@@ -473,7 +473,7 @@ describe("compose topology — a sidecar only when the operator chose one", () =
   });
 
   it("the hostname file rides its OWN volume, shared with the daemon and nothing else", () => {
-    expect(service("daemon")).toContain("qcr-ingress:/opt/quickreview/state/ingress");
+    expect(service("daemon")).toContain("qcr-ingress:/opt/qcr/state/ingress");
     expect(service("tunnel-quick")).toContain("qcr-ingress:/ingress");
     expect(service("tunnel-ngrok")).toContain("qcr-ingress:/ingress");
     // No sidecar ever sees the state volume (SQLite, memory, the dry-run record).
@@ -487,7 +487,7 @@ describe("compose topology — a sidecar only when the operator chose one", () =
   it("the token-bearing sidecars mount the secrets dir READ-ONLY and pass nothing on a command line", () => {
     for (const name of ["tunnel-ngrok", "tunnel-named"]) {
       expect(service(name)).toContain(
-        "${QCR_SECRETS_DIR:-~/.config/qcr/default/secrets}:/opt/quickreview/secrets:ro",
+        "${QCR_SECRETS_DIR:?set QCR_SECRETS_DIR to your secrets directory}:/opt/quickreview/secrets:ro",
       );
     }
     // The quick tunnel needs no credential at all, so it gets no secrets mount.
@@ -496,7 +496,10 @@ describe("compose topology — a sidecar only when the operator chose one", () =
     // (compose env lands in `docker inspect`), not as a client argument.
     expect(compose).not.toMatch(/^\s*(NGROK_AUTHTOKEN|TUNNEL_TOKEN)\s*[:=]/m);
     expect(compose).not.toMatch(/--token\b/);
-    expect(compose).not.toMatch(/^\s*command:/m);
+    // (The daemon's `command: ["daemon"]` is the image's mode, not a client.)
+    for (const name of ["tunnel-quick", "tunnel-ngrok", "tunnel-named"]) {
+      expect(service(name)).not.toMatch(/^\s*command:/m);
+    }
   });
 
   it("each sidecar is told its kind and restarts unless stopped", () => {

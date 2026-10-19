@@ -47,6 +47,9 @@ import {
 } from "../engine.js";
 
 export const INGRESS_STEP_ID = "ingress";
+/** Where the daemon container reads the tunnel's hostname file: <root>/state
+ * under the release image's app root (compose.ts CONTAINER_STATE_DIR). */
+export const CONTAINER_HOSTNAME_FILE = "/opt/qcr/state/ingress/hostname";
 /** Recorded choice keys later steps (and verify) read. */
 /** The daemon's webhook route — the same default `src/webhook.ts` serves and
  * `src/webhookheal.ts` re-points the App to. */
@@ -867,7 +870,7 @@ async function runningShapeChecks(
     "-T",
     "daemon",
     "cat",
-    "/opt/quickreview/state/ingress/hostname",
+    CONTAINER_HOSTNAME_FILE,
   ]);
   const published = cat.code === 0 ? normalizeHostname(cat.stdout) : null;
   const reserved =
@@ -888,13 +891,13 @@ async function runningShapeChecks(
       ? {
           name: "hostname-file",
           ok: true,
-          detail: `the daemon reads ${published} from /opt/quickreview/state/ingress/hostname — the App's webhook URL is re-pointed there`,
+          detail: `the daemon reads ${published} from ${CONTAINER_HOSTNAME_FILE} — the App's webhook URL is re-pointed there`,
         }
       : {
           name: "hostname-file",
           ok: false,
           detail:
-            "no hostname published yet at /opt/quickreview/state/ingress/hostname — a tunnel that just started needs a few seconds; " +
+            `no hostname published yet at ${CONTAINER_HOSTNAME_FILE} — a tunnel that just started needs a few seconds; ` +
             `otherwise check \`docker compose logs ${option.service}\``,
         },
   );

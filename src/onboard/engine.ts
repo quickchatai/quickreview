@@ -50,8 +50,10 @@ export interface OnboardAdapters {
   prompter?: (question: string) => Promise<string>;
   /** Deterministic host facts, captured once by the real assembly so steps
    * never read process globals themselves. `uid` is null where the platform
-   * has no uid (Windows). */
-  host: { nodeVersion: string; uid: number | null };
+   * has no uid (Windows). `inContainer`: the wizard is running inside a
+   * container (the release image), where there is no Docker to drive —
+   * bring-up then prints the host's commands instead (D16). */
+  host: { nodeVersion: string; uid: number | null; inContainer?: boolean };
   /** Filesystem roots. `stateDir` is `<sandbox root>/state`; `configPath` is
    * the live config.toml as the install locator resolved it — the
    * one file every step reads and writes, captured once by the real assembly

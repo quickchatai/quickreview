@@ -1,15 +1,19 @@
 // Preflight — the first real onboarding step: the machine facts the
-// rest of the wizard stands on. Node ≥22 (the daemon's floor), Docker and
-// Docker Compose present (the laptop route's runtime; the VM route still
-// builds images locally for the companion), and the current uid captured —
-// later steps pass it to the image build as QCR_UID so the container user
-// matches the bind-mount owner.
+// rest of the wizard stands on. Node ≥22 (the wizard's own floor), Docker and
+// Docker Compose present (the laptop route's runtime), the released image
+// reachable (the stack is pulled, never built, and the images are private), and
+// the current uid captured — later steps write it to the project `.env` as
+// QCR_UID so the containers run as the user who owns the secrets.
+//
+// Inside the release image there is no Docker and never will be (D16): the
+// wizard then notes it and goes on, and bring-up prints the host's commands.
 //
 // Deterministic by construction: every fact comes through the adapters
 // (host facts injected, binaries probed via the ProcessRunner seam), so tests
 // drive both paths with fakes and no test touches a real Docker.
 import { CHOICE_KEYS } from "../choices.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
+import { releaseImage, releaseVersion, rootOf } from "./compose.js";
 
 export const PREFLIGHT_STEP_ID = "preflight";
 /** The daemon's Node floor — package.json `engines.node` says the same
@@ -43,7 +47,21 @@ async function toolingChecks(ctx: StepContext): Promise<CheckResult[]> {
         },
   );
 
+  // Inside the release image there is no docker CLI: not a failure of this
+  // machine, and the step after this one says what to run on the host instead.
+  const noDockerHere = (what: string): CheckResult => ({
+    name: what,
+    ok: true,
+    detail:
+      `${what} is not runnable here, and this wizard is running inside a container, which never has it — ` +
+      "the bring-up step prints the exact commands to run on your host (where Docker must be installed)",
+  });
+
   const docker = await runner.run("docker", ["--version"]);
+  if (docker.code !== 0 && host.inContainer) {
+    checks.push(noDockerHere("docker"), noDockerHere("compose"));
+    return checks;
+  }
   checks.push(
     docker.code === 0
       ? {
@@ -73,16 +91,53 @@ async function toolingChecks(ctx: StepContext): Promise<CheckResult[]> {
         },
   );
 
+  // The stack is pulled, not built, and the images are private: ask the
+  // registry for the manifest now, so a missing login is a preflight line with
+  // its fix, not a failed pull far into the wizard. Not a failure of this
+  // step, because preflight runs before the topology is chosen and the server
+  // route builds on the server: bring-up's pull is the hard gate, and carries
+  // the same fix.
+  if (docker.code === 0 && compose.code === 0) {
+    const version = releaseVersion(rootOf(ctx.adapters));
+    if (version === "") {
+      checks.push({
+        name: "images",
+        ok: true,
+        detail:
+          "no release version to probe the image for: QCR_VERSION is not in the project .env and this wizard has no package version. " +
+          "Fix: set QCR_VERSION in .env to the release you run (there is no floating `latest` tag); bring-up needs it",
+      });
+      return checks;
+    }
+    const image = releaseImage(version);
+    const manifest = await runner.run("docker", ["manifest", "inspect", image]);
+    checks.push(
+      manifest.code === 0
+        ? { name: "images", ok: true, detail: `${image} is reachable on ghcr.io` }
+        : {
+            name: "images",
+            ok: true,
+            detail:
+              `cannot reach ${image} (exit ${manifest.code}): ${(manifest.stderr || manifest.stdout).trim().slice(0, 300) || "no output"}. ` +
+              "The images are private. Fix: `gh auth refresh -s read:packages`, then " +
+              "`gh auth token | docker login ghcr.io -u <your github login> --password-stdin`; " +
+              "if that is done, that release tag may not exist (QCR_VERSION in the project .env). " +
+              "Only the laptop route pulls it (the server route builds on the server), so this does not stop the wizard here",
+          },
+    );
+  }
+
   return checks;
 }
 
 export function preflightStep(): OnboardingStep {
   return {
     id: PREFLIGHT_STEP_ID,
-    title: "Preflight: Node, Docker, Compose, uid",
+    title: "Preflight: Node, Docker, Compose, images, uid",
     explain:
-      `Checks that this machine can run QuickReview at all: Node ${MIN_NODE_MAJOR} or newer, Docker, and the Compose plugin. ` +
-      "It also captures your user id so the containers built later run as you and can share files with your checkout.",
+      `Checks that this machine can run QuickReview at all: Node ${MIN_NODE_MAJOR} or newer, Docker, the Compose plugin, and whether ` +
+      "the released image can be pulled (it is private: a missing ghcr.io login is noted here, with the fix, and enforced by bring-up). " +
+      "It also captures your user id so the containers run as you and can read the secrets you own.",
     order: 10,
     async run(ctx): Promise<StepReport> {
       const checks = await toolingChecks(ctx);
@@ -98,7 +153,7 @@ export function preflightStep(): OnboardingStep {
         checks.push({
           name: "uid",
           ok: true,
-          detail: `uid ${uid} captured — later steps pass it to the image build as QCR_UID`,
+          detail: `uid ${uid} captured — later steps write it to .env as QCR_UID`,
         });
       }
       const ok = checks.every((c) => c.ok);
@@ -124,7 +179,7 @@ export function preflightStep(): OnboardingStep {
         checks.push({
           name: "uid",
           ok: false,
-          detail: `recorded uid ${recorded} no longer matches the current user (${current}) — re-run preflight before building images`,
+          detail: `recorded uid ${recorded} no longer matches the current user (${current}) — re-run preflight before bringing the stack up`,
         });
       } else {
         checks.push({ name: "uid", ok: true, detail: `uid ${recorded} recorded` });

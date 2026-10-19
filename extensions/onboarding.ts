@@ -18,6 +18,7 @@
 // wedge — a pi without registerTool registers nothing and says so; a missing
 // ctx.shutdown falls back to telling the operator to /exit.
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { registerQcrTool, textResult as text, type QcrTool } from "./pi-tool.js";
@@ -56,6 +57,7 @@ export function realAdapters(root: string): OnboardAdapters {
     host: {
       nodeVersion: process.version,
       uid: typeof process.getuid === "function" ? process.getuid() : null,
+      inContainer: existsSync("/.dockerenv"),
     },
     // The install locator decides which config.toml the wizard edits —
     // $QCR_CONFIG, else the install's config home (never the checkout's).

@@ -265,8 +265,8 @@ deploy paths. The full picture is in
 
 ## Prerequisites
 
-- **Node ≥ 22**, **Docker**, and the **Compose v2 plugin** (`docker compose`).
-  The build and the test suite run offline with no secrets.
+- **Docker**, and the **Compose v2 plugin** (`docker compose`). QuickReview is
+  one image; nothing else is installed on your machine.
 - **A GitHub account that can create an App** and install it on the repository
   you want reviewed. No personal access token is used, anywhere, and setup
   creates the App from a manifest in one click.
@@ -284,11 +284,14 @@ first-class ([docs/llm-setup.md](docs/llm-setup.md)).
 ## Quickstart
 
 ```sh
-git clone <this repo> && cd <repo>
-npm ci && npm test && npm run build   # green offline, no secrets needed
+# once: log in to the registry (the images are private) and install `qcr`,
+# the one-file host wrapper the image writes (docs/host-wrapper.md)
+gh auth refresh -s read:packages
+gh auth token | docker login ghcr.io -u <your github login> --password-stdin
+docker run --rm --user "$(id -u):$(id -g)" -v ~/.local/bin:/out \
+  ghcr.io/quickchatai/quickreview:<version> install
 
-scripts/qcr onboard                   # the whole setup, guided
-# or, the same thing:  npm run onboard
+qcr onboard                           # the whole setup, guided
 ```
 
 `qcr onboard` is an interactive session: a pi agent talks you through what the
@@ -321,7 +324,8 @@ Both answers are first-class.
   use, with every one of its preflights
   ([deploy/ansible/README.md](deploy/ansible/README.md)).
 - **This computer** — the whole system in Docker on the machine you are sitting
-  at. No server to own, and it reviews only while that machine is awake
+  at: the released daemon and memory images, pulled, never built. No server to
+  own, and it reviews only while that machine is awake
   ([docker/daemon/README.md](docker/daemon/README.md)).
 
 Switching later costs you none of your answers: re-run the topology step, and
@@ -399,17 +403,17 @@ money goes.
 ## Operating
 
 ```sh
-scripts/qcr onboard                             # guided setup; also a diagnostic
-scripts/qcr status | today | why <pr> | spend   # CLI over daemon state
-scripts/qcr metrics [--pr <n>] [--json]         # ttfv, queue/review legs, round stats
-scripts/qcr tui                                 # operator board
-docker compose logs -f daemon                   # daemon logs (laptop route)
+qcr onboard                             # guided setup; also a diagnostic
+qcr status | today | why <pr> | spend   # CLI over daemon state
+qcr metrics [--pr <n>] [--json]         # ttfv, queue/review legs, round stats
+qcr tui                                 # operator board
+qcr update                              # pull a newer release and re-pin
+docker compose logs -f daemon           # daemon logs (laptop route)
 ```
 
 The TUI reaches the daemon over ssh or against local Docker, per
-`config.toml [tui] target`. Working on the code: `npm run lint` (ESLint with
-type-aware rules) and `npm run format` (Prettier; `format:check` to verify).
-Neither is chained into `npm test` or `npm run build`; CI runs both.
+`config.toml [tui] target`. Working on the code (a clone, `npm ci`, the test
+suite, lint and format) is in [CONTRIBUTING.md](CONTRIBUTING.md#running-from-a-clone).
 
 ## Roadmap and non-goals
 
@@ -445,7 +449,7 @@ can be shown false. Please try.
 - [docs/onboarding.md](docs/onboarding.md) — the guided setup, step by step
 - [docs/github-app-setup.md](docs/github-app-setup.md) — what the GitHub App is, and how to register it by hand
 - [docs/llm-setup.md](docs/llm-setup.md) — the two LLM credential routes
-- [docker/daemon/README.md](docker/daemon/README.md) — the plain-Docker route: containers, ingress shapes, image pins
+- [docker/daemon/README.md](docker/daemon/README.md) — the compose stack: the daemon and memory images, ingress shapes, version pin
 - [deploy/ansible/README.md](deploy/ansible/README.md) — the VM/server route: provisioning, deploy, verification
 - [docs/profiles.md](docs/profiles.md) — repo profiles: addenda packs, heuristics, per-lens tuning
 - [docs/host-wrapper.md](docs/host-wrapper.md) — the `qcr` host wrapper the release image installs: mounts, token handoff, update
@@ -467,18 +471,28 @@ prefer; re-running the wizard afterwards re-checks every step against reality
 without writing anything that already holds.
 
 ```sh
-git clone <this repo> && cd <repo>
-npm ci && npm test && npm run build
+IMG=ghcr.io/quickchatai/quickreview:<version>      # after the registry login above
 
-cp config.example.toml config.toml    # ~10 clearly-marked FILL values:
-                                      # repo, app slug/bot login, review
-                                      # team/label, owner identity, timezone
-bash deploy/collect-secrets.sh        # interactive: App id + private key,
-                                      # webhook secret, tunnel token, OpenAI
-                                      # key (only what your deployment needs)
+mkdir qcr-bot && cd qcr-bot
+docker run --rm --entrypoint tar $IMG -C /opt/qcr -cf - docker-compose.yml docker/tunnel | tar -xf -
+mkdir -p ~/.config/qcr/default/secrets
+docker run --rm --entrypoint cat $IMG /opt/qcr/config.example.toml \
+  > ~/.config/qcr/default/config.toml    # ~10 clearly-marked FILL values:
+                                         # repo, app slug/bot login, review
+                                         # team/label, owner identity, timezone
+                                         # (and [openviking] endpoint = "remote",
+                                         # host = "memory", for this stack)
+# secrets dir: app_id, app.pem, webhook_secret, then only what your deployment
+# needs (tunnel_token, openai_api_key) -- one file each, 0600
 
-export QCR_UID=$(id -u)
-docker compose up -d --build          # laptop route (docker/daemon/README.md)
+cat > .env <<EOF
+QCR_VERSION=<version>
+QCR_UID=$(id -u)
+QCR_CONFIG_HOME=$HOME/.config/qcr/default
+QCR_SECRETS_DIR=$HOME/.config/qcr/default/secrets
+EOF
+docker compose pull --ignore-buildable
+docker compose up -d                  # laptop route (docker/daemon/README.md)
 curl -s http://127.0.0.1:8787/health
 
 # then: point your HTTPS ingress at the webhook port, install the App on your
@@ -491,10 +505,10 @@ Each piece has its own page: the GitHub App
 ([docker/daemon/README.md](docker/daemon/README.md)), and a server instead of
 a laptop ([deploy/ansible/README.md](deploy/ansible/README.md), with
 `scripts/deploy.sh sync|rebuild|verify`). Slack is optional, any time:
-`npm run slack:setup`. **Memory keys**: the server's root key is any 32
+`npm run slack:setup` (from a clone: the image does not carry it yet). **Memory keys**: the server's root key is any 32
 random bytes in `<secrets>/openviking_root_key`; the two *user* keys are
 issued by the running server, and the wizard's memory step is the only
-implementation that mints, places and proves them, so run `scripts/qcr
+implementation that mints, places and proves them, so run `qcr
 onboard` for that step even if you did everything else by hand. Declining
 memory is supported; rounds are unaffected.
 

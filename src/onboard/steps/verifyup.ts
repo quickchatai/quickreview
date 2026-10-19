@@ -3,8 +3,10 @@
 // Three layers, deliberately in this order, because each one can only mean
 // anything if the one before it holds:
 //
-//   1. CONTAINER STATE — is the daemon (and the tunnel the operator chose)
-//      actually running? Docker's own answer, not an inference.
+//   1. CONTAINER STATE — is the daemon (with its memory sidecar, and the tunnel
+//      the operator chose) actually running? Docker's own answer, not an
+//      inference. The containers are the pulled release images; a stale pin is
+//      `qcr update` / QCR_VERSION in .env, not a rebuild.
 //   2. HEALTH — does the daemon answer `GET /health`? That is the process
 //      saying "I booted, I loaded my config, I am serving".
 //   3. PING DELIVERY — did GitHub's webhook actually ARRIVE? This is the only

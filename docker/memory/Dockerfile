@@ -135,6 +135,10 @@ RUN useradd --create-home --non-unique --uid ${REVIEW_UID} review
 # named volume from the image directory it is mounted over - a mount point the
 # image lacks would be root-owned and unwritable.
 RUN install -d -o review -g review /opt/quickreview/state /opt/quickreview/state/openviking
+# Any uid: the compose stack runs this container as the operator's own uid (so
+# the 0600 key files in the secrets mount stay readable), which owns neither
+# the store nor HOME. World-writable and sticky, like the release image's.
+RUN chmod 1777 /opt/quickreview/state /opt/quickreview/state/openviking /home/review
 ENV HOME=/home/review \
     QCR_APP_ROOT=/opt/qcr
 

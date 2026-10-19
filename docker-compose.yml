@@ -1,18 +1,38 @@
-# Plain Docker path — build and run the review daemon on any host.
+# The compose stack: the always-on review daemon, its memory sidecar and an
+# optional webhook tunnel, all from the released images.
 #
-#   docker compose up -d --build
+#   docker compose pull --ignore-buildable && docker compose up -d
 #
-# Prerequisites: a secrets dir — QCR_SECRETS_DIR, which the wizard's bring-up
-# writes into .env as the install locator's answer (<config home>/secrets);
-# unset, the default install's ~/.config/qcr/default/secrets — holding at
-# least app_id, app.pem, webhook_secret;
-# optional openai_api_key (pi's API-key route), openviking_root_key,
-# openviking_reviewer_key, and openai_embeddings_api_key (only under the
-# hosted-embeddings opt-in — memory embeds locally by default).
-# Ingress is the operator's choice, and the wizard's ingress step
-# makes it for you. Four shapes, three of them a SIDECAR in this file, each
-# behind its own compose profile — with no profile selected you get the daemon
-# ALONE, which is the polling-only shape:
+# Nothing here builds the app or needs a checkout: `daemon` and `memory` are
+# pulled, `QCR_VERSION` pins them, and the project directory holds this file,
+# a .env and (for a tunnel) docker/tunnel/ -- all of which the image carries and
+# the onboarding wizard hands you the command to extract (qcr onboard, step 70):
+#
+#   docker run --rm --entrypoint tar ghcr.io/quickchatai/quickreview:<version> \
+#     -C /opt/qcr -cf - docker-compose.yml docker/tunnel | tar -xf -
+#
+# The images are private: `gh auth refresh -s read:packages`, then
+# `gh auth token | docker login ghcr.io -u <user> --password-stdin`.
+#
+# Needed on the host, all named in .env (the wizard's bring-up writes them):
+#   QCR_VERSION       the release to run (the image tag), e.g. 0.1.0
+#   QCR_CONFIG_HOME   the directory holding your config.toml, mounted read-only
+#   QCR_CONFIG_NAME   the file in it (default config.toml)
+#   QCR_SECRETS_DIR   the secrets dir -- app_id, app.pem, webhook_secret at
+#                     least; optional openai_api_key (pi's API-key route),
+#                     openviking_root_key, openviking_reviewer_key, and
+#                     openai_embeddings_api_key (only under the hosted-embeddings
+#                     opt-in -- memory embeds locally by default)
+#   QCR_UID           your uid, so the daemon can read 0600 files you own
+#
+# config.toml must say `[openviking] endpoint = "remote"` and `host = "memory"`:
+# the memory engine runs in the `memory` service, not inside the daemon (the
+# release image carries no OpenViking). The wizard's bring-up writes both.
+#
+# Ingress is the operator's choice, and the wizard's ingress step makes it for
+# you. Four shapes, three of them a SIDECAR in this file, each behind its own
+# compose profile -- with no profile selected you get the daemon (and its
+# memory) ALONE, which is the polling-only shape:
 #
 #   COMPOSE_PROFILES=quick-tunnel   cloudflared quick tunnel; no account, the
 #                                   hostname ROTATES and the daemon re-points
@@ -23,7 +43,7 @@
 #                                   hostname stable with a reserved domain
 #   COMPOSE_PROFILES=named-tunnel   your own Cloudflare tunnel token + your own
 #                                   domain (the VM route's default shape)
-#   (unset)                         no tunnel at all — the reconcile poll is
+#   (unset)                         no tunnel at all -- the reconcile poll is
 #                                   the trigger path ([daemon] poll_interval_s)
 #
 # The wizard writes the profile into the project's .env; set it by hand with
@@ -31,109 +51,67 @@
 # HTTPS proxy or tunnel pointed at the published webhook port also works.
 # See docker/daemon/README.md.
 #
-# Pins: the image versions (pi, OpenViking, llama-cpp-python,
-# tmux) are the Dockerfile's ARG defaults, mirrored against config.toml and
-# deploy/ansible/group_vars/all.yml by tests/docker-daemon.test.ts — drift
-# refuses there. Do not override the build args casually: a bump is a
-# deliberate act recorded in ALL the mirror locations.
+# Pins: pi, OpenViking, llama-cpp-python and tmux are the images' Dockerfile
+# ARG defaults (docker/Dockerfile, docker/memory/Dockerfile), mirrored against
+# config.toml and deploy/ansible/group_vars/all.yml by tests/release-image.test.ts
+# and tests/memory-image.test.ts. A version bump is a new release, never an
+# override here.
 name: quickreview
 
 services:
   daemon:
-    build:
-      context: docker/daemon
-      args:
-        # The repo is bind-mounted and the entrypoint builds in it — the
-        # container user must own your checkout's files. Set QCR_UID=$(id -u)
-        # (the default 1001 matches the templated VM image).
-        REVIEW_UID: ${QCR_UID:-1001}
-    image: quickreview-sandbox:v1
-    # PID-1 discipline: with a supervised OpenViking process beside
-    # the daemon, PID 1 must reap. tini forwards signals and adopts orphans.
+    image: ghcr.io/quickchatai/quickreview:${QCR_VERSION:?set QCR_VERSION to the release to run (the image tag)}
+    # The image's mode dispatch (docker/entrypoint.sh): the always-on bot.
+    command: ["daemon"]
+    # The image carries no passwd entry for the user it runs as; the caller
+    # picks it. Your uid, so the 0600 files you own in the secrets mount stay
+    # readable and nothing else is shared.
+    user: "${QCR_UID:-1000}:${QCR_UID:-1000}"
+    # PID-1 discipline: the daemon runs a tmux server beside itself, so PID 1
+    # must reap. tini forwards signals and adopts orphans.
     init: true
     restart: unless-stopped
-    # Resource caps — same defaults as the live VM (a shared box). Raise via
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    # Resource caps -- same defaults as the live VM (a shared box). Raise via
     # QCR_CPUS / QCR_MEMORY if the host is yours alone.
     cpus: ${QCR_CPUS:-2}
     mem_limit: ${QCR_MEMORY:-8g}
     memswap_limit: ${QCR_MEMORY:-8g}
     # The webhook port is the ONLY thing this container publishes, and on
-    # loopback by default — put your HTTPS ingress in front of it. OpenViking's
-    # port (1933) is deliberately absent: it is loopback-INSIDE-the-container,
-    # reachable by the daemon and the pi sessions and by nothing else. Do not
-    # publish it — nor the local embedder's (1934), which binds
-    # 127.0.0.1 inside the container and refuses any other address.
+    # loopback by default -- put your HTTPS ingress in front of it. OpenViking's
+    # port (1933) is the memory service's, on the compose network, and is
+    # deliberately never published.
     ports:
       - "${QCR_WEBHOOK_BIND:-127.0.0.1}:${QCR_WEBHOOK_PORT:-8787}:8787"
     volumes:
-      # The repo itself IS the sandbox (the entrypoint runs npm ci + build on
-      # first boot and symlinks <sandbox>/state onto the state volume).
-      - ./:/opt/quickreview/sandbox
-      # The state volume, mounted at BOTH paths on purpose:
-      # /opt/quickreview/state is the absolute path the docs, the TUI's
-      # remote_state_dir and the ingress checks use, and <sandbox>/state is
-      # where the code itself looks. Mounting it over the sandbox path is what
-      # stops the entrypoint from replacing the operator's OWN state/ directory
-      # — the sandbox is a bind mount of their checkout, and that directory
-      # holds host-side files the TUI and the onboarding wizard read directly
-      # (the onboarding checklist, the companion's rollover and alert state,
-      # the first-run marker). The entrypoint detects the double mount by inode
-      # and skips its symlink migration.
-      - qcr-state:/opt/quickreview/state
-      - qcr-state:/opt/quickreview/sandbox/state
+      # The state volume. /opt/qcr/state is the one writable directory under the
+      # app root (the MutationGate's state/dryrun, the onboarding checklist, the
+      # companion's rollover and alert state all live here); the image ships it
+      # world-writable, so a fresh volume is writable by whatever uid runs.
+      - qcr-state:/opt/qcr/state
       # The tunnel sidecar's ONLY shared surface: the one directory holding
       # the hostname file the self-heal watcher reads
-      # (<root>/state/ingress/hostname — the default `[ingress] hostname_file`
-      # resolves here through the entrypoint's state symlink). A nested mount
-      # so the sidecar never sees the rest of the state volume: no SQLite, no
-      # memory, no dry-run record.
-      - qcr-ingress:/opt/quickreview/state/ingress
-      # …and, for the same reason as the state volume above, at the sandbox
-      # path too, so both spellings of the hostname file are the SAME file.
-      - qcr-ingress:/opt/quickreview/sandbox/state/ingress
-      - ${QCR_SECRETS_DIR:-~/.config/qcr/default/secrets}:/opt/quickreview/secrets:ro
+      # (/opt/qcr/state/ingress/hostname, the default `[ingress] hostname_file`).
+      # A nested mount so the sidecar never sees the rest of the state volume:
+      # no SQLite, no memory, no dry-run record.
+      - qcr-ingress:/opt/qcr/state/ingress
+      - ${QCR_SECRETS_DIR:?set QCR_SECRETS_DIR to your secrets directory}:/opt/quickreview/secrets:ro
       # The directory holding the live config.toml the install locator found
-      # on the host — the install's config home, or wherever QCR_CONFIG
-      # points — and with it the profiles/ beside that config, which the
-      # in-container locator finds beside the QCR_CONFIG the entrypoint
-      # names. The bring-up step writes QCR_CONFIG_HOME and QCR_CONFIG_NAME
-      # into .env and creates the directory first. The container reads no
-      # other config. Unset (compose run by
-      # hand, before the wizard wrote .env) it defaults to a tracked dir with
-      # no config.toml in it, so the boot fails naming the missing file —
-      # never to ~/.config/qcr/<install>, which Docker would create owned by
-      # root when it is missing. To run by hand on a config home, set
-      # QCR_CONFIG_HOME in .env.
-      - ${QCR_CONFIG_HOME:-./docker/daemon/no-config-home}:/opt/quickreview/config-home:ro
-      # pi's home: OAuth tokens (auth.json), session JSONLs, models.json —
-      # must survive container rebuilds (sticky sessions + /login tokens).
-      - qcr-pihome:/home/review/.pi
+      # on the host -- the install's config home, or wherever QCR_CONFIG
+      # points -- and with it the profiles/ beside that config. The container
+      # reads no other config. Mounted read-only: the wizard edits it on the
+      # host, and the daemon reads it once, at boot.
+      - ${QCR_CONFIG_HOME:?set QCR_CONFIG_HOME to the directory holding config.toml}:/opt/quickreview/config-home:ro
+      # pi's home: OAuth tokens (auth.json), session JSONLs, models.json --
+      # must survive container recreates (sticky sessions + /login tokens).
+      - qcr-pihome:/home/qcr/.pi
     environment:
       TZ: ${TZ:-Europe/Warsaw}
       QC_REVIEW_PORT: "8787"
-      QCR_CONFIG_NAME: ${QCR_CONFIG_NAME:-config.toml}
-      # The memory engine's embedder: local by default —
-      # the local English embedder, served on loopback inside the container —
-      # so nothing but the model call leaves the machine. A hosted opt-in is
-      # these four in the project .env (the onboarding bring-up step mirrors
-      # them from config.toml [openviking] embedding_*) plus
-      # <secrets>/<key file> — its OWN file, never pi's openai_api_key.
-      # Defaults mirror config.toml. Under local the entrypoint runs the
-      # image's pinned model whatever model/dimension say here.
-      QCR_OPENVIKING_EMBEDDING_PROVIDER: ${QCR_OPENVIKING_EMBEDDING_PROVIDER:-local}
-      QCR_OPENVIKING_EMBEDDING_MODEL: ${QCR_OPENVIKING_EMBEDDING_MODEL:-bge-small-en-v1.5-f16}
-      QCR_OPENVIKING_EMBEDDING_DIMENSION: ${QCR_OPENVIKING_EMBEDDING_DIMENSION:-384}
-      QCR_OPENVIKING_EMBEDDING_KEY_FILE: ${QCR_OPENVIKING_EMBEDDING_KEY_FILE:-openai_embeddings_api_key}
-      # The local embedder's runtime knobs: the port the rendered
-      # ov.conf routes embeddings to and the provisioning step serves on, and
-      # its thread count. The daemon reads the SAME two from config.toml
-      # [openviking] local_embedder_port / _threads, so the bring-up step
-      # mirrors them here on every bring-up — a port the two disagree on is a
-      # search that nothing serves. Model, dimension and file are the image's
-      # (its ENV), never the .env's.
-      QCR_OPENVIKING_LOCAL_EMBEDDER_PORT: ${QCR_OPENVIKING_LOCAL_EMBEDDER_PORT:-1934}
-      QCR_OPENVIKING_LOCAL_EMBEDDER_THREADS: ${QCR_OPENVIKING_LOCAL_EMBEDDER_THREADS:-1}
-      # In-container bind must be 0.0.0.0 — the published port targets the
+      QCR_CONFIG: /opt/quickreview/config-home/${QCR_CONFIG_NAME:-config.toml}
+      # In-container bind must be 0.0.0.0 -- the published port targets the
       # container's eth0; host exposure stays loopback-only above.
       QC_BIND_HOST: "0.0.0.0"
       # The secrets mount, named to the install locator on the CONTAINER (the
@@ -142,13 +120,67 @@ services:
       # in-container mint-token.sh read) never inherits the entrypoint's env.
       QCR_SECRETS_MOUNT: /opt/quickreview/secrets
 
+  # ---- the memory sidecar --------------------------------------------------
+  # OpenViking, its venv, llama-cpp-python and the pinned GGUF in a container
+  # of their own (docker/memory/). The daemon only probes its health
+  # ([openviking] endpoint = "remote", host = "memory"); the sidecar owns the
+  # processes, the boot provisioning and the re-embed. Port 1933 stays on the
+  # compose network. The GGUF is in the image: it boots offline.
+  memory:
+    image: ghcr.io/quickchatai/quickreview-memory:${QCR_VERSION:?set QCR_VERSION to the release to run (the image tag)}
+    user: "${QCR_UID:-1000}:${QCR_UID:-1000}"
+    init: true
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    cpus: ${QCR_MEMORY_CPUS:-1}
+    mem_limit: ${QCR_MEMORY_LIMIT:-4g}
+    memswap_limit: ${QCR_MEMORY_LIMIT:-4g}
+    volumes:
+      # The memory store: memories, the vector db, ov.conf, the re-embed
+      # journal. Never wiped by anything here; `docker compose down` keeps it.
+      - qcr-memory:/opt/quickreview/state/openviking
+      # Read-only: the root and reviewer keys (and the hosted-embeddings key,
+      # only under that opt-in).
+      - ${QCR_SECRETS_DIR:?set QCR_SECRETS_DIR to your secrets directory}:/opt/quickreview/secrets:ro
+      # The SAME config.toml the daemon reads.
+      - ${QCR_CONFIG_HOME:?set QCR_CONFIG_HOME to the directory holding config.toml}:/opt/quickreview/config-home:ro
+    environment:
+      TZ: ${TZ:-Europe/Warsaw}
+      QCR_CONFIG_NAME: ${QCR_CONFIG_NAME:-config.toml}
+      # The memory engine's embedder: local by default -- the local English
+      # embedder, served on loopback inside this container -- so nothing but
+      # the model call leaves the machine. A hosted opt-in is these four in the
+      # project .env (the onboarding bring-up step mirrors them from config.toml
+      # [openviking] embedding_*) plus <secrets>/<key file> -- its OWN file,
+      # never pi's openai_api_key. Defaults mirror config.toml. Under local the
+      # entrypoint runs the image's pinned model whatever model/dimension say
+      # here.
+      QCR_OPENVIKING_EMBEDDING_PROVIDER: ${QCR_OPENVIKING_EMBEDDING_PROVIDER:-local}
+      QCR_OPENVIKING_EMBEDDING_MODEL: ${QCR_OPENVIKING_EMBEDDING_MODEL:-bge-small-en-v1.5-f16}
+      QCR_OPENVIKING_EMBEDDING_DIMENSION: ${QCR_OPENVIKING_EMBEDDING_DIMENSION:-384}
+      QCR_OPENVIKING_EMBEDDING_KEY_FILE: ${QCR_OPENVIKING_EMBEDDING_KEY_FILE:-openai_embeddings_api_key}
+      # The local embedder's runtime knobs: the port the rendered ov.conf routes
+      # embeddings to and the provisioning step serves on, and its thread count.
+      # The daemon reads the SAME two from config.toml [openviking]
+      # local_embedder_port / _threads, so the bring-up step mirrors them here
+      # on every bring-up -- a port the two disagree on is a search that nothing
+      # serves. Model, dimension and file are the image's (its ENV), never the
+      # .env's.
+      QCR_OPENVIKING_LOCAL_EMBEDDER_PORT: ${QCR_OPENVIKING_LOCAL_EMBEDDER_PORT:-1934}
+      QCR_OPENVIKING_LOCAL_EMBEDDER_THREADS: ${QCR_OPENVIKING_LOCAL_EMBEDDER_THREADS:-1}
+
   # ---- webhook ingress sidecars -------------------------------------------
   # All three run the same wrapper (docker/tunnel/sidecar.mjs) around an
   # official vendor binary, and all three are OPTIONAL: no profile, no
-  # sidecar. None of them publishes a port — the tunnel dials OUT and reaches
-  # the daemon over the compose network, so nothing new is exposed on the
-  # host. OpenViking's port (1933) stays unpublished and unreachable from any
-  # of them; the sidecars mount one directory and, at most, the secrets dir.
+  # sidecar. They are the one thing built here rather than pulled -- a thin
+  # wrapper over the vendor's own image, built from docker/tunnel/ (extracted
+  # beside this file) the first time a profile selects one. None of them
+  # publishes a port -- the tunnel dials OUT and reaches the daemon over the
+  # compose network, so nothing new is exposed on the host. OpenViking's port
+  # (1933) stays unpublished and unreachable from any of them; the sidecars
+  # mount one directory and, at most, the secrets dir.
 
   # The default laptop shape: no account, no signup, rotating hostname.
   # cloudflared prints the assigned *.trycloudflare.com name; the wrapper
@@ -194,7 +226,7 @@ services:
       QCR_TUNNEL_DOMAIN: ${QCR_NGROK_DOMAIN:-}
     volumes:
       - qcr-ingress:/ingress
-      - ${QCR_SECRETS_DIR:-~/.config/qcr/default/secrets}:/opt/quickreview/secrets:ro
+      - ${QCR_SECRETS_DIR:?set QCR_SECRETS_DIR to your secrets directory}:/opt/quickreview/secrets:ro
 
   # Your own named Cloudflare tunnel: a permanent hostname on your domain,
   # driven by the connector token the secrets wizard collects (tunnel_token).
@@ -213,11 +245,13 @@ services:
     environment:
       QCR_TUNNEL_KIND: named
     volumes:
-      - ${QCR_SECRETS_DIR:-~/.config/qcr/default/secrets}:/opt/quickreview/secrets:ro
+      - ${QCR_SECRETS_DIR:?set QCR_SECRETS_DIR to your secrets directory}:/opt/quickreview/secrets:ro
 
 volumes:
   qcr-state:
   qcr-pihome:
+  # The memory store, the sidecar's alone.
+  qcr-memory:
   # Shared by the daemon (read) and a tunnel sidecar (write): the hostname
   # file, and nothing else.
   qcr-ingress:

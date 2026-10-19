@@ -417,7 +417,8 @@ boot. In order:
 3. **Deploy with `scripts/deploy.sh rebuild`, not `sync`.** The model file and
    the entrypoint that renders the new ov.conf ride the image, and the
    playbook's stale-image guard refuses a `sync` whose Dockerfile or
-   entrypoint changed. On compose, `docker compose build` first.
+   entrypoint changed. On compose, pull the release that carries it
+   (`QCR_VERSION`, then `docker compose pull`) first.
 4. **Watch the boot log.**
    - The render: `openviking: ov.conf rendered … embedder
      openai/bge-small-en-v1.5-f16 384 dims at http://127.0.0.1:1934/v1`.

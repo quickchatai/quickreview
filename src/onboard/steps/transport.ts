@@ -36,6 +36,7 @@ import {
   containerStateCheck,
   daemonExecArgs,
   healthUrl,
+  memoryOn,
   isUp,
   nodeStreamRunner,
   readConfigText,
@@ -128,7 +129,10 @@ function composeTransport(ctx: StepContext, opts: TransportOptions): StackTransp
     where: "on this machine, through docker compose",
 
     async containerChecks(ingress) {
-      return containerStateCheck(await composePs(ctx.adapters.runner, root), ingress);
+      const config = readConfigText(ctx.adapters);
+      return containerStateCheck(await composePs(ctx.adapters.runner, root), ingress, {
+        memory: config === null || memoryOn(config),
+      });
     },
 
     async running() {

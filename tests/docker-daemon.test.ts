@@ -176,8 +176,6 @@ describe("plain Dockerfile — ARG defaults mirror the pinned sources of truth",
     const dirs = prep![1]!.split(/\s+/);
     expect(dirs).toContain("/home/review/.pi");
     expect(dirs).toContain("/opt/quickreview/state");
-    expect(compose).toContain("qcr-pihome:/home/review/.pi");
-    expect(compose).toContain("qcr-state:/opt/quickreview/state");
     expect(dockerfile.indexOf(prep![0])).toBeGreaterThan(dockerfile.indexOf("RUN useradd"));
     expect(dockerfile.indexOf(prep![0])).toBeLessThan(dockerfile.indexOf("USER review"));
   });
@@ -629,29 +627,11 @@ describe("docker-compose topology", () => {
     expect(mappings[0]).not.toContain("1933");
   });
 
-  it("state on a volume, secrets read-only, pihome persistent, repo as the sandbox", () => {
-    expect(compose).toContain("qcr-state:/opt/quickreview/state");
-    expect(compose).toContain(
-      "${QCR_SECRETS_DIR:-~/.config/qcr/default/secrets}:/opt/quickreview/secrets:ro",
-    );
-    expect(compose).not.toContain("quickreview-bot"); // the legacy dir is never mounted
-    expect(compose).toContain("qcr-pihome:/home/review/.pi");
-    expect(compose).toContain("./:/opt/quickreview/sandbox");
-  });
-
-  // The config the install locator found on the host reaches the container
-  // read-only, and the entrypoint always names the config in it: a checkout
-  // config is never a fallback, so an empty mount fails the boot.
-  it("mounts the install's config home read-only and ALWAYS names the config in it", () => {
-    expect(compose).toContain(
-      "${QCR_CONFIG_HOME:-./docker/daemon/no-config-home}:/opt/quickreview/config-home:ro",
-    );
-    // The unset default is a tracked dir holding NO config.toml — never a
-    // path under the operator's home that Docker would create owned by root.
-    const fallback = join(root, "docker/daemon/no-config-home");
-    expect(existsSync(fallback)).toBe(true);
-    expect(existsSync(join(fallback, "config.toml"))).toBe(false);
-    expect(compose).toMatch(/QCR_CONFIG_NAME: \$\{QCR_CONFIG_NAME:-config\.toml\}/);
+  // The plain entrypoint (the VM's image until P7.10) always names the config
+  // in the config home: a checkout config is never a fallback, so an empty
+  // mount fails the boot. (The compose stack runs the release image and has
+  // its own test: tests/compose-stack.test.ts.)
+  it("the plain entrypoint ALWAYS names the config in the config home", () => {
     // No "only when present": there is no sandbox config to fall back to, so
     // an empty mount fails the boot naming this file.
     expect(entrypoint).toContain(
@@ -661,20 +641,6 @@ describe("docker-compose topology", () => {
     expect(entrypoint.indexOf("export QCR_CONFIG=")).toBeLessThan(
       entrypoint.indexOf('exec node "$SANDBOX/dist/src/wire.js"'),
     );
-  });
-
-  // The sandbox is a bind mount of the operator's checkout, and <root>/state
-  // holds host-side files the TUI and the onboarding wizard read directly
-  // (the checklist, the companion's rollover/alert state, the first-run
-  // marker). Replacing that directory with a symlink to a container-only path
-  // would break them, so both volumes are mounted at both spellings, and the
-  // entrypoint detects the double mount by inode instead of running its
-  // destructive migration.
-  it("the state and ingress volumes are mounted at both the absolute and the sandbox path", () => {
-    expect(compose).toContain("qcr-state:/opt/quickreview/state");
-    expect(compose).toContain("qcr-state:/opt/quickreview/sandbox/state");
-    expect(compose).toContain("qcr-ingress:/opt/quickreview/state/ingress");
-    expect(compose).toContain("qcr-ingress:/opt/quickreview/sandbox/state/ingress");
   });
 
   it("the entrypoint never rm -rf's the operator's state dir when the volume is already mounted there", () => {

@@ -134,6 +134,11 @@ COPY config.example.toml ./config.example.toml
 # The entrypoint and the tmux config the daemon and companion modes start from.
 COPY docker/entrypoint.sh ./docker/entrypoint.sh
 COPY docker/vm/tmux.conf ./docker/vm/tmux.conf
+# The compose stack and the tunnel sidecars' build context, so a Docker-only
+# install extracts them from the image (the wizard's bring-up prints the one
+# `docker run --entrypoint tar` that does it): nothing is cloned.
+COPY docker-compose.yml ./docker-compose.yml
+COPY docker/tunnel ./docker/tunnel
 # The seed manifest, at the path it has in the repo, so code that reads it
 # relative to the app root finds it in the image.
 COPY tests/fixtures/seed-manifest.json ./tests/fixtures/seed-manifest.json
@@ -174,19 +179,21 @@ RUN chmod -R a+rX,go-w /opt/qcr && chmod 0444 /opt/qcr/AGENTS.override.md
 # writes state/dryrun and every mode keeps its state files. World-writable and
 # sticky, like HOME below; a state volume mounts over it. The entrypoint
 # refuses to start a mode whose uid cannot write here.
-RUN install -d -m 1777 /opt/qcr/state && chmod 0555 /opt/qcr/docker/entrypoint.sh
+RUN install -d -m 1777 /opt/qcr/state /opt/qcr/state/ingress && chmod 0555 /opt/qcr/docker/entrypoint.sh
 
 # HOME for whatever uid the caller maps in: world-writable and sticky, so
 # `--user 1234:1234` can create ~/.pi and ~/.cache. The login and state
 # volumes mount over parts of it.
-RUN install -d -m 1777 /home/qcr
-ENV HOME=/home/qcr
-
+# ~/.pi is pi's home, the mount point the compose stack's pihome volume lands
+# on: a volume mounted over a directory the image has takes that directory's
+# mode, one over a directory it lacks arrives root-owned and unwritable.
+#
 # pi's agent dir, which `qcr login` mounts the login volume over (P6.7). A new
 # volume starts as this directory is, so it must be writable by whatever uid
 # the caller logs in as; the login mode then moves everything pi wrote into the
 # login group (docker/entrypoint.sh), and file modes keep it private.
-RUN install -d -m 1777 /home/qcr/.pi && install -d -m 0777 /home/qcr/.pi/agent
+RUN install -d -m 1777 /home/qcr /home/qcr/.pi && install -d -m 0777 /home/qcr/.pi/agent
+ENV HOME=/home/qcr
 
 # A default for a bare `docker run`; the wrapper always passes --user. A per-call
 # run that reaches a model starts as root instead (--user 0:0 --cap-drop ALL

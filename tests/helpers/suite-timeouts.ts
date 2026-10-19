@@ -73,6 +73,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/commit-verdict-shell.test.ts",
   "tests/companion-github.test.ts",
   "tests/companion-memory.test.ts",
+  "tests/compose-stack.test.ts",
   "tests/context-files.test.ts",
   "tests/cpu-gate.test.ts",
   "tests/deploy.test.ts",

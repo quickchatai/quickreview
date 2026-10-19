@@ -18,7 +18,7 @@ hostname → `localhost:8787` → the container.
 > [../../docs/onboarding.md](../../docs/onboarding.md).
 
 **Prefer one machine?** The other first-class answer is the plain Docker path:
-`docker compose up` from the repo root — see `docker/daemon/README.md`. It
+`docker compose up` on the released images — see `docker/daemon/README.md`. It
 needs no server at all, and it reviews only while that machine is awake. This
 Ansible route adds VM host setup, the optional tunnel, and the
 `scripts/deploy.sh` sync/rebuild/verify workflow on top of the same image.
