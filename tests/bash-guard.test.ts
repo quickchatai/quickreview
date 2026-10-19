@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import activate, {
   APP_SECRET_FILES,
+  bashGuardConfigFromEnv,
   checkBashCommand,
   checkReadPath,
   checkProcSecrets,
@@ -11,6 +12,7 @@ import activate, {
   checkSecretPaths,
   checkWritePath,
   defaultSecretPathContext,
+  createBashGuard,
   DELIVERY_SURFACE,
   isDeliverySurface,
   isMemoryScopeSurface,
@@ -1838,6 +1840,28 @@ describe("checkBashCommand — /proc/<pid>/environ, mem and cmdline", () => {
     block("cd /proc/self/task/1 && cat environ");
   });
 
+  it("refuses a process's descriptors: another command's IPC capability lives there (P7.2a)", () => {
+    block("cat /proc/4242/fd/9");
+    block("cat /proc/$PPID/fd/3");
+    block("ls /proc/4242/fdinfo");
+    block("cat /proc/4242/fdinfo/3");
+    block("ls /proc/self/fd");
+    block("cat /proc/self/task/12/fd/4");
+    block("ls /proc/4242/task/12/fdinfo");
+    block("cat /proc/*/fd/3");
+    block("cat /proc/[0-9]*/fd/*");
+    block("cat /proc/self/fd/../fd/3");
+    block("cat /proc/1/root/proc/4242/fd/9");
+    block("cd /proc/4242 && cat fd/9");
+    block("cd /proc/4242/fdinfo && cat 3");
+    block("bash -c 'cat /proc/4242/fd/9'");
+    block("head -c 40 </proc/4242/fd/9");
+    allow("cat /proc/4242/status");
+    allow("cat /proc/self/stat");
+    allow("cat src/fd/9");
+    allow("cat docs/fdinfo");
+  });
+
   it("allows the rest of /proc and ordinary reads", () => {
     allow("ls /proc");
     allow("cat /proc/cpuinfo");
@@ -1886,5 +1910,84 @@ describe("checkBashCommand — /proc/<pid>/environ, mem and cmdline", () => {
       block?: boolean;
     };
     expect(k.block).toBe(true);
+  });
+});
+
+// [P7.2a] The daemon's IPC run dir (<state>/run: the worker socket and the
+// capability launch files) is closed to the model's reads, whoever the reader.
+describe("checkBashCommand — the IPC run dir", () => {
+  const ctx = (env: Record<string, string> = {}, cwd = "/work/wt/pr-7"): SecretPathContext =>
+    defaultSecretPathContext({ HOME: "/home/qcr", ...env }, cwd);
+  const refusedRun = (cmd: string, c: SecretPathContext): void => {
+    const res = checkSecretPaths(cmd, c);
+    expect(res.allowed, `${cmd} should be refused`).toBe(false);
+    expect(res.reason).toContain("IPC run dir");
+  };
+
+  it("refuses any read under the run dir the process names, by every reader", () => {
+    const c = ctx({ QCR_IPC_SOCKET: "/srv/bot/state/run/qcr.sock" });
+    refusedRun("cat /srv/bot/state/run/qcr.sock", c);
+    refusedRun("ls /srv/bot/state/run", c);
+    refusedRun("ls -la /srv/bot/state/run/caps", c);
+    refusedRun("cat /srv/bot/state/run/caps/abc.cap", c);
+    refusedRun("head -c 40 /srv/bot/state/run/.cap-1-ab", c);
+    refusedRun("cat /srv/bot/state//run/./caps/x", c);
+    refusedRun("cat /srv/bot/state/other/../run/caps/x", c);
+    refusedRun("cat /srv/bot/state/run/*", c);
+    refusedRun("cat /srv/bot/state/r?n/caps/*", c);
+    refusedRun("cat /srv/bot/st*/run/caps/*", c);
+    refusedRun("sort < /srv/bot/state/run/caps/x", c);
+    refusedRun("bash -c 'cat /srv/bot/state/run/caps/x'", c);
+    refusedRun("cat --files=/srv/bot/state/run/caps/x", c);
+    refusedRun("cd /srv/bot/state/run && cat caps/x", { ...c, cwd: "/srv/bot/state/run" });
+  });
+
+  it("refuses the spellings that need no context, and the state home's and the container's", () => {
+    const c = ctx();
+    refusedRun("cat /anywhere/state/run/qcr.sock", c);
+    refusedRun("ls /anywhere/state/run/caps", c);
+    refusedRun("ls /anywhere/state/run", c);
+    refusedRun("cat /opt/quickreview/state/run/caps/x", c);
+    refusedRun("cat /var/q/run/caps/x", ctx({ QCR_STATE_HOME: "/var/q" }));
+    refusedRun("cat /home/qcr/.local/state/qcr/default/run/qcr.sock", ctx({}));
+    refusedRun("cat ../state/run/caps/x", c);
+  });
+
+  it("applies to the file tools too", () => {
+    const c = ctx({ QCR_IPC_SOCKET: "/srv/bot/state/run/qcr.sock" });
+    expect(checkReadPath("/srv/bot/state/run/caps/x", c).allowed).toBe(false);
+    expect(checkReadPath("@/srv/bot/state/run/qcr.sock", c).allowed).toBe(false);
+    expect(checkReadPath("/srv/bot/state/pi-sessions/x.jsonl", c).allowed).toBe(true);
+  });
+
+  it("leaves neighbours and ordinary code alone", () => {
+    const c = ctx({ QCR_IPC_SOCKET: "/srv/bot/state/run/qcr.sock" });
+    for (const cmd of [
+      "cat /srv/bot/state/verdict/x.json",
+      "ls /srv/bot/state",
+      "cat /srv/bot/state/running.txt",
+      "cat src/run/main.ts",
+      "cat docs/state/run-book.md",
+      "cat /var/run/docker.pid",
+      "grep -rn state/run src",
+    ]) {
+      const res = checkSecretPaths(cmd, c);
+      expect(res.allowed, `${cmd} -> ${res.reason ?? ""}`).toBe(true);
+    }
+  });
+
+  it("is applied by the full guard, from the config the env describes", () => {
+    const env = { HOME: "/home/qcr", QCR_IPC_SOCKET: "/srv/bot/state/run/qcr.sock" };
+    const cfg = bashGuardConfigFromEnv(env, "/work/wt/pr-7");
+    const handlers: Array<(e: unknown, c: unknown) => unknown> = [];
+    void createBashGuard(cfg)({
+      on: (_n: string, h: (e: unknown, c: unknown) => unknown) => handlers.push(h),
+    } as never);
+    const call = (command: string) =>
+      handlers[0]!({ toolName: "bash", input: { command } }, { cwd: "/work/wt/pr-7" }) as
+        { block?: boolean } | undefined;
+    expect(call("cat /srv/bot/state/run/caps/x")?.block).toBe(true);
+    expect(call("cat /proc/4242/fd/9")?.block).toBe(true);
+    expect(call("cat /srv/bot/state/verdict/x.json")?.block).toBeUndefined();
   });
 });
