@@ -1,7 +1,14 @@
 // The SessionHooks contract (src/types.ts), stated once and run against every
-// host in tests/helpers/session-hooks-host.ts. Today that is the tmux host
-// (`PiSessionManager`); the per-round worker host joins by adding an entry to
-// SESSION_HOSTS and must pass the same cases without a change here.
+// host in tests/helpers/session-hooks-host.ts: the tmux host (`PiSessionManager`)
+// and the per-round worker host (`WorkerSessionHost`, P8.6).
+//
+// The two differ by nature in a few places, and the host descriptor says where
+// (`bridge`, `persistent`, `dispatchedRow`, `receiptBeforeAck`): a tmux session
+// outlives its commands and is fed through a mailbox its bridge consumes; a worker
+// IS its command, and its ack is the receipt. What only the bridge has (stale
+// generations, redelivery into a live session, adopting sessions across a
+// restart) runs for the bridge host only; the worker's own recovery cases are in
+// tests/worker-session-host.test.ts.
 //
 // Each group is the host-facing half of an existing suite, lifted so the
 // daemon's expectations of a host are written down apart from how tmux meets
@@ -68,7 +75,7 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
     rig.dispose();
   });
 
-  /** A tracked PR with its round running and its prompt delivered. */
+  /** A tracked PR with its round running and its prompt handed over. */
   async function dispatched(): Promise<void> {
     trackPr(rig.store, PR);
     rig.store.startRound(PR, "first", ["pass-baseline"], 75);
@@ -96,8 +103,7 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
           session: SESSION,
           kind: "round",
           round_no: 1,
-          status: "pending",
-          attempt: 0,
+          ...host.dispatchedRow,
         });
         // The row's evidence is the bytes the session was handed.
         expect(row.payload_sha256).toBe(sha256(stampedBody));
@@ -118,26 +124,26 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
 
     it("holds one command in flight per session: a second wake is refused until the first settles", async () => {
       trackPr(rig.store, PR);
-      rig.seedRunningSession(SESSION);
+      await rig.seedIdleSession(SESSION);
 
       await rig.hooks.inject(PR, "author replied");
       await expect(rig.hooks.inject(PR, "second wake")).rejects.toThrow(
-        /session command .* is pending/,
+        /session command .* is (pending|running)/,
       );
       expect(rig.mailbox(SESSION)).toEqual(["author replied\n"]);
 
-      rig.settleDelivered(PR);
+      await rig.settleDelivered(PR);
       expect(await rig.hooks.injectPending(PR)).toBe(false);
       await rig.hooks.inject(PR, "second wake");
       expect(rig.mailbox(SESSION)).toEqual(["second wake\n"]);
     });
 
-    it("wakes a live session in place: the mailbox gets the bytes and nothing is respawned", async () => {
+    it("wakes an idle session with the exact bytes, and a session that persists is not respawned", async () => {
       trackPr(rig.store, PR);
-      rig.seedRunningSession(SESSION);
+      await rig.seedIdleSession(SESSION);
       await rig.hooks.inject(PR, "zażółć 🧭 gęślą jaźń");
       expect(rig.mailbox(SESSION)).toEqual(["zażółć 🧭 gęślą jaźń\n"]);
-      expect(rig.lifecycle()).toEqual([]);
+      if (host.persistent) expect(rig.lifecycle()).toEqual([]);
     });
 
     it("rebirths a dead session for a wake the registry knows, and refuses a PR it does not", async () => {
@@ -152,20 +158,23 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
       expect(rig.isRunning("pr-77")).toBe(false);
     });
 
-    it("replaces a live session whose bridge belongs to a stale generation before it delivers", async () => {
-      trackPr(rig.store, PR);
-      rig.seedRunningSession(SESSION);
-      rig.staleBridge(SESSION);
+    it.runIf(host.bridge)(
+      "replaces a live session whose bridge belongs to a stale generation before it delivers",
+      async () => {
+        trackPr(rig.store, PR);
+        await rig.seedIdleSession(SESSION);
+        rig.staleBridge(SESSION);
 
-      await rig.hooks.inject(PR, "author reply");
+        await rig.hooks.inject(PR, "author reply");
 
-      expect(rig.lifecycle()).toEqual([`kill ${SESSION}`, `birth ${SESSION}`]);
-      expect(rig.mailbox(SESSION)).toEqual(["author reply\n"]);
-    });
+        expect(rig.lifecycle()).toEqual([`kill ${SESSION}`, `birth ${SESSION}`]);
+        expect(rig.mailbox(SESSION)).toEqual(["author reply\n"]);
+      },
+    );
 
     it("refuses a closed PR's wake even while its session is alive and ready", async () => {
       trackPr(rig.store, PR, "closed");
-      rig.seedRunningSession(SESSION);
+      await rig.seedIdleSession(SESSION);
 
       await expect(rig.hooks.inject(PR, "author reply")).rejects.toThrow(/PR #42 is closed/);
 
@@ -182,7 +191,7 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
 
         // The session wrote, but this round's order is not among what it took.
         rig.recordAccepted(PR, "wake up finish the review");
-        expect(await rig.hooks.roundPromptAccepted(PR, 1, STARTED_MS)).toBe(false);
+        expect(await rig.hooks.roundPromptAccepted(PR, 1, STARTED_MS)).toBe(host.receiptBeforeAck);
 
         // pi accepted it: the token comes back verbatim.
         rig.recordAccepted(PR, stampedBody);
@@ -193,14 +202,16 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
 
       it("reads a wake's receipt by its marker, without a round row", async () => {
         trackPr(rig.store, PR);
-        rig.seedRunningSession(SESSION);
+        await rig.seedIdleSession(SESSION);
         const marker = recheckPromptMarker(PR, "fingerprint-1");
         const wake = stampPrompt("recheck: head moved", marker);
         await rig.hooks.inject(PR, wake);
 
         expect(await rig.hooks.wakeReceiptPresent(PR, marker, STARTED_MS)).toBeNull();
         rig.recordAccepted(PR, "something else entirely");
-        expect(await rig.hooks.wakeReceiptPresent(PR, marker, STARTED_MS)).toBe(false);
+        expect(await rig.hooks.wakeReceiptPresent(PR, marker, STARTED_MS)).toBe(
+          host.receiptBeforeAck,
+        );
         rig.recordAccepted(PR, wake);
         expect(await rig.hooks.wakeReceiptPresent(PR, marker, STARTED_MS)).toBe(true);
       });
@@ -214,7 +225,7 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
     });
   });
 
-  describe("redelivery idempotency", () => {
+  describe.runIf(host.bridge)("redelivery idempotency", () => {
     it("redeliverRound keeps the command and the bytes: asking twice neither duplicates nor alters", async () => {
       await dispatched();
       const original = rig.store.activeSessionCommand(SESSION)!;
@@ -294,7 +305,7 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
       rig.killOutOfBand(SESSION);
       expect(await rig.hooks.redeliverSessionCommand(row.id, observed)).toBe("not_live");
 
-      rig.settleDelivered(PR);
+      await rig.settleDelivered(PR);
       expect(await rig.hooks.redeliverSessionCommand(row.id, observed)).toBe("settled");
     });
 
@@ -343,7 +354,7 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
   describe("fence", () => {
     it("killSession returns only once the session is proven gone", async () => {
       trackPr(rig.store, PR);
-      rig.seedRunningSession(SESSION);
+      await rig.seedRunningSession(SESSION);
       expect(await rig.hooks.sessionAlive(PR)).toBe(true);
 
       await rig.hooks.killSession(PR);
@@ -358,7 +369,7 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
     });
 
     it("a session that outlives the kill throws: no one dispatches beside a pi that may still run", async () => {
-      rig.seedRunningSession(SESSION);
+      await rig.seedRunningSession(SESSION);
       rig.wedgeSession(SESSION);
       await expect(rig.hooks.killSession(PR)).rejects.toThrow(/not proven gone after kill/);
       expect(await rig.hooks.sessionAlive(PR)).toBe(true);
@@ -397,9 +408,9 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
       expect(rig.isRunning(SESSION)).toBe(true);
     });
 
-    it("reports a session as alive only on tmux's affirmative listing", async () => {
+    it("reports a session as alive only on the host's affirmative answer", async () => {
       expect(await rig.hooks.sessionAlive(PR)).toBe(false);
-      rig.seedRunningSession(SESSION);
+      await rig.seedRunningSession(SESSION);
       expect(await rig.hooks.sessionAlive(PR)).toBe(true);
     });
   });
@@ -407,7 +418,7 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
   describe("held wakes", () => {
     it("a wake raised while the PR's round runs is held, not delivered, and flushes at round end", async () => {
       trackPr(rig.store, PR);
-      rig.seedRunningSession(SESSION);
+      await rig.seedIdleSession(SESSION);
       rig.store.startRound(PR, "first", ["pass-baseline"], 75);
 
       expect(await wakeOrHold(wakeDeps(), PR, "author replied", "author_reply")).toBe("held");
@@ -422,7 +433,7 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
 
     it("wakes go out one at a time, oldest first, each behind its predecessor's settlement", async () => {
       trackPr(rig.store, PR);
-      rig.seedRunningSession(SESSION);
+      await rig.seedIdleSession(SESSION);
       rig.store.startRound(PR, "first", ["pass-baseline"], 75);
       await wakeOrHold(wakeDeps(), PR, "first wake", "recheck:push");
       await wakeOrHold(wakeDeps(), PR, "second wake", "recheck:ci");
@@ -432,7 +443,7 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
       expect(rig.mailbox(SESSION)).toEqual(["first wake\n"]);
       expect(rig.store.heldWakes(PR).map((w) => w.payload)).toEqual(["second wake"]);
 
-      rig.settleDelivered(PR);
+      await rig.settleDelivered(PR);
       expect(await flushHeldWakes(wakeDeps(), PR)).toBe(1);
       expect(rig.mailbox(SESSION)).toEqual(["second wake\n"]);
       expect(rig.store.heldWakes(PR)).toEqual([]);
@@ -440,7 +451,7 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
 
     it("a burst of author replies is one delivery that carries every reply, in order", async () => {
       trackPr(rig.store, PR);
-      rig.seedRunningSession(SESSION);
+      await rig.seedIdleSession(SESSION);
       rig.store.startRound(PR, "first", ["pass-baseline"], 75);
       for (const text of ["reply one", "reply two", "reply three"])
         await wakeOrHold(wakeDeps(), PR, text, AUTHOR_REPLY_WAKE_REASON);
@@ -459,7 +470,7 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
     it("a wake that cannot be delivered stays held for the next flush, never dropped", async () => {
       trackPr(rig.store, PR, "closed");
       rig.store.holdWakeWithIdentity(PR, "late reply", AUTHOR_REPLY_WAKE_REASON);
-      rig.seedRunningSession(SESSION);
+      await rig.seedIdleSession(SESSION);
 
       await flushHeldWakes(wakeDeps(), PR).catch(() => 0);
 
@@ -469,7 +480,7 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
 
     it("operator restart-session fences through the hook and puts a cancelled wake back among the held", async () => {
       trackPr(rig.store, PR);
-      rig.seedRunningSession(SESSION);
+      await rig.seedIdleSession(SESSION);
       await rig.hooks.inject(PR, "author replied");
       const wake = rig.store.activeSessionCommand(SESSION)!;
 
@@ -492,7 +503,7 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
 
     it("operator restart-session changes nothing when the old session cannot be fenced", async () => {
       trackPr(rig.store, PR);
-      rig.seedRunningSession(SESSION);
+      await rig.seedIdleSession(SESSION);
       await rig.hooks.inject(PR, "author replied");
       const wake = rig.store.activeSessionCommand(SESSION)!;
       rig.wedgeSession(SESSION);
@@ -517,7 +528,7 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
   describe("close", () => {
     it("archiveAndClose takes the session down and refuses every later wake", async () => {
       trackPr(rig.store, PR);
-      rig.seedRunningSession(SESSION);
+      await rig.seedIdleSession(SESSION);
 
       rig.store.setPrState(PR, "closed");
       await rig.hooks.archiveAndClose(PR);
@@ -530,7 +541,7 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
 
     it("closing twice is idempotent: the session stays down and nothing is reborn", async () => {
       trackPr(rig.store, PR);
-      rig.seedRunningSession(SESSION);
+      await rig.seedIdleSession(SESSION);
       rig.store.setPrState(PR, "closed");
 
       await rig.hooks.archiveAndClose(PR);
@@ -542,11 +553,14 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
 
     it("terminalizes a live ordinary wake, so recovery never reborns a closed PR's session", async () => {
       trackPr(rig.store, PR);
-      rig.seedRunningSession(SESSION);
+      await rig.seedIdleSession(SESSION);
       await rig.hooks.inject(PR, "author replied");
       const wake = rig.store.activeSessionCommand(SESSION)!;
       rig.store.claimSessionCommand(wake.id, "bridge-old", "2026-08-13T10:02:00Z");
       rig.store.markSessionCommandStarted(wake.id, "bridge-old", "2026-08-13T10:45:00Z");
+      // The wake itself may have started a session; what must not happen is a second.
+      const births = (): number => rig.lifecycle().filter((e) => e.startsWith("birth")).length;
+      const bornForTheWake = births();
 
       rig.store.setPrState(PR, "closed");
       await rig.hooks.archiveAndClose(PR);
@@ -558,7 +572,7 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
         "retried",
       );
       expect(rig.isRunning(SESSION)).toBe(false);
-      expect(rig.lifecycle().filter((e) => e.startsWith("birth"))).toEqual([]);
+      expect(births()).toBe(bornForTheWake);
     });
 
     it("a PR with no session to close still closes", async () => {
@@ -586,7 +600,7 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
         trackPr(rig.store, pr);
         rig.store.startRound(pr, "first", ["pass-baseline"], 75);
       }
-      rig.seedRunningSession(SESSION);
+      await rig.seedRunningSession(SESSION);
 
       const swept = await sweep();
 
@@ -607,17 +621,20 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
       expect(rig.store.roundStatus(43, 1)).toBe("running");
     });
 
-    it("survives a daemon restart: the same live sessions are adopted, and nothing is killed", async () => {
-      trackPr(rig.store, PR);
-      rig.store.startRound(PR, "first", ["pass-baseline"], 75);
-      rig.seedRunningSession(SESSION);
+    it.runIf(host.bridge)(
+      "survives a daemon restart: the same live sessions are adopted, and nothing is killed",
+      async () => {
+        trackPr(rig.store, PR);
+        rig.store.startRound(PR, "first", ["pass-baseline"], 75);
+        await rig.seedRunningSession(SESSION);
 
-      const restarted = rig.restart();
-      expect(await restarted.sessionAlive(PR)).toBe(true);
-      const swept = await sweep();
+        const restarted = rig.restart();
+        expect(await restarted.sessionAlive(PR)).toBe(true);
+        const swept = await sweep();
 
-      expect(swept.cancelled).toEqual([]);
-      expect(rig.lifecycle()).toEqual([]);
-    });
+        expect(swept.cancelled).toEqual([]);
+        expect(rig.lifecycle()).toEqual([]);
+      },
+    );
   });
 });

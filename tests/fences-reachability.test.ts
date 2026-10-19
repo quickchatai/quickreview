@@ -120,14 +120,17 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "tests/ipc.test.ts until P8.6 wires the WorkerSupervisor (P8.5) and starts the socket; launcher.ts " +
         "is the pane-side entry point tmux runs for a takeover or debug pi.",
     })),
-    // The WorkerSupervisor (P8.5) and its lease: built and tested, wired into the daemon by P8.6 (the worker
-    // host under SessionHooks). Delete each entry with that import.
-    ...["workersupervisor.ts", "workerlease.ts"].map((f) => ({
+    // The WorkerSupervisor (P8.5), its lease and the worker host over them (P8.6): built and tested. The
+    // daemon constructs the host (supervisor, capability store, IPC server, spec builder) when the worker
+    // world is wired into wire.ts; until then the tmux host is the one it builds. Delete each entry with
+    // that import.
+    ...["workersupervisor.ts", "workerlease.ts", "worker-session-host.ts"].map((f) => ({
       file: `src/${f}`,
       why:
-        "the daemon's end of the per-round worker (P8.5): spawn, heartbeat, deadlines, lease, restart. Read " +
-        "only by tests/worker-supervisor.test.ts and tests/worker-lease.test.ts until P8.6 (WorkerSessionHost) " +
-        "constructs it in the daemon. Delete this entry with that import.",
+        "the worker world's session host (P8.5/P8.6): the supervisor (spawn, heartbeat, deadlines, lease, " +
+        "restart), its lease, and WorkerSessionHost, the SessionHooks over them. Read only by " +
+        "tests/worker-supervisor.test.ts, tests/worker-lease.test.ts, tests/worker-session-host.test.ts and the " +
+        "conformance suite until the daemon's wiring constructs the host. Delete this entry with that import.",
     })),
     // The daemon's post ops (P7.2). The daemon does not start the worker socket yet: P8.6 wires the
     // WorkerSupervisor (P8.5) that mints the commands the socket authenticates, and P8.7 registers these

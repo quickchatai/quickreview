@@ -335,7 +335,10 @@ export class SessionCommandSupervisor {
     // read, so a compaction can never be what spends a redelivery or a kill.
     // Only for a session not provably dead: a pi that died mid-compaction
     // leaves a "running" receipt behind, and its recovery must not wait.
-    if (alive !== false && (await this.deferBehindCompaction(command))) return;
+    // A host whose ack is its receipt (the worker host) compacts inside the
+    // round's own worker, never behind a command: nothing to defer for.
+    const definitiveHost = this.deps.hooks.ackIsReceipt === true;
+    if (alive !== false && !definitiveHost && (await this.deferBehindCompaction(command))) return;
     try {
       receipt = this.deps.hooks.wakeReceiptPresent
         ? await this.deps.hooks.wakeReceiptPresent(
@@ -388,7 +391,8 @@ export class SessionCommandSupervisor {
 
     // A dead session cannot still hold a queued followUp. A readable JSONL
     // without the marker is definitive absence. Everything else is UNKNOWN.
-    const definitive = receipt === false || alive === false;
+    // The worker host has no transcript to fail to read: its ack is the receipt.
+    const definitive = receipt === false || alive === false || definitiveHost;
     const unknownCap =
       this.deps.cfg.daemon.session_command_unknown_max_checks ??
       DEFAULT_SESSION_COMMAND_UNKNOWN_MAX_CHECKS;

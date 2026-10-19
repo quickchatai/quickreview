@@ -589,6 +589,12 @@ export interface OvSessionSweepReport {
 }
 
 export interface SessionHooks {
+  /** True when this host's evidence is definitive: a command's own ack is its
+   * receipt, and the host knows whether the worker lives. The session-command
+   * supervisor then skips what only a bridge host needs: the compaction defer
+   * and the unknown-evidence deferral (a transcript that could not be read). The
+   * worker host sets it; the tmux host leaves it unset. */
+  readonly ackIsReceipt?: true;
   /** Ensure the per-PR session exists (birth on first trigger) and inject the
    * rendered round prompt. */
   dispatchRound(order: RoundOrder, renderedPrompt: string): Promise<void>;

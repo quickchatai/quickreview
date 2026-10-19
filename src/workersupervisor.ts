@@ -31,8 +31,8 @@
 //     requeued under the same command id (`recover`), so the fresh worker resumes
 //     the JSONL and continues instead of sending the order again (D22).
 //
-// The daemon wires this in P8.6 (WorkerSessionHost). Until then nothing imports
-// it but its tests.
+// The session host over it is src/worker-session-host.ts (P8.6): the SessionHooks
+// the daemon's state machine speaks, served by this supervisor.
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, mkdirSync, openSync, renameSync, writeFileSync } from "node:fs";
@@ -44,7 +44,12 @@ import {
   ipcEnv,
   stdioWithCapability,
 } from "./ipc/capability.js";
-import { IpcError, type CommandLookup, type CommandState, type IpcEventKind } from "./ipc/protocol.js";
+import {
+  IpcError,
+  type CommandLookup,
+  type CommandState,
+  type IpcEventKind,
+} from "./ipc/protocol.js";
 import type { EventHandler, OpHandler, RequestContext } from "./ipc/server.js";
 import {
   WAKES_ACK_OP,
@@ -121,6 +126,9 @@ export interface WorkerLimits {
   maxRequeues: number;
   /** How often `start()` runs `tick`. */
   tickMs: number;
+  /** How long `fence` waits for a worker it ended to be reaped before it says the
+   * session is NOT proven gone. */
+  fenceWaitMs: number;
 }
 
 export const DEFAULT_WORKER_LIMITS: WorkerLimits = {
@@ -133,6 +141,7 @@ export const DEFAULT_WORKER_LIMITS: WorkerLimits = {
   killGraceMs: 10_000,
   maxRequeues: 3,
   tickMs: 1_000,
+  fenceWaitMs: 15_000,
 };
 
 /** How long, once silent, a worker has before it is ended. */
@@ -145,13 +154,17 @@ export type KillReason =
   | "stage_accept"
   | "heartbeat_lost"
   | "shutdown"
-  | "operator";
+  | "operator"
+  // The recovery fence (SessionHooks.killSession): the caller owns the row's fate,
+  // as it does when it kills a tmux session, so the exit writes nothing to it.
+  | "fence";
 
 /** What a worker's death means for its command. */
 export type Outcome =
   | { kind: "acked" }
   | { kind: "failed"; reason: string }
-  | { kind: "requeue"; reason: string };
+  | { kind: "requeue"; reason: string }
+  | { kind: "leave" };
 
 /**
  * The exit decides the row. Exit 0 is a served round (a verdict may or may not
@@ -159,7 +172,8 @@ export type Outcome =
  * a way a fresh one would repeat (a refused login, a turn that ran out of time or
  * money, a bad payload) fails the command; one that was lost (killed, crashed,
  * its daemon went away) hands the round to a fresh worker, which resumes the
- * JSONL. Ended for its wall clock, or by the operator: failed, not retried.
+ * JSONL. Ended for its wall clock, or by the operator: failed, not retried. Ended
+ * by a recovery fence: left as it is, for the caller that fenced it.
  */
 export function decideOutcome(x: {
   code: number | null;
@@ -172,9 +186,11 @@ export function decideOutcome(x: {
     return { kind: "failed", reason: `could not start the worker: ${x.spawnError}` };
   if (x.killedFor === "wall_clock")
     return { kind: "failed", reason: "the worker ran past its wall clock and was ended" };
+  if (x.killedFor === "fence") return { kind: "leave" };
   if (x.killedFor === "operator")
     return { kind: "failed", reason: "the worker was ended by the operator" };
-  if (x.killedFor !== undefined) return { kind: "requeue", reason: `the worker was ended: ${x.killedFor}` };
+  if (x.killedFor !== undefined)
+    return { kind: "requeue", reason: `the worker was ended: ${x.killedFor}` };
   if (x.code === 0) return { kind: "acked" };
   if (x.code !== null && x.code >= 1 && x.code <= 5)
     return { kind: "failed", reason: x.failedReason ?? `the worker exited ${x.code}` };
@@ -198,11 +214,14 @@ export function workerProcessEnv(
     const value = parent[name];
     if (value !== undefined && value !== "") env[name] = value;
   }
-  for (const [name, value] of Object.entries(extra)) if (!name.startsWith("QCR_IPC_")) env[name] = value;
+  for (const [name, value] of Object.entries(extra))
+    if (!name.startsWith("QCR_IPC_")) env[name] = value;
   Object.assign(env, ipc);
   for (const name of GITHUB_TOKEN_ENVS) delete env[name];
   return env;
 }
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 export class WorkerLaunchError extends Error {
   constructor(message: string) {
@@ -356,7 +375,10 @@ export class WorkerSupervisor {
     if (!row) return null;
     const rec = this.byCommand.get(commandId);
     const live =
-      rec !== undefined && !rec.settled && row.status === "running" && row.owner_token === rec.token;
+      rec !== undefined &&
+      !rec.settled &&
+      row.status === "running" &&
+      row.owner_token === rec.token;
     const facts = this.deps.facts?.(row) ?? {};
     const state: CommandState = {
       pr: row.pr,
@@ -418,7 +440,11 @@ export class WorkerSupervisor {
       case "accepted":
         if (rec.acceptedAt === undefined) {
           rec.acceptedAt = t;
-          this.deps.store.markSessionCommandStarted(rec.row.id, rec.token, this.iso(this.hardDeadline(rec)));
+          this.deps.store.markSessionCommandStarted(
+            rec.row.id,
+            rec.token,
+            this.iso(this.hardDeadline(rec)),
+          );
         }
         break;
       case "verdict_written":
@@ -466,7 +492,9 @@ export class WorkerSupervisor {
     if (input.kind === "round" && input.round_no !== null) {
       const status = store.roundStatus(input.pr, input.round_no);
       if (status !== undefined && status !== "running")
-        throw new Error(`round ${input.round_no} of #${input.pr} is ${status}; not submitting its order`);
+        throw new Error(
+          `round ${input.round_no} of #${input.pr} is ${status}; not submitting its order`,
+        );
     }
     const id = randomUUID();
     const payload = input.payload.endsWith("\n") ? input.payload : `${input.payload}\n`;
@@ -555,7 +583,8 @@ export class WorkerSupervisor {
 
     const token = WorkerLeases.newToken();
     const t0 = this.now();
-    const hardDeadline = t0 + spec.wall_clock_ms + this.limits.wallGraceMs + this.limits.killGraceMs;
+    const hardDeadline =
+      t0 + spec.wall_clock_ms + this.limits.wallGraceMs + this.limits.killGraceMs;
     const claimed = store.claimSessionCommand(row.id, token, this.iso(hardDeadline));
     if (!claimed) throw new WorkerLaunchError(`command ${commandId} was claimed by another`);
     const generation = claimed.attempt;
@@ -669,7 +698,9 @@ export class WorkerSupervisor {
     const env: Record<string, string> = {};
     for (const [name, value] of Object.entries(built.env)) {
       if (name.startsWith("QCR_IPC_"))
-        throw new WorkerLaunchError(`the spec's env names ${name}: the IPC names are the supervisor's`);
+        throw new WorkerLaunchError(
+          `the spec's env names ${name}: the IPC names are the supervisor's`,
+        );
       if (!(GITHUB_TOKEN_ENVS as readonly string[]).includes(name)) env[name] = value;
     }
     const spec = parseWorkerSpec(
@@ -749,10 +780,15 @@ export class WorkerSupervisor {
   private signalGroup(rec: LiveWorker, sig: NodeJS.Signals): void {
     const pid = rec.child.pid;
     if (pid === undefined) return;
-    if (this.signal(-pid, sig) === "denied") this.log(`worker ${rec.row.id}: ${sig} to the group was refused`);
+    if (this.signal(-pid, sig) === "denied")
+      this.log(`worker ${rec.row.id}: ${sig} to the group was refused`);
   }
 
-  private async settle(rec: LiveWorker, code: number | null, signal: NodeJS.Signals | null): Promise<void> {
+  private async settle(
+    rec: LiveWorker,
+    code: number | null,
+    signal: NodeJS.Signals | null,
+  ): Promise<void> {
     if (rec.settled) return;
     rec.settled = true;
     if (rec.killTimer) clearTimeout(rec.killTimer);
@@ -783,7 +819,7 @@ export class WorkerSupervisor {
         code,
         signal,
         outcome: outcome.kind,
-        ...(outcome.kind === "acked" ? {} : { reason: outcome.reason }),
+        ...(outcome.kind === "acked" || outcome.kind === "leave" ? {} : { reason: outcome.reason }),
         verdict_written: rec.verdictWritten,
         posted: rec.posted,
       });
@@ -800,6 +836,7 @@ export class WorkerSupervisor {
   private apply(rec: LiveWorker, outcome: Outcome): void {
     const { store } = this.deps;
     const id = rec.row.id;
+    if (outcome.kind === "leave") return;
     if (outcome.kind === "acked") {
       // An exit 0 is the round served, whether or not `accepted` got through.
       store.markSessionCommandStarted(id, rec.token, this.iso(this.now()));
@@ -875,9 +912,13 @@ export class WorkerSupervisor {
     for (const row of this.deps.store.activeSessionCommands()) {
       if (row.status !== "running" || this.byCommand.has(row.id)) continue;
       if (unkillable.has(row.id)) {
-        this.deps.store.failActiveSessionCommand(row.id, "the previous worker's group could not be ended");
+        this.deps.store.failActiveSessionCommand(
+          row.id,
+          "the previous worker's group could not be ended",
+        );
         result.failed.push(row.id);
-      } else if (this.requeueOrFail(row.id, null, "the daemon restarted")) result.requeued.push(row.id);
+      } else if (this.requeueOrFail(row.id, null, "the daemon restarted"))
+        result.requeued.push(row.id);
       else result.failed.push(row.id);
     }
     return result;
@@ -891,6 +932,61 @@ export class WorkerSupervisor {
     const live = [...this.byCommand.values()];
     for (const rec of live) this.end(rec, "shutdown");
     await Promise.all(live.map((rec) => rec.done));
+  }
+
+  // ---- the session host's questions (P8.6) -----------------------------------
+
+  /**
+   * Does a worker of this session run? Ours (a live child, or a launch under way),
+   * or one a lease file still names that the process table confirms. The host's
+   * liveness answer: a lease alone never says "alive", since pids repeat.
+   */
+  runs(session: string): boolean {
+    if (this.bySession.has(session) || this.launching.has(session)) return true;
+    const held = this.leases.read(session);
+    if (!held) return false;
+    const verdict = judgeLease(held, this.proc);
+    return verdict.kind === "group" || verdict.kind === "members";
+  }
+
+  /**
+   * End the session's worker and answer only once it is proven gone: true when no
+   * worker of the session runs (it had none, or its exit has been reaped), false
+   * when it outlived `fenceWaitMs`. The command's row is left as it is (`fence`):
+   * the caller fenced the session to decide the row itself. A launch that is
+   * still under way is waited out first, so a worker cannot start behind the fence.
+   */
+  async fence(session: string): Promise<boolean> {
+    // Real time, not the injected clock: this waits on processes.
+    const end = Date.now() + this.limits.fenceWaitMs;
+    while (this.launching.has(session) && Date.now() < end) await sleep(5);
+    const rec = this.bySession.get(session);
+    if (rec) {
+      this.end(rec, "fence");
+      let timer: NodeJS.Timeout | undefined;
+      await Promise.race([
+        rec.done,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, Math.max(0, end - Date.now()));
+          timer.unref();
+        }),
+      ]);
+      clearTimeout(timer);
+    }
+    return !this.runs(session);
+  }
+
+  /**
+   * Hand a command whose worker has been fenced and is gone back to `pending`
+   * under the same id, for a fresh worker (`launch`) to resume. The CAS is on the
+   * attempt the caller read, so a row that moved since is not replayed.
+   */
+  replay(commandId: string, expectedAttempt: number): boolean {
+    return this.deps.store.retrySessionCommandAfterFence(
+      commandId,
+      expectedAttempt,
+      this.iso(this.now() + this.limits.readyMs),
+    );
   }
 
   // ---- views ---------------------------------------------------------------
@@ -908,7 +1004,8 @@ export class WorkerSupervisor {
       mode: rec.mode,
       pid: rec.child.pid ?? -1,
       generation: rec.generation,
-      stage: rec.readyAt === undefined ? "starting" : rec.acceptedAt === undefined ? "ready" : "running",
+      stage:
+        rec.readyAt === undefined ? "starting" : rec.acceptedAt === undefined ? "ready" : "running",
       age_ms: t - rec.spawnedAt,
       silent_ms: t - rec.lastSeen,
       ending: rec.killedFor ?? null,

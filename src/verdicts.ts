@@ -1841,6 +1841,7 @@ export class VerdictWatcher {
       this.log(
         `verdicts: #${round.pr} preserved fresh-head successor after skipped round ${round.round_no}`,
       );
+    // (The worker host leaves compactSession unset: its worker compacts before it exits.)
     await this.safe(
       () => this.deps.hooks.compactSession?.(round.pr) ?? Promise.resolve(),
       `compact pr-${round.pr}`,
@@ -2473,6 +2474,7 @@ export class VerdictWatcher {
     // inject bridge runs it once nothing is in flight and delivers
     // no wake (the ones flushed below included) until it has ended, so a
     // compaction can neither abort a wake nor refuse one.
+    // (The worker host leaves compactSession unset: its worker compacts before it exits.)
     await this.safe(
       () => this.deps.hooks.compactSession?.(v.pr) ?? Promise.resolve(),
       `compact pr-${v.pr}`,
