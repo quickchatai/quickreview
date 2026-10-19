@@ -448,6 +448,7 @@ can be shown false. Please try.
 - [docker/daemon/README.md](docker/daemon/README.md) — the plain-Docker route: containers, ingress shapes, image pins
 - [deploy/ansible/README.md](deploy/ansible/README.md) — the VM/server route: provisioning, deploy, verification
 - [docs/profiles.md](docs/profiles.md) — repo profiles: addenda packs, heuristics, per-lens tuning
+- [docs/host-wrapper.md](docs/host-wrapper.md) — the `qcr` host wrapper the release image installs: mounts, token handoff, update
 - [docs/duplicate-merge.md](docs/duplicate-merge.md) — one comment per root cause
 - [docs/ownership.md](docs/ownership.md) — the owner-only surfaces (dry-run flag, frozen seeds, ratification)
 - [docs/exec-boundary.md](docs/exec-boundary.md) — what stops a review session running your code: the layers, the guarantees, the residual gaps

@@ -11,7 +11,8 @@
 #   tui        the operator TUI (dist/src/cli.js tui).
 #   login      pi's own /login, typed for the user (scanbox loginInPi).
 #   mint       a GitHub App installation token on stdout (scripts/mint-token.sh).
-#   install    the host wrapper (a stub until the wrapper lands, P6.6).
+#   install    the host wrapper, pinned to this image (scripts/install-wrapper.sh):
+#              `-v ~/.local/bin:/out` writes /out/qcr, otherwise `| sh` installs it.
 #   worker     the per-round bot worker (a stub until P8.3).
 #
 # `install where|migrate` and `companion up|down|status|rebuild` are qcr verbs
@@ -529,10 +530,8 @@ assert_pi_pin
 
 case "$mode" in
   install)
-    # Written by P6.6; nothing on stdout, so `docker run <img> install | sh`
-    # runs nothing in the meantime.
-    say "install: the host wrapper is not shipped in this image yet"
-    exit 64
+    # Stdout is the wrapper's (or the installer `| sh` runs) and nothing else.
+    exec "$APP/scripts/install-wrapper.sh"
     ;;
   worker)
     say "worker: the per-round bot worker is not shipped in this image yet (P8.3)"
