@@ -24,6 +24,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   COMPANION_DEFAULTS,
   parseConfig,
+  SCAN_IMAGE_DEFAULT,
   resolveCompanionPaths,
   type ScanSandboxConfig,
 } from "../src/config.js";
@@ -51,6 +52,7 @@ import { SCAN_AUTH_SRC_ENV, SCAN_CASE_AUTH_BUDGET_MS } from "../src/engine/auth.
 import { scanEnv } from "../src/scancli.js";
 import {
   CompanionLifecycle,
+  imageBuildProblem,
   IN_COMPANION_ENV,
   MEMORY,
   PUBLIC_DNS,
@@ -98,14 +100,17 @@ const SANDBOX: ScanSandboxConfig = {
 };
 
 describe("[scan] sandbox, pihome_volume and image", () => {
-  it("default to the docker sandbox, the companion's pi home volume and the companion image", () => {
+  it("default to the docker sandbox, the companion's pi home volume and the scan image", () => {
     const cfg = parseConfig(fixtureToml);
     expect(cfg.scan_sandbox).toEqual({
       sandbox: "docker",
       sandbox_set: false,
       pihome_volume: cfg.companion.pihome_volume,
-      image: cfg.companion.image,
+      image: SCAN_IMAGE_DEFAULT,
     });
+    // Not the companion's image: that is the release image in companion mode
+    // (P7.8), which the sandbox's one-shot entrypoint does not serve.
+    expect(SCAN_IMAGE_DEFAULT).not.toBe(cfg.companion.image);
     expect(cfg.scan_sandbox.pihome_volume).toBe("companion-pihome");
   });
 
@@ -117,9 +122,9 @@ describe("[scan] sandbox, pihome_volume and image", () => {
     expect(parseConfig(toml).scan_sandbox.pihome_volume).toBe("companion-pihome-selfscan");
   });
 
-  it("follow the companion image when [companion] image is renamed and [scan] image is not", () => {
+  it("keep the scan image when [companion] image is renamed", () => {
     const toml = fixtureToml.replace("[companion]", '[companion]\nimage = "my-companion"');
-    expect(parseConfig(toml).scan_sandbox.image).toBe("my-companion");
+    expect(parseConfig(toml).scan_sandbox.image).toBe(SCAN_IMAGE_DEFAULT);
   });
 
   it("are read from [scan], beside its other keys, and kept out of the scan settings", () => {
@@ -218,7 +223,10 @@ describe("the build stamp", () => {
 describe("the companion image build", () => {
   const cfg = resolveCompanionPaths({ ...COMPANION_DEFAULTS, repo_dir: "/host/rs" }, "/host/rs");
 
-  it("builds from the app root with the companion Dockerfile, stamped", async () => {
+  // The companion is the release image (P7.8): the scan sandbox's image is a
+  // separate build (`qcr scan rebuild`, below), so a companion rebuild can
+  // never replace the image the sandbox's one-shot entrypoint needs.
+  it("builds from the app root with the release Dockerfile, stamped, with no uid baked in", async () => {
     expect(cfg.build_context).toBe("/host/rs");
     const { docker, calls } = fakeDocker([(a) => (a[0] === "build" ? OK : undefined)]);
     const lc = new CompanionLifecycle(
@@ -230,16 +238,13 @@ describe("the companion image build", () => {
       () => "0123456789abcdef",
     );
     await lc.buildImage();
-    const uid = typeof process.getuid === "function" ? process.getuid() : 1000;
     expect(calls).toEqual([
       [
         "build",
         "-t",
-        "qcr-companion",
+        COMPANION_DEFAULTS.image,
         "-f",
-        "/host/rs/docker/companion/Dockerfile",
-        "--build-arg",
-        `COMPANION_UID=${uid}`,
+        "/host/rs/docker/Dockerfile",
         "--build-arg",
         "BUILD_SHA=0123456789abcdef",
         "/host/rs",
@@ -247,7 +252,7 @@ describe("the companion image build", () => {
     ]);
   });
 
-  it("refuses to build before the app is built — the image copies dist/", async () => {
+  it("refuses to build when the release Dockerfile is not under the build context", async () => {
     const { docker, calls } = fakeDocker([]);
     const lc = new CompanionLifecycle(
       cfg,
@@ -257,8 +262,13 @@ describe("the companion image build", () => {
       { exists: () => false, read: () => undefined, mode: () => undefined },
       () => "s",
     );
-    await expect(lc.buildImage()).rejects.toThrow(/npm run build/);
+    expect(() => lc.checkBuildable()).toThrow(/release Dockerfile.*docker\/Dockerfile/);
+    await expect(lc.buildImage()).rejects.toThrow(/release Dockerfile/);
     expect(calls).toEqual([]);
+  });
+
+  it("needs no host build: the release image compiles the app itself", () => {
+    expect(imageBuildProblem("/ctx", (p) => p === "/ctx/docker/Dockerfile")).toBeNull();
   });
 });
 
@@ -892,7 +902,10 @@ describe("the sandboxed launch", () => {
       (a) => (a[0] === "inspect" ? { ...OK, stdout: "true\n" } : undefined),
       (a) => {
         if (a[0] !== "rm") return undefined;
-        writeStartedFile(join(home, "scan/started/tok1.json"), { ok: true, run: { id: "late" } } as never);
+        writeStartedFile(join(home, "scan/started/tok1.json"), {
+          ok: true,
+          run: { id: "late" },
+        } as never);
         return OK;
       },
     ]);

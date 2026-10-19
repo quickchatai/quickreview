@@ -644,7 +644,7 @@ explicit, an empty `ssh_host` does not mean local), `ssh_host`, `container`
 `container_name` (`"qcr-companion"`), `image`, `pihome_volume`, `session`,
 `model`, and the host paths `repo_dir`, `tracker_dir`, `tracker_docs_dir`,
 `reviewed_repo_dir`, `evidence_dir`, `feed_dir`, `alerts_dir`, `ssh_dir`,
-`build_context` (the app root by default — the image copies its built app;
+`build_context` (the app root by default — the release image is built from it;
 the shipped path defaults are operator-specific — read
 `COMPANION_DEFAULTS` in `src/config.ts`), plus the watcher knobs
 `overdue_grace_min` (`30`), `stale_alert_s` (`300`), `awaiting_age_h` (`24`),

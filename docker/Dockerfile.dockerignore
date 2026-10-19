@@ -17,6 +17,8 @@
 !config.example.toml
 !docker/entrypoint.sh
 !docker/vm/tmux.conf
+!docker/companion/agents
+!docker/companion/memory-health.mjs
 !docker-compose.yml
 !docker/tunnel
 !tests/fixtures/seed-manifest.json

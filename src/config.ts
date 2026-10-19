@@ -143,8 +143,8 @@ export interface CompanionConfig {
    * companion never mounts `~/.ssh` (no ssh config, no agent socket). */
   ssh_dir: string;
   /** Docker build context for the companion image (auto-built when
-   * missing): the app root, whose built `dist/` and prompt trees the image
-   * copies; the Dockerfile is `docker/companion/Dockerfile` under it. */
+   * missing): the app root. The image is the release image, built from
+   * `docker/Dockerfile` under it, which compiles the app itself. */
   build_context: string;
   // --- watcher knobs ---
   /** A round overdue by more than this is worth waking the operator for. */
@@ -2252,7 +2252,7 @@ export function parseScanTable(
 }
 
 /** Where a `qcr scan start` driver runs. `docker`: in a throwaway
- * container from the companion image that mounts only the reviewed repo
+ * container from the scan sandbox image that mounts only the reviewed repo
  * (read-only), the state home, the scan's own pi home and the config
  * (src/scanbox.ts). `host`: a detached process on this machine. */
 export const SCAN_SANDBOXES = ["docker", "host"] as const;
@@ -2267,9 +2267,15 @@ export interface ScanSandboxConfig {
    * refresh-disabled copy per case; by default the companion's own
    * (`[companion] pihome_volume`), which alone refreshes it. */
   pihome_volume: string;
-  /** The image the sandbox runs; empty in the file means the companion's. */
+  /** The image the sandbox runs; empty in the file means `SCAN_IMAGE_DEFAULT`. */
   image: string;
 }
+
+/** The scan sandbox's own image (docker/companion/Dockerfile, built by
+ * `qcr scan rebuild`). Not the companion's: since P7.8 that is the release
+ * image in `companion` mode, which the sandbox's one-shot entrypoint does not
+ * serve. */
+export const SCAN_IMAGE_DEFAULT = "qcr-scan";
 
 /** The `[scan]` keys that say where a run is driven, not how it scans. */
 export const SCAN_SANDBOX_KEYS = ["sandbox", "pihome_volume", "image"] as const;
@@ -2279,11 +2285,11 @@ export const SCAN_SANDBOX_DEFAULTS: Omit<ScanSandboxConfig, "image" | "pihome_vo
   sandbox_set: false,
 };
 
-/** `[scan] sandbox / pihome_volume / image`; the image and the pi home
- * volume default to the companion's. */
+/** `[scan] sandbox / pihome_volume / image`; the pi home volume defaults to
+ * the companion's, the image to `SCAN_IMAGE_DEFAULT`. */
 export function parseScanSandbox(
   raw: unknown,
-  companion: { image: string; pihome_volume: string },
+  companion: { pihome_volume: string },
 ): ScanSandboxConfig {
   const t = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
   const name = (key: string, fallback: string): string => {
@@ -2304,7 +2310,7 @@ export function parseScanSandbox(
     sandbox: sandbox as ScanSandbox,
     sandbox_set: t["sandbox"] !== undefined,
     pihome_volume: name("pihome_volume", companion.pihome_volume),
-    image: name("image", companion.image),
+    image: name("image", SCAN_IMAGE_DEFAULT),
   };
 }
 
@@ -2521,11 +2527,19 @@ export const TUI_DEFAULTS: TuiConfig = {
   evidence_why_interval_s: 10,
 };
 
+/** The local companion image's tag: the release image (docker/Dockerfile) in
+ * `companion` mode, built on the host. */
+export const COMPANION_IMAGE = "qcr-companion:release";
+
 /** [companion] is optional in config.toml, exactly like [tui]. */
 export const COMPANION_DEFAULTS: CompanionConfig = {
   enabled: true,
   container_name: "qcr-companion",
-  image: "qcr-companion",
+  // The release image, locally built (`qcr companion rebuild`). A tag of its own:
+  // the name `qcr-companion` is the retired companion image on an existing
+  // PC, which the new container's entrypoint modes do not serve, so a
+  // recreate must find no image here and build the right one.
+  image: COMPANION_IMAGE,
   pihome_volume: "companion-pihome",
   session: "companion",
   model: "openai-codex/gpt-6.1-sol:medium",
@@ -2537,7 +2551,7 @@ export const COMPANION_DEFAULTS: CompanionConfig = {
   feed_dir: "", // → <root>/state/companion/feed
   alerts_dir: "", // → <root>/state/companion/alerts
   ssh_dir: "~/.ssh",
-  build_context: "", // → <root> (the image copies the built app; Dockerfile at docker/companion/)
+  build_context: "", // → <root> (the release image is built from it; Dockerfile at docker/Dockerfile)
   overdue_grace_min: 30,
   stale_alert_s: 300,
   awaiting_age_h: 24,

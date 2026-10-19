@@ -1,7 +1,7 @@
-// The app's build stamp: one hash over the files the companion image copies
+// The app's build stamp: one hash over the files the scan sandbox image copies
 // from the checkout (docker/companion/Dockerfile, admitted by the root
-// .dockerignore). `qcr companion rebuild` stamps the image with it
-// (`--build-arg BUILD_SHA`, the `qcr.build-sha` label), and the scan sandbox
+// .dockerignore). `qcr scan rebuild` and `qcr companion rebuild` stamp their
+// images with it (`--build-arg BUILD_SHA`, the `qcr.build-sha` label), and the scan sandbox
 // compares the image's stamp with the checkout's before it runs a driver
 // there, so a container never drives a scan with code other than the host's.
 //

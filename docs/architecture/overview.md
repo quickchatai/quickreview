@@ -45,7 +45,7 @@ front of that; the four supported ingress shapes are in
 |---|---|---|
 | `qcr` CLI | `scripts/qcr` → `src/cli.ts` | read-only over `state/` — `status`, `today`, `why <pr>`, `spend`, `metrics`, `events`, plus `attach`, `drain`, `onboard`, `companion`, `memory reembed`, `memory relayout` |
 | the TUI | `qcr tui` → `src/tui/` | the operator board, memory management, deploy and metrics tabs; reaches a remote daemon over ssh or a local one over Docker per `config.toml [tui] target`. See [tui.md](tui.md) and [../tui.md](../tui.md) |
-| the companion | `src/tui/companion.ts`, `docker/companion/` | a local pi session beside the TUI, for asking questions about the running system; it reaches the daemon only by injecting into the overseer |
+| the companion | `src/tui/companion.ts`, the release image's `companion` mode | a local pi session beside the TUI, for asking questions about the running system; it reaches the daemon only by injecting into the overseer |
 | Slack concierge | `src/slack/` | optional; a Socket Mode client (`src/slack/socket.ts`) with a router, reply path and policy layer over one public channel |
 | onboarding wizard | `scripts/qcr onboard` → `src/onboard/` | the guided install; see [../onboarding.md](../onboarding.md) |
 
@@ -165,7 +165,7 @@ Both are summarised in [boundaries.md](boundaries.md).
 | `agents/` | the lens pass definitions (`pass-*.md`). Mostly frozen seeds |
 | `seeds/` | the canonical byte-for-byte copies of every frozen file under `prompts/` and `agents/`; `tests/seed-integrity.test.ts` compares the two and fails on drift |
 | `profiles/` | repo profiles: house-rule addenda packs plus lens-selection heuristics — see [../profiles.md](../profiles.md) |
-| `docker/` | the daemon image, the companion image, the ingress sidecars |
+| `docker/` | the release image (daemon, companion and cli modes), the scan sandbox image, the ingress sidecars |
 | `deploy/` | the Ansible route for a managed VM, plus the secrets wizards |
 | `tests/` | the suite (vitest); all I/O is mocked except the worktree tests, which drive a real scratch git repo |
 | `docs/` | this documentation set |

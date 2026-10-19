@@ -645,7 +645,8 @@ describe("the tools read already-fetched state and can NEVER become a fetcher", 
       () => {},
       { exists: () => false, read: () => undefined, mode: () => undefined },
     );
-    expect(pi.piArgv()).toContain("/workspace/extensions/tui-view.ts");
+    // The companion's extensions are the image's (D20), not the checkout's.
+    expect(pi.piArgv()).toContain("/opt/qcr/extensions/tui-view.ts");
     expect(pi.piEnvPrefix().some((v) => v.startsWith("QCR_FEED_DIR="))).toBe(true);
   });
 });

@@ -317,8 +317,8 @@ PI_EXT_MERGE
 
 # pi's own examples/extensions/subagent, in the GLOBAL pi CLI (the one every
 # spawn resolves on PATH): a pi release that dropped it fails the boot, not a
-# session. The global CLI must also be the pinned version. Daemon and
-# companion only - they are the ones that load it.
+# session. The global CLI must also be the pinned version. Daemon only - the
+# one that loads it (the companion loads our lens tool, extensions/lens.ts).
 assert_subagent_example() {
   local groot gpkg
   groot="${QCR_PI_GLOBAL_ROOT:-$(npm root -g)}"
@@ -391,9 +391,11 @@ mode_daemon() {
 }
 
 # The companion's pi settings on top of the common merge: its skills, its
-# default model, its agent set, the /workspace trust.
+# default model, its agent set, the /workspace trust. The agent set is the
+# image's (QCR_COMPANION_AGENTS, default $APP/docker/companion/agents): the
+# companion runs the image's code (D20), not the checkout's.
 provision_companion_settings() {
-  node <<'PI_COMPANION_MERGE'
+  QCR_COMPANION_AGENTS="${QCR_COMPANION_AGENTS:-$APP/docker/companion/agents}" node <<'PI_COMPANION_MERGE'
 const fs = require("fs");
 const path = require("path");
 const home = process.env.HOME;
@@ -433,11 +435,12 @@ if (trust["/workspace"] !== true) {
 }
 console.log("pi project trust: /workspace pre-trusted");
 
-// Agent discovery for the native subagent extension: link the user-scope agents
-// dir at the companion agent set riding the /workspace mount. Symlink-or-absent
-// only: a REAL directory here is someone's own agents and is never clobbered.
+// Agent discovery for the lens tool (extensions/lens.ts reads the agents dir
+// under pi's agent dir): link it at the companion agent set in the image.
+// Symlink-or-absent only: a REAL directory here is someone's own agents and is
+// never clobbered.
 const agentsLink = path.join(home, ".pi", "agent", "agents");
-const companionAgents = "/workspace/docker/companion/agents";
+const companionAgents = process.env.QCR_COMPANION_AGENTS;
 try {
   const st = fs.lstatSync(agentsLink, { throwIfNoEntry: false });
   if (st && !st.isSymbolicLink()) {
@@ -482,10 +485,8 @@ mode_companion() {
     say "!! no read-only GitHub token yet - GitHub reads unavailable until the TUI mints one."
   fi
 
-  assert_subagent_example
-
-  # The companion registers no global extension (companion-guard rides per-spawn
-  # argv); the common merge and the companion's own keys.
+  # The companion registers no global extension (companion-guard and the lens
+  # tool ride per-spawn argv); the common merge and the companion's own keys.
   [ -f "$APP/docker/vm/tmux.conf" ] || die "$APP/docker/vm/tmux.conf missing"
   cp "$APP/docker/vm/tmux.conf" "$HOME/.tmux.conf"
   provision_pi_settings >&2

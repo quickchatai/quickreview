@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# The scan sandbox image's entrypoint (docker/companion/Dockerfile). Its one-shot
+# mode is all that is used since P7.8: the local companion is the release image
+# in `companion` mode (docker/entrypoint.sh). The companion branch below is the
+# superseded one and goes with this image.
+#
 # Companion container entrypoint. PID 1 owns exactly two jobs:
 # start a correctly-configured tmux server and then stay alive. pi itself is
 # spawned by the TUI through `docker exec` (src/tui/companion.ts), the same

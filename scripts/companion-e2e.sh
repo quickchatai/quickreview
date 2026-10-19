@@ -2,8 +2,9 @@
 # companion-e2e.sh — the scripted end-to-end for the local companion.
 #
 # What it proves, with a REAL container and REAL files (no vitest mocks):
-#   1. docker/companion builds (from the app root);
-#   2. the container comes up with feed/alerts bind mounts and a tmux server;
+#   1. the release image (docker/Dockerfile) builds from the app root;
+#   2. the container comes up in `companion` mode, as the host user, with
+#      feed/alerts bind mounts and a tmux server;
 #   3. a "model turn" inside the container can write a schema-valid alert file
 #      into /alerts, and the host sees it;
 #   4. the TUI-side consumer routes that alert: status line + notify + overseer
@@ -52,22 +53,22 @@ trap cleanup EXIT
 
 command -v docker >/dev/null 2>&1 || { echo "companion-e2e: docker is required" >&2; exit 2; }
 
-# --- 0. the code under test must be built ------------------------------------
+# --- 0. the host-side modules under test must be built -----------------------
+# (the image compiles the app itself; the steps below drive dist/ on the host)
 step "build (tsc)"
 if (cd "$ROOT" && npm run --silent build); then pass "npm run build"; else fail "npm run build"; fi
 
-# The app's build stamp (src/appstamp.ts) for the image's qcr.build-sha label —
-# what the scan sandbox compares with the checkout before it runs a driver.
+# The app's build stamp (src/appstamp.ts) for the image's qcr.build-sha label.
 app_stamp() {
   node --input-type=module -e 'const m = await import(process.argv[1]); console.log(m.appStamp(process.argv[2]));' \
     "$1/dist/src/appstamp.js" "$1"
 }
 
 # --- 1. image ----------------------------------------------------------------
-step "docker build docker/companion"
-# From the app root: the image copies the build above.
-if docker build -t "$IMAGE" -f "$ROOT/docker/companion/Dockerfile" \
-  --build-arg COMPANION_UID="$(id -u)" --build-arg BUILD_SHA="$(app_stamp "$ROOT")" \
+step "docker build docker/Dockerfile"
+# From the app root, as `qcr companion rebuild` does (src/tui/companion.ts).
+if docker build -t "$IMAGE" -f "$ROOT/docker/Dockerfile" \
+  --build-arg BUILD_SHA="$(app_stamp "$ROOT")" \
   "$ROOT" >"$WORK/build.log" 2>&1; then
   pass "image $IMAGE builds"
 else
@@ -80,10 +81,11 @@ fi
 # --- 2. throwaway container --------------------------------------------------
 step "container up"
 if docker run --detach --name "$CONTAINER" \
+    --user "$(id -u):$(id -g)" --workdir /workspace \
     --volume "$ROOT:/workspace:ro" \
     --volume "$FEED:/feed:rw" \
     --volume "$ALERTS:/alerts:rw" \
-    "$IMAGE" >/dev/null 2>&1; then
+    "$IMAGE" companion >/dev/null 2>&1; then
   pass "container $CONTAINER started"
 else
   fail "container $CONTAINER started"

@@ -581,7 +581,7 @@ local_embedder_threads = 1
 # (COMPANION_DEFAULTS) are the shipped configuration; uncomment to override.
 # enabled = true                  # `qcr tui` starts it unless --no-companion
 # container_name = "qcr-companion"
-# image = "qcr-companion"         # built from the app root: qcr companion rebuild
+# image = "qcr-companion:release" # the release image (docker/Dockerfile) in companion mode, built from the app root: qcr companion rebuild
 # pihome_volume = "companion-pihome"   # its OWN pi auth — never the VM's auth.json
 # session = "companion"           # tmux session inside the container
 # model = "openai-codex/gpt-6.1-sol:medium"
@@ -977,7 +977,7 @@ deep_lenses = ["pass-consistency", "pass-delivery", "pass-duplication", "pass-ma
 # or a case it would not outlive is refused; open the companion so it refreshes.
 sandbox = "docker"
 # pihome_volume = "companion-pihome"  # whose login the scan reads; default [companion] pihome_volume
-# image = "qcr-companion"      # the sandbox's image; default [companion] image
+# image = "qcr-scan"           # the sandbox's image (docker/companion/Dockerfile): qcr scan rebuild
 
 [slack]
 # The Slack concierge — ONE channel, one thread per PR. Tokens are
