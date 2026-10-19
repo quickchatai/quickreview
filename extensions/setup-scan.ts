@@ -39,7 +39,7 @@ import { join } from "node:path";
 import { textResult as text, type QcrTool, type QcrToolResult } from "./pi-tool.js";
 import { sandboxRoot } from "../src/config.js";
 import { stateHome } from "../src/install.js";
-import { scanCasesForEnv } from "../src/scanauth.js";
+import { scanCasesForEnv } from "../src/engine/auth.js";
 import { piCaseRunner } from "../src/setup/caserunner.js";
 import type { Refusal, SetupEngine } from "../src/setup/engine.js";
 import type {

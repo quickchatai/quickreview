@@ -6,7 +6,7 @@
 // which the companion loads with its much wider authority. So the companion's
 // dir is mounted read-only at `/pi-agent-src`, and every case gets a private
 // copy of the access token in a tmpfs agent dir, with the refresh token
-// replaced by a value no OAuth server accepts (src/piauthcopy.ts, the copy the
+// replaced by a value no OAuth server accepts (src/engine/auth.ts, the copy the
 // scan sandbox takes too). The sandbox therefore:
 //   - never writes anything the companion reads;
 //   - never refreshes, so it can never rotate (and invalidate) the companion's
@@ -24,10 +24,10 @@ import { PI_DISABLED_BUILTINS } from "../pibuiltins.js";
 import {
   AuthExpiring,
   authCopyFrom,
+  BENCH_AUTH_WORDS,
   copyPiAuth,
   DISABLED_REFRESH,
-  type AuthCopyWords,
-} from "../piauthcopy.js";
+} from "../engine/auth.js";
 
 // The API-key route: the published runs used the login above; an outsider
 // re-running the benchmark brings their own API key instead.
@@ -200,7 +200,7 @@ export function apiKeyEnv(
 export { AuthExpiring, DISABLED_REFRESH };
 
 /**
- * The sandbox copy of a pi `auth.json` (src/piauthcopy.ts `authCopyFrom`):
+ * The sandbox copy of a pi `auth.json` (src/engine/auth.ts `authCopyFrom`):
  * every OAuth entry's refresh token replaced, everything else kept, and the
  * earliest OAuth expiry so the caller can refuse a case that would outlive it.
  */
@@ -208,15 +208,6 @@ export function benchAuthFrom(raw: string): { json: string; expiresAt: number | 
   const { json, expiresAt } = authCopyFrom(raw);
   return { json, expiresAt };
 }
-
-/** The benchmark's refusals: its fixes are the login volume and the key route. */
-const BENCH_AUTH_WORDS: AuthCopyWords = {
-  missing: (src) =>
-    `no pi login at ${src} — log pi in on the auth volume first (/login), or use your own API key: QCR_BENCH_AUTH=api-key (bench/aacr/README.md "Reproduce")`,
-  expiring: ({ expiresAt, needMs }) =>
-    `the shared Codex access token expires at ${new Date(expiresAt).toISOString()}, inside this case's ${Math.round(needMs / 60_000)}-minute budget. ` +
-    "The benchmark never refreshes it (that would invalidate the login's own grant). Use pi on that login volume once so it refreshes its own login, then re-run with --resume — or run on your own API key (QCR_BENCH_AUTH=api-key).",
-};
 
 /** pi's agent-level retry for a benchmark sandbox — every session and every
  * lens child reads it (one agent dir). pi's own default (3 attempts, ≤ 60 s

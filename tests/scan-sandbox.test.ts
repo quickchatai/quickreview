@@ -47,7 +47,7 @@ import {
   writeStartedFile,
   type ScanBoxPlan,
 } from "../src/scanbox.js";
-import { SCAN_AUTH_SRC_ENV, SCAN_CASE_AUTH_BUDGET_MS } from "../src/scanauth.js";
+import { SCAN_AUTH_SRC_ENV, SCAN_CASE_AUTH_BUDGET_MS } from "../src/engine/auth.js";
 import { scanEnv } from "../src/scancli.js";
 import {
   CompanionLifecycle,

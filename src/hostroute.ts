@@ -4,7 +4,7 @@
 //
 // A run gets
 //  - a private agent dir (`<run>/agent`, replacing ~/.pi/agent): a
-//    refresh-disabled copy of the operator's login (src/piauthcopy.ts), a
+//    refresh-disabled copy of the operator's login (src/engine/auth.ts), a
 //    settings.json in the bench's style that registers bash-guard GLOBALLY
 //    (lens children load only global extensions) and carries the project
 //    settings the clone used to inherit from `<root>/.pi/settings.json`, and
@@ -32,7 +32,7 @@ import { dirname, join, relative, resolve, isAbsolute } from "node:path";
 import type { Config } from "./config.js";
 import { buildBenchAgents } from "./bench/runner.js";
 import { benchSettings } from "./bench/auth.js";
-import { copyPiAuth } from "./piauthcopy.js";
+import { copyPiAuth } from "./engine/auth.js";
 import type { ProfileLookup } from "./profiles.js";
 
 /** The reviewer stub, relative to the production tree. */
@@ -113,7 +113,7 @@ function checkoutOf(dir: string): string {
 
 /**
  * Prepare one run's private agent dir and cwd. Throws `AuthExpiring`
- * (src/piauthcopy.ts) when the operator's login would expire inside `needMs`,
+ * (src/engine/auth.ts) when the operator's login would expire inside `needMs`,
  * and a plain Error when the cwd would sit inside a checkout. `srcAgentDir` is
  * only read.
  */

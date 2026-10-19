@@ -19,7 +19,7 @@
 //
 // The login is the companion's: one login, refreshed by the companion alone.
 // Before every case the driver copies its auth.json into the tmpfs pi home
-// with the refresh token neutralised (src/scanauth.ts), so the scan never
+// with the refresh token neutralised (src/engine/auth.ts), so the scan never
 // refreshes and never writes anything the companion reads; a case the access
 // token would not outlive is refused.
 //
@@ -52,14 +52,14 @@ import {
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { appStamp } from "./appstamp.js";
 import type { ScanSandboxConfig } from "./config.js";
-import type { LoginSummary } from "./piauthcopy.js";
+import type { LoginSummary } from "./engine/auth.js";
 import {
   SCAN_AUTH_FIX,
   SCAN_AUTH_SRC_ENV,
   SCAN_CASE_AUTH_BUDGET_MS,
   scanAuthExpiring,
   scanAuthMissing,
-} from "./scanauth.js";
+} from "./engine/auth.js";
 import {
   configHome,
   installName,
@@ -354,7 +354,9 @@ export async function scanLoginRoute(
 // ---- the companion's login, read-only --------------------------------------------
 
 /** Prints the login summary of the agent dir named by its argument
- * (`loginSummary`: providers and expiries, never a token). */
+ * (`loginSummary`: providers and expiries, never a token). Both scripts import
+ * the container's built dist by path: src/piauthcopy.js and src/scanauth.js are
+ * re-exports of src/engine/auth.js until the companion image is rebuilt. */
 export const LOGIN_SUMMARY_SCRIPT =
   `const { readFileSync } = await import("node:fs");` +
   `const { loginSummary } = await import("${SCANBOX.app}/dist/src/piauthcopy.js");` +
