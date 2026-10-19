@@ -143,9 +143,9 @@ import {
   renderRoundPrompt,
   templateFileForOrder,
 } from "./templates.js";
-import { assertNativeOrder } from "./launchvocab.js";
+import { assertOrderFitsHost } from "./launchvocab.js";
 import { nodeExec } from "./tmux.js";
-import type { RoundOrder } from "./types.js";
+import type { RoundOrder, SessionHooks } from "./types.js";
 import { WebhookHealer } from "./webhookheal.js";
 
 export interface ProductionParts {
@@ -721,12 +721,14 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // The identity variable map every prompt render and agent build
   // resolves {{owner_name}}/{{repo}}/{{bot_login}} against.
   const identity = identityVars(cfg);
-  // The tmux host launches lenses through `subagent` / `launch_plan` only. It
-  // never reads `[engine] runtime`, `[pi] lens_runtime` or `engine_wave` (the
-  // SDK is the config default, the bot stays native until its workers land),
-  // and refuses an engine-written order (src/launchvocab.ts).
+  // The prompt is bound to the host's lens tools (src/launchvocab.ts). The worker
+  // host's sessions have `lens` and `lens_wave`; the tmux host's have `subagent`
+  // and `launch_plan`. Dispatch writes the host's names into every order it builds
+  // (`SessionHooks.lensRuntime`), whatever `[engine] runtime`, `[pi] lens_runtime` or
+  // `engine_wave` say, and this refuses an order written for the other pair.
+  const botHost: SessionHooks = sessions;
   const renderPrompt = (order: RoundOrder, memory: RoundMemory): string => {
-    assertNativeOrder(order);
+    assertOrderFitsHost(botHost, order);
     return renderRoundPrompt(
       readFileSync(join(root, "prompts", templateFileForOrder(order)), "utf8"),
       order,
@@ -906,7 +908,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       createDeferredReview: (pr, payload, postingKey) =>
         adapter.createReview(pr, payload, { postingRetry: postingKey }),
     },
-    hooks: sessions,
+    hooks: botHost,
     writeInbox,
     renderPrompt,
     ecosystem,

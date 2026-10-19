@@ -84,6 +84,8 @@ function ackOf(command: SessionCommandRow): boolean | null {
 
 export class WorkerSessionHost implements SessionHooks {
   readonly ackIsReceipt = true as const;
+  /** A worker's session carries the engine's lens tools and no `subagent`. */
+  readonly lensRuntime = "engine" as const;
   readonly lifecycle: PrSessionLifecycle;
   readonly worktrees: WorktreeManager;
   private readonly root: string;

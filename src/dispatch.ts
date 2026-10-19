@@ -1811,6 +1811,9 @@ export function buildRoundOrder(args: {
   recovery?: RoundRecoveryContext;
   /** Profile lens-heuristics extension; absent ⇒ generic core. */
   heuristics?: HeuristicsExtension;
+  /** The names the order launches lenses in (`SessionHooks.lensRuntime`): the
+   * worker host's engine tools. Absent ⇒ native, the tmux host's. */
+  lensRuntime?: "engine";
   /** The rendered third-party-sources block (src/depsources.ts). */
   dependencyNote?: string;
   /** The repo's written style guide references (src/styleguide.ts). */
@@ -1933,6 +1936,7 @@ export function buildRoundOrder(args: {
     settled_digest: args.settledDigest,
     ...(args.ledgerCarry ? { ledger_carry: args.ledgerCarry } : {}),
     issued_at: args.issuedAt,
+    ...(args.lensRuntime ? { lens_runtime: args.lensRuntime } : {}),
     ...(args.prBody !== undefined ? { pr_body: args.prBody } : {}),
     ...(args.followUp
       ? {
@@ -2761,6 +2765,9 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         issuedAt: now().toISOString(),
         ...(prBody !== undefined ? { prBody } : {}),
         ...(deps.heuristics !== undefined ? { heuristics: deps.heuristics } : {}),
+        // The host's lens tools, so the prompt and the task files name the ones its
+        // sessions have (rule 9: `lens` / `lens_wave` on workers).
+        ...(deps.hooks.lensRuntime ? { lensRuntime: deps.hooks.lensRuntime } : {}),
       });
       store.stampPostingKey(roundId, built.posting_key!);
       // The round row already holds the order's plan: the style guide and the
