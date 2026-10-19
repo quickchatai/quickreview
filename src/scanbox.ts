@@ -37,6 +37,12 @@
 //
 // Before any of that, the image's build stamp must be the checkout's
 // (src/appstamp.ts): a container never drives a scan with other code.
+//
+// This launch is the clone route's (the operator's TUI and companion). A scan
+// started through the host wrapper (scripts/qcr-host.sh, docs/host-wrapper.md)
+// never gets here: the wrapper's per-call release-image container IS the
+// sandbox, so it sets IN_SANDBOX_ENV and `--foreground`, and the driver runs in
+// that container with no docker of its own.
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {

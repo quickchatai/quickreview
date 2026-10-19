@@ -13,11 +13,9 @@
 #   2. schema       the review payload of step 3 carries the schema_version
 #                   that step 1 announced (and validates in tests/json-contract).
 #   3. review       `review --preview --json` on a throwaway fixture repo.
-#   4. wrapper      `install` prints the host wrapper; piped to sh with HOME in
-#                   a temp dir it must write an executable ~/.local/bin/qcr.
-#                   Until the image ships the wrapper (P6.6) `install` says so
-#                   and exits 64: that exact answer is a skip, any other
-#                   failure is not.
+#   4. wrapper      `install` prints the host wrapper's installer; piped to sh
+#                   with HOME in a temp dir it must write an executable
+#                   ~/.local/bin/qcr that parses and is pinned to this image.
 #   5. ptrace_scope the runner's kernel.yama.ptrace_scope, seen from the host
 #                   and from inside a container, recorded in the job summary
 #                   (P6.5b: it decides whether a child can read its parent's
@@ -91,19 +89,14 @@ jq -e --argjson v "$want_schema" '
 step "wrapper install into a temp dir"
 home="$WORK/home"
 mkdir "$home"
-set +e
-wrapper="$(qcr "$IMAGE" install 2>"$WORK/install.err")"
-rc=$?
-set -e
-if [ "$rc" = 64 ] && grep -q "not shipped in this image yet" "$WORK/install.err"; then
-  echo "::notice::image smoke: the image does not ship the host wrapper yet (P6.6): wrapper step skipped" >&2
-else
-  [ "$rc" = 0 ] || fail "install exited $rc: $(cat "$WORK/install.err")"
-  [ -n "$wrapper" ] || fail "install printed nothing"
-  HOME="$home" sh -c "$wrapper" >&2 || fail "the installer script failed"
-  [ -x "$home/.local/bin/qcr" ] || fail "the installer did not write an executable ~/.local/bin/qcr"
-  sh -n "$home/.local/bin/qcr" || fail "the installed wrapper does not parse"
-fi
+# The image cannot see its own tag from inside: the caller names it.
+wrapper="$(qcr -e "QCR_IMAGE=$IMAGE" "$IMAGE" install 2>"$WORK/install.err")" ||
+  fail "install exited non-zero: $(cat "$WORK/install.err")"
+[ -n "$wrapper" ] || fail "install printed nothing"
+HOME="$home" sh -c "$wrapper" >&2 || fail "the installer script failed"
+[ -x "$home/.local/bin/qcr" ] || fail "the installer did not write an executable ~/.local/bin/qcr"
+sh -n "$home/.local/bin/qcr" || fail "the installed wrapper does not parse"
+grep -qF "$IMAGE" "$home/.local/bin/qcr" || fail "the installed wrapper is not pinned to $IMAGE"
 
 # ---- 5. ptrace_scope -----------------------------------------------------------
 

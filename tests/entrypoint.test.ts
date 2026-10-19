@@ -77,7 +77,13 @@ function rig(base = tmpdir()): Rig {
   const globalRoot = join(dir, "global");
   for (const d of [app, home, bin]) mkdirSync(d, { recursive: true });
   mkdirSync(join(app, "state"));
-  for (const f of ["scripts/install-locator.sh", "config.example.toml", "docker/vm/tmux.conf"]) {
+  for (const f of [
+    "scripts/install-locator.sh",
+    "scripts/install-wrapper.sh",
+    "scripts/qcr-host.sh",
+    "config.example.toml",
+    "docker/vm/tmux.conf",
+  ]) {
     mkdirSync(dirname(join(app, f)), { recursive: true });
     copyFileSync(join(root, f), join(app, f));
   }
@@ -102,7 +108,13 @@ function rig(base = tmpdir()): Rig {
     `export const loginInPi = (p) => ["sh", "-c", "echo login:" + (p ?? "none")];\n`,
   );
   put(join(app, "scripts/mint-token.sh"), "#!/bin/sh\necho ghs_faketoken\n", 0o755);
-  put(join(app, "package.json"), "{}\n");
+  put(
+    join(app, "package.json"),
+    JSON.stringify({
+      version: "4.5.6",
+      repository: { url: "git+https://github.com/Acme/Widgets.git" },
+    }),
+  );
   // a tmux that only says what it was asked, and has no session yet
   put(
     join(bin, "tmux"),
@@ -180,16 +192,19 @@ describe("dispatch", () => {
     expect(JSON.parse(run(r, ["tui", "overseer"]).stdout).argv).toEqual(["tui", "overseer"]);
   });
 
-  it("install and worker are stubs: nothing on stdout, a refusal on stderr", () => {
-    const r = rig();
-    for (const mode of ["install", "worker"]) {
-      const out = run(r, [mode]);
-      expect(out.status, mode).toBe(64);
-      expect(out.stdout, mode).toBe("");
-      expect(out.stderr, mode).toContain("not shipped");
-    }
+  it("worker is a stub: nothing on stdout, a refusal on stderr", () => {
+    const out = run(rig(), ["worker"]);
+    expect(out.status).toBe(64);
+    expect(out.stdout).toBe("");
+    expect(out.stderr).toContain("not shipped");
   });
 
+  it("install prints the pinned installer on stdout and nothing else", () => {
+    const out = run(rig(), ["install"]);
+    expect(out.status, out.stderr).toBe(0);
+    expect(out.stdout).toContain("ghcr.io/acme/widgets:4.5.6");
+    expect(out.stdout).toContain('mv -f "$tmp" "$dest/qcr"');
+  });
   it("mint prints the token and nothing else, and touches no state", () => {
     const r = rig();
     rmSync(join(r.app, "state"), { recursive: true });

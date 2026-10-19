@@ -6,8 +6,8 @@
 //     and runs the smoke, and that has no secret, no registry login and no push;
 //   - the smoke script, run against a fake `docker` on PATH that answers the
 //     verbs it calls: it passes on a good image, fails on a wrong pi pin, a
-//     wrong schema version, a wrapper that writes nothing, or any `install`
-//     failure but the not-shipped-yet stub, and it records ptrace_scope;
+//     wrong schema version, a wrapper that writes nothing or does not pin the
+//     image, or any `install` failure, and it records ptrace_scope;
 //   - how the smoke starts a container: the wrapper's flags, no token, the
 //     repo read-only.
 import { afterEach, describe, expect, it } from "vitest";
@@ -78,7 +78,7 @@ const good = {
     preview: { branch: "feat", base: "main" },
   }),
 };
-const INSTALLER = `mkdir -p "$HOME/.local/bin" && printf '#!/bin/sh\\necho qcr\\n' > "$HOME/.local/bin/qcr" && chmod +x "$HOME/.local/bin/qcr"`;
+const INSTALLER = `mkdir -p "$HOME/.local/bin" && printf '#!/bin/sh\\n# pinned ${IMAGE}\\necho qcr\\n' > "$HOME/.local/bin/qcr" && chmod +x "$HOME/.local/bin/qcr"`;
 
 // A `docker` that answers the verbs the smoke runs. It logs one line per call
 // (argv up to the image) to $FAKE_LOG and takes its canned answers from env.
@@ -134,10 +134,9 @@ function rig(): Rig {
           FAKE_VERSION: good.version,
           FAKE_PREVIEW: good.preview,
           FAKE_SCOPE: "1",
-          FAKE_INSTALL_OUT: "",
-          FAKE_INSTALL_ERR:
-            "qcr-entrypoint: install: the host wrapper is not shipped in this image yet\n",
-          FAKE_INSTALL_RC: "64",
+          FAKE_INSTALL_OUT: INSTALLER,
+          FAKE_INSTALL_ERR: "",
+          FAKE_INSTALL_RC: "0",
           GITHUB_STEP_SUMMARY: summary,
           ...env,
         },
@@ -148,25 +147,24 @@ function rig(): Rig {
 }
 
 describe("image-smoke.sh", () => {
-  it("passes on a good image, skips the wrapper while it is a stub, and records ptrace_scope", () => {
+  it("passes on a good image, installs the pinned wrapper and records ptrace_scope", () => {
     const r = rig();
     const out = r.run({ FAKE_SCOPE: "1" });
     expect(out.status, out.stderr).toBe(0);
-    expect(out.stderr).toContain("wrapper step skipped");
     expect(out.stderr).toContain("kernel.yama.ptrace_scope: runner host=");
     expect(out.stderr).toContain("inside the container=1");
     const summary = readFileSync(r.summary, "utf8");
     expect(summary).toContain("kernel.yama.ptrace_scope");
   });
 
-  it("installs the wrapper into a temp dir when the image ships one", () => {
-    const out = rig().run({
-      FAKE_INSTALL_OUT: INSTALLER,
-      FAKE_INSTALL_RC: "0",
-      FAKE_INSTALL_ERR: "",
-    });
-    expect(out.status, out.stderr).toBe(0);
-    expect(out.stderr).not.toContain("wrapper step skipped");
+  it("names its own image to install, so the wrapper is pinned to it", () => {
+    const r = rig();
+    expect(r.run().status).toBe(0);
+    const install = readFileSync(r.log, "utf8")
+      .trim()
+      .split("\n")
+      .find((c) => c.includes(`QCR_IMAGE=${IMAGE}`));
+    expect(install).toBeDefined();
   });
 
   it("never writes the wrapper into the caller's real HOME", () => {
@@ -188,11 +186,24 @@ describe("image-smoke.sh", () => {
     expect(out.stderr).toContain("install printed nothing");
   });
 
-  it("fails on any install failure but the not-shipped stub", () => {
+  it("fails on any install failure, the old not-shipped answer included", () => {
     const other = rig().run({ FAKE_INSTALL_RC: "1", FAKE_INSTALL_ERR: "boom\n" });
     expect(other.status).toBe(1);
-    const code64 = rig().run({ FAKE_INSTALL_RC: "64", FAKE_INSTALL_ERR: "usage error\n" });
+    const code64 = rig().run({
+      FAKE_INSTALL_OUT: "",
+      FAKE_INSTALL_RC: "64",
+      FAKE_INSTALL_ERR:
+        "qcr-entrypoint: install: the host wrapper is not shipped in this image yet\n",
+    });
     expect(code64.status).toBe(1);
+  });
+
+  it("fails when the installed wrapper is not pinned to the image", () => {
+    const out = rig().run({
+      FAKE_INSTALL_OUT: `mkdir -p "$HOME/.local/bin" && printf 'echo qcr\\n' > "$HOME/.local/bin/qcr" && chmod +x "$HOME/.local/bin/qcr"`,
+    });
+    expect(out.status).toBe(1);
+    expect(out.stderr).toContain("not pinned");
   });
 
   it("fails when the image's pi pin is not config.example.toml's", () => {

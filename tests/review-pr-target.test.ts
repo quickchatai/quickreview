@@ -186,6 +186,37 @@ describe("the daemon stays App-only (CLAUDE.md rule 3)", () => {
     }
   });
 
+  it("daemon mode of the image reads no personal token (the entrypoint's mode_daemon)", () => {
+    const text = readFileSync(join(ROOT, "docker", "entrypoint.sh"), "utf8");
+    const start = text.indexOf("mode_daemon() {");
+    const body = text.slice(start, text.indexOf("\n}\n", start));
+    expect(start).toBeGreaterThan(0);
+    expect(body).not.toMatch(/GITHUB_TOKEN|GH_TOKEN|gh auth token|QCR_GH_TOKEN_FILE|\/run\/qcr-in/);
+    // the daemon's git auth is the App's installation token, minted on demand
+    expect(body).toMatch(/mint-token\.sh/);
+  });
+
+  it("the host wrapper is the one shell route that reads a personal token: to a file, never env or argv", () => {
+    const wrapper = readFileSync(join(ROOT, "scripts", "qcr-host.sh"), "utf8")
+      .split("\n")
+      .filter((l) => !l.trimStart().startsWith("#"))
+      .join("\n");
+    // it resolves GITHUB_TOKEN, GH_TOKEN, gh (rule 3's carve-out) ...
+    expect(wrapper).toMatch(/GITHUB_TOKEN/);
+    expect(wrapper).toMatch(/gh auth token/);
+    // ... and hands it over only as the read-once file (D39)
+    expect(wrapper).toMatch(/QCR_GH_TOKEN_FILE=\/run\/qcr-in\/gh-token/);
+    expect(wrapper).not.toMatch(/-e\s+"?\$?\{?(GITHUB_TOKEN|GH_TOKEN)/);
+    expect(wrapper).not.toMatch(/--env\b|--env-file/);
+    // no App on a laptop (D14): nothing mounts the secrets, nothing mints
+    expect(wrapper).not.toMatch(/secrets|app\.pem|\bmint\b/);
+    // and the daemon's own code never reads the wrapper's file variable
+    for (const f of ["github.ts", "githubAuth.ts", "daemon.ts", "wire.ts", "sessions.ts"])
+      expect(readFileSync(join(ROOT, "src", f), "utf8"), f).not.toMatch(
+        /QCR_GH_TOKEN_FILE|HANDOFF/,
+      );
+  });
+
   it("GitHubAdapter's only credential source is the App TokenMinter", () => {
     const text = readFileSync(join(ROOT, "src", "github.ts"), "utf8");
     expect(text).toMatch(/private readonly minter: TokenMinter/);
