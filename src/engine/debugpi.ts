@@ -25,7 +25,7 @@ import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { GITHUB_TOKEN_ENVS } from "../envstrip.js";
 import { DEBUG_STATUS_FILE, mainSessionOf } from "./openable.js";
-import { checkToolUid } from "./tooluid.js";
+import { checkToolUid, shareWithToolGroup, toolIsolation } from "./tooluid.js";
 import {
   prepareRound,
   settleRound,
@@ -158,11 +158,14 @@ function onTerminal(cmd: {
 export async function runDebugRound(i: RoundSpec, deps: DebugRoundDeps = {}): Promise<RoundResult> {
   const log = i.log ?? (() => {});
   const label = i.label ?? `${i.target.repo}#${i.target.number}`;
-  // pi's own bash runs as this process's uid: a container that asks for a
-  // separate tool uid cannot host this round.
-  checkToolUid(deps.env ?? process.env, {
+  // pi's own bash runs in pi's uid: where the image asks for a separate tool uid
+  // pi is started as that uid (below), and where it asked and could not arrange
+  // it, there is no round.
+  const procEnv = deps.env ?? process.env;
+  checkToolUid(procEnv, {
     what: "a debug round in pi",
     instead: "run the review without --debug-pi",
+    isolated: true,
   });
   const prep = prepareRound(i, { plannedWave: true });
   try {
@@ -181,9 +184,17 @@ export async function runDebugRound(i: RoundSpec, deps: DebugRoundDeps = {}): Pr
       order: join(i.outDir, "round-order.md"),
       tasksDir: join(i.outDir, "tasks"),
     });
+    // The whole pi runs as the tool uid, as the process route's did: its bash,
+    // and the lens sessions of its extension, get no capability and cannot read
+    // this process.
+    const launch = toolIsolation(deps.piBin ?? "pi", args, procEnv);
+    if ("refused" in launch) throw new Error(`a debug round in pi: ${launch.refused}`);
+    // That pi reads the run's agent dir (its login copy, models, lens agents),
+    // which the run uid made private.
+    if (launch.bin === "setpriv") shareWithToolGroup(i.agentDir);
     const code = await (deps.run ?? onTerminal)({
-      bin: deps.piBin ?? "pi",
-      args,
+      bin: launch.bin,
+      args: launch.argv,
       cwd: i.cwd ?? i.root,
       env,
     });

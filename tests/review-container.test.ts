@@ -657,7 +657,7 @@ import { readdirSync, writeFileSync } from "node:fs";
 const dist = ${JSON.stringify(join(root, "dist", "src"))};
 const { takeHandoffToken, handedToken } = await import(dist + "/ghcred.js");
 takeHandoffToken();
-const iso = (await import(dist + "/engine/procruntime.js")).toolIsolation;
+const iso = (await import(dist + "/engine/tooluid.js")).toolIsolation;
 const probe =
   'echo "uid=$(id -u)"; env; echo "--mount"; ls -A /run/qcr-in; echo "--environ"; ' +
   'cat "/proc/$HOLDER/environ" 2>&1 | head -c 300; echo; echo "--mem"; head -c 4 "/proc/$HOLDER/mem" 2>&1 | head -c 200; echo; ' +

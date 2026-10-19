@@ -215,7 +215,7 @@ ENV HOME=/home/qcr
 # run that reaches a model starts as root instead (--user 0:0 --cap-drop ALL
 # --cap-add SETUID --cap-add SETGID): the entrypoint drops to QCR_RUN_UID and
 # runs the model's tools as QCR_TOOLS_AS (D32, docker/entrypoint.sh). Started as
-# any other uid, the engine refuses to spawn pi unless QCR_ALLOW_SHARED_TOOL_UID=1.
+# any other uid, the engine refuses to run the model's tools unless QCR_ALLOW_SHARED_TOOL_UID=1.
 USER 1000:1000
 WORKDIR /opt/qcr
 

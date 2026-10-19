@@ -164,26 +164,72 @@ describe("reviewSdkRuntime", () => {
     keyed = [];
   });
 
-  it("refuses the SDK runtime where the image asks for the model's tools on another uid", async () => {
-    login(Date.now() + 3 * 3_600_000);
-    const seen: PiHostOptions[] = [];
-    for (const name of ["QCR_TOOL_UID", "QCR_TOOL_UID_REQUIRED"]) {
+  describe("the tool uid (D32)", () => {
+    const split = { QCR_TOOL_UID: "65534", QCR_TOOL_GID: "1000" };
+
+    it("runs the host's sessions' bash as the tool uid where the image names one", async () => {
+      login(Date.now() + 3 * 3_600_000);
+      const seen: PiHostOptions[] = [];
+      const rt = reviewSdkRuntime({ makeHost: fauxHost(seen), lens: noLens, processEnv: split });
+      await (await rt.create(spec())).dispose();
+      expect(seen[0]!.toolUid).toEqual({ uid: "65534", gid: "1000" });
+    });
+
+    it("gives no tool uid where nothing asks for one, or where the shared uid was accepted", async () => {
+      login(Date.now() + 3 * 3_600_000);
+      for (const processEnv of [
+        {},
+        { QCR_TOOL_UID_REQUIRED: "1", QCR_ALLOW_SHARED_TOOL_UID: "1" },
+      ]) {
+        const seen: PiHostOptions[] = [];
+        const rt = reviewSdkRuntime({ makeHost: fauxHost(seen), lens: noLens, processEnv });
+        await (await rt.create(spec())).dispose();
+        expect(seen[0]).not.toHaveProperty("toolUid");
+      }
+    });
+
+    it("refuses where the entrypoint could not arrange the split, or named bad ids, before any host exists", async () => {
+      login(Date.now() + 3 * 3_600_000);
+      const seen: PiHostOptions[] = [];
+      for (const processEnv of [
+        { QCR_TOOL_UID_REQUIRED: "1" },
+        { QCR_TOOL_UID: "0", QCR_TOOL_GID: "1000" },
+        { QCR_TOOL_UID: "1" },
+      ]) {
+        const rt = reviewSdkRuntime({ makeHost: fauxHost(seen), lens: noLens, processEnv });
+        await expect(rt.create(spec()), JSON.stringify(processEnv)).rejects.toThrow(
+          /SDK runtime: .*(--cap-add SETUID|non-zero numeric ids)/,
+        );
+      }
+      expect(seen).toEqual([]);
+    });
+
+    it("refuses the native lens tool under the split: its pi children would run the model's bash as this uid", async () => {
+      login(Date.now() + 3 * 3_600_000);
+      const seen: PiHostOptions[] = [];
+      const rt = reviewSdkRuntime({ makeHost: fauxHost(seen), processEnv: split });
+      await expect(rt.create(spec())).rejects.toThrow(/native lens tool.*lens_runtime = engine/);
+      expect(seen).toEqual([]);
+      // accepted explicitly, it runs
+      const shared = reviewSdkRuntime({
+        makeHost: fauxHost(seen),
+        processEnv: { QCR_TOOL_UID_REQUIRED: "1", QCR_ALLOW_SHARED_TOOL_UID: "1" },
+      });
+      await (await shared.create(spec())).dispose();
+      expect(seen).toHaveLength(1);
+    });
+
+    it("the engine lens route takes the split", async () => {
+      login(Date.now() + 3 * 3_600_000);
+      const seen: PiHostOptions[] = [];
       const rt = reviewSdkRuntime({
         makeHost: fauxHost(seen),
-        lens: noLens,
-        processEnv: { [name]: "1" },
+        processEnv: split,
+        engine: { plannedWave: false },
       });
-      await expect(rt.create(spec()), name).rejects.toThrow(/another uid/);
-    }
-    expect(seen).toEqual([]);
-    // accepted explicitly, it runs
-    const rt = reviewSdkRuntime({
-      makeHost: fauxHost(seen),
-      lens: noLens,
-      processEnv: { QCR_TOOL_UID_REQUIRED: "1", QCR_ALLOW_SHARED_TOOL_UID: "1" },
+      await (await rt.create(spec())).dispose();
+      expect(seen[0]!.toolUid).toEqual({ uid: "65534", gid: "1000" });
     });
-    await (await rt.create(spec())).dispose();
-    expect(seen).toHaveLength(1);
   });
 
   describe("the native lens tool", () => {

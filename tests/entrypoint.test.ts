@@ -34,7 +34,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseConfig } from "../src/config.js";
 import { loginInPi } from "../src/scanbox.js";
-import { toolIsolation } from "../src/engine/procruntime.js";
+import { toolIsolation } from "../src/engine/tooluid.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ENTRYPOINT = join(root, "docker", "entrypoint.sh");
