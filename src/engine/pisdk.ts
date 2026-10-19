@@ -358,6 +358,14 @@ export interface HostSessionSpec {
    * existing file under its own id (`resumeFile`; new turns append to it).
    * Omitted: in memory. */
   persist?: { sessionFile: string } | { sessionDir: string } | { resumeFile: string };
+  /** The id of an in-memory session. Omitted: a fresh unique one. Sessions given
+   * the SAME id share the provider's cache routing (pi derives the cache key and
+   * the routing headers from it) and the provider-side resources held for it:
+   * disposing any one of them closes the transports of all (pi's
+   * cleanupSessionResources(id)). Only a caller that disposes the whole set
+   * together (a lens cache group, D7) may share one. Refused with `persist` or
+   * `sessionManager`, which carry their own id. */
+  sessionId?: string;
   /** An already-built manager, for a caller that needs one pi's own way
    * (canaries). Wins over `persist`; give one or the other. Default: an
    * in-memory manager with a fresh unique id. */
@@ -414,6 +422,9 @@ function headerId(file: string): string | null {
  * cold prompt cache) at a missing or empty path. */
 function sessionManagerFor(spec: HostSessionSpec): SessionManager {
   const { persist, sessionManager } = spec;
+  if (spec.sessionId !== undefined && (persist || sessionManager))
+    throw new Error("sessionId names an in-memory session: not with persist or a sessionManager");
+  if (spec.sessionId === "") throw new Error("sessionId must not be empty");
   if (sessionManager) {
     if (persist) throw new Error("give a sessionManager or persist, not both");
     return sessionManager;
@@ -441,7 +452,9 @@ function sessionManagerFor(spec: HostSessionSpec): SessionManager {
     return SessionManager.open(file, dirname(file), spec.cwd);
   }
   if (persist) return SessionManager.create(spec.cwd, persist.sessionDir);
-  return SessionManager.inMemory(spec.cwd, { id: randomUUID() });
+  // VERIFY-ON-PIN (pi 1.3.0): inMemory({id}) sets the session id the provider
+  // keys its cache on (prompt_cache_key, session-id, x-client-request-id).
+  return SessionManager.inMemory(spec.cwd, { id: spec.sessionId ?? randomUUID() });
 }
 
 export class PiHost {
