@@ -96,6 +96,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/improvements-e2e.test.ts",
   "tests/install-shell.test.ts",
   "tests/json-contract.test.ts",
+  "tests/lens-prompt-parity.test.ts", // a real pi child per agent, against a loopback endpoint
   "tests/lens-yield.test.ts",
   "tests/levers.test.ts",
   "tests/localreview-readonly.test.ts",
