@@ -4,12 +4,5 @@
   "round": 1,
   "body": "body.md",
   "comments": "comments.json",
-  "records": ["create_review", "remove_label", "delete_team_review_request"],
-  "known_divergence": {
-    "record": 0,
-    "field": "body.body",
-    "shell": "Approved. Thanks for the quick turnaround — only nits left (see inline).\n\n<!-- qcr-post:v1:7:1:$HEAD -->",
-    "node": "Approved. Thanks for the quick turnaround — only nits left (see inline).\n\n\n<!-- qcr-post:v1:7:1:$HEAD -->",
-    "why": "approve-pr.sh reads the body with $(cat file), which strips its trailing newlines; the Node route keeps the file's text as is, so a body ending in a newline gets one more blank line before the marker."
-  }
+  "records": ["create_review", "remove_label", "delete_team_review_request"]
 }

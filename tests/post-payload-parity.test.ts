@@ -63,7 +63,7 @@ interface ParityCase {
   /** The record kinds both routes must produce, in order. */
   records: string[];
   /**
-   * A difference between the routes that is known and not yet ruled on. It is pinned exactly: the field, what the
+   * A difference between the routes that is known and ruled on (the owner accepted it). It is pinned exactly: the field, what the
    * shell wrote and what the Node route wrote. The case still compares every other byte, and fails when the
    * difference changes or goes away, so the entry cannot outlive the fix.
    */

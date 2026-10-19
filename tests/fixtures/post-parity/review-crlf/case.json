@@ -5,12 +5,5 @@
   "round": 1,
   "body": "body.md",
   "comments": null,
-  "records": ["create_review"],
-  "known_divergence": {
-    "record": 0,
-    "field": "body.body",
-    "shell": "line one\nline two\n\n\n\n\n<!-- qcr-post:v1:7:1:$HEAD -->",
-    "node": "line one\r\nline two\r\n\r\n\r\n\n\n<!-- qcr-post:v1:7:1:$HEAD -->",
-    "why": "post-review.sh reads the body with Python text mode, which turns CRLF into LF; the Node route keeps the file's bytes."
-  }
+  "records": ["create_review"]
 }
