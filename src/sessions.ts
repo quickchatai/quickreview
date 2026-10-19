@@ -1,6 +1,11 @@
 // The daemon↔pi boundary: birth, wake, adopt, archive and kill of the per-PR
 // pi sessions and the overseer session.
 //
+// This file is the tmux + inject-bridge host. The host-neutral half of a PR
+// session's life (worktree, raw-notes tier, archive record, close, and the
+// single-flights that order them) is `PrSessionLifecycle`
+// (pr-session-lifecycle.ts); the overseer is not PR lifecycle and stays here.
+//
 // Shape of a session: a detached tmux session named `pr-<n>` (or `overseer`)
 // running the pinned interactive pi TUI with cwd = the sandbox root, the
 // substituted system prompt passed by path, and the two sandbox extensions
@@ -14,7 +19,6 @@
 import { stripModelDocs } from "./promptdoc.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
-  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -45,9 +49,6 @@ import {
   ovcliConfPathIn,
   ovRecallHintPathIn,
   ovRetiredPathIn,
-  planStaleOvSessions,
-  OV_SESSION_SWEEP_BUDGET_MS,
-  OV_SESSION_SWEEP_MAX,
   writeOvcliConf,
   type OvSessionLifecycle,
   type OvcliWriteResult,
@@ -68,7 +69,6 @@ import type { ExecFn } from "./tmux.js";
 import type { SessionCommandKind, SessionCommandRow, StateStore } from "./state.js";
 import { roundPromptMarker, stampRoundPrompt } from "./types.js";
 import { RECEIPT_SCOPE_SLACK_MS, ReceiptIndex, type ReceiptIndexStats } from "./receiptscan.js";
-import { RESTORE_WAIT_MS } from "./archive/restore.js";
 import type {
   OvSessionSweepReport,
   RoundOrder,
@@ -81,6 +81,15 @@ import type {
 import { identityVars } from "./include.js";
 import { renderConversationSystemPrompt, renderOverseerSystemPrompt } from "./templates.js";
 import { WorktreeManager } from "./worktrees.js";
+import {
+  PrSessionLifecycle,
+  prOfSession,
+  prSessionName,
+  type PrSessionHost,
+} from "./pr-session-lifecycle.js";
+
+// The PR session naming lives with the lifecycle; sessions.ts keeps exporting it.
+export { prOfSession, prSessionName };
 
 export const OVERSEER_SESSION = "overseer";
 
@@ -154,19 +163,8 @@ export function sessionGitConfigPins(piHome: string): Record<string, string> {
   };
 }
 
-/** The PR's tmux session name — by design the same string as its OpenViking
- * session id, so the one formatter lives there. */
-export function prSessionName(pr: number): string {
-  return ovSessionIdForPr(pr);
-}
-
 export function isSandboxSession(name: string): boolean {
   return name === OVERSEER_SESSION || /^pr-\d+$/.test(name);
-}
-
-export function prOfSession(name: string): number | undefined {
-  const m = /^pr-(\d+)$/.exec(name);
-  return m ? Number(m[1]) : undefined;
 }
 
 export interface PiCommandSpec {
@@ -269,19 +267,13 @@ export class PiSessionManager implements SessionHooks {
   readonly worktrees: WorktreeManager;
   private readonly piBin: string;
   private readonly piHome: string;
-  private readonly ovSessions: OvSessionLifecycle | undefined;
   private readonly now: () => Date;
   private commandStore: StateStore | undefined;
   private readonly configPath: string | undefined;
-  private readonly prSessionBirths = new Map<number, Promise<string>>();
-  private readonly prSessionCloses = new Map<number, Promise<void>>();
-  private readonly prOvDeletes = new Map<number, Promise<boolean>>();
-  private readonly prCleanupVersions = new Map<number, number>();
+  /** The host-neutral half of a PR session's life (worktree, raw tier,
+   * archive, close); this class is its tmux + inject-bridge host. */
+  private readonly lifecycle: PrSessionLifecycle;
   private injectSeq = 0;
-  /** Stale-session deletes that failed, by session id → when (ms). A failed
-   * id waits an hour before the sweep tries it again, so a delete the server
-   * keeps refusing costs one log line an hour, not ten every pass. */
-  private readonly ovSweepFailedAt = new Map<string, number>();
   /** The receipt scan's index: each session file's receipt tokens, read once. */
   private readonly receipts = new ReceiptIndex();
   /** `receipt_archived_unknown` already logged, by (pr, marker, archive
@@ -290,9 +282,6 @@ export class PiSessionManager implements SessionHooks {
    * otherwise write ~288 rows a day per claim, indefinitely. A changed
    * archive state logs again; a restart logs each once more. */
   private readonly archivedUnknownLogged = new Set<string>();
-  /** Awaited before a PR session is born: the archiver's
-   * restore of a reopened PR's archived files. Unset ⇒ nothing to wait for. */
-  private beforeBirthHook?: (pr: number) => Promise<void>;
 
   constructor(opts: PiSessionManagerOptions) {
     this.cfg = opts.cfg;
@@ -310,10 +299,18 @@ export class PiSessionManager implements SessionHooks {
       });
     this.piBin = opts.piBin ?? "pi";
     this.piHome = opts.piHome ?? join(opts.root, "pihome");
-    this.ovSessions = opts.ovSessions;
     this.now = opts.now ?? (() => new Date());
     this.commandStore = opts.commandStore;
     this.configPath = opts.configPath;
+    this.lifecycle = new PrSessionLifecycle({
+      cfg: opts.cfg,
+      root: opts.root,
+      worktrees: this.worktrees,
+      host: this.tmuxHost(),
+      ovSessions: opts.ovSessions,
+      now: this.now,
+      commandStore: opts.commandStore,
+    });
     if (this.commandStore) this.restorePendingSessionCommands();
   }
 
@@ -329,19 +326,19 @@ export class PiSessionManager implements SessionHooks {
 
   /** Where every session's `--session-dir` lives (one subdir per session). */
   sessionsRoot(): string {
-    return join(this.root, this.cfg.pi.session_dir);
+    return this.lifecycle.sessionsRoot();
   }
 
   sessionDir(session: string): string {
-    return join(this.sessionsRoot(), session);
+    return this.lifecycle.sessionDir(session);
   }
 
   ledgerPath(session: string): string {
-    return join(this.root, "state", "ledgers", `${session}.md`);
+    return this.lifecycle.ledgerPath(session);
   }
 
   archiveDir(session: string): string {
-    return join(this.root, "archive", session);
+    return this.lifecycle.archiveDir(session);
   }
 
   sessionCommandPayloadPath(id: string): string {
@@ -446,64 +443,6 @@ export class PiSessionManager implements SessionHooks {
         log: (msg) => console.log(`[quickreviewd] sessions: ${msg}`),
       },
     );
-  }
-
-  /** Create the PR's raw-notes session. Total: a memory engine that is down
-   * costs the PR its raw tier and nothing else. */
-  private async ensureOvSession(pr: number): Promise<boolean> {
-    if (this.cfg.openviking?.enabled === false || !this.ovSessions) return false;
-    try {
-      return await this.ovSessions.create(ovSessionIdForPr(pr));
-    } catch {
-      return false;
-    }
-  }
-
-  /** Delete the PR's raw-notes session and its archives — the raw tier ages
-   * out by DELETE, never by `commit` (which exists to promote notes into
-   * durable memory, the extraction that is deliberately switched off).
-   *
-   * A failure is logged and recorded as an event, so lingering sessions are
-   * visible. Total — the PR closes either way. */
-  private deleteOvSession(pr: number): Promise<boolean> {
-    return this.fenceOvDelete(pr, () => this.removeOvSession(pr));
-  }
-
-  private async fenceOvDelete(pr: number, remove: () => Promise<boolean>): Promise<boolean> {
-    const existing = this.prOvDeletes.get(pr);
-    if (existing) return existing;
-    // Publish before the adapter runs: a sweep's awaited DELETE must finish
-    // before a reopened birth can recreate the same raw session id.
-    const deletion = Promise.resolve().then(remove);
-    this.prCleanupVersions.set(pr, (this.prCleanupVersions.get(pr) ?? 0) + 1);
-    this.prOvDeletes.set(pr, deletion);
-    try {
-      return await deletion;
-    } finally {
-      if (this.prOvDeletes.get(pr) === deletion) this.prOvDeletes.delete(pr);
-    }
-  }
-
-  private async removeOvSession(pr: number): Promise<boolean> {
-    if (this.cfg.openviking?.enabled === false || !this.ovSessions) return false;
-    const id = ovSessionIdForPr(pr);
-    let ok = false;
-    let error: string | undefined;
-    try {
-      ok = await this.ovSessions.remove(id);
-    } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
-    }
-    if (!ok) {
-      console.log(
-        `[quickreviewd] sessions: openviking session ${id} was NOT deleted${error ? ` (${error})` : ""} — it lingers on the server`,
-      );
-      this.recordEvent("openviking_session_delete_failed", pr, {
-        session: id,
-        ...(error ? { error } : {}),
-      });
-    }
-    return ok;
   }
 
   // ---- environment -------------------------------------------------------
@@ -767,79 +706,58 @@ export class PiSessionManager implements SessionHooks {
 
   /** Birth on first trigger; concurrent callers for one PR share the complete
    * has→prepare→spawn flight. Unrelated PRs remain independent. */
-  async ensurePrSession(pr: number, title: string, worktree: string): Promise<string> {
-    const closing = this.prSessionCloses.get(pr) ?? this.prOvDeletes.get(pr);
-    if (closing) {
-      // A reopened PR cannot adopt the old consumer or recreate its raw tier
-      // while the earlier close can still kill or delete either one. The
-      // close caller reports any failure; birth rechecks the actual session.
-      await closing.catch(() => undefined);
-      return this.ensurePrSession(pr, title, worktree);
-    }
-    const existing = this.prSessionBirths.get(pr);
-    if (existing) return existing;
-    const birth = this.birthPrSession(pr, title, worktree);
-    this.prSessionBirths.set(pr, birth);
-    try {
-      return await birth;
-    } finally {
-      if (this.prSessionBirths.get(pr) === birth) this.prSessionBirths.delete(pr);
-    }
+  ensurePrSession(pr: number, title: string, worktree: string): Promise<string> {
+    return this.lifecycle.ensureSession(pr, title, worktree);
   }
 
   /** Late production binding (wire.ts): the archiver's `beforeBirth`. */
   setBeforeBirth(fn: (pr: number) => Promise<void>): void {
-    this.beforeBirthHook = fn;
+    this.lifecycle.setBeforeBirth(fn);
   }
 
-  /**
-   * Before a PR session is born, its archived transcripts and
-   * session-command payloads go back (a reopen) — so the delivery receipts of
-   * its pre-close wakes are read from the real files again. Bounded at
-   * RESTORE_WAIT_MS (the archiver bounds it too), and it never refuses the
-   * birth: a slow or failed restore lets the session be born, and the receipt
-   * guard keeps the archived window unknown, never absent.
-   */
-  private async awaitBeforeBirth(pr: number): Promise<void> {
-    const hook = this.beforeBirthHook;
-    if (!hook) return;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([
-        hook(pr),
-        new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, RESTORE_WAIT_MS + 5_000);
-          timer.unref?.();
-        }),
-      ]);
-    } catch (err) {
-      console.log(
-        `[quickreviewd] sessions: the archive restore before pr-${pr}'s birth failed (${String(err)}) — born anyway`,
-      );
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
+  /** What the lifecycle asks of the tmux host: a session is a detached tmux
+   * session whose inject bridge proves readiness by a generation receipt. */
+  private tmuxHost(): PrSessionHost {
+    return {
+      liveSessions: () => this.tmux.listSessionsKnown().catch(() => null),
+      provenGone: (pr) => this.sessionProvenGone(prSessionName(pr)),
+      killConfirmed: (pr) => this.killConfirmed(prSessionName(pr)),
+      stop: async (pr) => {
+        const session = prSessionName(pr);
+        await this.tmux.killSession(session);
+        // A compaction request the killed bridge never took is not
+        // a wake and nothing archives it; it would only keep the inject dir alive.
+        try {
+          rmSync(join(this.injectDir(session), COMPACTION_REQUEST_FILE), { force: true });
+        } catch {
+          /* best-effort */
+        }
+      },
+      reuseLive: async (pr) => {
+        const session = prSessionName(pr);
+        if (!(await this.tmux.hasSession(session))) return undefined;
+        if (this.currentBridgeReady(session)) return session;
+        this.commandStore?.logEvent("session_bridge_stale", pr, {
+          session,
+          reason: "tmux alive without matching ready generation",
+        });
+        if (!(await this.killConfirmed(session))) {
+          throw new Error(`session ${session} survived stale-bridge fence`);
+        }
+        return undefined;
+      },
+      spawn: (pr, title, worktree, { rawReady }) =>
+        this.spawnPrSession(pr, title, worktree, rawReady),
+    };
   }
 
-  private async birthPrSession(pr: number, title: string, worktree: string): Promise<string> {
-    await this.awaitBeforeBirth(pr);
-    if (this.prClosed(pr)) throw new Error(`PR #${pr} is closed — refusing session birth`);
+  private async spawnPrSession(
+    pr: number,
+    title: string,
+    worktree: string,
+    rawReady: boolean,
+  ): Promise<string> {
     const session = prSessionName(pr);
-    if (await this.tmux.hasSession(session)) {
-      if (this.currentBridgeReady(session)) return session;
-      this.commandStore?.logEvent("session_bridge_stale", pr, {
-        session,
-        reason: "tmux alive without matching ready generation",
-      });
-      if (!(await this.killConfirmed(session))) {
-        throw new Error(`session ${session} survived stale-bridge fence`);
-      }
-    }
-    // The PR's raw-notes tier, created before pi starts so the extension has
-    // something to attach to on the first turn. A store object, not a session
-    // anyone schedules: the daemon still owns exactly two pi session kinds.
-    const rawReady = await this.ensureOvSession(pr);
-    if (this.prClosed(pr)) throw new Error(`PR #${pr} is closed — refusing session birth`);
     const template = readFileSync(join(this.root, "prompts", "conversation-system.md"), "utf8");
     const body = renderConversationSystemPrompt(
       template,
@@ -947,6 +865,7 @@ export class PiSessionManager implements SessionHooks {
    * running rows are never resubmitted by a restart. */
   setCommandStore(store: StateStore): void {
     this.commandStore = store;
+    this.lifecycle.setCommandStore(store);
     this.restorePendingSessionCommands();
   }
 
@@ -1089,7 +1008,7 @@ export class PiSessionManager implements SessionHooks {
     roundNo: number | null,
   ): SessionCommandRow | undefined {
     if (this.prClosed(pr)) throw new Error(`PR #${pr} is closed — refusing command delivery`);
-    if (this.prSessionCloses.has(pr) || this.prOvDeletes.has(pr))
+    if (this.lifecycle.cleanupInFlight(pr))
       throw new Error(`PR #${pr} session cleanup is in flight — refusing command delivery`);
     const store = this.commandStore;
     if (!store) {
@@ -1155,11 +1074,7 @@ export class PiSessionManager implements SessionHooks {
    * the sha is not in the clone at all (no prepare hook ran) do we fetch.
    */
   async dispatchRound(order: RoundOrder, renderedPrompt: string): Promise<void> {
-    if (order.head_sha && (await this.worktrees.hasCommit(order.head_sha))) {
-      await this.worktrees.checkoutAt(order.pr, order.head_sha);
-    } else {
-      await this.worktrees.ensureWorktree(order.pr, { baseRef: order.base_ref });
-    }
+    await this.lifecycle.prepareRoundWorktree(order);
     await this.ensurePrSession(order.pr, order.title, order.worktree);
     if (this.commandStore?.getPr(order.pr)?.paused)
       throw new Error(`PR #${order.pr} paused during session preparation — round not handed off`);
@@ -1607,21 +1522,17 @@ export class PiSessionManager implements SessionHooks {
    * proved it owns, which is the same silent loss the receipt exists to catch.
    * Throws when the PR is closed, or was never tracked so no title is known. */
   private async ensureSessionForWake(pr: number): Promise<void> {
-    const closing = this.prSessionCloses.get(pr) ?? this.prOvDeletes.get(pr);
+    const closing = this.lifecycle.cleanupInFlight(pr);
     if (closing) {
       await closing.catch(() => undefined);
       return this.ensureSessionForWake(pr);
     }
     const session = prSessionName(pr);
-    const cleanupVersion = this.prCleanupVersions.get(pr) ?? 0;
+    const cleanupVersion = this.lifecycle.cleanupVersion(pr);
     const alive = await this.tmux.hasSession(session);
     // Cleanup can start or even finish during the probe. Its old answer may
     // name the consumer that was just killed, even after the PR reopens.
-    if (
-      cleanupVersion !== (this.prCleanupVersions.get(pr) ?? 0) ||
-      this.prSessionCloses.has(pr) ||
-      this.prOvDeletes.has(pr)
-    )
+    if (cleanupVersion !== this.lifecycle.cleanupVersion(pr) || this.lifecycle.cleanupInFlight(pr))
       return this.ensureSessionForWake(pr);
     if (alive && this.currentBridgeReady(session)) return;
     if (this.prClosed(pr)) {
@@ -1632,14 +1543,8 @@ export class PiSessionManager implements SessionHooks {
       throw new Error(`no live session ${session} — dispatch a round to birth it first`);
     }
     // A reopened PR's archive comes back before its session does.
-    await this.awaitBeforeBirth(pr);
-    const worktree = this.worktrees.worktreePath(pr);
-    try {
-      await this.worktrees.ensureWorktree(pr);
-    } catch {
-      // Best-effort: an unfetchable worktree must not lose the wake — the
-      // session can re-derive state from the message + GitHub reads.
-    }
+    await this.lifecycle.awaitBeforeBirth(pr);
+    const worktree = await this.lifecycle.reviveWorktree(pr);
     if (this.prClosed(pr)) throw new Error(`PR #${pr} is closed — refusing to respawn ${session}`);
     await this.ensurePrSession(pr, title, worktree);
     console.log(`[quickreviewd] sessions: respawned dead ${session} for an out-of-round wake`);
@@ -1664,31 +1569,9 @@ export class PiSessionManager implements SessionHooks {
 
   // ---- archival / death --------------------------------------------------
 
-  /** Newest *.jsonl anywhere under a session's --session-dir. Ties break on the
-   * filename — pi names sessions `<timestamp>_<uuid>.jsonl`. */
+  /** Newest *.jsonl anywhere under a session's --session-dir. */
   newestSessionFile(session: string): string | undefined {
-    const root = this.sessionDir(session);
-    let newest: { path: string; mtime: number; name: string } | undefined;
-    const walk = (dir: string): void => {
-      let entries;
-      try {
-        entries = readdirSync(dir, { withFileTypes: true });
-      } catch {
-        return;
-      }
-      for (const e of entries) {
-        const full = join(dir, e.name);
-        if (e.isDirectory()) walk(full);
-        else if (e.name.endsWith(".jsonl")) {
-          const mtime = statSync(full).mtimeMs;
-          const better =
-            !newest || mtime > newest.mtime || (mtime === newest.mtime && e.name > newest.name);
-          if (better) newest = { path: full, mtime, name: e.name };
-        }
-      }
-    };
-    walk(root);
-    return newest?.path;
+    return this.lifecycle.newestSessionFile(session);
   }
 
   /** SessionHooks: newest session-JSONL mtime for the PR's sticky session —
@@ -1726,63 +1609,17 @@ export class PiSessionManager implements SessionHooks {
     }
   }
 
-  /**
-   * Write a session's record into an archive dir: its ledger (+ any verdict
-   * still at the top of verdict/) and `meta.json`, whose `session_file` names
-   * the live transcript that was newest at this moment. Returns what landed.
-   *
-   * The transcript itself is not copied: the closed-PR archiver keeps every
-   * JSONL of the session — verified and compressed — in
-   * `archive/<session>/transcripts/` once it is safe to move (`src/archive/`),
-   * and a multi-MB synchronous copy does not belong on the close path.
-   * `qcr why`, the TUI ledger and the overseer seed read `ledger.md` and
-   * `meta.json`, which stay plain.
-   */
+  /** Write a session's record into an archive dir (the lifecycle's archive
+   * record: ledger, verdicts, `meta.json`). Returns what landed. */
   archiveSession(session: string, dest: string): string[] {
-    mkdirSync(dest, { recursive: true });
-    const written: string[] = [];
-    const jsonl = this.newestSessionFile(session);
-    const ledger = this.ledgerPath(session);
-    if (existsSync(ledger)) {
-      const target = join(dest, "ledger.md");
-      copyFileSync(ledger, target);
-      written.push(target);
-    }
-    const pr = prOfSession(session);
-    if (pr !== undefined) {
-      const verdictDir = join(this.root, "verdict");
-      if (existsSync(verdictDir)) {
-        const prefix = `pr-${pr}-round-`;
-        for (const f of readdirSync(verdictDir)) {
-          if (!f.startsWith(prefix) || !f.endsWith(".json")) continue;
-          mkdirSync(join(dest, "verdicts"), { recursive: true });
-          const target = join(dest, "verdicts", f);
-          copyFileSync(join(verdictDir, f), target);
-          written.push(target);
-        }
-      }
-    }
-    this.writeAtomic(
-      join(dest, "meta.json"),
-      `${JSON.stringify(
-        {
-          session,
-          archived_at: this.now().toISOString(),
-          session_file: jsonl ?? null,
-          files: written,
-        },
-        null,
-        2,
-      )}\n`,
-    );
-    return written;
+    return this.lifecycle.archiveSession(session, dest);
   }
 
   /** Is a session birth for `pr` in flight right now? Synchronous — the
    * archiver's eligibility re-reads it immediately before
    * anything of the PR's leaves the live tree. */
   birthInFlight(pr: number): boolean {
-    return this.prSessionBirths.has(pr);
+    return this.lifecycle.birthInFlight(pr);
   }
 
   /** SessionHooks: an affirmative tmux listing decides liveness. An
@@ -1827,7 +1664,7 @@ export class PiSessionManager implements SessionHooks {
     };
     // Birth and delivery wait this existing close flight. Thus a successor
     // cannot be born between the last ownership check and the async tmux kill.
-    await this.withPrClose(pr, async () => {
+    await this.lifecycle.withPrClose(pr, async () => {
       if (!owns()) return;
       const gone = await this.sessionProvenGone(session);
       if (!owns()) return;
@@ -1879,150 +1716,10 @@ export class PiSessionManager implements SessionHooks {
     console.log(`[quickreviewd] sessions: command ${command.id} cannot be replayed: ${why}`);
   }
 
-  /**
-   * The reconcile sweep over the raw tier: delete the `pr-<n>` OpenViking
-   * sessions of PRs the registry says are closed — the ones
-   * `archiveAndClose` failed to delete or never got to. Bounded per pass
-   * (`OV_SESSION_SWEEP_MAX`), every outcome logged and recorded. A PR whose pi
-   * session is still alive keeps its raw tier until that session is gone (its
-   * turn sync would otherwise write into nothing), and an id whose delete
-   * failed waits an hour. Null when no raw tier is managed (memory switched
-   * off — `[openviking] enabled = false` runs no server to ask — no
-   * lifecycle, or one that cannot list). Total: a dead server is a report,
-   * never a throw.
-   */
-  async sweepStaleOvSessions(
-    max: number = OV_SESSION_SWEEP_MAX,
-  ): Promise<OvSessionSweepReport | null> {
-    // Closed registry rows and surviving tmux names are the retry obligation,
-    // independent of whether this install runs reviewer memory.
-    let closedProbeUnknown = false;
-    if (this.commandStore) {
-      const names = await this.tmux.listSessionsKnown().catch(() => null);
-      closedProbeUnknown = names === null;
-      let attempted = 0;
-      for (const name of names ?? []) {
-        const match = /^pr-([1-9]\d*)$/.exec(name);
-        if (!match) continue;
-        const pr = Number(match[1]);
-        if (!this.prClosed(pr) || this.prSessionBirths.has(pr)) continue;
-        if (attempted++ >= Math.max(0, Math.floor(max))) break;
-        try {
-          await this.withPrClose(pr, async () => {
-            // Already inside the birth/close fence; do not recursively join it.
-            if (this.prClosed(pr) && !(await this.killConfirmed(prSessionName(pr))))
-              throw new Error(`closed session pr-${pr} survived its cleanup kill`);
-          });
-        } catch (error) {
-          this.recordEvent("closed_session_kill_failed", pr, { error: String(error) });
-        }
-      }
-    }
-    if (this.cfg.openviking?.enabled === false) return null;
-    const lifecycle = this.ovSessions;
-    if (!lifecycle?.list) return null;
-    let listed: Awaited<ReturnType<NonNullable<OvSessionLifecycle["list"]>>>;
-    try {
-      listed = await lifecycle.list();
-    } catch (err) {
-      listed = { ok: false, reason: err instanceof Error ? err.message : String(err) };
-    }
-    if (!listed.ok) {
-      console.log(
-        `[quickreviewd] sessions: stale openviking-session sweep could not list sessions (${listed.reason}) — nothing deleted this pass`,
-      );
-      return { listed: 0, stale: 0, deleted: [], failed: [], deferred: 0, error: listed.reason };
-    }
-    const nowMs = this.now().getTime();
-    const plan = planStaleOvSessions(
-      listed.ids,
-      (pr) => {
-        const row = this.commandStore?.getPr(pr);
-        if (!row) return "unknown";
-        return row.state === "closed" ? "closed" : "open";
-      },
-      Number.MAX_SAFE_INTEGER,
-    );
-    const report: OvSessionSweepReport = {
-      listed: listed.ids.length,
-      stale: plan.remove.length,
-      deleted: [],
-      failed: [],
-      deferred: 0,
-    };
-    const bound = Math.max(0, Math.floor(max));
-    let attempted = 0;
-    // The pass rides the reconcile poll, so it must not hold it: after the
-    // first failed delete (a struggling server — each one can cost the
-    // lifecycle's whole deadline) and once `OV_SESSION_SWEEP_BUDGET_MS` has
-    // gone, the rest wait for a later pass.
-    let stopped = false;
-    for (const id of plan.remove) {
-      const failedAt = this.ovSweepFailedAt.get(id);
-      if (failedAt !== undefined && nowMs - failedAt < 3_600_000) {
-        report.deferred += 1;
-        continue;
-      }
-      if (
-        stopped ||
-        attempted >= bound ||
-        this.now().getTime() - nowMs >= OV_SESSION_SWEEP_BUDGET_MS
-      ) {
-        report.deferred += 1;
-        continue;
-      }
-      const pr = Number(id.slice(3));
-      // A closed PR whose pi is still running (archiveAndClose failed to kill
-      // it) keeps its raw tier until the session is gone. A probe that could
-      // not ask tmux proves nothing either way, so it holds like a live one.
-      const alive = closedProbeUnknown || !(await this.sessionProvenGone(prSessionName(pr)));
-      // The plan read the registry once; the probe and earlier deletes have
-      // awaited since. A PR reopened and re-triggered in that window is
-      // having its `pr-<n>` reused or recreated — re-check right before the
-      // delete, and leave alone a PR whose session birth is in flight.
-      if (this.commandStore?.getPr(pr)?.state !== "closed" || this.prSessionBirths.has(pr)) {
-        report.deferred += 1;
-        continue;
-      }
-      if (alive) {
-        report.deferred += 1;
-        continue;
-      }
-      attempted += 1;
-      let ok = false;
-      let error: string | undefined;
-      try {
-        ok = await this.fenceOvDelete(pr, () => lifecycle.remove(id));
-      } catch (err) {
-        error = err instanceof Error ? err.message : String(err);
-      }
-      if (ok) {
-        this.ovSweepFailedAt.delete(id);
-        report.deleted.push(id);
-        console.log(
-          `[quickreviewd] sessions: openviking session ${id} of closed PR #${pr} deleted (stale-session sweep)`,
-        );
-        this.recordEvent("openviking_session_deleted", pr, { session: id, source: "sweep" });
-      } else {
-        stopped = true;
-        this.ovSweepFailedAt.set(id, nowMs);
-        report.failed.push(id);
-        console.log(
-          `[quickreviewd] sessions: openviking session ${id} of closed PR #${pr} was NOT deleted by the stale-session sweep${error ? ` (${error})` : ""} — retried in an hour`,
-        );
-        this.recordEvent("openviking_session_delete_failed", pr, {
-          session: id,
-          source: "sweep",
-          ...(error ? { error } : {}),
-        });
-      }
-    }
-    if (report.stale > 0) {
-      console.log(
-        `[quickreviewd] sessions: stale openviking-session sweep — ${report.stale} stale, ${report.deleted.length} deleted, ${report.failed.length} failed, ${report.deferred} left for a later pass`,
-      );
-    }
-    return report;
+  /** SessionHooks: the reconcile sweep over closed PRs' raw tier (and any of
+   * their sessions still alive in tmux); see the lifecycle. */
+  sweepStaleOvSessions(max?: number): Promise<OvSessionSweepReport | null> {
+    return this.lifecycle.sweepStaleOvSessions(max);
   }
 
   private recordEvent(kind: string, pr: number, payload: Record<string, unknown>): void {
@@ -2082,89 +1779,13 @@ export class PiSessionManager implements SessionHooks {
 
   /** True only when the registry says the PR is closed; unknown is not closed. */
   private prClosed(pr: number): boolean {
-    return this.commandStore?.getPr(pr)?.state === "closed";
+    return this.lifecycle.prClosed(pr);
   }
 
-  async archiveAndClose(pr: number): Promise<void> {
-    return this.withPrClose(pr, () => this.closePrSession(pr));
-  }
-
-  private async withPrClose(pr: number, cleanup: () => Promise<void>): Promise<void> {
-    const existing = this.prSessionCloses.get(pr);
-    if (existing) {
-      // A sweep may only owe a kill, while a close also owes archival and
-      // raw-tier cleanup. Serialize each requested operation in full.
-      await existing.catch(() => undefined);
-      return this.withPrClose(pr, cleanup);
-    }
-    // Capture births already underway before publishing the close flight. A
-    // later birth waits this close, so looking it up from cleanup would make
-    // the two flights wait on one another.
-    const birth = this.prSessionBirths.get(pr);
-    const close = Promise.resolve().then(async () => {
-      await birth?.catch(() => undefined);
-      await cleanup();
-    });
-    this.prCleanupVersions.set(pr, (this.prCleanupVersions.get(pr) ?? 0) + 1);
-    this.prSessionCloses.set(pr, close);
-    try {
-      await close;
-    } finally {
-      if (this.prSessionCloses.get(pr) === close) this.prSessionCloses.delete(pr);
-    }
-  }
-
-  private async closePrSession(pr: number): Promise<void> {
-    const session = prSessionName(pr);
-    if (this.commandStore?.getPr(pr) && !this.prClosed(pr)) return;
-    // Terminalize outstanding ordinary wakes first, so no recovery sweep can
-    // replay one into a session reborn after the kill below.
-    this.commandStore?.cancelSessionCommandsForClosedPr(pr);
-    // The kill never waits on the bookkeeping before it: a record or a
-    // worktree that could not be removed is reported (rethrown below), never
-    // a reason to leave the closed PR's pi running. The reconcile sweep
-    // retries surviving closed sessions.
-    let failed: { err: unknown } | null = null;
-    try {
-      this.archiveSession(session, this.archiveDir(session));
-    } catch (err) {
-      failed ??= { err };
-    }
-    try {
-      await this.worktrees.remove(pr);
-    } catch (err) {
-      failed ??= { err };
-    }
-    if (this.commandStore?.getPr(pr) && !this.prClosed(pr)) {
-      if (failed !== null) throw failed.err;
-      return;
-    }
-    await this.tmux.killSession(session);
-    // A compaction request the killed bridge never took is not
-    // a wake and nothing archives it; it would only keep the inject dir alive.
-    try {
-      rmSync(join(this.injectDir(session), COMPACTION_REQUEST_FILE), { force: true });
-    } catch {
-      /* best-effort */
-    }
-    // The raw tier dies with the PR: DELETE removes the session's messages AND
-    // its archives. Only once tmux proves the session gone, so nothing is
-    // still syncing turns into it — a kill that did not take, or a probe that
-    // could not ask, leaves it to the stale-session sweep, which deletes it
-    // once the session is gone. Deliberately not in killSession(): a wedged
-    // session is respawned and keeps its notes.
-    if (await this.sessionProvenGone(session)) {
-      if (!this.commandStore?.getPr(pr) || this.prClosed(pr)) await this.deleteOvSession(pr);
-    } else {
-      console.log(
-        `[quickreviewd] sessions: ${session} is not proven gone after the close kill — its openviking session is left to the stale-session sweep`,
-      );
-      this.recordEvent("openviking_session_delete_deferred", pr, {
-        session,
-        reason: "session not proven gone after the close kill",
-      });
-    }
-    if (failed !== null) throw failed.err;
+  /** SessionHooks: archive the PR's record, drop its worktree, stop its
+   * session and delete its raw tier; see the lifecycle. */
+  archiveAndClose(pr: number): Promise<void> {
+    return this.lifecycle.archiveAndClose(pr);
   }
 
   // ---- overseer rotation -------------------------------------------------
@@ -2280,7 +1901,7 @@ export class PiSessionManager implements SessionHooks {
   ): Promise<{ adoption: AdoptionReport; sweptWorktrees: number[] }> {
     const adoption = await this.adopt();
     const keep = new Set<number>([...activePrs, ...adoption.prs]);
-    const sweptWorktrees = await this.worktrees.sweepStale(keep);
+    const sweptWorktrees = await this.lifecycle.sweepStaleWorktrees(keep);
     return { adoption, sweptWorktrees };
   }
 }
