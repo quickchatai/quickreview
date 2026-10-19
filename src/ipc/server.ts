@@ -40,6 +40,8 @@ export interface RequestContext {
   pr: number;
   generation: number;
   mayPost: boolean;
+  /** An answer worker's command: its posts need `mayPost`. */
+  answer: boolean;
   lease: CommandState["lease"];
   /** Throws `wrong_pr` unless `pr` is the command's PR: for ops whose body names one. */
   requirePr(pr: unknown): void;
@@ -231,6 +233,7 @@ export class IpcServer {
       pr: state.pr,
       generation: state.generation,
       mayPost: state.may_post,
+      answer: state.answer === true,
       lease: state.lease,
       requirePr(n: unknown) {
         if (n !== state.pr) throw new IpcError("wrong_pr", "the request names another PR");

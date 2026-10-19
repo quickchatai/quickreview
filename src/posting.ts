@@ -495,10 +495,13 @@ export async function submitReview(
   const result = await deps.adapter.createReview(pr, payload);
   const registered: number[] = [];
 
+  // A guard refused it: nothing was posted and nothing was recorded, so there is
+  // no intent to log and nothing for the reconcile poll to backfill.
+  if (result.blocked) return { result, payload, registered, needs_backfill: false };
   if (!result.executed) {
     deps.store.logEvent("review_post_intent", pr, {
       event: payload.event,
-      inline: payload.comments.length,
+      inline: payload.comments?.length ?? 0,
       overflow: review.overflow.length,
       dryrun_file: result.dryRunFile ?? null,
     });
@@ -517,14 +520,14 @@ export async function submitReview(
   }
   deps.store.logEvent("review_posted", pr, {
     event: payload.event,
-    inline: payload.comments.length,
+    inline: payload.comments?.length ?? 0,
     registered: registered.length,
   });
   return {
     result,
     payload,
     registered,
-    needs_backfill: registered.length < payload.comments.length,
+    needs_backfill: registered.length < (payload.comments?.length ?? 0),
   };
 }
 

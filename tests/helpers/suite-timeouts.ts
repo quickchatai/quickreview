@@ -122,6 +122,8 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/pi-resolution.test.ts",
   "tests/pibuiltins.test.ts",
   "tests/plugin-qcr.test.ts", // the plugin's shell scripts against a fake docker, gh and qcr
+  "tests/post-shim.test.ts", // the post scripts handing over to the client under bash
+  "tests/posting-journal.test.ts", // the Python receipt helper beside the TypeScript journal
   "tests/pr-checks-why.test.ts",
   "tests/pr-context-shell.test.ts",
   "tests/pr-self-shell.test.ts",
