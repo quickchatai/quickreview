@@ -171,12 +171,20 @@ describe("operator PR recovery", () => {
     };
     const rerun = setup(5410);
     park(rerun.store, rerun.pr);
-    await recoverPrForOperator({ store: rerun.store, pump: async () => {} }, rerun.pr, "rerun-round");
+    await recoverPrForOperator(
+      { store: rerun.store, pump: async () => {} },
+      rerun.pr,
+      "rerun-round",
+    );
     expect(rerun.store.workerBreaker(rerun.pr)).toBeUndefined();
     expect(
-      (rerun.store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind='worker_unparked'").get() as {
-        c: number;
-      }).c,
+      (
+        rerun.store.db
+          .prepare("SELECT COUNT(*) AS c FROM events WHERE kind='worker_unparked'")
+          .get() as {
+          c: number;
+        }
+      ).c,
     ).toBe(1);
 
     const restart = setup(5411);
@@ -741,5 +749,83 @@ describe("restart command delivery receipts", () => {
       reason: expect.stringMatching(/unknown/),
     });
     expect(killSession).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("operator PR recovery reads worker liveness (P8.8)", () => {
+  it("rerun-round refuses a PR a worker runs for, and a lease directory it cannot read", async () => {
+    const { store, pr } = setup();
+    const pump = vi.fn(async () => {});
+
+    const running = await recoverPrForOperator(
+      { store, pump, workerRuns: () => true },
+      pr,
+      "rerun-round",
+    );
+    expect(running).toMatchObject({ ok: false });
+    expect(running.reason).toContain("running worker");
+    expect(running.reason).toContain("restart-session");
+
+    const unknown = await recoverPrForOperator(
+      { store, pump, workerRuns: () => null },
+      pr,
+      "rerun-round",
+    );
+    expect(unknown).toMatchObject({ ok: false });
+    expect(unknown.reason).toContain("could not be read");
+    expect(pump).not.toHaveBeenCalled();
+  });
+
+  it("rerun-round goes on when no worker runs", async () => {
+    const { store, pr } = setup();
+    const pump = vi.fn(async () => {
+      store.setPrState(pr, "reviewing");
+      store.startRound(pr, "re-review", ["pass-baseline"], 75);
+    });
+    const result = await recoverPrForOperator(
+      { store, pump, workerRuns: () => false },
+      pr,
+      "rerun-round",
+    );
+    expect(result).toMatchObject({ ok: true, redispatched: true });
+  });
+
+  it("restart-session releases ownership only once no worker runs after the fence", async () => {
+    const { store, dir, pr } = setup();
+    const c = command(store, dir, pr);
+    const killSession = vi.fn(async () => {});
+    const pump = vi.fn(async () => {});
+
+    const survived = await recoverPrForOperator(
+      { store, pump, killSession, workerRuns: () => true },
+      pr,
+      "restart-session",
+    );
+    expect(killSession).toHaveBeenCalledWith(pr);
+    expect(survived).toMatchObject({ ok: false });
+    expect(survived.reason).toContain("still runs after the fence");
+    // Nothing was released: the command still owns the slot and its file stays.
+    expect(store.blockingSessionCommand(`pr-${pr}`)?.id).toBe(c.row.id);
+    expect(readFileSync(c.injectPath, "utf8")).toBe(c.payload);
+    expect(pump).not.toHaveBeenCalled();
+
+    const unreadable = await recoverPrForOperator(
+      { store, pump, killSession, workerRuns: () => null },
+      pr,
+      "restart-session",
+    );
+    expect(unreadable).toMatchObject({ ok: false });
+    expect(store.blockingSessionCommand(`pr-${pr}`)?.id).toBe(c.row.id);
+
+    pump.mockImplementation(async () => {
+      store.setPrState(pr, "reviewing");
+      store.startRound(pr, "re-review", ["pass-baseline"], 75);
+    });
+    const gone = await recoverPrForOperator(
+      { store, pump, killSession, workerRuns: () => false },
+      pr,
+      "restart-session",
+    );
+    expect(gone).toMatchObject({ ok: true, cancelled_session_commands: [c.row.id] });
   });
 });

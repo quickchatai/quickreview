@@ -9,7 +9,8 @@
 //     newest `pr_closed` event (an indexed lookup), else `pr_state.updated_at`;
 //     a PR restored earlier counts from the newer of its close and its
 //     `archive_prs.restored_at`;
-//   - tmux `pr-<n>` is not alive (and tmux answered: unknown holds);
+//   - no worker of `pr-<n>` runs (its lease, confirmed by the process table —
+//     src/workerliveness.ts; leases that cannot be read are unknown and hold);
 //   - no session birth is in flight;
 //   - no `rounds` row is running (or overdue — not terminal either);
 //   - no `session_commands` row is pending or running;
@@ -21,8 +22,8 @@
 //     missing (an undelivered wake a reborn session would receive; a dir we
 //     could not list holds too).
 //
-// Pure over the store and the facts the caller gathered outside it (tmux,
-// births, the inject listing): synchronous, a handful of indexed point reads.
+// Pure over the store and the facts the caller gathered outside it (worker
+// liveness, births, the inject listing): synchronous, a handful of indexed point reads.
 import type { StateStore } from "../state.js";
 import { TERMINAL_COMMAND_STATUSES } from "./prfiles.js";
 
@@ -30,8 +31,8 @@ export const INELIGIBLE_REASONS = [
   "unknown_pr",
   "not_closed",
   "closed_recently",
-  "tmux_alive",
-  "tmux_unknown",
+  "worker_alive",
+  "worker_unknown",
   "birth_in_flight",
   "round_running",
   "round_overdue",
@@ -45,8 +46,8 @@ export type IneligibleReason = (typeof INELIGIBLE_REASONS)[number];
 
 /** What the caller learned outside the database, for one PR. */
 export interface OutsideFacts {
-  /** Is tmux `pr-<n>` alive? null = tmux could not be asked (holds). */
-  tmuxAlive: boolean | null;
+  /** Does a worker of `pr-<n>` run? null = the leases could not be read (holds). */
+  workerAlive: boolean | null;
   /** Is a session birth in flight for it (the daemon's `prSessionBirths`)? */
   birthInFlight: boolean;
   /** The absolute paths of the top-level `*.md` files in `inject/pr-<n>/`
@@ -94,7 +95,7 @@ export function closedAt(
 
 /**
  * Is `pr` eligible for archiving at `now`? Synchronous: every database clause
- * is an indexed point read; tmux, births and the inject listing arrive in
+ * is an indexed point read; worker liveness, births and the inject listing arrive in
  * `outside`.
  */
 export function prEligibility(
@@ -141,9 +142,9 @@ export function prEligibility(
     return out;
   }
 
-  const { tmuxAlive, birthInFlight, injectFiles } = opts.outside;
-  if (tmuxAlive === null) fail("tmux_unknown");
-  else if (tmuxAlive) fail("tmux_alive");
+  const { workerAlive, birthInFlight, injectFiles } = opts.outside;
+  if (workerAlive === null) fail("worker_unknown");
+  else if (workerAlive) fail("worker_alive");
   if (birthInFlight) fail("birth_in_flight");
 
   const rounds = store.db

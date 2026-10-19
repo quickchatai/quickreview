@@ -56,10 +56,9 @@ const DAY_MS = 86_400_000;
 /** Rows per counting window: three narrow columns, a few ms on the VM. */
 export const COUNT_WINDOW_ROWS = 2000;
 
-/** The plan's own bound on the tmux ask, whatever answers it: past this, tmux
- * is UNKNOWN (every candidate holds `tmux_unknown`) and the plan goes on. A
- * little over `Tmux.listSessionsKnown`'s own kill, so the real one answers
- * null itself first. */
+/** The plan's own bound on the liveness ask, whatever answers it: past this,
+ * worker liveness is UNKNOWN (every candidate holds `worker_unknown`) and the
+ * plan goes on. */
 export const LIVE_SESSIONS_DEADLINE_MS = 12_000;
 
 export interface Tally {
@@ -150,8 +149,9 @@ export interface ArchivePlan {
    * births (`qcr archive status --plan` runs in its own process); the daemon
    * re-checks them before anything moves. */
   births_observed: boolean;
-  /** Whether tmux answered; "unknown" holds every candidate (`tmux_unknown`). */
-  tmux: "answered" | "unknown";
+  /** Whether worker liveness answered; "unknown" holds every candidate
+   * (`worker_unknown`). */
+  workers: "answered" | "unknown";
   /** Do `archive/` and `state/` sit on one device? null when unknown. */
   same_device: boolean | null;
   /** The plan's longest synchronous span, measured. */
@@ -187,9 +187,9 @@ export interface PlanDeps {
   now: () => Date;
   afterDays: number;
   eventsAfterDays: number;
-  /** Live tmux session names; null = tmux could not be asked. */
+  /** Session names (`pr-<n>`) a worker runs for; null = could not be asked. */
   liveSessions: () => Promise<readonly string[] | null>;
-  /** How long the plan waits for `liveSessions` before reading tmux as
+  /** How long the plan waits for `liveSessions` before reading liveness as
    * UNKNOWN (default `LIVE_SESSIONS_DEADLINE_MS`). */
   liveSessionsDeadlineMs?: number;
   /** The daemon's in-flight births; absent = not observable (a CLI). */
@@ -211,10 +211,10 @@ const add = (t: Tally, bytes: number): void => {
 };
 
 /**
- * Ask which tmux sessions live — bounded and abortable. A throw, or no answer
+ * Ask which worker sessions live — bounded and abortable. A throw, or no answer
  * by `deadlineMs`, is null (UNKNOWN, which holds every candidate), never
  * "none alive"; the plan's signal (the archiver's `stop()`) rejects at once,
- * so a hung tmux can neither wedge the strict mutex nor outlive a stop.
+ * so a hung ask can neither wedge the strict mutex nor outlive a stop.
  */
 export function askLiveSessions(
   ask: () => Promise<readonly string[] | null>,
@@ -369,7 +369,7 @@ export async function computePlan(deps: PlanDeps): Promise<ArchivePlan> {
   const eventsCutoff = new Date(now.getTime() - deps.eventsAfterDays * DAY_MS).toISOString();
   const stateDir = join(root, "state");
 
-  // ---- the registry, and what tmux says is alive ---------------------------
+  // ---- the registry, and which workers run ---------------------------
   const registry = meter.measure(
     () =>
       store.db.prepare("SELECT number, state FROM pr_state").all() as Array<{
@@ -436,7 +436,7 @@ export async function computePlan(deps: PlanDeps): Promise<ArchivePlan> {
         now,
         afterDays: deps.afterDays,
         outside: {
-          tmuxAlive: alive === null ? null : alive.has(pr),
+          workerAlive: alive === null ? null : alive.has(pr),
           birthInFlight: deps.birthInFlight?.(pr) ?? false,
           injectFiles,
         },
@@ -604,7 +604,7 @@ export async function computePlan(deps: PlanDeps): Promise<ArchivePlan> {
       delivery_rows: deliveries.backlog.rows,
     },
     births_observed: deps.birthInFlight !== undefined,
-    tmux: alive === null ? "unknown" : "answered",
+    workers: alive === null ? "unknown" : "answered",
     same_device: archiveDev === null || stateDev === null ? null : archiveDev === stateDev,
     max_sync_span_ms: Math.round(meter.max * 10) / 10,
     stores,

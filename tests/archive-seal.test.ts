@@ -994,7 +994,7 @@ function fakePlan(): ArchivePlan {
     deliveries: { rows: 0, cutoff: "", from_id: 0, examined: 0, windows: 0 },
     backlog: { prs: 0, bytes: 0, event_rows: 0, delivery_rows: 0 },
     births_observed: true,
-    tmux: "answered",
+    workers: "answered",
     same_device: true,
     max_sync_span_ms: 1,
   };

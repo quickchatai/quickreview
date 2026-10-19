@@ -1,4 +1,4 @@
-// The daemon↔pi boundary: birth, wake, adopt, archive and kill of the per-PR
+// The daemon↔pi boundary: birth, wake, archive and kill of the per-PR
 // pi sessions and the overseer session.
 //
 // This file is the tmux + inject-bridge host. The host-neutral half of a PR
@@ -246,13 +246,6 @@ export interface PiSessionManagerOptions {
    * session as QCR_CONFIG so its scripts read exactly the daemon's config
    * rather than re-locating one. Absent in unit wiring. */
   configPath?: string;
-}
-
-export interface AdoptionReport {
-  /** Live sandbox sessions found at daemon start — adopted, never killed. */
-  adopted: string[];
-  prs: number[];
-  overseer: boolean;
 }
 
 /** The exact newline policy both durable and direct wake files use. */
@@ -846,16 +839,6 @@ export class PiSessionManager implements SessionHooks {
       throw err;
     }
     return OVERSEER_SESSION;
-  }
-
-  /**
-   * Daemon restart: find the sandbox's live tmux sessions and take them over.
-   * Purely observational — nothing is killed or restarted here.
-   */
-  async adopt(): Promise<AdoptionReport> {
-    const names = (await this.tmux.listSessions()).filter(isSandboxSession);
-    const prs = names.map(prOfSession).filter((n): n is number => n !== undefined);
-    return { adopted: names, prs, overseer: names.includes(OVERSEER_SESSION) };
   }
 
   // ---- injection ---------------------------------------------------------
@@ -1876,15 +1859,14 @@ export class PiSessionManager implements SessionHooks {
   // ---- daemon start ------------------------------------------------------
 
   /**
-   * Daemon start: adopt live sessions and sweep worktrees whose PR is no
-   * longer active (ported preflight). Never touches a live session.
+   * Daemon start: sweep the worktrees of PRs that are no longer active (ported
+   * preflight). `keepPrs` are the active PRs plus any a worker still runs for
+   * (src/workerliveness.ts). The boot adopts no tmux `pr-*` session: whatever a
+   * worker-world boot finds is read from the leases, and a PR with none is idle
+   * with its JSONL.
    */
-  async preflight(
-    activePrs: Iterable<number>,
-  ): Promise<{ adoption: AdoptionReport; sweptWorktrees: number[] }> {
-    const adoption = await this.adopt();
-    const keep = new Set<number>([...activePrs, ...adoption.prs]);
-    const sweptWorktrees = await this.lifecycle.sweepStaleWorktrees(keep);
-    return { adoption, sweptWorktrees };
+  async preflight(keepPrs: Iterable<number>): Promise<{ sweptWorktrees: number[] }> {
+    const sweptWorktrees = await this.lifecycle.sweepStaleWorktrees(new Set<number>(keepPrs));
+    return { sweptWorktrees };
   }
 }

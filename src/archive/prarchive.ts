@@ -21,7 +21,7 @@
 //      or a byte-prefix) of the transcript `meta.json` names is removed, its
 //      `duplicate_removed` entry committed BEFORE the unlink; anything else is
 //      gzipped and kept (§7.5).
-//   7. Eligibility again, in two steps: the async tmux probe and inject
+//   7. Eligibility again, in two steps: the async worker-liveness probe and inject
 //      listing, then — synchronously, before EACH unlink — the registry, the
 //      births and every database clause. A reopen at any point stops the
 //      unlinks.
@@ -110,7 +110,7 @@ export interface PrPassDeps {
   level: number;
   bytesPerS: number;
   signal: AbortSignal;
-  /** Fresh outside facts for the eligibility rule: tmux (asked, bounded) and
+  /** Fresh outside facts for the eligibility rule: worker liveness (asked, bounded) and
    * the PR's top-level inject files. `birthInFlight` is ignored — births are
    * read synchronously through `birthInFlight` below. */
   outside: (pr: number) => Promise<OutsideFacts>;

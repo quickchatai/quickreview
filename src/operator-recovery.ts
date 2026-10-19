@@ -19,6 +19,12 @@ export interface OperatorRecoveryDeps {
   /** Required for restart-session. It must return only after the old Pi can no
    * longer acknowledge or consume the durable command slot. */
   killSession?: (pr: number) => Promise<void>;
+  /** Does a worker of this PR run now (its lease, confirmed by the process
+   * table — src/workerliveness.ts)? null = could not be asked. A running worker
+   * is a live owner beside the command rows: `rerun-round` refuses it, and
+   * `restart-session` releases ownership only once none runs. Absent = the
+   * caller has no worker host to ask. */
+  workerRuns?: (pr: number) => boolean | null;
   now?: () => Date;
 }
 
@@ -67,6 +73,17 @@ async function recoverPrForOperatorNow(
   if (row.state === "closed") return { ok: false, reason: `PR #${pr} is closed` };
 
   const blockers = deps.store.blockingSessionCommandsForPr(pr);
+  if (mode === "rerun-round") {
+    const runs = deps.workerRuns?.(pr);
+    if (runs === true || runs === null)
+      return {
+        ok: false,
+        reason:
+          runs === true
+            ? `PR #${pr} has a running worker; use restart-session to fence it`
+            : `PR #${pr}: worker leases could not be read; use restart-session to fence it`,
+      };
+  }
   if (mode === "rerun-round" && blockers.length > 0) {
     return {
       ok: false,
@@ -77,8 +94,7 @@ async function recoverPrForOperatorNow(
 
   // The worker crash-loop breaker (P8.5b) parked this PR after repeated worker
   // failures; either lever is the operator's word that it may run again.
-  if (deps.store.clearWorkerBreaker(pr))
-    deps.store.logEvent("worker_unparked", pr, { by: mode });
+  if (deps.store.clearWorkerBreaker(pr)) deps.store.logEvent("worker_unparked", pr, { by: mode });
 
   const failure = deps.store.openReviewFailure(pr);
   if (
@@ -132,6 +148,13 @@ async function recoverPrForOperatorNow(
     }
 
     await deps.killSession(pr);
+    // The kill's own answer is not the proof: the lease and the process table
+    // are. A worker still running could append to the JSONL beside a fresh one.
+    if (deps.workerRuns && deps.workerRuns(pr) !== false)
+      return {
+        ok: false,
+        reason: `PR #${pr}: a worker still runs after the fence; ownership unchanged`,
+      };
 
     // Keep the blocker in SQLite while every old inject file is moved out of
     // the bridge's *.md namespace. That closes the release→cleanup gap: no

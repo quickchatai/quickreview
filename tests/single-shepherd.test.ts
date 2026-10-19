@@ -151,9 +151,7 @@ describe("daemon topology", () => {
       expect([...live]).toEqual(["pr-5263"]);
       expect(ov).toEqual(["create pr-5263"]);
       // …and it is invisible to every session-topology surface.
-      const adoption = await m.adopt();
-      expect(adoption.adopted).toEqual(["pr-5263"]);
-      expect(adoption.prs).toEqual([5263]);
+      expect(await m.tmux.listSessions()).toEqual(["pr-5263"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

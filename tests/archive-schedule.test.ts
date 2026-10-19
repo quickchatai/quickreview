@@ -60,7 +60,7 @@ function fakePlan(at: number, prs = 3): ArchivePlan {
     deliveries: { rows: 5, cutoff: "", from_id: 0, examined: 0, windows: 0 },
     backlog: { prs, bytes: 1234, event_rows: 7, delivery_rows: 5 },
     births_observed: true,
-    tmux: "answered",
+    workers: "answered",
     same_device: true,
     max_sync_span_ms: 4.2,
   };
@@ -541,7 +541,7 @@ describe("fences — daemon bookkeeping only", () => {
     const wire = readFileSync(join(import.meta.dirname, "..", "src", "wire.ts"), "utf8");
     const daemon = readFileSync(join(import.meta.dirname, "..", "src", "daemon.ts"), "utf8");
 
-    it("built with the daemon's store, its reconcile gate, its load watch, births and the KNOWN tmux list — then started", () => {
+    it("built with the daemon's store, its reconcile gate, its load watch, births and the worker leases — then started", () => {
       const built = /archiver = new Archiver\(\{([\s\S]*?)\}\);\s*archiver\.start\(\);/.exec(wire);
       expect(built).not.toBeNull();
       const args = built![1]!;
@@ -550,10 +550,10 @@ describe("fences — daemon bookkeeping only", () => {
       expect(args).toMatch(/firstHealthyReconcileAt: \(\) => d\.firstHealthyReconcileAt\(\),/);
       expect(args).toMatch(/load: \(\) => d\.load\.status\(\),/);
       expect(args).toMatch(/starvedRatio: eventLoopPolicy\(cfg\.daemon\)\.starvedRatio,/);
-      // listSessions() folds every failure into "none alive" — the archiver
-      // must read the variant that says "could not ask".
-      expect(args).toMatch(/liveSessions: \(\) => sessions\.tmux\.listSessionsKnown\(\),/);
-      expect(args).not.toMatch(/listSessions\(\)/);
+      // Liveness is the workers' leases, never a tmux listing (which folds
+      // every failure into "none alive").
+      expect(args).toMatch(/liveSessions: async \(\) => workerLive\.liveSessions\(\),/);
+      expect(args).not.toMatch(/tmux/);
       expect(args).toMatch(/birthInFlight: \(pr\) => sessions\.birthInFlight\(pr\),/);
       expect(wire.match(/new Archiver\(/g)).toHaveLength(1);
     });

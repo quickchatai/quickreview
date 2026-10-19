@@ -29,6 +29,7 @@ import { drainLever, pauseLever, resumeLever, type LeverDeps } from "./levers.js
 import { CaseWriter } from "./cases.js";
 import { Archiver } from "./archive/archiver.js";
 import { piGlobalSessionsDir } from "./archive/piglobal.js";
+import { runDirOf } from "./ipc/capability.js";
 import { PermitBroker } from "./ipc/permits.js";
 import { LoginRefreshSupervisor } from "./loginrefresh/supervisor.js";
 import { pendingArchiveStatus } from "./archive/status.js";
@@ -119,6 +120,7 @@ import {
 } from "./openviking/provisionreport.js";
 import { countedGapSink } from "./openviking/gapsink.js";
 import { recoverPrForOperator } from "./operator-recovery.js";
+import { createWorkerLiveness, inFlightPrs } from "./workerliveness.js";
 import { resolveTerminalFailure } from "./terminal-failure.js";
 import type { MemoryStore } from "./memory/store.js";
 import { readPinnedFromSweep, startEodPinWatch, type PinnedSweepSource } from "./eodpinwatch.js";
@@ -833,6 +835,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // sessions across every worker. P8.6 hands this same broker to the
   // WorkerSupervisor, which serves its ops on the worker socket; until a worker
   // runs it holds nothing and status.json shows it idle.
+  // Worker liveness (P8.8): the archiver, the startup orphan sweep and operator
+  // recovery read the supervisor's lease files, never a tmux listing.
+  const workerLive = createWorkerLiveness({ runDir: runDirOf(join(root, "state")) });
   const lensPermits = new PermitBroker({
     ceiling: cfg.daemon.lens_permits,
     staggerMs: cfg.daemon.lens_grant_stagger_ms,
@@ -1539,9 +1544,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         learner.start();
       }
 
-      // The archiver. Its eligibility asks tmux which sessions live
-      // (unknown holds, never "none") and the session manager which births are
-      // in flight; its holds read the daemon's own load watch.
+      // The archiver. Its eligibility asks which workers run (leases the
+      // process table confirms; unknown holds, never "none") and the session
+      // manager which births are in flight; its holds read the daemon's own
+      // load watch.
       archiver = new Archiver({
         store: d.store,
         cfg: cfg.archive,
@@ -1550,7 +1556,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         firstHealthyReconcileAt: () => d.firstHealthyReconcileAt(),
         load: () => d.load.status(),
         starvedRatio: eventLoopPolicy(cfg.daemon).starvedRatio,
-        liveSessions: () => sessions.tmux.listSessionsKnown(),
+        liveSessions: async () => workerLive.liveSessions(),
         birthInFlight: (pr) => sessions.birthInFlight(pr),
         // The stores that belong to no PR. The overseer's birth record
         // says which of its files is current (unreadable = unknown = nothing
@@ -1576,20 +1582,23 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       const archiveRef = archiver;
       sessions.setBeforeBirth((pr) => archiveRef.beforeBirth(pr));
 
-      // Adopt live sessions + sweep stale worktrees (never kills a live session).
+      // Sweep stale worktrees. No tmux session is adopted: a PR with no worker
+      // is idle with its JSONL, and one a worker still runs for keeps its tree.
       const active = d.store
         .allPrs()
         .filter((p) => p.state !== "closed")
         .map((p) => p.number);
-      const pre = await sessions.preflight(active);
+      const inFlight = inFlightPrs(d.store, workerLive);
+      const pre = await sessions.preflight([...active, ...inFlight]);
       log(
-        `preflight: adopted=${pre.adoption.adopted.join(",") || "none"} swept-worktrees=${pre.sweptWorktrees.join(",") || "none"}`,
+        `preflight: workers=${inFlight.join(",") || "none"} swept-worktrees=${pre.sweptWorktrees.join(",") || "none"}`,
       );
 
-      // Rounds still marked running whose session did not survive the restart
+      // Rounds still marked running whose worker did not survive the restart
       // are phantoms: cancel them, requeue the ones whose work was truly lost.
-      // A round whose finished review the outbox still owes GitHub is not one.
-      const orphans = reconcileOrphanedRounds(d.store, pre.adoption.prs, {
+      // A round whose finished review the outbox still owes GitHub is not one,
+      // nor is one whose round command still waits for the next worker.
+      const orphans = reconcileOrphanedRounds(d.store, inFlight, {
         log,
         postingOwed: orphanPostingOwed(
           join(root, "state", "posting-receipts"),
@@ -1620,7 +1629,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       };
       const commandDeps: CommandDeps = {
         async rerunRound(pr) {
-          return recoverPrForOperator({ store: d.store, pump: () => d.pump() }, pr, "rerun-round");
+          return recoverPrForOperator(
+            { store: d.store, pump: () => d.pump(), workerRuns: (n) => workerLive.runs(n) },
+            pr,
+            "rerun-round",
+          );
         },
         async restartSession(target, deliveryKey) {
           if (target === "overseer") {
@@ -1641,6 +1654,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
               // Returns only once tmux lists the session as gone; a tmux it
               // could not ask throws, which leaves ownership unchanged.
               killSession: (pr) => sessions.killSession(pr),
+              workerRuns: (pr) => workerLive.runs(pr),
             },
             target,
             "restart-session",

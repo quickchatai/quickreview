@@ -1790,8 +1790,9 @@ async function cmdArchive(rest: readonly string[], json: boolean): Promise<numbe
     let plan: import("./archive/plan.js").ArchivePlan | null = null;
     if (args.plan) {
       const { computePlan } = await import("./archive/plan.js");
-      const { Tmux } = await import("./tmux.js");
-      const tmux = new Tmux();
+      const { createWorkerLiveness } = await import("./workerliveness.js");
+      const { runDirOf } = await import("./ipc/capability.js");
+      const workers = createWorkerLiveness({ runDir: runDirOf(join(root, "state")) });
       const { piGlobalSessionsDir } = await import("./archive/piglobal.js");
       plan = await computePlan({
         store,
@@ -1800,7 +1801,7 @@ async function cmdArchive(rest: readonly string[], json: boolean): Promise<numbe
         now: () => new Date(),
         afterDays: cfg.archive.after_days,
         eventsAfterDays: cfg.archive.events_after_days,
-        liveSessions: () => tmux.listSessionsKnown(),
+        liveSessions: async () => workers.liveSessions(),
         // This process's home: run in the container, the pihome volume.
         piGlobalDir: piGlobalSessionsDir(),
       });

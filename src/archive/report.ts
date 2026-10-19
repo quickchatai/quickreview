@@ -106,7 +106,7 @@ function planLines(plan: ArchivePlan): string[] {
     `  orphans — pi-sessions dirs with no registry row, never touched (${plan.orphans.length}): ${plan.orphans.length > 0 ? plan.orphans.join(", ") : "none"}`,
   );
   out.push(
-    `  tmux: ${plan.tmux === "answered" ? "answered" : "UNKNOWN — could not be asked; every candidate is held tmux_unknown"}`,
+    `  workers: ${plan.workers === "answered" ? "answered" : "UNKNOWN — could not be asked; every candidate is held worker_unknown"}`,
   );
   if (!plan.births_observed)
     out.push(

@@ -1024,7 +1024,7 @@ function fakePlan(backlog: { event_rows?: number; delivery_rows?: number } = {})
       delivery_rows: backlog.delivery_rows ?? 0,
     },
     births_observed: true,
-    tmux: "answered",
+    workers: "answered",
     same_device: true,
     max_sync_span_ms: 1,
   };
