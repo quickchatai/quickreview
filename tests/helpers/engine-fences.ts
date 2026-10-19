@@ -83,6 +83,10 @@ export const DAEMON_ROOTS = [
   "src/verdicts.ts",
   "src/dispatch.ts",
   "src/posting.ts",
+  // The worker supervisor (P8.5) is the daemon's end of the per-round worker. It
+  // spawns the worker BY PATH and imports its env allowlist's one shared name from
+  // src/envstrip.ts, so the engine's dispatcher and sessions never enter the daemon.
+  "src/workersupervisor.ts",
 ];
 
 /**

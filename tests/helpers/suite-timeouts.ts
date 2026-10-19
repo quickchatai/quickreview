@@ -174,5 +174,6 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/tui-sshtriage-probe.test.ts",
   "tests/tui-startup.test.ts",
   "tests/tui-tmux-socket.test.ts",
+  "tests/worker-supervisor.test.ts", // the fake worker as a real process group: kills, leases, restarts
   "tests/worktrees.test.ts",
 ];
