@@ -312,11 +312,11 @@ describe("[lens_wave] the join (D8)", () => {
     launchWave(wave, runner, planned().slice(0, 1));
     const res = await tools(runner, wave).lensWave.execute("w1", {
       dirs: [`${PASSES}/tasks`],
-      extra: { "1": "verify prior finding F1", "2": "verify prior finding F2" },
+      extra: { "1": "verify prior finding [F1]", "2": "verify prior finding [F2]" },
     });
     const d = detailsOf(res);
-    expect(runner.asked.filter((t) => t.includes("F2"))).toHaveLength(1);
-    expect(runner.asked.filter((t) => t.includes("F1"))).toHaveLength(0);
+    expect(runner.asked.filter((t) => t.includes("[F2]"))).toHaveLength(1);
+    expect(runner.asked.filter((t) => t.includes("[F1]"))).toHaveLength(0);
     expect(d.lens_wave!.extra_ignored).toEqual([expect.stringMatching(/01-pass-a\.md$/)]);
   });
 
