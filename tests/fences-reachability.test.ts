@@ -129,9 +129,8 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "only by tests/worker-supervisor.test.ts and tests/worker-lease.test.ts until P8.6 (WorkerSessionHost) " +
         "constructs it in the daemon. Delete this entry with that import.",
     })),
-    // The daemon's post ops (P7.2). The daemon does not start the worker socket yet: P8.6 wires the
-    // WorkerSupervisor (P8.5) that mints the commands the socket authenticates, and P8.7 registers these
-    // ops on it. Delete each entry with the first production import.
+    // The daemon's post ops (P7.2). The WorkerSupervisor (P8.5) serves them on the worker socket (P8.7);
+    // the daemon does not start the supervisor until P8.6. Delete each entry with that import.
     {
       file: "src/workerusage.ts",
       why:
@@ -142,15 +141,15 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
     {
       file: "src/postops.ts",
       why:
-        "the daemon's post.review / post.approval / post.reply ops on the worker socket (P7.2). Read only " +
-        "by tests/post-ops.test.ts until P8.6 wires the WorkerSupervisor (P8.5) and starts the socket and " +
-        "P8.7 registers these ops on it. Delete this entry with that import.",
+        "the daemon's post.review / post.approval / post.reply ops on the worker socket (P7.2). Imported by " +
+        "src/workersupervisor.ts, which serves them (P8.7) and is itself unreached until P8.6 constructs it " +
+        "in the daemon. Delete this entry with that import.",
     },
     {
       file: "src/posting-journal.ts",
       why:
         "the TypeScript writer of a round's receipt and outbox job (P7.2), the twin of " +
-        "scripts/posting-receipt.py. Read only by src/postops.ts, which is itself unreached until P8.6/P8.7. " +
+        "scripts/posting-receipt.py. Read only by src/postops.ts, which is itself unreached until P8.6. " +
         "Delete this entry with that import.",
     },
     {

@@ -55,6 +55,7 @@ import {
   type WorkerMode,
   type WorkerSpec,
 } from "./ipc/workerspec.js";
+import { postOps, type PostOpsDeps } from "./postops.js";
 import { verifiedPayload } from "./session-command-payload.js";
 import type { SessionCommandKind, SessionCommandRow, StateStore } from "./state.js";
 import {
@@ -246,6 +247,10 @@ export interface WorkerSupervisorDeps {
   /** What a command's IPC calls are told beyond its row: `may_post` and a
    * takeover/debug lease (P8.13, P8.17). Omitted: no post rights, no lease. */
   facts?: (row: SessionCommandRow) => Partial<Pick<CommandState, "may_post" | "lease">>;
+  /** The daemon's post ops (P8.7): `post.review`, `post.approval` and `post.reply`,
+   * run through the one gate for a host's post shims. Omitted: the daemon does not
+   * know the ops, and a shim's post is refused. */
+  post?: PostOpsDeps;
   /** Held wakes (P8.6). Omitted: the worker is told the daemon does not know the op. */
   wakes?: {
     take(ctx: RequestContext): WakeBatch[];
@@ -369,7 +374,8 @@ export class WorkerSupervisor {
     return state;
   };
 
-  /** The ops the daemon serves a worker: its spec, and (P8.6) its held wakes. */
+  /** The ops the daemon serves a worker: its spec, its post ops (P8.7), and (P8.6)
+   * its held wakes. */
   ops(): Record<string, OpHandler> {
     const ops: Record<string, OpHandler> = {
       [WORKER_SPEC_OP]: {
@@ -382,6 +388,7 @@ export class WorkerSupervisor {
         },
       },
     };
+    if (this.deps.post) Object.assign(ops, postOps(this.deps.post));
     const wakes = this.deps.wakes;
     if (wakes) {
       ops[WAKES_TAKE_OP] = {

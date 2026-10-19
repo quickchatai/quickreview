@@ -129,6 +129,29 @@ export interface PostOutcome {
   dryrun_file?: string;
 }
 
+/** The `roundOf` of a daemon that hosts workers (P8.7): the round a command
+ * posts for is its own session_commands row's. Only a `round` command has one;
+ * an answer worker, a takeover or a debug command posts unkeyed. `headOf` is the
+ * head the round reviewed (the order's `head_sha`, which its posting key names).
+ * A round whose head is unknown is refused, never posted unkeyed: a keyed round
+ * that lost its receipt would post twice. */
+export function commandRoundOf(
+  store: Pick<StateStore, "getSessionCommand">,
+  headOf: (pr: number, roundNo: number) => string | undefined,
+): PostOpsDeps["roundOf"] {
+  return (commandId, pr) => {
+    const row = store.getSessionCommand(commandId);
+    if (!row || row.pr !== pr || row.kind !== "round" || row.round_no === null) return null;
+    const head = headOf(pr, row.round_no);
+    if (!head)
+      throw new IpcError(
+        "blocked",
+        `the head round ${row.round_no} reviewed is unknown: nothing was posted`,
+      );
+    return { round_no: row.round_no, head_sha: head };
+  };
+}
+
 export function defaultResultDirs(root: string, pr: number, commandId: string): ResultDir[] {
   const prefix = `pr-${pr}-`;
   const dirs: ResultDir[] = [
