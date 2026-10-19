@@ -271,6 +271,22 @@ describe("[sdkRuntime] what is its own", () => {
     });
   });
 
+  describe("the CLI spellings it keeps", () => {
+    it("trims the first prompt as pi's piped stdin does, and sends a follow-up as written", async () => {
+      const s = await open("echo");
+      await s.prompt("\n  round order \n\n");
+      await s.followUp("  continue \n");
+      await s.dispose();
+      expect(sdk.delivered(dir)).toEqual(["round order", "  continue \n"]);
+    });
+
+    it("takes `provider/id:level` as the model, as --model does", async () => {
+      const s = await open("echo", { model: "faux/m:high" });
+      expect((await s.prompt("go")).code).toBe(0);
+      await s.dispose();
+    });
+  });
+
   describe("steer", () => {
     it("reaches the turn in flight: the model's next request carries it", async () => {
       const s = await open("slow");
