@@ -247,10 +247,14 @@ case "$verb" in
     # The model's bash there runs in the Node process's own uid, which the
     # image's tool-uid check (src/engine/tooluid.ts) refuses unless it is told
     # the shared uid is accepted; the person asking to watch has accepted it.
+    # That bash would then share a uid with the process that holds the GitHub
+    # token, so a debug round is given none: branch and uncommitted targets
+    # only, until the owner accepts a token beside the shared uid.
     for a in "$@"; do
       if [ "$a" = --debug-pi ]; then
         tty=1
         shared_uid=1
+        gh=0
       fi
     done
     ;;
@@ -708,6 +712,25 @@ done
 rc=0
 "$@" || rc=$?
 if [ "$rc" = 125 ]; then say "docker could not start the container — $PULL_HINT"; fi
+
+# The detached driver returns as soon as its container has started, and the
+# exit trap removes the token dir at once. The image reads the token file once
+# and unlinks it (takeHandoffToken), but only after its entrypoint and Node have
+# booted, so the dir must outlive that: wait for the file to be taken. A driver
+# that never takes it fails the start (the caller then stops the container).
+if [ "$rc" = 0 ] && [ "$phase" = driver ] && [ -n "$tokdir" ]; then
+  wait_s="${QCR_TOKEN_WAIT:-30}"
+  case "$wait_s" in '' | *[!0-9]*) wait_s=30 ;; esac
+  ticks=$((wait_s * 10))
+  while [ -e "$tokdir/gh-token" ] && [ "$ticks" -gt 0 ]; do
+    sleep 0.1
+    ticks=$((ticks - 1))
+  done
+  if [ -e "$tokdir/gh-token" ]; then
+    say "the review container did not take its GitHub token within ${wait_s}s"
+    rc=1
+  fi
+fi
 
 # `review stop`: the image has marked the run stopped (and freed its target);
 # now end its container. docker stop gives the driver QCR_STOP_GRACE seconds

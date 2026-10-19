@@ -124,6 +124,7 @@ for a in "$@"; do
       src=\${src%,dst=/run/qcr-in}
       printf '%s %s %s\\n' "$(stat -c %a "$src")" "$(stat -c %a "$src/gh-token")" "$(cat "$src/gh-token")" > "$f.token"
       printf '%s\\n' "$src" > "$f.tokendir"
+      tokensrc=$src
       ;;
     type=bind,src=*,dst=/out) outdir=\${a#type=bind,src=}; outdir=\${outdir%,dst=/out} ;;
   esac
@@ -141,7 +142,21 @@ case " $* " in
   *" cli version --json "*) printf '%s\\n' '{"schema_version":1,"image":{"version":"2.0.0","build_sha":null},"schemas":{"review":1,"scan":1},"pi":null}'; exit 0 ;;
 esac
 case " $* " in
-  *" --container-run "*) exit "\${FAKE_DRIVER_RC-0}" ;;
+  *" --container-run "*)
+    # the image reads the token file once and unlinks it, FAKE_TOKEN_DELAY seconds
+    # after the detached run returned (never with FAKE_TOKEN_KEEP); the file's
+    # presence at that moment is recorded
+    if [ -n "\${tokensrc-}" ] && [ -z "\${FAKE_TOKEN_KEEP-}" ]; then
+      (
+        sleep "\${FAKE_TOKEN_DELAY-0}"
+        if [ -f "$tokensrc/gh-token" ]; then
+          echo present > "$FAKE_DIR/token-present-when-taken"
+          rm -f "$tokensrc/gh-token"
+        fi
+      ) >/dev/null 2>&1 &
+    fi
+    exit "\${FAKE_DRIVER_RC-0}"
+    ;;
 esac
 exit "\${FAKE_RC-0}"
 `;
@@ -1040,6 +1055,35 @@ describe("qcr review start | status | stop: the run is a detached container", ()
     expect(tail(rs[2]!)).toEqual([IMAGE, "cli", "review", "stop", id]);
   });
 
+  it("the token dir outlives the detached run until the container has taken the token", () => {
+    const r = rig();
+    // docker run -d returns at once; the image unlinks the file a second later
+    const out = r.run(["review", "start", "--base", "main"], {
+      env: { GITHUB_TOKEN: TOKEN, FAKE_TOKEN_DELAY: "1" },
+    });
+    expect(out.status, out.stderr).toBe(0);
+    const driver = runs(r)[1]!;
+    const t = r.token(callIndex(r, driver))!;
+    expect(t.content).toBe(TOKEN);
+    // still there when the container took it, gone once the wrapper has returned
+    expect(existsSync(join(r.dir, "token-present-when-taken"))).toBe(true);
+    expect(existsSync(t.dir)).toBe(false);
+  });
+
+  it("a container that never takes the token fails the start and frees the target", () => {
+    const r = rig();
+    const out = r.run(["review", "start", "--base", "main"], {
+      env: { GITHUB_TOKEN: TOKEN, FAKE_TOKEN_KEEP: "1", QCR_TOKEN_WAIT: "1" },
+    });
+    expect(out.status).not.toBe(0);
+    expect(out.stderr).toContain("did not take its GitHub token");
+    expect(out.stderr).toContain("the review container could not be started");
+    const rs = runs(r);
+    expect(rs).toHaveLength(3);
+    expect(tail(rs[2]!).slice(2, 4)).toEqual(["review", "stop"]);
+    expect(existsSync(r.token(callIndex(r, rs[1]!))!.dir)).toBe(false);
+  });
+
   it("start --help is one plain call: nothing is claimed", () => {
     const r = rig();
     r.run(["review", "start", "--help"]);
@@ -1194,7 +1238,7 @@ describe("open and --debug-pi: -it on the state volume", () => {
   );
 
   it.skipIf(!HAS_SCRIPT)(
-    "qcr review --debug-pi in a pty is -it on the state volume, and accepts the shared tool uid",
+    "qcr review --debug-pi in a pty is -it on the state volume, accepts the shared tool uid and holds no token",
     () => {
       const r = rig();
       expect(inPty(r, ["review", "--debug-pi", "12"], { GITHUB_TOKEN: TOKEN })).toBe(0);
@@ -1204,8 +1248,11 @@ describe("open and --debug-pi: -it on the state volume", () => {
       // the person watches this session in their own terminal: pi's bash runs in the
       // process's own uid, which the image's tool-uid check refuses without this
       expect(envs(argv)).toContain("QCR_ALLOW_SHARED_TOOL_UID=1");
-      // the round reads the PR: the token goes by the file, as for any review
-      expect(r.token(callIndex(r, argv))!.content).toBe(TOKEN);
+      // pi's bash shares the uid of the process that would hold the token: none is staged
+      expect(mounts(argv).join(" ")).not.toContain("/run/qcr-in");
+      expect(envs(argv).join(" ")).not.toContain("QCR_GH_TOKEN_FILE");
+      expect(argv.join("\n")).not.toContain(TOKEN);
+      expect(r.token(callIndex(r, argv))).toBeNull();
       expect(tail(argv)).toEqual([IMAGE, "cli", "review", "--debug-pi", "12"]);
     },
   );

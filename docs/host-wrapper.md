@@ -180,11 +180,12 @@ environment.
 - `qcr review start|status|stop` make a run a container of its own (see "A
   review run is a container").
 - `qcr open` and `qcr review --debug-pi` are pi's own interactive UI: with a
-  terminal on both ends they run `-it`, on the same state volume. `open` is handed
-  no GitHub token (pi on a kept session reads none); `--debug-pi` is (the round
-  reads the PR) and is told to accept the shared tool uid
-  (`QCR_ALLOW_SHARED_TOOL_UID=1`), because pi's bash there runs in the Node
-  process's own uid, in the terminal of the person who asked to watch it.
+  terminal on both ends they run `-it`, on the same state volume. Neither is
+  handed a GitHub token: pi on a kept session reads none, and `--debug-pi` is told
+  to accept the shared tool uid (`QCR_ALLOW_SHARED_TOOL_UID=1`), because pi's bash
+  there runs in the Node process's own uid, in the terminal of the person who
+  asked to watch it, so a token beside it would reach that bash. A debug round
+  therefore takes a branch or uncommitted target, not a PR.
 - `qcr scan …` runs in the call's own container, which is the scan sandbox
   (`QCR_IN_SCAN_SANDBOX=1`); `scan start` and `scan stage2 start` get
   `--foreground`, because a driver detached in a throwaway container would end
