@@ -141,7 +141,10 @@ const DENYLIST: { token: string; why: string }[] = [
   { token: t("oper", "ator-box"), why: "the private shared operator terminal's host name" },
   { token: t("your-dev-", "project"), why: "the private GCP project id" },
   { token: t("issue-", "tracker"), why: "the private issue tracker's repository and paths" },
-  { token: t("/home/", "user"), why: "the original operator's home directory (absolute private paths)" },
+  {
+    token: t("/home/", "user"),
+    why: "the original operator's home directory (absolute private paths)",
+  },
   {
     token: t("-home-", "user"),
     why: "the operator's home directory in dashed form (Claude Code project dirs)",
@@ -340,6 +343,57 @@ const ALLOWLIST: AllowlistEntry[] = [
       "names the release and memory-sidecar images under the publishing org's registry namespace (ghcr.io/quickchatai/...)",
   },
   {
+    path: "docker-compose.yml",
+    tokens: ["quickchat"],
+    reason:
+      "names the daemon and memory-sidecar images it pulls, under the publishing org's registry namespace (ghcr.io/quickchatai/...)",
+  },
+  {
+    path: "README.md",
+    tokens: ["quickchat"],
+    reason:
+      "the install commands name the release image under the publishing org's registry namespace (ghcr.io/quickchatai/...)",
+  },
+  {
+    path: "docs/onboarding.md",
+    tokens: ["quickchat"],
+    reason:
+      "the install and bring-up commands name the release image under the publishing org's registry namespace (ghcr.io/quickchatai/...)",
+  },
+  {
+    path: "docker/daemon/README.md",
+    tokens: ["quickchat"],
+    reason:
+      "the compose stack's quick start names the release and memory images under the publishing org's registry namespace (ghcr.io/quickchatai/...)",
+  },
+  {
+    path: "src/onboard/steps/compose.ts",
+    tokens: ["quickchat"],
+    reason:
+      "the RELEASE_IMAGE_REPO / MEMORY_IMAGE_REPO constants: the images bring-up pulls, under the publishing org's registry namespace (ghcr.io/quickchatai/...), the ones release.yml pushes",
+  },
+  {
+    path: "src/onboard/steps/bringup.ts",
+    tokens: ["quickchat"],
+    reason: "its header comment names the images it pulls (ghcr.io/quickchatai/...)",
+  },
+  {
+    path: "tests/onboard-bringup.test.ts",
+    tokens: ["quickchat"],
+    reason: "pins the extraction command and image names bring-up prints (ghcr.io/quickchatai/...)",
+  },
+  {
+    path: "tests/onboard-engine.test.ts",
+    tokens: ["quickchat"],
+    reason: "pins the manifest probe's image name (ghcr.io/quickchatai/...)",
+  },
+  {
+    path: "tests/onboarding-docs.test.ts",
+    tokens: ["quickchat"],
+    reason:
+      "pins that the user docs name the release image under the registry namespace (ghcr.io/quickchatai/...)",
+  },
+  {
     path: "tests/tui-companion.test.ts",
     tokens: ["quickchat"],
     reason:
@@ -425,7 +479,16 @@ const ALLOWLIST: AllowlistEntry[] = [
   },
   {
     path: "tests/publishability.test.ts",
-    tokens: ["owner_legacy", "quickchat", "gfrost", "jbennett", "dwinchester", "avasquez-", "pmercier", "review.example.com"],
+    tokens: [
+      "owner_legacy",
+      "quickchat",
+      "gfrost",
+      "jbennett",
+      "dwinchester",
+      "avasquez-",
+      "pmercier",
+      "review.example.com",
+    ],
     reason:
       "this lint — the denylist itself plus the negative-control plants (the operator-specific tokens are built from parts, so the file never spells them)",
   },

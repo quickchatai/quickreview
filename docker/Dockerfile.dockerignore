@@ -17,6 +17,8 @@
 !config.example.toml
 !docker/entrypoint.sh
 !docker/vm/tmux.conf
+!docker-compose.yml
+!docker/tunnel
 !tests/fixtures/seed-manifest.json
 !deploy/reviewer/AGENTS.override.md
 **/node_modules

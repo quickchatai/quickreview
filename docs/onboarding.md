@@ -1,6 +1,6 @@
 # Onboarding — the guided setup, step by step
 
-`scripts/qcr onboard` takes a fresh clone to a working installation whose first
+`qcr onboard` takes a machine with Docker to a working installation whose first
 review you have watched happen. It is an interactive session: a pi agent talks
 you through what the system is *while building it*, and every act it performs is
 a named, deterministic tool whose result you see. The agent never improvises a
@@ -17,22 +17,33 @@ wizard composes exactly those tools rather than replacing them.
 
 ## Before you start
 
-- **Node ≥ 22**, **Docker**, and the **Compose v2 plugin** (`docker compose`,
-  not `docker-compose`).
-- The clone, with `npm ci` run in it once.
+- **Docker**, and the **Compose v2 plugin** (`docker compose`, not
+  `docker-compose`). Nothing else is installed on your machine: QuickReview is
+  one image, and the `qcr` command is a shell file that image writes
+  ([docs/host-wrapper.md](host-wrapper.md)). Install it once and pin it to a
+  release:
+
+  ```sh
+  gh auth refresh -s read:packages
+  gh auth token | docker login ghcr.io -u <your github login> --password-stdin
+  docker run --rm --user "$(id -u):$(id -g)" -v ~/.local/bin:/out \
+    ghcr.io/quickchatai/quickreview:<version> install
+  ```
+
+  The images are private, hence the registry login. `qcr update` moves the pin
+  to a newer release.
+
 - A GitHub account that can create a GitHub App and install it on the repository
   you want reviewed.
 - **On the server route only**: a Linux machine you already reach as `ssh
   <alias>`, with passwordless sudo there, and `ansible-playbook` installed on
   *your* machine — the deploy is an Ansible run from here, over your ssh.
 
-The wizard runs pi at the pinned version, fetched with `npx` at launch —
-`config.toml [pi]` when that file exists, and the `pi` block in `package.json`
-on a bare clone, which mirror the same pin. pi is not a dependency of this
-repo, so the first start downloads it and takes a moment. The session runs with
-no ambient extensions, exactly one onboarding extension, and a read-only
-built-in tool belt; its session store lives in `state/onboarding/pi-sessions/`
-and is never shared with the reviewer or companion sessions.
+The wizard runs pi at the pinned version (`config.toml [pi]`, which the image
+carries and checks at every start). The session runs with no ambient
+extensions, exactly one onboarding extension, and a read-only built-in tool
+belt; its session store lives in `state/onboarding/pi-sessions/` and is never
+shared with the reviewer or companion sessions.
 
 **The wizard's own pi session needs model credentials before it can say
 anything.** If you have neither a ChatGPT login on this machine nor
@@ -43,14 +54,11 @@ anything.** If you have neither a ChatGPT login on this machine nor
 ## Running it
 
 ```sh
-scripts/qcr onboard      # or: npm run onboard — the same command, either way
+qcr onboard
 ```
 
-Both entry points run the same thing: `npm run onboard` is a thin alias for the
-wrapper, which builds `dist/` once if it is missing so a fresh clone works.
-
 Run it again any time. The checklist lives in
-`state/onboarding/checklist.json`, and **a step claimed done is always
+`state/onboarding/checklist.json` (in the `qcr-state` volume), and **a step claimed done is always
 re-verified against reality before it is believed** — so a second run is a
 resume, and a run on a finished installation is a diagnostic. A corrupt or
 unreadable checklist degrades to a fresh one rather than failing, because the
@@ -89,10 +97,23 @@ topology chose.
 
 ### 10 — Preflight
 
-Checks Node ≥ 22, `docker --version`, `docker compose version`, and captures
-your user id. The uid matters: the images are built with it so the container
-user owns the files in your bind-mounted checkout. If you change user between
-here and the bring-up, this step goes red again on the next verification.
+Checks Node ≥ 22 (the wizard's own, which the image carries),
+`docker --version` and `docker compose version`, asks the registry whether the
+release image can be pulled, and captures your user id. The uid matters: the
+containers run as it, so they can read the 0600 files you own in the secrets
+directory. If you change user between here and the bring-up, this step goes red
+again on the next verification.
+
+The registry question is a note, not a failure: the images are private, so a
+missing `ghcr.io` login shows up here with its fix (`gh auth refresh -s
+read:packages`, then `gh auth token | docker login ghcr.io -u <you>
+--password-stdin`), but only the laptop route pulls the image — the server route
+builds on the server — and preflight runs before you have chosen. Bring-up's pull
+is the hard gate and carries the same fix.
+
+Where the wizard runs inside the image there is no Docker, and never will be
+(no docker CLI, no socket): preflight notes that, and bring-up prints the
+commands to run on your host.
 
 There is no disk-space or port check here. The bring-up reports Docker's own
 errors instead, and the deploy script has its own preflights.
@@ -183,11 +204,12 @@ later is just re-running this step. Model strings already pointing at some other
 provider are left alone and reported.
 
 The wizard does not accept a pasted key through the pi session (the value would
-land in a transcript). It points you at `bash deploy/collect-secrets.sh` in
-another terminal, which reads it with hidden input and writes it `0600`.
+land in a transcript). It points you at the secrets directory and the exact
+command that writes the file `0600` (`deploy/collect-secrets.sh`, from a clone,
+reads it with hidden input).
 
 **Either route: memory embeddings need nothing here.** The memory engine embeds
-locally by default, inside the daemon container, so no memory text leaves the
+locally by default, inside the memory container, so no memory text leaves the
 machine on either route — and `openai_api_key` is pi's credential alone, never
 read for embeddings. A hosted embedder is a separate, explicit opt-in with its
 own key file: step 38. This step says so as a note, never a blocker.
@@ -281,7 +303,7 @@ however many rounds it takes.
 Decides where the memory engine computes the vectors it stores and searches by.
 The shipped default is **local**: a small English embedding model
 (`bge-small-en-v1.5`, its file pinned in the image) is served on
-loopback inside the daemon container, so nothing but the model call ever leaves
+loopback inside the memory container, so nothing but the model call ever leaves
 the machine — memory text included — and no key is needed. Calling the step with no
 arguments keeps whatever `config.toml` already declares — the local default on a
 fresh install, but a hosted provider an installation already chose stays hosted.
@@ -301,7 +323,7 @@ step points you at `bash deploy/collect-secrets.sh`, which has the prompt.
 The answer reaches the boot through the route's own writer, from `config.toml`
 as the single truth: on the laptop route the bring-up step (70) mirrors it into
 the project `.env` (`QCR_OPENVIKING_EMBEDDING_*`, which `docker-compose.yml`
-passes into the container); on the server route the inventory step (68) writes
+passes into the memory container); on the server route the inventory step (68) writes
 a hosted opt-in as host vars on your inventory line (the tracked `group_vars`
 say local), and `scripts/deploy.sh` refuses to deploy if `config.toml` and that
 effective value ever disagree — that drift would reset the vector store for the
@@ -537,25 +559,44 @@ tracked-file edit would be a dirty tree, which the deploy refuses on.
 
 ### 70 — Bring the compose stack up (laptop route)
 
-Writes `QCR_UID` and `COMPOSE_PROFILES` into the project's `.env`, then runs
-`docker compose --project-directory <root> [--profile <p>] up -d --build`,
-streaming every line.
+Pulls the two released images and starts them. It writes `QCR_VERSION` (the
+release both images are pinned to), `QCR_UID`, `COMPOSE_PROFILES`, the config
+home, the secrets dir and the memory embedder's knobs into the project's
+`.env`, and `[openviking] endpoint = "remote"` with `host = "memory"` into
+`config.toml` (the daemon probes the memory service this stack runs; memory is
+a container of its own, not a process inside the daemon's). Then it runs
+`docker compose --project-directory <root> [--profile <p>] pull --ignore-buildable`
+and `... up -d`, streaming every line. Nothing is built except the tunnel you
+chose, from a small wrapper over the vendor's image.
 
-**The first build is genuinely slow.** It compiles the memory engine's local
-embedder (llama-cpp-python) from source, which on a laptop takes anywhere from
-ten minutes to an hour depending on your CPU. It also downloads the local
-embedder's model file (67 MB, from a pinned Hugging Face commit) and refuses it
-unless its sha256 matches the pin. That is expected, not a hang —
-the output is streamed line by line and the wizard prints an elapsed marker
-every 25 lines. Later builds reuse the cache and take seconds.
+**The first pull is the slow one.** It downloads the daemon image and the
+memory image, and the memory image carries its embedding model, so it is the
+larger of the two; how long that takes depends on your connection. That is
+expected, not a hang — the output is streamed line by line and the wizard
+prints an elapsed marker every 25 lines. Later starts reuse the layers already
+here and take seconds. The wizard says so before the pull starts, not after.
 
-A failed build quotes Docker's own last lines. The three commonest causes are no
-disk space (`docker system df`, then `docker system prune`), the Docker daemon
-not running, and a network failure mid-download — all safe to retry, and a retry
-resumes from the layers already built.
+A failed pull quotes Docker's own last lines. The usual causes are not being
+logged in to `ghcr.io` (the images are private: `gh auth refresh -s
+read:packages`, then `gh auth token | docker login ghcr.io -u <you>
+--password-stdin`), a `QCR_VERSION` no release carries, no disk space (`docker
+system df`, then `docker system prune`), and a network failure mid-download —
+all safe to retry, and a retry resumes from the layers already here.
+
+**Where the wizard runs inside the image, it cannot run Docker** (there is no
+docker CLI or socket in the image, by design), so this step starts nothing. It
+prints the exact commands for your host, in order — make the project
+directory, extract the compose file and the tunnel build context from the image
+(`docker run --rm --entrypoint tar ghcr.io/quickchatai/quickreview:<version> -C
+/opt/qcr -cf - docker-compose.yml docker/tunnel | tar -xf -`), write the
+`.env`, `docker compose pull`, `docker compose up -d` — and stays red until you
+have run them and run the step again to see the stack up. The paths in that
+`.env` are the install's default config home; edit those lines if yours is
+elsewhere. No secret is in any of it.
 
 Bring-up's own success bar is "the compose command succeeded and the daemon
-container is running". Whether the system *works* is step 74's question.
+and memory containers are running". Whether the system *works* is step 74's
+question.
 
 ### 71 — Deploy to the server (server route)
 
@@ -585,8 +626,8 @@ Docker on that machine what is running.
 Three layers, each meaningful only if the one before it holds. A red layer stops
 here and says what to do: nothing later would mean anything until it is fixed.
 
-1. **Containers** — the daemon (and the ingress sidecar, when your shape has
-   one) are running.
+1. **Containers** — the daemon, its memory sidecar (unless you declined memory)
+   and the ingress sidecar, when your shape has one, are running.
 2. **Health** — the daemon answers `GET /health` with `{"ok":true}`. On the
    server route this is a `curl` run on the box, because the daemon's port is
    loopback-only there.
@@ -715,7 +756,7 @@ conversation; it is not re-delivered as a mechanism, and it never nags.
 
 ## If it is interrupted
 
-Run `scripts/qcr onboard` again. Completed steps are re-verified, not repeated,
+Run `qcr onboard` again. Completed steps are re-verified, not repeated,
 and the session continues at the first unfinished one. Nothing you answered is
 asked twice: answers live in the checklist as recorded choices, and steps read
 each other's rather than re-asking.
@@ -741,10 +782,10 @@ claim until `finish_and_exit` runs green again.
 
 ## Windows
 
-There is no Windows-native path. Run everything inside **WSL2**: the clone, the
-Node toolchain, Docker (Docker Desktop's WSL2 backend, or Docker Engine inside
-the distro), and `scripts/qcr onboard` itself. The preflight step depends on a
-POSIX user id to match the container user to your checkout, and says so if it
+There is no Windows-native path. Run everything inside **WSL2**: Docker
+(Docker Desktop's WSL2 backend, or Docker Engine inside the distro), the `qcr`
+wrapper, and `qcr onboard` itself. The preflight step depends on a POSIX user
+id to match the containers' user to the files you own, and says so if it
 cannot find one.
 
 ## Slack, later
@@ -753,12 +794,19 @@ The Slack concierge is deliberately not part of onboarding. Skipping it now
 costs nothing, and setting it up later is its own guided tool:
 
 ```sh
-npm run slack:setup            # deploy/collect-slack-secrets.mjs
+npm run slack:setup            # deploy/collect-slack-secrets.mjs, from a clone: the image does not carry it yet
 ```
 
 It creates the app, collects the two tokens into your secrets dir, picks the one
 channel, builds the identity map and patches `config.toml`. It never deploys,
 never starts anything, and never touches `dry_run`.
+
+## Working on QuickReview itself
+
+A clone is for developing QuickReview, not for running it, and none of the
+above needs one. The developer route (build, test, and the wizard run from a
+checkout with `scripts/qcr onboard`) is in
+[CONTRIBUTING.md](../CONTRIBUTING.md#running-from-a-clone).
 
 ## What the wizard will not do
 

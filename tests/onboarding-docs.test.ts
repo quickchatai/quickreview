@@ -131,8 +131,10 @@ describe("the GitHub App doc matches the labels the wizard creates", () => {
 });
 
 describe("the entry point is the one the docs promise", () => {
-  // The docs tell a reader to `npm run onboard`, so that script must exist and
-  // run the wrapper.
+  // The user docs tell a reader to run `qcr onboard` (the host wrapper the
+  // image installs); the developer docs tell a contributor to run it from a
+  // clone with `scripts/qcr onboard` / `npm run onboard`, so that script must
+  // exist and run the wrapper.
   const pkg = JSON.parse(read("package.json")) as { scripts?: Record<string, string> };
 
   it("package.json carries an onboard script that runs the wrapper", () => {
@@ -147,12 +149,25 @@ describe("the entry point is the one the docs promise", () => {
   it("the wrapper the docs name exists and the CLI knows the verb", () => {
     expect(read("scripts/qcr")).toContain("dist/src/cli.js");
     expect(read("src/cli.ts")).toContain('case "onboard"');
-    expect(onboardingDoc).toContain("scripts/qcr onboard");
+    expect(read("CONTRIBUTING.md")).toContain("scripts/qcr onboard");
   });
 
-  it("both entry points are documented", () => {
-    expect(onboardingDoc).toContain("npm run onboard");
-    expect(readme).toContain("npm run onboard");
+  it("the user entry point is the host wrapper's, the clone one is in the developer section", () => {
+    expect(onboardingDoc).toContain("```sh\nqcr onboard\n```");
+    expect(readme).toContain("qcr onboard");
+    expect(read("CONTRIBUTING.md")).toContain("npm run onboard");
+    expect(read("scripts/install-wrapper.sh")).toContain("qcr");
+  });
+
+  it("the user docs install the wrapper from the image, behind the private-registry login", () => {
+    for (const [name, doc] of [
+      ["docs/onboarding.md", onboardingDoc],
+      ["README.md", readme],
+    ] as const) {
+      expect(doc, name).toContain("gh auth refresh -s read:packages");
+      expect(doc, name).toContain("docker login ghcr.io");
+      expect(doc, name).toMatch(/ghcr\.io\/quickchatai\/quickreview:<version>/);
+    }
   });
 });
 
@@ -170,13 +185,11 @@ describe("the quickstart leads with the onboarding command", () => {
   it("the manual path survives as an appendix rather than being deleted", () => {
     const appendix = readme.slice(readme.indexOf("## Appendix — setting up by hand"));
     expect(appendix, "the manual-path appendix is gone").not.toBe("");
-    for (const tool of [
-      "config.example.toml",
-      "deploy/collect-secrets.sh",
-      "docker compose up -d --build",
-    ]) {
+    for (const tool of ["config.example.toml", "docker compose pull", "docker compose up -d"]) {
       expect(appendix, `the manual path no longer mentions ${tool}`).toContain(tool);
     }
+    // the image world: pulled, never built, and no checkout to clone
+    expect(appendix).not.toMatch(/--build|git clone|npm ci/);
   });
 
   it("both topologies are advertised, and each route doc points back at the wizard", () => {

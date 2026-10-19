@@ -48,6 +48,8 @@ interface FakeHost {
   uid?: number | null;
   dockerOk?: boolean;
   composeOk?: boolean;
+  imagesOk?: boolean;
+  inContainer?: boolean;
 }
 
 function fakeAdapters(host: FakeHost = {}, calls: string[] = []): OnboardAdapters {
@@ -66,6 +68,11 @@ function fakeAdapters(host: FakeHost = {}, calls: string[] = []): OnboardAdapter
             ? { code: 0, stdout: "Docker version 27.0.0, build abc\n", stderr: "" }
             : { code: 127, stdout: "", stderr: "docker: command not found" };
         }
+        if (args[0] === "manifest") {
+          return host.imagesOk === false
+            ? { code: 1, stdout: "", stderr: "denied: requires authentication" }
+            : { code: 0, stdout: "{}", stderr: "" };
+        }
         if (args[0] === "compose") {
           return composeOk
             ? { code: 0, stdout: "Docker Compose version v2.29.0\n", stderr: "" }
@@ -78,6 +85,7 @@ function fakeAdapters(host: FakeHost = {}, calls: string[] = []): OnboardAdapter
     host: {
       nodeVersion: host.nodeVersion ?? "v22.5.1",
       uid: host.uid === undefined ? 1000 : host.uid,
+      inContainer: host.inContainer,
     },
     paths: { stateDir, configPath: join(dirname(stateDir), "config.toml") },
   };
@@ -108,7 +116,13 @@ describe("preflight step lifecycle", () => {
     const e = engine();
     const result = await e.runStep(PREFLIGHT_STEP_ID);
     expect(result.ok).toBe(true);
-    expect(result.checks.map((c) => c.name)).toEqual(["node", "docker", "compose", "uid"]);
+    expect(result.checks.map((c) => c.name)).toEqual([
+      "node",
+      "docker",
+      "compose",
+      "images",
+      "uid",
+    ]);
     expect(e.choices()[UID_CHOICE_KEY]).toBe(1000);
 
     const file = readChecklist(stateDir);
@@ -136,6 +150,39 @@ describe("preflight step lifecycle", () => {
     expect(noUid.failures.some((f) => f.startsWith("uid:"))).toBe(true);
     // A failed run must not half-record the uid choice.
     expect(readChecklist(stateDir)?.choices[UID_CHOICE_KEY]).toBeUndefined();
+  });
+
+  it("asks the registry for the release image and, when it is refused, notes the login fix without failing", async () => {
+    const calls: string[] = [];
+    const ok = await engine({}, calls).runStep(PREFLIGHT_STEP_ID);
+    expect(ok.ok).toBe(true);
+    expect(calls.find((c) => c.startsWith("docker manifest inspect"))).toMatch(
+      /^docker manifest inspect ghcr\.io\/quickchatai\/quickreview:\S+$/,
+    );
+
+    const refused = await engine({ imagesOk: false }).runStep(PREFLIGHT_STEP_ID);
+    // a note, not a failure: the server route builds on the server and the
+    // laptop route's pull is the hard gate
+    expect(refused.ok).toBe(true);
+    const detail = refused.checks.find((c) => c.name === "images")!.detail;
+    expect(detail).toMatch(/gh auth refresh -s read:packages/);
+    expect(detail).toMatch(/docker login ghcr\.io/);
+    expect(detail).toMatch(/requires authentication/);
+  });
+
+  it("inside the image there is no Docker, and that is noted, not failed (D16)", async () => {
+    const calls: string[] = [];
+    const inImage = await engine({ dockerOk: false, inContainer: true }, calls).runStep(
+      PREFLIGHT_STEP_ID,
+    );
+    expect(inImage.ok).toBe(true);
+    expect(inImage.checks.find((c) => c.name === "docker")!.detail).toMatch(
+      /host commands|commands to run on your host/,
+    );
+    expect(calls.some((c) => c.includes("manifest"))).toBe(false);
+    // the same missing Docker on a bare host is still a failure
+    const bare = await engine({ dockerOk: false }).runStep(PREFLIGHT_STEP_ID);
+    expect(bare.ok).toBe(false);
   });
 
   it("unknown and throwing steps are refusals, never throws", async () => {

@@ -498,7 +498,7 @@ describe("resume and verify", () => {
     // It really asked docker, and it read the hostname back through the
     // DAEMON's own path — the file contract, proven where it is consumed.
     const cat = f.calls.find((c) => c.includes("cat"));
-    expect(cat).toContain("/opt/quickreview/state/ingress/hostname");
+    expect(cat).toContain("/opt/qcr/state/ingress/hostname");
     expect(cat).toContain("daemon");
   });
 

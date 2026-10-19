@@ -12,8 +12,8 @@ walkthroughs already exist and are not repeated here — this page links them:
 - [../github-app-setup.md](../github-app-setup.md) — registering the App by
   hand, permission and event tables, where each value lands.
 - [../llm-setup.md](../llm-setup.md) — the two model-credential routes.
-- [../../docker/daemon/README.md](../../docker/daemon/README.md) — the plain
-  Docker route: containers, ingress shapes, image pins.
+- [../../docker/daemon/README.md](../../docker/daemon/README.md) — the compose
+  stack: the daemon and memory images, ingress shapes, version pin.
 - [../../deploy/ansible/README.md](../../deploy/ansible/README.md) — the
   server route: provisioning, deploy, verification.
 - [../memory-embeddings.md](../memory-embeddings.md) — the embedder choice and
@@ -134,7 +134,7 @@ Registered in `defaultSteps()` (`src/onboard/steps/index.ts`), executed in
 
 | Order | Id | File | What it establishes / verifies |
 |---|---|---|---|
-| 10 | `preflight` | `preflight.ts` | Node ≥ 22, Docker and Compose present, the operator's uid captured (later passed as the image build's `REVIEW_UID`, so container files stay theirs) |
+| 10 | `preflight` | `preflight.ts` | Node ≥ 22, Docker and Compose present, the release image noted as pullable (a missing ghcr.io login comes with its fix), the operator's uid captured (later written as `QCR_UID`, the containers' user, so they can read the secrets the operator owns) |
 | 20 | `topology` | `topology.ts` | Where the reviewer lives. Both answers first-class; switching later demands an explicit confirmation phrase and tears nothing down behind the operator |
 | 22 | `ssh_preflight` | `ssh.ts` | *(vm only, and first on that route)* the alias resolves, an agent holds the key, `ansible-playbook` is on this machine, remote sudo is passwordless — all under `BatchMode=yes` |
 | 30 | `llm_auth` | `llmauth.ts` | The model-credential route, and the whole installation made consistent with it (including rewriting model prefixes for the API-key route). No credential value ever reaches an argv or a tool result |
@@ -146,7 +146,7 @@ Registered in `defaultSteps()` (`src/onboard/steps/index.ts`), executed in
 | 60 | `memory` | `memory.ts` | Memory phase A: the server's root key on disk before the daemon boots, and where each of the three keys may live |
 | 65 | `app_slug_reconcile` | `appslug.ts` | Asks `GET /app` with the App JWT and reconciles the real slug into `[github] app_slug` / `bot_login`; the live answer wins over file and checklist |
 | 68 | `vm_inventory` | `inventory.ts` | *(vm only)* writes `deploy/ansible/inventory.ini` — the file the manual route already reads — carrying route answers as **host vars**, so no tracked file is dirtied |
-| 70 | `bringup` | `bringup.ts` | *(local)* `docker compose up --build` with the profile explicit, the long first build streamed line by line, warned about *before* the wait |
+| 70 | `bringup` | `bringup.ts` | *(local)* `docker compose pull` then `up -d` on the released images with the profile explicit, the long first pull streamed line by line, noted *before* the wait; with no Docker where the wizard runs (inside the image) it prints the host's commands instead |
 | 71 | `vm_deploy` | `vmdeploy.ts` | *(vm)* composes `scripts/deploy.sh` — plan first, always — with every refusal landing unchanged |
 | 72 | `memory_user_keys` | `memorykeys.ts` | Memory phase B: drives the *same* memory step again now the server answers, minting and placing the two user keys and proving confinement |
 | 74 | `verify_stack` | `verifyup.ts` | Three layers in order: container state, `GET /health`, then a webhook ping read from the App's own delivery log (a failed ping is redelivered once) |

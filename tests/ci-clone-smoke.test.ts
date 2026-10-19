@@ -193,11 +193,17 @@ describe("clone-smoke.sh", () => {
 });
 
 describe("the user docs leave the clone route out", () => {
-  // docs/onboarding.md still opens with the clone today; P6.15 rewrites it for
-  // the Docker install only and moves the clone route to a developer section.
-  it.skip("docs/onboarding.md has no clone-install instruction (enabled by P6.15)", () => {
+  // docs/onboarding.md is for the Docker install only; the clone route is in
+  // CONTRIBUTING.md's developer section.
+  it("docs/onboarding.md has no clone-install instruction", () => {
     const doc = read("docs/onboarding.md");
     expect(doc).not.toMatch(/git clone|npm (ci|install)\b|npm run build/);
     expect(doc).not.toMatch(/fresh clone|The clone, with/i);
+  });
+
+  it("the clone route is documented, in the developer section", () => {
+    const dev = read("CONTRIBUTING.md");
+    expect(dev).toMatch(/## Running from a clone/);
+    expect(dev).toContain("scripts/qcr onboard");
   });
 });

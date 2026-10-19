@@ -3,27 +3,38 @@
 // the compose stack, in one place so the four steps cannot drift apart in how
 // they name a service, reach the daemon, or restart it.
 //
+// The stack is the released images, pulled (`ghcr.io/quickchatai/quickreview`
+// and `-memory`, pinned by QCR_VERSION in the project `.env`): nothing here
+// builds the app. Only the tunnel sidecars are built, from the thin wrappers in
+// docker/tunnel/ that the release image carries.
+//
 // Two seams live here:
 //
 //   * `ProcessRunner` (the engine adapter) for every short command — compose
 //     ps, an exec into the daemon, reading a file out of the container. These
 //     answer in seconds and their whole output matters.
 //   * `StreamRunner` (a step option, defaulted here) for the long ones — the
-//     first `docker compose up --build` compiles the local embedder from
-//     source and runs for tens of minutes. The engine's runner returns only
-//     when the child is done and caps its wait at a minute, so a build driven
-//     through it would look like a hang and then fail on a timeout. The
-//     streaming runner reports every line as it arrives and has no timeout of
-//     its own. Same discipline as the GitHub App step's callback-server seam:
-//     an extra injectable that tests replace wholesale, never a second
-//     ambient I/O path.
+//     first `docker compose pull` downloads two images, the memory one with
+//     its embedding model inside, and runs for minutes. The engine's runner
+//     returns only when the child is done and caps its wait at a minute, so a
+//     pull driven through it would look like a hang and then fail on a
+//     timeout. The streaming runner reports every line as it arrives and has
+//     no timeout of its own. Same discipline as the GitHub App step's
+//     callback-server seam: an extra injectable that tests replace wholesale,
+//     never a second ambient I/O path.
 //
+// The wizard may itself run inside the release image (`qcr onboard`), where
+// there is no Docker (the image never carries docker.sock or a docker CLI).
+// Then it cannot pull or start anything: `hostCommands` renders the exact
+// commands for the HOST instead, and the bring-up step prints them.
+
 // Nothing here knows about GitHub, and nothing here writes config.toml — the
 // only step that may touch `dry_run` is golive.ts, and it is the only
 // onboarding file that writes that key at all (root CLAUDE.md rule 1).
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { sandboxRoot as packageRoot } from "../../config.js";
 import {
   readTextOrNull,
   sandboxRoot,
@@ -40,6 +51,7 @@ import {
   optionFor,
   parseComposePs,
   readEnvKey,
+  readTomlKey,
   secretsDirFor,
   type IngressOption,
   type RunningService,
@@ -51,10 +63,18 @@ export { isUp, readTextOrNull, secretsDirFor, writeAtomic };
 
 /** The compose service that runs the daemon (docker-compose.yml). */
 export const DAEMON_SERVICE = "daemon";
+/** The compose service that runs the memory sidecar (docker/memory/). */
+export const MEMORY_SERVICE = "memory";
+
+/** The released images (docker/Dockerfile, docker/memory/Dockerfile), tagged
+ * by version: what .github/workflows/release.yml pushes. */
+export const RELEASE_IMAGE_REPO = "ghcr.io/quickchatai/quickreview";
+export const MEMORY_IMAGE_REPO = "ghcr.io/quickchatai/quickreview-memory";
 
 /** Where the container roots its state — the same absolute path the ingress
- * step's hostname check and the docs use. */
-export const CONTAINER_STATE_DIR = "/opt/quickreview/state";
+ * step's hostname check and the docs use (the release image's app root is
+ * /opt/qcr, and <root>/state is its one writable directory). */
+export const CONTAINER_STATE_DIR = "/opt/qcr/state";
 export const CONTAINER_DRYRUN_DIR = `${CONTAINER_STATE_DIR}/dryrun`;
 
 /** `<sandbox root>` — the engine's contract is stateDir = `<root>/state`. */
@@ -81,6 +101,31 @@ export function readEnvText(root: string): string {
   return readTextOrNull(join(root, ".env")) ?? "";
 }
 
+/** The image tag the stack runs: the project `.env`'s QCR_VERSION (the pin an
+ * earlier bring-up wrote, which a later wizard run must not silently move),
+ * else the version of the package this wizard is running from. */
+export function releaseVersion(root: string): string {
+  const pinned = (readEnvKey(readEnvText(root), "QCR_VERSION") ?? "").trim();
+  if (pinned !== "") return pinned;
+  try {
+    const pkg = JSON.parse(readFileSync(join(packageRoot(), "package.json"), "utf8")) as {
+      version?: unknown;
+    };
+    if (typeof pkg.version === "string" && pkg.version !== "") return pkg.version;
+  } catch {
+    // no package.json to read: the floating tag below, which the pull then reports on
+  }
+  return "latest";
+}
+
+export function releaseImage(version: string): string {
+  return `${RELEASE_IMAGE_REPO}:${version}`;
+}
+
+export function memoryImage(version: string): string {
+  return `${MEMORY_IMAGE_REPO}:${version}`;
+}
+
 /** The ingress shape the operator picked, or null when none is recorded. */
 export function ingressOptionOf(choices: Readonly<Record<string, unknown>>): IngressOption | null {
   return optionFor(String(choices[INGRESS_CHOICE_KEY] ?? ""));
@@ -91,6 +136,14 @@ export function ingressOptionOf(choices: Readonly<Record<string, unknown>>): Ing
 /** Every compose invocation the onboarding steps make, built in one place. */
 export function composeArgs(root: string, rest: readonly string[]): string[] {
   return ["compose", "--project-directory", root, ...rest];
+}
+
+/** `docker compose [--profile p] pull --ignore-buildable`: the two released
+ * images. The tunnel sidecars are built from their wrappers, not pulled, so
+ * they are skipped (`--ignore-buildable`) rather than failing the pull. */
+export function pullArgs(root: string, profile: string): string[] {
+  const profileArgs = profile === "" ? [] : ["--profile", profile];
+  return composeArgs(root, [...profileArgs, "pull", "--ignore-buildable"]);
 }
 
 /** `docker compose exec -T daemon <argv…>` — `-T` because there is no TTY. */
@@ -143,9 +196,10 @@ export interface StreamRunner {
 
 /**
  * The real one: spawn, split both streams into lines, and hand each line to
- * the caller as it arrives. Deliberately without a timeout — the first image
- * build compiles llama-cpp-python from source and legitimately runs for tens
- * of minutes; a timeout here would kill exactly the case this exists for.
+ * the caller as it arrives. Deliberately without a timeout — the first pull
+ * downloads the memory image (its embedding model is a layer) over whatever
+ * link the operator has and can legitimately run for many minutes; a timeout
+ * here would kill exactly the case this exists for.
  */
 export const nodeStreamRunner: StreamRunner = {
   run: (cmd, args, onLine) =>
@@ -241,8 +295,14 @@ export async function restartDaemon(
 
 // ---- small shared checks -----------------------------------------------------
 
-/** The daemon container's state, as one check with its own fix. */
-export function containerStateCheck(ps: PsReport, ingress: IngressOption | null): CheckResult[] {
+/** The daemon container's state, as one check with its own fix. `memory`: the
+ * stack also runs the memory sidecar (config.toml `[openviking]` is on), so
+ * its container is checked too. */
+export function containerStateCheck(
+  ps: PsReport,
+  ingress: IngressOption | null,
+  opts: { memory?: boolean } = {},
+): CheckResult[] {
   if (!ps.ok) {
     return [
       {
@@ -271,6 +331,24 @@ export function containerStateCheck(ps: PsReport, ingress: IngressOption | null)
             "Fix: `docker compose logs --tail 200 daemon` says why it stopped; `docker compose up -d` starts it again",
         },
   );
+  if (opts.memory) {
+    const memory = serviceRow(ps.rows, MEMORY_SERVICE);
+    checks.push(
+      isUp(memory)
+        ? {
+            name: "memory-sidecar",
+            ok: true,
+            detail: `the ${MEMORY_SERVICE} sidecar is ${memory!.state}`,
+          }
+        : {
+            name: "memory-sidecar",
+            ok: false,
+            detail:
+              `the ${MEMORY_SERVICE} sidecar (OpenViking, the review memory) is ${memory ? memory.state : "not there at all"} — ` +
+              "Fix: `docker compose logs --tail 200 memory` says why it stopped; `docker compose up -d` starts it again",
+          },
+    );
+  }
   if (ingress?.service) {
     const sidecar = serviceRow(ps.rows, ingress.service);
     checks.push(
@@ -303,14 +381,64 @@ export function contextRoot(ctx: StepContext): string {
   return rootOf(ctx.adapters);
 }
 
-/** Does the checkout still look like a checkout? (A compose file we can drive.) */
-export function composeFileCheck(root: string): CheckResult {
+/** Does config.toml leave memory on? Only an explicit `enabled = false` (a
+ * declined memory setup) turns it off. */
+export function memoryOn(configText: string): boolean {
+  return readTomlKey(configText, "openviking", "enabled") !== "false";
+}
+
+/** Is there a compose file in the project directory to drive? */
+export function composeFileCheck(root: string, version = releaseVersion(root)): CheckResult {
   const path = join(root, "docker-compose.yml");
   return existsSync(path)
     ? { name: "compose-file", ok: true, detail: `${path} is the stack this step drives` }
     : {
         name: "compose-file",
         ok: false,
-        detail: `${path} is missing — Fix: run the wizard from the QuickReview checkout (the compose file ships with it)`,
+        detail: `${path} is missing — Fix: the release image carries it; in ${root} run \`${extractCommand(version)}\``,
       };
+}
+
+/** The one command that puts the compose file and the tunnel wrappers' build
+ * context from the release image into the current directory. */
+export function extractCommand(version: string): string {
+  return (
+    `docker run --rm --entrypoint tar ${releaseImage(version)} ` +
+    "-C /opt/qcr -cf - docker-compose.yml docker/tunnel | tar -xf -"
+  );
+}
+
+/** Can this process drive Docker Compose at all? `false` is the normal answer
+ * inside the release image, which never carries a docker CLI or socket. */
+export async function composeAvailable(runner: ProcessRunner): Promise<boolean> {
+  const r = await runner.run("docker", ["compose", "version"]);
+  return r.code === 0;
+}
+
+export interface HostCommandsInput {
+  version: string;
+  /** The directory on the host that holds the project (compose file, .env). */
+  projectDir: string;
+  /** The project .env's lines, `KEY=value`, in order. */
+  env: readonly string[];
+  /** The compose profile the ingress step chose; "" is the daemon alone. */
+  profile: string;
+}
+
+/**
+ * The exact commands for the HOST, in order — what the wizard prints when it
+ * cannot run Docker itself. No secret is in them: the .env holds paths,
+ * a port, a uid, a version pin and the embedder's non-secret knobs; every
+ * credential stays in the files the secrets directory already holds.
+ */
+export function hostCommands(input: HostCommandsInput): string[] {
+  const profile = input.profile === "" ? [] : ["--profile", input.profile];
+  const compose = ["docker", "compose", ...profile].join(" ");
+  return [
+    `mkdir -p ${input.projectDir} && cd ${input.projectDir}`,
+    extractCommand(input.version),
+    ["cat > .env <<'QCR_ENV'", ...input.env, "QCR_ENV"].join("\n"),
+    `${compose} pull --ignore-buildable`,
+    `${compose} up -d`,
+  ];
 }
