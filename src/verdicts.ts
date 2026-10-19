@@ -3199,7 +3199,11 @@ export class VerdictWatcher {
         // windows whose records carried no cost object.
         const pricing: Record<string, ModelPricing> =
           this.deps.usage?.pricing ?? cfg.models.pricing ?? {};
-        const est = usage.cost_usd ?? estimateUsd(usage.models, pricing);
+        // The worker's own total (session, in-process lenses, warm-ups) when it closed
+        // its report; the transcript's figure for a crashed or re-run worker and for
+        // the tmux routes, which report nothing.
+        const reported = store.workerReportedUsd(roundId);
+        const est = reported ?? usage.cost_usd ?? estimateUsd(usage.models, pricing);
         store.recordRoundUsage(roundId, {
           tokens_in: usage.tokens_in,
           tokens_out: usage.tokens_out,

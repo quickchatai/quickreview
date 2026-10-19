@@ -718,7 +718,10 @@ const SESSION_COMMAND_COLUMNS_SQL = `(
   started_at     TEXT,
   settled_at     TEXT,
   failed_at      TEXT,
-  failure        TEXT
+  failure        TEXT,
+  est_usd        REAL,
+  lens_usd       REAL,
+  usage_final    INTEGER NOT NULL DEFAULT 0
 )`;
 
 const SESSION_COMMAND_INDEXES_SQL = `
@@ -1628,6 +1631,14 @@ export interface SessionCommandRow {
   settled_at: string | null;
   failed_at: string | null;
   failure: string | null;
+  /** What the command's worker reported it spent: the session, its in-process
+   * lenses and the warm-ups. Null until a report arrives. */
+  est_usd: number | null;
+  /** The lens share of `est_usd`. */
+  lens_usd: number | null;
+  /** 1 once the worker's closing report arrived: `est_usd` is the whole command's
+   * spend. Before it, a figure is a partial (and a crashed worker never closes). */
+  usage_final: number;
 }
 
 export interface SupervisorLeaseRow {
@@ -1884,6 +1895,11 @@ export class StateStore {
       // start lease ran out on a live, ready bridge — bounded on their own,
       // before any kill-and-replay recovery is spent.
       "ALTER TABLE session_commands ADD COLUMN redeliveries INTEGER NOT NULL DEFAULT 0",
+      // What the command's worker reported it spent (P8.9). `usage_final` is set
+      // only by the worker's closing report; a figure without it is a crash's partial.
+      "ALTER TABLE session_commands ADD COLUMN est_usd REAL",
+      "ALTER TABLE session_commands ADD COLUMN lens_usd REAL",
+      "ALTER TABLE session_commands ADD COLUMN usage_final INTEGER NOT NULL DEFAULT 0",
       // Durable circuit-breaker generation and due time. Nullable due
       // means this failure remains in the operator-owned classes.
       "ALTER TABLE review_failures ADD COLUMN retry_epoch INTEGER NOT NULL DEFAULT 0",
@@ -2644,6 +2660,50 @@ export class StateStore {
     return this.db
       .prepare("SELECT * FROM rounds WHERE usage_owed_to IS NOT NULL ORDER BY id")
       .all() as RoundRow[];
+  }
+
+  /** A worker's spend report for its command (P8.9). Overwrites: the figures only
+   * grow within a worker, so the latest is the fullest. A closed report is never
+   * reopened by a late partial. */
+  recordCommandUsage(
+    commandId: string,
+    usage: { est_usd: number; lens_usd: number | null; final: boolean },
+  ): boolean {
+    return (
+      this.db
+        .prepare(
+          `UPDATE session_commands
+              SET est_usd = ?, lens_usd = ?, usage_final = ?, updated_at = ?
+            WHERE id = ? AND usage_final = 0`,
+        )
+        .run(usage.est_usd, usage.lens_usd, usage.final ? 1 : 0, this.ts(), commandId).changes > 0
+    );
+  }
+
+  /** What the workers of a round reported it cost, or null when the transcripts
+   * must measure it instead: no command of the round reported, or one that was
+   * claimed has no closed, single-worker report. A crashed worker's figure is a
+   * partial, and a requeued, recovered or redelivered command's last worker did
+   * not see the spend of the one before it. Rows never claimed cost nothing. */
+  workerReportedUsd(roundId: number): number | null {
+    const rows = this.db
+      .prepare(
+        `SELECT c.est_usd, c.usage_final, c.attempt, c.recovery_attempts, c.redeliveries
+           FROM session_commands c JOIN rounds r ON r.pr = c.pr AND r.round_no = c.round_no
+          WHERE r.id = ? AND c.kind = 'round'`,
+      )
+      .all(roundId) as Pick<
+      SessionCommandRow,
+      "est_usd" | "usage_final" | "attempt" | "recovery_attempts" | "redeliveries"
+    >[];
+    let total: number | null = null;
+    for (const r of rows) {
+      if (r.attempt === 0) continue;
+      const single = r.attempt === 1 && r.recovery_attempts === 0 && r.redeliveries === 0;
+      if (!single || r.usage_final !== 1 || r.est_usd === null) return null;
+      total = (total ?? 0) + r.est_usd;
+    }
+    return total;
   }
 
   /** Measured usage for a round (pi session JSONLs). Overwrites —
