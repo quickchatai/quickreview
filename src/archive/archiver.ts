@@ -88,7 +88,12 @@ import {
   type PlanMemo,
 } from "./plan.js";
 import { OVERSEER_STORE, archiveOverseer } from "./overseer.js";
-import { overLiveCap, sweepLiveTrees } from "./liveretention.js";
+import {
+  overLiveCap,
+  sweepLiveTrees,
+  type LiveSweepOptions,
+  type LiveSweepResult,
+} from "./liveretention.js";
 import { archivePiGlobal } from "./piglobal.js";
 import { archivePr, type PrPassResult } from "./prarchive.js";
 import { SpanMeter, injectDirOf, listLiveTree, knownInjectFiles } from "./prfiles.js";
@@ -301,6 +306,8 @@ export interface ArchiverDeps {
   step?: StepFn;
   /** Seam: the plan computation (default: src/archive/plan.ts). */
   plan?: (opts: { signal: AbortSignal; memo: PlanMemo }) => Promise<ArchivePlan>;
+  /** Seam: the worker-log sweep (default: `sweepLiveTrees`). */
+  sweepLive?: (o: LiveSweepOptions) => Promise<LiveSweepResult>;
   /** The DB mover's pause between batches (default: a real 100 ms timer). */
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   /** The DB mover's span clock (default `performance.now`). */
@@ -1733,7 +1740,7 @@ export class Archiver {
     const nowMs = at.getTime();
     if (!due && this.liveSweptAtMs !== null && nowMs - this.liveSweptAtMs < PLAN_REFRESH_MS) return;
     try {
-      const r = await sweepLiveTrees({
+      const r = await (this.deps.sweepLive ?? sweepLiveTrees)({
         root: this.deps.root,
         now: this.now(),
         retentionMs: this.policy.liveRetentionMs,
