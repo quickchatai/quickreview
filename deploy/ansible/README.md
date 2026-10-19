@@ -157,17 +157,34 @@ config that says otherwise.
 
 ### Pulling the release
 
-The images are private. Once per VM, log it in with a token that can read
-packages (and nothing else):
+The images are private. The VM pulls them with ONE credential: your own CLASSIC
+personal access token, scoped `read:packages` and nothing else, stored by
+`docker login` in root's docker config on the VM host (never in a container,
+env, argv or the secrets directory; CLAUDE.md rule 3). Not the token `gh auth
+token` prints: that one carries the full scopes of your gh login.
+
+Once per VM, and again when the token is renewed (it expires after one year):
+
+1. On github.com, Settings, Developer settings, Personal access tokens, Tokens
+   (classic): a new token, expiration one year, the single scope
+   `read:packages`.
+2. Once a version is published, on the controller:
 
 ```
-gh auth refresh -s read:packages
-gh auth token | ssh <vm> sudo docker login ghcr.io -u <your github login> --password-stdin
+scripts/vm-ghcr-login.sh --version <published X.Y.Z>        # paste the token, then Ctrl-D
+scripts/vm-ghcr-login.sh --version <X.Y.Z> --token-file <0600 file>
 ```
 
-That leaves a read-only registry credential in root's docker config on the VM;
-delete it with `ssh <vm> sudo docker logout ghcr.io` once images are pulled by
-some other means.
+The script refuses a token unless GitHub reports its scopes as exactly
+`read:packages` and it has an expiry, runs `ssh <vm> sudo docker login ghcr.io
+-u <you> --password-stdin`, checks the login with `docker manifest inspect` of
+both images at that version, and records the expiry on the controller. It is
+idempotent, and the token is never an argument or an environment variable.
+
+`scripts/deploy.sh release <version>` runs the same manifest check first (also
+under `--dry-run`) and refuses, with nothing changed, when the VM cannot read
+either image. `scripts/deploy.sh verify` warns 14 days before the recorded
+expiry. `ssh <vm> sudo docker logout ghcr.io` removes the login.
 
 ### The cutover (legacy image to release image)
 

@@ -275,9 +275,11 @@
         memory_image: "{{ (release_memory_image ~ ':' ~ release_version) if image_source == 'release' else (memory_image_name ~ ':' ~ memory_image_tag) }}"
 
     # The release images are private. The VM needs its own `docker login
-    # ghcr.io` (read:packages), done once by the operator -- README, "Pulling
-    # the release". A failed pull stops here, before the rsync and the restart,
-    # so the old container keeps running.
+    # ghcr.io` (the owner's classic read:packages token), done once with
+    # scripts/vm-ghcr-login.sh -- README, "Pulling the release". deploy.sh has
+    # already checked both images with `docker manifest inspect`; a failed pull
+    # still stops here, before the rsync and the restart, so the old container
+    # keeps running.
     - name: Pull the release images
       when: image_source == 'release'
       block:
@@ -293,9 +295,9 @@
           ansible.builtin.fail:
             msg: >-
               Pulling {{ daemon_image }} / {{ memory_image }} failed. Both are
-              private: log the VM in once (`gh auth refresh -s read:packages`,
-              then `gh auth token | ssh <vm> sudo docker login ghcr.io -u <login>
-              --password-stdin`) and check that version {{ release_version }}
+              private: log the VM in with scripts/vm-ghcr-login.sh (the owner's
+              classic read:packages token; it runs `sudo docker login ghcr.io`
+              on the VM) and check that version {{ release_version }}
               was published. Nothing was changed on the VM; the old container is
               still running.
 

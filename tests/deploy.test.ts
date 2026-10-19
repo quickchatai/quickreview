@@ -3,8 +3,9 @@
 // real ansible asset, and no live deploy ever runs: every case stops at
 // --dry-run or at a refusal.
 import { afterEach, describe, expect, it } from "vitest";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdtempSync,
@@ -322,8 +323,13 @@ function run(
         QC_ANSIBLE_DIR: e.ansible,
         QC_INVENTORY: join(e.ansible, "inventory.ini"),
         XDG_CONFIG_HOME: e.xdg,
+        // The recorded ghcr token expiry is read from the state home: never the operator's.
+        XDG_STATE_HOME: join(e.dir, "state-home"),
+        QCR_GHCR_EXPIRY_FILE: "",
         QCR_CONFIG: "",
         QCR_INSTALL: "",
+        // A release's pull check reads the VM over ssh; by default the stub finds both images.
+        QC_PULL_CHECK_CMD: "true",
         ...extraEnv,
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -2885,5 +2891,463 @@ describe("scripts/memory-search-check.mjs", () => {
     expect(out.join("\n")).not.toContain("SECRET-KEY");
     expect(out.join("\n")).toContain("memory search ok against http://m:1933");
     expect(out.join("\n")).toContain("ENOTFOUND");
+  });
+});
+
+// ---- the VM's ghcr pull credential (P7.13) ----------------------------------
+//
+// A release is pulled by the VM's own docker with the owner's classic
+// read:packages login. deploy.sh checks the VM can read both images before
+// anything changes, and `verify` warns before the recorded token expiry;
+// scripts/vm-ghcr-login.sh is the one writer of that login. Every command here
+// is a stub: no network, no ssh, no docker.
+describe("deploy.sh — the release pull check and the token expiry warning", () => {
+  const scratch = (): Env => makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+
+  /** A stub ansible-playbook and ssh on PATH; `ansible` is where the playbook's argv lands. */
+  function stubBin(e: Env): { PATH: string; ansibleSeen: string; sshLog: string } {
+    const bin = join(e.dir, "bin");
+    mkdirSync(bin, { recursive: true });
+    const ansibleSeen = join(e.dir, "ansible-argv");
+    const sshLog = join(e.dir, "ssh-log");
+    writeFileSync(
+      join(bin, "ansible-playbook"),
+      `#!/bin/sh\nprintf '%s\\n' "$*" > '${ansibleSeen}'\nexit 7\n`,
+      { mode: 0o755 },
+    );
+    writeFileSync(join(bin, "ssh"), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${sshLog}'\nexit 0\n`, {
+      mode: 0o755,
+    });
+    return { PATH: `${bin}:${process.env.PATH ?? ""}`, ansibleSeen, sshLog };
+  }
+
+  const RELEASE_LAYOUT =
+    "printf 'image=ghcr.io/quickchatai/quickreview:0.1.0\\nlabel=abc1234\\nmarker=\\n'";
+
+  it("checks both images at the version, over the VM's own docker, and the plan shows it", () => {
+    env = scratch();
+    const log = join(env.dir, "refs");
+    const r = run(env, ["--dry-run", "release", "0.1.0"], {
+      QC_PULL_CHECK_CMD: `printf '%s\\n' "$1" >> '${log}'`,
+      QC_VM_LAYOUT_CMD: RELEASE_LAYOUT,
+    });
+    expect(r.code).toBe(0);
+    expect(readFileSync(log, "utf8").trim().split("\n")).toEqual([
+      "ghcr.io/quickchatai/quickreview:0.1.0",
+      "ghcr.io/quickchatai/quickreview-memory:0.1.0",
+    ]);
+    expect(r.stdout).toContain(
+      "pull check   ok: the VM reads ghcr.io/quickchatai/quickreview:0.1.0",
+    );
+    expect(r.stdout).toContain(
+      "pull check   ok: the VM reads ghcr.io/quickchatai/quickreview-memory:0.1.0",
+    );
+  });
+
+  it("runs the check as `sudo docker manifest inspect` over ssh when no stub stands in", () => {
+    env = scratch();
+    const stub = stubBin(env);
+    const r = run(env, ["--dry-run", "release", "0.1.0"], {
+      PATH: stub.PATH,
+      QC_PULL_CHECK_CMD: "",
+      QC_VM_LAYOUT_CMD: RELEASE_LAYOUT,
+      QC_VM_HOST: "the-vm",
+    });
+    expect(r.code).toBe(0);
+    const calls = readFileSync(stub.sshLog, "utf8").split("\n");
+    expect(calls).toContain(
+      "-o BatchMode=yes -o ConnectTimeout=10 the-vm sudo docker manifest inspect ghcr.io/quickchatai/quickreview:0.1.0",
+    );
+    expect(calls).toContain(
+      "-o BatchMode=yes -o ConnectTimeout=10 the-vm sudo docker manifest inspect ghcr.io/quickchatai/quickreview-memory:0.1.0",
+    );
+  });
+
+  it("REFUSES a release whose image the VM cannot read, in a real run with nothing changed and in --dry-run", () => {
+    env = scratch();
+    const stub = stubBin(env);
+    // The second image (the memory one) is the unreadable one.
+    const probes = {
+      PATH: stub.PATH,
+      QC_VM_LAYOUT_CMD: RELEASE_LAYOUT,
+      QC_PULL_CHECK_CMD: 'case "$1" in *-memory:*) exit 1 ;; esac',
+    };
+    const real = run(env, ["release", "0.1.0"], probes);
+    expect(real.code).toBe(1);
+    expect(real.stderr).toContain(
+      "the VM cannot read ghcr.io/quickchatai/quickreview-memory:0.1.0",
+    );
+    expect(real.stderr).toContain("scripts/vm-ghcr-login.sh --version 0.1.0");
+    // Nothing changed: the playbook never ran, no deploy-grace marker was opened.
+    expect(existsSync(stub.ansibleSeen)).toBe(false);
+    expect(existsSync(join(env.sandbox, "state", "companion", "alerts"))).toBe(false);
+    const dry = run(env, ["--dry-run", "release", "0.1.0"], probes);
+    expect(dry.code).toBe(1);
+    expect(dry.stdout).not.toContain("(--dry-run: nothing executed)");
+    // A readable pair goes on to the playbook.
+    const ok = run(env, ["release", "0.1.0"], { ...probes, QC_PULL_CHECK_CMD: "true" });
+    expect(ok.stderr).toContain("running: ansible-playbook");
+    expect(readFileSync(stub.ansibleSeen, "utf8")).toContain("release_version=0.1.0");
+  });
+
+  it("checks no image for the dev build or verify: they pull nothing from ghcr", () => {
+    env = scratch();
+    const probes = { QC_PULL_CHECK_CMD: "exit 1" };
+    expect(run(env, ["--dry-run", "sync"], probes).code).toBe(0);
+    expect(run(env, ["--dry-run", "verify"], probes).code).toBe(0);
+  });
+
+  describe("the recorded token expiry", () => {
+    const NOW = Date.parse("2026-10-19T12:00:00Z") / 1000;
+    const probe = (e: Env, iso: string | null, mode = "verify") => {
+      const file = join(e.dir, "ghcr-token-expiry");
+      if (iso === null) rmSync(file, { force: true });
+      else writeFileSync(file, `${iso}\n`);
+      return run(e, ["--dry-run", ...(mode === "release" ? ["release", "0.1.0"] : [mode])], {
+        QCR_GHCR_EXPIRY_FILE: file,
+        QC_NOW_EPOCH: String(NOW),
+        QC_VM_LAYOUT_CMD: RELEASE_LAYOUT,
+      });
+    };
+
+    it("warns 14 days before the expiry, and on the day it lapses", () => {
+      env = scratch();
+      const near = probe(env, "2026-11-02T12:00:00Z");
+      expect(near.code).toBe(0);
+      expect(near.stdout).toContain(
+        "WARNING — the VM's ghcr pull token expires at 2026-11-02T12:00:00Z, in 14 day(s)",
+      );
+      expect(near.stdout).toContain("scripts/vm-ghcr-login.sh");
+      expect(probe(env, "2026-10-20T12:00:00Z", "release").stdout).toContain(
+        "WARNING — the VM's ghcr",
+      );
+      expect(probe(env, "2026-10-19T11:59:59Z").stdout).toContain(
+        "EXPIRED at 2026-10-19T11:59:59Z",
+      );
+    });
+
+    it("says nothing alarming 15 or more days out, or with no record", () => {
+      env = scratch();
+      const far = probe(env, "2026-11-03T12:00:00Z");
+      expect(far.stdout).toContain("expires at 2026-11-03T12:00:00Z, in 15 days");
+      expect(far.stdout).not.toContain("WARNING — the VM's ghcr");
+      const none = probe(env, null);
+      expect(none.code).toBe(0);
+      expect(none.stdout).toContain("no recorded expiry for the VM's ghcr pull token");
+      expect(none.stdout).not.toContain("WARNING — the VM's ghcr");
+    });
+
+    it("warns on an unreadable record rather than staying quiet", () => {
+      env = scratch();
+      expect(probe(env, "next tuesday").stdout).toContain("is not a date");
+    });
+
+    it("a real verify repeats the warning at the end and still passes the checks it can", () => {
+      env = scratch();
+      const stub = stubBin(env);
+      const file = join(env.dir, "ghcr-token-expiry");
+      writeFileSync(file, "2026-10-25T00:00:00Z\n");
+      // The ssh stub answers every check with success; the heartbeat and sidecar probes are stubbed.
+      const r = run(env, ["verify"], {
+        PATH: stub.PATH,
+        QC_VM_HOST: "the-vm",
+        QCR_GHCR_EXPIRY_FILE: file,
+        QC_NOW_EPOCH: String(NOW),
+        QC_HEARTBEAT_PROBE_CMD: "exit 1",
+        QC_HEARTBEAT_WAIT_S: "0",
+      });
+      expect(r.stderr).toContain(
+        "WARNING — the VM's ghcr pull token expires at 2026-10-25T00:00:00Z, in 5 day(s)",
+      );
+    });
+  });
+});
+
+describe.skipIf(!existsSync(join(root, "CLAUDE.md")))(
+  "CLAUDE.md rule 3 — the VM's registry pull login",
+  () => {
+    const claude = existsSync(join(root, "CLAUDE.md"))
+      ? readFileSync(join(root, "CLAUDE.md"), "utf8")
+      : "";
+    const rule3 = claude.slice(
+      claude.indexOf("\n3. **Only the App credential"),
+      claude.indexOf("\n4. **Never touch"),
+    );
+
+    it("carries the ratified carve-out: the owner's classic read:packages token, in root's docker config on the VM host only", () => {
+      expect(rule3).toContain("**The VM's registry pull login (owner's ruling, 2026-10-19).**");
+      expect(rule3).toContain("CLASSIC personal access token, scoped `read:packages`");
+      expect(rule3).toContain("root's docker config on the VM");
+      expect(rule3).toContain("never in a container");
+      expect(rule3).toContain("scripts/vm-ghcr-login.sh");
+      expect(rule3).toContain("exactly `read:packages`");
+      expect(rule3).toContain("`deploy.sh verify` warns 14 days before");
+      // the ban it is an exception to is still there, and says so
+      expect(rule3).toContain("token (the VM's registry pull login below is the");
+    });
+
+    it("names only a script that exists", () => {
+      expect(existsSync(join(root, "scripts", "vm-ghcr-login.sh"))).toBe(true);
+    });
+  },
+);
+
+describe("scripts/vm-ghcr-login.sh", () => {
+  const script = join(root, "scripts", "vm-ghcr-login.sh");
+  const TOKEN = "ghp_SECRETtoken0123456789abcdefghijklmn";
+  const NOW = Date.parse("2026-10-19T12:00:00Z") / 1000;
+
+  const response = (opts: {
+    status?: string;
+    scopes?: string | null;
+    expiry?: string | null;
+    login?: string;
+  }): string =>
+    [
+      `HTTP/2 ${opts.status ?? "200"}`,
+      "content-type: application/json; charset=utf-8",
+      ...(opts.scopes === null ? [] : [`X-OAuth-Scopes: ${opts.scopes ?? "read:packages"}`]),
+      ...(opts.expiry === null
+        ? []
+        : [`GitHub-Authentication-Token-Expiration: ${opts.expiry ?? "2027-10-19 12:00:00 UTC"}`]),
+      "",
+      `{\n  "login": "${opts.login ?? "the-owner"}",\n  "id": 7\n}`,
+    ].join("\r\n");
+
+  interface Rig {
+    dir: string;
+    bin: string;
+    log: string;
+    expiry: string;
+  }
+  function rig(): Rig {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-ghcr-login-"));
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    const log = join(dir, "log");
+    // Each stub records what a process could leak the token through: argv,
+    // environment, and (for ssh only, where it is meant to arrive) stdin.
+    writeFileSync(
+      join(bin, "curl"),
+      [
+        "#!/bin/sh",
+        `{ echo "CURL-ARGV $*"; env; } >> '${log}'`,
+        `cat > '${dir}/curl-stdin'`,
+        `cat '${dir}/response'`,
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      join(bin, "ssh"),
+      [
+        "#!/bin/sh",
+        `{ echo "SSH-ARGV $*"; env; } >> '${log}'`,
+        `case "$*" in *"docker login"*) cat > '${dir}/login-stdin' ;; esac`,
+        `[ -n "$STUB_SSH_FAIL" ] && case "$*" in *"$STUB_SSH_FAIL"*) exit 1 ;; esac`,
+        "exit 0",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    return { dir, bin, log, expiry: join(dir, "state", "ghcr-token-expiry") };
+  }
+
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+
+  function login(
+    r: Rig,
+    resp: string,
+    args: string[] = ["--version", "0.1.0", "--vm", "the-vm"],
+    opts: { input?: string; env?: Record<string, string> } = {},
+  ): { code: number; stdout: string; stderr: string } {
+    dirs.push(r.dir);
+    writeFileSync(join(r.dir, "response"), resp);
+    const out = spawnSync("bash", [script, ...args], {
+      encoding: "utf8",
+      input: opts.input ?? `${TOKEN}\n`,
+      env: {
+        ...process.env,
+        PATH: `${r.bin}:${process.env.PATH ?? ""}`,
+        QCR_GHCR_EXPIRY_FILE: r.expiry,
+        QC_NOW_EPOCH: String(NOW),
+        ...opts.env,
+      },
+    });
+    return { code: out.status ?? -1, stdout: out.stdout, stderr: out.stderr };
+  }
+
+  const sshCalls = (r: Rig): string[] =>
+    existsSync(r.log)
+      ? readFileSync(r.log, "utf8")
+          .split("\n")
+          .filter((l) => l.startsWith("SSH-ARGV "))
+          .map((l) => l.slice("SSH-ARGV ".length))
+      : [];
+
+  it("is syntactically valid bash", () => {
+    expect(() => execFileSync("bash", ["-n", script])).not.toThrow();
+  });
+
+  it("logs the VM in as the token's owner, checks both images at the version, and records the expiry", () => {
+    const r = rig();
+    const out = login(r, response({}));
+    expect(out.code, out.stderr).toBe(0);
+    expect(sshCalls(r)).toEqual([
+      "-T -o BatchMode=yes the-vm sudo docker login ghcr.io -u the-owner --password-stdin",
+      "-T -o BatchMode=yes the-vm sudo docker manifest inspect ghcr.io/quickchatai/quickreview:0.1.0",
+      "-T -o BatchMode=yes the-vm sudo docker manifest inspect ghcr.io/quickchatai/quickreview-memory:0.1.0",
+    ]);
+    // The token reaches docker on the VM through ssh's stdin, and only there.
+    expect(readFileSync(join(r.dir, "login-stdin"), "utf8")).toBe(`${TOKEN}\n`);
+    expect(readFileSync(r.expiry, "utf8")).toBe("2027-10-19T12:00:00Z\n");
+    expect(lstatSync(r.expiry).mode & 0o777).toBe(0o600);
+    expect(out.stderr).toContain(
+      "token ok: read:packages only, account the-owner, expires 2027-10-19T12:00:00Z",
+    );
+  });
+
+  it("never lets the token into any stubbed ssh or curl argv or env, nor into its own output", () => {
+    const r = rig();
+    const out = login(r, response({}));
+    expect(out.code).toBe(0);
+    const log = readFileSync(r.log, "utf8");
+    expect(log).toContain("CURL-ARGV");
+    expect(log).toContain("SSH-ARGV");
+    expect(log).not.toContain(TOKEN);
+    expect(out.stdout + out.stderr).not.toContain(TOKEN);
+    // GitHub gets it as a curl config on stdin: it is the only place it rides.
+    expect(readFileSync(join(r.dir, "curl-stdin"), "utf8")).toContain(`Bearer ${TOKEN}`);
+    // It is refused as an argument.
+    for (const arg of [["--token", TOKEN], [`--token=${TOKEN}`], ["--password", TOKEN]]) {
+      const bad = login(rig(), response({}), ["--version", "0.1.0", "--vm", "the-vm", ...arg]);
+      expect(bad.code).toBe(1);
+      expect(bad.stderr).toContain("the token is never an argument");
+    }
+  });
+
+  it("REFUSES a token with any scope beyond read:packages, or none, or a fine-grained token, before touching the VM", () => {
+    for (const [scopes, why] of [
+      ["read:packages, repo", 'scopes are "read:packages, repo"'],
+      ["repo", 'scopes are "repo"'],
+      ["read:packages, write:packages", "write:packages"],
+      ["", 'scopes are "none"'],
+      [null, "not a classic personal access token"],
+    ] as const) {
+      const r = rig();
+      const out = login(r, response({ scopes }));
+      expect(out.code, String(scopes)).toBe(1);
+      expect(out.stderr, String(scopes)).toContain(why);
+      expect(sshCalls(r), String(scopes)).toEqual([]);
+      expect(existsSync(r.expiry), String(scopes)).toBe(false);
+    }
+  });
+
+  it("REFUSES a token with no expiry, an expired one, an invalid one, and another account's", () => {
+    const cases: [string, string, string[]?][] = [
+      [response({ expiry: null }), "has no expiry"],
+      [response({ expiry: "2026-10-19 11:00:00 UTC" }), "expired at 2026-10-19T11:00:00Z"],
+      [response({ expiry: "soon" }), "cannot read the token's expiry"],
+      [response({ status: "401" }), "GitHub answered 401"],
+      [
+        response({}),
+        'belongs to "the-owner", not "someone-else"',
+        ["--version", "0.1.0", "--vm", "the-vm", "--login", "someone-else"],
+      ],
+    ];
+    for (const [resp, why, args] of cases) {
+      const r = rig();
+      const out = login(r, resp, args);
+      expect(out.code, why).toBe(1);
+      expect(out.stderr, why).toContain(why);
+      expect(sshCalls(r), why).toEqual([]);
+      expect(existsSync(r.expiry), why).toBe(false);
+    }
+  });
+
+  it("reads the token from a 0600 file, and refuses a file others can read", () => {
+    const r = rig();
+    const file = join(r.dir, "token");
+    writeFileSync(file, `${TOKEN}\n`, { mode: 0o644 });
+    chmodSync(file, 0o644);
+    const loose = login(
+      r,
+      response({}),
+      ["--version", "0.1.0", "--vm", "the-vm", "--token-file", file],
+      {
+        input: "",
+      },
+    );
+    expect(loose.code).toBe(1);
+    expect(loose.stderr).toContain("must be 0600");
+    expect(sshCalls(r)).toEqual([]);
+    chmodSync(file, 0o600);
+    const ok = login(
+      r,
+      response({}),
+      ["--version", "0.1.0", "--vm", "the-vm", "--token-file", file],
+      {
+        input: "",
+      },
+    );
+    expect(ok.code, ok.stderr).toBe(0);
+    expect(readFileSync(join(r.dir, "login-stdin"), "utf8")).toBe(`${TOKEN}\n`);
+    expect(readFileSync(r.log, "utf8")).not.toContain(TOKEN);
+    expect(readFileSync(file, "utf8")).toBe(`${TOKEN}\n`);
+  });
+
+  it("a failed manifest check exits non-zero and records no expiry; a re-run is idempotent", () => {
+    const r = rig();
+    const bad = login(r, response({}), undefined, {
+      env: { STUB_SSH_FAIL: "quickreview-memory:0.1.0" },
+    });
+    expect(bad.code).toBe(1);
+    expect(bad.stderr).toContain("cannot read ghcr.io/quickchatai/quickreview-memory:0.1.0");
+    expect(existsSync(r.expiry)).toBe(false);
+    const again = login(r, response({}));
+    const twice = login(r, response({}));
+    expect(again.code).toBe(0);
+    expect(twice.code).toBe(0);
+    expect(readFileSync(r.expiry, "utf8")).toBe("2027-10-19T12:00:00Z\n");
+  });
+
+  it("a failed docker login records nothing and checks nothing", () => {
+    const r = rig();
+    const bad = login(r, response({}), undefined, { env: { STUB_SSH_FAIL: "docker login" } });
+    expect(bad.code).toBe(1);
+    expect(bad.stderr).toContain("docker login on the-vm failed");
+    expect(sshCalls(r)).toHaveLength(1);
+    expect(existsSync(r.expiry)).toBe(false);
+  });
+
+  it("needs a published version and a plain host, and takes no token-shaped login", () => {
+    const r = rig();
+    const bad = (args: string[], why: string) => {
+      const out = login(r, response({}), args);
+      expect(out.code, why).toBe(1);
+      expect(out.stderr, why).toContain(why);
+    };
+    bad(["--vm", "the-vm"], "--version is required");
+    bad(["--version", "latest", "--vm", "the-vm"], "is not X.Y.Z");
+    bad(["--version", "0.1.0", "--vm", "-oProxyCommand=x"], "not a plain ssh destination");
+    bad(["--version", "0.1.0", "--vm", "the-vm", "--login", "a b"], "is not a GitHub login");
+    expect(sshCalls(r)).toEqual([]);
+  });
+
+  it("the expiry it records is the one deploy.sh verify warns on", () => {
+    const r = rig();
+    expect(login(r, response({ expiry: "2026-11-01 00:00:00 UTC" })).code).toBe(0);
+    const e = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    env = e;
+    const out = run(e, ["--dry-run", "verify"], {
+      QCR_GHCR_EXPIRY_FILE: r.expiry,
+      QC_NOW_EPOCH: String(NOW),
+    });
+    expect(out.stdout).toContain(
+      "WARNING — the VM's ghcr pull token expires at 2026-11-01T00:00:00Z",
+    );
   });
 });

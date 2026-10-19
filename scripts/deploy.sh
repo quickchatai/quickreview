@@ -8,8 +8,12 @@
 #                      memory image of the same version) and recreate the
 #                      containers on it. Nothing is built or rsynced: the code
 #                      is in the image. Versions only (X.Y.Z); there is no
-#                      latest tag. The VM must be logged in to ghcr.io once
-#                      (README, "Pulling the release").
+#                      latest tag. The VM must be logged in to ghcr.io once,
+#                      with the owner's classic read:packages token
+#                      (scripts/vm-ghcr-login.sh; README, "Pulling the
+#                      release"). A release first checks, over ssh, that the
+#                      VM can `docker manifest inspect` both images at the
+#                      version, and refuses before anything changes if not.
 #   sync | dev         the dev build: rsync this working copy to the VM, build
 #                      the same docker/Dockerfile there from it (docker layer
 #                      cache, so an unchanged tree is cheap), recreate the
@@ -24,7 +28,9 @@
 #                      cloudflared when the inventory enables it), the
 #                      containers, the image stamp, the pi settings and the
 #                      reviewer stub, and the state/status.json heartbeat the
-#                      status collector reads
+#                      status collector reads. It also warns 14 days before the
+#                      VM's ghcr pull token expires (the expiry that
+#                      scripts/vm-ghcr-login.sh recorded).
 #
 # There are no systemd units for the daemon: quickreviewd is the container's
 # command (`restart: unless-stopped`). The only host service this script cares
@@ -104,6 +110,11 @@
 #   QCR_CUTOVER_REQUIRES  space-separated commits the VM's deployed BUILD_SHA
 #                   must already contain, for the first run on the legacy image
 #   QC_VM_LAYOUT_CMD  replaces the ssh read of the VM's current image (tests)
+#   QC_PULL_CHECK_CMD replaces the ssh `docker manifest inspect` of a release
+#                   image; run as `bash -c "$QC_PULL_CHECK_CMD" _ <image:version>` (tests)
+#   QC_NOW_EPOCH    the clock for the token-expiry warning (tests)
+#   QCR_GHCR_EXPIRY_FILE  the recorded token expiry (default: the install's
+#                   state home, ghcr-token-expiry)
 #   QCR_CONFIG      config.toml path    (default: the install locator's answer —
 #                   the install's config home's config.toml;
 #                   scripts/install-locator.sh). Its directory is the
@@ -942,13 +953,79 @@ cutover_problem() {
   done
 }
 
+# The pull check: a release is pulled by the VM's own docker, as root, with the
+# ghcr login scripts/vm-ghcr-login.sh stored there, so the VM must be able to
+# read BOTH images at this version before anything changes. A manifest inspect
+# pulls no layers. It runs in --dry-run too (it reads, it changes nothing) and
+# is fatal: an unpublished version or a lapsed login stops here, not halfway
+# through the playbook. QC_PULL_CHECK_CMD stands in for the ssh (tests).
+release_ref() {
+  case "$1" in
+    daemon) echo "$(effective_var_or release_image ghcr.io/quickchatai/quickreview):$RELEASE_VERSION" ;;
+    memory) echo "$(effective_var_or release_memory_image ghcr.io/quickchatai/quickreview-memory):$RELEASE_VERSION" ;;
+  esac
+}
+PULL_CHECKED=()
+pull_check() {
+  [[ "$MODE" == release ]] || return 0
+  local ref
+  for ref in "$(release_ref daemon)" "$(release_ref memory)"; do
+    if [[ -n "${QC_PULL_CHECK_CMD:-}" ]]; then
+      bash -c "$QC_PULL_CHECK_CMD" _ "$ref" </dev/null >/dev/null 2>&1 || ref_unreadable "$ref"
+    else
+      [[ -n "$VM_HOST" ]] || die "no VM host resolved — set QC_VM_HOST: the release's pull check runs on the VM"
+      ssh -o BatchMode=yes -o ConnectTimeout=10 "$VM_HOST" "sudo docker manifest inspect $ref" </dev/null >/dev/null 2>&1 ||
+        ref_unreadable "$ref"
+    fi
+    PULL_CHECKED+=("$ref")
+  done
+}
+ref_unreadable() {
+  die "refusing the release — the VM cannot read $1 (docker manifest inspect failed). Either that version was never published, or the VM's ghcr login is missing or lapsed: run scripts/vm-ghcr-login.sh --version $RELEASE_VERSION (the owner's classic read:packages token). Nothing was changed"
+}
+
+# The VM's ghcr pull token expires (1 year, by ruling), and a lapsed one fails
+# the next release's pull check. scripts/vm-ghcr-login.sh records the expiry on
+# this controller; release and verify read it back. Within GHCR_WARN_DAYS of it
+# (or past it) the plan line starts with WARNING. Warn only, never a refusal.
+GHCR_WARN_DAYS=14
+GHCR_EXPIRY_LINE=""
+GHCR_EXPIRY_WARNS=0
+ghcr_expiry_status() {
+  [[ "$MODE" == verify || "$MODE" == release ]] || return 0
+  local file iso epoch now days
+  file="$(qcr_ghcr_expiry_file 2>/dev/null)" || file=""
+  if [[ -z "$file" || ! -s "$file" ]]; then
+    GHCR_EXPIRY_LINE="no recorded expiry for the VM's ghcr pull token (scripts/vm-ghcr-login.sh records it when the owner logs the VM in)"
+    return 0
+  fi
+  iso="$(head -1 "$file" | tr -d '[:space:]')"
+  epoch="$(date -u -d "$iso" +%s 2>/dev/null || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$iso" +%s 2>/dev/null || true)"
+  if [[ -z "$epoch" ]]; then
+    GHCR_EXPIRY_LINE="WARNING — the recorded ghcr token expiry in $file ('$iso') is not a date; re-run scripts/vm-ghcr-login.sh"
+    GHCR_EXPIRY_WARNS=1
+    return 0
+  fi
+  now="${QC_NOW_EPOCH:-$(date -u +%s)}"
+  days=$(( (epoch - now) / 86400 ))
+  if (( epoch <= now )); then
+    GHCR_EXPIRY_LINE="WARNING — the VM's ghcr pull token EXPIRED at $iso: create a new classic read:packages token and run scripts/vm-ghcr-login.sh"
+    GHCR_EXPIRY_WARNS=1
+  elif (( days <= GHCR_WARN_DAYS )); then
+    GHCR_EXPIRY_LINE="WARNING — the VM's ghcr pull token expires at $iso, in $days day(s) (warned from $GHCR_WARN_DAYS days out): create a new classic read:packages token and run scripts/vm-ghcr-login.sh"
+    GHCR_EXPIRY_WARNS=1
+  else
+    GHCR_EXPIRY_LINE="the VM's ghcr pull token expires at $iso, in $days days"
+  fi
+}
+
 # The image a mode puts on the VM, as the plan names it.
 plan_image() {
   local which="$1" tag
   case "$MODE:$which" in
     verify:*) echo "image as deployed" ;;
-    release:daemon) echo "image $(effective_var_or release_image ghcr.io/quickchatai/quickreview):$RELEASE_VERSION" ;;
-    release:memory) echo "image $(effective_var_or release_memory_image ghcr.io/quickchatai/quickreview-memory):$RELEASE_VERSION" ;;
+    release:daemon) echo "image $(release_ref daemon)" ;;
+    release:memory) echo "image $(release_ref memory)" ;;
     *:daemon) echo "image $(effective_var_or image_name "$CONTAINER"):$(effective_var_or dev_image_tag dev), built on the VM at $HEAD_SHA" ;;
     *:memory) echo "image $(effective_var_or memory_image_name quickreview-memory):$(effective_var_or memory_image_tag v1), built on the VM" ;;
   esac
@@ -986,7 +1063,8 @@ print_plan() {
     sync)    echo "  secrets      $SECRETS_SRC (not copied — sync starts past the secrets tasks; rebuild ships them)" ;;
   esac
   case "$MODE" in
-    release) echo "  action       pull $(plan_image daemon) and the memory image (the VM must be logged in to ghcr.io), recreate both containers; no rsync, no build" ;;
+    release) echo "  action       pull $(plan_image daemon) and the memory image (the VM must be logged in to ghcr.io), recreate both containers; no rsync, no build"
+             for pulled in "${PULL_CHECKED[@]}"; do echo "  pull check   ok: the VM reads $pulled (docker manifest inspect, over ssh)"; done ;;
     sync)    echo "  action       mirror-rsync working copy -> /opt/quickreview/sandbox (--delete, runtime dirs kept), build docker/Dockerfile on the VM (layer cache), recreate the containers" ;;
     rebuild) echo "  action       full playbook with -e rebuild_image=true (dev build, base images refreshed against the pins)" ;;
     verify)  echo "  action       post-deploy checks over ssh only (no ansible)" ;;
@@ -1006,6 +1084,7 @@ print_plan() {
   if [[ ${#ANSIBLE_CMD[@]} -gt 0 ]]; then
     echo "  command      ${ANSIBLE_CMD[*]}"
   fi
+  [[ -z "$GHCR_EXPIRY_LINE" ]] || echo "  ghcr login   $GHCR_EXPIRY_LINE"
   echo "  then verify  ssh ${VM_HOST:-<vm>}:"
   local c
   for c in "${VERIFY_CMDS[@]}"; do echo "                 $c"; done
@@ -1028,6 +1107,9 @@ print_plan() {
 
 drain_advisory
 [[ "$MODE" == verify ]] || probe_vm_layout
+# Fatal, before anything changes, and in --dry-run too.
+pull_check
+ghcr_expiry_status
 
 if [[ $DRY_RUN -eq 1 ]]; then
   print_plan
@@ -1212,5 +1294,8 @@ refresh_memory_forward() {
   note "WARNING — memory forward still not answering after ${waited}s; check 'journalctl --user -u qcr-memory-forward -n 20' (deploy-grace marker left to expire so a real outage still alerts)"
 }
 refresh_memory_forward
+
+# Said again at the end, where a long verify's output is read.
+[[ $GHCR_EXPIRY_WARNS -eq 0 ]] || note "$GHCR_EXPIRY_LINE"
 
 note "deploy ok ($MODE, $HEAD_SHA)"
