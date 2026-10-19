@@ -307,8 +307,9 @@ subagent_max_concurrency = 12
 
 # What hosts a pi session on the review, bench and scan routes: "proc" runs pi
 # as a child process (every route today), "sdk" runs it in-process on the pi
-# SDK. A route that has no SDK host yet refuses "sdk" instead of running on
-# proc. `qcr-bench review --runtime` and `defect-judge --runtime` override it.
+# SDK. `qcr review` has an SDK host (with pi's own lens tool); a route that has
+# none yet refuses "sdk" instead of running on proc. `qcr-bench review
+# --runtime` and `defect-judge --runtime` override it.
 # The scan runs its leaves on the SDK inside its own detached driver process
 # (`qcr scan start`), never inside the companion's pi; a scan the companion
 # drives itself refuses "sdk". The daemon's own tmux hosting does not read it.

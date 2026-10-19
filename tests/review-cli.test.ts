@@ -269,6 +269,62 @@ describe("qcr review: under and over the limit", () => {
     expect(readFileSync(pi.calls, "utf8").trim().split("\n")).toHaveLength(1);
   });
 
+  it("hosts the session on the SDK runtime ([engine] runtime = sdk), over the faux provider", async () => {
+    const repo = mkRepo("sdk");
+    setLimit(repo, 1000);
+    const { reviewSdkRuntime } = await import("../src/engine/reviewsdk.js");
+    const { PiHost } = await import("../src/engine/pisdk.js");
+    const { fauxAssistantMessage } = await import("@earendil-works/pi-ai");
+    const { pricedFaux } = await import("./helpers/priced-faux.js");
+    const h = harness({ repo, piBin: "false" });
+    const faux = pricedFaux(() => 0.25, { provider: "faux", models: [{ id: "m" }] });
+    // The model writes its files into the run's out dir, which the round names in
+    // the files it wrote before the turn.
+    const outDirOf = (): string => {
+      for (const d of readdirSync(h.deps.runsDir))
+        for (const e of readdirSync(join(h.deps.runsDir, d), { recursive: true }))
+          if (String(e).endsWith("round-order.md"))
+            return dirname(join(h.deps.runsDir, d, String(e)));
+      throw new Error("no round started");
+    };
+    faux.appendResponses([
+      async () => {
+        const out = outDirOf();
+        writeFileSync(join(out, "findings-record.json"), record);
+        writeFileSync(join(out, "outcome.json"), outcome);
+        return fauxAssistantMessage("done");
+      },
+    ]);
+    let hostOptions: { agentDir: string; ownsProcess?: boolean } | undefined;
+    const runtime = reviewSdkRuntime({
+      lens: () => ({ factories: [], toolNames: [] }),
+      makeHost: async (o) => {
+        hostOptions = o;
+        return PiHost.create({
+          ...o,
+          ownsProcess: false,
+          configureModels: (r) => {
+            r.registerNativeProvider(faux.provider);
+          },
+        });
+      },
+    });
+    const deps = {
+      ...h.deps,
+      cfg: { ...h.deps.cfg, models: { ...h.deps.cfg.models, conversation: "faux/m" } },
+      runtime,
+    };
+    const code = await runReviewCli([], false, deps);
+    expect(code, h.text()).toBe(0);
+    // the run's private agent dir, not the operator's
+    expect(hostOptions!.agentDir).not.toBe(h.deps.agentDir);
+    expect(hostOptions!.agentDir).toMatch(/\/agent$/);
+    const t = h.lines.filter((l) => !l.startsWith("{")).join("\n");
+    expect(t).toMatch(/c breaks the build/);
+    expect(t).toMatch(/b is a magic number/);
+    expect(t).not.toMatch(/killed one/);
+  });
+
   it("--json prints findings grouped by severity in one object", async () => {
     const repo = mkRepo("underjson");
     setLimit(repo, 1000);

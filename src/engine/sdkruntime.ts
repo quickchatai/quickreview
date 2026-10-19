@@ -31,6 +31,7 @@ import type { WriteStream } from "node:fs";
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { splitModelSpec, type ThinkingLevel } from "../config.js";
 import { TurnBudget } from "./budget.js";
+import { trackSession } from "./livesessions.js";
 import type { HostSessionSpec, PiHost } from "./pisdk.js";
 import {
   RuntimeUnsupportedError,
@@ -94,6 +95,8 @@ class SdkSession implements RuntimeSession {
   private stopped = false;
   private streamError: string | null = null;
   private headerWritten = false;
+  /** Forgets this session in the live registry (a signal handler stops what is there). */
+  private readonly untrack: () => void;
 
   constructor(
     private readonly spec: SessionSpec,
@@ -110,6 +113,7 @@ class SdkSession implements RuntimeSession {
       void this.abort();
     });
     this.unsubscribe = session.subscribe((event) => this.onEvent(event));
+    this.untrack = trackSession(this);
   }
 
   get id(): string {
@@ -169,6 +173,7 @@ class SdkSession implements RuntimeSession {
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
+    this.untrack();
     // Queued follow-ups fail fast (disposed); the running turn is aborted.
     if (this.pending > 0) {
       this.stopped = true;

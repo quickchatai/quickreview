@@ -24,12 +24,18 @@ export interface Beat {
 }
 
 const deadlines = new Set<{ at: number }>();
+/** Writes a beat now: set while a heartbeat runs. */
+let beatNow: (() => void) | null = null;
 
 /** A turn in flight ends at `at`: the beat carries it until the returned
- * release is called. Cheap and inert when no heartbeat is running. */
+ * release is called. Cheap and inert when no heartbeat is running. The beat is
+ * rewritten at once: a driver that freezes in the turn's first moments (a
+ * synchronous loop on the SDK runtime stops the timer too) would otherwise leave
+ * a last beat without the deadline, and the watchdog would never act. */
 export function trackDeadline(at: number): () => void {
   const entry = { at };
   deadlines.add(entry);
+  beatNow?.();
   return () => {
     deadlines.delete(entry);
   };
@@ -88,7 +94,11 @@ export function startHeartbeat(
     }
   };
   beat();
+  beatNow = beat;
   const timer = setInterval(beat, o.intervalMs ?? 2_000);
   timer.unref();
-  return () => clearInterval(timer);
+  return () => {
+    clearInterval(timer);
+    if (beatNow === beat) beatNow = null;
+  };
 }
