@@ -2084,6 +2084,51 @@ export interface Config {
   /** The closed-PR archiver (`src/archive/`). Optional in the file;
    * the parser fills every key. */
   archive: ArchiveConfig;
+  /** The bot login's single refresher (`src/loginrefresh/`, P8.22). Optional
+   * in the file; off unless the cutover's config turns it on. */
+  login_refresh: LoginRefreshConfig;
+}
+
+/**
+ * `[login_refresh]`: the VM-only exception to D5 (src/engine/auth.ts). After
+ * the cutover ONE refresher process, spawned and supervised by the daemon,
+ * owns pihome/agent/auth.json and every worker borrows a refresh-blanked copy.
+ * Off by default: while the bot's tmux pi sessions exist they refresh the file
+ * themselves, and a second refresher would rotate the refresh token under them.
+ */
+export interface LoginRefreshConfig {
+  enabled: boolean;
+  /** Refresh once the token has less than pi's own refresh window plus this
+   * left. Must exceed `[daemon] round_deadline_min` (the longest worker cap), so
+   * a worker that borrowed the file can finish on it. */
+  margin_min: number;
+}
+
+export const LOGIN_REFRESH_DEFAULTS: LoginRefreshConfig = Object.freeze({
+  enabled: false,
+  margin_min: 90,
+});
+
+/** Parse `[login_refresh]`; a margin that does not outlast the longest worker
+ * cap REFUSES to load (a worker would then outlive the token it borrowed). */
+export function parseLoginRefresh(
+  raw: Record<string, unknown>,
+  roundDeadlineMin: number,
+): LoginRefreshConfig {
+  const enabled = raw.enabled ?? LOGIN_REFRESH_DEFAULTS.enabled;
+  if (typeof enabled !== "boolean")
+    throw new Error(`config.toml [login_refresh]: enabled must be true or false`);
+  const m = raw.margin_min ?? LOGIN_REFRESH_DEFAULTS.margin_min;
+  const margin = typeof m === "bigint" ? Number(m) : m;
+  if (typeof margin !== "number" || !Number.isFinite(margin) || margin > 1440)
+    throw new Error(
+      `config.toml [login_refresh]: margin_min must be a number of minutes up to 1440 (got ${JSON.stringify(typeof m === "bigint" ? String(m) : m)})`,
+    );
+  if (margin <= roundDeadlineMin)
+    throw new Error(
+      `config.toml [login_refresh]: margin_min (${margin}) must exceed [daemon] round_deadline_min (${roundDeadlineMin}), the longest worker cap`,
+    );
+  return { enabled, margin_min: margin };
 }
 
 /**
@@ -2893,6 +2938,10 @@ export function parseConfig(toml: string): Config {
     scan: parseScan(raw.scan),
     scan_sandbox: parseScanSandbox(raw.scan, companion),
     archive: parseArchive((raw.archive ?? {}) as Record<string, unknown>),
+    login_refresh: parseLoginRefresh(
+      (raw.login_refresh ?? {}) as Record<string, unknown>,
+      Number((req(raw, "daemon") as { round_deadline_min?: number }).round_deadline_min ?? 75),
+    ),
   };
   validateLensKnobs(cfg);
   const shards = cfg.review.validator_shards;

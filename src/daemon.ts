@@ -204,6 +204,12 @@ export interface DaemonDeps {
    */
   archiveStatus?: () => import("./archive/status.js").ArchiveStatus | undefined;
   /**
+   * The login refresher's block (src/loginrefresh/) — a cached, synchronous
+   * read: wire.ts hands the supervisor's `status()`. Absent ⇒ no
+   * `login_refresh` key; a throwing implementation is swallowed like the others.
+   */
+  loginRefreshStatus?: () => import("./loginrefresh/types.js").LoginRefreshStatus | undefined;
+  /**
    * Seams of the daemon's event-loop watch (src/eventloop.ts):
    * the sampler, the cpu.stat reader, the clock and the evaluation timer.
    * Absent ⇒ the real drift sampler and /sys/fs/cgroup/cpu.stat. The watch
@@ -993,6 +999,12 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     } catch (err) {
       log("archive status read failed (heartbeat continues)", err);
     }
+    let loginRefresh: import("./loginrefresh/types.js").LoginRefreshStatus | undefined;
+    try {
+      loginRefresh = deps.loginRefreshStatus?.();
+    } catch (err) {
+      log("login refresh status read failed (heartbeat continues)", err);
+    }
     try {
       const snapshot = buildStatusSnapshot(
         store,
@@ -1008,6 +1020,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         memory,
         daemonLoad,
         archive,
+        loginRefresh,
       );
       if (postingOutbox)
         for (const pr of snapshot.prs) {

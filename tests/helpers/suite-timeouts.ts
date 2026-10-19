@@ -108,6 +108,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/lens-yield.test.ts",
   "tests/levers.test.ts",
   "tests/localreview-readonly.test.ts",
+  "tests/loginrefresh.test.ts", // flock helper processes and a racing writer process
   "tests/memory-image.test.ts",
   "tests/onboard-llmauth.test.ts",
   "tests/onboard-streamrunner.test.ts",

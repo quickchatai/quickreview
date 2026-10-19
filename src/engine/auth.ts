@@ -10,6 +10,15 @@
 // reads. Its price: it cannot outlive the access token, so the login is refused
 // before work starts when the token would expire inside the work window.
 //
+// One exception, the VM's: after the cutover no pi session lives long enough to
+// refresh the bot's login, so ONE locked refresher in the bot container
+// (src/loginrefresh/, spawned and supervised by the daemon by path) is its
+// owner. It holds an exclusive flock on pihome/agent/auth.json.lock for its whole
+// life, refreshes through pi-ai's own OAuth refresh and writes auth.json
+// atomically. Workers, takeover and debug pi are borrowers like any other: they
+// copy the file at spawn, blank, and take no lock. Everywhere else D5 is as
+// above.
+//
 // Three ways in, one module:
 //   - `engineCredentials` / `loadAuth`: the in-process route. The copy lives in
 //     memory as a CredentialStore for PiHost (src/engine/pisdk.ts); no file is
@@ -101,6 +110,42 @@ export class AuthRejected extends AuthError {
  * not an auth failure. One signature, shared with authwatch (PI_AUTH_ERROR_RE). */
 export function classifyAuthFailure(message: string): AuthRejected | undefined {
   return PI_AUTH_ERROR_RE.test(message) ? new AuthRejected(message) : undefined;
+}
+
+// ---- reading the owner's file ---------------------------------------------------
+
+/** How a borrower waits out a file it cannot parse. */
+export interface ReadRetry {
+  tries?: number;
+  delayMs?: number;
+}
+
+/** Block this thread for `ms` (a borrower's copy is synchronous). */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * The owner's `auth.json` as text that parses, taking no lock. Every write by
+ * the refresher is an atomic rename (src/loginrefresh/atomic.ts), so a borrower
+ * reads the old file or the new one, whole. The one file that may not parse is
+ * one a login is rewriting in place (the pi `/login` under the entrypoint's
+ * login mode, which the refresher pauses for): that read is retried, a few
+ * times, and then fails with the parse error.
+ */
+export function readOwnerAuth(src: string, retry: ReadRetry = {}): string {
+  const tries = retry.tries ?? 5;
+  const delayMs = retry.delayMs ?? 200;
+  for (let attempt = 1; ; attempt++) {
+    const raw = readFileSync(src, "utf8");
+    try {
+      JSON.parse(raw);
+      return raw;
+    } catch (err) {
+      if (attempt >= tries) throw err;
+      sleepSync(delayMs);
+    }
+  }
 }
 
 // ---- the refresh-blanked copy ---------------------------------------------------
@@ -272,7 +317,7 @@ export function engineCredentials(o: {
   const src = join(o.srcDir, "auth.json");
   const words = o.words ?? ENGINE_AUTH_WORDS;
   if (!existsSync(src)) throw new AuthExpiring(words.missing(src), { code: "missing" });
-  const parsed = JSON.parse(readFileSync(src, "utf8")) as AuthData;
+  const parsed = JSON.parse(readOwnerAuth(src)) as AuthData;
   const { expiresAt, provider } = blankRefresh(parsed);
   checkAuth({ expiresAt, provider }, { ...o, words });
   return { credentials: new ReadOnlyCredentials(parsed), expiresAt, provider };
@@ -299,7 +344,7 @@ export function copyPiAuth(o: {
 }): { expiresAt: number | null } {
   const src = join(o.srcDir, "auth.json");
   if (!existsSync(src)) throw new AuthExpiring(o.words.missing(src), { code: "missing" });
-  const { json, expiresAt, provider } = authCopyFrom(readFileSync(src, "utf8"));
+  const { json, expiresAt, provider } = authCopyFrom(readOwnerAuth(src));
   checkAuth(
     { expiresAt, provider },
     { needMs: o.needMs, marginMs: 0, words: o.words, ...(o.now ? { now: o.now } : {}) },

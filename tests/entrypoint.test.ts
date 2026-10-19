@@ -35,6 +35,8 @@ import { fileURLToPath } from "node:url";
 import { parseConfig } from "../src/config.js";
 import { loginInPi } from "../src/scanbox.js";
 import { toolIsolation } from "../src/engine/tooluid.js";
+import { LoginLockHeld, acquireLoginLock } from "../src/loginrefresh/lock.js";
+import { LoginRefresher, type RefreshFn } from "../src/loginrefresh/refresher.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ENTRYPOINT = join(root, "docker", "entrypoint.sh");
@@ -1041,4 +1043,192 @@ console.log(JSON.stringify({ uid: process.getuid(), groups: process.getgroups(),
     expect(out.status).not.toBe(0);
     expect(out.stderr).toContain("QCR_LOGIN_GID");
   });
+});
+
+// P8.22: the bot container's login refresher holds a flock on
+// <agent>/auth.json.lock for its whole life. The login mode hands over to it:
+// it writes <agent>/auth.json.pause, waits for `"paused": true` in the
+// refresher's status file, runs pi's /login, and removes the pause file
+// afterwards. The refresher is the real one (src/loginrefresh/), in this
+// process, on a scratch agent dir; the login is a stub that writes a new
+// auth.json the way pi does; the terminal is a pty (util-linux script).
+describe("the login mode's handover to the bot's login refresher", () => {
+  const hasPty = spawnSync("script", ["-qec", "true", "/dev/null"]).status === 0;
+  const HOUR = 3_600_000;
+  const logins: Array<() => Promise<void>> = [];
+  afterEach(async () => {
+    for (const stop of logins.splice(0)) await stop();
+  });
+
+  function agentOf(r: Rig): string {
+    const agent = join(r.home, ".pi/agent");
+    mkdirSync(agent, { recursive: true });
+    return agent;
+  }
+
+  const authText = (o: { access: string; refresh: string; expires: number }): string =>
+    JSON.stringify({ "openai-codex": { type: "oauth", ...o } }) + "\n";
+
+  /** A login stub in place of pi: records what it saw, then writes a new login. */
+  function stubLogin(r: Rig, agent: string, newLogin: string): string {
+    const out = join(r.dir, "stub.out");
+    put(join(r.dir, "new-auth.json"), newLogin);
+    put(
+      join(r.dir, "login-stub.sh"),
+      [
+        "#!/bin/sh",
+        `A="${agent}"`,
+        `flock -n -E 75 "$A/auth.json.lock" true; echo "lockrc=$?" > "${out}"`,
+        `grep -c '"paused": true' "$A/loginrefresh.status.json" >> "${out}"`,
+        `[ -e "$A/auth.json.pause" ] && echo pause-present >> "${out}"`,
+        // what pi does: its own file, 0600
+        `(umask 077; cat "${join(r.dir, "new-auth.json")}" > "$A/auth.json")`,
+        "",
+      ].join("\n"),
+      0o755,
+    );
+    put(
+      join(r.app, "dist/src/scanbox.js"),
+      `export const loginInPi = () => ["sh", "-c", "sh ${join(r.dir, "login-stub.sh")}"];\n`,
+    );
+    return out;
+  }
+
+  /** The entrypoint's login mode, in a pty, resolving with its exit status and output. */
+  function loginInPty(
+    r: Rig,
+    env: NodeJS.ProcessEnv = {},
+  ): Promise<{ status: number | null; output: string }> {
+    return new Promise((res) => {
+      const child = spawn("script", ["-qefc", `${ENTRYPOINT} login`, "/dev/null"], {
+        env: { ...r.env, ...env },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let output = "";
+      child.stdout.on("data", (c: unknown) => (output += String(c)));
+      child.stderr.on("data", (c: unknown) => (output += String(c)));
+      child.once("exit", (status) => res({ status, output }));
+    });
+  }
+
+  async function startRefresher(agent: string, seen: string[]): Promise<LoginRefresher> {
+    const refresh: RefreshFn = async (_p, cred) => {
+      seen.push(cred.refresh);
+      return {
+        access: "refreshed-access",
+        refresh: "refreshed-refresh",
+        expires: Date.now() + 10 * HOUR,
+      };
+    };
+    const refresher = await LoginRefresher.start({
+      agentDir: agent,
+      refresh,
+      marginMs: 90 * 60_000,
+      pollMs: 100,
+      log: () => undefined,
+    });
+    logins.push(() => refresher.stop());
+    return refresher;
+  }
+
+  const until = async (ok: () => boolean, ms = 10_000): Promise<void> => {
+    const t0 = Date.now();
+    while (!ok()) {
+      if (Date.now() - t0 > ms) throw new Error("timed out");
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  };
+  const status = (agent: string): { paused: boolean; expires_at: string | null } =>
+    JSON.parse(readFileSync(join(agent, "loginrefresh.status.json"), "utf8"));
+
+  it.skipIf(!hasPty)(
+    "pauses the refresher (the lock stays held), writes a new login, and the refresher resumes on it",
+    async () => {
+      const r = rig();
+      const agent = agentOf(r);
+      const seen: string[] = [];
+      put(
+        join(agent, "auth.json"),
+        authText({ access: "old", refresh: "old-refresh", expires: Date.now() + 24 * HOUR }),
+        0o660,
+      );
+      const out = stubLogin(
+        r,
+        agent,
+        // inside the refresh window: the refresher must refresh it once it resumes
+        authText({
+          access: "login-access",
+          refresh: "login-refresh",
+          expires: Date.now() + 30 * 60_000,
+        }),
+      );
+      await startRefresher(agent, seen);
+      expect(status(agent).paused).toBe(false);
+
+      const done = await loginInPty(r);
+      expect(done.status, done.output).toBe(0);
+
+      // while pi's /login ran: the lock was still held, the refresher paused, the pause file there
+      expect(readFileSync(out, "utf8").split("\n").filter(Boolean)).toEqual([
+        "lockrc=75",
+        "1",
+        "pause-present",
+      ]);
+      expect(done.output).toContain("asking it to pause");
+      // the entrypoint removed the pause file
+      expect(existsSync(join(agent, "auth.json.pause"))).toBe(false);
+      // the refresher resumed, re-read the NEW file and refreshed with the NEW refresh token
+      await until(() => seen.length > 0 && !status(agent).paused);
+      expect(seen).toEqual(["login-refresh"]);
+      await until(
+        () =>
+          JSON.parse(readFileSync(join(agent, "auth.json"), "utf8"))["openai-codex"].access ===
+          "refreshed-access",
+      );
+      expect(statSync(join(agent, "auth.json")).mode & 0o777).toBe(0o660);
+      // and it never let go of the lock
+      await expect(acquireLoginLock(join(agent, "auth.json.lock"))).rejects.toBeInstanceOf(
+        LoginLockHeld,
+      );
+    },
+  );
+
+  it.skipIf(!hasPty)(
+    "does nothing when no refresher holds the lock (a laptop, the companion)",
+    async () => {
+      const r = rig();
+      const agent = agentOf(r);
+      put(join(agent, "auth.json.lock"), "", 0o660); // a lock file nobody holds
+      const out = stubLogin(
+        r,
+        agent,
+        authText({ access: "a", refresh: "b", expires: Date.now() + HOUR }),
+      );
+      const done = await loginInPty(r);
+      expect(done.status, done.output).toBe(0);
+      expect(done.output).not.toContain("pause");
+      expect(readFileSync(out, "utf8")).toContain("lockrc=0");
+      expect(existsSync(join(agent, "auth.json.pause"))).toBe(false);
+    },
+  );
+
+  it.skipIf(!hasPty)(
+    "refuses to log in beside a lock holder that never pauses, and cleans up its pause file",
+    async () => {
+      const r = rig();
+      const agent = agentOf(r);
+      const lock = await acquireLoginLock(join(agent, "auth.json.lock")); // held, but nothing answers the pause
+      logins.push(() => lock.release());
+      const out = stubLogin(
+        r,
+        agent,
+        authText({ access: "a", refresh: "b", expires: Date.now() + HOUR }),
+      );
+      const done = await loginInPty(r, { QCR_LOGIN_PAUSE_WAIT_S: "1" });
+      expect(done.status).not.toBe(0);
+      expect(done.output).toContain("did not pause within 1s");
+      expect(existsSync(join(agent, "auth.json.pause"))).toBe(false);
+      expect(existsSync(out)).toBe(false); // pi's /login never ran
+    },
+  );
 });

@@ -1,0 +1,74 @@
+// The scan behind the P8.22 fence "only src/loginrefresh and the entrypoint's
+// login mode (pi's /login) write the pihome's auth.json". Pure over a root, so
+// tests/loginrefresh.test.ts runs it on the real tree AND on a planted copy: a
+// fence that cannot be made to fail is not a fence.
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { stripComments } from "./engine-fences.js";
+
+const WRITE =
+  /\b(writeFileSync|writeFile|renameSync|rename|copyFileSync|copyFile|appendFileSync|appendFile|createWriteStream|writeFileAtomic|rsync|cp|install|tee)\b|>>?\s*["']?[^\s"']*auth\.json/;
+
+function sources(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) return e.name === "node_modules" || e.name === ".git" ? [] : sources(p);
+    return /\.(ts|mjs|sh|py|yml|j2)$/.test(e.name) ? [p] : [];
+  });
+}
+
+/**
+ * The files (relative to `root`) holding a statement that both names an
+ * `auth.json` and writes. A statement runs to the next `;` or blank line.
+ */
+export function authJsonWriters(root: string): string[] {
+  const hits: string[] = [];
+  for (const f of ["src", "extensions", "scripts", "docker", "deploy", "bench"].flatMap((d) =>
+    sources(join(root, d)),
+  )) {
+    const raw = readFileSync(f, "utf8");
+    const text = f.endsWith(".ts") ? stripComments(raw) : raw.replace(/^\s*#.*$/gm, "");
+    if (text.split(/;|\n\s*\n/).some((st) => /auth\.json/.test(st) && WRITE.test(st)))
+      hits.push(f.slice(root.length + 1));
+  }
+  return hits.sort();
+}
+
+/**
+ * The files writing an auth.json that are NOT the refresher: each one writes
+ * a copy into a directory it made for itself (a sandbox's agent dir, the Action's
+ * run dir, another host's fresh volume), never the bot's pihome. Anything new that
+ * writes an auth.json must be added here with its reason, or be the refresher.
+ */
+export const SANDBOX_AUTH_WRITERS: Readonly<Record<string, string>> = {
+  "src/engine/auth.ts": "copyPiAuth: the refresh-blanked copy in a sandbox's own agent dir (D5)",
+  "src/bench/auth.ts": "the benchmark sandbox's empty or blanked login in its own tmpfs",
+  "src/bench/opencode.ts": "OpenCode's auth.json in the case's own data dir",
+  "src/hostroute.ts": "the host route's throwaway agent dir",
+  "scripts/action.sh": "the Action's per-run login dir, from its own input",
+  "scripts/operator-box-provision.sh": "seeds the operator-box's own fresh companion volume",
+  "scripts/operator-box-setup.sh": "seeds the operator-box's own fresh companion volume",
+};
+
+/** Every .ts under `src/loginrefresh/` that the daemon's import closure reaches. */
+export function daemonReachedLoginRefresh(root: string, daemonRoots: readonly string[]): string[] {
+  const all = new Set(
+    ["src", "extensions"].flatMap((d) => sources(join(root, d)).filter((f) => f.endsWith(".ts"))),
+  );
+  const seen = new Set<string>();
+  const queue = daemonRoots.map((r) => join(root, r)).filter((f) => all.has(f));
+  while (queue.length > 0) {
+    const f = queue.shift()!;
+    if (seen.has(f)) continue;
+    seen.add(f);
+    for (const m of stripComments(readFileSync(f, "utf8")).matchAll(/["'](\.[^"']+)\.js["']/g)) {
+      const p = join(f, "..", `${m[1]!}.ts`);
+      if (all.has(p) && !seen.has(p)) queue.push(p);
+    }
+  }
+  return [...seen]
+    .map((f) => f.slice(root.length + 1))
+    .filter((f) => f.startsWith("src/loginrefresh/"))
+    .sort();
+}
