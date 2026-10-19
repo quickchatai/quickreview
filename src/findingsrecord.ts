@@ -23,6 +23,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DOUBT_WORDS } from "./doubtwords.js";
 import {
+  entryDisposition,
   findingRecordKey,
   normalizeDisposition,
   recordNumber,
@@ -415,7 +416,7 @@ export function parseFindingsRecord(
     const path = str(e.path);
     const line = num(e.line);
     const word = str(e.word) ?? str(e.reason_word) ?? null;
-    const written = normalizeDisposition(e.disposition);
+    const written = entryDisposition(e);
     if (written === "unknown") unknownDisposition++;
     // A validity veto recorded as a kill is still a doubt.
     const disposition: FindingDisposition =
@@ -550,7 +551,7 @@ export function findingsRecordWake(pr: number, roundNo: number, relPath: string)
   return [
     `FINDINGS RECORD MISSING — PR #${pr} round ${roundNo}`,
     `The round is over and its verdict has been applied, but ${relPath} is missing or unreadable.`,
-    "Write ONLY that file now, in this conversation: one entry per candidate finding this round produced — posted, killed, doubted, downgraded, merged, folded, withheld or conceded — each with its lens, severity, confidence, reachability, the closed-vocabulary kill/downgrade word, and the reason in your own words. On a POSTED entry also give `posted_as` (one of the sanctioned tags), and on a posted nit the `request` — the concrete change it asked for.",
+    "Write ONLY that file now, in this conversation: one entry per candidate finding this round produced — posted, killed, doubted, downgraded, merged, folded, withheld or conceded — each with its lens, severity, confidence, reachability, the closed-vocabulary kill/downgrade word, and the reason in your own words. On a POSTED entry, and on a DOWNGRADED entry the validator kept, also give `posted_as` (one of the sanctioned tags), and on a posted nit the `request` — the concrete change it asked for.",
     `Reconstruct it from the artifacts still on disk: state/pr-${pr}-round-${roundNo}-passes/, state/pr-${pr}-round-${roundNo}-review.md and state/pr-${pr}-round-${roundNo}-comments.json. Record only what those artifacts support — an honest partial record beats an invented complete one.`,
     "Do NOT do any review work, do NOT run passes, do NOT post anything to GitHub, and do NOT write a verdict file — this is a bookkeeping write only. You will not be asked again.",
   ].join("\n");

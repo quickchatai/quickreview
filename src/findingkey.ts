@@ -44,7 +44,11 @@ export function recordSide(val: unknown): "LEFT" | "RIGHT" {
  *
  * - `posted` — it survived validation and went out on the PR (the RAISE side,
  *   the half adjudication actually needs).
- * - `killed` / `downgraded` — the validator vetoed or moved it.
+ * - `killed` — the validator vetoed it.
+ * - `downgraded` — the validator moved it (severity, confidence or
+ *   reachability). A `downgrade` survivor still goes out: recorded with its
+ *   `posted_as` it reads as posted (`entryDisposition`); without one it
+ *   is never posted, and the renderer reports it.
  * - `doubted` — the validator could not stand behind the CLAIM (`DOUBT_WORDS`:
  *   refuted, unverifiable, bad anchor). A validity veto is a mark, not a
  *   deletion — kept here as "may not be valid", never posted on the PR,
@@ -106,6 +110,22 @@ export function normalizeDisposition(raw: unknown): FindingDisposition {
   const v = raw.trim().toLowerCase().replace(/\s+/g, "-");
   if (DISPOSITIONS.has(v)) return v as FindingDisposition;
   return DISPOSITION_ALIASES[v] ?? "unknown";
+}
+
+/**
+ * The disposition a record ENTRY acts on. A validator `downgrade` keeps the
+ * finding at the severity it names (src/templates.ts
+ * renderValidatorOutputNote), so a `downgraded` entry that went out under a
+ * tag (`posted_as`) is a posted survivor: the downgrade's `word` and `axis`
+ * stay on the entry, and it counts, renders and dedups as `posted`. Without a
+ * `posted_as` it stays `downgraded`, never posted. Every reader that asks
+ * "was this entry posted?" of a raw entry asks it here.
+ */
+export function entryDisposition(entry: Record<string, unknown>): FindingDisposition {
+  const d = normalizeDisposition(entry.disposition);
+  if (d !== "downgraded") return d;
+  const tag = entry.posted_as;
+  return typeof tag === "string" && tag.trim() !== "" ? "posted" : d;
 }
 
 /**

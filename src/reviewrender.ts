@@ -30,6 +30,7 @@ import {
 } from "./severity.js";
 import { postCheckRecord, type PostCheckMerge } from "./dedup.js";
 import {
+  entryDisposition,
   findingMarker,
   findingRecordKey,
   normalizeDisposition,
@@ -183,13 +184,13 @@ export function recordPostingKeys(
 const num = recordNumber;
 
 /** Is this findings-record entry `posted`, under every spelling the record
- * parser folds onto it (src/findingkey.ts `normalizeDisposition`)? The
+ * parser folds onto it (src/findingkey.ts `entryDisposition`)? The
  * one test the posting cut and the renderer both apply. */
 function isPostedEntry(e: unknown): e is Record<string, unknown> {
   return (
     typeof e === "object" &&
     e !== null &&
-    normalizeDisposition((e as Record<string, unknown>).disposition) === "posted"
+    entryDisposition(e as Record<string, unknown>) === "posted"
   );
 }
 
@@ -329,6 +330,17 @@ export function renderReviewFromRecord(
   };
   const entries = entriesOf(rec) ?? [];
   if (entriesOf(rec) === null) problems.push("the record has no findings array");
+  entries.forEach((e, index) => {
+    if (typeof e !== "object" || e === null) return;
+    const raw = e as Record<string, unknown>;
+    if (
+      normalizeDisposition(raw.disposition) === "downgraded" &&
+      entryDisposition(raw) !== "posted"
+    )
+      problems.push(
+        `${findingRecordKey(raw, index)}: downgraded with no posted_as — a validator downgrade survivor needs the tag it goes out under; not posted`,
+      );
+  });
   const posted = entries
     // The index in the WHOLE findings array is what the record parser keys a
     // key-less entry by, so it is taken before the filter.
