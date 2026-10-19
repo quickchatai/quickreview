@@ -363,14 +363,20 @@ export class PingPongLedger {
     decisionCommentId: number | undefined,
     localReceipt: (exchanges: number) => void,
   ): number {
-    return this.db.transaction(() => {
-      if (decisionCommentId !== undefined && this.decisionProgress(decisionCommentId).reply_posted)
-        return this.exchanges(threadId);
-      const exchanges = this.recordExchange(threadId, pr);
-      localReceipt(exchanges);
-      if (decisionCommentId !== undefined) this.markDecisionStep(decisionCommentId, "reply_posted");
-      return exchanges;
-    })();
+    return this.db
+      .transaction(() => {
+        if (
+          decisionCommentId !== undefined &&
+          this.decisionProgress(decisionCommentId).reply_posted
+        )
+          return this.exchanges(threadId);
+        const exchanges = this.recordExchange(threadId, pr);
+        localReceipt(exchanges);
+        if (decisionCommentId !== undefined)
+          this.markDecisionStep(decisionCommentId, "reply_posted");
+        return exchanges;
+      })
+      .immediate();
   }
 }
 
