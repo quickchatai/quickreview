@@ -103,6 +103,13 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "first import.",
     },
     {
+      file: "src/engine/lens/runlens.ts",
+      why:
+        "runLens (P4.3): a lens pass as an SDK session under one cap per host. It is driven only by " +
+        "tests/lens-runner.test.ts until the lens tool (P4.5) takes it. Delete this entry with the " +
+        "first production import.",
+    },
+    {
       file: "src/piauthcopy.ts",
       why:
         "a re-export of src/engine/auth.ts (P2.10). The scan container imports it by path " +
