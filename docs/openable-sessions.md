@@ -47,6 +47,49 @@ environment. `--print` shows the command without starting anything.
 The kept JSONL resumes under the same session id, so the provider's prompt cache
 prefix still matches (pi canary 8).
 
+## `qcr open pr`
+
+```
+qcr open pr <N> [--round R] [--lens ID] [--print] [--json]
+```
+
+Opens the bot's own session for PR N. The session is on the box that hosts the bot,
+so it is pulled first, and then forked here like any kept session: the box does no
+work for it and nothing on the box is written.
+
+- **Live.** The PR's newest `<root>/<session_dir>/pr-<N>/*.jsonl`, read over the TUI's
+  runner (`[tui] ssh_host`, `container`, `sudo_docker`; `target = "local"` reads the
+  same way with no ssh). One listing call, one read of the file to the size the listing
+  measured, and `qcr why N --json` when `--round` asks for a round. The commands are
+  `ls`/`stat`/`head`/`base64` only; a test runs the real scripts against a fixture root
+  and asserts the root is unchanged and no script carries a write. A tail the bot was
+  still writing is dropped, so pi never reads a torn entry.
+- **Archived.** A PR closed for 14 days has no live file. The archive manifest
+  and the newest transcript's gzip are read off the box, laid out as an archive root
+  under the state home, and decompressed by `extractPr` (what `qcr archive extract` runs)
+  with every byte checked against the sha256 the manifest records. A gzip that does not
+  verify opens nothing.
+- **The copy.** `<state home>/open/pr-<N>/session/<name>.jsonl`, mode 0444, byte-for-byte
+  the box's file (so its header id is the bot's session id), with `open-pr.json` beside it
+  recording the source, host, sha256 and when. A second pull replaces it.
+- **`--round R`** keeps the session as it stood when round R finished: the header and every
+  entry stamped up to that round's `finished_at` (a prefix of the file, so ids and parents
+  are the bot's), minus a turn left asking for a tool whose result falls after the cut. It
+  lands in `.../pr-<N>/round-<R>/`. A tmux-hosted bot keeps one session per PR with every
+  round in it, which is why a round is a cut and not a file. A round still running, or one
+  `why` does not list, is refused with the finished ones named.
+- **`--lens ID`** opens a kept lens pass of the PR by run id or unambiguous prefix, from
+  `<pr dir>/lens-sessions/<run id>/*.jsonl` (the layout above). A tmux-hosted lens pass is
+  a child of the PR's session with no file of its own, so today the answer is "kept no lens
+  sessions"; they appear once workers persist them (P8.3, D10), and their archive inclusion
+  is P8.16. `--round` and `--lens` do not combine yet: nothing records a lens pass's round.
+
+Pi starts with bash-guard alone: the bot's tools are the tmux era's `subagent` and
+`launch_plan`, which this machine does not run, and posting is the daemon's. The login copy
+and the GitHub-token-free environment are the ones above. `--write` is refused: a copy has
+nothing to write back to. A fork gets a session id of its own, with the copy as its
+`parentSession`; the copy itself resumes under the bot's id.
+
 ## `qcr review --debug-pi`
 
 ```

@@ -108,6 +108,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/memory-image.test.ts",
   "tests/onboard-llmauth.test.ts",
   "tests/onboard-streamrunner.test.ts",
+  "tests/open-pr.test.ts", // sh -c against a fixture root, a real pi child in a pty
   "tests/openviking-embedder.test.ts",
   "tests/openviking-reembed-lock.test.ts",
   "tests/openviking.test.ts",
