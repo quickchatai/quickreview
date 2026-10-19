@@ -47,9 +47,16 @@ export const SANDBOX_AUTH_WRITERS: Readonly<Record<string, string>> = {
   "src/bench/opencode.ts": "OpenCode's auth.json in the case's own data dir",
   "src/hostroute.ts": "the host route's throwaway agent dir",
   "scripts/action.sh": "the Action's per-run login dir, from its own input",
-  "scripts/operator-box-provision.sh": "seeds the operator-box's own fresh companion volume",
-  "scripts/operator-box-setup.sh": "seeds the operator-box's own fresh companion volume",
 };
+
+/** Provisioning scripts that seed a fresh companion volume on another host. They
+ * are matched by shape, not named, so the list never carries a host's name. */
+export const PROVISIONING_AUTH_WRITER = /^scripts\/[a-z0-9]+-(provision|setup)\.sh$/;
+
+/** True for a writer that is a named sandbox copy or a provisioning script. */
+export function isSandboxAuthWriter(path: string): boolean {
+  return path in SANDBOX_AUTH_WRITERS || PROVISIONING_AUTH_WRITER.test(path);
+}
 
 /** Every .ts under `src/loginrefresh/` that the daemon's import closure reaches. */
 export function daemonReachedLoginRefresh(root: string, daemonRoots: readonly string[]): string[] {

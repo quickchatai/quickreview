@@ -126,7 +126,16 @@ export class LoginRefreshSupervisor {
 
   /** A login holds the handover: spawns that borrow auth.json wait. */
   paused(): boolean {
-    return this.file?.paused === true;
+    return this.current()?.paused === true;
+  }
+
+  /** The cached file, only while it is the running refresher's own: a leftover
+   * from a process that died (or from before a daemon restart) says nothing
+   * about the refresher now holding the lock. */
+  private current(): LoginRefreshFileStatus | undefined {
+    const file = this.file;
+    if (!file || this.child === null) return undefined;
+    return this.child.pid === undefined || file.pid === this.child.pid ? file : undefined;
   }
 
   /** Resolves true once the refresher is not paused (at once when it is not),
@@ -208,6 +217,8 @@ export class LoginRefreshSupervisor {
     this.child = null;
     this.startedAt = null;
     this.lastExit = { code, signal, at: this.now().toISOString() };
+    // a dead refresher holds no login handover: release the spawn hold now
+    for (const w of this.resumeWaiters.splice(0)) w();
     if (this.stopping) return;
     if (upMs >= RESET_AFTER_MS) this.attempt = 0;
     this.deps.log(
@@ -242,6 +253,9 @@ export class LoginRefreshSupervisor {
       if (raw === null) return;
       const file = JSON.parse(raw) as LoginRefreshFileStatus;
       this.file = file;
+      // the published file is shown as-is, but only the running refresher's own
+      // drives the episode and the hold (see current())
+      if (!this.current()) return;
       if (file.error_since === null || file.error_since === undefined) this.raisedFor = null;
       else if (this.raisedFor !== file.error_since) {
         this.raisedFor = file.error_since;
@@ -250,7 +264,7 @@ export class LoginRefreshSupervisor {
             ` (token expires ${file.expires_at ?? "unknown"}); recover with the entrypoint's login mode`,
         );
       }
-      if (!file.paused) for (const w of this.resumeWaiters.splice(0)) w();
+      if (!this.paused()) for (const w of this.resumeWaiters.splice(0)) w();
     } catch (err) {
       this.deps.log("login refresh: status file unreadable", err);
     }

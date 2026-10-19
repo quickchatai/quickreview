@@ -2109,8 +2109,9 @@ export const LOGIN_REFRESH_DEFAULTS: LoginRefreshConfig = Object.freeze({
   margin_min: 90,
 });
 
-/** Parse `[login_refresh]`; a margin that does not outlast the longest worker
- * cap REFUSES to load (a worker would then outlive the token it borrowed). */
+/** Parse `[login_refresh]`; with the refresher enabled, a margin that does not
+ * outlast the longest worker cap REFUSES to load (a worker would then outlive
+ * the token it borrowed). Disabled, nothing borrows, so the rule is not checked. */
 export function parseLoginRefresh(
   raw: Record<string, unknown>,
   roundDeadlineMin: number,
@@ -2124,7 +2125,7 @@ export function parseLoginRefresh(
     throw new Error(
       `config.toml [login_refresh]: margin_min must be a number of minutes up to 1440 (got ${JSON.stringify(typeof m === "bigint" ? String(m) : m)})`,
     );
-  if (margin <= roundDeadlineMin)
+  if (enabled && margin <= roundDeadlineMin)
     throw new Error(
       `config.toml [login_refresh]: margin_min (${margin}) must exceed [daemon] round_deadline_min (${roundDeadlineMin}), the longest worker cap`,
     );

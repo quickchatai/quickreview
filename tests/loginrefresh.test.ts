@@ -63,7 +63,7 @@ import {
   stripComments,
 } from "./helpers/engine-fences.js";
 import {
-  SANDBOX_AUTH_WRITERS,
+  isSandboxAuthWriter,
   authJsonWriters,
   daemonReachedLoginRefresh,
 } from "./helpers/loginrefresh-fence.js";
@@ -697,6 +697,7 @@ describe("the supervisor", () => {
           f === null
             ? null
             : JSON.stringify({
+                pid: 4242,
                 paused: false,
                 error_since: null,
                 last_error: null,
@@ -776,9 +777,18 @@ describe("the supervisor", () => {
       marginMin: 90,
       log: () => undefined,
       raiseAnomaly: (d) => store.logAnomaly("login_refresh_failed", null, null, d),
-      exists: () => false,
-      readStatusFile: () => JSON.stringify({ error_since: "t", last_error: "boom", paused: false }),
+      spawn: (() => ({
+        pid: 4242,
+        on: () => undefined,
+        stdout: { on: () => undefined },
+        stderr: { on: () => undefined },
+      })) as never,
+      schedule: () => () => undefined,
+      exists: () => true,
+      readStatusFile: () =>
+        JSON.stringify({ pid: 4242, error_since: "t", last_error: "boom", paused: false }),
     });
+    sup.start();
     sup.readFile();
     sup.readFile();
     const rows = store.db
@@ -815,6 +825,33 @@ describe("the supervisor", () => {
     expect(await held).toBe(false);
   });
 
+  it("ignores a leftover file while no refresher runs, or one from another pid", async () => {
+    const s = supRig();
+    s.setFile({ paused: true, error_since: "2026-10-20T08:00:00Z", last_error: "old" });
+    s.sup.readFile(); // before start(): no child, so the file is not its own
+    expect(s.sup.paused()).toBe(false);
+    expect(s.anomalies).toHaveLength(0);
+    s.sup.start();
+    s.setFile({ pid: 1, paused: true, error_since: "2026-10-20T08:00:00Z", last_error: "old" });
+    s.fire(LOGIN_STATUS_POLL_MS);
+    expect(s.sup.paused()).toBe(false); // a previous process's file
+    expect(s.anomalies).toHaveLength(0);
+    s.setFile({ paused: true }); // the running refresher's own
+    s.fire(LOGIN_STATUS_POLL_MS);
+    expect(s.sup.paused()).toBe(true);
+  });
+
+  it("a refresher that dies while paused releases the hold at once", async () => {
+    const s = supRig();
+    s.sup.start();
+    s.setFile({ paused: true });
+    s.fire(LOGIN_STATUS_POLL_MS);
+    const held = s.sup.whenResumed(120_000);
+    s.children[0]!.emit("exit", 1, null);
+    expect(await held).toBe(true);
+    expect(s.sup.paused()).toBe(false);
+  });
+
   it("stop() ends the child with SIGTERM", async () => {
     const s = supRig();
     s.sup.start();
@@ -829,10 +866,20 @@ describe("config", () => {
     expect(parseConfig(base).login_refresh).toEqual({ enabled: false, margin_min: 90 });
   });
   it("a margin that does not outlast the longest worker cap refuses to load", () => {
-    const toml = base.replace("margin_min = 90 ", "margin_min = 75 ");
+    const toml = base
+      .replace("enabled = false\nmargin_min", "enabled = true\nmargin_min")
+      .replace("margin_min = 90 ", "margin_min = 75 ");
     expect(() => parseConfig(toml)).toThrow(
       /margin_min \(75\) must exceed \[daemon\] round_deadline_min \(75\)/,
     );
+  });
+  it("a disabled section is not held to the margin rule", () => {
+    const toml = base.replace("round_deadline_min = 75", "round_deadline_min = 120");
+    expect(toml).not.toBe(base);
+    expect(parseConfig(toml).login_refresh.enabled).toBe(false);
+    expect(() =>
+      parseConfig(toml.replace("enabled = false\nmargin_min", "enabled = true\nmargin_min")),
+    ).toThrow(/must exceed \[daemon\] round_deadline_min \(120\)/);
   });
   it("enabled must be a boolean", () => {
     expect(() =>
@@ -847,7 +894,7 @@ describe("[P8.22] only the refresher and the login mode write the pihome's auth.
   it("every auth.json writer in the tree is the refresher or a named sandbox copy", () => {
     const writers = authJsonWriters(root);
     const stray = writers.filter(
-      (w) => !w.startsWith("src/loginrefresh/") && !(w in SANDBOX_AUTH_WRITERS),
+      (w) => !w.startsWith("src/loginrefresh/") && !isSandboxAuthWriter(w),
     );
     expect(stray).toEqual([]);
   });
