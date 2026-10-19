@@ -38,6 +38,10 @@ stay behaviourally identical to the TS side:
   the gate. Change a guard on one side → change it on both + both tests.
 - `mint-token.sh` is the only credential source (App JWT → installation
   token, cached, single-flight). Never a personal token, never `GH_TOKEN`.
+  The one personal credential is not GitHub access at all: `vm-ghcr-login.sh`
+  (run by the owner, on the controller) gives the VM's docker its classic
+  `read:packages` login for pulling the release images, and refuses any other
+  scope. It never takes the token as an argument or env, and posts nothing.
 - `commit-verdict.sh` is sanctioned for sessions but posts nothing: it
   publishes a staged `verdict/<name>.tmp` onto `verdict/<name>` by
   one rename after checking it is one whole JSON object, so the daemon never

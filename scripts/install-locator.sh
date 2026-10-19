@@ -95,6 +95,21 @@ qcr_state_home() {
   printf '%s\n' "$(_qcr_xdg_base "${XDG_STATE_HOME:-}" .local/state)/qcr/$name"
 }
 
+# Where scripts/vm-ghcr-login.sh records when the VM's registry pull token
+# expires (one ISO UTC line, no secret in it) and where `deploy.sh verify` reads
+# it back: the install's state home on the controller, never the config home
+# (which ships to the VM). $QCR_GHCR_EXPIRY_FILE overrides it (tests).
+qcr_ghcr_expiry_file() {
+  local override home
+  override="$(_qcr_trim "${QCR_GHCR_EXPIRY_FILE:-}")"
+  if [[ -n "$override" ]]; then
+    printf '%s\n' "$override"
+    return 0
+  fi
+  home="$(qcr_state_home)" || return 1
+  printf '%s\n' "$home/ghcr-token-expiry"
+}
+
 qcr_locate_config() { # qcr_locate_config [checkout-root]
   local override="${QCR_CONFIG:-}" home
   override="${override#"${override%%[![:space:]]*}"}"

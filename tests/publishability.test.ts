@@ -442,6 +442,12 @@ const ALLOWLIST: AllowlistEntry[] = [
       "release <version> names the daemon and memory images it has the VM pull, under the publishing org's registry namespace (ghcr.io/quickchatai/...), as a fallback for an inventory that sets none",
   },
   {
+    path: "scripts/vm-ghcr-login.sh",
+    tokens: ["quickchat"],
+    reason:
+      "names the default release and memory images it checks the pull credential against, under the publishing org's registry namespace (ghcr.io/quickchatai/...), as a fallback for an inventory that sets none",
+  },
+  {
     path: "tests/deploy.test.ts",
     tokens: ["quickchat"],
     reason:
