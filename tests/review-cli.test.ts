@@ -994,6 +994,37 @@ describe("qcr review <PR>", () => {
     expect(h.text()).toMatch(/--repo o\/other/);
   });
 
+  it("--debug-pi posts nothing even when the repo's saved default is pr", async () => {
+    const repo = cwdRepo("pr-debug-nopost");
+    setLimit(repo, 1000);
+    const { saveDefaultDestinations, loadDefaultDestinations } = await import(
+      "../src/reviewdest.js"
+    );
+    saveDefaultDestinations(repo, ["pr"]);
+    const pi = happyPi("pr-debug-nopost");
+    const { runOneShot } = await import("../src/oneshot.js");
+    const methods: string[] = [];
+    const recording = (async (u: string | URL | Request, init?: RequestInit) => {
+      methods.push(init?.method ?? "GET");
+      return api(u, init);
+    }) as typeof fetch;
+    const h = prHarness(repo, "false", {
+      env: { GITHUB_TOKEN: "tok" },
+      ghAuthToken: () => null,
+      fetchFn: recording,
+    });
+    const code = await runReviewCli(["--debug-pi", "7"], false, {
+      ...h.deps,
+      debugPi: (spec) => runOneShot({ ...spec, piBin: pi.bin }),
+    });
+    expect(code).toBe(0);
+    expect(h.text()).toMatch(/c breaks the build/);
+    expect(h.text()).not.toMatch(/Posted|posts to/);
+    expect(methods.filter((m) => m !== "GET")).toEqual([]);
+    // the debug round leaves the saved default as it found it
+    expect(loadDefaultDestinations(repo)).toEqual(["pr"]);
+  });
+
   it("a missing credential is refused with the way to get one", async () => {
     const repo = cwdRepo("pr-nocred");
     const h = prHarness(repo, "false", { env: {}, ghAuthToken: () => null });
