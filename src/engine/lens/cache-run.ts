@@ -89,7 +89,14 @@ export class CacheGroups {
   private readonly grouper: CacheGrouper;
   private readonly lives = new Map<string, Lifetime>();
 
-  constructor(size: number, staggerMs: number, newKey?: () => string) {
+  /** `onDisposed` is told each time a group's sessions are disposed: the live
+   * evidence for the cleanupSessionResources pin (scripts/pin-evidence-map.json). */
+  constructor(
+    size: number,
+    staggerMs: number,
+    newKey?: () => string,
+    private readonly onDisposed?: (key: string, sessions: number) => void,
+  ) {
     this.grouper = new CacheGrouper(size, staggerMs, newKey);
   }
 
@@ -111,13 +118,15 @@ export class CacheGroups {
   private settle(key: string, life: Lifetime): void {
     if (life.members > 0) return;
     if (this.lives.get(key) === life) this.lives.delete(key);
-    for (const s of life.sessions.splice(0)) {
+    const retired = life.sessions.splice(0);
+    for (const s of retired) {
       try {
         s.dispose();
       } catch {
         // already disposed
       }
     }
+    if (retired.length > 0) this.onDisposed?.(key, retired.length);
   }
 
   /** Groups with a member alive now (diagnostics and tests). */

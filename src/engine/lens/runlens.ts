@@ -295,7 +295,12 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     else live.delete(sessionId);
   };
   const cache = config.cache !== undefined && config.cache.size >= 1 ? config.cache : undefined;
-  const groups = cache !== undefined ? new CacheGroups(cache.size, cache.staggerMs) : undefined;
+  const groups =
+    cache !== undefined
+      ? new CacheGroups(cache.size, cache.staggerMs, undefined, (key, n) =>
+          warn(`pin-evidence cache-group-disposed key=${key} sessions=${n}`),
+        )
+      : undefined;
   const sessionGapMs = config.sessionGapMs ?? DEFAULT_SESSION_GAP_MS;
 
   const transition = (id: string, entry: ProgressTransition): void => {
