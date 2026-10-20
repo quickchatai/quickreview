@@ -424,8 +424,7 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
     // Host isolation: pi discovers nothing of its own. `-ne` leaves only the
     // extensions named below (so neither ~/.pi/agent, nor a project's `.pi/`,
     // nor a package can add one to the session) and `-ns` no skill; lens
-    // children, which load only the agent dir's GLOBAL settings, get bash-guard
-    // from there (the bench's and the host route's settings both register it).
+    // passes get bash-guard from the lens tool's factory, not a global setting.
     // `-nc` is deliberately absent: the cwd's context file is the reviewer stub.
     log(`review: ${label} — ${i.files.length} files, lenses ${prompts.plannedLenses.join(" ")}`);
     const cwd = i.cwd ?? root;

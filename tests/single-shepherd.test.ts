@@ -567,18 +567,11 @@ describe("buildAgents — built passes cannot launch agents", () => {
 // out, and it holds no matter what a frontmatter says.
 describe("subagents glue is never registered globally", () => {
   const root = join(import.meta.dirname, "..");
-  // The release image's entrypoint (the VM's, since the cutover) names its one
-  // required global extension on the daemon mode's call into the settings merge.
-  it("docker/entrypoint.sh: the global extension list carries no subagent loader", () => {
+  // The release image's entrypoint (P9.5) registers no global extension at all.
+  it("docker/entrypoint.sh: the global extension list is empty", () => {
     const text = readFileSync(join(root, "docker/entrypoint.sh"), "utf8");
-    const wanted = [...text.matchAll(/QCR_PI_REQUIRE_EXT="([^"]*)"/g)].map((m) => m[1] ?? "");
-    const paths = wanted.flatMap((w) => w.split(":")).filter(Boolean);
-    expect(paths).toEqual(["$APP/extensions/bash-guard.ts"]);
-    for (const p of paths) {
-      expect(p, `${p} must not hand children an agent launcher or memory`).not.toMatch(
-        /subagent|openviking|register-lens|extensions\/lens/,
-      );
-    }
+    expect(text).not.toContain("QCR_PI_REQUIRE_EXT");
+    expect(text).not.toContain("settings.extensions.push");
   });
   for (const file of ["docker/daemon/entrypoint.sh"]) {
     it(`${file}: the global extension list carries no subagent loader`, () => {

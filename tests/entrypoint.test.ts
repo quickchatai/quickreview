@@ -7,8 +7,8 @@
 //     to the cli;
 //   - every mode refuses to start when config.toml [pi] version differs from
 //     the installed pi package;
-//   - the daemon mode carries the bash-guard registration, its FATAL on a
-//     missing extension and on a global CLI that is not the pinned pi, and the 0444
+//   - the daemon mode carries the prune of the retired global bash-guard entry
+//     (P9.5), its FATAL on a global CLI that is not the pinned pi, and the 0444
 //     reviewer stub; the per-call cli mode registers no bash-guard and
 //     instead runs the model's tools as another uid (D32: the entrypoint's
 //     privilege drop, the engine's setpriv launch, and - in a user namespace,
@@ -306,14 +306,13 @@ describe("state", () => {
 });
 
 describe("daemon mode", () => {
-  it("registers bash-guard in pi's global settings, pre-trusts the app root and execs wire.js", () => {
+  it("registers no extension in pi's global settings, pre-trusts the app root and execs wire.js", () => {
     const r = rig();
     const out = run(r, ["daemon"], withConfig(r));
     expect(out.status, out.stderr).toBe(0);
     expect(JSON.parse(out.stdout)).toMatchObject({ ran: "wire", argv: [] });
     const s = settings(r);
-    expect(s.extensions[0]).toBe(GUARD(r));
-    expect(s.extensions.slice(1)).toEqual([
+    expect(s.extensions).toEqual([
       "-builtin:mcp",
       "-builtin:codemode",
       "-builtin:tool-search",
@@ -346,14 +345,21 @@ describe("daemon mode", () => {
     expect(settings(r).extensions).toEqual(first.extensions);
   });
 
-  it("FATAL on a missing bash-guard: a silently unregistered guard would mean unguarded sessions", () => {
+  it("prunes the global bash-guard entry an older image merged onto the pihome volume (P9.5)", () => {
     const r = rig();
-    rmSync(GUARD(r));
+    put(
+      join(r.home, ".pi/agent/settings.json"),
+      JSON.stringify({ extensions: [GUARD(r), "/gone/other.ts"], theme: "mine" }),
+    );
     const out = run(r, ["daemon"], withConfig(r));
-    expect(out.status).not.toBe(0);
-    expect(out.stderr).toContain(`FATAL: pi extension missing: ${GUARD(r)}`);
-    expect(out.stdout).toBe("");
-    expect(existsSync(join(r.dir, "tmux.log"))).toBe(false);
+    expect(out.status, out.stderr).toBe(0);
+    expect(out.stdout + out.stderr).toContain("bash-guard is no longer global");
+    const s = settings(r);
+    expect(s.extensions).not.toContain(GUARD(r));
+    expect(s["theme"]).toBe("mine");
+    // the guard rides the sessions as a factory, so its file is no boot requirement
+    rmSync(GUARD(r));
+    expect(run(r, ["daemon"], withConfig(r)).status).toBe(0);
   });
 
   it("boots without pi's examples: the lens tool is ours, nothing of pi's package but the pin is asked for", () => {
@@ -454,14 +460,10 @@ describe("per-call modes register no bash-guard (D32; the uid split is checked b
     expect(s["tuiMode"]).toBe("regular");
   });
 
-  it("the bash-guard registration is the daemon mode's alone", () => {
+  it("no mode registers an extension globally (P9.5)", () => {
     const text = read("docker/entrypoint.sh");
-    const daemon = text.slice(
-      text.indexOf("mode_daemon() {"),
-      text.indexOf("# The companion's pi settings"),
-    );
-    expect(text.match(/extensions\/bash-guard\.ts/g)).toHaveLength(2); // the knob, and a comment
-    expect(daemon).toContain('QCR_PI_REQUIRE_EXT="$APP/extensions/bash-guard.ts"');
+    expect(text).not.toContain("QCR_PI_REQUIRE_EXT");
+    expect(text).not.toContain("FATAL: pi extension missing");
   });
 });
 

@@ -1585,12 +1585,12 @@ describe("deploy.sh — release <version>", () => {
     }
   });
 
-  it("verify checks the image stamp, pi's bash-guard registration and the reviewer stub, in the container", () => {
+  it("verify checks the image stamp, that pi's settings carry no bash-guard entry and the reviewer stub, in the container", () => {
     env = scratch();
     const r = run(env, ["--dry-run", "verify"]);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain(
-      "sudo docker exec quickreview-sandbox grep -q bash-guard /home/qcr/.pi/agent/settings.json",
+      "sudo docker exec quickreview-sandbox sh -c '! grep -q bash-guard /home/qcr/.pi/agent/settings.json'",
     );
     expect(r.stdout).toContain("/opt/qcr/AGENTS.override.md");
     expect(r.stdout).toContain("= 444");
@@ -1610,7 +1610,7 @@ describe("deploy.sh — release <version>", () => {
       QC_MEMORY_SEARCH_CMD: "true",
     };
     for (const [needle, shown] of [
-      ["bash-guard", "grep -q bash-guard"],
+      ["bash-guard", "! grep -q bash-guard"],
       ["AGENTS.override.md", "AGENTS.override.md"],
     ] as const) {
       env = scratch();
@@ -2956,14 +2956,14 @@ describe("deploy — the memory sidecar", () => {
       expect(block).not.toMatch(/TOKEN|SECRET|PASSWORD|PEM/);
     });
 
-    it("the image's daemon mode does what the legacy entrypoint did: bash-guard merge (FATAL when absent), the stub, the agents link", () => {
+    it("the image's daemon mode does what the legacy entrypoint did, less the global bash-guard merge (P9.5): the stub, the agents link", () => {
       const entry = readFileSync(join(root, "docker", "entrypoint.sh"), "utf8");
       const daemonMode = entry.slice(
         entry.indexOf("mode_daemon() {"),
         entry.indexOf("mode_companion() {"),
       );
-      expect(daemonMode).toContain('QCR_PI_REQUIRE_EXT="$APP/extensions/bash-guard.ts"');
-      expect(entry).toContain('console.error("FATAL: pi extension missing: " + p)');
+      expect(daemonMode).not.toContain("QCR_PI_REQUIRE_EXT");
+      expect(entry).not.toContain("FATAL: pi extension missing");
       expect(daemonMode).toContain("assert_pinned_pi_cli");
       expect(daemonMode).not.toContain("assert_subagent_example");
       expect(daemonMode).toContain('QCR_PI_AGENTS_TARGET="$STATE/agents"');
