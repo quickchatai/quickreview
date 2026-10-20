@@ -3,11 +3,17 @@
 
   elo.py init PLAN.json [--dir D]   create an Elo run directory from a plan
   elo.py pack D                     pack every PR's shared context; no model call
+  elo.py repack D [--pr IID ...] [--dry-run]
+                                    re-pack from the current packing code; says
+                                    which PRs changed and what that invalidates
   elo.py run D [--rounds N] [--judge gpt|opus|both] [--no-wait]
                                     judge round 0, then adaptive rounds
   elo.py report D                   ratings per judge → D/REPORT.md, D/ratings.json
   elo.py show D --x RUN --y RUN [--judge J] [--pr IID]
                                     the judge's explanations for one matchup
+  elo.py audit D [--bridge-log judge.jsonl]
+                                    one call per judgment: rows, turns, and the
+                                    GPT bridge's upstream requests in the window
   elo.py --self-test
 
 A run directory holds the plan, the packed contexts (packs/), the scheduled
@@ -17,12 +23,15 @@ included), and the Opus batches (batches.jsonl). Everything is resumable:
 `run` first collects what is in flight, then retries what failed (≤ 3
 attempts), then schedules the next round. Both judges judge every unit with
 the same prompt, so their tables are comparable and their agreement is
-measured. See bench/aacr/elo/README.md.
+measured. A judgment counts only while its recorded prompt sha256 equals the
+unit's current prompt (the instructions, the packed context, the two
+rendered reviews): re-packing a PR sets its old judgments aside, for every
+judge, and its units are judged again. See bench/aacr/elo/README.md.
 """
 from __future__ import annotations
 
 import argparse
-import hashlib
+import calendar
 import json
 import random
 import re
@@ -44,6 +53,16 @@ JUDGES = ("gpt", "opus")
 # Opus 5.5 at Batch API prices, $ per million tokens: half of the standard
 # $4 input / $20 output / $8 one-hour cache write / $0.20 cache read.
 OPUS_BATCH_USD = {"input": 2.0, "output": 10.0, "cache_write_1h": 4.0, "cache_read": 0.10}
+# gpt-6.1-sol at API prices, $ per million tokens, per request: past
+# GPT_LONG_INPUT input tokens the whole request is billed at the long rates.
+# The judge runs on the ChatGPT login, which bills quota; this is what the
+# same calls would cost on the API.
+GPT_API_USD = {"input": 2.0, "output": 10.0, "cached": 0.10}
+GPT_API_LONG_USD = {"input": 4.0, "output": 15.0, "cached": 0.20}
+GPT_LONG_INPUT = 272_000
+# How far around the GPT judge's first and last judgment `audit` looks for
+# the bridge's upstream requests.
+AUDIT_WINDOW_S = 300
 
 
 def now() -> str:
@@ -52,6 +71,12 @@ def now() -> str:
 
 def log(msg: str) -> None:
     print(f"{time.strftime('%H:%M:%S')} elo: {msg}", flush=True)
+
+
+def as_read(text: str) -> str:
+    """Text as Path.read_text returns it after Path.write_text (universal
+    newlines)."""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def safe(name: str) -> str:
@@ -79,6 +104,11 @@ class Run:
         self.plan = json.loads((d / "plan.json").read_text())
         self.runs: List[str] = self.plan["runs"]
         self._cases: Optional[Dict[str, D.Case]] = None
+        # Per process: a PR's packed context and a unit's current prompt hash.
+        # `repack` drops a PR's entries when it rewrites the pack.
+        self._ctx: Dict[str, str] = {}
+        self._sha: Dict[str, Optional[str]] = {}
+        self._lock = threading.Lock()
 
     # -- data
     @property
@@ -90,15 +120,37 @@ class Run:
     def eligible(self) -> Dict[str, List[str]]:
         return {r: sorted(pr for pr, c in self.cases.items() if c.reviews.get(r) is not None) for r in self.runs}
 
+    def pack_path(self, pr: str) -> Path:
+        return self.d / "packs" / f"{safe(pr)}.txt"
+
+    def write_pack(self, pr: str, packed: dict, **extra) -> None:
+        path = self.pack_path(pr)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(packed["text"])
+        append_jsonl(self.d / "packs.jsonl", {"pr": pr, "tokens": packed["tokens"],
+                                              "over_budget": packed["over_budget"], "files": packed["files"],
+                                              **extra})
+        self.forget(pr)
+
+    def forget(self, pr: str) -> None:
+        """Drop the cached context and prompt hashes of one PR."""
+        with self._lock:
+            self._ctx.pop(pr, None)
+            self._sha.clear()
+
     def context(self, pr: str) -> str:
-        path = self.d / "packs" / f"{safe(pr)}.txt"
-        if not path.exists():
-            packed = D.pack_context(self.cases[pr], self.plan.get("max_prompt_tokens", 400000))
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(packed["text"])
-            append_jsonl(self.d / "packs.jsonl", {"pr": pr, "tokens": packed["tokens"],
-                                                  "over_budget": packed["over_budget"], "files": packed["files"]})
-        return path.read_text()
+        with self._lock:
+            if pr in self._ctx:
+                return self._ctx[pr]
+            path = self.pack_path(pr)
+            if not path.exists():
+                packed = D.pack_context(self.cases[pr], self.plan.get("max_prompt_tokens", 400000))
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(packed["text"])
+                append_jsonl(self.d / "packs.jsonl", {"pr": pr, "tokens": packed["tokens"],
+                                                      "over_budget": packed["over_budget"], "files": packed["files"]})
+            self._ctx[pr] = path.read_text()
+            return self._ctx[pr]
 
     def reviews(self, unit: dict) -> str:
         case = self.cases[unit["pr"]]
@@ -115,18 +167,41 @@ class Run:
             out.setdefault(row["id"], []).append(row)
         return out
 
+    def current(self, judge: str, rows_by_id: Optional[Dict[str, List[dict]]] = None) -> Dict[str, List[dict]]:
+        """id → the attempts made at the unit's CURRENT prompt. An attempt at
+        another prompt (the PR re-packed, a review rendered differently) is
+        stale: it neither counts as a judgment nor as an attempt."""
+        units = {u["id"]: u for u in self.units()}
+        out: Dict[str, List[dict]] = {}
+        for i, rows in (self.judgments(judge) if rows_by_id is None else rows_by_id).items():
+            u = units.get(i)
+            sha = self.prompt_sha(u) if u else None
+            keep = [r for r in rows if sha is not None and r.get("prompt_sha256") == sha]
+            if keep:
+                out[i] = keep
+        return out
+
+    def stale(self, judge: str) -> List[dict]:
+        """The ok judgments set aside because their prompt is no longer the
+        unit's current one."""
+        js = self.judgments(judge)
+        kept = {id(r) for rows in self.current(judge, js).values() for r in rows}
+        return [r for rows in js.values() for r in rows if r["status"] == "ok" and id(r) not in kept]
+
     def final(self, judge: str) -> Dict[str, dict]:
-        """id → the ok judgment, for units that have one."""
+        """id → the ok judgment at the current prompt, for units that have one."""
         return {i: next(r for r in rows if r["status"] == "ok")
-                for i, rows in self.judgments(judge).items() if any(r["status"] == "ok" for r in rows)}
+                for i, rows in self.current(judge).items() if any(r["status"] == "ok" for r in rows)}
 
     def pending(self, judge: str, in_flight: set) -> List[dict]:
-        js = self.judgments(judge)
+        js = self.current(judge)
         out = []
         for u in self.units():
             rows = js.get(u["id"], [])
             if u["id"] in in_flight or any(r["status"] == "ok" for r in rows) or len(rows) >= MAX_ATTEMPTS:
                 continue
+            if self.prompt_sha(u) is None:
+                continue  # a review no longer loads: nothing can be judged
             out.append(u)
         return out
 
@@ -145,12 +220,20 @@ class Run:
                       "judge": judge, "model": model, "effort": effort, "prompt_sha256": prompt_sha,
                       "at": now(), **result})
 
-    def prompt_sha(self, unit: dict) -> str:
-        h = hashlib.sha256()
-        for part in (J.SYSTEM, self.context(unit["pr"]), self.reviews(unit)):
-            h.update(part.encode())
-            h.update(b"\0")
-        return h.hexdigest()
+    def prompt_sha(self, unit: dict) -> Optional[str]:
+        """The unit's current prompt hash (cached per process); None when a
+        review of the unit no longer loads."""
+        uid = unit["id"]
+        if uid in self._sha:
+            return self._sha[uid]
+        case = self.cases.get(unit["pr"])
+        if case is None or case.reviews.get(unit["a"]) is None or case.reviews.get(unit["b"]) is None:
+            sha = None
+        else:
+            sha = J.prompt_sha(self.context(unit["pr"]), self.reviews(unit))
+        with self._lock:
+            self._sha[uid] = sha
+        return sha
 
     # -- games
     def games(self, judge: str, category: Optional[str] = None) -> List[R.Game]:
@@ -241,7 +324,8 @@ def run_gpt(run: Run, judge: J.GptJudge, workers: int) -> None:
     def one(u: dict) -> None:
         ctx, rev = run.context(u["pr"]), run.reviews(u)
         res = judge.judge(ctx, rev)
-        run.record("gpt", u, res, judge.model, judge.effort, run.prompt_sha(u))
+        # The hash of what was SENT, so a pack rewritten mid-call is caught.
+        run.record("gpt", u, res, judge.model, judge.effort, J.prompt_sha(ctx, rev))
         log(f"gpt {u['id']} {u['pr']}: {res['status']}"
             + (f" → {res['verdict']['overall']['winner']}" if res["status"] == "ok" else f" ({res.get('error', '')[:160]})"))
 
@@ -257,9 +341,13 @@ def run_opus(run: Run, judge: J.OpusJudge, wait: bool) -> None:
     todo = run.pending("opus", in_flight)
     if todo:
         units = {u["id"]: u for u in todo}
-        reqs = [{"custom_id": u["id"], "params": judge.params(run.context(u["pr"]), run.reviews(u))} for u in todo]
+        reqs, shas = [], {}
+        for u in todo:
+            ctx, rev = run.context(u["pr"]), run.reviews(u)
+            reqs.append({"custom_id": u["id"], "params": judge.params(ctx, rev)})
+            shas[u["id"]] = J.prompt_sha(ctx, rev)
         bid = judge.submit(reqs)
-        row = {"batch_id": bid, "ids": list(units), "submitted_at": now()}
+        row = {"batch_id": bid, "ids": list(units), "shas": shas, "submitted_at": now()}
         append_jsonl(run.d / "batches.jsonl", row)
         open_.append(row)
         log(f"opus: submitted batch {bid} with {len(reqs)} judgments")
@@ -273,7 +361,10 @@ def run_opus(run: Run, judge: J.OpusJudge, wait: bool) -> None:
         for uid in b["ids"]:
             u = all_units[uid]
             res = results.get(uid, {"status": "error", "error": "missing from the batch results"})
-            run.record("opus", u, res, judge.model, judge.effort, run.prompt_sha(u))
+            # The hash of what was submitted; a batch row from before hashes
+            # were stored falls back to the current prompt.
+            sha = (b.get("shas") or {}).get(uid) or run.prompt_sha(u)
+            run.record("opus", u, res, judge.model, judge.effort, sha)
         append_jsonl(run.d / "batches.jsonl", {"batch_id": b["batch_id"], "collected_at": now(),
                                                "statuses": dict(Counter(r["status"] for r in results.values()))})
         log(f"opus batch {b['batch_id']} collected: {dict(Counter(r['status'] for r in results.values()))}")
@@ -323,8 +414,27 @@ def cmd_run(a) -> None:
         log(f"round {rnd}: {len(new)} more judgments per judge")
 
 
+def gpt_row_usd(u: dict) -> float:
+    """One GPT judgment's API-equivalent cost (Chat Completions usage)."""
+    inp = int(u.get("prompt_tokens") or 0)
+    cached = min(inp, int((u.get("prompt_tokens_details") or {}).get("cached_tokens") or 0))
+    out = int(u.get("completion_tokens") or 0)
+    p = GPT_API_LONG_USD if inp > GPT_LONG_INPUT else GPT_API_USD
+    return ((inp - cached) * p["input"] + cached * p["cached"] + out * p["output"]) / 1e6
+
+
+def opus_row_usd(u: dict) -> float:
+    """One Opus judgment's cost at Batch API prices (Messages usage)."""
+    return (int(u.get("input_tokens") or 0) * OPUS_BATCH_USD["input"]
+            + int(u.get("output_tokens") or 0) * OPUS_BATCH_USD["output"]
+            + int(u.get("cache_creation_input_tokens") or 0) * OPUS_BATCH_USD["cache_write_1h"]
+            + int(u.get("cache_read_input_tokens") or 0) * OPUS_BATCH_USD["cache_read"]) / 1e6
+
+
 def usage_summary(rows: List[dict], judge: str) -> str:
     tot: Counter = Counter()
+    usd = 0.0
+    long_ = 0
     for r in rows:
         u = r.get("usage") or {}
         if judge == "gpt":
@@ -332,18 +442,21 @@ def usage_summary(rows: List[dict], judge: str) -> str:
             tot["cached"] += int((u.get("prompt_tokens_details") or {}).get("cached_tokens") or 0)
             tot["output"] += int(u.get("completion_tokens") or 0)
             tot["reasoning"] += int((u.get("completion_tokens_details") or {}).get("reasoning_tokens") or 0)
+            usd += gpt_row_usd(u)
+            long_ += int(u.get("prompt_tokens") or 0) > GPT_LONG_INPUT
         else:
             tot["input"] += int(u.get("input_tokens") or 0)
             tot["cache_write"] += int(u.get("cache_creation_input_tokens") or 0)
             tot["cache_read"] += int(u.get("cache_read_input_tokens") or 0)
             tot["output"] += int(u.get("output_tokens") or 0)
+            usd += opus_row_usd(u)
     s = ", ".join(f"{k} {v:,}" for k, v in tot.items())
     if judge == "opus":
-        usd = (tot["input"] * OPUS_BATCH_USD["input"] + tot["output"] * OPUS_BATCH_USD["output"]
-               + tot["cache_write"] * OPUS_BATCH_USD["cache_write_1h"] + tot["cache_read"] * OPUS_BATCH_USD["cache_read"]) / 1e6
-        s += f" (≈ ${usd:,.2f} at Batch API prices)"
+        s += f" (≈ ${usd:,.2f} at Batch API prices, per call)"
     else:
-        s += " (ChatGPT login: subscription quota, not billed per token)"
+        s += (f" (≈ ${usd:,.2f} API-equivalent at gpt-6.1-sol API prices"
+              f"{f', {long_} call(s) past {GPT_LONG_INPUT:,} input tokens at the long-context rate' if long_ else ''}; "
+              f"the ChatGPT login route bills quota, not dollars)")
     return s
 
 
@@ -384,10 +497,14 @@ def cmd_report(a) -> None:
         final = run.final(j)
         model = rows[-1].get("model")
         effort = rows[-1].get("effort")
-        statuses = Counter(r["status"] for r in rows)
+        statuses = Counter(r["status"] for rs in run.current(j).values() for r in rs)
+        stale = run.stale(j)
         out += [f"## Judge: {model} at {effort}", "",
-                f"{len(final)} of {len(units)} judgments in; attempts by status {dict(statuses)}.", "",
-                f"Usage: {usage_summary(rows, j)}.", "", "### Overall", ""]
+                f"{len(final)} of {len(units)} judgments in; attempts at the current prompts by status "
+                f"{dict(statuses)}.", "",
+                f"Set aside as stale (the prompt changed since they were made: re-packed context or "
+                f"re-rendered reviews): {len(stale)} judgment(s) over {len({r['id'] for r in stale})} unit(s).", "",
+                f"Usage (every attempt, stale ones included): {usage_summary(rows, j)}.", "", "### Overall", ""]
         t = R.table(run.runs, run.games(j), seed=seed)
         ratings[j] = {"overall": t, "categories": {}}
         out += fmt_table(t, labels) + [""]
@@ -416,6 +533,92 @@ def cmd_report(a) -> None:
     (run.d / "REPORT.md").write_text("\n".join(out))
     (run.d / "ratings.json").write_text(json.dumps(ratings, indent=2) + "\n")
     print("\n".join(out))
+
+
+def cmd_repack(a) -> None:
+    """Rewrite packs/<pr>.txt from the current packing code. A PR whose
+    context changes loses its judgments (for every judge): they stop
+    counting, and its units are judged again by the next `run`."""
+    run = Run(Path(a.dir))
+    prs = a.pr or sorted(run.cases)
+    unknown = [pr for pr in prs if pr not in run.cases]
+    if unknown:
+        raise SystemExit(f"not in this run: {', '.join(unknown)}")
+    units = run.units()
+    changed = []
+    lost: Counter = Counter()
+    for pr in prs:
+        packed = D.pack_context(run.cases[pr], run.plan.get("max_prompt_tokens", 400000))
+        path = run.pack_path(pr)
+        old = path.read_text() if path.exists() else None
+        # The judges are sent the pack as read back, and reading a text file
+        # turns \r\n and a lone \r into \n: compare in that form.
+        if old == as_read(packed["text"]):
+            continue
+        # A new context changes the prompt of every unit on this PR, so every
+        # judgment counting on one of them stops counting.
+        on_pr = {u["id"] for u in units if u["pr"] == pr}
+        n = {j: len(on_pr & set(run.final(j))) for j in JUDGES}
+        lost.update(n)
+        changed.append(pr)
+        if not a.dry_run:
+            run.write_pack(pr, packed, repacked_at=now())
+        size = f"new pack, ~{packed['tokens']} tok" if old is None else f"~{D.tokens(old)} → ~{packed['tokens']} tok"
+        log(f"{'would re-pack' if a.dry_run else 're-packed'} {pr} ({size}); judgments no longer counting: "
+            + ", ".join(f"{j} {n[j]}" for j in JUDGES))
+    log(f"{len(changed)} of {len(prs)} PR(s) {'would change' if a.dry_run else 'changed'}; judgments set aside: "
+        + ", ".join(f"{j} {lost[j]}" for j in JUDGES))
+
+
+def _ts(text: str) -> float:
+    return float(calendar.timegm(time.strptime(text, "%Y-%m-%dT%H:%M:%SZ")))
+
+
+def cmd_audit(a) -> None:
+    """One judgment = one call, checked from the records: per judge, rows vs
+    units, rows not marked as a single turn; with the GPT bridge's log, the
+    upstream requests in the judge's time window vs its judgments."""
+    run = Run(Path(a.dir))
+    units = run.units()
+    log(f"{len(units)} units")
+    for j in JUDGES:
+        js = run.judgments(j)
+        rows = [r for rs in js.values() for r in rs]
+        if not rows:
+            log(f"{j}: no judgments recorded")
+            continue
+        cur = run.current(j)
+        answered = [r for r in rows if r.get("status") != "error" or "turns" in r]
+        turns = Counter("missing" if r.get("turns") is None else ("1" if r.get("turns") == 1 else "other")
+                        for r in answered)
+        reasons = Counter(str(r.get("finish_reason") or r.get("stop_reason") or "not recorded") for r in answered)
+        retried = sum(1 for r in rows if int(r.get("http_attempts") or 1) > 1)
+        log(f"{j}: {len(rows)} rows over {len(js)} of {len(units)} units; statuses {dict(Counter(r['status'] for r in rows))}; "
+            f"final at the current prompt {len(run.final(j))}, stale ok {len(run.stale(j))}, "
+            f"attempts at the current prompt {sum(len(v) for v in cur.values())}")
+        log(f"{j}: answered rows by turns: 1 {turns['1']}, other {turns['other']}, missing {turns['missing']}"
+            f"{' (recorded before turns were stored)' if turns['missing'] else ''}; finish/stop reasons {dict(reasons)}; "
+            f"rows whose call was retried upstream {retried}")
+    if not a.bridge_log:
+        return
+    gpt = [r for rs in run.judgments("gpt").values() for r in rs if r.get("at")]
+    if not gpt:
+        log("bridge log: no gpt judgments to compare with")
+        return
+    t0 = min(_ts(r["at"]) for r in gpt) - AUDIT_WINDOW_S
+    t1 = max(_ts(r["at"]) for r in gpt) + AUDIT_WINDOW_S
+    reqs = [r for r in read_jsonl(Path(a.bridge_log)) if r.get("ts") and t0 <= _ts(r["ts"]) <= t1]
+    with_tools = [r for r in reqs if int(r.get("tools") or 0) > 0 or r.get("calls")]
+    ok = [r for r in reqs if r.get("status") == 200]
+    attempts = sum(int(r.get("http_attempts") or 1) for r in gpt)
+    stamp = lambda t: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))  # noqa: E731
+    log(f"bridge log, {stamp(t0)} … {stamp(t1)} (first/last gpt judgment ± {AUDIT_WINDOW_S // 60} min): "
+        f"{len(reqs)} upstream requests ({len(ok)} answered 200, statuses {dict(Counter(str(r.get('status')) for r in reqs))}), "
+        f"routes {dict(Counter(str(r.get('route')) for r in reqs))}, items per request {dict(Counter(r.get('items') for r in reqs))}")
+    log(f"bridge log: requests carrying tools or answering with a call: {len(with_tools)}")
+    log(f"bridge log: {len(reqs)} requests vs {len(gpt)} gpt judgment rows in the window "
+        f"(difference {len(reqs) - len(gpt):+d}; extra requests are retries or aborted calls; "
+        f"HTTP attempts the rows record: {attempts})")
 
 
 def cmd_show(a) -> None:
@@ -586,7 +789,186 @@ def self_test() -> None:
     assert R.next_round(["x", "y"], elig, done, sep, 5, 100, 2)[1].startswith("every adjacent gap")
     ag = R.agreement([("A", "A"), ("A", "B"), ("tie", "A")])
     assert ag["same"] == 1 and ag["opposite"] == 1
+
+    _self_test_single_turn_and_validity()
     print("elo self-test: ok")
+
+
+# ---- self-test: one call per judgment, and prompt-hash validity -------------------------
+# (kept apart from self_test()'s other checks, which cover the data layer)
+
+def _self_test_single_turn_and_validity() -> None:
+    import contextlib
+    import io
+    import tempfile
+    from types import SimpleNamespace as NS
+
+    verdict = {"categories": {c: {"reasoning": "r", "winner": "A"} for c in J.CATEGORIES},
+               "overall": {"explanation": "e", "winner": "B"}}
+    vtext = json.dumps(verdict)
+
+    # Both request builders: one turn, no tool key, the json_schema format,
+    # and the same three texts for both judges.
+    body = J.chat_body("m", "CTX", "REV")
+    params = J.opus_params("m", 1000, "xhigh", "CTX", "REV")
+    assert not set(J.TOOL_KEYS) & set(body) and not set(J.TOOL_KEYS) & set(params)
+    assert [m["content"] for m in body["messages"]] == [params["system"]] + [b["text"] for b in params["messages"][0]["content"]]
+    assert len(params["messages"]) == 1 and params["output_config"]["format"]["type"] == "json_schema"
+    for bad in ({**body, "tools": []}, {**body, "messages": body["messages"] + [{"role": "assistant", "content": "x"}]},
+                {**body, "response_format": {"type": "text"}}):
+        try:
+            J.check_chat_body(bad)
+            raise AssertionError(f"accepted {sorted(bad)}")
+        except ValueError:
+            pass
+    for bad in ({**params, "tool_choice": {"type": "auto"}}, {**params, "messages": params["messages"] * 2},
+                {**params, "output_config": {"effort": "xhigh"}}):
+        try:
+            J.check_opus_params(bad)
+            raise AssertionError(f"accepted {sorted(bad)}")
+        except ValueError:
+            pass
+
+    # GPT answers: only one plain final message counts.
+    def chat(finish="stop", content=vtext, n=1, **msg):
+        return {"choices": [{"index": i, "finish_reason": finish, "message": {"role": "assistant", "content": content, **msg}}
+                            for i in range(n)], "usage": {"prompt_tokens": 10}}
+    r = J.parse_chat_response(chat())
+    assert r["status"] == "ok" and r["turns"] == 1 and r["finish_reason"] == "stop" and r["verdict"]["overall"]["winner"] == "B", r
+    assert J.parse_chat_response(chat(n=2))["status"] == "invalid"
+    assert J.parse_chat_response(chat(n=0))["status"] == "invalid"
+    r = J.parse_chat_response(chat(finish="tool_calls", content=None, tool_calls=[{"id": "c", "type": "function"}]))
+    assert r["status"] == "invalid" and "tool call" in r["error"], r
+    assert J.parse_chat_response(chat(tool_calls=[{"id": "c"}]))["status"] == "invalid"
+    r = J.parse_chat_response(chat(finish="length", content=vtext[:20]))
+    assert r["status"] == "error" and "cut off" in r["error"] and r["finish_reason"] == "length", r
+    r = J.parse_chat_response(chat(finish="content_filter"))
+    assert r["status"] == "invalid" and "content_filter" in r["error"], r
+    assert J.parse_chat_response(chat(content="not json"))["status"] == "invalid"
+    assert J.parse_chat_response("nope")["status"] == "invalid"
+
+    # Opus answers, SDK-shaped: end_turn, one text block, no tool block.
+    def msg(stop="end_turn", blocks=None, **kw):
+        if blocks is None:
+            blocks = [NS(type="thinking", thinking="t"), NS(type="text", text=vtext)]
+        return NS(stop_reason=stop, content=blocks, usage=NS(input_tokens=5, output_tokens=7), **kw)
+    r = J.parse_opus_message(msg())
+    assert r["status"] == "ok" and r["turns"] == 1 and r["stop_reason"] == "end_turn" and r["usage"]["output_tokens"] == 7, r
+    r = J.parse_opus_message(msg("refusal", [], stop_details=NS(type="refusal", category="cyber")))
+    assert r["status"] == "refused" and "cyber" in r["error"], r
+    for stop in ("max_tokens", "model_context_window_exceeded"):
+        r = J.parse_opus_message(msg(stop))
+        assert r["status"] == "error" and "cut off" in r["error"] and r["stop_reason"] == stop, r
+    for stop in ("tool_use", "pause_turn", "stop_sequence"):
+        assert J.parse_opus_message(msg(stop))["status"] == "invalid", stop
+    tool = NS(type="tool_use", id="t", name="x", input={})
+    assert J.parse_opus_message(msg(blocks=[NS(type="text", text=vtext), tool]))["status"] == "invalid"
+    assert J.parse_opus_message(msg(blocks=[NS(type="server_tool_use"), NS(type="text", text=vtext)]))["status"] == "invalid"
+    assert J.parse_opus_message(msg(blocks=[NS(type="text", text=vtext)] * 2))["status"] == "invalid"
+    assert J.parse_opus_message(msg(blocks=[]))["status"] == "invalid"
+
+    # Prices, per call.
+    assert abs(gpt_row_usd({"prompt_tokens": 200_000, "prompt_tokens_details": {"cached_tokens": 100_000},
+                            "completion_tokens": 100_000}) - (0.2 + 0.01 + 1.0)) < 1e-9
+    long_ = {"prompt_tokens": 300_000, "prompt_tokens_details": {"cached_tokens": 100_000}, "completion_tokens": 10_000}
+    assert abs(gpt_row_usd(long_) - (200_000 * 4 + 100_000 * 0.2 + 10_000 * 15) / 1e6) < 1e-9
+    assert "1 call(s) past 272,000" in usage_summary([{"usage": long_}], "gpt")
+    assert abs(opus_row_usd({"input_tokens": 1_000_000, "output_tokens": 1_000_000, "cache_creation_input_tokens": 1_000_000,
+                             "cache_read_input_tokens": 1_000_000}) - 16.10) < 1e-9
+
+    # Prompt-hash validity: a judgment counts only at its unit's current prompt.
+    def review(text: str) -> D.Review:
+        return D.Review(findings=[D.Finding(path="a.py", line=1, text=text)], body="")
+    cases = {pr: D.Case(iid=pr, title=pr, body="", git_dir="", base="b", head="h", goldens=[],
+                        reviews={"x": review(f"{pr} x"), "y": review(f"{pr} y")}) for pr in ("p1", "p2")}
+    D.LOADERS["_selftest"] = lambda plan: cases
+    real_pack = D.pack_context
+    packs_made: List[str] = []
+
+    def fake_pack(case, budget, wide_context=60):
+        packs_made.append(case.iid)
+        text = f"context of {case.iid}, packing v2"
+        return {"text": text, "tokens": D.tokens(text), "over_budget": False, "files": []}
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "plan.json").write_text(json.dumps({"name": "t", "benchmark": "_selftest", "set": "-", "runs": ["x", "y"]}))
+            (d / "packs").mkdir()
+            for pr in cases:
+                (d / "packs" / f"{pr}.txt").write_text(f"context of {pr}, packing v1")
+            u1 = {"id": "u0001", "round": 0, "pr": "p1", "a": "x", "b": "y"}
+            u2 = {"id": "u0002", "round": 0, "pr": "p2", "a": "y", "b": "x"}
+            for u in (u1, u2):
+                append_jsonl(d / "units.jsonl", u)
+            run = Run(d)
+            sha1, sha2 = run.prompt_sha(u1), run.prompt_sha(u2)
+            assert sha1 == J.prompt_sha(run.context("p1"), run.reviews(u1)) and sha1 != sha2
+            ok = {"status": "ok", "verdict": verdict, "turns": 1}
+            run.record("gpt", u1, ok, "m", "e", sha1)
+            run.record("opus", u1, ok, "m", "e", sha1)
+            run.record("gpt", u2, ok, "m", "e", "0" * 64)  # made at a prompt that is not the current one
+            assert set(run.final("gpt")) == {"u0001"} and set(run.final("opus")) == {"u0001"}
+            assert [u["id"] for u in run.pending("gpt", set())] == ["u0002"] and len(run.stale("gpt")) == 1
+            assert len(run.games("gpt")) == 1
+            # Attempts count only at the current prompt.
+            for _ in range(MAX_ATTEMPTS):
+                run.record("gpt", u2, {"status": "error", "error": "x"}, "m", "e", "1" * 64)
+            assert [u["id"] for u in run.pending("gpt", set())] == ["u0002"]
+            for _ in range(MAX_ATTEMPTS):
+                run.record("opus", u2, {"status": "error", "error": "x"}, "m", "e", sha2)
+            assert run.pending("opus", set()) == []
+            # Re-packing p1 sets its judgments aside for both judges.
+            D.pack_context = fake_pack
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                cmd_repack(argparse.Namespace(dir=str(d), pr=["p1"], dry_run=True))
+            assert "would re-pack p1" in out.getvalue() and "gpt 1, opus 1" in out.getvalue(), out.getvalue()
+            assert (d / "packs" / "p1.txt").read_text().endswith("v1") and set(Run(d).final("gpt")) == {"u0001"}
+            with contextlib.redirect_stdout(io.StringIO()):
+                cmd_repack(argparse.Namespace(dir=str(d), pr=["p1"], dry_run=False))
+            assert (d / "packs" / "p1.txt").read_text().endswith("v2") and read_jsonl(d / "packs.jsonl")[-1]["pr"] == "p1"
+            run = Run(d)
+            assert run.final("gpt") == {} and run.final("opus") == {} and run.games("gpt") == []
+            assert [u["id"] for u in run.pending("gpt", set())] == ["u0001", "u0002"]
+            assert [u["id"] for u in run.pending("opus", set())] == ["u0001"] and len(run.stale("opus")) == 1
+            # Re-packing again changes nothing; the cache follows the rewrite in-process.
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                cmd_repack(argparse.Namespace(dir=str(d), pr=["p1"], dry_run=False))
+            assert "0 of 1 PR(s) changed" in out.getvalue(), out.getvalue()
+            # A pack holding \r\n reads back with \n (what the judges are sent):
+            # re-packing the same text is no change.
+            crlf = {"text": "a\r\nb\rc", "tokens": 1, "over_budget": False, "files": []}
+            run.write_pack("p1", crlf)
+            assert run.context("p1") == "a\nb\nc" == as_read(crlf["text"])
+            D.pack_context = lambda case, budget, wide_context=60: crlf
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                cmd_repack(argparse.Namespace(dir=str(d), pr=["p1"], dry_run=False))
+            assert "0 of 1 PR(s) changed" in out.getvalue(), out.getvalue()
+            D.pack_context = fake_pack
+            run.write_pack("p2", fake_pack(cases["p2"], 0))
+            assert run.prompt_sha(u2) != sha2 and run.pending("opus", set()) == [u1, u2]
+
+            # Audit: rows by turns, and the bridge log's requests in the window.
+            run.record("gpt", u1, {**ok, "finish_reason": "stop", "http_attempts": 2}, "m", "e", run.prompt_sha(u1))
+            at = [r["at"] for r in read_jsonl(d / "judgments" / "gpt.jsonl")]
+            blog = d / "judge.jsonl"
+            for row in ({"ts": at[0], "route": "chat", "tools": 0, "calls": [], "items": 2, "status": 200},
+                        {"ts": at[0], "route": "chat", "tools": 0, "calls": [], "items": 2, "status": 502},
+                        {"ts": at[-1], "route": "chat", "tools": 1, "calls": ["f"], "items": 2, "status": 200},
+                        {"ts": "2001-01-01T00:00:00Z", "route": "chat", "tools": 0, "calls": [], "items": 2, "status": 200}):
+                append_jsonl(blog, row)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                cmd_audit(argparse.Namespace(dir=str(d), bridge_log=str(blog)))
+            text = out.getvalue()
+            assert "3 upstream requests" in text and "answering with a call: 1" in text, text
+            assert f"3 requests vs {len(at)} gpt judgment rows" in text and "HTTP attempts the rows record: 7" in text, text
+            assert "answered rows by turns: 1 3, other 0, missing 0" in text, text
+    finally:
+        D.pack_context = real_pack
+        D.LOADERS.pop("_selftest", None)
 
 
 def main() -> None:
@@ -597,6 +979,11 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("init"); p.add_argument("plan"); p.add_argument("--dir")
     p = sub.add_parser("pack"); p.add_argument("dir")
+    p = sub.add_parser("repack"); p.add_argument("dir")
+    p.add_argument("--pr", action="append", help="re-pack only this PR (repeatable); default every PR")
+    p.add_argument("--dry-run", action="store_true", help="say what would change; write nothing")
+    p = sub.add_parser("audit"); p.add_argument("dir")
+    p.add_argument("--bridge-log", help="the GPT judge bridge's judge.jsonl")
     p = sub.add_parser("run"); p.add_argument("dir")
     p.add_argument("--judge", choices=("gpt", "opus", "both"), default="both")
     p.add_argument("--rounds", type=int, default=None, help="stop after N rounds (1 = round 0 only)")
@@ -606,7 +993,8 @@ def main() -> None:
     p = sub.add_parser("show"); p.add_argument("dir"); p.add_argument("--x", required=True); p.add_argument("--y", required=True)
     p.add_argument("--judge", choices=JUDGES); p.add_argument("--pr"); p.add_argument("--reasoning", action="store_true")
     a = ap.parse_args()
-    {"init": cmd_init, "pack": cmd_pack, "run": cmd_run, "report": cmd_report, "show": cmd_show}[a.cmd](a)
+    {"init": cmd_init, "pack": cmd_pack, "repack": cmd_repack, "run": cmd_run, "report": cmd_report,
+     "show": cmd_show, "audit": cmd_audit}[a.cmd](a)
 
 
 if __name__ == "__main__":
