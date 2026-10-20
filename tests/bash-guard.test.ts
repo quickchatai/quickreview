@@ -1431,6 +1431,19 @@ describe("checkSecretPaths — the App's secret files and dir", () => {
     expect(res.allowed, `${cmd} → ${res.reason ?? ""}`).toBe(true);
   };
 
+  // Found by the worker rehearsal (P8.20a): a debug round writing its verdict by bash
+  // put `[{"name":"pass-a"}]` in a quoted printf argument; the word's `[name:pass-a]`
+  // became a regex class with a reversed range and the guard THREW instead of answering.
+  it("a glob class JavaScript cannot compile is judged, never thrown, and widened, never narrowed", () => {
+    const verdict = `printf '%s' '{"pr":7,"passes":[{"name":"pass-a","tier":"sol-high"}]}' > verdict/pr-7-round-2.json.tmp`;
+    passes(verdict);
+    expect(checkProcSecrets(verdict, "/opt/quickreview/sandbox").allowed).toBe(true);
+    expect(checkBashCommand(verdict).allowed).toBe(true);
+    // the reversed range still reaches the key: `[z-a]` stands for any one character
+    refused("cat /opt/quickreview/secrets/[z-a]pp.pem");
+    refused("cat /opt/quickreview/secrets/app.p[z-a]m");
+  });
+
   it("cat of the App key is refused by the full guard", () => {
     const res = checkBashCommand("cat /opt/quickreview/secrets/app.pem");
     expect(res.allowed).toBe(false);

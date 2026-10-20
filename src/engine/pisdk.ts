@@ -62,6 +62,7 @@ import {
   createReadToolDefinition,
   createEditToolDefinition,
   createWriteToolDefinition,
+  main as piCliMain,
 } from "@earendil-works/pi-coding-agent";
 import { GITHUB_TOKEN_ENVS } from "../envstrip.js";
 import type { AgentsFile } from "./port.js";
@@ -96,7 +97,7 @@ export type DispatcherOutcome = "installed" | "reused" | "none";
 
 /** The process title pi's CLI gives itself: its APP_NAME (`pi` unless the
  * package's piConfig renames it), with `-rpc` appended by the rpc entry. */
-function piCliTitles(): readonly string[] {
+export function piCliTitles(): readonly string[] {
   let name = "pi";
   try {
     const pkg = JSON.parse(readFileSync(join(piPackageDir(), "package.json"), "utf8")) as {
@@ -153,6 +154,41 @@ export async function loadConfigureHttpDispatcher(): Promise<ConfigureHttpDispat
       `pi's configureHttpDispatcher is gone from ${file}: the pinned pi drifted from what pisdk.ts deep-imports (canary 6)`,
     );
   return mod.configureHttpDispatcher as ConfigureHttpDispatcher;
+}
+
+// ---- pi's interactive CLI in the launcher's cwd (src/picwd.ts) -------------------
+
+type SessionOpen = typeof SessionManager.open;
+const CWD_PINNED = Symbol.for("qcr.picwd.pinned");
+
+/** Make `SessionManager.open` default its cwd to `cwd()` instead of the session
+ * header's, the way `resumeFile` below opens a session in the spec's cwd. Idempotent.
+ * An explicit override (pi's own missing-cwd recovery) still wins. VERIFY-ON-PIN: pi's
+ * CLI reaches the class's static `open` at call time (main.js createSessionManager;
+ * tests/picwd.test.ts drives the real one). */
+export function pinSessionCwd(
+  manager: { open: SessionOpen } = SessionManager,
+  cwd: () => string = () => process.cwd(),
+): void {
+  const holder = manager as { open: SessionOpen; [CWD_PINNED]?: true };
+  if (holder[CWD_PINNED]) return;
+  const open = manager.open.bind(manager);
+  holder.open = (path, sessionDir, cwdOverride) => open(path, sessionDir, cwdOverride ?? cwd());
+  holder[CWD_PINNED] = true;
+}
+
+/** pi's own CLI entry (its cli.js: setupCli, then main) with the session cwd pinned
+ * to this process's. setupCli's steps are repeated here because the package does not
+ * export it: the same title and flags (so `insideCliPi` answers as in the CLI binary)
+ * and the same HTTP dispatcher. */
+export async function runPiCliInCwd(argv: string[]): Promise<void> {
+  process.title = piCliTitles()[0]!;
+  process.env["PI_CODING_AGENT"] = "true";
+  process.env["AI_AGENT"] = "pi";
+  process.emitWarning = () => {};
+  (await loadConfigureHttpDispatcher())();
+  pinSessionCwd();
+  await piCliMain(argv);
 }
 
 let imageSniffer: Promise<ImageSniffer | null> | undefined;

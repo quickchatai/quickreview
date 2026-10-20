@@ -1670,6 +1670,15 @@ function braceExpand(w: string, budget = 64): string[] {
 
 const GLOB_CHARS = /[*?[]/;
 
+function validClass(cls: string): boolean {
+  try {
+    new RegExp(cls);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function globToRegex(glob: string): RegExp {
   let re = "";
   for (let i = 0; i < glob.length; i++) {
@@ -1686,7 +1695,12 @@ function globToRegex(glob: string): RegExp {
       else {
         let body = glob.slice(i + 1, close);
         if (body.startsWith("!")) body = "^" + body.slice(1);
-        re += `[${body.replace(/\\/g, "\\\\")}]`;
+        const cls = `[${body.replace(/\\/g, "\\\\")}]`;
+        // A class JavaScript cannot compile (a reversed range: `[name:pass-a]` in a quoted
+        // JSON argument) must not throw out of the guard. It widens to any one character
+        // but `/`, the most a bracket expression can match in bash, so a judge built on
+        // this regex refuses at least as much as the word could reach.
+        re += validClass(cls) ? cls : "[^/]";
         i = close;
       }
     } else re += c.replace(/[.+^${}()|\\/]/g, "\\$&");

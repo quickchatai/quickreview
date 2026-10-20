@@ -16,7 +16,9 @@
 //      saved order (verified against the sha256 recorded at dispatch), the engine's
 //      lens section, and the command's marker, exactly as a worker builds it;
 //   4. runs interactive pi on the PR's REAL session JSONL (`--session`, which
-//      appends: not a fork) with the round's extensions, `/qcr-round` as its first
+//      appends: not a fork) in the production tree's root even when the JSONL's
+//      header names the legacy tree (src/picwd.ts: its scripts, state/ and verdict/
+//      are there, and bash-guard sanctions the scripts only there), with the round's extensions, `/qcr-round` as its first
 //      message, and the capability fd inherited. The cwd's own context files are off
 //      and the reviewer stub (D34) is appended, so the dev instructions of the
 //      production tree never reach a reviewer;
@@ -46,7 +48,7 @@ import { engineLensSection } from "./engine/lens/section.js";
 import { CONTEXT_PACK_FILE } from "./contextpack.js";
 import { verifiedPayload } from "./session-command-payload.js";
 import { DEBUG_STATUS_NAME, type DebugRoundSpec } from "./debuground.js";
-import { prepareBorrowedAgent, takeoverEnv } from "./takeoverpi.js";
+import { paneLaunch, prepareBorrowedAgent, takeoverEnv } from "./takeoverpi.js";
 
 /** pi's first message: the extension command that starts the round. */
 export const DEBUG_START_MESSAGE = "/qcr-round";
@@ -250,7 +252,8 @@ export async function runDebugRoundPane(
     return 3;
   }
   const env = debugRoundEnv(procEnv, spec);
-  const launch = toolIsolation(deps.piBin ?? spec.pi_bin ?? "pi", debugRoundArgv(spec), procEnv);
+  const pi = paneLaunch(debugRoundArgv(spec), deps.piBin ?? spec.pi_bin);
+  const launch = toolIsolation(pi.bin, pi.argv, procEnv);
   if ("refused" in launch) {
     log(`debug round: ${launch.refused}`);
     return 3;
