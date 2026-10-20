@@ -100,7 +100,7 @@ chmod 0600 "$H"/secrets/*
 if [[ ! -f "$TLS/ca.pem" ]]; then
   openssl req -x509 -newkey rsa:2048 -nodes -keyout "$TLS/ca.key" -out "$TLS/ca.pem" -days 30 -subj "/CN=rehearsal-ca" 2>/dev/null
   openssl req -newkey rsa:2048 -nodes -keyout "$TLS/leaf.key" -out "$TLS/leaf.csr" -subj "/CN=api.github.com" 2>/dev/null
-  printf 'subjectAltName=DNS:api.github.com,DNS:github.com\n' >"$TLS/ext.cnf"
+  printf 'subjectAltName=DNS:api.github.com,DNS:github.com,DNS:auth.openai.com\n' >"$TLS/ext.cnf"
   openssl x509 -req -in "$TLS/leaf.csr" -CA "$TLS/ca.pem" -CAkey "$TLS/ca.key" -CAcreateserial -out "$TLS/leaf.crt" -days 30 -extfile "$TLS/ext.cnf" 2>/dev/null
   chmod a+r "$TLS"/*
 fi

@@ -147,6 +147,39 @@ function github(req, res, body) {
 }
 
 // ---------------------------------------------------------------------------------------
+// The login's OAuth refresh (auth.openai.com), as pi-ai's openai-codex refresh speaks it
+// ---------------------------------------------------------------------------------------
+
+let refreshes = 0;
+/** POST /oauth/token with grant_type=refresh_token: a new access token (a JWT carrying the
+ * account id pi-ai reads out of it) and a ROTATED refresh token. Anything else is a 404. */
+function oauth(req, res, raw) {
+  const url = new URL(req.url, "https://auth.openai.com");
+  log({ kind: "oauth", method: req.method, path: url.pathname, from: req.socket.remoteAddress });
+  const form = new URLSearchParams(raw);
+  if (
+    req.method !== "POST" ||
+    url.pathname !== "/oauth/token" ||
+    form.get("grant_type") !== "refresh_token"
+  ) {
+    res.writeHead(404, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "unmodelled by the rehearsal stub" }));
+    return;
+  }
+  refreshes++;
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64").replace(/=+$/, "");
+  const claims = { "https://api.openai.com/auth": { chatgpt_account_id: "rehearsal-account" } };
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(
+    JSON.stringify({
+      access_token: `${b64({ alg: "none" })}.${b64(claims)}.rehearsal`,
+      refresh_token: `rehearsal-refresh-token-${refreshes}`,
+      expires_in: 10 * 24 * 3600,
+    }),
+  );
+}
+
+// ---------------------------------------------------------------------------------------
 // The model
 // ---------------------------------------------------------------------------------------
 
@@ -481,6 +514,10 @@ const collect = (handler) => (req, res) => {
 
 httpsServer(
   { key: readFileSync(join(tlsDir, "leaf.key")), cert: readFileSync(join(tlsDir, "leaf.crt")) },
-  collect((req, res, raw) => github(req, res, raw)),
+  collect((req, res, raw) =>
+    /^auth\.openai\.com(:\d+)?$/.test(req.headers.host ?? "")
+      ? oauth(req, res, raw)
+      : github(req, res, raw),
+  ),
 ).listen(HTTPS_PORT, HOST, () => log({ kind: "up", port: HTTPS_PORT }));
 httpServer(collect(model)).listen(HTTP_PORT, HOST, () => log({ kind: "up", port: HTTP_PORT }));

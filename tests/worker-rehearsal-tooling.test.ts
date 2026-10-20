@@ -92,10 +92,21 @@ describe.skipIf(!hasOpenssl)("[P8.20a] the scripted stub", () => {
       req.end(JSON.stringify(body));
     });
 
-  const gh = (method: string, path: string): Promise<{ status: number; text: string }> =>
+  const gh = (
+    method: string,
+    path: string,
+    o: { host?: string; body?: string } = {},
+  ): Promise<{ status: number; text: string }> =>
     new Promise((ok, fail) => {
       const req = https.request(
-        { host: "127.0.0.1", port: httpsPort, path, method, rejectUnauthorized: false },
+        {
+          host: "127.0.0.1",
+          port: httpsPort,
+          path,
+          method,
+          rejectUnauthorized: false,
+          ...(o.host ? { headers: { host: o.host } } : {}),
+        },
         (res) => {
           let text = "";
           res.on("data", (c) => (text += c));
@@ -103,7 +114,7 @@ describe.skipIf(!hasOpenssl)("[P8.20a] the scripted stub", () => {
         },
       );
       req.on("error", fail);
-      req.end();
+      req.end(o.body);
     });
 
   /** The tool call the stub makes next, or its text, from the SSE the reply streams. */
@@ -293,6 +304,22 @@ describe.skipIf(!hasOpenssl)("[P8.20a] the scripted stub", () => {
     const res = await post("/v1/chat/completions", { messages: [{ role: "user", content: "hi" }] });
     expect(res.status).toBe(500);
     await post("/admin/mode", { mode: "round" });
+  });
+
+  it("answers the login's OAuth refresh as auth.openai.com, with a rotated refresh token", async () => {
+    const host = "auth.openai.com";
+    const body = "grant_type=refresh_token&refresh_token=old&client_id=x";
+    const first = await gh("POST", "/oauth/token", { host, body });
+    expect(first.status).toBe(200);
+    const token = JSON.parse(first.text);
+    expect(token.expires_in).toBeGreaterThan(3600);
+    const claims = JSON.parse(atob(token.access_token.split(".")[1]));
+    expect(claims["https://api.openai.com/auth"].chatgpt_account_id).toBe("rehearsal-account");
+    const second = JSON.parse((await gh("POST", "/oauth/token", { host, body })).text);
+    expect(second.refresh_token).not.toBe(token.refresh_token);
+    expect((await gh("GET", "/oauth/token", { host })).status).toBe(404);
+    // never a GitHub mutation: it is the login's own host
+    expect(readFileSync(join(dir, "log.jsonl"), "utf8")).not.toMatch(/github-mutation.*oauth/);
   });
 
   it("serves GitHub's reads and refuses every mutation, recording it", async () => {
