@@ -1,19 +1,12 @@
 // The SessionHooks contract (src/types.ts), stated once and run against every
-// host in tests/helpers/session-hooks-host.ts: the tmux host (`PiSessionManager`)
-// and the per-round worker host (`WorkerSessionHost`, P8.6).
-//
-// The two differ by nature in a few places, and the host descriptor says where
-// (`bridge`, `persistent`, `dispatchedRow`, `receiptBeforeAck`): a tmux session
-// outlives its commands and is fed through a mailbox its bridge consumes; a worker
-// IS its command, and its ack is the receipt. What only the bridge has (stale
-// generations, redelivery into a live session, adopting sessions across a
-// restart) runs for the bridge host only; the worker's own recovery cases are in
+// host in tests/helpers/session-hooks-host.ts. The per-round worker host
+// (`WorkerSessionHost`, P8.6) is the only PR host; a worker IS its command, and
+// its ack is the receipt. The worker's own recovery cases are in
 // tests/worker-session-host.test.ts.
 //
 // Each group is the host-facing half of an existing suite, lifted so the
-// daemon's expectations of a host are written down apart from how tmux meets
-// them. The originals keep running against the manager's internals; this file
-// speaks only through the hooks and the rig's world verbs.
+// daemon's expectations of a host are written down apart from how a host meets
+// them. This file speaks only through the hooks and the rig's world verbs.
 //
 //   delivery            session-commands, receipt-aware-finalize
 //   redelivery          session-commands, session-command-supervisor
@@ -96,7 +89,6 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
 
         expect(rig.isRunning(SESSION)).toBe(true);
         expect(rig.mailbox(SESSION)).toEqual([stampedBody]);
-        expect(await rig.hooks.injectPending(PR)).toBe(true);
         const row = rig.store.activeSessionCommand(SESSION)!;
         expect(row).toMatchObject({
           pr: PR,
@@ -133,17 +125,15 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
       expect(rig.mailbox(SESSION)).toEqual(["author replied\n"]);
 
       await rig.settleDelivered(PR);
-      expect(await rig.hooks.injectPending(PR)).toBe(false);
       await rig.hooks.inject(PR, "second wake");
       expect(rig.mailbox(SESSION)).toEqual(["second wake\n"]);
     });
 
-    it("wakes an idle session with the exact bytes, and a session that persists is not respawned", async () => {
+    it("wakes an idle PR with the exact bytes", async () => {
       trackPr(rig.store, PR);
       await rig.seedIdleSession(SESSION);
       await rig.hooks.inject(PR, "zażółć 🧭 gęślą jaźń");
       expect(rig.mailbox(SESSION)).toEqual(["zażółć 🧭 gęślą jaźń\n"]);
-      if (host.persistent) expect(rig.lifecycle()).toEqual([]);
     });
 
     it("rebirths a dead session for a wake the registry knows, and refuses a PR it does not", async () => {
@@ -158,20 +148,6 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
       expect(rig.isRunning("pr-77")).toBe(false);
     });
 
-    it.runIf(host.bridge)(
-      "replaces a live session whose bridge belongs to a stale generation before it delivers",
-      async () => {
-        trackPr(rig.store, PR);
-        await rig.seedIdleSession(SESSION);
-        rig.staleBridge(SESSION);
-
-        await rig.hooks.inject(PR, "author reply");
-
-        expect(rig.lifecycle()).toEqual([`kill ${SESSION}`, `birth ${SESSION}`]);
-        expect(rig.mailbox(SESSION)).toEqual(["author reply\n"]);
-      },
-    );
-
     it("refuses a closed PR's wake even while its session is alive and ready", async () => {
       trackPr(rig.store, PR, "closed");
       await rig.seedIdleSession(SESSION);
@@ -182,9 +158,8 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
       expect(rig.store.activeSessionCommand(SESSION)).toBeUndefined();
     });
 
-    // The tmux host (the overseer's, until P9.13) offers no receipt read.
     describe("the receipt: present is delivered, absent is lost, unreadable is unknown", () => {
-      it.skipIf(host.bridge)("reads a round's receipt out of the transcript", async () => {
+      it("reads a round's receipt out of the transcript", async () => {
         await dispatched();
 
         // Nothing written since the round started: no evidence either way.
@@ -192,7 +167,7 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
 
         // The session wrote, but this round's order is not among what it took.
         rig.recordAccepted(PR, "wake up finish the review");
-        expect(await rig.hooks.roundPromptAccepted(PR, 1, STARTED_MS)).toBe(host.receiptBeforeAck);
+        expect(await rig.hooks.roundPromptAccepted(PR, 1, STARTED_MS)).toBeNull();
 
         // pi accepted it: the token comes back verbatim.
         rig.recordAccepted(PR, stampedBody);
@@ -201,7 +176,7 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
         expect(await rig.hooks.roundPromptAccepted(PR, 2, STARTED_MS)).toBe(false);
       });
 
-      it.skipIf(host.bridge)("reads a wake's receipt by its marker, without a round row", async () => {
+      it("reads a wake's receipt by its marker, without a round row", async () => {
         trackPr(rig.store, PR);
         await rig.seedIdleSession(SESSION);
         const marker = recheckPromptMarker(PR, "fingerprint-1");
@@ -210,9 +185,7 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
 
         expect(await rig.hooks.wakeReceiptPresent(PR, marker, STARTED_MS)).toBeNull();
         rig.recordAccepted(PR, "something else entirely");
-        expect(await rig.hooks.wakeReceiptPresent(PR, marker, STARTED_MS)).toBe(
-          host.receiptBeforeAck,
-        );
+        expect(await rig.hooks.wakeReceiptPresent(PR, marker, STARTED_MS)).toBeNull();
         rig.recordAccepted(PR, wake);
         expect(await rig.hooks.wakeReceiptPresent(PR, marker, STARTED_MS)).toBe(true);
       });
@@ -223,132 +196,6 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
         rig.recordActivity(PR);
         expect(await rig.hooks.sessionActivityAt(PR)).toEqual(expect.any(Number));
       });
-    });
-  });
-
-  describe.runIf(host.bridge)("redelivery idempotency", () => {
-    it("redeliverRound keeps the command and the bytes: asking twice neither duplicates nor alters", async () => {
-      await dispatched();
-      const original = rig.store.activeSessionCommand(SESSION)!;
-
-      expect(await rig.hooks.redeliverRound(PR, 1)).toBe(true);
-      expect(await rig.hooks.redeliverRound(PR, 1)).toBe(true);
-
-      const after = rig.store.activeSessionCommand(SESSION)!;
-      expect(after.id).toBe(original.id);
-      expect(rig.mailbox(SESSION)).toEqual([stampedBody]);
-      expect(rig.store.db.prepare("SELECT COUNT(*) AS c FROM session_commands").get()).toEqual({
-        c: 1,
-      });
-    });
-
-    it("redeliverRound puts a consumed-and-failed round back under the same id with identical bytes", async () => {
-      await dispatched();
-      const original = rig.store.activeSessionCommand(SESSION)!;
-      rig.store.claimSessionCommand(original.id, "bridge", "2026-08-13T10:30:00Z");
-      rig.store.finishSessionCommand(original.id, "bridge", "failed", "no start");
-      rig.consumeMailbox(SESSION);
-      expect(rig.mailbox(SESSION)).toEqual([]);
-
-      expect(await rig.hooks.redeliverRound(PR, 1)).toBe(true);
-
-      const retried = rig.store.activeSessionCommand(SESSION)!;
-      expect(retried.id).toBe(original.id);
-      expect(retried.attempt).toBe(1);
-      expect(rig.mailbox(SESSION)).toEqual([stampedBody]);
-    });
-
-    it("redeliverRound says false for a round with nothing saved, so recovery escalates", async () => {
-      await dispatched();
-      expect(await rig.hooks.redeliverRound(PR, 99)).toBe(false);
-    });
-
-    it("redeliverSessionCommand rewrites the same bytes into the live session and kills nothing", async () => {
-      await dispatched();
-      const row = rig.store.activeSessionCommand(SESSION)!;
-      rig.consumeMailbox(SESSION);
-
-      const result = await rig.hooks.redeliverSessionCommand(row.id, {
-        attempt: row.attempt,
-        redeliveries: row.redeliveries,
-        next_check_at: row.next_check_at,
-      });
-
-      expect(result).toBe("redelivered");
-      expect(rig.mailbox(SESSION)).toEqual([stampedBody]);
-      expect(rig.lifecycle()).toEqual([`birth ${SESSION}`]);
-      expect(rig.store.activeSessionCommand(SESSION)!.id).toBe(row.id);
-    });
-
-    it("redeliverSessionCommand never requeues a row that moved since the supervisor saw it", async () => {
-      await dispatched();
-      const row = rig.store.activeSessionCommand(SESSION)!;
-
-      expect(
-        await rig.hooks.redeliverSessionCommand(row.id, {
-          attempt: row.attempt + 1,
-          redeliveries: row.redeliveries,
-          next_check_at: row.next_check_at,
-        }),
-      ).toBe("raced");
-      expect(rig.mailbox(SESSION)).toEqual([stampedBody]);
-    });
-
-    it("redeliverSessionCommand leaves a settled command alone and has nothing to say to a dead session", async () => {
-      await dispatched();
-      const row = rig.store.activeSessionCommand(SESSION)!;
-      const observed = {
-        attempt: row.attempt,
-        redeliveries: row.redeliveries,
-        next_check_at: row.next_check_at,
-      };
-
-      rig.killOutOfBand(SESSION);
-      expect(await rig.hooks.redeliverSessionCommand(row.id, observed)).toBe("not_live");
-
-      await rig.settleDelivered(PR);
-      expect(await rig.hooks.redeliverSessionCommand(row.id, observed)).toBe("settled");
-    });
-
-    it("retrySessionCommand fences the old session first, then replays the same id and bytes", async () => {
-      await dispatched();
-      const original = rig.store.activeSessionCommand(SESSION)!;
-      rig.store.claimSessionCommand(original.id, "bridge-old", "2026-08-13T10:02:00Z");
-      // The reborn consumer reserves the replayed command as it starts.
-      rig.onBirth(() => {
-        rig.store.claimSessionCommand(original.id, "bridge-new", "2026-08-13T10:04:00Z");
-      });
-
-      expect(await rig.hooks.retrySessionCommand(original.id, "start lease expired")).toBe(
-        "retried",
-      );
-
-      expect(rig.lifecycle()).toEqual([`birth ${SESSION}`, `kill ${SESSION}`, `birth ${SESSION}`]);
-      const retried = rig.store.activeSessionCommand(SESSION)!;
-      expect(retried).toMatchObject({ id: original.id, attempt: 2, owner_token: "bridge-new" });
-      expect(rig.mailbox(SESSION)).toEqual([stampedBody]);
-    });
-
-    it("retrySessionCommand refuses a round that already started: its merits lifecycle owns that", async () => {
-      await dispatched();
-      const row = rig.store.activeSessionCommand(SESSION)!;
-      rig.store.claimSessionCommand(row.id, "bridge", "2026-08-13T10:02:00Z");
-      rig.store.markSessionCommandStarted(row.id, "bridge", "2026-08-13T10:45:00Z");
-
-      expect(await rig.hooks.retrySessionCommand(row.id, "expired")).toBe("retry_failed");
-      expect(rig.lifecycle()).toEqual([`birth ${SESSION}`]);
-    });
-
-    it("a daemon restart reconstructs a missing pending delivery without a second command", async () => {
-      await dispatched();
-      const command = rig.store.activeSessionCommand(SESSION)!;
-      rig.consumeMailbox(SESSION);
-
-      const restarted = rig.restart();
-
-      expect(rig.mailbox(SESSION)).toEqual([stampedBody]);
-      expect(rig.store.activeSessionCommand(SESSION)!.id).toBe(command.id);
-      expect(await restarted.injectPending(PR)).toBe(true);
     });
   });
 
@@ -621,21 +468,5 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
       expect(swept.kept_for_posting).toEqual([43]);
       expect(rig.store.roundStatus(43, 1)).toBe("running");
     });
-
-    it.runIf(host.bridge)(
-      "survives a daemon restart: the same live sessions are adopted, and nothing is killed",
-      async () => {
-        trackPr(rig.store, PR);
-        rig.store.startRound(PR, "first", ["pass-baseline"], 75);
-        await rig.seedRunningSession(SESSION);
-
-        const restarted = rig.restart();
-        expect(await restarted.sessionAlive(PR)).toBe(true);
-        const swept = await sweep();
-
-        expect(swept.cancelled).toEqual([]);
-        expect(rig.lifecycle()).toEqual([]);
-      },
-    );
   });
 });

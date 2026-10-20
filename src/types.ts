@@ -3,7 +3,6 @@
 import type { SessionCommandOwnership } from "./session-command.js";
 import type { MigrationCollision } from "./migrations.js";
 import type { PostingPolicy } from "./postingpolicy.js";
-import type { SessionBridgeCompaction } from "./overseer-bridge.js";
 import type { SweepClaim } from "./sweepstatus.js";
 
 export type RoundType = "first" | "re-review" | "staleness";
@@ -551,10 +550,6 @@ export interface SessionCommandObservation {
   redeliveries: number;
   next_check_at: string;
 }
-/** The inject bridge's compaction report, as `SessionHooks.sessionCompaction`
- * returns it: the `compaction` block of the bridge's ready receipt, as
- * `src/overseer-bridge.ts` declares it. */
-export type SessionCompactionReport = SessionBridgeCompaction;
 /** A lens a round may run beyond its plan, as the round row records it
  * (`addable_passes`): an addable lens at its add tier, which the session runs
  * with a reason — or one of a follow-up round's OPTIONAL rows (`optional`),
@@ -589,12 +584,6 @@ export interface OvSessionSweepReport {
 }
 
 export interface SessionHooks {
-  /** True when this host's evidence is definitive: a command's own ack is its
-   * receipt, and the host knows whether the worker lives. The session-command
-   * supervisor then skips what only a bridge host needs: the compaction defer
-   * and the unknown-evidence deferral (a transcript that could not be read). The
-   * worker host sets it; the tmux host leaves it unset. */
-  readonly ackIsReceipt?: true;
   /** The tools this host's sessions launch lenses with (src/launchvocab.ts):
    * `engine` for the worker host (`lens`, `lens_wave`), absent for the tmux host
    * (`subagent`, `launch_plan`). Every round order the daemon builds for the host
@@ -612,11 +601,6 @@ export interface SessionHooks {
    * per pass. Optional — stubs and a daemon with no raw tier omit it (null =
    * no raw tier managed). Never a reconcile error: memory never blocks. */
   sweepStaleOvSessions?(): Promise<OvSessionSweepReport | null>;
-  /** After a round's verdict lands: compact the sticky conversation, since
-   * cache re-reads of a long conversation dominate cost and sessions do not
-   * compact on their own. A REQUEST to the session's inject bridge, which
-   * runs it once nothing is in flight and holds every wake until it ends — never a keystroke into the pane. Optional — stubs may omit it. */
-  compactSession?(pr: number): Promise<void>;
   /** Is the PR's session alive (tmux session present)? The stuck-round
    * detector reads this — the existing liveness signal, not a new one.
    * Optional: absent (stubs, tests) ⇒ liveness is unknown and the deadline
@@ -636,10 +620,6 @@ export interface SessionHooks {
    * consumed while the session shows no activity since the round started
    * never received its prompt. Optional: absent ⇒ no net. */
   sessionActivityAt?(pr: number): Promise<number | null>;
-  /** Is any wake file still pending (unconsumed) in the PR session's inject
-   * dir? Read by the same net — a pending file means the bridge is still
-   * retrying delivery, which is patience, not loss. Optional as above. */
-  injectPending?(pr: number): Promise<boolean>;
   /**
    * Did this round's prompt actually reach the session?
    *
@@ -691,11 +671,4 @@ export interface SessionHooks {
     commandId: string,
     observed: SessionCommandObservation,
   ): Promise<SessionCommandRedeliveryResult>;
-  /** What the PR session's inject bridge reports about pi's
-   * compaction, or null when unknown (no live bridge generation — tmux gone
-   * included, so a pi that died mid-compaction never reads "running" — an
-   * older bridge, an unreadable receipt). A compaction holds the session's mailbox,
-   * so a command waiting behind one is late, not lost. Optional: absent ⇒ no
-   * compaction is ever known about. */
-  sessionCompaction?(pr: number): Promise<SessionCompactionReport | null>;
 }

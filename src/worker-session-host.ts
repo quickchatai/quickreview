@@ -1,7 +1,6 @@
 // The worker host (P8.6): the SessionHooks the daemon's state machine speaks,
 // served by the per-round WorkerSupervisor (P8.5) over the host-neutral
-// PrSessionLifecycle (P8.1). It does for a PR's session what `PiSessionManager`
-// does with tmux and the inject bridge, with none of either:
+// PrSessionLifecycle (P8.1). No tmux session and no inject bridge is involved:
 //
 //   - A PR's "session" is its JSONL and its OpenViking id. Nothing runs between
 //     rounds. A round or a wake is a durable command (`session_commands`), and
@@ -10,12 +9,10 @@
 //     a lease the process table confirms), never a listing.
 //   - The ack is the receipt. A worker's `accepted` event stamps the command
 //     started, so "did the order reach the session" is a column. The silent-round
-//     net (`roundPromptAccepted`), the recheck sweep (`wakeReceiptPresent`) and
-//     the patience signal (`injectPending`) all read it, and none reads a
-//     transcript. Their answers are definitive (`ackIsReceipt`): the command
-//     supervisor skips the compaction defer and the unknown-evidence deferral.
-//   - Compaction is the worker's, before it exits (D22), so `compactSession` and
-//     `sessionCompaction` are not offered and the round-end calls skip them.
+//     net (`roundPromptAccepted`) and the recheck sweep (`wakeReceiptPresent`)
+//     both read it, and neither reads a transcript. Their answers are definitive.
+//   - Compaction is the worker's, before it exits (D22); the daemon never asks
+//     for one.
 //   - Held wakes of a running round are taken by that round's own worker
 //     (`HeldWakeHandoff` in src/wakes.ts). Whatever is still held when the worker
 //     is gone is flushed by `inject`, which starts a wake worker for it.
@@ -26,7 +23,7 @@
 //     worker's place, and the supervisor's host gate keeps every worker out.
 //
 // The daemon builds this host as the bot's ONLY host (src/workerworld.ts, P8.15w); the tmux manager
-// (src/sessions.ts) still serves the overseer until P9.13.
+// (src/sessions.ts) hosts no PR session and still serves the overseer until P9.13.
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.js";
@@ -87,7 +84,6 @@ function ackOf(command: SessionCommandRow): boolean | null {
 }
 
 export class WorkerSessionHost implements SessionHooks {
-  readonly ackIsReceipt = true as const;
   /** A worker's session carries the engine's lens tools and no `subagent`. */
   readonly lensRuntime = "engine" as const;
   readonly lifecycle: PrSessionLifecycle;
@@ -310,14 +306,6 @@ export class WorkerSessionHost implements SessionHooks {
     if (acks.includes(null)) return null;
     if (hits.length > 0) return false;
     return unreadable ? null : false;
-  }
-
-  /** SessionHooks: is the PR's command still on its way to its session? The
-   * patience signal of the silent-round net: a command a worker is starting for
-   * (or none has been started for yet) is not a lost prompt. */
-  async injectPending(pr: number): Promise<boolean> {
-    const active = this.store.activeSessionCommand(prSessionName(pr));
-    return active !== undefined && active.started_at === null;
   }
 
   /** SessionHooks: newest session-JSONL mtime for the PR's session, or null when

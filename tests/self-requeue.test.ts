@@ -120,7 +120,7 @@ function watcher(hooks: SessionHooks, cfg: Config = baseCfg): VerdictWatcher {
     writeInbox,
     verdictDir: dir,
     root: dir,
-    usage: { globalStoreDir: null },
+    usage: {},
     partialWrite: { windowMs: 0 },
     now: () => clock,
   });
@@ -905,14 +905,11 @@ describe("lost-prompt net — a round with no prompt receipt", () => {
   /** hooksWith + the observation hooks, with redelivery ALWAYS failing so the
    * escalation half can be exercised on its own. `accepted` mirrors what
    * `roundPromptAccepted` reports. */
-  function netHooks(opts: { pending: boolean; accepted: boolean | null }): ReturnType<
-    typeof hooksWith
-  > & {
+  function netHooks(opts: { accepted: boolean | null }): ReturnType<typeof hooksWith> & {
     redelivered: number[];
   } {
     const h = hooksWith(true);
     const redelivered: number[] = [];
-    h.hooks.injectPending = async () => opts.pending;
     h.hooks.roundPromptAccepted = async () => opts.accepted;
     h.hooks.redeliverRound = async (pr) => {
       redelivered.push(pr);
@@ -927,7 +924,6 @@ describe("lost-prompt net — a round with no prompt receipt", () => {
   } {
     const h = hooksWith(true);
     const redelivered: Array<{ pr: number; round: number }> = [];
-    h.hooks.injectPending = async () => false;
     h.hooks.roundPromptAccepted = async () => opts.accepted;
     h.hooks.redeliverRound = async (pr, roundNo) => {
       redelivered.push({ pr, round: roundNo });
@@ -1032,7 +1028,7 @@ describe("lost-prompt net — a round with no prompt receipt", () => {
   it("escalates immediately when there is no saved prompt to re-deliver", async () => {
     const roundId = reviewingRound(321);
     pastGrace();
-    const { hooks, redelivered } = netHooks({ pending: false, accepted: false });
+    const { hooks, redelivered } = netHooks({ accepted: false });
     const w = watcher(hooks);
 
     await w.checkDeadlines();
@@ -1071,17 +1067,6 @@ describe("lost-prompt net — a round with no prompt receipt", () => {
     expect(roundStatus(second)).toBe("running"); // recovered without cancelling
   });
 
-  it("does nothing while the inject file is still pending — the bridge is retrying, not losing", async () => {
-    const roundId = reviewingRound(311);
-    pastGrace();
-    const { hooks, redelivered } = netHooks({ pending: true, accepted: false });
-
-    await watcher(hooks).checkDeadlines();
-    expect(roundStatus(roundId)).toBe("running");
-    expect(redelivered).toHaveLength(0);
-    expect(silentSince(roundId)).toBeNull();
-  });
-
   it("does nothing when the receipt IS there — a busy session is not a lost prompt", async () => {
     // A session finishing its previous turn has activity after round start
     // whether or not the prompt arrived. The receipt separates the two:
@@ -1099,7 +1084,7 @@ describe("lost-prompt net — a round with no prompt receipt", () => {
   it("does nothing when the receipt is UNKNOWN, or when the hooks are absent (stubs)", async () => {
     const roundIdA = reviewingRound(313);
     pastGrace();
-    const unknown = netHooks({ pending: false, accepted: null });
+    const unknown = netHooks({ accepted: null });
     await watcher(unknown.hooks).checkDeadlines();
     expect(roundStatus(roundIdA)).toBe("running");
     expect(unknown.redelivered).toHaveLength(0);
@@ -1136,7 +1121,6 @@ describe("lost-prompt net — a round with no prompt receipt", () => {
     let accepted: boolean | null = false;
     const h = hooksWith(true);
     const redelivered: number[] = [];
-    h.hooks.injectPending = async () => false;
     h.hooks.roundPromptAccepted = async () => accepted;
     h.hooks.redeliverRound = async (pr) => {
       redelivered.push(pr);
@@ -1185,7 +1169,6 @@ describe("lost-prompt net — a round with no prompt receipt", () => {
     const roundId = reviewingRound(319);
     pastGrace();
     const h = hooksWith(undefined); // no sessionAlive at all
-    h.hooks.injectPending = async () => false;
     h.hooks.roundPromptAccepted = async () => false;
     const w = watcher(h.hooks);
 

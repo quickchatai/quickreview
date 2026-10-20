@@ -1,6 +1,6 @@
 // The host-neutral PR session lifecycle (src/pr-session-lifecycle.ts) against
-// a fake host: no tmux, no bridge, no pi. The tmux host's behaviour is covered
-// by sessions.test.ts and the SessionHooks conformance suite; this file pins
+// a fake host: no tmux, no bridge, no pi. Its longer flows are in
+// pr-session-lifecycle-flows.test.ts; this file pins
 // what the lifecycle itself decides, whoever runs the session.
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

@@ -9,45 +9,28 @@
 // the host runs in: what has reached a session's mailbox, what pi accepted,
 // whether the session is up.
 //
-// The tmux host is today's `PiSessionManager` over a recording fake exec — no
-// tmux, no pi and no git is ever spawned. The worker host (P8.6) is
-// `WorkerSessionHost` over a real `WorkerSupervisor` whose spawn, process table
-// and signals are fakes — no process, no socket, no model. Where the two differ
-// by nature (a tmux session outlives its commands and has a bridge to redeliver
-// into; a worker is a command), `SessionHooksHost` says so and the suite asks.
+// The worker host (P8.6), the only PR host, is `WorkerSessionHost` over a real
+// `WorkerSupervisor` whose spawn, process table and signals are fakes — no
+// process, no socket, no model.
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { spawn as nodeSpawn } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Config } from "../../src/config.js";
 import { CapabilityStore } from "../../src/ipc/capability.js";
 import type { WorkerSpec } from "../../src/ipc/workerspec.js";
-import { writeSessionBridgeState } from "../../src/overseer-bridge.js";
-import { PiSessionManager, prSessionName } from "../../src/sessions.js";
+import { prSessionName } from "../../src/sessions.js";
 import { StateStore } from "../../src/state.js";
-import { Tmux, type ExecFn } from "../../src/tmux.js";
 import type { SessionHooks } from "../../src/types.js";
 import { WorkerSessionHost } from "../../src/worker-session-host.js";
 import { WorkerSupervisor } from "../../src/workersupervisor.js";
 import { WorktreeManager } from "../../src/worktrees.js";
 
 /** The hooks a conforming host provides in full. The optional members of
- * `SessionHooks` are optional for stubs; a real host has all of them, but for the
- * two the worker host bypasses (its worker compacts) and its own marker. The tmux
- * host (the overseer's, until P9.13) offers no receipt read: that is the worker's. */
-export type FullSessionHooks = Required<
-  Omit<SessionHooks, "compactSession" | "sessionCompaction" | "ackIsReceipt">
->;
+ * `SessionHooks` are optional for stubs; a real host has all of them. */
+export type FullSessionHooks = Required<SessionHooks>;
 
 export const HOST_NOW = new Date("2026-08-13T10:00:00Z");
 
@@ -75,18 +58,10 @@ export interface SessionHooksRig {
   recordAccepted(pr: number, text: string): void;
   /** pi wrote something to the PR session's transcript that is not a prompt. */
   recordActivity(pr: number): void;
-  /** The session consumed what was in its mailbox without settling it (the
-   * wake file is gone, the durable command is untouched). Bridge hosts only. */
-  consumeMailbox(session: string): void;
-  /** The session's bridge now reports a generation the host did not birth.
-   * Bridge hosts only. */
-  staleBridge(session: string): void;
   /** The order the session was handed is gone without a receipt: consumed and
    * never written to its transcript (tmux), or its worker ended before it
    * accepted (worker). The silent-round net's case. */
   loseDeliveredOrder(pr: number): void | Promise<void>;
-  /** How many compactions the daemon has asked of the session. */
-  compactionRequests(session: string): number;
   /** The session dies on its own — the container restarted, pi crashed. */
   killOutOfBand(session: string): void;
   /** From now on a kill of this session does not take. */
@@ -98,10 +73,6 @@ export interface SessionHooksRig {
    * where a replayed command is reserved — or as a kill lands. */
   onBirth(fn: (session: string) => void): void;
   onKill(fn: (session: string) => void): void;
-  /** The daemon restarts: fresh hooks over the same world and the same store.
-   * Hosts whose sessions survive a restart only (a tmux session does; a worker
-   * dies with its daemon, which `worker-session-host.test.ts` covers). */
-  restart(): FullSessionHooks;
   dispose(): void;
 }
 
@@ -109,19 +80,9 @@ export interface SessionHooksHost {
   /** Names the host in the suite's output. */
   readonly name: string;
   open(): SessionHooksRig;
-  /** The host delivers through an inject bridge: a mailbox a session consumes,
-   * a bridge generation, a redelivery into a live session, a restart that adopts
-   * the live sessions. False for the worker host, whose command IS the delivery. */
-  readonly bridge: boolean;
-  /** A session outlives its commands, so a wake into a live one births nothing. */
-  readonly persistent: boolean;
   /** The row a dispatched round's command is in right after `dispatchRound`:
    * the bridge claims it later; a worker claims it as it launches. */
   readonly dispatchedRow: { status: string; attempt: number };
-  /** What a receipt read says when the session has done other work but not yet
-   * this order: a transcript scan can say it was absent (false); a command's ack
-   * cannot yet tell (null). */
-  readonly receiptBeforeAck: boolean | null;
 }
 
 const TITLE = "Add rate limiting";
@@ -171,202 +132,6 @@ function config(root: string): Config {
     openviking: { host: "127.0.0.1", port: 1933, config_file: join(root, "ovhome", "ov.conf") },
   } as unknown as Config;
 }
-
-function openTmuxHost(): SessionHooksRig {
-  const root = mkdtempSync(join(tmpdir(), "qcr-hooks-conformance-"));
-  mkdirSync(join(root, "prompts"), { recursive: true });
-  mkdirSync(join(root, "secrets"), { recursive: true });
-  mkdirSync(join(root, "state"), { recursive: true });
-  writeFileSync(
-    join(root, "prompts", "conversation-system.md"),
-    "Shepherd of PR #{{n}} ({{title}}) at {{worktree}}.\n",
-  );
-  writeFileSync(join(root, "prompts", "overseer-system.md"), "You are the overseer.\n");
-  writeFileSync(join(root, "secrets", "openai_api_key"), "sk-app-key\n");
-
-  const live = new Set<string>();
-  const wedged = new Set<string>();
-  const lifecycle: string[] = [];
-  let onBirth: ((session: string) => void) | undefined;
-  let onKill: ((session: string) => void) | undefined;
-  // The recording fake: tmux answers from `live`, and a new session's bridge
-  // reports ready the way the real one does once pi is up.
-  const exec: ExecFn = async (cmd, args) => {
-    if (cmd !== "tmux") return { code: 0, stdout: "", stderr: "" };
-    if (args[0] === "list-sessions") return { code: 0, stdout: [...live].join("\n"), stderr: "" };
-    if (args[0] === "has-session")
-      return { code: live.has(String(args[2]).replace(/^=/, "")) ? 0 : 1, stdout: "", stderr: "" };
-    if (args[0] === "new-session") {
-      const session = String(args[3]);
-      live.add(session);
-      lifecycle.push(`birth ${session}`);
-      onBirth?.(session);
-      const generation = args
-        .find((value) => value.startsWith("QCR_SESSION_BRIDGE_GENERATION="))
-        ?.split("=", 2)[1];
-      const stateFile = args
-        .find((value) => value.startsWith("QCR_SESSION_BRIDGE_STATE_FILE="))
-        ?.slice("QCR_SESSION_BRIDGE_STATE_FILE=".length);
-      if (generation && stateFile)
-        writeSessionBridgeState(stateFile, {
-          version: 1,
-          session,
-          generation,
-          stage: "ready",
-          run_status: "idle",
-          compaction: { state: "idle", seq: 0 },
-          updated_at: HOST_NOW.toISOString(),
-        });
-    }
-    if (args[0] === "kill-session") {
-      const name = String(args[2]).replace(/^=/, "");
-      lifecycle.push(`kill ${name}`);
-      onKill?.(name);
-      if (!wedged.has(name)) live.delete(name);
-    }
-    return { code: 0, stdout: "", stderr: "" };
-  };
-
-  const store = new StateStore(join(root, "state", "state.db"), () => HOST_NOW);
-  const build = (): PiSessionManager => {
-    const m = new PiSessionManager({
-      cfg: config(root),
-      root,
-      tmux: new Tmux({ exec }),
-      worktrees: new WorktreeManager({
-        root,
-        repo: "o/n",
-        cloneDir: "example-app",
-        cloneUrl: "/dev/null",
-        run: exec,
-      }),
-      piHome: join(root, "pihome"),
-      ovSessions: { create: async () => true, remove: async () => true },
-      now: () => HOST_NOW,
-      commandStore: store,
-    });
-    // A tracked PR can be woken out of round; the registry knows its title.
-    m.setTitleResolver((pr) => store.getPr(pr)?.title ?? undefined);
-    return m;
-  };
-  let manager = build();
-
-  const jsonlFor = (pr: number): string => {
-    const dir = join(manager.sessionDir(prSessionName(pr)), "--home-sandbox--");
-    mkdirSync(dir, { recursive: true });
-    return join(dir, "2026-08-13T10-00-01-000Z_abc.jsonl");
-  };
-
-  return {
-    get hooks() {
-      return manager as unknown as FullSessionHooks;
-    },
-    store,
-    isRunning: (session) => live.has(session),
-    seedIdleSession(session) {
-      return this.seedRunningSession(session);
-    },
-    seedRunningSession(session) {
-      const generation = `existing-${session}`;
-      live.add(session);
-      mkdirSync(join(root, "state", "sessions"), { recursive: true });
-      writeFileSync(
-        join(root, "state", "sessions", `${session}.json`),
-        `${JSON.stringify({ session, born_at: "2026-08-13T09:00:00.000Z", bridge_generation: generation })}\n`,
-      );
-      writeSessionBridgeState(manager.bridgeStatePath(session, generation), {
-        version: 1,
-        session,
-        generation,
-        stage: "ready",
-        updated_at: "2026-08-13T09:00:00.000Z",
-      });
-    },
-    mailbox(session) {
-      const dir = manager.injectDir(session);
-      if (!existsSync(dir)) return [];
-      return readdirSync(dir)
-        .filter((f) => f.endsWith(".md"))
-        .sort()
-        .map((f) => readFileSync(join(dir, f), "utf8"));
-    },
-    settleDelivered(pr) {
-      const session = prSessionName(pr);
-      const row = store.activeSessionCommand(session);
-      if (!row) return;
-      if (!store.claimSessionCommand(row.id, "conformance-bridge", HOST_NOW.toISOString()))
-        throw new Error(`could not claim ${row.id}`);
-      store.markSessionCommandStarted(row.id, "conformance-bridge", HOST_NOW.toISOString());
-      store.finishSessionCommand(row.id, "conformance-bridge", "acked");
-      rmSync(row.inject_path, { force: true });
-    },
-    consumeMailbox(session) {
-      const dir = manager.injectDir(session);
-      if (!existsSync(dir)) return;
-      for (const f of readdirSync(dir)) if (f.endsWith(".md")) rmSync(join(dir, f));
-    },
-    staleBridge(session) {
-      writeSessionBridgeState(manager.bridgeStatePath(session, `existing-${session}`), {
-        version: 1,
-        session,
-        generation: "stale-generation",
-        stage: "ready",
-        updated_at: "2026-08-13T09:59:00.000Z",
-      });
-    },
-    killOutOfBand: (session) => void live.delete(session),
-    loseDeliveredOrder(pr) {
-      const session = prSessionName(pr);
-      for (const f of existsSync(manager.injectDir(session))
-        ? readdirSync(manager.injectDir(session))
-        : [])
-        if (f.endsWith(".md")) rmSync(join(manager.injectDir(session), f));
-      // pi wrote something since, but not the order: the receipt is absent, not unknown.
-      writeFileSync(
-        jsonlFor(pr),
-        `${JSON.stringify({ message: { role: "assistant", content: [{ type: "text", text: "working" }] } })}\n`,
-      );
-    },
-    compactionRequests: () => 0,
-    recordAccepted(pr, text) {
-      writeFileSync(
-        jsonlFor(pr),
-        `${JSON.stringify({ message: { role: "user", content: [{ type: "text", text }] } })}\n`,
-      );
-    },
-    recordActivity(pr) {
-      writeFileSync(
-        jsonlFor(pr),
-        `${JSON.stringify({ message: { role: "assistant", content: [{ type: "text", text: "working" }] } })}\n`,
-      );
-    },
-    wedgeSession: (session) => void wedged.add(session),
-    lifecycle: () => [...lifecycle],
-    onBirth(fn) {
-      onBirth = fn;
-    },
-    onKill(fn) {
-      onKill = fn;
-    },
-    restart() {
-      manager = build();
-      return manager as unknown as FullSessionHooks;
-    },
-    dispose() {
-      store.close();
-      rmSync(root, { recursive: true, force: true });
-    },
-  };
-}
-
-export const tmuxHost: SessionHooksHost = {
-  name: "tmux",
-  open: openTmuxHost,
-  bridge: true,
-  persistent: true,
-  dispatchedRow: { status: "pending", attempt: 0 },
-  receiptBeforeAck: false,
-};
 
 // ---- the worker host ---------------------------------------------------------
 
@@ -523,7 +288,6 @@ export function openWorkerRig(): WorkerHostRig {
       live(session)?.end(3, null);
       return untilGone(() => !supervisor.isLive(session));
     },
-    compactionRequests: () => 0,
     seedIdleSession() {
       // An idle PR has no process: nothing to seed.
     },
@@ -578,12 +342,6 @@ export function openWorkerRig(): WorkerHostRig {
 `,
       );
     },
-    consumeMailbox() {
-      throw new Error("a worker has no mailbox to consume");
-    },
-    staleBridge() {
-      throw new Error("a worker has no bridge");
-    },
     killOutOfBand(session) {
       live(session)?.end(null, "SIGKILL");
     },
@@ -594,9 +352,6 @@ export function openWorkerRig(): WorkerHostRig {
     },
     onKill(fn) {
       onKill = fn;
-    },
-    restart() {
-      throw new Error("a worker dies with its daemon: nothing is adopted");
     },
     dispose() {
       disposed = true;
@@ -609,14 +364,11 @@ export function openWorkerRig(): WorkerHostRig {
 export const workerHost: SessionHooksHost = {
   name: "worker",
   open: openWorkerRig,
-  bridge: false,
-  persistent: false,
   dispatchedRow: { status: "running", attempt: 1 },
-  receiptBeforeAck: null,
 };
 
 /** Every host the contract runs against. */
-export const SESSION_HOSTS: SessionHooksHost[] = [tmuxHost, workerHost];
+export const SESSION_HOSTS: SessionHooksHost[] = [workerHost];
 
 /** A tracked (or closed) PR in the registry, the title the host wakes it by. */
 export function trackPr(

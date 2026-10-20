@@ -111,36 +111,6 @@ describe("measureRoundUsage — through the transcript index", () => {
     });
   });
 
-  it("includes global-store files by mtime window (whole file) and flags passes_included", async () => {
-    const startMs = Date.parse(START);
-    const fs = fakeFs(
-      {
-        "/s/pr-7/a.jsonl": msg(START, 10, 1),
-        "/g/deep/nested/pass1.jsonl": [
-          modelChange("openai-codex", "gpt-mini"),
-          msg("not-a-timestamp", 100, 10),
-        ].join("\n"),
-        "/g/old/pass0.jsonl": msg(START, 7777, 777),
-      },
-      {
-        "/g/deep/nested/pass1.jsonl": startMs + 60_000, // inside window
-        "/g/old/pass0.jsonl": startMs - 60_000, // before window — excluded
-      },
-    );
-    const usage = await measureRoundUsage({
-      sessionDir: "/s/pr-7",
-      globalStoreDir: "/g",
-      startedAt: START,
-      finishedAt: END,
-      fs,
-    });
-    // Global-store files count in full even when their line timestamps do not parse.
-    expect(usage.tokens_in).toBe(110);
-    expect(usage.tokens_out).toBe(11);
-    expect(usage.passes_included).toBe(true);
-    expect(usage.models["openai-codex/gpt-mini"]).toEqual({ in: 100, out: 10 });
-  });
-
   it("sums pi's real cost fields: cacheRead, reasoning-inclusive output and usage.cost.total", async () => {
     const rich = (ts: string): string =>
       JSON.stringify({

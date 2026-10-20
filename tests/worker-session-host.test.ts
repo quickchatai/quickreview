@@ -24,7 +24,6 @@ import {
   roundPromptMarker,
   stampPrompt,
   type RoundOrder,
-  type SessionHooks,
 } from "../src/types.js";
 import { sessionCommandMarker } from "../src/session-command.js";
 import { HeldWakeHandoff, flushHeldWakes, wakeOrHold, type WakeDeps } from "../src/wakes.js";
@@ -82,13 +81,6 @@ const events = (kind: string): unknown[] =>
   rig.store.db.prepare("SELECT payload FROM events WHERE kind = ?").all(kind);
 
 describe("[P8.6] what the worker host offers", () => {
-  it("compacts nothing itself: its worker does, before it exits", () => {
-    const hooks = rig.host as SessionHooks;
-    expect(hooks.compactSession).toBeUndefined();
-    expect(hooks.sessionCompaction).toBeUndefined();
-    expect(hooks.ackIsReceipt).toBe(true);
-  });
-
   it("hands a round to one worker as one claimed command, bytes saved before the row exists", async () => {
     const row = await dispatched();
     expect(row).toMatchObject({ kind: "round", status: "running", attempt: 1, started_at: null });
@@ -113,13 +105,10 @@ describe("[P8.6] the ack is the receipt", () => {
   it("reads null while the worker is starting, true once it accepted the order", async () => {
     await dispatched();
     expect(await rig.hooks.roundPromptAccepted(PR, 1, STARTED_MS)).toBeNull();
-    expect(await rig.hooks.injectPending(PR)).toBe(true);
 
     rig.recordAccepted(PR, STAMPED);
 
     expect(await rig.hooks.roundPromptAccepted(PR, 1, STARTED_MS)).toBe(true);
-    // Nothing is retrying delivery any more: the net has no patience left to give.
-    expect(await rig.hooks.injectPending(PR)).toBe(false);
   });
 
   it("reads false for an order its worker never accepted, and for a round with no command", async () => {
@@ -128,7 +117,6 @@ describe("[P8.6] the ack is the receipt", () => {
 
     expect(rig.store.sessionCommandForRound(PR, 1)?.status).toBe("failed");
     expect(await rig.hooks.roundPromptAccepted(PR, 1, STARTED_MS)).toBe(false);
-    expect(await rig.hooks.injectPending(PR)).toBe(false);
     // Nothing was ever handed to a worker for round 2.
     expect(await rig.hooks.roundPromptAccepted(PR, 2, STARTED_MS)).toBe(false);
   });
@@ -209,7 +197,7 @@ describe("[P8.6] a refused launch is not a failed dispatch", () => {
     expect(rig.workers()).toEqual([]);
     expect(events("worker_launch_deferred")).toHaveLength(1);
     // Still on its way: not lost, not delivered.
-    expect(await rig.hooks.injectPending(PR)).toBe(true);
+    expect(await rig.hooks.roundPromptAccepted(PR, 1, STARTED_MS)).toBeNull();
     expect(await rig.hooks.sessionAlive(PR)).toBe(false);
 
     rig.holdLogin(false);

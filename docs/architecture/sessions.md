@@ -1,5 +1,12 @@
 # Sessions and pi — how the daemon drives the coding agent
 
+> **Workers are the only PR host.** The tmux PR host described below (birth,
+> wake files, the inject bridge's PR half, kill and fence, round-end
+> compaction requests) was deleted in P9.2: `src/sessions.ts` keeps only the
+> overseer's tmux session and the replay harness's, and a PR's session is the
+> per-round worker of `src/worker-session-host.ts`, where a worker's ack is the
+> receipt. The sections on PR sessions below describe the retired host.
+
 The daemon never talks to a model. It runs **pi** (the pinned coding-agent CLI,
 `@earendil-works/pi-coding-agent`) inside detached **tmux** sessions and steers
 those sessions by writing files. Everything in this document is about that
@@ -328,31 +335,22 @@ freshness through a supervisor lease (`round-stage`, stale after
   when available, otherwise the already-expired lease as the conservative
   latest possible origin — never observation time, which would let an outage
   reset the hard cap);
-- the session's bridge reports a compaction running ⇒ late, not
-  lost: the start lease is held open, re-checked every
-  `session_command_unknown_grace_s`, bounded by the compaction's own start +
-  `session_compaction_max_s` (600 s); event `session_command_start_deferred`.
-  This comes before the receipt is read, and only for a session not provably
-  dead — liveness is read first, and `sessionCompaction` reports nothing once
-  tmux holds no session (a pi killed mid-compaction never rewrites its
-  "running" receipt);
 - receipt definitively absent, or session definitively dead ⇒ recover —
   **redelivery first** into a live, bridge-ready session (above), at most
   `max_prompt_redeliveries` times (`session_command_redelivered`,
   `…_redelivery_exhausted`); the kill-and-replay only after that, or at once
   for a dead session;
-- otherwise **unknown**, deferred a bounded number of times
-  (`session_command_unknown_grace_s`, `session_command_unknown_max_checks`)
-  before recovery.
+
+A worker's ack is its receipt, so the supervisor never defers a command for
+compaction or for unknown transcript evidence.
 
 `src/daemon.ts` runs `roundStages.scan()` once at startup (off the critical
 path) and on the deadline tick.
 
 Relevant `[daemon]` knobs in `config.example.toml`:
-`session_bridge_ready_timeout_s`, `session_command_start_lease_s`,
+`session_bridge_ready_timeout_s`,
 `session_command_running_max_min`, `session_command_unknown_grace_s`,
-`session_command_unknown_max_checks`, `session_command_max_start_retries`,
-`session_compaction_max_s`, `max_prompt_redeliveries`,
+`session_command_max_start_retries`, `max_prompt_redeliveries`,
 `round_stage_supervisor_stale_s`, `overseer_rotation_days`.
 
 ## Live round progress

@@ -1138,7 +1138,6 @@ describe("undelivered recheck-claim sweep", () => {
       asked.push(`${pr}:${marker}`);
       return landed;
     };
-    h.injectPending = async () => false;
     return h;
   }
 
@@ -1341,7 +1340,6 @@ describe("undelivered recheck-claim sweep — bounded (boot stall)", () => {
       h.asked.push(`${pr}:${marker}`);
       return answer(pr, marker);
     };
-    h.injectPending = async () => false;
     return h;
   }
 

@@ -242,28 +242,23 @@ class FakeAdapter implements VerdictAdapter {
   }
 }
 
-function recordingHooks(): { hooks: SessionHooks; injects: string[]; compacted: number[] } {
+function recordingHooks(): { hooks: SessionHooks; injects: string[] } {
   const injects: string[] = [];
-  const compacted: number[] = [];
   return {
     injects,
-    compacted,
     hooks: {
       async dispatchRound() {},
       async inject(pr, msg) {
         injects.push(`${pr}:${msg}`);
       },
       async archiveAndClose() {},
-      async compactSession(pr) {
-        compacted.push(pr);
-      },
     },
   };
 }
 
 describe("VerdictWatcher round-end ledger check", () => {
-  function setup(): { watcher: VerdictWatcher; injects: string[]; compacted: number[] } {
-    const { hooks, injects, compacted } = recordingHooks();
+  function setup(): { watcher: VerdictWatcher; injects: string[] } {
+    const { hooks, injects } = recordingHooks();
     const watcher = new VerdictWatcher({
       cfg,
       store,
@@ -271,13 +266,13 @@ describe("VerdictWatcher round-end ledger check", () => {
       hooks,
       verdictDir: join(dir, "verdict"),
       root: dir,
-      usage: { globalStoreDir: null },
+      usage: {},
       partialWrite: { windowMs: 0 },
       // Inline: the production settle delay (it avoids a compaction race) is
       // covered in verdicts.test.ts; these tests pin the check itself.
       ledgerCheckDelayMs: 0,
     });
-    return { watcher, injects, compacted };
+    return { watcher, injects };
   }
 
   function verdicted(pr: number): void {
@@ -308,18 +303,16 @@ describe("VerdictWatcher round-end ledger check", () => {
   it("fresh ledger at the verdict head → verdict applies, no nudge", async () => {
     verdicted(100);
     writeLedger(100, `LEDGER PR #100 @ ${HEAD}\n- all settled`);
-    const { watcher, injects, compacted } = setup();
+    const { watcher, injects } = setup();
     await watcher.sweep();
-    expect(compacted).toEqual([100]);
     expect(injects).toEqual([]);
     expect(anomalyKinds()).toEqual([]);
   });
 
-  it("missing ledger → anomaly + one nudge, delivered AFTER compaction", async () => {
+  it("missing ledger → anomaly + one nudge", async () => {
     verdicted(100);
-    const { watcher, injects, compacted } = setup();
+    const { watcher, injects } = setup();
     await watcher.sweep();
-    expect(compacted).toEqual([100]);
     expect(injects).toHaveLength(1);
     expect(injects[0]).toContain("100:LEDGER REFRESH — PR #100");
     expect(anomalyKinds()).toEqual(["ledger_stale"]);

@@ -21,6 +21,11 @@ import { ARCHIVE_DEFAULTS, type ArchiveConfig, type Config } from "../../src/con
 import type { DaemonLoadStatus } from "../../src/eventloop.js";
 import { writeSessionBridgeState } from "../../src/overseer-bridge.js";
 import { PiSessionManager } from "../../src/sessions.js";
+import {
+  PrSessionLifecycle,
+  prSessionName,
+  type PrSessionHost,
+} from "../../src/pr-session-lifecycle.js";
 import { StateStore } from "../../src/state.js";
 import { Tmux, type ExecFn } from "../../src/tmux.js";
 import { WorktreeManager } from "../../src/worktrees.js";
@@ -409,6 +414,67 @@ export function sessionRig(f: PrFixture): SessionRig {
     now: () => new Date(f.clock.ms),
     commandStore: f.store,
   });
+  return rig;
+}
+
+// ---- a PR session lifecycle over the fixture root (no host at all) ----------
+
+export interface LifecycleRig {
+  m: {
+    setBeforeBirth(fn: (pr: number) => Promise<void>): void;
+    ensurePrSession(pr: number, title: string, worktree: string): Promise<string>;
+  };
+  /** Live session names (the fake host answers from this). */
+  live: Set<string>;
+  /** Every session the host was asked to start, in order. */
+  births: string[];
+  /** Called on each start, before the session counts as live. */
+  onBirth?: (session: string) => void;
+}
+
+/** The host-neutral lifecycle over a fake host that records births: what the
+ * restore-before-birth cases need, with no transcript-hosting machinery. */
+export function lifecycleRig(f: PrFixture): LifecycleRig {
+  const rig = { live: new Set<string>(), births: [] as string[] } as LifecycleRig;
+  const host: PrSessionHost = {
+    liveSessions: async () => [...rig.live],
+    provenGone: async (pr) => !rig.live.has(prSessionName(pr)),
+    killConfirmed: async (pr) => {
+      rig.live.delete(prSessionName(pr));
+      return true;
+    },
+    stop: async (pr) => void rig.live.delete(prSessionName(pr)),
+    reuseLive: async (pr) => (rig.live.has(prSessionName(pr)) ? prSessionName(pr) : undefined),
+    spawn: async (pr) => {
+      const session = prSessionName(pr);
+      rig.births.push(session);
+      rig.onBirth?.(session);
+      rig.live.add(session);
+      return session;
+    },
+  };
+  const exec: ExecFn = async () => ({ code: 0, stdout: "", stderr: "" });
+  const lifecycle = new PrSessionLifecycle({
+    cfg: {
+      github: { repo: "exampleorg/example-app" },
+      pi: { session_dir: "state/pi-sessions" },
+    } as unknown as Config,
+    root: f.root,
+    worktrees: new WorktreeManager({
+      root: f.root,
+      repo: "o/n",
+      cloneDir: "example-app",
+      cloneUrl: "/dev/null",
+      run: exec,
+    }),
+    host,
+    now: () => new Date(f.clock.ms),
+    commandStore: f.store,
+  });
+  rig.m = {
+    setBeforeBirth: (fn) => lifecycle.setBeforeBirth(fn),
+    ensurePrSession: (pr, title, worktree) => lifecycle.ensureSession(pr, title, worktree),
+  };
   return rig;
 }
 

@@ -511,25 +511,6 @@ describe("bounded round-stage supervision", () => {
     );
   });
 
-  it("allows unknown evidence one finite lease, then recovers instead of waiting indefinitely", async () => {
-    const { id } = seedRoundCommand({ status: "running" });
-    const retry = vi.fn(async () => "retried" as const);
-    const h = hooks({
-      wakeReceiptPresent: async () => null,
-      sessionAlive: async () => true,
-      retrySessionCommand: retry,
-    });
-    const s = supervisor(h).supervisor;
-
-    await s.scan();
-    expect(retry).not.toHaveBeenCalled();
-    expect(store.getSessionCommand(id)).toMatchObject({ unknown_checks: 1, status: "running" });
-
-    clock = new Date("2026-08-27T20:07:00.000Z");
-    await s.scan();
-    expect(retry).toHaveBeenCalledWith(id, expect.stringContaining("unknown"));
-  });
-
   it("fails contradictory accepted-but-dead evidence through bounded round recovery", async () => {
     const { id, pr, round } = seedRoundCommand({ status: "running" });
     const onRoundFailure = vi.fn(async () => "requeued" as const);
@@ -1266,7 +1247,11 @@ describe("bounded round-stage supervision", () => {
       release = () => resolve(null);
     });
     const s = supervisor(
-      hooks({ wakeReceiptPresent: async () => receipt, sessionAlive: async () => true }),
+      hooks({
+        wakeReceiptPresent: async () => receipt,
+        sessionAlive: async () => true,
+        retrySessionCommand: async () => "retried" as const,
+      }),
     ).supervisor;
     expect(s.health().healthy).toBe(false); // no successful scan is not health evidence
 
@@ -1290,7 +1275,7 @@ describe("bounded round-stage supervision", () => {
 // compaction until its start lease runs out. A command waiting behind a
 // compaction is late, not lost; a live, bridge-ready session gets a bounded
 // REDELIVERY of the same command before any kill.
-describe("missing start on a live session: compaction and redelivery come before any kill", () => {
+describe("missing start on a live session: redelivery comes before any kill", () => {
   // The moment the wake's 120 s start lease has run out.
   const LEASE_OUT = "2026-08-27T20:04:00.000Z";
 
@@ -1321,52 +1306,6 @@ describe("missing start on a live session: compaction and redelivery come before
       }),
     };
   }
-
-  it("a wake waiting behind a running compaction keeps its lease: no redelivery, no retry, no kill", async () => {
-    const { id, pr } = seedWakeCommand({ status: "pending", nextCheckAt: LEASE_OUT });
-    const { h, retry, kill, redeliver } = liveHooks({
-      sessionCompaction: async () => ({
-        state: "running",
-        seq: 3,
-        started_at: new Date(clock.getTime() - 73_000).toISOString(),
-        source: "request",
-      }),
-    });
-
-    await supervisor(h).supervisor.scan();
-
-    expect(redeliver).not.toHaveBeenCalled();
-    expect(retry).not.toHaveBeenCalled();
-    expect(kill).not.toHaveBeenCalled();
-    const row = store.getSessionCommand(id)!;
-    expect(row).toMatchObject({ status: "pending", unknown_checks: 0, redeliveries: 0 });
-    expect(Date.parse(row.next_check_at)).toBeGreaterThan(clock.getTime());
-    expect(events("session_command_start_deferred")).toMatchObject([
-      { pr, payload: { command_id: id, reason: "compacting", compaction_source: "request" } },
-    ]);
-  });
-
-  it("the compaction deferral is bounded: a compaction 'running' past session_compaction_max_s defers nothing", async () => {
-    const { id } = seedWakeCommand({ status: "pending", nextCheckAt: LEASE_OUT });
-    const bound = baseCfg.daemon.session_compaction_max_s ?? 600;
-    const { h, redeliver, kill } = liveHooks({
-      sessionCompaction: async () => ({
-        state: "running",
-        seq: 0,
-        started_at: new Date(clock.getTime() - bound * 1000).toISOString(),
-      }),
-    });
-
-    await supervisor(h).supervisor.scan();
-
-    expect(redeliver).toHaveBeenCalledWith(id, {
-      attempt: 0,
-      redeliveries: 0,
-      next_check_at: LEASE_OUT,
-    });
-    expect(kill).not.toHaveBeenCalled();
-    expect(events("session_command_start_deferred")).toEqual([]);
-  });
 
   it("a live, bridge-ready session gets a bounded REDELIVERY of the same command before any kill", async () => {
     const { id, pr } = seedWakeCommand({ status: "running", nextCheckAt: LEASE_OUT });
@@ -1480,29 +1419,6 @@ describe("missing start on a live session: compaction and redelivery come before
     ]);
     expect(retry).not.toHaveBeenCalled();
     expect(kill).not.toHaveBeenCalled();
-  });
-
-  // A pi killed or OOM'd mid-compaction never reaches
-  // `session_shutdown`, so its receipt still says "running". A provably dead
-  // session is the kill-and-replay case at once, never held off for
-  // `session_compaction_max_s`.
-  it("a session that died mid-compaction is not deferred: it is replayed on the first check", async () => {
-    const { id } = seedWakeCommand({ status: "running", nextCheckAt: LEASE_OUT });
-    const { h, retry, redeliver } = liveHooks({
-      sessionAlive: async () => false,
-      sessionCompaction: async () => ({
-        state: "running",
-        seq: 3,
-        started_at: new Date(clock.getTime() - 73_000).toISOString(),
-        source: "request",
-      }),
-    });
-
-    await supervisor(h).supervisor.scan();
-
-    expect(events("session_command_start_deferred")).toEqual([]);
-    expect(redeliver).not.toHaveBeenCalled();
-    expect(retry).toHaveBeenCalledWith(id, expect.stringContaining("no correlated start"));
   });
 
   // The redelivery budget is per session generation. A

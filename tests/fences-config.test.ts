@@ -108,6 +108,13 @@ describe("[T4] every config knob has a reader, not just a parser", () => {
     // accepted for an older config and read by nothing.
     "catchup_max_age_s",
     "queue_concurrency",
+    // The tmux host's command timing (the start lease of an inject file, the
+    // unknown-evidence wait, the compaction hold). A worker's ack is its
+    // receipt, so nothing reads them; they stay parsed so an older config.toml
+    // that sets them still loads.
+    "session_command_start_lease_s",
+    "session_command_unknown_max_checks",
+    "session_compaction_max_s",
     "soft_exchange_limit",
     "storm_corrections",
     "tickets_effort",

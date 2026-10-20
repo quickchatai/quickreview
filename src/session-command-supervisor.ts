@@ -16,8 +16,6 @@ import {
   DEFAULT_SESSION_COMMAND_MAX_START_RETRIES,
   DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN,
   DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S,
-  DEFAULT_SESSION_COMMAND_UNKNOWN_MAX_CHECKS,
-  DEFAULT_SESSION_COMPACTION_MAX_S,
   DEFAULT_FOLLOW_UP_SWEEP_EXTRA_MIN,
   type Config,
 } from "./config.js";
@@ -329,16 +327,6 @@ export class SessionCommandSupervisor {
     } catch {
       alive = null;
     }
-    // A compaction holds the session's one mailbox — pi refuses
-    // every prompt while it runs — so a command waiting behind one is late,
-    // not lost. Its start lease is held open (bounded) before the receipt is
-    // read, so a compaction can never be what spends a redelivery or a kill.
-    // Only for a session not provably dead: a pi that died mid-compaction
-    // leaves a "running" receipt behind, and its recovery must not wait.
-    // A host whose ack is its receipt (the worker host) compacts inside the
-    // round's own worker, never behind a command: nothing to defer for.
-    const definitiveHost = this.deps.hooks.ackIsReceipt === true;
-    if (alive !== false && !definitiveHost && (await this.deferBehindCompaction(command))) return;
     try {
       receipt = this.deps.hooks.wakeReceiptPresent
         ? await this.deps.hooks.wakeReceiptPresent(
@@ -389,75 +377,15 @@ export class SessionCommandSupervisor {
       return;
     }
 
-    // A dead session cannot still hold a queued followUp. A readable JSONL
-    // without the marker is definitive absence. Everything else is UNKNOWN.
-    // The worker host has no transcript to fail to read: its ack is the receipt.
-    const definitive = receipt === false || alive === false || definitiveHost;
-    const unknownCap =
-      this.deps.cfg.daemon.session_command_unknown_max_checks ??
-      DEFAULT_SESSION_COMMAND_UNKNOWN_MAX_CHECKS;
-    if (!definitive && command.unknown_checks < unknownCap) {
-      const next = this.deadlineFromNowSeconds(
-        this.deps.cfg.daemon.session_command_unknown_grace_s ??
-          DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S,
-      );
-      if (this.deps.store.deferSessionCommandEvidence(command.id, next)) {
-        this.deps.store.logEvent("session_command_evidence_unknown", command.pr, {
-          command_id: command.id,
-          round_no: command.round_no,
-          unknown_check: command.unknown_checks + 1,
-          cap: unknownCap,
-          next_check_at: next,
-        });
-      }
-      return;
-    }
-
-    const reason = definitive
-      ? `command ${command.id} has no correlated start before ${command.next_check_at}`
-      : `command ${command.id} start evidence remained unknown after ${command.unknown_checks} finite check(s)`;
+    // The worker's ack is its receipt: a command with no correlated start by
+    // its lease is definitively not delivered.
+    const reason = `command ${command.id} has no correlated start before ${command.next_check_at}`;
     // A missing prompt is a delivery fault, so redelivery comes first.
     // A live session with no order is IDLE, not wedged — the kill-and-replay
     // recovery below costs its whole conversation, so it runs only when the
     // session is provably dead or its bounded redeliveries are spent.
     if (alive === true && (await this.redeliverFirst(command, reason))) return;
     await this.recoverMissingStart(command, reason);
-  }
-
-  /** Hold the start lease of a command queued behind a
-   * compaction the session's bridge reports running. Bounded by the
-   * compaction's own start + `session_compaction_max_s`: one still "running"
-   * past that is no reason to wait. True when the check was deferred. */
-  private async deferBehindCompaction(command: SessionCommandRow): Promise<boolean> {
-    if (!this.deps.hooks.sessionCompaction) return false;
-    let compaction: Awaited<ReturnType<NonNullable<SessionHooks["sessionCompaction"]>>> = null;
-    try {
-      compaction = await this.deps.hooks.sessionCompaction(command.pr);
-    } catch {
-      return false;
-    }
-    if (compaction?.state !== "running") return false;
-    const started = Date.parse(compaction.started_at ?? "");
-    const boundMs =
-      (this.deps.cfg.daemon.session_compaction_max_s ?? DEFAULT_SESSION_COMPACTION_MAX_S) * 1000;
-    const now = this.now().getTime();
-    if (!Number.isFinite(started) || now >= started + boundMs) return false;
-    const graceMs =
-      (this.deps.cfg.daemon.session_command_unknown_grace_s ??
-        DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S) * 1000;
-    const next = new Date(Math.min(now + graceMs, started + boundMs)).toISOString();
-    if (this.deps.store.scheduleSessionCommandCheck(command.id, next)) {
-      this.deps.store.logEvent("session_command_start_deferred", command.pr, {
-        command_id: command.id,
-        kind: command.kind,
-        round_no: command.round_no,
-        reason: "compacting",
-        compaction_started_at: compaction.started_at,
-        compaction_source: compaction.source ?? null,
-        next_check_at: next,
-      });
-    }
-    return true;
   }
 
   /**

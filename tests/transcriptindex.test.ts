@@ -5,7 +5,7 @@
 //
 //   1. the answers are the oracle's exactly — usage, cost (to the last float
 //      bit), per-model attribution and the classified audit — over multi-file
-//      dirs, the global store, any chunk size, and a file appended between
+//      dirs, any chunk size, and a file appended between
 //      calls;
 //   2. a 50 MB session dir is read as many event-loop turns, never more than
 //      one chunk parsed between two turns;
@@ -124,31 +124,6 @@ function oldSumFile(
   }
 }
 
-const isDirSync = (path: string): boolean => {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
-};
-
-function oldJsonlFilesUnder(dir: string, depth = 6): string[] {
-  if (depth < 0) return [];
-  let names: string[];
-  try {
-    names = readdirSync(dir);
-  } catch {
-    return [];
-  }
-  const out: string[] = [];
-  for (const name of names) {
-    const path = join(dir, name);
-    if (name.endsWith(".jsonl")) out.push(path);
-    else if (isDirSync(path)) out.push(...oldJsonlFilesUnder(path, depth - 1));
-  }
-  return out;
-}
-
 function oldMeasureRoundUsage(opts: TranscriptMeasureOpts): RoundUsage {
   const acc: RoundUsage = {
     tokens_in: 0,
@@ -176,18 +151,6 @@ function oldMeasureRoundUsage(opts: TranscriptMeasureOpts): RoundUsage {
       oldSumFile(readFileSync(join(opts.sessionDir, name), "utf8"), window, acc);
     } catch {
       /* unreadable file — best-effort */
-    }
-  }
-  if (opts.globalStoreDir) {
-    for (const path of oldJsonlFilesUnder(opts.globalStoreDir)) {
-      try {
-        const mtime = statSync(path).mtimeMs;
-        if (mtime < start || mtime > end) continue;
-        oldSumFile(readFileSync(path, "utf8"), null, acc);
-        acc.passes_included = true;
-      } catch {
-        /* best-effort */
-      }
     }
   }
   return acc;
@@ -221,20 +184,6 @@ function oldCollectWindowLines(opts: TranscriptMeasureOpts): string[] {
         continue;
       }
       out.push(trimmed);
-    }
-  }
-  if (opts.globalStoreDir) {
-    for (const path of oldJsonlFilesUnder(opts.globalStoreDir)) {
-      try {
-        const mtime = statSync(path).mtimeMs;
-        if (mtime < start || mtime > end) continue;
-        for (const line of readFileSync(path, "utf8").split("\n")) {
-          const trimmed = line.trim();
-          if (trimmed) out.push(trimmed);
-        }
-      } catch {
-        /* best-effort */
-      }
     }
   }
   return out;
@@ -359,28 +308,8 @@ function writeSession(dir: string, name: string, lines: string[], trailingNewlin
   return path;
 }
 
-/** A global store: nested pass transcripts, one inside the window by mtime,
- * one before it, and a directory a `.jsonl` name does not make a file. */
-function writeGlobalStore(dir: string): void {
-  const inside = writeSession(join(dir, "--opt-quickreview--", "deep"), "pass-a.jsonl", [
-    modelChange(at(1), "openai-codex", "gpt-pass"),
-    assistant("not-a-timestamp", { input: 100, output: 10, cost: { total: 0.25 } }),
-    bashCall(at(2), "node evil.js"),
-    JSON.stringify([{ name: "bash", arguments: { command: "cargo build" } }]),
-  ]);
-  const old = writeSession(join(dir, "old"), "pass-0.jsonl", [
-    assistant(at(1), { input: 5555, output: 555 }),
-  ]);
-  writeSession(dir, "pass-b.jsonl", [assistant(at(3), { input: 40, output: 4 })], false);
-  const t = (iso: string): Date => new Date(iso);
-  utimesSync(inside, t(at(15)), t(at(15)));
-  utimesSync(join(dir, "pass-b.jsonl"), t(at(16)), t(at(16)));
-  utimesSync(old, t(at(-60)), t(at(-60)));
-}
-
-const window = (sessionDir: string, globalStoreDir?: string): TranscriptMeasureOpts => ({
+const window = (sessionDir: string): TranscriptMeasureOpts => ({
   sessionDir,
-  ...(globalStoreDir ? { globalStoreDir } : {}),
   startedAt: START,
   finishedAt: END,
 });
@@ -395,7 +324,7 @@ async function measured(idx: TranscriptIndex, opts: TranscriptMeasureOpts) {
 
 describe("the answers are the pre-H2 answers, exactly", () => {
   it(
-    "a multi-file session dir and a nested global store, at every chunk size",
+    "a multi-file session dir, at every chunk size",
     {
       timeout: HEAVY_TIMEOUT_MS,
     },
@@ -408,13 +337,10 @@ describe("the answers are the pre-H2 answers, exactly", () => {
       writeFileSync(join(sessionDir, "notes.txt"), assistant(at(1), { input: 1, output: 1 }));
       mkdirSync(join(sessionDir, "nested"), { recursive: true });
       writeSession(join(sessionDir, "nested"), "x.jsonl", sessionLines("nested")); // not read: top level only
-      const globalStoreDir = join(root, "pihome-sessions");
-      writeGlobalStore(globalStoreDir);
 
-      const opts = window(sessionDir, globalStoreDir);
+      const opts = window(sessionDir);
       const want = oldMeasure(opts);
       // The fixture really exercises what it claims to.
-      expect(want.usage.passes_included).toBe(true);
       expect(Object.keys(want.usage.models).length).toBeGreaterThan(4);
       expect(want.violations.map((v) => v.kind)).toEqual(
         expect.arrayContaining([
@@ -441,10 +367,8 @@ describe("the answers are the pre-H2 answers, exactly", () => {
   it("a file appended between calls — and any window over what was kept", async () => {
     const sessionDir = join(root, "sessions", "pr-5850");
     const live = writeSession(sessionDir, "live.jsonl", sessionLines("r1"), false);
-    const globalStoreDir = join(root, "g");
-    writeGlobalStore(globalStoreDir);
     const idx = new TranscriptIndex({ chunkBytes: 100 });
-    const round1 = window(sessionDir, globalStoreDir);
+    const round1 = window(sessionDir);
     expect(await measured(idx, round1)).toEqual(oldMeasure(round1));
 
     // The partial last line is completed, then round 2 appends its own lines.
@@ -460,7 +384,6 @@ describe("the answers are the pre-H2 answers, exactly", () => {
     );
     const round2: TranscriptMeasureOpts = {
       sessionDir,
-      globalStoreDir,
       startedAt: later(0),
       finishedAt: later(10),
     };
@@ -764,19 +687,18 @@ describe("an unreadable transcript makes the usage UNKNOWN", () => {
     expect(m.violations).toEqual(oldMeasure(window(sessionDir)).violations);
   });
 
-  it("a read that fails mid-file, an unlistable dir, an unreadable store subdir", async () => {
+  it("a read that fails mid-file, an unlistable dir", async () => {
     const base = Date.parse(END);
     const fs = new MemoryTranscriptFs(
       {
         "/s/a.jsonl": sessionLines("a").join("\n"),
         "/s/b.jsonl": sessionLines("b").join("\n"),
-        "/g/sub/p.jsonl": assistant(at(1), { input: 1, output: 1 }),
       },
-      { "/g/sub/p.jsonl": Date.parse(at(2)) },
+      {},
       base,
     );
     const idx = new TranscriptIndex({ fs, chunkBytes: 64 });
-    const ok = await idx.measure({ ...window("/s", "/g") });
+    const ok = await idx.measure(window("/s"));
     expect(ok.unreadable).toEqual([]);
     expect(ok.usage).not.toBeNull();
 
@@ -793,70 +715,41 @@ describe("an unreadable transcript makes the usage UNKNOWN", () => {
     expect(denied.usage).toBeNull();
     expect(denied.unreadable[0]).toMatchObject({ path: "/s" });
     fs.listErrors.delete("/s");
-
-    fs.listErrors.set("/g/sub", "EACCES");
-    fs.failRead("/s/b.jsonl", "");
-    const store = await idx.measure(window("/s", "/g"));
-    expect(store.usage).toBeNull();
-    expect(store.unreadable).toEqual([
-      { path: "/g/sub", reason: expect.stringContaining("EACCES") },
-    ]);
-    fs.listErrors.delete("/g/sub");
-
-    // A store subdir that cannot even be stat'ed hides its subtree just the
-    // same. MUTATION: swallow the subdir stat failure as "not a dir" — red.
-    fs.statErrors.set("/g/sub", "EIO");
-    const hidden = await idx.measure(window("/s", "/g"));
-    expect(hidden.usage).toBeNull();
-    expect(hidden.unreadable).toEqual([{ path: "/g/sub", reason: expect.stringContaining("EIO") }]);
   });
 
-  it("an absent session dir or store is NOT unknown — there is simply nothing there", async () => {
-    const m = await new TranscriptIndex().measure(
-      window(join(root, "none"), join(root, "nostore")),
-    );
+  it("an absent session dir is NOT unknown — there is simply nothing there", async () => {
+    const m = await new TranscriptIndex().measure(window(join(root, "none")));
     expect(m.unreadable).toEqual([]);
     expect(m.usage).toMatchObject({ tokens_in: 0, tokens_out: 0, passes_included: false });
   });
 
-  // The daemon's own pi-global archiver gzips and unlinks store files a day
-  // old while this walk awaits between its listing and each stat — files that
-  // can never be inside a round's window. Gone is absent, as a missing dir is;
-  // the synchronous oracle skips them too.
+  // An archiver may gzip and unlink a file while this walk awaits between its
+  // listing and each stat. Gone is absent, as a missing dir is; the synchronous
+  // oracle skips it too.
   // MUTATION: push ENOENT from `statListed` (or from `readListed`) into
   // `unreadable` — red.
   it("a listed file gone before its stat or its open is absent, not unknown", async () => {
     const base = Date.parse(END);
-    const inWindow = Date.parse(at(15));
     const files = {
       "/s/a.jsonl": sessionLines("a").join("\n"),
       "/s/b-gone-before-stat.jsonl": sessionLines("b").join("\n"),
       "/s/c-gone-before-open.jsonl": sessionLines("c").join("\n"),
-      "/g/live/pass.jsonl": assistant(at(1), { input: 40, output: 4 }),
-      "/g/old/p.jsonl": assistant(at(1), { input: 5555, output: 555 }),
     };
-    const mtimes = { "/g/live/pass.jsonl": inWindow, "/g/old/p.jsonl": inWindow };
-    const fs = new MemoryTranscriptFs(files, mtimes, base);
+    const fs = new MemoryTranscriptFs(files, {}, base);
     fs.afterReaddir = (dir) => {
       if (dir === "/s") fs.remove("/s/b-gone-before-stat.jsonl");
-      if (dir === "/g/old") fs.remove("/g/old/p.jsonl"); // the archiver, mid-walk
     };
     fs.afterStat = (path) => {
       if (path === "/s/c-gone-before-open.jsonl") fs.remove(path);
     };
-    const m = await new TranscriptIndex({ fs }).measure(window("/s", "/g"));
+    const m = await new TranscriptIndex({ fs }).measure(window("/s"));
     expect(m.unreadable).toEqual([]);
 
     // Exactly what the files still there measure.
-    const rest = new MemoryTranscriptFs(
-      { "/s/a.jsonl": files["/s/a.jsonl"], "/g/live/pass.jsonl": files["/g/live/pass.jsonl"] },
-      mtimes,
-      base,
-    );
-    const want = await new TranscriptIndex({ fs: rest }).measure(window("/s", "/g"));
+    const rest = new MemoryTranscriptFs({ "/s/a.jsonl": files["/s/a.jsonl"] }, {}, base);
+    const want = await new TranscriptIndex({ fs: rest }).measure(window("/s"));
     expect(want.unreadable).toEqual([]);
     expect(m.usage).toEqual(want.usage);
-    expect(m.usage).toMatchObject({ passes_included: true });
     expect(m.violations).toEqual(want.violations);
 
     // ENOTDIR is absence too; any other code is not.
@@ -869,9 +762,8 @@ describe("an unreadable transcript makes the usage UNKNOWN", () => {
   });
 
   // A `.jsonl` that is not a regular file holds no transcript: the oracle
-  // skips it (readFileSync fails with EISDIR, or the store walk does), and a
-  // FIFO would block a read forever. Absent — exactly the oracle's answer — in
-  // the session dir and in the store; a dangling link likewise.
+  // skips it (readFileSync fails with EISDIR), and a FIFO would block a read
+  // forever. Absent — exactly the oracle's answer; a dangling link likewise.
   // MUTATION: in `statListed`, report a non-file as unreadable — red.
   it("a `.jsonl` that is not a regular file, or a dangling link, is the old answer: skipped", async () => {
     const sessionDir = join(root, "s");
@@ -879,15 +771,8 @@ describe("an unreadable transcript makes the usage UNKNOWN", () => {
     mkdirSync(join(root, "elsewhere"));
     symlinkSync(join(root, "elsewhere"), join(sessionDir, "b-dir-link.jsonl"));
     symlinkSync(join(root, "nowhere.jsonl"), join(sessionDir, "c-dangling.jsonl"));
-    const globalStoreDir = join(root, "g");
-    writeGlobalStore(globalStoreDir);
-    const dirNamedJsonl = join(globalStoreDir, "sub", "not-a-file.jsonl");
-    mkdirSync(dirNamedJsonl, { recursive: true });
-    writeSession(dirNamedJsonl, "inner.jsonl", [assistant(at(1), { input: 3, output: 3 })]);
-    utimesSync(dirNamedJsonl, new Date(at(15)), new Date(at(15))); // inside the window
-    symlinkSync(join(root, "nowhere-2.jsonl"), join(globalStoreDir, "dangling.jsonl"));
 
-    const opts = window(sessionDir, globalStoreDir);
+    const opts = window(sessionDir);
     const m = await new TranscriptIndex().measure(opts);
     expect(m.unreadable).toEqual([]);
     expect({ usage: m.usage, violations: m.violations }).toEqual(oldMeasure(opts));

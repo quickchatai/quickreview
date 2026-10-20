@@ -70,7 +70,6 @@ import {
 import { estimateUsd, type ModelPricing } from "./usage.js";
 import { TranscriptIndex } from "./transcriptindex.js";
 import { withinBudget } from "./budget.js";
-import { piGlobalSessionsDir } from "./archive/piglobal.js";
 import type { GateResult } from "./gate.js";
 import { applyEvent, restoreStandingLifecycle } from "./statemachine.js";
 import type { VerdictAnnouncer } from "./slack/announce.js";
@@ -292,8 +291,6 @@ export interface VerdictDeps {
   usage?: {
     /** pi session dir for a PR's sticky session (sessions.ts sessionDir()). */
     sessionDirFor?: (pr: number) => string;
-    /** pi HOME global store (pass subagents); null disables the best-effort scan. */
-    globalStoreDir?: string | null;
     /** Per-model pricing; defaults to config `[models.pricing]`. */
     pricing?: Record<string, ModelPricing>;
     /** The transcript reader. Default: one per watcher, so its
@@ -1841,11 +1838,6 @@ export class VerdictWatcher {
       this.log(
         `verdicts: #${round.pr} preserved fresh-head successor after skipped round ${round.round_no}`,
       );
-    // (The worker host leaves compactSession unset: its worker compacts before it exits.)
-    await this.safe(
-      () => this.deps.hooks.compactSession?.(round.pr) ?? Promise.resolve(),
-      `compact pr-${round.pr}`,
-    );
     if (!successorPromoted) await this.flushWakes(round.pr);
     await this.closeMeasurement(owed, measure);
     return "settled";
@@ -2466,19 +2458,7 @@ export class VerdictWatcher {
     // line on an already-applied verdict.
     if (round && cfg.escalation.enabled) await this.runRoundWorkKey(`escalations:${round.id}`);
     else await this.safe(() => this.deliverEscalations(v), `escalations pr-${v.pr}`);
-    // Round is over: compact the sticky conversation. Cache re-reads of the
-    // ever-growing prefix are a large share of measured cost; the continuity
-    // that matters (SETTLED digest, ledger) survives compaction by design:
-    // ledger-pin pins the ledger into pi's summary and the next round order
-    // re-hands the mirrored copy. This only requests it — the session's
-    // inject bridge runs it once nothing is in flight and delivers
-    // no wake (the ones flushed below included) until it has ended, so a
-    // compaction can neither abort a wake nor refuse one.
-    // (The worker host leaves compactSession unset: its worker compacts before it exits.)
-    await this.safe(
-      () => this.deps.hooks.compactSession?.(v.pr) ?? Promise.resolve(),
-      `compact pr-${v.pr}`,
-    );
+    // (The worker compacts its own conversation before it exits.)
     // Ledger freshness: after compaction, so ledger-pin's mirror has had its
     // chance — and delayed, because the compaction is only requested: it is
     // still running when apply continues. Best-effort fire-and-forget —
@@ -3082,14 +3062,6 @@ export class VerdictWatcher {
     return join(root, this.deps.cfg.pi.session_dir, `pr-${pr}`);
   }
 
-  private globalStoreDir(): string | undefined {
-    const configured = this.deps.usage?.globalStoreDir;
-    if (configured === null) return undefined;
-    // The subagent tool's isolated children skip --session-dir → pi HOME
-    // global store (in-container /home/review/.pi/agent/sessions). Best-effort.
-    return configured ?? piGlobalSessionsDir();
-  }
-
   /**
    * Did git's configuration change while this round ran? And did this
    * system's own policy surface (config.toml, scripts/, dist/, extensions/,
@@ -3187,7 +3159,6 @@ export class VerdictWatcher {
       const bounded = await withinBudget(
         this.transcripts.measure({
           sessionDir: this.sessionDirFor(pr),
-          globalStoreDir: this.globalStoreDir(),
           startedAt,
           finishedAt,
         }),
@@ -4432,7 +4403,7 @@ export class VerdictWatcher {
   private async maybeRequeueLostPrompt(round: RoundRow, nowMs: number): Promise<void> {
     const { cfg, store } = this.deps;
     const hooks = this.deps.hooks;
-    if (!hooks.roundPromptAccepted || !hooks.injectPending || !hooks.sessionAlive) return;
+    if (!hooks.roundPromptAccepted || !hooks.sessionAlive) return;
     // A round dispatched before receipts existed carries no marker, so its
     // delivery is unknowable — never guess at it.
     if (!round.prompt_marker) return;
@@ -4445,10 +4416,6 @@ export class VerdictWatcher {
       if (round.silent_since) store.clearRoundSilent(round.id);
     };
     try {
-      if (await hooks.injectPending.call(hooks, round.pr)) {
-        clearSilent(); // bridge still holding/retrying — patience, not loss
-        return;
-      }
       const accepted = await hooks.roundPromptAccepted.call(
         hooks,
         round.pr,

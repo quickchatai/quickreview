@@ -819,7 +819,6 @@ describe("runRecheck", () => {
           },
           archiveAndClose: async () => {},
           wakeReceiptPresent: async () => false,
-          injectPending: async () => false,
         };
         await reconcileOnce({ cfg, store: state, adapter, hooks });
         expect(injected).toHaveLength(1);
