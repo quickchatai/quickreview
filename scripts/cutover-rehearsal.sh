@@ -588,7 +588,7 @@ MISS+="$(want_in_plan 'seed the sidecar store' 'the sidecar seed')"
 MISS+="$(want_in_plan 'swap the config' 'the config swap')"
 MISS+="$(want_in_plan 'wait for /ready; recreate the daemon container' 'the sidecar /ready then the recreate')"
 MISS+="$(want_in_plan 'cutover +first run on the legacy layout, acknowledged' 'the cutover acknowledgement')"
-MISS+="$(want_in_plan '(?i)point of no return' 'the recreate named as the point of no return')"
+MISS+="$(want_in_plan 'POINT OF NO RETURN' 'the recreate named as the point of no return')"
 if [[ "$PLAN_RC" == 0 && -z "$MISS" ]]; then
   check PLAN-1 pass "the dry-run plan shows what runbook C.11 asks for" "legacy layout, the manifest digests and a pull by digest, the new image's config check, stop then snapshot then preflight, the seed, the swap, sidecar /ready, the recreate named as the point of no return; nothing executed"
 else
@@ -673,12 +673,234 @@ export CUTOVER_PRS_CMD="echo '$PR $(python3 -c "import json;print(json.load(open
 export QC_RELEASE_REPO=quickchatai/quickreview
 
 # run A: preconditions, drain, plan, the release (the typed go), verify, the first reconcile, the backstop, the surfaces;
-# it stops at stage 9, which asks about a worker round.
+# it stops at stage 9, which asks whether a worker round was checked (EOF: not answered).
 printf '\ny\n%s\ny\ny\n' "$VERSION" >"$WORK/wizard-a.in"
-printf 'y\n' >>"$WORK/wizard-a.in"   # the surfaces
 "$ROOT/scripts/cutover.sh" "$VERSION" <"$WORK/wizard-a.in" >"$LOGS/wizard-a.log" 2>&1; WA_RC=$?
 sed -i 's/\x1b\[[0-9;]*[a-zA-Z]//g' "$LOGS/wizard-a.log"
-STAGES_DONE="$(grep -o 'done:[a-z_]*' "$CTL/wizard.state" 2>/dev/null | tr '\n' ' ')"
+STAGES_DONE="$(grep -o 'done:[a-z_0-9]*' "$CTL/wizard.state" 2>/dev/null | sed 's/done://' | tr '\n' ' ')"
 fact wizard_a "rc=$WA_RC; stages recorded: $STAGES_DONE"
-log "wizard run A: rc=$WA_RC; $STAGES_DONE"
-tail -25 "$LOGS/wizard-a.log" | sed 's/^/    | /' >&2
+log "wizard run A: rc=$WA_RC; stages done: $STAGES_DONE"
+tail -22 "$LOGS/wizard-a.log" | sed 's/^/    | /' >&2
+
+A_MISSING=""
+for st in preconditions drain plan release verify reconcile backstop surfaces; do
+  grep -qx "done:$st" "$CTL/wizard.state" 2>/dev/null || A_MISSING+="$st "
+done
+if [[ -z "$A_MISSING" && "$WA_RC" == 1 ]] && grep -q "Stopped at stage 9" "$LOGS/wizard-a.log"; then
+  check WIZ-A pass "scripts/cutover.sh runs stages 1-8 (preconditions, drain, plan, release, verify, first reconcile, backstop, surfaces) and stops at stage 9" "stages recorded: $STAGES_DONE; stopped at stage 9 with the drain held (no answer to the worker-round question)"
+else
+  check WIZ-A fail "scripts/cutover.sh runs stages 1-8 and stops at stage 9" "rc=$WA_RC missing stages: ${A_MISSING:-none}; log $LOGS/wizard-a.log"
+fi
+
+# ---- CUT-1: the point of no return, as it stands ------------------------------------------------------------------------------
+ST="$(vmstatus)"
+D_IMG="$(docker inspect -f '{{.Config.Image}}' "$DAEMON" 2>/dev/null)"; M_IMG="$(docker inspect -f '{{.Config.Image}}' "$MEMORY" 2>/dev/null)"
+P=""
+[[ "$(vmfield layout <<<"$ST")" == release ]] || P+="layout is '$(vmfield layout <<<"$ST")'; "
+[[ "$D_IMG" == "$REPO_D@$(digest_of $VERSION 2)" ]] || P+="the daemon runs '$D_IMG', not the manifest's digest; "
+[[ "$M_IMG" == "$REPO_M@$(digest_of $VERSION 3)" ]] || P+="the sidecar runs '$M_IMG', not the manifest's digest; "
+[[ "$(label_of "$DAEMON" qcr.build-sha)" == "$IMG_SHA" ]] || P+="build-sha label '$(label_of "$DAEMON" qcr.build-sha)'; "
+[[ "$(docker inspect -f '{{.State.Running}}' "$DAEMON" "$MEMORY" | tr '\n' ' ')" == "true true " ]] || P+="not both containers running; "
+[[ "$(docker inspect -f '{{.State.Running}}' "$DAEMON-prev" 2>/dev/null)" == false && -z "$(label_of "$DAEMON-prev" qcr.layout)" ]] || P+="the legacy container is not kept stopped as $DAEMON-prev; "
+[[ "$(last_run | cut -d' ' -f1)" == ok ]] || P+="last run '$(last_run)'; "
+[[ "$(sha256sum "$H/config-home/config.toml" | cut -c1-16)" == "$(sha256sum "$CFGHOME/config.toml" | cut -c1-16)" ]] || P+="config-home is not the shipped config; "
+[[ "$(sha256sum "$H/config-home.prev/config.toml" | cut -c1-16)" == "$(snap_get before config)" ]] || P+="config-home.prev is not the legacy config; "
+[[ "$(tree_sum "$H/memory-state")" == "$(snap_get before store)" ]] || P+="the sidecar store is not the verified copy; "
+[[ "$(tree_sum "$H/state/openviking")" == "$(snap_get before store)" ]] || P+="the daemon's old store changed; "
+BK="$(ls -d "$VM/backups/$VERSION-"* 2>/dev/null | tail -1)"
+[[ -f "$BK/state.db" && -f "$BK/pi-sessions.tar.gz" ]] || P+="no snapshot of state.db and the sessions under $VM/backups; "
+if [[ -z "$P" ]]; then
+  check CUT-1 pass "the clean run passes the point of no return: both containers recreated by digest from the registry, config swapped, store seeded, snapshot kept" \
+    "daemon $D_IMG (qcr.build-sha $(label_of "$DAEMON" qcr.build-sha | cut -c1-12)) and sidecar $M_IMG running; the legacy container kept stopped as $DAEMON-prev; config-home = the shipped config, config-home.prev = the legacy config; sidecar store = the legacy store (verified copy, original untouched); snapshot $(basename "$BK"): $(ls "$BK" | tr '\n' ' ')modes $(stat -c %a "$BK/state.db"); last run: $(cat "$VM/lib/last-run.json" | cut -c1-160)"
+else
+  check CUT-1 fail "the clean run passes the point of no return" "$P"
+fi
+
+# ---- MIG-1: the first boot migrated the legacy db forward, nothing lost -------------------------------------------------------------
+python3 - "$BK/state.db" "$H/state/state.db" >"$WORK/schema-diff.txt" <<'PY'
+import sqlite3, sys
+old = sqlite3.connect("file:%s?mode=ro" % sys.argv[1], uri=True); new = sqlite3.connect("file:%s?mode=ro" % sys.argv[2], uri=True)
+def schema(c):
+    return {t: [r[1] for r in c.execute("pragma table_info(%s)" % t)] for (t,) in c.execute("select name from sqlite_master where type='table' and name not like 'sqlite_%'")}
+a, b = schema(old), schema(new)
+lost = [t for t in a if t not in b] + ["%s.%s" % (t, c) for t in a if t in b for c in a[t] if c not in b[t]]
+print("legacy_tables=%d migrated_tables=%d" % (len(a), len(b)))
+print("tables_added=%d" % len([t for t in b if t not in a]))
+print("LOST=%s" % (",".join(lost) or "none"))
+PY
+if [[ "$(grep '^LOST=' "$WORK/schema-diff.txt" | cut -d= -f2)" == none && "$(sql "select count(*) from events where kind='legacy_fixture'")" == 1 && "$(sql 'select state from pr_state where number=6')" == closed ]]; then
+  check MIG-1 pass "the release's first boot migrated the legacy state.db forward: nothing lost, the legacy rows kept" "$(tr '\n' ' ' <"$WORK/schema-diff.txt")legacy event and closed PR 6 survive; the snapshot the updater took ($(basename "$BK")) is still the legacy file ($(tables "$BK/state.db") tables)"
+else
+  check MIG-1 fail "the first boot migrated the legacy db forward" "$(tr '\n' ' ' <"$WORK/schema-diff.txt")"
+fi
+
+# ---- VERIFY-1: deploy.sh verify, as the wizard ran it at stage 5 ----------------------------------------------------------------
+if ! grep -q "CHECK FAILED" "$LOGS/wizard-a.log" && grep -q "heartbeat written by this boot" "$LOGS/wizard-a.log" && grep -q "memory sidecar search" "$LOGS/wizard-a.log"; then
+  check VERIFY-1 pass "deploy.sh verify (the wizard's stage 5) passes: both containers up, build stamp, fresh heartbeat, pi settings and the AGENTS.override stub, sidecar ready and a memory search from the daemon's container" "no CHECK FAILED in the wizard's output; $(grep -c '^--- ' "$LOGS/wizard-a.log") checks ran"
+else
+  check VERIFY-1 fail "deploy.sh verify passes" "$(grep -E 'CHECK FAILED' "$LOGS/wizard-a.log" | head -3 | tr '\n' ' ')"
+fi
+check_verify_extra() {
+  local ps; ps="$(dx sh -c 'for p in /proc/[0-9]*; do [ -r $p/stat ] || continue; printf "%s %s\n" "${p#/proc/}" "$(tr "\0" " " <$p/cmdline | cut -c1-120)"; done')"
+  local pi tmuxn
+  pi="$(grep -cE ' (pi|.*/pi) |bin/pi|pi-coding-agent' <<<"$ps")"; tmuxn="$(dx tmux ls 2>&1 | grep -vc 'no server')"
+  fact process_tree "$(awk '{ $1=""; print }' <<<"$ps" | grep -E 'node|flock|sleep' | cut -c1-90 | tr '\n' ';')"
+  echo "$pi $tmuxn"
+}
+read -r PI_N TMUX_N <<<"$(check_verify_extra)"
+# the process tree at rest, right after the boot: no pi, no tmux, no overseer (runbook 13)
+if [[ "$PI_N" == 0 && "${TMUX_N:-1}" == 0 && "$(sql "select count(*) from events where kind like '%overseer%'")" == 0 ]]; then
+  check TREE-0 pass "right after the release boot the daemon container holds no pi, no tmux server and no overseer" "pi processes $PI_N, tmux sessions $TMUX_N; the process tree is in the run notes"
+else
+  check TREE-0 fail "the release boot holds no pi, tmux or overseer" "pi=$PI_N tmux=$TMUX_N"
+fi
+
+# ---- HOLD-1: the operator's drain survives the release boot as the hold ----------------------------------------------------------------
+CARRIED="$(sql "select count(*) from events where kind='drain_hold_carried'")"
+KEPT="$(docker logs "$DAEMON" 2>&1 | grep -c drain_hold_kept)"
+LIFTED="$(sql "select count(*) from events where kind='drain_lifted'")"
+DS="$(sql 'select * from drain_state' | tr '\n' ' ')"
+if [[ "$CARRIED" -ge 1 && "$KEPT" -ge 1 && "$LIFTED" == 0 && "$(status_get draining)" == True && "$(status_get draining_hold)" == True && "$(status_get draining_by)" == operator ]]; then
+  check HOLD-1 pass "the operator's plain drain survives the release boot as the HOLD: drain_hold_carried at the boot, drain_hold_kept at the first healthy reconcile, no drain_lifted" \
+    "drain_hold_carried x$CARRIED (events), drain_hold_kept x$KEPT (daemon log), drain_lifted x$LIFTED; status.json: draining=true draining_by=operator draining_hold=true; drain_state row: $DS"
+else
+  check HOLD-1 fail "the drain survives the boot as the hold" "carried=$CARRIED kept=$KEPT lifted=$LIFTED status draining=$(status_get draining) hold=$(status_get draining_hold) by=$(status_get draining_by); row: $DS"
+fi
+op status >"$WORK/status-held.txt" 2>&1
+if grep -q "HELD by the operator" "$WORK/status-held.txt"; then
+  check SURFACE-1 pass "the operator's tools reach the release container with no [tui] remote_* key (layout resolved from the container's label): qcr status reads the heartbeat and says HELD" "$(grep -m1 DRAINING "$WORK/status-held.txt" | cut -c1-200)"
+else
+  check SURFACE-1 fail "qcr status reads the release container's heartbeat with the owner's [tui] config (no remote_state_dir / remote_sandbox_root)" "$(head -5 "$WORK/status-held.txt" | tr '\n' ' ' | cut -c1-400)"
+fi
+
+# the hold outlasts later reconcile passes and a daemon restart
+RECS0="$(docker logs "$DAEMON" 2>&1 | grep -c 'reconcile: open=')"
+log "waiting for two more reconcile passes under the hold"
+passes_more() { [[ "$(docker logs "$DAEMON" 2>&1 | grep -c 'reconcile: open=')" -ge $((RECS0 + 2)) ]]; }
+wait_for 150 "two more reconcile passes" passes_more
+RECS1="$(docker logs "$DAEMON" 2>&1 | grep -c 'reconcile: open=')"
+STILL1="$(status_get draining)/$(status_get draining_hold)"
+BOOTS0="$(docker logs "$DAEMON" 2>&1 | grep -c 'workers: recovered')"
+docker restart "$DAEMON" >/dev/null
+reboot_done() { [[ "$(docker logs "$DAEMON" 2>&1 | grep -c 'workers: recovered')" -gt "$BOOTS0" ]] && docker logs "$DAEMON" 2>&1 | awk '/workers: recovered/ {ok=0} /reconcile: open=.* errors=0/ {ok=1} END {exit !ok}'; }
+wait_for 180 "the restarted daemon's first reconcile" reboot_done
+sleep 3
+STILL2="$(status_get draining)/$(status_get draining_hold)"
+KEPT2="$(docker logs "$DAEMON" 2>&1 | grep -c drain_hold_kept)"
+if [[ "$STILL1" == True/True && "$STILL2" == True/True && "$(sql "select count(*) from events where kind='drain_lifted'")" == 0 && "$KEPT2" -gt "$KEPT" ]]; then
+  check HOLD-2 pass "no later reconcile pass and no daemon restart lifts the hold" "reconcile passes $RECS0 -> $RECS1 with the drain standing ($STILL1); after docker restart of the release container and its first healthy reconcile: $STILL2, drain_hold_kept x$KEPT -> x$KEPT2, drain_lifted x0"
+else
+  check HOLD-2 fail "the hold outlasts reconcile passes and a restart" "after passes $STILL1; after restart $STILL2; kept $KEPT -> $KEPT2; lifted $(sql "select count(*) from events where kind='drain_lifted'")"
+fi
+
+# ---- HOLD-3: under the hold a trigger starts nothing -------------------------------------------------------------------------------------
+hook() { # <event> <json>, signed, from inside the container (the webhook binds there)
+  local body="$2" sig
+  sig="sha256=$(printf '%s' "$body" | openssl dgst -sha256 -hmac "$(tr -d '\n' <"$H/secrets/webhook_secret")" | sed 's/^.* //')"
+  printf '%s' "$body" | docker exec -i "$DAEMON" curl -sS -o /dev/null -w '%{http_code}' -XPOST http://127.0.0.1:8787/webhook \
+    -H 'content-type: application/json' -H "x-github-event: $1" -H "x-github-delivery: rh-$(date +%s%3N)" \
+    -H "x-hub-signature-256: $sig" --data-binary @-
+}
+HEAD1="$(python3 -c "import json;print(json.load(open('$H/fixture.json'))['heads'][1])")"
+git -C "$H/remote.git" update-ref "refs/pull/$PR/head" "$HEAD1"
+DROPPED0="$(status_get drained_deliveries)"
+CODE="$(hook pull_request "{\"action\":\"labeled\",\"label\":{\"name\":\"AI review requested\"},\"pull_request\":{\"number\":$PR,\"title\":\"Add rate limiting\",\"head\":{\"sha\":\"$HEAD1\"},\"user\":{\"login\":\"alice\"}},\"sender\":{\"login\":\"alice\",\"type\":\"User\"}}")"
+op debug-round "$PR" >"$WORK/debug-held.txt" 2>&1
+sleep 45
+ROUNDS="$(sql 'select count(*) from rounds')"; CMDS="$(sql "select count(*) from session_commands where kind='round'")"
+SPAWNED="$(sql "select count(*) from events where kind='worker_spawned'")"
+fact trigger_under_hold "webhook HTTP $CODE; drained_deliveries $DROPPED0 -> $(status_get drained_deliveries); debug-round said: $(tr '\n' ' ' <"$WORK/debug-held.txt" | cut -c1-240); rounds $ROUNDS, round commands $CMDS, workers spawned $SPAWNED"
+if [[ "$ROUNDS" == 0 && "$CMDS" == 0 && "$SPAWNED" == 0 ]]; then
+  check HOLD-3 pass "under the hold a signed trigger and a debug-round request start nothing: no round, no command, no worker" "webhook HTTP $CODE (the delivery is dropped, drained_deliveries $DROPPED0 -> $(status_get drained_deliveries)); debug-round: $(tr '\n' ' ' <"$WORK/debug-held.txt" | cut -c1-200)"
+else
+  check HOLD-3 fail "under the hold nothing starts" "rounds=$ROUNDS commands=$CMDS spawned=$SPAWNED"
+fi
+op release "$PR" >/dev/null 2>&1
+
+# ---- LIFT-1: only drain off lifts it --------------------------------------------------------------------------------------------------------
+op drain off >"$WORK/drain-off.txt" 2>&1; OFFRC=$?
+sleep 3
+DRAIN_HB="$(status_get draining)"
+if [[ "$OFFRC" == 0 && "$(sql 'select draining from drain_state')" == 0 && ( -z "$DRAIN_HB" || "$DRAIN_HB" == False ) ]]; then
+  check LIFT-1 pass "qcr drain off (the owner's go) lifts the hold, and it is the only thing that did" "$(tr '\n' ' ' <"$WORK/drain-off.txt" | cut -c1-200); drain_state draining=0; the heartbeat no longer shows draining; no round started by the lift itself ($(sql 'select count(*) from rounds') rounds)"
+else
+  check LIFT-1 fail "qcr drain off lifts the hold" "rc=$OFFRC $(cat "$WORK/drain-off.txt" | tr '\n' ' ') db=$(sql 'select draining from drain_state')"
+fi
+
+# ---- REFRESH-1: the refresher took over the existing login ------------------------------------------------------------------------------------
+PIHOME_SUM_NOW="$(sha256sum "$H/pihome/agent/auth.json" | cut -c1-16)"
+PIHOME_SUM_0="$(sha256sum "$PRISTINE/pihome/agent/auth.json" | cut -c1-16)"
+LOCKED=no; dx flock -n /home/qcr/.pi/agent/auth.json.lock true 2>/dev/null || LOCKED=yes
+LR="$(status_get login_refresh)"
+EXP="$(python3 -c "import json,sys;d=json.loads(sys.argv[1] or '{}');print(d.get('expires_at') or d.get('expiresAt') or '')" "$LR" 2>/dev/null)"
+fact login_refresh "$LR"
+REFRESHER_PS="$(dx sh -c 'for p in /proc/[0-9]*; do tr "\0" " " <$p/cmdline 2>/dev/null; echo; done' | grep -c loginrefresh)"
+if [[ "$LOCKED" == yes && "$PIHOME_SUM_NOW" == "$PIHOME_SUM_0" && -n "$LR" && "$LR" != null ]]; then
+  check REFRESH-1 pass "the login refresher took over the existing pihome login: it holds auth.json.lock, reports expires_at, and left the login file untouched (nothing was due)" "lock held: $LOCKED; auth.json sha $PIHOME_SUM_NOW == the legacy pihome's; status.json login_refresh: $(echo "$LR" | cut -c1-200); refresher processes: $REFRESHER_PS"
+else
+  check REFRESH-1 fail "the refresher took over the existing login" "locked=$LOCKED sum $PIHOME_SUM_NOW vs $PIHOME_SUM_0 login_refresh=$LR"
+fi
+
+# ---- LOGIN-PTY-1: an owner-style login through the entrypoint in a pty pauses and resumes the refresher -------------------------------------------
+STATUS_F="$H/pihome/agent/loginrefresh.status.json"
+paused_now() { grep -q '"paused": true' "$STATUS_F" 2>/dev/null; }
+not_paused() { ! paused_now && [[ ! -e "$H/pihome/agent/auth.json.pause" ]]; }
+python3 "$WRH/pty-drive.py" --settle 14 --expect "Select|login|Login|authentication|provider" --timeout 60 --detach -- \
+  docker exec -it "$DAEMON" /opt/qcr/docker/entrypoint.sh login >"$WORK/login-pty.txt" 2>&1 &
+PTY_PID=$!
+wait_for 40 "the refresher to pause" paused_now; SAW_PAUSE=$?
+PAUSE_FILE_SEEN=no; [[ -e "$H/pihome/agent/auth.json.pause" ]] && PAUSE_FILE_SEEN=yes
+LOCK_DURING=no; dx flock -n /home/qcr/.pi/agent/auth.json.lock true 2>/dev/null || LOCK_DURING=yes
+wait "$PTY_PID"; PTY_RC=$?
+wait_for 40 "the refresher to resume" not_paused; RESUMED=$?
+dx tmux kill-server >/dev/null 2>&1
+SUM_AFTER="$(sha256sum "$H/pihome/agent/auth.json" | cut -c1-16)"
+if [[ "$SAW_PAUSE" == 0 && "$LOCK_DURING" == yes && "$RESUMED" == 0 && "$PTY_RC" == 0 && "$SUM_AFTER" == "$PIHOME_SUM_0" ]]; then
+  check LOGIN-PTY-1 pass "docker exec -it … entrypoint.sh login in a pty pauses the refresher (it keeps the lock) while pi's /login is open, and resumes it when the login ends; no OAuth was completed" \
+    "pty rc $PTY_RC; during: loginrefresh.status.json paused=true, pause file $PAUSE_FILE_SEEN, lock still held; after the pty was detached: paused cleared, pause file removed; auth.json unchanged. Screen: $(sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g' "$WORK/login-pty.txt" | tr -s '\n ' ' ' | cut -c1-240)"
+else
+  check LOGIN-PTY-1 fail "an owner-style login pauses and resumes the refresher" "paused_seen=$SAW_PAUSE lock_during=$LOCK_DURING resumed=$RESUMED pty_rc=$PTY_RC sum_same=$([[ $SUM_AFTER == $PIHOME_SUM_0 ]] && echo y || echo n) screen: $(tail -c 600 "$WORK/login-pty.txt" | tr '\n' ' ')"
+fi
+
+# =================================================================================================
+# the P8.20a worker checks, on THIS release boot
+# =================================================================================================
+if [[ "$SKIP_WORKER" == 0 ]]; then
+  cat >"$WORK/world.env" <<EOF
+H="$H"
+TLS="$TLS"
+LOGS="$LOGS"
+OPERATOR_TOML="$CTL/operator.toml"
+LEGACY_ORIGINAL="$WORK/legacy-original.jsonl"
+REL_IMG="$REL_IMG"
+EOF
+  log "the worker checks (scripts/worker-rehearsal.sh --adopt) on the release boot the updater made"
+  "$ROOT/scripts/worker-rehearsal.sh" --adopt "$WORK/world.env" --work "$WORK/worker" --out "$WORK/worker-report.md" >"$LOGS/worker.log" 2>&1; WORKER_RC=$?
+  tail -5 "$LOGS/worker.log" | sed 's/^/    | /' >&2
+  cat "$WORK/worker/results.tsv" >>"$RESULTS" 2>/dev/null
+  fact worker_run "rc=$WORKER_RC; $(grep -c -P '\tpass\t' "$WORK/worker/results.tsv") passed, $(grep -c -P '\tfail\t' "$WORK/worker/results.tsv") failed; $(cat "$WORK/worker/facts.tsv" | grep -E '^(permits_status|burst|first_worker)' | cut -c1-200 | tr '\n' ' ')"
+fi
+
+# ---- wizard run B: stages 9-11 -----------------------------------------------------------------------------------------------------------------
+printf '%s\ny\ny\ny\n' "$PR" >"$WORK/wizard-b.in"
+"$ROOT/scripts/cutover.sh" "$VERSION" <"$WORK/wizard-b.in" >"$LOGS/wizard-b.log" 2>&1; WB_RC=$?
+sed -i 's/\x1b\[[0-9;]*[a-zA-Z]//g' "$LOGS/wizard-b.log"
+STAGES_DONE="$(grep -o 'done:[a-z_0-9]*' "$CTL/wizard.state" 2>/dev/null | sed 's/done://' | tr '\n' ' ')"
+tail -12 "$LOGS/wizard-b.log" | sed 's/^/    | /' >&2
+if [[ "$WB_RC" == 0 ]] && grep -q "already done, skipped" "$LOGS/wizard-b.log" && [[ "$STAGES_DONE" == *first_round*idle_pr* ]] && grep -q "The 4-hour check is due at" "$LOGS/wizard-b.log"; then
+  check WIZ-B pass "the resumed wizard skips the finished stages (never repeats the release), records the owner's lift and the idle-PR answer, and schedules the 4-hour check" "rc 0; stages recorded: $STAGES_DONE; $(grep -m1 'The 4-hour check is due' "$LOGS/wizard-b.log" | sed 's/^ *//')"
+else
+  check WIZ-B fail "the resumed wizard finishes stages 9-11" "rc=$WB_RC stages: $STAGES_DONE; $(tail -5 "$LOGS/wizard-b.log" | tr '\n' ' ')"
+fi
+[[ "$(grep -c 'step: ' "$LOGS/wizard-b.log")" == 0 ]] || check WIZ-B2 fail "the resumed wizard did not re-run the release" "the log shows updater steps"
+
+# =================================================================================================
+# the report
+# =================================================================================================
+cp "$LOGS/stub.jsonl" "$WORK/stub.jsonl" 2>/dev/null
+docker logs "$DAEMON" >"$LOGS/daemon.log" 2>&1
+fact ssh_commands "$(wc -l <"$VM/ssh-commands.log") commands crossed the throwaway sshd"
+node "$RH/report.mjs" "$RESULTS" "$FACTS" "$OUT" "$HEAD_FULL" "$RH/findings.md" || log "the report failed"
+FAILS="$(grep -c -P '\tfail\t' "$RESULTS")"; PASSES="$(grep -c -P '\tpass\t' "$RESULTS")"
+log "done: $PASSES passed, $FAILS failed; report $OUT"
+[[ "$FAILS" == 0 ]]
