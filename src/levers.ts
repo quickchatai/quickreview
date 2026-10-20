@@ -9,6 +9,11 @@
 //   * An OPERATOR lever is the deploy flow's valve. `qcr drain on` engages it,
 //     the new boot's first healthy reconcile pass lifts it (daemon.ts), and it
 //     has no expiry — a broken deploy must not resume work blind.
+//   * The operator's HOLD (`qcr drain on --hold`, P8.21b) is the one drain the
+//     boot does NOT lift: it stands until an explicit operator `drain off`.
+//     The cutover uses it, so no round starts until the owner has triggered
+//     and checked one worker round. Only the operator can set one — a
+//     session's ask for a hold is refused, never shortened into a plain drain.
 //   * A SESSION lever ALWAYS carries an expiry and ALWAYS draws on a per-day
 //     minute budget. The grant type below has no member that spells a session
 //     hold without an expiry, and `boundSessionGrant` refuses or shortens
@@ -36,12 +41,17 @@ export type LeverKind = "drain" | "pause";
  * that lasts until lifted.
  */
 export type LeverGrant =
-  { issuer: "operator"; expires_at: string | null } | { issuer: "session"; expires_at: string };
+  | { issuer: "operator"; expires_at: string | null; hold?: false }
+  /** The operator's no-auto-lift drain: no expiry, ever, and no session member. */
+  | { issuer: "operator"; expires_at: null; hold: true }
+  | { issuer: "session"; expires_at: string };
 
-/** A hold as stored: the same shape, read back. */
+/** A hold as stored: the same shape, read back. `hold` is set only on the
+ * operator's no-auto-lift drain (never on a pause, never on a session's). */
 export interface LeverHold {
   issuer: LeverIssuer;
   expires_at: string | null;
+  hold?: true;
 }
 
 export type HoldOutcome = "engaged" | "upgraded" | "extended" | "unchanged";
@@ -52,25 +62,36 @@ function widerExpiry(a: string | null, b: string | null): string | null {
   return a > b ? a : b;
 }
 
+/** The stored shape of a grant: `hold` only when the grant is the operator's hold. */
+function holdOf(grant: LeverGrant): LeverHold {
+  return grant.issuer === "operator" && grant.hold === true
+    ? { issuer: "operator", expires_at: null, hold: true }
+    : { issuer: grant.issuer, expires_at: grant.expires_at };
+}
+
 /**
  * Fold a new grant onto the hold that stands. Pure, and the one place the
  * precedence lives:
  *   nothing standing         → engaged with the grant;
  *   operator over session    → upgraded (the operator's terms replace);
  *   session over operator    → unchanged (a session never narrows an operator);
+ *   operator hold over a plain operator drain → upgraded to the hold;
+ *   plain operator drain over a hold → unchanged (only `drain off` ends a hold);
  *   same issuer over itself  → extended when the grant reaches later, else unchanged.
  */
 export function mergeHold(
   current: LeverHold | null,
   grant: LeverGrant,
 ): { hold: LeverHold; outcome: HoldOutcome } {
-  if (!current)
-    return { hold: { issuer: grant.issuer, expires_at: grant.expires_at }, outcome: "engaged" };
+  if (!current) return { hold: holdOf(grant), outcome: "engaged" };
   if (current.issuer === "operator" && grant.issuer === "session")
     return { hold: current, outcome: "unchanged" };
   if (current.issuer === "session" && grant.issuer === "operator") {
-    return { hold: { issuer: "operator", expires_at: grant.expires_at }, outcome: "upgraded" };
+    return { hold: holdOf(grant), outcome: "upgraded" };
   }
+  if (current.hold === true) return { hold: current, outcome: "unchanged" };
+  if (grant.issuer === "operator" && grant.hold === true)
+    return { hold: holdOf(grant), outcome: "upgraded" };
   const expires_at = widerExpiry(current.expires_at, grant.expires_at);
   if (expires_at === current.expires_at) return { hold: current, outcome: "unchanged" };
   return { hold: { issuer: current.issuer, expires_at }, outcome: "extended" };
@@ -155,8 +176,31 @@ function grantFor(
   pr: number | null,
   issuer: LeverIssuer,
   forMin: number | undefined,
+  hold = false,
 ): { ok: true; grant: LeverGrant; charge: () => void } | { ok: false; reason: string } {
   const now = (deps.now ?? (() => new Date()))();
+  if (hold) {
+    // The channel decides, never the file: a hold asked through the session
+    // directory — or through an operator directory without its seal — is a
+    // SESSION's ask, and a session holds nothing it cannot be bounded on.
+    if (issuer !== "operator") {
+      return {
+        ok: false,
+        reason: `${kind}: a hold is the operator's alone (qcr drain on --hold, through the sealed commands/operator/); a session's drain is always bounded`,
+      };
+    }
+    if (kind !== "drain") return { ok: false, reason: `${kind}: only the drain has a hold` };
+    if (forMin !== undefined)
+      return {
+        ok: false,
+        reason: "drain: a hold has no expiry; 'for_min' and 'hold' exclude each other",
+      };
+    return {
+      ok: true,
+      grant: { issuer: "operator", expires_at: null, hold: true },
+      charge: () => {},
+    };
+  }
   if (issuer === "operator") {
     return {
       ok: true,
@@ -192,7 +236,8 @@ function grantFor(
 
 /**
  * The `drain` handler. ON engages (or upgrades/extends) the drain; OFF lifts
- * it — a session's OFF is refused while the operator holds it. Never touches
+ * it — a session's OFF is refused while the operator holds it. `hold` asks for
+ * the operator's no-auto-lift drain, refused for a session. Never touches
  * GitHub, never goes near the gate.
  */
 export async function drainLever(
@@ -201,15 +246,19 @@ export async function drainLever(
   issuer: LeverIssuer,
   forMin: number | undefined,
   afterLift: () => Promise<void>,
+  hold = false,
 ): Promise<FileOutcome> {
   const { store } = deps;
   if (!on) {
+    const standing = store.drainState();
     const res = store.liftDrain(issuer);
     if (res.refused) {
       return {
         ok: false,
         reason:
-          "drain is held by the operator (qcr drain on); only the operator lifts it (qcr drain off), or the next boot's first reconcile pass if that pass is healthy",
+          standing.draining && standing.hold
+            ? "drain is HELD by the operator (qcr drain on --hold); only the operator lifts it (qcr drain off) — no boot lifts a hold"
+            : "drain is held by the operator (qcr drain on); only the operator lifts it (qcr drain off), or the next boot's first reconcile pass if that pass is healthy",
       };
     }
     if (res.changed)
@@ -219,9 +268,14 @@ export async function drainLever(
   }
   return atomicCommandEffect(
     store,
-    commandEffectKey("drain", deps.deliveryKey, { on, issuer, forMin }),
+    commandEffectKey("drain", deps.deliveryKey, {
+      on,
+      issuer,
+      forMin,
+      ...(hold ? { hold: true } : {}),
+    }),
     () => {
-      const resolved = grantFor(deps, "drain", null, issuer, forMin);
+      const resolved = grantFor(deps, "drain", null, issuer, forMin, hold);
       if (!resolved.ok) return { ok: false, reason: resolved.reason };
       const res = store.engageDrain(resolved.grant);
       const state = res.state;
@@ -240,6 +294,7 @@ export async function drainLever(
           by: issuer,
           outcome: res.outcome,
           expires_at: state.expires_at,
+          ...(state.hold ? { hold: true } : {}),
         });
       }
       return {
@@ -248,6 +303,7 @@ export async function drainLever(
         outcome: res.outcome,
         issuer: state.issued_by,
         expires_at: state.expires_at,
+        hold: state.hold,
         running_rounds: store.runningRounds().length,
       };
     },

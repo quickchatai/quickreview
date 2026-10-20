@@ -160,8 +160,11 @@ export type Command =
   | { command: "slack_reply"; thread: string; text: string }
   /** Deploy-window drain: a hard webhook stop + dispatch/recheck/ping-pong/EOD
    * hold while in-flight rounds finish naturally. `for_min` as on `pause-pr`;
-   * only meaningful with `on: true`. */
-  | { command: "drain"; on: boolean; for_min?: number }
+   * only meaningful with `on: true`. `hold` asks for the operator's
+   * no-auto-lift drain (P8.21b): only with `on: true`, never with `for_min`.
+   * The field says WHAT is asked, never who asks: the lever handler refuses a
+   * hold to any issuer but the sealed operator directory's. */
+  | { command: "drain"; on: boolean; for_min?: number; hold?: true }
   | { command: "retry-thread-decision"; comment_id: number }
   /** The EOD curator's answer to the day's outcomes packet — per
    * candidate, adopted / declined (with a reason) / refused (the write
@@ -243,6 +246,7 @@ export interface CommandDeps {
     issuer: CommandIssuer,
     forMin: number | undefined,
     deliveryKey?: string,
+    hold?: boolean,
   ): Promise<FileOutcome | void> | FileOutcome | void;
   retryThreadDecision?(commentId: number): Promise<FileOutcome | void> | FileOutcome | void;
   /** The learner's receipt handler. Optional like `drain`: a
@@ -501,7 +505,7 @@ export function validateCommand(raw: unknown, opts: ValidateOptions = {}): Valid
       };
     }
     case "drain": {
-      const err = fieldError(obj, ["on", "for_min"]);
+      const err = fieldError(obj, ["on", "for_min", "hold"]);
       if (err) return { ok: false, reason: err };
       if (typeof obj["on"] !== "boolean") {
         return {
@@ -513,12 +517,23 @@ export function validateCommand(raw: unknown, opts: ValidateOptions = {}): Valid
       if (!forMin.ok) return forMin;
       if (forMin.value !== undefined && !obj["on"])
         return { ok: false, reason: "'for_min' only applies with on = true" };
+      const hold = obj["hold"];
+      if (hold !== undefined && typeof hold !== "boolean")
+        return { ok: false, reason: "'hold' must be a boolean" };
+      if (hold === true && !obj["on"])
+        return { ok: false, reason: "'hold' only applies with on = true (drain off lifts a hold)" };
+      if (hold === true && forMin.value !== undefined)
+        return {
+          ok: false,
+          reason: "'hold' has no expiry; 'for_min' and 'hold' exclude each other",
+        };
       return {
         ok: true,
         command: {
           command: "drain",
           on: obj["on"],
           ...(forMin.value === undefined ? {} : { for_min: forMin.value }),
+          ...(hold === true ? { hold: true as const } : {}),
         },
       };
     }
@@ -888,6 +903,10 @@ export async function executeCommand(
     }
     case "drain": {
       if (!deps.drain) return { ok: false, reason: "drain is not wired on this daemon" };
+      if (command.hold === true)
+        return normalize(
+          await deps.drain(command.on, ctx.issuer, command.for_min, ctx.delivery_key, true),
+        );
       return normalize(
         await deps.drain(
           command.on,

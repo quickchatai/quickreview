@@ -121,6 +121,15 @@ export function leverHolderLabel(
   return until ? `${who}, lapses ${until.slice(11, 19)}Z` : `${who} until lifted`;
 }
 
+/** The drain bar's hold marker: ` · HOLD …` for the operator's no-auto-lift
+ * drain, ` · hold ?` for an operator drain from a daemon that reports no
+ * marker (honest unknown), nothing otherwise. */
+export function drainHoldLabel(s: Pick<StatusSnapshot, "draining_by" | "draining_hold">): string {
+  if (s.draining_hold === true) return " · HOLD: no boot lifts it, drain off does";
+  if (s.draining_hold === undefined && s.draining_by === "operator") return " · hold ?";
+  return "";
+}
+
 /** The pause chip on a PR row: `⏸op` for the operator's hold, `⏸` + the lapse time for a session's. */
 function pauseChip(pr: SnapshotPr): string {
   if (!pr.paused) return "";
@@ -477,9 +486,10 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
   // many webhook deliveries were dropped so far — and by whom, and when it
   // lapses: an operator's drain holds until lifted, a session's always has an
   // expiry. An older daemon that reports neither is shown as such rather than
-  // guessed at.
+  // guessed at. The operator's HOLD (P8.21b) says that no boot lifts it; an
+  // operator drain from a daemon that reports no hold marker says "hold ?".
   const drainSeg = s?.draining
-    ? `${FG.anomaly}⛔ DRAINING — ${s.running_rounds} round${s.running_rounds === 1 ? "" : "s"} finishing · ${s.drain_failed_loud ?? 0} failed loud · ${s.drained_deliveries ?? 0} dropped · ${leverHolderLabel(s.draining_by, s.draining_until)}${s.draining_reason === "worker_failures" ? " · workers keep failing, drain off lifts it" : ""}${RESET}`
+    ? `${FG.anomaly}⛔ DRAINING — ${s.running_rounds} round${s.running_rounds === 1 ? "" : "s"} finishing · ${s.drain_failed_loud ?? 0} failed loud · ${s.drained_deliveries ?? 0} dropped · ${leverHolderLabel(s.draining_by, s.draining_until)}${drainHoldLabel(s)}${s.draining_reason === "worker_failures" ? " · workers keep failing, drain off lifts it" : ""}${RESET}`
     : "";
   const td = s?.thread_decisions;
   const breakerSeg =

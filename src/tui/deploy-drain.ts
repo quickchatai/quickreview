@@ -22,15 +22,20 @@ export interface DrainCommandOutcome {
   issuer?: "operator" | "session";
   /** When a bounded drain lapses; absent for the operator's until-lifted hold. */
   expires_at?: string;
+  /** The daemon's word on the no-auto-lift HOLD (P8.21b): true = no boot lifts
+   * it. Absent when the daemon said nothing (an older daemon). */
+  hold?: boolean;
 }
 
 export interface DeployDrainSender {
-  set(on: boolean): Promise<DrainCommandOutcome>;
+  set(on: boolean, hold?: boolean): Promise<DrainCommandOutcome>;
 }
 
-/** Exact daemon-whitelisted shape. */
-export function drainPayload(on: boolean): string {
-  return `${JSON.stringify({ command: "drain", on }, null, 2)}\n`;
+/** Exact daemon-whitelisted shape. `hold` (on only) asks for the operator's
+ * no-auto-lift drain; a plain drain's payload is byte-identical to before. */
+export function drainPayload(on: boolean, hold = false): string {
+  const body = on && hold ? { command: "drain", on, hold: true } : { command: "drain", on };
+  return `${JSON.stringify(body, null, 2)}\n`;
 }
 
 export function drainCommandFileName(now: Date, clientId: string, seq: number): string {
@@ -50,11 +55,11 @@ export class CommandDrainSender implements DeployDrainSender {
       new Promise((resolve) => setTimeout(resolve, ms)),
   ) {}
 
-  async set(on: boolean): Promise<DrainCommandOutcome> {
+  async set(on: boolean, hold = false): Promise<DrainCommandOutcome> {
     await resolveLayout(this.cfg, this.ssh);
     const name = drainCommandFileName(this.now(), this.clientId, this.seq++);
     const write = await this.ssh(this.cfg.ssh_host, commandWriteArgv(this.cfg, name), {
-      stdin: drainPayload(on),
+      stdin: drainPayload(on, hold),
     });
     if (!write.ok)
       return {
@@ -77,6 +82,7 @@ export class CommandDrainSender implements DeployDrainSender {
         dropped_deliveries?: unknown;
         issuer?: unknown;
         expires_at?: unknown;
+        hold?: unknown;
       };
       try {
         value = JSON.parse(body) as typeof value;
@@ -107,6 +113,7 @@ export class CommandDrainSender implements DeployDrainSender {
             ? { issuer: value.issuer }
             : {}),
           ...(expires ? { expires_at: expires } : {}),
+          ...(typeof value.hold === "boolean" ? { hold: value.hold } : {}),
         };
       }
       const dropped =
