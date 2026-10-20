@@ -307,6 +307,15 @@ function makeScratch(opts: {
   return { dir, sandbox, ansible, xdg, home, pi: opts.configPi, ov: opts.configOv };
 }
 
+/** The registry stand-in: `<repo>:<version>` resolves to the digest the named
+ * manifest holds for that repo, so only a test that wants a mismatch has one. */
+function tagDigestStub(args: string[]): string {
+  const i = args.indexOf("--manifest");
+  const file = i >= 0 ? args[i + 1] : undefined;
+  if (!file || !existsSync(file)) return "exit 1";
+  return `node -e 'const m=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const i=m.images;const k=process.argv[2].split(":")[0]===i.memory.repository?"memory":"daemon";console.log(i[k].index_digest)' ${JSON.stringify(file)} "$1"`;
+}
+
 function runRaw(
   e: Env,
   args: string[],
@@ -327,6 +336,7 @@ function runRaw(
       QCR_INSTALL: "",
       // a stubbed run never restarts the developer's own memory-forward unit
       QC_NO_MEMORY_FORWARD: "1",
+      QC_TAG_DIGEST_CMD: tagDigestStub(args),
       ...extraEnv,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -1534,7 +1544,7 @@ describe("deploy.sh — release <version>", () => {
   it("deploy.sh holds no rsync, no docker build, no BuildKit and no ansible image task", () => {
     const sh = readFileSync(deploySh, "utf8").replace(/^\s*#.*$/gm, "");
     expect(sh).not.toMatch(
-      /\brsync\s+-|synchronize|docker build|buildx|npm run build|BUILD_SHA"? >/,
+      /\brsync\s+-|synchronize|docker build(?!x imagetools inspect )|buildx(?! imagetools inspect )|npm run build|BUILD_SHA"? >/,
     );
     const playbook = readFileSync(join(root, "deploy", "ansible", "playbook.yml"), "utf8");
     expect(playbook).not.toMatch(/synchronize|docker build|docker_image|docker_container/);
@@ -1730,6 +1740,41 @@ describe("deploy.sh — release <version>", () => {
       expect(r.code).toBe(1);
       expect(r.stderr).toContain("no deploy manifest at");
       expect(r.stderr).toContain("deploy/manifest.schema.json");
+    });
+
+    it("REFUSES when the tag resolves to a different digest than the manifest's — in a plan too", () => {
+      env = scratch();
+      for (const dry of [true, false]) {
+        const r = release(env, {
+          dry,
+          env: { QC_TAG_DIGEST_CMD: `echo sha256:${"9".repeat(64)}` },
+        });
+        expect(r.code, String(dry)).toBe(1);
+        expect(r.stderr).toContain("resolves to sha256:99");
+        expect(r.stderr).toContain("exactly the bytes CI built");
+      }
+    });
+
+    it("an unreadable registry is UNKNOWN: the plan says so, a real run refuses", () => {
+      env = scratch();
+      const plan = release(env, { env: { QC_TAG_DIGEST_CMD: "exit 1" } });
+      expect(plan.code, plan.stderr).toBe(0);
+      expect(plan.stdout).toContain("REFUSED in a real run: the registry could not be read");
+      const real = release(env, { dry: false, env: { QC_TAG_DIGEST_CMD: "exit 1" } });
+      expect(real.code).toBe(1);
+      expect(real.stderr).toContain("registry could not be read");
+    });
+
+    it("downloads the release's attached manifest when none is named or beside us", () => {
+      env = scratch();
+      const src = writeManifest(env, undefined, "1.2.3", "attached.json");
+      const r = run(env, ["--dry-run", "release", "1.2.3"], {
+        QC_UPDATE_STATUS_CMD: statusCmd(env),
+        QC_RELEASE_DOWNLOAD_CMD: `cp ${JSON.stringify(src)} "$2/deploy-manifest-$1.json"`,
+        QC_TAG_DIGEST_CMD: tagDigestStub(["--manifest", src]),
+      });
+      expect(r.code, r.stderr).toBe(0);
+      expect(r.stdout).toContain(`daemon ghcr.io/quickchatai/quickreview@${DAEMON_DIGEST}`);
     });
 
     it("REFUSES a malformed manifest, naming the problem; accepts the fixture", () => {

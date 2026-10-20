@@ -57,11 +57,16 @@ describe("release.yml — triggers and permissions", () => {
     ]);
   });
 
-  it("is read-only by default; only publish may write packages or attest", () => {
+  it("is read-only by default; only publish may write packages or attest, only attach-manifest contents", () => {
     expect(wf.permissions).toEqual({ contents: "read" });
     for (const [name, job] of Object.entries(wf.jobs)) {
-      if (name !== "publish") expect(job.permissions, name).toBeUndefined();
+      if (name !== "publish" && name !== "attach-manifest")
+        expect(job.permissions, name).toBeUndefined();
     }
+    // Actions sets permissions per job, so the contents write is its own job
+    // and publish never holds it.
+    expect(wf.jobs["attach-manifest"]!.permissions).toEqual({ contents: "write" });
+    expect(wf.jobs.publish!.permissions).not.toHaveProperty("contents", "write");
     expect(wf.jobs.publish!.permissions).toEqual({
       contents: "read",
       packages: "write",
@@ -150,6 +155,33 @@ describe("release.yml — the gates", () => {
   it("tags nothing but the version (no latest, no floating major)", () => {
     expect(text).not.toMatch(/:latest|imagetools create -t [^\n]*:v?[0-9]+["\s]/);
     expect(text).toContain('imagetools create -t "$REPO:$VERSION"');
+  });
+});
+
+describe("release.yml — the deploy manifest", () => {
+  it("is assembled after publish and attached by its own job", () => {
+    expect(needs("manifest").sort()).toEqual(["plan", "publish"]);
+    expect(needs("attach-manifest")).toContain("publish");
+    expect(needs("attach-manifest")).toContain("manifest");
+    expect(wf.jobs.manifest!.permissions).toBeUndefined();
+  });
+
+  it("a scratch version gets no manifest", () => {
+    expect(wf.jobs.manifest!.if).toContain("needs.plan.outputs.scratch != 'true'");
+    expect(wf.jobs["attach-manifest"]!.if).toContain("needs.manifest.result == 'success'");
+  });
+
+  it("the manifest is a workflow artifact and the attach step uploads that file to the release", () => {
+    const up = wf.jobs.manifest!.steps.find((s) => s.uses?.startsWith("actions/upload-artifact"));
+    expect(JSON.stringify(up)).toContain("deploy-manifest-");
+    expect(jobText("manifest")).toContain("scripts/emit-deploy-manifest.mjs");
+    expect(jobText("attach-manifest")).toContain("gh release upload");
+    // the write job runs no checked-out code and never logs in to a registry
+    expect(jobText("attach-manifest")).not.toMatch(/actions\/checkout|docker\/login-action/);
+  });
+
+  it("publish records each image's digests for the manifest", () => {
+    expect(jobText("publish")).toContain("digests-${{ matrix.image }}");
   });
 });
 

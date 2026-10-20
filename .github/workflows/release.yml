@@ -3,6 +3,7 @@
 # provenance attestations.
 #
 #   plan -> build (image x arch) -> e2e (release-e2e) -> publish (image)
+#        -> manifest -> attach-manifest (a non-scratch version only)
 #
 # Triggers: a vX.Y.Z tag pushed by hand (the floating v1 does not match, so
 # moving it starts nothing), or workflow_dispatch. Nothing here runs
@@ -356,6 +357,17 @@ jobs:
             "$REPO@$(grep '^amd64=' "$GITHUB_OUTPUT" | cut -d= -f2)" \
             "$REPO@$(grep '^arm64=' "$GITHUB_OUTPUT" | cut -d= -f2)"
           echo "index=$(docker buildx imagetools inspect "$REPO:$VERSION" --format '{{.Manifest.Digest}}')" >>"$GITHUB_OUTPUT"
+      - name: record the digests for the deploy manifest
+        run: |
+          jq -n --arg repository "$REPO" --arg index "${{ steps.push.outputs.index }}" \
+            --arg amd64 "${{ steps.push.outputs.amd64 }}" --arg arm64 "${{ steps.push.outputs.arm64 }}" \
+            '{repository: $repository, index: $index, amd64: $amd64, arm64: $arm64}' \
+            >"$RUNNER_TEMP/digests-${{ matrix.image }}.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.image }}
+          path: ${{ runner.temp }}/digests-${{ matrix.image }}.json
+          retention-days: 7
       - name: provenance for the amd64 image
         uses: actions/attest-build-provenance@v2
         with:
@@ -379,3 +391,61 @@ jobs:
           printf '### Published\n\n- `%s:%s` (index %s)\n- amd64 %s\n- arm64 %s\n' \
             "$REPO" "$VERSION" "${{ steps.push.outputs.index }}" \
             "${{ steps.push.outputs.amd64 }}" "${{ steps.push.outputs.arm64 }}" >>"$GITHUB_STEP_SUMMARY"
+
+  # Assembles deploy-manifest-<version>.json from both publish legs' digests
+  # (deploy/manifest.schema.json; scripts/deploy.sh release reads it). Read-only:
+  # the manifest is a workflow artifact here, and attach-manifest alone writes
+  # to the release. A scratch version gets none.
+  manifest:
+    needs: [plan, publish]
+    if: ${{ !cancelled() && needs.publish.result == 'success' && needs.plan.outputs.scratch != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digests-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+      - name: write and validate the manifest
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/manifest"
+          out="$RUNNER_TEMP/manifest/deploy-manifest-$VERSION.json"
+          node scripts/emit-deploy-manifest.mjs --version "$VERSION" --revision "${{ github.sha }}" \
+            --digests "$RUNNER_TEMP/digests" --out "$out"
+          node scripts/deploy-manifest.mjs "$out" "$VERSION" >/dev/null
+          printf '### Deploy manifest\n\n```json\n%s\n```\n' "$(cat "$out")" >>"$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deploy-manifest-${{ env.VERSION }}
+          path: ${{ runner.temp }}/manifest/deploy-manifest-${{ env.VERSION }}.json
+
+  # The only job that writes to the repository's contents. Actions sets
+  # permissions per job, not per step, so this is its own job: publish keeps
+  # packages: write without contents: write.
+  attach-manifest:
+    needs: [plan, publish, manifest]
+    if: ${{ !cancelled() && needs.manifest.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: deploy-manifest-${{ env.VERSION }}
+          path: ${{ runner.temp }}/manifest
+      - name: attach it to the release
+        run: |
+          set -euo pipefail
+          gh release view "v$VERSION" >/dev/null 2>&1 ||
+            gh release create "v$VERSION" --verify-tag --title "v$VERSION" --notes "Images: deploy-manifest-$VERSION.json lists them by digest."
+          gh release upload "v$VERSION" "$RUNNER_TEMP/manifest/deploy-manifest-$VERSION.json" --clobber
