@@ -1,29 +1,40 @@
 #!/usr/bin/env bash
-# deploy.sh — put a build on the review-sandbox VM, through the vendored
-# ansible (deploy/ansible/). The runtime is the RELEASE IMAGE (docker/Dockerfile)
-# in `daemon` mode, one Docker container named quickreview-sandbox plus the memory
-# sidecar beside it, with cloudflared on the host. "Deploy" means one of
+# deploy.sh — deploy the review-sandbox VM. The runtime is the RELEASE IMAGE
+# (docker/Dockerfile) in `daemon` mode, one Docker container named
+# quickreview-sandbox plus the memory sidecar beside it, with cloudflared on the
+# host. The images are built ONCE, by CI, from the release tag; the VM pulls
+# those exact images by digest. Nothing is rsynced, built or installed on the
+# VM by a deploy. Three modes:
 #
-#   release <version>  pull ghcr.io/quickchatai/quickreview:<version> (and the
-#                      memory image of the same version) and recreate the
-#                      containers on it. Nothing is built or rsynced: the code
-#                      is in the image. Versions only (X.Y.Z); there is no
-#                      latest tag. The VM must be logged in to ghcr.io once,
-#                      with the owner's classic read:packages token
-#                      (scripts/vm-ghcr-login.sh; README, "Pulling the
-#                      release"). A release first checks, over ssh, that the
-#                      VM can `docker manifest inspect` both images at the
-#                      version, and refuses before anything changes if not.
-#   sync | dev         the dev build: rsync this working copy to the VM, build
-#                      the same docker/Dockerfile there from it (docker layer
-#                      cache, so an unchanged tree is cheap), recreate the
-#                      container. For pre-release fixes; `dev` is the newer
-#                      name for `sync`. The image is tagged
-#                      quickreview-sandbox:dev and stamped with this commit.
-#   rebuild            the dev build over the whole playbook (host packages,
-#                      secrets, cloudflared) with `-e rebuild_image=true`: the
-#                      base images are refreshed too -- the deliberate act
-#                      after bumping a pin
+#   release <version>  the deploy. A controller preflight (the manifest, the
+#                      pins, the run spec), then
+#                        tar config.toml profiles/ | ssh vm sudo qcr-update ...
+#                      and the post-deploy checks. qcr-update
+#                      (deploy/qcr-update.sh, installed by provision) is the
+#                      only thing that runs on the VM: it takes a flock, refuses
+#                      an undrained or busy board, pulls both images by digest,
+#                      checks the new image's `qcr config check` on the staged
+#                      config, stops the daemon, snapshots state, runs the new
+#                      image's `daemon --preflight` on a scratch copy, seeds the
+#                      sidecar store (legacy layout only), swaps the config,
+#                      starts the sidecar and recreates the daemon -- and
+#                      rescues the old version on any failure before the
+#                      recreate. See the header of deploy/qcr-update.sh.
+#                        --manifest FILE    deploy-manifest-<version>.json, the
+#                                           CI artifact (deploy/manifest.schema.json;
+#                                           default ./deploy-manifest-<version>.json)
+#                        --cutover-ack      the VM still runs the legacy layout:
+#                                           this deploy is the cutover, and the
+#                                           first boot migrates forward. Without
+#                                           it the updater (and this script)
+#                                           refuse.
+#   provision          ansible installs packages, Docker, cloudflared, secrets,
+#                      the directory layout, the updater
+#                      (/usr/local/sbin/qcr-update) and its run spec
+#                      (/etc/qcr/update.conf, rendered here from group_vars).
+#                      It never pulls or starts an image. Re-run it when the
+#                      run spec changes (a release whose image needs a newer
+#                      run spec is refused with "re-run provision").
 #   verify             post-deploy checks on the VM: the docker service (and
 #                      cloudflared when the inventory enables it), the
 #                      containers, the image stamp, the pi settings and the
@@ -32,21 +43,17 @@
 #                      VM's ghcr pull token expires (the expiry that
 #                      scripts/vm-ghcr-login.sh recorded).
 #
+# `sync`, `dev` and `rebuild` are gone (the on-VM rsync and build are deleted):
+# they refuse with a pointer to `release`. A pre-release fix is a release.
+#
 # There are no systemd units for the daemon: quickreviewd is the container's
 # command (`restart: unless-stopped`). The only host service this script cares
 # about is cloudflared, and only when `cloudflared_enabled` is true -- the
 # playbook installs it on exactly that condition.
 #
-# The first run of release|sync|rebuild against a VM still on the legacy image
-# (Ubuntu + the rendered Dockerfile.j2, quickreview-sandbox:v1) is the CUTOVER.
-# It carries whatever the image bakes, so it is refused unless
-# QCR_CUTOVER_REQUIRES names the commits (the batched Phase 1-3 deploys) that
-# the VM's deployed BUILD_SHA already contains. The legacy image stays on the
-# VM; README "Rollback" is the way back.
-#
 # Guardrails (all pre-flight, all fatal):
-#   * refuses to deploy a dirty working tree — what runs on the VM must be a
-#     commit you can point at
+#   * refuses to deploy a dirty working tree -- group_vars and the pins are
+#     read from this checkout, so it must be a commit you can point at
 #   * refuses when config.toml's [pi] version and the ansible group_vars
 #     pi_version disagree, and refuses on the "PIN-ME" placeholder. The pin
 #     never floats and this script never bumps it.
@@ -54,77 +61,66 @@
 #       - [openviking] version              == group_vars openviking_version
 #       - [openviking] llama_cpp_python_version
 #                                           == group_vars llama_cpp_python_version
-#         (the Dockerfile venv layer interpolates the group_vars, never a
-#          literal — so agreeing here means agreeing in the image)
 #       - [openviking] extension_commit     == extensions/vendor/openviking-pi/
 #                                              upstream.json "commit"
-#         (the vendored fork rides the rsync, not the image)
 #       - [openviking] local_embedder_file/_url/_sha256/_port/_threads
 #                                           == group_vars openviking_local_embedder_*
-#         (the local embedder's model file, baked into the image
-#          by a layer that interpolates the group_vars — a changed pin needs
-#          `rebuild`)
+#     A release also holds the pi, openviking, llama-cpp-python and embedder
+#     file/sha256 pins to the MANIFEST (the pins the images were built with,
+#     which are the images' pin labels) -- a drift means the image is not the
+#     build the config and group_vars describe.
 #   * refuses endpoint drift, the same way: [openviking] endpoint ==
 #     group_vars openviking_endpoint. Under "remote" (the memory sidecar, a
-#     second container — docker/memory/ — beside the daemon's) the config's
+#     second container -- docker/memory/ -- beside the daemon's) the config's
 #     [openviking] host and port must also name the sidecar (group_vars
-#     memory_container_name, openviking_port), or the daemon would probe a host
-#     nothing serves. A shipping mode also REFUSES "local": the release image
-#     carries no OpenViking, so there is nothing for the daemon to supervise.
+#     memory_container_name, openviking_port). A shipping mode also REFUSES
+#     "local": the release image carries no OpenViking.
 #   * refuses a config whose [tui] remote_sandbox_root is not the image's app
-#     root (group_vars app_root, /opt/qcr): the TUI reads the deployed
-#     BUILD_SHA, the operator channel, the inject and digest dirs and the
-#     archive there, inside the container, and the legacy value names a path
-#     the image does not have.
-#   * refuses to ship without a config home: release|sync|rebuild deliver
-#     the install's config home — the located config.toml and the profiles/
-#     beside it, never its secrets/ — to the VM by the secrets' route (a
-#     playbook task of its own, `-e config_home_src=…`, never the checkout
-#     rsync), and the container reads it there. A config that lives only in
-#     the checkout is refused (`qcr install migrate` moves it), and so is a
-#     `[review] profile` — or any profile it extends — found neither in the
-#     home's profiles/ nor among the checkout's generic examples (the two
-#     places the VM looks; no other checkout profile is read).
-#     Every pin/drift check below reads that same located config.
-#   * refuses a base-clone name (`[github] clone_dir`, else the
-#     repo slug's basename — the same rule as githubCloneDir in
-#     src/config.ts) that is not one plain path segment, that names a
-#     runtime/build dir of the sandbox root, or that names a tracked path.
-#     That name is handed to the playbook as
-#     `-e base_clone_dir=…`, which is what keeps the VM's clone out of the
-#     rsync --delete, and it is written into this checkout's LOCAL ignore
-#     (.git/info/exclude, never the tracked .gitignore) so a clone of any
-#     name never reads as a dirty tree.
+#     root (group_vars app_root, /opt/qcr)
+#   * release refuses to ship without a config home: the located config.toml
+#     and the profiles/ beside it (never its secrets/) are the tar the updater
+#     takes. A config that lives only in the checkout is refused (`qcr install
+#     migrate` moves it), and so is a `[review] profile` -- or any profile it
+#     extends -- found neither in the home's profiles/ nor among the checkout's
+#     generic examples.
+#   * release refuses a run spec the VM does not hold: the fingerprint of
+#     /etc/qcr/update.conf (read by `qcr-update status --json`) must equal the
+#     one rendered from group_vars -- otherwise "re-run provision"
+#   * refuses a base-clone name ([github] clone_dir, else the repo slug's
+#     basename -- the same rule as githubCloneDir in src/config.ts) that is not
+#     one plain path segment or that names a runtime dir of the sandbox root
 #
 # This script performs no live run on its own beyond ansible/ssh; every live
 # invocation belongs to the operator on a machine with VM access.
 #
 # Usage:
-#   scripts/deploy.sh [--dry-run] [release <version>|sync|dev|rebuild|verify]
+#   scripts/deploy.sh [--dry-run] release <version> [--manifest FILE] [--cutover-ack]
+#   scripts/deploy.sh [--dry-run] provision
+#   scripts/deploy.sh [--dry-run] verify
 #
 # Env:
 #   QC_ANSIBLE_DIR  ansible project dir (default: deploy/ansible in this checkout)
 #   QC_INVENTORY    inventory file      (default: $QC_ANSIBLE_DIR/inventory.ini)
 #   QC_SANDBOX_DIR  sandbox working copy (default: this script's parent)
-#   QC_VM_HOST      ssh target for `verify` (default: the inventory's first host)
-#   QCR_CUTOVER_REQUIRES  space-separated commits the VM's deployed BUILD_SHA
-#                   must already contain, for the first run on the legacy image
-#   QC_VM_LAYOUT_CMD  replaces the ssh read of the VM's current image (tests)
-#   QC_PULL_CHECK_CMD replaces the ssh `docker manifest inspect` of a release
-#                   image; run as `bash -c "$QC_PULL_CHECK_CMD" _ <image:version>` (tests)
+#   QC_VM_HOST      ssh target (default: the inventory's first host)
+#   QC_UPDATE_STATUS_CMD  replaces the ssh `sudo qcr-update status --json` (tests)
+#   QC_UPDATE_RUN_CMD     replaces the ssh `sudo qcr-update <args>`; run as
+#                   `bash -c "$QC_UPDATE_RUN_CMD" _ <args...>` with the config
+#                   tar on stdin (tests)
 #   QC_NOW_EPOCH    the clock for the token-expiry warning (tests)
+#   QC_NO_MEMORY_FORWARD  skip the host memory-forward restart (tests)
 #   QCR_GHCR_EXPIRY_FILE  the recorded token expiry (default: the install's
 #                   state home, ghcr-token-expiry)
-#   QCR_CONFIG      config.toml path    (default: the install locator's answer —
+#   QCR_CONFIG      config.toml path    (default: the install locator's answer --
 #                   the install's config home's config.toml;
 #                   scripts/install-locator.sh). Its directory is the
-#                   config home sync|rebuild ship; `verify` alone
+#                   config home a release ships; `verify` alone
 #                   accepts a QCR_CONFIG inside the checkout
 #   QC_MEMORY_PROBE_CMD   replaces the ssh read of the sidecar's /ready (tests)
 #   QC_MEMORY_SEARCH_CMD  replaces the ssh run of the post-deploy search check (tests)
 #   QC_MEMORY_WAIT_S      how long the sidecar checks wait for a cold boot (default 240)
-#   (secrets)       the playbook's secrets_src is the install locator's answer
-#                   too — [github] secrets_dir, else <config home>/secrets
+#   (secrets)       provision's secrets_src is the install locator's answer --
+#                   [github] secrets_dir, else <config home>/secrets
 
 set -euo pipefail
 
@@ -144,46 +140,54 @@ PLAYBOOK="$ANSIBLE_DIR/playbook.yml"
 CONTAINER="quickreview-sandbox"
 OV_UPSTREAM="$SANDBOX_DIR/extensions/vendor/openviking-pi/upstream.json"
 
-# The playbook (an asset — never edited from here) carries no tags, so "sync"
-# and "release" are expressed as a start-at-task: everything from the image
-# source check onwards (check → pull or rsync+build → image labels → config home
-# → sidecar → container recreate), skipping host packages, cloudflared install
-# and the secrets copies. The check comes first so a run that cannot work
-# (a non-version, a local memory endpoint) changes nothing.
-SYNC_START_TASK="Image source and version"
+# The run-spec version this script renders and the images' qcr.runspec label
+# must not exceed (docker/Dockerfile; tests/deploy.test.ts pins the two).
+RUNSPEC_VERSION=1
 
 # The release images' version spelling: X.Y.Z, optionally -prerelease. No "latest"
-# exists. It reaches the playbook as `-e k=v` and names an image tag.
+# exists. It names an image tag and the manifest.
 RELEASE_VERSION_RE='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
 
 MODE=""
 RELEASE_VERSION=""
 DRY_RUN=0
+MANIFEST_FILE=""
+CUTOVER_ACK=0
 
 die() { echo "$SELF: $*" >&2; exit 1; }
 note() { echo "$SELF: $*" >&2; }
 
 # ---- arguments ---------------------------------------------------------------
 
+USAGE="usage: $SELF [--dry-run] release <version> [--manifest FILE] [--cutover-ack] | provision | verify"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run|-n) DRY_RUN=1 ;;
-    sync|dev|rebuild|verify)
+    sync|dev|rebuild)
+      die "'$1' is gone: nothing is rsynced, built or installed on the VM any more. A deploy is \`$SELF release <version>\` (the image CI built once from the release tag, pulled by digest); the host's packages, secrets and updater are \`$SELF provision\`" ;;
+    verify|provision)
       [[ -n "$MODE" ]] && die "two modes given: $MODE and $1"
-      # `dev` is the new name of the VM-side build; it is the same run as `sync`.
-      MODE="$1"; [[ "$MODE" == dev ]] && MODE=sync ;;
+      MODE="$1" ;;
     release)
       [[ -n "$MODE" ]] && die "two modes given: $MODE and $1"
       MODE=release
       [[ $# -ge 2 ]] || die "release needs a version (usage: $SELF release X.Y.Z)"
       RELEASE_VERSION="$2"
       shift ;;
+    --manifest)
+      [[ $# -ge 2 ]] || die "--manifest needs a file"
+      MANIFEST_FILE="$2"
+      shift ;;
+    --cutover-ack) CUTOVER_ACK=1 ;;
     -h|--help) sed -n '2,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) die "unknown argument '$1' (usage: $SELF [--dry-run] [release <version>|sync|dev|rebuild|verify])" ;;
+    *) die "unknown argument '$1' ($USAGE)" ;;
   esac
   shift
 done
-MODE="${MODE:-sync}"
+[[ -n "$MODE" ]] || die "no mode given ($USAGE)"
+if [[ "$MODE" != release && ( -n "$MANIFEST_FILE" || $CUTOVER_ACK -eq 1 ) ]]; then
+  die "--manifest and --cutover-ack belong to \`release\`"
+fi
 if [[ "$MODE" == release ]]; then
   [[ "$RELEASE_VERSION" != latest ]] || die "there is no latest tag: name the version (X.Y.Z)"
   [[ "$RELEASE_VERSION" =~ $RELEASE_VERSION_RE ]] ||
@@ -273,9 +277,8 @@ $SELF: $label pin mismatch — refusing to deploy.
     $b_where = "$b"
 
 Deploying would change a pinned version on the VM. That is a deliberate act:
-reconcile the two by hand, then run
-    $SELF rebuild
-so the image is rebuilt against the new pin.
+reconcile the two by hand and cut a new release, so CI builds the image against
+the new pin.
 EOF
     exit 1
   fi
@@ -349,37 +352,36 @@ first_inventory_host() {
 # ---- pre-flight --------------------------------------------------------------
 
 [[ -f "$CONFIG" ]] || die "no config at $CONFIG — the install's config home holds none (run the onboarding wizard, or \`qcr install migrate\` to move a checkout config.toml there: the checkout's is no longer read)"
-# A shipping mode ships the install's config home — the located
-# config and the profiles/ beside it — to the VM by the secrets' route (its own
-# playbook task, never the checkout rsync), and the container reads it there
-# ($QCR_CONFIG names the shipped file). So the config must live in such a home:
-# a $QCR_CONFIG naming a file inside the checkout is refused, not shipped.
-# `verify` ships nothing and still reads whatever the locator found.
+# A release ships the install's config home — the located config and the
+# profiles/ beside it — to the VM as the tar the updater takes (never secrets/),
+# and the container reads it there ($QCR_CONFIG names the shipped file). So the
+# config must live in such a home: a $QCR_CONFIG naming a file inside the
+# checkout is refused, not shipped. `provision` and `verify` ship nothing and
+# still read whatever the locator found.
 SHIPPED_CONFIG="$(qcr_shipped_config "$SANDBOX_DIR")" || exit 1
-if [[ "$MODE" != "verify" && -z "$SHIPPED_CONFIG" ]]; then
-  die "no config home to ship — the live config is $CONFIG, inside the checkout. Deploy ships the install's config home ($(qcr_config_home 2>/dev/null || echo '$XDG_CONFIG_HOME/qcr/<install>'), or the directory \$QCR_CONFIG names) to the VM, never the checkout's config.toml: move it with \`qcr install migrate\`, then re-run"
+if [[ "$MODE" == release && -z "$SHIPPED_CONFIG" ]]; then
+  die "no config home to ship — the live config is $CONFIG, inside the checkout. A release ships the install's config home ($(qcr_config_home 2>/dev/null || echo '$XDG_CONFIG_HOME/qcr/<install>'), or the directory \$QCR_CONFIG names) to the VM, never the checkout's config.toml: move it with \`qcr install migrate\`, then re-run"
 fi
 CONFIG_HOME_SRC=""
 CONFIG_NAME=""
 if [[ -n "$SHIPPED_CONFIG" ]]; then
   CONFIG_HOME_SRC="$(dirname "$SHIPPED_CONFIG")"
   CONFIG_NAME="$(basename "$SHIPPED_CONFIG")"
-  # Both reach the playbook as `-e k=v`, which splits on whitespace, and
-  # ansible templates the values, so a `{`/`}` could render as Jinja.
-  if [[ "$MODE" != "verify" && ( "$CONFIG_HOME_SRC" =~ [[:space:]\"\'{}] || "$CONFIG_NAME" =~ [[:space:]\"\'{}] ) ]]; then
-    die "the config home path '$SHIPPED_CONFIG' contains whitespace, quotes or braces — the playbook cannot be handed it; set XDG_CONFIG_HOME (or QCR_CONFIG) to a plain path"
+  # The tar is built from these paths and handed through ssh: a plain path
+  # and a plain file name, so nothing in them is read as shell or as a glob.
+  if [[ "$MODE" == release && ( "$CONFIG_HOME_SRC" =~ [[:space:]\"\'{}] || "$CONFIG_NAME" =~ [[:space:]\"\'{}] ) ]]; then
+    die "the config home path '$SHIPPED_CONFIG' contains whitespace, quotes or braces — set XDG_CONFIG_HOME (or QCR_CONFIG) to a plain path"
   fi
-  # The file name is also an rsync filter pattern (`--include=/<name>`): a
-  # wildcard in it would ship some other file, or none, and the container's
-  # QCR_CONFIG would name a config that is not there — refused, not shipped.
-  if [[ "$MODE" != "verify" && ! "$CONFIG_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
-    die "the config file name '$CONFIG_NAME' is not a plain file name — letters, digits, '.', '_' and '-' only (it becomes an rsync filter pattern and the container's QCR_CONFIG); rename it, or point QCR_CONFIG at one that is"
+  # The file ships as config.toml whatever it is called here, but a name with
+  # a wildcard or a leading dash is never a file anyone meant to ship.
+  if [[ "$MODE" == release && ! "$CONFIG_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    die "the config file name '$CONFIG_NAME' is not a plain file name — letters, digits, '.', '_' and '-' only; rename it, or point QCR_CONFIG at one that is"
   fi
 fi
 # The repo profile the config names, and every profile it `extends`,
 # must be found where the VM's daemon will look for it (src/install.ts
 # locateProfile, in the container): profiles/ beside the shipped config first,
-# then the rsynced checkout's profiles/ — for a generic example only
+# then the image's own profiles/ — for a generic example only
 # (`qcr_is_example_profile`, pinned to EXAMPLE_PROFILES). A profile
 # found in neither fails the VM's boot, so it fails here. Only presence is checked; the daemon's
 # resolver refuses a cycle, so the walk just stops at a name it has seen.
@@ -411,7 +413,7 @@ check_profile_name() {
 }
 DEPLOY_PROFILE="$(config_table_key review profile)"
 PROFILE_CHAIN=""
-if [[ "$MODE" != "verify" && -n "$DEPLOY_PROFILE" ]]; then
+if [[ "$MODE" == release && -n "$DEPLOY_PROFILE" ]]; then
   check_profile_name "$DEPLOY_PROFILE" "config [review] profile"
   chain_at="$DEPLOY_PROFILE"
   chain_dir="$(shipped_profile_dir "$chain_at")"
@@ -439,45 +441,26 @@ if ! git -C "$SANDBOX_DIR" rev-parse --git-dir >/dev/null 2>&1; then
   die "$SANDBOX_DIR is not a git repository — refusing to deploy an untracked tree"
 fi
 
-# 1a. the base clone. Its name reaches the playbook's rsync exclude,
-# so it must be one plain path segment, and it must not name anything this
-# tree tracks — excluding `/src` would ship no daemon, and a clone called
-# `src` would be deleted by the --delete it was meant to survive.
+# 1a. the base clone. Its name becomes a directory under the sandbox root, a
+# mount into the container and a run-spec value, so it must be one plain path
+# segment.
 CLONE_DIR="$(base_clone_dir)"
 if [[ ! "$CLONE_DIR" =~ ^[A-Za-z0-9._-]+$ || "$CLONE_DIR" == "." || "$CLONE_DIR" == ".." ]]; then
   die "base clone name '$CLONE_DIR' ([github] clone_dir, else the repo's basename) is not one plain directory name — fix config.toml"
 fi
-# Nor may it name a directory the daemon or the build already owns at the
-# sandbox root — every runtime exclude of the playbook's rsync, plus the build
-# output. Those are untracked, so the ls-files check below cannot see them,
-# and a repo called `notes` or `wt` would otherwise be cloned into (or over)
-# a runtime dir. tests/deploy.test.ts pins this list against the playbook.
+# Nor may it name a directory the daemon already owns at the sandbox root:
+# a repo called `notes` or `wt` would otherwise be cloned into (or over) a
+# runtime dir. tests/deploy.test.ts pins this list against the updater's mounts.
 BASE_CLONE_RESERVED=(.git .claude node_modules state wt archive commands digest inject verdict memory notes ledger.md AGENTS.override.md pihome dist)
 for reserved in "${BASE_CLONE_RESERVED[@]}"; do
   if [[ "$CLONE_DIR" == "$reserved" ]]; then
     die "base clone name '$CLONE_DIR' is a runtime or build directory of the sandbox root — set [github] clone_dir to a free name"
   fi
 done
-if [[ -n "$(git -C "$SANDBOX_DIR" ls-files -- "$CLONE_DIR" | head -1)" ]]; then
-  die "base clone name '$CLONE_DIR' collides with a tracked path in $SANDBOX_DIR — set [github] clone_dir to a free name"
-fi
-# The clone is untracked by construction, so the ignore rule is local: the
-# repo's info/exclude (shared by every worktree), never the tracked
-# .gitignore — a per-install name there would itself be a dirty tree. Written
-# in every mode, --dry-run included: it is bookkeeping for the check below,
-# not a deploy action, and it is idempotent.
-if ! git -C "$SANDBOX_DIR" check-ignore -q --no-index "$CLONE_DIR/" 2>/dev/null; then
-  CLONE_EXCLUDE="$(git -C "$SANDBOX_DIR" rev-parse --path-format=absolute --git-path info/exclude)"
-  mkdir -p "$(dirname "$CLONE_EXCLUDE")"
-  # never glue the rule onto a last line that lacks its newline
-  if [[ -s "$CLONE_EXCLUDE" && -n "$(tail -c1 "$CLONE_EXCLUDE")" ]]; then echo >>"$CLONE_EXCLUDE"; fi
-  printf '/%s/\n' "$CLONE_DIR" >>"$CLONE_EXCLUDE"
-  note "base clone '$CLONE_DIR' added to the local ignore ($CLONE_EXCLUDE)"
-fi
 
 # 1b. the secrets source: the install locator's answer — the
-# configured [github] secrets_dir, else <config home>/secrets — handed to the
-# playbook's secrets copy as secrets_src, so group_vars' hand-run default is
+# configured [github] secrets_dir, else <config home>/secrets — handed to
+# provision's secrets copy as secrets_src, so group_vars' hand-run default is
 # never what ships.
 SECRETS_SRC="$(qcr_locate_secrets "$(config_table_key github secrets_dir || true)")" || exit 1
 
@@ -491,7 +474,7 @@ fi
 HEAD_SHA="$(git -C "$SANDBOX_DIR" rev-parse --short HEAD 2>/dev/null || echo "no-commits")"
 
 # The dry_run flag as the shipped config carries it — shown in the plan, never
-# changed: a sync ships the config home, so its flag is the VM's flag.
+# changed: a release ships the config home, so its flag is the VM's flag.
 CFG_DRY_RUN="$(awk '/^\[/ { exit } /^[[:space:]]*dry_run[[:space:]]*=/ { sub(/^[^=]*=[[:space:]]*/, ""); sub(/[[:space:]]*(#.*)?$/, ""); print; exit }' "$CONFIG")"
 
 # 2. the pi pin must agree, and must not be the placeholder
@@ -522,9 +505,8 @@ $SELF: pi version mismatch — refusing to deploy.
     group_vars    pi_version   = "$GV_PI"
 
 Deploying would change the pinned pi version on the VM. That is a deliberate
-act: reconcile the two by hand (and package.json's "pi" block), then run
-    $SELF rebuild
-so the image is rebuilt against the new pin.
+act: reconcile the two by hand (and package.json's "pi" block) and cut a new
+release, so CI builds the image against the new pin.
 EOF
   exit 1
 fi
@@ -697,19 +679,25 @@ if [[ "$OV_ENDPOINT" == remote ]]; then
     "$(effective_var_source openviking_port)    openviking_port" "$OV_PORT"
 fi
 
+# 2c'. the daemon container's name: the verify commands and the run spec name
+# it here, group_vars' image_name is the playbook's. One name or none.
+GV_IMAGE_NAME="$(effective_var image_name || true)"
+[[ -z "$GV_IMAGE_NAME" || "$GV_IMAGE_NAME" == "$CONTAINER" ]] ||
+  die "image_name is \"$GV_IMAGE_NAME\" ($(effective_var_source image_name)) but this script and the run spec name the daemon container $CONTAINER"
+
 # 2d. the release image runs the daemon and nothing else: OpenViking is the
 # sidecar's. A shipping mode on a "local" endpoint would boot a daemon that
-# supervises a server the image does not have (the playbook asserts this too).
+# supervises a server the image does not have.
 if [[ "$MODE" != verify && "$OV_ENDPOINT" != remote ]]; then
   die "openviking endpoint is \"$OV_ENDPOINT\" — the release image carries no OpenViking, so $MODE needs the memory sidecar: set group_vars/inventory openviking_endpoint AND config.toml [openviking] endpoint to \"remote\" (and [openviking] host to the sidecar's name). The way back to \"local\" is the legacy image and the old playbook (deploy/ansible/README.md, Rollback)"
 fi
 
 # 2e. the TUI reads the deployed build and the operator channel at the image's
-# app root, inside the container. The config home ships with this deploy, so its
+# app root, inside the container. The config home ships with a release, so its
 # [tui] must already say so.
 APP_ROOT="$(effective_var app_root || true)"
 APP_ROOT="${APP_ROOT:-/opt/qcr}"
-if [[ "$MODE" != verify ]]; then
+if [[ "$MODE" == release ]]; then
   CFG_TUI_ROOT="$(config_table_key tui remote_sandbox_root || true)"
   if [[ "$CFG_TUI_ROOT" != "$APP_ROOT" ]]; then
     cat >&2 <<EOF
@@ -729,29 +717,13 @@ EOF
   fi
 fi
 
-# 3. sandbox_src must be wired, or the rsync task no-ops (a release ships no
-# working copy: the code is in the image)
-if [[ "$MODE" != release ]] && ! grep -Eq '^[[:space:]]*sandbox_src[[:space:]]*:' "$GROUP_VARS"; then
-  die "group_vars/all.yml has no active 'sandbox_src' — uncomment it (it must point at $SANDBOX_DIR) or the working copy is never synced"
-fi
-# The playbook is handed the checkout this preflight validated and builds
-# (`-e sandbox_src=…`), so the rsync ships that tree and never the group_vars
-# default (the playbook's own checkout, which QC_SANDBOX_DIR may differ from).
-# Absolute, because ansible resolves a relative src against the playbook, not
-# this shell's directory. `-e k=v` splits on whitespace and ansible templates
-# the value.
-SANDBOX_SRC="$(cd "$SANDBOX_DIR" && pwd)" || die "cannot resolve the sandbox path '$SANDBOX_DIR'"
-if [[ "$MODE" != "verify" && "$MODE" != release && "$SANDBOX_SRC" =~ [[:space:]\"\'{}] ]]; then
-  die "the sandbox path '$SANDBOX_SRC' contains whitespace, quotes or braces — the playbook cannot be handed it; deploy from a checkout at a plain path"
-fi
-
 # Slack tokens ride the secrets mount under their configured flat filenames.
 SLACK_ENABLED="$(config_table_key slack enabled)"
 SLACK_BOT_TOKEN_FILE="$(config_table_key slack bot_token_file)"
 SLACK_APP_TOKEN_FILE="$(config_table_key slack app_token_file)"
 SLACK_BOT_TOKEN_FILE="${SLACK_BOT_TOKEN_FILE:-slack_bot_token}"
 SLACK_APP_TOKEN_FILE="${SLACK_APP_TOKEN_FILE:-slack_app_token}"
-if [[ "$MODE" != verify ]]; then
+if [[ "$MODE" == provision ]]; then
   for token_key in bot_token_file app_token_file; do
     token_name="$SLACK_BOT_TOKEN_FILE"
     [[ "$token_key" == app_token_file ]] && token_name="$SLACK_APP_TOKEN_FILE"
@@ -771,13 +743,20 @@ fi
 
 # ---- plan --------------------------------------------------------------------
 
-ANSIBLE_CMD=(ansible-playbook -i "$INVENTORY" "$PLAYBOOK")
-case "$MODE" in
-  release) ANSIBLE_CMD+=(--start-at-task "$SYNC_START_TASK" -e image_source=release -e "release_version=$RELEASE_VERSION" -e force_restart=true -e "base_clone_dir=$CLONE_DIR" -e "config_home_src=$CONFIG_HOME_SRC" -e "config_file_name=$CONFIG_NAME") ;;
-  sync)    ANSIBLE_CMD+=(--start-at-task "$SYNC_START_TASK" -e image_source=dev -e "build_sha=$HEAD_SHA" -e force_restart=true -e "sandbox_src=$SANDBOX_SRC" -e "base_clone_dir=$CLONE_DIR" -e "config_home_src=$CONFIG_HOME_SRC" -e "config_file_name=$CONFIG_NAME") ;;
-  rebuild) ANSIBLE_CMD+=(-e image_source=dev -e "build_sha=$HEAD_SHA" -e rebuild_image=true -e force_restart=true -e "sandbox_src=$SANDBOX_SRC" -e "base_clone_dir=$CLONE_DIR" -e "secrets_src=$SECRETS_SRC" -e "slack_bot_token_file=$SLACK_BOT_TOKEN_FILE" -e "slack_app_token_file=$SLACK_APP_TOKEN_FILE" -e "config_home_src=$CONFIG_HOME_SRC" -e "config_file_name=$CONFIG_NAME") ;;
-  verify)  ANSIBLE_CMD=() ;;
-esac
+# provision is the only mode that runs ansible, and the whole playbook runs: the
+# host packages, Docker, cloudflared, the secrets, the directory layout, the
+# updater and its run spec. No tags, no start-at-task. The run spec is rendered
+# here (render_runspec) into a file the playbook installs as /etc/qcr/update.conf.
+WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/qcr-deploy.XXXXXX")"
+trap 'rm -rf "$WORK_DIR"' EXIT
+UPDATE_CONF_SRC="$WORK_DIR/update.conf"
+ANSIBLE_CMD=()
+if [[ "$MODE" == provision ]]; then
+  ANSIBLE_CMD=(ansible-playbook -i "$INVENTORY" "$PLAYBOOK"
+    -e "base_clone_dir=$CLONE_DIR" -e "secrets_src=$SECRETS_SRC"
+    -e "slack_bot_token_file=$SLACK_BOT_TOKEN_FILE" -e "slack_app_token_file=$SLACK_APP_TOKEN_FILE"
+    -e "update_conf_src=$UPDATE_CONF_SRC")
+fi
 
 # Ansible's `| bool`: its BOOLEANS_TRUE set (quoted or not, any case) is true,
 # everything else false — the same reading src/onboard/steps/inventory.ts's
@@ -843,150 +822,202 @@ memory_search_cmd() {
   echo "sudo docker exec $CONTAINER node $APP_ROOT/scripts/memory-search-check.mjs --base http://$MEMORY_CONTAINER:$OV_PORT --key-file /opt/quickreview/secrets/$OV_REVIEWER_KEY_FILE"
 }
 
-# ---- drain advisory (warn only, never a refusal) ------------------------------
-# A deploy recreates the container; rounds in flight are orphaned mid-review,
-# burn self-requeue budget, and the cold boot's reconcile eats GitHub rate
-# limit (a few cold boots in an hour can exhaust it).
-# The drain valve (`qcr drain on`) hard-stops the webhook and starts no new
-# work, so running_rounds converges to 0. This reads the heartbeat and warns
-# on an undrained deploy while rounds run — it never refuses, and an
-# unreadable heartbeat is noted, not fatal. QC_STATUS_JSON_CMD overrides the
-# ssh read (tests).
-drain_advisory() {
-  [[ "$MODE" == "verify" ]] && return 0
-  local status=""
-  if [[ -n "${QC_STATUS_JSON_CMD:-}" ]]; then
-    status="$(bash -c "$QC_STATUS_JSON_CMD" 2>/dev/null || true)"
-  elif [[ -n "$VM_HOST" ]]; then
-    status="$(ssh -o BatchMode=yes "$VM_HOST" 'sudo cat /opt/quickreview/state/status.json' 2>/dev/null || true)"
-  fi
-  if [[ -z "$status" ]]; then
-    note "drain check: heartbeat unreadable — cannot tell whether rounds are running (WARN-only check, proceeding)"
-    return 0
-  fi
-  local running draining
-  running="$(printf '%s' "$status" | grep -o '"running_rounds"[[:space:]]*:[[:space:]]*[0-9]*' | grep -o '[0-9]*$' || true)"
-  running="${running:-0}"
-  draining=0
-  printf '%s' "$status" | grep -q '"draining"[[:space:]]*:[[:space:]]*true' && draining=1
-  if [[ "$draining" -eq 0 && "$running" -gt 0 ]]; then
-    cat >&2 <<EOF
-$SELF: WARNING — deploying UNDRAINED while $running round(s) are running.
-    Recreating the container orphans them mid-review, burns self-requeue
-    budget, and the cold boot's reconcile eats GitHub rate limit.
-    Prefer:  qcr drain on   ->  wait for running_rounds 0  ->  deploy.
-    (WARN only — proceeding. The drain auto-lifts on the new boot's first
-    healthy reconcile pass; re-drain before each step of a multi-deploy
-    window.)
-EOF
-  elif [[ "$draining" -eq 1 && "$running" -gt 0 ]]; then
-    note "drain is ON with $running round(s) still finishing — wait for running_rounds 0 before deploying"
-  elif [[ "$draining" -eq 1 ]]; then
-    note "drain is ON and the board is quiet — good to deploy (auto-lifts on the new boot's first healthy reconcile)"
-  fi
+# ---- the run spec ---------------------------------------------------------------
+# /etc/qcr/update.conf on the VM, rendered HERE from group_vars (and the
+# inventory's host vars over them, as effective_var reads) so the playbook has
+# nothing to template and the controller can recompute the same bytes: a release
+# compares this fingerprint with the one the VM's updater reports, and refuses a
+# drift with "re-run provision". KEY=VALUE only, every value from the plain
+# charset qcr-update reads. The fingerprint is the sha256 of every other
+# KEY=VALUE line, in this order. The defaults are group_vars/all.yml's.
+
+runspec_value() { effective_var_or "$1" "$2"; }
+
+runspec_body() {
+  local v
+  v() { runspec_value "$1" "$2"; }
+  printf 'RUNSPEC_VERSION=%s\n' "$RUNSPEC_VERSION"
+  printf 'SANDBOX_ROOT=%s\n' "$(v sandbox_root /opt/quickreview)"
+  printf 'APP_ROOT=%s\n' "$APP_ROOT"
+  printf 'DAEMON_CONTAINER=%s\n' "$CONTAINER"
+  printf 'MEMORY_CONTAINER=%s\n' "$MEMORY_CONTAINER"
+  printf 'DAEMON_IMAGE_REPO=%s\n' "$(v release_image ghcr.io/quickchatai/quickreview)"
+  printf 'MEMORY_IMAGE_REPO=%s\n' "$(v release_memory_image ghcr.io/quickchatai/quickreview-memory)"
+  printf 'MEMORY_NETWORK=%s\n' "$(v memory_network quickreview-memory)"
+  printf 'WEBHOOK_PORT=%s\n' "$(v webhook_port 8787)"
+  printf 'CONTAINER_UID=%s\n' "$(v container_uid 1001)"
+  printf 'TZ=%s\n' "$(v timezone Europe/Warsaw)"
+  printf 'DAEMON_CPUS=%s\n' "$(v container_cpus 2)"
+  printf 'DAEMON_MEMORY=%s\n' "$(v container_memory 8g)"
+  printf 'MEMORY_CPUS=%s\n' "$(v memory_container_cpus 1)"
+  printf 'MEMORY_MEMORY=%s\n' "$(v memory_container_memory 3g)"
+  printf 'MEMORY_STATE_DIR=%s\n' "$(v memory_state_dir /opt/quickreview/memory-state)"
+  printf 'OPENVIKING_HOME=%s\n' "$(v openviking_home /opt/quickreview/state/openviking)"
+  printf 'OPENVIKING_PORT=%s\n' "$OV_PORT"
+  printf 'BASE_CLONE_DIR=%s\n' "$CLONE_DIR"
+  printf 'LEGACY_SANDBOX_ROOT=%s\n' "$(v legacy_sandbox_root /opt/quickreview/sandbox)"
+  printf 'BACKUP_DIR=%s\n' "$(v backup_dir /var/backups/qcr)"
+  printf 'UPDATE_STATE_DIR=%s\n' "$(v update_state_dir /var/lib/qcr-update)"
+  printf 'MEMORY_READY_TIMEOUT_S=%s\n' "$(v memory_ready_timeout_s 1800)"
+  # The sidecar's boot knobs: docker/memory/entrypoint.sh renders ov.conf from
+  # these, the values config.toml [openviking] is held equal to above.
+  printf 'SIDECAR_ENV_TZ=%s\n' "$(v timezone Europe/Warsaw)"
+  printf 'SIDECAR_ENV_QCR_OPENVIKING_HOME=%s\n' "$(v openviking_home /opt/quickreview/state/openviking)"
+  printf 'SIDECAR_ENV_QCR_OPENVIKING_PORT=%s\n' "$OV_PORT"
+  printf 'SIDECAR_ENV_QCR_OPENVIKING_BIND_HOST=0.0.0.0\n'
+  printf 'SIDECAR_ENV_QCR_OPENVIKING_WORKERS=%s\n' "$(v openviking_workers 1)"
+  printf 'SIDECAR_ENV_QCR_OPENVIKING_QUEUE_CONCURRENCY=%s\n' "$(v openviking_queue_concurrency 2)"
+  printf 'SIDECAR_ENV_QCR_OPENVIKING_AUTH_MODE=%s\n' "$(v openviking_auth_mode api_key)"
+  printf 'SIDECAR_ENV_QCR_OPENVIKING_EMBEDDING_PROVIDER=%s\n' "$(v openviking_embedding_provider local)"
+  printf 'SIDECAR_ENV_QCR_OPENVIKING_EMBEDDING_MODEL=%s\n' "$(v openviking_embedding_model bge-small-en-v1.5-f16)"
+  printf 'SIDECAR_ENV_QCR_OPENVIKING_EMBEDDING_DIMENSION=%s\n' "$(v openviking_embedding_dimension 384)"
+  printf 'SIDECAR_ENV_QCR_OPENVIKING_EMBEDDING_KEY_FILE=%s\n' "$(v openviking_embedding_key_file openai_embeddings_api_key)"
+  printf 'SIDECAR_ENV_QCR_OPENVIKING_LOCAL_EMBEDDER_MODEL=%s\n' "$(v openviking_local_embedder_model bge-small-en-v1.5-f16)"
+  printf 'SIDECAR_ENV_QCR_OPENVIKING_LOCAL_EMBEDDER_DIMENSION=%s\n' "$(v openviking_local_embedder_dimension 384)"
+  printf 'SIDECAR_ENV_QCR_OPENVIKING_LOCAL_EMBEDDER_DIR=%s\n' "$(v openviking_local_embedder_dir /opt/openviking/models)"
+  printf 'SIDECAR_ENV_QCR_OPENVIKING_LOCAL_EMBEDDER_SHA256=%s\n' "$(v openviking_local_embedder_sha256 f0b2fef971e8366438bfd2d9aefea1b0115919389448806d290237f638bae999)"
+  printf 'SIDECAR_ENV_QCR_OPENVIKING_LOCAL_EMBEDDER_PORT=%s\n' "$(v openviking_local_embedder_port 1934)"
+  printf 'SIDECAR_ENV_QCR_OPENVIKING_LOCAL_EMBEDDER_THREADS=%s\n' "$(v openviking_local_embedder_threads 1)"
+  printf 'SIDECAR_ENV_QCR_OPENVIKING_ROOT_KEY_FILE=%s\n' "$(v openviking_root_key_file openviking_root_key)"
+  printf 'SIDECAR_ENV_QCR_OPENVIKING_REVIEWER_KEY_FILE=%s\n' "$OV_REVIEWER_KEY_FILE"
+  printf 'SIDECAR_ENV_QCR_OPENVIKING_PROVISION_USERS=%s\n' "$(v openviking_provision_users reviewer,companion)"
 }
 
-# ---- what the VM runs now (warn in a plan, refuse in a run) --------------------
-# The container's image, read from the VM: the release layout stamps its image
-# with qcr.build-sha, the legacy one (Ubuntu + the rendered Dockerfile.j2,
-# quickreview-sandbox:v1) does not and keeps a BUILD_SHA marker in the sandbox
-# root on the host. The read prints three key=value lines: image (empty when
-# there is no container), label (empty on the legacy image) and marker (the
-# legacy marker's first field). QC_VM_LAYOUT_CMD stands in for the ssh read (tests).
-VM_IMAGE=""
-VM_LAYOUT="unknown"
-VM_DEPLOYED_SHA=""
-probe_vm_layout() {
-  local out="" remote
-  remote="img=\$(sudo docker inspect -f '{{.Config.Image}}' $CONTAINER 2>/dev/null); "
-  remote+="lab=\$(sudo docker inspect -f '{{index .Config.Labels \"qcr.build-sha\"}}' $CONTAINER 2>/dev/null); "
-  remote+="mk=\$(sudo cat /opt/quickreview/sandbox/BUILD_SHA 2>/dev/null | cut -d' ' -f1); "
-  remote+="echo image=\$img; echo label=\$lab; echo marker=\$mk"
-  if [[ -n "${QC_VM_LAYOUT_CMD:-}" ]]; then
-    out="$(bash -c "$QC_VM_LAYOUT_CMD" 2>/dev/null)" || out=""
-  elif [[ -n "$VM_HOST" ]]; then
-    out="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$VM_HOST" "$remote" 2>/dev/null)" || out=""
-  fi
-  grep -q '^image=' <<<"$out" || return 0
-  local label legacy_marker
-  VM_IMAGE="$(sed -n 's/^image=//p' <<<"$out" | head -1)"
-  label="$(sed -n 's/^label=//p' <<<"$out" | head -1)"
-  legacy_marker="$(sed -n 's/^marker=//p' <<<"$out" | head -1)"
-  if [[ -z "$VM_IMAGE" ]]; then
-    VM_LAYOUT="none"
-  elif [[ -n "$label" && "$label" != "<no value>" ]]; then
-    VM_LAYOUT="release"
-    VM_DEPLOYED_SHA="$label"
-  else
-    VM_LAYOUT="legacy"
-    VM_DEPLOYED_SHA="$legacy_marker"
-  fi
+# Rendered once, here, at the top level (a die inside a command substitution
+# would only end the substitution): every line must be a KEY=VALUE qcr-update
+# will read, so a group_vars value with a space, quote or `$` stops the run.
+RUNSPEC_BODY=""
+RUNSPEC_FP=""
+if [[ "$MODE" != verify ]]; then
+  RUNSPEC_BODY="$(runspec_body)"
+  bad_line="$(printf '%s\n' "$RUNSPEC_BODY" | grep -vE '^[A-Z][A-Z0-9_]*=[A-Za-z0-9_./:@+,-]*$' | head -1 || true)"
+  [[ -z "$bad_line" ]] ||
+    die "the run spec cannot carry \"$bad_line\" — group_vars values ride /etc/qcr/update.conf, which allows letters, digits and _ . / : @ + , - only"
+  RUNSPEC_FP="$(printf '%s\n' "$RUNSPEC_BODY" | sha256sum | cut -d' ' -f1)"
+fi
+runspec_fingerprint() { echo "$RUNSPEC_FP"; }
+
+runspec_file() {
+  echo "# /etc/qcr/update.conf -- rendered by scripts/deploy.sh provision from group_vars."
+  echo "# Root-owned. Do not edit: qcr-update checks RUNSPEC_FINGERPRINT."
+  printf '%s\n' "$RUNSPEC_BODY"
+  printf 'RUNSPEC_FINGERPRINT=%s\n' "$RUNSPEC_FP"
 }
 
-# The first run on the legacy image carries whatever the release image bakes:
-# node_modules (pi), the retyped extensions and the Phase 3 factory shims. They
-# must already have reached the VM on their own deploys (P1.8, P2.12, P3.5), so
-# the operator names the commits that landed them and each must be an ancestor
-# of what the VM runs. Prints a problem, or nothing.
-cutover_problem() {
-  [[ "$MODE" != verify && "$VM_LAYOUT" != release ]] || return 0
-  if [[ "$VM_LAYOUT" == unknown ]]; then
-    echo "the VM's current image could not be read (ssh/docker), so whether this is the cutover is unknown"
-    return 0
-  fi
-  [[ "$VM_LAYOUT" == legacy ]] || return 0
-  if [[ -z "${QCR_CUTOVER_REQUIRES:-}" ]]; then
-    echo "the VM still runs the legacy image ($VM_IMAGE, build ${VM_DEPLOYED_SHA:-unknown}): this is the cutover. Set QCR_CUTOVER_REQUIRES to the commits whose deploys (P1.8, P2.12, P3.5) must already be on the VM, and re-run"
-    return 0
-  fi
-  [[ -n "$VM_DEPLOYED_SHA" ]] && git -C "$SANDBOX_DIR" cat-file -e "$VM_DEPLOYED_SHA^{commit}" 2>/dev/null || {
-    echo "the VM's deployed build '${VM_DEPLOYED_SHA:-none}' is not a commit of this checkout, so it cannot be compared with QCR_CUTOVER_REQUIRES"
-    return 0
-  }
-  local req
-  for req in $QCR_CUTOVER_REQUIRES; do
-    git -C "$SANDBOX_DIR" cat-file -e "$req^{commit}" 2>/dev/null || { echo "QCR_CUTOVER_REQUIRES names '$req', which is not a commit of this checkout"; return 0; }
-    git -C "$SANDBOX_DIR" merge-base --is-ancestor "$req" "$VM_DEPLOYED_SHA" || {
-      echo "the VM's deployed build $VM_DEPLOYED_SHA does not contain $req: deploy that first, on its own, and never let the image carry it for the first time"
-      return 0
-    }
-  done
-}
-
-# The pull check: a release is pulled by the VM's own docker, as root, with the
-# ghcr login scripts/vm-ghcr-login.sh stored there, so the VM must be able to
-# read BOTH images at this version before anything changes. A manifest inspect
-# pulls no layers. It runs in --dry-run too (it reads, it changes nothing) and
-# is fatal: an unpublished version or a lapsed login stops here, not halfway
-# through the playbook. QC_PULL_CHECK_CMD stands in for the ssh (tests).
-release_ref() {
-  case "$1" in
-    daemon) echo "$(effective_var_or release_image ghcr.io/quickchatai/quickreview):$RELEASE_VERSION" ;;
-    memory) echo "$(effective_var_or release_memory_image ghcr.io/quickchatai/quickreview-memory):$RELEASE_VERSION" ;;
-  esac
-}
-PULL_CHECKED=()
-pull_check() {
+# ---- the deploy manifest (release) ---------------------------------------------------
+# deploy-manifest-<version>.json: CI's record of what it built (the schema is
+# deploy/manifest.schema.json, the parser scripts/deploy-manifest.mjs).
+declare -A MF=()
+load_manifest() {
   [[ "$MODE" == release ]] || return 0
-  local ref
-  for ref in "$(release_ref daemon)" "$(release_ref memory)"; do
-    if [[ -n "${QC_PULL_CHECK_CMD:-}" ]]; then
-      bash -c "$QC_PULL_CHECK_CMD" _ "$ref" </dev/null >/dev/null 2>&1 || ref_unreadable "$ref"
-    else
-      [[ -n "$VM_HOST" ]] || die "no VM host resolved — set QC_VM_HOST: the release's pull check runs on the VM"
-      ssh -o BatchMode=yes -o ConnectTimeout=10 "$VM_HOST" "sudo docker manifest inspect $ref" </dev/null >/dev/null 2>&1 ||
-        ref_unreadable "$ref"
-    fi
-    PULL_CHECKED+=("$ref")
-  done
+  MANIFEST_FILE="${MANIFEST_FILE:-./deploy-manifest-$RELEASE_VERSION.json}"
+  [[ -f "$MANIFEST_FILE" ]] ||
+    die "no deploy manifest at $MANIFEST_FILE — the release workflow emits deploy-manifest-$RELEASE_VERSION.json next to the images (deploy/manifest.schema.json); download it, or name it with --manifest"
+  local out line
+  out="$(node "$(dirname "${BASH_SOURCE[0]}")/deploy-manifest.mjs" "$MANIFEST_FILE" "$RELEASE_VERSION" 2>&1)" ||
+    die "refusing the release — $MANIFEST_FILE: $out"
+  while IFS= read -r line; do MF["${line%%=*}"]="${line#*=}"; done <<<"$out"
+
+  # The images are the ones group_vars names.
+  check_pin "daemon image repository" \
+    "manifest $MANIFEST_FILE" "${MF[DAEMON_REPOSITORY]}" \
+    'group_vars    release_image' "$(effective_var_or release_image ghcr.io/quickchatai/quickreview)"
+  check_pin "memory image repository" \
+    "manifest $MANIFEST_FILE" "${MF[MEMORY_REPOSITORY]}" \
+    'group_vars    release_memory_image' "$(effective_var_or release_memory_image ghcr.io/quickchatai/quickreview-memory)"
+  # Rule 7, kept: the pins the images were BUILT with (their pin labels, copied
+  # into the manifest) must be the ones config.toml and group_vars hold. A drift
+  # here is an image that is not the build this config describes.
+  check_pin "pi (manifest)" \
+    "manifest pins.pi" "${MF[PIN_PI]}" \
+    'config.toml   [pi] version' "$CFG_PI"
+  if [[ -n "$CFG_OV" ]]; then
+    check_pin "openviking (manifest)" \
+      "manifest pins.openviking" "${MF[PIN_OPENVIKING]}" \
+      'config.toml   [openviking] version' "$CFG_OV"
+    check_pin "llama-cpp-python (manifest)" \
+      "manifest pins.llama_cpp_python" "${MF[PIN_LLAMA_CPP_PYTHON]}" \
+      'config.toml   [openviking] llama_cpp_python_version' "$(config_table_key openviking llama_cpp_python_version || true)"
+  fi
+  local gv_dir gv_model gv_sha
+  gv_dir="$(effective_var openviking_local_embedder_dir || true)"
+  gv_model="$(effective_var openviking_local_embedder_model || true)"
+  gv_sha="$(effective_var openviking_local_embedder_sha256 || true)"
+  if [[ -n "$gv_dir" && -n "$gv_model" ]]; then
+    check_pin "local embedder model file (manifest)" \
+      "manifest pins.embedder_file" "${MF[PIN_EMBEDDER_FILE]}" \
+      'ansible       openviking_local_embedder_dir/<model>.gguf' "$gv_dir/$gv_model.gguf"
+  fi
+  if [[ -n "$gv_sha" ]]; then
+    check_pin "local embedder model sha256 (manifest)" \
+      "manifest pins.embedder_sha256" "${MF[PIN_EMBEDDER_SHA256]}" \
+      'ansible       openviking_local_embedder_sha256' "$gv_sha"
+  fi
+  if (( MF[PIN_RUNSPEC] > RUNSPEC_VERSION )); then
+    die "refusing the release — its images need run spec v${MF[PIN_RUNSPEC]} but this checkout renders v$RUNSPEC_VERSION: update this checkout, then re-run provision"
+  fi
 }
-ref_unreadable() {
-  die "refusing the release — the VM cannot read $1 (docker manifest inspect failed). Either that version was never published, or the VM's ghcr login is missing or lapsed: run scripts/vm-ghcr-login.sh --version $RELEASE_VERSION (the owner's classic read:packages token). Nothing was changed"
+
+# ---- what the VM runs now (the updater's own report) -----------------------------------
+# `sudo qcr-update status --json`, over ssh: the layout, the run spec the VM
+# holds (version + fingerprint) and the drain. QC_UPDATE_STATUS_CMD stands in
+# for the ssh (tests). Unreadable is UNKNOWN: a plan says so, a real run refuses.
+VM_STATUS=""
+VM_LAYOUT="unknown"
+VM_FINGERPRINT=""
+VM_DRAINING=""
+VM_ROUNDS=""
+vm_status_read() {
+  [[ "$MODE" == release ]] || return 0
+  if [[ -n "${QC_UPDATE_STATUS_CMD:-}" ]]; then
+    VM_STATUS="$(bash -c "$QC_UPDATE_STATUS_CMD" 2>/dev/null)" || VM_STATUS=""
+  elif [[ -n "$VM_HOST" ]]; then
+    VM_STATUS="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$VM_HOST" 'sudo qcr-update status --json' 2>/dev/null)" || VM_STATUS=""
+  fi
+  grep -q '"layout"' <<<"$VM_STATUS" || { VM_STATUS=""; return 0; }
+  VM_LAYOUT="$(grep -o '"layout":"[^"]*"' <<<"$VM_STATUS" | head -1 | cut -d'"' -f4)"
+  VM_FINGERPRINT="$(grep -o '"fingerprint":"[^"]*"' <<<"$VM_STATUS" | head -1 | cut -d'"' -f4)"
+  VM_DRAINING="$(grep -o '"draining":[a-z]*' <<<"$VM_STATUS" | head -1 | cut -d: -f2)"
+  VM_ROUNDS="$(grep -o '"running_rounds":[0-9a-z]*' <<<"$VM_STATUS" | head -1 | cut -d: -f2)"
+}
+
+# A run spec the VM does not hold is fatal in any run (the plan included): the
+# updater would refuse the image, or run a stale container shape.
+EXPECTED_FINGERPRINT=""
+runspec_drift() {
+  [[ "$MODE" == release ]] || return 0
+  EXPECTED_FINGERPRINT="$(runspec_fingerprint)"
+  [[ -n "$VM_STATUS" ]] || return 0
+  if [[ "$VM_FINGERPRINT" != "$EXPECTED_FINGERPRINT" ]]; then
+    die "refusing the release — the VM's run spec (fingerprint ${VM_FINGERPRINT:-none}) differs from the one group_vars renders ($EXPECTED_FINGERPRINT): re-run provision (\`$SELF provision\`). Nothing was changed"
+  fi
+}
+
+# Things a real run refuses and a plan reports (the updater refuses them too):
+# the layout needs the ack, the board must be drained and idle. Prints the first.
+release_problem() {
+  [[ "$MODE" == release ]] || return 0
+  if [[ -z "$VM_STATUS" ]]; then
+    echo "the VM's \`qcr-update status\` could not be read (ssh, or provision never installed the updater), so its layout, run spec and drain are unknown"
+    return 0
+  fi
+  if [[ "$VM_LAYOUT" == legacy && $CUTOVER_ACK -eq 0 ]]; then
+    echo "the VM still runs the legacy layout: this deploy is the cutover (the first boot migrates forward). Re-run with --cutover-ack"
+    return 0
+  fi
+  if [[ "$VM_DRAINING" != true ]]; then
+    echo "the bot is not drained (draining=${VM_DRAINING:-unknown}): run \`qcr drain on\`, wait for running_rounds 0, then deploy"
+    return 0
+  fi
+  if [[ "$VM_ROUNDS" != 0 ]]; then
+    echo "the board is busy (running_rounds=${VM_ROUNDS:-unknown}): wait for running_rounds 0, then deploy"
+    return 0
+  fi
 }
 
 # The VM's ghcr pull token expires (1 year, by ruling), and a lapsed one fails
-# the next release's pull check. scripts/vm-ghcr-login.sh records the expiry on
-# this controller; release and verify read it back. Within GHCR_WARN_DAYS of it
+# the updater's pull. scripts/vm-ghcr-login.sh records the expiry on this
+# controller; release and verify read it back. Within GHCR_WARN_DAYS of it
 # (or past it) the plan line starts with WARNING. Warn only, never a refusal.
 GHCR_WARN_DAYS=14
 GHCR_EXPIRY_LINE=""
@@ -1019,16 +1050,11 @@ ghcr_expiry_status() {
   fi
 }
 
-# The image a mode puts on the VM, as the plan names it.
-plan_image() {
-  local which="$1" tag
-  case "$MODE:$which" in
-    verify:*) echo "image as deployed" ;;
-    release:daemon) echo "image $(release_ref daemon)" ;;
-    release:memory) echo "image $(release_ref memory)" ;;
-    *:daemon) echo "image $(effective_var_or image_name "$CONTAINER"):$(effective_var_or dev_image_tag dev), built on the VM at $HEAD_SHA" ;;
-    *:memory) echo "image $(effective_var_or memory_image_name quickreview-memory):$(effective_var_or memory_image_tag v1), built on the VM" ;;
-  esac
+# The updater's argv, minus `sudo qcr-update`.
+update_args() {
+  local args=("$RELEASE_VERSION@${MF[DAEMON_INDEX_DIGEST]}" --memory-digest "${MF[MEMORY_INDEX_DIGEST]}")
+  [[ $CUTOVER_ACK -eq 0 ]] || args+=(--cutover-ack "$RELEASE_VERSION")
+  printf '%s ' "${args[@]}"
 }
 
 print_plan() {
@@ -1041,74 +1067,85 @@ print_plan() {
     echo "  memory pins  openviking $CFG_OV (config.toml == group_vars == image layer), extension ${CFG_OV_EXT:-<unset>} (config.toml == upstream.json)"
     echo "  memory auth  auth_mode ${CFG_OV_AUTH:-<unset>} (config.toml == group_vars; 'dev' means NO per-user confinement)"
     echo "  memory embed ${CFG_OV_EMBED:-<unset>} (config.toml == ansible effective value; 'local' means no memory text leaves the VM)"
-    echo "  local model  ${GV_LE_MODEL:-<code default>} sha256 ${CFG_OV_LE_SHA:-<code default>} (config.toml == group_vars == image layer; a changed pin needs rebuild)"
+    echo "  local model  ${GV_LE_MODEL:-<code default>} sha256 ${CFG_OV_LE_SHA:-<code default>} (config.toml == group_vars == image layer; a changed pin needs a new release)"
   else
     echo "  memory pins  <no [openviking] block in config.toml — unverified>"
   fi
   if [[ "$OV_ENDPOINT" == remote ]]; then
-    echo "  containers   $CONTAINER (daemon, $(plan_image daemon)) + $MEMORY_CONTAINER (memory sidecar: OpenViking + local embedder, $(plan_image memory), network $(effective_var_or memory_network quickreview-memory), port $OV_PORT unpublished)"
+    echo "  containers   $CONTAINER (daemon) + $MEMORY_CONTAINER (memory sidecar: OpenViking + local embedder, network $(effective_var_or memory_network quickreview-memory), port $OV_PORT unpublished)"
     echo "  memory       endpoint remote (config.toml == ansible): the daemon only probes $MEMORY_CONTAINER:$OV_PORT; the sidecar owns provisioning and the re-embed"
-    echo "  memory store the sidecar's own copy at $(effective_var_or memory_state_dir /opt/quickreview/memory-state), copied from the daemon's and checksum-verified ONCE (the daemon container stopped for it), never wiped; the old directory is the rollback"
+    echo "  memory store the sidecar's own copy at $(effective_var_or memory_state_dir /opt/quickreview/memory-state), copied from the daemon's and checksum-verified ONCE by the updater on the legacy layout (the daemon container stopped for it), never wiped; the old directory is the rollback"
   else
     echo "  containers   $CONTAINER only (endpoint local: OpenViking is the daemon's child; a shipping mode refuses this — the release image carries no OpenViking)"
   fi
   echo "  vm host      ${VM_HOST:-<unset — set QC_VM_HOST>}"
-  echo "  base clone   /$CLONE_DIR (kept on the VM by the rsync exclude; locally ignored via info/exclude)"
-  if [[ "$MODE" != "verify" ]]; then
-    echo "  config home  $CONFIG_HOME_SRC ($CONFIG_NAME + profiles/ -> the VM's read-only /opt/quickreview/config-home, which QCR_CONFIG names; secrets/ never rides it)"
+  echo "  base clone   /$CLONE_DIR (mounted from the sandbox root, outside every image)"
+  if [[ "$MODE" == release ]]; then
+    echo "  config home  $CONFIG_HOME_SRC ($CONFIG_NAME as config.toml + profiles/ -> the tar on stdin; the VM's read-only /opt/quickreview/config-home, which QCR_CONFIG names; secrets/ never rides it)"
     echo "  profile      ${PROFILE_CHAIN:-<none — the generic registry>}"
   fi
   case "$MODE" in
-    rebuild) echo "  secrets      $SECRETS_SRC (copied to the VM's read-only secrets mount)" ;;
-    sync)    echo "  secrets      $SECRETS_SRC (not copied — sync starts past the secrets tasks; rebuild ships them)" ;;
-  esac
-  case "$MODE" in
-    release) echo "  action       pull $(plan_image daemon) and the memory image (the VM must be logged in to ghcr.io), recreate both containers; no rsync, no build"
-             for pulled in "${PULL_CHECKED[@]}"; do echo "  pull check   ok: the VM reads $pulled (docker manifest inspect, over ssh)"; done ;;
-    sync)    echo "  action       mirror-rsync working copy -> /opt/quickreview/sandbox (--delete, runtime dirs kept), build docker/Dockerfile on the VM (layer cache), recreate the containers" ;;
-    rebuild) echo "  action       full playbook with -e rebuild_image=true (dev build, base images refreshed against the pins)" ;;
+    provision)
+      echo "  secrets      $SECRETS_SRC (copied to the VM's read-only secrets mount)"
+      echo "  action       the whole playbook: host packages, Docker, cloudflared, secrets, the directory layout, /usr/local/sbin/qcr-update and /etc/qcr/update.conf. It pulls and starts no image"
+      echo "  run spec     v$RUNSPEC_VERSION, fingerprint $(runspec_fingerprint) (rendered from group_vars into $UPDATE_CONF_SRC)" ;;
+    release)
+      echo "  manifest     $MANIFEST_FILE: version ${MF[VERSION]}, revision ${MF[REVISION]} (checkout HEAD $(git -C "$SANDBOX_DIR" rev-parse HEAD 2>/dev/null || echo unknown))"
+      echo "  images       daemon ${MF[DAEMON_REPOSITORY]}@${MF[DAEMON_INDEX_DIGEST]}"
+      echo "               memory ${MF[MEMORY_REPOSITORY]}@${MF[MEMORY_INDEX_DIGEST]}"
+      echo "  manifest pins  pi ${MF[PIN_PI]}, openviking ${MF[PIN_OPENVIKING]}, llama-cpp-python ${MF[PIN_LLAMA_CPP_PYTHON]}, embedder ${MF[PIN_EMBEDDER_FILE]} sha256 ${MF[PIN_EMBEDDER_SHA256]}, run spec v${MF[PIN_RUNSPEC]} (== config.toml == group_vars)"
+      echo "  run spec     v$RUNSPEC_VERSION, fingerprint $EXPECTED_FINGERPRINT (== the VM's: ${VM_FINGERPRINT:-unread})"
+      echo "  vm now       layout $VM_LAYOUT, draining ${VM_DRAINING:-?}, running_rounds ${VM_ROUNDS:-?}"
+      echo "  steps        1. read the manifest (this script)         2. tar config.toml profiles/ | ssh ${VM_HOST:-<vm>} sudo qcr-update $(update_args)"
+      echo "               on the VM, in order:"
+      echo "                 flock; refuse unless draining=true and running_rounds=0; legacy layout needs --cutover-ack"
+      echo "                 pull both images by digest and check them (qcr.layout, qcr.build-sha, qcr.preflight, qcr.runspec <= update.conf)"
+      echo "                 stage the config to config-home.next; the NEW image's \`qcr config check --json\` on it"
+      echo "                 stop the daemon container; snapshot state.db(-wal/-shm) and state/pi-sessions to $(effective_var_or backup_dir /var/backups/qcr)/<version>-<ts>/"
+      echo "                 the new image's \`daemon --preflight\` on a scratch copy of the snapshot (--network none)"
+      echo "                 seed the sidecar store once (legacy layout only; copy + checksum verify)"
+      echo "                 swap the config (current -> .prev, .next -> current)"
+      echo "                 start the memory sidecar, wait for /ready; recreate the daemon container on the new image"
+      echo "               any failure from the stop to the recreate is RESCUED: previous config back, old containers started, drain re-sent and confirmed, non-zero exit"
+      echo "  no rsync, no build, no install on the VM"
+      local problem
+      problem="$(release_problem)"
+      if [[ -n "$problem" ]]; then
+        echo "  REFUSED in a real run: $problem"
+      elif [[ "$VM_LAYOUT" == legacy ]]; then
+        echo "  cutover      first run on the legacy layout, acknowledged (--cutover-ack $RELEASE_VERSION): the first boot migrates forward"
+      fi
+      echo "  rollback     the legacy image quickreview-sandbox:v1 stays on the VM until the owner removes it; the updater also keeps the previous container as $CONTAINER-prev and the state snapshot under $(effective_var_or backup_dir /var/backups/qcr)/. A release is undone by 'release <previous version>' (drain first)" ;;
     verify)  echo "  action       post-deploy checks over ssh only (no ansible)" ;;
   esac
-  if [[ "$MODE" != verify ]]; then
+  if [[ "$MODE" == release ]]; then
     echo "  container    release image in daemon mode as uid $(effective_var_or container_uid 1001): app root $APP_ROOT read-only; state, pihome, secrets, config-home and wt/archive/commands/digest/inject/verdict/$CLONE_DIR mounted from /opt/quickreview"
-    echo "  vm now       ${VM_IMAGE:-<no container or unreadable>} (layout $VM_LAYOUT${VM_DEPLOYED_SHA:+, build $VM_DEPLOYED_SHA})"
-    local cutover
-    cutover="$(cutover_problem)"
-    if [[ -n "$cutover" ]]; then
-      echo "  cutover      REFUSED in a real run: $cutover"
-    elif [[ "$VM_LAYOUT" == legacy ]]; then
-      echo "  cutover      first run on the legacy image; QCR_CUTOVER_REQUIRES ($QCR_CUTOVER_REQUIRES) is contained in the VM's build"
-    fi
-    echo "  rollback     the legacy image quickreview-sandbox:v1 stays on the VM; deploy/ansible/README.md (Rollback) re-runs the pre-cutover playbook on it. A release is undone by 'release <previous version>'"
   fi
   if [[ ${#ANSIBLE_CMD[@]} -gt 0 ]]; then
     echo "  command      ${ANSIBLE_CMD[*]}"
   fi
   [[ -z "$GHCR_EXPIRY_LINE" ]] || echo "  ghcr login   $GHCR_EXPIRY_LINE"
-  echo "  then verify  ssh ${VM_HOST:-<vm>}:"
-  local c
-  for c in "${VERIFY_CMDS[@]}"; do echo "                 $c"; done
-  for c in "${BOOT_CMDS[@]}"; do echo "                 (after the heartbeat) $c"; done
-  if [[ "$OV_ENDPOINT" == remote ]]; then
-    echo "                 (polled) $(memory_ready_cmd)"
-    echo "                 (polled) $(memory_search_cmd)"
-  fi
-  ansible_bool "$CLOUDFLARED_ENABLED" ||
-    echo "                 (cloudflared not checked — cloudflared_enabled=$CLOUDFLARED_ENABLED, so the playbook does not install it)"
-  echo "  dry_run      ${CFG_DRY_RUN:-<unset>} in $CONFIG — config.toml dry_run is NOT touched by deploy — the cutover flip is a manual edit"
-  if [[ "$MODE" != "verify" ]]; then
-    if [[ "$MODE" == release ]]; then
-      echo "  stamp        BUILD_SHA is CI's, in the image (qcr.build-sha label, $APP_ROOT/BUILD_SHA); the playbook refuses an unstamped image. The qcr tui deploy tab reads it in the container"
-    else
-      echo "  stamp        BUILD_SHA=$HEAD_SHA is baked into the image by the VM-side build (the qcr tui deploy tab reads it in the container)"
+  if [[ "$MODE" != provision ]]; then
+    echo "  then verify  ssh ${VM_HOST:-<vm>}:"
+    local c
+    for c in "${VERIFY_CMDS[@]}"; do echo "                 $c"; done
+    for c in "${BOOT_CMDS[@]}"; do echo "                 (after the heartbeat) $c"; done
+    if [[ "$OV_ENDPOINT" == remote ]]; then
+      echo "                 (polled) $(memory_ready_cmd)"
+      echo "                 (polled) $(memory_search_cmd)"
     fi
+    ansible_bool "$CLOUDFLARED_ENABLED" ||
+      echo "                 (cloudflared not checked — cloudflared_enabled=$CLOUDFLARED_ENABLED, so the playbook does not install it)"
+  fi
+  echo "  dry_run      ${CFG_DRY_RUN:-<unset>} in $CONFIG — config.toml dry_run is NOT touched by deploy — the cutover flip is a manual edit"
+  if [[ "$MODE" == release ]]; then
+    echo "  stamp        BUILD_SHA is CI's, in the image (qcr.build-sha label, $APP_ROOT/BUILD_SHA). The qcr tui deploy tab reads it in the container"
   fi
 }
 
-drain_advisory
-[[ "$MODE" == verify ]] || probe_vm_layout
-# Fatal, before anything changes, and in --dry-run too.
-pull_check
+load_manifest
+vm_status_read
+runspec_drift
 ghcr_expiry_status
 
 if [[ $DRY_RUN -eq 1 ]]; then
@@ -1136,18 +1173,43 @@ echo >&2
 COMPANION_ALERTS_DIR="$SANDBOX_DIR/state/companion/alerts"
 DEPLOY_MARKER_FILE="$COMPANION_ALERTS_DIR/.deploy-window.json"
 
-if [[ "$MODE" != "verify" ]]; then
+if [[ "$MODE" == provision ]]; then
   command -v ansible-playbook >/dev/null 2>&1 || die "ansible-playbook not on PATH — run this from the controller machine"
   [[ -f "$INVENTORY" ]] || die "no inventory at $INVENTORY (cp inventory.example.ini inventory.ini, then edit; or set QC_INVENTORY)"
-  # Nothing is built here: the image is built from the shipped tree on the VM
-  # (sync, rebuild) or pulled (release), and stamped with the commit or by CI.
-  local_problem="$(cutover_problem)"
-  [[ -z "$local_problem" ]] || die "refusing the cutover — $local_problem"
+  runspec_file >"$UPDATE_CONF_SRC"
+  note "running: ${ANSIBLE_CMD[*]}"
+  "${ANSIBLE_CMD[@]}"
+  note "provision ok ($HEAD_SHA): the updater and run spec v$RUNSPEC_VERSION are on the VM; no image was pulled or started. Deploy with: $SELF release <version>"
+  exit 0
+fi
+
+if [[ "$MODE" == release ]]; then
+  [[ -n "$VM_HOST" ]] || die "no VM host resolved — set QC_VM_HOST: the release runs qcr-update over ssh"
+  release_refusal="$(release_problem)"
+  [[ -z "$release_refusal" ]] || die "refusing the release — $release_refusal"
+  # The config home as the tar the updater takes: config.toml and profiles/,
+  # dereferenced (a symlinked profile ships as the files it points at), never
+  # secrets/. Staged first so the tar is exactly these two names.
+  STAGE="$WORK_DIR/config-home"
+  mkdir -p "$STAGE"
+  cp -L "$CONFIG_HOME_SRC/$CONFIG_NAME" "$STAGE/config.toml"
+  TAR_NAMES=(config.toml)
+  if [[ -d "$CONFIG_HOME_SRC/profiles" ]]; then
+    cp -RL "$CONFIG_HOME_SRC/profiles" "$STAGE/profiles"
+    TAR_NAMES+=(profiles)
+  fi
   # Open the deploy-grace window before the disruptive phase starts.
   mkdir -p "$COMPANION_ALERTS_DIR"
   printf '{"since":"%s","by":"deploy.sh","mode":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$MODE" > "$DEPLOY_MARKER_FILE"
-  note "running: ${ANSIBLE_CMD[*]}"
-  "${ANSIBLE_CMD[@]}"
+  read -r -a UPDATE_ARGV <<<"$(update_args)"
+  note "running: tar ${TAR_NAMES[*]} | ssh $VM_HOST sudo qcr-update ${UPDATE_ARGV[*]}"
+  if [[ -n "${QC_UPDATE_RUN_CMD:-}" ]]; then
+    tar -C "$STAGE" -cf - "${TAR_NAMES[@]}" | bash -c "$QC_UPDATE_RUN_CMD" _ "${UPDATE_ARGV[@]}" ||
+      die "qcr-update failed — read its output above: any step before the recreate was rescued (the previous version runs, the bot is drained)"
+  else
+    tar -C "$STAGE" -cf - "${TAR_NAMES[@]}" | ssh -o BatchMode=yes "$VM_HOST" "sudo qcr-update ${UPDATE_ARGV[*]}" ||
+      die "qcr-update failed — read its output above: any step before the recreate was rescued (the previous version runs, the bot is drained)"
+  fi
 fi
 
 [[ -n "$VM_HOST" ]] || die "no VM host resolved — set QC_VM_HOST to run the post-deploy checks"
@@ -1263,6 +1325,8 @@ fi
 # runs skip it (no container was touched).
 refresh_memory_forward() {
   [[ "$MODE" == "verify" ]] && return 0
+  # tests: a stubbed run never restarts the developer's own user unit
+  [[ -z "${QC_NO_MEMORY_FORWARD:-}" ]] || return 0
   command -v systemctl >/dev/null 2>&1 || return 0
   if ! systemctl --user is-active --quiet qcr-memory-forward 2>/dev/null; then
     note "memory forward: systemd unit not active (TUI-owned or absent) — not restarted"

@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "deploy-manifest-<version>.json",
+  "description": "What one release published: CI (P7.16) emits it next to the two images, and `scripts/deploy.sh release <version>` reads it. It names the images by digest, so the VM pulls exactly what CI built, and carries the pins the images were built with, so the controller can hold them to config.toml and group_vars before anything is sent to the VM. scripts/deploy-manifest.mjs is the validator; this file is its documentation and tests/deploy-manifest.test.ts holds the two together.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "version", "revision", "images", "pins"],
+  "properties": {
+    "schema": { "const": 1 },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.]+)?$" },
+    "revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "The commit the images were built from (the qcr.build-sha label)."
+    },
+    "images": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["daemon", "memory"],
+      "properties": {
+        "daemon": { "$ref": "#/$defs/image" },
+        "memory": { "$ref": "#/$defs/image" }
+      }
+    },
+    "pins": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pi",
+        "openviking",
+        "llama_cpp_python",
+        "embedder_file",
+        "embedder_sha256",
+        "runspec"
+      ],
+      "properties": {
+        "pi": { "type": "string", "minLength": 1 },
+        "openviking": { "type": "string", "minLength": 1 },
+        "llama_cpp_python": { "type": "string", "minLength": 1 },
+        "embedder_file": { "type": "string", "minLength": 1 },
+        "embedder_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "runspec": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The qcr.runspec label of the daemon image."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "index_digest", "platforms"],
+      "properties": {
+        "repository": { "type": "string", "pattern": "^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)+$" },
+        "index_digest": {
+          "$ref": "#/$defs/digest",
+          "description": "The multi-arch index: what `qcr-update` pulls."
+        },
+        "platforms": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["linux/amd64", "linux/arm64"],
+          "properties": {
+            "linux/amd64": { "$ref": "#/$defs/digest" },
+            "linux/arm64": { "$ref": "#/$defs/digest" }
+          }
+        }
+      }
+    }
+  }
+}

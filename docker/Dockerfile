@@ -159,6 +159,18 @@ COPY deploy/reviewer/AGENTS.override.md ./AGENTS.override.md
 # The build stamp: `qcr version --json` reports it. CI passes the commit.
 ARG BUILD_SHA=unstamped
 LABEL qcr.build-sha="${BUILD_SHA}"
+# What the VM's updater (deploy/qcr-update.sh) reads off the image before it
+# stops anything. qcr.layout says this is the release layout (the legacy image
+# has no such label). qcr.runspec is the run-spec version the image needs of
+# /etc/qcr/update.conf, which `provision` renders: an image that needs a newer
+# one than the VM holds is refused with "re-run provision". qcr.pi is the pi pin
+# the preflight holds to config.toml [pi] and group_vars. (qcr.preflight, which
+# says the image has `daemon --preflight`, is labelled by the change that adds
+# that subcommand, never before it exists.) tests/deploy.test.ts pins the
+# runspec to scripts/deploy.sh's RUNSPEC_VERSION.
+LABEL qcr.layout="release" \
+      qcr.runspec="1" \
+      qcr.pi="${PI_VERSION}"
 RUN printf '%s\n' "${BUILD_SHA}" > /opt/qcr/BUILD_SHA
 
 # The checks that make this the image it claims to be.

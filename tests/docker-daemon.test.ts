@@ -78,7 +78,10 @@ describe("plain Dockerfile — ARG defaults mirror the pinned sources of truth",
   });
 
   it("tmux/node/webhook-port defaults == group_vars", () => {
-    expect(arg("TMUX_VERSION")).toBe(gv("tmux_version"));
+    // tmux's version is the Dockerfile's alone now (CI builds with its default;
+    // group_vars carries no tmux_version knob).
+    expect(arg("TMUX_VERSION")).toMatch(/^\d+\.\d+[a-z]?$/);
+    expect(gv("tmux_version")).toBeUndefined();
     expect(arg("NODE_MAJOR")).toBe(gv("node_major"));
     expect(arg("WEBHOOK_PORT")).toBe(gv("webhook_port"));
     expect(arg("WEBHOOK_PORT")).toBe(String(cfg.server.port));
@@ -682,10 +685,9 @@ describe("ansible decoupling", () => {
     expect(rsync).not.toContain("--exclude=/agents");
   });
 
-  it("sandbox_src is an ACTIVE variable with a repo-relative default, not a hardcoded home path", () => {
-    // deploy.sh's preflight greps for an active (uncommented) sandbox_src.
-    expect(groupVars).toMatch(/^sandbox_src:\s*"\{\{ playbook_dir/m);
-    expect(groupVars).not.toMatch(/^sandbox_src:.*\/home\//m);
+  it("there is no sandbox_src: nothing is synced from a working copy to the VM any more", () => {
+    expect(groupVars).not.toMatch(/^\s*#?\s*sandbox_src:/m);
+    expect(playbook).not.toContain("sandbox_src");
   });
 
   it("every cloudflared task is behind cloudflared_enabled (default true — the live tunnel stays)", () => {

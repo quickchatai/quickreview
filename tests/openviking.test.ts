@@ -99,11 +99,18 @@ describe("triple-mirror version pin (config.toml ↔ group_vars ↔ the memory i
     expect(gv("llama_cpp_python_version")).toBe(cfg.openviking.llama_cpp_python_version);
   });
 
-  it("the memory image pins BOTH packages through ARGs the playbook feeds from the group_vars, never a literal", () => {
+  it("the memory image pins BOTH packages through ARGs whose defaults ARE the group_vars pins (CI builds with the defaults), never a literal in an install line", () => {
     expect(dockerfile).toContain('"openviking==${OPENVIKING_VERSION}"');
     expect(dockerfile).toContain('"llama-cpp-python==${LLAMA_CPP_PYTHON_VERSION}"');
-    expect(playbook).toContain('"OPENVIKING_VERSION={{ openviking_version }}"');
-    expect(playbook).toContain('"LLAMA_CPP_PYTHON_VERSION={{ llama_cpp_python_version }}"');
+    // Nothing builds on the VM any more: the playbook feeds no build ARGs.
+    expect(playbook).not.toContain("OPENVIKING_VERSION");
+    const arg = (name: string): string | undefined =>
+      new RegExp(`^ARG ${name}=(\\S+)$`, "m").exec(dockerfile)?.[1];
+    expect(arg("OPENVIKING_VERSION")).toBe(gv("openviking_version"));
+    expect(arg("LLAMA_CPP_PYTHON_VERSION")).toBe(gv("llama_cpp_python_version"));
+    // …and the image says so in labels, which the deploy manifest and the preflight read
+    expect(dockerfile).toContain('qcr.openviking="${OPENVIKING_VERSION}"');
+    expect(dockerfile).toContain('qcr.llama-cpp-python="${LLAMA_CPP_PYTHON_VERSION}"');
     // A literal version in the image is exactly the drift the mirror prevents.
     expect(dockerfile).not.toMatch(/openviking==\d/);
     expect(dockerfile).not.toMatch(/llama-cpp-python==\d/);
@@ -527,17 +534,26 @@ describe("api_key confinement", () => {
 });
 
 describe("container topology", () => {
+  // The containers are the updater's now (deploy/qcr-update.sh), not the playbook's.
+  const updater = readFileSync(resolve(root, "deploy/qcr-update.sh"), "utf8")
+    .split("\n")
+    .filter((l) => !/^\s*#/.test(l))
+    .join("\n");
+
   it("the OpenViking port is NEVER published out of the container", () => {
-    const published = /published_ports:\n((?:\s+-\s+.*\n)+)/.exec(playbook)?.[1] ?? "";
-    expect(published).toContain("webhook_port");
-    expect(published).not.toContain("1933");
-    expect(published).not.toContain("openviking");
-    // The only published_ports in the playbook is the daemon's: the sidecar has none.
-    expect(playbook.match(/^\s+published_ports:/gm)).toHaveLength(1);
+    // The only publish in the updater is the daemon's webhook port, on loopback:
+    // the sidecar's argv has none.
+    const publishes = updater.match(/^\s+-p "[^"]*"$/gm) ?? [];
+    expect(publishes).toHaveLength(1);
+    expect(publishes[0]).toContain("WEBHOOK_PORT");
+    expect(publishes[0]).toContain("127.0.0.1:");
+    expect(publishes[0]).not.toMatch(/1933|OPENVIKING/);
+    expect(playbook).not.toMatch(/published_ports/);
   });
 
   it("PID 1 reaps — a second supervised process needs an init", () => {
-    expect(playbook).toMatch(/^\s+init: true$/m);
+    expect(updater.match(/^\s+(?:run -d .*)?--init\b/gm)?.length ?? 0).toBeGreaterThanOrEqual(1);
+    expect(updater.match(/--init/g)).toHaveLength(2); // the daemon's and the sidecar's
   });
 
   it("the state volume carries OpenViking's home, at 0700 (ov.conf holds a credential)", () => {
@@ -586,15 +602,20 @@ describe("the local English embedder pin (config.toml ↔ group_vars ↔ the mem
       'echo "${LOCAL_EMBEDDER_SHA256}  ${LOCAL_EMBEDDER_DIR}/${LOCAL_EMBEDDER_MODEL}.gguf" | sha256sum -c -',
     );
     expect(layer).toMatch(/\|\| \{ echo "FATAL: the local embedder model/);
-    // The playbook feeds those ARGs from the group_vars.
+    // The ARG defaults CI builds with ARE the group_vars pins.
     for (const [arg, key] of [
       ["LOCAL_EMBEDDER_URL", "openviking_local_embedder_url"],
       ["LOCAL_EMBEDDER_SHA256", "openviking_local_embedder_sha256"],
       ["LOCAL_EMBEDDER_MODEL", "openviking_local_embedder_model"],
       ["LOCAL_EMBEDDER_DIR", "openviking_local_embedder_dir"],
     ] as const) {
-      expect(playbook).toContain(`"${arg}={{ ${key} }}"`);
+      expect(new RegExp(`^ARG ${arg}=(\\S+)$`, "m").exec(dockerfile)?.[1], arg).toBe(gv(key));
     }
+    // The image labels the pin it carries (the deploy manifest's pins are these).
+    expect(dockerfile).toContain('qcr.embedder-sha256="${LOCAL_EMBEDDER_SHA256}"');
+    expect(dockerfile).toContain(
+      'qcr.embedder-file="${LOCAL_EMBEDDER_DIR}/${LOCAL_EMBEDDER_MODEL}.gguf"',
+    );
     // The ARG defaults are the pin itself (tests/memory-image.test.ts holds them
     // to config.toml); a literal in a RUN line would be the drift it prevents.
     expect(layer).not.toContain(ov.local_embedder_sha256);

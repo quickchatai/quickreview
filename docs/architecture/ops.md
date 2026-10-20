@@ -65,9 +65,9 @@ commands the operator would type. Everything the wizard does after bring-up
 flip) is written once against that interface. The compose implementation
 delegates to `src/onboard/steps/compose.ts`; the ssh implementation puts
 `ssh <alias> sudo docker …` in front, always with `BatchMode=yes`, and
-implements "restart" as `scripts/deploy.sh sync` — on that route the config the
-daemon reads is the one the deploy ships, so re-running the deploy *is* the
-restart, with its preflights intact.
+implements "restart" as a `scripts/deploy.sh release` of the running version — on
+that route the config the daemon reads is the one the deploy ships, so
+re-running the deploy *is* the restart, with its preflights intact.
 
 The operator TUI makes the same split separately, through `config.toml
 [tui] target` and `runnerFor(cfg.tui)` in `src/tui/remote.ts`.
@@ -311,12 +311,14 @@ correctness backbone, and a webhook that never arrives never loses a PR.
 ## The Ansible path
 
 `deploy/ansible/playbook.yml`, driven from the operator's machine over their
-own ssh. Three plays: host preflight (refuse to trample an existing service —
-webhook port already bound by something else, a foreign cloudflared, not enough
-free disk), host setup (packages, Docker, optionally cloudflared as a systemd
-service, gated on `cloudflared_enabled`), then the container play (directory
-layout under the container uid, secrets into place, rsync of the working copy,
-image build, container run).
+own ssh. It is **provision only**: it never pulls, builds or starts an image. Three plays:
+host preflight (refuse to trample an existing service — webhook port already
+bound by something else, a foreign cloudflared, not enough free disk), host
+setup (packages, Docker, optionally cloudflared as a systemd service, gated on
+`cloudflared_enabled`), then the provision play (directory layout under the
+container uid, secrets into place, the thin updater `/usr/local/sbin/qcr-update`
+and its run spec `/etc/qcr/update.conf`). The containers are the updater's
+(`deploy/qcr-update.sh`); see `deploy/ansible/README.md`.
 
 `inventory.ini` is gitignored and operator-local; `inventory.example.ini` is the
 tracked template. The wizard writes route answers as **host vars on the host
@@ -327,10 +329,13 @@ refuses to deploy.
 
 ## `scripts/deploy.sh`
 
-Three modes. `sync` rsyncs the working copy and recreates the container without
-rebuilding the image; `rebuild` is the same plus a forced image rebuild (the
-deliberate act after a pin bump); `verify` runs the post-deploy checks only.
-`--dry-run` prints the plan and stops.
+Three modes. `provision` runs the playbook (packages, secrets, directories, the
+updater and its run spec; no image). `release <version>` reads CI's deploy
+manifest and runs `tar | ssh vm sudo qcr-update <version>@<digest> ...`: the
+VM pulls the images CI built, by digest; nothing is rsynced, built or
+installed. `verify` runs the post-deploy checks only. `sync`, `dev` and
+`rebuild` are gone and refuse with a pointer to `release`. `--dry-run` prints the
+plan and stops.
 
 **Preflights, all fatal, all before anything runs:**
 
@@ -351,8 +356,9 @@ deliberate act after a pin bump); `verify` runs the post-deploy checks only.
   only in the checkout, or a `[review] profile` (or any base it extends) found
   neither in the config home nor among the checkout's generic examples, is
   refused;
-- `sandbox_src` actually wired in `group_vars`, or the rsync task silently
-  no-ops;
+- for a release, the manifest's pins (the images' labels) held to `config.toml` and
+  `group_vars`, and the VM's run-spec fingerprint held to the one `group_vars`
+  renders ("re-run provision");
 - `ansible-playbook` on this machine and an inventory to run against.
 
 **Then the plan is printed, and the drain advisory runs** (below). Execution

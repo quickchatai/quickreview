@@ -2114,6 +2114,13 @@ export async function main(argv: string[]): Promise<void> {
       process.exitCode = cmdInstall(rest);
       return;
     }
+    case "config": {
+      // Load a config home the way the daemon boots, print every error
+      // (src/configcheck.ts); the VM updater runs it on the staged home.
+      const { cmdConfig } = await import("./configcheck.js");
+      process.exitCode = cmdConfig(rest, json, { defaultHome: () => locateConfig().home });
+      return;
+    }
     case "attach": {
       if (!rest[0]) throw new Error("usage: qcr attach <pr-number|session>");
       return cmdAttach(rest[0]);
@@ -2126,7 +2133,7 @@ export async function main(argv: string[]): Promise<void> {
     }
     default:
       console.log(
-        "usage: qcr <version|onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|takeover <n>|debug-round <n>|release <n>|tui [pr|overseer]|drain <on|off>|message <pr> [--may-post] <text...>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
+        "usage: qcr <version|config check [--config-home <dir>]|onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|takeover <n>|debug-round <n>|release <n>|tui [pr|overseer]|drain <on|off>|message <pr> [--may-post] <text...>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
           "companion <up|down|status|rebuild>|review [start|status|stop|branch|--uncommitted|--diff FILE|-|<PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--json]|live [RUN_ID|DIR] [--lens ID] [--round N] [--follow] [--json]|open [RUN_ID|DIR|FILE.jsonl|scan[:RUN]|pr N [--round R]] [--lens ID] [--write] [--print]|scan <preview|start|status|stop|findings|matches|match|suggestions|stage2 propose|stage2 start|dismiss|units show|units propose|units adjust|units save|login|doctor|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine|shadow-report [--days <n>]|off|on|suppress <id>|unsuppress <id>]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );
