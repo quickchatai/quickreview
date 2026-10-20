@@ -1408,8 +1408,8 @@ export interface OpenVikingConfig {
    * image downloads at BUILD time from `local_embedder_url`, verified against
    * `local_embedder_sha256` there and again by the service at every start.
    * TRIPLE-MIRRORED like `version`: this block == group_vars
-   * (`openviking_local_embedder_*`) == both Dockerfiles' model layer —
-   * `tests/openviking.test.ts`, `tests/docker-daemon.test.ts` and the
+   * (`openviking_local_embedder_*`) == the memory Dockerfile's model layer —
+   * `tests/openviking.test.ts`, `tests/memory-image.test.ts` and the
    * `scripts/deploy.sh` preflight refuse on drift. The file's basename is
    * `<LOCAL_EMBEDDING.model>.gguf`; the image carries the file whatever the
    * provider, so a hosted opt-in can come back to local without a rebuild. */

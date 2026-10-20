@@ -24,12 +24,12 @@ by the session through gated shell scripts.
 
 One container runs the daemon and its sessions; on the compose route the memory
 engine is a second container beside it (`docker-compose.yml`,
-[docker/daemon/README.md](../../docker/daemon/README.md)):
+[docker/README.md](../../docker/README.md)):
 
 | process | started by | what it is |
 |---|---|---|
 | tini (PID 1) | `init: true` in `docker-compose.yml` | reaps orphans and forwards signals; required because the daemon supervises a second long-lived process |
-| the daemon | `docker/entrypoint.sh` daemon mode (the VM route: `docker/daemon/entrypoint.sh`) → `node dist/src/wire.js` | the whole deterministic core (`src/wire.ts` assembles it, `src/daemon.ts` is its stub-wired core) |
+| the daemon | `docker/entrypoint.sh` daemon mode → `node dist/src/wire.js` | the whole deterministic core (`src/wire.ts` assembles it, `src/daemon.ts` is its stub-wired core) |
 | the OpenViking memory server | on the compose route the `memory` service (`docker/memory/`, `[openviking] endpoint = "remote"`); on the VM route a supervised child of the daemon, `src/openviking/supervisor.ts` | reviewer memory, HTTP on `:1933`; the port is deliberately not published anywhere |
 | a tmux server | `docker/entrypoint.sh` daemon mode | holds the LLM sessions; also the jump-in surface for `qcr attach` |
 | one **pi** session per triggered PR, plus one `overseer` | `src/sessions.ts` (via `src/tmux.ts`) | the review conversations; see [sessions.md](sessions.md) |
@@ -37,7 +37,7 @@ engine is a second container beside it (`docker-compose.yml`,
 The daemon publishes exactly one port, `8787`, on loopback by default: `POST
 /webhook` and `GET /health` (`src/webhook.ts`). Your HTTPS ingress goes in
 front of that; the four supported ingress shapes are in
-[docker/daemon/README.md](../../docker/daemon/README.md).
+[docker/README.md](../../docker/README.md).
 
 ## Operator surfaces
 
@@ -219,7 +219,7 @@ All three must be green. `npm run build` emits to `dist/`; the daemon runs
 ```sh
 npm run daemon           # run the daemon locally (needs a secrets dir)
 npm run dev              # build, then tsc --watch in the background + qcr tui
-docker compose up -d           # the container route (pulled images; docker/daemon/README.md)
+docker compose up -d           # the container route (pulled images; docker/README.md)
 ```
 
 `npm run dev` writes the compiler's output to `state/tsc-watch.log` rather

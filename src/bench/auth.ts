@@ -225,18 +225,18 @@ export const BENCH_RETRY = {
   maxAgentDelayMs: 120_000,
 } as const;
 
-/** pi's global settings for the sandbox — what the VM entrypoint provisions
- * (docker/entrypoint.sh, daemon mode): bash-guard registered globally
- * so lens children load it too; pi's built-in extensions switched off
+/** pi's global settings for the sandbox: pi's built-in extensions switched off
  * (src/pibuiltins.ts — the reviewed checkout is exactly the untrusted ground a
  * `.pi/mcp.json` would come from); every project trusted so no modal can stall
- * a run; /opt/quickreview pre-trusted; and the durable retry above. */
-export function benchSettings(root: string): { settings: string; trust: string } {
+ * a run; /opt/quickreview pre-trusted; and the durable retry above. No global
+ * bash-guard (P9.5, P9.12): every route that runs a model hands the guard to
+ * its sessions itself, as an `--extension` or a factory. */
+export function benchSettings(_root: string): { settings: string; trust: string } {
   return {
     settings:
       JSON.stringify(
         {
-          extensions: [join(root, "extensions", "cli", "bash-guard.ts"), ...PI_DISABLED_BUILTINS],
+          extensions: [...PI_DISABLED_BUILTINS],
           defaultProjectTrust: "always",
           retry: BENCH_RETRY,
         },

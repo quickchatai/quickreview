@@ -12,16 +12,15 @@
 # own children, in its own container. With `endpoint = "remote"` the daemon
 # only probes a server somebody else runs, and THIS image is that somebody:
 # entrypoint.sh renders ov.conf, runs the embedder migration's `prepare`, and
-# provisions the users (the steps docker/daemon/entrypoint.sh runs in the
-# daemon's container), then execs src/openviking/sidecar-main.ts, which
+# provisions the users, then execs src/openviking/sidecar-main.ts, which
 # supervises the server and the embedder and drives the re-embed.
 #
 # The four OpenViking pins of CLAUDE.md rule 7 move here intact (the vendored
 # extension's base commit rides the repo, not an image). The ARG defaults below
 # are a MIRROR of config.toml [openviking] and deploy/ansible/group_vars/
 # all.yml: tests/memory-image.test.ts fails the moment one drifts, the same
-# discipline tests/docker-daemon.test.ts holds the daemon image to. Bump a pin
-# deliberately - config.toml + group_vars + BOTH Dockerfiles together, never
+# discipline as the release image's pins (tests/release-image.test.ts). Bump a
+# pin deliberately - config.toml + group_vars + this Dockerfile together, never
 # one alone - and never change the embedder under a live store without the
 # re-embed migration (docs/memory-embeddings.md).
 ARG NODE_MAJOR=22
@@ -134,8 +133,8 @@ COPY config.example.toml ./config.example.toml
 COPY docker/memory/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod -R a+rX,go-w /opt/qcr && chmod 0755 /usr/local/bin/entrypoint.sh
 
-# The container user. 1001 matches the daemon image, so a store the daemon
-# container wrote opens here without a chown. --non-unique because 24.04
+# The container user. 1001 is the uid the daemon-era stores were
+# written under, so one opens here without a chown. --non-unique because 24.04
 # already ships an `ubuntu` user at 1000; HOME is set EXPLICITLY.
 ARG REVIEW_UID=1001
 RUN useradd --create-home --non-unique --uid ${REVIEW_UID} review

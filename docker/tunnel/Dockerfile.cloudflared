@@ -11,7 +11,7 @@
 # The COPY path and the pin are both verified AT BUILD TIME (`cloudflared
 # --version` must print the pinned version): if upstream ever moves the binary
 # or the tag resolves to something else, the build fails loudly here instead of
-# the sidecar silently never starting. Same discipline as docker/daemon's
+# the sidecar silently never starting. Same discipline as the memory image's
 # "failed verification" check.
 #
 # Bumping the pin is a deliberate act (tests/tunnel-sidecar.test.ts refuses a

@@ -307,9 +307,9 @@ embedding_key_file = "openai_embeddings_api_key"
 # The local embedder's MODEL FILE — a rule-7 pin like `version`: the image
 # downloads the GGUF from `local_embedder_url` at BUILD time and refuses it
 # unless its sha256 matches; the service re-checks the hash at every start.
-# TRIPLE MIRROR: these == group_vars openviking_local_embedder_* == both
-# Dockerfiles' model layer (tests/openviking.test.ts,
-# tests/docker-daemon.test.ts and the scripts/deploy.sh preflight refuse on
+# TRIPLE MIRROR: these == group_vars openviking_local_embedder_* == the
+# memory Dockerfile's model layer (tests/openviking.test.ts,
+# tests/memory-image.test.ts and the scripts/deploy.sh preflight refuse on
 # drift). A changed pin needs `scripts/deploy.sh rebuild`.
 local_embedder_file = "/opt/openviking/models/bge-small-en-v1.5-f16.gguf"
 local_embedder_url = "https://huggingface.co/CompendiumLabs/bge-small-en-v1.5-gguf/resolve/d32f8c040ea3b516330eeb75b72bcc2d3a780ab7/bge-small-en-v1.5-f16.gguf"

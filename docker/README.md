@@ -16,12 +16,7 @@ for a managed VM; both run the same daemon.
 > to drive, so it prints the exact commands for your host instead and you run
 > them there. It composes this path; it does not replace it, and drift between
 > the two is a bug. Everything here stays true for a manual run. See
-> [../../docs/onboarding.md](../../docs/onboarding.md).
-
-This directory's `Dockerfile` and `entrypoint.sh` are not part of that stack.
-They were the Ansible route's non-templated image; the VM now runs the release
-image (`deploy/ansible/`), and they stay only until the plain-Docker route's
-tests are retargeted at the release and memory images.
+> [../docs/onboarding.md](../docs/onboarding.md).
 
 ## Quick start
 
@@ -96,7 +91,7 @@ embedding model.
     into the memory container as `QCR_OPENVIKING_EMBEDDING_*` in the project
     `.env`). By default the memory engine embeds locally and nothing but the
     model call leaves the machine
-    ([docs/memory-embeddings.md](../../docs/memory-embeddings.md)).
+    ([docs/memory-embeddings.md](../docs/memory-embeddings.md)).
   - `openviking_root_key`, `openviking_reviewer_key` — optional; without the
     root key the memory engine degrades loudly to `auth_mode=dev` (no
     per-user confinement) rather than blocking the boot.
@@ -202,7 +197,7 @@ values `group_vars` carries — see `docker/memory/entrypoint.sh`'s header block
 ## Developing on the stack
 
 A clone is for working on QuickReview itself, not for running it; the clone
-route is in [CONTRIBUTING.md](../../CONTRIBUTING.md). To run locally built
+route is in [CONTRIBUTING.md](../CONTRIBUTING.md). To run locally built
 images through this file, build them and name them:
 `docker build -f docker/Dockerfile -t ghcr.io/quickchatai/quickreview:dev .` and
 `docker build -f docker/memory/Dockerfile -t ghcr.io/quickchatai/quickreview-memory:dev .`,

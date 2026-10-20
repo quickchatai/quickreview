@@ -43,12 +43,6 @@ describe("reviewer context stub", () => {
     expect(read("deploy/ansible/playbook.yml")).not.toContain('AGENTS.override.md"');
   });
 
-  it("the plain-Docker path does NOT install it — there the sandbox root is the operator's checkout", () => {
-    const ep = read("docker/daemon/entrypoint.sh");
-    expect(ep).not.toMatch(/install[^\n]*AGENTS\.override\.md/);
-    expect(ep).toMatch(/NO reviewer context stub on this path/);
-  });
-
   it("the bench image reads the same stub production does", () => {
     // bench.sh builds from an explicit allowlist: the stub must be ON it, or
     // the COPY below fails the build.

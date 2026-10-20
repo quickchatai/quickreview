@@ -7,7 +7,7 @@
 // the route's argv (`--no-context-files`), cwd, ancestors and agentDir decide
 // what rides each turn. The routes differ on purpose: the VM bot, the bench
 // image, the clone route (from the run's own dir outside the checkout, D34)
-// and their lenses load the reviewer stub; the docker daemon loads the full
+// and their lenses load the reviewer stub; the companion loads the full
 // AGENTS.md; the bench judge, the onboarding session and the scan leaves
 // (-nc, on the host and in the container alike) load nothing.
 //
@@ -468,19 +468,15 @@ beforeAll(async () => {
   before = { root: snapshot(ROOT), repo: snapshot(reviewedRepo) };
 
   const updater = read("deploy/qcr-update.sh");
-  const daemonEntrypoint = read("docker/daemon/entrypoint.sh");
-  const daemonDockerfile = read("docker/daemon/Dockerfile");
   const benchDockerfile = read("bench/aacr/Dockerfile");
   const companionDockerfile = read("docker/companion/Dockerfile");
   const releaseDockerfile = read("docker/Dockerfile");
 
-  // -- the tmux-hosted bot: the VM (the release image in daemon mode) and docker daemon
+  // -- the tmux-hosted bot: the VM (the release image in daemon mode)
   const tmuxRun = await captureTmuxSession();
-  ran.push("vm-bot", "daemon-bot");
+  ran.push("vm-bot");
   const vmRoot = [...releaseDockerfile.matchAll(/^WORKDIR\s+(\S+)/gm)].pop()![1]!;
-  const daemonRoot = mustMatch(daemonEntrypoint, /^SANDBOX=(\S+)/m, "daemon entrypoint SANDBOX");
   expect(vmRoot).toBe("/opt/qcr");
-  expect(mustMatch(daemonDockerfile, /^WORKDIR\s+(\S+)/m, "daemon WORKDIR")).toBe(daemonRoot);
   // tmux panes inherit the tmux server's environment, so what the pane's pi
   // sees as HOME / agentDir is the container's, unless the spawn pushes one.
   expect(tmuxRun.paneEnv.filter((e) => /^(HOME|PI_CODING_AGENT_DIR)=/.test(e))).toEqual([]);
@@ -488,11 +484,6 @@ beforeAll(async () => {
   // volume is mounted over its .pi (qcr-update.sh: …/pihome:/home/qcr/.pi).
   const vmHome = mustMatch(releaseDockerfile, /^ENV HOME=(\S+)/m, "release HOME");
   const vmAgentDir = join(vmHome, ".pi", "agent");
-  const daemonAgentDir = join(
-    mustMatch(daemonDockerfile, /^ENV HOME=(\S+)/m, "daemon HOME"),
-    ".pi",
-    "agent",
-  );
   expect(updater).toContain(`:${vmHome}/.pi"`);
   // The playbook's app root is the image's: the cwd the engine and the tmux
   // panes start from.
@@ -501,13 +492,8 @@ beforeAll(async () => {
   ).toBe(vmRoot);
 
   // The VM tree is the release image (the stub COPY'd into the app dir, which
-  // the daemon mode only re-installs if it is missing); the daemon's is the
-  // operator's own checkout plus whatever ITS entrypoint installs (nothing, by
-  // design).
+  // the daemon mode only re-installs if it is missing).
   const vmFs = dockerfileContext(releaseDockerfile);
-  const daemonFs = checkoutFs(daemonRoot);
-  for (const [src, dest] of entrypointInstalls(daemonEntrypoint))
-    daemonFs.set(join(daemonRoot, dest), src);
 
   observed.routes["vm-bot"] = row(vmFs, {
     cwd: at(tmuxRun.cwd, tmuxRun.root, vmRoot),
@@ -516,13 +502,6 @@ beforeAll(async () => {
     note: "The reviewer stub, baked into the release image's app dir (docker/Dockerfile) and re-installed 0444 by the daemon mode if missing; the dev build's rsync keeps its own anchored exclude.",
   });
   observed.routes["vm-lens"] = { ...observed.routes["vm-bot"], note: LENS_NOTE };
-  observed.routes["daemon-bot"] = row(daemonFs, {
-    cwd: at(tmuxRun.cwd, tmuxRun.root, daemonRoot),
-    agentDir: daemonAgentDir,
-    argv: tmuxRun.argv,
-    note: "The full AGENTS.md: the entrypoint refuses to install the stub because this root is the operator's own checkout.",
-  });
-  observed.routes["daemon-lens"] = { ...observed.routes["daemon-bot"], note: LENS_NOTE };
 
   // -- bench: the same one-shot runner, in the image's tree -----------------------
   const benchRoot = mustMatch(
@@ -793,9 +772,8 @@ describe("the context-file inventory", () => {
     }
     // The SDK host hands the stub over as data, with discovery off.
     for (const r of ["sdk", "sdk-lens"]) expect(routes[r]!.contextFiles, r).toBe("injected");
-    // The full guide: the docker daemon and the companion.
-    for (const r of ["daemon-bot", "daemon-lens", "companion"])
-      expect(files(r), r).toEqual(["AGENTS.md"]);
+    // The full guide: the companion.
+    expect(files("companion")).toEqual(["AGENTS.md"]);
     // Nothing: the judge, the onboarding session, the scan leaves.
     for (const r of ["bench-judge", "onboard", "scan-leaf-container", "scan-leaf-host"])
       expect(files(r), r).toEqual([]);
@@ -887,7 +865,6 @@ describe("the one install site", () => {
       "bench/aacr/bench.sh", // the build's allowlist
       "docker/Dockerfile", // COPY into the release image's cwd
       "docker/Dockerfile.dockerignore", // the build's allowlist
-      "docker/daemon/entrypoint.sh", // a comment: it refuses to install
       "docker/entrypoint.sh", // the release image's daemon mode: keeps the baked 0444 stub, in its own /opt/qcr
       "extensions/bash-guard.ts", // a policy surface no session may write
       "extensions/debug-round.ts", // a debug round's lens passes carry the stub the cwd holds, as data; it writes none
@@ -950,14 +927,7 @@ describe("the one install site", () => {
 describe("after a fake-pi run of each route", () => {
   it("ran every captured route", () => {
     expect(ran.sort()).toEqual(
-      [
-        "bench",
-        "clone-review",
-        "daemon-bot",
-        "scan-leaf-container",
-        "scan-leaf-host",
-        "vm-bot",
-      ].sort(),
+      ["bench", "clone-review", "scan-leaf-container", "scan-leaf-host", "vm-bot"].sort(),
     );
   });
 

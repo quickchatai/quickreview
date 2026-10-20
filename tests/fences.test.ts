@@ -284,7 +284,7 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
    * The pi pin is written in several places, and any one can drift while the
    * suite stays green unless every spelling is compared (OpenViking's pins
    * have the same check in tests/openviking.test.ts).
-   * `tests/docker-daemon.test.ts` pins config.toml ↔ group_vars ↔ Dockerfile;
+   * `tests/release-image.test.ts` pins config.toml ↔ group_vars ↔ Dockerfile;
    * this file pins the others, among them `package.json`'s `pi` block
    * (`scripts/deploy.sh` only tells the operator to reconcile it by hand) and
    * the version quoted in the operating rulebook's rule 7.
@@ -338,8 +338,8 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
     "group_vars pi_version": /^pi_version:\s*"([^"]+)"/m.exec(
       read("deploy/ansible/group_vars/all.yml"),
     )?.[1],
-    "docker/daemon/Dockerfile ARG PI_VERSION": /^ARG PI_VERSION=(\S+)/m.exec(
-      read("docker/daemon/Dockerfile"),
+    "docker/Dockerfile ARG PI_VERSION": /^ARG PI_VERSION=(\S+)/m.exec(
+      read("docker/Dockerfile"),
     )?.[1],
   });
 

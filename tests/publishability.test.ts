@@ -374,7 +374,7 @@ const ALLOWLIST: AllowlistEntry[] = [
       "the install and bring-up commands name the release image under the publishing org's registry namespace (ghcr.io/quickchatai/...)",
   },
   {
-    path: "docker/daemon/README.md",
+    path: "docker/README.md",
     tokens: ["quickchat"],
     reason:
       "the compose stack's quick start names the release and memory images under the publishing org's registry namespace (ghcr.io/quickchatai/...)",

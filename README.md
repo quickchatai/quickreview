@@ -326,7 +326,7 @@ Both answers are first-class.
 - **This computer** — the whole system in Docker on the machine you are sitting
   at: the released daemon and memory images, pulled, never built. No server to
   own, and it reviews only while that machine is awake
-  ([docker/daemon/README.md](docker/daemon/README.md)).
+  ([docker/README.md](docker/README.md)).
 
 Switching later costs you none of your answers: re-run the topology step, and
 the repo, the App, the labels, the keys and your config are all kept.
@@ -335,7 +335,7 @@ the repo, the App, the labels, the keys and your config are all kept.
 
 GitHub needs an HTTPS URL to deliver to. Four shapes, chosen during setup, with
 their trade-offs stated in full in
-[docker/daemon/README.md](docker/daemon/README.md):
+[docker/README.md](docker/README.md):
 
 | shape | what you get | what it costs |
 |---|---|---|
@@ -449,7 +449,7 @@ can be shown false. Please try.
 - [docs/onboarding.md](docs/onboarding.md) — the guided setup, step by step
 - [docs/github-app-setup.md](docs/github-app-setup.md) — what the GitHub App is, and how to register it by hand
 - [docs/llm-setup.md](docs/llm-setup.md) — the two LLM credential routes
-- [docker/daemon/README.md](docker/daemon/README.md) — the compose stack: the daemon and memory images, ingress shapes, version pin
+- [docker/README.md](docker/README.md) — the compose stack: the daemon and memory images, ingress shapes, version pin
 - [deploy/ansible/README.md](deploy/ansible/README.md) — the VM/server route: provisioning, deploy, verification
 - [docs/profiles.md](docs/profiles.md) — repo profiles: addenda packs, heuristics, per-lens tuning
 - [docs/host-wrapper.md](docs/host-wrapper.md) — the `qcr` host wrapper the release image installs: mounts, token handoff, update
@@ -492,7 +492,7 @@ QCR_CONFIG_HOME=$HOME/.config/qcr/default
 QCR_SECRETS_DIR=$HOME/.config/qcr/default/secrets
 EOF
 docker compose pull --ignore-buildable
-docker compose up -d                  # laptop route (docker/daemon/README.md)
+docker compose up -d                  # laptop route (docker/README.md)
 curl -s http://127.0.0.1:8787/health
 
 # then: point your HTTPS ingress at the webhook port, install the App on your
@@ -502,7 +502,7 @@ curl -s http://127.0.0.1:8787/health
 Each piece has its own page: the GitHub App
 ([docs/github-app-setup.md](docs/github-app-setup.md)), LLM credentials
 ([docs/llm-setup.md](docs/llm-setup.md)), ingress and sidecars
-([docker/daemon/README.md](docker/daemon/README.md)), and a server instead of
+([docker/README.md](docker/README.md)), and a server instead of
 a laptop ([deploy/ansible/README.md](deploy/ansible/README.md), with
 `scripts/deploy.sh sync|rebuild|verify`). Slack is optional, any time:
 `npm run slack:setup` (from a clone: the image does not carry it yet). **Memory keys**: the server's root key is any 32

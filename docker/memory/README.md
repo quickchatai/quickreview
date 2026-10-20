@@ -11,11 +11,10 @@ docker build -f docker/memory/Dockerfile -t qcr-memory .   # from the repo root
 
 ## What it does at boot
 
-`entrypoint.sh` runs the memory half of `docker/daemon/entrypoint.sh`, then
+`entrypoint.sh` renders, migrates and provisions the memory store, then
 execs `src/openviking/sidecar-main.ts`:
 
-1. renders `ov.conf` (`scripts/openviking-ov-conf.mjs`, the same document the
-   daemon entrypoints render; `tests/memory-image.test.ts` holds them equal);
+1. renders `ov.conf` (`scripts/openviking-ov-conf.mjs`; `tests/memory-image.test.ts` runs it);
 2. `openviking-reembed.mjs prepare`: a store built under another embedder has
    its vector collection moved ASIDE (never deleted) and is journalled for
    re-embedding;

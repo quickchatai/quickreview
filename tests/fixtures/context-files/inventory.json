@@ -25,30 +25,6 @@
       ],
       "note": "A lens session runs in its parent's cwd with the parent's environment, so it loads what the parent loads."
     },
-    "daemon-bot": {
-      "cwd": "/opt/quickreview/sandbox",
-      "agentDir": "/home/review/.pi/agent",
-      "contextFiles": "default",
-      "effective": [
-        {
-          "path": "/opt/quickreview/sandbox/AGENTS.md",
-          "source": "AGENTS.md"
-        }
-      ],
-      "note": "The full AGENTS.md: the entrypoint refuses to install the stub because this root is the operator's own checkout."
-    },
-    "daemon-lens": {
-      "cwd": "/opt/quickreview/sandbox",
-      "agentDir": "/home/review/.pi/agent",
-      "contextFiles": "default",
-      "effective": [
-        {
-          "path": "/opt/quickreview/sandbox/AGENTS.md",
-          "source": "AGENTS.md"
-        }
-      ],
-      "note": "A lens session runs in its parent's cwd with the parent's environment, so it loads what the parent loads."
-    },
     "bench": {
       "cwd": "/opt/quickreview/sandbox",
       "agentDir": "/tmp/pi-agent",

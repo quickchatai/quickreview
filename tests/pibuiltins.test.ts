@@ -41,7 +41,7 @@ function runMerge(file: string, home: string, bootstrap = ""): Record<string, un
   const script = bootstrap + "\n" + heredoc(file).split(VM_GUARD).join(guard);
   execFileSync(process.execPath, ["-"], {
     input: script,
-    env: { PATH: process.env.PATH ?? "", HOME: home },
+    env: { PATH: process.env.PATH ?? "", HOME: home, QCR_PI_TRUST_DIR: "/opt/quickreview" },
     stdio: ["pipe", "pipe", "pipe"],
   });
   return JSON.parse(readFileSync(join(home, ".pi", "agent", "settings.json"), "utf8")) as Record<
@@ -62,11 +62,7 @@ describe("pi built-ins are switched off wherever we provision pi settings", () =
     ]);
   });
 
-  for (const file of [
-    "docker/daemon/entrypoint.sh",
-    "docker/companion/entrypoint.sh",
-    "docker/entrypoint.sh",
-  ]) {
+  for (const file of ["docker/companion/entrypoint.sh", "docker/entrypoint.sh"]) {
     it(`${file}: the merge writes every disable, drops a stale +builtin:mcp, and is idempotent`, () => {
       const home = mkdtempSync(join(tmpdir(), "qcr-pibuiltins-"));
       tmps.push(home);
@@ -94,9 +90,9 @@ describe("pi built-ins are switched off wherever we provision pi settings", () =
     });
   }
 
-  it("the bench sandbox's settings carry the same list after bash-guard", () => {
+  it("the bench sandbox's settings carry the same list and no global guard (P9.12)", () => {
     const s = JSON.parse(benchSettings("/r").settings) as { extensions: string[] };
-    expect(s.extensions).toEqual(["/r/extensions/cli/bash-guard.ts", ...PI_DISABLED_BUILTINS]);
+    expect(s.extensions).toEqual([...PI_DISABLED_BUILTINS]);
   });
 
   it("the bench sandbox outlasts a provider overload window: durable agent-level retry", () => {
@@ -117,7 +113,7 @@ describe("pi built-ins are switched off wherever we provision pi settings", () =
 });
 
 it.each(
-  ["docker/daemon/entrypoint.sh"].flatMap((file) =>
+  ["docker/entrypoint.sh"].flatMap((file) =>
     ["settings.json", "trust.json"].map((name) => [file, name] as const),
   ),
 )("preserves %s / %s after a failed JSON replacement", (file, name) => {

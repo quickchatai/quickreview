@@ -9,7 +9,7 @@
 //
 // The mirror tests for the pin itself (lockfile = config.toml = group_vars =
 // Dockerfile ARG) are in tests/fences.test.ts [T12] and
-// tests/docker-daemon.test.ts; this file adds the two installed copies.
+// tests/release-image.test.ts; this file adds the two installed copies.
 import { spawn } from "node:child_process";
 import {
   existsSync,

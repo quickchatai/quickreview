@@ -64,7 +64,7 @@
 #
 # The daemon is the live bot and keeps the guard, the pinned-CLI check and the
 # reviewer context stub it has always had (the VM's retired
-# deploy/ansible/templates/entrypoint.sh.j2 and docker/daemon/entrypoint.sh).
+# deploy/ansible/templates/entrypoint.sh.j2).
 # The VM runs this image since the P7.10 cutover: deploy/ansible/playbook.yml.
 #
 # Every mode that reaches pi needs a writable <root>/state and a writable HOME

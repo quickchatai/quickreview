@@ -440,9 +440,11 @@ describe("the bench keeps its placement", () => {
         join(realpathSync(b.root), ".pi", "agents", `${lens}.md`),
       );
     }
-    // the guard is loaded by the session explicitly and by the child from the settings
+    // the guard is loaded by the session explicitly; the sandbox's global
+    // settings register none (P9.12), so a settings-only child loads nothing
+    // (lens passes get the guard from the lens tool's factory)
     expect(b.main.extensions.map((e) => basename(e))).toContain("bash-guard.ts");
-    expect(b.child!.extensions.map((e) => basename(e))).toEqual(["bash-guard.ts"]);
+    expect(b.child!.extensions.map((e) => basename(e))).toEqual([]);
     expect(b.main.env["QCR_SUBAGENT_SCOPE"]).toBe("project");
   }, 60_000);
 
