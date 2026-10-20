@@ -512,10 +512,9 @@ export interface ReviewConfig {
    * which lenses run or what they are asked; each removes serial time.
    *
    * `wide_lens_fanout`: a batched `tasks:[…]` lens launch runs as wide as
-   * `[pi] subagent_max_concurrency`, not native pi's in-call four
-   * (extensions/subagents.ts, `QCR_SUBAGENT_WIDE_FANOUT`).
-   * Deprecated: it steers only the native glue, and is a no-op on an SDK
-   * session (`[engine] runtime = sdk`), where our lens tool sets its own width. */
+   * `[engine] lens_max_concurrency`.
+   * Deprecated: it steered only the retired native glue, and is a no-op on an
+   * SDK session, where our lens tool sets its own width. */
   wide_lens_fanout: boolean;
   /** `task_files`: the daemon (or the bench) writes each plan row's complete
    * lens task to a file (src/passtasks.ts), so the session launches a lens
@@ -567,10 +566,10 @@ export interface ReviewConfig {
   /** `context_pack` (src/contextpack.ts): `"pack-first"` ⇒ the
    * daemon writes the round's CONTEXT PACK (the diff, the change since the
    * last review, the most-changed files' full text) beside its task files, and
-   * every lens child carries it at the very start of its prompt, ahead of its
-   * lens instructions (extensions/leaf-cache.ts) — one shared, cached prefix
+   * every lens session carries it at the very start of its prompt, ahead of its
+   * lens instructions (src/engine/lens/leaf-cache.ts) — one shared, cached prefix
    * instead of every lens re-reading the same text uncached. `"off"` ⇒ no
-   * pack. Takes effect only with `[pi] subagent_cache_group` > 0 (an unshared
+   * pack. Takes effect only with `[engine] lens_cache_group` > 0 (an unshared
    * pack would cost more, not less). On by default: measured ~40% cheaper,
    * with verdicts and recall unchanged. */
   context_pack: "off" | "pack-first";
@@ -1118,15 +1117,22 @@ export const DEFAULT_PASS_TIERS: Readonly<Record<string, PassTier>> = Object.fre
   "pass-behaviour-delta": "sol-high",
 });
 
-/** `[pi] subagent_pass_deadline_min` when the file does not set it: a
+/** `[engine] lens_pass_deadline_min` when the file does not set it: a
  * healthy pass takes 20-100 s and the slowest about 4 min, so 8 min only
  * ever cuts a stalled one. */
-export const DEFAULT_SUBAGENT_PASS_DEADLINE_MIN = 8;
+export const DEFAULT_LENS_PASS_DEADLINE_MIN = 8;
 
-/** `[pi] subagent_cache_stagger_ms`'s default — every reader's fallback too.
- * The glue extension keeps its own copy (`DEFAULT_CACHE_STAGGER_MS`, it
- * imports nothing from the daemon), pinned equal by a test. */
-export const DEFAULT_SUBAGENT_CACHE_STAGGER_MS = 2500;
+/** `[engine] lens_cache_stagger_ms`'s default — every reader's fallback too
+ * (`src/engine/lens/env.ts` keeps the env reader's copy, pinned equal by a
+ * test). */
+export const DEFAULT_LENS_CACHE_STAGGER_MS = 2500;
+
+/** `[engine] lens_max_concurrency` when the file does not set it: the
+ * companion's desktop number. */
+export const DEFAULT_LENS_MAX_CONCURRENCY = 4;
+
+/** `[engine] lens_cache_group` when the file does not set it. */
+export const DEFAULT_LENS_CACHE_GROUP = 5;
 
 /** What hosts a pi session (`[engine] runtime`): the pi SDK, in-process
  * (src/engine/sdkruntime.ts), the one adapter. The `proc` runtime, pi as a
@@ -1135,32 +1141,53 @@ export const DEFAULT_SUBAGENT_CACHE_STAGGER_MS = 2500;
 export type EngineRuntimeKind = "sdk";
 export const ENGINE_RUNTIME_KINDS: readonly EngineRuntimeKind[] = ["sdk"];
 
-/** Who launches the lenses (`[pi] lens_runtime`). `native` is pi's own
- * subagent glue (the tmux bot's); `engine` is our lens
- * tool and discovery wave (the default, on the SDK runtime). */
-export type LensRuntimeKind = "native" | "engine";
-export const LENS_RUNTIME_KINDS: readonly LensRuntimeKind[] = ["native", "engine"];
+/** Who launches the lenses (`[pi] lens_runtime`): `engine`, our lens tool and
+ * discovery wave, the only kind. pi's own subagent glue (`native`) is retired
+ * and refused (`parsePiLensRuntime`). */
+export type LensRuntimeKind = "engine";
+export const LENS_RUNTIME_KINDS: readonly LensRuntimeKind[] = ["engine"];
 
-/** `[engine]`: which runtime hosts pi sessions on the review, bench and scan
- * routes. The daemon's tmux hosting does not read it (nor `[pi] lens_runtime`
- * or `engine_wave`): the bot's sessions stay native tmux pi. */
+/** `[engine]`: which runtime hosts pi sessions, and how its lens tool runs the
+ * passes (the width, the shared prompt cache and the per-pass deadline that
+ * `[pi] subagent_*` used to carry). */
 export interface EngineConfig {
   runtime: EngineRuntimeKind;
+  /** Process-wide cap on a round's concurrently running lens sessions
+   * (rides the lens tool's env as QCR_SUBAGENT_MAX_CONCURRENCY). */
+  lens_max_concurrency: number;
+  /** Lens sessions share a provider PROMPT CACHE in groups of this many (one
+   * pi session id, the provider's cache key, per group); 0 ⇒ a random id per
+   * session, which gets no cache hits. */
+  lens_cache_group: number;
+  /** How long a group's later sessions wait after its first one started, so
+   * the cache is written before they ask. */
+  lens_cache_stagger_ms: number;
+  /** Per-pass deadline in minutes: a pass still running at the deadline is
+   * aborted and retried ONCE with a fresh deadline, and a second timeout fails
+   * that pass alone. 0 ⇒ no deadline. */
+  lens_pass_deadline_min: number;
 }
 
-export const ENGINE_DEFAULTS: EngineConfig = { runtime: "sdk" };
+export const ENGINE_DEFAULTS: EngineConfig = {
+  runtime: "sdk",
+  lens_max_concurrency: DEFAULT_LENS_MAX_CONCURRENCY,
+  lens_cache_group: DEFAULT_LENS_CACHE_GROUP,
+  lens_cache_stagger_ms: DEFAULT_LENS_CACHE_STAGGER_MS,
+  lens_pass_deadline_min: DEFAULT_LENS_PASS_DEADLINE_MIN,
+};
 
-/** The `[pi]` lens defaults: the engine's lens tool and planned wave, with the
- * wave following the lens runtime the config names: `lens_runtime = "native"`
- * alone must not default the wave on (the wave needs the engine's lens tool). */
-function piLensDefaults(pi: Record<string, unknown>): {
-  lens_runtime: LensRuntimeKind;
-  engine_wave: boolean;
-} {
-  return pi.lens_runtime === "native"
-    ? { lens_runtime: "engine", engine_wave: false }
-    : { lens_runtime: "engine", engine_wave: true };
+/** The `[pi]` lens default: the engine's planned wave is on. */
+function piLensDefaults(): { lens_runtime: LensRuntimeKind; engine_wave: boolean } {
+  return { lens_runtime: "engine", engine_wave: true };
 }
+
+/** The `[pi]` keys that moved to `[engine]` and are refused where they stand. */
+const RETIRED_PI_KEYS: Readonly<Record<string, string>> = {
+  subagent_max_concurrency: "lens_max_concurrency",
+  subagent_cache_group: "lens_cache_group",
+  subagent_cache_stagger_ms: "lens_cache_stagger_ms",
+  subagent_pass_deadline_min: "lens_pass_deadline_min",
+};
 
 /** Refuse a value outside a closed set. A typo must not silently become the
  * default runtime. */
@@ -1178,10 +1205,38 @@ function parseEngine(raw: Record<string, unknown>): EngineConfig {
     throw new Error(
       'config.toml [engine] runtime = "proc" is retired: pi runs in-process on the SDK (the one adapter); delete the key or set it to "sdk"',
     );
-  return { runtime: oneOf("[engine] runtime", e.runtime, ENGINE_RUNTIME_KINDS) };
+  const runtime = oneOf("[engine] runtime", e.runtime, ENGINE_RUNTIME_KINDS);
+  const whole = (key: keyof EngineConfig, min: number, max: number): number => {
+    const v = e[key];
+    if (typeof v !== "number" || !Number.isInteger(v) || v < min || v > max)
+      throw new Error(
+        `config.toml [engine] ${key} must be a whole number ${min}-${max} (got ${JSON.stringify(v)})`,
+      );
+    return v;
+  };
+  return {
+    runtime,
+    lens_max_concurrency: whole("lens_max_concurrency", 1, 64),
+    lens_cache_group: whole("lens_cache_group", 0, 1000),
+    lens_cache_stagger_ms: whole("lens_cache_stagger_ms", 0, 600_000),
+    lens_pass_deadline_min: whole("lens_pass_deadline_min", 0, 240),
+  };
+}
+
+/** Refuse the `[pi]` keys the lens settings left behind, naming where they went. */
+function refuseRetiredPiKeys(pi: Record<string, unknown>): void {
+  for (const [key, to] of Object.entries(RETIRED_PI_KEYS))
+    if (key in pi)
+      throw new Error(
+        `config.toml [pi] ${key} is retired with pi's native subagent glue: delete it, and set [engine] ${to} if the default does not suit`,
+      );
 }
 
 function parsePiLensRuntime<T extends { lens_runtime: unknown; engine_wave: unknown }>(pi: T): T {
+  if (pi.lens_runtime === "native")
+    throw new Error(
+      'config.toml [pi] lens_runtime = "native" is retired: pi\'s own subagent glue is gone and the engine\'s lens tool is the only one; delete the key or set it to "engine"',
+    );
   oneOf("[pi] lens_runtime", pi.lens_runtime, LENS_RUNTIME_KINDS);
   if (typeof pi.engine_wave !== "boolean")
     throw new Error(
@@ -1191,18 +1246,6 @@ function parsePiLensRuntime<T extends { lens_runtime: unknown; engine_wave: unkn
   // session's own launch while the config says the engine's.
   if (pi.engine_wave && pi.lens_runtime !== "engine")
     throw new Error('config.toml [pi] engine_wave = true needs lens_runtime = "engine"');
-  return pi;
-}
-
-/** Refuse a per-pass deadline that is not a number of minutes in 0..240
- * (0 = off). A typo must not silently become "no deadline". */
-function parsePiPassDeadline<T extends { subagent_pass_deadline_min: unknown }>(pi: T): T {
-  const v = pi.subagent_pass_deadline_min;
-  if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 240) {
-    throw new Error(
-      `config.toml [pi] subagent_pass_deadline_min must be a number of minutes 0-240 (0 = off; got ${JSON.stringify(v)})`,
-    );
-  }
   return pi;
 }
 
@@ -2068,32 +2111,8 @@ export interface Config {
     package: string;
     version: string;
     session_dir: string;
-    /** Process-wide subagent fan-out cap the glue extension enforces per
-     * session (rides the command line as QCR_SUBAGENT_MAX_CONCURRENCY).
-     * Default 4 — the companion/desktop number; the VM config sets 6. */
-    subagent_max_concurrency: number;
-    /** Lens children share a provider PROMPT CACHE in groups of this
-     * many (rides the command line as QCR_SUBAGENT_CACHE_GROUP). Each group's
-     * children run under one pi session id — the provider's cache key — instead
-     * of a random one per child, so an identical prompt prefix is read
-     * from cache by every child after the first (per-child ids get no cache
-     * hits at all). Groups, not one key per round, keep each key's request
-     * rate low. 0 ⇒ a random id per child. */
-    subagent_cache_group: number;
-    /** How long a group's later children wait after its first one started, so
-     * the cache is written before they ask (QCR_SUBAGENT_CACHE_STAGGER_MS;
-     * probe: simultaneous requests both missed, one 2 s later hit). */
-    subagent_cache_stagger_ms: number;
-    /** Per-pass deadline in minutes for a review session's lens children
-     * (rides the command line as QCR_SUBAGENT_PASS_DEADLINE_MIN). The glue
-     * aborts a pass still running at the deadline, retries it ONCE with a
-     * fresh deadline, and a second timeout returns a failed result for that
-     * pass alone. 0 ⇒ no deadline. */
-    subagent_pass_deadline_min: number;
-    /** Who launches a round's lenses: `native` (pi's own subagent glue) or
-     * `engine` (our lens tool and discovery wave, on an SDK session; the
-     * default under `[engine] runtime = sdk`). Only the SDK routes read it; the
-     * tmux bot is always native. */
+    /** Who launches a round's lenses: `engine`, our lens tool and discovery
+     * wave on an SDK session, the only kind. */
     lens_runtime: LensRuntimeKind;
     /** `lens_runtime = engine` only: the round's engine starts the planned
      * discovery wave itself at round start (rule 9) and the main session joins
@@ -2943,33 +2962,15 @@ export function parseConfig(toml: string): Config {
     models: parseModels(req(raw, "models") as Record<string, any>, REVIEW_PRESETS[preset].effort),
     engine,
     pi: parsePiLensRuntime(
-      parsePiPassDeadline({
-        subagent_max_concurrency: 4,
-        subagent_cache_group: 5,
-        subagent_cache_stagger_ms: DEFAULT_SUBAGENT_CACHE_STAGGER_MS,
-        subagent_pass_deadline_min: DEFAULT_SUBAGENT_PASS_DEADLINE_MIN,
-        ...piLensDefaults(req(raw, "pi") as Record<string, unknown>),
-        ...(req(raw, "pi") as Omit<
-          Config["pi"],
-          | "subagent_max_concurrency"
-          | "subagent_cache_group"
-          | "subagent_cache_stagger_ms"
-          | "subagent_pass_deadline_min"
-          | "lens_runtime"
-          | "engine_wave"
-        > &
-          Partial<
-            Pick<
-              Config["pi"],
-              | "subagent_max_concurrency"
-              | "subagent_cache_group"
-              | "subagent_cache_stagger_ms"
-              | "subagent_pass_deadline_min"
-              | "lens_runtime"
-              | "engine_wave"
-            >
-          >),
-      }),
+      (() => {
+        const pi = req(raw, "pi") as Record<string, unknown>;
+        refuseRetiredPiKeys(pi);
+        return {
+          ...piLensDefaults(),
+          ...(pi as Omit<Config["pi"], "lens_runtime" | "engine_wave"> &
+            Partial<Pick<Config["pi"], "lens_runtime" | "engine_wave">>),
+        };
+      })(),
     ),
     openviking: parseOpenViking((raw.openviking ?? {}) as Record<string, unknown>),
     memory: parseMemory((raw.memory ?? {}) as Record<string, unknown>),
@@ -3087,8 +3088,6 @@ export function parseConfig(toml: string): Config {
   }
   for (const [key, n, min] of [
     ["[review] context_pack_max_tokens", cfg.review.context_pack_max_tokens, 1000],
-    ["[pi] subagent_cache_group", cfg.pi.subagent_cache_group, 0],
-    ["[pi] subagent_cache_stagger_ms", cfg.pi.subagent_cache_stagger_ms, 0],
   ] as const) {
     if (!(typeof n === "number" && Number.isInteger(n) && n >= min))
       throw new Error(

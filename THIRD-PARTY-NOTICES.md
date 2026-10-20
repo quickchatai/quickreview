@@ -93,12 +93,10 @@ sha256 in `sets/martian*.json`).
 
 ## Subagents — no third-party component
 
-Subagents run on pi's **first-party** subagent extension, shipped inside the
-pinned `@earendil-works/pi-coding-agent` npm package
-(`examples/extensions/subagent/`, MIT like the rest of pi) and loaded at
-runtime from the installed package by the first-party
-`extensions/subagents.ts` — nothing is vendored or redistributed, so no
-notice entry is needed. (History: the unlicensed third-party
+Lenses run through the first-party lens tool (`src/engine/lens/`), SDK sessions
+of the host process — nothing is vendored or redistributed, so no notice entry
+is needed. (The pi-package example subagent extension that once filled this
+role, loaded by `extensions/subagents.ts`, is retired.) (History: the unlicensed third-party
 amosblomqvist/pi-subagents extension that used to fill this role was removed
 entirely on 2026-08-30 —'s licensing question dissolved by removal,
 .)

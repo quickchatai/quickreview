@@ -360,8 +360,9 @@ export function taskDirOf(files: ReadonlyArray<{ path: string }>): string {
  * files (the knob off), so the round order carries no task-file note.
  *
  * The rows launch through one `launch_plan` call over the task directory
- * (extensions/subagents.ts), which makes the one-turn launch structural; the
- * hand-written per-row `subagent` calls are the fallback only. */
+ * (planned by src/engine/lens/launch-plan.ts), which makes the one-turn launch
+ * structural; the hand-written per-row `subagent` calls are the fallback only
+ * (the engine vocabulary: `lens_wave` and `lens`, src/launchvocab.ts). */
 export function renderPassTaskNote(
   order: Pick<
     RoundOrder,

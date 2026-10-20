@@ -1,28 +1,23 @@
-// The shared prompt cache for lens children, and the context pack.
+// The shared prompt cache for lens sessions, and the context pack.
 //
-// The provider keys its prompt cache on the session id: pi children under ONE
-// session id read an identical prefix from cache, under `--no-session` none,
-// and simultaneous requests both miss while one sent a moment later hits.
-// These tests pin the three pieces built on that: the glue's spawn rewrite
-// (cache groups, the stagger, the temp session dir, the pack's extension),
-// the child extension's pack-first payload, and the daemon's pack renderer.
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+// The provider keys its prompt cache on the session id: sessions under ONE
+// session id read an identical prefix from cache, and simultaneous requests
+// both miss while one sent a moment later hits. These tests pin the pieces
+// built on that: the cache groups and their env knobs, the lens extension's
+// pack-first payload, and the daemon's pack renderer.
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { CACHE_GROUP_MAX_AGE_MS, CacheGrouper } from "../src/engine/lens/cache-group.js";
 import {
-  CACHE_GROUP_MAX_AGE_MS,
-  CacheGrouper,
-  LEAF_PACK_ENV,
-  leafNoSessionIndex,
-  packForTask,
+  DEFAULT_CACHE_STAGGER_MS,
+  DEFAULT_MAX_CONCURRENCY,
   resolveCacheGroup,
   resolveCacheStagger,
-  rewriteLeafSpawn,
-  taskPointer,
-  WARMUP_TASK,
-} from "../extensions/subagents.js";
-import { appendedPromptPath, packFirstPayload } from "../extensions/leaf-cache.js";
+  resolveMaxConcurrency,
+} from "../src/engine/lens/env.js";
+import { packFirstPayload } from "../src/engine/lens/leaf-cache.js";
 import {
   CHARS_PER_TOKEN,
   mustSeeCandidates,
@@ -30,23 +25,13 @@ import {
   readWorktreeFileForPack,
   renderContextPack,
 } from "../src/contextpack.js";
-import { DEFAULT_SUBAGENT_CACHE_STAGGER_MS, REVIEW_DEFAULTS } from "../src/config.js";
+import {
+  DEFAULT_LENS_CACHE_STAGGER_MS,
+  DEFAULT_LENS_MAX_CONCURRENCY,
+  ENGINE_DEFAULTS,
+  REVIEW_DEFAULTS,
+} from "../src/config.js";
 import type { PrFileEntry } from "../src/github.js";
-
-/** Native's own child argv shape (pi 1.0.0 runSingleAgent), with the node
- * script first as getPiInvocation puts it. */
-const nativeArgs = (task: string) => [
-  "/usr/local/lib/node_modules/pi/dist/cli.js",
-  "--mode",
-  "json",
-  "-p",
-  "--no-session",
-  "--model",
-  "openai-codex/gpt-6.1-sol:high",
-  "--append-system-prompt",
-  "/tmp/pi-subagent-x/prompt-pass-baseline.md",
-  `Task: ${task}`,
-];
 
 describe("cache groups", () => {
   it("one key per group of `size` per model; the first child at once, the rest after the stagger", () => {
@@ -75,146 +60,22 @@ describe("cache groups", () => {
     expect(resolveCacheGroup({ QCR_SUBAGENT_CACHE_GROUP: "5" })).toBe(5);
     expect(resolveCacheGroup({ QCR_SUBAGENT_CACHE_GROUP: "-1" })).toBe(0);
     expect(resolveCacheGroup({ QCR_SUBAGENT_CACHE_GROUP: "x" })).toBe(0);
-    expect(resolveCacheStagger({})).toBe(DEFAULT_SUBAGENT_CACHE_STAGGER_MS);
+    expect(resolveCacheStagger({})).toBe(DEFAULT_LENS_CACHE_STAGGER_MS);
     expect(resolveCacheStagger({ QCR_SUBAGENT_CACHE_STAGGER_MS: "0" })).toBe(0);
   });
-});
 
-describe("the leaf spawn rewrite", () => {
-  let dir: string;
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "qcr-prompt-cache-"));
-  });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
-
-  const deps = (over: Partial<Parameters<typeof rewriteLeafSpawn>[3]> = {}) => {
-    let n = 0;
-    let d = 0;
-    return {
-      grouper: new CacheGrouper(2, 2500, () => `key-${++n}`),
-      now: () => 0,
-      makeSessionDir: () => join(dir, `sd-${++d}`),
-      isFile: () => false,
-      leafCacheExt: "/opt/quickreview/sandbox/extensions/leaf-cache.ts",
-      baseEnv: { HOME: "/home/review" },
-      warmups: new Map<string, string>(),
-      ...over,
-    };
-  };
-
-  it("touches only native's exact leaf flag run", () => {
-    expect(leafNoSessionIndex(nativeArgs("x"))).toBe(4);
-    expect(leafNoSessionIndex(["--mode", "json", "--no-session"])).toBe(-1);
-    expect(leafNoSessionIndex(["-p", "--no-session"])).toBe(-1);
-    expect(rewriteLeafSpawn("git", ["status"], undefined, deps())).toBeUndefined();
+  it("the env reader's defaults equal the config's (env.ts imports nothing from the daemon)", () => {
+    expect(DEFAULT_CACHE_STAGGER_MS).toBe(DEFAULT_LENS_CACHE_STAGGER_MS);
+    expect(DEFAULT_MAX_CONCURRENCY).toBe(DEFAULT_LENS_MAX_CONCURRENCY);
+    expect(ENGINE_DEFAULTS.lens_cache_stagger_ms).toBe(DEFAULT_CACHE_STAGGER_MS);
+    expect(ENGINE_DEFAULTS.lens_max_concurrency).toBe(DEFAULT_MAX_CONCURRENCY);
   });
 
-  it("keys the child: --no-session becomes --session-id + its own --session-dir, nothing else moves", () => {
-    const args = nativeArgs("look at x");
-    const r = rewriteLeafSpawn("/usr/bin/node", args, { cwd: "/opt/quickreview/sandbox" }, deps())!;
-    expect(r.warmup).toBeUndefined();
-    expect(r.child.command).toBe("/usr/bin/node");
-    expect(r.child.args).toEqual([
-      ...args.slice(0, 4),
-      "--session-id",
-      "key-1",
-      "--session-dir",
-      r.child.sessionDir,
-      ...args.slice(5),
-    ]);
-    expect(r.child.args).toContain("-p"); // still a leaf for qcr-leaf.ts
-    expect(r.child.options).toEqual({ cwd: "/opt/quickreview/sandbox" });
-  });
-
-  it("without a pack, a group's later child starts through sh after the stagger, exec'ing the same command", () => {
-    const d = deps();
-    rewriteLeafSpawn("/usr/bin/node", nativeArgs("a"), undefined, d);
-    const r = rewriteLeafSpawn("/usr/bin/node", nativeArgs("b"), undefined, d)!.child;
-    expect(r.command).toBe("/bin/sh");
-    expect(r.args.slice(0, 4)).toEqual(["-c", 'sleep "$0"; exec "$@"', "2.50", "/usr/bin/node"]);
-    expect(r.args).toContain("key-1");
-  });
-
-  describe("a round with a context pack", () => {
-    const setup = () => {
-      const passes = join(dir, "state", "pr-5-round-2-passes");
-      mkdirSync(join(passes, "tasks"), { recursive: true });
-      const task = (n: number) => join(passes, "tasks", `0${n}-pass-x--sol-high.md`);
-      const pack = join(passes, "context-pack.md");
-      return { task, pack, d: deps({ isFile: (p) => p === pack }) };
-    };
-
-    it("the group's first child brings a WARM-UP: its argv without the lens text, the task replaced, same key, model and pack", () => {
-      const { task, pack, d } = setup();
-      const args = nativeArgs(`${taskPointer(task(1))}\n\nPrior finding 1:2 to verify.`);
-      const r = rewriteLeafSpawn("/usr/bin/node", args, undefined, d)!;
-      const w = r.warmup!;
-      expect(w.spawn.command).toBe("/usr/bin/node");
-      expect(w.spawn.args).not.toContain("--append-system-prompt");
-      expect(w.spawn.args.at(-1)).toBe(WARMUP_TASK);
-      expect(w.spawn.args.slice(0, 4)).toEqual(args.slice(0, 4));
-      expect(w.spawn.args).toContain("key-1");
-      expect(w.spawn.args[w.spawn.args.indexOf("--model") + 1]).toBe(
-        "openai-codex/gpt-6.1-sol:high",
-      );
-      expect(w.spawn.args[w.spawn.args.indexOf("--extension") + 1]).toBe(
-        "/opt/quickreview/sandbox/extensions/leaf-cache.ts",
-      );
-      expect((w.spawn.options?.env as Record<string, string>)[LEAF_PACK_ENV]).toBe(pack);
-      expect(w.spawn.sessionDir).not.toBe(r.child.sessionDir);
-      expect(w.readyFile.startsWith(w.readyDir)).toBe(true);
-      // The child itself: keyed, the pack's extension, the HOME it had — and it
-      // waits for the warm-up's ready file before it execs.
-      const c = r.child;
-      expect(c.command).toBe("/bin/sh");
-      expect(c.args[2]).toBe(w.readyFile);
-      expect(c.args.slice(3, 5)).toEqual(["/usr/bin/node", args[0]]);
-      expect(c.args).toContain("--append-system-prompt");
-      expect((c.options?.env as Record<string, string>).HOME).toBe("/home/review");
-      expect(packForTask(args, (p) => p === pack)).toBe(pack);
-    });
-
-    it("the group's later children wait for the same warm-up and bring none", () => {
-      const { task, d } = setup();
-      const first = rewriteLeafSpawn(
-        "/usr/bin/node",
-        nativeArgs(taskPointer(task(1))),
-        undefined,
-        d,
-      )!;
-      const second = rewriteLeafSpawn(
-        "/usr/bin/node",
-        nativeArgs(taskPointer(task(2))),
-        undefined,
-        d,
-      )!;
-      expect(second.warmup).toBeUndefined();
-      expect(second.child.args[2]).toBe(first.warmup!.readyFile);
-      expect(second.child.args).toContain("key-1");
-      // The third child is a new group (size 2): a new key and its own warm-up.
-      const third = rewriteLeafSpawn(
-        "/usr/bin/node",
-        nativeArgs(taskPointer(task(3))),
-        undefined,
-        d,
-      )!;
-      expect(third.warmup).toBeDefined();
-      expect(third.child.args).toContain("key-2");
-    });
-
-    it("no pack file, a free-form task, or no extension path: keyed, no warm-up, no pack", () => {
-      const { task, pack, d } = setup();
-      for (const [t, dd] of [
-        [taskPointer(task(1)), deps()],
-        ["look at the PR", d],
-        [taskPointer(task(1)), deps({ isFile: (p) => p === pack, leafCacheExt: undefined })],
-      ] as const) {
-        const r = rewriteLeafSpawn("/usr/bin/node", nativeArgs(t), undefined, dd)!;
-        expect(r.warmup).toBeUndefined();
-        expect(r.child.args).not.toContain("--extension");
-        expect(r.child.options).toBeUndefined();
-      }
-    });
+  it("the cap: default 4; 6 from the env; garbage falls back", () => {
+    expect(resolveMaxConcurrency({})).toBe(4);
+    expect(resolveMaxConcurrency({ QCR_SUBAGENT_MAX_CONCURRENCY: "6" })).toBe(6);
+    for (const bad of ["0", "65", "1e3", "6x", ""])
+      expect(resolveMaxConcurrency({ QCR_SUBAGENT_MAX_CONCURRENCY: bad }), bad).toBe(4);
   });
 });
 
@@ -277,11 +138,6 @@ describe("the pack-first payload (child side)", () => {
     expect(packFirstPayload({ instructions: `${base}\n\n${lens}` }, lens, "PACK")).toBeUndefined();
     expect(packFirstPayload(payload(`${base}\n\n${lens}`), lens, "  ")).toBeUndefined();
     expect(packFirstPayload(null, lens, "PACK")).toBeUndefined();
-  });
-
-  it("finds the appended prompt's file in the child argv", () => {
-    expect(appendedPromptPath(nativeArgs("x"))).toBe("/tmp/pi-subagent-x/prompt-pass-baseline.md");
-    expect(appendedPromptPath(["-p"])).toBeUndefined();
   });
 });
 

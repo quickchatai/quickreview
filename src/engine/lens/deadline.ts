@@ -1,7 +1,6 @@
 // The per-pass deadline: its env knob, the retry-once runner and the result a
 // pass that timed out twice answers with. Pure — no pi, no filesystem. Lifted
-// verbatim from extensions/subagents.ts (which re-exports every name), so the
-// tmux bot and the engine routes share one implementation.
+// from the retired extensions/subagents.ts.
 
 /** The shape of a native subagent tool result, as far as the glue reads it. */
 export interface ParallelNativeResult {

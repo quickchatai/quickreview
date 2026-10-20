@@ -110,17 +110,9 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 RUN git config --system --add safe.directory '*'
 
 # pi - pinned, never floating, and equal to the copy in node_modules below
-# (checked after the COPY). The global CLI is what the extensions' subagent
-# spawns resolve on PATH.
+# (checked after the COPY). Lenses run on the SDK through our own lens tool
+# (src/engine/lens/), so nothing here depends on what else the pi package ships.
 RUN npm install -g --no-audit --no-fund "${PI_PACKAGE}@${PI_VERSION}" && npm cache clean --force
-
-# Subagents are pi's own first-party extension, shipped inside the pinned pi
-# package (examples/extensions/subagent) and loaded from the install path by
-# extensions/subagents.ts - the pin covers it. Kept until the lens tool
-# replaces it (P9.4), and a pi release that dropped the example fails the
-# build here, not at session time.
-RUN test -f "$(npm root -g)/${PI_PACKAGE}/examples/extensions/subagent/index.ts" \
-    || { echo "FATAL: pi ${PI_VERSION} does not ship examples/extensions/subagent" >&2; exit 1; }
 
 # The app. COPY lands root-owned; the chmod below makes it world-readable and
 # writable by nobody.

@@ -3,8 +3,8 @@
 // session or its lens children, and the bench keeps its own placement.
 //
 // pi is a fake that MODELS what pi 1.3.0 discovers from its argv, cwd and
-// environment, and spawns a lens child of itself the way extensions/subagents.ts
-// does (tests/helpers/host-fake-pi.ts). No network, no model.
+// environment, and spawns a lens child of itself the way the retired native glue
+// did (tests/helpers/host-fake-pi.ts). No network, no model.
 import { piCliRuntime } from "./helpers/pi-cli-runtime.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -184,7 +184,7 @@ beforeAll(async () => {
 }, 60_000);
 
 describe("the argv", () => {
-  it("disables discovery and names the guard and the session's three extensions explicitly", () => {
+  it("disables discovery and names the guard and the session's two other extensions explicitly", () => {
     const { argv } = ran.main;
     expect(argv).toContain("-ne");
     expect(argv).toContain("-ns");
@@ -195,7 +195,6 @@ describe("the argv", () => {
       "bash-guard.ts",
       "finding-clusters.ts",
       "ledger-pin.ts",
-      "subagents.ts",
     ]);
   });
 
@@ -211,7 +210,7 @@ describe("the argv", () => {
       "--session-dir",
     ];
     const paths = argv.flatMap((a, i) => (pathFlags.includes(a) ? [argv[i + 1]!] : []));
-    expect(paths.length).toBeGreaterThanOrEqual(6);
+    expect(paths.length).toBeGreaterThanOrEqual(5);
     for (const p of paths) expect(isAbsolute(p), p).toBe(true);
     expect(ran.main.extensions.every(isAbsolute)).toBe(true);
   });
@@ -262,21 +261,19 @@ describe("pi's cwd and context", () => {
 });
 
 describe("what loads", () => {
-  it("the session loads the four named extensions and nothing planted in the pi home, $HOME or the repo", () => {
+  it("the session loads the three named extensions and nothing planted in the pi home, $HOME or the repo", () => {
     expect(ran.main.extensions.map((e) => basename(e)).sort()).toEqual([
       "bash-guard.ts",
       "finding-clusters.ts",
       "ledger-pin.ts",
-      "subagents.ts",
     ]);
     for (const evil of ["own-evil.ts", "home-evil.ts", "repo-evil.ts"])
       expect(ran.main.extensions.map((e) => basename(e))).not.toContain(evil);
     expect(ran.main.skills).toEqual([]);
   });
 
-  it("a lens child loads bash-guard from the global settings, and only that", () => {
-    expect(ran.child.extensions.map((e) => basename(e))).toEqual(["bash-guard.ts"]);
-    expect(ran.child.extensions[0]).toBe(join(realpathSync(root), "extensions", "bash-guard.ts"));
+  it("the private settings register no extension: a lens carries the guard as a factory, not from settings (P9.4)", () => {
+    expect(ran.child.extensions).toEqual([]);
     expect(ran.child.agentDir).toBe(ran.main.agentDir);
     expect(ran.child.cwd).toBe(ran.main.cwd);
   });
@@ -301,7 +298,7 @@ describe("what loads", () => {
       (JSON.parse(read(".pi/settings.json")) as { httpIdleTimeoutMs: number }).httpIdleTimeoutMs,
     );
     const s = JSON.parse(hostSettings(root)) as Record<string, unknown>;
-    expect(s["extensions"]).toContain(join(root, "extensions", "bash-guard.ts"));
+    expect(s).not.toHaveProperty("extensions");
     expect(s["httpIdleTimeoutMs"]).toBe(120_000);
     // the bench's settings are unchanged by it
     expect(JSON.parse(benchSettings(root).settings)).not.toHaveProperty("httpIdleTimeoutMs");

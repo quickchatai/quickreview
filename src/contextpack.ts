@@ -8,10 +8,10 @@
 // it once and every later child reads it from the cache.
 //
 // This module only RENDERS the pack (pure). The daemon writes it beside the
-// round's task files (`<passes>/context-pack.md`); the subagent glue
-// (extensions/subagents.ts) notices it for a task file of that round and hands
-// it to the child's leaf-cache extension (extensions/leaf-cache.ts), which
-// places it first. Nothing here decides what a lens reviews: the pack is the
+// round's task files (`<passes>/context-pack.md`); the lens runner
+// (src/engine/lens/runlens.ts) reads it for a round and its leaf-cache
+// extension (src/engine/lens/leaf-cache.ts) places it first. Nothing here
+// decides what a lens reviews: the pack is the
 // same data a lens would fetch with `git diff` and `read`, fetched once.
 
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
@@ -45,8 +45,6 @@ export function readWorktreeFileForPack(
 
 /** The file the daemon writes into a round's pass directory. */
 export const CONTEXT_PACK_FILE = "context-pack.md";
-/** Pack location handed from the child launcher to its cache extension. */
-export const LEAF_PACK_ENV = "QCR_LEAF_PACK";
 
 /** A rough characters-per-token ratio for code and diffs, used only to turn
  * the token budget into a character cap. */

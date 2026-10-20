@@ -264,7 +264,7 @@ describe("the round's context pack", () => {
       const cfg: Config = {
         ...baseCfg,
         review: { ...baseCfg.review, task_files: true, context_pack: "pack-first" },
-        pi: { ...baseCfg.pi, subagent_cache_group: 1 },
+        engine: { ...baseCfg.engine, lens_cache_group: 1 },
       };
       const passesDir = join(sandboxRoot(), "state", "pr-9301-round-1-passes");
       const packPath = join(passesDir, "context-pack.md");
@@ -300,7 +300,7 @@ describe("the context pack reads the worktree the round reviews", () => {
       const cfg: Config = {
         ...baseCfg,
         review: { ...baseCfg.review, task_files: true, context_pack: "pack-first" },
-        pi: { ...baseCfg.pi, subagent_cache_group: 1 },
+        engine: { ...baseCfg.engine, lens_cache_group: 1 },
       };
       const rel = "state/test-wt-pr-9302";
       const tree = join(sandboxRoot(), rel);

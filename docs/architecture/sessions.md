@@ -35,8 +35,8 @@ allowed to execute).
 | Ledger survival across compaction | `extensions/ledger-pin.ts` |
 | Lens agent build + addendum registry | `src/include.ts` |
 | Prompt rendering | `src/templates.ts` |
-| Glue over pi's own subagent extension | `extensions/subagents.ts` |
-| Model tiers, session dir, fan-out cap | `config.example.toml` `[models]`, `[pi]`; `src/config.ts` |
+| The lens tool (`lens`, `lens_wave`) | `src/engine/lens/`, `extensions/lens.ts` |
+| Model tiers, session dir, fan-out cap | `config.example.toml` `[models]`, `[pi]`, `[engine]`; `src/config.ts` |
 
 ## Two session kinds, and only two
 
@@ -94,15 +94,13 @@ The extensions are listed by `extensionPaths()` and their order is load-bearing
 2. `extensions/ledger-pin.ts` — owns compaction.
 3. `extensions/muted-theme.ts` — colours only.
 4. `extensions/round-progress.ts` — read-only progress sidecar.
-5. `extensions/subagents.ts` — the fan-out tool.
-6. `extensions/vendor/openviking-pi/index.ts` — memory tools, deliberately
+5. `extensions/vendor/openviking-pi/index.ts` — memory tools, deliberately
    last, and the only extension here that is vendored rather than written
    in-tree.
 
 These ride **per-spawn argv**, not the global pi settings. That is what makes a
-lens pass a leaf: a subagent child process loads only the globally-registered
-extensions, so the `subagent` tool and the memory write surface do not exist
-inside a child at all.
+lens pass a leaf: a lens session is given the bash guard and nothing else, so
+the lens tool and the memory write surface do not exist inside it at all.
 
 ### The environment
 
@@ -533,43 +531,29 @@ with `PASS_TIER_ORDER` as the single place the order is written down.
 
 `[models.tiers]` maps each tier to a full model spec, `provider/model:thinking`.
 The whole spec goes into the built `model:` field: pi's `--model` accepts the
-`:thinking` suffix, and the native subagent extension reads only that one field.
+`:thinking` suffix, and the lens runner reads only that one field.
 `thinking:` is rewritten as well, so the built file stays accurate for a human
-reader, but the extension ignores it. `splitModelSpec` is the parser.
+reader, but the runner ignores it. `splitModelSpec` is the parser.
 
-## The subagent tool
+## The lens tool
 
-`extensions/subagents.ts` is first-party glue over **pi's own** subagent
-extension. It imports the native extension at runtime from the installed pi
-package (`getExamplesPath()` + `extensions/subagent/index.ts`), so there is no
-vendored copy that can drift from the version pin: bumping pi bumps the
-extension with it. If either import fails the tool is simply never registered —
-logged as fatal, never a crashed pi — and the round templates' "unknown agent ⇒
-stop" rule takes over.
+Lenses run through our own tool, `lens` (one or a parallel batch) and
+`lens_wave` (join the round's planned discovery wave), from
+`src/engine/lens/`; the companion loads the same code as `extensions/lens.ts`.
+Each lens is an SDK session of the process that hosts the round. pi's own
+subagent example and the glue that wrapped it (`extensions/subagents.ts`, with
+its `cwd` stripping, chunking and spawn patch) are retired: an SDK lens has no
+child process to confine.
 
-The glue exists to add three things the native extension does not provide:
-
-1. **A process-wide fan-out cap.** The native tool caps concurrency only *within*
-   one `tasks:[…]` call. Several single-mode calls in one assistant turn — the
-   pattern the round templates mandate — run uncapped, because pi dispatches a
-   turn's tool calls in parallel. `WeightedSemaphore` restores the process-wide
-   cap from `QCR_SUBAGENT_MAX_CONCURRENCY` (`[pi] subagent_max_concurrency`;
-   code default `DEFAULT_MAX_CONCURRENCY` = 4). `callWeight` charges a parallel
-   call `min(tasks, NATIVE_IN_CALL_CONCURRENCY, permits)` and everything else 1.
-2. **`cwd` stripping and scope pinning.** `sanitizeParams` deletes `cwd` at the
-   top level and inside `tasks[]` and `chain[]`, so a child always runs in the
-   parent's own working directory and can never be pointed into a reviewed-repo
-   worktree whose `.pi/` resources always-on project trust would load. It also
-   pins `agentScope` (`resolveScope`, default `"user"`) and forces
-   `confirmProjectAgents: false`.
-3. **Chunking.** The native tool rejects a `tasks` array longer than
-   `NATIVE_MAX_PARALLEL_TASKS` (8) before starting any child, so `wrapExecute`
-   feeds it stable contiguous chunks sequentially under one semaphore lease —
-   selecting nine legitimate lenses cannot become a zero-pass round.
-
-The wrapping is done through a `Proxy` that intercepts `registerTool` and wraps
-only the `subagent` tool's `execute`; everything else passes through to the real
-API.
+1. **A process-wide fan-out cap.** The lens runner's weighted semaphore, sized
+   from `QCR_SUBAGENT_MAX_CONCURRENCY` (`[engine] lens_max_concurrency`; code
+   default 4) and, on the bot, the daemon's permit broker (`[daemon]
+   lens_permits`).
+2. **Scope pinning.** The agents come from the agent dir's `agents` (the
+   `user` scope), or from the nearest `.pi/agents` for the bench's `project`
+   scope (`lensAgentsDir`).
+3. **A guard on every lens.** `bashGuard` is a required field of the runner's
+   config, attached to every pass; `tests/lens-runner.test.ts` pins it.
 
 ## Adoption, archival, rotation
 

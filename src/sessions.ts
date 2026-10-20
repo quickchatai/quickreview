@@ -30,8 +30,6 @@ import { dirname, join } from "node:path";
 import type { Config } from "./config.js";
 import {
   DEFAULT_SESSION_BRIDGE_READY_TIMEOUT_S,
-  DEFAULT_SUBAGENT_CACHE_STAGGER_MS,
-  DEFAULT_SUBAGENT_PASS_DEADLINE_MIN,
   githubCloneDir,
   openVikingBaseUrl,
 } from "./config.js";
@@ -328,14 +326,6 @@ export class PiSessionManager {
       // sidecar for the operator TUI. It observes pi events only; no session
       // scheduling or daemon state passes through it.
       join(this.root, "extensions", "round-progress.ts"),
-      // First-party glue over pi's own subagent extension, imported at
-      // runtime from the installed pinned package (nothing vendored, nothing
-      // that can drift from the rule-7 pin). The built state/agents
-      // passes reach it through the native "user" discovery scope — the VM
-      // entrypoint symlinks ~/.pi/agent/agents to state/agents. Rides argv on
-      // purpose: children load only the global settings extensions, so the
-      // subagent tool never exists inside a leaf and a pass cannot fan out.
-      join(this.root, "extensions", "subagents.ts"),
       // docs/duplicate-merge.md: the `cluster_findings` tool a round calls
       // before pass-validate (`[review] dedup_merge`). The bench session
       // loads the same file (src/bench/runner.ts), so both routes group
@@ -346,9 +336,9 @@ export class PiSessionManager {
       // here we did not write, and pi registers handlers in load order, so
       // ours (ledger-pin above all) are in place before it arrives.
       //
-      // It rides argv for the same reason the subagents glue does: a subagent
-      // child loads no argv extensions, so a lens pass gets no memory surface
-      // at all. Its own PATCH 2 is the second layer.
+      // It rides argv, not the global settings: a lens session loads no argv
+      // extensions, so a lens pass gets no memory surface at all. Its own
+      // PATCH 2 is the second layer.
       //
       // Its patches are load-bearing — read
       // extensions/vendor/openviking-pi/README.md before touching this line.
@@ -451,26 +441,14 @@ export class PiSessionManager {
       QCR_LEDGER_FILE: this.ledgerPath(session),
       QCR_SECRETS_DIR: this.cfg.github.secrets_dir,
       QCR_PI_VERSION: this.cfg.pi.version,
-      // The process-wide subagent fan-out cap the glue extension enforces
-      // (config.toml [pi] subagent_max_concurrency).
-      QCR_SUBAGENT_MAX_CONCURRENCY: String(this.cfg.pi.subagent_max_concurrency),
-      // `[review] wide_lens_fanout`: a batched lens launch runs as wide as
-      // that cap instead of native pi's in-call four (bench/aacr/PERF.md §1).
-      QCR_SUBAGENT_WIDE_FANOUT: this.cfg.review?.wide_lens_fanout === false ? "0" : "1",
-      // Lens children share the provider's prompt cache in groups
-      // (extensions/subagents.ts), and the leaf-cache extension that puts a
-      // round's context pack first rides a child only where the round has one.
-      QCR_SUBAGENT_CACHE_GROUP: String(this.cfg.pi.subagent_cache_group ?? 0),
-      QCR_SUBAGENT_CACHE_STAGGER_MS: String(
-        this.cfg.pi.subagent_cache_stagger_ms ?? DEFAULT_SUBAGENT_CACHE_STAGGER_MS,
-      ),
-      // The per-pass deadline (config.toml [pi] subagent_pass_deadline_min):
-      // a stalled lens child is aborted and retried once instead of holding
-      // the round. "0" switches it off.
-      QCR_SUBAGENT_PASS_DEADLINE_MIN: String(
-        this.cfg.pi.subagent_pass_deadline_min ?? DEFAULT_SUBAGENT_PASS_DEADLINE_MIN,
-      ),
-      QCR_LEAF_CACHE_EXT: join(this.root, "extensions", "leaf-cache.ts"),
+      // The engine lens tool's config (`[engine] lens_*`): the worker's lens
+      // runner reads these names back (lensRunConfigFromEnv).
+      QCR_SUBAGENT_MAX_CONCURRENCY: String(this.cfg.engine.lens_max_concurrency),
+      QCR_SUBAGENT_CACHE_GROUP: String(this.cfg.engine.lens_cache_group),
+      QCR_SUBAGENT_CACHE_STAGGER_MS: String(this.cfg.engine.lens_cache_stagger_ms),
+      // A stalled lens pass is aborted and retried once instead of holding the
+      // round. "0" switches it off.
+      QCR_SUBAGENT_PASS_DEADLINE_MIN: String(this.cfg.engine.lens_pass_deadline_min),
       // The daemon's own resolved config, so the posting scripts read the
       // file the daemon read. Set by the daemon — the bash guard
       // refuses a session's own `QCR_CONFIG=` prefix.

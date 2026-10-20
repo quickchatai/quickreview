@@ -204,19 +204,10 @@ describe("reviewSdkRuntime", () => {
       expect(seen).toEqual([]);
     });
 
-    it("refuses the native lens tool under the split: its pi children would run the model's bash as this uid", async () => {
+    it("builds no session where no lens tool was given: there is no native tool to fall back on", async () => {
       login(Date.now() + 3 * 3_600_000);
-      const seen: PiHostOptions[] = [];
-      const rt = reviewSdkRuntime({ makeHost: fauxHost(seen), processEnv: split });
-      await expect(rt.create(spec())).rejects.toThrow(/native lens tool.*lens_runtime = engine/);
-      expect(seen).toEqual([]);
-      // accepted explicitly, it runs
-      const shared = reviewSdkRuntime({
-        makeHost: fauxHost(seen),
-        processEnv: { QCR_TOOL_UID_REQUIRED: "1", QCR_ALLOW_SHARED_TOOL_UID: "1" },
-      });
-      await (await shared.create(spec())).dispose();
-      expect(seen).toHaveLength(1);
+      const rt = reviewSdkRuntime({ makeHost: fauxHost([]), processEnv: split });
+      await expect(rt.create(spec())).rejects.toThrow(/no lens tool.*`engine`, `lens` or `extras`/);
     });
 
     it("fences the login the round's agent dir was copied from (the wrapper's /qcr-login)", async () => {
@@ -245,63 +236,6 @@ describe("reviewSdkRuntime", () => {
       });
       await (await rt.create(spec())).dispose();
       expect(seen[0]!.toolUid).toEqual({ uid: "65534", gid: "1000" });
-    });
-  });
-
-  describe("the native lens tool", () => {
-    const saved: Record<string, string | undefined> = {};
-    const keep = (n: string): void => {
-      saved[n] = process.env[n];
-    };
-    afterEach(() => {
-      for (const [n, v] of Object.entries(saved)) {
-        if (v === undefined) delete process.env[n];
-        else process.env[n] = v;
-      }
-    });
-
-    it("sees the round's env and no GitHub token while the session lives, and the process gets its env back", async () => {
-      login(Date.now() + 3 * 3_600_000);
-      for (const n of ["GH_TOKEN", "GITHUB_TOKEN", "QCR_PR", "PI_CODING_AGENT_DIR"]) keep(n);
-      process.env["GH_TOKEN"] = "ghp_secret";
-      process.env["GITHUB_TOKEN"] = "ghp_secret2";
-      process.env["QCR_PR"] = "before";
-      const during: Record<string, string | undefined> = {};
-      let tools = "";
-      const rt = reviewSdkRuntime({
-        makeHost: fauxHost([], (context) => {
-          tools = JSON.stringify(context);
-          for (const n of ["GH_TOKEN", "GITHUB_TOKEN", "QCR_PR", "PI_CODING_AGENT_DIR"])
-            during[n] = process.env[n];
-        }),
-      });
-      const s = await rt.create(spec());
-      expect((await s.prompt("go")).code).toBe(0);
-      await s.dispose();
-      expect(tools).toContain("launch_plan");
-      // the lens tool loaded without an extension error
-      expect(readFileSync(join(dir, "stderr.log"), "utf8")).not.toMatch(/Extension error/);
-      expect(during).toEqual({
-        GH_TOKEN: undefined,
-        GITHUB_TOKEN: undefined,
-        QCR_PR: "7",
-        PI_CODING_AGENT_DIR: agentDir,
-      });
-      expect(process.env["GH_TOKEN"]).toBe("ghp_secret");
-      expect(process.env["GITHUB_TOKEN"]).toBe("ghp_secret2");
-      expect(process.env["QCR_PR"]).toBe("before");
-    });
-
-    it("puts the env back when the session cannot be made", async () => {
-      login(Date.now() + 3 * 3_600_000);
-      keep("QCR_PR");
-      process.env["QCR_PR"] = "before";
-      const rt = reviewSdkRuntime({
-        makeHost: fauxHost([]),
-        lens: undefined,
-      });
-      await expect(rt.create(spec({ model: "faux/nope" }))).rejects.toThrow(/not known/);
-      expect(process.env["QCR_PR"]).toBe("before");
     });
   });
 });
@@ -340,8 +274,8 @@ describe("selectReviewRuntime ([engine] runtime for qcr review)", () => {
       expect(selectReviewRuntime(withPi("engine_wave = false"))?.engineLens).toMatchObject({
         plannedWave: false,
       });
-      // lens_runtime = native on the SDK has no engine route
-      expect(selectReviewRuntime(withPi('lens_runtime = "native"'))?.engineLens).toBeUndefined();
+      // "native" is no longer a lens runtime: the config refuses it
+      expect(() => withPi('lens_runtime = "native"')).toThrow(/retired/);
     } finally {
       resetLiveSessions();
     }

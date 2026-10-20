@@ -215,7 +215,9 @@ describe("the routes that build orders", () => {
 
   const oneShot = (runtime: "native" | "engine") => {
     const cfg = benchConfig("");
-    cfg.pi.lens_runtime = runtime;
+    // The native vocabulary still renders for an order that carries no
+    // lens_runtime; the config no longer spells it, so this cast is the test's.
+    cfg.pi.lens_runtime = runtime as never;
     return renderOneShotPrompts({
       root,
       cfg,

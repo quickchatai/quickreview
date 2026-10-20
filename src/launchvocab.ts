@@ -42,7 +42,7 @@ export function launchVocab(order: Pick<RoundOrder, "lens_runtime">): LaunchVoca
 
 /**
  * The tmux bot's prompt renderer is bound to the native vocabulary: its
- * sessions carry `subagent` and `launch_plan` (extensions/subagents.ts) and
+ * sessions carried `subagent` and `launch_plan` (the glue is retired, P9.4) and
  * not the engine tools, so an order written for the engine would tell the
  * session to call tools it does not have, and the round would end with no
  * verdict. Throws on such an order.

@@ -28,7 +28,10 @@ import {
 } from "../src/round-progress.js";
 import { parsePrIdentity } from "../src/pr-identity.js";
 import { parseSessionCommandMarker } from "../src/session-command.js";
-import { LAUNCH_PLAN_TOOL, planLaunch } from "./subagents.js";
+import { planLaunch } from "../src/engine/lens/launch-plan.js";
+
+/** The glue's launch tool, retired with it; a transcript may still name it. */
+const LAUNCH_PLAN_TOOL = "launch_plan";
 import { isLensTool, lensIdOf } from "../src/lensresult.js";
 
 /**

@@ -1,10 +1,12 @@
 // leaf-cache, the pack-first payload rewrite and the SDK lens's extension that
-// applies it. The pure parts are lifted verbatim from extensions/leaf-cache.ts
-// (which re-exports them and keeps the pi-child entry point); the header there
-// explains the request layout and why the lens body moves behind the pack.
+// applies it.
 //
-// leafCache({ pack, cacheKey }) is the in-process counterpart of that child
-// extension: it rewrites each request pack-first, and on a payload that carries
+// The request layout: the lens body comes out of pi's `<addendum>` block in
+// `instructions`; the input becomes the pack (user role, fenced data), then the
+// lens body as a developer message, then the task. The pack is then the prefix
+// every lens request of a cache group extends (docs/prompt-caching.md).
+//
+// leafCache({ pack, cacheKey }) rewrites each request pack-first, and on a payload that carries
 // a `prompt_cache_key` sets it to the group's key. Under the shared session id
 // of a cache group (D7, docs/probes/p4.6-codex-cache-routing.md) the key already
 // equals that id, so the second edit is a belt for a pi that derives the key

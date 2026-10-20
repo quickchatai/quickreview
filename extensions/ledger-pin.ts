@@ -168,8 +168,8 @@ export function stripPinned(summary: string): string {
 export type CompactFn = typeof import("@earendil-works/pi-coding-agent").compact;
 
 /** Load `compact` from the installed (= pinned) pi package, resolved inside
- * the pi process exactly like extensions/subagents.ts's import of the same
- * package. VERIFY-ON-PIN: pi 1.0.0 `dist/index.js` exports `compact`
+ * the pi process, so it lands on the running instance
+ * (tests/pi-resolution.test.ts). VERIFY-ON-PIN: pi 1.0.0 `dist/index.js` exports `compact`
  * (re-exported from `dist/core/compaction/index.js`). Undefined when the
  * import fails or the export is missing. */
 export async function loadPiCompact(): Promise<CompactFn | undefined> {

@@ -366,15 +366,11 @@ fi
 
 # pi extensions — register in $HOME/.pi/agent/settings.json (on the pihome
 # volume). Every pi process shares HOME=/home/review — main sessions AND the
-# isolated child processes the subagent tool spawns — so this one file covers
-# all. Idempotent MERGE, safe on every boot: the file predates the
+# isolated child processes pi spawns — so this one file covers all. Idempotent MERGE, safe on every boot: the file predates the
 # "extensions" key and carries user keys (auth/defaults) that must never be
 # clobbered. Each path is appended only if absent; missing extension files
 # hard-fail the boot (a silently unregistered bash-guard would mean unguarded
-# sessions). ONLY bash-guard belongs here: subagent children load exactly this
-# list, so a globally-registered subagents glue would hand every LEAF the
-# subagent tool (nested fan-out — rule 9 broken). It rides per-spawn argv in
-# src/sessions.ts instead.
+# sessions). ONLY bash-guard belongs here: a child loads exactly this list.
 node <<'PI_EXT_MERGE'
 const fs = require("fs");
 const path = require("path");
@@ -389,11 +385,8 @@ if (!Array.isArray(settings.extensions)) settings.extensions = [];
 // retired. Memory is OpenViking, and its (vendored, patched) pi
 // extension is passed per spawn by src/sessions.ts, deliberately NOT registered
 // globally: a globally-registered memory extension would also load in the
-// isolated children the subagent tool spawns, and lens passes must do no
-// ambient memory work.
-// The third-party pi-subagents entry is gone the same way pi-memory
-// went — the native subagent extension rides per-spawn argv via
-// extensions/subagents.ts (a global entry would arm leaves with fan-out; the
+// isolated children pi spawns, and lens passes must do no ambient memory work.
+// The third-party pi-subagents entry is gone the same way pi-memory went (the
 // prune below retires the stale /opt/pi-extensions path on older volumes).
 const wanted = [
   // Repo-shipped guard, rides the sandbox mount. Subagent children load this
@@ -463,8 +456,8 @@ if (trust["/opt/quickreview"] !== true) {
 }
 console.log("pi project trust: defaultProjectTrust=always, /opt/quickreview pre-trusted");
 
-// Agent discovery for the native subagent extension. Its default
-// "user" scope reads $HOME/.pi/agent/agents; link that at the daemon-built
+// Agent discovery for the lens tool: its agent dir's `agents` is
+// $HOME/.pi/agent/agents; link that at the daemon-built
 // lens passes (state/agents, written by buildAgents at wire start — a
 // dangling link until the first build is fine, discovery just sees none).
 // Symlink-or-absent only: a REAL directory here is someone's own agents and

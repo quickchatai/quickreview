@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { planLaunch } from "../extensions/subagents.js";
+import { planLaunch } from "../src/engine/lens/launch-plan.js";
 import { parseConfig, type Config } from "../src/config.js";
 import {
   buildPassPlan,

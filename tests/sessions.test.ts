@@ -82,7 +82,13 @@ const cfg = (): Config =>
       package: "@earendil-works/pi-coding-agent",
       version: "0.84.4",
       session_dir: "state/pi-sessions",
-      subagent_max_concurrency: 6,
+    },
+    engine: {
+      runtime: "sdk",
+      lens_max_concurrency: 6,
+      lens_cache_group: 5,
+      lens_cache_stagger_ms: 2500,
+      lens_pass_deadline_min: 8,
     },
     // Only the fields sessions.ts reads: the loopback endpoint the
     // sessions authenticate against, and the SERVER's ov.conf — passed so the
@@ -291,21 +297,14 @@ describe("buildPiCommand", () => {
   it("loads the live round-progress reporter in every parent session", () => {
     const paths = manager().extensionPaths();
     expect(paths).toContain(join(root, "extensions", "round-progress.ts"));
-    expect(paths.indexOf(join(root, "extensions", "round-progress.ts"))).toBeLessThan(
-      paths.indexOf(join(root, "extensions", "subagents.ts")),
-    );
   });
 
-  // The subagents glue (pi's native subagent extension loaded from
-  // the installed package) rides per-spawn argv, NEVER a settings.json entry —
-  // children load only the global settings extensions, so a leaf never gets
-  // the subagent tool and a pass cannot fan out (rule 9, structurally).
-  it("loads the first-party subagents glue on argv in every parent session", () => {
-    const paths = manager().extensionPaths();
-    expect(paths).toContain(join(root, "extensions", "subagents.ts"));
-    // The register-lens-agents hook is not loaded per spawn.
-    expect(paths.join("\n")).not.toContain("register-lens-agents");
-    expect(paths.join("\n")).not.toContain("pi-subagents");
+  // pi's native subagent extension and its glue are retired (P9.4): lenses are
+  // the engine's lens tool, and a session loads no subagent surface of any kind.
+  it("loads no subagent glue or leaf-cache extension, and no stray lens hooks", () => {
+    const joined = manager().extensionPaths().join("\n");
+    for (const gone of ["subagents.ts", "leaf-cache.ts", "register-lens-agents", "pi-subagents"])
+      expect(joined, gone).not.toContain(gone);
   });
 
   it("loads the vendored OpenViking fork, after ledger-pin", () => {
@@ -392,7 +391,6 @@ describe("birth", () => {
         "QCR_INJECT_DIR",
         // The leaf-cache extension's path and the prompt-cache
         // groups (below) — a path and two numbers, not credentials.
-        "QCR_LEAF_CACHE_EXT",
         "QCR_LEDGER_FILE",
         // Where the daemon publishes this PR's recall hint (the
         // round's own query and areas) — a path, not a credential.
@@ -408,11 +406,10 @@ describe("birth", () => {
         "QCR_SESSION_NAME",
         "QCR_SUBAGENT_CACHE_GROUP",
         "QCR_SUBAGENT_CACHE_STAGGER_MS",
-        // The process-wide subagent fan-out cap for the glue.
+        // The engine lens tool's cap and per-pass deadline (minutes),
+        // from config.toml [engine] lens_*.
         "QCR_SUBAGENT_MAX_CONCURRENCY",
-        // The per-pass deadline for lens children, in minutes.
         "QCR_SUBAGENT_PASS_DEADLINE_MIN",
-        "QCR_SUBAGENT_WIDE_FANOUT",
         "TERM",
       ]);
       expect(env.QCR_SUBAGENT_MAX_CONCURRENCY).toBe("6");

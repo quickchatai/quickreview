@@ -19,10 +19,9 @@
 // `--mode json` mark a pi as a pi-subagents leaf to the OpenViking extension
 // (qcr-leaf.ts), which then adds nothing to the prompt. The bot's pi is not a leaf.
 //
-// The lens slot is run twice. Native: today's `subagent` and `launch_plan` (the
-// bot until its workers land), a file in the pi and a factory in the session.
-// Engine: our `lens` and `lens_wave` (D3), extensions/lens.ts in the pi (what the
-// debug round and takeover load) and customTools in the session.
+// The lens slot is our `lens` and `lens_wave` (D3): extensions/lens.ts in the pi
+// (what the debug round and takeover load) and customTools in the session. pi's
+// native `subagent` and `launch_plan` are retired with their glue.
 //
 // A resumed PR JSONL must keep its system prompt: a session reopened from the
 // file sends the first session's prompt and tool schemas.
@@ -41,8 +40,6 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import subagents from "../../extensions/subagents.js";
 import { lensTools } from "../../extensions/lens.js";
 import { botSdkRuntime } from "../../src/engine/botsdk.js";
 import { LensWave } from "../../src/engine/lens/wave.js";
@@ -97,7 +94,6 @@ afterAll(async () => {
 let dir: string;
 let root: string;
 let hosts: PiHost[];
-const stubbed = new Map<string, string | undefined>();
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "pi-canary-10-bot-"));
@@ -118,11 +114,6 @@ beforeEach(() => {
 });
 afterEach(() => {
   for (const h of hosts) h.dispose();
-  for (const [k, v] of stubbed) {
-    if (v === undefined) delete process.env[k];
-    else process.env[k] = v;
-  }
-  stubbed.clear();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -134,7 +125,7 @@ function botEnv(): Record<string, string> {
     PATH: process.env["PATH"] ?? "/usr/bin:/bin",
     HOME: home,
     LANG: "C.UTF-8",
-    // The native lens tool's description names the agent dir it reads from: the
+    // The lens tool's description names the agent dir it reads from: the
     // child's PI_CODING_AGENT_DIR, the host process's env on the SDK route. One
     // path for both, so the comparison is of the build and not of a directory.
     PI_CODING_AGENT_DIR: join(dir, "agent-cli"),
@@ -143,7 +134,6 @@ function botEnv(): Record<string, string> {
     QCR_PR: "7",
     QCR_LEDGER_FILE: join(dir, "ledgers", `${SESSION}.md`),
     QCR_SUBAGENT_MAX_CONCURRENCY: "4",
-    QCR_SUBAGENT_WIDE_FANOUT: "1",
     QCR_SUBAGENT_CACHE_GROUP: "0",
     QCR_SUBAGENT_PASS_DEADLINE_MIN: "0",
     ...sessionGitConfigPins(home),
@@ -161,33 +151,16 @@ function botEnv(): Record<string, string> {
   };
 }
 
-type LensKind = "native" | "engine";
-
 /** The extension files the tmux bot loads, in its order, with the lens slot's. */
-function botExtensions(lens: LensKind): string[] {
+function botExtensions(): string[] {
   const ext = (name: string): string => join(root, "extensions", name);
   return [
     ext("bash-guard.ts"),
     ext("ledger-pin.ts"),
-    ext(lens === "native" ? "subagents.ts" : "lens.ts"),
+    ext("lens.ts"),
     ext("finding-clusters.ts"),
     ext(join("vendor", "openviking-pi", "index.ts")),
   ];
-}
-
-/** The native lens extension as a factory. It reads its settings from the process
- * env (the child's env is the session's), so they are put there for the session's
- * life: what a route hosting it would do. */
-function nativeLens(env: Record<string, string>): RoundLensTools {
-  for (const [k, v] of Object.entries(env)) {
-    if (!(k.startsWith("QCR_") || k === "PI_CODING_AGENT_DIR")) continue;
-    if (!stubbed.has(k)) stubbed.set(k, process.env[k]);
-    process.env[k] = v;
-  }
-  return {
-    factories: [subagents as unknown as ExtensionFactory],
-    toolNames: ["subagent", "launch_plan"],
-  };
 }
 
 /** The engine's lens tools over a runner that is never asked to run a pass. */
@@ -230,7 +203,7 @@ interface Run {
 /** The first request of the interactive build: the real `pi`, started the way the
  * tmux bot starts it (src/sessions.ts buildPiCommand: no discovery switch), given
  * the first message as its argument, in a pty. */
-async function interactive(lens: LensKind): Promise<Run> {
+async function interactive(): Promise<Run> {
   server.script([{ text: "ok" }]);
   const before = server.requests.length;
   const sessions = join(dir, "sessions-pi");
@@ -244,7 +217,7 @@ async function interactive(lens: LensKind): Promise<Run> {
     sessions,
     "--system-prompt",
     join(dir, "system.md"),
-    ...botExtensions(lens).flatMap((e) => ["--extension", e]),
+    ...botExtensions().flatMap((e) => ["--extension", e]),
     "--name",
     SESSION,
     "Review PR 7.",
@@ -286,7 +259,7 @@ async function interactive(lens: LensKind): Promise<Run> {
 }
 
 /** The bot worker's session on the SDK: a first turn and a second one. */
-async function worker(lens: LensKind): Promise<Run> {
+async function worker(): Promise<Run> {
   server.script([{ text: "ok" }, { text: "ok" }]);
   const before = server.requests.length;
   const spec = specFor("sdk", { sessionDir: join(dir, "sessions-sdk") });
@@ -294,7 +267,7 @@ async function worker(lens: LensKind): Promise<Run> {
   const host = await PiHost.create({ agentDir: join(dir, "agent-sdk") });
   hosts.push(host);
   const session = await botSdkRuntime(host, {
-    lens: lens === "native" ? nativeLens(env) : engineLens(env),
+    lens: engineLens(env),
     processEnv: {},
   }).create(spec);
   const first = await session.prompt("Review PR 7.");
@@ -331,23 +304,22 @@ function expectSameRequest(sdk: { body: string; id: string }, pi: { body: string
 const toolNames = (body: string): string[] =>
   (JSON.parse(body) as Body).tools.map((t) => t.function.name);
 
-describe.skipIf(!hasScript || process.platform !== "linux").each<LensKind>(["native", "engine"])(
-  "[canary 10, bot] the SDK request == the interactive build's, %s lens tools",
-  (lens) => {
+describe.skipIf(!hasScript || process.platform !== "linux")(
+  "[canary 10, bot] the SDK request == the interactive build's, with the engine's lens tools",
+  () => {
     it(
       "system prompt, D34 context stub, factory tools, memory tools, lens tools: the first request",
       { timeout: 120_000 },
       async () => {
-        const pi = await interactive(lens);
-        const sdk = await worker(lens);
+        const pi = await interactive();
+        const sdk = await worker();
         const a = pi.requests[0]!.body;
         const system = (JSON.parse(a) as Body).messages[0]!.content as string;
         // The comparison is not vacuous.
         expect(system).toContain("You are the reviewer of PR 7.");
         expect(system).toContain("AGENTS.override.md");
         expect(system).toContain("OpenViking tools: viking_search");
-        const wanted =
-          lens === "native" ? ["subagent", "launch_plan"] : [LENS_TOOL, LENS_WAVE_TOOL];
+        const wanted = [LENS_TOOL, LENS_WAVE_TOOL];
         for (const tool of [
           "bash",
           ...wanted,
@@ -368,7 +340,7 @@ describe("[canary 10, bot] the SDK session across turns and across a resume", ()
     "the second turn extends the first: same system prompt, same tools, the history after it",
     { timeout: 60_000 },
     async () => {
-      const sdk = await worker("engine");
+      const sdk = await worker();
       const [one, two] = sdk.requests.map((r) => JSON.parse(masked(r.body, sdk.id)) as Body);
       expect(two!.messages[0]).toEqual(one!.messages[0]);
       expect(two!.tools).toEqual(one!.tools);
@@ -381,7 +353,7 @@ describe("[canary 10, bot] the SDK session across turns and across a resume", ()
     "a reopened PR JSONL sends the first session's prompt, stub and tool schemas, under its id",
     { timeout: 60_000 },
     async () => {
-      const first = await worker("engine");
+      const first = await worker();
       expect(first.file).not.toBeNull();
       // A new worker: a new host and a new factory over the PR's newest JSONL.
       server.script([{ text: "ok" }]);

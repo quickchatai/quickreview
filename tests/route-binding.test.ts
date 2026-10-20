@@ -69,7 +69,9 @@ afterAll(cleanup);
 function cfgOf(lensRuntime: "native" | "engine"): Config {
   const cfg = parseConfig(readFileSync(join(ROOT, "tests/fixtures/config.toml"), "utf8"));
   cfg.review.task_files = true;
-  cfg.pi.lens_runtime = lensRuntime;
+  // The config no longer spells "native" (refused at parse); the cast keeps
+  // the vocabulary comparison below.
+  cfg.pi.lens_runtime = lensRuntime as never;
   return cfg;
 }
 

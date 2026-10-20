@@ -123,7 +123,6 @@ export function openEnv(o: {
   Object.assign(env, o.meta?.env ?? {}, GIT_ISOLATION_ENV, {
     PI_CODING_AGENT_DIR: o.agentDir,
     QCR_SANDBOX_ROOT: o.root,
-    QCR_LEAF_CACHE_EXT: join(o.root, "extensions", "leaf-cache.ts"),
     QCR_SUBAGENT_SCOPE: "user",
   });
   env["QCR_LEDGER_FILE"] = join(o.ledgerDir, "ledger.md");

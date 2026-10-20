@@ -89,7 +89,7 @@ import {
   type PortraitView,
   type SectionDiff,
 } from "../src/setup/portrait.js";
-import { resolveMaxConcurrency } from "./subagents.js";
+import { resolveMaxConcurrency } from "../src/engine/lens/env.js";
 import {
   ciText,
   displayRoot,

@@ -138,11 +138,7 @@ import { clearJudgeCase, judgeCase, judgeLabel, loadJudgements } from "./defectj
 import { codexCommand } from "./codexcli.js";
 import { LENS_RUNTIME_KINDS, type EngineRuntimeKind, type LensRuntimeKind } from "../config.js";
 import type { Runtime } from "../engine/port.js";
-import {
-  checkLensRuntime,
-  parseRuntimeKind,
-  selectRuntime,
-} from "../engine/select.js";
+import { checkLensRuntime, parseRuntimeKind, selectRuntime } from "../engine/select.js";
 import {
   CASE_HOST_AUTH_STOP,
   exitWithParent,
@@ -195,7 +191,7 @@ function benchRuntimeKind(fallback: string): EngineRuntimeKind {
 }
 
 /** `[pi] lens_runtime`, checked (a `--config` lever is not parsed by the config
- * loader). The bench has the engine's lens tool, so both values stand. */
+ * loader). The engine's lens tool is the only kind. */
 function benchLensKind(raw: string): LensRuntimeKind {
   if (!(LENS_RUNTIME_KINDS as readonly string[]).includes(raw))
     throw new Error(

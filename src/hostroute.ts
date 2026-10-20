@@ -53,9 +53,16 @@ const CONTEXT_CANDIDATES = [
  * tests/host-isolation.test.ts pins it to that file. */
 export const HOST_HTTP_IDLE_TIMEOUT_MS = 120_000;
 
-/** The private agent dir's settings.json. */
+/** The private agent dir's settings.json: what the SDK host reads from it (the
+ * durable retry, the idle timeout) and the trust default. No `extensions`
+ * entry: the SDK host discovers none (src/engine/pisdk.ts), so neither the
+ * guard nor pi's built-ins (src/pibuiltins.ts) are loaded from settings. Every
+ * lens session gets the guard as a factory (src/engine/lens/runlens.ts). */
 export function hostSettings(root: string): string {
-  const base = JSON.parse(benchSettings(root).settings) as Record<string, unknown>;
+  const { extensions: _discovered, ...base } = JSON.parse(benchSettings(root).settings) as Record<
+    string,
+    unknown
+  >;
   return JSON.stringify({ ...base, httpIdleTimeoutMs: HOST_HTTP_IDLE_TIMEOUT_MS }, null, 2) + "\n";
 }
 
@@ -164,9 +171,8 @@ export function prepareHostRun(o: {
     chmodSync(join(o.agentDir, "models.json"), 0o600);
   }
   writeFileSync(join(o.agentDir, "settings.json"), hostSettings(o.root));
-  // The lens agents, for the user scope (QCR_SUBAGENT_SCOPE=user): lens
-  // children run in the parent's cwd and resolve them through the inherited
-  // agent dir.
+  // The lens agents, for the user scope (QCR_SUBAGENT_SCOPE=user): the lens
+  // tool reads them from the agent dir's `agents`.
   buildBenchAgents(o.root, o.cfg, join(o.agentDir, "agents"), o.profile);
   mkdirSync(cwd, { recursive: true });
   copyFileSync(join(o.root, REVIEWER_STUB), join(cwd, HOST_CONTEXT_STUB));
