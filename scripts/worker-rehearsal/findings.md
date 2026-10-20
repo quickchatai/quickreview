@@ -48,7 +48,13 @@ with unit tests before this run; the rest were the rehearsal's own expectations 
   The leaf now names `auth.openai.com` and the stub answers the refresh with a rotated refresh
   token. The check's comparison of the rotated token was also a prefix match that the new token
   (`rehearsal-refresh-token-1`) always matched.
-- **F7, rehearsal: PERMIT-1 measured nothing on one earlier run.** That run triggered round 1 at
+- **F7, rehearsal: reading a restarted daemon's logs by time.** A restarted container keeps the
+  previous boot's lines, so "a healthy reconcile in the last two minutes" matched the old daemon's
+  and RESTART-1 read the first boot's `workers: recovered … requeued=0` while the new boot had
+  logged `requeued=1`. The rehearsal now waits for a boot after the kill and a reconcile after
+  that boot's recovery. BREAKER-1 read a status field that does not exist (`worker_error`); it now
+  reads the park where the board and the alerts do, `prs[].worker_crash.parked_at`.
+- **F8, rehearsal: PERMIT-1 measured nothing on one earlier run.** That run triggered round 1 at
   the head the legacy bot had reviewed, and the round settled in six seconds with no burst pass in
   the stub's log. With the trigger on a new head every run since has measured the burst (24
   passes, at most 20 in flight, grants about 250 ms apart). That run's log was not kept, so the

@@ -185,8 +185,8 @@ fact memory_image "$(docker image inspect -f '{{.Id}} {{.Size}}' "$MEM_IMG")"
 fact build_sha "$IMG_SHA (HEAD $HEAD_SHA)"
 fact runspec_label "$(label_of "$REL_IMG" qcr.runspec) layout=$(label_of "$REL_IMG" qcr.layout)"
 if [[ "$(label_of "$REL_IMG" qcr.layout)" == release ]] && same_inputs "$IMG_SHA"; then
-  SAME="the same commit"; [[ "$IMG_SHA" != "$HEAD_SHA" ]] && SAME="a commit that differs from HEAD only in the rehearsal's tooling, tests and docs"
-  check IMG-1 pass "the release image is built from HEAD" "qcr.build-sha=$IMG_SHA ($SAME as HEAD $HEAD_SHA) qcr.layout=release qcr.runspec=$(label_of "$REL_IMG" qcr.runspec)"
+  SAME="HEAD itself"; [[ "$IMG_SHA" != "$HEAD_SHA" ]] && SAME="HEAD is $HEAD_SHA, which differs from it only in the rehearsal's own tooling, tests and docs"
+  check IMG-1 pass "the release image is built from HEAD" "qcr.build-sha=$IMG_SHA ($SAME); qcr.layout=release qcr.runspec=$(label_of "$REL_IMG" qcr.runspec)"
 else
   check IMG-1 fail "the release image is built from HEAD" "labels: sha=$IMG_SHA layout=$(label_of "$REL_IMG" qcr.layout); HEAD $HEAD_SHA"
 fi
@@ -289,6 +289,15 @@ daemon_run() {
 log "starting the daemon on the legacy host directory"
 daemon_run >/dev/null || die "the daemon did not start"
 daemon_up() { docker logs "$DAEMON" 2>&1 | grep -q "reconcile: open=.* errors=0"; }
+# boots: how many times the daemon has booted (its worker recovery logs once per boot)
+boots() { docker logs "$DAEMON" 2>&1 | grep -c 'workers: recovered'; }
+# rebooted <n>: a boot after the first <n>, and a healthy reconcile after that boot's recovery
+# (the logs of a restarted container keep the previous boot's lines: a window by time would
+# match them)
+rebooted() {
+  [[ "$(boots)" -gt "$1" ]] && docker logs "$DAEMON" 2>&1 \
+    | awk '/workers: recovered/ {ok = 0} /reconcile: open=.* errors=0/ {ok = 1} END {exit !ok}'
+}
 wait_for 180 "the daemon's first healthy reconcile" daemon_up || { docker logs --tail 40 "$DAEMON" >&2; die "the daemon did not reconcile"; }
 sleep 3
 
@@ -544,10 +553,11 @@ waitx 120 "a worker running round $RR" round_running "$RR"
 sleep 3
 ATT_BEFORE="$(sql "select attempt from session_commands where kind='round' and round_no=$RR order by rowid desc limit 1")"
 stub_mode round
+BOOTS_BEFORE="$(boots)"
 DAEMON_PID="$(procs | awk '/dist\/src\/wire.js/ {print $1; exit}')"
 dx sh -c "kill -9 $DAEMON_PID" 2>/dev/null
 wait_for 60 "the container to come back" bash -c "docker exec $DAEMON true"
-wait_for 180 "the restarted daemon's reconcile" bash -c "docker logs --since 120s $DAEMON 2>&1 | grep -q 'reconcile: open=.* errors=0'"
+waitx 180 "the restarted daemon's recovery and reconcile" rebooted "$BOOTS_BEFORE"
 RECOVER="$(docker logs "$DAEMON" 2>&1 | grep 'workers: recovered' | tail -1)"
 wait_for 240 "round $RR to settle after the restart" rounds_done "$RR"
 ATT_AFTER="$(sql "select attempt from session_commands where kind='round' and round_no=$RR order by rowid desc limit 1")"
@@ -570,10 +580,14 @@ pr_event synchronize "$HEAD4" >/dev/null
 waitx 240 "the PR to park" crash_loop_seen
 sleep 20
 SPAWNED="$(( $(events worker_spawned) - SPAWNS_BEFORE ))"
-PARKED="$(python3 -c "import json;d=json.load(open('$H/state/status.json'));print([ (p.get('runtime'),p.get('worker_error')) for p in d['prs'] if p['number']==$PR])" 2>/dev/null)"
+# status.json carries the park (prs[].worker_crash, which the board and the alerts read)
+pr_crash() { python3 -c "import json,sys;d=json.load(open(sys.argv[1]));print(json.dumps([p.get('worker_crash') for p in d['prs'] if p['number']==$PR][0]))" "$H/state/status.json" 2>/dev/null; }
+parked_in_status() { [[ "$(pr_crash)" == *parked_at* ]]; }
+waitx 60 "status.json to show the park" parked_in_status
+PARKED="$(pr_crash | cut -c1-300)"
 CRASH="$(sql "select count(*) from events where kind='anomaly' and payload like '%worker_crash_loop%'")"
-if [[ "$CRASH" -ge 1 && "$SPAWNED" == 2 ]]; then
-  check BREAKER-1 pass "a failing worker trips the breaker: the PR is parked after two failures and no third worker starts" "workers spawned for the round: $SPAWNED; worker_crash_loop anomaly x$CRASH; status: $PARKED"
+if [[ "$CRASH" -ge 1 && "$SPAWNED" == 2 && "$PARKED" == *parked_at* ]]; then
+  check BREAKER-1 pass "a failing worker trips the breaker: the PR is parked after two failures and no third worker starts" "workers spawned for the round: $SPAWNED; worker_crash_loop anomaly x$CRASH; status.json worker_crash: $PARKED"
 else
   check BREAKER-1 fail "a failing worker trips the breaker" "spawned=$SPAWNED crash_loop_anomalies=$CRASH status=$PARKED round$BR=$(round_status "$BR")"
 fi
@@ -585,6 +599,7 @@ if want LOGIN-1; then
 LOCKED=no; dx flock -n "/home/qcr/.pi/agent/auth.json.lock" true 2>/dev/null || LOCKED=yes
 OLD_REFRESH="$(python3 -c "import json;print(json.load(open('$H/pihome/agent/auth.json'))['openai-codex']['refresh'])")"
 # a login that is due: stop the daemon, make the token expire inside the refresh margin, start it
+BOOTS_LOGIN="$(boots)"
 docker stop -t 30 "$DAEMON" >/dev/null
 python3 - "$H/pihome/agent/auth.json" <<'PY'
 import json, sys, time
@@ -609,7 +624,7 @@ if [[ "$LOCKED" == yes && "$LOCKED2" == yes && "$SECOND_RC" == 75 && "$TOKEN_POS
 else
   check LOGIN-1 fail "the refresher and its lock" "locked=$LOCKED/$LOCKED2 second rc=$SECOND_RC ($SECOND) token_posts=$TOKEN_POSTS refresh '$OLD_REFRESH' -> '$NEW_REFRESH'"
 fi
-wait_for 180 "the daemon after the refresher scenario" bash -c "docker logs --since 90s $DAEMON 2>&1 | grep -q 'reconcile: open=.* errors=0'"
+waitx 180 "the daemon after the refresher scenario" rebooted "$BOOTS_LOGIN"
 fi
 
 # ---- J. SQLITE_BUSY, the process tree, status.json, the network ------------------------------------------------------------------------
