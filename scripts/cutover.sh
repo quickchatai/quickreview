@@ -442,10 +442,19 @@ s_release() {
   rc=${PIPESTATUS[0]}
   if (( rc != 0 )); then
     bad "the release failed (exit $rc); output above, saved to $log"
-    say "A failure before the recreate was RESCUED by the updater: the legacy bot is back on its old"
-    say "config and drained. Confirm with \`ssh ${VM_HOST:-<vm>} sudo qcr-update status --json\`, wait for"
-    say "running_rounds 0, fix, re-tag if needed, and re-run $SELF <version>."
-    say "A failure AFTER the recreate is fixed forward under the drain (runbook E.3)."
+    # Where it failed decides what it means: the updater's RESCUE covers a failure up to the recreate,
+    # and a failure in deploy.sh's post-deploy checks comes AFTER it. The VM's own layout says which.
+    if read_vm_status && [[ "$(jfield layout)" == release ]]; then
+      bad "the VM's layout is now RELEASE: the recreate happened, so this failure came AFTER the point of no return"
+      say "Nothing was rescued and nothing can be: fix forward under the drain (runbook E.3). Read"
+      say "\`ssh ${VM_HOST:-<vm>} sudo docker logs --tail 100 $CONTAINER\` and the post-deploy output above, keep the"
+      say "drain, and re-run $SELF $VERSION to resume at this stage once it is fixed."
+    else
+      say "A failure before the recreate was RESCUED by the updater: the legacy bot is back on its old"
+      say "config and drained. Confirm with \`ssh ${VM_HOST:-<vm>} sudo qcr-update status --json\`, wait for"
+      say "running_rounds 0, fix, re-tag if needed, and re-run $SELF <version>."
+      say "A failure AFTER the recreate is fixed forward under the drain (runbook E.3)."
+    fi
     return 1
   fi
   good "release $VERSION deployed"
