@@ -95,6 +95,7 @@ case "$1" in
   *qcr-update*status*) cat "${vmState}" ;;
   *state/status.json*) c="\${1#sudo }"; bash -c "$(printf '%s' "$c" | sed "s#/opt/quickreview/state/status.json#${statusFile}#")" ;;
   *drain_hold_kept*) cat "${keptFile}" ;;
+  *cli.js*status*) echo "quickreview — DRY-RUN — snapshot x"; cat "${dir}/qcr-status" ;;
   *docker*node*) echo 3 ;;
   *posting-receipts*) echo 1 ;;
 esac`,
@@ -358,5 +359,15 @@ describe("scripts/cutover.sh", () => {
     expect(res.code).toBe(1);
     expect(res.out).toContain("has not caught up for: #12");
     expect(existsSync(join(r.dir, "state"))).toBe(true);
+  });
+
+  it("reads the backstop's daemon status in the daemon's container, never from the owner's machine", () => {
+    const r = rig();
+    const res = r.run(["", "y", V, "y"]);
+    expect(res.code).toBe(1);
+    const vmCalls = r.calls().filter((l) => l.startsWith("vm "));
+    expect(vmCalls.some((l) => l.includes("docker exec quickreview-sandbox node /opt/qcr/dist/src/cli.js status"))).toBe(true);
+    // the owner's own `qcr status` is not what the backstop compares against
+    expect(r.calls()).not.toContain("qcr status");
   });
 });

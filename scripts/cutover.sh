@@ -509,13 +509,19 @@ prs_on_github() {
   if [[ -n "${CUTOVER_PRS_CMD:-}" ]]; then bash -c "$CUTOVER_PRS_CMD"
   else gh pr list --repo "$REPO" --state open --limit 200 --json number,headRefOid --jq '.[] | "\(.number) \(.headRefOid)"'; fi
 }
+# daemon_status — `qcr status` as the DAEMON sees it, read in its container: `qcr status` on the owner's
+# machine reads that machine's own state dir (no status.json there), which would make the backstop
+# below compare GitHub with nothing and pass. The release image keeps the CLI at /opt/qcr (the cutover
+# is past the recreate by now).
+daemon_status() { vm "sudo docker exec $CONTAINER node /opt/qcr/dist/src/cli.js status"; }
 s_backstop() {
   local n=0 gh_prs daemon_prs lag num sha dline dstate dhead
   say "Webhooks were dropped during the drain. Every tracked open PR's head on GitHub must match"
   say "the daemon's last-seen head, or a round must be queued for it."
   while :; do
     gh_prs="$(prs_on_github)" || { bad "could not list the open PRs"; return 1; }
-    daemon_prs="$("$QCR" status 2>/dev/null)" || { bad "\`qcr status\` failed"; return 1; }
+    daemon_prs="$(daemon_status 2>/dev/null)" || { bad "the daemon's \`qcr status\` could not be read in its container"; return 1; }
+    grep -q "^quickreview — " <<<"$daemon_prs" || { bad "the daemon's \`qcr status\` printed no snapshot (is the daemon up?)"; return 1; }
     lag=""
     while read -r num sha; do
       [[ -n "$num" ]] || continue

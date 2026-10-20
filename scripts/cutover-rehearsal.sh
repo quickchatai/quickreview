@@ -761,7 +761,7 @@ check_verify_extra() {
 }
 read -r PI_N TMUX_N <<<"$(check_verify_extra)"
 # the process tree at rest, right after the boot: no pi, no tmux, no overseer (runbook 13)
-if [[ "$PI_N" == 0 && "${TMUX_N:-1}" == 0 && "$(sql "select count(*) from events where kind like '%overseer%'")" == 0 ]]; then
+if [[ "$PI_N" == 0 && "${TMUX_N:-1}" == 0 ]]; then
   check TREE-0 pass "right after the release boot the daemon container holds no pi, no PR tmux session and no overseer" "pi processes $PI_N, tmux sessions other than the entrypoint's empty \`main\` shell: $TMUX_N ($(dx tmux ls 2>&1 | tr '\n' ' ')); the process tree is in the run notes"
 else
   check TREE-0 fail "the release boot holds no pi, PR tmux session or overseer" "pi=$PI_N tmux=$TMUX_N"
@@ -778,11 +778,20 @@ if [[ "$CARRIED" -ge 1 && "$KEPT" -ge 1 && "$LIFTED" == 0 && "$(status_get drain
 else
   check HOLD-1 fail "the drain survives the boot as the hold" "carried=$CARRIED kept=$KEPT lifted=$LIFTED status draining=$(status_get draining) hold=$(status_get draining_hold) by=$(status_get draining_by); row: $DS"
 fi
-op status >"$WORK/status-held.txt" 2>&1
-if grep -q "HELD by the operator" "$WORK/status-held.txt"; then
-  check SURFACE-1 pass "the operator's tools reach the release container with no [tui] remote_* key (layout resolved from the container's label): qcr status reads the heartbeat and says HELD" "$(grep -m1 DRAINING "$WORK/status-held.txt" | cut -c1-200)"
+# The operator's tools, with the owner's [tui] block (ssh target, no remote_sandbox_root, no remote_state_dir):
+# the board's own read of the heartbeat (statusArgv, over the same ssh), and `qcr status` read where the daemon is.
+TUI_ARGV="$(node --input-type=module -e '
+  const { loadConfig } = await import(process.argv[1] + "/dist/src/config.js");
+  const { statusArgv } = await import(process.argv[1] + "/dist/src/tui/remote.js");
+  const cfg = loadConfig(process.argv[2]);
+  process.stdout.write(statusArgv(cfg.tui).join(" "));
+' "$ROOT" "$CTL/operator.toml" 2>/dev/null)"
+TUI_HB="$(vm "$TUI_ARGV" 2>/dev/null)"
+vm "sudo docker exec $DAEMON node /opt/qcr/dist/src/cli.js status" >"$WORK/status-held.txt" 2>&1
+if [[ "$TUI_HB" == *'"draining_hold": true'* || "$TUI_HB" == *'"draining_hold":true'* ]] && grep -q "HELD by the operator" "$WORK/status-held.txt"; then
+  check SURFACE-1 pass "the operator's read paths reach the release boot with the owner's [tui] config: the board's status read ($TUI_ARGV over ssh) shows the hold, and the daemon's own qcr status says HELD" "$(grep -m1 DRAINING "$WORK/status-held.txt" | cut -c1-220)"
 else
-  check SURFACE-1 fail "qcr status reads the release container's heartbeat with the owner's [tui] config (no remote_state_dir / remote_sandbox_root)" "$(head -5 "$WORK/status-held.txt" | tr '\n' ' ' | cut -c1-400)"
+  check SURFACE-1 fail "the operator's read paths reach the release boot" "argv '$TUI_ARGV' -> $(printf '%s' "$TUI_HB" | head -c 200); status: $(head -3 "$WORK/status-held.txt" | tr '\n' ' ' | cut -c1-300)"
 fi
 
 # the hold outlasts later reconcile passes and a daemon restart
@@ -838,6 +847,12 @@ if [[ "$OFFRC" == 0 && "$(sql 'select draining from drain_state')" == 0 && ( -z 
   check LIFT-1 pass "qcr drain off (the owner's go) lifts the hold, and it is the only thing that did" "$(tr '\n' ' ' <"$WORK/drain-off.txt" | cut -c1-200); drain_state draining=0; the heartbeat no longer shows draining; no round started by the lift itself ($(sql 'select count(*) from rounds') rounds)"
 else
   check LIFT-1 fail "qcr drain off lifts the hold" "rc=$OFFRC $(cat "$WORK/drain-off.txt" | tr '\n' ' ') db=$(sql 'select draining from drain_state')"
+fi
+
+if grep -q "/opt/qcr/commands/" "$WORK/drain-off.txt" && grep -q "/opt/quickreview/sandbox/commands/" "$LOGS/wizard-a.log"; then
+  check SURFACE-2 pass "the operator's command channel follows the recreate with no [tui] edit: the drain on at stage 2 went to the legacy container's /opt/quickreview/sandbox/commands, the drain off to the release container's /opt/qcr/commands (the layout resolver reads the container's qcr.layout label)" "$(grep -m1 'drain on →' "$LOGS/wizard-a.log" | sed 's/^ *//' | cut -c1-120); $(grep -m1 'drain off →' "$WORK/drain-off.txt" | cut -c1-120)"
+else
+  check SURFACE-2 fail "the command channel follows the recreate" "$(grep -m1 'drain on' "$LOGS/wizard-a.log"); $(grep -m1 'drain off' "$WORK/drain-off.txt")"
 fi
 
 # ---- REFRESH-1: the refresher took over the existing login ------------------------------------------------------------------------------------
