@@ -27,12 +27,22 @@ describe("bench/aacr/elo", () => {
   it("a judgment is one call with no tools, the same prompt for both judges", () => {
     const judge = read("elo_judge.py");
     expect(judge).not.toMatch(/"tools"\s*:/);
-    expect(judge).not.toMatch(/tool_choice/);
+    // The tool keys appear once: in the list a request is refused for carrying.
+    expect(judge).toMatch(/^TOOL_KEYS = \("tools", "tool_choice",/m);
+    expect(judge.replace(/^TOOL_KEYS = \([^)]*\)$/m, "")).not.toMatch(/tool_choice/);
+    expect(judge).toContain("check_chat_body(body)");
+    expect(judge).toContain("check_opus_params(params)");
+    // An answer counts only as one plain final message, recorded as one turn.
+    expect(judge).toContain('if finish != "stop":');
+    expect(judge).toContain('if stop != "end_turn" or tool_blocks:');
+    expect(judge).toMatch(/"turns": 1/);
     // GPT: system + shared context + the two reviews; Opus: the same three texts.
     expect(judge).toContain('{"role": "system", "content": SYSTEM}');
     expect(judge).toContain('"system": SYSTEM');
     const elo = read("elo.py");
     expect(elo).toContain('"prompt_sha256": prompt_sha');
+    // A judgment counts only at its unit's current prompt.
+    expect(elo).toContain('r.get("prompt_sha256") == sha');
   });
 
   it("the GPT judge is published on loopback only; the Opus key is read from a file", () => {
