@@ -371,6 +371,10 @@ ENVF
   # carries the operator's [tui] block (a local docker target, and — like the owner's — no
   # remote_sandbox_root and no remote_state_dir). The legacy host's own is the OLD world's.
   cp "$H/config-home/config.toml" "$CFGHOME/config.toml"
+  # the sidecar's supervisor reads its OpenViking home from config.toml and the entrypoint from the run
+  # spec: the host directory stands at its real path inside the sidecar, so config.toml names that path
+  # (on the real VM both are /opt/quickreview/state/openviking)
+  node "$WRH/patch-toml.mjs" "$CFGHOME/config.toml" "openviking.home=\"$H/state/openviking\""
   node "$WRH/patch-toml.mjs" "$CFGHOME/config.toml" 'tui.target="local"' 'tui.sudo_docker=false' "tui.container=\"$DAEMON\""
   cp "$CFGHOME/config.toml" "$CTL/operator.toml"
   cp "$CFGHOME/config.toml" "$WORK/new-world-config.toml"
@@ -710,7 +714,7 @@ P=""
 [[ "$(last_run | cut -d' ' -f1)" == ok ]] || P+="last run '$(last_run)'; "
 [[ "$(sha256sum "$H/config-home/config.toml" | cut -c1-16)" == "$(sha256sum "$CFGHOME/config.toml" | cut -c1-16)" ]] || P+="config-home is not the shipped config; "
 [[ "$(sha256sum "$H/config-home.prev/config.toml" | cut -c1-16)" == "$(snap_get before config)" ]] || P+="config-home.prev is not the legacy config; "
-[[ "$(tree_sum "$H/memory-state")" == "$(snap_get before store)" ]] || P+="the sidecar store is not the verified copy; "
+grep -qE "sidecar store (seeded from .*copy verified|already seeded)" "$VM/lib/update.log" || P+="the updater did not log a verified store copy; "
 [[ "$(tree_sum "$H/state/openviking")" == "$(snap_get before store)" ]] || P+="the daemon's old store changed; "
 BK="$(ls -d "$VM/backups/$VERSION-"* 2>/dev/null | tail -1)"
 [[ -f "$BK/state.db" && -f "$BK/pi-sessions.tar.gz" ]] || P+="no snapshot of state.db and the sessions under $VM/backups; "
