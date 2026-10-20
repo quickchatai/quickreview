@@ -254,6 +254,37 @@ describe.skipIf(!hasOpenssl)("[P8.20a] the scripted stub", () => {
     expect(done).toContain(`LEDGER PR #7 @ ${HEAD}`);
   });
 
+  it("reports the plan table's lenses as the verdict's passes, not every agent the order names", async () => {
+    await post("/admin/mode", { mode: "round" });
+    const order = [
+      "# Review round — re-review",
+      "**ROUND: re-review** — PR #7",
+      "**Pass plan for this round** (chosen by the daemon):",
+      "",
+      "| lens | lens to call | tier | may raise to | focus / why |",
+      "| --- | --- | --- | --- | --- |",
+      "| pass-baseline | `pass-baseline--sol-high` | sol-high | — (pinned) | every round |",
+      "| pass-tests | `pass-tests--terra-med` | terra-med | `pass-tests--sol-med`, `pass-tests--sol-high` | code |",
+      "| pass-validate | `pass-validate--sol-high` | sol-high | — (pinned) |  |",
+      "",
+      "The sweep's own plan:",
+      "| pass-sweep | `pass-sweep--sol-high` | sol-high | — (pinned) | files |",
+      "<!-- qcr-round: pr-7 round-4 -->",
+    ].join("\n");
+    const verdict = await next(order, 3);
+    expect(verdict.args.path).toBe("verdict/pr-7-round-4.json.tmp");
+    expect(
+      JSON.parse(verdict.args.content).passes.map((p: { name: string; tier: string }) => [
+        p.name,
+        p.tier,
+      ]),
+    ).toEqual([
+      ["pass-baseline", "sol-high"],
+      ["pass-tests", "terra-med"],
+      ["pass-validate", "sol-high"],
+    ]);
+  });
+
   it("plays a round a worker took over from its order, not as a lens leaf", async () => {
     await post("/admin/mode", { mode: "round" });
     // the killed worker's order, then the taking-over worker's continuation turn

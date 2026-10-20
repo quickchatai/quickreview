@@ -39,7 +39,9 @@ with unit tests before this run; the rest were the rehearsal's own expectations 
   (RESTART-1). The stub's rounds also wrote no findings record and no ledger block, so the daemon
   nudged the PR's session a minute after each round, and that nudge's worker held the PR's one
   active slot while RESTART-1 waited for its round. The stub now plays a taken-over round from its
-  order and writes both. Its answer stub ran `…; echo post-exit=$?`, which hid the post's exit
+  order and writes both. It also reported every agent a later round's order names (the raise-to
+  tiers, the pre-approval sweep's plan) as the verdict's passes, which the daemon rightly logged
+  as `pass_plan_mismatch`; it now reports the rows of the order's pass plan. Its answer stub ran `…; echo post-exit=$?`, which hid the post's exit
   status from the worker's post count.
 - **F6, rehearsal: the login refresh had no OAuth server** (LOGIN-1). The stub's certificate named
   only GitHub, so pi-ai's refresh to `auth.openai.com` failed TLS (`ERR_TLS_CERT_ALTNAME_INVALID`).

@@ -291,6 +291,26 @@ function shape(body) {
 
 const bash = (id, command) => ({ tools: [{ id, name: "bash", args: { command } }] });
 
+const AGENT_RE = /\b(pass-[a-z0-9-]+?)--((?:sol|terra|luna)-(?:high|med|low))\b/g;
+
+/** The round's planned lenses, as the agents to call: the order's "Pass plan for this round"
+ * table, one row per lens (its "lens to call" column), and nothing else the order names (a
+ * later round's order also lists the raise-to tiers and the sweep's own plan). An order with
+ * no such table (a test's) gives every agent it names. */
+function plannedAgents(user) {
+  const at = user.indexOf("**Pass plan for this round**");
+  if (at >= 0) {
+    const rows = [];
+    for (const line of user.slice(at).split("\n").slice(1)) {
+      if (rows.length > 0 && !line.startsWith("|")) break;
+      const m = /^\|\s*pass-[a-z0-9-]+\s*\|\s*`([^`]+)`/.exec(line);
+      if (m && new RegExp(AGENT_RE.source).test(m[1])) rows.push(m[1]);
+    }
+    if (rows.length > 0) return rows;
+  }
+  return [...new Set([...user.matchAll(AGENT_RE)].map((m) => `${m[1]}--${m[2]}`))];
+}
+
 /** The round the main session plays: join the wave, run the validator, write the verdict and the
  * review body, commit the verdict, post through the shim, say done. The pr, round, head and the
  * planned passes come off the round order (the plan table names every agent as `pass-x--tier`). */
@@ -301,13 +321,7 @@ function playRound(s) {
     /QCR_ROUND_NO=(\d+)/.exec(s.user)?.[1] ??
     "1";
   const head = /QCR_EXPECTED_HEAD=([0-9a-f]{7,40})/.exec(s.user)?.[1] ?? gh.head;
-  const agents = [
-    ...new Set(
-      [...s.user.matchAll(/\b(pass-[a-z0-9-]+?)--((?:sol|terra|luna)-(?:high|med|low))\b/g)].map(
-        (m) => `${m[1]}--${m[2]}`,
-      ),
-    ),
-  ];
+  const agents = plannedAgents(s.user);
   const validator = agents.find((a) => a.startsWith("pass-validate"));
   const passes = agents.map((a) => {
     const [name, tier] = a.split("--");
