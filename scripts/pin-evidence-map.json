@@ -111,7 +111,7 @@
     },
     {
       "id": "oauth-refresh",
-      "assumes": "pi-ai's OAuth loaders and refresh(credential, signal) exist at dist/auth/oauth/load.js; pi refreshes with under five minutes of validity left.",
+      "assumes": "pi-ai's OAuth loaders and refresh(credential, signal) exist in the pi-ai package (auth/oauth/load.js); pi refreshes with under five minutes of validity left.",
       "files": { "src/loginrefresh/pirefresh.ts": 2, "src/loginrefresh/refresher.ts": 1 },
       "signal": {
         "source": "structured-log",
