@@ -86,8 +86,16 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
       file: "src/resumecheck.ts",
       why:
         "the static half of the resume rehearsal (P8.4): what a PR's session JSONL looks like before a worker " +
-        "resumes it. Read only by the rehearsal tests and helpers until the cutover preflight (P8.4b) imports " +
-        "it. Delete this entry with that import.",
+        "resumes it. Read by the rehearsal tests and helpers, and by src/preflight.ts, which is itself " +
+        "driven by the image entrypoint rather than imported (see its entry). Delete this entry once a " +
+        "production import reaches it.",
+    },
+    {
+      file: "src/preflight.ts",
+      why:
+        "`daemon --preflight` (P8.4b): the cutover and release check. Run as `node dist/src/preflight.js` by " +
+        "docker/entrypoint.sh from the new image, so a real driver this static scan cannot follow; no wire.ts, " +
+        "cli.ts or extension imports it.",
     },
     {
       file: "src/memory/import.ts",

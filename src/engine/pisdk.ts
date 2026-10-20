@@ -697,3 +697,10 @@ export class PiHost {
     this.sessions.clear();
   }
 }
+
+/** pi's own parse of a session file, as a worker's first act on it: open it and
+ * rebuild the context. No session is started and nothing is written to `file`.
+ * The cutover preflight (src/preflight.ts) resumes every open PR's JSONL with it. */
+export function openSessionContext(file: string, sessionDir: string, cwd: string): void {
+  SessionManager.open(file, sessionDir, cwd).buildSessionContext();
+}

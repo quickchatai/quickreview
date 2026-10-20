@@ -578,6 +578,7 @@ chmod -R go+rX "$SCRATCH"
 d run --rm --network none --user "$UID_GID" \
   -e "QCR_CONFIG=$CONFIG_PATH_IN_CONTAINER" \
   -v "$SCRATCH:${C[APP_ROOT]}/state" -v "$CFG.next:/opt/quickreview/config-home:ro" \
+  -v "$ROOT/pihome:/home/qcr/.pi:ro" \
   "$DAEMON_REF" daemon --preflight >"$WORK/preflight.out" 2>&1 ||
   { tail -n 20 "$WORK/preflight.out" >&2 || true; die "the new image's \`daemon --preflight\` failed on a scratch copy of the snapshot"; }
 rm -rf "$SCRATCH"

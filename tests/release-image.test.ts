@@ -87,9 +87,9 @@ describe("release image — stages and pins", () => {
     expect(arg("NODE_MAJOR")).toBe(gv("node_major"));
   });
 
-  it("carries the labels the VM's updater reads: layout, run spec, the pi pin — and not qcr.preflight until `daemon --preflight` exists", () => {
+  it("carries the labels the VM's updater reads: layout, preflight, run spec, the pi pin", () => {
     expect(dockerfile).toMatch(
-      /LABEL qcr\.layout="release" \\\n\s+qcr\.runspec="1" \\\n\s+qcr\.pi="\$\{PI_VERSION\}"/,
+      /LABEL qcr\.layout="release" \\\n\s+qcr\.preflight="true" \\\n\s+qcr\.runspec="1" \\\n\s+qcr\.pi="\$\{PI_VERSION\}"/,
     );
     expect(dockerfile).toContain('LABEL qcr.build-sha="${BUILD_SHA}"');
     // The run spec the image needs is the one scripts/deploy.sh renders.
@@ -100,7 +100,8 @@ describe("release image — stages and pins", () => {
     // qcr-update refuses every image (nothing deploys before the cutover).
     const hasSubcommand =
       spawnSync("grep", ["-rlF", "--", "daemon --preflight", "src"], { cwd: root }).status === 0;
-    if (!hasSubcommand) expect(dockerfile).not.toMatch(/qcr\.preflight\s*=/);
+    expect(hasSubcommand).toBe(true);
+    expect(dockerfile).toMatch(/qcr\.preflight\s*=\s*"true"/);
   });
 
   it("install lines reference the ARGs, never a literal version", () => {
