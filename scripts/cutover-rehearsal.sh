@@ -87,6 +87,8 @@ FACTS="$WORK/facts.tsv"
 VM_HOST=cutover-vm
 VERSION=1.0.0
 PR=7
+exec 8>"$WORK/.lock"
+flock -n 8 || { echo "[cutover-rehearsal] another run is using $WORK" >&2; exit 1; }
 mkdir -p "$LOGS" "$VM/inject" "$VM/etc/qcr" "$VM/backups" "$VM/lib" "$CTL"
 : >"$RESULTS"; : >"$FACTS"
 
