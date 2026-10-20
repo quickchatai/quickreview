@@ -624,3 +624,19 @@ describe("qcr drain on --hold", () => {
     );
   });
 });
+
+describe("the ratified levers text", () => {
+  const claude = readFileSync(resolve(__dirname, "..", "CLAUDE.md"), "utf8").replace(/\s+/g, " ");
+
+  it("CLAUDE.md carries the drain hold word for word, as ratified", () => {
+    for (const ratified of [
+      "[private rule text removed]",
+      "[private rule text removed]",
+      "The boot that adds the hold to state.db carries a standing operator drain over as one (`drain_hold_carried`); that is how the legacy daemon's cutover drain holds.",
+      "[private rule text removed]",
+      "[private rule text removed]",
+    ])
+      expect(claude).toContain(ratified);
+    expect(claude).not.toContain("lifts whatever stands");
+  });
+});
