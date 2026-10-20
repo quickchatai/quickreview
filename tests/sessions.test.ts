@@ -27,7 +27,7 @@ import {
 import { Tmux } from "../src/tmux.js";
 import type { ExecFn } from "../src/tmux.js";
 import { writeSessionBridgeState } from "../src/overseer-bridge.js";
-import { StateStore } from "../src/state.js";
+import { type StateStore } from "../src/state.js";
 import { WorktreeManager } from "../src/worktrees.js";
 import { piAuthWatchDirs } from "../src/wire.js";
 import { PiAuthWatch } from "../src/authwatch.js";
