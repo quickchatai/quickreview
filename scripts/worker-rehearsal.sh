@@ -680,10 +680,12 @@ fact process_tree_pi "$PI_ROWS"
 fact tmux_sessions "$TMUXS"
 LONG_LIVED="$(awk '{ $1=""; $2=""; print }' <<<"$PROCS" | grep -E 'wire.js|loginrefresh' | sed 's/^ *//' | cut -c1-80 | tr '\n' ';')"
 fact long_lived "$LONG_LIVED"
-if [[ "$PR_PI" == 0 && -z "${TMUXS// /}" && "$OVERSEER_PI" == 0 ]]; then
-  check TREE-1 pass "the daemon's process tree holds no pi, no tmux session and no overseer: the daemon and the login refresher, nothing else long-lived" "pi processes in the container: $OVERSEER_PI (under the daemon: $PR_PI); tmux sessions: ${TMUXS:-none}; long-lived: $LONG_LIVED"
+# The entrypoint still starts a tmux server and one empty `main` shell session (the jump-in surface and the
+# host of the takeover and debug panes); that is not a PR session. Anything else, and any pi, is.
+if [[ "$PR_PI" == 0 && ( -z "${TMUXS// /}" || "$TMUXS" == "main " ) && "$OVERSEER_PI" == 0 ]]; then
+  check TREE-1 pass "the daemon's process tree holds no pi, no PR tmux session and no overseer: the daemon and the login refresher, nothing else long-lived" "pi processes in the container: $OVERSEER_PI (under the daemon: $PR_PI); tmux sessions: ${TMUXS:-none} (the entrypoint's empty shell, no pane runs pi); long-lived: $LONG_LIVED"
 else
-  check TREE-1 fail "the daemon's process tree holds no pi, no tmux session and no overseer" "under daemon: $PR_PI; tmux: ${TMUXS:-none}; pi: $OVERSEER_PI; rows: $(tr '\n' ';' <<<"$PI_ROWS" | cut -c1-300)"
+  check TREE-1 fail "the daemon's process tree holds no pi, no PR tmux session and no overseer" "under daemon: $PR_PI; tmux: ${TMUXS:-none}; pi: $OVERSEER_PI; rows: $(tr '\n' ';' <<<"$PI_ROWS" | cut -c1-300)"
 fi
 
 # The heartbeat reports a block only once its source is up: right after the login scenario's

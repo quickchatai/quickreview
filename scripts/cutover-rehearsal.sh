@@ -368,14 +368,14 @@ ENVF
   cp "$H/state/state.db" "$WORK/legacy-state.db"
 
   # Two configs. The controller's is the NEW world's (what runbook A.5 edits the config home to) and
-  # carries the operator's [tui] block (a local docker target, and — like the owner's — no
+  # carries the operator's [tui] block (the ssh target, as the owner's, and — like the owner's — no
   # remote_sandbox_root and no remote_state_dir). The legacy host's own is the OLD world's.
   cp "$H/config-home/config.toml" "$CFGHOME/config.toml"
   # the sidecar's supervisor reads its OpenViking home from config.toml and the entrypoint from the run
   # spec: the host directory stands at its real path inside the sidecar, so config.toml names that path
   # (on the real VM both are /opt/quickreview/state/openviking)
   node "$WRH/patch-toml.mjs" "$CFGHOME/config.toml" "openviking.home=\"$H/state/openviking\""
-  node "$WRH/patch-toml.mjs" "$CFGHOME/config.toml" 'tui.target="local"' 'tui.sudo_docker=false' "tui.container=\"$DAEMON\""
+  node "$WRH/patch-toml.mjs" "$CFGHOME/config.toml" 'tui.target="ssh"' 'tui.sudo_docker=true' "tui.ssh_host=\"$VM_HOST\"" "tui.container=\"$DAEMON\""
   cp "$CFGHOME/config.toml" "$CTL/operator.toml"
   cp "$CFGHOME/config.toml" "$WORK/new-world-config.toml"
   cp "$H/config-home/config.toml" "$H/config-home/config.toml.new"; rm "$H/config-home/config.toml.new"
@@ -444,7 +444,7 @@ op() { QCR_CONFIG="$CTL/operator.toml" node "$ROOT/dist/src/cli.js" "$@"; }
 export CUTOVER_QCR="$CTL/qcr-op"
 cat >"$CTL/qcr-op" <<EOF
 #!/usr/bin/env bash
-# scripts/qcr for the rehearsal's operator: \`config check --config-home\` as given, everything else on the [tui] local target
+# scripts/qcr for the rehearsal's operator: \`config check --config-home\` as given, everything else on the [tui] ssh target
 if [[ "\${1:-}" == config ]]; then exec node "$ROOT/dist/src/cli.js" "\$@"; fi
 QCR_CONFIG="$CTL/operator.toml" exec node "$ROOT/dist/src/cli.js" "\$@"
 EOF
@@ -752,16 +752,19 @@ fi
 check_verify_extra() {
   local ps; ps="$(dx sh -c 'for p in /proc/[0-9]*; do [ -r $p/stat ] || continue; printf "%s %s\n" "${p#/proc/}" "$(tr "\0" " " <$p/cmdline | cut -c1-120)"; done')"
   local pi tmuxn
-  pi="$(grep -cE ' (pi|.*/pi) |bin/pi|pi-coding-agent' <<<"$ps")"; tmuxn="$(dx tmux ls 2>&1 | grep -vc 'no server')"
+  pi="$(grep -cE ' (pi|.*/pi) |bin/pi|pi-coding-agent' <<<"$ps")"
+  # the entrypoint still starts a tmux server and one empty `main` shell session (the jump-in surface and
+  # the host of takeover/debug panes): that is not a PR session; anything else is
+  tmuxn="$(dx tmux ls 2>/dev/null | grep -vc '^main:')"
   fact process_tree "$(awk '{ $1=""; print }' <<<"$ps" | grep -E 'node|flock|sleep' | cut -c1-90 | tr '\n' ';')"
   echo "$pi $tmuxn"
 }
 read -r PI_N TMUX_N <<<"$(check_verify_extra)"
 # the process tree at rest, right after the boot: no pi, no tmux, no overseer (runbook 13)
 if [[ "$PI_N" == 0 && "${TMUX_N:-1}" == 0 && "$(sql "select count(*) from events where kind like '%overseer%'")" == 0 ]]; then
-  check TREE-0 pass "right after the release boot the daemon container holds no pi, no tmux server and no overseer" "pi processes $PI_N, tmux sessions $TMUX_N; the process tree is in the run notes"
+  check TREE-0 pass "right after the release boot the daemon container holds no pi, no PR tmux session and no overseer" "pi processes $PI_N, tmux sessions other than the entrypoint's empty \`main\` shell: $TMUX_N ($(dx tmux ls 2>&1 | tr '\n' ' ')); the process tree is in the run notes"
 else
-  check TREE-0 fail "the release boot holds no pi, tmux or overseer" "pi=$PI_N tmux=$TMUX_N"
+  check TREE-0 fail "the release boot holds no pi, PR tmux session or overseer" "pi=$PI_N tmux=$TMUX_N"
 fi
 
 # ---- HOLD-1: the operator's drain survives the release boot as the hold ----------------------------------------------------------------
@@ -828,7 +831,8 @@ op release "$PR" >/dev/null 2>&1
 
 # ---- LIFT-1: only drain off lifts it --------------------------------------------------------------------------------------------------------
 op drain off >"$WORK/drain-off.txt" 2>&1; OFFRC=$?
-sleep 3
+hb_cleared() { local d; d="$(status_get draining)"; [[ -z "$d" || "$d" == False ]]; }
+wait_for 60 "the heartbeat to drop the drain" hb_cleared
 DRAIN_HB="$(status_get draining)"
 if [[ "$OFFRC" == 0 && "$(sql 'select draining from drain_state')" == 0 && ( -z "$DRAIN_HB" || "$DRAIN_HB" == False ) ]]; then
   check LIFT-1 pass "qcr drain off (the owner's go) lifts the hold, and it is the only thing that did" "$(tr '\n' ' ' <"$WORK/drain-off.txt" | cut -c1-200); drain_state draining=0; the heartbeat no longer shows draining; no round started by the lift itself ($(sql 'select count(*) from rounds') rounds)"
@@ -891,8 +895,8 @@ EOF
 fi
 
 # ---- wizard run B: stages 9-11 -----------------------------------------------------------------------------------------------------------------
-python3 "$RH/answer.py" --timeout 600 \
-  --on 'PR number for the commands below.*=>'"$PR"'\n' --on 'Was the worker round checked and is it good\?.*\[y/N\]=>y\n' \
+python3 "$RH/answer.py" --timeout 300 \
+  --on 'Ready to start\?=>\n' --on 'PR number for the commands below.*=>'"$PR"'\n' --on 'Was the worker round checked and is it good\?.*\[y/N\]=>y\n' \
   --on 'Lift the drain now.*\[y/N\]=>y\n' --on 'Answer worker replied.*\[y/N\]=>y\n' \
   -- "$ROOT/scripts/cutover.sh" "$VERSION" >"$LOGS/wizard-b.log" 2>&1; WB_RC=$?
 sed -i 's/\x1b\[[0-9;]*[a-zA-Z]//g' "$LOGS/wizard-b.log"
