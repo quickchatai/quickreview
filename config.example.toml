@@ -318,8 +318,7 @@ subagent_max_concurrency = 12
 # Who launches a round's lenses: "engine" (our lens tool and discovery wave, on
 # an SDK session; the default) or "native" (pi's own subagent glue). Read only
 # by the routes that have an SDK host (`qcr review`, the Action, the bench); the
-# tmux bot is always native and ignores it. Under [engine] runtime = "proc" the
-# default is "native", and "engine" there is refused.
+# tmux bot is always native and ignores it.
 # lens_runtime = "engine"
 # With lens_runtime = "engine": the round's engine starts the planned discovery
 # wave itself at round start (rule 9) and the main session joins it with
@@ -328,14 +327,12 @@ subagent_max_concurrency = 12
 # engine_wave = true
 
 # What hosts a pi session on the review, bench and scan routes: "sdk" runs it
-# in-process on the pi SDK (the default), "proc" runs pi as a child process (the
-# fallback, retired in a later phase). `qcr review` and the bench (`qcr-bench
+# in-process on the pi SDK (the default and the only value; "proc", pi as a
+# child process, is retired and refused). `qcr review` and the bench (`qcr-bench
 # review`, `defect-judge`) host the SDK: in the bench each case, and each case
 # of the judge's pool, runs in a host process of its own, so one crash or frozen
 # loop costs one case, and `[pi] lens_runtime = "engine"` gives the review our
-# lens tool. A route that has no host yet refuses "sdk" instead of running on
-# proc. `qcr-bench review --runtime` and `defect-judge --runtime` override it; so
-# does `--config engine.runtime=proc,pi.lens_runtime=native`.
+# lens tool. A route that has no host yet refuses "sdk".
 # In the image the SDK runs the model's bash as the separate tool uid (D32) and
 # fences the file tools off /proc, /run/qcr-in and the agent dir; pi's native
 # lens tool spawns `pi` children that could not take that uid, so under the
@@ -343,7 +340,7 @@ subagent_max_concurrency = 12
 # that runs.
 # The scan runs its leaves on the SDK inside its own detached driver process
 # (`qcr scan start`), never inside the companion's pi; a scan the companion
-# drives itself refuses "sdk" (set "proc" for that). The daemon's own tmux
+# drives itself refuses. The daemon's own tmux
 # hosting does not read it: the bot stays on native tmux pi.
 # [engine]
 # runtime = "sdk"

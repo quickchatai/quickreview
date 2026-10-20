@@ -204,17 +204,18 @@ arms on the same PRs from the archived judge files, never calling a model.
 case's pi session in-process on the pi SDK instead of as a `pi` child process,
 `pi.lens_runtime=engine` gives the main session our `lens` / `lens_wave` tool
 (`native` keeps pi's `subagent` / `launch_plan`), and `pi.engine_wave=true` has
-the round start the planned discovery wave itself. The process arm is the
-lever: `--config engine.runtime=proc,pi.lens_runtime=native`. Either arm is a
-config lever like any other, so both share the image and are recorded in the
-run's fingerprint (`engine`: runtime, lens tool and `wave`). Every case runs in a host process of its own (one container
+the round start the planned discovery wave itself. The process arm is
+retired and refused. The lens tool and the wave
+are config levers like any other (`pi.lens_runtime=native` for pi's own
+`subagent`), shared on one image and recorded in the run's fingerprint
+(`engine`: runtime, lens tool and `wave`). Every case runs in a host process of its own (one container
 per case under `arm.sh`, a child `node` per case under a plain
 `bench.sh review --concurrency N`), and the defect judge's pool likewise: a
 crash or a frozen loop costs that case, recorded as a failed (or not judged)
 case, and the others finish.
 
 ```sh
-QCR_BENCH_IMAGE=qcr-bench:exp bench/aacr/arm.sh --prefix proc --config engine.runtime=proc,pi.lens_runtime=native --cases fresh10
+QCR_BENCH_IMAGE=qcr-bench:exp bench/aacr/arm.sh --prefix native --config pi.lens_runtime=native,pi.engine_wave=false --cases fresh10
 ```
 
 **Comparing against open-code-review, on both metrics.** One command per arm,

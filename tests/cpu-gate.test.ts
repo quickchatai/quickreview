@@ -67,7 +67,7 @@ describe("[cpu-gate] the arithmetic", () => {
       },
       abort: { oneMs: [10, 11, 12], allP50Ms: 40, allMaxMs: 50, lagAll: { max: 4 } },
     });
-    const md = markdownTables([cell("sdk"), cell("proc")], {
+    const md = markdownTables([cell("sdk"), cell("sdk-b")], {
       window: 15,
       warmup: 3,
       cpus: "0,1",
@@ -75,7 +75,7 @@ describe("[cpu-gate] the arithmetic", () => {
       loadavg: "1 1 1",
     });
     expect(md).toContain("| sdk | 12 |");
-    expect(md).toContain("| proc | 12 |");
+    expect(md).toContain("| sdk-b | 12 |");
     expect(md).toContain("10 / 11 / 12");
   });
 });
@@ -83,14 +83,13 @@ describe("[cpu-gate] the arithmetic", () => {
 describe.skipIf(!built || !taskset)("[cpu-gate] end to end, offline", () => {
   const tiny = ["--sessions", "2", "--window", "2", "--warmup", "1", "--gate-sessions", "2"];
 
-  it("a limit nobody can meet fails the gate, on both runtimes", async () => {
+  it("a limit nobody can meet fails the gate", async () => {
     const r = await run("node", [SCRIPT, ...tiny, "--limit-ms", "0"], { cwd: ROOT }).catch(
       (e: { code: number; stdout: string }) => e,
     );
     expect(r).toMatchObject({ code: 1 });
     const out = (r as { stdout: string }).stdout;
     expect(out).toContain("| sdk | 2 |");
-    expect(out).toContain("| proc | 2 |");
     expect(out).toContain("GATE FAIL");
   });
 

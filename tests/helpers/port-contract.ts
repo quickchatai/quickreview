@@ -1,7 +1,6 @@
 // The runtime port's contract (src/engine/port.ts), written against a harness
-// so any runtime can be put through it. tests/engine-port-contract.test.ts runs
-// it on procRuntime; the in-process SDK runtime adds a harness there and gets
-// the same cases.
+// so any runtime can be put through it. tests/engine-sdkruntime.test.ts runs it
+// on the in-process SDK runtime, the one runtime.
 //
 // A harness builds a runtime whose backend plays a named behaviour, and can
 // say what the backend was sent. The contract never reaches past the port:
@@ -9,7 +8,7 @@
 // runtime's own describe in the test file.
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   RuntimeUnsupportedError,
@@ -19,9 +18,8 @@ import {
 } from "../../src/engine/port.js";
 
 /** What the backend does with each turn it is given.
- *  - stream:    plays the recorded stream (fixtures/engine-proc/pi-stdout.jsonl,
- *               priced at 0.75 a turn) and ends on its own. A backend with no
- *               recording answers with one message priced the same.
+ *  - stream:    answers with one message priced at 0.75 a turn and ends on
+ *               its own.
  *  - echo:      ends at once with a bare agent_end.
  *  - slow:      ends on its own after about half a second.
  *  - hang:      never ends; only an abort, a dispose or a limit stops it.
@@ -39,10 +37,6 @@ export interface PortHarness {
   resume: "unsupported" | "supported";
   /** Whether `agentsFiles` are delivered or refused. */
   agentsFiles: "unsupported" | "supported";
-  /** True when the backend replays the recorded stream (fixtures/engine-proc),
-   * so the events file can be held to its golden byte for byte; false when the
-   * backend produces its own events (the SDK on faux). */
-  recordedStream: boolean;
   /** The model name the specs carry. Default "m". */
   model?: string;
   /** Called after each test, to release what `runtime` built. */
@@ -54,19 +48,10 @@ export interface PortHarness {
   delivered(dir: string): string[];
 }
 
-/** The golden events file for `stream`, captured from the pre-port runPi. */
-export const STREAM_GOLDEN = resolve(
-  import.meta.dirname,
-  "..",
-  "fixtures",
-  "engine-proc",
-  "pi-events.golden.jsonl",
-);
 /** Raw line and paragraph separators: legal inside a JSON string, and where a
  * splitter that is not LF-only cuts an event in two. */
 const LS = String.fromCharCode(0x2028);
 const PS = String.fromCharCode(0x2029);
-export const STREAM_STDERR = "pi: warning fixture\n";
 export const STREAM_SPENT_USD = 0.75;
 
 /** Poll `ok` until it holds, inside the test's own timeout. */
@@ -261,23 +246,13 @@ export function portContract(h: PortHarness): void {
         .filter(Boolean)
         .map((l) => JSON.parse(l) as SessionEvent);
 
-    it(
-      h.recordedStream
-        ? "writes the events file byte for byte as the pre-port runner did"
-        : "writes the events file as one JSON event per line",
-      async () => {
-        const s = await open("stream");
-        await s.prompt("p");
-        await s.dispose();
-        expect(written().length).toBeGreaterThan(0);
-        if (h.recordedStream) {
-          expect(readFileSync(events())).toEqual(readFileSync(STREAM_GOLDEN));
-          expect(readFileSync(join(dir, "stderr.log"), "utf8")).toBe(STREAM_STDERR);
-        } else {
-          expect(existsSync(join(dir, "stderr.log"))).toBe(true);
-        }
-      },
-    );
+    it("writes the events file as one JSON event per line", async () => {
+      const s = await open("stream");
+      await s.prompt("p");
+      await s.dispose();
+      expect(written().length).toBeGreaterThan(0);
+      expect(existsSync(join(dir, "stderr.log"))).toBe(true);
+    });
 
     it("lets a subscriber hear each event that was written, in order, until it unsubscribes", async () => {
       const s = await open("stream");
@@ -293,13 +268,6 @@ export function portContract(h: PortHarness): void {
       expect(first.length).toBeGreaterThan(0);
       expect(heard).toEqual(first);
       expect(quiet).toEqual([]);
-      if (h.recordedStream)
-        expect(first).toEqual(
-          readFileSync(STREAM_GOLDEN, "utf8")
-            .trim()
-            .split("\n")
-            .map((l) => JSON.parse(l) as SessionEvent),
-        );
     });
 
     it("does not let a listener's failure stop the others or the turn", async () => {

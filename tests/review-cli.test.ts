@@ -2,6 +2,7 @@
 // A real throwaway git repo is the branch fixture; pi is a fake shell script
 // (no network, no model, no docker, no GitHub).
 
+import { piCliRuntime } from "./helpers/pi-cli-runtime.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { freshStateHomePerTest } from "./helpers/fresh-state-home.js";
 import {
@@ -140,7 +141,7 @@ function harness(o: {
     agentDir: join(tmp, "agent"),
     cfg: ctx.cfg,
     ecosystem: ctx.ecosystem,
-    piBin: o.piBin,
+    runtime: piCliRuntime({ bin: o.piBin }),
     runsDir: join(tmp, `runs-${Math.random().toString(36).slice(2)}`),
     timeoutMs: 10 * 60_000,
   };
@@ -249,12 +250,11 @@ describe("qcr review: under and over the limit", () => {
     expect(t).not.toMatch(/partial/i);
   });
 
-  it("hosts the session on the injected runtime, not on piBin", async () => {
+  it("hosts the session on the injected runtime", async () => {
     const repo = mkRepo("injected");
     setLimit(repo, 1000);
     const pi = happyPi("injected");
-    const { procRuntime } = await import("../src/engine/procruntime.js");
-    const inner = procRuntime({ bin: pi.bin });
+    const inner = piCliRuntime({ bin: pi.bin });
     let created = 0;
     const h = harness({ repo, piBin: "false" });
     const code = await runReviewCli([], false, {
@@ -1014,7 +1014,7 @@ describe("qcr review <PR>", () => {
     });
     const code = await runReviewCli(["--debug-pi", "7"], false, {
       ...h.deps,
-      debugPi: (spec) => runOneShot({ ...spec, piBin: pi.bin }),
+      debugPi: (spec) => runOneShot({ ...spec, runtime: piCliRuntime({ bin: pi.bin }) }),
     });
     expect(code).toBe(0);
     expect(h.text()).toMatch(/c breaks the build/);
@@ -1114,7 +1114,7 @@ describe("qcr review --debug-pi", () => {
       // stands for interactive pi: the specs it is handed, and a round that ends as a person would end it
       debugPi: async (spec) => {
         specs.push(spec as unknown as Record<string, unknown>);
-        return runOneShot({ ...spec, piBin: pi.bin });
+        return runOneShot({ ...spec, runtime: piCliRuntime({ bin: pi.bin }) });
       },
     });
     expect(code).toBe(0);

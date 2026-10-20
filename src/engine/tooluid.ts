@@ -104,7 +104,7 @@ export function checkToolUid(
   env: NodeJS.ProcessEnv,
   host: { what: string; instead: string; isolated?: boolean } = {
     what: "the SDK runtime",
-    instead: "use [engine] runtime = proc here",
+    instead: "",
   },
 ): void {
   if (host.isolated === true) {
@@ -116,7 +116,7 @@ export function checkToolUid(
   if (TOOL_UID_ENVS.some((n) => env[n]))
     throw new Error(
       `${host.what} runs the model's tools in this process, so it cannot run them as another uid, ` +
-        `which this container asks for: ${host.instead}, or set ` +
+        `which this container asks for: ${host.instead === "" ? "" : `${host.instead}, or `}set ` +
         "QCR_ALLOW_SHARED_TOOL_UID=1 to accept the shared uid",
     );
 }

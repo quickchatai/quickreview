@@ -1128,15 +1128,15 @@ export const DEFAULT_SUBAGENT_PASS_DEADLINE_MIN = 8;
  * imports nothing from the daemon), pinned equal by a test. */
 export const DEFAULT_SUBAGENT_CACHE_STAGGER_MS = 2500;
 
-/** What hosts a pi session (`[engine] runtime`). `proc` runs pi as a child
- * process, as every route does today; `sdk` runs it in-process on the pi SDK
- * (src/engine/sdkruntime.ts). A route that has no SDK host yet refuses `sdk`
- * (src/engine/select.ts). */
-export type EngineRuntimeKind = "proc" | "sdk";
-export const ENGINE_RUNTIME_KINDS: readonly EngineRuntimeKind[] = ["proc", "sdk"];
+/** What hosts a pi session (`[engine] runtime`): the pi SDK, in-process
+ * (src/engine/sdkruntime.ts), the one adapter. The `proc` runtime, pi as a
+ * child process, is retired and refused (`parseEngine`). A route that has no
+ * SDK host yet refuses `sdk` (src/engine/select.ts). */
+export type EngineRuntimeKind = "sdk";
+export const ENGINE_RUNTIME_KINDS: readonly EngineRuntimeKind[] = ["sdk"];
 
 /** Who launches the lenses (`[pi] lens_runtime`). `native` is pi's own
- * subagent glue (the tmux bot's, and the proc runtime's); `engine` is our lens
+ * subagent glue (the tmux bot's); `engine` is our lens
  * tool and discovery wave (the default, on the SDK runtime). */
 export type LensRuntimeKind = "native" | "engine";
 export const LENS_RUNTIME_KINDS: readonly LensRuntimeKind[] = ["native", "engine"];
@@ -1150,28 +1150,16 @@ export interface EngineConfig {
 
 export const ENGINE_DEFAULTS: EngineConfig = { runtime: "sdk" };
 
-/** The `[pi]` lens defaults that follow the runtime: the engine's lens tool and
- * planned wave are the SDK runtime's, so a config that only sets
- * `[engine] runtime = "proc"` gets pi's own lens glue, as before the SDK became
- * the default, instead of a refusal. An explicit key always wins. */
-export function lensDefaultsFor(runtime: EngineRuntimeKind): {
+/** The `[pi]` lens defaults: the engine's lens tool and planned wave, with the
+ * wave following the lens runtime the config names: `lens_runtime = "native"`
+ * alone must not default the wave on (the wave needs the engine's lens tool). */
+function piLensDefaults(pi: Record<string, unknown>): {
   lens_runtime: LensRuntimeKind;
   engine_wave: boolean;
 } {
-  return runtime === "sdk"
-    ? { lens_runtime: "engine", engine_wave: true }
-    : { lens_runtime: "native", engine_wave: false };
-}
-
-/** `lensDefaultsFor`, with the wave following the lens runtime the config
- * names: `lens_runtime = "native"` alone must not default the wave on (the wave
- * needs the engine's lens tool). */
-function piLensDefaults(
-  runtime: EngineRuntimeKind,
-  pi: Record<string, unknown>,
-): { lens_runtime: LensRuntimeKind; engine_wave: boolean } {
-  const d = lensDefaultsFor(runtime);
-  return pi.lens_runtime === "native" ? { ...d, engine_wave: false } : d;
+  return pi.lens_runtime === "native"
+    ? { lens_runtime: "engine", engine_wave: false }
+    : { lens_runtime: "engine", engine_wave: true };
 }
 
 /** Refuse a value outside a closed set. A typo must not silently become the
@@ -1186,6 +1174,10 @@ function oneOf<T extends string>(where: string, v: unknown, allowed: readonly T[
 
 function parseEngine(raw: Record<string, unknown>): EngineConfig {
   const e = { ...ENGINE_DEFAULTS, ...raw };
+  if ((e.runtime as unknown) === "proc")
+    throw new Error(
+      'config.toml [engine] runtime = "proc" is retired: pi runs in-process on the SDK (the one adapter); delete the key or set it to "sdk"',
+    );
   return { runtime: oneOf("[engine] runtime", e.runtime, ENGINE_RUNTIME_KINDS) };
 }
 
@@ -2956,7 +2948,7 @@ export function parseConfig(toml: string): Config {
         subagent_cache_group: 5,
         subagent_cache_stagger_ms: DEFAULT_SUBAGENT_CACHE_STAGGER_MS,
         subagent_pass_deadline_min: DEFAULT_SUBAGENT_PASS_DEADLINE_MIN,
-        ...piLensDefaults(engine.runtime, req(raw, "pi") as Record<string, unknown>),
+        ...piLensDefaults(req(raw, "pi") as Record<string, unknown>),
         ...(req(raw, "pi") as Omit<
           Config["pi"],
           | "subagent_max_concurrency"

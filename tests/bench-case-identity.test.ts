@@ -10,6 +10,7 @@
 // Local git only: https transport is disabled for these tests, so a cache
 // MISS fails fast instead of reaching GitHub.
 
+import { piCliRuntime } from "./helpers/pi-cli-runtime.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   chmodSync,
@@ -205,7 +206,7 @@ describe("a retried case's continuation", () => {
         outDir,
         agentDir: join(tmp, "agent"),
         timeoutMs: 10 * 60_000,
-        piBin,
+        runtime: piCliRuntime({ bin: piBin }),
       },
       {
         cfg: benchConfig(""),
@@ -259,7 +260,7 @@ describe("a completed benchmark process with invalid output guarantees", () => {
           outDir,
           agentDir: join(dir, "agent"),
           timeoutMs: 10 * 60_000,
-          piBin,
+          runtime: piCliRuntime({ bin: piBin }),
         },
         { cfg, ecosystem: ecosystemFor("none"), fingerprint: {} as never },
       );
@@ -321,7 +322,7 @@ describe("a round whose output files do not parse", () => {
         outDir,
         agentDir: join(tmp, "agent"),
         timeoutMs: 10 * 60_000,
-        piBin,
+        runtime: piCliRuntime({ bin: piBin }),
       },
       { cfg: benchConfig(""), ecosystem: ecosystemFor("none"), fingerprint: {} as never },
     );
@@ -385,7 +386,7 @@ describe("a round that wrote its outcome without a file the scorer reads", () =>
         outDir,
         agentDir: join(tmp, "agent"),
         timeoutMs: 10 * 60_000,
-        piBin,
+        runtime: piCliRuntime({ bin: piBin }),
       },
       { cfg: benchConfig(""), ecosystem: ecosystemFor("none"), fingerprint: {} as never },
     );
@@ -435,7 +436,7 @@ describe("a round that renders nothing: the session's own comments are a scorer 
         outDir,
         agentDir: join(tmp, "agent"),
         timeoutMs: 10 * 60_000,
-        piBin,
+        runtime: piCliRuntime({ bin: piBin }),
       },
       { cfg, ecosystem: ecosystemFor("none"), fingerprint: {} as never },
     );

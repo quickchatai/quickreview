@@ -4,6 +4,7 @@
 // is customised; an uncustomised run feeds the model exactly what it always
 // did; the bench refuses a customised profile unless it is allowed to.
 // pi is a fake shell script: no model, no network.
+import { piCliRuntime } from "./helpers/pi-cli-runtime.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { freshStateHomePerTest } from "./helpers/fresh-state-home.js";
 import {
@@ -142,7 +143,7 @@ function harness(repo: string, piBin: string, profile = "") {
     agentDir: join(tmp, "agent"),
     cfg: { ...ctx.cfg, review: { ...ctx.cfg.review, profile } },
     ecosystem: ctx.ecosystem,
-    piBin,
+    runtime: piCliRuntime({ bin: piBin }),
     runsDir: join(tmp, `runs-${Math.random().toString(36).slice(2)}`),
     timeoutMs: 10 * 60_000,
     warn: () => {},

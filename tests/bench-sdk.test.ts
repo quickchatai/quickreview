@@ -373,16 +373,13 @@ describe("the bench's default config (P7.12)", () => {
       engine_wave: wave,
     });
     expect(sdk.engine).toEqual({ runtime: "sdk", lens_runtime: "engine", wave: true });
-    // a run without the wave, and a proc run, tell themselves apart from it
+    // a run without the wave tells itself apart from it
     const noWave = runFingerprint(cfg, "", "", undefined, {
       runtime: "sdk",
       lens_runtime: "engine",
       engine_wave: false,
     });
     expect(noWave.engine).toEqual({ runtime: "sdk", lens_runtime: "engine" });
-    expect(
-      runFingerprint(cfg, "", "", undefined, { runtime: "proc", lens_runtime: "native" }).engine,
-    ).toBeUndefined();
   });
 });
 

@@ -24,7 +24,7 @@ import {
   type SessionEvent,
   type SessionSpec,
 } from "../src/engine/port.js";
-import { procRuntime } from "../src/engine/procruntime.js";
+import { piCliRuntime } from "./helpers/pi-cli-runtime.js";
 import { sdkRuntime } from "../src/engine/sdkruntime.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";
 import {
@@ -126,7 +126,6 @@ const sdk: PortHarness = {
   steer: "delivered",
   resume: "supported",
   agentsFiles: "supported",
-  recordedStream: false,
   runtime: fauxRuntime,
   delivered: (dir) => delivered.get(dir) ?? [],
   cleanup: (dir) => {
@@ -408,7 +407,7 @@ describe("[sdkRuntime] against a real pi CLI on a local endpoint", () => {
     const before = jsonl(file);
     expect(JSON.parse(before[0]!)).toMatchObject({ type: "session", version: 3, id: s.id });
 
-    const cli = await procRuntime({ bin: PI_BIN }).create(
+    const cli = await piCliRuntime({ bin: PI_BIN }).create(
       spec("cli", { cliFlags: [...CLI_FLAGS, "--session", file] }),
     );
     const r = await cli.prompt("round two");
@@ -466,7 +465,7 @@ describe("[sdkRuntime] against a real pi CLI on a local endpoint", () => {
     const run = async (kind: "cli" | "sdk") => {
       server.script(script);
       const s = await (kind === "cli"
-        ? procRuntime({ bin: PI_BIN }).create(spec(kind, { cliFlags: CLI_FLAGS }))
+        ? piCliRuntime({ bin: PI_BIN }).create(spec(kind, { cliFlags: CLI_FLAGS }))
         : sdkRuntime(host).create(spec(kind)));
       const heard: SessionEvent[] = [];
       s.subscribe((e) => heard.push(e));

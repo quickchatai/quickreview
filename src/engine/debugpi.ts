@@ -33,7 +33,7 @@ import {
   type RoundResult,
   type RoundSpec,
 } from "./round.js";
-import type { PiRun } from "./procruntime.js";
+import type { PiRun } from "./port.js";
 
 /** The extensions of a debug round, by file name in the production tree's
  * `extensions/`: the round's own set with the debug extension (which carries the

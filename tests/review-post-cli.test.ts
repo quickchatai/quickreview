@@ -2,6 +2,7 @@
 // A real throwaway git repo is the branch fixture; pi is a fake shell script
 // (no network, no model, no docker, no GitHub).
 
+import { piCliRuntime } from "./helpers/pi-cli-runtime.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { freshStateHomePerTest } from "./helpers/fresh-state-home.js";
 import {
@@ -164,7 +165,7 @@ function harness(o: {
     agentDir: join(tmp, "agent"),
     cfg: ctx.cfg,
     ecosystem: ctx.ecosystem,
-    piBin: o.piBin,
+    runtime: piCliRuntime({ bin: o.piBin }),
     runsDir: join(tmp, `runs-${Math.random().toString(36).slice(2)}`),
     timeoutMs: 10 * 60_000,
   };

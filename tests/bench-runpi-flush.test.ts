@@ -3,6 +3,7 @@
 // deterministically with a SLOW write stream: every
 // write lands 20 ms late, so a runPi that resolves on the child's `close`
 // (before the files flush) reads an empty tail every time.
+import { piCliRuntime } from "./helpers/pi-cli-runtime.js";
 import {
   appendFileSync,
   chmodSync,
@@ -47,6 +48,7 @@ describe("runPi's output files", () => {
     appendFileSync(eventsPath, "");
     const r = await runJudgeSession("prompt", {
       root: "/x",
+      runtime: piCliRuntime(),
       cwd: dir,
       model: "m",
       env: { PATH: `${join(dir, "bin")}:${process.env.PATH ?? ""}` },

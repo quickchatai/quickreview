@@ -28,8 +28,10 @@ cores, ours included). What the single number hides is in finding 4.
 ## What was measured
 
 - **sdk**: N faux sessions in one process, `sdkRuntime` over `PiHost`, file-backed.
-- **proc**: N children, each one process hosting one faux session of the same
-  code and printing the `pi --mode json` event stream; `procRuntime` reads them.
+- **proc** (arm retired with the process runtime; `scripts/cpu-gate.mjs` now
+  measures sdk alone, and the proc results below are kept as measured): N
+  children, each one process hosting one faux session of the same code and
+  printing the `pi --mode json` event stream, read by the process runtime.
   The parent's loop only parses lines, as it does for real pi children. Each child
   is a node process that loads the pi SDK, the same footprint class as a pi CLI.
 - **Workload**: one lens-shaped turn per session, started all at once (a wave):

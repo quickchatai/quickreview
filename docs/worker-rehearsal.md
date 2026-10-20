@@ -1,6 +1,6 @@
 # Worker rehearsal
 
-P8.20a. The pre-deletion rehearsal of the worker world: HEAD's release and memory images, run with the cutover run spec's volumes and command (`deploy/qcr-update.sh`) over a legacy-shaped host directory, before any Phase 9 deletion. While `procRuntime`, the tmux host and the bridge still exist a failure is found before anything is gone.
+P8.20a. The pre-deletion rehearsal of the worker world: HEAD's release and memory images, run with the cutover run spec's volumes and command (`deploy/qcr-update.sh`) over a legacy-shaped host directory, before any Phase 9 deletion. While the process runtime, the tmux host and the bridge still exist a failure is found before anything is gone.
 
 Run 2026-10-20 on 1baa2f5e. **21 of 21 checks passed, 0 failed.** Cost: $0 (no model, no GitHub, no registry; the containers cannot reach anything but a scripted stub).
 

@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { EventCostMeter, eventLineCostUsd } from "../src/bench/cost.js";
-import { runPi } from "../src/oneshot.js";
+import { runPi } from "./helpers/pi-cli-runtime.js";
 
 const child = (cost: number) => ({ usage: { cost: { total: cost } } });
 const update = (id: string, costs: number[], name = "subagent") =>

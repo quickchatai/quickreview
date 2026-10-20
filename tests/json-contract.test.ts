@@ -10,6 +10,7 @@
 //
 // Regenerate the goldens ONLY for a deliberate change to a payload:
 // `UPDATE_GOLDEN=1 npx vitest run tests/json-contract.test.ts` (then `npx prettier --write tests/fixtures/json-contract`).
+import { piCliRuntime } from "./helpers/pi-cli-runtime.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   chmodSync,
@@ -273,7 +274,7 @@ async function reviewJson(
     agentDir: join(tmp, "agent"),
     cfg: ctx.cfg,
     ecosystem: ctx.ecosystem,
-    piBin,
+    runtime: piCliRuntime({ bin: piBin }),
     runsDir: join(tmp, `runs-${Math.random().toString(36).slice(2)}`),
     timeoutMs: 10 * 60_000,
   });
@@ -356,7 +357,7 @@ describe("qcr review --json", () => {
       agentDir: join(tmp, "agent"),
       cfg: ctx.cfg,
       ecosystem: ctx.ecosystem,
-      piBin: "false",
+      runtime: piCliRuntime({ bin: "false" }),
       runsDir: join(tmp, "runs-tojson"),
       timeoutMs: 60_000,
     });

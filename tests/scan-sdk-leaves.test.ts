@@ -515,7 +515,7 @@ describe("[P5.7] the same case on the SDK and on a real pi child, one local endp
   it("keeps a transcript of the same events, under the same keys", async () => {
     const { cli, sdk } = await both();
     // The runtime port leaves out the two re-emissions that restate a whole
-    // transcript on every update (as procRuntime does); nothing else differs.
+    // transcript on every update (as the pi CLI does); nothing else differs.
     const kept = (ls: string[]): string[] =>
       ls.filter((l) => !/^\{"type":"(message|tool_execution)_update"/.test(l));
     const types = (ls: string[]): string[] => kept(ls).map((l) => String(JSON.parse(l).type));

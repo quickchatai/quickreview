@@ -11,6 +11,8 @@ The children's first turns read **0** cached tokens, even where two children's p
 
 The reason is that pi uses its session id as the provider's cache key (`prompt_cache_key`, and the routing headers built from the same id). Native subagent children run `--no-session`, so every child gets a random id and lands on a cold cache.
 
+This is the native lens tool's (and the tmux bot's) case. The review, bench and scan routes run pi in-process on the SDK (the one adapter; the process runtime is retired), where the SDK creates the sessions in this process rather than as `pi` children.
+
 ## What the backend does (measured)
 
 About 30 short probe calls on 2026-10-09, all on the reviewer's own ChatGPT login and `gpt-6.1-sol`. Each case below is a pair of separate pi processes over the same ~24k-token prefix.
