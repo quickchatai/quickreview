@@ -2,6 +2,8 @@
 
 P8.20a. The pre-deletion rehearsal of the worker world: HEAD's release and memory images, run with the cutover run spec's volumes and command (`deploy/qcr-update.sh`) over a legacy-shaped host directory, before any Phase 9 deletion. While the process runtime, the tmux host and the bridge still exist a failure is found before anything is gone.
 
+Superseded in part by `docs/cutover-rehearsal.md` (P8.20), which re-runs these scenarios on the release boot the real updater made, after the Phase 9 deletions: TREE-1 now expects no overseer and no PR tmux session (the table below is the pre-deletion run).
+
 Run 2026-10-20 on 1baa2f5e. **21 of 21 checks passed, 0 failed.** Cost: $0 (no model, no GitHub, no registry; the containers cannot reach anything but a scripted stub).
 
 Re-run it: `scripts/worker-rehearsal.sh` (about 10 minutes with the images built, 25 with a cold build; `--reuse-images`, `--keep`, `--work DIR` and `--only IDS` are in the script's header). It exits 0 only when every check passed, and a full run rewrites this file; an `--only` run writes its report into its work directory.

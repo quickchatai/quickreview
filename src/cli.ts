@@ -66,7 +66,7 @@ import type { GitHubAdapter } from "./github.js";
 import type { OutcomeCapture } from "./outcomes.js";
 import type { Learner, MineReport } from "./learner/learner.js";
 import type { CurationStatus } from "./learner/status.js";
-import { remoteSandboxRoot } from "./tui/layout.js";
+import { remoteSandboxRoot, resolveLayout } from "./tui/layout.js";
 
 export { drainPayload } from "./tui/deploy-drain.js";
 
@@ -412,6 +412,7 @@ async function cmdLessonSwitch(
     "target" in sub
       ? { command: sub.command, uri: lessonUriOf(sub.target, cfg.openviking.user) }
       : { command: sub.command };
+  await resolveLayout(cfg.tui, runnerFor(cfg.tui));
   console.log(
     `${cmd.command}${"uri" in cmd ? ` ${cmd.uri}` : ""} → ${cfg.tui.ssh_host}:${remoteSandboxRoot(cfg.tui)}/commands/operator/`,
   );
@@ -1103,6 +1104,10 @@ export interface DrainRunDeps {
 export async function runDrain(on: boolean, deps: DrainRunDeps, hold = false): Promise<number> {
   const tui = deps.cfg.tui;
   const where = transportOf(tui) === "local" ? `local docker ${tui.container}` : tui.ssh_host;
+  // Say the directory the command will really be written to: the root follows the container's layout
+  // label (the cutover recreates the container under a running operator), and an unresolved root is the
+  // legacy one.
+  await resolveLayout(tui, deps.ssh);
   deps.log(
     `drain ${on ? (hold ? "on --hold" : "on") : "off"} → ${where}:${remoteSandboxRoot(tui)}/commands/`,
   );
@@ -1886,10 +1891,12 @@ async function cmdArchive(rest: readonly string[], json: boolean): Promise<numbe
       args.verb === "run"
         ? { command: "archive-run" }
         : { command: "archive-restore", pr: args.pr };
-    if (!json)
+    if (!json) {
+      await resolveLayout(cfg.tui, runnerFor(cfg.tui));
       console.log(
         `${cmd.command}${"pr" in cmd ? ` ${cmd.pr}` : ""} → ${cfg.tui.ssh_host}:${remoteSandboxRoot(cfg.tui)}/commands/operator/`,
       );
+    }
     const res = await new ArchiveOpSender(cfg.tui, runnerFor(cfg.tui)).send(cmd);
     if (json) console.log(JSON.stringify(res));
     else for (const line of renderArchiveOp(cmd, res)) console.log(line);

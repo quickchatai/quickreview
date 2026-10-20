@@ -1,6 +1,6 @@
 ## Findings
 
-Everything the rehearsal found on the way to a green run, and whether it is fixed. F1 to F3 and F5 were
+Everything the rehearsal found on the way to a green run, and whether it is fixed. F1 to F3, F5 and F5b were
 defects in the cutover tooling itself and are fixed in product code with tests; F4 is a contradiction in the
 cutover procedure that needs the owner; the rest are properties worth knowing.
 
@@ -37,6 +37,11 @@ cutover procedure that needs the owner; the rest are properties worth knowing.
   before the recreate was RESCUED by the updater: the legacy bot is back". It now asks the VM for its layout:
   `release` means the failure came after the point of no return and says to fix forward under the drain.
   `tests/cutover-wizard.test.ts`.
+- **F5b, product, FIXED: `qcr drain` named the legacy directory after the cutover.** The command was
+  written to the right place (the sender resolves the container's layout label first), but the line printed
+  before it, `drain off → host:/opt/quickreview/sandbox/commands/`, used the unresolved root, so the owner
+  who lifts the hold at stage 9 was told the legacy path. `qcr drain`, `qcr lessons` and `qcr archive` now
+  resolve the layout before they say where they write. `tests/drain.test.ts`.
 - **F6, property: a rescued legacy bot is undrained for a few seconds.** Every injected failure after the
   stop restarts the legacy bot, whose first healthy reconcile lifts the drain; the updater re-sends `drain
   on` only after it sees that reconcile. INJ-2 to INJ-4 show the lift and the re-drain in the legacy bot's
