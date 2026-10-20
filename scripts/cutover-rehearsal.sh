@@ -160,7 +160,8 @@ IMG_SHA="$(label_of "$REL_IMG" qcr.build-sha)"
 same_inputs() {
   [[ "$1" =~ ^[0-9a-f]{7,40}$ ]] && git -C "$ROOT" cat-file -e "$1^{commit}" 2>/dev/null \
     && git -C "$ROOT" diff --quiet "$1" HEAD -- . ':(exclude)scripts/worker-rehearsal.sh' ':(exclude)scripts/worker-rehearsal' \
-      ':(exclude)scripts/cutover-rehearsal.sh' ':(exclude)scripts/cutover-rehearsal' ':(exclude)tests' ':(exclude)docs'
+      ':(exclude)scripts/cutover-rehearsal.sh' ':(exclude)scripts/cutover-rehearsal' ':(exclude)scripts/deploy.sh' ':(exclude)scripts/cutover.sh' \
+      ':(exclude)tests' ':(exclude)docs'
 }
 if [[ "$(label_of "$REL_IMG" qcr.layout)" == release && "$(label_of "$REL_IMG" qcr.preflight)" == true \
    && "$IMG_SHA" =~ ^[0-9a-f]{40}$ ]] && same_inputs "$IMG_SHA"; then

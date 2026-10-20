@@ -193,7 +193,7 @@ label_of() { docker inspect -f "{{index .Config.Labels \"$2\"}}" "$1" 2>/dev/nul
 same_inputs() {
   [[ -n "$1" ]] && git -C "$ROOT" cat-file -e "$1^{commit}" 2>/dev/null \
     && git -C "$ROOT" diff --quiet "$1" HEAD -- . ':(exclude)scripts/worker-rehearsal.sh' \
-      ':(exclude)scripts/worker-rehearsal' ':(exclude)scripts/cutover-rehearsal.sh' ':(exclude)scripts/cutover-rehearsal' ':(exclude)tests' ':(exclude)docs'
+      ':(exclude)scripts/worker-rehearsal' ':(exclude)scripts/cutover-rehearsal.sh' ':(exclude)scripts/cutover-rehearsal' ':(exclude)scripts/deploy.sh' ':(exclude)scripts/cutover.sh' ':(exclude)tests' ':(exclude)docs'
 }
 IMG_SHA="$(label_of "$REL_IMG" qcr.build-sha)"
 if [[ "$REUSE" == 1 ]] && same_inputs "$IMG_SHA" && docker image inspect "$MEM_IMG" >/dev/null 2>&1; then
