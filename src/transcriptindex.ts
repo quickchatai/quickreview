@@ -53,20 +53,16 @@
 //   - Concurrent queries for one file share one scan.
 //
 // What counts: session-dir lines whose timestamp is inside [startedAt,
-// finishedAt] (inclusive), and global-store files counted whole when their
-// mtime is inside the window — files in a fixed order (session files by name,
-// then the store in its walk order), records in file order, so the
-// floating-point cost sum is deterministic.
+// finishedAt] (inclusive) — files in a fixed order (session files by name),
+// records in file order, so the floating-point cost sum is deterministic.
 //
 // An in-scope file that cannot be read (or listed) makes the usage UNKNOWN
 // (`usage: null`), never a silent partial sum — an undercount posing as a
 // measurement — and the audit INCOMPLETE (every violation found in what was
 // read is still reported). ABSENT is not unreadable, and is "nothing there":
-// a missing session dir or
-// global store, a listed file gone by the time it is stat'ed or opened
-// (ENOENT/ENOTDIR — the daemon's own pi-global archiver unlinks store files a
-// day old while this walk awaits, and a dangling link is the same), and a
-// `.jsonl` that is not a regular file (a directory, a FIFO: no transcript, and
+// a missing session dir, a listed file gone by the time it is stat'ed or opened
+// (ENOENT/ENOTDIR — an archiver may unlink a file while this walk awaits, and a
+// dangling link is the same), and a `.jsonl` that is not a regular file (a directory, a FIFO: no transcript, and
 // a FIFO would block the read forever).
 
 import { open, readdir, stat } from "node:fs/promises";
@@ -103,8 +99,6 @@ export const TRANSCRIPT_RACY_MS = 2_000;
 const TAIL_BYTES = 512;
 /** Bytes from the start of the file re-read and compared before a resume. */
 const HEAD_BYTES = 512;
-/** The global store's walk depth. */
-const GLOBAL_STORE_DEPTH = 6;
 const NEWLINE = 0x0a;
 const NEWLINE_BUF = Buffer.from([NEWLINE]);
 const EMPTY = Buffer.alloc(0);
@@ -145,10 +139,6 @@ export const nodeTranscriptFs: TranscriptFs = {
 export interface TranscriptMeasureOpts {
   /** The PR's pi session dir: its top-level `*.jsonl`, line-window filtered. */
   sessionDir: string;
-  /** pi HOME global store (pass transcripts): whole files matched by mtime.
-   * Optional; when given, an unreadable part of it makes the usage unknown,
-   * as one of the session dir does. */
-  globalStoreDir?: string | undefined;
   /** ISO round window, inclusive on both ends. */
   startedAt: string;
   finishedAt: string;
@@ -237,8 +227,6 @@ class PartialTranscriptRead extends Error {
 
 interface Part {
   view: FileView;
-  /** Global-store file: every line counts. Otherwise the line window. */
-  whole: boolean;
 }
 
 function sameInode(entry: FileEntry, st: TranscriptStat): boolean {
@@ -374,16 +362,6 @@ export class TranscriptIndex {
     try {
       const parts: Part[] = [];
       await this.sessionParts(opts.sessionDir, start, parts, unreadable);
-      if (opts.globalStoreDir)
-        await this.globalParts(
-          opts.globalStoreDir,
-          GLOBAL_STORE_DEPTH,
-          start,
-          end,
-          parts,
-          unreadable,
-          usage,
-        );
       const seen = new Map<string, ExecViolationKind>();
       const lenses = new LensOnce();
       for (const part of parts) {
@@ -432,7 +410,7 @@ export class TranscriptIndex {
         continue;
       }
       const view = await this.readListed(path, listed.st, unreadable);
-      if (view) parts.push({ view, whole: false });
+      if (view) parts.push({ view });
     }
   }
 
@@ -467,59 +445,6 @@ export class TranscriptIndex {
     }
   }
 
-  /** The global store, walked depth-first in listing order; a `*.jsonl`
-   * whose mtime is inside the window counts whole. */
-  private async globalParts(
-    dir: string,
-    depth: number,
-    start: number,
-    end: number,
-    parts: Part[],
-    unreadable: UnreadableTranscript[],
-    usage: RoundUsage,
-  ): Promise<void> {
-    if (depth < 0) return;
-    let names: string[];
-    try {
-      names = await this.fs.readdir(dir);
-    } catch (err) {
-      if (!isMissing(err)) unreadable.push({ path: dir, reason: reasonOf(err) });
-      return;
-    }
-    for (const name of names) {
-      const path = join(dir, name);
-      if (name.endsWith(".jsonl")) {
-        const listed = await this.statListed(path);
-        if (listed.kind === "absent") continue;
-        if (listed.kind === "unreadable") {
-          unreadable.push({ path, reason: listed.reason });
-          continue;
-        }
-        if (listed.st.mtimeMs < start || listed.st.mtimeMs > end) continue;
-        const view = await this.readListed(path, listed.st, unreadable);
-        if (view) {
-          parts.push({ view, whole: true });
-          usage.passes_included = true;
-        }
-        continue;
-      }
-      // Any other name is followed, while the walk may go deeper, only when it
-      // is a directory. Gone is nothing to follow; any other stat failure is a
-      // subtree that may hold this round's transcripts — unreadable, as an
-      // unlistable one is.
-      if (depth === 0) continue;
-      let st: TranscriptStat;
-      try {
-        st = await this.fs.stat(path);
-      } catch (err) {
-        if (!isMissing(err)) unreadable.push({ path, reason: reasonOf(err) });
-        continue;
-      }
-      if (st.isDirectory())
-        await this.globalParts(path, depth - 1, start, end, parts, unreadable, usage);
-    }
-  }
-
   /** Add one file's contributions to the round, in file order. */
   private fold(
     part: Part,
@@ -530,7 +455,7 @@ export class TranscriptIndex {
     lenses: LensOnce,
   ): void {
     const visit = (c: LineContribution): void => {
-      if (!part.whole && (c.ts === null || c.ts < start || c.ts > end)) return;
+      if (c.ts === null || c.ts < start || c.ts > end) return;
       if (c.usage !== undefined) addLineUsage(usage, c.usage);
       if (c.childUsage !== undefined) {
         // A lens run with an id counts once: its tool result, a later

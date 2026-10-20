@@ -19,14 +19,12 @@ import { join } from "node:path";
 import { checkBashCommand } from "../extensions/bash-guard.js";
 import { COMPANION_DEFAULTS, resolveCompanionPaths, type Config } from "../src/config.js";
 import { LEAF_MEMORY_TOOLS, buildAgents, stripAgentSpawnTools } from "../src/include.js";
-import { writeSessionBridgeState } from "../src/overseer-bridge.js";
-import { OVERSEER_SESSION, PiSessionManager, isSandboxSession } from "../src/sessions.js";
+import { PrSessionLifecycle, prSessionName } from "../src/pr-session-lifecycle.js";
+import { OVERSEER_SESSION, isSandboxSession } from "../src/sessions.js";
 import { MAX_HELD_WAKES, StateStore } from "../src/state.js";
-import { Tmux } from "../src/tmux.js";
 import { CompanionLifecycle } from "../src/tui/companion.js";
-import type { ExecFn } from "../src/tmux.js";
 import { flushHeldWakes, pauseDefersAllHeldWakes, wakeOrHold } from "../src/wakes.js";
-import { WorktreeManager } from "../src/worktrees.js";
+import type { WorktreeManager } from "../src/worktrees.js";
 import { runtimeSdkImporters } from "./helpers/engine-fences.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
@@ -77,57 +75,26 @@ describe("daemon topology", () => {
   it("S1: an OpenViking session is a store object, not a daemon-owned pi session", async () => {
     const dir = mkdtempSync(join(tmpdir(), "shepherd-ov-"));
     try {
-      mkdirSync(join(dir, "prompts"), { recursive: true });
-      writeFileSync(join(dir, "prompts", "conversation-system.md"), "shepherd of #{{n}}\n");
       const live = new Set<string>();
       const ov: string[] = [];
-      const exec: ExecFn = async (cmd, args) => {
-        if (cmd === "tmux") {
-          if (args[0] === "has-session")
-            return {
-              code: live.has(String(args[2]).replace(/^=/, "")) ? 0 : 1,
-              stdout: "",
-              stderr: "",
-            };
-          if (args[0] === "new-session") {
-            const session = String(args[3]);
-            live.add(session);
-            const generation = args
-              .find((value) => value.startsWith("QCR_SESSION_BRIDGE_GENERATION="))
-              ?.split("=", 2)[1];
-            const stateFile = args
-              .find((value) => value.startsWith("QCR_SESSION_BRIDGE_STATE_FILE="))
-              ?.slice("QCR_SESSION_BRIDGE_STATE_FILE=".length);
-            if (generation && stateFile) {
-              writeSessionBridgeState(stateFile, {
-                version: 1,
-                session,
-                generation,
-                stage: "ready",
-                updated_at: "2026-08-13T10:00:00.000Z",
-              });
-            }
-          }
-          if (args[0] === "list-sessions")
-            return { code: 0, stdout: [...live].join("\n"), stderr: "" };
-          if (args[0] === "kill-session") live.delete(String(args[2]).replace(/^=/, ""));
-        }
-        return { code: 0, stdout: "", stderr: "" };
-      };
-      const m = new PiSessionManager({
+      const lifecycle = new PrSessionLifecycle({
         cfg: {
-          github: { repo: "o/n", secrets_dir: join(dir, "secrets") },
+          github: { repo: "o/n" },
           pi: { version: "0.84.1", session_dir: "state/pi-sessions" },
-          models: { conversation: "openai/conv" },
         } as unknown as Config,
         root: dir,
-        tmux: new Tmux({ exec }),
-        worktrees: new WorktreeManager({
-          root: dir,
-          repo: "o/n",
-          cloneUrl: "/dev/null",
-          run: exec,
-        }),
+        worktrees: {} as unknown as WorktreeManager,
+        host: {
+          liveSessions: async () => [...live],
+          provenGone: async (pr) => !live.has(prSessionName(pr)),
+          killConfirmed: async () => true,
+          stop: async () => undefined,
+          reuseLive: async () => undefined,
+          spawn: async (pr) => {
+            live.add(prSessionName(pr));
+            return prSessionName(pr);
+          },
+        },
         ovSessions: {
           create: async (id) => {
             ov.push(`create ${id}`);
@@ -140,12 +107,10 @@ describe("daemon topology", () => {
         },
       });
 
-      await m.ensurePrSession(5263, "t", "wt/pr-5263");
+      await lifecycle.ensureSession(5263, "t", "wt/pr-5263");
       // One pi session was born; the OpenViking session was CREATED, not spawned.
       expect([...live]).toEqual(["pr-5263"]);
       expect(ov).toEqual(["create pr-5263"]);
-      // …and it is invisible to every session-topology surface.
-      expect(await m.tmux.listSessions()).toEqual(["pr-5263"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

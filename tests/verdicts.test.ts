@@ -238,7 +238,7 @@ function watcher(
     ...(inboxWriters.has(h) ? { writeInbox: inboxWriters.get(h)! } : {}),
     verdictDir: dir,
     root: dir, // usage measurement stays inside the temp dir…
-    usage: { globalStoreDir: null }, // …and never scans the real ~/.pi store
+    usage: {},
     partialWrite: { windowMs: 0 },
     ...over,
   });
@@ -278,7 +278,6 @@ function gatedTranscripts(
     reached,
     release,
     usage: {
-      globalStoreDir: null,
       sessionDirFor: (n) => `/sessions/pr-${n}`,
       transcripts: new TranscriptIndex({ fs }),
     },
@@ -596,9 +595,7 @@ describe("measured round usage", () => {
     });
     writeSessionJsonl(103, [modelLine(), costLine]);
     // No pricing configured — cost.total alone must carry the estimate.
-    await watcher({ usage: { globalStoreDir: null, pricing: {} } }).handleFile(
-      write(103, 1, verdictFile({ pr: 103 })),
-    );
+    await watcher({ usage: { pricing: {} } }).handleFile(write(103, 1, verdictFile({ pr: 103 })));
     const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as any;
     expect(round.tokens_in).toBe(500);
     expect(round.tokens_out).toBe(75); // output + reasoning
@@ -616,7 +613,6 @@ describe("measured round usage", () => {
     ]);
     const w = watcher({
       usage: {
-        globalStoreDir: null,
         pricing: { "gpt-5.6-sol": { input_per_mtok: 2, output_per_mtok: 8 } },
       },
     });
@@ -658,9 +654,7 @@ describe("measured round usage", () => {
     };
     const estOf = async (pr: number, roundId: number): Promise<number | null> => {
       writeSessionJsonl(pr, [modelLine(), costLine(0.5)]);
-      await watcher({ usage: { globalStoreDir: null, pricing: {} } }).handleFile(
-        write(pr, 1, verdictFile({ pr })),
-      );
+      await watcher({ usage: { pricing: {} } }).handleFile(write(pr, 1, verdictFile({ pr })));
       const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as any;
       expect(round.tokens_in).toBe(500); // always the transcripts'
       return round.est_usd as number | null;
@@ -711,9 +705,7 @@ describe("measured round usage", () => {
   it("records est_usd null when the model has no price entry", async () => {
     const roundId = reviewingRound(101);
     writeSessionJsonl(101, [modelLine(), jsonlLine(1000, 100)]);
-    await watcher({ usage: { globalStoreDir: null, pricing: {} } }).handleFile(
-      write(101, 1, verdictFile({ pr: 101 })),
-    );
+    await watcher({ usage: { pricing: {} } }).handleFile(write(101, 1, verdictFile({ pr: 101 })));
     const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as any;
     expect(round.tokens_in).toBe(1000);
     expect(round.est_usd).toBeNull();
@@ -945,7 +937,6 @@ describe("measured round usage", () => {
       fs.failOpen("/sessions/pr-120/zz-broken.jsonl", "EACCES"); // there, and unreadable
       await watcher({
         usage: {
-          globalStoreDir: null,
           sessionDirFor: (pr) => `/sessions/pr-${pr}`,
           transcripts: new TranscriptIndex({ fs }),
         },
@@ -981,7 +972,6 @@ describe("measured round usage", () => {
       fs.hangingStats.add("/sessions/pr-121/a.jsonl"); // a hung filesystem
       const w = watcher({
         usage: {
-          globalStoreDir: null,
           sessionDirFor: (pr) => `/sessions/pr-${pr}`,
           transcripts: new TranscriptIndex({ fs }),
           budgetMs: 30,
@@ -997,7 +987,7 @@ describe("measured round usage", () => {
 
     it("round after round, the PR's transcript is read on from where the last round end stopped", async () => {
       const transcripts = new TranscriptIndex();
-      const w = watcher({ usage: { globalStoreDir: null, transcripts } });
+      const w = watcher({ usage: { transcripts } });
       const minutesAgo = (m: number): string => new Date(Date.now() - m * 60_000).toISOString();
       const usageLine = (ts: string, input: number): string =>
         JSON.stringify({
@@ -1183,7 +1173,6 @@ describe("measured round usage", () => {
    */
   describe("a round that never produced a verdict is measured too", () => {
     const priced = {
-      globalStoreDir: null,
       pricing: { "gpt-5.6-sol": { input_per_mtok: 2, output_per_mtok: 8 } },
     };
 
@@ -2270,7 +2259,7 @@ describe("anomaly paths", () => {
       verdictDir: dir,
       now: () => clock,
       root: dir,
-      usage: { globalStoreDir: null },
+      usage: {},
     });
 
     expect(await w.checkDeadlines()).toEqual([300]);
@@ -2329,7 +2318,7 @@ describe("anomaly paths", () => {
       verdictDir: dir,
       now: () => clock,
       root: dir,
-      usage: { globalStoreDir: null },
+      usage: {},
     });
 
     expect(await w.checkDeadlines()).toEqual([]);
@@ -2386,7 +2375,7 @@ describe("held wakes are flushed at round end", () => {
       verdictDir: dir,
       now: () => later,
       root: dir,
-      usage: { globalStoreDir: null },
+      usage: {},
     });
 
     expect(await w.checkDeadlines()).toEqual([101]);
@@ -3515,7 +3504,6 @@ describe("integration review", () => {
     pr: number,
     lines: string[],
   ): NonNullable<ConstructorParameters<typeof VerdictWatcher>[0]["usage"]> => ({
-    globalStoreDir: null,
     sessionDirFor: (n) => `/sessions/pr-${n}`,
     transcripts: new TranscriptIndex({
       fs: new MemoryTranscriptFs(
@@ -3607,7 +3595,6 @@ describe("integration review", () => {
       let measured = 0;
       const w = watcher({
         usage: {
-          globalStoreDir: null,
           transcripts: {
             measure: () => {
               measured++;

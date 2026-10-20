@@ -1,12 +1,11 @@
 // The daemon↔pi boundary: birth, wake, archive and kill of the per-PR
 // pi sessions and the overseer session.
 //
-// This file is the tmux + inject-bridge host. The host-neutral half of a PR
-// session's life (worktree, raw-notes tier, archive record, close, and the
-// single-flights that order them) is `PrSessionLifecycle`
-// (pr-session-lifecycle.ts); the overseer is not PR lifecycle and stays here.
+// PR sessions are hosted by workers only (worker-session-host.ts); this file
+// no longer births, wakes or kills one. What stays is the tmux host of the
+// overseer (until it is deleted) and of the replay harness.
 //
-// Shape of a session: a detached tmux session named `pr-<n>` (or `overseer`)
+// Shape of a session: a detached tmux session named `overseer`
 // running the pinned interactive pi TUI with cwd = the sandbox root, the
 // substituted system prompt passed by path, and the two sandbox extensions
 // loaded. The daemon never types into that TUI: it wakes the session by
@@ -17,7 +16,7 @@
 // assumption about its CLI surface is tagged VERIFY-ON-PIN and confined to
 // buildPiCommand().
 import { stripModelDocs } from "./promptdoc.js";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -25,15 +24,12 @@ import {
   readdirSync,
   renameSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { verifiedPayload } from "./session-command-payload.js";
 import type { Config } from "./config.js";
 import {
   DEFAULT_SESSION_BRIDGE_READY_TIMEOUT_S,
-  DEFAULT_SESSION_COMMAND_START_LEASE_S,
   DEFAULT_SUBAGENT_CACHE_STAGGER_MS,
   DEFAULT_SUBAGENT_PASS_DEADLINE_MIN,
   githubCloneDir,
@@ -59,21 +55,11 @@ import {
   writeSessionBridgeState,
   type SessionBridgeState,
 } from "./overseer-bridge.js";
-import { sameSessionCommandOwner, type SessionCommandOwnership } from "./session-command.js";
 import { Tmux } from "./tmux.js";
 import type { ExecFn } from "./tmux.js";
-import type { SessionCommandKind, SessionCommandRow, StateStore } from "./state.js";
-import { stampRoundPrompt } from "./types.js";
-import type {
-  OvSessionSweepReport,
-  RoundOrder,
-  SessionCommandObservation,
-  SessionCommandRedeliveryResult,
-  SessionCommandRetryResult,
-  SessionHooks,
-} from "./types.js";
+import type { StateStore } from "./state.js";
 import { identityVars } from "./include.js";
-import { renderConversationSystemPrompt, renderOverseerSystemPrompt } from "./templates.js";
+import { renderOverseerSystemPrompt } from "./templates.js";
 import { WorktreeManager } from "./worktrees.js";
 import {
   PrSessionLifecycle,
@@ -212,6 +198,20 @@ export function buildPiCommand(spec: PiCommandSpec): string[] {
   return argv;
 }
 
+/** The lifecycle's host for a manager that hosts no PR session. The lifecycle
+ * is built for the paths, the archive record and the worktree sweep; a birth,
+ * kill or fence through it is a bug, so each of those throws. */
+const NO_PR_HOST: PrSessionHost = {
+  liveSessions: async () => null,
+  provenGone: async () => false,
+  killConfirmed: async () => false,
+  stop: async () => undefined,
+  reuseLive: async () => undefined,
+  spawn: async (pr) => {
+    throw new Error(`the tmux manager hosts no PR session (#${pr}); workers are the only PR host`);
+  },
+};
+
 export interface PiSessionManagerOptions {
   cfg: Config;
   /** Sandbox root (cwd of every session). */
@@ -243,7 +243,7 @@ function messagePayload(message: string): string {
   return message.endsWith("\n") ? message : `${message}\n`;
 }
 
-export class PiSessionManager implements SessionHooks {
+export class PiSessionManager {
   readonly cfg: Config;
   readonly root: string;
   readonly tmux: Tmux;
@@ -251,10 +251,11 @@ export class PiSessionManager implements SessionHooks {
   private readonly piBin: string;
   private readonly piHome: string;
   private readonly now: () => Date;
-  private commandStore: StateStore | undefined;
+  private readonly commandStore: StateStore | undefined;
   private readonly configPath: string | undefined;
-  /** The host-neutral half of a PR session's life (worktree, raw tier,
-   * archive, close); this class is its tmux + inject-bridge host. */
+  /** The host-neutral lifecycle, used here for its paths, the archive record
+   * and the worktree sweep only: this class hosts no PR session (the workers
+   * are the only PR host, src/worker-session-host.ts). */
   private readonly lifecycle: PrSessionLifecycle;
   private injectSeq = 0;
   constructor(opts: PiSessionManagerOptions) {
@@ -280,12 +281,11 @@ export class PiSessionManager implements SessionHooks {
       cfg: opts.cfg,
       root: opts.root,
       worktrees: this.worktrees,
-      host: this.tmuxHost(),
+      host: NO_PR_HOST,
       ovSessions: opts.ovSessions,
       now: this.now,
       commandStore: opts.commandStore,
     });
-    if (this.commandStore) this.restorePendingSessionCommands();
   }
 
   // ---- paths -------------------------------------------------------------
@@ -529,9 +529,10 @@ export class PiSessionManager implements SessionHooks {
     return path;
   }
 
-  /** Birth an arbitrary session (used by ensure* and by the smoke script).
-   * A PR birth is not complete when tmux returns: the exact Pi generation must
-   * prove that its inject bridge opened and swept the mailbox first. */
+  /** Birth an arbitrary session (the overseer, and the replay harness). A
+   * daemon-owned birth is not complete when tmux returns: the exact Pi
+   * generation must prove that its inject bridge opened and swept the mailbox
+   * first. */
   async spawnSession(
     session: string,
     systemPromptBody: string,
@@ -670,76 +671,6 @@ export class PiSessionManager implements SessionHooks {
     }
   }
 
-  /** Birth on first trigger; concurrent callers for one PR share the complete
-   * has→prepare→spawn flight. Unrelated PRs remain independent. */
-  ensurePrSession(pr: number, title: string, worktree: string): Promise<string> {
-    return this.lifecycle.ensureSession(pr, title, worktree);
-  }
-
-  /** Late production binding (wire.ts): the archiver's `beforeBirth`. */
-  setBeforeBirth(fn: (pr: number) => Promise<void>): void {
-    this.lifecycle.setBeforeBirth(fn);
-  }
-
-  /** What the lifecycle asks of the tmux host: a session is a detached tmux
-   * session whose inject bridge proves readiness by a generation receipt. */
-  private tmuxHost(): PrSessionHost {
-    return {
-      liveSessions: () => this.tmux.listSessionsKnown().catch(() => null),
-      provenGone: (pr) => this.sessionProvenGone(prSessionName(pr)),
-      killConfirmed: (pr) => this.killConfirmed(prSessionName(pr)),
-      stop: async (pr) => {
-        const session = prSessionName(pr);
-        await this.tmux.killSession(session);
-      },
-      reuseLive: async (pr) => {
-        const session = prSessionName(pr);
-        if (!(await this.tmux.hasSession(session))) return undefined;
-        if (this.currentBridgeReady(session)) return session;
-        this.commandStore?.logEvent("session_bridge_stale", pr, {
-          session,
-          reason: "tmux alive without matching ready generation",
-        });
-        if (!(await this.killConfirmed(session))) {
-          throw new Error(`session ${session} survived stale-bridge fence`);
-        }
-        return undefined;
-      },
-      spawn: (pr, title, worktree, { rawReady }) =>
-        this.spawnPrSession(pr, title, worktree, rawReady),
-    };
-  }
-
-  private async spawnPrSession(
-    pr: number,
-    title: string,
-    worktree: string,
-    rawReady: boolean,
-  ): Promise<string> {
-    const session = prSessionName(pr);
-    const template = readFileSync(join(this.root, "prompts", "conversation-system.md"), "utf8");
-    const body = renderConversationSystemPrompt(
-      template,
-      { pr, title, worktree },
-      identityVars(this.cfg),
-    );
-    try {
-      await this.spawnSession(session, body, this.cfg.models.conversation, {
-        ...(rawReady ? {} : { QCR_OV_SESSION_ID: "", OPENVIKING_SESSION_ID: "" }),
-        QCR_PR: String(pr),
-        QCR_PR_META: `PR #${pr} — ${title} (worktree ${worktree})`,
-        QCR_WORKTREE: worktree,
-      });
-    } catch (err) {
-      // A creator outside this manager instance may win after our first check.
-      // Adopt only when both tmux and the matching bridge-generation receipt
-      // prove that winner is usable; process existence alone is not proof.
-      if ((await this.tmux.hasSession(session)) && this.currentBridgeReady(session)) return session;
-      throw err;
-    }
-    return session;
-  }
-
   /** Slack concierge appendix, or "" when Slack is off. */
   private slackAppendix(): string {
     // Typed access, not a cast: rename `slack` or `enabled` in Config and this
@@ -809,131 +740,10 @@ export class PiSessionManager implements SessionHooks {
 
   // ---- injection ---------------------------------------------------------
 
-  /** Late production binding: createDaemon owns the StateStore, while parts
-   * construct the session manager first. Restore pending files immediately;
-   * running rows are never resubmitted by a restart. */
-  setCommandStore(store: StateStore): void {
-    this.commandStore = store;
-    this.lifecycle.setCommandStore(store);
-    this.restorePendingSessionCommands();
-  }
-
-  /** Recreate only provably-pending inject files from their immutable payload.
-   * A running command belongs to its bridge owner until the bounded recovery
-   * sweep decides otherwise; replaying it here would create two shepherds. */
-  restorePendingSessionCommands(): { restored: string[]; failed: string[] } {
-    const restored: string[] = [];
-    const failed: string[] = [];
-    const store = this.commandStore;
-    if (!store) return { restored, failed };
-    this.adoptLegacyPendingCommands();
-    for (const command of store.activeSessionCommands()) {
-      if (command.status !== "pending" || existsSync(command.inject_path)) continue;
-      try {
-        const read = verifiedPayload(command);
-        if (!read.ok) throw new Error(read.why);
-        this.writeAtomic(command.inject_path, read.payload);
-        restored.push(command.id);
-      } catch (err) {
-        const failure = `restart reconstruction failed: ${String(err)}`;
-        store.failPendingSessionCommand(command.id, failure);
-        store.logAnomaly(
-          "session_command_failed",
-          command.pr,
-          command.round_no,
-          `${failure}; command ${command.id} remains failed and blocks successors until bounded recovery/operator action`,
-        );
-        failed.push(command.id);
-      }
-    }
-    return { restored, failed };
-  }
-
-  /** Adopt at most the oldest legacy inject file (one with no durable command
-   * row) per PR. Later files remain the filesystem backlog and are adopted
-   * after the slot terminalizes; no legacy file is ever declared accepted
-   * merely because it already exists. */
-  private adoptLegacyPendingCommands(): void {
-    const store = this.commandStore;
-    if (!store) return;
-    const injectRoot = join(this.root, "inject");
-    let sessions;
-    try {
-      sessions = readdirSync(injectRoot, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of sessions) {
-      if (
-        !entry.isDirectory() ||
-        !/^pr-\d+$/.test(entry.name) ||
-        store.blockingSessionCommand(entry.name)
-      )
-        continue;
-      const dir = join(injectRoot, entry.name);
-      let files: string[];
-      try {
-        files = readdirSync(dir)
-          .filter((f) => f.endsWith(".md"))
-          .sort();
-      } catch {
-        continue;
-      }
-      for (const file of files) {
-        const injectPath = join(dir, file);
-        const existing = store.getSessionCommandByInjectPath(injectPath);
-        if (existing?.status === "acked") {
-          try {
-            const done = join(dir, ".done");
-            mkdirSync(done, { recursive: true });
-            renameSync(injectPath, join(done, file));
-          } catch {
-            return;
-          }
-          continue;
-        }
-        if (existing) break;
-        try {
-          const payload = readFileSync(injectPath);
-          const id = randomUUID();
-          const payloadPath = this.sessionCommandPayloadPath(id);
-          this.writeAtomic(payloadPath, payload);
-          store.createSessionCommand({
-            id,
-            pr: prOfSession(entry.name)!,
-            session: entry.name,
-            kind: "legacy",
-            round_no: null,
-            payload_sha256: createHash("sha256").update(payload).digest("hex"),
-            payload_path: payloadPath,
-            inject_path: injectPath,
-            next_check_at: this.commandDeadline(this.sessionCommandStartLeaseMs()),
-          });
-        } catch (err) {
-          console.error(
-            `[quickreviewd] sessions: FAILED_LOUD could not adopt ${injectPath}: ${String(err)}`,
-          );
-        }
-        break;
-      }
-    }
-  }
-
   private injectFileName(commandId?: string): string {
     const ts = this.now().toISOString().replace(/[:.]/g, "-");
     const prefix = `${ts}-${String(this.injectSeq++).padStart(4, "0")}`;
     return commandId ? `${prefix}--cmd-${commandId}.md` : `${prefix}.md`;
-  }
-
-  private commandDeadline(ms: number): string {
-    return new Date(this.now().getTime() + ms).toISOString();
-  }
-
-  private sessionCommandStartLeaseMs(): number {
-    return (
-      (this.cfg.daemon.session_command_start_lease_s ?? DEFAULT_SESSION_COMMAND_START_LEASE_S) *
-      1000
-    );
   }
 
   private sessionBridgeReadyTimeoutMs(): number {
@@ -941,60 +751,6 @@ export class PiSessionManager implements SessionHooks {
       (this.cfg.daemon?.session_bridge_ready_timeout_s ?? DEFAULT_SESSION_BRIDGE_READY_TIMEOUT_S) *
       1000
     );
-  }
-
-  private queuePrCommand(
-    pr: number,
-    kind: SessionCommandKind,
-    message: string,
-    roundNo: number | null,
-  ): SessionCommandRow | undefined {
-    if (this.prClosed(pr)) throw new Error(`PR #${pr} is closed — refusing command delivery`);
-    if (this.lifecycle.cleanupInFlight(pr))
-      throw new Error(`PR #${pr} session cleanup is in flight — refusing command delivery`);
-    const store = this.commandStore;
-    if (!store) {
-      this.injectFile(prSessionName(pr), message);
-      return undefined;
-    }
-    const session = prSessionName(pr);
-    const blocking = store.blockingSessionCommand(session);
-    if (blocking) throw new Error(`session command ${blocking.id} is ${blocking.status}`);
-    // A round's command is born only while its round is still running. The
-    // dispatch that created the round awaited the worktree and the session
-    // before reaching here, and an operator `restart-session` may have
-    // cancelled the round in that window; delivering it anyway would hand the
-    // session a cancelled round that the supervisor then kills, and the
-    // recovery that cancelled it would never see a successor. This check and
-    // the insert below are one synchronous block, so nothing interleaves.
-    if (kind === "round" && roundNo !== null) {
-      const status = store.roundStatus(pr, roundNo);
-      if (status !== undefined && status !== "running")
-        throw new Error(`round ${roundNo} of #${pr} is ${status}; not delivering its prompt`);
-    }
-    const id = randomUUID();
-    const payload = messagePayload(message);
-    const payloadPath = this.sessionCommandPayloadPath(id);
-    const injectPath = join(this.injectDir(session), this.injectFileName(id));
-    this.writeAtomic(payloadPath, payload);
-    const command = store.createSessionCommand({
-      id,
-      pr,
-      session,
-      kind,
-      round_no: roundNo,
-      payload_sha256: createHash("sha256").update(payload).digest("hex"),
-      payload_path: payloadPath,
-      inject_path: injectPath,
-      next_check_at: this.commandDeadline(this.sessionCommandStartLeaseMs()),
-    });
-    try {
-      this.writeAtomic(injectPath, payload);
-    } catch (err) {
-      store.failPendingSessionCommand(id, `inject write failed: ${String(err)}`);
-      throw err;
-    }
-    return command;
   }
 
   /** Drop a wake file the inject-bridge extension will deliver. */
@@ -1006,492 +762,12 @@ export class PiSessionManager implements SessionHooks {
     return path;
   }
 
-  /**
-   * SessionHooks: ensure worktree + session, then inject the round prompt.
-   *
-   * The worktree is checked out at the order's sha, without a fetch: dispatch
-   * already fetched and pinned it (`prepareWorktree`). Re-fetching here would
-   * reintroduce the drift the pinning exists to remove — a push landing
-   * between the two calls would leave the tree ahead of the prompt. Only if
-   * the sha is not in the clone at all (no prepare hook ran) do we fetch.
-   */
-  async dispatchRound(order: RoundOrder, renderedPrompt: string): Promise<void> {
-    await this.lifecycle.prepareRoundWorktree(order);
-    await this.ensurePrSession(order.pr, order.title, order.worktree);
-    if (this.commandStore?.getPr(order.pr)?.paused)
-      throw new Error(`PR #${order.pr} paused during session preparation — round not handed off`);
-    const stamped = stampRoundPrompt(renderedPrompt, order.pr, order.round_no);
-    // Keep the exact bytes that were dispatched. Redelivery must send the same
-    // prompt — re-rendering later would quietly change the order (a different
-    // head, a different memory block, a different nit-scope note), so what the
-    // session eventually reads would not be the round the daemon recorded.
-    this.saveRoundPrompt(order.pr, order.round_no, stamped);
-    this.queuePrCommand(order.pr, "round", stamped, order.round_no);
-  }
-
-  private roundPromptPath(pr: number, roundNo: number): string {
-    return join(this.root, "state", "round-prompts", `pr-${pr}-round-${roundNo}.md`);
-  }
-
-  private saveRoundPrompt(pr: number, roundNo: number, stamped: string): void {
-    try {
-      const path = this.roundPromptPath(pr, roundNo);
-      mkdirSync(dirname(path), { recursive: true });
-      this.writeAtomic(path, stamped);
-    } catch (err) {
-      // Best-effort by contract: losing the copy costs the cheap recovery for
-      // this round, never the dispatch itself.
-      console.log(
-        `[quickreviewd] sessions: could not save the round prompt for #${pr} round ${roundNo}: ${String(err)}`,
-      );
-    }
-  }
-
-  /** SessionHooks: re-deliver a round prompt whose receipt never appeared.
-   * The cheap recovery: the same round, the same session, the same
-   * conversation — just the wake file written again, byte-identical to what
-   * was dispatched. No round is cancelled; a stale bridge may be replaced. No GitHub
-   * state is touched, and the self-requeue budget is untouched.
-   *
-   * False when the saved prompt is gone (a round dispatched before this
-   * existed, or a wiped state dir): the caller then falls through to the
-   * expensive recovery rather than inventing a prompt. */
-  async redeliverRound(pr: number, roundNo: number): Promise<boolean> {
-    const command = this.commandStore?.sessionCommandForRound(pr, roundNo);
-    let stamped: string;
-    if (command) {
-      const read = verifiedPayload(command);
-      if (!read.ok) return false;
-      stamped = read.payload.toString("utf8");
-    } else {
-      try {
-        stamped = readFileSync(this.roundPromptPath(pr, roundNo), "utf8");
-      } catch {
-        return false;
-      }
-    }
-    if (stamped.trim().length === 0) return false;
-    // The session may have died since dispatch; the bridge only delivers to a
-    // live one. Rebirth it exactly as `inject` does, so a redelivery into a
-    // dead session is not silently swallowed.
-    await this.ensureSessionForWake(pr);
-    if (!command || !this.commandStore) {
-      this.injectFile(prSessionName(pr), stamped);
-      return true;
-    }
-    if (command.status === "running") {
-      // Never report a no-op as redelivery. A correlated start means the
-      // prompt already landed; an unaccepted owner must expire through the
-      // command lease before the same id can be retried safely.
-      return command.started_at !== null;
-    }
-    if (command.status === "pending") {
-      this.restorePendingSessionCommands();
-      return true;
-    }
-    // Reuse the original path as well as the id. A failed no-start attempt
-    // deliberately leaves that file pending; minting a second filename would
-    // let the old evidence be adopted as a new legacy command on restart.
-    const injectPath = command.inject_path;
-    try {
-      if (
-        !this.commandStore.retrySessionCommand(command.id, {
-          inject_path: injectPath,
-          next_check_at: this.commandDeadline(this.sessionCommandStartLeaseMs()),
-        })
-      )
-        return false;
-      this.writeAtomic(injectPath, stamped);
-      return true;
-    } catch (err) {
-      this.commandStore.failPendingSessionCommand(
-        command.id,
-        `redelivery write failed: ${String(err)}`,
-      );
-      return false;
-    }
-  }
-
-  /**
-   * SessionHooks: redeliver one command whose start lease ran out, into the
-   * same live, bridge-ready session — never a kill.
-   * The row goes back to `pending` (same id, path and bytes; a CAS on what was
-   * read) and the payload is rewritten at its inject path, which wakes the
-   * bridge. A bridge that still holds the command as submitted-but-unstarted
-   * resubmits it only when pi is idle with nothing queued (`inject-bridge.ts`
-   * `reclaimRedelivered`), so a prompt pi did queue is never sent twice.
-   * `not_live` when there is no live, ready bridge to redeliver into: that is
-   * the kill-and-replay recovery's case.
-   *
-   * `observed` is the row the supervisor found due, and every check — this
-   * read and the CAS — is against it, never against a fresh read: a bridge
-   * that reserved the command after the due check (a new attempt, a fresh
-   * lease) may hold a submission pi is still preflighting, and handing that
-   * back would send it twice. A row that moved is
-   * `raced`: the supervisor looks again on the fresh lease.
-   */
-  async redeliverSessionCommand(
-    commandId: string,
-    observed: SessionCommandObservation,
-  ): Promise<SessionCommandRedeliveryResult> {
-    const store = this.commandStore;
-    const command = store?.getSessionCommand(commandId);
-    if (!store || !command) return "redelivery_failed";
-    if (command.status === "acked" || command.status === "cancelled") return "settled";
-    if (command.started_at !== null) return "started";
-    if (command.status !== "pending" && command.status !== "running") return "redelivery_failed";
-    // The fast path, before any tmux or file work; the CAS below is what
-    // binds (a reservation landing after this read still loses there).
-    if (
-      command.attempt !== observed.attempt ||
-      command.redeliveries !== observed.redeliveries ||
-      command.next_check_at !== observed.next_check_at
-    )
-      return "raced";
-    const session = prSessionName(command.pr);
-    if (!(await this.tmux.hasSession(session)) || !this.currentBridgeReady(session))
-      return "not_live";
-    const read = verifiedPayload(command);
-    if (!read.ok) {
-      this.notePayloadUnusable(store, command, read.why);
-      return "redelivery_failed";
-    }
-    const payload = read.payload;
-    if (
-      !store.requeueSessionCommandForRedelivery(
-        command.id,
-        {
-          attempt: observed.attempt,
-          redeliveries: observed.redeliveries,
-          next_check_at: observed.next_check_at,
-        },
-        this.commandDeadline(this.sessionCommandStartLeaseMs()),
-      )
-    ) {
-      const current = store.getSessionCommand(command.id);
-      if (!current || current.status === "acked" || current.status === "cancelled")
-        return "settled";
-      if (current.started_at !== null) return "started";
-      // A round that ended meanwhile is the merits lifecycle's to close.
-      if (
-        current.kind === "round" &&
-        current.round_no !== null &&
-        store.roundStatus(current.pr, current.round_no) !== "running"
-      )
-        return "settled";
-      return "raced";
-    }
-    try {
-      this.writeAtomic(command.inject_path, payload);
-    } catch (err) {
-      store.noteSessionCommandRecoveryFailure(
-        command.id,
-        `redelivery write failed: ${String(err)}`,
-      );
-      return "redelivery_failed";
-    }
-    return "redelivered";
-  }
-
-  /** Retry one durable command without ever leaving the old
-   * consumer alive beside its replay. Rounds may only use this before start;
-   * an ordinary wake may use it after acceptance because the tmux fence comes
-   * first. In both cases the same id, path and exact payload bytes survive. */
-  async retrySessionCommand(
-    commandId: string,
-    _reason: string,
-  ): Promise<SessionCommandRetryResult> {
-    const store = this.commandStore;
-    const command = store?.getSessionCommand(commandId);
-    if (
-      !store ||
-      !command ||
-      !["pending", "running", "failed"].includes(command.status) ||
-      (command.kind === "round" && command.started_at !== null)
-    )
-      return "retry_failed";
-    // A closed PR is never reborn for an ordinary wake: settle the row
-    // instead of replaying it into a respawned session.
-    if (command.kind !== "round" && this.prClosed(command.pr)) {
-      store.cancelSessionCommandsForClosedPr(command.pr);
-      return "settled";
-    }
-
-    const read = verifiedPayload(command);
-    if (!read.ok) {
-      this.notePayloadUnusable(store, command, read.why);
-      return "retry_failed";
-    }
-    const payload = read.payload;
-
-    const prepareReplay = (): SessionCommandRetryResult | undefined => {
-      // Nothing can consume or settle the old command after the tmux session is
-      // proven absent. Check the merits lifecycle, then atomically return the
-      // same ownership row to pending. A settlement that won during the kill is
-      // success, never grounds for duplicate replay.
-      if (command.kind === "round" && command.round_no !== null) {
-        if (
-          existsSync(join(this.root, "verdict", `pr-${command.pr}-round-${command.round_no}.json`))
-        )
-          return "round_finished";
-        const round = store.roundsFor(command.pr).find((row) => row.round_no === command.round_no);
-        if (!round || round.status !== "running") return "round_finished";
-      }
-      if (
-        !store.retrySessionCommandAfterFence(
-          command.id,
-          command.attempt,
-          this.commandDeadline(this.sessionCommandStartLeaseMs()),
-        )
-      ) {
-        const current = store.getSessionCommand(command.id);
-        if (current?.status === "acked") return "settled";
-        if (
-          command.kind === "round" &&
-          current?.started_at !== null &&
-          current?.started_at !== undefined
-        )
-          return "accepted_race";
-        if (command.kind === "round" && command.round_no !== null) {
-          const round = store
-            .roundsFor(command.pr)
-            .find((row) => row.round_no === command.round_no);
-          if (!round || round.status !== "running") return "round_finished";
-        }
-        return "retry_failed";
-      }
-    };
-    let preparation: SessionCommandRetryResult | undefined;
-    let publicationError: { error: unknown } | undefined;
-    const fenced = await this.fenceSession(command.pr, command, () => {
-      preparation = prepareReplay();
-      // Publish replay transport before releasing the close flight: a birth
-      // already waiting on this fence must find its immutable command file.
-      if (!preparation) {
-        try {
-          this.writeAtomic(command.inject_path, payload);
-        } catch (error) {
-          publicationError = { error };
-        }
-      }
-    });
-    if (!fenced) {
-      const current = store.getSessionCommand(command.id);
-      return !current || current.status === "acked" || current.status === "cancelled"
-        ? "settled"
-        : "raced";
-    }
-    if (preparation) return preparation;
-    try {
-      if (publicationError) throw publicationError.error;
-      await this.ensureSessionForWake(command.pr);
-      const replayed = store.getSessionCommand(command.id);
-      if (replayed?.status === "acked" || replayed?.status === "cancelled") return "settled";
-      // The recovery file exists before birth. A matching bridge writes ready
-      // only after its synchronous startup drain, whose reservation is the one
-      // transition that increments attempt. Tmux birth without that increment
-      // is zero deliveries, never a successful replay.
-      if (!replayed || replayed.attempt <= command.attempt) {
-        const detail = `bridge became ready without reserving command ${command.id} (delivery attempt stayed ${command.attempt})`;
-        store.noteSessionCommandRecoveryFailure(command.id, detail);
-        store.logEvent("session_command_replay_unreserved", command.pr, {
-          command_id: command.id,
-          delivery_attempt: replayed?.attempt ?? command.attempt,
-          detail,
-        });
-        console.log(`[quickreviewd] sessions: ${detail}`);
-        return "retry_failed";
-      }
-      return "retried";
-    } catch (error) {
-      // The pending row + immutable payload remain the one obligation. The
-      // next finite supervisor check retries rebirth; no held-wake conversion
-      // can evict or reorder it. Persist the pre-reserve cause outside the Pi
-      // pane, because the recovery fence is about to destroy that pane.
-      const detail = String(error);
-      store.noteSessionCommandRecoveryFailure(command.id, detail);
-      store.logEvent("session_command_rebirth_failed", command.pr, {
-        command_id: command.id,
-        delivery_attempt: store.getSessionCommand(command.id)?.attempt ?? command.attempt,
-        detail,
-      });
-      console.log(
-        `[quickreviewd] sessions: command ${command.id} recovery rebirth failed: ${detail}`,
-      );
-      return "retry_failed";
-    }
-  }
-
-  /** Late-bound title lookup for respawning a dead sticky session (the store
-   * exists only after wire-up; set from onStart). */
-  private titleResolver?: (pr: number) => string | undefined;
-
-  setTitleResolver(fn: (pr: number) => string | undefined): void {
-    this.titleResolver = fn;
-  }
-
-  /** SessionHooks: wake a PR session outside a round (ping-pong, follow-ups).
-   *
-   * Sticky sessions die with the container (restart/deploy) and are otherwise
-   * reborn only on round dispatch — but rechecks and ping-pong fire without a
-   * round. So a dead or unready session is respawned here (see
-   * ensureSessionForWake): same prompt template, same env, worktree
-   * re-ensured best-effort (the wake message cites it). A PR whose title is
-   * unknown (never tracked) throws instead, and a closed PR throws whether or
-   * not its session is still alive. */
-  async inject(pr: number, message: string): Promise<void> {
-    // Before the live fast path: a closed PR's session that outlived its
-    // close cleanup takes no new wake either.
-    if (this.prClosed(pr)) {
-      throw new Error(`PR #${pr} is closed — refusing a wake into ${prSessionName(pr)}`);
-    }
-    await this.ensureSessionForWake(pr);
-    this.queuePrCommand(pr, "wake", message, null);
-  }
-
-  /** Rebirth a dead or bridge-unready sticky session so a wake has somewhere
-   * to land. Shared by `inject` and `redeliverRound` — a redelivery into tmux
-   * without the matching watcher receipt would be written to a mailbox nobody
-   * proved it owns, which is the same silent loss the receipt exists to catch.
-   * Throws when the PR is closed, or was never tracked so no title is known. */
-  private async ensureSessionForWake(pr: number): Promise<void> {
-    const closing = this.lifecycle.cleanupInFlight(pr);
-    if (closing) {
-      await closing.catch(() => undefined);
-      return this.ensureSessionForWake(pr);
-    }
-    const session = prSessionName(pr);
-    const cleanupVersion = this.lifecycle.cleanupVersion(pr);
-    const alive = await this.tmux.hasSession(session);
-    // Cleanup can start or even finish during the probe. Its old answer may
-    // name the consumer that was just killed, even after the PR reopens.
-    if (cleanupVersion !== this.lifecycle.cleanupVersion(pr) || this.lifecycle.cleanupInFlight(pr))
-      return this.ensureSessionForWake(pr);
-    if (alive && this.currentBridgeReady(session)) return;
-    if (this.prClosed(pr)) {
-      throw new Error(`PR #${pr} is closed — refusing to respawn ${session} for a wake`);
-    }
-    const title = this.titleResolver?.(pr);
-    if (title === undefined) {
-      throw new Error(`no live session ${session} — dispatch a round to birth it first`);
-    }
-    // A reopened PR's archive comes back before its session does.
-    await this.lifecycle.awaitBeforeBirth(pr);
-    const worktree = await this.lifecycle.reviveWorktree(pr);
-    if (this.prClosed(pr)) throw new Error(`PR #${pr} is closed — refusing to respawn ${session}`);
-    await this.ensurePrSession(pr, title, worktree);
-    console.log(`[quickreviewd] sessions: respawned dead ${session} for an out-of-round wake`);
-  }
-
   // ---- archival / death --------------------------------------------------
-
-  /** Newest *.jsonl anywhere under a session's --session-dir. */
-  newestSessionFile(session: string): string | undefined {
-    return this.lifecycle.newestSessionFile(session);
-  }
-
-  /** SessionHooks: newest session-JSONL mtime for the PR's sticky session —
-   * an activity signal. Null when no JSONL exists (a session that never wrote
-   * anything has no activity to date).
-   * VERIFY-ON-PIN: the net's entire evidence base is that pi APPENDS to the
-   * session JSONL promptly (bumping mtime) whenever a prompt is ACCEPTED into
-   * the session — a stale mtime after a consumed inject must mean the prompt
-   * never became a turn, not merely lazy/buffered writes. Confirm on the live
-   * 0.84.1 container (smoke:session): send a prompt, watch the JSONL mtime
-   * move within seconds. */
-  async sessionActivityAt(pr: number): Promise<number | null> {
-    const file = this.newestSessionFile(prSessionName(pr));
-    if (!file) return null;
-    try {
-      return statSync(file).mtimeMs;
-    } catch {
-      return null;
-    }
-  }
-
-  /** SessionHooks: unconsumed wake files in the PR session's inject dir —
-   * still pending means the inject-bridge is retrying, not that it lost
-   * anything. Its callers (reconcile's recheck-claim sweep, verdicts' silent-round check)
-   * read it as a patience signal only: a pending wake means wait.
-   * Whether a wake was delivered is never inferred from it — that is the
-   * receipt token's job (`wakeReceiptPresent`): present = delivered, absent =
-   * never arrived, unreadable = unknown. */
-  async injectPending(pr: number): Promise<boolean> {
-    const dir = this.injectDir(prSessionName(pr));
-    try {
-      return readdirSync(dir).some((f) => f.endsWith(".md"));
-    } catch {
-      return false;
-    }
-  }
 
   /** Write a session's record into an archive dir (the lifecycle's archive
    * record: ledger, verdicts, `meta.json`). Returns what landed. */
   archiveSession(session: string, dest: string): string[] {
     return this.lifecycle.archiveSession(session, dest);
-  }
-
-  /** Is a session birth for `pr` in flight right now? Synchronous — the
-   * archiver's eligibility re-reads it immediately before
-   * anything of the PR's leaves the live tree. */
-  birthInFlight(pr: number): boolean {
-    return this.lifecycle.birthInFlight(pr);
-  }
-
-  /** SessionHooks: an affirmative tmux listing decides liveness. An
-   * unavailable listing rejects, so recovery callers preserve unknown
-   * rather than treating a failed probe as confirmed death. */
-  async sessionAlive(pr: number): Promise<boolean> {
-    const names = await this.tmux.listSessionsKnown();
-    if (names === null) throw new Error("tmux liveness unknown: session listing unavailable");
-    return names.includes(prSessionName(pr));
-  }
-
-  /** SessionHooks: kill a wedged session so the requeued round's dispatch
-   * rebirths it fresh (live-but-stuck recovery), and the operator's
-   * restart-session fence. It returns only once tmux affirmatively lists the
-   * session as gone; a tmux that could not be asked throws, so no caller
-   * releases ownership beside a pi that may still run. The ledger on disk is
-   * the continuity that matters and survives the kill by design. */
-  async killSession(pr: number): Promise<void>;
-  async killSession(pr: number, expected: SessionCommandOwnership): Promise<boolean>;
-  async killSession(pr: number, expected?: SessionCommandOwnership): Promise<void | boolean>;
-  async killSession(pr: number, expected?: SessionCommandOwnership): Promise<void | boolean> {
-    const fenced = await this.fenceSession(pr, expected);
-    return expected ? fenced : undefined;
-  }
-
-  private async fenceSession(
-    pr: number,
-    expected?: SessionCommandOwnership,
-    afterFence?: () => void,
-  ): Promise<boolean> {
-    const session = prSessionName(pr);
-    let fenced = false;
-    const owns = () => {
-      if (!expected) return true;
-      if (
-        !this.commandStore ||
-        !sameSessionCommandOwner(this.commandStore.getSessionCommand(expected.id), expected)
-      )
-        return false;
-      const active = this.commandStore.activeSessionCommand(session);
-      return !active || active.id === expected.id;
-    };
-    // Birth and delivery wait this existing close flight. Thus a successor
-    // cannot be born between the last ownership check and the async tmux kill.
-    await this.lifecycle.withPrClose(pr, async () => {
-      if (!owns()) return;
-      const gone = await this.sessionProvenGone(session);
-      if (!owns()) return;
-      if (!gone && !(await this.killConfirmed(session)))
-        throw new Error(
-          `session ${session} not proven gone after kill; recovery must not dispatch beside it`,
-        );
-      afterFence?.(); // Keep retry's CAS inside the same birth/close serialization.
-      fenced = true;
-    });
-    return fenced;
   }
 
   /** Kill `session` and confirm it gone: `Tmux.killSession` ignores its exit
@@ -1514,47 +790,6 @@ export class PiSessionManager implements SessionHooks {
       names = null;
     }
     return names !== null && !names.includes(session);
-  }
-
-  /** A recovery route found the command's saved payload unusable: say why on
-   * the row (the supervisor reports it in place of the original reason) and
-   * in the event log. */
-  private notePayloadUnusable(
-    store: StateStore,
-    command: { id: string; pr: number },
-    why: string,
-  ): void {
-    store.noteSessionCommandRecoveryFailure(command.id, why);
-    this.recordEvent("session_command_payload_unusable", command.pr, {
-      command_id: command.id,
-      detail: why,
-    });
-    console.log(`[quickreviewd] sessions: command ${command.id} cannot be replayed: ${why}`);
-  }
-
-  /** SessionHooks: the reconcile sweep over closed PRs' raw tier (and any of
-   * their sessions still alive in tmux); see the lifecycle. */
-  sweepStaleOvSessions(max?: number): Promise<OvSessionSweepReport | null> {
-    return this.lifecycle.sweepStaleOvSessions(max);
-  }
-
-  private recordEvent(kind: string, pr: number, payload: Record<string, unknown>): void {
-    try {
-      this.commandStore?.logEvent(kind, pr, payload);
-    } catch {
-      /* recording is best-effort; the log line says it too */
-    }
-  }
-
-  /** True only when the registry says the PR is closed; unknown is not closed. */
-  private prClosed(pr: number): boolean {
-    return this.lifecycle.prClosed(pr);
-  }
-
-  /** SessionHooks: archive the PR's record, drop its worktree, stop its
-   * session and delete its raw tier; see the lifecycle. */
-  archiveAndClose(pr: number): Promise<void> {
-    return this.lifecycle.archiveAndClose(pr);
   }
 
   // ---- overseer rotation -------------------------------------------------

@@ -421,9 +421,6 @@ describe("the daemon's reconcile (boot stall)", () => {
           async dispatchRound() {},
           async inject() {},
           async archiveAndClose() {},
-          async injectPending() {
-            return false;
-          },
           async wakeReceiptPresent(_pr, marker) {
             asked.push(marker);
             return false; // provably never delivered

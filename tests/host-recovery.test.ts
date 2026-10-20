@@ -4,15 +4,13 @@
 // with hand-made hooks. What they cannot show is that the REAL hooks of each host
 // give the daemon's recovery what it asks of them. These cases run the real
 // VerdictWatcher and SessionCommandSupervisor over every host in SESSION_HOSTS
-// (the contract's own rigs, tests/helpers/session-hooks-host.ts) and say where the
-// hosts must agree and where the worker host bypasses the bridge's machinery:
+// (the contract's own rigs, tests/helpers/session-hooks-host.ts):
 //
-//   round end        the wake held during the round reaches the session on both;
-//                    the compaction request (verdicts.ts) is the bridge's alone
+//   round end        the wake held during the round reaches the session
 //   silent round     an order lost in transit is redelivered by the net, cheaply
 //                    (no kill), once the grace has passed and it is seen twice
-//   missing start    unknown transcript evidence is deferred on the bridge host
-//                    and never reached on the worker host, whose ack is the receipt
+//   missing start    a worker's ack is the receipt: no start by the lease is
+//                    recovered at once
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -89,7 +87,7 @@ describe.each(SESSION_HOSTS)("recovery over the $name host", (host) => {
       hooks: rig.hooks,
       verdictDir: join(dir, "verdict"),
       root: dir,
-      usage: { globalStoreDir: null },
+      usage: {},
       partialWrite: { windowMs: 0 },
       ...(now ? { now: () => now } : {}),
     });
@@ -141,15 +139,12 @@ describe.each(SESSION_HOSTS)("recovery over the $name host", (host) => {
         ).toBe("done");
         expect(rig.mailbox(SESSION)).toEqual(["author says: fixed in abc123\n"]);
         expect(rig.store.heldWakes(PR)).toEqual([]);
-        // A worker compacts before it exits; no host asks for one.
-        expect(rig.compactionRequests(SESSION)).toBe(0);
       },
     );
   });
 
   describe("the silent-round net", () => {
-    // Reads the receipt: the tmux host (the overseer's) offers none.
-    it.skipIf(host.bridge)(
+    it(
       "redelivers an order lost in transit, without a kill, on the second sighting after the grace",
       { timeout: HEAVY_TIMEOUT_MS },
       async () => {
@@ -176,14 +171,14 @@ describe.each(SESSION_HOSTS)("recovery over the $name host", (host) => {
         ).toEqual({ c: 1 });
         expect(rig.mailbox(SESSION)).toEqual([STAMPED]);
         expect(rig.lifecycle().some((e) => e.startsWith("kill"))).toBe(false);
-        // The bridge writes into the session it has; a worker is a fresh process.
-        expect(births()).toBe(host.bridge ? bornBefore : bornBefore + 1);
+        // A worker is a fresh process.
+        expect(births()).toBe(bornBefore + 1);
         expect(rig.store.runningRounds()).toHaveLength(1);
       },
     );
 
     it(
-      "is patient with an order still on its way: nothing is marked while the host says pending",
+      "is patient with an order still on its way: nothing is marked while its ack is pending",
       { timeout: HEAVY_TIMEOUT_MS },
       async () => {
         await dispatched();
@@ -219,42 +214,26 @@ describe.each(SESSION_HOSTS)("recovery over the $name host", (host) => {
         }
       ).c;
 
-    it(
-      "defers on unknown transcript evidence on a bridge, and recovers at once on a worker's definitive ack",
-      { timeout: HEAVY_TIMEOUT_MS },
-      async () => {
-        await dispatched();
-        const row = rig.store.activeSessionCommand(SESSION)!;
-        rig.store.db
-          .prepare("UPDATE session_commands SET next_check_at = ? WHERE id = ?")
-          .run("2026-08-13T09:00:00.000Z", row.id);
+    it("recovers at once on a worker's definitive ack", { timeout: HEAVY_TIMEOUT_MS }, async () => {
+      await dispatched();
+      const row = rig.store.activeSessionCommand(SESSION)!;
+      rig.store.db
+        .prepare("UPDATE session_commands SET next_check_at = ? WHERE id = ?")
+        .run("2026-08-13T09:00:00.000Z", row.id);
 
-        await supervisor().scan();
+      await supervisor().scan();
 
-        if (host.bridge) {
-          // The transcript could not say: wait, finitely, and touch nothing.
-          expect(events("session_command_evidence_unknown")).toBe(1);
-          expect(events("session_command_start_recovery")).toBe(0);
-          expect(rig.lifecycle()).toEqual([`birth ${SESSION}`]);
-          expect(rig.store.getSessionCommand(row.id)?.attempt).toBe(row.attempt);
-        } else {
-          // No transcript to fail to read: the ack is absent, so the worker is fenced
-          // and the same command is replayed under a fresh one.
-          expect(events("session_command_evidence_unknown")).toBe(0);
-          expect(events("session_command_start_recovery")).toBe(1);
-          expect(rig.lifecycle()).toEqual([
-            `birth ${SESSION}`,
-            `kill ${SESSION}`,
-            `birth ${SESSION}`,
-          ]);
-          expect(rig.store.getSessionCommand(row.id)).toMatchObject({
-            id: row.id,
-            attempt: row.attempt + 1,
-            status: "running",
-          });
-        }
-      },
-    );
+      // No transcript to fail to read: the ack is absent, so the worker is fenced
+      // and the same command is replayed under a fresh one.
+      expect(events("session_command_evidence_unknown")).toBe(0);
+      expect(events("session_command_start_recovery")).toBe(1);
+      expect(rig.lifecycle()).toEqual([`birth ${SESSION}`, `kill ${SESSION}`, `birth ${SESSION}`]);
+      expect(rig.store.getSessionCommand(row.id)).toMatchObject({
+        id: row.id,
+        attempt: row.attempt + 1,
+        status: "running",
+      });
+    });
 
     it("leaves a started command alone", { timeout: HEAVY_TIMEOUT_MS }, async () => {
       await dispatched();
@@ -263,11 +242,6 @@ describe.each(SESSION_HOSTS)("recovery over the $name host", (host) => {
       rig.store.db
         .prepare("UPDATE session_commands SET next_check_at = ? WHERE id = ?")
         .run("2026-08-13T09:00:00.000Z", row.id);
-      if (host.bridge) {
-        // The bridge stamps the start itself; the worker host's `accepted` already did.
-        rig.store.claimSessionCommand(row.id, "bridge", "2026-08-13T09:00:00.000Z");
-        rig.store.markSessionCommandStarted(row.id, "bridge", "2099-01-01T00:00:00.000Z");
-      }
 
       await supervisor().scan();
 

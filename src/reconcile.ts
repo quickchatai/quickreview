@@ -574,11 +574,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       // sweep is never one synchronous span.
       await yieldToLoop();
       // A held or still-pending nudge is not a lost one.
-      if (
-        store.hasRunningRound(claim.pr) ||
-        store.hasHeldWakes(claim.pr) ||
-        (deps.hooks.injectPending && (await deps.hooks.injectPending(claim.pr)))
-      ) {
+      if (store.hasRunningRound(claim.pr) || store.hasHeldWakes(claim.pr)) {
         store.markRecheckReceiptChecked(claim.pr, claim.fingerprint);
         continue;
       }

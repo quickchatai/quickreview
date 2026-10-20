@@ -433,7 +433,7 @@ describe("the verdict path requeues instead of applying", () => {
       hooks,
       verdictDir: join(dir, "verdict"),
       root: dir,
-      usage: { globalStoreDir: null },
+      usage: {},
       partialWrite: { windowMs: 0 },
       now: () => clock,
     });
@@ -567,7 +567,7 @@ describe("the verdict path requeues instead of applying", () => {
       hooks,
       verdictDir: join(dir, "verdict"),
       root: dir,
-      usage: { globalStoreDir: null },
+      usage: {},
       partialWrite: { windowMs: 0 },
       postingReceiptGraceS: 0,
       now: () => clock,

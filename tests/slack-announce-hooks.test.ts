@@ -239,7 +239,7 @@ describe("verdict hooks", () => {
       announce,
       now,
       // No transcripts: a session dir that does not exist (zero usage).
-      usage: { globalStoreDir: null, sessionDirFor: (pr) => join(dir, "no-sessions", `pr-${pr}`) },
+      usage: { sessionDirFor: (pr) => join(dir, "no-sessions", `pr-${pr}`) },
       partialWrite: { windowMs: 0 },
     });
   }

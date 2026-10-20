@@ -43,7 +43,7 @@ import {
   prFixture,
   put,
   reopen,
-  sessionRig,
+  lifecycleRig,
   type PrFixture,
 } from "./helpers/archive-pr.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
@@ -88,7 +88,7 @@ describe("restore before birth (acceptance 6)", () => {
           },
         },
       );
-      const rig = sessionRig(f);
+      const rig = lifecycleRig(f);
       rig.m.setBeforeBirth((pr) => a.beforeBirth(pr));
       const atBirth: boolean[] = [];
       rig.onBirth = () => atBirth.push(f.transcripts.every((t) => existsSync(join(f.root, t))));
@@ -147,7 +147,7 @@ describe("restore before birth (acceptance 6)", () => {
       );
       writeFileSync(gz, "not a gzip at all");
       const a = onArchiver(f);
-      const rig = sessionRig(f);
+      const rig = lifecycleRig(f);
       rig.m.setBeforeBirth((pr) => a.beforeBirth(pr));
       reopen(f);
       await rig.m.ensurePrSession(f.pr, "T", "wt/pr");
@@ -186,7 +186,7 @@ describe("restore before birth (acceptance 6)", () => {
       );
       writeFileSync(gz, gzipSync(Buffer.from("other bytes")));
       const a = onArchiver(f);
-      const rig = sessionRig(f);
+      const rig = lifecycleRig(f);
       rig.m.setBeforeBirth((pr) => a.beforeBirth(pr));
       reopen(f);
       await rig.m.ensurePrSession(f.pr, "T", "wt/pr");
@@ -255,7 +255,7 @@ describe("restore before birth (acceptance 6)", () => {
           }),
         },
       );
-      const rig = sessionRig(f);
+      const rig = lifecycleRig(f);
       rig.m.setBeforeBirth((pr) => a.beforeBirth(pr));
       reopen(f);
       await rig.m.ensurePrSession(f.pr, "T", "wt/pr");
@@ -286,7 +286,7 @@ describe("restore before birth (acceptance 6)", () => {
           },
         },
       );
-      const rig = sessionRig(f);
+      const rig = lifecycleRig(f);
       rig.m.setBeforeBirth((pr) => a.beforeBirth(pr));
       reopen(f);
       const t = Date.now();
@@ -824,33 +824,8 @@ describe("the tick's restores yield to a priority restore (§8.3)", () => {
   );
 });
 
-describe("both birth paths await the restore, and wire.ts connects it", () => {
-  it(
-    "an out-of-round wake on a reopened PR (inject → ensureSessionForWake) restores before the rebirth",
-    { timeout: HEAVY_TIMEOUT_MS },
-    async () => {
-      const f = await archived();
-      const a = onArchiver(f);
-      const rig = sessionRig(f);
-      rig.m.setBeforeBirth((pr) => a.beforeBirth(pr));
-      rig.m.setTitleResolver(() => "T");
-      const atBirth: boolean[] = [];
-      rig.onBirth = () => atBirth.push(f.transcripts.every((t) => existsSync(join(f.root, t))));
-      reopen(f);
-      // The fixture's failed round command would block the mailbox (a
-      // separate rule); this test is about the birth.
-      f.store.db
-        .prepare("UPDATE session_commands SET status = 'cancelled' WHERE id = ?")
-        .run(`cmd-${f.pr}-2`);
-      await rig.m.inject(f.pr, "a wake after the reopen");
-      expect(rig.births).toEqual([`pr-${f.pr}`]);
-      expect(atBirth).toEqual([true]);
-      expect(archiveRow(f.store, f.pr)?.state).toBe("restored");
-      a.stop();
-    },
-  );
-
-  it("wire.ts hands the worker host the archiver's beforeBirth, and both birth paths await it", () => {
+describe("the birth awaits the restore, and wire.ts connects it", () => {
+  it("wire.ts hands the worker host the archiver's beforeBirth, and the birth awaits it", () => {
     const src = join(import.meta.dirname, "..", "src");
     const wire = readFileSync(join(src, "wire.ts"), "utf8");
     expect(wire).toMatch(/workerWorld\.host\.setBeforeBirth\(\(pr\) => archiveRef\.beforeBirth\(pr\)\);/);
@@ -858,11 +833,6 @@ describe("both birth paths await the restore, and wire.ts connects it", () => {
     const birth = lifecycle.slice(lifecycle.indexOf("private async birth("));
     expect(birth.slice(0, birth.indexOf("\n  }\n"))).toMatch(
       /^[\s\S]{0,200}await this\.awaitBeforeBirth\(pr\);/,
-    );
-    const sessions = readFileSync(join(src, "sessions.ts"), "utf8");
-    const wake = sessions.slice(sessions.indexOf("private async ensureSessionForWake("));
-    expect(wake.slice(0, wake.indexOf("\n  }\n"))).toContain(
-      "await this.lifecycle.awaitBeforeBirth(pr);",
     );
   });
 });

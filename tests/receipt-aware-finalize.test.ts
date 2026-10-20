@@ -234,7 +234,7 @@ function wire(live = false): { watcher: VerdictWatcher; supervisor: SessionComma
     hooks,
     verdictDir,
     root,
-    usage: { globalStoreDir: null },
+    usage: {},
     ledgerCheckDelayMs: 0,
     partialWrite: { windowMs: 0 },
     now: () => clock,

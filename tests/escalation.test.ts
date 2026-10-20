@@ -279,7 +279,7 @@ describe("INVARIANT 1 — the reviewer still decides; escalation rides beside th
           hooks,
           verdictDir: dir,
           root: dir,
-          usage: { globalStoreDir: null },
+          usage: {},
           partialWrite: { windowMs: 0 },
           ledgerCheckDelayMs: 0,
         });
@@ -366,7 +366,7 @@ describe("INVARIANT 1 — the reviewer still decides; escalation rides beside th
       hooks,
       verdictDir: dir,
       root: dir,
-      usage: { globalStoreDir: null },
+      usage: {},
       partialWrite: { windowMs: 0 },
       ledgerCheckDelayMs: 0,
     });
@@ -2052,7 +2052,7 @@ describe("the verdict path delivers what the rules found", () => {
       verdictDir: dir,
       root: dir,
       findingsDir,
-      usage: { globalStoreDir: null },
+      usage: {},
       partialWrite: { windowMs: 0 },
       ledgerCheckDelayMs: 0,
     });
@@ -2143,7 +2143,7 @@ describe("the verdict path delivers what the rules found", () => {
           hooks,
           verdictDir: dir,
           root: dir,
-          usage: { globalStoreDir: null },
+          usage: {},
           partialWrite: { windowMs: 0 },
           ledgerCheckDelayMs: 0,
         });
@@ -2551,7 +2551,7 @@ describe("escalation recovery through the verdict sweep", () => {
       hooks,
       verdictDir: dir,
       root: dir,
-      usage: { globalStoreDir: null },
+      usage: {},
       ledgerCheckDelayMs: 0,
     });
 

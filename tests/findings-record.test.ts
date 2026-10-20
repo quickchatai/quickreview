@@ -502,7 +502,6 @@ function hooksOf(injects: string[]): SessionHooks {
       injects.push(`${pr}:${msg}`);
     },
     async archiveAndClose() {},
-    async compactSession() {},
   };
 }
 
@@ -522,7 +521,7 @@ describe("VerdictWatcher round-end findings check", () => {
       verdictDir: join(dir, "verdict"),
       root: dir,
       findingsDir: findingsDir(),
-      usage: { globalStoreDir: null },
+      usage: {},
       partialWrite: { windowMs: 0 },
       ledgerCheckDelayMs: 0, // inline; the settle delay is pinned in verdicts.test.ts
       ...over,
@@ -680,7 +679,7 @@ describe("VerdictWatcher round-end findings check", () => {
       hooks: hooksOf(injects),
       verdictDir: join(dir, "verdict"),
       root: dir,
-      usage: { globalStoreDir: null },
+      usage: {},
       partialWrite: { windowMs: 0 },
       ledgerCheckDelayMs: 0,
     });
