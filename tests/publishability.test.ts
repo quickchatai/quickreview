@@ -437,6 +437,12 @@ const ALLOWLIST: AllowlistEntry[] = [
       "the cutover wizard's defaults name the reviewed repo and the release repo (quickchatai/...) it checks the origin and downloads the release from",
   },
   {
+    path: "scripts/cutover-rehearsal.sh",
+    tokens: ["quickchat"],
+    reason:
+      "builds a bare origin whose path looks like the release repo (quickchatai/quickreview.git), which the wizard's origin check matches, and names the release repo for its manifest download seam",
+  },
+  {
     path: "tests/cutover-wizard.test.ts",
     tokens: ["quickchat"],
     reason:

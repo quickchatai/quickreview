@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# `sudo` on the throwaway host: the rehearsal runs unprivileged, so sudo runs the command as the user.
+while [[ "${1:-}" == -* ]]; do shift; done
+exec "$@"

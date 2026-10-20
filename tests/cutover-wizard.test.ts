@@ -95,6 +95,7 @@ case "$1" in
   *qcr-update*status*) cat "${vmState}" ;;
   *state/status.json*) c="\${1#sudo }"; bash -c "$(printf '%s' "$c" | sed "s#/opt/quickreview/state/status.json#${statusFile}#")" ;;
   *drain_hold_kept*) cat "${keptFile}" ;;
+  *cli.js*status*) echo "quickreview — DRY-RUN — snapshot x"; cat "${dir}/qcr-status" ;;
   *docker*node*) echo 3 ;;
   *posting-receipts*) echo 1 ;;
 esac`,
@@ -121,6 +122,10 @@ if [ "$1" = status ]; then cat "${dir}/qcr-status"; fi`,
     `echo "deploy $* ACK=\${QCR_CUTOVER_ACK:-}" >> "${log}"
 if [ "$1" = release ]; then
   if [ -f "${dir}/fail-release" ]; then echo "RESCUED: legacy bot back, drain re-sent"; exit 1; fi
+  if [ -f "${dir}/fail-after-recreate" ]; then
+    echo '${vmJson({ layout: "release", draining: true, rounds: 0 })}' > "${vmState}"
+    echo "CHECK FAILED: memory sidecar search"; exit 1
+  fi
   if [ -f "${dir}/boot-lifts" ]; then
     # a daemon that did not keep the drain: its first healthy reconcile lifted it
     echo '{}' > "${statusFile}"
@@ -245,6 +250,17 @@ describe("scripts/cutover.sh", () => {
     expect(r.calls().some((l) => l === `deploy release ${V} ACK=${V}`)).toBe(false);
   });
 
+  it("says a failure AFTER the recreate was not rescued (the VM's layout is release by then)", () => {
+    const r = rig();
+    writeFileSync(join(r.dir, "fail-after-recreate"), "");
+    const res = r.run(["", "y", V]);
+    expect(res.code).toBe(1);
+    expect(res.out).toContain("the release failed");
+    expect(res.out).toContain("came AFTER the point of no return");
+    expect(res.out).toContain("fix forward under the drain");
+    expect(res.out).not.toContain("was RESCUED by the updater");
+  });
+
   it("stops at a failed release with its output, and resumes at the release", () => {
     const r = rig();
     writeFileSync(join(r.dir, "fail-release"), "");
@@ -358,5 +374,15 @@ describe("scripts/cutover.sh", () => {
     expect(res.code).toBe(1);
     expect(res.out).toContain("has not caught up for: #12");
     expect(existsSync(join(r.dir, "state"))).toBe(true);
+  });
+
+  it("reads the backstop's daemon status in the daemon's container, never from the owner's machine", () => {
+    const r = rig();
+    const res = r.run(["", "y", V, "y"]);
+    expect(res.code).toBe(1);
+    const vmCalls = r.calls().filter((l) => l.startsWith("vm "));
+    expect(vmCalls.some((l) => l.includes("docker exec quickreview-sandbox node /opt/qcr/dist/src/cli.js status"))).toBe(true);
+    // the owner's own `qcr status` is not what the backstop compares against
+    expect(r.calls()).not.toContain("qcr status");
   });
 });

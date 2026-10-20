@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# ansible-playbook on the controller, for `deploy.sh provision` only: the playbook needs root and a
+# real host (apt, docker, systemd), so the rehearsal does not run it. It performs the ONE task of
+# the playbook this ticket exercises, installing the run spec deploy.sh rendered
+# (`-e update_conf_src=FILE`) as the updater's update.conf, and records the command it was given.
+. "${QCR_RH_ENV:?}"
+echo "ansible-playbook $*" >>"$QCR_RH_VM/ansible-playbook.log"
+src=""
+for ((i = 1; i <= $#; i++)); do
+  if [[ "${!i}" == -e ]]; then j=$((i + 1)); [[ "${!j}" == update_conf_src=* ]] && src="${!j#update_conf_src=}"; fi
+done
+[[ -f "$src" ]] || { echo "ansible-playbook stub: no update_conf_src" >&2; exit 2; }
+mkdir -p "$QCR_RH_VM/etc/qcr" "$QCR_RH_VM/backups" "$QCR_RH_VM/lib"
+install -m 0644 "$src" "$QCR_RH_VM/etc/qcr/update.conf"
+echo "ansible-playbook stub: run spec installed at $QCR_RH_VM/etc/qcr/update.conf"

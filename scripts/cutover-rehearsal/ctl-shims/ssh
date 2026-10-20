@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# ssh on the controller: the user's ssh, with the rehearsal's own config (the throwaway sshd on
+# localhost, its own key and host key). The user's ~/.ssh is never read or written.
+. "${QCR_RH_ENV:?}"
+exec /usr/bin/ssh -F "$QCR_RH_CTL/ssh_config" "$@"

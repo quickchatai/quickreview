@@ -12,7 +12,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." && pwd)"
 REL_TAG="${1:?usage: build-images.sh <release-tag> <memory-tag>}"
 MEM_TAG="${2:?usage: build-images.sh <release-tag> <memory-tag>}"
-SHA="$(git -C "$ROOT" rev-parse --short HEAD)"
+SHA="$(git -C "$ROOT" rev-parse HEAD)"   # the full sha: the deploy manifest's revision is 40 hex
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 

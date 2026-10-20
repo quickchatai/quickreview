@@ -1662,6 +1662,25 @@ describe("deploy.sh — release <version>", () => {
       expect(r.stdout).toContain("first run on the legacy layout, acknowledged");
     });
 
+    it("takes the acknowledgement from QCR_CUTOVER_ACK=<version> too (the runbook's and the wizard's spelling), and only for this version", () => {
+      env = scratch();
+      const ok = release(env, { vm: { layout: "legacy" }, env: { QCR_CUTOVER_ACK: "1.2.3" } });
+      expect(ok.code, ok.stderr).toBe(0);
+      expect(ok.stdout).not.toContain("REFUSED in a real run");
+      expect(ok.stdout).toContain("--cutover-ack 1.2.3");
+      expect(ok.stdout).toContain("first run on the legacy layout, acknowledged");
+      // an ack for another version authorizes nothing
+      const stale = release(env, { vm: { layout: "legacy" }, env: { QCR_CUTOVER_ACK: "1.2.2" } });
+      expect(stale.code).toBe(1);
+      expect(stale.stderr).toContain("acknowledges another version");
+    });
+
+    it("names the recreate as the point of no return in the plan", () => {
+      env = scratch();
+      const r = release(env, { vm: { layout: "legacy" }, args: ["--cutover-ack"] });
+      expect(r.stdout).toMatch(/recreate the daemon container on the new image — THE POINT OF NO RETURN on the legacy layout/);
+    });
+
     it("REFUSES an undrained or busy board (the updater refuses it too)", () => {
       env = scratch();
       const undrained = release(env, { vm: { draining: false } });

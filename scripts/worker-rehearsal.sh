@@ -12,6 +12,11 @@
 #                     were built from a commit whose image inputs are HEAD's (only the rehearsal's
 #                     own tooling, tests or docs differ); otherwise they are built (build-images.sh)
 #   --keep            leave the containers, network and host directory up for a look
+#   --adopt FILE      do not build, lay out or start anything: run the scenarios against the world the
+#                     cutover rehearsal (scripts/cutover-rehearsal.sh) left standing, the release boot the
+#                     real updater made. FILE is a shell file naming H, TLS, LOGS, OPERATOR_TOML,
+#                     LEGACY_ORIGINAL and REL_IMG. The setup checks (IMG, NET, MEM, CFG, MIG, DRAIN) are
+#                     the cutover rehearsal's; round 1 and the closing checks run as always.
 #   --only IDS        run only these scenarios after the shared setup, comma-separated check ids
 #                     (ANSWER-1,TAKEOVER-1,DEBUG-1,RESTART-1,BREAKER-1,LOGIN-1). The setup and its
 #                     checks (IMG, NET, MEM, CFG, MIG, DRAIN), round 1 (WEBHOOK, RESUME, WAVE,
@@ -39,6 +44,7 @@ WORK=""
 REUSE=0
 KEEP=0
 ONLY=""
+ADOPT=""
 OUT_SET=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -47,7 +53,8 @@ while [[ $# -gt 0 ]]; do
     --reuse-images) REUSE=1; shift ;;
     --keep) KEEP=1; shift ;;
     --only) ONLY="$2"; shift 2 ;;
-    *) echo "usage: $0 [--out FILE] [--work DIR] [--reuse-images] [--keep] [--only IDS]" >&2; exit 2 ;;
+    --adopt) ADOPT="$2"; shift 2 ;;
+    *) echo "usage: $0 [--out FILE] [--work DIR] [--reuse-images] [--keep] [--only IDS] [--adopt FILE]" >&2; exit 2 ;;
   esac
 done
 WORK="${WORK:-/tmp/claude-$(id -u)/worker-rehearsal-$$}"
@@ -75,6 +82,13 @@ RESULTS="$WORK/results.tsv"
 FACTS="$WORK/facts.tsv"
 UIDGID="$(id -u):$(id -g)"
 PR=7
+if [[ -n "$ADOPT" ]]; then
+  # shellcheck disable=SC1090
+  . "$ADOPT"
+  KEEP=1
+  cp "$OPERATOR_TOML" "$WORK/operator.toml"
+  cp "$LEGACY_ORIGINAL" "$WORK/legacy-original.jsonl"
+fi
 : >"$RESULTS"; : >"$FACTS"
 mkdir -p "$LOGS"
 
@@ -161,15 +175,25 @@ events() { sql "select count(*) from events where kind='$1'"; }
 # every pi / node process of the daemon container: pid ppid args
 procs() { dx sh -c 'for p in /proc/[0-9]*; do [ -r $p/stat ] || continue; printf "%s %s %s\n" "${p#/proc/}" "$(cut -d" " -f4 $p/stat)" "$(tr "\0" " " <$p/cmdline | cut -c1-200)"; done 2>/dev/null'; }
 
-# ---- 0. the images --------------------------------------------------------------------------------
+# boots: how many times the daemon has booted (its worker recovery logs once per boot)
+boots() { docker logs "$DAEMON" 2>&1 | grep -c 'workers: recovered'; }
+# rebooted <n>: a boot after the first <n>, and a healthy reconcile after that boot's recovery
+# (the logs of a restarted container keep the previous boot's lines: a window by time would
+# match them)
+rebooted() {
+  [[ "$(boots)" -gt "$1" ]] && docker logs "$DAEMON" 2>&1 \
+    | awk '/workers: recovered/ {ok = 0} /reconcile: open=.* errors=0/ {ok = 1} END {exit !ok}'
+}
 HEAD_SHA="$(git -C "$ROOT" rev-parse --short HEAD)"
+if [[ -z "$ADOPT" ]]; then
+# ---- 0. the images --------------------------------------------------------------------------------
 label_of() { docker inspect -f "{{index .Config.Labels \"$2\"}}" "$1" 2>/dev/null; }
 # same_inputs <sha>: does that commit build the image HEAD builds? Only the rehearsal's own
 # tooling, the tests and the docs may differ (none of them is an image input that runs).
 same_inputs() {
   [[ -n "$1" ]] && git -C "$ROOT" cat-file -e "$1^{commit}" 2>/dev/null \
     && git -C "$ROOT" diff --quiet "$1" HEAD -- . ':(exclude)scripts/worker-rehearsal.sh' \
-      ':(exclude)scripts/worker-rehearsal' ':(exclude)tests' ':(exclude)docs'
+      ':(exclude)scripts/worker-rehearsal' ':(exclude)scripts/cutover-rehearsal.sh' ':(exclude)scripts/cutover-rehearsal' ':(exclude)scripts/deploy.sh' ':(exclude)scripts/cutover.sh' ':(exclude)tests' ':(exclude)docs'
 }
 IMG_SHA="$(label_of "$REL_IMG" qcr.build-sha)"
 if [[ "$REUSE" == 1 ]] && same_inputs "$IMG_SHA" && docker image inspect "$MEM_IMG" >/dev/null 2>&1; then
@@ -289,15 +313,6 @@ daemon_run() {
 log "starting the daemon on the legacy host directory"
 daemon_run >/dev/null || die "the daemon did not start"
 daemon_up() { docker logs "$DAEMON" 2>&1 | grep -q "reconcile: open=.* errors=0"; }
-# boots: how many times the daemon has booted (its worker recovery logs once per boot)
-boots() { docker logs "$DAEMON" 2>&1 | grep -c 'workers: recovered'; }
-# rebooted <n>: a boot after the first <n>, and a healthy reconcile after that boot's recovery
-# (the logs of a restarted container keep the previous boot's lines: a window by time would
-# match them)
-rebooted() {
-  [[ "$(boots)" -gt "$1" ]] && docker logs "$DAEMON" 2>&1 \
-    | awk '/workers: recovered/ {ok = 0} /reconcile: open=.* errors=0/ {ok = 1} END {exit !ok}'
-}
 wait_for 180 "the daemon's first healthy reconcile" daemon_up || { docker logs --tail 40 "$DAEMON" >&2; die "the daemon did not reconcile"; }
 sleep 3
 
@@ -335,6 +350,8 @@ if [[ "$LEGACY_DRAINING" == 1 && "$DRAIN_NOW" == 0 && "$(events drain_lifted)" -
 else
   check DRAIN-1 fail "the drain lifts on the first healthy reconcile" "legacy=$LEGACY_DRAINING now=$DRAIN_NOW lifted_events=$(events drain_lifted) rounds=$(sql 'select count(*) from rounds')"
 fi
+
+fi # not adopted: the cutover rehearsal made this world
 
 # ---- B/C. a signed webhook starts a round; the worker resumes the legacy session ------------------------------------------
 log "triggering PR $PR with a signed webhook"
@@ -661,10 +678,14 @@ done <<<"$PI_ROWS"
 OVERSEER_PI="$(awk '$3=="pi" || $3 ~ /^pi / {print $1}' <<<"$PROCS" | wc -l)"
 fact process_tree_pi "$PI_ROWS"
 fact tmux_sessions "$TMUXS"
-if [[ "$PR_PI" == 0 && "$TMUXS" == "main overseer " ]] && [[ "$OVERSEER_PI" -le 1 ]]; then
-  check TREE-1 pass "the daemon's process tree holds no PR pi; the only pi is the tmux overseer's (HEAD still births it at boot; P9.13 deletes it)" "pi processes under the daemon (node wire.js): $PR_PI; tmux sessions: $TMUXS; pi processes in the container: $OVERSEER_PI (the overseer's, under the tmux server)"
+LONG_LIVED="$(awk '{ $1=""; $2=""; print }' <<<"$PROCS" | grep -E 'wire.js|loginrefresh' | sed 's/^ *//' | cut -c1-80 | tr '\n' ';')"
+fact long_lived "$LONG_LIVED"
+# The entrypoint still starts a tmux server and one empty `main` shell session (the jump-in surface and the
+# host of the takeover and debug panes); that is not a PR session. Anything else, and any pi, is.
+if [[ "$PR_PI" == 0 && ( -z "${TMUXS// /}" || "$TMUXS" == "main " ) && "$OVERSEER_PI" == 0 ]]; then
+  check TREE-1 pass "the daemon's process tree holds no pi, no PR tmux session and no overseer: the daemon and the login refresher, nothing else long-lived" "pi processes in the container: $OVERSEER_PI (under the daemon: $PR_PI); tmux sessions: ${TMUXS:-none} (the entrypoint's empty shell, no pane runs pi); long-lived: $LONG_LIVED"
 else
-  check TREE-1 fail "the daemon's process tree holds no PR pi" "under daemon: $PR_PI; tmux: $TMUXS; pi: $OVERSEER_PI; rows: $(tr '\n' ';' <<<"$PI_ROWS" | cut -c1-300)"
+  check TREE-1 fail "the daemon's process tree holds no pi, no PR tmux session and no overseer" "under daemon: $PR_PI; tmux: ${TMUXS:-none}; pi: $OVERSEER_PI; rows: $(tr '\n' ';' <<<"$PI_ROWS" | cut -c1-300)"
 fi
 
 # The heartbeat reports a block only once its source is up: right after the login scenario's

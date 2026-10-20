@@ -17,6 +17,7 @@ import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetLayoutCache } from "../src/tui/layout.js";
 import { drainManualCommand, drainPayload, renderStatus, runDrain } from "../src/cli.js";
 import {
   authorizeCommand,
@@ -632,6 +633,33 @@ describe("qcr drain over the unwedge command channel", () => {
     expect(writes[0]!.argv.join(" ")).toContain(`${remoteSandboxRoot(cfg.tui)}/commands`);
     expect(polled).toBeGreaterThan(0);
     expect(lines.join("\n")).toContain("2 round(s) still finishing");
+  });
+
+  it("says the directory it writes to by the container's layout, not the legacy default (the cutover recreates the container)", async () => {
+    const lines: string[] = [];
+    const written: string[] = [];
+    const ssh = async (
+      _h: string,
+      argv: string[],
+      opts?: { stdin?: string },
+    ): Promise<RemoteResult> => {
+      if (argv.includes("inspect")) return ok("0123456789abcdef release\n");
+      if (opts?.stdin !== undefined) {
+        written.push(argv.join(" "));
+        return ok();
+      }
+      return ok(JSON.stringify({ ok: true, draining: false, running_rounds: 0 }));
+    };
+    resetLayoutCache();
+    try {
+      const unset: Config = { ...cfg, tui: { ...cfg.tui, remote_sandbox_root: "" } }; // the owner's config names none
+      expect(await runDrain(false, { cfg: unset, ssh, log: (l) => lines.push(l), sleep: async () => {} })).toBe(0);
+    } finally {
+      resetLayoutCache();
+    }
+    expect(lines[0]).toContain("/opt/qcr/commands/");
+    expect(lines[0]).not.toContain("/opt/quickreview/sandbox");
+    expect(written[0]).toContain("/opt/qcr/commands");
   });
 
   it("prints a session-bounded drain's expiry without its control bytes", async () => {

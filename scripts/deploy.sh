@@ -29,7 +29,12 @@
 #                                           this deploy is the cutover, and the
 #                                           first boot migrates forward. Without
 #                                           it the updater (and this script)
-#                                           refuse.
+#                                           refuse. `QCR_CUTOVER_ACK=<version>`
+#                                           in the environment is the same
+#                                           acknowledgement (the runbook and
+#                                           scripts/cutover.sh spell it so);
+#                                           one that names another version is
+#                                           refused.
 #   provision          ansible installs packages, Docker, cloudflared, secrets,
 #                      the directory layout, the updater
 #                      (/usr/local/sbin/qcr-update) and its run spec
@@ -199,6 +204,14 @@ if [[ "$MODE" == release ]]; then
   [[ "$RELEASE_VERSION" != latest ]] || die "there is no latest tag: name the version (X.Y.Z)"
   [[ "$RELEASE_VERSION" =~ $RELEASE_VERSION_RE ]] ||
     die "release version '$RELEASE_VERSION' is not X.Y.Z (optionally -prerelease): it names an image tag"
+  # The acknowledgement the runbook (C.11/C.12) and scripts/cutover.sh give is the environment's
+  # QCR_CUTOVER_ACK=<version>, not only the flag. It acknowledges THIS release and no other: a stale
+  # one left over from another version must not authorize the cutover.
+  if [[ -n "${QCR_CUTOVER_ACK:-}" ]]; then
+    [[ "$QCR_CUTOVER_ACK" == "$RELEASE_VERSION" ]] ||
+      die "QCR_CUTOVER_ACK=$QCR_CUTOVER_ACK acknowledges another version than the one being released ($RELEASE_VERSION): set it to $RELEASE_VERSION, or unset it"
+    CUTOVER_ACK=1
+  fi
 fi
 
 # ---- helpers -----------------------------------------------------------------
@@ -1156,7 +1169,7 @@ print_plan() {
       echo "                 the new image's \`daemon --preflight\` on a scratch copy of the snapshot (--network none)"
       echo "                 seed the sidecar store once (legacy layout only; copy + checksum verify)"
       echo "                 swap the config (current -> .prev, .next -> current)"
-      echo "                 start the memory sidecar, wait for /ready; recreate the daemon container on the new image"
+      echo "                 start the memory sidecar, wait for /ready; recreate the daemon container on the new image — THE POINT OF NO RETURN on the legacy layout (the first boot migrates state.db forward; there is no way back to tmux or processes)"
       echo "               any failure from the stop to the recreate is RESCUED: previous config back, old containers started, drain re-sent and confirmed, non-zero exit"
       echo "  no rsync, no build, no install on the VM"
       local problem

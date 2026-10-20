@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# /usr/local/sbin/qcr-update on the throwaway host: deploy/qcr-update.sh itself, unprivileged. The
+# script's own test seam applies (it says so in its header): QCR_UPDATE_CONF names the run spec
+# `deploy.sh provision` installed, and the polling intervals are short. Nothing else is changed.
+. "${QCR_RH_ENV:?}"
+export QCR_UPDATE_CONF="$QCR_RH_VM/etc/qcr/update.conf"
+export QCR_UPDATE_POLL_S=1 QCR_UPDATE_NAP_S=1 QCR_RESCUE_WAIT_S=90
+# the sidecar-never-ready injection shortens the wait it would otherwise give a re-embed
+[[ -f "$QCR_RH_VM/inject/ready-timeout" ]] && export QCR_MEMORY_READY_TIMEOUT_S="$(cat "$QCR_RH_VM/inject/ready-timeout")"
+# Test mode runs unprivileged, and the operator channel (<sandbox>/commands/operator) is root-owned and
+# 0755 by design (the seal: the TUI writes it with `docker exec -u 0`). The real updater runs as root
+# and writes there; this one cannot, so for the length of a RUN (not a status) the directory is opened
+# to the user and sealed again afterwards. The stand-in legacy bot does not check the seal; the release
+# daemon does, which is why the seal is restored before this shim returns.
+chan="$QCR_RH_HOST/sandbox/commands/operator"
+rootdo() { docker run --rm -u 0 --network none -v "$QCR_RH_HOST/sandbox/commands:/c" alpine "$@" >/dev/null 2>&1; }
+if [[ "${1:-}" != status ]]; then
+  mkdir -p "$QCR_RH_HOST/sandbox/commands" 2>/dev/null
+  rootdo sh -c 'mkdir -p /c/operator && chmod 0777 /c/operator'
+fi
+"$QCR_RH_REPO/deploy/qcr-update.sh" "$@"; rc=$?
+if [[ "${1:-}" != status ]]; then rootdo sh -c 'chown 0:0 /c/operator && chmod 0755 /c/operator'; fi
+exit $rc
