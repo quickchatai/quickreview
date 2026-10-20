@@ -22,7 +22,9 @@
 #                      recreate. See the header of deploy/qcr-update.sh.
 #                        --manifest FILE    deploy-manifest-<version>.json, the
 #                                           CI artifact (deploy/manifest.schema.json;
-#                                           default ./deploy-manifest-<version>.json)
+#                                           default ./deploy-manifest-<version>.json,
+#                                           else `gh release download` of the
+#                                           release's attached copy)
 #                        --cutover-ack      the VM still runs the legacy layout:
 #                                           this deploy is the cutover, and the
 #                                           first boot migrates forward. Without
@@ -107,6 +109,11 @@
 #   QC_UPDATE_RUN_CMD     replaces the ssh `sudo qcr-update <args>`; run as
 #                   `bash -c "$QC_UPDATE_RUN_CMD" _ <args...>` with the config
 #                   tar on stdin (tests)
+#   QC_RELEASE_DOWNLOAD_CMD  replaces `gh release download` of the manifest; run as
+#                   `bash -c "$QC_RELEASE_DOWNLOAD_CMD" _ <version> <dir>` (tests)
+#   QC_TAG_DIGEST_CMD     replaces the registry read of what <repo>:<version> resolves
+#                   to; run as `bash -c "$QC_TAG_DIGEST_CMD" _ <repo>:<version>`,
+#                   prints the index digest (tests)
 #   QC_NOW_EPOCH    the clock for the token-expiry warning (tests)
 #   QC_NO_MEMORY_FORWARD  skip the host memory-forward restart (tests)
 #   QCR_GHCR_EXPIRY_FILE  the recorded token expiry (default: the install's
@@ -910,9 +917,22 @@ runspec_file() {
 declare -A MF=()
 load_manifest() {
   [[ "$MODE" == release ]] || return 0
+  if [[ -z "$MANIFEST_FILE" && ! -f "./deploy-manifest-$RELEASE_VERSION.json" ]]; then
+    # No manifest named and none beside us: the release's own attached copy.
+    local dl="$WORK_DIR/manifest-download"
+    mkdir -p "$dl"
+    if [[ -n "${QC_RELEASE_DOWNLOAD_CMD:-}" ]]; then
+      bash -c "$QC_RELEASE_DOWNLOAD_CMD" _ "$RELEASE_VERSION" "$dl" >/dev/null 2>&1 || true
+    elif command -v gh >/dev/null 2>&1; then
+      gh release download "v$RELEASE_VERSION" --repo "${QC_RELEASE_REPO:-quickchatai/quickreview}" \
+        --pattern "deploy-manifest-$RELEASE_VERSION.json" --dir "$dl" >/dev/null 2>&1 || true
+    fi
+    [[ ! -f "$dl/deploy-manifest-$RELEASE_VERSION.json" ]] ||
+      MANIFEST_FILE="$dl/deploy-manifest-$RELEASE_VERSION.json"
+  fi
   MANIFEST_FILE="${MANIFEST_FILE:-./deploy-manifest-$RELEASE_VERSION.json}"
   [[ -f "$MANIFEST_FILE" ]] ||
-    die "no deploy manifest at $MANIFEST_FILE — the release workflow emits deploy-manifest-$RELEASE_VERSION.json next to the images (deploy/manifest.schema.json); download it, or name it with --manifest"
+    die "no deploy manifest at $MANIFEST_FILE — the release workflow emits deploy-manifest-$RELEASE_VERSION.json next to the images (deploy/manifest.schema.json); download it (\`gh release download v$RELEASE_VERSION --pattern 'deploy-manifest-*.json'\`), or name it with --manifest"
   local out line
   out="$(node "$(dirname "${BASH_SOURCE[0]}")/deploy-manifest.mjs" "$MANIFEST_FILE" "$RELEASE_VERSION" 2>&1)" ||
     die "refusing the release — $MANIFEST_FILE: $out"
@@ -993,12 +1013,47 @@ runspec_drift() {
   fi
 }
 
+# What the version tag resolves to in the registry must be the manifest's index
+# digest: the VM runs exactly the bytes CI built and smoked once. A different
+# digest is fatal in any run (the tag moved, or the manifest is not this
+# release's); a registry that cannot be read is UNKNOWN (a plan says so, a real
+# run refuses, see release_problem). The updater pulls by digest either way.
+TAG_DIGEST_UNREAD=""
+tag_digest() {
+  local ref="$1"
+  if [[ -n "${QC_TAG_DIGEST_CMD:-}" ]]; then
+    bash -c "$QC_TAG_DIGEST_CMD" _ "$ref" 2>/dev/null
+  elif command -v docker >/dev/null 2>&1; then
+    docker buildx imagetools inspect "$ref" --format '{{.Manifest.Digest}}' 2>/dev/null
+  else
+    return 1
+  fi
+}
+verify_tag_digests() {
+  [[ "$MODE" == release ]] || return 0
+  local which ref want got
+  for which in DAEMON MEMORY; do
+    ref="${MF[${which}_REPOSITORY]}:$RELEASE_VERSION"
+    want="${MF[${which}_INDEX_DIGEST]}"
+    got="$(tag_digest "$ref" | head -1 | tr -d '[:space:]')" || got=""
+    if [[ -z "$got" ]]; then
+      TAG_DIGEST_UNREAD="${TAG_DIGEST_UNREAD:+$TAG_DIGEST_UNREAD, }$ref"
+    elif [[ "$got" != "$want" ]]; then
+      die "refusing the release — $ref resolves to $got but the manifest says $want: the tag moved or the manifest is not this release's. The VM must run exactly the bytes CI built. Nothing was changed"
+    fi
+  done
+}
+
 # Things a real run refuses and a plan reports (the updater refuses them too):
 # the layout needs the ack, the board must be drained and idle. Prints the first.
 release_problem() {
   [[ "$MODE" == release ]] || return 0
   if [[ -z "$VM_STATUS" ]]; then
     echo "the VM's \`qcr-update status\` could not be read (ssh, or provision never installed the updater), so its layout, run spec and drain are unknown"
+    return 0
+  fi
+  if [[ -n "$TAG_DIGEST_UNREAD" ]]; then
+    echo "the registry could not be read for $TAG_DIGEST_UNREAD, so the manifest's digests are not checked against the tags (the docker CLI, a ghcr login)"
     return 0
   fi
   if [[ "$VM_LAYOUT" == legacy && $CUTOVER_ACK -eq 0 ]]; then
@@ -1144,6 +1199,7 @@ print_plan() {
 }
 
 load_manifest
+verify_tag_digests
 vm_status_read
 runspec_drift
 ghcr_expiry_status
