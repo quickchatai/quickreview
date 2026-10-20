@@ -353,11 +353,12 @@ def ci(lo: float, hi: float, signed: bool = False) -> str:
     return f"{lo:+.0f} … {hi:+.0f}" if signed else f"{lo:.0f} – {hi:.0f}"
 
 
-def fmt_table(t: dict) -> List[str]:
+def fmt_table(t: dict, labels: Dict[str, str]) -> List[str]:
     out = [f"{t['games']} games over {t['prs']} PRs.", "",
            "| configuration | Elo | 95% CI | W-T-L |", "|---|---:|---|---|"]
     for r in t["rows"]:
-        out.append(f"| {r['player']} | {r['elo']:.0f} | {ci(r['lo'], r['hi'])} | {r['w']}-{r['t']}-{r['l']} |")
+        out.append(f"| {labels.get(r['player'], r['player'])} | {r['elo']:.0f} | {ci(r['lo'], r['hi'])} | "
+                   f"{r['w']}-{r['t']}-{r['l']} |")
     return out
 
 
@@ -371,6 +372,9 @@ def cmd_report(a) -> None:
            f"Each judge is rated on its own; nothing is pooled.", "",
            "Reviews present per configuration (a PR where a configuration produced nothing drops out of its pairs): "
            + ", ".join(f"`{r}` {len(elig[r])}/{len(run.cases)}" for r in run.runs), ""]
+    labels = run.plan.get("labels") or {}
+    if labels:
+        out += ["| configuration | run |", "|---|---|"] + [f"| {labels.get(r, r)} | `{r}` |" for r in run.runs] + [""]
     ratings: Dict[str, dict] = {}
     units = run.units()
     for j in JUDGES:
@@ -386,15 +390,16 @@ def cmd_report(a) -> None:
                 f"Usage: {usage_summary(rows, j)}.", "", "### Overall", ""]
         t = R.table(run.runs, run.games(j), seed=seed)
         ratings[j] = {"overall": t, "categories": {}}
-        out += fmt_table(t) + [""]
+        out += fmt_table(t, labels) + [""]
         for g in t["gaps"]:
-            out.append(f"- `{g['upper']}` over `{g['lower']}`: +{g['gap']:.0f} (95% CI {ci(g['lo'], g['hi'], signed=True)})"
+            out.append(f"- {labels.get(g['upper'], g['upper'])} over {labels.get(g['lower'], g['lower'])}: "
+                       f"+{g['gap']:.0f} (95% CI {ci(g['lo'], g['hi'], signed=True)})"
                        f"{' — separated' if g['separated'] else ' — not separated'}")
         out.append("")
         for c in J.CATEGORIES:
             tc = R.table(run.runs, run.games(j, c), seed=seed)
             ratings[j]["categories"][c] = tc
-            out += [f"### {c}", ""] + fmt_table(tc) + [""]
+            out += [f"### {c}", ""] + fmt_table(tc, labels) + [""]
     if all(j in ratings for j in JUDGES):
         fg, fo = run.final("gpt"), run.final("opus")
         both = sorted(set(fg) & set(fo))
@@ -487,6 +492,31 @@ def self_test() -> None:
         assert {f["path"]: f["shape"] for f in tight["files"]}["big.py"] == "hunks" and not tight["over_budget"], tight["files"]
         tiny = D.pack_context(case, 300)
         assert {f["path"]: f["shape"] for f in tiny["files"]}["big.py"] == "absent", tiny["files"]
+
+    # The Martian loader: a run in its own directory, one tool picked out of
+    # several, and the pool cut to the planned PRs.
+    with tempfile.TemporaryDirectory() as tmp:
+        sets = json.loads((D.AACR / "sets" / "martian50.json").read_text())["cases"][:2]
+        iids = [c["instance_id"] for c in sets]
+        def bench(path: Path, reviews_per_pr) -> None:
+            data = {f"u{i}": {"golden_comments": [{"comment": "g", "severity": "High"}],
+                              "reviews": reviews_per_pr(iid)} for i, iid in enumerate(iids)}
+            (path / "results").mkdir(parents=True)
+            (path / "results" / "benchmark_data.json").write_text(json.dumps(data))
+        bench(Path(tmp, "a", "r1.martian"), lambda iid: [{"tool": "quickreview", "repo_name": iid,
+                                                          "review_comments": [{"path": "x", "line": 1, "body": "f"}]}])
+        bench(Path(tmp, "b", "r2.martian"), lambda iid: [
+            {"tool": "quickreview", "repo_name": iid, "review_comments": [{"path": "y", "line": 2, "body": "q"}]},
+            {"tool": "rejudged-other", "repo_name": "x", "review_comments": []}])
+        plan = {"benchmark": "martian", "set": "sets/martian50.json", "runs": ["r1", "r2"], "runs_dir": str(Path(tmp, "a")),
+                "git_cache": tmp, "run_dirs": {"r2": str(Path(tmp, "b"))}, "tools": {"r2": "quickreview"}, "prs": iids[:1]}
+        cases = D.load_cases(plan)
+        assert list(cases) == iids[:1] and cases[iids[0]].reviews["r2"].findings[0].text == "q", cases
+        try:
+            D.load_cases({**plan, "tools": {}})
+            raise AssertionError("two reviews per PR were accepted without a tool")
+        except SystemExit:
+            pass
 
     # Verdicts are checked against the schema's shape.
     good = {"categories": {c: {"reasoning": "r", "winner": "A"} for c in J.CATEGORIES},

@@ -1,0 +1,66 @@
+{
+  "name": "martian-hard20-all-gpt",
+  "benchmark": "martian",
+  "set": "sets/martian50.json",
+  "runs": [
+    "ft0622-hard20-qr-sonnet55",
+    "ft0622-hard20-cc-high-opus55",
+    "ft0622-hard20-cc-high-sonnet55",
+    "glm53-full-martian50",
+    "ft0622-hard20-qr-opus55",
+    "dsv41f-mix-martian50",
+    "final1-martian50",
+    "ft0622-hard20-sonnet"
+  ],
+  "labels": {
+    "ft0622-hard20-qr-sonnet55": "QuickReview, Sonnet 5.5",
+    "ft0622-hard20-cc-high-opus55": "Claude Code high, Opus 5.5 (1 agent)",
+    "ft0622-hard20-cc-high-sonnet55": "Claude Code high, Sonnet 5.5 (1 agent)",
+    "glm53-full-martian50": "QuickReview, GLM-5.3 Flash",
+    "ft0622-hard20-qr-opus55": "QuickReview, Opus 5.5",
+    "dsv41f-mix-martian50": "QuickReview, DeepSeek V4.1 Flash",
+    "final1-martian50": "QuickReview, GPT-6.1 Sol",
+    "ft0622-hard20-sonnet": "Claude Code max, Sonnet 5.5 agents (Opus main)"
+  },
+  "run_dirs": {
+    "glm53-full-martian50": "bench/aacr/artifacts/open-models/runs",
+    "dsv41f-mix-martian50": "bench/aacr/artifacts/open-models/runs"
+  },
+  "tools": {
+    "final1-martian50": "quickreview"
+  },
+  "prs": [
+    "ai-code-review-evaluation__discourse-graphite-1@ffbaf8c",
+    "ai-code-review-evaluation__discourse-graphite-4@4f8aed2",
+    "ai-code-review-evaluation__discourse-graphite-7@d38c4d5",
+    "ai-code-review-evaluation__discourse-graphite-9@ecfa17b",
+    "ai-code-review-evaluation__sentry-greptile-2@8ab8814",
+    "ai-code-review-evaluation__sentry-greptile-3@6ad6fe3",
+    "calcom__cal.com-10600@54486a0",
+    "calcom__cal.com-10967@de62829",
+    "calcom__cal.com-11059@9fde0e9",
+    "calcom__cal.com-22345@da09bc0",
+    "getsentry__sentry-67876@bb75657",
+    "getsentry__sentry-77754@9501091",
+    "getsentry__sentry-80528@dcdcadb",
+    "getsentry__sentry-95633@9966ec5",
+    "grafana__grafana-107534@1cab414",
+    "grafana__grafana-76186@303cdc2",
+    "grafana__grafana-90045@e369f24",
+    "grafana__grafana-94942@f3317b3",
+    "keycloak__keycloak-33832@79d11c4",
+    "keycloak__keycloak-36882@62bf989"
+  ],
+  "judges": {
+    "gpt": {
+      "model": "gpt-6.1-sol",
+      "effort": "xhigh",
+      "url": "http://127.0.0.1:8790"
+    }
+  },
+  "max_prompt_tokens": 400000,
+  "round0_prs": 5,
+  "per_pair_step": 3,
+  "cap": 300,
+  "seed": 1
+}

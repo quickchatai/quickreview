@@ -158,17 +158,33 @@ def canon_review(items: List[dict]) -> Optional[Review]:
 # ---- benchmarks ------------------------------------------------------------------
 
 def load_martian(plan: dict) -> Dict[str, Case]:
+    """Plan keys beyond the basics: `run_dirs` (run → the directory holding
+    `<run>.martian`, relative to the repo root; default the bench runs dir),
+    `tools` (run → the review's tool, for a run whose PRs carry several, such
+    as one with re-judged vendor reviews beside its own) and `prs` (the PRs to
+    judge, so a 50-PR run can join a 20-PR pool)."""
     runs = Path(plan.get("runs_dir") or runs_dir())
     cache = Path(plan.get("git_cache") or runs.parent / "ext-cache" / "martian")
     cases_meta = {c["instance_id"]: c for c in json.loads((AACR / plan["set"]).read_text())["cases"]}
+    run_dirs = plan.get("run_dirs") or {}
+    tools = plan.get("tools") or {}
+    only = set(plan["prs"]) if plan.get("prs") else None
     cases: Dict[str, Case] = {}
     for run in plan["runs"]:
-        data = json.loads((runs / f"{run}.martian" / "results" / "benchmark_data.json").read_text())
+        where = Path(run_dirs[run]) if run in run_dirs else runs
+        if not where.is_absolute():
+            where = AACR.parent.parent / where
+        data = json.loads((where / f"{run}.martian" / "results" / "benchmark_data.json").read_text())
         for entry in data.values():
             reviews = entry.get("reviews") or []
+            if run in tools:
+                reviews = [r for r in reviews if r.get("tool") == tools[run]]
             if len(reviews) != 1:
-                raise SystemExit(f"{run}: expected one review per PR, got {len(reviews)}")
+                raise SystemExit(f"{run}: expected one review per PR{' from ' + tools[run] if run in tools else ''}, "
+                                 f"got {len(reviews)}")
             iid = reviews[0]["repo_name"]
+            if only is not None and iid not in only:
+                continue
             meta = cases_meta.get(iid)
             if meta is None:
                 raise SystemExit(f"{run}: {iid} is not in {plan['set']}")
@@ -184,6 +200,8 @@ def load_martian(plan: dict) -> Dict[str, Case]:
             elif [g.text for g in case.goldens] != [g.text for g in goldens]:
                 raise SystemExit(f"{run}: golden comments for {iid} differ from another run's")
             case.reviews[run] = canon_review(reviews[0].get("review_comments") or [])
+    if only is not None and only - set(cases):
+        raise SystemExit(f"no run holds these planned PRs: {', '.join(sorted(only - set(cases)))}")
     for case in cases.values():
         for run in plan["runs"]:
             case.reviews.setdefault(run, None)  # a run with no entry for this PR produced nothing
