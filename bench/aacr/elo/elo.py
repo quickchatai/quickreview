@@ -342,6 +342,28 @@ def run_gpt(run: Run, judge: J.GptJudge, workers: int) -> None:
         list(pool.map(one, todo))
 
 
+def run_opus_live(run: Run, judge: J.OpusJudge, workers: int) -> None:
+    """The rated Opus judge through live (streamed) Messages calls instead of
+    a batch: the same request, the same judge name, full price."""
+    batches = read_jsonl(run.d / "batches.jsonl")
+    collected = {b["batch_id"] for b in batches if b.get("collected_at")}
+    in_flight = {i for b in batches if b.get("submitted_at") and b["batch_id"] not in collected for i in b["ids"]}
+    todo = run.pending("opus", in_flight)
+    if not todo:
+        return
+    log(f"opus (live): {len(todo)} judgments, {workers} at a time")
+
+    def one(u: dict) -> None:
+        ctx, rev = run.context(u["pr"]), run.reviews(u)
+        res = judge.live(ctx, rev)
+        run.record("opus", u, res, judge.model, judge.effort, J.prompt_sha(ctx, rev))
+        log(f"opus {u['id']} {u['pr']}: {res['status']}"
+            + (f" → {res['verdict']['overall']['winner']}" if res["status"] == "ok" else f" ({res.get('error', '')[:160]})"))
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        list(pool.map(one, todo))
+
+
 def run_opus(run: Run, judge: J.OpusJudge, wait: bool, collect_only: bool = False) -> None:
     batches = read_jsonl(run.d / "batches.jsonl")
     collected = {b["batch_id"] for b in batches if b.get("collected_at")}
@@ -404,7 +426,11 @@ def cmd_run(a) -> None:
                 t = threading.Thread(target=run_gpt, args=(run, judges["gpt"], a.gpt_workers))
                 t.start()
                 threads.append(t)
-            if "opus" in judges:
+            if "opus" in judges and a.opus_live:
+                t = threading.Thread(target=run_opus_live, args=(run, judges["opus"], a.opus_workers))
+                t.start()
+                threads.append(t)
+            elif "opus" in judges:
                 run_opus(run, judges["opus"], wait=not a.no_wait)
             for t in threads:
                 t.join()
@@ -428,6 +454,30 @@ def cmd_run(a) -> None:
             return
         run.add_units(new, rnd)
         log(f"round {rnd}: {len(new)} more judgments per judge")
+
+
+def cmd_schedule(a) -> None:
+    """A targeted round: every pair among the named runs, on every PR both
+    reviewed that the pair has not been judged on yet."""
+    from itertools import combinations
+    run = Run(Path(a.dir))
+    chosen = [r.strip() for r in a.runs.split(",") if r.strip()]
+    unknown = [r for r in chosen if r not in run.runs]
+    if unknown:
+        raise SystemExit(f"not in this run's plan: {', '.join(unknown)}")
+    elig = run.eligible()
+    done = run.done_prs()
+    new = []
+    for x, y in combinations(chosen, 2):
+        seen = set(done.get(R.pair_key(x, y), []))
+        new += [{"pr": pr, "x": x, "y": y} for pr in sorted(set(elig[x]) & set(elig[y])) if pr not in seen]
+    if not new:
+        log("nothing to schedule: every pair is judged on every PR both reviewed")
+        return
+    rnd = max((u["round"] for u in run.units()), default=-1) + 1
+    run.add_units(new, rnd)
+    per_pair = Counter(R.pair_key(u["x"], u["y"]) for u in new)
+    log(f"round {rnd}: {len(new)} units over {len(per_pair)} pairs (per pair {min(per_pair.values())}–{max(per_pair.values())})")
 
 
 def cmd_live(a) -> None:
@@ -572,6 +622,32 @@ def cmd_report(a) -> None:
                 out.append(f"| {c or 'overall'} | {ag['same_rate']:.0%} | {ag['opposite_rate']:.0%} |")
                 ratings.setdefault("agreement", {})[c or "overall"] = ag
         out.append("")
+    if all(j in ratings for j in JUDGES):
+        fg, fo = run.final("gpt"), run.final("opus")
+        both = sorted(set(fg) & set(fo))
+
+        def pooled(cat: Optional[str]) -> List[R.Game]:
+            out_: List[R.Game] = []
+            for i in both:
+                for row in (fg[i], fo[i]):
+                    v = row["verdict"]
+                    w = (v["categories"][cat] if cat else v["overall"])["winner"]
+                    out_.append((row["pr"], row["a"], row["b"], {"A": 1.0, "B": 0.0, "tie": 0.5}[w]))
+            return out_
+        tc = R.table(run.runs, pooled(None), seed=seed)
+        ratings["combined"] = {"overall": tc, "categories": {}}
+        out += ["## Combined (both judges, equal weight)", "",
+                f"Every unit both judges answered counts once per judge ({len(both)} units).", ""]
+        out += fmt_table(tc, labels) + [""]
+        for g in tc["gaps"]:
+            out.append(f"- {labels.get(g['upper'], g['upper'])} over {labels.get(g['lower'], g['lower'])}: "
+                       f"+{g['gap']:.0f} (95% CI {ci(g['lo'], g['hi'], signed=True)})"
+                       f"{' — separated' if g['separated'] else ' — not separated'}")
+        out.append("")
+        for c in J.CATEGORIES:
+            tcc = R.table(run.runs, pooled(c), seed=seed)
+            ratings["combined"]["categories"][c] = tcc
+            out += [f"### combined {c}", ""] + fmt_table(tcc, labels) + [""]
     out += ["Explanations: `elo.py show <dir> --x <run> --y <run>` (every judgment is kept in `judgments/`).", ""]
     (run.d / "REPORT.md").write_text("\n".join(out))
     (run.d / "ratings.json").write_text(json.dumps(ratings, indent=2) + "\n")
@@ -1033,6 +1109,10 @@ def main() -> None:
     p.add_argument("--gpt-workers", type=int, default=4)
     p.add_argument("--no-wait", action="store_true", help="submit the Opus batch and return")
     p.add_argument("--collect-only", action="store_true", help="only collect submitted Opus batches")
+    p.add_argument("--opus-live", action="store_true", help="Opus through live calls, not a batch")
+    p.add_argument("--opus-workers", type=int, default=8)
+    p = sub.add_parser("schedule", help="add units: every pair among --runs on every PR not yet judged for it")
+    p.add_argument("dir"); p.add_argument("--runs", required=True, help="comma-separated run names")
     p = sub.add_parser("live", help="judge chosen units live (opus or deepseek), recorded as judge <judge>-live")
     p.add_argument("dir"); p.add_argument("--units", required=True, help="comma-separated unit ids")
     p.add_argument("--judge", choices=("opus", "deepseek"), default="opus")
@@ -1042,7 +1122,7 @@ def main() -> None:
     p.add_argument("--judge", choices=JUDGES); p.add_argument("--pr"); p.add_argument("--reasoning", action="store_true")
     a = ap.parse_args()
     {"init": cmd_init, "pack": cmd_pack, "repack": cmd_repack, "run": cmd_run, "report": cmd_report,
-     "show": cmd_show, "audit": cmd_audit, "live": cmd_live}[a.cmd](a)
+     "show": cmd_show, "audit": cmd_audit, "live": cmd_live, "schedule": cmd_schedule}[a.cmd](a)
 
 
 if __name__ == "__main__":
