@@ -98,6 +98,7 @@ import {
   OV_REVIEWER_KEY_SECRET,
   keyChangeWatcher,
   openVikingSessionLifecycle,
+  type OvSessionLifecycle,
   readOvcliKey,
   readRetiredUrisFile,
   writeRecallHint,
@@ -133,7 +134,7 @@ import { makeSlackReply } from "./slack/reply.js";
 import { SlackRouter } from "./slack/router.js";
 import { SlackSocketClient } from "./slack/socket.js";
 import type { SlackTransport } from "./slack/types.js";
-import type { RoundRow, StateStore } from "./state.js";
+import { StateStore, type RoundRow } from "./state.js";
 import { deliverablePosting } from "./posting-outbox.js";
 import { readPostingReceipt } from "./posting-receipt.js";
 import type { RecheckOrder } from "./recheck.js";
@@ -147,6 +148,7 @@ import { assertOrderFitsHost } from "./launchvocab.js";
 import { nodeExec } from "./tmux.js";
 import type { RoundOrder, SessionHooks } from "./types.js";
 import { WebhookHealer } from "./webhookheal.js";
+import { buildWorkerWorld } from "./workerworld.js";
 
 export interface ProductionParts {
   cfg: Config;
@@ -154,7 +156,11 @@ export interface ProductionParts {
   minter: TokenMinter;
   gate: MutationGate;
   adapter: GitHubAdapter;
+  /** The tmux manager: it serves what has not moved to workers yet (the overseer) and
+   * lends the worker world its worktrees, session environment and path helpers. */
   sessions: PiSessionManager;
+  /** The PR's raw-notes tier, which the worker host creates and deletes. */
+  ovSessions?: OvSessionLifecycle;
   /** Late-bound observer for the raw-tier client's requests:
    * buildParts builds that client before the memory health monitor exists,
    * so createProductionDaemon points `sink` at the monitor once it does. */
@@ -235,6 +241,7 @@ export function buildParts(root = sandboxRoot(), loaded = loadConfig()): Product
     gate,
     adapter,
     sessions,
+    ...(ovSessions ? { ovSessions } : {}),
     memoryRequests,
     ...(memoryBootFailure ? { memoryBootFailure } : {}),
   };
@@ -726,7 +733,43 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // and `launch_plan`. Dispatch writes the host's names into every order it builds
   // (`SessionHooks.lensRuntime`), whatever `[engine] runtime`, `[pi] lens_runtime` or
   // `engine_wave` say, and this refuses an order written for the other pair.
-  const botHost: SessionHooks = sessions;
+  // The central lens permit broker (D25, src/ipc/permits.ts): one count of lens
+  // sessions across every worker. The WorkerSupervisor serves its ops on the worker
+  // socket and status.json shows it.
+  const lensPermits = new PermitBroker({
+    ceiling: cfg.daemon.lens_permits,
+    staggerMs: cfg.daemon.lens_grant_stagger_ms,
+    log: (m) => log(m),
+  });
+  // The daemon's one store, built here so the worker world (the host the daemon's
+  // state machine speaks to) can exist before the daemon does.
+  const store = new StateStore(join(root, "state", "state.db"));
+  // The bot login's single refresher (src/loginrefresh/, P8.22), spawned by
+  // path so this process imports neither pi nor src/engine/. Only built when
+  // `[login_refresh] enabled`.
+  let loginRefresh: LoginRefreshSupervisor | null = null;
+  // Workers are the bot's ONLY host (P8.15w): the IPC server,
+  // the supervisor and its spec builder, the leases and the controls, assembled in
+  // src/workerworld.ts. No config key picks the tmux route, and nothing births a
+  // `pr-<n>` tmux session any more; `sessions` serves the overseer until P9.13.
+  const agentDir = process.env["PI_CODING_AGENT_DIR"]?.trim() || join(homedir(), ".pi", "agent");
+  const workerWorld = buildWorkerWorld({
+    cfg,
+    root,
+    store,
+    adapter,
+    sessions,
+    ...(parts.ovSessions ? { ovSessions: parts.ovSessions } : {}),
+    permits: lensPermits,
+    agentDir,
+    pump: () => daemon.pump(),
+    loginGate: {
+      paused: () => loginRefresh?.paused() ?? false,
+      whenResumed: (ms) => loginRefresh?.whenResumed(ms) ?? Promise.resolve(true),
+    },
+    log,
+  });
+  const botHost: SessionHooks = workerWorld.host;
   const renderPrompt = (order: RoundOrder, memory: RoundMemory): string => {
     assertOrderFitsHost(botHost, order);
     return renderRoundPrompt(
@@ -829,22 +872,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // Timer-armed, never awaited; its block rides inside the heartbeat's
   // `openviking` entry.
   let reembed: ReembedDriver | null = null;
-  // The bot login's single refresher (src/loginrefresh/, P8.22), spawned by
-  // path so this process imports neither pi nor src/engine/. Only built when
-  // `[login_refresh] enabled`.
-  let loginRefresh: LoginRefreshSupervisor | null = null;
-  // The central lens permit broker (D25, src/ipc/permits.ts): one count of lens
-  // sessions across every worker. P8.6 hands this same broker to the
-  // WorkerSupervisor, which serves its ops on the worker socket; until a worker
-  // runs it holds nothing and status.json shows it idle.
   // Worker liveness (P8.8): the archiver, the startup orphan sweep and operator
   // recovery read the supervisor's lease files, never a tmux listing.
   const workerLive = createWorkerLiveness({ runDir: runDirOf(join(root, "state")) });
-  const lensPermits = new PermitBroker({
-    ceiling: cfg.daemon.lens_permits,
-    staggerMs: cfg.daemon.lens_grant_stagger_ms,
-    log: (m) => log(m),
-  });
   // The webhook-URL self-heal. Only ever constructed when [ingress]
   // shape = "tunnel-file".
   let webhookHeal: WebhookHealer | null = null;
@@ -881,6 +911,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   const daemon = createDaemon({
     cfg,
     root,
+    store,
     adapter,
     postingDelivery: {
       createReview: async (pr, payload) => {
@@ -1037,6 +1068,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     loginRefreshStatus: () => loginRefresh?.status(),
     // The lens permit broker's use and queue.
     permitStatus: () => lensPermits.status(),
+    // What hosts each PR's session, for status.json's per-PR `runtime` (P8.12).
+    runtimeOf: workerWorld.runtimeOf,
     // Whether memory works, beside whether the server is up — and what memory
     // still owes the [feedback] ledger.
     memoryStatus: (): MemoryStatus => {
@@ -1181,13 +1214,6 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         reembed.start();
       }
 
-      // Bind the daemon's durable command slot before any PR session is
-      // adopted or born. Pending rows reconstruct their exact inject bytes;
-      // running rows retain their prior owner until bounded recovery.
-      sessions.setCommandStore(d.store);
-      // Out-of-round wakes (recheck, ping-pong) can now respawn a sticky
-      // session the last restart killed — the title comes from the registry.
-      sessions.setTitleResolver((pr) => d.store.getPr(pr)?.title);
       // Lens agents: expand {{include:...}} + per-pass model overrides into
       // the build dir (state/agents) the native subagent extension discovers
       // through its "user" scope — the container entrypoint symlinks
@@ -1559,7 +1585,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         load: () => d.load.status(),
         starvedRatio: eventLoopPolicy(cfg.daemon).starvedRatio,
         liveSessions: async () => workerLive.liveSessions(),
-        birthInFlight: (pr) => sessions.birthInFlight(pr),
+        birthInFlight: (pr) => workerWorld.host.birthInFlight(pr),
         // The stores that belong to no PR. The overseer's birth record
         // says which of its files is current (unreadable = unknown = nothing
         // moves); pi's global store lies under the container user's home.
@@ -1582,7 +1608,12 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // A reopened PR's archive comes back before its session is born:
       // both birth paths await this, bounded, and never refuse the birth.
       const archiveRef = archiver;
-      sessions.setBeforeBirth((pr) => archiveRef.beforeBirth(pr));
+      workerWorld.host.setBeforeBirth((pr) => archiveRef.beforeBirth(pr));
+
+      // The worker world comes up before anything asks which workers run: the socket,
+      // then whatever a previous daemon left reaped and requeued (a worker's round is
+      // resumed from its JSONL by a fresh one), then the timers. Nothing is adopted.
+      await workerWorld.start();
 
       // Sweep stale worktrees. No tmux session is adopted: a PR with no worker
       // is idle with its JSONL, and one a worker still runs for keeps its tree.
@@ -1653,10 +1684,12 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
               store: d.store,
               deliveryKey,
               pump: () => d.pump(),
-              // Returns only once tmux lists the session as gone; a tmux it
-              // could not ask throws, which leaves ownership unchanged.
-              killSession: (pr) => sessions.killSession(pr),
+              // Returns only once the worker is reaped; one that outlives the kill
+              // throws, which leaves ownership unchanged.
+              killSession: (pr) => workerWorld.host.killSession(pr),
               workerRuns: (pr) => workerLive.runs(pr),
+              // A fresh worker resumes the newest JSONL: rotate it away first.
+              rotateSession: (pr) => workerWorld.host.rotateSession(pr),
             },
             target,
             "restart-session",
@@ -1671,6 +1704,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             payload,
           );
         },
+        // The operator's round controls on a worker-hosted PR (P8.12): steer, follow-up,
+        // abort, takeover, debug-round, release and the idle-PR message.
+        operatorControl: workerWorld.operatorControl,
         // The two bounded levers: who is asking comes from the
         // watcher's channel, and a session's hold is capped, budgeted and
         // expiring in src/levers.ts — an operator's is not.
@@ -1995,6 +2031,12 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       caseWriter?.stop();
       learner?.stop();
       archiver?.stop();
+      // Workers end and their commands requeue; the socket closes.
+      try {
+        await workerWorld.stop();
+      } catch (err) {
+        log("workers: shutdown failed", err);
+      }
       if (loginRefresh) {
         try {
           await loginRefresh.stop();

@@ -866,10 +866,10 @@ describe("both birth paths await the restore, and wire.ts connects it", () => {
     },
   );
 
-  it("wire.ts hands the session manager the archiver's beforeBirth, and both birth paths await it", () => {
+  it("wire.ts hands the worker host the archiver's beforeBirth, and both birth paths await it", () => {
     const src = join(import.meta.dirname, "..", "src");
     const wire = readFileSync(join(src, "wire.ts"), "utf8");
-    expect(wire).toMatch(/sessions\.setBeforeBirth\(\(pr\) => archiveRef\.beforeBirth\(pr\)\);/);
+    expect(wire).toMatch(/workerWorld\.host\.setBeforeBirth\(\(pr\) => archiveRef\.beforeBirth\(pr\)\);/);
     const lifecycle = readFileSync(join(src, "pr-session-lifecycle.ts"), "utf8");
     const birth = lifecycle.slice(lifecycle.indexOf("private async birth("));
     expect(birth.slice(0, birth.indexOf("\n  }\n"))).toMatch(

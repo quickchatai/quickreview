@@ -367,17 +367,16 @@ describe("operator PR recovery", () => {
     expect(result).toMatchObject({ cancelled_session_commands: ["cmd-round"] });
   });
 
-  it("the daemon's restart-session hook is the sessions' proven-absence kill, never a bare has-session probe", () => {
-    // `Tmux.hasSession` reads every failed probe (a socket it may not open,
-    // EAGAIN) as absence; `PiSessionManager.killSession` returns only once
-    // tmux lists the session gone and throws when tmux could not be asked —
-    // the throw above that leaves ownership unchanged.
+  it("the daemon's restart-session hook is the worker host's proven-gone kill, never a bare has-session probe", () => {
+    // `Tmux.hasSession` reads every failed probe as absence; the worker host's
+    // `killSession` returns only once the worker is reaped and throws when it
+    // outlives the kill — the throw above that leaves ownership unchanged.
     const wire = readFileSync(join(import.meta.dirname, "..", "src", "wire.ts"), "utf8");
     const hook = /return recoverPrForOperator\(\s*\{[\s\S]*?\},\s*target,\s*"restart-session"/.exec(
       wire,
     );
     expect(hook).not.toBeNull();
-    expect(hook![0]).toMatch(/killSession: \(pr\) => sessions\.killSession\(pr\),/);
+    expect(hook![0]).toMatch(/killSession: \(pr\) => workerWorld\.host\.killSession\(pr\),/);
     expect(hook![0]).not.toMatch(/hasSession/);
   });
 

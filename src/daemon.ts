@@ -228,7 +228,7 @@ export interface DaemonDeps {
    */
   loginRefreshStatus?: () => import("./loginrefresh/types.js").LoginRefreshStatus | undefined;
   /** The central lens permit broker's counts (D25), for status.json `permits`.
-   * wire.ts hands the broker's `status()` once the WorkerSupervisor runs in the
+   * wire.ts hands the broker's `status()`; the WorkerSupervisor runs in the
    * daemon (P8.6). Absent ⇒ no `permits` key. */
   permitStatus?: () => import("./ipc/permits.js").PermitStatus | undefined;
   /** What hosts each PR's session, for status.json's per-PR `runtime` (P8.12,

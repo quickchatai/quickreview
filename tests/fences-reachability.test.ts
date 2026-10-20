@@ -56,16 +56,6 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
    */
   const NOT_REACHED_FROM_PRODUCTION: ReadonlyArray<{ file: string; why: string }> = [
     {
-      file: "src/posting.ts",
-      why:
-        "the manifesto audit's structural finding: ~950 lines of review-assembly law — the " +
-        "severity-to-tag mapping's caller, anchor validation, the [check this] grammar — that execute ONLY in " +
-        "tests, because sessions post through scripts/*.sh instead. The audit's sharpest sentence about it is " +
-        "'the tested guard is not the enforcing guard'. Delete, wire up, or keep as the specification the shell " +
-        "mirrors is the largest single question the inventory raised and has its own decision to make. Until it " +
-        "does, this entry is the debt being VISIBLE rather than silent, which is the whole point of [T8].",
-    },
-    {
       file: "src/engine/envmap.ts",
       why:
         "the table classifying every QCR_* and OPENVIKING_* name the extensions carry (P1.2). It is read " +
@@ -109,106 +99,22 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
       file: "src/memory/legacy-file.ts",
       why: "the READ-ONLY reader over the archived MEMORY.md that the import above consumes. Same driver, same reason.",
     },
-    // The worker-daemon IPC (P7.2a, D23): a neutral module. The worker (P8.3) reads protocol, capability,
-    // client and workerspec; the daemon's end (server.ts) is started by the WorkerSupervisor's host (P8.6),
-    // and launcher.ts is the pane-side entry point tmux runs for a takeover or debug pi (P8.13). Delete each
-    // entry with the first production import.
-    ...["server.ts", "launcher.ts"].map((f) => ({
-      file: `src/ipc/${f}`,
+    // The pane-side entries the daemon's tmux panes run by path (the takeover and debug pi, P8.13/P8.13b):
+    // the worker world is constructed in wire.ts (P8.15w) and names them as strings, which this static scan
+    // cannot follow. Delete an entry only when its file does.
+    {
+      file: "src/ipc/launcher.ts",
       why:
-        "the worker-daemon IPC (P7.2a): the socket server and the pane-side launcher. Read only by " +
-        "tests/ipc.test.ts until P8.6 wires the WorkerSupervisor (P8.5) and starts the socket; launcher.ts " +
-        "is the pane-side entry point tmux runs for a takeover or debug pi.",
-    })),
-    // The WorkerSupervisor (P8.5), its lease, crash-loop breaker and log, and the worker host over them
-    // (P8.6): built and tested. The daemon constructs the host (supervisor, capability store, IPC server,
-    // spec builder) when the worker world is wired into wire.ts; until then the tmux host is the one it
-    // builds. Delete each entry with that import.
-    ...["workersupervisor.ts", "workerbreaker.ts", "workerlog.ts", "worker-session-host.ts"].map(
-      (f) => ({
-        file: `src/${f}`,
-        why:
-          "the worker world's session host (P8.5/P8.6): the supervisor (spawn, heartbeat, deadlines, lease, " +
-          "restart, crash-loop breaker, worker log) and WorkerSessionHost, the SessionHooks over " +
-          "them. Read only by tests/worker-supervisor.test.ts, " +
-          "tests/worker-session-host.test.ts and the conformance suite until the daemon's wiring constructs " +
-          "the host. Delete this entry with that import.",
-      }),
-    ),
-    // The operator's controls on a worker-hosted PR (P8.12): the daemon's operatorControl handler and
-    // status.json's per-PR runtime reader. Read only by tests/worker-control.test.ts until the daemon's
-    // wiring constructs the worker host (it hands `workerOperatorControl` to the command deps and
-    // `runtimeOfPr` to DaemonDeps.runtimeOf). Delete each entry with that import.
-    ...["workercontrol.ts", "workerruntime.ts"].map((f) => ({
+        "the pane-side launcher (P7.2a): tmux runs `node dist/src/ipc/launcher.js <launch-file> -- pi ...` " +
+        "for a takeover or debug pi (src/workerworld.ts names it), a real driver this static scan cannot follow.",
+    },
+    ...["takeoverpi.ts", "debugroundpi.ts"].map((f) => ({
       file: `src/${f}`,
       why:
-        "the worker host's operator controls and runtime status (P8.12): steer, follow-up and abort-round " +
-        "forwarded to the PR's worker, and the per-PR runtime in status.json. Read only by " +
-        "tests/worker-control.test.ts until the daemon's wiring constructs the worker host. Delete this " +
-        "entry with that import.",
+        "the entry the TakeoverManager / DebugRoundManager run in their tmux pane by path (P8.13, P8.13b; " +
+        "src/workerworld.ts names it): the borrowed login, pi's argv and env. A real driver this static scan " +
+        "cannot follow, not an orphan.",
     })),
-    // The takeover lease (P8.13): the daemon's manager, which starts the operator's pi in tmux, and the
-    // pane's entry that manager runs by path. The daemon's wiring constructs the manager (it hands it to
-    // `workerOperatorControl`, its `hostGate` to the supervisor and its `lookup` to the IPC server) when
-    // the worker world is wired into wire.ts. Delete each entry with that import.
-    ...["takeover.ts", "takeoverpi.ts"].map((f) => ({
-      file: `src/${f}`,
-      why:
-        "the takeover lease (P8.13, D27): TakeoverManager grants the SQLite lease and starts the operator's " +
-        "interactive pi on the PR's real session in tmux takeover-pr-<n>; takeoverpi.ts is the entry tmux runs " +
-        "(the borrowed login, pi's argv and env). Read only by tests/takeover.test.ts and " +
-        "tests/takeover-pane.test.ts until the daemon's wiring constructs the manager. Delete this entry with that import.",
-    })),
-    // The bot's debug round (P8.13b): the daemon's manager, which arms a PR's next round to run in
-    // interactive pi in tmux and delivers the order to it, and the pane's entry that manager runs by
-    // path. The daemon's wiring constructs the manager (it hands it to `workerOperatorControl` and to
-    // the worker host, its `hostGate` to the supervisor and its `lookup` to the IPC server) when the
-    // worker world is wired into wire.ts. Delete each entry with that import.
-    ...["debuground.ts", "debugroundpi.ts"].map((f) => ({
-      file: `src/${f}`,
-      why:
-        "the bot's debug round (P8.13b, D38): DebugRoundManager takes the PR's host lease in debug mode " +
-        "and delivers its next round to interactive pi in tmux debug-pr-<n>; debugroundpi.ts is the entry " +
-        "tmux runs (the borrowed login, the round order, pi's argv and env). Read only by " +
-        "tests/debug-round-bot.test.ts until the daemon's wiring constructs the manager. Delete this entry " +
-        "with that import.",
-    })),
-    // The idle-PR answer worker's daemon side (P8.17): the `message` handler (a steer during a round, an
-    // answer worker for an idle PR, the refusals with their reasons) and the result file it writes when
-    // the worker settles. The daemon's wiring hands `host.message` to `workerOperatorControl` and
-    // `host.onSettled` to the supervisor's `settled` dep when it constructs the worker host. Delete this
-    // entry with that import.
-    {
-      file: "src/answerworker.ts",
-      why:
-        "the idle-PR answer worker's host (P8.17): the operator's `message` handler and the result file " +
-        "of an answer command. Read only by tests/answer-host.test.ts until the daemon's wiring constructs " +
-        "the worker host and hands it to workerOperatorControl and the supervisor. Delete this entry " +
-        "with that import.",
-    },
-    // The daemon's post ops (P7.2). The WorkerSupervisor (P8.5) serves them on the worker socket (P8.7);
-    // the daemon does not start the supervisor until P8.6. Delete each entry with that import.
-    {
-      file: "src/workerusage.ts",
-      why:
-        "the daemon's intake of a worker's spend report (P8.9): the onEvent handler that keeps usage/done " +
-        "figures on the command row. Read only by tests/workerusage.test.ts until the WorkerSupervisor " +
-        "(P8.5) starts the socket and composes it into its onEvent. Delete this entry with that import.",
-    },
-    {
-      file: "src/postops.ts",
-      why:
-        "the daemon's post.review / post.approval / post.reply ops on the worker socket (P7.2). Imported by " +
-        "src/workersupervisor.ts, which serves them (P8.7) and is itself unreached until P8.6 constructs it " +
-        "in the daemon. Delete this entry with that import.",
-    },
-    {
-      file: "src/posting-journal.ts",
-      why:
-        "the TypeScript writer of a round's receipt and outbox job (P7.2), the twin of " +
-        "scripts/posting-receipt.py. Read only by src/postops.ts, which is itself unreached until P8.6. " +
-        "Delete this entry with that import.",
-    },
     {
       file: "src/ipc/postshim.ts",
       why:
