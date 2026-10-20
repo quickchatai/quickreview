@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# rsync on the throwaway host: the real rsync. With the injection file present, a COPY (not the
+# updater's --dry-run verification) is followed by one flipped byte in the destination, so the
+# updater's checksum verification of the sidecar store copy has something to catch.
+. "${QCR_RH_ENV:?}"
+real=/usr/bin/rsync
+"$real" "$@"; rc=$?
+if [[ $rc -eq 0 && -f "$QCR_RH_VM/inject/rsync-corrupt" && " $* " != *" --dry-run "* ]]; then
+  dest="${!#}"
+  victim="$(find "$dest" -type f -size +0 ! -name '.seeded-from-daemon' | sort | head -1)"
+  if [[ -n "$victim" ]]; then
+    printf 'X' | dd of="$victim" bs=1 seek=0 count=1 conv=notrunc 2>/dev/null
+    echo "rsync shim: corrupted one byte of $victim after the copy" >>"$QCR_RH_VM/ssh-commands.log"
+  fi
+fi
+exit $rc

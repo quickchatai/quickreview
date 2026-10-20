@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# /usr/local/sbin/qcr-update on the throwaway host: deploy/qcr-update.sh itself, unprivileged. The
+# script's own test seam applies (it says so in its header): QCR_UPDATE_CONF names the run spec
+# `deploy.sh provision` installed, and the polling intervals are short. Nothing else is changed.
+. "${QCR_RH_ENV:?}"
+export QCR_UPDATE_CONF="$QCR_RH_VM/etc/qcr/update.conf"
+export QCR_UPDATE_POLL_S=1 QCR_UPDATE_NAP_S=1 QCR_RESCUE_WAIT_S=90
+# the sidecar-never-ready injection shortens the wait it would otherwise give a re-embed
+[[ -f "$QCR_RH_VM/inject/ready-timeout" ]] && export QCR_MEMORY_READY_TIMEOUT_S="$(cat "$QCR_RH_VM/inject/ready-timeout")"
+exec "$QCR_RH_REPO/deploy/qcr-update.sh" "$@"
