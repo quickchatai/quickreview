@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# docker on the throwaway host: the real docker. One adaptation: the updater, run as root, chowns the
+# sidecar's store to CONTAINER_UID before it starts the sidecar (the daemon container gets --user; the
+# sidecar run line has none, its image's own user owns the store). The rehearsal's updater is
+# unprivileged and cannot chown, so the sidecar is started as the user that owns the store.
+. "${QCR_RH_ENV:?}"
+if [[ "${1:-}" == run && " $* " == *" --name quickreview-memory "* ]]; then
+  shift
+  exec /usr/bin/docker run --user "$(id -u):$(id -g)" "$@"
+fi
+exec /usr/bin/docker "$@"
