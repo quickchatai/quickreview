@@ -391,6 +391,11 @@ const ALLOWLIST: AllowlistEntry[] = [
       "the RELEASE_IMAGE_REPO / MEMORY_IMAGE_REPO constants: the images bring-up pulls, under the publishing org's registry namespace (ghcr.io/quickchatai/...), the ones release.yml pushes",
   },
   {
+    path: "tests/emit-deploy-manifest.test.ts",
+    tokens: ["quickchat"],
+    reason: "its fixtures name the release and memory images under the publishing org's registry namespace (ghcr.io/quickchatai/...), as release.yml pushes them",
+  },
+  {
     path: "src/onboard/steps/bringup.ts",
     tokens: ["quickchat"],
     reason: "its header comment names the images it pulls (ghcr.io/quickchatai/...)",

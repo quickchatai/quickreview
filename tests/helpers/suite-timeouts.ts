@@ -86,6 +86,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/deploy-manifest.test.ts",
   "tests/deploy.test.ts",
   "tests/docker-daemon.test.ts",
+  "tests/emit-deploy-manifest.test.ts",
   "tests/engine-port-contract.test.ts",
   "tests/entrypoint.test.ts",
   "tests/exec-boundary.test.ts",
