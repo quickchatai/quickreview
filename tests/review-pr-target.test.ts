@@ -255,9 +255,13 @@ describe("the daemon stays App-only (CLAUDE.md rule 3)", () => {
       .replace(/\s+/g, " ")
       .trim();
     expect(rule).toContain(PARAGRAPH);
-    // The paragraph closes the rule, after the two exceptions and no others.
-    expect(rule.endsWith(PARAGRAPH)).toBe(true);
+    // The paragraph follows the two exceptions and no others, and the workers
+    // paragraph (pinned word for word in tests/ratified-rule-texts.test.ts)
+    // follows it and closes the rule.
     expect(rule).toContain("Two exceptions, and no others:");
+    const workers = rule.indexOf("**The bot's workers are not a route of their own.**");
+    expect(workers).toBeGreaterThan(rule.indexOf(PARAGRAPH) + PARAGRAPH.length - 1);
+    expect(rule.endsWith("No worker holds a GitHub token.")).toBe(true);
   });
 });
 

@@ -100,6 +100,13 @@ describe("checkBashCommand — blocked executors", () => {
     block("echo $(python -c 1)", "'python'");
     block("cat `node gen.js`", "'node'");
   });
+
+  it("names the lens tool as the only launcher when an agent spawn is refused (single-shepherd S3)", () => {
+    for (const cmd of ["pi -p hi", "codex exec x", "node run.js"]) {
+      block(cmd, "the lens tool (`lens` / `lens_wave`) is the only launcher");
+      expect(checkBashCommand(cmd).reason).not.toContain("`subagent`");
+    }
+  });
 });
 
 describe("checkBashCommand — gh mutating verbs", () => {

@@ -8,9 +8,10 @@
 //     internal one, and names only files that exist or that its landing
 //     checklist says a ticket will create or remove;
 //   - CLAUDE.md is not edited by the drafting: every `current` block is still
-//     verbatim in the file it quotes. A landing ticket that pastes a block marks
-//     its section LANDED (as rules 1 and 3 are) and drops that section's
-//     `current` blocks in the same commit.
+//     verbatim in the file it quotes. A landing that pastes a block marks its
+//     section LANDED (as rules 1, 3, 5, 6, 8 and 9 are), keeps that section's
+//     `current` blocks as `replaced`, and its `proposed` blocks are then held
+//     word for word against the files they landed in.
 // An ASSEMBLED public tree has neither the drafts nor CLAUDE.md, so those
 // assertions skip there.
 import { existsSync, readFileSync } from "node:fs";
@@ -129,14 +130,17 @@ describe.skipIf(!has("docs/rule-text-drafts.md"))("docs/rule-text-drafts.md", ()
         checked++;
       }
     }
-    // The floor only proves the parse found blocks: it falls as drafts land.
-    expect(checked).toBeGreaterThan(5);
+    // The floor only proves the parse found blocks: it falls as drafts land
+    // (rule 7's, pasted at the cutover, is the last one left).
+    expect(checked).toBeGreaterThanOrEqual(1);
   });
 
   it("every drafted rule opens with the line CLAUDE.md's rule opens with, and rules 7 and 8 and 9 are whole", () => {
     const claude = read("CLAUDE.md");
     const rules = blocks.filter((b) => b.kind === "proposed" && /^\d+\. /.test(b.body));
-    // 1 and 3 twice (landed + delta), 5, 7, 8, and rule 9 in three stages.
+    // 1 and 3 twice (landed + delta), 5, 7, 8, and rule 9's landed stage (iii):
+    // its stage (i) block is kept as `replaced` and stage (ii), skipped as moot,
+    // as `skipped`, so neither reads as a proposal.
     expect(rules.map((b) => b.body.slice(0, 2))).toEqual([
       "1.",
       "1.",
@@ -145,8 +149,6 @@ describe.skipIf(!has("docs/rule-text-drafts.md"))("docs/rule-text-drafts.md", ()
       "5.",
       "7.",
       "8.",
-      "9.",
-      "9.",
       "9.",
     ]);
     for (const b of rules) expect(claude, b.body.slice(0, 40)).toContain(b.body.slice(0, 40));
@@ -165,32 +167,51 @@ describe.skipIf(!has("docs/rule-text-drafts.md"))("docs/rule-text-drafts.md", ()
     expect(read("CLAUDE.md")).not.toContain("No `~/.ssh` and no ssh-agent socket are ever mounted");
   });
 
-  it("rule 9 stage (i), the single-shepherd doc's S4 and amendment, and the PR-pane rule's part 2 sit in place word for word (P8.17)", () => {
+  it("rules 1 (IPC delta), 5 and 6 sit in CLAUDE.md word for word, as ratified 2026-10-20", () => {
+    const claude = read("CLAUDE.md");
+    for (const head of ["Rule 1 — the IPC post path", "Rule 5 ", "Rule 6 "]) {
+      const sec = sections.find((x) => x.startsWith(head))!;
+      expect(sec, head).toMatch(/^LANDED in CLAUDE\.md \(ratified 2026-10-20\)/m);
+      const proposed = [...sec.matchAll(FENCE)].filter((m) => m[1] === "proposed");
+      expect(proposed, head).toHaveLength(1);
+      expect(claude, head).toContain(proposed[0]![3]!);
+    }
+    expect(claude).not.toContain("(shell side:");
+    expect(claude).not.toContain("`conversation-system.md` and `overseer-system.md`");
+  });
+
+  it("rule 9 stage (iii), the single-shepherd doc's S1, S3, S4, S5, audit row and amendment, and the PR-pane rule's part 2 sit in place word for word", () => {
     const claude = read("CLAUDE.md");
     const doc = read("docs/single-shepherd-invariant.md");
     const proposed = blocks.filter((b) => b.kind === "proposed");
     const rule9 = proposed.filter((b) => b.body.startsWith("9. "));
-    // Stage (i) is in; stage (ii) and (iii) are drafts that follow it.
+    // Stage (iii) is in; stages (i) and (ii) are kept as `replaced` / `skipped`.
+    expect(rule9).toHaveLength(1);
     expect(claude).toContain(rule9[0]!.body);
-    expect(claude).not.toContain(rule9[1]!.body);
-    expect(claude).not.toContain(rule9[2]!.body);
-    const s4 = proposed.find((b) => b.body.startsWith("**S4 "))!;
-    expect(doc).toContain(s4.body);
-    const amendment = proposed.find((b) => b.body.startsWith("## Amendment: workers"))!;
-    // P9.4 already reworded the amendment's first bullet in the doc (part (ii)); the rest is stage (i) verbatim.
-    const tail = amendment.body.slice(amendment.body.indexOf("- **Exactly two launchers.**"));
-    expect(doc).toContain(tail);
-    expect(doc).toContain("- **Two lens tools, one rule.** The native `subagent` path is gone");
+    expect(text).toContain("```text skipped CLAUDE.md\n9. ");
+    for (const start of ["**S1 ", "**S3 ", "**S4 ", "**S5 ", "| S1 |", "## Amendment: workers\n"]) {
+      const block = proposed.filter((b) => b.body.startsWith(start));
+      expect(block, start).toHaveLength(1);
+      expect(doc, start).toContain(block[0]!.body);
+    }
+    const bullet = proposed.find((b) => b.body.startsWith("- **One lens tool, one rule.**"))!;
+    expect(doc).toContain(bullet.body);
+    expect(doc).not.toContain("Two lens tools, one rule");
+    expect(doc).not.toContain("The Slack router and the TUI alert sink");
+    expect(doc).not.toContain("subagents glue");
+    expect(doc).not.toContain("the `subagent` tool is the only launcher");
     const pane = proposed.filter((b) =>
       b.body.startsWith("- **An embedded pi surface is a TERMINAL"),
     );
     expect(pane).toHaveLength(2);
     expect(claude).toContain(pane[1]!.body);
     expect(claude).not.toContain(pane[0]!.body);
-    // The sentences the landing made false are gone, and the new ones are there.
+    // The sentences the landings made false are gone, and the new ones are there.
     const folded = claude.replace(/\s+/g, " ");
     expect(folded).not.toContain("One exception: an operator's steer");
     expect(folded).not.toContain("flushed at round end (`src/wakes.ts`). One");
+    expect(folded).not.toContain("two daemon-owned session kinds only");
+    expect(folded).not.toContain("`overseer`, the global watcher");
     expect(folded).toContain("Two exceptions, both the operator's");
     expect(folded).toContain("answered at once by a short worker that resumes the session");
     expect(folded).toContain("posts only when the operator marked the message may-post");

@@ -154,8 +154,8 @@ const SANCTIONED_SCRIPTS = new Set([
 /** Agent-spawning programs. They are off ALLOWED already; this set exists so
  * the refusal tells the model what to do instead, and so the single-shepherd
  * invariant has a rule that greps.
- * The PR's main pi is the only scheduler of agents, and the `subagent` tool is
- * its only launcher. */
+ * The PR's main pi is the only scheduler of agents, and the lens tool (`lens` /
+ * `lens_wave`) is its only launcher. */
 const AGENT_SPAWNERS = new Set([
   "pi",
   "claude",
@@ -173,7 +173,7 @@ const AGENT_SPAWNERS = new Set([
 ]);
 
 const AGENT_SPAWN_REASON =
-  "exec policy: never spawn an agent or a runtime from bash — the `subagent` tool is the only launcher (single-shepherd invariant)";
+  "exec policy: never spawn an agent or a runtime from bash — the lens tool (`lens` / `lens_wave`) is the only launcher (single-shepherd invariant)";
 
 /** Relative under scripts/ only: no `..`, no absolute paths, exactly one
  * path segment after scripts/. */

@@ -1,9 +1,9 @@
 // The single-shepherd invariant (docs/single-shepherd-invariant.md): one main
-// pi per PR owns the review, the daemon only nudges, agents are launched only
-// by the round's engine (the planned discovery wave) and by that one pi (the
-// `subagent` / `launch_plan` tools on the tmux bot, the `lens` / `lens_wave`
-// tools on engine routes), lenses are leaves, and the main pi is never given
-// two instructions at once, bar an operator's steer.
+// pi per PR owns the review, hosted by one worker (or one operator host) at a
+// time, the daemon only nudges, agents are launched only by the round's engine
+// (the planned discovery wave) and by that one pi (the `lens` / `lens_wave`
+// tools, on every route), lenses are leaves, and the main pi is never given two
+// instructions at once, bar the operator's two exceptions.
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import {
   existsSync,
@@ -132,7 +132,7 @@ describe("daemon topology", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("CLAUDE.md rule 9 is the ratified text (D9, with the answer worker's stage (i), P8.17)", () => {
+  it("CLAUDE.md rule 9 is the ratified text (one session kind, workers, one host per PR)", () => {
     // Rule text changes only by the owner's ratification, so the test pins it
     // verbatim (whitespace folded: CLAUDE.md wraps it). The same words open
     // docs/single-shepherd-invariant.md's amendment.
@@ -155,6 +155,9 @@ describe("daemon topology", () => {
     const folded = doc.replace(/\s+/g, " ");
     expect(folded).toContain("Exactly two launchers");
     expect(folded).toContain("`lens` / `lens_wave`");
+    expect(folded).toContain("**S5 \u2014 One host per PR at a time.**");
+    expect(folded).toContain("## Amendment: workers CLAUDE.md rule 9 is the authority");
+    expect(folded).not.toContain("Two daemon-owned pi session kinds");
   });
 
   it("S2: no daemon module invokes pi outside the session manager", () => {
@@ -557,14 +560,13 @@ describe("buildAgents — built passes cannot launch agents", () => {
   });
 });
 
-// ---- S3: children never get the subagent tool (no nested fan-out) ---------
+// ---- S3: children never get a launcher tool (no nested fan-out) ----------
 //
-// The native extension's children spawn WITHOUT per-spawn argv
-// extensions and load only the global settings.json list. The glue therefore
-// rides argv (pinned in tests/sessions.test.ts / tests/tui-companion.test.ts),
-// and the global registration lists in BOTH container boots must never grow a
-// subagents entry — that is the structural guarantee that a leaf cannot fan
-// out, and it holds no matter what a frontmatter says.
+// The native subagent extension and its glue are gone; the lens tool rides
+// per-spawn argv only (pinned in tests/sessions.test.ts /
+// tests/tui-companion.test.ts), and the release image registers no global
+// extension, so a leaf, which loads only the global list, has no tool to fan
+// out with, whatever its frontmatter says.
 describe("subagents glue is never registered globally", () => {
   const root = join(import.meta.dirname, "..");
   // The release image's entrypoint (P9.5) registers no global extension at all.
@@ -574,9 +576,8 @@ describe("subagents glue is never registered globally", () => {
     expect(text).not.toContain("settings.extensions.push");
   });
   // extensions/lens.ts hosts SDK lens sessions in an interactive pi (a debug
-  // round, the companion since P7.8). The tmux bot runs the native pair
-  // through extensions/subagents.ts and never loads it: the argv lists that
-  // start its sessions and the bench's must not name it.
+  // round, the companion since P7.8). The argv lists that start a tmux
+  // session and the bench's must not name it.
   for (const file of ["src/sessions.ts", "src/bench/runner.ts"]) {
     it(`${file}: the tmux bot's and the bench's pi never load extensions/lens.ts`, () => {
       const text = readFileSync(join(root, file), "utf8");
@@ -611,7 +612,7 @@ describe("bash-guard — agent spawners are named explicitly", () => {
     it(`blocks: ${cmd}`, () => {
       const res = checkBashCommand(cmd);
       expect(res.allowed).toBe(false);
-      expect(res.reason).toContain("subagent");
+      expect(res.reason).toContain("the lens tool (`lens` / `lens_wave`) is the only launcher");
     });
   }
 

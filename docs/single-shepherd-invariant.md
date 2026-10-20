@@ -2,23 +2,22 @@
 
 This document states the dispatch topology the sandbox is *required* to have,
 the audit of the code against it (2026-08-17), and the three fixes that make
-it structural rather than prompted. The last section is the transitional
-amendment (D9, ratified at P-1): what the invariant means while the tmux bot
-and the engine routes coexist.
+it structural rather than prompted. The last section is the amendment on workers: what the
+invariant means now that the bot runs in workers.
 
 ## The invariant
 
-**S1 — Two daemon-owned pi session kinds, and only two.**
+**S1 — One daemon-owned pi session kind, and only one.**
 `pr-<n>` is the PR's ONE main session (pi): it owns that PR's review for its whole life —
-every round, every staleness check, every author exchange. `overseer` is the
-global watcher over all reviews in flight (anomalies, commands, the EOD sweep).
-The daemon spawns nothing else, ever. (`companion` is a separate boundary and
-lives on the owner's PC — see CLAUDE.md.)
+every round, every staleness check, every author exchange. There is no global
+watcher: the overseer retired into the companion (CLAUDE.md rule 8), which lives
+on the owner's PC and is a separate boundary. The daemon runs no pi itself: it
+starts workers (S5).
 
-A PR's **OpenViking session** (`pr-<n>`) is not a third kind and does
+A PR's **OpenViking session** (`pr-<n>`) is not a second kind and does
 not count against S1: it is a **row in the memory store**, created and deleted
 over HTTP, holding that review's raw working notes. Nothing schedules it,
-nothing runs in it, and it shares the tmux session's name only so an operator
+nothing runs in it, and it shares the session's name only so an operator
 reading `state/` sees the correspondence at a glance.
 
 **S2 — The daemon nudges; it never schedules an agent.**
@@ -36,28 +35,31 @@ image-only paths (`/opt/qcr`, `/opt/quickreview`, state-home layout literals,
 `QCR_STATE_HOME`), so a post-v1 pi package stays possible.
 
 **S3 — Every agent runs through a lens tool, launched by the PR's main
-session** (with one engine-side launcher, see the transitional amendment).
-That tool is our own `lens` / `lens_wave`, in `src/engine/lens/`.
-The main session is the only scheduler of agents. Passes are
-**leaves**: a pass never launches another agent and never posts to GitHub.
-`launch_plan` (registered by the same glue beside the subagent tool)
-does not change this: the main pi calls it, and it launches the round's
-discovery task files — confined to a round's `tasks/` and `tasks-sweep/`
-dirs of the session's own PR (`QCR_PR`), both from one round per call, never
-the validator's — as ONE call through the subagent tool's own
-wrapped execute and semaphore. It exists because a main pi asked to launch
-every row in one turn does not reliably do so.
+session** (with one engine-side launcher, see the amendment). That tool is
+`lens` / `lens_wave` (`src/engine/lens/`) on every route; the native `subagent`
+extension and `launch_plan` are gone. The main session is the only scheduler of
+agents. Passes are **leaves**: a pass never launches another agent and never
+posts to GitHub. `lens_wave` joins the engine-launched wave: it returns the
+wave's results, or waits for them without launching duplicates, and extra lenses
+go through `lens`.
 
 **S4 — One instruction at a time per main pi.** A round in flight is never
 interleaved with another instruction to the same session. Wakes that arrive
 mid-round are held and delivered by the round's own worker before it exits. The
 exceptions are the operator's, below: a steer, and a message to an idle PR.
 
+**S5 — One host per PR at a time.** A PR's session is hosted by exactly one
+of: a round worker, an answer worker, a takeover lease or a debug round. The
+one-active command index and the host lease keep it to one; every IPC request
+carries its command's generation, so a post, a permit or an event from a past
+generation is refused, and the previous host is confirmed gone before the next
+one resumes the JSONL, so two writers never append to it.
+
 ## Audit against the shipped code (2026-08-17)
 
 | Invariant | Status before | Evidence |
 | --- | --- | --- |
-| S1 | **held** | `sessions.ts` — `ensurePrSession` / `ensureOverseerSession` are the only `spawnSession` callers outside the smoke script; `isSandboxSession` bounds the namespace to `pr-<n>` + `overseer`. `eod.ts` injects into the overseer rather than birthing a session. |
+| S1 | **held** | PR sessions are born only by `PrSessionLifecycle.ensureSession` (`src/pr-session-lifecycle.ts`), reached only from the worker host (`src/worker-session-host.ts`); `spawnSession` is called only by the replay harness; `ensureOverseerSession` is deleted; `isSandboxSession` bounds the namespace to `pr-<n>`. `eod.ts` writes the day's sweep to the companion inbox. |
 | S2 | **held** | `dispatch.ts` computes the plan from the files API via pure `heuristics.ts`; `wire.ts` `onStart` builds *agent definition files* into `state/agents/` for the extension and launches nothing. No `pi` invocation exists outside `sessions.ts`. |
 | S3 | **partly** | The main pi's fan-out is correct (round templates mandate the `subagent` tool; `bash-guard.ts` blocks a bash fan-out). But nothing stopped a *pass* from launching further agents: the seeds' `tools:` line is a convention, not enforcement, and the build step never constrained it. → **G1** |
 | S3 (diagnostics) | **weak** | `pi`, `node`, `npx` were blocked only by falling off the read-only allowlist, with a generic "not an allowed read-only command" reason that never tells the model to use the `subagent` tool instead. → **G2** |
@@ -77,15 +79,15 @@ any agent-spawning tool (`subagent`, `subagents`, `task`, `agent`, `agents`,
 `dispatch`) should a seed ever grow one, and the addendum appended to
 every built agent states the leaf rule outright. The seeds stay byte-identical;
 only `state/agents/*.md` — what agent discovery actually reads — carries the
-enforcement. (Structurally, children also never load the subagents glue: it
-rides per-spawn argv, and a child process loads only the global settings.json
-extensions — so the `subagent` tool does not exist inside a leaf at all.)
+enforcement. (Structurally, a lens session is never given a lens tool either,
+so no agent-launching tool exists inside a leaf at all.)
 
 ### G2 — bash-guard names the agent-spawn class explicitly
 
 `checkBashCommand` blocks `pi`, `node`, `npx`, `bun`, `deno`, `claude`, `codex`
 and friends with a reason that names the rule and points at the right tool:
-*"never spawn an agent from bash — the `subagent` tool is the only launcher"*.
+*"never spawn an agent or a runtime from bash — the lens tool (`lens` /
+`lens_wave`) is the only launcher"*.
 Behaviourally these were already blocked by falling off the allowlist; the win
 is a directive error message and an invariant that greps.
 
@@ -115,9 +117,7 @@ Verified end to end: `tests/verdicts.test.ts` proves the watcher actually
 flushes on both round-end paths (verdict applied, round abandoned as overdue)
 and leaves a wake held while the round still runs; `tests/single-shepherd.test.ts`
 adds source-level guards that the author-reply path goes through `wakeOrHold`
-and that no other module opens a second wake channel to a PR session. The Slack
-router and the TUI alert sink inject into the **overseer** only, so neither can
-interrupt a round.
+and that no other module opens a second wake channel to a PR session.
 
 One writer does reach a `pr-<n>` session from outside the daemon: the
 operator's quick-message box (`m`, `src/tui/msg.ts`), which writes the inject
@@ -133,15 +133,15 @@ Known and accepted: the wake is *rendered* at claim time, so its ping-pong
 discipline counter reflects the moment the reply arrived. That counter only
 advances when the bot replies, which cannot happen while the wake is held.
 
-## Amendment: workers, the answer worker and the permit broker
+## Amendment: workers
 
 CLAUDE.md rule 9 is the authority for the wording; this section says what it
-covers while the tmux bot and the worker routes coexist.
+covers now that the bot runs in workers.
 
-- **Two lens tools, one rule.** The native `subagent` path is gone: our own
-  lens tool runs on engine (SDK) routes and in workers: `lens` /
-  `lens_wave`, in `src/engine/lens/`. It is called by the PR's main session,
-  and nothing else schedules a lens.
+- **One lens tool, one rule.** Our own lens tool runs on every route: `lens` /
+  `lens_wave`, in `src/engine/lens/` (an interactive pi's — the companion, a
+  debug round — through `extensions/cli/lens.ts`). It is called by the PR's main
+  session, and nothing else schedules a lens.
 - **Exactly two launchers.** The round's engine starts the *planned discovery
   wave* — the task files the engine wrote for this round — at round start.
   Everything else (rows the session raises, lenses it adds, the validator) is
