@@ -127,6 +127,11 @@ export const CHOICE_KEYS = {
 
   /** The proof round record. Written by the proof step; read by go-live. */
   proof: "proof_round_completed",
+
+  /** The last successful VM deploy: `{mode: "release", version, host, ...}`.
+   * Written by the deploy step; read by the ssh transport, whose "restart" is a
+   * re-release of the version recorded here. */
+  vmDeployed: "vm_deployed",
 } as const;
 
 export type ChoiceName = keyof typeof CHOICE_KEYS;
@@ -164,6 +169,7 @@ export const CHOICE_WRITERS: Record<ChoiceName, readonly string[]> = {
   webhookUrl: ["ingress"],
   memory: ["memory"],
   proof: ["proof_round"],
+  vmDeployed: ["vm_deploy"],
   memoryRestartOwed: ["memory"],
 };
 
@@ -182,7 +188,6 @@ export const PRIVATE_CHOICE_KEYS: Readonly<Record<string, string>> = {
   llm_model_prefix: "llm_auth",
   openviking_keys_file: "memory",
   stack_brought_up_at: "bringup",
-  vm_deployed: "vm_deploy",
   go_live_decision: "go_live",
 };
 

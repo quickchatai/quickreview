@@ -166,9 +166,12 @@ directory and the base clone are mounted a second time at their old path
 the cutover still resolve. `commands/operator` stays root-owned on the host and
 is re-sealed on every run.
 
-The TUI's `[tui] remote_sandbox_root` must be `/opt/qcr` (the container's app
-root; `remote_state_dir` stays the host path): `deploy.sh` refuses to ship a
-config that says otherwise.
+The TUI finds the container's app root by itself: it reads the running
+container's `qcr.layout` label (`release` = `/opt/qcr`, no label = the legacy
+`/opt/quickreview/sandbox`) and reads it again whenever the container id changes,
+so the cutover needs no TUI key edited (`src/tui/layout.ts`). An explicit
+`[tui] remote_sandbox_root` still wins; `deploy.sh` warns, and does not refuse,
+when one names another root. `remote_state_dir` stays the host path.
 
 ### Pulling the release
 

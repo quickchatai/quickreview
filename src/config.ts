@@ -83,6 +83,10 @@ export interface TuiConfig {
    * server). See `tuiMemoryContainer`. */
   memory_container: string;
   remote_state_dir: string;
+  /** The app root inside the daemon container. "" (the default) = resolved
+   * from the running container's `qcr.layout` label (src/tui/layout.ts): the
+   * release image is /opt/qcr, the legacy container (no label)
+   * /opt/quickreview/sandbox. A set value wins and is never probed. */
   remote_sandbox_root: string;
   sudo_docker: boolean;
   poll_interval_s: number;
@@ -2623,7 +2627,7 @@ export const TUI_DEFAULTS: TuiConfig = {
   container: "quickreview-sandbox",
   memory_container: "",
   remote_state_dir: "/opt/quickreview/state",
-  remote_sandbox_root: "/opt/quickreview/sandbox",
+  remote_sandbox_root: "",
   sudo_docker: true,
   poll_interval_s: 3,
   stale_after_s: 90,

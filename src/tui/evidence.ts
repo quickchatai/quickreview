@@ -52,6 +52,7 @@ import {
   type SettledRecord,
 } from "../archive/manifest.js";
 import { dockerShArgv, whyArgv, type RemoteResult, type SshRunner } from "./remote.js";
+import { remoteSandboxRoot } from "./layout.js";
 
 /** Roles a round bundle can carry, in copy order. `transcript` carries the pass
  * output too: lens passes run as subagent children inside the PR's one
@@ -166,7 +167,7 @@ export function manifestArgv(
   pr: number,
   round: number,
 ): string[] {
-  const root = cfg.remote_sandbox_root;
+  const root = remoteSandboxRoot(cfg);
   const script = [
     `r="${root}"`,
     `t=$(ls -1t "$r/${sessionDir}/pr-${pr}"/*.jsonl 2>/dev/null | head -1)`,
@@ -238,7 +239,7 @@ export function parseManifest(stdout: string, root: string): EvidenceFile[] {
  * alone exits with head's status, so a corrupt gzip would land as a short
  * file that looks complete — then `zcat | head -c <cap>`. */
 export function fetchArgv(cfg: TuiConfig, remotePath: string, maxBytes = MAX_FILE_BYTES): string[] {
-  if (isArchivedGzip(remotePath, cfg.remote_sandbox_root))
+  if (isArchivedGzip(remotePath, remoteSandboxRoot(cfg)))
     return dockerShArgv(
       cfg,
       `zcat -t '${remotePath}' && zcat '${remotePath}' | head -c ${maxBytes}`,
@@ -887,7 +888,7 @@ export class EvidenceCopier {
         key,
         `evidence: ${key} — could not list artefacts (ssh${remoteCause(listed)})`,
       );
-    const files = parseManifest(listed.stdout, this.cfg.remote_sandbox_root);
+    const files = parseManifest(listed.stdout, remoteSandboxRoot(this.cfg));
     // A round that finished before this copier first saw the PR — or before
     // it came back from a hold — is a backfill: the pr-current
     // roles on the VM are the PR's files as of TODAY, not that round's, so
@@ -908,7 +909,7 @@ export class EvidenceCopier {
     // a manifest written now would say `missing` forever.
     const archived: NonNullable<RoundManifest["archived"]> = [];
     const absent = EVIDENCE_ROLES.filter((r) => !files.some((f) => f.role === r));
-    const manifestPath = parseArchiveManifestLine(listed.stdout, this.cfg.remote_sandbox_root, pr);
+    const manifestPath = parseArchiveManifestLine(listed.stdout, remoteSandboxRoot(this.cfg), pr);
     if (absent.length > 0 && manifestPath) {
       const got = await this.ssh(this.cfg.ssh_host, fetchArgv(this.cfg, manifestPath), {
         timeoutMs: this.deps.timeoutMs,
@@ -951,7 +952,7 @@ export class EvidenceCopier {
         // in bytes — multibyte text would otherwise read as short of the cap.
         truncated: Buffer.byteLength(got.stdout, "utf8") >= MAX_FILE_BYTES,
         scope: PR_CURRENT_ROLES.includes(f.role) ? "pr-current" : "round",
-        from: isArchivedGzip(f.remotePath, this.cfg.remote_sandbox_root) ? "archive" : "live",
+        from: isArchivedGzip(f.remotePath, remoteSandboxRoot(this.cfg)) ? "archive" : "live",
       });
     }
     this.store.writeManifest({

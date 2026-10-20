@@ -127,12 +127,13 @@ export interface AppHooks {
   /** The companion was asked for while its startup is down — re-run
    * that startup (build/up/rollover/spawn) and focus the column on success. */
   companionEnsure?: (app: App) => Promise<void>;
-  /** Start ./scripts/deploy.sh sync after the deploy tab has engaged the
-   * daemon drain and observed a fresh zero-running-round snapshot. Streams
-   * output back into the tab; the handle aborts a stuck sync. */
+  /** Start ./scripts/deploy.sh release <version> after the deploy tab has
+   * engaged the daemon drain and observed a fresh zero-running-round snapshot.
+   * Streams output back into the tab; the handle aborts a stuck release. */
   deployRun?: (
     app: App,
     runId: string,
+    version: string,
     onData: (chunk: string) => void,
     onExit: (code: number | null) => void,
   ) => { kill(): void };

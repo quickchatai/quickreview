@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import type { TuiConfig } from "../config.js";
 import { commandResultArgv, commandWriteArgv, resultReason } from "./unwedge.js";
 import type { SshRunner } from "./remote.js";
+import { resolveLayout } from "./layout.js";
 
 export interface DrainCommandOutcome {
   ok: boolean;
@@ -50,6 +51,7 @@ export class CommandDrainSender implements DeployDrainSender {
   ) {}
 
   async set(on: boolean): Promise<DrainCommandOutcome> {
+    await resolveLayout(this.cfg, this.ssh);
     const name = drainCommandFileName(this.now(), this.clientId, this.seq++);
     const write = await this.ssh(this.cfg.ssh_host, commandWriteArgv(this.cfg, name), {
       stdin: drainPayload(on),

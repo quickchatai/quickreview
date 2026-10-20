@@ -1,14 +1,22 @@
-// `[5] deploy` — "what would a deploy ship?" plus the deploy button:
-// the commit the VM is running (the BUILD_SHA marker deploy.sh rsyncs along),
-// local HEAD, the pending commit list + diffstat between them, and deploy.sh's
-// own --dry-run plan verbatim. Click ▶ (or D D) owns the whole ceremony:
-// engage the persistent daemon drain, visibly wait for a fresh zero-round
-// snapshot, then stream `scripts/deploy.sh sync`. The new boot auto-lifts only
-// after its first healthy reconcile; a failed sync stays drained.
+// `[5] deploy` — "what would a deploy ship?" plus the deploy button.
+// Every deploy is a RELEASE: the tag, the two-arch build, the paid e2e and the
+// owner's approval already happened in CI, so the tab only chooses a version.
+// It shows the version and revision the VM runs (`qcr-update status --json`,
+// read over ssh) against the chosen version, the commits between the two
+// revisions (from the local checkout), and deploy.sh's own
+// `--dry-run release <version>` plan verbatim. The version is one of the
+// published ones (a read-only `gh api` packages listing, newest first) or typed
+// with `V`. Click ▶ (or D D) owns the whole ceremony: engage the persistent
+// daemon drain, visibly wait for a fresh zero-round snapshot, then stream
+// `scripts/deploy.sh release <version>`. The new boot auto-lifts only after its
+// first healthy reconcile; a failed release stays drained. On a legacy-layout
+// VM the tab refuses and points at the cutover wizard (scripts/cutover.sh):
+// the first release is the cutover, with its own window and acknowledgement.
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { RELEASE_IMAGE_REPO } from "../onboard/steps/compose.js";
 import { stateHome } from "../install.js";
 import { parseRetunes, RETUNES_FILE, type RetunesRead } from "../setup/retunelog.js";
 import type { TuiConfig } from "../config.js";
@@ -50,13 +58,110 @@ import {
   type ConfigRead,
 } from "./confighome.js";
 import { FG, RESET } from "./theme.js";
+import { remoteSandboxRoot } from "./layout.js";
 
-/** BUILD_SHA rides the deploy rsync into the sandbox root on the VM. A
- * missing file answers empty (no marker); a file that exists but cannot be
- * read fails the exec, so it stays an unanswered read rather than "absent". */
-export function buildShaArgv(cfg: TuiConfig): string[] {
-  const file = `${cfg.remote_sandbox_root}/BUILD_SHA`;
-  return dockerShArgv(cfg, `if [ -e '${file}' ]; then cat '${file}'; fi`);
+/** What the VM's updater reports: `sudo qcr-update status --json`, over ssh
+ * (deploy.sh reads the same). Read-only. */
+export const UPDATE_STATUS_ARGV = ["sudo", "qcr-update", "status", "--json"];
+
+export type VmLayout = "release" | "legacy" | "none";
+
+/** The updater's report, reduced to what the tab shows. */
+export interface UpdateStatus {
+  layout: VmLayout;
+  /** The CI build stamp of the running daemon image (`qcr.build-sha`). */
+  revision?: string;
+  /** The version of the last successful `qcr-update` run. */
+  version?: string;
+  /** When that run finished. */
+  at?: string;
+}
+
+const REVISION_RE = /^[0-9a-f]{7,40}$/;
+
+/** `qcr-update status --json` -> UpdateStatus; undefined when it is not that
+ * report (the read succeeded and the content is the problem). */
+export function parseUpdateStatus(stdout: string): UpdateStatus | undefined {
+  let v: unknown;
+  try {
+    v = JSON.parse(stdout);
+  } catch {
+    return undefined;
+  }
+  if (typeof v !== "object" || v === null) return undefined;
+  const o = v as Record<string, unknown>;
+  const layout = o.layout;
+  if (layout !== "release" && layout !== "legacy" && layout !== "none") return undefined;
+  const out: UpdateStatus = { layout };
+  const daemon = o.daemon;
+  if (typeof daemon === "object" && daemon !== null) {
+    const sha = (daemon as Record<string, unknown>).build_sha;
+    if (typeof sha === "string" && REVISION_RE.test(sha)) out.revision = sha;
+  }
+  const last = o.last_run;
+  if (typeof last === "object" && last !== null) {
+    const l = last as Record<string, unknown>;
+    if (l.result === "ok" && typeof l.version === "string" && VERSION_RE.test(l.version)) {
+      out.version = l.version;
+      if (typeof l.at === "string") out.at = l.at;
+    }
+  }
+  return out;
+}
+
+/** The release version spelling deploy.sh accepts: X.Y.Z, optionally
+ * -prerelease. It names an image tag; "latest" is not one. */
+export const VERSION_RE = /^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$/;
+
+/** The package the releases are published as: the daemon image's ghcr
+ * repository (`ghcr.io/<org>/<name>`), the one the compose route pulls. */
+export function releasePackage(repo: string = RELEASE_IMAGE_REPO): { org: string; name: string } {
+  const [org, name] = repo.replace(/^ghcr\.io\//, "").split("/");
+  return { org: org ?? "", name: name ?? "" };
+}
+
+/** The published versions: the package's tags, one per line, through the
+ * operator's own `gh` (a read; nothing is mutated). */
+export const PUBLISHED_VERSIONS_ARGV = [
+  "gh",
+  "api",
+  "--paginate",
+  `orgs/${releasePackage().org}/packages/container/${releasePackage().name}/versions`,
+  "--jq",
+  ".[].metadata.container.tags[]",
+];
+
+function versionParts(v: string): [number, number, number, string] {
+  const m = /^(\d+)\.(\d+)\.(\d+)(?:-(.*))?$/.exec(v)!;
+  return [Number(m[1]), Number(m[2]), Number(m[3]), m[4] ?? ""];
+}
+
+/** Newest first; a release outranks its own prereleases. */
+export function compareVersionsDesc(a: string, b: string): number {
+  const x = versionParts(a);
+  const y = versionParts(b);
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return (y[i] as number) - (x[i] as number);
+  if (x[3] === y[3]) return 0;
+  if (x[3] === "") return -1;
+  if (y[3] === "") return 1;
+  return x[3] < y[3] ? 1 : -1;
+}
+
+/** The tag list -> the published versions, newest first, deduplicated. Tags
+ * that are not a version (`latest`, a digest tag) are not releases. */
+export function parsePublishedVersions(stdout: string): string[] {
+  const seen = new Set(
+    stdout
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => VERSION_RE.test(l)),
+  );
+  return [...seen].sort(compareVersionsDesc);
+}
+
+/** The git tag a release is cut from. */
+export function releaseTag(version: string): string {
+  return `v${version}`;
 }
 
 /** The config home the last sync shipped, fingerprinted inside the
@@ -65,7 +170,7 @@ export function buildShaArgv(cfg: TuiConfig): string[] {
  * never been shipped a config home: that is a fact read (`none`), not an
  * unanswered read, so it is said as one. */
 export function configFingerprintArgv(cfg: TuiConfig): string[] {
-  const root = cfg.remote_sandbox_root;
+  const root = remoteSandboxRoot(cfg);
   const script = `${root}/scripts/config-fingerprint.sh`;
   return dockerShArgv(
     cfg,
@@ -105,17 +210,24 @@ export function powerSpawnArgv(cfg: TuiConfig, action: "stop" | "start"): string
 
 export const HEAD_ARGV = ["git", "rev-parse", "--short", "HEAD"];
 export const DIRTY_ARGV = ["git", "status", "--porcelain"];
-export const PLAN_ARGV = ["bash", "scripts/deploy.sh", "--dry-run", "sync"];
+/** deploy.sh's own plan for a release, run locally. */
+export function planArgv(version: string): string[] {
+  return ["bash", "scripts/deploy.sh", "--dry-run", "release", version];
+}
+/** The chosen version's revision in the local checkout: its release tag. */
+export function versionRevArgv(version: string): string[] {
+  return ["git", "rev-parse", "--short", `${releaseTag(version)}^{commit}`];
+}
 /** The config home a sync would ship, located exactly as deploy.sh
  * locates it (scripts/install-locator.sh `qcr_shipped_config`). */
 export const CONFIG_FINGERPRINT_ARGV = ["bash", "scripts/config-fingerprint.sh", "--located", "."];
 
-export function logArgv(deployedSha: string): string[] {
-  return ["git", "log", "--oneline", `${deployedSha}..HEAD`];
+export function logArgv(deployedSha: string, to: string): string[] {
+  return ["git", "log", "--oneline", `${deployedSha}..${to}`];
 }
 
-export function diffStatArgv(deployedSha: string): string[] {
-  return ["git", "diff", "--stat", `${deployedSha}..HEAD`];
+export function diffStatArgv(deployedSha: string, to: string): string[] {
+  return ["git", "diff", "--stat", `${deployedSha}..${to}`];
 }
 
 /** Runs a local argv in the sandbox root. Injectable — tests never spawn. */
@@ -137,32 +249,49 @@ export function realLocalRunner(cwd: string): LocalRunner {
 
 // ---- state ------------------------------------------------------------------
 
-export interface DeployedMarker {
-  sha: string;
-  at?: string;
-  mode?: string;
-}
-
-/** BUILD_SHA content: `<short-sha> <iso-utc> <mode>` (one line). */
-export function parseBuildSha(stdout: string): DeployedMarker | undefined {
+/** The build stamp `BUILD_SHA` holds: the release image's is one bare sha; a
+ * legacy marker was `<short-sha> <iso-utc> <mode>`. `qcr metrics` reads it from
+ * the app root, so the format keeps its one parser here. */
+export function parseBuildSha(
+  stdout: string,
+): { sha: string; at?: string; mode?: string } | undefined {
   const [sha, at, mode] = stdout.trim().split(/\s+/);
   if (!sha || !/^[0-9a-f]{7,40}$/.test(sha)) return undefined;
   return { sha, at, mode };
 }
 
+/** What the VM runs: the CI build stamp and, once a `qcr-update` run has
+ * finished ok, the version and when. */
+export interface DeployedMarker {
+  sha: string;
+  version?: string;
+  at?: string;
+}
+
 export interface DeployState {
   loaded: boolean;
   loading: boolean;
-  /** The VM's BUILD_SHA marker: the marker when read; `"absent"` when the VM
-   * carries none (this system has never deployed to it — the first deploy
-   * writes one); `"unparseable"` when the file is there but is not a
-   * `<sha> <iso> <mode>` line (the read succeeded — the content is the
-   * problem, and a redeploy rewrites it); `undefined` until fetched, and
-   * after a fetch whose ssh or docker read never answered. Three different
-   * facts, three different sentences: an unanswered read says nothing about
-   * what the VM runs, so it must never render or publish as "no marker" —
-   * and a corrupt marker must never be blamed on ssh. */
+  /** What the VM runs, from `qcr-update status --json`: the marker when the
+   * report names a build stamp; `"absent"` when the VM runs no release image
+   * (no daemon container, or the legacy one); `"unparseable"` when the report
+   * was read but is not that report (the read succeeded — the content is the
+   * problem); `undefined` until fetched, and after a fetch whose ssh read
+   * never answered. Different facts, different sentences: an unanswered read
+   * says nothing about what the VM runs, so it must never render or publish as
+   * "no release" — and a corrupt report must never be blamed on ssh. */
   deployed?: DeployedMarker | "absent" | "unparseable";
+  /** The VM's layout, from the same report; undefined = unread. A deploy needs
+   * it read: legacy refuses (the cutover wizard owns that release). */
+  layout?: VmLayout;
+  /** The published versions, newest first; undefined = the listing was not
+   * read (no gh, no access) — a typed version still works. */
+  versions?: string[];
+  /** The version a deploy would ship: typed with `V`, else the newest
+   * published. Undefined until one exists. */
+  version?: string;
+  /** The chosen version's revision in the local checkout (its tag), or
+   * undefined when the tag is not there. */
+  versionRev?: string;
   /** The config home this machine would ship, and the one the VM
    * was shipped — each `undefined` until fetched and after a read that never
    * answered. Compared by `configDrift`. */
@@ -209,7 +338,7 @@ export interface DeployState {
     | "deploy-failed";
   drainRounds?: number;
   drainStatusNote?: string;
-  targetHead?: string;
+  targetVersion?: string;
   preDeploySnapshotAt?: string;
   drainObserved?: boolean;
   firstUndrainedSnapshotAt?: string;
@@ -259,8 +388,27 @@ export function appendRunChunk(run: DeployRun, chunk: string): void {
 
 export const DEPLOY_CONFIRM_MS = 5000;
 
+/** Why a deploy cannot start now, or undefined. The version must be a release
+ * version and the VM's layout must have been read as one a release can land on. */
+export function deployRefusal(st: DeployState): string | undefined {
+  if (st.layout !== "release" && st.layout !== "none") return layoutRefusal(st.layout);
+  if (!st.version || !VERSION_RE.test(st.version))
+    return "no deploy version chosen — press V and type one (X.Y.Z), or publish a release";
+  return undefined;
+}
+
+/** Why a deploy cannot start on this VM layout. The legacy VM's first release
+ * is the cutover — its own window, drain and acknowledgement — not a button. */
+export function layoutRefusal(layout: VmLayout | undefined): string {
+  if (layout === "legacy")
+    return "this VM still runs the legacy layout — its first release is the cutover: run scripts/cutover.sh <version> (the cutover wizard), not the deploy tab";
+  return "the VM's layout has not been read (qcr-update status) — r refreshes; a deploy is not started on a guess";
+}
+
 export interface DeployFetcher {
-  load(): Promise<Omit<DeployState, "loaded" | "loading" | "scroll">>;
+  /** `version` = the operator's choice (typed, or held from a load); absent =
+   * default to the newest published. */
+  load(version?: string): Promise<Omit<DeployState, "loaded" | "loading" | "scroll">>;
 }
 
 /** The re-tune log in this machine's state home (the companion writes it
@@ -284,27 +432,39 @@ export class RealDeployFetcher implements DeployFetcher {
     private readonly retuneLog: () => RetunesRead = () => readRetuneLog(),
   ) {}
 
-  async load(): Promise<Omit<DeployState, "loaded" | "loading" | "scroll">> {
-    const [marker, status, head, dirty, plan, cfgRemote, cfgLocal] = await Promise.all([
-      this.ssh(this.cfg.ssh_host, buildShaArgv(this.cfg)),
+  async load(version?: string): Promise<Omit<DeployState, "loaded" | "loading" | "scroll">> {
+    const [update, status, head, dirty, published, cfgRemote, cfgLocal] = await Promise.all([
+      this.ssh(this.cfg.ssh_host, UPDATE_STATUS_ARGV),
       this.ssh(this.cfg.ssh_host, containerStatusArgv(this.cfg)),
       this.local(HEAD_ARGV),
       this.local(DIRTY_ARGV),
-      this.local(PLAN_ARGV),
+      this.local(PUBLISHED_VERSIONS_ARGV),
       this.ssh(this.cfg.ssh_host, configFingerprintArgv(this.cfg)),
       this.local(CONFIG_FINGERPRINT_ARGV),
     ]);
-    // `buildShaArgv` answers a missing file with empty output, so an ok/empty
-    // answer is a VM with no marker; ok/garbage is a marker we read but could
-    // not parse; a failed exec is a VM we could not ask (or a marker it could
-    // not read).
-    const deployed = marker.ok
-      ? marker.stdout.trim() === ""
-        ? "absent"
-        : (parseBuildSha(marker.stdout) ?? "unparseable")
-      : undefined;
+    // A failed exec is a VM we could not ask; ok/garbage is a report we read
+    // but cannot use; the layout decides whether there is a release to show.
+    const reported = update.ok ? parseUpdateStatus(update.stdout) : undefined;
+    const deployed: DeployState["deployed"] = !update.ok
+      ? undefined
+      : reported === undefined
+        ? "unparseable"
+        : reported.layout === "release" && reported.revision !== undefined
+          ? {
+              sha: reported.revision,
+              ...(reported.version ? { version: reported.version } : {}),
+              ...(reported.at ? { at: reported.at } : {}),
+            }
+          : reported.layout === "release"
+            ? "unparseable"
+            : "absent";
+    const versions = published.ok ? parsePublishedVersions(published.stdout) : undefined;
+    const chosen = version ?? versions?.[0];
     const out: Omit<DeployState, "loaded" | "loading" | "scroll"> = {
       deployed,
+      layout: reported?.layout,
+      versions,
+      version: chosen,
       containerStatus: status.ok ? status.stdout.trim() : undefined,
       configLocal: cfgLocal.ok ? parseConfigFingerprint(cfgLocal.stdout) : undefined,
       configDeployed: cfgRemote.ok ? parseConfigFingerprint(cfgRemote.stdout) : undefined,
@@ -313,15 +473,30 @@ export class RealDeployFetcher implements DeployFetcher {
       dirty: dirty.ok ? dirty.stdout.split("\n").filter((l) => l.trim() !== "") : undefined,
       // Present even when unread: the tab merges each load over the last one,
       // so an omitted key would keep the previous load's range on screen.
+      versionRev: undefined,
       commits: undefined,
       diffstat: undefined,
-      // A refusal exits non-zero with the reason on stderr — that IS the plan.
-      plan: (plan.ok ? plan.stdout : `${plan.stdout}${plan.stderr}`).split("\n"),
+      plan: [],
     };
-    if (typeof deployed === "object") {
+    if (chosen === undefined) {
+      out.plan = ["no version chosen — press V and type one (X.Y.Z), or publish a release"];
+      return out;
+    }
+    if (!VERSION_RE.test(chosen)) {
+      out.plan = [`"${chosen}" is not a release version (X.Y.Z, optionally -prerelease)`];
+      return out;
+    }
+    const [plan, rev] = await Promise.all([
+      this.local(planArgv(chosen)),
+      this.local(versionRevArgv(chosen)),
+    ]);
+    // A refusal exits non-zero with the reason on stderr — that IS the plan.
+    out.plan = (plan.ok ? plan.stdout : `${plan.stdout}${plan.stderr}`).split("\n");
+    if (rev.ok && rev.stdout.trim() !== "") out.versionRev = rev.stdout.trim();
+    if (typeof deployed === "object" && out.versionRev !== undefined) {
       const [log, stat] = await Promise.all([
-        this.local(logArgv(deployed.sha)),
-        this.local(diffStatArgv(deployed.sha)),
+        this.local(logArgv(deployed.sha, out.versionRev)),
+        this.local(diffStatArgv(deployed.sha, out.versionRev)),
       ]);
       // A sha local git doesn't know (rewritten history?) leaves these
       // undefined and the render says so instead of pretending "0 pending".
@@ -344,13 +519,25 @@ export function deployLines(st: DeployState, width: number): string[] {
   const lines: string[] = [];
   const dep = typeof st.deployed === "object" ? st.deployed : undefined;
   const depText = dep
-    ? `${STRONG}${dep.sha}${DRESET}${dep.at ? ` ${FG.dim}${dep.at}${RESET}` : ""}${dep.mode ? ` ${FG.dim}(${dep.mode})${RESET}` : ""}`
-    : st.deployed === "absent"
-      ? `${FG.dim}unknown — no BUILD_SHA on the VM yet (the next deploy writes it)${RESET}`
-      : st.deployed === "unparseable"
-        ? `${WARN}unknown — the VM's BUILD_SHA was read but is not a <sha> <iso> <mode> line (corrupt marker; the next deploy rewrites it)${DRESET}`
-        : `${WARN}unknown — the VM's BUILD_SHA could not be read (ssh/docker failed); r retries${DRESET}`;
+    ? `${dep.version ? `${STRONG}${dep.version}${DRESET} ` : `${FG.dim}version unrecorded${RESET} `}${FG.dim}rev${RESET} ${STRONG}${dep.sha}${DRESET}${dep.at ? ` ${FG.dim}${dep.at}${RESET}` : ""}`
+    : st.layout === "legacy"
+      ? `${WARN}the legacy layout — no release image yet${DRESET}`
+      : st.deployed === "absent"
+        ? `${FG.dim}unknown — the VM runs no release image yet (the first release starts one)${RESET}`
+        : st.deployed === "unparseable"
+          ? `${WARN}unknown — qcr-update status was read but names no build stamp (r retries)${DRESET}`
+          : `${WARN}unknown — qcr-update status could not be read (ssh failed, or provision never installed the updater); r retries${DRESET}`;
   lines.push(truncate(`${section("DEPLOYED", "what the VM runs")}  ${depText}`, width));
+  const verText = st.version
+    ? `${STRONG}${st.version}${DRESET}${st.versionRev ? ` ${FG.dim}rev${RESET} ${STRONG}${st.versionRev}${DRESET}` : ` ${WARN}tag ${releaseTag(st.version)} is not in this checkout (git fetch --tags)${DRESET}`}${st.versions === undefined ? ` ${FG.dim}(published list not read — gh api failed)${RESET}` : st.versions.includes(st.version) ? ` ${FG.dim}(published)${RESET}` : ` ${WARN}(not among the ${st.versions.length} published)${DRESET}`}`
+    : `${WARN}none chosen — press ${STRONG}V${DRESET}${WARN} and type a version${DRESET}`;
+  lines.push(truncate(`${section("VERSION", "what a deploy would ship")}  ${verText}`, width));
+  if (
+    st.layout === "legacy" ||
+    (st.loaded && st.layout === undefined && st.deployed === undefined)
+  ) {
+    lines.push(truncate(`${BAD}${layoutRefusal(st.layout)}${DRESET}`, width));
+  }
   const headText = st.head
     ? `${STRONG}${st.head}${DRESET}`
     : `${WARN}HEAD unknown — git rev-parse failed${DRESET}`;
@@ -387,39 +574,51 @@ export function deployLines(st: DeployState, width: number): string[] {
   }
   lines.push("");
 
-  // "Up to date, nothing to deploy" is a claim, so it needs every fact — an
-  // unreadable working tree is not the same as a clean one, and a config home
-  // that could not be compared is not the same as one that matches.
-  if (dep && st.head && dep.sha === st.head && st.dirty?.length === 0) {
+  // "Up to date, nothing to deploy" is a claim, so it needs every fact — a
+  // config home that could not be compared is not the same as one that matches.
+  if (dep && st.version && dep.version === st.version) {
     lines.push(
       drift.kind === "same"
-        ? `${OK}✓ the VM already runs this commit and this config home — nothing to deploy${DRESET}`
+        ? `${OK}✓ the VM already runs ${st.version} and this config home — nothing to deploy${DRESET}`
         : drift.kind === "changed" || drift.kind === "never-shipped"
-          ? `${WARN}the VM runs this commit, but its config home is behind — a sync ships it${DRESET}`
-          : `${WARN}the VM runs this commit; whether its config home matches is not known${DRESET}`,
+          ? `${WARN}the VM runs ${st.version}, but its config home is behind — a release ships it${DRESET}`
+          : `${WARN}the VM runs ${st.version}; whether its config home matches is not known${DRESET}`,
     );
-  } else if (dep) {
+  } else if (dep && st.version) {
     if (st.commits === undefined) {
       lines.push(
         truncate(
-          `${BAD}deployed sha ${dep.sha} is unknown to local git — cannot diff${DRESET}`,
+          `${BAD}${st.versionRev ? `deployed revision ${dep.sha} is unknown to local git` : `${releaseTag(st.version)} is unknown to local git`} — cannot list the commits${DRESET}`,
           width,
         ),
       );
     } else {
       lines.push(
-        truncate(section(`PENDING (${st.commits.length})`, "commits a deploy would ship"), width),
+        truncate(
+          section(
+            `PENDING (${st.commits.length})`,
+            `commits ${dep.sha}..${st.versionRev ?? st.version}`,
+          ),
+          width,
+        ),
       );
       for (const c of st.commits) lines.push(truncate(`  ${c}`, width));
       if (st.commits.length === 0) lines.push(`  ${MUTED}none yet — nothing to ship${DRESET}`);
       if (st.diffstat && st.diffstat.length > 0) {
-        lines.push(truncate(section("DIFFSTAT", `${dep.sha}..HEAD`), width));
+        lines.push(
+          truncate(section("DIFFSTAT", `${dep.sha}..${st.versionRev ?? st.version}`), width),
+        );
         for (const d of st.diffstat) lines.push(truncate(`  ${d}`, width));
       }
     }
   }
   lines.push("");
-  lines.push(truncate(section("PLAN", "scripts/deploy.sh --dry-run sync, verbatim"), width));
+  lines.push(
+    truncate(
+      section("PLAN", `scripts/deploy.sh --dry-run release ${st.version ?? "<version>"}, verbatim`),
+      width,
+    ),
+  );
   for (const p of st.plan) lines.push(truncate(`  ${p}`, width));
   lines.push("");
   if (st.armedAt !== undefined) {
@@ -431,7 +630,7 @@ export function deployLines(st: DeployState, width: number): string[] {
   } else {
     lines.push(
       truncate(
-        `${STRONG}to deploy:${DRESET} press ${STRONG}D${DRESET} twice (${ACCENT}drain → zero rounds → ./scripts/deploy.sh sync → healthy-boot auto-lift${DRESET})`,
+        `${STRONG}to deploy:${DRESET} press ${STRONG}D${DRESET} twice (${ACCENT}drain → zero rounds → ./scripts/deploy.sh release ${st.version ?? "<version>"} → healthy-boot auto-lift${DRESET})`,
         width,
       ),
     );
@@ -454,6 +653,7 @@ export function deployKeys(st: DeployState): LiveKeys {
     return { bar, inline: [] };
   }
   bar.push({ key: "D", label: st.armedKind === "deploy" ? "D confirm deploy" : "D deploy" });
+  bar.push({ key: "V", label: st.version ? `V version ${st.version}` : "V set version" });
   const kind = powerActionFor(st.containerStatus);
   if (kind !== undefined) {
     bar.push({ key: "S", label: st.armedKind === kind ? `S confirm ${kind}` : `S ${kind} VM app` });
@@ -616,7 +816,7 @@ export function installDeployHooks(
     if (st.loading) return;
     st.loading = true;
     try {
-      Object.assign(st, await f.load());
+      Object.assign(st, await f.load(st.version));
       st.loaded = true;
     } finally {
       st.loading = false;
@@ -654,7 +854,7 @@ export function installDeployHooks(
     ceremony.write({
       version: 1,
       phase,
-      ...(st.targetHead ? { target_head: st.targetHead } : {}),
+      ...(st.targetVersion ? { target_version: st.targetVersion } : {}),
       ...(st.preDeploySnapshotAt ? { pre_deploy_snapshot_at: st.preDeploySnapshotAt } : {}),
       ...(st.drainObserved ? { drain_observed: true } : {}),
       ...(st.firstUndrainedSnapshotAt
@@ -684,6 +884,7 @@ export function installDeployHooks(
     handle = runner(
       theApp,
       st.deployRunId,
+      st.targetVersion ?? st.version ?? "",
       (chunk) => {
         if (st.run !== run) return;
         appendRunChunk(run, chunk);
@@ -697,7 +898,7 @@ export function installDeployHooks(
           persist("awaiting-lift");
           line(
             run,
-            "✓ sync finished — healthy boot will auto-lift the drain after its first reconcile",
+            "✓ release finished — healthy boot will auto-lift the drain after its first reconcile",
           );
           theApp.notice("deploy complete — waiting for healthy boot to auto-lift drain");
         } else {
@@ -730,40 +931,50 @@ export function installDeployHooks(
   const launchDeployProcess = (theApp: App, run: DeployRun): void => {
     if (st.run !== run || st.deployPhase !== "waiting-rounds") return;
     if (!st.loaded) {
-      line(run, "… waiting for local deploy target to reload before sync");
+      line(run, "… waiting for local deploy target to reload before the release");
       return;
     }
     // The preflight refresh is asynchronous: the status that started it may
-    // have gone stale, or the board busy again, while it ran. A sync starts
+    // have gone stale, or the board busy again, while it ran. A release starts
     // only on a status that proves the drain quiet now; otherwise the next
     // fresh zero-round poll starts the preflight again.
     if (!drainQuiet(theApp)) {
-      const note = "waiting for a fresh zero-round daemon status before sync";
+      const note = "waiting for a fresh zero-round daemon status before the release";
       if (st.drainStatusNote !== note) line(run, `… ${note}`);
       st.drainStatusNote = note;
       theApp.repaint();
       return;
     }
-    if (!st.head) {
+    if (!st.version || !VERSION_RE.test(st.version)) {
       st.deployPhase = "deploy-failed";
       run.running = false;
       run.code = 1;
       persist("deploy-failed");
-      line(run, "✖ local deploy target is unknown — deploy did not start; drain remains ON");
-      theApp.notice("✖ deploy target unknown — drain remains on");
+      line(run, "✖ deploy version is unknown — deploy did not start; drain remains ON");
+      theApp.notice("✖ deploy version unknown — drain remains on");
       theApp.repaint();
       return;
     }
-    if (st.targetHead && st.targetHead !== st.head) {
+    if (st.targetVersion && st.targetVersion !== st.version) {
       st.deployPhase = "deploy-failed";
       run.running = false;
       run.code = 1;
       persist("deploy-failed");
       line(
         run,
-        `✖ local HEAD moved from ${st.targetHead} to ${st.head} while draining — deploy did not start; drain remains ON`,
+        `✖ the chosen version changed from ${st.targetVersion} to ${st.version} while draining — deploy did not start; drain remains ON`,
       );
       theApp.notice("✖ deploy target changed while draining — drain remains on");
+      theApp.repaint();
+      return;
+    }
+    if (st.layout !== "release" && st.layout !== "none") {
+      st.deployPhase = "deploy-failed";
+      run.running = false;
+      run.code = 1;
+      persist("deploy-failed");
+      line(run, `✖ ${layoutRefusal(st.layout)} — deploy did not start; drain remains ON`);
+      theApp.notice("✖ deploy refused — drain remains on");
       theApp.repaint();
       return;
     }
@@ -771,10 +982,13 @@ export function installDeployHooks(
     st.deployRunId = `${new Date(now()).toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 12)}`;
     st.deployPhase = "syncing";
     persist("syncing");
-    line(run, "✓ drain confirmed and board quiet — starting ./scripts/deploy.sh sync");
+    line(
+      run,
+      `✓ drain confirmed and board quiet — starting ./scripts/deploy.sh release ${st.version}`,
+    );
     line(run, "  deploy process is durable across the required TUI hot reload");
     line(run, "  drain stays on until the new boot's first healthy reconcile");
-    theApp.notice("deploy drain reached zero — starting durable sync");
+    theApp.notice(`deploy drain reached zero — starting durable release ${st.version}`);
     attachDeployProcess(theApp, run);
   };
 
@@ -784,7 +998,7 @@ export function installDeployHooks(
     line(run, "… board is quiet — refreshing local HEAD and deploy preflight");
     theApp.repaint();
     void f
-      .load()
+      .load(st.targetVersion ?? st.version)
       .then((latest) => {
         targetCheckInFlight = false;
         if (st.run !== run || st.deployPhase !== "waiting-rounds") return;
@@ -945,8 +1159,15 @@ export function installDeployHooks(
   };
 
   const startDrain = (theApp: App, resuming = false, resumeAbort = false): void => {
-    if (!resuming && (!st.loaded || !st.head)) {
-      theApp.notice("deploy target is still loading — wait for LOCAL HEAD, then press D D again");
+    if (!resuming) {
+      const refusal = deployRefusal(st);
+      if (refusal !== undefined) {
+        theApp.notice(`✖ ${refusal}`);
+        return;
+      }
+    }
+    if (!resuming && !st.loaded) {
+      theApp.notice("deploy target is still loading — wait, then press D D again");
       return;
     }
     const run: DeployRun = {
@@ -959,7 +1180,7 @@ export function installDeployHooks(
     st.scroll = 0;
     st.deployPhase = resumeAbort ? "lifting-after-abort" : "engaging-drain";
     if (!resuming) {
-      st.targetHead = st.head;
+      st.targetVersion = st.version;
       st.deployRunId = undefined;
     }
     st.preDeploySnapshotAt = undefined;
@@ -1046,7 +1267,8 @@ export function installDeployHooks(
 
   const savedCeremony = ceremony.read();
   if (savedCeremony) {
-    st.targetHead = savedCeremony.target_head;
+    st.targetVersion = savedCeremony.target_version;
+    st.version = savedCeremony.target_version;
     st.preDeploySnapshotAt = savedCeremony.pre_deploy_snapshot_at;
     st.drainObserved = savedCeremony.drain_observed === true;
     st.firstUndrainedSnapshotAt = savedCeremony.first_undrained_snapshot_at;
@@ -1096,6 +1318,15 @@ export function installDeployHooks(
     if (kind === "deploy" && st.run) {
       theApp.notice("close the previous deploy result with x before starting another");
       return;
+    }
+    if (kind === "deploy") {
+      const refusal = st.loaded
+        ? deployRefusal(st)
+        : "the deploy target is still loading — wait, then press D again";
+      if (refusal !== undefined) {
+        theApp.notice(`✖ ${refusal}`);
+        return;
+      }
     }
     if (kind === "deploy" && ceremony.read()) {
       theApp.notice(
@@ -1163,6 +1394,25 @@ export function installDeployHooks(
       pressPower(theApp);
       return true;
     }
+    if (key.kind === "char" && key.ch === "V" && !st.run) {
+      disarm(theApp);
+      const published =
+        st.versions === undefined
+          ? "published list not read"
+          : `published: ${st.versions.slice(0, 5).join(" ") || "none"}`;
+      theApp.promptInput(`deploy version (X.Y.Z) — ${published}`, st.version ?? "", (text) => {
+        const typed = text.trim().replace(/^v(?=\d)/, "");
+        if (!VERSION_RE.test(typed)) {
+          theApp.notice(`✖ "${typed}" is not a release version (X.Y.Z, optionally -prerelease)`);
+          return;
+        }
+        st.version = typed;
+        st.loaded = false;
+        void load();
+        theApp.repaint();
+      });
+      return true;
+    }
     const disarmed = st.armedAt !== undefined;
     if (disarmed) disarm(theApp); // any other key disarms
     if (st.run && key.kind === "char" && key.ch === "x") {
@@ -1196,7 +1446,7 @@ export function installDeployHooks(
         st.scroll = 0;
         st.deployPhase = undefined;
         if (!ceremony.read()) {
-          st.targetHead = undefined;
+          st.targetVersion = undefined;
           st.preDeploySnapshotAt = undefined;
           st.drainObserved = undefined;
           st.firstUndrainedSnapshotAt = undefined;

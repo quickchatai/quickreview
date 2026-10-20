@@ -1,16 +1,19 @@
 #!/usr/bin/env node
-// Detached child for the TUI deploy tab. deploy.sh rebuilds dist/, which
-// intentionally re-execs the TUI; this process must outlive that re-exec and
-// leave a durable result the new TUI generation can attach to.
+// Detached child for the TUI deploy tab: `deploy.sh release <version>`. The
+// operator's checkout is rebuilt by the pull that follows a release, which
+// re-execs the TUI; this process must outlive that re-exec and leave a durable
+// result the new TUI generation can attach to.
 import { closeSync, fsyncSync, mkdirSync, openSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 
-const [root, logPath, resultPath] = process.argv.slice(2);
-if (!root || !logPath || !resultPath) process.exit(2);
+const [root, logPath, resultPath, version] = process.argv.slice(2);
+if (!root || !logPath || !resultPath || !version) process.exit(2);
+// The same spelling scripts/deploy.sh accepts for a release: it names an image tag.
+if (!/^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$/.test(version)) process.exit(2);
 mkdirSync(dirname(logPath), { recursive: true });
 const logFd = openSync(logPath, "a", 0o600);
-const child = spawn("bash", [join(root, "scripts", "deploy.sh"), "sync"], {
+const child = spawn("bash", [join(root, "scripts", "deploy.sh"), "release", version], {
   cwd: root,
   env: { ...process.env, ANSIBLE_FORCE_COLOR: "0", PY_COLORS: "0", NO_COLOR: "1" },
   stdio: ["ignore", logFd, logFd],

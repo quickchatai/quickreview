@@ -791,7 +791,14 @@ describe("the deploy tab shows the pending re-tune", () => {
       const cmd = argv.join(" ");
       if (cmd.includes("config-fingerprint.sh"))
         return ok(`config=${"a".repeat(64)} profiles=${"b".repeat(64)}\n`);
-      if (cmd.includes("BUILD_SHA")) return ok(`aaa1111 ${DEPLOYED} sync\n`);
+      if (cmd.includes("qcr-update"))
+        return ok(
+          JSON.stringify({
+            layout: "release",
+            daemon: { build_sha: "aaa1111" },
+            last_run: { version: "1.0.0", at: DEPLOYED, result: "ok" },
+          }),
+        );
       return ok("");
     };
     const f = new RealDeployFetcher(
@@ -806,7 +813,7 @@ describe("the deploy tab shows the pending re-tune", () => {
     const st = { loaded: true, loading: false, scroll: 0, ...(await f.load()) } as DeployState;
     const text = stripAnsi(deployLines(st, 200).join("\n"));
     expect(text).toContain("profile changed, not deployed");
-    expect(text).toContain("1 post-scan re-tune not deployed — a sync ships it:");
+    expect(text).toContain("1 post-scan re-tune not deployed — a release ships it:");
     expect(text).toContain("after scan scan-1 (acme): priority security important → critical");
     expect(text).toContain(`priority security: important → critical — ${REASON}`);
 

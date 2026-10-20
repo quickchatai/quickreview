@@ -1173,7 +1173,7 @@ describe("the server route's daemon copy of the reviewer key", () => {
     };
   }
 
-  it("is red until a rebuild has shipped the placed key, then green when the hashes match", async () => {
+  it("is red until a provision has shipped the placed key, then green when the hashes match", async () => {
     const server = fakeServer();
     const step = memoryStep(stepOptions());
     const missing = vmCtx(server.fetchFn, () => ({
@@ -1187,7 +1187,7 @@ describe("the server route's daemon copy of the reviewer key", () => {
     const check = first.checks.find((c) => c.name === "reviewer-key-on-server");
     expect(check?.ok).toBe(false);
     expect(check?.detail).toMatch(/no reviewer key yet/);
-    expect(check?.detail).toMatch(/mode "rebuild"/);
+    expect(check?.detail).toMatch(/mode "provision"/);
     // Only a hash crosses ssh — never the key.
     expect(missing.calls.at(-1)?.join(" ")).toContain("sha256sum");
 

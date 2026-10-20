@@ -285,7 +285,7 @@ export function migrateReport(outcome: MigrateOutcome): { code: number; lines: s
           `moved ${outcome.from} → ${outcome.to}`,
           "every reader now finds it there (restart a running daemon or TUI to pick it up).",
           "If this checkout tracked config.toml in git, the move shows as a deletion — the snapshot manifests already exclude the path.",
-          "scripts/deploy.sh sync|rebuild ships the config home to the VM from there — and refuses a config left in the checkout.",
+          "scripts/deploy.sh release ships the config home to the VM from there — and refuses a config left in the checkout.",
         ],
       };
     case "already":
@@ -877,7 +877,7 @@ export function profileMigrateReport(outcomes: ProfileMigrateOutcome[]): {
   }
   if (outcomes.some((o) => o.kind === "moved" || o.kind === "deduplicated")) {
     lines.push(
-      "A moved profile tracked in git shows as a deletion. scripts/deploy.sh sync|rebuild ships the config home's " +
+      "A moved profile tracked in git shows as a deletion. scripts/deploy.sh release ships the config home's " +
         "profiles/ to the VM with the config.",
     );
   }

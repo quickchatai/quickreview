@@ -711,8 +711,8 @@ function serverUnreachableDetail(ctx: StepContext, base: string, why: string): s
 
 /**
  * The server route's daemon reads ITS copy of the reviewer key: the one a
- * deploy shipped into the VM's secrets dir, and only `rebuild` ships secrets
- * (`deploy.sh sync` starts past those tasks). The operator copy proven here
+ * deploy shipped into the VM's secrets dir, and only `provision` ships secrets
+ * (`deploy.sh release` starts past those tasks). The operator copy proven here
  * says nothing about it, so ask the container for the hash of its copy — a
  * hash, never the key — and compare. null on the compose route, where the
  * container mounts this machine's secrets dir itself.
@@ -725,8 +725,8 @@ async function daemonReviewerCopyCheck(
   const name = "reviewer-key-on-server";
   const remotePath = `${CONTAINER_SECRETS_DIR}/${REVIEWER_KEY_FILE}`;
   const ship =
-    'run the vm_deploy step with mode "rebuild" (`bash scripts/deploy.sh rebuild`) — only a rebuild copies the ' +
-    "secrets dir to the server; a sync never does — then run this step again";
+    'run the vm_deploy step with mode "provision" (`bash scripts/deploy.sh provision`) — only provision copies the ' +
+    "secrets dir to the server; a release never does — then run this step again";
   let local: string;
   try {
     local = createHash("sha256").update(readFileSync(localPath)).digest("hex");

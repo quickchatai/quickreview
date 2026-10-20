@@ -51,6 +51,7 @@ const CFG: TuiConfig = {
   ssh_host: "my-vm",
   container: "quickreview-sandbox",
   sudo_docker: true,
+  remote_sandbox_root: "/opt/quickreview/sandbox",
 };
 const ROOT = CFG.remote_sandbox_root;
 

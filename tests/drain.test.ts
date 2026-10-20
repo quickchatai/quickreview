@@ -11,6 +11,7 @@
 //   * the boot's FIRST healthy reconcile pass lifts it (`drain_lifted`); a
 //     failed first pass leaves it standing — a broken deploy must not resume
 //     work blind. Manual `drain off` works at any time.
+import { remoteSandboxRoot } from "../src/tui/layout.js";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -628,7 +629,7 @@ describe("qcr drain over the unwedge command channel", () => {
     expect(JSON.parse(writes[0]!.stdin!)).toEqual({ command: "drain", on: true });
     // The write rides the SAME docker-exec-over-ssh channel the TUI unwedge
     // uses: an atomic tmp+mv into the daemon's commands/ dir.
-    expect(writes[0]!.argv.join(" ")).toContain(`${cfg.tui.remote_sandbox_root}/commands`);
+    expect(writes[0]!.argv.join(" ")).toContain(`${remoteSandboxRoot(cfg.tui)}/commands`);
     expect(polled).toBeGreaterThan(0);
     expect(lines.join("\n")).toContain("2 round(s) still finishing");
   });

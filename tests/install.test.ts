@@ -285,9 +285,9 @@ describe("qcr install", () => {
     const moved = migrateReport({ kind: "moved", from, to });
     expect(moved.code).toBe(0);
     expect(moved.lines.join("\n")).toContain(to);
-    // deploy.sh sync|rebuild ships the config home from there.
+    // deploy.sh release ships the config home from there.
     expect(moved.lines.join("\n")).toMatch(
-      /deploy\.sh sync\|rebuild ships the config home to the VM from there/,
+      /deploy\.sh release ships the config home to the VM from there/,
     );
     expect(migrateReport({ kind: "already", to }).code).toBe(0);
     expect(migrateReport({ kind: "deduplicated", from, to }).code).toBe(0);
@@ -758,7 +758,7 @@ describe("migrateProfiles", () => {
     const moved = profileMigrateReport([{ kind: "moved", name: "q", from: "/a", to: "/b" }]);
     expect(moved.code).toBe(0);
     expect(moved.lines.join("\n")).toMatch(
-      /deploy\.sh sync\|rebuild ships the config home's profiles\/ to the VM with the config\./,
+      /deploy\.sh release ships the config home's profiles\/ to the VM with the config\./,
     );
     expect(profileMigrateReport([{ kind: "conflict", name: "q", from: "/a", to: "/b" }]).code).toBe(
       1,

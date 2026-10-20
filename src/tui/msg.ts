@@ -12,6 +12,7 @@ import type { App } from "./app.js";
 import { LiveControlSender, type ControlOutcome, type ControlSender } from "./livecontrol.js";
 import { shellQuote, type SshRunner } from "./remote.js";
 import { resultReason } from "./unwedge.js";
+import { remoteSandboxRoot, resolveLayout } from "./layout.js";
 
 /** The only session names the TUI will ever build a remote path from. */
 export function isValidSessionName(name: string): boolean {
@@ -19,7 +20,7 @@ export function isValidSessionName(name: string): boolean {
 }
 
 export function injectDirFor(cfg: TuiConfig, session: string): string {
-  return `${cfg.remote_sandbox_root}/inject/${session}`;
+  return `${remoteSandboxRoot(cfg)}/inject/${session}`;
 }
 
 export function injectFileName(now: Date, seq: number): string {
@@ -89,6 +90,7 @@ export class InjectSender implements MessageSender {
     text: string,
     onState: (state: DeliveryState, label: string) => void,
   ): Promise<void> {
+    await resolveLayout(this.cfg, this.ssh);
     if (!isValidSessionName(session)) {
       onState("undelivered", `✖ msg ${session} undelivered (bad session name)`);
       return;

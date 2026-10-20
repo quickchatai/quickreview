@@ -22,6 +22,7 @@ import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
 import type { SshRunner } from "./remote.js";
 import { commandFileName, commandResultArgv, commandWriteArgv, resultReason } from "./unwedge.js";
+import { resolveLayout } from "./layout.js";
 
 /** What a control asks for. `text` is the steer, follow-up or message body;
  * `may_post` rides a `message` only. */
@@ -102,6 +103,7 @@ export class LiveControlSender implements ControlSender, CommandSender {
     req: ControlRequest,
     onState: (state: ControlState, label: string) => void,
   ): Promise<ControlOutcome> {
+    await resolveLayout(this.cfg, this.ssh);
     const what = `${req.kind} #${req.pr}`;
     const say = (state: ControlOutcome["state"], label: string): ControlOutcome => {
       onState(state, label);
@@ -120,6 +122,7 @@ export class LiveControlSender implements ControlSender, CommandSender {
     command: Command,
     onState: (state: ControlState, label: string) => void,
   ): Promise<ControlOutcome> {
+    await resolveLayout(this.cfg, this.ssh);
     return this.deliver(`${JSON.stringify(command, null, 2)}\n`, commandLabel(command), onState);
   }
 

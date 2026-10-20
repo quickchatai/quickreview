@@ -43,6 +43,7 @@ import {
 import type { TuiConfig } from "./config.js";
 import { LENS_SESSIONS_DIR, MAIN_SESSION_DIR } from "./engine/openable.js";
 import { dockerShArgv, whyArgv, type RemoteResult, type SshRunner } from "./tui/remote.js";
+import { remoteSandboxRoot, resolveLayout } from "./tui/layout.js";
 
 /** A session bigger than this is refused rather than pulled whole over ssh. */
 export const OPEN_PR_MAX_BYTES = 128 * 1024 * 1024;
@@ -93,7 +94,7 @@ export function openPrOptions(
  * not make an answer look failed.
  */
 export function listArgv(cfg: TuiConfig, sessionDir: string, pr: number): string[] {
-  const root = cfg.remote_sandbox_root;
+  const root = remoteSandboxRoot(cfg);
   const dir = `$r/${sessionDir}/pr-${pr}`;
   return dockerShArgv(
     cfg,
@@ -290,7 +291,7 @@ function record(dir: string, body: Record<string, unknown>): void {
 /** Pull what `o` names; see the file header. Never throws: an answer is a PrPull. */
 export async function pullPrSession(o: OpenPrOptions, deps: PrPullDeps): Promise<PrPull> {
   const { cfg, ssh } = deps;
-  const root = cfg.remote_sandbox_root;
+  const root = await resolveLayout(cfg, ssh);
   const where = `${cfg.target === "local" ? "this machine" : cfg.ssh_host}`;
   const base = join(deps.home, "open", `pr-${o.pr}`);
   const listed = await ssh(cfg.ssh_host, listArgv(cfg, deps.sessionDir, o.pr), {
@@ -461,7 +462,7 @@ async function pullArchived(
   deps: PrPullDeps,
 ): Promise<string | { text: string; remotePath: string }> {
   const { cfg, ssh } = deps;
-  const root = cfg.remote_sandbox_root;
+  const root = remoteSandboxRoot(cfg);
   const mtext = await ssh(cfg.ssh_host, readArgv(cfg, manifestPath, 64 * 1024 * 1024), {
     timeoutMs: cfg.evidence_timeout_s * 1000,
   });

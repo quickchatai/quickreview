@@ -55,6 +55,7 @@ import { parse as parseToml } from "smol-toml";
 import type { TuiConfig } from "../config.js";
 import { shellQuote } from "./remote.js";
 import { TRAILER_RATIFIED } from "./changelog-store.js";
+import { remoteSandboxRoot } from "./layout.js";
 
 export interface RubricProposal {
   slug: string;
@@ -160,7 +161,7 @@ export function improvementsArgv(
   const gh = `GH_TOKEN="$(bash scripts/mint-token.sh)"`;
   return dockerSh(
     cfg,
-    `cd ${shellQuote(cfg.remote_sandbox_root)} && ` +
+    `cd ${shellQuote(remoteSandboxRoot(cfg))} && ` +
       `{ ${gh} gh pr list -R '${repo}' --state all --limit 30 --search 'head:bot/improve' --json number,title,state 2>/dev/null || echo '${IMPROVEMENTS_FAILED}'; } && echo '---' && ` +
       `{ ${gh} gh issue list -R '${repo}' --state all --limit 30 --label ${shellQuote(issueLabel)} --json number,title,state 2>/dev/null || echo '${IMPROVEMENTS_FAILED}'; }`,
   );

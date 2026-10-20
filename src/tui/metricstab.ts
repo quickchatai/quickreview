@@ -316,7 +316,7 @@ export function localHeadProbe(local: LocalRunner): LocalHeadProbe {
       const out: LocalHeadState = {};
       if (head.ok && head.stdout.trim()) out.head = head.stdout.trim();
       if (deployedSha) {
-        const log = await local(logArgv(deployedSha));
+        const log = await local(logArgv(deployedSha, "HEAD"));
         if (log.ok) out.ahead = log.stdout.split("\n").filter((l) => l.trim() !== "").length;
       }
       return out;

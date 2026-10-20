@@ -1019,7 +1019,7 @@ export const HELP_LINES = [
   "W / F          open OpenViking Studio through the memory forward · clear the tag filter",
   "[3] digest — the EOD sweep's document: j/k scroll · [ / ] older / newer day",
   "[4] tickets — what adjudication filed on the tracker: j/k choose · [ / ] scroll the body · c actionable ⇄ all",
-  "[5] deploy — D D deploys (or click ▶ DEPLOY TO VM) · S S powers the VM app · x aborts a run / closes its log",
+  "[5] deploy — V picks the version · D D deploys it (or click ▶ DEPLOY TO VM) · S S powers the VM app · x aborts a run / closes its log",
   "[6] metrics — w / m / a switch the 7d / 30d / all window · # <pr> ⏎ opens a PR timeline (Esc back)",
   "[7] feedback — the loop on one surface: signal → adjudication → proposal → change → revert",
   "t              focus the next pane: inbox → proposed → changed",

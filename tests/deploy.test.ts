@@ -1560,15 +1560,17 @@ describe("deploy.sh — release <version>", () => {
     expect(release(env, { version: "1.2.3-rc.1" }).code).toBe(0);
   });
 
-  it("REFUSES a config whose [tui] remote_sandbox_root is not the image's app root; verify and provision read whatever the locator found", () => {
-    for (const shape of [{ tuiRoot: null }, { tuiRoot: "/opt/quickreview/sandbox" }]) {
+  it("does not refuse on [tui] remote_sandbox_root (the TUI resolves the layout itself): an absent key is silent, an explicit other root only warns", () => {
+    for (const [shape, warns] of [
+      [{ tuiRoot: null }, false],
+      [{ tuiRoot: "/opt/qcr" }, false],
+      [{ tuiRoot: "/opt/quickreview/sandbox" }, true],
+    ] as const) {
       env = scratch({ shape });
       const r = release(env);
-      expect(r.code, JSON.stringify(shape)).toBe(1);
-      expect(r.stderr).toContain("[tui] remote_sandbox_root mismatch");
-      expect(r.stderr).toContain('remote_sandbox_root = "/opt/qcr"');
-      expect(run(env, ["--dry-run", "verify"]).code).toBe(0);
-      expect(run(env, ["--dry-run", "provision"]).code).toBe(0);
+      expect(r.code, JSON.stringify(shape)).toBe(0);
+      expect(r.stderr.includes("remote_sandbox_root"), JSON.stringify(shape)).toBe(warns);
+      expect(r.stderr).not.toContain("mismatch");
       rmSync(env.dir, { recursive: true, force: true });
     }
   });

@@ -3,6 +3,7 @@
 // old truth.
 import type { StatusSnapshot } from "../state.js";
 import type { TuiConfig } from "../config.js";
+import { resolveLayout } from "./layout.js";
 import { statusArgv, type SshRunner } from "./remote.js";
 
 export type Health =
@@ -102,6 +103,11 @@ export class Poller {
 
   async tick(): Promise<void> {
     const generation = ++this.generation;
+    // The cutover recreates the container mid-connection; every remote path
+    // follows the root this keeps current (src/tui/layout.ts). Its probe never
+    // fails the poll.
+    // Resolved first: the status read below must use the root it settles on.
+    await resolveLayout(this.cfg, this.ssh);
     const res = await this.ssh(this.cfg.ssh_host, statusArgv(this.cfg));
     if (generation !== this.generation) return;
     const snapshot = res.ok ? parseSnapshot(res.stdout) : undefined;

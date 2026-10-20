@@ -56,6 +56,7 @@ import { remoteFactsFor, stackTransportFor } from "../src/onboard/steps/transpor
 import { VERIFY_STACK_STEP_ID, verifyStackStep } from "../src/onboard/steps/verifyup.js";
 import {
   DEPLOY_BUILD_WARNING,
+  ONBOARD_DEPLOY_MODES,
   VM_DEPLOY_CHOICE_KEY,
   VM_DEPLOY_STEP_ID,
   vmDeployStep,
@@ -428,7 +429,7 @@ function deployHarness(
     run: async (cmd, args, onLine) => {
       runs.push([cmd, ...args]);
       // Distinguishable per invocation, so a test can pin what came before what.
-      onLine(args.includes("--dry-run") ? "plan — deploy.sh rebuild" : "PLAY [quickreview] ****");
+      onLine(args.includes("--dry-run") ? "plan — deploy.sh" : "PLAY [quickreview] ****");
       return queue.shift() ?? { code: 0, stdout: "ok\n", stderr: "" };
     },
   };
@@ -448,18 +449,50 @@ function deployHarness(
   return { engine: new OnboardingEngine([vmDeployStep({ stream })], adapters), runs, logs };
 }
 
+const V = "1.2.3";
+const RECORD = (over: Record<string, unknown> = {}) => ({
+  mode: "release",
+  version: "1.2.0",
+  provisioned: true,
+  at: "2026-08-30T10:00:00Z",
+  host: ALIAS,
+  ...over,
+});
+const verbs = (runs: string[][]): string[] => runs.map((r) => r.slice(2).join(" "));
+
 describe("the deploy composes the real script, at full strictness", () => {
   it("the argv is the script and the mode — no flag that skips a check, and no env to override", () => {
-    expect(deployArgv(root, "rebuild")).toEqual([deployScriptPath(root), "rebuild"]);
-    expect(deployArgv(root, "sync", { dryRun: true })).toEqual([
+    expect(deployArgv(root, "provision")).toEqual([deployScriptPath(root), "provision"]);
+    expect(deployArgv(root, "release", { version: V })).toEqual([
+      deployScriptPath(root),
+      "release",
+      V,
+    ]);
+    expect(deployArgv(root, "release", { version: V, dryRun: true })).toEqual([
       deployScriptPath(root),
       "--dry-run",
-      "sync",
+      "release",
+      V,
+    ]);
+    expect(deployArgv(root, "release", { version: V, manifest: "m.json" }).slice(-2)).toEqual([
+      "--manifest",
+      "m.json",
     ]);
     // The StreamRunner interface takes (cmd, args, onLine) and nothing else:
     // there is nowhere for this step to put a QC_* override even if it wanted
     // one, so the defaults the manual path gets are the ones it gets.
-    expect(deployCommandLine("sync")).toBe("scripts/deploy.sh sync");
+    expect(deployCommandLine("release", { version: V })).toBe(`scripts/deploy.sh release ${V}`);
+    expect(deployCommandLine("provision")).toBe("scripts/deploy.sh provision");
+  });
+
+  it("a release without a spelled version, and a version on another mode, cannot be built", () => {
+    expect(() => deployArgv(root, "release")).toThrow(/needs a version/);
+    for (const bad of ["latest", "1.2", "1.2.3; id", "$(id)", ""])
+      expect(() => deployArgv(root, "release", { version: bad }), bad).toThrow(/needs a version/);
+    expect(() => deployArgv(root, "provision", { version: V })).toThrow(/takes no version/);
+    expect(() => deployArgv(root, "verify", { manifest: "m.json" })).toThrow(/takes no version/);
+    // the gone verbs are not modes at all
+    expect(ONBOARD_DEPLOY_MODES).toEqual(["provision", "release"]);
   });
 
   it.each(["QC_INVENTORY", "QC_ANSIBLE_DIR"] as const)(
@@ -472,63 +505,111 @@ describe("the deploy composes the real script, at full strictness", () => {
       writeFileSync(alternate, "[quickreview]\nother-box\n");
       vi.stubEnv(variable, variable === "QC_INVENTORY" ? alternate : elsewhere);
       const h = deployHarness();
-      const result = await h.engine.runStep(VM_DEPLOY_STEP_ID);
+      const result = await h.engine.runStep(VM_DEPLOY_STEP_ID, { version: V });
       expect(result.ok).toBe(false);
       expect(result.failures.join(" ")).toContain("other-box");
       expect(h.runs).toEqual([]);
     },
   );
 
-  it("runs the plan first, then the deploy, and records what it did", async () => {
+  it("needs a version: nothing runs without one, and a bad spelling is refused", async () => {
+    writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
+    for (const input of [
+      {},
+      { version: "latest" },
+      { version: "1.2" },
+      { version: "1.2.3 && id" },
+    ]) {
+      const h = deployHarness();
+      const result = await h.engine.runStep(VM_DEPLOY_STEP_ID, input);
+      expect(result.ok, JSON.stringify(input)).toBe(false);
+      expect(result.failures.join(" ")).toMatch(/release version is needed/);
+      expect(h.runs).toEqual([]);
+    }
+  });
+
+  it("the first deploy is provision then release <version>: each planned first, in order, and recorded", async () => {
     const h = deployHarness();
     writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
-    const result = await h.engine.runStep(VM_DEPLOY_STEP_ID);
+    const result = await h.engine.runStep(VM_DEPLOY_STEP_ID, { version: `v${V}` });
     expect(result.ok).toBe(true);
     expect(h.runs).toEqual([
-      ["bash", deployScriptPath(root), "--dry-run", "rebuild"],
-      ["bash", deployScriptPath(root), "rebuild"],
+      ["bash", deployScriptPath(root), "--dry-run", "provision"],
+      ["bash", deployScriptPath(root), "provision"],
+      ["bash", deployScriptPath(root), "--dry-run", "release", V],
+      ["bash", deployScriptPath(root), "release", V],
     ]);
-    expect(h.engine.choices()[VM_DEPLOY_CHOICE_KEY]).toMatchObject({ mode: "rebuild" });
+    expect(h.engine.choices()[VM_DEPLOY_CHOICE_KEY]).toMatchObject({
+      mode: "release",
+      version: V,
+      provisioned: true,
+      host: ALIAS,
+    });
   });
 
-  it("the first deploy is a rebuild; a later one is a sync; the operator can still ask by name", async () => {
+  it("names the manifest when one is given", async () => {
+    const h = deployHarness({
+      choices: { ...VM_CHOICES, [VM_DEPLOY_CHOICE_KEY]: RECORD() },
+    });
     writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
-    const second = deployHarness({
-      choices: {
-        ...VM_CHOICES,
-        [VM_DEPLOY_CHOICE_KEY]: { mode: "rebuild", at: "2026-08-30T10:00:00Z", host: ALIAS },
-      },
-    });
-    await second.engine.runStep(VM_DEPLOY_STEP_ID);
-    expect(second.runs.map((r) => r.at(-1))).toEqual(["sync", "sync"]);
-
-    const asked = deployHarness({
-      choices: {
-        ...VM_CHOICES,
-        [VM_DEPLOY_CHOICE_KEY]: { mode: "sync", at: "2026-08-30T10:00:00Z", host: ALIAS },
-      },
-    });
-    await asked.engine.runStep(VM_DEPLOY_STEP_ID, { mode: "rebuild" });
-    expect(asked.runs.map((r) => r.at(-1))).toEqual(["rebuild", "rebuild"]);
+    await h.engine.runStep(VM_DEPLOY_STEP_ID, { version: V, manifest: "/tmp/m.json" });
+    expect(h.runs.map((r) => r.slice(-2))).toEqual([
+      ["--manifest", "/tmp/m.json"],
+      ["--manifest", "/tmp/m.json"],
+    ]);
   });
 
-  it("a later deploy is a rebuild when the inventory's host settings changed since — a sync skips host provisioning", async () => {
+  it("a later deploy is the release alone; the operator can still ask for provision by name", async () => {
+    writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
+    const second = deployHarness({ choices: { ...VM_CHOICES, [VM_DEPLOY_CHOICE_KEY]: RECORD() } });
+    await second.engine.runStep(VM_DEPLOY_STEP_ID, { version: V });
+    expect(verbs(second.runs)).toEqual([`--dry-run release ${V}`, `release ${V}`]);
+    expect(second.engine.choices()[VM_DEPLOY_CHOICE_KEY]).toMatchObject({
+      version: V,
+      provisioned: false,
+    });
+
+    const asked = deployHarness({ choices: { ...VM_CHOICES, [VM_DEPLOY_CHOICE_KEY]: RECORD() } });
+    await asked.engine.runStep(VM_DEPLOY_STEP_ID, { version: V, mode: "provision" });
+    expect(verbs(asked.runs)).toEqual([
+      "--dry-run provision",
+      "provision",
+      `--dry-run release ${V}`,
+      `release ${V}`,
+    ]);
+  });
+
+  it("a record from before the release route (sync / rebuild) is no deploy on record", async () => {
+    writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
+    for (const mode of ["sync", "rebuild"]) {
+      const h = deployHarness({
+        choices: {
+          ...VM_CHOICES,
+          [VM_DEPLOY_CHOICE_KEY]: { mode, at: "2026-08-30T10:00:00Z", host: ALIAS },
+        },
+      });
+      await h.engine.runStep(VM_DEPLOY_STEP_ID, { version: V });
+      expect(verbs(h.runs)[0], mode).toBe("--dry-run provision");
+    }
+  });
+
+  it("a later deploy provisions first when the inventory's host settings changed since", async () => {
     writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS} cloudflared_enabled=true\n`);
     const changed = deployHarness({
       choices: {
         ...VM_CHOICES,
-        [VM_DEPLOY_CHOICE_KEY]: {
-          mode: "rebuild",
-          at: "2026-08-30T10:00:00Z",
-          host: ALIAS,
-          host_vars: { cloudflared_enabled: "false" },
-        },
+        [VM_DEPLOY_CHOICE_KEY]: RECORD({ host_vars: { cloudflared_enabled: "false" } }),
       },
     });
-    const result = await changed.engine.runStep(VM_DEPLOY_STEP_ID);
-    expect(changed.runs.map((r) => r.at(-1))).toEqual(["rebuild", "rebuild"]);
+    const result = await changed.engine.runStep(VM_DEPLOY_STEP_ID, { version: V });
+    expect(verbs(changed.runs)).toEqual([
+      "--dry-run provision",
+      "provision",
+      `--dry-run release ${V}`,
+      `release ${V}`,
+    ]);
     expect(result.checks.find((c) => c.name === "mode")!.detail).toMatch(/cloudflared_enabled/);
-    // What it deployed with is recorded, so the next run compares against it.
+    // What it provisioned with is recorded, so the next run compares against it.
     expect(changed.engine.choices()[VM_DEPLOY_CHOICE_KEY]).toMatchObject({
       host_vars: { cloudflared_enabled: "true" },
     });
@@ -536,53 +617,46 @@ describe("the deploy composes the real script, at full strictness", () => {
     const same = deployHarness({
       choices: {
         ...VM_CHOICES,
-        [VM_DEPLOY_CHOICE_KEY]: {
-          mode: "rebuild",
-          at: "2026-08-30T10:00:00Z",
-          host: ALIAS,
-          host_vars: { cloudflared_enabled: "true" },
-        },
+        [VM_DEPLOY_CHOICE_KEY]: RECORD({ host_vars: { cloudflared_enabled: "true" } }),
       },
     });
-    await same.engine.runStep(VM_DEPLOY_STEP_ID);
-    expect(same.runs.map((r) => r.at(-1))).toEqual(["sync", "sync"]);
+    await same.engine.runStep(VM_DEPLOY_STEP_ID, { version: V });
+    expect(verbs(same.runs)).toEqual([`--dry-run release ${V}`, `release ${V}`]);
   });
 
-  it("an explicit sync preserves the last provisioned host settings for the next default run", async () => {
+  it("a release alone preserves the last provisioned host settings for the next default run", async () => {
     writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS} cloudflared_enabled=true\n`);
     const h = deployHarness({
       choices: {
         ...VM_CHOICES,
-        [VM_DEPLOY_CHOICE_KEY]: {
-          mode: "rebuild",
-          at: "2026-08-30T10:00:00Z",
-          host: ALIAS,
-          host_vars: { cloudflared_enabled: "false" },
-        },
+        [VM_DEPLOY_CHOICE_KEY]: RECORD({ host_vars: { cloudflared_enabled: "false" } }),
       },
     });
-    expect((await h.engine.runStep(VM_DEPLOY_STEP_ID, { mode: "sync" })).ok).toBe(true);
+    // "release" by name is the release alone, even with a changed host setting.
+    expect((await h.engine.runStep(VM_DEPLOY_STEP_ID, { version: V, mode: "release" })).ok).toBe(
+      true,
+    );
     expect(h.engine.choices()[VM_DEPLOY_CHOICE_KEY]).toMatchObject({
       host_vars: { cloudflared_enabled: "false" },
     });
     expect((await h.engine.verifyAll()).ok).toBe(false);
-    await h.engine.runStep(VM_DEPLOY_STEP_ID);
-    expect(h.runs.map((r) => r.at(-1))).toEqual(["sync", "sync", "rebuild", "rebuild"]);
+    await h.engine.runStep(VM_DEPLOY_STEP_ID, { version: V });
+    expect(verbs(h.runs).filter((v) => v === "provision")).toEqual(["provision"]);
   });
 
-  it("a deploy recorded for another host does not make a fresh host's first deploy a sync", async () => {
+  it("a deploy recorded for another host does not make a fresh host's first deploy a bare release", async () => {
     writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
     for (const record of [
-      { mode: "rebuild", at: "2026-08-30T10:00:00Z", host: "old-box" },
+      RECORD({ host: "old-box" }),
       // A record that names no host is not trusted.
-      { mode: "rebuild", at: "2026-08-30T10:00:00Z" },
+      { mode: "release", version: "1.2.0", at: "2026-08-30T10:00:00Z" },
     ]) {
       const moved = deployHarness({ choices: { ...VM_CHOICES, [VM_DEPLOY_CHOICE_KEY]: record } });
-      const result = await moved.engine.runStep(VM_DEPLOY_STEP_ID);
+      const result = await moved.engine.runStep(VM_DEPLOY_STEP_ID, { version: V });
       expect(result.ok).toBe(true);
-      expect(moved.runs.map((r) => r.at(-1))).toEqual(["rebuild", "rebuild"]);
+      expect(verbs(moved.runs)[0]).toBe("--dry-run provision");
       expect(moved.engine.choices()[VM_DEPLOY_CHOICE_KEY]).toMatchObject({
-        mode: "rebuild",
+        mode: "release",
         host: ALIAS,
       });
     }
@@ -591,7 +665,7 @@ describe("the deploy composes the real script, at full strictness", () => {
   it("refuses when the inventory targets a host other than the recorded alias — nothing runs", async () => {
     writeFileSync(inventoryPath(root), "[quickreview]\nold-box\n");
     const h = deployHarness();
-    const result = await h.engine.runStep(VM_DEPLOY_STEP_ID);
+    const result = await h.engine.runStep(VM_DEPLOY_STEP_ID, { version: V });
     expect(result.ok).toBe(false);
     expect(result.failures.join(" ")).toMatch(
       /targets "old-box", not the recorded alias "review-box"/,
@@ -602,22 +676,38 @@ describe("the deploy composes the real script, at full strictness", () => {
   it("a refusal at plan time is quoted verbatim and STOPS — the real deploy never runs", async () => {
     writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
     const h = deployHarness({
+      choices: { ...VM_CHOICES, [VM_DEPLOY_CHOICE_KEY]: RECORD() },
       results: [
         {
           code: 1,
           stdout: "",
           stderr:
-            "deploy.sh: refusing to deploy — the working tree is dirty:\n    M src/daemon.ts\ndeploy.sh: commit (locally) and re-run.",
+            "deploy.sh: no deploy manifest at ./deploy-manifest-1.2.3.json — the release workflow emits it\ndeploy.sh: download it, or name it with --manifest",
         },
       ],
     });
-    const result = await h.engine.runStep(VM_DEPLOY_STEP_ID);
+    const result = await h.engine.runStep(VM_DEPLOY_STEP_ID, { version: V });
     expect(result.ok).toBe(false);
     expect(h.runs).toHaveLength(1);
     expect(h.runs[0]!).toContain("--dry-run");
     const said = result.failures.join(" ");
-    expect(said).toMatch(/the working tree is dirty/);
+    expect(said).toMatch(/no deploy manifest/);
     expect(said).toMatch(/the wizard does not have a way to override it/);
+    expect(h.engine.choices()[VM_DEPLOY_CHOICE_KEY]).toMatchObject({ version: "1.2.0" });
+  });
+
+  it("a failed provision stops before any release is planned or run", async () => {
+    writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
+    const h = deployHarness({
+      results: [
+        { code: 0, stdout: "plan\n", stderr: "" },
+        { code: 3, stdout: "", stderr: "TASK [docker] failed" },
+      ],
+    });
+    const result = await h.engine.runStep(VM_DEPLOY_STEP_ID, { version: V });
+    expect(result.ok).toBe(false);
+    expect(verbs(h.runs)).toEqual(["--dry-run provision", "provision"]);
+    expect(result.failures.join(" ")).toMatch(/scripts\/deploy\.sh provision` exited 3/);
     expect(h.engine.choices()[VM_DEPLOY_CHOICE_KEY]).toBeUndefined();
   });
 
@@ -633,30 +723,29 @@ describe("the deploy composes the real script, at full strictness", () => {
         },
       ],
     });
-    const said = (await h.engine.runStep(VM_DEPLOY_STEP_ID)).failures.join(" ");
+    const said = (await h.engine.runStep(VM_DEPLOY_STEP_ID, { version: V })).failures.join(" ");
     expect(said).toMatch(/openviking pin mismatch/);
     expect(h.runs).toHaveLength(1);
   });
 
-  it("warns about the long first build BEFORE it starts, never after", async () => {
+  it("warns before the long wait, never after it", async () => {
     writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
     const h = deployHarness();
-    await h.engine.runStep(VM_DEPLOY_STEP_ID);
-    const warningAt = h.logs.findIndex((l) =>
-      l.includes("compiles the memory engine's local embedder"),
-    );
-    const planAt = h.logs.findIndex((l) => l.includes("plan — deploy.sh rebuild"));
+    await h.engine.runStep(VM_DEPLOY_STEP_ID, { version: V });
+    const warningAt = h.logs.findIndex((l) => l.includes("Nothing is built on the server"));
+    const planAt = h.logs.findIndex((l) => l.includes("plan — deploy.sh"));
     const deployAt = h.logs.findIndex((l) => l.includes("PLAY [quickreview]"));
     expect(warningAt).toBeGreaterThanOrEqual(0);
     // Plan, then the warning, then the long wait. Never the warning afterwards.
     expect(planAt).toBeLessThan(warningAt);
     expect(warningAt).toBeLessThan(deployAt);
     expect(DEPLOY_BUILD_WARNING).toMatch(/preflights execute at full strength/);
+    expect(DEPLOY_BUILD_WARNING).not.toMatch(/compil|rebuild/i);
   });
 
   it("refuses without an inventory, naming the step that writes one", async () => {
     const h = deployHarness();
-    const result = await h.engine.runStep(VM_DEPLOY_STEP_ID);
+    const result = await h.engine.runStep(VM_DEPLOY_STEP_ID, { version: V });
     expect(result.ok).toBe(false);
     expect(result.failures.join(" ")).toMatch(new RegExp(VM_INVENTORY_STEP_ID));
     expect(h.runs).toEqual([]);
@@ -665,34 +754,28 @@ describe("the deploy composes the real script, at full strictness", () => {
   it("verify never deploys — it asks the server what is running", async () => {
     writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
     const h = deployHarness({
-      choices: {
-        ...VM_CHOICES,
-        [VM_DEPLOY_CHOICE_KEY]: { mode: "sync", at: "2026-08-30T10:00:00Z", host: ALIAS },
-      },
+      choices: { ...VM_CHOICES, [VM_DEPLOY_CHOICE_KEY]: RECORD() },
     });
     const report = await h.engine.verifyAll();
     expect(report.ok).toBe(true);
     expect(h.runs).toEqual([]);
 
     const down = deployHarness({
-      choices: {
-        ...VM_CHOICES,
-        [VM_DEPLOY_CHOICE_KEY]: { mode: "sync", at: "2026-08-30T10:00:00Z", host: ALIAS },
-      },
+      choices: { ...VM_CHOICES, [VM_DEPLOY_CHOICE_KEY]: RECORD() },
       containerState: "exited",
     });
     const bad = await down.engine.verifyAll();
     expect(bad.ok).toBe(false);
     expect(bad.results[0]!.failures.join(" ")).toMatch(/container on review-box is exited/);
 
-    // A deploy on record for another host (or an unscoped legacy one) is not
-    // this host's deploy, and says which it was rather than "none yet".
+    // A deploy on record for another host (or an unscoped one) is not this
+    // host's deploy, and says which it was rather than "none yet".
     for (const [record, where] of [
+      [RECORD({ host: "old-box" }), /was to "old-box", not review-box/],
       [
-        { mode: "sync", at: "2026-08-30T10:00:00Z", host: "old-box" },
-        /was to "old-box", not review-box/,
+        { mode: "release", version: "1.2.0", at: "2026-08-30T10:00:00Z" },
+        /was to an unrecorded host, not review-box/,
       ],
-      [{ mode: "sync", at: "2026-08-30T10:00:00Z" }, /was to an unrecorded host, not review-box/],
     ] as const) {
       const moved = deployHarness({ choices: { ...VM_CHOICES, [VM_DEPLOY_CHOICE_KEY]: record } });
       const r = await moved.engine.verifyAll();
@@ -823,7 +906,7 @@ describe("the ssh transport's probes and restart", () => {
     const r = await stackTransportFor(ctx).restart(() => undefined, false);
     expect(r.ok).toBe(false);
     expect(r.detail).toMatch(/exists but is not running/);
-    expect(r.detail).toMatch(/deploy\.sh sync/);
+    expect(r.detail).toMatch(/deploy\.sh release <version>/);
   });
 
   it("a server never deployed to has nothing to restart; one Docker cannot answer for is not 'done'", async () => {
@@ -1004,8 +1087,15 @@ describe("the go-live flip on the server route", () => {
     review_shown: true,
   };
 
-  function golive(inventoryHost = ALIAS): { engine: OnboardingEngine; deploys: string[][] } {
-    seedChoices({ ...VM_CHOICES, [PROOF_CHOICE_KEY]: PROOF });
+  function golive(
+    inventoryHost = ALIAS,
+    deployed: unknown = RECORD(),
+  ): { engine: OnboardingEngine; deploys: string[][] } {
+    seedChoices({
+      ...VM_CHOICES,
+      [PROOF_CHOICE_KEY]: PROOF,
+      ...(deployed === null ? {} : { [VM_DEPLOY_CHOICE_KEY]: deployed }),
+    });
     writeFileSync(inventoryPath(root), `[quickreview]\n${inventoryHost}\n`);
     const deploys: string[][] = [];
     const runner = {
@@ -1050,10 +1140,24 @@ describe("the go-live flip on the server route", () => {
     expect(loadConfig(join(root, "config.toml")).dry_run).toBe(false);
     // On this route the deploy IS the restart: the daemon reads the config the
     // deploy ships, so a hand-rolled `docker restart` would leave it stale.
-    expect(h.deploys).toEqual([["bash", deployScriptPath(root), "sync"]]);
+    // — re-releasing the version that is deployed, which ships the config home.
+    expect(h.deploys).toEqual([["bash", deployScriptPath(root), "release", "1.2.0"]]);
     expect(result.checks.find((c) => c.name === "daemon-restart")!.detail).toMatch(
-      /scripts\/deploy\.sh sync/,
+      /scripts\/deploy\.sh release 1\.2\.0/,
     );
+  });
+
+  it("with no release version on record it ships nothing and says how to record one", async () => {
+    const h = golive(ALIAS, null);
+    const result = await h.engine.runStep(GO_LIVE_STEP_ID, {
+      decision: "go_live",
+      confirm: GO_LIVE_CONFIRMATION,
+    });
+    expect(h.deploys).toEqual([]);
+    const restart = result.checks.find((c) => c.name === "daemon-restart")!;
+    expect(restart.ok).toBe(false);
+    expect(restart.detail).toMatch(/no release version is recorded/);
+    expect(restart.detail).toMatch(/release <version>/);
   });
 
   it("never ships through an inventory that targets another host than the one it checked", async () => {

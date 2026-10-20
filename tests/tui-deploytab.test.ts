@@ -1,16 +1,20 @@
 // Deploy tab — argv construction, BUILD_SHA parsing, the pure line renderer,
 // and key routing. All runners are fakes; nothing spawns, nothing sshes.
 import { EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { RELEASE_IMAGE_REPO } from "../src/onboard/steps/compose.js";
 import { TUI_DEFAULTS } from "../src/config.js";
 import { App } from "../src/tui/app.js";
 import {
   CONFIG_FINGERPRINT_ARGV,
   DIRTY_ARGV,
   HEAD_ARGV,
-  PLAN_ARGV,
+  PUBLISHED_VERSIONS_ARGV,
   RealDeployFetcher,
-  buildShaArgv,
+  UPDATE_STATUS_ARGV,
   configFingerprintArgv,
   deployKeys,
   deployLines,
@@ -18,6 +22,11 @@ import {
   installDeployHooks,
   logArgv,
   parseBuildSha,
+  parsePublishedVersions,
+  parseUpdateStatus,
+  planArgv,
+  releasePackage,
+  versionRevArgv,
   type DeployDrainSender,
   type DeployState,
   type LocalRunner,
@@ -59,140 +68,252 @@ const emptyState = (over: Partial<DeployState> = {}): DeployState => ({
   ...over,
 });
 
-describe("deploy tab argv + parsing", () => {
-  it("reads BUILD_SHA through docker exec like the digest tab", () => {
-    const argv = buildShaArgv(TUI_DEFAULTS);
-    expect(argv.slice(0, 4)).toEqual(["sudo", "docker", "exec", "quickreview-sandbox"]);
-    expect(argv[argv.length - 1]).toContain("cat '/opt/quickreview/sandbox/BUILD_SHA'");
-  });
+const RELEASE_REPORT = JSON.stringify({
+  layout: "release",
+  daemon: { container: "quickreview-sandbox", build_sha: "aaa1111", layout: "release" },
+  drain: { draining: null, running_rounds: null },
+  last_run: {
+    version: "1.0.0",
+    at: "2026-08-14T12:00:00Z",
+    result: "ok",
+    step: "done",
+    detail: "",
+  },
+});
 
-  it("builds read-only local git argvs against the deployed sha", () => {
-    expect(logArgv("abc1234")).toEqual(["git", "log", "--oneline", "abc1234..HEAD"]);
-    expect(diffStatArgv("abc1234")).toEqual(["git", "diff", "--stat", "abc1234..HEAD"]);
+describe("deploy tab argv + parsing", () => {
+  it("builds read-only local git argvs between the two revisions", () => {
+    expect(logArgv("abc1234", "def5678")).toEqual(["git", "log", "--oneline", "abc1234..def5678"]);
+    expect(diffStatArgv("abc1234", "def5678")).toEqual([
+      "git",
+      "diff",
+      "--stat",
+      "abc1234..def5678",
+    ]);
     expect(HEAD_ARGV).toContain("rev-parse");
     expect(DIRTY_ARGV).toContain("--porcelain");
-    expect(PLAN_ARGV).toEqual(["bash", "scripts/deploy.sh", "--dry-run", "sync"]);
+    expect(versionRevArgv("1.2.3")).toEqual(["git", "rev-parse", "--short", "v1.2.3^{commit}"]);
   });
 
-  it("reads the release image's marker at its app root, and the bare CI sha it holds parses", () => {
-    // After the VM moved onto the release image the TUI's remote_sandbox_root is
-    // the image's app root, where the build stamp is one bare sha, not a
-    // `<sha> <iso> <mode>` line.
-    const cfg = { ...TUI_DEFAULTS, remote_sandbox_root: "/opt/qcr" };
-    expect(buildShaArgv(cfg).at(-1)).toContain("cat '/opt/qcr/BUILD_SHA'");
+  it("the plan is deploy.sh's own --dry-run release <version>, never sync or rebuild", () => {
+    expect(planArgv("1.2.3")).toEqual([
+      "bash",
+      "scripts/deploy.sh",
+      "--dry-run",
+      "release",
+      "1.2.3",
+    ]);
+    expect(planArgv("1.2.3-rc.1").slice(-2)).toEqual(["release", "1.2.3-rc.1"]);
+  });
+
+  it("asks the updater for the VM's version and revision, read-only, over ssh", () => {
+    expect(UPDATE_STATUS_ARGV).toEqual(["sudo", "qcr-update", "status", "--json"]);
+    expect(parseUpdateStatus(RELEASE_REPORT)).toEqual({
+      layout: "release",
+      revision: "aaa1111",
+      version: "1.0.0",
+      at: "2026-08-14T12:00:00Z",
+    });
+    // a last run that did not finish ok says nothing about the running version
+    const failed = JSON.parse(RELEASE_REPORT);
+    failed.last_run.result = "rescued";
+    expect(parseUpdateStatus(JSON.stringify(failed))).toEqual({
+      layout: "release",
+      revision: "aaa1111",
+    });
+    expect(parseUpdateStatus('{"layout":"legacy","daemon":null,"last_run":null}')).toEqual({
+      layout: "legacy",
+    });
+    expect(parseUpdateStatus("not json")).toBeUndefined();
+    expect(parseUpdateStatus('{"layout":"weird"}')).toBeUndefined();
+    expect(parseUpdateStatus("[]")).toBeUndefined();
+  });
+
+  it("lists published versions from a read-only gh api call, newest first, tags only", () => {
+    expect(PUBLISHED_VERSIONS_ARGV.slice(0, 2)).toEqual(["gh", "api"]);
+    const { org, name } = releasePackage(RELEASE_IMAGE_REPO);
+    expect(org).not.toBe("");
+    expect(name).not.toBe("");
+    expect(PUBLISHED_VERSIONS_ARGV.join(" ")).toContain(
+      `orgs/${org}/packages/container/${name}/versions`,
+    );
+    // the package is the daemon image's repository, not a second spelling of it
+    expect(RELEASE_IMAGE_REPO).toBe(`ghcr.io/${org}/${name}`);
+    // no verb that mutates
+    expect(PUBLISHED_VERSIONS_ARGV).not.toContain("-X");
+    expect(PUBLISHED_VERSIONS_ARGV).not.toContain("--method");
+    expect(
+      parsePublishedVersions("latest\n1.2.3\n1.10.0\n1.2.3\nsha256-abc\n1.2.3-rc.1\n0.9.9\n"),
+    ).toEqual(["1.10.0", "1.2.3", "1.2.3-rc.1", "0.9.9"]);
+    expect(parsePublishedVersions("")).toEqual([]);
+  });
+
+  it("parses the bare CI build stamp `qcr metrics` reads, and rejects garbage", () => {
     const full = "0123456789abcdef0123456789abcdef01234567";
     expect(parseBuildSha(`${full}\n`)).toEqual({ sha: full, at: undefined, mode: undefined });
-    // A local, unstamped image says nothing about what it runs.
     expect(parseBuildSha("unstamped\n")).toBeUndefined();
+    expect(parseBuildSha("")).toBeUndefined();
   });
 
-  it("parses BUILD_SHA lines and rejects garbage", () => {
-    expect(parseBuildSha("540a9d0 2026-08-14T13:10:00Z sync\n")).toEqual({
-      sha: "540a9d0",
-      at: "2026-08-14T13:10:00Z",
-      mode: "sync",
-    });
-    expect(parseBuildSha("540a9d0\n")).toEqual({ sha: "540a9d0", at: undefined, mode: undefined });
-    expect(parseBuildSha("")).toBeUndefined();
-    expect(parseBuildSha("not-a-sha here\n")).toBeUndefined();
+  it("no deploy argv anywhere in the deploy surface spells sync or rebuild", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const files = [
+      "../src/tui/deploytab.ts",
+      "../src/tui/deploy-process.ts",
+      "../scripts/tui-deploy-runner.mjs",
+      "../src/onboard/steps/deploysh.ts",
+      "../src/onboard/steps/vmdeploy.ts",
+      "../src/onboard/steps/transport.ts",
+    ];
+    for (const rel of files) {
+      const text = readFileSync(join(here, rel), "utf8");
+      // an argv/command spelling: deploy.sh followed by a gone verb, or a gone verb as a mode literal
+      expect(text, rel).not.toMatch(/deploy\.sh["',\s\]]+(--dry-run["',\s]+)?(sync|rebuild)\b/);
+      expect(text, rel).not.toMatch(/(deployCommandLine|deployArgv)\([^)]*"(sync|rebuild)"/);
+      expect(text, rel).not.toMatch(/deploymentMode[^\n]*"(sync|rebuild)"/);
+    }
   });
 });
 
 describe("RealDeployFetcher", () => {
-  function fetcherWith(marker: RemoteResult, local: Record<string, RemoteResult>) {
+  const PLAN_121 = planArgv("1.2.1").join(" ");
+  function fetcherWith(
+    report: RemoteResult,
+    local: Record<string, RemoteResult>,
+    published = "1.2.1\n1.0.0\n",
+  ) {
     const localCalls: string[][] = [];
     const localRunner: LocalRunner = async (argv) => {
       localCalls.push(argv);
+      if (argv.join(" ") === PUBLISHED_VERSIONS_ARGV.join(" ")) return ok(published);
       return local[argv.join(" ")] ?? fail();
     };
-    const f = new RealDeployFetcher(TUI_DEFAULTS, async () => marker, localRunner);
-    return { f, localCalls };
+    const sshCalls: string[][] = [];
+    const f = new RealDeployFetcher(
+      TUI_DEFAULTS,
+      async (_h, argv) => {
+        sshCalls.push(argv);
+        return argv.join(" ") === UPDATE_STATUS_ARGV.join(" ") ? report : ok("");
+      },
+      localRunner,
+    );
+    return { f, localCalls, sshCalls };
   }
 
-  it("diffs local HEAD against the deployed sha when the marker exists", async () => {
-    const { f } = fetcherWith(ok("aaa1111 2026-08-14T12:00:00Z sync\n"), {
+  it("shows the running version and revision against the newest published version, with the commits between", async () => {
+    const { f, sshCalls } = fetcherWith(ok(RELEASE_REPORT), {
       [HEAD_ARGV.join(" ")]: ok("bbb2222\n"),
       [DIRTY_ARGV.join(" ")]: ok(""),
-      [PLAN_ARGV.join(" ")]: ok("plan — deploy.sh sync\n"),
-      [logArgv("aaa1111").join(" ")]: ok("bbb2222 fix the thing\n"),
-      [diffStatArgv("aaa1111").join(" ")]: ok(" src/x.ts | 2 +-\n"),
+      [PLAN_121]: ok("plan — deploy.sh release 1.2.1\n"),
+      [versionRevArgv("1.2.1").join(" ")]: ok("ccc3333\n"),
+      [logArgv("aaa1111", "ccc3333").join(" ")]: ok("ccc3333 fix the thing\n"),
+      [diffStatArgv("aaa1111", "ccc3333").join(" ")]: ok(" src/x.ts | 2 +-\n"),
     });
     const st = await f.load();
-    expect(st.deployed).toMatchObject({ sha: "aaa1111" });
-    expect(st.head).toBe("bbb2222");
-    expect(st.commits).toEqual(["bbb2222 fix the thing"]);
+    expect(sshCalls.some((c) => c.join(" ") === UPDATE_STATUS_ARGV.join(" "))).toBe(true);
+    expect(st.layout).toBe("release");
+    expect(st.deployed).toEqual({ sha: "aaa1111", version: "1.0.0", at: "2026-08-14T12:00:00Z" });
+    expect(st.versions).toEqual(["1.2.1", "1.0.0"]);
+    expect(st.version).toBe("1.2.1");
+    expect(st.versionRev).toBe("ccc3333");
+    expect(st.commits).toEqual(["ccc3333 fix the thing"]);
     expect(st.diffstat).toEqual([" src/x.ts | 2 +-"]);
+    expect(st.plan.join("\n")).toContain("deploy.sh release 1.2.1");
   });
 
-  it("degrades to marker-unknown without local git calls against it", async () => {
-    const { f, localCalls } = fetcherWith(ok(""), {
+  it("a typed version beats the newest published one, and is not required to be published", async () => {
+    const { f, localCalls } = fetcherWith(ok(RELEASE_REPORT), {
       [HEAD_ARGV.join(" ")]: ok("bbb2222\n"),
-      [DIRTY_ARGV.join(" ")]: ok(" M src/x.ts\n"),
-      [PLAN_ARGV.join(" ")]: fail("deploy.sh: refusing to deploy — the working tree is dirty:\n"),
+      [DIRTY_ARGV.join(" ")]: ok(""),
+      [planArgv("9.9.9").join(" ")]: ok("plan 9.9.9\n"),
     });
-    const st = await f.load();
-    expect(st.deployed).toBe("absent"); // the VM answered: no marker file
+    const st = await f.load("9.9.9");
+    expect(st.version).toBe("9.9.9");
+    expect(localCalls.some((c) => c.join(" ") === planArgv("9.9.9").join(" "))).toBe(true);
+    // its tag is not in the checkout: the commits are unknown, not zero
+    expect(st.versionRev).toBeUndefined();
     expect(st.commits).toBeUndefined();
-    expect(st.dirty).toEqual([" M src/x.ts"]);
-    // the refusal is shown verbatim as the plan
-    expect(st.plan.join("\n")).toContain("refusing to deploy");
+  });
+
+  it("an unreadable published listing leaves a typed version working and the list unknown", async () => {
+    const localRunner: LocalRunner = async (argv) =>
+      argv[0] === "gh" ? fail("gh: not logged in") : ok("");
+    const f = new RealDeployFetcher(TUI_DEFAULTS, async () => ok(RELEASE_REPORT), localRunner);
+    const none = await f.load();
+    expect(none.versions).toBeUndefined();
+    expect(none.version).toBeUndefined();
+    expect(none.plan.join("\n")).toContain("no version chosen");
+    const typed = await f.load("1.4.0");
+    expect(typed.version).toBe("1.4.0");
+  });
+
+  it("a version that is not a release spelling never reaches deploy.sh", async () => {
+    const { f, localCalls } = fetcherWith(ok(RELEASE_REPORT), {});
+    const st = await f.load("latest; rm -rf /");
+    expect(st.plan.join("\n")).toContain("is not a release version");
+    expect(localCalls.some((c) => c.includes("deploy.sh"))).toBe(false);
+  });
+
+  it("the legacy layout is read as legacy: no release to show, no commit list", async () => {
+    const { f, localCalls } = fetcherWith(
+      ok('{"layout":"legacy","daemon":{"build_sha":"","layout":""},"last_run":null}'),
+      {
+        [PLAN_121]: ok("plan\n"),
+        [versionRevArgv("1.2.1").join(" ")]: ok("ccc3333\n"),
+      },
+    );
+    const st = await f.load();
+    expect(st.layout).toBe("legacy");
+    expect(st.deployed).toBe("absent");
+    expect(st.commits).toBeUndefined();
     expect(localCalls.some((c) => c.includes("log"))).toBe(false);
   });
 
-  it("answers empty only for a MISSING marker — a marker it cannot read fails the exec", () => {
-    const script = buildShaArgv(TUI_DEFAULTS).at(-1)!;
-    expect(script).toBe(
-      "if [ -e '/opt/quickreview/sandbox/BUILD_SHA' ]; then cat '/opt/quickreview/sandbox/BUILD_SHA'; fi",
+  it("an ssh that never answered is NOT a VM with no release", async () => {
+    const localCalls: string[][] = [];
+    const f = new RealDeployFetcher(
+      TUI_DEFAULTS,
+      async () => fail("ssh: connect timed out"),
+      async (argv) => {
+        localCalls.push(argv);
+        return argv[0] === "gh" ? ok("1.2.1\n") : ok("");
+      },
     );
-    expect(script).not.toContain("|| true");
+    const st = await f.load();
+    expect(st.deployed).toBeUndefined();
+    expect(st.layout).toBeUndefined();
+    expect(st.containerStatus).toBeUndefined();
+    expect(localCalls.some((c) => c.includes("log"))).toBe(false);
+  });
+
+  // The read SUCCEEDED here — the content is the problem — so it is neither a
+  // VM with no release nor an ssh failure, and neither of those sentences is true.
+  it("a report that is read but is not the updater's is unparseable — not absent, not unread", async () => {
+    const { f } = fetcherWith(ok("sudo: qcr-update: command not found\n"), {});
+    const st = await f.load();
+    expect(st.deployed).toBe("unparseable");
+    expect(st.layout).toBeUndefined();
   });
 
   it("a range read that fails replaces the previous load's commits and diffstat", async () => {
     const results: Record<string, RemoteResult> = {
       [HEAD_ARGV.join(" ")]: ok("bbb2222\n"),
       [DIRTY_ARGV.join(" ")]: ok(""),
-      [PLAN_ARGV.join(" ")]: ok("plan\n"),
-      [logArgv("aaa1111").join(" ")]: ok("bbb2222 fix the thing\n"),
-      [diffStatArgv("aaa1111").join(" ")]: ok(" src/x.ts | 2 +-\n"),
+      [PLAN_121]: ok("plan\n"),
+      [versionRevArgv("1.2.1").join(" ")]: ok("ccc3333\n"),
+      [logArgv("aaa1111", "ccc3333").join(" ")]: ok("ccc3333 fix the thing\n"),
+      [diffStatArgv("aaa1111", "ccc3333").join(" ")]: ok(" src/x.ts | 2 +-\n"),
     };
-    const { f } = fetcherWith(ok("aaa1111 2026-08-14T12:00:00Z sync\n"), results);
+    const { f } = fetcherWith(ok(RELEASE_REPORT), results);
     const st: Partial<DeployState> = {};
     Object.assign(st, await f.load());
-    expect(st.commits).toEqual(["bbb2222 fix the thing"]);
-    delete results[logArgv("aaa1111").join(" ")];
-    delete results[diffStatArgv("aaa1111").join(" ")];
+    expect(st.commits).toEqual(["ccc3333 fix the thing"]);
+    delete results[logArgv("aaa1111", "ccc3333").join(" ")];
+    delete results[diffStatArgv("aaa1111", "ccc3333").join(" ")];
     // The tab merges every load over the last one (Object.assign).
     Object.assign(st, await f.load());
     expect(st.commits).toBeUndefined();
     expect(st.diffstat).toBeUndefined();
-  });
-
-  // A missing marker answers empty output, so an
-  // ok/empty answer is a VM with no marker; a failed exec is a VM we could not
-  // ask. The two stay apart: neither the tab nor the companion feed may read
-  // an unasked VM as "no marker".
-  it("an ssh that never answered is NOT a VM with no marker", async () => {
-    const { f, localCalls } = fetcherWith(fail("ssh: connect timed out"), {
-      [HEAD_ARGV.join(" ")]: ok("bbb2222\n"),
-      [DIRTY_ARGV.join(" ")]: ok(""),
-      [PLAN_ARGV.join(" ")]: ok("plan\n"),
-    });
-    const st = await f.load();
-    expect(st.deployed).toBeUndefined();
-    expect(st.containerStatus).toBeUndefined();
-    expect(localCalls.some((c) => c.includes("log"))).toBe(false);
-  });
-
-  // The read SUCCEEDED here — the content is the problem — so it is neither a
-  // missing marker nor an ssh failure, and neither of those sentences is true.
-  it("a marker that exists but is garbage is unparseable — not absent, not unread", async () => {
-    const { f, localCalls } = fetcherWith(ok("not-a-sha here\n"), {
-      [HEAD_ARGV.join(" ")]: ok("bbb2222\n"),
-      [DIRTY_ARGV.join(" ")]: ok(""),
-      [PLAN_ARGV.join(" ")]: ok(""),
-    });
-    expect((await f.load()).deployed).toBe("unparseable");
-    expect(localCalls.some((c) => c.includes("log"))).toBe(false);
   });
 });
 
@@ -277,7 +398,13 @@ describe("config home vs the VM", () => {
     const at = (over: Partial<DeployState>) =>
       stripAnsi(
         deployLines(
-          emptyState({ deployed: { sha: "aaa1111" }, head: "aaa1111", commits: [], ...over }),
+          emptyState({
+            deployed: { sha: "aaa1111", version: "1.2.1" },
+            version: "1.2.1",
+            layout: "release",
+            commits: [],
+            ...over,
+          }),
           100,
         ).join("\n"),
       );
@@ -293,11 +420,14 @@ describe("config home vs the VM", () => {
 });
 
 describe("deployLines", () => {
-  it("says nothing-to-deploy when the VM already runs HEAD and the tree is clean", () => {
+  it("says nothing-to-deploy when the VM already runs the chosen version", () => {
     const text = stripAnsi(
       deployLines(
         emptyState({
-          deployed: { sha: "aaa1111" },
+          deployed: { sha: "aaa1111", version: "1.2.1" },
+          version: "1.2.1",
+          versions: ["1.2.1"],
+          layout: "release",
           head: "aaa1111",
           commits: [],
           diffstat: [],
@@ -308,7 +438,7 @@ describe("deployLines", () => {
       ).join("\n"),
     );
     expect(text).toContain("nothing to deploy");
-    expect(text).toContain("./scripts/deploy.sh sync");
+    expect(text).toContain("./scripts/deploy.sh release 1.2.1");
     expect(text).toContain("press D twice");
   });
 
@@ -330,45 +460,62 @@ describe("deployLines", () => {
 
   it("lists pending commits, dirty files and the plan", () => {
     const st = emptyState({
-      deployed: { sha: "aaa1111", at: "2026-08-14T12:00:00Z", mode: "sync" },
+      deployed: { sha: "aaa1111", at: "2026-08-14T12:00:00Z", version: "1.0.0" },
+      version: "1.2.1",
+      versionRev: "ccc3333",
+      layout: "release",
       head: "ccc3333",
       dirty: ["?? notes.txt"],
       commits: ["ccc3333 tui deploy tab", "bbb2222 fix dispatch"],
       diffstat: [" 2 files changed"],
-      plan: ["plan — deploy.sh sync"],
+      plan: ["plan — deploy.sh release 1.2.1"],
     });
     const text = stripAnsi(deployLines(st, 90).join("\n"));
     expect(text).toContain("PENDING (2)");
     expect(text).toContain("ccc3333 tui deploy tab");
     expect(text).toContain("dirty — 1 uncommitted (deploy.sh will refuse)");
-    expect(text).toContain("plan — deploy.sh sync");
+    expect(text).toContain("plan — deploy.sh release 1.2.1");
+    // the running version and revision against the chosen one
+    expect(text).toContain("1.0.0");
+    expect(text).toContain("rev aaa1111");
+    expect(text).toContain("1.2.1");
+    expect(text).toContain("rev ccc3333");
+    expect(text).toContain("aaa1111..ccc3333");
   });
 
   it("renders 'no marker' and 'could not read' as different sentences, and an unread HEAD as unknown", () => {
     const absent = stripAnsi(
       deployLines(emptyState({ deployed: "absent", head: "ccc3333" }), 90).join("\n"),
     );
-    expect(absent).toContain("no BUILD_SHA on the VM yet");
+    expect(absent).toContain("runs no release image yet");
     expect(absent).not.toContain("could not be read");
     const unread = stripAnsi(
       deployLines(emptyState({ deployed: undefined, head: undefined }), 90).join("\n"),
     );
     expect(unread).toContain("could not be read");
-    expect(unread).not.toContain("no BUILD_SHA on the VM yet");
+    expect(unread).not.toContain("runs no release image yet");
     expect(unread).toContain("HEAD unknown");
     // A corrupt marker was READ — blaming ssh/docker for it would be false.
     const corrupt = stripAnsi(
       deployLines(emptyState({ deployed: "unparseable", head: "ccc3333" }), 160).join("\n"),
     );
-    expect(corrupt).toContain("corrupt marker");
+    expect(corrupt).toContain("names no build stamp");
     expect(corrupt).not.toContain("could not be read");
-    expect(corrupt).not.toContain("no BUILD_SHA on the VM yet");
+    expect(corrupt).not.toContain("runs no release image yet");
     expect(corrupt).not.toContain("nothing to deploy");
   });
 
   it("flags a deployed sha unknown to local git instead of pretending 0 pending", () => {
     const text = stripAnsi(
-      deployLines(emptyState({ deployed: { sha: "deadbee" }, head: "ccc3333" }), 90).join("\n"),
+      deployLines(
+        emptyState({
+          deployed: { sha: "deadbee", version: "1.0.0" },
+          version: "1.2.1",
+          versionRev: "ccc3333",
+          layout: "release",
+        }),
+        90,
+      ).join("\n"),
     );
     expect(text).toContain("unknown to local git");
     expect(text).not.toContain("PENDING");
@@ -430,14 +577,22 @@ describe("deploy tab drain orchestration", () => {
         },
       };
       let deploys = 0;
-      app.hooks.deployRun = (_a, _id, _data, exit) => {
+      app.hooks.deployRun = (_a, _id, _v, _data, exit) => {
         deploys++;
         exit(0);
         return { kill: () => {} };
       };
       const st = installDeployHooks(
         app,
-        { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+        {
+          load: async () => ({
+            dirty: [],
+            plan: [],
+            head: "abc1234",
+            layout: "release" as const,
+            version: "1.2.3",
+          }),
+        },
         () => 1000,
         drain,
       );
@@ -488,7 +643,15 @@ describe("deploy tab drain orchestration", () => {
     const drain = quietDrain(2);
     installDeployHooks(
       first,
-      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      {
+        load: async () => ({
+          dirty: [],
+          plan: [],
+          head: "abc1234",
+          layout: "release" as const,
+          version: "1.2.3",
+        }),
+      },
       () => 1000,
       drain,
       store,
@@ -511,14 +674,22 @@ describe("deploy tab drain orchestration", () => {
       secondStreams.input,
     );
     let deploys = 0;
-    second.hooks.deployRun = (_a, _id, _d, exit) => {
+    second.hooks.deployRun = (_a, _id, _v, _d, exit) => {
       deploys++;
       exit(0);
       return { kill: () => {} };
     };
     const restored = installDeployHooks(
       second,
-      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      {
+        load: async () => ({
+          dirty: [],
+          plan: [],
+          head: "abc1234",
+          layout: "release" as const,
+          version: "1.2.3",
+        }),
+      },
       () => 2000,
       drain,
       store,
@@ -541,7 +712,7 @@ describe("deploy tab drain orchestration", () => {
     store.write({
       version: 1,
       phase: "waiting-rounds",
-      target_head: "abc1234",
+      target_version: "1.2.3",
       updated_at: "2026-08-28T12:00:01Z",
     });
     const finishLoads: Array<(value: any) => void> = [];
@@ -554,7 +725,7 @@ describe("deploy tab drain orchestration", () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let deploys = 0;
-    app.hooks.deployRun = (_a, _id, _d, exit) => {
+    app.hooks.deployRun = (_a, _id, _v, _d, exit) => {
       deploys++;
       exit(0);
       return { kill: () => {} };
@@ -566,7 +737,14 @@ describe("deploy tab drain orchestration", () => {
     expect(deploys).toBe(0);
     expect(st.deployPhase).toBe("waiting-rounds");
     expect(finishLoads).toHaveLength(2); // eager restore + zero-round preflight refresh
-    for (const finish of finishLoads) finish({ dirty: [], plan: [], head: "abc1234" });
+    for (const finish of finishLoads)
+      finish({
+        dirty: [],
+        plan: [],
+        head: "abc1234",
+        layout: "release" as const,
+        version: "1.2.3",
+      });
     await settle();
     // The App's own poll (a fake ssh with no status.json) has since marked the
     // daemon unreachable: a sync never starts without a fresh quiet status.
@@ -574,7 +752,13 @@ describe("deploy tab drain orchestration", () => {
     expect(deploys).toBe(0);
     publishStatus(app, 0);
     expect(finishLoads).toHaveLength(3);
-    finishLoads[2]!({ dirty: [], plan: [], head: "abc1234" });
+    finishLoads[2]!({
+      dirty: [],
+      plan: [],
+      head: "abc1234",
+      layout: "release" as const,
+      version: "1.2.3",
+    });
     await settle();
     expect(deploys).toBe(1);
     app.quit();
@@ -589,7 +773,15 @@ describe("deploy tab drain orchestration", () => {
     const pendingDrain: DeployDrainSender = { set: async () => never };
     installDeployHooks(
       first,
-      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      {
+        load: async () => ({
+          dirty: [],
+          plan: [],
+          head: "abc1234",
+          layout: "release" as const,
+          version: "1.2.3",
+        }),
+      },
       () => 1000,
       pendingDrain,
       store,
@@ -627,7 +819,15 @@ describe("deploy tab drain orchestration", () => {
     };
     const restored = installDeployHooks(
       second,
-      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      {
+        load: async () => ({
+          dirty: [],
+          plan: [],
+          head: "abc1234",
+          layout: "release" as const,
+          version: "1.2.3",
+        }),
+      },
       () => 2000,
       resumedDrain,
       store,
@@ -648,7 +848,7 @@ describe("deploy tab drain orchestration", () => {
     store.write({
       version: 1,
       phase: "syncing",
-      target_head: "abc1234",
+      target_version: "1.2.3",
       pre_deploy_snapshot_at: "2026-08-28T12:00:00Z",
       deploy_run_id: "deploy-run-1234",
       updated_at: "2026-08-28T12:00:01Z",
@@ -657,14 +857,22 @@ describe("deploy tab drain orchestration", () => {
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     const attached: string[] = [];
     let finish: ((code: number | null) => void) | undefined;
-    app.hooks.deployRun = (_a, runId, _data, onExit) => {
+    app.hooks.deployRun = (_a, runId, _v, _data, onExit) => {
       attached.push(runId);
       finish = onExit;
       return { kill: () => {} };
     };
     const st = installDeployHooks(
       app,
-      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      {
+        load: async () => ({
+          dirty: [],
+          plan: [],
+          head: "abc1234",
+          layout: "release" as const,
+          version: "1.2.3",
+        }),
+      },
       () => 2000,
       quietDrain(),
       store,
@@ -693,7 +901,15 @@ describe("deploy tab drain orchestration", () => {
     const drain: DeployDrainSender = { set: async () => ({ ok: false, reason: "tier refused" }) };
     const st = installDeployHooks(
       app,
-      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      {
+        load: async () => ({
+          dirty: [],
+          plan: [],
+          head: "abc1234",
+          layout: "release" as const,
+          version: "1.2.3",
+        }),
+      },
       () => 1000,
       drain,
     );
@@ -734,7 +950,15 @@ describe("deploy tab drain orchestration", () => {
     };
     const st = installDeployHooks(
       app,
-      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      {
+        load: async () => ({
+          dirty: [],
+          plan: [],
+          head: "abc1234",
+          layout: "release" as const,
+          version: "1.2.3",
+        }),
+      },
       () => 1000,
       drain,
     );
@@ -774,7 +998,15 @@ describe("deploy tab drain orchestration", () => {
     };
     const st = installDeployHooks(
       app,
-      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      {
+        load: async () => ({
+          dirty: [],
+          plan: [],
+          head: "abc1234",
+          layout: "release" as const,
+          version: "1.2.3",
+        }),
+      },
       () => 1000,
       drain,
     );
@@ -806,7 +1038,15 @@ describe("deploy tab drain orchestration", () => {
     };
     const st = installDeployHooks(
       app,
-      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      {
+        load: async () => ({
+          dirty: [],
+          plan: [],
+          head: "abc1234",
+          layout: "release" as const,
+          version: "1.2.3",
+        }),
+      },
       () => 1000,
       quietDrain(2),
       store,
@@ -839,7 +1079,15 @@ describe("deploy tab drain orchestration", () => {
     };
     const st = installDeployHooks(
       app,
-      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      {
+        load: async () => ({
+          dirty: [],
+          plan: [],
+          head: "abc1234",
+          layout: "release" as const,
+          version: "1.2.3",
+        }),
+      },
       () => 1000,
       quietDrain(2),
       store,
@@ -876,13 +1124,21 @@ describe("deploy tab drain orchestration", () => {
         };
       },
     };
-    app.hooks.deployRun = (_a, _id, _data, exit) => {
+    app.hooks.deployRun = (_a, _id, _v, _data, exit) => {
       exit(1);
       return { kill: () => {} };
     };
     const st = installDeployHooks(
       app,
-      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      {
+        load: async () => ({
+          dirty: [],
+          plan: [],
+          head: "abc1234",
+          layout: "release" as const,
+          version: "1.2.3",
+        }),
+      },
       () => 1000,
       drain,
       store,
@@ -914,7 +1170,7 @@ describe("deploy tab drain orchestration — revalidation and refresh", () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let deploys = 0;
-    app.hooks.deployRun = (_a, _id, _d, exit) => {
+    app.hooks.deployRun = (_a, _id, _v, _d, exit) => {
       deploys++;
       exit(0);
       return { kill: () => {} };
@@ -923,7 +1179,14 @@ describe("deploy tab drain orchestration — revalidation and refresh", () => {
     let lazy = true;
     const fetcher = {
       load: () => {
-        if (lazy) return Promise.resolve({ dirty: [], plan: [], head: "abc1234" });
+        if (lazy)
+          return Promise.resolve({
+            dirty: [],
+            plan: [],
+            head: "abc1234",
+            layout: "release" as const,
+            version: "1.2.3",
+          });
         return new Promise<any>((resolve) => pending.push(resolve));
       },
     };
@@ -940,13 +1203,25 @@ describe("deploy tab drain orchestration — revalidation and refresh", () => {
     expect(pending).toHaveLength(1);
     app.view.health = { kind: "stale", dataAgeS: 600 };
     app.hooks.onPoll?.(app);
-    pending[0]!({ dirty: [], plan: [], head: "abc1234" });
+    pending[0]!({
+      dirty: [],
+      plan: [],
+      head: "abc1234",
+      layout: "release" as const,
+      version: "1.2.3",
+    });
     await settle();
     expect(deploys).toBe(0);
     expect(st.deployPhase).toBe("waiting-rounds");
     publishStatus(app, 0); // fresh again → preflight again → sync
     expect(pending).toHaveLength(2);
-    pending[1]!({ dirty: [], plan: [], head: "abc1234" });
+    pending[1]!({
+      dirty: [],
+      plan: [],
+      head: "abc1234",
+      layout: "release" as const,
+      version: "1.2.3",
+    });
     await settle();
     expect(deploys).toBe(1);
     app.quit();
@@ -957,14 +1232,19 @@ describe("deploy tab drain orchestration — revalidation and refresh", () => {
     const store = new MemoryDeployCeremonyStore();
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
-    app.hooks.deployRun = (_a, _id, _data, exit) => {
+    app.hooks.deployRun = (_a, _id, _v, _data, exit) => {
       exit(1);
       return { kill: () => {} };
     };
     let loads = 0;
     const st = installDeployHooks(
       app,
-      { load: async () => (loads++, { dirty: [], plan: [], head: "abc1234" }) },
+      {
+        load: async () => (
+          loads++,
+          { dirty: [], plan: [], head: "abc1234", layout: "release" as const, version: "1.2.3" }
+        ),
+      },
       () => 1000,
       quietDrain(0),
       store,
@@ -1002,7 +1282,12 @@ describe("deploy tab keys", () => {
     const st = installDeployHooks(app, {
       load: async () => (
         loads++,
-        { dirty: [], plan: ["plan — deploy.sh sync"], deployed: "absent" as const, head: "abc1234" }
+        {
+          dirty: [],
+          plan: ["plan — deploy.sh release 1.2.3"],
+          deployed: "absent" as const,
+          head: "abc1234",
+        }
       ),
     });
     const run = app.run();
@@ -1010,7 +1295,7 @@ describe("deploy tab keys", () => {
     expect(app.tab).toBe("deploy");
     await new Promise((r) => setTimeout(r, 0)); // lazy load settles
     expect(loads).toBe(1);
-    expect(stripAnsi(streams.written())).toContain("no BUILD_SHA on the VM yet");
+    expect(stripAnsi(streams.written())).toContain("runs no release image yet");
     streams.type("j");
     expect(st.scroll).toBe(1);
     streams.type("k");
@@ -1028,7 +1313,7 @@ describe("deploy tab keys", () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let deploys = 0;
-    app.hooks.deployRun = (_a, _id, _onData, onExit) => {
+    app.hooks.deployRun = (_a, _id, _v, _onData, onExit) => {
       deploys++;
       onExit(0);
       return { kill: () => {} };
@@ -1036,7 +1321,15 @@ describe("deploy tab keys", () => {
     let clock = 1000;
     const st = installDeployHooks(
       app,
-      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      {
+        load: async () => ({
+          dirty: [],
+          plan: [],
+          head: "abc1234",
+          layout: "release" as const,
+          version: "1.2.3",
+        }),
+      },
       () => clock,
       quietDrain(),
     );
@@ -1073,7 +1366,7 @@ describe("deploy tab keys", () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let deploys = 0;
-    app.hooks.deployRun = (_a, _id, _onData, onExit) => {
+    app.hooks.deployRun = (_a, _id, _v, _onData, onExit) => {
       deploys++;
       onExit(0);
       return { kill: () => {} };
@@ -1081,7 +1374,15 @@ describe("deploy tab keys", () => {
     let clock = 1000;
     const st = installDeployHooks(
       app,
-      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      {
+        load: async () => ({
+          dirty: [],
+          plan: [],
+          head: "abc1234",
+          layout: "release" as const,
+          version: "1.2.3",
+        }),
+      },
       () => clock,
       quietDrain(),
     );
@@ -1115,7 +1416,7 @@ describe("deploy tab keys", () => {
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let exitFn: ((code: number | null) => void) | undefined;
     let dataFn: ((chunk: string) => void) | undefined;
-    app.hooks.deployRun = (_a, _id, onData, onExit) => {
+    app.hooks.deployRun = (_a, _id, _v, onData, onExit) => {
       dataFn = onData;
       exitFn = onExit;
       return { kill: () => {} };
@@ -1123,7 +1424,15 @@ describe("deploy tab keys", () => {
     const clock = 1000;
     const st = installDeployHooks(
       app,
-      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      {
+        load: async () => ({
+          dirty: [],
+          plan: [],
+          head: "abc1234",
+          layout: "release" as const,
+          version: "1.2.3",
+        }),
+      },
       () => clock,
       quietDrain(),
     );
@@ -1164,13 +1473,21 @@ describe("deploy tab keys", () => {
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let killed = 0;
     let exitFn: ((code: number | null) => void) | undefined;
-    app.hooks.deployRun = (_a, _id, _onData, onExit) => {
+    app.hooks.deployRun = (_a, _id, _v, _onData, onExit) => {
       exitFn = onExit;
       return { kill: () => killed++ };
     };
     const st = installDeployHooks(
       app,
-      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      {
+        load: async () => ({
+          dirty: [],
+          plan: [],
+          head: "abc1234",
+          layout: "release" as const,
+          version: "1.2.3",
+        }),
+      },
       () => 1000,
       quietDrain(),
     );
@@ -1255,7 +1572,7 @@ describe("power button (stop/start the VM app)", () => {
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let powers = 0;
     app.hooks.powerRun = (_a, _action, _d, onExit) => (powers++, onExit(0), { kill: () => {} });
-    app.hooks.deployRun = (_a, _id, _d, onExit) => (onExit(0), { kill: () => {} });
+    app.hooks.deployRun = (_a, _id, _v, _d, onExit) => (onExit(0), { kill: () => {} });
     const st = installDeployHooks(
       app,
       {
@@ -1263,6 +1580,8 @@ describe("power button (stop/start the VM app)", () => {
           dirty: [],
           plan: [],
           head: "abc1234",
+          layout: "release" as const,
+          version: "1.2.3",
           containerStatus: "Up 5 minutes",
         }),
       },
@@ -1282,6 +1601,164 @@ describe("power button (stop/start the VM app)", () => {
     click(st.powerZone!.x1, st.powerZone!.y1); // arm stop again
     click(st.powerZone!.x2, st.powerZone!.y2); // confirm inside the zone
     expect(powers).toBe(1);
+    app.quit();
+    await run;
+  });
+});
+
+describe("deploy tab version choice and the legacy refusal", () => {
+  const loaded = (over: Record<string, unknown> = {}) => ({
+    dirty: [],
+    plan: [],
+    head: "abc1234",
+    layout: "release" as const,
+    version: "1.2.3",
+    versions: ["1.2.3", "1.2.0"],
+    ...over,
+  });
+
+  it("refuses to arm on a legacy-layout VM and points at the cutover wizard", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    const drainCalls: boolean[] = [];
+    const st = installDeployHooks(
+      app,
+      { load: async () => loaded({ layout: "legacy" as const, deployed: "absent" as const }) },
+      () => 1000,
+      { set: async (on) => (drainCalls.push(on), { ok: true, draining: on }) },
+    );
+    const run = app.run();
+    streams.type("5");
+    await settle();
+    streams.type("D");
+    streams.type("D");
+    await settle();
+    expect(st.armedAt).toBeUndefined();
+    expect(st.run).toBeUndefined();
+    expect(drainCalls).toEqual([]);
+    expect(app.view.noticeLine).toContain("cutover");
+    expect(stripAnsi(streams.written())).toContain("scripts/cutover.sh");
+    app.quit();
+    await run;
+  });
+
+  it("refuses on an unread layout: a deploy is not started on a guess", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    const drainCalls: boolean[] = [];
+    const st = installDeployHooks(
+      app,
+      { load: async () => loaded({ layout: undefined }) },
+      () => 1000,
+      { set: async (on) => (drainCalls.push(on), { ok: true, draining: on }) },
+    );
+    const run = app.run();
+    streams.type("5");
+    await settle();
+    streams.type("D");
+    streams.type("D");
+    await settle();
+    expect(st.run).toBeUndefined();
+    expect(drainCalls).toEqual([]);
+    expect(app.view.noticeLine).toContain("has not been read");
+    app.quit();
+    await run;
+  });
+
+  it("refuses with no version chosen", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    const st = installDeployHooks(
+      app,
+      { load: async () => loaded({ version: undefined }) },
+      () => 1000,
+    );
+    const run = app.run();
+    streams.type("5");
+    await settle();
+    streams.type("D");
+    expect(st.armedAt).toBeUndefined();
+    expect(app.view.noticeLine).toContain("no deploy version chosen");
+    app.quit();
+    await run;
+  });
+
+  it("V prompts for a version, validates it and reloads for it; the release runs with that version", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    const loadsFor: Array<string | undefined> = [];
+    const shipped: string[] = [];
+    app.hooks.deployRun = (_a, _id, version, _d, exit) => {
+      shipped.push(version);
+      exit(0);
+      return { kill: () => {} };
+    };
+    const st = installDeployHooks(
+      app,
+      {
+        load: async (version) => (loadsFor.push(version), loaded({ version: version ?? "1.2.3" })),
+      },
+      () => 1000,
+      quietDrain(),
+    );
+    const run = app.run();
+    streams.type("5");
+    await settle();
+    expect(loadsFor).toEqual([undefined]);
+    expect(deployKeys(st).bar.map((b) => b.key)).toEqual(["D", "V"]);
+    streams.type("V");
+    expect(app.view.inputBox?.target).toContain("published: 1.2.3 1.2.0");
+    // a bad spelling is refused and nothing reloads
+    for (const ch of "latest") streams.type(ch);
+    streams.type("\r");
+    expect(app.view.noticeLine).toContain("not a release version");
+    expect(loadsFor).toEqual([undefined]);
+    streams.type("V");
+    // the prompt starts from the current choice; clear it, then type
+    for (let i = 0; i < "1.2.3".length; i++) streams.type("\x7f");
+    for (const ch of "v1.4.0") streams.type(ch);
+    streams.type("\r");
+    await settle();
+    expect(st.version).toBe("1.4.0");
+    expect(loadsFor).toEqual([undefined, "1.4.0"]);
+    streams.type("D");
+    streams.type("D");
+    await settle();
+    publishStatus(app, 0);
+    await settle();
+    expect(shipped).toEqual(["1.4.0"]);
+    app.quit();
+    await run;
+  });
+
+  it("will not start the release if the chosen version changed while draining", async () => {
+    const store = new MemoryDeployCeremonyStore();
+    store.write({
+      version: 1,
+      phase: "waiting-rounds",
+      target_version: "1.2.3",
+      updated_at: "2026-08-28T12:00:01Z",
+    });
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    let deploys = 0;
+    app.hooks.deployRun = () => (deploys++, { kill: () => {} });
+    // the reload returns a different version than the ceremony targets
+    const st = installDeployHooks(
+      app,
+      { load: async () => loaded({ version: "1.9.9" }) },
+      () => 2000,
+      quietDrain(),
+      store,
+    );
+    const run = app.run();
+    publishStatus(app, 0);
+    await settle();
+    publishStatus(app, 0);
+    await settle();
+    expect(deploys).toBe(0);
+    expect(st.deployPhase).toBe("deploy-failed");
+    expect(st.run?.lines.join("\n")).toContain("chosen version changed from 1.2.3 to 1.9.9");
     app.quit();
     await run;
   });

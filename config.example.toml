@@ -273,7 +273,8 @@ memory_container = ""             # the container the memory forward relays into
                                   # the memory sidecar (the openviking table's endpoint =
                                   # "remote") set "quickreview-memory"; flip it back with the endpoint.
 remote_state_dir = "/opt/quickreview/state"  # host path on ssh; inside the daemon container on local
-remote_sandbox_root = "/opt/quickreview/sandbox"
+remote_sandbox_root = ""         # "" = read the container's qcr.layout label (release: /opt/qcr, legacy: /opt/quickreview/sandbox);
+                                  # a value here wins and is never probed
 sudo_docker = true                # docker on the VM needs sudo (root-owned socket)
 poll_interval_s = 3
 stale_after_s = 90                # DATA STALE banner past this written_at age

@@ -100,7 +100,7 @@ describe("InjectSender", () => {
     let clock = 0;
     const states: Array<[DeliveryState, string]> = [];
     const sender = new InjectSender(
-      { ...TUI_DEFAULTS, msg_timeout_s: timeoutS },
+      { ...TUI_DEFAULTS, remote_sandbox_root: "/opt/quickreview/sandbox", msg_timeout_s: timeoutS },
       ssh,
       () => new Date(clock),
       async (ms) => {

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -19,8 +19,9 @@ describe("DurableDeployProcess", () => {
       join(root, "scripts", "tui-deploy-runner.mjs"),
       `
       import { appendFileSync, writeFileSync } from "node:fs";
-      const [root, log, result] = process.argv.slice(2);
+      const [root, log, result, version] = process.argv.slice(2);
       appendFileSync(root + "/starts", "start\\n");
+      appendFileSync(root + "/versions", version + "\\n");
       appendFileSync(log, "sync started\\n");
       setTimeout(() => writeFileSync(result, JSON.stringify({code: 0, finished_at: new Date().toISOString()})), 40);
     `,
@@ -31,12 +32,29 @@ describe("DurableDeployProcess", () => {
     const outputs: string[] = [];
     const wait = (runner: DurableDeployProcess) =>
       new Promise<number | null>((resolve) => {
-        runner.startOrAttach("same-run-1234", (chunk) => outputs.push(chunk), resolve);
+        runner.startOrAttach("same-run-1234", "1.2.3", (chunk) => outputs.push(chunk), resolve);
       });
     const [a, b] = await Promise.all([wait(first), wait(second)]);
     expect([a, b]).toEqual([0, 0]);
     expect(readFileSync(join(root, "starts"), "utf8")).toBe("start\n");
+    // The detached runner is started with the version the ceremony ships.
+    expect(readFileSync(join(root, "versions"), "utf8")).toBe("1.2.3\n");
     expect(outputs.filter((line) => line.includes("sync started"))).toHaveLength(2);
+  });
+
+  it("refuses a version that is not a release spelling before anything starts", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tui-deploy-version-"));
+    roots.push(root);
+    const runner = new DurableDeployProcess(root, join(root, "state", "runs"), 5);
+    for (const bad of ["", "latest", "1.2", "1.2.3; rm -rf /", "$(id)", "../1.2.3"]) {
+      const output: string[] = [];
+      const code = await new Promise<number | null>((resolve) => {
+        runner.startOrAttach("badver-run-1234", bad, (c) => output.push(c), resolve);
+      });
+      expect(code, bad).toBe(1);
+      expect(output.join(""), bad).toContain("invalid release version");
+    }
+    expect(existsSync(join(root, "state", "runs"))).toBe(false);
   });
 
   it("fails a stale pre-spawn marker visibly instead of polling forever", async () => {
@@ -55,7 +73,7 @@ describe("DurableDeployProcess", () => {
     const output: string[] = [];
     const runner = new DurableDeployProcess(root, state, 5, 5);
     const code = await new Promise<number | null>((resolve) => {
-      runner.startOrAttach("stale-run-1234", (chunk) => output.push(chunk), resolve);
+      runner.startOrAttach("stale-run-1234", "1.2.3", (chunk) => output.push(chunk), resolve);
     });
     expect(code).toBe(1);
     expect(output.join("")).toContain("never started");
@@ -70,7 +88,7 @@ describe("DurableDeployProcess", () => {
     const output: string[] = [];
     const runner = new DurableDeployProcess(root, state, 5, 5);
     const code = await new Promise<number | null>((resolve) => {
-      runner.startOrAttach("empty-run-1234", (chunk) => output.push(chunk), resolve);
+      runner.startOrAttach("empty-run-1234", "1.2.3", (chunk) => output.push(chunk), resolve);
     });
     expect(code).toBe(1);
     expect(output.join("")).toContain("never started");
@@ -89,7 +107,7 @@ describe("DurableDeployProcess", () => {
     const output: string[] = [];
     const runner = new DurableDeployProcess(root, state, 5, 5);
     const code = await new Promise<number | null>((resolve) => {
-      runner.startOrAttach("dead-run-1234", (chunk) => output.push(chunk), resolve);
+      runner.startOrAttach("dead-run-1234", "1.2.3", (chunk) => output.push(chunk), resolve);
     });
     expect(code).toBe(1);
     expect(output.join("")).toContain("exited without a result");
@@ -109,7 +127,7 @@ describe("DurableDeployProcess", () => {
     const output: string[] = [];
     const runner = new DurableDeployProcess(root, state, 5, 5);
     const code = await new Promise<number | null>((resolve) => {
-      runner.startOrAttach("boot-run-1234", (chunk) => output.push(chunk), resolve);
+      runner.startOrAttach("boot-run-1234", "1.2.3", (chunk) => output.push(chunk), resolve);
     });
     expect(code).toBe(1);
     expect(output.join("")).toContain("exited without a result");
@@ -132,6 +150,7 @@ describe("DurableDeployProcess", () => {
     const code = await new Promise<number | null>((resolve) => {
       new DurableDeployProcess(root, state, 5, 5).startOrAttach(
         "sig-run-1234",
+        "1.2.3",
         (chunk) => (log += chunk),
         resolve,
       );
@@ -153,6 +172,7 @@ describe("DurableDeployProcess", () => {
     const runner = new DurableDeployProcess(root, state, 5, 5);
     runner.startOrAttach(
       "live-run-1234",
+      "1.2.3",
       () => {},
       () => (exited = true),
     );
