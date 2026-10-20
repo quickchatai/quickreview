@@ -389,7 +389,14 @@ round in flight.
 - **Lifting it.** The operator's drain has no expiry, and the boot's **first**
   reconcile pass lifts it — only that pass, and only when it completed with no
   errors (`src/daemon.ts`), so a broken deploy never resumes work blind.
-  `qcr drain off` lifts it immediately.
+  `qcr drain off` lifts it immediately. Two drains the boot never lifts: a
+  system's (`draining_reason`, the worker crash-loop breaker) and the
+  operator's **hold** — `qcr drain on --hold` (`{"command":"drain","on":true,
+  "hold":true}`), the cutover's — which only an explicit `qcr drain off` lifts;
+  the boot logs `drain_hold_kept` instead. A hold is refused to any issuer but
+  the sealed operator channel, and never carries an expiry. The boot that adds
+  the `hold` column to state.db carries a standing operator drain over as one
+  (`drain_hold_carried`): that is how the legacy daemon's cutover drain holds.
 - **Who is asking is decided by channel, never by a field.** `commands/` is the
   session directory; `commands/operator/` is root-owned and unwritable by the
   uid the daemon and every session run as. `operatorSealVerdict`
