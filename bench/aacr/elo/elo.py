@@ -206,7 +206,7 @@ def cmd_pack(a) -> None:
         shapes = Counter(f["shape"] for f in p["files"])
         log(f"  {pr}: context ~{p['tokens']} tok {dict(shapes)}{' OVER BUDGET' if p['over_budget'] else ''}")
     sizes.sort()
-    log(f"largest judge prompt ~{sizes[-1]} tok, median ~{sizes[len(sizes) // 2]} tok (estimate: chars/{D.CHARS_PER_TOKEN})")
+    log(f"largest judge prompt ~{sizes[-1]} tok, median ~{sizes[len(sizes) // 2]} tok (estimate: {D.ESTIMATE_RULE}, an upper bound)")
 
 
 def make_judges(run: Run, which: str):
@@ -476,18 +476,40 @@ def self_test() -> None:
         git("init", "-q")
         Path(tmp, "big.py").write_text("\n".join(f"line {i}" for i in range(4000)) + "\n")
         Path(tmp, "small.py").write_text("x = 1\n")
+        hashes = lambda salt: "".join(f"example.com/m{i} v1.{i}.0 h1:{salt}{i:04d}Zq8xK2pLm9VbN3cRt7YwE5uHs1Ga=\n"
+                                      for i in range(300))
+        Path(tmp, "go.sum").write_text(hashes("AAAA"))
+        Path(tmp, "web").mkdir()
+        Path(tmp, "web", "package-lock.json").write_text('{"lockfileVersion": 3, "packages": {}}\n')
         git("add", "-A"); git("commit", "-qm", "base")
         base = git("rev-parse", "HEAD")
         Path(tmp, "big.py").write_text(Path(tmp, "big.py").read_text().replace("line 2000\n", "line 2000 changed\n"))
         Path(tmp, "small.py").write_text("x = 2\n")
         Path(tmp, "img.bin").write_bytes(b"\0\1\2")
+        Path(tmp, "go.sum").write_text(hashes("BBBB"))
+        Path(tmp, "web", "package-lock.json").write_text(
+            '{"lockfileVersion": 3, "packages": {"node_modules/x": {"integrity": "sha512-QmF0aGVyZWQ1MjM0NTY3ODkw"}}}\n')
         git("add", "-A"); git("commit", "-qm", "head")
         head = git("rev-parse", "HEAD")
         case = D.Case(iid="t", title="T", body="B", git_dir=str(Path(tmp, ".git")), base=base, head=head,
                       goldens=[D.Golden(text="g", severity="High", category="bug")])
         full = D.pack_context(case, 10 ** 6)
-        assert {f["path"]: f["shape"] for f in full["files"]} == {"big.py": "full", "small.py": "full", "img.bin": "absent"}, full["files"]
+        assert {f["path"]: f["shape"] for f in full["files"]} == {
+            "big.py": "full", "small.py": "full", "img.bin": "absent",
+            "go.sum": "lockfile", "web/package-lock.json": "lockfile"}, full["files"]
         assert "2001| line 2000 changed" in full["text"] and "G1. [High · bug]" in full["text"]
+        # Lockfiles: never whole, and their hunks are one summary line each.
+        assert "h1:" not in full["text"] and "integrity" not in full["text"], "a lockfile's contents reached the prompt"
+        assert "- go.sum: +300 −300 lines (lockfile, hunks omitted)" in full["text"], full["text"][:3000]
+        assert "- web/package-lock.json: +1 −1 lines (lockfile, hunks omitted)" in full["text"]
+        assert "## go.sum (lockfile: never shown whole" in full["text"] and "diff --git a/small.py" in full["text"]
+        assert D.machine_kind("vendor/app.min.js") == "generated" and D.machine_kind("Gemfile_rails4.lock") == "lockfile"
+        assert D.machine_kind("tests/__snapshots__/a.snap") is None and D.machine_kind("go.mod") is None
+        # The estimate: hash-like runs cost more tokens per character than code.
+        code = "def handler(request):\n    return render(request, 'index.html', {'items': items})\n" * 50
+        hexy = "".join(f"sha256:{i:04x}9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\n" for i in range(50))
+        assert D.tokens(hexy) / len(hexy) > 2 * D.tokens(code) / len(code), (D.tokens(hexy), D.tokens(code))
+        assert D.tokens(code) == int(len(code) / D.CHARS_PER_TOKEN) + 1  # long plain identifiers are not hash-like
         tight = D.pack_context(case, full["tokens"] // 3)
         assert {f["path"]: f["shape"] for f in tight["files"]}["big.py"] == "hunks" and not tight["over_budget"], tight["files"]
         tiny = D.pack_context(case, 300)

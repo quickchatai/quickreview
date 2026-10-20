@@ -15,6 +15,16 @@ their reasons: tracker ticket.
   Review B (findings and summary body). The ceiling is 400k tokens. Past it,
   the largest files fall back to their diff with 60 lines of context, then
   drop out (the diff always stays).
+- **Lockfiles and generated files are never packed.** Dependency lockfiles
+  and checksum files (`go.sum`, `package-lock.json`, `yarn.lock`, `*.lock`,
+  …) and minified bundles and source maps (`*.min.js`, `*.min.css`, `*.map`)
+  are left out whole and out of the diff too: each is one line under the
+  diff with its added and removed line counts.
+- **The token estimate is an upper bound for both judges.** Hash-like runs
+  (16+ base64 or hex characters with a digit) count one token per
+  character; everything else one per 3 characters. On real prompts
+  gpt-6.1-sol's count ran 0.70–0.76x of it for code, and 0.86x for a prompt
+  carrying `go.sum` whole.
 - **Two judges, rated separately, with an identical prompt:** gpt-6.1-sol at
   xhigh and Claude Opus 5.5 at xhigh. Every judgment records the prompt's
   sha256, so this can be checked.
