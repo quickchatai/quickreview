@@ -674,8 +674,11 @@ export QC_RELEASE_REPO=quickchatai/quickreview
 
 # run A: preconditions, drain, plan, the release (the typed go), verify, the first reconcile, the backstop, the surfaces;
 # it stops at stage 9, which asks whether a worker round was checked (EOF: not answered).
-printf '\ny\n%s\ny\ny\n' "$VERSION" >"$WORK/wizard-a.in"
-"$ROOT/scripts/cutover.sh" "$VERSION" <"$WORK/wizard-a.in" >"$LOGS/wizard-a.log" 2>&1; WA_RC=$?
+python3 "$RH/answer.py" --timeout 900 \
+  --on 'Ready to start\?=>\n' --on 'Does the plan show all of that\?.*\[y/N\]=>y\n' --on "Type the version.*=>$VERSION\n" \
+  --on 'Does verify show all of that\?.*\[y/N\]=>y\n' --on 'Both done\?.*\[y/N\]=>y\n' \
+  --on 'PR number for the commands below.*=>\n' --on 'Was the worker round checked and is it good\?.*\[y/N\]=>n\n' \
+  -- "$ROOT/scripts/cutover.sh" "$VERSION" >"$LOGS/wizard-a.log" 2>&1; WA_RC=$?
 sed -i 's/\x1b\[[0-9;]*[a-zA-Z]//g' "$LOGS/wizard-a.log"
 STAGES_DONE="$(grep -o 'done:[a-z_0-9]*' "$CTL/wizard.state" 2>/dev/null | sed 's/done://' | tr '\n' ' ')"
 fact wizard_a "rc=$WA_RC; stages recorded: $STAGES_DONE"
@@ -882,8 +885,10 @@ EOF
 fi
 
 # ---- wizard run B: stages 9-11 -----------------------------------------------------------------------------------------------------------------
-printf '%s\ny\ny\ny\n' "$PR" >"$WORK/wizard-b.in"
-"$ROOT/scripts/cutover.sh" "$VERSION" <"$WORK/wizard-b.in" >"$LOGS/wizard-b.log" 2>&1; WB_RC=$?
+python3 "$RH/answer.py" --timeout 600 \
+  --on 'PR number for the commands below.*=>'"$PR"'\n' --on 'Was the worker round checked and is it good\?.*\[y/N\]=>y\n' \
+  --on 'Lift the drain now.*\[y/N\]=>y\n' --on 'Answer worker replied.*\[y/N\]=>y\n' \
+  -- "$ROOT/scripts/cutover.sh" "$VERSION" >"$LOGS/wizard-b.log" 2>&1; WB_RC=$?
 sed -i 's/\x1b\[[0-9;]*[a-zA-Z]//g' "$LOGS/wizard-b.log"
 STAGES_DONE="$(grep -o 'done:[a-z_0-9]*' "$CTL/wizard.state" 2>/dev/null | sed 's/done://' | tr '\n' ' ')"
 tail -12 "$LOGS/wizard-b.log" | sed 's/^/    | /' >&2
