@@ -84,9 +84,13 @@ class Case:
 _TAG = re.compile(r"^\s*\[(blocker|question|nit|suggestion|check this)\]\s*", re.I)
 _TAG_WORD = {"blocker": "blocking", "question": "question", "nit": "nit",
              "suggestion": "suggestion", "check this": "for a human to double-check"}
-_QR_FOOTER = re.compile(r"^\s*_P(\d)\s*·\s*confidence[^\n]*_\s*$", re.M)
-_QR_INLINE = re.compile(r"_\((P\d)/[0-9.]+(?:,[^)]*)?\)_")
+_LEVEL = r"(P\d|blocker|question|nit|suggestion)"
+_QR_FOOTER = re.compile(r"^\s*_" + _LEVEL + r"\s*·\s*confidence[^\n]*_\s*$", re.M | re.I)
+# Inline forms: `_(P3/0.80, pass-a,pass-b)_`, `_(nit · confidence 0.9 · pass-a)_`,
+# and the same without underscores or with commas: `(P3, confidence 0.55, pass-a)`.
+_QR_INLINE = re.compile(r"_?\(" + _LEVEL + r"(?:/[0-9.]+|\s*[·,]\s*confidence)[^)]*\)_?", re.I)
 _SIGNATURES = [
+    re.compile(r"<details>\s*<summary>\s*Lenses\b.*?</details>", re.S | re.I),
     re.compile(r"^\s*_Lenses applied:.*?_\s*$", re.M | re.S),
     re.compile(r"^\s*_Automated review by .*?_\s*$", re.M | re.S),
 ]
@@ -111,7 +115,10 @@ def canon_finding(path: str, line: Optional[int], raw: str) -> Finding:
         text = text[m.end():]
     m = _QR_FOOTER.search(text)
     if m:
-        sev.append(f"P{m.group(1)}")
+        level = m.group(1)
+        word = level.upper() if level[0] in "Pp" else _TAG_WORD[level.lower()]
+        if word not in sev:
+            sev.append(word)
         text = _QR_FOOTER.sub("", text)
     return Finding(path=path, line=line, text=_clean(text), severity=", ".join(sev) or None)
 

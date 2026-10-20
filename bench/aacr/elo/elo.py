@@ -347,10 +347,17 @@ def usage_summary(rows: List[dict], judge: str) -> str:
     return s
 
 
+def ci(lo: float, hi: float, signed: bool = False) -> str:
+    if lo != lo or hi != hi:  # NaN: too few PRs to bootstrap
+        return f"n/a (< {R.MIN_BOOTSTRAP_PRS} PRs)"
+    return f"{lo:+.0f} … {hi:+.0f}" if signed else f"{lo:.0f} – {hi:.0f}"
+
+
 def fmt_table(t: dict) -> List[str]:
-    out = ["| configuration | Elo | 95% CI | W-T-L |", "|---|---:|---|---|"]
+    out = [f"{t['games']} games over {t['prs']} PRs.", "",
+           "| configuration | Elo | 95% CI | W-T-L |", "|---|---:|---|---|"]
     for r in t["rows"]:
-        out.append(f"| {r['player']} | {r['elo']:.0f} | {r['lo']:.0f} – {r['hi']:.0f} | {r['w']}-{r['t']}-{r['l']} |")
+        out.append(f"| {r['player']} | {r['elo']:.0f} | {ci(r['lo'], r['hi'])} | {r['w']}-{r['t']}-{r['l']} |")
     return out
 
 
@@ -381,7 +388,7 @@ def cmd_report(a) -> None:
         ratings[j] = {"overall": t, "categories": {}}
         out += fmt_table(t) + [""]
         for g in t["gaps"]:
-            out.append(f"- `{g['upper']}` over `{g['lower']}`: +{g['gap']:.0f} (95% CI {g['lo']:+.0f} … {g['hi']:+.0f})"
+            out.append(f"- `{g['upper']}` over `{g['lower']}`: +{g['gap']:.0f} (95% CI {ci(g['lo'], g['hi'], signed=True)})"
                        f"{' — separated' if g['separated'] else ' — not separated'}")
         out.append("")
         for c in J.CATEGORIES:
@@ -434,6 +441,14 @@ def self_test() -> None:
     f = D.canon_finding("a.py", 3, "[blocker] Title\n\nBody text.\n\n_P1 · confidence 0.95 · lens pass-security,pass-sweep_")
     assert f.severity == "blocking, P1" and f.text == "Title\n\nBody text.", f
     assert D.canon_finding("a.py", 3, "plain text").severity is None
+    f = D.canon_finding("a.py", 3, "[nit] N\n\n_nit · confidence 0.80 · contrived · lens pass-sweep, pass-tests_")
+    assert f.severity == "nit" and f.text == "N", f
+    assert D._clean("- `x.go:3` — Name it _(nit/0.70, pass-duplication)_") == "- `x.go:3` — Name it (nit)"
+    assert D._clean("Also: [nit] rename. _(P3 · confidence 0.6 · contrived · pass-a, pass-b)_") == "Also: [nit] rename. (P3)"
+    assert D._clean("drift apart (nit · confidence 0.8 · pass-sweep).") == "drift apart (nit)."
+    assert D._clean("unqualified? (P3, confidence 0.55, pass-sweep)") == "unqualified? (P3)"
+    assert D._clean("a (see confidence below) b") == "a (see confidence below) b"
+    assert D._clean("A\n\n<details><summary>Lenses that returned NONE</summary>pass-ui</details>\n\nB") == "A\n\nB"
     body = ("Summary.\n\n- `x.py:3` — thing _(P3/0.80, pass-security,pass-bounds)_\n\n"
             "_Lenses applied: pass-baseline (sol-high), pass-ui (sol-med)_\n\n"
             "_Automated review by `bot[bot]` (quickreview sandbox). Reply to discuss._<!-- qcr:f=1:k -->")
@@ -498,6 +513,9 @@ def self_test() -> None:
     assert r["x"] > r["y"] > r["z"]
     t = R.table(["x", "y"], sweep, reps=200)
     assert t["rows"][0]["player"] == "x" and t["gaps"][0]["separated"] and t["rows"][0]["w"] == 10
+    one_pr = [("p0", "x", "y", 1.0)] * 3
+    t = R.table(["x", "y"], one_pr, reps=200)  # one PR: nothing to resample
+    assert not t["gaps"][0]["separated"] and t["gaps"][0]["lo"] != t["gaps"][0]["lo"]
     t = R.table(["x", "y"], even, reps=200)
     assert not t["gaps"][0]["separated"]
 

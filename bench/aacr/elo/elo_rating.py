@@ -22,6 +22,10 @@ from typing import Dict, List, Sequence, Tuple
 Game = Tuple[str, str, str, float]  # (pr, x, y, score of x)
 
 PRIOR_TIES = 0.5
+# Below this many distinct PRs a bootstrap over PRs has too little to
+# resample (one PR: every replicate is the original), so no interval is
+# reported and no gap counts as separated.
+MIN_BOOTSTRAP_PRS = 5
 BASE = 1500.0
 
 
@@ -81,7 +85,8 @@ def interval(values: Sequence[float], level: float = 0.95) -> Tuple[float, float
 def table(players: Sequence[str], games: Sequence[Game], reps: int = 1000, seed: int = 1) -> dict:
     """Ratings, 95% intervals, records and the adjacent-gap intervals, ranked."""
     point = fit(players, games)
-    boots = bootstrap(players, games, reps=reps, seed=seed) if games else []
+    prs = len({g[0] for g in games})
+    boots = bootstrap(players, games, reps=reps, seed=seed) if prs >= MIN_BOOTSTRAP_PRS else []
     rows = []
     for p in players:
         w = t = l = 0
@@ -99,7 +104,7 @@ def table(players: Sequence[str], games: Sequence[Game], reps: int = 1000, seed:
         lo, hi = interval(diffs) if diffs else (float("nan"), float("nan"))
         gaps.append({"upper": a["player"], "lower": b["player"], "gap": a["elo"] - b["elo"],
                      "lo": lo, "hi": hi, "separated": bool(diffs) and lo > 0})
-    return {"rows": rows, "gaps": gaps, "games": len(games)}
+    return {"rows": rows, "gaps": gaps, "games": len(games), "prs": prs}
 
 
 # ---- scheduling ----------------------------------------------------------------------
