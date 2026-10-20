@@ -248,6 +248,17 @@ describe.skipIf(!hasOpenssl)("[P8.20a] the scripted stub", () => {
     await post("/admin/mode", { mode: "round" });
   });
 
+  it("answers an operator's message with a thread reply through the shim, its exit status unmasked", async () => {
+    await post("/admin/mode", { mode: "answer_post", comment: 9001 });
+    const reply = await next("Please answer the author's question.", 0);
+    expect(reply.tool).toBe("bash");
+    expect(reply.args.command).toContain(
+      "scripts/reply-thread.sh 7 9001 state/pr-7-answer-reply.md",
+    );
+    expect(reply.args.command).not.toMatch(/;\s*echo/);
+    await post("/admin/mode", { mode: "round" });
+  });
+
   it("answers a lens leaf with NONE and fails every request when told to", async () => {
     await post("/admin/mode", { mode: "round" });
     expect((await next("Task: Task file: /x/tasks/01-pass-baseline--sol-high.md.", 0)).text).toBe(

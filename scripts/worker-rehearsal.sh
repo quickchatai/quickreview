@@ -148,6 +148,8 @@ push_head() { # <n> : the PR's head becomes the fixture's nth commit
   echo "$sha"
 }
 round_status() { sql "select status from rounds where pr=$PR and round_no=$1"; }
+# the round the next trigger starts (a scenario left out by --only does not shift the next one's)
+next_round() { echo $(( $(sql "select coalesce(max(round_no),0) from rounds where pr=$PR") + 1 )); }
 rounds_done() { [[ "$(round_status "$1")" == done ]]; }
 answers_acked() { [[ "$(sql "select count(*) from session_commands where kind='answer' and status='acked'")" -ge "$1" ]]; }
 round_running() { [[ "$(sql "select count(*) from session_commands where kind='round' and round_no=$1 and status='running'")" -ge 1 ]]; }
@@ -491,6 +493,8 @@ fi
 
 # ---- F. debug round in a pty: armed, the next round runs in interactive pi, the fence --------------------------------------
 if want DEBUG-1; then
+DR="$(next_round)"
+D_REVIEWS_BEFORE="$(dryrun_reviews)"
 op debug-round "$PR" >"$WORK/debug.txt" 2>&1
 DEBUG_ARMED="$(sql "select kind||' '||state from pr_host_leases where pr=$PR")"
 HEAD2="$(push_head 3)"
@@ -501,17 +505,17 @@ sleep 6
 python3 "$RH/pty-drive.py" --settle 3 --expect "[Rr]ound|lens|verdict|bash" --timeout 20 --detach -- \
   docker exec -it "$DAEMON" tmux attach -t "debug-pr-$PR" >"$WORK/debug-pty.txt" 2>&1
 DPTY=$?
-wait_for 240 "round 2 to settle" rounds_done 2
+wait_for 240 "round $DR (the debug round) to settle" rounds_done "$DR"
 sleep 8
 DEBUG_GONE=no; dx tmux has-session -t "debug-pr-$PR" 2>/dev/null || DEBUG_GONE=yes
 DLEASE="$(sql "select count(*) from pr_host_leases where pr=$PR")"
 D_REVIEWS="$(dryrun_reviews)"
-DCMD="$(sql "select status from session_commands where kind='round' and round_no=2 order by rowid desc limit 1" 2>/dev/null)"
+DCMD="$(sql "select status from session_commands where kind='round' and round_no=$DR order by rowid desc limit 1" 2>/dev/null)"
 SPAWNS_DURING_DEBUG="$(( $(events worker_spawned) - WORKER_COUNT_BEFORE ))"
-if [[ "$DEBUG_ARMED" == "debug "* && "$DEBUG_GONE" == yes && "$DLEASE" == 0 && "$(round_status 2)" == done && "$D_REVIEWS" -ge 3 && "$SPAWNS_DURING_DEBUG" == 0 ]]; then
-  check DEBUG-1 pass "debug-round runs the PR's next round in interactive pi in a pty, posts through the gate, and keeps every worker out until the pi is confirmed gone" "lease '$DEBUG_ARMED' armed; round 2 ran in tmux debug-pr-$PR (attached in a pty, rc=$DPTY); verdict committed; pi gone; lease rows $DLEASE; workers spawned while it stood: $SPAWNS_DURING_DEBUG; create_review records now $D_REVIEWS"
+if [[ "$DEBUG_ARMED" == "debug "* && "$DEBUG_GONE" == yes && "$DLEASE" == 0 && "$(round_status "$DR")" == done && "$D_REVIEWS" == $((D_REVIEWS_BEFORE + 1)) && "$SPAWNS_DURING_DEBUG" == 0 ]]; then
+  check DEBUG-1 pass "debug-round runs the PR's next round in interactive pi in a pty, posts through the gate, and keeps every worker out until the pi is confirmed gone" "lease '$DEBUG_ARMED' armed; round $DR ran in tmux debug-pr-$PR (attached in a pty, rc=$DPTY), its review went through the gate (create_review records $D_REVIEWS_BEFORE -> $D_REVIEWS); verdict committed; pi gone; lease rows $DLEASE; workers spawned while it stood: $SPAWNS_DURING_DEBUG"
 else
-  check DEBUG-1 fail "debug-round in a pty" "armed='$DEBUG_ARMED' round2='$(round_status 2)' pi_gone=$DEBUG_GONE lease_rows=$DLEASE spawns_during=$SPAWNS_DURING_DEBUG reviews=$D_REVIEWS cmd=$DCMD pty rc=$DPTY screen: $(tail -6 "$WORK/debug-pty.txt" | tr '\n' ' ')"
+  check DEBUG-1 fail "debug-round in a pty" "armed='$DEBUG_ARMED' round$DR='$(round_status "$DR")' pi_gone=$DEBUG_GONE lease_rows=$DLEASE spawns_during=$SPAWNS_DURING_DEBUG reviews $D_REVIEWS_BEFORE -> $D_REVIEWS cmd=$DCMD pty rc=$DPTY screen: $(tail -6 "$WORK/debug-pty.txt" | tr '\n' ' ')"
 fi
 
 # a debug round that did not end leaves its lease; the next scenario needs the PR free
@@ -521,31 +525,33 @@ fi
 # ---- G. a daemon restart kills and requeues a worker -----------------------------------------------------------------------------
 if want RESTART-1; then
 log "restart scenario: a worker mid-round, then the daemon is killed"
+RR="$(next_round)"
 HEAD3="$(push_head 4)"
 stub_mode slow '"ms":300000'
 pr_event synchronize "$HEAD3" >/dev/null
-waitx 120 "a worker running round 3" round_running 3
+waitx 120 "a worker running round $RR" round_running "$RR"
 sleep 3
-ATT_BEFORE="$(sql "select attempt from session_commands where kind='round' and round_no=3 order by rowid desc limit 1")"
+ATT_BEFORE="$(sql "select attempt from session_commands where kind='round' and round_no=$RR order by rowid desc limit 1")"
 stub_mode round
 DAEMON_PID="$(procs | awk '/dist\/src\/wire.js/ {print $1; exit}')"
 dx sh -c "kill -9 $DAEMON_PID" 2>/dev/null
 wait_for 60 "the container to come back" bash -c "docker exec $DAEMON true"
 wait_for 180 "the restarted daemon's reconcile" bash -c "docker logs --since 120s $DAEMON 2>&1 | grep -q 'reconcile: open=.* errors=0'"
 RECOVER="$(docker logs "$DAEMON" 2>&1 | grep 'workers: recovered' | tail -1)"
-wait_for 240 "round 3 to settle after the restart" rounds_done 3
-ATT_AFTER="$(sql "select attempt from session_commands where kind='round' and round_no=3 order by rowid desc limit 1")"
+wait_for 240 "round $RR to settle after the restart" rounds_done "$RR"
+ATT_AFTER="$(sql "select attempt from session_commands where kind='round' and round_no=$RR order by rowid desc limit 1")"
 NJ3="$(find "$JDIR" -name '*.jsonl' | wc -l)"
-if [[ "$(round_status 3)" == done && "${ATT_AFTER:-0}" -gt "${ATT_BEFORE:-0}" && "$NJ3" == 1 && "$RECOVER" == *"requeued=1"* ]]; then
-  check RESTART-1 pass "a daemon restart kills and requeues a worker; a fresh one finishes the round over the same JSONL" "worker mid-round, daemon SIGKILLed, container restarted by its policy; boot said: ${RECOVER#*] }; the command's attempt $ATT_BEFORE -> $ATT_AFTER; round 3 done; one JSONL"
+if [[ "$(round_status "$RR")" == done && "${ATT_AFTER:-0}" -gt "${ATT_BEFORE:-0}" && "$NJ3" == 1 && "$RECOVER" == *"requeued=1"* ]]; then
+  check RESTART-1 pass "a daemon restart kills and requeues a worker; a fresh one finishes the round over the same JSONL" "worker mid-round, daemon SIGKILLed, container restarted by its policy; boot said: ${RECOVER#*] }; the command's attempt $ATT_BEFORE -> $ATT_AFTER; round $RR done; one JSONL"
 else
-  check RESTART-1 fail "a daemon restart requeues a worker" "round3='$(round_status 3)' attempt $ATT_BEFORE -> $ATT_AFTER jsonl=$NJ3 recover='$RECOVER'"
+  check RESTART-1 fail "a daemon restart requeues a worker" "round$RR='$(round_status "$RR")' attempt $ATT_BEFORE -> $ATT_AFTER jsonl=$NJ3 recover='$RECOVER'"
 fi
 fi
 
 # ---- H. a failing worker trips the breaker -------------------------------------------------------------------------------------
 if want BREAKER-1; then
 log "breaker scenario: the model fails every request"
+BR="$(next_round)"
 HEAD4="$(push_head 5)"
 SPAWNS_BEFORE="$(events worker_spawned)"
 stub_mode fail
@@ -558,7 +564,7 @@ CRASH="$(sql "select count(*) from events where kind='anomaly' and payload like 
 if [[ "$CRASH" -ge 1 && "$SPAWNED" == 2 ]]; then
   check BREAKER-1 pass "a failing worker trips the breaker: the PR is parked after two failures and no third worker starts" "workers spawned for the round: $SPAWNED; worker_crash_loop anomaly x$CRASH; status: $PARKED"
 else
-  check BREAKER-1 fail "a failing worker trips the breaker" "spawned=$SPAWNED crash_loop_anomalies=$CRASH status=$PARKED round4=$(round_status 4)"
+  check BREAKER-1 fail "a failing worker trips the breaker" "spawned=$SPAWNED crash_loop_anomalies=$CRASH status=$PARKED round$BR=$(round_status "$BR")"
 fi
 stub_mode round
 fi
