@@ -300,6 +300,8 @@ function playRound(s) {
   const reviewFile = `state/pr-${pr}-round-${round}-review.md`;
   const verdictFile = `verdict/pr-${pr}-round-${round}.json.tmp`;
   const verdictBare = JSON.stringify({ ...JSON.parse(verdict), passes: [] });
+  const findingsFile = `state/findings/pr-${pr}-round-${round}.json`;
+  const findings = JSON.stringify({ pr: Number(pr), round_no: Number(round), findings: [] });
   const steps = [
     // Join the wave the engine launched at round start (rule 9): the permit broker's use.
     () => ({ tools: [{ id: "c0", name: "lens_wave", args: {} }] }),
@@ -366,8 +368,18 @@ function playRound(s) {
         "c3",
         `QCR_EXPECTED_HEAD=${head} QCR_ROUND_NO=${round} scripts/post-review.sh ${pr} REQUEST_CHANGES state/pr-${pr}-round-${round}-review.md`,
       ),
+    // The findings record the round templates ask for (src/findingsrecord.ts): none raised.
+    () =>
+      canWrite
+        ? { tools: [{ id: "c4", name: "write", args: { path: findingsFile, content: findings } }] }
+        : bash("c4", `printf '%s' '${findings}' > ${findingsFile}`),
   ];
-  return steps[s.nTail] ? steps[s.nTail]() : { text: "round done" };
+  // The closing words carry the ledger block ledger-pin mirrors (src/ledgercheck.ts reads its header).
+  return steps[s.nTail]
+    ? steps[s.nTail]()
+    : {
+        text: `round done\n\nLEDGER PR #${pr} @ ${head}\nR${round}: REQUEST_CHANGES, the retry loop is unbounded.`,
+      };
 }
 
 function reply(body, ip) {

@@ -234,7 +234,13 @@ describe.skipIf(!hasOpenssl)("[P8.20a] the scripted stub", () => {
     expect((await next(ORDER, 5)).args.command).toContain(
       "scripts/post-review.sh 7 REQUEST_CHANGES state/pr-7-round-3-review.md",
     );
-    expect((await next(ORDER, 6)).text).toBe("round done");
+    const record = await next(ORDER, 6);
+    expect(record.tool).toBe("write");
+    expect(record.args.path).toBe("state/findings/pr-7-round-3.json");
+    expect(JSON.parse(record.args.content)).toEqual({ pr: 7, round_no: 3, findings: [] });
+    const done = (await next(ORDER, 7)).text;
+    expect(done).toMatch(/^round done/);
+    expect(done).toContain(`LEDGER PR #7 @ ${HEAD}`);
   });
 
   it("plays a round a worker took over from its order, not as a lens leaf", async () => {

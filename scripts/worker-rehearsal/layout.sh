@@ -30,7 +30,9 @@ PR=7
 LEGACY_ROOT=/opt/quickreview/sandbox
 git_id=(-c user.email=rehearsal@example.test -c user.name=rehearsal -c init.defaultBranch=master)
 
-mkdir -p "$H"/{state/pi-sessions/pr-$PR,secrets,config-home,memory-state,pihome/agent}
+# state/findings and state/ledgers: the legacy bot's state carried both (a round writes its findings record and
+# ledger-pin mirrors the ledger there)
+mkdir -p "$H"/{state/pi-sessions/pr-$PR,state/findings,state/ledgers,secrets,config-home,memory-state,pihome/agent}
 mkdir -p "$H"/sandbox/{wt,archive,commands,digest,inject,verdict}
 chmod 0755 "$H" "$H/sandbox" "$H"/sandbox/*
 
