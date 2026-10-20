@@ -6,6 +6,7 @@
 // Git is real (a local bare repo stands in for github.com); pi is a fake shell
 // script and GitHub's API a fake fetch. No network, no model, no docker.
 
+import { piCliRuntime } from "./helpers/pi-cli-runtime.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { freshStateHomePerTest } from "./helpers/fresh-state-home.js";
 import {
@@ -235,7 +236,7 @@ function harness(o: {
     // (dry-run posting is covered in review-post-cli.test.ts).
     cfg: { ...ctx.cfg, dry_run: false },
     ecosystem: ctx.ecosystem,
-    piBin: o.piBin,
+    runtime: piCliRuntime({ bin: o.piBin }),
     runsDir: join(tmp, `runs-${Math.random().toString(36).slice(2)}`),
     timeoutMs: 10 * 60_000,
     pr: {

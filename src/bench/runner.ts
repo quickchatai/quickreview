@@ -34,7 +34,6 @@ import {
   missingOutputs,
   readJson,
   runOneShot,
-  runPi,
   unparseableOutputs,
   PI_RUN_FILES,
   type PiRun,
@@ -49,7 +48,7 @@ import { renderBenchOutputs } from "../engine/render.js";
 
 // The prompts, render and context moved to src/engine/; their callers still
 // import them from here.
-export { boundBody, jsonProblem, missingOutputs, renderBenchOutputs, runPi, unparseableOutputs };
+export { boundBody, jsonProblem, missingOutputs, renderBenchOutputs, unparseableOutputs };
 export type { PiRun };
 export {
   applyConfigOverrides,
@@ -60,7 +59,6 @@ export {
   withPresetInToml,
 } from "../engine/context.js";
 import type { Runtime, SessionSpec } from "../engine/port.js";
-import { procArgv, procRuntime } from "../engine/procruntime.js";
 import { publishChangedResult } from "./publication.js";
 import {} from "../reviewrender.js";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -129,9 +127,8 @@ export interface RunnerOptions {
    * shared login with its refresh token disabled (src/bench/auth.ts). */
   agentDir: string;
   timeoutMs: number;
-  piBin?: string;
-  /** Hosts the review session (`--runtime`). Omitted: a process runtime over
-   * `piBin`. */
+  /** Hosts the review session: the SDK runtime. Required to review a case in
+   * this process (a pooled run hosts each case in a process of its own). */
   runtime?: Runtime;
   keepTree?: boolean;
   log?: (line: string) => void;
@@ -739,24 +736,7 @@ export function judgeSessionSpec(
   };
 }
 
-/** The pi argv the judge's process session runs (`-p` last, the prompt on stdin). */
-export function judgePiArgv(root: string, model: string): string[] {
-  return [
-    ...procArgv(
-      judgeSessionSpec(root, model, {
-        cwd: "",
-        env: {},
-        eventsFile: "",
-        stderrFile: "",
-        limits: { timeoutMs: 0 },
-      }),
-    ),
-    "-p",
-  ];
-}
-
-/** One judge session: \`pi\` from the env's PATH (or the injected runtime),
- * the prompt on stdin. */
+/** One judge session on the injected runtime. */
 export async function runJudgeSession(
   prompt: string,
   o: {
@@ -769,7 +749,8 @@ export async function runJudgeSession(
     runtime?: Runtime;
   },
 ): Promise<PiRun> {
-  const session = await (o.runtime ?? procRuntime()).create(
+  if (o.runtime === undefined) throw new Error("the defect judge needs a runtime");
+  const session = await o.runtime.create(
     judgeSessionSpec(o.root, o.model, {
       cwd: o.cwd,
       env: o.env,
@@ -815,6 +796,8 @@ export async function reviewCase(
   },
 ): Promise<CaseSummary> {
   const log = o.log ?? (() => {});
+  if (o.runtime === undefined) throw new Error("reviewCase needs a runtime");
+  const runtime = o.runtime;
   const safe = safeId(c.instance_id);
   const caseDir = join(o.outDir, "cases", safe);
   const tree = join(o.root, "wt", safe);
@@ -927,8 +910,7 @@ export async function reviewCase(
       cfg: ctx.cfg,
       ecosystem: ctx.ecosystem,
       timeoutMs: o.timeoutMs,
-      ...(o.piBin !== undefined ? { piBin: o.piBin } : {}),
-      ...(o.runtime !== undefined ? { runtime: o.runtime } : {}),
+      runtime,
       tmpDir,
       prompts,
       label: c.instance_id,

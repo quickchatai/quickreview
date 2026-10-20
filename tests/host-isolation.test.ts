@@ -5,6 +5,7 @@
 // pi is a fake that MODELS what pi 1.3.0 discovers from its argv, cwd and
 // environment, and spawns a lens child of itself the way extensions/subagents.ts
 // does (tests/helpers/host-fake-pi.ts). No network, no model.
+import { piCliRuntime } from "./helpers/pi-cli-runtime.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import {
@@ -158,7 +159,7 @@ async function review(
     agentDir: o.agentDir ?? operatorAgent,
     cfg: ctx.cfg,
     ecosystem: ctx.ecosystem,
-    piBin,
+    runtime: piCliRuntime({ bin: piBin }),
     runsDir,
     timeoutMs: 60_000,
     warn: () => {},
@@ -401,7 +402,7 @@ describe("the bench keeps its placement", () => {
       cfg: ctx().cfg,
       ecosystem: ecosystemFor("none"),
       timeoutMs: 60_000,
-      piBin: probe.bin,
+      runtime: piCliRuntime({ bin: probe.bin }),
     });
     const lenses = first.plannedLenses;
     const fake = hostFakePi(tmp, name, { floor: tmp, lenses });
@@ -424,7 +425,7 @@ describe("the bench keeps its placement", () => {
       cfg: ctx().cfg,
       ecosystem: ecosystemFor("none"),
       timeoutMs: 60_000,
-      piBin: fake.bin,
+      runtime: piCliRuntime({ bin: fake.bin }),
     });
     return { ...fake.read(), lenses, root: bRoot };
   }

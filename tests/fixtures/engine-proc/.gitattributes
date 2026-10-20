@@ -1,2 +1,0 @@
-# The recorded stream carries a CRLF line on purpose.
-pi-stdout.jsonl -text

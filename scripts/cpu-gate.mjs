@@ -4,14 +4,12 @@
 //
 // The in-process SDK runtime (src/engine/sdkruntime.ts) puts every lens
 // session on the same JS thread, which is why CPU forced the 10-08 cut. This
-// measures what that costs, against the process runtime doing the same work:
+// measures what that costs:
 //
 //   sdk   N faux sessions in this process (sdkRuntime over PiHost).
-//   proc  N children, each hosting one faux session and printing the event
-//         stream `pi --mode json` prints, read by procRuntime. The parent's
-//         loop only parses lines, which is all it does for real pi children.
 //
-// Both run under `taskset -c 0,1` (the host's two vCPUs). The workload is one
+// (The process-runtime arm this once measured it against is retired with the
+// runtime; its results stay in docs/cpu-gate.md.) It runs under `taskset -c 0,1` (the host's two vCPUs). The workload is one
 // long lens-shaped turn per session: a short thought, then a read or bash tool
 // call, over and over (the real tools run, on a real file tree), every response
 // streamed at pi-ai's faux pacing. No model, no network: each cell asserts it
@@ -30,14 +28,13 @@
 // docs/cpu-gate.md).
 //
 // Usage (after `npm run build`; dist/ must exist):
-//   node scripts/cpu-gate.mjs                      the gate: 8, 12, 20 sessions, sdk and proc
+//   node scripts/cpu-gate.mjs                      the gate: 8, 12, 20 sessions on sdk
 //   node scripts/cpu-gate.mjs --sessions 12 --modes sdk --window 10
 //   node scripts/cpu-gate.mjs --md out.md --json out.json
 // Exit status: 1 when the sdk cell at the gate size misses --limit-ms (D6:
 // p99 lag <= 200 ms at 12 sessions), 2 on a harness failure.
 import { spawn, spawnSync } from "node:child_process";
 import {
-  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -290,34 +287,6 @@ function sessionSpec(i, dir, tree) {
   };
 }
 
-// ---- a child that is one pi process (proc mode) ---------------------------------
-
-async function childMain(dir, tps, steps) {
-  const attempts = installOfflineGuard();
-  const { PiHost } = await import(pathToFileURL(join(DIST, "pisdk.js")).href);
-  const { sdkRuntime } = await import(pathToFileURL(join(DIST, "sdkruntime.js")).href);
-  const { faux, reply } = await fauxFixtures(tps, steps);
-  faux.appendResponses(Array.from({ length: steps + 8 }, () => reply));
-  const host = await PiHost.create({
-    agentDir: join(dir, "agent"),
-    settings: { compaction: { enabled: false }, retry: { enabled: false } },
-    configureModels: (r) => {
-      r.registerNativeProvider(faux.provider);
-    },
-  });
-  const spec = sessionSpec(`c${process.pid}`, dir, join(dir, "tree"));
-  const session = await sdkRuntime(host).create(spec);
-  // `pi --mode json` prints the stream and nothing else on stdout.
-  session.subscribe((event) => process.stdout.write(JSON.stringify(event) + "\n"));
-  process.on("SIGTERM", () => {
-    void session.abort().finally(() => process.exit(143));
-  });
-  const prompt = readFileSync(0, "utf8");
-  const r = await session.prompt(prompt);
-  if (attempts.length) process.stderr.write(`OFFLINE-VIOLATION ${attempts.join("; ")}\n`);
-  process.exit(r.code === 0 ? 0 : 1);
-}
-
 // ---- one cell (a mode at a session count), in its own process ------------------
 
 async function cellMain(mode, n, opts) {
@@ -353,15 +322,6 @@ async function cellMain(mode, n, opts) {
       },
     });
     runtime = sdkRuntime(host);
-  } else {
-    const { procRuntime } = await import(pathToFileURL(join(DIST, "procruntime.js")).href);
-    const bin = join(dir, "fake-pi");
-    writeFileSync(
-      bin,
-      `#!/bin/sh\nexec ${process.execPath} ${join(HERE, "cpu-gate.mjs")} --child ${dir} ${opts.tps} ${opts.steps}\n`,
-    );
-    chmodSync(bin, 0o755);
-    runtime = procRuntime({ bin });
   }
 
   // ---- start every session at once (a lens wave) ----
@@ -430,17 +390,7 @@ async function cellMain(mode, n, opts) {
 
   const results = await Promise.all(turns);
   const aborted = results.filter((x) => x.r.code !== 0).length;
-  let violations = attempts.length;
-  if (mode === "proc") {
-    for (let i = 0; i < n; i++) {
-      try {
-        if (readFileSync(join(dir, `s${i}`, "stderr.log"), "utf8").includes("OFFLINE-VIOLATION"))
-          violations++;
-      } catch {
-        // no stderr file: nothing printed
-      }
-    }
-  }
+  const violations = attempts.length;
   await cleanup();
 
   const ticks = ourTicks(c0, c1);
@@ -548,7 +498,7 @@ export function markdownTables(cells, meta) {
 function parseArgs(argv) {
   const o = {
     sessions: [8, 12, 20],
-    modes: ["sdk", "proc"],
+    modes: ["sdk"],
     window: 15,
     warmup: 3,
     tps: 100,
@@ -580,7 +530,6 @@ function parseArgs(argv) {
 
 async function main() {
   const argv = process.argv.slice(2);
-  if (argv[0] === "--child") return childMain(argv[1], num(argv[2]), num(argv[3]));
   if (argv[0] === "--cell") {
     const o = parseArgs(argv.slice(3));
     return cellMain(argv[1], num(argv[2]), o);

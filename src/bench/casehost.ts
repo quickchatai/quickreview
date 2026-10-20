@@ -13,8 +13,6 @@
 // included, the pipe closes and the host takes its own process group down
 // (`exitWithParent`). Without that, a plain `bench.sh review --concurrency N`
 // whose parent was killed would leave its hosts and their lens children running.
-//
-// The proc runtime is unchanged: its pi is already a child per session.
 import { spawn } from "node:child_process";
 import type { Readable } from "node:stream";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
@@ -44,9 +42,9 @@ export interface HostEnd {
   spawnError?: string;
 }
 
-/** The flags a pool owns: a host is told its one case, its serial pool and its
- * runtime afresh, whatever the parent was given. */
-const POOL_FLAGS = ["--only", "--concurrency", "--phase", "--runtime"] as const;
+/** The flags a pool owns: a host is told its one case and its serial pool
+ * afresh, whatever the parent was given. */
+const POOL_FLAGS = ["--only", "--concurrency", "--phase"] as const;
 
 /**
  * The argv of the host for case `id`: the parent's own command line with the
@@ -77,8 +75,6 @@ export function caseHostArgv(
     id,
     "--concurrency",
     "1",
-    "--runtime",
-    "sdk",
     ...(o.phase ? ["--phase", o.phase] : []),
     "--case-host",
   ];

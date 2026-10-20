@@ -1,8 +1,7 @@
 // The runtime port: the one narrow seam between the engine and whatever hosts a
 // pi session. A route builds a SessionSpec (plain data), asks a Runtime for a
-// session, and drives it through RuntimeSession. procRuntime (procruntime.ts)
-// hosts it as a `pi` child process; the in-process SDK runtime is a second
-// implementation behind the same port.
+// session, and drives it through RuntimeSession. The in-process SDK runtime
+// (sdkruntime.ts) is the one implementation behind the port.
 //
 // What a runtime cannot do is said in the type, not hidden: a `steer` or a
 // `resume` it has no way to honour comes back as a typed "unsupported", never a
@@ -75,6 +74,9 @@ export interface TurnResult {
   /** The turn was killed because its spend reached the cap. */
   capped?: boolean;
 }
+
+/** How one pi run ended: a turn's result, by its older name. */
+export type PiRun = TurnResult;
 
 /** One event of the stream, as the harness wrote it. */
 export type SessionEvent = Record<string, unknown>;

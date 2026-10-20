@@ -3,7 +3,6 @@
 // test really spawns a detached node stub to show the run outlives its starter.
 import { afterAll, describe, expect, it } from "vitest";
 import {
-  chmodSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -406,17 +405,18 @@ describe("runDetachedChild", () => {
 });
 
 describe("driverSignals", () => {
-  it("the first signal halts and SIGTERMs pi, the second SIGKILLs it and exits 130", () => {
+  it("the first signal stops the sessions then exits 130; a second exits at once", async () => {
     const calls: string[] = [];
     const onSignal = driverSignals({
-      killPi: (sig) => calls.push(`kill ${sig}`),
-      halt: () => calls.push("halt"),
       exit: (code) => calls.push(`exit ${code}`),
+      stopSessions: async () => void calls.push("stop"),
     });
     onSignal();
-    expect(calls).toEqual(["halt", "kill SIGTERM"]);
+    expect(calls).toEqual(["stop"]);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(calls).toEqual(["stop", "exit 130"]);
     onSignal();
-    expect(calls).toEqual(["halt", "kill SIGTERM", "kill SIGKILL", "exit 130"]);
+    expect(calls).toEqual(["stop", "exit 130", "exit 130"]);
   });
 
   it("runDetachedChild listens for SIGINT and SIGTERM while the run lasts, then lets go", async () => {
@@ -441,80 +441,13 @@ describe("driverSignals", () => {
   });
 });
 
-describe("stop leaves no orphan", () => {
-  it("a fake pi in its own process group, and its child, are gone after `review stop`", async () => {
-    const home = join(tmp, "orphan");
-    const pidFile = join(tmp, "orphan-pids");
-    const pi = join(tmp, "fake-pi.sh");
-    // Like the real pi: a lens child it would otherwise leave behind.
-    writeFileSync(pi, `#!/bin/sh\nsleep 300 &\necho "$$ $!" > ${pidFile}\nwait\n`);
-    chmodSync(pi, 0o755);
-    const stub = join(tmp, "orphan-stub.mjs");
-    const dist = join(process.cwd(), "dist", "src");
-    writeFileSync(
-      stub,
-      `import { runDetachedChild } from ${JSON.stringify(join(dist, "reviewdetach.js"))};
-import { runPi } from ${JSON.stringify(join(dist, "oneshot.js"))};
-const [dir, key] = process.argv.slice(2);
-await runDetachedChild({ dir, key, run: async () => {
-  const r = await runPi([], process.env, dir, dir + "/events.jsonl", dir + "/stderr.log", 600000, ${JSON.stringify(pi)});
-  return r.code === null ? 1 : r.code;
-} });
-`,
-    );
-    const alive = (p: number): boolean => {
-      try {
-        process.kill(p, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    };
-    const deps: DetachDeps = {
-      home,
-      out: () => {},
-      now: Date.now,
-      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-      newId: () => "orph1",
-      alive,
-      kill: (p, s) => process.kill(-p, s),
-      identify: () => ({ ok: true, key: "branch:o/r@y", label: "y" }),
-      launch: (l) =>
-        launchDetached({
-          command: process.execPath,
-          args: [stub, l.dir, l.key],
-          dir: l.dir,
-          env: process.env,
-        }),
-    };
-    expect(await runDetachedVerb("start", [], true, deps)).toBe(0);
-    let pids: number[] = [];
-    for (let i = 0; i < 100 && pids.length < 2; i++) {
-      await new Promise((r) => setTimeout(r, 50));
-      try {
-        pids = readFileSync(pidFile, "utf8").trim().split(" ").map(Number);
-      } catch {
-        // pi not started yet
-      }
-    }
-    expect(pids).toHaveLength(2);
-    expect(pids.every(alive)).toBe(true);
-    expect(await runDetachedVerb("stop", [], true, deps)).toBe(0);
-    for (let i = 0; i < 100 && pids.some(alive); i++) await new Promise((r) => setTimeout(r, 50));
-    expect(pids.filter(alive)).toEqual([]);
-  }, 20_000);
-});
-
 describe("driverSignals on the SDK runtime", () => {
   const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
-  it("the first signal aborts, then disposes, then exits 130; pi's groups are SIGTERMed too", async () => {
+  it("the first signal aborts, then disposes, then exits 130", async () => {
     const calls: string[] = [];
     const onSignal = driverSignals({
-      killPi: (sig) => calls.push(`kill ${sig}`),
-      halt: () => calls.push("halt"),
       exit: (code) => calls.push(`exit ${code}`),
-      sdk: () => true,
       stopSessions: async () => {
         calls.push("abort");
         await flush();
@@ -522,52 +455,32 @@ describe("driverSignals on the SDK runtime", () => {
       },
     });
     onSignal();
-    expect(calls).toEqual(["halt", "kill SIGTERM", "abort"]);
+    expect(calls).toEqual(["abort"]);
     await new Promise((r) => setTimeout(r, 20));
-    expect(calls).toEqual(["halt", "kill SIGTERM", "abort", "dispose", "exit 130"]);
+    expect(calls).toEqual(["abort", "dispose", "exit 130"]);
   });
 
   it("exits 130 even when the stop throws, and a second signal exits at once, mid-stop", async () => {
     const calls: string[] = [];
     const never = new Promise<void>(() => {});
     const wedged = driverSignals({
-      killPi: (sig) => calls.push(`kill ${sig}`),
-      halt: () => {},
       exit: (code) => calls.push(`exit ${code}`),
-      sdk: () => true,
       stopSessions: () => never,
     });
     wedged();
     await flush();
-    expect(calls).toEqual(["kill SIGTERM"]);
+    expect(calls).toEqual([]);
     wedged();
-    expect(calls).toEqual(["kill SIGTERM", "kill SIGKILL", "exit 130"]);
+    expect(calls).toEqual(["exit 130"]);
 
     const calls2: string[] = [];
     const throwing = driverSignals({
-      killPi: () => {},
-      halt: () => {},
       exit: (code) => calls2.push(`exit ${code}`),
-      sdk: () => true,
       stopSessions: () => Promise.reject(new Error("boom")),
     });
     throwing();
     await new Promise((r) => setTimeout(r, 10));
     expect(calls2).toEqual(["exit 130"]);
-  });
-
-  it("a process run does not exit on the first signal: its run unwinds on its own", async () => {
-    const calls: string[] = [];
-    const onSignal = driverSignals({
-      killPi: (sig) => calls.push(`kill ${sig}`),
-      halt: () => calls.push("halt"),
-      exit: (code) => calls.push(`exit ${code}`),
-      sdk: () => false,
-      stopSessions: async () => void calls.push("abort"),
-    });
-    onSignal();
-    await new Promise((r) => setTimeout(r, 10));
-    expect(calls).toEqual(["halt", "kill SIGTERM"]);
   });
 });
 

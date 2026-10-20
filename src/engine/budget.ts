@@ -14,7 +14,7 @@ import type { SessionEvent } from "./port.js";
 
 export type BudgetReason = "timeout" | "cap";
 
-/** What a budget stops. A RuntimeSession fits; so does a pi child (procruntime). */
+/** What a budget stops. A RuntimeSession fits; so does a pi child. */
 export interface BudgetTarget {
   /** Stop the turn in flight. Resolves once it has stopped, or when it cannot say. */
   abort(): Promise<void>;

@@ -44,9 +44,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { haltPi, killPiGroups } from "./oneshot.js";
-import { livePiGroupIds } from "./engine/procruntime.js";
-import { onSdkRoute, stopLiveSessions } from "./engine/livesessions.js";
+import { stopLiveSessions } from "./engine/livesessions.js";
 import { HEARTBEAT_FILE, readBeat, startHeartbeat } from "./heartbeat.js";
 import { originRepo, resolveBranch, resolveUncommitted } from "./localreview.js";
 import { latestLiveRound, viewRound } from "./live/read.js";
@@ -575,19 +573,12 @@ export function launchDetached(o: {
 
 /** The driver's SIGINT/SIGTERM (what `qcr review stop` sends).
  *
- * On a process runtime the first halts the run and kills every pi's process
- * group, which the kill aimed at the driver's own group never reaches; the run
- * then unwinds on its own. On the SDK runtime the sessions are in this process,
- * so the first aborts them, disposes them and exits 130 (`stopSessions`); the
- * native lens tool's children share the driver's group, which `stop`'s kill
- * reaches, and the abort stops them through the tool call's signal. A second
- * signal, on either, kills the pi groups outright and exits. */
+ * The sessions are in this process, so the first signal aborts them, disposes
+ * them and exits 130 (`stopSessions`); the native lens tool's children share
+ * the driver's group, which `stop`'s kill reaches, and the abort stops them
+ * through the tool call's signal. A second signal exits at once. */
 export function driverSignals(io: {
-  killPi: (sig: NodeJS.Signals) => void;
-  halt: () => void;
   exit: (code: number) => void;
-  /** The run is on the SDK runtime. Default: it is not. */
-  sdk?: () => boolean;
   /** Abort, then dispose, the running SDK sessions. */
   stopSessions?: () => Promise<void>;
 }): () => void {
@@ -595,21 +586,12 @@ export function driverSignals(io: {
   return () => {
     seen++;
     if (seen === 1) {
-      io.halt();
-      io.killPi("SIGTERM");
-      setTimeout(() => io.killPi("SIGKILL"), 5_000).unref();
-      if (io.sdk?.() === true && io.stopSessions !== undefined)
-        void io
-          .stopSessions()
-          .catch(() => {})
-          .finally(() => io.exit(130));
+      void (io.stopSessions?.() ?? Promise.resolve())
+        .catch(() => {})
+        .finally(() => io.exit(130));
       return;
     }
-    try {
-      io.killPi("SIGKILL");
-    } finally {
-      io.exit(130);
-    }
+    io.exit(130);
   };
 }
 
@@ -626,15 +608,12 @@ export async function runDetachedChild(o: {
   const outFile = join(o.dir, "output.jsonl");
   const out = (line: string): void => appendFileSync(outFile, `${line}\n`);
   const onSignal = driverSignals({
-    killPi: killPiGroups,
-    halt: haltPi,
     exit: (code) => proc.exit(code),
-    sdk: onSdkRoute,
     stopSessions: () => stopLiveSessions(),
   });
   proc.on("SIGINT", onSignal);
   proc.on("SIGTERM", onSignal);
-  const stopBeat = startHeartbeat(join(o.dir, HEARTBEAT_FILE), { pgids: livePiGroupIds });
+  const stopBeat = startHeartbeat(join(o.dir, HEARTBEAT_FILE));
   let code: number;
   try {
     code = await o.run(out);

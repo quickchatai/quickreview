@@ -8,10 +8,9 @@
 //             [--allow-customised]   run although the profile replaces shipped
 //                                    agents or prompts (refused otherwise)
 //             [--config a.b=v,c.d=w]   config levers for this run (runner.ts)
-//             [--runtime proc|sdk]     what hosts pi (default [engine] runtime, sdk). sdk runs each case's
-//                                      session in-process, in its own host process (src/bench/casehost.ts);
-//                                      the lens tool is [pi] lens_runtime (engine by default, with the planned
-//                                      wave of [pi] engine_wave; native on proc), set with --config
+//             pi runs in-process on the SDK, each case in its own host process
+//             (src/bench/casehost.ts); the lens tool is [pi] lens_runtime (engine by
+//             default, with the planned wave of [pi] engine_wave), set with --config
 //             [--phase all|init|case|finish]   arm.sh's one-container-per-case split;
 //             every case ends with a `result: <id> <status> retry= limited=` line
 //   results   --set <file> --out DIR     rebuild result files from case dirs
@@ -58,8 +57,7 @@
 // The defect benchmark (src/bench/defects.ts; any run dir, either arm):
 //   defect-judge  --set <file> --defects <file> --out RUN_DIR [--only id,id] [--rounds 1]
 //                 [--model openai-codex/gpt-6-sol:high] [--concurrency 3] [--resume] [--label L]
-//                 [--runtime proc|sdk]   what hosts the judge (default [engine] runtime, sdk); on sdk each
-//                                        judged case runs in its own host process
+//                 (each judged case runs in its own host process)
 //   defect-report --set <file> --defects <file> --out RUN_DIR [--label L]   rescore, no model calls
 //
 // Nothing here can reach GitHub except `prefetch` (anonymous, read-only), and
@@ -141,7 +139,6 @@ import { codexCommand } from "./codexcli.js";
 import { LENS_RUNTIME_KINDS, type EngineRuntimeKind, type LensRuntimeKind } from "../config.js";
 import type { Runtime } from "../engine/port.js";
 import {
-  checkLensNeedsSdk,
   checkLensRuntime,
   parseRuntimeKind,
   selectRuntime,
@@ -186,14 +183,15 @@ function flags(argv: string[]): {
   };
 }
 
-/** The runtime kind a bench command hosts pi on: `--runtime`, else `fallback`
- * (the config's `[engine] runtime`, which a `--config` lever may have set to
- * anything: it is checked here like the flag). */
-function benchRuntimeKind(
-  f: { get: (k: string) => string | undefined },
-  fallback: string,
-): EngineRuntimeKind {
-  return parseRuntimeKind(f.get("--runtime") ?? fallback);
+/** The runtime kind a bench command hosts pi on: the config's `[engine]
+ * runtime`, which a `--config` lever may have set to anything: it is checked
+ * here (a lever is not parsed by the config loader). */
+function benchRuntimeKind(fallback: string): EngineRuntimeKind {
+  if (fallback === "proc")
+    throw new Error(
+      '[engine] runtime = "proc" is retired: pi runs in-process on the SDK; drop the lever',
+    );
+  return parseRuntimeKind(fallback);
 }
 
 /** `[pi] lens_runtime`, checked (a `--config` lever is not parsed by the config
@@ -220,13 +218,12 @@ function lazyRuntime(make: () => Promise<Runtime>): Runtime {
   };
 }
 
-/** The runtime a bench command hosts the review's main session on: undefined on
- * proc (each runner's own process runtime), the SDK runtime on sdk. */
+/** The runtime a bench command hosts the review's main session on. */
 function benchRuntime(
   kind: EngineRuntimeKind,
   lens: LensRuntimeKind,
   plannedWave: boolean,
-): Runtime | undefined {
+): Runtime {
   return selectRuntime(kind, "bench", () =>
     lazyRuntime(() =>
       import("../engine/benchsdk.js").then((m) => m.benchSdkRuntime({ lens, plannedWave })),
@@ -235,7 +232,7 @@ function benchRuntime(
 }
 
 /** The runtime the defect judge's session runs on. */
-function judgeRuntime(kind: EngineRuntimeKind): Runtime | undefined {
+function judgeRuntime(kind: EngineRuntimeKind): Runtime {
   return selectRuntime(kind, "bench", () =>
     lazyRuntime(() => import("../engine/benchsdk.js").then((m) => m.judgeSdkRuntime())),
   );
@@ -428,9 +425,8 @@ async function main(): Promise<number> {
     // `--config review.profile=<name>` chooses the profile as `--profile` does.
     const profile = base.cfg.review.profile;
     const bench = benchCustomisation(root, profile, f.has("--allow-customised"));
-    const runtimeKind = benchRuntimeKind(f, base.cfg.engine.runtime);
+    const runtimeKind = benchRuntimeKind(base.cfg.engine.runtime);
     const lensKind = benchLensKind(base.cfg.pi.lens_runtime);
-    checkLensNeedsSdk(lensKind, runtimeKind);
     // The planned wave is the engine lens tool's: `[pi] engine_wave` is read only with it.
     const wave = lensKind === "engine" && base.cfg.pi.engine_wave;
     const ctx = {
@@ -450,7 +446,7 @@ async function main(): Promise<number> {
     // On sdk a whole run (`--phase all`) puts each case in a host process of its
     // own, so a crash or a frozen loop costs that case. arm.sh's `--phase case`
     // is already one container, hence one process, per case.
-    const hosted = runtimeKind === "sdk" && phase === "all" && !caseHost;
+    const hosted = phase === "all" && !caseHost;
     const runtime = hosted ? undefined : benchRuntime(runtimeKind, lensKind, wave);
     // A case container always resumes: its run was set up (and, if fresh,
     // cleared) by the init phase, so a finished case it finds is this run's.
@@ -1109,15 +1105,14 @@ async function main(): Promise<number> {
       const agentDir = f.get("--agent-dir") ?? DEFAULTS.agentDir;
       const timeoutMs = Number(f.get("--timeout-min") ?? "30") * 60_000;
       const resume = f.has("--resume");
-      // The judge's runtime is the config's, as the review's is; `--runtime`
-      // overrides it. On sdk each judged case is hosted by a process of its own
-      // (`--case-host` is that process, told its one case by the pool).
+      // The judge's runtime is the config's, as the review's is. Each judged
+      // case is hosted by a process of its own (`--case-host` is that process,
+      // told its one case by the pool).
       const runtimeKind = benchRuntimeKind(
-        f,
         applyConfigOverrides(benchConfig(""), f.get("--config") ?? "").engine.runtime,
       );
       const caseHost = f.has("--case-host");
-      const hosts = runtimeKind === "sdk" && !caseHost ? hostPool("defect-judge") : undefined;
+      const hosts = !caseHost ? hostPool("defect-judge") : undefined;
       const runtime = hosts ? undefined : judgeRuntime(runtimeKind);
       mkdirSync(judgeDir, { recursive: true });
       let authStop: string | null = null;

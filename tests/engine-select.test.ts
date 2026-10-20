@@ -1,7 +1,7 @@
-// P5.1: the runtime selection keys. `[engine] runtime = proc|sdk` and
-// `[pi] lens_runtime = native|engine` parse with sdk/engine defaults (X2), the
-// shipped example config still validates, and a route that has no SDK host
-// refuses `sdk` instead of running on proc.
+// P5.1: the runtime selection keys. `[engine] runtime = sdk` (`proc` is retired
+// and refused) and `[pi] lens_runtime = native|engine` parse with sdk/engine
+// defaults (X2), the shipped example config still validates, and a route that
+// has no SDK host refuses `sdk`.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -9,7 +9,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.js";
 import type { Runtime } from "../src/engine/port.js";
 import {
-  checkLensNeedsSdk,
   checkLensRuntime,
   parseRuntimeKind,
   selectRuntime,
@@ -35,11 +34,10 @@ describe("[engine] runtime and [pi] lens_runtime", () => {
     }
   });
 
-  it("runtime = proc alone brings the lens defaults back to native and no wave", () => {
-    const cfg = parseConfig(`${FIXTURE}\n[engine]\nruntime = "proc"\n`);
-    expect(cfg.engine.runtime).toBe("proc");
-    expect(cfg.pi.lens_runtime).toBe("native");
-    expect(cfg.pi.engine_wave).toBe(false);
+  it("runtime = proc is refused with a retirement message", () => {
+    expect(() => parseConfig(`${FIXTURE}\n[engine]\nruntime = "proc"\n`)).toThrow(
+      /"proc" is retired/,
+    );
   });
 
   it("lens_runtime = native alone keeps the sdk runtime and turns the wave off", () => {
@@ -59,7 +57,7 @@ describe("[engine] runtime and [pi] lens_runtime", () => {
 
   it("refuse a value outside the closed set, naming the key", () => {
     expect(() => parseConfig(`${FIXTURE}\n[engine]\nruntime = "docker"\n`)).toThrow(
-      /\[engine\] runtime must be one of proc \| sdk/,
+      /\[engine\] runtime must be one of sdk/,
     );
     expect(() => parseConfig(underPi(FIXTURE, 'lens_runtime = "wave"'))).toThrow(
       /\[pi\] lens_runtime must be one of native \| engine/,
@@ -83,11 +81,6 @@ describe("[engine] runtime and [pi] lens_runtime", () => {
 describe("selectRuntime", () => {
   const sdk = {} as Runtime;
 
-  it("proc selects nothing: the route keeps its own process runtime", () => {
-    expect(selectRuntime("proc", "review")).toBeUndefined();
-    expect(selectRuntime("proc", "review", () => sdk)).toBeUndefined();
-  });
-
   it("sdk builds the route's host, and is refused where the route has none", () => {
     expect(selectRuntime("sdk", "review", () => sdk)).toBe(sdk);
     expect(() => selectRuntime("sdk", "scan")).toThrow(/not available on the scan route/);
@@ -99,16 +92,9 @@ describe("selectRuntime", () => {
     expect(() => checkLensRuntime("engine", "bench")).toThrow(/not available on the bench route/);
   });
 
-  it("lens_runtime = engine without runtime = sdk is refused, not run as the proc baseline", () => {
-    expect(() => checkLensNeedsSdk("engine", "sdk")).not.toThrow();
-    expect(() => checkLensNeedsSdk("native", "proc")).not.toThrow();
-    expect(() => checkLensNeedsSdk("native", "sdk")).not.toThrow();
-    expect(() => checkLensNeedsSdk("engine", "proc")).toThrow(/needs \[engine\] runtime = sdk/);
-  });
-
-  it("--runtime accepts proc and sdk only", () => {
+  it("a runtime kind accepts sdk only", () => {
     expect(parseRuntimeKind("sdk")).toBe("sdk");
-    expect(() => parseRuntimeKind("native")).toThrow(/--runtime must be proc \| sdk/);
+    expect(() => parseRuntimeKind("proc")).toThrow(/must be sdk/);
   });
 });
 
@@ -138,7 +124,7 @@ describe("the scan leaf runner under [engine] runtime", () => {
     return { QCR_CONFIG: path };
   };
 
-  it("passes straight through on proc and on an unreadable config", async () => {
+  it("passes straight through on a config that does not load (the retired proc included)", async () => {
     for (const env of [
       envWith(`${FIXTURE}\n[engine]\nruntime = "proc"\n`),
       { QCR_CONFIG: join(dir, "missing.toml") },
@@ -177,7 +163,7 @@ describe("the scan leaf runner under [engine] runtime", () => {
     expect(i.calls()).toBe(0);
   });
 
-  it("a proc scan never builds the SDK leaves", async () => {
+  it("a config that does not load never builds the SDK leaves", async () => {
     const i = inner();
     const env = envWith(`${FIXTURE}\n[engine]\nruntime = "proc"\n`);
     const runner = scanLeafRunner(i.runner, ROOT, env, () => {

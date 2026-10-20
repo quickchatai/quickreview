@@ -320,10 +320,8 @@ export interface ReviewCliDeps {
   agentDir: string;
   cfg: Config;
   ecosystem: Ecosystem;
-  piBin?: string;
-  /** Hosts the review session (`[engine] runtime`). Omitted: a process
-   * runtime over `piBin`. */
-  runtime?: Runtime;
+  /** Hosts the review session (`[engine] runtime`, the SDK). */
+  runtime: Runtime;
   /** Runs the round inside interactive pi (`--debug-pi`, src/engine/debugpi.ts).
    * Absent: there is no terminal for it, and the flag is refused. */
   debugPi?: (spec: RoundSpec) => Promise<OneShotResult>;
@@ -989,8 +987,7 @@ async function runReview(
           await deps.debugPi({ ...round, live: undefined })
         : await runOneShot({
             ...round,
-            ...(deps.piBin !== undefined ? { piBin: deps.piBin } : {}),
-            ...(deps.runtime !== undefined ? { runtime: deps.runtime } : {}),
+            runtime: deps.runtime,
           });
   } catch (err) {
     return refuse(1, [`the review could not run: ${String(err).slice(0, 300)}`]);
@@ -1251,19 +1248,14 @@ export function watchdogCommand(
   };
 }
 
-/** The runtime `[engine] runtime` selects for `qcr review`: undefined on proc
- * (the review keeps its process runtime), the SDK runtime on sdk. Throws where
- * the config asks for what the route cannot do. `[pi] lens_runtime = engine` is
+/** The runtime `[engine] runtime` selects for `qcr review`: the SDK runtime.
+ * `[pi] lens_runtime = engine` is
  * the SDK runtime with our lens tools; with `[pi] engine_wave` the runtime
  * carries the board the round starts the planned wave on. */
 export function selectReviewRuntime(
   cfg: Pick<Config, "engine" | "pi">,
-): EngineRouteRuntime | undefined {
+): EngineRouteRuntime {
   const engine = cfg.pi.lens_runtime === "engine";
-  if (engine && cfg.engine.runtime !== "sdk")
-    throw new Error(
-      "[pi] lens_runtime = engine runs the lenses in this process: set [engine] runtime = sdk, or lens_runtime = native",
-    );
   return selectRuntime(cfg.engine.runtime, "review", () => {
     // The SDK host loads on the first session, not at startup: a preview, a
     // refusal and `review status` never pay for the pi SDK. A stop signal that
@@ -1443,7 +1435,7 @@ export async function cmdReview(
     console.error(
       `note: no pi login at ${agentDir} — run \`qcr scan login\` first if the review fails`,
     );
-  let runtime: Runtime | undefined;
+  let runtime: Runtime;
   try {
     runtime = selectReviewRuntime(cfg);
   } catch (err) {
@@ -1490,7 +1482,7 @@ export async function cmdReview(
     agentDir,
     cfg,
     ecosystem,
-    ...(runtime !== undefined ? { runtime } : {}),
+    runtime,
     // A round inside interactive pi needs the whole terminal.
     ...(interactive && process.stdout.isTTY
       ? {

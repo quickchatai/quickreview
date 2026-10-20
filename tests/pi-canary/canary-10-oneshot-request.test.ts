@@ -26,7 +26,7 @@ import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import subagents from "../../extensions/subagents.js";
 import { PiHost } from "../../src/engine/pisdk.js";
 import type { Runtime, RuntimeSession, SessionSpec } from "../../src/engine/port.js";
-import { procRuntime } from "../../src/engine/procruntime.js";
+import { piCliRuntime } from "../helpers/pi-cli-runtime.js";
 import { runRound, type RoundSpec } from "../../src/engine/round.js";
 import { roundSdkExtras } from "../../src/engine/roundsdk.js";
 import { sdkRuntime } from "../../src/engine/sdkruntime.js";
@@ -177,7 +177,7 @@ async function round(kind: "proc" | "sdk"): Promise<Run> {
     timeoutMs: 10 * 60_000,
     prompts: rig.prompts,
   };
-  const runtime = kind === "proc" ? offline(procRuntime({ bin: PI_BIN })) : sdkOneShotRuntime();
+  const runtime = kind === "proc" ? offline(piCliRuntime({ bin: PI_BIN })) : sdkOneShotRuntime();
   let main: RuntimeSession | undefined;
   const result = await runRound(spec, {
     create: async (s) => (main = await runtime.create(s)),

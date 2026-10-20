@@ -17,7 +17,7 @@ import { LIVE_MAIN_FILE, liveRoundDir, readLiveEvents } from "../src/live/events
 import { projectRoundProgress } from "../src/live/projection.js";
 import { PiHost } from "../src/engine/pisdk.js";
 import type { Runtime } from "../src/engine/port.js";
-import { procRuntime } from "../src/engine/procruntime.js";
+import { piCliRuntime } from "./helpers/pi-cli-runtime.js";
 import { runRound, type RoundSpec } from "../src/engine/round.js";
 import { roundSdkExtras } from "../src/engine/roundsdk.js";
 import { sdkRuntime } from "../src/engine/sdkruntime.js";
@@ -110,7 +110,7 @@ function fakePi(outDir: string, turns: Turn[], dir: string): Built {
     ].join("\n"),
   );
   chmodSync(bin, 0o755);
-  const inner = procRuntime({ bin });
+  const inner = piCliRuntime({ bin });
   let created = 0;
   return {
     runtime: {

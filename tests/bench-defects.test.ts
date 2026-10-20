@@ -1,3 +1,5 @@
+import { piCliRuntime } from "./helpers/pi-cli-runtime.js";
+import { judgePiArgv } from "./helpers/judge-argv.js";
 import {
   chmodSync,
   mkdirSync,
@@ -32,7 +34,6 @@ import {
   readJudgeEvents,
 } from "../src/bench/defectjudge.js";
 import {
-  judgePiArgv,
   recordUnprefetched,
   runJudgeSession,
   type RunFingerprint,
@@ -591,6 +592,7 @@ describe("the judge session", () => {
       log: () => {},
       pi: {
         root: "/x",
+        runtime: piCliRuntime(),
         cwd: dir,
         model: "m",
         // The judge spawns `pi` from the env PATH: the fake stands first.
@@ -717,6 +719,7 @@ describe("a re-judged round", () => {
       log: () => {},
       pi: {
         root: "/x",
+        runtime: piCliRuntime(),
         cwd: dir,
         model: "m",
         env: { PATH: `${join(dir, "bin")}:${process.env.PATH ?? ""}` },
@@ -744,6 +747,7 @@ describe("the bench's one pi spawn", () => {
     const { dir, env } = fakePi("exit 3");
     const r = await runJudgeSession("x".repeat(4 << 20), {
       root: "/x",
+      runtime: piCliRuntime(),
       cwd: dir,
       model: "m",
       env,
@@ -777,6 +781,7 @@ describe("the bench's one pi spawn", () => {
       const eventsPath = join(dir, `e${i}.jsonl`);
       const r = await runJudgeSession("prompt", {
         root: "/x",
+        runtime: piCliRuntime(),
         cwd: dir,
         model: "m",
         env,

@@ -27,6 +27,8 @@
 // A deliberate change updates the fixture in the same commit:
 // `UPDATE_CONTEXT_FILES=1 npx vitest run tests/context-files.test.ts`, then
 // review the diff.
+import { piCliRuntime } from "./helpers/pi-cli-runtime.js";
+import { judgePiArgv } from "./helpers/judge-argv.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
@@ -76,7 +78,7 @@ vi.stubEnv("QCR_CONFIG", join(import.meta.dirname, "fixtures", "config.toml"));
 
 const { runReviewCli } = await import("../src/reviewcli.js");
 const { runOneShot } = await import("../src/oneshot.js");
-const { benchConfig, buildBenchAgents, contextFor, judgePiArgv } =
+const { benchConfig, buildBenchAgents, contextFor } =
   await import("../src/bench/runner.js");
 const { ecosystemFor } = await import("../src/ecosystem.js");
 
@@ -310,7 +312,7 @@ async function runOneShotProbe(root: string, agentDir: string): Promise<Probe> {
     cfg: benchConfig(""),
     ecosystem: ecosystemFor("none"),
     timeoutMs: 60_000,
-    piBin: pi.bin,
+    runtime: piCliRuntime({ bin: pi.bin }),
   });
   return pi.probe();
 }
@@ -340,7 +342,7 @@ async function captureReviewCli(
     agentDir,
     cfg: ctx.cfg,
     ecosystem: ctx.ecosystem,
-    piBin: pi.bin,
+    runtime: piCliRuntime({ bin: pi.bin }),
     runsDir,
     timeoutMs: 60_000,
   });

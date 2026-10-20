@@ -34,8 +34,7 @@ import {
 import { caseCostUsd } from "../bench/cost.js";
 import { lineHasAuthError } from "../authwatch.js";
 import { checkAuth, classifyAuthFailure, type AuthRejected, type EngineAuth } from "./auth.js";
-import type { Runtime, RuntimeSession } from "./port.js";
-import type { PiRun } from "./procruntime.js";
+import type { PiRun, Runtime, RuntimeSession } from "./port.js";
 import { GIT_ISOLATION_ENV } from "../bench/exec.js";
 import { POLICED_ORIGINALS, type BenchPostingReport } from "../bench/benchposting.js";
 import { apiKeyEnv } from "../bench/auth.js";

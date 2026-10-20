@@ -220,7 +220,7 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRunti
       native
         ? {
             what: "the SDK runtime with the native lens tool",
-            instead: "set [pi] lens_runtime = engine, or use [engine] runtime = proc here",
+            instead: "set [pi] lens_runtime = engine",
           }
         : { what: "the SDK runtime", instead: "", isolated: true },
     );

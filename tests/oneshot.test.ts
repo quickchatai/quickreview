@@ -5,6 +5,7 @@
 // dir, and knows nothing about bench cases. pi is a fake shell script: no
 // network, no model.
 
+import { piCliRuntime, onLfLines } from "./helpers/pi-cli-runtime.js";
 import { PassThrough } from "node:stream";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import {
@@ -27,7 +28,7 @@ vi.stubEnv(
   resolve(dirname(fileURLToPath(import.meta.url)), "fixtures", "config.toml"),
 );
 
-const { runOneShot, onLfLines } = await import("../src/oneshot.js");
+const { runOneShot } = await import("../src/oneshot.js");
 const { benchConfig } = await import("../src/bench/runner.js");
 const { ecosystemFor } = await import("../src/ecosystem.js");
 
@@ -116,7 +117,7 @@ describe("runOneShot", () => {
       cfg: benchConfig(""),
       ecosystem: ecosystemFor("none"),
       timeoutMs: 10 * 60_000,
-      piBin: pi.bin,
+      runtime: piCliRuntime({ bin: pi.bin }),
     });
     const calls = readFileSync(pi.calls, "utf8").trim().split("\n");
     expect(calls).toHaveLength(1);
@@ -154,7 +155,7 @@ describe("runOneShot", () => {
       cfg: benchConfig(""),
       ecosystem: ecosystemFor("none"),
       timeoutMs: 10 * 60_000,
-      piBin: pi.bin,
+      runtime: piCliRuntime({ bin: pi.bin }),
     });
     const calls = readFileSync(pi.calls, "utf8").trim().split("\n");
     expect(calls).toHaveLength(2);
@@ -178,7 +179,7 @@ describe("runOneShot", () => {
       cfg: benchConfig(""),
       ecosystem: ecosystemFor("none"),
       timeoutMs: 10 * 60_000,
-      piBin: bin,
+      runtime: piCliRuntime({ bin }),
     });
     expect(r.continued).toBe(false);
     expect(r.error).toMatch(/nothing to continue/);
@@ -202,7 +203,7 @@ describe("runOneShot", () => {
       cfg: benchConfig(""),
       ecosystem: ecosystemFor("none"),
       timeoutMs: 10 * 60_000,
-      piBin: pi.bin,
+      runtime: piCliRuntime({ bin: pi.bin }),
       capUsd: 1,
     });
     expect(Date.now() - t0).toBeLessThan(30_000);
@@ -230,7 +231,7 @@ describe("runOneShot", () => {
       cfg: benchConfig(""),
       ecosystem: ecosystemFor("none"),
       timeoutMs: 10 * 60_000,
-      piBin: pi.bin,
+      runtime: piCliRuntime({ bin: pi.bin }),
       capUsd: 1,
     });
     expect(Date.now() - t0).toBeLessThan(30_000);
@@ -252,7 +253,7 @@ describe("runOneShot", () => {
       cfg: benchConfig(""),
       ecosystem: ecosystemFor("none"),
       timeoutMs: 10 * 60_000,
-      piBin: pi.bin,
+      runtime: piCliRuntime({ bin: pi.bin }),
       capUsd: 1,
     });
     expect(r.capped).toBe(false);

@@ -14,8 +14,7 @@
 // `subscribe` and the events file carry the stream a `pi --mode json` child
 // prints, line for line: the session header first, then every session event as
 // JSON, with the `message_update` and `tool_execution_update` re-emissions left
-// out (they restate a whole transcript on each update; procruntime.ts drops
-// them the same way). The spend and the dollar cap read the same events, so
+// out (they restate a whole transcript on each update). The spend and the dollar cap read the same events, so
 // bench/aacr.ts parses a file from either runtime unchanged. What pi itself
 // prints to stdout in that mode is only this stream; nothing else is faked.
 
@@ -75,7 +74,7 @@ export interface SdkRuntimeOptions {
 const GRACE_MS = { cap: 5_000, timeout: 15_000 };
 
 /** The lines `pi --mode json` writes that carry no information a reader wants and
- * grow with the transcript (procruntime.ts drops the same two). */
+ * grow with the transcript. */
 function isUpdate(event: AgentSessionEvent): boolean {
   return event.type === "message_update" || event.type === "tool_execution_update";
 }

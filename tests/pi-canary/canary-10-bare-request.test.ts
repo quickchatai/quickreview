@@ -6,7 +6,7 @@
 // a context file per D34, a system-prompt file when the spec names one) and the
 // built-in tool schemas. Both runtimes are put in front of the SAME local
 // OpenAI-compatible endpoint, so the comparison is of raw request bodies off the
-// wire, not of objects: a real `pi` child through procRuntime, and the SDK
+// wire, not of objects: a real `pi` child through piCliRuntime, and the SDK
 // in this process through sdkRuntime. Nothing leaves loopback and no model runs.
 //
 // Full parity with our factories and lens tools: canary-10-oneshot-request (P5.2)
@@ -17,7 +17,7 @@ import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { PiHost } from "../../src/engine/pisdk.js";
 import type { SessionSpec } from "../../src/engine/port.js";
-import { procRuntime } from "../../src/engine/procruntime.js";
+import { piCliRuntime } from "../helpers/pi-cli-runtime.js";
 import { sdkRuntime } from "../../src/engine/sdkruntime.js";
 import {
   FAKE_MODEL,
@@ -81,7 +81,7 @@ function spec(name: string, over: Partial<SessionSpec> = {}): SessionSpec {
 /** The request a runtime's first turn put on the wire. */
 async function firstRequest(kind: "cli" | "sdk", over: Partial<SessionSpec> = {}) {
   const before = server.requests.length;
-  const rt = kind === "cli" ? procRuntime({ bin: PI_BIN }) : sdkRuntime(host);
+  const rt = kind === "cli" ? piCliRuntime({ bin: PI_BIN }) : sdkRuntime(host);
   const s = await rt.create(
     kind === "cli"
       ? spec(kind, {

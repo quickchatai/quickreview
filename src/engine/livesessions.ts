@@ -1,8 +1,7 @@
 // The SDK sessions this process has running, so a signal handler elsewhere
-// (src/reviewdetach.ts runDetachedChild) can stop them: the in-process twin of
-// the pi process groups procruntime.ts keeps (`livePiGroupIds`, `killPiGroups`).
-// A pi child is stopped by killing its group; an SDK session lives in this very
-// process, so the stop is `abort()`, then `dispose()`, then the process exit.
+// (src/reviewdetach.ts runDetachedChild) can stop them. An SDK session lives in
+// this very process, so the stop is `abort()`, then `dispose()`, then the
+// process exit.
 //
 // Kept apart from sdkruntime.ts so that the detached driver can import it
 // without loading the pi SDK (tests/fences-engine.test.ts S2).

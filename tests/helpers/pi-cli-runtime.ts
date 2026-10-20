@@ -1,4 +1,6 @@
-// procRuntime: the runtime port (port.ts) hosted as a `pi` child process.
+// piCliRuntime: a TEST helper. The runtime port (port.ts) hosted as a `pi`
+// child process, so tests can drive the round, the bench and `qcr review` with a
+// fake pi script. Production runs pi in-process on the SDK (the one adapter).
 //
 // One session is a sequence of `pi -p --mode json` runs: the first turn sends
 // the prompt on stdin, and each follow-up is a respawn that resumes the same pi
@@ -6,9 +8,7 @@
 // or a timeout takes its lens children with it. There is no way into a running
 // pi's turn, so `steer` is typed as unsupported here.
 //
-// Shared by the one-shot review (src/oneshot.ts), the bench and the defect
-// judge (src/bench/runner.ts); `runPi` below is the one place a pi child is
-// spawned for them.
+// `runPi` below is the one place a fake pi child is spawned for the tests.
 
 import { spawn } from "node:child_process";
 import {
@@ -23,9 +23,10 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
-import { TurnBudget, termThenKill } from "./budget.js";
+import { TurnBudget, termThenKill } from "../../src/engine/budget.js";
 import {
   RuntimeUnsupportedError,
+  type PiRun,
   type Delivery,
   type Runtime,
   type RuntimeSession,
@@ -35,8 +36,8 @@ import {
   type SubscribeOptions,
   type TurnOptions,
   type TurnResult,
-} from "./port.js";
-import { toolIsolation } from "./tooluid.js";
+} from "../../src/engine/port.js";
+import { toolIsolation } from "../../src/engine/tooluid.js";
 
 /** Feed `onLine` each LF-terminated line of `input` (a trailing CR dropped, a
  * last unterminated line delivered at end). pi's JSON mode frames events by
@@ -63,39 +64,11 @@ export function onLfLines(input: Readable, onLine: (line: string) => void): void
   });
 }
 
-/** How one pi process ended: a turn's result, by its older name. */
-export type PiRun = TurnResult;
-
-/** Process groups of the pi children runPi has running right now, so a signal
- * handler elsewhere (reviewdetach.ts runDetachedChild) can reach them: each pi
- * leads its own group, which a kill aimed at the driver's group never touches. */
+/** Process groups of the pi children runPi has running right now. */
 const livePiGroups = new Set<number>();
-let piHalted = false;
 
-/** The process groups of the pi children running now: the heartbeat names them
- * so an outside watchdog can reach what the driver's own group does not hold. */
-export function livePiGroupIds(): number[] {
-  return [...livePiGroups];
-}
-
-/** Signal every running pi's process group (its lens children with it). */
-export function killPiGroups(sig: NodeJS.Signals): void {
-  for (const pgid of livePiGroups) {
-    try {
-      process.kill(-pgid, sig);
-    } catch {
-      // already gone
-    }
-  }
-}
-
-/** The run is being stopped: no further pi is spawned by this process. */
-export function haltPi(): void {
-  piHalted = true;
-}
-
-/** The ONE pi spawn (tests/single-shepherd.test.ts S2): the review round and
- * the defect judge both go through it, by way of procRuntime. */
+/** The fake pi spawn: the review round and the defect judge go through it, by
+ * way of piCliRuntime. */
 export function runPi(
   argv: string[],
   env: NodeJS.ProcessEnv,
@@ -119,10 +92,6 @@ export function runPi(
   },
 ): Promise<PiRun> {
   return new Promise((resolve) => {
-    if (piHalted) {
-      resolve({ code: null, timedOut: false, streamError: "stopped" });
-      return;
-    }
     const launch = toolIsolation(bin, argv);
     if ("refused" in launch) {
       try {
@@ -227,7 +196,7 @@ export function runPi(
 /** What a pi child is started with, from the spec: its CLI-only flags first,
  * then the fields the port names, in the order pi's own docs list them. The
  * turn's `-p` (and, after the first turn, `--continue`) is the session's. */
-export function procArgv(spec: SessionSpec): string[] {
+export function piCliArgv(spec: SessionSpec): string[] {
   return [
     ...(spec.cliFlags ?? []),
     ...(spec.tools ? ["--tools", spec.tools.join(",")] : []),
@@ -265,7 +234,7 @@ class ProcSession implements RuntimeSession {
     private readonly spec: SessionSpec,
     private readonly bin: string,
   ) {
-    this.argv = procArgv(spec);
+    this.argv = piCliArgv(spec);
   }
 
   get id(): string {
@@ -415,7 +384,7 @@ const DEFAULT_BIN = "pi";
 
 /** The runtime that hosts a session as `pi` child processes. `bin` is the pi
  * executable (a PATH lookup by default). */
-export function procRuntime(options: { bin?: string } = {}): Runtime {
+export function piCliRuntime(options: { bin?: string } = {}): Runtime {
   const bin = options.bin ?? DEFAULT_BIN;
   return {
     create(spec) {

@@ -1079,12 +1079,11 @@ export type SdkLeaves = (o: {
   onExpired: (reason: string) => void;
 }) => CaseRunner | Promise<CaseRunner>;
 
-/** The scan leaf runner under `[engine] runtime`: the process runner
- * (`piCaseRunner`) on proc, and on sdk the driver's SDK runner (`sdkLeaves`,
- * built on first use). A process that has none — the companion's own pi, which
- * must never host SDK sessions — refuses every case instead. The key is read
- * per case, as `settingsOf` reads the live config; an unreadable config is
- * proc, the runner's behaviour before the key existed. */
+/** The scan leaf runner: the driver's SDK runner (`sdkLeaves`, built on first
+ * use). A process that has none — the companion's own pi, which must never host
+ * SDK sessions — refuses every case instead. The config is read per case, as
+ * `settingsOf` reads the live config; an unreadable config runs the process
+ * runner (`piCaseRunner`), the runner's behaviour before the key existed. */
 export function scanLeafRunner(
   proc: CaseRunner,
   root: string,
@@ -1097,12 +1096,12 @@ export function scanLeafRunner(
       const loaded = loadScanConfig(root, env);
       // `[pi] lens_runtime` is not read here: a scan leaf is a leaf and never
       // gets a lens tool, so the key (engine by default) changes nothing.
-      if (!loaded.ok || loaded.cfg.engine.runtime === "proc") return proc.run(spec, signal, onCost);
+      if (!loaded.ok) return proc.run(spec, signal, onCost);
       if (sdkLeaves === undefined)
         return {
           ok: false,
           reason:
-            "[engine] runtime = sdk is not available on the scan route in this process: scan leaves run on the SDK only in the `qcr scan` driver. Set it to proc here",
+            "[engine] runtime = sdk is not available on the scan route in this process: scan leaves run on the SDK only in the `qcr scan` driver",
         };
       try {
         sdk ??= Promise.resolve(sdkLeaves());

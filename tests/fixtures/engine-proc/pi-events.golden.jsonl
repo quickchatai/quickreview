@@ -1,6 +1,0 @@
-{"type":"session","version":3,"id":"fx-1"}
-{"type":"message_start","message":{"role":"assistant"}}
-{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"a b c"}],"usage":{"input":10,"output":2,"cacheRead":1,"cost":{"total":0.25}}}}
-{"type":"tool_execution_end","toolName":"launch_plan","toolCallId":"t1","result":{"details":{"results":[{"usage":{"cost":{"total":0.5}}}]}}}
-{"type":"crlf"}
-{"type":"agent_end","last":"unterminated"}
