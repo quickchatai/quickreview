@@ -15,7 +15,8 @@
 //      reads; the copy is refused when its token would expire inside the lease's
 //      idle window;
 //   3. runs interactive pi on the PR's REAL session JSONL (`--session`, which
-//      appends: not a fork), with bash-guard (its takeover policy blocks the post
+//      appends: not a fork) in the production tree's root even when the JSONL's
+//      header names the legacy tree (src/picwd.ts), with bash-guard (its takeover policy blocks the post
 //      scripts), the read tools and bash, and no write tools;
 //   4. returns pi's exit code. The tmux session ends with this process, and the
 //      daemon's sweep frees the lease.
@@ -25,6 +26,7 @@
 import { spawn } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { GITHUB_TOKEN_ENVS } from "./envstrip.js";
 import { CAP_FD_INDEX } from "./ipc/capability.js";
 import { PI_REFRESH_MARGIN_MS, ENGINE_AUTH_WORDS, copyPiAuth } from "./engine/auth.js";
@@ -115,6 +117,23 @@ export function prepareBorrowedAgent(
     chmodSync(to, 0o600);
   }
   return { expiresAt };
+}
+
+/** The entry that runs pi's CLI in its own cwd (src/picwd.ts), beside this file. */
+export const PICWD_MAIN = fileURLToPath(new URL("./picwd.js", import.meta.url));
+
+/** How a pane starts its pi: pi's own CLI through src/picwd.ts, so a session the
+ * legacy bot wrote (its header names the legacy tree) still runs its tools in the
+ * pane's cwd, the production tree's root, where bash-guard sanctions the scripts.
+ * An explicit `piBin` (a test's or a dev's own pi) is started as given. Pure. */
+export function paneLaunch(
+  piArgv: string[],
+  piBin?: string,
+  node: string = process.execPath,
+): { bin: string; argv: string[] } {
+  return piBin !== undefined
+    ? { bin: piBin, argv: piArgv }
+    : { bin: node, argv: [PICWD_MAIN, ...piArgv] };
 }
 
 /** pi's argv for a takeover. Pure. */
@@ -230,7 +249,8 @@ export async function runTakeover(specFile: string, deps: TakeoverRunDeps = {}):
     return 3;
   }
   const env = takeoverEnv(procEnv, spec);
-  const launch = toolIsolation(deps.piBin ?? "pi", takeoverArgv(spec), procEnv);
+  const pi = paneLaunch(takeoverArgv(spec), deps.piBin);
+  const launch = toolIsolation(pi.bin, pi.argv, procEnv);
   if ("refused" in launch) {
     log(`takeover: ${launch.refused}`);
     return 3;

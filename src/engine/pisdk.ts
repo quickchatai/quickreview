@@ -96,7 +96,7 @@ export type DispatcherOutcome = "installed" | "reused" | "none";
 
 /** The process title pi's CLI gives itself: its APP_NAME (`pi` unless the
  * package's piConfig renames it), with `-rpc` appended by the rpc entry. */
-function piCliTitles(): readonly string[] {
+export function piCliTitles(): readonly string[] {
   let name = "pi";
   try {
     const pkg = JSON.parse(readFileSync(join(piPackageDir(), "package.json"), "utf8")) as {
