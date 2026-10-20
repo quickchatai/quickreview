@@ -108,6 +108,13 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "the pane-side launcher (P7.2a): tmux runs `node dist/src/ipc/launcher.js <launch-file> -- pi ...` " +
         "for a takeover or debug pi (src/workerworld.ts names it), a real driver this static scan cannot follow.",
     },
+    {
+      file: "src/picwd.ts",
+      why:
+        "the entry both of those panes start pi's interactive CLI through, by path (src/takeoverpi.ts " +
+        "PICWD_MAIN, P8.20a): pi's own CLI with the session cwd pinned to the pane's. A real driver this " +
+        "static scan cannot follow, not an orphan.",
+    },
     ...["takeoverpi.ts", "debugroundpi.ts"].map((f) => ({
       file: `src/${f}`,
       why:

@@ -1,5 +1,5 @@
-// src/picwd.ts: the panes' interactive pi runs in its own cwd, whatever cwd the
-// session JSONL's header records. Found by the worker rehearsal (P8.20a, DEBUG-1):
+// src/picwd.ts (src/engine/pisdk.ts runPiCliInCwd): the panes' interactive pi runs in
+// its own cwd, whatever cwd the session JSONL's header records. Found by the worker rehearsal (P8.20a, DEBUG-1):
 // a debug round on a PR the legacy tmux bot had reviewed opened the JSONL with its
 // legacy header cwd, so bash-guard refused `scripts/post-review.sh` ("not a
 // sanctioned script": the cwd was not the sandbox root) and the round never ended.
@@ -9,8 +9,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { piPackageDir } from "../src/engine/pisdk.js";
-import { pinSessionCwd } from "../src/picwd.js";
+import { piPackageDir, pinSessionCwd } from "../src/engine/pisdk.js";
 import { PICWD_MAIN, paneLaunch } from "../src/takeoverpi.js";
 
 // pi's own CLI session selection, from the very module its `main` runs: the export map

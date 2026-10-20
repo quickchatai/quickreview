@@ -1,6 +1,6 @@
-// pi's interactive CLI, run in ITS OWN cwd whatever session it opens: the entry of
-// the two panes that run interactive pi on a PR's real JSONL (a takeover,
-// src/takeoverpi.ts, and a bot debug round, src/debugroundpi.ts).
+// The entry of the two panes that run pi's interactive CLI on a PR's real JSONL (a
+// takeover, src/takeoverpi.ts, and a bot debug round, src/debugroundpi.ts), so that
+// pi runs in ITS OWN cwd whatever session it opens:
 //
 //     node dist/src/picwd.js <pi's own argv>
 //
@@ -13,50 +13,12 @@
 // ran its bash in the legacy dir, so bash-guard refused every sanctioned script
 // (the cwd was not the sandbox root) and a debug round could neither commit its
 // verdict nor post. The SDK route already keeps a resumed session in the spec's
-// cwd (src/engine/pisdk.ts, `SessionManager.open(file, dir, spec.cwd)`, the header
-// on disk not rewritten); this gives the CLI the same: every open without an
-// explicit cwd takes the process's own, the launcher's `cwd`.
-//
-// Everything else is pi's own `pi` binary: setupCli's four steps, then main().
-import { main, SessionManager } from "@earendil-works/pi-coding-agent";
-import { loadConfigureHttpDispatcher, piCliTitles } from "./engine/pisdk.js";
+// cwd; src/engine/pisdk.ts `runPiCliInCwd` gives the CLI the same.
+import { runPiCliInCwd } from "./engine/pisdk.js";
 
-type Open = typeof SessionManager.open;
-
-const PINNED = Symbol.for("qcr.picwd.pinned");
-
-/** Make `SessionManager.open` default its cwd to `cwd()` instead of the session
- * header's. Idempotent. An explicit override (pi's own missing-cwd recovery)
- * still wins. VERIFY-ON-PIN: pi's CLI reaches the class's static `open` at call
- * time (tests/picwd.test.ts drives the real createSessionManager). */
-export function pinSessionCwd(
-  manager: { open: Open } = SessionManager,
-  cwd: () => string = () => process.cwd(),
-): void {
-  const holder = manager as { open: Open; [PINNED]?: true };
-  if (holder[PINNED]) return;
-  const open = manager.open.bind(manager);
-  holder.open = (path, sessionDir, cwdOverride) => open(path, sessionDir, cwdOverride ?? cwd());
-  holder[PINNED] = true;
-}
-
-/** pi's `cli.js`: setupCli, then main, with the cwd pinned. */
-export async function runPiInCwd(argv: string[]): Promise<void> {
-  // setupCli (pi's cli/setup.js): the same title and flags, so the helpers that ask
-  // "am I inside a CLI pi" (src/engine/pisdk.ts insideCliPi) answer as they would
-  // in `pi`, and the same dispatcher.
-  process.title = piCliTitles()[0]!;
-  process.env["PI_CODING_AGENT"] = "true";
-  process.env["AI_AGENT"] = "pi";
-  process.emitWarning = () => {};
-  (await loadConfigureHttpDispatcher())();
-  pinSessionCwd();
-  await main(argv);
-}
-
-// Run only as the entry point, not when a test imports pinSessionCwd.
+// Run only as the entry point, not when a test imports this file.
 if (process.argv[1]?.endsWith("picwd.js")) {
-  runPiInCwd(process.argv.slice(2)).catch((e: unknown) => {
+  runPiCliInCwd(process.argv.slice(2)).catch((e: unknown) => {
     console.error(e instanceof Error ? (e.stack ?? e.message) : String(e));
     process.exit(1);
   });
