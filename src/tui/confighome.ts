@@ -1,4 +1,4 @@
-// The deploy tab's config-home half: `deploy.sh sync` ships the
+// The deploy tab's config-home half: `deploy.sh release <version>` ships the
 // install's config home — config.toml and the profiles/ beside it — to the VM,
 // and the tab says whether the VM runs the one this machine would ship.
 // Both ends are fingerprinted by the same script (`scripts/config-fingerprint.sh`,
@@ -144,7 +144,7 @@ export function pendingRetuneLines(p: PendingRetunes): string[] {
   if (p.state === "none") return [];
   const head =
     p.state === "pending"
-      ? `${p.retunes.length} post-scan re-tune${p.retunes.length === 1 ? "" : "s"} not deployed — a sync ships ${p.retunes.length === 1 ? "it" : "them"}:`
+      ? `${p.retunes.length} post-scan re-tune${p.retunes.length === 1 ? "" : "s"} not deployed — a release ships ${p.retunes.length === 1 ? "it" : "them"}:`
       : `whether these re-tunes are deployed is unknown — ${p.why}`;
   const out = [head];
   for (const r of p.retunes) {

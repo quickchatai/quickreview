@@ -14,6 +14,7 @@ import { validateCommand, type Command } from "../commands.js";
 import type { TuiConfig } from "../config.js";
 import type { SshRunner } from "./remote.js";
 import { commandResultArgv, commandWriteArgv, resultReason } from "./unwedge.js";
+import { resolveLayout } from "./layout.js";
 
 /** The kill switch's four payloads, read from the daemon's own `Command`. */
 export type LessonSwitchCommand = Extract<
@@ -65,6 +66,7 @@ export class LessonSwitchSender {
   ) {}
 
   async send(cmd: LessonSwitchCommand): Promise<LessonSwitchOutcome> {
+    await resolveLayout(this.cfg, this.ssh);
     let payload: string;
     try {
       payload = lessonSwitchPayload(cmd);

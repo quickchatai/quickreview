@@ -692,28 +692,23 @@ if [[ "$MODE" != verify && "$OV_ENDPOINT" != remote ]]; then
   die "openviking endpoint is \"$OV_ENDPOINT\" — the release image carries no OpenViking, so $MODE needs the memory sidecar: set group_vars/inventory openviking_endpoint AND config.toml [openviking] endpoint to \"remote\" (and [openviking] host to the sidecar's name). The way back to \"local\" is the legacy image and the old playbook (deploy/ansible/README.md, Rollback)"
 fi
 
-# 2e. the TUI reads the deployed build and the operator channel at the image's
-# app root, inside the container. The config home ships with a release, so its
-# [tui] must already say so.
+# 2e. the TUI finds the app root inside the container by itself: it reads the
+# running container's qcr.layout label (src/tui/layout.ts), release = the
+# image's app root, so no [tui] key is edited for a release or for the cutover.
+# An EXPLICIT [tui] remote_sandbox_root wins over that, so one that names another
+# root points the TUI at a path the release container does not have: warn, do
+# not refuse (the key is the operator's, and the release does not read it).
 APP_ROOT="$(effective_var app_root || true)"
 APP_ROOT="${APP_ROOT:-/opt/qcr}"
 if [[ "$MODE" == release ]]; then
   CFG_TUI_ROOT="$(config_table_key tui remote_sandbox_root || true)"
-  if [[ "$CFG_TUI_ROOT" != "$APP_ROOT" ]]; then
+  if [[ -n "$CFG_TUI_ROOT" && "$CFG_TUI_ROOT" != "$APP_ROOT" ]]; then
     cat >&2 <<EOF
-$SELF: [tui] remote_sandbox_root mismatch — refusing to deploy.
-
-    config.toml   [tui] remote_sandbox_root = "${CFG_TUI_ROOT:-<unset: the legacy /opt/quickreview/sandbox>}"
-    group_vars    app_root                  = "$APP_ROOT"
-
-The release image keeps the app at $APP_ROOT, and the TUI (the deploy tab's
-BUILD_SHA, qcr drain, the operator channel, messages, the digest and the
-evidence copier) looks for it under remote_sandbox_root in the container. Set
-    [tui]
-    remote_sandbox_root = "$APP_ROOT"
-in $CONFIG, then re-run. (remote_state_dir stays: it is the host path.)
+$SELF: warning: [tui] remote_sandbox_root = "$CFG_TUI_ROOT" is set explicitly in $CONFIG, and the release image keeps the app at $APP_ROOT.
+    An explicit key wins over the TUI's own layout detection, so the TUI will look for the deploy marker,
+    the operator channel, messages and the digest under "$CFG_TUI_ROOT". Delete the key (or set it to
+    "$APP_ROOT") unless that is what you want.
 EOF
-    exit 1
   fi
 fi
 

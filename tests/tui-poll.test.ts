@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
+
+// An explicit app root is never probed, so these tests count only the status reads.
+const EXPLICIT = { ...TUI_DEFAULTS, remote_sandbox_root: "/opt/quickreview/sandbox" };
 import type { StatusSnapshot } from "../src/state.js";
 import { Poller, classifyHealth, parseSnapshot } from "../src/tui/poll.js";
 import type { RemoteResult, SshRunner } from "../src/tui/remote.js";
@@ -107,7 +110,7 @@ describe("Poller", () => {
       calls++;
       return ok(JSON.stringify(snap(new Date().toISOString())));
     };
-    const p = new Poller(TUI_DEFAULTS, ssh, () => {});
+    const p = new Poller(EXPLICIT, ssh, () => {});
     await p.tick();
     expect(calls).toBe(1);
     expect(p.state.snapshot).toBeDefined();
@@ -118,7 +121,7 @@ describe("Poller", () => {
 
   it("backs off linearly on failures, capped at 5×", async () => {
     const ssh: SshRunner = async () => fail();
-    const p = new Poller(TUI_DEFAULTS, ssh, () => {});
+    const p = new Poller(EXPLICIT, ssh, () => {});
     for (let i = 0; i < 7; i++) await p.tick();
     expect(p.state.consecutiveFailures).toBe(7);
     expect(p.nextDelayMs()).toBe(3000 * 5);
@@ -129,7 +132,7 @@ describe("Poller", () => {
     let n = 0;
     const written = "2026-08-13T11:00:00Z";
     const ssh: SshRunner = async () => (n++ === 0 ? ok(JSON.stringify(snap(written))) : fail());
-    const p = new Poller(TUI_DEFAULTS, ssh, () => {});
+    const p = new Poller(EXPLICIT, ssh, () => {});
     await p.tick();
     await p.tick();
     expect(p.state.snapshot?.written_at).toBe(written);
@@ -139,7 +142,7 @@ describe("Poller", () => {
   it("notifies on every tick", async () => {
     let updates = 0;
     const ssh: SshRunner = async () => fail();
-    const p = new Poller(TUI_DEFAULTS, ssh, () => updates++);
+    const p = new Poller(EXPLICIT, ssh, () => updates++);
     await p.tick();
     await p.tick();
     expect(updates).toBe(2);
@@ -149,7 +152,7 @@ describe("Poller", () => {
 it("keeps the newer manual refresh when an older poll answers last", async () => {
   const replies: Array<(r: RemoteResult) => void> = [];
   const p = new Poller(
-    TUI_DEFAULTS,
+    EXPLICIT,
     () => new Promise((r) => replies.push(r)),
     () => {},
   );

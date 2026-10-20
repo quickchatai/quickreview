@@ -22,8 +22,33 @@
 // when rounds are still running. The wizard's job is to run it and show what
 // it said — never to soften it.
 import { join } from "node:path";
+import { CHOICE_KEYS } from "../choices.js";
 
-export type DeployMode = "sync" | "rebuild" | "verify";
+/** `provision` installs the host (packages, Docker, secrets, the updater) and
+ * ships no image; `release <version>` is the deploy (CI built the image once
+ * from the release tag; the VM pulls it by digest); `verify` asks what runs.
+ * `sync` and `rebuild` are gone from the script — it refuses them. */
+export type DeployMode = "provision" | "release" | "verify";
+
+/** The version spelling deploy.sh accepts: X.Y.Z, optionally -prerelease. It
+ * names an image tag, so nothing else gets near the argv. */
+export const RELEASE_VERSION_RE = /^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$/;
+
+/** A typed version -> the spelling deploy.sh takes (a leading `v` is the git
+ * tag's, not the version's), or null. */
+export function releaseVersionOf(raw: unknown): string | null {
+  const v = String(raw ?? "")
+    .trim()
+    .replace(/^v(?=\d)/, "");
+  return RELEASE_VERSION_RE.test(v) ? v : null;
+}
+
+/** The release version recorded by the last successful deploy, or null. */
+export function recordedReleaseVersion(choices: Readonly<Record<string, unknown>>): string | null {
+  const rec = choices[CHOICE_KEYS.vmDeployed];
+  if (typeof rec !== "object" || rec === null) return null;
+  return releaseVersionOf((rec as Record<string, unknown>).version);
+}
 
 /** Match the deploy script's inherited inventory overrides without changing them. */
 export function effectiveInventoryPath(root: string, env: NodeJS.ProcessEnv = process.env): string {
@@ -38,16 +63,39 @@ export function deployScriptPath(root: string): string {
   return join(root, DEPLOY_SCRIPT_REL);
 }
 
-/** `<root>/scripts/deploy.sh [--dry-run] <mode>`. */
-export function deployArgv(
-  root: string,
-  mode: DeployMode,
-  opts: { dryRun?: boolean } = {},
-): string[] {
-  return [deployScriptPath(root), ...(opts.dryRun ? ["--dry-run"] : []), mode];
+export interface DeployArgvOptions {
+  dryRun?: boolean;
+  /** Required by `release`, refused by every other mode. */
+  version?: string;
+  /** `release` only: the CI deploy manifest, when it is not the default
+   * `./deploy-manifest-<version>.json`. */
+  manifest?: string;
+}
+
+function words(mode: DeployMode, opts: DeployArgvOptions): string[] {
+  if (mode === "release") {
+    if (opts.version === undefined || !RELEASE_VERSION_RE.test(opts.version))
+      throw new Error(
+        `deploy.sh release needs a version (X.Y.Z), got ${JSON.stringify(opts.version)}`,
+      );
+    return [
+      ...(opts.dryRun ? ["--dry-run"] : []),
+      "release",
+      opts.version,
+      ...(opts.manifest ? ["--manifest", opts.manifest] : []),
+    ];
+  }
+  if (opts.version !== undefined || opts.manifest !== undefined)
+    throw new Error(`deploy.sh ${mode} takes no version or manifest`);
+  return [...(opts.dryRun ? ["--dry-run"] : []), mode];
+}
+
+/** `<root>/scripts/deploy.sh [--dry-run] release <version> | provision | verify`. */
+export function deployArgv(root: string, mode: DeployMode, opts: DeployArgvOptions = {}): string[] {
+  return [deployScriptPath(root), ...words(mode, opts)];
 }
 
 /** How the same invocation reads when the operator types it themselves. */
-export function deployCommandLine(mode: DeployMode, opts: { dryRun?: boolean } = {}): string {
+export function deployCommandLine(mode: DeployMode, opts: DeployArgvOptions = {}): string {
   return deployArgv("", mode, opts).join(" ");
 }

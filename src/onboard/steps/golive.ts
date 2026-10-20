@@ -173,7 +173,7 @@ export interface GoLiveStepOptions {
 
 /** The stream runner is the transport's, not this step's: the "restart" that
  * makes the daemon re-read the flag is `docker compose restart` here and
- * `scripts/deploy.sh sync` on the server route, and only the transport knows
+ * `scripts/deploy.sh release <version>` on the server route, and only the transport knows
  * which. */
 function transportOptionsOf(opts: GoLiveStepOptions): TransportOptions {
   return opts.stream ? { stream: opts.stream } : {};

@@ -66,6 +66,7 @@ import type { GitHubAdapter } from "./github.js";
 import type { OutcomeCapture } from "./outcomes.js";
 import type { Learner, MineReport } from "./learner/learner.js";
 import type { CurationStatus } from "./learner/status.js";
+import { remoteSandboxRoot } from "./tui/layout.js";
 
 export { drainPayload } from "./tui/deploy-drain.js";
 
@@ -412,7 +413,7 @@ async function cmdLessonSwitch(
       ? { command: sub.command, uri: lessonUriOf(sub.target, cfg.openviking.user) }
       : { command: sub.command };
   console.log(
-    `${cmd.command}${"uri" in cmd ? ` ${cmd.uri}` : ""} → ${cfg.tui.ssh_host}:${cfg.tui.remote_sandbox_root}/commands/operator/`,
+    `${cmd.command}${"uri" in cmd ? ` ${cmd.uri}` : ""} → ${cfg.tui.ssh_host}:${remoteSandboxRoot(cfg.tui)}/commands/operator/`,
   );
   const res = await new LessonSwitchSender(cfg.tui, runnerFor(cfg.tui)).send(cmd);
   if (!res.ok) {
@@ -1091,7 +1092,7 @@ export interface DrainRunDeps {
 export async function runDrain(on: boolean, deps: DrainRunDeps): Promise<number> {
   const tui = deps.cfg.tui;
   const where = transportOf(tui) === "local" ? `local docker ${tui.container}` : tui.ssh_host;
-  deps.log(`drain ${on ? "on" : "off"} → ${where}:${tui.remote_sandbox_root}/commands/`);
+  deps.log(`drain ${on ? "on" : "off"} → ${where}:${remoteSandboxRoot(tui)}/commands/`);
   const sender = new CommandDrainSender(tui, deps.ssh, deps.now, deps.sleep);
   const result = await sender.set(on);
   if (result.ok) {
@@ -1857,7 +1858,7 @@ async function cmdArchive(rest: readonly string[], json: boolean): Promise<numbe
         : { command: "archive-restore", pr: args.pr };
     if (!json)
       console.log(
-        `${cmd.command}${"pr" in cmd ? ` ${cmd.pr}` : ""} → ${cfg.tui.ssh_host}:${cfg.tui.remote_sandbox_root}/commands/operator/`,
+        `${cmd.command}${"pr" in cmd ? ` ${cmd.pr}` : ""} → ${cfg.tui.ssh_host}:${remoteSandboxRoot(cfg.tui)}/commands/operator/`,
       );
     const res = await new ArchiveOpSender(cfg.tui, runnerFor(cfg.tui)).send(cmd);
     if (json) console.log(JSON.stringify(res));

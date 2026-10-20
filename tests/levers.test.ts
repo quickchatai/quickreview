@@ -15,6 +15,7 @@
 //
 // Every fence here was verified by mutation (the defect applied, the test
 // red, the defect reverted); the MUTATION notes say which edit.
+import { remoteSandboxRoot } from "../src/tui/layout.js";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -1252,7 +1253,7 @@ describe("qcr drain — the operator channel", () => {
       cfg.tui.container,
     ]);
     expect(writes[0]![writes[0]!.length - 1]).toContain(
-      `cd -P '${cfg.tui.remote_sandbox_root}/commands/operator'`,
+      `cd -P '${remoteSandboxRoot(cfg.tui)}/commands/operator'`,
     );
     expect(lines.join("\n")).not.toContain("NOT an operator drain");
     const manual = drainManualCommand(cfg.tui, true, new Date("2026-08-31T12:00:00Z"));

@@ -243,7 +243,7 @@ function learning() {
 const deployState: DeployState = {
   loaded: true,
   loading: false,
-  deployed: { sha: "abc1234", at: "2026-08-19T10:00:00Z", mode: "sync" },
+  deployed: { sha: "abc1234", at: "2026-08-19T10:00:00Z", version: "1.0.0" },
   head: "def5678",
   dirty: [],
   commits: ["def5678 tui: uplift"],

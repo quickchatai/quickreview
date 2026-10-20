@@ -19,18 +19,19 @@ import type { BoardKey } from "./keys.js";
 import type { LearningStore } from "./learning.js";
 import { Frame, rule } from "./paint.js";
 import { dockerShArgv, type SshRunner } from "./remote.js";
+import { remoteSandboxRoot, resolveLayout } from "./layout.js";
 
 export function digestListArgv(cfg: TuiConfig): string[] {
   // A directory that does not exist yet is an EMPTY digest, not a failed
   // read — the sweep creates it with the first file. One that exists but
   // cannot be listed fails the exec, like a failed ssh, and the fetcher
   // reports both as undefined.
-  const dir = `${cfg.remote_sandbox_root}/digest`;
+  const dir = `${remoteSandboxRoot(cfg)}/digest`;
   return dockerShArgv(cfg, `if [ -e '${dir}' ]; then ls '${dir}'; fi`);
 }
 
 export function digestCatArgv(cfg: TuiConfig, file: string): string[] {
-  return dockerShArgv(cfg, `cat '${cfg.remote_sandbox_root}/digest/${file}'`);
+  return dockerShArgv(cfg, `cat '${remoteSandboxRoot(cfg)}/digest/${file}'`);
 }
 
 /** Digest file names are `<YYYY-MM-DD>.md`; anything else is ignored. */
@@ -71,6 +72,7 @@ export class SshDigestFetcher implements DigestFetcher {
   ) {}
 
   async list(): Promise<string[] | undefined> {
+    await resolveLayout(this.cfg, this.ssh);
     const res = await this.ssh(this.cfg.ssh_host, digestListArgv(this.cfg));
     return res.ok ? parseDigestList(res.stdout) : undefined;
   }

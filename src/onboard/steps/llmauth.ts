@@ -940,7 +940,10 @@ export function llmAuthStep(opts: { transport?: TransportOptions } = {}): Onboar
       else checks.push(...(await companionLoginChecks(ctx, configText)));
       const delivery = await deliverConfigChange(
         ctx,
-        { ...opts.transport, ...(credentialChanged ? { deploymentMode: "rebuild" as const } : {}) },
+        {
+          ...opts.transport,
+          ...(credentialChanged ? { deploymentMode: "provision" as const } : {}),
+        },
         ctx.data.restart_owed === true || credentialChanged || rewrite.text !== cfg.text,
         LLM_AUTH_STEP_ID,
       );

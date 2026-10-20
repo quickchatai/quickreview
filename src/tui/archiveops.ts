@@ -26,6 +26,7 @@ import {
 } from "../archive/status.js";
 import type { SshRunner } from "./remote.js";
 import { commandResultArgv, commandWriteArgv, resultReason } from "./unwedge.js";
+import { resolveLayout } from "./layout.js";
 
 /** The archive verbs' payloads, read from the daemon's own `Command`. */
 export type ArchiveOpCommand = Extract<Command, { command: "archive-run" | "archive-restore" }>;
@@ -71,6 +72,7 @@ export class ArchiveOpSender {
   ) {}
 
   async send(cmd: ArchiveOpCommand): Promise<ArchiveOpOutcome> {
+    await resolveLayout(this.cfg, this.ssh);
     let payload: string;
     try {
       payload = archiveOpPayload(cmd);

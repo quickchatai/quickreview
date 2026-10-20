@@ -97,6 +97,7 @@ export const TAB_VOCABULARY: Readonly<Record<Tab, readonly BarButton[]>> = {
   ],
   deploy: [
     { key: "D", label: "D deploy" },
+    { key: "V", label: "V version" },
     { key: "S", label: "S power" },
     { key: "x", label: "x abort" },
   ],

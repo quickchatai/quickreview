@@ -23,9 +23,9 @@
 //     ssh.ts: a prompt is a hang, and a hang is the failure mode of this whole
 //     route). Health is curl ON the box against its loopback publish, because
 //     the daemon's port is deliberately not exposed off the VM. And a "restart"
-//     is `scripts/deploy.sh sync` — on that route the config the daemon reads
-//     is the one the deploy ships, so re-running the existing deploy IS the
-//     restart, with every one of its preflights intact. Never a hand-rolled
+//     is `scripts/deploy.sh release <version>` — on that route the config the
+//     daemon reads is the one the release ships, so re-running the recorded
+//     release IS the restart, with every one of its preflights intact. Never a hand-rolled
 //     `ssh … docker restart` that would leave the box running a config nobody
 //     shipped.
 import { TUI_DEFAULTS } from "../../config.js";
@@ -45,7 +45,12 @@ import {
   serviceRow,
   type StreamRunner,
 } from "./compose.js";
-import { effectiveInventoryPath, deployArgv, deployCommandLine } from "./deploysh.js";
+import {
+  effectiveInventoryPath,
+  deployArgv,
+  deployCommandLine,
+  recordedReleaseVersion,
+} from "./deploysh.js";
 import { readTomlKey, type IngressOption } from "./ingress.js";
 import { inventoryTargetMismatch } from "./inventory.js";
 import { sshArgv, sshCommandLine } from "./ssh.js";
@@ -95,8 +100,9 @@ export interface StackTransport {
 }
 
 export interface TransportOptions {
-  /** Newly collected secrets need the provisioning tasks that sync skips. */
-  deploymentMode?: "sync" | "rebuild";
+  /** Newly collected secrets need the host provisioning a release skips:
+   * `provision` runs it first. The default is the release alone. */
+  deploymentMode?: "release" | "provision";
   /** Long-running commands (the deploy that stands in for a restart). */
   stream?: StreamRunner;
   /** Health probe budget. */
@@ -216,6 +222,19 @@ function psRows(stdout: string): Array<{ name: string; rest: string }> {
 function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport {
   const root = rootOf(ctx.adapters);
   const facts = remoteFactsFor(ctx.adapters, ctx.choices);
+  // Shipping a changed config is a release of the version already deployed
+  // (the config home rides every release); a host that needs its secrets
+  // provisioned runs `provision` first.
+  const version = recordedReleaseVersion(ctx.choices);
+  const shipLine = (): string => {
+    const release =
+      version === null
+        ? "scripts/deploy.sh release <version>"
+        : deployCommandLine("release", { version });
+    return opts.deploymentMode === "provision"
+      ? `${deployCommandLine("provision")} && ${release}`
+      : release;
+  };
   const stream = opts.stream ?? nodeStreamRunner;
   const healthTimeoutS = Math.max(
     1,
@@ -468,7 +487,7 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
             ok: false,
             detail:
               `could not ask Docker on ${facts.alias} whether ${facts.container} exists (${(ps.stderr || ps.stdout).trim().slice(0, 200) || `exit ${ps.code}`}) — ` +
-              `the changed config is NOT known to be on the server. Fix: \`${deployCommandLine(opts.deploymentMode ?? "sync")}\` ships it`,
+              `the changed config is NOT known to be on the server. Fix: \`${shipLine()}\` ships it`,
           };
         }
         if (!psRows(ps.stdout).some((r) => r.name === facts.container)) return nothingDeployed;
@@ -477,7 +496,7 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
           ok: false,
           detail:
             `the ${facts.container} container on ${facts.alias} exists but is not running — it holds the config last shipped, ` +
-            `not this one, and starting it as it is would bring the old value back. Fix: \`${deployCommandLine(opts.deploymentMode ?? "sync")}\` ` +
+            `not this one, and starting it as it is would bring the old value back. Fix: \`${shipLine()}\` ` +
             "ships the change and recreates the container",
         };
       }
@@ -492,22 +511,35 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
         };
       }
       log(
-        `shipping the changed config to ${facts.alias} with \`${deployCommandLine(opts.deploymentMode ?? "sync")}\` — on the server route the deploy IS the restart`,
+        `shipping the changed config to ${facts.alias} with \`${shipLine()}\` — on the server route the deploy IS the restart`,
       );
-      const r = await stream.run("bash", deployArgv(root, opts.deploymentMode ?? "sync"), (line) =>
-        log(line),
-      );
+      if (version === null) {
+        return {
+          name: "daemon-restart",
+          ok: false,
+          detail:
+            "not shipping: no release version is recorded for this server, and a release is the only deploy. " +
+            "The file on disk here is already correct; run the deploy step with a version (it records it), or " +
+            "`scripts/deploy.sh release <version>` yourself",
+        };
+      }
+      let r: { code: number; stdout: string; stderr: string } = { code: 0, stdout: "", stderr: "" };
+      if (opts.deploymentMode === "provision") {
+        r = await stream.run("bash", deployArgv(root, "provision"), (line) => log(line));
+      }
+      if (r.code === 0)
+        r = await stream.run("bash", deployArgv(root, "release", { version }), (line) => log(line));
       return r.code === 0
         ? {
             name: "daemon-restart",
             ok: true,
-            detail: `\`${deployCommandLine(opts.deploymentMode ?? "sync")}\` shipped the config to ${facts.alias} and recreated the container — it is running with the value on disk`,
+            detail: `\`${shipLine()}\` shipped the config to ${facts.alias} and recreated the container — it is running with the value on disk`,
           }
         : {
             name: "daemon-restart",
             ok: false,
             detail:
-              `\`${deployCommandLine(opts.deploymentMode ?? "sync")}\` exited ${r.code}: ${(r.stderr || r.stdout).trim().split("\n").slice(-6).join(" ").slice(0, 400) || "no output"} — ` +
+              `\`${shipLine()}\` exited ${r.code}: ${(r.stderr || r.stdout).trim().split("\n").slice(-6).join(" ").slice(0, 400) || "no output"} — ` +
               "the file on disk here is already correct; run that command yourself to ship it (it refuses on a dirty tree or a " +
               "pin mismatch, and those refusals are the point)",
           };

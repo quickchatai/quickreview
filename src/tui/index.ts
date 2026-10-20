@@ -511,8 +511,8 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   };
   const { DurableDeployProcess } = await import("./deploy-process.js");
   const durableDeploy = new DurableDeployProcess(sandboxRoot());
-  app.hooks.deployRun = (_theApp, runId, onData, onExit) =>
-    durableDeploy.startOrAttach(runId, onData, onExit);
+  app.hooks.deployRun = (_theApp, runId, version, onData, onExit) =>
+    durableDeploy.startOrAttach(runId, version, onData, onExit);
   app.view.repo = full.github.repo;
   const { spawn } = await import("node:child_process");
   const { openUrlDetached } = await import("./openurl.js");
@@ -1222,8 +1222,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       maybeWriteMemoryAlert,
       maybeWriteCurationAlert,
       maybeWriteWorkerCrashAlerts,
-    } =
-      await import("./alerts.js");
+    } = await import("./alerts.js");
     const piAuthMem = { lastWritten: "" };
     chainOnPoll(app, (a) => {
       try {

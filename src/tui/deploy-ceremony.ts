@@ -22,7 +22,9 @@ export type DurableDeployPhase = (typeof DURABLE_DEPLOY_PHASES)[number];
 export interface DeployCeremonyRecord {
   version: 1;
   phase: DurableDeployPhase;
-  target_head?: string;
+  /** The release version the ceremony ships; the detached runner is started
+   * with it, so a reload mid-ceremony still knows what it was shipping. */
+  target_version?: string;
   /** Snapshot that proved the pre-deploy drain. Auto-lift must be observed on
    * a strictly newer daemon generation, never inferred from this one. */
   pre_deploy_snapshot_at?: string;
@@ -49,7 +51,7 @@ function valid(value: unknown): value is DeployCeremonyRecord {
     v.version === 1 &&
     typeof v.phase === "string" &&
     (DURABLE_DEPLOY_PHASES as readonly string[]).includes(v.phase) &&
-    (v.target_head === undefined || typeof v.target_head === "string") &&
+    (v.target_version === undefined || typeof v.target_version === "string") &&
     (v.pre_deploy_snapshot_at === undefined || typeof v.pre_deploy_snapshot_at === "string") &&
     (v.drain_observed === undefined || typeof v.drain_observed === "boolean") &&
     (v.first_undrained_snapshot_at === undefined ||

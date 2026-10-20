@@ -384,6 +384,8 @@ describe("actions wiring: the watcher on a real App", () => {
     app.tab = "deploy";
     deployState.loaded = true;
     deployState.head = "abc123";
+    deployState.layout = "release";
+    deployState.version = "1.2.3";
     app.pressKey("D");
     expect(deployState.armedKind).toBe("deploy");
     driver.deployTab("deploy");

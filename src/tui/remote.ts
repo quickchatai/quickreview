@@ -17,6 +17,7 @@ import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import type { TuiConfig } from "../config.js";
 import { tmuxCaptureArgs } from "./termmirror.js";
+import { remoteSandboxRoot } from "./layout.js";
 
 export interface RemoteResult {
   ok: boolean;
@@ -62,7 +63,7 @@ export function dockerShArgv(cfg: TuiConfig, script: string): string[] {
 
 /** The bot's companion inbox (src/companioninbox.ts), inside the container. */
 export function inboxDirFor(cfg: TuiConfig): string {
-  return `${cfg.remote_sandbox_root}/inject/companion-inbox`;
+  return `${remoteSandboxRoot(cfg)}/inject/companion-inbox`;
 }
 
 /** Items one pull reads at most: a backlog drains over a few polls rather

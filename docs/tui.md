@@ -19,7 +19,7 @@ pinned against — `tests/tui-surfaces.test.ts` fails when they disagree.
 | 2 | **memory** | the reviewer's durable store: the timeline newest first, grouped by day, with the defect flags and the memory forward's state |
 | 3 | **digest** | what the EOD sweep wrote, `digest/<date>.md` — a document, read top to bottom, one day at a time |
 | 4 | **tickets** | the tracker tickets adjudication filed, actionable first, each readable in full |
-| 5 | **deploy** | what the VM runs versus this checkout, and the button that ships the difference |
+| 5 | **deploy** | the release the VM runs versus the one chosen, and the button that ships it |
 | 6 | **metrics** | whether the reviewer is working well over time |
 | 7 | **feedback** | the tuning loop on one surface — signal → adjudication → proposal → change → revert |
 | 8 | **scan** | the whole-repo scan's report — findings by unit, triage, the stage 2 plan for approval, the run and its stop |
@@ -117,17 +117,32 @@ lists them. Search them through the companion or OpenViking Studio (`W`).
 
 | key | does |
 | --- | --- |
-| `D` | deploy — twice inside the window, or click ▶ DEPLOY TO VM |
+| `D` | deploy the chosen version — twice inside the window, or click ▶ DEPLOY TO VM. Refused on a legacy-layout VM (its first release is `scripts/cutover.sh`) and while the VM's layout is unread |
+| `V` | choose the version (a prompt: type `X.Y.Z`; the newest published one is the default) |
 | `S` | power the VM app container — stop or start, twice; absent until its state has been read |
 | `x` | abort the running deploy / power run, or close its finished log |
 
-The CONFIG line compares the config home a sync would ship (config.toml and
+Every deploy is a release: the tag, the two-arch build, the paid e2e and the
+owner's approval already happened in CI. The DEPLOYED line is the VM's running
+version and revision (`ssh <vm> sudo qcr-update status --json`), VERSION the
+chosen one (published versions come from a read-only `gh api` packages listing;
+`V` types one), PENDING the commits between the two revisions in the local
+checkout, PLAN `deploy.sh --dry-run release <version>` verbatim. The ceremony
+is drain, wait for zero rounds, `deploy.sh release <version>`, then watch the
+new boot's first reconcile lift the drain.
+
+Every remote path (inject files, the digest, evidence, the operator command
+channel) is built from the container's app root, which the TUI reads from the
+container's `qcr.layout` label and re-reads when the container id changes
+(`src/tui/layout.ts`); `[tui] remote_sandbox_root`, when set, wins.
+
+The CONFIG line compares the config home a release would ship (config.toml and
 its profiles/) with the one the VM was shipped, both fingerprinted by
 `scripts/config-fingerprint.sh`: "profile changed, not deployed" until a
 sync, "unknown" when either end could not be read. Under it, while
 the profiles are behind, the post-scan re-tunes the companion wrote since the
 last deploy (`<state home>/setup/retunes.json`), each change with its reason
-— which re-tune a sync would ship; "unknown" when the VM end, the
+— which re-tune a release would ship; "unknown" when the VM end, the
 deploy time or the log could not be read.
 
 ### metrics

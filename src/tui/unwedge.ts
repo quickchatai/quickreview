@@ -26,6 +26,7 @@ import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
 import { sanitizeText } from "./paint.js";
 import type { SshRunner } from "./remote.js";
+import { remoteSandboxRoot, resolveLayout } from "./layout.js";
 
 /** The commands this channel may produce. Deliberately a closed set: the
  * daemon's whitelist is the authority, and this is the narrower subset that
@@ -34,7 +35,7 @@ export type UnwedgeCommand = "rerun-round" | "restart-session";
 
 /** The daemon's command root: results land in `<root>/results/`. */
 export function commandDirFor(cfg: TuiConfig): string {
-  return `${cfg.remote_sandbox_root}/commands`;
+  return `${remoteSandboxRoot(cfg)}/commands`;
 }
 
 /**
@@ -191,6 +192,7 @@ export class CommandFileSender implements UnwedgeSender {
     pr: number,
     onState: (state: UnwedgeState, label: string) => void,
   ): Promise<void> {
+    await resolveLayout(this.cfg, this.ssh);
     if (!Number.isInteger(pr) || pr <= 0) {
       onState("failed", `✖ ${command} refused (bad PR number)`);
       return;

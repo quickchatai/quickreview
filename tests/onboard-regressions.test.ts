@@ -203,7 +203,17 @@ describe("onboarding regression seams", () => {
   });
   it("ships a precollected API key when switching a running VM to the API route", async () => {
     const c = ctx();
-    c.choices = { topology: "vm", vm_ssh_alias: "review-vm" };
+    c.choices = {
+      topology: "vm",
+      vm_ssh_alias: "review-vm",
+      vm_deployed: {
+        mode: "release",
+        version: "1.2.0",
+        provisioned: true,
+        at: "2026-10-17T12:00:00Z",
+        host: "review-vm",
+      },
+    };
     const secrets = join(root, "secrets");
     mkdirSync(secrets);
     writeFileSync(join(secrets, "openai_api_key"), "sk-proj-test0000000000000000000000000");
@@ -234,7 +244,12 @@ describe("onboarding regression seams", () => {
         .map((check) => check.detail)
         .join(" "),
     ).toBe(true);
-    expect(stream.run.mock.calls[0]?.[1]?.at(-1)).toBe("rebuild");
+    // New secrets need the host provisioning a release skips: provision, then
+    // a re-release of the version on record.
+    expect(stream.run.mock.calls.map((call) => call[1]?.slice(1))).toEqual([
+      ["provision"],
+      ["release", "1.2.0"],
+    ]);
   });
   it("delivers changed model routing and persists a failed restart", async () => {
     const c = ctx();

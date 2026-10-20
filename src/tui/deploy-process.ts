@@ -17,6 +17,8 @@ import { uptime } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 
+const RELEASE_VERSION_RE = /^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$/;
+
 export interface DurableDeployHandle {
   kill(): void;
 }
@@ -42,12 +44,23 @@ export class DurableDeployProcess {
 
   startOrAttach(
     runId: string,
+    version: string,
     onData: (chunk: string) => void,
     onExit: (code: number | null) => void,
   ): DurableDeployHandle {
     if (!/^[A-Za-z0-9._-]{8,120}$/.test(runId)) {
       queueMicrotask(() => {
         onData("invalid durable deploy run id\n");
+        onExit(1);
+      });
+      return { kill: () => {} };
+    }
+    // The version names the image tag the release pulls; it is an argv word of
+    // a script run with the operator's credentials, so only the spelling
+    // deploy.sh itself accepts gets that far.
+    if (!RELEASE_VERSION_RE.test(version)) {
+      queueMicrotask(() => {
+        onData(`invalid release version '${version}' (X.Y.Z, optionally -prerelease)\n`);
         onExit(1);
       });
       return { kill: () => {} };
@@ -80,7 +93,13 @@ export class DurableDeployProcess {
         closeSync(openSync(logPath, "a", 0o600));
         const child = spawn(
           process.execPath,
-          [join(this.root, "scripts", "tui-deploy-runner.mjs"), this.root, logPath, resultPath],
+          [
+            join(this.root, "scripts", "tui-deploy-runner.mjs"),
+            this.root,
+            logPath,
+            resultPath,
+            version,
+          ],
           {
             cwd: this.root,
             detached: true,
