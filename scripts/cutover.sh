@@ -12,13 +12,15 @@
 #                      and its expiry, the VM's updater (legacy layout, a
 #                      provisioned run spec), the config home (no retired
 #                      keys, lens_permits = 20)
-#   2  drain           `qcr drain on`, wait for running_rounds 0, record the
-#                      pending_wakes and outbox counts
+#   2  drain           `qcr drain on` (an OPERATOR drain, checked), wait for
+#                      running_rounds 0, record the pending_wakes and outbox
+#                      counts
 #   3  plan            `QCR_CUTOVER_ACK=<v> deploy.sh --dry-run release <v>`
 #   4  release         the point of no return; typed go; deploy.sh release
 #   5  verify          deploy.sh verify
-#   6  first reconcile watched; the drain is HELD (re-sent if the daemon's
-#                      first healthy reconcile lifted it)
+#   6  first reconcile watched; the drain must still stand as the operator's
+#                      HOLD (P8.21b) after the new daemon's first healthy
+#                      reconcile, or the wizard stops loudly
 #   7  backstop        every open PR's head matches the daemon's, or a round
 #                      is queued for it
 #   8  surfaces        the TUI pull and the companion rebuild (the owner's)
@@ -30,6 +32,14 @@
 # Owner ruling: at the cutover the drain HOLDS until the owner has triggered
 # and checked one worker round. This script never lifts it on its own; stage 9
 # runs `qcr drain off` only on the owner's explicit go.
+#
+# The hold (P8.21b, owner ruling 2026-10-20) is the operator's no-auto-lift
+# drain: no boot lifts it, only `qcr drain off`. The legacy daemon cannot
+# spell one — its strict command schema refuses a `hold` field — so stage 2
+# sets the operator's drain, and the release's first boot (the boot that adds
+# the hold to state.db) carries a standing operator drain over as the hold
+# (`drain_hold_carried`). Its first healthy reconcile then keeps it
+# (`drain_hold_kept`) instead of lifting it, so no round starts in between.
 #
 # Resume: finished stages are recorded in a state file (per version) and
 # skipped on the next run. The drain and its emptiness are re-checked before
@@ -282,6 +292,13 @@ VM_JSON=""
 read_vm_status() { VM_JSON="$(vm 'sudo qcr-update status --json' 2>/dev/null)" && grep -q '"layout"' <<<"$VM_JSON"; }
 jfield() { grep -o "\"$1\":\"\?[^,}\"]*" <<<"$VM_JSON" | head -1 | sed -E 's/^"[^"]*":"?//' || true; }
 
+# status_field KEY — the first `"KEY": value` of the daemon's status.json on
+# the VM, or "" (unreadable, or absent — an older daemon's snapshot).
+status_field() {
+  vm "sudo grep -m1 -o '\"$1\"[[:space:]]*:[[:space:]]*\"\\?[^,}\" ]*' $SANDBOX_ROOT/state/status.json" 2>/dev/null |
+    head -1 | sed -E 's/^[^:]*:[[:space:]]*"?//' || true
+}
+
 # ensure_drained — the board is draining with nothing running, or this fails.
 # Re-run before the release on every run, done or not.
 ensure_drained() {
@@ -362,9 +379,11 @@ count_outbox() {
   vm "sudo sh -c 'ls $SANDBOX_ROOT/state/posting-receipts/*.outbox.json 2>/dev/null | wc -l'" 2>/dev/null | tail -1
 }
 s_drain() {
-  local n=0 wakes outbox
+  local n=0 wakes outbox by
   say "Turning the drain on. From here webhook deliveries are dropped, not queued;"
   say "stage 7 checks the reconcile backstop caught up."
+  say "The legacy daemon refuses a \`hold\` field, so this is the operator's plain drain; the release's"
+  say "first boot keeps it as the operator's HOLD, which no boot lifts (stage 6 checks that)."
   "$QCR" drain on || { bad "\`qcr drain on\` failed"; return 1; }
   until read_vm_status && [[ "$(jfield draining)" == true && "$(jfield running_rounds)" == 0 ]]; do
     n=$((n + 1))
@@ -373,6 +392,16 @@ s_drain() {
     sleep "$POLL_S"
   done
   good "drained, running_rounds 0"
+  # Only an OPERATOR drain is carried over as the hold: a drain the daemon
+  # bounded like a session's (an unsealed commands/operator/) lapses and is
+  # lifted by the boot. Read from the same heartbeat that showed the drain.
+  by="$(status_field draining_by)"
+  if [[ "$by" != operator ]]; then
+    bad "the drain is not the operator's (draining_by=${by:-unknown}): the release's boot would not keep it"
+    say "Fix commands/operator/ in the container (root-owned, 0755, not a symlink), \`qcr drain off\`, then re-run."
+    return 1
+  fi
+  good "the drain is the operator's"
   wakes="$(count_wakes || true)"; outbox="$(count_outbox || true)"
   [[ "$wakes" =~ ^[0-9]+$ ]] || { wakes=unknown; warn "pending_wakes could not be read"; }
   [[ "$outbox" =~ ^[0-9]+$ ]] || { outbox=unknown; warn "the outbox count could not be read"; }
@@ -431,26 +460,48 @@ s_verify() {
   confirm "Does verify show all of that?" || return 1
 }
 
-# ── 6. first reconcile; hold the drain ───────────────────────────────────
+# ── 6. first reconcile; the hold stands ──────────────────────────────────
+# hold_kept — the new daemon logged that its first healthy reconcile kept the hold.
+hold_kept() {
+  local c; c="$(vm "sudo docker logs --since 30m $CONTAINER 2>&1 | grep -c drain_hold_kept" 2>/dev/null | tail -1 || true)"
+  [[ "$c" =~ ^[0-9]+$ ]] && (( c > 0 ))
+}
 s_reconcile() {
-  local n=0 lifted=0
-  say "Watching the new daemon's first reconcile. Its first healthy pass lifts the drain by itself;"
-  say "the owner's ruling is that the drain HOLDS until one worker round has been checked."
+  local n=0 kept=0 hold
+  say "Watching the new daemon's first reconcile. The drain is the operator's HOLD now: the first"
+  say "healthy pass keeps it (drain_hold_kept) instead of lifting it. Only \`qcr drain off\` lifts it."
   while (( n <= MAX_POLLS )); do
-    if read_vm_status && [[ "$(jfield draining)" != true ]]; then lifted=1; break; fi
-    n=$((n + 1)); note "waiting for the first reconcile…"; sleep "$POLL_S"
+    if ! read_vm_status; then
+      bad "the VM's \`qcr-update status\` cannot be read"; return 1
+    fi
+    if [[ "$(jfield draining)" != true ]]; then
+      bad "THE DRAIN IS OFF after the new daemon's boot (draining=$(jfield draining)): rounds may be starting"
+      say "Drain by hand NOW (\`qcr drain on --hold\`), then read \`ssh ${VM_HOST:-<vm>} sudo docker logs --since 15m $CONTAINER\`"
+      say "for drain_hold_carried / drain_lifted, and check \`qcr status\` for rounds that started."
+      return 1
+    fi
+    hold="$(status_field draining_hold)"
+    if [[ "$hold" == false ]]; then
+      bad "the drain stands but is NOT a hold (draining_hold=false): the daemon's first healthy reconcile lifts it"
+      say "Make it a hold NOW (\`qcr drain on --hold\`), then re-run $SELF $VERSION."
+      return 1
+    fi
+    if [[ "$hold" == true ]] && hold_kept; then kept=1; break; fi
+    n=$((n + 1)); note "waiting for the first reconcile (draining_hold=${hold:-not reported yet})…"; sleep "$POLL_S"
   done
-  if (( lifted )); then
-    warn "the first reconcile was healthy and the daemon lifted the drain; re-sending it now"
-    "$QCR" drain on || { bad "\`qcr drain on\` failed: drain by hand NOW (\`qcr drain on\`)"; return 1; }
-    read_vm_status && [[ "$(jfield draining)" == true ]] || { bad "the drain is not confirmed: drain by hand NOW"; return 1; }
-    note "rounds may have started between the lift and the re-drain; stage 9 shows them"
+  if (( kept )); then
+    good "the first reconcile was healthy and kept the hold"
   else
-    warn "the drain stayed on: the first reconcile reported errors, or has not finished"
+    if [[ "$hold" != true ]]; then
+      bad "the new daemon never reported the hold (draining_hold=${hold:-unknown}): do not go on"
+      say "Read \`ssh ${VM_HOST:-<vm>} sudo docker logs --since 15m $CONTAINER\` before anything else."
+      return 1
+    fi
+    warn "the hold stands, but no healthy first reconcile was logged: it reported errors, or has not finished"
     say "Read \`ssh ${VM_HOST:-<vm>} sudo docker logs --since 15m $CONTAINER\` and \`qcr why <pr>\` before any drain off."
-    confirm "Is the reconcile healthy enough to go on (drain stays on)?" || return 1
+    confirm "Is the reconcile healthy enough to go on (the hold stays on)?" || return 1
   fi
-  good "the drain is held"
+  good "the drain is held (no boot lifts it; stage 9 lifts it on your go)"
 }
 
 # ── 7. the reconcile backstop ────────────────────────────────────────────
