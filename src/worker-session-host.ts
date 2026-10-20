@@ -25,7 +25,8 @@
 //     order in interactive pi: `start` gives the order to the debug manager in a
 //     worker's place, and the supervisor's host gate keeps every worker out.
 //
-// The tmux host (src/sessions.ts) survives only until P9.2 deletes it.
+// The daemon builds this host as the bot's ONLY host (src/workerworld.ts, P8.15w); the tmux manager
+// (src/sessions.ts) still serves the overseer until P9.13.
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.js";
@@ -69,6 +70,9 @@ export interface WorkerSessionHostOptions {
    * to its interactive pi, in a worker's place. Omitted: every round goes to a worker. */
   debugRounds?: Pick<DebugRoundManager, "claims" | "deliver">;
   ovSessions?: OvSessionLifecycle;
+  /** Told at each birth whether the PR's raw-notes tier could be created, so the worker's
+   * spec can leave the session memory-less when it could not (as the tmux birth did). */
+  onRawTier?: (pr: number, ready: boolean) => void;
   now?: () => Date;
   log?: (msg: string) => void;
 }
@@ -94,6 +98,7 @@ export class WorkerSessionHost implements SessionHooks {
   private readonly debugRounds: WorkerSessionHostOptions["debugRounds"];
   private readonly log: (msg: string) => void;
   private readonly now: () => Date;
+  private readonly onRawTier: WorkerSessionHostOptions["onRawTier"];
 
   constructor(opts: WorkerSessionHostOptions) {
     this.now = opts.now ?? (() => new Date());
@@ -103,6 +108,7 @@ export class WorkerSessionHost implements SessionHooks {
     this.debugRounds = opts.debugRounds;
     this.worktrees = opts.worktrees;
     this.log = opts.log ?? ((msg) => console.log(`[quickreviewd] worker-host: ${msg}`));
+    this.onRawTier = opts.onRawTier;
     this.lifecycle = new PrSessionLifecycle({
       cfg: opts.cfg,
       root: opts.root,
@@ -126,7 +132,10 @@ export class WorkerSessionHost implements SessionHooks {
       },
       reuseLive: async (pr) => (supervisor.runs(prSessionName(pr)) ? prSessionName(pr) : undefined),
       // Nothing runs between rounds: the session is born when its first worker is.
-      spawn: async (pr) => prSessionName(pr),
+      spawn: async (pr, _title, _worktree, { rawReady }) => {
+        this.onRawTier?.(pr, rawReady);
+        return prSessionName(pr);
+      },
     };
   }
 

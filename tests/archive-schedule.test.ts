@@ -554,7 +554,7 @@ describe("fences — daemon bookkeeping only", () => {
       // every failure into "none alive").
       expect(args).toMatch(/liveSessions: async \(\) => workerLive\.liveSessions\(\),/);
       expect(args).not.toMatch(/tmux/);
-      expect(args).toMatch(/birthInFlight: \(pr\) => sessions\.birthInFlight\(pr\),/);
+      expect(args).toMatch(/birthInFlight: \(pr\) => workerWorld\.host\.birthInFlight\(pr\),/);
       expect(wire.match(/new Archiver\(/g)).toHaveLength(1);
     });
 
