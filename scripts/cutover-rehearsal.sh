@@ -674,7 +674,7 @@ export QC_RELEASE_REPO=quickchatai/quickreview
 
 # run A: preconditions, drain, plan, the release (the typed go), verify, the first reconcile, the backstop, the surfaces;
 # it stops at stage 9, which asks whether a worker round was checked (EOF: not answered).
-python3 "$RH/answer.py" --timeout 900 \
+python3 "$RH/answer.py" --timeout 300 \
   --on 'Ready to start\?=>\n' --on 'Does the plan show all of that\?.*\[y/N\]=>y\n' --on "Type the version.*=>$VERSION\n" \
   --on 'Does verify show all of that\?.*\[y/N\]=>y\n' --on 'Both done\?.*\[y/N\]=>y\n' \
   --on 'PR number for the commands below.*=>\n' --on 'Was the worker round checked and is it good\?.*\[y/N\]=>n\n' \
