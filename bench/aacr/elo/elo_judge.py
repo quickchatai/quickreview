@@ -338,6 +338,17 @@ class OpusJudge:
     def params(self, context: str, reviews: str) -> dict:
         return opus_params(self.model, self.max_tokens, self.effort, context, reviews)
 
+    def live(self, context: str, reviews: str) -> dict:
+        """One judgment as a live (streamed) Messages call, the same single
+        turn as a batch request: full price, minutes instead of hours."""
+        import anthropic
+        try:
+            with self.client.messages.stream(**self.params(context, reviews)) as stream:
+                msg = stream.get_final_message()
+        except anthropic.APIError as e:
+            return {"status": "error", "error": f"{type(e).__name__}: {str(e)[:800]}"}
+        return parse_opus_message(msg)
+
     def submit(self, requests: List[dict]) -> str:
         """requests: [{custom_id, params}] → batch id."""
         batch = self.client.messages.batches.create(requests=requests)

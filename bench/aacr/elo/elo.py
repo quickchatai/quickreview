@@ -333,12 +333,12 @@ def run_gpt(run: Run, judge: J.GptJudge, workers: int) -> None:
         list(pool.map(one, todo))
 
 
-def run_opus(run: Run, judge: J.OpusJudge, wait: bool) -> None:
+def run_opus(run: Run, judge: J.OpusJudge, wait: bool, collect_only: bool = False) -> None:
     batches = read_jsonl(run.d / "batches.jsonl")
     collected = {b["batch_id"] for b in batches if b.get("collected_at")}
     open_ = [b for b in batches if b.get("submitted_at") and b["batch_id"] not in collected]
     in_flight = {i for b in open_ for i in b["ids"]}
-    todo = run.pending("opus", in_flight)
+    todo = [] if collect_only else run.pending("opus", in_flight)
     if todo:
         units = {u["id"]: u for u in todo}
         reqs, shas = [], {}
@@ -373,6 +373,13 @@ def run_opus(run: Run, judge: J.OpusJudge, wait: bool) -> None:
 def cmd_run(a) -> None:
     run = Run(Path(a.dir))
     judges = make_judges(run, a.judge)
+    if a.collect_only:
+        # Collect the Opus batches already submitted and stop: never submit,
+        # never schedule — safe beside a GPT run that adds units.
+        if "opus" not in judges:
+            raise SystemExit("--collect-only collects Opus batches: use --judge opus")
+        run_opus(run, judges["opus"], wait=not a.no_wait, collect_only=True)
+        return
     cap = int(run.plan.get("cap", 300))
     seed = int(run.plan.get("seed", 1))
     rounds_done = 0
@@ -412,6 +419,31 @@ def cmd_run(a) -> None:
             return
         run.add_units(new, rnd)
         log(f"round {rnd}: {len(new)} more judgments per judge")
+
+
+def cmd_live(a) -> None:
+    """Live Opus judgments of hand-picked units — a spot check beside the
+    batch, recorded under their own judge name so the two never mix."""
+    run = Run(Path(a.dir))
+    judge = make_judges(run, "opus")["opus"]
+    units = {u["id"]: u for u in run.units()}
+    wanted = [i.strip() for i in a.units.split(",") if i.strip()]
+    missing = [i for i in wanted if i not in units]
+    if missing:
+        raise SystemExit(f"no such unit(s): {', '.join(missing)}")
+    done = run.final("opus-live")
+    todo = [units[i] for i in wanted if i not in done]
+    log(f"opus-live: {len(todo)} judgments, {a.workers} at a time ({len(wanted) - len(todo)} already in)")
+
+    def one(u: dict) -> None:
+        ctx, rev = run.context(u["pr"]), run.reviews(u)
+        res = judge.live(ctx, rev)
+        run.record("opus-live", u, res, judge.model, judge.effort, J.prompt_sha(ctx, rev))
+        log(f"opus-live {u['id']} {u['pr']}: {res['status']}"
+            + (f" → {res['verdict']['overall']['winner']}" if res["status"] == "ok" else f" ({res.get('error', '')[:160]})"))
+
+    with ThreadPoolExecutor(max_workers=a.workers) as pool:
+        list(pool.map(one, todo))
 
 
 def gpt_row_usd(u: dict) -> float:
@@ -989,12 +1021,16 @@ def main() -> None:
     p.add_argument("--rounds", type=int, default=None, help="stop after N rounds (1 = round 0 only)")
     p.add_argument("--gpt-workers", type=int, default=4)
     p.add_argument("--no-wait", action="store_true", help="submit the Opus batch and return")
+    p.add_argument("--collect-only", action="store_true", help="only collect submitted Opus batches")
+    p = sub.add_parser("live", help="judge chosen units with live Opus calls, recorded as judge opus-live")
+    p.add_argument("dir"); p.add_argument("--units", required=True, help="comma-separated unit ids")
+    p.add_argument("--workers", type=int, default=4)
     p = sub.add_parser("report"); p.add_argument("dir")
     p = sub.add_parser("show"); p.add_argument("dir"); p.add_argument("--x", required=True); p.add_argument("--y", required=True)
     p.add_argument("--judge", choices=JUDGES); p.add_argument("--pr"); p.add_argument("--reasoning", action="store_true")
     a = ap.parse_args()
     {"init": cmd_init, "pack": cmd_pack, "repack": cmd_repack, "run": cmd_run, "report": cmd_report,
-     "show": cmd_show, "audit": cmd_audit}[a.cmd](a)
+     "show": cmd_show, "audit": cmd_audit, "live": cmd_live}[a.cmd](a)
 
 
 if __name__ == "__main__":
