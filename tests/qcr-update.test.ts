@@ -95,7 +95,9 @@ case "$cmd" in
     echo true > "$d/running"; now > "$d/started"
     # a healthy boot of the OLD daemon: its first reconcile lifts the drain
     if [ "$name" = "$FAKE_DAEMON" ] && [ -n "$FAKE_STATUS" ]; then
-      printf '{"written_at":"%s","draining":false,"running_rounds":0}\\n' "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" > "$FAKE_STATUS"
+      # the real heartbeat carries "draining" only while draining; a lifted drain omits the key
+      if [ -n "$FAKE_START_DRAINING" ]; then dr='"draining":true,'; else dr=''; fi
+      printf '{"written_at":"%s",%s"running_rounds":0}\\n' "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$dr" > "$FAKE_STATUS"
     fi ;;
   rm) name="\${@: -1}"; rm -rf "$F/containers/$name" ;;
   rename)
@@ -1034,6 +1036,17 @@ describe("qcr-update — the rescue", () => {
     // a start that does not touch status.json: the heartbeat stays draining=true, from before
     const r = await runUpdater(sb, GOOD, tarOf(), { QCR_UPDATE_FAIL_AT: "swap", FAKE_STATUS: "" });
     expect(r.stderr).toContain("no first reconcile from the old daemon within 3s");
+    expectRescued(sb, "release", r, "swap");
+  });
+
+  it("a fresh heartbeat that still says draining=true is not a first reconcile: the wait runs out", async () => {
+    sb = setup("release");
+    const r = await runUpdater(sb, GOOD, tarOf(), {
+      QCR_UPDATE_FAIL_AT: "swap",
+      FAKE_START_DRAINING: "1",
+    });
+    expect(r.stderr).toContain("no first reconcile from the old daemon within 3s");
+    expect(r.stderr).not.toContain("first reconcile has run");
     expectRescued(sb, "release", r, "swap");
   });
 

@@ -347,7 +347,8 @@ send_drain_on() {
 
 # The old container's first reconcile, as status.json shows it: a heartbeat
 # written by this boot (after the container's StartedAt) with the drain lifted,
-# which is what a healthy first reconcile does. A boot whose first reconcile
+# which is what a healthy first reconcile does. The daemon writes `draining`
+# only while draining and omits the key once lifted, so lifted = absent (or false). A boot whose first reconcile
 # fails leaves the drain standing, so the wait also ends at the timeout.
 wait_first_reconcile() {
   local container="$1" wait_s="${2:-300}" waited=0 started written draining
@@ -355,7 +356,7 @@ wait_first_reconcile() {
   while (( waited <= wait_s )); do
     written="$(status_value written_at | cut -c1-19)"
     draining="$(status_value draining)"
-    if [[ -n "$started" && -n "$written" && ! "$written" < "$started" && "$draining" == false ]]; then
+    if [[ -n "$started" && -n "$written" && ! "$written" < "$started" && "$draining" != true ]]; then
       log "the old daemon's first reconcile has run (heartbeat $written, drain lifted)"
       return 0
     fi
