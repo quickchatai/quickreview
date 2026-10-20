@@ -358,7 +358,7 @@ make_pristine() {
   git -C "$H/sandbox/base-clone" remote set-url origin /opt/qcr/state/rehearsal/remote.git
   cp "$TLS/ca.pem" "$H/state/rehearsal/ca.pem"
   chmod -R a+rX "$H/state/rehearsal"
-  cat >"$WORK/daemon.env" <<ENVF
+  cat >"$VM/daemon.env" <<ENVF
 NODE_EXTRA_CA_CERTS=/opt/qcr/state/rehearsal/ca.pem
 SSL_CERT_FILE=/opt/qcr/state/rehearsal/ca.pem
 CURL_CA_BUNDLE=/opt/qcr/state/rehearsal/ca.pem
