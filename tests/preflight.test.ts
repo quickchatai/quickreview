@@ -65,6 +65,20 @@ describe("daemon --preflight", () => {
     expect(readdirSync(join(dir, "state")).sort()).toEqual(["pi-sessions", "state.db"]);
   });
 
+  it("passes with the live state read-only, so it cannot have written there", () => {
+    const state = opts.stateDir;
+    const before = snapshot(dir);
+    const dirs = [state, join(state, "pi-sessions"), join(state, "pi-sessions", "pr-7")];
+    for (const d of dirs) chmodSync(d, 0o500);
+    try {
+      const r = runPreflight(opts);
+      expect(failed(r), JSON.stringify(r)).toEqual([]);
+    } finally {
+      for (const d of dirs.reverse()) chmodSync(d, 0o700);
+    }
+    expect(snapshot(dir)).toEqual(before);
+  });
+
   it("fails a corrupt JSONL by name", () => {
     writeFileSync(join(opts.stateDir, "pi-sessions", "pr-7", "s.jsonl"), "{not json\n");
     const r = runPreflight(opts);

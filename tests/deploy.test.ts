@@ -689,7 +689,7 @@ describe("deploy.sh provision", () => {
   it("the run spec version is the one the image label and the updater agree on", () => {
     const sh = readFileSync(deploySh, "utf8");
     expect(/^RUNSPEC_VERSION=(\d+)$/m.exec(sh)![1]).toBe(
-      /LABEL qcr\.layout="release" \\\n\s+qcr\.runspec="(\d+)"/.exec(
+      /LABEL qcr\.layout="release"[\s\S]*?qcr\.runspec="(\d+)"/.exec(
         readFileSync(join(root, "docker", "Dockerfile"), "utf8"),
       )![1],
     );
