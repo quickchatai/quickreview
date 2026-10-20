@@ -289,23 +289,6 @@ const PINNED: Record<string, PinnedFence[]> = {
       sha256: "d5976bf31c68d797ed0924c18215fca3d6d6bbcdee9e8f09b4120d0a0ae8d9c8",
     },
   ],
-  "prompts/overseer-system.md": [
-    {
-      slug: "action-space",
-      ft: "",
-      sha256: "6e8ea028dec90920b7b9d9ccec544c835de35195b3426d0b213533e4ccee7192",
-    },
-    {
-      slug: "action-space-never",
-      ft: "RULE-2",
-      sha256: "136820d54aed82fcb5d9579c452791ab233f93b9b9034ee6dd86e0e43bf248ec",
-    },
-    {
-      slug: "memory-discipline",
-      ft: "",
-      sha256: "08a56035ebf0f5254c7710bd5d33ee40984ac6a53940c373f76aeb441f852c51",
-    },
-  ],
   "prompts/eod-sweep.md": [
     {
       slug: "memory-discipline",
@@ -417,7 +400,6 @@ const PINNED: Record<string, PinnedFence[]> = {
 const FROZEN_SEEDS = [
   "prompts/pass-common.md",
   "prompts/conversation-system.md",
-  "prompts/overseer-system.md",
   "prompts/eod-sweep.md",
 ] as const;
 

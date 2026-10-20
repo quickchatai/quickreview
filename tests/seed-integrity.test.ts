@@ -132,7 +132,6 @@ describe("seed integrity (hard rule 6)", () => {
       "agents/pass-validate.md",
       "prompts/conversation-system.md",
       "prompts/eod-sweep.md",
-      "prompts/overseer-system.md",
       "prompts/pass-common.md",
     ]);
     expect(manifest.algorithm).toBe("sha256");

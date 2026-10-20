@@ -427,15 +427,11 @@ placeholder it was given no value for (`UnknownPlaceholderError`). A supplied
 value the template does not use is fine — templates are edited independently of
 the renderer — but a `{{…}}` reaching a model is treated as a bug.
 
-- **System prompts**, substituted at session birth:
+- **The system prompt**, substituted at session birth:
   `renderConversationSystemPrompt` (`prompts/conversation-system.md`, given the
-  PR number, title and worktree) and `renderOverseerSystemPrompt`
-  (`prompts/overseer-system.md`). Both also receive the identity variables
+  PR number, title and worktree). It also receives the identity variables
   (`owner_name`, `repo`, `bot_login`) from `identityVars` in `src/include.ts`,
-  which degrade to neutral role wording when the config leaves them empty. The
-  overseer prompt is a frozen seed, so the Slack contract is appended by
-  `slackAppendix()` at spawn time rather than written into the file; with Slack
-  off the prompt is byte-identical to the seed.
+  which degrade to neutral role wording when the config leaves them empty.
 - **Round prompts**: `ROUND_TEMPLATE_FILES` maps each round type to
   `prompts/round-first.md`, `round-re-review.md` or `round-staleness.md`;
   `RECHECK_TEMPLATE_FILE` is the fourth (`round-recheck.md`), used by a recheck,

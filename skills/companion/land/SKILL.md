@@ -80,8 +80,8 @@ a proposal directory and their accept click in the TUI ratifies it.
 Two things travel with a review-side commit:
 
 - **`prompts/CLAUDE.md` is the map of what is frozen.** Seeded content
-  (`pass-common.md`, `conversation-system.md`, `overseer-system.md`,
-  `eod-sweep.md`, the seeded `agents/pass-*.md`) is frozen under root rule 6 —
+  (`pass-common.md`, `conversation-system.md`, `eod-sweep.md`,
+  the seeded `agents/pass-*.md`) is frozen under root rule 6 —
   a reseed is the owner's ratification, not yours. Ours to edit: the round
   templates, `companion.md`, `companion-day-open.md`, the Slack appendix. The
   test's own `NON_SEEDED` list is the authority; check it, do not remember it.
