@@ -8,34 +8,21 @@
 // submission). The daemon writes files atomically (tmp + rename), so a watch
 // event sees a complete file.
 //
-// "Resolved" is not "accepted": pi's extension-facing sendUserMessage is
-// fire-and-forget and swallows every failure into an error banner, so a drop
-// cannot be detected from here at all. Four things cover that loss:
-//   1. only one unacknowledged wake may exist per PR session,
+// Two sessions still read a mailbox: the companion (its inbox) and the tmux
+// overseer. A PR's wake is not a file at all: a worker takes its order as its
+// first message. The bridge keeps what those two need:
+//   1. only one unacknowledged wake exists per session,
 //   2. a marker-correlated user `message_start` after `agent_start` is the
 //      acceptance acknowledgement, and the busy flag brackets the whole RUN,
 //      not one assistant turn,
 //   3. a delivery that still reaches a streaming agent is QUEUED, not refused
 //      (`DELIVER_AS`),
-//   4. the daemon independently reads the prompt receipt out of the session's
-//      own JSONL (`SessionHooks.roundPromptAccepted`).
-//
-// pi also REFUSES a prompt while it compacts — `prompt()` throws "Cannot
-// submit a prompt while compaction is in progress" — and the refusal is
-// swallowed like every other extension-side send failure. A wake submitted
-// INTO a compaction is lost, and manual compaction emits no `agent_settled`
-// to re-drain, so the start lease would run out on a healthy, idle session.
-// Three more rules cover it:
-//   5. compaction holds the mailbox — no submission while pi is not idle
-//      (pi's own `ctx.isIdle()`, which counts compaction, else the bridge's
-//      compaction events), and the queue drains again when it ends,
-//   6. the round-end compaction is the bridge's to run (`ctx.compact()` on the
-//      daemon's request file), only while nothing is in flight — never a
-//      keystroke that aborts a running wake,
-//   7. a command the daemon hands back for REDELIVERY is resubmitted
-//      only when pi provably holds nothing of it: it never took it (pi's
-//      `input` event never carried its marker), its start lease has passed,
-//      and pi is idle with nothing queued.
+//   4. compaction holds the mailbox: pi REFUSES a prompt while it compacts
+//      ("Cannot submit a prompt while compaction is in progress"), and the
+//      refusal is swallowed like every other extension-side send failure, so
+//      nothing is submitted while pi is not idle (pi's own `ctx.isIdle()`,
+//      else the bridge's compaction events) and the queue drains again when
+//      it ends.
 //
 // pi is a dependency of this repo, so the pi API is typechecked against its own
 // declarations; what a live session does with it stays VERIFY-ON-PIN.
@@ -51,14 +38,11 @@ import {
 } from "node:fs";
 import { basename, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { sessionCommandMarker } from "../src/session-command.js";
 import {
-  COMPACTION_REQUEST_FILE,
   OVERSEER_RETIRE_REQUEST_FILE,
   writeSessionBridgeState,
   type SessionBridgeCompaction,
-} from "../src/session-bridge.js";
-import { SessionCommandLedger } from "./session-command-ledger.js";
+} from "../src/overseer-bridge.js";
 
 /**
  * Session name resolution, in order:
@@ -106,20 +90,14 @@ export function pendingFiles(dir: string): string[] {
 export const RETRY_BASE_MS = 2_000;
 export const RETRY_MAX_MS = 30_000;
 /** A submitted wake should start a Pi run almost immediately. This bound is
- * deliberately generous for local preflight while remaining far below a
- * round's deadline. Expiry never retries or consumes the wake: it
- * emits one FAILED_LOUD record and leaves the pending file as recovery
- * evidence for the daemon/operator watchdogs. */
+ * deliberately generous for local preflight. Expiry never retries or consumes
+ * the wake: it emits one FAILED_LOUD record and leaves the pending file as
+ * evidence for the operator. */
 export const START_ACK_TIMEOUT_MS = 2 * 60_000;
 /** While pi is busy with something the bridge has no end event for (a run it
  * missed the start of, a compaction whose end event did not arrive), look
  * again this often. Only armed while a delivery is actually waiting. */
 export const IDLE_RECHECK_MS = 1_000;
-
-function positiveEnvMs(name: string): number | undefined {
-  const value = Number(process.env[name]);
-  return Number.isFinite(value) && value > 0 ? value : undefined;
-}
 
 /**
  * How a message that reaches pi while the agent is STREAMING is handled
@@ -134,8 +112,7 @@ function positiveEnvMs(name: string): number | undefined {
  * queued one lands when the run ends.
  *
  * `steer` is deliberately NOT used: it interrupts the turn in progress, and a
- * round's tail (ledger, then the verdict file) is the one part that must not
- * be cut off.
+ * run's tail must not be cut off.
  * VERIFY-ON-PIN: option name `deliverAs` and its "followUp" value — read off
  * the pinned 0.84.1 dist (`extensions/types.d.ts` sendUserMessage, mapped at
  * `agent-session.js` `streamingBehavior: options?.deliverAs`).
@@ -145,17 +122,10 @@ export const DELIVER_AS = "followUp" as const;
 export const activate: (pi: ExtensionAPI) => void = (pi) => {
   const dir = resolveInjectDir(pi);
   const doneDir = join(dir, ".done");
-  const terminalDir = join(dir, ".terminal");
   let watcher: ReturnType<typeof watch> | undefined;
   let closed = false;
-  const stateDb = process.env.QCR_STATE_DB?.trim();
   const session = resolveSessionName(pi);
   const root = process.env.QCR_SANDBOX_ROOT?.trim() || process.cwd();
-  const prSession = /^pr-\d+$/.test(session);
-  // Managed daemon PR sessions explicitly require the SQLite ledger. The
-  // default is fail-closed; only isolated smoke/replay managers pass "0".
-  const ledgerRequired =
-    prSession && process.env.QCR_SESSION_BRIDGE_LEDGER_REQUIRED?.trim() !== "0";
   const bridgeGeneration = process.env.QCR_SESSION_BRIDGE_GENERATION?.trim();
   const bridgeStateFile = process.env.QCR_SESSION_BRIDGE_STATE_FILE?.trim();
   let bridgeFailed = false;
@@ -196,32 +166,6 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
     console.error(`[inject-bridge] FAILED_LOUD ${stage}: ${detail}`);
   };
 
-  if (ledgerRequired && (!bridgeGeneration || !bridgeStateFile)) {
-    failBridge(
-      "startup_fence",
-      "missing QCR_SESSION_BRIDGE_GENERATION or QCR_SESSION_BRIDGE_STATE_FILE",
-    );
-  }
-  if (ledgerRequired && !stateDb) {
-    failBridge("state_db", "missing QCR_STATE_DB for a ledger-required PR bridge");
-  }
-
-  // The start lease the ledger reserves with — the daemon's own
-  // (`sessions.ts` passes it in the pi env). Read once: the bridge's own
-  // bounds must agree with the reservation it made.
-  const startLeaseMs = positiveEnvMs("QCR_SESSION_COMMAND_START_LEASE_MS") ?? START_ACK_TIMEOUT_MS;
-
-  let ledger: SessionCommandLedger | undefined;
-  if (ledgerRequired && stateDb) {
-    try {
-      ledger = new SessionCommandLedger(stateDb, root, session, undefined, {
-        startMs: positiveEnvMs("QCR_SESSION_COMMAND_START_LEASE_MS"),
-        runningMs: positiveEnvMs("QCR_SESSION_COMMAND_RUNNING_LEASE_MS"),
-      });
-    } catch (err) {
-      failBridge("ledger_open", String(err));
-    }
-  }
   // The span that matters is the AGENT RUN, not one assistant turn:
   // `turn_start`/`turn_end` fire once per turn INSIDE a run, so a wake sent
   // in one of those gaps reaches a running agent. `agent_settled` is the only
@@ -234,13 +178,6 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
     marker: string;
     submittedAt: number;
     accepted: boolean;
-    commandId?: string;
-    /** pi's `input` event carried this wake's marker: pi took the submission
-     * past its compaction refusal and holds it (preflight or queue) — or
-     * failed it after, which the bridge cannot see. Never resubmitted. */
-    inputSeen?: boolean;
-    /** The "pi holds it" refusal of a redelivery is logged once per wake. */
-    holdLogged?: boolean;
   }
   let submitted: SubmittedWake | undefined;
   let activeWake: SubmittedWake | undefined;
@@ -251,17 +188,12 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
   let latestSettledGeneration: number | undefined;
   let idleRecheckTimer: NodeJS.Timeout | undefined;
   let compactionDrainTimer: NodeJS.Timeout | undefined;
-  let reclaimTimer: NodeJS.Timeout | undefined;
   // The latest extension context pi handed any event handler. Its methods
   // resolve pi's state at CALL time (pi 1.0.0 `ExtensionRunner.createContext`),
   // so an old context still answers for the live session — and throws once the
   // runner is torn down, which every reader below turns into "unknown".
   let piCtx: ExtensionContext | undefined;
   let compacting = false;
-  // True from the bridge's own `ctx.compact()` call until pi reports its end:
-  // pi sets its compaction flag only after an awaited abort, so in that first
-  // moment pi still reads idle and that must not be taken for a missed end.
-  let compactionRequestInFlight = false;
 
   const remember = (ctx: unknown): void => {
     if (ctx && typeof ctx === "object") piCtx = ctx as ExtensionContext;
@@ -298,14 +230,14 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
     if (readyPublished && !bridgeFailed && !closed) publishBridgeState("ready");
   };
 
-  const beginCompaction = (source: "request" | "event"): void => {
+  const beginCompaction = (): void => {
     if (compacting) return;
     compacting = true;
     compaction = {
       state: "running",
       seq: compaction.seq,
       started_at: new Date().toISOString(),
-      source,
+      source: "event",
     };
     republish();
   };
@@ -341,7 +273,7 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
     if (idle === true) {
       // pi is idle, so a compaction the bridge still holds open ended without
       // its event reaching here — never wait on it forever.
-      if (compacting && !compactionRequestInFlight) endCompaction("stale");
+      if (compacting) endCompaction("stale");
       return compacting;
     }
     return compacting;
@@ -375,17 +307,12 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
       startAckTimer = undefined;
       if (closed || submitted?.full !== wake.full) return;
       const failure = `${wake.file} was submitted ${Date.now() - wake.submittedAt}ms ago without its correlated run message`;
-      // Do NOT terminalize the durable reservation here. A stale busy reading
-      // can make Pi queue `followUp`; that queued command cannot be withdrawn.
-      // Leaving the short running lease expired lets the daemon's recovery
-      // reconcile JSONL/liveness: on a live, ready session it REDELIVERS
-      // first (`reclaimRedelivered` below resubmits only when pi provably
-      // holds nothing), and only a dead session or spent redeliveries reach
-      // the kill-before-replay.
+      // Do not retry or consume: a stale busy reading can make Pi queue
+      // `followUp`, and a queued message cannot be withdrawn.
       console.error(
         `[inject-bridge] FAILED_LOUD ${failure}; preserving the pending file and refusing successor delivery`,
       );
-    }, startLeaseMs);
+    }, START_ACK_TIMEOUT_MS);
   };
 
   const archive = (wake: SubmittedWake): boolean => {
@@ -401,40 +328,6 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
     }
   };
 
-  const disposeTerminalTransport = (
-    full: string,
-    file: string,
-    terminal: { id: string; status: "acked" | "failed" | "cancelled"; blocksSuccessors: boolean },
-  ): boolean => {
-    // SQLite + immutable payload_path own terminal evidence. The exact
-    // inject_path copy is only transport residue: acked is a delivery receipt;
-    // failed/cancelled use a distinct non-delivery quarantine.
-    const targetDir = terminal.status === "acked" ? doneDir : terminalDir;
-    const targetName =
-      terminal.status === "acked" ? basename(full) : `${basename(full)}.${terminal.status}`;
-    try {
-      mkdirSync(targetDir, { recursive: true });
-      renameSync(full, join(targetDir, targetName));
-    } catch (error) {
-      failBridge(
-        "terminal_transport",
-        `${file}: could not move stale ${terminal.status} transport: ${String(error)}`,
-      );
-      return false;
-    }
-    console.error(
-      `[inject-bridge] moved stale ${terminal.status} transport ${file} for command ${terminal.id}`,
-    );
-    if (terminal.blocksSuccessors) {
-      failBridge(
-        "command_link",
-        `failed command ${terminal.id} still owns the serialized session lane`,
-      );
-      return false;
-    }
-    return true;
-  };
-
   /** Returns true only when drain may immediately inspect another file. */
   const deliver = (file: string): boolean => {
     const full = join(dir, file);
@@ -447,28 +340,9 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
       scheduleIdleRecheck();
       return false;
     }
-    if (ledgerRequired && !ledger) {
-      failBridge("ledger_open", "durable command ledger is unavailable");
-      return false;
-    }
     try {
-      const payload = readFileSync(full);
-      const content = payload.toString("utf8");
-      const link = ledger?.linkOrAdopt(full, payload);
-      if (link && !link.ok) {
-        if (link.terminal) return disposeTerminalTransport(full, file, link.terminal);
-        failBridge("command_link", `${file}: ${link.reason}`);
-        return false;
-      }
+      const content = readFileSync(full, "utf8");
       if (content.trim().length === 0) {
-        if (link?.ok && ledger) {
-          ledger.failPending(link.command.id, "empty command payload");
-          failBridge(
-            "payload_validate",
-            `refusing empty command ${link.command.id}; preserving its file`,
-          );
-          return false;
-        }
         mkdirSync(doneDir, { recursive: true });
         renameSync(full, join(doneDir, basename(full)));
         return true;
@@ -476,20 +350,13 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
 
       // Install the single-flight barrier BEFORE invoking Pi: a pinned-Pi
       // adapter may emit agent_start synchronously from inside this call.
-      if (link?.ok && ledger && !ledger.reserve(link.command.id)) {
-        failBridge("command_reserve", `${file}: command ${link.command.id} could not be reserved`);
-        return false;
-      }
-      const marker = link?.ok
-        ? sessionCommandMarker(link.command.id, link.command.payload_sha256)
-        : `<!-- qcr-inject:${file} -->`;
+      const marker = `<!-- qcr-inject:${file} -->`;
       const wake: SubmittedWake = {
         file,
         full,
         marker,
         submittedAt: Date.now(),
         accepted: false,
-        ...(link?.ok ? { commandId: link.command.id } : {}),
       };
       if (retryTimer) clearTimeout(retryTimer);
       retryTimer = undefined;
@@ -503,11 +370,6 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
         // synchronous agent_start already acknowledged the wake, do not turn
         // the post-ack throw into a duplicate submission.
         if (submitted?.full === full) {
-          if (submitted.commandId && ledger && !ledger.releasePending(submitted.commandId)) {
-            console.error(
-              `[inject-bridge] FAILED_LOUD could not release command ${submitted.commandId} after synchronous throw`,
-            );
-          }
           submitted = undefined;
           clearStartAckTimer();
           console.error(`[inject-bridge] failed to submit ${file}: ${String(err)}`);
@@ -526,135 +388,9 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
     }
   };
 
-  /**
-   * The daemon REDELIVERS a command whose start lease
-   * ran out on this live, ready bridge by handing the same row back to
-   * `pending` (same id, path and bytes) and rewriting its file. If this bridge
-   * still holds that command as submitted-but-never-started, its barrier is
-   * stale — but only pi can say whether the earlier submission is truly gone.
-   * It is resubmitted only when ALL of these hold; unknown is never loss, so
-   * whenever one cannot be shown the barrier stays and the daemon's bounded
-   * recovery decides:
-   *   - pi never took it: its `input` event never carried this wake's marker
-   *     (pi reads idle through its whole prompt preflight — auth, a pre-prompt
-   *     compaction check, before_agent_start — so idleness alone cannot say a
-   *     submission is gone; pi emits `input` right after the compaction
-   *     refusal, so a wake refused into a compaction never shows one),
-   *   - its own start lease has passed since this bridge submitted it,
-   *   - pi is idle (no run, no compaction) AND holds nothing queued.
-   */
-  const reclaimRedelivered = (): void => {
-    const wake = submitted;
-    if (!wake || wake.accepted || !wake.commandId || !ledger) return;
-    if (!ledger.redeliveryRequested(wake.commandId)) return;
-    if (wake.inputSeen) {
-      if (!wake.holdLogged) {
-        wake.holdLogged = true;
-        console.error(
-          `[inject-bridge] not redelivering ${wake.file}: pi took command ${wake.commandId} past its input stage and may still start it`,
-        );
-      }
-      return;
-    }
-    const age = Date.now() - wake.submittedAt;
-    if (age < startLeaseMs) {
-      // A belt over the daemon's own lease: look again once this
-      // submission is as old as the lease it was reserved under.
-      if (!reclaimTimer && !closed) {
-        reclaimTimer = setTimeout(() => {
-          reclaimTimer = undefined;
-          drain();
-        }, startLeaseMs - age);
-      }
-      return;
-    }
-    if (busy || compacting || activeWake) return;
-    if (piIdle() !== true || piHasPending() !== false) return;
-    clearStartAckTimer();
-    submitted = undefined;
-    console.error(
-      `[inject-bridge] redelivering ${wake.file}: command ${wake.commandId} never started and pi holds nothing queued`,
-    );
-  };
-
-  const requestPath = join(dir, COMPACTION_REQUEST_FILE);
-
-  /**
-   * Run the daemon's round-end compaction request through pi's
-   * own `ctx.compact()` — but only while the mailbox is empty-handed: no run,
-   * no submitted or active wake, pi idle. Returns true while a compaction holds
-   * the mailbox (running, or just started), so the caller delivers nothing.
-   * The request is consumed exactly once, before the call, so a failure is
-   * never retried into a loop; a compaction is an optimisation, not owed work.
-   * VERIFY-ON-PIN: `ExtensionContext.compact({ onComplete, onError })` is pi
-   * 1.0.0's (`core/extensions/types.d.ts` `CompactOptions`; it calls the same
-   * `AgentSession.compact()` as `/compact`, without awaiting it).
-   */
-  const startRequestedCompaction = (): boolean => {
-    if (compacting) {
-      // Still running — unless pi reads idle, which closes a compaction whose
-      // end never reached the bridge (`piNotReady`), and the queue goes on.
-      if (piNotReady()) {
-        scheduleIdleRecheck();
-        return true;
-      }
-    }
-    if (!existsSync(requestPath)) return false;
-    if (busy || submitted || activeWake) return false;
-    if (piNotReady()) {
-      scheduleIdleRecheck();
-      return true;
-    }
-    try {
-      mkdirSync(doneDir, { recursive: true });
-      renameSync(
-        requestPath,
-        join(
-          doneDir,
-          `${new Date().toISOString().replace(/[:.]/g, "-")}${COMPACTION_REQUEST_FILE}`,
-        ),
-      );
-    } catch (err) {
-      try {
-        unlinkSync(requestPath);
-      } catch {
-        console.error(
-          `[inject-bridge] FAILED_LOUD could not consume the compaction request: ${String(err)}`,
-        );
-        return false;
-      }
-    }
-    const compact = (piCtx as { compact?: unknown } | undefined)?.compact;
-    if (typeof compact !== "function") {
-      console.error(
-        "[inject-bridge] compaction requested, but pi offers no ctx.compact here — skipped",
-      );
-      return false;
-    }
-    compactionRequestInFlight = true;
-    beginCompaction("request");
-    const finished = (outcome: "compacted" | "failed", detail?: string): void => {
-      compactionRequestInFlight = false;
-      if (detail) console.error(`[inject-bridge] requested compaction ${outcome}: ${detail}`);
-      endCompaction(outcome);
-    };
-    try {
-      compact.call(piCtx, {
-        onComplete: () => finished("compacted"),
-        onError: (error: unknown) =>
-          finished("failed", error instanceof Error ? error.message : String(error)),
-      });
-    } catch (err) {
-      finished("failed", String(err));
-      return false;
-    }
-    return true;
-  };
-
   // Every trigger funnels through this one synchronous drain. It may consume
   // empty files, but a non-empty submission always stops the drain until its
-  // start is acknowledged and its run settles. A requested compaction goes
-  // first: it is the end of the round the queued wakes follow.
+  // start is acknowledged and its run settles.
   const retireIdleOverseer = (): boolean => {
     if (session !== "overseer" || !bridgeGeneration) return false;
     try {
@@ -673,11 +409,9 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
         submitted ||
         activeWake ||
         compacting ||
-        compactionRequestInFlight ||
         piIdle() !== true ||
         piHasPending() !== false ||
-        pendingFiles(dir).length > 0 ||
-        existsSync(join(dir, COMPACTION_REQUEST_FILE))
+        pendingFiles(dir).length > 0
       )
         return false;
       const birth = JSON.parse(
@@ -710,8 +444,10 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
       do {
         drainAgain = false;
         if (retireIdleOverseer()) break;
-        reclaimRedelivered();
-        if (startRequestedCompaction()) break;
+        if (piNotReady()) {
+          scheduleIdleRecheck();
+          break;
+        }
         for (const file of pendingFiles(dir)) {
           if (!deliver(file)) break;
         }
@@ -727,32 +463,6 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
     try {
       mkdirSync(dir, { recursive: true });
       mkdirSync(doneDir, { recursive: true });
-      // A compaction request left from before this pi started
-      // belonged to the conversation that was there then; a newborn one has
-      // nothing to compact, and its first job is the command a recovery wrote
-      // before birth, which the startup drain below must reserve at once.
-      stage = "stale_compaction_request";
-      if (existsSync(requestPath)) {
-        try {
-          renameSync(
-            requestPath,
-            join(
-              doneDir,
-              `${new Date().toISOString().replace(/[:.]/g, "-")}-stale${COMPACTION_REQUEST_FILE}`,
-            ),
-          );
-        } catch {
-          try {
-            unlinkSync(requestPath);
-          } catch (err) {
-            // Not worth failing the bridge over: the worst case is one
-            // compaction of a fresh conversation before its first command.
-            console.error(
-              `[inject-bridge] could not discard a stale compaction request: ${String(err)}`,
-            );
-          }
-        }
-      }
       stage = "watch_register";
       // Register before sweeping: a daemon rename between sweep and watch
       // registration would otherwise remain pending until an unrelated event.
@@ -765,27 +475,11 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
         // deliver): concurrent watch events cannot interleave or reorder —
         // pendingFiles() sorts, so delivery is strictly oldest-first.
         const name = String(filename);
-        if (
-          name.endsWith(".md") ||
-          name === COMPACTION_REQUEST_FILE ||
-          name === OVERSEER_RETIRE_REQUEST_FILE
-        )
-          drain();
+        if (name.endsWith(".md") || name === OVERSEER_RETIRE_REQUEST_FILE) drain();
       });
       stage = "initial_drain";
       drain(); // anything dropped before or during watch registration
       if (bridgeFailed) return;
-      const blockingFailure = ledger?.blockingFailedCommand();
-      if (blockingFailure) {
-        failBridge(
-          "command_link",
-          `failed command ${blockingFailure.id} still owns the serialized session lane`,
-        );
-        return;
-      }
-      // Recovery writes its immutable command file before Pi birth. Since the
-      // drain above is synchronous and reserve precedes sendUserMessage, this
-      // receipt means a pre-existing command has already incremented attempt.
       publishBridgeState("ready");
       console.error(`[inject-bridge] watching ${dir}`);
     } catch (error) {
@@ -808,17 +502,13 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
     if (settleDrainTimer) clearTimeout(settleDrainTimer);
     if (idleRecheckTimer) clearTimeout(idleRecheckTimer);
     if (compactionDrainTimer) clearTimeout(compactionDrainTimer);
-    if (reclaimTimer) clearTimeout(reclaimTimer);
     retryTimer = undefined;
     startAckTimer = undefined;
     settleDrainTimer = undefined;
     idleRecheckTimer = undefined;
     compactionDrainTimer = undefined;
-    reclaimTimer = undefined;
     piCtx = undefined;
     latestSettledGeneration = undefined;
-    ledger?.close();
-    ledger = undefined;
     watcher?.close();
     watcher = undefined;
   });
@@ -845,25 +535,6 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
     if (!busy) runGeneration++;
     busy = true;
     republish();
-  });
-
-  // pi 1.0.0 `prompt()` emits `input` (source
-  // "extension" for this bridge's own sends) right after its compaction
-  // refusal and BEFORE the rest of its preflight — auth, the pre-prompt
-  // compaction check, before_agent_start — during all of which it still reads
-  // idle. A marker seen here means pi holds this submission (or failed it
-  // after, invisibly), so `reclaimRedelivered` never sends it again. Returns
-  // nothing: the input is never transformed or handled. VERIFY-ON-PIN: event
-  // name, `text` field and emission point read off the 1.0.0 dist
-  // (`core/agent-session.js` `prompt()` / `_runInputHandlers`,
-  // `core/extensions/runner.js` `emitInput`), not yet observed live.
-  pi.on("input", (event, ctx) => {
-    remember(ctx);
-    const wake = submitted;
-    if (!wake || wake.accepted) return;
-    const text =
-      event && typeof event === "object" ? (event as { text?: unknown }).text : undefined;
-    if (typeof text === "string" && text.includes(wake.marker)) wake.inputSeen = true;
   });
 
   // Raw agent_start carries no prompt identity. The following user
@@ -894,26 +565,6 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
       busy = true;
     }
     republish();
-    // The daemon may have handed this very command back for redelivery
-    // a moment before pi started it: the row is `pending` again.
-    // The run that just started IS that command, so take it back and accept
-    // it rather than fail the lane.
-    if (
-      wake.commandId &&
-      ledger &&
-      !ledger.markAccepted(wake.commandId) &&
-      !(
-        ledger.redeliveryRequested(wake.commandId) &&
-        ledger.reserve(wake.commandId) &&
-        ledger.markAccepted(wake.commandId)
-      )
-    ) {
-      clearStartAckTimer();
-      console.error(
-        `[inject-bridge] FAILED_LOUD command ${wake.commandId} reached Pi but a stale owner cannot mark it accepted`,
-      );
-      return;
-    }
     wake.accepted = true;
     clearStartAckTimer();
     if (!archive(wake)) return;
@@ -953,13 +604,6 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
         activeWake = wake;
         retryDelay = RETRY_BASE_MS;
       }
-      const completed = activeWake;
-      if (completed?.commandId && ledger && !ledger.ack(completed.commandId)) {
-        console.error(
-          `[inject-bridge] FAILED_LOUD stale owner cannot ack command ${completed.commandId}`,
-        );
-        return;
-      }
       activeWake = undefined;
       republish(); // Only full settlement clears the run receipt, never agent_end.
       drain();
@@ -979,7 +623,7 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
   // `core/extensions/runner.js` `emit`).
   pi.on("session_before_compact", (_event, ctx) => {
     remember(ctx);
-    beginCompaction(compactionRequestInFlight ? "request" : "event");
+    beginCompaction();
   });
   pi.on("session_compact", (_event, ctx) => {
     remember(ctx);

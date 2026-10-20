@@ -1,30 +1,19 @@
-// The undelivered-recheck sweep must never block the daemon's event loop.
-// Every recheck claim re-proves its receipt from the PR's session transcript;
-// decoding a whole transcript per claim, synchronously, inside an `async` loop
-// whose `await`s never leave the microtask queue stalls the loop for minutes
-// at live scale. These pin, at the scale of the live data's shape: what the
-// sweep may read, that it reads each byte once, that it yields, and the
-// cheaper paths around it (the rounds index, the `/health` pipeline block,
-// one reconcile at a time, the boot pass).
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+// The daemon's boot work must never block its event loop. These pin the
+// cheaper paths around the old receipt sweep (the rounds index, the `/health`
+// pipeline block, one reconcile at a time, the boot pass).
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadConfig, parseConfig, type Config } from "../src/config.js";
+import { loadConfig } from "../src/config.js";
 import { createDaemon, RECONCILE_OVERDUE_INTERVALS, type DaemonAdapter } from "../src/daemon.js";
 import type { GateResult } from "../src/gate.js";
 import type { PrRef } from "../src/github.js";
-import { ReceiptIndex } from "../src/receiptscan.js";
 import type { RoundStageSupervisorHealth } from "../src/session-command-supervisor.js";
-import { reconcileOnce, type ReconcileAdapter } from "../src/reconcile.js";
 import { buildPipelineStatus, buildStatusSnapshot, StateStore } from "../src/state.js";
-import { recheckPromptMarker, type SessionHooks } from "../src/types.js";
+import { recheckPromptMarker } from "../src/types.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
-
-const cfg: Config = parseConfig(
-  readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
-);
 
 let dir: string;
 beforeEach(() => {
@@ -59,141 +48,6 @@ function seed(store: StateStore, number: number, state: "tracked" | "closed"): v
     migration_gate: 0,
   });
 }
-
-/** A turn counter: how many real event-loop iterations ran while `fn` did. */
-async function countingTurns<T>(fn: () => Promise<T>): Promise<{ out: T; turns: number }> {
-  let turns = 0;
-  let on = true;
-  const tick = (): void => {
-    turns++;
-    if (on) setImmediate(tick);
-  };
-  setImmediate(tick);
-  try {
-    const out = await fn();
-    return { out, turns };
-  } finally {
-    on = false;
-  }
-}
-
-describe("the undelivered-recheck sweep at the live data's shape", () => {
-  it(
-    "asks only claims that can still be lost, reads each transcript byte once, and yields throughout",
-    { timeout: HEAVY_TIMEOUT_MS },
-    async () => {
-      // The live snapshot's proportions, scaled down: most claims on CLOSED
-      // PRs, a third no-op claims, a few dozen open PRs whose claims are half
-      // delivered — and session transcripts that every claim of a PR shares.
-      const store = new StateStore(":memory:");
-      const sessions = join(dir, "pi-sessions");
-      const OPEN = 40;
-      const CLOSED = 20;
-      const PER_OPEN = 10; // nudged claims per open PR, half delivered
-      const NOOP_PER_OPEN = 8; // no-op claims per open PR (never carry a token)
-      const PER_CLOSED = 60;
-      const FILE = 256 * 1024;
-      const old = new Date(Date.now() - 2 * 60 * 60_000).toISOString();
-      const filler = `${JSON.stringify({ type: "toolResult", text: "x".repeat(250) })}\n`;
-      const claim = (pr: number, fp: string, nudge: boolean): void => {
-        store.claimRecheck(pr, fp, {
-          head_sha: `sha${pr}`,
-          trigger: "push",
-          reason: nudge ? "3 changed file(s) this review" : "noop:trivial-delta",
-          nudge,
-        });
-        store.db
-          .prepare("UPDATE rechecks SET created_at = ? WHERE pr = ? AND fingerprint = ?")
-          .run(old, pr, fp);
-      };
-      const transcript = (pr: number, tokens: string[]): number => {
-        mkdirSync(join(sessions, `pr-${pr}`), { recursive: true });
-        const body =
-          filler.repeat(Math.ceil(FILE / filler.length)) +
-          tokens.map((t) => `${JSON.stringify({ message: { role: "user", text: t } })}\n`).join("");
-        writeFileSync(join(sessions, `pr-${pr}`, "session.jsonl"), body);
-        return Buffer.byteLength(body);
-      };
-      let openBytes = 0;
-      const open: PrRef[] = [];
-      for (let i = 0; i < OPEN; i++) {
-        const pr = 6000 + i;
-        seed(store, pr, "tracked");
-        open.push(ref(pr));
-        const delivered: string[] = [];
-        for (let k = 0; k < PER_OPEN; k++) {
-          claim(pr, `base_advance:${pr}:${k}`, true);
-          if (k % 2 === 0) delivered.push(recheckPromptMarker(pr, `base_advance:${pr}:${k}`));
-        }
-        for (let k = 0; k < NOOP_PER_OPEN; k++) claim(pr, `push:noop${k}`, false);
-        openBytes += transcript(pr, delivered);
-      }
-      for (let i = 0; i < CLOSED; i++) {
-        const pr = 5000 + i;
-        seed(store, pr, "closed");
-        for (let k = 0; k < PER_CLOSED; k++) claim(pr, `push:${k}`, true);
-        transcript(pr, []); // a session dir nobody deletes — must never be read
-      }
-
-      const index = new ReceiptIndex();
-      const asked: number[] = [];
-      const hooks: SessionHooks = {
-        async dispatchRound() {},
-        async inject() {},
-        async archiveAndClose() {},
-        async injectPending() {
-          return false;
-        },
-        async wakeReceiptPresent(pr, marker, since) {
-          asked.push(pr);
-          return (await index.present(join(sessions, `pr-${pr}`), marker, since)).answer;
-        },
-      };
-      const adapter: ReconcileAdapter = {
-        searchLabelTriggered: async () => [],
-        searchTeamTriggered: async () => [],
-        listOpenPrs: async () => open,
-        getPr: async (n) => ref(n),
-        listBotReviewComments: async () => [],
-      };
-      const total = OPEN * (PER_OPEN + NOOP_PER_OPEN) + CLOSED * PER_CLOSED;
-      expect(store.db.prepare("SELECT COUNT(*) AS n FROM rechecks").get()).toEqual({ n: total });
-
-      const first = await countingTurns(() => reconcileOnce({ cfg, store, adapter, hooks }));
-      // Only the open PRs' real nudges were asked about…
-      expect(first.out.receipt_sweep).toEqual({
-        asked: OPEN * PER_OPEN,
-        delivered: (OPEN * PER_OPEN) / 2,
-        released: (OPEN * PER_OPEN) / 2,
-        carried: 0,
-      });
-      expect(asked.every((pr) => pr >= 6000)).toBe(true);
-      // …each transcript was read ONCE for all ten of its claims, and no
-      // closed PR's transcript at all.
-      const read = index.stats().bytes_read;
-      expect(read).toBe(openBytes);
-      expect(index.stats().full_scans).toBe(OPEN);
-      // And other work ran all through it: a real turn per claim at least.
-      expect(first.turns).toBeGreaterThanOrEqual(OPEN * PER_OPEN);
-
-      // The next pass has nothing left to prove: delivered claims are recorded,
-      // undelivered ones released, no-op and closed-PR claims never in scope.
-      asked.length = 0;
-      const second = await reconcileOnce({ cfg, store, adapter, hooks });
-      expect(second.receipt_sweep).toMatchObject({ asked: 0, delivered: 0, released: 0 });
-      expect(asked).toEqual([]);
-      expect(index.stats().bytes_read).toBe(read);
-      // Every no-op claim and every closed PR's claim is still there.
-      expect(store.db.prepare("SELECT COUNT(*) AS n FROM rechecks WHERE nudged = 0").get()).toEqual(
-        { n: OPEN * NOOP_PER_OPEN },
-      );
-      expect(store.db.prepare("SELECT COUNT(*) AS n FROM rechecks WHERE pr < 6000").get()).toEqual({
-        n: CLOSED * PER_CLOSED,
-      });
-      store.close();
-    },
-  );
-});
 
 describe("the rechecks migration (boot stall)", () => {
   it("backfills no-op claims as un-nudged once, from the reason they were written with", () => {

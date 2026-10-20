@@ -61,7 +61,7 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
   },
   QCR_STATE_DB: {
     kind: "extension-config",
-    readers: ["bash-guard.ts", "inject-bridge.ts"],
+    readers: ["bash-guard.ts"],
     note: "state database; the posting scripts read it too, and bash-guard refuses it in a command",
   },
   QCR_CONFIG: {
@@ -155,21 +155,6 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
     kind: "extension-config",
     readers: ["inject-bridge.ts"],
     note: "bridge state file the daemon wrote for this session",
-  },
-  QCR_SESSION_BRIDGE_LEDGER_REQUIRED: {
-    kind: "extension-config",
-    readers: ["inject-bridge.ts"],
-    note: "=0 turns the PR bridge's ledger requirement off",
-  },
-  QCR_SESSION_COMMAND_START_LEASE_MS: {
-    kind: "extension-config",
-    readers: ["inject-bridge.ts"],
-    note: "start-ack lease for a session command",
-  },
-  QCR_SESSION_COMMAND_RUNNING_LEASE_MS: {
-    kind: "extension-config",
-    readers: ["inject-bridge.ts"],
-    note: "running lease for a session command",
   },
 
   // ---- QCR_*: lens launching

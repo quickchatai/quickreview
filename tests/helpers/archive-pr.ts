@@ -19,7 +19,7 @@ import { gunzipSync } from "node:zlib";
 import { Archiver, type ArchiverDeps } from "../../src/archive/archiver.js";
 import { ARCHIVE_DEFAULTS, type ArchiveConfig, type Config } from "../../src/config.js";
 import type { DaemonLoadStatus } from "../../src/eventloop.js";
-import { writeSessionBridgeState } from "../../src/session-bridge.js";
+import { writeSessionBridgeState } from "../../src/overseer-bridge.js";
 import { PiSessionManager } from "../../src/sessions.js";
 import { StateStore } from "../../src/state.js";
 import { Tmux, type ExecFn } from "../../src/tmux.js";

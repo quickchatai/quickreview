@@ -3,7 +3,7 @@
 import type { SessionCommandOwnership } from "./session-command.js";
 import type { MigrationCollision } from "./migrations.js";
 import type { PostingPolicy } from "./postingpolicy.js";
-import type { SessionBridgeCompaction } from "./session-bridge.js";
+import type { SessionBridgeCompaction } from "./overseer-bridge.js";
 import type { SweepClaim } from "./sweepstatus.js";
 
 export type RoundType = "first" | "re-review" | "staleness";
@@ -553,7 +553,7 @@ export interface SessionCommandObservation {
 }
 /** The inject bridge's compaction report, as `SessionHooks.sessionCompaction`
  * returns it: the `compaction` block of the bridge's ready receipt, as
- * `src/session-bridge.ts` declares it. */
+ * `src/overseer-bridge.ts` declares it. */
 export type SessionCompactionReport = SessionBridgeCompaction;
 /** A lens a round may run beyond its plan, as the round row records it
  * (`addable_passes`): an addable lens at its add tier, which the session runs

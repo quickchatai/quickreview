@@ -32,7 +32,7 @@ import { join } from "node:path";
 import type { Config } from "../../src/config.js";
 import { CapabilityStore } from "../../src/ipc/capability.js";
 import type { WorkerSpec } from "../../src/ipc/workerspec.js";
-import { COMPACTION_REQUEST_FILE, writeSessionBridgeState } from "../../src/session-bridge.js";
+import { writeSessionBridgeState } from "../../src/overseer-bridge.js";
 import { PiSessionManager, prSessionName } from "../../src/sessions.js";
 import { StateStore } from "../../src/state.js";
 import { Tmux, type ExecFn } from "../../src/tmux.js";
@@ -43,7 +43,8 @@ import { WorktreeManager } from "../../src/worktrees.js";
 
 /** The hooks a conforming host provides in full. The optional members of
  * `SessionHooks` are optional for stubs; a real host has all of them, but for the
- * two the worker host bypasses (its worker compacts) and its own marker. */
+ * two the worker host bypasses (its worker compacts) and its own marker. The tmux
+ * host (the overseer's, until P9.13) offers no receipt read: that is the worker's. */
 export type FullSessionHooks = Required<
   Omit<SessionHooks, "compactSession" | "sessionCompaction" | "ackIsReceipt">
 >;
@@ -326,8 +327,7 @@ function openTmuxHost(): SessionHooksRig {
         `${JSON.stringify({ message: { role: "assistant", content: [{ type: "text", text: "working" }] } })}\n`,
       );
     },
-    compactionRequests: (session) =>
-      existsSync(join(manager.injectDir(session), COMPACTION_REQUEST_FILE)) ? 1 : 0,
+    compactionRequests: () => 0,
     recordAccepted(pr, text) {
       writeFileSync(
         jsonlFor(pr),

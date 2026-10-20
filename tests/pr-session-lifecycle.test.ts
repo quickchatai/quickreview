@@ -180,7 +180,7 @@ describe("PrSessionLifecycle stays host-neutral", () => {
       join(import.meta.dirname, "..", "src", "pr-session-lifecycle.ts"),
       "utf8",
     );
-    expect(src).not.toMatch(/from "\.\/(tmux|session-bridge|session-command)\.js"/);
+    expect(src).not.toMatch(/from "\.\/(tmux|overseer-bridge|session-command)\.js"/);
     expect(src).not.toMatch(/from "\.\/sessions\.js"/);
   });
 });

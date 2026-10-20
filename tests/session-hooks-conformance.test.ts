@@ -182,8 +182,9 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
       expect(rig.store.activeSessionCommand(SESSION)).toBeUndefined();
     });
 
+    // The tmux host (the overseer's, until P9.13) offers no receipt read.
     describe("the receipt: present is delivered, absent is lost, unreadable is unknown", () => {
-      it("reads a round's receipt out of the transcript", async () => {
+      it.skipIf(host.bridge)("reads a round's receipt out of the transcript", async () => {
         await dispatched();
 
         // Nothing written since the round started: no evidence either way.
@@ -200,7 +201,7 @@ describe.each(SESSION_HOSTS)("SessionHooks conformance: $name host", (host) => {
         expect(await rig.hooks.roundPromptAccepted(PR, 2, STARTED_MS)).toBe(false);
       });
 
-      it("reads a wake's receipt by its marker, without a round row", async () => {
+      it.skipIf(host.bridge)("reads a wake's receipt by its marker, without a round row", async () => {
         trackPr(rig.store, PR);
         await rig.seedIdleSession(SESSION);
         const marker = recheckPromptMarker(PR, "fingerprint-1");
