@@ -20,7 +20,7 @@ import { checkBashCommand } from "../extensions/bash-guard.js";
 import { COMPANION_DEFAULTS, resolveCompanionPaths, type Config } from "../src/config.js";
 import { LEAF_MEMORY_TOOLS, buildAgents, stripAgentSpawnTools } from "../src/include.js";
 import { PrSessionLifecycle, prSessionName } from "../src/pr-session-lifecycle.js";
-import { OVERSEER_SESSION, isSandboxSession } from "../src/sessions.js";
+import { isSandboxSession } from "../src/sessions.js";
 import { MAX_HELD_WAKES, StateStore } from "../src/state.js";
 import { CompanionLifecycle } from "../src/tui/companion.js";
 import { flushHeldWakes, pauseDefersAllHeldWakes, wakeOrHold } from "../src/wakes.js";
@@ -28,7 +28,7 @@ import type { WorktreeManager } from "../src/worktrees.js";
 import { runtimeSdkImporters } from "./helpers/engine-fences.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
-// ---- S1/S2: the daemon spawns two session kinds and launches no agent ------
+// ---- S1/S2: the daemon spawns one session kind and launches no agent ------
 
 /** Every .ts under src/, recursively. */
 function srcFiles(dir: string): string[] {
@@ -45,10 +45,10 @@ describe("daemon topology", () => {
   const src = join(import.meta.dirname, "..", "src");
 
   it("S1: only sessions.ts and the replay may birth a pi session", () => {
-    // sessions.ts owns the two DAEMON-OWNED kinds. replay.ts is an
+    // sessions.ts owns the one DAEMON-OWNED kind. replay.ts is an
     // operator one-shot, not daemon topology: it runs only under an explicit
     // `qcr` invocation, spawns a session whose name is outside the
-    // `pr-<n>`/`overseer` namespace (so `adopt()` can never pick one up —
+    // `pr-<n>` namespace (so `adopt()` can never pick one up —
     // pinned in tests/replay.test.ts), and kills it before returning. Its
     // session owns no PR, holds no gate and posts nothing; its whole contract
     // is "read a scratch tree, write one JSON file".
@@ -58,10 +58,15 @@ describe("daemon topology", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("S1: the session namespace is exactly pr-<n> plus overseer", () => {
+  it("S1: the session namespace is exactly pr-<n>", () => {
     expect(isSandboxSession("pr-5263")).toBe(true);
-    expect(isSandboxSession(OVERSEER_SESSION)).toBe(true);
-    for (const name of ["pass-security--sol-high", "pr-5263-pass", "companion", "reviewer"]) {
+    for (const name of [
+      "overseer",
+      "pass-security--sol-high",
+      "pr-5263-pass",
+      "companion",
+      "reviewer",
+    ]) {
       expect(isSandboxSession(name), name).toBe(false);
     }
   });
@@ -70,8 +75,7 @@ describe("daemon topology", () => {
   // a session in this invariant's sense: it is a row in the memory store that
   // the daemon creates and deletes over HTTP — nothing schedules it, nothing
   // runs in it, no pi process is attached to it, and it never appears in tmux.
-  // The two daemon-owned pi session kinds are still exactly `pr-<n>` and
-  // `overseer`.
+  // The one daemon-owned pi session kind is still exactly `pr-<n>`.
   it("S1: an OpenViking session is a store object, not a daemon-owned pi session", async () => {
     const dir = mkdtempSync(join(tmpdir(), "shepherd-ov-"));
     try {

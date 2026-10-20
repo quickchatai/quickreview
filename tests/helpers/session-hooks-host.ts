@@ -107,7 +107,6 @@ function config(root: string): Config {
       poll_interval_s: 300,
       max_concurrent_rounds: 6,
       round_deadline_min: 45,
-      overseer_rotation_days: 7,
     },
     eod: { time: "18:00", timezone: "Europe/Warsaw" },
     caps: {

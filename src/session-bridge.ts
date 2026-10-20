@@ -2,10 +2,9 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
-// The overseer↔daemon readiness receipt: one small JSON file per bridge
+// The session↔daemon readiness receipt: one small JSON file per bridge
 // generation, written only by the inject bridge (and `starting` by the
-// session manager before birth). The overseer is the last tmux session the
-// daemon births; this module goes with it.
+// session manager before birth).
 
 export type SessionBridgeStage = "starting" | "ready" | "failed" | "closed";
 
@@ -14,7 +13,7 @@ export type SessionBridgeStage = "starting" | "ready" | "failed" | "closed";
  * beside its `ready` stage. A compaction holds the session's one mailbox: pi
  * refuses every prompt while one runs ("Cannot submit a prompt while
  * compaction is in progress"), so the bridge delivers nothing until it ends,
- * and the overseer's rotation reads `running` as a reason to hold.
+ * and a reader holds on `running`.
  *
  * `seq` counts the compactions this bridge generation has seen END (succeeded
  * or failed); a reader that remembers it can tell a new compaction from an
@@ -138,6 +137,3 @@ export async function waitForSessionBridgeReady(
     await sleep(Math.min(pollMs, Math.max(1, deadline - Date.now())));
   }
 }
-
-/** Automatic overseer retirement asks the owning process to exit only when idle. */
-export const OVERSEER_RETIRE_REQUEST_FILE = ".overseer-retire-request.json";

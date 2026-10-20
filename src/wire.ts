@@ -1,4 +1,3 @@
-import { asyncCommandEffect, commandEffectKey } from "./commandeffects.js";
 // Production assembly of quickreviewd: createDaemon() with the real pi session
 // manager, the round-template renderer, the agents build step, the EOD timer,
 // the overseer command executor, and the weekly overseer rotation. `npm run
@@ -126,7 +125,7 @@ import { resolveTerminalFailure } from "./terminal-failure.js";
 import type { MemoryStore } from "./memory/store.js";
 import { readPinnedFromSweep, startEodPinWatch, type PinnedSweepSource } from "./eodpinwatch.js";
 import { reconcileOrphanedRounds } from "./reconcile.js";
-import { OVERSEER_SESSION, PiSessionManager, prSessionName } from "./sessions.js";
+import { PiSessionManager, prSessionName } from "./sessions.js";
 import { SlackApiClient } from "./slack/api.js";
 import { makeAnnouncer, type SlackAnnouncer } from "./slack/announce.js";
 import { clearOriginRecords, OriginStore } from "./slack/origin.js";
@@ -576,7 +575,7 @@ export function buildOperatorCommandWatcher(opts: {
 }
 
 /**
- * Where the passive auth watch looks. PR and overseer sessions are spawned
+ * Where the passive auth watch looks. PR sessions are spawned
  * with `--session-dir <root>/<pi.session_dir>/<session>`, so THAT is where
  * their expired-token errors land; pi's default store alone would miss every
  * reviewer session. The default store under the container user's home (the
@@ -669,25 +668,17 @@ export function orphanPostingOwed(
 }
 
 /**
- * The daemon's origin store: it reads the overseer's accepted wakes (the
- * inject bridge's `.done/` beside the overseer's pending queue), so a
- * command's rights are those of the turn being served. A store built without
- * that view puts the newest record in force at once.
+ * The daemon's origin store. It has no accepted-wake view, so the newest
+ * record is in force at once.
  *
  * Slack inbound turns are retired, so no record can describe a live turn any
  * more, and no daemon wake stamps a superseding `local` one. A guest's record
  * left by the previous run would therefore hold the legacy-dir belt on for
  * good: the records are dropped at boot, before the store reads them.
  */
-export function overseerOriginStore(
-  root: string,
-  sessions: Pick<PiSessionManager, "injectDir">,
-  now?: () => Date,
-): OriginStore {
+export function slackOriginStore(root: string, now?: () => Date): OriginStore {
   clearOriginRecords(join(root, "state", "slack", "origin"));
-  return new OriginStore(join(root, "state", "slack", "origin"), now, {
-    deliveredDir: join(sessions.injectDir(OVERSEER_SESSION), ".done"),
-  });
+  return new OriginStore(join(root, "state", "slack", "origin"), now);
 }
 
 export function createProductionDaemon(parts: ProductionParts = buildParts()): Daemon {
@@ -751,7 +742,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // Workers are the bot's ONLY host (P8.15w): the IPC server,
   // the supervisor and its spec builder, the leases and the controls, assembled in
   // src/workerworld.ts. No config key picks the tmux route, and nothing births a
-  // `pr-<n>` tmux session any more; `sessions` serves the overseer until P9.13.
+  // `pr-<n>` tmux session any more; `sessions` serves paths, worktrees and the replay harness.
   const agentDir = process.env["PI_CODING_AGENT_DIR"]?.trim() || join(homedir(), ".pi", "agent");
   const workerWorld = buildWorkerWorld({
     cfg,
@@ -889,9 +880,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   if (parts.memoryRequests) parts.memoryRequests.sink = (r) => memoryHealth?.recordRequest(r);
 
   // The origin store the Slack belt reads. Slack inbound turns are retired, so
-  // nothing writes an origin any more; the belt reads it for the overseer's
-  // pre-retirement wakes only.
-  const origins = overseerOriginStore(root, sessions);
+  // nothing writes an origin any more.
+  const origins = slackOriginStore(root);
 
   // The companion inbox: everything that used to wake the overseer (anomalies,
   // the heartbeat, authwatch's and the login refresher's alerts, the EOD sweep,
@@ -1586,10 +1576,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         starvedRatio: eventLoopPolicy(cfg.daemon).starvedRatio,
         liveSessions: async () => workerLive.liveSessions(),
         birthInFlight: (pr) => workerWorld.host.birthInFlight(pr),
-        // The stores that belong to no PR. The overseer's birth record
-        // says which of its files is current (unreadable = unknown = nothing
-        // moves); pi's global store lies under the container user's home.
-        overseerBornAt: () => sessions.bornAt(OVERSEER_SESSION) ?? null,
+        // The stores that belong to no PR. The overseer is gone, so its
+        // transcripts have no current file to protect and no birth record
+        // (unknown = nothing moves); pi's global store lies under the
+        // container user's home.
         piGlobalDir: piGlobalSessionsDir(),
         log,
       });
@@ -1645,15 +1635,6 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         );
       }
 
-      // The overseer exists from boot, so `tmux attach -t overseer` works
-      // after every restart rather than only after the first anomaly.
-      try {
-        await sessions.ensureOverseerSession();
-        log("overseer session ready");
-      } catch (err) {
-        log("overseer spawn failed (will retry on first wake)", err);
-      }
-
       // Overseer command files → validated execution (whitelist + caps).
       const leverDeps: LeverDeps = {
         store: d.store,
@@ -1669,16 +1650,6 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           );
         },
         async restartSession(target, deliveryKey) {
-          if (target === "overseer") {
-            return asyncCommandEffect(
-              d.store,
-              commandEffectKey("restart-overseer", deliveryKey, target),
-              async () => {
-                const name = await sessions.rotateOverseer();
-                return { ok: true, respawned: name };
-              },
-            );
-          }
           return recoverPrForOperator(
             {
               store: d.store,
@@ -2005,18 +1976,6 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         onError: (err) => log("heartbeat injection failed", err),
       });
       log(`heartbeat armed for ${heartbeat.nextFire().toISOString()}`);
-
-      // Weekly overseer rotation, checked hourly.
-      const rotation = setInterval(() => {
-        void sessions
-          .rotateOverseerIfDue()
-          .then((rotated) => {
-            if (rotated) log("overseer rotated (weekly)");
-          })
-          .catch((err) => log("overseer rotation failed", err));
-      }, 3600_000);
-      rotation.unref?.();
-      intervals.push(rotation);
 
       // Expire a stale same-day feedback addendum promptly on the
       // ops-day change — a 5-minute string compare, so yesterday's items

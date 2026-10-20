@@ -19,15 +19,13 @@ import { gunzipSync } from "node:zlib";
 import { Archiver, type ArchiverDeps } from "../../src/archive/archiver.js";
 import { ARCHIVE_DEFAULTS, type ArchiveConfig, type Config } from "../../src/config.js";
 import type { DaemonLoadStatus } from "../../src/eventloop.js";
-import { writeSessionBridgeState } from "../../src/overseer-bridge.js";
-import { PiSessionManager } from "../../src/sessions.js";
 import {
   PrSessionLifecycle,
   prSessionName,
   type PrSessionHost,
 } from "../../src/pr-session-lifecycle.js";
 import { StateStore } from "../../src/state.js";
-import { Tmux, type ExecFn } from "../../src/tmux.js";
+import type { ExecFn } from "../../src/tmux.js";
 import { WorktreeManager } from "../../src/worktrees.js";
 
 export const T0 = Date.parse("2026-10-21T12:00:00.000Z");
@@ -318,103 +316,6 @@ export function lostBytes(f: PrFixture): string[] {
     lost.push(rel);
   }
   return lost;
-}
-
-// ---- a session manager over the fixture root (no tmux, no pi) ---------------
-
-export interface SessionRig {
-  m: PiSessionManager;
-  /** Live tmux session names (the fake answers from this). */
-  live: Set<string>;
-  /** Every `new-session` the manager asked for, in order. */
-  births: string[];
-  /** Called on each new-session, before the bridge reports ready. */
-  onBirth?: (session: string) => void;
-}
-
-/** A PiSessionManager whose tmux is a fake that records births and makes the
- * new generation's bridge ready at once (tests/sessions.test.ts's shape). */
-export function sessionRig(f: PrFixture): SessionRig {
-  const secrets = join(f.root, "secrets");
-  mkdirSync(secrets, { recursive: true });
-  writeFileSync(join(secrets, "openai_api_key"), "sk-app-key\n");
-  mkdirSync(join(f.root, "prompts"), { recursive: true });
-  writeFileSync(
-    join(f.root, "prompts", "conversation-system.md"),
-    "Shepherd of PR #{{n}} ({{title}}) at {{worktree}}.\n",
-  );
-  const rig = { live: new Set<string>(), births: [] as string[] } as SessionRig;
-  const exec: ExecFn = async (cmd, args) => {
-    if (cmd === "tmux") {
-      if (args[0] === "list-sessions")
-        return { code: 0, stdout: [...rig.live].join("\n"), stderr: "" };
-      if (args[0] === "has-session") {
-        const name = String(args[2]).replace(/^=/, "");
-        return { code: rig.live.has(name) ? 0 : 1, stdout: "", stderr: "" };
-      }
-      if (args[0] === "new-session") {
-        const session = String(args[3]);
-        rig.births.push(session);
-        rig.onBirth?.(session);
-        rig.live.add(session);
-        const generation = args
-          .find((v) => v.startsWith("QCR_SESSION_BRIDGE_GENERATION="))
-          ?.split("=", 2)[1];
-        const stateFile = args
-          .find((v) => v.startsWith("QCR_SESSION_BRIDGE_STATE_FILE="))
-          ?.slice("QCR_SESSION_BRIDGE_STATE_FILE=".length);
-        if (generation && stateFile)
-          writeSessionBridgeState(stateFile, {
-            version: 1,
-            session,
-            generation,
-            stage: "ready",
-            updated_at: new Date(f.clock.ms).toISOString(),
-          });
-      }
-      if (args[0] === "kill-session") rig.live.delete(String(args[2]).replace(/^=/, ""));
-    }
-    return { code: 0, stdout: "", stderr: "" };
-  };
-  const config = {
-    dry_run: true,
-    github: {
-      repo: "exampleorg/example-app",
-      app_slug: "example-review",
-      bot_login: "example-review[bot]",
-      secrets_dir: secrets,
-    },
-    daemon: { poll_interval_s: 300, overseer_rotation_days: 7 },
-    models: {
-      default: "openai/x",
-      conversation: "openai/conv",
-      overseer: "openai/over",
-      passes: {},
-    },
-    pi: {
-      package: "p",
-      version: "1.0.0",
-      session_dir: "state/pi-sessions",
-      subagent_max_concurrency: 6,
-    },
-    openviking: { host: "127.0.0.1", port: 1933, config_file: join(f.root, "ovhome", "ov.conf") },
-  } as unknown as Config;
-  rig.m = new PiSessionManager({
-    cfg: config,
-    root: f.root,
-    tmux: new Tmux({ exec }),
-    worktrees: new WorktreeManager({
-      root: f.root,
-      repo: "o/n",
-      cloneDir: "example-app",
-      cloneUrl: "/dev/null",
-      run: exec,
-    }),
-    piHome: join(f.root, "pihome"),
-    now: () => new Date(f.clock.ms),
-    commandStore: f.store,
-  });
-  return rig;
 }
 
 // ---- a PR session lifecycle over the fixture root (no host at all) ----------

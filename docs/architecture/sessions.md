@@ -28,7 +28,7 @@ allowed to execute).
 | `exec` primitive + the tmux surface | `src/tmux.ts` |
 | One base clone + one worktree per PR | `src/worktrees.ts` |
 | Wake-file delivery inside pi (the overseer's and the companion's mailbox) | `extensions/inject-bridge.ts` |
-| Bridge readiness receipt (the overseer's) | `src/overseer-bridge.ts` |
+| Bridge readiness receipt (any tmux-hosted session) | `src/session-bridge.ts` |
 | Durable command marker | `src/session-command.ts` |
 | Daemon-side reconciler over that slot | `src/session-command-supervisor.ts` |
 | Live lens progress (publisher / reader) | `extensions/round-progress.ts`, `src/round-progress.ts` |
@@ -135,7 +135,7 @@ A live tmux process proves only that a container started. It does not prove
 that the inject bridge opened its mailbox — and a wake written into a mailbox
 nobody is watching is a silently lost instruction.
 
-`src/overseer-bridge.ts` closes that gap (for the overseer, the one tmux session left). The daemon mints a generation UUID per
+`src/session-bridge.ts` closes that gap (for the tmux-hosted sessions that remain: the replay harness). The daemon mints a generation UUID per
 spawn and passes it as `QCR_SESSION_BRIDGE_GENERATION` with a state-file path in
 `QCR_SESSION_BRIDGE_STATE_FILE`. The bridge writes `ready` to that file only
 after it has registered its watcher and completed its first synchronous sweep of

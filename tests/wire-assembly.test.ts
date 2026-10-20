@@ -30,8 +30,8 @@ describe("wire.ts: the lesson kill switch's agents rebuild", () => {
 });
 
 describe("wire.ts: onStart's intervals stop with the daemon", () => {
-  it("the overseer rotation and the agents day check are cleared in onStop", () => {
-    expect(wire).toMatch(/rotation\.unref\?\.\(\);\s*intervals\.push\(rotation\);/);
+  it("the agents day check is cleared in onStop, and no overseer rotation timer exists", () => {
+    expect(wire).not.toMatch(/rotateOverseer/);
     expect(wire).toMatch(/dayCheck\.unref\?\.\(\);\s*intervals\.push\(dayCheck\);/);
     const stop = wire.slice(wire.indexOf("async onStop("));
     expect(stop).toMatch(/for \(const t of intervals\) clearInterval\(t\);/);

@@ -250,7 +250,6 @@ describe("dry config check: a fresh clone's config on the key route", () => {
     const specs = (c: typeof login) => [
       c.models.default,
       c.models.conversation,
-      c.models.overseer,
       ...Object.values(c.models.tiers),
     ];
     // The published route is untouched: the example's own provider.
@@ -304,7 +303,7 @@ describe("dry config check: a fresh clone's config on the key route", () => {
 
   it("the GLM run configuration reaches every built lens and the validator", () => {
     const model = "digitalocean/glm-5.3-flash";
-    const overrides = `models.default=${model},models.conversation=${model},models.overseer=${model},models.tiers.terra-med=${model}:medium,models.tiers.sol-med=${model}:medium,models.tiers.sol-high=${model}:high`;
+    const overrides = `models.default=${model},models.conversation=${model},models.tiers.terra-med=${model}:medium,models.tiers.sol-med=${model}:medium,models.tiers.sol-high=${model}:high`;
     const cfg = withEnv(
       { QCR_BENCH_AUTH: "api-key", QCR_BENCH_PROVIDER: "digitalocean" },
       () => contextFor(ROOT, "", overrides).cfg,

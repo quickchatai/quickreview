@@ -52,7 +52,6 @@ poll_interval_s = 300
 # 2 CPU / 8 GB Docker cap is the hard resource guard (the owner, 2026-08-13).
 max_concurrent_rounds = 12
 round_deadline_min = 75
-overseer_rotation_days = 7
 # a round overdue with no verdict whose session is dead is
 # self-requeued by the daemon (fresh dispatch to the PR's own session) at most
 # this many times per PR head. Past the cap the round is abandoned as an
@@ -110,7 +109,6 @@ issues_per_day = 3
 # in pi's auth.json (direct `openai/` needs an API key we don't ship).
 default = "openai-codex/gpt-5.6-sol"
 conversation = "openai-codex/gpt-5.6-sol"
-overseer = "openai-codex/gpt-5.6-sol"
 # Passes always run at sol-high — single variant, not raisable (already top).
 risk_passes = ["pass-security", "pass-prod-risk", "pass-data-safety"]
 # pass-validate's FLOOR tier — raised per round to the highest-tier lens that

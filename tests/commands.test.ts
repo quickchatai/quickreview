@@ -86,7 +86,6 @@ describe("validateCommand — whitelist", () => {
     const valid: unknown[] = [
       { command: "rerun-round", pr: 12 },
       { command: "restart-session", pr: 12 },
-      { command: "restart-session", pr: "overseer" },
       {
         command: "resolve-terminal-failure",
         pr: 5408,
@@ -287,8 +286,8 @@ describe("executeCommand", () => {
     const deps = makeDeps();
     await executeCommand({ command: "rerun-round", pr: 41 }, deps);
     expect(deps.rerunRound).toHaveBeenCalledWith(41);
-    await executeCommand({ command: "restart-session", pr: "overseer" }, deps);
-    expect(deps.restartSession).toHaveBeenCalledWith("overseer");
+    await executeCommand({ command: "restart-session", pr: 41 }, deps);
+    expect(deps.restartSession).toHaveBeenCalledWith(41);
     const terminal = {
       pr: 5408,
       incident_id: "review-failure:cmd-5408",
@@ -780,7 +779,7 @@ describe("CommandWatcher", () => {
       { command: "rerun-round", pr: 1234 },
       { command: "pause-pr", pr: 1234, reason: "r" },
       { command: "resume-pr", pr: 1234 },
-      { command: "restart-session", pr: "overseer" },
+      { command: "restart-session", pr: 12 },
       {
         command: "resolve-terminal-failure",
         pr: 1234,
@@ -880,7 +879,7 @@ describe("CommandWatcher", () => {
     const m = origin({ tier: "owner", slack_user: "U0MAT", authorized_prs: [] });
     for (const cmd of [
       { command: "rerun-round", pr: 42 },
-      { command: "restart-session", pr: "overseer" },
+      { command: "restart-session", pr: 12 },
       {
         command: "resolve-terminal-failure",
         pr: 5408,
@@ -1022,7 +1021,7 @@ describe("authorizeCommand (pure)", () => {
 
   it("a null origin is a local turn — full (system-grade) autonomy", () => {
     const cmds: Command[] = [
-      { command: "restart-session", pr: "overseer" },
+      { command: "restart-session", pr: 12 },
       {
         command: "resolve-terminal-failure",
         pr: 999902,
@@ -1076,13 +1075,12 @@ describe("authorizeCommand (pure)", () => {
     expect(authorizeCommand(c, rec("anyone")).ok).toBe(false);
   });
 
-  it("restart-session on 'overseer' is owner-only and needs no PR", () => {
-    expect(authorizeCommand({ command: "restart-session", pr: "overseer" }, rec("owner")).ok).toBe(
-      true,
+  it("restart-session is owner-only, and the retired 'overseer' target is refused", () => {
+    expect(validateCommand({ command: "restart-session", pr: "overseer" }).ok).toBe(false);
+    expect(authorizeCommand({ command: "restart-session", pr: 12 }, rec("owner")).ok).toBe(true);
+    expect(authorizeCommand({ command: "restart-session", pr: 12 }, rec("author", [1])).ok).toBe(
+      false,
     );
-    expect(
-      authorizeCommand({ command: "restart-session", pr: "overseer" }, rec("author", [1])).ok,
-    ).toBe(false);
   });
 });
 

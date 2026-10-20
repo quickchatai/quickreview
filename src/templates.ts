@@ -968,11 +968,3 @@ export function renderConversationSystemPrompt(
     worktree: vars.worktree,
   });
 }
-
-/** prompts/overseer-system.md — no per-session substitution today; rendered
- * through the same path so a future placeholder fails loudly rather than
- * silently shipping "{{...}}" to the model. The identity variables
- * are always in scope. */
-export function renderOverseerSystemPrompt(templateText: string, vars: TemplateVars = {}): string {
-  return render(stripModelDocs(templateText), { ...NEUTRAL_IDENTITY_VARS, ...vars });
-}

@@ -12,7 +12,7 @@ takes precedence over an API key in the environment.
 **The onboarding wizard does all of this for you** (`qcr onboard`):
 it asks the question, points you at the same secrets flow for the key (a key
 pasted into an agent session would land in a transcript, so it never accepts
-one as an argument), performs the six-value prefix rewrite below itself
+one as an argument), performs the five-value prefix rewrite below itself
 (comment-preserving, idempotent and reversible — switching routes later just
 re-runs the step), and, on the OAuth route, guides each of the three logins in
 turn and checks that each container's token landed on that container's
@@ -30,8 +30,8 @@ review models.
 log in:
 
 ```sh
-docker exec -it <container> tmux attach -t overseer
-# inside pi:  /login   → follow the browser flow, then detach (Ctrl-b d)
+docker exec -it <container> pi
+# inside pi:  /login   → follow the browser flow, then quit pi
 ```
 
 The OAuth tokens land in `auth.json` under pi's home, which is a **named
@@ -76,7 +76,6 @@ a low one.
    [models]
    default      = "openai/<model>"      # was "openai-codex/<model>"
    conversation = "openai/<model>"
-   overseer     = "openai/<model>"
 
    [models.tiers]
    "terra-med" = "openai/<small-model>:medium"

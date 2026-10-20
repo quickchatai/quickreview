@@ -108,7 +108,6 @@ const NON_SEEDED = [
   "prompts/companion-day-open.md",
   // The first-run greeting + calibration interview.
   "prompts/companion-first-run.md",
-  "prompts/slack-overseer-appendix.md",
   // The onboarding wizard's system prompt.
   "prompts/onboarding.md",
 ] as const;

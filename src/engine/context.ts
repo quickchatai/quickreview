@@ -66,6 +66,12 @@ export function withPresetInToml(toml: string, preset: ReviewPreset): string {
   return lines.join("\n");
 }
 
+/** `--config` keys that went with the overseer session. */
+const RETIRED_CONFIG_KEYS: ReadonlySet<string> = new Set([
+  "models.overseer",
+  "daemon.overseer_rotation_days",
+]);
+
 /**
  * `--config a.b=v,c.d=w`: one bench run's levers (see above). `review.preset=X`
  * means "as if config.toml said `preset = X`": the config TEXT is re-parsed
@@ -98,6 +104,14 @@ export function applyConfigOverrides(cfg: Config, spec: string, toml?: string): 
   for (const pair of rest) {
     const eq = pair.indexOf("=");
     if (eq <= 0) throw new Error(`--config: "${pair}" is not key=value`);
+    // The overseer session is deleted: bench plans still pin its model, so
+    // the key is accepted, named once and ignored (like the config file's).
+    if (RETIRED_CONFIG_KEYS.has(pair.slice(0, eq).trim())) {
+      console.warn(
+        `--config: ${pair.slice(0, eq).trim()} is deprecated and ignored (the overseer session was deleted)`,
+      );
+      continue;
+    }
     const path = pair.slice(0, eq).trim().split(".");
     const raw = pair.slice(eq + 1).trim();
     let node = out;
@@ -194,7 +208,6 @@ export function withAuthModels(cfg: Config, mode: BenchAuthMode = benchAuthMode(
   const m = out.models;
   m.default = modelForAuth(m.default, mode);
   m.conversation = modelForAuth(m.conversation, mode);
-  m.overseer = modelForAuth(m.overseer, mode);
   for (const k of Object.keys(m.tiers) as (keyof typeof m.tiers)[])
     m.tiers[k] = modelForAuth(m.tiers[k], mode);
   for (const pass of Object.keys(m.pass_models))

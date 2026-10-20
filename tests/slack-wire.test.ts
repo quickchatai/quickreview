@@ -10,15 +10,7 @@
 //   enabled   ⇒ two command watchers, right dirs, right tier gates
 //   shutdown  ⇒ the goodbye is posted, the socket stops, the heartbeat stops
 //   off       ⇒ the daemon still starts and stops exactly as before
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,7 +25,7 @@ import {
   buildLocalCommandWatcher,
   buildOperatorCommandWatcher,
   defaultTransport,
-  overseerOriginStore,
+  slackOriginStore,
   startSlack,
   type SlackRuntime,
 } from "../src/wire.js";
@@ -526,33 +518,28 @@ describe("origin cause, not recency (the belt)", () => {
     expect(lines).toContain("slack: slack.socket.open_threw");
   });
 
-  // MUTATION: build the production store without `deliveredDir` — the
-  // queued owner's rights reach the running guest turn, and the fence below
-  // fails if createProductionDaemon stops using this builder.
-  it("the production origin store reads the overseer's accepted wakes", () => {
-    const sessions = { injectDir: (s: string) => join(dir, "inject", s) };
-    const inject = sessions.injectDir("overseer");
-    mkdirSync(join(inject, ".done"), { recursive: true });
-    const origins = overseerOriginStore(dir, sessions, now);
-    const turn = (n: number, user: string, tier: "anyone" | "owner") => {
-      origins.write(`event-Ev${n}`, {
-        event_id: `Ev${n}`,
-        slack_user: user,
-        tier,
-        authorized_prs: [],
-      });
-      writeFileSync(join(inject, `000${n}.md`), "turn\n");
-      origins.rename(`event-Ev${n}`, `000${n}.md`);
-    };
-    turn(1, "U0GUEST", "anyone");
-    renameSync(join(inject, "0001.md"), join(inject, ".done", "0001.md"));
-    turn(2, OWNER, "owner");
-    expect(origins.latest()).toMatchObject({ slack_user: "U0GUEST", tier: "anyone" });
-    expect(existsSync(join(dir, "state", "slack", "origin", "0001.json"))).toBe(true);
+  // The overseer's accepted-wake view went with the overseer: the production
+  // store sees no delivery, so the newest record is in force at once, and the
+  // fence below fails if createProductionDaemon stops using this builder.
+  it("the production origin store has no accepted-wake view: the newest record is in force", () => {
+    const origins = slackOriginStore(dir, now);
+    origins.write("event-Ev1", {
+      event_id: "Ev1",
+      slack_user: "U0GUEST",
+      tier: "anyone",
+      authorized_prs: [],
+    });
+    origins.write("event-Ev2", {
+      event_id: "Ev2",
+      slack_user: OWNER,
+      tier: "owner",
+      authorized_prs: [],
+    });
+    expect(origins.latest()).toMatchObject({ slack_user: OWNER, tier: "owner" });
 
     const wire = readFileSync(join(root, "src/wire.ts"), "utf8");
     const body = wire.slice(wire.indexOf("export function createProductionDaemon("));
-    expect(body).toContain("const origins = overseerOriginStore(root, sessions);");
+    expect(body).toContain("const origins = slackOriginStore(root);");
     expect(body).not.toContain("new OriginStore(");
   });
 
@@ -588,8 +575,7 @@ describe("origin cause, not recency (the belt)", () => {
       tier: "anyone",
       authorized_prs: [],
     });
-    const sessions = { injectDir: (s: string) => join(dir, "inject", s) };
-    const fresh = overseerOriginStore(dir, sessions, now);
+    const fresh = slackOriginStore(dir, now);
     expect(fresh.latestAny()).toBeNull();
     expect(existsSync(join(dir, "state", "slack", "origin", "old-guest.json"))).toBe(false);
   });

@@ -76,12 +76,6 @@ const ALLOWLIST: readonly AllowEntry[] = [
     reason: 'the retired wire spellings (tier "owner_legacy", flag-owner-legacy) the folds accept',
   },
   {
-    file: "tests/slack-appendix-schemas.test.ts",
-    token: "owner_legacy",
-    reason:
-      'the retired wire spellings (tier "owner_legacy", flag-owner-legacy) the appendix must not advertise',
-  },
-  {
     file: "bench/aacr/export_runs.py",
     token: "owner_legacy",
     reason: "the export scrubber's docstring names the strings it replaces",

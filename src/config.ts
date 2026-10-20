@@ -984,7 +984,6 @@ export interface ModelPricing {
 export interface ModelsConfig {
   default: string;
   conversation: string;
-  overseer: string;
   /** PassTier → full model spec ("provider/model:thinking"). */
   tiers: Record<PassTier, string>;
   /** Passes always run at sol-high, single variant, not raisable. */
@@ -1070,7 +1069,6 @@ export function applyReviewEffort(models: ModelsConfig): ModelsConfig {
     ...models,
     default: withThinking(models.default, level),
     conversation: withThinking(models.conversation, level),
-    overseer: withThinking(models.overseer, level),
     tiers,
   };
 }
@@ -1942,7 +1940,6 @@ export interface Config {
     poll_interval_s: number;
     max_concurrent_rounds: number;
     round_deadline_min: number;
-    overseer_rotation_days: number;
     /** How many times the daemon may self-requeue a stuck round (overdue +
      * no verdict + session dead) per PR head. Past the cap the round
      * terminalizes through the overdue-anomaly path. Optional
@@ -2861,8 +2858,24 @@ export const IMPROVEMENT_DENY_PREFIXES_DEFAULT: readonly string[] = [
   ".github/workflows/",
 ];
 
+/** The overseer session is gone (P9.13): its two knobs are still ACCEPTED so a
+ * live config does not break, read by nothing, and named here once at parse. */
+export function configDeprecations(raw: Record<string, any>): string[] {
+  const out: string[] = [];
+  if (raw.models?.overseer !== undefined)
+    out.push(
+      "config.toml [models] overseer is deprecated and ignored: the overseer session was deleted. Remove the key.",
+    );
+  if (raw.daemon?.overseer_rotation_days !== undefined)
+    out.push(
+      "config.toml [daemon] overseer_rotation_days is deprecated and ignored: the overseer session was deleted. Remove the key.",
+    );
+  return out;
+}
+
 export function parseConfig(toml: string): Config {
   const raw = parse(toml) as Record<string, any>;
+  for (const line of configDeprecations(raw)) console.warn(`[quickreviewd] ${line}`);
   // base_branch/clone_dir default so older configs keep parsing.
   const github: GithubConfig = {
     base_branch: "main",
@@ -3220,6 +3233,7 @@ export function parseConfig(toml: string): Config {
   // Shape checks are pure, so they fire on every parse (tests included);
   // the token-file check is I/O and lives in validateSlackConfig.
   checkSlackShape(cfg.slack, cfg.owner);
+  delete (cfg.daemon as Record<string, unknown>)["overseer_rotation_days"];
   return cfg;
 }
 
@@ -3384,7 +3398,6 @@ function parseModels(raw: Record<string, any>, presetEffort: ReviewEffort = ""):
     effort_max: parseEffortMax(raw.effort_max),
     default: String(req(raw, "default")),
     conversation: String(req(raw, "conversation")),
-    overseer: String(req(raw, "overseer")),
     tiers: {
       ...MODELS_TIER_DEFAULTS.tiers,
       ...((raw.tiers ?? {}) as Partial<Record<PassTier, string>>),
