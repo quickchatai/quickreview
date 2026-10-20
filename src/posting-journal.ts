@@ -1,5 +1,5 @@
 // The posting journal: the daemon's own writer of a round's receipt and outbox
-// job, the TypeScript twin of scripts/posting-receipt.py (P7.2).
+// job, the TypeScript successor of scripts/posting-receipt.py (P7.2; the script is deleted, P9.3).
 //
 // The shell route records a round's posting in two files under
 // state/posting-receipts/: `pr-<n>-round-<k>.json` (the receipt, what the
@@ -66,7 +66,7 @@ export type JobPayload = PostingJob["payload"];
 export const payloadHash = (payload: unknown): string =>
   createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 
-/** `<pid> <start time> <boot id>`, the owner record scripts/posting-receipt.py
+/** `<pid> <start time> <boot id>`, the owner record the journal
  * writes: a reused pid after a container restart is not mistaken for the owner. */
 export function ownerRecord(pid: number): string | undefined {
   try {

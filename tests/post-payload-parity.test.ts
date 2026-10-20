@@ -1,36 +1,29 @@
-// [P7.3] The shell posting route and the Node/IPC posting route write the same
-// payload bytes in dry-run.
+// [P7.3] The Node/IPC posting route writes the payload bytes the shell route
+// wrote, in dry-run.
 //
-// There is no posting canary before the cutover, so this is the only proof the
-// Node path gets: every recorded round in tests/fixtures/post-parity/ is posted
-// once through the real scripts/post-review.sh, approve-pr.sh or
-// reply-thread.sh (the legacy tmux route, a loopback stub of GitHub) and once
-// through the Node client against a real daemon post endpoint (src/postops.ts,
-// the real MutationGate, a scripted GitHub fetch). Both see the same GitHub
-// state and the same input files, and both only write under their own dryrun
-// directory. The records the two routes wrote must be byte-equal, line for
-// line, apart from the one field that is the wall clock.
+// Every recorded round in tests/fixtures/post-parity/ is posted through the
+// Node client against a real daemon post endpoint (src/postops.ts, the real
+// MutationGate, a scripted GitHub fetch), and the records it writes must equal
+// the fixture's expected.json, apart from the wall clock and the log label.
+// expected.json was captured from the Node route on the day the legacy shell
+// route (scripts/guards.sh and the shell bodies of the three scripts) was
+// deleted (P9.3), after the test had shown the two routes byte-equal, record
+// by record, apart from each case's pinned known_divergence.
 //
 // A fixture is a directory: case.json (the kind of post, the round, the GitHub
 // state, the record kinds it must produce) beside the files the host wrote
 // (body.md, comments.json). Add a directory to add a case; the harness reads
 // whatever it finds.
-import { execFile } from "node:child_process";
-import { createServer, type Server } from "node:http";
 import {
   closeSync,
   copyFileSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
-  writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createCapabilityFd } from "../src/ipc/capability.js";
 import type { IpcClient } from "../src/ipc/client.js";
@@ -39,7 +32,6 @@ import {
   FakeGitHub,
   HEAD,
   PR,
-  REPO,
   buildRig,
   roundCommand,
   plainCommand,
@@ -48,7 +40,6 @@ import {
 
 const SANDBOX = resolve(import.meta.dirname, "..");
 const FIXTURES = join(SANDBOX, "tests", "fixtures", "post-parity");
-const run = promisify(execFile);
 
 interface ParityCase {
   about: string;
@@ -60,12 +51,11 @@ interface ParityCase {
   body: string | null;
   comments: string | null;
   github?: { reviews?: Array<Record<string, unknown>> };
-  /** The record kinds both routes must produce, in order. */
+  /** The record kinds the route must produce, in order. */
   records: string[];
   /**
-   * A difference between the routes that is known and ruled on (the owner accepted it). It is pinned exactly: the field, what the
-   * shell wrote and what the Node route wrote. The case still compares every other byte, and fails when the
-   * difference changes or goes away, so the entry cannot outlive the fix.
+   * A difference from the retired shell route that is known and ruled on (the owner accepted it): the field, what
+   * the shell wrote and what the Node route writes. The Node value is pinned here and in expected.json.
    */
   known_divergence?: { record: number; field: string; shell: string; node: string; why: string };
 }
@@ -83,12 +73,6 @@ function loadCases(): Array<[string, ParityCase]> {
       return [d, JSON.parse(text) as ParityCase];
     });
 }
-
-const SHELL_SCRIPT: Record<PostShimKind, string> = {
-  review: "post-review.sh",
-  approval: "approve-pr.sh",
-  reply: "reply-thread.sh",
-};
 
 /** The script's own argument list for a case, over the given file paths. */
 function argsFor(c: ParityCase, body: string | undefined, comments: string | undefined): string[] {
@@ -160,91 +144,7 @@ function recordFiles(dir: string): string[] {
     : [];
 }
 
-/** The shell route: the real script, a loopback GitHub, its own throwaway home. */
-async function postViaShell(c: ParityCase, fixture: string): Promise<Rec[]> {
-  const home = mkdtempSync(join(tmpdir(), "qcr-parity-sh-"));
-  const gh = scriptedGitHub(c);
-  let server: Server | undefined;
-  try {
-    mkdirSync(join(home, "secrets"));
-    // The config mirrors what the Node route's rig is built from.
-    writeFileSync(
-      join(home, "config.toml"),
-      [
-        "dry_run = true",
-        "",
-        "[github]",
-        `repo = "${REPO}"`,
-        'bot_login = "example-review[bot]"',
-        'trigger_label = "AI review requested"',
-        'review_team = "example-org/review"',
-        `secrets_dir = "${join(home, "secrets")}"`,
-        "",
-      ].join("\n"),
-    );
-    server = createServer((req, res) => {
-      const chunks: Buffer[] = [];
-      req.on("data", (d: Buffer) => chunks.push(d));
-      req.on("end", () => {
-        const body = Buffer.concat(chunks).toString("utf8");
-        void gh
-          .fetch(`http://stub${req.url}`, {
-            method: req.method ?? "GET",
-            ...(body ? { body } : {}),
-          })
-          .then(async (r) => {
-            res.writeHead(r.status, { "content-type": "application/json" });
-            res.end(await r.text());
-          });
-      });
-    });
-    await new Promise<void>((ok) => server!.listen(0, "127.0.0.1", ok));
-    const addr = server.address();
-    const api = `http://127.0.0.1:${typeof addr === "object" && addr ? addr.port : 0}`;
-
-    const inputs = join(home, "inputs");
-    mkdirSync(inputs);
-    const copy = (name: string | null): string | undefined => {
-      if (!name) return undefined;
-      copyFileSync(join(FIXTURES, fixture, name), join(inputs, name));
-      return join(inputs, name);
-    };
-    const args = argsFor(c, copy(c.body), copy(c.comments));
-    const env: Record<string, string | undefined> = {
-      ...process.env,
-      GITHUB_API: api,
-      QCR_CONFIG: join(home, "config.toml"),
-      QCR_DRYRUN_DIR: join(home, "dryrun"),
-      QCR_STATE_DB: join(home, "state.db"),
-      QCR_ROUND_PROGRESS_DIR: join(home, "round-progress"),
-      QCR_POSTING_RECEIPT_DIR: join(home, "receipts"),
-    };
-    // A leaked variable from the runner must not change which route this is.
-    for (const k of [
-      "QCR_IPC_SOCKET",
-      "QCR_IPC_CAP_FD",
-      "QCR_ROUND_NO",
-      "QCR_EXPECTED_HEAD",
-      "QCR_POSTING_KEY",
-    ])
-      delete env[k];
-    if (c.round !== null) {
-      env.QCR_ROUND_NO = String(c.round);
-      env.QCR_EXPECTED_HEAD = HEAD;
-    }
-    await run("bash", [join(SANDBOX, "scripts", SHELL_SCRIPT[c.kind]), ...args], {
-      env: env as NodeJS.ProcessEnv,
-      encoding: "utf8",
-    });
-    expect(gh.posts()).toEqual([]); // dry-run: nothing was sent
-    return recordFiles(join(home, "dryrun")).map(readRecord);
-  } finally {
-    await new Promise<void>((ok) => (server ? server.close(() => ok()) : ok()));
-    rmSync(home, { recursive: true, force: true });
-  }
-}
-
-describe("[P7.3] the shell and Node posting routes write byte-equal dry-run records", () => {
+describe("[P7.3] the Node posting route writes the recorded dry-run payloads", () => {
   let rig: Rig | undefined;
   let clients: IpcClient[];
   let fd: number | undefined;
@@ -308,20 +208,15 @@ describe("[P7.3] the shell and Node posting routes write byte-equal dry-run reco
   });
 
   it.each(cases)("%s", { timeout: 60_000 }, async (fixture, c) => {
-    const shell = await postViaShell(c, fixture);
     const node = await postViaNode(c, fixture);
-    // Not vacuous: both routes recorded exactly what the fixture says they must.
-    expect(shell.map((r) => r.kind)).toEqual(c.records);
+    // Not vacuous: the route recorded exactly what the fixture says it must.
     expect(node.map((r) => r.kind)).toEqual(c.records);
+    const expected = (
+      JSON.parse(readFileSync(join(FIXTURES, fixture, "expected.json"), "utf8")) as Rec[]
+    ).map(canonical);
     const d = c.known_divergence;
-    if (d) {
-      // The pinned difference is exactly what it says, and nothing else differs.
-      expect(valueAt(shell[d.record]!, d.field)).toBe(d.shell);
-      expect(valueAt(node[d.record]!, d.field)).toBe(d.node);
-      valueAt(shell[d.record]!, d.field, "<known divergence>");
-      valueAt(node[d.record]!, d.field, "<known divergence>");
-    }
-    // Byte-equal, record by record (canonical form: see canonical()).
-    expect(node.map(canonical)).toEqual(shell.map(canonical));
+    // The pinned difference from the retired shell route is what the Node route writes.
+    if (d) expect(valueAt(node[d.record]!, d.field)).toBe(d.node);
+    expect(node.map(canonical)).toEqual(expected);
   });
 });

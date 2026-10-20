@@ -1,0 +1,262 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`[P7.2] the journal writes the receipt and job files the readers expect > enqueue, prepare, confirm > pr-12-round-2.json 1`] = `
+"{
+ "version": 1,
+ "posting_key": "v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+ "marker": "<!-- qcr-post:v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->",
+ "pr": 12,
+ "round_no": 2,
+ "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+ "intended_event": "REQUEST_CHANGES",
+ "actual_event": "REQUEST_CHANGES",
+ "payload_sha256": "fa316ecf208a9bc67109b970c3c6af92ac003805d3703bb27030eb309bf00f97",
+ "prepared_at": "<time>",
+ "status": "prepared"
+}"
+`;
+
+exports[`[P7.2] the journal writes the receipt and job files the readers expect > enqueue, prepare, confirm > pr-12-round-2.json 2`] = `
+"{
+ "version": 1,
+ "posting_key": "v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+ "marker": "<!-- qcr-post:v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->",
+ "pr": 12,
+ "round_no": 2,
+ "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+ "intended_event": "REQUEST_CHANGES",
+ "actual_event": "REQUEST_CHANGES",
+ "payload_sha256": "fa316ecf208a9bc67109b970c3c6af92ac003805d3703bb27030eb309bf00f97",
+ "prepared_at": "<time>",
+ "status": "confirmed",
+ "confirmed_at": "<time>",
+ "gh_review_id": 501,
+ "gh_commit_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+ "gh_state": "CHANGES_REQUESTED"
+}"
+`;
+
+exports[`[P7.2] the journal writes the receipt and job files the readers expect > enqueue, prepare, confirm > pr-12-round-2.outbox.json 1`] = `
+"{
+ "version": 1,
+ "posting_key": "v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+ "repo": "org/repo",
+ "mode": "live",
+ "pr": 12,
+ "round_no": 2,
+ "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+ "intended_event": "REQUEST_CHANGES",
+ "payload": {
+  "commit_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "event": "REQUEST_CHANGES",
+  "body": "the review body\\n\\n<!-- qcr-post:v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->",
+  "comments": [
+   {
+    "path": "a.py",
+    "line": 3,
+    "side": "RIGHT",
+    "body": "b"
+   }
+  ]
+ },
+ "payload_sha256": "fa316ecf208a9bc67109b970c3c6af92ac003805d3703bb27030eb309bf00f97",
+ "source_sha256": "fa316ecf208a9bc67109b970c3c6af92ac003805d3703bb27030eb309bf00f97",
+ "status": "pending",
+ "attempts": 0,
+ "created_at": "<time>",
+ "next_attempt_at": "<time>"
+}"
+`;
+
+exports[`[P7.2] the journal writes the receipt and job files the readers expect > enqueue, prepare, confirm > pr-12-round-2.outbox.json 2`] = `
+"{
+ "version": 1,
+ "posting_key": "v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+ "repo": "org/repo",
+ "mode": "live",
+ "pr": 12,
+ "round_no": 2,
+ "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+ "intended_event": "REQUEST_CHANGES",
+ "payload": {
+  "commit_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "event": "REQUEST_CHANGES",
+  "body": "the review body\\n\\n<!-- qcr-post:v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->",
+  "comments": [
+   {
+    "path": "a.py",
+    "line": 3,
+    "side": "RIGHT",
+    "body": "b"
+   }
+  ]
+ },
+ "payload_sha256": "fa316ecf208a9bc67109b970c3c6af92ac003805d3703bb27030eb309bf00f97",
+ "source_sha256": "fa316ecf208a9bc67109b970c3c6af92ac003805d3703bb27030eb309bf00f97",
+ "status": "pending",
+ "attempts": 0,
+ "created_at": "<time>",
+ "next_attempt_at": "<time>",
+ "attempted_at": "<time>"
+}"
+`;
+
+exports[`[P7.2] the journal writes the receipt and job files the readers expect > enqueue, prepare, confirm > pr-12-round-2.outbox.json 3`] = `
+"{
+ "version": 1,
+ "posting_key": "v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+ "repo": "org/repo",
+ "mode": "live",
+ "pr": 12,
+ "round_no": 2,
+ "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+ "intended_event": "REQUEST_CHANGES",
+ "payload": {
+  "commit_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "event": "REQUEST_CHANGES",
+  "body": "the review body\\n\\n<!-- qcr-post:v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->",
+  "comments": [
+   {
+    "path": "a.py",
+    "line": 3,
+    "side": "RIGHT",
+    "body": "b"
+   }
+  ]
+ },
+ "payload_sha256": "fa316ecf208a9bc67109b970c3c6af92ac003805d3703bb27030eb309bf00f97",
+ "source_sha256": "fa316ecf208a9bc67109b970c3c6af92ac003805d3703bb27030eb309bf00f97",
+ "status": "done",
+ "attempts": 0,
+ "created_at": "<time>",
+ "next_attempt_at": "<time>",
+ "attempted_at": "<time>"
+}"
+`;
+
+exports[`[P7.2] the journal writes the receipt and job files the readers expect > enqueue, prepare, defer > pr-12-round-2.json 1`] = `
+"{
+ "version": 1,
+ "posting_key": "v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+ "marker": "<!-- qcr-post:v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->",
+ "pr": 12,
+ "round_no": 2,
+ "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+ "intended_event": "REQUEST_CHANGES",
+ "actual_event": "REQUEST_CHANGES",
+ "payload_sha256": "fa316ecf208a9bc67109b970c3c6af92ac003805d3703bb27030eb309bf00f97",
+ "prepared_at": "<time>",
+ "status": "deferred",
+ "deferred_at": "<time>",
+ "defer_reason": "GitHub answered 502; marker read: none"
+}"
+`;
+
+exports[`[P7.2] the journal writes the receipt and job files the readers expect > enqueue, prepare, defer > pr-12-round-2.outbox.json 1`] = `
+"{
+ "version": 1,
+ "posting_key": "v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+ "repo": "org/repo",
+ "mode": "live",
+ "pr": 12,
+ "round_no": 2,
+ "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+ "intended_event": "REQUEST_CHANGES",
+ "payload": {
+  "commit_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "event": "REQUEST_CHANGES",
+  "body": "the review body\\n\\n<!-- qcr-post:v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->",
+  "comments": [
+   {
+    "path": "a.py",
+    "line": 3,
+    "side": "RIGHT",
+    "body": "b"
+   }
+  ]
+ },
+ "payload_sha256": "fa316ecf208a9bc67109b970c3c6af92ac003805d3703bb27030eb309bf00f97",
+ "source_sha256": "fa316ecf208a9bc67109b970c3c6af92ac003805d3703bb27030eb309bf00f97",
+ "status": "pending",
+ "attempts": 0,
+ "created_at": "<time>",
+ "next_attempt_at": "<time>",
+ "attempted_at": "<time>",
+ "deferred_at": "<time>",
+ "last_error": "GitHub answered 502; marker read: none"
+}"
+`;
+
+exports[`[P7.2] the journal writes the receipt and job files the readers expect > enqueue, prepare, dry-run > pr-12-round-2.json 1`] = `
+"{
+ "version": 1,
+ "posting_key": "v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+ "marker": "<!-- qcr-post:v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->",
+ "pr": 12,
+ "round_no": 2,
+ "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+ "intended_event": "COMMENT",
+ "actual_event": "COMMENT",
+ "payload_sha256": "b64418e7210a46f116733fdced1ee9598c983900b1656f3cfc6c40fec2758cd1",
+ "prepared_at": "<time>",
+ "status": "dryrun",
+ "confirmed_at": "<time>"
+}"
+`;
+
+exports[`[P7.2] the journal writes the receipt and job files the readers expect > enqueue, prepare, dry-run > pr-12-round-2.outbox.json 1`] = `
+"{
+ "version": 1,
+ "posting_key": "v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+ "repo": "org/repo",
+ "mode": "dryrun",
+ "pr": 12,
+ "round_no": 2,
+ "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+ "intended_event": "COMMENT",
+ "payload": {
+  "commit_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "event": "COMMENT",
+  "body": "the review body\\n\\n<!-- qcr-post:v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->",
+  "comments": [
+   {
+    "path": "a.py",
+    "line": 3,
+    "side": "RIGHT",
+    "body": "b"
+   }
+  ]
+ },
+ "payload_sha256": "b64418e7210a46f116733fdced1ee9598c983900b1656f3cfc6c40fec2758cd1",
+ "source_sha256": "b64418e7210a46f116733fdced1ee9598c983900b1656f3cfc6c40fec2758cd1",
+ "status": "done",
+ "attempts": 0,
+ "created_at": "<time>",
+ "next_attempt_at": "<time>",
+ "attempted_at": "<time>"
+}"
+`;
+
+exports[`[P7.2] the journal writes the receipt and job files the readers expect > skip > pr-12-round-2.json 1`] = `
+"{
+ "version": 1,
+ "posting_key": "v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+ "marker": "<!-- qcr-post:v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->",
+ "pr": 12,
+ "round_no": 2,
+ "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+ "status": "skipped",
+ "skip_reason": "no-new-evidence",
+ "intended_event": "REQUEST_CHANGES",
+ "mode": "live",
+ "skipped_at": "<time>",
+ "standing_mark": {
+  "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "reviewed_at": "2026-10-18T10:00:00.000Z",
+  "verdict": "REQUEST_CHANGES",
+  "posted_event": "REQUEST_CHANGES",
+  "round_no": 1,
+  "last_author_reply_at": null
+ }
+}"
+`;

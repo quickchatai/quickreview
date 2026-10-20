@@ -37,7 +37,7 @@
 // lines above are the ones worth a hard veto.
 //
 // Loaded per spawn from piArgv (src/tui/companion.ts), companion only — the VM
-// sessions have their own gate + guards.sh mirror, and subagent children load
+// sessions have their own gate, and subagent children load
 // only the global settings extensions (this rides argv) so leaves never pay
 // for this hook.
 import { readFileSync } from "node:fs";

@@ -1,0 +1,13 @@
+[
+  {
+    "kind": "create_review",
+    "method": "POST",
+    "path": "/repos/example-org/example-app/pulls/7/reviews",
+    "body": {
+      "commit_id": "68b8040aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "event": "COMMENT",
+      "body": "line one\nline two\n\n\n\n\n<!-- qcr-post:v1:7:1:68b8040aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->"
+    },
+    "pr": 7
+  }
+]

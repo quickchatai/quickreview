@@ -52,8 +52,8 @@ export interface PostingReceipt {
  * The terminal record of a review the shell route was forbidden to post:
  * posting guard 2 found the head already reviewed with no author reply since,
  * and refused before any receipt was prepared. It proves that no POST was
- * attempted — it is written only by `scripts/post-review.sh`, only
- * before `prepare`, and `scripts/posting-receipt.py` refuses to write it over
+ * attempted — it is written only by the posting journal, only
+ * before `prepare`, and the journal refuses to write it over
  * any attempted-post status — and it carries the standing mark the guard read,
  * so settlement restores state from evidence rather than from session prose.
  *
@@ -165,7 +165,7 @@ function parseGuardedNoop(
     return undefined;
   // The guard-2 condition, re-derived from the record's own evidence. `>=`
   // reads an ambiguous same-millisecond reply as new evidence, exactly as
-  // guards.ts / guards.sh do.
+  // guards.ts does.
   if (
     recorded.last_author_reply_at !== null &&
     recorded.last_author_reply_at >= recorded.reviewed_at

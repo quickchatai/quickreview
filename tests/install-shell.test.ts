@@ -302,17 +302,15 @@ describe("qcr_profile_dirs ≡ profileSearchDirs", () => {
 describe("every script that reads the live config reads it through the locator", () => {
   // No reader builds the checkout path itself: the
   // `${QCR_CONFIG:-$ROOT/config.toml}` spelling appears in no script, and
-  // each one that reads a config sources the shell locator.
+  // each one that reads a config sources the shell locator (the three posting
+  // shims read none: they are Node-only clients, P9.3).
   const readers = [
-    "approve-pr.sh",
     "deploy.sh",
     "mint-token.sh",
-    "post-review.sh",
     "pr-checks.sh",
     "pr-context.sh",
     "pr-self.sh",
     "pr-threads.sh",
-    "reply-thread.sh",
     OPERATOR_BOX_SETUP,
   ];
   for (const script of readers) {

@@ -313,7 +313,7 @@ describe("the app-self-config gate class (rule-1 exception)", () => {
   it("the session shell route never learns this kind — only the daemon self-configures the App", () => {
     // The shell mirror needs no change precisely because sessions have no
     // business here; this pins that they never grew one.
-    for (const script of ["post-review.sh", "approve-pr.sh", "reply-thread.sh", "guards.sh"]) {
+    for (const script of ["post-review.sh", "approve-pr.sh", "reply-thread.sh"]) {
       const body = readFileSync(join(process.cwd(), "scripts", script), "utf8");
       for (const kind of APP_SELF_CONFIG_KINDS) expect(body).not.toContain(kind);
       expect(body).not.toContain("/app/hook/config");

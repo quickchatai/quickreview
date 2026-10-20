@@ -12,7 +12,6 @@
 //   round-*.md Decide step ─► the session withholds the approval itself and
 //                             posts the full review as a COMMENT
 //   guards.ts (guard 4)    ─► the gate rewrites an APPROVE review to COMMENT
-//   scripts/guards.sh      ─► the same refusal on the sessions' own route
 //   this module            ─► the classifier both halves share, and the retry
 //
 // The retry is what makes the gate safe: a PR whose approval is withheld needs
@@ -98,9 +97,8 @@ const UNFINISHED = new Set(["queued", "in_progress", "waiting", "pending", "requ
  * same-named check-run lets one hide the other. A failing status could lose
  * to a passing check-run, or an untimestamped check-run (queued, or failed
  * with a null start) could lose to a passing status listed after it — either
- * way red or pending reads green. `scripts/guards.sh` applies this same rule,
- * and `scripts/pr-checks.sh` reads check-runs and commit statuses and applies
- * both clauses. Keep the three in step (`tests/fences-cigate.test.ts`).
+ * way red or pending reads green. `scripts/pr-checks.sh` reads check-runs and commit statuses and applies
+ * both clauses. Keep the two in step (`tests/fences-cigate.test.ts`).
  */
 export function latestRunPerName(checks: readonly CheckSummary[]): CheckSummary[] {
   interface Kept {
