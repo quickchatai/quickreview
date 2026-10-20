@@ -14,7 +14,7 @@
 // (commit 8169df6f, mounted read-only at /opt/legacy/dist), so every drain it engages or lifts is the
 // legacy code's row, in the legacy schema, and a failed cutover leaves the file legacy-shaped.
 // Nothing here posts, reviews or reaches a network (the container runs --network none).
-import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 
 const { StateStore } = await import("/opt/legacy/dist/src/state.js");
 const STATE = "/opt/quickreview/state";
@@ -55,12 +55,14 @@ const poll = () => {
   for (const name of names.sort()) {
     const file = `${CMD}/operator/${name}`;
     const base = name.replace(/\.json$/, "");
+    // The operator directory is root-owned and this daemon is not root (the sealed channel): it cannot
+    // remove a command it has served. A command is served once, and its result file says so.
+    if (existsSync(`${CMD}/results/${base}.result.json`)) continue;
     let cmd;
     try {
       cmd = JSON.parse(readFileSync(file, "utf8"));
     } catch (e) {
       answer(base, { ok: false, reason: `unreadable command: ${e.message}` });
-      rmSync(file, { force: true });
       continue;
     }
     if (cmd.command !== "drain") {
@@ -77,7 +79,6 @@ const poll = () => {
       log(`drain off by the operator (changed=${r.changed})`);
       answer(base, { ok: true, command: "drain", draining: false, running_rounds: 0, dropped_deliveries: r.dropped });
     }
-    rmSync(file, { force: true });
     heartbeat();
   }
 };
