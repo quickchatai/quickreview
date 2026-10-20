@@ -309,7 +309,10 @@ def make_judges(run: Run, which: str):
         out["deepseek"] = J.OpenAICompatJudge(
             "deepseek", d.get("base_url", "https://inference.do-ai.run/v1"), d.get("model", "deepseek-v4.1-flash"),
             d.get("effort", "xhigh"), Path(d.get("env_file") or D.AACR / "digitalocean.env"),
-            d.get("key_var", "DIGITALOCEAN_API_KEY"), d.get("max_tokens", 65536))
+            # Its reasoning can run away (20+ minutes at the 65k output cap
+            # on a 170k-token prompt); an answer worth having comes inside
+            # two minutes and 16k tokens, so both are hard limits.
+            d.get("key_var", "DIGITALOCEAN_API_KEY"), d.get("max_tokens", 16000), timeout_s=d.get("timeout_s", 150))
     return out
 
 

@@ -287,6 +287,10 @@ class OpenAICompatJudge:
                     continue
                 return {"status": "error", "error": f"HTTP {e.code}: {detail}", "http_attempts": attempts}
             except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+                # A call that outlives timeout_s is a slow answer, not a
+                # network fault: recorded once, never sent again.
+                if isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError):
+                    return {"status": "error", "error": f"timed out after {self.timeout_s} s", "http_attempts": attempts}
                 if wait_s is not None:
                     time.sleep(wait_s)
                     continue
