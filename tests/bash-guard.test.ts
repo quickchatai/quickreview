@@ -1438,7 +1438,7 @@ describe("checkSecretPaths — the App's secret files and dir", () => {
     const verdict = `printf '%s' '{"pr":7,"passes":[{"name":"pass-a","tier":"sol-high"}]}' > verdict/pr-7-round-2.json.tmp`;
     passes(verdict);
     expect(checkProcSecrets(verdict, "/opt/quickreview/sandbox").allowed).toBe(true);
-    expect(checkBashCommand(verdict, "/opt/quickreview/sandbox").allowed).toBe(true);
+    expect(checkBashCommand(verdict).allowed).toBe(true);
     // the reversed range still reaches the key: `[z-a]` stands for any one character
     refused("cat /opt/quickreview/secrets/[z-a]pp.pem");
     refused("cat /opt/quickreview/secrets/app.p[z-a]m");
