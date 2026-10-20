@@ -435,6 +435,17 @@ const ALLOWLIST: AllowlistEntry[] = [
       "the VM route's docs name the release and memory images under the publishing org's registry namespace (ghcr.io/quickchatai/...)",
   },
   {
+    path: "scripts/cutover.sh",
+    tokens: ["quickchat"],
+    reason:
+      "the cutover wizard's defaults name the reviewed repo and the release repo (quickchatai/...) it checks the origin and downloads the release from",
+  },
+  {
+    path: "tests/cutover-wizard.test.ts",
+    tokens: ["quickchat"],
+    reason: "builds a bare origin whose path looks like the release repo (quickchatai/quickreview.git), which the wizard's origin check matches",
+  },
+  {
     path: "scripts/deploy.sh",
     tokens: ["quickchat"],
     reason:
