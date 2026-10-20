@@ -106,10 +106,9 @@ export class Poller {
     // The cutover recreates the container mid-connection; every remote path
     // follows the root this keeps current (src/tui/layout.ts). Its probe never
     // fails the poll.
-    const [res] = await Promise.all([
-      this.ssh(this.cfg.ssh_host, statusArgv(this.cfg)),
-      resolveLayout(this.cfg, this.ssh),
-    ]);
+    // Resolved first: the status read below must use the root it settles on.
+    await resolveLayout(this.cfg, this.ssh);
+    const res = await this.ssh(this.cfg.ssh_host, statusArgv(this.cfg));
     if (generation !== this.generation) return;
     const snapshot = res.ok ? parseSnapshot(res.stdout) : undefined;
     if (snapshot) {

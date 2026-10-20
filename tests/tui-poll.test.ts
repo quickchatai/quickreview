@@ -158,6 +158,8 @@ it("keeps the newer manual refresh when an older poll answers last", async () =>
   );
   const older = p.tick();
   const newer = p.tick();
+  // The layout probe settles before each status read is issued.
+  while (replies.length < 2) await new Promise((r) => setTimeout(r, 0));
   replies[1]!({
     ok: true,
     stdout: JSON.stringify(snap("2026-08-13T12:01:00Z")),

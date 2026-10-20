@@ -64,6 +64,16 @@ eval "$CONF"
 DOCKER_ON_VM="docker"
 [[ "$SUDO" == "1" ]] && DOCKER_ON_VM="sudo docker"
 
+# remote_sandbox_root ships empty: the container's qcr.layout label decides
+# (the same probe as src/tui/layout.ts).
+if [[ -z "$VM_ROOT" ]]; then
+  LAYOUT="$(ssh "$SSH_HOST" "$DOCKER_ON_VM inspect -f '{{index .Config.Labels \"qcr.layout\"}}' $VM_CONTAINER" 2>/dev/null || true)"
+  case "$LAYOUT" in
+    release) VM_ROOT="/opt/qcr" ;;
+    *) VM_ROOT="/opt/quickreview/sandbox" ;;
+  esac
+fi
+
 QCR="$ROOT/scripts/qcr"
 
 # The app's build stamp (src/appstamp.ts) for the image's qcr.build-sha label.
