@@ -23,7 +23,7 @@ afterEach(() => {
 
 function recorded(): Replayed {
   const root = mkReplayRoot(PR);
-  const r = replay({ root, pr: PR, events: eventsFromSession(SESSION, root) });
+  const r = replay({ root, pr: PR, events: eventsFromSession(SESSION, root), golden: "session" });
   cleanups.push(r.cleanup);
   return r;
 }
@@ -56,8 +56,8 @@ describe("RoundProgressPublisher", () => {
       for (const line of piece) appendFileSync(log, `${line}\n`);
       publisher.catchUp();
     }
-    expect(readFileSync(snapshotPath, "utf8")).toBe(r.extensionSnapshot);
-    expect(readFileSync(progressLogPath(snapshotPath), "utf8")).toBe(r.extensionTransitions);
+    expect(readFileSync(snapshotPath, "utf8")).toBe(r.goldenSnapshot);
+    expect(readFileSync(progressLogPath(snapshotPath), "utf8")).toBe(r.goldenTransitions);
   });
 
   it("publishes a round's transitions once, however often it catches up", () => {
@@ -70,7 +70,7 @@ describe("RoundProgressPublisher", () => {
       who: { pr: PR, session: `pr-${PR}` },
     });
     for (let i = 0; i < 3; i++) publisher.catchUp();
-    expect(readFileSync(progressLogPath(snapshotPath), "utf8")).toBe(r.extensionTransitions);
+    expect(readFileSync(progressLogPath(snapshotPath), "utf8")).toBe(r.goldenTransitions);
   });
 
   it("leaves a torn last line for the next catch-up", () => {
@@ -88,7 +88,7 @@ describe("RoundProgressPublisher", () => {
     publisher.catchUp();
     appendFileSync(log, text.slice(text.length - 7));
     publisher.catchUp();
-    expect(readFileSync(snapshotPath, "utf8")).toBe(r.extensionSnapshot);
+    expect(readFileSync(snapshotPath, "utf8")).toBe(r.goldenSnapshot);
   });
 
   it("warns, and never throws, when it cannot write", () => {

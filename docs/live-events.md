@@ -44,13 +44,12 @@ one line.
 
 ## The round-progress projection
 
-`projectRoundProgress(events)` reproduces what `extensions/round-progress.ts`
-publishes: the `state/round-progress/pr-<n>.json` snapshot (v2, the contract in
+`projectRoundProgress(events)` reproduces what the retired tmux
+round-progress extension published: the `state/round-progress/pr-<n>.json` snapshot (v2, the contract in
 `src/round-progress.ts` unchanged) and the append-only transition log. The
-extension is the reference. `tests/live-projection-golden.test.ts` feeds the same
-events to it and to the writer and holds the two byte-equal; set
-`QCR_GOLDEN_SESSION=<an extracted real session JSONL>` to hold that line against
-a real archived PR.
+extension was the reference: `tests/live-projection-golden.test.ts` holds the
+projection byte-equal to golden files recorded from it
+(`tests/fixtures/live-events/golden/`).
 
 The log is coarser than pi's stream in one respect: time. A held update is
 stamped at its window, so a heartbeat's `updated_at`, or a `started_at` taken

@@ -17,7 +17,6 @@ import {
 import type { AgentSession, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { createBashGuard } from "../extensions/bash-guard.js";
 import { interactiveLens, lensRunConfigFromEnv, lensTools } from "../extensions/lens.js";
-import activateProgress from "../extensions/round-progress.js";
 import { usageFromEvents, stagesFromEvents } from "../src/bench/aacr.js";
 import { EventCostMeter } from "../src/bench/cost.js";
 import { lensOutputsFromEvents } from "../src/bench/whatif.js";
@@ -40,7 +39,6 @@ import { LensWave, launchWave, type WaveRunner } from "../src/engine/lens/wave.j
 import { roundSdkExtras } from "../src/engine/roundsdk.js";
 import { DEFAULT_TOOLS } from "../src/engine/pisdk.js";
 import { isLensTool, parseLedger } from "../src/lensresult.js";
-import { parseRoundProgress } from "../src/round-progress.js";
 import { createHostRig, useOfflineGuard, type HostRig } from "./pi-canary/harness.js";
 
 useOfflineGuard();
@@ -665,42 +663,6 @@ describe("[lens] the replay: each lens counts once through the consumers", () =>
       [0, 0],
     ]);
     expect(lensOutputsFromEvents(lines)).toHaveLength(7);
-
-    // round-progress: one row per run, the repeat wave adds none.
-    const root = mkdtempSync(join(tmpdir(), "lens-tool-progress-"));
-    const previous = { ...process.env };
-    process.env["QCR_SANDBOX_ROOT"] = root;
-    process.env["QCR_SESSION_NAME"] = "pr-7";
-    process.env["QCR_PR"] = "7";
-    try {
-      const handlers = new Map<string, Array<(e: Record<string, unknown>) => unknown>>();
-      activateProgress({
-        on: (name: string, h: (e: Record<string, unknown>) => unknown) =>
-          handlers.set(name, [...(handlers.get(name) ?? []), h]),
-      } as never);
-      const emit = async (name: string, e: Record<string, unknown> = {}) => {
-        for (const h of handlers.get(name) ?? []) await h(e);
-      };
-      await emit("agent_start");
-      await emit("message_start", {
-        message: {
-          role: "user",
-          content: [{ type: "text", text: `<!-- qcr-command:cmd-7:${"d".repeat(64)} -->` }],
-        },
-      });
-      for (const l of lines) {
-        const e = JSON.parse(l) as Record<string, unknown>;
-        await emit(String(e["type"]), e);
-      }
-      const snap = parseRoundProgress(
-        readFileSync(join(root, "state", "round-progress", "pr-7.json"), "utf8"),
-      )!;
-      expect(snap.agents).toHaveLength(7);
-      expect(snap.agents.every((a) => a.status === "completed")).toBe(true);
-    } finally {
-      process.env = previous;
-      rmSync(root, { recursive: true, force: true });
-    }
   });
 
   it("the ledger and the results agree: 20 lens lines for a 20-lens wave read by two calls", async () => {

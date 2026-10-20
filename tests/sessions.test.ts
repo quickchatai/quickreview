@@ -294,11 +294,6 @@ describe("buildPiCommand", () => {
     expect(argv.join(" ")).not.toMatch(/update/i);
   });
 
-  it("loads the live round-progress reporter in every parent session", () => {
-    const paths = manager().extensionPaths();
-    expect(paths).toContain(join(root, "extensions", "round-progress.ts"));
-  });
-
   // pi's native subagent extension and its glue are retired (P9.4): lenses are
   // the engine's lens tool, and a session loads no subagent surface of any kind.
   it("loads no subagent glue or leaf-cache extension, and no stray lens hooks", () => {

@@ -3,8 +3,6 @@
 // the one sticky Pi first, repairs only that PR's command slot, then asks the
 // ordinary pump to decide what work is actually eligible.
 import { asyncCommandEffect, commandEffectKey } from "./commandeffects.js";
-import { randomUUID } from "node:crypto";
-import { existsSync, renameSync, rmSync } from "node:fs";
 import { ovSessionIdForPr } from "./memory/ovsession.js";
 import { verifiedPayload } from "./session-command-payload.js";
 import type { StateStore } from "./state.js";
@@ -162,25 +160,11 @@ async function recoverPrForOperatorNow(
         reason: `PR #${pr}: a worker still runs after the fence; ownership unchanged`,
       };
 
-    // Keep the blocker in SQLite while every old inject file is moved out of
-    // the bridge's *.md namespace. That closes the release→cleanup gap: no
-    // concurrent dispatch can birth a replacement Pi beside stale input. If
-    // the exact blocker set changed while kill was in flight, restore the
-    // quarantined files and leave the winner untouched.
-    const quarantined: Array<{ commandId: string; injectPath: string; quarantinePath: string }> =
-      [];
+    // Keep the blocker in SQLite until the old session is rotated away; if
+    // the exact blocker set changed while kill was in flight, the CAS below
+    // refuses and the rotation is put back.
     let unrotate: (() => void) | undefined;
     try {
-      for (const { command } of payloads) {
-        if (!existsSync(command.inject_path)) continue;
-        const quarantinePath = `${command.inject_path}.operator-recovery-${randomUUID()}`;
-        renameSync(command.inject_path, quarantinePath);
-        quarantined.push({
-          commandId: command.id,
-          injectPath: command.inject_path,
-          quarantinePath,
-        });
-      }
       if (deps.rotateSession) unrotate = await deps.rotateSession(pr);
       reset = deps.store.cancelBlockingSessionCommandsForOperator(
         pr,
@@ -192,21 +176,8 @@ async function recoverPrForOperatorNow(
       );
     } catch (error) {
       unrotate?.();
-      const stillBlocking = new Set(
-        deps.store.blockingSessionCommandsForPr(pr).map((command) => command.id),
-      );
-      for (const { commandId, injectPath, quarantinePath } of [...quarantined].reverse()) {
-        if (!existsSync(quarantinePath)) continue;
-        // Restore only a command that still owns work. If settlement won the
-        // fence, putting its old file back into *.md would duplicate delivery
-        // beside the successor that caused the blocker-set CAS to refuse.
-        if (stillBlocking.has(commandId) && !existsSync(injectPath))
-          renameSync(quarantinePath, injectPath);
-        else rmSync(quarantinePath, { force: true });
-      }
       throw error;
     }
-    for (const { quarantinePath } of quarantined) rmSync(quarantinePath, { force: true });
   }
 
   const current = deps.store.getPr(pr) ?? row;

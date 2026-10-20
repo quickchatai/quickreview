@@ -1,0 +1,7 @@
+{"at":"2026-10-01T10:00:00.000Z","pr":5409,"session":"pr-5409","run_started_at":"2026-10-01T10:00:00.000Z","event":"parent_start"}
+{"at":"2026-10-01T10:00:00.100Z","pr":5409,"session":"pr-5409","run_started_at":"2026-10-01T10:00:00.000Z","command_id":"cmd-9","event":"command_accepted"}
+{"at":"2026-10-01T10:00:03.000Z","pr":5409,"session":"pr-5409","run_started_at":"2026-10-01T10:00:00.000Z","command_id":"cmd-9","event":"pass_start","execution_id":"sa:pass-baseline--sol-high","agent":"pass-baseline--sol-high"}
+{"at":"2026-10-01T10:00:03.000Z","pr":5409,"session":"pr-5409","run_started_at":"2026-10-01T10:00:00.000Z","command_id":"cmd-9","event":"pass_start","execution_id":"sa:pass-security--sol-high","agent":"pass-security--sol-high"}
+{"at":"2026-10-01T10:00:06.000Z","pr":5409,"session":"pr-5409","run_started_at":"2026-10-01T10:00:00.000Z","command_id":"cmd-9","event":"pass_end","execution_id":"sa:pass-baseline--sol-high","agent":"pass-baseline--sol-high","status":"completed"}
+{"at":"2026-10-01T10:00:12.000Z","pr":5409,"session":"pr-5409","run_started_at":"2026-10-01T10:00:00.000Z","command_id":"cmd-9","event":"pass_end","execution_id":"sa:pass-security--sol-high","agent":"pass-security--sol-high","status":"failed"}
+{"at":"2026-10-01T10:00:14.000Z","pr":5409,"session":"pr-5409","run_started_at":"2026-10-01T10:00:00.000Z","command_id":"cmd-9","event":"parent_settle"}

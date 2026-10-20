@@ -1,7 +1,8 @@
-// Replays a recorded pi session through the two publishers of round-progress,
-// so a test can hold them byte-equal: extensions/round-progress.ts (the
-// reference, fed pi's events through a fake `pi.on`) and the LiveEvent writer
-// plus the projection (src/live/).
+// Replays a recorded pi session through the LiveEvent writer and the projection
+// (src/live/), and holds the result to the golden files in
+// fixtures/live-events/golden/. Those were recorded once from the retired tmux
+// extension (extensions/round-progress.ts), the reference publisher of
+// round-progress v2; QCR_RECORD_GOLDEN=1 rewrites them from the projection.
 //
 // A pi session JSONL is the on-disk record of a run: user and assistant messages
 // with their tool calls, the tool results, the timestamps. It holds no
@@ -11,7 +12,6 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { vi } from "vitest";
-import activate from "../../extensions/round-progress.js";
 import { roundLiveWriter } from "../../src/engine/livewire.js";
 import { liveRoundDir, LIVE_MAIN_FILE, readLiveEvents } from "../../src/live/events.js";
 import { projectRoundProgress, type RoundProgressProjection } from "../../src/live/projection.js";
@@ -76,10 +76,10 @@ export function eventsFromSession(jsonl: string, root: string): TimedEvent[] {
 }
 
 export interface Replayed {
-  /** `state/round-progress/pr-<n>.json` as the extension left it. */
-  extensionSnapshot: string;
-  /** `state/round-progress/pr-<n>.jsonl`. */
-  extensionTransitions: string;
+  /** The golden `state/round-progress/pr-<n>.json` ("" without a golden name). */
+  goldenSnapshot: string;
+  /** The golden `state/round-progress/pr-<n>.jsonl`. */
+  goldenTransitions: string;
   projection: RoundProgressProjection | undefined;
   /** The LiveEvent main log the writer wrote. */
   logPath: string;
@@ -102,29 +102,29 @@ export function mkReplayRoot(pr: number): string {
   return root;
 }
 
-/** Feed `events` to the extension and to the LiveEvent writer under one fake
- * clock, then read both outputs back. The writer's log is read from the file
+/** Feed `events` to the LiveEvent writer under a fake clock, then read its log
+ * back. The writer's log is read from the file
  * and projected, so the whole path (slim, write, read, project) is the one a
  * viewer takes. */
-export function replay(opts: { root: string; pr: number; events: TimedEvent[] }): Replayed {
+const GOLDEN_DIR = join(import.meta.dirname, "..", "fixtures", "live-events", "golden");
+export function replay(opts: {
+  root: string;
+  pr: number;
+  events: TimedEvent[];
+  golden?: string;
+}): Replayed {
   const { root, pr, events } = opts;
   const session = `pr-${pr}`;
-  const previous = { ...process.env };
-  process.env.QCR_SANDBOX_ROOT = root;
-  process.env.QCR_SESSION_NAME = session;
-  process.env.QCR_PR = String(pr);
-  const handlers = new Map<string, Array<(event: Record<string, unknown>) => unknown>>();
-  const pi = {
-    on(name: string, handler: (event: Record<string, unknown>) => unknown) {
-      handlers.set(name, [...(handlers.get(name) ?? []), handler]);
-    },
-  };
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   try {
     vi.setSystemTime(events[0]!.at);
-    activate(pi as never);
     const live = { root, key: session, round: 1 };
-    const sink = roundLiveWriter(live, { ...process.env }).main({
+    const sink = roundLiveWriter(live, {
+      ...process.env,
+      QCR_SANDBOX_ROOT: root,
+      QCR_SESSION_NAME: session,
+      QCR_PR: String(pr),
+    }).main({
       key: live.key,
       round: live.round,
       pr,
@@ -133,21 +133,28 @@ export function replay(opts: { root: string; pr: number; events: TimedEvent[] })
     for (const { at, event } of events) {
       const wait = at - Date.now();
       if (wait > 0) vi.advanceTimersByTime(wait);
-      for (const handler of handlers.get(String(event.type)) ?? []) void handler(event);
       sink.feed(event);
     }
     vi.advanceTimersByTime(1_000);
     sink.close();
   } finally {
     vi.useRealTimers();
-    process.env = previous;
   }
   const logPath = join(liveRoundDir(root, session, 1), LIVE_MAIN_FILE);
-  const progress = join(root, "state", "round-progress");
+  const projection = projectRoundProgress(readLiveEvents(logPath).events);
+  if (opts.golden !== undefined && process.env.QCR_RECORD_GOLDEN === "1") {
+    mkdirSync(GOLDEN_DIR, { recursive: true });
+    writeFileSync(join(GOLDEN_DIR, `${opts.golden}.json`), projection?.snapshotJson ?? "");
+    writeFileSync(join(GOLDEN_DIR, `${opts.golden}.jsonl`), projection?.transitionsJsonl ?? "");
+  }
+  const golden = (ext: string): string =>
+    opts.golden === undefined
+      ? ""
+      : readFileSync(join(GOLDEN_DIR, `${opts.golden}.${ext}`), "utf8");
   return {
-    extensionSnapshot: readFileSync(join(progress, `${session}.json`), "utf8"),
-    extensionTransitions: readFileSync(join(progress, `${session}.jsonl`), "utf8"),
-    projection: projectRoundProgress(readLiveEvents(logPath).events),
+    goldenSnapshot: golden("json"),
+    goldenTransitions: golden("jsonl"),
+    projection,
     logPath,
     root,
     cleanup: () => rmSync(root, { recursive: true, force: true }),

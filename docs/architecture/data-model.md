@@ -226,7 +226,7 @@ losing the review record, except `state.db` itself.
 | `state/findings/` | `pr-<n>-round-<k>.json` | the PR session | parsed into `round_findings` by `src/findingsrecord.ts` |
 | `state/posting-receipts/` | `pr-<n>-round-<k>.json` | the shell posting route (`scripts/post-review.sh`) | read by `src/posting-receipt.ts` / `src/verdicts.ts` |
 | `state/round-prompts/` | `pr-<n>-round-<k>.md` | `SessionManager` | the exact dispatched bytes, so a redelivery re-sends them rather than re-rendering |
-| `state/round-progress/` | `pr-<n>.json` | the pi progress extension | ephemeral live pass telemetry; parsed by `src/round-progress.ts` |
+| `state/round-progress/` | `pr-<n>.json` | the worker's LiveEvent projection (`src/live/`) | ephemeral live pass telemetry; parsed by `src/round-progress.ts` |
 | `state/session-prompts/` | `<session>.md` | `SessionManager` | the session's system prompt |
 | `state/session-commands/` | `<id>.md` | `SessionManager` | the payload bytes a `session_commands` row points at |
 | `state/sessions/` | `<session>.json`, `<session>.bridge-<generation>.json` | `SessionManager` | birth record and inject-bridge readiness receipt |

@@ -31,7 +31,7 @@ allowed to execute).
 | Bridge readiness receipt (the overseer's) | `src/overseer-bridge.ts` |
 | Durable command marker | `src/session-command.ts` |
 | Daemon-side reconciler over that slot | `src/session-command-supervisor.ts` |
-| Live lens progress (publisher / reader) | `extensions/round-progress.ts`, `src/round-progress.ts` |
+| Live lens progress (publisher / reader) | `src/live/publish.ts`, `src/round-progress.ts` |
 | Ledger survival across compaction | `extensions/ledger-pin.ts` |
 | Lens agent build + addendum registry | `src/include.ts` |
 | Prompt rendering | `src/templates.ts` |
@@ -93,8 +93,7 @@ The extensions are listed by `extensionPaths()` and their order is load-bearing
 1. `extensions/inject-bridge.ts` — the wake channel.
 2. `extensions/ledger-pin.ts` — owns compaction.
 3. `extensions/muted-theme.ts` — colours only.
-4. `extensions/round-progress.ts` — read-only progress sidecar.
-5. `extensions/vendor/openviking-pi/index.ts` — memory tools, deliberately
+4. `extensions/vendor/openviking-pi/index.ts` — memory tools, deliberately
    last, and the only extension here that is vendored rather than written
    in-tree.
 
@@ -356,8 +355,8 @@ Relevant `[daemon]` knobs in `config.example.toml`:
 SQLite is authoritative for the round plan, its timing and its verdict. It
 cannot see what the parent session and its subagents are doing *right now*.
 
-`extensions/round-progress.ts` publishes that ephemeral state and nothing else.
-It observes pi's tool-execution events, keys each subagent by **invocation**
+The worker's LiveEvent log, projected by `src/live/`, publishes that ephemeral
+state and nothing else (the tmux pi extension that once did is gone). It observes tool-execution events, keys each subagent by **invocation**
 rather than by agent name (a parent may launch the same lens twice, and the
 second run must not inherit the first run's terminal timestamp), and atomically
 writes `state/round-progress/pr-<n>.json`. It returns immediately when `QCR_PR`

@@ -322,10 +322,6 @@ export class PiSessionManager {
       join(this.root, "extensions", "inject-bridge.ts"),
       join(this.root, "extensions", "ledger-pin.ts"),
       join(this.root, "extensions", "muted-theme.ts"),
-      // Publishes the parent + lens lifecycle as an ephemeral read-only
-      // sidecar for the operator TUI. It observes pi events only; no session
-      // scheduling or daemon state passes through it.
-      join(this.root, "extensions", "round-progress.ts"),
       // docs/duplicate-merge.md: the `cluster_findings` tool a round calls
       // before pass-validate (`[review] dedup_merge`). The bench session
       // loads the same file (src/bench/runner.ts), so both routes group
