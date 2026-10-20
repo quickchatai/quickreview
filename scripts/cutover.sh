@@ -33,7 +33,7 @@
 # and checked one worker round. This script never lifts it on its own; stage 9
 # runs `qcr drain off` only on the owner's explicit go.
 #
-# The hold (P8.21b, owner ruling 2026-10-20) is the operator's no-auto-lift
+# The hold is the operator's no-auto-lift
 # drain: no boot lifts it, only `qcr drain off`. The legacy daemon cannot
 # spell one — its strict command schema refuses a `hold` field — so stage 2
 # sets the operator's drain, and the release's first boot (the boot that adds

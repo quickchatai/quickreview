@@ -1,4 +1,4 @@
-// The operator's no-auto-lift drain HOLD (P8.21b, owner ruling 2026-10-20).
+// The operator's no-auto-lift drain HOLD.
 //
 // At the cutover the drain must hold until the owner has triggered and checked
 // one worker round. A plain operator drain is lifted by the new boot's first
