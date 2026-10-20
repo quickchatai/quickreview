@@ -14,33 +14,25 @@
 //      landing between a round's validation and its posting step never gets
 //      the stale review posted against it. On the gate route the intent's
 //      commit_id is the reviewed head, so a mismatch with the guard-3 live
-//      read refuses; on the shell route the session passes QCR_EXPECTED_HEAD
-//      (cited by its round prompt) and guards.sh refuses the same way — a
-//      missing expectation only warns there, so a session whose prompt does
-//      not set it is never wedged.
+//      read refuses; a session's post carries QCR_EXPECTED_HEAD
+//      (cited by its round prompt) as the intent's commit_id, and a post that
+//      names none carries no expectation, so a session whose prompt does not
+//      set it is never wedged.
 //   4. No green CI at this head ⇒ APPROVE is unavailable. The review still
 //      posts — as a COMMENT with the approval withheld and a plain note saying
 //      so — and the PR is re-queued when CI goes green. The classifier lives
-//      in cigate.ts, which the shell mirror answers from too.
+//      in cigate.ts.
 //
 // All of them are installed on the one MutationGate (gate.ts `MutationGuard`),
 // not on a call site, so no posting route in the daemon can reach GitHub
-// around them. The sessions post through the shell instead
-// (scripts/post-review.sh, approve-pr.sh, reply-thread.sh), which does not go
-// through the gate — `scripts/guards.sh` is the mirror for that route,
-// together with the reviewed-head stamp that the gate's after-step makes on
-// its own route. The two halves are kept behaviourally identical:
-// tests/guards.test.ts drives the real gate and tests/guards-shell-*.test.ts
-// runs the real scripts, over the same cases.
-// Guard 2 never gates an APPROVE on either route. Guard coverage per shell
-// route: post-review.sh 1+2+3+5 (it hard-rejects
-// APPROVE, so guard 4 has nothing to say there), approve-pr.sh 3+4+5 — guards
-// 1 and 2 do not apply to it (an approval is not softened for a human
-// approval, and gating it on evidence would strand the wake triggers this
-// script clears), but guard 4 is exactly about approvals, so it does — and
-// reply-thread.sh 3. On the shell route guard 4 REFUSES rather than softens:
-// approve-pr.sh can only approve, so the session posts its COMMENT through
-// post-review.sh instead, which is what the round template tells it to do.
+// around them. The sessions post through scripts/post-review.sh,
+// approve-pr.sh and reply-thread.sh, Node-only clients of the daemon's post
+// endpoint (src/ipc/postshim.ts); the daemon builds the intent and hands it to
+// the same gate, so these guards bind them too. The gate's after-step makes
+// the reviewed-head stamp. tests/guards.test.ts drives the real gate over the
+// cases.
+// Guard 2 never gates an APPROVE. Guard 4 softens rather than refuses: an
+// approval over red CI posts as a COMMENT with the approval withheld.
 //
 // Nothing here dismisses, retracts or edits an existing review. A guard's only
 // powers are to refuse a mutation and to soften its event to COMMENT — a
@@ -260,8 +252,7 @@ export function makePostingGuard(deps: GuardDeps): MutationGuard {
       // only where the data exists —
       // an intent without a commit_id carries no expectation, and without the
       // guard-3 read there is no live head to compare against. Shas compare
-      // case-insensitively, matching the shell twin (guards.sh uses
-      // `${live,,}`/`${expected,,}`): git shas are hex, and an LLM-written
+      // case-insensitively: git shas are hex, and an LLM-written
       // commit_id with drifted case must never fake a "moved" head.
       // A deferred session review the daemon delivers
       // (`intent.postingRetry`) posts at its ORIGINAL commit_id even when the
@@ -293,8 +284,7 @@ export function makePostingGuard(deps: GuardDeps): MutationGuard {
       // max_per_pr` caps the rest. Every other guard still binds it —
       // merged/closed (3) and head drift (5) both ran above, unconditionally.
       //
-      // An APPROVE is exempt too, exactly as on the shell route (approve-pr.sh
-      // runs guards 3, 4 and 5 only). Every approval reaching the gate is a
+      // An APPROVE is exempt too, as a matter of design. Every approval reaching the gate is a
       // session's approve-pr.sh POST the daemon delivers, and the one that
       // meets an already-stamped head is the CI-green retry of a withheld
       // approval: its COMMENT stamped the head, and refusing the APPROVE here

@@ -24,25 +24,18 @@
   `publishability` and `fences-provenance` run `ls-files` on the checkout
   to list what they lint.
 - **Other subprocesses** are this repo's own shell scripts and CLIs, never a
-  network service or a VM. For example, `guards-shell-*.test.ts` runs the
-  real posting scripts against a loopback HTTP stub (see "Shell parity").
+  network service or a VM. For example, `post-shim.test.ts` runs the
+  three posting shims against a stub client.
 - The list drifts. Find the current one with
   `grep -l child_process tests/*.test.ts tests/helpers/*.ts`.
 
-## Shell parity
+## Posting guards
 
-`guards-shell-*.test.ts` is the proof that the shell posting route and the
-TypeScript gate agree. The files run the real scripts against a loopback
-stub, and the parity block at the end of `guards.test.ts` runs every guard
-case through both routes over the same world (the rig's stub, state.db and
-config.toml; the drivers are in `helpers/guards-parity.ts`): the real scripts
-on one side, the real gate and `GitHubAdapter` on the other. A route that
-answers differently fails by case name unless the case records the difference
-and its reason. The shell files are split by area so they run in parallel,
-each with its own stub from `helpers/guards-shell-rig.ts`; they keep the
-shell-only plumbing (receipts, outbox, deferred handoff, error wording) until
-P9.3 deletes the scripts. Change a guard on one side and you change it on
-both, with both tests.
+`guards.test.ts` runs every posting-guard case through the real gate and
+`GitHubAdapter` over a world (a loopback GitHub stub, state.db and config.toml
+from `helpers/guards-world-rig.ts`; the driver is `helpers/guards-parity.ts`).
+The shell route these cases were first pinned against was deleted with
+`scripts/guards.sh`; the answers are the contract on their own.
 
 ## Timeouts under load
 

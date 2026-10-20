@@ -699,7 +699,7 @@ export class CompanionLifecycle {
       // The companion's bright lines (frozen seeds, no-GitHub,
       // no-discard in the shared checkout) as tool_call vetoes — see the
       // header of extensions/companion-guard.ts. Companion only; the VM has
-      // the gate + guards.sh.
+      // the gate.
       `${ext}/companion-guard.ts`,
       "--extension",
       // The setup & scan tool belt — the deterministic SetupEngine

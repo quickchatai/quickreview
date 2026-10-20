@@ -1,0 +1,13 @@
+[
+  {
+    "kind": "create_review",
+    "method": "POST",
+    "path": "/repos/example-org/example-app/pulls/7/reviews",
+    "body": {
+      "commit_id": "68b8040aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "event": "COMMENT",
+      "body": "Looks fine overall; one question about the retry budget."
+    },
+    "pr": 7
+  }
+]

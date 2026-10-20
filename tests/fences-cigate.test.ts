@@ -1,22 +1,14 @@
-// The CI-classifier differential.
+// The adapter's CI read, over a loopback stub.
 //
-// `scripts/guards.sh`'s `guard_ci_state` is a hand-rolled jq reimplementation
-// of `classifyCi` in `src/cigate.ts`, and both file headers claim the two are
-// behaviourally identical. `tests/cigate.test.ts` drives the TypeScript and
-// `tests/guards-shell-cigate.test.ts` drives the script, over different
-// inputs; this file is the agreement assertion between them.
-//
-// That matters more here than for any other pair in the tree, because guard 4
-// is the only guard that gates an approval.
-//
-// This runs the REAL shell function against a loopback stub and the REAL
-// TypeScript function over the same corpus, and requires them to agree.
-import { execFile } from "node:child_process";
+// `classifyCi` in `src/cigate.ts` is the one CI rule (the shell mirror in
+// scripts/guards.sh is deleted, P9.3), and guard 4 is the only guard that gates
+// an approval. This file pins the half `tests/cigate.test.ts` cannot see: that
+// the adapter's `listChecks` reads EVERY page of check-runs and statuses, and
+// that an unreadable later page is an error, never a green read.
 import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { classifyCi, type CheckSummary } from "../src/cigate.js";
 import { parseConfig } from "../src/config.js";
@@ -24,205 +16,8 @@ import { MutationGate } from "../src/gate.js";
 import { GitHubAdapter } from "../src/github.js";
 import type { FetchFn, TokenMinter } from "../src/githubAuth.js";
 
-const exec = promisify(execFile);
 const ROOT = join(import.meta.dirname, "..");
 const cfg = parseConfig(readFileSync(join(ROOT, "tests", "fixtures", "config.toml"), "utf8"));
-
-/**
- * The shared corpus. Each case is a set of check runs; both classifiers see
- * exactly these and must return the same word.
- *
- * The cases cover the risky branches: latest-run-per-name (GitHub
- * auto-cancels superseded runs, and a permanent `cancelled` husk would
- * withhold every approval), the inert conclusions, the unfinished
- * states, and the default-to-red fall-through that makes every conclusion
- * GitHub invents next fail closed.
- */
-const CORPUS: ReadonlyArray<{
-  name: string;
-  runs: CheckSummary[];
-  statuses?: Array<{ context: string; state: string }>;
-}> = [
-  { name: "empty", runs: [] },
-  {
-    name: "one green",
-    runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "success" }],
-  },
-  {
-    name: "one failure",
-    runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "failure" }],
-  },
-  {
-    name: "one cancelled",
-    runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "cancelled" }],
-  },
-  {
-    name: "one timed_out",
-    runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "timed_out" }],
-  },
-  {
-    name: "one action_required",
-    runs: [
-      { name: "unit", source: "check_run", status: "completed", conclusion: "action_required" },
-    ],
-  },
-  {
-    name: "a conclusion GitHub has not invented yet",
-    runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "quantum_flux" }],
-  },
-  {
-    name: "queued",
-    runs: [{ name: "unit", source: "check_run", status: "queued", conclusion: null }],
-  },
-  {
-    name: "in_progress",
-    runs: [{ name: "unit", source: "check_run", status: "in_progress", conclusion: null }],
-  },
-  {
-    name: "all skipped",
-    runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "skipped" }],
-  },
-  {
-    name: "all neutral",
-    runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "neutral" }],
-  },
-  {
-    name: "green beside skipped",
-    runs: [
-      { name: "unit", source: "check_run", status: "completed", conclusion: "success" },
-      { name: "lint", source: "check_run", status: "completed", conclusion: "skipped" },
-    ],
-  },
-  {
-    name: "green beside a still-running check",
-    runs: [
-      { name: "unit", source: "check_run", status: "completed", conclusion: "success" },
-      { name: "e2e", source: "check_run", status: "in_progress", conclusion: null },
-    ],
-  },
-  {
-    name: "green beside a failure",
-    runs: [
-      { name: "unit", source: "check_run", status: "completed", conclusion: "success" },
-      { name: "e2e", source: "check_run", status: "completed", conclusion: "failure" },
-    ],
-  },
-  {
-    // GitHub cancels the superseded run of a check name. Only the newest run
-    // of each name counts, or a permanent husk withholds every approval forever.
-    name: "a cancelled husk superseded by a green rerun",
-    runs: [
-      {
-        name: "unit",
-        source: "check_run",
-        status: "completed",
-        conclusion: "cancelled",
-        started_at: "2026-08-19T09:00:00Z",
-      },
-      {
-        name: "unit",
-        source: "check_run",
-        status: "completed",
-        conclusion: "success",
-        started_at: "2026-08-19T10:00:00Z",
-      },
-    ],
-  },
-  {
-    name: "a green run superseded by a failing rerun",
-    runs: [
-      {
-        name: "unit",
-        source: "check_run",
-        status: "completed",
-        conclusion: "success",
-        started_at: "2026-08-19T09:00:00Z",
-      },
-      {
-        name: "unit",
-        source: "check_run",
-        status: "completed",
-        conclusion: "failure",
-        started_at: "2026-08-19T10:00:00Z",
-      },
-    ],
-  },
-  // A commit status is a second check, never a superseded run — whichever
-  // kind is timestamped, whichever is listed first. The two copies must agree
-  // on each of these rows.
-  {
-    name: "a failing status under a passing check-run's name",
-    runs: [
-      {
-        name: "unit",
-        source: "check_run",
-        status: "completed",
-        conclusion: "success",
-        started_at: "2026-08-19T10:00:00Z",
-      },
-    ],
-    statuses: [{ context: "unit", state: "failure" }],
-  },
-  {
-    name: "a pending status under a passing check-run's name",
-    runs: [
-      {
-        name: "unit",
-        source: "check_run",
-        status: "completed",
-        conclusion: "success",
-        started_at: "2026-08-19T10:00:00Z",
-      },
-    ],
-    statuses: [{ context: "unit", state: "pending" }],
-  },
-  {
-    name: "a queued null-start check-run under a passing status's name",
-    runs: [
-      { name: "unit", source: "check_run", status: "queued", conclusion: null, started_at: null },
-    ],
-    statuses: [{ context: "unit", state: "success" }],
-  },
-  {
-    name: "a failed null-start check-run under a passing status's name",
-    runs: [
-      {
-        name: "unit",
-        source: "check_run",
-        status: "completed",
-        conclusion: "failure",
-        started_at: null,
-      },
-    ],
-    statuses: [{ context: "unit", state: "success" }],
-  },
-  {
-    name: "a queued null-start check-run beside the older completed run of its name",
-    runs: [
-      {
-        name: "unit",
-        source: "check_run",
-        status: "completed",
-        conclusion: "success",
-        started_at: "2026-08-19T10:00:00Z",
-      },
-      { name: "unit", source: "check_run", status: "queued", conclusion: null, started_at: null },
-    ],
-  },
-  {
-    name: "a passing status beside a passing check-run of its name",
-    runs: [
-      {
-        name: "unit",
-        source: "check_run",
-        status: "completed",
-        conclusion: "success",
-        started_at: "2026-08-19T10:00:00Z",
-      },
-    ],
-    statuses: [{ context: "unit", state: "success" }],
-  },
-];
 
 let server: Server;
 let apiBase = "";
@@ -303,52 +98,15 @@ async function adapterClassifyInput(): Promise<CheckSummary[]> {
   );
 }
 
-/** The REAL `guard_ci_state`, sourced out of the real guards.sh. */
-async function shellClassify(): Promise<string> {
-  const script = [
-    `ROOT=${JSON.stringify(ROOT)}`,
-    `API=${JSON.stringify(apiBase)} CONFIG=/dev/null REPO=o/r PR=5180 LIVE=0`,
-    'die() { echo "$*" >&2; exit 1; }',
-    "cfg() { :; }",
-    "guard_token() { :; }",
-    `. ${JSON.stringify(join(ROOT, "scripts", "guards.sh"))}`,
-    'guard_ci_state "deadbeefcafe"',
-  ].join("\n");
-  const { stdout } = await exec("bash", ["-c", script]);
-  return stdout.trim();
-}
-
-describe("the shell CI classifier agrees with classifyCi", () => {
+describe("the adapter reads every page of the head's checks", () => {
   /**
-   * MUTATION: change `elif any($finished[]; .[1] == "success") then "green"`
-   * to `then "red"` in scripts/guards.sh — every green case fails here.
-   * Or delete `latestRunPerName` from src/cigate.ts — the two superseded-run
-   * cases fail.
-   */
-  for (const c of CORPUS) {
-    it(`agrees on: ${c.name}`, async () => {
-      checkRuns = c.runs;
-      statuses = c.statuses ?? [];
-      const shell = await shellClassify();
-      const ts = classifyCi(await adapterClassifyInput());
-      expect(
-        shell,
-        `guard 4 is the only guard that gates an approval, and its two implementations disagree on "${c.name}": ` +
-          `scripts/guards.sh says "${shell}", src/cigate.ts says "${ts}". Change both, or the shell route — which is ` +
-          "the LIVE posting route — enforces a different rule from the one the tests pin.",
-      ).toBe(ts);
-    });
-  }
-
-  /**
-   * Both readers must see EVERY check at the head, not the first page of each
+   * The reader must see EVERY check at the head, not the first page of each
    * endpoint. A head with more than 100 check-runs (matrix jobs plus reruns —
    * superseded runs still count toward the total) or 100 status contexts puts
    * the rest on page 2; a reader of page 1 alone would miss a failing or
    * pending one there, classify green, and allow APPROVE.
    *
-   * MUTATION: drop the page loop from `listChecks` in src/github.ts, or from
-   * `guard_ci_pages` in scripts/guards.sh — the matching case reads green.
+   * MUTATION: drop the page loop from `listChecks` in src/github.ts, — the matching case reads green.
    */
   const greens = (n: number): CheckSummary[] =>
     Array.from({ length: n }, (_, i) => ({
@@ -387,88 +145,20 @@ describe("the shell CI classifier agrees with classifyCi", () => {
       want: "red",
     },
   ]) {
-    it(`both read past the first page: ${c.name}`, async () => {
+    it(`reads past the first page: ${c.name}`, async () => {
       checkRuns = c.runs;
       statuses = c.statuses;
       expect(classifyCi(await adapterClassifyInput()), "src/github.ts listChecks").toBe(c.want);
-      expect(await shellClassify(), "scripts/guards.sh guard_ci_state").toBe(c.want);
     });
   }
 
   /**
    * An error body on a LATER page is not a short page. Read as one, the first
-   * 100 green rows pass for the whole list and the shell says green while the
-   * adapter throws. The shell must drop the truncated read (unreadable), never
-   * classify it.
-   *
-   * MUTATION: in `guard_ci_pages`, read a later page's error object as `[]`
-   * (the page-1 reading) — the shell says "green" here.
+   * 100 green rows would pass for the whole list. The adapter must throw.
    */
   it("an error on page 2 is an unreadable read, never a green one", async () => {
     checkRuns = [...greens(100), { ...greens(1)[0]!, name: "late", conclusion: "failure" }];
     failRunsPage = 2;
     await expect(adapterClassifyInput()).rejects.toThrow();
-    expect(await shellClassify()).not.toBe("green");
-  });
-
-  /**
-   * The one case where they do not agree, asserted as the disagreement it is.
-   *
-   * When the check list cannot be read at all, `guard_ci_state` ends
-   * `2>/dev/null || echo unknown`, and `guard_require_green_ci`'s `case`
-   * treats `unknown` like `green` — "the guard blocks only what it can see".
-   * That is a silent FAIL-OPEN on the only guard that gates approvals, and it
-   * is asymmetric with guard 3 three functions above, which fails CLOSED and
-   * loudly on an unreadable PR state.
-   *
-   * `classifyCi` has no such state: it takes a list, and an empty list is
-   * `none`.
-   *
-   * This is deliberately not repaired here. Making guard 4 fail closed would
-   * withhold approvals during a GitHub API blip — a live behaviour change on
-   * the approval path, which is the owner's call and not a fence's. What the
-   * fence owes is that the asymmetry is written down and cannot change
-   * unnoticed in either direction.
-   *
-   * MUTATION: change the `*) ;;` arm of `guard_require_green_ci` to include
-   * `unknown)` in the `die` branch — this fails, and the record should then
-   * be deleted.
-   */
-  it("records the unreadable-checks asymmetry: guard 4 fails OPEN, guard 3 fails CLOSED (MC-15)", async () => {
-    const guards = (await import("node:fs")).readFileSync(
-      join(ROOT, "scripts", "guards.sh"),
-      "utf8",
-    );
-
-    // Guard 4's classifier still swallows its own failure into "unknown"…
-    expect(guards).toMatch(/2>\/dev\/null \|\| echo unknown/);
-
-    const requireGreen = /guard_require_green_ci\(\)[\s\S]*?\n\}/.exec(guards)?.[0] ?? "";
-    expect(requireGreen, "guard_require_green_ci not found — this record is now vacuous").toContain(
-      "case ",
-    );
-
-    // …and `unknown` is still not among the states that refuse. This is the
-    // assertion the record turns on: asserting only that a `*)` catch-all
-    // exists would survive the fix, because `green` needs that arm too, and
-    // the record would never retire.
-    const refusing = /case "\$state" in([\s\S]*?)esac/.exec(requireGreen)?.[1] ?? "";
-    expect(
-      refusing,
-      "the `case` over the CI state moved — say what happens on an unreadable check list",
-    ).toContain("red|pending");
-    const dieArm = /^\s*(red\|pending[^)]*)\)/m.exec(refusing)?.[1] ?? "";
-    if (dieArm.includes("unknown")) {
-      throw new Error(
-        "guard 4 now REFUSES on an unreadable check list — the MC-15 fail-open is fixed. Delete this record and " +
-          "assert the closed behaviour directly; `tests/guards-shell-cigate.test.ts` is where the live case belongs.",
-      );
-    }
-
-    // …while guard 3, three functions above, fails closed and says so.
-    const requireOpen = /guard_require_open\(\)[\s\S]*?\n\}/.exec(guards)?.[0] ?? "";
-    expect(requireOpen, "guard 3 must still fail CLOSED on an unreadable PR state").toContain(
-      "fail closed",
-    );
   });
 });

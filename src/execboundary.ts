@@ -31,9 +31,8 @@
 //   · It is bounded to the CURRENT head. `reviewed_heads` is one row per PR
 //     (upsert), so an older head's legitimate review has no surviving trace and
 //     auditing history would be all noise.
-//   · `guard_stamp_reviewed_head` in scripts/guards.sh swallows its own
-//     failures (`2>/dev/null || true`). A silently failed stamp presents here
-//     as an unaccounted review. That is the right way round: a broken ledger
+//   · A reviewed-head stamp that failed without a trace (the gate's after-step
+//     is best-effort) presents here as an unaccounted review. That is the right way round: a broken ledger
 //     and an ungated write are both faults, and the message says so.
 //   · It detects; it never blocks. A detector that could wedge a review would
 //     be traded away the first time it misfired.
@@ -204,7 +203,7 @@ function roundPolicyWatchPaths(sandboxRoot: string, env: InstallEnv): string[] {
 const MAX_HASH_DEPTH = 16;
 
 /** One watched path's value: a file's content hash, a directory's RECURSIVE
- * content hash (so a rewritten `scripts/guards.sh` changes `scripts`, not only
+ * content hash (so a rewritten `scripts/post-review.sh` changes `scripts`, not only
  * a planted file — a listing hash would miss the rewrite), or "absent".
  *
  * Async, with a real event-loop turn after every file hashed: the policy
@@ -579,7 +578,7 @@ export function ungatedReviewMessage(pr: number, found: readonly UngatedReview[]
     `EXEC BOUNDARY — PR #${pr}: ${found.length} bot-authored review(s) at the current head with no local posting record: ${list}.`,
     "Two readings, both faults: (a) something posted to GitHub outside the mutation gate and the posting guards —",
     "check the round's session transcript and the exec_policy_violation events; or (b) the daemon posted it and the",
-    "reviewed_heads stamp failed silently (scripts/guards.sh swallows that error), which breaks guard 2 for this PR.",
+    "reviewed_heads stamp failed silently (the gate's after-step is best-effort), which breaks guard 2 for this PR.",
     "Rule out (a) first. This check only reports: it never withdraws, retracts or edits a review.",
   ].join("\n");
 }

@@ -13,7 +13,7 @@
 //  - the verdict path requeues instead of applying, and past the cap ends on
 //    the anomaly path — never with the verdict applied over the gap.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import Database from "better-sqlite3";
@@ -30,7 +30,6 @@ import type { PassPlanEntry, SessionHooks } from "../src/types.js";
 import { roundPromptMarker } from "../src/types.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
-import { HEAD, useGuardsShellRig } from "./helpers/guards-shell-rig.js";
 
 const root = resolve(import.meta.dirname, "..");
 const baseCfg: Config = parseConfig(
@@ -108,6 +107,8 @@ function snapshot(
 }
 
 const TIMEOUT = "pass pass-security--sol-high timed out after 8 min (retried once)";
+
+const HEAD = "68b8040c0ffee1234567890abcdef0123456789a";
 
 describe("the plan builder marks the required rows", () => {
   it("pass-baseline and every risk pass are required; nothing else is", () => {
@@ -316,81 +317,6 @@ describe("scripts/required-passes.py answers as the TypeScript rule does", () =>
     expect(out.split(":")[0]!.trim()).toBe(expected);
     expect(code).toBe(expected === "missing" ? 3 : 0);
     if (expected === "missing" && plan === PLAN) expect(out).toContain(TIMEOUT);
-  });
-});
-
-describe("the posting route refuses while a required pass is missing", () => {
-  const s = useGuardsShellRig();
-
-  function seed(progress: RoundProgressSnapshot): void {
-    const store = new StateStore(s.dbPath);
-    store.upsertPr({
-      number: 5180,
-      state: "reviewing",
-      head_sha: HEAD,
-      title: "PR",
-      author: "pr-author",
-      trigger_ts: null,
-      stale_recheck: 0,
-      migration_gate: 0,
-    });
-    const id = store.startRound(5180, "first", ["pass-baseline", "pass-security"], 60);
-    store.setRoundMeta(id, { pass_plan: PLAN });
-    store.close();
-    mkdirSync(join(s.dir, "round-progress"), { recursive: true });
-    writeFileSync(join(s.dir, "round-progress", "pr-5180.json"), JSON.stringify(progress));
-  }
-  const env = () => ({
-    QCR_EXPECTED_HEAD: HEAD,
-    QCR_ROUND_NO: "1",
-    QCR_POSTING_RECEIPT_DIR: join(s.dir, "receipts"),
-  });
-  const receipts = () => {
-    try {
-      return readdirSync(join(s.dir, "receipts")).filter((n) => !n.endsWith(".lock"));
-    } catch {
-      return [];
-    }
-  };
-
-  it.each([
-    ["post-review.sh", ["5180", "COMMENT"]],
-    ["approve-pr.sh", ["5180"]],
-  ])("%s posts, queues and records nothing", async (script, args) => {
-    seed(
-      snapshot(1, [agent("pass-baseline", "completed"), agent("pass-security", "failed", TIMEOUT)]),
-    );
-    const res = await s.run(script, [...args, s.bodyFile()], env());
-    expect(res.ok).toBe(false);
-    expect(res.out).toContain("required pass missing");
-    expect(res.out).toContain(TIMEOUT);
-    expect(s.dryrunRecords()).toEqual([]);
-    expect(receipts()).toEqual([]);
-  });
-
-  it("refuses an approval after a failed required sweep despite a completed delta", async () => {
-    seed(
-      snapshot(1, [
-        Object.assign(agent("pass-baseline", "completed"), { phase: "plan" }),
-        Object.assign(agent("pass-security", "completed"), { phase: "plan" }),
-        Object.assign(agent("pass-security", "failed", TIMEOUT), { phase: "sweep" }),
-      ]),
-    );
-    const store = new StateStore(s.dbPath);
-    store.setRoundMeta(store.roundsFor(5180)[0]!.id, { sweep_plan: [row("pass-security", true)] });
-    store.close();
-    const res = await s.run("approve-pr.sh", ["5180", s.bodyFile()], env());
-    expect(res.ok).toBe(false);
-    expect(res.out).toContain("sweep pass-security");
-    expect(s.dryrunRecords()).toEqual([]);
-    expect(receipts()).toEqual([]);
-  });
-
-  it("posts as usual once every required pass completed", async () => {
-    seed(snapshot(1, [agent("pass-baseline", "completed"), agent("pass-security", "completed")]));
-    const res = await s.run("post-review.sh", ["5180", "COMMENT", s.bodyFile()], env());
-    expect(res.ok).toBe(true);
-    expect(s.dryrunRecords()).toHaveLength(1);
   });
 });
 

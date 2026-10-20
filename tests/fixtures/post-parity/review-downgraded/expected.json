@@ -1,0 +1,21 @@
+[
+  {
+    "kind": "create_review",
+    "method": "POST",
+    "path": "/repos/example-org/example-app/pulls/7/reviews",
+    "body": {
+      "commit_id": "68b8040aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "event": "COMMENT",
+      "body": "One blocker remains in the retry path.\n\n\n<!-- qcr-post:v1:7:1:68b8040aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\n\n_Not blocking: **@mhale** has already approved this head (`68b8040`). The findings above are reported for information only — this review does not request changes._",
+      "comments": [
+        {
+          "path": "src/retry.ts",
+          "line": 7,
+          "side": "RIGHT",
+          "body": "[blocker] retries forever"
+        }
+      ]
+    },
+    "pr": 7
+  }
+]

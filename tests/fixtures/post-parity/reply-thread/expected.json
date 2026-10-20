@@ -1,0 +1,11 @@
+[
+  {
+    "kind": "create_review_comment_reply",
+    "method": "POST",
+    "path": "/repos/example-org/example-app/pulls/7/comments/9001/replies",
+    "body": {
+      "body": "Thanks, fixed in the next push — \"naïve\" is now handled.\n\n(日本語 stays intact.)\n"
+    },
+    "pr": 7
+  }
+]

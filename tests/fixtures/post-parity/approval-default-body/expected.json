@@ -1,0 +1,31 @@
+[
+  {
+    "kind": "create_review",
+    "method": "POST",
+    "path": "/repos/example-org/example-app/pulls/7/reviews",
+    "body": {
+      "commit_id": "68b8040aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "event": "APPROVE",
+      "body": "Automated review: approved."
+    },
+    "pr": 7
+  },
+  {
+    "kind": "remove_label",
+    "method": "DELETE",
+    "path": "/repos/example-org/example-app/issues/7/labels/AI%20review%20requested",
+    "pr": 7
+  },
+  {
+    "kind": "delete_team_review_request",
+    "method": "DELETE",
+    "path": "/repos/example-org/example-app/pulls/7/requested_reviewers",
+    "body": {
+      "reviewers": [],
+      "team_reviewers": [
+        "review"
+      ]
+    },
+    "pr": 7
+  }
+]

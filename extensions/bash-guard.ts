@@ -752,7 +752,7 @@ const COMMAND_INJECTING_ENV_RE = /^GIT_CONFIG_(KEY|VALUE)_\d+$/;
  *
  * SCOPE: this closes the ENV-PREFIX spelling. The two further routes —
  * `bash -c '<sanctioned script> ; <anything>'` past the segment policy, and
- * overwriting the config / `guards.sh` / the posting scripts / the compiled
+ * overwriting the config / the posting scripts / the compiled
  * guard outright — are closed elsewhere: the `bash -c` payload is re-parsed as
  * its own command (`bashCPayload`, from `checkSegment`), and every
  * policy-carrying file is unwritable at BOTH the write-tool and the
@@ -2037,8 +2037,8 @@ export function isGitConfigSurface(path: string): boolean {
  *     invocation, and `guard_enabled` treats a knob as ON unless it is literally
  *     `false`, so ONE write turns guards 1-5 off and flips a dry-run install to
  *     live on the next sanctioned post — hard rule 1, by a redirection.
- *   · `scripts/**`            — the sanctioned posting route AND `guards.sh`,
- *     the shell mirror of the one MutationGate. Overwriting one posts around it.
+ *   · `scripts/**`            — the sanctioned posting route (the shims that
+ *     hand over to the daemon). Overwriting one posts around it.
  *   · `dist/**`               — the COMPILED artifacts the container actually
  *     runs, `dist/extensions/bash-guard.js` among them: overwrite the compiled
  *     guard and the boundary is off for every later round in that container.

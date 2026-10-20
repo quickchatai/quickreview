@@ -33,12 +33,7 @@ import {
   type PostAction,
   type Route,
 } from "./helpers/guards-parity.js";
-import {
-  exec as rigExec,
-  root as rigRoot,
-  useGuardsShellRig,
-  type GuardsShellRig,
-} from "./helpers/guards-shell-rig.js";
+import { useGuardsWorld, type GuardsWorld } from "./helpers/guards-world-rig.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const cfg: Config = parseConfig(
@@ -702,7 +697,7 @@ describe("dispatch — a tick with no new evidence starts no round", () => {
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
       queued(5409, HEAD);
-      // Exactly the row the shell route leaves before the watcher enriches it.
+      // Exactly the row the posting route leaves before the watcher enriches it.
       store.recordReviewedHead(5409, { head_sha: HEAD, posted_event: "REQUEST_CHANGES" });
       expect(store.reviewedHead(5409)).toMatchObject({
         verdict: null,
@@ -933,7 +928,7 @@ describe("guard 5 — the head the review is about must still be the live head",
     expect((await gate.execute(reviewIntent("REQUEST_CHANGES", HEAD))).executed).toBe(true);
   });
 
-  it("compares shas case-insensitively — matching the guards.sh twin's ${live,,} convention", async () => {
+  it("compares shas case-insensitively", async () => {
     const { gate, adapter } = harness();
     adapter.pr = { ...adapter.pr, head_sha: HEAD.toUpperCase() }; // same sha, drifted case
     expect((await gate.execute(reviewIntent("REQUEST_CHANGES", HEAD))).executed).toBe(true);
@@ -1009,32 +1004,15 @@ describe("postingRetry — a deferred session review delivered at its original h
   });
 });
 
-// ---- parity: the shell route and this gate answer the same cases ------------
+// ---- the posting guards, case by case, through the Node route --------------
 //
-// The sessions post through scripts/post-review.sh, approve-pr.sh and
-// reply-thread.sh (scripts/guards.sh), the daemon through the gate above.
-// Until the shell guards are deleted (P9.3) the shell stays the reference the
-// Node guards must match, so every case here runs on BOTH routes against ONE
-// world — the shell rig's loopback GitHub stub, state.db and config.toml, read
-// by the real scripts on one side and by the real GitHubAdapter plus
-// makePostingGuard on the other (tests/helpers/guards-parity.ts). Asserting
-// each side in its own file would let them drift; here a case that one route
-// answers differently fails by name, unless the case says so itself, in a
-// `shell`/`node` override with the reason beside it.
-//
-// This block is the port of tests/guards-shell-*.test.ts, file by file:
-//   guards-shell-post       guard 1 and guard 2 on post-review.sh        ported
-//   guards-shell-parity     the guard-2 table and the reviewed-head stamp ported
-//   guards-shell-closed     guard 3 on all three scripts                  ported
-//   guards-shell-drift      guard 5 (the message wording stays shell-only) ported
-//   guards-shell-cigate     guard 4 (the receipt withdrawal stays shell-only) ported
-//   guards-shell-receipts, -noop, -deferred
-//       the shell's posting-receipt.py / outbox / deferred-handoff plumbing,
-//       its comments-file validation and its error wording. The Node route
-//       has no counterpart to compare (the daemon's outbox is tested in
-//       posting-outbox*.test.ts); P9.3 replaces them with the Node client's
-//       own tests.
-// The guards-shell files stay as they are until P9.3 deletes the scripts.
+// Sessions post through scripts/post-review.sh, approve-pr.sh and
+// reply-thread.sh, which are Node-only clients of the daemon's post endpoint
+// (P9.3); every post reaches the gate above. These cases were first pinned
+// against the shell guards on ONE world (the world rig's loopback GitHub stub,
+// state.db and config.toml, tests/helpers/guards-world-rig.ts) and now run on
+// the Node route alone: the real GitHubAdapter plus makePostingGuard
+// (tests/helpers/guards-parity.ts).
 
 const RIG_MOVED = "5b71a80ffee0987654321fedcba09876543210ab";
 
@@ -1053,10 +1031,9 @@ interface ParityCase {
   action: PostAction;
   /** The sha the session names as the head it reviewed; null = none named. */
   expectedHead?: string | null;
-  world?: (s: GuardsShellRig) => void;
+  world?: (s: GuardsWorld) => void;
   want: Want;
-  /** A route-specific answer, with the reason the routes differ. */
-  shell?: Partial<Want>;
+  /** A deviation from `want`, with the reason beside it. */
   node?: Partial<Want>;
   why?: string;
 }
@@ -1180,7 +1157,7 @@ const guard1: ParityCase[] = [
   },
 ];
 
-// The guard-2 table the shell's parity file pinned against hasNewEvidence,
+// The guard-2 table pinned against hasNewEvidence,
 // now answered by both posting routes.
 const guard2Marks: Array<[string, Parameters<typeof seedMark>[1] | null, boolean]> = [
   [
@@ -1280,10 +1257,7 @@ const guard3: ParityCase[] = [
     action: COMMENT,
     world: (s) => (s.pr = null), // the stub 404s
     want: { sent: null, blocked: "pr-unreadable" },
-    shell: { sent: "COMMENT", blocked: undefined },
-    why:
-      "the gate fails closed in dry-run too; the script only fails closed in live mode and " +
-      "continues in dry-run, where nothing is sent anyway",
+    why: "the gate fails closed in dry-run too",
   },
   {
     what: "recheck_pr_state_before_post = false posts onto a merged PR",
@@ -1353,20 +1327,15 @@ const guard5: ParityCase[] = [
       setPr(s, { head: { sha: RIG_MOVED } });
       setGuardKnobs(s, { recheck_pr_state_before_post: false });
     },
-    want: { sent: null, blocked: "head-drift" },
-    node: { sent: "COMMENT", blocked: undefined },
+    want: { sent: "COMMENT" },
     why:
-      "the script still reads the PR with guard 3 switched off and keeps checking the head; " +
-      "the gate makes no read then, so guard 5 has no live head to compare with. The Node " +
-      "answer is the owner-ruled behaviour (2026-10-19): the route keeps posting, and the " +
-      "shell refusal is not carried over",
+      "the gate makes no read with guard 3 switched off, so guard 5 has no live head to " +
+      "compare with (owner-ruled behaviour, 2026-10-19): the route keeps posting",
   },
 ];
 
-// A failing check refuses the approval on the shell route and softens it to a
-// COMMENT on the gate; the shell case follows the refusal with the COMMENT the
-// round template prescribes (guards-parity.ts), so both end with the review
-// posted as a COMMENT and no APPROVE sent.
+// A failing check softens the approval to a COMMENT on the gate: the review is
+// posted as a COMMENT and no APPROVE is sent.
 const WITHHELD: Want = { sent: "COMMENT" };
 const guard4: ParityCase[] = [
   {
@@ -1495,7 +1464,7 @@ const guard4: ParityCase[] = [
 ];
 
 function expectOutcome(route: Route, got: Outcome, c: ParityCase): void {
-  const want: Want = { ...c.want, ...(c[route.name] ?? {}) };
+  const want: Want = { ...c.want, ...(c.node ?? {}) };
   const at = `${route.name} route`;
   expect(got.sent, `${at}: the event sent`).toBe(want.sent);
   expect(got.blocked, `${at}: the guard that refused`).toBe(want.blocked ?? null);
@@ -1505,8 +1474,8 @@ function expectOutcome(route: Route, got: Outcome, c: ParityCase): void {
   if (want.commitId) expect(got.commitId, `${at}: commit_id`).toBe(want.commitId);
 }
 
-describe("parity — scripts/guards.sh and src/guards.ts answer the same cases", () => {
-  const rig = useGuardsShellRig();
+describe("the posting guards over the Node route", () => {
+  const rig = useGuardsWorld();
 
   const groups: Array<[string, ParityCase[]]> = [
     ["guard 1 (a human approval at this head)", guard1],
@@ -1523,19 +1492,9 @@ describe("parity — scripts/guards.sh and src/guards.ts answer the same cases",
           setPr(s);
           c.world?.(s);
           const opts = c.expectedHead === undefined ? {} : { expectedHead: c.expectedHead };
-          const outcomes: Outcome[] = [];
           for (const route of routes(s)) {
             const got = await route.post(c.action, opts);
             expectOutcome(route, got, c);
-            outcomes.push(got);
-          }
-          // Where the case names no difference, the routes agree outright.
-          if (!c.shell && !c.node) {
-            const [shell, node] = outcomes as [Outcome, Outcome];
-            expect({ sent: node.sent, blocked: node.blocked }).toEqual({
-              sent: shell.sent,
-              blocked: shell.blocked,
-            });
           }
         });
       }
@@ -1543,9 +1502,9 @@ describe("parity — scripts/guards.sh and src/guards.ts answer the same cases",
   }
 
   describe("the reviewed-head stamp", () => {
-    // The gate's after-step stamps the mark on its own route; the shell stamps it
-    // itself, for the posting scripts. Same starting row, same posted review,
-    // same row after (reviewed_at aside, which is the stamp's own clock).
+    // The gate's after-step stamps the mark on a posted review: the same head
+    // keeps the verdict and round and clears the author reply; a new head
+    // replaces the row wholesale (reviewed_at aside, the stamp's own clock).
     const stamps: Array<[string, Parameters<typeof seedMark>[1], string, string]> = [
       [
         "the same head keeps the verdict and round, clears the author reply",
@@ -1567,21 +1526,8 @@ describe("parity — scripts/guards.sh and src/guards.ts answer the same cases",
     ];
 
     it.each(stamps)("%s", async (_what, seed, head, event) => {
-      const shellDb = rig.dbPath;
       const nodeDb = join(rig.dir, "node-state.db");
-      seedMark(rig, seed, shellDb);
       seedMark(rig, seed, nodeDb);
-
-      const script = [
-        `ROOT=${JSON.stringify(rigRoot)}`,
-        "API=http://127.0.0.1:1 CONFIG=/dev/null REPO=o/r PR=5180 LIVE=1",
-        'die() { echo "$*" >&2; exit 1; }',
-        "cfg() { :; }",
-        `. ${JSON.stringify(join(rigRoot, "scripts", "guards.sh"))}`,
-        `guard_stamp_reviewed_head ${JSON.stringify(head)} ${JSON.stringify(event)}`,
-      ].join("\n");
-      await rigExec("bash", ["-c", script], { env: { ...process.env, QCR_STATE_DB: shellDb } });
-
       const nodeStore = new StateStore(nodeDb);
       await makePostingGuard({
         store: nodeStore,
@@ -1589,17 +1535,14 @@ describe("parity — scripts/guards.sh and src/guards.ts answer the same cases",
         botLogin: BOT,
         guards: GUARDS_DEFAULTS,
       }).after?.({ ...reviewIntent(event as "COMMENT", head), pr: 5180 }, { executed: true });
-
-      const shellStore = new StateStore(shellDb);
-      const { reviewed_at: _a, ...shellRow } = shellStore.reviewedHead(5180)!;
       const { reviewed_at: _b, ...nodeRow } = nodeStore.reviewedHead(5180)!;
-      shellStore.close();
       nodeStore.close();
-      expect(nodeRow).toEqual(shellRow);
+      const prior = seed.head_sha === head;
       expect(nodeRow).toMatchObject({
         head_sha: head,
         posted_event: event,
         last_author_reply_at: null,
+        ...(prior ? { verdict: seed.verdict, round_no: seed.round_no } : {}),
       });
     });
   });

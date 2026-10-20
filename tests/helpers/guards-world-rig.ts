@@ -1,30 +1,19 @@
-// The rig behind the tests/guards-shell-*.test.ts files: the guards on the
-// other posting route. The sessions post through
-// scripts/post-review.sh, approve-pr.sh and reply-thread.sh, which do not go
-// through src/gate.ts — so scripts/guards.sh mirrors the guards there the same
-// way the dry-run gate is mirrored, and those files are the bypass-attempt
-// test: posting via the shell path still hits every guard the gate would
-// apply (1 + 2 + 3 on post-review.sh, 3 on the other two).
+// The world behind the posting-guard parity block in tests/guards.test.ts: a
+// loopback GitHub stub, a temp home with state.db and config.toml. The Node
+// route (the real MutationGate with src/guards.ts and the real GitHubAdapter)
+// reads it; the shell route that once read it too is gone (P9.3).
 //
-// No real GitHub and no real credential: GITHUB_API points at a loopback stub,
-// and the throwaway config's secrets_dir is an empty temp dir, so
-// mint-token.sh finds no PEM and the scripts fall back to an unauthenticated
-// read against the stub. Everything runs in dry-run, so nothing is ever sent.
+// No real GitHub and no real credential: the adapter's base URL points at the
+// stub. Everything runs in dry-run, so nothing is ever sent.
 //
-// The cases are split by area so vitest runs the parts in parallel; every
-// part calls useGuardsShellRig() once at module level, which gives it its OWN
-// stub server (port 0 — the kernel picks, so parts never collide), its own
-// temp home and its own state.db, fresh for every test.
+// Every user calls useGuardsWorld() once at module level, which gives it its
+// OWN stub server (port 0), its own temp home and its own state.db, fresh for
+// every test.
 import { afterEach, beforeEach, expect } from "vitest";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { createServer, type Server } from "node:http";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
-export const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+import { join } from "node:path";
 
 export const HEAD = "68b8040c0ffee1234567890abcdef0123456789a";
 
@@ -49,12 +38,7 @@ export interface CheckRunStub {
   started_at?: string | null;
 }
 
-// execFile, not execFileSync: the stub server shares this process's event
-// loop, so a synchronous child would deadlock waiting for a reply that cannot
-// be written until the child exits.
-export const exec = promisify(execFile);
-
-export interface GuardsShellRig {
+export interface GuardsWorld {
   mutationStatus: number;
   /** What GET /pulls/5180 answers; null makes the stub 404. */
   pr: PrStub | null;
@@ -65,17 +49,12 @@ export interface GuardsShellRig {
   /** Commit statuses at HEAD (the combined status endpoint). Empty by default
    * for the same reason. */
   statuses: Array<{ context: string; state: string }>;
-  /** This test's temp home (config.toml, secrets/, dryrun/, receipts/). */
+  /** This test's temp home (config.toml, secrets/, dryrun/). */
   dir: string;
   /** This test's state.db — never the repo's own. */
   dbPath: string;
   /** The stub's base URL. */
   apiBase: string;
-  run(
-    script: string,
-    args: string[],
-    extraEnv?: Record<string, string>,
-  ): Promise<{ ok: boolean; out: string; code: number }>;
   dryrunRecords(): string[];
   /** The single dry-run record the run produced, parsed. */
   record(): { note: string; body: { event?: string; body?: string; commit_id?: string } };
@@ -98,10 +77,10 @@ const CONFIG = (secretsDir: string) =>
 /** Registers the per-test stub + temp home on the calling file and returns the
  * live state object the file's tests read and mutate. Call once, at module
  * level. */
-export function useGuardsShellRig(): GuardsShellRig {
+export function useGuardsWorld(): GuardsWorld {
   let server: Server;
 
-  const s: GuardsShellRig = {
+  const s: GuardsWorld = {
     mutationStatus: 500,
     pr: null,
     reviews: [],
@@ -110,39 +89,6 @@ export function useGuardsShellRig(): GuardsShellRig {
     dir: "",
     dbPath: "",
     apiBase: "",
-    async run(script, args, extraEnv = {}) {
-      const env = {
-        ...process.env,
-        GITHUB_API: s.apiBase,
-        QCR_CONFIG: join(s.dir, "config.toml"),
-        QCR_DRYRUN_DIR: join(s.dir, "dryrun"),
-        // Never the repo's own state.db: the guards read and stamp this file.
-        QCR_STATE_DB: s.dbPath,
-        // Never the repo's own round-progress snapshots: the required-pass
-        // check reads this directory.
-        QCR_ROUND_PROGRESS_DIR: join(s.dir, "round-progress"),
-        ...extraEnv,
-      };
-      // The guard reads QCR_EXPECTED_HEAD from the caller's environment: unless
-      // a case sets it, it must be genuinely absent, not inherited from the
-      // runner.
-      if (!("QCR_EXPECTED_HEAD" in extraEnv))
-        delete (env as Record<string, unknown>).QCR_EXPECTED_HEAD;
-      try {
-        const { stdout, stderr } = await exec("bash", [join(root, "scripts", script), ...args], {
-          encoding: "utf8",
-          env,
-        });
-        return { ok: true, out: `${stdout}${stderr}`, code: 0 };
-      } catch (err) {
-        const e = err as { stdout?: string; stderr?: string; code?: number };
-        return {
-          ok: false,
-          out: `${e.stdout ?? ""}${e.stderr ?? ""}`,
-          code: typeof e.code === "number" ? e.code : -1,
-        };
-      }
-    },
     dryrunRecords() {
       try {
         return readdirSync(join(s.dir, "dryrun"));

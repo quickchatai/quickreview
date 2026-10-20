@@ -48,7 +48,7 @@ export interface PostingJob {
   attempted_at?: string;
   negative_at?: string;
   last_error?: string;
-  /** Set by `posting-receipt.py defer` — the session's POST got a
+  /** Set by `PostingJournal.defer` — the session's POST got a
    * 5xx or no answer and no review carried the marker. The first failure;
    * the daemon's retry schedule (state.db `posting_retries`) runs from it. */
   deferred_at?: string;
@@ -76,7 +76,7 @@ export interface PostingDeliveryAdapter {
   >;
 }
 
-// Same fsync + rename protocol as posting-receipt.py. File and directory sync
+// Same fsync + rename protocol as the posting journal. File and directory sync
 // are both required: a saved retry schedule must outlive a container restart.
 export function writePostingFile(path: string, value: unknown): void {
   const temp = `${path}.tmp-${randomUUID()}`;

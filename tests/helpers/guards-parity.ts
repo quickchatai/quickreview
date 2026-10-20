@@ -1,17 +1,12 @@
-// The two posting routes behind one interface, for the parity block in
-// tests/guards.test.ts: the shell route (scripts/post-review.sh,
-// approve-pr.sh and reply-thread.sh, which source scripts/guards.sh) and the
-// Node route (the real MutationGate with src/guards.ts installed and the real
-// GitHubAdapter doing the reads).
+// The Node posting route behind one interface, for the guard block in
+// tests/guards.test.ts: the real MutationGate with src/guards.ts installed and
+// the real GitHubAdapter doing the reads, over the world rig's loopback GitHub
+// stub, its state.db and its config.toml. The shell route these answers were
+// first pinned against (scripts/guards.sh) is deleted (P9.3); the answers are
+// now the contract on their own.
 //
-// Both routes read ONE world: the shell rig's loopback GitHub stub, its
-// state.db and its config.toml. A case sets the world up once and each route
-// answers from it, so a difference in an answer is a difference in the
-// guards, never in the fixtures. Everything runs in dry-run, so nothing is
-// sent: the outcome is read from the dry-run record the route wrote.
-//
-// The Node route is the one the shell routes are removed in favour of
-// (P9.3), so these answers are the contract it must keep.
+// Everything runs in dry-run, so nothing is sent: the outcome is read from the
+// dry-run record the route wrote.
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { vi } from "vitest";
@@ -21,8 +16,8 @@ import { MutationGate, type MutationIntent } from "../../src/gate.js";
 import { GitHubAdapter } from "../../src/github.js";
 import { makePostingGuard } from "../../src/guards.js";
 import { StateStore } from "../../src/state.js";
-import type { GuardsShellRig, PrStub } from "./guards-shell-rig.js";
-import { HEAD as RIG_HEAD } from "./guards-shell-rig.js";
+import type { GuardsWorld, PrStub } from "./guards-world-rig.js";
+import { HEAD as RIG_HEAD } from "./guards-world-rig.js";
 
 export const WORLD_HEAD = RIG_HEAD;
 export const PR_NUMBER = 5180;
@@ -54,7 +49,7 @@ export interface Outcome {
 }
 
 export interface Route {
-  readonly name: "shell" | "node";
+  readonly name: "node";
   post(action: PostAction, opts?: { expectedHead?: string | null }): Promise<Outcome>;
 }
 
@@ -63,7 +58,7 @@ const NOTHING: Outcome = { sent: null, blocked: null, body: "", commitId: "", no
 // ---- the world -------------------------------------------------------------
 
 /** The PR a real GitHub would answer with: head and author always present. */
-export function setPr(s: GuardsShellRig, over: Partial<PrStub> = {}): void {
+export function setPr(s: GuardsWorld, over: Partial<PrStub> = {}): void {
   s.pr = {
     state: "open",
     merged: false,
@@ -73,9 +68,9 @@ export function setPr(s: GuardsShellRig, over: Partial<PrStub> = {}): void {
   };
 }
 
-/** Seed the reviewed-head mark both routes read (guard 2). */
+/** Seed the reviewed-head mark the route read (guard 2). */
 export function seedMark(
-  s: GuardsShellRig,
+  s: GuardsWorld,
   mark: { head_sha: string; verdict?: string | null; round_no?: number; reply_at?: string },
   dbPath = s.dbPath,
 ): void {
@@ -89,24 +84,16 @@ export function seedMark(
   store.close();
 }
 
-/** Switch [guards] knobs in the one config.toml both routes parse. */
-export function setGuardKnobs(s: GuardsShellRig, knobs: Record<string, boolean>): void {
+/** Switch [guards] knobs in the one config.toml the route parse. */
+export function setGuardKnobs(s: GuardsWorld, knobs: Record<string, boolean>): void {
   const path = join(s.dir, "config.toml");
   const lines = Object.entries(knobs).map(([k, v]) => `${k} = ${v}`);
   writeFileSync(path, `${readFileSync(path, "utf8")}\n[guards]\n${lines.join("\n")}\n`);
 }
 
-// ---- the shell route ---------------------------------------------------------
+// ---- reading the dry-run records ------------------------------------------------
 
-const SHELL_REFUSALS: Array<[RegExp, Blocked]> = [
-  [/already merged/, "pr-merged"],
-  [/is closed — refusing/, "pr-closed"],
-  [/refusing to post \(guard 3, fail closed\)/, "pr-unreadable"],
-  [/\(guard 2\)/, "no-new-evidence"],
-  [/\(guard 5\)/, "head-drift"],
-];
-
-/** A dry-run record as the gate and the scripts write it. */
+/** A dry-run record as the gate writes it. */
 interface DryRunRecord {
   kind: string;
   note?: string;
@@ -137,48 +124,11 @@ function outcomeOf(records: Array<DryRunRecord>): Outcome {
   };
 }
 
-export function shellRoute(s: GuardsShellRig): Route {
-  const records = () => readRecords(join(s.dir, "dryrun"));
-  const refusal = (out: string): Blocked => {
-    const hit = SHELL_REFUSALS.find(([re]) => re.test(out));
-    if (!hit) throw new Error(`the shell route failed for no known guard:\n${out}`);
-    return hit[1];
-  };
-  return {
-    name: "shell",
-    async post(action, opts = {}) {
-      const body = s.bodyFile();
-      const env: Record<string, string> = {};
-      const expected = opts.expectedHead === undefined ? WORLD_HEAD : opts.expectedHead;
-      if (expected) env.QCR_EXPECTED_HEAD = expected;
-      const [script, args] =
-        action.kind === "review"
-          ? (["post-review.sh", [String(PR_NUMBER), action.event, body]] as const)
-          : action.kind === "approve"
-            ? (["approve-pr.sh", [String(PR_NUMBER), body]] as const)
-            : (["reply-thread.sh", [String(PR_NUMBER), String(COMMENT_ID), body]] as const);
-      const res = await s.run(script, [...args], env);
-      if (res.ok) return outcomeOf(records());
-      // Guard 4 on this route REFUSES an approval rather than softening it:
-      // approve-pr.sh can only approve, and the round template tells the
-      // session to post the same review as a COMMENT through post-review.sh.
-      // That follow-up is what the gate's softening does in one step, so the
-      // two are compared as the session's net effect.
-      if (action.kind === "approve" && /APPROVE is unavailable \(guard 4/.test(res.out)) {
-        const fallback = await s.run("post-review.sh", [String(PR_NUMBER), "COMMENT", body], env);
-        if (!fallback.ok) return { ...NOTHING, blocked: refusal(fallback.out) };
-        return outcomeOf(records());
-      }
-      return { ...NOTHING, blocked: refusal(res.out) };
-    },
-  };
-}
-
 // ---- the Node route -----------------------------------------------------------
 
-/** The Config both routes see: the fixture's shape, with the rig's repo, bot
- * login and [guards] — parsed from the very config.toml the scripts read. */
-function nodeConfig(s: GuardsShellRig): Config {
+/** The Config the route see: the fixture's shape, with the rig's repo, bot
+ * login and [guards] — parsed from the rig's config.toml. */
+function nodeConfig(s: GuardsWorld): Config {
   const base = parseConfig(
     readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
   );
@@ -200,7 +150,7 @@ const stubMinter = {
   invalidate: () => {},
 } as never;
 
-export function nodeRoute(s: GuardsShellRig): Route {
+export function nodeRoute(s: GuardsWorld): Route {
   const dryrunDir = () => join(s.dir, "dryrun-node");
   return {
     name: "node",
@@ -220,7 +170,7 @@ export function nodeRoute(s: GuardsShellRig): Route {
           }),
         );
         // The shim stamps the payload's commit_id with the head the round
-        // reviewed (QCR_EXPECTED_HEAD on the shell route), and with the live
+        // reviewed (QCR_EXPECTED_HEAD in the session's env), and with the live
         // head when the session named none.
         const live = s.pr?.head?.sha ?? WORLD_HEAD;
         const commitId = opts.expectedHead === undefined ? WORLD_HEAD : (opts.expectedHead ?? live);
@@ -259,7 +209,7 @@ export function nodeRoute(s: GuardsShellRig): Route {
   };
 }
 
-/** Both routes over the rig's world, shell first. */
-export function routes(s: GuardsShellRig): Route[] {
-  return [shellRoute(s), nodeRoute(s)];
+/** The routes over the rig's world. */
+export function routes(s: GuardsWorld): Route[] {
+  return [nodeRoute(s)];
 }

@@ -1,0 +1,40 @@
+[
+  {
+    "kind": "create_review",
+    "method": "POST",
+    "path": "/repos/example-org/example-app/pulls/7/reviews",
+    "body": {
+      "commit_id": "68b8040aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "event": "REQUEST_CHANGES",
+      "body": "**Verdict: request changes** — two blockers, one nit.\n\n1. `parse()` drops the trailing \"é\" — see \"naïve\" handling (日本語, 🙂).\n2. Path join uses a backslash: C:\\temp\\new\\table and a literal \\n sequence.\n\n```ts\nconst x = JSON.parse('{\"a\":\"b\\\\n\"}');\n```\n\nQuote: \"double\", 'single', <angle> & ampersand, $dollar `tick`.\n\n\n<!-- qcr-post:v1:7:1:68b8040aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->",
+      "comments": [
+        {
+          "path": "src/parse.ts",
+          "line": 12,
+          "side": "RIGHT",
+          "body": "[blocker] drops the accent: é → e"
+        },
+        {
+          "path": "src/join.ts",
+          "line": 30,
+          "side": "RIGHT",
+          "start_line": 28,
+          "start_side": "RIGHT",
+          "body": "[blocker] backslash \\ join\nsecond line with 日本語"
+        },
+        {
+          "path": "src/old.ts",
+          "line": 4,
+          "side": "LEFT",
+          "body": "[nit] removed here"
+        },
+        {
+          "path": "src/bare.ts",
+          "line": 1,
+          "body": "no side given"
+        }
+      ]
+    },
+    "pr": 7
+  }
+]

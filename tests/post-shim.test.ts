@@ -9,6 +9,7 @@ import {
   copyFileSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -249,14 +250,23 @@ describe("[P7.2] the three scripts hand over to the client when the worker socke
   });
 
   it.each(["post-review.sh", "approve-pr.sh", "reply-thread.sh"])(
-    "%s keeps its shell route when either variable is missing",
+    "%s is Node-only: it hands over unconditionally and holds no shell route (P9.3)",
     (script) => {
-      for (const env of [{}, { QCR_IPC_SOCKET: "/x/qcr.sock" }, { QCR_IPC_CAP_FD: "3" }]) {
-        const r = run(script, ["7", "COMMENT", "b.md"], env);
-        // The shell route runs: it needs the install locator, which is not here.
-        expect(r.stdout).not.toContain('["');
-        expect(r.status).not.toBe(0);
-      }
+      const body = readFileSync(join(SANDBOX, "scripts", script), "utf8");
+      expect(body).toMatch(/^exec node "\$ROOT\/dist\/src\/ipc\/postshim\.js" \w+ "\$@"$/m);
+      for (const gone of [
+        "guards.sh",
+        "posting-receipt",
+        "mint-token",
+        "curl",
+        "install-locator",
+        "config.toml",
+      ])
+        expect(body.replace(/^#.*$/gm, "")).not.toContain(gone);
+      // Without the socket in env the client itself refuses; no other route runs.
+      const r = run(script, ["7", "COMMENT", "b.md"], {});
+      expect(r.status).toBe(0);
+      expect(JSON.parse(r.stdout)[1]).toBe("7");
     },
   );
 });

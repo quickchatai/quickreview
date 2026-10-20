@@ -33,8 +33,7 @@ export const TYPECHECK_TIMEOUT_MS = 600_000;
  * the *Sync variants across a full run:
  *   bench-defects, bench-live-cap, bench-runpi-flush — the bench's runPi over a
  *     fake `pi`;
- *   guards-shell-* and guards — the real posting scripts, spawned by their
- *     shared rig (tests/helpers/guards-shell-rig.ts);
+ *   post-shim — the posting shims over a stub client;
  *   companion-memory — the forward's ssh probe (fails fast, no VM);
  *   onboard-streamrunner — a node child under the wizard's streaming runner;
  *   tui-deploy-process — a node child under the deploy tab's runner;
@@ -95,15 +94,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/fences-provenance.test.ts",
   "tests/ghcred-handoff.test.ts",
   "tests/golden-prompts.test.ts",
-  "tests/guards-shell-cigate.test.ts",
-  "tests/guards-shell-closed.test.ts",
-  "tests/guards-shell-deferred.test.ts",
-  "tests/guards-shell-drift.test.ts",
-  "tests/guards-shell-noop.test.ts",
-  "tests/guards-shell-parity.test.ts",
-  "tests/guards-shell-post.test.ts",
-  "tests/guards-shell-receipts.test.ts",
-  "tests/guards.test.ts", // the parity block runs the real posting scripts through the shell rig
+  "tests/guards.test.ts", // the guard cases drive the real gate over a loopback GitHub stub
   "tests/hf-export.test.ts",
   "tests/host-isolation.test.ts",
   "tests/host-wrapper.test.ts",
@@ -131,7 +122,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/pi-resolution.test.ts",
   "tests/pibuiltins.test.ts",
   "tests/plugin-qcr.test.ts", // the plugin's shell scripts against a fake docker, gh and qcr
-  "tests/post-payload-parity.test.ts", // the real post scripts beside the Node route, byte-compared in dry-run
+  "tests/post-payload-parity.test.ts", // the Node post route, compared with recorded dry-run payloads
   "tests/post-shim.test.ts", // the post scripts handing over to the client under bash
   "tests/posting-journal.test.ts", // the Python receipt helper beside the TypeScript journal
   "tests/pr-checks-why.test.ts",

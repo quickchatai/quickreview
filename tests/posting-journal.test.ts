@@ -1,12 +1,11 @@
-// [P7.2] The TypeScript posting journal writes the same receipt and outbox job
-// files as scripts/posting-receipt.py, step for step: the verdict watcher, the
-// outbox and the deferred retry read them and cannot tell which route wrote
-// them. Each scenario runs the Python helper and the journal over the same
-// inputs in two directories and compares the files, timestamps aside.
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+// [P7.2] The TypeScript posting journal writes the receipt and outbox job
+// files the verdict watcher, the outbox and the deferred retry read. Each
+// scenario's files are pinned as snapshots (timestamps blanked, key order kept):
+// they are the bytes scripts/posting-receipt.py wrote step for step until P9.3
+// deleted it, so the readers keep reading what they always read.
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   JournalError,
@@ -24,7 +23,6 @@ import {
 } from "../src/posting-receipt.js";
 import type { StandingMarkSnapshot } from "../src/standing-review.js";
 
-const PY = resolve(import.meta.dirname, "..", "scripts", "posting-receipt.py");
 const PR = 12;
 const ROUND = 2;
 const HEAD = "b".repeat(40);
@@ -41,7 +39,6 @@ const TIMES = [
 ];
 
 let work: string;
-let pyDir: string;
 let tsDir: string;
 let journal: PostingJournal;
 const receiptName = `pr-${PR}-round-${ROUND}.json`;
@@ -49,15 +46,10 @@ const jobName = `pr-${PR}-round-${ROUND}.outbox.json`;
 
 beforeEach(() => {
   work = mkdtempSync(join(tmpdir(), "journal-"));
-  pyDir = join(work, "py");
   tsDir = join(work, "ts");
   journal = new PostingJournal({ dir: tsDir, repo: REPO });
 });
 afterEach(() => rmSync(work, { recursive: true, force: true }));
-
-const py = (args: string[], env: Record<string, string> = {}): void => {
-  execFileSync("python3", ["-I", PY, ...args], { env: { ...process.env, ...env }, stdio: "pipe" });
-};
 
 /** A file as plain data, with its timestamps blanked. */
 function load(dir: string, name: string): Record<string, unknown> | null {
@@ -69,47 +61,17 @@ function load(dir: string, name: string): Record<string, unknown> | null {
 }
 
 function same(name: string): void {
-  const a = load(pyDir, name);
-  const b = load(tsDir, name);
-  expect(b, name).toEqual(a);
-  if (a && b) expect(Object.keys(b), `${name} key order`).toEqual(Object.keys(a));
+  expect(JSON.stringify(load(tsDir, name), null, 1)).toMatchSnapshot(name);
 }
 
-const bodyFile = (): string => {
-  const p = join(work, "body.md");
-  writeFileSync(p, "the review body");
-  return p;
-};
-const commentsFile = (): string => {
-  const p = join(work, "comments.json");
-  writeFileSync(
-    p,
-    JSON.stringify([{ path: "a.py", line: 3, side: "RIGHT", body: "b", extra: "dropped" }]),
-  );
-  return p;
-};
 const payload = (event: ReviewEvent = "REQUEST_CHANGES"): JobPayload => ({
   commit_id: HEAD,
   event,
   body: `the review body\n\n${postingMarker(KEY)}`,
   comments: [{ path: "a.py", line: 3, side: "RIGHT", body: "b" }] as unknown[],
 });
-const pyPath = (n: string) => join(pyDir, n);
 
-function bothEnqueue(event: ReviewEvent = "REQUEST_CHANGES", mode: "live" | "dryrun" = "live") {
-  py([
-    "enqueue",
-    pyPath(jobName),
-    KEY,
-    String(PR),
-    String(ROUND),
-    HEAD,
-    event,
-    REPO,
-    mode,
-    bodyFile(),
-    commentsFile(),
-  ]);
+function enqueue(event: ReviewEvent = "REQUEST_CHANGES", mode: "live" | "dryrun" = "live") {
   journal.enqueue({
     key: KEY,
     pr: PR,
@@ -120,18 +82,7 @@ function bothEnqueue(event: ReviewEvent = "REQUEST_CHANGES", mode: "live" | "dry
     payload: payload(event),
   });
 }
-function bothPrepare(intended: ReviewEvent = "REQUEST_CHANGES") {
-  py([
-    "prepare",
-    pyPath(receiptName),
-    KEY,
-    String(PR),
-    String(ROUND),
-    HEAD,
-    intended,
-    intended,
-    JSON.stringify(payload(intended)),
-  ]);
+function prepare(intended: ReviewEvent = "REQUEST_CHANGES") {
   journal.prepare({
     key: KEY,
     pr: PR,
@@ -142,28 +93,14 @@ function bothPrepare(intended: ReviewEvent = "REQUEST_CHANGES") {
   });
 }
 
-describe("[P7.2] the journal writes what posting-receipt.py writes", () => {
+describe("[P7.2] the journal writes the receipt and job files the readers expect", () => {
   it("enqueue, prepare, confirm", () => {
-    bothEnqueue();
+    enqueue();
     same(jobName);
-    bothPrepare();
+    prepare();
     same(receiptName);
     same(jobName);
     const response = { id: 501, commit_id: HEAD, state: "CHANGES_REQUESTED" };
-    py(
-      [
-        "confirm",
-        pyPath(receiptName),
-        KEY,
-        String(PR),
-        String(ROUND),
-        HEAD,
-        "REQUEST_CHANGES",
-        "REQUEST_CHANGES",
-        JSON.stringify(payload()),
-      ],
-      { QCR_POST_RESPONSE: JSON.stringify(response) },
-    );
     journal.confirm({
       key: KEY,
       pr: PR,
@@ -181,19 +118,8 @@ describe("[P7.2] the journal writes what posting-receipt.py writes", () => {
   });
 
   it("enqueue, prepare, dry-run", () => {
-    bothEnqueue("COMMENT", "dryrun");
-    bothPrepare("COMMENT");
-    py([
-      "dryrun",
-      pyPath(receiptName),
-      KEY,
-      String(PR),
-      String(ROUND),
-      HEAD,
-      "COMMENT",
-      "COMMENT",
-      JSON.stringify(payload("COMMENT")),
-    ]);
+    enqueue("COMMENT", "dryrun");
+    prepare("COMMENT");
     journal.dryrun({
       key: KEY,
       pr: PR,
@@ -208,21 +134,9 @@ describe("[P7.2] the journal writes what posting-receipt.py writes", () => {
   });
 
   it("enqueue, prepare, defer", () => {
-    bothEnqueue();
-    bothPrepare();
+    enqueue();
+    prepare();
     const reason = "GitHub answered 502; marker read: none";
-    py([
-      "defer",
-      pyPath(receiptName),
-      KEY,
-      String(PR),
-      String(ROUND),
-      HEAD,
-      "REQUEST_CHANGES",
-      "REQUEST_CHANGES",
-      JSON.stringify(payload()),
-      reason,
-    ]);
     journal.defer({
       key: KEY,
       pr: PR,
@@ -240,17 +154,13 @@ describe("[P7.2] the journal writes what posting-receipt.py writes", () => {
   });
 
   it("enqueue, withdraw: the job is set aside and nothing else is written", () => {
-    bothEnqueue("APPROVE");
-    py(["withdraw", pyPath(receiptName), KEY]);
+    enqueue("APPROVE");
     journal.withdraw(PR, ROUND, KEY);
-    for (const dir of [pyDir, tsDir]) {
-      expect(existsSync(join(dir, jobName))).toBe(false);
-      expect(readdirSync(dir).filter((f) => f.startsWith(`${jobName}.withdrawn-`))).toHaveLength(1);
-    }
+    expect(existsSync(join(tsDir, jobName))).toBe(false);
+    expect(readdirSync(tsDir).filter((f) => f.startsWith(`${jobName}.withdrawn-`))).toHaveLength(1);
     // never over a receipt
-    bothEnqueue("COMMENT");
-    bothPrepare("COMMENT");
-    expect(() => py(["withdraw", pyPath(receiptName), KEY])).toThrow();
+    enqueue("COMMENT");
+    prepare("COMMENT");
     expect(() => journal.withdraw(PR, ROUND, KEY)).toThrow(JournalError);
   });
 
@@ -263,17 +173,6 @@ describe("[P7.2] the journal writes what posting-receipt.py writes", () => {
       round_no: 1,
       last_author_reply_at: null,
     };
-    py([
-      "skip",
-      pyPath(receiptName),
-      KEY,
-      String(PR),
-      String(ROUND),
-      HEAD,
-      "REQUEST_CHANGES",
-      "live",
-      JSON.stringify(mark),
-    ]);
     expect(
       journal.skip({
         key: KEY,
@@ -312,21 +211,21 @@ describe("[P7.2] the journal writes what posting-receipt.py writes", () => {
     expect(skip({ ...ok, verdict: "NEEDS_HUMAN" })).toBe(false);
     expect(skip({ ...ok, head_sha: "c".repeat(40) })).toBe(false);
     expect(existsSync(join(tsDir, receiptName))).toBe(false);
-    bothEnqueue("COMMENT");
-    bothPrepare("COMMENT");
+    enqueue("COMMENT");
+    prepare("COMMENT");
     expect(() => skip(ok)).toThrow(/attempted post/);
   });
 
   it("hashes the receipt and the job alike, so the job reader accepts the receipt's twin", () => {
-    bothEnqueue();
-    bothPrepare();
+    enqueue();
+    prepare();
     const r = readPostingReceipt(tsDir, PR, ROUND) as PostingReceipt;
     expect(r.payload_sha256).toBe(payloadHash(payload()));
     expect(readPostingJob(join(tsDir, jobName))!.payload_sha256).toBe(r.payload_sha256);
   });
 
   it("refuses a changed queued input and a foreign key", () => {
-    bothEnqueue();
+    enqueue();
     expect(() =>
       journal.enqueue({
         key: KEY,
@@ -352,7 +251,7 @@ describe("[P7.2] the journal writes what posting-receipt.py writes", () => {
   });
 
   it("confirm refuses a response that contradicts the attempt", () => {
-    bothPrepare();
+    prepare();
     const base = {
       key: KEY,
       pr: PR,

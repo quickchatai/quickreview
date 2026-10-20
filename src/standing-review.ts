@@ -1,7 +1,7 @@
 // The ONE reading of a reviewed-head mark for lifecycle decisions.
 //
-// `reviewed_heads` is stamped in two steps by two writers. The shell posting
-// route (scripts/guards.sh `guard_stamp_reviewed_head`) writes `head_sha` and
+// `reviewed_heads` is stamped in two steps by two writers. The gate's
+// after-step (src/guards.ts) writes `head_sha` and
 // `posted_event` the moment a review reaches GitHub; the verdict watcher then
 // enriches the same row with `verdict` and `round_no` when it consumes the
 // session's verdict file. A crash, an overdue round or a guard refusal between
@@ -55,7 +55,7 @@ export function standingReview(mark: ReviewedHeadRow | undefined | null): Standi
   if (decided === "APPROVE" || decided === "REQUEST_CHANGES")
     return { kind: "decided", verdict: decided, source: "verdict" };
   // Exact spelling, deliberately: both writers of `posted_event` (the gate's
-  // after-step and guards.sh) stamp the upper-case GitHub event, so a
+  // after-step, and the retired shell stamp on older rows) stamp the upper-case GitHub event, so a
   // differently-cased value is a lookalike and is NOT proof (pinned by
   // tests/operator-recovery.test.ts).
   const posted = mark.posted_event;
