@@ -177,7 +177,10 @@ describe.skipIf(!has("docs/rule-text-drafts.md"))("docs/rule-text-drafts.md", ()
     const s4 = proposed.find((b) => b.body.startsWith("**S4 "))!;
     expect(doc).toContain(s4.body);
     const amendment = proposed.find((b) => b.body.startsWith("## Amendment: workers"))!;
-    expect(doc).toContain(amendment.body);
+    // P9.4 already reworded the amendment's first bullet in the doc (part (ii)); the rest is stage (i) verbatim.
+    const tail = amendment.body.slice(amendment.body.indexOf("- **Exactly two launchers.**"));
+    expect(doc).toContain(tail);
+    expect(doc).toContain("- **Two lens tools, one rule.** The native `subagent` path is gone");
     const pane = proposed.filter((b) =>
       b.body.startsWith("- **An embedded pi surface is a TERMINAL"),
     );
