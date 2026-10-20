@@ -506,16 +506,22 @@ python3 "$RH/pty-drive.py" --settle 3 --expect "[Rr]ound|lens|verdict|bash" --ti
   docker exec -it "$DAEMON" tmux attach -t "debug-pr-$PR" >"$WORK/debug-pty.txt" 2>&1
 DPTY=$?
 wait_for 240 "round $DR (the debug round) to settle" rounds_done "$DR"
-sleep 8
+# The round ends itself: once the verdict is committed and the pane has been quiet
+# DEBUG_VERDICT_SETTLE_MS (15 s), the daemon stops the pi, confirms it gone, then frees the lease.
+debug_ended() { ! dx tmux has-session -t "debug-pr-$PR" 2>/dev/null && [[ "$(sql "select count(*) from pr_host_leases where pr=$PR")" == 0 ]]; }
+waitx 120 "the debug pi to be stopped and its lease freed after the verdict" debug_ended
 DEBUG_GONE=no; dx tmux has-session -t "debug-pr-$PR" 2>/dev/null || DEBUG_GONE=yes
 DLEASE="$(sql "select count(*) from pr_host_leases where pr=$PR")"
+DEND="$(sql "select payload from events where kind='host_lease_released' order by id desc limit 1")"
+fact debug_end "$DEND"
 D_REVIEWS="$(dryrun_reviews)"
 DCMD="$(sql "select status from session_commands where kind='round' and round_no=$DR order by rowid desc limit 1" 2>/dev/null)"
-SPAWNS_DURING_DEBUG="$(( $(events worker_spawned) - WORKER_COUNT_BEFORE ))"
-if [[ "$DEBUG_ARMED" == "debug "* && "$DEBUG_GONE" == yes && "$DLEASE" == 0 && "$(round_status "$DR")" == done && "$D_REVIEWS" == $((D_REVIEWS_BEFORE + 1)) && "$SPAWNS_DURING_DEBUG" == 0 ]]; then
-  check DEBUG-1 pass "debug-round runs the PR's next round in interactive pi in a pty, posts through the gate, and keeps every worker out until the pi is confirmed gone" "lease '$DEBUG_ARMED' armed; round $DR ran in tmux debug-pr-$PR (attached in a pty, rc=$DPTY), its review went through the gate (create_review records $D_REVIEWS_BEFORE -> $D_REVIEWS); verdict committed; pi gone; lease rows $DLEASE; workers spawned while it stood: $SPAWNS_DURING_DEBUG"
+# the fence: no worker starts between the lease's grant and its release (the pi confirmed gone)
+SPAWNS_DURING_DEBUG="$(sql "select count(*) from events where kind='worker_spawned' and pr=$PR and id > (select max(id) from events where kind='host_lease_granted' and pr=$PR) and id < coalesce((select max(id) from events where kind='host_lease_released' and pr=$PR), 1e18)")"
+if [[ "$DEBUG_ARMED" == "debug "* && "$DEBUG_GONE" == yes && "$DLEASE" == 0 && "$DEND" != *"by the operator"* && "$(round_status "$DR")" == done && "$D_REVIEWS" == $((D_REVIEWS_BEFORE + 1)) && "$SPAWNS_DURING_DEBUG" == 0 ]]; then
+  check DEBUG-1 pass "debug-round runs the PR's next round in interactive pi in a pty, posts through the gate, and keeps every worker out until the pi is confirmed gone" "lease '$DEBUG_ARMED' armed; round $DR ran in tmux debug-pr-$PR (attached in a pty, rc=$DPTY), its review went through the gate (create_review records $D_REVIEWS_BEFORE -> $D_REVIEWS); verdict committed; the round ended itself ($DEND): pi gone, lease rows $DLEASE; workers spawned while it stood: $SPAWNS_DURING_DEBUG"
 else
-  check DEBUG-1 fail "debug-round in a pty" "armed='$DEBUG_ARMED' round$DR='$(round_status "$DR")' pi_gone=$DEBUG_GONE lease_rows=$DLEASE spawns_during=$SPAWNS_DURING_DEBUG reviews $D_REVIEWS_BEFORE -> $D_REVIEWS cmd=$DCMD pty rc=$DPTY screen: $(tail -6 "$WORK/debug-pty.txt" | tr '\n' ' ')"
+  check DEBUG-1 fail "debug-round in a pty" "armed='$DEBUG_ARMED' round$DR='$(round_status "$DR")' pi_gone=$DEBUG_GONE lease_rows=$DLEASE end='$DEND' spawns_during=$SPAWNS_DURING_DEBUG reviews $D_REVIEWS_BEFORE -> $D_REVIEWS cmd=$DCMD pty rc=$DPTY screen: $(tail -6 "$WORK/debug-pty.txt" | tr '\n' ' ')"
 fi
 
 # a debug round that did not end leaves its lease; the next scenario needs the PR free

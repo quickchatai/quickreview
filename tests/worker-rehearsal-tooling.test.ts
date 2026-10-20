@@ -237,6 +237,25 @@ describe.skipIf(!hasOpenssl)("[P8.20a] the scripted stub", () => {
     expect((await next(ORDER, 6)).text).toBe("round done");
   });
 
+  it("plays a round a worker took over from its order, not as a lens leaf", async () => {
+    await post("/admin/mode", { mode: "round" });
+    // the killed worker's order, then the taking-over worker's continuation turn
+    const res = await post("/v1/chat/completions", {
+      messages: [
+        { role: "system", content: "s" },
+        { role: "user", content: ORDER },
+        {
+          role: "user",
+          content:
+            "The worker that was running this round stopped before the round finished; this conversation is intact. Carry on from where it stopped.",
+        },
+      ],
+      tools: [{ function: { name: "bash" } }, { function: { name: "write" } }],
+    });
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('"name":"lens_wave"');
+  });
+
   it("fires a burst of parallel passes when told to, and delays only their answers", async () => {
     await post("/admin/mode", { mode: "round", burst: 3, burstMs: 1 });
     expect((await next(ORDER, 0)).tool).toBe("lens_wave");

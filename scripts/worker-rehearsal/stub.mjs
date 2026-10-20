@@ -223,6 +223,9 @@ const textOf = (c) =>
       ? c.map((p) => (typeof p === "string" ? p : (p.text ?? ""))).join("")
       : "";
 
+/** A round's order (the main session's first message), as against a lens leaf's task. */
+const ROUND_ORDER_RE = /Review round|qcr-round|Round order/;
+
 /** The conversation's shape, read off one request: its latest user turn, the tool results
  * after it, the tool names it was offered. */
 function shape(body) {
@@ -233,6 +236,15 @@ function shape(body) {
       lastUser = i;
       break;
     }
+  // A worker that took a round over (src/botworker.ts continuationText) adds a user turn that
+  // points back at the round order: the playbook reads that order, and counts its steps from it.
+  if (lastUser > 0 && /stopped before the round finished/.test(textOf(msgs[lastUser].content))) {
+    for (let i = lastUser - 1; i >= 0; i--)
+      if (msgs[i].role === "user" && ROUND_ORDER_RE.test(textOf(msgs[i].content))) {
+        lastUser = i;
+        break;
+      }
+  }
   const user = lastUser >= 0 ? textOf(msgs[lastUser].content) : "";
   const tail = msgs.slice(lastUser + 1);
   const results = tail.filter((m) => m.role === "tool").map((m) => textOf(m.content));
@@ -374,7 +386,7 @@ function reply(body, ip) {
   state.requests++;
   // A leaf (a lens or the validator) is a session with no lens tool and no post shim: it
   // answers its task at once, with the "nothing found" the lens grammar allows.
-  const isLeaf = !/Review round|qcr-round|Round order/.test(s.user);
+  const isLeaf = !ROUND_ORDER_RE.test(s.user);
   let r;
   if (mode === "hold") r = { text: "holding", delayMs: 600_000 };
   else if (mode === "slow")
