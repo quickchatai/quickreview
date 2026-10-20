@@ -332,7 +332,6 @@ function playRound(s) {
   const canWrite = s.tools.includes("write");
   const reviewFile = `state/pr-${pr}-round-${round}-review.md`;
   const verdictFile = `verdict/pr-${pr}-round-${round}.json.tmp`;
-  const verdictBare = JSON.stringify({ ...JSON.parse(verdict), passes: [] });
   const findingsFile = `state/findings/pr-${pr}-round-${round}.json`;
   const findings = JSON.stringify({ pr: Number(pr), round_no: Number(round), findings: [] });
   const steps = [
@@ -377,8 +376,8 @@ function playRound(s) {
         ]
       : []),
     // The model stages the review body and the verdict with its write tool, as the round template
-    // tells it to. A pi without one (the debug round's) gets them by bash, with an empty `passes`:
-    // the guard throws on a verdict whose JSON has an array of objects in it (findings.md, F3).
+    // tells it to. A pi without one (the debug round's) writes them by bash, the same verdict
+    // (bash-guard once threw on its `[{...}]`: findings.md, F2).
     () =>
       canWrite
         ? {
@@ -394,7 +393,7 @@ function playRound(s) {
     () =>
       canWrite
         ? { tools: [{ id: "c1b", name: "write", args: { path: verdictFile, content: verdict } }] }
-        : bash("c1b", `printf '%s' '${verdictBare}' > ${verdictFile}`),
+        : bash("c1b", `printf '%s' '${verdict}' > ${verdictFile}`),
     () => bash("c2", `scripts/commit-verdict.sh pr-${pr}-round-${round}.json`),
     () =>
       bash(

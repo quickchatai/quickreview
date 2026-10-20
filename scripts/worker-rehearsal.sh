@@ -500,8 +500,12 @@ DEBUG_ARMED="$(sql "select kind||' '||state from pr_host_leases where pr=$PR")"
 HEAD2="$(push_head 3)"
 pr_event synchronize "$HEAD2" >/dev/null
 wait_for 120 "the debug pane" dx tmux has-session -t "debug-pr-$PR"
-WORKER_COUNT_BEFORE="$(events worker_spawned)"
-sleep 6
+pr_runtime() { python3 -c "import json,sys;d=json.load(open(sys.argv[1]));print([p.get('runtime') for p in d.get('prs',[]) if p.get('number')==$PR][0])" "$H/state/status.json" 2>/dev/null; }
+DRUNTIME="unseen"
+debug_runtime_seen() { [[ "$(pr_runtime)" == debug ]] && DRUNTIME=debug; }
+# the pane's first seconds: does the heartbeat say runtime=debug? (informational; the
+# heartbeat's period decides whether one lands inside them)
+SECONDS_END=$((SECONDS + 8)); until ((SECONDS >= SECONDS_END)); do debug_runtime_seen && break; sleep 1; done; sleep 2
 python3 "$RH/pty-drive.py" --settle 3 --expect "[Rr]ound|lens|verdict|bash" --timeout 20 --detach -- \
   docker exec -it "$DAEMON" tmux attach -t "debug-pr-$PR" >"$WORK/debug-pty.txt" 2>&1
 DPTY=$?
@@ -513,15 +517,16 @@ waitx 120 "the debug pi to be stopped and its lease freed after the verdict" deb
 DEBUG_GONE=no; dx tmux has-session -t "debug-pr-$PR" 2>/dev/null || DEBUG_GONE=yes
 DLEASE="$(sql "select count(*) from pr_host_leases where pr=$PR")"
 DEND="$(sql "select payload from events where kind='host_lease_released' order by id desc limit 1")"
+DMISMATCH="$(sql "select count(*) from events where kind='pass_plan_mismatch' and payload like '%\"round_no\":$DR,%'")"
 fact debug_end "$DEND"
 D_REVIEWS="$(dryrun_reviews)"
 DCMD="$(sql "select status from session_commands where kind='round' and round_no=$DR order by rowid desc limit 1" 2>/dev/null)"
 # the fence: no worker starts between the lease's grant and its release (the pi confirmed gone)
 SPAWNS_DURING_DEBUG="$(sql "select count(*) from events where kind='worker_spawned' and pr=$PR and id > (select max(id) from events where kind='host_lease_granted' and pr=$PR) and id < coalesce((select max(id) from events where kind='host_lease_released' and pr=$PR), 1e18)")"
-if [[ "$DEBUG_ARMED" == "debug "* && "$DEBUG_GONE" == yes && "$DLEASE" == 0 && "$DEND" != *"by the operator"* && "$(round_status "$DR")" == done && "$D_REVIEWS" == $((D_REVIEWS_BEFORE + 1)) && "$SPAWNS_DURING_DEBUG" == 0 ]]; then
-  check DEBUG-1 pass "debug-round runs the PR's next round in interactive pi in a pty, posts through the gate, and keeps every worker out until the pi is confirmed gone" "lease '$DEBUG_ARMED' armed; round $DR ran in tmux debug-pr-$PR (attached in a pty, rc=$DPTY), its review went through the gate (create_review records $D_REVIEWS_BEFORE -> $D_REVIEWS); verdict committed; the round ended itself ($DEND): pi gone, lease rows $DLEASE; workers spawned while it stood: $SPAWNS_DURING_DEBUG"
+if [[ "$DEBUG_ARMED" == "debug "* && "$DPTY" == 0 && "$DEBUG_GONE" == yes && "$DLEASE" == 0 && "$DEND" != *"by the operator"* && "$(round_status "$DR")" == done && "$D_REVIEWS" == $((D_REVIEWS_BEFORE + 1)) && "$DMISMATCH" == 0 && "$SPAWNS_DURING_DEBUG" == 0 ]]; then
+  check DEBUG-1 pass "debug-round runs the PR's next round in interactive pi in a pty, posts through the gate, and keeps every worker out until the pi is confirmed gone" "lease '$DEBUG_ARMED' armed; round $DR ran in tmux debug-pr-$PR (attached in a pty, rc=$DPTY), its review went through the gate (create_review records $D_REVIEWS_BEFORE -> $D_REVIEWS); verdict committed, its passes the plan's (no pass_plan_mismatch); status.json runtime while it ran: $DRUNTIME; the round ended itself ($DEND): pi gone, lease rows $DLEASE; workers spawned while it stood: $SPAWNS_DURING_DEBUG"
 else
-  check DEBUG-1 fail "debug-round in a pty" "armed='$DEBUG_ARMED' round$DR='$(round_status "$DR")' pi_gone=$DEBUG_GONE lease_rows=$DLEASE end='$DEND' spawns_during=$SPAWNS_DURING_DEBUG reviews $D_REVIEWS_BEFORE -> $D_REVIEWS cmd=$DCMD pty rc=$DPTY screen: $(tail -6 "$WORK/debug-pty.txt" | tr '\n' ' ')"
+  check DEBUG-1 fail "debug-round in a pty" "armed='$DEBUG_ARMED' round$DR='$(round_status "$DR")' pi_gone=$DEBUG_GONE lease_rows=$DLEASE end='$DEND' plan_mismatch=$DMISMATCH spawns_during=$SPAWNS_DURING_DEBUG reviews $D_REVIEWS_BEFORE -> $D_REVIEWS cmd=$DCMD pty rc=$DPTY screen: $(tail -6 "$WORK/debug-pty.txt" | tr '\n' ' ')"
 fi
 
 # a debug round that did not end leaves its lease; the next scenario needs the PR free
@@ -598,7 +603,8 @@ SECOND_RC="${SECOND##*exit=}"
 TOKEN_POSTS="$(grep -c '"path":"/oauth/token"' "$LOGS/stub.jsonl")"
 STATUS_LR="$(python3 -c "import json;print(json.dumps(json.load(open('$H/state/status.json')).get('login_refresh')))" 2>/dev/null)"
 fact login_refresh "$STATUS_LR"
-if [[ "$LOCKED" == yes && "$LOCKED2" == yes && "$SECOND_RC" == 75 && "$TOKEN_POSTS" -ge 1 && "$NEW_REFRESH" != "$OLD_REFRESH"* ]]; then
+# NEW_REFRESH is "<refresh token> <expires>": the token alone must have rotated
+if [[ "$LOCKED" == yes && "$LOCKED2" == yes && "$SECOND_RC" == 75 && "$TOKEN_POSTS" -ge 1 && "${NEW_REFRESH%% *}" != "$OLD_REFRESH" ]]; then
   check LOGIN-1 pass "the refresher holds auth.json.lock; after a real refresh a second refresher is refused" "lock held before and after the refresh; the due token was refreshed through pi-ai's own OAuth refresh against the stub ($TOKEN_POSTS token POST(s), the refresh token rotated); a second refresher exited $SECOND_RC: ${SECOND%%exit=*}"
 else
   check LOGIN-1 fail "the refresher and its lock" "locked=$LOCKED/$LOCKED2 second rc=$SECOND_RC ($SECOND) token_posts=$TOKEN_POSTS refresh '$OLD_REFRESH' -> '$NEW_REFRESH'"
@@ -646,7 +652,11 @@ else
   check TREE-1 fail "the daemon's process tree holds no PR pi" "under daemon: $PR_PI; tmux: $TMUXS; pi: $OVERSEER_PI; rows: $(tr '\n' ';' <<<"$PI_ROWS" | cut -c1-300)"
 fi
 
-STATUS_OK="$(python3 - "$H/state/status.json" <<'PY'
+# The heartbeat reports a block only once its source is up: right after the login scenario's
+# restart the refresher's block is "not reported" for a heartbeat or two. Read the newest one
+# that carries every field, for a bounded while.
+status_fields() {
+  python3 - "$H/state/status.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 miss = []
@@ -657,7 +667,10 @@ for p in d.get("prs", []):
 print("ok" if not miss else "missing:" + ",".join(miss))
 print(json.dumps({"permits": d.get("permits"), "runtime": {p["number"]: p.get("runtime") for p in d.get("prs", [])}}))
 PY
-)"
+}
+status_complete() { [[ "$(status_fields | head -1)" == ok ]]; }
+waitx 90 "a heartbeat that carries every runtime field" status_complete
+STATUS_OK="$(status_fields)"
 fact status_runtime "$(tail -1 <<<"$STATUS_OK")"
 if [[ "$(head -1 <<<"$STATUS_OK")" == ok ]]; then
   check STATUS-1 pass "status.json shows the runtime fields" "$(tail -1 <<<"$STATUS_OK")"
