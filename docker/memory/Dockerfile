@@ -114,6 +114,14 @@ ENV QCR_OPENVIKING_LOCAL_EMBEDDER_MODEL=${LOCAL_EMBEDDER_MODEL} \
     QCR_OPENVIKING_VENV=${OPENVIKING_VENV} \
     QCR_OPENVIKING_PORT=${OPENVIKING_PORT}
 
+# The pins this image carries, as labels the VM's updater and the deploy
+# preflight read without running it (mirrors: config.toml [openviking] ==
+# group_vars openviking_* == the ARGs above).
+LABEL qcr.openviking="${OPENVIKING_VERSION}" \
+      qcr.llama-cpp-python="${LLAMA_CPP_PYTHON_VERSION}" \
+      qcr.embedder-file="${LOCAL_EMBEDDER_DIR}/${LOCAL_EMBEDDER_MODEL}.gguf" \
+      qcr.embedder-sha256="${LOCAL_EMBEDDER_SHA256}"
+
 # The app: root-owned, never written at run time. dist/ is the supervisors and
 # the config parser; scripts/ is the boot provisioning, the migration and the
 # embedder service; smol-toml is the one package config.ts reaches.

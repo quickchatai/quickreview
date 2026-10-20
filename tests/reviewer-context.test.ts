@@ -38,9 +38,9 @@ describe("reviewer context stub", () => {
     expect(install).toBeGreaterThan(-1);
     expect(install).toBeLessThan(daemon.indexOf("tmux new-session"));
     expect(install).toBeLessThan(daemon.indexOf('exec node "$APP/dist/src/wire.js"'));
-    // ANCHORED: an unanchored pattern would also skip the stub's SOURCE under
-    // deploy/reviewer/ and a dev build would copy a stale one.
-    expect(read("deploy/ansible/playbook.yml")).toContain('- "--exclude=/AGENTS.override.md"');
+    // Nothing is rsynced onto the VM any more (the stub rides the image), so the
+    // old anchored rsync exclude has nothing left to guard.
+    expect(read("deploy/ansible/playbook.yml")).not.toContain('AGENTS.override.md"');
   });
 
   it("the plain-Docker path does NOT install it — there the sandbox root is the operator's checkout", () => {

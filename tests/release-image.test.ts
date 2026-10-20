@@ -81,9 +81,26 @@ describe("release image — stages and pins", () => {
     expect(pkg.dependencies[cfg.pi.package]).toBe(arg("PI_VERSION"));
   });
 
-  it("tmux and node defaults == group_vars", () => {
-    expect(arg("TMUX_VERSION")).toBe(gv("tmux_version"));
+  it("node default == group_vars; tmux's version is the Dockerfile's alone", () => {
+    expect(arg("TMUX_VERSION")).toMatch(/^\d+\.\d+[a-z]?$/);
+    expect(gv("tmux_version")).toBeUndefined();
     expect(arg("NODE_MAJOR")).toBe(gv("node_major"));
+  });
+
+  it("carries the labels the VM's updater reads: layout, run spec, the pi pin — and not qcr.preflight until `daemon --preflight` exists", () => {
+    expect(dockerfile).toMatch(
+      /LABEL qcr\.layout="release" \\\n\s+qcr\.runspec="1" \\\n\s+qcr\.pi="\$\{PI_VERSION\}"/,
+    );
+    expect(dockerfile).toContain('LABEL qcr.build-sha="${BUILD_SHA}"');
+    // The run spec the image needs is the one scripts/deploy.sh renders.
+    const deploy = readFileSync(resolve(root, "scripts/deploy.sh"), "utf8");
+    expect(/^RUNSPEC_VERSION=(\d+)$/m.exec(deploy)?.[1]).toBe("1");
+    // qcr.preflight says the image HAS `daemon --preflight` (P8.4b): it is labelled
+    // by the change that adds the subcommand, never before it exists, so until then
+    // qcr-update refuses every image (nothing deploys before the cutover).
+    const hasSubcommand =
+      spawnSync("grep", ["-rlF", "--", "daemon --preflight", "src"], { cwd: root }).status === 0;
+    if (!hasSubcommand) expect(dockerfile).not.toMatch(/qcr\.preflight\s*=/);
   });
 
   it("install lines reference the ARGs, never a literal version", () => {

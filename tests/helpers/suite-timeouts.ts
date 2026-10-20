@@ -83,6 +83,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/cpu-gate.test.ts",
   "tests/debug-pi.test.ts",
   "tests/debug-round-bot-smoke.test.ts", // the real pane chain and the real pi CLI in a pty, on a loopback endpoint
+  "tests/deploy-manifest.test.ts",
   "tests/deploy.test.ts",
   "tests/docker-daemon.test.ts",
   "tests/engine-port-contract.test.ts",
@@ -141,6 +142,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/proposals.test.ts",
   "tests/publish-snapshot.test.ts",
   "tests/publishability.test.ts",
+  "tests/qcr-update.test.ts", // the updater against a fake docker and a fake daemon
   "tests/release-image.test.ts",
   "tests/release-workflow.test.ts",
   "tests/required-passes.test.ts",

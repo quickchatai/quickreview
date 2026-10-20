@@ -461,7 +461,7 @@ beforeAll(async () => {
   reviewedRepo = mkReviewedRepo();
   before = { root: snapshot(ROOT), repo: snapshot(reviewedRepo) };
 
-  const playbook = read("deploy/ansible/playbook.yml");
+  const updater = read("deploy/qcr-update.sh");
   const daemonEntrypoint = read("docker/daemon/entrypoint.sh");
   const daemonDockerfile = read("docker/daemon/Dockerfile");
   const benchDockerfile = read("bench/aacr/Dockerfile");
@@ -479,7 +479,7 @@ beforeAll(async () => {
   // sees as HOME / agentDir is the container's, unless the spawn pushes one.
   expect(tmuxRun.paneEnv.filter((e) => /^(HOME|PI_CODING_AGENT_DIR)=/.test(e))).toEqual([]);
   // The VM container runs as any uid under the image's fixed HOME; the pihome
-  // volume is mounted over its .pi (playbook.yml: …/pihome:/home/qcr/.pi).
+  // volume is mounted over its .pi (qcr-update.sh: …/pihome:/home/qcr/.pi).
   const vmHome = mustMatch(releaseDockerfile, /^ENV HOME=(\S+)/m, "release HOME");
   const vmAgentDir = join(vmHome, ".pi", "agent");
   const daemonAgentDir = join(
@@ -487,7 +487,7 @@ beforeAll(async () => {
     ".pi",
     "agent",
   );
-  expect(playbook).toContain(`:${vmHome}/.pi"`);
+  expect(updater).toContain(`:${vmHome}/.pi"`);
   // The playbook's app root is the image's: the cwd the engine and the tmux
   // panes start from.
   expect(
@@ -882,15 +882,14 @@ describe("the one install site", () => {
     expect(ep).toContain(
       'stub_src="$APP/deploy/reviewer/AGENTS.override.md" stub="$APP/AGENTS.override.md"',
     );
-    // The playbook's dev rsync keeps whatever the image's app dir stands for out of the delete.
-    expect(read("deploy/ansible/playbook.yml")).toContain('- "--exclude=/AGENTS.override.md"');
+    // Nothing is rsynced onto the VM any more, so the playbook names the stub nowhere.
+    expect(read("deploy/ansible/playbook.yml")).not.toContain("AGENTS.override.md");
   });
 
   it("every other file naming it copies it into an image, excludes it, reserves it or guards it", () => {
     expect(mentions()).toEqual([
       "bench/aacr/Dockerfile", // COPY into the image's cwd
       "bench/aacr/bench.sh", // the build's allowlist
-      "deploy/ansible/playbook.yml", // the dev rsync's anchored exclude
       "docker/Dockerfile", // COPY into the release image's cwd
       "docker/Dockerfile.dockerignore", // the build's allowlist
       "docker/daemon/entrypoint.sh", // a comment: it refuses to install

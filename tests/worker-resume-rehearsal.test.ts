@@ -50,7 +50,7 @@ useOfflineGuard();
 
 const REPO = resolve(import.meta.dirname, "..");
 const STUB = readFileSync(join(REPO, REVIEWER_STUB), "utf8");
-const PLAYBOOK = readFileSync(join(REPO, "deploy", "ansible", "playbook.yml"), "utf8");
+const UPDATER = readFileSync(join(REPO, "deploy", "qcr-update.sh"), "utf8");
 
 // ---- synthetic JSONLs --------------------------------------------------------
 
@@ -296,9 +296,9 @@ describe("[P8.4] inspecting a PR JSONL", () => {
 });
 
 describe("[P8.4] legacy cwd headers under the release image's mounts", () => {
-  const mounts = legacyMountDirs(PLAYBOOK, "clone");
+  const mounts = legacyMountDirs(UPDATER, "clone");
 
-  it("reads the playbook's legacy mounts: the worktrees and the base clone", () => {
+  it("reads the updater's legacy mounts: the worktrees and the base clone", () => {
     expect(mounts).toEqual(["clone", "wt"]);
   });
 
@@ -459,7 +459,7 @@ describe("[P8.4] the report", () => {
       date: "2026-10-19",
       commit: "abc1234",
       sources: [{ label: "synthetic", what: "A synthetic file." }],
-      mountDirs: legacyMountDirs(PLAYBOOK, "<clone>"),
+      mountDirs: legacyMountDirs(UPDATER, "<clone>"),
       canary10: [{ file: "tests/pi-canary/canary-10-bot-request.test.ts", tests: 4, passed: true }],
     };
     const doc = renderReport(new Map([["synthetic", [row, bad]]]), meta);
@@ -529,7 +529,7 @@ describe.skipIf(!spec)("[P8.4] the rehearsal over real PR JSONLs", () => {
         date: new Date().toISOString().slice(0, 10),
         commit: process.env["QCR_RESUME_REHEARSAL_COMMIT"] ?? "unknown",
         sources: sources.map((s) => ({ label: s.label, what: s.what })),
-        mountDirs: legacyMountDirs(PLAYBOOK, "<clone>"),
+        mountDirs: legacyMountDirs(UPDATER, "<clone>"),
         canary10: canary,
       };
       if (out) {

@@ -188,7 +188,7 @@ export function inspectSessionJsonl(file: string, options: InspectOptions = {}):
 
 /** How a header cwd fares in the release image. */
 export type CwdResolution =
-  /** a directory the playbook mounts at its legacy path (`wt`, the base clone) */
+  /** a directory the updater mounts at its legacy path (`wt`, the base clone) */
   | "mount"
   /** beneath such a mount (`wt/pr-N`) */
   | "under-mount"
@@ -198,14 +198,14 @@ export type CwdResolution =
   | "unmounted";
 
 /** The directories the release image's container mounts at the legacy path, under
- * `LEGACY_SANDBOX_ROOT` (deploy/ansible/playbook.yml: the worktree directory and
- * the base clone). */
-export function legacyMountDirs(playbookText: string, cloneDir: string): string[] {
+ * `LEGACY_SANDBOX_ROOT` (deploy/qcr-update.sh builds the daemon container: the
+ * worktree directory and the base clone, each mounted a second time there). */
+export function legacyMountDirs(updaterText: string, cloneDir: string): string[] {
   const dirs = new Set<string>();
-  const re = /:\{\{ legacy_sandbox_root \}\}\/([^"]+?)"/g;
-  for (const m of playbookText.matchAll(re)) {
-    const dir = (m[1] as string).replace(/\{\{ base_clone_dir \}\}/, cloneDir);
-    if (!dir.includes("{{")) dirs.add(dir);
+  const re = /:\$\{C\[LEGACY_SANDBOX_ROOT\]\}\/([^"]+?)"/g;
+  for (const m of updaterText.matchAll(re)) {
+    const dir = (m[1] as string).replace(/\$\{C\[BASE_CLONE_DIR\]\}/, cloneDir);
+    if (!dir.includes("${")) dirs.add(dir);
   }
   return [...dirs].sort();
 }

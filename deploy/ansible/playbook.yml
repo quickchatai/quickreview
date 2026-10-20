@@ -1,16 +1,16 @@
 ---
-# Review-sandbox provisioning — one VM, one container, cloudflared on the host.
-# See README.md in this directory. Idempotent; re-run freely.
+# Review-sandbox PROVISIONING -- one VM, cloudflared on the host, the thin
+# updater installed once. See README.md in this directory. Idempotent; re-run
+# freely. Run it through scripts/deploy.sh provision, which names the extra
+# vars (base_clone_dir, secrets_src, the Slack token names and update_conf_src,
+# the run spec it renders from group_vars).
 #
-#   ansible-playbook -i inventory.ini playbook.yml                          # dev: build the image on the VM
-#   ansible-playbook -i inventory.ini playbook.yml -e rebuild_image=true    # dev, base images refreshed
-#   ansible-playbook -i inventory.ini playbook.yml -e image_source=release -e release_version=0.1.0
-#
-# The container runs the RELEASE IMAGE (docker/Dockerfile) in `daemon` mode,
-# under the same name as ever, on the same host directories. `image_source`
-# says where that image comes from: `release` pulls
-# ghcr.io/quickchatai/quickreview:<release_version>; `dev` builds the same
-# Dockerfile on the VM from the rsynced checkout (scripts/deploy.sh sync|rebuild).
+# This playbook installs the host, the secrets, the directory layout and the
+# updater (/usr/local/sbin/qcr-update, deploy/qcr-update.sh) with its run spec
+# (/etc/qcr/update.conf). It NEVER pulls or starts an image: every deploy is
+# `scripts/deploy.sh release <version>`, which runs `ssh vm sudo qcr-update ...`
+# (the images are built once by CI and pulled by digest; the containers are the
+# updater's). Nothing is rsynced, built or installed on the VM by a deploy.
 
 - name: Preflight — refuse to trample the shared VM
   hosts: quickreview
@@ -145,7 +145,7 @@
         enabled: true
       when: cloudflared_enabled | bool
 
-- name: Sandbox container — image, secrets, seed content
+- name: Provision — directory layout, secrets, the updater and its run spec
   hosts: quickreview
   become: true
   tasks:
@@ -158,10 +158,7 @@
         group: "{{ item.owner | default(container_uid) }}"
       loop:
         - { path: "{{ sandbox_root }}", mode: "0755", owner: "root" }
-        - { path: "{{ sandbox_root }}/build", mode: "0755", owner: "root" }
         - { path: "{{ sandbox_root }}/sandbox", mode: "0755" }
-        - { path: "{{ sandbox_root }}/sandbox/agents", mode: "0755" }
-        - { path: "{{ sandbox_root }}/sandbox/prompts", mode: "0755" }
         - { path: "{{ sandbox_root }}/state", mode: "0755" }
         # OpenViking's home: ~/.openviking is symlinked here at boot,
         # so memories + vector db + ov.conf survive an image rebuild. 0700 —
@@ -170,8 +167,9 @@
         - { path: "{{ openviking_home }}", mode: "0700" }
         - { path: "{{ sandbox_root }}/pihome", mode: "0700" }
         - { path: "{{ sandbox_root }}/secrets", mode: "0700" }
-        # The install's config home as shipped — config.toml +
-        # profiles/, mounted read-only; the ship task below also creates it.
+        # The install's config home as the updater ships it (config.toml +
+        # profiles/ from the tar on its stdin), mounted read-only. Created
+        # here so the first bind mount has a source.
         - { path: "{{ sandbox_root }}/config-home", mode: "0755" }
 
     - name: Secrets into place (readable only by the container user)
@@ -241,152 +239,40 @@
       no_log: true
       when: lookup('ansible.builtin.fileglob', secrets_src + '/' + item) | length > 0
 
-    # The seed content (prompts/, agents/) has no copy task of its own: it rides
-    # the rsync below, byte-identical to the canonical seed set (enforced by
-    # tests/seed-integrity.test.ts — root CLAUDE.md rule 6).
+    # ---- the thin updater ------------------------------------------------------
+    # Installed ONCE, here. After this, a deploy is
+    # `ssh vm sudo qcr-update <version>@<digest> ...` and nothing else runs on
+    # the VM. The script is deploy/qcr-update.sh from the checkout this
+    # playbook came from; the run spec is rendered by scripts/deploy.sh from
+    # group_vars (and the inventory's host vars over them) so the controller
+    # can recompute its fingerprint and refuse a drift with "re-run provision".
+    - name: The updater's directories (root only)
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        mode: "{{ item.mode }}"
+        owner: root
+        group: root
+      loop:
+        - { path: /etc/qcr, mode: "0755" }
+        - { path: /var/backups/qcr, mode: "0700" }
+        - { path: /var/lib/qcr-update, mode: "0700" }
 
-    # ---- which image the container runs --------------------------------------
-    # Everything from here on is what `scripts/deploy.sh sync|release` runs (the
-    # start-at task is the first one below); `rebuild` runs the whole playbook.
-    # The release image carries the code, pi, tmux, the seeds and the reviewer
-    # context stub (docker/Dockerfile), and no OpenViking: the memory engine is
-    # the sidecar below, so `openviking_endpoint` must be `remote` here. The way
-    # back to `local` is the OLD image and the OLD playbook (README, "Rollback").
-    - name: Image source and version
-      ansible.builtin.assert:
-        that:
-          - image_source in ['release', 'dev']
-          - openviking_endpoint == 'remote'
-          - image_source != 'release' or (release_version | default('') | string) is match('^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$')
-          - image_source != 'dev' or (build_sha | default('') | string) is match('^[0-9a-f]{7,40}$')
-        fail_msg: >-
-          image_source must be 'release' (with release_version, X.Y.Z -- there is
-          no latest tag) or 'dev' (with build_sha, the commit being built), and
-          openviking_endpoint must be 'remote': the release image carries no
-          OpenViking. Got image_source={{ image_source }},
-          release_version={{ release_version | default('<unset>') }},
-          build_sha={{ build_sha | default('<unset>') }},
-          openviking_endpoint={{ openviking_endpoint }}. Nothing was changed on the VM.
-        quiet: true
+    - name: The updater (/usr/local/sbin/qcr-update, root 0755)
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../qcr-update.sh"
+        dest: /usr/local/sbin/qcr-update
+        mode: "0755"
+        owner: root
+        group: root
 
-    - name: Image references
-      ansible.builtin.set_fact:
-        daemon_image: "{{ (release_image ~ ':' ~ release_version) if image_source == 'release' else (image_name ~ ':' ~ dev_image_tag) }}"
-        memory_image: "{{ (release_memory_image ~ ':' ~ release_version) if image_source == 'release' else (memory_image_name ~ ':' ~ memory_image_tag) }}"
-
-    # The release images are private. The VM needs its own `docker login
-    # ghcr.io` (the owner's classic read:packages token), done once with
-    # scripts/vm-ghcr-login.sh -- README, "Pulling the release". deploy.sh has
-    # already checked both images with `docker manifest inspect`; a failed pull
-    # still stops here, before the rsync and the restart, so the old container
-    # keeps running.
-    - name: Pull the release images
-      when: image_source == 'release'
-      block:
-        - name: The daemon and memory images, by version
-          community.docker.docker_image:
-            name: "{{ item }}"
-            source: pull
-          loop:
-            - "{{ daemon_image }}"
-            - "{{ memory_image }}"
-      rescue:
-        - name: "Fail: the release images could not be pulled"
-          ansible.builtin.fail:
-            msg: >-
-              Pulling {{ daemon_image }} / {{ memory_image }} failed. Both are
-              private: log the VM in with scripts/vm-ghcr-login.sh (the owner's
-              classic read:packages token; it runs `sudo docker login ghcr.io`
-              on the VM) and check that version {{ release_version }}
-              was published. Nothing was changed on the VM; the old container is
-              still running.
-
-    # dev only: the checkout becomes the docker build context on the VM. A
-    # release ships no checkout -- the code is in the image.
-    - name: Sync the local sandbox working copy (the dev build's context)
-      ansible.posix.synchronize:
-        src: "{{ sandbox_src }}/"
-        dest: "{{ sandbox_root }}/sandbox/"
-        # --delete keeps the VM tree a true mirror (renamed/removed files
-        # actually disappear); every runtime dir the daemon/pi writes under the
-        # sandbox root is excluded, which also protects it from the delete.
-        # The runtime excludes are ANCHORED with a leading slash so they match
-        # ONLY at the sandbox root. An unanchored rsync pattern matches any
-        # path COMPONENT of that name — `memory` would also exclude the
-        # daemon's own `src/memory/` and `dist/src/memory/`.
-        # .git/.claude/node_modules stay unanchored: those may nest.
-        # The base clone's name is the configured one: deploy.sh
-        # derives it from config.toml and passes `-e base_clone_dir=…`. No
-        # default on purpose — a run that does not name the clone fails here
-        # rather than letting --delete wipe a clone it did not know about.
-        rsync_opts:
-          - "--delete"
-          - "--exclude=.git"
-          - "--exclude=.claude"
-          - "--exclude=node_modules"
-          - "--exclude=/state"
-          - "--exclude=/wt"
-          - "--exclude=/archive"
-          - "--exclude=/commands"
-          - "--exclude=/digest"
-          - "--exclude=/inject"
-          - "--exclude=/verdict"
-          - "--exclude=/memory"
-          - "--exclude=/notes"
-          - "--exclude=/ledger.md"
-          - "--exclude=/AGENTS.override.md"
-          - "--exclude=/{{ base_clone_dir | mandatory }}"
-          - "--exclude=/pihome"
-      when: image_source == 'dev' and sandbox_src is defined
-
-    # The install's config home — the live config.toml and the
-    # profiles/ beside it — shipped by the secrets' route: its own task from a
-    # controller-side dir deploy.sh names (`-e config_home_src=…`, the install
-    # locator's answer, and `-e config_file_name=…`), onto a VM dir the
-    # container mounts read-only. Never the checkout rsync: the config and the
-    # install's profiles do not live in the checkout. It runs in `sync`
-    # (it follows the start-at task) so a profile change reaches the VM
-    # without a rebuild.
-    # Exactly two things ship — the filter admits the config file and
-    # profiles/**, and excludes the rest of the home, above all its secrets/
-    # (those ride the secrets tasks, 0400, rebuild only). --delete plus
-    # --delete-excluded keep the VM copy an exact mirror: a profile or addendum
-    # removed locally disappears there too. --copy-links ships a symlinked
-    # profile as the files it points at. No defaults on purpose — a run that
-    # does not name the home fails here rather than booting on a stale one.
-    - name: Ship the install's config home (config.toml + profiles/, never secrets/)
-      ansible.posix.synchronize:
-        src: "{{ config_home_src | mandatory }}/"
-        dest: "{{ sandbox_root }}/config-home/"
-        rsync_opts:
-          - "--delete"
-          - "--delete-excluded"
-          - "--copy-links"
-          - "--include=/{{ config_file_name | mandatory }}"
-          - "--include=/profiles/***"
-          - "--exclude=*"
-      register: config_home_ship
-
-    # rsync lands controller-side ownership. Leave the sealed operator
-    # subtree untouched: each pending file's root owner carries its authority.
-    - name: Sandbox tree owned by the container user
-      ansible.builtin.command:
-        argv:
-          - find
-          - "{{ sandbox_root }}/sandbox"
-          - "{{ sandbox_root }}/state"
-          - "{{ sandbox_root }}/config-home"
-          - -path
-          - "{{ sandbox_root }}/sandbox/commands/operator"
-          - -prune
-          - -o
-          - -exec
-          - chown
-          - -h
-          - "{{ container_uid }}:{{ container_uid }}"
-          - "{}"
-          - "+"
-      changed_when: true
+    - name: The updater's run spec (/etc/qcr/update.conf, root-owned)
+      ansible.builtin.copy:
+        src: "{{ update_conf_src | mandatory }}"
+        dest: /etc/qcr/update.conf
+        mode: "0644"
+        owner: root
+        group: root
 
     # Re-seal an existing channel without granting authority to session-owned
     # files, creating the daemon's commands/ parent, or following a symlink.
@@ -404,92 +290,13 @@
         mode: "0755"
       when: operator_channel.stat.exists and operator_channel.stat.isdir and not operator_channel.stat.islnk
 
-    # dev: the release Dockerfile, built on the VM from the synced tree. The pins
-    # reach it as ARGs from the SAME group_vars the checks mirror
-    # (tests/release-image.test.ts holds the Dockerfile defaults to them), and
-    # BUILD_SHA stamps the image so the deploy tab and verify can say what runs.
-    # BuildKit, because the build context is the file-level allowlist
-    # docker/Dockerfile.dockerignore (the legacy builder reads the root
-    # .dockerignore, the companion image's). The docker layer cache makes an
-    # unchanged tree cheap; `rebuild` also refreshes the base images (--pull).
-    - name: BuildKit available for the dev build?
-      ansible.builtin.command: docker buildx version
-      register: buildx_dev
-      changed_when: false
-      failed_when: false
-      when: image_source == 'dev'
-
-    - name: "Fail: no BuildKit -- the dev image cannot be built"
-      ansible.builtin.fail:
-        msg: >-
-          `docker buildx` is not available on the VM, and the release Dockerfile
-          builds only with BuildKit (install docker-buildx-plugin), or deploy a
-          published version with `scripts/deploy.sh release <version>`. Nothing
-          was changed on the VM.
-      when: image_source == 'dev' and buildx_dev.rc != 0
-
-    - name: Build the sandbox image (dev)
-      ansible.builtin.command:
-        argv:
-          - docker
-          - build
-          - --file
-          - docker/Dockerfile
-          - --tag
-          - "{{ daemon_image }}"
-          - "--pull={{ 'true' if (rebuild_image | default(false) | bool) else 'false' }}"
-          - --build-arg
-          - "NODE_MAJOR={{ node_major }}"
-          - --build-arg
-          - "TMUX_VERSION={{ tmux_version }}"
-          - --build-arg
-          - "PI_PACKAGE={{ pi_npm_package }}"
-          - --build-arg
-          - "PI_VERSION={{ pi_version }}"
-          - --build-arg
-          - "BUILD_SHA={{ build_sha }}"
-          - .
-        chdir: "{{ sandbox_root }}/sandbox"
-      environment:
-        DOCKER_BUILDKIT: "1"
-      changed_when: true
-      when: image_source == 'dev'
-
-    # The image's own labels, read from the VM's docker: a release must be
-    # stamped by CI (an `unstamped` build is a local one), a dev build must carry
-    # the commit it was just built from. Anything else is the OLD image
-    # (quickreview-sandbox:v1 has no such label), which must never get the new
-    # container shape.
-    - name: The image the container will run
-      community.docker.docker_image_info:
-        name: "{{ daemon_image }}"
-      register: daemon_image_info
-
-    - name: "Fail: that is not a release-layout image"
-      ansible.builtin.assert:
-        that:
-          - daemon_image_info.images | length == 1
-          - (daemon_image_info.images[0].Config.Labels | default({}, true)).get('qcr.build-sha', '') not in ['', 'unstamped']
-          - image_source != 'dev' or (daemon_image_info.images[0].Config.Labels | default({}, true)).get('qcr.build-sha') == build_sha
-        fail_msg: >-
-          {{ daemon_image }} is missing, carries no qcr.build-sha label, is
-          unstamped, or (dev) was not built from {{ build_sha | default('<n/a>') }}.
-          Nothing was changed on the VM.
-        quiet: true
-
-    - name: The image's stamp
-      ansible.builtin.debug:
-        msg: >-
-          {{ daemon_image }} qcr.build-sha={{ daemon_image_info.images[0].Config.Labels['qcr.build-sha'] }}
-          (image id {{ daemon_image_info.images[0].Id }})
-
     # Docker would create a missing bind-mount source as root, which the
     # container user could not write. The host directories are the SAME ones the
-    # old container mounted whole as /opt/quickreview/sandbox; the release image's
-    # app root is read-only, so each runtime directory is mounted on its own.
-    # commands/ is created for the container user only; the operator channel
-    # below it is never created here (see the seal).
-    - name: Runtime directories the container mounts (container user = uid {{ container_uid }})
+    # legacy container mounted whole as /opt/quickreview/sandbox; the release image's
+    # app root is read-only, so each runtime directory is mounted on its own (by
+    # the updater). commands/ is created for the container user only; the
+    # operator channel below it is never created here (see the seal).
+    - name: Runtime directories the containers mount (container user = uid {{ container_uid }})
       ansible.builtin.file:
         path: "{{ sandbox_root }}/sandbox/{{ item }}"
         state: directory
@@ -505,18 +312,9 @@
         - verdict
         - "{{ base_clone_dir | mandatory }}"
 
-    # ---- the memory sidecar (openviking_endpoint: remote) -----------------------
-    # A second container beside the daemon's: OpenViking, its local embedder and
-    # the boot provisioning / re-embed (docker/memory/). Everything here sits
-    # AFTER the start-at task, so `sync`, `release` and `rebuild` all carry it, and
-    # BEFORE the daemon's container, so the sidecar is up (and the store seeded)
-    # when the daemon boots against it. Its image follows the daemon's: pulled by
-    # the same version under `release`, built from the synced tree under `dev`.
-    - name: Memory sidecar network
-      community.docker.docker_network:
-        name: "{{ memory_network }}"
-        state: present
-
+    # The memory sidecar's store directories. The sidecar CONTAINER and its
+    # network are the updater's; its store is seeded from the daemon's once, by
+    # the updater, on the legacy layout.
     - name: Directories for the sidecar's store (container user = uid {{ container_uid }})
       ansible.builtin.file:
         path: "{{ item }}"
@@ -528,247 +326,13 @@
         - "{{ openviking_home }}"
         - "{{ memory_state_dir }}"
 
-    - name: Has the sidecar's store been seeded from the daemon's?
-      ansible.builtin.stat:
-        path: "{{ memory_state_dir }}/.seeded-from-daemon"
-      register: memory_seed
-
-    # THE STORE IS COPIED AND VERIFIED, NEVER WIPED OR MOVED. Once, on the first
-    # flip: the daemon container is stopped (a live store is not a consistent
-    # copy), its OpenViking home is rsynced to the sidecar's own directory
-    # (no --delete: an earlier partial copy is completed, never emptied), and
-    # the copy is compared by checksum. The marker is written only after the
-    # comparison is clean, so a failed run repeats the copy. The source
-    # directory is never modified: it is the rollback's store. A store built
-    # under another embedder is the SIDECAR's boot to handle (`prepare` moves
-    # the collection aside and the re-embed rebuilds it) — never a wipe here.
-    # If any step fails the daemon container is started again before the
-    # play stops. The stop waits up to 90 s (not the module's 10 s) so the
-    # supervised OpenViking child flushes before the copy is taken. The marker
-    # also means the copy never repeats: flipping back to remote after the
-    # daemon wrote memories needs the marker deleted (runbook, "Rollback").
-    - name: Seed the sidecar's store from the daemon's (first flip only)
-      when: not memory_seed.stat.exists
-      block:
-        - name: Stop the daemon container — a live store is not a consistent copy
-          community.docker.docker_container:
-            name: "{{ image_name }}"
-            state: stopped
-            stop_timeout: 90
-
-        - name: "Copy the store (rsync -a, additive, deletes nothing on either side)"
-          ansible.builtin.command:
-            argv: [rsync, -a, "{{ openviking_home }}/", "{{ memory_state_dir }}/"]
-          changed_when: true
-
-        - name: Verify the copy, every file by checksum (nothing may differ)
-          ansible.builtin.command:
-            argv: [rsync, -a, --checksum, --dry-run, --itemize-changes, "{{ openviking_home }}/", "{{ memory_state_dir }}/"]
-          register: memory_seed_diff
-          changed_when: false
-          failed_when: (memory_seed_diff.stdout | trim | length) > 0
-
-        - name: Mark the store seeded
-          ansible.builtin.copy:
-            content: "seeded from {{ openviking_home }} on {{ ansible_date_time.iso8601 }}\n"
-            dest: "{{ memory_state_dir }}/.seeded-from-daemon"
-            mode: "0600"
-            owner: "{{ container_uid }}"
-            group: "{{ container_uid }}"
-      rescue:
-        - name: The copy failed — start the daemon container again
-          community.docker.docker_container:
-            name: "{{ image_name }}"
-            state: started
-
-        - name: "Fail: the sidecar's store could not be seeded"
-          ansible.builtin.fail:
-            msg: >-
-              Copying {{ openviking_home }} to {{ memory_state_dir }} did not
-              verify. The daemon container was started again on its own store
-              (untouched); the sidecar was not started. Fix the cause (disk
-              space, permissions) and re-run.
-
-    # dev: rebuilt from the shipped tree on every sync and rebuild: the docker
-    # layer cache makes an unchanged tree cheap, and an image that always matches
-    # the tree it was shipped with has no stale-image state to guard. The pins
-    # reach the build as ARGs from the SAME group_vars the daemon image
-    # interpolates. (A release pulled the published sidecar image above.)
-    - name: Build the memory sidecar image
-      ansible.builtin.command:
-        argv:
-          - docker
-          - build
-          - --file
-          - docker/memory/Dockerfile
-          - --tag
-          - "{{ memory_image }}"
-          - --build-arg
-          - "TZ={{ timezone }}"
-          - --build-arg
-          - "NODE_MAJOR={{ node_major }}"
-          - --build-arg
-          - "OPENVIKING_VERSION={{ openviking_version }}"
-          - --build-arg
-          - "LLAMA_CPP_PYTHON_VERSION={{ llama_cpp_python_version }}"
-          - --build-arg
-          - "OPENVIKING_VENV={{ openviking_venv }}"
-          - --build-arg
-          - "OPENVIKING_PORT={{ openviking_port }}"
-          - --build-arg
-          - "LOCAL_EMBEDDER_MODEL={{ openviking_local_embedder_model }}"
-          - --build-arg
-          - "LOCAL_EMBEDDER_DIR={{ openviking_local_embedder_dir }}"
-          - --build-arg
-          - "LOCAL_EMBEDDER_URL={{ openviking_local_embedder_url }}"
-          - --build-arg
-          - "LOCAL_EMBEDDER_SHA256={{ openviking_local_embedder_sha256 }}"
-          - --build-arg
-          - "REVIEW_UID={{ container_uid }}"
-          - .
-        chdir: "{{ sandbox_root }}/sandbox"
-      environment:
-        DOCKER_BUILDKIT: "1"
-      changed_when: true
-      when: image_source == 'dev'
-
-    - name: Run the memory sidecar
-      community.docker.docker_container:
-        name: "{{ memory_container_name }}"
-        image: "{{ memory_image }}"
-        state: started
-        # A new image recreates the container by itself; the config home is
-        # read at boot, so a rebuild or a changed home restarts it too. A plain
-        # sync that changed neither leaves the sidecar (and its embedder
-        # warm-up) alone.
-        restart: "{{ (rebuild_image | default(false) | bool) or (config_home_ship.changed | default(false)) }}"
-        restart_policy: unless-stopped
-        init: true
-        cpus: "{{ memory_container_cpus | float }}"
-        memory: "{{ memory_container_memory }}"
-        memory_swap: "{{ memory_container_memory }}"
-        networks:
-          - name: "{{ memory_network }}"
-        # No published port, on purpose: OpenViking answers on the container
-        # network only (api_key mode confines every key), and the companion's
-        # memory forward reaches it by `docker exec` into this container.
-        volumes:
-          - "{{ memory_state_dir }}:{{ openviking_home }}"
-          - "{{ sandbox_root }}/secrets:/opt/quickreview/secrets:ro"
-          - "{{ sandbox_root }}/config-home:/opt/quickreview/config-home:ro"
-        env:
-          TZ: "{{ timezone }}"
-          QCR_CONFIG: "/opt/quickreview/config-home/{{ config_file_name | mandatory }}"
-          # The knobs docker/memory/entrypoint.sh renders ov.conf from, here the
-          # group_vars config.toml [openviking] is held equal to (deploy.sh).
-          QCR_OPENVIKING_HOME: "{{ openviking_home }}"
-          QCR_OPENVIKING_PORT: "{{ openviking_port | string }}"
-          QCR_OPENVIKING_BIND_HOST: "0.0.0.0"
-          QCR_OPENVIKING_WORKERS: "{{ openviking_workers | string }}"
-          QCR_OPENVIKING_QUEUE_CONCURRENCY: "{{ openviking_queue_concurrency | string }}"
-          QCR_OPENVIKING_AUTH_MODE: "{{ openviking_auth_mode }}"
-          QCR_OPENVIKING_EMBEDDING_PROVIDER: "{{ openviking_embedding_provider }}"
-          QCR_OPENVIKING_EMBEDDING_MODEL: "{{ openviking_embedding_model }}"
-          QCR_OPENVIKING_EMBEDDING_DIMENSION: "{{ openviking_embedding_dimension | string }}"
-          QCR_OPENVIKING_EMBEDDING_KEY_FILE: "{{ openviking_embedding_key_file }}"
-          QCR_OPENVIKING_LOCAL_EMBEDDER_MODEL: "{{ openviking_local_embedder_model }}"
-          QCR_OPENVIKING_LOCAL_EMBEDDER_DIMENSION: "{{ openviking_local_embedder_dimension | string }}"
-          QCR_OPENVIKING_LOCAL_EMBEDDER_DIR: "{{ openviking_local_embedder_dir }}"
-          QCR_OPENVIKING_LOCAL_EMBEDDER_SHA256: "{{ openviking_local_embedder_sha256 }}"
-          QCR_OPENVIKING_LOCAL_EMBEDDER_PORT: "{{ openviking_local_embedder_port | string }}"
-          QCR_OPENVIKING_LOCAL_EMBEDDER_THREADS: "{{ openviking_local_embedder_threads | string }}"
-          QCR_OPENVIKING_ROOT_KEY_FILE: "{{ openviking_root_key_file }}"
-          QCR_OPENVIKING_REVIEWER_KEY_FILE: "{{ openviking_reviewer_key_file }}"
-          QCR_OPENVIKING_PROVISION_USERS: "{{ openviking_provision_users }}"
-
-    # The release image in daemon mode (docker/entrypoint.sh): the same container
-    # name, ports, caps and host directories as the container it replaces, so a
-    # restart is the whole cutover and the old image tag stays on the VM as the
-    # way back. Its app root is /opt/qcr, root-owned and read-only to every uid;
-    # only the directories below are writable, each bind-mounted from the host
-    # directory the old container mounted as part of /opt/quickreview/sandbox.
-    - name: Run the sandbox container
-      community.docker.docker_container:
-        name: "{{ image_name }}"
-        image: "{{ daemon_image }}"
-        # The image's mode dispatch: the always-on bot (wire.js under tmux).
-        command: ["daemon"]
-        # The image has no passwd entry for the user it runs as: the caller
-        # picks it. The uid that owns the host directories below.
-        user: "{{ container_uid }}:{{ container_uid }}"
-        state: started
-        # `state: started` alone is idempotent — a running container is left
-        # untouched, so a shipped config would be read by nobody. sync, release
-        # and rebuild all pass force_restart=true: restart re-runs the
-        # entrypoint (fresh .tmux.conf/tmux server, daemon on the new build). A
-        # rebuild needs it too: the config is a bind mount, so a rebuild whose
-        # image comes out identical recreates nothing on its own.
-        restart: "{{ force_restart | default(false) | bool }}"
-        restart_policy: unless-stopped
-        # PID-1 discipline: the daemon runs a tmux server beside itself, so PID 1
-        # must reap. tini forwards signals and adopts orphans.
-        init: true
-        # Hard caps — the VM is shared; the VM itself is never resized.
-        cpus: "{{ container_cpus | float }}"
-        memory: "{{ container_memory }}"
-        memory_swap: "{{ container_memory }}"   # no swap ballooning past the cap
-        # The webhook port is the ONLY thing this container exposes. The
-        # memory engine's port is the sidecar's, on its network, never published.
-        published_ports:
-          - "127.0.0.1:{{ webhook_port }}:{{ webhook_port }}"
-        # The daemon joins the sidecar's network, which is how config.toml
-        # [openviking] host (the sidecar's name) resolves. The published webhook
-        # port is unaffected.
-        networks:
-          - name: "{{ memory_network }}"
-        volumes:
-          - "{{ sandbox_root }}/state:{{ app_root }}/state"
-          - "{{ sandbox_root }}/secrets:/opt/quickreview/secrets:ro"
-          # The shipped config home, read-only like the secrets —
-          # the same mount point the compose route uses.
-          - "{{ sandbox_root }}/config-home:/opt/quickreview/config-home:ro"
-          # pi's home: OAuth tokens (auth.json), session JSONLs, models.json —
-          # must survive container recreates (sticky sessions + /login tokens).
-          # The volume is the old container's: files written under /home/review
-          # are owned by the same uid.
-          - "{{ sandbox_root }}/pihome:/home/qcr/.pi"
-          # The runtime directories of the old sandbox root. The operator
-          # channel (commands/operator) stays root-owned on the host; the
-          # container user can neither replace nor write into it.
-          - "{{ sandbox_root }}/sandbox/wt:{{ app_root }}/wt"
-          - "{{ sandbox_root }}/sandbox/archive:{{ app_root }}/archive"
-          - "{{ sandbox_root }}/sandbox/commands:{{ app_root }}/commands"
-          - "{{ sandbox_root }}/sandbox/digest:{{ app_root }}/digest"
-          - "{{ sandbox_root }}/sandbox/inject:{{ app_root }}/inject"
-          - "{{ sandbox_root }}/sandbox/verdict:{{ app_root }}/verdict"
-          - "{{ sandbox_root }}/sandbox/{{ base_clone_dir | mandatory }}:{{ app_root }}/{{ base_clone_dir }}"
-          # Path continuity for what the old container wrote: git worktree
-          # metadata (<clone>/.git/worktrees/*, wt/*/.git), pi session headers
-          # and the state db name worktrees by their old absolute path. The same
-          # two host directories again at that path, so every one of those
-          # records still resolves until the worktrees turn over.
-          - "{{ sandbox_root }}/sandbox/wt:{{ legacy_sandbox_root }}/wt"
-          - "{{ sandbox_root }}/sandbox/{{ base_clone_dir | mandatory }}:{{ legacy_sandbox_root }}/{{ base_clone_dir }}"
-        env:
-          TZ: "{{ timezone }}"
-          QC_REVIEW_PORT: "{{ webhook_port | string }}"
-          # In-container bind must be 0.0.0.0 — the published port targets the
-          # container's eth0; host exposure stays 127.0.0.1-only above.
-          QC_BIND_HOST: "0.0.0.0"
-          # The live config is the shipped one. The in-container install locator
-          # finds the install's profiles beside it, then the image's generic
-          # examples; the daemon hands this path to every session. Set on the
-          # container (not in the image) so a plain `sync` delivers it.
-          QCR_CONFIG: "/opt/quickreview/config-home/{{ config_file_name | mandatory }}"
-
-    # The subagent fan-out cap needs no post-start task: it rides config.toml
-    # [pi] subagent_max_concurrency, delivered per session as
-    # QCR_SUBAGENT_MAX_CONCURRENCY and enforced by extensions/subagents.ts.
-
-    - name: Note — webhook ingress
+    - name: Note — what happens next
       ansible.builtin.debug:
         msg: >-
-          The webhook port is published on 127.0.0.1:{{ webhook_port }} only.
+          Provisioned. No image was pulled or started. Deploy with
+          `scripts/deploy.sh release <version>`. The webhook port is published on
+          127.0.0.1:{{ webhook_port }} only by the daemon container the updater
+          creates.
           {% if cloudflared_enabled | bool %}cloudflared forwards the public
           hostname -> localhost:{{ webhook_port }} -> container.{% else %}
           cloudflared is disabled (cloudflared_enabled=false) — point your own

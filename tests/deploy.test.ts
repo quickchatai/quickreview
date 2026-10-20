@@ -4,6 +4,7 @@
 // --dry-run or at a refusal.
 import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -11,6 +12,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -73,7 +75,7 @@ interface Shape {
   tuiRoot?: string | null;
 }
 
-const GROUP_VARS = (piVersion: string, withSandboxSrc = true, ov?: OvPins, shape: Shape = {}) =>
+const GROUP_VARS = (piVersion: string, ov?: OvPins, shape: Shape = {}) =>
   [
     "---",
     "sandbox_root: /opt/quickreview",
@@ -117,7 +119,6 @@ const GROUP_VARS = (piVersion: string, withSandboxSrc = true, ov?: OvPins, shape
           `openviking_local_embedder_port: ${ov.localEmbedder.port}`,
           `openviking_local_embedder_threads: ${ov.localEmbedder.threads}`,
         ]),
-    ...(withSandboxSrc ? ['sandbox_src: "/tmp/whatever"'] : ['# sandbox_src: "/tmp/whatever"']),
     "",
   ].join("\n");
 
@@ -197,6 +198,9 @@ interface Env {
   xdg: string;
   /** The install's config home under it: `<xdg>/qcr/default`. */
   home: string;
+  /** The pins the scratch config holds (the release manifest is built from them). */
+  pi: string;
+  ov?: OvPins;
 }
 
 let env: Env;
@@ -204,7 +208,6 @@ let env: Env;
 function makeScratch(opts: {
   configPi: string;
   groupVarsPi: string;
-  sandboxSrc?: boolean;
   /** `[openviking]` in config.toml + the matching group_vars keys. */
   configOv?: OvPins;
   groupVarsOv?: OvPins;
@@ -264,12 +267,7 @@ function makeScratch(opts: {
   }
   writeFileSync(
     join(ansible, "group_vars", "all.yml"),
-    GROUP_VARS(
-      opts.groupVarsPi,
-      opts.sandboxSrc ?? true,
-      opts.groupVarsOv ?? opts.configOv,
-      opts.shape,
-    ),
+    GROUP_VARS(opts.groupVarsPi, opts.groupVarsOv ?? opts.configOv, opts.shape),
   );
   if (opts.upstreamCommit !== undefined) {
     mkdirSync(join(sandbox, "extensions", "vendor", "openviking-pi"), { recursive: true });
@@ -306,76 +304,164 @@ function makeScratch(opts: {
   writeFileSync(join(sandbox, "README.md"), "scratch\n");
   git("add", "-A");
   git("commit", "-qm", "scratch");
-  return { dir, sandbox, ansible, xdg, home };
+  return { dir, sandbox, ansible, xdg, home, pi: opts.configPi, ov: opts.configOv };
 }
 
+function runRaw(
+  e: Env,
+  args: string[],
+  extraEnv: Record<string, string> = {},
+): { code: number; stdout: string; stderr: string } {
+  const r = spawnSync("bash", [deploySh, ...args], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      QC_SANDBOX_DIR: e.sandbox,
+      QC_ANSIBLE_DIR: e.ansible,
+      QC_INVENTORY: join(e.ansible, "inventory.ini"),
+      XDG_CONFIG_HOME: e.xdg,
+      // The recorded ghcr token expiry is read from the state home: never the operator's.
+      XDG_STATE_HOME: join(e.dir, "state-home"),
+      QCR_GHCR_EXPIRY_FILE: "",
+      QCR_CONFIG: "",
+      QCR_INSTALL: "",
+      // a stubbed run never restarts the developer's own memory-forward unit
+      QC_NO_MEMORY_FORWARD: "1",
+      ...extraEnv,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return { code: r.status ?? -1, stdout: r.stdout, stderr: r.stderr };
+}
+
+/** A run that names no mode is a provision (the mode every pin/config
+ * preflight case shares); release and verify cases name theirs. */
 function run(
   e: Env,
   args: string[],
   extraEnv: Record<string, string> = {},
 ): { code: number; stdout: string; stderr: string } {
-  try {
-    const stdout = execFileSync("bash", [deploySh, ...args], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        QC_SANDBOX_DIR: e.sandbox,
-        QC_ANSIBLE_DIR: e.ansible,
-        QC_INVENTORY: join(e.ansible, "inventory.ini"),
-        XDG_CONFIG_HOME: e.xdg,
-        // The recorded ghcr token expiry is read from the state home: never the operator's.
-        XDG_STATE_HOME: join(e.dir, "state-home"),
-        QCR_GHCR_EXPIRY_FILE: "",
-        QCR_CONFIG: "",
-        QCR_INSTALL: "",
-        // A release's pull check reads the VM over ssh; by default the stub finds both images.
-        QC_PULL_CHECK_CMD: "true",
-        ...extraEnv,
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    return { code: 0, stdout, stderr: "" };
-  } catch (err) {
-    const e2 = err as { status?: number; stdout?: string; stderr?: string };
-    return {
-      code: e2.status ?? -1,
-      stdout: String(e2.stdout ?? ""),
-      stderr: String(e2.stderr ?? ""),
-    };
-  }
+  if (!args.some((a) => ["release", "provision", "verify", "sync", "dev", "rebuild"].includes(a)))
+    args = [...args, "provision"];
+  return runRaw(e, args, extraEnv);
 }
 
 afterEach(() => {
   if (env) rmSync(env.dir, { recursive: true, force: true });
 });
 
+// ---- the release's inputs: the manifest and what the VM reports ---------------
+// A release reads CI's deploy manifest and asks the VM's updater for its status
+// (`sudo qcr-update status --json`). Both are fixtures here: the manifest is
+// tests/fixtures/deploy-manifest-1.2.3.json with the pins the scratch config
+// holds, and the status is a stub command (QC_UPDATE_STATUS_CMD).
+
+const FIXTURE_MANIFEST = join(root, "tests", "fixtures", "deploy-manifest-1.2.3.json");
+const DAEMON_DIGEST = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+const MEMORY_DIGEST = "sha256:4444444444444444444444444444444444444444444444444444444444444444";
+
+type Manifest = {
+  version: string;
+  pins: Record<string, string | number>;
+  images: Record<string, { repository: string; index_digest: string }>;
+} & Record<string, unknown>;
+
+/** The manifest for this scratch tree; `patch` edits it before it is written. */
+function writeManifest(
+  e: Env,
+  patch: (m: Manifest) => void = () => {},
+  version = "1.2.3",
+  name = `deploy-manifest-${version}.json`,
+): string {
+  const m = JSON.parse(readFileSync(FIXTURE_MANIFEST, "utf8")) as Manifest;
+  m.version = version;
+  m.pins.pi = e.pi;
+  if (e.ov?.version !== undefined) m.pins.openviking = e.ov.version;
+  if (e.ov?.llama !== undefined) m.pins.llama_cpp_python = e.ov.llama;
+  if (e.ov?.localEmbedder !== undefined) {
+    m.pins.embedder_file = `${e.ov.localEmbedder.dir}/${e.ov.localEmbedder.model}.gguf`;
+    m.pins.embedder_sha256 = e.ov.localEmbedder.sha;
+  }
+  patch(m);
+  const file = join(e.dir, name);
+  writeFileSync(file, JSON.stringify(m, null, 2));
+  return file;
+}
+
+/** The run-spec fingerprint group_vars renders to, as the provision plan shows it. */
+function fingerprintOf(e: Env): string {
+  const r = run(e, ["--dry-run", "provision"]);
+  expect(r.code, r.stderr).toBe(0);
+  const m = /fingerprint ([0-9a-f]{64})/.exec(r.stdout);
+  expect(m, r.stdout).not.toBeNull();
+  return m![1]!;
+}
+
+interface VmState {
+  layout?: string;
+  draining?: boolean | null;
+  rounds?: number | null;
+  fingerprint?: string;
+}
+
+/** `qcr-update status --json` as the updater prints it (its field order). */
+function statusCmd(e: Env, s: VmState = {}): string {
+  const j = JSON.stringify;
+  const draining = s.draining === undefined ? true : s.draining;
+  const rounds = s.rounds === undefined ? 0 : s.rounds;
+  const body =
+    `{"layout":${j(s.layout ?? "release")},"daemon":null,"memory":null,` +
+    `"runspec":{"version":"1","fingerprint":${j(s.fingerprint ?? fingerprintOf(e))}},` +
+    `"drain":{"draining":${draining === null ? "null" : draining},"running_rounds":${rounds === null ? "null" : rounds}},"last_run":null}`;
+  return `printf '%s' '${body}'`;
+}
+
+/** A release run: the manifest written, the VM reporting `vm`. */
+function release(
+  e: Env,
+  opts: {
+    dry?: boolean;
+    args?: string[];
+    vm?: VmState;
+    env?: Record<string, string>;
+    version?: string;
+    patch?: (m: Manifest) => void;
+  } = {},
+): { code: number; stdout: string; stderr: string } {
+  const version = opts.version ?? "1.2.3";
+  const manifest = writeManifest(e, opts.patch, version);
+  return run(
+    e,
+    [
+      ...(opts.dry === false ? [] : ["--dry-run"]),
+      "release",
+      version,
+      "--manifest",
+      manifest,
+      ...(opts.args ?? []),
+    ],
+    { QC_UPDATE_STATUS_CMD: statusCmd(e, opts.vm), ...(opts.env ?? {}) },
+  );
+}
+
 describe("deploy.sh --dry-run", () => {
   it("is syntactically valid bash", () => {
     expect(() => execFileSync("bash", ["-n", deploySh])).not.toThrow();
   });
 
-  it("prints the plan and exits 0 on a clean tree with matching pins", () => {
+  it("prints the provision plan and exits 0 on a clean tree with matching pins", () => {
     env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
     const r = run(env, ["--dry-run"]);
-    expect(r.code).toBe(0);
-    expect(r.stdout).toContain("plan — deploy.sh sync");
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("plan — deploy.sh provision");
     expect(r.stdout).toContain("pi pin       0.84.1");
-    expect(r.stdout).toContain("rsync working copy");
+    expect(r.stdout).toContain("/usr/local/sbin/qcr-update and /etc/qcr/update.conf");
+    expect(r.stdout).toContain("It pulls and starts no image");
     expect(r.stdout).toContain("(--dry-run: nothing executed)");
     // the flip is never automated
     expect(r.stdout).toContain("dry_run is NOT touched by deploy");
-    // the deploy tab's marker is part of the plan (written only on a real run)
-    expect(r.stdout).toContain("BUILD_SHA=");
-  });
-
-  it("plans an image rebuild in rebuild mode", () => {
-    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
-    const r = run(env, ["--dry-run", "rebuild"]);
-    expect(r.code).toBe(0);
-    expect(r.stdout).toContain("-e rebuild_image=true");
-    // An image that comes out identical recreates nothing, and the code and
-    // config are bind mounts: only a restart puts the shipped tree to work.
-    expect(r.stdout).toContain("-e force_restart=true");
+    // Nothing is rsynced or built: not in the plan, not in the command.
+    expect(r.stdout).not.toMatch(/rsync|docker build|rebuild_image|sandbox_src/);
   });
 
   it("plans ssh-only checks in verify mode (cloudflared + container + heartbeat)", () => {
@@ -437,26 +523,183 @@ describe("deploy.sh --dry-run", () => {
     expect(r.stderr).toContain("pi version mismatch");
     expect(r.stderr).toContain('config.toml   [pi] version = "0.85.0"');
     expect(r.stderr).toContain('group_vars    pi_version   = "0.84.1"');
+    // the way out is a new release now, not a rebuild on the VM
+    expect(r.stderr).toMatch(/cut a new\s+release/);
+    expect(r.stderr).not.toContain("deploy.sh rebuild");
   });
 
-  it("refuses when sandbox_src is still commented out", () => {
-    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", sandboxSrc: false });
-    const r = run(env, ["--dry-run"]);
-    expect(r.code).toBe(1);
-    expect(r.stderr).toContain("sandbox_src");
+  it("needs no sandbox_src: nothing is synced from this checkout any more", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    expect(readFileSync(join(env.ansible, "group_vars", "all.yml"), "utf8")).not.toContain(
+      "sandbox_src",
+    );
+    expect(run(env, ["--dry-run"]).code).toBe(0);
   });
 
-  it("rejects unknown arguments and two modes", () => {
+  it("rejects unknown arguments and two modes, and a run that names no mode", () => {
     env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
     expect(run(env, ["--wat"]).code).toBe(1);
-    expect(run(env, ["sync", "rebuild"]).stderr).toContain("two modes");
+    expect(run(env, ["provision", "verify"]).stderr).toContain("two modes");
+    expect(run(env, ["release", "1.2.3", "provision"]).stderr).toContain("two modes");
+    const none = runRaw(env, ["--dry-run"]);
+    expect(none.code).toBe(1);
+    expect(none.stderr).toContain("no mode given");
+    expect(none.stderr).toContain("release <version>");
+  });
+
+  it("REFUSES sync, dev and rebuild with a pointer to release: nothing is rsynced, built or installed on the VM", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    for (const mode of ["sync", "dev", "rebuild"]) {
+      for (const dry of [["--dry-run"], []]) {
+        const r = run(env, [...dry, mode]);
+        expect(r.code, mode).toBe(1);
+        expect(r.stderr, mode).toContain(`'${mode}' is gone`);
+        expect(r.stderr, mode).toContain("deploy.sh release <version>");
+        expect(r.stderr, mode).toContain("deploy.sh provision");
+        expect(r.stdout, mode).not.toContain("plan —");
+      }
+    }
+  });
+
+  it("--manifest and --cutover-ack belong to release", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    expect(run(env, ["--dry-run", "provision", "--cutover-ack"]).stderr).toContain(
+      "belong to `release`",
+    );
+    expect(run(env, ["--dry-run", "verify", "--manifest", "x.json"]).stderr).toContain(
+      "belong to `release`",
+    );
   });
 });
 
-// ---- the config home ships ---------------------------------------------------
-// sync|rebuild deliver the install's config home — the located config and the
-// profiles/ beside it — to the VM by a playbook task of its own; the container
-// reads it through QCR_CONFIG. The pin/drift preflight reads that same config.
+// ---- provision ----------------------------------------------------------------
+// The one mode that runs ansible, and the whole playbook runs: host, secrets,
+// the directory layout, the updater and its run spec. A stub ansible-playbook on
+// PATH records its argv and copies the run spec it was handed.
+
+describe("deploy.sh provision", () => {
+  function provisionWithStub(e: Env, extraEnv: Record<string, string> = {}) {
+    const bin = join(e.dir, "bin");
+    mkdirSync(bin, { recursive: true });
+    const seen = join(e.dir, "ansible-argv");
+    const conf = join(e.dir, "update.conf.seen");
+    writeFileSync(
+      join(bin, "ansible-playbook"),
+      `#!/bin/sh\nprintf '%s\\n' "$*" > '${seen}'\n` +
+        `for a in "$@"; do case "$a" in update_conf_src=*) cp "\${a#update_conf_src=}" '${conf}' ;; esac; done\nexit 0\n`,
+      { mode: 0o755 },
+    );
+    const r = run(e, ["provision"], { PATH: `${bin}:${process.env.PATH ?? ""}`, ...extraEnv });
+    return {
+      ...r,
+      argv: existsSync(seen) ? readFileSync(seen, "utf8") : "",
+      conf: existsSync(conf) ? readFileSync(conf, "utf8") : "",
+    };
+  }
+
+  it("runs the WHOLE playbook — no tags, no start-at-task — and starts no image", () => {
+    env = makeScratch({
+      configPi: "0.84.1",
+      groupVarsPi: "0.84.1",
+      github: { repo: "acme/widgets" },
+    });
+    const r = provisionWithStub(env);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.argv).toContain("playbook.yml");
+    expect(r.argv).not.toMatch(/--start-at-task|--tags|image_source|release_version|rebuild_image/);
+    expect(r.argv).toContain("base_clone_dir=widgets");
+    expect(r.argv).toContain("update_conf_src=");
+    expect(r.argv).toContain("secrets_src=");
+    expect(r.stderr).toContain("provision ok");
+    expect(r.stderr).toContain("no image was pulled or started");
+    // no deploy-grace window: provision touches no container
+    expect(existsSync(join(env.sandbox, "state", "companion", "alerts"))).toBe(false);
+  });
+
+  it("renders the run spec from group_vars: names, caps, mounts' roots, the sidecar's env, a version and a fingerprint", () => {
+    env = makeScratch({
+      configPi: "0.84.1",
+      groupVarsPi: "0.84.1",
+      github: { repo: "acme/widgets" },
+    });
+    const r = provisionWithStub(env);
+    expect(r.conf).toContain("RUNSPEC_VERSION=1\n");
+    for (const line of [
+      "SANDBOX_ROOT=/opt/quickreview",
+      "APP_ROOT=/opt/qcr",
+      "DAEMON_CONTAINER=quickreview-sandbox",
+      "MEMORY_CONTAINER=quickreview-memory",
+      "DAEMON_IMAGE_REPO=ghcr.io/quickchatai/quickreview",
+      "MEMORY_IMAGE_REPO=ghcr.io/quickchatai/quickreview-memory",
+      "MEMORY_NETWORK=quickreview-memory",
+      "WEBHOOK_PORT=8787",
+      "CONTAINER_UID=1001",
+      "DAEMON_CPUS=2",
+      "DAEMON_MEMORY=8g",
+      "MEMORY_CPUS=1",
+      "MEMORY_MEMORY=3g",
+      "MEMORY_STATE_DIR=/opt/quickreview/memory-state",
+      "OPENVIKING_HOME=/opt/quickreview/state/openviking",
+      "OPENVIKING_PORT=1933",
+      "BASE_CLONE_DIR=widgets",
+      "LEGACY_SANDBOX_ROOT=/opt/quickreview/sandbox",
+      "BACKUP_DIR=/var/backups/qcr",
+      "SIDECAR_ENV_QCR_OPENVIKING_AUTH_MODE=api_key",
+      "SIDECAR_ENV_QCR_OPENVIKING_EMBEDDING_PROVIDER=local",
+      "SIDECAR_ENV_QCR_OPENVIKING_PROVISION_USERS=reviewer,companion",
+    ]) {
+      expect(r.conf.split("\n"), line).toContain(line);
+    }
+    // the fingerprint is the sha256 of every other KEY=VALUE line, in order
+    const body = r.conf
+      .split("\n")
+      .filter((l) => /^[A-Z][A-Z0-9_]*=/.test(l) && !l.startsWith("RUNSPEC_FINGERPRINT="));
+    const want = createHash("sha256")
+      .update(body.join("\n") + "\n")
+      .digest("hex");
+    expect(r.conf).toContain(`RUNSPEC_FINGERPRINT=${want}\n`);
+    expect(fingerprintOf(env)).toBe(want);
+  });
+
+  it("an inventory host var outranks group_vars in the run spec, and the fingerprint moves", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    const before = fingerprintOf(env);
+    rmSync(env.dir, { recursive: true, force: true });
+    env = makeScratch({
+      configPi: "0.84.1",
+      groupVarsPi: "0.84.1",
+      inventory: "[quickreview]\nquickreview-vm container_memory=12g\n",
+    });
+    const r = provisionWithStub(env);
+    expect(r.conf).toContain("DAEMON_MEMORY=12g\n");
+    expect(fingerprintOf(env)).not.toBe(before);
+  });
+
+  it("refuses a group_vars value the run spec cannot carry", () => {
+    env = makeScratch({
+      configPi: "0.84.1",
+      groupVarsPi: "0.84.1",
+      inventory: "[quickreview]\nquickreview-vm timezone=Europe/War$aw\n",
+    });
+    const r = run(env, ["--dry-run", "provision"]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("the run spec cannot carry");
+  });
+
+  it("the run spec version is the one the image label and the updater agree on", () => {
+    const sh = readFileSync(deploySh, "utf8");
+    expect(/^RUNSPEC_VERSION=(\d+)$/m.exec(sh)![1]).toBe(
+      /LABEL qcr\.layout="release" \\\n\s+qcr\.runspec="(\d+)"/.exec(
+        readFileSync(join(root, "docker", "Dockerfile"), "utf8"),
+      )![1],
+    );
+    expect(parseManifestFixture().pins.runspec).toBe(1);
+  });
+});
+
+function parseManifestFixture(): { pins: { runspec: number } } {
+  return JSON.parse(readFileSync(FIXTURE_MANIFEST, "utf8")) as { pins: { runspec: number } };
+}
 
 /** The `-e k=v` extra vars on the planned ansible command. */
 function planVars(stdout: string): Record<string, string> {
@@ -465,6 +708,12 @@ function planVars(stdout: string): Record<string, string> {
     [...line.matchAll(/-e (\w+)=(\S+)/g)].map((m) => [m[1]!, m[2]!] as const),
   );
 }
+
+// ---- the config home ships ---------------------------------------------------
+// A release delivers the install's config home — the located config and the
+// profiles/ beside it — to the VM as the tar on qcr-update's stdin; the
+// container reads it through QCR_CONFIG. The pin/drift preflight reads that
+// same config.
 
 describe("deploy.sh — the config home ships", () => {
   it("the pin preflight reads the config home — a checkout config.toml beside it changes nothing", () => {
@@ -478,64 +727,47 @@ describe("deploy.sh — the config home ships", () => {
     expect(r.stderr).toContain('config.toml   [pi] version = "0.85.0"');
   });
 
-  it("sync and rebuild hand the config home to the playbook; verify ships nothing", () => {
+  it("a release plans the config home as the tar on the updater's stdin; verify and provision ship none", () => {
     env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
     const home = realpathSync(env.home);
-    for (const mode of ["sync", "rebuild"]) {
-      const r = run(env, ["--dry-run", mode]);
-      expect(r.code, r.stderr).toBe(0);
-      expect(planVars(r.stdout).config_home_src).toBe(home);
-      expect(planVars(r.stdout).config_file_name).toBe("config.toml");
-      expect(r.stdout).toContain(`config home  ${home} (config.toml + profiles/`);
-      expect(r.stdout).toContain("secrets/ never rides it");
-    }
-    const v = run(env, ["--dry-run", "verify"]);
-    expect(v.code).toBe(0);
-    expect(v.stdout).not.toContain("config home");
-  });
-
-  it("sync and rebuild hand the playbook the checkout they validated and built, never its own default", () => {
-    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
-    for (const mode of ["sync", "rebuild"]) {
-      const r = run(env, ["--dry-run", mode]);
-      expect(r.code, r.stderr).toBe(0);
-      expect(planVars(r.stdout).sandbox_src).toBe(env.sandbox);
+    const r = release(env);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain(`config home  ${home} (config.toml as config.toml + profiles/`);
+    expect(r.stdout).toContain("secrets/ never rides it");
+    for (const mode of ["verify", "provision"]) {
+      const v = run(env, ["--dry-run", mode]);
+      expect(v.code).toBe(0);
+      expect(v.stdout, mode).not.toContain("config home");
     }
   });
 
-  it("REFUSES a sandbox path the playbook cannot be handed whole", () => {
-    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
-    const spaced = join(env.dir, "my sandbox");
-    symlinkSync(env.sandbox, spaced);
-    const r = run(env, ["--dry-run"], { QC_SANDBOX_DIR: spaced });
-    expect(r.code).toBe(1);
-    expect(r.stderr).toContain("contains whitespace, quotes or braces");
-    expect(r.stdout).not.toContain("ansible-playbook");
-  });
-
-  it("QCR_CONFIG names the file: its directory is the home that ships, under its own name", () => {
+  it("QCR_CONFIG names the file: its directory is the home that ships, shipped as config.toml", () => {
     env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
     const elsewhere = join(env.dir, "elsewhere");
     mkdirSync(elsewhere);
     writeFileSync(join(elsewhere, "prod.toml"), CONFIG("0.84.1"));
-    const r = run(env, ["--dry-run"], { QCR_CONFIG: join(elsewhere, "prod.toml") });
+    const r = release(env, { env: { QCR_CONFIG: join(elsewhere, "prod.toml") } });
     expect(r.code, r.stderr).toBe(0);
-    expect(planVars(r.stdout).config_home_src).toBe(realpathSync(elsewhere));
-    expect(planVars(r.stdout).config_file_name).toBe("prod.toml");
+    expect(r.stdout).toContain(`config home  ${realpathSync(elsewhere)} (prod.toml as config.toml`);
   });
 
   it("REFUSES a missing home: a config that lives only in the checkout is never read or shipped", () => {
     env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", configAt: "checkout" });
     // The checkout's config.toml is not a fallback for any mode —
     // the located config (the empty home's) is missing, and migrate is named.
-    for (const mode of ["sync", "rebuild", "verify"]) {
+    for (const mode of ["provision", "verify"]) {
       const r = run(env, ["--dry-run", mode]);
       expect(r.code).toBe(1);
       expect(r.stderr).toContain(`no config at ${join(env.home, "config.toml")}`);
       expect(r.stderr).toContain("qcr install migrate");
     }
+    const rel = run(env, ["--dry-run", "release", "1.2.3", "--manifest", "m.json"]);
+    expect(rel.code).toBe(1);
+    expect(rel.stderr).toContain("no config at");
     // QCR_CONFIG pointed back into the checkout: shipping refuses it…
-    const r = run(env, ["--dry-run"], { QCR_CONFIG: join(env.sandbox, "config.toml") });
+    const r = run(env, ["--dry-run", "release", "1.2.3", "--manifest", "m.json"], {
+      QCR_CONFIG: join(env.sandbox, "config.toml"),
+    });
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("no config home to ship");
     // …and verify, which ships nothing, reads the file the operator named.
@@ -552,38 +784,32 @@ describe("deploy.sh — the config home ships", () => {
     expect(r.stderr).toContain("no config at");
   });
 
-  it("refuses a config home path the playbook's -e k=v would split", () => {
+  it("refuses a config home path with whitespace, and one with braces", () => {
     env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
-    const spaced = join(env.dir, "with space");
-    mkdirSync(spaced);
-    writeFileSync(join(spaced, "config.toml"), CONFIG("0.84.1"));
-    const r = run(env, ["--dry-run"], { QCR_CONFIG: join(spaced, "config.toml") });
-    expect(r.code).toBe(1);
-    expect(r.stderr).toContain("whitespace");
+    for (const [name, needle] of [
+      ["with space", "whitespace"],
+      ["x{{y}}", "braces"],
+    ] as const) {
+      const dir = join(env.dir, name);
+      mkdirSync(dir);
+      writeFileSync(join(dir, "config.toml"), CONFIG("0.84.1"));
+      const r = release(env, { env: { QCR_CONFIG: join(dir, "config.toml") } });
+      expect(r.code, name).toBe(1);
+      expect(r.stderr, name).toContain(needle);
+    }
   });
 
-  it("refuses a config file name that is not a plain name (it becomes an rsync filter pattern)", () => {
+  it("refuses a config file name that is not a plain name; verify, which ships nothing, is not refused", () => {
     env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
     const other = join(env.dir, "globbed");
     mkdirSync(other);
     writeFileSync(join(other, "c[1].toml"), CONFIG("0.84.1"));
-    const r = run(env, ["--dry-run"], { QCR_CONFIG: join(other, "c[1].toml") });
+    const r = release(env, { env: { QCR_CONFIG: join(other, "c[1].toml") } });
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("not a plain file name");
-    // verify ships nothing, so it is not refused.
     expect(run(env, ["--dry-run", "verify"], { QCR_CONFIG: join(other, "c[1].toml") }).code).toBe(
       0,
     );
-  });
-
-  it("refuses a config home path with braces (ansible would template it)", () => {
-    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
-    const braced = join(env.dir, "x{{y}}");
-    mkdirSync(braced);
-    writeFileSync(join(braced, "config.toml"), CONFIG("0.84.1"));
-    const r = run(env, ["--dry-run"], { QCR_CONFIG: join(braced, "config.toml") });
-    expect(r.code).toBe(1);
-    expect(r.stderr).toContain("braces");
   });
 });
 
@@ -595,22 +821,22 @@ describe("deploy.sh — the repo profile ships with the config home", () => {
       profile: "house",
       homeFiles: { "profiles/house/profile.toml": "# mine\n" },
     });
-    const r = run(env, ["--dry-run"]);
+    const r = release(env);
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout).toContain("profile      house");
   });
 
-  it("REFUSES a named profile the home does not hold — for sync and rebuild, never verify", () => {
+  it("REFUSES a named profile the home does not hold — for a release, never verify or provision", () => {
     env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", profile: "house" });
-    for (const mode of ["sync", "rebuild"]) {
-      const r = run(env, ["--dry-run", mode]);
-      expect(r.code).toBe(1);
-      expect(r.stderr).toContain('[review] profile = "house"');
-      expect(r.stderr).toContain("the config home does not hold it");
-      expect(r.stderr).toContain(join("profiles", "house"));
+    const r = release(env);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('[review] profile = "house"');
+    expect(r.stderr).toContain("the config home does not hold it");
+    expect(r.stderr).toContain(join("profiles", "house"));
+    for (const mode of ["verify", "provision"]) {
+      const v = run(env, ["--dry-run", mode]);
+      expect(v.stderr, mode).not.toContain("[review] profile");
     }
-    const v = run(env, ["--dry-run", "verify"]);
-    expect(v.stderr).not.toContain("[review] profile");
   });
 
   it("an install profile left in the checkout is REFUSED — the VM never reads it there", () => {
@@ -620,7 +846,7 @@ describe("deploy.sh — the repo profile ships with the config home", () => {
       profile: "house",
       tracked: { "profiles/house/addenda/.gitkeep": "" },
     });
-    const r = run(env, ["--dry-run"]);
+    const r = release(env);
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("the config home does not hold it");
     expect(r.stderr).toContain("qcr install migrate");
@@ -632,10 +858,10 @@ describe("deploy.sh — the repo profile ships with the config home", () => {
       profile: "minimal",
       tracked: { "profiles/minimal/addenda/.gitkeep": "" },
     });
-    expect(run(env, ["--dry-run"]).code).toBe(0);
+    expect(release(env).code).toBe(0);
     rmSync(env.dir, { recursive: true, force: true });
     env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", profile: "" });
-    expect(run(env, ["--dry-run"]).code).toBe(0);
+    expect(release(env).code).toBe(0);
   });
 
   it("every profile in the chain must be found — the home first, then the checkout's examples", () => {
@@ -648,7 +874,7 @@ describe("deploy.sh — the repo profile ships with the config home", () => {
         "profiles/family/profile.toml": "# a base\nextends = 'default'\n[addenda]\ndrop = []\n",
       },
     });
-    let r = run(env, ["--dry-run", "sync"]);
+    let r = release(env);
     expect(r.code).toBe(1);
     expect(r.stderr).toContain('profile "family" extends "default"');
     rmSync(env.dir, { recursive: true, force: true });
@@ -660,7 +886,7 @@ describe("deploy.sh — the repo profile ships with the config home", () => {
       homeFiles: { "profiles/house/profile.toml": 'extends = "default"\n' },
       tracked: { "profiles/default/profile.toml": "# the shipped behaviour\n" },
     });
-    r = run(env, ["--dry-run", "sync"]);
+    r = release(env);
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout).toContain("profile      house → default");
     rmSync(env.dir, { recursive: true, force: true });
@@ -674,12 +900,12 @@ describe("deploy.sh — the repo profile ships with the config home", () => {
         "profiles/family/profile.toml": 'extends = "house"\n',
       },
     });
-    expect(run(env, ["--dry-run", "sync"]).code).toBe(0);
+    expect(release(env).code).toBe(0);
   });
 
   it("refuses a profile name — or an extends — that could climb out of profiles/", () => {
     env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", profile: "../secrets" });
-    let r = run(env, ["--dry-run"]);
+    let r = release(env);
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("not a plain profile name");
     rmSync(env.dir, { recursive: true, force: true });
@@ -689,52 +915,50 @@ describe("deploy.sh — the repo profile ships with the config home", () => {
       profile: "house",
       homeFiles: { "profiles/house/profile.toml": 'extends = "../../etc"\n' },
     });
-    r = run(env, ["--dry-run"]);
+    r = release(env);
     expect(r.code).toBe(1);
     expect(r.stderr).toContain('profile "house" extends "../../etc" is not a plain profile name');
   });
 });
 
-describe("the playbook's config-home ship", () => {
-  const playbook = () => readFileSync(join(root, "deploy", "ansible", "playbook.yml"), "utf8");
-  const SHIP = "- name: Ship the install's config home";
-
-  /** The ship task's rsync_opts, read out of the REAL playbook. */
-  function shipOpts(vars: Record<string, string>): string[] {
-    const text = playbook();
-    const at = text.indexOf(SHIP);
-    expect(at).toBeGreaterThan(0);
-    const block = text.slice(at, text.indexOf("- name:", at + 1));
-    return [...block.matchAll(/^\s+- "(--[^"]+)"$/gm)].map((m) =>
-      m[1]!.replace(/\{\{\s*(\w+)\s*\|\s*mandatory\s*\}\}/g, (_, k: string) => {
-        const v = vars[k];
-        if (v === undefined) throw new Error(`playbook var ${k} undefined — ansible would fail`);
-        return v;
-      }),
-    );
+// A real release run against stubs: the tar the updater receives on stdin.
+describe("deploy.sh release — the config tar the updater receives", () => {
+  /** A stub ssh (answers every post-deploy check) and the stand-in for the update call. */
+  function realRelease(
+    e: Env,
+    extraEnv: Record<string, string> = {},
+    opts: { updateRc?: number; vm?: VmState } = {},
+  ) {
+    const bin = join(e.dir, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "ssh"), "#!/bin/sh\necho stub-ok\n", { mode: 0o755 });
+    const tarOut = join(e.dir, "received.tar");
+    const argvOut = join(e.dir, "update-argv");
+    const r = release(e, {
+      dry: false,
+      vm: opts.vm,
+      env: {
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        QC_UPDATE_RUN_CMD: `cat > '${tarOut}'; printf '%s\\n' "$*" > '${argvOut}'; exit ${opts.updateRc ?? 0}`,
+        QC_HEARTBEAT_PROBE_CMD: "exit 1",
+        QC_HEARTBEAT_WAIT_S: "0",
+        QC_MEMORY_WAIT_S: "0",
+        QC_MEMORY_PROBE_CMD: "true",
+        QC_MEMORY_SEARCH_CMD: "true",
+        ...extraEnv,
+      },
+    });
+    return {
+      ...r,
+      tarOut,
+      argv: existsSync(argvOut) ? readFileSync(argvOut, "utf8").trim() : "",
+      listing: existsSync(tarOut)
+        ? execFileSync("tar", ["-tvf", tarOut], { encoding: "utf8" })
+        : "",
+    };
   }
 
-  it("runs in sync (after the start-at task), mounts the home read-only and names it QCR_CONFIG", () => {
-    const text = playbook();
-    const deploy = readFileSync(deploySh, "utf8");
-    const start = /SYNC_START_TASK="([^"]+)"/.exec(deploy)![1]!;
-    expect(text.indexOf(`- name: ${start}`)).toBeGreaterThan(0);
-    expect(text.indexOf(SHIP)).toBeGreaterThan(text.indexOf(`- name: ${start}`));
-    expect(text).toContain('src: "{{ config_home_src | mandatory }}/"');
-    expect(text).toContain('- "{{ sandbox_root }}/config-home:/opt/quickreview/config-home:ro"');
-    expect(text).toContain(
-      'QCR_CONFIG: "/opt/quickreview/config-home/{{ config_file_name | mandatory }}"',
-    );
-  });
-
-  it("ships exactly the config and profiles/ — never secrets/ — and mirrors deletions (real rsync)", () => {
-    let hasRsync = true;
-    try {
-      execFileSync("rsync", ["--version"], { stdio: "ignore" });
-    } catch {
-      hasRsync = false;
-    }
-    if (!hasRsync) return;
+  it("is config.toml and profiles/ only — never secrets/ — a symlinked profile dereferenced", () => {
     env = makeScratch({
       configPi: "0.84.1",
       groupVarsPi: "0.84.1",
@@ -745,27 +969,25 @@ describe("the playbook's config-home ship", () => {
         "notes.txt": "operator scratch\n",
       },
     });
-    // a symlinked profile ships as the files it points at
     const linked = join(env.dir, "linked-profile");
     mkdirSync(linked);
     writeFileSync(join(linked, "profile.toml"), "# linked\n");
     symlinkSync(linked, join(env.home, "profiles", "linked"));
-    const vars = planVars(run(env, ["--dry-run"]).stdout);
-    const dest = join(env.dir, "vm-config-home");
-    mkdirSync(join(dest, "profiles", "gone"), { recursive: true });
-    writeFileSync(join(dest, "profiles", "gone", "profile.toml"), "stale\n");
-    writeFileSync(join(dest, "leftover.toml"), "stale\n");
-    execFileSync("rsync", ["-a", ...shipOpts(vars), `${vars.config_home_src}/`, `${dest}/`]);
-    expect(readFileSync(join(dest, "config.toml"), "utf8")).toContain("[pi]");
-    expect(readFileSync(join(dest, "profiles", "house", "addenda", "10-x.md"), "utf8")).toBe(
-      "rule\n",
+    const r = realRelease(env);
+    expect(r.listing).toContain("config.toml");
+    expect(r.listing).toContain("profiles/house/addenda/10-x.md");
+    expect(r.listing).toContain("profiles/linked/profile.toml");
+    expect(r.listing).not.toMatch(/secrets|app\.pem|PRIVATE|notes\.txt/);
+    // no link survives into the tar: the updater refuses any
+    expect(r.listing.split("\n").some((l) => /^[lh]/.test(l))).toBe(false);
+    // …and a clean unpack reproduces the home exactly
+    const dest = join(env.dir, "unpacked");
+    mkdirSync(dest);
+    execFileSync("tar", ["-xf", r.tarOut, "-C", dest]);
+    expect(readdirSync(dest).sort()).toEqual(["config.toml", "profiles"]);
+    expect(readFileSync(join(dest, "profiles", "linked", "profile.toml"), "utf8")).toBe(
+      "# linked\n",
     );
-    expect(lstatSync(join(dest, "profiles", "linked")).isDirectory()).toBe(true);
-    expect(existsSync(join(dest, "secrets"))).toBe(false);
-    expect(existsSync(join(dest, "notes.txt"))).toBe(false);
-    expect(existsSync(join(dest, "profiles", "gone"))).toBe(false);
-    expect(existsSync(join(dest, "leftover.toml"))).toBe(false);
-
     // The shipped copy fingerprints exactly like the home it came from — the
     // container runs the same script with QCR_CONFIG naming the shipped file.
     const fp = (extra: Record<string, string>) =>
@@ -779,9 +1001,17 @@ describe("the playbook's config-home ship", () => {
           ...extra,
         },
       }).trim();
-    const local = fp({});
-    expect(local).toMatch(/^config=[0-9a-f]{64} profiles=[0-9a-f]{64}$/);
-    expect(fp({ QCR_CONFIG: join(dest, "config.toml") })).toBe(local);
+    expect(fp({ QCR_CONFIG: join(dest, "config.toml") })).toBe(fp({}));
+  });
+
+  it("ships the config under the name config.toml whatever it is called here", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    const elsewhere = join(env.dir, "elsewhere");
+    mkdirSync(elsewhere);
+    writeFileSync(join(elsewhere, "prod.toml"), CONFIG("0.84.1"));
+    const r = realRelease(env, { QCR_CONFIG: join(elsewhere, "prod.toml") });
+    expect(r.listing).toContain("config.toml");
+    expect(r.listing).not.toContain("prod.toml");
   });
 });
 
@@ -1159,7 +1389,7 @@ describe("deploy.sh — OpenViking pin drift", () => {
       const r = run(env, ["--dry-run"]);
       expect(r.code).toBe(0);
       expect(r.stdout).toContain(`local model  bge-small-en-v1.5-f16 sha256 ${PIN.sha}`);
-      expect(r.stdout).toMatch(/a changed pin needs rebuild/);
+      expect(r.stdout).toMatch(/a changed pin needs a new release/);
     });
 
     for (const [what, drifted, label] of [
@@ -1257,100 +1487,60 @@ describe("deploy.sh — OpenViking pin drift", () => {
   });
 });
 
-// ---- release <version>, dev, and the cutover --------------------------------
-//
-// The VM runs the release image in daemon mode. `release` pulls it, `sync`/`dev`
-// builds the same Dockerfile on the VM, and the first run on the legacy image is
-// a guarded cutover. Everything here is a dry run, a refusal, or a stub
-// ansible-playbook/ssh on PATH: nothing leaves the machine.
-describe("deploy.sh — release <version>, dev and the cutover", () => {
+// ---- release <version> and the cutover --------------------------------------
+// The deploy: a controller preflight over CI's manifest and the VM's reported
+// status, then `tar | ssh vm sudo qcr-update ...`. Everything here is a dry
+// run, a refusal, or a stub on PATH: nothing leaves the machine.
+describe("deploy.sh — release <version>", () => {
   const scratch = (extra: Partial<Parameters<typeof makeScratch>[0]> = {}): Env =>
     makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", ...extra });
 
-  const git = (e: Env, ...args: string[]): string =>
-    execFileSync("git", ["-C", e.sandbox, ...args], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        GIT_AUTHOR_NAME: "t",
-        GIT_AUTHOR_EMAIL: "t@t",
-        GIT_COMMITTER_NAME: "t",
-        GIT_COMMITTER_EMAIL: "t@t",
-      },
-    }).trim();
-
-  /** Run for real against stub ansible-playbook and ssh; returns what the stubs saw. */
-  function realRun(
-    e: Env,
-    args: string[],
-    extraEnv: Record<string, string> = {},
-  ): { code: number; stderr: string; ansible: string } {
-    const bin = join(e.dir, "bin");
-    mkdirSync(bin, { recursive: true });
-    const seen = join(e.dir, "ansible-argv");
-    writeFileSync(
-      join(bin, "ansible-playbook"),
-      `#!/bin/sh\nprintf '%s\\n' "$*" > '${seen}'\nexit 7\n`,
-      { mode: 0o755 },
-    );
-    writeFileSync(join(bin, "ssh"), "#!/bin/sh\nexit 255\n", { mode: 0o755 });
-    const r = run(e, args, { PATH: `${bin}:${process.env.PATH ?? ""}`, ...extraEnv });
-    return {
-      code: r.code,
-      stderr: r.stderr,
-      ansible: existsSync(seen) ? readFileSync(seen, "utf8") : "",
-    };
-  }
-
-  it("plans a release: the images by version, no rsync, no build, the legacy image kept for the way back", () => {
+  it("plans a release: manifest, pull by digest, config check, stop, snapshot, preflight, seed, swap, sidecar, recreate — and no rsync, build or install", () => {
     env = scratch();
-    const r = run(env, ["--dry-run", "release", "0.1.0"]);
+    const r = release(env);
     expect(r.code, r.stderr).toBe(0);
-    expect(r.stdout).toContain("plan — deploy.sh release 0.1.0");
-    expect(r.stdout).toContain("ghcr.io/quickchatai/quickreview:0.1.0");
-    expect(r.stdout).toContain("ghcr.io/quickchatai/quickreview-memory:0.1.0");
-    expect(r.stdout).toContain("no rsync, no build");
+    expect(r.stdout).toContain("plan — deploy.sh release 1.2.3");
+    expect(r.stdout).toContain("manifest     ");
+    expect(r.stdout).toContain(`daemon ghcr.io/quickchatai/quickreview@${DAEMON_DIGEST}`);
+    expect(r.stdout).toContain(`memory ghcr.io/quickchatai/quickreview-memory@${MEMORY_DIGEST}`);
+    expect(r.stdout).toContain(
+      `sudo qcr-update 1.2.3@${DAEMON_DIGEST} --memory-digest ${MEMORY_DIGEST}`,
+    );
+    // the VM-side order, as the plan states it
+    const order = [
+      "flock; refuse unless draining=true and running_rounds=0",
+      "pull both images by digest",
+      "`qcr config check --json`",
+      "stop the daemon container; snapshot state.db",
+      "`daemon --preflight` on a scratch copy",
+      "seed the sidecar store once (legacy layout only",
+      "swap the config",
+      "start the memory sidecar, wait for /ready; recreate the daemon container",
+    ].map((needle) => {
+      const i = r.stdout.indexOf(needle);
+      expect(i, needle).toBeGreaterThan(-1);
+      return i;
+    });
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(r.stdout).toContain("any failure from the stop to the recreate is RESCUED");
+    expect(r.stdout).toContain("no rsync, no build, no install on the VM");
+    // …and the plan contains no ansible at all: provision is the only ansible mode
+    expect(r.stdout).not.toContain("ansible-playbook");
+    expect(r.stdout).not.toMatch(/docker build|image_source|sandbox_src|rebuild_image/);
     expect(r.stdout).toContain("the legacy image quickreview-sandbox:v1 stays on the VM");
-    const vars = planVars(r.stdout);
-    expect(vars.image_source).toBe("release");
-    expect(vars.release_version).toBe("0.1.0");
-    expect(vars.force_restart).toBe("true");
-    expect(vars.config_home_src).toBe(realpathSync(env.home));
-    // A release ships no checkout and builds nothing from it.
-    expect(vars.sandbox_src).toBeUndefined();
-    expect(vars.build_sha).toBeUndefined();
-    expect(r.stdout).toContain("--start-at-task Image source and version");
-    // The CI stamp, not a local one, is what the deploy tab will read.
     expect(r.stdout).toContain("BUILD_SHA is CI's");
   });
 
-  it("plans a dev build: the checkout is synced and built on the VM, stamped with HEAD", () => {
-    env = scratch();
-    const head = git(env, "rev-parse", "--short", "HEAD");
-    for (const verb of ["sync", "dev", undefined]) {
-      const r = run(env, ["--dry-run", ...(verb ? [verb] : [])]);
-      expect(r.code, r.stderr).toBe(0);
-      // `dev` is the new name of the same run.
-      expect(r.stdout).toContain("plan — deploy.sh sync");
-      const vars = planVars(r.stdout);
-      expect(vars.image_source).toBe("dev");
-      expect(vars.build_sha).toBe(head);
-      expect(vars.sandbox_src).toBe(env.sandbox);
-      expect(vars.rebuild_image).toBeUndefined();
-      expect(r.stdout).toContain("build docker/Dockerfile on the VM");
-      expect(r.stdout).toContain(`image quickreview-sandbox:dev, built on the VM at ${head}`);
-    }
-    const rebuild = planVars(run(env, ["--dry-run", "rebuild"]).stdout);
-    expect(rebuild.image_source).toBe("dev");
-    expect(rebuild.rebuild_image).toBe("true");
-    expect(rebuild.build_sha).toBe(head);
-  });
-
-  it("builds nothing on the controller: the old npm build and the BUILD_SHA marker are gone", () => {
-    const text = readFileSync(deploySh, "utf8");
-    expect(text).not.toContain("npm run build");
-    expect(text).not.toContain("verify-dist");
-    expect(text).not.toMatch(/> "\$SANDBOX_DIR\/BUILD_SHA"/);
+  it("deploy.sh holds no rsync, no docker build, no BuildKit and no ansible image task", () => {
+    const sh = readFileSync(deploySh, "utf8").replace(/^\s*#.*$/gm, "");
+    expect(sh).not.toMatch(
+      /\brsync\s+-|synchronize|docker build|buildx|npm run build|BUILD_SHA"? >/,
+    );
+    const playbook = readFileSync(join(root, "deploy", "ansible", "playbook.yml"), "utf8");
+    expect(playbook).not.toMatch(/synchronize|docker build|docker_image|docker_container/);
+    expect(playbook).not.toMatch(
+      /sandbox_src|rebuild_image|image_source|dev_image_tag|tmux_version/,
+    );
   });
 
   it("REFUSES a release with no version, a non-version, or latest — it names an image tag", () => {
@@ -1361,26 +1551,24 @@ describe("deploy.sh — release <version>, dev and the cutover", () => {
       [["release", "v0.1.0"], "is not X.Y.Z"],
       [["release", "0.1"], "is not X.Y.Z"],
       [["release", "0.1.0; rm"], "is not X.Y.Z"],
-      [["release", "0.1.0", "sync"], "two modes given"],
+      [["release", "0.1.0", "verify"], "two modes given"],
     ] as const) {
       const r = run(env, ["--dry-run", ...args]);
       expect(r.code, args.join(" ")).toBe(1);
       expect(r.stderr, args.join(" ")).toContain(msg);
     }
-    expect(run(env, ["--dry-run", "release", "0.1.0-rc.1"]).code).toBe(0);
+    expect(release(env, { version: "1.2.3-rc.1" }).code).toBe(0);
   });
 
-  it("REFUSES a config whose [tui] remote_sandbox_root is not the image's app root, for every shipping mode", () => {
+  it("REFUSES a config whose [tui] remote_sandbox_root is not the image's app root; verify and provision read whatever the locator found", () => {
     for (const shape of [{ tuiRoot: null }, { tuiRoot: "/opt/quickreview/sandbox" }]) {
       env = scratch({ shape });
-      for (const args of [["sync"], ["rebuild"], ["release", "0.1.0"]]) {
-        const r = run(env, ["--dry-run", ...args]);
-        expect(r.code, `${JSON.stringify(shape)} ${args.join(" ")}`).toBe(1);
-        expect(r.stderr).toContain("[tui] remote_sandbox_root mismatch");
-        expect(r.stderr).toContain('remote_sandbox_root = "/opt/qcr"');
-      }
-      // verify ships nothing and reads whatever the locator found.
+      const r = release(env);
+      expect(r.code, JSON.stringify(shape)).toBe(1);
+      expect(r.stderr).toContain("[tui] remote_sandbox_root mismatch");
+      expect(r.stderr).toContain('remote_sandbox_root = "/opt/qcr"');
       expect(run(env, ["--dry-run", "verify"]).code).toBe(0);
+      expect(run(env, ["--dry-run", "provision"]).code).toBe(0);
       rmSync(env.dir, { recursive: true, force: true });
     }
   });
@@ -1438,262 +1626,318 @@ describe("deploy.sh — release <version>, dev and the cutover", () => {
     );
   });
 
-  describe("the cutover guard", () => {
-    const LEGACY = (sha: string) =>
-      `printf 'image=quickreview-sandbox:v1\\nlabel=\\nmarker=%s\\n' '${sha}'`;
-    const RELEASE = (sha: string) =>
-      `printf 'image=ghcr.io/quickchatai/quickreview:0.1.0\\nlabel=%s\\nmarker=\\n' '${sha}'`;
+  describe("what the VM reports: layout, drain and run spec", () => {
+    it("REFUSES (in a real run; the plan says so) a legacy VM without the cutover ack", () => {
+      env = scratch();
+      const plan = release(env, { vm: { layout: "legacy" } });
+      expect(plan.code, plan.stderr).toBe(0);
+      expect(plan.stdout).toContain("REFUSED in a real run: the VM still runs the legacy layout");
+      expect(plan.stdout).toContain("--cutover-ack");
+      const real = release(env, { vm: { layout: "legacy" }, dry: false });
+      expect(real.code).toBe(1);
+      expect(real.stderr).toContain("refusing the release");
+      expect(real.stderr).toContain("legacy layout");
+      // nothing opened: no deploy-grace marker, the updater never called
+      expect(existsSync(join(env.sandbox, "state", "companion", "alerts"))).toBe(false);
+    });
 
-    /** A scratch tree with an old commit (what the VM runs) and a newer one. */
-    function history(): { env: Env; old: string; landed: string; head: string } {
-      const e = scratch();
-      const old = git(e, "rev-parse", "HEAD");
-      writeFileSync(join(e.sandbox, "landed.txt"), "P1.8\n");
-      git(e, "add", "-A");
-      git(e, "commit", "-qm", "the phase 1 deploy");
-      const landed = git(e, "rev-parse", "HEAD");
-      writeFileSync(join(e.sandbox, "later.txt"), "later\n");
-      git(e, "add", "-A");
-      git(e, "commit", "-qm", "head");
-      return { env: e, old, landed, head: git(e, "rev-parse", "HEAD") };
+    it("hands the ack to the updater and plans the cutover when --cutover-ack is given", () => {
+      env = scratch();
+      const r = release(env, { vm: { layout: "legacy" }, args: ["--cutover-ack"] });
+      expect(r.code, r.stderr).toBe(0);
+      expect(r.stdout).not.toContain("REFUSED in a real run");
+      expect(r.stdout).toContain("--cutover-ack 1.2.3");
+      expect(r.stdout).toContain("first run on the legacy layout, acknowledged");
+    });
+
+    it("REFUSES an undrained or busy board (the updater refuses it too)", () => {
+      env = scratch();
+      const undrained = release(env, { vm: { draining: false } });
+      expect(undrained.stdout).toContain("REFUSED in a real run: the bot is not drained");
+      expect(release(env, { vm: { draining: false }, dry: false }).code).toBe(1);
+      const busy = release(env, { vm: { rounds: 3 } });
+      expect(busy.stdout).toContain("REFUSED in a real run: the board is busy (running_rounds=3)");
+      const real = release(env, { vm: { rounds: 3 }, dry: false });
+      expect(real.code).toBe(1);
+      expect(real.stderr).toContain("running_rounds=3");
+      // drained and idle: no refusal in the plan
+      expect(release(env).stdout).not.toContain("REFUSED");
+    });
+
+    it("an unreadable status is UNKNOWN: the plan says so, a real run refuses", () => {
+      env = scratch();
+      const manifest = writeManifest(env);
+      const plan = run(env, ["--dry-run", "release", "1.2.3", "--manifest", manifest], {
+        QC_UPDATE_STATUS_CMD: "exit 255",
+      });
+      expect(plan.code, plan.stderr).toBe(0);
+      expect(plan.stdout).toContain(
+        "REFUSED in a real run: the VM's `qcr-update status` could not be read",
+      );
+      const real = run(env, ["release", "1.2.3", "--manifest", manifest], {
+        QC_UPDATE_STATUS_CMD: "exit 255",
+      });
+      expect(real.code).toBe(1);
+      expect(real.stderr).toContain("could not be read");
+    });
+
+    it("REFUSES a run spec the VM does not hold: re-run provision — fatal in a plan too", () => {
+      env = scratch();
+      for (const dry of [true, false]) {
+        const r = release(env, { vm: { fingerprint: "0".repeat(64) }, dry });
+        expect(r.code, String(dry)).toBe(1);
+        expect(r.stderr).toContain("differs from the one group_vars renders");
+        expect(r.stderr).toContain("re-run provision");
+      }
+      // …and a group_vars change moves the fingerprint, so the VM's stale spec is caught
+      const stale = fingerprintOf(env);
+      writeFileSync(
+        join(env.ansible, "group_vars", "all.yml"),
+        readFileSync(join(env.ansible, "group_vars", "all.yml"), "utf8") +
+          "container_memory: 12g\n",
+      );
+      execFileSync("git", ["-C", env.sandbox, "status", "--porcelain"]);
+      const r = release(env, { vm: { fingerprint: stale } });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("re-run provision");
+    });
+
+    it("refuses a release whose images need a newer run spec than this checkout renders", () => {
+      env = scratch();
+      const r = release(env, {
+        patch: (m) => {
+          m.pins.runspec = 2;
+        },
+      });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("need run spec v2 but this checkout renders v1");
+      expect(r.stderr).toContain("re-run provision");
+    });
+  });
+
+  describe("the manifest", () => {
+    it("is required: a release names no image without CI's manifest", () => {
+      env = scratch();
+      const r = run(env, [
+        "--dry-run",
+        "release",
+        "1.2.3",
+        "--manifest",
+        join(env.dir, "nope.json"),
+      ]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("no deploy manifest at");
+      expect(r.stderr).toContain("deploy/manifest.schema.json");
+    });
+
+    it("REFUSES a malformed manifest, naming the problem; accepts the fixture", () => {
+      env = scratch();
+      expect(release(env).code).toBe(0);
+      const bad = release(env, {
+        patch: (m) => {
+          m.images.daemon!.index_digest = "sha256:short";
+          delete (m as Record<string, unknown>).revision;
+        },
+      });
+      expect(bad.code).toBe(1);
+      expect(bad.stderr).toContain("malformed deploy manifest");
+      expect(bad.stderr).toContain("index_digest");
+      expect(bad.stderr).toContain('missing "revision"');
+      const notJson = join(env.dir, "not-json.json");
+      writeFileSync(notJson, "{ nope");
+      const r = run(env, ["--dry-run", "release", "1.2.3", "--manifest", notJson]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("not JSON");
+    });
+
+    it("REFUSES a manifest for another version, and images that are not the ones group_vars names", () => {
+      env = scratch();
+      const m = writeManifest(env, () => {}, "1.2.4", "other.json");
+      const r = run(env, ["--dry-run", "release", "1.2.3", "--manifest", m]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("is for version 1.2.4, not 1.2.3");
+      const other = release(env, {
+        patch: (x) => {
+          x.images.daemon!.repository = "ghcr.io/elsewhere/quickreview";
+        },
+      });
+      expect(other.code).toBe(1);
+      expect(other.stderr).toContain("daemon image repository pin mismatch");
+    });
+
+    it("KEEPS rule 7: a pin drift between the manifest (the images' labels) and config.toml refuses", () => {
+      env = scratch();
+      const pi = release(env, {
+        patch: (m) => {
+          m.pins.pi = "1.4.0";
+        },
+      });
+      expect(pi.code).toBe(1);
+      expect(pi.stderr).toContain("pi (manifest) pin mismatch");
+      expect(pi.stderr).toContain('manifest pins.pi = "1.4.0"');
+      rmSync(env.dir, { recursive: true, force: true });
+
+      const OV = { version: "0.4.15", llama: "0.3.35" };
+      env = scratch({ configOv: OV });
+      expect(release(env).code).toBe(0);
+      for (const [key, value, label] of [
+        ["openviking", "0.4.16", "openviking (manifest) pin mismatch"],
+        ["llama_cpp_python", "0.3.99", "llama-cpp-python (manifest) pin mismatch"],
+      ] as const) {
+        const r = release(env, {
+          patch: (m) => {
+            m.pins[key] = value;
+          },
+        });
+        expect(r.code, key).toBe(1);
+        expect(r.stderr, key).toContain(label);
+      }
+    });
+
+    it("KEEPS rule 7: the embedder file and sha256 in the manifest are held to group_vars", () => {
+      const PIN: LocalEmbedderPin = {
+        dir: "/opt/openviking/models",
+        model: "bge-small-en-v1.5-f16",
+        url: "https://example.invalid/bge.gguf",
+        sha: "f0b2fef971e8366438bfd2d9aefea1b0115919389448806d290237f638bae999",
+        port: "1934",
+        threads: "1",
+      };
+      env = scratch({ configOv: { version: "0.4.15", llama: "0.3.35", localEmbedder: PIN } });
+      expect(release(env).code).toBe(0);
+      const sha = release(env, {
+        patch: (m) => {
+          m.pins.embedder_sha256 = "0".repeat(64);
+        },
+      });
+      expect(sha.code).toBe(1);
+      expect(sha.stderr).toContain("local embedder model sha256 (manifest) pin mismatch");
+      const file = release(env, {
+        patch: (m) => {
+          m.pins.embedder_file = "/opt/openviking/models/other.gguf";
+        },
+      });
+      expect(file.code).toBe(1);
+      expect(file.stderr).toContain("local embedder model file (manifest) pin mismatch");
+    });
+
+    it("the config/group_vars pin refusals still bind a release (embedder, endpoint, openviking)", () => {
+      env = scratch({
+        configOv: { version: "0.4.15", llama: "0.3.35" },
+        groupVarsOv: { version: "0.4.16", llama: "0.3.35" },
+      });
+      const r = run(env, ["--dry-run", "release", "1.2.3", "--manifest", writeManifest(env)], {
+        QC_UPDATE_STATUS_CMD: "true",
+      });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("openviking pin mismatch");
+    });
+  });
+
+  describe("a real run against stubs", () => {
+    function stubs(e: Env, updateRc = 0) {
+      const bin = join(e.dir, "bin");
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(join(bin, "ssh"), "#!/bin/sh\necho stub-ok\n", { mode: 0o755 });
+      const argv = join(e.dir, "update-argv");
+      const stdin = join(e.dir, "update-stdin.tar");
+      return {
+        argv,
+        stdin,
+        env: {
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          QC_UPDATE_RUN_CMD: `cat > '${stdin}'; printf '%s\\n' "$*" > '${argv}'; exit ${updateRc}`,
+          QC_HEARTBEAT_PROBE_CMD: `printf '%s\\n%s\\n%s' '2026-10-03T09:55:40.000000000Z' '2026-10-03T09:57:00Z' '{"written_at":"2026-10-03T09:56:50.000Z"}'`,
+          QC_HEARTBEAT_WAIT_S: "0",
+          QC_MEMORY_WAIT_S: "0",
+          QC_MEMORY_PROBE_CMD: "true",
+          QC_MEMORY_SEARCH_CMD: "true",
+        },
+      };
     }
 
-    it("the plan names the VM's current image, and a release-layout VM needs no guard", () => {
-      const h = history();
-      env = h.env;
-      const r = run(env, ["--dry-run", "release", "0.1.0"], {
-        QC_VM_LAYOUT_CMD: RELEASE(h.landed),
-      });
-      expect(r.code).toBe(0);
-      expect(r.stdout).toContain(
-        `vm now       ghcr.io/quickchatai/quickreview:0.1.0 (layout release, build ${h.landed})`,
+    it("calls the updater once with <version>@<digest> and the memory digest; opens the deploy-grace window; then runs the post-deploy checks", () => {
+      env = scratch();
+      const s = stubs(env);
+      const r = release(env, { dry: false, env: s.env });
+      expect(r.code, r.stderr).toBe(0);
+      expect(readFileSync(s.argv, "utf8").trim()).toBe(
+        `1.2.3@${DAEMON_DIGEST} --memory-digest ${MEMORY_DIGEST}`,
       );
-      expect(r.stdout).not.toContain("  cutover  ");
-      const real = realRun(env, ["release", "0.1.0"], { QC_VM_LAYOUT_CMD: RELEASE(h.landed) });
-      // Past the guard: the (stub) ansible-playbook ran, with the release vars.
-      expect(real.ansible).toContain("-e image_source=release -e release_version=0.1.0");
+      expect(existsSync(s.stdin)).toBe(true);
+      expect(r.stderr).toContain("running: tar config.toml");
+      expect(r.stdout).toContain("--- heartbeat written by this boot");
+      expect(r.stderr).toContain("deploy ok (release");
+      const marker = readFileSync(
+        join(env.sandbox, "state", "companion", "alerts", ".deploy-window.json"),
+        "utf8",
+      );
+      expect(marker).toContain('"mode":"release"');
     });
 
-    it("refuses the first run on the legacy image unless the prerequisite deploys are named", () => {
-      const h = history();
-      env = h.env;
-      const probe = { QC_VM_LAYOUT_CMD: LEGACY(h.landed) };
-      const plan = run(env, ["--dry-run", "release", "0.1.0"], probe);
-      // A plan only says so: it exists to be reviewed.
-      expect(plan.code).toBe(0);
-      expect(plan.stdout).toContain("layout legacy");
-      expect(plan.stdout).toContain("REFUSED in a real run");
-      const real = realRun(env, ["release", "0.1.0"], probe);
-      expect(real.code).toBe(1);
-      expect(real.stderr).toContain("refusing the cutover");
-      expect(real.stderr).toContain("QCR_CUTOVER_REQUIRES");
-      expect(real.ansible).toBe("");
+    it("passes --cutover-ack <version> on the cutover", () => {
+      env = scratch();
+      const s = stubs(env);
+      const r = release(env, {
+        dry: false,
+        env: s.env,
+        vm: { layout: "legacy" },
+        args: ["--cutover-ack"],
+      });
+      expect(r.code, r.stderr).toBe(0);
+      expect(readFileSync(s.argv, "utf8").trim()).toBe(
+        `1.2.3@${DAEMON_DIGEST} --memory-digest ${MEMORY_DIGEST} --cutover-ack 1.2.3`,
+      );
     });
 
-    it("reads the VM's image through the real ssh command (quoting included), legacy and release", () => {
-      const h = history();
-      env = h.env;
-      const bin = join(env.dir, "probe-bin");
-      mkdirSync(bin);
-      // ssh runs the remote command locally; sudo is transparent; docker answers
-      // like a daemon would for the two inspect formats the probe asks.
+    it("a failing updater fails the release and runs no post-deploy check", () => {
+      env = scratch();
+      const s = stubs(env, 3);
+      const r = release(env, { dry: false, env: s.env });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("qcr-update failed");
+      expect(r.stderr).toContain("rescued");
+      expect(r.stdout).not.toContain("--- heartbeat");
+    });
+
+    it("runs `sudo qcr-update` over ssh when no stub stands in, with the tar on stdin", () => {
+      env = scratch();
+      const s = stubs(env);
+      const bin = join(env.dir, "bin");
+      const log = join(env.dir, "ssh-log");
+      const stdinCopy = join(env.dir, "ssh-stdin.tar");
       writeFileSync(
         join(bin, "ssh"),
-        '#!/bin/sh\nfor a; do last="$a"; done\nexec sh -c "$last"\n',
+        `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\ncase "$*" in *qcr-update*) cat > '${stdinCopy}' ;; esac\necho stub-ok\n`,
         { mode: 0o755 },
       );
-      writeFileSync(join(bin, "sudo"), '#!/bin/sh\nexec "$@"\n', { mode: 0o755 });
-      writeFileSync(
-        join(bin, "docker"),
-        [
-          "#!/bin/sh",
-          '[ "$1" = inspect ] || exit 1',
-          'case "$3" in',
-          "  *Labels*) printf '%s\\n' \"$STUB_LABEL\" ;;",
-          "  *) printf '%s\\n' \"$STUB_IMAGE\" ;;",
-          "esac",
-          "",
-        ].join("\n"),
-        { mode: 0o755 },
+      const r = release(env, {
+        dry: false,
+        env: {
+          ...s.env,
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          QC_UPDATE_RUN_CMD: "",
+          QC_VM_HOST: "the-vm",
+        },
+      });
+      expect(r.code, r.stderr).toBe(0);
+      expect(readFileSync(log, "utf8")).toContain(
+        `-o BatchMode=yes the-vm sudo qcr-update 1.2.3@${DAEMON_DIGEST} --memory-digest ${MEMORY_DIGEST}`,
       );
-      const base = { PATH: `${bin}:${process.env.PATH ?? ""}` };
-      const legacy = run(env, ["--dry-run", "release", "0.1.0"], {
-        ...base,
-        STUB_IMAGE: "quickreview-sandbox:v1",
-        STUB_LABEL: "",
-      });
-      expect(legacy.stdout).toContain("vm now       quickreview-sandbox:v1 (layout legacy");
-      const release = run(env, ["--dry-run", "release", "0.1.0"], {
-        ...base,
-        STUB_IMAGE: "ghcr.io/quickchatai/quickreview:0.1.0",
-        STUB_LABEL: h.landed,
-      });
-      expect(release.stdout).toContain(
-        `vm now       ghcr.io/quickchatai/quickreview:0.1.0 (layout release, build ${h.landed})`,
+      expect(execFileSync("tar", ["-tf", stdinCopy], { encoding: "utf8" })).toContain(
+        "config.toml",
       );
-      // No container at all (a fresh VM): not a cutover, nothing to compare.
-      const none = run(env, ["--dry-run", "release", "0.1.0"], {
-        ...base,
-        STUB_IMAGE: "",
-        STUB_LABEL: "",
-      });
-      expect(none.stdout).toContain("(layout none");
-      expect(none.stdout).not.toContain("  cutover  ");
     });
-
-    it("lets the cutover run once every named commit is an ancestor of the VM's deployed build", () => {
-      const h = history();
-      env = h.env;
-      const probe = {
-        QC_VM_LAYOUT_CMD: LEGACY(h.head),
-        QCR_CUTOVER_REQUIRES: `${h.old} ${h.landed}`,
-      };
-      const plan = run(env, ["--dry-run", "release", "0.1.0"], probe);
-      expect(plan.stdout).toContain("first run on the legacy image");
-      const real = realRun(env, ["release", "0.1.0"], probe);
-      expect(real.stderr).not.toContain("refusing the cutover");
-      expect(real.ansible).toContain("image_source=release");
-    });
-
-    it("refuses when a named commit is NOT in what the VM runs — it would arrive inside the image", () => {
-      const h = history();
-      env = h.env;
-      const real = realRun(env, ["release", "0.1.0"], {
-        QC_VM_LAYOUT_CMD: LEGACY(h.old),
-        QCR_CUTOVER_REQUIRES: h.landed,
-      });
-      expect(real.code).toBe(1);
-      expect(real.stderr).toContain(`does not contain ${h.landed}`);
-      expect(real.ansible).toBe("");
-    });
-
-    it("refuses a deployed build it cannot compare, a requirement that is no commit, and an unreadable VM", () => {
-      const h = history();
-      env = h.env;
-      const unknown = realRun(env, ["sync"], {
-        QC_VM_LAYOUT_CMD: LEGACY("deadbee"),
-        QCR_CUTOVER_REQUIRES: h.old,
-      });
-      expect(unknown.stderr).toContain("is not a commit of this checkout");
-      const bogus = realRun(env, ["sync"], {
-        QC_VM_LAYOUT_CMD: LEGACY(h.head),
-        QCR_CUTOVER_REQUIRES: "nonesuch",
-      });
-      expect(bogus.stderr).toContain("QCR_CUTOVER_REQUIRES names 'nonesuch'");
-      // The stub ssh fails: the layout is unknown, and the cutover cannot be ruled out.
-      const dark = realRun(env, ["rebuild"]);
-      expect(dark.code).toBe(1);
-      expect(dark.stderr).toContain("could not be read");
-      expect(dark.ansible).toBe("");
-    });
-
-    it("the same guard covers a dev build: pre-release fixes do not skip it", () => {
-      const h = history();
-      env = h.env;
-      const real = realRun(env, ["dev"], { QC_VM_LAYOUT_CMD: LEGACY(h.head) });
-      expect(real.code).toBe(1);
-      expect(real.stderr).toContain("refusing the cutover");
-    });
-  });
-});
-
-// ---- drain advisory — WARN only, never a refusal ----------------------------
-//
-// The heartbeat read is seamed through QC_STATUS_JSON_CMD so no test ever
-// opens an ssh connection. Every case runs --dry-run: the advisory fires
-// before the plan exits, and a warning must never change the exit code.
-describe("deploy.sh drain advisory", () => {
-  function status(e: Env, body: string): string {
-    const p = join(e.dir, "status.json");
-    writeFileSync(p, body);
-    return `cat ${p}`;
-  }
-
-  /** Like run(), but with stderr folded into the captured output — the
-   * advisory speaks on stderr and exits 0, which run() throws away. */
-  function runMerged(
-    e: Env,
-    args: string[],
-    extraEnv: Record<string, string>,
-  ): { code: number; out: string } {
-    const r = run(e, ["--dry-run", ...args], extraEnv);
-    if (r.code !== 0) return { code: r.code, out: r.stdout + r.stderr };
-    const out = execFileSync("bash", ["-c", `bash '${deploySh}' --dry-run 2>&1`], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        QC_SANDBOX_DIR: e.sandbox,
-        QC_ANSIBLE_DIR: e.ansible,
-        QC_INVENTORY: join(e.ansible, "inventory.ini"),
-        XDG_CONFIG_HOME: e.xdg,
-        QCR_CONFIG: "",
-        QCR_INSTALL: "",
-        ...extraEnv,
-      },
-    });
-    return { code: 0, out };
-  }
-
-  it("WARNS (exit 0) on an undrained deploy while rounds run", () => {
-    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
-    const cmd = status(env, JSON.stringify({ running_rounds: 3, dry_run: false }));
-    const res = runMerged(env, [], { QC_STATUS_JSON_CMD: cmd });
-    expect(res.code).toBe(0); // WARN only, never a refusal
-    expect(res.out).toContain("WARNING — deploying UNDRAINED while 3 round(s) are running");
-    expect(res.out).toContain("qcr drain on");
-  });
-
-  it("stays quiet when the board is drained and quiet", () => {
-    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
-    const cmd = status(env, JSON.stringify({ running_rounds: 0, draining: true }));
-    const res = runMerged(env, [], { QC_STATUS_JSON_CMD: cmd });
-    expect(res.code).toBe(0);
-    expect(res.out).not.toContain("WARNING");
-    expect(res.out).toContain("good to deploy");
-  });
-
-  it("says the drain is still converging when rounds remain", () => {
-    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
-    const cmd = status(env, JSON.stringify({ running_rounds: 2, draining: true }));
-    const res = runMerged(env, [], { QC_STATUS_JSON_CMD: cmd });
-    expect(res.code).toBe(0);
-    expect(res.out).toContain("drain is ON with 2 round(s) still finishing");
-  });
-
-  it("notes an unreadable heartbeat and proceeds", () => {
-    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
-    const res = runMerged(env, [], { QC_STATUS_JSON_CMD: "false" });
-    expect(res.code).toBe(0);
-    expect(res.out).toContain("heartbeat unreadable");
   });
 });
 
 // ---- the base clone, for any repo name ------------------------------------
-// The VM's base clone lives inside the rsync --delete target, and it survives
-// a sync only because the playbook excludes it by name. That exclude, and the
-// dirty-tree check's ignore, follow the configured clone name: a literal repo
-// name would wipe any other reviewed repo's clone on every sync and leave it
-// reading as a dirty tree, which this script refuses.
+// The VM's base clone lives in the sandbox root and is mounted into the daemon
+// container under the configured clone name: the run spec carries it
+// (BASE_CLONE_DIR), provision creates its directory, the updater mounts it. A
+// literal repo name would mount the wrong directory for any other reviewed repo.
 describe("deploy.sh — base clone name", () => {
   const ACME = { repo: "acme/acme-api" };
-
-  /** The sync task's rsync_opts, read out of the REAL playbook. */
-  function playbookRsyncOpts(): string[] {
-    const playbook = readFileSync(join(root, "deploy", "ansible", "playbook.yml"), "utf8");
-    const at = playbook.indexOf("- name: Sync the local sandbox working copy");
-    expect(at).toBeGreaterThan(0);
-    const block = playbook.slice(at, playbook.indexOf("- name:", at + 1));
-    return [...block.matchAll(/^\s+- "(--[^"]+)"$/gm)].map((m) => m[1]!);
-  }
-
-  /** Render the playbook's Jinja the way ansible would for these extra vars. */
-  function render(opt: string, vars: Record<string, string>): string {
-    return opt.replace(/\{\{\s*(\w+)(?:\s*\|\s*mandatory)?\s*\}\}/g, (_, k: string) => {
-      const v = vars[k];
-      if (v === undefined) throw new Error(`playbook var ${k} undefined — ansible would fail`);
-      return v;
-    });
-  }
 
   /** The `-e k=v` extra vars on the planned ansible command. */
   function extraVars(stdout: string): Record<string, string> {
@@ -1703,24 +1947,26 @@ describe("deploy.sh — base clone name", () => {
     );
   }
 
-  it("names the clone in the plan and hands it to the playbook in sync and rebuild", () => {
+  it("names the clone in the plan, hands it to provision and writes it into the run spec", () => {
     env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", github: ACME });
-    const sync = run(env, ["--dry-run"]);
-    expect(sync.code).toBe(0);
-    expect(sync.stdout).toContain("base clone   /acme-api");
-    expect(extraVars(sync.stdout).base_clone_dir).toBe("acme-api");
-    const rebuild = run(env, ["--dry-run", "rebuild"]);
-    expect(rebuild.code).toBe(0);
-    expect(extraVars(rebuild.stdout).base_clone_dir).toBe("acme-api");
+    const prov = run(env, ["--dry-run", "provision"]);
+    expect(prov.code).toBe(0);
+    expect(prov.stdout).toContain("base clone   /acme-api");
+    expect(extraVars(prov.stdout).base_clone_dir).toBe("acme-api");
+    const rel = release(env);
+    expect(rel.code, rel.stderr).toBe(0);
+    expect(rel.stdout).toContain("base clone   /acme-api");
+    // the release runs no ansible: the clone rides the run spec the VM already holds
+    expect(rel.stdout).not.toContain("base_clone_dir=");
   });
 
-  it("hands the install locator's secrets dir to rebuild's secrets copy", () => {
+  it("hands the install locator's secrets dir to provision's secrets copy — and a release ships none", () => {
     // Temp homes only: the locator never sees the operator's own.
     const homes = (e: Env) => ({ HOME: join(e.dir, "home"), XDG_CONFIG_HOME: join(e.dir, "xdg") });
     env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", github: ACME });
     const h = homes(env);
     // Nothing anywhere → the config home's secrets dir.
-    let r = run(env, ["--dry-run", "rebuild"], h);
+    let r = run(env, ["--dry-run", "provision"], h);
     expect(r.code).toBe(0);
     const home = join(h.XDG_CONFIG_HOME, "qcr", "default", "secrets");
     expect(extraVars(r.stdout).secrets_src).toBe(home);
@@ -1729,20 +1975,22 @@ describe("deploy.sh — base clone name", () => {
     const legacy = join(h.HOME, ".config", "quickreview-bot");
     mkdirSync(legacy, { recursive: true });
     writeFileSync(join(legacy, "app_id"), "1\n");
-    r = run(env, ["--dry-run", "rebuild"], h);
+    r = run(env, ["--dry-run", "provision"], h);
     expect(extraVars(r.stdout).secrets_src).toBe(home);
     mkdirSync(home, { recursive: true });
-    r = run(env, ["--dry-run", "rebuild"], h);
+    r = run(env, ["--dry-run", "provision"], h);
     expect(extraVars(r.stdout).secrets_src).toBe(home);
-    // sync ships no secrets, so it passes none.
-    expect(extraVars(run(env, ["--dry-run"], h).stdout).secrets_src).toBeUndefined();
+    // a release ships no secrets
+    const rel = release(env, { env: h });
+    expect(rel.stdout).not.toContain("secrets_src");
+    expect(rel.stdout).not.toContain(`secrets      ${home}`);
     // A secrets_dir the operator set wins.
     env = makeScratch({
       configPi: "0.84.1",
       groupVarsPi: "0.84.1",
       github: { ...ACME, secretsDir: "/srv/keys" },
     });
-    r = run(env, ["--dry-run", "rebuild"], homes(env));
+    r = run(env, ["--dry-run", "provision"], homes(env));
     expect(extraVars(r.stdout).secrets_src).toBe("/srv/keys");
   });
 
@@ -1767,84 +2015,23 @@ describe("deploy.sh — base clone name", () => {
     }
   }, 60_000); // seven scratch repos + seven script runs
 
-  it("a clone of another repo's name SURVIVES the playbook's real rsync --delete, and stale files still go", () => {
-    let hasRsync = true;
-    try {
-      execFileSync("rsync", ["--version"], { stdio: "ignore" });
-    } catch {
-      hasRsync = false;
-    }
-    if (!hasRsync) return; // the sync itself needs rsync; the plan cases above still run
-    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", github: ACME });
-    const vars = extraVars(run(env, ["--dry-run"]).stdout);
-    const opts = playbookRsyncOpts().map((o) => render(o, vars));
-    expect(opts).toContain("--exclude=/acme-api");
-    // exactly one anchored exclude is not a known runtime dir: the clone's
-    const runtime = [
-      "state",
-      "wt",
-      "archive",
-      "commands",
-      "digest",
-      "inject",
-      "verdict",
-      "memory",
-      "notes",
-      "ledger.md",
-      "AGENTS.override.md",
-      "pihome",
-    ];
-    const clones = opts.filter(
-      (o) => /^--exclude=\/[^/]+$/.test(o) && !runtime.includes(o.slice(11)),
-    );
-    expect(clones).toEqual(["--exclude=/acme-api"]);
-
-    const src = join(env.dir, "src-tree");
-    const dest = join(env.dir, "vm-sandbox");
-    mkdirSync(join(src, "dist"), { recursive: true });
-    writeFileSync(join(src, "dist", "daemon.js"), "new build\n");
-    mkdirSync(join(dest, "acme-api", ".git"), { recursive: true });
-    writeFileSync(join(dest, "acme-api", ".git", "HEAD"), "ref: refs/heads/main\n");
-    writeFileSync(join(dest, "acme-api", "README.md"), "the reviewed repo\n");
-    writeFileSync(join(dest, "removed-upstream.txt"), "stale\n");
-
-    execFileSync("rsync", ["-a", ...opts, `${src}/`, `${dest}/`]);
-    expect(readFileSync(join(dest, "acme-api", "README.md"), "utf8")).toBe("the reviewed repo\n");
-    expect(existsSync(join(dest, "acme-api", ".git", "HEAD"))).toBe(true);
-    expect(existsSync(join(dest, "removed-upstream.txt"))).toBe(false);
-    expect(readFileSync(join(dest, "dist", "daemon.js"), "utf8")).toBe("new build\n");
+  it("the playbook refuses to create the runtime directories without a clone name (no silent default)", () => {
+    const playbook = readFileSync(join(root, "deploy", "ansible", "playbook.yml"), "utf8");
+    expect(playbook).toContain('- "{{ base_clone_dir | mandatory }}"');
   });
 
-  it("the playbook refuses to render without a clone name (no silent default)", () => {
-    const opt = playbookRsyncOpts().find((o) => o.includes("base_clone_dir"));
-    expect(opt).toBe("--exclude=/{{ base_clone_dir | mandatory }}");
-    expect(() => render(opt!, {})).toThrow(/undefined/);
-  });
-
-  it("a local clone of any name does not dirty the tree: it lands in info/exclude, once", () => {
+  it("a local clone of any name leaves the checkout alone: no ignore rule is written and the tree stays clean", () => {
     env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", github: ACME });
-    // a real nested repo, exactly what WorktreeManager.ensureBaseClone leaves
-    execFileSync("git", ["init", "-q", join(env.sandbox, "acme-api")]);
-    const r = run(env, ["--dry-run"]);
-    expect(r.code).toBe(0);
-    const exclude = readFileSync(join(env.sandbox, ".git", "info", "exclude"), "utf8");
-    expect(exclude).toMatch(/^\/acme-api\/$/m);
-    const status = execFileSync("git", ["-C", env.sandbox, "status", "--porcelain"], {
-      encoding: "utf8",
-    });
-    expect(status).toBe("");
+    // nothing is rsynced from this tree any more, so a nested clone needs no rule
+    const before = existsSync(join(env.sandbox, ".git", "info", "exclude"))
+      ? readFileSync(join(env.sandbox, ".git", "info", "exclude"), "utf8")
+      : "";
     expect(run(env, ["--dry-run"]).code).toBe(0);
-    const again = readFileSync(join(env.sandbox, ".git", "info", "exclude"), "utf8");
-    expect(again.match(/^\/acme-api\/$/gm)).toHaveLength(1);
-  });
-
-  it("never glues the rule onto an exclude file's unterminated last line", () => {
-    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", github: ACME });
-    writeFileSync(join(env.sandbox, ".git", "info", "exclude"), "*.swp");
-    expect(run(env, ["--dry-run"]).code).toBe(0);
-    expect(readFileSync(join(env.sandbox, ".git", "info", "exclude"), "utf8")).toBe(
-      "*.swp\n/acme-api/\n",
-    );
+    const after = existsSync(join(env.sandbox, ".git", "info", "exclude"))
+      ? readFileSync(join(env.sandbox, ".git", "info", "exclude"), "utf8")
+      : "";
+    expect(after).toBe(before);
+    expect(after).not.toContain("acme-api");
   });
 
   it("refuses a clone name that is not one plain directory name", () => {
@@ -1866,17 +2053,24 @@ describe("deploy.sh — base clone name", () => {
     expect(help).not.toContain("set -euo pipefail");
   });
 
-  it("refuses a clone name that is a runtime/build dir of the sandbox root — the list mirrors the playbook", () => {
-    // the reserved list in deploy.sh must name every exclude the playbook
-    // carries besides the clone's own (read out of the REAL playbook)
+  it("refuses a clone name that is a runtime/build dir of the sandbox root — the list names every directory the updater mounts", () => {
     const reserved = /^BASE_CLONE_RESERVED=\(([^)]*)\)$/m.exec(readFileSync(deploySh, "utf8"))?.[1];
     expect(reserved).toBeDefined();
     const list = reserved!.split(/\s+/).filter(Boolean);
-    const excludes = playbookRsyncOpts()
-      .filter((o) => o.startsWith("--exclude=") && !o.includes("{{"))
-      .map((o) => o.slice("--exclude=".length).replace(/^\//, ""));
-    expect(excludes.length).toBeGreaterThan(5);
-    for (const e of excludes) expect(list, e).toContain(e);
+    // every `$ROOT/sandbox/<dir>` the updater mounts, besides the clone's own
+    const updater = readFileSync(join(root, "deploy", "qcr-update.sh"), "utf8");
+    const mounted = new Set([...updater.matchAll(/\$ROOT\/sandbox\/([a-z]+):/g)].map((m) => m[1]!));
+    expect([...mounted].sort()).toEqual(
+      ["archive", "commands", "digest", "inject", "verdict", "wt"].sort(),
+    );
+    for (const d of mounted) expect(list, d).toContain(d);
+    // …and the playbook creates exactly those, plus the clone's own
+    const playbook = readFileSync(join(root, "deploy", "ansible", "playbook.yml"), "utf8");
+    const made = playbook.slice(
+      playbook.indexOf("- name: Runtime directories the containers mount"),
+      playbook.indexOf("- name: Directories for the sidecar's store"),
+    );
+    for (const d of mounted) expect(made, d).toMatch(new RegExp(`^\\s+- ${d}$`, "m"));
     expect(list).toContain("dist");
 
     for (const name of ["notes", "wt", "dist"]) {
@@ -1891,18 +2085,6 @@ describe("deploy.sh — base clone name", () => {
       rmSync(env.dir, { recursive: true, force: true });
     }
   }, 60_000);
-
-  it("refuses a clone name that collides with a tracked path — excluding it would ship no daemon", () => {
-    env = makeScratch({
-      configPi: "0.84.1",
-      groupVarsPi: "0.84.1",
-      github: { repo: "acme/src" },
-      tracked: { "src/daemon.ts": "export {};\n" },
-    });
-    const r = run(env, ["--dry-run"]);
-    expect(r.code).toBe(1);
-    expect(r.stderr).toContain("collides with a tracked path");
-  });
 
   it("the tracked .gitignore names no install's clone — that rule is local now", () => {
     const gitignore = readFileSync(join(root, ".gitignore"), "utf8");
@@ -1919,9 +2101,8 @@ describe("deploy.sh — base clone name", () => {
   });
 });
 
-// A sync can ship code whose entrypoint half is baked into an older image; the
-// post-deploy check must then not read the previous daemon's status.json as
-// healthy. These cases pin the guards against that.
+// A release can leave the previous daemon's status.json on disk; the
+// post-deploy check must then not read it as healthy. These cases pin the guards against that.
 describe("deploy — the stale-image outage", () => {
   const checker = join(root, "scripts", "heartbeat-fresh.mjs");
   const STARTED = "2026-10-03T09:55:40.000000000Z";
@@ -2021,93 +2202,6 @@ describe("deploy — the stale-image outage", () => {
 
   const playbook = () => readFileSync(join(root, "deploy", "ansible", "playbook.yml"), "utf8");
 
-  it("a sync or release starts at the image source check, which precedes the pull, the rsync and the build", () => {
-    const text = playbook();
-    const start = /SYNC_START_TASK="([^"]+)"/.exec(readFileSync(deploySh, "utf8"))![1]!;
-    expect(start).toBe("Image source and version");
-    const check = text.indexOf(`- name: ${start}`);
-    const pull = text.indexOf("- name: Pull the release images");
-    const rsync = text.indexOf("- name: Sync the local sandbox working copy");
-    const build = text.indexOf("- name: Build the sandbox image (dev)");
-    expect(check).toBeGreaterThan(0);
-    expect(pull).toBeGreaterThan(check);
-    expect(rsync).toBeGreaterThan(check);
-    expect(build).toBeGreaterThan(rsync);
-    // Nothing the run needs lives before the start task: host setup and the
-    // secrets copies are the only tasks a sync skips.
-    for (const skipped of ["Directory layout", "Secrets into place", "Base packages"]) {
-      expect(text.indexOf(`- name: ${skipped}`), skipped).toBeLessThan(check);
-    }
-  });
-
-  it("the source check refuses a non-version, a dev run with no commit, and a local memory endpoint", () => {
-    const text = playbook();
-    const at = text.indexOf("- name: Image source and version");
-    const block = text.slice(at, text.indexOf("\n    - name:", at + 1));
-    expect(block).toContain("image_source in ['release', 'dev']");
-    expect(block).toContain("openviking_endpoint == 'remote'");
-    expect(block).toContain("is match('^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.]+)?$')");
-    expect(block).toContain("is match('^[0-9a-f]{7,40}$')");
-  });
-
-  it("refuses an image that carries no CI or build stamp, so the legacy image never gets the new container shape", () => {
-    const text = playbook();
-    const at = text.indexOf('- name: "Fail: that is not a release-layout image"');
-    const block = text.slice(at, text.indexOf("\n    - name:", at + 1));
-    expect(block).toContain("daemon_image_info.images | length == 1");
-    expect(block).toContain("get('qcr.build-sha', '') not in ['', 'unstamped']");
-    // A dev build must carry the commit it was just built from.
-    expect(block).toContain("get('qcr.build-sha') == build_sha");
-    // …and it sits before anything is stopped, started or recreated.
-    expect(at).toBeGreaterThan(text.indexOf("- name: Build the sandbox image (dev)"));
-    expect(at).toBeLessThan(text.indexOf("- name: Memory sidecar network"));
-    expect(at).toBeLessThan(text.indexOf("- name: Run the sandbox container"));
-  });
-
-  it("the dev build stamps its commit and passes the pins the Dockerfile mirrors, from group_vars", () => {
-    const text = playbook();
-    const at = text.indexOf("- name: Build the sandbox image (dev)");
-    const block = text.slice(at, text.indexOf("\n    - name:", at + 1));
-    expect(block).toContain("docker/Dockerfile");
-    expect(block).toContain('DOCKER_BUILDKIT: "1"');
-    expect(block).toContain("when: image_source == 'dev'");
-    const dockerfile = readFileSync(join(root, "docker", "Dockerfile"), "utf8");
-    for (const [arg, key] of [
-      ["NODE_MAJOR", "node_major"],
-      ["TMUX_VERSION", "tmux_version"],
-      ["PI_PACKAGE", "pi_npm_package"],
-      ["PI_VERSION", "pi_version"],
-      ["BUILD_SHA", "build_sha"],
-    ] as const) {
-      expect(block, arg).toContain(`"${arg}={{ ${key} }}"`);
-      expect(dockerfile, `ARG ${arg}`).toMatch(new RegExp(`^ARG ${arg}\\b`, "m"));
-    }
-    // The dockerignore that narrows the context is BuildKit's, so BuildKit is checked first.
-    expect(text.indexOf("- name: BuildKit available for the dev build?")).toBeLessThan(at);
-  });
-
-  it("the release pull names no tag but the version, and a failed pull stops before anything changes", () => {
-    const text = playbook();
-    const at = text.indexOf("- name: Pull the release images");
-    const block = text.slice(at, text.indexOf("\n    - name:", at + 1));
-    expect(block).toContain("when: image_source == 'release'");
-    expect(block).toContain("source: pull");
-    expect(block).toContain("rescue:");
-    expect(block).toContain("docker login ghcr.io");
-    const refs = text.slice(
-      text.indexOf("- name: Image references"),
-      text.indexOf("- name: Pull the release images"),
-    );
-    expect(refs).toContain("release_image ~ ':' ~ release_version");
-    expect(refs).toContain("release_memory_image ~ ':' ~ release_version");
-    // The rsync is a dev-only step: a release ships no checkout.
-    const sync = text.slice(
-      text.indexOf("- name: Sync the local sandbox working copy"),
-      text.indexOf("- name: Ship the install's config home"),
-    );
-    expect(sync).toContain("when: image_source == 'dev' and sandbox_src is defined");
-  });
-
   it("host setup refreshes the apt cache only when a base package is missing", () => {
     const text = playbook();
     const at = text.indexOf("- name: Base packages");
@@ -2124,20 +2218,174 @@ describe("deploy — the stale-image outage", () => {
   });
 });
 
+// ---- the playbook is provision only: it installs the updater and pulls no image -------------
+describe("deploy — what the playbook does (provision) and no longer does", () => {
+  const raw = readFileSync(join(root, "deploy", "ansible", "playbook.yml"), "utf8");
+  // Comment lines dropped: the prose around a task says what it must never do.
+  const text = raw
+    .split("\n")
+    .filter((l) => !/^\s*#/.test(l))
+    .join("\n");
+  const tasks = (parseYaml(text) as { name: string; tasks?: { name: string }[] }[]).flatMap(
+    (play) => (play.tasks ?? []).map((t) => t.name),
+  );
+  const at = (needle: string): number => {
+    const i = text.indexOf(needle);
+    expect(i, `${needle} is in the playbook`).toBeGreaterThan(-1);
+    return i;
+  };
+
+  it("installs the updater (root 0755) and its run spec (root-owned) from the controller's files", () => {
+    const updater = text.slice(
+      at("- name: The updater (/usr/local/sbin/qcr-update, root 0755)"),
+      at("- name: The updater's run spec (/etc/qcr/update.conf, root-owned)"),
+    );
+    expect(updater).toContain('src: "{{ playbook_dir }}/../qcr-update.sh"');
+    expect(updater).toContain("dest: /usr/local/sbin/qcr-update");
+    expect(updater).toContain('mode: "0755"');
+    expect(updater).toContain("owner: root");
+    expect(existsSync(join(root, "deploy", "qcr-update.sh"))).toBe(true);
+    const spec = text.slice(
+      at("- name: The updater's run spec (/etc/qcr/update.conf, root-owned)"),
+      at("- name: Operator command channel present?"),
+    );
+    expect(spec).toContain('src: "{{ update_conf_src | mandatory }}"');
+    expect(spec).toContain("dest: /etc/qcr/update.conf");
+    expect(spec).toContain("owner: root");
+    expect(spec).not.toContain("0666");
+    // the backups and the updater's own state are root's alone
+    const dirs = text.slice(
+      at("- name: The updater's directories (root only)"),
+      at("- name: The updater (/usr/local/sbin/qcr-update, root 0755)"),
+    );
+    expect(dirs).toContain("/var/backups/qcr");
+    expect(dirs).toMatch(/\/var\/backups\/qcr, mode: "0700"/);
+  });
+
+  it("never pulls, builds, starts or stops an image or a container, and rsyncs nothing", () => {
+    expect(text).not.toMatch(
+      /docker_image|docker_container|docker_network|docker build|docker pull|docker run|synchronize|rsync_opts|buildx/,
+    );
+    for (const gone of [
+      "Image source and version",
+      "Pull the release images",
+      "Sync the local sandbox working copy",
+      "Ship the install's config home",
+      "Sandbox tree owned by the container user",
+      "Build the sandbox image (dev)",
+      "Build the memory sidecar image",
+      "Run the memory sidecar",
+      "Run the sandbox container",
+      "Seed the sidecar's store from the daemon's (first flip only)",
+    ]) {
+      expect(
+        tasks.some((t) => t.includes(gone)),
+        gone,
+      ).toBe(false);
+    }
+    // the knobs of the deleted paths
+    for (const knob of [
+      "image_source",
+      "dev_image_tag",
+      "memory_image_tag",
+      "rebuild_image",
+      "sandbox_src",
+      "tmux_version",
+    ]) {
+      expect(text, knob).not.toContain(knob);
+    }
+  });
+
+  it("creates the directory layout the updater's mounts need, before the updater is installed or used", () => {
+    expect(tasks).toContain("Directory layout (container user = uid {{ container_uid }})");
+    expect(tasks).toContain(
+      "Runtime directories the containers mount (container user = uid {{ container_uid }})",
+    );
+    expect(tasks).toContain(
+      "Directories for the sidecar's store (container user = uid {{ container_uid }})",
+    );
+    // the config home's mount point exists for the first bind mount; its content is the updater's
+    expect(text).toContain('path: "{{ sandbox_root }}/config-home", mode: "0755"');
+  });
+
+  it("parses as YAML and the tracked group_vars carries every knob it uses", () => {
+    const groupVars = readFileSync(
+      join(root, "deploy", "ansible", "group_vars", "all.yml"),
+      "utf8",
+    );
+    // A task name with an unquoted `word: ` once made the whole playbook unparseable.
+    expect(() => parseYaml(text), "playbook.yml").not.toThrow();
+    expect(() => parseYaml(groupVars), "group_vars/all.yml").not.toThrow();
+    // every group_vars knob is used somewhere: the playbook, the run spec or the checks
+    const used = text + readFileSync(deploySh, "utf8");
+    for (const key of [
+      "openviking_endpoint",
+      "memory_container_name",
+      "memory_network",
+      "memory_state_dir",
+      "memory_container_cpus",
+      "memory_container_memory",
+      "release_image",
+      "release_memory_image",
+      "app_root",
+      "legacy_sandbox_root",
+    ]) {
+      expect(groupVars, key).toMatch(new RegExp(`^${key}:`, "m"));
+      expect(used, key).toContain(key);
+    }
+    for (const gone of [
+      "image_source",
+      "dev_image_tag",
+      "memory_image_tag",
+      "memory_image_name",
+      "sandbox_src",
+      "tmux_version",
+    ]) {
+      expect(groupVars, gone).not.toMatch(new RegExp(`^${gone}:`, "m"));
+    }
+    // The VM's tracked value is the flip; its rollback value is `local`.
+    expect(groupVars).toMatch(/^openviking_endpoint: "remote"/m);
+    // The seeded copy never lands on the daemon's own directory.
+    expect(groupVars).toMatch(/^memory_state_dir: \/opt\/quickreview\/memory-state$/m);
+    expect(groupVars).not.toMatch(/^memory_state_dir: .*\/openviking$/m);
+  });
+
+  it("ansible-playbook --syntax-check passes (when ansible is installed)", () => {
+    let has = true;
+    try {
+      execFileSync("ansible-playbook", ["--version"], { stdio: "ignore" });
+    } catch {
+      has = false;
+    }
+    if (!has) return;
+    const inv = join(root, "deploy", "ansible", "inventory.example.ini");
+    expect(() =>
+      execFileSync(
+        "ansible-playbook",
+        ["--syntax-check", "-i", inv, join(root, "deploy", "ansible", "playbook.yml")],
+        { stdio: "pipe", env: { ...process.env, ANSIBLE_LOCAL_TEMP: tmpdir() } },
+      ),
+    ).not.toThrow();
+  });
+});
+
 // A recursive chown of the sandbox would hand commands/operator/ to the
 // container user, so a pending operator drain would be served as a session's
-// and the boot would never lift it.
-describe("deploy — the operator channel's seal survives the sandbox chown", () => {
+// and the boot would never lift it. The playbook no longer chowns the tree at
+// all (the chown sweep went with the rsync); it still re-seals the channel.
+describe("deploy — the operator channel's seal", () => {
   const playbook = () => readFileSync(join(root, "deploy", "ansible", "playbook.yml"), "utf8");
 
-  it("re-seals commands/operator root:root 0755 after the recursive chown and before the container starts", () => {
+  it("has no recursive chown sweep any more, so nothing can hand the operator channel away", () => {
     const text = playbook();
-    const chown = text.indexOf("- name: Sandbox tree owned by the container user");
+    expect(text).not.toContain("Sandbox tree owned by the container user");
+    expect(text).not.toMatch(/-exec\s*\n?\s*- chown|argv:\s*\n\s+- find/);
+  });
+
+  it("re-seals commands/operator root:root 0755 before the runtime directories are made", () => {
+    const text = playbook();
     const seal = text.indexOf("- name: Operator command channel stays root-owned 0755 (the seal)");
-    const run = text.indexOf("- name: Run the sandbox container");
-    expect(chown).toBeGreaterThan(0);
-    expect(seal).toBeGreaterThan(chown);
-    expect(run).toBeGreaterThan(seal);
+    expect(seal).toBeGreaterThan(0);
     const block = text.slice(seal, text.indexOf("- name:", seal + 1));
     expect(block).toContain('path: "{{ sandbox_root }}/sandbox/commands/operator"');
     expect(block).toContain('owner: "0"');
@@ -2153,14 +2401,6 @@ describe("deploy — the operator channel's seal survives the sandbox chown", ()
       "when: operator_channel.stat.exists and operator_channel.stat.isdir and not operator_channel.stat.islnk",
     );
   });
-
-  it("runs in a sync (after the sync start task)", () => {
-    const text = playbook();
-    const start = /SYNC_START_TASK="([^"]+)"/.exec(readFileSync(deploySh, "utf8"))![1]!;
-    expect(text.indexOf("- name: Operator command channel stays root-owned 0755")).toBeGreaterThan(
-      text.indexOf(`- name: ${start}`),
-    );
-  });
 });
 
 describe("deployment identity and Slack token configuration", () => {
@@ -2172,7 +2412,7 @@ describe("deployment identity and Slack token configuration", () => {
       readFileSync(path, "utf8") +
         '\n[slack]\nbot_token_file = "concierge_bot"\napp_token_file = "concierge_app"\n',
     );
-    const res = run(env, ["--dry-run", "rebuild"]);
+    const res = run(env, ["--dry-run", "provision"]);
     expect(res.code).toBe(0);
     expect(planVars(res.stdout).slack_bot_token_file).toBe("concierge_bot");
     expect(planVars(res.stdout).slack_app_token_file).toBe("concierge_app");
@@ -2189,7 +2429,7 @@ describe("deployment identity and Slack token configuration", () => {
       path,
       readFileSync(path, "utf8") + '\n[slack]\nenabled = true\nbot_token_file = "/private/token"\n',
     );
-    const res = run(env, ["--dry-run", "rebuild"]);
+    const res = run(env, ["--dry-run", "provision"]);
     expect(res.code).toBe(1);
     expect(res.stderr).toContain("bot_token_file");
     expect(res.stderr).toContain("flat filename");
@@ -2203,67 +2443,27 @@ describe("deployment identity and Slack token configuration", () => {
       readFileSync(path, "utf8") +
         '\n[slack]\nenabled = false\nbot_token_file = "/private/token"\n',
     );
-    const res = run(env, ["--dry-run", "rebuild"]);
+    const res = run(env, ["--dry-run", "provision"]);
     expect(res.code).toBe(0);
     expect(planVars(res.stdout).slack_bot_token_file).toBe("slack_bot_token");
   });
 
   it("runs the container as the UID used for provisioned ownership", () => {
-    // MUTATION: replace {{ container_uid }} with 1001 in the container's user; this fails.
+    // MUTATION: replace the uid in the updater's --user with 1001; this fails.
     // The release image has no passwd entry for the user it runs as: the caller picks it.
-    const text = readFileSync(join(root, "deploy/ansible/playbook.yml"), "utf8");
-    const at = text.indexOf("- name: Run the sandbox container");
-    const block = text.slice(at);
-    expect(block).toContain('user: "{{ container_uid }}:{{ container_uid }}"');
+    const updater = readFileSync(join(root, "deploy/qcr-update.sh"), "utf8");
+    expect(updater).toContain('UID_GID="${C[CONTAINER_UID]}:${C[CONTAINER_UID]}"');
+    expect(updater).toContain('--user "$UID_GID"');
     // …and it is the uid the secrets and the mounted directories are given to.
+    const text = readFileSync(join(root, "deploy/ansible/playbook.yml"), "utf8");
     expect(text).toContain('owner: "{{ container_uid }}"');
   });
-});
-
-it("the deployment ownership walk preserves pending operator-file authority", () => {
-  // MUTATION: remove the -prune branch — pending.json appears in chown's log.
-  const text = readFileSync(join(root, "deploy/ansible/playbook.yml"), "utf8");
-  const start = text.indexOf("- name: Sandbox tree owned by the container user");
-  const block = text.slice(start, text.indexOf("- name:", start + 1));
-  const listed = block
-    .split("\n")
-    .map((l) => /^\s+- (.+)$/.exec(l)?.[1])
-    .filter((v): v is string => v !== undefined);
-  expect(listed).toContain("-prune");
-  const dir = mkdtempSync(join(tmpdir(), "qcr-chown-"));
-  try {
-    const bin = join(dir, "bin");
-    mkdirSync(bin);
-    mkdirSync(join(dir, "sandbox/commands/operator"), { recursive: true });
-    mkdirSync(join(dir, "state"));
-    mkdirSync(join(dir, "config-home"));
-    const pending = join(dir, "sandbox/commands/operator/pending.json");
-    writeFileSync(pending, "{}");
-    const ordinary = join(dir, "sandbox/code.ts");
-    writeFileSync(ordinary, "code");
-    const log = join(dir, "chown.log");
-    writeFileSync(join(bin, "chown"), '#!/bin/sh\nprintf "%s\\n" "$@" >> "$CHOWN_LOG"\n', {
-      mode: 0o755,
-    });
-    const argv = listed.map((token) => {
-      const value = token.startsWith('"') ? (JSON.parse(token) as string) : token;
-      return value.replaceAll("{{ sandbox_root }}", dir).replaceAll("{{ container_uid }}", "1001");
-    });
-    execFileSync(argv[0]!, argv.slice(1), {
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, CHOWN_LOG: log },
-    });
-    const touched = readFileSync(log, "utf8");
-    expect(touched).toContain(ordinary);
-    expect(touched).not.toContain(pending);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 // The memory sidecar: a second container on the VM (docker/memory/), the
 // `[openviking] endpoint` flip, and the deploy plumbing around both. Nothing
 // here runs ansible or touches a VM: deploy.sh stops at --dry-run, a refusal or
-// a stub ssh, and the playbook/template are read as text.
+// a stub ssh, and the playbook and the updater are read as text.
 describe("deploy — the memory sidecar", () => {
   const OV_LOCAL: OvPins = {
     version: "0.4.15",
@@ -2292,10 +2492,10 @@ describe("deploy — the memory sidecar", () => {
   describe("the plan", () => {
     it("shows the second container, its network, the one-time verified copy and the way back", () => {
       env = scratch(OV_REMOTE);
-      const r = run(env, ["--dry-run", "sync"]);
-      expect(r.code).toBe(0);
+      const r = release(env);
+      expect(r.code, r.stderr).toBe(0);
       expect(r.stdout).toMatch(
-        /containers\s+quickreview-sandbox \(daemon, image quickreview-sandbox:dev, built on the VM at [0-9a-f]+\) \+ quickreview-memory \(memory sidecar/,
+        /containers\s+quickreview-sandbox \(daemon\) \+ quickreview-memory \(memory sidecar/,
       );
       expect(r.stdout).toContain("port 1933 unpublished");
       expect(r.stdout).toContain("endpoint remote (config.toml == ansible)");
@@ -2309,7 +2509,7 @@ describe("deploy — the memory sidecar", () => {
 
     it("lists the sidecar's own post-deploy checks: running, /ready, and a search from the daemon's container", () => {
       env = scratch(OV_REMOTE);
-      const r = run(env, ["--dry-run", "sync"]);
+      const r = release(env);
       expect(r.stdout).toContain("sudo docker ps --filter name=quickreview-memory");
       expect(r.stdout).toContain("sudo docker inspect -f '{{.State.Running}}' quickreview-memory");
       expect(r.stdout).toContain(
@@ -2331,9 +2531,14 @@ describe("deploy — the memory sidecar", () => {
 
     it("every shipping mode REFUSES endpoint local: the release image carries no OpenViking", () => {
       env = scratch(OV_LOCAL);
-      for (const args of [["sync"], ["rebuild"], ["release", "0.1.0"]]) {
-        const r = run(env, ["--dry-run", ...args]);
-        expect(r.code, args.join(" ")).toBe(1);
+      const manifest = writeManifest(env);
+      for (const r of [
+        run(env, ["--dry-run", "release", "1.2.3", "--manifest", manifest], {
+          QC_UPDATE_STATUS_CMD: "true",
+        }),
+        run(env, ["--dry-run", "provision"]),
+      ]) {
+        expect(r.code).toBe(1);
         expect(r.stderr).toContain("the release image carries no OpenViking");
         expect(r.stderr).toContain('endpoint to "remote"');
       }
@@ -2350,7 +2555,7 @@ describe("deploy — the memory sidecar", () => {
       expect(r.code).toBe(0);
       expect(r.stdout).toMatch(/containers\s+quickreview-sandbox only/);
       // …and shipping them is refused, not read as the sidecar.
-      expect(run(env, ["--dry-run", "sync"]).code).toBe(1);
+      expect(run(env, ["--dry-run", "provision"]).code).toBe(1);
     });
 
     it("honours a renamed sidecar (group_vars memory_container_name) in the checks", () => {
@@ -2358,8 +2563,8 @@ describe("deploy — the memory sidecar", () => {
         { ...OV_REMOTE, host: "mem-box" },
         { ...OV_REMOTE, memoryContainer: "mem-box" },
       );
-      const r = run(env, ["--dry-run", "sync"]);
-      expect(r.code).toBe(0);
+      const r = release(env);
+      expect(r.code, r.stderr).toBe(0);
       expect(r.stdout).toContain("sudo docker ps --filter name=mem-box");
       expect(r.stdout).toContain("--base http://mem-box:1933");
     });
@@ -2520,136 +2725,77 @@ describe("deploy — the memory sidecar", () => {
     });
   });
 
-  describe("the playbook", () => {
-    // Comment lines dropped: the prose around a task says what it must never do.
-    const playbook = readFileSync(join(root, "deploy", "ansible", "playbook.yml"), "utf8")
+  describe("the updater (the sidecar and the daemon container are its)", () => {
+    // Comment lines dropped: the prose around a step says what it must never do.
+    const updater = readFileSync(join(root, "deploy", "qcr-update.sh"), "utf8")
       .split("\n")
       .filter((l) => !/^\s*#/.test(l))
       .join("\n");
     const at = (needle: string): number => {
-      const i = playbook.indexOf(needle);
-      expect(i, `${needle} is in the playbook`).toBeGreaterThan(-1);
+      const i = updater.indexOf(needle);
+      expect(i, `${needle} is in qcr-update`).toBeGreaterThan(-1);
       return i;
     };
 
-    it("carries every sidecar task in a sync: after the start-at task, before the daemon's container", () => {
-      const start = at("- name: Image source and version");
-      const daemon = at("- name: Run the sandbox container");
-      for (const task of [
-        "- name: Memory sidecar network",
-        "- name: Seed the sidecar's store from the daemon's (first flip only)",
-        "- name: Build the memory sidecar image",
-        "- name: Run the memory sidecar",
-      ]) {
-        const i = at(task);
-        expect(i, task).toBeGreaterThan(start);
-        expect(i, task).toBeLessThan(daemon);
-      }
+    it("starts the sidecar and waits for /ready before the daemon boots against it; there is no way back to local", () => {
+      const start = at("step sidecar-start");
+      const ready = at("step sidecar-ready");
+      const recreate = at("step recreate");
+      const seed = at("step seed");
+      const stop = at("step stop");
+      expect([stop, seed, start, ready, recreate].sort((a, b) => a - b)).toEqual([
+        stop,
+        seed,
+        start,
+        ready,
+        recreate,
+      ]);
+      // the release image cannot supervise OpenViking: no step turns the sidecar off for good
+      expect(updater).not.toMatch(/OPENVIKING_ENDPOINT/);
     });
 
-    it("starts the sidecar before the daemon boots against it; the playbook has no way back to local", () => {
-      expect(at("- name: Run the memory sidecar")).toBeLessThan(
-        at("- name: Run the sandbox container"),
-      );
-      // The release image cannot supervise OpenViking: the way back is the legacy
-      // image and the old playbook, so no task stops the sidecar here.
-      expect(playbook).not.toContain("Memory sidecar stopped");
-    });
-
-    it("copies the store once, verifies it by checksum, marks it, and only then", () => {
-      const block = playbook.slice(
-        at("- name: Seed the sidecar's store from the daemon's (first flip only)"),
-        at("- name: Build the memory sidecar image"),
-      );
-      expect(block).toContain("not memory_seed.stat.exists");
-      const stop = block.indexOf("Stop the daemon container");
-      const copy = block.indexOf("Copy the store");
-      const verify = block.indexOf("Verify the copy");
-      const mark = block.indexOf("Mark the store seeded");
-      expect(stop).toBeGreaterThan(-1);
-      expect(copy).toBeGreaterThan(stop);
+    it("copies the store once, on the legacy layout, verifies it by checksum, marks it, and only then", () => {
+      const block = updater.slice(at("step seed"), at("step swap"));
+      expect(block).toContain('"$LAYOUT" == legacy');
+      expect(block).toContain('[[ ! -e "$marker" ]]');
+      const copy = block.indexOf("rsync -a");
+      const verify = block.indexOf("--checksum --dry-run --itemize-changes");
+      const mark = block.indexOf('>"$marker"');
+      expect(copy).toBeGreaterThan(-1);
       expect(verify).toBeGreaterThan(copy);
       expect(mark).toBeGreaterThan(verify);
-      expect(block).toContain("--checksum");
-      expect(block).toContain("failed_when: (memory_seed_diff.stdout | trim | length) > 0");
-      // The failure path puts the daemon back on its own, untouched store.
-      const rescue = block.slice(block.indexOf("rescue:"));
-      expect(rescue).toContain("state: started");
-      expect(rescue).toMatch(/did not\s+verify/);
+      expect(block).toContain('[[ -z "$diff_out" ]] || die');
+      // the daemon container is stopped before the copy (a live store is not consistent)
+      expect(at("step stop")).toBeLessThan(at("step seed"));
     });
 
-    it("NEVER wipes or moves a store: no --delete, no state: absent, the source is only read", () => {
-      const block = playbook.slice(
-        at("- name: Seed the sidecar's store from the daemon's (first flip only)"),
-        at("- name: Build the memory sidecar image"),
-      );
-      expect(block).not.toMatch(/--delete/);
-      expect(block).not.toMatch(/state: absent/);
-      expect(block).not.toMatch(/\b(rm|mv)\b/);
-      // The only argv that writes names the sidecar's directory as destination.
-      expect(block).toContain(
-        'argv: [rsync, -a, "{{ openviking_home }}/", "{{ memory_state_dir }}/"]',
-      );
-      // Nothing anywhere in the sidecar tasks removes anything.
-      const all = playbook.slice(
-        at("- name: Memory sidecar network"),
-        at("- name: Run the sandbox container"),
-      );
-      expect(all).not.toMatch(
-        /state: absent|force_source: true|--delete|remove_volumes|\brm -|\bmv /,
-      );
+    it("NEVER wipes or moves a store: no --delete, no rm or mv of the memory dirs, the source is only read", () => {
+      const block = updater.slice(at("step seed"), at("step swap"));
+      expect(block).not.toMatch(/--delete|\brm\b|\bmv\b|--remove-source/);
+      // the only writer names the sidecar's directory as destination
+      expect(block).toContain('rsync -a "${C[OPENVIKING_HOME]}/" "${C[MEMORY_STATE_DIR]}/"');
     });
 
-    it("builds the sidecar image with BuildKit, from the pins the daemon image uses", () => {
-      const block = playbook.slice(
-        at("- name: Build the memory sidecar image"),
-        at("- name: Run the memory sidecar"),
-      );
-      expect(block).toContain('DOCKER_BUILDKIT: "1"');
-      expect(block).toContain("docker/memory/Dockerfile");
-      for (const [arg, key] of [
-        ["OPENVIKING_VERSION", "openviking_version"],
-        ["LLAMA_CPP_PYTHON_VERSION", "llama_cpp_python_version"],
-        ["LOCAL_EMBEDDER_URL", "openviking_local_embedder_url"],
-        ["LOCAL_EMBEDDER_SHA256", "openviking_local_embedder_sha256"],
-        ["LOCAL_EMBEDDER_MODEL", "openviking_local_embedder_model"],
-        ["NODE_MAJOR", "node_major"],
-        ["REVIEW_UID", "container_uid"],
-      ] as const) {
-        expect(block, arg).toContain(`"${arg}={{ ${key} }}"`);
-      }
-      // Every build ARG it passes exists in the Dockerfile.
-      const dockerfile = readFileSync(join(root, "docker", "memory", "Dockerfile"), "utf8");
-      for (const m of block.matchAll(/"([A-Z0-9_]+)=\{\{/g)) {
-        expect(dockerfile, `ARG ${m[1]}`).toMatch(new RegExp(`^ARG ${m[1]}\\b`, "m"));
-      }
-      expect(playbook).toContain("docker buildx version");
-    });
-
-    it("publishes NO port for the sidecar, mounts secrets and config read-only, and caps it", () => {
-      const block = playbook.slice(
-        at("- name: Run the memory sidecar"),
-        at("- name: Run the sandbox container"),
-      );
-      expect(block).not.toMatch(/published_ports\s*:/);
-      expect(block).toContain('"{{ sandbox_root }}/secrets:/opt/quickreview/secrets:ro"');
-      expect(block).toContain('"{{ sandbox_root }}/config-home:/opt/quickreview/config-home:ro"');
-      expect(block).toContain('"{{ memory_state_dir }}:{{ openviking_home }}"');
-      expect(block).toContain("cpus:");
-      expect(block).toContain("memory_swap:");
-      expect(block).toContain("restart_policy: unless-stopped");
-      // The daemon's secrets for OTHER services never reach it: it mounts the
-      // secrets dir read-only, like the daemon (the companion key is not on the VM).
+    it("publishes NO port for the sidecar, mounts secrets and config read-only, caps it and keeps it up", () => {
+      const block = updater.slice(at("mem_args=("), at('mem_args+=("$MEMORY_REF")'));
+      expect(block).not.toMatch(/\s-p\s|--publish/);
+      expect(block).toContain('-v "$ROOT/secrets:/opt/quickreview/secrets:ro"');
+      expect(block).toContain('-v "$ROOT/config-home:/opt/quickreview/config-home:ro"');
+      expect(block).toContain('-v "${C[MEMORY_STATE_DIR]}:${C[OPENVIKING_HOME]}"');
+      expect(block).toContain('--cpus "${C[MEMORY_CPUS]}"');
+      expect(block).toContain('--memory-swap "${C[MEMORY_MEMORY]}"');
+      expect(block).toContain("--restart unless-stopped");
+      expect(block).toContain("--init");
+      // the companion key is not on this machine: nothing like the docker socket or ssh either
       expect(block).not.toMatch(/docker\.sock|\/\.ssh|state:\/opt\/quickreview\/state\b/);
     });
 
-    it("passes the sidecar entrypoint exactly the knobs it reads, from the daemon's group_vars", () => {
-      const block = playbook.slice(
-        at("- name: Run the memory sidecar"),
-        at("- name: Run the sandbox container"),
+    it("passes the sidecar entrypoint exactly the knobs it reads, from the run spec", () => {
+      const sh = readFileSync(deploySh, "utf8");
+      const passed = [...sh.matchAll(/'SIDECAR_ENV_(QCR_OPENVIKING_[A-Z0-9_]+)=/g)].map(
+        (m) => m[1]!,
       );
       const entrypoint = readFileSync(join(root, "docker", "memory", "entrypoint.sh"), "utf8");
-      const passed = [...block.matchAll(/^\s+(QCR_OPENVIKING_[A-Z0-9_]+):/gm)].map((m) => m[1]!);
       expect(passed.length).toBeGreaterThan(15);
       for (const name of passed) {
         expect(entrypoint, `${name} is read by docker/memory/entrypoint.sh`).toContain(name);
@@ -2669,111 +2815,74 @@ describe("deploy — the memory sidecar", () => {
       ]) {
         expect(passed, name).toContain(name);
       }
-    });
-
-    it("joins the daemon to the sidecar's network and keeps its published webhook port", () => {
-      const daemon = playbook.slice(at("- name: Run the sandbox container"));
-      expect(daemon).toMatch(/networks:\s*\n\s+- name: "\{\{ memory_network \}\}"/);
-      expect(daemon).toContain('"127.0.0.1:{{ webhook_port }}:{{ webhook_port }}"');
-    });
-
-    it("restarts the sidecar on a rebuild or a changed config home, not on every sync", () => {
-      expect(playbook).toContain("register: config_home_ship");
-      expect(playbook).toContain(
-        'restart: "{{ (rebuild_image | default(false) | bool) or (config_home_ship.changed | default(false)) }}"',
+      // the updater turns each SIDECAR_ENV_<NAME> into -e <NAME>
+      expect(updater).toContain(
+        '[[ "$key" == SIDECAR_ENV_* ]] && mem_args+=(-e "${key#SIDECAR_ENV_}=${C[$key]}")',
       );
     });
 
-    it("parses as YAML and the tracked group_vars carries every knob it uses", () => {
-      const groupVars = readFileSync(
-        join(root, "deploy", "ansible", "group_vars", "all.yml"),
-        "utf8",
-      );
-      // A task name with an unquoted `word: ` once made the whole playbook unparseable.
-      expect(() => parseYaml(playbook), "playbook.yml").not.toThrow();
-      expect(() => parseYaml(groupVars), "group_vars/all.yml").not.toThrow();
-      for (const key of [
-        "openviking_endpoint",
-        "memory_container_name",
-        "memory_image_name",
-        "memory_image_tag",
-        "memory_network",
-        "memory_state_dir",
-        "memory_container_cpus",
-        "memory_container_memory",
-        "image_source",
-        "dev_image_tag",
-        "release_image",
-        "release_memory_image",
-        "app_root",
-        "legacy_sandbox_root",
-      ]) {
-        expect(groupVars, key).toMatch(new RegExp(`^${key}:`, "m"));
-        expect(playbook, key).toContain(key);
-      }
-      // The VM's tracked value is the flip; its rollback value is `local`.
-      expect(groupVars).toMatch(/^openviking_endpoint: "remote"/m);
-      // The seeded copy never lands on the daemon's own directory.
-      expect(groupVars).toMatch(/^memory_state_dir: \/opt\/quickreview\/memory-state$/m);
-      expect(groupVars).not.toMatch(/^memory_state_dir: .*\/openviking$/m);
+    it("joins the daemon to the sidecar's network and keeps its published webhook port on loopback", () => {
+      const block = updater.slice(at("daemon_args=("), at('daemon_args+=("$DAEMON_REF" daemon)'));
+      expect(block).toContain('--network "${C[MEMORY_NETWORK]}"');
+      expect(block).toContain('-p "127.0.0.1:${C[WEBHOOK_PORT]}:${C[WEBHOOK_PORT]}"');
     });
   });
 
   describe("the daemon container (the release image in daemon mode)", () => {
-    const playbook = readFileSync(join(root, "deploy", "ansible", "playbook.yml"), "utf8")
+    const updater = readFileSync(join(root, "deploy", "qcr-update.sh"), "utf8")
       .split("\n")
       .filter((l) => !/^\s*#/.test(l))
       .join("\n");
-    const daemon = playbook.slice(playbook.indexOf("- name: Run the sandbox container"));
-    const block = daemon.slice(0, daemon.indexOf("\n    - name:", 10));
-    const volumes = [...block.matchAll(/^\s+- "([^"]+:[^"]+)"$/gm)].map((m) => m[1]!);
+    const start = updater.indexOf("daemon_args=(");
+    const block = updater.slice(start, updater.indexOf('daemon_args+=("$DAEMON_REF" daemon)'));
+    const volumes = [...block.matchAll(/^\s+-v "([^"]+)"$/gm)].map((m) => m[1]!);
 
     it("keeps the container's name, port, caps and restart policy, and runs the image's daemon mode", () => {
-      expect(block).toContain('name: "{{ image_name }}"');
-      expect(block).toContain('image: "{{ daemon_image }}"');
-      expect(block).toContain('command: ["daemon"]');
-      expect(block).toContain("restart_policy: unless-stopped");
-      expect(block).toContain("init: true");
-      expect(block).toContain('cpus: "{{ container_cpus | float }}"');
-      expect(block).toContain('memory: "{{ container_memory }}"');
-      expect(block).toContain('"127.0.0.1:{{ webhook_port }}:{{ webhook_port }}"');
+      expect(block).toContain('--name "$DAEMON"');
+      expect(updater).toContain('daemon_args+=("$DAEMON_REF" daemon)');
+      expect(block).toContain("--restart unless-stopped");
+      expect(block).toContain("--init");
+      expect(block).toContain('--cpus "${C[DAEMON_CPUS]}"');
+      expect(block).toContain('--memory "${C[DAEMON_MEMORY]}"');
+      expect(block).toContain('-p "127.0.0.1:${C[WEBHOOK_PORT]}:${C[WEBHOOK_PORT]}"');
       // Joined to the sidecar's network: that is how [openviking] host resolves.
-      expect(block).toMatch(/networks:\s*\n\s+- name: "\{\{ memory_network \}\}"/);
+      expect(block).toContain('--network "${C[MEMORY_NETWORK]}"');
     });
 
     it("mounts the SAME host directories the legacy container used: state, pihome, secrets, config-home", () => {
-      expect(volumes).toContain("{{ sandbox_root }}/state:{{ app_root }}/state");
-      expect(volumes).toContain("{{ sandbox_root }}/pihome:/home/qcr/.pi");
-      expect(volumes).toContain("{{ sandbox_root }}/secrets:/opt/quickreview/secrets:ro");
-      expect(volumes).toContain("{{ sandbox_root }}/config-home:/opt/quickreview/config-home:ro");
+      expect(volumes).toContain("$ROOT/state:${C[APP_ROOT]}/state");
+      expect(volumes).toContain("$ROOT/pihome:/home/qcr/.pi");
+      expect(volumes).toContain("$ROOT/secrets:/opt/quickreview/secrets:ro");
+      expect(volumes).toContain("$ROOT/config-home:/opt/quickreview/config-home:ro");
     });
 
-    it("mounts every runtime directory of the old sandbox root into the read-only app root, and creates each first", () => {
+    it("mounts every runtime directory of the old sandbox root into the read-only app root, and the playbook creates each first", () => {
       const dirs = ["wt", "archive", "commands", "digest", "inject", "verdict"];
       for (const d of dirs) {
-        expect(volumes, d).toContain(`{{ sandbox_root }}/sandbox/${d}:{{ app_root }}/${d}`);
+        expect(volumes, d).toContain(`$ROOT/sandbox/${d}:\${C[APP_ROOT]}/${d}`);
       }
       expect(volumes).toContain(
-        "{{ sandbox_root }}/sandbox/{{ base_clone_dir | mandatory }}:{{ app_root }}/{{ base_clone_dir }}",
+        "$ROOT/sandbox/${C[BASE_CLONE_DIR]}:${C[APP_ROOT]}/${C[BASE_CLONE_DIR]}",
       );
       // Docker would create a missing source as root: each is made for the container user first.
+      const playbook = readFileSync(join(root, "deploy", "ansible", "playbook.yml"), "utf8");
       const made = playbook.slice(
-        playbook.indexOf("- name: Runtime directories the container mounts"),
-        playbook.indexOf("- name: Memory sidecar network"),
+        playbook.indexOf("- name: Runtime directories the containers mount"),
+        playbook.indexOf("- name: Directories for the sidecar's store"),
       );
-      for (const d of [...dirs, "{{ base_clone_dir | mandatory }}"]) {
-        expect(made.includes(`- ${d}\n`) || made.includes(`- "${d}"`), d).toBe(true);
+      for (const d of [...dirs, '"{{ base_clone_dir | mandatory }}"']) {
+        expect(made, d).toMatch(new RegExp(`^\\s+- ${d.replace(/[{}|"]/g, "\\$&")}$`, "m"));
       }
       expect(made).toContain('owner: "{{ container_uid }}"');
-      // Every runtime dir the deploy script reserves is either mounted or not a runtime dir of the image.
+      // Every runtime dir the deploy script reserves is mounted.
       const reserved = /BASE_CLONE_RESERVED=\(([^)]*)\)/.exec(readFileSync(deploySh, "utf8"))![1]!;
       for (const d of dirs) expect(reserved.split(/\s+/), d).toContain(d);
     });
 
     it("mounts the worktrees and the base clone a second time at their legacy path, so recorded absolute paths resolve", () => {
-      expect(volumes).toContain("{{ sandbox_root }}/sandbox/wt:{{ legacy_sandbox_root }}/wt");
+      expect(volumes).toContain("$ROOT/sandbox/wt:${C[LEGACY_SANDBOX_ROOT]}/wt");
       expect(volumes).toContain(
-        "{{ sandbox_root }}/sandbox/{{ base_clone_dir | mandatory }}:{{ legacy_sandbox_root }}/{{ base_clone_dir }}",
+        "$ROOT/sandbox/${C[BASE_CLONE_DIR]}:${C[LEGACY_SANDBOX_ROOT]}/${C[BASE_CLONE_DIR]}",
       );
       const groupVars = parseYaml(
         readFileSync(join(root, "deploy", "ansible", "group_vars", "all.yml"), "utf8"),
@@ -2783,23 +2892,21 @@ describe("deploy — the memory sidecar", () => {
     });
 
     it("never mounts the app root itself, the docker socket or a home directory: the tree is the image's", () => {
-      expect(block).not.toMatch(
-        /docker\.sock|\/\.ssh|:\{\{ app_root \}\}["/]?$|sandbox:\{\{ app_root/m,
-      );
+      expect(block).not.toMatch(/docker\.sock|\/\.ssh|-v "\$ROOT\/sandbox:/m);
       for (const v of volumes) {
-        expect(v.split(":")[1], v).not.toBe("{{ app_root }}");
+        expect(v.split(":")[1], v).not.toBe("${C[APP_ROOT]}");
       }
     });
 
     it("sets only the env the image's daemon mode reads, and no OpenViking endpoint knob", () => {
-      const env = block.slice(block.indexOf("env:"));
+      const envLines = [...block.matchAll(/-e "?([A-Z_]+)=/g)].map((m) => m[1]!);
       for (const name of ["TZ", "QC_REVIEW_PORT", "QC_BIND_HOST", "QCR_CONFIG"]) {
-        expect(env, name).toContain(`${name}:`);
+        expect(envLines, name).toContain(name);
       }
       // The legacy entrypoint read this to skip its memory boot; the image has no such boot.
-      expect(env).not.toContain("QCR_OPENVIKING_ENDPOINT");
+      expect(block).not.toContain("QCR_OPENVIKING_ENDPOINT");
       // Nothing in env is a token (rule 3, D39).
-      expect(env).not.toMatch(/TOKEN|SECRET|PASSWORD|PEM/);
+      expect(block).not.toMatch(/TOKEN|SECRET|PASSWORD|PEM/);
     });
 
     it("the image's daemon mode does what the legacy entrypoint did: bash-guard merge (FATAL when absent), the stub, the agents link", () => {
@@ -2895,106 +3002,56 @@ describe("scripts/memory-search-check.mjs", () => {
 });
 
 // ---- the VM's ghcr pull credential (P7.13) ----------------------------------
-//
-// A release is pulled by the VM's own docker with the owner's classic
-// read:packages login. deploy.sh checks the VM can read both images before
-// anything changes, and `verify` warns before the recorded token expiry;
-// scripts/vm-ghcr-login.sh is the one writer of that login. Every command here
-// is a stub: no network, no ssh, no docker.
-describe("deploy.sh — the release pull check and the token expiry warning", () => {
+// The VM pulls the private release images with the owner's classic
+// read:packages login. The updater pulls BY DIGEST on the VM (a lapsed login
+// fails its pull before anything changes), `verify` and `release` warn before
+// the recorded token expiry; scripts/vm-ghcr-login.sh is the one writer of that
+// login. Every command here is a stub: no network, no ssh, no docker.
+describe("deploy.sh — the pull login and the token expiry warning", () => {
   const scratch = (): Env => makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
 
-  /** A stub ansible-playbook and ssh on PATH; `ansible` is where the playbook's argv lands. */
-  function stubBin(e: Env): { PATH: string; ansibleSeen: string; sshLog: string } {
+  /** A stub ssh on PATH; the log is what the controller ran over it. */
+  function stubBin(e: Env): { PATH: string; sshLog: string } {
     const bin = join(e.dir, "bin");
     mkdirSync(bin, { recursive: true });
-    const ansibleSeen = join(e.dir, "ansible-argv");
     const sshLog = join(e.dir, "ssh-log");
-    writeFileSync(
-      join(bin, "ansible-playbook"),
-      `#!/bin/sh\nprintf '%s\\n' "$*" > '${ansibleSeen}'\nexit 7\n`,
-      { mode: 0o755 },
-    );
     writeFileSync(join(bin, "ssh"), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${sshLog}'\nexit 0\n`, {
       mode: 0o755,
     });
-    return { PATH: `${bin}:${process.env.PATH ?? ""}`, ansibleSeen, sshLog };
+    return { PATH: `${bin}:${process.env.PATH ?? ""}`, sshLog };
   }
 
-  const RELEASE_LAYOUT =
-    "printf 'image=ghcr.io/quickchatai/quickreview:0.1.0\\nlabel=abc1234\\nmarker=\\n'";
-
-  it("checks both images at the version, over the VM's own docker, and the plan shows it", () => {
-    env = scratch();
-    const log = join(env.dir, "refs");
-    const r = run(env, ["--dry-run", "release", "0.1.0"], {
-      QC_PULL_CHECK_CMD: `printf '%s\\n' "$1" >> '${log}'`,
-      QC_VM_LAYOUT_CMD: RELEASE_LAYOUT,
-    });
-    expect(r.code).toBe(0);
-    expect(readFileSync(log, "utf8").trim().split("\n")).toEqual([
-      "ghcr.io/quickchatai/quickreview:0.1.0",
-      "ghcr.io/quickchatai/quickreview-memory:0.1.0",
-    ]);
-    expect(r.stdout).toContain(
-      "pull check   ok: the VM reads ghcr.io/quickchatai/quickreview:0.1.0",
-    );
-    expect(r.stdout).toContain(
-      "pull check   ok: the VM reads ghcr.io/quickchatai/quickreview-memory:0.1.0",
-    );
-  });
-
-  it("runs the check as `sudo docker manifest inspect` over ssh when no stub stands in", () => {
+  it("the controller pulls and inspects no image: the updater pulls both by digest on the VM", () => {
     env = scratch();
     const stub = stubBin(env);
-    const r = run(env, ["--dry-run", "release", "0.1.0"], {
+    const r = release(env, { env: { PATH: stub.PATH } });
+    expect(r.code, r.stderr).toBe(0);
+    // a dry-run release reads the VM through the status stub only: no ssh call, no manifest inspect
+    expect(existsSync(stub.sshLog)).toBe(false);
+    const sh = readFileSync(deploySh, "utf8").replace(/^\s*#.*$/gm, "");
+    expect(sh).not.toMatch(/manifest inspect|docker pull|QC_PULL_CHECK_CMD/);
+    const updater = readFileSync(join(root, "deploy", "qcr-update.sh"), "utf8");
+    expect(updater).toContain('d pull "$DAEMON_REF"');
+    expect(updater).toContain('d pull "$MEMORY_REF"');
+    expect(updater).toContain('DAEMON_REF="${C[DAEMON_IMAGE_REPO]}@$DAEMON_DIGEST"');
+  });
+
+  it("reads the VM's status over ssh as `sudo qcr-update status --json` when no stub stands in", () => {
+    env = scratch();
+    const stub = stubBin(env);
+    const manifest = writeManifest(env);
+    const r = run(env, ["--dry-run", "release", "1.2.3", "--manifest", manifest], {
       PATH: stub.PATH,
-      QC_PULL_CHECK_CMD: "",
-      QC_VM_LAYOUT_CMD: RELEASE_LAYOUT,
       QC_VM_HOST: "the-vm",
     });
-    expect(r.code).toBe(0);
-    const calls = readFileSync(stub.sshLog, "utf8").split("\n");
-    expect(calls).toContain(
-      "-o BatchMode=yes -o ConnectTimeout=10 the-vm sudo docker manifest inspect ghcr.io/quickchatai/quickreview:0.1.0",
+    // the stub ssh prints nothing, so the status is UNKNOWN: the plan says so
+    expect(r.code, r.stderr).toBe(0);
+    expect(readFileSync(stub.sshLog, "utf8")).toContain(
+      "-o BatchMode=yes -o ConnectTimeout=10 the-vm sudo qcr-update status --json",
     );
-    expect(calls).toContain(
-      "-o BatchMode=yes -o ConnectTimeout=10 the-vm sudo docker manifest inspect ghcr.io/quickchatai/quickreview-memory:0.1.0",
+    expect(r.stdout).toContain(
+      "REFUSED in a real run: the VM's `qcr-update status` could not be read",
     );
-  });
-
-  it("REFUSES a release whose image the VM cannot read, in a real run with nothing changed and in --dry-run", () => {
-    env = scratch();
-    const stub = stubBin(env);
-    // The second image (the memory one) is the unreadable one.
-    const probes = {
-      PATH: stub.PATH,
-      QC_VM_LAYOUT_CMD: RELEASE_LAYOUT,
-      QC_PULL_CHECK_CMD: 'case "$1" in *-memory:*) exit 1 ;; esac',
-    };
-    const real = run(env, ["release", "0.1.0"], probes);
-    expect(real.code).toBe(1);
-    expect(real.stderr).toContain(
-      "the VM cannot read ghcr.io/quickchatai/quickreview-memory:0.1.0",
-    );
-    expect(real.stderr).toContain("scripts/vm-ghcr-login.sh --version 0.1.0");
-    // Nothing changed: the playbook never ran, no deploy-grace marker was opened.
-    expect(existsSync(stub.ansibleSeen)).toBe(false);
-    expect(existsSync(join(env.sandbox, "state", "companion", "alerts"))).toBe(false);
-    const dry = run(env, ["--dry-run", "release", "0.1.0"], probes);
-    expect(dry.code).toBe(1);
-    expect(dry.stdout).not.toContain("(--dry-run: nothing executed)");
-    // A readable pair goes on to the playbook.
-    const ok = run(env, ["release", "0.1.0"], { ...probes, QC_PULL_CHECK_CMD: "true" });
-    expect(ok.stderr).toContain("running: ansible-playbook");
-    expect(readFileSync(stub.ansibleSeen, "utf8")).toContain("release_version=0.1.0");
-  });
-
-  it("checks no image for the dev build or verify: they pull nothing from ghcr", () => {
-    env = scratch();
-    const probes = { QC_PULL_CHECK_CMD: "exit 1" };
-    expect(run(env, ["--dry-run", "sync"], probes).code).toBe(0);
-    expect(run(env, ["--dry-run", "verify"], probes).code).toBe(0);
   });
 
   describe("the recorded token expiry", () => {
@@ -3003,11 +3060,8 @@ describe("deploy.sh — the release pull check and the token expiry warning", ()
       const file = join(e.dir, "ghcr-token-expiry");
       if (iso === null) rmSync(file, { force: true });
       else writeFileSync(file, `${iso}\n`);
-      return run(e, ["--dry-run", ...(mode === "release" ? ["release", "0.1.0"] : [mode])], {
-        QCR_GHCR_EXPIRY_FILE: file,
-        QC_NOW_EPOCH: String(NOW),
-        QC_VM_LAYOUT_CMD: RELEASE_LAYOUT,
-      });
+      const extra = { QCR_GHCR_EXPIRY_FILE: file, QC_NOW_EPOCH: String(NOW) };
+      return mode === "release" ? release(e, { env: extra }) : run(e, ["--dry-run", mode], extra);
     };
 
     it("warns 14 days before the expiry, and on the day it lapses", () => {

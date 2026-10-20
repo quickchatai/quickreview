@@ -272,6 +272,12 @@ describe("MANIFESTO.md is pinned by something", () => {
         why: "the same leg: the PyPI archive itself (a pure-Python wheel or an sdist), verified against that sha256.",
       },
       {
+        host: "json-schema.org",
+        why:
+          "the `$schema` identifier of deploy/manifest.schema.json (the deploy manifest's schema). A JSON Schema dialect " +
+          "URI is a name, not an endpoint: nothing in this repo fetches it, and the validator (scripts/deploy-manifest.mjs) is hand-written.",
+      },
+      {
         host: "huggingface.co",
         why:
           "the local English embedder's model file: ONE GGUF, fetched at image BUILD from a pinned commit " +

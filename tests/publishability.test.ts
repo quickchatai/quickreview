@@ -424,12 +424,6 @@ const ALLOWLIST: AllowlistEntry[] = [
       "release_image / release_memory_image: the images the VM route pulls, under the publishing org's registry namespace (ghcr.io/quickchatai/...), the ones release.yml pushes",
   },
   {
-    path: "deploy/ansible/playbook.yml",
-    tokens: ["quickchat"],
-    reason:
-      "its header comment names the release image the VM route pulls (ghcr.io/quickchatai/...)",
-  },
-  {
     path: "deploy/ansible/README.md",
     tokens: ["quickchat"],
     reason:
@@ -446,6 +440,18 @@ const ALLOWLIST: AllowlistEntry[] = [
     tokens: ["quickchat"],
     reason:
       "names the default release and memory images it checks the pull credential against, under the publishing org's registry namespace (ghcr.io/quickchatai/...), as a fallback for an inventory that sets none",
+  },
+  {
+    path: "tests/qcr-update.test.ts",
+    tokens: ["quickchat"],
+    reason:
+      "drives the VM updater against a fake docker: the image repositories are the release images under the publishing org's registry namespace (ghcr.io/quickchatai/...)",
+  },
+  {
+    path: "tests/fixtures/deploy-manifest-1.2.3.json",
+    tokens: ["quickchat"],
+    reason:
+      "a release's deploy manifest as CI emits it: the daemon and memory image repositories under the publishing org's registry namespace (ghcr.io/quickchatai/...)",
   },
   {
     path: "tests/deploy.test.ts",
