@@ -3405,3 +3405,24 @@ describe("scripts/vm-ghcr-login.sh", () => {
     );
   });
 });
+
+describe("the deploy docs describe the updater world", () => {
+  const docs = [
+    join(root, "deploy", "ansible", "README.md"),
+    join(root, ".claude", "skills", "deploying", "SKILL.md"),
+  ];
+  it("name no retired deploy mode", () => {
+    for (const f of docs) {
+      const text = readFileSync(f, "utf8");
+      expect(text, f).not.toMatch(/deploy\.sh sync|rebuild/);
+    }
+  });
+  it("the skill's deploy.sh commands are modes of the usage string", () => {
+    const text = readFileSync(docs[1], "utf8");
+    const usage = readFileSync(join(root, "scripts", "deploy.sh"), "utf8");
+    const modes = /usage: \$SELF \[--dry-run\] ([^"]+)"/.exec(usage)?.[1] ?? "";
+    for (const m of text.matchAll(/deploy\.sh (?:--dry-run )?([a-z]+)/g)) {
+      expect(modes, m[0]).toContain(m[1]);
+    }
+  });
+});
