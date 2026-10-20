@@ -1,0 +1,257 @@
+{
+  "version": 1,
+  "pi": "1.3.0",
+  "note": "D29: a VERIFY-ON-PIN tag is cleared by live production evidence only. Each entry names the tagged files (with how many tags each holds), the pi behaviour assumed, and the production signal that would prove it. `kind: jsonl` matches a JSON line of a state extract (a LiveEvent line under state/live, a pi session JSONL record, a scan transcript line) when every `where` clause holds; `kind: log` matches a text line by regex; `kind: gap` has no signal yet and says what would be needed. scripts/pin-evidence.mjs reads an extract and reports which entries have evidence; tests/pin-evidence.test.ts holds this map to the tags in the tree. No tag is removed by this map.",
+  "entries": [
+    {
+      "id": "pi-argv-session",
+      "assumes": "The tmux bot's pi argv (--model, --session-dir, --name, --theme, --extension) is accepted by pi 1.3.0.",
+      "files": { "src/sessions.ts": 3 },
+      "signal": {
+        "source": "live-event",
+        "kind": "jsonl",
+        "where": [{ "path": "type", "equals": "session_start" }],
+        "says": "a session started under that argv and wrote its session_start LiveEvent"
+      }
+    },
+    {
+      "id": "pi-argv-companion-onboarding",
+      "assumes": "The companion's and the onboarding wizard's pi argv (--extension, --no-extensions, --no-skills, --no-context-files, --tools) is accepted.",
+      "files": { "src/tui/companion.ts": 3, "src/onboard/launch.ts": 1 },
+      "signal": {
+        "source": "session-jsonl",
+        "kind": "jsonl",
+        "where": [{ "path": "type", "equals": "session" }],
+        "says": "pi wrote its session header, so it started with that argv"
+      }
+    },
+    {
+      "id": "pi-builtins",
+      "assumes": "The four pi built-in extensions and the -builtin:<name> spelling that switches them off.",
+      "files": { "src/pibuiltins.ts": 1, "tests/pibuiltins.test.ts": 1 },
+      "signal": {
+        "source": "none",
+        "kind": "gap",
+        "needs": "pi lists loaded extensions nowhere in a transcript; the evidence is a started session with no built-in tool in its tool_start events, which no extract field names yet"
+      }
+    },
+    {
+      "id": "pi-pin-mirrors",
+      "assumes": "The pinned pi version is the one that runs (package.json, config.toml [pi], the image ARG, tsconfig discipline).",
+      "files": {
+        "tsconfig.json": 1,
+        "config.example.toml": 1,
+        "tests/fixtures/config.toml": 1,
+        "docker/companion/Dockerfile": 1
+      },
+      "signal": {
+        "source": "session-jsonl",
+        "kind": "jsonl",
+        "where": [
+          { "path": "type", "equals": "session" },
+          { "path": "version", "exists": true }
+        ],
+        "says": "a pinned pi wrote a session header"
+      }
+    },
+    {
+      "id": "usage-and-price",
+      "assumes": "A message's usage.cost.total is a number, and a subagent result's usage is the child's sum; the codex price list matches pi's catalog.",
+      "files": { "src/usage.ts": 1, "src/bench/cost.ts": 1 },
+      "signal": {
+        "source": "session-jsonl",
+        "kind": "jsonl",
+        "where": [{ "path": "message.usage.cost.total", "gt": 0 }],
+        "says": "an assistant message carried a positive numeric cost.total"
+      }
+    },
+    {
+      "id": "thinking-levels",
+      "assumes": "pi's thinking levels and the model's top level (effort_max).",
+      "files": { "src/config.ts": 2 },
+      "signal": {
+        "source": "session-jsonl",
+        "kind": "jsonl",
+        "where": [{ "path": "type", "equals": "thinking_level_change" }],
+        "says": "pi recorded the level it applied for the configured effort"
+      }
+    },
+    {
+      "id": "session-cwd-and-cache-id",
+      "assumes": "SessionManager.open defaults its cwd to the spec's; inMemory({id}) sets the id the provider keys its cache on.",
+      "files": { "src/engine/pisdk.ts": 2 },
+      "signal": {
+        "source": "session-jsonl",
+        "kind": "jsonl",
+        "where": [{ "path": "message.usage.cacheRead", "gt": 0 }],
+        "says": "a request read from the provider cache under the session's own id"
+      }
+    },
+    {
+      "id": "lens-prefix-cache",
+      "assumes": "before_provider_request may return a replacement payload with the pack first and a pinned prompt_cache_key.",
+      "files": { "src/engine/lens/leaf-cache.ts": 1 },
+      "signal": {
+        "source": "session-jsonl",
+        "kind": "jsonl",
+        "where": [{ "path": "message.usage.cacheRead", "gt": 0 }],
+        "says": "a lens request after the group's warm-up read from the cache"
+      }
+    },
+    {
+      "id": "cache-group-dispose",
+      "assumes": "cleanupSessionResources closes by session id alone, so a cache group's sessions are disposed together after the last member.",
+      "files": { "src/engine/lens/cache-run.ts": 1 },
+      "signal": {
+        "source": "structured-log",
+        "kind": "log",
+        "pattern": "pin-evidence cache-group-disposed key=\\S+ sessions=\\d+",
+        "says": "a cache group disposed its sessions (logged by CacheGroups since P9.8a), and no sibling lens failed after it"
+      }
+    },
+    {
+      "id": "oauth-refresh",
+      "assumes": "pi-ai's OAuth loaders and refresh(credential, signal) exist at dist/auth/oauth/load.js; pi refreshes with under five minutes of validity left.",
+      "files": { "src/loginrefresh/pirefresh.ts": 2, "src/loginrefresh/refresher.ts": 1 },
+      "signal": {
+        "source": "structured-log",
+        "kind": "log",
+        "pattern": "login refresh: refreshed ",
+        "says": "the refresher obtained a fresh credential through pi-ai's loader"
+      }
+    },
+    {
+      "id": "rollover-session-file",
+      "assumes": "The day-open inject is accepted at session_start, and the session JSONL text-turn shapes the rollover reads.",
+      "files": { "src/tui/rollover.ts": 2 },
+      "signal": {
+        "source": "session-jsonl",
+        "kind": "jsonl",
+        "where": [
+          { "path": "type", "equals": "message" },
+          { "path": "message.role", "equals": "user" }
+        ],
+        "says": "a user turn in the shape the rollover parses"
+      }
+    },
+    {
+      "id": "tool-definition-shape",
+      "assumes": "defineTool/registerTool's definition shape and execute's positional signature; a plain JSON-Schema parameters object.",
+      "files": {
+        "extensions/lens.ts": 1,
+        "extensions/finding-clusters.ts": 1,
+        "extensions/tui-view.ts": 2,
+        "extensions/vendor/openviking-pi/qcr-leaf.ts": 1
+      },
+      "signal": {
+        "source": "live-event",
+        "kind": "jsonl",
+        "where": [{ "path": "type", "equals": "tool_end" }],
+        "says": "a registered custom tool ran to its end in a live session"
+      }
+    },
+    {
+      "id": "session-event-names",
+      "assumes": "session_start / session_shutdown / ctx.ui.setTheme and registerCommand behave as the extensions use them.",
+      "files": { "extensions/setup.ts": 1, "extensions/muted-theme.ts": 1, "extensions/debug-round.ts": 1 },
+      "signal": {
+        "source": "live-event",
+        "kind": "jsonl",
+        "where": [{ "path": "type", "equals": "session_start" }],
+        "says": "the session_start event fired in a live session"
+      }
+    },
+    {
+      "id": "inject-bridge-delivery",
+      "assumes": "sendUserMessage deliverAs followUp, isIdle(), message_start and the compaction event order.",
+      "files": { "extensions/inject-bridge.ts": 6 },
+      "signal": {
+        "source": "session-jsonl",
+        "kind": "jsonl",
+        "where": [
+          { "path": "type", "equals": "message" },
+          { "path": "message.role", "equals": "user" },
+          { "path": "message.content.0.text", "matches": "<!-- qcr-round: pr-\\d+ round-\\d+ -->" }
+        ],
+        "says": "the round's receipt token was echoed into the session JSONL: pi accepted the follow-up"
+      }
+    },
+    {
+      "id": "ledger-pin-compaction",
+      "assumes": "session_before_compact's payload and result, turn_end, appendEntry, and pi's exported compact().",
+      "files": { "extensions/ledger-pin.ts": 7 },
+      "signal": {
+        "source": "session-jsonl",
+        "kind": "jsonl",
+        "where": [
+          { "path": "type", "equals": "custom" },
+          { "path": "customType", "equals": "qcr-review-ledger" }
+        ],
+        "says": "the pinned compaction ran and appendEntry wrote the ledger as a custom entry"
+      }
+    },
+    {
+      "id": "guard-tool-call-fields",
+      "assumes": "The tool_call event's toolName and input fields, the write/read tool names, and pi's context-file candidates; a block reason reaches the model.",
+      "files": {
+        "extensions/bash-guard.ts": 6,
+        "tests/bash-guard.test.ts": 1
+      },
+      "signal": {
+        "source": "session-jsonl",
+        "kind": "jsonl",
+        "where": [
+          { "path": "message.role", "equals": "toolResult" },
+          { "path": "message.isError", "equals": true },
+          { "path": "message.content.0.text", "matches": "exec policy:" }
+        ],
+        "says": "a vetoed tool call returned its exec-policy reason to the model"
+      }
+    },
+    {
+      "id": "companion-guard-fields",
+      "assumes": "The same tool_call fields for the companion's guard, and that a throw from a tool_call handler is contained by pi.",
+      "files": { "extensions/companion-guard.ts": 2, "tests/companion-guard.test.ts": 1 },
+      "signal": {
+        "source": "structured-log",
+        "kind": "log",
+        "pattern": "companion-guard: ",
+        "says": "the guard handled a call (a DEGRADED line also proves the veto path ran)"
+      }
+    },
+    {
+      "id": "case-runner-json-stream",
+      "assumes": "pi's JSON mode event spellings (tool_execution_start/end, message_end usage), the bin path, path resolution of read arguments.",
+      "files": { "src/setup/caserunner.ts": 6 },
+      "signal": {
+        "source": "scan-transcript",
+        "kind": "jsonl",
+        "where": [
+          { "path": "type", "equals": "tool_execution_end" },
+          { "path": "toolCallId", "exists": true }
+        ],
+        "says": "a scan leaf's JSON stream carried tool_execution_end with its toolCallId"
+      }
+    },
+    {
+      "id": "onboarding-smoke",
+      "assumes": "ctx.shutdown's idle deferral, and GitHub's manifest-flow contract (34-character name cap, 201 shape, 404 on reuse).",
+      "files": { "extensions/onboarding.ts": 2, "src/onboard/steps/githubapp.ts": 2 },
+      "signal": {
+        "source": "none",
+        "kind": "gap",
+        "needs": "the named github-app onboarding smoke step against a scratch account; no production signal exists, and one needs a run the owner starts"
+      }
+    },
+    {
+      "id": "companion-skills-dir",
+      "assumes": "The skills array-of-directories settings form, scanned one level deep for <name>/SKILL.md.",
+      "files": { "docker/companion/entrypoint.sh": 1 },
+      "signal": {
+        "source": "none",
+        "kind": "gap",
+        "needs": "a companion transcript showing a /skill: command resolving; no extract field names it yet"
+      }
+    }
+  ]
+}
