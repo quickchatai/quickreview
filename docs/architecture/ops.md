@@ -12,7 +12,7 @@ walkthroughs already exist and are not repeated here — this page links them:
 - [../github-app-setup.md](../github-app-setup.md) — registering the App by
   hand, permission and event tables, where each value lands.
 - [../llm-setup.md](../llm-setup.md) — the two model-credential routes.
-- [../../docker/daemon/README.md](../../docker/daemon/README.md) — the compose
+- [../../docker/README.md](../../docker/README.md) — the compose
   stack: the daemon and memory images, ingress shapes, version pin.
 - [../../deploy/ansible/README.md](../../deploy/ansible/README.md) — the
   server route: provisioning, deploy, verification.
@@ -35,7 +35,7 @@ walkthroughs already exist and are not repeated here — this page links them:
 | Webhook ingress choice and config | `src/onboard/steps/ingress.ts`, `docker/tunnel/sidecar.mjs` |
 | Webhook URL self-heal | `src/webhookheal.ts`, `src/gate.ts` (`update_own_webhook_url`) |
 | Secrets collection (interactive) | `deploy/collect-secrets.sh`, `deploy/collect-slack-secrets.mjs` |
-| Laptop topology runtime | `docker-compose.yml`, `docker/daemon/` |
+| Laptop topology runtime | `docker-compose.yml`, `docker/README.md` |
 | Server topology runtime | `deploy/ansible/playbook.yml`, `deploy/ansible/group_vars/all.yml` |
 | Deploy driver and its preflights | `scripts/deploy.sh`, `src/onboard/steps/deploysh.ts` |
 | Drain / pause levers | `src/levers.ts`, `src/commands.ts`, `src/tui/deploy-drain.ts` |
@@ -287,26 +287,21 @@ correctness backbone, and a webhook that never arrives never loses a PR.
 
 ## The plain Docker path
 
-`docker-compose.yml` + `docker/daemon/`. Salient points an editor should know:
+`docker-compose.yml` runs the released images (the release image and the
+memory image); `docker/README.md` is the guide. Salient points an editor
+should know:
 
-- The repo is bind-mounted at `/opt/quickreview/sandbox` and the entrypoint
-  builds inside it, so the container user must own the checkout — hence
-  `REVIEW_UID` from `QCR_UID`.
 - `init: true`, because a supervised memory-engine process runs beside the
   daemon and PID 1 must reap.
-- The state volume is mounted at **both** `/opt/quickreview/state` (the absolute
-  path the docs, the TUI's `remote_state_dir` and the ingress checks use) and
-  `<sandbox>/state` (where the code looks). The double mount is what stops the
-  entrypoint replacing the operator's own `state/` directory, which holds
-  host-side files the TUI and the wizard read directly.
 - The ingress volume is nested inside the state mount so a sidecar sees the
   hostname file and nothing else — no SQLite, no memory, no dry-run record.
 - pi's home is its own named volume: OAuth tokens and session JSONLs must
   survive a rebuild.
-- Image pins (pi, the memory server, `llama-cpp-python`, tmux) are the
-  Dockerfile's `ARG` defaults, mirrored against `config.toml` and
+- Image pins (pi, tmux in `docker/Dockerfile`; the memory server,
+  `llama-cpp-python` and the model file in `docker/memory/Dockerfile`) are the
+  Dockerfiles' `ARG` defaults, mirrored against `config.toml` and
   `deploy/ansible/group_vars/all.yml` and checked by
-  `tests/docker-daemon.test.ts`.
+  `tests/release-image.test.ts` and `tests/memory-image.test.ts`.
 
 ## The Ansible path
 

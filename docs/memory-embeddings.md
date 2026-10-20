@@ -188,13 +188,13 @@ each checked:
 |---|---|
 | `config.toml [openviking]` | `local_embedder_file` / `_url` / `_sha256` (and `_port` / `_threads`) |
 | `deploy/ansible/group_vars/all.yml` | `openviking_local_embedder_model` / `_dimension` / `_dir` / `_url` / `_sha256` / `_port` / `_threads` |
-| the image | the memory image, `docker/memory/Dockerfile` (its `LOCAL_EMBEDDER_*` ARG defaults, which a VM-side build is fed from the group_vars), and `docker/daemon/Dockerfile` (the plain Docker path) |
+| the image | the memory image, `docker/memory/Dockerfile` (its `LOCAL_EMBEDDER_*` ARG defaults, which a VM-side build is fed from the group_vars) |
 
 The model layer downloads the file **at build time** and fails the build
 unless `sha256sum -c` passes, so a running container never fetches a model
 (the engine's built-in local provider downloads its model at first start).
 The URL names a Hugging Face commit, never a branch. `tests/openviking.test.ts`
-and `tests/docker-daemon.test.ts` refuse drift between the mirrors, and so
+and `tests/memory-image.test.ts` refuse drift between the mirrors, and so
 does the `scripts/deploy.sh` preflight, which also names the pin in its plan.
 **Changing the pin needs `scripts/deploy.sh rebuild`**: the playbook's
 stale-image guard refuses a `sync` whose Dockerfile or entrypoint changed. The model's name and dimension also live in
@@ -586,10 +586,10 @@ This path was proven twice against a real 0.4.15:
     older image, and a trailing slash;
   - the heartbeat block, the real script through the driver, and
     `qcr memory reembed`'s helper.
-- `tests/openviking.test.ts` and `tests/docker-daemon.test.ts`:
+- `tests/openviking.test.ts` and `tests/memory-image.test.ts`:
   - the shipped default is local in every mirror, and the local embedder's
-    pin agrees across config.toml, group_vars and both Dockerfiles;
-  - the render heredoc is **executed** with the same group_vars/env the boot
+    pin agrees across config.toml, group_vars and the memory Dockerfile;
+  - the render script is **executed** with the same group_vars/env the boot
     uses. The default `ov.conf` names only loopback and no key, even with
     pi's key in the mount, and matches what the daemon's drift check
     expects. A stale model knob under `local` is ignored, said aloud.

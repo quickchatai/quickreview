@@ -49,7 +49,7 @@
 # The wizard writes the profile into the project's .env; set it by hand with
 # `COMPOSE_PROFILES=quick-tunnel docker compose up -d` if you prefer. Any other
 # HTTPS proxy or tunnel pointed at the published webhook port also works.
-# See docker/daemon/README.md.
+# See docker/README.md.
 #
 # Pins: pi, OpenViking, llama-cpp-python and tmux are the images' Dockerfile
 # ARG defaults (docker/Dockerfile, docker/memory/Dockerfile), mirrored against

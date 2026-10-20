@@ -30,8 +30,8 @@
 // covered by this list — re-read dist/extensions/index.js on every bump.
 //
 // The mirrors (plain JS, they run before any build): the release image's
-// entrypoint (docker/entrypoint.sh, the VM's too), the plain Docker path's
-// (docker/daemon/entrypoint.sh), the companion's (docker/companion/entrypoint.sh)
+// entrypoint (docker/entrypoint.sh, the VM's too), the companion's
+// (docker/companion/entrypoint.sh)
 // and the bench sandbox's
 // settings (src/bench/auth.ts benchSettings). tests/pibuiltins.test.ts pins
 // every mirror to this list.

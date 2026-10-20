@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # Memory sidecar entrypoint (docker/memory/Dockerfile).
 #
-# The memory half of docker/daemon/entrypoint.sh, for a container whose only
+# The memory image's boot, for a container whose only
 # job is OpenViking: render ov.conf, run the embedder migration's `prepare`,
 # provision the users, then exec the process supervisor. The knobs and their
-# defaults are the daemon entrypoint's (QCR_OPENVIKING_*, the same names), so
-# one environment drives both images. tests/memory-image.test.ts holds the
-# render to the daemon entrypoint's and the invariants below.
+# defaults are QCR_OPENVIKING_* (config.toml [openviking]); tests/memory-image.test.ts
+# holds them to it, and the invariants below.
 #
-# Invariants (the daemon entrypoint's, restated because they matter more here):
+# Invariants:
 #   * never an interactive wizard (no `openviking-server init`), never a vlm;
 #   * the root key comes from the read-only secrets mount, never a literal;
 #   * degrade, never block: a step that fails says so and the sidecar still
@@ -49,7 +48,7 @@ OV_PROVISION_USERS="${QCR_OPENVIKING_PROVISION_USERS:-reviewer,companion}"
 OV_VENV="${QCR_OPENVIKING_VENV:-/opt/openviking/venv}"
 
 # ~/.openviking is a SYMLINK onto the state volume, so memories, the vector db
-# and ov.conf survive an image rebuild. Same migration idiom as the daemon's.
+# and ov.conf survive an image rebuild. The old daemon image used the same idiom.
 mkdir -p "$OV_HOME/workspace" || echo "openviking: could not create $OV_HOME/workspace" >&2
 BOOT_OK=1
 if [[ -e "$HOME/.openviking" && ! -L "$HOME/.openviking" ]]; then
@@ -67,8 +66,7 @@ fi
 
 if [[ "$BOOT_OK" == 1 ]]; then
 
-# ov.conf is RENDERED on every boot (scripts/openviking-ov-conf.mjs - the same
-# document the daemon entrypoints render), so a knob change ships with a
+# ov.conf is RENDERED on every boot (scripts/openviking-ov-conf.mjs), so a knob change ships with a
 # restart. The `||` is deliberate: a memory engine that cannot be configured
 # must not stop the container from coming up.
 OPENVIKING_CONF="$OV_HOME/ov.conf" QCR_SECRETS="$SECRETS" QCR_OV_HOST="$OV_BIND_HOST" \

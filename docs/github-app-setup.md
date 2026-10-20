@@ -129,7 +129,7 @@ be `/webhook`.
 
 Any HTTPS proxy or tunnel works. Four shapes ship ready to use, and the
 wizard's ingress step configures whichever you pick — the trade-offs are laid
-out in [../docker/daemon/README.md](../docker/daemon/README.md):
+out in [../docker/README.md](../docker/README.md):
 
 - a Cloudflare **quick tunnel** (no account; the hostname rotates, and the
   daemon re-points the App's own webhook URL when it does — see below);

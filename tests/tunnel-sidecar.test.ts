@@ -400,7 +400,7 @@ describe("sidecarConfig — container env in, config out", () => {
 const compose = readFileSync(join(root, "docker-compose.yml"), "utf8");
 const cloudflaredFile = readFileSync(join(root, "docker/tunnel/Dockerfile.cloudflared"), "utf8");
 const ngrokFile = readFileSync(join(root, "docker/tunnel/Dockerfile.ngrok"), "utf8");
-const daemonReadme = readFileSync(join(root, "docker/daemon/README.md"), "utf8");
+const daemonReadme = readFileSync(join(root, "docker/README.md"), "utf8");
 
 const argOf = (dockerfile: string, name: string): string | undefined =>
   new RegExp(`^ARG ${name}=(.+)$`, "m").exec(dockerfile)?.[1];
@@ -426,7 +426,7 @@ describe("tunnel images — official binaries, pinned, verified at build time", 
     expect(ngrokFile).not.toMatch(/ngrok:\d/);
   });
 
-  it("the build hard-fails unless the INSTALLED client matches the pin (the docker/daemon discipline)", () => {
+  it("the build hard-fails unless the INSTALLED client matches the pin (the release image discipline)", () => {
     expect(cloudflaredFile).toContain('cloudflared --version | grep -qF "${CLOUDFLARED_VERSION}"');
     expect(cloudflaredFile).toContain("failed verification");
     expect(ngrokFile).toContain('ngrok version | grep -qF "${NGROK_VERSION}"');

@@ -1,26 +1,22 @@
 #!/usr/bin/env node
 // Renders OpenViking's ov.conf for the memory sidecar (docker/memory/).
 //
-// The plain Docker path's daemon image renders the same file with an inline node
-// heredoc in its entrypoint (docker/daemon/entrypoint.sh; the VM's retired
-// templated entrypoint did too); the sidecar has no such entrypoint to share,
-// so the render lives here. It is the SAME document: tests/memory-image.test.ts runs
-// the plain entrypoint's heredoc and this script over one environment and
-// holds the two outputs equal, so a knob changed in one place and not the
-// other refuses.
+// The memory image is the only place the file is rendered (the daemon
+// entrypoints' inline heredocs are gone). tests/memory-image.test.ts runs this
+// script over a temp secrets mount and holds the document it writes.
 //
-// Everything arrives by environment, exactly as the heredoc's does:
+// Everything arrives by environment:
 //   OPENVIKING_CONF                  where to write ov.conf (0600)
 //   QCR_SECRETS                      the read-only secrets mount
 //   QCR_OV_PORT, QCR_OV_WORKERS, QCR_OV_QUEUE_CONCURRENCY, QCR_OV_AUTH_MODE
 //   QCR_OV_EMBEDDING_PROVIDER / _MODEL / _DIMENSION / _KEY_FILE
 //   QCR_OV_LOCAL_EMBEDDER_MODEL / _DIMENSION / _PORT
 //   QCR_OV_ROOT_KEY_FILE
-// and one the heredoc does not have:
+// and one more:
 //   QCR_OV_HOST                      server.host (default 127.0.0.1; the
 //                                    sidecar binds its private network)
 //
-// The rules are the heredoc's: no `vlm` section; api_key mode needs the root
+// The rules: no `vlm` section; api_key mode needs the root
 // key from the secrets mount (missing => dev, loudly); the embedder is always
 // written explicitly so the migration check can compare it with the store;
 // `local` is the pinned model over the loopback service, a hosted provider

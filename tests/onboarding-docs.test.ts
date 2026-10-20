@@ -8,7 +8,7 @@
 // stop describing a step that exists, or keep describing one that does not.
 //
 // Prior art: tests/skill-descriptions.test.ts (prose-content assertions over
-// checked-in files) and tests/docker-daemon.test.ts (image defaults pinned
+// checked-in files) and tests/release-image.test.ts (image defaults pinned
 // against their mirrors).
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -24,7 +24,7 @@ const read = (rel: string): string => readFileSync(join(repoRoot, rel), "utf8");
 const onboardingDoc = read("docs/onboarding.md");
 const readme = read("README.md");
 const appDoc = read("docs/github-app-setup.md");
-const dockerDoc = read("docker/daemon/README.md");
+const dockerDoc = read("docker/README.md");
 const ansibleDoc = read("deploy/ansible/README.md");
 
 describe("docs/onboarding.md tracks the registered steps", () => {
@@ -81,13 +81,13 @@ describe("the setup docs name the real ingress shapes", () => {
       if (option.profile !== "") {
         expect(
           dockerDoc,
-          `compose profile "${option.profile}" is missing from docker/daemon/README.md`,
+          `compose profile "${option.profile}" is missing from docker/README.md`,
         ).toContain(option.profile);
       }
       if (option.service !== null) {
         expect(
           dockerDoc,
-          `sidecar service "${option.service}" is missing from docker/daemon/README.md`,
+          `sidecar service "${option.service}" is missing from docker/README.md`,
         ).toContain(option.service);
       }
     }
@@ -103,7 +103,7 @@ describe("the setup docs name the real ingress shapes", () => {
     for (const [name, doc] of [
       ["docs/onboarding.md", onboardingDoc],
       ["README.md", readme],
-      ["docker/daemon/README.md", dockerDoc],
+      ["docker/README.md", dockerDoc],
     ] as const) {
       expect(doc, `${name} must name the [feedback] loop among the polling-only costs`).toMatch(
         /poll[\s\S]{0,600}feedback/i,
@@ -194,10 +194,10 @@ describe("the quickstart leads with the onboarding command", () => {
 
   it("both topologies are advertised, and each route doc points back at the wizard", () => {
     expect(readme).toContain("deploy/ansible/README.md");
-    expect(readme).toContain("docker/daemon/README.md");
+    expect(readme).toContain("docker/README.md");
     for (const [name, doc] of [
       ["deploy/ansible/README.md", ansibleDoc],
-      ["docker/daemon/README.md", dockerDoc],
+      ["docker/README.md", dockerDoc],
     ] as const) {
       expect(doc, `${name} must point at the guided path it is the manual half of`).toContain(
         "qcr onboard",

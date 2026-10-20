@@ -40,7 +40,7 @@ Lint and format are not chained into `npm test` or `npm run build`; CI runs
 both. From a clone the wizard drives Docker on your machine directly, the same
 as the image's wizard does where it can; to run a locally built image through
 `docker-compose.yml`, see the last section of
-[docker/daemon/README.md](docker/daemon/README.md).
+[docker/README.md](docker/README.md).
 
 ## The rules that will surprise you
 

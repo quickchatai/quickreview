@@ -573,20 +573,6 @@ describe("subagents glue is never registered globally", () => {
     expect(text).not.toContain("QCR_PI_REQUIRE_EXT");
     expect(text).not.toContain("settings.extensions.push");
   });
-  for (const file of ["docker/daemon/entrypoint.sh"]) {
-    it(`${file}: the global extension list carries no subagent loader`, () => {
-      const text = readFileSync(join(root, file), "utf8");
-      const wanted = /const wanted = \[([\s\S]*?)\];/.exec(text)?.[1] ?? "";
-      const paths = [...wanted.matchAll(/"([^"]+)"/g)].map((m) => m[1] ?? "");
-      expect(paths.length).toBeGreaterThan(0);
-      for (const p of paths) {
-        expect(p, `${p} must not hand children an agent launcher or memory`).not.toMatch(
-          /subagent|openviking|register-lens|extensions\/lens/,
-        );
-      }
-    });
-  }
-
   // extensions/lens.ts hosts SDK lens sessions in an interactive pi (a debug
   // round, the companion since P7.8). The tmux bot runs the native pair
   // through extensions/subagents.ts and never loads it: the argv lists that

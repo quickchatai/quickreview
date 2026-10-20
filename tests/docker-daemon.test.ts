@@ -1,28 +1,15 @@
-// The plain Docker path (docker/daemon/ + docker-compose.yml) and its
-// decoupling from Ansible.
-//
-// The plain Dockerfile carries the pins as ARG defaults instead of Jinja
-// variables, which makes it a mirror surface of its own: this file holds those
-// defaults against config.toml and the ansible group_vars the same way
-// tests/openviking.test.ts holds the templated image, so a bump that misses
-// one spelling refuses here. It also pins the entrypoint invariants shared
-// with the templated boot (no interactive wizard, no vlm, root key from the
-// secrets mount, degrade-never-block, the no-stall trust layers) and the
-// compose topology (webhook published, OpenViking port never).
-import { afterEach, describe, expect, it } from "vitest";
-import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+// The compose stack's images (docker/Dockerfile = the release image,
+// docker/memory/Dockerfile = the memory image) and docker-compose.yml, and
+// their decoupling from Ansible. The per-image pins live in
+// tests/release-image.test.ts and tests/memory-image.test.ts; this file holds
+// what spans the two (one Node major, no third-party clone layer, the release
+// entrypoint's no-stall and guard invariants) and the compose topology
+// (webhook published, OpenViking port never).
+import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  LOCAL_EMBEDDING,
-  OPENVIKING_DEFAULTS,
-  RETIRED_LOCAL_EMBEDDING,
-  SLACK_DEFAULTS,
-  ovConfEmbedder,
-  parseConfig,
-} from "../src/config.js";
+import { OPENVIKING_DEFAULTS, SLACK_DEFAULTS, parseConfig } from "../src/config.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // The tracked config.example.toml (the rule-7 pin spelling every tree
@@ -31,289 +18,56 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // preflight, which reads it through the install locator and refuses on drift.
 const configToml = readFileSync(resolve(root, "config.example.toml"), "utf8");
 const groupVars = readFileSync(resolve(root, "deploy/ansible/group_vars/all.yml"), "utf8");
-const dockerfile = readFileSync(resolve(root, "docker/daemon/Dockerfile"), "utf8");
-const entrypoint = readFileSync(resolve(root, "docker/daemon/entrypoint.sh"), "utf8");
+const releaseFile = readFileSync(resolve(root, "docker/Dockerfile"), "utf8");
+const memoryFile = readFileSync(resolve(root, "docker/memory/Dockerfile"), "utf8");
 const compose = readFileSync(resolve(root, "docker-compose.yml"), "utf8");
 const playbook = readFileSync(resolve(root, "deploy/ansible/playbook.yml"), "utf8");
 
 const cfg = parseConfig(configToml);
 const gv = (key: string): string | undefined =>
   new RegExp(`^${key}:\\s*"?([^"\\n#]+?)"?\\s*(?:#.*)?$`, "m").exec(groupVars)?.[1];
-/** An `ARG NAME=default` out of the plain Dockerfile. */
-const arg = (name: string): string | undefined =>
-  new RegExp(`^ARG ${name}=(.+)$`, "m").exec(dockerfile)?.[1];
+/** An `ARG NAME=default` out of a Dockerfile. */
+const arg = (text: string, name: string): string | undefined =>
+  new RegExp(`^ARG ${name}=(.+)$`, "m").exec(text)?.[1];
 
-describe("plain Dockerfile — ARG defaults mirror the pinned sources of truth", () => {
-  it("pi: package and version == config.toml [pi] == group_vars", () => {
-    expect(arg("PI_VERSION")).toBe(cfg.pi.version);
-    expect(arg("PI_VERSION")).toBe(gv("pi_version"));
-    expect(arg("PI_NPM_PACKAGE")).toBe(cfg.pi.package);
-    expect(arg("PI_NPM_PACKAGE")).toBe(gv("pi_npm_package"));
+describe("the two images agree where they overlap", () => {
+  it("one Node major, equal to group_vars", () => {
+    expect(arg(releaseFile, "NODE_MAJOR")).toBe(gv("node_major"));
+    expect(arg(memoryFile, "NODE_MAJOR")).toBe(arg(releaseFile, "NODE_MAJOR"));
   });
 
-  it("openviking + llama-cpp-python: the triple mirror gains this fourth spelling", () => {
-    expect(arg("OPENVIKING_VERSION")).toBe(cfg.openviking.version);
-    expect(arg("OPENVIKING_VERSION")).toBe(gv("openviking_version"));
-    expect(arg("LLAMA_CPP_PYTHON_VERSION")).toBe(cfg.openviking.llama_cpp_python_version);
-    expect(arg("LLAMA_CPP_PYTHON_VERSION")).toBe(gv("llama_cpp_python_version"));
+  it("the release image carries no OpenViking layer; the memory image no pi", () => {
+    expect(releaseFile).not.toMatch(/openviking==|llama-cpp-python==/);
+    expect(memoryFile).not.toMatch(/pi-coding-agent|PI_VERSION/);
   });
 
-  it("the venv path matches group_vars and config.toml's binary path", () => {
-    expect(arg("OPENVIKING_VENV")).toBe(gv("openviking_venv"));
-    expect(cfg.openviking.bin).toBe(`${arg("OPENVIKING_VENV")}/bin/openviking-server`);
-  });
-
-  // Lenses are our own lens tool (P9.4): the image no longer depends on pi's
+  // Lenses are our own lens tool (P9.4): the images no longer depend on pi's
   // shipped subagent example, and must never carry a third-party clone (an
   // unlicensed dependency).
-  it("does not depend on pi's subagent example; no third-party clone layer", () => {
-    expect(dockerfile).not.toContain("examples/extensions/subagent");
-    expect(dockerfile).not.toContain("pi_subagents");
-    expect(dockerfile).not.toContain("PI_SUBAGENTS");
-    expect(dockerfile).not.toContain("amosblomqvist");
+  it("neither depends on pi's subagent example nor carries a third-party clone layer", () => {
+    for (const file of [releaseFile, memoryFile]) {
+      expect(file).not.toContain("examples/extensions/subagent");
+      expect(file).not.toContain("pi_subagents");
+      expect(file).not.toContain("PI_SUBAGENTS");
+      expect(file).not.toContain("amosblomqvist");
+    }
     expect(gv("pi_subagents_commit")).toBeUndefined();
     expect(gv("pi_subagents_repo")).toBeUndefined();
   });
 
-  it("tmux/node/webhook-port defaults == group_vars", () => {
-    // tmux's version is the Dockerfile's alone now (CI builds with its default;
-    // group_vars carries no tmux_version knob).
-    expect(arg("TMUX_VERSION")).toMatch(/^\d+\.\d+[a-z]?$/);
-    expect(gv("tmux_version")).toBeUndefined();
-    expect(arg("NODE_MAJOR")).toBe(gv("node_major"));
-    expect(arg("WEBHOOK_PORT")).toBe(gv("webhook_port"));
-    expect(arg("WEBHOOK_PORT")).toBe(String(cfg.server.port));
+  it("the webhook port default is group_vars' and config.toml's", () => {
+    expect(gv("webhook_port")).toBe(String(cfg.server.port));
   });
 
-  it("install lines reference the ARGs, never a literal version", () => {
-    expect(dockerfile).toContain('"llama-cpp-python==${LLAMA_CPP_PYTHON_VERSION}"');
-    expect(dockerfile).toContain('"openviking==${OPENVIKING_VERSION}"');
-    expect(dockerfile).toContain('"${PI_NPM_PACKAGE}@${PI_VERSION}"');
-    // A literal version in an install line is exactly the drift the mirror
-    // prevents (ARG default lines are the sanctioned spelling).
-    expect(dockerfile).not.toMatch(/openviking==\d/);
-    expect(dockerfile).not.toMatch(/llama-cpp-python==\d/);
-    expect(dockerfile).not.toMatch(/pi-coding-agent@\d/);
-  });
-
-  // The local English embedder's model file — a fourth spelling of
-  // the pin config.toml and group_vars carry.
-  it("the local embedder's model pin: ARG defaults == config.toml == group_vars", () => {
-    const ov = cfg.openviking;
-    expect(arg("LOCAL_EMBEDDER_MODEL")).toBe(LOCAL_EMBEDDING.model);
-    expect(arg("LOCAL_EMBEDDER_MODEL")).toBe(gv("openviking_local_embedder_model"));
-    expect(arg("LOCAL_EMBEDDER_DIR")).toBe(gv("openviking_local_embedder_dir"));
-    expect(`${arg("LOCAL_EMBEDDER_DIR")}/${arg("LOCAL_EMBEDDER_MODEL")}.gguf`).toBe(
-      ov.local_embedder_file,
-    );
-    expect(arg("LOCAL_EMBEDDER_URL")).toBe(ov.local_embedder_url);
-    expect(arg("LOCAL_EMBEDDER_URL")).toBe(gv("openviking_local_embedder_url"));
-    expect(arg("LOCAL_EMBEDDER_SHA256")).toBe(ov.local_embedder_sha256);
-    expect(arg("LOCAL_EMBEDDER_SHA256")).toBe(gv("openviking_local_embedder_sha256"));
-  });
-
-  it("the model layer downloads through the ARGs and hard-fails unless the sha256 matches", () => {
-    const layer = dockerfile.slice(dockerfile.indexOf('RUN mkdir -p "${LOCAL_EMBEDDER_DIR}"'));
-    expect(layer).toContain('"${LOCAL_EMBEDDER_URL}"');
-    expect(layer).toContain(
-      'echo "${LOCAL_EMBEDDER_SHA256}  ${LOCAL_EMBEDDER_DIR}/${LOCAL_EMBEDDER_MODEL}.gguf" | sha256sum -c -',
-    );
-    expect(layer).toMatch(/\|\| \{ echo "FATAL: the local embedder model/);
-    // The literal pin lives on the ARG lines only.
-    const nonArg = dockerfile
-      .split("\n")
-      .filter((l) => !l.startsWith("ARG "))
-      .join("\n");
-    expect(nonArg).not.toContain(cfg.openviking.local_embedder_sha256);
-    expect(nonArg).not.toContain("huggingface.co");
-  });
-
-  // The compose boot renders from the image's pin, not from the
-  // entrypoint's literal defaults — the image exports its ARGs to it.
-  it("the image tells its entrypoint which model file it carries", () => {
-    for (const [env, argName] of [
-      ["QCR_OPENVIKING_LOCAL_EMBEDDER_MODEL", "LOCAL_EMBEDDER_MODEL"],
-      ["QCR_OPENVIKING_LOCAL_EMBEDDER_DIR", "LOCAL_EMBEDDER_DIR"],
-      ["QCR_OPENVIKING_LOCAL_EMBEDDER_SHA256", "LOCAL_EMBEDDER_SHA256"],
-    ] as const) {
-      expect(dockerfile).toMatch(new RegExp(`^(ENV |\\s+)${env}=\\$\\{${argName}\\}`, "m"));
-      expect(entrypoint).toContain(`\${${env}:-`);
-    }
-  });
-
-  it("the image hard-fails unless the INSTALLED versions match the pins", () => {
-    expect(dockerfile).toContain("importlib.metadata");
-    expect(dockerfile).toContain("import llama_cpp");
-    expect(dockerfile).toMatch(/test -x "\$\{OPENVIKING_VENV\}\/bin\/openviking-server"/);
-    expect(dockerfile).toContain("failed verification");
-  });
-
-  it("llama-cpp-python installs BEFORE openviking — without it the server cannot boot", () => {
-    const llama = dockerfile.indexOf('"llama-cpp-python==${');
-    const ov = dockerfile.indexOf('"openviking==${');
-    expect(llama).toBeGreaterThan(0);
-    expect(llama).toBeLessThan(ov);
-  });
-
-  it("carries no baked lens concurrency file — the cap rides config.toml [engine]", () => {
-    expect(dockerfile).not.toContain("maxConcurrency");
+  it("carries no baked lens concurrency file: the cap rides config.toml [engine]", () => {
+    expect(releaseFile).not.toContain("maxConcurrency");
     expect(playbook).not.toContain("maxConcurrency");
-    // The config knob that carries the cap, so it cannot silently vanish.
     expect(cfg.engine.lens_max_concurrency).toBe(4);
   });
-
-  it("sets HOME explicitly beside the uid-parameterized user", () => {
-    expect(dockerfile).toMatch(/^ARG REVIEW_UID=1001$/m);
-    expect(dockerfile).toContain("--non-unique");
-    expect(dockerfile).toMatch(/^ENV HOME=\/home\/review$/m);
-  });
-
-  // A fresh named volume takes its owner from the image directory it mounts
-  // over; a mount point the image lacks is root-owned and the non-root boot
-  // cannot write it.
-  it("creates the pihome and state volume mount points owned by the container user, before USER", () => {
-    const prep = /^RUN install -d -o review -g review (.+)$/m.exec(dockerfile);
-    expect(prep).not.toBeNull();
-    const dirs = prep![1]!.split(/\s+/);
-    expect(dirs).toContain("/home/review/.pi");
-    expect(dirs).toContain("/opt/quickreview/state");
-    expect(dockerfile.indexOf(prep![0])).toBeGreaterThan(dockerfile.indexOf("RUN useradd"));
-    expect(dockerfile.indexOf(prep![0])).toBeLessThan(dockerfile.indexOf("USER review"));
-  });
 });
 
-describe("plain entrypoint — same invariants as the templated boot", () => {
-  it("never invokes `openviking-server init` — an interactive prompt would stall the boot", () => {
-    expect(entrypoint).not.toMatch(/openviking-server\s+init/);
-    expect(entrypoint).toContain("ov.conf");
-  });
-
-  it("never backgrounds a server itself — the DAEMON supervises it", () => {
-    expect(entrypoint).not.toMatch(/^\s*(nohup\s+)?[^#\n]*openviking-server(?!\s*`)[^\n]*&\s*$/m);
-    expect(entrypoint).toContain("--start-server");
-    expect(entrypoint).not.toMatch(/openviking-provision\.mjs[^\n]*&\s*$/m);
-    expect(entrypoint).toMatch(/exec node "\$SANDBOX\/dist\/src\/wire\.js"/);
-  });
-
-  it("runtime knob defaults mirror group_vars / config.toml", () => {
-    const def = (name: string): string | undefined =>
-      new RegExp(`\\$\\{QCR_OPENVIKING_${name}:-([^}]+)\\}`).exec(entrypoint)?.[1];
-    expect(def("HOME")).toBe(cfg.openviking.home);
-    expect(def("PORT")).toBe(String(cfg.openviking.port));
-    expect(def("WORKERS")).toBe(String(cfg.openviking.workers));
-    expect(def("QUEUE_CONCURRENCY")).toBe(String(cfg.openviking.queue_concurrency));
-    expect(def("AUTH_MODE")).toBe(cfg.openviking.auth_mode);
-    expect(def("AUTH_MODE")).toBe("api_key");
-    // The embedder defaults are the shipped default (local), which
-    // every mirror carries; the live config may opt into a hosted provider.
-    expect(def("EMBEDDING_PROVIDER")).toBe("local");
-    expect(def("EMBEDDING_PROVIDER")).toBe(OPENVIKING_DEFAULTS.embedding_provider);
-    expect(def("EMBEDDING_MODEL")).toBe(OPENVIKING_DEFAULTS.embedding_model);
-    expect(def("EMBEDDING_DIMENSION")).toBe(String(OPENVIKING_DEFAULTS.embedding_dimension));
-    expect(def("EMBEDDING_KEY_FILE")).toBe(OPENVIKING_DEFAULTS.embedding_key_file);
-    expect(def("EMBEDDING_KEY_FILE")).toBe(gv("openviking_embedding_key_file"));
-    // The local embedder's knobs default to the pin.
-    expect(def("LOCAL_EMBEDDER_MODEL")).toBe(LOCAL_EMBEDDING.model);
-    expect(def("LOCAL_EMBEDDER_DIMENSION")).toBe(String(LOCAL_EMBEDDING.dimension));
-    expect(`${def("LOCAL_EMBEDDER_DIR")}/${def("LOCAL_EMBEDDER_MODEL")}.gguf`).toBe(
-      cfg.openviking.local_embedder_file,
-    );
-    expect(def("LOCAL_EMBEDDER_SHA256")).toBe(cfg.openviking.local_embedder_sha256);
-    expect(def("LOCAL_EMBEDDER_PORT")).toBe(String(cfg.openviking.local_embedder_port));
-    expect(def("LOCAL_EMBEDDER_THREADS")).toBe(String(cfg.openviking.local_embedder_threads));
-    expect(def("ROOT_KEY_FILE")).toBe(cfg.openviking.root_key_file);
-    expect(def("REVIEWER_KEY_FILE")).toBe(cfg.openviking.reviewer_key_file);
-    expect(def("PROVISION_USERS")).toBe(cfg.openviking.provision_users.join(","));
-  });
-
-  it("renders ov.conf on loopback with NO vlm section and extraction off", () => {
-    const render = entrypoint.slice(
-      entrypoint.indexOf("OV_CONF_RENDER"),
-      entrypoint.lastIndexOf("OV_CONF_RENDER"),
-    );
-    expect(render).toContain('host: "127.0.0.1"');
-    expect(render).not.toMatch(/\bvlm\b\s*:/);
-    expect(render).toContain("extraction_enabled: false");
-    // The mode comes from the env knob — a literal "dev" in the config line
-    // would ship a server with no per-user confinement.
-    expect(render).toContain("auth_mode: process.env.QCR_OV_AUTH_MODE");
-    expect(render).not.toContain('auth_mode: "dev",');
-  });
-
-  it("the root key comes from the SECRETS MOUNT, never a literal, and ov.conf is 0600", () => {
-    const render = entrypoint.slice(
-      entrypoint.indexOf("OV_CONF_RENDER"),
-      entrypoint.lastIndexOf("OV_CONF_RENDER"),
-    );
-    expect(render).toMatch(/root_api_key = fs\.readFileSync\(rootFile/);
-    expect(render).not.toMatch(/root_api_key\s*[:=]\s*"[A-Za-z0-9_-]{8,}"/);
-    expect(render).toContain("0o600");
-    // Degrade loudly, never wedge.
-    expect(render).toContain('conf.server.auth_mode = "dev"');
-    expect(render).toContain("Per-user confinement is NOT enforced");
-  });
-
-  it("a failed render or provisioning never fails the boot — memory degrades, the reviewer comes up", () => {
-    expect(entrypoint).toMatch(/OV_CONF_RENDER' \|\| echo "openviking: ov\.conf render FAILED/);
-    expect(entrypoint).toMatch(/\|\| echo "openviking: boot provisioning did not complete/);
-    expect(entrypoint).toMatch(/\|\| echo "openviking: embedder migration check did not complete/);
-  });
-
-  it("the embedding provider is an env knob, pi's key is never its credential, and the migration check runs before provisioning", () => {
-    const render = entrypoint.slice(
-      entrypoint.indexOf("OV_CONF_RENDER"),
-      entrypoint.lastIndexOf("OV_CONF_RENDER"),
-    );
-    expect(render).toContain("provider: process.env.QCR_OV_EMBEDDING_PROVIDER");
-    // The one literal "openai" is the local embedder's wire
-    // provider, inside the `local` branch, beside the loopback api_base.
-    expect(render.match(/provider: "openai"/g)).toHaveLength(1);
-    expect(render).toMatch(
-      /if \(conf\.embedding\.dense\.provider === "local"\) \{[\s\S]*provider: "openai",[\s\S]*api_base: "http:\/\/127\.0\.0\.1:" \+ Number\(process\.env\.QCR_OV_LOCAL_EMBEDDER_PORT\)/,
-    );
-    expect(render).not.toContain("openai_api_key");
-    expect(render).toContain("process.env.QCR_OV_EMBEDDING_KEY_FILE");
-    const reembed = entrypoint.indexOf('scripts/openviking-reembed.mjs" prepare');
-    const provision = entrypoint.indexOf('scripts/openviking-provision.mjs" \\');
-    expect(reembed).toBeGreaterThan(0);
-    expect(reembed).toBeLessThan(provision);
-  });
-
-  it("the COMPANION key is never provisioned into this container", () => {
-    expect(entrypoint).not.toContain("openviking_companion_key");
-    expect(compose).not.toContain("companion_key");
-  });
-
-  it("keeps the no-stall trust layers: defaultProjectTrust=always + pre-seeded trust.json", () => {
-    expect(entrypoint).toContain('settings.defaultProjectTrust = "always"');
-    expect(entrypoint).toContain('trust["/opt/quickreview"] = true');
-  });
-
-  it("registers ONLY bash-guard globally, hard-failing when it is missing", () => {
-    expect(entrypoint).toContain("/opt/quickreview/sandbox/extensions/cli/bash-guard.ts");
-    expect(entrypoint).toContain("FATAL: pi extension missing");
-    // No global memory extension, and no global lens entry either. The
-    // `wanted` registration list carries exactly the one path above.
-    const wanted = /const wanted = \[([\s\S]*?)\];/.exec(entrypoint)?.[1] ?? "";
-    const paths = [...wanted.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-    expect(paths).toEqual(["/opt/quickreview/sandbox/extensions/cli/bash-guard.ts"]);
-  });
-
-  // The native "user" discovery scope reads ~/.pi/agent/agents; the
-  // boot links it at the daemon-built lens passes — symlink-or-absent only,
-  // never clobbering a real directory.
-  it("links the pi user agents dir at the built state/agents", () => {
-    expect(entrypoint).toContain('"/opt/quickreview/sandbox/state/agents"');
-    expect(entrypoint).toContain("fs.symlinkSync(builtAgents, agentsLink)");
-    expect(entrypoint).toContain("is not a symlink — NOT touching it");
-  });
-});
-
-// The release image's entrypoint (docker/entrypoint.sh, daemon mode) carries
-// the plain boot's no-stall and guard invariants over unchanged; the executed
-// per-mode checks are tests/entrypoint.test.ts. What it drops is the plain
-// boot's checkout dance: no state symlink, no npm build, and no OpenViking
-// (the memory sidecar owns that, P6.12).
+// The release image's entrypoint (docker/entrypoint.sh, daemon mode); the executed
+// per-mode checks are tests/entrypoint.test.ts.
 describe("release entrypoint (daemon mode) — same invariants as the plain boot", () => {
   const release = readFileSync(resolve(root, "docker/entrypoint.sh"), "utf8");
 
@@ -348,240 +102,6 @@ describe("release entrypoint (daemon mode) — same invariants as the plain boot
     expect(release).not.toMatch(/npm (ci|run build)/);
     expect(release).not.toMatch(/ln -sfn [^\n]*state/);
     expect(release).not.toContain(".build-lock-hash");
-  });
-});
-
-// The boot build, checked by execution: the block is lifted out of the
-// entrypoint and run against a temp checkout with a stub npm that logs its
-// argv. The checkout is bind-mounted, so a source change must reach dist/
-// on restart even when the lockfile did not move.
-describe("the boot build (executed)", () => {
-  let dir: string;
-  afterEach(() => {
-    if (dir) rmSync(dir, { recursive: true, force: true });
-  });
-
-  function boot(source = entrypoint): string[] {
-    const start = source.indexOf('cd "$SANDBOX"\nmarker=');
-    const end = source.indexOf("\nfi\n", start) + 4;
-    expect(start).toBeGreaterThan(0);
-    const block = source
-      .slice(start, end)
-      .replace("/opt/quickreview/state/.build-lock-hash", join(dir, "state", ".build-lock-hash"));
-    const bin = join(dir, "bin");
-    const log = join(dir, "npm.log");
-    const script = join(dir, "build.sh");
-    writeFileSync(
-      script,
-      `set -euo pipefail\nSANDBOX=${JSON.stringify(join(dir, "sandbox"))}\n${block}`,
-    );
-    const result = spawnSync("bash", [script], {
-      env: {
-        ...process.env,
-        PATH: `${bin}:${process.env.PATH}`,
-        NPM_LOG: log,
-        NODE_ABI_FILE: join(dir, "node-abi"),
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf8",
-    });
-    if (result.status !== 0) throw new Error(`build block failed: ${result.stderr}`);
-    const out = existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : [];
-    rmSync(log, { force: true });
-    return out;
-  }
-
-  function setup(): void {
-    dir = mkdtempSync(join(tmpdir(), "qcr-bootbuild-"));
-    mkdirSync(join(dir, "bin"));
-    writeFileSync(join(dir, "node-abi"), "127");
-    writeFileSync(join(dir, "bin", "node"), '#!/bin/bash\ncat "$NODE_ABI_FILE"\n', { mode: 0o755 });
-    mkdirSync(join(dir, "state"));
-    mkdirSync(join(dir, "sandbox", "dist"), { recursive: true });
-    mkdirSync(join(dir, "sandbox", "node_modules"));
-    writeFileSync(join(dir, "sandbox", "package-lock.json"), '{"v":1}\n');
-    writeFileSync(join(dir, "bin", "npm"), '#!/usr/bin/env bash\necho "$*" >> "$NPM_LOG"\n', {
-      mode: 0o755,
-    });
-  }
-
-  it.each(["docker/daemon/entrypoint.sh"])(
-    "reinstalls native dependencies when Node ABI changes in %s",
-    (path) => {
-      setup();
-      const source = readFileSync(join(root, path), "utf8");
-      expect(boot(source)).toContain("ci");
-      writeFileSync(join(dir, "node-abi"), "137");
-      expect(boot(source)).toContain("ci");
-    },
-  );
-
-  it("a restart with an unchanged lockfile still builds — never runs a stale dist/", () => {
-    setup();
-    expect(boot()).toEqual(["ci", "run build"]);
-    expect(boot()).toEqual(["run build"]);
-  });
-
-  it("a moved lockfile, or no node_modules, reinstalls before building", () => {
-    setup();
-    boot();
-    writeFileSync(join(dir, "sandbox", "package-lock.json"), '{"v":2}\n');
-    expect(boot()).toEqual(["ci", "run build"]);
-    rmSync(join(dir, "sandbox", "node_modules"), { recursive: true });
-    expect(boot()).toEqual(["ci", "run build"]);
-  });
-
-  it("a missing dist/ reinstalls too — an incremental build over a deleted dist/ emits nothing", () => {
-    setup();
-    boot();
-    rmSync(join(dir, "sandbox", "dist"), { recursive: true });
-    expect(boot()).toEqual(["ci", "run build"]);
-  });
-});
-
-// The sovereignty claim, checked by execution: the render heredoc is
-// lifted out of the plain entrypoint and run with node, driven by the same env
-// knobs the shell sets, against a temp secrets dir.
-describe("the rendered ov.conf (executed)", () => {
-  let dir: string;
-  afterEach(() => {
-    if (dir) rmSync(dir, { recursive: true, force: true });
-  });
-
-  /** The shell's `${QCR_OPENVIKING_X:-default}` defaults, as the render's env. */
-  function shellDefaults(): Record<string, string> {
-    const env: Record<string, string> = {};
-    for (const m of entrypoint.matchAll(/^OV_(\w+)="\$\{QCR_OPENVIKING_\1:-([^}]*)\}"$/gm))
-      env[`QCR_OV_${m[1]}`] = m[2]!;
-    return env;
-  }
-
-  function render(
-    overrides: Record<string, string>,
-    secrets: Record<string, string>,
-  ): Record<string, any> {
-    dir = mkdtempSync(join(tmpdir(), "qcr-ovconf-plain-"));
-    const home = join(dir, "openviking");
-    const secretsDir = join(dir, "secrets");
-    mkdirSync(home, { recursive: true });
-    mkdirSync(secretsDir, { recursive: true });
-    for (const [name, value] of Object.entries(secrets))
-      writeFileSync(join(secretsDir, name), value);
-    const start = entrypoint.indexOf("<<'OV_CONF_RENDER'");
-    const script = join(dir, "render.cjs");
-    writeFileSync(
-      script,
-      entrypoint.slice(
-        entrypoint.indexOf("\n", start) + 1,
-        entrypoint.lastIndexOf("\nOV_CONF_RENDER"),
-      ),
-    );
-    const result = spawnSync(process.execPath, [script], {
-      env: {
-        ...process.env,
-        ...shellDefaults(),
-        ...overrides,
-        OPENVIKING_CONF: join(home, "ov.conf"),
-        QCR_SECRETS: secretsDir,
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf8",
-    });
-    if (result.status !== 0) throw new Error(`render failed: ${result.stderr}`);
-    lastStderr = result.stderr;
-    return JSON.parse(readFileSync(join(home, "ov.conf"), "utf8"));
-  }
-  let lastStderr = "";
-
-  it("SHIPPED DEFAULT: embeds locally with no key present and no key required — pi's key in the mount changes nothing", () => {
-    const conf = render(
-      {},
-      { openai_api_key: "sk-pi-model-credential", openviking_root_key: "root-key-value" },
-    );
-    expect(conf.embedding.dense).toEqual({
-      provider: "openai",
-      model: LOCAL_EMBEDDING.model,
-      dimension: LOCAL_EMBEDDING.dimension,
-      api_base: "http://127.0.0.1:1934/v1",
-      query_param: "query",
-      document_param: "passage",
-      input: "text",
-    });
-    const text = JSON.stringify(conf);
-    expect(text).not.toContain("sk-pi-model-credential");
-    expect([...text.matchAll(/"([a-z_]*api_key)":/g)].map((m) => m[1])).toEqual(["root_api_key"]);
-    expect([...text.matchAll(/https?:\/\/([^/:"]+)/g)].map((m) => m[1])).toEqual(["127.0.0.1"]);
-    expect(conf.server.auth_mode).toBe("api_key");
-    const dense = conf.embedding.dense as Record<string, unknown>;
-    expect({
-      provider: dense.provider,
-      model: dense.model,
-      dimension: dense.dimension,
-      api_base: dense.api_base,
-    }).toEqual(ovConfEmbedder(cfg.openviking));
-  });
-
-  // A project .env the bring-up step wrote earlier may carry the retired
-  // built-in model. Under local the pin decides.
-  it("a stale .env model under local is ignored — the pinned model renders, and it says so", () => {
-    const conf = render(
-      {
-        QCR_OV_EMBEDDING_MODEL: RETIRED_LOCAL_EMBEDDING.model,
-        QCR_OV_EMBEDDING_DIMENSION: String(RETIRED_LOCAL_EMBEDDING.dimension),
-      },
-      { openviking_root_key: "r" },
-    );
-    expect(conf.embedding.dense).toMatchObject({
-      provider: "openai",
-      model: LOCAL_EMBEDDING.model,
-      dimension: LOCAL_EMBEDDING.dimension,
-    });
-    expect(lastStderr).toMatch(/ignored under provider local/);
-  });
-
-  it("the boot's provisioning step runs the embedder beside its temporary server — only under local", () => {
-    const block = entrypoint.slice(
-      entrypoint.indexOf("OV_EMBEDDER_ARGS=()"),
-      entrypoint.indexOf('scripts/openviking-provision.mjs" \\'),
-    );
-    expect(block).toContain('if [[ "$OV_EMBEDDING_PROVIDER" == "local" ]]; then');
-    expect(block).toContain('--embedder-python "$OV_VENV/bin/python"');
-    expect(block).toContain(
-      '--embedder-file "$OV_LOCAL_EMBEDDER_DIR/$OV_LOCAL_EMBEDDER_MODEL.gguf"',
-    );
-    expect(block).toContain('--embedder-sha256 "$OV_LOCAL_EMBEDDER_SHA256"');
-    expect(entrypoint).toContain('"${OV_EMBEDDER_ARGS[@]}" \\');
-  });
-
-  it("turns model-based query planning OFF and bounds embedding concurrency on the 2-CPU knob", () => {
-    const conf = render({}, { openviking_root_key: "r" });
-    expect(conf.retrieval).toEqual({ enable_intent: false });
-    expect(conf.embedding.max_concurrent).toBe(cfg.openviking.queue_concurrency);
-    expect(
-      render({ QCR_OV_QUEUE_CONCURRENCY: "1" }, { openviking_root_key: "r" }).embedding
-        .max_concurrent,
-    ).toBe(1);
-  });
-
-  it("OPT-IN: the hosted provider reads its OWN key file; without one it renders no key rather than switching embedder", () => {
-    const hosted = {
-      QCR_OV_EMBEDDING_PROVIDER: "openai",
-      QCR_OV_EMBEDDING_MODEL: "text-embedding-3-small",
-      QCR_OV_EMBEDDING_DIMENSION: "1536",
-    };
-    const withKey = render(hosted, {
-      openai_api_key: "sk-pi",
-      openai_embeddings_api_key: "sk-embeddings",
-      openviking_root_key: "r",
-    });
-    expect(withKey.embedding.dense).toMatchObject({
-      provider: "openai",
-      dimension: 1536,
-      api_key: "sk-embeddings",
-    });
-    const without = render(hosted, { openai_api_key: "sk-pi", openviking_root_key: "r" });
-    expect(without.embedding.dense.provider).toBe("openai");
-    expect(without.embedding.dense.api_key).toBeUndefined();
   });
 });
 
@@ -623,40 +143,6 @@ describe("docker-compose topology", () => {
     expect(mappings).toHaveLength(1);
     expect(mappings[0]).toContain(":8787");
     expect(mappings[0]).not.toContain("1933");
-  });
-
-  // The plain entrypoint (the VM's image until P7.10) always names the config
-  // in the config home: a checkout config is never a fallback, so an empty
-  // mount fails the boot. (The compose stack runs the release image and has
-  // its own test: tests/compose-stack.test.ts.)
-  it("the plain entrypoint ALWAYS names the config in the config home", () => {
-    // No "only when present": there is no sandbox config to fall back to, so
-    // an empty mount fails the boot naming this file.
-    expect(entrypoint).toContain(
-      'export QCR_CONFIG="${QCR_CONFIG:-/opt/quickreview/config-home/${QCR_CONFIG_NAME:-config.toml}}"',
-    );
-    // Before the daemon starts, which inherits it and hands it to sessions.
-    expect(entrypoint.indexOf("export QCR_CONFIG=")).toBeLessThan(
-      entrypoint.indexOf('exec node "$SANDBOX/dist/src/wire.js"'),
-    );
-  });
-
-  it("the entrypoint never rm -rf's the operator's state dir when the volume is already mounted there", () => {
-    expect(entrypoint).toContain(
-      'STATE_ID="$(stat -c %d:%i "$SANDBOX/state" 2>/dev/null || echo sandbox)"',
-    );
-    expect(entrypoint).toContain(
-      'VOLUME_ID="$(stat -c %d:%i /opt/quickreview/state 2>/dev/null || echo volume)"',
-    );
-    // The destructive legacy branch survives, but only behind the inode guard.
-    const guarded = entrypoint.slice(
-      entrypoint.indexOf("STATE_ID="),
-      entrypoint.indexOf("# The code resolves secrets"),
-    );
-    expect(guarded).toContain('if [[ "$STATE_ID" == "$VOLUME_ID" ]]; then');
-    expect(guarded.indexOf('if [[ "$STATE_ID" == "$VOLUME_ID" ]]; then')).toBeLessThan(
-      guarded.indexOf('rm -rf "$SANDBOX/state"'),
-    );
   });
 
   it("PID 1 reaps (init: true) — the daemon supervises a second process", () => {
@@ -734,132 +220,9 @@ describe("ansible decoupling", () => {
   });
 });
 
-// Both entrypoints point the install locator's secrets home at the
-// read-only secrets mount, so the in-container loader (an empty or
-// legacy-default `secrets_dir`) resolves to the mount through the HOME rule,
-// not the legacy fallback. The real lines, run in a real bash, temp HOME only.
 describe("entrypoint secrets link", () => {
-  // A configured [github] secrets_dir names a HOST path; the container sees
-  // the secrets only at the mount. The entrypoint names the mount to the
-  // locator, which the daemon, its sessions and mint-token.sh all inherit.
-  for (const rel of ["docker/daemon/entrypoint.sh"]) {
-    it(`${rel} names the secrets mount to the install locator`, () => {
-      const text = readFileSync(resolve(root, rel), "utf8");
-      expect(text).toMatch(/^export QCR_SECRETS_MOUNT="\$SECRETS"$/m);
-    });
-  }
   it("docker-compose.yml names the mount on the container, for `docker exec` processes too", () => {
-    const compose = readFileSync(resolve(root, "docker-compose.yml"), "utf8");
     expect(compose).toMatch(/^\s+QCR_SECRETS_MOUNT: \/opt\/quickreview\/secrets$/m);
     expect(compose).toContain(":/opt/quickreview/secrets:ro");
   });
-  for (const rel of ["docker/daemon/entrypoint.sh"]) {
-    it(`${rel} links <config home>/secrets to the mount, where the locator looks`, async () => {
-      const { locateSecrets } = await import("../src/install.js");
-      const text = readFileSync(resolve(root, rel), "utf8");
-      const start = text.indexOf('XDG_BASE="${XDG_CONFIG_HOME:-}"');
-      const end = text.indexOf('[[ -L "$SECRETS_HOME" ]] || ln -sfn "$SECRETS" "$SECRETS_HOME"');
-      expect(start).toBeGreaterThan(-1);
-      expect(end).toBeGreaterThan(start);
-      const block = text.slice(start, text.indexOf("\n", end));
-      const dir = mkdtempSync(join(tmpdir(), "qcr-ep-secrets-"));
-      try {
-        const home = join(dir, "home");
-        const mount = join(dir, "secrets");
-        mkdirSync(home);
-        mkdirSync(mount);
-        writeFileSync(join(mount, "app_id"), "1\n");
-        execFileSync(
-          "bash",
-          ["-c", `set -euo pipefail\nSECRETS=${JSON.stringify(mount)}\n${block}`],
-          {
-            env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home },
-          },
-        );
-        const located = locateSecrets({
-          configured: "~/.config/quickreview-bot",
-          env: { HOME: home },
-        });
-        expect(located.source).toBe("home");
-        expect(readFileSync(join(located.path, "app_id"), "utf8")).toBe("1\n");
-        // No compatibility link to the legacy dir — nothing reads it.
-        expect(existsSync(join(home, ".config", "quickreview-bot"))).toBe(false);
-        expect(text).not.toContain('quickreview-bot"');
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    });
-  }
 });
-
-it.each(
-  ["docker/daemon/entrypoint.sh"].flatMap((file) =>
-    ["state", "memory"].map((migration) => [file, migration] as const),
-  ),
-)("preserves migrated %s / %s after a failed copy", (file, migration) => {
-  const dir = mkdtempSync(join(tmpdir(), "qcr-migration-failure-"));
-  try {
-    const source = join(dir, "source");
-    const destination = join(dir, "destination");
-    mkdirSync(source);
-    mkdirSync(destination);
-    writeFileSync(join(source, "memory.json"), "valuable state");
-    const text = readFileSync(join(root, file), "utf8");
-    const start = text.indexOf(
-      migration === "state" ? 'if [[ -d "$SANDBOX/state"' : 'if [[ -e "$HOME/.openviking"',
-    );
-    expect(start).toBeGreaterThan(0);
-    const block = text.slice(start);
-    const end =
-      migration === "state"
-        ? /\n\s*fi/.exec(block)!.index + /\n\s*fi/.exec(block)![0].length
-        : block.indexOf("# OpenViking boot preparation");
-    const fragment = block
-      .slice(0, end)
-      .replaceAll("$HOME/.openviking", "${SI_SOURCE}")
-      .replaceAll("$SANDBOX/state", "${SI_SOURCE}")
-      .replaceAll("$OV_HOME", "${SI_DEST}");
-    const result = spawnSync("bash", ["-c", "set -euo pipefail\ncp() { return 1; }\n" + fragment], {
-      env: { ...process.env, SI_SOURCE: source, SI_DEST: destination },
-      encoding: "utf8",
-    });
-    expect(result.status).toBe(migration === "state" ? 1 : 0);
-    expect(readFileSync(join(source, "memory.json"), "utf8")).toBe("valuable state");
-    expect(existsSync(source)).toBe(true);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-it.each(["docker/daemon/entrypoint.sh"])(
-  "continues reviewer boot without opening partial memory after optional migration fails: %s",
-  (file) => {
-    const dir = mkdtempSync(join(tmpdir(), "qcr-optional-memory-failure-"));
-    const home = join(dir, "home");
-    const destination = join(dir, "destination");
-    mkdirSync(join(home, ".openviking"), { recursive: true });
-    mkdirSync(destination);
-    writeFileSync(join(home, ".openviking", "original"), "retained memory");
-    const text = readFileSync(join(root, file), "utf8");
-    const start = text.indexOf('if [[ -e "$HOME/.openviking"');
-    const end = text.indexOf("# pi extensions", start);
-    const fragment = text.slice(start, end);
-    const script =
-      'set -euo pipefail\ncp() { printf partial > "$OV_HOME/partial"; return 1; }\nnode() { printf opened > "$OV_HOME/opened"; }\n' +
-      fragment +
-      '\nprintf "reviewer-started:%s" "${QCR_OPENVIKING_BOOT_DISABLED:-0}"';
-    try {
-      const result = spawnSync("bash", ["-c", script], {
-        env: { ...process.env, HOME: home, OV_HOME: destination },
-        encoding: "utf8",
-      });
-      expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toContain("reviewer-started:1");
-      expect(readFileSync(join(home, ".openviking", "original"), "utf8")).toBe("retained memory");
-      expect(existsSync(join(destination, "partial"))).toBe(true);
-      expect(existsSync(join(destination, "opened"))).toBe(false);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  },
-);
