@@ -1,7 +1,7 @@
 // Our lens tools: `lens` and `lens_wave` (owner ruling D3), the engine routes'
-// replacement for pi's native `subagent` and the glue's `launch_plan`. The tmux
-// bot keeps the old pair (extensions/subagents.ts); a consumer reads all four
-// (src/lensresult.ts isLensTool).
+// replacement for pi's native `subagent` and the glue's `launch_plan` (retired,
+// P9.4); a consumer still reads all four, for the transcripts and ledgers of
+// older rounds (src/lensresult.ts isLensTool).
 //
 //   lens        one pass, `{agent, task}`, or several at once, `{tasks: [...]}`:
 //               the rows the session raises, the lenses it adds, the validator.

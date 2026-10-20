@@ -391,7 +391,7 @@ export function pruneTranscripts(dir: string, keep: number, except: string): voi
  * the install's or a checkout's own reaches it) and `--approve` (the
  * no-stall rule: a child never waits on a trust modal). The child runs in
  * `cwd`, first-party ground, never in the reviewed checkout, whose `.pi/`
- * config must not load (extensions/subagents.ts reason 3); it reads the
+ * config must not load; it reads the
  * checkout by absolute path, and no context file is ever written there. Its
  * env is `leafEnv`: an allowlist, never the driver's whole environment.
  *

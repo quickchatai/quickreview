@@ -8,7 +8,7 @@
 //   - every mode refuses to start when config.toml [pi] version differs from
 //     the installed pi package;
 //   - the daemon mode carries the bash-guard registration, its FATAL on a
-//     missing extension and on a missing examples/subagent, and the 0444
+//     missing extension and on a global CLI that is not the pinned pi, and the 0444
 //     reviewer stub; the per-call cli mode registers no bash-guard and
 //     instead runs the model's tools as another uid (D32: the entrypoint's
 //     privilege drop, the engine's setpriv launch, and - in a user namespace,
@@ -90,11 +90,10 @@ function rig(base = tmpdir()): Rig {
     copyFileSync(join(root, f), join(app, f));
   }
   copyFileSync(join(root, "deploy/reviewer/AGENTS.override.md"), join(dir, "stub.md"));
-  // the installed pi, and the global CLI with its subagent example
+  // the installed pi, and the global CLI (the pinned version, nothing else of pi's package is needed)
   for (const base of [join(app, "node_modules"), globalRoot]) {
     put(join(base, PKG, "package.json"), JSON.stringify({ version: VERSION }));
   }
-  put(join(globalRoot, PKG, "examples/extensions/subagent/index.ts"), "");
   put(join(app, "extensions/bash-guard.ts"), "// stub\n");
   // dist stubs: each reports who ran, with which argv, on which stdout
   put(
@@ -326,7 +325,7 @@ describe("daemon mode", () => {
       boolean
     >;
     expect(trust[r.app]).toBe(true);
-    // the native subagent extension's user-scope agents dir -> the built agents
+    // the lens tool's agent dir (<agent dir>/agents) -> the built agents
     expect(readlinkSync(join(r.home, ".pi/agent/agents"))).toBe(join(r.app, "state/agents"));
     expect(readFileSync(join(r.dir, "tmux.log"), "utf8")).toBe(
       "tmux start-server\ntmux has-session -t main\ntmux new-session -d -s main\n",
@@ -357,12 +356,11 @@ describe("daemon mode", () => {
     expect(existsSync(join(r.dir, "tmux.log"))).toBe(false);
   });
 
-  it("FATAL when the global pi lacks examples/extensions/subagent", () => {
+  it("boots without pi's examples: the lens tool is ours, nothing of pi's package but the pin is asked for", () => {
     const r = rig();
-    rmSync(join(r.globalRoot, PKG, "examples"), { recursive: true });
+    expect(existsSync(join(r.globalRoot, PKG, "examples"))).toBe(false);
     const out = run(r, ["daemon"], withConfig(r));
-    expect(out.status).not.toBe(0);
-    expect(out.stderr).toContain(`FATAL: pi ${VERSION} does not ship examples/extensions/subagent`);
+    expect(out.stderr).not.toContain("examples/extensions/subagent");
   });
 
   it("FATAL when the global pi CLI is not the pinned version", () => {
@@ -715,11 +713,8 @@ describe("companion mode", () => {
     expect(await exited).toBe(0);
   });
 
-  it("runs the image's code: agents linked at the image's agent set, no pi subagent example needed", async () => {
+  it("runs the image's code: agents linked at the image's agent set", async () => {
     const r = rig();
-    // The global CLI of this rig has no examples/extensions/subagent: the
-    // companion loads our lens tool, so the boot must not ask for it.
-    rmSync(join(r.globalRoot, PKG, "examples"), { recursive: true, force: true });
     const child = spawn(ENTRYPOINT, ["companion"], {
       env: r.env,
       stdio: ["ignore", "ignore", "pipe"],

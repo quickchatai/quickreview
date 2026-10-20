@@ -49,7 +49,6 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import { fauxProvider } from "@earendil-works/pi-ai";
-import { sanitizeParams } from "../extensions/subagents.js";
 import { COMPANION_AGENTS_DIR } from "../extensions/setup.js";
 import { COMPANION_DEFAULTS, resolveCompanionPaths, sandboxRoot } from "../src/config.js";
 import { PiHost } from "../src/engine/pisdk.js";
@@ -78,8 +77,7 @@ vi.stubEnv("QCR_CONFIG", join(import.meta.dirname, "fixtures", "config.toml"));
 
 const { runReviewCli } = await import("../src/reviewcli.js");
 const { runOneShot } = await import("../src/oneshot.js");
-const { benchConfig, buildBenchAgents, contextFor } =
-  await import("../src/bench/runner.js");
+const { benchConfig, buildBenchAgents, contextFor } = await import("../src/bench/runner.js");
 const { ecosystemFor } = await import("../src/ecosystem.js");
 
 const ROOT = realpathSync(resolve(import.meta.dirname, ".."));
@@ -266,7 +264,13 @@ async function captureTmuxSession(): Promise<{
         package: "@earendil-works/pi-coding-agent",
         version: "1.3.0",
         session_dir: "state/pi-sessions",
-        subagent_max_concurrency: 6,
+      },
+      engine: {
+        runtime: "sdk",
+        lens_max_concurrency: 6,
+        lens_cache_group: 5,
+        lens_cache_stagger_ms: 2500,
+        lens_pass_deadline_min: 8,
       },
       github: { repo: "o/n", secrets_dir: join(root, "secrets") },
       openviking: { host: "127.0.0.1", port: 1933, config_file: join(root, "ov.conf") },
@@ -440,7 +444,7 @@ const row = (
 };
 
 const LENS_NOTE =
-  "A lens child runs in its parent's cwd (extensions/subagents.ts strips every cwd param) with the parent's environment, so it loads what the parent loads.";
+  "A lens session runs in its parent's cwd with the parent's environment, so it loads what the parent loads.";
 
 /** Every route's observed row, filled in beforeAll. */
 const observed: Inventory = { pi: "1.3.0", routes: {} };
@@ -836,17 +840,6 @@ describe("the context-file inventory", () => {
       );
       expect(outside, name).toEqual([]);
     }
-  });
-});
-
-describe("lens children", () => {
-  it("never run in another cwd: sanitizeParams strips every cwd param", () => {
-    const out = sanitizeParams({
-      cwd: "/some/repo",
-      tasks: [{ agent: "a", task: "t", cwd: "/some/repo" }],
-      chain: [{ agent: "a", task: "t", cwd: "/some/repo" }],
-    });
-    expect(JSON.stringify(out)).not.toContain("/some/repo");
   });
 });
 

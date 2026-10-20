@@ -11,12 +11,11 @@
 //   default export     the env shim for an interactive pi (a debug round, the
 //                      companion): it builds the lens runner on first use
 //
-// The tmux bot does NOT load this file: it runs pi's native `subagent` and the
-// glue's `launch_plan` through extensions/subagents.ts, unchanged, until it
-// moves to workers. A lens session is never given either of these tools (the
-// runner refuses an agent file that lists one, include.ts strips them at build
-// time), so a pass cannot fan out. They ride the session's own extension list,
-// never the global settings.json.
+// The tmux bot does NOT load this file. pi's native `subagent` and the glue's
+// `launch_plan` (extensions/subagents.ts) are retired (P9.4). A lens session is
+// never given either of these tools (the runner refuses an agent file that
+// lists one, include.ts strips them at build time), so a pass cannot fan out.
+// They ride the session's own extension list, never the global settings.json.
 //
 // The shim's lens sessions are SDK sessions of this pi process. It builds a
 // PiHost over the pi's own agent dir (`PI_CODING_AGENT_DIR`) with a read-only
@@ -54,7 +53,7 @@ import { LensWave } from "../src/engine/lens/wave.js";
 import { PiHost } from "../src/engine/pisdk.js";
 import { bashGuardConfigFromEnv, createBashGuard } from "./bash-guard.js";
 import { toPiTool } from "./pi-tool.js";
-import { resolveCacheGroup, resolveCacheStagger, resolveMaxConcurrency } from "./subagents.js";
+import { resolveCacheGroup, resolveCacheStagger, resolveMaxConcurrency } from "../src/engine/lens/env.js";
 
 export { LENS_TOOL, LENS_WAVE_TOOL };
 

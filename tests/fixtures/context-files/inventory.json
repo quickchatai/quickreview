@@ -23,7 +23,7 @@
           "source": "deploy/reviewer/AGENTS.override.md"
         }
       ],
-      "note": "A lens child runs in its parent's cwd (extensions/subagents.ts strips every cwd param) with the parent's environment, so it loads what the parent loads."
+      "note": "A lens session runs in its parent's cwd with the parent's environment, so it loads what the parent loads."
     },
     "daemon-bot": {
       "cwd": "/opt/quickreview/sandbox",
@@ -47,7 +47,7 @@
           "source": "AGENTS.md"
         }
       ],
-      "note": "A lens child runs in its parent's cwd (extensions/subagents.ts strips every cwd param) with the parent's environment, so it loads what the parent loads."
+      "note": "A lens session runs in its parent's cwd with the parent's environment, so it loads what the parent loads."
     },
     "bench": {
       "cwd": "/opt/quickreview/sandbox",
@@ -71,7 +71,7 @@
           "source": "deploy/reviewer/AGENTS.override.md"
         }
       ],
-      "note": "A lens child runs in its parent's cwd (extensions/subagents.ts strips every cwd param) with the parent's environment, so it loads what the parent loads."
+      "note": "A lens session runs in its parent's cwd with the parent's environment, so it loads what the parent loads."
     },
     "release-image": {
       "cwd": "/opt/qcr",
@@ -95,7 +95,7 @@
           "source": "deploy/reviewer/AGENTS.override.md"
         }
       ],
-      "note": "A lens child runs in its parent's cwd (extensions/subagents.ts strips every cwd param) with the parent's environment, so it loads what the parent loads."
+      "note": "A lens session runs in its parent's cwd with the parent's environment, so it loads what the parent loads."
     },
     "bench-judge": {
       "cwd": "/case-tree",
@@ -132,7 +132,7 @@
           "source": "deploy/reviewer/AGENTS.override.md"
         }
       ],
-      "note": "A lens child runs in its parent's cwd (extensions/subagents.ts strips every cwd param) with the parent's environment, so it loads what the parent loads."
+      "note": "A lens session runs in its parent's cwd with the parent's environment, so it loads what the parent loads."
     },
     "sdk": {
       "cwd": "/home/op/.local/state/qcr/default/review/runs/RUN/out",

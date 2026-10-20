@@ -118,6 +118,10 @@ describe("[T4] every config knob has a reader, not just a parser", () => {
     "soft_exchange_limit",
     "storm_corrections",
     "tickets_effort",
+    // The retired native glue's width switch (P9.4). Our lens tool sets its own
+    // width; the key stays parsed so an older config.toml that sets it still
+    // loads.
+    "wide_lens_fanout",
   ];
 
   it("the knob set is large enough that the parse cannot have silently failed", () => {

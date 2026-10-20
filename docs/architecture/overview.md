@@ -159,7 +159,7 @@ Both are summarised in [boundaries.md](boundaries.md).
 | `src/tui/` | the operator TUI and the companion controller |
 | `src/slack/` | the Slack concierge |
 | `src/onboard/` | the guided setup wizard's steps and engine |
-| `extensions/` | pi extensions loaded per session: `inject-bridge.ts` (the wake channel), `ledger-pin.ts` (a findings ledger that survives compaction), `bash-guard.ts` (the command guard), `subagents.ts`, plus `vendor/` for third-party extensions carried with recorded patches |
+| `extensions/` | pi extensions loaded per session: `inject-bridge.ts` (the wake channel), `ledger-pin.ts` (a findings ledger that survives compaction), `bash-guard.ts` (the command guard), `lens.ts` (the companion's lens tool), plus `vendor/` for third-party extensions carried with recorded patches |
 | `scripts/` | the shell surface: the session posting route (`post-review.sh`, `approve-pr.sh`, `reply-thread.sh`, all sourcing `guards.sh`), `mint-token.sh`, `qcr`, `deploy.sh`, and the memory-forward relay |
 | `prompts/` | system prompts and round templates. Half frozen seeds, half editable templates |
 | `agents/` | the lens pass definitions (`pass-*.md`). Mostly frozen seeds |

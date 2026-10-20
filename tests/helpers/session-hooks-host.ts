@@ -127,7 +127,13 @@ function config(root: string): Config {
       package: "@earendil-works/pi-coding-agent",
       version: "0.84.4",
       session_dir: "state/pi-sessions",
-      subagent_max_concurrency: 6,
+    },
+    engine: {
+      runtime: "sdk",
+      lens_max_concurrency: 6,
+      lens_cache_group: 5,
+      lens_cache_stagger_ms: 2500,
+      lens_pass_deadline_min: 8,
     },
     openviking: { host: "127.0.0.1", port: 1933, config_file: join(root, "ovhome", "ov.conf") },
   } as unknown as Config;

@@ -305,8 +305,8 @@ export const LENS = {
   extension: `${CONTAINER.app}/extensions/lens.ts`,
   /** The companion's process-wide pass cap: 8, because a survey or scan fans
    * out one case per unit. Rides `QCR_SUBAGENT_MAX_CONCURRENCY` on the pi
-   * command line (the name extensions/subagents.ts gave it, which
-   * extensions/lens.ts and extensions/setup.ts still read). Pinned by
+   * command line (the name the retired subagents glue gave it, which
+   * the lens tool and extensions/setup.ts still read). Pinned by
    * tests/tui-companion.test.ts. */
   maxConcurrency: 8,
 } as const;

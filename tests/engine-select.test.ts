@@ -8,11 +8,7 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.js";
 import type { Runtime } from "../src/engine/port.js";
-import {
-  checkLensRuntime,
-  parseRuntimeKind,
-  selectRuntime,
-} from "../src/engine/select.js";
+import { checkLensRuntime, parseRuntimeKind, selectRuntime } from "../src/engine/select.js";
 import { scanLeafRunner } from "../extensions/setup-scan.js";
 import type { CaseRunner, CaseSpec } from "../src/setup/engine.js";
 
@@ -40,11 +36,10 @@ describe("[engine] runtime and [pi] lens_runtime", () => {
     );
   });
 
-  it("lens_runtime = native alone keeps the sdk runtime and turns the wave off", () => {
-    const cfg = parseConfig(underPi(FIXTURE, 'lens_runtime = "native"'));
-    expect(cfg.engine.runtime).toBe("sdk");
-    expect(cfg.pi.lens_runtime).toBe("native");
-    expect(cfg.pi.engine_wave).toBe(false);
+  it('lens_runtime = "native" is refused as retired (pi\'s subagent glue is gone)', () => {
+    expect(() => parseConfig(underPi(FIXTURE, 'lens_runtime = "native"'))).toThrow(
+      /lens_runtime = "native" is retired/,
+    );
   });
 
   it("read the file's values", () => {
@@ -60,7 +55,7 @@ describe("[engine] runtime and [pi] lens_runtime", () => {
       /\[engine\] runtime must be one of sdk/,
     );
     expect(() => parseConfig(underPi(FIXTURE, 'lens_runtime = "wave"'))).toThrow(
-      /\[pi\] lens_runtime must be one of native \| engine/,
+      /\[pi\] lens_runtime must be one of engine/,
     );
   });
 
@@ -69,9 +64,6 @@ describe("[engine] runtime and [pi] lens_runtime", () => {
     expect(parseConfig(underPi(FIXTURE, "engine_wave = false")).pi.engine_wave).toBe(false);
     const on = underPi(FIXTURE, 'lens_runtime = "engine"\nengine_wave = true');
     expect(parseConfig(on).pi.engine_wave).toBe(true);
-    expect(() =>
-      parseConfig(underPi(FIXTURE, 'lens_runtime = "native"\nengine_wave = true')),
-    ).toThrow(/engine_wave = true needs lens_runtime = "engine"/);
     expect(() => parseConfig(underPi(FIXTURE, 'engine_wave = "yes"'))).toThrow(
       /\[pi\] engine_wave must be true or false/,
     );
@@ -87,7 +79,6 @@ describe("selectRuntime", () => {
   });
 
   it("lens_runtime = engine is refused where the route has no lens tool yet", () => {
-    expect(() => checkLensRuntime("native", "review")).not.toThrow();
     expect(() => checkLensRuntime("engine", "review", true)).not.toThrow();
     expect(() => checkLensRuntime("engine", "bench")).toThrow(/not available on the bench route/);
   });
@@ -196,7 +187,7 @@ describe("the scan leaf runner under [engine] runtime", () => {
 
   it("lens_runtime is not read on scan: a leaf never gets a lens tool", async () => {
     const i = inner();
-    for (const lens of ["engine", "native"]) {
+    for (const lens of ["engine"]) {
       const env = envWith(
         underPi(`${FIXTURE}\n[engine]\nruntime = "sdk"\n`, `lens_runtime = "${lens}"`),
       );

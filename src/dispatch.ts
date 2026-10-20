@@ -1332,8 +1332,8 @@ const CHEAP_LAST_PASSES: ReadonlySet<string> = new Set([
 /**
  * The plan's rows in LAUNCH order — the expected-slowest first.
  *
- * The session launches a turn's rows in table order, and the subagent glue
- * (extensions/subagents.ts) runs them under a process-wide cap in that order,
+ * The session launches a turn's rows in table order, and the lens runner
+ * (src/engine/lens/runlens.ts) runs them under a process-wide cap in that order,
  * so a 15–27 row plan runs in waves: a slow row listed late starts in the
  * last wave and sets the round's critical path (typically pass-baseline,
  * sol-high sweep and behaviour-delta rows). The order:
@@ -2837,7 +2837,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // row's delivered lessons ride its task file.
       // `[review] context_pack = "pack-first"`: the round's CONTEXT
       // PACK, written before the task files that point at it, and only where
-      // children share a cache key (`[pi] subagent_cache_group`) — an unshared
+      // children share a cache key (`[engine] lens_cache_group`) — an unshared
       // pack costs every lens more, not less. Total: a pack that cannot be
       // written leaves the round exactly as without one; a stale pack from an
       // earlier attempt of this round number never survives into it.
@@ -2854,7 +2854,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       if (
         cfg.review.task_files &&
         cfg.review.context_pack === "pack-first" &&
-        cfg.pi.subagent_cache_group > 0
+        cfg.engine.lens_cache_group > 0
       ) {
         try {
           const pack = renderContextPack({

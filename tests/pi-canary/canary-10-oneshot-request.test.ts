@@ -11,10 +11,10 @@
 //   - the tools: pi's four, the factory-registered ones (cluster_findings,
 //     coverage_gaps) and the lens tool schemas
 //
-// The lens tool slot holds today's native extension (extensions/subagents.ts:
-// `subagent`, `launch_plan`), loaded as a file by the child and as a factory by
-// the SDK session. The engine's own lens tools (P4.5) take the slot and must
-// keep this test green. The follow-up turn is compared too: the child's
+// The lens tool slot is empty on both sides: pi's native subagent glue
+// (extensions/subagents.ts) is retired, and the engine's own lens tools
+// (`lens`, `lens_wave`) ride the SDK route's engine option, which this comparison
+// has no process counterpart for (canary-10-bot-request covers them). The follow-up turn is compared too: the child's
 // `--continue` respawn and the SDK session's second turn send the same body.
 //
 // Nothing leaves loopback and no model runs.
@@ -22,8 +22,6 @@ import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import subagents from "../../extensions/subagents.js";
 import { PiHost } from "../../src/engine/pisdk.js";
 import type { Runtime, RuntimeSession, SessionSpec } from "../../src/engine/port.js";
 import { piCliRuntime } from "../helpers/pi-cli-runtime.js";
@@ -106,11 +104,6 @@ beforeEach(async () => {
 });
 afterEach(() => {
   host.dispose();
-  for (const [k, v] of stubbed) {
-    if (v === undefined) delete process.env[k];
-    else process.env[k] = v;
-  }
-  stubbed.clear();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -124,27 +117,9 @@ function offline(rt: Runtime): Runtime {
   return { create: (s) => rt.create(add(s)), resume: (f, s) => rt.resume(f, add(s)) };
 }
 
-/** The process env as it was before a session put the round's QCR_* names in it. */
-const stubbed = new Map<string, string | undefined>();
-
-/** The native lens extension as a factory. It reads its settings from the
- * process env (the child's env is the round's), so they are put there for the
- * session's life: what a route hosting it would do. */
-function nativeLens(spec: SessionSpec): ExtensionFactory {
-  for (const [k, v] of Object.entries(spec.env)) {
-    if (!(k.startsWith("QCR_") || k === "PI_CODING_AGENT_DIR") || v === undefined) continue;
-    if (!stubbed.has(k)) stubbed.set(k, process.env[k]);
-    process.env[k] = v;
-  }
-  return subagents as unknown as ExtensionFactory;
-}
-
 function sdkOneShotRuntime(): Runtime {
   return sdkRuntime(host, {
-    extras: (spec) =>
-      roundSdkExtras({
-        lens: { factories: [nativeLens(spec)], toolNames: ["subagent", "launch_plan"] },
-      })(spec),
+    extras: (spec) => roundSdkExtras({ lens: { factories: [], toolNames: [] } })(spec),
   });
 }
 
@@ -165,8 +140,6 @@ async function round(kind: "proc" | "sdk"): Promise<Run> {
   const spec: RoundSpec = {
     root: rig.root,
     cwd: rig.cwd,
-    // The native lens tool's description names the agent dir it reads from: the
-    // child's PI_CODING_AGENT_DIR, the host process's env on the SDK route.
     agentDir: join(dir, "agent-cli"),
     tree: rig.tree,
     files: FILES,
@@ -205,7 +178,7 @@ describe("[canary 10, full] the one-shot SDK request == the process route's", ()
     // The comparison is not vacuous.
     const text = JSON.stringify(body);
     expect(text).toContain("AGENTS.override.md");
-    for (const tool of ["bash", "subagent", "launch_plan", "cluster_findings", "coverage_gaps"])
+    for (const tool of ["bash", "cluster_findings", "coverage_gaps"])
       expect(text, tool).toContain(`"name":"${tool}"`);
     expect(masked(b, sdk.id)).toBe(masked(a, proc.id));
   });

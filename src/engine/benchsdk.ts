@@ -10,11 +10,8 @@
 // or a frozen event loop costs that case alone. This module does not pool; a
 // runtime built here is meant to live as long as one case.
 //
-// LENSES. `lens_runtime = "native"` keeps pi's `subagent` / `launch_plan` tool
-// (its children inherit the case's spill dir and git isolation through the
-// process env, which the runtime scopes to the session's life); `"engine"` gives
-// the main session our `lens` / `lens_wave` over the agents `buildBenchAgents`
-// wrote, run in this process on the same host.
+// LENSES. The main session gets our `lens` / `lens_wave` over the agents
+// `buildBenchAgents` wrote, run in this process on the same host.
 import { createBashGuard, bashGuardConfigFromEnv } from "../../extensions/bash-guard.js";
 import type { LensRuntimeKind } from "../config.js";
 import { roundLensConfig, roundLensTools } from "./lens/round-lens.js";
@@ -34,11 +31,6 @@ export interface BenchSdkOptions {
   processEnv?: NodeJS.ProcessEnv;
 }
 
-/** The names of a case's env that the native lens tool's children need besides
- * the QCR_* names: the spill dir on the disk-backed volume and the git
- * isolation pins. */
-const isBenchChildEnv = (name: string): boolean => name === "TMPDIR" || name.startsWith("GIT_");
-
 /** What the model's bash may draw from the judge's env beyond the host defaults. */
 const JUDGE_BASH_ENV_ALLOW = ["GIT_*"] as const;
 
@@ -47,12 +39,9 @@ export function benchSdkRuntime(o: BenchSdkOptions): Runtime {
   return reviewSdkRuntime({
     ...(o.makeHost ? { makeHost: o.makeHost } : {}),
     ...(o.processEnv ? { processEnv: o.processEnv } : {}),
-    childEnv: isBenchChildEnv,
-    ...(o.lens === "engine" && o.plannedWave
+    ...(o.plannedWave
       ? { engine: { plannedWave: true, config: (host, spec) => roundLensConfig(spec, host) } }
-      : o.lens === "engine"
-        ? { lens: (spec, host) => roundLensTools(spec, host) }
-        : {}),
+      : { lens: (spec, host) => roundLensTools(spec, host) }),
   });
 }
 

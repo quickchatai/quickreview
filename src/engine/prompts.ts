@@ -78,7 +78,7 @@ export function benchContextPack(
   if (
     !cfg.review.task_files ||
     cfg.review.context_pack !== "pack-first" ||
-    cfg.pi.subagent_cache_group <= 0
+    cfg.engine.lens_cache_group <= 0
   )
     return { order: built };
   const path = join(caseDir, CONTEXT_PACK_FILE);

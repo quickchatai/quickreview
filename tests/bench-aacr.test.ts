@@ -2086,7 +2086,7 @@ describe("report and result bookkeeping", () => {
       fp((x) => (x.review.context_pack = x.review.context_pack === "off" ? "pack-first" : "off")),
     ).not.toEqual(same);
     expect(fp((x) => (x.review.lint_conformance = !x.review.lint_conformance))).not.toEqual(same);
-    expect(fp((x) => (x.pi.subagent_max_concurrency += 1))).not.toEqual(same);
+    expect(fp((x) => (x.engine.lens_max_concurrency += 1))).not.toEqual(same);
   });
 
   it("`--config models.effort` takes the config file's spellings", () => {

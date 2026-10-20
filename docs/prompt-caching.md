@@ -1,4 +1,4 @@
-# Prompt caching for lens children
+# Prompt caching for lens sessions
 
 ## Why
 
@@ -9,9 +9,7 @@ Every lens of a round reads the same diff and, mostly, the same few changed file
 
 The children's first turns read **0** cached tokens, even where two children's prompts were byte-identical.
 
-The reason is that pi uses its session id as the provider's cache key (`prompt_cache_key`, and the routing headers built from the same id). Native subagent children run `--no-session`, so every child gets a random id and lands on a cold cache.
-
-This is the native lens tool's (and the tmux bot's) case. The review, bench and scan routes run pi in-process on the SDK (the one adapter; the process runtime is retired), where the SDK creates the sessions in this process rather than as `pi` children.
+The reason is that pi uses its session id as the provider's cache key (`prompt_cache_key`, and the routing headers built from the same id). The measured run was pi's native subagent tool, whose children ran `--no-session`, so every child got a random id and landed on a cold cache. That tool, and the glue around it, are gone: every route runs pi in-process on the SDK and launches lenses through our lens tool (`src/engine/lens/`), which creates each lens as a session of its own process and gives it the group's session id. The measurements below are what that design rests on.
 
 ## What the backend does (measured)
 
@@ -33,11 +31,10 @@ So a prefix the lenses share is reused only if each lens request extends a reque
 
 ## Shape
 
-**Cache groups** (`[pi] subagent_cache_group`, default 5; `extensions/subagents.ts`).
-- At spawn, the glue rewrites a lens child's `--no-session` to `--session-id <group key> --session-dir <its own temp dir>`. The dir is removed when the child exits.
-- Children share a key in groups of N per model, so no single key carries a whole round's request rate.
-- Only native's exact leaf argv (`--mode json -p --no-session`) is touched. A child stays a leaf: `-p` alone marks it so for `qcr-leaf.ts`.
-- Without a pack, a group's later children start `subagent_cache_stagger_ms` (2500) after its first. Rows of one agent whose prompts differ only in a short task pointer, such as the sweep rows, then share their system prompt.
+**Cache groups** (`[engine] lens_cache_group`, default 5; `src/engine/lens/cache-group.ts`, `cache-run.ts`).
+- A lens session is created with its group's key as its session id, which pi turns into the provider's cache key and routing headers. The group shares one id (D7), so the sessions of a group are disposed together once the whole group is done: one lens's dispose would otherwise close a sibling's live transport.
+- Sessions share a key in groups of N per model, so no single key carries a whole round's request rate.
+- Without a pack, a group's later sessions start `[engine] lens_cache_stagger_ms` (2500) after its first. Rows of one agent whose prompts differ only in a short task pointer, such as the sweep rows, then share their system prompt.
 
 **The context pack** (`[review] context_pack = "pack-first"`, the default; `"off"` restores the old prompts). Three pieces:
 - **The pack file.** `src/contextpack.ts` renders the round's pack, written beside its task files as `<passes>/context-pack.md`. It holds, within `context_pack_max_tokens` (40,000):
@@ -46,10 +43,10 @@ So a prefix the lenses share is reused only if each lens request extends a reque
   - the full text of its most-changed non-test files.
 
   Files are read only as regular files inside the worktree (never a symlink a PR planted) and under 256 KB. What did not fit is named.
-- **The warm-up.** For a task-file child of a round with a pack, the glue starts the group's first child together with a **warm-up**:
-  - the same argv without the lens text, and "reply OK" as its task;
-  - every child of the group waits for the warm-up to finish, at most 30 s, before it starts.
-- **The child extension.** `extensions/leaf-cache.ts`, loaded into those children, rewrites each request:
+- **The warm-up.** For a round with a pack, the lens runner starts the group's first session together with a **warm-up**:
+  - the same request without the lens text, and "reply OK" as its task;
+  - every session of the group waits for the warm-up to finish, at most 30 s, before it starts.
+- **The lens extension.** `src/engine/lens/leaf-cache.ts`, loaded into those sessions as an in-process extension, rewrites each request:
   - the lens body comes out of pi's `<addendum>` block in `instructions`;
   - the input becomes the pack (user role, fenced data), then the lens body as a **developer** message, then the task.
 
@@ -57,7 +54,7 @@ The warm-up's request is exactly that shared prefix, and every lens request of t
 
 The task files tell the lens that the pack is the first message of its conversation, and to read the pack file instead when it is not there.
 
-Measured end to end in a real pi 1.0.0 parent with this glue: two lenses with different instructions over a 24k-token pack. Each paid ~1.2k uncached tokens and read 23,808 from cache, against ~25k uncached each without it.
+Measured end to end (real pi 1.0.0 parent, the retired native glue): two lenses with different instructions over a 24k-token pack. Each paid ~1.2k uncached tokens and read 23,808 from cache, against ~25k uncached each without it.
 
 ## The measured run (2026-10-09)
 
@@ -76,4 +73,4 @@ The pack was 40% cheaper than the same code without it, case by case, with no lo
 
 ## Debugging
 
-`QCR_LEAF_CACHE_DEBUG=1` in a child's environment prints a short hash of each request's prefix parts (`instructions`, `tools`, `input0…`). Comparing two children shows where they diverge. The child's `turn1 cacheRead` shows whether it hit.
+`prefixDigest` (`src/engine/lens/leaf-cache.ts`) gives a short hash of each request's prefix parts (`instructions`, `tools`, `input0…`). Comparing two lens sessions' digests shows where they diverge. A session's `turn1 cacheRead` shows whether it hit.

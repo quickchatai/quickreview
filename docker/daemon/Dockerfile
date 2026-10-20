@@ -70,13 +70,9 @@ RUN npm install -g "${PI_NPM_PACKAGE}@${PI_VERSION}"
 # engine writing MEMORY.md would fork memory, and pi-memory also hooks
 # `session_before_compact`, which extensions/ledger-pin.ts must own alone.
 
-# Subagents are pi's own first-party extension, shipped inside the pinned pi
-# package above (examples/extensions/subagent) and loaded from the install path
-# by extensions/subagents.ts — the pi layer's version pin covers it, and the
-# fan-out cap rides config.toml [pi] subagent_max_concurrency. The layer
-# hard-fails if the shipped example is missing from the published package.
-RUN test -f "$(npm root -g)/${PI_NPM_PACKAGE}/examples/extensions/subagent/index.ts" \
-    || { echo "FATAL: pi ${PI_VERSION} does not ship examples/extensions/subagent" >&2; exit 1; }
+# Lenses run through our own lens tool (src/engine/lens/); the fan-out cap
+# rides config.toml [engine] lens_max_concurrency. Nothing here depends on the
+# pi package's examples.
 
 # OpenViking — the context store the daemon supervises on loopback (1933 by
 # default; the port is a runtime knob, see the entrypoint). Its own venv so

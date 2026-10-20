@@ -93,6 +93,13 @@ function cfg(slackEnabled: boolean): Config {
       version: "0.84.1",
       session_dir: "state/pi-sessions",
     },
+    engine: {
+      runtime: "sdk",
+      lens_max_concurrency: 4,
+      lens_cache_group: 5,
+      lens_cache_stagger_ms: 2500,
+      lens_pass_deadline_min: 8,
+    },
     slack: { enabled: slackEnabled },
   } as unknown as Config;
 }

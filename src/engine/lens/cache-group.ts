@@ -1,7 +1,7 @@
 // Cache grouping for lens children: which provider cache key a child shares.
-// Pure (the key source is injectable). Lifted verbatim from
-// extensions/subagents.ts (which re-exports it); the rationale for the groups
-// is in that file's "shared prompt cache" section.
+// Pure (the key source is injectable). Lifted from the retired
+// extensions/subagents.ts; the rationale for the groups is in
+// docs/prompt-caching.md.
 import { randomUUID } from "node:crypto";
 
 /** A group older than this starts afresh: the provider's cache is short-lived. */

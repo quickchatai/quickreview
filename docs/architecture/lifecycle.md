@@ -280,8 +280,8 @@ stronger lens's finding vanish. A profile may switch the validator off
 `addable_lenses`.
 
 The plan's rows are listed in **launch order, slowest first** (`slowestFirst`).
-The session launches a turn's rows in table order and the subagent glue runs
-them under a process-wide cap (`[pi] subagent_max_concurrency`) in that order,
+The session launches a turn's rows in table order and the lens runner starts
+them under a process-wide cap (`[engine] lens_max_concurrency`) in that order,
 so a large plan runs in waves, and a slow row listed late would start in the
 last wave and set the round's critical path. The order:
 `pass-baseline`; then by tier, highest first; within a tier the risk passes,

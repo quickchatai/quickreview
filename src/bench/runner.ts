@@ -67,7 +67,6 @@ import {} from "node:child_process";
 import {} from "node:readline";
 import { dirname, join } from "node:path";
 import {
-  DEFAULT_SUBAGENT_CACHE_STAGGER_MS,
   REVIEW_DEFAULTS,
   type Config,
   type EngineRuntimeKind,
@@ -287,9 +286,9 @@ function reviewSettingsDigest(cfg: Config): string {
   const settings = {
     review: cfg.review,
     subagents: {
-      max_concurrency: cfg.pi.subagent_max_concurrency,
-      cache_group: cfg.pi.subagent_cache_group ?? 0,
-      cache_stagger_ms: cfg.pi.subagent_cache_stagger_ms ?? DEFAULT_SUBAGENT_CACHE_STAGGER_MS,
+      max_concurrency: cfg.engine.lens_max_concurrency,
+      cache_group: cfg.engine.lens_cache_group,
+      cache_stagger_ms: cfg.engine.lens_cache_stagger_ms,
     },
   };
   return createHash("sha256").update(JSON.stringify(settings)).digest("hex");

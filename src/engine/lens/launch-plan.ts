@@ -1,8 +1,8 @@
 // Planning a launch from a round's task files: which directories a lens
 // launch may read (confined to the round's own pass dirs), which files are
 // discovery rows, and how `skip` / `extra` apply. Pure over the filesystem it
-// reads. Lifted verbatim from extensions/subagents.ts (which re-exports every
-// name); the launch_plan tool's contract is documented there.
+// reads. Lifted from the retired extensions/subagents.ts, whose `launch_plan`
+// tool it planned for; `lens_wave` (tool.ts) is its successor.
 import { readdirSync, realpathSync } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 

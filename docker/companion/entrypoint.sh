@@ -269,10 +269,8 @@ if (trust["/workspace"] !== true) {
 console.log("pi project trust: defaultProjectTrust=always, /workspace pre-trusted");
 }
 
-// Agent discovery for the native subagent extension (loaded by the
-// first-party glue extensions/subagents.ts — the vendored pi-subagents is
-// removed). The native default "user" scope reads $HOME/.pi/agent/agents;
-// link that at the companion agent set (explore/evidence/study) riding the
+// Agent discovery for the lens tool (extensions/lens.ts): its agent dir's
+// `agents` is $HOME/.pi/agent/agents; link that at the companion agent set (explore/evidence/study) riding the
 // /workspace mount. Same degrade discipline as the skills dirs: a missing
 // /workspace leaves the link dangling and discovery simply finds no agents —
 // an under-equipped companion, never one that won't start. Symlink-or-absent

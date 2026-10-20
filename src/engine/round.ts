@@ -16,7 +16,7 @@
 // credential reaches it).
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
-import { DEFAULT_SUBAGENT_CACHE_STAGGER_MS, type Config } from "../config.js";
+import type { Config } from "../config.js";
 import type { Ecosystem } from "../ecosystem.js";
 import type { PrFileEntry } from "../github.js";
 import { CONTEXT_PACK_FILE } from "../contextpack.js";
@@ -316,13 +316,9 @@ export function prepareRound(
       LANG: "C.UTF-8",
       PI_CODING_AGENT_DIR: i.agentDir,
       QCR_SUBAGENT_SCOPE: i.agentScope ?? "project",
-      QCR_SUBAGENT_MAX_CONCURRENCY: String(cfg.pi.subagent_max_concurrency),
-      QCR_SUBAGENT_WIDE_FANOUT: cfg.review?.wide_lens_fanout === false ? "0" : "1",
-      QCR_SUBAGENT_CACHE_GROUP: String(cfg.pi.subagent_cache_group ?? 0),
-      QCR_SUBAGENT_CACHE_STAGGER_MS: String(
-        cfg.pi.subagent_cache_stagger_ms ?? DEFAULT_SUBAGENT_CACHE_STAGGER_MS,
-      ),
-      QCR_LEAF_CACHE_EXT: join(root, "extensions", "leaf-cache.ts"),
+      QCR_SUBAGENT_MAX_CONCURRENCY: String(cfg.engine.lens_max_concurrency),
+      QCR_SUBAGENT_CACHE_GROUP: String(cfg.engine.lens_cache_group),
+      QCR_SUBAGENT_CACHE_STAGGER_MS: String(cfg.engine.lens_cache_stagger_ms),
       // This run's task dirs are its sanctioned launch_plan dirs
       // (production's live under state/pr-<n>-round-<k>-passes/).
       QCR_LAUNCH_PLAN_DIRS: [
@@ -442,7 +438,6 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
       extensions: [
         join(root, "extensions", "bash-guard.ts"),
         join(root, "extensions", "ledger-pin.ts"),
-        join(root, "extensions", "subagents.ts"),
         // The live PR session's `cluster_findings` tool (src/sessions.ts
         // extensionPaths): the same grouping code on both routes.
         join(root, "extensions", "finding-clusters.ts"),

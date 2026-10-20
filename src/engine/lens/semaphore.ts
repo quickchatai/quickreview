@@ -1,5 +1,5 @@
 // The process-wide lens cap: a FIFO counting semaphore with per-call weights.
-// Pure. Lifted verbatim from extensions/subagents.ts (which re-exports it).
+// Pure. Lifted from the retired extensions/subagents.ts.
 
 /** A weighted counting semaphore (FIFO). */
 export class WeightedSemaphore {

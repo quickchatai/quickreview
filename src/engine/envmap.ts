@@ -18,8 +18,8 @@
 // `readers` lists every file under extensions/ whose text carries the name,
 // comments included: tests/extension-envmap.test.ts scans extensions/ and fails
 // on an unclassified name, a stale entry or a reader list that has drifted.
-// A name read only through a constant imported from src/ (QCR_LEAF_PACK, from
-// contextpack.ts) is caught by the comment that names it, so keep that comment.
+// A name read only through a constant imported from src/ is caught by the
+// comment that names it, so keep that comment.
 
 export type ExtensionEnvKind = "extension-config" | "bash-child-env" | "companion-only";
 
@@ -35,7 +35,7 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
   // ---- QCR_*: the session's identity and where it lives
   QCR_PR: {
     kind: "extension-config",
-    readers: ["ledger-pin.ts", "round-progress.ts", "subagents.ts"],
+    readers: ["ledger-pin.ts", "round-progress.ts"],
     note: "the session's own PR number; absent for the overseer",
   },
   QCR_PR_META: {
@@ -50,13 +50,7 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
   },
   QCR_SANDBOX_ROOT: {
     kind: "extension-config",
-    readers: [
-      "bash-guard.ts",
-      "inject-bridge.ts",
-      "ledger-pin.ts",
-      "round-progress.ts",
-      "subagents.ts",
-    ],
+    readers: ["bash-guard.ts", "inject-bridge.ts", "ledger-pin.ts", "round-progress.ts"],
     note: "the sandbox the session runs in; also a relocator bash-guard refuses in a command",
   },
   QCR_STATE_DB: {
@@ -158,55 +152,10 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
   },
 
   // ---- QCR_*: lens launching
-  QCR_LAUNCH_PLAN_DIRS: {
-    kind: "extension-config",
-    readers: ["subagents.ts"],
-    note: "extra task-dir roots launch_plan accepts; the session cannot set its own env",
-  },
-  QCR_LEAF_PACK: {
-    kind: "extension-config",
-    readers: ["leaf-cache.ts"],
-    note: "the round's leaf context pack (LEAF_PACK_ENV in src/contextpack.ts); also set on lens children",
-  },
-  QCR_LEAF_CACHE_EXT: {
-    kind: "extension-config",
-    readers: ["subagents.ts"],
-    note: "leaf-cache extension path handed to lens children",
-  },
-  QCR_LEAF_CACHE_DEBUG: {
-    kind: "extension-config",
-    readers: ["leaf-cache.ts"],
-    note: "=1 logs the leaf-cache reorder",
-  },
-  QCR_SUBAGENT_SCOPE: {
-    kind: "extension-config",
-    readers: ["subagents.ts"],
-    note: "which agents the session may launch",
-  },
   QCR_SUBAGENT_MAX_CONCURRENCY: {
     kind: "extension-config",
-    readers: ["setup.ts", "subagents.ts"],
+    readers: ["setup.ts"],
     note: "concurrent lens cap; the VM and the companion each pass their own",
-  },
-  QCR_SUBAGENT_WIDE_FANOUT: {
-    kind: "extension-config",
-    readers: ["subagents.ts"],
-    note: "=1 lifts the fan-out limit",
-  },
-  QCR_SUBAGENT_PASS_DEADLINE_MIN: {
-    kind: "extension-config",
-    readers: ["subagents.ts"],
-    note: "pass deadline in minutes",
-  },
-  QCR_SUBAGENT_CACHE_GROUP: {
-    kind: "extension-config",
-    readers: ["subagents.ts"],
-    note: "children per prompt-cache key",
-  },
-  QCR_SUBAGENT_CACHE_STAGGER_MS: {
-    kind: "extension-config",
-    readers: ["subagents.ts"],
-    note: "stagger between cache-group members",
   },
 
   // ---- QCR_*: the model's bash (per-invocation arguments and relocators)

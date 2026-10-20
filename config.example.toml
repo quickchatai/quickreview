@@ -296,34 +296,18 @@ evidence_why_interval_s = 10      # evidence sweep pace: at most one
 package = "@earendil-works/pi-coding-agent"
 version = "1.3.0"
 session_dir = "state/pi-sessions"
-# Process-wide subagent fan-out cap: enforced by the first-party
-# glue over pi's native subagent extension (extensions/subagents.ts). The
-# code default is 4 (the companion's). 12 here because with
-# [review] wide_lens_fanout a 13-19-lens round runs 12 wide, about 90 s a
-# review faster on the measured set (bench/aacr/PERF.md §1); each child is
-# ~100 MB, so the VM's 8 GiB holds it.
-subagent_max_concurrency = 12
-# Shared prompt cache for lens children (docs/prompt-caching.md):
-# children share one provider cache key in groups of this many per model,
-# instead of `--no-session`'s random one; 0 = plain `--no-session`. A
-# pack-less group's later children start this many ms after its first.
-# subagent_cache_group = 5
-# subagent_cache_stagger_ms = 2500
-# Per-pass deadline for lens children, in minutes: a pass still running at
-# the deadline is aborted and retried ONCE with a fresh deadline; a second
-# timeout fails that pass alone. A failed pass-baseline or risk lens holds
-# the round's posting and the round is requeued (within max_self_requeues).
-# 0 = no deadline.
-# subagent_pass_deadline_min = 8
-# Who launches a round's lenses: "engine" (our lens tool and discovery wave, on
-# an SDK session; the default) or "native" (pi's own subagent glue). Read only
-# by the routes that have an SDK host (`qcr review`, the Action, the bench); the
-# tmux bot is always native and ignores it.
+# The lens settings that used to live here (subagent_max_concurrency,
+# subagent_cache_group, subagent_cache_stagger_ms, subagent_pass_deadline_min)
+# moved to [engine] (lens_max_concurrency, lens_cache_group,
+# lens_cache_stagger_ms, lens_pass_deadline_min); a config that still sets them
+# is refused.
+# Who launches a round's lenses: "engine", our lens tool and discovery wave on
+# an SDK session, the only value ("native", pi's own subagent glue, is retired
+# and refused).
 # lens_runtime = "engine"
-# With lens_runtime = "engine": the round's engine starts the planned discovery
-# wave itself at round start (rule 9) and the main session joins it with
-# lens_wave. false = the main session launches the wave, with the same tools.
-# Needs lens_runtime = "engine"; defaults to true with it, false with "native".
+# The round's engine starts the planned discovery wave itself at round start
+# (rule 9) and the main session joins it with lens_wave. false = the main
+# session launches the wave, with the same tools.
 # engine_wave = true
 
 # What hosts a pi session on the review, bench and scan routes: "sdk" runs it
@@ -334,16 +318,27 @@ subagent_max_concurrency = 12
 # loop costs one case, and `[pi] lens_runtime = "engine"` gives the review our
 # lens tool. A route that has no host yet refuses "sdk".
 # In the image the SDK runs the model's bash as the separate tool uid (D32) and
-# fences the file tools off /proc, /run/qcr-in and the agent dir; pi's native
-# lens tool spawns `pi` children that could not take that uid, so under the
-# split it refuses and `lens_runtime = "engine"` (the default) is the setting
-# that runs.
+# fences the file tools off /proc, /run/qcr-in and the agent dir.
 # The scan runs its leaves on the SDK inside its own detached driver process
 # (`qcr scan start`), never inside the companion's pi; a scan the companion
-# drives itself refuses. The daemon's own tmux
-# hosting does not read it: the bot stays on native tmux pi.
+# drives itself refuses.
+# The lens tool's settings ride here too (docs/prompt-caching.md):
+#   lens_max_concurrency   cap on running lens sessions per round (default 4);
+#                          the daemon's [daemon] lens_permits is the bot's
+#                          cross-worker budget
+#   lens_cache_group       lens sessions per shared provider prompt-cache key
+#                          (default 5; 0 = a random id each, no cache hits)
+#   lens_cache_stagger_ms  how long a group's later sessions wait after its
+#                          first, so the cache is written first (default 2500)
+#   lens_pass_deadline_min per-pass deadline in minutes: a pass still running
+#                          is aborted and retried ONCE, and a second timeout
+#                          fails that pass alone; 0 = no deadline (default 8)
 # [engine]
 # runtime = "sdk"
+# lens_max_concurrency = 4
+# lens_cache_group = 5
+# lens_cache_stagger_ms = 2500
+# lens_pass_deadline_min = 8
 
 [memory]
 # Round seeding — how much memory rides each round prompt and how
@@ -755,10 +750,11 @@ preset = "default"
 # serial time; none changes which lenses run. All on by default except
 # validator sharding:
 #   wide_lens_fanout — a batched lens launch runs as wide as
-#     [pi] subagent_max_concurrency, not native pi's in-call four;
+#     [engine] lens_max_concurrency (deprecated: the lens tool sets its own
+#     width);
 #   task_files — the daemon writes each lens's complete task to a file, and
 #     the session launches every row with ONE `launch_plan` call over the
-#     round's task dir (extensions/subagents.ts; off ⇒ hand-written
+#     round's task dir (src/engine/lens/launch-plan.ts; off ⇒ hand-written
 #     per-row subagent calls);
 #   render_outputs — the review body and inline comments are rendered from
 #     the findings record instead of being written out a second time;
@@ -811,7 +807,7 @@ preset = "default"
 # lenses read it from cache instead of re-reading it uncached (each lens's
 # instructions move into a developer message after the pack). On by default
 # (measured 40% cheaper on 10 cases, verdicts and recall held); "off" sends
-# no pack. Needs [pi] subagent_cache_group > 0.
+# no pack. Needs [engine] lens_cache_group > 0.
 # context_pack = "off"
 # context_pack_max_tokens = 40000
 # Loosened-test hint: weakened assertions in the PR's test files

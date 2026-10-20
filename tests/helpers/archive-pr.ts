@@ -395,7 +395,13 @@ export function sessionRig(f: PrFixture): SessionRig {
       package: "p",
       version: "1.0.0",
       session_dir: "state/pi-sessions",
-      subagent_max_concurrency: 6,
+    },
+    engine: {
+      runtime: "sdk",
+      lens_max_concurrency: 6,
+      lens_cache_group: 5,
+      lens_cache_stagger_ms: 2500,
+      lens_pass_deadline_min: 8,
     },
     openviking: { host: "127.0.0.1", port: 1933, config_file: join(f.root, "ovhome", "ov.conf") },
   } as unknown as Config;

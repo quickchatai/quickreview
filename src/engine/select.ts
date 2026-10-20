@@ -17,14 +17,12 @@ export function parseRuntimeKind(v: string): EngineRuntimeKind {
   return v as EngineRuntimeKind;
 }
 
-/** `[pi] lens_runtime`: `engine` (the default on the SDK runtime) needs the
- * engine's lens tool and discovery wave, which a route passes in as `engine`
- * once it has them; a route without them refuses the key, not ignores it. */
+/** `[pi] lens_runtime = engine` (the only kind) needs the engine's lens tool and
+ * discovery wave, which a route passes in as `engine` once it has them; a route
+ * without them refuses the key, not ignores it. */
 export function checkLensRuntime(kind: LensRuntimeKind, route: string, engine = false): void {
   if (kind === "engine" && !engine)
-    throw new Error(
-      `[pi] lens_runtime = engine is not available on the ${route} route yet: set it to native`,
-    );
+    throw new Error(`[pi] lens_runtime = engine is not available on the ${route} route yet`);
 }
 
 /**

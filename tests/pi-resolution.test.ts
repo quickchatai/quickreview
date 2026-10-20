@@ -1,12 +1,11 @@
 // pi and pi-ai are exact dependencies of this repo (rule 7), so a VM's plain
 // `npm ci` puts a second copy of pi into node_modules beside the global CLI
-// the image installs. Two live extensions import the package at runtime:
-// ledger-pin (`compact`, for the pinned compaction) and subagents (`VERSION`
-// and `getExamplesPath()`, to load pi's own native subagent extension). An
+// the image installs. A live extension imports the package at runtime:
+// ledger-pin (`compact`, for the pinned compaction). An
 // extension is loaded through jiti with pi's aliases, which map the package
 // name to the RUNNING pi's entry point; this file holds that to be true, by
 // running a real pi CLI (rpc mode, no session, offline, no model call) with
-// both extensions loaded and asking where their dynamic imports landed.
+// the extension loaded and asking where its dynamic import landed.
 //
 // The mirror tests for the pin itself (lockfile = config.toml = group_vars =
 // Dockerfile ARG) are in tests/fences.test.ts [T12] and
@@ -113,9 +112,9 @@ afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
 /**
  * Start `pi` (rpc mode: a session starts, extensions load, nothing is sent to
- * a model) with ledger-pin, subagents and a probe loaded, and read what the
+ * a model) with ledger-pin and a probe loaded, and read what the
  * probe saw. The probe is a pi extension of its own: at session_start it
- * imports the package the way ledger-pin and subagents do, and asks
+ * imports the package the way ledger-pin does, and asks
  * ledger-pin's own `loadPiCompact()` whether it got that same `compact`.
  */
 async function runProbe(pi: InstalledPi, name: string): Promise<Probe> {
@@ -152,8 +151,6 @@ async function runProbe(pi: InstalledPi, name: string): Promise<Probe> {
       "--no-context-files",
       "-e",
       join(ROOT, "extensions", "ledger-pin.ts"),
-      "-e",
-      join(ROOT, "extensions", "subagents.ts"),
       "-e",
       probe,
     ],
@@ -198,14 +195,12 @@ describe("the dynamic import of pi resolves pi's own running instance", () => {
   // Under the repo's own copy: the extensions must see that copy, and
   // ledger-pin's compact() must be the very function the package exports.
   it.skipIf(!nodeModulesPi)(
-    "under node_modules' pi CLI, ledger-pin and subagents see that pi",
+    "under node_modules' pi CLI, ledger-pin sees that pi",
     async () => {
       const seen = await runProbe(nodeModulesPi!, "node-modules");
       expect(seen.version).toBe(PIN);
       expect(inside(seen.examples, nodeModulesPi!.dir)).toBe(true);
       expect(seen.compactIsPi).toBe(true);
-      expect(seen.stderr).toMatch(new RegExp(`native subagent tool registered \\(pi ${PIN}`));
-      expect(seen.stderr).not.toMatch(/subagents: FATAL/);
     },
     90_000,
   );
@@ -223,8 +218,6 @@ describe("the dynamic import of pi resolves pi's own running instance", () => {
         `getExamplesPath() resolved to ${seen.examples}, not the running pi at ${globalPi!.dir}`,
       ).toBe(true);
       expect(seen.compactIsPi).toBe(true);
-      expect(seen.stderr).toMatch(new RegExp(`native subagent tool registered \\(pi ${PIN}`));
-      expect(seen.stderr).not.toMatch(/subagents: FATAL/);
     },
     90_000,
   );

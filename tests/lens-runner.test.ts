@@ -493,3 +493,27 @@ describe("[runLens] a throwing extension is contained", () => {
     expect(result.exitCode).toBe(0);
   });
 });
+
+describe("[canary] every lens session carries bash-guard", () => {
+  it("in every session the runner makes: the plain pass, the cached pass and the group's warm-up", async () => {
+    const marked = guard();
+    rig.faux.setResponses(Array.from({ length: 6 }, () => () => fauxAssistantMessage("fine")));
+    const runner = createLensRunner(
+      config({ bashGuard: marked, cache: { size: 2, staggerMs: 0, pack: "PACK" } }),
+    );
+    await runner.run({ agent: "pass-a", task: "go" });
+    await runner.run({ agent: "pass-a", task: "again" });
+    const plain = createLensRunner(config({ bashGuard: marked }));
+    await plain.run({ agent: "pass-a", task: "plain" });
+    const made = vi.mocked(rig.host.makeSession).mock.calls.map(([spec]) => spec);
+    // the plain pass, two cached passes and the warm-up: no session without the guard
+    expect(made.length).toBeGreaterThanOrEqual(3);
+    for (const spec of made) expect(spec.extensions?.[0]).toBe(marked);
+  });
+
+  it("the runner config has no way to leave it out: bashGuard is required", () => {
+    // @ts-expect-error a LensRunConfig without bashGuard does not typecheck
+    const bad: LensRunConfig = { ...config(), bashGuard: undefined };
+    expect(bad.bashGuard).toBeUndefined();
+  });
+});

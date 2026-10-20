@@ -62,11 +62,10 @@
 # through the group; the model's tools, which clear their groups, do not; and
 # a later login under yet another uid can still rewrite it.
 #
-# The daemon is the live bot and keeps the guard, the `examples/subagent`
-# check and the reviewer context stub it has always had (the VM's retired
-# deploy/ansible/templates/entrypoint.sh.j2 and docker/daemon/entrypoint.sh),
-# unchanged until the lens tool replaces the subagent example (P9.4). The VM
-# runs this image since the P7.10 cutover: deploy/ansible/playbook.yml.
+# The daemon is the live bot and keeps the guard, the pinned-CLI check and the
+# reviewer context stub it has always had (the VM's retired
+# deploy/ansible/templates/entrypoint.sh.j2 and docker/daemon/entrypoint.sh).
+# The VM runs this image since the P7.10 cutover: deploy/ansible/playbook.yml.
 #
 # Every mode that reaches pi needs a writable <root>/state and a writable HOME
 # (pi settings are merged under ~/.pi on every cli start, `version` included):
@@ -226,11 +225,10 @@ assert_state_writable() {
 #                        is not on disk is FATAL (a silently unregistered
 #                        bash-guard would mean unguarded sessions). Daemon only.
 #   QCR_PI_TRUST_DIR     a directory pre-seeded into pi's trust store.
-#   QCR_PI_AGENTS_TARGET where $HOME/.pi/agent/agents links (the native
-#                        subagent extension's user-scope discovery).
-# The extensions that rides per-spawn argv (subagents glue, memory) are NOT
-# registered globally: a global entry would arm every lens leaf with fan-out
-# (rule 9) or ambient memory work.
+#   QCR_PI_AGENTS_TARGET where $HOME/.pi/agent/agents links (the lens tool's
+#                        agent discovery, <agent dir>/agents).
+# The extensions that ride per-spawn argv (memory) are NOT registered
+# globally: a global entry would arm every lens leaf with ambient memory work.
 provision_pi_settings() {
   node <<'PI_EXT_MERGE'
 const fs = require("fs");
@@ -297,8 +295,8 @@ if (trustDir) {
   console.log("pi project trust: defaultProjectTrust=always, " + trustDir + " pre-trusted");
 }
 
-// Agent discovery for the native subagent extension: its default "user" scope
-// reads $HOME/.pi/agent/agents. Symlink-or-absent only: a REAL directory here
+// Agent discovery for the lens tool: its agent dir's `agents` is
+// $HOME/.pi/agent/agents. Symlink-or-absent only: a REAL directory here
 // is someone's own agents and is never clobbered — loud log instead.
 const agentsTarget = process.env.QCR_PI_AGENTS_TARGET || "";
 if (agentsTarget) {
@@ -319,16 +317,12 @@ if (agentsTarget) {
 PI_EXT_MERGE
 }
 
-# pi's own examples/extensions/subagent, in the GLOBAL pi CLI (the one every
-# spawn resolves on PATH): a pi release that dropped it fails the boot, not a
-# session. The global CLI must also be the pinned version. Daemon only - the
-# one that loads it (the companion loads our lens tool, extensions/lens.ts).
-assert_subagent_example() {
+# The GLOBAL pi CLI (the one every spawn resolves on PATH) must be the pinned
+# version. Daemon only.
+assert_pinned_pi_cli() {
   local groot gpkg
   groot="${QCR_PI_GLOBAL_ROOT:-$(npm root -g)}"
   gpkg="$groot/$PI_PACKAGE_PINNED"
-  [ -f "$gpkg/examples/extensions/subagent/index.ts" ] ||
-    die "pi $PI_VERSION_PINNED does not ship examples/extensions/subagent ($gpkg)"
   [ "$(pkg_version "$gpkg")" = "$PI_VERSION_PINNED" ] ||
     die "the global pi CLI is $(pkg_version "$gpkg"), not the pinned $PI_VERSION_PINNED"
 }
@@ -361,7 +355,7 @@ mode_daemon() {
     export OPENAI_API_KEY
   fi
 
-  assert_subagent_example
+  assert_pinned_pi_cli
 
   # The global registration: bash-guard ONLY (see provision_pi_settings), a
   # missing file is FATAL.

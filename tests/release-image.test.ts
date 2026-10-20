@@ -268,13 +268,7 @@ function sandbox(): Sandbox {
     }
   // a global node_modules holding pi, and an `npm` that says where it is
   const globalRoot = join(dir, "global");
-  mkdirSync(join(globalRoot, cfg.pi.package, "examples", "extensions", "subagent"), {
-    recursive: true,
-  });
-  writeFileSync(
-    join(globalRoot, cfg.pi.package, "examples", "extensions", "subagent", "index.ts"),
-    "",
-  );
+  mkdirSync(join(globalRoot, cfg.pi.package), { recursive: true });
   const npm = join(bin, "npm");
   writeFileSync(npm, `#!/bin/sh\necho ${globalRoot}\n`);
   chmodSync(npm, 0o755);
@@ -302,20 +296,8 @@ function sh(s: Sandbox, script: string): { status: number | null; stderr: string
 describe("release image — the build-time checks fail when they should", () => {
   const hasJq = spawnSync("jq", ["--version"]).status === 0;
 
-  it("FATAL: the subagent example missing from the published pi", () => {
-    const s = sandbox();
-    try {
-      const step = runWith("examples/extensions/subagent/index.ts");
-      expect(sh(s, step).status).toBe(0);
-      rmSync(
-        join(s.dir, "global", cfg.pi.package, "examples", "extensions", "subagent", "index.ts"),
-      );
-      const bad = sh(s, step);
-      expect(bad.status).not.toBe(0);
-      expect(bad.stderr).toContain("FATAL: pi 1.3.0 does not ship examples/extensions/subagent");
-    } finally {
-      rmSync(s.dir, { recursive: true, force: true });
-    }
+  it("has no check on pi's subagent example: the lens tool is ours (P9.4)", () => {
+    expect(code).not.toContain("examples/extensions/subagent");
   });
 
   it.skipIf(!hasJq)("FATAL: a seed that no longer hashes to the manifest", () => {

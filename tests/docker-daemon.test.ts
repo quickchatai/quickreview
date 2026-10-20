@@ -63,13 +63,11 @@ describe("plain Dockerfile — ARG defaults mirror the pinned sources of truth",
     expect(cfg.openviking.bin).toBe(`${arg("OPENVIKING_VENV")}/bin/openviking-server`);
   });
 
-  // Subagents are pi's own first-party extension inside the pinned pi
-  // package, not a third-party clone layer. The image must verify the shipped
-  // example exists (a pi release that dropped it would otherwise fail
-  // silently at session time) and must never carry a third-party clone (an
+  // Lenses are our own lens tool (P9.4): the image no longer depends on pi's
+  // shipped subagent example, and must never carry a third-party clone (an
   // unlicensed dependency).
-  it("verifies pi ships the native subagent example; no third-party clone layer", () => {
-    expect(dockerfile).toContain("examples/extensions/subagent/index.ts");
+  it("does not depend on pi's subagent example; no third-party clone layer", () => {
+    expect(dockerfile).not.toContain("examples/extensions/subagent");
     expect(dockerfile).not.toContain("pi_subagents");
     expect(dockerfile).not.toContain("PI_SUBAGENTS");
     expect(dockerfile).not.toContain("amosblomqvist");
@@ -157,11 +155,11 @@ describe("plain Dockerfile — ARG defaults mirror the pinned sources of truth",
     expect(llama).toBeLessThan(ov);
   });
 
-  it("carries no baked subagent concurrency file — the cap rides config.toml", () => {
+  it("carries no baked lens concurrency file — the cap rides config.toml [engine]", () => {
     expect(dockerfile).not.toContain("maxConcurrency");
     expect(playbook).not.toContain("maxConcurrency");
-    // The config knob that carries the cap, mirrored here so it cannot silently vanish.
-    expect(cfg.pi.subagent_max_concurrency).toBe(12);
+    // The config knob that carries the cap, so it cannot silently vanish.
+    expect(cfg.engine.lens_max_concurrency).toBe(4);
   });
 
   it("sets HOME explicitly beside the uid-parameterized user", () => {
@@ -294,10 +292,7 @@ describe("plain entrypoint — same invariants as the templated boot", () => {
   it("registers ONLY bash-guard globally, hard-failing when it is missing", () => {
     expect(entrypoint).toContain("/opt/quickreview/sandbox/extensions/bash-guard.ts");
     expect(entrypoint).toContain("FATAL: pi extension missing");
-    // No global memory extension, and no global subagents entry either —
-    // subagent children load
-    // exactly this list, so a globally-registered subagents glue would hand
-    // every LEAF the subagent tool (nested fan-out, rule 9 broken). The
+    // No global memory extension, and no global lens entry either. The
     // `wanted` registration list carries exactly the one path above.
     const wanted = /const wanted = \[([\s\S]*?)\];/.exec(entrypoint)?.[1] ?? "";
     const paths = [...wanted.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
@@ -345,8 +340,9 @@ describe("release entrypoint (daemon mode) — same invariants as the plain boot
     expect(release).toContain('ln -sfn "$secrets" "$secrets_home"');
   });
 
-  it("keeps the examples/subagent FATAL until the lens tool replaces it", () => {
-    expect(release).toContain("does not ship examples/extensions/subagent");
+  it("has no examples/subagent FATAL: the lens tool replaced pi's example", () => {
+    expect(release).not.toContain("examples/extensions/subagent");
+    expect(release).not.toContain("assert_subagent_example");
   });
 
   it("has none of the checkout dance: no state symlink, no boot-time npm build", () => {

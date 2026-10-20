@@ -353,10 +353,6 @@ describe("a bench review round on the SDK with the engine's planned wave", () =>
       (benchSdkRuntime({ lens: "engine", plannedWave: false }) as { engineLens?: unknown })
         .engineLens,
     ).toBeUndefined();
-    expect(
-      (benchSdkRuntime({ lens: "native", plannedWave: true }) as { engineLens?: unknown })
-        .engineLens,
-    ).toBeUndefined();
   });
 });
 
@@ -380,51 +376,6 @@ describe("the bench's default config (P7.12)", () => {
       engine_wave: false,
     });
     expect(noWave.engine).toEqual({ runtime: "sdk", lens_runtime: "engine" });
-  });
-});
-
-describe("a bench review round on the SDK with the native lens tool", () => {
-  it("scopes the case's env for the tool's children while the session lives, and gives it back", async () => {
-    const agentDir = agentDirWith();
-    const saved = {
-      TMPDIR: process.env["TMPDIR"],
-      GIT_CONFIG_GLOBAL: process.env["GIT_CONFIG_GLOBAL"],
-    };
-    const during: Record<string, string | undefined> = {};
-    const seen: unknown[] = [];
-    const runtime = benchSdkRuntime({
-      lens: "native",
-      makeHost: fauxHost(
-        [
-          () => {
-            for (const k of ["TMPDIR", "GIT_CONFIG_GLOBAL"]) during[k] = process.env[k];
-            return fauxAssistantMessage("done");
-          },
-        ],
-        seen,
-      ),
-    });
-    const session = await runtime.create({
-      cwd: tmp,
-      env: {
-        PATH: process.env["PATH"],
-        PI_CODING_AGENT_DIR: agentDir,
-        QCR_SANDBOX_ROOT: join(import.meta.dirname, ".."),
-        TMPDIR: "/case/tmp",
-        GIT_CONFIG_GLOBAL: "/dev/null",
-      },
-      model: "faux/m",
-      eventsFile: join(tmp, `e-${n}.jsonl`),
-      stderrFile: join(tmp, `s-${n++}.log`),
-      limits: { timeoutMs: 60_000 },
-    });
-    expect((await session.prompt("go")).code).toBe(0);
-    await session.dispose();
-    expect(during).toEqual({ TMPDIR: "/case/tmp", GIT_CONFIG_GLOBAL: "/dev/null" });
-    expect(process.env["TMPDIR"]).toBe(saved.TMPDIR);
-    expect(process.env["GIT_CONFIG_GLOBAL"]).toBe(saved.GIT_CONFIG_GLOBAL);
-    expect(toolNamesIn(seen[0])).toEqual(expect.arrayContaining(["subagent", "launch_plan"]));
-    expect(toolNamesIn(seen[0])).not.toContain("lens");
   });
 });
 

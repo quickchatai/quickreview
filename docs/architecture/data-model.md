@@ -599,8 +599,10 @@ a bare model id to `{ input_per_mtok, output_per_mtok }` for spend accounting.
 
 **`[pi]`** — `package` (`"@earendil-works/pi-coding-agent"`), `version`
 (pinned; mirrored in `package.json` and the deploy variables), `session_dir`
-(`"state/pi-sessions"`), `subagent_max_concurrency` (number; `12` in the
-example, `4` in code).
+(`"state/pi-sessions"`), `lens_runtime`, `engine_wave`. The lens tool's width, cache group and deadline are
+`[engine] lens_max_concurrency` (`4`), `lens_cache_group` (`5`),
+`lens_cache_stagger_ms` and `lens_pass_deadline_min`; the old `[pi] subagent_*`
+keys are refused.
 
 **`[memory]`** — `context_tokens` (`2000`), `context_timeout_ms` (`9000`;
 clamped 100…15000), `case_embed_tail_ms` (`4000` a case, clamped 0…30000 —

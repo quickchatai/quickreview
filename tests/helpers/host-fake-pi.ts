@@ -17,7 +17,7 @@
 //  - settings: the global settings.json merged under the cwd's `.pi/settings.json`;
 //  - lens agents: `<agentDir>/agents` for QCR_SUBAGENT_SCOPE=user, the nearest
 //    `.pi/agents` above the cwd for "project".
-// Then, like extensions/subagents.ts does, it spawns a lens CHILD of itself
+// Then, like the retired extensions/subagents.ts did, it spawns a lens CHILD of itself
 // (`--mode json -p --no-session`, no `-ne`, the parent's cwd and environment)
 // that records the same. The main run leaves the files a review round must.
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
