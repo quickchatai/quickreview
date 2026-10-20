@@ -42,6 +42,11 @@ stay behaviourally identical to the TS side:
   (run by the owner, on the controller) gives the VM's docker its classic
   `read:packages` login for pulling the release images, and refuses any other
   scope. It never takes the token as an argument or env, and posts nothing.
+- `cutover.sh <version>` is the owner's one-time cutover window (runbook
+  sections C and D): resumable through a state file, a stop at every go, and
+  the drain HELD after the release until the owner has checked one worker
+  round. It never lifts the drain by itself and never passes a force flag;
+  `tests/cutover-wizard.test.ts` drives it against stubbed ssh, deploy.sh and qcr.
 - `commit-verdict.sh` is sanctioned for sessions but posts nothing: it
   publishes a staged `verdict/<name>.tmp` onto `verdict/<name>` by
   one rename after checking it is one whole JSON object, so the daemon never
