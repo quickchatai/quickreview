@@ -52,7 +52,7 @@ describe("[P8.20a] patch-toml.mjs", () => {
         f,
         "dry_run=true",
         'github.repo="o/r"',
-        'github.clone_dir="example-app"',
+        'github.clone_dir="base-clone"',
         'models.tiers."sol-high"="local/m"',
         'tui.target="local"',
       ]);
@@ -60,7 +60,7 @@ describe("[P8.20a] patch-toml.mjs", () => {
       expect(out).toContain("dry_run = true");
       expect(out).toContain('repo = "o/r"');
       expect(out).toMatch(
-        /\[github\]\nrepo = "o\/r"\nbase_branch = "main"\nclone_dir = "example-app"\n/,
+        /\[github\]\nrepo = "o\/r"\nbase_branch = "main"\nclone_dir = "base-clone"\n/,
       );
       expect(out).toContain('"sol-high" = "local/m"');
       expect(out).toContain('[pi]\nversion = "1.3.0"');

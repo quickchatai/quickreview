@@ -47,6 +47,8 @@ export const SANDBOX_AUTH_WRITERS: Readonly<Record<string, string>> = {
   "src/bench/opencode.ts": "OpenCode's auth.json in the case's own data dir",
   "src/hostroute.ts": "the host route's throwaway agent dir",
   "scripts/action.sh": "the Action's per-run login dir, from its own input",
+  "scripts/worker-rehearsal/layout.sh":
+    "the worker rehearsal's throwaway host dir: a fake far-future login in the pihome it lays out (P8.20a)",
 };
 
 /** Provisioning scripts that seed a fresh companion volume on another host. They

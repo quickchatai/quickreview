@@ -8,8 +8,8 @@
 #   <host>/state/state.db         a state db at the pre-cutover schema (legacy-db.sh), drained
 #   <host>/state/pi-sessions/     the P8.4 snapshot's shape: PR 7's legacy interactive-pi JSONL,
 #                                 its header cwd the LEGACY sandbox root, where the legacy tmux session ran
-#   <host>/sandbox/{wt,archive,commands,digest,inject,verdict,example-app}
-#                                 the legacy mounts; example-app is the base clone, its origin
+#   <host>/sandbox/{wt,archive,commands,digest,inject,verdict,base-clone}
+#                                 the legacy mounts; base-clone is the base clone (github.clone_dir), its origin
 #                                 a local bare repo (the fixture's "GitHub", for git only)
 #   <host>/pihome/agent/          a far-future FAKE login, and models.json pointing pi's `local`
 #                                 provider at the scripted stub (no code hook, no real provider)
@@ -38,7 +38,7 @@ chmod 0755 "$H" "$H/sandbox" "$H"/sandbox/*
 
 # ---- the fixture repository ---------------------------------------------------------------------
 W="$H/fixture-work"
-rm -rf "$W" "$H/remote.git" "$H/sandbox/example-app"
+rm -rf "$W" "$H/remote.git" "$H/sandbox/base-clone"
 git "${git_id[@]}" init -q "$W"
 mkdir -p "$W/src"
 printf 'export function handle(req: string): string {\n  return req;\n}\n' >"$W/src/app.ts"
@@ -62,10 +62,10 @@ git -C "$H/remote.git" update-ref "refs/heads/master" "$BASE_SHA"
 git -C "$H/remote.git" symbolic-ref HEAD refs/heads/master
 git -C "$H/remote.git" update-ref -d refs/heads/feat/rate-limit
 # The base clone: origin is the in-container path of the bare repo (mounted at /rehearsal/remote.git).
-git clone -q "$H/remote.git" "$H/sandbox/example-app"
-git -C "$H/sandbox/example-app" remote set-url origin /rehearsal/remote.git
+git clone -q "$H/remote.git" "$H/sandbox/base-clone"
+git -C "$H/sandbox/base-clone" remote set-url origin /rehearsal/remote.git
 rm -rf "$W"
-chmod -R a+rX "$H/remote.git" "$H/sandbox/example-app"
+chmod -R a+rX "$H/remote.git" "$H/sandbox/base-clone"
 
 cat >"$H/fixture.json" <<JSON
 {"repo":"$REPO","pr":$PR,"title":"Add rate limiting","author":"alice","app_slug":"example-review",
@@ -123,7 +123,7 @@ node "$HERE/patch-toml.mjs" "$CFG" \
   'dry_run=true' \
   'ops.timezone="UTC"' \
   "github.repo=\"$REPO\"" 'github.app_slug="example-review"' 'github.bot_login="example-review[bot]"' \
-  'github.review_team="example-org/reviewers"' 'github.base_branch="master"' 'github.clone_dir="example-app"' \
+  'github.review_team="example-org/reviewers"' 'github.base_branch="master"' 'github.clone_dir="base-clone"' \
   'owner.name="Rehearsal"' 'owner.github_login="alice"' \
   'openviking.endpoint="remote"' 'openviking.host="quickreview-memory"' 'openviking.port=1933' \
   'models.default="local/m"' 'models.conversation="local/m"' 'models.overseer="local/m"' \

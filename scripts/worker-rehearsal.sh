@@ -280,8 +280,8 @@ daemon_run() {
     -v "$H/state:$APP_ROOT/state" -v "$H/secrets:/opt/quickreview/secrets:ro" -v "$H/config-home:/opt/quickreview/config-home:ro" -v "$H/pihome:/home/qcr/.pi" \
     -v "$H/sandbox/wt:$APP_ROOT/wt" -v "$H/sandbox/archive:$APP_ROOT/archive" -v "$H/sandbox/commands:$APP_ROOT/commands" \
     -v "$H/sandbox/digest:$APP_ROOT/digest" -v "$H/sandbox/inject:$APP_ROOT/inject" -v "$H/sandbox/verdict:$APP_ROOT/verdict" \
-    -v "$H/sandbox/example-app:$APP_ROOT/example-app" \
-    -v "$H/sandbox/wt:$LEGACY_ROOT/wt" -v "$H/sandbox/example-app:$LEGACY_ROOT/example-app" \
+    -v "$H/sandbox/base-clone:$APP_ROOT/base-clone" \
+    -v "$H/sandbox/wt:$LEGACY_ROOT/wt" -v "$H/sandbox/base-clone:$LEGACY_ROOT/base-clone" \
     -v "$H/remote.git:/rehearsal/remote.git:ro" -v "$TLS/ca.pem:/rehearsal/ca.pem:ro" \
     -e TZ=UTC -e QC_REVIEW_PORT=8787 -e QC_BIND_HOST=0.0.0.0 -e QCR_CONFIG=/opt/quickreview/config-home/config.toml --env-file "$WORK/daemon.env" \
     "$REL_IMG" daemon
