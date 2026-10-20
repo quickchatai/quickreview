@@ -659,7 +659,7 @@ rm -f "$VM/inject/ready-timeout"
 RDY_LINE="$(grep -m1 "not ready within" "$LOGS/inj4-release.log" | cut -c1-200)"
 check_rescued INJ-4 "a sidecar that never becomes ready is rescued: config swapped back, the sidecar removed, the legacy bot restarted and drained after its first reconcile" 0.9.4 "rescued sidecar-ready" 1 "the sidecar from the never-ready memory image ($BROKEN_IMG) was pulled and started, the config had been SWAPPED and the store SEEDED: ${RDY_LINE:-see log}; seeded marker $( [[ -e "$H/memory-state/.seeded-from-daemon" ]] && echo present || echo absent ) (the retry will say 'already seeded'); config-home.failed kept for the post-mortem: $( [[ -d "$H/config-home.failed" ]] && echo yes || echo no )" "$RC4"
 fact backups "$(ls "$VM/backups" | tr '\n' ' ')"
-fact update_log "$(grep -c . "$VM/lib/update.log" 2>/dev/null) lines at $VM/lib/update.log"
+fact update_log "$(grep -c . "$VM/lib/update.log" 2>/dev/null) lines in the updater's update.log across the four rescues and the clean run"
 legacy_snapshot before
 LIFTS_BEFORE="$(legacy_lifts)"; DRAINS_BEFORE="$(legacy_drains)"
 

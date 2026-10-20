@@ -72,7 +72,7 @@ Stands in (a test tool; none of it ships): see Limits.
 
 - **wizard a**: `rc=1; stages recorded: preconditions drain plan release verify reconcile backstop surfaces `
 - **backups**: `0.9.2-20261020T212258Z 0.9.3-20261020T212310Z 0.9.4-20261020T212322Z `
-- **update log**: `81 lines at <scratchpad>/cr1/vm/lib/update.log`
+- **update log**: `81 lines in the updater's update.log across the four rescues and the clean run`
 - **trigger under hold**: `webhook HTTP 200; drained_deliveries 0 -> 1; debug-round said: [quickreviewd] config.toml [models] overseer is deprecated and ignored: the overseer session was deleted. Remove the key. ✖ debug-round #7 refused (drained: the bot is draining: no worker starts) ; rounds 0, round commands 0, workers spawned 0`
 - **login refresh**: `{"state": "supervised", "running": true, "restarts": 0, "login": {"pid": 74, "started_at": "2026-10-20T21:25:15.066Z", "expires_at": "2036-10-17T21:22:16.000Z", "provider": "openai-codex", "last_refresh": null, "last_error": null, "error_since": null, "paused": false, "checked_at": "2026-10-20T21:25:15.068Z"}}`
 - **process tree**: ` node /opt/qcr/dist/src/wire.js; /usr/local/bin/node /opt/qcr/dist/src/loginrefresh/main.js; flock -n -E 75 /home/qcr/.pi/agent/auth.json.lock sh -c echo locked; exec cat;`
