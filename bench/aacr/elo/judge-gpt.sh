@@ -3,7 +3,7 @@
 # bridge) in the same hardened judge container bench/aacr/ext/ext.sh runs,
 # at the plan's effort, published on loopback ONLY for elo.py on the host.
 #
-#   judge-gpt.sh start [--effort xhigh] [--port 8790]
+#   judge-gpt.sh start [--effort xhigh] [--port 8790] [--max-inflight 8]
 #   judge-gpt.sh stop | status
 #
 # Credentials are ext.sh's: by default the container copies the companion's
@@ -34,10 +34,12 @@ die() { echo "judge-gpt: $*" >&2; exit 1; }
 cmd="${1:-}"; shift || true
 EFFORT=xhigh
 PORT=8790
+INFLIGHT=8
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --effort) EFFORT="$2"; shift 2 ;;
     --port) PORT="$2"; shift 2 ;;
+    --max-inflight) INFLIGHT="$2"; shift 2 ;;
     *) die "unknown argument $1" ;;
   esac
 done
@@ -69,10 +71,10 @@ case "$cmd" in
       --mount "type=bind,src=$LOGDIR,dst=/judge-out" \
       --entrypoint bash "$JIMG" -c "mkdir -p \"\$HOME\" && $auth_step \
         && exec python3 /opt/elo/ext_judge.py --host 0.0.0.0 --port 8765 --model gpt-6.1-sol \
-           --effort $EFFORT --max-inflight 8 --read-timeout 3600 --log /judge-out/judge.jsonl" >/dev/null
+           --effort $EFFORT --max-inflight $INFLIGHT --read-timeout 3600 --log /judge-out/judge.jsonl" >/dev/null
     for _ in $(seq 1 90); do
       if curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
-        echo "judge-gpt: up on 127.0.0.1:$PORT (gpt-6.1-sol, effort $EFFORT); log $LOGDIR/judge.jsonl"
+        echo "judge-gpt: up on 127.0.0.1:$PORT (gpt-6.1-sol, effort $EFFORT, $INFLIGHT in flight); log $LOGDIR/judge.jsonl"
         exit 0
       fi
       sleep 1
@@ -82,5 +84,5 @@ case "$cmd" in
     ;;
   stop) docker rm -f "$NAME" >/dev/null 2>&1 && echo "judge-gpt: stopped" || echo "judge-gpt: not running" ;;
   status) curl -fsS "http://127.0.0.1:$PORT/health" && echo || die "not answering on :$PORT" ;;
-  *) die "usage: judge-gpt.sh start [--effort E] [--port P] | stop | status" ;;
+  *) die "usage: judge-gpt.sh start [--effort E] [--port P] [--max-inflight N] | stop | status" ;;
 esac

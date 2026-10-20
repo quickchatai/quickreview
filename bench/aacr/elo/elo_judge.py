@@ -134,15 +134,24 @@ class GptJudge:
             "response_format": {"type": "json_schema",
                                 "json_schema": {"name": "pairwise_verdict", "schema": SCHEMA, "strict": True}},
         }
-        req = urllib.request.Request(f"{self.url}/v1/chat/completions", data=json.dumps(body).encode(),
-                                     headers={"content-type": "application/json"}, method="POST")
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout_s) as r:
-                resp = json.loads(r.read())
-        except urllib.error.HTTPError as e:
-            return {"status": "error", "error": f"HTTP {e.code}: {e.read(800).decode('utf-8', 'replace')}"}
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
-            return {"status": "error", "error": f"unreachable: {e}"}
+        data = json.dumps(body).encode()
+        # Rate limits and upstream hiccups are retried here with backoff, so
+        # running many judgments at once never spends a unit's attempts on them.
+        for wait_s in (30, 60, 120, 240, None):
+            req = urllib.request.Request(f"{self.url}/v1/chat/completions", data=data,
+                                         headers={"content-type": "application/json"}, method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout_s) as r:
+                    resp = json.loads(r.read())
+                break
+            except urllib.error.HTTPError as e:
+                detail = e.read(800).decode("utf-8", "replace")
+                if e.code in (429, 500, 502, 503, 504) and wait_s is not None:
+                    time.sleep(wait_s)
+                    continue
+                return {"status": "error", "error": f"HTTP {e.code}: {detail}"}
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+                return {"status": "error", "error": f"unreachable: {e}"}
         usage = resp.get("usage") or {}
         text = ((resp.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
         try:
