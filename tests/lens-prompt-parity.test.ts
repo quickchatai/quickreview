@@ -56,9 +56,9 @@ const PI_BIN = join(ROOT, "node_modules", ".bin", "pi");
 const STUB = join(ROOT, "deploy", "reviewer", "AGENTS.override.md");
 const cfg: Config = loadConfig(join(ROOT, "tests", "fixtures", "config.toml"));
 
-/** sha256 of EXECUTION_POLICY_ADDENDUM when P4.2 landed. A deliberate change to
+/** sha256 of EXECUTION_POLICY_ADDENDUM since the leaf line names the lens tool. A deliberate change to
  * the native text is a reseed-class decision: update it with the owner. */
-const EXECUTION_POLICY_SHA256 = "6055a7befe1eaeba5ef25cb33c37edd484958aade4b449a3a016f68b53257d1f";
+const EXECUTION_POLICY_SHA256 = "d1ad0d87debf0ccaecc5b43ce1ccaccb37e2de077e4fc27b43e16659e34dc61d";
 
 const tmp = mkdtempSync(join(tmpdir(), "lens-prompt-parity-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
