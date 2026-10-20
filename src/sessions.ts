@@ -324,10 +324,6 @@ export class PiSessionManager {
       join(this.root, "extensions", "inject-bridge.ts"),
       join(this.root, "extensions", "ledger-pin.ts"),
       join(this.root, "extensions", "muted-theme.ts"),
-      // Publishes the parent + lens lifecycle as an ephemeral read-only
-      // sidecar for the operator TUI. It observes pi events only; no session
-      // scheduling or daemon state passes through it.
-      join(this.root, "extensions", "round-progress.ts"),
       // First-party glue over pi's own subagent extension, imported at
       // runtime from the installed pinned package (nothing vendored, nothing
       // that can drift from the rule-7 pin). The built state/agents

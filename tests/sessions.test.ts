@@ -288,14 +288,6 @@ describe("buildPiCommand", () => {
     expect(argv.join(" ")).not.toMatch(/update/i);
   });
 
-  it("loads the live round-progress reporter in every parent session", () => {
-    const paths = manager().extensionPaths();
-    expect(paths).toContain(join(root, "extensions", "round-progress.ts"));
-    expect(paths.indexOf(join(root, "extensions", "round-progress.ts"))).toBeLessThan(
-      paths.indexOf(join(root, "extensions", "subagents.ts")),
-    );
-  });
-
   // The subagents glue (pi's native subagent extension loaded from
   // the installed package) rides per-spawn argv, NEVER a settings.json entry —
   // children load only the global settings extensions, so a leaf never gets

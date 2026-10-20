@@ -1,14 +1,14 @@
 // Golden: the LiveEvent projection reproduces round-progress v2 byte for byte.
 //
-// extensions/round-progress.ts is the reference publisher (the tmux pi). The
-// same pi events go to it and to the LiveEvent writer; the writer's log is read
-// back from disk and projected (src/live/projection.ts). The snapshot file and
-// the transition log must be identical bytes.
+// The goldens in fixtures/live-events/golden/ were recorded from the retired tmux
+// extension (extensions/round-progress.ts), the reference publisher. The same pi
+// events go to the LiveEvent writer; its log is read back from disk and projected
+// (src/live/projection.ts). The snapshot file and the transition log must be
+// identical bytes to the goldens.
 //
 // The committed session (fixtures/live-events/pr-session.jsonl) is a recorded-
 // shape PR session - the layout `qcr archive extract` restores, with synthetic
-// content. Set QCR_GOLDEN_SESSION=<path to an extracted real session JSONL> to
-// hold the same line against a real archived PR; the test is skipped otherwise.
+// content.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -32,18 +32,18 @@ afterEach(() => {
   for (const r of done.splice(0)) r.cleanup();
 });
 
-function run(events: (root: string) => TimedEvent[]): Replayed {
+function run(events: (root: string) => TimedEvent[], golden?: string): Replayed {
   const root = mkReplayRoot(PR);
-  const r = replay({ root, pr: PR, events: events(root) });
+  const r = replay({ root, pr: PR, events: events(root), golden });
   done.push(r);
   return r;
 }
 
 describe("a recorded PR session replays to the extension's round-progress v2", () => {
   it("is byte-equal: snapshot and transition log", () => {
-    const r = run((root) => eventsFromSession(SESSION, root));
-    expect(r.projection?.snapshotJson).toBe(r.extensionSnapshot);
-    expect(r.projection?.transitionsJsonl).toBe(r.extensionTransitions);
+    const r = run((root) => eventsFromSession(SESSION, root), "session");
+    expect(r.projection?.snapshotJson).toBe(r.goldenSnapshot);
+    expect(r.projection?.transitionsJsonl).toBe(r.goldenTransitions);
   });
 
   it("is a snapshot the supervisor's parser accepts, with the round's identity and passes", () => {
@@ -86,16 +86,6 @@ describe("a recorded PR session replays to the extension's round-progress v2", (
       ]),
     ).toBe("finalized");
   });
-
-  it.runIf(process.env.QCR_GOLDEN_SESSION !== undefined)(
-    "holds for the real archived session in QCR_GOLDEN_SESSION",
-    () => {
-      const real = readFileSync(process.env.QCR_GOLDEN_SESSION!, "utf8");
-      const r = run((root) => eventsFromSession(real, root));
-      expect(r.projection?.snapshotJson).toBe(r.extensionSnapshot);
-      expect(r.projection?.transitionsJsonl).toBe(r.extensionTransitions);
-    },
-  );
 });
 
 describe("a live stream with updates", () => {
@@ -254,9 +244,9 @@ describe("a live stream with updates", () => {
   ];
 
   it("is byte-equal: snapshot and transition log", () => {
-    const r = run(() => events());
-    expect(r.projection?.snapshotJson).toBe(r.extensionSnapshot);
-    expect(r.projection?.transitionsJsonl).toBe(r.extensionTransitions);
+    const r = run(() => events(), "updates");
+    expect(r.projection?.snapshotJson).toBe(r.goldenSnapshot);
+    expect(r.projection?.transitionsJsonl).toBe(r.goldenTransitions);
     expect(parseRoundProgress(r.projection!.snapshotJson!)?.agents.map((a) => a.status)).toEqual([
       "completed",
       "failed",
@@ -304,8 +294,8 @@ describe("a live stream with updates", () => {
       },
       { at: at(9), event: { type: "agent_settled", aborted: false } },
     ];
-    const r = run(() => run2());
-    expect(r.projection?.snapshotJson).toBe(r.extensionSnapshot);
-    expect(r.projection?.transitionsJsonl).toBe(r.extensionTransitions);
+    const r = run(() => run2(), "wave");
+    expect(r.projection?.snapshotJson).toBe(r.goldenSnapshot);
+    expect(r.projection?.transitionsJsonl).toBe(r.goldenTransitions);
   });
 });

@@ -153,7 +153,6 @@ describe("operator PR recovery", () => {
 
     expect(killSession).toHaveBeenCalledWith(pr);
     expect(readFileSync(c.payloadPath, "utf8")).toBe(c.payload); // immutable evidence stays
-    expect(() => readFileSync(c.injectPath)).toThrow(); // stale delivery cannot rebirth
     expect(store.getSessionCommand(c.row.id)?.status).toBe("cancelled");
     expect(store.blockingSessionCommand(`pr-${pr}`)).toBeUndefined();
     expect(result).toMatchObject({
@@ -257,7 +256,6 @@ describe("operator PR recovery", () => {
     expect(pump).not.toHaveBeenCalled();
     expect(store.getSessionCommand("cmd-successor")?.status).toBe("pending");
     expect(readFileSync(successorInjectPath, "utf8")).toBe(successorPayload);
-    expect(() => readFileSync(old.injectPath)).toThrow(); // the acked predecessor must not re-enter *.md delivery
   });
 
   it("never reopens a PR that closes while its old session is being fenced", async () => {

@@ -35,7 +35,7 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
   // ---- QCR_*: the session's identity and where it lives
   QCR_PR: {
     kind: "extension-config",
-    readers: ["ledger-pin.ts", "round-progress.ts", "subagents.ts"],
+    readers: ["ledger-pin.ts", "subagents.ts"],
     note: "the session's own PR number; absent for the overseer",
   },
   QCR_PR_META: {
@@ -45,18 +45,12 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
   },
   QCR_SESSION_NAME: {
     kind: "extension-config",
-    readers: ["inject-bridge.ts", "ledger-pin.ts", "round-progress.ts"],
+    readers: ["inject-bridge.ts", "ledger-pin.ts"],
     note: "pr-<n> or overseer",
   },
   QCR_SANDBOX_ROOT: {
     kind: "extension-config",
-    readers: [
-      "bash-guard.ts",
-      "inject-bridge.ts",
-      "ledger-pin.ts",
-      "round-progress.ts",
-      "subagents.ts",
-    ],
+    readers: ["bash-guard.ts", "inject-bridge.ts", "ledger-pin.ts", "subagents.ts"],
     note: "the sandbox the session runs in; also a relocator bash-guard refuses in a command",
   },
   QCR_STATE_DB: {
@@ -212,13 +206,13 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
   // ---- QCR_*: the model's bash (per-invocation arguments and relocators)
   QCR_EXPECTED_HEAD: {
     kind: "bash-child-env",
-    readers: ["bash-guard.ts", "round-progress.ts"],
-    note: "per-call prefix on a posting command; round-progress parses it from the command text",
+    readers: ["bash-guard.ts"],
+    note: "per-call prefix on a posting command",
   },
   QCR_ROUND_NO: {
     kind: "bash-child-env",
-    readers: ["bash-guard.ts", "round-progress.ts"],
-    note: "per-call prefix (or `export` line); round-progress parses it from the command text",
+    readers: ["bash-guard.ts"],
+    note: "per-call prefix (or `export` line)",
   },
   QCR_POSTING_KEY: {
     kind: "bash-child-env",
