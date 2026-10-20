@@ -31,11 +31,11 @@ import {
   MEMORY_SCOPE_SURFACE,
   POLICY_SURFACE_DIRS,
   POLICY_SURFACE_FILES,
-  checkBashCommand,
   checkWritePath,
   isMemoryScopeSurface,
   isPolicySurface,
 } from "../extensions/bash-guard.js";
+import { checkBashCommand } from "../extensions/cli/bash-guard-ambient.js";
 import { toolScopeAreas } from "../extensions/vendor/openviking-pi/qcr-hint.js";
 import { ovRecallHintPathIn, ovRetiredPathIn } from "../src/memory/ovsession.js";
 import {
@@ -77,6 +77,18 @@ describe("the four proven bypasses, replayed against the COMPILED guard", () => 
   // exercised in its compiled form. `npm run build` first — when dist is
   // absent the probe says so loudly instead of passing vacuously.
   const distPath = resolve(process.cwd(), "dist/extensions/bash-guard.js");
+  const distAmbientPath = resolve(process.cwd(), "dist/extensions/cli/bash-guard-ambient.js");
+  /** The build's checkers: the write check from the guard, the command check
+   * from its ambient wrapper (this process as the policy). */
+  const loadCompiled = async () => {
+    const guard = (await import(distPath)) as {
+      checkWritePath: (p: string) => { allowed: boolean; reason?: string };
+    };
+    const ambient = (await import(distAmbientPath)) as {
+      checkBashCommand: (c: string) => { allowed: boolean; reason?: string };
+    };
+    return { ...guard, checkBashCommand: ambient.checkBashCommand };
+  };
   const require_ = createRequire(import.meta.url);
 
   it("has a compiled artifact to probe (run `npm run build`)", () => {
@@ -90,10 +102,7 @@ describe("the four proven bypasses, replayed against the COMPILED guard", () => 
     "blocks every bash chain, in the build the container actually loads",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
-      const compiled = (await import(distPath)) as {
-        checkBashCommand: (c: string) => { allowed: boolean; reason?: string };
-        checkWritePath: (p: string) => { allowed: boolean; reason?: string };
-      };
+      const compiled = await loadCompiled();
       for (const c of CORPUS) {
         const res =
           c.via === "bash" ? compiled.checkBashCommand(c.chain) : compiled.checkWritePath(c.chain);
@@ -105,10 +114,7 @@ describe("the four proven bypasses, replayed against the COMPILED guard", () => 
   );
 
   it("the source agrees with the build — otherwise one of them is the live policy and nobody knows which", async () => {
-    const compiled = (await import(distPath)) as {
-      checkBashCommand: (c: string) => { allowed: boolean };
-      checkWritePath: (p: string) => { allowed: boolean };
-    };
+    const compiled = await loadCompiled();
     for (const c of CORPUS) {
       const src = c.via === "bash" ? checkBashCommand(c.chain) : checkWritePath(c.chain);
       const dist =

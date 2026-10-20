@@ -236,7 +236,7 @@ export function benchSettings(root: string): { settings: string; trust: string }
     settings:
       JSON.stringify(
         {
-          extensions: [join(root, "extensions", "bash-guard.ts"), ...PI_DISABLED_BUILTINS],
+          extensions: [join(root, "extensions", "cli", "bash-guard.ts"), ...PI_DISABLED_BUILTINS],
           defaultProjectTrust: "always",
           retry: BENCH_RETRY,
         },

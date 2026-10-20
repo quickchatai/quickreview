@@ -11,11 +11,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import {
   CONTAINER_SECRETS_DIR,
-  bashGuardConfigFromEnv,
-  checkBashCommand,
   createBashGuard,
   type BashGuardConfig,
 } from "../extensions/bash-guard.js";
+import { bashGuardConfigFromEnv, checkBashCommand } from "../extensions/cli/bash-guard-ambient.js";
 import { PiHost } from "../src/engine/pisdk.js";
 import { sdkRuntime } from "../src/engine/sdkruntime.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";
@@ -253,7 +252,7 @@ describe("[createBashGuard] the policy is not an input", () => {
     );
     const body = /export interface BashGuardConfig \{([\s\S]*?)\n\}/.exec(src)![1]!;
     const fields = [...body.matchAll(/^\s{2}(\w+)\??:/gm)].map((m) => m[1]);
-    expect(fields).toEqual(["sandboxRoot", "replay", "noPost", "secretDirs", "pathEnv"]);
+    expect(fields).toEqual(["sandboxRoot", "cwd", "replay", "noPost", "secretDirs", "pathEnv"]);
   });
 
   it("no profile layer imports the guard", () => {

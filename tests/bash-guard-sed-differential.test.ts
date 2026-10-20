@@ -10,7 +10,7 @@
 // allows must compile under the sandbox.
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { checkBashCommand } from "../extensions/bash-guard.js";
+import { checkBashCommand } from "../extensions/cli/bash-guard-ambient.js";
 
 const probe = spawnSync("sed", ["--sandbox", "-n", "-e", "p", "/dev/null"], { encoding: "utf8" });
 const gnuSandbox = probe.status === 0;

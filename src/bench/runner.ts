@@ -722,7 +722,7 @@ export function judgeSessionSpec(
     ...rest,
     model,
     tools: ["read", "bash"],
-    extensions: [join(root, "extensions", "bash-guard.ts")],
+    extensions: [join(root, "extensions", "cli", "bash-guard.ts")],
     cliFlags: [
       "--no-approve",
       "--no-extensions",

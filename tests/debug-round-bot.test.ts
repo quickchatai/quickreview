@@ -408,9 +408,9 @@ describe("[P8.13b] the round is delivered to interactive pi, not to a worker", (
     // a PR with no JSONL gets one born; the pi's extensions carry the lens tools
     expect(spec.session_file).toBeUndefined();
     expect(spec.extensions.map((e) => e.slice(r.root.length + 1))).toEqual([
-      "extensions/bash-guard.ts",
-      "extensions/ledger-pin.ts",
-      "extensions/debug-round.ts",
+      "extensions/cli/bash-guard.ts",
+      "extensions/cli/ledger-pin.ts",
+      "extensions/cli/debug-round.ts",
       "extensions/finding-clusters.ts",
       "extensions/vendor/openviking-pi/index.ts",
     ]);

@@ -304,7 +304,7 @@ export function replayToolDefinitions(replay: ReplayRunner): QcrTool[] {
  * that side's build. */
 export function buildReplay(
   reviewedRepo: string,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv,
   concurrency?: number,
 ): ReplayRunner {
   const root = env.QCR_ROOT?.trim() || sandboxRoot();

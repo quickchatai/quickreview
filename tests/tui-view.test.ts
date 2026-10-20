@@ -36,7 +36,7 @@ import {
   resolveFeedDir,
   screenAnswer,
   toolDefinitions,
-  activate,
+  createTuiView,
 } from "../extensions/tui-view.js";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 
@@ -533,8 +533,8 @@ describe("tui_* tools — the read surface", () => {
   });
 
   it("resolves the feed dir from QCR_FEED_DIR, the var the companion is spawned with", () => {
-    expect(resolveFeedDir({ QCR_FEED_DIR: "/feed" } as NodeJS.ProcessEnv)).toBe("/feed");
-    expect(resolveFeedDir({ QCR_ROOT: "/workspace" } as NodeJS.ProcessEnv)).toBe(
+    expect(resolveFeedDir({ QCR_FEED_DIR: "/feed" } as NodeJS.ProcessEnv, "/cwd")).toBe("/feed");
+    expect(resolveFeedDir({ QCR_ROOT: "/workspace" } as NodeJS.ProcessEnv, "/cwd")).toBe(
       "/workspace/state/companion/feed",
     );
   });
@@ -546,14 +546,14 @@ describe("tui_* tools — the read surface", () => {
       sendUserMessage: () => {},
       registerTool: (d: ToolDefinition) => registered.push(d),
     } as unknown as ExtensionAPI;
-    activate(pi, { QCR_FEED_DIR: dir } as NodeJS.ProcessEnv);
+    void createTuiView({ feedDir: dir })(pi);
     expect(registered.map((d) => d.name)).toEqual([...TOOL_NAMES]);
     // A pi without the API must leave the companion starting, not wedged.
     expect(() =>
-      activate(
-        { on: () => {}, sendUserMessage: () => {} } as unknown as ExtensionAPI,
-        {} as NodeJS.ProcessEnv,
-      ),
+      createTuiView({ feedDir: dir })({
+        on: () => {},
+        sendUserMessage: () => {},
+      } as unknown as ExtensionAPI),
     ).not.toThrow();
   });
 });
@@ -646,7 +646,7 @@ describe("the tools read already-fetched state and can NEVER become a fetcher", 
       { exists: () => false, read: () => undefined, mode: () => undefined },
     );
     // The companion's extensions are the image's (D20), not the checkout's.
-    expect(pi.piArgv()).toContain("/opt/qcr/extensions/tui-view.ts");
+    expect(pi.piArgv()).toContain("/opt/qcr/extensions/cli/tui-view.ts");
     expect(pi.piEnvPrefix().some((v) => v.startsWith("QCR_FEED_DIR="))).toBe(true);
   });
 });

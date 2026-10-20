@@ -25,7 +25,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { checkBashCommand } from "../extensions/bash-guard.js";
+import { checkBashCommand } from "../extensions/cli/bash-guard-ambient.js";
 import { RECHECK_FILE_RE } from "../src/recheck.js";
 import { VERDICT_FILE_RE, validateVerdict } from "../src/verdicts.js";
 

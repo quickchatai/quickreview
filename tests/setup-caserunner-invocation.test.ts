@@ -145,14 +145,14 @@ describe("the scan leaf's isolation — argv and env", () => {
     for (const flag of ["-ne", "-ns", "-nc"]) expect(args).toContain(flag);
     expect(args).not.toContain("--no-extensions");
     const ext = args.flatMap((a, i) => (a === "--extension" || a === "-e" ? [args[i + 1]] : []));
-    expect(ext).toEqual(["/opt/qcr/extensions/bash-guard.ts"]);
+    expect(ext).toEqual(["/opt/qcr/extensions/cli/bash-guard.ts"]);
     // the flags come before the prompt operand, which stays last
     expect(args.at(-1)).toBe("Task: p");
   });
 
   it("finds bash-guard under `root` when it is not the cwd", async () => {
     const { args } = await spawned({ root: "/srv/qcr" });
-    expect(args[args.indexOf("--extension") + 1]).toBe("/srv/qcr/extensions/bash-guard.ts");
+    expect(args[args.indexOf("--extension") + 1]).toBe("/srv/qcr/extensions/cli/bash-guard.ts");
   });
 
   it("starts pi with an allowlisted env, never the driver's, and no GitHub credential", async () => {

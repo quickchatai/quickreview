@@ -302,7 +302,7 @@ export const MEMORY = {
  * session is never given a lens tool (leaves, rule 9), and there is no cwd or
  * scope knob to pin: the tool takes `{agent, task}` and nothing else. */
 export const LENS = {
-  extension: `${CONTAINER.app}/extensions/lens.ts`,
+  extension: `${CONTAINER.app}/extensions/cli/lens.ts`,
   /** The companion's process-wide pass cap: 8, because a survey or scan fans
    * out one case per unit. Rides `QCR_SUBAGENT_MAX_CONCURRENCY` on the pi
    * command line (the name the retired subagents glue gave it, which
@@ -671,7 +671,7 @@ export class CompanionLifecycle {
       // active conversation. The model reads the bounded feed files on demand
       // instead.
       "--extension",
-      `${ext}/muted-theme.ts`,
+      `${ext}/cli/muted-theme.ts`,
       "--theme",
       `${ext}/muted-theme.json`,
       "--extension",
@@ -680,14 +680,14 @@ export class CompanionLifecycle {
       // the rollover can queue the opening message before pi is spawned and
       // the delivery is race-free. QCR_INJECT_DIR (below) points it at the
       // companion's own dir. VERIFY-ON-PIN: `--extension <path>` again.
-      `${ext}/inject-bridge.ts`,
+      `${ext}/cli/inject-bridge.ts`,
       "--extension",
       // The read-only `tui_*` tools over what the TUI published to
       // /feed (screen.txt + view.json). Reads only — it holds no credential and
       // cannot fetch; see the header of extensions/tui-view.ts for why that is
       // structural and not a promise. QCR_FEED_DIR (below) points it at the
       // same dir the FeedWriter writes. VERIFY-ON-PIN: `--extension <path>`.
-      `${ext}/tui-view.ts`,
+      `${ext}/cli/tui-view.ts`,
       "--extension",
       // Our lens tools (`lens`, `lens_wave`) at cap 8 — see LENS and
       // extensions/lens.ts. First-party and always in the image, so it loads
@@ -700,7 +700,7 @@ export class CompanionLifecycle {
       // no-discard in the shared checkout) as tool_call vetoes — see the
       // header of extensions/companion-guard.ts. Companion only; the VM has
       // the gate.
-      `${ext}/companion-guard.ts`,
+      `${ext}/cli/companion-guard.ts`,
       "--extension",
       // The setup & scan tool belt — the deterministic SetupEngine
       // (repo facts, the unit cut) as `setup_*` tools. Reads the reviewed
@@ -708,7 +708,7 @@ export class CompanionLifecycle {
       // extensions/setup.ts. Unconditional like every other extension:
       // a missing checkout is a refusal from the tools, never a pi that
       // won't start.
-      `${ext}/setup.ts`,
+      `${ext}/cli/setup.ts`,
       "--extension",
       // `!{cmd}` inline expansion in typed prompts — vendored
       // verbatim from the pinned pi package's shipped examples (see its

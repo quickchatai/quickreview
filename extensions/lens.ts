@@ -191,14 +191,3 @@ export function interactiveHostFor(
 ): (agentDir: string) => Promise<PiHost> {
   return (dir) => interactiveHost(dir, env);
 }
-
-const activate = (pi: ExtensionAPI): void => {
-  if (typeof pi.registerTool !== "function") {
-    console.error("lens: pi.registerTool unavailable — lens and lens_wave not registered.");
-    return;
-  }
-  const env = process.env;
-  void interactiveLens(env, () => process.cwd(), interactiveHostFor(env))(pi);
-};
-
-export default activate;

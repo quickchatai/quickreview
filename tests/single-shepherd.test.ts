@@ -16,7 +16,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkBashCommand } from "../extensions/bash-guard.js";
+import { checkBashCommand } from "../extensions/cli/bash-guard-ambient.js";
 import { COMPANION_DEFAULTS, resolveCompanionPaths, type Config } from "../src/config.js";
 import { LEAF_MEMORY_TOOLS, buildAgents, stripAgentSpawnTools } from "../src/include.js";
 import { PrSessionLifecycle, prSessionName } from "../src/pr-session-lifecycle.js";
@@ -606,7 +606,7 @@ describe("subagents glue is never registered globally", () => {
       () => {},
       { exists: () => false, read: () => undefined, mode: () => undefined },
     ).piArgv();
-    expect(argv).toContain("/opt/qcr/extensions/lens.ts");
+    expect(argv).toContain("/opt/qcr/extensions/cli/lens.ts");
     expect(argv.filter((a) => /subagents?\.ts$|register-lens/.test(a))).toEqual([]);
   });
 });

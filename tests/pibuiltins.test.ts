@@ -18,7 +18,7 @@ import { benchSettings } from "../src/bench/auth.js";
 import { PI_DISABLED_BUILTINS, PI_TUI_MODE } from "../src/pibuiltins.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const VM_GUARD = "/opt/quickreview/sandbox/extensions/bash-guard.ts";
+const VM_GUARD = "/opt/quickreview/sandbox/extensions/cli/bash-guard.ts";
 
 function heredoc(file: string): string {
   const text = readFileSync(resolve(root, file), "utf8");
@@ -96,7 +96,7 @@ describe("pi built-ins are switched off wherever we provision pi settings", () =
 
   it("the bench sandbox's settings carry the same list after bash-guard", () => {
     const s = JSON.parse(benchSettings("/r").settings) as { extensions: string[] };
-    expect(s.extensions).toEqual(["/r/extensions/bash-guard.ts", ...PI_DISABLED_BUILTINS]);
+    expect(s.extensions).toEqual(["/r/extensions/cli/bash-guard.ts", ...PI_DISABLED_BUILTINS]);
   });
 
   it("the bench sandbox outlasts a provider overload window: durable agent-level retry", () => {

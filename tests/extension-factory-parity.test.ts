@@ -15,11 +15,22 @@ import {
 } from "../extensions/bash-guard.js";
 import { createFindingClusters } from "../extensions/finding-clusters.js";
 import { createLedgerPin, ledgerPinConfigFromEnv } from "../extensions/ledger-pin.js";
+import {
+  createCompanionGuard,
+  companionGuardConfigFromEnv,
+} from "../extensions/companion-guard.js";
+import { createInjectBridge } from "../extensions/inject-bridge.js";
+import { interactiveHostFor, interactiveLens } from "../extensions/lens.js";
+import { createMutedTheme } from "../extensions/muted-theme.js";
+import { createOnboarding } from "../extensions/onboarding.js";
+import { createSetup } from "../extensions/setup.js";
+import { createTuiView, resolveFeedDir } from "../extensions/tui-view.js";
 import { createOpenViking } from "../extensions/vendor/openviking-pi/index.js";
 import {
   openVikingConfigFromProcess,
   type OpenVikingConfig,
 } from "../extensions/vendor/openviking-pi/qcr-shim.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 import { loadFactory, loadShim, withEnv, type ParityCase } from "./helpers/extension-parity.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -51,12 +62,12 @@ function ledgerPinCase(): ParityCase<never> {
     toolResults: [],
   });
   return {
-    shimPath: join(ROOT, "extensions", "ledger-pin.ts"),
+    shimPath: join(ROOT, "extensions", "cli", "ledger-pin.ts"),
     env,
     config: config as never,
     factory: (c) => createLedgerPin(c as never),
     resolved: {
-      fromEnv: (e) => ledgerPinConfigFromEnv(e),
+      fromEnv: (e) => ledgerPinConfigFromEnv(e, process.cwd()),
       fromConfig: (c) => c,
     },
     probe: async (ext) => {
@@ -107,7 +118,7 @@ function bashGuardCase(): ParityCase<BashGuardConfig> {
     Object.entries(env).filter((e): e is [string, string] => e[1] !== undefined),
   );
   return {
-    shimPath: join(ROOT, "extensions", "bash-guard.ts"),
+    shimPath: join(ROOT, "extensions", "cli", "bash-guard.ts"),
     env,
     config: bashGuardConfigFromEnv(setEnv, dir),
     factory: createBashGuard,
@@ -139,7 +150,105 @@ function bashGuardCase(): ParityCase<BashGuardConfig> {
   };
 }
 
+/** P9.7: the companion's extensions. Each shim under extensions/cli/ reads the
+ * process's env and cwd; the factory takes the same facts as config. */
+function companionCases(): Record<string, ParityCase<never>> {
+  const dir = mkdtempSync(join(tmpdir(), "qcr-parity-companion-"));
+  process.once("exit", () => rmSync(dir, { recursive: true, force: true }));
+  const cli = (name: string) => join(ROOT, "extensions", "cli", `${name}.ts`);
+  const toolNames = (ext: Extension) => [...ext.tools.keys()].sort();
+  // The setup belt builds an engine over the homes the env names; point them at scratch dirs.
+  const setupEnv = {
+    QCR_ROOT: ROOT,
+    QCR_STATE_HOME: join(dir, "state"),
+    QCR_CONFIG_HOME: join(dir, "config"),
+    QCR_REVIEWED_REPO: join(dir, "reviewed"),
+    QCR_TRACKER_DIR: undefined,
+    QCR_GITHUB_READ_ENV: undefined,
+    OPENVIKING_API_KEY: undefined,
+  };
+  return {
+    "muted-theme": {
+      shimPath: cli("muted-theme"),
+      env: {},
+      config: {} as never,
+      factory: () => createMutedTheme(),
+    },
+    "tui-view": {
+      shimPath: cli("tui-view"),
+      env: { QCR_FEED_DIR: join(dir, "feed"), QCR_ROOT: undefined },
+      config: { feedDir: join(dir, "feed") } as never,
+      factory: (c) => createTuiView(c as never),
+      resolved: {
+        fromEnv: (e) => ({ feedDir: resolveFeedDir(e, process.cwd()) }),
+        fromConfig: (c) => c,
+      },
+      probe: async (ext) => ({
+        tools: toolNames(ext),
+        // No feed written: both answer the same honest refusal.
+        screen: await callTool(ext, "tui_screen", {}),
+      }),
+    },
+    "companion-guard": {
+      shimPath: cli("companion-guard"),
+      env: { QCR_ROOT: ROOT },
+      config: { root: ROOT } as never,
+      factory: (c) => createCompanionGuard(c as never),
+      resolved: {
+        fromEnv: (e) => companionGuardConfigFromEnv(e, process.cwd()),
+        fromConfig: (c) => c,
+      },
+      probe: async (ext) => {
+        const guard = ext.handlers.get("tool_call")![0]!;
+        const call = (toolName: string, input: Record<string, unknown>) =>
+          guard({ type: "tool_call", toolCallId: "t", toolName, input } as never, {} as never);
+        return {
+          push: await call("bash", { command: "git push origin HEAD" }),
+          ghWrite: await call("bash", { command: "gh pr merge 5" }),
+          seed: await call("write", { path: "tests/fixtures/seed-manifest.json" }),
+          plain: (await call("bash", { command: "git status" })) ?? null,
+          source: (await call("write", { path: "src/a.ts" })) ?? null,
+        };
+      },
+    },
+    "inject-bridge": {
+      shimPath: cli("inject-bridge"),
+      env: {
+        QCR_INJECT_DIR: join(dir, "inject"),
+        QCR_SESSION_NAME: "companion",
+        QCR_SESSION_BRIDGE_GENERATION: undefined,
+        QCR_SESSION_BRIDGE_STATE_FILE: undefined,
+      },
+      config: { dir: join(dir, "inject"), session: "companion" } as never,
+      factory: (c) => createInjectBridge(c as never),
+    },
+    onboarding: {
+      shimPath: cli("onboarding"),
+      env: { QCR_ROOT: ROOT },
+      config: { root: ROOT } as never,
+      factory: (c) => createOnboarding(c as never),
+      probe: async (ext) => toolNames(ext),
+    },
+    setup: {
+      shimPath: cli("setup"),
+      env: setupEnv,
+      config: { env: { ...process.env, ...setupEnv }, cwd: process.cwd() } as never,
+      factory: (c) => createSetup(c as never),
+      probe: async (ext) => toolNames(ext),
+    },
+    lens: {
+      shimPath: cli("lens"),
+      env: { PI_CODING_AGENT_DIR: join(dir, "agent") },
+      config: { ...process.env, PI_CODING_AGENT_DIR: join(dir, "agent") } as never,
+      factory: (env) =>
+        interactiveLens(env as never, () => process.cwd(), interactiveHostFor(env as never)),
+      probe: async (ext) => toolNames(ext),
+    },
+  };
+}
+
 const CASES: Record<string, ParityCase<never>> = {
+  ...companionCases(),
   "ledger-pin": ledgerPinCase(),
   "bash-guard": bashGuardCase() as never,
   "finding-clusters": {
@@ -206,13 +315,17 @@ async function openVikingCase(dir: string): Promise<ParityCase<OpenVikingConfig>
 
 describe("extension factory parity", () => {
   for (const [name, c] of Object.entries(CASES)) {
-    it(`${name}: shim(env) and factory(config) register the same thing`, async () => {
-      const shim = await loadShim(c);
-      const factory = await loadFactory(c);
-      expect(factory.registration).toEqual(shim.registration);
-      expect(factory.resolved).toEqual(shim.resolved);
-      expect(factory.probe).toEqual(shim.probe);
-    });
+    it(
+      `${name}: shim(env) and factory(config) register the same thing`,
+      { timeout: HEAVY_TIMEOUT_MS },
+      async () => {
+        const shim = await loadShim(c);
+        const factory = await loadFactory(c);
+        expect(factory.registration).toEqual(shim.registration);
+        expect(factory.resolved).toEqual(shim.resolved);
+        expect(factory.probe).toEqual(shim.probe);
+      },
+    );
   }
 
   it("openviking: shim(env) and createOpenViking(config) register the same thing", async () => {
@@ -282,6 +395,27 @@ describe("extension factory parity", () => {
       verdict: null,
     });
   });
+
+  it(
+    "each companion shim loads through pi's resource loader and registers what it is for",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const reg = async (name: string) => (await loadShim(CASES[name]!)).registration;
+      expect(Object.keys((await reg("muted-theme")).events)).toEqual(["session_start"]);
+      const names = (r: Awaited<ReturnType<typeof reg>>) =>
+        (r.tools as Array<{ name: string }>).map((t) => t.name);
+      expect(names(await reg("tui-view"))).toEqual(["tui_board", "tui_deploy", "tui_screen"]);
+      expect((await reg("companion-guard")).events).toEqual({ tool_call: 1 });
+      expect(Object.keys((await reg("inject-bridge")).events)).toContain("session_start");
+      expect(names(await reg("onboarding"))).toEqual(
+        expect.arrayContaining(["onboard_status", "finish_and_exit"]),
+      );
+      expect(names(await reg("setup"))).toEqual(
+        expect.arrayContaining(["setup_unit_cut_save", "scan_preview"]),
+      );
+      expect(names(await reg("lens"))).toEqual(["lens", "lens_wave"]);
+    },
+  );
 
   it("the harness tells a factory that registers less from its shim", async () => {
     const c = CASES["finding-clusters"]!;

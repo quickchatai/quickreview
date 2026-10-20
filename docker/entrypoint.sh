@@ -27,7 +27,7 @@
 # No npm build, no state symlink: the image is built, /opt/qcr is read-only to
 # every runtime uid, and <root>/state is a world-writable mount point.
 #
-# bash-guard (extensions/bash-guard.ts) is no longer registered in pi's global
+# bash-guard (extensions/cli/bash-guard.ts) is no longer registered in pi's global
 # settings (P9.5): every lens and worker session gets it from the factory, and
 # the takeover and debug pi load it by path. D32's per-call cli mode runs in a
 # throwaway container that is the sandbox, and puts the model's
@@ -241,7 +241,7 @@ if (!Array.isArray(settings.extensions)) settings.extensions = [];
 // bash-guard is no longer a global registration. The pihome volume still
 // carries the entry an older image merged, and a global entry would load the
 // guard a second time beside the factory's, so it is dropped here.
-const retiredGuard = (p) => /(^|[\\/])extensions[\\/]bash-guard\.ts$/.test(p);
+const retiredGuard = (p) => /(^|[\\/])extensions[\\/](cli[\\/])?bash-guard\.ts$/.test(p);
 const retired = settings.extensions.filter(retiredGuard);
 if (retired.length) {
   settings.extensions = settings.extensions.filter((p) => !retiredGuard(p));

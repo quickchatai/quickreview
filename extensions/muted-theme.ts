@@ -6,18 +6,18 @@
 // VERIFY-ON-PIN: session_start's second argument and ctx.ui.setTheme are the
 // documented 0.84.1 extension API, also exercised by pi's mac-system-theme
 // example.
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 export const MUTED_THEME = "muted";
 
-export const activate = (pi: ExtensionAPI): void => {
-  pi.on("session_start", (_event, ctx) => {
-    const ui = ctx?.ui as
-      { setTheme?: (theme: string) => { success: boolean; error?: string } } | undefined;
-    const result = ui?.setTheme?.(MUTED_THEME);
-    if (result && !result.success)
-      console.error(`[muted-theme] ${result.error ?? "could not select theme"}`);
-  });
-};
-
-export default activate;
+export function createMutedTheme(): ExtensionFactory {
+  return (pi: ExtensionAPI): void => {
+    pi.on("session_start", (_event, ctx) => {
+      const ui = ctx?.ui as
+        { setTheme?: (theme: string) => { success: boolean; error?: string } } | undefined;
+      const result = ui?.setTheme?.(MUTED_THEME);
+      if (result && !result.success)
+        console.error(`[muted-theme] ${result.error ?? "could not select theme"}`);
+    });
+  };
+}

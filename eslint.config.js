@@ -11,6 +11,48 @@
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 
+// -----------------------------------------------------------------------
+// Extensions read no ambient process state.
+//
+// An extension is a factory over an explicit config (createX(config)), so
+// the SDK session builder and the tests construct it without a process env
+// to set. The one place that turns the process's env, cwd or argv into that
+// config is the env shim under extensions/cli/<x>.ts, which is exempt, as is
+// inline-bash.ts (vendored verbatim, and already ignored above). The
+// check is on the property, so a default parameter (`env = process.env`) is
+// caught the same as a read in a body.
+// -----------------------------------------------------------------------
+export const extensionBan = {
+  files: ["extensions/**/*.ts"],
+  ignores: ["extensions/cli/**", "extensions/inline-bash.ts"],
+  rules: {
+    "no-restricted-properties": [
+      "error",
+      ...["env", "cwd", "argv"].map((property) => ({
+        object: "process",
+        property,
+        message:
+          "An extension takes its env, cwd and argv as config. Read them in the shim under extensions/cli/.",
+      })),
+      {
+        object: "os",
+        property: "homedir",
+        message:
+          "An extension takes its home directory as config. Read it in the shim under extensions/cli/.",
+      },
+    ],
+    "no-restricted-imports": [
+      "error",
+      ...["os", "node:os"].map((name) => ({
+        name,
+        importNames: ["homedir"],
+        message:
+          "An extension takes its home directory as config. Read it in the shim under extensions/cli/.",
+      })),
+    ],
+  },
+};
+
 export default tseslint.config(
   {
     // ---------------------------------------------------------------------
@@ -229,6 +271,8 @@ export default tseslint.config(
       ],
     },
   },
+
+  extensionBan,
 
   // -----------------------------------------------------------------------
   // Test-only relaxations.

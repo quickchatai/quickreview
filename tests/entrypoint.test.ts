@@ -94,7 +94,7 @@ function rig(base = tmpdir()): Rig {
   for (const base of [join(app, "node_modules"), globalRoot]) {
     put(join(base, PKG, "package.json"), JSON.stringify({ version: VERSION }));
   }
-  put(join(app, "extensions/bash-guard.ts"), "// stub\n");
+  put(join(app, "extensions/cli/bash-guard.ts"), "// stub\n");
   // dist stubs: each reports who ran, with which argv, on which stdout
   put(
     join(app, "dist/src/cli.js"),
@@ -163,7 +163,7 @@ const settings = (r: Rig): { extensions: string[]; [k: string]: unknown } =>
   JSON.parse(readFileSync(join(r.home, ".pi/agent/settings.json"), "utf8")) as {
     extensions: string[];
   };
-const GUARD = (r: Rig): string => join(r.app, "extensions/bash-guard.ts");
+const GUARD = (r: Rig): string => join(r.app, "extensions/cli/bash-guard.ts");
 
 describe("dispatch", () => {
   it("cli is the default, and stdout is the command's alone", () => {

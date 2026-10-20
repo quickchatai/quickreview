@@ -163,6 +163,9 @@ export const EXTENSION_SDK_HOST_ALLOWED: Readonly<Record<string, readonly string
   // The debug round (P5.9) is lens.ts's tools plus the command that starts the
   // round, so it reaches the builder through lens.ts and nothing else.
   "extensions/debug-round.ts": ["src/engine/pisdk.ts"],
+  // The env shims pi loads by path (extensions/cli/) reach the same modules.
+  "extensions/cli/lens.ts": ["src/engine/pisdk.ts"],
+  "extensions/cli/debug-round.ts": ["src/engine/pisdk.ts"],
 };
 
 /**

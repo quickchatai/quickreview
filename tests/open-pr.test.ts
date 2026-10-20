@@ -607,10 +607,10 @@ describe("[open-pr] the verb", () => {
     expect(cmd.args.slice(-2)).toEqual(["--fork", file]);
     expect(cmd.args).not.toContain("--session");
     const loaded = cmd.args.flatMap((a, i) =>
-      cmd.args[i - 1] === "--extension" ? [basename(a)] : [],
+      cmd.args[i - 1] === "--extension" ? [a.slice(a.indexOf("/extensions/") + "/extensions/".length)] : [],
     );
-    expect(loaded).toEqual(["bash-guard.ts"]);
-    expect([...BOT_OPEN_EXTENSIONS]).toEqual(["bash-guard.ts"]);
+    expect(loaded).toEqual(["cli/bash-guard.ts"]);
+    expect([...BOT_OPEN_EXTENSIONS]).toEqual(["cli/bash-guard.ts"]);
     expect(cmd.args.join(" ")).not.toMatch(/post|inject|submit/i);
     expect(cmd.env["GITHUB_TOKEN"]).toBeUndefined();
     expect(cmd.env["GH_TOKEN"]).toBeUndefined();

@@ -554,7 +554,7 @@ describe("the judge session", () => {
     );
     expect(argv[argv.indexOf("--tools") + 1]).toBe("read,bash");
     expect(argv[argv.indexOf("--extension") + 1]).toBe(
-      "/opt/quickreview/sandbox/extensions/bash-guard.ts",
+      "/opt/quickreview/sandbox/extensions/cli/bash-guard.ts",
     );
     expect(argv.filter((a) => a === "--extension")).toHaveLength(1);
     expect(judgeLabel("3", "openai-codex/gpt-6-sol:high")).toBe("v3-gpt-6-sol-high");

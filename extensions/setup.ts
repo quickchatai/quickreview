@@ -48,7 +48,7 @@
 // without registerTool registers nothing and says so, and every tool answers
 // a refusal as its result rather than throwing.
 import { usd } from "../src/setup/presentation.js";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import {
   registerQcrTool,
   textResult as text,
@@ -1308,7 +1308,7 @@ export const APP_ROOT = fileURLToPath(new URL("..", import.meta.url));
  * and the tracker sink — the issue tracker mounted at QCR_TRACKER_DIR
  * (`/tracker`), or one markdown file per promoted finding in the state home
  * when there is none. */
-export function sharedPorts(env: NodeJS.ProcessEnv = process.env): {
+export function sharedPorts(env: NodeJS.ProcessEnv): {
   memory: MemoryStore | null;
   tracker: TrackerSink;
 } {
@@ -1323,8 +1323,10 @@ export function sharedPorts(env: NodeJS.ProcessEnv = process.env): {
 }
 
 export function buildEngine(
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv,
   shared: { memory: MemoryStore | null; tracker: TrackerSink } = sharedPorts(env),
+  /** The case runner's cwd when QCR_ROOT names none. */
+  cwd: string = APP_ROOT,
 ): SetupEngine {
   return new SetupEngine(
     {
@@ -1347,7 +1349,7 @@ export function buildEngine(
       // ground), never from the reviewed checkout.
       cases: piCaseRunner({
         agentsDir: COMPANION_AGENTS_DIR,
-        cwd: env.QCR_ROOT?.trim() || process.cwd(),
+        cwd: env.QCR_ROOT?.trim() || cwd,
       }),
       tracker: shared.tracker,
       github: tokenFileGitHubReader({
@@ -1362,7 +1364,22 @@ export function buildEngine(
   );
 }
 
-const activate = (pi: ExtensionAPI): void => {
+export interface SetupConfig {
+  /** The env the engine, the scan and the replay resolve their homes, keys and
+   * mounts from (QCR_ROOT, QCR_REVIEWED_REPO, QCR_TRACKER_DIR, QCR_GITHUB_READ_ENV…). */
+  env: NodeJS.ProcessEnv;
+  /** The case runner's cwd when QCR_ROOT names none. */
+  cwd: string;
+}
+
+/** The factory that registers the `setup_*`, `scan_*` and replay tools. The env
+ * shim is extensions/cli/setup.ts. */
+export function createSetup(config: SetupConfig): ExtensionFactory {
+  return (pi) => registerSetup(pi, config);
+}
+
+function registerSetup(pi: ExtensionAPI, config: SetupConfig): void {
+  const { env } = config;
   if (typeof pi.registerTool !== "function") {
     console.error("setup: pi.registerTool unavailable — no setup tools registered.");
     return;
@@ -1370,8 +1387,8 @@ const activate = (pi: ExtensionAPI): void => {
   let engine: SetupEngine;
   let shared: ReturnType<typeof sharedPorts>;
   try {
-    shared = sharedPorts();
-    engine = buildEngine(process.env, shared);
+    shared = sharedPorts(env);
+    engine = buildEngine(env, shared, config.cwd);
   } catch (err) {
     // A bad QCR_INSTALL is the only throw on this path: say so, start without
     // the belt rather than failing the companion's start.
@@ -1382,8 +1399,8 @@ const activate = (pi: ExtensionAPI): void => {
   // The scan tools, over the same engine's saved unit cut.
   const { scan, findings, settingsOf, triage, home } = buildScan(
     engine,
-    reviewedCheckout(process.env),
-    process.env,
+    reviewedCheckout(env),
+    env,
     shared,
   );
   for (const def of scanToolDefinitions(
@@ -1397,7 +1414,7 @@ const activate = (pi: ExtensionAPI): void => {
   // Triage — dismiss, promote, close fixed, scan memory.
   if (triage) for (const def of triageToolDefinitions(triage)) registerQcrTool(pi, def);
   // The PR replay — old vs new profile, cost first.
-  const replay = buildReplay(reviewedCheckout(process.env), process.env, resolveMaxConcurrency());
+  const replay = buildReplay(reviewedCheckout(env), env, resolveMaxConcurrency());
   for (const def of replayToolDefinitions(replay)) registerQcrTool(pi, def);
   // The TUI's stage-2 start click and its scan stop, answered while the
   // companion's session runs (the inject-bridge's lifecycle: start on
@@ -1412,6 +1429,4 @@ const activate = (pi: ExtensionAPI): void => {
     unwatch?.();
     unwatch = null;
   });
-};
-
-export default activate;
+}

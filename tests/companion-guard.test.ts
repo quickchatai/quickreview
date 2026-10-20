@@ -6,7 +6,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import activate, {
+import activate from "../extensions/cli/companion-guard.js";
+import {
   bashBlockReason,
   frozenPaths,
   readSeedManifest,

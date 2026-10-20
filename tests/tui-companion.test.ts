@@ -369,27 +369,27 @@ describe("CompanionLifecycle argv", () => {
       `${app}/extensions/vendor/openviking-pi/index.ts`,
       // Ambient feed changes stay in /feed and never become synthetic turns.
       "--extension",
-      `${app}/extensions/muted-theme.ts`,
+      `${app}/extensions/cli/muted-theme.ts`,
       "--theme",
       `${app}/extensions/muted-theme.json`,
       // The inject bridge delivers the day-open message.
       "--extension",
-      `${app}/extensions/inject-bridge.ts`,
+      `${app}/extensions/cli/inject-bridge.ts`,
       // The read-only tui_* tools over what the TUI published to
       // /feed. Reads only — it cannot fetch (see extensions/tui-view.ts).
       "--extension",
-      `${app}/extensions/tui-view.ts`,
+      `${app}/extensions/cli/tui-view.ts`,
       // Our lens tools (`lens`, `lens_wave`), in place of pi's example
       // subagent extension. Unconditional like every other extension.
       "--extension",
-      `${app}/extensions/lens.ts`,
+      `${app}/extensions/cli/lens.ts`,
       // The bright-line vetoes — frozen seeds, no-GitHub,
       // no-discard (extensions/companion-guard.ts). Unconditional.
       "--extension",
-      `${app}/extensions/companion-guard.ts`,
+      `${app}/extensions/cli/companion-guard.ts`,
       // The setup & scan tool belt over the SetupEngine.
       "--extension",
-      `${app}/extensions/setup.ts`,
+      `${app}/extensions/cli/setup.ts`,
       // `!{cmd}` inline expansion, vendored from pi's examples.
       "--extension",
       `${app}/extensions/inline-bash.ts`,
@@ -1387,8 +1387,8 @@ describe("lens tools (companion)", () => {
     expect(at).toBeGreaterThan(0);
     expect(argv[at - 1]).toBe("--extension");
     // In-container path, off the image's app root — never the /workspace mount.
-    expect(LENS.extension).toBe(`${CONTAINER.app}/extensions/lens.ts`);
-    expect(existsSync(resolve(root, "extensions/lens.ts"))).toBe(true);
+    expect(LENS.extension).toBe(`${CONTAINER.app}/extensions/cli/lens.ts`);
+    expect(existsSync(resolve(root, "extensions/cli/lens.ts"))).toBe(true);
     // …and the example subagent glue is gone from the companion.
     expect(argv.join(" ")).not.toContain("subagents.ts");
   });

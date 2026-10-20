@@ -20,7 +20,7 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionFactory, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { registerQcrTool, textResult as text, type QcrTool } from "./pi-tool.js";
 import {
   OnboardingEngine,
@@ -184,7 +184,23 @@ export function toolDefinitions(
 
 // ---- activation -------------------------------------------------------------
 
-const activate = (pi: ExtensionAPI): void => {
+export interface OnboardingConfig {
+  /** The checkout the wizard inspects and writes the install's config for. */
+  root: string;
+}
+
+/** The root the env describes: QCR_ROOT, else `cwd`. */
+export function onboardingConfigFromEnv(env: NodeJS.ProcessEnv, cwd: string): OnboardingConfig {
+  return { root: env.QCR_ROOT ?? cwd };
+}
+
+/** The factory that registers the wizard's tools. The env shim is
+ * extensions/cli/onboarding.ts. */
+export function createOnboarding(config: OnboardingConfig): ExtensionFactory {
+  return (pi) => registerOnboarding(pi, config);
+}
+
+function registerOnboarding(pi: ExtensionAPI, config: OnboardingConfig): void {
   if (typeof pi.registerTool !== "function") {
     // Degrade loudly, never wedge: pi still starts, the guide can only talk.
     console.error(
@@ -192,8 +208,7 @@ const activate = (pi: ExtensionAPI): void => {
     );
     return;
   }
-  const root = process.env.QCR_ROOT ?? process.cwd();
-  const engine = buildEngine(root);
+  const engine = buildEngine(config.root);
   const shutdown = (ctx?: Pick<ExtensionToolContext, "shutdown">): void => {
     const fn = ctx?.shutdown ?? (pi as { shutdown?: () => void | Promise<void> }).shutdown;
     if (typeof fn === "function") {
@@ -207,6 +222,4 @@ const activate = (pi: ExtensionAPI): void => {
     }
   };
   for (const def of toolDefinitions(engine, shutdown)) registerQcrTool(pi, def);
-};
-
-export default activate;
+}

@@ -86,7 +86,7 @@ export function roundSdkExtras(
       // tool, finding-clusters. The tool list in the request follows it.
       extensions: [
         createBashGuard(bashGuardConfigFromEnv(spec.env, spec.cwd)),
-        createLedgerPin(ledgerPinConfigFromEnv(spec.env)),
+        createLedgerPin(ledgerPinConfigFromEnv(spec.env, process.cwd())),
         ...(lens?.factories ?? []),
         createFindingClusters(),
       ],

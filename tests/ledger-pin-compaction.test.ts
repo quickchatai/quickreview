@@ -14,7 +14,8 @@ import type {
   SessionBeforeCompactEvent,
 } from "@earendil-works/pi-coding-agent";
 import {
-  activateWith,
+  createLedgerPin,
+  ledgerPinConfigFromEnv,
   type CompactFn,
   fenceFor,
   LEDGER_ENTRY_TYPE,
@@ -301,7 +302,9 @@ describe("the session_before_compact handler as registered", () => {
     const handlers = new Map<string, PiEventHandler>();
     const appendEntry = vi.fn();
     const pi = { on: (e: string, h: PiEventHandler) => handlers.set(e, h), appendEntry };
-    activateWith(pi as unknown as ExtensionAPI, { loadCompact: async () => compactFn });
+    void createLedgerPin(
+      ledgerPinConfigFromEnv(process.env, process.cwd(), { loadCompact: async () => compactFn }),
+    )(pi as unknown as ExtensionAPI);
     return { handler: handlers.get("session_before_compact")!, appendEntry };
   }
 

@@ -155,9 +155,9 @@ function botEnv(): Record<string, string> {
 function botExtensions(): string[] {
   const ext = (name: string): string => join(root, "extensions", name);
   return [
-    ext("bash-guard.ts"),
-    ext("ledger-pin.ts"),
-    ext("lens.ts"),
+    ext(join("cli", "bash-guard.ts")),
+    ext(join("cli", "ledger-pin.ts")),
+    ext(join("cli", "lens.ts")),
     ext("finding-clusters.ts"),
     ext(join("vendor", "openviking-pi", "index.ts")),
   ];

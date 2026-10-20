@@ -1059,7 +1059,7 @@ export async function cmdScan(rest: string[], json: boolean): Promise<number> {
   const env = scanEnv(process.env, DEFAULT_REVIEWED_REPO);
   const inSandbox = Boolean(env[IN_SANDBOX_ENV]?.trim());
   const shared = sharedPorts(env);
-  const engine = buildEngine(env, shared);
+  const engine = buildEngine(env, shared, process.cwd());
   const home = stateHome(env);
   const { scan, findings, settingsOf, triage } = buildScan(
     engine,

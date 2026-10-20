@@ -116,7 +116,7 @@ function specOf(over: Partial<DebugRoundSpec> = {}): DebugRoundSpec {
     model: "faux/faux-1",
     system_prompt_file: join(root, "prompts", "system.md"),
     stub_file: join(root, "deploy", "reviewer", "AGENTS.override.md"),
-    extensions: ["bash-guard.ts", "ledger-pin.ts", "debug-round.ts"].map((e) =>
+    extensions: ["cli/bash-guard.ts", "cli/ledger-pin.ts", "cli/debug-round.ts"].map((e) =>
       join(root, "extensions", e),
     ),
     payload_path: payload,

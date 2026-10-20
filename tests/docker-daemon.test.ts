@@ -290,13 +290,13 @@ describe("plain entrypoint — same invariants as the templated boot", () => {
   });
 
   it("registers ONLY bash-guard globally, hard-failing when it is missing", () => {
-    expect(entrypoint).toContain("/opt/quickreview/sandbox/extensions/bash-guard.ts");
+    expect(entrypoint).toContain("/opt/quickreview/sandbox/extensions/cli/bash-guard.ts");
     expect(entrypoint).toContain("FATAL: pi extension missing");
     // No global memory extension, and no global lens entry either. The
     // `wanted` registration list carries exactly the one path above.
     const wanted = /const wanted = \[([\s\S]*?)\];/.exec(entrypoint)?.[1] ?? "";
     const paths = [...wanted.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-    expect(paths).toEqual(["/opt/quickreview/sandbox/extensions/bash-guard.ts"]);
+    expect(paths).toEqual(["/opt/quickreview/sandbox/extensions/cli/bash-guard.ts"]);
   });
 
   // The native "user" discovery scope reads ~/.pi/agent/agents; the
