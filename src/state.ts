@@ -736,6 +736,10 @@ export type DrainState =
        * for a hand-set drain. A drain with a reason is lifted only by an explicit
        * `drain off`, never by a boot's first reconcile pass. */
       reason: string | null;
+      /** The operator's no-auto-lift HOLD (`qcr drain on --hold`, P8.21b): no
+       * boot's first reconcile lifts it, only an explicit operator `drain off`.
+       * Always the operator's, never with an expiry. */
+      hold: boolean;
     };
 
 const SESSION_COMMAND_COLUMNS_SQL = `(
@@ -1216,7 +1220,8 @@ CREATE TABLE IF NOT EXISTS approval_withheld (
 -- recheck/ping-pong/EOD hold -- in-flight rounds still run to their natural
 -- end. Persistent on purpose: the flag must survive the container restart the
 -- drain exists for; it is lifted by the new boot's first HEALTHY reconcile
--- pass, or by an explicit 'drain off' command.
+-- pass, or by an explicit 'drain off' command. A HOLD (column hold = 1, added
+-- by migrateDrainHold) is lifted only by an explicit 'drain off'.
 CREATE TABLE IF NOT EXISTS drain_state (
   id                 INTEGER PRIMARY KEY CHECK (id = 1),
   draining           INTEGER NOT NULL DEFAULT 0,
@@ -2021,6 +2026,7 @@ export class StateStore {
     this.migrateBotCommentNamespaces();
     this.db.exec("CREATE INDEX IF NOT EXISTS bot_comments_id ON bot_comments(comment_id)");
     this.migrateRecheckReceipts();
+    this.migrateDrainHold();
     this.migrateSessionCommandCancelledStatus();
     this.runDataMigrations();
   }
@@ -2093,6 +2099,36 @@ export class StateStore {
     })();
     this.addColumn("ALTER TABLE rechecks ADD COLUMN receipt_at TEXT");
     this.addColumn("ALTER TABLE rechecks ADD COLUMN receipt_checked_at TEXT");
+  }
+
+  /**
+   * The operator's no-auto-lift drain HOLD (P8.21b): `drain_state.hold`.
+   *
+   * The boot that adds the column CARRIES a standing operator drain over as a
+   * hold. That drain was set by a daemon that could not spell a hold, and the
+   * one place this matters is the cutover: the legacy daemon takes the
+   * cutover's `qcr drain on` (it refuses an unknown `hold` field), and the
+   * release's first boot is the boot that adds this column — so the drain the
+   * owner set before the release still stands after the new daemon's first
+   * healthy reconcile, until the owner's checked worker round and an explicit
+   * `qcr drain off`. Only an OPERATOR drain with no expiry and no system
+   * reason is carried (a NULL issuer predates issuers and reads as the
+   * operator's); a session's bounded drain is not. Like
+   * `migrateRecheckReceipts`, the carry commits with the column.
+   */
+  private migrateDrainHold(): void {
+    this.db.transaction(() => {
+      if (!this.addColumn("ALTER TABLE drain_state ADD COLUMN hold INTEGER NOT NULL DEFAULT 0"))
+        return;
+      const info = this.db
+        .prepare(
+          `UPDATE drain_state SET hold = 1
+            WHERE id = 1 AND draining = 1 AND COALESCE(issued_by, 'operator') = 'operator'
+              AND expires_at IS NULL AND reason IS NULL`,
+        )
+        .run();
+      if (info.changes > 0) this.logEvent("drain_hold_carried", null, {});
+    })();
   }
 
   /** Existing databases carry a CHECK constraint that predates operator
@@ -6567,7 +6603,7 @@ export class StateStore {
   drainState(): DrainState {
     const row = this.db
       .prepare(
-        "SELECT draining, drained_deliveries, since, issued_by, expires_at, reason FROM drain_state WHERE id = 1",
+        "SELECT draining, drained_deliveries, since, issued_by, expires_at, reason, hold FROM drain_state WHERE id = 1",
       )
       .get() as
       | {
@@ -6577,6 +6613,7 @@ export class StateStore {
           issued_by: LeverIssuer | null;
           expires_at: string | null;
           reason: string | null;
+          hold: number;
         }
       | undefined;
     if (!row) return { draining: false, drained_deliveries: 0 };
@@ -6590,6 +6627,9 @@ export class StateStore {
       issued_by: hold.issuer,
       expires_at: hold.expires_at,
       reason: row.reason,
+      // A hold is the operator's and never lapses; a row that says otherwise
+      // (no writer produces one) reads as no hold rather than an unliftable one.
+      hold: row.hold === 1 && hold.issuer === "operator" && hold.expires_at === null,
     };
   }
 
@@ -6614,26 +6654,33 @@ export class StateStore {
   ): { outcome: HoldOutcome; state: DrainState } {
     const standing = this.drainState();
     const merged = mergeHold(
-      standing.draining ? { issuer: standing.issued_by, expires_at: standing.expires_at } : null,
+      standing.draining
+        ? {
+            issuer: standing.issued_by,
+            expires_at: standing.expires_at,
+            ...(standing.hold ? { hold: true as const } : {}),
+          }
+        : null,
       grant,
     );
+    const hold = merged.hold.hold === true ? 1 : 0;
     if (merged.outcome === "unchanged") return { outcome: merged.outcome, state: standing };
     const ts = this.ts();
     if (merged.outcome === "engaged") {
       this.db
         .prepare(
-          `INSERT INTO drain_state (id, draining, drained_deliveries, since, issued_by, expires_at, reason, updated_at)
-           VALUES (1, 1, 0, @ts, @issuer, @expires, @reason, @ts)
-           ON CONFLICT(id) DO UPDATE SET draining = 1, drained_deliveries = 0, since = @ts, issued_by = @issuer, expires_at = @expires, reason = @reason, updated_at = @ts`,
+          `INSERT INTO drain_state (id, draining, drained_deliveries, since, issued_by, expires_at, reason, hold, updated_at)
+           VALUES (1, 1, 0, @ts, @issuer, @expires, @reason, @hold, @ts)
+           ON CONFLICT(id) DO UPDATE SET draining = 1, drained_deliveries = 0, since = @ts, issued_by = @issuer, expires_at = @expires, reason = @reason, hold = @hold, updated_at = @ts`,
         )
-        .run({ ts, issuer: merged.hold.issuer, expires: merged.hold.expires_at, reason });
+        .run({ ts, issuer: merged.hold.issuer, expires: merged.hold.expires_at, reason, hold });
     } else {
       // An upgrade or an extension keeps the standing reason unless one is given.
       this.db
         .prepare(
-          "UPDATE drain_state SET issued_by = ?, expires_at = ?, reason = COALESCE(?, reason), updated_at = ? WHERE id = 1",
+          "UPDATE drain_state SET issued_by = ?, expires_at = ?, reason = COALESCE(?, reason), hold = ?, updated_at = ? WHERE id = 1",
         )
-        .run(merged.hold.issuer, merged.hold.expires_at, reason, ts);
+        .run(merged.hold.issuer, merged.hold.expires_at, reason, hold, ts);
     }
     return { outcome: merged.outcome, state: this.drainState() };
   }
@@ -6653,7 +6700,7 @@ export class StateStore {
     }
     this.db
       .prepare(
-        "UPDATE drain_state SET draining = 0, issued_by = NULL, expires_at = NULL, reason = NULL, updated_at = ? WHERE id = 1",
+        "UPDATE drain_state SET draining = 0, issued_by = NULL, expires_at = NULL, reason = NULL, hold = 0, updated_at = ? WHERE id = 1",
       )
       .run(this.ts());
     // The breaker's drain lifted: its failures are answered for, so they stop
@@ -6672,7 +6719,7 @@ export class StateStore {
     const drain =
       this.db
         .prepare(
-          "UPDATE drain_state SET draining = 0, issued_by = NULL, expires_at = NULL, reason = NULL, updated_at = ? WHERE id = 1 AND draining = 1 AND expires_at IS NOT NULL AND expires_at <= ?",
+          "UPDATE drain_state SET draining = 0, issued_by = NULL, expires_at = NULL, reason = NULL, hold = 0, updated_at = ? WHERE id = 1 AND draining = 1 AND expires_at IS NOT NULL AND expires_at <= ?",
         )
         .run(now, now).changes > 0;
     const pauses = (
@@ -8022,6 +8069,11 @@ export interface StatusSnapshot {
   draining_until?: string;
   /** Why a system engaged the drain (`worker_failures`); absent for a hand-set one. */
   draining_reason?: string;
+  /** The operator's no-auto-lift HOLD (P8.21b): true when no boot lifts this
+   * drain (only `qcr drain off`), false when the next healthy boot would.
+   * Always written while draining by a daemon that knows holds; ABSENT from
+   * an older daemon's snapshot, which readers must show as unknown. */
+  draining_hold?: boolean;
   /** Terminal FAILED_LOUD obligations are visible during drain but do not
    * count as live rounds; operator recovery remains dormant until drain lifts. */
   drain_failed_loud?: number;
@@ -8342,6 +8394,7 @@ export function buildStatusSnapshot(
           draining_by: drain.issued_by,
           ...(drain.expires_at ? { draining_until: drain.expires_at } : {}),
           ...(drain.reason ? { draining_reason: drain.reason } : {}),
+          draining_hold: drain.hold,
           drain_failed_loud: failures.length,
         }
       : {}),

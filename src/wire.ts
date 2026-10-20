@@ -1805,13 +1805,21 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         // Deploy-window drain. On = the webhook answers 200 and drops, the
         // pump starts nothing, recheck/ping-pong/EOD hold — in-flight rounds
         // finish naturally. Off is the manual lift; the automatic one is the
-        // next boot's first healthy reconcile pass (daemon.ts). Never touches
+        // next boot's first healthy reconcile pass (daemon.ts) — except for
+        // the operator's HOLD, which only an explicit off lifts. Never touches
         // GitHub, never goes near the gate.
-        drain(on, issuer, forMin, deliveryKey) {
-          return drainLever({ ...leverDeps, deliveryKey }, on, issuer, forMin, async () => {
-            d.wakeThreadDecisions();
-            await d.pump();
-          });
+        drain(on, issuer, forMin, deliveryKey, hold) {
+          return drainLever(
+            { ...leverDeps, deliveryKey },
+            on,
+            issuer,
+            forMin,
+            async () => {
+              d.wakeThreadDecisions();
+              await d.pump();
+            },
+            hold === true,
+          );
         },
       };
       // The Slack concierge. Off by default; when on it owns its own

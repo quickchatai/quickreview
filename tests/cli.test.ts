@@ -451,10 +451,16 @@ describe("[P8.17] qcr message", () => {
 });
 
 describe("qcr drain / qcr backfill arguments", () => {
-  it("drain takes exactly one of on|off and an optional --local; anything else is refused", () => {
-    expect(parseDrainArgs(["on"])).toEqual({ on: true, local: false });
-    expect(parseDrainArgs(["off", "--local"])).toEqual({ on: false, local: true });
-    expect(parseDrainArgs(["--local", "on"])).toEqual({ on: true, local: true });
+  it("drain takes exactly one of on|off, an optional --local, and --hold with on only; anything else is refused", () => {
+    expect(parseDrainArgs(["on"])).toEqual({ on: true, local: false, hold: false });
+    expect(parseDrainArgs(["off", "--local"])).toEqual({ on: false, local: true, hold: false });
+    expect(parseDrainArgs(["--local", "on"])).toEqual({ on: true, local: true, hold: false });
+    expect(parseDrainArgs(["on", "--hold"])).toEqual({ on: true, local: false, hold: true });
+    expect(parseDrainArgs(["--hold", "on", "--local"])).toEqual({
+      on: true,
+      local: true,
+      hold: true,
+    });
     for (const rest of [
       [],
       ["off", "--locl"],
@@ -462,6 +468,10 @@ describe("qcr drain / qcr backfill arguments", () => {
       ["on", "on"],
       ["on", "--local", "--local"],
       ["of"],
+      // A hold is engaged, never lifted, by --hold: `drain off` lifts it.
+      ["off", "--hold"],
+      ["on", "--hold", "--hold"],
+      ["--hold"],
     ])
       expect(() => parseDrainArgs(rest), rest.join(" ")).toThrow(/usage: qcr drain/);
   });

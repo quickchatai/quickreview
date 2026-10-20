@@ -819,7 +819,9 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   // leaves the drain standing for the rest of this boot (a broken deploy must
   // not resume work blind); clearing it then takes an explicit `drain off`.
   // In a multi-deploy window each healthy boot lifts the drain, so the
-  // operator re-drains before each step.
+  // operator re-drains before each step. Two drains are never lifted here: a
+  // system's (with a reason) and the operator's HOLD (`qcr drain on --hold`,
+  // P8.21b — the cutover's), which only an explicit `drain off` lifts.
   //
   // One reconcile pass at a time: an overlapping pass would pay every step
   // again. A tick that finds a pass running is skipped; an explicit call
@@ -900,7 +902,22 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       if (report.errors.length === 0 && firstHealthyReconcileAt === null)
         firstHealthyReconcileAt = deps.now ? deps.now() : new Date();
       const standing = store.drainState();
-      if (bootFirstPass && standing.draining && standing.reason !== null) {
+      if (bootFirstPass && standing.draining && standing.hold) {
+        // The operator's hold: the boot keeps it, and says so — a healthy
+        // first pass is exactly where a plain drain would have lifted.
+        if (report.errors.length === 0) {
+          store.logEvent("drain_hold_kept", null, {
+            dropped_deliveries: standing.drained_deliveries,
+          });
+          log(
+            `drain_hold_kept — first reconcile pass healthy; the operator's drain HOLD stands, only an explicit drain off lifts it`,
+          );
+        } else {
+          log(
+            "drain hold stands — first reconcile pass had errors; only an explicit drain off lifts it",
+          );
+        }
+      } else if (bootFirstPass && standing.draining && standing.reason !== null) {
         // A drain a system set for a reason (the worker crash-loop breaker,
         // `worker_failures`) is not a deploy window: a restart does not clear what
         // made it. Only an explicit `drain off` does.

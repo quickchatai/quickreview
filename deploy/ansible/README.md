@@ -223,7 +223,13 @@ scripts/deploy.sh --dry-run release 0.1.0 --manifest deploy-manifest-0.1.0.json 
 scripts/deploy.sh release 0.1.0 --manifest deploy-manifest-0.1.0.json --cutover-ack
 ```
 
-The drain stays on until the new boot's first healthy reconcile lifts it. After
+Use `scripts/cutover.sh`, which runs these steps in order. At the cutover the
+drain does NOT auto-lift: the release's first boot keeps the operator's drain as
+the no-auto-lift hold (`drain_hold_carried`, then `drain_hold_kept` at its first
+healthy reconcile; `draining_hold: true` in status.json), so no round starts
+until the owner has triggered and checked one worker round and runs `qcr drain
+off`. (A plain drain on a release-layout VM is still lifted by the new boot's
+first healthy reconcile; `qcr drain on --hold` sets the hold by hand.) After
 the deploy, `deploy.sh verify` shows the image and its build stamp, that pi's
 `settings.json` lists bash-guard, and that `AGENTS.override.md` in the app root
 is the 12-line reviewer stub.

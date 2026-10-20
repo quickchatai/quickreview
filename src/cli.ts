@@ -467,7 +467,7 @@ export function renderStatus(snapshot: StatusSnapshot): string {
     lines.push(
       `DRAINING${snapshot.draining_since ? ` since ${snapshot.draining_since}` : ""} — ${drainHolderLine(snapshot)} — ` +
         `webhook deliveries dropped: ${snapshot.drained_deliveries ?? 0}; ` +
-        `deploy when rounds running hits 0 (auto-lifts on the next boot's first healthy reconcile; qcr drain off to lift now)`,
+        `deploy when rounds running hits 0 (${drainLiftLine(snapshot)})`,
     );
   }
   lines.push("");
@@ -503,11 +503,22 @@ export function renderStatus(snapshot: StatusSnapshot): string {
 function drainHolderLine(snapshot: StatusSnapshot): string {
   if (snapshot.draining_by === undefined) return "holder unknown (older daemon)";
   if (snapshot.draining_by === "operator") {
+    if (snapshot.draining_hold === true) return "HELD by the operator (hold: no boot lifts it)";
     return snapshot.draining_until
       ? `held by the operator, lapses ${snapshot.draining_until}`
       : "held by the operator until lifted";
   }
   return `held by a SESSION, lapses ${snapshot.draining_until ?? "(no expiry recorded)"}`;
+}
+
+/** What lifts the drain that stands. A snapshot with no hold marker comes from
+ * a daemon that does not report holds: whether its boot lifts it is unknown. */
+function drainLiftLine(snapshot: StatusSnapshot): string {
+  if (snapshot.draining_hold === true || snapshot.draining_reason)
+    return "only qcr drain off lifts it — no boot does";
+  if (snapshot.draining_hold === undefined)
+    return "hold not reported (older daemon); qcr drain off lifts it, a healthy boot may";
+  return "auto-lifts on the next boot's first healthy reconcile; qcr drain off to lift now";
 }
 
 function cmdStatus(): void {
@@ -1056,7 +1067,7 @@ export async function cmdRegression(rest: string[], json: boolean): Promise<numb
  * command file by hand when the runner path fails — over ssh, or straight
  * into local docker when `[tui] target = "local"`, the transport the runner
  * path itself used. */
-export function drainManualCommand(tui: TuiConfig, on: boolean, now: Date): string {
+export function drainManualCommand(tui: TuiConfig, on: boolean, now: Date, hold = false): string {
   // Same root-owned operator directory the runner path writes: a
   // fallback that wrote into the session dir would be a bounded session drain.
   const docker = `${tui.sudo_docker ? "sudo " : ""}docker exec -i -u 0 ${tui.container}`;
@@ -1067,7 +1078,7 @@ export function drainManualCommand(tui: TuiConfig, on: boolean, now: Date): stri
   // fresh name is what keeps its result readable.
   const name = `${now.toISOString().replace(/[:.]/g, "-")}-manual-drain.json`;
   // drainPayload's own object, compacted onto the one line.
-  const payload = `printf '%s' '${JSON.stringify(JSON.parse(drainPayload(on)))}' | `;
+  const payload = `printf '%s' '${JSON.stringify(JSON.parse(drainPayload(on, hold)))}' | `;
   // Single quotes for the container's `sh -c`.
   const script = operatorCommandWriteScript(tui, name).replace(/'/g, "'\\''");
   if (transportOf(tui) === "local") return `${payload}${docker} sh -c '${script}'`;
@@ -1089,12 +1100,21 @@ export interface DrainRunDeps {
 /** Write the drain command through the configured transport and wait for the
  * daemon's verdict. Returns a process exit code; every failure path prints
  * the manual fallback so the operator is never stuck behind this wrapper. */
-export async function runDrain(on: boolean, deps: DrainRunDeps): Promise<number> {
+export async function runDrain(on: boolean, deps: DrainRunDeps, hold = false): Promise<number> {
   const tui = deps.cfg.tui;
   const where = transportOf(tui) === "local" ? `local docker ${tui.container}` : tui.ssh_host;
-  deps.log(`drain ${on ? "on" : "off"} → ${where}:${remoteSandboxRoot(tui)}/commands/`);
+  deps.log(
+    `drain ${on ? (hold ? "on --hold" : "on") : "off"} → ${where}:${remoteSandboxRoot(tui)}/commands/`,
+  );
   const sender = new CommandDrainSender(tui, deps.ssh, deps.now, deps.sleep);
-  const result = await sender.set(on);
+  const result = await sender.set(on, hold);
+  if (result.ok && on && hold && result.hold !== true) {
+    // The daemon took a drain but did not say it is a hold: a boot may lift it.
+    deps.log(
+      "✖ the drain is ON but the daemon did not confirm the HOLD — the next healthy boot may lift it; qcr drain off, then check the daemon's version",
+    );
+    return 1;
+  }
   if (result.ok) {
     if (on) {
       deps.log(
@@ -1112,7 +1132,9 @@ export async function runDrain(on: boolean, deps: DrainRunDeps): Promise<number>
         );
       }
       deps.log(
-        "  (auto-lifts on the new boot's first healthy reconcile — re-drain before each step of a multi-deploy window)",
+        hold
+          ? "  HOLD: no boot lifts it — only `qcr drain off` does"
+          : "  (auto-lifts on the new boot's first healthy reconcile — re-drain before each step of a multi-deploy window)",
       );
     } else {
       deps.log(
@@ -1123,7 +1145,7 @@ export async function runDrain(on: boolean, deps: DrainRunDeps): Promise<number>
   }
   deps.log(`✖ drain refused: ${result.reason ?? "no reason given"}`);
   deps.log("manual fallback — run:");
-  deps.log(`  ${drainManualCommand(tui, on, (deps.now ?? (() => new Date()))())}`);
+  deps.log(`  ${drainManualCommand(tui, on, (deps.now ?? (() => new Date()))(), hold)}`);
   return 1;
 }
 
@@ -1131,14 +1153,14 @@ export async function runDrain(on: boolean, deps: DrainRunDeps): Promise<number>
  * sandbox commands/operator/ dir as the current user (in-container use; no
  * ssh). Fire-and-forget — the
  * local watcher's result lands in commands/results/. */
-function runDrainLocal(on: boolean): number {
+function runDrainLocal(on: boolean, hold: boolean): number {
   const dir = join(sandboxRoot(), "commands", "operator");
   mkdirSync(dir, { recursive: true });
   const name = `${new Date().toISOString().replace(/[:.]/g, "-")}-cli-drain-${randomUUID()}.json`;
-  writeFileSync(join(dir, `.${name}.tmp`), drainPayload(on));
+  writeFileSync(join(dir, `.${name}.tmp`), drainPayload(on, hold));
   renameSync(join(dir, `.${name}.tmp`), join(dir, name));
   console.log(
-    `drain ${on ? "on" : "off"} command written to ${join(dir, name)} — result lands in commands/results/`,
+    `drain ${on ? (hold ? "on --hold" : "on") : "off"} command written to ${join(dir, name)} — result lands in commands/results/`,
   );
   console.log(
     "note: written as THIS user, so unless commands/operator/ is root-owned the daemon sees no operator seal and bounds the drain like a session's",
@@ -1146,31 +1168,39 @@ function runDrainLocal(on: boolean): number {
   return 0;
 }
 
-const DRAIN_USAGE = "usage: qcr drain <on|off> [--local]";
+const DRAIN_USAGE = "usage: qcr drain <on [--hold]|off> [--local]";
 
-/** `qcr drain`'s arguments: exactly one of `on`/`off`, optionally `--local`.
+/** `qcr drain`'s arguments: exactly one of `on`/`off`, optionally `--local`,
+ * and `--hold` with `on` only (the operator's no-auto-lift drain, P8.21b).
  * Anything else is refused before a transport is picked or a command file
  * written — a mistyped `--local` must not send the drain over ssh instead. */
-export function parseDrainArgs(rest: readonly string[]): { on: boolean; local: boolean } {
+export function parseDrainArgs(rest: readonly string[]): {
+  on: boolean;
+  local: boolean;
+  hold: boolean;
+} {
   let sub: "on" | "off" | undefined;
   let local = false;
+  let hold = false;
   for (const a of rest) {
     if ((a === "on" || a === "off") && sub === undefined) sub = a;
     else if (a === "--local" && !local) local = true;
+    else if (a === "--hold" && !hold) hold = true;
     else throw new Error(DRAIN_USAGE);
   }
   if (sub === undefined) throw new Error(DRAIN_USAGE);
-  return { on: sub === "on", local };
+  if (hold && sub !== "on") throw new Error(DRAIN_USAGE);
+  return { on: sub === "on", local, hold };
 }
 
 async function cmdDrain(rest: string[]): Promise<number> {
-  const { on, local } = parseDrainArgs(rest);
-  if (local) return runDrainLocal(on);
+  const { on, local, hold } = parseDrainArgs(rest);
+  if (local) return runDrainLocal(on, hold);
   // Honour [tui] target — on the laptop topology the same command
   // file write runs against local docker instead of ssh.
   const { runnerFor } = await import("./tui/remote.js");
   const cfg = loadConfig();
-  return runDrain(on, { cfg, ssh: runnerFor(cfg.tui), log: (l) => console.log(l) });
+  return runDrain(on, { cfg, ssh: runnerFor(cfg.tui), log: (l) => console.log(l) }, hold);
 }
 
 // ---- takeover (P8.13, D27) -----------------------------------------------------
@@ -2134,7 +2164,7 @@ export async function main(argv: string[]): Promise<void> {
     }
     default:
       console.log(
-        "usage: qcr <version|config check [--config-home <dir>]|onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|takeover <n>|debug-round <n>|release <n>|tui [pr|overseer]|drain <on|off>|message <pr> [--may-post] <text...>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
+        "usage: qcr <version|config check [--config-home <dir>]|onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|takeover <n>|debug-round <n>|release <n>|tui [pr|overseer]|drain <on [--hold]|off>|message <pr> [--may-post] <text...>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
           "companion <up|down|status|rebuild>|review [start|status|stop|branch|--uncommitted|--diff FILE|-|<PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--json]|live [RUN_ID|DIR] [--lens ID] [--round N] [--follow] [--json]|open [RUN_ID|DIR|FILE.jsonl|scan[:RUN]|pr N [--round R]] [--lens ID] [--write] [--print]|scan <preview|start|status|stop|findings|matches|match|suggestions|stage2 propose|stage2 start|dismiss|units show|units propose|units adjust|units save|login|doctor|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine|shadow-report [--days <n>]|off|on|suppress <id>|unsuppress <id>]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );
