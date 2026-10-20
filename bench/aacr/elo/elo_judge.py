@@ -234,6 +234,66 @@ class GptJudge:
 
 # ---- claude-opus-5-5 via the Message Batches API ---------------------------------------
 
+def read_env_key(env_file: Path, var: str) -> str:
+    """One KEY=value line from a regular (non-symlink) env file; the value
+    stays in memory, never argv or the process environment."""
+    if not env_file.is_file() or env_file.is_symlink():
+        raise SystemExit(f"this judge needs {var}=<key> in {env_file} (a regular file)")
+    for line in env_file.read_text().splitlines():
+        if line.startswith(f"{var}="):
+            key = line.split("=", 1)[1].strip().strip('"').strip("'")
+            if key:
+                return key
+    raise SystemExit(f"{env_file} has no {var}= line")
+
+
+class OpenAICompatJudge:
+    """A judge on an OpenAI-compatible Chat Completions endpoint with its own
+    key — the open models on DigitalOcean's serverless inference. The same
+    single turn as the GPT judge (chat_body, parse_chat_response), plus the
+    endpoint's `reasoning_effort` and an output cap."""
+
+    def __init__(self, name: str, base_url: str, model: str, effort: str, env_file: Path, key_var: str,
+                 max_tokens: int, timeout_s: int = 3600):
+        self.name = name
+        self.url = base_url.rstrip("/")
+        self.model = model
+        self.effort = effort
+        self.max_tokens = max_tokens
+        self.timeout_s = timeout_s
+        self._key = read_env_key(env_file, key_var)
+
+    def judge(self, context: str, reviews: str) -> dict:
+        body = chat_body(self.model, context, reviews)
+        body["reasoning_effort"] = self.effort
+        body["max_tokens"] = self.max_tokens
+        data = json.dumps(body).encode()
+        attempts = 0
+        # The provider has short overload windows (429, 5xx, 529): retried
+        # here with backoff, never spending one of a unit's attempts.
+        for wait_s in (15, 30, 60, 120, 120, None):
+            attempts += 1
+            req = urllib.request.Request(f"{self.url}/chat/completions", data=data, method="POST",
+                                         headers={"content-type": "application/json",
+                                                  "authorization": f"Bearer {self._key}"})
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout_s) as r:
+                    resp = json.loads(r.read())
+                break
+            except urllib.error.HTTPError as e:
+                detail = e.read(800).decode("utf-8", "replace")
+                if (e.code in (429, 529) or e.code >= 500) and wait_s is not None:
+                    time.sleep(wait_s)
+                    continue
+                return {"status": "error", "error": f"HTTP {e.code}: {detail}", "http_attempts": attempts}
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+                if wait_s is not None:
+                    time.sleep(wait_s)
+                    continue
+                return {"status": "error", "error": f"unreachable: {e}", "http_attempts": attempts}
+        return {**parse_chat_response(resp), "http_attempts": attempts}
+
+
 def read_anthropic_key(env_file: Path) -> str:
     if not env_file.is_file() or env_file.is_symlink():
         raise SystemExit(f"the Opus judge needs ANTHROPIC_API_KEY=<key> in {env_file} (a regular file)")

@@ -304,6 +304,12 @@ def make_judges(run: Run, which: str):
         env = Path(o.get("env_file") or D.AACR / "claude.env")
         out["opus"] = J.OpusJudge(env, o.get("model", "claude-opus-5-5"), o.get("effort", "xhigh"),
                                   o.get("max_tokens", 128000))
+    if which == "deepseek":
+        d = cfg.get("deepseek", {})
+        out["deepseek"] = J.OpenAICompatJudge(
+            "deepseek", d.get("base_url", "https://inference.do-ai.run/v1"), d.get("model", "deepseek-v4.1-flash"),
+            d.get("effort", "xhigh"), Path(d.get("env_file") or D.AACR / "digitalocean.env"),
+            d.get("key_var", "DIGITALOCEAN_API_KEY"), d.get("max_tokens", 65536))
     return out
 
 
@@ -422,24 +428,26 @@ def cmd_run(a) -> None:
 
 
 def cmd_live(a) -> None:
-    """Live Opus judgments of hand-picked units — a spot check beside the
-    batch, recorded under their own judge name so the two never mix."""
+    """Live judgments of hand-picked units — a spot check beside the batch
+    (Opus) or a third judge (DeepSeek), recorded as judge `<judge>-live` so
+    they never mix with the rated judges."""
     run = Run(Path(a.dir))
-    judge = make_judges(run, "opus")["opus"]
+    judge = make_judges(run, a.judge)[a.judge]
+    name = f"{a.judge}-live"
     units = {u["id"]: u for u in run.units()}
     wanted = [i.strip() for i in a.units.split(",") if i.strip()]
     missing = [i for i in wanted if i not in units]
     if missing:
         raise SystemExit(f"no such unit(s): {', '.join(missing)}")
-    done = run.final("opus-live")
+    done = run.final(name)
     todo = [units[i] for i in wanted if i not in done]
-    log(f"opus-live: {len(todo)} judgments, {a.workers} at a time ({len(wanted) - len(todo)} already in)")
+    log(f"{name}: {len(todo)} judgments, {a.workers} at a time ({len(wanted) - len(todo)} already in)")
 
     def one(u: dict) -> None:
         ctx, rev = run.context(u["pr"]), run.reviews(u)
-        res = judge.live(ctx, rev)
-        run.record("opus-live", u, res, judge.model, judge.effort, J.prompt_sha(ctx, rev))
-        log(f"opus-live {u['id']} {u['pr']}: {res['status']}"
+        res = judge.live(ctx, rev) if a.judge == "opus" else judge.judge(ctx, rev)
+        run.record(name, u, res, judge.model, judge.effort, J.prompt_sha(ctx, rev))
+        log(f"{name} {u['id']} {u['pr']}: {res['status']}"
             + (f" → {res['verdict']['overall']['winner']}" if res["status"] == "ok" else f" ({res.get('error', '')[:160]})"))
 
     with ThreadPoolExecutor(max_workers=a.workers) as pool:
@@ -1022,8 +1030,9 @@ def main() -> None:
     p.add_argument("--gpt-workers", type=int, default=4)
     p.add_argument("--no-wait", action="store_true", help="submit the Opus batch and return")
     p.add_argument("--collect-only", action="store_true", help="only collect submitted Opus batches")
-    p = sub.add_parser("live", help="judge chosen units with live Opus calls, recorded as judge opus-live")
+    p = sub.add_parser("live", help="judge chosen units live (opus or deepseek), recorded as judge <judge>-live")
     p.add_argument("dir"); p.add_argument("--units", required=True, help="comma-separated unit ids")
+    p.add_argument("--judge", choices=("opus", "deepseek"), default="opus")
     p.add_argument("--workers", type=int, default=4)
     p = sub.add_parser("report"); p.add_argument("dir")
     p = sub.add_parser("show"); p.add_argument("dir"); p.add_argument("--x", required=True); p.add_argument("--y", required=True)
