@@ -20,9 +20,8 @@ allowed to execute).
 | Session birth, adoption, wakes, archival | `src/sessions.ts` |
 | `exec` primitive + the tmux surface | `src/tmux.ts` |
 | One base clone + one worktree per PR | `src/worktrees.ts` |
-| Wake-file delivery inside pi | `extensions/inject-bridge.ts` |
-| Cross-process command ledger (bridge side) | `extensions/session-command-ledger.ts` |
-| Bridge readiness receipt | `src/session-bridge.ts` |
+| Wake-file delivery inside pi (the overseer's and the companion's mailbox) | `extensions/inject-bridge.ts` |
+| Bridge readiness receipt (the overseer's) | `src/overseer-bridge.ts` |
 | Durable command marker | `src/session-command.ts` |
 | Daemon-side reconciler over that slot | `src/session-command-supervisor.ts` |
 | Live lens progress (publisher / reader) | `extensions/round-progress.ts`, `src/round-progress.ts` |
@@ -129,7 +128,7 @@ A live tmux process proves only that a container started. It does not prove
 that the inject bridge opened its mailbox — and a wake written into a mailbox
 nobody is watching is a silently lost instruction.
 
-`src/session-bridge.ts` closes that gap. The daemon mints a generation UUID per
+`src/overseer-bridge.ts` closes that gap (for the overseer, the one tmux session left). The daemon mints a generation UUID per
 spawn and passes it as `QCR_SESSION_BRIDGE_GENERATION` with a state-file path in
 `QCR_SESSION_BRIDGE_STATE_FILE`. The bridge writes `ready` to that file only
 after it has registered its watcher and completed its first synchronous sweep of
@@ -235,13 +234,12 @@ rules:
 - **`pi.sendUserMessage` is fire-and-forget.** Only a synchronous throw is
   observable at this seam, so failure detection cannot live here alone — hence
   the receipts and the supervisor below.
-- **The durable ledger is fail-closed for managed PR sessions.**
-  `QCR_SESSION_BRIDGE_LEDGER_REQUIRED` defaults on for a `pr-<n>` session; a
-  missing generation, state file, or `QCR_STATE_DB` fails the bridge loudly
-  instead of running unledgered. `extensions/session-command-ledger.ts` opens
-  the daemon's SQLite file directly (WAL), and every transition is one guarded
-  UPDATE carrying an `owner_token`, so an extension instance that survived a
-  recovery cannot terminalize a newer attempt.
+- **A PR's order is not a mailbox file.** The bridge once carried a durable
+  command ledger and a start-lease redelivery for `pr-<n>` sessions
+  (`extensions/session-command-ledger.ts`); a worker takes its order as its
+  first message, so both were deleted with the receipt scan (P9.1). The old
+  `session_commands` rows stay in the state database for the daemon's own
+  bookkeeping, and the bridge's JSONL entries are tolerated on resume.
 
 ## Receipts: three markers, one question
 
@@ -416,22 +414,15 @@ Two details are load-bearing:
   `extensions/vendor/openviking-pi/patches/0001-remove-session-before-compact-handler.patch`
   for exactly this reason.
 
-Compaction itself is requested by the daemon: `compactSession(pr)`
-writes `.compact-request.json` into the session's inject dir after a round's
-verdict lands, and the inject bridge — the session's one mailbox consumer —
-runs it through pi's own `ctx.compact()` once nothing is in flight (no run, no
-submitted or active wake), before the wakes queued behind it. While pi
-compacts, the bridge submits nothing: pi 1.0.0 refuses every prompt then
+Round-end compaction is the worker's, before it exits. The inject bridge only
+holds its mailbox while pi compacts: pi 1.0.0 refuses every prompt then
 ("Cannot submit a prompt while compaction is in progress"), the refusal is
 swallowed, and manual compaction emits no `agent_settled`. The bridge watches
 `session_before_compact` / `session_compact` / `session_compact_failed` (and pi's
 own `ctx.isIdle()`, which counts compaction), drains when it ends, and
 publishes the state in its ready receipt (`compaction: {state, seq, started_at,
-ended_at, outcome, source}`, read by `sessionCompaction(pr)`). The daemon never
-types `/compact` into the pane: that aborts whatever turn is running, and a wake
-flushed right after it would be submitted into the compaction, refused and never
-retried. Best-effort: an older bridge that does not know the request file
-ignores it.
+ended_at, outcome, source}`), which the overseer's rotation reads. The daemon
+never types `/compact` into the pane.
 
 ## Prompts and rendering
 

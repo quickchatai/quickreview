@@ -10,17 +10,13 @@ import {
   readdirSync,
   rmSync,
   statSync,
-  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import activateInjectBridge from "../extensions/inject-bridge.js";
 import type { Config } from "../src/config.js";
-import { dispatchOnce } from "../src/dispatch.js";
 import {
   PiSessionManager,
   OVERSEER_SESSION,
@@ -31,17 +27,14 @@ import {
 } from "../src/sessions.js";
 import { Tmux } from "../src/tmux.js";
 import type { ExecFn } from "../src/tmux.js";
-import { writeSessionBridgeState } from "../src/session-bridge.js";
-import { SessionCommandSupervisor } from "../src/session-command-supervisor.js";
+import { writeSessionBridgeState } from "../src/overseer-bridge.js";
 import { StateStore } from "../src/state.js";
 import { roundPromptMarker } from "../src/types.js";
 import type { RoundOrder } from "../src/types.js";
-import { flushHeldWakes } from "../src/wakes.js";
 import { WorktreeManager } from "../src/worktrees.js";
 import { piAuthWatchDirs } from "../src/wire.js";
 import { whyJson } from "../src/cli.js";
 import { PiAuthWatch } from "../src/authwatch.js";
-import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 let root: string;
 let secrets: string;
@@ -401,7 +394,6 @@ describe("birth", () => {
         ),
       ),
     ).toBe(true);
-    expect(newSession).toContain("QCR_SESSION_BRIDGE_LEDGER_REQUIRED=0");
 
     const promptPath = m.promptPath("pr-42");
     expect(newSession).toContain(promptPath);
@@ -1040,131 +1032,6 @@ describe("injection", () => {
     );
   });
 
-  it("reads the receipt out of the session JSONL — present, absent, unknowable", async () => {
-    const m = manager();
-    await m.dispatchRound(order, "ROUND PROMPT BODY");
-    const started = Date.parse("2026-08-13T10:00:00Z");
-    const jsonlDir = m.sessionDir("pr-42");
-    mkdirSync(jsonlDir, { recursive: true });
-    const jsonl = join(jsonlDir, "2026-08-13T10-00-00-000Z_abc.jsonl");
-
-    // Nothing written since the round started: no evidence either way.
-    expect(await m.roundPromptAccepted(42, 1, started)).toBeNull();
-
-    // The session wrote, but the prompt is not among what it accepted: other
-    // messages are in the JSONL, this round's order is simply not there.
-    writeFileSync(
-      jsonl,
-      `${JSON.stringify({ message: { role: "user", content: [{ type: "text", text: "wake up finish the review" }] } })}\n`,
-    );
-    expect(await m.roundPromptAccepted(42, 1, started)).toBe(false);
-
-    // pi accepted it: the token comes back verbatim through JSON encoding.
-    writeFileSync(
-      jsonl,
-      `${JSON.stringify({
-        message: {
-          role: "user",
-          content: [{ type: "text", text: `ROUND PROMPT BODY\n\n${roundPromptMarker(42, 1)}\n` }],
-        },
-      })}\n`,
-    );
-    expect(await m.roundPromptAccepted(42, 1, started)).toBe(true);
-    // A different round's token is not this round's receipt.
-    expect(await m.roundPromptAccepted(42, 2, started)).toBe(false);
-  });
-
-  // The receipt rule: present = delivered, absent = never arrived,
-  // unreadable = unknown, and unknown is never read as loss. Returning `false`
-  // from a failed read would be the "provably never arrived" answer — the one
-  // that, once redelivery is spent, kills a live conversation.
-  describe("an unreadable session JSONL is UNKNOWN, never loss", () => {
-    // The fault is injected with a SYMLINK TO A DIRECTORY, not `chmod 0o000`.
-    // `readdirSync(withFileTypes)` does not follow symlinks, so the entry is
-    // not reported as a directory and falls through to the `.jsonl` branch;
-    // `statSync` then follows it and succeeds (in scope, mtime now), and
-    // `readFileSync` fails with EISDIR. That is exactly the shape the rule is
-    // about — stats fine, cannot be read — and unlike a permission bit it
-    // behaves identically for every uid — a `chmod` fault would have to skip
-    // under root and leave the rule uncovered there while the suite reads green.
-    const unreadableJsonl = (dir: string, name: string): void => {
-      const target = join(dir, `${name}.d`);
-      mkdirSync(target, { recursive: true });
-      symlinkSync(target, join(dir, name));
-    };
-
-    it(
-      "returns null, not false, when an in-scope file cannot be read",
-      { timeout: HEAVY_TIMEOUT_MS },
-      async () => {
-        const store = new StateStore(":memory:");
-        const m = manager(() => new Date("2026-08-13T10:00:00Z"), store);
-        await m.dispatchRound(order, "ROUND PROMPT BODY");
-        const started = Date.parse("2026-08-13T10:00:00Z");
-        const jsonlDir = m.sessionDir("pr-42");
-        mkdirSync(jsonlDir, { recursive: true });
-        // The entry stats in scope — the session demonstrably wrote — but its
-        // bytes are not readable, so nothing can be concluded about the marker.
-        unreadableJsonl(jsonlDir, "2026-08-13T10-00-00-000Z_abc.jsonl");
-
-        expect(await m.roundPromptAccepted(42, 1, started)).toBeNull();
-
-        // And it says so. The flag is scan-global, so one permanently
-        // unreadable stale file would otherwise answer `null` for this PR
-        // forever, silently disabling the redelivery-vs-loss decision and
-        // reconcile's claim-release sweep.
-        const kinds = store.eventsOn(new Date().toISOString().slice(0, 10)).map((e) => e.kind);
-        expect(kinds).toContain("receipt_scan_unreadable");
-        store.close();
-      },
-    );
-
-    it("keeps scanning past an unreadable file — the marker may be in the next one", async () => {
-      const m = manager();
-      await m.dispatchRound(order, "ROUND PROMPT BODY");
-      const started = Date.parse("2026-08-13T10:00:00Z");
-      const jsonlDir = m.sessionDir("pr-42");
-      mkdirSync(jsonlDir, { recursive: true });
-      // Named so the unreadable one is walked first: a failed read must not
-      // end the walk before `b.jsonl` is opened.
-      unreadableJsonl(jsonlDir, "a-blocked.jsonl");
-      writeFileSync(
-        join(jsonlDir, "b-delivered.jsonl"),
-        `${JSON.stringify({ text: `BODY\n\n${roundPromptMarker(42, 1)}\n` })}\n`,
-      );
-
-      expect(await m.roundPromptAccepted(42, 1, started)).toBe(true);
-    });
-
-    it("still reports a genuine absence as false — the fix does not blunt the receipt", async () => {
-      const m = manager();
-      await m.dispatchRound(order, "ROUND PROMPT BODY");
-      const started = Date.parse("2026-08-13T10:00:00Z");
-      const jsonlDir = m.sessionDir("pr-42");
-      mkdirSync(jsonlDir, { recursive: true });
-      writeFileSync(
-        join(jsonlDir, "readable.jsonl"),
-        `${JSON.stringify({ text: "no marker here" })}\n`,
-      );
-      expect(await m.roundPromptAccepted(42, 1, started)).toBe(false);
-    });
-  });
-
-  it("ignores JSONL files that predate the round — the prompt cannot be in one", async () => {
-    const m = manager();
-    await m.dispatchRound(order, "BODY");
-    const jsonlDir = m.sessionDir("pr-42");
-    mkdirSync(jsonlDir, { recursive: true });
-    const stale = join(jsonlDir, "old.jsonl");
-    writeFileSync(stale, `${JSON.stringify({ text: roundPromptMarker(42, 1) })}\n`);
-    const old = new Date("2026-08-13T08:00:00Z");
-    utimesSync(stale, old, old);
-
-    // Two hours after that file was last touched: it is out of scope, and it
-    // is the only file — so the answer is "cannot tell", never "delivered".
-    expect(await m.roundPromptAccepted(42, 1, Date.parse("2026-08-13T10:00:00Z"))).toBeNull();
-  });
-
   it("redelivers the EXACT dispatched bytes, and reports false when there is nothing saved", async () => {
     const m = manager();
     await m.dispatchRound(order, "ROUND PROMPT BODY");
@@ -1335,9 +1202,6 @@ describe("durable command ownership", () => {
       const m = manager(undefined, store);
       await m.dispatchRound(order, "ROUND PROMPT BODY");
 
-      expect(tmuxArgs().find((args) => args[0] === "new-session")).toContain(
-        "QCR_SESSION_BRIDGE_LEDGER_REQUIRED=1",
-      );
       const row = store.activeSessionCommand("pr-42")!;
       const bytes = readFileSync(row.inject_path);
       expect(row).toMatchObject({
@@ -1351,11 +1215,7 @@ describe("durable command ownership", () => {
       expect(row.payload_sha256).toBe(createHash("sha256").update(bytes).digest("hex"));
       expect(readFileSync(row.payload_path)).toEqual(bytes);
       expect(row.inject_path).toContain(`--cmd-${row.id}.md`);
-      expect(m.buildEnv("pr-42")).toMatchObject({
-        QCR_STATE_DB: dbPath,
-        QCR_SESSION_COMMAND_START_LEASE_MS: "120000",
-        QCR_SESSION_COMMAND_RUNNING_LEASE_MS: "2700000",
-      });
+      expect(m.buildEnv("pr-42")).toMatchObject({ QCR_STATE_DB: dbPath });
 
       markExistingSessionReady(m, "pr-42");
       await expect(m.inject(42, "author replied")).rejects.toThrow(/session command .* is pending/);
@@ -1480,290 +1340,6 @@ describe("durable command ownership", () => {
         store.recentEvents(20).some((event) => event.kind === "session_bridge_readiness_failed"),
       ).toBe(true);
     } finally {
-      store.close();
-    }
-  });
-
-  it(
-    "composes attempt-zero rebirth failures through wire, supervisor, manager, and the real failing bridge",
-    { timeout: HEAVY_TIMEOUT_MS },
-    async () => {
-      const dbPath = join(root, "state", "state.db");
-      let clock = new Date("2026-09-01T08:08:00.000Z");
-      const store = new StateStore(dbPath, () => clock);
-      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
-      try {
-        const config = cfg();
-        config.daemon.session_command_unknown_max_checks = 0;
-        config.daemon.session_command_max_start_retries = 2;
-        config.daemon.session_bridge_ready_timeout_s = 0.05;
-        const m = manager(() => clock, store, config);
-        m.setTitleResolver(() => "PR 5454");
-        store.upsertPr({
-          number: 5454,
-          state: "queued",
-          head_sha: "e038",
-          title: "PR 5454",
-          author: "alice",
-          trigger_ts: clock.toISOString(),
-          stale_recheck: 0,
-          migration_gate: 0,
-        });
-        const payload = Buffer.from("# Author reply — PR #5454\n\noldest durable wake\n", "utf8");
-        const payloadPath = join(root, "state", "session-commands", "cmd-5454.md");
-        mkdirSync(join(root, "state", "session-commands"), { recursive: true });
-        writeFileSync(payloadPath, payload);
-        store.createSessionCommand({
-          id: "cmd-5454",
-          pr: 5454,
-          session: "pr-5454",
-          kind: "wake",
-          round_no: null,
-          payload_sha256: createHash("sha256").update(payload).digest("hex"),
-          payload_path: payloadPath,
-          inject_path: join(root, "inject", "pr-5454", "wake--cmd-cmd-5454.md"),
-          next_check_at: clock.toISOString(),
-        });
-        store.failPendingSessionCommand("cmd-5454", "historical attempt-zero failure");
-        for (let n = 1; n <= 4; n++)
-          store.holdWake(5454, `# Author reply — PR #5454\n\nreply ${n}`, "author_reply");
-        // tmux exists, but no generation receipt does.
-        liveSessions.add("pr-5454");
-        autoBridgeReady = false;
-        onNewSession = (_session, args) => {
-          const changed: Array<[string, string | undefined]> = [];
-          for (const token of args) {
-            const equals = token.indexOf("=");
-            if (equals < 1) continue;
-            const key = token.slice(0, equals);
-            if (!key.startsWith("QCR_")) continue;
-            changed.push([key, process.env[key]]);
-            process.env[key] = token.slice(equals + 1);
-          }
-          try {
-            // The daemon handed Pi the real DB path. Removing only its directory
-            // entry leaves this already-open StateStore usable while making the
-            // bridge's independent fileMustExist open fail before reservation.
-            rmSync(dbPath, { force: true });
-            const handlers = new Map<string, Array<(event?: unknown) => void>>();
-            const pi = {
-              on(event: string, handler: (event?: unknown) => void) {
-                const list = handlers.get(event) ?? [];
-                list.push(handler);
-                handlers.set(event, list);
-              },
-              sendUserMessage() {},
-            } as unknown as ExtensionAPI;
-            activateInjectBridge(pi);
-            for (const handler of handlers.get("session_start") ?? []) handler({});
-          } finally {
-            for (const [key, prior] of changed) {
-              if (prior === undefined) delete process.env[key];
-              else process.env[key] = prior;
-            }
-          }
-        };
-
-        const retry = vi.spyOn(m, "retrySessionCommand");
-        const hooks = m;
-        const supervisor = new SessionCommandSupervisor({
-          cfg: config,
-          store,
-          hooks,
-          verdictDir: join(root, "verdict"),
-          onRoundFailure: async () => "requeued",
-          now: () => clock,
-        });
-
-        await expect(supervisor.scan()).rejects.toThrow(/ledger_open/);
-        clock = new Date("2026-09-01T08:11:00.000Z");
-        await expect(supervisor.scan()).rejects.toThrow(/ledger_open/);
-        clock = new Date("2026-09-01T08:14:00.000Z");
-        await supervisor.scan();
-
-        expect(retry).toHaveBeenCalledTimes(2);
-        expect(store.getSessionCommand("cmd-5454")).toMatchObject({
-          status: "failed",
-          attempt: 0,
-          recovery_attempts: 2,
-          failure: expect.stringContaining("ledger_open"),
-        });
-        expect(store.heldWakes(5454)).toHaveLength(4);
-        expect(store.blockingSessionCommand("pr-5454")).toBeTruthy();
-        expect(store.openReviewFailure(5454)).toMatchObject({
-          command_id: "cmd-5454",
-          work_owed: 1,
-          detail: expect.stringContaining("ledger_open"),
-        });
-        expect(
-          store
-            .recentEvents(100)
-            .filter((event) => event.kind === "session_bridge_readiness_failed"),
-        ).toHaveLength(2);
-
-        const listPrFiles = vi.fn(async () => {
-          throw new Error("blocked dispatch touched GitHub");
-        });
-        expect(
-          await dispatchOnce({
-            cfg: config,
-            store,
-            hooks,
-            adapter: {
-              listPrFiles,
-              getPr: async () => {
-                throw new Error("blocked dispatch read PR");
-              },
-              addLabel: async () => {
-                throw new Error("blocked dispatch mutated label");
-              },
-              removeLabel: async () => {
-                throw new Error("blocked dispatch mutated label");
-              },
-              deleteTeamReviewRequest: async () => {
-                throw new Error("blocked dispatch consumed trigger");
-              },
-              createReview: async () => {
-                throw new Error("blocked dispatch posted review");
-              },
-            },
-            now: () => clock,
-          }),
-        ).toEqual([]);
-        expect(listPrFiles).not.toHaveBeenCalled();
-        expect(store.roundsFor(5454)).toHaveLength(0);
-      } finally {
-        errors.mockRestore();
-        store.close();
-      }
-    },
-  );
-
-  it("quarantines stale terminal residue and transfers five replies into one live command", async () => {
-    const dbPath = join(root, "state", "state.db");
-    const store = new StateStore(dbPath, () => new Date("2026-09-01T12:00:00.000Z"));
-    let shutdownBridge = (): void => {};
-    try {
-      const config = cfg();
-      const m = manager(undefined, store, config);
-      m.setTitleResolver(() => "PR 5454");
-      store.upsertPr({
-        number: 5454,
-        state: "queued",
-        head_sha: "e038",
-        title: "PR 5454",
-        author: "alice",
-        trigger_ts: "2026-09-01T11:34:30.000Z",
-        stale_recheck: 0,
-        migration_gate: 0,
-      });
-
-      const staleRoundId = store.startRound(5454, "re-review", ["pass-baseline"], 75);
-      const staleRoundNo = store.roundsFor(5454)[0]!.round_no;
-      const staleInjectDir = m.injectDir("pr-5454");
-      mkdirSync(staleInjectDir, { recursive: true });
-      const staleInject = join(
-        staleInjectDir,
-        "2026-08-31T14-28-38-150Z-0247--cmd-stale-terminal.md",
-      );
-      const stalePayload = Buffer.from("old terminal round transport\n", "utf8");
-      const stalePayloadPath = join(root, "state", "session-commands", "stale-terminal.md");
-      mkdirSync(join(root, "state", "session-commands"), { recursive: true });
-      writeFileSync(staleInject, stalePayload);
-      writeFileSync(stalePayloadPath, stalePayload);
-      store.createSessionCommand({
-        id: "stale-terminal",
-        pr: 5454,
-        session: "pr-5454",
-        kind: "round",
-        round_no: staleRoundNo,
-        payload_sha256: createHash("sha256").update(stalePayload).digest("hex"),
-        payload_path: stalePayloadPath,
-        inject_path: staleInject,
-        next_check_at: "2026-09-01T11:00:00.000Z",
-      });
-      store.failPendingSessionCommand("stale-terminal", "old infrastructure failure");
-      store.markRoundCancelled(
-        staleRoundId,
-        "old infrastructure failure",
-        "infrastructure_failure",
-      );
-      const row = store.getPr(5454)!;
-      store.upsertPr({
-        ...row,
-        state: "queued",
-        head_sha: "e038",
-        trigger_ts: "2026-09-01T11:34:30.000Z",
-      });
-      for (let n = 1; n <= 5; n++) {
-        store.holdWake(
-          5454,
-          `# Author reply — PR #5454\n\nreply ${n}\nresponse-${n}.json`,
-          "author_reply",
-        );
-      }
-
-      const sent: string[] = [];
-      autoBridgeReady = false;
-      onNewSession = (_session, args) => {
-        const changed: Array<[string, string | undefined]> = [];
-        for (const token of args) {
-          const equals = token.indexOf("=");
-          if (equals < 1) continue;
-          const key = token.slice(0, equals);
-          if (!key.startsWith("QCR_")) continue;
-          changed.push([key, process.env[key]]);
-          process.env[key] = token.slice(equals + 1);
-        }
-        try {
-          const handlers = new Map<string, Array<(event?: unknown) => void>>();
-          const pi = {
-            on(event: string, handler: (event?: unknown) => void) {
-              const list = handlers.get(event) ?? [];
-              list.push(handler);
-              handlers.set(event, list);
-            },
-            sendUserMessage(content: string) {
-              sent.push(content);
-            },
-          } as unknown as ExtensionAPI;
-          activateInjectBridge(pi);
-          shutdownBridge = () => {
-            for (const handler of handlers.get("session_shutdown") ?? []) handler({});
-          };
-          for (const handler of handlers.get("session_start") ?? []) handler({});
-        } finally {
-          for (const [key, prior] of changed) {
-            if (prior === undefined) delete process.env[key];
-            else process.env[key] = prior;
-          }
-        }
-      };
-
-      expect(
-        await flushHeldWakes({ store, inject: (pr, message) => m.inject(pr, message) }, 5454),
-      ).toBe(5);
-
-      await vi.waitFor(() =>
-        expect(store.activeSessionCommand("pr-5454")).toMatchObject({
-          kind: "wake",
-          status: "running",
-          attempt: 1,
-        }),
-      );
-      expect(store.heldWakes(5454)).toHaveLength(0);
-      expect(sent).toHaveLength(1);
-      for (let n = 1; n <= 5; n++) expect(sent[0]).toContain(`response-${n}.json`);
-      expect(readdirSync(join(staleInjectDir, ".terminal"))).toEqual([
-        "2026-08-31T14-28-38-150Z-0247--cmd-stale-terminal.md.failed",
-      ]);
-      expect(store.getSessionCommand("stale-terminal")).toMatchObject({
-        status: "failed",
-        attempt: 0,
-      });
-      expect(store.recentEvents(50).some((event) => event.kind === "wakes_coalesced")).toBe(true);
-    } finally {
-      shutdownBridge();
       store.close();
     }
   });

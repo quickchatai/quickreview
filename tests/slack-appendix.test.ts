@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Config } from "../src/config.js";
 import { PiSessionManager, OVERSEER_SESSION } from "../src/sessions.js";
-import { writeSessionBridgeState } from "../src/session-bridge.js";
+import { writeSessionBridgeState } from "../src/overseer-bridge.js";
 import { Tmux } from "../src/tmux.js";
 import type { ExecFn } from "../src/tmux.js";
 import { renderOverseerSystemPrompt } from "../src/templates.js";

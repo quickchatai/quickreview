@@ -372,7 +372,7 @@ describe("a locked archive month (acceptance 4)", () => {
 
 describe("every batch is its own bounded span (acceptance 5)", () => {
   /** How many real event-loop turns ran while `fn` did, and at which turn
-   * each batch ended (receiptscan.test.ts's counter). */
+   * each batch ended (the deleted receipt scan test's counter). */
   async function counting<T>(
     fn: (turn: () => number) => Promise<T>,
   ): Promise<{ out: T; turns: number }> {

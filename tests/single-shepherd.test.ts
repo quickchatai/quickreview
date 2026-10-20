@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { checkBashCommand } from "../extensions/bash-guard.js";
 import { COMPANION_DEFAULTS, resolveCompanionPaths, type Config } from "../src/config.js";
 import { LEAF_MEMORY_TOOLS, buildAgents, stripAgentSpawnTools } from "../src/include.js";
-import { writeSessionBridgeState } from "../src/session-bridge.js";
+import { writeSessionBridgeState } from "../src/overseer-bridge.js";
 import { OVERSEER_SESSION, PiSessionManager, isSandboxSession } from "../src/sessions.js";
 import { MAX_HELD_WAKES, StateStore } from "../src/state.js";
 import { Tmux } from "../src/tmux.js";

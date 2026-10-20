@@ -34,7 +34,7 @@
 //     pi 1.0.0's SessionManager `_persist` is `appendFileSync` of one entry
 //     per line; it rewrites a file only to migrate or branch one it LOADED,
 //     which a session spawned without `--continue` never does (the same
-//     assumption as `receiptscan.ts`).
+//     assumption as the deleted receipt scan).
 //   - A file whose size and mtime have not moved is answered from what was
 //     kept without a byte read — but only once its mtime is older, by
 //     TRANSCRIPT_RACY_MS, than the moment its bytes were last confirmed. A

@@ -2,13 +2,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { waitForSessionBridgeReady, writeSessionBridgeState } from "../src/session-bridge.js";
+import { waitForSessionBridgeReady, writeSessionBridgeState } from "../src/overseer-bridge.js";
 
 let dir: string;
 let path: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "qcr-session-bridge-"));
+  dir = mkdtempSync(join(tmpdir(), "qcr-overseer-bridge-"));
   path = join(dir, "pr-42.bridge.json");
 });
 

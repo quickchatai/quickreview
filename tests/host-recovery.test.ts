@@ -141,14 +141,15 @@ describe.each(SESSION_HOSTS)("recovery over the $name host", (host) => {
         ).toBe("done");
         expect(rig.mailbox(SESSION)).toEqual(["author says: fixed in abc123\n"]);
         expect(rig.store.heldWakes(PR)).toEqual([]);
-        // Compaction is asked of a bridge; a worker compacts before it exits.
-        expect(rig.compactionRequests(SESSION)).toBe(host.bridge ? 1 : 0);
+        // A worker compacts before it exits; no host asks for one.
+        expect(rig.compactionRequests(SESSION)).toBe(0);
       },
     );
   });
 
   describe("the silent-round net", () => {
-    it(
+    // Reads the receipt: the tmux host (the overseer's) offers none.
+    it.skipIf(host.bridge)(
       "redelivers an order lost in transit, without a kill, on the second sighting after the grace",
       { timeout: HEAVY_TIMEOUT_MS },
       async () => {

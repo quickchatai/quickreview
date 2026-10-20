@@ -32,7 +32,6 @@ import { StrictMutex } from "../src/archive/archiver.js";
 import { archiveRow } from "../src/archive/rows.js";
 import { restorePr } from "../src/archive/restore.js";
 import type { DaemonLoadStatus } from "../src/eventloop.js";
-import { recheckPromptMarker } from "../src/types.js";
 import {
   DAY,
   T0,
@@ -138,9 +137,6 @@ describe("restore before birth (acceptance 6)", () => {
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
       const f = await archived();
-      // A pre-close wake whose marker would only be in the archived files.
-      const marker = recheckPromptMarker(f.pr, "fp-before-close");
-      const since = f.mtimes.get(f.transcripts[0]!)! - DAY;
       // Corrupt one archived transcript.
       const gz = join(
         f.root,
@@ -162,9 +158,6 @@ describe("restore before birth (acceptance 6)", () => {
       expect(wakes).toHaveLength(1);
       expect(wakes[0]!.pr).toBe(f.pr);
       expect(anomalySeverity("archive_restore_failed")).toBe("wake");
-      // The reborn session's file is live; the archived window stays UNKNOWN.
-      put(f.root, `state/pi-sessions/pr-${f.pr}/new.jsonl`, line("hi"), T0);
-      expect(await rig.m.wakeReceiptPresent(f.pr, marker, since)).toBeNull();
       // A second birth inside the retry window does not retry (nor wake again).
       await a.beforeBirth(f.pr);
       expect(f.store.anomalies().filter((x) => x.kind === "archive_restore_failed")).toHaveLength(
@@ -184,8 +177,6 @@ describe("restore before birth (acceptance 6)", () => {
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
       const f = await archived();
-      const marker = recheckPromptMarker(f.pr, "fp-before-close");
-      const since = f.mtimes.get(f.transcripts[0]!)! - DAY;
       const gz = join(
         f.root,
         "archive",
@@ -208,8 +199,6 @@ describe("restore before birth (acceptance 6)", () => {
       expect(f.store.anomalies().filter((x) => x.kind === "archive_restore_failed")).toHaveLength(
         1,
       );
-      put(f.root, `state/pi-sessions/pr-${f.pr}/new.jsonl`, line("hi"), T0);
-      expect(await rig.m.wakeReceiptPresent(f.pr, marker, since)).toBeNull();
     },
   );
 
@@ -218,8 +207,6 @@ describe("restore before birth (acceptance 6)", () => {
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
       const f = await archived();
-      const marker = recheckPromptMarker(f.pr, "fp-before-close");
-      const since = f.mtimes.get(f.transcripts[0]!)! - DAY;
       rmSync(join(f.root, "archive", `pr-${f.pr}`, "manifest.json"));
       reopen(f);
       const a = onArchiver(f);
@@ -230,9 +217,6 @@ describe("restore before birth (acceptance 6)", () => {
       expect(f.store.anomalies().filter((x) => x.kind === "archive_restore_failed")).toHaveLength(
         1,
       );
-      const rig = sessionRig(f);
-      put(f.root, `state/pi-sessions/pr-${f.pr}/new.jsonl`, line("hi"), T0);
-      expect(await rig.m.wakeReceiptPresent(f.pr, marker, since)).toBeNull();
     },
   );
 

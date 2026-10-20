@@ -60,14 +60,12 @@ import { workerUsageHandler } from "./workerusage.js";
 
 /** The names the tmux route's environment carried that a worker's session does not:
  * the model key (a worker borrows the bot's login), the inject bridge's directory and the
- * bridge's state database and leases. Nothing else is dropped: a worker round sees what a
+ * state database. Nothing else is dropped: a worker round sees what a
  * tmux round saw. */
 export const WORKER_ENV_DROPPED: readonly string[] = [
   "OPENAI_API_KEY",
   "QCR_INJECT_DIR",
   "QCR_STATE_DB",
-  "QCR_SESSION_COMMAND_START_LEASE_MS",
-  "QCR_SESSION_COMMAND_RUNNING_LEASE_MS",
 ];
 
 /** How often a command a worker's death requeued is handed a fresh worker. */

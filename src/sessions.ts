@@ -33,7 +33,6 @@ import { verifiedPayload } from "./session-command-payload.js";
 import type { Config } from "./config.js";
 import {
   DEFAULT_SESSION_BRIDGE_READY_TIMEOUT_S,
-  DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN,
   DEFAULT_SESSION_COMMAND_START_LEASE_S,
   DEFAULT_SUBAGENT_CACHE_STAGGER_MS,
   DEFAULT_SUBAGENT_PASS_DEADLINE_MIN,
@@ -54,28 +53,23 @@ import {
   type OvcliWriteResult,
 } from "./memory/ovsession.js";
 import {
-  bridgeCompaction,
-  COMPACTION_REQUEST_FILE,
   OVERSEER_RETIRE_REQUEST_FILE,
   readSessionBridgeState,
   waitForSessionBridgeReady,
   writeSessionBridgeState,
-  type CompactionRequest,
   type SessionBridgeState,
-} from "./session-bridge.js";
+} from "./overseer-bridge.js";
 import { sameSessionCommandOwner, type SessionCommandOwnership } from "./session-command.js";
 import { Tmux } from "./tmux.js";
 import type { ExecFn } from "./tmux.js";
 import type { SessionCommandKind, SessionCommandRow, StateStore } from "./state.js";
-import { roundPromptMarker, stampRoundPrompt } from "./types.js";
-import { RECEIPT_SCOPE_SLACK_MS, ReceiptIndex, type ReceiptIndexStats } from "./receiptscan.js";
+import { stampRoundPrompt } from "./types.js";
 import type {
   OvSessionSweepReport,
   RoundOrder,
   SessionCommandObservation,
   SessionCommandRedeliveryResult,
   SessionCommandRetryResult,
-  SessionCompactionReport,
   SessionHooks,
 } from "./types.js";
 import { identityVars } from "./include.js";
@@ -100,10 +94,6 @@ export const OVERSEER_SESSION = "overseer";
  * (see sessionGitConfigPins). Secrets are never prefixed — argv is
  * world-readable — so no prefix carries a credential. */
 const ARGV_ENV_PREFIXES = ["QCR_", "OPENVIKING_", "GIT_CONFIG_"] as const;
-
-/** The once-per-claim memory of `receipt_archived_unknown` holds at most this
- * many keys; past it, it starts again (each logged once more). */
-const ARCHIVED_UNKNOWN_LOG_KEYS = 10_000;
 
 /**
  * The config-scope pin: which files git may read configuration from, decided by
@@ -267,15 +257,6 @@ export class PiSessionManager implements SessionHooks {
    * archive, close); this class is its tmux + inject-bridge host. */
   private readonly lifecycle: PrSessionLifecycle;
   private injectSeq = 0;
-  /** The receipt scan's index: each session file's receipt tokens, read once. */
-  private readonly receipts = new ReceiptIndex();
-  /** `receipt_archived_unknown` already logged, by (pr, marker, archive
-   * state): once each, not once per sweep — reconcile asks about a standing
-   * claim every pass, and a reopened PR left unrestored (mode not `on`) would
-   * otherwise write ~288 rows a day per claim, indefinitely. A changed
-   * archive state logs again; a restart logs each once more. */
-  private readonly archivedUnknownLogged = new Set<string>();
-
   constructor(opts: PiSessionManagerOptions) {
     this.cfg = opts.cfg;
     this.root = opts.root;
@@ -501,8 +482,6 @@ export class PiSessionManager implements SessionHooks {
       ...(this.commandStore && this.commandStore.path !== ":memory:"
         ? {
             QCR_STATE_DB: this.commandStore.path,
-            QCR_SESSION_COMMAND_START_LEASE_MS: String(this.sessionCommandStartLeaseMs()),
-            QCR_SESSION_COMMAND_RUNNING_LEASE_MS: String(this.sessionCommandRunningLeaseMs()),
           }
         : {}),
     };
@@ -577,16 +556,10 @@ export class PiSessionManager implements SessionHooks {
     });
     const generation = randomUUID();
     const bridgeStateFile = this.bridgeStatePath(session, generation);
-    const durablePrBridge =
-      prOfSession(session) !== undefined &&
-      Boolean(this.commandStore && this.commandStore.path !== ":memory:");
     const spawnEnv = {
       ...extraEnv,
       QCR_SESSION_BRIDGE_GENERATION: generation,
       QCR_SESSION_BRIDGE_STATE_FILE: bridgeStateFile,
-      // Production PR sessions own the durable command ledger. Explicit 0 is
-      // reserved for isolated smoke/replay harnesses with no daemon StateStore.
-      QCR_SESSION_BRIDGE_LEDGER_REQUIRED: durablePrBridge ? "1" : "0",
     };
     writeSessionBridgeState(bridgeStateFile, {
       version: 1,
@@ -718,13 +691,6 @@ export class PiSessionManager implements SessionHooks {
       stop: async (pr) => {
         const session = prSessionName(pr);
         await this.tmux.killSession(session);
-        // A compaction request the killed bridge never took is not
-        // a wake and nothing archives it; it would only keep the inject dir alive.
-        try {
-          rmSync(join(this.injectDir(session), COMPACTION_REQUEST_FILE), { force: true });
-        } catch {
-          /* best-effort */
-        }
       },
       reuseLive: async (pr) => {
         const session = prSessionName(pr);
@@ -977,13 +943,6 @@ export class PiSessionManager implements SessionHooks {
     );
   }
 
-  private sessionCommandRunningLeaseMs(): number {
-    return (
-      (this.cfg.daemon.session_command_running_max_min ?? DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN) *
-      60_000
-    );
-  }
-
   private queuePrCommand(
     pr: number,
     kind: SessionCommandKind,
@@ -1086,115 +1045,6 @@ export class PiSessionManager implements SessionHooks {
         `[quickreviewd] sessions: could not save the round prompt for #${pr} round ${roundNo}: ${String(err)}`,
       );
     }
-  }
-
-  /** SessionHooks: has this round's prompt actually been accepted into the
-   * session?
-   *
-   * A JSONL mtime cannot tell "the prompt arrived" from "the session was busy
-   * doing something else" — and a prompt is dropped precisely because the
-   * agent is busy, which also bumps the mtime. So delivery is read from a
-   * receipt instead: `dispatchRound` stamps a token into the wake file, and pi
-   * writes the user message it accepted — token included — into the session
-   * JSONL. Present ⇒ delivered. Absent ⇒ never delivered.
-   *
-   * Returns null for "cannot tell": no session dir, nothing readable. The
-   * caller must treat null as "no evidence either way" and never as loss.
-   * Only files touched at/after the round started are read — the prompt cannot
-   * be in an older one, and that keeps the scan bounded on long conversations.
-   */
-  async roundPromptAccepted(
-    pr: number,
-    roundNo: number,
-    startedAtMs: number,
-  ): Promise<boolean | null> {
-    return this.wakeReceiptPresent(pr, roundPromptMarker(pr, roundNo), startedAtMs);
-  }
-
-  /** SessionHooks: the general receipt read — did a wake carrying `marker`
-   * reach the session? `roundPromptAccepted` is the round-shaped wrapper; the
-   * recheck sweep uses this directly, because a recheck has no round row and
-   * (unlike a round) no deadline underneath it to catch a silent loss. */
-  async wakeReceiptPresent(pr: number, marker: string, sinceMs: number): Promise<boolean | null> {
-    const root = this.sessionDir(prSessionName(pr));
-    // The scan lives in `receiptscan.ts`: an index that reads each byte of a
-    // session file once, asynchronously and in chunks, so a query never
-    // blocks the event loop re-reading whole transcripts.
-    const { answer, unreadable } = await this.receipts.present(root, marker, sinceMs);
-    // A file we could not read might have held the marker, so absence is not
-    // established: the answer is unknown rather than loss (CLAUDE.md, "a
-    // delivered prompt is a receipt" ①) — but say so. The flag is
-    // scan-global, so one permanently unreadable stale `.jsonl` makes every
-    // receipt query for this PR answer `null` forever — which silently disables
-    // both the redelivery-vs-loss decision and reconcile's claim-release sweep.
-    // Unknown is the correct answer and a durable row is how it stops being a
-    // silent one.
-    if (answer === null && unreadable)
-      this.commandStore?.logEvent("receipt_scan_unreadable", pr, {
-        marker,
-        since_ms: sinceMs,
-        root,
-      });
-    // Archived is never absent. The archiver
-    // moves a closed PR's transcripts out of this dir; once a reopened PR's
-    // reborn session writes a fresh JSONL, a scan for a pre-close wake reads
-    // only that file and answers `false` — and the claim sweep would release
-    // a nudge that may well have landed. While the PR's archive is not
-    // restored and could hold a file in this query's scope (its newest
-    // archived mtime reaches the scope floor), a live `false` is unknown. A
-    // live `true` stays true; a wake sent after the reopen is past every
-    // archived mtime and is answered from the live files alone.
-    if (answer === false) {
-      const scope = this.archiveScopeOf(pr);
-      if (
-        scope === "unreadable" ||
-        (scope !== null &&
-          scope.state !== "restored" &&
-          scope.max_mtime_ms !== null &&
-          sinceMs - RECEIPT_SCOPE_SLACK_MS <= scope.max_mtime_ms)
-      ) {
-        const archiveState = scope === "unreadable" ? "unreadable" : scope.state;
-        const key = `${pr}\u0000${marker}\u0000${archiveState}`;
-        if (!this.archivedUnknownLogged.has(key)) {
-          if (this.archivedUnknownLogged.size >= ARCHIVED_UNKNOWN_LOG_KEYS)
-            this.archivedUnknownLogged.clear();
-          this.archivedUnknownLogged.add(key);
-          this.commandStore?.logEvent("receipt_archived_unknown", pr, {
-            marker,
-            since_ms: sinceMs,
-            archive_state: archiveState,
-            max_mtime_ms: scope === "unreadable" ? null : scope.max_mtime_ms,
-          });
-        }
-        return null;
-      }
-    }
-    // Nothing to read at all (a session that has not written since the wake)
-    // is genuinely ambiguous on a slow first tool call — but every caller asks
-    // only after the stall grace, by which point a session that received its
-    // prompt has certainly written. So in-scope files without the marker are
-    // reported as the absence they are.
-    return answer;
-  }
-
-  /** The PR's archive row as the receipt guard reads it; "unreadable" when
-   * the read failed (then a live `false` is unknown too — never a guess). */
-  private archiveScopeOf(
-    pr: number,
-  ): { state: string; max_mtime_ms: number | null } | null | "unreadable" {
-    // A store without the archive ledger (a narrow test double) has nothing
-    // archived; a real store whose read fails is unknown.
-    if (typeof this.commandStore?.archiveScope !== "function") return null;
-    try {
-      return this.commandStore.archiveScope(pr);
-    } catch {
-      return "unreadable";
-    }
-  }
-
-  /** What the receipt index has read so far (status/diagnostics). */
-  receiptIndexStats(): ReceiptIndexStats {
-    return this.receipts.stats();
   }
 
   /** SessionHooks: re-deliver a round prompt whose receipt never appeared.
@@ -1696,53 +1546,6 @@ export class PiSessionManager implements SessionHooks {
     }
   }
 
-  /**
-   * Post-round compaction, requested from the session's inject bridge: one
-   * `.compact-request.json` in the inject dir, which the bridge runs through
-   * pi's own `ctx.compact()` once nothing is in flight, holding every wake
-   * until it ends. Never `/compact` typed into the pane: that aborts whatever
-   * turn is running, and a wake submitted into a running compaction is
-   * refused by pi without the bridge learning. The verdict file is the
-   * round's last durable write; the tail after it finishes before the
-   * compaction starts.
-   * Best-effort: no live session is a no-op, and a bridge that does not know
-   * the request ignores it (no compaction, never a stuck mailbox).
-   */
-  async compactSession(pr: number): Promise<void> {
-    const session = prSessionName(pr);
-    if (!(await this.tmux.hasSession(session))) return;
-    const request: CompactionRequest = {
-      version: 1,
-      requested_at: this.now().toISOString(),
-      reason: "round-end",
-    };
-    try {
-      this.writeAtomic(
-        join(this.injectDir(session), COMPACTION_REQUEST_FILE),
-        `${JSON.stringify(request)}\n`,
-      );
-    } catch (err) {
-      // Best-effort by contract: a compaction is an optimisation, never owed.
-      console.log(
-        `[quickreviewd] sessions: could not request compaction of ${session}: ${String(err)}`,
-      );
-    }
-  }
-
-  /** SessionHooks: the current bridge generation's compaction report — null
-   * when there is no ready bridge to read or it reports no compaction,
-   * and null when tmux holds no session: a pi killed or OOM'd mid-compaction
-   * never reaches `session_shutdown`, so its last receipt still says
-   * "running", and a dead session must never hold off its own recovery. */
-  async sessionCompaction(pr: number): Promise<SessionCompactionReport | null> {
-    const session = prSessionName(pr);
-    const state = this.currentBridgeState(session);
-    if (state?.stage !== "ready") return null;
-    const compaction = bridgeCompaction(state) ?? null;
-    if (compaction?.state === "running" && !(await this.tmux.hasSession(session))) return null;
-    return compaction;
-  }
-
   /** True only when the registry says the PR is closed; unknown is not closed. */
   private prClosed(pr: number): boolean {
     return this.lifecycle.prClosed(pr);
@@ -1838,7 +1641,7 @@ export class PiSessionManager implements SessionHooks {
     if (!this.overseerRotationDue()) return false;
     // Acceptance archives transport before the run settles. Idle telemetry
     // only admits the retirement request; the process itself proves idle.
-    // A legacy receipt without run_status is unknown and safely holds automatic
+    // A receipt without run_status is unknown and safely holds automatic
     // rotation; the operator can still request an explicit restart.
     const bridge = this.currentBridgeState(OVERSEER_SESSION);
     if (

@@ -205,8 +205,6 @@ describe("the worker world", () => {
       ...names,
       "OPENAI_API_KEY",
       "QCR_STATE_DB",
-      "QCR_SESSION_COMMAND_START_LEASE_MS",
-      "QCR_SESSION_COMMAND_RUNNING_LEASE_MS",
     ]);
     for (const name of WORKER_ENV_DROPPED) expect(producible.has(name), name).toBe(true);
     expect(workerSessionEnv(r.sessions, "pr-7", {})).not.toHaveProperty("QCR_INJECT_DIR");
