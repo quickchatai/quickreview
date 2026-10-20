@@ -336,6 +336,12 @@ assert_subagent_example() {
 # ---- modes -------------------------------------------------------------------
 
 mode_daemon() {
+  # `daemon --preflight` (P8.4b): the updater's check on a scratch copy, run with
+  # --network none. It starts nothing (no tmux, no git config, no pi settings):
+  # it reads the mounts and prints one JSON report.
+  if [ "${1:-}" = "--preflight" ]; then
+    exec node "$APP/dist/src/preflight.js"
+  fi
   # The key a pi OAuth /login does not provide: exported so the tmux server and
   # every pi process inherit it.
   local secrets="${QCR_SECRETS_MOUNT:-/opt/quickreview/secrets}"

@@ -164,11 +164,12 @@ LABEL qcr.build-sha="${BUILD_SHA}"
 # has no such label). qcr.runspec is the run-spec version the image needs of
 # /etc/qcr/update.conf, which `provision` renders: an image that needs a newer
 # one than the VM holds is refused with "re-run provision". qcr.pi is the pi pin
-# the preflight holds to config.toml [pi] and group_vars. (qcr.preflight, which
-# says the image has `daemon --preflight`, is labelled by the change that adds
-# that subcommand, never before it exists.) tests/deploy.test.ts pins the
-# runspec to scripts/deploy.sh's RUNSPEC_VERSION.
+# the preflight holds to config.toml [pi] and group_vars. qcr.preflight says the
+# image has `daemon --preflight` (src/preflight.ts); qcr-update refuses an image
+# without it. tests/deploy.test.ts pins the runspec to scripts/deploy.sh's
+# RUNSPEC_VERSION.
 LABEL qcr.layout="release" \
+      qcr.preflight="true" \
       qcr.runspec="1" \
       qcr.pi="${PI_VERSION}"
 RUN printf '%s\n' "${BUILD_SHA}" > /opt/qcr/BUILD_SHA
