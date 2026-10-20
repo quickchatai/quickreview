@@ -23,7 +23,7 @@ for r in a.on:
 
 pid, fd = pty.fork()
 if pid == 0:
-    os.environ["TERM"] = "dumb"
+    os.environ["TERM"] = "xterm-256color"
     os.execvp(cmd[0], cmd)
 
 import fcntl, struct, termios
