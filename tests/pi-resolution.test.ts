@@ -150,7 +150,7 @@ async function runProbe(pi: InstalledPi, name: string): Promise<Probe> {
       "--no-mcp",
       "--no-context-files",
       "-e",
-      join(ROOT, "extensions", "ledger-pin.ts"),
+      join(ROOT, "extensions", "cli", "ledger-pin.ts"),
       "-e",
       probe,
     ],

@@ -17,7 +17,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
@@ -72,11 +72,11 @@ describe("[debug-pi] what pi is started with", () => {
   });
 
   it("loads the round's extensions with the debug one in the lens tool's place, bash-guard included", () => {
-    const loaded = argv.flatMap((a, i) => (argv[i - 1] === "--extension" ? [basename(a)] : []));
+    const loaded = argv.flatMap((a, i) => (argv[i - 1] === "--extension" ? [a.slice(a.indexOf("/extensions/") + "/extensions/".length)] : []));
     expect(loaded).toEqual([
-      "bash-guard.ts",
-      "ledger-pin.ts",
-      "debug-round.ts",
+      "cli/bash-guard.ts",
+      "cli/ledger-pin.ts",
+      "cli/debug-round.ts",
       "finding-clusters.ts",
     ]);
     expect([...DEBUG_ROUND_EXTENSIONS]).toEqual(loaded);

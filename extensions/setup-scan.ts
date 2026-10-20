@@ -1126,7 +1126,7 @@ export function scanLeafRunner(
 export function buildScan(
   engine: SetupEngine,
   reviewedRepo: string,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv,
   shared: { memory: MemoryStore | null; tracker: TrackerSink } | null = null,
   /** The driver lease; default the state home's file lease, shared with every
    * other runner over it. */

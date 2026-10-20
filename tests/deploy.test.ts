@@ -2962,7 +2962,7 @@ describe("deploy — the memory sidecar", () => {
         entry.indexOf("mode_daemon() {"),
         entry.indexOf("mode_companion() {"),
       );
-      expect(daemonMode).toContain('QCR_PI_REQUIRE_EXT="$APP/extensions/bash-guard.ts"');
+      expect(daemonMode).toContain('QCR_PI_REQUIRE_EXT="$APP/extensions/cli/bash-guard.ts"');
       expect(entry).toContain('console.error("FATAL: pi extension missing: " + p)');
       expect(daemonMode).toContain("assert_pinned_pi_cli");
       expect(daemonMode).not.toContain("assert_subagent_example");

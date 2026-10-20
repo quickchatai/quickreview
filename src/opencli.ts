@@ -69,14 +69,14 @@ export function openHelp(): string {
  * round had (bash-guard, ledger-pin, the lens tool, cluster_findings). Nothing
  * here posts: the posting path is the gate's, never a session's. */
 export const MAIN_OPEN_EXTENSIONS = [
-  "bash-guard.ts",
-  "ledger-pin.ts",
-  "lens.ts",
+  "cli/bash-guard.ts",
+  "cli/ledger-pin.ts",
+  "cli/lens.ts",
   "finding-clusters.ts",
 ] as const;
 
 /** A lens pass is a leaf: the guard, and no lens tool. */
-export const LENS_OPEN_EXTENSIONS = ["bash-guard.ts"] as const;
+export const LENS_OPEN_EXTENSIONS = ["cli/bash-guard.ts"] as const;
 
 /** The bot's own session (`qcr open pr`): the guard alone. The bot's tools are
  * the tmux era's subagent/launch_plan, which this machine does not run, and the

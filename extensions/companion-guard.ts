@@ -42,7 +42,7 @@
 // for this hook.
 import { readFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
-import type { ExtensionAPI, ToolCallEvent } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionFactory, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import { shellWords, splitShellSegments } from "./bash-guard.js";
 
 export interface BashRule {
@@ -280,9 +280,9 @@ export function readSeedManifest(root: string): ManifestRead {
  * The degradation is (a) always LOUD — `readSeedManifest` classifies a
  * manifest that names no files as unreadable, so the empty frozen set cannot
  * arrive silently — and (b) never cached for the life of the session; see
- * `activate`.
+ * `registerCompanionGuard`.
  *
- * It takes the READ rather than a path so `activate` can use this one function
+ * It takes the READ rather than a path so `registerCompanionGuard` can use this one function
  * for the set AND classify the degradation from the same single read.
  */
 export function frozenPaths(read: ManifestRead): Set<string> {
@@ -312,8 +312,27 @@ export function writeBlockReason(
  * returning { block, reason } is VERIFIED (pi control-surface findings §5); the
  * payload field names (`toolName`, `input`/`arguments`, write/edit's `path`)
  * stay VERIFY-ON-PIN, probed defensively. */
-export default function activate(pi: ExtensionAPI): void {
-  const root = process.env.QCR_ROOT ?? process.cwd();
+export interface CompanionGuardConfig {
+  /** The checkout whose seed manifest and frozen paths the guard reads. */
+  root: string;
+}
+
+/** The root the env describes: QCR_ROOT, else `cwd`. */
+export function companionGuardConfigFromEnv(
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+): CompanionGuardConfig {
+  return { root: env.QCR_ROOT ?? cwd };
+}
+
+/** The factory that vetoes the companion's bright-line calls. The env shim is
+ * extensions/cli/companion-guard.ts. */
+export function createCompanionGuard(config: CompanionGuardConfig): ExtensionFactory {
+  return (pi) => registerCompanionGuard(pi, config);
+}
+
+function registerCompanionGuard(pi: ExtensionAPI, config: CompanionGuardConfig): void {
+  const root = config.root;
   let frozen: Set<string> | undefined;
   let warnedDegraded = false;
 

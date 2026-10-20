@@ -2,16 +2,10 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import activate, {
+import {
   APP_SECRET_FILES,
-  bashGuardConfigFromEnv,
-  checkBashCommand,
-  checkReadPath,
-  checkProcSecrets,
   checkReaderModes,
-  checkSecretPaths,
   checkWritePath,
-  defaultSecretPathContext,
   createBashGuard,
   DELIVERY_SURFACE,
   isDeliverySurface,
@@ -21,6 +15,15 @@ import activate, {
   redirectTargets,
   type SecretPathContext,
 } from "../extensions/bash-guard.js";
+import activate from "../extensions/cli/bash-guard.js";
+import {
+  bashGuardConfigFromEnv,
+  checkBashCommand,
+  checkReadPath,
+  checkProcSecrets,
+  checkSecretPaths,
+  defaultSecretPathContext,
+} from "../extensions/cli/bash-guard-ambient.js";
 import { ovRecallHintPathIn, ovRetiredPathIn } from "../src/memory/ovsession.js";
 
 const allow = (cmd: string): void => {

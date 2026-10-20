@@ -36,7 +36,7 @@ import {
   watch,
 } from "node:fs";
 import { basename, join } from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { writeSessionBridgeState, type SessionBridgeCompaction } from "../src/session-bridge.js";
 
 /**
@@ -49,7 +49,7 @@ import { writeSessionBridgeState, type SessionBridgeCompaction } from "../src/se
  *      no QCR_SESSION_NAME watches.
  *   3. "session" as the last resort (matches ledger-pin's default).
  */
-export function resolveSessionName(pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env): string {
+export function resolveSessionName(pi: ExtensionAPI, env: NodeJS.ProcessEnv): string {
   const fromEnv = env.QCR_SESSION_NAME?.trim();
   if (fromEnv) return fromEnv;
   const named = (pi as { session?: { name?: unknown } }).session?.name;
@@ -58,10 +58,10 @@ export function resolveSessionName(pi: ExtensionAPI, env: NodeJS.ProcessEnv = pr
   return "session";
 }
 
-export function resolveInjectDir(pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env): string {
+export function resolveInjectDir(pi: ExtensionAPI, env: NodeJS.ProcessEnv, cwd: string): string {
   const explicit = env.QCR_INJECT_DIR?.trim();
   if (explicit) return explicit;
-  const root = env.QCR_SANDBOX_ROOT?.trim() || process.cwd();
+  const root = env.QCR_SANDBOX_ROOT?.trim() || cwd;
   return join(root, "inject", resolveSessionName(pi, env));
 }
 
@@ -114,14 +114,46 @@ export const IDLE_RECHECK_MS = 1_000;
  */
 export const DELIVER_AS = "followUp" as const;
 
-export const activate: (pi: ExtensionAPI) => void = (pi) => {
-  const dir = resolveInjectDir(pi);
+/** What one inbox bridge needs, resolved: no env is read past here. */
+export interface InjectBridgeConfig {
+  /** The mailbox directory the bridge watches. */
+  dir: string;
+  /** The session's name (the bridge-state receipt carries it). */
+  session: string;
+  /** The generation and file of the bridge-state receipt; both or neither. */
+  bridgeGeneration?: string;
+  bridgeStateFile?: string;
+}
+
+/** The config the env describes: QCR_INJECT_DIR (else the sandbox root, else
+ * `cwd`, plus `inject/<session>`), QCR_SESSION_NAME, and the bridge-state
+ * receipt's QCR_SESSION_BRIDGE_GENERATION / QCR_SESSION_BRIDGE_STATE_FILE. */
+export function injectBridgeConfigFromEnv(
+  pi: ExtensionAPI,
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+): InjectBridgeConfig {
+  const bridgeGeneration = env.QCR_SESSION_BRIDGE_GENERATION?.trim();
+  const bridgeStateFile = env.QCR_SESSION_BRIDGE_STATE_FILE?.trim();
+  return {
+    dir: resolveInjectDir(pi, env, cwd),
+    session: resolveSessionName(pi, env),
+    ...(bridgeGeneration ? { bridgeGeneration } : {}),
+    ...(bridgeStateFile ? { bridgeStateFile } : {}),
+  };
+}
+
+/** The factory that watches `config.dir` and offers each wake to pi. The env
+ * shim is extensions/cli/inject-bridge.ts. */
+export function createInjectBridge(config: InjectBridgeConfig): ExtensionFactory {
+  return (pi) => registerInjectBridge(pi, config);
+}
+
+function registerInjectBridge(pi: ExtensionAPI, config: InjectBridgeConfig): void {
+  const { dir, session, bridgeGeneration, bridgeStateFile } = config;
   const doneDir = join(dir, ".done");
   let watcher: ReturnType<typeof watch> | undefined;
   let closed = false;
-  const session = resolveSessionName(pi);
-  const bridgeGeneration = process.env.QCR_SESSION_BRIDGE_GENERATION?.trim();
-  const bridgeStateFile = process.env.QCR_SESSION_BRIDGE_STATE_FILE?.trim();
   let bridgeFailed = false;
   let readyPublished = false;
   // pi's compaction, as far as the bridge knows it. Published
@@ -574,6 +606,4 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
     remember(ctx);
     endCompaction("failed");
   });
-};
-
-export default activate;
+}

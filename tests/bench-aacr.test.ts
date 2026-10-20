@@ -1128,7 +1128,7 @@ describe("the benchmark's login: read-only, never refreshed", () => {
       const settings = JSON.parse(readFileSync(join(dst, "settings.json"), "utf8"));
       expect(settings).toEqual({
         extensions: [
-          "/r/extensions/bash-guard.ts",
+          "/r/extensions/cli/bash-guard.ts",
           "-builtin:mcp",
           "-builtin:codemode",
           "-builtin:tool-search",

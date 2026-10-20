@@ -66,7 +66,7 @@ export function onboardingPiArgv(pin: PiPin, root: string): string[] {
     "--no-skills",
     "--no-context-files",
     "-e",
-    join(root, "extensions", "onboarding.ts"),
+    join(root, "extensions", "cli", "onboarding.ts"),
     "--system-prompt",
     join(root, "prompts", "onboarding.md"),
     "--tools",

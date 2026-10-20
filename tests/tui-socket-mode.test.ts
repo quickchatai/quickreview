@@ -232,7 +232,7 @@ describe("runTui with the companion behind a tmux socket", () => {
     // the companion's pi, from the image's extensions
     const born = s.tmux.find((a) => a.includes("new-session"))!;
     expect(born).toContain("pi");
-    expect(born).toContain("/opt/qcr/extensions/lens.ts");
+    expect(born).toContain("/opt/qcr/extensions/cli/lens.ts");
     expect(born).toContain("QCR_FEED_DIR=/feed");
 
     // no docker anywhere: not to start, not to inspect, not to stop at quit

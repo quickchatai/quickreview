@@ -182,7 +182,7 @@ const planFor =
       agent_dir: join(root, "agent"),
       session_file: join(root, "state", "pi-sessions", `pr-${pr}`, "s.jsonl"),
       model: "faux/faux-1",
-      extensions: [join(root, "extensions", "bash-guard.ts")],
+      extensions: [join(root, "extensions", "cli", "bash-guard.ts")],
       env: { QCR_SANDBOX_ROOT: root },
     };
   };

@@ -195,8 +195,11 @@ function block(reason: string): BashCheck {
  * at construction; the exported pure checkers build one from the process (the
  * ambient policy below) when a caller passes none.
  */
-interface GuardPolicy {
+export interface GuardPolicy {
   sandboxRoot: string;
+  /** The cwd the secret and /proc belts resolve a relative word against when a
+   * `cd` has made the command's own cwd unknown. */
+  cwd: string;
   /** A regression replay session (src/replay.ts), spawned with `QCR_REPLAY=1`
    * on its pi's own environment, which no bash command can change. It posts
    * nothing and reads nothing from GitHub, so no sandbox script is sanctioned
@@ -1266,12 +1269,13 @@ const ROOT_CREDENTIAL_PATTERNS: Array<{ re: RegExp; what: string }> = [
 ];
 
 /** The root-credential check, plus the App-secret belt below.
- * Exported so the reason is testable on its own. `ctx` defaults to this
- * process's own cwd, home and secrets dirs. */
-export function checkSecretPaths(cmd: string, ctx?: SecretPathContext): BashCheck {
+ * Exported so the reason is testable on its own. extensions/cli/bash-guard-ambient.ts
+ * is the same call with `ctx` defaulted to this process's own cwd, home and
+ * secrets dirs. */
+export function checkSecretPaths(cmd: string, ctx: SecretPathContext): BashCheck {
   const root = checkRootCredentialSpelling(cmd);
   if (!root.allowed) return root;
-  return checkAppSecretWords(cmd, ctx ?? processSecretContext());
+  return checkAppSecretWords(cmd, ctx);
 }
 
 function checkRootCredentialSpelling(text: string): BashCheck {
@@ -1369,8 +1373,8 @@ const SECRET_DIR_SPELLINGS: readonly RegExp[] = [
  * `[github] secrets_dir` read best-effort from `$QCR_CONFIG`.
  */
 export function defaultSecretPathContext(
-  env: Readonly<Record<string, string | undefined>> = process.env,
-  cwd: string = process.cwd(),
+  env: Readonly<Record<string, string | undefined>>,
+  cwd: string,
 ): SecretPathContext {
   const home = homeFor(env);
   const xdg = (env.XDG_CONFIG_HOME ?? "").trim() || `${home}/.config`;
@@ -1440,13 +1444,6 @@ function configuredSecretsDir(configPath: string | undefined): string | null {
     /* unreadable config: nothing to add */
   }
   return null;
-}
-
-let cachedSecretDirs: SecretPathContext | null = null;
-/** The live process's context: dirs resolved once, the cwd read every call. */
-function processSecretContext(): SecretPathContext {
-  cachedSecretDirs ??= defaultSecretPathContext();
-  return { ...cachedSecretDirs, cwd: process.cwd() };
 }
 
 /** Programs whose first positional (or `-e` value) is a PATTERN or script,
@@ -1818,10 +1815,9 @@ export function judgeSecretPath(w: string, ctx: SecretPathContext): BashCheck {
  * judgement the bash belt applies to a word applies to that path — plus the
  * OpenViking root-credential spellings.
  */
-export function checkReadPath(path: string, ctx?: SecretPathContext): BashCheck {
+export function checkReadPath(path: string, c: SecretPathContext): BashCheck {
   const root = checkRootCredentialSpelling(path);
   if (!root.allowed) return root;
-  const c = ctx ?? processSecretContext();
   const p = path.startsWith("@") ? path.slice(1) : path;
   const w = expandShellWord(p, c.env);
   const proc = judgeProcPath(w, c.cwd);
@@ -1928,7 +1924,7 @@ function judgeProcWord(raw: string, cwd: string): BashCheck {
 }
 
 /** Refuse a command that names `/proc/<pid>/{environ,mem,cmdline,fd,fdinfo}`. */
-export function checkProcSecrets(cmd: string, cwd: string = process.cwd()): BashCheck {
+export function checkProcSecrets(cmd: string, cwd: string): BashCheck {
   for (const text of [procOpenSubstitutions(cmd), procDynamicToGlob(cmd)]) {
     let at = cwd;
     for (const segment of splitShellSegments(text)) {
@@ -2544,19 +2540,19 @@ export function redirectTargets(cmd: string): string[] {
  * (quote-aware) and vet each segment's first program token. */
 export function checkBashCommand(
   cmd: string,
-  depth = 0,
-  cwd: string | null = process.cwd(),
-  policy: GuardPolicy = ambientPolicy(),
+  depth: number,
+  cwd: string | null,
+  policy: GuardPolicy,
 ): BashCheck {
   const normalized = normalizeRedirections(cmd);
   const scriptCwd = scriptCwdForCommand(normalized, cwd, policy);
   // Checked over the WHOLE command, before the per-segment program check: the
   // programs that would read a root credential (cat, grep, jq…) are all
   // legitimately allowed, so the path is the only thing that distinguishes it.
-  const secret = checkSecretPaths(normalized, { ...policy.secrets, cwd: cwd ?? process.cwd() });
+  const secret = checkSecretPaths(normalized, { ...policy.secrets, cwd: cwd ?? policy.cwd });
   if (!secret.allowed) return secret;
   // Same reason again: `/proc/<pid>/environ` is read by `cat`.
-  const proc = checkProcSecrets(normalized, cwd ?? process.cwd());
+  const proc = checkProcSecrets(normalized, cwd ?? policy.cwd);
   if (!proc.allowed) return proc;
   // Same shape, same reason: a PROTECTED write surface
   // (`isProtectedWriteTarget`). A redirection target is not a program token,
@@ -3057,6 +3053,9 @@ const READ_TOOLS = new Set(["read", "grep", "find", "ls", "read_file", "view", "
 export interface BashGuardConfig {
   /** The daemon-selected checkout that owns the sanctioned script bytes. */
   sandboxRoot: string;
+  /** The cwd a tool call is judged from when pi's context names none. Omitted:
+   * the sandbox root. */
+  cwd?: string;
   /** A regression replay session: no sandbox script is sanctioned at all. */
   replay: boolean;
   /** A takeover (P8.13): the scripts that post are not sanctioned. Omitted: false. */
@@ -3067,7 +3066,7 @@ export interface BashGuardConfig {
   /** HOME, XDG_CONFIG_HOME and QCR_INSTALL, the variables a secrets path is
    * spelled with in a command, plus QCR_IPC_SOCKET, which locates the IPC
    * run dir. Unset falls back to the
-   * defaults the env shim's `defaultSecretPathContext` uses. */
+   * defaults `defaultSecretPathContext` uses. */
   pathEnv?: Readonly<Record<string, string | undefined>>;
 }
 
@@ -3075,6 +3074,7 @@ function policyFromConfig(config: BashGuardConfig): GuardPolicy {
   const dirs = new Set<string>([CONTAINER_SECRETS_DIR, ...config.secretDirs]);
   return {
     sandboxRoot: config.sandboxRoot,
+    cwd: config.cwd ?? config.sandboxRoot,
     replay: config.replay,
     noPost: config.noPost === true,
     secrets: {
@@ -3090,10 +3090,11 @@ function policyFromConfig(config: BashGuardConfig): GuardPolicy {
 /** The config the env describes: QCR_SANDBOX_ROOT (else the cwd), QCR_REPLAY,
  * QCR_TAKEOVER, and the secrets dirs `defaultSecretPathContext` resolves from the same env. */
 export function bashGuardConfigFromEnv(
-  env: Readonly<Record<string, string | undefined>> = process.env,
-  cwd: string = process.cwd(),
+  env: Readonly<Record<string, string | undefined>>,
+  cwd: string,
 ): BashGuardConfig {
   return {
+    cwd,
     sandboxRoot: env.QCR_SANDBOX_ROOT ?? cwd,
     replay: env.QCR_REPLAY === "1",
     noPost: env.QCR_TAKEOVER === "1",
@@ -3107,24 +3108,10 @@ export function bashGuardConfigFromEnv(
   };
 }
 
-/** The policy the process describes, read at each call: what the exported
- * pure checkers use when a caller passes none, so a test (or tool) that sets
- * QCR_SANDBOX_ROOT or QCR_REPLAY sees it at once. The secrets dirs are
- * resolved once, as they always were. */
-function ambientPolicy(): GuardPolicy {
-  const { cwd: _cwd, ...secrets } = processSecretContext();
-  return {
-    sandboxRoot: process.env.QCR_SANDBOX_ROOT ?? process.cwd(),
-    replay: process.env.QCR_REPLAY === "1",
-    noPost: process.env.QCR_TAKEOVER === "1",
-    secrets,
-  };
-}
-
 /**
- * The factory a session loads: the guard over this config. Both hosts carry
- * the same object, a tmux pi through the default export below and an SDK
- * session as an extension factory. VERIFIED (pi control-surface findings §5):
+ * The factory a session loads: the guard over this config. A pi loaded by
+ * path gets it through the env shim, extensions/cli/bash-guard.ts, and an SDK
+ * session as this extension factory. VERIFIED (pi control-surface findings §5):
  * a tool_call handler can return { block: true, reason } to veto the call, and
  * event.input is mutable. pi 1.3.0 emits `{ type: "tool_call", toolName,
  * toolCallId, input }` and its read/grep/find/ls tools take `path` (grep also
@@ -3150,7 +3137,7 @@ export function createBashGuard(config: BashGuardConfig): ExtensionFactory {
           }
         | undefined;
       // The session's own cwd: an SDK session shares its host's process.
-      const cwd = typeof ctx?.cwd === "string" ? ctx.cwd : process.cwd();
+      const cwd = typeof ctx?.cwd === "string" ? ctx.cwd : policy.cwd;
 
       // The App-secret belt on every file tool, read AND write: an
       // `edit` that fails to match still answers with what it read.
@@ -3185,9 +3172,4 @@ export function createBashGuard(config: BashGuardConfig): ExtensionFactory {
       return;
     });
   };
-}
-
-/** pi activation: the env shim. The env is read here, once, at activation. */
-export default function activate(pi: ExtensionAPI): void {
-  void createBashGuard(bashGuardConfigFromEnv(process.env))(pi);
 }

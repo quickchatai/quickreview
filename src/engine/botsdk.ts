@@ -214,7 +214,7 @@ export function botSdkExtras(options: BotSdkOptions): (spec: SessionSpec) => Ses
       return {
         extensions: [
           createBashGuard(bashGuardConfigFromEnv(spec.env, spec.cwd)),
-          createLedgerPin(ledgerPinConfigFromEnv(spec.env)),
+          createLedgerPin(ledgerPinConfigFromEnv(spec.env, process.cwd())),
           createAnswerGuard(),
           createOpenViking((options.openViking ?? ((c) => c))(memory)),
         ],
@@ -229,7 +229,7 @@ export function botSdkExtras(options: BotSdkOptions): (spec: SessionSpec) => Ses
       // The tmux bot's `--extension` order, bash-guard first (it rides pi's
       // global settings there).
       createBashGuard(bashGuardConfigFromEnv(spec.env, spec.cwd)),
-      createLedgerPin(ledgerPinConfigFromEnv(spec.env)),
+      createLedgerPin(ledgerPinConfigFromEnv(spec.env, process.cwd())),
       ...lens.factories,
       createFindingClusters(),
       createOpenViking((options.openViking ?? ((c) => c))(memory)),

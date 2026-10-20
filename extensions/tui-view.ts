@@ -36,6 +36,7 @@ import { join } from "node:path";
 import type {
   AgentToolResult,
   ExtensionAPI,
+  ExtensionFactory,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 
@@ -52,10 +53,10 @@ export const STALE_AFTER_MS = 30_000;
  * surface is exactly these, all reads. */
 export const TOOL_NAMES = ["tui_screen", "tui_deploy", "tui_board"] as const;
 
-export function resolveFeedDir(env: NodeJS.ProcessEnv = process.env): string {
+export function resolveFeedDir(env: NodeJS.ProcessEnv, cwd: string): string {
   const explicit = env.QCR_FEED_DIR?.trim();
   if (explicit) return explicit;
-  const root = env.QCR_ROOT?.trim() || process.cwd();
+  const root = env.QCR_ROOT?.trim() || cwd;
   return join(root, "state", "companion", "feed");
 }
 
@@ -460,12 +461,18 @@ export function toolDefinitions(dir: string, now: () => Date = () => new Date())
   ];
 }
 
-export const activate = (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env): void => {
-  // A pi without registerTool registers nothing and says nothing — the
-  // companion must still start (it never wedges).
-  if (typeof pi.registerTool !== "function") return;
-  const dir = resolveFeedDir(env);
-  for (const def of toolDefinitions(dir)) pi.registerTool(def);
-};
+export interface TuiViewConfig {
+  /** The directory the TUI's feed writer fills (view.json, screen.txt). */
+  feedDir: string;
+}
 
-export default activate;
+/** The factory that registers the `tui_*` tools over `feedDir`. The env shim
+ * is extensions/cli/tui-view.ts. */
+export function createTuiView(config: TuiViewConfig): ExtensionFactory {
+  return (pi: ExtensionAPI): void => {
+    // A pi without registerTool registers nothing and says nothing — the
+    // companion must still start (it never wedges).
+    if (typeof pi.registerTool !== "function") return;
+    for (const def of toolDefinitions(config.feedDir)) pi.registerTool(def);
+  };
+}

@@ -27,7 +27,7 @@
 # No npm build, no state symlink: the image is built, /opt/qcr is read-only to
 # every runtime uid, and <root>/state is a world-writable mount point.
 #
-# bash-guard (extensions/bash-guard.ts) is registered in pi's global settings
+# bash-guard (extensions/cli/bash-guard.ts) is registered in pi's global settings
 # by the daemon mode only (the companion never registered it globally either:
 # its guard rides per-spawn argv). D32 drops it from the per-call cli mode,
 # which runs in a throwaway container that is the sandbox, and puts the model's
@@ -359,7 +359,7 @@ mode_daemon() {
 
   # The global registration: bash-guard ONLY (see provision_pi_settings), a
   # missing file is FATAL.
-  QCR_PI_REQUIRE_EXT="$APP/extensions/bash-guard.ts" \
+  QCR_PI_REQUIRE_EXT="$APP/extensions/cli/bash-guard.ts" \
     QCR_PI_TRUST_DIR="$APP" \
     QCR_PI_AGENTS_TARGET="$STATE/agents" \
     provision_pi_settings >&2

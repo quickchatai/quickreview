@@ -38,7 +38,7 @@ import {
   takeHandoffToken,
 } from "../src/ghcred.js";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import bashGuard from "../extensions/bash-guard.js";
+import bashGuard from "../extensions/cli/bash-guard.js";
 import { main } from "../src/cli.js";
 import { type HostRig, createHostRig, useOfflineGuard } from "./pi-canary/harness.js";
 

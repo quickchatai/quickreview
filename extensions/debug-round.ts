@@ -100,7 +100,8 @@ export interface DebugRoundOptions {
   /** The capability fd the model's commands inherit (a round that posts through the
    * daemon). Omitted: pi's own bash tool, which hands a command nothing but stdio. */
   capFd?: number;
-  /** The cwd the replacement bash tool runs commands in. Default: this process's. */
+  /** The cwd the replacement bash tool runs commands in. Default: the process's own
+   * (".", resolved when a command starts). */
   cwd?: string;
   now?: () => Date;
 }
@@ -143,7 +144,7 @@ export function createDebugRound(o: DebugRoundOptions): ExtensionFactory {
     void o.lens.factory(pi);
     if (o.capFd !== undefined && typeof pi.registerTool === "function")
       pi.registerTool(
-        createBashToolDefinition(o.cwd ?? process.cwd(), {
+        createBashToolDefinition(o.cwd ?? ".", {
           operations: inheritingBashOperations([o.capFd]),
         }) as unknown as ToolDefinition,
       );
@@ -221,14 +222,19 @@ export function lensAdjust(o: {
   });
 }
 
-const activate = (pi: ExtensionAPI): void => {
-  const env = process.env;
+/** The debug round a pi loaded by path runs: the order, stub, pack, status file,
+ * lens dir and capability fd all come from `env`, the cwd from `cwd`. The env
+ * shim is extensions/cli/debug-round.ts. */
+export function activateDebugRound(
+  pi: ExtensionAPI,
+  env: Readonly<Record<string, string | undefined>>,
+  cwd: string,
+): void {
   const orderFile = env[DEBUG_ORDER_ENV];
   if (orderFile === undefined || typeof pi.registerCommand !== "function") {
     console.error(`debug-round: ${DEBUG_ORDER_ENV} is not set - no round to start.`);
     return;
   }
-  const cwd = process.cwd();
   const ledger = env["QCR_LEDGER_FILE"];
   const roundDir = ledger ? dirname(ledger) : dirname(orderFile);
   /** What the lens passes carry beyond the shim's defaults: the reviewer stub the
@@ -265,6 +271,4 @@ const activate = (pi: ExtensionAPI): void => {
     statusFile,
     ...(capFd !== null ? { capFd, cwd } : {}),
   })(pi);
-};
-
-export default activate;
+}

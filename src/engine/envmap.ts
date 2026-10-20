@@ -50,7 +50,7 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
   },
   QCR_SANDBOX_ROOT: {
     kind: "extension-config",
-    readers: ["bash-guard.ts", "inject-bridge.ts", "ledger-pin.ts"],
+    readers: ["bash-guard.ts", "cli/bash-guard-ambient.ts", "inject-bridge.ts", "ledger-pin.ts"],
     note: "the sandbox the session runs in; also a relocator bash-guard refuses in a command",
   },
   QCR_STATE_DB: {
@@ -90,12 +90,12 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
   },
   QCR_REPLAY: {
     kind: "extension-config",
-    readers: ["bash-guard.ts"],
+    readers: ["bash-guard.ts", "cli/bash-guard-ambient.ts"],
     note: "=1 on a replay pi's own env, which no bash command can set",
   },
   QCR_TAKEOVER: {
     kind: "extension-config",
-    readers: ["bash-guard.ts"],
+    readers: ["bash-guard.ts", "cli/bash-guard-ambient.ts"],
     note: "=1 on a takeover pi's own env (P8.13): the post scripts are not sanctioned there",
   },
 

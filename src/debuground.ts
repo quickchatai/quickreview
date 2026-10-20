@@ -86,9 +86,9 @@ export const DEBUG_VERDICT_SETTLE_MS = 15_000;
  * worker's own set (src/engine/botsdk.ts), with the debug extension (which carries
  * the lens tools) in the lens slot. */
 export const DEBUG_BOT_EXTENSIONS = [
-  "extensions/bash-guard.ts",
-  "extensions/ledger-pin.ts",
-  "extensions/debug-round.ts",
+  "extensions/cli/bash-guard.ts",
+  "extensions/cli/ledger-pin.ts",
+  "extensions/cli/debug-round.ts",
   "extensions/finding-clusters.ts",
   "extensions/vendor/openviking-pi/index.ts",
 ] as const;

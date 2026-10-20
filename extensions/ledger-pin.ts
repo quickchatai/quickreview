@@ -99,10 +99,10 @@ export function extractLedger(
   return found;
 }
 
-export function ledgerSnapshotPath(env: NodeJS.ProcessEnv, session: string): string {
+export function ledgerSnapshotPath(env: NodeJS.ProcessEnv, session: string, cwd: string): string {
   const explicit = env.QCR_LEDGER_FILE?.trim();
   if (explicit) return explicit;
-  const root = env.QCR_SANDBOX_ROOT?.trim() || process.cwd();
+  const root = env.QCR_SANDBOX_ROOT?.trim() || cwd;
   return join(root, "state", "ledgers", `${session}.md`);
 }
 
@@ -287,9 +287,11 @@ export interface LedgerPinConfig extends LedgerPinDeps {
 }
 
 /** The config the env describes (QCR_SESSION_NAME, QCR_PR_META, QCR_PR, and
- * the snapshot path from ledgerSnapshotPath). */
+ * the snapshot path from ledgerSnapshotPath, `cwd` standing in for an absent
+ * sandbox root). */
 export function ledgerPinConfigFromEnv(
   env: NodeJS.ProcessEnv,
+  cwd: string,
   deps: LedgerPinDeps = {},
 ): LedgerPinConfig {
   const session = env.QCR_SESSION_NAME?.trim() || "session";
@@ -297,21 +299,16 @@ export function ledgerPinConfigFromEnv(
     session,
     prMeta: env.QCR_PR_META?.trim() ?? "",
     ownPr: parseOwnPr(env.QCR_PR),
-    snapshotPath: ledgerSnapshotPath(env, session),
+    snapshotPath: ledgerSnapshotPath(env, session, cwd),
     ...deps,
   };
 }
 
-/** The factory an SDK session loads. The default export is its env shim. */
+/** The factory an SDK session loads. Its env shim is extensions/cli/ledger-pin.ts. */
 export function createLedgerPin(config: LedgerPinConfig): ExtensionFactory {
   return (pi: ExtensionAPI): void => {
     registerLedgerPin(pi, config);
   };
-}
-
-/** Env shim with injectable deps: the env is read at activation, as before. */
-export function activateWith(pi: ExtensionAPI, deps: LedgerPinDeps = {}): void {
-  registerLedgerPin(pi, ledgerPinConfigFromEnv(process.env, deps));
 }
 
 function registerLedgerPin(pi: ExtensionAPI, config: LedgerPinConfig): void {
@@ -373,7 +370,3 @@ function registerLedgerPin(pi: ExtensionAPI, config: LedgerPinConfig): void {
     },
   );
 }
-
-export const activate: (pi: ExtensionAPI) => void = (pi) => activateWith(pi);
-
-export default activate;

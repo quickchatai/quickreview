@@ -61,6 +61,12 @@ All three must be green before you commit. Notes that will bite otherwise:
   worktree manager against a scratch git repo, the shell posting scripts against
   a loopback HTTP stub, the CLI and deploy preflight); the current set is
   `PROCESS_SUITES` in `tests/helpers/suite-timeouts.ts`.
+- **Extensions are factories over explicit config.** Nothing under
+  `extensions/` reads `process.env`, `process.cwd()`, `process.argv` or
+  `os.homedir()` (an ESLint ban, `tests/extension-lint-ban.test.ts`). A pi that
+  loads an extension by path loads its env shim, `extensions/cli/<name>.ts`,
+  the one place the process becomes config; an SDK session builds the factory
+  (`createX(config)`) itself.
 - **Every behaviour change needs a test at the seam it changes.** See
   [`tests/AGENTS.md`](tests/AGENTS.md) for the house style.
 - **Fences are verified by mutation.** A structural test that cannot be made to

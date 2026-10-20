@@ -39,9 +39,9 @@ import type { PiRun } from "./port.js";
  * `extensions/`: the round's own set with the debug extension (which carries the
  * lens tools) in the lens tool's place. Nothing here posts. */
 export const DEBUG_ROUND_EXTENSIONS = [
-  "bash-guard.ts",
-  "ledger-pin.ts",
-  "debug-round.ts",
+  "cli/bash-guard.ts",
+  "cli/ledger-pin.ts",
+  "cli/debug-round.ts",
   "finding-clusters.ts",
 ] as const;
 

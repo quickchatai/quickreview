@@ -436,8 +436,8 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
       systemPromptFile: sysPath,
       // The extension list is the whole list: the session discovers none.
       extensions: [
-        join(root, "extensions", "bash-guard.ts"),
-        join(root, "extensions", "ledger-pin.ts"),
+        join(root, "extensions", "cli", "bash-guard.ts"),
+        join(root, "extensions", "cli", "ledger-pin.ts"),
         // The live PR session's `cluster_findings` tool (src/sessions.ts
         // extensionPaths): the same grouping code on both routes.
         join(root, "extensions", "finding-clusters.ts"),

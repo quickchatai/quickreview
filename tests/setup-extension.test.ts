@@ -13,7 +13,8 @@ import type { QcrTool, QcrToolResult } from "../extensions/pi-tool.js";
 import { EventEmitter } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
 import { PassThrough } from "node:stream";
-import activate, {
+import activate from "../extensions/cli/setup.js";
+import {
   COMPANION_AGENTS_DIR,
   DEFAULT_REVIEWED_REPO,
   buildEngine,
@@ -658,7 +659,7 @@ describe("the pass-survey agent and the case runner", () => {
       "-ns",
       "-nc",
       "--extension",
-      "/workspace/extensions/bash-guard.ts",
+      "/workspace/extensions/cli/bash-guard.ts",
       "--approve",
     ]);
     expect(args).toEqual(

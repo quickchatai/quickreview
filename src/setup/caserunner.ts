@@ -478,7 +478,7 @@ export function piCaseRunner(opts: {
           "-ns",
           "-nc",
           "--extension",
-          join(opts.root ?? opts.cwd, "extensions", "bash-guard.ts"),
+          join(opts.root ?? opts.cwd, "extensions", "cli", "bash-guard.ts"),
           "--approve",
         ];
         if (agent.model) args.push("--model", agent.model);

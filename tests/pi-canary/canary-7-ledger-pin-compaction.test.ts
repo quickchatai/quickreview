@@ -12,7 +12,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import ledgerPin, {
+import ledgerPin from "../../extensions/cli/ledger-pin.js";
+import {
   LEDGER_ENTRY_TYPE,
   PIN_CLOSE,
   PIN_OPEN,

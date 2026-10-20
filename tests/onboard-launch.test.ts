@@ -29,7 +29,7 @@ describe("onboardingPiArgv", () => {
     expect(argv).toContain("--no-skills");
     expect(argv).toContain("--no-context-files");
     const e = argv.indexOf("-e");
-    expect(argv[e + 1]).toBe("/clone/extensions/onboarding.ts");
+    expect(argv[e + 1]).toBe("/clone/extensions/cli/onboarding.ts");
     // exactly one extension flag
     expect(argv.filter((a) => a === "-e" || a === "--extension")).toHaveLength(1);
   });

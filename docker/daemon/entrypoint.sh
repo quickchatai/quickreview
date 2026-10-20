@@ -392,7 +392,7 @@ const wanted = [
   // Repo-shipped guard, rides the sandbox mount. Subagent children load this
   // (they spawn without --no-extensions at the 0.84.4 pin), which puts the
   // exec-policy guard inside leaves too.
-  "/opt/quickreview/sandbox/extensions/bash-guard.ts",
+  "/opt/quickreview/sandbox/extensions/cli/bash-guard.ts",
 ];
 for (const p of wanted) {
   if (!fs.existsSync(p)) {

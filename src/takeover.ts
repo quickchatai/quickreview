@@ -601,7 +601,7 @@ export function takeoverPlanFor(o: {
     session_file: file,
     model: o.model,
     ...(o.systemPromptFile ? { system_prompt_file: o.systemPromptFile } : {}),
-    extensions: [join(o.root, "extensions", "bash-guard.ts")],
+    extensions: [join(o.root, "extensions", "cli", "bash-guard.ts")],
     env: { QCR_SANDBOX_ROOT: o.root, ...o.env },
   };
 }

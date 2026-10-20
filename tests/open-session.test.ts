@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import {
   LENS_OPEN_EXTENSIONS,
@@ -136,8 +136,13 @@ describe("[open] the argv", () => {
 
   it("loads exactly the round's extensions, bash-guard among them, and discovers none", () => {
     const argv = openArgv({ file: "/s/a.jsonl", mode: "fork", extensions: main });
-    const loaded = argv.flatMap((a, i) => (argv[i - 1] === "--extension" ? [basename(a)] : []));
-    expect(loaded).toEqual(["bash-guard.ts", "ledger-pin.ts", "lens.ts", "finding-clusters.ts"]);
+    const loaded = argv.flatMap((a, i) => (argv[i - 1] === "--extension" ? [a.slice(a.indexOf("/extensions/") + "/extensions/".length)] : []));
+    expect(loaded).toEqual([
+      "cli/bash-guard.ts",
+      "cli/ledger-pin.ts",
+      "cli/lens.ts",
+      "finding-clusters.ts",
+    ]);
     expect(argv).toEqual(expect.arrayContaining(["-ne", "-ns", "--approve"]));
     // `-nc` is absent on purpose: the cwd's context file is the reviewer stub.
     expect(argv).not.toContain("-nc");
@@ -146,7 +151,8 @@ describe("[open] the argv", () => {
   it("carries no posting tool: no extension named for posting, and none of them registers one", () => {
     for (const name of [...MAIN_OPEN_EXTENSIONS, ...LENS_OPEN_EXTENSIONS]) {
       expect(name).not.toMatch(/post|inject|review-submit/i);
-      const code = readFileSync(join(ROOT, "extensions", name), "utf8");
+      // The shim names nothing; the tools are registered by the module behind it.
+      const code = readFileSync(join(ROOT, "extensions", name.replace(/^cli\//, "")), "utf8");
       const tools = [...code.matchAll(/\bname:\s*"([a-z_]+)"/g)].map((m) => m[1]!);
       for (const t of tools) expect(t).not.toMatch(/post|submit|comment|review_pr/i);
     }
@@ -161,13 +167,13 @@ describe("[open] the argv", () => {
       deps().d,
     );
     expect(found.ok && found.kind).toBe("lens");
-    expect([...LENS_OPEN_EXTENSIONS]).toEqual(["bash-guard.ts"]);
+    expect([...LENS_OPEN_EXTENSIONS]).toEqual(["cli/bash-guard.ts"]);
     const { d, calls } = deps();
     const dir = round(join(home, "r2"), { lenses: [{ id: "L1", agent: "pass-a" }] });
     expect(await runOpen([dir, "--lens", "L1"], false, d)).toBe(0);
     const args = calls.spawned[0]!.args;
-    const loaded = args.flatMap((a, i) => (args[i - 1] === "--extension" ? [basename(a)] : []));
-    expect(loaded).toEqual(["bash-guard.ts"]);
+    const loaded = args.flatMap((a, i) => (args[i - 1] === "--extension" ? [a.slice(a.indexOf("/extensions/") + "/extensions/".length)] : []));
+    expect(loaded).toEqual(["cli/bash-guard.ts"]);
   });
 });
 

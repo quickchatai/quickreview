@@ -22,7 +22,7 @@ import {
 import { DJANGO_ECOSYSTEM, NONE_ECOSYSTEM } from "../src/ecosystem.js";
 import { RECHECK_FILE_RE, recheckDecisionFile, type RecheckOrder } from "../src/recheck.js";
 import { VERDICT_FILE_RE } from "../src/verdicts.js";
-import { checkBashCommand } from "../extensions/bash-guard.js";
+import { checkBashCommand } from "../extensions/cli/bash-guard-ambient.js";
 import type { RoundOrder, RoundType } from "../src/types.js";
 
 const order: RoundOrder = {

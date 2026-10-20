@@ -31,7 +31,8 @@ import { readFileSync, readdirSync, existsSync, mkdtempSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ALLOWED_PROGRAMS, checkBashCommand } from "../extensions/bash-guard.js";
+import { ALLOWED_PROGRAMS } from "../extensions/bash-guard.js";
+import { checkBashCommand } from "../extensions/cli/bash-guard-ambient.js";
 import {
   ALLOWED_COMMANDS_CLAUSE,
   EXECUTION_POLICY_ADDENDUM,
@@ -464,7 +465,7 @@ describe("the sanctioned-script set is DERIVED from the prompts, not maintained 
    * it. Add "deploy.sh" to that set — this fails too.
    */
   it("every script the prompts mandate is accepted, and nothing else is sanctioned", async () => {
-    const { checkBashCommand } = await import("../extensions/bash-guard.js");
+    const { checkBashCommand } = await import("../extensions/cli/bash-guard-ambient.js");
 
     const mandated = new Set<string>();
     for (const dir of ["prompts", "agents"]) {
@@ -507,7 +508,7 @@ describe("the sanctioned-script set is DERIVED from the prompts, not maintained 
    * accepts one.
    */
   it("accepts each mandated script through every spelling a session would use", async () => {
-    const { checkBashCommand } = await import("../extensions/bash-guard.js");
+    const { checkBashCommand } = await import("../extensions/cli/bash-guard-ambient.js");
     for (const form of [
       "scripts/pr-self.sh 5 reviews",
       "./scripts/pr-self.sh 5 head",
@@ -547,7 +548,7 @@ describe("no env prefix can move the posting guards' own configuration", () => {
    * extensions/bash-guard.ts — this fails.
    */
   it("refuses the relocators and still allows the per-call arguments", async () => {
-    const { checkBashCommand } = await import("../extensions/bash-guard.js");
+    const { checkBashCommand } = await import("../extensions/cli/bash-guard-ambient.js");
     for (const cmd of [
       "QCR_CONFIG=/tmp/x.toml bash scripts/approve-pr.sh 5 b.md",
       "env QCR_CONFIG=/tmp/x.toml scripts/approve-pr.sh 5 b.md",
@@ -572,16 +573,16 @@ describe("no env prefix can move the posting guards' own configuration", () => {
    * not the source, is what must refuse these.
    */
   it("the COMPILED guard agrees with the source", async () => {
-    const dist = join(ROOT, "dist", "extensions", "bash-guard.js");
+    const dist = join(ROOT, "dist", "extensions", "cli", "bash-guard-ambient.js");
     if (!existsSync(dist)) {
       throw new Error(
-        "dist/extensions/bash-guard.js is missing — run `npm run build`; the shipped policy is unverified",
+        "dist/extensions/cli/bash-guard-ambient.js is missing — run `npm run build`; the shipped policy is unverified",
       );
     }
     const compiled = (await import(dist)) as {
       checkBashCommand: (c: string) => { allowed: boolean };
     };
-    const source = await import("../extensions/bash-guard.js");
+    const source = await import("../extensions/cli/bash-guard-ambient.js");
     for (const cmd of [
       "QCR_CONFIG=/tmp/x.toml bash scripts/approve-pr.sh 5 b.md",
       "scripts/pr-self.sh 5 reviews",

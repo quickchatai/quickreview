@@ -300,9 +300,9 @@ export class PiSessionManager {
 
   extensionPaths(): string[] {
     return [
-      join(this.root, "extensions", "inject-bridge.ts"),
-      join(this.root, "extensions", "ledger-pin.ts"),
-      join(this.root, "extensions", "muted-theme.ts"),
+      join(this.root, "extensions", "cli", "inject-bridge.ts"),
+      join(this.root, "extensions", "cli", "ledger-pin.ts"),
+      join(this.root, "extensions", "cli", "muted-theme.ts"),
       // docs/duplicate-merge.md: the `cluster_findings` tool a round calls
       // before pass-validate (`[review] dedup_merge`). The bench session
       // loads the same file (src/bench/runner.ts), so both routes group

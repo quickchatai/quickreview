@@ -15,7 +15,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import activate, { RETRY_BASE_MS, START_ACK_TIMEOUT_MS } from "../extensions/inject-bridge.js";
+import activate from "../extensions/cli/inject-bridge.js";
+import { RETRY_BASE_MS, START_ACK_TIMEOUT_MS } from "../extensions/inject-bridge.js";
 import { readSessionBridgeState } from "../src/session-bridge.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
