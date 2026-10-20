@@ -94,8 +94,9 @@ scripts/deploy.sh verify                             # post-deploy checks over s
 scripts/deploy.sh --dry-run <any of them>            # the plan, nothing executed
 ```
 
-`sync`, `dev` and `rebuild` are gone: they refuse with a pointer to `release`.
-A pre-release fix is a release.
+The old dev modes are gone: they refuse with a pointer to `release`. A fix
+that cannot wait is a release too (a patch version); there is no working-copy
+deploy.
 
 **`provision`** runs this whole playbook (no tags): host packages + Docker →
 (when `cloudflared_enabled`) cloudflared apt repo, install, service
@@ -177,6 +178,9 @@ personal access token, scoped `read:packages` and nothing else, stored by
 env, argv or the secrets directory; CLAUDE.md rule 3). Not the token `gh auth
 token` prints: that one carries the full scopes of your gh login.
 
+A deploy needs this login to exist before the first `release` (the pull is the
+updater's first step, and a lapsed login fails there with nothing changed).
+
 Once per VM, and again when the token is renewed (it expires after one year):
 
 1. On github.com, Settings, Developer settings, Personal access tokens, Tokens
@@ -206,8 +210,9 @@ The first `release` against a VM still running the legacy image
 swaps the image and the container shape in one restart, and the first boot
 migrates forward. It needs the deliberate `--cutover-ack`, which `deploy.sh`
 hands the updater as `--cutover-ack <version>`; without it both refuse, with
-nothing changed. Run `provision` first (it installs the updater beside the
-legacy container and touches no image), then:
+nothing changed. **Until the cutover the legacy VM takes no deploy**: if something urgent comes
+up, drain and wait for the cutover window. Run `provision` first (it installs
+the updater beside the legacy container and touches no image), then:
 
 ```
 qcr drain on                      # wait for running_rounds 0
@@ -222,31 +227,37 @@ is the 12-line reviewer stub.
 
 ### Rollback
 
-Several things are left on the VM and nothing is deleted: the legacy image
-`quickreview-sandbox:v1` (nothing here removes an image), the previous containers
-(the updater renames them to `<name>-prev`), the state snapshot under
-`/var/backups/qcr/`, and every host directory the new container used (state,
-pihome, the sandbox tree with its runtime directories, the memory sidecar's
-store).
+There is no rollback across a migration. The first boot of a release migrates
+`state.db` forward, and an older image run over the newer schema is not a
+supported state. Going back is therefore a **forward fix**: cut a new release
+(a patch version) that contains the fix or the revert, and `deploy.sh release`
+it. Nothing is hand-edited on the VM.
 
-- **Back to a previous release**: drain, then `scripts/deploy.sh release
-  <previous version>` with that release's manifest. The same containers, the
-  same directories.
-- **Back to the legacy image**: check out the commit *before* the release-image
-  cutover merged (its `deploy/ansible/templates/` is the legacy build context and
-  its playbook the legacy container shape), set `[tui] remote_sandbox_root` in
-  the config home back to `/opt/quickreview/sandbox`, and run that commit's
-  `scripts/deploy.sh sync` (a commit that still has it). Its stale-image guard compares the `v1` image's
-  stamp with its own templates, which are the ones that built it, so nothing is
-  rebuilt: the container is recreated on `quickreview-sandbox:v1` with the old
-  single mount of `/opt/quickreview/sandbox`, and the rsync puts the old tree
-  back. Record that commit's SHA in the cutover notes before you start. Memory
-  stays on the sidecar (`openviking_endpoint: remote` is also the legacy
-  playbook's value), so this rollback does not touch it; moving memory back into
-  the daemon container is the sidecar's own rollback (the deploying skill).
-  pi's `settings.json` on the pihome volume names the bash-guard of the app root
-  it last booted under; the legacy entrypoint prunes a path that is not on disk
-  and registers its own on boot.
+What the updater does for you:
+
+- **Before the recreate** (config check, stop, snapshot, preflight, sidecar
+  seed, config swap, sidecar `/ready`): any failure is a **rescue**. The
+  updater restores `config-home.prev`, puts the old containers back (they were
+  renamed to `<name>-prev`), waits for the old daemon's first reconcile,
+  re-sends `drain on` and exits non-zero naming the step. Nothing was migrated,
+  so the bot is exactly as it was, drained. Fix the cause and run the same
+  release again once `running_rounds` is 0.
+- **After the recreate** the new boot has migrated state: no rescue. The drain
+  stays on until a first reconcile passes healthily; fix forward with a new
+  release.
+- **The snapshot** of every run is `/var/backups/qcr/<version>-<ts>/` on the VM
+  (root, `0600`): `state.db` with its `-wal`/`-shm`, and a tar of
+  `state/pi-sessions`. It is the evidence and the manual restore point, not an
+  automatic one; pihome is never in it. Keep it until the release has proven
+  itself.
+- **Left in place, never deleted by a deploy**: the legacy image
+  `quickreview-sandbox:v1` (nothing here removes an image), the previous
+  containers, and every host directory the container uses (state, pihome, the
+  sandbox tree, the memory sidecar's store).
+
+Redeploying a **previous** version is allowed only when no migration lies
+between it and the running one; `qcr-update status --json` and the release
+notes say whether one does. When in doubt, the answer is a forward fix.
 
 ## Verify
 
@@ -285,7 +296,7 @@ what this route does with each:
   not transfer, so each pi home needs its own.
 
 The `pihome` volume also persists pi's session JSONLs across container
-rebuilds — required for the sticky per-PR conversations, not just for auth.
+recreates — required for the sticky per-PR conversations, not just for auth.
 
 ## Notes
 
