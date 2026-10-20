@@ -3418,7 +3418,7 @@ describe("the deploy docs describe the updater world", () => {
     }
   });
   it("the skill's deploy.sh commands are modes of the usage string", () => {
-    const text = readFileSync(docs[1], "utf8");
+    const text = readFileSync(join(root, ".claude", "skills", "deploying", "SKILL.md"), "utf8");
     const usage = readFileSync(join(root, "scripts", "deploy.sh"), "utf8");
     const modes = /usage: \$SELF \[--dry-run\] ([^"]+)"/.exec(usage)?.[1] ?? "";
     for (const m of text.matchAll(/deploy\.sh (?:--dry-run )?([a-z]+)/g)) {
