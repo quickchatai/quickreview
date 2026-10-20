@@ -783,7 +783,7 @@ describe("[P8.13] the operator's verbs", () => {
     });
     expect(plan).toMatchObject({
       session_file: "/r/state/pi-sessions/pr-7/a.jsonl",
-      extensions: ["/r/extensions/bash-guard.ts"],
+      extensions: ["/r/extensions/cli/bash-guard.ts"],
     });
     expect(() =>
       takeoverPlanFor({
