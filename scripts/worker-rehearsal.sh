@@ -4,13 +4,20 @@
 # memory images, run with the cutover run spec's volumes and command over a LEGACY-SHAPED host
 # directory, with a scripted stub as the model and as GitHub, on a network that has no way out.
 #
-#   scripts/worker-rehearsal.sh [--out FILE] [--work DIR] [--reuse-images] [--keep]
+#   scripts/worker-rehearsal.sh [--out FILE] [--work DIR] [--reuse-images] [--keep] [--only IDS]
 #
-#   --out FILE        the report (default docs/worker-rehearsal.md)
+#   --out FILE        the report (default docs/worker-rehearsal.md; with --only, <work>/report.md)
 #   --work DIR        the scratch directory (default /tmp/claude-$UID/worker-rehearsal-<pid>)
 #   --reuse-images    use the images a previous run built (tags qcr-rehearsal/*:head) when they
-#                     were built from this HEAD; otherwise they are built (build-images.sh)
+#                     were built from a commit whose image inputs are HEAD's (only the rehearsal's
+#                     own tooling, tests or docs differ); otherwise they are built (build-images.sh)
 #   --keep            leave the containers, network and host directory up for a look
+#   --only IDS        run only these scenarios after the shared setup, comma-separated check ids
+#                     (ANSWER-1,TAKEOVER-1,DEBUG-1,RESTART-1,BREAKER-1,LOGIN-1). The setup and its
+#                     checks (IMG, NET, MEM, CFG, MIG, DRAIN), round 1 (WEBHOOK, RESUME, WAVE,
+#                     PERMIT, POST) and the closing checks (BUSY, TREE, STATUS, NETCAP) always run:
+#                     every scenario stands on round 1. A partial run is for iterating; the
+#                     committed report comes from a full one.
 #
 # No model and no GitHub: the containers sit on a docker network created with --internal (no
 # route out), the model is scripts/worker-rehearsal/stub.mjs, reached through pi's own
@@ -31,18 +38,24 @@ OUT="$ROOT/docs/worker-rehearsal.md"
 WORK=""
 REUSE=0
 KEEP=0
+ONLY=""
+OUT_SET=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --out) OUT="$2"; shift 2 ;;
+    --out) OUT="$2"; OUT_SET=1; shift 2 ;;
     --work) WORK="$2"; shift 2 ;;
     --reuse-images) REUSE=1; shift ;;
     --keep) KEEP=1; shift ;;
-    *) echo "usage: $0 [--out FILE] [--work DIR] [--reuse-images] [--keep]" >&2; exit 2 ;;
+    --only) ONLY="$2"; shift 2 ;;
+    *) echo "usage: $0 [--out FILE] [--work DIR] [--reuse-images] [--keep] [--only IDS]" >&2; exit 2 ;;
   esac
 done
 WORK="${WORK:-/tmp/claude-$(id -u)/worker-rehearsal-$$}"
 mkdir -p "$WORK"
 WORK="$(cd "$WORK" && pwd)"
+[[ -n "$ONLY" && "$OUT_SET" == 0 ]] && OUT="$WORK/report.md"
+# want <ID>: is this scenario part of the run?
+want() { [[ -z "$ONLY" || ",$ONLY," == *",$1,"* ]]; }
 
 # ---- names -------------------------------------------------------------------------------------
 # The run spec's names (deploy/qcr-update.sh): the daemon, the sidecar and their network. The
@@ -141,6 +154,7 @@ round_running() { [[ "$(sql "select count(*) from session_commands where kind='r
 crash_loop_seen() { [[ "$(sql "select count(*) from events where kind='anomaly' and payload like '%worker_crash_loop%'")" -ge 1 ]]; }
 round_spend_known() { [[ -n "$(sql "select est_usd from rounds where pr=$PR and round_no=$1 and est_usd is not null")" ]]; }
 dryrun_reviews() { find "$H/state/dryrun" -name '*create_review.json' 2>/dev/null | wc -l; }
+dryrun_replies() { find "$H/state/dryrun" -name '*create_review_comment_reply.json' 2>/dev/null | wc -l; }
 events() { sql "select count(*) from events where kind='$1'"; }
 # every pi / node process of the daemon container: pid ppid args
 procs() { dx sh -c 'for p in /proc/[0-9]*; do [ -r $p/stat ] || continue; printf "%s %s %s\n" "${p#/proc/}" "$(cut -d" " -f4 $p/stat)" "$(tr "\0" " " <$p/cmdline | cut -c1-200)"; done 2>/dev/null'; }
@@ -148,20 +162,31 @@ procs() { dx sh -c 'for p in /proc/[0-9]*; do [ -r $p/stat ] || continue; printf
 # ---- 0. the images --------------------------------------------------------------------------------
 HEAD_SHA="$(git -C "$ROOT" rev-parse --short HEAD)"
 label_of() { docker inspect -f "{{index .Config.Labels \"$2\"}}" "$1" 2>/dev/null; }
-if [[ "$REUSE" == 1 && "$(label_of "$REL_IMG" qcr.build-sha)" == "$HEAD_SHA" ]] && docker image inspect "$MEM_IMG" >/dev/null 2>&1; then
-  log "reusing the images built from $HEAD_SHA"
+# same_inputs <sha>: does that commit build the image HEAD builds? Only the rehearsal's own
+# tooling, the tests and the docs may differ (none of them is an image input that runs).
+same_inputs() {
+  [[ -n "$1" ]] && git -C "$ROOT" cat-file -e "$1^{commit}" 2>/dev/null \
+    && git -C "$ROOT" diff --quiet "$1" HEAD -- . ':(exclude)scripts/worker-rehearsal.sh' \
+      ':(exclude)scripts/worker-rehearsal' ':(exclude)tests' ':(exclude)docs'
+}
+IMG_SHA="$(label_of "$REL_IMG" qcr.build-sha)"
+if [[ "$REUSE" == 1 ]] && same_inputs "$IMG_SHA" && docker image inspect "$MEM_IMG" >/dev/null 2>&1; then
+  log "reusing the images built from $IMG_SHA (HEAD $HEAD_SHA builds the same image)"
 else
   log "building the release and memory images from $HEAD_SHA"
+  [[ -z "$(git -C "$ROOT" status --porcelain -- . ':(exclude)docs')" ]] || die "the image is built from HEAD: commit or drop the working tree's changes first"
   "$RH/build-images.sh" "$REL_IMG" "$MEM_IMG" >"$LOGS/build-images.log" 2>&1 || { tail -30 "$LOGS/build-images.log" >&2; die "the image build failed"; }
+  IMG_SHA="$(label_of "$REL_IMG" qcr.build-sha)"
 fi
 fact release_image "$(docker image inspect -f '{{.Id}} {{.Size}}' "$REL_IMG")"
 fact memory_image "$(docker image inspect -f '{{.Id}} {{.Size}}' "$MEM_IMG")"
-fact build_sha "$HEAD_SHA"
+fact build_sha "$IMG_SHA (HEAD $HEAD_SHA)"
 fact runspec_label "$(label_of "$REL_IMG" qcr.runspec) layout=$(label_of "$REL_IMG" qcr.layout)"
-if [[ "$(label_of "$REL_IMG" qcr.layout)" == release && "$(label_of "$REL_IMG" qcr.build-sha)" == "$HEAD_SHA" ]]; then
-  check IMG-1 pass "the release image is built from HEAD" "qcr.build-sha=$HEAD_SHA qcr.layout=release qcr.runspec=$(label_of "$REL_IMG" qcr.runspec)"
+if [[ "$(label_of "$REL_IMG" qcr.layout)" == release ]] && same_inputs "$IMG_SHA"; then
+  SAME="the same commit"; [[ "$IMG_SHA" != "$HEAD_SHA" ]] && SAME="a commit that differs from HEAD only in the rehearsal's tooling, tests and docs"
+  check IMG-1 pass "the release image is built from HEAD" "qcr.build-sha=$IMG_SHA ($SAME as HEAD $HEAD_SHA) qcr.layout=release qcr.runspec=$(label_of "$REL_IMG" qcr.runspec)"
 else
-  check IMG-1 fail "the release image is built from HEAD" "labels: sha=$(label_of "$REL_IMG" qcr.build-sha) layout=$(label_of "$REL_IMG" qcr.layout)"
+  check IMG-1 fail "the release image is built from HEAD" "labels: sha=$IMG_SHA layout=$(label_of "$REL_IMG" qcr.layout); HEAD $HEAD_SHA"
 fi
 log "building the operator's CLI (dist) at HEAD"
 (cd "$ROOT" && npx tsc -p tsconfig.json --tsBuildInfoFile "/tmp/claude-$(id -u)/tsbi/rehearsal-op.tsbuildinfo" >"$LOGS/tsc.log" 2>&1 && node scripts/verify-dist.mjs >>"$LOGS/tsc.log" 2>&1) || { tail -20 "$LOGS/tsc.log" >&2; die "tsc failed"; }
@@ -300,32 +325,7 @@ else
   check DRAIN-1 fail "the drain lifts on the first healthy reconcile" "legacy=$LEGACY_DRAINING now=$DRAIN_NOW lifted_events=$(events drain_lifted) rounds=$(sql 'select count(*) from rounds')"
 fi
 
-# ---- B. the answer worker, with and without may_post (the PR has a session and no review yet) ---------------------------------------------------------------------
-stub_mode answer_post
-BEFORE="$(dryrun_reviews)"
-op message "$PR" "Please post a note about the retry bound." >"$WORK/msg1.txt" 2>&1
-waitx 90 "the first answer" answers_acked 1
-sleep 2
-R1="$(find "$H/state/commands" -name 'result.json' 2>/dev/null | head -5)"
-ANS1="$(sql "select id from session_commands where kind='answer' order by rowid limit 1")"
-RES1="$(cat "$H/state/commands/$ANS1/result.json" 2>/dev/null | tr '\n' ' ' | cut -c1-500)"
-AFTER1="$(dryrun_reviews)"
-op message "$PR" --may-post "Please post a note about the retry bound." >"$WORK/msg2.txt" 2>&1
-waitx 90 "the second answer" answers_acked 2
-sleep 2
-ANS2="$(sql "select id from session_commands where kind='answer' order by rowid desc limit 1")"
-RES2="$(cat "$H/state/commands/$ANS2/result.json" 2>/dev/null | tr '\n' ' ' | cut -c1-500)"
-AFTER2="$(dryrun_reviews)"
-fact answer_without "$RES1"
-fact answer_with "$RES2"
-if [[ "$AFTER1" == "$BEFORE" && "$AFTER2" == $((BEFORE + 1)) && "$RES1" == *may_post* && "$ANS1" != "$ANS2" ]]; then
-  check ANSWER-1 pass "the answer worker works without may_post (a post is refused) and with it (the post lands in state/dryrun)" "without: create_review records $BEFORE -> $AFTER1, the model was told: ${RES1:0:200}; with --may-post: $AFTER1 -> $AFTER2 (a COMMENT record)"
-else
-  check ANSWER-1 fail "the answer worker with and without may_post" "records $BEFORE/$AFTER1/$AFTER2; without: $RES1; with: $RES2; messages: $(cat "$WORK/msg1.txt" "$WORK/msg2.txt" | tr '\n' ' ')"
-fi
-stub_mode round
-
-# ---- C. a signed webhook starts a round; the worker resumes the legacy session ------------------------------------------
+# ---- B/C. a signed webhook starts a round; the worker resumes the legacy session ------------------------------------------
 log "triggering PR $PR with a signed webhook"
 # round 1 also fires a burst of 24 parallel passes, each answered after 6 s, to put more lenses
 # than the ceiling in front of the permit broker
@@ -426,7 +426,44 @@ else
   check POST-1 fail "the worker posts through the gate into state/dryrun" "reviews=$REVIEWS event='$EVENT' mutations=$MUTATIONS verdict_applied=$(events verdict_applied)"
 fi
 
-# ---- D. takeover in a pty, the fence, release ------------------------------------------------------------------------------
+# ---- D. the answer worker, with and without may_post (after round 1: the PR is tracked, has a session
+# and a review at its head) -----------------------------------------------------------------------------------
+# The operator asks the PR's session to answer the author's thread. Without may_post the worker holds
+# no posting tool (no bash: P8.17's read-only tools plus chat) and nothing lands; with --may-post it
+# holds the three post shims, and its reply goes through the daemon's post IPC and the one gate into
+# state/dryrun. A REPLY, not a review: guard 2 (no new evidence) rightly refuses a second review at
+# the head round 1 reviewed, and a reply is what an operator's "answer them" asks for.
+if want ANSWER-1; then
+stub_mode answer_post '"comment":9001'
+BEFORE="$(dryrun_replies)"
+op message "$PR" "Please answer the author's question about the retry bound." >"$WORK/msg1.txt" 2>&1
+waitx 120 "the first answer" answers_acked 1
+ANS1="$(sql "select id from session_commands where kind='answer' order by rowid limit 1")"
+waitx 30 "the first answer's result file" test -s "$H/state/commands/$ANS1/result.json"
+RES1="$(tr '\n' ' ' <"$H/state/commands/$ANS1/result.json" 2>/dev/null | cut -c1-500)"
+AFTER1="$(dryrun_replies)"
+op message "$PR" --may-post "Please answer the author's question about the retry bound." >"$WORK/msg2.txt" 2>&1
+waitx 120 "the second answer" answers_acked 2
+ANS2="$(sql "select id from session_commands where kind='answer' order by rowid desc limit 1")"
+waitx 30 "the second answer's result file" test -s "$H/state/commands/$ANS2/result.json"
+RES2="$(tr '\n' ' ' <"$H/state/commands/$ANS2/result.json" 2>/dev/null | cut -c1-500)"
+AFTER2="$(dryrun_replies)"
+REPLY_REC="$(find "$H/state/dryrun" -name '*create_review_comment_reply.json' -newer "$WORK/msg1.txt" 2>/dev/null | head -1)"
+REPLY_OK=no; [[ -n "$REPLY_REC" ]] && grep -q 'Operator-requested reply' "$REPLY_REC" && grep -q 9001 "$REPLY_REC" && REPLY_OK=yes
+fact answer_without "$RES1"
+fact answer_with "$RES2"
+if [[ "$ANS1" != "$ANS2" && "$AFTER1" == "$BEFORE" && "$RES1" == *'"may_post": false'* && "$RES1" == *'"posted": 0'* \
+  && "$AFTER2" == $((BEFORE + 1)) && "$REPLY_OK" == yes && "$RES2" == *'"may_post": true'* && "$RES2" == *'"posted": 1'* ]]; then
+  check ANSWER-1 pass "the answer worker works without may_post (it holds no posting tool, nothing lands) and with it (its reply goes through the gate into state/dryrun)" "without: reply records $BEFORE -> $AFTER1, result: ${RES1:0:240}; with --may-post: $AFTER1 -> $AFTER2, $(basename "$REPLY_REC") (reply to comment 9001), result: ${RES2:0:240}"
+else
+  check ANSWER-1 fail "the answer worker with and without may_post" "reply records $BEFORE/$AFTER1/$AFTER2 record_ok=$REPLY_OK; without: $RES1; with: $RES2; messages: $(cat "$WORK/msg1.txt" "$WORK/msg2.txt" | tr '\n' ' ')"
+fi
+stub_mode round
+fi
+
+
+# ---- E. takeover in a pty, the fence, release ------------------------------------------------------------------------------
+if want TAKEOVER-1; then
 op takeover "$PR" >"$WORK/takeover.txt" 2>&1
 wait_for 60 "the takeover pane" dx tmux has-session -t "takeover-pr-$PR"
 sleep 8
@@ -450,8 +487,10 @@ else
   check TAKEOVER-1 fail "takeover in a pty" "pty rc=$PTY_RC lease='$LEASE_ROW' fence='$FENCE' lease_after=$LEASE_AFTER pi_left=$PI_LEFT procs: $TPROCS; screen: $(tail -5 "$WORK/takeover-pty.txt" | tr '\n' ' ')"
 fi
 stub_mode round
+fi
 
-# ---- E. debug round in a pty: armed, the next round runs in interactive pi, the fence --------------------------------------
+# ---- F. debug round in a pty: armed, the next round runs in interactive pi, the fence --------------------------------------
+if want DEBUG-1; then
 op debug-round "$PR" >"$WORK/debug.txt" 2>&1
 DEBUG_ARMED="$(sql "select kind||' '||state from pr_host_leases where pr=$PR")"
 HEAD2="$(push_head 3)"
@@ -477,8 +516,10 @@ fi
 
 # a debug round that did not end leaves its lease; the next scenario needs the PR free
 op release "$PR" >/dev/null 2>&1; sleep 3
+fi
 
-# ---- F. a daemon restart kills and requeues a worker -----------------------------------------------------------------------------
+# ---- G. a daemon restart kills and requeues a worker -----------------------------------------------------------------------------
+if want RESTART-1; then
 log "restart scenario: a worker mid-round, then the daemon is killed"
 HEAD3="$(push_head 4)"
 stub_mode slow '"ms":300000'
@@ -500,8 +541,10 @@ if [[ "$(round_status 3)" == done && "${ATT_AFTER:-0}" -gt "${ATT_BEFORE:-0}" &&
 else
   check RESTART-1 fail "a daemon restart requeues a worker" "round3='$(round_status 3)' attempt $ATT_BEFORE -> $ATT_AFTER jsonl=$NJ3 recover='$RECOVER'"
 fi
+fi
 
-# ---- G. a failing worker trips the breaker -------------------------------------------------------------------------------------
+# ---- H. a failing worker trips the breaker -------------------------------------------------------------------------------------
+if want BREAKER-1; then
 log "breaker scenario: the model fails every request"
 HEAD4="$(push_head 5)"
 SPAWNS_BEFORE="$(events worker_spawned)"
@@ -518,8 +561,10 @@ else
   check BREAKER-1 fail "a failing worker trips the breaker" "spawned=$SPAWNED crash_loop_anomalies=$CRASH status=$PARKED round4=$(round_status 4)"
 fi
 stub_mode round
+fi
 
-# ---- H. the refresher --------------------------------------------------------------------------------------------------------------
+# ---- I. the refresher --------------------------------------------------------------------------------------------------------------
+if want LOGIN-1; then
 LOCKED=no; dx flock -n "/home/qcr/.pi/agent/auth.json.lock" true 2>/dev/null || LOCKED=yes
 OLD_REFRESH="$(python3 -c "import json;print(json.load(open('$H/pihome/agent/auth.json'))['openai-codex']['refresh'])")"
 # a login that is due: stop the daemon, make the token expire inside the refresh margin, start it
@@ -547,8 +592,9 @@ else
   check LOGIN-1 fail "the refresher and its lock" "locked=$LOCKED/$LOCKED2 second rc=$SECOND_RC ($SECOND) token_posts=$TOKEN_POSTS refresh '$OLD_REFRESH' -> '$NEW_REFRESH'"
 fi
 wait_for 180 "the daemon after the refresher scenario" bash -c "docker logs --since 90s $DAEMON 2>&1 | grep -q 'reconcile: open=.* errors=0'"
+fi
 
-# ---- I. SQLITE_BUSY, the process tree, status.json, the network ------------------------------------------------------------------------
+# ---- J. SQLITE_BUSY, the process tree, status.json, the network ------------------------------------------------------------------------
 sleep 5
 BUSY_DAEMON="$(docker logs "$DAEMON" 2>&1 | grep -c -E 'SQLITE_BUSY|database is locked')"
 BUSY_WORKERS="$(cat "$H"/state/workers/*.log "$H"/state/workers/*.pi-stderr.log 2>/dev/null | grep -c -E 'SQLITE_BUSY|database is locked')"

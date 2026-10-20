@@ -387,10 +387,12 @@ function reply(body, ip) {
       s.nTail === 0
         ? bash(
             "a1",
-            `printf 'Operator-requested note.\\n' > state/pr-${fx.pr}-answer-note.md && scripts/post-review.sh ${fx.pr} COMMENT state/pr-${fx.pr}-answer-note.md; echo "post-exit=$?"`,
+            // The operator's "answer the author": a reply on the thread (admin `comment` = its id).
+            // The command's exit status is the tool result's, which is what the worker counts a post by.
+            `printf 'Operator-requested reply.\\n' > state/pr-${fx.pr}-answer-reply.md && scripts/reply-thread.sh ${fx.pr} ${Number(state.hold.comment ?? 9001)} state/pr-${fx.pr}-answer-reply.md`,
           )
         : {
-            text: `post attempt: ${s.results[0] ?? "(no result)"}`
+            text: `reply attempt: ${s.results[0] ?? "(no result)"}`
               .replace(/\s+/g, " ")
               .slice(0, 600),
           };

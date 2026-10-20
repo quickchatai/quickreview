@@ -179,6 +179,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/tui-sshtriage-probe.test.ts",
   "tests/tui-startup.test.ts",
   "tests/tui-tmux-socket.test.ts",
+  "tests/worker-rehearsal-tooling.test.ts", // the rehearsal's node scripts (report, patch-toml) as children
   "tests/worker-supervisor.test.ts", // the fake worker as a real process group: kills, leases, restarts
   "tests/worker-world-e2e.test.ts", // the production daemon spawns the built botworker as a process
   "tests/worktrees.test.ts",
