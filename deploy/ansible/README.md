@@ -231,7 +231,7 @@ until the owner has triggered and checked one worker round and runs `qcr drain
 off`. (A plain drain on a release-layout VM is still lifted by the new boot's
 first healthy reconcile; `qcr drain on --hold` sets the hold by hand.) After
 the deploy, `deploy.sh verify` shows the image and its build stamp, that pi's
-`settings.json` lists bash-guard, and that `AGENTS.override.md` in the app root
+`settings.json` carries no global bash-guard entry (P9.5), and that `AGENTS.override.md` in the app root
 is the 12-line reviewer stub.
 
 ### Rollback

@@ -323,11 +323,10 @@ describe("release entrypoint (daemon mode) — same invariants as the plain boot
     expect(release).toContain('QCR_PI_TRUST_DIR="$APP"');
   });
 
-  it("registers ONLY bash-guard globally, hard-failing when it is missing", () => {
-    expect(release).toContain("FATAL: pi extension missing");
-    expect([...release.matchAll(/QCR_PI_REQUIRE_EXT="([^"]+)"/g)].map((m) => m[1])).toEqual([
-      "$APP/extensions/bash-guard.ts",
-    ]);
+  it("registers no extension globally and prunes the retired bash-guard entry (P9.5)", () => {
+    expect(release).not.toContain("FATAL: pi extension missing");
+    expect(release).not.toContain("QCR_PI_REQUIRE_EXT");
+    expect(release).toContain("bash-guard is no longer global");
   });
 
   it("links the pi user agents dir at the built state/agents, never clobbering a real directory", () => {

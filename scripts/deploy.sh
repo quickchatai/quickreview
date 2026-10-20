@@ -798,8 +798,9 @@ if [[ "$OV_ENDPOINT" == remote ]]; then
 fi
 # What runs, and that it is the release layout: the image's build stamp (the
 # deploy tab reads the same label), then — once the heartbeat shows the
-# entrypoint has finished — the global bash-guard registration the daemon mode
-# merges into pi's settings on the pihome volume, and the 12-line reviewer stub
+# entrypoint has finished — that pi's settings carry no global bash-guard entry
+# (P9.5: the guard is a factory on every session; the entrypoint prunes the one
+# an older image left on the pihome volume), and the 12-line reviewer stub
 # every session loads instead of the contributor guide.
 VERIFY_CMDS+=(
   "sudo docker inspect -f '{{.Config.Image}} build {{index .Config.Labels \"qcr.build-sha\"}}' $CONTAINER"
@@ -808,7 +809,7 @@ VERIFY_CMDS+=(
   "cat /opt/quickreview/state/status.json | head -20   # heartbeat for the status collector"
 )
 BOOT_CMDS=(
-  "sudo docker exec $CONTAINER grep -q bash-guard /home/qcr/.pi/agent/settings.json"
+  "sudo docker exec $CONTAINER sh -c '! grep -q bash-guard /home/qcr/.pi/agent/settings.json'"
   "sudo docker exec $CONTAINER sh -c 'test \"\$(stat -c %a $APP_ROOT/AGENTS.override.md)\" = 444 && grep -q \"session context\" $APP_ROOT/AGENTS.override.md'"
 )
 
@@ -1305,7 +1306,7 @@ check_heartbeat_fresh() {
 }
 check_heartbeat_fresh || FAILED=1
 
-# The checks that need the entrypoint to have run: it merges bash-guard into
+# The checks that need the entrypoint to have run: it prunes the global bash-guard entry from
 # pi's settings and re-installs the stub, both before it starts the daemon.
 for cmd in "${BOOT_CMDS[@]}"; do
   echo "--- $cmd"

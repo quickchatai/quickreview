@@ -27,11 +27,11 @@
 # No npm build, no state symlink: the image is built, /opt/qcr is read-only to
 # every runtime uid, and <root>/state is a world-writable mount point.
 #
-# bash-guard (extensions/bash-guard.ts) is registered in pi's global settings
-# by the daemon mode only (the companion never registered it globally either:
-# its guard rides per-spawn argv). D32 drops it from the per-call cli mode,
-# which runs in a throwaway container that is the sandbox, and puts the model's
-# tools under another uid instead, so the kernel keeps them off the
+# bash-guard (extensions/bash-guard.ts) is no longer registered in pi's global
+# settings (P9.5): every lens and worker session gets it from the factory, and
+# the takeover and debug pi load it by path. D32's per-call cli mode runs in a
+# throwaway container that is the sandbox, and puts the model's
+# tools under another uid, so the kernel keeps them off the
 # token-holding Node process (/proc/<pid>/mem and environ):
 #   - started as root (--user 0:0 --cap-drop ALL --cap-add SETUID --cap-add
 #     SETGID), the cli mode re-executes this script as QCR_RUN_UID:QCR_RUN_GID
@@ -221,14 +221,12 @@ assert_state_writable() {
 
 # Registers pi's global settings under $HOME/.pi/agent. Idempotent MERGE, safe
 # on every boot: the file carries keys pi itself and the user wrote. Env knobs:
-#   QCR_PI_REQUIRE_EXT   colon-separated extension paths to register; one that
-#                        is not on disk is FATAL (a silently unregistered
-#                        bash-guard would mean unguarded sessions). Daemon only.
 #   QCR_PI_TRUST_DIR     a directory pre-seeded into pi's trust store.
 #   QCR_PI_AGENTS_TARGET where $HOME/.pi/agent/agents links (the lens tool's
 #                        agent discovery, <agent dir>/agents).
-# The extensions that ride per-spawn argv (memory) are NOT registered
-# globally: a global entry would arm every lens leaf with ambient memory work.
+# No extension is registered globally (P9.5): bash-guard rides every lens and
+# worker session as a factory, and the takeover and debug pi load it by path.
+# A global entry would arm every lens leaf with ambient extension work.
 provision_pi_settings() {
   node <<'PI_EXT_MERGE'
 const fs = require("fs");
@@ -240,13 +238,14 @@ let settings = {};
 if (fs.existsSync(file)) settings = JSON.parse(fs.readFileSync(file, "utf8"));
 if (!Array.isArray(settings.extensions)) settings.extensions = [];
 
-const wanted = (process.env.QCR_PI_REQUIRE_EXT || "").split(":").filter(Boolean);
-for (const p of wanted) {
-  if (!fs.existsSync(p)) {
-    console.error("FATAL: pi extension missing: " + p);
-    process.exit(1);
-  }
-  if (!settings.extensions.includes(p)) settings.extensions.push(p);
+// bash-guard is no longer a global registration. The pihome volume still
+// carries the entry an older image merged, and a global entry would load the
+// guard a second time beside the factory's, so it is dropped here.
+const retiredGuard = (p) => /(^|[\\/])extensions[\\/]bash-guard\.ts$/.test(p);
+const retired = settings.extensions.filter(retiredGuard);
+if (retired.length) {
+  settings.extensions = settings.extensions.filter((p) => !retiredGuard(p));
+  console.log("pi extensions pruned (bash-guard is no longer global): " + retired.join(", "));
 }
 // settings.json lives on a PERSISTENT pihome volume on the bot, so entries
 // written by an older image survive a rebuild. Prune anything that is not on
@@ -357,10 +356,8 @@ mode_daemon() {
 
   assert_pinned_pi_cli
 
-  # The global registration: bash-guard ONLY (see provision_pi_settings), a
-  # missing file is FATAL.
-  QCR_PI_REQUIRE_EXT="$APP/extensions/bash-guard.ts" \
-    QCR_PI_TRUST_DIR="$APP" \
+  # No global extension registration (P9.5, see provision_pi_settings).
+  QCR_PI_TRUST_DIR="$APP" \
     QCR_PI_AGENTS_TARGET="$STATE/agents" \
     provision_pi_settings >&2
 
