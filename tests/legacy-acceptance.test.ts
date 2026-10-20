@@ -66,7 +66,7 @@ describe("tier fold: 'owner_legacy' → 'owner'", () => {
     expect(rec).not.toBeNull();
     expect(rec?.tier).toBe("owner");
     // …and the folded record carries the old top-tier rights end to end.
-    expect(authorizeCommand({ command: "restart-session", pr: "overseer" }, rec!).ok).toBe(true);
+    expect(authorizeCommand({ command: "restart-session", pr: 12 }, rec!).ok).toBe(true);
   });
 
   it("OriginStore reads a legacy record file straight off disk into the new vocabulary", () => {

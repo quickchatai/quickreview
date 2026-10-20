@@ -146,7 +146,7 @@ export interface TerminalFailurePayload {
 
 export type Command =
   | { command: "rerun-round"; pr: number }
-  | { command: "restart-session"; pr: number | "overseer" }
+  | { command: "restart-session"; pr: number }
   | ({ command: "resolve-terminal-failure" } & TerminalFailurePayload)
   /** `for_min`: how long the hold is asked for. Optional — a
    * session that omits it gets the largest bounded grant the cap and the
@@ -214,7 +214,7 @@ export interface CommandContext {
 export interface CommandDeps {
   rerunRound(pr: number): Promise<FileOutcome | void> | FileOutcome | void;
   restartSession(
-    target: number | "overseer",
+    target: number,
     deliveryKey?: string,
   ): Promise<FileOutcome | void> | FileOutcome | void;
   resolveTerminalFailure(
@@ -377,8 +377,8 @@ export function validateCommand(raw: unknown, opts: ValidateOptions = {}): Valid
       const err = fieldError(obj, ["pr"]);
       if (err) return { ok: false, reason: err };
       const pr = obj["pr"];
-      if (!isPrNumber(pr) && pr !== "overseer") {
-        return { ok: false, reason: "'pr' must be a positive integer or the string \"overseer\"" };
+      if (!isPrNumber(pr)) {
+        return { ok: false, reason: "'pr' must be a positive integer" };
       }
       return { ok: true, command: { command: "restart-session", pr: pr } };
     }

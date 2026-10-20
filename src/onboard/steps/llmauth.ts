@@ -21,7 +21,7 @@ import type { TransportOptions } from "./transport.js";
 //     companion keeps its own login (its model is on the OAuth provider by
 //     default), and this host's own pi reads OPENAI_API_KEY only from its own
 //     environment.
-//     The wizard does that rewrite itself: six values, comment-preserving,
+//     The wizard does that rewrite itself: five values, comment-preserving,
 //     idempotent, and reversible, so switching routes later re-runs cleanly in
 //     either direction.
 //
@@ -90,14 +90,13 @@ export function prefixFor(route: AuthRoute): string {
 export const OPENAI_KEY_FILE = "openai_api_key";
 
 /**
- * The SIX model strings the route decides. Every one of them lives in
+ * The FIVE model strings the route decides. Every one of them lives in
  * `config.toml [models]` / `[models.tiers]` (docs/llm-setup.md route 2), and
  * the provider prefix IS the route — nothing else in the file changes.
  */
 export const MODEL_LOCATIONS: ReadonlyArray<{ section: string; key: string }> = [
   { section: "models", key: "default" },
   { section: "models", key: "conversation" },
-  { section: "models", key: "overseer" },
   { section: "models.tiers", key: "terra-med" },
   { section: "models.tiers", key: "sol-med" },
   { section: "models.tiers", key: "sol-high" },
@@ -219,7 +218,7 @@ export function managedModel(value: string): { route: AuthRoute; rest: string } 
   return null;
 }
 
-/** What the six locations currently say. Read-only; the basis of verify(). */
+/** What the five locations currently say. Read-only; the basis of verify(). */
 export function auditModelStrings(text: string): ModelAudit[] {
   return MODEL_LOCATIONS.map(({ section, key }) => {
     const label = `${section}.${key}`;
@@ -233,7 +232,7 @@ export interface RewriteResult {
   text: string;
   /** Labels whose prefix changed in this pass. */
   rewritten: string[];
-  /** Labels already on the target prefix (idempotent re-run ⇒ all six). */
+  /** Labels already on the target prefix (idempotent re-run ⇒ all five). */
   unchanged: string[];
   /** Labels on some other provider — left exactly as they are. */
   custom: string[];
@@ -242,11 +241,11 @@ export interface RewriteResult {
 }
 
 /**
- * Move every one of the six model strings onto `route`'s provider prefix.
+ * Move every one of the five model strings onto `route`'s provider prefix.
  *
  * Line-oriented on purpose: comments, ordering, spacing and every other key in
  * the file survive byte-for-byte (a TOML round-trip would eat them). Only the
- * prefix of the six values changes, so the operation is idempotent (running it
+ * prefix of the five values changes, so the operation is idempotent (running it
  * twice is a no-op) and reversible (oauth → api → oauth restores the original
  * bytes). Values on any other provider are left alone — a deliberate custom
  * model is not the wizard's business.
@@ -488,8 +487,12 @@ function localAttach(container: string, session: string): string {
   return `docker exec -it ${container} tmux attach -t ${session}`;
 }
 
-/** The daemon container's pi session a login lands in. */
-const DAEMON_LOGIN_SESSION = "overseer";
+/** The command that opens pi in the daemon container, where `/login` runs: the
+ * daemon hosts no tmux session any more (the overseer was deleted), so the
+ * login is an interactive pi in the container. */
+function daemonLoginCommand(container: string): string {
+  return `docker exec -it ${container} pi`;
+}
 
 /** Container names to probe, config first so a renamed deployment still works;
  * the fallbacks are the loader's own defaults. */
@@ -544,7 +547,7 @@ export const ROUTE_QUESTION =
   "     expect up to three separate browser logins — this wizard's pi session, the daemon container, and the\n" +
   "     companion container. Each is guided when its surface first needs it.\n" +
   "  2) api — one OpenAI API key, metered per token. One paste covers the daemon and its review sessions (the daemon\n" +
-  "     container's entrypoint exports the key file as OPENAI_API_KEY), and the wizard rewrites all six model strings\n" +
+  "     container's entrypoint exports the key file as OPENAI_API_KEY), and the wizard rewrites all five model strings\n" +
   "     for you. The companion container is not handed the key: it keeps its own login.\n" +
   "Answer 1/oauth or 2/api:";
 
@@ -563,7 +566,7 @@ export const STEP_EXPLAIN =
   "and a container; each login is guided where it happens and verified to have landed on that container's persistent " +
   "pi-home volume, so a recreate never silently costs it. An API key is one paste that covers the daemon and its review " +
   "sessions (the companion container is not handed the key and keeps its own login), " +
-  "and the wizard then rewrites all six model strings in config.toml from the openai-codex/ provider prefix to " +
+  "and the wizard then rewrites all five model strings in config.toml from the openai-codex/ provider prefix to " +
   "openai/ (comment-preserving and reversible — switching routes later just re-runs this step). Neither route has " +
   "anything to do with memory embeddings: those run locally by default, and pi's key is never used for them.";
 
@@ -780,12 +783,12 @@ async function oauthLoginChecks(
   const vm = topologyOf(ctx.choices) === "vm";
   let daemon = vm ? "" : await localDaemonContainer(runner, rootOf(ctx.adapters), configText);
   let daemonRunner: ProcessRunner = runner;
-  let daemonAttach = localAttach(daemon, DAEMON_LOGIN_SESSION);
+  let daemonAttach = daemonLoginCommand(daemon);
   if (vm) {
     const facts = remoteFactsFor(ctx.adapters, ctx.choices);
     daemon = facts.container;
     const prefix = facts.sudo ? ["sudo"] : [];
-    daemonAttach = `ssh -t ${facts.alias || "<vm>"} ${facts.sudo ? "sudo " : ""}${localAttach(daemon, DAEMON_LOGIN_SESSION)}`;
+    daemonAttach = `ssh -t ${facts.alias || "<vm>"} ${facts.sudo ? "sudo " : ""}${daemonLoginCommand(daemon)}`;
     daemonRunner =
       facts.alias === ""
         ? { run: async () => ({ code: 1, stdout: "", stderr: "no ssh alias recorded" }) }

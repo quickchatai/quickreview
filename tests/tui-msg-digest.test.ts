@@ -58,7 +58,7 @@ function fakeStreams() {
 describe("quick-message inject writes", () => {
   it("accepts only the daemon's session names", () => {
     expect(isValidSessionName("pr-5012")).toBe(true);
-    expect(isValidSessionName("overseer")).toBe(true);
+    expect(isValidSessionName("overseer")).toBe(false);
     expect(isValidSessionName("main")).toBe(true);
     expect(isValidSessionName("pr-5012; rm -rf /")).toBe(false);
     expect(isValidSessionName("../overseer")).toBe(false);

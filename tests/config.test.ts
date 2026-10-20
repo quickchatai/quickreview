@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -564,5 +564,38 @@ describe("[tui] memory_container", () => {
     const example = readFileSync(resolve(root, "config.example.toml"), "utf8");
     expect(example).toMatch(/^memory_container = ""/m);
     expect(parseConfig(example).tui.memory_container).toBe("");
+  });
+});
+
+describe("the deleted overseer session's config knobs", () => {
+  const withKeys = (toml: string): string =>
+    toml
+      .replace("[models]\n", '[models]\noverseer = "openai-codex/gpt-6.1-sol"\n')
+      .replace("[daemon]\n", "[daemon]\noverseer_rotation_days = 7\n");
+
+  it("accepts [models] overseer and [daemon] overseer_rotation_days, warns, and ignores both", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const cfg = parseConfig(withKeys(readFileSync(configPath, "utf8")));
+      const lines = warn.mock.calls.map((c) => String(c[0]));
+      expect(lines.some((l) => /\[models\] overseer is deprecated and ignored/.test(l))).toBe(true);
+      expect(
+        lines.some((l) => /\[daemon\] overseer_rotation_days is deprecated and ignored/.test(l)),
+      ).toBe(true);
+      expect("overseer" in cfg.models).toBe(false);
+      expect("overseer_rotation_days" in cfg.daemon).toBe(false);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("a config without them parses silently", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      parseConfig(readFileSync(configPath, "utf8"));
+      expect(warn.mock.calls.filter((c) => /overseer/.test(String(c[0])))).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

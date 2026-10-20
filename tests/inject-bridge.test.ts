@@ -16,8 +16,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import activate, { RETRY_BASE_MS, START_ACK_TIMEOUT_MS } from "../extensions/inject-bridge.js";
-import * as bridgeState from "../src/overseer-bridge.js";
-import { readSessionBridgeState } from "../src/overseer-bridge.js";
+import { readSessionBridgeState } from "../src/session-bridge.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 let dir: string;
@@ -135,117 +134,28 @@ describe("inject-bridge — start-acknowledged single flight", () => {
     expect(pending()).toHaveLength(0);
   });
 
-  it("retires its own idle overseer only for its current generation request", async () => {
-    process.env.QCR_SESSION_NAME = "overseer";
+  it("has no self-retirement protocol: a retire-request file never exits the process", async () => {
+    process.env.QCR_SESSION_NAME = "companion";
     process.env.QCR_SANDBOX_ROOT = dir;
-    const birth = join(dir, "state", "sessions", "overseer.json");
     mkdirSync(join(dir, "state", "sessions"), { recursive: true });
     writeFileSync(
-      birth,
-      JSON.stringify({ session: "overseer", bridge_generation: "generation-1" }),
-    );
-    const exit = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
-    const requestPath = join(dir, ".overseer-retire-request.json");
-    writeFileSync(
-      requestPath,
-      JSON.stringify({ version: 1, generation: "stale-generation", nonce: "old" }),
-    );
-    activate(fakePi());
-    fire("session_start", {}, { isIdle: () => true, hasPendingMessages: () => false });
-    expect(exit).not.toHaveBeenCalled(); // synchronous first drain rejects stale requests
-    writeFileSync(birth, JSON.stringify({ session: "overseer", bridge_generation: "replacement" }));
-    writeFileSync(
-      requestPath,
-      JSON.stringify({ version: 1, generation: "generation-1", nonce: "old-owner" }),
-    );
-    await sleep(20);
-    expect(exit).not.toHaveBeenCalled();
-    writeFileSync(
-      birth,
-      JSON.stringify({ session: "overseer", bridge_generation: "generation-1" }),
+      join(dir, "state", "sessions", "companion.json"),
+      JSON.stringify({ session: "companion", bridge_generation: "generation-1" }),
     );
     writeFileSync(
       join(dir, ".overseer-retire-request.json"),
-      JSON.stringify({ version: 1, generation: "generation-1", nonce: "current-request" }),
+      JSON.stringify({ version: 1, generation: "generation-1", nonce: "request" }),
     );
-    await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(0));
-    expect(existsSync(join(dir, ".overseer-retire-request.json"))).toBe(false);
-  });
-
-  it.each([
-    { isIdle: (): boolean => true },
-    { hasPendingMessages: (): boolean => false },
-    { isIdle: (): boolean => true, hasPendingMessages: (): boolean => true },
-  ])(
-    "refuses self-retirement while Pi idle/queued evidence is unknown or queued",
-    async (context) => {
-      process.env.QCR_SESSION_NAME = "overseer";
-      process.env.QCR_SANDBOX_ROOT = dir;
-      mkdirSync(join(dir, "state", "sessions"), { recursive: true });
-      writeFileSync(
-        join(dir, "state", "sessions", "overseer.json"),
-        JSON.stringify({ session: "overseer", bridge_generation: "generation-1" }),
-      );
-      writeFileSync(
-        join(dir, ".overseer-retire-request.json"),
-        JSON.stringify({ version: 1, generation: "generation-1", nonce: "request" }),
-      );
-      const exit = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
-      activate(fakePi());
-      fire("session_start", {}, context);
-      expect(exit).not.toHaveBeenCalled(); // initial drain is synchronous
-      fire("agent_settled", {}, { isIdle: () => true, hasPendingMessages: () => false });
-      await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(0));
-    },
-  );
-
-  it("does not retire active work after its active receipt publication fails", async () => {
-    process.env.QCR_SESSION_NAME = "overseer";
-    process.env.QCR_SANDBOX_ROOT = dir;
-    const receipts = join(dir, "receipts");
-    mkdirSync(receipts);
-    const statePath = join(receipts, "bridge.json");
-    process.env.QCR_SESSION_BRIDGE_STATE_FILE = statePath;
-    mkdirSync(join(dir, "state", "sessions"), { recursive: true });
-    writeFileSync(
-      join(dir, "state", "sessions", "overseer.json"),
-      JSON.stringify({ session: "overseer", bridge_generation: "generation-1" }),
-    );
-    let idle = true;
     const exit = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
     activate(fakePi());
-    fire("session_start", {}, { isIdle: () => idle, hasPendingMessages: () => false });
-    const writeState = bridgeState.writeSessionBridgeState;
-    const publication = vi
-      .spyOn(bridgeState, "writeSessionBridgeState")
-      .mockImplementation((path, state) => {
-        if (path === statePath)
-          throw Object.assign(new Error("EACCES: receipt directory is unwritable"), {
-            code: "EACCES",
-          });
-        writeState(path, state);
-      });
-    try {
-      idle = false;
-      fire("agent_start");
-      expect(readSessionBridgeState(statePath)?.run_status).toBe("idle"); // actual stale-idle counterexample
-      writeFileSync(
-        join(dir, ".overseer-retire-request.json"),
-        JSON.stringify({ version: 1, generation: "generation-1", nonce: "retirement" }),
-      );
-      await sleep(20);
-      expect(exit).not.toHaveBeenCalled();
-      publication.mockRestore();
-      idle = true;
-      fire("agent_settled");
-      await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(0));
-    } finally {
-      publication.mockRestore();
-    }
+    fire("session_start", {}, { isIdle: () => true, hasPendingMessages: () => false });
+    fire("agent_settled", {}, { isIdle: () => true, hasPendingMessages: () => false });
+    await sleep(30);
+    expect(exit).not.toHaveBeenCalled();
   });
 
   it("publishes accepted unfinished work after its transport file has been archived", async () => {
-    process.env.QCR_SESSION_NAME = "overseer";
+    process.env.QCR_SESSION_NAME = "companion";
     writeFileSync(join(dir, "accepted.md"), "accepted work");
     activate(fakePi());
     fire("session_start");

@@ -17,7 +17,6 @@ import {
   FOLLOW_UP_TEMPLATE_FILE,
   RECHECK_TEMPLATE_FILE,
   renderConversationSystemPrompt,
-  renderOverseerSystemPrompt,
   renderRecheckPrompt,
   renderRoundPrompt,
   ROUND_TEMPLATE_FILES,
@@ -190,13 +189,9 @@ describe("no provenance reaches a model", () => {
       readFileSync(join(sandbox, "prompts", "conversation-system.md"), "utf8"),
       { pr: 7, title: "Orders", worktree: "/wt" },
     );
-    const overseer = renderOverseerSystemPrompt(
-      readFileSync(join(sandbox, "prompts", "overseer-system.md"), "utf8"),
-    );
     for (const [name, text] of [
       ["recheck", recheck],
       ["conversation-system", conversation],
-      ["overseer-system", overseer],
     ] as const) {
       expect(text, name).not.toContain("RATIFIED");
       expect(text, name).not.toContain("Sandbox file:");
@@ -205,13 +200,13 @@ describe("no provenance reaches a model", () => {
   });
 
   // These reach pi byte for byte (the companion's --system-prompt, the
-  // overseer's appended Slack file, the companion's registered skills), so
+  // companion's registered skills), so
   // they are scanned raw. Mutation: put "Feedback-PR: 5270" back in a skill.
-  it("files a model reads raw: companion prompt, Slack appendix, companion skills", () => {
-    const raw = ["prompts/companion.md", "prompts/slack-overseer-appendix.md"];
+  it("files a model reads raw: companion prompt, companion skills", () => {
+    const raw = ["prompts/companion.md"];
     const skills = join(sandbox, "skills", "companion");
     for (const d of readdirSync(skills)) raw.push(join("skills", "companion", d, "SKILL.md"));
-    expect(raw.length).toBeGreaterThanOrEqual(8);
+    expect(raw.length).toBeGreaterThanOrEqual(7);
     // The replay skill's contamination cutoff is an operational value the
     // instrument checks (src/regression.ts), not a dated aside.
     const OPERATIONAL = new Map([["skills/companion/replay/SKILL.md", "`2026-03-01`"]]);

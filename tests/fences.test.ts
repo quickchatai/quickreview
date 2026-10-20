@@ -37,10 +37,8 @@ import {
   EXECUTION_POLICY_ADDENDUM,
   PASS_ADDENDA,
   buildAgents,
-  identityVars,
 } from "../src/include.js";
 import { postTag } from "../src/severity.js";
-import { renderOverseerSystemPrompt } from "../src/templates.js";
 import { loadProfileAddenda } from "../src/profiles.js";
 import { locateProfile } from "../src/install.js";
 import { stageFixtureProfiles } from "./helpers/tracked-profiles.js";
@@ -796,34 +794,6 @@ describe("what a built pass is told it may run is exactly what the guard lets th
       "env FOO=1 python3 x.py",
     ]) {
       expect(checkBashCommand(cmd).allowed, `${cmd} must be refused`).toBe(false);
-    }
-  });
-
-  /**
-   * The overseer is the OTHER prompt a model reads on every day, and it too
-   * is composed: the frozen seed rendered, plus — when `[slack] enabled` —
-   * the non-seeded appendix, concatenated at spawn (`ensureOverseerSession`;
-   * `tests/slack-appendix.test.ts` proves this is the body that is spawned).
-   * The appendix is ours, and must not tell the overseer "a PR stops for a
-   * person only when a round returns NEEDS_HUMAN", nor that the seed still
-   * lists a command the seed no longer carries.
-   *
-   * MUTATION: put that sentence in prompts/slack-overseer-appendix.md —
-   * fails. Put `mark-escalation-worthy` into the seed's command list — fails.
-   */
-  it("the composed overseer body — seed rendered plus the Slack appendix — names neither the park nor NEEDS_HUMAN", () => {
-    const seed = readFileSync(join(ROOT, "prompts", "overseer-system.md"), "utf8");
-    const appendix = readFileSync(join(ROOT, "prompts", "slack-overseer-appendix.md"), "utf8");
-    const rendered = renderOverseerSystemPrompt(seed, identityVars({}));
-    // The appendix says the seed no longer lists the retired command; hold
-    // the fact the sentence rests on, not the sentence.
-    expect(rendered).not.toContain("mark-escalation-worthy");
-    for (const [label, body] of [
-      ["slack off", rendered],
-      ["slack on", `${rendered}\n\n${appendix.trimEnd()}\n`],
-    ] as const) {
-      expect(body, `${label}: names NEEDS_HUMAN`).not.toMatch(/NEEDS_HUMAN/);
-      expect(body, `${label}: names the park`).not.toMatch(/\bpark(s|ed|ing)?\b/i);
     }
   });
 

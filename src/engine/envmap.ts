@@ -36,7 +36,7 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
   QCR_PR: {
     kind: "extension-config",
     readers: ["ledger-pin.ts"],
-    note: "the session's own PR number; absent for the overseer",
+    note: "the session's own PR number; absent outside a PR session",
   },
   QCR_PR_META: {
     kind: "extension-config",
@@ -46,7 +46,7 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
   QCR_SESSION_NAME: {
     kind: "extension-config",
     readers: ["inject-bridge.ts", "ledger-pin.ts"],
-    note: "pr-<n> or overseer",
+    note: "pr-<n>",
   },
   QCR_SANDBOX_ROOT: {
     kind: "extension-config",

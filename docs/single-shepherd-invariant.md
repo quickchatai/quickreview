@@ -37,8 +37,7 @@ image-only paths (`/opt/qcr`, `/opt/quickreview`, state-home layout literals,
 
 **S3 — Every agent runs through a lens tool, launched by the PR's main
 session** (with one engine-side launcher, see the transitional amendment).
-On the tmux bot that tool is `subagent`: pi's own first-party subagent
-extension, loaded from the installed pi package by `extensions/subagents.ts`.
+That tool is our own `lens` / `lens_wave`, in `src/engine/lens/`.
 The main session is the only scheduler of agents. Passes are
 **leaves**: a pass never launches another agent and never posts to GitHub.
 `launch_plan` (registered by the same glue beside the subagent tool)
@@ -139,10 +138,9 @@ advances when the bot replies, which cannot happen while the wake is held.
 CLAUDE.md rule 9 is the authority for the wording; this section says what it
 covers while the tmux bot and the worker routes coexist.
 
-- **Two lens tools, one rule.** On the tmux bot `extensions/subagents.ts` stays
-  the lens tool (`subagent` / `launch_plan`) until the bot moves to workers. On
-  engine (SDK) routes and in workers our own lens tool runs: `lens` /
-  `lens_wave`, in `src/engine/lens/`. Both are called by the PR's main session,
+- **Two lens tools, one rule.** The native `subagent` path is gone: our own
+  lens tool runs on engine (SDK) routes and in workers: `lens` /
+  `lens_wave`, in `src/engine/lens/`. It is called by the PR's main session,
   and nothing else schedules a lens.
 - **Exactly two launchers.** The round's engine starts the *planned discovery
   wave* — the task files the engine wrote for this round — at round start.

@@ -4,7 +4,7 @@
 // docker, no pi.
 //
 // The properties that matter:
-//   - the six-string rewrite is comment-preserving, IDEMPOTENT and REVERSIBLE
+//   - the five-string rewrite is comment-preserving, IDEMPOTENT and REVERSIBLE
 //     (oauth → api → oauth restores the original bytes);
 //   - a bad key is refused and nothing is written;
 //   - switching routes re-runs cleanly in either direction;
@@ -69,7 +69,7 @@ let home: string;
 let savedHome: string | undefined;
 let savedSecretsEnv: string | undefined;
 
-/** A config.example.toml with the real shape: the six model strings, comments
+/** A config.example.toml with the real shape: the five model strings, comments
  * between them, and other `openai-codex/` mentions that must NOT be touched. */
 const EXAMPLE_CONFIG = `# QuickReview config
 [github]
@@ -81,7 +81,6 @@ secrets_dir = "SECRETS_DIR"
 # in pi's auth.json (direct \`openai/\` needs an API key we don't ship).
 default = "openai-codex/gpt-5.6-sol"
 conversation = "openai-codex/gpt-5.6-sol"   # sticky per-PR session
-overseer = "openai-codex/gpt-5.6-sol"
 risk_passes = ["pass-security"]
 validate_tier = "sol-high"
 
@@ -286,19 +285,18 @@ function detailOf(checks: Array<{ name: string; detail: string }>, name: string)
 // ---- the pure rewrite -------------------------------------------------------
 
 describe("model-string rewrite", () => {
-  it("names exactly six locations, all under [models]/[models.tiers]", () => {
+  it("names exactly five locations, all under [models]/[models.tiers]", () => {
     expect(modelLabels()).toEqual([
       "models.default",
       "models.conversation",
-      "models.overseer",
       "models.tiers.terra-med",
       "models.tiers.sol-med",
       "models.tiers.sol-high",
     ]);
-    expect(MODEL_LOCATIONS).toHaveLength(6);
+    expect(MODEL_LOCATIONS).toHaveLength(5);
   });
 
-  it("rewrites all six to the API prefix and touches nothing else (comments, other keys, commented-out models)", () => {
+  it("rewrites all five to the API prefix and touches nothing else (comments, other keys, commented-out models)", () => {
     const before = EXAMPLE_CONFIG;
     const { text, rewritten, custom, missing } = rewriteModelPrefixes(before, "api");
     expect(rewritten).toEqual(modelLabels());
@@ -336,12 +334,12 @@ describe("model-string rewrite", () => {
 
   it("leaves a deliberately custom provider alone and reports it", () => {
     const custom = EXAMPLE_CONFIG.replace(
-      'overseer = "openai-codex/gpt-5.6-sol"',
-      'overseer = "anthropic/some-model"',
+      'conversation = "openai-codex/gpt-5.6-sol"',
+      'conversation = "anthropic/some-model"',
     );
     const out = rewriteModelPrefixes(custom, "api");
-    expect(out.custom).toEqual(["models.overseer"]);
-    expect(out.text).toContain('overseer = "anthropic/some-model"');
+    expect(out.custom).toEqual(["models.conversation"]);
+    expect(out.text).toContain('conversation = "anthropic/some-model"');
   });
 
   it("reports a location that is missing from the file rather than inventing it", () => {
@@ -529,10 +527,10 @@ describe("OAuth route", () => {
     const report = await e.verifyAll();
     expect(report.ok).toBe(false);
     expect(report.results[0]?.failures.join(" ")).toMatch(/no auth\.json on the pi home/);
-    expect(report.results[0]?.failures.join(" ")).toMatch(/tmux attach/);
+    expect(report.results[0]?.failures.join(" ")).toMatch(/docker exec -it \S+ pi\b/);
   });
 
-  it("verify: the companion's login repair attaches to the COMPANION's session, never the daemon's overseer", async () => {
+  it("verify: the companion's login repair attaches to the COMPANION's session, never a daemon tmux session", async () => {
     hostLogin();
     await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
     const world = {
@@ -567,7 +565,7 @@ describe("OAuth route", () => {
     expect(report.ok).toBe(false);
     const failures = report.results[0]?.failures.join(" ") ?? "";
     expect(failures).toMatch(/daemon container: no auth\.json/);
-    expect(failures).toContain("docker exec -it quickreview-daemon-1 tmux attach");
+    expect(failures).toContain("docker exec -it quickreview-daemon-1 pi");
   });
 
   it("verify: a stopped container and an undetectable docker are notes, not failures", async () => {
@@ -652,7 +650,7 @@ describe("OAuth route", () => {
     expect(calls.some((c) => c[0] === "ssh" && c.includes("review-vm"))).toBe(true);
     // The repair command reaches the same host and container the probe did.
     expect(report.results[0]?.failures.join(" ")).toContain(
-      "ssh -t review-vm sudo docker exec -it quickreview-sandbox tmux attach -t overseer → /login",
+      "ssh -t review-vm sudo docker exec -it quickreview-sandbox pi → /login",
     );
     // The companion is this machine's: never probed over ssh.
     expect(
@@ -673,7 +671,7 @@ describe("OAuth route", () => {
 // ---- the API-key route ------------------------------------------------------
 
 describe("API-key route", () => {
-  it("run: one paste stores the key 0600 and rewrites all six model strings", async () => {
+  it("run: one paste stores the key 0600 and rewrites all five model strings", async () => {
     const calls: string[][] = [];
     const e = engine({}, calls, ["api", KEY]);
     const result = await e.runStep(LLM_AUTH_STEP_ID);
@@ -687,7 +685,7 @@ describe("API-key route", () => {
     expect(statSync(secretsDir).mode & 0o777).toBe(0o700);
 
     for (const a of auditModelStrings(configText())) expect(a.kind).toBe("api");
-    expect(detailOf(result.checks, "models")).toMatch(/rewrote 6/);
+    expect(detailOf(result.checks, "models")).toMatch(/rewrote 5/);
     expect(detailOf(result.checks, "credential")).toMatch(/OPENAI_API_KEY/);
     // The companion container is never handed the key file: the step must not
     // claim it is covered.

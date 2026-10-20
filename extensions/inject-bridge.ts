@@ -8,9 +8,9 @@
 // submission). The daemon writes files atomically (tmp + rename), so a watch
 // event sees a complete file.
 //
-// Two sessions still read a mailbox: the companion (its inbox) and the tmux
-// overseer. A PR's wake is not a file at all: a worker takes its order as its
-// first message. The bridge keeps what those two need:
+// The companion (its inbox) is the one session that still reads a mailbox. A PR's
+// wake is not a file at all: a worker takes its order as its first message.
+// The bridge keeps what the companion needs:
 //   1. only one unacknowledged wake exists per session,
 //   2. a marker-correlated user `message_start` after `agent_start` is the
 //      acceptance acknowledgement, and the busy flag brackets the whole RUN,
@@ -33,16 +33,11 @@ import {
   readFileSync,
   renameSync,
   statSync,
-  unlinkSync,
   watch,
 } from "node:fs";
 import { basename, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import {
-  OVERSEER_RETIRE_REQUEST_FILE,
-  writeSessionBridgeState,
-  type SessionBridgeCompaction,
-} from "../src/overseer-bridge.js";
+import { writeSessionBridgeState, type SessionBridgeCompaction } from "../src/session-bridge.js";
 
 /**
  * Session name resolution, in order:
@@ -52,7 +47,7 @@ import {
  *      accessor, so on a real pi this branch is inert. `getSessionName()` is
  *      deliberately not used: it would change which inject dir a session with
  *      no QCR_SESSION_NAME watches.
- *   3. "overseer" as the last resort (the only unnumbered session).
+ *   3. "session" as the last resort (matches ledger-pin's default).
  */
 export function resolveSessionName(pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env): string {
   const fromEnv = env.QCR_SESSION_NAME?.trim();
@@ -60,7 +55,7 @@ export function resolveSessionName(pi: ExtensionAPI, env: NodeJS.ProcessEnv = pr
   const named = (pi as { session?: { name?: unknown } }).session?.name;
   const fromPi = typeof named === "string" ? named.trim() : "";
   if (fromPi) return fromPi;
-  return "overseer";
+  return "session";
 }
 
 export function resolveInjectDir(pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env): string {
@@ -125,7 +120,6 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
   let watcher: ReturnType<typeof watch> | undefined;
   let closed = false;
   const session = resolveSessionName(pi);
-  const root = process.env.QCR_SANDBOX_ROOT?.trim() || process.cwd();
   const bridgeGeneration = process.env.QCR_SESSION_BRIDGE_GENERATION?.trim();
   const bridgeStateFile = process.env.QCR_SESSION_BRIDGE_STATE_FILE?.trim();
   let bridgeFailed = false;
@@ -208,18 +202,6 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
   const piIdle = (): boolean | undefined => {
     try {
       const fn = (piCtx as { isIdle?: unknown } | undefined)?.isIdle;
-      return typeof fn === "function" ? Boolean(fn.call(piCtx)) : undefined;
-    } catch {
-      return undefined;
-    }
-  };
-
-  /** Are prompts queued inside pi (steer/followUp)? pi 1.0.0
-   * `ExtensionContext.hasPendingMessages()`. undefined = unknown.
-   * VERIFY-ON-PIN, as above. */
-  const piHasPending = (): boolean | undefined => {
-    try {
-      const fn = (piCtx as { hasPendingMessages?: unknown } | undefined)?.hasPendingMessages;
       return typeof fn === "function" ? Boolean(fn.call(piCtx)) : undefined;
     } catch {
       return undefined;
@@ -391,46 +373,6 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
   // Every trigger funnels through this one synchronous drain. It may consume
   // empty files, but a non-empty submission always stops the drain until its
   // start is acknowledged and its run settles.
-  const retireIdleOverseer = (): boolean => {
-    if (session !== "overseer" || !bridgeGeneration) return false;
-    try {
-      const requestPath = join(dir, OVERSEER_RETIRE_REQUEST_FILE);
-      if (!existsSync(requestPath) || statSync(requestPath).size > 4096) return false;
-      const request = JSON.parse(readFileSync(requestPath, "utf8")) as Record<string, unknown>;
-      if (
-        request["version"] !== 1 ||
-        request["generation"] !== bridgeGeneration ||
-        typeof request["nonce"] !== "string" ||
-        !request["nonce"]
-      )
-        return false;
-      if (
-        busy ||
-        submitted ||
-        activeWake ||
-        compacting ||
-        piIdle() !== true ||
-        piHasPending() !== false ||
-        pendingFiles(dir).length > 0
-      )
-        return false;
-      const birth = JSON.parse(
-        readFileSync(join(root, "state", "sessions", "overseer.json"), "utf8"),
-      ) as Record<string, unknown>;
-      if (birth["session"] !== session || birth["bridge_generation"] !== bridgeGeneration)
-        return false;
-      // Consume and exit in one synchronous callback: no fresh prompt can be
-      // admitted between the in-process idle proof and process termination.
-      unlinkSync(requestPath);
-      closed = true;
-      watcher?.close();
-      process.exit(0);
-      return true;
-    } catch {
-      return false; // Malformed/unreadable/stale requests never terminate work.
-    }
-  };
-
   let draining = false;
   let drainAgain = false;
   const drain = (): void => {
@@ -443,7 +385,6 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
     try {
       do {
         drainAgain = false;
-        if (retireIdleOverseer()) break;
         if (piNotReady()) {
           scheduleIdleRecheck();
           break;
@@ -475,7 +416,7 @@ export const activate: (pi: ExtensionAPI) => void = (pi) => {
         // deliver): concurrent watch events cannot interleave or reorder —
         // pendingFiles() sorts, so delivery is strictly oldest-first.
         const name = String(filename);
-        if (name.endsWith(".md") || name === OVERSEER_RETIRE_REQUEST_FILE) drain();
+        if (name.endsWith(".md")) drain();
       });
       stage = "initial_drain";
       drain(); // anything dropped before or during watch registration

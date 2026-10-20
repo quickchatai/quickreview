@@ -268,11 +268,6 @@ const ALLOWLIST: AllowlistEntry[] = [
     reason: "exercises the legacy legacy_owner_slack_id alias (set, conflicting, folded)",
   },
   {
-    path: "tests/slack-appendix-schemas.test.ts",
-    tokens: ["owner_legacy"],
-    reason: "pins the flag-owner-legacy legacy command alias against the frozen appendix seed",
-  },
-  {
     path: "tests/slack-router.test.ts",
     tokens: ["owner_legacy"],
     reason: "pasted-table injection case uses the retired legacy tier spelling deliberately",
@@ -393,7 +388,8 @@ const ALLOWLIST: AllowlistEntry[] = [
   {
     path: "tests/emit-deploy-manifest.test.ts",
     tokens: ["quickchat"],
-    reason: "its fixtures name the release and memory images under the publishing org's registry namespace (ghcr.io/quickchatai/...), as release.yml pushes them",
+    reason:
+      "its fixtures name the release and memory images under the publishing org's registry namespace (ghcr.io/quickchatai/...), as release.yml pushes them",
   },
   {
     path: "src/onboard/steps/bringup.ts",
@@ -443,7 +439,8 @@ const ALLOWLIST: AllowlistEntry[] = [
   {
     path: "tests/cutover-wizard.test.ts",
     tokens: ["quickchat"],
-    reason: "builds a bare origin whose path looks like the release repo (quickchatai/quickreview.git), which the wizard's origin check matches",
+    reason:
+      "builds a bare origin whose path looks like the release repo (quickchatai/quickreview.git), which the wizard's origin check matches",
   },
   {
     path: "scripts/deploy.sh",

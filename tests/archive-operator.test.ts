@@ -904,8 +904,8 @@ describe("wire.ts connects both verbs to the archiver", () => {
     expect(wire).toMatch(
       /archiveRestore\(pr\) \{\s*if \(!archiver\)\s*return \{[^}]*\};\s*return archiver\.operatorRestore\(pr\);/,
     );
-    // The overseer and pi-global stores are wired too.
-    expect(wire).toMatch(/overseerBornAt: \(\) => sessions\.bornAt\(OVERSEER_SESSION\) \?\? null,/);
+    // pi-global is wired; the overseer is deleted, so no birth record is.
+    expect(wire).not.toMatch(/overseerBornAt/);
     expect(wire).toMatch(/piGlobalDir: piGlobalSessionsDir\(\),/);
   });
 });

@@ -1,11 +1,11 @@
 // The daemon↔pi boundary: birth, wake, archive and kill of the per-PR
-// pi sessions and the overseer session.
+// pi sessions.
 //
 // PR sessions are hosted by workers only (worker-session-host.ts); this file
 // no longer births, wakes or kills one. What stays is the tmux host of the
-// overseer (until it is deleted) and of the replay harness.
+// replay harness and the path/archive helpers the worker host shares.
 //
-// Shape of a session: a detached tmux session named `overseer`
+// Shape of a session: a detached tmux session
 // running the pinned interactive pi TUI with cwd = the sandbox root, the
 // substituted system prompt passed by path, and the two sandbox extensions
 // loaded. The daemon never types into that TUI: it wakes the session by
@@ -15,17 +15,8 @@
 // pi's package is a dependency here, but its CLI is not run in tests; every
 // assumption about its CLI surface is tagged VERIFY-ON-PIN and confined to
 // buildPiCommand().
-import { stripModelDocs } from "./promptdoc.js";
 import { randomUUID } from "node:crypto";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Config } from "./config.js";
 import {
@@ -46,18 +37,10 @@ import {
   type OvSessionLifecycle,
   type OvcliWriteResult,
 } from "./memory/ovsession.js";
-import {
-  OVERSEER_RETIRE_REQUEST_FILE,
-  readSessionBridgeState,
-  waitForSessionBridgeReady,
-  writeSessionBridgeState,
-  type SessionBridgeState,
-} from "./overseer-bridge.js";
+import { waitForSessionBridgeReady, writeSessionBridgeState } from "./session-bridge.js";
 import { Tmux } from "./tmux.js";
 import type { ExecFn } from "./tmux.js";
 import type { StateStore } from "./state.js";
-import { identityVars } from "./include.js";
-import { renderOverseerSystemPrompt } from "./templates.js";
 import { WorktreeManager } from "./worktrees.js";
 import {
   PrSessionLifecycle,
@@ -68,8 +51,6 @@ import {
 
 // The PR session naming lives with the lifecycle; sessions.ts keeps exporting it.
 export { prOfSession, prSessionName };
-
-export const OVERSEER_SESSION = "overseer";
 
 /** Environment-variable prefixes that ride the `env K=V … pi …` argv (see
  * spawnSession). `QCR_` is the daemon's routing surface; `OPENVIKING_` is the
@@ -138,7 +119,7 @@ export function sessionGitConfigPins(piHome: string): Record<string, string> {
 }
 
 export function isSandboxSession(name: string): boolean {
-  return name === OVERSEER_SESSION || /^pr-\d+$/.test(name);
+  return /^pr-\d+$/.test(name);
 }
 
 export interface PiCommandSpec {
@@ -464,8 +445,7 @@ export class PiSessionManager {
     // OpenViking identity. Explicit, because every session shares one
     // working directory and the extension's path-derived peer id therefore
     // cannot tell two PRs apart. The PR's raw-notes session is attached by id;
-    // the overseer owns no PR and so gets no session id (no raw tier, tools
-    // only). None of these is a secret — the key rides ovcli.conf at 0600.
+    // a non-PR session gets no session id (no raw tier, tools only). None of these is a secret — the key rides ovcli.conf at 0600.
     const pr = prOfSession(session);
     Object.assign(
       env,
@@ -503,7 +483,7 @@ export class PiSessionManager {
     return path;
   }
 
-  /** Birth an arbitrary session (the overseer, and the replay harness). A
+  /** Birth an arbitrary session (the replay harness). A
    * daemon-owned birth is not complete when tmux returns: the exact Pi
    * generation must prove that its inject bridge opened and swept the mailbox
    * first. */
@@ -615,103 +595,6 @@ export class PiSessionManager {
     );
   }
 
-  /** The bridge receipt of the session's current generation (the one its
-   * birth file names), or undefined when there is none to read. */
-  private currentBridgeState(session: string): SessionBridgeState | undefined {
-    try {
-      const birth = JSON.parse(readFileSync(this.birthFile(session), "utf8")) as {
-        bridge_generation?: string;
-      };
-      if (!birth.bridge_generation) return undefined;
-      const state = readSessionBridgeState(this.bridgeStatePath(session, birth.bridge_generation));
-      return state?.session === session && state.generation === birth.bridge_generation
-        ? state
-        : undefined;
-    } catch {
-      return undefined;
-    }
-  }
-
-  private currentBridgeReady(session: string): boolean {
-    return this.currentBridgeState(session)?.stage === "ready";
-  }
-
-  bornAt(session: string): Date | undefined {
-    try {
-      const raw = JSON.parse(readFileSync(this.birthFile(session), "utf8")) as { born_at?: string };
-      return raw.born_at ? new Date(raw.born_at) : undefined;
-    } catch {
-      return undefined;
-    }
-  }
-
-  /** Slack concierge appendix, or "" when Slack is off. */
-  private slackAppendix(): string {
-    // Typed access, not a cast: rename `slack` or `enabled` in Config and this
-    // fails the build instead of silently dropping the appendix. (The `?.`
-    // survives hand-rolled test configs that omit the block entirely.)
-    if (!this.cfg.slack?.enabled) return "";
-    const path = join(this.root, "prompts", "slack-overseer-appendix.md");
-    if (!existsSync(path))
-      throw new Error(`slack.enabled = true but the overseer Slack appendix is missing: ${path}`);
-    return `\n\n${stripModelDocs(readFileSync(path, "utf8")).trimEnd()}\n`;
-  }
-
-  /** Concurrent callers (a Slack burst, an anomaly beside the EOD sweep)
-   * share one has→spawn flight, as PR births do: a second spawn would fail
-   * on tmux's duplicate name before its caller wrote its wake. */
-  async ensureOverseerSession(): Promise<string> {
-    if (this.overseerRotation) {
-      await this.overseerRotation;
-      return OVERSEER_SESSION;
-    }
-    const existing = this.overseerBirth;
-    if (existing) return existing;
-    const birth = this.birthOverseer();
-    this.overseerBirth = birth;
-    try {
-      return await birth;
-    } finally {
-      if (this.overseerBirth === birth) this.overseerBirth = undefined;
-    }
-  }
-
-  private overseerBirth?: Promise<string>;
-  private overseerRotation?: Promise<string | false>;
-
-  private async birthOverseer(rotating = false): Promise<string> {
-    const alive = await this.tmux.hasSession(OVERSEER_SESSION);
-    // A probe begun before rotation may describe its old incarnation. Join
-    // the rotation's fresh birth instead of fencing a newly starting bridge.
-    if (!rotating && this.overseerRotation) {
-      await this.overseerRotation;
-      return OVERSEER_SESSION;
-    }
-    if (alive) {
-      if (this.currentBridgeReady(OVERSEER_SESSION)) return OVERSEER_SESSION;
-      if (!(await this.killConfirmed(OVERSEER_SESSION)))
-        throw new Error("the overseer survived its stale-bridge fence");
-    }
-    const template = readFileSync(join(this.root, "prompts", "overseer-system.md"), "utf8");
-    // The seeded overseer prompt is canonical and unmodifiable (CLAUDE.md rule
-    // 6), so the Slack contract rides as a spawn-time appendix — same shape as
-    // EXECUTION_POLICY_ADDENDUM in include.ts. Slack off = byte-identical prompt.
-    const body =
-      renderOverseerSystemPrompt(template, identityVars(this.cfg)) + this.slackAppendix();
-    try {
-      await this.spawnSession(OVERSEER_SESSION, body, this.cfg.models.overseer);
-    } catch (err) {
-      // A creator outside this manager instance may have won after our check.
-      if (
-        (await this.tmux.hasSession(OVERSEER_SESSION)) &&
-        this.currentBridgeReady(OVERSEER_SESSION)
-      )
-        return OVERSEER_SESSION;
-      throw err;
-    }
-    return OVERSEER_SESSION;
-  }
-
   // ---- injection ---------------------------------------------------------
 
   private injectFileName(commandId?: string): string {
@@ -742,130 +625,6 @@ export class PiSessionManager {
    * record: ledger, verdicts, `meta.json`). Returns what landed. */
   archiveSession(session: string, dest: string): string[] {
     return this.lifecycle.archiveSession(session, dest);
-  }
-
-  /** Kill `session` and confirm it gone: `Tmux.killSession` ignores its exit
-   * status, so the follow-up listing is the fence. True only when tmux
-   * answered and no longer lists it — never when tmux could not be asked. */
-  private async killConfirmed(session: string): Promise<boolean> {
-    await this.tmux.killSession(session);
-    return this.sessionProvenGone(session);
-  }
-
-  /** Does tmux affirmatively say `session` is gone? `hasSession` reads every
-   * failed probe (a socket it may not open, EAGAIN) as absence; a cleanup
-   * that destroys what a live session still writes to needs the listing tmux
-   * could answer, so "could not ask" is never "gone". */
-  private async sessionProvenGone(session: string): Promise<boolean> {
-    let names: string[] | null;
-    try {
-      names = await this.tmux.listSessionsKnown();
-    } catch {
-      names = null;
-    }
-    return names !== null && !names.includes(session);
-  }
-
-  // ---- overseer rotation -------------------------------------------------
-
-  /**
-   * Weekly rotation on the daemon timer (and the operator's `restart-session
-   * overseer`): record the run, then respawn. Each rotation gets its own
-   * record dir — `archive/overseer/<YYYY-MM-DD>`, then `<date>-2`, `-3`, … for
-   * another the same day — so two rotations on one date never overwrite each
-   * other. Only the ledger and `meta.json` are written there;
-   * the transcript stays live until the archiver moves it, named by its own
-   * file name, into `archive/overseer/transcripts/`. Returns the dir's name.
-   */
-  async rotateOverseer(): Promise<string> {
-    const rotated = await this.runOverseerRotation(false);
-    return rotated === false ? this.rotateOverseer() : rotated;
-  }
-
-  private async runOverseerRotation(automatic: boolean): Promise<string | false> {
-    if (this.overseerRotation) return this.overseerRotation;
-    const rotation = this.rotateOverseerNow(automatic);
-    this.overseerRotation = rotation;
-    try {
-      return await rotation;
-    } finally {
-      if (this.overseerRotation === rotation) this.overseerRotation = undefined;
-    }
-  }
-
-  private async retireOverseerWhenIdle(): Promise<boolean> {
-    const bridge = this.currentBridgeState(OVERSEER_SESSION);
-    if (bridge?.stage !== "ready") return false;
-    const nonce = randomUUID();
-    const path = join(this.injectDir(OVERSEER_SESSION), OVERSEER_RETIRE_REQUEST_FILE);
-    try {
-      this.writeAtomic(path, JSON.stringify({ version: 1, generation: bridge.generation, nonce }));
-      const deadline = performance.now() + this.sessionBridgeReadyTimeoutMs();
-      while (true) {
-        if (await this.sessionProvenGone(OVERSEER_SESSION)) return true;
-        if (performance.now() >= deadline) return false;
-        await new Promise((resolve) =>
-          setTimeout(resolve, Math.min(25, Math.max(1, deadline - performance.now()))),
-        );
-      }
-    } finally {
-      try {
-        const current = JSON.parse(readFileSync(path, "utf8")) as { nonce?: string };
-        if (current.nonce === nonce) rmSync(path);
-      } catch {
-        /* Do not remove a replacement or unreadable request. */
-      }
-    }
-  }
-
-  private async rotateOverseerNow(automatic: boolean): Promise<string | false> {
-    // Stale idle telemetry is never authority to kill. The bridge proves idle
-    // in its own event loop and retires itself; unknown/timeout keeps it intact.
-    if (automatic && !(await this.retireOverseerWhenIdle())) return false;
-    const day = this.now().toISOString().slice(0, 10);
-    const base = this.archiveDir(OVERSEER_SESSION);
-    let stamp = day;
-    for (let k = 2; existsSync(join(base, stamp)); k++) stamp = `${day}-${k}`;
-    this.archiveSession(OVERSEER_SESSION, join(base, stamp));
-    // A kill that did not take would let the respawn below adopt the old
-    // overseer and report a rotation that never happened.
-    if (!automatic && !(await this.killConfirmed(OVERSEER_SESSION))) {
-      throw new Error(`the overseer survived the rotation kill — not rotated (record ${stamp})`);
-    }
-    // An older single-flight probe may still describe the overseer killed
-    // above. Rotation needs its own fresh liveness decision.
-    await this.birthOverseer(true);
-    return stamp;
-  }
-
-  /** True when the live overseer is older than config.daemon.overseer_rotation_days. */
-  overseerRotationDue(): boolean {
-    const born = this.bornAt(OVERSEER_SESSION);
-    if (!born) return false;
-    const ageDays = (this.now().getTime() - born.getTime()) / 86_400_000;
-    return ageDays >= this.cfg.daemon.overseer_rotation_days;
-  }
-
-  async rotateOverseerIfDue(): Promise<boolean> {
-    if (!this.overseerRotationDue()) return false;
-    // Acceptance archives transport before the run settles. Idle telemetry
-    // only admits the retirement request; the process itself proves idle.
-    // A receipt without run_status is unknown and safely holds automatic
-    // rotation; the operator can still request an explicit restart.
-    const bridge = this.currentBridgeState(OVERSEER_SESSION);
-    if (
-      bridge?.stage !== "ready" ||
-      bridge.run_status !== "idle" ||
-      bridge.compaction?.state !== "idle"
-    )
-      return false;
-    try {
-      if (readdirSync(this.injectDir(OVERSEER_SESSION)).some((file) => file.endsWith(".md")))
-        return false;
-    } catch {
-      return false;
-    }
-    return (await this.runOverseerRotation(true)) !== false;
   }
 
   // ---- daemon start ------------------------------------------------------

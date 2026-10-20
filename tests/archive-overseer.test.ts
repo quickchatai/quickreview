@@ -46,7 +46,6 @@ import {
   onArchiver,
   prFixture,
   put,
-  sessionRig,
   type PrFixture,
 } from "./helpers/archive-pr.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
@@ -195,44 +194,6 @@ describe("the overseer store (acceptance 4)", () => {
       a.stop();
     }
   });
-
-  it(
-    "two rotations on the same date no longer overwrite each other — both runs kept, by name",
-    { timeout: HEAVY_TIMEOUT_MS },
-    async () => {
-      const f = root();
-      const rig = sessionRig(f);
-      writeFileSync(join(f.root, "prompts", "overseer-system.md"), "You are the overseer.\n");
-      const at = (iso: string): void => {
-        f.clock.ms = Date.parse(iso);
-      };
-      at("2026-10-21T09:00:00Z");
-      await rig.m.ensureOverseerSession();
-      const a = put(f.root, `${OV}/a.jsonl`, line("run a"), Date.parse("2026-10-21T09:30:00Z"));
-      at("2026-10-21T10:00:00Z");
-      expect(await rig.m.rotateOverseer()).toBe("2026-10-21");
-      const b = put(f.root, `${OV}/b.jsonl`, line("run b"), Date.parse("2026-10-21T11:00:00Z"));
-      at("2026-10-21T12:00:00Z");
-      expect(await rig.m.rotateOverseer()).toBe("2026-10-21-2");
-      const c = put(f.root, `${OV}/c.jsonl`, line("run c"), Date.parse("2026-10-21T12:30:00Z"));
-      at("2026-10-21T13:00:00Z");
-      const ar = onArchiver(f, {}, { overseerBornAt: () => rig.m.bornAt("overseer") ?? null });
-      archivers.push(ar);
-      await ar.tick();
-      // Both earlier runs are archived under their own names; the current
-      // one stays; each rotation's record keeps its own meta.json.
-      expect(gz(f, "archive/overseer/transcripts/a.jsonl.gz").toString()).toBe(line("run a"));
-      expect(gz(f, "archive/overseer/transcripts/b.jsonl.gz").toString()).toBe(line("run b"));
-      expect(existsSync(a) || existsSync(b)).toBe(false);
-      expect(existsSync(c)).toBe(true);
-      const meta = (d: string) =>
-        JSON.parse(readFileSync(join(f.root, "archive", "overseer", d, "meta.json"), "utf8"));
-      expect(meta("2026-10-21").session_file).toBe(a);
-      expect(meta("2026-10-21-2").session_file).toBe(b);
-      for (const d of ["2026-10-21", "2026-10-21-2"])
-        expect(existsSync(join(f.root, "archive", "overseer", d, "session.jsonl"))).toBe(false);
-    },
-  );
 });
 
 describe("the overseer's legacy rotation copies (§7.5)", () => {

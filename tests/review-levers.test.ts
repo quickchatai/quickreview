@@ -86,12 +86,7 @@ describe("[models] effort — one reasoning level for every model", () => {
     ["high", "max"],
   ])("effort = %s sets :%s on default, conversation, overseer and every tier", (effort, level) => {
     const cfg = parseConfig(fixture.replace("[models]\n", `[models]\neffort = "${effort}"\n`));
-    const specs = [
-      cfg.models.default,
-      cfg.models.conversation,
-      cfg.models.overseer,
-      ...Object.values(cfg.models.tiers),
-    ];
+    const specs = [cfg.models.default, cfg.models.conversation, ...Object.values(cfg.models.tiers)];
     for (const spec of specs) expect(spec.endsWith(`:${level}`)).toBe(true);
   });
 
@@ -141,11 +136,7 @@ describe("[review] preset — default / low / max", () => {
 
   it("max: every model at its ceiling, the full lever plan", () => {
     const cfg = withPreset(`preset = "max"`);
-    for (const spec of [
-      cfg.models.conversation,
-      cfg.models.overseer,
-      ...Object.values(cfg.models.tiers),
-    ])
+    for (const spec of [cfg.models.conversation, ...Object.values(cfg.models.tiers)])
       expect(spec.endsWith(":max")).toBe(true);
     expect(cfg.review).toMatchObject({
       intent_min_words: 20,

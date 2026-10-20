@@ -16,7 +16,7 @@ import { remoteSandboxRoot, resolveLayout } from "./layout.js";
 
 /** The only session names the TUI will ever build a remote path from. */
 export function isValidSessionName(name: string): boolean {
-  return name === "overseer" || name === "main" || /^pr-\d+$/.test(name);
+  return name === "main" || /^pr-\d+$/.test(name);
 }
 
 export function injectDirFor(cfg: TuiConfig, session: string): string {

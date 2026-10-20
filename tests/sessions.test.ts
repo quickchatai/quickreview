@@ -9,16 +9,14 @@ import {
   readdirSync,
   rmSync,
   statSync,
-  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Config } from "../src/config.js";
 import {
   PiSessionManager,
-  OVERSEER_SESSION,
   buildPiCommand,
   isSandboxSession,
   prOfSession,
@@ -26,7 +24,7 @@ import {
 } from "../src/sessions.js";
 import { Tmux } from "../src/tmux.js";
 import type { ExecFn } from "../src/tmux.js";
-import { writeSessionBridgeState } from "../src/overseer-bridge.js";
+import { writeSessionBridgeState } from "../src/session-bridge.js";
 import { type StateStore } from "../src/state.js";
 import { WorktreeManager } from "../src/worktrees.js";
 import { piAuthWatchDirs } from "../src/wire.js";
@@ -62,7 +60,6 @@ const cfg = (): Config =>
       poll_interval_s: 300,
       max_concurrent_rounds: 6,
       round_deadline_min: 45,
-      overseer_rotation_days: 7,
     },
     eod: { time: "18:00", timezone: "Europe/Warsaw" },
     caps: {
@@ -75,7 +72,6 @@ const cfg = (): Config =>
     models: {
       default: "openai/gpt-5.6-sol",
       conversation: "openai/conv",
-      overseer: "openai/over",
       passes: {},
     },
     pi: {
@@ -194,6 +190,11 @@ function markExistingSessionReady(m: PiSessionManager, session: string): void {
   });
 }
 
+/** Birth a throwaway non-PR session (the replay harness's shape). */
+function birth(m: PiSessionManager, name = "replay-1"): Promise<void> {
+  return m.spawnSession(name, "You are a test session.\n", "openai/conv");
+}
+
 function tmuxArgs(): string[][] {
   return calls.filter((c) => c.cmd === "tmux").map((c) => c.args);
 }
@@ -215,7 +216,6 @@ beforeEach(() => {
     join(root, "prompts", "conversation-system.md"),
     "Shepherd of PR #{{n}} ({{title}}) at {{worktree}}.\n",
   );
-  writeFileSync(join(root, "prompts", "overseer-system.md"), "You are the overseer.\n");
   writeFileSync(join(secrets, "openai_api_key"), "sk-app-key\n");
 });
 
@@ -248,7 +248,7 @@ describe("session naming", () => {
     expect(prSessionName(42)).toBe("pr-42");
     expect(prOfSession("pr-42")).toBe(42);
     expect(prOfSession("misc")).toBeUndefined();
-    expect(isSandboxSession("overseer")).toBe(true);
+    expect(isSandboxSession("overseer")).toBe(false);
     expect(isSandboxSession("pr-7")).toBe(true);
     expect(isSandboxSession("scratch")).toBe(false);
   });
@@ -415,8 +415,8 @@ describe("birth", () => {
       expect(env.QCR_OV_RECALL_HINT_FILE).toBe(
         join(root, "pihome", ".openviking", "recall-hints", "pr-42.json"),
       );
-      // The overseer owns no PR and recalls on its own prompts: no hint file.
-      expect(manager().buildEnv("overseer").QCR_OV_RECALL_HINT_FILE).toBeUndefined();
+      // A non-PR session recalls on its own prompts: no hint file.
+      expect(manager().buildEnv("replay-1").QCR_OV_RECALL_HINT_FILE).toBeUndefined();
       // No credential of any kind reached the environment.
       for (const [k, v] of Object.entries(env)) {
         expect(k, `${k} must not look like an OpenViking key`).not.toMatch(/OPENVIKING.*KEY/);
@@ -451,7 +451,7 @@ describe("OpenViking identity of a session", () => {
   it("puts the whole identity on the pi command line — and no key anywhere", async () => {
     const m = manager();
     writeFileSync(join(secrets, "openviking_reviewer_key"), "ov-reviewer-key\n");
-    await m.ensureOverseerSession();
+    await birth(m);
 
     const newSession = tmuxArgs().find((a) => a[0] === "new-session")!;
     const prefix = newSession.filter((a) => a.startsWith("OPENVIKING_") || a.startsWith("QCR_OV_"));
@@ -459,7 +459,7 @@ describe("OpenViking identity of a session", () => {
     expect(prefix).toContain("OPENVIKING_USER=reviewer");
     // The peer id is per-session: all sessions share one cwd, so the
     // extension's path-derived peer cannot separate two of them.
-    expect(prefix).toContain("OPENVIKING_PEER_ID=overseer");
+    expect(prefix).toContain("OPENVIKING_PEER_ID=replay-1");
     expect(prefix).toContain(`OPENVIKING_CLI_CONFIG_FILE=${m.ovcliConfPath()}`);
     // argv is world-readable (`ps`): the key must never appear on it.
     expect(newSession.join(" ")).not.toContain("ov-reviewer-key");
@@ -473,7 +473,7 @@ describe("OpenViking identity of a session", () => {
     } as unknown as Config;
     writeFileSync(join(secrets, "openviking_reviewer_key"), "ov-reviewer-key\n");
     const m = manager(undefined, undefined, config);
-    await m.ensureOverseerSession();
+    await birth(m);
 
     const newSession = tmuxArgs().find((a) => a[0] === "new-session")!;
     expect(newSession).toContain("OPENVIKING_USER=alice");
@@ -481,11 +481,11 @@ describe("OpenViking identity of a session", () => {
     expect(JSON.parse(readFileSync(m.ovcliConfPath(), "utf8")).user).toBe("alice");
   });
 
-  it("the overseer gets the identity but owns no raw tier", async () => {
+  it("a non-PR session gets the identity but owns no raw tier", async () => {
     const m = manager();
-    await m.ensureOverseerSession();
+    await birth(m);
     const newSession = tmuxArgs().find((a) => a[0] === "new-session")!;
-    expect(newSession).toContain("OPENVIKING_PEER_ID=overseer");
+    expect(newSession).toContain("OPENVIKING_PEER_ID=replay-1");
     expect(newSession.some((a) => a.startsWith("QCR_OV_SESSION_ID="))).toBe(false);
     expect(ovCalls).toEqual([]);
   });
@@ -493,7 +493,7 @@ describe("OpenViking identity of a session", () => {
   it("drops the reviewer key into the pi HOME at 0600, never onto argv", async () => {
     writeFileSync(join(secrets, "openviking_reviewer_key"), "ov-reviewer-key\n");
     const m = manager();
-    await m.ensureOverseerSession();
+    await birth(m);
 
     const path = m.ovcliConfPath();
     expect(path).toBe(join(root, "pihome", ".openviking", "ovcli.conf"));
@@ -533,41 +533,40 @@ describe("OpenViking identity of a session", () => {
   });
 });
 
-describe("overseer birth", () => {
-  it("concurrent overseer births share one session", async () => {
+describe("session birth", () => {
+  it("births a replay session on the configured model with an empty mailbox", async () => {
     const m = manager();
-    await Promise.all([m.ensureOverseerSession(), m.ensureOverseerSession()]);
-    expect(
-      tmuxArgs().filter((a) => a[0] === "new-session" && a[3] === OVERSEER_SESSION),
-    ).toHaveLength(1);
-  });
-
-  it("ensureOverseerSession births the overseer session", async () => {
-    const m = manager();
-    await m.ensureOverseerSession();
+    await birth(m, "replay-1");
     const newSession = tmuxArgs().find((a) => a[0] === "new-session")!;
-    expect(newSession[3]).toBe(OVERSEER_SESSION);
-    expect(newSession).toContain("openai/over");
-    expect(
-      readdirSync(m.injectDir(OVERSEER_SESSION)).filter((f) => f.endsWith(".md")),
-    ).toHaveLength(0);
+    expect(newSession[3]).toBe("replay-1");
+    expect(newSession).toContain("openai/conv");
+    expect(readdirSync(m.injectDir("replay-1")).filter((f) => f.endsWith(".md"))).toHaveLength(0);
   });
 
   it("gives concurrent injections distinct filenames", async () => {
     const m = manager();
-    markExistingSessionReady(m, OVERSEER_SESSION);
-    m.injectFile(OVERSEER_SESSION, "one");
-    m.injectFile(OVERSEER_SESSION, "two");
-    const files = readdirSync(m.injectDir(OVERSEER_SESSION)).filter((f) => f.endsWith(".md"));
+    markExistingSessionReady(m, "pr-9");
+    m.injectFile("pr-9", "one");
+    m.injectFile("pr-9", "two");
+    const files = readdirSync(m.injectDir("pr-9")).filter((f) => f.endsWith(".md"));
     expect(new Set(files).size).toBe(2);
+  });
+
+  it("refuses a daemon-owned birth without its matching bridge-ready receipt", async () => {
+    autoBridgeReady = false;
+    const config = cfg();
+    config.daemon.session_bridge_ready_timeout_s = 0.005;
+    const m = manager(undefined, undefined, config);
+    await expect(birth(m, "pr-12")).rejects.toThrow(/timed out/);
+    expect(liveSessions.has("pr-12")).toBe(false);
   });
 });
 
 describe("pi auth watch coverage", () => {
-  it("watches the --session-dir every PR and overseer session actually writes", () => {
+  it("watches the --session-dir every PR session actually writes", () => {
     const m = manager();
     const watch = new PiAuthWatch(piAuthWatchDirs(m), () => new Date());
-    for (const session of ["pr-4242", "overseer"]) {
+    for (const session of ["pr-4242"]) {
       const dir = m.sessionDir(session);
       mkdirSync(dir, { recursive: true });
       writeFileSync(
@@ -577,13 +576,12 @@ describe("pi auth watch coverage", () => {
     }
     const hits = watch.scan().map((h) => h.file);
     expect(hits.some((f) => f.startsWith(m.sessionDir("pr-4242")))).toBe(true);
-    expect(hits.some((f) => f.startsWith(m.sessionDir("overseer")))).toBe(true);
   });
 });
 
 describe("daemon start", () => {
   it("adopts no tmux session: a live pr-* is neither listed, killed nor restarted at boot", async () => {
-    liveSessions = new Set(["pr-7", "pr-42", "overseer", "some-other-session"]);
+    liveSessions = new Set(["pr-7", "pr-42", "some-other-session"]);
     const m = manager();
     expect("adopt" in m).toBe(false);
     await m.preflight([]);
@@ -603,234 +601,5 @@ describe("daemon start", () => {
     expect(sweptWorktrees).toEqual([9]);
     expect(existsSync(m.worktrees.worktreePath(9))).toBe(false);
     expect(existsSync(m.worktrees.worktreePath(7))).toBe(true);
-  });
-});
-
-it("refuses an overseer birth without its matching bridge-ready receipt", async () => {
-  autoBridgeReady = false;
-  const config = cfg();
-  config.daemon.session_bridge_ready_timeout_s = 0.005;
-  const m = manager(undefined, undefined, config);
-  await expect(m.ensureOverseerSession()).rejects.toThrow(/timed out/);
-  expect(liveSessions.has("overseer")).toBe(false);
-});
-
-it("replaces a live overseer whose bridge failed before accepting another wake", async () => {
-  const m = manager();
-  await m.ensureOverseerSession();
-  const birth = JSON.parse(
-    readFileSync(join(root, "state", "sessions", "overseer.json"), "utf8"),
-  ) as { bridge_generation: string };
-  writeSessionBridgeState(m.bridgeStatePath("overseer", birth.bridge_generation), {
-    version: 1,
-    session: "overseer",
-    generation: birth.bridge_generation,
-    stage: "failed",
-    updated_at: "2026-08-13T10:00:00Z",
-    detail: "watcher failed",
-  });
-  await m.ensureOverseerSession();
-  expect(tmuxArgs().filter((a) => a[0] === "kill-session")).toHaveLength(1);
-  expect(tmuxArgs().filter((a) => a[0] === "new-session")).toHaveLength(2);
-});
-
-it("defers automatic overseer rotation while an accepted wake remains unfinished", async () => {
-  let now = new Date("2026-08-13T10:00:00Z");
-  const m = manager(() => now);
-  await m.ensureOverseerSession();
-  m.injectFile("overseer", "accepted but still running");
-  now = new Date("2026-08-21T10:00:00Z");
-  expect(await m.rotateOverseerIfDue()).toBe(false);
-  expect(tmuxArgs().filter((a) => a[0] === "kill-session")).toHaveLength(0);
-});
-
-it("holds automatic rotation for an accepted run even with an empty mailbox", async () => {
-  let now = new Date("2026-08-13T10:00:00Z");
-  const m = manager(() => now);
-  await m.ensureOverseerSession();
-  const birth = JSON.parse(
-    readFileSync(join(root, "state", "sessions", "overseer.json"), "utf8"),
-  ) as { bridge_generation: string };
-  const state = {
-    version: 1 as const,
-    session: "overseer",
-    generation: birth.bridge_generation,
-    stage: "ready" as const,
-    updated_at: now.toISOString(),
-    compaction: { state: "idle" as const, seq: 0 },
-  };
-  writeSessionBridgeState(m.bridgeStatePath("overseer", birth.bridge_generation), {
-    ...state,
-    run_status: "active",
-  });
-  now = new Date("2026-08-21T10:00:00Z");
-  expect(readdirSync(m.injectDir("overseer")).filter((file) => file.endsWith(".md"))).toEqual([]);
-  expect(await m.rotateOverseerIfDue()).toBe(false);
-  expect(tmuxArgs().filter((a) => a[0] === "kill-session")).toEqual([]);
-  writeSessionBridgeState(m.bridgeStatePath("overseer", birth.bridge_generation), {
-    ...state,
-    run_status: "idle",
-  });
-  onListSessions = () => {
-    if (existsSync(join(m.injectDir(OVERSEER_SESSION), ".overseer-retire-request.json")))
-      liveSessions.delete(OVERSEER_SESSION);
-  };
-  expect(await m.rotateOverseerIfDue()).toBe(true);
-});
-
-it("accepts a legacy bridge receipt while holding automatic rotation as unknown", async () => {
-  let now = new Date("2026-08-13T10:00:00Z");
-  const m = manager(() => now);
-  await m.ensureOverseerSession();
-  const birth = JSON.parse(
-    readFileSync(join(root, "state", "sessions", "overseer.json"), "utf8"),
-  ) as { bridge_generation: string };
-  writeSessionBridgeState(m.bridgeStatePath("overseer", birth.bridge_generation), {
-    version: 1,
-    session: "overseer",
-    generation: birth.bridge_generation,
-    stage: "ready",
-    updated_at: now.toISOString(),
-    compaction: { state: "idle", seq: 0 },
-  });
-  expect(await m.ensureOverseerSession()).toBe("overseer");
-  now = new Date("2026-08-21T10:00:00Z");
-  expect(await m.rotateOverseerIfDue()).toBe(false);
-  expect(tmuxArgs().filter((a) => a[0] === "kill-session")).toEqual([]);
-});
-
-it.each(["alive", "unknown"] as const)(
-  "never rotates stale idle telemetry when self-retirement is %s",
-  async (probe) => {
-    let now = new Date("2026-08-13T10:00:00Z");
-    const config = cfg();
-    config.daemon.session_bridge_ready_timeout_s = 0.005;
-    const m = manager(() => now, undefined, config);
-    await m.ensureOverseerSession();
-    now = new Date("2026-08-21T10:00:00Z");
-    if (probe === "unknown") vi.spyOn(m.tmux, "listSessionsKnown").mockResolvedValue(null);
-    expect(await m.rotateOverseerIfDue()).toBe(false);
-    expect(tmuxArgs().filter((args) => args[0] === "kill-session")).toEqual([]);
-    expect(tmuxArgs().filter((args) => args[0] === "new-session")).toHaveLength(1);
-    expect(existsSync(m.archiveDir("overseer"))).toBe(false);
-  },
-);
-
-describe("overseer rotation", () => {
-  it("is not due before the configured age", async () => {
-    let now = new Date("2026-08-13T10:00:00Z");
-    const m = manager(() => now);
-    await m.ensureOverseerSession();
-    now = new Date("2026-08-19T10:00:00Z"); // 6 days
-    expect(m.overseerRotationDue()).toBe(false);
-    expect(await m.rotateOverseerIfDue()).toBe(false);
-  });
-
-  it("records the run and respawns once the rotation interval elapses — ledger and meta, never the JSONL", async () => {
-    let now = new Date("2026-08-13T10:00:00Z");
-    const m = manager(() => now);
-    await m.ensureOverseerSession();
-    const sdir = join(m.sessionDir(OVERSEER_SESSION), "s");
-    mkdirSync(sdir, { recursive: true });
-    writeFileSync(join(sdir, "run.jsonl"), '{"type":"session"}\n');
-    mkdirSync(join(root, "state", "ledgers"), { recursive: true });
-    writeFileSync(m.ledgerPath(OVERSEER_SESSION), "overseer ledger\n");
-
-    now = new Date("2026-08-20T10:00:00Z"); // 7 days
-    expect(m.overseerRotationDue()).toBe(true);
-    onListSessions = () => {
-      if (existsSync(join(m.injectDir(OVERSEER_SESSION), ".overseer-retire-request.json")))
-        liveSessions.delete(OVERSEER_SESSION);
-    };
-    expect(await m.rotateOverseerIfDue()).toBe(true);
-
-    const rec = join(m.archiveDir(OVERSEER_SESSION), "2026-08-20");
-    expect(existsSync(join(rec, "session.jsonl"))).toBe(false);
-    expect(readFileSync(join(rec, "ledger.md"), "utf8")).toBe("overseer ledger\n");
-    expect(JSON.parse(readFileSync(join(rec, "meta.json"), "utf8")).session_file).toBe(
-      join(sdir, "run.jsonl"),
-    );
-    // The transcript stays live until the archiver moves it.
-    expect(existsSync(join(sdir, "run.jsonl"))).toBe(true);
-    expect(tmuxArgs().filter((args) => args[0] === "kill-session")).toEqual([]);
-    expect(tmuxArgs().filter((a) => a[0] === "new-session" && a[3] === "overseer")).toHaveLength(2);
-    expect(liveSessions.has(OVERSEER_SESSION)).toBe(true);
-  });
-
-  it("rotation does not join a birth flight whose probe still describes the killed overseer", async () => {
-    const m = manager();
-    await m.ensureOverseerSession();
-    let entered!: () => void;
-    const probing = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    let release!: () => void;
-    const finishProbe = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    vi.spyOn(m.tmux, "hasSession").mockImplementationOnce(async () => {
-      entered();
-      await finishProbe;
-      return true;
-    });
-    const olderBirth = m.ensureOverseerSession();
-    await probing;
-    // Let the rotation run every continuation after its kill before the old
-    // probe finishes. It must spawn without borrowing that stale flight.
-    onKillSession = () => {
-      setImmediate(release);
-    };
-    try {
-      await Promise.all([olderBirth, m.rotateOverseer()]);
-      expect(liveSessions.has(OVERSEER_SESSION)).toBe(true);
-      expect(tmuxArgs().filter((a) => a[0] === "new-session" && a[3] === "overseer")).toHaveLength(
-        2,
-      );
-    } finally {
-      release();
-    }
-  });
-
-  it("an overseer that survives the rotation kill is not reported rotated", async () => {
-    const m = manager();
-    await m.ensureOverseerSession();
-    keepKilledSession = true;
-    await expect(m.rotateOverseer()).rejects.toThrow(/survived the rotation kill/);
-    expect(tmuxArgs().filter((a) => a[0] === "new-session" && a[3] === "overseer")).toHaveLength(1);
-  });
-
-  it("two rotations on the same date no longer overwrite each other", async () => {
-    let now = new Date("2026-08-20T09:00:00Z");
-    const m = manager(() => now);
-    await m.ensureOverseerSession();
-    const sdir = m.sessionDir(OVERSEER_SESSION);
-    mkdirSync(sdir, { recursive: true });
-    writeFileSync(join(sdir, "a.jsonl"), '{"n":1}\n');
-    utimesSync(
-      join(sdir, "a.jsonl"),
-      new Date("2026-08-20T08:00:00Z"),
-      new Date("2026-08-20T08:00:00Z"),
-    );
-    expect(await m.rotateOverseer()).toBe("2026-08-20");
-    // The weekly rotation, then an operator restart-session the same day.
-    now = new Date("2026-08-20T15:00:00Z");
-    writeFileSync(join(sdir, "b.jsonl"), '{"n":2}\n');
-    expect(await m.rotateOverseer()).toBe("2026-08-20-2");
-    now = new Date("2026-08-20T16:00:00Z");
-    expect(await m.rotateOverseer()).toBe("2026-08-20-3");
-    const meta = (d: string) =>
-      JSON.parse(readFileSync(join(m.archiveDir(OVERSEER_SESSION), d, "meta.json"), "utf8"));
-    expect(meta("2026-08-20").archived_at).toBe("2026-08-20T09:00:00.000Z");
-    expect(meta("2026-08-20").session_file).toBe(join(sdir, "a.jsonl"));
-    expect(meta("2026-08-20-2").archived_at).toBe("2026-08-20T15:00:00.000Z");
-    expect(meta("2026-08-20-2").session_file).toBe(join(sdir, "b.jsonl"));
-    expect(meta("2026-08-20-3").archived_at).toBe("2026-08-20T16:00:00.000Z");
-    // Both transcripts are still live — nothing was copied, nothing lost.
-    expect(readFileSync(join(sdir, "a.jsonl"), "utf8")).toBe('{"n":1}\n');
-    expect(readFileSync(join(sdir, "b.jsonl"), "utf8")).toBe('{"n":2}\n');
-  });
-
-  it("reports not-due when no birth record exists (adopted session)", () => {
-    expect(manager().overseerRotationDue()).toBe(false);
   });
 });
