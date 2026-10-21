@@ -1208,6 +1208,54 @@ async function cmdDrain(rest: string[]): Promise<number> {
   return runDrain(on, { cfg, ssh: runnerFor(cfg.tui), log: (l) => console.log(l) }, hold);
 }
 
+// ---- the operator's per-PR pause ---------------------------------------------------
+//
+// `qcr pause-pr <n>` / `qcr resume-pr <n>`: the operator's `pause-pr` /
+// `resume-pr`, written as root into the sealed commands/operator/ (the drain's
+// channel) and confirmed by the daemon's own result file
+// (src/tui/prpause.ts). From that channel a pause carries no expiry: it stands
+// until `qcr resume-pr`, and no session lifts it. The cutover wizard's stage 9
+// pauses every tracked PR but one with it before the drain is lifted.
+
+export const PR_LEVER_USAGE = "usage: qcr pause-pr <pr> [--reason <text>] | qcr resume-pr <pr>";
+
+/** `qcr pause-pr|resume-pr`'s arguments: one PR number, and for a pause an
+ * optional `--reason <text>` (the reason the board and `qcr status` show). */
+export function parsePrLeverArgs(
+  verb: "pause-pr" | "resume-pr",
+  rest: readonly string[],
+): import("./tui/prpause.js").PrLeverCommand {
+  let pr: number | undefined;
+  let reason: string | undefined;
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i]!;
+    if (a === "--reason" && verb === "pause-pr" && reason === undefined) {
+      const v = rest[++i];
+      if (v === undefined || v.trim() === "") throw new Error(PR_LEVER_USAGE);
+      reason = v;
+    } else if (/^\d+$/.test(a) && Number(a) > 0 && pr === undefined) pr = Number(a);
+    else throw new Error(PR_LEVER_USAGE);
+  }
+  if (pr === undefined) throw new Error(PR_LEVER_USAGE);
+  if (verb === "resume-pr") return { command: "resume-pr", pr };
+  return { command: "pause-pr", pr, reason: reason ?? "paused by the operator (qcr pause-pr)" };
+}
+
+async function cmdPrLever(verb: "pause-pr" | "resume-pr", rest: string[]): Promise<number> {
+  const cmd = parsePrLeverArgs(verb, rest);
+  const cfg = loadConfig();
+  const { runnerFor } = await import("./tui/remote.js");
+  const { PrLeverSender, renderPrLever } = await import("./tui/prpause.js");
+  const ssh = runnerFor(cfg.tui);
+  await resolveLayout(cfg.tui, ssh);
+  const where =
+    transportOf(cfg.tui) === "local" ? `local docker ${cfg.tui.container}` : cfg.tui.ssh_host;
+  console.log(`${verb} #${cmd.pr} → ${where}:${remoteSandboxRoot(cfg.tui)}/commands/operator/`);
+  const { lines, code } = renderPrLever(cmd, await new PrLeverSender(cfg.tui, ssh).send(cmd));
+  for (const l of lines) console.log(l);
+  return code;
+}
+
 // ---- takeover (P8.13, D27) -----------------------------------------------------
 //
 // `qcr takeover <pr>`, `qcr debug-round <pr>` (P8.13b) and `qcr release <pr>` are three
@@ -2082,6 +2130,11 @@ export async function main(argv: string[]): Promise<void> {
       process.exitCode = await cmdDrain(rest);
       return;
     }
+    case "pause-pr":
+    case "resume-pr": {
+      process.exitCode = await cmdPrLever(cmd, rest);
+      return;
+    }
     case "message": {
       process.exitCode = await cmdMessage(rest);
       return;
@@ -2171,7 +2224,7 @@ export async function main(argv: string[]): Promise<void> {
     }
     default:
       console.log(
-        "usage: qcr <version|config check [--config-home <dir>]|onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|takeover <n>|debug-round <n>|release <n>|tui [pr|overseer]|drain <on [--hold]|off>|message <pr> [--may-post] <text...>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
+        "usage: qcr <version|config check [--config-home <dir>]|onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|takeover <n>|debug-round <n>|release <n>|tui [pr|overseer]|drain <on [--hold]|off>|pause-pr <pr> [--reason <text>]|resume-pr <pr>|message <pr> [--may-post] <text...>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
           "companion <up|down|status|rebuild>|review [start|status|stop|branch|--uncommitted|--diff FILE|-|<PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--json]|live [RUN_ID|DIR] [--lens ID] [--round N] [--follow] [--json]|open [RUN_ID|DIR|FILE.jsonl|scan[:RUN]|pr N [--round R]] [--lens ID] [--write] [--print]|scan <preview|start|status|stop|findings|matches|match|suggestions|stage2 propose|stage2 start|dismiss|units show|units propose|units adjust|units save|login|doctor|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine|shadow-report [--days <n>]|off|on|suppress <id>|unsuppress <id>]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );

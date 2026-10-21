@@ -24,14 +24,19 @@
 #   7  backstop        every open PR's head matches the daemon's, or a round
 #                      is queued for it
 #   8  surfaces        the TUI pull and the companion rebuild (the owner's)
-#   9  first round     the owner triggers ONE worker round and checks it; only
-#                      then, on an explicit go, `qcr drain off`
+#   9  first round     pause every tracked PR but the one the owner picks
+#                      (`qcr pause-pr`, the operator's), `qcr drain off` on
+#                      the owner's go, the owner watches that PR's first
+#                      worker round, then `qcr resume-pr` on exactly the PRs
+#                      it paused
 #   10 idle PR         the answer worker
 #   11 4 h check
 #
-# Owner ruling: at the cutover the drain HOLDS until the owner has triggered
-# and checked one worker round. This script never lifts it on its own; stage 9
-# runs `qcr drain off` only on the owner's explicit go.
+# Owner ruling: at the cutover the drain HOLDS through the release and the
+# first reconcile. Nothing runs under any drain, so the first worker round is
+# watched after the lift: stage 9 pauses every tracked PR but one, runs
+# `qcr drain off` only on the owner's explicit go, and resumes the PRs it
+# paused only once the owner says that one round is good.
 #
 # The hold is the operator's no-auto-lift
 # drain: no boot lifts it, only `qcr drain off`. The legacy daemon cannot
@@ -510,7 +515,7 @@ s_reconcile() {
     say "Read \`ssh ${VM_HOST:-<vm>} sudo docker logs --since 15m $CONTAINER\` and \`qcr why <pr>\` before any drain off."
     confirm "Is the reconcile healthy enough to go on (the hold stays on)?" || return 1
   fi
-  good "the drain is held (no boot lifts it; stage 9 lifts it on your go)"
+  good "the drain is held (no boot lifts it; stage 9 lifts it on your go, all but one PR paused)"
 }
 
 # ── 7. the reconcile backstop ────────────────────────────────────────────
@@ -557,16 +562,113 @@ s_surfaces() {
   confirm "Both done?" || return 1
 }
 
-# ── 9. the first worker round; the owner lifts ───────────────────────────
+# ── 9. the first worker round, one PR at a time ──────────────────────────
+# Nothing runs under any drain (dispatch starts nothing, a webhook is dropped, `qcr debug-round` is
+# refused), so the first worker round is watched AFTER the lift. The stage
+# pauses every tracked PR but the one the owner picks (the operator's pause through the sealed operator
+# channel: no expiry, no session lifts it), lifts the drain, has the owner watch that one PR's first worker
+# round, and on a good round resumes exactly the PRs it paused. Each step is recorded in the state file
+# (`first_pr`, `paused:<n>`, `lift=sent`, `lifted_at`, `resumed:<n>`), so a resumed run never pauses a PR
+# twice, never lifts twice and resumes only what it paused.
+paused_by_wizard()  { grep -E '^paused:[0-9]+$' "$STATE_FILE" | cut -d: -f2 | sort -un || true; }
+resumed_by_wizard() { grep -qxF "resumed:$1" "$STATE_FILE"; }
+# tracked_prs STATUS — `<number> <state>` per PR the daemon tracks and has not closed.
+tracked_prs() {
+  awk '$1 ~ /^#[0-9]+$/ && $2 ~ /^(tracked|queued|reviewing|awaiting_author)$/ { sub(/^#/, "", $1); print $1, $2 }' <<<"$1"
+}
+# operator_paused STATUS — the PR numbers whose pause is the OPERATOR's (until resumed).
+operator_paused() {
+  grep -E '^#[0-9]+ paused by the operator until resumed' <<<"$1" | sed -E 's/^#([0-9]+) .*/\1/' | sort -un || true
+}
+trigger_label() {
+  local cfg l=""
+  cfg="$(qcr_locate_config "$ROOT" 2>/dev/null || true)"
+  [[ -f "$cfg" ]] && l="$(grep -E '^[[:space:]]*trigger_label[[:space:]]*=' "$cfg" | head -1 | sed -E 's/^[^=]*=[[:space:]]*"([^"]*)".*/\1/' || true)"
+  printf '%s' "${l:-AI review requested}"
+}
 s_first_round() {
-  local pr=""
-  ensure_drained || note "rounds are running or the drain is off: check before you go on"
-  say "The drain HOLDS. Trigger ONE worker round yourself, on a PR you choose, and check it."
-  printf '  %sPR number for the commands below (Enter to skip):%s ' "$BOLD" "$RESET"
-  read -r pr || true
-  [[ "$pr" =~ ^[0-9]+$ ]] || pr='<n>'
-  step "trigger it:        qcr debug-round $pr      (or re-trigger the PR the usual way)"
-  step "watch it in the TUI viewer, then check, over ssh $VM_HOST:"
+  local pr st status tracked op num state pstate n lifted
+  lifted="$(state_get lifted_at)"
+  if [[ -z "$lifted" ]]; then
+    read_vm_status || { bad "the VM's \`qcr-update status\` cannot be read"; return 1; }
+    if [[ "$(jfield draining)" != true ]]; then
+      if [[ "$(state_get lift)" == sent ]]; then
+        lifted="$(now_epoch)"; state_set lifted_at "$lifted"
+        good "the drain was lifted by this stage's earlier run"
+      else
+        bad "THE DRAIN IS OFF before this stage lifted it (draining=$(jfield draining)): rounds may be starting"
+        say "Drain by hand NOW (\`qcr drain on --hold\`), check \`qcr status\` for rounds that started, then re-run $SELF $VERSION."
+        return 1
+      fi
+    fi
+  fi
+  say "Nothing runs under a drain, so the first worker round is watched AFTER the lift. This stage pauses every"
+  say "tracked PR but the one you pick (the operator's pause: it stands until resumed), lifts the drain, waits"
+  say "for your check of that PR's first worker round, and on a good round resumes exactly the PRs it paused."
+  status="$(daemon_status 2>/dev/null)" || { bad "the daemon's \`qcr status\` could not be read in its container"; return 1; }
+  grep -q "^quickreview — " <<<"$status" || { bad "the daemon's \`qcr status\` printed no snapshot (is the daemon up?)"; return 1; }
+  tracked="$(tracked_prs "$status")"
+  op="$(operator_paused "$status")"
+  if [[ -n "$tracked" ]]; then
+    say "Tracked open PRs (the daemon's \`qcr status\`):"
+    while read -r num state; do
+      if grep -qxF "$num" <<<"$op"; then note "    #$num  $state  (paused by the operator)"; else note "    #$num  $state"; fi
+    done <<<"$tracked"
+  else
+    note "the daemon tracks no open PR"
+  fi
+
+  pr="$(state_get first_pr)"
+  if [[ -n "$pr" ]]; then
+    good "the first PR is #$pr (chosen on an earlier run of this stage)"
+  else
+    printf '  %sWhich PR runs the first worker round? PR number for the commands below:%s ' "$BOLD" "$RESET"
+    read -r pr || true
+    [[ "$pr" =~ ^[0-9]+$ ]] && (( pr > 0 )) || { say "No PR chosen. Nothing was paused and the drain still holds."; return 1; }
+    state_set first_pr "$pr"
+  fi
+  pstate="$(awk -v n="$pr" '$1 == n { print $2 }' <<<"$tracked")"
+  [[ -n "$pstate" ]] || warn "#$pr is not a tracked open PR: it reviews only once it is triggered after the lift"
+  if grep -qxF "$pr" <<<"$op" && ! grep -qxF "$pr" <<<"$(paused_by_wizard)"; then
+    warn "#$pr is paused by the operator from before this stage: it cannot run until \`qcr resume-pr $pr\`"
+  fi
+
+  if [[ -z "$lifted" ]]; then
+    # Pause every other tracked PR that the operator does not already hold. Read fresh each run, so a PR the
+    # reconcile started tracking since an earlier run is caught too.
+    n=0
+    while read -r num state; do
+      [[ -n "$num" && "$num" != "$pr" ]] || continue
+      if grep -qxF "paused:$num" "$STATE_FILE"; then note "#$num already paused by this stage"; continue; fi
+      if grep -qxF "$num" <<<"$op"; then note "#$num is already paused by the operator: left as it is (and left paused after)"; continue; fi
+      "$QCR" pause-pr "$num" --reason "cutover $VERSION: first worker round runs on #$pr alone" </dev/null ||
+        { bad "\`qcr pause-pr $num\` failed: the drain still holds; fix it, then re-run $SELF $VERSION"; return 1; }
+      printf 'paused:%s\n' "$num" >> "$STATE_FILE"; n=$((n + 1))
+    done <<<"$tracked"
+    good "paused $n PR(s) now; paused by this stage in all: $(paused_by_wizard | sed 's/^/#/' | tr '\n' ' ')"
+    # Every PR this stage paused must stand as the OPERATOR's pause before the lift: a bounded one lapses.
+    status="$(daemon_status 2>/dev/null)" || { bad "the daemon's \`qcr status\` could not be read in its container"; return 1; }
+    op="$(operator_paused "$status")"
+    for num in $(paused_by_wizard); do
+      grep -qxF "$num" <<<"$op" || { bad "#$num does not show as paused by the operator in the daemon's \`qcr status\`: not lifting"; return 1; }
+    done
+    warn "Lifting the drain lets #$pr start a worker round (and nothing else: every other tracked PR is paused)."
+    confirm "Lift the drain now (qcr drain off)?" || { say "The drain stays on; the pauses stay recorded. Re-run $SELF $VERSION when ready."; return 1; }
+    state_set lift sent
+    "$QCR" drain off || { bad "\`qcr drain off\` failed"; return 1; }
+    read_vm_status && [[ "$(jfield draining)" != true ]] || { bad "the drain is still on"; return 1; }
+    lifted="$(now_epoch)"; state_set lifted_at "$lifted"
+    good "drain lifted by the owner's go; only #$pr can start a round"
+  fi
+
+  say "Watch #$pr's first worker round:"
+  if [[ "$pstate" == queued ]]; then
+    step "#$pr has a pending trigger (queued): its round starts at the lift, nothing to trigger"
+  else
+    step "trigger it: re-request review from the review team on #$pr, or re-add the label \"$(trigger_label)\""
+    note "    (not \`qcr debug-round\`: that round runs in interactive pi, not on a worker)"
+  fi
+  step "watch it in the TUI viewer, then check, over ssh ${VM_HOST:-<vm>}:"
   note "    status.json runtime=worker for the PR:   sudo grep -o '\"runtime\":\"[a-z]*\"' $SANDBOX_ROOT/state/status.json"
   note "    the IPC ready session_id equals the PR's JSONL id:   sudo ls $SANDBOX_ROOT/state/pi-sessions/pr-$pr"
   note "    the engine wave starts and permits stay at or under 20, grants staggered:   qcr status"
@@ -575,18 +677,20 @@ s_first_round() {
   note "      the worker exited 0:   sudo docker logs $CONTAINER 2>&1 | grep -E 'worker|verdict_written'"
   note "    est_usd is recorded:   qcr why $pr"
   if ! confirm "Was the worker round checked and is it good?"; then
-    say "The drain STAYS ON. Failure handling (runbook E.3): read the daemon log (worker exit code, the IPC"
-    say "'failed' reason), state/workers/<command>.log, state/live/<key>/ and \`qcr open pr $pr\`. A bad boot,"
-    say "env or socket fault: keep the drain, reproduce in a faux test, fix on master, ship a full release"
-    say "$VERSION+1 under drain. Re-run $SELF $VERSION to come back to this stage."
+    say "The other PRs STAY PAUSED (the operator's pauses: they do not lapse); only #$pr can run. The drain is off."
+    say "Failure handling (runbook E.3): read the daemon log (worker exit code, the IPC 'failed' reason),"
+    say "state/workers/<command>.log, state/live/<key>/ and \`qcr open pr $pr\`. To stop #$pr too: \`qcr pause-pr $pr\`"
+    say "(or \`qcr drain on --hold\` for the whole board). A bad boot, env or socket fault: reproduce in a faux test,"
+    say "fix on master, ship $VERSION+1. Re-run $SELF $VERSION to come back to this question."
     return 1
   fi
-  warn "Lifting the drain makes the bot review every triggered PR on workers."
-  confirm "Lift the drain now (qcr drain off)?" || { say "The drain stays on. Re-run $SELF $VERSION when ready."; return 1; }
-  "$QCR" drain off || { bad "\`qcr drain off\` failed"; return 1; }
-  read_vm_status && [[ "$(jfield draining)" != true ]] || { bad "the drain is still on"; return 1; }
-  state_set lifted_at "$(now_epoch)"
-  good "drain lifted by the owner's go"
+  for num in $(paused_by_wizard); do
+    resumed_by_wizard "$num" && continue
+    "$QCR" resume-pr "$num" </dev/null || { bad "\`qcr resume-pr $num\` failed: re-run $SELF $VERSION to resume the rest"; return 1; }
+    printf 'resumed:%s\n' "$num" >> "$STATE_FILE"
+  done
+  good "resumed every PR this stage paused: $(paused_by_wizard | sed 's/^/#/' | tr '\n' ' ')"
+  good "the board is open on workers"
 }
 
 # ── 10. the idle-PR answer worker ────────────────────────────────────────
@@ -650,7 +754,7 @@ run_stage verify        "Verify"                         s_verify
 run_stage reconcile     "First reconcile; hold the drain" s_reconcile
 run_stage backstop      "The reconcile backstop"         s_backstop
 run_stage surfaces      "TUI and companion"              s_surfaces
-run_stage first_round   "First worker round, then lift"  s_first_round
+run_stage first_round   "Pause all but one, lift, first worker round" s_first_round
 run_stage idle_pr       "The idle-PR answer worker"      s_idle_pr
 run_stage four_hours    "The 4-hour check"               s_four_hours
 # ──────────────────────────────────────────────────────────────────────────

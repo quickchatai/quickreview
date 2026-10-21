@@ -1,8 +1,8 @@
 ## Findings
 
 Everything the rehearsal found on the way to a green run, and whether it is fixed. F1 to F3, F5 and F5b were
-defects in the cutover tooling itself and are fixed in product code with tests; F4 is a contradiction in the
-cutover procedure that needs the owner; the rest are properties worth knowing.
+defects in the cutover tooling itself and are fixed in product code with tests; F4 was a contradiction in the
+cutover procedure, fixed by the owner's ruling of 2026-10-21; the rest are properties worth knowing.
 
 - **F1, product, FIXED: `deploy.sh` ignored `QCR_CUTOVER_ACK`.** The runbook (C.11, C.12) and the wizard
   (`QCR_CUTOVER_ACK=<v> deploy.sh [--dry-run] release <v>`) spell the acknowledgement as an environment
@@ -22,16 +22,21 @@ cutover procedure that needs the owner; the rest are properties worth knowing.
   vacuously, which is exactly the check runbook C.15 exists for. It now reads `qcr status` in the daemon's
   container (`docker exec … node /opt/qcr/dist/src/cli.js status`) and fails when that prints no snapshot.
   `tests/cutover-wizard.test.ts`.
-- **F4, procedure, OPEN (owner): stage 9 cannot do what it asks.** Stage 9 says the drain holds while the
-  owner triggers ONE worker round and checks it, then lifts. Under any drain the dispatch pump starts
-  nothing (`dispatch.ts`: `if (store.drainState().draining) return []`), the webhook delivery is dropped, and
-  `qcr debug-round` is refused outright ("debug-round #7 refused (drained: the bot is draining: no worker
-  starts)"); HOLD-3 records all three. So the first worker round can only be watched AFTER `qcr drain off`,
-  and from that moment every triggered PR is reviewed. In this rehearsal the lift was therefore the owner's
-  command at the point stage 9 reaches it, and the worker checks ran after it. The wizard is unchanged
-  because the fix is a decision: either the owner accepts that the first round runs with the board open (and
-  stage 9 says so), or the wizard pauses every tracked PR but the chosen one (`qcr pause-pr`) before the lift
-  and resumes them after the check.
+- **F4, procedure, FIXED (owner ruling 2026-10-21): stage 9 could not do what it asked.** Stage 9 said the
+  drain holds while the owner triggers ONE worker round and checks it, then lifts. Under any drain the dispatch
+  pump starts nothing (`dispatch.ts`: `if (store.drainState().draining) return []`), the webhook delivery is
+  dropped, and `qcr debug-round` is refused outright ("debug-round #7 refused (drained: the bot is draining: no
+  worker starts)"); HOLD-3 records all three. So the first worker round can only be watched AFTER `qcr drain
+  off`. In this rehearsal the lift was therefore the owner's command at the point stage 9 reaches it, and the
+  worker checks ran after it. The owner ruled: nothing runs under any drain, so the first round is watched after
+  the lift, one PR at a time. Stage 9 now lists the tracked open PRs from the daemon's `qcr status` in its
+  container, asks which PR runs first, pauses every other tracked PR with the operator's pause (`qcr pause-pr`,
+  new: the sealed operator channel, so the pause carries no expiry and no session lifts it), checks each shows
+  as the operator's, lifts the drain on the owner's go, says how to trigger the chosen PR's round (a queued PR
+  starts at the lift; otherwise a re-request or the trigger label), and asks whether that round is good. On yes
+  it resumes (`qcr resume-pr`, new) exactly the PRs it paused; on no they stay paused and it stops. Every pause,
+  the lift and every resume is recorded in the wizard's state file, so a resumed run never pauses twice and
+  touches only what it paused. `tests/cutover-wizard.test.ts`, `tests/prpause.test.ts`.
 - **F5, product, FIXED: the wizard called a failure after the recreate "rescued".** When `deploy.sh
   release` fails in its post-deploy checks (after the updater's recreate), stage 4 still printed "A failure
   before the recreate was RESCUED by the updater: the legacy bot is back". It now asks the VM for its layout:

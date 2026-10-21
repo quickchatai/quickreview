@@ -13,6 +13,11 @@
 //   - only an operator drain goes into the release (a session-bounded one
 //     would be lifted by the boot)
 //   - no force flag is ever passed or spelled
+//   - stage 9: every tracked PR but the
+//     chosen one is paused with the operator's pause BEFORE the lift, each one
+//     recorded; the drain is lifted on the owner's go; on a good first worker
+//     round exactly the PRs it paused are resumed, on a bad one they stay
+//     paused; a resumed run never pauses a PR twice
 import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -95,7 +100,15 @@ case "$1" in
   *qcr-update*status*) cat "${vmState}" ;;
   *state/status.json*) c="\${1#sudo }"; bash -c "$(printf '%s' "$c" | sed "s#/opt/quickreview/state/status.json#${statusFile}#")" ;;
   *drain_hold_kept*) cat "${keptFile}" ;;
-  *cli.js*status*) echo "quickreview — DRY-RUN — snapshot x"; cat "${dir}/qcr-status" ;;
+  *cli.js*status*)
+    echo "quickreview — DRY-RUN — snapshot x"; cat "${dir}/qcr-status"
+    if [ -s "${dir}/paused" ]; then
+      echo
+      while read -r n; do
+        if [ -f "${dir}/session-pause" ]; then echo "#$n paused by a session, lapses 2026-10-21T12:00:00Z — x"
+        else echo "#$n paused by the operator until resumed — cutover"; fi
+      done < "${dir}/paused"
+    fi ;;
   *docker*node*) echo 3 ;;
   *posting-receipts*) echo 1 ;;
 esac`,
@@ -113,6 +126,10 @@ case "$1 $2" in
     echo '{}' > "${statusFile}"
     echo '${vmJson({ layout: "release", draining: false, rounds: 0 })}' > "${vmState}" ;;
   "config check") [ -f "${dir}/badconfig" ] && { echo "retired key [engine] runtime"; exit 1; }; exit 0 ;;
+esac
+case "$1" in
+  pause-pr) [ -f "${dir}/pause-fails" ] && exit 1; echo "$2" >> "${dir}/paused" ;;
+  resume-pr) touch "${dir}/paused"; grep -vx "$2" "${dir}/paused" > "${dir}/paused.tmp"; mv "${dir}/paused.tmp" "${dir}/paused" ;;
 esac
 if [ "$1" = status ]; then cat "${dir}/qcr-status"; fi`,
   );
@@ -185,9 +202,9 @@ const HAPPY_TO_LIFT = [
   V, // typed go
   "y", // verify shows it
   "y", // surfaces
-  "12", // PR number
-  "y", // round checked
+  "12", // the first PR
   "y", // lift
+  "y", // round checked and good
   "y", // idle PR
 ];
 
@@ -271,12 +288,12 @@ describe("scripts/cutover.sh", () => {
     rmSync(join(r.dir, "fail-release"));
     r.setVm({ draining: true, rounds: 0 }); // the rescue re-sent the drain
     const before = r.calls().length;
-    const second = r.run(["", V, "y", "y", "12", "n"]); // go, verify, surfaces, then the round is NOT good
+    const second = r.run(["", V, "y", "y", "12", "n"]); // go, verify, surfaces, the first PR, then no lift
     const after = r.calls().slice(before).filter((l) => /^(deploy|qcr drain)/.test(l));
     expect(after).toEqual([`deploy release ${V} ACK=${V}`, "deploy verify ACK="]);
     expect(second.out).toContain("already done, skipped");
     expect(second.code).toBe(1);
-    expect(second.out).toContain("The drain STAYS ON");
+    expect(second.out).toContain("The drain stays on");
     expect(r.calls().some((l) => l === "qcr drain off")).toBe(false);
   });
 
@@ -309,9 +326,9 @@ describe("scripts/cutover.sh", () => {
     const declined = r.run(["", "y", V, "y", "n"]);
     expect(declined.code).toBe(1);
     expect(declined.out).toContain("no healthy first reconcile was logged");
-    const went = r.run(["", "y", "y", "12", "n"]); // healthy enough; surfaces; PR; round not good
+    const went = r.run(["", "y", "y", "12", "n"]); // healthy enough; surfaces; PR; no lift
     expect(went.out).toContain("the drain is held");
-    expect(went.out).toContain("The drain STAYS ON");
+    expect(went.out).toContain("The drain stays on");
     expect(r.calls().some((l) => l === "qcr drain off")).toBe(false);
   });
 
@@ -338,7 +355,7 @@ describe("scripts/cutover.sh", () => {
 
   it("never lifts the drain without the owner's go", () => {
     const r = rig();
-    const res = r.run(["", "y", V, "y", "y", "12", "y", "n"]); // round good, but the lift is declined
+    const res = r.run(["", "y", V, "y", "y", "12", "n"]); // the first PR chosen, the lift declined
     expect(res.code).toBe(1);
     expect(res.out).toContain("The drain stays on");
     expect(r.calls().some((l) => l === "qcr drain off")).toBe(false);
@@ -384,5 +401,136 @@ describe("scripts/cutover.sh", () => {
     expect(vmCalls.some((l) => l.includes("docker exec quickreview-sandbox node /opt/qcr/dist/src/cli.js status"))).toBe(true);
     // the owner's own `qcr status` is not what the backstop compares against
     expect(r.calls()).not.toContain("qcr status");
+  });
+
+  describe("stage 9: pause all but one, lift, the first worker round, resume", () => {
+    /** Up to and through stage 8: the banner, the plan, the typed go, verify, the surfaces. */
+    const TO_STAGE_9 = ["", "y", V, "y", "y"];
+
+    /** A board of five PRs: #12 awaiting the author, #13 tracked, #14 queued, #15 closed and
+     * #16 already paused by the operator before the cutover. */
+    function board(): Rig {
+      const r = rig();
+      writeFileSync(
+        join(r.dir, "qcr-status"),
+        [
+          "#12    awaiting_author   -      abcdef1234  a pr",
+          "#13    tracked           -      1111111111  b pr",
+          "#14    queued            -      2222222222  c pr",
+          "#15    closed            -      3333333333  d pr",
+          "#16    awaiting_author   -      4444444444  e pr",
+          "",
+        ].join("\n"),
+      );
+      writeFileSync(join(r.dir, "paused"), "16\n");
+      return r;
+    }
+    const levers = (r: Rig) => r.calls().filter((l) => /^qcr (pause-pr|resume-pr|drain)/.test(l));
+    const stateOf = (r: Rig) =>
+      readFileSync(join(r.dir, "state", "qcr", "default", `cutover-${V}.state`), "utf8");
+    const pausedNow = (r: Rig) => readFileSync(join(r.dir, "paused"), "utf8").split("\n").filter(Boolean);
+
+    it("pauses every tracked PR but the chosen, records them, lifts, and on a good round resumes only those", () => {
+      const r = board();
+      const res = r.run([...TO_STAGE_9, "13", "y", "y", "y"]); // #13 first, lift, round good, idle PR
+      expect(res.code, res.out).toBe(0);
+      expect(levers(r).map((l) => l.replace(/ --reason .*/, " --reason …"))).toEqual([
+        "qcr drain on",
+        "qcr pause-pr 12 --reason …", // the closed #15, the operator's own #16 and the chosen #13 are not touched
+        "qcr pause-pr 14 --reason …",
+        "qcr drain off", // only after the pauses
+        "qcr resume-pr 12",
+        "qcr resume-pr 14",
+      ]);
+      expect(r.calls().find((l) => l.startsWith("qcr pause-pr 12"))).toContain("first worker round runs on #13");
+      const st = stateOf(r);
+      expect(st).toMatch(/^kv:first_pr=13$/m);
+      expect(st).toMatch(/^paused:12$/m);
+      expect(st).toMatch(/^paused:14$/m);
+      expect(st).not.toMatch(/^paused:1[356]$/m);
+      expect(st).toMatch(/^resumed:12$/m);
+      expect(st).toMatch(/^resumed:14$/m);
+      expect(st).toMatch(/^done:first_round$/m);
+      expect(pausedNow(r)).toEqual(["16"]); // the operator's own pause stands
+      expect(res.out).toContain("re-add the label \"AI review requested\"");
+      expect(res.out).toContain("only #13 can start a round");
+    });
+
+    it("says a queued first PR starts at the lift with nothing to trigger", () => {
+      const r = board();
+      const res = r.run([...TO_STAGE_9, "14", "y", "y", "y"]);
+      expect(res.code, res.out).toBe(0);
+      expect(res.out).toContain("#14 has a pending trigger (queued): its round starts at the lift");
+      expect(levers(r).filter((l) => l.startsWith("qcr pause-pr")).map((l) => l.split(" ")[2])).toEqual(["12", "13"]);
+    });
+
+    it("leaves the PRs paused when the round is not good, and a resume asks again without pausing or lifting twice", () => {
+      const r = board();
+      const bad = r.run([...TO_STAGE_9, "13", "y", "n"]); // lift, then the round is NOT good
+      expect(bad.code).toBe(1);
+      expect(bad.out).toContain("The other PRs STAY PAUSED");
+      expect(levers(r).filter((l) => /resume-pr/.test(l))).toEqual([]);
+      expect(pausedNow(r).sort()).toEqual(["12", "14", "16"]);
+      expect(stateOf(r)).not.toMatch(/^done:first_round$/m);
+
+      const before = r.calls().length;
+      const good = r.run(["", "y", "y"]); // banner, the round is good now, idle PR
+      expect(good.code, good.out).toBe(0);
+      expect(good.out).toContain("the first PR is #13 (chosen on an earlier run");
+      expect(
+        r
+          .calls()
+          .slice(before)
+          .filter((l) => /^qcr (pause-pr|resume-pr|drain)/.test(l)),
+      ).toEqual(["qcr resume-pr 12", "qcr resume-pr 14"]);
+      expect(pausedNow(r)).toEqual(["16"]);
+    });
+
+    it("a resume before the lift does not pause a PR twice", () => {
+      const r = board();
+      const declined = r.run([...TO_STAGE_9, "13", "n"]); // the lift declined
+      expect(declined.code).toBe(1);
+      expect(declined.out).toContain("The drain stays on; the pauses stay recorded");
+      expect(levers(r).filter((l) => l.startsWith("qcr pause-pr"))).toHaveLength(2);
+      expect(r.calls()).not.toContain("qcr drain off");
+
+      const before = r.calls().length;
+      const res = r.run(["", "y", "y", "y"]); // banner, lift, round good, idle PR
+      expect(res.code, res.out).toBe(0);
+      expect(
+        r
+          .calls()
+          .slice(before)
+          .filter((l) => /^qcr (pause-pr|resume-pr|drain)/.test(l)),
+      ).toEqual(["qcr drain off", "qcr resume-pr 12", "qcr resume-pr 14"]);
+      expect(res.out).toContain("#12 already paused by this stage");
+    });
+
+    it("pauses nothing and keeps the drain when no PR is chosen", () => {
+      const r = board();
+      const res = r.run([...TO_STAGE_9, ""]);
+      expect(res.code).toBe(1);
+      expect(res.out).toContain("No PR chosen. Nothing was paused and the drain still holds.");
+      expect(levers(r)).toEqual(["qcr drain on"]);
+    });
+
+    it("never lifts while a pause is not the operator's (a bounded one would lapse)", () => {
+      const r = board();
+      writeFileSync(join(r.dir, "session-pause"), "");
+      const res = r.run([...TO_STAGE_9, "13", "y"]);
+      expect(res.code).toBe(1);
+      expect(res.out).toContain("does not show as paused by the operator");
+      expect(r.calls()).not.toContain("qcr drain off");
+    });
+
+    it("stops with the drain held when a pause fails", () => {
+      const r = board();
+      writeFileSync(join(r.dir, "pause-fails"), "");
+      const res = r.run([...TO_STAGE_9, "13", "y"]);
+      expect(res.code).toBe(1);
+      expect(res.out).toContain("`qcr pause-pr 12` failed: the drain still holds");
+      expect(r.calls()).not.toContain("qcr drain off");
+      expect(stateOf(r)).not.toMatch(/^paused:/m);
+    });
   });
 });
