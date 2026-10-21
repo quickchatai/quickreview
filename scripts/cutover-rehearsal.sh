@@ -679,7 +679,8 @@ export CUTOVER_PRS_CMD="echo '$PR $(python3 -c "import json;print(json.load(open
 export QC_RELEASE_REPO=quickchatai/quickreview
 
 # run A: preconditions, drain, plan, the release (the typed go), verify, the first reconcile, the backstop, the surfaces;
-# it stops at stage 9, which asks whether a worker round was checked (EOF: not answered).
+# it stops at stage 9, which asks for the PR whose first worker round is watched (Enter: none, so nothing is paused
+# and the drain holds).
 python3 "$RH/answer.py" --timeout 300 \
   --on 'Ready to start\?=>\n' --on 'Does the plan show all of that\?.*\[y/N\]=>y\n' --on "Type the version.*=>$VERSION\n" \
   --on 'Does verify show all of that\?.*\[y/N\]=>y\n' --on 'Both done\?.*\[y/N\]=>y\n' \
@@ -696,7 +697,7 @@ for st in preconditions drain plan release verify reconcile backstop surfaces; d
   grep -qx "done:$st" "$CTL/wizard.state" 2>/dev/null || A_MISSING+="$st "
 done
 if [[ -z "$A_MISSING" && "$WA_RC" == 1 ]] && grep -q "Stopped at stage 9" "$LOGS/wizard-a.log"; then
-  check WIZ-A pass "scripts/cutover.sh runs stages 1-8 (preconditions, drain, plan, release, verify, first reconcile, backstop, surfaces) and stops at stage 9" "stages recorded: $STAGES_DONE; stopped at stage 9 with the drain held (no answer to the worker-round question)"
+  check WIZ-A pass "scripts/cutover.sh runs stages 1-8 (preconditions, drain, plan, release, verify, first reconcile, backstop, surfaces) and stops at stage 9" "stages recorded: $STAGES_DONE; stopped at stage 9 with the drain held (no first PR chosen, nothing paused)"
 else
   check WIZ-A fail "scripts/cutover.sh runs stages 1-8 and stops at stage 9" "rc=$WA_RC missing stages: ${A_MISSING:-none}; log $LOGS/wizard-a.log"
 fi

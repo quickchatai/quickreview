@@ -7,6 +7,7 @@ import {
   cmdMessage,
   parseDrainArgs,
   parseMessageArgs,
+  parsePrLeverArgs,
   parseReembedArgs,
   parseRelayoutArgs,
   rebuildCompanion,
@@ -474,6 +475,35 @@ describe("qcr drain / qcr backfill arguments", () => {
       ["--hold"],
     ])
       expect(() => parseDrainArgs(rest), rest.join(" ")).toThrow(/usage: qcr drain/);
+  });
+
+  it("pause-pr / resume-pr take one PR number, and a pause an optional --reason", () => {
+    expect(parsePrLeverArgs("pause-pr", ["12"])).toEqual({
+      command: "pause-pr",
+      pr: 12,
+      reason: "paused by the operator (qcr pause-pr)",
+    });
+    expect(parsePrLeverArgs("pause-pr", ["--reason", "cutover", "12"])).toEqual({
+      command: "pause-pr",
+      pr: 12,
+      reason: "cutover",
+    });
+    expect(parsePrLeverArgs("resume-pr", ["7"])).toEqual({ command: "resume-pr", pr: 7 });
+    // An operator pause never carries an expiry: there is no --for flag.
+    for (const [verb, rest] of [
+      ["pause-pr", []],
+      ["pause-pr", ["0"]],
+      ["pause-pr", ["12", "13"]],
+      ["pause-pr", ["12", "--reason"]],
+      ["pause-pr", ["12", "--reason", " "]],
+      ["pause-pr", ["12", "--for", "30"]],
+      ["pause-pr", ["#12"]],
+      ["resume-pr", ["12", "--reason", "x"]],
+      ["resume-pr", []],
+    ] as const)
+      expect(() => parsePrLeverArgs(verb, rest), `${verb} ${rest.join(" ")}`).toThrow(
+        /usage: qcr pause-pr/,
+      );
   });
 
   it("backfill takes --dry-run and --limit <n> only; a mistyped flag never reads as an import", () => {

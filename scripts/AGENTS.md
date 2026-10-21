@@ -23,8 +23,10 @@ not get a shell route; it is a new op on the daemon.
   scope. It never takes the token as an argument or env, and posts nothing.
 - `cutover.sh <version>` is the owner's one-time cutover window (runbook
   sections C and D): resumable through a state file, a stop at every go, and
-  the drain HELD after the release until the owner has checked one worker
-  round. It never lifts the drain by itself and never passes a force flag;
+  the drain HELD after the release. Its stage 9 pauses every tracked PR but one
+  (the operator's `qcr pause-pr`, recorded in the state file), lifts the drain
+  on the owner's go, and resumes exactly those PRs once the owner has checked
+  that one PR's first worker round. It never lifts the drain by itself and never passes a force flag;
   `tests/cutover-wizard.test.ts` drives it against stubbed ssh, deploy.sh and qcr.
 - `commit-verdict.sh` is sanctioned for sessions but posts nothing: it
   publishes a staged `verdict/<name>.tmp` onto `verdict/<name>` by
