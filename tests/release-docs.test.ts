@@ -9,7 +9,7 @@
 //     checklist says a ticket will create or remove;
 //   - CLAUDE.md is not edited by the drafting: every `current` block is still
 //     verbatim in the file it quotes. A landing that pastes a block marks its
-//     section LANDED (as rules 1, 3, 5, 6, 8 and 9 are), keeps that section's
+//     section LANDED (as rules 1, 3, 5, 6, 7, 8 and 9 are), keeps that section's
 //     `current` blocks as `replaced`, and its `proposed` blocks are then held
 //     word for word against the files they landed in.
 // An ASSEMBLED public tree has neither the drafts nor CLAUDE.md, so those
@@ -130,9 +130,9 @@ describe.skipIf(!has("docs/rule-text-drafts.md"))("docs/rule-text-drafts.md", ()
         checked++;
       }
     }
-    // The floor only proves the parse found blocks: it falls as drafts land
-    // (rule 7's, pasted at the cutover, is the last one left).
-    expect(checked).toBeGreaterThanOrEqual(1);
+    // Every drafted rule has landed (rule 7's, pasted at the cutover, was the
+    // last), so no `current` block is left to check.
+    expect(checked).toBe(0);
   });
 
   it("every drafted rule opens with the line CLAUDE.md's rule opens with, and rules 7 and 8 and 9 are whole", () => {
@@ -178,6 +178,18 @@ describe.skipIf(!has("docs/rule-text-drafts.md"))("docs/rule-text-drafts.md", ()
     }
     expect(claude).not.toContain("(shell side:");
     expect(claude).not.toContain("`conversation-system.md` and `overseer-system.md`");
+  });
+
+  it("rule 7 sits in CLAUDE.md word for word, as re-ratified at the cutover", () => {
+    const claude = read("CLAUDE.md");
+    const sec = sections.find((x) => x.startsWith("Rule 7 "))!;
+    expect(sec).toMatch(/^LANDED in CLAUDE\.md \(ratified 2026-10-21/m);
+    const proposed = [...sec.matchAll(FENCE)].filter((m) => m[1] === "proposed");
+    expect(proposed).toHaveLength(1);
+    expect(claude).toContain(proposed[0]![3]!);
+    expect(claude).not.toContain("caught in three places");
+    expect(claude).not.toContain("`tests/docker-daemon.test.ts` for the plain Dockerfile");
+    expect(claude).not.toContain("deploy with `-e rebuild_image=true`");
   });
 
   it("rule 9 stage (iii), the single-shepherd doc's S1, S3, S4, S5, audit row and amendment, and the PR-pane rule's part 2 sit in place word for word", () => {
