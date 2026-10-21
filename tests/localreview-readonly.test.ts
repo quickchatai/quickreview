@@ -17,7 +17,12 @@ import {
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { addUncommittedTree, resolveUncommitted } from "../src/localreview.js";
+import {
+  addReviewTree,
+  addUncommittedTree,
+  removeReviewTree,
+  resolveUncommitted,
+} from "../src/localreview.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "localreview-ro-"));
 
@@ -116,8 +121,28 @@ describe("resolveUncommitted on a read-only repository", () => {
       expect(git(dir, "status", "--porcelain")).toMatch(/src\/new\.ts/);
       expect(git(dir, "diff", "--stat", "HEAD").length).toBeGreaterThan(0);
     } finally {
-      git(repo, "worktree", "remove", "--force", dir);
+      rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("checks a commit out for the review without writing into a read-only repo", () => {
+    const repo = dirtyRepo("ro-tree");
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "all");
+    const head = git(repo, "rev-parse", "HEAD");
+    execFileSync("chmod", ["-R", "a-w", repo]);
+    const before = objectStore(repo);
+    const dir = join(tmp, "ro-tree-wt");
+    try {
+      addReviewTree(repo, dir, head);
+      expect(git(dir, "rev-parse", "HEAD")).toBe(head);
+      expect(git(dir, "status", "--porcelain")).toBe("");
+      expect(objectStore(repo)).toEqual(before);
+      expect(readdirSync(join(repo, ".git"))).not.toContain("worktrees");
+    } finally {
+      removeReviewTree(repo, dir);
+    }
+    expect(() => statSync(dir)).toThrow();
   });
 
   it("still says there is nothing to review on a clean read-only repo", () => {

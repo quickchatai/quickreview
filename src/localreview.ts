@@ -320,14 +320,18 @@ export function addUncommittedTree(cwd: string, dir: string, t: BranchTarget): v
   if (patch) git(dir, ["apply", "--whitespace=nowarn"], { input: patch });
 }
 
-/** A throwaway detached checkout of `sha`, for the review to read. */
+/** A throwaway detached checkout of `sha`, for the review to read. A shared
+ * clone, not a worktree: its objects come from the repository by alternates, so
+ * nothing is written into the reviewed repo's .git (the wrapper and the Action
+ * mount it read-only), and the tree is still a git checkout the lenses can ask. */
 export function addReviewTree(cwd: string, dir: string, sha: string): void {
-  git(cwd, ["worktree", "add", "--detach", "--force", dir, sha]);
+  const common = git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  git(cwd, ["clone", "--quiet", "--shared", "--no-checkout", common, dir]);
+  git(dir, ["checkout", "--quiet", "--detach", sha]);
 }
 
-export function removeReviewTree(cwd: string, dir: string): void {
-  tryGit(cwd, ["worktree", "remove", "--force", dir]);
-  tryGit(cwd, ["worktree", "prune"]);
+export function removeReviewTree(_cwd: string, dir: string): void {
+  rmSync(dir, { recursive: true, force: true });
 }
 
 // ---- the repo's settings and the price -----------------------------------------------
