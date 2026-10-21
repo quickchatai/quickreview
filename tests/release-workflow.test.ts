@@ -150,6 +150,11 @@ describe("release.yml — the gates", () => {
       /steps\.push\.outputs\.amd64.*steps\.push\.outputs\.arm64.*steps\.push\.outputs\.index/,
     );
     expect(JSON.stringify(att)).not.toMatch(/"push-to-registry":false/);
+    // a private repo on a plan without attestations still publishes
+    for (const step of att)
+      expect((step as unknown as { if: string }).if).toBe(
+        "github.event.repository.visibility == 'public' || vars.RELEASE_ATTEST == 'true'",
+      );
   });
 
   it("tags nothing but the version (no latest, no floating major)", () => {

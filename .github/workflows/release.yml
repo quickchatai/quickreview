@@ -35,7 +35,10 @@
 #   - optional repo variables RELEASE_ARM64_RUNNER (above) and
 #     RELEASE_E2E_LIMIT_USD (the per-run cap handed to `review --limit`).
 #   - packages: the repo needs write access to both ghcr packages. Artifact
-#     attestations on a private repo need a plan that offers them.
+#     attestations on a private repo need a plan that offers them, so the
+#     provenance steps run only on a public repo or with the repo variable
+#     RELEASE_ATTEST=true; without them the deploy manifest's digests still pin
+#     what the VM pulls.
 #
 # The paid e2e is counted against the small separate release grant (D37), not
 # the bench budget. Each run writes its ledger line (version, run, cap, spend)
@@ -369,18 +372,21 @@ jobs:
           path: ${{ runner.temp }}/digests-${{ matrix.image }}.json
           retention-days: 7
       - name: provenance for the amd64 image
+        if: github.event.repository.visibility == 'public' || vars.RELEASE_ATTEST == 'true'
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.REPO }}
           subject-digest: ${{ steps.push.outputs.amd64 }}
           push-to-registry: true
       - name: provenance for the arm64 image
+        if: github.event.repository.visibility == 'public' || vars.RELEASE_ATTEST == 'true'
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.REPO }}
           subject-digest: ${{ steps.push.outputs.arm64 }}
           push-to-registry: true
       - name: provenance for the index
+        if: github.event.repository.visibility == 'public' || vars.RELEASE_ATTEST == 'true'
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.REPO }}
