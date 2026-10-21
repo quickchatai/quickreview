@@ -310,6 +310,8 @@
         - digest
         - inject
         - verdict
+        # the PR sessions' own HOME (<app root>/pihome)
+        - pihome
         - "{{ base_clone_dir | mandatory }}"
 
     # The memory sidecar's store directories. The sidecar CONTAINER and its

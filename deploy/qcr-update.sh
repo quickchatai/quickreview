@@ -679,6 +679,9 @@ daemon_args=(
   -v "$ROOT/sandbox/digest:${C[APP_ROOT]}/digest"
   -v "$ROOT/sandbox/inject:${C[APP_ROOT]}/inject"
   -v "$ROOT/sandbox/verdict:${C[APP_ROOT]}/verdict"
+  # the sessions' own HOME (<root>/pihome: their ovcli.conf, recall hints, retired
+  # list and pinned git config), the directory the legacy container kept beside them
+  -v "$ROOT/sandbox/pihome:${C[APP_ROOT]}/pihome"
   -v "$ROOT/sandbox/${C[BASE_CLONE_DIR]}:${C[APP_ROOT]}/${C[BASE_CLONE_DIR]}"
   # path continuity for what the legacy container recorded
   -v "$ROOT/sandbox/wt:${C[LEGACY_SANDBOX_ROOT]}/wt"

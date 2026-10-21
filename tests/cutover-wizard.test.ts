@@ -115,7 +115,13 @@ case "$1" in
     echo "quickreview — DRY-RUN — snapshot x"; cat "${dir}/qcr-status"
     if [ -s "${dir}/paused" ]; then
       echo
+      # pause-lag "<pr> <n>": the next n snapshots that would show <pr>'s pause predate
+      # it (the heartbeat is rewritten about every 30 s)
+      lagpr=""; lagn=0; [ -f "${dir}/pause-lag" ] && read -r lagpr lagn < "${dir}/pause-lag"
       while read -r n; do
+        if [ "$n" = "$lagpr" ] && [ "$lagn" -gt 0 ]; then
+          lagn=$((lagn - 1)); echo "$lagpr $lagn" > "${dir}/pause-lag"; continue
+        fi
         if [ -f "${dir}/session-pause" ]; then echo "#$n paused by a session, lapses 2026-10-21T12:00:00Z — x"
         else echo "#$n paused by the operator until resumed — cutover"; fi
       done < "${dir}/paused"
@@ -547,8 +553,17 @@ describe("scripts/cutover.sh", () => {
       writeFileSync(join(r.dir, "session-pause"), "");
       const res = r.run([...TO_STAGE_9, "13", "y"]);
       expect(res.code).toBe(1);
-      expect(res.out).toContain("does not show as paused by the operator");
+      expect(res.out).toContain("not shown as paused by the operator");
       expect(r.calls()).not.toContain("qcr drain off");
+    });
+
+    it("waits for a snapshot that shows the last pause before lifting (the heartbeat lags a pause)", () => {
+      const r = board();
+      writeFileSync(join(r.dir, "pause-lag"), "14 1\n");
+      const res = r.run([...TO_STAGE_9, "13", "y", "y", "y"]);
+      expect(res.out).toContain("waiting for the daemon's snapshot to show the pause of: #14");
+      expect(res.out).not.toContain("not lifting");
+      expect(r.calls()).toContain("qcr drain off");
     });
 
     it("stops with the drain held when a pause fails", () => {

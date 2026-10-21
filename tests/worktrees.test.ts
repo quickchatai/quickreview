@@ -185,6 +185,56 @@ describe("WorktreeManager", () => {
     expect(facts.merge_base).not.toBe(facts.base_sha);
   });
 
+  // ---- a lagging refs/pull/<n>/head (#6075) -------------------------------
+  // GitHub can leave refs/pull/<n>/head behind the PR's branch. The API head
+  // the caller read wins only when the ref is a strict ancestor of it.
+
+  /** The PR's branch at two commits, its pull ref left at the first. GitHub
+   * serves any reachable sha by want; the scratch remote is told to. */
+  function laggingPull(): { stale: string; head: string } {
+    git(origin, "config", "uploadpack.allowReachableSHA1InWant", "true");
+    git(origin, "checkout", "-q", "-b", "feature");
+    const stale = commit("feature.txt", "v1\n");
+    publishPullHead(7, stale);
+    const head = commit("feature.txt", "v2\n");
+    git(origin, "checkout", "-q", "master");
+    return { stale, head };
+  }
+
+  it("a pull ref that lags the expected head: the worktree holds the expected head, fetched by sha", async () => {
+    const { stale, head } = laggingPull();
+    const m = mgr();
+    const facts = await m.ensureWorktree(7, { expectedHead: head });
+    expect(facts.head_sha).toBe(head);
+    expect(facts.pull_ref_sha).toBe(stale);
+    expect(readFileSync(join(facts.path, "feature.txt"), "utf8")).toBe("v2\n");
+    expect(await m.headSha(7)).toBe(head);
+  });
+
+  it("a pull ref NEWER than the expected head keeps the ref's answer (the PR moved after the read)", async () => {
+    const { head } = laggingPull();
+    publishPullHead(7, head);
+    const older = git(origin, "rev-parse", `${head}~1`).trim();
+    const facts = await mgr().ensureWorktree(7, { expectedHead: older });
+    expect(facts.head_sha).toBe(head);
+    expect(facts.pull_ref_sha).toBeUndefined();
+  });
+
+  it("an expected head the remote cannot serve, or one unrelated to the ref, keeps the ref's answer", async () => {
+    const { stale } = laggingPull();
+    const m = mgr();
+    const gone = await m.ensureWorktree(7, { expectedHead: "f".repeat(40) });
+    expect(gone.head_sha).toBe(stale);
+    expect(gone.pull_ref_sha).toBeUndefined();
+    // a force push: the expected head shares no line with the ref
+    git(origin, "checkout", "-q", "--orphan", "rewritten");
+    const unrelated = commit("other.txt", "rewritten\n");
+    git(origin, "checkout", "-q", "master");
+    const forced = await m.ensureWorktree(7, { expectedHead: unrelated });
+    expect(forced.head_sha).toBe(stale);
+    expect(forced.pull_ref_sha).toBeUndefined();
+  });
+
   it("degrades to empty base facts when no base ref is supplied", async () => {
     publishPullHead(7, commit("a.txt", "x\n"));
     const facts = await mgr().ensureWorktree(7);

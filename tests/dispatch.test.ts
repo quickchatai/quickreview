@@ -1423,6 +1423,45 @@ describe("dispatchOnce", () => {
   );
 
   it(
+    "hands the worktree the row's API head, and records a pull ref that lagged it (#6075)",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(63, "2026-08-13T09:00:00Z", { head: "api-head" });
+      const { hooks } = recordingHooks();
+      const asked: string[] = [];
+      const [order] = await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter,
+        hooks,
+        prepareWorktree: async (_pr, _base, expectedHead) => {
+          asked.push(expectedHead);
+          return {
+            head_sha: "api-head",
+            base_ref: "master",
+            base_sha: "b",
+            merge_base: "m",
+            pull_ref_sha: "stale-pull-ref",
+          };
+        },
+      });
+      expect(asked).toEqual(["api-head"]);
+      expect(order!.head_sha).toBe("api-head");
+      const lag = store.db
+        .prepare("SELECT payload FROM events WHERE kind = 'pull_ref_lagged'")
+        .all() as Array<{ payload: string }>;
+      expect(lag).toHaveLength(1);
+      expect(JSON.parse(lag[0]!.payload)).toMatchObject({
+        pull_ref: "stale-pull-ref",
+        head: "api-head",
+      });
+      expect(
+        store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'head_drift'").get(),
+      ).toMatchObject({ c: 0 });
+    },
+  );
+
+  it(
     "logs no drift when the tree matches the snapshot",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {

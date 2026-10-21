@@ -162,7 +162,7 @@ export interface DaemonDeps {
   /** Fetch head + base and materialise the worktree before the order is built
    * (wire.ts passes the real WorktreeManager). Absent ⇒ no git: the order
    * falls back to the PR row's sha with no base facts. */
-  prepareWorktree?: (pr: number, baseRef: string) => Promise<PreparedTree>;
+  prepareWorktree?: (pr: number, baseRef: string, expectedHead: string) => Promise<PreparedTree>;
   /** The PR-owned change between two reviewed heads (follow-up rounds) —
    * wire.ts passes `WorktreeManager.prOwnedDelta`. Absent ⇒ every
    * later round is a full re-review. */

@@ -1000,7 +1000,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     // One network fetch per round, before the order is built: the PR head and
     // the branch it targets, together. Everything downstream (prompt, session,
     // passes) then works from the shas this returns.
-    prepareWorktree: (pr, baseRef) => sessions.worktrees.ensureWorktree(pr, { baseRef }),
+    prepareWorktree: (pr, baseRef, expectedHead) =>
+      sessions.worktrees.ensureWorktree(pr, { baseRef, expectedHead }),
     // Follow-up rounds: the PR-owned change since the last reviewed
     // head (the reviewed head replayed onto the round's merge base, read-only
     // git in the base clone), and the pin that keeps a reviewed head

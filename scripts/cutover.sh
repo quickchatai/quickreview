@@ -647,10 +647,18 @@ s_first_round() {
     done <<<"$tracked"
     good "paused $n PR(s) now; paused by this stage in all: $(paused_by_wizard | sed 's/^/#/' | tr '\n' ' ')"
     # Every PR this stage paused must stand as the OPERATOR's pause before the lift: a bounded one lapses.
-    status="$(daemon_status 2>/dev/null)" || { bad "the daemon's \`qcr status\` could not be read in its container"; return 1; }
-    op="$(operator_paused "$status")"
-    for num in $(paused_by_wizard); do
-      grep -qxF "$num" <<<"$op" || { bad "#$num does not show as paused by the operator in the daemon's \`qcr status\`: not lifting"; return 1; }
+    # The snapshot is the heartbeat's, rewritten about every 30 s, so a pause handled after the last
+    # write is not in it yet: wait for it, bounded, rather than read one snapshot (the 1.0.3 cutover).
+    local missing polls=0
+    while :; do
+      status="$(daemon_status 2>/dev/null)" || { bad "the daemon's \`qcr status\` could not be read in its container"; return 1; }
+      op="$(operator_paused "$status")"
+      missing=""
+      for num in $(paused_by_wizard); do grep -qxF "$num" <<<"$op" || missing="$missing #$num"; done
+      [[ -z "$missing" ]] && break
+      polls=$((polls + 1))
+      if (( polls > MAX_POLLS )); then bad "not shown as paused by the operator in the daemon's \`qcr status\`:$missing: not lifting"; return 1; fi
+      note "waiting for the daemon's snapshot to show the pause of:$missing"; sleep "$POLL_S"
     done
     warn "Lifting the drain lets #$pr start a worker round (and nothing else: every other tracked PR is paused)."
     confirm "Lift the drain now (qcr drain off)?" || { say "The drain stays on; the pauses stay recorded. Re-run $SELF $VERSION when ready."; return 1; }

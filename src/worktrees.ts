@@ -583,6 +583,9 @@ export interface WorktreeFacts {
   base_sha: string;
   /** merge-base(base_sha, head_sha); "" when unavailable. */
   merge_base: string;
+  /** Set when GitHub's `refs/pull/<n>/head` lagged the head the caller expected
+   * and the worktree holds that head instead: the stale commit the ref named. */
+  pull_ref_sha?: string;
 }
 
 export function cloneUrlFor(repo: string): string {
@@ -715,7 +718,10 @@ export class WorktreeManager {
    * Both refspecs go in one `git fetch` so the two sides are as close to
    * simultaneous as git allows.
    */
-  async ensureWorktree(pr: number, opts: { baseRef?: string } = {}): Promise<WorktreeFacts> {
+  async ensureWorktree(
+    pr: number,
+    opts: { baseRef?: string; expectedHead?: string } = {},
+  ): Promise<WorktreeFacts> {
     await this.ensureBaseClone();
     mkdirSync(this.wtRoot, { recursive: true });
     const base = opts.baseRef?.trim();
@@ -723,7 +729,21 @@ export class WorktreeManager {
     const refspecs = [`+refs/pull/${pr}/head:${ref}`];
     if (base) refspecs.push(`+refs/heads/${base}:${this.baseRef(base)}`);
     await this.git(["fetch", "--force", "origin", ...refspecs]);
-    const head_sha = (await this.git(["rev-parse", ref])).stdout.trim();
+    let head_sha = (await this.git(["rev-parse", ref])).stdout.trim();
+    // GitHub updates `refs/pull/<n>/head` asynchronously and sometimes leaves it
+    // behind the PR's head for good (#6075, 2026-10-21: three rounds reviewed a
+    // stale commit and the head-moved guard refused each one). When the fetched
+    // commit is a strict ANCESTOR of the head the API reported, the ref lags:
+    // the round reviews that head, fetched by sha. A ref NEWER than the expected
+    // head (the PR moved after the read) or unrelated to it (a force push) keeps
+    // the ref's answer, as before.
+    let pull_ref_sha: string | undefined;
+    const want = opts.expectedHead?.trim() ?? "";
+    if (/^[0-9a-f]{40}$/.test(want) && want !== head_sha && (await this.refLags(head_sha, want))) {
+      await this.git(["update-ref", ref, want]);
+      pull_ref_sha = head_sha;
+      head_sha = want;
+    }
     const path = await this.checkoutAt(pr, head_sha);
 
     let base_sha = "";
@@ -735,7 +755,28 @@ export class WorktreeManager {
       const mb = await this.run("git", ["merge-base", base_sha, head_sha], { cwd: this.basePath });
       if (mb.code === 0) merge_base = mb.stdout.trim();
     }
-    return { path, head_sha, base_ref: base ?? "", base_sha, merge_base };
+    return {
+      path,
+      head_sha,
+      base_ref: base ?? "",
+      base_sha,
+      merge_base,
+      ...(pull_ref_sha ? { pull_ref_sha } : {}),
+    };
+  }
+
+  /** Whether `fetched` is a strict ancestor of `want`, fetching `want` by sha
+   * when the clone lacks it. False on any failure: an unfetchable sha is no
+   * evidence the ref lags. */
+  private async refLags(fetched: string, want: string): Promise<boolean> {
+    const cwd = this.basePath;
+    if ((await this.run("git", ["cat-file", "-e", `${want}^{commit}`], { cwd })).code !== 0) {
+      if ((await this.run("git", ["fetch", "--force", "origin", want], { cwd })).code !== 0)
+        return false;
+    }
+    return (
+      (await this.run("git", ["merge-base", "--is-ancestor", fetched, want], { cwd })).code === 0
+    );
   }
 
   /**

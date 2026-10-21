@@ -208,7 +208,7 @@ export interface DispatchDeps {
    * stub-wired daemon core and unit tests have no git, and fall back to the PR
    * row's sha with no base facts.
    */
-  prepareWorktree?: (pr: number, baseRef: string) => Promise<PreparedTree>;
+  prepareWorktree?: (pr: number, baseRef: string, expectedHead: string) => Promise<PreparedTree>;
   /**
    * Every migration file present on the base branch at a commit. Read-only
    * git in the base clone, which the worktree preparation has just
@@ -2346,7 +2346,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // collision check). The files API is by PR number, so read after the
       // fetch it lists at least the prepared head.
       const tree = deps.prepareWorktree
-        ? await deps.prepareWorktree(row.number, baseRef)
+        ? await deps.prepareWorktree(row.number, baseRef, row.head_sha)
         : undefined;
       // The head this round reviews — the prepared tree's, else the row's —
       // decided once, so the round row, the prior findings, the pre-check,
@@ -2557,6 +2557,16 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         : null;
       const priorFindingsNote = priorFindings?.note ?? "";
 
+      if (tree?.pull_ref_sha) {
+        log(
+          `dispatch: #${row.number} GitHub's refs/pull/${row.number}/head lags (${tree.pull_ref_sha}); reviewing the API head ${tree.head_sha}`,
+        );
+        store.logEvent("pull_ref_lagged", row.number, {
+          round_id: roundId,
+          pull_ref: tree.pull_ref_sha,
+          head: tree.head_sha,
+        });
+      }
       if (tree && row.head_sha && tree.head_sha !== row.head_sha) {
         log(`dispatch: #${row.number} head drift ${row.head_sha} → ${tree.head_sha}`);
         store.logEvent("head_drift", row.number, {

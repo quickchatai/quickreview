@@ -2129,7 +2129,7 @@ describe("deploy.sh — base clone name", () => {
     const updater = readFileSync(join(root, "deploy", "qcr-update.sh"), "utf8");
     const mounted = new Set([...updater.matchAll(/\$ROOT\/sandbox\/([a-z]+):/g)].map((m) => m[1]!));
     expect([...mounted].sort()).toEqual(
-      ["archive", "commands", "digest", "inject", "verdict", "wt"].sort(),
+      ["archive", "commands", "digest", "inject", "pihome", "verdict", "wt"].sort(),
     );
     for (const d of mounted) expect(list, d).toContain(d);
     // …and the playbook creates exactly those, plus the clone's own

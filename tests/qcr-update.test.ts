@@ -667,6 +667,8 @@ describe("qcr-update — the happy path", () => {
       `${sb.root}/pihome:/home/qcr/.pi`,
       `${sb.root}/sandbox/wt:/opt/qcr/wt`,
       `${sb.root}/sandbox/commands:/opt/qcr/commands`,
+      // the sessions' HOME: the daemon builds it as <app root>/pihome (sessions.ts)
+      `${sb.root}/sandbox/pihome:/opt/qcr/pihome`,
       `${sb.root}/sandbox/repo:/opt/qcr/repo`,
       `${sb.root}/sandbox/wt:/opt/quickreview/sandbox/wt`,
       `${sb.root}/sandbox/repo:/opt/quickreview/sandbox/repo`,
