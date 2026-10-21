@@ -57,7 +57,8 @@ function machine(
 
 describe("[P8.5] parseStat", () => {
   it("reads the start time and group past a command name with spaces and parens", () => {
-    const raw = "812 (node (worker) x) S 1 812 812 0 -1 4194560 100 0 0 0 5 1 0 0 20 0 11 0 987654 1 2";
+    const raw =
+      "812 (node (worker) x) S 1 812 812 0 -1 4194560 100 0 0 0 5 1 0 0 20 0 11 0 987654 1 2";
     expect(parseStat(raw)).toEqual({ state: "S", pgid: 812, start: "987654" });
   });
 

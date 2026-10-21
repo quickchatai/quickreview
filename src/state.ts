@@ -6870,29 +6870,35 @@ export class StateStore {
     pr: number,
     o: { commandId: string; error: string; at: string; parkAfter: number },
   ): { failures: number; parked: boolean; newlyParked: boolean } {
-    return this.db.transaction(() => {
-      const row = this.workerBreaker(pr);
-      const failures = (row?.failures ?? 0) + 1;
-      const wasParked = row?.parked_at != null;
-      const parkedAt = wasParked ? row.parked_at : failures >= o.parkAfter ? o.at : null;
-      this.db
-        .prepare(
-          `INSERT INTO worker_breaker (pr, failures, parked_at, last_error, last_failure_at, last_command_id, failure_epoch, updated_at)
+    return this.db
+      .transaction(() => {
+        const row = this.workerBreaker(pr);
+        const failures = (row?.failures ?? 0) + 1;
+        const wasParked = row?.parked_at != null;
+        const parkedAt = wasParked ? row.parked_at : failures >= o.parkAfter ? o.at : null;
+        this.db
+          .prepare(
+            `INSERT INTO worker_breaker (pr, failures, parked_at, last_error, last_failure_at, last_command_id, failure_epoch, updated_at)
            VALUES (@pr, @failures, @parked, @error, @at, @command, @epoch, @at)
            ON CONFLICT(pr) DO UPDATE SET failures = @failures, parked_at = @parked, last_error = @error,
              last_failure_at = @at, last_command_id = @command, failure_epoch = @epoch, updated_at = @at`,
-        )
-        .run({
-          pr,
+          )
+          .run({
+            pr,
+            failures,
+            parked: parkedAt,
+            error: o.error,
+            at: o.at,
+            command: o.commandId,
+            epoch: this.workerEpoch(),
+          });
+        return {
           failures,
-          parked: parkedAt,
-          error: o.error,
-          at: o.at,
-          command: o.commandId,
-          epoch: this.workerEpoch(),
-        });
-      return { failures, parked: parkedAt !== null, newlyParked: !wasParked && parkedAt !== null };
-    }).immediate();
+          parked: parkedAt !== null,
+          newlyParked: !wasParked && parkedAt !== null,
+        };
+      })
+      .immediate();
   }
 
   /** A worker for `pr` served its round: its consecutive count restarts, and the
@@ -6928,8 +6934,7 @@ export class StateStore {
 
   private workerEpoch(): number {
     const row = this.db.prepare("SELECT epoch FROM worker_breaker_global WHERE id = 1").get() as
-      | { epoch: number }
-      | undefined;
+      { epoch: number } | undefined;
     return row?.epoch ?? 0;
   }
 

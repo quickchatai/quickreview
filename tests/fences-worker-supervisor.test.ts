@@ -9,7 +9,12 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
-import { DAEMON_ROOTS, daemonReachesEngine, stripComments, tsFilesUnder } from "./helpers/engine-fences.js";
+import {
+  DAEMON_ROOTS,
+  daemonReachesEngine,
+  stripComments,
+  tsFilesUnder,
+} from "./helpers/engine-fences.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const ROOT = join(import.meta.dirname, "..");
@@ -32,15 +37,21 @@ function callers(root: string, method: string): string[] {
   return tsFilesUnder(join(root, "src"))
     .map((f) => relative(root, f))
     .filter((f) => f !== "src/state.ts")
-    .filter((f) => new RegExp(`\\b${method}\\(`).test(stripComments(readFileSync(join(root, f), "utf8"))))
+    .filter((f) =>
+      new RegExp(`\\b${method}\\(`).test(stripComments(readFileSync(join(root, f), "utf8"))),
+    )
     .sort();
 }
 
 describe("[P8.5] the supervisor stays out of src/engine/", () => {
-  it("is a daemon root, and no chain from it reaches the engine", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    expect(DAEMON_ROOTS).toContain("src/workersupervisor.ts");
-    expect(daemonReachesEngine(ROOT)).toEqual([]);
-  });
+  it(
+    "is a daemon root, and no chain from it reaches the engine",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      expect(DAEMON_ROOTS).toContain("src/workersupervisor.ts");
+      expect(daemonReachesEngine(ROOT)).toEqual([]);
+    },
+  );
 
   it("takes the GitHub credential names from src/envstrip.ts", () => {
     const text = stripComments(readFileSync(join(ROOT, "src/workersupervisor.ts"), "utf8"));

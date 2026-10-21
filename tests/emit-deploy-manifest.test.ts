@@ -21,7 +21,17 @@ function emit(version: string, release: object, memory: object) {
     const out = join(dir, `deploy-manifest-${version}.json`);
     const r = spawnSync(
       "node",
-      [script, "--version", version, "--revision", "0123456789abcdef0123456789abcdef01234567", "--digests", dir, "--out", out],
+      [
+        script,
+        "--version",
+        version,
+        "--revision",
+        "0123456789abcdef0123456789abcdef01234567",
+        "--digests",
+        dir,
+        "--out",
+        out,
+      ],
       { encoding: "utf8" },
     );
     const parsed = spawnSync("node", [parser, out, version], { encoding: "utf8" });
@@ -37,8 +47,18 @@ function emit(version: string, release: object, memory: object) {
   }
 }
 
-const rel = { repository: "ghcr.io/quickchatai/quickreview", index: d("1"), amd64: d("2"), arm64: d("3") };
-const mem = { repository: "ghcr.io/quickchatai/quickreview-memory", index: d("4"), amd64: d("5"), arm64: d("6") };
+const rel = {
+  repository: "ghcr.io/quickchatai/quickreview",
+  index: d("1"),
+  amd64: d("2"),
+  arm64: d("3"),
+};
+const mem = {
+  repository: "ghcr.io/quickchatai/quickreview-memory",
+  index: d("4"),
+  amd64: d("5"),
+  arm64: d("6"),
+};
 
 describe("emit-deploy-manifest", () => {
   it("writes a manifest the controller's parser accepts, with both index and per-arch digests", () => {

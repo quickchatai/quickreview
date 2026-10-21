@@ -57,7 +57,8 @@ export function buildManifest({ version, revision, release, memory, pins }) {
     pins,
   };
   const problems = manifestProblems(m);
-  if (problems.length) throw new Error(`the manifest would be invalid:\n  ${problems.join("\n  ")}`);
+  if (problems.length)
+    throw new Error(`the manifest would be invalid:\n  ${problems.join("\n  ")}`);
   return m;
 }
 
@@ -69,7 +70,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   };
   const [version, revision, digests, out] = ["version", "revision", "digests", "out"].map(opt);
   if (!version || !revision || !digests || !out) {
-    console.error("usage: emit-deploy-manifest.mjs --version V --revision SHA --digests DIR --out FILE");
+    console.error(
+      "usage: emit-deploy-manifest.mjs --version V --revision SHA --digests DIR --out FILE",
+    );
     process.exit(2);
   }
   try {

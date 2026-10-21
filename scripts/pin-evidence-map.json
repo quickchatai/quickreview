@@ -153,7 +153,11 @@
     {
       "id": "session-event-names",
       "assumes": "session_start / session_shutdown / ctx.ui.setTheme and registerCommand behave as the extensions use them.",
-      "files": { "extensions/setup.ts": 1, "extensions/muted-theme.ts": 1, "extensions/debug-round.ts": 1 },
+      "files": {
+        "extensions/setup.ts": 1,
+        "extensions/muted-theme.ts": 1,
+        "extensions/debug-round.ts": 1
+      },
       "signal": {
         "source": "live-event",
         "kind": "jsonl",

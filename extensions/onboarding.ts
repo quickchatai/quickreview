@@ -20,7 +20,11 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { ExtensionAPI, ExtensionFactory, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionFactory,
+  ExtensionToolContext,
+} from "@earendil-works/pi-coding-agent";
 import { registerQcrTool, textResult as text, type QcrTool } from "./pi-tool.js";
 import {
   OnboardingEngine,

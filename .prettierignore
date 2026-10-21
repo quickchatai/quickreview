@@ -84,3 +84,8 @@ tests/fixtures/golden-prompts/
 tests/fixtures/lens-registry-golden.json
 tests/fixtures/openviking-local-transcript.json
 tests/fixtures/result-shape-compat/golden.json
+
+# Byte-compared fixtures: the live-projection goldens and the post-parity
+# payloads are written by the code under test and read back byte for byte.
+tests/fixtures/live-events/golden/
+tests/fixtures/post-parity/

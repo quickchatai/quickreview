@@ -878,7 +878,8 @@ async function runWorker(
 }
 
 const spawned = (r: Rig): number => r.events("worker_spawned").length;
-const crashAnomalies = (r: Rig) => r.store.anomalies().filter((a) => a.kind === "worker_crash_loop");
+const crashAnomalies = (r: Rig) =>
+  r.store.anomalies().filter((a) => a.kind === "worker_crash_loop");
 
 describe("[P8.5b] the per-PR breaker", () => {
   it("parks a PR after 2 consecutive failures: the anomaly, the last error, and no third spawn", async () => {
@@ -895,7 +896,9 @@ describe("[P8.5b] the per-PR breaker", () => {
     expect(crashAnomalies(r)[0]).toMatchObject({ pr: PR });
 
     // A third round is ordered; no worker starts for it, by launch or by launchPending.
-    r.store.db.prepare("UPDATE session_commands SET status='cancelled' WHERE status='failed'").run();
+    r.store.db
+      .prepare("UPDATE session_commands SET status='cancelled' WHERE status='failed'")
+      .run();
     const third = r.sup.submit({ pr: PR, kind: "round", round_no: null, payload: "again" });
     await expect(r.sup.launch(third.id)).rejects.toThrow(/parked after 2 consecutive/);
     expect(await r.sup.launchPending()).toEqual([]);
@@ -1082,7 +1085,10 @@ describe("[P8.5b] the global drain", () => {
     await runWorker(r, PR, "fail");
     expect(r.sup.breaker.gate(PR)).toMatchObject({ ok: false, why: "parked" });
     expect(r.sup.breaker.gate(99)).toEqual({ ok: true });
-    r.store.engageDrain({ issuer: "session", expires_at: new Date(Date.now() + 60_000).toISOString() });
+    r.store.engageDrain({
+      issuer: "session",
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+    });
     expect(r.sup.breaker.gate(99)).toMatchObject({ ok: false, why: "draining" });
   });
 });

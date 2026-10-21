@@ -136,7 +136,11 @@ describe("[open] the argv", () => {
 
   it("loads exactly the round's extensions, bash-guard among them, and discovers none", () => {
     const argv = openArgv({ file: "/s/a.jsonl", mode: "fork", extensions: main });
-    const loaded = argv.flatMap((a, i) => (argv[i - 1] === "--extension" ? [a.slice(a.indexOf("/extensions/") + "/extensions/".length)] : []));
+    const loaded = argv.flatMap((a, i) =>
+      argv[i - 1] === "--extension"
+        ? [a.slice(a.indexOf("/extensions/") + "/extensions/".length)]
+        : [],
+    );
     expect(loaded).toEqual([
       "cli/bash-guard.ts",
       "cli/ledger-pin.ts",
@@ -172,7 +176,11 @@ describe("[open] the argv", () => {
     const dir = round(join(home, "r2"), { lenses: [{ id: "L1", agent: "pass-a" }] });
     expect(await runOpen([dir, "--lens", "L1"], false, d)).toBe(0);
     const args = calls.spawned[0]!.args;
-    const loaded = args.flatMap((a, i) => (args[i - 1] === "--extension" ? [a.slice(a.indexOf("/extensions/") + "/extensions/".length)] : []));
+    const loaded = args.flatMap((a, i) =>
+      args[i - 1] === "--extension"
+        ? [a.slice(a.indexOf("/extensions/") + "/extensions/".length)]
+        : [],
+    );
     expect(loaded).toEqual(["cli/bash-guard.ts"]);
   });
 });

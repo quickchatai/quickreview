@@ -607,7 +607,9 @@ describe("[open-pr] the verb", () => {
     expect(cmd.args.slice(-2)).toEqual(["--fork", file]);
     expect(cmd.args).not.toContain("--session");
     const loaded = cmd.args.flatMap((a, i) =>
-      cmd.args[i - 1] === "--extension" ? [a.slice(a.indexOf("/extensions/") + "/extensions/".length)] : [],
+      cmd.args[i - 1] === "--extension"
+        ? [a.slice(a.indexOf("/extensions/") + "/extensions/".length)]
+        : [],
     );
     expect(loaded).toEqual(["cli/bash-guard.ts"]);
     expect([...BOT_OPEN_EXTENSIONS]).toEqual(["cli/bash-guard.ts"]);

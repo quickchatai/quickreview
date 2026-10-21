@@ -70,7 +70,8 @@ export function rotateWorkerLogs(
       .sort((a, b) => b.mtime - a.mtime);
     files.forEach(({ f, mtime }, i) => {
       if (f.startsWith(`${commandId}.log`)) return; // this command's own files stay
-      if (i >= limits.maxFiles || now - mtime > limits.maxAgeMs) rmSync(join(logDir, f), { force: true });
+      if (i >= limits.maxFiles || now - mtime > limits.maxAgeMs)
+        rmSync(join(logDir, f), { force: true });
     });
   } catch {
     /* best effort */

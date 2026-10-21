@@ -618,15 +618,20 @@ export interface WorkerCrashAlertMemory {
 export function maybeWriteWorkerCrashAlerts(
   alertsDir: string,
   snapshot:
-    | Pick<StatusSnapshot, "prs" | "draining" | "draining_reason" | "draining_since">
-    | undefined,
+    Pick<StatusSnapshot, "prs" | "draining" | "draining_reason" | "draining_since"> | undefined,
   fresh: boolean,
   mem: WorkerCrashAlertMemory,
   now: () => Date = () => new Date(),
 ): string[] {
   if (!fresh || !snapshot) return [];
   const names: string[] = [];
-  const write = (key: string, cause: string, pr: number | null, title: string, body: string): void => {
+  const write = (
+    key: string,
+    cause: string,
+    pr: number | null,
+    title: string,
+    body: string,
+  ): void => {
     if (mem.written.has(key)) return;
     mem.written.add(key);
     const name = `${now().toISOString().replace(/[:.]/g, "-")}-${cause}${pr === null ? "" : `-${pr}`}.json`;

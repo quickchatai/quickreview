@@ -34,14 +34,7 @@
 // Exit status: 1 when the sdk cell at the gate size misses --limit-ms (D6:
 // p99 lag <= 200 ms at 12 sessions), 2 on a harness failure.
 import { spawn, spawnSync } from "node:child_process";
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import { dirname, join, resolve } from "node:path";

@@ -36,7 +36,11 @@ import {
   watch,
 } from "node:fs";
 import { basename, join } from "node:path";
-import type { ExtensionAPI, ExtensionContext, ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  ExtensionFactory,
+} from "@earendil-works/pi-coding-agent";
 import { writeSessionBridgeState, type SessionBridgeCompaction } from "../src/session-bridge.js";
 
 /**

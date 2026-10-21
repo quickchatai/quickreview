@@ -42,7 +42,11 @@
 // for this hook.
 import { readFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
-import type { ExtensionAPI, ExtensionFactory, ToolCallEvent } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionFactory,
+  ToolCallEvent,
+} from "@earendil-works/pi-coding-agent";
 import { shellWords, splitShellSegments } from "./bash-guard.js";
 
 export interface BashRule {

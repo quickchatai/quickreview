@@ -1,7 +1,16 @@
 // [P8.5b] The worker crash-loop breaker: the store's counters, the TUI alert and
 // the worker log rotation. The supervisor's end of it (a fake failing worker, the
 // park, the drain, the replay that never re-posts) is in tests/worker-supervisor.test.ts.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -66,7 +75,11 @@ describe("[P8.5b] the breaker over the store", () => {
     b.failure(2, "c", "x");
     expect(store.drainState().draining).toBe(false);
     expect(b.failure(3, "c", "x").drained).toBe(true);
-    expect(store.drainState()).toMatchObject({ draining: true, reason: "worker_failures", issued_by: "operator" });
+    expect(store.drainState()).toMatchObject({
+      draining: true,
+      reason: "worker_failures",
+      issued_by: "operator",
+    });
     // Already draining: a fourth PR does not engage again.
     expect(b.failure(4, "c", "x").drained).toBe(false);
   });
@@ -106,12 +119,15 @@ describe("[P8.5b] the TUI alert", () => {
   it("writes one alert for the breaker's drain", () => {
     const alerts = join(dir, "alerts");
     const mem = { written: new Set<string>() };
-    const s = snap({ draining: true, draining_reason: "worker_failures", draining_since: "2026-10-19T10:00:00Z" });
+    const s = snap({
+      draining: true,
+      draining_reason: "worker_failures",
+      draining_since: "2026-10-19T10:00:00Z",
+    });
     const names = maybeWriteWorkerCrashAlerts(alerts, s, true, mem);
-    expect(names.map((n) => JSON.parse(readFileSync(join(alerts, n), "utf8")).cause).sort()).toEqual([
-      "worker-crash-loop",
-      "worker-failures-drain",
-    ]);
+    expect(
+      names.map((n) => JSON.parse(readFileSync(join(alerts, n), "utf8")).cause).sort(),
+    ).toEqual(["worker-crash-loop", "worker-failures-drain"]);
   });
 
   it("the board shows the drain's cause", () => {

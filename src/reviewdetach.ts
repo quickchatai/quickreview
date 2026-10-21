@@ -586,9 +586,7 @@ export function driverSignals(io: {
   return () => {
     seen++;
     if (seen === 1) {
-      void (io.stopSessions?.() ?? Promise.resolve())
-        .catch(() => {})
-        .finally(() => io.exit(130));
+      void (io.stopSessions?.() ?? Promise.resolve()).catch(() => {}).finally(() => io.exit(130));
       return;
     }
     io.exit(130);

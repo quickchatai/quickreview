@@ -1678,7 +1678,9 @@ describe("deploy.sh — release <version>", () => {
     it("names the recreate as the point of no return in the plan", () => {
       env = scratch();
       const r = release(env, { vm: { layout: "legacy" }, args: ["--cutover-ack"] });
-      expect(r.stdout).toMatch(/recreate the daemon container on the new image — THE POINT OF NO RETURN on the legacy layout/);
+      expect(r.stdout).toMatch(
+        /recreate the daemon container on the new image — THE POINT OF NO RETURN on the legacy layout/,
+      );
     });
 
     it("REFUSES an undrained or busy board (the updater refuses it too)", () => {

@@ -53,7 +53,11 @@ import { LensWave } from "../src/engine/lens/wave.js";
 import { PiHost } from "../src/engine/pisdk.js";
 import { bashGuardConfigFromEnv, createBashGuard } from "./bash-guard.js";
 import { toPiTool } from "./pi-tool.js";
-import { resolveCacheGroup, resolveCacheStagger, resolveMaxConcurrency } from "../src/engine/lens/env.js";
+import {
+  resolveCacheGroup,
+  resolveCacheStagger,
+  resolveMaxConcurrency,
+} from "../src/engine/lens/env.js";
 
 export { LENS_TOOL, LENS_WAVE_TOOL };
 

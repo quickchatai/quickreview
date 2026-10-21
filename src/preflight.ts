@@ -15,7 +15,18 @@
 //   - the config home is checked with `qcr config check`'s own function.
 // It prints one JSON object (never a token, never transcript text) and exits
 // non-zero when any check failed, which is what makes the updater rescue.
-import { accessSync, constants, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
@@ -33,13 +44,7 @@ const SUN_PATH_MAX = 107;
 /** How long the first rounds after the cutover may need the login for. */
 export const DEFAULT_WORK_WINDOW_MIN = 120;
 
-export type CheckName =
-  | "migrations"
-  | "resume"
-  | "login"
-  | "models"
-  | "socket"
-  | "config";
+export type CheckName = "migrations" | "resume" | "login" | "models" | "socket" | "config";
 
 export interface PreflightCheck {
   name: CheckName;
@@ -84,17 +89,32 @@ function copyIfPresent(from: string, to: string): boolean {
 function openPrs(db: string): number[] {
   const h = new Database(db, { readonly: true });
   try {
-    return (h.prepare("SELECT number FROM pr_state WHERE state != 'closed' ORDER BY number").all() as { number: number }[]).map((r) => r.number);
+    return (
+      h.prepare("SELECT number FROM pr_state WHERE state != 'closed' ORDER BY number").all() as {
+        number: number;
+      }[]
+    ).map((r) => r.number);
   } finally {
     h.close();
   }
 }
 
-function migrate(opts: PreflightOptions, scratch: string): { check: PreflightCheck; db: string | null } {
+function migrate(
+  opts: PreflightOptions,
+  scratch: string,
+): { check: PreflightCheck; db: string | null } {
   const db = join(scratch, "state.db");
   try {
     if (!copyIfPresent(join(opts.stateDir, "state.db"), db)) {
-      return { check: { name: "migrations", ok: false, detail: "no state.db", reason: `no state.db in ${opts.stateDir}` }, db: null };
+      return {
+        check: {
+          name: "migrations",
+          ok: false,
+          detail: "no state.db",
+          reason: `no state.db in ${opts.stateDir}`,
+        },
+        db: null,
+      };
     }
     copyIfPresent(join(opts.stateDir, "state.db-wal"), `${db}-wal`);
     copyIfPresent(join(opts.stateDir, "state.db-shm"), `${db}-shm`);
@@ -106,19 +126,41 @@ function migrate(opts: PreflightOptions, scratch: string): { check: PreflightChe
     } finally {
       store.db.close();
     }
-    return { check: { name: "migrations", ok: true, detail: "the scratch copy migrated forward" }, db };
+    return {
+      check: { name: "migrations", ok: true, detail: "the scratch copy migrated forward" },
+      db,
+    };
   } catch (e) {
-    return { check: { name: "migrations", ok: false, detail: "migration failed", reason: `migrating the scratch copy of state.db failed: ${msgOf(e)}` }, db: null };
+    return {
+      check: {
+        name: "migrations",
+        ok: false,
+        detail: "migration failed",
+        reason: `migrating the scratch copy of state.db failed: ${msgOf(e)}`,
+      },
+      db: null,
+    };
   }
 }
 
 function resume(opts: PreflightOptions, scratch: string, db: string | null): PreflightCheck {
-  if (db === null) return { name: "resume", ok: false, detail: "no migrated copy", reason: "the open PRs cannot be listed without the migrated state.db" };
+  if (db === null)
+    return {
+      name: "resume",
+      ok: false,
+      detail: "no migrated copy",
+      reason: "the open PRs cannot be listed without the migrated state.db",
+    };
   let prs: number[];
   try {
     prs = openPrs(db);
   } catch (e) {
-    return { name: "resume", ok: false, detail: "cannot list open PRs", reason: `listing open PRs failed: ${msgOf(e)}` };
+    return {
+      name: "resume",
+      ok: false,
+      detail: "cannot list open PRs",
+      reason: `listing open PRs failed: ${msgOf(e)}`,
+    };
   }
   const sessions = opts.sessionsDir ?? join(opts.stateDir, "pi-sessions");
   const sessionDirOut = join(scratch, "sessions");
@@ -157,13 +199,23 @@ function resume(opts: PreflightOptions, scratch: string, db: string | null): Pre
   }
   const detail = `${prs.length} open PR(s), ${files} session file(s) resumed offline, ${withoutSession} without a session`;
   if (failures.length > 0)
-    return { name: "resume", ok: false, detail, reason: `${failures.length} session file(s) cannot be resumed: ${failures.slice(0, 5).join("; ")}` };
+    return {
+      name: "resume",
+      ok: false,
+      detail,
+      reason: `${failures.length} session file(s) cannot be resumed: ${failures.slice(0, 5).join("; ")}`,
+    };
   return { name: "resume", ok: true, detail };
 }
 
 function login(opts: PreflightOptions): PreflightCheck {
   const file = join(opts.agentDir, "auth.json");
-  const fail = (reason: string): PreflightCheck => ({ name: "login", ok: false, detail: "login not usable", reason });
+  const fail = (reason: string): PreflightCheck => ({
+    name: "login",
+    ok: false,
+    detail: "login not usable",
+    reason,
+  });
   if (!existsSync(file)) return fail(`no pi login at ${file}`);
   try {
     accessSync(file, constants.R_OK);
@@ -188,13 +240,20 @@ function login(opts: PreflightOptions): PreflightCheck {
     const s = summary[p]!;
     if (s.type !== "oauth") continue;
     const refresh = parsed[p]?.["refresh"];
-    const refreshable = typeof refresh === "string" && refresh !== "" && refresh !== DISABLED_REFRESH;
+    const refreshable =
+      typeof refresh === "string" && refresh !== "" && refresh !== DISABLED_REFRESH;
     const lasts = s.expires !== null && s.expires >= now + need + PI_REFRESH_MARGIN_MS;
     if (!refreshable && !lasts) lacking.push(p);
   }
   if (lacking.length > 0)
-    return fail(`the ${lacking.join(", ")} login has no refresh token and expires inside the ${Math.round(need / 60_000)}-minute work window`);
-  return { name: "login", ok: true, detail: `${providers.length} provider(s): ${providers.join(", ")}` };
+    return fail(
+      `the ${lacking.join(", ")} login has no refresh token and expires inside the ${Math.round(need / 60_000)}-minute work window`,
+    );
+  return {
+    name: "login",
+    ok: true,
+    detail: `${providers.length} provider(s): ${providers.join(", ")}`,
+  };
 }
 
 function models(opts: PreflightOptions): PreflightCheck {
@@ -202,15 +261,26 @@ function models(opts: PreflightOptions): PreflightCheck {
   if (!existsSync(file)) return { name: "models", ok: true, detail: "no models.json (optional)" };
   try {
     const v = JSON.parse(readFileSync(file, "utf8")) as unknown;
-    if (typeof v !== "object" || v === null || Array.isArray(v)) throw new Error("not a JSON object");
+    if (typeof v !== "object" || v === null || Array.isArray(v))
+      throw new Error("not a JSON object");
     return { name: "models", ok: true, detail: "models.json parses" };
   } catch (e) {
-    return { name: "models", ok: false, detail: "models.json unusable", reason: `${file} does not parse: ${msgOf(e)}` };
+    return {
+      name: "models",
+      ok: false,
+      detail: "models.json unusable",
+      reason: `${file} does not parse: ${msgOf(e)}`,
+    };
   }
 }
 
 function socket(opts: PreflightOptions, scratch: string): PreflightCheck {
-  const fail = (reason: string): PreflightCheck => ({ name: "socket", ok: false, detail: "socket dir not usable", reason });
+  const fail = (reason: string): PreflightCheck => ({
+    name: "socket",
+    ok: false,
+    detail: "socket dir not usable",
+    reason,
+  });
   try {
     const dir = runDirOf(join(scratch, "state"));
     ensurePrivateDir(dir);
@@ -218,7 +288,9 @@ function socket(opts: PreflightOptions, scratch: string): PreflightCheck {
     if (mode !== 0o700) return fail(`the IPC run dir came out ${mode.toString(8)}, not 700`);
     const real = socketPathOf(opts.stateDir);
     if (Buffer.byteLength(real) > SUN_PATH_MAX)
-      return fail(`the socket path ${real} is ${Buffer.byteLength(real)} bytes, over the ${SUN_PATH_MAX} a unix socket takes`);
+      return fail(
+        `the socket path ${real} is ${Buffer.byteLength(real)} bytes, over the ${SUN_PATH_MAX} a unix socket takes`,
+      );
     return { name: "socket", ok: true, detail: "the IPC run dir is creatable at 0700" };
   } catch (e) {
     return fail(`the IPC run dir cannot be created: ${msgOf(e)}`);
@@ -232,7 +304,10 @@ function config(opts: PreflightOptions): PreflightCheck {
     name: "config",
     ok: false,
     detail: `${res.errors.length} error(s)`,
-    reason: res.errors.map((e) => `${e.where}: ${e.message}`).slice(0, 5).join("; "),
+    reason: res.errors
+      .map((e) => `${e.where}: ${e.message}`)
+      .slice(0, 5)
+      .join("; "),
   };
 }
 

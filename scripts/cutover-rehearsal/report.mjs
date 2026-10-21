@@ -5,19 +5,34 @@
 import { readFileSync, writeFileSync } from "node:fs";
 
 const [resultsPath, factsPath, out, sha, findingsPath] = process.argv.slice(2);
-const rows = readFileSync(resultsPath, "utf8").split("\n").filter(Boolean).map((l) => l.split("\t"));
+const rows = readFileSync(resultsPath, "utf8")
+  .split("\n")
+  .filter(Boolean)
+  .map((l) => l.split("\t"));
 const facts = new Map(
-  readFileSync(factsPath, "utf8").split("\n").filter(Boolean).map((l) => l.split("\t")).map(([k, ...v]) => [k, v.join("\t")]),
+  readFileSync(factsPath, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => l.split("\t"))
+    .map(([k, ...v]) => [k, v.join("\t")]),
 );
 const passed = rows.filter((r) => r[1] === "pass").length;
 const failed = rows.length - passed;
-const cell = (s) => String(s ?? "").replace(/\|/g, "\\|").replace(/\n/g, " ");
+const cell = (s) =>
+  String(s ?? "")
+    .replace(/\|/g, "\\|")
+    .replace(/\n/g, " ");
 const date = new Date().toISOString().slice(0, 10);
-const worker = (id) => /^(WEBHOOK|RESUME|WAVE|PERMIT|POST|ANSWER|TAKEOVER|DEBUG|RESTART|BREAKER|LOGIN-1|BUSY|TREE-1|STATUS|NETCAP)/.test(id);
+const worker = (id) =>
+  /^(WEBHOOK|RESUME|WAVE|PERMIT|POST|ANSWER|TAKEOVER|DEBUG|RESTART|BREAKER|LOGIN-1|BUSY|TREE-1|STATUS|NETCAP)/.test(
+    id,
+  );
 const table = (list) => {
   const md = ["| | check | result | evidence |", "|---|---|---|---|"];
   for (const [id, status, title, detail] of list)
-    md.push(`| ${id} | ${cell(title)} | ${status === "pass" ? "pass" : "**FAIL**"} | ${cell(detail)} |`);
+    md.push(
+      `| ${id} | ${cell(title)} | ${status === "pass" ? "pass" : "**FAIL**"} | ${cell(detail)} |`,
+    );
   return md;
 };
 
@@ -53,7 +68,16 @@ md.push(
   "## Run notes",
   "",
 );
-for (const k of ["wizard_a", "backups", "update_log", "trigger_under_hold", "login_refresh", "process_tree", "worker_run", "ssh_commands"])
+for (const k of [
+  "wizard_a",
+  "backups",
+  "update_log",
+  "trigger_under_hold",
+  "login_refresh",
+  "process_tree",
+  "worker_run",
+  "ssh_commands",
+])
   if (facts.has(k)) md.push(`- **${k.replaceAll("_", " ")}**: \`${facts.get(k)}\``);
 md.push("");
 md.push(readFileSync(findingsPath, "utf8").trim(), "");

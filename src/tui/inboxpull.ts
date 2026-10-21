@@ -131,7 +131,8 @@ function why(r: { stderr: string; code: number | null }): string {
  */
 export async function pullCompanionInbox(deps: InboxPullDeps): Promise<InboxPullResult> {
   const listed = await deps.ssh(deps.cfg.ssh_host, inboxListArgv(deps.cfg));
-  if (!listed.ok) return { delivered: [], skipped: 0, error: `inbox listing failed: ${why(listed)}` };
+  if (!listed.ok)
+    return { delivered: [], skipped: 0, error: `inbox listing failed: ${why(listed)}` };
   const items: InboxItem[] = [];
   let skipped = 0;
   for (const line of listed.stdout.split("\n")) {
@@ -140,7 +141,9 @@ export async function pullCompanionInbox(deps: InboxPullDeps): Promise<InboxPull
     if (item) items.push(item);
     else skipped++;
   }
-  items.sort((a, b) => (a.created_at === b.created_at ? a.id.localeCompare(b.id) : a.created_at < b.created_at ? -1 : 1));
+  items.sort((a, b) =>
+    a.created_at === b.created_at ? a.id.localeCompare(b.id) : a.created_at < b.created_at ? -1 : 1,
+  );
   const delivered: InboxItem[] = [];
   let error: string | undefined;
   for (const item of items) {
@@ -154,8 +157,15 @@ export async function pullCompanionInbox(deps: InboxPullDeps): Promise<InboxPull
     }
   }
   if (delivered.length > 0) {
-    const acked = await deps.ssh(deps.cfg.ssh_host, inboxAckArgv(deps.cfg, delivered.map((i) => i.id)));
-    if (!acked.ok) error = `inbox ack failed (items stay pending, re-delivery is a no-op): ${why(acked)}`;
+    const acked = await deps.ssh(
+      deps.cfg.ssh_host,
+      inboxAckArgv(
+        deps.cfg,
+        delivered.map((i) => i.id),
+      ),
+    );
+    if (!acked.ok)
+      error = `inbox ack failed (items stay pending, re-delivery is a no-op): ${why(acked)}`;
   }
   return { delivered, skipped, ...(error === undefined ? {} : { error }) };
 }

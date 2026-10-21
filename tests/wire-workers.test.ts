@@ -201,11 +201,7 @@ describe("the worker world", () => {
     const names = Object.keys(r.sessions.buildEnv("pr-7", {}));
     // Not every drop is present for every config (the model key needs a secret); the list may
     // only name things buildEnv can produce.
-    const producible = new Set([
-      ...names,
-      "OPENAI_API_KEY",
-      "QCR_STATE_DB",
-    ]);
+    const producible = new Set([...names, "OPENAI_API_KEY", "QCR_STATE_DB"]);
     for (const name of WORKER_ENV_DROPPED) expect(producible.has(name), name).toBe(true);
     expect(workerSessionEnv(r.sessions, "pr-7", {})).not.toHaveProperty("QCR_INJECT_DIR");
   });

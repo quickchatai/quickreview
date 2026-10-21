@@ -42,7 +42,11 @@ const beatMs = Number(env.FAKE_WORKER_BEAT_MS ?? "50");
 const argv = process.argv.slice(2);
 const commandId = argv[argv.indexOf("--command") + 1];
 const record = (name, value) => {
-  if (out) writeFileSync(join(out, `${commandId}.${name}`), typeof value === "string" ? value : JSON.stringify(value));
+  if (out)
+    writeFileSync(
+      join(out, `${commandId}.${name}`),
+      typeof value === "string" ? value : JSON.stringify(value),
+    );
 };
 
 const buf = Buffer.alloc(64);
@@ -70,7 +74,8 @@ const request = (op, gen = generation, body = undefined) =>
     waiting.set(id, resolve);
     send({ type: "request", id, op, generation: gen, ...(body === undefined ? {} : { body }) });
   });
-const event = (kind, body = {}, gen = generation) => send({ type: "event", kind, generation: gen, body });
+const event = (kind, body = {}, gen = generation) =>
+  send({ type: "event", kind, generation: gen, body });
 const errors = [];
 
 sock.on("data", (chunk) => {

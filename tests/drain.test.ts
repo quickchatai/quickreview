@@ -653,7 +653,14 @@ describe("qcr drain over the unwedge command channel", () => {
     resetLayoutCache();
     try {
       const unset: Config = { ...cfg, tui: { ...cfg.tui, remote_sandbox_root: "" } }; // the owner's config names none
-      expect(await runDrain(false, { cfg: unset, ssh, log: (l) => lines.push(l), sleep: async () => {} })).toBe(0);
+      expect(
+        await runDrain(false, {
+          cfg: unset,
+          ssh,
+          log: (l) => lines.push(l),
+          sleep: async () => {},
+        }),
+      ).toBe(0);
     } finally {
       resetLayoutCache();
     }

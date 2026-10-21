@@ -782,7 +782,10 @@ export class WorkerSupervisor {
       const capability = capabilities.mint(row.id);
       capFd = createCapabilityFd(this.deps.runDir, capability);
       mkdirSync(this.deps.logDir, { recursive: true });
-      rotateWorkerLogs(this.deps.logDir, row.id, t0, { ...DEFAULT_WORKER_LOG_LIMITS, ...this.deps.logLimits });
+      rotateWorkerLogs(this.deps.logDir, row.id, t0, {
+        ...DEFAULT_WORKER_LOG_LIMITS,
+        ...this.deps.logLimits,
+      });
       logFd = openSync(workerLogPath(this.deps.logDir, row.id), "a", 0o600);
       const env = workerProcessEnv(
         this.deps.parentEnv ?? process.env,
@@ -1087,7 +1090,8 @@ export class WorkerSupervisor {
     // the PR or feed the drain, and its success must not hide a round's crash loop.
     if (rec.mode === "answer") return;
     // A fenced worker was ended by the caller, who owns the row's fate: not a worker failure.
-    if (rec.killedFor === "shutdown" || rec.killedFor === "operator" || outcome.kind === "leave") return;
+    if (rec.killedFor === "shutdown" || rec.killedFor === "operator" || outcome.kind === "leave")
+      return;
     if (outcome.kind === "acked" && rec.failedReason === undefined) {
       this.breaker.success(pr);
       return;
@@ -1101,7 +1105,10 @@ export class WorkerSupervisor {
     if (res.parked && outcome.kind === "requeue")
       this.deps.store.failPendingSessionCommand(
         rec.row.id,
-        `PR #${pr} is parked after ${res.failures} consecutive worker failures: ${error}`.slice(0, 500),
+        `PR #${pr} is parked after ${res.failures} consecutive worker failures: ${error}`.slice(
+          0,
+          500,
+        ),
       );
   }
 

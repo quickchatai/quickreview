@@ -2,7 +2,16 @@
 // live inputs are only read (hash and mtime compare, mounted-read-only shape).
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,26 +29,67 @@ beforeEach(() => {
   const state = join(dir, "state");
   const cfg = join(dir, "config-home");
   const agent = join(dir, "pihome", "agent");
-  for (const d of [state, cfg, agent, join(state, "pi-sessions", "pr-7")]) mkdirSync(d, { recursive: true });
+  for (const d of [state, cfg, agent, join(state, "pi-sessions", "pr-7")])
+    mkdirSync(d, { recursive: true });
   const store = new StateStore(join(state, "state.db"));
-  store.upsertPr({ number: 7, state: "awaiting_author", head_sha: "abc", title: "t", author: "a", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
-  store.upsertPr({ number: 8, state: "closed", head_sha: "abc", title: "t", author: "a", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+  store.upsertPr({
+    number: 7,
+    state: "awaiting_author",
+    head_sha: "abc",
+    title: "t",
+    author: "a",
+    trigger_ts: null,
+    stale_recheck: 0,
+    migration_gate: 0,
+  });
+  store.upsertPr({
+    number: 8,
+    state: "closed",
+    head_sha: "abc",
+    title: "t",
+    author: "a",
+    trigger_ts: null,
+    stale_recheck: 0,
+    migration_gate: 0,
+  });
   store.db.pragma("wal_checkpoint(TRUNCATE)");
   store.db.close();
   const lines = [
-    { type: "session", version: 3, id: "sess-7", timestamp: "2026-10-01T00:00:00Z", cwd: "/opt/quickreview/sandbox/wt/pr-7" },
-    { type: "message", id: "m1", parentId: null, timestamp: "2026-10-01T00:00:01Z", message: { role: "user", content: [{ type: "text", text: "hello" }], timestamp: 1 } },
+    {
+      type: "session",
+      version: 3,
+      id: "sess-7",
+      timestamp: "2026-10-01T00:00:00Z",
+      cwd: "/opt/quickreview/sandbox/wt/pr-7",
+    },
+    {
+      type: "message",
+      id: "m1",
+      parentId: null,
+      timestamp: "2026-10-01T00:00:01Z",
+      message: { role: "user", content: [{ type: "text", text: "hello" }], timestamp: 1 },
+    },
   ];
-  writeFileSync(join(state, "pi-sessions", "pr-7", "s.jsonl"), lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+  writeFileSync(
+    join(state, "pi-sessions", "pr-7", "s.jsonl"),
+    lines.map((l) => JSON.stringify(l)).join("\n") + "\n",
+  );
   writeFileSync(join(cfg, "config.toml"), GOOD_CONFIG);
-  writeFileSync(join(agent, "auth.json"), JSON.stringify({ "openai-codex": { type: "oauth", access: "a", refresh: "r", expires: NOW + 3600_000 } }));
+  writeFileSync(
+    join(agent, "auth.json"),
+    JSON.stringify({
+      "openai-codex": { type: "oauth", access: "a", refresh: "r", expires: NOW + 3600_000 },
+    }),
+  );
   writeFileSync(join(agent, "models.json"), "{}");
   opts = { stateDir: state, configHome: cfg, agentDir: agent, root, now: () => NOW };
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-const failed = (r: ReturnType<typeof runPreflight>): string[] => r.checks.filter((c) => !c.ok).map((c) => c.name);
-const reason = (r: ReturnType<typeof runPreflight>, n: string): string => r.checks.find((c) => c.name === n)?.reason ?? "";
+const failed = (r: ReturnType<typeof runPreflight>): string[] =>
+  r.checks.filter((c) => !c.ok).map((c) => c.name);
+const reason = (r: ReturnType<typeof runPreflight>, n: string): string =>
+  r.checks.find((c) => c.name === n)?.reason ?? "";
 
 function snapshot(d: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -47,7 +97,8 @@ function snapshot(d: string): Record<string, string> {
     for (const e of readdirSync(p, { withFileTypes: true })) {
       const f = join(p, e.name);
       if (e.isDirectory()) walk(f);
-      else out[f] = createHash("sha256").update(readFileSync(f)).digest("hex") + statSync(f).mtimeMs;
+      else
+        out[f] = createHash("sha256").update(readFileSync(f)).digest("hex") + statSync(f).mtimeMs;
     }
   };
   walk(d);
@@ -60,7 +111,9 @@ describe("daemon --preflight", () => {
     const r = runPreflight(opts);
     expect(failed(r), JSON.stringify(r)).toEqual([]);
     expect(r.ok).toBe(true);
-    expect(r.checks.find((c) => c.name === "resume")?.detail).toContain("1 open PR(s), 1 session file(s)");
+    expect(r.checks.find((c) => c.name === "resume")?.detail).toContain(
+      "1 open PR(s), 1 session file(s)",
+    );
     expect(snapshot(dir)).toEqual(before);
     expect(readdirSync(join(dir, "state")).sort()).toEqual(["pi-sessions", "state.db"]);
   });
@@ -87,7 +140,10 @@ describe("daemon --preflight", () => {
   });
 
   it("fails a migration error", () => {
-    writeFileSync(join(opts.stateDir, "state.db"), "this is not a database, and it is long enough to be read as one".repeat(5));
+    writeFileSync(
+      join(opts.stateDir, "state.db"),
+      "this is not a database, and it is long enough to be read as one".repeat(5),
+    );
     const r = runPreflight(opts);
     expect(failed(r)).toContain("migrations");
     expect(reason(r, "migrations")).toContain("migrating the scratch copy");
@@ -96,9 +152,29 @@ describe("daemon --preflight", () => {
   it("fails a missing login, and a login that expires in the work window with no refresh token", () => {
     rmSync(join(opts.agentDir, "auth.json"));
     expect(reason(runPreflight(opts), "login")).toContain("no pi login");
-    writeFileSync(join(opts.agentDir, "auth.json"), JSON.stringify({ p: { type: "oauth", access: "a", refresh: "bench-refresh-disabled", expires: NOW + 600_000 } }));
+    writeFileSync(
+      join(opts.agentDir, "auth.json"),
+      JSON.stringify({
+        p: {
+          type: "oauth",
+          access: "a",
+          refresh: "bench-refresh-disabled",
+          expires: NOW + 600_000,
+        },
+      }),
+    );
     expect(reason(runPreflight(opts), "login")).toContain("work window");
-    writeFileSync(join(opts.agentDir, "auth.json"), JSON.stringify({ p: { type: "oauth", access: "a", refresh: "bench-refresh-disabled", expires: NOW + 24 * 3600_000 } }));
+    writeFileSync(
+      join(opts.agentDir, "auth.json"),
+      JSON.stringify({
+        p: {
+          type: "oauth",
+          access: "a",
+          refresh: "bench-refresh-disabled",
+          expires: NOW + 24 * 3600_000,
+        },
+      }),
+    );
     expect(failed(runPreflight(opts))).toEqual([]);
   });
 

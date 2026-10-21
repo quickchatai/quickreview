@@ -33,11 +33,7 @@ import {
   loadJudgements,
   readJudgeEvents,
 } from "../src/bench/defectjudge.js";
-import {
-  recordUnprefetched,
-  runJudgeSession,
-  type RunFingerprint,
-} from "../src/bench/runner.js";
+import { recordUnprefetched, runJudgeSession, type RunFingerprint } from "../src/bench/runner.js";
 import { caseCostUsd, caseTokenCounts, CODEX_USD_PER_MTOK, runCostUsd } from "../src/bench/cost.js";
 
 const D = (id: string, severity: "high" | "medium" | "low" = "high"): Defect => ({

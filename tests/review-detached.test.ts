@@ -2,14 +2,7 @@
 // plugins. Time, pids, the launcher and the review itself are injected; one
 // test really spawns a detached node stub to show the run outlives its starter.
 import { afterAll, describe, expect, it } from "vitest";
-import {
-  mkdtempSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

@@ -1252,9 +1252,7 @@ export function watchdogCommand(
  * `[pi] lens_runtime = engine` is
  * the SDK runtime with our lens tools; with `[pi] engine_wave` the runtime
  * carries the board the round starts the planned wave on. */
-export function selectReviewRuntime(
-  cfg: Pick<Config, "engine" | "pi">,
-): EngineRouteRuntime {
+export function selectReviewRuntime(cfg: Pick<Config, "engine" | "pi">): EngineRouteRuntime {
   const engine = cfg.pi.lens_runtime === "engine";
   return selectRuntime(cfg.engine.runtime, "review", () => {
     // The SDK host loads on the first session, not at startup: a preview, a

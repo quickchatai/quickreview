@@ -81,16 +81,7 @@ const caseOf = (name: string): BenchCase => ({
 
 const lines: string[] = [];
 const pool = (cmd: string, extra: string[] = []): HostPool => ({
-  argv: [
-    cmd,
-    "--set",
-    "s.json",
-    "--out",
-    outDir,
-    "--concurrency",
-    "3",
-    ...extra,
-  ],
+  argv: [cmd, "--set", "s.json", "--out", outDir, "--concurrency", "3", ...extra],
   entry,
   env: { ...process.env, HOST_LOG: hostLog },
   log: (l) => lines.push(l),

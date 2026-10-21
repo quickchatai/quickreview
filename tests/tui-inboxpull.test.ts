@@ -8,7 +8,15 @@
 // scripts are exercised, not mirrored. The "faux companion" reads the inject
 // dir with the inject-bridge's own `pendingFiles`.
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -125,7 +133,10 @@ describe("pullCompanionInbox", () => {
   it("an anomaly and an EOD item reach the faux companion and the alerts feed, then are acked", async () => {
     bot.add("anomaly", "[anomaly] verdict_malformed on PR #7\n\nround 2 wrote no verdict");
     bot.add("login", "pi login expired on the bot; run /login");
-    await bot.eodWriter()("EOD sweep for 2026-10-19\n\nRun today's end-of-day sweep.", "2026-10-19");
+    await bot.eodWriter()(
+      "EOD sweep for 2026-10-19\n\nRun today's end-of-day sweep.",
+      "2026-10-19",
+    );
     await bot.heartbeatWriter()("daily heartbeat: all quiet", "2026-10-19");
     const { ssh } = localRunner();
 
@@ -235,7 +246,12 @@ describe("pullCompanionInbox", () => {
   });
 
   it("a listing that fails is an error and writes nothing", async () => {
-    const down: SshRunner = async () => ({ ok: false, stdout: "", stderr: "ssh: no route", code: 255 });
+    const down: SshRunner = async () => ({
+      ok: false,
+      stdout: "",
+      stderr: "ssh: no route",
+      code: 255,
+    });
     const res = await pullCompanionInbox(deps(down));
     expect(res.error).toContain("no route");
     expect(existsSync(injectDir)).toBe(false);
@@ -280,9 +296,16 @@ describe("InboxPuller", () => {
     const real = localRunner();
     const ssh: SshRunner = async (h, argv, o) => {
       calls++;
-      return fail ? { ok: false, stdout: "", stderr: "ssh: down", code: 255 } : real.ssh(h, argv, o);
+      return fail
+        ? { ok: false, stdout: "", stderr: "ssh: down", code: 255 }
+        : real.ssh(h, argv, o);
     };
-    const puller = new InboxPuller(deps(ssh), (l) => lines.push(l), () => t, 20_000);
+    const puller = new InboxPuller(
+      deps(ssh),
+      (l) => lines.push(l),
+      () => t,
+      20_000,
+    );
 
     await puller.tick();
     expect(lines.some((l) => l.includes("1 new (anomaly)"))).toBe(true);

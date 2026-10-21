@@ -20,7 +20,15 @@
 //     paused; a resumed run never pauses a PR twice
 import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -74,7 +82,10 @@ function rig(opts: { lensPermits?: number } = {}): Rig {
   const bare = join(dir, "quickchatai", "quickreview.git");
   mkdirSync(dirname(bare), { recursive: true });
   const git = (cwd: string, ...a: string[]) =>
-    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd, stdio: "pipe" });
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], {
+      cwd,
+      stdio: "pipe",
+    });
   git(dir, "init", "-q", "--bare", bare);
   const co = join(dir, "co");
   git(dir, "clone", "-q", bare, co);
@@ -232,9 +243,9 @@ describe("scripts/cutover.sh", () => {
     ]);
     expect(first.out).toContain("the first reconcile was healthy and kept the hold");
     // the counts were taken and recorded
-    expect(readFileSync(join(r.dir, "state", "qcr", "default", `cutover-${V}.state`), "utf8")).toMatch(
-      /kv:pending_wakes=3\nkv:outbox=1/,
-    );
+    expect(
+      readFileSync(join(r.dir, "state", "qcr", "default", `cutover-${V}.state`), "utf8"),
+    ).toMatch(/kv:pending_wakes=3\nkv:outbox=1/);
 
     // 5 hours later: only the 4 h check is left, and nothing deploys again
     const before = r.calls().length;
@@ -289,7 +300,10 @@ describe("scripts/cutover.sh", () => {
     r.setVm({ draining: true, rounds: 0 }); // the rescue re-sent the drain
     const before = r.calls().length;
     const second = r.run(["", V, "y", "y", "12", "n"]); // go, verify, surfaces, the first PR, then no lift
-    const after = r.calls().slice(before).filter((l) => /^(deploy|qcr drain)/.test(l));
+    const after = r
+      .calls()
+      .slice(before)
+      .filter((l) => /^(deploy|qcr drain)/.test(l));
     expect(after).toEqual([`deploy release ${V} ACK=${V}`, "deploy verify ACK="]);
     expect(second.out).toContain("already done, skipped");
     expect(second.code).toBe(1);
@@ -306,9 +320,9 @@ describe("scripts/cutover.sh", () => {
     expect(res.out).toContain("qcr drain on --hold");
     const drains = r.calls().filter((l) => l.startsWith("qcr drain"));
     expect(drains).toEqual(["qcr drain on"]); // stage 2's only; nothing after the release
-    expect(readFileSync(join(r.dir, "state", "qcr", "default", `cutover-${V}.state`), "utf8")).not.toContain(
-      "done:reconcile",
-    );
+    expect(
+      readFileSync(join(r.dir, "state", "qcr", "default", `cutover-${V}.state`), "utf8"),
+    ).not.toContain("done:reconcile");
   });
 
   it("stops when the drain stands but is not a hold (the boot would lift it)", () => {
@@ -376,7 +390,10 @@ describe("scripts/cutover.sh", () => {
     expect(rr.code).toBe(1);
 
     const expired = rig();
-    writeFileSync(expired.env.QCR_GHCR_EXPIRY_FILE!, new Date((NOW - 86400) * 1000).toISOString() + "\n");
+    writeFileSync(
+      expired.env.QCR_GHCR_EXPIRY_FILE!,
+      new Date((NOW - 86400) * 1000).toISOString() + "\n",
+    );
     expect(expired.run([""]).out).toContain("expired");
     for (const r of [layout, permits, retired, expired]) {
       expect(r.calls().some((l) => l.startsWith("deploy") || l === "qcr drain on")).toBe(false);
@@ -398,7 +415,11 @@ describe("scripts/cutover.sh", () => {
     const res = r.run(["", "y", V, "y"]);
     expect(res.code).toBe(1);
     const vmCalls = r.calls().filter((l) => l.startsWith("vm "));
-    expect(vmCalls.some((l) => l.includes("docker exec quickreview-sandbox node /opt/qcr/dist/src/cli.js status"))).toBe(true);
+    expect(
+      vmCalls.some((l) =>
+        l.includes("docker exec quickreview-sandbox node /opt/qcr/dist/src/cli.js status"),
+      ),
+    ).toBe(true);
     // the owner's own `qcr status` is not what the backstop compares against
     expect(r.calls()).not.toContain("qcr status");
   });
@@ -428,7 +449,8 @@ describe("scripts/cutover.sh", () => {
     const levers = (r: Rig) => r.calls().filter((l) => /^qcr (pause-pr|resume-pr|drain)/.test(l));
     const stateOf = (r: Rig) =>
       readFileSync(join(r.dir, "state", "qcr", "default", `cutover-${V}.state`), "utf8");
-    const pausedNow = (r: Rig) => readFileSync(join(r.dir, "paused"), "utf8").split("\n").filter(Boolean);
+    const pausedNow = (r: Rig) =>
+      readFileSync(join(r.dir, "paused"), "utf8").split("\n").filter(Boolean);
 
     it("pauses every tracked PR but the chosen, records them, lifts, and on a good round resumes only those", () => {
       const r = board();
@@ -442,7 +464,9 @@ describe("scripts/cutover.sh", () => {
         "qcr resume-pr 12",
         "qcr resume-pr 14",
       ]);
-      expect(r.calls().find((l) => l.startsWith("qcr pause-pr 12"))).toContain("first worker round runs on #13");
+      expect(r.calls().find((l) => l.startsWith("qcr pause-pr 12"))).toContain(
+        "first worker round runs on #13",
+      );
       const st = stateOf(r);
       expect(st).toMatch(/^kv:first_pr=13$/m);
       expect(st).toMatch(/^paused:12$/m);
@@ -452,7 +476,7 @@ describe("scripts/cutover.sh", () => {
       expect(st).toMatch(/^resumed:14$/m);
       expect(st).toMatch(/^done:first_round$/m);
       expect(pausedNow(r)).toEqual(["16"]); // the operator's own pause stands
-      expect(res.out).toContain("re-add the label \"AI review requested\"");
+      expect(res.out).toContain('re-add the label "AI review requested"');
       expect(res.out).toContain("only #13 can start a round");
     });
 
@@ -461,7 +485,11 @@ describe("scripts/cutover.sh", () => {
       const res = r.run([...TO_STAGE_9, "14", "y", "y", "y"]);
       expect(res.code, res.out).toBe(0);
       expect(res.out).toContain("#14 has a pending trigger (queued): its round starts at the lift");
-      expect(levers(r).filter((l) => l.startsWith("qcr pause-pr")).map((l) => l.split(" ")[2])).toEqual(["12", "13"]);
+      expect(
+        levers(r)
+          .filter((l) => l.startsWith("qcr pause-pr"))
+          .map((l) => l.split(" ")[2]),
+      ).toEqual(["12", "13"]);
     });
 
     it("leaves the PRs paused when the round is not good, and a resume asks again without pausing or lifting twice", () => {

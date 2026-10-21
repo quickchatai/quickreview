@@ -14,7 +14,14 @@
 // (commit 8169df6f, mounted read-only at /opt/legacy/dist), so every drain it engages or lifts is the
 // legacy code's row, in the legacy schema, and a failed cutover leaves the file legacy-shaped.
 // Nothing here posts, reviews or reaches a network (the container runs --network none).
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 
 const { StateStore } = await import("/opt/legacy/dist/src/state.js");
 const STATE = "/opt/quickreview/state";
@@ -34,7 +41,11 @@ const heartbeat = () => {
     pending_wakes: wakes,
     build: "legacy-standin",
     ...(d.draining
-      ? { draining: true, draining_by: d.issued_by, ...(d.expires_at ? { draining_until: d.expires_at } : {}) }
+      ? {
+          draining: true,
+          draining_by: d.issued_by,
+          ...(d.expires_at ? { draining_until: d.expires_at } : {}),
+        }
       : {}),
   };
   const tmp = `${STATE}/.status.json.tmp`;
@@ -66,18 +77,39 @@ const poll = () => {
       continue;
     }
     if (cmd.command !== "drain") {
-      answer(base, { ok: false, reason: `the legacy stand-in only knows drain (got ${cmd.command})` });
+      answer(base, {
+        ok: false,
+        reason: `the legacy stand-in only knows drain (got ${cmd.command})`,
+      });
     } else if (Object.keys(cmd).some((k) => !["command", "on", "for_min"].includes(k))) {
       // the legacy command schema is strict: `hold` (P8.21b) is a field it has never heard of
-      answer(base, { ok: false, reason: `unknown field in drain command: ${Object.keys(cmd).filter((k) => !["command", "on", "for_min"].includes(k)).join(",")}` });
+      answer(base, {
+        ok: false,
+        reason: `unknown field in drain command: ${Object.keys(cmd)
+          .filter((k) => !["command", "on", "for_min"].includes(k))
+          .join(",")}`,
+      });
     } else if (cmd.on === true) {
       const r = store.engageDrain({ issuer: "operator", expires_at: null });
       log(`drain on by the operator (${r.outcome})`);
-      answer(base, { ok: true, command: "drain", draining: true, running_rounds: 0, issuer: "operator", dropped_deliveries: 0 });
+      answer(base, {
+        ok: true,
+        command: "drain",
+        draining: true,
+        running_rounds: 0,
+        issuer: "operator",
+        dropped_deliveries: 0,
+      });
     } else {
       const r = store.liftDrain("operator");
       log(`drain off by the operator (changed=${r.changed})`);
-      answer(base, { ok: true, command: "drain", draining: false, running_rounds: 0, dropped_deliveries: r.dropped });
+      answer(base, {
+        ok: true,
+        command: "drain",
+        draining: false,
+        running_rounds: 0,
+        dropped_deliveries: r.dropped,
+      });
     }
     heartbeat();
   }
@@ -91,7 +123,9 @@ setTimeout(() => {
   log("reconcile: open=0 triggered=0 closed=0 captured=0 corrections=0 errors=0");
   if (standing.draining) {
     const r = store.liftDrain("operator");
-    log(`drain_lifted — the boot's first healthy reconcile lifted the deploy drain (changed=${r.changed})`);
+    log(
+      `drain_lifted — the boot's first healthy reconcile lifted the deploy drain (changed=${r.changed})`,
+    );
   }
   heartbeat();
 }, 3000);

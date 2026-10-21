@@ -196,7 +196,10 @@ export function judgeLease(lease: WorkerLease, proc: ProcView = realProc): Lease
   if (leader.start !== lease.start_time)
     return { kind: "foreign", why: `pid ${lease.pid} now belongs to another process` };
   if (leader.pgid !== lease.pgid)
-    return { kind: "foreign", why: `pid ${lease.pid} is no longer the leader of group ${lease.pgid}` };
+    return {
+      kind: "foreign",
+      why: `pid ${lease.pid} is no longer the leader of group ${lease.pgid}`,
+    };
   return { kind: "group", pgid: lease.pgid };
 }
 
@@ -213,7 +216,8 @@ export class WorkerLeases {
   }
 
   private path(session: string): string {
-    if (!SESSION_RE.test(session)) throw new Error(`not a session name: ${JSON.stringify(session)}`);
+    if (!SESSION_RE.test(session))
+      throw new Error(`not a session name: ${JSON.stringify(session)}`);
     return join(this.dir, `${session}.lease.json`);
   }
 
