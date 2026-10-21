@@ -238,11 +238,13 @@ describe("the file tools of a real session", () => {
       isError: false,
       text: expect.stringContaining("hello from the worktree"),
     });
-    expect(await call("grep", { pattern: "hello", path: "." })).toMatchObject({
-      isError: false,
-      text: expect.stringContaining("a.txt"),
-    });
-    // fd is the image's; a machine without it has nothing to find with
+    // rg and fd are the image's; a machine without one has nothing to grep or
+    // find with (pi would try to download it)
+    if (spawnSync("rg", ["--version"]).status === 0)
+      expect(await call("grep", { pattern: "hello", path: "." })).toMatchObject({
+        isError: false,
+        text: expect.stringContaining("a.txt"),
+      });
     if (spawnSync("fd", ["--version"]).status === 0)
       expect(await call("find", { pattern: "*.txt" })).toMatchObject({
         isError: false,

@@ -42,7 +42,9 @@ jobs:
       # checkout there is no dist/ yet, so running the suite first fails them
       # with "Cannot find module .../dist/...".
       - run: npm run build
-      - run: timeout 900 npm test # full suite incl. the publishability lint
+      # 25 minutes: the suite passed 900 s on the 2-CPU hosted runner once the
+      # worker world landed (13,500 tests); locally it stays under 900 s.
+      - run: timeout 1500 npm test # full suite incl. the publishability lint
       # The pi canaries (tests/pi-canary/) already ran inside `npm test`. A bump
       # of the pi pin is gated by them by name: when the pi dependencies moved
       # (declared in package.json or resolved in the lockfile), run them again
