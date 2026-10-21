@@ -152,15 +152,19 @@ load_conf() {
 
 d() { "$DOCKER" "$@"; }
 
+# Every lookup by name is `container inspect`: a bare `docker inspect` resolves any
+# object, and the memory network shares the sidecar's name (the 1.0.2 cutover
+# took the network for an old sidecar and failed renaming it).
+
 # A container's label, or "" (a missing container or label is "").
 container_label() {
-  d inspect -f "{{index .Config.Labels \"$2\"}}" "$1" 2>/dev/null | sed 's/^<no value>$//' || true
+  d container inspect -f "{{index .Config.Labels \"$2\"}}" "$1" 2>/dev/null | sed 's/^<no value>$//' || true
 }
 image_label() {
   d image inspect -f "{{index .Config.Labels \"$2\"}}" "$1" 2>/dev/null | sed 's/^<no value>$//' || true
 }
-container_exists() { d inspect -f '{{.Id}}' "$1" >/dev/null 2>&1; }
-container_running() { [[ "$(d inspect -f '{{.State.Running}}' "$1" 2>/dev/null || true)" == true ]]; }
+container_exists() { d container inspect -f '{{.Id}}' "$1" >/dev/null 2>&1; }
+container_running() { [[ "$(d container inspect -f '{{.State.Running}}' "$1" 2>/dev/null || true)" == true ]]; }
 
 # release | legacy | none — of the daemon container.
 detect_layout() {
@@ -188,7 +192,7 @@ json_num_or_null() { if [[ "$1" =~ ^[0-9]+$ ]]; then printf '%s' "$1"; else prin
 image_block() {
   local container="$1" img id
   if ! container_exists "$container"; then printf null; return; fi
-  img="$(d inspect -f '{{.Config.Image}}' "$container" 2>/dev/null || true)"
+  img="$(d container inspect -f '{{.Config.Image}}' "$container" 2>/dev/null || true)"
   printf '{"container":%s,"running":%s,"image":%s,"layout":%s,"build_sha":%s,"runspec":%s,"preflight":%s,"pi":%s}' \
     "$(json_str "$container")" "$(container_running "$container" && echo true || echo false)" \
     "$(json_str "$img")" "$(json_str "$(container_label "$container" qcr.layout)")" \
@@ -291,6 +295,7 @@ OLD_DAEMON_RENAMED=0
 OLD_MEM_RENAMED=0
 OLD_MEM_STOPPED=0
 NEW_MEM_STARTED=0
+SEEDED=0
 NEW_DAEMON_STARTED=0
 DAEMON_STOPPED=0
 LAYOUT=none
@@ -352,7 +357,7 @@ send_drain_on() {
 # fails leaves the drain standing, so the wait also ends at the timeout.
 wait_first_reconcile() {
   local container="$1" wait_s="${2:-300}" waited=0 started written draining
-  started="$(d inspect -f '{{.State.StartedAt}}' "$container" 2>/dev/null | cut -c1-19 || true)"
+  started="$(d container inspect -f '{{.State.StartedAt}}' "$container" 2>/dev/null | cut -c1-19 || true)"
   while (( waited <= wait_s )); do
     written="$(status_value written_at | cut -c1-19)"
     draining="$(status_value draining)"
@@ -388,6 +393,17 @@ rescue() {
   fi
   if [[ $OLD_MEM_STOPPED -eq 1 ]]; then
     d start "$MEM" >/dev/null 2>&1 || log "RESCUE: the old sidecar did not start"
+  fi
+  if [[ $SEEDED -eq 1 ]]; then
+    # The legacy daemon owns its store again, so the copy this run seeded goes stale from
+    # here on: it is set aside (never deleted) and the next run seeds afresh.
+    local aside="${C[MEMORY_STATE_DIR]}.rescued-$TS"
+    if mv "${C[MEMORY_STATE_DIR]}" "$aside"; then
+      log "RESCUE: the sidecar store this run seeded is set aside at $aside; the next run seeds afresh"
+    else
+      log "RESCUE: could not set aside ${C[MEMORY_STATE_DIR]}: move it away before the next run, or it boots a stale store"
+      ok=0
+    fi
   fi
   if [[ $NEW_DAEMON_STARTED -eq 1 || $OLD_DAEMON_RENAMED -eq 1 ]]; then
     d rm -f "$DAEMON" >/dev/null 2>&1
@@ -597,6 +613,7 @@ if [[ "$LAYOUT" == legacy ]]; then
     printf 'seeded from %s on %s\n' "${C[OPENVIKING_HOME]}" "$TS" >"$marker"
     chmod 0600 "$marker"
     if [[ $TEST_MODE -eq 0 ]]; then chown "$UID_GID" "$marker"; fi
+    SEEDED=1
     log "sidecar store seeded from ${C[OPENVIKING_HOME]} (copy verified; the old store is untouched)"
   else
     log "sidecar store already seeded"

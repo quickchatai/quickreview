@@ -2579,7 +2579,9 @@ describe("deploy — the memory sidecar", () => {
       env = scratch(OV_REMOTE);
       const r = release(env);
       expect(r.stdout).toContain("sudo docker ps --filter name=quickreview-memory");
-      expect(r.stdout).toContain("sudo docker inspect -f '{{.State.Running}}' quickreview-memory");
+      expect(r.stdout).toContain(
+        "sudo docker container inspect -f '{{.State.Running}}' quickreview-memory",
+      );
       expect(r.stdout).toContain(
         "(polled) sudo docker exec quickreview-memory curl -fsS http://127.0.0.1:1933/ready",
       );

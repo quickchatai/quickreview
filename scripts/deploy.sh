@@ -806,7 +806,7 @@ VERIFY_CMDS+=(
 if [[ "$OV_ENDPOINT" == remote ]]; then
   VERIFY_CMDS+=(
     "sudo docker ps --filter name=$MEMORY_CONTAINER --format '{{.Names}} {{.Status}}'"
-    "test \"\$(sudo docker inspect -f '{{.State.Running}}' $MEMORY_CONTAINER)\" = true"
+    "test \"\$(sudo docker container inspect -f '{{.State.Running}}' $MEMORY_CONTAINER)\" = true"
   )
 fi
 # What runs, and that it is the release layout: the image's build stamp (the

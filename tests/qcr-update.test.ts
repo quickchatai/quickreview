@@ -62,8 +62,17 @@ label_of() { # <dir> <fmt>
 }
 cmd="$1"; shift
 case "$cmd" in
-  inspect)
-    fmt="$2"; name="$3"; d="$F/containers/$name"; [ -d "$d" ] || exit 1
+  inspect|container)
+    # a bare \`docker inspect\` resolves ANY object by name, and the memory
+    # network shares the sidecar's name: real docker answers {{.Id}} for it
+    if [ "$cmd" = container ]; then [ "$1" = inspect ] || exit 1; shift; bare=""; else bare=1; fi
+    fmt="$2"; name="$3"; d="$F/containers/$name"
+    if [ ! -d "$d" ]; then
+      if [ -n "$bare" ] && [ -f "$F/network" ] && [ "$name" = quickreview-memory ] && [ "$fmt" = '{{.Id}}' ]; then
+        echo "net-$name"; exit 0
+      fi
+      exit 1
+    fi
     case "$fmt" in
       *Config.Labels*) label_of "$d" "$fmt" ;;
       '{{.Id}}') echo "id-$name" ;;
@@ -726,6 +735,29 @@ describe("qcr-update — the legacy layout and the cutover", () => {
     expect(imageOf(sb, DAEMON)).toBe(DAEMON_REF);
   });
 
+  it("the cutover with the memory network already there (provision made it): the network's name is no sidecar to rename", async () => {
+    // The 1.0.2 cutover failed here: a bare `docker inspect quickreview-memory` matched the network.
+    sb = setup("legacy");
+    write(join(sb.fake, "network"), "");
+    const r = await runUpdater(sb, [...GOOD, "--cutover-ack", "1.2.3"]);
+    expect(r.code, r.stderr).toBe(0);
+    const lines = events(sb);
+    expect(lines.some((l) => l.startsWith(`docker rename ${MEMORY}`))).toBe(false);
+    expect(lines.some((l) => l.startsWith(`docker stop -t 90 ${MEMORY}`))).toBe(false);
+    expect(imageOf(sb, MEMORY)).toBe(MEMORY_REF);
+    expect(imageOf(sb, DAEMON)).toBe(DAEMON_REF);
+    // status reads no sidecar from the network either
+    const st = await runUpdater(sb, ["status", "--json"]);
+    expect(JSON.parse(st.stdout).memory.image).toBe(MEMORY_REF);
+  });
+
+  it("status reads no sidecar from the memory network's name", async () => {
+    sb = setup("legacy");
+    write(join(sb.fake, "network"), "");
+    const st = await runUpdater(sb, ["status", "--json"]);
+    expect(JSON.parse(st.stdout).memory).toBeNull();
+  });
+
   it("seeds once: an existing marker means the store is not copied again", async () => {
     sb = setup("legacy");
     write(join(sb.memState, ".seeded-from-daemon"), "seeded earlier\n");
@@ -912,6 +944,8 @@ describe("qcr-update — every refusal before the stop changes nothing", () => {
 });
 
 describe("qcr-update — the rescue", () => {
+  // the steps at or after the legacy layout's seed
+  const SEEDED_BY = ["swap", "sidecar-start", "sidecar-ready", "recreate"];
   const RESCUED_STEPS = [
     "stop",
     "snapshot",
@@ -940,6 +974,19 @@ describe("qcr-update — the rescue", () => {
       expect(existsSync(join(s.fake, "containers", `${MEMORY}-prev`))).toBe(false);
     } else {
       expect(existsSync(join(s.fake, "containers", MEMORY))).toBe(false);
+      // a store this run seeded is set aside, never deleted, so the next run seeds afresh
+      const aside = readdirSync(dirname(s.memState)).filter((n) =>
+        n.startsWith("memory-state.rescued-"),
+      );
+      if (SEEDED_BY.includes(step)) {
+        expect(existsSync(s.memState)).toBe(false);
+        expect(aside).toHaveLength(1);
+        expect(
+          readFileSync(join(dirname(s.memState), aside[0]!, "vectors", "data.bin"), "utf8"),
+        ).toBe("VECTORS");
+      } else {
+        expect(aside).toHaveLength(0);
+      }
     }
     // 3. the OLD daemon container runs again, on its own image, under its own name
     expect(imageOf(s, DAEMON)).toBe(layout === "release" ? OLD_DAEMON_REF : LEGACY_IMAGE);
@@ -1019,6 +1066,23 @@ describe("qcr-update — the rescue", () => {
     writeFileSync(join(sb.fake, `fail-run-${DAEMON}`), "");
     const r = await runUpdater(sb, [...GOOD, "--cutover-ack", "1.2.3"]);
     expectRescued(sb, "legacy", r, "recreate");
+  });
+
+  it("a cutover retried after a rescue seeds the sidecar store again from the legacy store as it now is", async () => {
+    sb = setup("legacy");
+    const args = [...GOOD, "--cutover-ack", "1.2.3"];
+    const first = await runUpdater(sb, args, tarOf(), { QCR_UPDATE_FAIL_AT: "sidecar-start" });
+    expectRescued(sb, "legacy", first, "sidecar-start");
+    // the legacy daemon ran again and wrote to its store meanwhile
+    write(join(sb.root, "state", "openviking", "vectors", "data.bin"), "VECTORS-NEWER");
+    writeFileSync(
+      sb.status,
+      JSON.stringify({ written_at: "x", draining: true, running_rounds: 0 }),
+    );
+    const second = await runUpdater(sb, args);
+    expect(second.code, second.stderr).toBe(0);
+    expect(second.stderr).toContain("sidecar store seeded");
+    expect(readFileSync(join(sb.memState, "vectors", "data.bin"), "utf8")).toBe("VECTORS-NEWER");
   });
 
   it("waits for the old daemon's first reconcile before re-sending the drain (the heartbeat shows the lift)", async () => {
