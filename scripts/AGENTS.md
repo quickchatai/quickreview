@@ -28,6 +28,16 @@ not get a shell route; it is a new op on the daemon.
   on the owner's go, and resumes exactly those PRs once the owner has checked
   that one PR's first worker round. It never lifts the drain by itself and never passes a force flag;
   `tests/cutover-wizard.test.ts` drives it against stubbed ssh, deploy.sh and qcr.
+- `vm-postcutover-cleanup.sh` is the owner's one-off cleanup after the
+  cutover, run ON the VM as root (`ssh <vm> 'sudo bash -s' < scripts/vm-postcutover-cleanup.sh`).
+  The dry run is the default and prints a plan key; `--apply <key>` removes
+  exactly that plan and refuses a changed one. It removes the legacy and
+  VM-built images, the allowlisted names of the old rsynced checkout and all
+  but the newest three updater snapshots. It refuses unless `qcr-update status
+  --json` says release, and keeps every `sandbox/` dir the installed updater
+  names or any container mounts, the legacy runtime data, and (as the owner's
+  decision) `state/openviking` and the rescued sidecar stores;
+  `tests/vm-postcutover-cleanup.test.ts` drives it against a fake docker.
 - `commit-verdict.sh` is sanctioned for sessions but posts nothing: it
   publishes a staged `verdict/<name>.tmp` onto `verdict/<name>` by
   one rename after checking it is one whole JSON object, so the daemon never

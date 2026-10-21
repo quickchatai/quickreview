@@ -263,6 +263,12 @@ What the updater does for you:
   `quickreview-sandbox:v1` (nothing here removes an image), the previous
   containers, and every host directory the container uses (state, pihome, the
   sandbox tree, the memory sidecar's store).
+  Once the release has proven itself, the owner removes the leftovers with
+  `scripts/vm-postcutover-cleanup.sh` (run on the VM as root; a dry run first,
+  then `--apply <plan key>`): the legacy and VM-built images, the old rsynced
+  checkout by an allowlist that never touches a directory the containers mount,
+  and all but the newest three snapshots. It keeps `state/openviking` and the
+  `memory-state.rescued-*` stores, which are the owner's separate decision.
 
 Redeploying a **previous** version is allowed only when no migration lies
 between it and the running one; `qcr-update status --json` and the release
