@@ -137,6 +137,21 @@ describe("memory Dockerfile — ARG defaults mirror the pinned sources of truth"
     expect(dockerfile).toContain("failed verification");
   });
 
+  it("llama.cpp is built for the target platform, never the build host's CPU, and AVX-512/VNNI/AMX are refused (the 1.0.2 SIGILL)", () => {
+    expect(dockerfile).toMatch(/^ARG TARGETARCH$/m);
+    expect(dockerfile).toContain('CMAKE_ARGS="$llama_cmake"');
+    expect(dockerfile).toContain("--no-binary llama-cpp-python");
+    const amd64 = /amd64\) llama_cmake="([^"]*)"/.exec(dockerfile)?.[1] ?? "";
+    for (const on of ["GGML_AVX", "GGML_AVX2", "GGML_FMA", "GGML_F16C"])
+      expect(amd64).toContain(`-D${on}=ON`);
+    for (const off of ["GGML_NATIVE", "GGML_AVX512", "GGML_AVX_VNNI", "GGML_AMX_TILE"])
+      expect(amd64).toContain(`-D${off}=OFF`);
+    expect(/\*\) llama_cmake="([^"]*)"/.exec(dockerfile)?.[1]).toBe("-DGGML_NATIVE=OFF");
+    // the build-time check: objdump over every llama library, refusing zmm / VNNI / AMX
+    expect(dockerfile).toContain("objdump -d");
+    expect(dockerfile).toContain("%zmm|vpdpbusd|vpdpwssd|tdpb|tileloadd");
+  });
+
   it("llama-cpp-python installs BEFORE openviking - without it the server cannot boot", () => {
     expect(dockerfile.indexOf("llama-cpp-python==${")).toBeGreaterThan(-1);
     expect(dockerfile.indexOf("llama-cpp-python==${")).toBeLessThan(

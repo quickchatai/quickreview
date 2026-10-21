@@ -53,6 +53,8 @@ ARG LOCAL_EMBEDDER_DIR=/opt/openviking/models
 ARG LOCAL_EMBEDDER_URL=https://huggingface.co/CompendiumLabs/bge-small-en-v1.5-gguf/resolve/d32f8c040ea3b516330eeb75b72bcc2d3a780ab7/bge-small-en-v1.5-f16.gguf
 ARG LOCAL_EMBEDDER_SHA256=f0b2fef971e8366438bfd2d9aefea1b0115919389448806d290237f638bae999
 ARG OPENVIKING_PORT=1933
+# set by buildx per platform: the llama build below targets it, never the build host
+ARG TARGETARCH
 
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=${TZ}
@@ -81,11 +83,33 @@ RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
 # group_vars); a literal here would be exactly the drift the pin prevents. The
 # layer hard-fails unless the INSTALLED distribution reports the pinned version
 # and the server entry point exists.
+#
+# llama-cpp-python compiles llama.cpp from source, and by default for the BUILD
+# host's CPU (-march=native). CI's runners have AVX-512; the VM's Xeon does not,
+# so a native build dies of SIGILL on the VM (the 1.0.2 cutover). The build is
+# therefore portable: on amd64 the AVX2 level (AVX, AVX2, FMA, F16C) and nothing
+# newer, on arm64 the architecture's baseline. The layer then refuses a library
+# that carries AVX-512, VNNI or AMX instructions, because CI's own smoke runs on
+# a CPU that has them and could never see the crash.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3-venv python3-dev cmake \
     && python3 -m venv "${OPENVIKING_VENV}" \
     && "${OPENVIKING_VENV}/bin/pip" install --no-cache-dir --upgrade pip \
-    && "${OPENVIKING_VENV}/bin/pip" install --no-cache-dir "llama-cpp-python==${LLAMA_CPP_PYTHON_VERSION}" \
+    && arch="${TARGETARCH:-$(dpkg --print-architecture)}" \
+    && case "$arch" in \
+         amd64) llama_cmake="-DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_AVX_VNNI=OFF -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF -DGGML_AMX_TILE=OFF -DGGML_AMX_INT8=OFF -DGGML_AMX_BF16=OFF" ;; \
+         *) llama_cmake="-DGGML_NATIVE=OFF" ;; \
+       esac \
+    && CMAKE_ARGS="$llama_cmake" "${OPENVIKING_VENV}/bin/pip" install --no-cache-dir --no-binary llama-cpp-python "llama-cpp-python==${LLAMA_CPP_PYTHON_VERSION}" \
+    && if [ "$arch" = amd64 ]; then \
+         libs="$(find "${OPENVIKING_VENV}" -path '*llama_cpp*' -name '*.so*' -type f)" \
+         && [ -n "$libs" ] \
+         && for so in $libs; do \
+              if objdump -d --no-show-raw-insn "$so" | grep -qE '%zmm|vpdpbusd|vpdpwssd|tdpb|tileloadd'; then \
+                echo "FATAL: $so carries AVX-512/VNNI/AMX instructions: the VM cannot run it (SIGILL)" >&2; exit 1; \
+              fi; \
+            done; \
+       fi \
     && "${OPENVIKING_VENV}/bin/pip" install --no-cache-dir "openviking==${OPENVIKING_VERSION}" \
     && "${OPENVIKING_VENV}/bin/python" -c "import importlib.metadata as m, sys; v=m.version('openviking'); sys.exit(0 if v=='${OPENVIKING_VERSION}' else 'openviking version %s != ${OPENVIKING_VERSION}' % v)" \
     && "${OPENVIKING_VENV}/bin/python" -c "import importlib.metadata as m, sys; v=m.version('llama-cpp-python'); sys.exit(0 if v=='${LLAMA_CPP_PYTHON_VERSION}' else 'llama-cpp-python %s != ${LLAMA_CPP_PYTHON_VERSION}' % v)" \
