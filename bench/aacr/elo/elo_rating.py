@@ -82,8 +82,16 @@ def interval(values: Sequence[float], level: float = 0.95) -> Tuple[float, float
     return lo, hi
 
 
+def win_prob(gap: float) -> float:
+    """Expected score of the higher-rated side at an Elo gap."""
+    return 1 / (1 + 10 ** (-gap / 400))
+
+
 def table(players: Sequence[str], games: Sequence[Game], reps: int = 1000, seed: int = 1) -> dict:
-    """Ratings, 95% intervals, records and the adjacent-gap intervals, ranked."""
+    """Ratings, 95% intervals, records, the adjacent-gap intervals (what the
+    scheduler reads) and every pair's gap interval, ranked. Every interval is
+    read off the same bootstrap replicates, so a pair's gap interval is the
+    interval of the difference, not two rating intervals compared."""
     point = fit(players, games)
     prs = len({g[0] for g in games})
     boots = bootstrap(players, games, reps=reps, seed=seed) if prs >= MIN_BOOTSTRAP_PRS else []
@@ -98,13 +106,27 @@ def table(players: Sequence[str], games: Sequence[Game], reps: int = 1000, seed:
         lo, hi = interval([b[p] for b in boots]) if boots else (float("nan"), float("nan"))
         rows.append({"player": p, "elo": point[p], "lo": lo, "hi": hi, "w": w, "t": t, "l": l})
     rows.sort(key=lambda r: -r["elo"])
-    gaps = []
-    for a, b in zip(rows, rows[1:]):
+    def gap(a: dict, b: dict) -> dict:
         diffs = [bt[a["player"]] - bt[b["player"]] for bt in boots]
         lo, hi = interval(diffs) if diffs else (float("nan"), float("nan"))
-        gaps.append({"upper": a["player"], "lower": b["player"], "gap": a["elo"] - b["elo"],
-                     "lo": lo, "hi": hi, "separated": bool(diffs) and lo > 0})
-    return {"rows": rows, "gaps": gaps, "games": len(games), "prs": prs}
+        return {"upper": a["player"], "lower": b["player"], "gap": a["elo"] - b["elo"],
+                "lo": lo, "hi": hi, "separated": bool(diffs) and lo > 0}
+
+    gaps = [gap(a, b) for a, b in zip(rows, rows[1:])]
+    pairs = []
+    for i, a in enumerate(rows):
+        for b in rows[i + 1:]:
+            g = gap(a, b)
+            # The direct record: games between these two only, from the upper side.
+            w = t = l = 0
+            for _pr, x, y, s in games:
+                if {x, y} != {a["player"], b["player"]}:
+                    continue
+                mine = s if x == a["player"] else 1 - s
+                w, t, l = w + (mine == 1), t + (mine == 0.5), l + (mine == 0)
+            g.update(p_win=win_prob(g["gap"]), direct={"w": w, "t": t, "l": l})
+            pairs.append(g)
+    return {"rows": rows, "gaps": gaps, "pairs": pairs, "games": len(games), "prs": prs}
 
 
 # ---- scheduling ----------------------------------------------------------------------

@@ -517,11 +517,14 @@ def gpt_row_usd(u: dict) -> float:
 
 
 def opus_row_usd(u: dict) -> float:
-    """One Opus judgment's cost at Batch API prices (Messages usage)."""
-    return (int(u.get("input_tokens") or 0) * OPUS_BATCH_USD["input"]
-            + int(u.get("output_tokens") or 0) * OPUS_BATCH_USD["output"]
-            + int(u.get("cache_creation_input_tokens") or 0) * OPUS_BATCH_USD["cache_write_1h"]
-            + int(u.get("cache_read_input_tokens") or 0) * OPUS_BATCH_USD["cache_read"]) / 1e6
+    """One Opus judgment's cost (Messages usage). A Batch API call is billed
+    at Batch prices; anything else (a live call's `service_tier` is
+    `standard`) at twice that, the regular price."""
+    batch = (int(u.get("input_tokens") or 0) * OPUS_BATCH_USD["input"]
+             + int(u.get("output_tokens") or 0) * OPUS_BATCH_USD["output"]
+             + int(u.get("cache_creation_input_tokens") or 0) * OPUS_BATCH_USD["cache_write_1h"]
+             + int(u.get("cache_read_input_tokens") or 0) * OPUS_BATCH_USD["cache_read"]) / 1e6
+    return batch if u.get("service_tier") == "batch" else 2 * batch
 
 
 def usage_summary(rows: List[dict], judge: str) -> str:
@@ -538,6 +541,7 @@ def usage_summary(rows: List[dict], judge: str) -> str:
             usd += gpt_row_usd(u)
             long_ += int(u.get("prompt_tokens") or 0) > GPT_LONG_INPUT
         else:
+            tot["batch calls" if u.get("service_tier") == "batch" else "live calls"] += 1
             tot["input"] += int(u.get("input_tokens") or 0)
             tot["cache_write"] += int(u.get("cache_creation_input_tokens") or 0)
             tot["cache_read"] += int(u.get("cache_read_input_tokens") or 0)
@@ -545,7 +549,7 @@ def usage_summary(rows: List[dict], judge: str) -> str:
             usd += opus_row_usd(u)
     s = ", ".join(f"{k} {v:,}" for k, v in tot.items())
     if judge == "opus":
-        s += f" (≈ ${usd:,.2f} at Batch API prices, per call)"
+        s += f" (≈ ${usd:,.2f}: Batch API prices for batch calls, regular prices for live ones)"
     else:
         s += (f" (≈ ${usd:,.2f} API-equivalent at gpt-6.1-sol API prices"
               f"{f', {long_} call(s) past {GPT_LONG_INPUT:,} input tokens at the long-context rate' if long_ else ''}; "
@@ -565,6 +569,20 @@ def fmt_table(t: dict, labels: Dict[str, str]) -> List[str]:
     for r in t["rows"]:
         out.append(f"| {labels.get(r['player'], r['player'])} | {r['elo']:.0f} | {ci(r['lo'], r['hi'])} | "
                    f"{r['w']}-{r['t']}-{r['l']} |")
+    return out
+
+
+def fmt_pairs(t: dict, labels: Dict[str, str]) -> List[str]:
+    """Every pair's gap, not only rank neighbours: the interval of the
+    difference from the same bootstrap replicates as the ratings."""
+    out = ["Every pair (upper over lower), from the same bootstrap:", "",
+           "| upper | lower | gap | 95% CI of the gap | expected win rate | direct W-T-L | separated |",
+           "|---|---|---:|---|---:|---|---|"]
+    for g in t["pairs"]:
+        d = g["direct"]
+        out.append(f"| {labels.get(g['upper'], g['upper'])} | {labels.get(g['lower'], g['lower'])} | "
+                   f"+{g['gap']:.0f} | {ci(g['lo'], g['hi'], signed=True)} | {g['p_win']:.0%} | "
+                   f"{d['w']}-{d['t']}-{d['l']} | {'yes' if g['separated'] else 'no'} |")
     return out
 
 
@@ -605,7 +623,7 @@ def cmd_report(a) -> None:
             out.append(f"- {labels.get(g['upper'], g['upper'])} over {labels.get(g['lower'], g['lower'])}: "
                        f"+{g['gap']:.0f} (95% CI {ci(g['lo'], g['hi'], signed=True)})"
                        f"{' — separated' if g['separated'] else ' — not separated'}")
-        out.append("")
+        out += [""] + fmt_pairs(t, labels) + [""]
         for c in J.CATEGORIES:
             tc = R.table(run.runs, run.games(j, c), seed=seed)
             ratings[j]["categories"][c] = tc
@@ -643,7 +661,7 @@ def cmd_report(a) -> None:
             out.append(f"- {labels.get(g['upper'], g['upper'])} over {labels.get(g['lower'], g['lower'])}: "
                        f"+{g['gap']:.0f} (95% CI {ci(g['lo'], g['hi'], signed=True)})"
                        f"{' — separated' if g['separated'] else ' — not separated'}")
-        out.append("")
+        out += [""] + fmt_pairs(tc, labels) + [""]
         for c in J.CATEGORIES:
             tcc = R.table(run.runs, pooled(c), seed=seed)
             ratings["combined"]["categories"][c] = tcc
@@ -892,6 +910,19 @@ def self_test() -> None:
     assert not t["gaps"][0]["separated"] and t["gaps"][0]["lo"] != t["gaps"][0]["lo"]
     t = R.table(["x", "y"], even, reps=200)
     assert not t["gaps"][0]["separated"]
+    # Every pair gets an interval, not only rank neighbours; the adjacent
+    # gaps are the same numbers as their pair rows.
+    chain5 = [(f"p{i}", a, b, s) for i in range(8) for a, b, s in (("x", "y", 1.0), ("y", "z", 1.0), ("x", "z", 0.5))]
+    t = R.table(["x", "y", "z"], chain5, reps=200)
+    assert len(t["pairs"]) == 3 and all(g["lo"] == g["lo"] for g in t["pairs"])
+    by = {(g["upper"], g["lower"]): g for g in t["pairs"]}
+    for g in t["gaps"]:
+        assert (by[(g["upper"], g["lower"])]["lo"], by[(g["upper"], g["lower"])]["hi"]) == (g["lo"], g["hi"])
+    xz = by.get(("x", "z")) or by[("z", "x")]
+    assert xz["direct"] == {"w": 0, "t": 8, "l": 0} and 0.5 <= xz["p_win"] < 1
+    assert abs(R.win_prob(100) - 0.640) < 0.001 and R.win_prob(0) == 0.5
+    assert abs(opus_row_usd({"output_tokens": 1_000_000, "service_tier": "standard"})
+               - 2 * opus_row_usd({"output_tokens": 1_000_000, "service_tier": "batch"})) < 1e-9
 
     # Scheduling: round 0 covers every pair on shared PRs; later rounds only
     # the unseparated adjacent pairs, with fresh PRs, within the cap.
@@ -993,7 +1024,7 @@ def _self_test_single_turn_and_validity() -> None:
     assert abs(gpt_row_usd(long_) - (200_000 * 4 + 100_000 * 0.2 + 10_000 * 15) / 1e6) < 1e-9
     assert "1 call(s) past 272,000" in usage_summary([{"usage": long_}], "gpt")
     assert abs(opus_row_usd({"input_tokens": 1_000_000, "output_tokens": 1_000_000, "cache_creation_input_tokens": 1_000_000,
-                             "cache_read_input_tokens": 1_000_000}) - 16.10) < 1e-9
+                             "cache_read_input_tokens": 1_000_000, "service_tier": "batch"}) - 16.10) < 1e-9
 
     # Prompt-hash validity: a judgment counts only at its unit's current prompt.
     def review(text: str) -> D.Review:

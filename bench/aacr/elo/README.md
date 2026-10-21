@@ -72,7 +72,10 @@ their reasons: tracker ticket.
 - **Fit:** Bradley-Terry by MM iteration, ties counted as half a win, with a
   weak prior so a clean sweep stays finite. Shown as
   1500 + 400·log10(strength); a 100-point gap is about a 64% win rate.
-  Intervals come from a 95% bootstrap over PRs.
+  Intervals come from a 95% bootstrap over PRs. The report gives every pair
+  of configurations, not only rank neighbours, a gap with the interval of the
+  difference (from the same replicates), the expected win rate and the
+  direct head-to-head record; `ratings.json` carries them as `pairs`.
 - **Round 0:** every configuration pair, judged on the same `round0_prs` PRs.
 - **Later rounds:** `per_pair_step` fresh PRs go to each rank-adjacent pair
   whose gap interval still crosses zero in either judge's table. Sampling
@@ -122,9 +125,10 @@ $E/judge-gpt.sh stop
   those carried tools or answered with a call, and the difference against
   the GPT judgment rows in that window: extra requests are retries or aborted
   calls.
-- **Cost.** `report` prices every attempt, per call. Opus is priced at Batch
-  API prices ($2 input, $10 output, $4 one-hour cache write, $0.10 cache read
-  per million tokens). GPT gets an API-equivalent estimate at gpt-6.1-sol API
+- **Cost.** `report` prices every attempt, per call. An Opus batch call is
+  priced at Batch API prices ($2 input, $10 output, $4 one-hour cache write,
+  $0.10 cache read per million tokens), a live call (`service_tier`
+  `standard`) at twice that. GPT gets an API-equivalent estimate at gpt-6.1-sol API
   prices: $2 input, $10 output and $0.10 cached input per million, or $4, $15
   and $0.20 for a call past 272k input tokens. The ChatGPT login route bills
   quota, not dollars.
