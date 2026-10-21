@@ -1,12 +1,14 @@
-// Live pi pane (the board's lower region): what the selected PR's pi session
-// is doing right now.
+// Live pi pane (the board's lower region) while an operator is inside a PR's
+// pi: a debug round (`debug-pr-<n>`) or a takeover (`takeover-pr-<n>`). Every
+// other PR pane is the transcript viewer (viewer.ts): the bot's rounds run in
+// workers, with no `pr-<n>` tmux session to mirror (P9.6).
 //
 // The pane is an embedded terminal. Output comes from
 // `tmux capture-pane -e -p -J` inside the container (poll tick, ~400ms while
 // focused, ~300ms after the selection moves); input goes back the other way as
 // `tmux send-keys` (see `keysToTmux` + `sendKeysArgv`).
 import type { TuiConfig } from "../config.js";
-import { captureArgv, scrolledRange, type SshRunner } from "./remote.js";
+import { captureArgv, scrolledRange, type PiTerminalSession, type SshRunner } from "./remote.js";
 import { SCROLL_STEP, clampScrollback, splitCapture } from "./termmirror.js";
 
 // The mirror protocol lives in termmirror.ts; re-exported so pipane stays the
@@ -33,9 +35,9 @@ export interface PiPaneView {
   /** Scrollback: how many lines above the live tail the pane is parked.
    * 0 = following the bottom. The board drops this many lines off `lines`. */
   offset: number;
-  /** The tmux session the capture is of, when it is not `pr-<n>`: a debug
-   * round's or a takeover's pi terminal (`paneSurface`). */
-  session?: string;
+  /** The tmux session the capture is of: a debug round's or a takeover's pi
+   * terminal (`paneSurface`). Absent on the transcript viewer's pane. */
+  session?: PiTerminalSession;
   /** Set on the transcript viewer's pane (viewer.ts): `lines` are the rendered
    * transcript, not a capture, and nothing is typed into them. */
   viewer?: ViewerInfo;
@@ -76,32 +78,36 @@ export class PiMirror {
   private paneSize: { cols: number; rows: number } | undefined;
 
   /** The tmux session each cached capture is of. */
-  private readonly sessions = new Map<number, string>();
+  private readonly sessions = new Map<number, PiTerminalSession>();
 
-  /** `sessionOf` names the tmux session a PR's pane mirrors: `pr-<n>` unless the
-   * PR is in a debug round or a takeover (viewer.ts `paneSurface`). */
+  /** `sessionOf` names the pi terminal a PR's pane mirrors — its debug round's
+   * or its takeover's (viewer.ts `paneSurface`) — and undefined when the PR has
+   * none: then nothing is captured, because there is nothing to capture. */
   constructor(
     private readonly cfg: TuiConfig,
     private readonly ssh: SshRunner,
-    private readonly onUpdate: () => void = () => {},
-    private readonly debounceMs = 300,
-    private readonly sessionOf: (pr: number) => string = (pr) => `pr-${pr}`,
+    private readonly onUpdate: () => void,
+    private readonly debounceMs: number,
+    private readonly sessionOf: (pr: number) => PiTerminalSession | undefined,
   ) {}
 
-  /** A PR whose session changed (a debug round began) keeps nothing of the old
-   * one's capture: it would paint another terminal's text. */
-  private follow(pr: number): string {
+  /** A PR whose session changed (a debug round began, a takeover ended) keeps
+   * nothing of the old one's capture: it would paint another terminal's text. */
+  private follow(pr: number): PiTerminalSession | undefined {
     const session = this.sessionOf(pr);
     const had = this.sessions.get(pr);
     if (had !== undefined && had !== session) this.invalidate(pr);
-    this.sessions.set(pr, session);
+    if (session === undefined) this.sessions.delete(pr);
+    else this.sessions.set(pr, session);
     return session;
   }
 
-  /** What the board should paint for `pr` right now (never throws, never waits). */
+  /** What the board should paint for `pr` right now (never throws, never
+   * waits); undefined when the PR has no pi terminal to mirror. */
   view(pr: number | undefined): PiPaneView | undefined {
     if (pr === undefined) return undefined;
     const session = this.follow(pr);
+    if (session === undefined) return undefined;
     const lines = this.cache.get(pr);
     const missing = this.missing.has(pr);
     return {
@@ -110,7 +116,7 @@ export class PiMirror {
       missing,
       stale: missing && (lines?.length ?? 0) > 0,
       offset: this.offsetFor(pr),
-      ...(session !== `pr-${pr}` ? { session } : {}),
+      session,
     };
   }
 
@@ -169,6 +175,8 @@ export class PiMirror {
   /** The debounced capture, exposed for tests that would rather not fake timers. */
   async fetch(pr: number): Promise<void> {
     if (this.inFlight.has(pr)) return;
+    const session = this.follow(pr);
+    if (session === undefined) return;
     this.inFlight.add(pr);
     try {
       const offset = this.offsetFor(pr);
@@ -177,7 +185,7 @@ export class PiMirror {
       const range = scrolledRange(offset);
       const res = await this.ssh(
         this.cfg.ssh_host,
-        captureArgv(this.cfg, this.follow(pr), range, this.paneSize),
+        captureArgv(this.cfg, session, range, this.paneSize),
         { timeoutMs: 5_000 },
       );
       if (!res.ok) {
@@ -197,7 +205,7 @@ export class PiMirror {
     this.onUpdate();
   }
 
-  /** Drop a PR's mirror (session archived / round finished). */
+  /** Drop a PR's mirror (the debug round or the takeover ended). */
   invalidate(pr: number): void {
     this.cache.delete(pr);
     this.missing.delete(pr);

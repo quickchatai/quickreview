@@ -216,19 +216,20 @@ describe("rich board", () => {
   });
 });
 
-describe("live pi mirror pane", () => {
+describe("live pi mirror pane (a debug round's pi terminal)", () => {
   const pane = {
     pr: 5277,
     lines: ["\x1b[36m▌ pi\x1b[0m reading src/tasks.py", "…thinking"],
     missing: false,
     stale: false,
     offset: 0,
+    session: "debug-pr-5277" as const,
   };
 
   it("fills the lower half with the selected session, colors intact", () => {
     const frame = renderBoard(view({ pi: pane }), 140, 40);
     const text = frame.lines.map(stripAnsi).join("\n");
-    expect(text).toContain("PI pr-5277 · live mirror · click to type"); // #5277 sorts first (reviewing)
+    expect(text).toContain("PI debug-pr-5277 · live mirror · click to type"); // #5277 sorts first (reviewing)
     expect(text).toContain("reading src/tasks.py");
     expect(frame.lines.join("\n")).toContain("\x1b[36m▌ pi");
     // The pane really is the lower half, not a strip.

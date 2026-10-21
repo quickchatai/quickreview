@@ -31,7 +31,7 @@ engine is a second container beside it (`docker-compose.yml`,
 | tini (PID 1) | `init: true` in `docker-compose.yml` | reaps orphans and forwards signals; required because the daemon supervises a second long-lived process |
 | the daemon | `docker/entrypoint.sh` daemon mode → `node dist/src/wire.js` | the whole deterministic core (`src/wire.ts` assembles it, `src/daemon.ts` is its stub-wired core) |
 | the OpenViking memory server | on the compose route the `memory` service (`docker/memory/`, `[openviking] endpoint = "remote"`); on the VM route a supervised child of the daemon, `src/openviking/supervisor.ts` | reviewer memory, HTTP on `:1933`; the port is deliberately not published anywhere |
-| a tmux server | `docker/entrypoint.sh` daemon mode | holds the LLM sessions; also the jump-in surface for `qcr attach` |
+| a tmux server | `docker/entrypoint.sh` daemon mode | holds the operator's interactive pi only — a takeover's `takeover-pr-<n>` and a debug round's `debug-pr-<n>` (`qcr takeover`, `qcr debug-round`); a bot round runs in a worker with no tmux session |
 | one **pi** session per triggered PR, plus one `overseer` | `src/sessions.ts` (via `src/tmux.ts`) | the review conversations; see [sessions.md](sessions.md) |
 
 The daemon publishes exactly one port, `8787`, on loopback by default: `POST
@@ -43,7 +43,7 @@ front of that; the four supported ingress shapes are in
 
 | surface | entry point | what it is |
 |---|---|---|
-| `qcr` CLI | `scripts/qcr` → `src/cli.ts` | read-only over `state/` — `status`, `today`, `why <pr>`, `spend`, `metrics`, `events`, plus `attach`, `drain`, `onboard`, `companion`, `memory reembed`, `memory relayout` |
+| `qcr` CLI | `scripts/qcr` → `src/cli.ts` | read-only over `state/` — `status`, `today`, `why <pr>`, `spend`, `metrics`, `events`, plus `live`, `open`, `takeover`, `debug-round`, `release`, `drain`, `onboard`, `companion`, `memory reembed`, `memory relayout` |
 | the TUI | `qcr tui` → `src/tui/` | the operator board, memory management, deploy and metrics tabs; reaches a remote daemon over ssh or a local one over Docker per `config.toml [tui] target`. See [tui.md](tui.md) and [../tui.md](../tui.md) |
 | the companion | `src/tui/companion.ts`, the release image's `companion` mode | a local pi session beside the TUI, for asking questions about the running system; it reaches the daemon only by injecting into the overseer |
 | Slack concierge | `src/slack/` | optional; a Socket Mode client (`src/slack/socket.ts`) with a router, reply path and policy layer over one public channel |

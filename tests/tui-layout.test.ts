@@ -84,11 +84,11 @@ describe("the resolver", () => {
     expect(drainWrite).not.toContain(RELEASE_LAYOUT_ROOT + "/");
 
     await new InjectSender(TUI_DEFAULTS, vm.ssh, undefined, async () => undefined).send(
-      "pr-7",
+      "main",
       "hello",
       () => undefined,
     );
-    expect(lastWriteTo(vm.state.calls, "cat > ")).toContain(`${LEGACY_LAYOUT_ROOT}/inject/pr-7/`);
+    expect(lastWriteTo(vm.state.calls, "cat > ")).toContain(`${LEGACY_LAYOUT_ROOT}/inject/main/`);
   });
 
   it("a release-labelled container gets /opt/qcr for the same writes", async () => {
@@ -98,11 +98,11 @@ describe("the resolver", () => {
       `${RELEASE_LAYOUT_ROOT}/commands/operator'`,
     );
     await new InjectSender(TUI_DEFAULTS, vm.ssh, undefined, async () => undefined).send(
-      "pr-7",
+      "main",
       "hello",
       () => undefined,
     );
-    expect(lastWriteTo(vm.state.calls, "cat > ")).toContain(`${RELEASE_LAYOUT_ROOT}/inject/pr-7/`);
+    expect(lastWriteTo(vm.state.calls, "cat > ")).toContain(`${RELEASE_LAYOUT_ROOT}/inject/main/`);
     expect(digestListArgv(TUI_DEFAULTS).at(-1)).toContain(`${RELEASE_LAYOUT_ROOT}/digest`);
     expect(operatorCommandDirFor(TUI_DEFAULTS)).toBe(`${RELEASE_LAYOUT_ROOT}/commands/operator`);
   });

@@ -15,7 +15,7 @@ pinned against — `tests/tui-surfaces.test.ts` fails when they disagree.
 
 | # | surface | what it is for |
 | --- | --- | --- |
-| 1 | **board** | what the reviewer is doing right now, PR by PR — the live list, the selected PR's detail, and its pi session mirrored below |
+| 1 | **board** | what the reviewer is doing right now, PR by PR — the live list, the selected PR's detail, and below them its live transcript (or, during a debug round or a takeover, its pi terminal) |
 | 2 | **memory** | the reviewer's durable store: the timeline newest first, grouped by day, with the defect flags and the memory forward's state |
 | 3 | **digest** | what the EOD sweep wrote, `digest/<date>.md` — a document, read top to bottom, one day at a time |
 | 4 | **tickets** | the tracker tickets adjudication filed, actionable first, each readable in full |
@@ -76,12 +76,16 @@ overlay and setup are about the whole repo.
 | `I` | set up the repo: the companion runs its setup skill — survey, interview, the repo profile (same as `qcr setup`) |
 
 The pane below the list takes its surface from the PR's `runtime` in
-status.json, with no toggle: absent or `tmux` mirrors the tmux session (a
-terminal, as above); `worker`, `answer` or `idle` is the **transcript viewer**,
-a read-only rendering of the PR's LiveEvent logs (`state/live/pr-<n>/r<round>/`)
-that follows the tail until `PgUp` or the wheel parks it and `End` follows it
-again; `debug` or `takeover` is the pi terminal of `debug-pr-<n>` /
-`takeover-pr-<n>`, with every byte but `Ctrl-q` going to pi.
+status.json, with no toggle: `debug` or `takeover` is the pi terminal of
+`debug-pr-<n>` / `takeover-pr-<n>` (a terminal, as above), with every byte but
+`Ctrl-q` going to pi; every other runtime — `worker`, `answer`, `idle`, and one
+that is absent or unknown — is the **transcript viewer**, a read-only rendering
+of the PR's LiveEvent logs (`state/live/pr-<n>/r<round>/`, what `qcr live`
+prints) that follows the tail until `PgUp` or the wheel parks it and `End`
+follows it again. There is no `pr-<n>` tmux session to mirror: the bot's rounds
+run in workers. To sit inside a PR's conversation, `qcr takeover <n>` or
+`qcr debug-round <n>` opens its pi terminal here, and `qcr open pr <n>` forks a
+finished session into pi on your own machine.
 
 ### memory
 

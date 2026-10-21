@@ -1,5 +1,8 @@
-// The board's live pi mirror: capture argv,
-// escape-sequence hygiene, and the debounced stale-while-revalidate cache.
+// The board's live pi mirror — a debug round's or a takeover's pi terminal, the
+// only tmux sessions the PR pane mirrors (P9.6): capture argv, escape-sequence
+// hygiene, and the debounced stale-while-revalidate cache.
+import { readFileSync, readdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
@@ -7,15 +10,54 @@ import { App } from "../src/tui/app.js";
 import { piHeader } from "../src/tui/board.js";
 import { stripAnsi } from "../src/tui/paint.js";
 import { PiMirror, keepSgrOnly, keysToTmux, splitCapture } from "../src/tui/pipane.js";
-import { captureArgv, sendKeysArgv, type RemoteResult, type SshRunner } from "../src/tui/remote.js";
-import type { StatusSnapshot } from "../src/state.js";
+import {
+  captureArgv,
+  sendKeysArgv,
+  type PiTerminalSession,
+  type RemoteResult,
+  type SshRunner,
+} from "../src/tui/remote.js";
+import type { PrRuntime, StatusSnapshot } from "../src/state.js";
 
 const ok = (stdout: string): RemoteResult => ({ ok: true, stdout, stderr: "", code: 0 });
 const fail = (): RemoteResult => ({ ok: false, stdout: "", stderr: "no such session", code: 1 });
+const debugOf = (pr: number): PiTerminalSession => `debug-pr-${pr}`;
+
+describe("[P9.6] the bot's PR sessions have no tmux path", () => {
+  it("a `pr-<n>` session does not type-check as a capture or send-keys target", () => {
+    // @ts-expect-error — the bot runs no `pr-<n>` tmux session
+    captureArgv(TUI_DEFAULTS, "pr-5012");
+    // @ts-expect-error — the bot runs no `pr-<n>` tmux session
+    sendKeysArgv(TUI_DEFAULTS, "pr-5012", ["Enter"]);
+  });
+
+  it("no TUI source builds a capture-pane or send-keys for a `pr-<n>` session", () => {
+    const dir = resolve(import.meta.dirname, "..", "src", "tui");
+    for (const name of readdirSync(dir).filter((f) => f.endsWith(".ts"))) {
+      const text = readFileSync(join(dir, name), "utf8");
+      for (const line of text.split("\n")) {
+        if (!/capture-pane|send-keys|captureArgv\(|sendKeysArgv\(/.test(line)) continue;
+        expect(line, `${name}: ${line.trim()}`).not.toMatch(/(?<![a-z]-)pr-\$\{|"pr-\d|`pr-/);
+      }
+    }
+  });
+
+  it("cli.ts has no attach verb and no tmux attach to a `pr-<n>` session", () => {
+    const cli = readFileSync(resolve(import.meta.dirname, "..", "src", "cli.ts"), "utf8");
+    expect(cli).not.toMatch(/case "attach"/);
+    expect(cli).not.toMatch(/\|attach <n>\|/);
+    expect(cli).not.toMatch(/tmux attach -t (?:pr-|\$\{session\}`[^\n]*\n[^\n]*`pr-)/);
+    for (const m of cli.matchAll(/tmux attach -t ([^\s`)]+)/g))
+      expect(m[1], m[0]).toMatch(/^\$\{session\}$/);
+    // and every `session` an attach line names is a takeover's or a debug round's
+    for (const m of cli.matchAll(/const session = `([^`]+)`;/g))
+      expect(m[1]).toMatch(/^(?:takeover|debug)-pr-\$\{pr\}$/);
+  });
+});
 
 describe("captureArgv", () => {
   it("captures the pane inside the container, colors kept, wrapped lines joined", () => {
-    expect(captureArgv(TUI_DEFAULTS, "pr-5012")).toEqual([
+    expect(captureArgv(TUI_DEFAULTS, "debug-pr-5012")).toEqual([
       "sudo",
       "docker",
       "exec",
@@ -26,19 +68,19 @@ describe("captureArgv", () => {
       "-p",
       "-J",
       "-t",
-      "pr-5012",
+      "debug-pr-5012",
     ]);
   });
 
   it("uses the shared docker prefix (sudo off = plain docker, no -it)", () => {
-    const argv = captureArgv({ ...TUI_DEFAULTS, sudo_docker: false }, "overseer");
+    const argv = captureArgv({ ...TUI_DEFAULTS, sudo_docker: false }, "takeover-pr-5012");
     expect(argv[0]).toBe("docker");
     expect(argv).not.toContain("-it");
-    expect(argv[argv.length - 1]).toBe("overseer");
+    expect(argv[argv.length - 1]).toBe("takeover-pr-5012");
   });
 
   it("asks for scrollback with tmux's negative line numbers (-S above the visible top)", () => {
-    expect(captureArgv(TUI_DEFAULTS, "pr-5012", { startBack: 212 })).toEqual([
+    expect(captureArgv(TUI_DEFAULTS, "debug-pr-5012", { startBack: 212 })).toEqual([
       "sudo",
       "docker",
       "exec",
@@ -51,20 +93,20 @@ describe("captureArgv", () => {
       "-S",
       "-212",
       "-t",
-      "pr-5012",
+      "debug-pr-5012",
     ]);
     // Both edges when a caller knows them; `-E` is omitted by the mirror so the
     // capture always runs through the bottom of the visible pane.
     expect(
-      captureArgv(TUI_DEFAULTS, "pr-5012", { startBack: 30, endBack: 10 }).join(" "),
+      captureArgv(TUI_DEFAULTS, "debug-pr-5012", { startBack: 30, endBack: 10 }).join(" "),
     ).toContain("-S -30 -E -10");
-    expect(captureArgv(TUI_DEFAULTS, "pr-5012", { startBack: 0 })).not.toContain("-S");
+    expect(captureArgv(TUI_DEFAULTS, "debug-pr-5012", { startBack: 0 })).not.toContain("-S");
   });
 });
 
 describe("sendKeysArgv", () => {
   it("writes into the session's tmux pane inside the container", () => {
-    expect(sendKeysArgv(TUI_DEFAULTS, "pr-5012", ["-l", "hi"])).toEqual([
+    expect(sendKeysArgv(TUI_DEFAULTS, "debug-pr-5012", ["-l", "hi"])).toEqual([
       "sudo",
       "docker",
       "exec",
@@ -72,21 +114,23 @@ describe("sendKeysArgv", () => {
       "tmux",
       "send-keys",
       "-t",
-      "pr-5012",
+      "debug-pr-5012",
       "-l",
       "hi",
     ]);
   });
 
   it("drops sudo when configured off and passes key names through", () => {
-    expect(sendKeysArgv({ ...TUI_DEFAULTS, sudo_docker: false }, "overseer", ["Enter"])).toEqual([
+    expect(
+      sendKeysArgv({ ...TUI_DEFAULTS, sudo_docker: false }, "takeover-pr-5012", ["Enter"]),
+    ).toEqual([
       "docker",
       "exec",
       "quickreview-sandbox",
       "tmux",
       "send-keys",
       "-t",
-      "overseer",
+      "takeover-pr-5012",
       "Enter",
     ]);
   });
@@ -220,7 +264,7 @@ describe("PiMirror", () => {
       return responses[pr] ?? fail();
     };
     let repaints = 0;
-    const mirror = new PiMirror(TUI_DEFAULTS, ssh, () => (repaints += 1), debounceMs);
+    const mirror = new PiMirror(TUI_DEFAULTS, ssh, () => (repaints += 1), debounceMs, debugOf);
     return { mirror, calls, repaints: () => repaints };
   }
 
@@ -232,6 +276,7 @@ describe("PiMirror", () => {
       missing: false,
       stale: false,
       offset: 0,
+      session: "debug-pr-5012",
     });
     await mirror.refresh(5012);
     expect(mirror.view(5012)).toEqual({
@@ -240,6 +285,7 @@ describe("PiMirror", () => {
       missing: false,
       stale: false,
       offset: 0,
+      session: "debug-pr-5012",
     });
     expect(calls).toHaveLength(1);
     expect(repaints()).toBe(1);
@@ -248,7 +294,7 @@ describe("PiMirror", () => {
   it("marks a vanished session missing but keeps the last capture as (stale)", async () => {
     let live = true;
     const ssh: SshRunner = async () => (live ? ok("output") : fail());
-    const mirror = new PiMirror(TUI_DEFAULTS, ssh, () => {}, 0);
+    const mirror = new PiMirror(TUI_DEFAULTS, ssh, () => {}, 0, debugOf);
     await mirror.refresh(7);
     live = false;
     await mirror.refresh(7);
@@ -258,13 +304,21 @@ describe("PiMirror", () => {
       missing: true,
       stale: true,
       offset: 0,
+      session: "debug-pr-7",
     });
   });
 
   it("reports a never-seen session as missing without a stale marker", async () => {
     const { mirror } = mirrorWith({});
     await mirror.refresh(9);
-    expect(mirror.view(9)).toEqual({ pr: 9, lines: [], missing: true, stale: false, offset: 0 });
+    expect(mirror.view(9)).toEqual({
+      pr: 9,
+      lines: [],
+      missing: true,
+      stale: false,
+      offset: 0,
+      session: "debug-pr-9",
+    });
   });
 
   it("has nothing to say without a selection", () => {
@@ -282,7 +336,7 @@ describe("PiMirror", () => {
       expect(calls).toHaveLength(0);
       await vi.advanceTimersByTimeAsync(300);
       expect(calls).toHaveLength(1);
-      expect(calls[0]).toContain("pr-5049");
+      expect(calls[0]).toContain("debug-pr-5049");
       mirror.stop();
     } finally {
       vi.useRealTimers();
@@ -309,7 +363,7 @@ describe("PiMirror", () => {
       calls.push(argv);
       return new Promise<RemoteResult>((res) => (resolveIt = res));
     };
-    const mirror = new PiMirror(TUI_DEFAULTS, ssh, () => {}, 0);
+    const mirror = new PiMirror(TUI_DEFAULTS, ssh, () => {}, 0, debugOf);
     const first = mirror.refresh(3);
     void mirror.refresh(3);
     expect(calls).toHaveLength(1);
@@ -344,22 +398,54 @@ describe("PiMirror", () => {
     expect(v.lines.slice(0, v.lines.length - v.offset)).toHaveLength(10);
   });
 
+  it("a PR with no pi terminal is never captured and has no mirror view", async () => {
+    const calls: string[][] = [];
+    const ssh: SshRunner = async (_h, argv) => (calls.push(argv), ok("x"));
+    let session: PiTerminalSession | undefined = "takeover-pr-8";
+    const mirror = new PiMirror(
+      TUI_DEFAULTS,
+      ssh,
+      () => {},
+      0,
+      () => session,
+    );
+    await mirror.refresh(8);
+    expect(mirror.view(8)?.lines).toEqual(["x"]);
+    session = undefined; // the takeover ended: the PR is a worker's again
+    await mirror.refresh(8);
+    expect(calls).toHaveLength(1); // no capture of a `pr-8` that does not exist
+    expect(mirror.view(8)).toBeUndefined();
+    session = "debug-pr-8"; // a debug round: nothing of the takeover's text survives
+    expect(mirror.view(8)?.lines).toEqual([]);
+  });
+
   it("invalidate drops a PR's mirror", async () => {
     const { mirror } = mirrorWith({ 4: ok("y") });
     await mirror.refresh(4);
     mirror.invalidate(4);
-    expect(mirror.view(4)).toEqual({ pr: 4, lines: [], missing: false, stale: false, offset: 0 });
+    expect(mirror.view(4)).toEqual({
+      pr: 4,
+      lines: [],
+      missing: false,
+      stale: false,
+      offset: 0,
+      session: "debug-pr-4",
+    });
   });
 });
 
 // ---- the board follows the selection --------------------------------------
 
+// Both PRs are in a debug round: the pane's pi terminal is `debug-pr-<n>`. A PR
+// with any other runtime gets the transcript viewer (tests/tui-viewer-pane.test.ts).
+const runtime: PrRuntime = "debug";
+
 const snapshot: StatusSnapshot = {
   written_at: "2026-08-14T12:00:00Z",
   dry_run: true,
   prs: [
-    { number: 5012, state: "reviewing", title: "a", head_sha: "aa", stale_recheck: 0 },
-    { number: 5049, state: "reviewing", title: "b", head_sha: "bb", stale_recheck: 0 },
+    { number: 5012, state: "reviewing", title: "a", head_sha: "aa", stale_recheck: 0, runtime },
+    { number: 5049, state: "reviewing", title: "b", head_sha: "bb", stale_recheck: 0, runtime },
   ],
   running_rounds: 0,
   max_concurrent_rounds: 12,
@@ -525,7 +611,7 @@ describe("focused pi pane — keys go to the session", () => {
         "tmux",
         "send-keys",
         "-t",
-        "pr-5012",
+        "debug-pr-5012",
         "-l",
         "--",
         "hello",
@@ -693,7 +779,7 @@ describe("pi pane scrollback (wheel)", () => {
       "tmux",
       "resize-window",
       "-t",
-      "pr-5012",
+      "debug-pr-5012",
       "-x",
       "96",
       "-y",
@@ -706,7 +792,7 @@ describe("pi pane scrollback (wheel)", () => {
       "-S",
       "-203",
       "-t",
-      "pr-5012",
+      "debug-pr-5012",
     ]);
     expect(stripAnsi(piHeader(5012, app.view.pi, true))).toContain("↑ 3 lines back · End live");
 

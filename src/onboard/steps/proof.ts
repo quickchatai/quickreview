@@ -590,8 +590,9 @@ function roundFailedCheck(
       '③ a round that ended "cancelled" right after a restart is the boot-time orphan sweep and is harmless — ' +
       "re-add the trigger label and run this step again;\n" +
       '④ a round that ended "overdue" or "expired" ran out of its deadline: the most common cause on a first ' +
-      `install is that the review session has no working model credential — \`${transport.attachCommand(`pr-${pr}`)}\` ` +
-      "shows the session, and a login prompt there is the answer.",
+      "install is that the review session has no working model credential — " +
+      `\`qcr tui ${pr}\` opens the board on the PR, whose pane is the round's own live log, ` +
+      "and an authentication error there is the answer.",
   };
 }
 

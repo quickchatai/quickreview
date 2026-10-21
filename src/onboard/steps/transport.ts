@@ -95,8 +95,6 @@ export interface StackTransport {
   execCommand(rest: string): string;
   /** The command the OPERATOR types to run the daemon's own CLI. */
   cliCommand(rest: string): string;
-  /** The command the OPERATOR types to attach to a tmux session. */
-  attachCommand(session: string): string;
 }
 
 export interface TransportOptions {
@@ -172,7 +170,6 @@ function composeTransport(ctx: StepContext, opts: TransportOptions): StackTransp
     logsCommand: (tail) => `docker compose logs --tail ${tail} daemon`,
     execCommand: (rest) => `docker compose exec ${DAEMON_SERVICE} ${rest}`,
     cliCommand: (rest) => `docker compose exec ${DAEMON_SERVICE} node dist/src/cli.js ${rest}`,
-    attachCommand: (session) => `docker compose exec -it daemon tmux attach -t ${session}`,
   };
 }
 
@@ -548,8 +545,6 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
     logsCommand,
     execCommand,
     cliCommand,
-    attachCommand: (session) =>
-      `ssh -t ${facts.alias || "<vm>"} ${facts.sudo ? "sudo " : ""}docker exec -it ${facts.container} tmux attach -t ${session}`,
   };
 }
 

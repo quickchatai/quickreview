@@ -28,9 +28,9 @@ const text = (lines: readonly string[] | undefined): string[] =>
   (lines ?? []).map((l) => stripAnsi(l));
 
 describe("paneSurface — the runtime picks the surface, nothing else does", () => {
-  it("absent or tmux is today's mirror of pr-<n>", () => {
-    expect(paneSurface(undefined, 7)).toEqual({ kind: "mirror", session: "pr-7" });
-    expect(paneSurface("tmux", 7)).toEqual({ kind: "mirror", session: "pr-7" });
+  it("absent or tmux is the viewer: the bot runs no `pr-<n>` tmux session to mirror (P9.6)", () => {
+    expect(paneSurface(undefined, 7)).toEqual({ kind: "viewer" });
+    expect(paneSurface("tmux", 7)).toEqual({ kind: "viewer" });
   });
 
   it("worker, answer and idle get the viewer", () => {
@@ -43,15 +43,17 @@ describe("paneSurface — the runtime picks the surface, nothing else does", () 
     expect(paneSurface("takeover", 7)).toEqual({ kind: "terminal", session: "takeover-pr-7" });
   });
 
-  it("a runtime it does not know is the mirror, never a guess", () => {
-    expect(paneSurface("quantum", 7)).toEqual({ kind: "mirror", session: "pr-7" });
-    expect(paneSurface("", 7).kind).toBe("mirror");
+  it("a runtime it does not know is the viewer, which only reads — never a terminal to type into", () => {
+    expect(paneSurface("quantum", 7)).toEqual({ kind: "viewer" });
+    expect(paneSurface("", 7).kind).toBe("viewer");
   });
 
-  it("only the viewer has no tmux session", () => {
+  it("only a pi terminal has a tmux session, and it is never `pr-<n>`", () => {
     expect(surfaceSession(paneSurface("worker", 7))).toBeUndefined();
     expect(surfaceSession(paneSurface("debug", 7))).toBe("debug-pr-7");
-    expect(surfaceSession(paneSurface(undefined, 7))).toBe("pr-7");
+    expect(surfaceSession(paneSurface("takeover", 7))).toBe("takeover-pr-7");
+    for (const r of [undefined, "tmux", "idle", "quantum"])
+      expect(surfaceSession(paneSurface(r, 7)), String(r)).toBeUndefined();
   });
 });
 

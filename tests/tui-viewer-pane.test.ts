@@ -1,8 +1,9 @@
 // The PR pane chooses its surface per PR from status.json `runtime`, with no
-// toggle: a tmux PR keeps today's mirror, a worker / answer / idle PR gets the
-// transcript viewer, a debug / takeover PR gets the termmirror pi terminal of
+// toggle: a debug / takeover PR gets the termmirror pi terminal of
 // debug-pr-<n> / takeover-pr-<n> — every byte but Ctrl-q forwarded to pi, and
-// no viewer input line on it. The App runs against a fake state dir and a fake
+// no viewer input line on it — and every other PR (worker, answer, idle, and a
+// runtime that is absent or unknown) gets the transcript viewer. There is no
+// `pr-<n>` tmux mirror (P9.6): the bot's rounds run in workers. The App runs against a fake state dir and a fake
 // tmux; nothing here touches a box or a model.
 import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -25,8 +26,8 @@ afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 const ok = (stdout: string): RemoteResult => ({ ok: true, stdout, stderr: "", code: 0 });
 
 const PRS: Array<[number, PrRuntime | undefined]> = [
-  [5012, undefined], // the legacy tmux VM: no runtime field at all
-  [5013, "tmux"],
+  [5012, undefined], // a daemon that reports no runtime field at all
+  [5013, "tmux"], // a value no daemon writes any more
   [5049, "worker"],
   [5050, "idle"],
   [5051, "debug"],
@@ -120,7 +121,7 @@ function snapshotOf(runtimes: Map<number, PrRuntime | undefined>): StatusSnapsho
 const line = (seq: number, body: Record<string, unknown>): string =>
   JSON.stringify({ v: 1, seq, at: "2026-10-19T12:00:00.000Z", ...body }) + "\n";
 
-/** A round log for each PR that has a runtime of its own: 40 user rows, so the
+/** A round log for each PR the viewer shows: 40 user rows, so the
  * viewer has scrollback, and two lens sessions. */
 function writeLogs(root: string, pr: number): void {
   const put = (rel: string, body: string): void => {
@@ -168,7 +169,7 @@ function fakeStreams() {
 
 function rig() {
   const root = mkdtempSync(join(tmp, "state-"));
-  for (const [pr, rt] of PRS) if (rt === "worker" || rt === "idle") writeLogs(root, pr);
+  for (const [pr, rt] of PRS) if (rt !== "debug" && rt !== "takeover") writeLogs(root, pr);
   const runtimes = new Map<number, PrRuntime | undefined>(PRS);
   const captured: string[] = []; // the tmux session of each capture-pane
   const sent: string[][] = []; // each send-keys argv
@@ -223,19 +224,19 @@ const frame = (h: ReturnType<typeof rig>): string[] =>
   renderBoard(h.app.view, 100, 24).lines.map((l) => stripAnsi(l));
 
 describe("the PR pane picks its surface per PR from status.json runtime", () => {
-  it("a mixed board: the tmux PR is mirrored, the worker PR is a viewer — both on one screen", async () => {
+  it("a mixed board: the debug PR is mirrored, the worker PR is a viewer — both on one screen", async () => {
     await withApp(async (h) => {
       h.captured.length = 0;
       h.calls.length = 0;
 
-      await show(h, 5012);
-      expect(h.captured).toContain("pr-5012");
+      await show(h, 5051);
+      expect(h.captured).toEqual(["debug-pr-5051"]);
       expect(h.app.view.pi?.viewer).toBeUndefined();
-      expect(h.app.view.pi?.lines).toEqual(["pane of pr-5012"]);
+      expect(h.app.view.pi?.lines).toEqual(["pane of debug-pr-5051"]);
       expect(liveReads(h.calls)).toEqual([]);
 
       await show(h, 5049);
-      expect(h.captured).not.toContain("pr-5049");
+      expect(h.captured).toEqual(["debug-pr-5051"]);
       expect(h.app.view.pi?.viewer).toMatchObject({ round: 1, stream: "main" });
       expect(stripAnsi(h.app.view.pi!.lines.at(-1)!)).toContain("transcript row 40 of #5049");
       expect(liveReads(h.calls).some((p) => p.includes("/live/pr-5049/r1/main.jsonl"))).toBe(true);
@@ -244,12 +245,38 @@ describe("the PR pane picks its surface per PR from status.json runtime", () => 
       expect(screen).toContain("transcript row 40 of #5049");
 
       // and back: the cached mirror paints at once, with no viewer on it
-      await show(h, 5013); // runtime "tmux" is the mirror too
-      expect(h.captured).toContain("pr-5013");
-      expect(frame(h).join("\n")).toContain("PI pr-5013");
+      await show(h, 5051);
+      expect(frame(h).join("\n")).toContain("PI debug-pr-5051");
       expect(frame(h).join("\n")).not.toContain("LIVE");
     });
   });
+
+  it.each([
+    [5012, "no runtime at all"],
+    [5013, "runtime tmux"],
+  ])(
+    "PR %i (%s) is the viewer — the bot has no `pr-<n>` tmux session to mirror (P9.6)",
+    async (pr) => {
+      await withApp(async (h) => {
+        h.captured.length = 0;
+        h.sent.length = 0;
+        await show(h, pr);
+        expect(h.app.view.pi?.viewer).toMatchObject({ round: 1, stream: "main" });
+        expect(liveReads(h.calls).some((p) => p.includes(`/live/pr-${pr}/r1/main.jsonl`))).toBe(
+          true,
+        );
+        expect(frame(h).join("\n")).toContain(`LIVE pr-${pr}`);
+        // focused, typing goes to the viewer's input line, never to tmux
+        h.app.repaint();
+        h.streams.type("\r");
+        h.streams.type("hello");
+        await vi.advanceTimersByTimeAsync(400);
+        expect(h.app.view.viewerInput?.text).toBe("hello");
+        expect(h.captured).toEqual([]);
+        expect(h.sent).toEqual([]);
+      });
+    },
+  );
 
   it("an idle PR gets the viewer, and so does an answer worker's", async () => {
     await withApp(async (h) => {
@@ -410,8 +437,8 @@ describe("the viewer is not a terminal", () => {
   it("registers [ ] < > only while the selected PR's pane is the viewer", async () => {
     await withApp(async (h) => {
       for (const [pr, expected] of [
-        [5012, false],
-        [5013, false],
+        [5012, true],
+        [5013, true],
         [5049, true],
         [5050, true],
         [5051, false],
@@ -452,17 +479,16 @@ describe("the viewer is not a terminal", () => {
     });
   });
 
-  it("a mirror whose PR went to debug drops the old capture instead of painting it", async () => {
+  it("a takeover mirror whose PR went to debug drops the old capture instead of painting it", async () => {
     await withApp(async (h) => {
-      h.runtimes.set(5012, undefined);
-      await show(h, 5012);
-      expect(h.app.view.pi?.lines).toEqual(["pane of pr-5012"]);
-      h.runtimes.set(5012, "debug");
+      await show(h, 5052);
+      expect(h.app.view.pi?.lines).toEqual(["pane of takeover-pr-5052"]);
+      h.runtimes.set(5052, "debug");
       await h.app.poller.tick();
-      expect(h.app.view.pi?.session).toBe("debug-pr-5012");
-      expect(h.app.view.pi?.lines).toEqual([]); // nothing of pr-5012's text
+      expect(h.app.view.pi?.session).toBe("debug-pr-5052");
+      expect(h.app.view.pi?.lines).toEqual([]); // nothing of the takeover's text
       await vi.advanceTimersByTimeAsync(400);
-      expect(h.app.view.pi?.lines).toEqual(["pane of debug-pr-5012"]);
+      expect(h.app.view.pi?.lines).toEqual(["pane of debug-pr-5052"]);
     });
   });
 });
@@ -487,11 +513,11 @@ describe("the viewer's input line (worker, answer and idle panes only)", () => {
   };
   const screen = (h: ReturnType<typeof rig>): string => frame(h).join("\n");
 
-  it("exists on the viewer only: a mirror and a pi terminal have none", async () => {
+  it("exists on the viewer only: a pi terminal has none", async () => {
     await withApp(async (h) => {
       for (const [pr, has] of [
-        [5012, false],
-        [5013, false],
+        [5012, true],
+        [5013, true],
         [5049, true],
         [5050, true],
         [5051, false],

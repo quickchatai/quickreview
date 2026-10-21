@@ -1,7 +1,8 @@
 // Remote access layer for qcr tui — every VM touch goes through here, and
 // every command it can produce is read-only against the box except the
 // user-initiated writes (inject files in msg.ts, and `sendKeysArgv` typing
-// into the board's focused pi pane) and the one bookkeeping delete, the
+// into the board's focused pi pane — a takeover's or a debug round's pi, never
+// a bot session: the bot runs no `pr-<n>` tmux session) and the one bookkeeping delete, the
 // companion inbox's ack (`inboxAckArgv`). There is no interactive attach: the TUI
 // never takes a pty to a VM tmux session — the board's PR pane and the
 // companion column are the only terminals, both embedded. Rubric proposals do
@@ -217,6 +218,14 @@ export interface CaptureRange {
 }
 
 /**
+ * The only tmux sessions the board's PR pane may capture or type into: the pi
+ * an operator is inside, a debug round's (`debug-pr-<n>`) or a takeover's
+ * (`takeover-pr-<n>`). The bot's rounds run in workers with no tmux session,
+ * so a `pr-<n>` name does not type-check here (P9.6).
+ */
+export type PiTerminalSession = `debug-pr-${number}` | `takeover-pr-${number}`;
+
+/**
  * Non-interactive snapshot of a live pi session for the board's mirror pane:
  * `-e` keeps the pane's colors, `-p` writes to stdout, `-J` joins wrapped
  * lines. Reads only — writing into the pane is `sendKeysArgv`.
@@ -242,7 +251,7 @@ export interface CaptureRange {
  */
 export function captureArgv(
   cfg: TuiConfig,
-  session: string,
+  session: PiTerminalSession,
   range?: CaptureRange,
   size?: { cols: number; rows: number },
 ): string[] {
@@ -270,7 +279,11 @@ export function scrolledRange(offset: number): CaptureRange | undefined {
  * no GitHub state, so it does not go near the mutation gate — it is the same
  * keystroke the operator could type after a manual `tmux attach`.
  */
-export function sendKeysArgv(cfg: TuiConfig, session: string, parts: string[]): string[] {
+export function sendKeysArgv(
+  cfg: TuiConfig,
+  session: PiTerminalSession,
+  parts: string[],
+): string[] {
   return [...dockerPrefix(cfg), cfg.container, "tmux", "send-keys", "-t", session, ...parts];
 }
 

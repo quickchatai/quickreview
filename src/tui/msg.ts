@@ -1,4 +1,7 @@
-// Quick-message — deliver a typed message to a session via the
+// Quick-message — deliver a typed message to a session. A message to a PR
+// (`pr-<n>`) goes down the operator control route (`messageRoute`): the bot's
+// rounds run in workers, and nothing reads a PR's inject directory any more
+// (P9.6). A message to any other session goes via the
 // daemon's inject bridge: write `inject/<session>/<name>.md` inside the
 // container (atomic tmp+mv, matching the daemon's own writes), then poll for
 // the bridge's `.done/<name>` archive as the delivery confirmation. Never
@@ -17,6 +20,11 @@ import { remoteSandboxRoot, resolveLayout } from "./layout.js";
 /** The only session names the TUI will ever build a remote path from. */
 export function isValidSessionName(name: string): boolean {
   return name === "main" || /^pr-\d+$/.test(name);
+}
+
+/** A PR's session name, `pr-<n>`. */
+function isPrSession(name: string): boolean {
+  return /^pr-\d+$/.test(name);
 }
 
 export function injectDirFor(cfg: TuiConfig, session: string): string {
@@ -95,6 +103,16 @@ export class InjectSender implements MessageSender {
       onState("undelivered", `✖ msg ${session} undelivered (bad session name)`);
       return;
     }
+    // A PR's inject directory has no reader: the bot's rounds run in workers,
+    // whose order is their first message (P9.6). A PR message goes by the
+    // control route (`messageRoute`), never as a file nothing would consume.
+    if (isPrSession(session)) {
+      onState(
+        "undelivered",
+        `✖ msg ${session} undelivered (a PR's message goes by the control route)`,
+      );
+      return;
+    }
     const name = injectFileName(this.now(), this.seq++);
     onState("pending", `→ msg ${session} pending…`);
     const write = await this.ssh(this.cfg.ssh_host, injectWriteArgv(this.cfg, session, name), {
@@ -146,23 +164,21 @@ export interface MessageOutcome {
  *                          daemon hands to the PR's host;
  *   debug, takeover        none: the PR's pane is a pi terminal, so the message
  *                          is typed into pi, and the operator is told to focus it;
- *   absent, tmux (or any   today's tmux inject path, until the cutover deletes
- *   runtime not known)     it (P9.6), so the owner's hot-reloading TUI keeps
- *                          messaging the legacy VM.
+ *   absent, or any         the control route too: the daemon knows the PR's real
+ *   runtime not known      host and answers, queues or refuses with its reason,
+ *                          so a runtime the TUI cannot read is never guessed at.
+ *
+ * There is no tmux route: the bot runs no `pr-<n>` tmux session (P9.6).
  */
-export type MessageRoute = "control" | "terminal" | "tmux";
+export type MessageRoute = "control" | "terminal";
 
 export function messageRoute(runtime: string | undefined): MessageRoute {
   switch (runtime) {
-    case "worker":
-    case "answer":
-    case "idle":
-      return "control";
     case "debug":
     case "takeover":
       return "terminal";
     default:
-      return "tmux";
+      return "control";
   }
 }
 
@@ -195,8 +211,8 @@ export function installMessageHooks(
       state: "unconfirmed",
       label: `? msg ${session} unconfirmed (the sender gave no outcome)`,
     };
-    const pr = /^pr-(\d+)$/.exec(session)?.[1];
-    const route = pr === undefined ? "tmux" : messageRoute(theApp.runtimeOf(Number(pr)));
+    const pr = isPrSession(session) ? session.slice("pr-".length) : undefined;
+    const route = pr === undefined ? "inject" : messageRoute(theApp.runtimeOf(Number(pr)));
     if (route === "terminal") {
       last = {
         state: "undelivered",

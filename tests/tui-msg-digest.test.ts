@@ -112,14 +112,14 @@ describe("InjectSender", () => {
 
   it("goes pending → delivered when the bridge consumes the file", async () => {
     const { sender, states, record } = senderWith([ok(""), ok("pending\n"), ok("consumed\n")]);
-    await sender.send("pr-5012", "check send_batch too", record);
+    await sender.send("main", "check send_batch too", record);
     expect(states.map(([s]) => s)).toEqual(["pending", "delivered"]);
-    expect(states[1]![1]).toBe("✓ msg pr-5012 delivered");
+    expect(states[1]![1]).toBe("✓ msg main delivered");
   });
 
   it("reports undelivered when the write itself fails", async () => {
     const { sender, states, record } = senderWith([fail()]);
-    await sender.send("pr-5012", "x", record);
+    await sender.send("main", "x", record);
     expect(states.map(([s]) => s)).toEqual(["pending", "undelivered"]);
     expect(states[1]![1]).toContain("write failed");
     expect(states[1]![1]).toContain("exit 1"); // no stderr: the exit code
@@ -134,9 +134,9 @@ describe("InjectSender", () => {
         code: 1,
       },
     ]);
-    await sender.send("pr-5012", "x", record);
+    await sender.send("main", "x", record);
     expect(states[1]![1]).toBe(
-      "✖ msg pr-5012 undelivered (write failed: Error: No such container[2J quickreview-sandbox)",
+      "✖ msg main undelivered (write failed: Error: No such container[2J quickreview-sandbox)",
     );
   });
 
@@ -145,18 +145,27 @@ describe("InjectSender", () => {
   it("times out to queued while the file is still pending — never silent", async () => {
     const probes = Array.from({ length: 20 }, () => ok("pending\n"));
     const { sender, states, record } = senderWith([ok(""), ...probes], 10);
-    await sender.send("pr-5012", "x", record);
+    await sender.send("main", "x", record);
     expect(states[states.length - 1]).toEqual([
       "queued",
-      "⧗ msg pr-5012 queued — will deliver when the session is idle; do not re-send",
+      "⧗ msg main queued — will deliver when the session is idle; do not re-send",
     ]);
   });
 
   it("times out to unconfirmed when no probe saw the file pending", async () => {
     const { sender, states, record } = senderWith([ok(""), ok("missing\n")], 4);
-    await sender.send("pr-5012", "x", record);
+    await sender.send("main", "x", record);
     expect(states[states.length - 1]![0]).toBe("unconfirmed");
     expect(states[states.length - 1]![1]).toContain("check the session before re-sending");
+  });
+
+  it("refuses a PR session: nothing reads a PR's inject directory (P9.6)", async () => {
+    const { sender, states, calls, record } = senderWith([ok(""), ok("consumed\n")]);
+    await sender.send("pr-5012", "x", record);
+    expect(states).toEqual([
+      ["undelivered", "✖ msg pr-5012 undelivered (a PR's message goes by the control route)"],
+    ]);
+    expect(calls).toEqual([]); // nothing ever hit ssh
   });
 
   it("refuses to build paths from a bad session name", async () => {
@@ -194,7 +203,7 @@ describe("deliverMessage — the outcome the action result carries", () => {
         );
       },
     });
-    await expect(deliverMessage(app, "pr-7", "hi")).resolves.toBe("✓ msg pr-7 delivered");
+    await expect(deliverMessage(app, "main", "hi")).resolves.toBe("✓ msg main delivered");
     final = "queued";
     await expect(deliverMessage(app, "overseer", "hi")).resolves.toMatch(
       /overseer queued .* do not re-send/,
@@ -204,10 +213,10 @@ describe("deliverMessage — the outcome the action result carries", () => {
       /overseer undelivered \(write failed/,
     );
     final = "pending";
-    await expect(deliverMessage(app, "pr-7", "hi")).resolves.toMatch(/unconfirmed \(ssh died\)/);
+    await expect(deliverMessage(app, "main", "hi")).resolves.toMatch(/unconfirmed \(ssh died\)/);
     expect(app.view.noticeLine).toContain("ssh died");
     app.hooks.sendMessage = undefined;
-    await expect(deliverMessage(app, "pr-7", "hi")).rejects.toThrow(/not wired/);
+    await expect(deliverMessage(app, "main", "hi")).rejects.toThrow(/not wired/);
   });
 });
 
@@ -232,7 +241,7 @@ describe("message delivery after a transport exception", () => {
         async () => {},
       ),
     );
-    await expect(deliverMessage(app, "pr-7", "one author reply")).resolves.toMatch(
+    await expect(deliverMessage(app, "main", "one author reply")).resolves.toMatch(
       /unconfirmed.*probe connection lost/,
     );
     expect(writes).toBe(1);
@@ -252,7 +261,7 @@ describe("a receipt preceding a sender exception", () => {
           throw new Error("late transport exception");
         },
       });
-      expect(await app.hooks.sendMessage!("pr-7", "once", app)).toEqual({
+      expect(await app.hooks.sendMessage!("main", "once", app)).toEqual({
         state,
         label: `known ${state}`,
       });
@@ -261,17 +270,26 @@ describe("a receipt preceding a sender exception", () => {
 });
 
 describe("quick-message input box", () => {
-  it("m opens the box, typing edits, ⏎ hands the verbatim text to the sender", async () => {
+  it("m opens the box, typing edits, ⏎ hands the verbatim text to the control route", async () => {
     const streams = fakeStreams();
     const sshOk: SshRunner = async () => ok("");
     const app = new App(TUI_DEFAULTS, sshOk, streams.out, streams.input);
-    const sent: Array<[string, string]> = [];
-    installMessageHooks(app, {
-      send: async (session, text, onState) => {
-        sent.push([session, text]);
-        onState("delivered", `✓ msg ${session} delivered`);
+    const injected: string[] = [];
+    const sent: ControlRequest[] = [];
+    installMessageHooks(
+      app,
+      {
+        send: async (session) => {
+          injected.push(session);
+        },
       },
-    });
+      {
+        async send(req) {
+          sent.push(req);
+          return { state: "handled", label: `✓ ${req.kind} #${req.pr} delivered` };
+        },
+      },
+    );
     app.view.snapshot = {
       written_at: "",
       dry_run: true,
@@ -282,14 +300,16 @@ describe("quick-message input box", () => {
     };
     const running = app.run();
     streams.type("m");
-    expect(app.view.inputBox?.target).toBe("#5012 (pi session pr-5012)");
+    expect(app.view.inputBox?.target).toBe("#5012 (a message to its session)");
     streams.type("hi");
     streams.type(Buffer.from("\x1b\r")); // Alt-⏎ newline
     streams.type("there");
     streams.type("\r");
-    expect(sent).toEqual([["pr-5012", "hi\nthere"]]);
+    await settle();
+    expect(sent).toEqual([{ kind: "message", pr: 5012, text: "hi\nthere" }]);
+    expect(injected).toEqual([]); // a PR's message is never an inject file (P9.6)
     expect(app.view.inputBox).toBeUndefined();
-    expect(app.view.noticeLine).toBe("✓ msg pr-5012 delivered");
+    expect(app.view.noticeLine).toBe("✓ message #5012 delivered");
     streams.type("q");
     streams.type("y"); // q asks before it quits
     await running;
@@ -814,23 +834,23 @@ describe("msg.ts routes a PR message by status.json runtime", () => {
     return { app, tmux, control };
   }
 
-  it("the route is a function of the runtime alone", () => {
-    expect(messageRoute(undefined)).toBe("tmux");
-    expect(messageRoute("tmux")).toBe("tmux");
-    expect(messageRoute("a runtime a later daemon invents")).toBe("tmux");
+  it("the route is a function of the runtime alone, and there is no tmux route (P9.6)", () => {
+    expect(messageRoute(undefined)).toBe("control");
+    expect(messageRoute("tmux")).toBe("control");
+    expect(messageRoute("a runtime a later daemon invents")).toBe("control");
     for (const r of ["worker", "answer", "idle"]) expect(messageRoute(r), r).toBe("control");
     for (const r of ["debug", "takeover"]) expect(messageRoute(r), r).toBe("terminal");
   });
 
-  it("a runtime=tmux PR, and one with no runtime at all, still go through the tmux msg path", async () => {
+  it("a runtime=tmux PR, and one with no runtime at all, go by the control route: the daemon decides", async () => {
     const { app, tmux, control } = routed({ 1: "tmux", 2: undefined });
     expect((await app.hooks.sendMessage!("pr-1", "hello", app))?.state).toBe("delivered");
     expect((await app.hooks.sendMessage!("pr-2", "hello", app))?.state).toBe("delivered");
-    expect(tmux).toEqual([
-      ["pr-1", "hello"],
-      ["pr-2", "hello"],
+    expect(control).toEqual([
+      { kind: "message", pr: 1, text: "hello" },
+      { kind: "message", pr: 2, text: "hello" },
     ]);
-    expect(control).toEqual([]);
+    expect(tmux).toEqual([]); // no inject file nothing would read
   });
 
   it("a runtime=worker, answer or idle PR gets `message` on the control route, not a tmux write", async () => {
@@ -873,7 +893,7 @@ describe("msg.ts routes a PR message by status.json runtime", () => {
     await expect(deliverMessage(app, "pr-6", "hi")).rejects.toThrow(/focus its pane/);
   });
 
-  it("the overseer and main sessions are untouched: always the tmux path", async () => {
+  it("the overseer and main sessions are untouched: always the inject path", async () => {
     const { app, tmux, control } = routed({ 3: "worker" });
     await app.hooks.sendMessage!("overseer", "hi", app);
     await app.hooks.sendMessage!("main", "hi", app);

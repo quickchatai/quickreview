@@ -59,7 +59,14 @@ import {
   sidebarResizeHit,
   sidebarWidth,
 } from "./sidebar.js";
-import { eventsArgv, progressArgv, sendKeysArgv, whyArgv, type SshRunner } from "./remote.js";
+import {
+  eventsArgv,
+  progressArgv,
+  sendKeysArgv,
+  whyArgv,
+  type PiTerminalSession,
+  type SshRunner,
+} from "./remote.js";
 
 export type { Tab } from "./tabs.js";
 
@@ -197,7 +204,8 @@ export class App {
    * Wired by index.ts; absent in bare test harnesses (no column painted). */
   sidebar?: CompanionSidebar;
   readonly poller: Poller;
-  /** Live mirror of the selected PR's pi session (board's lower region). */
+  /** Live mirror of the pi an operator is inside for the selected PR — its
+   * debug round or its takeover (board's lower region). */
   readonly pi: PiMirror;
   /** The same region for a worker-hosted PR: its transcript, read-only. Which
    * of the two a PR gets is `surfaceOf` — status.json's `runtime`, no toggle. */
@@ -245,10 +253,9 @@ export class App {
         this.syncPiPane();
         // The session we were typing into went away — say so and hand the
         // keyboard back rather than swallowing keystrokes into nothing.
-        if (this.view.piFocus && this.view.pi?.missing && this.piFocusPr !== undefined)
-          this.blurPiPane(
-            `pi session ${this.sessionFor(this.piFocusPr)} is gone — keyboard back on the board`,
-          );
+        const gone = this.view.pi?.session;
+        if (this.view.piFocus && this.view.pi?.missing && gone !== undefined)
+          this.blurPiPane(`pi session ${gone} is gone — keyboard back on the board`);
         this.repaint();
       },
       300,
@@ -263,15 +270,16 @@ export class App {
   // ---- which surface the PR pane is -----------------------------------------
 
   /** What the pane shows for `pr`, from the PR's `runtime` in status.json — a
-   * tmux mirror (absent or `tmux`), the transcript viewer (`worker`, `answer`,
-   * `idle`) or a pi terminal (`debug`, `takeover`). */
+   * pi terminal (`debug`, `takeover`) or, for every other runtime, the
+   * transcript viewer. */
   private surfaceOf(pr: number): PaneSurface {
     return paneSurface(this.view.snapshot?.prs.find((p) => p.number === pr)?.runtime, pr);
   }
 
-  /** The tmux session a mirror/terminal pane types into and captures. */
-  private sessionFor(pr: number): string {
-    return surfaceSession(this.surfaceOf(pr)) ?? `pr-${pr}`;
+  /** The pi terminal a pane types into and captures; undefined for the viewer
+   * (the bot runs no `pr-<n>` tmux session, P9.6). */
+  private sessionFor(pr: number): PiTerminalSession | undefined {
+    return surfaceSession(this.surfaceOf(pr));
   }
 
   /** The PR's `runtime` in status.json, as the daemon last reported it. */
@@ -393,15 +401,21 @@ export class App {
       .then(async () => {
         for (const parts of groups) {
           if (this.paneSendDropped) return;
-          const res = await this.ssh(
-            this.cfg.ssh_host,
-            sendKeysArgv(this.cfg, this.sessionFor(pr), parts),
-            { timeoutMs: 5_000 },
-          );
+          // Only a pi terminal takes keys. A PR whose debug round or takeover
+          // ended under the operator's hands has none: drop, and say so.
+          const session = this.sessionFor(pr);
+          if (session === undefined) {
+            this.paneSendDropped = true;
+            this.notice(`✖ #${pr}: no pi terminal any more — input dropped`);
+            return;
+          }
+          const res = await this.ssh(this.cfg.ssh_host, sendKeysArgv(this.cfg, session, parts), {
+            timeoutMs: 5_000,
+          });
           if (!res.ok) {
             this.paneSendDropped = true;
             this.notice(
-              `✖ ${this.sessionFor(pr)}: keys not delivered (${res.stderr.trim() || `exit ${res.code}`}) — input after them dropped`,
+              `✖ ${session}: keys not delivered (${res.stderr.trim() || `exit ${res.code}`}) — input after them dropped`,
             );
             return;
           }
@@ -410,7 +424,7 @@ export class App {
       .catch((err: unknown) => {
         this.paneSendDropped = true;
         this.notice(
-          `✖ ${this.sessionFor(pr)}: keys not delivered (${err instanceof Error ? err.message : String(err)}) — input after them dropped`,
+          `✖ #${pr}: keys not delivered (${err instanceof Error ? err.message : String(err)}) — input after them dropped`,
         );
       })
       .finally(() => {
@@ -449,8 +463,8 @@ export class App {
     const pr = this.panePr();
     this.view.piPr = pr;
     this.view.pi = this.viewerOn(pr) ? this.viewer.view(pr) : this.pi.view(pr);
-    // The input line exists on the viewer's pane only: a mirror or a pi
-    // terminal gets none (the PR-pane rule).
+    // The input line exists on the viewer's pane only: a pi terminal gets
+    // none (the PR-pane rule).
     this.view.viewerInput = this.viewerOn(pr)
       ? {
           ...this.viewerInputOf(pr),
@@ -878,7 +892,7 @@ export class App {
     this.inputSubmit = undefined;
     const pr = /^pr-(\d+)$/.exec(session)?.[1];
     this.view.inputBox = {
-      target: pr ? `#${pr} (pi session ${session})` : session,
+      target: pr ? `#${pr} (a message to its session)` : session,
       text: this.msgDraft,
     };
     this.repaint();
@@ -1943,9 +1957,9 @@ export class App {
       return;
     }
     this.view.now = this.now();
-    // Same reason as the sidebar above: the PR's pi runs in a detached tmux
-    // window stuck at 80×24, so without this it wraps at 80 columns however
-    // wide we paint the mirror. Fed here, applied by the next capture — and
+    // Same reason as the sidebar above: a debug round's or a takeover's pi runs
+    // in a detached tmux window stuck at 80×24, so without this it wraps at 80
+    // columns however wide we paint the mirror. Fed here, applied by the next capture — and
     // sized against the bar rows THIS frame's board actually paints.
     const paneSize = piPaneSize(inner, rows, boardBarHeight(this.view, inner));
     this.pi.setViewport(paneSize);

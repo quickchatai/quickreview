@@ -4,8 +4,8 @@ Two things ship on the operator's own machine and are documented together
 because they share one frame, one poll cadence and one set of files:
 
 - **the TUI** (`src/tui/`, started by `qcr tui`) — a full-screen terminal
-  board over the daemon. It reads the daemon's state, mirrors its pi sessions,
-  and has exactly two paths that write anything back.
+  board over the daemon. It reads the daemon's state, shows each PR's live
+  transcript (and mirrors the pi of a takeover or a debug round), and has exactly two paths that write anything back.
 - **the companion** (`src/tui/companion.ts`, the release image in `companion` mode) — a local
   pi session in a docker container on the same machine, permanently visible as
   the right-hand column of the TUI. It holds no credential for the deployment
@@ -65,8 +65,12 @@ Consequences that are enforced rather than agreed:
 - **Nothing takes the whole terminal.** There is no attach screen and no
   `attach` hook on `AppHooks`; `parseTarget` in `src/tui/index.ts` refuses
   `qcr tui overseer` and `qcr tui main` with the place to go instead. The
-  board's PR pane (`src/tui/pipane.ts`) and the companion column
-  (`src/tui/sidebar.ts`) are the only terminals, both embedded.
+  board's PR pane while it holds a takeover's or a debug round's pi
+  (`src/tui/pipane.ts`) and the companion column (`src/tui/sidebar.ts`) are
+  the only terminals, both embedded. Every other PR pane is the read-only
+  transcript viewer (`src/tui/viewer.ts`): the bot runs no `pr-<n>` tmux
+  session, and `remote.ts` types a capture or send-keys target as
+  `debug-pr-<n>` | `takeover-pr-<n>` only.
 - **Nothing folds the column away.** `--no-companion` and
   `[companion] enabled = false` decide what *runs* — no container, no ambient
   feed, no alert consumer — and what the column *says*

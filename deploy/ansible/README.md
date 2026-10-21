@@ -325,7 +325,9 @@ recreates — required for the sticky per-PR conversations, not just for auth.
   Dockerfile's ARG defaults, which tests hold equal); the images carry them as
   labels (`qcr.pi`, `qcr.openviking`, ...) and the release manifest copies them.
   Bumping them is a deliberate edit and a new release, never automatic.
-- Jump-in from your own machine: `ssh -t <vm> docker exec -it quickreview-sandbox
-  tmux attach -t <pr-N|overseer>` — `scripts/qcr attach <n>` prints that
-  command (it never attaches itself), and the operator TUI (`scripts/qcr tui`, with `[tui] target = "ssh"`) embeds the same
-  session in a pane.
+- Jump-in from your own machine: a bot round runs in a worker with no tmux
+  session, so there is nothing to attach to. The operator TUI (`scripts/qcr
+  tui`, with `[tui] target = "ssh"`) shows each PR's live transcript;
+  `scripts/qcr open pr <n>` opens the PR's session in pi, forked; and
+  `scripts/qcr takeover <n>` / `debug-round <n>` put the PR in an interactive
+  pi (`takeover-pr-<n>` / `debug-pr-<n>`) that the TUI embeds in its pane.

@@ -1,5 +1,7 @@
 // qcr — the operator CLI. Read-only against state/ (status.json + state.db)
-// except where a subcommand says otherwise; `attach` wraps tmux/docker-exec.
+// except where a subcommand says otherwise. Nothing here attaches to a tmux
+// session: a PR is read with `live` / `open pr`, entered with `takeover` /
+// `debug-round` (whose own lines say how to attach to their pi).
 import {
   readFileSync,
   existsSync,
@@ -1439,14 +1441,6 @@ export function cmdInstall(
   }
 }
 
-function cmdAttach(target: string): void {
-  // Live sessions run inside the quickreview container on the VM; locally the
-  // tmux server is direct. Print both invocations — this never attaches.
-  const session = /^\d+$/.test(target) ? `pr-${target}` : target;
-  console.log(`attach: tmux attach -t ${session}`);
-  console.log(`(on the VM: docker exec -it quickreview-sandbox tmux attach -t ${session})`);
-}
-
 function cmdEvents(tail: number, json: boolean): void {
   const store = openStore();
   try {
@@ -2212,10 +2206,6 @@ export async function main(argv: string[]): Promise<void> {
       process.exitCode = cmdConfig(rest, json, { defaultHome: () => locateConfig().home });
       return;
     }
-    case "attach": {
-      if (!rest[0]) throw new Error("usage: qcr attach <pr-number|session>");
-      return cmdAttach(rest[0]);
-    }
     case "takeover":
     case "debug-round":
     case "release": {
@@ -2224,7 +2214,7 @@ export async function main(argv: string[]): Promise<void> {
     }
     default:
       console.log(
-        "usage: qcr <version|config check [--config-home <dir>]|onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|takeover <n>|debug-round <n>|release <n>|tui [pr|overseer]|drain <on [--hold]|off>|pause-pr <pr> [--reason <text>]|resume-pr <pr>|message <pr> [--may-post] <text...>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
+        "usage: qcr <version|config check [--config-home <dir>]|onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|takeover <n>|debug-round <n>|release <n>|tui [pr|overseer]|drain <on [--hold]|off>|pause-pr <pr> [--reason <text>]|resume-pr <pr>|message <pr> [--may-post] <text...>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
           "companion <up|down|status|rebuild>|review [start|status|stop|branch|--uncommitted|--diff FILE|-|<PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--json]|live [RUN_ID|DIR] [--lens ID] [--round N] [--follow] [--json]|open [RUN_ID|DIR|FILE.jsonl|scan[:RUN]|pr N [--round R]] [--lens ID] [--write] [--print]|scan <preview|start|status|stop|findings|matches|match|suggestions|stage2 propose|stage2 start|dismiss|units show|units propose|units adjust|units save|login|doctor|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine|shadow-report [--days <n>]|off|on|suppress <id>|unsuppress <id>]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );

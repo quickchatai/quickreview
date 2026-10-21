@@ -1080,15 +1080,19 @@ export function piHeader(
 ): string {
   if (pr === undefined) return `${FG.dim}PI — no PR selected${RESET}`;
   const mine = pane && pane.pr === pr ? pane : undefined;
-  const session = mine?.session ?? `pr-${pr}`;
+  // A pi terminal (a debug round's or a takeover's) names its tmux session;
+  // everything else is the PR's live transcript — there is no `pr-<n>` tmux
+  // session to name (P9.6).
+  const session = mine?.viewer ? undefined : mine?.session;
   const viewer = mine?.viewer;
-  const name = viewer
-    ? focused
-      ? `${ACCENT_BG}LIVE pr-${pr}${DRESET}`
-      : `${MUTED}LIVE ${DRESET}${ACCENT}pr-${pr}${DRESET}`
-    : focused
-      ? `${ACCENT_BG}PI ${session}${DRESET}`
-      : `${MUTED}PI ${DRESET}${ACCENT}${session}${DRESET}`;
+  const name =
+    session === undefined
+      ? focused
+        ? `${ACCENT_BG}LIVE pr-${pr}${DRESET}`
+        : `${MUTED}LIVE ${DRESET}${ACCENT}pr-${pr}${DRESET}`
+      : focused
+        ? `${ACCENT_BG}PI ${session}${DRESET}`
+        : `${MUTED}PI ${DRESET}${ACCENT}${session}${DRESET}`;
   if (!mine) return `${name}${FG.dim} · connecting…${RESET}`;
   if (viewer) return `${name}${viewerHeaderTail(mine, viewer, focused)}`;
   if (mine.missing) {

@@ -389,7 +389,9 @@ describe("the two paths that actually happen", () => {
     expect(detail).toMatch(/ended as "cancelled": orphaned by a restart/);
     expect(detail).toMatch(/events --tail 40/);
     expect(detail).toMatch(/boot-time orphan sweep/);
-    expect(detail).toMatch(/tmux attach -t pr-17/);
+    // The session is read, never attached to: there is no `pr-<n>` tmux session.
+    expect(detail).toMatch(/`qcr tui 17`/);
+    expect(detail).not.toMatch(/tmux attach/);
   });
 
   it("an unreadable state store is red, and blames the right thing", async () => {

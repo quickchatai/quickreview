@@ -1,17 +1,17 @@
-// The board's transcript viewer: what the PR pane shows when a PR's session is
-// not a tmux pane to mirror. Its source is the LiveEvent log of the PR's rounds
+// The board's transcript viewer: what the PR pane shows unless an operator is
+// inside the PR's pi. Its source is the LiveEvent log of the PR's rounds
 // (src/live/events.ts) under state/live/pr-<n>/r<round>/ — the main session's
 // main.jsonl and one lens-<id>.jsonl per lens session — read over the same
 // runner as every other state read (`liveReadArgv`: cat, then tail -c +offset),
 // so it looks the same over ssh and locally.
 //
 // WHICH surface a PR gets is decided by status.json `runtime`, per PR, with no
-// toggle (`paneSurface`): the owner's TUI hot-reloads from master and keeps
-// mirroring the legacy tmux VM until the cutover, so absent or `tmux` is today's
-// mirror, unchanged. A PR whose runtime is `debug` or `takeover` runs inside
+// toggle (`paneSurface`). A PR whose runtime is `debug` or `takeover` runs inside
 // interactive pi, which is a pi TERMINAL under the PR-pane rule (CLAUDE.md): it
 // gets the termmirror of its own tmux session and every byte goes to pi, so the
-// viewer — which is not a terminal — never paints there.
+// viewer — which is not a terminal — never paints there. Every other runtime,
+// absent and unknown included, gets the viewer: the bot runs no `pr-<n>` tmux
+// session to mirror (P9.6), and the viewer only reads.
 //
 // The viewer is read-only. The pane is bottom-anchored like the mirror: offset 0
 // follows the tail, a positive offset parks that many wrapped rows above it and
@@ -24,7 +24,7 @@ import { newRenderState, renderLiveEvent, type RenderState } from "../livecli.js
 import { lensForAgent } from "../round-progress.js";
 import type { PiPaneView } from "./pipane.js";
 import { charWidth, displayWidth, sanitizeText } from "./paint.js";
-import { liveListArgv, liveReadArgv, type SshRunner } from "./remote.js";
+import { liveListArgv, liveReadArgv, type PiTerminalSession, type SshRunner } from "./remote.js";
 import { SCROLL_STEP } from "./termmirror.js";
 import { FG, RESET } from "./theme.js";
 
@@ -33,35 +33,31 @@ import { FG, RESET } from "./theme.js";
 /**
  * What the PR pane shows for one PR.
  *
- *   mirror    today's tmux capture of `pr-<n>` (runtime absent or `tmux`);
- *   viewer    the transcript viewer (`worker`, `answer`, `idle`);
+ *   viewer    the transcript viewer (`worker`, `answer`, `idle`, and any
+ *             runtime this reader does not know, absent included);
  *   terminal  the termmirror of a pi the operator is inside: `debug-pr-<n>`
  *             (a debug round) or `takeover-pr-<n>` (a takeover).
  *
- * A runtime this reader does not know is a `mirror`: the safe reading is the
- * one the TUI has always had.
+ * There is no third surface: the bot runs no `pr-<n>` tmux session, so nothing
+ * mirrors one (P9.6). An unknown runtime reads as the viewer because the viewer
+ * only reads — the safe reading is the one that types into nothing.
  */
-export type PaneSurface =
-  { kind: "mirror"; session: string } | { kind: "viewer" } | { kind: "terminal"; session: string };
+export type PaneSurface = { kind: "viewer" } | { kind: "terminal"; session: PiTerminalSession };
 
 export function paneSurface(runtime: string | undefined, pr: number): PaneSurface {
   switch (runtime) {
-    case "worker":
-    case "answer":
-    case "idle":
-      return { kind: "viewer" };
     case "debug":
       return { kind: "terminal", session: `debug-pr-${pr}` };
     case "takeover":
       return { kind: "terminal", session: `takeover-pr-${pr}` };
     default:
-      return { kind: "mirror", session: `pr-${pr}` };
+      return { kind: "viewer" };
   }
 }
 
 /** The tmux session a surface mirrors; undefined for the viewer. */
-export function surfaceSession(surface: PaneSurface): string | undefined {
-  return surface.kind === "viewer" ? undefined : surface.session;
+export function surfaceSession(surface: PaneSurface): PiTerminalSession | undefined {
+  return surface.kind === "terminal" ? surface.session : undefined;
 }
 
 // ---- the transcript as rows ------------------------------------------------------

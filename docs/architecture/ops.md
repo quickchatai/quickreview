@@ -515,7 +515,12 @@ cheap.
 | `checklist` | the cutover checklist harness (`src/checklist.ts`) |
 | `compare <pr…>` | dry-run review comparison (`src/compare.ts`) |
 | `regression …` | run the regression set (`src/regression.ts`) |
-| `attach <pr\|session>` | print (and locally exec) the tmux attach invocation |
+| `live [RUN_ID\|DIR] [--lens ID] [--round N] [--follow]` | read a review's LiveEvent log as a transcript (on the bot's box: a round directory `state/live/pr-<n>/r<k>`) |
+| `open pr <n> [--round R] [--lens ID]` | open the bot's session for a PR in pi on this machine, forked (read from the box first) |
+| `takeover\|debug-round\|release <n>` | the operator's leases: work in the PR's real session, or run its next round in interactive pi; each prints how to reach its `takeover-pr-<n>` / `debug-pr-<n>` pi |
+
+There is no `attach` verb: the bot's rounds run in workers, with no `pr-<n>`
+tmux session to attach to.
 
 An unrecognised command prints the usage line **and** loads the config, so a
 broken `config.toml` surfaces even on a typo.

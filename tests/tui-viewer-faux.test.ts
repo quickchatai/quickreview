@@ -105,7 +105,7 @@ function streams() {
 }
 
 describe("the board over a faux one-shot's state dir", () => {
-  it("paints the transcript the round logged, for a worker PR, next to a tmux PR", async () => {
+  it("paints the transcript the round logged, for a worker PR, next to a takeover PR's pi terminal", async () => {
     const stateRoot = join(tmp, "box");
     await fauxOneShot(stateRoot, `pr-${TARGET.number}`);
 
@@ -121,7 +121,14 @@ describe("the board over a faux one-shot's state dir", () => {
           stale_recheck: 0,
           runtime: "worker",
         },
-        { number: 9, state: "reviewing", title: "legacy", head_sha: "bb", stale_recheck: 0 },
+        {
+          number: 9,
+          state: "reviewing",
+          title: "takeover",
+          head_sha: "bb",
+          stale_recheck: 0,
+          runtime: "takeover",
+        },
       ],
       running_rounds: 0,
       max_concurrent_rounds: 12,
@@ -133,7 +140,7 @@ describe("the board over a faux one-shot's state dir", () => {
     const fallback: SshRunner = async (_h, argv) => {
       if (argv.includes("capture-pane")) {
         captured.push(argv[argv.indexOf("-t") + 1]!);
-        return { ok: true, stdout: "legacy pi pane", stderr: "", code: 0 };
+        return { ok: true, stdout: "takeover pi pane", stderr: "", code: 0 };
       }
       if (argv[0] === "cat")
         return { ok: true, stdout: JSON.stringify(snapshot), stderr: "", code: 0 };
@@ -170,10 +177,11 @@ describe("the board over a faux one-shot's state dir", () => {
 
       app.selectPr(9);
       await vi.advanceTimersByTimeAsync(400);
-      expect(captured).toEqual(["pr-9"]);
-      const legacy = renderBoard(app.view, 100, 30).lines.map(stripAnsi).join("\n");
-      expect(legacy).toContain("legacy pi pane");
-      expect(legacy).not.toContain("LIVE");
+      expect(captured).toEqual(["takeover-pr-9"]);
+      const takeover = renderBoard(app.view, 100, 30).lines.map(stripAnsi).join("\n");
+      expect(takeover).toContain("takeover pi pane");
+      expect(takeover).toContain("PI takeover-pr-9");
+      expect(takeover).not.toContain("LIVE");
     } finally {
       app.quit();
       await running;

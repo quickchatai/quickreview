@@ -738,6 +738,7 @@ describe("renderBoard", () => {
           missing: false,
           stale: false,
           offset: 0,
+          session: "debug-pr-5012",
         },
       }),
       100,
@@ -748,7 +749,7 @@ describe("renderBoard", () => {
     expect(text).toContain("▶ #5012");
     expect(text).toContain("fix(crm)");
     expect(text).toContain("✎ #5049");
-    expect(text).toContain("PI pr-5012 · live mirror · click to type");
+    expect(text).toContain("PI debug-pr-5012 · live mirror · click to type");
     expect(text).toContain("> reading tasks.py");
     expect(text).toContain("1 board");
     expect(text).toContain("2 memory");
@@ -841,7 +842,9 @@ describe("renderBoard", () => {
     )
       .lines.map(stripAnsi)
       .join("\n");
-    expect(text).toContain("PI pr-5012 · connecting…");
+    // No pane of its own yet: the PR's live transcript, which is all a PR is
+    // between an operator's debug rounds and takeovers (P9.6).
+    expect(text).toContain("LIVE pr-5012 · connecting…");
     expect(text).not.toContain("other pr");
   });
 
@@ -860,10 +863,17 @@ describe("renderBoard", () => {
   });
 
   it("accents the header and divider while the pane owns the keyboard", () => {
-    const pi = { pr: 5012, lines: ["x"], missing: false, stale: false, offset: 0 };
+    const pi = {
+      pr: 5012,
+      lines: ["x"],
+      missing: false,
+      stale: false,
+      offset: 0,
+      session: "takeover-pr-5012" as const,
+    };
     const frame = renderBoard(view({ pi, piFocus: true, piPr: 5012 }), 100, 24);
     const text = frame.lines.map(stripAnsi).join("\n");
-    expect(text).toContain("PI pr-5012 · focused · Ctrl-q back to board");
+    expect(text).toContain("PI takeover-pr-5012 · focused · Ctrl-q back to board");
     expect(text).not.toContain("click to type");
     expect(frame.lines[frame.meta["piTop"]!]).toContain("━"); // heavy divider cue
   });
@@ -883,11 +893,18 @@ describe("renderBoard", () => {
   });
 
   it("keeps painting the locked session when the pane is focused elsewhere", () => {
-    const pi = { pr: 5049, lines: ["locked output"], missing: false, stale: false, offset: 0 };
+    const pi = {
+      pr: 5049,
+      lines: ["locked output"],
+      missing: false,
+      stale: false,
+      offset: 0,
+      session: "debug-pr-5049" as const,
+    };
     const text = renderBoard(view({ pi, piFocus: true, piPr: 5049, selected: 0 }), 100, 24)
       .lines.map(stripAnsi)
       .join("\n");
-    expect(text).toContain("PI pr-5049 · focused");
+    expect(text).toContain("PI debug-pr-5049 · focused");
     expect(text).toContain("locked output");
   });
 
@@ -999,13 +1016,13 @@ describe("renderBoard", () => {
 
   it("renders the quick-message input box in place of the events strip", () => {
     const text = renderBoard(
-      view({ inputBox: { target: "#5012 (pi session pr-5012)", text: "also check" } }),
+      view({ inputBox: { target: "#5012 (a message to its session)", text: "also check" } }),
       100,
       24,
     )
       .lines.map(stripAnsi)
       .join("\n");
-    expect(text).toContain("MSG → #5012 (pi session pr-5012)");
+    expect(text).toContain("MSG → #5012 (a message to its session)");
     expect(text).toContain("> also check");
     expect(text).toContain("⏎ send · Esc cancel");
   });
@@ -1143,12 +1160,12 @@ describe("the mirrored pi session gets the board's real geometry", () => {
   it("folds resize-window into the capture, ahead of it and in one invocation", () => {
     // One invocation matters: a separate resize could land after the capture
     // and the mirror would paint a frame laid out for the previous size.
-    const argv = captureArgv(TUI_DEFAULTS, "pr-5012", undefined, { cols: 96, rows: 8 });
+    const argv = captureArgv(TUI_DEFAULTS, "debug-pr-5012", undefined, { cols: 96, rows: 8 });
     expect(argv.indexOf("resize-window")).toBeLessThan(argv.indexOf("capture-pane"));
     expect(argv.slice(argv.indexOf("resize-window"))).toEqual([
       "resize-window",
       "-t",
-      "pr-5012",
+      "debug-pr-5012",
       "-x",
       "96",
       "-y",
@@ -1159,13 +1176,13 @@ describe("the mirrored pi session gets the board's real geometry", () => {
       "-p",
       "-J",
       "-t",
-      "pr-5012",
+      "debug-pr-5012",
     ]);
   });
 
   it("captures exactly as before when no rectangle is known yet", () => {
     // First capture can precede the first paint; it must not invent a size.
-    expect(captureArgv(TUI_DEFAULTS, "pr-5012")).not.toContain("resize-window");
+    expect(captureArgv(TUI_DEFAULTS, "debug-pr-5012")).not.toContain("resize-window");
   });
 
   it("keeps the last usable rectangle rather than sending a degenerate one", () => {
@@ -1174,7 +1191,13 @@ describe("the mirrored pi session gets the board's real geometry", () => {
       seen.push(argv);
       return { ok: true, stdout: "pane", stderr: "", code: 0 };
     };
-    const mirror = new PiMirror(TUI_DEFAULTS, ssh);
+    const mirror = new PiMirror(
+      TUI_DEFAULTS,
+      ssh,
+      () => {},
+      300,
+      (pr) => `debug-pr-${pr}`,
+    );
     mirror.setViewport({ cols: 96, rows: 8 });
     mirror.setViewport(undefined); // board collapsed to nothing mid-resize
     mirror.setViewport({ cols: 0, rows: 8 });
@@ -1451,9 +1474,10 @@ describe("the transcript viewer in the board's pane", () => {
         boardFilter: null,
         repo: undefined,
       }).inline;
-    for (const rt of ["worker", "answer", "idle"])
-      expect(keysFor(rt), rt).toEqual(["a", "[", "]", "<", ">"]);
-    for (const rt of [undefined, "tmux", "debug", "takeover", "other"])
-      expect(keysFor(rt), String(rt)).toEqual(["a"]);
+    // Every runtime but a pi terminal's is the viewer, absent and unknown
+    // included: there is no `pr-<n>` tmux mirror any more (P9.6).
+    for (const rt of ["worker", "answer", "idle", undefined, "tmux", "other"])
+      expect(keysFor(rt), String(rt)).toEqual(["a", "[", "]", "<", ">"]);
+    for (const rt of ["debug", "takeover"]) expect(keysFor(rt), rt).toEqual(["a"]);
   });
 });
