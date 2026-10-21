@@ -34,7 +34,7 @@ import { buildBenchAgents } from "./bench/runner.js";
 import { benchSettings } from "./bench/auth.js";
 import { copyPiAuth } from "./engine/auth.js";
 import type { ProfileLookup } from "./profiles.js";
-import { HOST_CONTEXT_STUB, REVIEWER_STUB } from "./reviewerstub.js";
+import { HOST_CONTEXT_STUB, REVIEWER_STUB, reviewerStubSource } from "./reviewerstub.js";
 
 // The two names live in a neutral module (the bot worker imports them without this file's closure).
 export { HOST_CONTEXT_STUB, REVIEWER_STUB };
@@ -175,6 +175,6 @@ export function prepareHostRun(o: {
   // tool reads them from the agent dir's `agents`.
   buildBenchAgents(o.root, o.cfg, join(o.agentDir, "agents"), o.profile);
   mkdirSync(cwd, { recursive: true });
-  copyFileSync(join(o.root, REVIEWER_STUB), join(cwd, HOST_CONTEXT_STUB));
+  copyFileSync(reviewerStubSource(o.root), join(cwd, HOST_CONTEXT_STUB));
   return { agentDir: o.agentDir, cwd, strayContext: ancestorContextFiles(cwd) };
 }

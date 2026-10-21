@@ -31,7 +31,7 @@ import {
   createFindingClusters,
 } from "../../extensions/finding-clusters.js";
 import { createLedgerPin, ledgerPinConfigFromEnv } from "../../extensions/ledger-pin.js";
-import { HOST_CONTEXT_STUB, REVIEWER_STUB } from "../reviewerstub.js";
+import { HOST_CONTEXT_STUB, reviewerStubSource } from "../reviewerstub.js";
 import { DEFAULT_TOOLS } from "./pisdk.js";
 import type { SessionSpec } from "./port.js";
 import type { SessionExtras } from "./sdkruntime.js";
@@ -61,15 +61,10 @@ export const BASH_ENV_ALLOW = ["GIT_*", "QCR_*"] as const;
  * places are tried. A round without the stub fails here, loudly: a context file
  * is never dropped silently. */
 export function reviewerStub(root: string, cwd: string): { path: string; content: string } {
-  const sources = [join(root, REVIEWER_STUB), join(root, HOST_CONTEXT_STUB)];
-  for (const source of sources) {
-    try {
-      return { path: join(cwd, HOST_CONTEXT_STUB), content: readFileSync(source, "utf8") };
-    } catch {
-      // try the next place
-    }
-  }
-  throw new Error(`the reviewer context stub is missing at ${sources.join(" and ")}`);
+  return {
+    path: join(cwd, HOST_CONTEXT_STUB),
+    content: readFileSync(reviewerStubSource(root), "utf8"),
+  };
 }
 
 /** The per-session pieces of a round's main session on the SDK runtime. */

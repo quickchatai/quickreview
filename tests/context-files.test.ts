@@ -869,11 +869,10 @@ describe("the one install site", () => {
       "extensions/bash-guard.ts", // a policy surface no session may write
       "extensions/debug-round.ts", // a debug round's lens passes carry the stub the cwd holds, as data; it writes none
       "scripts/deploy.sh", // a name the base clone may not take
-      "src/debuground.ts", // names the stub's path in the debug round spec so its lens passes carry it as data; it writes none
       "src/engine/roundsdk.ts", // the SDK round's stub as in-memory data for the session, never written to a checkout
       "src/hostroute.ts", // the clone route's per-run copy, into the run's own out dir
       "src/resumecheck.ts", // the offline resume check compares a session's context file with the stub text; reads, never writes
-      "src/reviewerstub.ts", // the neutral home of the stub's two names; constants only
+      "src/reviewerstub.ts", // the neutral home of the stub's two names and the one resolver of its source (a checkout's or an image's); reads, never writes
       "src/usage.ts", // the cost split counts it as a context file
     ]);
   });
@@ -897,7 +896,7 @@ describe("the one install site", () => {
       .filter((f) => read(f).includes("HOST_CONTEXT_STUB"))
       .sort();
     // roundsdk.ts only hands the stub to the SDK session as data; it writes nothing.
-    // reviewerstub.ts is the neutral home of the two names and only declares them.
+    // reviewerstub.ts is the neutral home of the two names and finds the stub; it writes nothing.
     expect(users).toEqual(["src/engine/roundsdk.ts", "src/hostroute.ts", "src/reviewerstub.ts"]);
     expect(read("src/engine/roundsdk.ts")).not.toMatch(
       /(writeFile|copyFile|cpSync|renameSync|symlinkSync)\w*\(/,
@@ -909,7 +908,7 @@ describe("the one install site", () => {
     expect(text.match(/copyFileSync\([^\n]*HOST_CONTEXT_STUB\)/g)).toHaveLength(1);
     // …into the run's cwd only, after the guard that keeps it out of a checkout.
     expect(text).toMatch(
-      /is inside the checkout[\s\S]*copyFileSync\(join\(o\.root, REVIEWER_STUB\), join\(cwd, HOST_CONTEXT_STUB\)\)/,
+      /is inside the checkout[\s\S]*copyFileSync\(reviewerStubSource\(o\.root\), join\(cwd, HOST_CONTEXT_STUB\)\)/,
     );
   });
 

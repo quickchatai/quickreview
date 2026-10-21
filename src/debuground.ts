@@ -61,6 +61,7 @@ import {
 import type { CommandLookup } from "./ipc/protocol.js";
 import type { WorkerSpec } from "./ipc/workerspec.js";
 import { sessionCommandMarker } from "./session-command.js";
+import { findReviewerStub } from "./reviewerstub.js";
 import { verifiedPayload } from "./session-command-payload.js";
 import type { HostLeaseRow, SessionCommandRow, StateStore } from "./state.js";
 import { killHostPane } from "./takeover.js";
@@ -585,7 +586,7 @@ export class DebugRoundManager {
     const passes = join(spec.root, "state", `pr-${row.pr}-round-${round}-passes`);
     const lensDir = spec.lens_dir ?? join(spec.root, "state", "lens", spec.session, `r${round}`);
     const file = this.deps.newestSessionFile(spec.session_dir);
-    const stub = join(spec.root, "deploy", "reviewer", "AGENTS.override.md");
+    const stub = findReviewerStub(spec.root);
     const out: DebugRoundSpec = {
       v: 1,
       pr: row.pr,
@@ -601,7 +602,7 @@ export class DebugRoundManager {
       session_dir: spec.session_dir,
       model: spec.model,
       system_prompt_file: spec.system_prompt_file,
-      ...(existsSync(stub) ? { stub_file: stub } : {}),
+      ...(stub ? { stub_file: stub } : {}),
       extensions: DEBUG_BOT_EXTENSIONS.map((e) => join(spec.root, e)),
       payload_path: row.payload_path,
       payload_sha256: row.payload_sha256,
