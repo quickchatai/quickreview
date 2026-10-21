@@ -107,6 +107,13 @@ const ARGV_ENV_PREFIXES = ["QCR_", "OPENVIKING_", "GIT_CONFIG_"] as const;
  *     that block stays load-bearing. Env pins the floor; the guard stops it
  *     being lifted.
  */
+/** `QCR_SECRETS_MOUNT` from the daemon's own environment, when it names an
+ * absolute path (`docker/entrypoint.sh` exports it in every daemon container). */
+export function secretsMountEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const mount = env.QCR_SECRETS_MOUNT?.trim() ?? "";
+  return mount.startsWith("/") ? { QCR_SECRETS_MOUNT: mount } : {};
+}
+
 export function sessionGitConfigPins(piHome: string): Record<string, string> {
   return {
     // The global scope, named rather than searched for.
@@ -417,6 +424,13 @@ export class PiSessionManager {
       QCR_INJECT_DIR: this.injectDir(session),
       QCR_LEDGER_FILE: this.ledgerPath(session),
       QCR_SECRETS_DIR: this.cfg.github.secrets_dir,
+      // Inside a daemon container the secrets are the mount the entrypoint
+      // names, the install locator's first answer: the session's HOME holds no
+      // install home, so without it mint-token.sh (pr-checks.sh's sanctioned
+      // read) looks for the App id under that HOME and finds none (the 1.0.4
+      // cutover's first worker round). A path, not a credential; bash-guard
+      // also reads it into its secret-path set.
+      ...secretsMountEnv(),
       QCR_PI_VERSION: this.cfg.pi.version,
       // The engine lens tool's config (`[engine] lens_*`): the worker's lens
       // runner reads these names back (lensRunConfigFromEnv).

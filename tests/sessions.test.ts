@@ -21,6 +21,7 @@ import {
   isSandboxSession,
   prOfSession,
   prSessionName,
+  secretsMountEnv,
 } from "../src/sessions.js";
 import { Tmux } from "../src/tmux.js";
 import type { ExecFn } from "../src/tmux.js";
@@ -353,6 +354,24 @@ describe("birth", () => {
    * GIT_CONFIG_GLOBAL=… <cmd>` puts the value in a GRANDCHILD's environment and
    * `HOME=<evil> git diff --no-index` does not execute there.
    */
+
+  it("carries the daemon container's secrets mount, so the session's mint-token.sh finds the App (1.0.4)", () => {
+    expect(secretsMountEnv({ QCR_SECRETS_MOUNT: "/opt/quickreview/secrets" })).toEqual({
+      QCR_SECRETS_MOUNT: "/opt/quickreview/secrets",
+    });
+    // a relative or empty value is no mount: the locator's later rules decide
+    expect(secretsMountEnv({ QCR_SECRETS_MOUNT: "secrets" })).toEqual({});
+    expect(secretsMountEnv({ QCR_SECRETS_MOUNT: " " })).toEqual({});
+    expect(secretsMountEnv({})).toEqual({});
+    const prior = process.env.QCR_SECRETS_MOUNT;
+    process.env.QCR_SECRETS_MOUNT = "/opt/quickreview/secrets";
+    try {
+      expect(manager().buildEnv("pr-42").QCR_SECRETS_MOUNT).toBe("/opt/quickreview/secrets");
+    } finally {
+      if (prior === undefined) delete process.env.QCR_SECRETS_MOUNT;
+      else process.env.QCR_SECRETS_MOUNT = prior;
+    }
+  });
 
   it("builds an env with the app key only — no personal credential", async () => {
     process.env.QCR_TEST_PERSONAL_TOKEN = "ghp_personal";
