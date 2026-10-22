@@ -134,6 +134,7 @@ describe("the scan leaf runner under [engine] runtime", () => {
     expect(out).toMatchObject({
       ok: false,
       reason: expect.stringMatching(/not available on the scan route/),
+      cost_usd: 0,
     });
     expect(i.calls()).toBe(0);
   });

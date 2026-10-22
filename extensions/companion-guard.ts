@@ -133,6 +133,20 @@ export const BASH_RULES: BashRule[] = [
   },
 ];
 
+/** `git checkout <tree-ish> <path>…` without `--`: two or more operands and no
+ * branch-creating or tracking option, so the extras are paths. */
+function checkoutHasPathOperands(args: string[]): boolean {
+  const operands: string[] = [];
+  for (const arg of args) {
+    if (arg.startsWith("-")) {
+      if (/^-[bB]|^--(orphan|track|no-track|detach|merge|conflict)|^-[tmfq]/.test(arg)) return false;
+      continue;
+    }
+    operands.push(arg);
+  }
+  return operands.length >= 2;
+}
+
 /** First matching bash rule's reason, or undefined when the command is fine. */
 export function bashBlockReason(
   command: string,
@@ -202,7 +216,7 @@ export function bashBlockReason(
           if (!staged || worktree)
             return "rule 11: git restore that touches the worktree discards uncommitted changes. Use --staged or -S alone to change only the index.";
         }
-        if (verb === "checkout" && args.includes("--"))
+        if (verb === "checkout" && (args.includes("--") || checkoutHasPathOperands(args)))
           return "rule 11: git checkout with path operands discards uncommitted changes in the shared checkout.";
         // Apply the existing bright lines after consuming git's global options.
         const normalized = `git ${words.slice(at).join(" ")}`;

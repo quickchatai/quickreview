@@ -153,6 +153,10 @@ describe("the delta and match tools", () => {
 
     const q = await call(defs, "scan_matches");
     expect(q).toMatch(/^MATCH QUESTION (\w+)/);
+    expect(q).toMatch(/a dismissed one stays dismissed/);
+    expect(defs.find((d) => d.name === "scan_match")!.description).toMatch(
+      /unpaired dismissed finding stays dismissed/,
+    );
     const qkey = /^MATCH QUESTION (\w+)/.exec(q)![1]!;
     const [oldFp, newFp] = [...q.matchAll(/^ {2}- ([0-9a-f]{64}) /gm)].map((m) => m[1]!);
     expect(await call(defs, "scan_match", { key: "stale", pairs: [] })).toMatch(
