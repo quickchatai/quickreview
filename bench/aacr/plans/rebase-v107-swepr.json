@@ -1,0 +1,13 @@
+{
+  "name": "rebase-v107-swepr",
+  "note": "v1.0.7 re-baseline against final1 @ e32f0cf. Image built FROM the published release image ghcr.io/quickchatai/quickreview@sha256:44f41fea0e1f0ca6a46405f72173e7083b63e41ed9d3c2f4e8cf1a738cf84358 (QCR_BENCH_RELEASE_IMAGE), bench layer at v1.0.7 = eedf999c (QCR_RERUN_HEAD). Config = final1's model overrides (models.overseer dropped: retired, ignored) plus the three knobs that drifted since final1: the six luna lenses back on gpt-6.1-sol:medium (models.pass_models), review.sweep_group_files=5 (code default is now 8), engine.lens_max_concurrency=12 (final1's [pi] subagent_max_concurrency). Runtime is the SDK + engine wave, the only one left. Optional stage 4 (separate go): SWE-PRBench eval100. NOT paired with final1 (final1 never ran it); its comparator is ext-r5-sweprbench-eval100 (build r5, older), so this is a fresh number, not a regression test.",
+  "image": "qcr-bench:v107",
+  "prefix": "v107",
+  "config": "models.default=openai-codex/gpt-6.1-sol,models.conversation=openai-codex/gpt-6.1-sol,models.tiers.terra-med=openai-codex/gpt-6.1-sol:medium,models.tiers.sol-med=openai-codex/gpt-6.1-sol:medium,models.tiers.sol-high=openai-codex/gpt-6.1-sol:high,models.pass_models.pass-maintainability=openai-codex/gpt-6.1-sol:medium,models.pass_models.pass-duplication=openai-codex/gpt-6.1-sol:medium,models.pass_models.pass-abstraction=openai-codex/gpt-6.1-sol:medium,models.pass_models.pass-consistency=openai-codex/gpt-6.1-sol:medium,models.pass_models.pass-placement=openai-codex/gpt-6.1-sol:medium,models.pass_models.pass-simplicity=openai-codex/gpt-6.1-sol:medium,review.sweep_group_files=5,engine.lens_max_concurrency=12",
+  "sets": [
+    {
+      "set": "sweprbench-eval100",
+      "scorer": "swepr"
+    }
+  ]
+}
