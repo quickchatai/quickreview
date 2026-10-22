@@ -139,7 +139,7 @@ function checkoutHasPathOperands(args: string[]): boolean {
   const operands: string[] = [];
   for (const arg of args) {
     if (arg.startsWith("-")) {
-      if (/^-[bB]|^--(orphan|track|no-track|detach|merge|conflict)|^-[tmfq]/.test(arg)) return false;
+      if (/^-[bBt]|^--(orphan|track|no-track|detach)\b/.test(arg)) return false;
       continue;
     }
     operands.push(arg);
