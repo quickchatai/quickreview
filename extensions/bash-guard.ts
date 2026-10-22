@@ -1353,6 +1353,9 @@ export const APP_SECRET_FILES: readonly string[] = [
   "openai_embeddings_api_key",
   "slack_bot_token",
   "slack_app_token",
+  // The reviewer's OpenViking key (the root key has its own rule above). The
+  // session's memory extension reads it in-process, never through bash.
+  "openviking_reviewer_key",
 ];
 const APP_SECRET_NAME_RE = new RegExp(
   `^(?:${APP_SECRET_FILES.map(escapeRe).join("|")}|openai[A-Za-z0-9_.-]*key)$`,

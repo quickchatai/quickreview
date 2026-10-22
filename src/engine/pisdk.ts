@@ -69,6 +69,7 @@ import type { AgentsFile } from "./port.js";
 import {
   FENCED_TOOLS,
   createToolFence,
+  credentialPaths,
   fencedOperations,
   guardedTool,
   loginSourceDirs,
@@ -420,11 +421,13 @@ export interface PiHostOptions {
   setprivBin?: string;
   /** What the file tools may not reach. Omitted: /proc, /run/qcr-in, /qcr-login,
    * the host's agent dir, this home's pi dir, the login sources this process's
-   * env names (PI_CODING_AGENT_DIR, QCR_SCAN_AUTH_SRC) and `fenceDirs`.
+   * env names (PI_CODING_AGENT_DIR, QCR_SCAN_AUTH_SRC), the credentials it
+   * points at (toolfence.ts credentialPaths) and `fenceDirs`.
    * `false` turns the fence off. */
   fence?: ToolFence | false;
-  /** More directories for the default fence: where a caller's login source is
-   * when it is not in the process env (reviewsdk's processEnv). */
+  /** More paths for the default fence: where a caller's login source and
+   * credentials are when they are not in the process env (reviewsdk's
+   * processEnv, a bot worker's session env). */
   fenceDirs?: readonly string[];
 }
 
@@ -597,6 +600,7 @@ export class PiHost {
               options.agentDir,
               join(homedir(), ".pi"),
               ...loginSourceDirs(process.env),
+              ...credentialPaths(process.env),
               ...(options.fenceDirs ?? []),
             ],
           }));

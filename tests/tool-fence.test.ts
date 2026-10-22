@@ -12,6 +12,7 @@ import { loadImageSniffer } from "../src/engine/pisdk.js";
 import {
   ToolFenceError,
   createToolFence,
+  credentialPaths,
   loginSourceDirs,
   toolPath,
 } from "../src/engine/toolfence.js";
@@ -443,6 +444,137 @@ describe("the file tools and the login source, through a real session", () => {
       f?.close();
       if (before === undefined) delete process.env["PI_CODING_AGENT_DIR"];
       else process.env["PI_CODING_AGENT_DIR"] = before;
+    }
+  });
+});
+
+// The credentials: the bot's model ran its file tools as the uid that
+// owns /opt/quickreview/secrets, so a PR could commit a symlink to app.pem and the
+// read tool would follow it. The fence names every secrets dir the install
+// could use, the IPC run dir and the sessions' ovcli.conf.
+describe("the credentials the env points at", () => {
+  let dir: string;
+  let secrets: string;
+  let work: string;
+  let ovcli: string;
+  let run: string;
+  const PEM = "-----BEGIN RSA PRIVATE KEY----- app-key-material";
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "fence-creds-"));
+    secrets = join(dir, "secrets");
+    work = join(dir, "wt", "pr-1");
+    run = join(dir, "state", "run");
+    ovcli = join(dir, "pihome", ".openviking", "ovcli.conf");
+    for (const d of [secrets, work, run, join(dir, "pihome", ".openviking")])
+      mkdirSync(d, { recursive: true });
+    writeFileSync(join(secrets, "app.pem"), PEM);
+    writeFileSync(join(secrets, "openviking_reviewer_key"), "reviewer-key");
+    writeFileSync(join(secrets, "webhook_secret"), "hook");
+    writeFileSync(ovcli, '{"api_key":"reviewer-key"}');
+    writeFileSync(join(work, "a.txt"), "ok");
+    // what a PR can commit: links into the secrets, the key file, the socket dir
+    symlinkSync(join(secrets, "app.pem"), join(work, "innocent.md"));
+    symlinkSync("../../secrets", join(work, "docs"));
+    symlinkSync(ovcli, join(work, "ov.json"));
+    symlinkSync(run, join(work, "run"));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const env = (): NodeJS.ProcessEnv => ({
+    HOME: join(dir, "home"),
+    QCR_SECRETS_MOUNT: secrets,
+    QCR_IPC_SOCKET: join(run, "qcr.sock"),
+    OPENVIKING_CLI_CONFIG_FILE: ovcli,
+  });
+
+  it("names the secrets mount, the container mount, the config home's, the run dir and ovcli.conf", () => {
+    const paths = credentialPaths(env());
+    for (const p of [
+      secrets,
+      "/opt/quickreview/secrets",
+      join(dir, "home", ".config", "qcr", "default", "secrets"),
+      join(dir, "home", ".config", "quickreview-bot"),
+      run,
+      ovcli,
+    ])
+      expect(paths, p).toContain(p);
+    // a relative ovcli path is no path; nothing is duplicated across envs
+    expect(credentialPaths({ OPENVIKING_CLI_CONFIG_FILE: "rel/ovcli.conf" })).not.toContain(
+      "rel/ovcli.conf",
+    );
+    const twice = credentialPaths(env(), env());
+    expect(new Set(twice).size).toBe(twice.length);
+  });
+
+  it("refuses the files and every link a worktree can carry to them", () => {
+    const fence = createToolFence({ dirs: credentialPaths(env()) });
+    const refused = (p: string): boolean => {
+      try {
+        fence.check(p);
+        return false;
+      } catch (e) {
+        return e instanceof ToolFenceError;
+      }
+    };
+    for (const p of [
+      join(secrets, "app.pem"),
+      join(secrets, "webhook_secret"),
+      join(secrets, "openviking_reviewer_key"),
+      secrets,
+      ovcli,
+      join(run, "qcr.sock"),
+      join(work, "innocent.md"),
+      join(work, "docs", "app.pem"),
+      join(work, "docs"),
+      join(work, "ov.json"),
+      join(work, "run", "caps"),
+    ])
+      expect(refused(p), p).toBe(true);
+    expect(refused(join(work, "a.txt"))).toBe(false);
+  });
+
+  it("a real session's read tool gets a refusal for the committed link, never the key", async () => {
+    // MUTATION: drop `...credentialPaths(process.env)` from PiHost's default
+    // fence and the env-only case below reads the key.
+    const before = process.env["QCR_SECRETS_MOUNT"];
+    process.env["QCR_SECRETS_MOUNT"] = secrets;
+    const rigs: HostRig[] = [];
+    try {
+      // the process env alone (a host built without fenceDirs), and a worker's
+      // session env handed as fenceDirs
+      rigs.push(await createHostRig());
+      delete process.env["QCR_SECRETS_MOUNT"];
+      rigs.push(await createHostRig({ fenceDirs: credentialPaths({}, env()) }));
+      for (const [i, r] of rigs.entries()) {
+        // the process env names no ovcli.conf; the session env does
+        const paths = ["innocent.md", "docs/app.pem", join(secrets, "app.pem")];
+        for (const path of i === 1 ? [...paths, "ov.json"] : paths) {
+          const session = await r.host.makeSession({
+            cwd: work,
+            env: { PATH: process.env["PATH"] },
+            model: r.faux.getModel(),
+            tools: ["read"],
+          });
+          r.faux.setResponses([
+            fauxAssistantMessage([fauxToolCall("read", { path })], { stopReason: "toolUse" }),
+            fauxAssistantMessage("done"),
+          ]);
+          await session.prompt("go");
+          const result = session.messages.find((m) => m.role === "toolResult") as unknown as {
+            isError: boolean;
+            content: { text: string }[];
+          };
+          const text = result.content.map((c) => c.text).join("\n");
+          expect(result.isError, path).toBe(true);
+          expect(text, path).toContain("access refused");
+          expect(text, path).not.toContain("app-key-material");
+          expect(text, path).not.toContain("reviewer-key");
+        }
+      }
+    } finally {
+      for (const r of rigs) r.close();
+      if (before === undefined) delete process.env["QCR_SECRETS_MOUNT"];
+      else process.env["QCR_SECRETS_MOUNT"] = before;
     }
   });
 });

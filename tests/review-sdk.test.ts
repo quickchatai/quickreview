@@ -223,7 +223,9 @@ describe("reviewSdkRuntime", () => {
         },
       });
       await (await rt.create(spec())).dispose();
-      expect(seen[0]!.fenceDirs).toEqual(["/qcr-login", "/src/login"]);
+      // the login sources first, then the credentials the envs point at
+      expect(seen[0]!.fenceDirs!.slice(0, 2)).toEqual(["/qcr-login", "/src/login"]);
+      expect(seen[0]!.fenceDirs).toContain("/opt/quickreview/secrets");
     });
 
     it("the engine lens route takes the split", async () => {

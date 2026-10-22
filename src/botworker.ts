@@ -76,7 +76,7 @@ import { LENS_SESSIONS_DIR } from "./engine/openable.js";
 import { PiHost, headerId, type PiHostOptions } from "./engine/pisdk.js";
 import type { RuntimeSession, SessionSpec, TurnOptions, TurnResult } from "./engine/port.js";
 import { engineLensConfig } from "./engine/reviewsdk.js";
-import { loginSourceDirs } from "./engine/toolfence.js";
+import { credentialPaths, loginSourceDirs } from "./engine/toolfence.js";
 import { checkToolUid, toolIdsOf } from "./engine/tooluid.js";
 import { connectFromEnv, type IpcClient } from "./ipc/client.js";
 import { brokerPermits } from "./ipc/permits.js";
@@ -429,7 +429,7 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
         agentDir: spec.agent_dir,
         ownsProcess: true,
         ...(ids !== null && !("refused" in ids) ? { toolUid: ids } : {}),
-        fenceDirs: loginSourceDirs(env),
+        fenceDirs: [...loginSourceDirs(env), ...credentialPaths(env, spec.env)],
         credentials: auth.credentials,
         settings: agentDirSettings(spec.agent_dir),
       });

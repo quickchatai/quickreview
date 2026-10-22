@@ -7,6 +7,9 @@
 //   /run/qcr-in    where the caller staged the token (read once and unlinked,
 //                  but the mount is the caller's)
 //   the agent dir  the run's login copy, models and settings
+//   credentials    the secrets dirs (the App key, the webhook secret, the
+//                  OpenViking keys), the IPC run dirs and the sessions'
+//                  ovcli.conf (credentialPaths)
 //
 // The model's bash runs as another uid (tooluid.ts) and so cannot reach them;
 // these tools can. Plain path matching is not enough: bash, as the tool uid,
@@ -35,6 +38,7 @@ import type {
   ToolDefinition,
   WriteOperations,
 } from "@earendil-works/pi-coding-agent";
+import { defaultSecretPathContext } from "../../extensions/bash-guard.js";
 
 /** What no file tool may reach, besides the run's agent dirs. `/qcr-login` is
  * where the wrapper and the Action mount the owner's login volume: its
@@ -51,6 +55,36 @@ export function loginSourceDirs(env: NodeJS.ProcessEnv): string[] {
   return ["PI_CODING_AGENT_DIR", "QCR_SCAN_AUTH_SRC"]
     .map((k) => env[k]?.trim())
     .filter((v): v is string => v !== undefined && v !== "" && isAbsolute(v));
+}
+
+/**
+ * The credentials an `env` points at, which no file tool may reach:
+ *
+ *   - every secrets dir this install could be using: the App's private key, the
+ *     webhook secret and the OpenViking keys live there. The list is the bash
+ *     guard's own (`defaultSecretPathContext`, which mirrors the install
+ *     locator: `$QCR_SECRETS_MOUNT`, the container mount, `$QC_SECRETS_DIR`,
+ *     `<config home>/secrets`, a `[github] secrets_dir` read from
+ *     `$QCR_CONFIG`, and the legacy dir), so the shell belt and this fence
+ *     name the same places;
+ *   - the daemon's IPC run dirs (the socket and the capability launch files);
+ *   - the memory CLI config the env names (`OPENVIKING_CLI_CONFIG_FILE`, the
+ *     sessions' ovcli.conf): it holds the reviewer key, which the in-process
+ *     memory extension reads itself and the model has no use for.
+ *
+ * Our own code reads these with plain fs calls, never through the tools, so
+ * fencing them takes nothing away from it. Every absolute path, deduplicated;
+ * a path that does not exist is fenced lexically and by its resolved prefix.
+ */
+export function credentialPaths(...envs: NodeJS.ProcessEnv[]): string[] {
+  const out = new Set<string>();
+  for (const env of envs) {
+    const ctx = defaultSecretPathContext(env, "/");
+    for (const d of [...ctx.dirs, ...(ctx.runDirs ?? [])]) out.add(d);
+    const ovcli = env["OPENVIKING_CLI_CONFIG_FILE"]?.trim();
+    if (ovcli !== undefined && isAbsolute(ovcli)) out.add(resolve(ovcli));
+  }
+  return [...out];
 }
 
 /** The names of the file tools behind the fence. */
