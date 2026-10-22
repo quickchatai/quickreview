@@ -132,7 +132,7 @@ export function checkToolUid(
  * Opens `dir` and everything in it to the tool uid's group: group read and
  * write on files, and group access on directories, each entry handed to the
  * tool gid (`QCR_TOOL_GID`) where that is not this process's own gid (the
- * bot's tools run in a gid of their own,; the cli's share the run
+ * bot's tools run in a gid of their own; the cli's share the run
  * gid). For a process that runs as the tool uid and needs what the run uid
  * made private (a debug round's pi reading its agent dir); the owner's bits
  * stay. Symbolic links are left as they are, and a missing dir is nothing to

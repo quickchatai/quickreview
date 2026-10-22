@@ -118,6 +118,7 @@ function confText(root: string, backups: string, memState: string, upd: string):
     "WEBHOOK_PORT=8787",
     "CONTAINER_UID=1001",
     "TOOL_UID=65534",
+    "TOOL_GID=4749",
     "TZ=Europe/Warsaw",
     "DAEMON_CPUS=2",
     "DAEMON_MEMORY=8g",
