@@ -33,6 +33,7 @@
 //     RE-POINTING the pin (COMMAND_INJECTING_ENV).
 import { readFileSync, realpathSync } from "node:fs";
 import { posix } from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
   ExtensionAPI,
   ExtensionFactory,
@@ -370,21 +371,34 @@ function ghApiEffectiveMethod(args: string[]): string {
   let body = false;
   for (let j = 0; j < args.length; j++) {
     const a = args[j]!;
-    if (a === "-X" || a === "--method") {
+    if (a === "--") break;
+    if (a === "--method") {
       explicit = (args[j + 1] ?? "").toUpperCase();
+      j++;
       continue;
     }
-    const attached = /^(?:-X|--method=)(.+)$/.exec(a);
+    const attached = /^--method=(.*)$/.exec(a);
     if (attached) {
       explicit = attached[1]!.toUpperCase();
       continue;
     }
-    if (
-      GH_API_BODY_FLAGS.has(a) ||
-      GH_API_BODY_FLAG_ATTACHED.test(a) ||
-      GH_API_SHORT_BODY_CLUSTER.test(a)
-    ) {
-      body = true;
+    if (GH_API_BODY_FLAGS.has(a) || GH_API_BODY_FLAG_ATTACHED.test(a)) body = true;
+    if (/^--(?:header|jq|template|preview|hostname|cache|input|field|raw-field)$/.test(a)) {
+      j++; // a value, never a flag
+      continue;
+    }
+    if (/^-[A-Za-z]/.test(a) && !a.startsWith("--")) {
+      // A short cluster: switches, then at most one flag that takes the rest of
+      // the word (or the next word) as its value.
+      if (GH_API_SHORT_BODY_CLUSTER.test(a)) body = true;
+      for (let k = 1; k < a.length; k++) {
+        const ch = a[k]!;
+        if (!"XHqtpfF".includes(ch)) continue;
+        const rest = a.slice(k + 1);
+        if (ch === "X") explicit = (rest || (args[j + 1] ?? "")).toUpperCase();
+        if (rest === "") j++;
+        break;
+      }
     }
   }
   if (explicit !== null) return explicit || "GET";
@@ -1144,7 +1158,7 @@ function checkProgram(
         `exec policy: 'xargs ${reader}' can receive executable or output operands from stdin — use a direct, fully specified reader invocation`,
       );
     }
-    if (["sed", "sort", "git", "gh"].includes(reader)) {
+    if (["sed", "sort", "git", "gh", "rg"].includes(reader)) {
       const replaces = args
         .slice(0, at)
         .some((a) => /^(?:-[a-zA-Z]*[Ii]|--replace)/.test(dequote(a)));
@@ -1200,7 +1214,7 @@ export function splitShellSegments(cmd: string): string[] {
       cur += ch;
       continue;
     }
-    if (ch === "'") {
+    if (ch === "'" && q !== '"') {
       q = "'";
       cur += ch;
       continue;
@@ -1456,6 +1470,9 @@ const PATTERN_PROGRAMS = new Set(["grep", "egrep", "fgrep", "rg", "sed"]);
 /** Their options that consume the NEXT word as a value, so the value is not
  * mistaken for the pattern. (`-e`/`--regexp`/`--expression` are handled
  * separately: their value IS the pattern.) */
+/** Value-taking in rg (`-E` an encoding, `-T` a type) but a plain switch in
+ * grep (`-T` initial tab, `-E` extended regexes) and sed (`-E`). */
+const RG_ONLY_VALUE_OPTS = new Set(["-E", "-T"]);
 const PATTERN_PROGRAM_VALUE_OPTS = new Set([
   "-A",
   "-B",
@@ -1581,6 +1598,7 @@ function patternWordIndexes(words: readonly string[]): Set<number> {
   }
   if (p >= words.length || !PATTERN_PROGRAMS.has(basenameOf(dequoteShellWord(words[p]!))))
     return out;
+  const isRg = basenameOf(dequoteShellWord(words[p]!)) === "rg";
   let explicit = false;
   let firstPositional = -1;
   for (let i = p + 1; i < words.length; i++) {
@@ -1610,7 +1628,7 @@ function patternWordIndexes(words: readonly string[]): Set<number> {
       continue;
     }
     if (w.startsWith("-")) {
-      if (PATTERN_PROGRAM_VALUE_OPTS.has(w)) i++;
+      if (PATTERN_PROGRAM_VALUE_OPTS.has(w) && (isRg || !RG_ONLY_VALUE_OPTS.has(w))) i++;
       continue;
     }
     if (/^\d*[<>]/.test(w)) continue;
@@ -2607,6 +2625,13 @@ interface ReaderModeRule {
   what: string;
 }
 
+/** Regex alternatives matching every prefix of `name` at least `min` long. */
+function longOptionPrefixes(name: string, min: number): string {
+  const out: string[] = [];
+  for (let n = min; n <= name.length; n++) out.push(name.slice(0, n));
+  return out.join("|");
+}
+
 const READER_MODE_RULES: Readonly<Record<string, ReaderModeRule>> = {
   // -exec/-ok run a command; -delete removes files; the -fprint family writes
   // an arbitrary path (the `-fprintf` bypass above). find's primaries do not
@@ -2615,13 +2640,22 @@ const READER_MODE_RULES: Readonly<Record<string, ReaderModeRule>> = {
     flags: /^-(?:exec|execdir|ok|okdir|delete|fprintf|fprint|fprint0|fls)$/,
     what: "runs a command or writes a file",
   },
+  // --pre runs a program on every file searched; --hostname-bin runs one to
+  // name the host in hyperlinks. rg's long options do not abbreviate.
+  rg: {
+    flags: /^--(?:pre|hostname-bin)(?:=|$)/,
+    what: "runs a command",
+  },
   // -o/--output writes; --compress-program names a program sort execs when it
   // spills to temp files (refused on documented behaviour, not on a probe —
   // sort does not spill on a small input).
   // `o` is unambiguous in sort's short-option set, so a cluster carrying it is
   // an output redirect.
   sort: {
-    flags: /^(?:--(?:output|compress-program)(?:=|$)|-(?!-)[a-zA-Z]*o)/,
+    // getopt_long accepts any unique prefix of a long option (`--out`, `--com`).
+    flags: new RegExp(
+      `^(?:--(?:${longOptionPrefixes("output", 1)}|${longOptionPrefixes("compress-program", 2)})(?:=|$)|-(?!-)[a-zA-Z]*o)`,
+    ),
     what: "writes a file or names a program to run",
   },
   // sed is not here: `checkSedInvocation` parses it, which no pattern can match.
@@ -2969,7 +3003,19 @@ export function checkReaderModes(
     }
     return { allowed: true };
   }
-  const words = rawText === undefined ? args.map(dequote) : shellWords(rawText).words;
+  let words = rawText === undefined ? args.map(dequote) : shellWords(rawText).words;
+  if (["find", "sort", "uniq"].includes(prog)) {
+    // As for sed: an argument value the guard cannot see (`$flag`, a command
+    // substitution) could be the very option these rules refuse.
+    const text = rawText ?? rawArgs?.join(" ");
+    const read = text === undefined ? null : sedWords(text);
+    if (text !== undefined && read === null) {
+      return block(
+        `exec policy: '${prog}' has an argument the guard cannot read as words ($-expansion, a backtick, a quote cut by the command splitter), which could be an option that writes a file or runs a command — spell it out`,
+      );
+    }
+    if (read !== null) words = read;
+  }
   if (
     ["find", "sort", "uniq"].includes(prog) &&
     (args.some(opensUnmodelledQuoting) ||
@@ -2987,7 +3033,13 @@ export function checkReaderModes(
         continue;
       }
       if (options && a.startsWith("-") && a !== "-") {
-        if (/^-(?:f|s|w)$/.test(a) || /^--(?:skip-fields|skip-chars|check-chars)$/.test(a)) i++;
+        if (/^--(?:skip-fields|skip-chars|check-chars)$/.test(a)) i++;
+        else if (!a.startsWith("--")) {
+          // A short cluster: f, s and w take the rest of the cluster as their
+          // value, or the next word when they end it.
+          const at = a.slice(1).search(/[fsw]/);
+          if (at >= 0 && at === a.length - 2) i++;
+        }
         continue;
       }
       operands++;
@@ -3022,7 +3074,28 @@ export function checkReaderModes(
  * the ledger, /tmp bodies — is allowed. This is not a write allowlist.
  */
 export function checkWritePath(path: string): BashCheck {
-  return isProtectedWriteTarget(path) ? protectedWriteBlock(path) : { allowed: true };
+  for (const spelling of toolPathSpellings(path)) {
+    if (isProtectedWriteTarget(spelling)) return protectedWriteBlock(spelling);
+  }
+  return { allowed: true };
+}
+
+/** The spellings of a file tool's `path` argument that name a destination: as
+ * given, and as pi opens it (unicode spaces normalised, the `@` prefix dropped,
+ * a `file://` URL decoded). */
+function toolPathSpellings(path: string): string[] {
+  const out = [path];
+  let p = path.replace(/[\u00a0\u2000-\u200a\u202f\u205f\u3000]/g, " ");
+  if (p.startsWith("@")) p = p.slice(1);
+  if (/^file:\/\//.test(p)) {
+    try {
+      p = fileURLToPath(p);
+    } catch {
+      // pi cannot open an undecodable URL either
+    }
+  }
+  if (p !== path) out.push(p);
+  return out;
 }
 
 /** Tool names that take a file path and write it. Kept broad on purpose: a

@@ -2012,3 +2012,77 @@ describe("checkBashCommand — the IPC run dir", () => {
     expect(call("cat /srv/bot/state/verdict/x.json")?.block).toBeUndefined();
   });
 });
+
+describe("scan findings: spellings the guard must judge as the program receives them", () => {
+  it("keeps double-quote state across an apostrophe in the splitter", () => {
+    block(`echo "it's"; node /tmp/payload.js`, "node");
+    block(`echo "it's" && python3 /tmp/payload.py`, "python3");
+    allow(`echo "it's fine"`);
+    allow(`rg 'a"b' src`);
+  });
+
+  it("judges a write tool's file: URL and @ prefix by the destination they spell", () => {
+    for (const p of [
+      "file:///opt/quickreview/sandbox/%63onfig.toml",
+      "file:///opt/quickreview/sandbox/config.toml",
+      "@config.toml",
+      "@file:///opt/quickreview/sandbox/%63onfig.toml",
+      "file:///opt/quickreview/sandbox/%2Egit/config",
+    ]) {
+      expect(checkWritePath(p).allowed, `${p} should be refused`).toBe(false);
+    }
+    expect(checkWritePath("file:///tmp/body%20x.md").allowed).toBe(true);
+  });
+
+  it("refuses an expansion find, sort or uniq cannot be judged through", () => {
+    block('flag=-delete; find /tmp/victim "$flag"', "find");
+    block("flag=-delete; find /tmp/victim $flag", "find");
+    block("o=--output=config.toml; sort $o in.txt", "sort");
+    block("uniq $a in.txt", "uniq");
+    allow("find . -name '*.ts'");
+    allow("sort -u in.txt");
+  });
+
+  it("consumes the value of a clustered uniq option", () => {
+    allow("uniq -cf 1 input");
+    allow("uniq -cf1 input");
+    allow("uniq -cs 2 input");
+    block("uniq -c input out", "output operand");
+    block("uniq -cf 1 input out", "output operand");
+  });
+
+  it("classifies a method spelled inside a gh short-option cluster", () => {
+    block("gh api repos/o/n/issues/1 -iX DELETE", "DELETE");
+    block("gh api repos/o/n/issues/1 -iXDELETE", "DELETE");
+    block("gh api repos/o/n/issues/1 -X DELETE -H -XGET", "DELETE");
+    block("gh api repos/o/n/issues/1 -iX PATCH --input body.json", "PATCH");
+    allow("gh api repos/o/n/issues/1 -i");
+    allow("gh api repos/o/n/issues/1 -iX GET");
+    allow("gh api repos/o/n/issues/1 -H 'Accept: x'");
+  });
+
+  it("does not take grep's or sed's -E as an option with a value", () => {
+    block("grep -E . /proc/self/environ", "environ");
+    block("grep -T . /proc/self/environ", "environ");
+    block("sed -E 's/a/b/' /proc/self/environ", "environ");
+    // rg's -E takes an encoding, so its pattern is the word after it.
+    allow("rg -E utf-8 pattern src");
+    block("rg -E utf-8 pattern /proc/self/environ", "environ");
+  });
+
+  it("refuses rg's preprocessor and hostname command, direct or fed by xargs", () => {
+    block("rg --pre=/tmp/payload pattern input.txt", "rg");
+    block("rg --pre /tmp/payload pattern input.txt", "rg");
+    block("rg --hostname-bin=/tmp/payload pattern input.txt", "rg");
+    block("printf '%s\\n' --pre=/tmp/payload input.txt | xargs rg pattern", "closing '--'");
+    allow("git diff --name-only | xargs rg pattern --");
+    allow("rg -n pattern src");
+  });
+
+  it("refuses sort's output and compress-program under any unique abbreviation", () => {
+    for (const f of ["--out=config.toml", "--o=x", "--outp x", "--com=/tmp/payload", "--compress-p=x"])
+      block(`sort ${f} input.txt`, "sort");
+    allow("sort --reverse input.txt");
+    allow("sort --unique --key=2 input.txt");
+  });
+});
