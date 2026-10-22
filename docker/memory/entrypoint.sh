@@ -51,7 +51,20 @@ OV_VENV="${QCR_OPENVIKING_VENV:-/opt/openviking/venv}"
 # and ov.conf survive an image rebuild. The old daemon image used the same idiom.
 mkdir -p "$OV_HOME/workspace" || echo "openviking: could not create $OV_HOME/workspace" >&2
 BOOT_OK=1
-if [[ -e "$HOME/.openviking" && ! -L "$HOME/.openviking" ]]; then
+# config.toml's [github] secrets_dir names a host path; the loader resolves it to
+# the mount instead, as the daemon's container does.
+export QCR_SECRETS_MOUNT="$SECRETS"
+# Memory switched off in config.toml: the sidecar only idles, so no step below
+# renders, migrates or provisions. An unreadable config counts as enabled (degrade,
+# never block).
+OV_ENABLED="$(node --input-type=module -e \
+  'const m = await import(process.argv[1]); process.stdout.write(m.loadConfig().openviking.enabled ? "1" : "0")' \
+  "$APP/dist/src/config.js" 2>/dev/null || echo 1)"
+if [[ "$OV_ENABLED" == 0 ]]; then
+  BOOT_OK=0
+  echo "openviking: memory is disabled in config.toml; boot steps skipped" >&2
+fi
+if [[ "$BOOT_OK" == 1 && -e "$HOME/.openviking" && ! -L "$HOME/.openviking" ]]; then
   if cp -a "$HOME/.openviking/." "$OV_HOME/" && rm -rf "$HOME/.openviking"; then
     :
   else
