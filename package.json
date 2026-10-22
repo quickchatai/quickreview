@@ -1,6 +1,6 @@
 {
   "name": "quickreview",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "private": true,
   "//private": "kept deliberately: this repo is an application, not an npm library — the flag blocks an accidental `npm publish` and nothing in the toolchain depends on its absence",
   "description": "QuickReview — a sovereign 24/7 AI code-review daemon: deterministic TypeScript core driving sticky LLM review sessions, with an operator TUI, Slack concierge, and a continuous learning loop your org owns end to end",
