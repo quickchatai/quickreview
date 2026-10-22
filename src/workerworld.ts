@@ -39,6 +39,7 @@ import type { WorkerMode, WorkerSpec } from "./ipc/workerspec.js";
 import type { OvSessionLifecycle } from "./memory/ovsession.js";
 import { PostingJournal } from "./posting-journal.js";
 import { postingKeyHead } from "./posting-receipt.js";
+import type { GhReader } from "./ghread.js";
 import { commandRoundOf, type PostAdapter } from "./postops.js";
 import { newestSessionFile } from "./sessionjsonl.js";
 import { prSessionName, type PiSessionManager } from "./sessions.js";
@@ -77,6 +78,11 @@ export interface WorkerWorldOptions {
   root: string;
   store: StateStore;
   adapter: PostAdapter;
+  /** The helpers' GitHub reads (src/ghread.ts): the full adapter, in production. */
+  reader?: GhReader;
+  /** The model's tools run as a separate uid of the daemon's group (D32): the
+   * socket is opened to the group so their shims can dial in. */
+  toolUid?: boolean;
   /** The tmux manager that still serves the overseer: lends the worktrees, the OpenViking
    * and git environment, the system prompt writer and the tmux client the lease panes use. */
   sessions: PiSessionManager;
@@ -310,6 +316,7 @@ export function buildWorkerWorld(o: WorkerWorldOptions): WorkerWorld {
       log,
     },
     wakes: wakes.forWorker(),
+    ...(o.reader ? { ghRead: o.reader } : {}),
     permits: o.permits,
     hostGate: composeHostGates(takeover.hostGate.bind(takeover), debug.hostGate.bind(debug)),
     ...(o.loginGate ? { loginGate: o.loginGate } : {}),
@@ -330,6 +337,7 @@ export function buildWorkerWorld(o: WorkerWorldOptions): WorkerWorld {
   const server: IpcServer = new IpcServer({
     socketPath,
     capabilities,
+    ...(o.toolUid === true ? { groupAccess: true } : {}),
     // A debug round's command and a takeover's are known to their managers; every worker's
     // is the supervisor's.
     commands: composeLookups(debug.lookup, takeover.lookup, supervisor.lookup),

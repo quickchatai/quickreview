@@ -77,7 +77,7 @@ import { PiHost, headerId, type PiHostOptions } from "./engine/pisdk.js";
 import type { RuntimeSession, SessionSpec, TurnOptions, TurnResult } from "./engine/port.js";
 import { engineLensConfig } from "./engine/reviewsdk.js";
 import { credentialPaths, loginSourceDirs } from "./engine/toolfence.js";
-import { checkToolUid, toolIdsOf } from "./engine/tooluid.js";
+import { TOOL_UMASK, checkToolUid, toolIdsOf } from "./engine/tooluid.js";
 import { connectFromEnv, type IpcClient } from "./ipc/client.js";
 import { brokerPermits } from "./ipc/permits.js";
 import { IpcError, type IpcEventKind } from "./ipc/protocol.js";
@@ -900,6 +900,13 @@ async function main(): Promise<void> {
     process.stderr.write(`botworker: ${parsed.error}\n`);
     process.exit(EXIT.usage);
   }
+  // Under the tool uid (D32) the run uid and the tool uid share one
+  // gid: what this worker's file tools write (a verdict staged, a review body)
+  // the model's bash may rewrite (commit-verdict.sh, render-review.sh), and the
+  // reverse, so both write group-writable files. The daemon keeps its own umask:
+  // the files it writes for a session to read (the recall hints) stay its own.
+  const ids = toolIdsOf(process.env);
+  if (ids !== null && !("refused" in ids)) process.umask(TOOL_UMASK);
   // The supervisor's TERM is the hard stop (the process exit); this stops the
   // sessions first so a turn in flight is aborted and its JSONL closed.
   for (const sig of ["SIGTERM", "SIGINT"] as const)

@@ -25,12 +25,18 @@
 // round's does. The env it gets is an allowlist: no GitHub token of any name.
 import { spawn } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, readFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { GITHUB_TOKEN_ENVS } from "./envstrip.js";
 import { CAP_FD_INDEX } from "./ipc/capability.js";
 import { PI_REFRESH_MARGIN_MS, ENGINE_AUTH_WORDS, copyPiAuth } from "./engine/auth.js";
-import { checkToolUid, shareWithToolGroup, toolIsolation } from "./engine/tooluid.js";
+import {
+  TOOL_UMASK,
+  checkToolUid,
+  shareWithToolGroup,
+  toolIsolation,
+  toolUidEnv,
+} from "./engine/tooluid.js";
 import type { TakeoverSpec } from "./takeover.js";
 
 /** The env names the pane's pi may inherit. Everything else is dropped. */
@@ -255,13 +261,20 @@ export async function runTakeover(specFile: string, deps: TakeoverRunDeps = {}):
     log(`takeover: ${launch.refused}`);
     return 3;
   }
-  // The pi, as the tool uid, reads the agent dir the run uid made private.
-  if (launch.bin === "setpriv") shareWithToolGroup(spec.borrow_dir);
+  // The pi, as the tool uid, reads the agent dir the run uid made private, and
+  // appends to the PR's JSONL, which the run uid's worker wrote. What it
+  // writes stays group-writable for the worker of the next round.
+  const isolated = launch.isolated;
+  if (isolated) {
+    shareWithToolGroup(spec.borrow_dir);
+    shareWithToolGroup(dirname(spec.session_file));
+    process.umask(TOOL_UMASK);
+  }
   return (deps.run ?? onTerminal)({
     bin: launch.bin,
     args: launch.argv,
     cwd: spec.cwd,
-    env,
+    env: isolated ? toolUidEnv(env) : env,
   });
 }
 

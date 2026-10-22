@@ -77,6 +77,7 @@ import {
   type ControlAck,
   type ControlKind,
 } from "./ipc/control.js";
+import { type GhReader, ghReadOps } from "./ghread.js";
 import { type PermitBroker, permitOps } from "./ipc/permits.js";
 import type { EventHandler, OpHandler, RequestContext } from "./ipc/server.js";
 import {
@@ -140,6 +141,9 @@ export const WORKER_ENV_ALLOW: readonly string[] = [
   "QCR_TOOL_GID",
   "QCR_TOOL_UID_REQUIRED",
   "QCR_ALLOW_SHARED_TOOL_UID",
+  // The bot's setid helper, which the worker reaches the tool uid through
+  // (tooluid.ts setidHelperOf): a path, no secret.
+  "QCR_SETPRIV_BIN",
 ];
 
 export interface WorkerLimits {
@@ -331,6 +335,10 @@ export interface WorkerSupervisorDeps {
    * run through the one gate for a host's post shims. Omitted: the daemon does not
    * know the ops, and a shim's post is refused. */
   post?: PostOpsDeps;
+  /** The helpers' GitHub reads (src/ghread.ts): `github.read`, served
+   * with the App's token for the scripts the model's tool uid runs. Omitted: the
+   * daemon does not know the op. */
+  ghRead?: GhReader;
   /** Held wakes (P8.6). Omitted: the worker is told the daemon does not know the op. */
   wakes?: {
     take(ctx: RequestContext): WakeBatch[];
@@ -539,6 +547,8 @@ export class WorkerSupervisor {
       },
     };
     if (this.deps.post) Object.assign(ops, postOps(this.deps.post));
+    if (this.deps.ghRead)
+      Object.assign(ops, ghReadOps({ reader: this.deps.ghRead, log: this.log }));
     if (this.deps.permits) Object.assign(ops, permitOps(this.deps.permits));
     const wakes = this.deps.wakes;
     if (wakes) {

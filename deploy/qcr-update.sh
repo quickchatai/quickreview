@@ -113,7 +113,7 @@ declare -A C=()
 REQUIRED_KEYS=(
   RUNSPEC_VERSION RUNSPEC_FINGERPRINT SANDBOX_ROOT APP_ROOT
   DAEMON_CONTAINER MEMORY_CONTAINER DAEMON_IMAGE_REPO MEMORY_IMAGE_REPO
-  MEMORY_NETWORK WEBHOOK_PORT CONTAINER_UID TZ
+  MEMORY_NETWORK WEBHOOK_PORT CONTAINER_UID TOOL_UID TZ
   DAEMON_CPUS DAEMON_MEMORY MEMORY_CPUS MEMORY_MEMORY
   MEMORY_STATE_DIR OPENVIKING_HOME OPENVIKING_PORT BASE_CLONE_DIR LEGACY_SANDBOX_ROOT
   BACKUP_DIR UPDATE_STATE_DIR
@@ -510,6 +510,16 @@ image_runspec="$(image_label "$DAEMON_REF" qcr.runspec)"
 if [[ "$image_runspec" -gt "${C[RUNSPEC_VERSION]}" ]]; then
   die "refusing: the image needs run spec v$image_runspec but $CONF is v${C[RUNSPEC_VERSION]} — re-run provision"
 fi
+# The gate group of the image's setid helper (docker/Dockerfile): the
+# bot is given it, and the helper is what runs the model's tools as TOOL_UID. An
+# image from before the helper (run spec v1) has no label and needs no group.
+SETID_GID="$(image_label "$DAEMON_REF" qcr.setid-gid)"
+if [[ "$image_runspec" -ge 2 || -n "$SETID_GID" ]]; then
+  [[ "$SETID_GID" =~ ^[1-9][0-9]*$ ]] || die "$DAEMON_REF needs run spec v$image_runspec but has no numeric qcr.setid-gid label"
+  [[ "$SETID_GID" != "${C[CONTAINER_UID]}" ]] || die "$DAEMON_REF's setid gate group $SETID_GID is the container uid's own group"
+fi
+[[ "${C[TOOL_UID]}" =~ ^[1-9][0-9]*$ && "${C[TOOL_UID]}" != "${C[CONTAINER_UID]}" ]] ||
+  die "$CONF TOOL_UID (${C[TOOL_UID]}) must be a non-zero uid other than CONTAINER_UID — re-run provision"
 
 # ---- 5. stage the config and check it with the NEW image ---------------------------------------------------
 
@@ -667,6 +677,16 @@ daemon_args=(
   run -d --name "$DAEMON" --restart unless-stopped --init
   --cpus "${C[DAEMON_CPUS]}" --memory "${C[DAEMON_MEMORY]}" --memory-swap "${C[DAEMON_MEMORY]}"
   --user "$UID_GID"
+  # the model's tools run as TOOL_UID (QCR_TOOLS_AS), which cannot read
+  # secrets/ or pi's login; the bot reaches it through the image's setid helper,
+  # given by --group-add below. The bot stays this uid, so a `docker exec` lands
+  # as it. No capability beyond these: SETUID/SETGID for the helper's file
+  # capabilities, and CHOWN/DAC_OVERRIDE/FOWNER for the operator channel's
+  # `docker exec -u 0` (the root-owned commands/operator seal). no-new-privileges
+  # stays off: it would void the helper's file capabilities; the model's tools
+  # carry no_new_privs of their own.
+  --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER
+  -e "QCR_TOOLS_AS=${C[TOOL_UID]}"
   -p "127.0.0.1:${C[WEBHOOK_PORT]}:${C[WEBHOOK_PORT]}"
   --network "${C[MEMORY_NETWORK]}"
   -v "$ROOT/state:${C[APP_ROOT]}/state"
@@ -689,6 +709,9 @@ daemon_args=(
   -e "TZ=${C[TZ]}" -e "QC_REVIEW_PORT=${C[WEBHOOK_PORT]}" -e QC_BIND_HOST=0.0.0.0
   -e "QCR_CONFIG=$CONFIG_PATH_IN_CONTAINER"
 )
+if [[ -n "$SETID_GID" ]]; then
+  daemon_args+=(--group-add "$SETID_GID")
+fi
 if [[ -n "${C[DAEMON_ENV_FILE]:-}" && -f "${C[DAEMON_ENV_FILE]}" ]]; then
   daemon_args+=(--env-file "${C[DAEMON_ENV_FILE]}")
 fi

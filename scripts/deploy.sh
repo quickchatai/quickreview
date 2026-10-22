@@ -154,7 +154,7 @@ OV_UPSTREAM="$SANDBOX_DIR/extensions/vendor/openviking-pi/upstream.json"
 
 # The run-spec version this script renders and the images' qcr.runspec label
 # must not exceed (docker/Dockerfile; tests/deploy.test.ts pins the two).
-RUNSPEC_VERSION=1
+RUNSPEC_VERSION=2
 
 # The release images' version spelling: X.Y.Z, optionally -prerelease. No "latest"
 # exists. It names an image tag and the manifest.
@@ -862,6 +862,7 @@ runspec_body() {
   printf 'MEMORY_NETWORK=%s\n' "$(v memory_network quickreview-memory)"
   printf 'WEBHOOK_PORT=%s\n' "$(v webhook_port 8787)"
   printf 'CONTAINER_UID=%s\n' "$(v container_uid 1001)"
+  printf 'TOOL_UID=%s\n' "$(v tool_uid 65534)"
   printf 'TZ=%s\n' "$(v timezone Europe/Warsaw)"
   printf 'DAEMON_CPUS=%s\n' "$(v container_cpus 2)"
   printf 'DAEMON_MEMORY=%s\n' "$(v container_memory 8g)"

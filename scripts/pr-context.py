@@ -2,7 +2,9 @@
 """Read-only PR context. Reject incomplete or mixed-head pagination."""
 import json
 import os
+import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 import urllib.parse
@@ -13,7 +15,8 @@ MAX_PAGES = 100
 def main():
     api, repo, number = sys.argv[1:]
     owner, name = repo.split("/", 1)
-    token = os.environ["QCR_CONTEXT_TOKEN"]
+    ghread = os.environ.get("QCR_CONTEXT_GHREAD")
+    token = None if ghread else os.environ["QCR_CONTEXT_TOKEN"]
 
     origin = urllib.parse.urlsplit(api)
 
@@ -26,7 +29,38 @@ def main():
 
     opener = urllib.request.build_opener(ApiRedirects())
 
+    def via_daemon(path, payload):
+        # The daemon reads (src/ghread.ts): a REST GET by path, or this script's
+        # GraphQL query by its name there ("pr-context"), the repo filled in by
+        # the daemon. ghreadshim prints GitHub's status and writes the body.
+        with tempfile.NamedTemporaryFile(prefix="pr-context-", delete=False) as fh:
+            out = fh.name
+        try:
+            if payload is None:
+                argv = ["node", ghread, "get", path, out]
+            else:
+                given = payload["variables"]
+                variables = {k: given[k] for k in ("number", "filesCursor", "threadsCursor")}
+                argv = ["node", ghread, "graphql", "pr-context", out, json.dumps(variables)]
+            # the shim reads the command's capability from the inherited fd,
+            # which Python closes in a child unless it is passed on by name
+            cap_fd = int(os.environ["QCR_IPC_CAP_FD"])
+            done = subprocess.run(
+                argv, stdout=subprocess.PIPE, check=False, text=True, pass_fds=(cap_fd,)
+            )
+            if done.returncode != 0:
+                raise ValueError("the daemon's read failed (" + path + ")")
+            if done.stdout.strip() != "200":
+                with open(out, encoding="utf-8", errors="replace") as fh:
+                    raise ValueError(f"{path} -> {done.stdout.strip()}: {fh.read(300)}")
+            with open(out, encoding="utf-8") as fh:
+                return json.load(fh)
+        finally:
+            os.unlink(out)
+
     def request(path, payload=None):
+        if ghread:
+            return via_daemon(path, payload)
         data = None if payload is None else json.dumps(payload).encode()
         req = urllib.request.Request(api + path, data=data, headers={
             "Authorization": "Bearer " + token,

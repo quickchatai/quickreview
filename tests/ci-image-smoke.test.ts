@@ -83,13 +83,18 @@ const INSTALLER = `mkdir -p "$HOME/.local/bin" && printf '#!/bin/sh\\n# pinned $
 // A `docker` that answers the verbs the smoke runs. It logs one line per call
 // (argv up to the image) to $FAKE_LOG and takes its canned answers from env.
 const FAKE_DOCKER = `#!/usr/bin/env bash
+if [ "$1 $2" = "image inspect" ]; then echo "$FAKE_SETID_GID"; exit 0; fi
 [ "$1" = run ] || exit 99
 shift
 pre=()
 while [ "$#" -gt 0 ] && [ "$1" != "${IMAGE}" ]; do pre+=("$1"); shift; done
 echo "\${pre[*]}" >> "$FAKE_LOG"
 shift
-case "\${pre[*]}" in *--entrypoint*) echo "$FAKE_SCOPE"; exit 0 ;; esac
+case "\${pre[*]}" in
+  *--group-add*libexec/qcr/setpriv*) echo "$FAKE_HELPER_UID"; exit 0 ;;
+  *libexec/qcr/setpriv*) exit "$FAKE_HELPER_NOGATE_RC" ;;
+  *--entrypoint*) echo "$FAKE_SCOPE"; exit 0 ;;
+esac
 case "$*" in
   "version --json") printf '%s\\n' "$FAKE_VERSION" ;;
   "version") echo "qcr 0.1.0" ;;
@@ -137,6 +142,9 @@ function rig(): Rig {
           FAKE_INSTALL_OUT: INSTALLER,
           FAKE_INSTALL_ERR: "",
           FAKE_INSTALL_RC: "0",
+          FAKE_SETID_GID: "4748",
+          FAKE_HELPER_UID: "65534",
+          FAKE_HELPER_NOGATE_RC: "126",
           GITHUB_STEP_SUMMARY: summary,
           ...env,
         },
@@ -155,6 +163,27 @@ describe("image-smoke.sh", () => {
     expect(out.stderr).toContain("inside the container=1");
     const summary = readFileSync(r.summary, "utf8");
     expect(summary).toContain("kernel.yama.ptrace_scope");
+  });
+
+  it("fails when the bot's setid helper switches nothing, runs ungated or has no gate label", () => {
+    // MUTATION: drop step 6 from image-smoke.sh — every case below passes
+    const ok = rig();
+    expect(ok.run().status).toBe(0);
+    const call = readFileSync(ok.log, "utf8")
+      .split("\n")
+      .find((l) => l.includes("--group-add 4748"));
+    expect(call).toContain("--user 1001:1001");
+    expect(call).toContain("--cap-drop ALL --cap-add SETUID --cap-add SETGID");
+    expect(call).not.toContain("no-new-privileges");
+    for (const [env, why] of [
+      [{ FAKE_HELPER_UID: "1001" }, "not the tool uid 65534"],
+      [{ FAKE_HELPER_NOGATE_RC: "0" }, "runs without its gate group"],
+      [{ FAKE_SETID_GID: "" }, "no numeric qcr.setid-gid label"],
+    ] as const) {
+      const out = rig().run(env);
+      expect(out.status, why).toBe(1);
+      expect(out.stderr).toContain(why);
+    }
   });
 
   it("names its own image to install, so the wrapper is pinned to it", () => {
@@ -238,7 +267,12 @@ describe("image-smoke.sh", () => {
   it("starts every container the way the wrapper does: capless, no new privileges, no token", () => {
     const r = rig();
     expect(r.run().status).toBe(0);
-    const calls = readFileSync(r.log, "utf8").trim().split("\n");
+    // step 6 starts the bot's shape instead (its own test, above): the helper's
+    // file capabilities need a start without no-new-privileges
+    const calls = readFileSync(r.log, "utf8")
+      .trim()
+      .split("\n")
+      .filter((c) => !c.includes("libexec/qcr/setpriv"));
     expect(calls.length).toBeGreaterThanOrEqual(5);
     for (const c of calls) {
       expect(c).toContain("--rm");

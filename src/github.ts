@@ -310,6 +310,69 @@ export interface SearchIssueItem {
   created_at: string;
 }
 
+/** How much of a raw read's body is kept (GitHubAdapter.readText). */
+export interface RawReadOptions {
+  maxBytes: number;
+  /** Keep the end instead of the head (a job log's tail). */
+  tail?: boolean;
+}
+
+/** A raw read as GitHub answered it. */
+export interface RawReadAnswer {
+  status: number;
+  body: string;
+  /** Bytes past `maxBytes` were dropped. */
+  truncated: boolean;
+}
+
+/** A response body as UTF-8 text, at most `max` bytes of it, read as a stream so
+ * a large log never sits in memory whole: the first `max` bytes, or with `tail`
+ * the last. A cut that splits a character loses that character only. */
+export async function cappedText(
+  res: Response,
+  max: number,
+  tail: boolean,
+): Promise<{ text: string; truncated: boolean }> {
+  if (res.body === null) return { text: "", truncated: false };
+  const chunks: Buffer[] = [];
+  let held = 0;
+  let truncated = false;
+  const reader = res.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    let chunk = Buffer.from(value);
+    if (!tail) {
+      if (held + chunk.length > max) {
+        chunk = chunk.subarray(0, max - held);
+        truncated = true;
+      }
+      chunks.push(chunk);
+      held += chunk.length;
+      if (truncated) {
+        await reader.cancel().catch(() => {});
+        break;
+      }
+      continue;
+    }
+    chunks.push(chunk);
+    held += chunk.length;
+    while (held > max && chunks.length > 0) {
+      truncated = true;
+      const first = chunks[0]!;
+      const over = held - max;
+      if (first.length <= over) {
+        chunks.shift();
+        held -= first.length;
+      } else {
+        chunks[0] = first.subarray(over);
+        held -= over;
+      }
+    }
+  }
+  return { text: Buffer.concat(chunks).toString("utf8"), truncated };
+}
+
 /** One files-API entry (pulls/files and compare share the shape). */
 function fileEntry(f: any): PrFileEntry {
   return {
@@ -416,6 +479,66 @@ export class GitHubAdapter {
     if (payload.errors?.length)
       throw new Error(`graphql errors: ${JSON.stringify(payload.errors).slice(0, 300)}`);
     return payload.data as T;
+  }
+
+  /**
+   * A session helper's read, served by the daemon (src/ghread.ts): one
+   * GET of `path` with the installation token, redirects followed (fetch drops
+   * the Authorization header on a cross-origin hop, which is what the Actions
+   * log storage wants), answered as GitHub answered it — the status and at most
+   * `maxBytes` of the body as text, the head or, with `tail`, the end. An HTTP
+   * error status is an answer, not a throw; only a request that never got one
+   * throws. The caller has already checked `path` is a read of the reviewed repo.
+   */
+  async readText(path: string, o: RawReadOptions): Promise<RawReadAnswer> {
+    return this.rawAnswer(o, () =>
+      this.minter.installationToken().then((token) =>
+        this.fetchFn(`${this.apiBase}${path}`, {
+          method: "GET",
+          redirect: "follow",
+          signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
+          headers: {
+            authorization: `Bearer ${token}`,
+            accept: "application/vnd.github+json",
+            "x-github-api-version": "2022-11-28",
+          },
+        }),
+      ),
+    );
+  }
+
+  /** The same for one GraphQL read: the caller supplies a query it holds itself
+   * (src/ghread.ts GH_READ_QUERIES), never one a session wrote. */
+  async graphqlText(
+    query: string,
+    variables: Record<string, unknown>,
+    o: RawReadOptions,
+  ): Promise<RawReadAnswer> {
+    return this.rawAnswer(o, () =>
+      this.minter.installationToken().then((token) =>
+        this.fetchFn(`${this.apiBase}/graphql`, {
+          method: "POST",
+          signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          body: JSON.stringify({ query, variables }),
+        }),
+      ),
+    );
+  }
+
+  /** One raw request with REST's one re-mint on a 401, its body capped. */
+  private async rawAnswer(
+    o: RawReadOptions,
+    send: () => Promise<Response>,
+  ): Promise<RawReadAnswer> {
+    let res = await send();
+    if (res.status === 401) {
+      await res.body?.cancel().catch(() => {});
+      this.minter.invalidate();
+      res = await send();
+    }
+    const { text, truncated } = await cappedText(res, o.maxBytes, o.tail === true);
+    return { status: res.status, body: text, truncated };
   }
 
   /** The mutation executor the gate runs when it decides a mutation is real —

@@ -170,6 +170,10 @@ memory_container_memory: "3g"
 
 timezone: Europe/Warsaw
 container_uid: 1001                   # the uid the daemon runs as and the host directories belong to
+# The uid the model's tools run as (D32): never the container uid, so
+# they cannot read secrets/ or pi's login. It shares the container uid's gid,
+# which is how it writes the round's state files and verdicts.
+tool_uid: 65534
 
 # Hard Docker limits — the VM may be shared with other workloads.
 container_cpus: "2"

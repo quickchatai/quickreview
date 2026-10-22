@@ -4,7 +4,8 @@
 # Prints labeled plain-text sections: META, FILES, CHECKS, REVIEWS, THREADS
 # (unresolved only, last 2 comments each). Files and threads are paginated;
 # REST supplies check runs and legacy commit statuses for the same head.
-# Read-only: no gate involvement; token via scripts/mint-token.sh only.
+# Read-only: no gate involvement. On a daemon's host the daemon reads
+# (src/ghread.ts); elsewhere the token comes from scripts/mint-token.sh only.
 #
 # Usage: pr-context.sh <pr-number>
 
@@ -49,6 +50,14 @@ cfg_sed() {
 REPO="$(cfg github repo)"
 [[ -n "$REPO" ]] || die "config.toml: [github].repo missing"
 OWNER="${REPO%%/*}"; NAME="${REPO##*/}"
+# On a host the daemon runs (the worker socket and the capability fd are in env)
+# the daemon makes the reads with the App's token (src/ghread.ts): the
+# model's tool uid can neither read the App key nor mint a token. Elsewhere the
+# reads are our own, with a token from mint-token.sh.
+if [[ -n "${QCR_IPC_SOCKET:-}" && -n "${QCR_IPC_CAP_FD:-}" ]]; then
+  QCR_CONTEXT_GHREAD="$ROOT/dist/src/ipc/ghreadshim.js" \
+    exec python3 "$ROOT/scripts/pr-context.py" "$API" "$REPO" "$PR"
+fi
 TOKEN="$("$ROOT/scripts/mint-token.sh")"
 
 QCR_CONTEXT_TOKEN="$TOKEN" exec python3 "$ROOT/scripts/pr-context.py" "$API" "$REPO" "$PR"

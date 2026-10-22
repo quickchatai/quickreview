@@ -140,6 +140,21 @@ wait for `/ready` (a long timeout: a re-embed is a boot); recreate the daemon
 container on the new image. At the cutover the recreate is the point of no
 return: the first boot migrates forward.
 
+**The tool uid (run spec v2).** The daemon runs as `container_uid`
+and the model's tools as `tool_uid` (65534), which cannot read `secrets/` or
+pi's login. The bot is not started as root, so a `docker exec` into it still
+lands as `container_uid`; it reaches the tool uid through the image's setid
+helper (`/usr/local/libexec/qcr/setpriv`, file capabilities), which only the
+gate group in the image's `qcr.setid-gid` label may run. The recreate gives the
+bot `--group-add <that gid>`, `--cap-drop ALL` with `SETUID`/`SETGID` (the
+helper) and `CHOWN`/`DAC_OVERRIDE`/`FOWNER` (the operator channel's
+`docker exec -u 0`) only, `QCR_TOOLS_AS=<tool_uid>`, and no
+`no-new-privileges` (it would void the helper; the model's tools carry
+`no_new_privs` of their own). An image older than run spec v2 has no label and
+gets no group. The entrypoint refuses to start the bot when the helper cannot
+switch uid. Adopting it is `provision` (the new updater and run spec v2), then
+a release built with the helper.
+
 **Rescue.** Any failure from the stop to the recreate restores `.prev`, removes
 the newly started sidecar (the old one is put back), starts the old daemon
 container, waits for its first reconcile in `status.json` (a healthy legacy

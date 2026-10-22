@@ -749,6 +749,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     root,
     store,
     adapter,
+    reader: adapter,
+    // The entrypoint names the tool uid (docker/entrypoint.sh, D32): the model's
+    // shims then dial the socket as another uid of this group.
+    toolUid: /^[1-9][0-9]*$/.test(process.env["QCR_TOOL_UID"] ?? ""),
     sessions,
     ...(parts.ovSessions ? { ovSessions: parts.ovSessions } : {}),
     permits: lensPermits,

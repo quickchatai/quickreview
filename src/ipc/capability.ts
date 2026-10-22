@@ -40,13 +40,17 @@ export function capsDirOf(stateDir: string): string {
 }
 
 /** Make `dir` (and parents) and force it to 0700 owned by this uid. A dir that
- * belongs to someone else is an error: the daemon's secrets live under it. */
-export function ensurePrivateDir(dir: string): void {
+ * belongs to someone else is an error: the daemon's secrets live under it.
+ * `searchable` makes it 0710 instead: the group may pass through it to a name it
+ * already knows (the socket, for the tool uid's post and read shims),
+ * never list it or create anything in it. */
+export function ensurePrivateDir(dir: string, o: { searchable?: boolean } = {}): void {
+  const mode = o.searchable === true ? 0o710 : 0o700;
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const st = statSync(dir);
   if (typeof process.getuid === "function" && st.uid !== process.getuid())
     throw new Error(`${dir} is not owned by this user`);
-  if ((st.mode & 0o777) !== 0o700) chmodSync(dir, 0o700);
+  if ((st.mode & 0o777) !== mode) chmodSync(dir, mode);
 }
 
 /** Linux's O_TMPFILE is `__O_TMPFILE | O_DIRECTORY` with `__O_TMPFILE` = 020000000

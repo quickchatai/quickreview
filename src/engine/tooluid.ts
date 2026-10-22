@@ -25,7 +25,7 @@
 import { spawn } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, readdirSync } from "node:fs";
 import { access } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { constants as osConstants } from "node:os";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
 
@@ -83,11 +83,18 @@ export function toolIsolation(
   bin: string,
   argv: string[],
   procEnv: NodeJS.ProcessEnv = process.env,
-): { bin: string; argv: string[] } | { refused: string } {
+): { bin: string; argv: string[]; isolated: boolean } | { refused: string } {
   const ids = toolIdsOf(procEnv);
-  if (ids === null) return { bin, argv };
+  if (ids === null) return { bin, argv, isolated: false };
   if ("refused" in ids) return ids;
-  return { bin: "setpriv", argv: [...setprivSwitches(ids), "--", bin, ...argv] };
+  // The bot's setid helper where the image names one, else setpriv itself.
+  const helper = setidHelperOf(procEnv);
+  if (helper !== null && "refused" in helper) return helper;
+  return {
+    bin: helper?.path ?? "setpriv",
+    argv: [...setprivSwitches(ids), "--", bin, ...argv],
+    isolated: true,
+  };
 }
 
 /** The gate in front of a host that runs the model's tools.
@@ -131,6 +138,9 @@ export function checkToolUid(
 export function shareWithToolGroup(dir: string): void {
   const st = lstatSync(dir, { throwIfNoEntry: false });
   if (st === undefined || st.isSymbolicLink()) return;
+  // An entry another uid owns (the tool uid's own, made under its group-writable
+  // umask) is not this process's to change, and needs no sharing.
+  if (typeof process.getuid === "function" && st.uid !== process.getuid()) return;
   if (st.isDirectory()) {
     chmodSync(dir, (st.mode & 0o7777) | 0o070);
     for (const name of readdirSync(dir)) shareWithToolGroup(join(dir, name));
@@ -138,6 +148,40 @@ export function shareWithToolGroup(dir: string): void {
     chmodSync(dir, (st.mode & 0o7777) | 0o060);
   }
 }
+
+/**
+ * The environment a command run as the tool uid needs on top of the one it was
+ * given: git's `safe.directory = *` in the command scope.
+ *
+ * The repositories the model reads (the worktrees, the base clone) belong to the
+ * run uid, and git refuses a repository another uid owns ("dubious ownership").
+ * The image's system config says `*`, but a review session pins git's system
+ * scope off (src/sessions.ts sessionGitConfigPins), and `safe.directory` is read
+ * only from a protected scope: system, global or command. So it rides the
+ * command scope (GIT_CONFIG_COUNT/KEY_n/VALUE_n), appended after any entries the
+ * env already carries, never in place of them. It widens nothing: the
+ * repositories are the run uid's, which the tool uid trusts by construction.
+ */
+export function toolUidEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const given = env["GIT_CONFIG_COUNT"];
+  const n = given !== undefined && /^\d{1,3}$/.test(given) ? Number(given) : 0;
+  return {
+    ...env,
+    GIT_CONFIG_COUNT: String(n + 1),
+    [`GIT_CONFIG_KEY_${n}`]: "safe.directory",
+    [`GIT_CONFIG_VALUE_${n}`]: "*",
+  };
+}
+
+/** The umask a tool-uid command runs under: group-writable files, which is how
+ * the run uid and the tool uid (one gid, two uids) share what either writes. */
+export const TOOL_UMASK = 0o002;
+
+/** The shell program that runs a tool-uid command: it sets the umask and
+ * replaces itself with the shell on the command, so the command is still
+ * `<shell> -c <command>` (one argument, the same $0) under the same pid, which
+ * leads its process group. */
+const UMASK_THEN_RUN = `umask 002 && exec "$0" -c "$1"`;
 
 /** Where setpriv is looked for: root-owned system dirs, never the model's PATH. */
 const SETPRIV_DIRS = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"];
@@ -147,8 +191,53 @@ const SETPRIV_PATH = SETPRIV_DIRS.join(":");
  * absolute path in a system dir. A PATH entry the tool uid can write must not
  * be able to plant the binary the next command runs with those capabilities.
  * Null where no system dir has one. */
-export function trustedSetpriv(exists: (p: string) => boolean = existsSync): string | null {
+export function trustedSetpriv(
+  exists: (p: string) => boolean = existsSync,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const helper = setidHelperOf(env);
+  if (helper !== null) return "path" in helper ? helper.path : null;
   return SETPRIV_DIRS.map((d) => join(d, "setpriv")).find(exists) ?? null;
+}
+
+/**
+ * The bot's setid helper, named by `QCR_SETPRIV_BIN`: the image's
+ * own copy of setpriv that carries CAP_SETUID/CAP_SETGID as FILE capabilities
+ * and only a gate group may run (docker/Dockerfile). The always-on bot runs as
+ * its own uid, not root, so `docker exec` into it keeps landing as that uid; it
+ * reaches the tool uid through this helper instead of ambient capabilities
+ * (docker/entrypoint.sh's daemon mode). The model's tools never get it: they run
+ * with no_new_privs, under which a file capability grants nothing, and without
+ * the gate group.
+ *
+ * Trusted only as a root-owned regular file in a root-owned directory, neither
+ * writable by group or others: the run uid must not be able to swap the binary
+ * it hands its capabilities to. Null where the env names none; `refused` where
+ * it names one that fails those checks.
+ */
+export function setidHelperOf(
+  env: NodeJS.ProcessEnv,
+  stat: (
+    p: string,
+  ) => { uid: number; mode: number; isFile(): boolean; isDirectory(): boolean } | undefined = (p) =>
+    lstatSync(p, { throwIfNoEntry: false }),
+): { path: string } | { refused: string } | null {
+  const named = env["QCR_SETPRIV_BIN"]?.trim();
+  if (named === undefined || named === "") return null;
+  const refuse = (why: string) => ({ refused: `QCR_SETPRIV_BIN ${named}: ${why}` });
+  if (!named.startsWith("/")) return refuse("not an absolute path");
+  const file = stat(named);
+  if (file === undefined || !file.isFile()) return refuse("not a regular file");
+  const dir = stat(dirname(named));
+  if (dir === undefined || !dir.isDirectory()) return refuse("its directory is not a directory");
+  for (const [what, st] of [
+    ["it", file],
+    ["its directory", dir],
+  ] as const) {
+    if (st.uid !== 0) return refuse(`${what} is not owned by root`);
+    if ((st.mode & 0o022) !== 0) return refuse(`${what} is writable by group or others`);
+  }
+  return { path: named };
 }
 
 /** The shell the model's commands run in: pi's own choice on Unix. */
@@ -166,6 +255,8 @@ interface ShellPlan {
   /** Throws where the command cannot be started at all. */
   ready(): void;
   start(command: string): { bin: string; argv: string[] };
+  /** The command's environment from the one it was given. */
+  env?(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
   /** End the group `pgid` leads. Best effort. */
   killGroup(pgid: number): void;
 }
@@ -198,7 +289,13 @@ function shellOperations(plan: ShellPlan, inherit: readonly number[]): BashOpera
         throw new Error(`Working directory does not exist: ${cwd}\nCannot execute bash commands.`);
       }
       const { bin, argv } = plan.start(command);
-      const child = spawn(bin, argv, { cwd, env: env ?? process.env, detached: true, stdio });
+      const given = env ?? process.env;
+      const child = spawn(bin, argv, {
+        cwd,
+        env: plan.env ? plan.env(given) : given,
+        detached: true,
+        stdio,
+      });
       const pgid = child.pid;
       const killGroup = (): void => {
         if (pgid !== undefined) plan.killGroup(pgid);
@@ -261,7 +358,8 @@ function shellOperations(plan: ShellPlan, inherit: readonly number[]): BashOpera
  * The SDK bash tool's execution, with the model's command run as the tool uid.
  *
  * The command is `setpriv … -- bash -c <command>` in a process group of its
- * own. A timeout or an abort ends that group through setpriv too: the run uid
+ * own, the umask set first (TOOL_UMASK) and git's safe.directory in its env
+ * (toolUidEnv). A timeout or an abort ends that group through setpriv too: the run uid
  * may not signal a process of another uid (kill(2): the sender's uid must match
  * the target's real or saved uid, and this process holds no CAP_KILL), so pi's
  * own kill of the tree would silently do nothing and the command would run on.
@@ -278,9 +376,12 @@ export function isolatedBashOperations(
 ): BashOperations {
   const switches = setprivSwitches(ids);
   const setpriv = setprivBin ?? trustedSetpriv();
+  const helper = setprivBin === undefined ? setidHelperOf(process.env) : null;
   return shellOperations(
     {
       ready: () => {
+        if (helper !== null && "refused" in helper)
+          throw new Error(`${helper.refused}: the tool uid cannot be used`);
         if (setpriv === null)
           throw new Error(
             "setpriv is in none of " + SETPRIV_PATH + ": the tool uid cannot be used",
@@ -288,8 +389,9 @@ export function isolatedBashOperations(
       },
       start: (command) => ({
         bin: setpriv!,
-        argv: [...switches, "--", shellPath(), "-c", command],
+        argv: [...switches, "--", shellPath(), "-c", UMASK_THEN_RUN, shellPath(), command],
       }),
+      env: toolUidEnv,
       // The group's end, as the tool uid. Best effort: a failure leaves the
       // command running, as pi's own kill does when it cannot signal.
       killGroup: (pgid) => {

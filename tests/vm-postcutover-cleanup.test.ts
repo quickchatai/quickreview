@@ -107,7 +107,7 @@ function write(path: string, body = "x"): void {
 
 function confText(root: string, backups: string, memState: string, upd: string): string {
   const body = [
-    "RUNSPEC_VERSION=1",
+    "RUNSPEC_VERSION=2",
     `SANDBOX_ROOT=${root}`,
     "APP_ROOT=/opt/qcr",
     `DAEMON_CONTAINER=${DAEMON}`,
@@ -117,6 +117,7 @@ function confText(root: string, backups: string, memState: string, upd: string):
     "MEMORY_NETWORK=quickreview-memory",
     "WEBHOOK_PORT=8787",
     "CONTAINER_UID=1001",
+    "TOOL_UID=65534",
     "TZ=Europe/Warsaw",
     "DAEMON_CPUS=2",
     "DAEMON_MEMORY=8g",

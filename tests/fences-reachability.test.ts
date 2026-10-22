@@ -137,6 +137,14 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "by those scripts, which exec it out of dist/ whenever QCR_IPC_SOCKET and QCR_IPC_CAP_FD are in " +
         "env: a real driver this static scan cannot follow, not an orphan.",
     },
+    {
+      file: "src/ipc/ghreadshim.ts",
+      why:
+        "the Node read client behind scripts/pr-context.sh, pr-checks.sh, pr-threads.sh and pr-self.sh: " +
+        "the daemon makes their GitHub reads for the model's tool uid, which cannot mint a token. Driven " +
+        "by those scripts, which run it out of dist/ whenever QCR_IPC_SOCKET and QCR_IPC_CAP_FD are in " +
+        "env: a real driver this static scan cannot follow, not an orphan.",
+    },
   ];
 
   it(

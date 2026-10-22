@@ -90,7 +90,7 @@ ENV DEBIAN_FRONTEND=noninteractive TZ=UTC LANG=C.UTF-8
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl git jq ripgrep openssh-client python3 tzdata \
-      'libevent-core-2.1-7*' libncurses6 libnss-wrapper \
+      'libevent-core-2.1-7*' libncurses6 libnss-wrapper libcap2-bin \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=tmux-build /out/usr/local/bin/tmux /usr/local/bin/tmux
@@ -162,7 +162,7 @@ LABEL qcr.build-sha="${BUILD_SHA}"
 # RUNSPEC_VERSION.
 LABEL qcr.layout="release" \
       qcr.preflight="true" \
-      qcr.runspec="1" \
+      qcr.runspec="2" \
       qcr.pi="${PI_VERSION}"
 RUN printf '%s\n' "${BUILD_SHA}" > /opt/qcr/BUILD_SHA
 
@@ -188,6 +188,21 @@ RUN ! command -v claude
 # setpriv (util-linux): the engine starts pi through it, as another uid with no
 # capabilities, so the model's tools cannot read the token-holding process (D32).
 RUN setpriv --version >/dev/null
+# The always-on bot's setid helper. The bot runs as its own uid, not
+# root, so a `docker exec` into it lands as that uid; docker gives a non-root
+# uid no ambient capabilities, so it reaches the tool uid through this copy of
+# setpriv, which carries CAP_SETUID/CAP_SETGID as FILE capabilities and which
+# only the gate group may run (the run spec's --group-add, the qcr.setid-gid
+# label below). The model's tools run with no_new_privs and without that group:
+# to them the helper is a plain, unrunnable binary. setcap comes last: a chown
+# or a copy afterwards would drop the capabilities.
+ARG QCR_SETID_GID=4748
+RUN install -d -o root -g root -m 0755 /usr/local/libexec/qcr \
+    && install -o root -g "${QCR_SETID_GID}" -m 0750 "$(command -v setpriv)" /usr/local/libexec/qcr/setpriv \
+    && setcap cap_setuid,cap_setgid=ep /usr/local/libexec/qcr/setpriv \
+    && getcap /usr/local/libexec/qcr/setpriv | grep -q 'cap_setgid,cap_setuid=ep' \
+    || { echo "FATAL: the setid helper has no cap_setuid,cap_setgid=ep ($(getcap /usr/local/libexec/qcr/setpriv 2>&1))" >&2; exit 1; }
+LABEL qcr.setid-gid="${QCR_SETID_GID}"
 # flock (util-linux): the login refresher's single-instance lock and the login
 # mode's test for whether one is running (src/loginrefresh/lock.ts, P8.22).
 RUN flock --version >/dev/null

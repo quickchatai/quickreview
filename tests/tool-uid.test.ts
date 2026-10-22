@@ -21,10 +21,12 @@ import {
   TOOL_UID_ENVS,
   checkToolUid,
   isolatedBashOperations,
+  setidHelperOf,
   setprivSwitches,
   shareWithToolGroup,
   toolIdsOf,
   toolIsolation,
+  toolUidEnv,
   trustedSetpriv,
 } from "../src/engine/tooluid.js";
 import { type HostRig, createHostRig, useOfflineGuard } from "./pi-canary/harness.js";
@@ -113,6 +115,80 @@ describe("toolIsolation and the switches", () => {
     expect(toolIsolation("pi", ["-p"], SPLIT)).toEqual({
       bin: "setpriv",
       argv: [...SWITCHES, "--", "pi", "-p"],
+      isolated: true,
+    });
+  });
+});
+
+// The bot reaches the tool uid through the image's setid helper
+// (docker/Dockerfile), which QCR_SETPRIV_BIN names; a helper the run uid could
+// swap is refused, never run.
+describe("the bot's setid helper", () => {
+  const st = (uid: number, mode: number, kind: "file" | "dir") => ({
+    uid,
+    mode,
+    isFile: () => kind === "file",
+    isDirectory: () => kind === "dir",
+  });
+  const fs =
+    (file: ReturnType<typeof st> | undefined, dir: ReturnType<typeof st> | undefined) =>
+    (p: string) =>
+      p === "/usr/local/libexec/qcr/setpriv"
+        ? file
+        : p === "/usr/local/libexec/qcr"
+          ? dir
+          : undefined;
+  const HELPER = { QCR_SETPRIV_BIN: "/usr/local/libexec/qcr/setpriv" };
+
+  it("is trusted as a root-owned file in a root-owned dir, neither writable by group or others", () => {
+    expect(setidHelperOf({}, fs(undefined, undefined))).toBeNull();
+    expect(setidHelperOf(HELPER, fs(st(0, 0o100750, "file"), st(0, 0o40755, "dir")))).toEqual({
+      path: "/usr/local/libexec/qcr/setpriv",
+    });
+    // MUTATION: drop the owner check in setidHelperOf — the first two pass
+    for (const [file, dir] of [
+      [st(1001, 0o100750, "file"), st(0, 0o40755, "dir")],
+      [st(0, 0o100750, "file"), st(1001, 0o40755, "dir")],
+      [st(0, 0o100770, "file"), st(0, 0o40755, "dir")],
+      [st(0, 0o100750, "file"), st(0, 0o40757, "dir")],
+      [st(0, 0o40750, "dir"), st(0, 0o40755, "dir")],
+      [undefined, st(0, 0o40755, "dir")],
+    ] as const)
+      expect(setidHelperOf(HELPER, fs(file, dir))).toHaveProperty("refused");
+    expect(setidHelperOf({ QCR_SETPRIV_BIN: "setpriv" })).toHaveProperty("refused");
+  });
+
+  it("is what a pane's pi and a worker's bash run through, and a bad one is a refusal", () => {
+    // a real root-owned regular file in a root-owned dir stands in for the helper
+    const env = { ...SPLIT, QCR_SETPRIV_BIN: "/usr/bin/env" };
+    expect(toolIsolation("pi", ["-p"], env)).toEqual({
+      bin: "/usr/bin/env",
+      argv: [...SWITCHES, "--", "pi", "-p"],
+      isolated: true,
+    });
+    expect(trustedSetpriv(() => true, env)).toBe("/usr/bin/env");
+    const bad = { ...SPLIT, QCR_SETPRIV_BIN: tmpdir() };
+    expect(toolIsolation("pi", [], bad)).toHaveProperty("refused");
+    expect(trustedSetpriv(() => true, bad)).toBeNull();
+  });
+});
+
+describe("what a tool-uid command runs with", () => {
+  it("git's safe.directory in the command scope, after whatever the env already carries", () => {
+    expect(toolUidEnv({ PATH: "/bin" })).toEqual({
+      PATH: "/bin",
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "safe.directory",
+      GIT_CONFIG_VALUE_0: "*",
+    });
+    expect(
+      toolUidEnv({ GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "a.b", GIT_CONFIG_VALUE_0: "c" }),
+    ).toEqual({
+      GIT_CONFIG_COUNT: "2",
+      GIT_CONFIG_KEY_0: "a.b",
+      GIT_CONFIG_VALUE_0: "c",
+      GIT_CONFIG_KEY_1: "safe.directory",
+      GIT_CONFIG_VALUE_1: "*",
     });
   });
 });
@@ -156,7 +232,16 @@ describe("the SDK bash tool as the tool uid", () => {
     expect(r.exitCode).toBe(0);
     expect(r.out).toContain(dir);
     const first = readFileSync(log, "utf8").split("\n")[0]!;
-    expect(first).toBe(`${SWITCHES.join(" ")} -- /bin/bash -c echo "hello $FOO"; pwd`);
+    expect(first).toBe(
+      `${SWITCHES.join(" ")} -- /bin/bash -c umask 002 && exec "$0" -c "$1" /bin/bash echo "hello $FOO"; pwd`,
+    );
+  });
+
+  it("runs it under the group-writable umask, with git's safe.directory in its env", async () => {
+    // MUTATION: drop the umask from UMASK_THEN_RUN in tooluid.ts — this fails
+    const r = await run("umask; touch f; stat -c %a f; git config --get safe.directory");
+    expect(r.exitCode).toBe(0);
+    expect(r.out.split("\n").slice(0, 3)).toEqual(["0002", "664", "*"]);
   });
 
   it("hands the command over as one argument, never through another shell's parsing", async () => {
@@ -286,7 +371,9 @@ describe("a session's bash under the host's tool uid", () => {
     } finally {
       delete process.env["GITHUB_TOKEN"];
     }
-    expect(readFileSync(log, "utf8")).toContain(`${SWITCHES.join(" ")} -- /bin/bash -c env`);
+    expect(readFileSync(log, "utf8")).toContain(
+      `${SWITCHES.join(" ")} -- /bin/bash -c umask 002 && exec "$0" -c "$1" /bin/bash env`,
+    );
   });
 
   it("a host with no tool uid runs the command itself", async () => {

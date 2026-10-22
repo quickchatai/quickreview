@@ -6,7 +6,8 @@
 #   SUMMARY: n passed / n failed / n pending
 # REST only: GET /pulls/{n} for the head sha, then /commits/{sha}/check-runs
 # and /commits/{sha}/status.
-# Read-only: no gate involvement; token via scripts/mint-token.sh only.
+# Read-only: no gate involvement. On a daemon's host the daemon reads
+# (src/ghread.ts); elsewhere the token comes from scripts/mint-token.sh only.
 #
 # Usage: pr-checks.sh <pr-number> [--why]
 #
@@ -59,14 +60,26 @@ cfg_sed() {
 
 REPO="$(cfg github repo)"
 [[ -n "$REPO" ]] || die "config.toml: [github].repo missing"
-TOKEN="$("$ROOT/scripts/mint-token.sh")"
+# On a host the daemon runs (the worker socket and the capability fd are in env)
+# the daemon makes the read with the App's token (src/ghread.ts): the
+# model's tool uid can neither read the App key nor mint a token. Elsewhere the
+# read is our own, with a token from mint-token.sh.
+VIA_DAEMON=0
+[[ -n "${QCR_IPC_SOCKET:-}" && -n "${QCR_IPC_CAP_FD:-}" ]] && VIA_DAEMON=1
+GHREAD="$ROOT/dist/src/ipc/ghreadshim.js"
+TOKEN=""
+[[ "$VIA_DAEMON" == 1 ]] || TOKEN="$("$ROOT/scripts/mint-token.sh")"
 
 get() { # get <path>  → body in $OUT, dies on non-200
   local status
-  status="$(curl -sS -o "$OUT" -w '%{http_code}' \
-    -H "Authorization: Bearer $TOKEN" \
-    -H "Accept: application/vnd.github+json" \
-    -H "X-GitHub-Api-Version: 2022-11-28" "$API$1")"
+  if [[ "$VIA_DAEMON" == 1 ]]; then
+    status="$(node "$GHREAD" get "$1" "$OUT")"
+  else
+    status="$(curl -sS -o "$OUT" -w '%{http_code}' \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2022-11-28" "$API$1")"
+  fi
   [[ "$status" == "200" ]] || die "GET $1 -> $status: $(head -c 300 "$OUT")"
 }
 
@@ -217,8 +230,12 @@ PY
   if [[ "$job" != "-" ]]; then
     # The log endpoint redirects to storage; curl drops the Authorization
     # header on the cross-host redirect by default, which is what storage wants.
-    code="$(curl -sS -L -o "$OUT" -w '%{http_code}' -H "Authorization: Bearer $TOKEN" \
-      -H "Accept: application/vnd.github+json" "$API/repos/$REPO/actions/jobs/$job/logs" 2>/dev/null || echo 000)"
+    if [[ "$VIA_DAEMON" == 1 ]]; then
+      code="$(node "$GHREAD" get "/repos/$REPO/actions/jobs/$job/logs" "$OUT" 2>/dev/null || echo 000)"
+    else
+      code="$(curl -sS -L -o "$OUT" -w '%{http_code}' -H "Authorization: Bearer $TOKEN" \
+        -H "Accept: application/vnd.github+json" "$API/repos/$REPO/actions/jobs/$job/logs" 2>/dev/null || echo 000)"
+    fi
     if [[ "$code" == "200" ]]; then
       echo "log tail (last 60 lines):"
       sed -e 's/^[0-9-]*T[0-9:.]*Z //' "$OUT" | tail -n 60

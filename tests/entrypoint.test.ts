@@ -118,6 +118,13 @@ function rig(base = tmpdir()): Rig {
     `#!/bin/sh\necho "tmux $*" >> "${dir}/tmux.log"\n[ "$1" = has-session ] && exit 1\nexit 0\n`,
     0o755,
   );
+  // the bot's setid helper, as a stand-in that switches nothing: it
+  // records its switches and runs the command after `--`
+  put(
+    join(bin, "setid-helper"),
+    `#!/bin/sh\necho "$*" >> "${dir}/helper.log"\nwhile [ "$1" != -- ]; do shift; done\nshift\nexec "$@"\n`,
+    0o755,
+  );
   const r: Rig = {
     dir,
     app,
@@ -127,6 +134,7 @@ function rig(base = tmpdir()): Rig {
       PATH: `${bin}:${process.env.PATH}`,
       HOME: home,
       QCR_APP_ROOT: app,
+      QCR_SETID_HELPER: join(bin, "setid-helper"),
     },
   };
   rigs.push(r);
@@ -445,6 +453,106 @@ describe("daemon mode", () => {
   });
 });
 
+// The always-on bot runs the model's tools as another uid. It starts
+// as its own uid (so `docker exec` keeps landing as it) and reaches the tool uid
+// through the image's setid helper, which the rig stands in for: a script that
+// records its switches and runs the command after `--`.
+describe("daemon mode: the model's tools run as another uid", () => {
+  const report = (r: Rig): void =>
+    put(
+      join(r.app, "dist/src/wire.js"),
+      `console.log(JSON.stringify({ ran: "wire", uid: process.env.QCR_TOOL_UID ?? null, gid: process.env.QCR_TOOL_GID ?? null, bin: process.env.QCR_SETPRIV_BIN ?? null, req: process.env.QCR_TOOL_UID_REQUIRED ?? null, umask: process.umask() }));\n`,
+    );
+  const gid = String(process.getgid?.() ?? 1000);
+
+  it("probes the helper, then exports the tool uid, the daemon's own gid and the helper", () => {
+    const r = rig();
+    report(r);
+    const out = run(r, ["daemon"], { ...withConfig(r), QCR_TOOL_UID: "1", QCR_SETPRIV_BIN: "/x" });
+    expect(out.status, out.stderr).toBe(0);
+    expect(JSON.parse(out.stdout)).toEqual({
+      ran: "wire",
+      uid: "65534",
+      gid,
+      bin: join(r.bin, "setid-helper"),
+      req: null,
+      // the daemon keeps its umask: what it writes for a session stays its own
+      umask: process.umask(),
+    });
+    // the probe: the tool uid, this gid, no groups, no capability, no new privileges
+    expect(readFileSync(join(r.dir, "helper.log"), "utf8").trim()).toBe(
+      `--reuid=65534 --regid=${gid} --clear-groups --inh-caps=-all --ambient-caps=-all --no-new-privs -- true`,
+    );
+    expect(out.stderr).toContain("the model's tools run as uid 65534");
+    // QCR_TOOLS_AS names another tool uid
+    const other = run(r, ["daemon"], { ...withConfig(r), QCR_TOOLS_AS: "4242" });
+    expect(JSON.parse(other.stdout).uid).toBe("4242");
+  });
+
+  it("opens the directories the model's scripts write to its group, and nothing else", () => {
+    const r = rig();
+    report(r);
+    for (const d of ["verdict", "commands", "wt"]) mkdirSync(join(r.app, d), { mode: 0o755 });
+    chmodSync(join(r.app, "state"), 0o755);
+    expect(run(r, ["daemon"], withConfig(r)).status).toBe(0);
+    for (const d of ["state", "state/findings", "state/ledgers", "verdict", "commands"])
+      expect(statSync(join(r.app, d)).mode & 0o070, d).toBe(0o070);
+    // the worktrees stay the daemon's
+    expect(statSync(join(r.app, "wt")).mode & 0o020).toBe(0);
+  });
+
+  it("refuses to start when the helper cannot switch, and runs nothing", () => {
+    // MUTATION: make daemon_setid_helper return 0 when the probe fails — this fails
+    const r = rig();
+    report(r);
+    put(join(r.bin, "setid-helper"), "#!/bin/sh\necho 'setresuid failed' >&2\nexit 1\n", 0o755);
+    const out = run(r, ["daemon"], withConfig(r));
+    expect(out.status).toBe(1);
+    expect(out.stdout).toBe("");
+    expect(out.stderr).toContain("cannot run as another uid");
+    expect(out.stderr).toContain("--group-add 4748");
+    // a missing helper too
+    const gone = run(r, ["daemon"], { ...withConfig(r), QCR_SETID_HELPER: join(r.dir, "nope") });
+    expect(gone.status).toBe(1);
+    expect(gone.stdout).toBe("");
+  });
+
+  it("the owner's explicit acceptance of the shared uid starts it, loudly, with no tool uid", () => {
+    const r = rig();
+    report(r);
+    const out = run(r, ["daemon"], {
+      ...withConfig(r),
+      QCR_SETID_HELPER: join(r.dir, "nope"),
+      QCR_ALLOW_SHARED_TOOL_UID: "1",
+    });
+    expect(out.status, out.stderr).toBe(0);
+    expect(JSON.parse(out.stdout)).toMatchObject({ uid: null, bin: null });
+    expect(out.stderr).toContain("WARNING: the model's tools run as the daemon's own uid");
+  });
+
+  it("a tool uid equal to the daemon's, or not a number, is refused", () => {
+    const r = rig();
+    report(r);
+    const me = String(process.getuid?.() ?? 1000);
+    expect(run(r, ["daemon"], { ...withConfig(r), QCR_TOOLS_AS: me }).stderr).toContain(
+      "must differ from the daemon's uid",
+    );
+    expect(run(r, ["daemon"], { ...withConfig(r), QCR_TOOLS_AS: "0" }).status).toBe(1);
+  });
+
+  it("`daemon --preflight` reads mounts and runs no model: no probe, no split", () => {
+    const r = rig();
+    put(
+      join(r.app, "dist/src/preflight.js"),
+      `console.log(JSON.stringify({ ran: "preflight" }));\n`,
+    );
+    put(join(r.bin, "setid-helper"), "#!/bin/sh\nexit 1\n", 0o755);
+    const out = run(r, ["daemon", "--preflight"], withConfig(r));
+    expect(out.status, out.stderr).toBe(0);
+    expect(JSON.parse(out.stdout)).toEqual({ ran: "preflight" });
+  });
+});
+
 describe("per-call modes register no bash-guard (D32; the uid split is checked below)", () => {
   it.each([
     ["cli", ["version"]],
@@ -527,19 +635,25 @@ describe("D32: the model's tools run as another uid", () => {
     expect(JSON.parse(out.stdout)).toEqual({ uid: null, req: "1" });
   });
 
-  it("only the cli mode asks for the split: the daemon and the companion are untouched", () => {
-    const r = rig();
-    const wire = JSON.parse(run(r, ["daemon"], withConfig(r)).stdout) as Record<string, unknown>;
-    expect(wire["ran"]).toBe("wire");
+  it("the cli and the daemon ask for the split; the companion, tui and login do not", () => {
     const text = read("docker/entrypoint.sh");
-    expect(text).toContain('[ "$mode" = cli ] || return 0');
-    expect(text).not.toMatch(/QCR_TOOL_UID_REQUIRED[^\n]*daemon/);
+    expect(text).toMatch(
+      /case "\$mode" in\n\s+cli\) ;;\n\s+daemon\) \[ "\$\{1:-\}" != --preflight \] \|\| return 0 ;;\n\s+\*\) return 0 ;;/,
+    );
+    const r = rig();
+    put(
+      join(r.app, "dist/src/cli.js"),
+      `console.log(JSON.stringify({ uid: process.env.QCR_TOOL_UID ?? null, req: process.env.QCR_TOOL_UID_REQUIRED ?? null }));\n`,
+    );
+    // the companion mode never reaches cli.js; tui reaches it unsplit
+    expect(JSON.parse(run(r, ["tui"]).stdout)).toEqual({ uid: null, req: null });
   });
 
   it("the engine's launch: setpriv to the tool uid, no capabilities, no new privileges", () => {
     const env = { QCR_TOOL_UID: "65534", QCR_TOOL_GID: "1000" };
     expect(toolIsolation("pi", ["-p", "--mode", "json"], env)).toEqual({
       bin: "setpriv",
+      isolated: true,
       argv: [
         "--reuid=65534",
         "--regid=1000",
@@ -557,14 +671,14 @@ describe("D32: the model's tools run as another uid", () => {
   });
 
   it("without the split nothing changes; with it required and absent, pi is refused", () => {
-    expect(toolIsolation("pi", ["-p"], {})).toEqual({ bin: "pi", argv: ["-p"] });
+    expect(toolIsolation("pi", ["-p"], {})).toEqual({ bin: "pi", argv: ["-p"], isolated: false });
     const refused = toolIsolation("pi", ["-p"], { QCR_TOOL_UID_REQUIRED: "1" });
     expect(refused).toHaveProperty("refused");
     expect((refused as { refused: string }).refused).toContain("--cap-add SETUID");
     // the owner's explicit acceptance of the shared uid
     expect(
       toolIsolation("pi", ["-p"], { QCR_TOOL_UID_REQUIRED: "1", QCR_ALLOW_SHARED_TOOL_UID: "1" }),
-    ).toEqual({ bin: "pi", argv: ["-p"] });
+    ).toEqual({ bin: "pi", argv: ["-p"], isolated: false });
   });
 
   it("a tool id that is not a non-zero number is refused, never passed to setpriv", () => {

@@ -633,7 +633,7 @@ describe("deploy.sh provision", () => {
       github: { repo: "acme/widgets" },
     });
     const r = provisionWithStub(env);
-    expect(r.conf).toContain("RUNSPEC_VERSION=1\n");
+    expect(r.conf).toContain("RUNSPEC_VERSION=2\n");
     for (const line of [
       "SANDBOX_ROOT=/opt/quickreview",
       "APP_ROOT=/opt/qcr",
@@ -644,6 +644,7 @@ describe("deploy.sh provision", () => {
       "MEMORY_NETWORK=quickreview-memory",
       "WEBHOOK_PORT=8787",
       "CONTAINER_UID=1001",
+      "TOOL_UID=65534",
       "DAEMON_CPUS=2",
       "DAEMON_MEMORY=8g",
       "MEMORY_CPUS=1",
@@ -1739,11 +1740,11 @@ describe("deploy.sh — release <version>", () => {
       env = scratch();
       const r = release(env, {
         patch: (m) => {
-          m.pins.runspec = 2;
+          m.pins.runspec = 3;
         },
       });
       expect(r.code).toBe(1);
-      expect(r.stderr).toContain("need run spec v2 but this checkout renders v1");
+      expect(r.stderr).toContain("need run spec v3 but this checkout renders v2");
       expect(r.stderr).toContain("re-run provision");
     });
   });

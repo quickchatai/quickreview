@@ -1,6 +1,8 @@
 // The daemon's end of the worker socket (D23).
 //
-// Listens on <state>/run/qcr.sock: socket 0600, directory 0700, daemon uid. A
+// Listens on <state>/run/qcr.sock: socket 0600, directory 0700, daemon uid (0660
+// and 0710 where the model's tools run as another uid of the daemon's group, so
+// its shims can dial in; the capability authenticates them). A
 // connection opens with a hello that names a command and presents its
 // capability; every later message is checked again against the daemon's own
 // view of the command, because a capability alone authenticates only WHO is
@@ -63,6 +65,11 @@ export interface IpcServerOptions {
   ops?: Readonly<Record<string, OpHandler>>;
   onEvent?: EventHandler;
   maxLineBytes?: number;
+  /** The model's tools run as another uid of this process's group (D32): its
+   * post and read shims must reach the socket. The run dir becomes
+   * 0710 and the socket 0660; the capability is what authenticates a caller, and
+   * every other entry of the run dir stays 0700. Omitted: 0700 and 0600. */
+  groupAccess?: boolean;
   /** A connection that has not said hello in this long is closed. */
   helloTimeoutMs?: number;
   /** Diagnostics only; never receives a capability. */
@@ -95,7 +102,8 @@ export class IpcServer {
     const { socketPath } = this.opts;
     if (Buffer.byteLength(socketPath) > 100)
       throw new Error(`socket path is too long for a unix socket: ${socketPath}`);
-    ensurePrivateDir(dirname(socketPath));
+    const group = this.opts.groupAccess === true;
+    ensurePrivateDir(dirname(socketPath), { searchable: group });
     await clearStaleSocket(socketPath);
     const server = net.createServer((s) => this.accept(s));
     await new Promise<void>((resolve, reject) => {
@@ -105,7 +113,7 @@ export class IpcServer {
         resolve();
       });
     });
-    chmodSync(socketPath, 0o600);
+    chmodSync(socketPath, group ? 0o660 : 0o600);
     this.server = server;
     this.unsubscribe = this.opts.capabilities.onRevoke((id) => this.dropCommand(id));
   }

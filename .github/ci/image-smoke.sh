@@ -21,6 +21,8 @@
 #                   (P6.5b: it decides whether a child can read its parent's
 #                   memory, and a GitHub runner's value is not documented).
 #                   Recording never fails the job.
+#   6. setid helper the bot's helper switches the bot's uid to the
+#                   tool uid with its gate group, and does not run without it.
 set -euo pipefail
 
 IMAGE="${1:?usage: image-smoke.sh <image>}"
@@ -109,6 +111,30 @@ echo "$line" >&2
 echo "::notice::$line" >&2
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   printf '### Image smoke\n\n- %s\n' "$line" >>"$GITHUB_STEP_SUMMARY"
+fi
+
+# ---- 6. the bot's setid helper -------------------------------------------------
+# the always-on bot runs as its own uid and reaches the tool uid through
+# /usr/local/libexec/qcr/setpriv, whose CAP_SETUID/CAP_SETGID are FILE
+# capabilities (docker/Dockerfile). A build or a registry that drops the xattr
+# leaves a helper that switches nothing, and the bot refuses to start; this is
+# where that is caught, in the run spec's shape (deploy/qcr-update.sh).
+
+step "the bot's setid helper switches to the tool uid"
+helper=/usr/local/libexec/qcr/setpriv
+gate="$(docker image inspect --format '{{index .Config.Labels "qcr.setid-gid"}}' "$IMAGE")" ||
+  fail "cannot read the image's labels"
+[[ "$gate" =~ ^[1-9][0-9]*$ ]] || fail "the image has no numeric qcr.setid-gid label ($gate)"
+bot() {
+  docker run --rm --network none --user 1001:1001 --cap-drop ALL --cap-add SETUID --cap-add SETGID \
+    "$@"
+}
+as_tool="$(bot --group-add "$gate" --entrypoint "$helper" "$IMAGE" \
+  --reuid=65534 --regid=1001 --clear-groups --inh-caps=-all --ambient-caps=-all --no-new-privs -- id -u)" ||
+  fail "the setid helper did not run as the bot's uid with its gate group"
+[ "$as_tool" = 65534 ] || fail "the setid helper switched to uid '$as_tool', not the tool uid 65534"
+if bot --entrypoint "$helper" "$IMAGE" --reuid=65534 --regid=1001 --clear-groups -- true >/dev/null 2>&1; then
+  fail "the setid helper runs without its gate group"
 fi
 
 echo "image smoke: ok" >&2

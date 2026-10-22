@@ -93,6 +93,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/fences-cigate.test.ts",
   "tests/fences-gate.test.ts",
   "tests/fences-provenance.test.ts",
+  "tests/gh-read.test.ts", // the helper scripts read through the built shim and a real socket
   "tests/ghcred-handoff.test.ts",
   "tests/golden-prompts.test.ts",
   "tests/guards.test.ts", // the guard cases drive the real gate over a loopback GitHub stub
@@ -164,6 +165,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/temp-root.test.ts",
   "tests/tool-fence.test.ts",
   "tests/tool-uid-container.test.ts",
+  "tests/tool-uid-daemon-container.test.ts", // the bot's run shape in docker: the daemon mode, the setid helper, the model's bash
   "tests/tool-uid.test.ts",
   "tests/tui-deploy-process.test.ts",
   "tests/tui-inboxpull.test.ts",

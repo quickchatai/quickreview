@@ -201,7 +201,8 @@ const NEW_LABELS: Record<string, string> = {
   "qcr.layout": "release",
   "qcr.build-sha": "abc1234",
   "qcr.preflight": "true",
-  "qcr.runspec": "1",
+  "qcr.runspec": "2",
+  "qcr.setid-gid": "4748",
 };
 
 function confText(
@@ -212,7 +213,7 @@ function confText(
   backups: string,
 ): string {
   const body = [
-    "RUNSPEC_VERSION=1",
+    "RUNSPEC_VERSION=2",
     `SANDBOX_ROOT=${sandbox}`,
     "APP_ROOT=/opt/qcr",
     `DAEMON_CONTAINER=${DAEMON}`,
@@ -222,6 +223,7 @@ function confText(
     "MEMORY_NETWORK=quickreview-memory",
     "WEBHOOK_PORT=8787",
     "CONTAINER_UID=1001",
+    "TOOL_UID=65534",
     "TZ=Europe/Warsaw",
     "DAEMON_CPUS=2",
     "DAEMON_MEMORY=8g",
@@ -517,11 +519,11 @@ describe("qcr-update status", () => {
     };
     expect(j.layout).toBe("release");
     expect(j.daemon.build_sha).toBe("old1234");
-    expect(j.daemon.runspec).toBe("1");
+    expect(j.daemon.runspec).toBe("2");
     expect(j.daemon.preflight).toBe("true");
     expect(j.daemon.running).toBe(true);
     expect(j.memory.image).toBe(OLD_MEMORY_REF);
-    expect(j.runspec.version).toBe("1");
+    expect(j.runspec.version).toBe("2");
     expect(j.runspec.fingerprint).toMatch(/^[0-9a-f]{64}$/);
     expect(j.drain).toEqual({ draining: true, running_rounds: 0 });
     expect(j.last_run).toBeNull();
@@ -652,6 +654,16 @@ describe("qcr-update — the happy path", () => {
     const pair = (flag: string): string => argv[argv.indexOf(flag) + 1]!;
     expect(argv.slice(-2)).toEqual([DAEMON_REF, "daemon"]);
     expect(pair("--user")).toBe("1001:1001");
+    // the bot stays uid 1001 (a `docker exec` lands as it) and runs the
+    // model's tools as TOOL_UID through the image's setid helper, whose gate
+    // group it is given; no capability but the helper's and the operator
+    // channel's, and no no-new-privileges (it would void the helper)
+    expect(pair("--group-add")).toBe("4748");
+    const caps = argv.filter((_a, i) => argv[i - 1] === "--cap-add").sort();
+    expect(caps).toEqual(["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"]);
+    expect(pair("--cap-drop")).toBe("ALL");
+    expect(argv.join(" ")).not.toContain("no-new-privileges");
+    expect(argv.filter((_a, i) => argv[i - 1] === "-e")).toContain("QCR_TOOLS_AS=65534");
     expect(pair("-p")).toBe("127.0.0.1:8787:8787");
     expect(pair("--network")).toBe("quickreview-memory");
     expect(pair("--cpus")).toBe("2");
@@ -838,15 +850,40 @@ describe("qcr-update — every refusal before the stop changes nothing", () => {
 
   it("REFUSES an image whose qcr.runspec is newer than update.conf's: re-run provision", async () => {
     sb = setup("release");
-    write(join(sb.fake, "images", DAEMON_REF.replace(/[/:@]/g, "_"), "labels", "qcr.runspec"), "2");
+    write(join(sb.fake, "images", DAEMON_REF.replace(/[/:@]/g, "_"), "labels", "qcr.runspec"), "3");
     const r = await runUpdater(sb, GOOD);
     expect(r.code).toBe(1);
-    expect(r.stderr).toContain("needs run spec v2");
+    expect(r.stderr).toContain("needs run spec v3");
     expect(r.stderr).toContain("re-run provision");
     expectUntouched(sb, "release");
     // an older or equal one is fine
-    write(join(sb.fake, "images", DAEMON_REF.replace(/[/:@]/g, "_"), "labels", "qcr.runspec"), "1");
+    write(join(sb.fake, "images", DAEMON_REF.replace(/[/:@]/g, "_"), "labels", "qcr.runspec"), "2");
     expect((await runUpdater(sb, GOOD)).code).toBe(0);
+  });
+
+  it("an image from before the setid helper (run spec v1) runs with no gate group", async () => {
+    sb = setup("release");
+    const labels = join(sb.fake, "images", DAEMON_REF.replace(/[/:@]/g, "_"), "labels");
+    write(join(labels, "qcr.runspec"), "1");
+    rmSync(join(labels, "qcr.setid-gid"));
+    const r = await runUpdater(sb, GOOD);
+    expect(r.code, r.stderr).toBe(0);
+    const argv = readFileSync(join(sb.fake, `run-${DAEMON}.argv`), "utf8").split("\n");
+    expect(argv).not.toContain("--group-add");
+  });
+
+  it("REFUSES a v2 image without a numeric setid gate group, before anything stops", async () => {
+    sb = setup("release");
+    const labels = join(sb.fake, "images", DAEMON_REF.replace(/[/:@]/g, "_"), "labels");
+    // MUTATION: drop the qcr.setid-gid check from qcr-update.sh — this recreates
+    for (const bad of ["", "x", "1001"]) {
+      if (bad === "") rmSync(join(labels, "qcr.setid-gid"), { force: true });
+      else write(join(labels, "qcr.setid-gid"), bad);
+      const r = await runUpdater(sb, GOOD);
+      expect(r.code, bad).toBe(1);
+      expect(r.stderr, bad).toMatch(/qcr\.setid-gid|setid gate group/);
+      expectUntouched(sb, "release");
+    }
   });
 
   it("REFUSES a config tar that contains secrets/, an escaping path, a link, or any other top-level name", async () => {

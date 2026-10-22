@@ -300,7 +300,11 @@ CURL_CA_BUNDLE=/rehearsal/ca.pem
 GIT_SSL_CAINFO=/rehearsal/ca.pem
 ENVF
 daemon_run() {
+  # the run spec's tool-uid shape (deploy/qcr-update.sh): the image's setid helper's gate group
+  local gate
+  gate="$(docker image inspect -f '{{index .Config.Labels "qcr.setid-gid"}}' "$REL_IMG")"
   docker run -d --name "$DAEMON" --restart unless-stopped --init --cpus 2 --memory 8g --memory-swap 8g --user "$UIDGID" --network "$NET" \
+    --group-add "$gate" --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER -e QCR_TOOLS_AS=65534 \
     -v "$H/state:$APP_ROOT/state" -v "$H/secrets:/opt/quickreview/secrets:ro" -v "$H/config-home:/opt/quickreview/config-home:ro" -v "$H/pihome:/home/qcr/.pi" \
     -v "$H/sandbox/wt:$APP_ROOT/wt" -v "$H/sandbox/archive:$APP_ROOT/archive" -v "$H/sandbox/commands:$APP_ROOT/commands" \
     -v "$H/sandbox/digest:$APP_ROOT/digest" -v "$H/sandbox/inject:$APP_ROOT/inject" -v "$H/sandbox/verdict:$APP_ROOT/verdict" \

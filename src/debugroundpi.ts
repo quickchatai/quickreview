@@ -42,7 +42,13 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { CAP_FD_INDEX } from "./ipc/capability.js";
-import { checkToolUid, shareWithToolGroup, toolIsolation } from "./engine/tooluid.js";
+import {
+  TOOL_UMASK,
+  checkToolUid,
+  shareWithToolGroup,
+  toolIsolation,
+  toolUidEnv,
+} from "./engine/tooluid.js";
 import { planLaunch } from "./engine/lens/launch-plan.js";
 import { engineLensSection } from "./engine/lens/section.js";
 import { CONTEXT_PACK_FILE } from "./contextpack.js";
@@ -260,15 +266,21 @@ export async function runDebugRoundPane(
   }
   // The pi, as the tool uid, reads the agent dir the run uid made private, and writes
   // the round's lens files.
-  if (launch.bin === "setpriv") {
+  // It also appends to the PR's JSONL (or births one in its session dir), which
+  // the run uid's worker wrote; what it writes stays group-writable for
+  // the worker of the next round.
+  const isolated = launch.isolated;
+  if (isolated) {
     shareWithToolGroup(spec.borrow_dir);
     shareWithToolGroup(spec.lens_dir);
+    shareWithToolGroup(spec.session_dir);
+    process.umask(TOOL_UMASK);
   }
   return (deps.run ?? onTerminal)({
     bin: launch.bin,
     args: launch.argv,
     cwd: spec.cwd,
-    env,
+    env: isolated ? toolUidEnv(env) : env,
   });
 }
 

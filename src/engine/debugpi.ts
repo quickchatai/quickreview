@@ -26,7 +26,7 @@ import { join } from "node:path";
 import { GITHUB_TOKEN_ENVS } from "../envstrip.js";
 import { piCliPath } from "../picli.js";
 import { DEBUG_STATUS_FILE, mainSessionOf } from "./openable.js";
-import { checkToolUid, shareWithToolGroup, toolIsolation } from "./tooluid.js";
+import { checkToolUid, shareWithToolGroup, toolIsolation, toolUidEnv } from "./tooluid.js";
 import {
   prepareRound,
   settleRound,
@@ -193,12 +193,13 @@ export async function runDebugRound(i: RoundSpec, deps: DebugRoundDeps = {}): Pr
     if ("refused" in launch) throw new Error(`a debug round in pi: ${launch.refused}`);
     // That pi reads the run's agent dir (its login copy, models, lens agents),
     // which the run uid made private.
-    if (launch.bin === "setpriv") shareWithToolGroup(i.agentDir);
+    if (launch.isolated) shareWithToolGroup(i.agentDir);
     const code = await (deps.run ?? onTerminal)({
       bin: launch.bin,
       args: launch.argv,
       cwd: i.cwd ?? i.root,
-      env,
+      // as the tool uid, git needs the run uid's repositories named safe
+      env: launch.isolated ? toolUidEnv(env) : env,
     });
     // Interactive pi prints no event stream: usage, stages and the price are read
     // from the session it kept.

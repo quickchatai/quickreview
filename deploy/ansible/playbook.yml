@@ -159,7 +159,9 @@
       loop:
         - { path: "{{ sandbox_root }}", mode: "0755", owner: "root" }
         - { path: "{{ sandbox_root }}/sandbox", mode: "0755" }
-        - { path: "{{ sandbox_root }}/state", mode: "0755" }
+        # Group-writable: the model's tools (tool_uid, the container uid's
+        # gid) write the round's state files there.
+        - { path: "{{ sandbox_root }}/state", mode: "0775" }
         # OpenViking's home: ~/.openviking is symlinked here at boot,
         # so memories + vector db + ov.conf survive an image rebuild. 0700 —
         # ov.conf carries the server's root key (and, under the hosted

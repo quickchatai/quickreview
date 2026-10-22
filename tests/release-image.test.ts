@@ -89,12 +89,35 @@ describe("release image — stages and pins", () => {
 
   it("carries the labels the VM's updater reads: layout, preflight, run spec, the pi pin", () => {
     expect(dockerfile).toMatch(
-      /LABEL qcr\.layout="release" \\\n\s+qcr\.preflight="true" \\\n\s+qcr\.runspec="1" \\\n\s+qcr\.pi="\$\{PI_VERSION\}"/,
+      /LABEL qcr\.layout="release" \\\n\s+qcr\.preflight="true" \\\n\s+qcr\.runspec="2" \\\n\s+qcr\.pi="\$\{PI_VERSION\}"/,
     );
     expect(dockerfile).toContain('LABEL qcr.build-sha="${BUILD_SHA}"');
     // The run spec the image needs is the one scripts/deploy.sh renders.
     const deploy = readFileSync(resolve(root, "scripts/deploy.sh"), "utf8");
-    expect(/^RUNSPEC_VERSION=(\d+)$/m.exec(deploy)?.[1]).toBe("1");
+    expect(/^RUNSPEC_VERSION=(\d+)$/m.exec(deploy)?.[1]).toBe("2");
+  });
+
+  it("carries the bot's setid helper: setpriv with file capabilities, its gate group labelled", () => {
+    // MUTATION: drop the setcap line — the build check and this test fail
+    expect(dockerfile).toMatch(/ARG QCR_SETID_GID=4748\n/);
+    expect(dockerfile).toContain(
+      'install -o root -g "${QCR_SETID_GID}" -m 0750 "$(command -v setpriv)" /usr/local/libexec/qcr/setpriv',
+    );
+    expect(dockerfile).toContain("setcap cap_setuid,cap_setgid=ep /usr/local/libexec/qcr/setpriv");
+    // the build fails unless the capabilities really are on the file
+    expect(dockerfile).toMatch(
+      /getcap \/usr\/local\/libexec\/qcr\/setpriv \| grep -q 'cap_setgid,cap_setuid=ep'/,
+    );
+    expect(dockerfile).toContain('LABEL qcr.setid-gid="${QCR_SETID_GID}"');
+    // the capabilities are set after everything that could drop them, and the
+    // world-readable sweep of the app root never reaches the helper
+    const at = dockerfile.indexOf("setcap cap_setuid");
+    expect(dockerfile.slice(at)).not.toMatch(/(chown|chmod|install)[^\n]*libexec\/qcr\/setpriv/);
+    expect(dockerfile).toMatch(/chmod -R a\+rX,go-w \/opt\/qcr &&/);
+    // the entrypoint's default is the same path and gate group
+    const entry = read("docker/entrypoint.sh");
+    expect(entry).toContain('SETID_HELPER="${QCR_SETID_HELPER:-/usr/local/libexec/qcr/setpriv}"');
+    expect(entry).toContain("${QCR_SETID_GID:-4748}");
     // qcr.preflight says the image HAS `daemon --preflight` (P8.4b): it is labelled
     // by the change that adds the subcommand, never before it exists, so until then
     // qcr-update refuses every image (nothing deploys before the cutover).

@@ -26,6 +26,7 @@ import {
   capsDirOf,
   claimLaunchFile,
   createCapabilityFd,
+  ensurePrivateDir,
   ipcEnv,
   readCapabilityFd,
   runDirOf,
@@ -480,6 +481,28 @@ describe("[P7.2a] the server", () => {
     expect(mode(socketPathOf(state))).toBe(0o600);
     expect(statSync(socketPathOf(state)).isSocket()).toBe(true);
     expect(statSync(socketPathOf(state)).uid).toBe(process.getuid!());
+  });
+
+  it("with group access the tool uid's shims can dial in: the dir 0710, the socket 0660", async () => {
+    // MUTATION: keep 0o600 on the socket under groupAccess — this fails
+    const dir = mkdtempSync(join(tmpdir(), "ipc-grp-"));
+    const shared = new IpcServer({
+      socketPath: socketPathOf(dir),
+      capabilities: new CapabilityStore(),
+      commands: () => null,
+      groupAccess: true,
+    });
+    try {
+      await shared.start();
+      expect(mode(runDirOf(dir))).toBe(0o710);
+      expect(mode(socketPathOf(dir))).toBe(0o660);
+      // what else lives in the run dir stays the daemon's alone
+      ensurePrivateDir(capsDirOf(dir));
+      expect(mode(capsDirOf(dir))).toBe(0o700);
+    } finally {
+      await shared.stop();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("serves a request from an authenticated command and tells the handler who asked", async () => {
