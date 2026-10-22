@@ -1356,14 +1356,14 @@ describe("companion image", () => {
   });
 
   it("runs the image's code, not the checkout's: no mode needs a pi subagent example", () => {
-    // Every route loads our lens tool (below); the daemon keeps only the
-    // pinned-CLI check (assert_pinned_pi_cli), the companion not even that.
+    // Every route loads our lens tool (below), and no mode checks a global pi
+    // CLI: the release image has only node_modules' pi (P9.9b).
     const mode = entrypoint.slice(entrypoint.indexOf("mode_companion() {"));
     expect(mode).not.toContain("assert_subagent_example");
     expect(mode).not.toContain("assert_pinned_pi_cli");
     const daemon = image.slice(image.indexOf("mode_daemon() {"));
     expect(daemon).not.toContain("assert_subagent_example");
-    expect(daemon).toContain("assert_pinned_pi_cli");
+    expect(image).not.toContain("assert_pinned_pi_cli");
   });
 });
 

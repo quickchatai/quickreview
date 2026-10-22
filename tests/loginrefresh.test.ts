@@ -904,7 +904,9 @@ describe("[P8.22] only the refresher and the login mode write the pihome's auth.
     // the pause file and the lock are named; auth.json is only ever read, found, or shared (chmod/chgrp)
     const sh = text.replace(/^\s*#.*$/gm, "");
     expect(sh).not.toMatch(/>>?\s*["']?[^\s"']*auth\.json(?!\.)/);
-    expect(sh).toContain("loginInPi(process.argv[2] || undefined)[2]");
+    expect(sh).toContain(
+      'loginInPi(process.argv[2] || undefined, process.argv[1] + "/node_modules/.bin/pi")[2]',
+    );
   });
 
   it("the scan catches a planted writer (a fence that cannot fail is not one)", () => {
