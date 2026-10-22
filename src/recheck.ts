@@ -334,6 +334,9 @@ function tokenSeams(lines: string[]): string {
   let out = "";
   let gap = false;
   let lineBreak = false;
+  // A line comment runs to the end of its line, so the break after a line
+  // that holds a comment marker outside a literal is content.
+  const LINE_COMMENT = /\/\/|#|--/;
   const push = (text: string): void => {
     if (text === "") return;
     const prev = out.slice(-1);
@@ -359,13 +362,16 @@ function tokenSeams(lines: string[]): string {
   for (const line of lines) {
     gap = true;
     lineBreak = true;
+    let commented = false;
     line.split(QUOTED).forEach((part, i) => {
       if (i % 2 === 1) return push(part);
+      if (LINE_COMMENT.test(part)) commented = true;
       part.split(/(\s+)/).forEach((chunk, k) => {
         if (k % 2 === 1) gap = true;
         else push(chunk);
       });
     });
+    if (commented && out !== "") out += "\n";
   }
   return out;
 }
@@ -1274,6 +1280,10 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
       return done({ action: "noop", reason: "stale-head", class: "empty" });
     if (standingVerdict(store.reviewedHead(req.pr)) !== "APPROVE")
       return done({ action: "noop", reason: "no-standing-approval", class: "empty" });
+    // A pause that landed while the reads ran: a push question is asked again
+    // by the reconcile backstop once it lifts.
+    if (req.trigger === "push" && store.getPr(req.pr)?.paused)
+      return done({ action: "noop", reason: "paused", class: "empty" });
     claimed = store.db.transaction(() => {
       if (
         !store.claimRecheck(req.pr, fingerprint, {

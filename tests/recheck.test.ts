@@ -207,6 +207,14 @@ describe("trivial-delta classifier", () => {
     );
   });
 
+  it("keeps the line break that ends a line comment significant", () => {
+    // `foo(); //()\nbar();` runs bar; `foo(); //()bar();` comments it out.
+    expect(formattingOnly("@@\n-foo(); //()\n-bar();\n+foo(); //()bar();", "src/x.ts")).toBe(false);
+    expect(formattingOnly("@@\n-x = 1 # c\n-y = 2\n+x = 1 # cy = 2", "app/x.py")).toBe(false);
+    // A re-indent of a commented line stays formatting.
+    expect(formattingOnly("@@\n-  foo(); // c\n+    foo(); // c", "src/x.ts")).toBe(true);
+  });
+
   it("keeps a line break that can end a statement significant", () => {
     // `return\nvalue;` returns undefined.
     expect(formattingOnly("@@\n-return value;\n+return\n+value;", "src/x.ts")).toBe(false);
@@ -912,6 +920,19 @@ describe("runRecheck", () => {
     expect(out).toMatchObject({ action: "noop", reason: "paused" });
     expect(h.injected).toHaveLength(0);
     expect(h.adapter.calls).toEqual([]);
+    expect(h.store.rechecksFor(PR)).toHaveLength(0);
+  });
+
+  it("asks nothing of a push whose PR is paused while its reads run", async () => {
+    const h = harness({
+      repoFacts: async () => {
+        h.store.pausePr(PR, { issuer: "operator", expires_at: null }, "hold");
+        return "facts";
+      },
+    });
+    const out = await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
+    expect(out).toMatchObject({ action: "noop", reason: "paused" });
+    expect(h.injected).toHaveLength(0);
     expect(h.store.rechecksFor(PR)).toHaveLength(0);
   });
 
