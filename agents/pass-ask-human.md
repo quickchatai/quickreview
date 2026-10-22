@@ -1,7 +1,7 @@
 ---
 name: pass-ask-human
 description: Ask-your-human review pass — added on demand when the session suspects a question whose answer lives outside the repo. Every finding is a question addressed to the PR author's AI implementer, telling it to put the question to a person rather than answer it itself. It may block only when it names the failure under the bad answer.
-tools: read, bash, grep, glob
+tools: read, bash, grep
 ---
 
 {{include:prompts/pass-common.md}}

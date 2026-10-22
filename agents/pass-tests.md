@@ -1,7 +1,7 @@
 ---
 name: pass-tests
 description: Tests review pass — which existing tests, mocks and fixtures the change breaks, and whether the PR's tests actually test the code or mock away the failure point.
-tools: read, bash, grep, glob
+tools: read, bash, grep
 ---
 
 {{include:prompts/pass-common.md}}

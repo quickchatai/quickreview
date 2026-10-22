@@ -1,7 +1,7 @@
 ---
 name: pass-deferred
 description: Deferred-work review pass (sub-lens of concurrency) — when work moves onto a queue, loop, timer or batch, checks who wakes it, who reads before it drains, and what coalescing merges.
-tools: read, bash, grep, glob
+tools: read, bash, grep
 ---
 
 {{include:prompts/pass-common.md}}

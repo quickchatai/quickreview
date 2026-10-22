@@ -131,9 +131,10 @@ describe("the scan-mode anchor addendum rides only the scan build", () => {
       const tools = /^tools: (.*)$/m.exec(body)?.[1];
       expect(tools, name).toBe(SCAN_LEAF_TOOLS.join(", "));
     }
-    // …while a PR build keeps its own (bash behind the guard, the two memory reads).
-    expect(/^tools: (.*)$/m.exec(prBuild().get("pass-baseline--sol-med")!)?.[1]).toContain(
-      "viking_search",
+    // …while a PR build keeps its own: bash behind the guard, and no memory
+    // tool (no lens leaf loads the memory extension).
+    expect(/^tools: (.*)$/m.exec(prBuild().get("pass-baseline--sol-med")!)?.[1]).toBe(
+      "read, bash, grep",
     );
   });
 

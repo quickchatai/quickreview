@@ -1,7 +1,7 @@
 ---
 name: pass-sweep
 description: Line-by-line sweep of a few changed files for local slips — typos, fall-through, a copied line not updated, shipped placeholders, unchecked parsing — the defects a whole-PR reading skims past.
-tools: read, bash, grep, glob
+tools: read, bash, grep
 ---
 
 {{include:prompts/pass-common.md}}

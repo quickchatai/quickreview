@@ -172,15 +172,23 @@ describe("the registry on every agent buildAgents emits", () => {
     }
   });
 
-  it("the VM build holds the two memory tools; the bench build and the scan build do not", () => {
+  // No lens leaf loads the memory extension (LENS_LEAVES_LOAD_MEMORY), so no
+  // build names a memory tool; and none names `glob`, which pi has no tool for.
+  it("no build holds a memory tool or a `glob`; the scan build is read-only", () => {
     const vm = loadBuiltAgents(dirs.vm);
     const bench = loadBuiltAgents(dirs.bench);
     const scan = loadBuiltAgents(dirs.scan);
     const sec = (r: AgentRegistry) =>
       [...r.agents.values()].find((a) => a.name.startsWith("pass-security--"))!.tools!;
-    expect(sec(vm).some((t) => t.startsWith("viking_"))).toBe(true);
-    expect(sec(bench).some((t) => t.startsWith("viking_"))).toBe(false);
+    expect(sec(vm)).toEqual(["read", "bash", "grep"]);
+    expect(sec(bench)).toEqual(["read", "bash", "grep"]);
     expect(sec(scan)).toEqual(["read", "grep", "find", "ls"]);
+    for (const r of [vm, bench, scan])
+      for (const a of r.agents.values())
+        expect(
+          a.tools!.filter((t) => t.startsWith("viking_") || t === "glob"),
+          a.name,
+        ).toEqual([]);
   });
 
   it("matches the committed golden of the example parser's name / model / tools", () => {

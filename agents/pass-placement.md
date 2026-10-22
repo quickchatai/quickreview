@@ -1,7 +1,7 @@
 ---
 name: pass-placement
 description: Placement review pass — is this change in the right place? Judged against the repo's own structure; findings name the better home; capped at P2.
-tools: read, bash, grep, glob
+tools: read, bash, grep
 ---
 
 {{include:prompts/pass-common.md}}

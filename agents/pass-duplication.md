@@ -1,7 +1,7 @@
 ---
 name: pass-duplication
 description: Duplication review pass — does the change write the same knowledge twice, or again where the repo already has it? Both sites cited, and what drifts when one changes without the other. Capped at P2.
-tools: read, bash, grep, glob
+tools: read, bash, grep
 ---
 
 {{include:prompts/pass-common.md}}

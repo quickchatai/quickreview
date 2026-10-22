@@ -1,7 +1,7 @@
 ---
 name: pass-rollout
 description: Mixed-version rollout pass (sub-lens of backcompat) — for releases that will not reach every party at once, checks old peer against new code, new peer against old code, and state persisted by the old version.
-tools: read, bash, grep, glob
+tools: read, bash, grep
 ---
 
 {{include:prompts/pass-common.md}}

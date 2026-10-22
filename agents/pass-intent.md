@@ -1,7 +1,7 @@
 ---
 name: pass-intent
 description: Intent review pass — does the diff do what the PR title and body say it does? Body+title only; questions and nits, never blockers.
-tools: read, bash, grep, glob
+tools: read, bash, grep
 ---
 
 {{include:prompts/pass-common.md}}

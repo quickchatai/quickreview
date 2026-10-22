@@ -1,7 +1,7 @@
 ---
 name: pass-bounds
 description: Resource and trust bounds pass (sub-lens of security) — loops whose exit another party controls, size checks after allocation, unvalidated remote data, unbounded growth, internal facts leaking out.
-tools: read, bash, grep, glob
+tools: read, bash, grep
 ---
 
 {{include:prompts/pass-common.md}}

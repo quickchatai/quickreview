@@ -238,8 +238,8 @@ const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
 // The default profile's built agents with `[review] dedup_merge = false` and no
 // posting policy. These hashes move only when an agent body, an addendum or the
 // agent build changes on purpose; `[posting]` must never move them.
-const GOLDEN_AGENTS_NO_DEDUP = "60247498db0bff42e4bdcc763095a890d0c872398452b56f2c7a331691aae209";
+const GOLDEN_AGENTS_NO_DEDUP = "9e7e43846c9694c957d312662f8c7bfad04660d3990055bbfdd12d8ef1c58a26";
 // The default build: as GOLDEN_AGENTS_NO_DEDUP plus `dedup-group-validate`
 // (pass-validate, `[review] dedup_merge` on by default) and the default
 // profile's posting addendum for `repeat_sites = false`.
-const GOLDEN_AGENTS = "92cece7878eb7aa36ba6395972a9e95bae7e42eeab9e3fc4f9c727c18ef01690";
+const GOLDEN_AGENTS = "d0b43e083255a534d3bbdd4020afdba542c6b75be31960e496beae3b6460e759";

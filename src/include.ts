@@ -257,24 +257,22 @@ function toolsList(frontmatter: string): string[] | null {
 }
 
 /**
- * The memory tools a lens pass may hold — exactly two, both read-only.
+ * The memory tools a lens pass would hold if its leaf loaded the memory
+ * extension — exactly two, both read-only. No leaf does today
+ * (`LENS_LEAVES_LOAD_MEMORY` below), so no build grants them by default.
  *
  * A pass is a blank-slate evaluator of a diff; being able to look something up
  * ("was this settled before?", "what does the reviewer's memory say about this
- * subsystem?") is a deliberate, narrow widening of that slate. Writing is not:
- * everything durable a review produces is authored by the PR's one main
+ * subsystem?") would be a deliberate, narrow widening of that slate. Writing is
+ * not: everything durable a review produces is authored by the PR's one main
  * session and the EOD curator, so a leaf that could write would be a second
  * author of the reviewer's memory with none of the accounting.
  *
- * There are two layers, and this list is the outer one: the frontmatter
- * `tools:` line becomes the child's `--tools` allowlist, so it decides which
- * memory tools a leaf could ever activate. (The OpenViking extension does not
- * load inside a child at all — children load only the global settings.json
- * extensions, and it rides per-spawn argv — so these two names sit inert in
- * the child's allowlist; pi ignores allowlisted names with no provider,
- * verified statically at pi 0.84.4.) The inner layer is the vendored fork's
- * own PATCH 2, which withholds `viking_write` in any leaf process regardless
- * of what the frontmatter says.
+ * The frontmatter `tools:` line becomes the leaf session's tool allowlist
+ * (runLens hands it to PiHost.makeSession), so it decides which memory tools a
+ * leaf could ever activate; pi ignores an allowlisted name nothing registers.
+ * The inner layer is the vendored fork's own PATCH 2, which withholds
+ * `viking_write` in any leaf process regardless of what the frontmatter says.
  */
 export const LEAF_MEMORY_TOOLS: readonly string[] = ["viking_search", "viking_read"];
 
@@ -282,7 +280,43 @@ export const LEAF_MEMORY_TOOLS: readonly string[] = ["viking_search", "viking_re
 const MEMORY_TOOL_RE = /^viking_/i;
 
 /**
- * Put exactly `LEAF_MEMORY_TOOLS` on a built variant's `tools:` line.
+ * Whether a lens leaf session loads the OpenViking memory extension. It does
+ * not, on any route: runLens (src/engine/lens/runlens.ts) gives a leaf the
+ * bash guard and, in a cache group, the leaf cache — nothing else — and that
+ * runner hosts every lens the built agents feed (a worker round, a debug round,
+ * the `qcr review` route, the bench). The memory extension goes only to a PR's
+ * main and answer sessions (src/engine/botsdk.ts). So a build grants a leaf no
+ * memory tool and no rule describing one unless its caller says the leaf has
+ * them (`BuildAgentsOptions.memory`). tests/lens-runner.test.ts holds this to
+ * the runner: every tool a default-built lens names exists in its session.
+ * Wire the extension into the leaves and this flips with it, in one change.
+ */
+export const LENS_LEAVES_LOAD_MEMORY = false;
+
+/**
+ * Names a seed's `tools:` line carries that are no tool at pi's pin. The
+ * seeds were written for a harness with a `Glob` tool; pi 1.3.0's built-ins
+ * are read, bash, powershell, edit, write, grep, find and ls (its
+ * `allToolNames`), and an allowlisted name nothing registers is ignored. So
+ * the name grants nothing, and the build drops it rather than carry a tool
+ * the leaf never has. Dropping, not renaming to pi's `find`: that would give
+ * every lens a tool it has never had. The seeds stay frozen (rule 6); this is
+ * build-time normalisation of the files agent discovery reads.
+ */
+const NOT_PI_TOOLS = new Set(["glob"]);
+
+/** Drop `NOT_PI_TOOLS` from a built variant's `tools:` line. A line left
+ * as it was when it names none of them. */
+export function dropNonPiTools(frontmatter: string): string {
+  const listed = toolsList(frontmatter);
+  if (listed === null || !listed.some((t) => NOT_PI_TOOLS.has(t.toLowerCase()))) return frontmatter;
+  const kept = listed.filter((t) => !NOT_PI_TOOLS.has(t.toLowerCase()));
+  return frontmatter.replace(TOOLS_LINE_RE, `tools: ${kept.join(", ")}`);
+}
+
+/**
+ * Put exactly `tools` — `LEAF_MEMORY_TOOLS` by default, none for a leaf
+ * without memory — on a built variant's `tools:` line.
  *
  * Any other `viking_*` tool a seed might name is dropped first, so a future
  * seed carrying `viking_write` cannot smuggle a write surface into a leaf —
@@ -775,12 +809,14 @@ const MERGE_DISPOSITIONS_VALIDATE_ADDENDUM =
 const FINDING_SELF_SUFFICIENCY_ADDENDUM =
   "\n## Blocker-class findings carry a detail paragraph (sandbox rule)\nThe posted comment is fixed from directly — often by an AI agent with nothing else — so every `P0`–`P2` candidate adds a `detail:` line after `claim`: one short paragraph with the mechanism, the concrete failing scenario and the invariant a fix must restore (never the prescribed rewrite; the remedy-size rule is unchanged). The `claim` **leads with the general defect or violated invariant** when the evidence establishes a class; the concrete reproducer is proof in `detail`, not the scope of the requested fix — unless one exact literal really is the contract. Include only what you verified by reading; one sentence of `detail` is enough when it carries the mechanism and what a fix needs. `P3` and `nit` candidates add `detail` only when the claim alone would be unclear.\n";
 
-// The passes hold two read-only memory tools (`viking_search`,
-// `viking_read` — see LEAF_MEMORY_TOOLS above). A tool with no contract around
-// it is worse than no tool: a pass would either ignore it or treat whatever it
-// returns as authority. This entry says what the store IS, what it is FOR, and
-// that writing to it is not on the table — the frontmatter allowlist and the
-// fork's leaf gate enforce that, this explains it.
+// Where the passes hold the two read-only memory tools (`viking_search`,
+// `viking_read` — see LEAF_MEMORY_TOOLS above; no route's leaves do today,
+// LENS_LEAVES_LOAD_MEMORY). A tool with no contract around it is worse than no
+// tool: a pass would either ignore it or treat whatever it returns as
+// authority. This entry says what the store IS, what it is FOR, and that
+// writing to it is not on the table — the frontmatter allowlist and the fork's
+// leaf gate enforce that, this explains it. A rule describing tools the leaf
+// does not have is worse still, so it is composed only beside them.
 /** Composed only where the leaves hold the memory tools (BuildAgentsOptions.memory). */
 export const MEMORY_ADDENDUM_ID = "memory-read-only";
 const MEMORY_READ_ONLY_ADDENDUM =
@@ -1028,8 +1064,10 @@ const ASK_HUMAN_NAMED_DEFECT_VALIDATE_ADDENDUM =
 //   * Defect-shaped (a wrong declared type, a data-losing migration split)
 //     binds in an addendum, where a blank-slate leaf reads it every round.
 //     Convention-shaped (which module a constant lives in, the logging kwarg
-//     that is silently dropped) goes to reviewer memory, which the passes look
-//     up with `viking_search` — a convention drifts.
+//     that is silently dropped) goes to reviewer memory, which reaches a round
+//     through the PR's main session (its pinned head, its recall and memory
+//     tools, and the lessons delivered into the plan) — a convention drifts.
+//     The passes themselves hold no memory tool (LENS_LEAVES_LOAD_MEMORY).
 //   * A rule about which lens runs is not a rule about how a lens judges, so
 //     the missing-migration trigger lives in the round templates instead.
 //
@@ -1844,9 +1882,10 @@ export interface BuildAgentsOptions {
    * Implied by `mode: "scan"`. */
   readOnlyLeaves?: boolean;
   /** Whether the leaves run with the memory extension (the two read-only
-   * memory tools and their rule). Default: every PR build except
-   * `readOnlyLeaves`; never a scan build. The bench passes `false`: its
-   * rounds run without memory, so the tools and the rule describe nothing. */
+   * memory tools and their rule). Default `LENS_LEAVES_LOAD_MEMORY` — false:
+   * no route's lens leaf loads it, so the tools and the rule would describe
+   * nothing. Never for a scan or `readOnlyLeaves` build, whatever this says.
+   * The bench passes `false` explicitly. */
   memory?: boolean;
   /** More source directories of `pass-*.md` agents, built exactly like
    * `srcDir`'s — the scan build's `agents/scan/` (`pass-scan`), which no PR
@@ -2007,7 +2046,7 @@ export function buildAgents(
   const built: BuiltAgent[] = [];
   // A leaf that loads no extensions: no bash guard, no memory tools.
   const extensionFree = mode === "scan" || opts.readOnlyLeaves === true;
-  const memory = opts.memory ?? !extensionFree;
+  const memory = !extensionFree && (opts.memory ?? LENS_LEAVES_LOAD_MEMORY);
   for (const src of sources) {
     const file = src.slice(src.lastIndexOf("/") + 1);
     const doc = splitFrontmatter(read(src));
@@ -2041,14 +2080,13 @@ export function buildAgents(
       const { model, thinking } = splitModelSpec(spec);
       let frontmatter = applyNameOverride(doc.frontmatter, name);
       // Order matters: strip first (a tools line that named ONLY spawn tools is
-      // removed entirely, and a removed line stays removed), then grant the two
-      // read-only memory tools to what remains.
+      // removed entirely, and a removed line stays removed), then drop the
+      // names pi has no tool for, then put exactly the memory tools the leaf
+      // has on what remains — the two read-only ones with memory, none without.
       frontmatter = stripAgentSpawnTools(frontmatter);
       frontmatter = extensionFree
         ? applyScanLeafTools(frontmatter)
-        : memory
-          ? applyMemoryTools(frontmatter)
-          : frontmatter;
+        : applyMemoryTools(dropNonPiTools(frontmatter), memory ? LEAF_MEMORY_TOOLS : []);
       // The full spec ("provider/model:thinking") goes into `model:`.
       // The native subagent extension reads only the `model` frontmatter field
       // and passes it verbatim as `--model`, and pi's CLI accepts the

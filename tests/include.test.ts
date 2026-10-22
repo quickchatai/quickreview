@@ -13,6 +13,7 @@ import {
   composeAddendum,
   LEAF_MEMORY_TOOLS,
   applyMemoryTools,
+  dropNonPiTools,
   applyModelOverride,
   applyNameOverride,
   applyThinkingOverride,
@@ -240,11 +241,11 @@ describe("buildAgents", () => {
     const out = join(root, "state", "agents");
     buildAgents(join(root, "agents"), out, { root });
     const alpha = readFileSync(join(out, "pass-alpha--terra-med.md"), "utf8");
-    // `tools:` carries the seed's list plus the two read-only memory tools
-    // every built pass gets — the seed itself is untouched.
+    // `tools:` carries the seed's list — no memory tool, since no lens leaf
+    // loads the memory extension — and the seed itself is untouched.
     expect(
       alpha.startsWith(
-        "---\nname: pass-alpha--terra-med\ndescription: a\ntools: read, bash, viking_search, viking_read\nmodel: openai-codex/gpt-6.1-sol:medium\n",
+        "---\nname: pass-alpha--terra-med\ndescription: a\ntools: read, bash\nmodel: openai-codex/gpt-6.1-sol:medium\n",
       ),
     ).toBe(true);
     expect(alpha).toContain("thinking: medium\n");
@@ -257,9 +258,9 @@ describe("buildAgents", () => {
     expect(high).toContain("thinking: high\n");
   });
 
-  it("grants every built pass exactly two read-only memory tools", () => {
+  it("with memory: true, grants every built pass exactly two read-only memory tools", () => {
     const out = join(root, "state", "agents");
-    const built = buildAgents(join(root, "agents"), out, { root });
+    const built = buildAgents(join(root, "agents"), out, { root, memory: true });
     for (const b of built) {
       const text = readFileSync(b.output, "utf8");
       const line = /^tools:[ \t]*(.*)$/m.exec(text);
@@ -287,11 +288,16 @@ describe("buildAgents", () => {
   it("appends the composed addendum to every built body (seeds untouched)", () => {
     const out = join(root, "state", "agents");
     const built = buildAgents(join(root, "agents"), out, { root });
+    // No leaf loads memory by default, so the memory rule is left out.
+    const noMemory = PASS_ADDENDA.filter((a) => a.id !== "memory-read-only");
     for (const b of built) {
       const text = readFileSync(b.output, "utf8");
       expect(text).toContain("## Execution policy (sandbox rule, enforced)");
-      expect(text.endsWith(composeAddendum(b.pass))).toBe(true);
+      expect(text.endsWith(composeAddendum(b.pass, noMemory))).toBe(true);
     }
+    const withMemory = buildAgents(join(root, "agents"), join(root, "mem"), { root, memory: true });
+    for (const b of withMemory)
+      expect(readFileSync(b.output, "utf8").endsWith(composeAddendum(b.pass))).toBe(true);
     expect(readFileSync(join(root, "agents", "pass-alpha.md"), "utf8")).not.toContain(
       "Execution policy",
     );
@@ -1457,6 +1463,35 @@ describe("applyMemoryTools", () => {
 
   it("never CREATES a tools line: absent means 'whatever the harness gives you'", () => {
     expect(applyMemoryTools("name: pass-x\nmodel: m\n")).toBe("name: pass-x\nmodel: m\n");
+  });
+});
+
+describe("dropNonPiTools", () => {
+  it("drops `glob` — no tool at pi's pin — and leaves every other name as it was", () => {
+    expect(dropNonPiTools("name: x\ntools: read, bash, grep, glob\n")).toBe(
+      "name: x\ntools: read, bash, grep\n",
+    );
+    expect(dropNonPiTools("tools: Glob, read\n")).toBe("tools: read\n");
+  });
+
+  it("is a no-op on a line naming none, and never creates a tools line", () => {
+    expect(dropNonPiTools("tools: read,  bash\n")).toBe("tools: read,  bash\n");
+    expect(dropNonPiTools("name: pass-x\n")).toBe("name: pass-x\n");
+  });
+
+  it("a build of a frozen seed carrying `glob` builds without it; the seed is untouched", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-glob-"));
+    try {
+      const src = join(dir, "agents");
+      mkdirSync(src, { recursive: true });
+      const seed = "---\nname: pass-ui\ntools: read, bash, grep, glob\n---\n\nbody\n";
+      writeFileSync(join(src, "pass-ui.md"), seed);
+      const [a] = buildAgents(src, join(dir, "out"), { riskPasses: [], validateTier: "terra-med" });
+      expect(readFileSync(a!.output, "utf8")).toMatch(/^tools: read, bash, grep$/m);
+      expect(readFileSync(join(src, "pass-ui.md"), "utf8")).toBe(seed);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

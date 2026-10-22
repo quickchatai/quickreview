@@ -1,7 +1,7 @@
 ---
 name: pass-lint-conformance
 description: Lint and format conformance (sub-lens of style) — planned only when a CI job of the repo runs a linter or formatter whose rules cover the changed files; reports only violations on changed lines that would fail that job.
-tools: read, bash, grep, glob
+tools: read, bash, grep
 ---
 
 {{include:prompts/pass-common.md}}

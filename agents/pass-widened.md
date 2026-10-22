@@ -1,7 +1,7 @@
 ---
 name: pass-widened
 description: Widened-check review pass (sub-lens of baseline) — when a predicate, guard or accepted-value list changes, every consumer that trusted the old set is checked against each newly admitted member.
-tools: read, bash, grep, glob
+tools: read, bash, grep
 ---
 
 {{include:prompts/pass-common.md}}

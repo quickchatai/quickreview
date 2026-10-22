@@ -1,7 +1,7 @@
 ---
 name: pass-simplicity
 description: Simplicity review pass — is the code as simple as its job allows, and do any of its checks defend states that cannot occur? May point beyond the diff at a simpler shape; capped at P2.
-tools: read, bash, grep, glob
+tools: read, bash, grep
 ---
 
 {{include:prompts/pass-common.md}}

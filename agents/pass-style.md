@@ -1,7 +1,7 @@
 ---
 name: pass-style
 description: Style review pass — only where the repo writes its code style down. Findings cite the guide's own rule and the changed line that breaks it; never taste, never another ecosystem's conventions, never what a linter or formatter enforces. Nit only.
-tools: read, bash, grep, glob
+tools: read, bash, grep
 ---
 
 {{include:prompts/pass-common.md}}

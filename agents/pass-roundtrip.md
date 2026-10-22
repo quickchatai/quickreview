@@ -1,7 +1,7 @@
 ---
 name: pass-roundtrip
 description: Persisted-bytes round-trip pass (sub-lens of data-safety) — traces sample files through read, detect, decode, edit, encode and write, and checks the bytes that land on disk.
-tools: read, bash, grep, glob
+tools: read, bash, grep
 ---
 
 {{include:prompts/pass-common.md}}

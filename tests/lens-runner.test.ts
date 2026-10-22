@@ -4,7 +4,8 @@
 // the leaf guarantee and the containment of a throwing extension.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   fauxAssistantMessage,
@@ -20,6 +21,9 @@ import {
   type LensRunConfig,
 } from "../src/engine/lens/runlens.js";
 import { loadBuiltAgents } from "../src/engine/lens/registry.js";
+import { LENS_LEAVES_LOAD_MEMORY, PASS_TIERS, buildAgents } from "../src/include.js";
+import type { PassTier } from "../src/types.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 import { lensLogName, readLiveEvents } from "../src/live/events.js";
 import { createLiveWriter } from "../src/live/writer.js";
 import { parseLedger } from "../src/lensresult.js";
@@ -492,6 +496,61 @@ describe("[runLens] a throwing extension is contained", () => {
     expect(text).toBe("carried on");
     expect(result.exitCode).toBe(0);
   });
+});
+
+// The tools line of a built lens is the leaf's allowlist, and pi ignores an
+// allowlisted name nothing registers — so a name the leaf never has (a memory
+// tool with no memory extension, a `glob` pi has no tool for) costs nothing at
+// runtime and says something false. The truth is what the runner's session
+// holds: it loads the bash guard and the leaf cache, never the memory
+// extension (LENS_LEAVES_LOAD_MEMORY), so every name a default build of the
+// real agents/ puts on a tools line must be a tool its session carries.
+describe("[runLens] a built lens names only tools its leaf holds", () => {
+  it(
+    "every name on a default-built agent's tools line is a tool its session has; no memory tool",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+      const out = join(dir, "built");
+      const tiers = Object.fromEntries(PASS_TIERS.map((t) => [t, "faux/faux-1"])) as Record<
+        PassTier,
+        string
+      >;
+      const built = buildAgents(join(root, "agents"), out, {
+        root,
+        tiers,
+        riskPasses: [],
+        validateTier: "terra-med",
+      });
+      // One session per distinct tools line: the line is what is under test.
+      const byLine = new Map<string, string>();
+      for (const a of built) {
+        const line = /^tools:[ \t]*(.*)$/m.exec(readFileSync(a.output, "utf8"))?.[1] ?? "";
+        if (!byLine.has(line)) byLine.set(line, a.name);
+      }
+      expect(byLine.size).toBeGreaterThan(0);
+      expect(LENS_LEAVES_LOAD_MEMORY).toBe(false);
+      rig.faux.setResponses(
+        Array.from({ length: byLine.size }, () => () => fauxAssistantMessage("fine")),
+      );
+      const runner = createLensRunner(config({ registry: loadBuiltAgents(out) }));
+      for (const [line, name] of byLine) {
+        const before = sessions.length;
+        const { result } = await runner.run({ agent: name, task: "go" });
+        expect(result.exitCode, `${name}: ${result.errorMessage ?? ""}`).toBe(0);
+        const held = sessions[before]!.getAllTools().map((t) => t.name);
+        const named = line
+          .split(",")
+          .map((t) => t.trim())
+          .filter((t) => t.length > 0);
+        for (const tool of named) expect(held, `${name} names ${tool}`).toContain(tool);
+        expect(
+          held.filter((t) => t.startsWith("viking_")),
+          name,
+        ).toEqual([]);
+      }
+    },
+  );
 });
 
 describe("[canary] every lens session carries bash-guard", () => {

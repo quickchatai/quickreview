@@ -1,7 +1,7 @@
 ---
 name: pass-abstraction
 description: Abstraction review pass — are the functions, types, interfaces and parameters this change introduces or reshapes drawn at the right level for their job? Mixed levels, leaky or missing abstractions, speculative generality, contracts that do not say what they guarantee. Capped at P2.
-tools: read, bash, grep, glob
+tools: read, bash, grep
 ---
 
 {{include:prompts/pass-common.md}}

@@ -1,7 +1,7 @@
 ---
 name: pass-behaviour-delta
 description: Base-versus-head behaviour on every modified, rewrapped, replaced or deleted line of non-test code — what the old code did on the paths the PR did not set out to change, and whether the new code still does it.
-tools: read, bash, grep, glob
+tools: read, bash, grep
 ---
 
 {{include:prompts/pass-common.md}}

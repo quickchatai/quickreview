@@ -18,7 +18,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkBashCommand } from "../extensions/cli/bash-guard-ambient.js";
 import { COMPANION_DEFAULTS, resolveCompanionPaths, type Config } from "../src/config.js";
-import { LEAF_MEMORY_TOOLS, buildAgents, stripAgentSpawnTools } from "../src/include.js";
+import {
+  LEAF_MEMORY_TOOLS,
+  LENS_LEAVES_LOAD_MEMORY,
+  buildAgents,
+  stripAgentSpawnTools,
+  type BuildAgentsOptions,
+} from "../src/include.js";
 import { PrSessionLifecycle, prSessionName } from "../src/pr-session-lifecycle.js";
 import { isSandboxSession } from "../src/sessions.js";
 import { MAX_HELD_WAKES, StateStore } from "../src/state.js";
@@ -525,26 +531,43 @@ describe("buildAgents — built passes cannot launch agents", () => {
     }
   });
 
-  // Leaves may LOOK THINGS UP and may not write. Two layers — this
-  // allowlist decides which memory tools exist inside a leaf at all, and the
-  // vendored fork's PATCH 2 withholds `viking_write` in any leaf process.
-  it("gives a leaf read-only memory and no way to author anything", () => {
+  // Leaves hold no memory tool: no route's lens leaf loads the memory
+  // extension (LENS_LEAVES_LOAD_MEMORY; runlens gives a leaf the bash guard and
+  // the leaf cache only), so an allowlisted `viking_*` name would grant nothing
+  // and its rule would describe a tool the pass never has. A build that says its
+  // leaves have memory gets exactly the two read-only tools — never a write.
+  it("gives a leaf no memory tool by default, and never a way to author anything", () => {
     const src = join(dir, "agents");
-    const out = join(dir, "built");
     mkdirSync(src, { recursive: true });
     writeFileSync(
       join(src, "pass-baseline.md"),
       "---\nname: pass-baseline\ntools: read, grep, viking_write\nmodel: openai/x\n---\n\nbody\n",
     );
-
-    for (const agent of buildAgents(src, out, { riskPasses: [], validateTier: "terra-med" })) {
-      const text = readFileSync(agent.output, "utf8");
-      const tools = /^tools:[ \t]*(.*)$/m
+    const toolsOf = (text: string): string[] =>
+      /^tools:[ \t]*(.*)$/m
         .exec(text)![1]!
         .split(",")
         .map((t) => t.trim());
-      expect(tools.filter((t) => t.startsWith("viking_"))).toEqual([...LEAF_MEMORY_TOOLS]);
-      expect(tools).not.toContain("viking_write");
+
+    expect(LENS_LEAVES_LOAD_MEMORY).toBe(false);
+    const plain = buildAgents(src, join(dir, "built"), {
+      riskPasses: [],
+      validateTier: "terra-med",
+    });
+    for (const agent of plain) {
+      const text = readFileSync(agent.output, "utf8");
+      expect(toolsOf(text).filter((t) => t.startsWith("viking_"))).toEqual([]);
+      expect(text).not.toContain("**You have no write tool**");
+    }
+
+    const withMemory = buildAgents(src, join(dir, "built-mem"), {
+      riskPasses: [],
+      validateTier: "terra-med",
+      memory: true,
+    });
+    for (const agent of withMemory) {
+      const text = readFileSync(agent.output, "utf8");
+      expect(toolsOf(text).filter((t) => t.startsWith("viking_"))).toEqual([...LEAF_MEMORY_TOOLS]);
       expect(text).toContain("**You have no write tool**");
     }
   });
@@ -1036,31 +1059,41 @@ describe("wakeOrHold / flushHeldWakes", () => {
   });
 });
 
-// A build whose leaves run
-// without memory (the bench) carries neither the two memory tools nor the
-// memory rule that describes them.
-describe("buildAgents — memory off", () => {
-  it("drops the memory tools and the memory rule; default builds keep both", () => {
+// A build's leaves hold the memory tools and their rule only where the leaf
+// loads the memory extension. No lens leaf does (LENS_LEAVES_LOAD_MEMORY), so
+// a default build carries neither; `memory: true` is the only way in, and a
+// leaf that loads no extensions (scan, replay) never has them.
+describe("buildAgents — memory tools follow the leaf", () => {
+  it("drops the memory tools and the memory rule by default; memory: true keeps both", () => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-nomem-"));
     try {
       const src = join(dir, "agents");
       mkdirSync(src, { recursive: true });
       writeFileSync(
         join(src, "pass-baseline.md"),
-        "---\nname: pass-baseline\ntools: read, grep\n---\n\nbody\n",
+        "---\nname: pass-baseline\ntools: read, grep, viking_search\n---\n\nbody\n",
       );
-      const off = buildAgents(src, join(dir, "off"), {
-        riskPasses: [],
-        validateTier: "terra-med",
-        memory: false,
-      });
-      const on = buildAgents(src, join(dir, "on"), { riskPasses: [], validateTier: "terra-med" });
-      const offText = readFileSync(off[0]!.output, "utf8");
-      const onText = readFileSync(on[0]!.output, "utf8");
-      expect(offText).not.toContain("viking_");
-      expect(offText).not.toContain("## Memory: two read-only tools");
-      expect(onText).toContain("viking_search");
-      expect(onText).toContain("## Memory: two read-only tools");
+      const build = (out: string, extra: Partial<BuildAgentsOptions> = {}): string =>
+        readFileSync(
+          buildAgents(src, join(dir, out), {
+            riskPasses: [],
+            validateTier: "terra-med",
+            ...extra,
+          })[0]!.output,
+          "utf8",
+        );
+      const byDefault = build("default");
+      const off = build("off", { memory: false });
+      const on = build("on", { memory: true });
+      const replay = build("replay", { memory: true, readOnlyLeaves: true });
+      expect(LENS_LEAVES_LOAD_MEMORY).toBe(false);
+      expect(byDefault).toBe(off);
+      for (const text of [byDefault, replay]) {
+        expect(text).not.toContain("viking_");
+        expect(text).not.toContain("## Memory: two read-only tools");
+      }
+      expect(on).toMatch(/^tools: read, grep, viking_search, viking_read$/m);
+      expect(on).toContain("## Memory: two read-only tools");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

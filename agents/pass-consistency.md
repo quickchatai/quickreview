@@ -1,7 +1,7 @@
 ---
 name: pass-consistency
 description: Consistency review pass — does the change treat alike what is alike, within itself and against the code around it? A sibling left out, one path handled differently, a pattern the repo follows everywhere but here. Inconsistency is where bugs hide; findings name both sides.
-tools: read, bash, grep, glob
+tools: read, bash, grep
 ---
 
 {{include:prompts/pass-common.md}}

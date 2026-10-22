@@ -473,9 +473,12 @@ For each source `agents/pass-*.md`, the build:
 4. fans the result out into one file per tier, `<pass>--<tier>.md`, rewriting
    the `name:`, `model:` and `thinking:` frontmatter fields;
 5. strips agent-spawning tools from `tools:` (`stripAgentSpawnTools`: `subagent`,
-   `subagents`, `task`, `agent`, `agents`, `dispatch`) and normalizes the memory
-   tools to exactly `LEAF_MEMORY_TOOLS` (`viking_search`, `viking_read` — read,
-   never write). A pass with no `tools:` line is left alone, because an absent
+   `subagents`, `task`, `agent`, `agents`, `dispatch`), drops names pi has no
+   tool for (`glob`, `dropNonPiTools`), and normalizes the memory tools: none,
+   because no lens leaf loads the memory extension (`LENS_LEAVES_LOAD_MEMORY`),
+   or exactly `LEAF_MEMORY_TOOLS` (`viking_search`, `viking_read` — read, never
+   write) for a build whose caller says its leaves have them. A pass with no
+   `tools:` line is left alone, because an absent
    list means "whatever the harness gives you" while a present one is an
    allowlist;
 6. writes each file atomically (tmp + rename in the same directory), because a

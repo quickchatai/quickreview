@@ -1,7 +1,7 @@
 ---
 name: pass-claims
 description: Claim-check pass (sub-lens of intent) — for each checkable claim in the PR title or body (fixes a warning, supports a version, prevents a failure), verifies that the diff actually makes it true, everywhere it applies.
-tools: read, bash, grep, glob
+tools: read, bash, grep
 ---
 
 {{include:prompts/pass-common.md}}

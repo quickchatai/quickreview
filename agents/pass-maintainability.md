@@ -1,7 +1,7 @@
 ---
 name: pass-maintainability
 description: Maintainability review pass — will the next person reading or changing this code understand it and change it safely? Stale docs and comments, misleading names, dead code, undecodable values, weak types, hidden coupling. Never style. Capped at P2.
-tools: read, bash, grep, glob
+tools: read, bash, grep
 ---
 
 {{include:prompts/pass-common.md}}
