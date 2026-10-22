@@ -389,7 +389,12 @@ jobs:
           docker buildx imagetools create -t "$REPO:$VERSION" \
             "$REPO@$(grep '^amd64=' "$GITHUB_OUTPUT" | cut -d= -f2)" \
             "$REPO@$(grep '^arm64=' "$GITHUB_OUTPUT" | cut -d= -f2)"
-          echo "index=$(docker buildx imagetools inspect "$REPO:$VERSION" --format '{{.Manifest.Digest}}')" >>"$GITHUB_OUTPUT"
+          # The plain listing's Digest line, as deploy.sh reads it: `--format`
+          # is not honoured by every runner's buildx (Blacksmith's prints the
+          # raw listing, which breaks $GITHUB_OUTPUT).
+          index="$(docker buildx imagetools inspect "$REPO:$VERSION" | awk '/^Digest:/{print $2; exit}')"
+          [[ "$index" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no index digest for $REPO:$VERSION"; exit 1; }
+          echo "index=$index" >>"$GITHUB_OUTPUT"
       - name: record the digests for the deploy manifest
         run: |
           jq -n --arg repository "$REPO" --arg index "${{ steps.push.outputs.index }}" \
