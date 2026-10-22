@@ -504,6 +504,7 @@ describe("[open-pr] an archived session", () => {
       if (!got.ok) return;
       expect(got.source).toBe("archive");
       expect(readFileSync(got.file, "utf8")).toBe(texts[2]);
+      expect(got.file.endsWith(".jsonl")).toBe(true);
       expect(sessionIdOf(readFileSync(got.file, "utf8"))).toBe("spawn-2");
       expect(JSON.parse(readFileSync(join(got.dir, OPEN_PR_RECORD), "utf8")).source).toBe(
         "archive",
