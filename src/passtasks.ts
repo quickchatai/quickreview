@@ -404,6 +404,8 @@ export function renderPassTaskNote(
         "repeat them in `extra`. `extra`, keyed by the row number, carries only a",
         "finding your LEDGER holds that the list does not, assigned the same way,",
         "and optionally a few lines of added focus — appended after the row's pointer.",
+        "A row the engine already started ignores `extra`: verify such a finding in a",
+        "launch of its own.",
       ]
     : followUp
       ? [

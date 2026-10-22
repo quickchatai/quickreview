@@ -845,6 +845,63 @@ describe("structured thread decision", () => {
     watcher.stop();
   });
 
+  it("an expired cooldown with nothing to process leaves the breaker open and logs no probe", async () => {
+    let now = new Date("2026-08-26T09:00:00Z");
+    const resolveOwnReviewThread = vi
+      .fn()
+      .mockRejectedValue(new Error('graphql errors: [{"code":"graphql_rate_limit"}]'));
+    const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
+    const watcher = new ThreadDecisionWatcher({
+      adapter: { createReviewCommentReply: vi.fn(), resolveOwnReviewThread },
+      store,
+      ledger,
+      verdictDir: root,
+      now: () => now,
+    });
+    ledger.claimAuthorMessage(event);
+    const name = "pr-77-thread-4000-comment-5001.json";
+    writeFileSync(
+      join(root, name),
+      JSON.stringify({ pr: 77, thread_id: 4000, comment_id: 5001, resolution: "resolve", reply: "" }),
+    );
+    await watcher.sweep();
+    expect(watcher.status().breaker_state).toBe("open");
+    rmSync(join(root, name));
+    now = new Date("2026-08-26T09:10:00Z");
+    await watcher.sweep();
+    expect(watcher.status().breaker_state).toBe("open");
+    expect(store.logEvent).not.toHaveBeenCalledWith("pingpong_breaker_half_open", null, {});
+    watcher.stop();
+  });
+
+  it("a replayed decision does not repeat the human-request callback", async () => {
+    ledger.claimAuthorMessage(event);
+    const onHumanRequested = vi.fn();
+    const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
+    const watcher = new ThreadDecisionWatcher({
+      adapter: { createReviewCommentReply: vi.fn(), resolveOwnReviewThread: vi.fn() },
+      store,
+      ledger,
+      verdictDir: root,
+      onHumanRequested,
+    });
+    const name = "pr-77-thread-4000-comment-5001.json";
+    const body = JSON.stringify({
+      pr: 77,
+      thread_id: 4000,
+      comment_id: 5001,
+      resolution: "keep_open",
+      reply: "",
+      human_requested: true,
+    });
+    writeFileSync(join(root, name), body);
+    expect(await watcher.handleFile(name)).toBe(true);
+    // the archive step did not complete: the same file is still there
+    writeFileSync(join(root, name), body);
+    expect(await watcher.handleFile(name)).toBe(true);
+    expect(onHumanRequested).toHaveBeenCalledTimes(1);
+  });
+
   it("bounds non-rate retries and preserves an exhausted decision under failed", async () => {
     ledger.claimAuthorMessage(event);
     let now = new Date("2026-08-26T09:00:00Z");

@@ -112,6 +112,14 @@ export class PingPongLedger {
     } catch {
       /* column already present */
     }
+    // Additive column: the human-request callback ran for this decision.
+    try {
+      this.db.exec(
+        "ALTER TABLE pingpong_decisions ADD COLUMN human_notified INTEGER NOT NULL DEFAULT 0",
+      );
+    } catch {
+      /* column already present */
+    }
     // Additive column: a reply POST was started for this decision.
     try {
       this.db.exec(
@@ -163,23 +171,31 @@ export class PingPongLedger {
     reply_attempted: boolean;
     reply_posted: boolean;
     thread_resolved: boolean;
+    human_notified: boolean;
   } {
     const row = this.db
       .prepare(
-        "SELECT reply_attempted, reply_posted, thread_resolved FROM pingpong_decisions WHERE comment_id = ?",
+        "SELECT reply_attempted, reply_posted, thread_resolved, human_notified FROM pingpong_decisions WHERE comment_id = ?",
       )
       .get(commentId) as
-      { reply_attempted: number; reply_posted: number; thread_resolved: number } | undefined;
+      | {
+          reply_attempted: number;
+          reply_posted: number;
+          thread_resolved: number;
+          human_notified: number;
+        }
+      | undefined;
     return {
       reply_attempted: row?.reply_attempted === 1,
       reply_posted: row?.reply_posted === 1,
       thread_resolved: row?.thread_resolved === 1,
+      human_notified: row?.human_notified === 1,
     };
   }
 
   markDecisionStep(
     commentId: number,
-    step: "reply_attempted" | "reply_posted" | "thread_resolved",
+    step: "reply_attempted" | "reply_posted" | "thread_resolved" | "human_notified",
   ): void {
     this.db
       .prepare(
@@ -934,8 +950,7 @@ export class ThreadDecisionWatcher {
             this.requestSweep(Math.max(1, Date.parse(breaker.open_until) - now.getTime()));
           return [];
         }
-        this.deps.ledger.halfOpen(now);
-        this.deps.store.logEvent("pingpong_breaker_half_open", null, {});
+        // The cooldown is over; the probe starts at the first GitHub call.
       } else if (breaker.state === "half_open") {
         // A live probe owns `sweeping`; observing persisted half-open here means
         // the prior process died before recording its result. Recover without
@@ -1031,6 +1046,14 @@ export class ThreadDecisionWatcher {
     }
   }
 
+  /** An expired open breaker becomes half-open when a decision is about to
+   * call GitHub, so a sweep that finds nothing to send leaves it as it was. */
+  private startProbe(now: Date): void {
+    if (this.deps.ledger.breaker().state !== "open") return;
+    this.deps.ledger.halfOpen(now);
+    this.deps.store.logEvent("pingpong_breaker_half_open", null, {});
+  }
+
   async handleFile(name: string): Promise<boolean> {
     const match = THREAD_DECISION_RE.exec(name);
     if (!match || this.processing || this.inFlight.has(name) || this.deps.isDraining?.())
@@ -1039,10 +1062,6 @@ export class ThreadDecisionWatcher {
     if (this.githubDelayMs(now) > 0) return false;
     const breaker = this.deps.ledger.breaker();
     if (this.breakerWaiting(breaker, now)) return false;
-    if (breaker.state === "open") {
-      this.deps.ledger.halfOpen(now);
-      this.deps.store.logEvent("pingpong_breaker_half_open", null, {});
-    }
     const retry = this.deps.ledger.retry(Number(match[3]));
     if (retry.terminal || this.deadlinePending(retry.next_attempt_at, now)) return false;
     this.processing = true;
@@ -1077,6 +1096,7 @@ export class ThreadDecisionWatcher {
       const progress = this.deps.ledger.decisionProgress(d.comment_id);
       if (!progress.reply_posted) {
         if (this.deps.isDraining?.()) return false;
+        if (d.reply.trim()) this.startProbe(now);
         // A POST started before — a caught failure, or a process that died
         // before it could record the answer — may have landed: look first.
         const landed =
@@ -1119,6 +1139,7 @@ export class ThreadDecisionWatcher {
       }
       if (d.resolution === "resolve" && !progress.thread_resolved) {
         if (this.deps.isDraining?.()) return false;
+        this.startProbe(now);
         this.lastGitHubStart = now.getTime();
         const resolution = await this.deps.adapter.resolveOwnReviewThread(d.pr, d.thread_id);
         this.deps.ledger.markDecisionStep(d.comment_id, "thread_resolved");
@@ -1129,7 +1150,10 @@ export class ThreadDecisionWatcher {
           skipped: resolution.skipped,
         });
       }
-      if (d.human_requested) await this.deps.onHumanRequested?.(d);
+      if (d.human_requested && !this.deps.ledger.decisionProgress(d.comment_id).human_notified) {
+        await this.deps.onHumanRequested?.(d);
+        this.deps.ledger.markDecisionStep(d.comment_id, "human_notified");
+      }
       this.deps.ledger.resetRetry(d.comment_id);
       if (this.deps.ledger.breaker().state === "half_open") {
         this.deps.ledger.closeBreaker(now);

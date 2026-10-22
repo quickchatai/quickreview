@@ -147,9 +147,13 @@ export interface OpenDeps {
   /** The pi binary. Omitted: the pinned pi's own CLI (src/picli.ts), never a
    * `pi` on the PATH. */
   piBin?: string;
+  /** A tag that makes this invocation's scratch dirs its own (the terminal side
+   * passes its pid), so two opens of one round never share or delete each
+   * other's. Omitted: the plain names. */
+  instance?: string;
   /** Prepares the private agent dir and the cwd pi runs in; `cleanup` removes
    * them (the login copy goes with the open). */
-  prepare: (o: { roundDir: string; copyRound: boolean }) => {
+  prepare: (o: { roundDir: string; copyRound: boolean; instance?: string }) => {
     agentDir: string;
     cwd: string;
     cleanup: () => void;
@@ -258,6 +262,16 @@ function knownRuns(deps: OpenDeps, name?: string): string[] {
   return dirs.filter(isDir).sort((a, b) => mtime(b) - mtime(a));
 }
 
+/** The disposable agent dir and cwd an open uses inside `roundDir`; a tagged
+ * pair belongs to one invocation. */
+export function openScratchDirs(
+  roundDir: string,
+  instance?: string,
+): { agentDir: string; cwd: string } {
+  const tag = instance === undefined ? "" : `-${instance}`;
+  return { agentDir: join(roundDir, `open-agent${tag}`), cwd: join(roundDir, `open-cwd${tag}`) };
+}
+
 export type Found =
   | { ok: true; file: string; kind: "main" | "lens"; id: string | null; roundDir: string }
   | { ok: false; error: string };
@@ -309,8 +323,13 @@ export function findSession(
     const bare = knownRuns(deps, arg);
     runs = bare.length > 0 ? bare : isDir(resolve(deps.cwd, arg)) ? [resolve(deps.cwd, arg)] : [];
   } else runs = [];
-  const run = runs.find((r) => roundDirsOf(r).length > 0);
-  const roundDir = run === undefined ? undefined : roundDirsOf(run)[0];
+  let run = runs.find((r) => roundDirsOf(r).length > 0);
+  let roundDir = run === undefined ? undefined : roundDirsOf(run)[0];
+  // An extracted archive that kept only the main transcript has no worker round.
+  if (run === undefined && lens === undefined) {
+    run = runs.find((r) => extractedMainOf(r) !== null);
+    roundDir = run;
+  }
   if (roundDir === undefined || run === undefined)
     return fail(
       arg === undefined
@@ -325,7 +344,9 @@ export function findSession(
   // An extracted archive keeps the PR's main session as a transcript, not in the round.
   const main =
     mainSessionOf(roundDir) ??
-    (roundDir.startsWith(join(run, EXTRACTED_LENS)) ? extractedMainOf(run) : null);
+    (roundDir === run || roundDir.startsWith(join(run, EXTRACTED_LENS))
+      ? extractedMainOf(run)
+      : null);
   if (main === null) {
     const kept = lensSessionsOf(roundDir);
     return fail(
@@ -417,13 +438,13 @@ export async function runOpen(
   const inPlace = mode === "write" && meta !== null;
   const label = found.kind === "lens" ? `lens ${found.id}` : "the main session";
   if (print) {
-    const agentDir = join(found.roundDir, "open-agent");
+    const { agentDir, cwd: scratchCwd } = openScratchDirs(found.roundDir, deps.instance);
     const args = openArgv({ file: found.file, mode, extensions });
     const env = openEnv({
       base: {},
       meta,
       root: deps.root,
-      ledgerDir: inPlace ? found.roundDir : join(found.roundDir, "open-cwd"),
+      ledgerDir: inPlace ? found.roundDir : scratchCwd,
       agentDir,
     });
     const shown = Object.fromEntries(
@@ -450,7 +471,11 @@ export async function runOpen(
   }
   let host: ReturnType<OpenDeps["prepare"]>;
   try {
-    host = deps.prepare({ roundDir: found.roundDir, copyRound: !inPlace });
+    host = deps.prepare({
+      roundDir: found.roundDir,
+      copyRound: !inPlace,
+      ...(deps.instance !== undefined ? { instance: deps.instance } : {}),
+    });
   } catch (err) {
     const why = err instanceof Error ? err.message : String(err);
     deps.out(json ? JSON.stringify({ ok: false, errors: [why] }) : `✗ ${why.slice(0, 600)}`);
@@ -519,11 +544,11 @@ export async function cmdOpen(rest: string[], json: boolean): Promise<number> {
         extract: (x) => extractPr({ ...x, bytesPerS }),
       });
     },
-    prepare: ({ roundDir, copyRound }) => {
+    instance: String(process.pid),
+    prepare: ({ roundDir, copyRound, instance }) => {
       const cfg0 = loadConfig();
       const { cfg } = contextFor(root, cfg0.review.profile);
-      const agentDir = join(roundDir, "open-agent");
-      const cwd = join(roundDir, "open-cwd");
+      const { agentDir, cwd } = openScratchDirs(roundDir, instance);
       // An open lasts as long as someone looks: 30 minutes of login at least.
       prepareHostRun({ root, srcAgentDir, agentDir, cwd, cfg, needMs: 30 * 60_000, checkouts: [] });
       // A fork works on a copy of what the round's tools read from beside its
