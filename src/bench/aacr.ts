@@ -1001,6 +1001,8 @@ export interface BenchSite {
   line: number;
   start_line?: number;
   tag?: PostTag;
+  /** The coordinate system `line` is in; two sites on different sides never pair. */
+  side?: "LEFT" | "RIGHT";
 }
 
 /**
@@ -1027,6 +1029,7 @@ export function pairWithInline(
     if (!e) return;
     comments.forEach((c, ci) => {
       if (c.path !== e.path) return;
+      if (e.side !== undefined && c.side !== undefined && e.side !== c.side) return;
       const d = spanDistance(e, c);
       if (d > NEAR_LINES) return;
       const mismatch = e.tag !== undefined && c.tag !== undefined && e.tag !== c.tag ? 1 : 0;
@@ -1087,7 +1090,9 @@ export function placePosted(
   const sites = posted.map((r): BenchSite | null => {
     const path = benchPath(r["path"]);
     const line = posInt(r["line"]);
-    return path && line !== undefined ? { path, line, tag: recordTag(r) } : null;
+    return path && line !== undefined
+      ? { path, line, tag: recordTag(r), side: recordSide(r["side"]) }
+      : null;
   });
   const pairs = pairWithInline(
     sites.map((x, i) => (posted[i]!["inline"] === false ? null : x)),
@@ -1095,7 +1100,9 @@ export function placePosted(
   );
   const inBody: Array<{ site: BenchSite; posted: number }> = [];
   const near = (site: BenchSite, x: BenchSite): boolean =>
-    x.path === site.path && spanDistance(site, x) <= NEAR_LINES;
+    x.path === site.path &&
+    (site.side === undefined || x.side === undefined || site.side === x.side) &&
+    spanDistance(site, x) <= NEAR_LINES;
   return sites.map((site, i): PostedPlace | null => {
     if (!site) return null;
     const c = pairs[i];

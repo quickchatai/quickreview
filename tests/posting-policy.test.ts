@@ -904,3 +904,58 @@ describe("the budget: one root cause, the changed line first", () => {
     expect(out.report.withheld.map((w) => w.title)).toEqual(["Spans context?"]);
   });
 });
+
+describe("benchmark export: coordinate sides and deferred findings", () => {
+  it("a LEFT record entry is never paired with a RIGHT comment on the same line number", () => {
+    const inline = parseSessionComments([
+      { path: "f.ts", line: 10, side: "RIGHT", body: `[blocker] Head bug\n\nx.${tail("P1")}` },
+    ]).comments;
+    const record = {
+      findings: [
+        {
+          id: "old",
+          path: "f.ts",
+          line: 10,
+          side: "LEFT",
+          disposition: "posted",
+          posted_as: "blocker",
+          severity: "P1",
+          title: "Removed guard",
+        },
+      ],
+    };
+    const body = bodyPostedFindings(record, "- `f.ts:10` — Removed guard\n", inline);
+    expect(body.map((c) => [c.path, c.line, c.side])).toEqual([["f.ts", 10, "LEFT"]]);
+  });
+
+  it("a kept [deferred] blocker is not counted in the recounted verdict line", () => {
+    const out = policeBenchOutput({
+      comments: [
+        {
+          path: "src/a.ts",
+          line: 10,
+          side: "RIGHT",
+          body: `[deferred] [blocker] Later\n\nx.${tail("P1")}`,
+        },
+      ],
+      reviewMd: "",
+      record: {
+        findings: [
+          {
+            id: "d",
+            path: "src/a.ts",
+            line: 10,
+            lens: "pass-baseline",
+            severity: "P1",
+            disposition: "posted",
+            posted_as: "[deferred] [blocker]",
+          },
+        ],
+      },
+      outcome: { verdict: "APPROVE", summary: "s" },
+      policy: SNAPPY,
+    });
+    expect(out.reviewMd).toContain("no findings");
+    expect(out.reviewMd).not.toContain("1 blocker");
+  });
+});

@@ -77,6 +77,29 @@ it("judges a reanchored deleted-line comment once and reads its ordinary tag aft
   expect(review.comments[1]).toMatchObject({ tag: "question", text: "Other guard" });
 });
 
+it("a deleted-line comment whose body carries padding is judged once, not again beside its trimmed scored copy", () => {
+  const run = mkdtempSync(join(tmpdir(), "bench-deleted-pad-"));
+  const id = "o__r@1234567";
+  mkdirSync(join(run, "results/all"), { recursive: true });
+  mkdirSync(join(run, "cases", id), { recursive: true });
+  const body = "[blocker] Guard removed";
+  writeFileSync(
+    join(run, "results/all", `${id}.json`),
+    JSON.stringify({
+      review: { comments: [{ path: "a.py", start_line: 12, end_line: 12, content: body }] },
+    }),
+  );
+  writeFileSync(
+    join(run, "cases", id, "head-patches.json"),
+    JSON.stringify({ "a.py": "@@ -11,3 +11,2 @@\n context\n-guard\n context" }),
+  );
+  writeFileSync(
+    join(run, "cases", id, "comments.json"),
+    JSON.stringify([{ path: "./a.py", line: "12", side: "LEFT", body: `  ${body}\n\n` }]),
+  );
+  expect(reviewForJudge(run, id).comments).toHaveLength(1);
+});
+
 const SET = {
   set: "t",
   version: "1",
