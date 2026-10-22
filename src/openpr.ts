@@ -407,7 +407,7 @@ export async function pullPrSession(o: OpenPrOptions, deps: PrPullDeps): Promise
 
   const dir = cut ? join(base, `round-${cut.round}`) : base;
   mkdirSync(dir, { recursive: true });
-  const file = placeCopy(dir, MAIN_SESSION_DIR, basename(remotePath), text);
+  const file = placeCopy(dir, MAIN_SESSION_DIR, basename(remotePath).replace(/\.gz$/, ""), text);
   record(dir, {
     version: 1,
     pr: o.pr,
