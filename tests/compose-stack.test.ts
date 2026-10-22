@@ -18,7 +18,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 import { parse as parseToml } from "smol-toml";
-import { memoryEndpointPatch } from "../src/onboard/steps/bringup.js";
+import { cloneDirOfConfig, memoryEndpointPatch } from "../src/onboard/steps/bringup.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel: string): string => readFileSync(join(root, rel), "utf8");
@@ -37,8 +37,12 @@ interface Service {
   environment?: Record<string, string>;
   profiles?: string[];
   cap_drop?: string[];
+  cap_add?: string[];
+  group_add?: string[];
   security_opt?: string[];
-  depends_on?: string[];
+  depends_on?: string[] | Record<string, { condition: string }>;
+  entrypoint?: string[];
+  network_mode?: string;
 }
 const doc = parse(composeText) as {
   services: Record<string, Service>;
@@ -70,10 +74,26 @@ describe("the daemon and memory services are pulled, not built", () => {
     expect(daemon.command).toEqual(["daemon"]);
     expect(daemon.user).toBe("${QCR_UID:-1000}:${QCR_UID:-1000}");
     expect(memory.user).toBe(daemon.user);
-    for (const svc of [daemon, memory]) {
-      expect(svc.cap_drop).toEqual(["ALL"]);
-      expect(svc.security_opt).toContain("no-new-privileges:true");
-    }
+    for (const svc of [daemon, memory]) expect(svc.cap_drop).toEqual(["ALL"]);
+    expect(memory.cap_add).toBeUndefined();
+    expect(memory.security_opt).toContain("no-new-privileges:true");
+  });
+
+  // The daemon runs the model's tools as another uid through the
+  // image's setid helper, the VM's shape (deploy/qcr-update.sh): the helper's
+  // gate group, its two capabilities and the operator channel's three, and no
+  // no-new-privileges (it would void the helper's file capabilities).
+  it("the daemon has the VM's tool-uid shape: gate group, capabilities, no no-new-privileges", () => {
+    // MUTATION: put no-new-privileges back on the daemon — this fails
+    const gate = /^ARG QCR_SETID_GID=(\d+)$/m.exec(dockerfile)?.[1];
+    expect(gate).toBe("4748");
+    expect(daemon.group_add).toEqual([gate]);
+    expect(daemon.security_opt ?? []).not.toContain("no-new-privileges:true");
+    const update = read("deploy/qcr-update.sh");
+    const vmCaps = [...update.matchAll(/--cap-add (\w+)/g)].map((m) => m[1]!).sort();
+    expect([...(daemon.cap_add ?? [])].sort()).toEqual(vmCaps);
+    expect(update).toContain("--cap-drop ALL");
+    expect(daemon.environment?.QCR_TOOLS_AS).toBe("${QCR_TOOLS_AS:-65534}");
   });
 
   it("mount no checkout and no docker.sock", () => {
@@ -152,6 +172,89 @@ describe("the mounts land on the release image's own paths", () => {
   });
 });
 
+// The daemon writes wt/, commands/, inject/, verdict/, digest/,
+// archive/, the base clone and the sessions' pihome/ directly under the app
+// root, which the image keeps read-only: compose mounts the same set the VM's
+// run spec does, as named volumes, and a one-shot root service hands their
+// roots to the daemon's uid before it starts.
+describe("the daemon's writable trees are the VM's", () => {
+  /** The container side of each of the VM daemon's mounts, the legacy
+   * path-continuity aliases left out and the base clone named <clone>. */
+  const vmTargets = (): string[] => {
+    const update = read("deploy/qcr-update.sh");
+    const block = /^daemon_args=\(\n([\s\S]*?)^\)$/m.exec(update)?.[1] ?? "";
+    return [...block.matchAll(/^\s*-v "[^:"]+:([^"]+)"/gm)]
+      .map((m) => m[1]!)
+      .filter((t) => !t.includes("LEGACY_SANDBOX_ROOT"))
+      .map((t) =>
+        t
+          .replace("${C[APP_ROOT]}", "/opt/qcr")
+          .replace("${C[BASE_CLONE_DIR]}", "<clone>")
+          .replace(/:ro$/, ""),
+      )
+      .sort();
+  };
+  const composeTargets = (svc: Service): string[] =>
+    (svc.volumes ?? [])
+      .map((v) => v.replace(/^\$\{[^}]+\}:/, "").replace(/^[\w-]+:/, ""))
+      .map((t) => t.replace(/\$\{QCR_CLONE_DIR:\?[^}]+\}/, "<clone>").replace(/:ro$/, ""))
+      .filter((t) => t !== "/opt/qcr/state/ingress")
+      .sort();
+
+  it("compose mounts every directory the VM's run spec mounts, and no other", () => {
+    // MUTATION: drop the qcr-verdict line from docker-compose.yml — this fails
+    const vm = vmTargets();
+    expect(vm).toEqual(
+      expect.arrayContaining([
+        "/opt/qcr/wt",
+        "/opt/qcr/verdict",
+        "/opt/qcr/<clone>",
+        "/home/qcr/.pi",
+      ]),
+    );
+    expect(composeTargets(daemon)).toEqual(vm);
+  });
+
+  it("each is a named volume the file declares, and the base clone's name is required", () => {
+    for (const v of daemon.volumes ?? []) {
+      if (v.startsWith("${")) continue; // the two read-only host binds
+      const name = v.split(":")[0]!;
+      expect(Object.keys(doc.volumes), v).toContain(name);
+    }
+    expect(daemon.volumes).toContain(
+      "qcr-base-clone:/opt/qcr/${QCR_CLONE_DIR:?set QCR_CLONE_DIR to the base clone's directory name ([github] clone_dir, else the repo's name)}",
+    );
+  });
+
+  it("a root one-shot hands each volume root to the daemon's uid before the daemon starts", () => {
+    const init = doc.services["volume-init"]!;
+    expect(init.user).toBe("0:0");
+    expect(init.image).toBe(daemon.image);
+    expect(init.network_mode).toBe("none");
+    expect(init.cap_drop).toEqual(["ALL"]);
+    expect([...(init.cap_add ?? [])].sort()).toEqual(["CHOWN", "FOWNER"]);
+    expect(init.security_opt).toContain("no-new-privileges:true");
+    expect(daemon.depends_on).toEqual({
+      "volume-init": { condition: "service_completed_successfully" },
+    });
+    // every daemon volume but the tunnel's ingress is one it prepares
+    const initVols = new Set((init.volumes ?? []).map((v) => v.split(":")[0]));
+    for (const v of daemon.volumes ?? []) {
+      if (v.startsWith("${") || v.startsWith("qcr-ingress:")) continue;
+      expect(initVols, v).toContain(v.split(":")[0]);
+    }
+    const script = String((init as { command?: string[] }).command?.[0] ?? "");
+    expect(script).toContain('chown "$$QCR_UID:$$QCR_UID"');
+    expect(script).toMatch(/chmod 0775 \/v\/state \/v\/verdict \/v\/commands;/);
+    expect(script).toMatch(/chmod 0700 \/v\/home-pi/);
+  });
+
+  it("the bring-up writes QCR_CLONE_DIR as the daemon's loader resolves it", () => {
+    expect(cloneDirOfConfig('[github]\nrepo = "acme/webapp"\n')).toBe("webapp");
+    expect(cloneDirOfConfig('[github]\nrepo = "acme/webapp"\nclone_dir = "base"\n')).toBe("base");
+  });
+});
+
 describe("the tunnels are the one built thing, and the image carries what they build from", () => {
   it("each sidecar builds from docker/tunnel/, behind its own profile", () => {
     for (const t of tunnels) {
@@ -188,7 +291,12 @@ describe.skipIf(!hasCompose)("docker compose config lints the file", () => {
         env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", ...env },
       },
     );
-  const full = { QCR_VERSION: "0.1.0", QCR_SECRETS_DIR: "/tmp/s", QCR_CONFIG_HOME: "/tmp/c" };
+  const full = {
+    QCR_VERSION: "0.1.0",
+    QCR_SECRETS_DIR: "/tmp/s",
+    QCR_CONFIG_HOME: "/tmp/c",
+    QCR_CLONE_DIR: "webapp",
+  };
 
   it("accepts it with the .env the bring-up writes, with and without a tunnel", () => {
     expect(config(full).status).toBe(0);

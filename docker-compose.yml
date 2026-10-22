@@ -24,6 +24,8 @@
 #                     openai_embeddings_api_key (only under the hosted-embeddings
 #                     opt-in -- memory embeds locally by default)
 #   QCR_UID           your uid, so the daemon can read 0600 files you own
+#   QCR_CLONE_DIR     the base clone's directory name: [github] clone_dir, else
+#                     the repo's name ("acme/webapp" => webapp)
 #
 # config.toml must say `[openviking] endpoint = "remote"` and `host = "memory"`:
 # the memory engine runs in the `memory` service, not inside the daemon (the
@@ -59,6 +61,44 @@
 name: quickreview
 
 services:
+  # One-shot, as root, before the daemon: hands the roots of the daemon's named
+  # volumes to QCR_UID. A volume over a path the image lacks (wt/, verdict/, the
+  # base clone ...) arrives root-owned and unwritable by the daemon, and one
+  # over a path the image has arrives world-writable (state/, pi's home), which
+  # the model's tool uid must not get. It touches the volume roots only, never a
+  # file inside one: the daemon's own 0755, state/, verdict/ and commands/
+  # group-writable for the tool uid (the daemon's gid), pi's home 0700.
+  volume-init:
+    image: ghcr.io/quickchatai/quickreview:${QCR_VERSION:?set QCR_VERSION to the release to run (the image tag)}
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        set -eu;
+        for d in /v/state /v/wt /v/archive /v/commands /v/digest /v/inject /v/verdict
+        /v/pihome /v/base-clone /v/home-pi; do chown "$$QCR_UID:$$QCR_UID" "$$d"; done;
+        chmod 0775 /v/state /v/verdict /v/commands;
+        chmod 0755 /v/wt /v/archive /v/digest /v/inject /v/pihome /v/base-clone;
+        chmod 0700 /v/home-pi
+    environment:
+      QCR_UID: ${QCR_UID:-1000}
+    network_mode: none
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - qcr-state:/v/state
+      - qcr-wt:/v/wt
+      - qcr-archive:/v/archive
+      - qcr-commands:/v/commands
+      - qcr-digest:/v/digest
+      - qcr-inject:/v/inject
+      - qcr-verdict:/v/verdict
+      - qcr-sessions-home:/v/pihome
+      - qcr-base-clone:/v/base-clone
+      - qcr-pihome:/v/home-pi
+
   daemon:
     image: ghcr.io/quickchatai/quickreview:${QCR_VERSION:?set QCR_VERSION to the release to run (the image tag)}
     # The image's mode dispatch (docker/entrypoint.sh): the always-on bot.
@@ -67,13 +107,24 @@ services:
     # picks it. Your uid, so the 0600 files you own in the secrets mount stay
     # readable and nothing else is shared.
     user: "${QCR_UID:-1000}:${QCR_UID:-1000}"
+    # The model's tools run as another uid, which cannot read the secrets mount
+    # or pi's login (docker/entrypoint.sh): the daemon reaches it through the
+    # image's setid helper, which only this gate group may run (the image's
+    # qcr.setid-gid label). The same shape as the VM's (deploy/qcr-update.sh):
+    # SETUID/SETGID for the helper's file capabilities, CHOWN/DAC_OVERRIDE/
+    # FOWNER for the operator channel's `docker exec -u 0`, and no
+    # no-new-privileges, which would void the helper (the model's tools carry
+    # no_new_privs of their own).
+    group_add: ["4748"]
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
     # PID-1 discipline: the daemon runs a tmux server beside itself, so PID 1
     # must reap. tini forwards signals and adopts orphans.
     init: true
     restart: unless-stopped
     cap_drop: [ALL]
-    security_opt:
-      - no-new-privileges:true
+    cap_add: [SETUID, SETGID, CHOWN, DAC_OVERRIDE, FOWNER]
     # Resource caps -- same defaults as the live VM (a shared box). Raise via
     # QCR_CPUS / QCR_MEMORY if the host is yours alone.
     cpus: ${QCR_CPUS:-2}
@@ -107,6 +158,22 @@ services:
       # pi's home: OAuth tokens (auth.json), session JSONLs, models.json --
       # must survive container recreates (sticky sessions + /login tokens).
       - qcr-pihome:/home/qcr/.pi
+      # Everything else the daemon writes under the read-only app root, the
+      # same set the VM's run spec mounts (deploy/qcr-update.sh; the two are
+      # held equal by tests/compose-stack.test.ts): the PR worktrees, the
+      # closed-PR archive, the command channel (commands/operator is the
+      # operator's, root-owned), the digests, the inject channel and the
+      # companion inbox, the verdicts, the sessions' own HOME (their ovcli.conf
+      # and recall hints) and the reviewed repo's base clone, whose directory
+      # name is the config's ([github] clone_dir, else the repo's name).
+      - qcr-wt:/opt/qcr/wt
+      - qcr-archive:/opt/qcr/archive
+      - qcr-commands:/opt/qcr/commands
+      - qcr-digest:/opt/qcr/digest
+      - qcr-inject:/opt/qcr/inject
+      - qcr-verdict:/opt/qcr/verdict
+      - qcr-sessions-home:/opt/qcr/pihome
+      - qcr-base-clone:/opt/qcr/${QCR_CLONE_DIR:?set QCR_CLONE_DIR to the base clone's directory name ([github] clone_dir, else the repo's name)}
     environment:
       TZ: ${TZ:-Europe/Warsaw}
       QC_REVIEW_PORT: "8787"
@@ -119,6 +186,8 @@ services:
       # config.toml names a HOST path, and a `docker exec` process (the TUI's
       # in-container mint-token.sh read) never inherits the entrypoint's env.
       QCR_SECRETS_MOUNT: /opt/quickreview/secrets
+      # The uid the model's tools run as: never QCR_UID.
+      QCR_TOOLS_AS: ${QCR_TOOLS_AS:-65534}
 
   # ---- the memory sidecar --------------------------------------------------
   # OpenViking, its venv, llama-cpp-python and the pinned GGUF in a container
@@ -250,6 +319,15 @@ services:
 volumes:
   qcr-state:
   qcr-pihome:
+  # The daemon's runtime trees under the app root (see its volumes above).
+  qcr-wt:
+  qcr-archive:
+  qcr-commands:
+  qcr-digest:
+  qcr-inject:
+  qcr-verdict:
+  qcr-sessions-home:
+  qcr-base-clone:
   # The memory store, the sidecar's alone.
   qcr-memory:
   # Shared by the daemon (read) and a tunnel sidecar (write): the hostname

@@ -40,6 +40,7 @@ QCR_VERSION=<version>
 QCR_UID=$(id -u)
 QCR_CONFIG_HOME=$HOME/.config/qcr/default
 QCR_SECRETS_DIR=$HOME/.config/qcr/default/secrets
+QCR_CLONE_DIR=<the reviewed repo's name, or your [github] clone_dir>
 EOF
 
 # 3. pull and start
@@ -60,9 +61,18 @@ embedding model.
 ## What the stack is
 
 - **`daemon`** — `ghcr.io/quickchatai/quickreview`, run as `daemon` mode, as
-  your uid (`QCR_UID`), with no capabilities and `no-new-privileges`. It
-  publishes one port, the webhook port `8787`, bound to `127.0.0.1` by default
-  (`QCR_WEBHOOK_BIND` / `QCR_WEBHOOK_PORT` to change).
+  your uid (`QCR_UID`). The model's tools run as another uid
+  (`QCR_TOOLS_AS`, default `65534`) that cannot read your secrets or pi's
+  login: the daemon reaches it through the image's setid helper, so it gets
+  the helper's gate group (`group_add`) and, of all capabilities, only
+  `SETUID`/`SETGID` (the helper) and `CHOWN`/`DAC_OVERRIDE`/`FOWNER` (the
+  operator channel's `docker exec -u 0`), and no `no-new-privileges`, which
+  would void the helper. It publishes one port, the webhook port `8787`, bound
+  to `127.0.0.1` by default (`QCR_WEBHOOK_BIND` / `QCR_WEBHOOK_PORT` to
+  change).
+- **`volume-init`** — a one-shot root container that runs before the daemon
+  and hands the roots of the daemon's volumes to `QCR_UID` (it touches no file
+  inside them), then exits.
 - **`memory`** — `ghcr.io/quickchatai/quickreview-memory`: OpenViking, its
   venv, llama-cpp-python and the pinned embedding model, in a container of its
   own. It boots offline. `config.toml` must say `[openviking] endpoint =
@@ -101,8 +111,14 @@ embedding model.
   SQLite, heartbeat, the dry-run record, the onboarding checklist), `qcr-pihome`
   (`/home/qcr/.pi` — pi OAuth tokens + session JSONLs; sticky conversations
   depend on it surviving a recreate), `qcr-memory` (the memory store) and
-  `qcr-ingress` (the tunnel's hostname file). `docker compose down` keeps all
-  of them; `docker compose down -v` deletes them, memory included.
+  `qcr-ingress` (the tunnel's hostname file), and the daemon's runtime trees
+  under the read-only app root, the same set the VM mounts: `qcr-wt`
+  (`/opt/qcr/wt`, the PR worktrees), `qcr-archive`, `qcr-commands`,
+  `qcr-digest`, `qcr-inject`, `qcr-verdict`, `qcr-sessions-home`
+  (`/opt/qcr/pihome`, the sessions' own HOME) and `qcr-base-clone`
+  (`/opt/qcr/$QCR_CLONE_DIR`, the reviewed repo's base clone; the variable is
+  required). `docker compose down` keeps all of them; `docker compose down -v`
+  deletes them, memory included.
 
 No checkout is mounted, and neither is `docker.sock`: a stack that can start
 containers could hand a review session the host.

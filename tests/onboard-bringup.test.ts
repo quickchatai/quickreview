@@ -270,6 +270,8 @@ describe("bring-up, happy path", () => {
     expect(result.ok).toBe(true);
     expect(readEnvKey(envText(), "QCR_UID")).toBe("1234");
     expect(readEnvKey(envText(), "COMPOSE_PROFILES")).toBe("quick-tunnel");
+    // the base clone the compose file mounts a volume at: the repo's name
+    expect(readEnvKey(envText(), "QCR_CLONE_DIR")).toBe("web");
     expect(h.streamed).toEqual([
       ["docker", ...pullArgs(root, "quick-tunnel")],
       ["docker", ...bringUpArgs(root, "quick-tunnel")],

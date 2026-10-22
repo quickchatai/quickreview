@@ -46,6 +46,7 @@
 // command succeeded and the daemon container is running".
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
+import { repoCloneDirName } from "../../clonedir.js";
 import { parseConfig } from "../../config.js";
 import { installName } from "../../install.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
@@ -153,6 +154,16 @@ function hostPaths(configText: string): { home: string; secrets: string } {
   return { home, secrets: configured.startsWith("/") ? configured : `${home}/secrets` };
 }
 
+/** The base clone's directory name the compose file mounts a volume at
+ * (`QCR_CLONE_DIR`): the config's `[github] clone_dir`, else the repo's name,
+ * as the daemon's loader resolves it (config.ts githubCloneDir). */
+export function cloneDirOfConfig(configText: string): string {
+  const explicit = (readTomlKey(configText, "github", "clone_dir") ?? "").trim();
+  return explicit !== ""
+    ? explicit
+    : repoCloneDirName(readTomlKey(configText, "github", "repo") ?? "");
+}
+
 /** The project `.env` lines the host commands write, for a host this process
  * cannot see: paths are the host's own defaults, spelled with shell variables.
  * The heredoc that writes them is quoted, so the variables land literally in
@@ -172,6 +183,7 @@ function hostEnvLines(
     `QCR_CONFIG_HOME=${home}`,
     `QCR_CONFIG_NAME=${basename(ctx.adapters.paths.configPath)}`,
     `QCR_SECRETS_DIR=${secrets}`,
+    `QCR_CLONE_DIR=${cloneDirOfConfig(configText)}`,
   ];
   for (const [key, value] of embedderEnvEntries(declaredEmbedderOf(configText)))
     lines.push(`${key}=${value}`);
@@ -358,6 +370,9 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
       // config home: never by Docker, as root.
       mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
       next = setEnvKey(next, "QCR_SECRETS_DIR", secretsDir);
+      // The base clone's directory: the compose file mounts the daemon's
+      // base-clone volume at /opt/qcr/<it>, where the daemon looks for it.
+      next = setEnvKey(next, "QCR_CLONE_DIR", cloneDirOfConfig(configText));
       if (next !== envText) writeAtomic(`${root}/.env`, next);
       checks.push({
         name: "pull-inputs",
