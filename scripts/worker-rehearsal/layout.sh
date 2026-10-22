@@ -8,7 +8,7 @@
 #   <host>/state/state.db         a state db at the pre-cutover schema (legacy-db.sh), drained
 #   <host>/state/pi-sessions/     the P8.4 snapshot's shape: PR 7's legacy interactive-pi JSONL,
 #                                 its header cwd the LEGACY sandbox root, where the legacy tmux session ran
-#   <host>/sandbox/{wt,archive,commands,digest,inject,verdict,base-clone}
+#   <host>/sandbox/{wt,archive,commands,digest,inject,verdict,pihome,base-clone}
 #                                 the legacy mounts; base-clone is the base clone (github.clone_dir), its origin
 #                                 a local bare repo (the fixture's "GitHub", for git only)
 #   <host>/pihome/agent/          a far-future FAKE login, and models.json pointing pi's `local`
@@ -33,7 +33,7 @@ git_id=(-c user.email=rehearsal@example.test -c user.name=rehearsal -c init.defa
 # state/findings and state/ledgers: the legacy bot's state carried both (a round writes its findings record and
 # ledger-pin mirrors the ledger there)
 mkdir -p "$H"/{state/pi-sessions/pr-$PR,state/findings,state/ledgers,secrets,config-home,memory-state,pihome/agent}
-mkdir -p "$H"/sandbox/{wt,archive,commands,digest,inject,verdict}
+mkdir -p "$H"/sandbox/{wt,archive,commands,digest,inject,verdict,pihome}
 chmod 0755 "$H" "$H/sandbox" "$H"/sandbox/*
 
 # ---- the fixture repository ---------------------------------------------------------------------

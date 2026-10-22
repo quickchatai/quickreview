@@ -314,7 +314,7 @@ daemon_run() {
     -v "$H/state:$APP_ROOT/state" -v "$H/secrets:/opt/quickreview/secrets:ro" -v "$H/config-home:/opt/quickreview/config-home:ro" -v "$H/pihome:/home/qcr/.pi" \
     -v "$H/sandbox/wt:$APP_ROOT/wt" -v "$H/sandbox/archive:$APP_ROOT/archive" -v "$H/sandbox/commands:$APP_ROOT/commands" \
     -v "$H/sandbox/digest:$APP_ROOT/digest" -v "$H/sandbox/inject:$APP_ROOT/inject" -v "$H/sandbox/verdict:$APP_ROOT/verdict" \
-    -v "$H/sandbox/base-clone:$APP_ROOT/base-clone" \
+    -v "$H/sandbox/base-clone:$APP_ROOT/base-clone" -v "$H/sandbox/pihome:$APP_ROOT/pihome" \
     -v "$H/sandbox/wt:$LEGACY_ROOT/wt" -v "$H/sandbox/base-clone:$LEGACY_ROOT/base-clone" \
     -v "$H/remote.git:/rehearsal/remote.git:ro" -v "$TLS/ca.pem:/rehearsal/ca.pem:ro" \
     -e TZ=UTC -e QC_REVIEW_PORT=8787 -e QC_BIND_HOST=0.0.0.0 -e QCR_CONFIG=/opt/quickreview/config-home/config.toml --env-file "$WORK/daemon.env" \
@@ -354,11 +354,22 @@ else
   check MIG-1 fail "the migrations apply to the legacy state.db" "$(tr '\n' ' ' <"$WORK/schema-diff.txt") legacy_event=$LEGACY_ROW pr6=$PR6"
 fi
 fact schema_diff "$(tr '\n' ' ' <"$WORK/schema-diff.txt")"
+# The release's first boot carries the drain the legacy bot left standing over as the
+# operator's HOLD (state.ts migrateDrainHold): the first healthy reconcile keeps it, and only an
+# explicit `qcr drain off` lifts it, which is the cutover's own order (scripts/cutover.sh). The
+# lift goes through the sealed operator channel, as root, into commands/operator.
 DRAIN_NOW="$(sql 'select draining from drain_state')"
-if [[ "$LEGACY_DRAINING" == 1 && "$DRAIN_NOW" == 0 && "$(events drain_lifted)" -ge 1 && "$(sql 'select count(*) from rounds')" == 0 ]]; then
-  check DRAIN-1 pass "the drain the legacy bot left standing lifts on the first healthy reconcile" "draining 1 -> 0, drain_lifted event, no round started by the lift"
+HOLD_NOW="$(sql 'select hold from drain_state')"
+CARRIED="$(events drain_hold_carried)"
+ROUNDS_BEFORE_LIFT="$(sql 'select count(*) from rounds')"
+op drain off >"$WORK/drain-off.txt" 2>&1
+drained_off() { [[ "$(sql 'select draining from drain_state')" == 0 ]]; }
+wait_for 60 "the operator's drain off" drained_off
+DRAIN_AFTER="$(sql 'select draining from drain_state')"
+if [[ "$LEGACY_DRAINING" == 1 && "$DRAIN_NOW" == 1 && "$HOLD_NOW" == 1 && "$CARRIED" -ge 1 && "$ROUNDS_BEFORE_LIFT" == 0 && "$DRAIN_AFTER" == 0 ]]; then
+  check DRAIN-1 pass "the drain the legacy bot left standing is kept as the operator's hold, and the operator's drain off lifts it" "draining 1 -> 1 (hold, drain_hold_carried), no round started; qcr drain off -> draining 0"
 else
-  check DRAIN-1 fail "the drain lifts on the first healthy reconcile" "legacy=$LEGACY_DRAINING now=$DRAIN_NOW lifted_events=$(events drain_lifted) rounds=$(sql 'select count(*) from rounds')"
+  check DRAIN-1 fail "the legacy drain is carried as a hold and the operator lifts it" "legacy=$LEGACY_DRAINING now=$DRAIN_NOW hold=$HOLD_NOW carried=$CARRIED rounds=$ROUNDS_BEFORE_LIFT after_off=$DRAIN_AFTER ($(tr '\n' ' ' <"$WORK/drain-off.txt" | cut -c1-200))"
 fi
 
 fi # not adopted: the cutover rehearsal made this world
