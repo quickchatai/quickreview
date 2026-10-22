@@ -141,6 +141,34 @@ describe("release.yml — the gates", () => {
     expect((qemu as unknown as { if: string }).if).toBe("matrix.qemu == 'true'");
   });
 
+  it("runs on Blacksmith's runners and builder, and on GitHub's with QCR_RUNNERS=github", () => {
+    for (const [name, job] of Object.entries(wf.jobs)) {
+      const runsOn = job["runs-on"];
+      if (name === "build") continue;
+      expect(runsOn, name).toMatch(
+        /^\$\{\{ vars\.QCR_RUNNERS == 'github' && 'ubuntu-latest' \|\| 'blacksmith-\d+vcpu-ubuntu-2404' \}\}$/,
+      );
+    }
+    const inc = wf.jobs.build!.strategy!.matrix.include as Record<string, string>[];
+    expect(inc.find((i) => i.arch === "amd64")!.runner).toContain("blacksmith-8vcpu-ubuntu-2404'");
+    expect(inc.find((i) => i.arch === "arm64")!.runner).toContain(
+      "blacksmith-8vcpu-ubuntu-2404-arm",
+    );
+    // one builder per route, each the only one that runs there; both load and never push
+    const steps = wf.jobs.build!.steps as (Step & {
+      if?: string;
+      with?: Record<string, unknown>;
+    })[];
+    const bs = steps.find((s) => s.uses?.startsWith("useblacksmith/build-push-action@"))!;
+    const gh = steps.find((s) => s.uses?.startsWith("docker/build-push-action@"))!;
+    expect(bs.if).toBe("startsWith(matrix.runner, 'blacksmith-')");
+    expect(gh.if).toBe("${{ !startsWith(matrix.runner, 'blacksmith-') }}");
+    for (const b of [bs, gh]) expect(b.with).toMatchObject({ load: true, push: false });
+    const setup = steps.find((s) => s.uses?.startsWith("useblacksmith/setup-docker-builder@"))!;
+    expect(setup.if).toBe(bs.if);
+    expect(JSON.stringify(bs.with)).not.toContain("type=gha");
+  });
+
   it("attests provenance for each arch digest and the index", () => {
     const att = wf.jobs.publish!.steps.filter((s) =>
       s.uses?.startsWith("actions/attest-build-provenance"),

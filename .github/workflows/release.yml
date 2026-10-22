@@ -20,19 +20,24 @@
 # digests; those are plumbing, not tags to pin. There is no `latest` tag, and the floating
 # v1 major tag of the Action is moved by hand, not by this workflow.
 #
+# Runners: Blacksmith's (blacksmith-*, the org's Blacksmith app), with the image
+# builds on Blacksmith's Docker builder and its layer cache. The repository
+# variable QCR_RUNNERS=github puts every job on GitHub's own runners instead
+# (ubuntu-latest, ubuntu-24.04-arm), with buildx and the gha cache: the route for
+# a repo without the app, the public snapshot included.
+#
 # ARM runners (D15): native by default, so the arm64 smoke runs on real arm64
 # and the memory image's llama-cpp-python compiles natively. The repo variable
-# RELEASE_ARM64_RUNNER picks the label (default ubuntu-24.04-arm; a private
-# repo needs a larger-runner label there). Set it to `qemu` and the arm64 legs
-# run on ubuntu-latest under QEMU instead: the fallback, slow, and the memory
-# image can take hours under emulation.
+# RELEASE_ARM64_RUNNER, when set, picks the label over both defaults. Set it to
+# `qemu` and the arm64 legs run on ubuntu-latest under QEMU instead: the
+# fallback, slow, and the memory image can take hours under emulation.
 #
 # What the owner sets up once (this file creates none of it):
 #   - environment `release-e2e`, with the owner as the required reviewer;
 #     the e2e job is the only job that reads a secret;
 #   - secret `RELEASE_E2E_PI_AUTH` in that environment: the contents of a pi
 #     auth.json (a login for the model the e2e reaches), nothing else;
-#   - optional repo variables RELEASE_ARM64_RUNNER (above) and
+#   - optional repo variables QCR_RUNNERS and RELEASE_ARM64_RUNNER (above) and
 #     RELEASE_E2E_LIMIT_USD (the per-run cap handed to `review --limit`).
 #   - packages: the repo needs write access to both ghcr packages. Artifact
 #     attestations on a private repo need a plan that offers them, so the
@@ -79,7 +84,7 @@ concurrency:
 
 jobs:
   plan:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.QCR_RUNNERS == 'github' && 'ubuntu-latest' || 'blacksmith-2vcpu-ubuntu-2404' }}
     outputs:
       version: ${{ steps.plan.outputs.version }}
       scratch: ${{ steps.plan.outputs.scratch }}
@@ -147,10 +152,10 @@ jobs:
         arch: [amd64, arm64]
         include:
           - arch: amd64
-            runner: ubuntu-latest
+            runner: ${{ vars.QCR_RUNNERS == 'github' && 'ubuntu-latest' || 'blacksmith-8vcpu-ubuntu-2404' }}
             qemu: "false"
           - arch: arm64
-            runner: ${{ vars.RELEASE_ARM64_RUNNER == 'qemu' && 'ubuntu-latest' || vars.RELEASE_ARM64_RUNNER || 'ubuntu-24.04-arm' }}
+            runner: ${{ vars.RELEASE_ARM64_RUNNER == 'qemu' && 'ubuntu-latest' || vars.RELEASE_ARM64_RUNNER || (vars.QCR_RUNNERS == 'github' && 'ubuntu-24.04-arm' || 'blacksmith-8vcpu-ubuntu-2404-arm') }}
             qemu: ${{ vars.RELEASE_ARM64_RUNNER == 'qemu' && 'true' || 'false' }}
           - image: release
             file: docker/Dockerfile
@@ -164,8 +169,33 @@ jobs:
         if: matrix.qemu == 'true'
         with:
           platforms: arm64
+      # On a Blacksmith runner: Blacksmith's builder, whose layer cache lives on
+      # the runner fleet's own disks (one cache per image and arch). Anywhere
+      # else (QCR_RUNNERS=github, the QEMU leg): buildx with the gha cache.
+      - uses: useblacksmith/setup-docker-builder@v2
+        if: startsWith(matrix.runner, 'blacksmith-')
+        with:
+          cache-key: ${{ matrix.image }}-${{ matrix.arch }}
+      - name: build (Blacksmith)
+        if: startsWith(matrix.runner, 'blacksmith-')
+        uses: useblacksmith/build-push-action@v2
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          push: false
+          provenance: false
+          tags: ${{ env.LOCAL_TAG }}
+          build-args: ${{ matrix.image == 'release' && format('BUILD_SHA={0}', github.sha) || '' }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.plan.outputs.version }}
       - uses: docker/setup-buildx-action@v3
+        if: ${{ !startsWith(matrix.runner, 'blacksmith-') }}
       - name: build
+        if: ${{ !startsWith(matrix.runner, 'blacksmith-') }}
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -232,7 +262,7 @@ jobs:
   e2e:
     needs: [plan, build]
     if: needs.plan.outputs.e2e == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.QCR_RUNNERS == 'github' && 'ubuntu-latest' || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     environment: release-e2e
     env:
@@ -315,7 +345,7 @@ jobs:
       && needs.build.result == 'success'
       && (needs.e2e.result == 'success' || (needs.e2e.result == 'skipped' && needs.plan.outputs.e2e != 'true')) }}
     name: publish ${{ matrix.image }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.QCR_RUNNERS == 'github' && 'ubuntu-latest' || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -405,7 +435,7 @@ jobs:
   manifest:
     needs: [plan, publish]
     if: ${{ !cancelled() && needs.publish.result == 'success' && needs.plan.outputs.scratch != 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.QCR_RUNNERS == 'github' && 'ubuntu-latest' || 'blacksmith-2vcpu-ubuntu-2404' }}
     timeout-minutes: 10
     env:
       VERSION: ${{ needs.plan.outputs.version }}
@@ -436,7 +466,7 @@ jobs:
   attach-manifest:
     needs: [plan, publish, manifest]
     if: ${{ !cancelled() && needs.manifest.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.QCR_RUNNERS == 'github' && 'ubuntu-latest' || 'blacksmith-2vcpu-ubuntu-2404' }}
     timeout-minutes: 10
     permissions:
       contents: write

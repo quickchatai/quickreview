@@ -10,6 +10,10 @@
 # `clone` job keeps the native developer install honest (a fresh checkout,
 # npm ci, npm run build, then the wrapper's version and review --preview on a
 # fixture repo): no docker, no model, and the user docs leave that route out.
+#
+# Runners: Blacksmith's (blacksmith-*), which the org's Blacksmith app serves.
+# A repo without that app, the public snapshot included, sets the repository
+# variable QCR_RUNNERS=github and every job runs on GitHub's own runners.
 name: CI
 
 on:
@@ -22,7 +26,7 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.QCR_RUNNERS == 'github' && 'ubuntu-latest' || 'blacksmith-16vcpu-ubuntu-2404' }}
     strategy:
       matrix:
         node: ["22"]
@@ -86,13 +90,19 @@ jobs:
   # workflow's. BuildKit is named because docker/Dockerfile.dockerignore (the
   # release context's allowlist) is only read by it.
   image:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.QCR_RUNNERS == 'github' && 'ubuntu-latest' || 'blacksmith-8vcpu-ubuntu-2404' }}
     env:
       DOCKER_BUILDKIT: "1"
     steps:
       - uses: actions/checkout@v4
+      # Blacksmith's builder: `docker build` below reuses its layer cache. Off a
+      # Blacksmith runner (QCR_RUNNERS=github) it is skipped.
+      - uses: useblacksmith/setup-docker-builder@v2
+        if: ${{ vars.QCR_RUNNERS != 'github' }}
+        with:
+          cache-key: ci-release-amd64
       - name: build the release image
-        run: docker build -f docker/Dockerfile --build-arg "BUILD_SHA=${GITHUB_SHA}" -t qcr-ci:smoke .
+        run: docker build --load -f docker/Dockerfile --build-arg "BUILD_SHA=${GITHUB_SHA}" -t qcr-ci:smoke .
       - name: offline smoke
         run: .github/ci/image-smoke.sh qcr-ci:smoke
 
@@ -101,7 +111,7 @@ jobs:
   # --json` on a fixture repo (.github/ci/clone-smoke.sh). Offline and with no
   # model, like the image job, and nothing is pushed.
   clone:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.QCR_RUNNERS == 'github' && 'ubuntu-latest' || 'blacksmith-4vcpu-ubuntu-2404' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
