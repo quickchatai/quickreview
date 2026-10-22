@@ -9,8 +9,9 @@
 //
 // The checker is pure (checkBashCommand) so tests need no pi. The pi hookup
 // (`pi.on("tool_call", …)` returning {block, reason}) is a VERIFIED capability
-// per the pi control-surface findings (§5); the exact payload field names
-// remain VERIFY-ON-PIN.
+// per the pi control-surface findings (§5), and its `toolName` and `input`
+// fields are seen in production at pi 1.3.0 (a vetoed call's exec-policy reason
+// reached the model).
 //
 // This guard is ONE LAYER of the exec boundary, not the whole of it. It vets
 // command strings, and a command guard never sees a FILE the session writes —
@@ -3116,9 +3117,9 @@ export function bashGuardConfigFromEnv(
  * event.input is mutable. pi 1.3.0 emits `{ type: "tool_call", toolName,
  * toolCallId, input }` and its read/grep/find/ls tools take `path` (grep also
  * `glob`).
- * // VERIFY-ON-PIN: field names `toolName` and `input`/`arguments` on the event
- * payload, and (following extensions/companion-guard.ts, which already vetoes
- * writes this way) `path`/`file_path` on a file tool's input.
+ * `toolName` and `input` on the event payload are seen in production (above).
+ * // VERIFY-ON-PIN: `path`/`file_path` on a file tool's input (following
+ * extensions/companion-guard.ts, which already vetoes writes this way).
  */
 export function createBashGuard(config: BashGuardConfig): ExtensionFactory {
   const policy = policyFromConfig(config);

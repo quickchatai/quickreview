@@ -67,7 +67,7 @@
     {
       "id": "usage-and-price",
       "assumes": "A message's usage.cost.total is a number, and a subagent result's usage is the child's sum; the codex price list matches pi's catalog.",
-      "files": { "src/usage.ts": 1, "src/bench/cost.ts": 1 },
+      "files": { "src/bench/cost.ts": 1 },
       "signal": {
         "source": "session-jsonl",
         "kind": "jsonl",
@@ -106,17 +106,6 @@
         "kind": "jsonl",
         "where": [{ "path": "message.usage.cacheRead", "gt": 0 }],
         "says": "a lens request after the group's warm-up read from the cache"
-      }
-    },
-    {
-      "id": "cache-group-dispose",
-      "assumes": "cleanupSessionResources closes by session id alone, so a cache group's sessions are disposed together after the last member.",
-      "files": { "src/engine/lens/cache-run.ts": 1 },
-      "signal": {
-        "source": "structured-log",
-        "kind": "log",
-        "pattern": "pin-evidence cache-group-disposed key=\\S+ sessions=\\d+",
-        "says": "a cache group disposed its sessions (logged by CacheGroups since P9.8a), and no sibling lens failed after it"
       }
     },
     {
@@ -208,7 +197,7 @@
       "id": "guard-tool-call-fields",
       "assumes": "The tool_call event's toolName and input fields, the write/read tool names, and pi's context-file candidates; a block reason reaches the model.",
       "files": {
-        "extensions/bash-guard.ts": 6,
+        "extensions/bash-guard.ts": 5,
         "tests/bash-guard.test.ts": 1
       },
       "signal": {

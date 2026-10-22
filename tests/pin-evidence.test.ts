@@ -79,7 +79,6 @@ describe("VERIFY-ON-PIN evidence map", () => {
     expect(by["inject-bridge-delivery"]).toBe("live");
     expect(by["ledger-pin-compaction"]).toBe("live");
     expect(by["oauth-refresh"]).toBe("live");
-    expect(by["cache-group-dispose"]).toBe("live");
     expect(by["usage-and-price"]).toBe("live");
     expect(by["lens-prefix-cache"]).toBe("none");
     expect(by["guard-tool-call-fields"]).toBe("none");

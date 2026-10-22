@@ -12,7 +12,8 @@
 // each member leases the group, hands its finished sessions over with keep(),
 // and the last release disposes them together.
 //
-// VERIFY-ON-PIN (pi 1.3.0): cleanupSessionResources closes by session id alone.
+// Seen in production at pi 1.3.0: cleanupSessionResources closes by session id
+// alone (groups disposed their sessions together, and no sibling lens failed after).
 import { CacheGrouper, type CacheSlot } from "./cache-group.js";
 
 /** The longest a packed group's lens waits for its warm-up. */
@@ -89,8 +90,8 @@ export class CacheGroups {
   private readonly grouper: CacheGrouper;
   private readonly lives = new Map<string, Lifetime>();
 
-  /** `onDisposed` is told each time a group's sessions are disposed: the live
-   * evidence for the cleanupSessionResources pin (scripts/pin-evidence-map.json). */
+  /** `onDisposed` is told each time a group's sessions are disposed: the
+   * production evidence the cleanupSessionResources pin rests on. */
   constructor(
     size: number,
     staggerMs: number,

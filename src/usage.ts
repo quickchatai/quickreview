@@ -211,9 +211,10 @@ function ledgerUsageOf(line: LensLedgerLine): LineUsage {
 /** Each child's usage in a lens tool result (`subagent`, `launch_plan`, `lens`,
  * `lens_wave` — the tmux bot's spellings and the engine's), attributed to
  * the child's model without its `:<thinking>` suffix (the pricing table's
- * key). VERIFY-ON-PIN (pi 1.0.0, examples/extensions/subagent): a result's
- * `usage` is the child's sum over its turns — input, output, cacheRead, and
- * `cost` as a NUMBER (the sum of each turn's cost.total). */
+ * key). A result's `usage` is the child's sum over its turns — input, output,
+ * cacheRead, and `cost` as a NUMBER (the sum of each turn's cost.total); seen in
+ * production on `lens` and `lens_wave` results at pi 1.3.0. The older spellings
+ * survive only in archived transcripts. */
 function childUsageOf(rec: JsonlRecord): LineUsage[] {
   if (rec.type !== "message") return [];
   const msg = rec.message;
