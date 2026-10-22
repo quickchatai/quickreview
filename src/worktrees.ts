@@ -82,9 +82,9 @@ export function prWorktreeRel(pr: number): string {
 const SHA_RE = /^[0-9a-f]{7,40}$/i;
 const MEMO_ENTRY_LIMIT = 5000;
 
-/** A file diff git renders without text hunks although the content changed:
- * a binary file, or a file deleted while empty. */
-const WHOLE_FILE_CHANGE = /^(Binary files .* differ|deleted file mode )/m;
+/** A file diff git renders without text hunks although the file changed:
+ * a binary file, a file deleted while empty, or a mode-only change. */
+const WHOLE_FILE_CHANGE = /^(Binary files .* differ|deleted file mode |old mode )/m;
 
 /** One file's zero-context hunks, keyed by the file's OLD path (the side a
  * blame of the parent reads) as the repository spells it — git's quoting of a
