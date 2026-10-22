@@ -1414,7 +1414,7 @@ function registerSetup(pi: ExtensionAPI, config: SetupConfig): void {
   // Triage — dismiss, promote, close fixed, scan memory.
   if (triage) for (const def of triageToolDefinitions(triage)) registerQcrTool(pi, def);
   // The PR replay — old vs new profile, cost first.
-  const replay = buildReplay(reviewedCheckout(env), env, resolveMaxConcurrency());
+  const replay = buildReplay(reviewedCheckout(env), env, resolveMaxConcurrency(env));
   for (const def of replayToolDefinitions(replay)) registerQcrTool(pi, def);
   // The TUI's stage-2 start click and its scan stop, answered while the
   // companion's session runs (the inject-bridge's lifecycle: start on

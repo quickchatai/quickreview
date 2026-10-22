@@ -122,6 +122,24 @@ describe("buildTuiView — the derived state behind the frame", () => {
     expect(v.deploy.container_status).toBe("Up 2 hours");
   });
 
+  it("the pending count names the release version and revision it is counted up to", () => {
+    const v = buildTuiView({
+      now: NOW,
+      tab: "deploy",
+      deploy: { ...DEPLOY, version: "1.2.3", versionRev: "ddd4444" },
+    });
+    expect(v.deploy.target_version).toBe("1.2.3");
+    expect(v.deploy.target_rev).toBe("ddd4444");
+    const answer = deployAnswer(publish(v), NOW);
+    expect(answer).toContain("release version the waiting commits are counted up to: 1.2.3");
+    expect(answer).toContain("that version's revision: ddd4444");
+    const none = buildTuiView({ now: NOW, tab: "deploy", deploy: DEPLOY });
+    expect(none.deploy.target_version).toBeNull();
+    expect(deployAnswer(publish(none), NOW)).toContain(
+      "release version the waiting commits are counted up to: UNKNOWN",
+    );
+  });
+
   it("an unopened deploy tab is reported as not loaded, never as 'nothing to ship'", () => {
     const v = buildTuiView({ now: NOW, tab: "board", snapshot: snap() });
     expect(v.deploy.loaded).toBe(false);
@@ -286,7 +304,8 @@ describe("a failed read reaches the companion as UNKNOWN, never as an absent lin
     expect(v.deploy.deployed).toBe("absent");
     expect(v.deploy.container_status).toBe("");
     const answer = deployAnswer(publish(v), NOW);
-    expect(answer).toContain("never deployed to it");
+    expect(answer).toContain("legacy layout");
+    expect(answer).not.toContain("BUILD_SHA");
     expect(answer).toContain("docker lists no container");
     expect(answer).not.toMatch(/VM is running: UNKNOWN|local HEAD: UNKNOWN|container: UNKNOWN/);
     // (With no marker there is nothing to diff against, so the pending count
@@ -308,7 +327,7 @@ describe("a failed read reaches the companion as UNKNOWN, never as an absent lin
     expect(v.deploy.deployed).toBe("unparseable");
     const answer = deployAnswer(publish(v), NOW);
     expect(answer).toContain("VM is running: UNKNOWN");
-    expect(answer).toContain("corrupt marker");
+    expect(answer).toContain("names no build stamp");
     expect(answer).not.toContain("never deployed");
     expect(answer).not.toContain("VM is running: UNKNOWN (the TUI has not been able to read this)");
     // (No sha to diff against, so the pending count is honestly UNKNOWN.)
