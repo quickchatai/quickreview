@@ -21,6 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { stripAnsi } from "../src/tui/paint.js";
+import { CONTAINER } from "../src/tui/companion.js";
 
 interface Rig {
   spawned: string[];
@@ -231,7 +232,7 @@ describe("runTui with the companion behind a tmux socket", () => {
     expect(words.indexOf("show-options")).toBeLessThan(words.indexOf("new-session"));
     // the companion's pi, from the image's extensions
     const born = s.tmux.find((a) => a.includes("new-session"))!;
-    expect(born).toContain("pi");
+    expect(born).toContain(`${CONTAINER.app}/node_modules/.bin/pi`);
     expect(born).toContain("/opt/qcr/extensions/cli/lens.ts");
     expect(born).toContain("QCR_FEED_DIR=/feed");
 

@@ -158,6 +158,8 @@ function withBuiltApp(
  * out rather than repeated in every expectation. */
 const containerCalls = (calls: string[][]): string[][] => calls.filter((c) => c[0] !== "network");
 
+const PI_BIN = `${CONTAINER.app}/node_modules/.bin/pi`;
+
 describe("companion config", () => {
   it("defaults the whole [companion] section when config.toml omits the keys", () => {
     const cfg = parseConfig(
@@ -354,12 +356,12 @@ describe("CompanionLifecycle argv", () => {
     // inject-bridge resolves its session name from this one.
     expect(argv).toContain("QCR_SESSION_NAME=companion");
     expect(argv).toContain(`QCR_INJECT_DIR=${CONTAINER.workspace}/inject/companion`);
-    const pi = argv.slice(argv.indexOf("pi"));
+    const pi = argv.slice(argv.indexOf(PI_BIN));
     // Every extension, the theme and the prompt are the IMAGE's (D20), under
     // /opt/qcr — none comes off the /workspace mount.
     const app = CONTAINER.app;
     expect(pi).toEqual([
-      "pi",
+      PI_BIN,
       // The companion never blocks on pi's "Trust project folder?" modal
       // either. This is the same flag sessions.ts passes; without it the
       // companion prompts on every start.
@@ -1181,6 +1183,11 @@ describe("companion image", () => {
     );
   });
 
+  it("launches the image's own pi bin, never a pi looked up on the PATH", () => {
+    const argv = new CompanionLifecycle(CFG, async () => OK, {}, noDirs, noFs).piArgv();
+    expect(argv[0]).toBe(PI_BIN);
+  });
+
   // The image's HOME and the code's mount destination are ONE fact split
   // across two files. If they drift, pi's OAuth token lands on the writable
   // layer, where a recreate destroys it.
@@ -1449,7 +1456,7 @@ describe("lens tools (companion)", () => {
     const lc = new CompanionLifecycle(CFG, async () => OK, HOST_ENV, noDirs, noFs);
     const argv = lc.spawnArgv();
     expect(argv).toContain("QCR_SUBAGENT_MAX_CONCURRENCY=8");
-    expect(argv.indexOf("QCR_SUBAGENT_MAX_CONCURRENCY=8")).toBeLessThan(argv.indexOf("pi"));
+    expect(argv.indexOf("QCR_SUBAGENT_MAX_CONCURRENCY=8")).toBeLessThan(argv.indexOf(PI_BIN));
     // The tool parses it as a valid cap (strict digits, 1..64).
     expect(lc.piArgv().join(" ")).not.toContain("QCR_SUBAGENT_MAX_CONCURRENCY");
   });
@@ -1554,7 +1561,7 @@ describe("the install's homes and the read-only GitHub token", () => {
     expect(RETIRED_FILE_ENV).toBe("QCR_OV_RETIRED_FILE");
     const set = `${RETIRED_FILE_ENV}=${CONTAINER.stateHome}/${MEMORY.retiredFile}`;
     expect(argv).toContain(set);
-    expect(argv.indexOf(set)).toBeLessThan(argv.indexOf("pi"));
+    expect(argv.indexOf(set)).toBeLessThan(argv.indexOf(PI_BIN));
     expect(MEMORY.retiredFile).toBe("openviking/companion-retired-uris.json");
   });
 

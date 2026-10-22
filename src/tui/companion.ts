@@ -655,7 +655,7 @@ export class CompanionLifecycle {
   piArgv(): string[] {
     const ext = `${CONTAINER.app}/extensions`;
     return [
-      "pi",
+      `${CONTAINER.app}/node_modules/.bin/pi`,
       // --approve: pre-trust project-local .pi resources for this run. Without
       // it a cwd carrying .pi/ hits pi's interactive "Trust project folder?"
       // modal and the session stalls forever. Same flag sessions.ts passes
