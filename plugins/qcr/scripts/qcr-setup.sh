@@ -25,7 +25,7 @@ set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # Kept equal to plugin.json's and package.json's version; a test checks it.
-RELEASE_VERSION=1.0.6
+RELEASE_VERSION=1.0.7
 IMAGE="${QCR_IMAGE:-ghcr.io/quickchatai/quickreview:$RELEASE_VERSION}"
 DEST="${QCR_SETUP_BIN_DIR:-$HOME/.local/bin}"
 case "${QCR_SETUP_INTERACTIVE:-auto}" in
