@@ -288,6 +288,8 @@ export function sdkCaseRunner(opts: SdkCaseRunnerOptions): CaseRunner {
           if (stopped) return { ok: false, reason: "stopped", cost_usd };
           if (result.timedOut)
             return { ok: false, reason: "the case ran past its wall clock", cost_usd };
+          // The model's own reason leads: a provider error also ends the turn non-zero.
+          if (readout.failure !== null) return { ok: false, reason: readout.failure, cost_usd };
           if (result.code !== 0) {
             let tail = "";
             try {
@@ -306,7 +308,6 @@ export function sdkCaseRunner(opts: SdkCaseRunnerOptions): CaseRunner {
               cost_usd,
             };
           }
-          if (readout.failure !== null) return { ok: false, reason: readout.failure, cost_usd };
           if (readout.final.trim() === "")
             return { ok: false, reason: "the subagent gave no answer", cost_usd };
           return { ok: true, output: readout.final, cost_usd, reads: readout.reads };
