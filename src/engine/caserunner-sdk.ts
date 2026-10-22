@@ -269,7 +269,11 @@ export function sdkCaseRunner(opts: SdkCaseRunnerOptions): CaseRunner {
           ).unref();
         };
         signal.addEventListener("abort", onAbort, { once: true });
-        if (signal.aborted) onAbort();
+        if (signal.aborted) {
+          onAbort();
+          // Cancelled while the session was being created: no turn starts.
+          return finish({ ok: false, reason: "stopped", cost_usd: 0 });
+        }
 
         const turn = (async (): Promise<CaseOutcome> => {
           let result: TurnResult;
@@ -380,7 +384,12 @@ export function scanSdkCases(o: ScanSdkCasesOptions): CaseRunner {
       try {
         auth = engineCredentials({
           srcDir: src,
-          needMs: SCAN_CASE_AUTH_BUDGET_MS,
+          // In the scan container the driver's login wrapper ends a case at the case
+          // budget; on the host nothing does, so the login must cover the turn's
+          // whole wall clock.
+          needMs: o.env[SCAN_AUTH_SRC_ENV]?.trim()
+            ? SCAN_CASE_AUTH_BUDGET_MS
+            : LEAF_TURN_TIMEOUT_MS,
           words: { missing: scanAuthMissing, expiring: scanAuthExpiring },
         });
       } catch (err) {
@@ -390,7 +399,9 @@ export function scanSdkCases(o: ScanSdkCasesOptions): CaseRunner {
       mkdirSync(o.agentDir, { recursive: true, mode: 0o700 });
       // A custom provider list lives next to the login; the host reads its own copy.
       const models = join(src, "models.json");
-      if (existsSync(models)) copyFileSync(models, join(o.agentDir, "models.json"));
+      const hostModels = join(o.agentDir, "models.json");
+      if (existsSync(models)) copyFileSync(models, hostModels);
+      else rmSync(hostModels, { force: true });
       const host = await (o.makeHost
         ? o.makeHost({ agentDir: o.agentDir, credentials: auth.credentials })
         : PiHost.create({

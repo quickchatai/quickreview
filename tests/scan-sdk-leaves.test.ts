@@ -28,6 +28,7 @@ import {
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { LENS_SESSIONS_DIR, lensSessionsOf } from "../src/engine/openable.js";
 import { PiHost } from "../src/engine/pisdk.js";
+import type { Runtime } from "../src/engine/port.js";
 import { sdkRuntime } from "../src/engine/sdkruntime.js";
 import { piCaseRunner } from "../src/setup/caserunner.js";
 import type { CaseOutcome, CaseSpec } from "../src/setup/engine.js";
@@ -240,6 +241,34 @@ describe("[P5.7] sdkCaseRunner on the faux provider", () => {
     expect((out as { cost_usd: number }).cost_usd).toBeCloseTo(0.02, 9);
   });
 
+  it("an abort that lands while the session is being created starts no turn", async () => {
+    const stop = new AbortController();
+    let prompts = 0;
+    writeFileSync(join(agentsDir, "pass-survey.md"), AGENT("faux/m"));
+    const out = await sdkCaseRunner({
+      agentsDir,
+      cwd: work,
+      env: { PATH: process.env["PATH"], HOME: dir },
+      runtime: async () =>
+        ({
+          create: async () => {
+            stop.abort();
+            return {
+              subscribe: () => () => {},
+              prompt: async () => {
+                prompts++;
+                return { code: 0, timedOut: false };
+              },
+              abort: async () => {},
+              dispose: async () => {},
+            } as never;
+          },
+        }) as unknown as Runtime,
+    }).run(spec, stop.signal);
+    expect(prompts).toBe(0);
+    expect(out).toEqual({ ok: false, reason: "stopped", cost_usd: 0 });
+  });
+
   it("keeps the case's session JSONL beside its transcript, where `qcr open --lens CASE` finds it (D10)", async () => {
     const transcriptDir = join(dir, "transcripts-kept");
     await runner([fauxAssistantMessage("NONE")], { transcriptDir }).run(
@@ -397,6 +426,42 @@ describe("[P5.7] the driver's host: a login per case, refused and read-only", ()
     expect(out).toMatchObject({ ok: false, reason: expect.stringMatching(/no pi login/) });
     expect(expired).toHaveLength(1);
     expect(made).toHaveLength(0);
+  });
+
+  it("host mode admits a login only if it outlives the turn's wall clock; the container's budget is the case budget", async () => {
+    const src = join(dir, "src-agent");
+    mkdirSync(src);
+    // 40 minutes left: past the 30-minute case budget, inside the 45-minute turn.
+    writeFileSync(join(src, "auth.json"), login(Date.now() + 40 * 60_000));
+    const hostExpired: string[] = [];
+    const host = driver({ PATH: "/bin", HOME: dir, PI_CODING_AGENT_DIR: src }, (r) =>
+      hostExpired.push(r),
+    );
+    const refused = await host.cases.run(spec, new AbortController().signal);
+    expect(refused).toMatchObject({ ok: false, cost_usd: 0 });
+    expect(hostExpired).toHaveLength(1);
+    expect(host.made).toHaveLength(0);
+
+    const boxExpired: string[] = [];
+    const box = driver({ PATH: "/bin", HOME: dir, QCR_SCAN_AUTH_SRC: src }, (r) =>
+      boxExpired.push(r),
+    );
+    const admitted = await box.cases.run(spec, new AbortController().signal);
+    expect(admitted, JSON.stringify(admitted)).toMatchObject({ ok: true });
+    expect(boxExpired).toHaveLength(0);
+  });
+
+  it("a models.json removed from the login source is removed from the host's copy", async () => {
+    const src = join(dir, "src-agent");
+    mkdirSync(src);
+    writeFileSync(join(src, "auth.json"), login(Date.now() + 3 * 3_600_000));
+    writeFileSync(join(src, "models.json"), JSON.stringify({ providers: {} }));
+    const { cases } = driver({ PATH: "/bin", HOME: dir, QCR_SCAN_AUTH_SRC: src }, () => {});
+    await cases.run(spec, new AbortController().signal);
+    expect(existsSync(join(dir, "sdk-agent", "models.json"))).toBe(true);
+    rmSync(join(src, "models.json"));
+    await cases.run(spec, new AbortController().signal);
+    expect(existsSync(join(dir, "sdk-agent", "models.json"))).toBe(false);
   });
 
   it("gives the host the login's custom model list, and refuses a relative agent dir", async () => {
