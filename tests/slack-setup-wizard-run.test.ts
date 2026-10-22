@@ -79,6 +79,7 @@ describe("collect-slack-secrets: input that runs out", () => {
     expect(code).toBe(0);
     expect(out).toContain("the bot is NOT a member");
     expect(out).toContain("Step 8");
-    expect(out).toContain("./scripts/deploy.sh rebuild");
+    expect(out).toContain("./scripts/deploy.sh release <version>");
+    expect(out).not.toContain("deploy.sh rebuild");
   });
 });
