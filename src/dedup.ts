@@ -440,14 +440,19 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
     ),
   );
   for (const e of byKey.values()) {
-    if (normalizeDisposition(e.disposition) !== "merged" || !s(e.group)) continue;
+    if (normalizeDisposition(e.disposition) !== "merged") continue;
     let into = s(e.merged_into);
     for (let hops = 0; into && !postedAt.has(into) && hops < entries.length; hops++) {
       const next = byKey.get(into);
       into = next && normalizeDisposition(next.disposition) === "merged" ? s(next.merged_into) : "";
     }
     const at = postedAt.get(into);
-    if (at !== undefined && !groupsOf[at]!.includes(s(e.group))) groupsOf[at]!.push(s(e.group));
+    if (at === undefined) continue;
+    if (s(e.group) && !groupsOf[at]!.includes(s(e.group))) groupsOf[at]!.push(s(e.group));
+    // Its site rides with the lead too, so a later merge names it on the survivor.
+    const line = recordNumber(e.line);
+    if (line !== null && s(e.path) === s(posted[at]!.e.path) && !sites[at]!.includes(line))
+      sites[at]!.push(line);
   }
   const merges: PostCheckMerge[] = [];
   for (let a = 0; a < posted.length; a++) {

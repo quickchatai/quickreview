@@ -1583,6 +1583,16 @@ describe("prepareDependencySources", () => {
     expect(existsSync(join(cacheDir, "npm", "left-pad@1.3.0"))).toBe(false);
   });
 
+  it("an integrity string with several digests of one algorithm matches any of them", async () => {
+    const tgz = npmTgz();
+    const { fetch } = fakeFetch(
+      leftPadRoutes(tgz, { integrity: `${sri(tgz)} ${sri(Buffer.from("something else"))}` }),
+    );
+    const m = await prepareDependencySources(npmTree(), CHANGED, { cacheDir: tmp(), fetch });
+    expect(m.skipped).toEqual([]);
+    expect(m.sources).toHaveLength(1);
+  });
+
   it("a skip's log line names the version it was for", async () => {
     const tgz = npmTgz();
     const { fetch } = fakeFetch(
