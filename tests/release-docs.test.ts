@@ -215,8 +215,10 @@ describe.skipIf(!has("docs/rule-text-drafts.md"))("docs/rule-text-drafts.md", ()
     const pane = proposed.filter((b) =>
       b.body.startsWith("- **An embedded pi surface is a TERMINAL"),
     );
-    expect(pane).toHaveLength(2);
-    expect(claude).toContain(pane[1]!.body);
+    // Part 3 is the live text (owner ratification 2026-10-22, P9.6); parts 1 and 2 are not.
+    expect(pane).toHaveLength(3);
+    expect(claude).toContain(pane[2]!.body);
+    expect(claude).not.toContain(pane[1]!.body);
     expect(claude).not.toContain(pane[0]!.body);
     // The sentences the landings made false are gone, and the new ones are there.
     const folded = claude.replace(/\s+/g, " ");

@@ -292,7 +292,16 @@ describe("the CLAUDE.md anchors", () => {
     expect(b.text).toContain("[private rule text removed]");
     expect(b.text).toContain("answered at once by a short worker that resumes the session");
     expect(b.text).toContain("posts only when the operator marked the message may-post");
-    expect(b.text).toContain("debug round or a takeover inside interactive pi");
+    // owner ratification 2026-10-22 (P9.6): the pane's two pi terminals, by name, and
+    // every other pane the viewer
+    expect(b.text).toContain(
+      "[private rule text removed]",
+    );
+    expect(b.text).toContain("[private rule text removed]");
+    expect(b.text).toContain("`qcr open pr <n>` forks it into pi");
+    expect(b.text).not.toContain("worker-hosted PR's pane");
+    expect(b.text).toContain("tests/tui-pipane.test.ts");
+    expect(b.text).toContain("tests/tui-viewer-pane.test.ts");
     expect(b.text).toContain("`Ctrl-q` is the only reserved byte");
     expect(b.text).not.toMatch(/held as a wake/);
     expect(b.text).toContain("tests/cmdbar.test.ts");
