@@ -76,8 +76,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3-venv fd
     && rm -f /etc/apt/sources.list.d/github-cli.list /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && rm -rf /var/lib/apt/lists/*
 
-# pi is the release's (config.toml [pi]); this reinstalls it only when
-# QCR_BENCH_PI_VERSION asks for another, e.g. the pi an earlier run's image carried.
+# pi on the PATH. The release image carries one pi, in node_modules, and no CLI
+# on the PATH (P9.9b); the judge shim and the pi-review arm run `pi` from the
+# PATH, so the bench installs the release's pin (config.toml [pi]) globally, or
+# the pi QCR_BENCH_PI_VERSION asks for, e.g. the pi an earlier run's image carried.
 ARG PI_PACKAGE=@earendil-works/pi-coding-agent
 ARG PI_VERSION=1.3.0
 RUN [ "$(node -p "require('$(npm root -g)/${PI_PACKAGE}/package.json').version")" = "${PI_VERSION}" ] \

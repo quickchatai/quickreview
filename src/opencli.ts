@@ -36,6 +36,7 @@ import {
   type OpenMeta,
 } from "./engine/openable.js";
 import { openPrOptions, type OpenPrOptions, type PrPull } from "./openpr.js";
+import { piCliPath } from "./picli.js";
 
 export const OPEN_USAGE =
   "usage: qcr open [RUN_ID | DIR | FILE.jsonl | scan[:RUN]] [--lens ID] [--write] [--print] [--json]\n" +
@@ -143,7 +144,8 @@ export interface OpenDeps {
   cwd: string;
   env: Readonly<Record<string, string | undefined>>;
   out: (line: string) => void;
-  /** The pi binary. Omitted: `pi` on the PATH. */
+  /** The pi binary. Omitted: the pinned pi's own CLI (src/picli.ts), never a
+   * `pi` on the PATH. */
   piBin?: string;
   /** Prepares the private agent dir and the cwd pi runs in; `cleanup` removes
    * them (the login copy goes with the open). */
@@ -409,7 +411,7 @@ export async function runOpen(
       : LENS_OPEN_EXTENSIONS;
   const extensions = names.map((n) => join(deps.root, "extensions", n));
   const meta = readOpenMeta(found.roundDir);
-  const bin = deps.piBin ?? "pi";
+  const bin = deps.piBin ?? piCliPath();
   // Writing into a round that recorded how it ran keeps its ledger and lens
   // sessions where they are; a fork (or a bare file) works on a copy.
   const inPlace = mode === "write" && meta !== null;

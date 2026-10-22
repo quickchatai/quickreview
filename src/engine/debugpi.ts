@@ -24,6 +24,7 @@ import { spawn } from "node:child_process";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { GITHUB_TOKEN_ENVS } from "../envstrip.js";
+import { piCliPath } from "../picli.js";
 import { DEBUG_STATUS_FILE, mainSessionOf } from "./openable.js";
 import { checkToolUid, shareWithToolGroup, toolIsolation } from "./tooluid.js";
 import {
@@ -113,7 +114,8 @@ export function eventsFromSession(file: string): string[] {
 }
 
 export interface DebugRoundDeps {
-  /** The pi binary. Omitted: `pi` on the PATH. */
+  /** The pi binary. Omitted: the pinned pi's own CLI (src/picli.ts); the
+   * release image has no `pi` on the PATH. */
   piBin?: string;
   /** The environment pi inherits. Omitted: `process.env`. */
   env?: Readonly<Record<string, string | undefined>>;
@@ -187,7 +189,7 @@ export async function runDebugRound(i: RoundSpec, deps: DebugRoundDeps = {}): Pr
     // The whole pi runs as the tool uid, as the process route's did: its bash,
     // and the lens sessions of its extension, get no capability and cannot read
     // this process.
-    const launch = toolIsolation(deps.piBin ?? "pi", args, procEnv);
+    const launch = toolIsolation(deps.piBin ?? piCliPath(), args, procEnv);
     if ("refused" in launch) throw new Error(`a debug round in pi: ${launch.refused}`);
     // That pi reads the run's agent dir (its login copy, models, lens agents),
     // which the run uid made private.

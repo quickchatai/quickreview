@@ -15,6 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { piCliPath } from "../src/picli.js";
 import {
   LENS_OPEN_EXTENSIONS,
   MAIN_OPEN_EXTENSIONS,
@@ -365,7 +366,8 @@ describe("[open] the verb", () => {
     expect(await runOpen(["r1"], false, d)).toBe(0);
     expect(calls.prepared).toEqual([out]);
     const cmd = calls.spawned[0]!;
-    expect(cmd.bin).toBe("pi");
+    // the pinned pi's own CLI, never a pi on the PATH
+    expect(cmd.bin).toBe(piCliPath());
     expect(cmd.args.slice(-2)).toEqual(["--fork", mainSessionOf(out)]);
     expect(cmd.cwd).toBe(join(out, "open-cwd"));
     expect(cmd.env["GITHUB_TOKEN"]).toBeUndefined();
@@ -410,14 +412,15 @@ describe("[open] the verb", () => {
     expect(await runOpen(["r3", "--print"], false, d)).toBe(0);
     expect(calls.spawned).toEqual([]);
     expect(calls.prepared).toEqual([]);
-    expect(calls.out.join("\n")).toMatch(/pi .*--fork .*\.jsonl/);
+    expect(calls.out.join("\n")).toContain(`${piCliPath()} `);
+    expect(calls.out.join("\n")).toMatch(/--fork .*\.jsonl/);
     calls.out.length = 0;
     expect(await runOpen(["r3", "--lens", "L", "--print", "--json"], false, d)).toBe(0);
     expect(JSON.parse(calls.out[0]!)).toMatchObject({
       ok: true,
       kind: "lens",
       mode: "fork",
-      command: "pi",
+      command: piCliPath(),
     });
   });
 

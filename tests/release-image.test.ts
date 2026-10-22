@@ -105,14 +105,17 @@ describe("release image — stages and pins", () => {
   });
 
   it("install lines reference the ARGs, never a literal version", () => {
-    expect(dockerfile).toContain('"${PI_PACKAGE}@${PI_VERSION}"');
+    expect(runWith("FATAL: pi versions disagree")).toContain("node_modules/${PI_PACKAGE}/package.json");
     expect(code).not.toMatch(/pi-coding-agent@\d/);
     expect(dockerfile).toContain("tmux-${TMUX_VERSION}");
   });
 
-  it("pi comes from npm ci, with the global CLI pinned beside it", () => {
+  it("pi comes from npm ci alone: no global pi CLI (P9.9b)", () => {
     expect(lines).toContain("RUN npm ci --no-audit --no-fund");
-    expect(runWith("npm install -g")).toContain('"${PI_PACKAGE}@${PI_VERSION}"');
+    expect(code).not.toContain("npm install -g");
+    expect(code).not.toContain("npm root -g");
+    // the one pi's bin is there, and no pi answers on the PATH
+    expect(runWith("! command -v pi")).toContain("[ -x /opt/qcr/node_modules/.bin/pi ]");
   });
 
   it("builds tmux from source; there are no OpenViking layers", () => {
@@ -266,12 +269,6 @@ function sandbox(): Sandbox {
       mkdirSync(dirname(join(app, at)), { recursive: true });
       copyFileSync(join(root, at), join(app, at));
     }
-  // a global node_modules holding pi, and an `npm` that says where it is
-  const globalRoot = join(dir, "global");
-  mkdirSync(join(globalRoot, cfg.pi.package), { recursive: true });
-  const npm = join(bin, "npm");
-  writeFileSync(npm, `#!/bin/sh\necho ${globalRoot}\n`);
-  chmodSync(npm, 0o755);
   return {
     dir,
     bin,
@@ -339,30 +336,50 @@ describe("release image — the build-time checks fail when they should", () => 
     }
   });
 
-  it("the three pi versions must agree with the ARG", () => {
+  it("the one pi's version must agree with the ARG and config.example.toml", () => {
     const s = sandbox();
     try {
-      const step = runWith("global=");
+      const step = runWith("FATAL: pi versions disagree");
       // the scratch tree has no node_modules pi: the step refuses…
       expect(sh(s, step).status).not.toBe(0);
-      // …and passes once the global CLI, node_modules and config all say 1.3.0
-      for (const base of [join(s.dir, "global"), join(s.dir, "opt-qcr", "node_modules")]) {
-        const dir = join(base, cfg.pi.package);
-        mkdirSync(dir, { recursive: true });
-        writeFileSync(join(dir, "package.json"), JSON.stringify({ version: cfg.pi.version }));
-      }
+      // …and passes once node_modules and config both say 1.3.0
+      const pkg = join(s.dir, "opt-qcr", "node_modules", cfg.pi.package);
+      mkdirSync(pkg, { recursive: true });
+      writeFileSync(join(pkg, "package.json"), JSON.stringify({ version: cfg.pi.version }));
       copyFileSync(
         join(root, "config.example.toml"),
         join(s.dir, "opt-qcr", "config.example.toml"),
       );
       expect(sh(s, step).status).toBe(0);
-      writeFileSync(
-        join(s.dir, "global", cfg.pi.package, "package.json"),
-        JSON.stringify({ version: "9.9.9" }),
-      );
+      writeFileSync(join(pkg, "package.json"), JSON.stringify({ version: "9.9.9" }));
       const bad = sh(s, step);
       expect(bad.status).not.toBe(0);
       expect(bad.stderr).toContain("FATAL: pi versions disagree");
+    } finally {
+      rmSync(s.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("FATAL unless pi is node_modules/.bin/pi alone", () => {
+    const s = sandbox();
+    try {
+      const step = runWith("! command -v pi");
+      // a PATH the host's own pi is not on
+      s.env.PATH = s.bin;
+      // no bin in node_modules: refused…
+      const none = sh(s, step);
+      expect(none.status).not.toBe(0);
+      expect(none.stderr).toContain("FATAL: pi must be node_modules/.bin/pi alone");
+      // …the bin alone passes…
+      const binDir = join(s.dir, "opt-qcr", "node_modules", ".bin");
+      mkdirSync(binDir, { recursive: true });
+      writeFileSync(join(binDir, "pi"), "#!/bin/sh\n");
+      chmodSync(join(binDir, "pi"), 0o755);
+      expect(sh(s, step).status).toBe(0);
+      // …and a second pi on the PATH is refused
+      writeFileSync(join(s.bin, "pi"), "#!/bin/sh\n");
+      chmodSync(join(s.bin, "pi"), 0o755);
+      expect(sh(s, step).status).not.toBe(0);
     } finally {
       rmSync(s.dir, { recursive: true, force: true });
     }

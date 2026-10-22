@@ -2987,7 +2987,8 @@ describe("deploy — the memory sidecar", () => {
       );
       expect(daemonMode).not.toContain("QCR_PI_REQUIRE_EXT");
       expect(entry).not.toContain("FATAL: pi extension missing");
-      expect(daemonMode).toContain("assert_pinned_pi_cli");
+      // P9.9b: the one pi is node_modules'; no mode asks for a global CLI
+      expect(entry).not.toContain("assert_pinned_pi_cli");
       expect(daemonMode).not.toContain("assert_subagent_example");
       expect(daemonMode).toContain('QCR_PI_AGENTS_TARGET="$STATE/agents"');
       expect(daemonMode).toContain("AGENTS.override.md");

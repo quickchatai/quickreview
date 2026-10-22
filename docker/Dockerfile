@@ -40,10 +40,10 @@
 # the clone route's scan sandbox image, docker/companion/Dockerfile).
 
 # ---- pinned versions ---------------------------------------------------------
-# A MIRROR of config.toml [pi] / package.json / group_vars: the global pi CLI
-# below must equal the version `npm ci` puts in node_modules, and
-# tests/release-image.test.ts fails the moment either default drifts. Bump
-# them together, never one alone.
+# A MIRROR of config.toml [pi] / package.json / group_vars: PI_VERSION must
+# equal the version `npm ci` puts in node_modules (the image's one pi, checked
+# below), and tests/release-image.test.ts fails the moment either default
+# drifts. Bump them together, never one alone.
 ARG NODE_MAJOR=22
 # The Debian release under node. bookworm is the image; bench/aacr/Dockerfile's
 # ocr, claude and pragent arms need git >= 2.41 and python >= 3.12, so bench.sh
@@ -109,10 +109,10 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # git refuses every one of them as "dubious ownership".
 RUN git config --system --add safe.directory '*'
 
-# pi - pinned, never floating, and equal to the copy in node_modules below
-# (checked after the COPY). Lenses run on the SDK through our own lens tool
-# (src/engine/lens/), so nothing here depends on what else the pi package ships.
-RUN npm install -g --no-audit --no-fund "${PI_PACKAGE}@${PI_VERSION}" && npm cache clean --force
+# pi: ONE copy, the pinned package npm ci put in node_modules below (P9.9b).
+# There is no global pi CLI: every pi the app starts is that package's own bin,
+# node_modules/.bin/pi (src/picli.ts), or its SDK. Lenses run on the SDK through
+# our own lens tool (src/engine/lens/).
 
 # The app. COPY lands root-owned; the chmod below makes it world-readable and
 # writable by nobody.
@@ -169,19 +169,21 @@ RUN printf '%s\n' "${BUILD_SHA}" > /opt/qcr/BUILD_SHA
 # The checks that make this the image it claims to be.
 #   - the seeds: the baked agents/ and prompts/ and their seeds/ canonical
 #     copies all hash to the manifest (rule 6). A drifted seed fails the build.
-#   - pi: the global CLI and the one in node_modules are the same version, and
-#     it is the version config.example.toml [pi] pins.
+#   - pi: the one copy, in node_modules, is the ARG's version and the version
+#     config.example.toml [pi] pins; its bin is node_modules/.bin/pi, and no
+#     other pi is on the PATH.
 #   - claude: absent (rule 5). The claude arm exists only in bench/aacr/.
 RUN cd /opt/qcr \
     && jq -r '.files | to_entries[] | "\(.value)  seeds/\(.key)"' tests/fixtures/seed-manifest.json | sha256sum -c --quiet - \
     && jq -r '.files | to_entries[] | "\(.value)  \(.key)"' tests/fixtures/seed-manifest.json | sha256sum -c --quiet - \
     || { echo "FATAL: the baked seeds do not match tests/fixtures/seed-manifest.json" >&2; exit 1; }
 RUN cd /opt/qcr \
-    && global="$(node -p "require('$(npm root -g)/${PI_PACKAGE}/package.json').version")" \
     && local_="$(node -p "require('/opt/qcr/node_modules/${PI_PACKAGE}/package.json').version")" \
     && pinned="$(awk '/^\[pi\]/{p=1;next} /^\[/{p=0} p && $1=="version"{gsub(/"/,"",$3);print $3}' config.example.toml)" \
-    && [ "${global}" = "${PI_VERSION}" ] && [ "${local_}" = "${PI_VERSION}" ] && [ "${pinned}" = "${PI_VERSION}" ] \
-    || { echo "FATAL: pi versions disagree (ARG ${PI_VERSION}, global ${global:-?}, node_modules ${local_:-?}, config ${pinned:-?})" >&2; exit 1; }
+    && [ "${local_}" = "${PI_VERSION}" ] && [ "${pinned}" = "${PI_VERSION}" ] \
+    || { echo "FATAL: pi versions disagree (ARG ${PI_VERSION}, node_modules ${local_:-?}, config ${pinned:-?})" >&2; exit 1; }
+RUN [ -x /opt/qcr/node_modules/.bin/pi ] && ! command -v pi \
+    || { echo "FATAL: pi must be node_modules/.bin/pi alone (bin: $(ls -l /opt/qcr/node_modules/.bin/pi 2>&1); PATH: $(command -v pi || echo none))" >&2; exit 1; }
 RUN ! command -v claude
 # setpriv (util-linux): the engine starts pi through it, as another uid with no
 # capabilities, so the model's tools cannot read the token-holding process (D32).

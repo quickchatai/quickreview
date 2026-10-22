@@ -26,6 +26,16 @@
       }
     },
     {
+      "id": "pi-cli-bin",
+      "assumes": "The pinned pi package declares its CLI as the `pi` bin in its package.json, the file node_modules/.bin/pi links to (src/picli.ts), so every launcher that no longer looks pi up on the PATH starts the pinned CLI.",
+      "files": { "src/picli.ts": 1 },
+      "signal": {
+        "source": "none",
+        "kind": "gap",
+        "needs": "a launch through piCliPath leaves no line of its own; the evidence is a debug round, a takeover or the entrypoint's login started on a release image without a global pi CLI, which no extract field names yet"
+      }
+    },
+    {
       "id": "pi-builtins",
       "assumes": "The four pi built-in extensions and the -builtin:<name> spelling that switches them off.",
       "files": { "src/pibuiltins.ts": 1, "tests/pibuiltins.test.ts": 1 },

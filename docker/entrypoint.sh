@@ -316,16 +316,6 @@ if (agentsTarget) {
 PI_EXT_MERGE
 }
 
-# The GLOBAL pi CLI (the one every spawn resolves on PATH) must be the pinned
-# version. Daemon only.
-assert_pinned_pi_cli() {
-  local groot gpkg
-  groot="${QCR_PI_GLOBAL_ROOT:-$(npm root -g)}"
-  gpkg="$groot/$PI_PACKAGE_PINNED"
-  [ "$(pkg_version "$gpkg")" = "$PI_VERSION_PINNED" ] ||
-    die "the global pi CLI is $(pkg_version "$gpkg"), not the pinned $PI_VERSION_PINNED"
-}
-
 # ---- modes -------------------------------------------------------------------
 
 mode_daemon() {
@@ -353,8 +343,6 @@ mode_daemon() {
     OPENAI_API_KEY="$(<"$secrets/openai_api_key")"
     export OPENAI_API_KEY
   fi
-
-  assert_pinned_pi_cli
 
   # No global extension registration (P9.5, see provision_pi_settings).
   QCR_PI_TRUST_DIR="$APP" \
@@ -549,11 +537,12 @@ mode_companion() {
 
 mode_login() {
   # pi itself with `/login` typed and sent for the user: the one script
-  # scanbox.ts `loginInPi` builds (it validates the provider name too).
+  # scanbox.ts `loginInPi` builds (it validates the provider name too), run on
+  # the image's one pi, node_modules/.bin/pi (there is no pi on the PATH, P9.9b).
   local script
   script="$(node --input-type=module -e '
     const { loginInPi } = await import(process.argv[1] + "/dist/src/scanbox.js");
-    process.stdout.write(loginInPi(process.argv[2] || undefined)[2]);
+    process.stdout.write(loginInPi(process.argv[2] || undefined, process.argv[1] + "/node_modules/.bin/pi")[2]);
   ' "$APP" "${1:-}")" || die "login: could not build the pi login command"
   # The bot's login has ONE refresher (src/loginrefresh/, P8.22); when this
   # container runs it, it stands down for the login and takes over again after.

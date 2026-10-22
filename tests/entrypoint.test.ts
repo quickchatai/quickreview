@@ -8,8 +8,8 @@
 //   - every mode refuses to start when config.toml [pi] version differs from
 //     the installed pi package;
 //   - the daemon mode carries the prune of the retired global bash-guard entry
-//     (P9.5), its FATAL on a global CLI that is not the pinned pi, and the 0444
-//     reviewer stub; the per-call cli mode registers no bash-guard and
+//     (P9.5) and the 0444 reviewer stub, and no mode asks for a global pi CLI
+//     (P9.9b: the image's one pi is node_modules/.bin/pi); the per-call cli mode registers no bash-guard and
 //     instead runs the model's tools as another uid (D32: the entrypoint's
 //     privilege drop, the engine's setpriv launch, and - in a user namespace,
 //     where available - the kernel refusing the tools the token holder's
@@ -51,7 +51,6 @@ interface Rig {
   app: string;
   home: string;
   bin: string;
-  globalRoot: string;
   env: NodeJS.ProcessEnv;
 }
 
@@ -76,7 +75,6 @@ function rig(base = tmpdir()): Rig {
   const app = join(dir, "opt-qcr");
   const home = join(dir, "home");
   const bin = join(dir, "bin");
-  const globalRoot = join(dir, "global");
   for (const d of [app, home, bin]) mkdirSync(d, { recursive: true });
   mkdirSync(join(app, "state"));
   for (const f of [
@@ -90,10 +88,8 @@ function rig(base = tmpdir()): Rig {
     copyFileSync(join(root, f), join(app, f));
   }
   copyFileSync(join(root, "deploy/reviewer/AGENTS.override.md"), join(dir, "stub.md"));
-  // the installed pi, and the global CLI (the pinned version, nothing else of pi's package is needed)
-  for (const base of [join(app, "node_modules"), globalRoot]) {
-    put(join(base, PKG, "package.json"), JSON.stringify({ version: VERSION }));
-  }
+  // the installed pi (the pinned version, nothing else of pi's package is needed)
+  put(join(app, "node_modules", PKG, "package.json"), JSON.stringify({ version: VERSION }));
   put(join(app, "extensions/cli/bash-guard.ts"), "// stub\n");
   // dist stubs: each reports who ran, with which argv, on which stdout
   put(
@@ -106,7 +102,7 @@ function rig(base = tmpdir()): Rig {
   );
   put(
     join(app, "dist/src/scanbox.js"),
-    `export const loginInPi = (p) => ["sh", "-c", "echo login:" + (p ?? "none")];\n`,
+    `export const loginInPi = (p, pi) => ["sh", "-c", "echo login:" + (p ?? "none") + " " + pi];\n`,
   );
   put(join(app, "scripts/mint-token.sh"), "#!/bin/sh\necho ghs_faketoken\n", 0o755);
   put(
@@ -127,12 +123,10 @@ function rig(base = tmpdir()): Rig {
     app,
     home,
     bin,
-    globalRoot,
     env: {
       PATH: `${bin}:${process.env.PATH}`,
       HOME: home,
       QCR_APP_ROOT: app,
-      QCR_PI_GLOBAL_ROOT: globalRoot,
     },
   };
   rigs.push(r);
@@ -217,8 +211,9 @@ describe("dispatch", () => {
 
   it("login hands pi's /login script to sh, with the provider", () => {
     const r = rig();
-    expect(run(r, ["login"]).stdout).toBe("login:none\n");
-    expect(run(r, ["login", "openai-codex"]).stdout).toBe("login:openai-codex\n");
+    const pi = join(r.app, "node_modules/.bin/pi");
+    expect(run(r, ["login"]).stdout).toBe(`login:none ${pi}\n`);
+    expect(run(r, ["login", "openai-codex"]).stdout).toBe(`login:openai-codex ${pi}\n`);
   });
 
   it("login runs the script scanbox builds: pi's own /login in a tmux session", () => {
@@ -227,7 +222,14 @@ describe("dispatch", () => {
     expect([sh, c]).toEqual(["sh", "-c"]);
     expect(script).toContain("tmux new-session -d -s");
     expect(script).toContain("/login openai-codex");
-    expect(read("docker/entrypoint.sh")).toContain("loginInPi(process.argv[2] || undefined)[2]");
+    expect(read("docker/entrypoint.sh")).toContain(
+      'loginInPi(process.argv[2] || undefined, process.argv[1] + "/node_modules/.bin/pi")[2]',
+    );
+    // …on the image's one pi, never a pi on the PATH
+    expect(loginInPi(undefined, "/opt/qcr/node_modules/.bin/pi")[2]).toContain(
+      'tmux new-session -d -s "$s" /opt/qcr/node_modules/.bin/pi ||',
+    );
+    expect(() => loginInPi(undefined, "pi; rm -rf /")).toThrow(/plain path/);
   });
 });
 
@@ -364,17 +366,18 @@ describe("daemon mode", () => {
 
   it("boots without pi's examples: the lens tool is ours, nothing of pi's package but the pin is asked for", () => {
     const r = rig();
-    expect(existsSync(join(r.globalRoot, PKG, "examples"))).toBe(false);
+    expect(existsSync(join(r.app, "node_modules", PKG, "examples"))).toBe(false);
     const out = run(r, ["daemon"], withConfig(r));
     expect(out.stderr).not.toContain("examples/extensions/subagent");
   });
 
-  it("FATAL when the global pi CLI is not the pinned version", () => {
+  it("asks for no global pi CLI: the one pi is node_modules' (P9.9b)", () => {
     const r = rig();
-    put(join(r.globalRoot, PKG, "package.json"), JSON.stringify({ version: "1.2.0" }));
     const out = run(r, ["daemon"], withConfig(r));
-    expect(out.status).not.toBe(0);
-    expect(out.stderr).toContain(`the global pi CLI is 1.2.0, not the pinned ${VERSION}`);
+    expect(out.status, out.stderr).toBe(0);
+    const ep = read("docker/entrypoint.sh");
+    expect(ep).not.toContain("npm root -g");
+    expect(ep).not.toContain("global pi CLI");
   });
 
   it("installs the reviewer context stub 0444 into the app root, never anywhere else", () => {
@@ -1003,7 +1006,7 @@ describe("the login volume is shared through a fixed group", () => {
     const env = ["env", `HOME=${r.home}`, `PATH=${r.env["PATH"]}`, `QCR_APP_ROOT=${r.app}`];
     const o = as(
       uid,
-      [...env, `QCR_PI_GLOBAL_ROOT=${r.globalRoot}`, script, "login"],
+      [...env, script, "login"],
       String(GROUP),
       r.dir,
     );

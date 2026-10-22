@@ -297,17 +297,21 @@ export interface ScanLoginRoute {
  * login menu shows — an Enter sent while pi still starts is lost, and a
  * `/login` left in the editor then only needs the Enter. After 30 s the
  * terminal attaches regardless, so every login pi offers is there and
- * quitting pi ends it. */
-export function loginInPi(provider?: string): string[] {
+ * quitting pi ends it. `pi` is the pi to start: the companion image's CLI on
+ * its PATH by default; the release image's entrypoint passes its one pi,
+ * node_modules/.bin/pi (src/picli.ts `piCliIn`). */
+export function loginInPi(provider?: string, pi: string = "pi"): string[] {
   if (provider !== undefined && !/^[A-Za-z0-9._-]+$/.test(provider))
     throw new Error(
       `scan login: provider ${JSON.stringify(provider)} is not a plain provider name`,
     );
+  if (!/^[A-Za-z0-9._/-]+$/.test(pi))
+    throw new Error(`scan login: pi ${JSON.stringify(pi)} is not a plain path`);
   const keys = provider ? `/login ${provider}` : "/login";
   return [
     "sh",
     "-c",
-    `s=qcr-login-$$; tmux new-session -d -s "$s" pi || exit 1; i=0; ` +
+    `s=qcr-login-$$; tmux new-session -d -s "$s" ${pi} || exit 1; i=0; ` +
       `while [ $i -lt 100 ]; do p=$(tmux capture-pane -p -t "$s"); ` +
       `case "$p" in *"Select authentication"*|*"Select provider"*) break;; esac; ` +
       `if [ "$(printf '%s\\n' "$p" | grep -cF '──────────')" -ge 2 ]; then ` +

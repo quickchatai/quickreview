@@ -38,6 +38,7 @@ import {
   type OvcliWriteResult,
 } from "./memory/ovsession.js";
 import { waitForSessionBridgeReady, writeSessionBridgeState } from "./session-bridge.js";
+import { piCliPath } from "./picli.js";
 import { Tmux } from "./tmux.js";
 import type { ExecFn } from "./tmux.js";
 import type { StateStore } from "./state.js";
@@ -206,6 +207,7 @@ export interface PiSessionManagerOptions {
   /** Used to build a Tmux when one is not supplied. */
   exec?: ExecFn;
   worktrees?: WorktreeManager;
+  /** The pi to start. Omitted: the pinned pi's own CLI (src/picli.ts). */
   piBin?: string;
   /** HOME for the pi process — the container's pihome volume. */
   piHome?: string;
@@ -258,7 +260,7 @@ export class PiSessionManager {
         cloneDir: githubCloneDir(opts.cfg.github),
         run: opts.exec,
       });
-    this.piBin = opts.piBin ?? "pi";
+    this.piBin = opts.piBin ?? piCliPath();
     this.piHome = opts.piHome ?? join(opts.root, "pihome");
     this.now = opts.now ?? (() => new Date());
     this.commandStore = opts.commandStore;

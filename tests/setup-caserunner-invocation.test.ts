@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { COMPANION_AGENTS_DIR } from "../extensions/setup.js";
+import { piCliPath } from "../src/picli.js";
 import {
   isPiCliEntry,
   leafEnv,
@@ -37,16 +38,19 @@ function fakePackage(name: string, bin: unknown = { pi: "dist/cli.js" }): string
 }
 
 const NODE = "/usr/bin/node";
+/** The pinned pi's CLI as an injected resolver answers it. */
+const PINNED = "/app/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js";
+const PINNED_RUN = { command: NODE, prefix: [PINNED] };
 
 describe("piInvocation — resolves pi, never the host script", () => {
-  it("this very host (vitest, a non-pi node process whose argv[1] exists) resolves to pi on the PATH", () => {
-    expect(piInvocation()).toEqual({ command: "pi", prefix: [] });
+  it("this very host (vitest, a non-pi node process whose argv[1] exists) resolves to the pinned pi's CLI, never a pi on the PATH", () => {
+    expect(piInvocation()).toEqual({ command: process.execPath, prefix: [piCliPath()] });
   });
 
-  it("a node driver script as host resolves to pi on the PATH", () => {
+  it("a node driver script as host resolves to the pinned pi's CLI", () => {
     const driver = join(dir, "driver.mjs");
     writeFileSync(driver, "");
-    expect(piInvocation({ argv1: driver, execPath: NODE })).toEqual({ command: "pi", prefix: [] });
+    expect(piInvocation({ argv1: driver, execPath: NODE, piCli: () => PINNED })).toEqual(PINNED_RUN);
   });
 
   it("pi's own CLI entry is reused under the running runtime — directly and through a .bin symlink", () => {
@@ -70,28 +74,21 @@ describe("piInvocation — resolves pi, never the host script", () => {
 
   it("another package's bin is not pi, nor is a missing file, nor a bun-compiled virtual path", () => {
     const root = fakePackage("vitest", { vitest: "dist/cli.js" });
-    expect(piInvocation({ argv1: join(root, "dist", "cli.js"), execPath: NODE })).toEqual({
-      command: "pi",
-      prefix: [],
-    });
-    expect(piInvocation({ argv1: join(dir, "missing.js"), execPath: NODE })).toEqual({
-      command: "pi",
-      prefix: [],
-    });
-    expect(piInvocation({ argv1: "/$bunfs/root/pi", execPath: NODE })).toEqual({
-      command: "pi",
-      prefix: [],
-    });
-    expect(piInvocation({ argv1: undefined, execPath: NODE })).toEqual({
-      command: "pi",
-      prefix: [],
-    });
+    for (const argv1 of [
+      join(root, "dist", "cli.js"),
+      join(dir, "missing.js"),
+      "/$bunfs/root/pi",
+      undefined,
+    ])
+      expect(piInvocation({ argv1, execPath: NODE, piCli: () => PINNED }), String(argv1)).toEqual(
+        PINNED_RUN,
+      );
   });
 
   it("a runner built with no invocation spawns pi, not the host", async () => {
     const calls: string[] = [];
-    const spawn: SpawnFn = (command) => {
-      calls.push(command);
+    const spawn: SpawnFn = (command, args) => {
+      calls.push(command, args[0]!);
       const child = new EventEmitter() as EventEmitter & ReturnType<SpawnFn>;
       Object.assign(child, {
         stdout: new PassThrough(),
@@ -105,7 +102,7 @@ describe("piInvocation — resolves pi, never the host script", () => {
       { id: "c", unit: "u", agent: "pass-survey", files: [], prompt: "p" },
       new AbortController().signal,
     );
-    expect(calls).toEqual(["pi"]);
+    expect(calls).toEqual([process.execPath, piCliPath()]);
   });
 });
 

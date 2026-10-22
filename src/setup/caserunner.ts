@@ -26,6 +26,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { GITHUB_TOKEN_ENVS } from "../envstrip.js";
+import { piCliPath } from "../picli.js";
 import type { CaseOutcome, CaseRunner, CaseSpec } from "./engine.js";
 
 /** An agent file of the companion set: `name`/`tools`/`model` frontmatter
@@ -121,11 +122,13 @@ export function isPiCliEntry(script: string): boolean {
 /** How to start pi. When the running process is pi (argv[1] is verifiably
  * pi's CLI entry — the native subagent extension's rule) it reuses that
  * script under the running runtime; any other host — a node driver, a test,
- * the TUI — gets `pi` on the PATH, so a non-pi host never spawns itself.
- * A bun-compiled pi (`/$bunfs/…`) also falls back to the PATH.
+ * the TUI, the release image's scan — gets the pinned pi's own CLI
+ * (src/picli.ts), so a non-pi host never spawns itself and never runs a `pi`
+ * of another version off the PATH (the release image has none). A
+ * bun-compiled pi (`/$bunfs/…`) takes that CLI too.
  * VERIFY-ON-PIN (0.87.1, re-read at 0.99.1, 1.0.0 and 1.3.0 — bin still dist/bundle/cli.js): pi's entry is a `bin` of its package, run by node. */
 export function piInvocation(
-  host: { argv1: string | undefined; execPath: string } = {
+  host: { argv1: string | undefined; execPath: string; piCli?: () => string } = {
     argv1: process.argv[1],
     execPath: process.execPath,
   },
@@ -134,7 +137,7 @@ export function piInvocation(
   if (script && !script.startsWith("/$bunfs/") && isPiCliEntry(script)) {
     return { command: host.execPath, prefix: [script] };
   }
-  return { command: "pi", prefix: [] };
+  return { command: host.execPath, prefix: [(host.piCli ?? piCliPath)()] };
 }
 
 /** The tools whose `path` argument names content the model read. `find` and
