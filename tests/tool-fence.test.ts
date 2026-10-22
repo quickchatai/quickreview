@@ -3,7 +3,16 @@
 // cannot read, search, list, edit or write /proc, /run/qcr-in or the run's agent
 // dir, not even through a link its own bash planted in the worktree.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -575,6 +584,90 @@ describe("the credentials the env points at", () => {
       for (const r of rigs) r.close();
       if (before === undefined) delete process.env["QCR_SECRETS_MOUNT"];
       else process.env["QCR_SECRETS_MOUNT"] = before;
+    }
+  });
+});
+
+describe("a write a symlink carries onto the protected surface", () => {
+  // The in-process write tools run as the daemon's uid, the one that runs git in
+  // the base clone and reads the policy surface. A link committed in a PR, or one
+  // the tool uid planted in a directory it shares, must not carry a write onto
+  // git's config or hooks, or the system's own scripts: that would be code
+  // execution as the daemon's uid.
+  let rig: HostRig;
+  let work: string;
+  let clone: string;
+  let scripts: string;
+  beforeEach(async () => {
+    rig = await createHostRig();
+    work = join(rig.dir, "work");
+    clone = join(rig.dir, "base-clone");
+    scripts = join(rig.dir, "app", "scripts");
+    mkdirSync(work);
+    mkdirSync(join(clone, ".git", "hooks"), { recursive: true });
+    mkdirSync(scripts, { recursive: true });
+    writeFileSync(join(clone, ".git", "config"), "[core]\n\tbare = false\n");
+    writeFileSync(join(scripts, "post-review.sh"), "#!/bin/sh\nexit 0\n");
+    writeFileSync(join(rig.dir, "plain.txt"), "plain\n");
+    symlinkSync(join(clone, ".git", "config"), join(work, "to-git-config"));
+    symlinkSync(join(clone, ".git", "hooks"), join(work, "to-hooks"));
+    symlinkSync(join(scripts, "post-review.sh"), join(work, "to-script"));
+    symlinkSync(join(rig.dir, "plain.txt"), join(work, "to-plain"));
+  });
+  afterEach(() => rig.close());
+
+  async function call(name: string, args: Record<string, unknown>): Promise<boolean> {
+    const session = await rig.host.makeSession({
+      cwd: work,
+      env: { PATH: process.env["PATH"], HOME: join(rig.dir, "home") },
+      model: rig.faux.getModel(),
+      tools: ["read", "edit", "write"],
+    });
+    rig.faux.setResponses([
+      fauxAssistantMessage([fauxToolCall(name, args as Parameters<typeof fauxToolCall>[1])], {
+        stopReason: "toolUse",
+      }),
+      fauxAssistantMessage("done"),
+    ]);
+    await session.prompt("go");
+    const result = session.messages.find((m) => m.role === "toolResult") as unknown as {
+      isError: boolean;
+    };
+    return result.isError;
+  }
+
+  it("refuses write and edit through a link into .git/ or onto the policy surface, and leaves the files as they were", async () => {
+    expect(
+      await call("write", { path: "to-git-config", content: "[core]\n\tfsmonitor = sh -c x\n" }),
+    ).toBe(true);
+    expect(
+      await call("write", { path: "to-hooks/post-checkout", content: "#!/bin/sh\nid\n" }),
+    ).toBe(true);
+    expect(
+      await call("edit", { path: "to-script", edits: [{ oldText: "exit 0", newText: "id" }] }),
+    ).toBe(true);
+    expect(readFileSync(join(clone, ".git", "config"), "utf-8")).toBe("[core]\n\tbare = false\n");
+    expect(readFileSync(join(scripts, "post-review.sh"), "utf-8")).toBe("#!/bin/sh\nexit 0\n");
+    expect(spawnSync("ls", [join(clone, ".git", "hooks")]).stdout.toString()).toBe("");
+  });
+
+  it("still writes through a link that lands nowhere protected", async () => {
+    expect(await call("write", { path: "to-plain", content: "changed\n" })).toBe(false);
+    expect(readFileSync(join(rig.dir, "plain.txt"), "utf-8")).toBe("changed\n");
+  });
+
+  it("refuses the descriptor when a link is swapped in after the path check", () => {
+    const fence = createToolFence({ protectedWrite: (p) => p.includes("/.git/") });
+    const target = join(work, "late");
+    writeFileSync(target, "x");
+    expect(() => fence.checkWrite(target)).not.toThrow();
+    rmSync(target);
+    symlinkSync(join(clone, ".git", "config"), target);
+    const fd = openSync(target, "r");
+    try {
+      expect(() => fence.checkWriteOpened(fd, target)).toThrow(ToolFenceError);
+    } finally {
+      closeSync(fd);
     }
   });
 });

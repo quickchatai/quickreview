@@ -64,6 +64,7 @@ import {
   createWriteToolDefinition,
   main as piCliMain,
 } from "@earendil-works/pi-coding-agent";
+import { isProtectedWriteTarget } from "../../extensions/bash-guard.js";
 import { GITHUB_TOKEN_ENVS } from "../envstrip.js";
 import type { AgentsFile } from "./port.js";
 import {
@@ -596,6 +597,7 @@ export class PiHost {
         ? null
         : (options.fence ??
           createToolFence({
+            protectedWrite: isProtectedWriteTarget,
             dirs: [
               options.agentDir,
               join(homedir(), ".pi"),

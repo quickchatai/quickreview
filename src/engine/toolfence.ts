@@ -133,10 +133,29 @@ export interface ToolFence {
   /** For a file already opened: refuses when the descriptor is a fenced file,
    * whatever path it was opened by. A no-op where /proc/self/fd does not exist. */
   checkOpened(fd: number, path: string): void;
+  /** `check`, and for a write: refuses a path that LEADS, through a symlink,
+   * onto a protected write target (`protectedWrite`). A path that is itself the
+   * target is the write veto's to judge as spelled (bash-guard), so only a real
+   * path that differs from the one given is held to the predicate here. */
+  checkWrite(path: string): void;
+  /** `checkOpened`, and the same symlink rule for the descriptor a write opened. */
+  checkWriteOpened(fd: number, path: string): void;
 }
 
 /** A fence over the fixed paths and the given directories. */
-export function createToolFence(o: { dirs?: readonly string[] } = {}): ToolFence {
+export function createToolFence(
+  o: {
+    dirs?: readonly string[];
+    /** The write veto's predicate (bash-guard `isProtectedWriteTarget`): git's
+     * config and hook surface, the policy surface, the memory scope, the wake
+     * delivery files. Applied to where a write really lands when a symlink
+     * moved it: the in-process write tools run in the uid that runs the
+     * daemon's git and reads its policy, so a link committed in a PR, or one
+     * the tool uid planted in a directory it shares, must not carry a write
+     * there. */
+    protectedWrite?: (realPath: string) => boolean;
+  } = {},
+): ToolFence {
   const roots = (): string[] => {
     const out = new Set<string>();
     for (const r of [...FENCED_PATHS, ...(o.dirs ?? [])]) {
@@ -171,6 +190,31 @@ export function createToolFence(o: { dirs?: readonly string[] } = {}): ToolFence
         return;
       }
       if (fenced(real)) throw new ToolFenceError(path);
+    },
+    checkWrite(path) {
+      this.check(path);
+      const guard = o.protectedWrite;
+      if (guard === undefined) return;
+      const abs = resolve(path);
+      let real: string;
+      try {
+        real = realOrIntended(abs);
+      } catch {
+        throw new ToolFenceError(path);
+      }
+      if (real !== abs && guard(real)) throw new ToolFenceError(path);
+    },
+    checkWriteOpened(fd, path) {
+      this.checkOpened(fd, path);
+      const guard = o.protectedWrite;
+      if (guard === undefined) return;
+      let real: string;
+      try {
+        real = realpathSync(`/proc/self/fd/${fd}`);
+      } catch {
+        return;
+      }
+      if (real !== resolve(path) && guard(real)) throw new ToolFenceError(path);
     },
   };
 }
@@ -231,8 +275,17 @@ async function readChecked(fence: ToolFence, path: string): Promise<Buffer> {
 }
 
 async function writeChecked(fence: ToolFence, path: string, content: string): Promise<void> {
-  // No truncation at open: nothing is cut before the descriptor is known to be clear.
-  const fh = await openChecked(fence, path, constants.O_WRONLY | constants.O_CREAT);
+  // No truncation at open: nothing is cut before the descriptor is known to be
+  // clear — of the fence, and of a protected target a symlink led it to (a link
+  // swapped in after the path check still lands on a refusal here).
+  fence.checkWrite(path);
+  const fh = await open(path, constants.O_WRONLY | constants.O_CREAT);
+  try {
+    fence.checkWriteOpened(fh.fd, path);
+  } catch (e) {
+    await fh.close();
+    throw e;
+  }
   try {
     await fh.truncate(0);
     await fh.writeFile(content, "utf-8");
@@ -277,7 +330,7 @@ function writeOperations(fence: ToolFence): WriteOperations {
   return {
     writeFile: (p, content) => writeChecked(fence, p, content),
     mkdir: async (dir) => {
-      fence.check(dir);
+      fence.checkWrite(dir);
       await mkdir(dir, { recursive: true });
     },
   };
