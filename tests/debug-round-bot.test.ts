@@ -808,6 +808,54 @@ describe("[P8.13b] the round ends with the verdict commit", () => {
   });
 });
 
+describe("[P8.13b] a sweep does not take an earlier round's evidence or a launch in flight for this round's", () => {
+  it("a status file left by the PR's previous debug round is not this round's start receipt", async () => {
+    const r = rig();
+    upsert(r.store, 7);
+    expect((await r.mgr.arm(7)).ok).toBe(true);
+    const borrow = join(dir, "run", "debug", "debug-pr-7.agent");
+    mkdirSync(borrow, { recursive: true });
+    const status = join(borrow, DEBUG_STATUS_NAME);
+    writeFileSync(
+      status,
+      JSON.stringify({ state: "started", order_sent_at: "2026-10-18T09:00:05Z" }),
+    );
+    const row = await dispatch(r);
+    await r.mgr.sweep();
+    expect(r.store.getSessionCommand(row.id)!.started_at).toBeNull();
+    expect(await r.worker.roundPromptAccepted(7, 1, 0)).toBeNull();
+  });
+
+  it("a sweep during the launch leaves the round alone", async () => {
+    const r = rig();
+    upsert(r.store, 7);
+    let open!: () => void;
+    const gate = new Promise<void>((res) => {
+      open = res;
+    });
+    const gated = r.manager({
+      tmux: new Tmux({
+        exec: async (...a: Parameters<typeof r.host.exec>) => {
+          if (a.join(" ").includes("new-session")) await gate;
+          return r.host.exec(...a);
+        },
+      }),
+    });
+    expect((await gated.arm(7)).ok).toBe(true);
+    const worker = r.hostFor(gated);
+    trackPr(r.store, 7);
+    r.store.startRound(7, "first", ["pass-baseline"], 75);
+    const dispatching = worker.dispatchRound({ ...ORDER, worktree: "wt/pr-7" }, BODY);
+    await new Promise((res) => setTimeout(res, 20));
+    expect((await gated.sweep()).released).toEqual([]);
+    expect(r.store.hostLease(7)).toBeDefined();
+    open();
+    await dispatching;
+    expect([...r.host.sessions.keys()]).toEqual(["debug-pr-7"]);
+    expect(r.store.hostLease(7)).toBeDefined();
+  });
+});
+
 describe("[P8.13b] it posts like any round: through the gate, with the install's dry_run", () => {
   let po: Rig;
   const clients: IpcClient[] = [];

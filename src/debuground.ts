@@ -479,6 +479,13 @@ export class DebugRoundManager {
       this.deps.capabilities.mint(claimed.id);
       const launch = this.deps.launchFiles.create(claimed.id);
       const planned = this.planFor(claimed, spec);
+      // The status file is shared by every debug round of the PR: a receipt left by
+      // an earlier round must not read as this command's start.
+      try {
+        unlinkSync(planned.statusFile);
+      } catch {
+        // none left
+      }
       specFile = this.writeSpec(session, planned.spec);
       const node = this.deps.nodeBin ?? process.execPath;
       await tmux.newSession(
@@ -772,6 +779,8 @@ export class DebugRoundManager {
             if ((await this.deliver(waiting)).ok) report.delivered.push(row.pr);
             continue;
           }
+          // A launch in flight has claimed its command but not yet registered its pi.
+          if (this.delivering.has(row.pr)) continue;
           // A round claimed under this lease by a manager that is not this one: no pi
           // of ours to watch.
           if (this.commandOf(row)) why = "the debug round has no pi under this daemon";
