@@ -790,7 +790,9 @@ export class WorkerSupervisor {
       this.leases.create(lease);
       leased = true;
       const capability = capabilities.mint(row.id);
-      capFd = createCapabilityFd(this.deps.runDir, capability);
+      // In run/caps, never run/ itself: run/ is the socket's dir, which the tool
+      // uid must still traverse (0710) when the model's tools run as another uid.
+      capFd = createCapabilityFd(join(this.deps.runDir, "caps"), capability);
       mkdirSync(this.deps.logDir, { recursive: true });
       rotateWorkerLogs(this.deps.logDir, row.id, t0, {
         ...DEFAULT_WORKER_LOG_LIMITS,

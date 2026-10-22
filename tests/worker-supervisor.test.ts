@@ -7,6 +7,7 @@
 // goes with its leader, a lease that names a stranger kills nothing.
 import { spawn, type ChildProcess } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -14,6 +15,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -239,6 +241,17 @@ describe("[P8.5] the worker's life", () => {
     expect(r.caps.get(row.id)).toBeUndefined();
     expect(readdirSync(join(r.runDir, "workers"))).toEqual([]);
     expect(r.events("worker_exited")[0]).toMatchObject({ outcome: "acked", code: 0 });
+  });
+
+  it("launching a worker leaves the socket's dir as the server opened it", async () => {
+    // MUTATION: hand createCapabilityFd the run dir itself — this fails
+    const r = await rig();
+    // the server's group access for a tool uid: the run dir searchable by the group
+    chmodSync(r.runDir, 0o710);
+    const row = r.submit();
+    await r.sup.launch(row.id);
+    await until(finished(r.sup));
+    expect(statSync(r.runDir).mode & 0o777).toBe(0o710);
   });
 
   it("fails the row when the worker reports a failure and exits 1", async () => {
