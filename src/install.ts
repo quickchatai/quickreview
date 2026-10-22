@@ -622,6 +622,14 @@ function profileLinks(root: string, profile: string): ProfileLinkRepair[] {
   return links;
 }
 
+function homeHoldsLink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
 /** Recover link publication even when rename succeeded before interruption. */
 function repairProfileLinks(plan: ProfileRepairPlan): void {
   const relocated = (profile: string): boolean =>
@@ -749,9 +757,16 @@ export function migrateProfiles(opts: { root: string; env?: InstallEnv }): Profi
   }
   const linkMap = new Map(previousPlan.links.map((link) => [`${link.profile}/${link.path}`, link]));
   for (const name of names) {
-    if (conflicts.has(name) || !isDirectory(join(fromBase, name))) continue;
-    for (const link of profileLinks(join(fromBase, name), name))
+    if (!isDirectory(join(fromBase, name))) continue;
+    // A conflicted profile stays in the checkout, so its links to a sibling
+    // that moves are repaired like a moved profile's.
+    const kept = equalTrees.get(name) === true;
+    for (const link of profileLinks(join(fromBase, name), name)) {
+      // A duplicate's checkout copy is deleted and the home's stays as it is:
+      // only a link the home copy holds as a link is the repair's to redirect.
+      if (kept && !homeHoldsLink(join(toBase, name, link.path))) continue;
       linkMap.set(`${name}/${link.path}`, link);
+    }
   }
   const repairPlan: ProfileRepairPlan = {
     version: 1,
@@ -827,7 +842,15 @@ export function migrateProfiles(opts: { root: string; env?: InstallEnv }): Profi
       if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
       // verbatimSymlinks: a relative link inside the profile keeps pointing
       // inside the copy, not back into the source tree removed next.
-      cpSync(from, to, { recursive: true, verbatimSymlinks: true });
+      // The copy lands under a temporary name and is renamed into place, so an
+      // interrupted copy never leaves a partial profile at the destination.
+      const tmp = `${to}.${randomUUID()}.tmp`;
+      try {
+        cpSync(from, tmp, { recursive: true, verbatimSymlinks: true });
+        renameSync(tmp, to);
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
       rmSync(from, { recursive: true });
     }
     outcomes.push({ kind: "moved", name, from, to });

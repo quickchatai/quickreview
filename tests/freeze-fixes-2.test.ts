@@ -175,6 +175,15 @@ describe("pass-lint-conformance: planned only on linters a CI job runs", () => {
     }
   });
 
+  it("go vet is its own tool, never reported as gofmt formatting", () => {
+    const d = repo({ ".github/workflows/ci.yml": "steps:\n  - run: go vet ./...\n" });
+    try {
+      expect(findCiLinters(d).map((x) => x.tool)).toEqual(["go vet"]);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
   it("follows a CI step through the package script that wraps the tool; a shared file needs the tool's section", () => {
     const d = repo({
       ".github/workflows/ci.yml": "steps:\n  - run: pnpm run lint\n",

@@ -5,6 +5,7 @@
 // an absolute path into the source tree the fallback deletes next. EXDEV is
 // forced by a mocked renameSync (one mount in a test tmpdir cannot produce it).
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -17,10 +18,15 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const copyFault = vi.hoisted(() => ({ on: false }));
 vi.mock("node:fs", async (orig) => {
   const real = await orig<typeof import("node:fs")>();
   return {
     ...real,
+    cpSync: (from: string, to: string, opts?: Parameters<typeof real.cpSync>[2]) => {
+      real.cpSync(from, to, opts);
+      if (copyFault.on) throw new Error("copy interrupted");
+    },
     renameSync: (from: string, to: string) => {
       // Only the profile move crosses mounts. Atomic journal/symlink
       // publication renames within the same directory cannot be EXDEV.
@@ -35,6 +41,7 @@ const { configHome, migrateProfiles } = await import("../src/install.js");
 
 let dir = "";
 afterEach(() => {
+  copyFault.on = false;
   if (dir) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -67,5 +74,19 @@ describe("migrateProfiles across filesystems", () => {
     expect(migrateProfiles({ root, env })).toEqual([{ kind: "moved", name: "house", from, to }]);
     expect(readlinkSync(join(to, "addenda", "10-rule.md"))).toBe(join(to, "rule.md"));
     expect(readFileSync(join(to, "addenda", "10-rule.md"), "utf8")).toBe("r\n");
+  });
+
+  it("an interrupted copy leaves nothing at the destination", () => {
+    dir = mkdtempSync(join(tmpdir(), "qcr-install-exdev-"));
+    const root = join(dir, "checkout");
+    const env = { HOME: join(dir, "home"), XDG_CONFIG_HOME: join(dir, "xdg-config") };
+    const from = join(root, "profiles", "house");
+    mkdirSync(from, { recursive: true });
+    writeFileSync(join(from, "settings.toml"), "s = 1\n");
+    const to = join(configHome(env), "profiles", "house");
+    copyFault.on = true;
+    expect(() => migrateProfiles({ root, env })).toThrow(/copy interrupted/);
+    expect(existsSync(to)).toBe(false);
+    expect(existsSync(from)).toBe(true);
   });
 });
