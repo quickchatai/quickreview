@@ -2294,6 +2294,36 @@ describe("durable escalation delivery recovery", () => {
     }
   });
 
+  it("keeps the obligation owed when the posting guard could not read the PR", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-01T12:00:00Z"));
+    try {
+      const adapter = {
+        createReview: vi
+          .fn()
+          .mockResolvedValueOnce({ executed: false, blocked: "pr-unreadable" })
+          .mockResolvedValue({ executed: true }),
+      };
+      const deps = { cfg: on(), store, adapter };
+      await deliverEscalations(deps, args);
+      expect(store.pendingEscalationRecoveries()).toHaveLength(0);
+      vi.setSystemTime(new Date("2026-09-01T12:01:00Z"));
+      expect(store.pendingEscalationRecoveries()).toHaveLength(1);
+      await escalationModule.resumeEscalations(deps);
+      expect(adapter.createReview).toHaveBeenCalledTimes(2);
+      expect(store.escalationCount(args.pr)).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a rule question for a very long path never loses its code-span delimiter", () => {
+    const path = `dir/@outsider/${"a".repeat(200)}/migrations/${"b".repeat(150)}.py`;
+    const [req] = evaluateEscalationRules(on(), facts({ changed_paths: [path] }));
+    expect(req).toBeDefined();
+    expect(req!.question.split("`").length % 2).toBe(1);
+  });
+
   it("clears definite permanent comment refusals while continuing other candidates", async () => {
     const adapter = {
       createReview: vi

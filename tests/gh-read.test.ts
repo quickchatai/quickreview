@@ -392,6 +392,7 @@ describe("a read is the command's PR's, and bounded", () => {
     for (const body of [
       { kind: "rest", path: "/repos/acme/webapp/pulls/8/files" },
       { kind: "rest", path: "/repos/acme/webapp/issues/8/comments" },
+      { kind: "rest", path: "/repos/acme/webapp/pulls/%38/files" },
       { kind: "graphql", name: "pr-threads", variables: { number: 8 } },
     ])
       await expect(op.handle(ctxFor(7), body)).rejects.toMatchObject({ code: "wrong_pr" });

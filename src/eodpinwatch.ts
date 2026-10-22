@@ -404,6 +404,7 @@ export function startEodPinWatch(deps: EodPinWatchDeps): EodPinWatch {
     // `w.before` was issued before the injection and is bounded by
     // readTimeoutMs, so awaiting it HERE cannot delay anything that matters.
     const before = await w.before;
+    if (stopped) return;
     if (!before.ok) {
       log(`eod pin watch: no before-snapshot for ${w.date} — ${before.reason}`);
       deps.logAnomaly(
@@ -415,6 +416,9 @@ export function startEodPinWatch(deps: EodPinWatchDeps): EodPinWatch {
       return;
     }
     const after = await readSnapshot();
+    // A judgement still reading when the watchdog stops is dropped unjudged,
+    // like an open window.
+    if (stopped) return;
     if (!after.ok) {
       log(`eod pin watch: no after-snapshot for ${w.date} — ${after.reason}`);
       deps.logAnomaly(
