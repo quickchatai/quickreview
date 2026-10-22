@@ -511,6 +511,35 @@ describe("[P7.2] post.reply", () => {
   });
 });
 
+describe("[P7.2] post.reply live", () => {
+  beforeEach(async () => {
+    rig = await build(false);
+    plainCommand("c-answer", { may_post: true, answer: true });
+  });
+
+  it("posts the reply and registers it as the bot's own comment", async () => {
+    const body = rig.write(`pr-${PR}-reply.md`, "thanks, fixed");
+    const c = await rig.connect("c-answer");
+    const out = await c.request<PostOutcome>(
+      "post.reply",
+      { pr: PR, comment_id: 9001, body_file: body },
+      { pr: PR },
+    );
+    expect(out.status).toBe("posted");
+    expect(rig.gh.posts()).toEqual([
+      expect.objectContaining({
+        method: "POST",
+        path: `/pulls/${PR}/comments/9001/replies`,
+        body: { body: "thanks, fixed" },
+      }),
+    ]);
+    // the reconcile's ungated-review audit reads this to excuse the reply's
+    // wrapper review (execboundary.ts isGatedReplyWrapper)
+    expect(rig.store.isBotComment(9100, "review_comment")).toBe(true);
+    expect(rig.store.botCommentIds(PR)).toContain(9100);
+  });
+});
+
 describe("[P7.2] what a post can never be", () => {
   const ASKS: Array<[string, (body: string, pr?: number) => Record<string, unknown>]> = [
     ["post.review", (body, pr = PR) => ({ pr, event: "COMMENT", body_file: body })],
