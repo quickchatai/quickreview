@@ -44,6 +44,13 @@ export function capsDirOf(stateDir: string): string {
  * `searchable` makes it 0710 instead: the group may pass through it to a name it
  * already knows (the socket, for the tool uid's post and read shims),
  * never list it or create anything in it. */
+/** Whether the model's tools run as another uid of this process's group (the
+ * entrypoint named one): the dirs a pane's pi must pass through to reach what
+ * was shared with it are then searchable by the group (0710), never listable. */
+export function toolUidSplit(env: NodeJS.ProcessEnv = process.env): boolean {
+  return /^[1-9][0-9]*$/.test(env["QCR_TOOL_UID"] ?? "");
+}
+
 export function ensurePrivateDir(dir: string, o: { searchable?: boolean } = {}): void {
   const mode = o.searchable === true ? 0o710 : 0o700;
   mkdirSync(dir, { recursive: true, mode: 0o700 });

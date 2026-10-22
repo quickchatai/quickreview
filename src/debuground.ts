@@ -56,6 +56,7 @@ import {
   type CapabilityStore,
   type LaunchFiles,
   ensurePrivateDir,
+  toolUidSplit,
   ipcEnv,
 } from "./ipc/capability.js";
 import type { CommandLookup } from "./ipc/protocol.js";
@@ -285,7 +286,7 @@ export class DebugRoundManager {
     this.now = deps.now ?? Date.now;
     this.sleep = deps.sleep ?? defaultSleep;
     this.log = deps.log ?? ((): void => {});
-    this.leases = new WorkerLeases(join(deps.runDir, "debug"));
+    this.leases = new WorkerLeases(join(deps.runDir, "debug"), { searchable: toolUidSplit() });
   }
 
   private iso(ms = this.now()): string {
@@ -622,7 +623,8 @@ export class DebugRoundManager {
 
   private writeSpec(session: string, spec: DebugRoundSpec): string {
     const dir = join(this.deps.runDir, "debug");
-    ensurePrivateDir(dir);
+    // The pane's pi runs as the tool uid and reaches its agent dir through here.
+    ensurePrivateDir(dir, { searchable: toolUidSplit() });
     const file = join(dir, `${session}.${randomBytes(6).toString("hex")}.spec.json`);
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, `${JSON.stringify(spec)}\n`, { mode: 0o600 });

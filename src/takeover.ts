@@ -38,6 +38,7 @@ import {
   type CapabilityStore,
   type LaunchFiles,
   ensurePrivateDir,
+  toolUidSplit,
   ipcEnv,
 } from "./ipc/capability.js";
 import type { CommandLookup } from "./ipc/protocol.js";
@@ -170,7 +171,7 @@ export class TakeoverManager {
     this.now = deps.now ?? Date.now;
     this.sleep = deps.sleep ?? defaultSleep;
     this.log = deps.log ?? ((): void => {});
-    this.leases = new WorkerLeases(join(deps.runDir, "takeover"));
+    this.leases = new WorkerLeases(join(deps.runDir, "takeover"), { searchable: toolUidSplit() });
   }
 
   private iso(ms = this.now()): string {
@@ -314,7 +315,8 @@ export class TakeoverManager {
 
   private writeSpec(pr: number, session: string, plan: TakeoverPlan, commandId: string): string {
     const dir = join(this.deps.runDir, "takeover");
-    ensurePrivateDir(dir);
+    // The pane's pi runs as the tool uid and reaches its agent dir through here.
+    ensurePrivateDir(dir, { searchable: toolUidSplit() });
     const spec: TakeoverSpec = {
       v: 1,
       ...plan,

@@ -1,7 +1,8 @@
 // [P8.5] The worker lease: what a lease may and may not be trusted to kill.
 // A fake /proc stands in for the machine, so "another container" and "the pid was
 // reused" are cases, not hopes.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { toolUidSplit } from "../src/ipc/capability.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -268,5 +269,26 @@ describe("[P8.5] the lease file", () => {
   it("refuses a session name that is a path", () => {
     const leases = new WorkerLeases(join(dir, "workers"));
     expect(() => leases.read("../etc")).toThrow(/not a session name/);
+  });
+});
+
+describe("the pane dirs under the tool uid split", () => {
+  // MUTATION: drop the searchable option from WorkerLeases or ensurePrivateDir — this fails
+  it("a searchable lease dir is 0710 (the tool uid passes, never lists); a plain one 0700", () => {
+    const base = mkdtempSync(join(tmpdir(), "pane-dirs-"));
+    try {
+      new WorkerLeases(join(base, "takeover"), { searchable: true });
+      new WorkerLeases(join(base, "workers"));
+      expect(statSync(join(base, "takeover")).mode & 0o777).toBe(0o710);
+      expect(statSync(join(base, "workers")).mode & 0o777).toBe(0o700);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("the split is the entrypoint's numeric QCR_TOOL_UID, nothing else", () => {
+    expect(toolUidSplit({ QCR_TOOL_UID: "65534" })).toBe(true);
+    for (const v of [undefined, "", "0", "x", "-1"])
+      expect(toolUidSplit(v === undefined ? {} : { QCR_TOOL_UID: v }), String(v)).toBe(false);
   });
 });

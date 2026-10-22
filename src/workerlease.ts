@@ -211,8 +211,14 @@ export class LeaseHeld extends Error {
 }
 
 export class WorkerLeases {
-  constructor(readonly dir: string) {
-    ensurePrivateDir(dir);
+  /** `searchable`: the dir is also the way a pane's pi, run as the tool uid,
+   * reaches what was shared with it (run/takeover, run/debug), so the group may
+   * pass through it (0710); a lease file in it stays the owner's alone. */
+  constructor(
+    readonly dir: string,
+    o: { searchable?: boolean } = {},
+  ) {
+    ensurePrivateDir(dir, o);
   }
 
   private path(session: string): string {
