@@ -682,6 +682,9 @@ describe("qcr archive status", () => {
       expect(out).toContain(
         "policy: mode plan · files and deliveries after 14 d · events after 35 d · every 60 s · start delay 10 min · tick budget 20 s · ≤ 5 PR(s)/tick · ≤ 8.0 MB/s · headroom 2.0 GB · DB batch 500 rows · gzip 6",
       );
+      expect(out).toMatch(
+        /gzip 6 · worker logs kept \d+(\.\d+)? d · worker-log cap (off|[\d.]+ \w+)/,
+      );
       expect(out).toContain("ledger: archive_prs empty; archived event rows 0");
       expect(out).toMatch(
         /registry: 745 PR\(s\) — 49 open, 696 closed: 199 inside the 14-day window, 485 eligible, 12 held/,

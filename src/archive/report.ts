@@ -52,7 +52,9 @@ export function policyLine(p: ArchivePolicy): string {
     `policy: mode ${p.mode} · files and deliveries after ${p.afterDays} d · events after ${p.eventsAfterDays} d · ` +
     `every ${p.intervalMs / 1000} s · start delay ${p.startDelayMs / 60_000} min · tick budget ${p.tickBudgetMs / 1000} s · ` +
     `≤ ${p.maxPrsPerTick} PR(s)/tick · ≤ ${fmtBytes(p.maxBytesPerS)}/s · headroom ${fmtBytes(p.diskHeadroomBytes)} · ` +
-    `DB batch ${p.dbBatchRows} rows · gzip ${p.gzipLevel}`
+    `DB batch ${p.dbBatchRows} rows · gzip ${p.gzipLevel} · ` +
+    `worker logs kept ${p.liveRetentionMs / 86_400_000} d · ` +
+    `worker-log cap ${p.liveCapBytes > 0 ? fmtBytes(p.liveCapBytes) : "off"}`
   );
 }
 

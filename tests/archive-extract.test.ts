@@ -347,6 +347,18 @@ describe("what extract will not pretend", () => {
     expect(r2).toMatchObject({ ok: false, reason: expect.stringContaining("cannot be verified") });
   });
 
+  it("a missing manifest beside gzips only under files/ is unknown, not 'nothing archived'", async () => {
+    const f = prFixture();
+    open.push(f);
+    const gz = join(f.root, "archive", `pr-${f.pr}`, "files", "state", "live", "pr-1", "r1");
+    mkdirSync(gz, { recursive: true });
+    writeFileSync(join(gz, "main.jsonl.gz"), "x");
+    expect(await extractPr(opts(f, scratchDir()))).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("cannot be verified"),
+    });
+  });
+
   it("an unreadable manifest is refused, never read as empty", async () => {
     const f = await archivedFixture();
     writeFileSync(join(f.root, "archive", `pr-${f.pr}`, "manifest.json"), "{not json");
