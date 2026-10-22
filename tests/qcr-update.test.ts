@@ -101,6 +101,7 @@ case "$cmd" in
     name="\${@: -1}"; echo false > "$F/containers/$name/running" ;;
   start)
     name="$1"; d="$F/containers/$name"; [ -d "$d" ] || exit 1
+    [ ! -f "$F/fail-start-$name" ] || exit 1
     echo true > "$d/running"; now > "$d/started"
     # a healthy boot of the OLD daemon: its first reconcile lifts the drain
     if [ "$name" = "$FAKE_DAEMON" ] && [ -n "$FAKE_STATUS" ]; then
@@ -703,6 +704,7 @@ describe("qcr-update — the happy path", () => {
       .filter(Boolean);
     expect(mem).not.toContain("-p");
     expect(mem.slice(-1)).toEqual([MEMORY_REF]);
+    expect(mem[mem.indexOf("--user") + 1]).toBe("1001:1001");
     expect(mem.filter((_a, i) => mem[i - 1] === "-e")).toContain(
       "QCR_OPENVIKING_AUTH_MODE=api_key",
     );
@@ -1129,6 +1131,16 @@ describe("qcr-update — the rescue", () => {
     const r = await runUpdater(sb, GOOD, tarOf(), { QCR_MEMORY_READY_TIMEOUT_S: "2" });
     expect(r.stderr).toContain("was not ready within 2s");
     expectRescued(sb, "release", r, "sidecar-ready");
+  });
+
+  it("an old sidecar that will not restart makes the rescue INCOMPLETE", async () => {
+    sb = setup("release");
+    writeFileSync(join(sb.fake, "ready-rc"), "22");
+    writeFileSync(join(sb.fake, `fail-start-${MEMORY}`), "");
+    const r = await runUpdater(sb, GOOD, tarOf(), { QCR_MEMORY_READY_TIMEOUT_S: "2" });
+    expect(r.stderr).toContain("the old sidecar did not start");
+    expect(r.stderr).toContain("RESCUE INCOMPLETE");
+    expect(r.stderr).not.toContain("RESCUE complete");
   });
 
   it("a daemon container that cannot be created is rescued: the old container is renamed back and started", async () => {

@@ -409,7 +409,7 @@ rescue() {
     fi
   fi
   if [[ $OLD_MEM_STOPPED -eq 1 ]]; then
-    d start "$MEM" >/dev/null 2>&1 || log "RESCUE: the old sidecar did not start"
+    d start "$MEM" >/dev/null 2>&1 || { log "RESCUE: the old sidecar did not start"; ok=0; }
   fi
   if [[ $SEEDED -eq 1 ]]; then
     # The legacy daemon owns its store again, so the copy this run seeded goes stale from
@@ -669,6 +669,7 @@ SWAP_STATE=2
 step sidecar-start
 mem_args=(
   run -d --name "$MEM" --restart unless-stopped --init
+  --user "$UID_GID"
   --cpus "${C[MEMORY_CPUS]}" --memory "${C[MEMORY_MEMORY]}" --memory-swap "${C[MEMORY_MEMORY]}"
   --network "${C[MEMORY_NETWORK]}"
   # no published port: OpenViking answers on the container network only

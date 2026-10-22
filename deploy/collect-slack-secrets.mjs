@@ -268,6 +268,26 @@ function replaceScalar(line, key, value) {
 }
 
 /**
+ * Set `enabled = true` in [slack]: an existing assignment is rewritten, an
+ * absent one is inserted right after the section header.
+ */
+export function enableSlack(text) {
+  const src = String(text ?? "");
+  const sec = sliceSection(src, "[slack]");
+  if (sec.start === -1) throw new Error("config.toml has no [slack] section — nothing to enable");
+  const lines = src.split("\n");
+  let found = false;
+  for (let i = sec.start + 1; i < sec.end; i++) {
+    if (/^\s*enabled\s*=/.test(lines[i])) {
+      found = true;
+      lines[i] = lines[i].replace(/^(\s*enabled\s*=\s*)(true|false)/, "$1true");
+    }
+  }
+  if (!found) lines.splice(sec.start + 1, 0, "enabled = true");
+  return lines.join("\n");
+}
+
+/**
  * Surgically patch config.toml: only `channel`, `channel_kind`,
  * `legacy_owner_slack_id` and the [slack.users] table body change. Every comment,
  * every other key, and the whole [slack.policy] / [slack.policy.causes] block
@@ -1117,14 +1137,10 @@ async function main() {
   if (readSlackValues(nowText).enabled) {
     info("[slack] enabled is already true");
   } else if (await confirm("set enabled = true now?", false)) {
-    const flipped = nowText.split("\n");
-    const sec = sliceSection(nowText, "[slack]");
-    for (let i = sec.start + 1; i < sec.end; i++) {
-      flipped[i] = flipped[i].replace(/^(\s*enabled\s*=\s*)(true|false)/, "$1true");
-    }
+    const flipped = enableSlack(nowText);
     backupConfigOnce();
     const tmp = `${CONFIG_PATH}.tmp-${process.pid}`;
-    writeFileSync(tmp, flipped.join("\n"));
+    writeFileSync(tmp, flipped);
     renameSync(tmp, CONFIG_PATH);
     ok("enabled = true");
   } else {
@@ -1156,9 +1172,9 @@ async function main() {
   }
   out();
   para("This wizard does NOT deploy and does NOT start anything. The VM daemon is");
-  para("intentionally stopped. When you are ready, the command is:");
+  para("intentionally stopped. When you are ready, ship the config home with a release:");
   out();
-  out(`    ${bold("./scripts/deploy.sh rebuild")}`);
+  out(`    ${bold("./scripts/deploy.sh release <version>")}`);
   out();
 
   rl.close();
