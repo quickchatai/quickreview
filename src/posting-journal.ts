@@ -341,6 +341,11 @@ export class PostingJournal {
         gh_review_id: r.id,
         gh_commit_id: r.commit_id.toLowerCase(),
         gh_state: state,
+        // An APPROVE GitHub holds as a COMMENT was softened by guard 4 on the
+        // gate: the same withheld-approval evidence the outbox's delivery records.
+        ...(o.intended === "APPROVE" && actual === "COMMENT"
+          ? { delivered_by: "daemon_retry" as const }
+          : {}),
       }),
     );
     this.touchJob(o, o.payload, "done");
