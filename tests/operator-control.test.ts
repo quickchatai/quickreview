@@ -292,7 +292,7 @@ describe("the CLAUDE.md anchors", () => {
     expect(b.text).toContain("[private rule text removed]");
     expect(b.text).toContain("answered at once by a short worker that resumes the session");
     expect(b.text).toContain("posts only when the operator marked the message may-post");
-    // owner ratification 2026-10-22 (P9.6): the pane's two pi terminals, by name, and
+    // the ratified P9.6 text: the pane's two pi terminals, by name, and
     // every other pane the viewer
     expect(b.text).toContain(
       "[private rule text removed]",

@@ -215,7 +215,7 @@ describe.skipIf(!has("docs/rule-text-drafts.md"))("docs/rule-text-drafts.md", ()
     const pane = proposed.filter((b) =>
       b.body.startsWith("- **An embedded pi surface is a TERMINAL"),
     );
-    // Part 3 is the live text (owner ratification 2026-10-22, P9.6); parts 1 and 2 are not.
+    // Part 3 is the live text (ratified with P9.6); parts 1 and 2 are not.
     expect(pane).toHaveLength(3);
     expect(claude).toContain(pane[2]!.body);
     expect(claude).not.toContain(pane[1]!.body);

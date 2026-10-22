@@ -932,6 +932,6 @@ describe("the docs (acceptance 7)", () => {
       expect(entry.slice(0, entry.indexOf("\n- `tui/`")), mod).toContain(mod);
     const runbook = readFileSync(join(repo, ".claude", "skills", "runbook", "SKILL.md"), "utf8");
     expect(runbook).toContain("### Reading the archive offline");
-    expect(runbook).toContain("qcr archive extract <pr> --to");
+    expect(runbook).toContain("archive extract <pr> --to");
   });
 });
