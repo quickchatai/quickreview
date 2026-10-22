@@ -19,6 +19,7 @@ import {
   postingMarker,
   readPostingReceipt,
   roundPostingKey,
+  retrySoftenedApproval,
   type PostingReceipt,
 } from "../src/posting-receipt.js";
 import type { StandingMarkSnapshot } from "../src/standing-review.js";
@@ -248,6 +249,22 @@ describe("[P7.2] the journal writes the receipt and job files the readers expect
       }),
     ).not.toThrow();
     expect(journal.check(PR, ROUND, KEY)).toBe("mismatch");
+  });
+
+  it("confirm stamps an approval GitHub holds as a COMMENT as withheld", () => {
+    prepare("APPROVE");
+    journal.confirm({
+      key: KEY,
+      pr: PR,
+      round: ROUND,
+      head: HEAD,
+      intended: "APPROVE",
+      payload: payload("APPROVE"),
+      response: { id: 502, commit_id: HEAD, state: "COMMENTED" },
+    });
+    const receipt = readPostingReceipt(tsDir, PR, ROUND) as PostingReceipt;
+    expect(receipt).toMatchObject({ actual_event: "COMMENT", delivered_by: "daemon_retry" });
+    expect(retrySoftenedApproval(receipt)).toBe(true);
   });
 
   it("confirm refuses a response that contradicts the attempt", () => {
