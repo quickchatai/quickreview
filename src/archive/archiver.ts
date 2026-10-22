@@ -1504,6 +1504,7 @@ export class Archiver {
           ? `archive db: ${err.message} — nothing is moved until it is readable`
           : `archive db: ${(err as Error).message}`;
       this.log(`archive: ${why}`, err);
+      if (err instanceof ManifestUnreadable) this.raiseQuiet("db_manifest_unreadable", why);
       return why;
     }
     this.mover ??= new DbMover({

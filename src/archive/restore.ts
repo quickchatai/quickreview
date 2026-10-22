@@ -312,7 +312,7 @@ export async function restoreTargets(
 /** Does the PR's archive dir hold any archive file — a transcript or state
  * gzip, or a bundle? (An unreadable dir counts as holding some: unknown is
  * never "nothing".) */
-async function holdsArchiveFiles(dir: string): Promise<boolean> {
+export async function holdsArchiveFiles(dir: string): Promise<boolean> {
   const any = async (d: string, depth: number): Promise<boolean> => {
     let entries;
     try {

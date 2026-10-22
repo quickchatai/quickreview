@@ -769,6 +769,23 @@ describe("sealing through the archiver (mode on)", () => {
     }
   });
 
+  it("an unreadable db manifest raises ONE quiet anomaly per incident and counts in verify_failures_24h", async () => {
+    const r = await moved();
+    r.adb.close();
+    writeFileSync(join(r.dir, "manifest.json"), "{not json");
+    let now = T0;
+    const a = archiver(r, { now: () => new Date(now) });
+    try {
+      await a.tick();
+      now += 60_000;
+      await a.tick();
+      expect(r.store.anomalies().map((x) => x.kind)).toEqual(["archive_verify_failed"]);
+      expect(a.status()).toMatchObject({ verify_failures_24h: 1 });
+    } finally {
+      a.stop();
+    }
+  });
+
   it("retries a quiet anomaly whose first persistence failed without waiting six hours", async () => {
     const r = await moved();
     r.adb.close();

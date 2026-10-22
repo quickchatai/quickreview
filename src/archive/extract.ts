@@ -33,7 +33,6 @@ import {
   lstat,
   mkdir,
   mkdtemp,
-  readdir,
   realpath,
   rmdir,
   utimes,
@@ -44,6 +43,7 @@ import { readBundleRecords } from "./bundle.js";
 import { fileDigest, gunzipToFile, renameNoReplace, unlinkIfPresent } from "./fsutil.js";
 import { ManifestUnreadable, readManifestIfPresent, type Manifest } from "./manifest.js";
 import { injectDirOf } from "./prfiles.js";
+import { holdsArchiveFiles } from "./restore.js";
 
 /** The suffix of a file being extracted (never left behind on a failure). */
 export const EXTRACT_PARTIAL_SUFFIX = ".extract-partial";
@@ -227,15 +227,9 @@ export async function extractPr(opts: ExtractOptions): Promise<ExtractResult> {
     throw err;
   }
   if (manifest === null) {
-    let names: string[] = [];
-    try {
-      names = await readdir(dir);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-    }
     return {
       ok: false,
-      reason: names.some((n) => n.endsWith(".gz") || n === "transcripts")
+      reason: (await holdsArchiveFiles(dir))
         ? `${join(dir, "manifest.json")} is missing beside archived files — what they hold cannot be verified`
         : `pr-${pr} has no archive manifest — nothing of it was archived`,
     };
