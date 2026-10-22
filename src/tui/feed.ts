@@ -87,10 +87,10 @@ export const VIEW_MIN_INTERVAL_MS = 500;
 export interface ViewDeploy {
   loaded: boolean;
   loading?: boolean;
-  /** The VM's BUILD_SHA marker — the commit it is actually running. `"absent"`
-   * is a VM this system has never deployed to (the first deploy writes the
-   * marker); `"unparseable"` is a marker the TUI read but could not parse (a
-   * corrupt file, not a failed read); `null` is a read that failed and says
+  /** The release the VM runs (`qcr-update status`). `"absent"` is a VM that
+   * runs no release image (never deployed to, or still on the legacy layout);
+   * `"unparseable"` is a status report the TUI read but that names no build
+   * stamp (not a failed read); `null` is a read that failed and says
    * nothing about what the VM runs. Never a dropped key: the companion's
    * renderer shows an absent key as nothing at all, which reads as "nothing to
    * report". */
@@ -105,6 +105,12 @@ export interface ViewDeploy {
   /** `null` when the deployed sha is unknown or local git could not diff it,
    * so "nothing to ship" is never published from an unread repo. */
   pending_commit_count: number | null;
+  /** The release version the pending commits are counted up to (the deploy
+   * tab's chosen version); `null` when none is chosen or unread. */
+  target_version?: string | null;
+  /** The revision that version's tag resolves to in the local checkout;
+   * `null` when the tag is not in it or unread. */
+  target_rev?: string | null;
   /** Last line of `git diff --stat` — the "N files changed" summary. */
   diffstat_summary?: string;
   /** `docker ps` Status line ("Up 2 hours" / "Exited (0) …"); `""` when docker
@@ -219,14 +225,18 @@ export interface ViewSource {
   deploy?: {
     loaded: boolean;
     loading?: boolean;
-    /** Structural echo of `DeployState.deployed`: the marker, `"absent"` for a
-     * VM with none, `"unparseable"` for a marker that is not a marker line,
+    /** Structural echo of `DeployState.deployed`: the release stamp, `"absent"`
+     * for a VM running no release image, `"unparseable"` for a status report
+     * naming no build stamp,
      * `undefined` for a read that failed. */
     deployed?: { sha: string; at?: string; mode?: string } | "absent" | "unparseable";
     head?: string;
     /** undefined = git status could not be read, not "clean". */
     dirty: string[] | undefined;
     commits?: string[];
+    /** Structural echo of `DeployState.version` / `versionRev`. */
+    version?: string;
+    versionRev?: string;
     diffstat?: string[];
     containerStatus?: string;
     /** Structural echo of `DeployState.configLocal` / `configDeployed`. */
@@ -284,6 +294,8 @@ export function buildTuiView(src: ViewSource): TuiView {
       dirty_files: d?.dirty?.length ?? null,
       pending_commits: (commits ?? []).slice(0, PENDING_COMMITS_MAX),
       pending_commit_count: commits?.length ?? null,
+      target_version: d?.version ?? null,
+      target_rev: d?.versionRev ?? null,
       ...(diffstat.length > 0 ? { diffstat_summary: diffstat[diffstat.length - 1] } : {}),
       container_status: d?.containerStatus ?? null,
       config_home: configHomeFact(d?.configLocal, d?.configDeployed),

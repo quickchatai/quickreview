@@ -159,21 +159,21 @@ function fmt(label: string, value: unknown): string | undefined {
   return `${label}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`;
 }
 
-/** The VM's BUILD_SHA marker as `view.json` carries it: its fields, the
- * string `"absent"` for a VM this system has never deployed to, the string
- * `"unparseable"` for a marker the TUI read but could not parse, or `null`
- * for a read that failed. Four different sentences — a VM that was never
- * deployed to, a VM whose marker is corrupt and a VM that could not be asked
- * must not read alike. */
+/** The VM's release stamp as `view.json` carries it: its fields, the string
+ * `"absent"` for a VM that runs no release image (never deployed to, or still
+ * on the legacy layout), the string `"unparseable"` for a `qcr-update status`
+ * report the TUI read but that names no build stamp, or `null` for a read that
+ * failed. Four different sentences — a VM with no release image, a VM whose
+ * report is unusable and a VM that could not be asked must not read alike. */
 function deployedLines(value: unknown): Array<string | undefined> {
   if (value === "absent") {
     return [
-      "VM is running: no BUILD_SHA marker on the VM — this system has never deployed to it (the first deploy writes one)",
+      "VM is running: no release image — the VM was never deployed to, or is still on the legacy layout (the first release starts a release image)",
     ];
   }
   if (value === "unparseable") {
     return [
-      "VM is running: UNKNOWN — the VM's BUILD_SHA marker was read but is not a <sha> <iso> <mode> line (corrupt marker; the next deploy rewrites it)",
+      "VM is running: UNKNOWN — qcr-update status was read but names no build stamp (unusable report; retry the deploy tab)",
     ];
   }
   if (typeof value !== "object" || value === null) return [fmt("VM is running", null)];
@@ -224,6 +224,8 @@ export function deployAnswer(dir: string, now: Date): string {
     fmt("local HEAD", d.head ?? null),
     fmt("dirty files in the local checkout", d.dirty_files),
     fmt("commits waiting to ship", d.pending_commit_count),
+    fmt("release version the waiting commits are counted up to", d.target_version ?? null),
+    fmt("that version's revision", d.target_rev ?? null),
     fmt("diffstat", d.diffstat_summary),
     containerLine(d.container_status ?? null),
     // Whether the VM runs this machine's config home and profiles.
