@@ -82,6 +82,16 @@ describe("extractLedger", () => {
     expect(ignored).toEqual([42, 5288]);
   });
 
+  it("skips the format's example: a header whose head is a <placeholder> (#6114, 2026-10-22)", () => {
+    const example =
+      "LEDGER PR #42 @ <head-sha>\nF1 [P1/0.9][delivery] path/file.py:123 — <claim> → open thread:<id>";
+    // the example after the real block does not replace it
+    expect(extractLedger([`${OWN}\n\n${example}`], 42)).toBe(OWN);
+    expect(extractLedger([OWN, example], 42)).toBe(OWN);
+    // and alone it is no ledger
+    expect(extractLedger([example], 42)).toBeUndefined();
+  });
+
   it("picks the LAST own-PR block when several are present", () => {
     const newer = "LEDGER PR #42 @ ffff9999\n- fact: newer state";
     expect(extractLedger([`${OWN}\n\n${newer}`], 42)).toBe(newer);

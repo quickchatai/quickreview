@@ -13,7 +13,12 @@ import {
   type CapturedComment,
 } from "./capture.js";
 import { retryWithheldApproval, type CheckSummary } from "./cigate.js";
-import { auditUngatedReviews, hasUngatedApproval, ungatedReviewMessage } from "./execboundary.js";
+import {
+  auditUngatedReviews,
+  commentsByReview,
+  hasUngatedApproval,
+  ungatedReviewMessage,
+} from "./execboundary.js";
 import { ledgerFeedbackSignal } from "./feedback.js";
 import { wakeOrHold } from "./wakes.js";
 import { recheckFingerprint } from "./recheck.js";
@@ -936,6 +941,8 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
               postingKeys: new Set(
                 store.roundsFor(n).flatMap((r) => (r.posting_key ? [r.posting_key] : [])),
               ),
+              reviewComments: commentsByReview(inlineFetched),
+              gatedCommentIds: store.botCommentIds(n),
             },
             { botLogin, appSlug: cfg.github.app_slug },
           );

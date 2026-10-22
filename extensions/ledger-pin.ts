@@ -79,10 +79,17 @@ export function collectText(value: unknown, out: string[] = [], depth = 0): stri
   return out;
 }
 
+// The format's own example in the system prompt (prompts/conversation-system.md
+// renders `LEDGER PR #<n> @ <head-sha>` with the PR's number filled in) names a
+// placeholder where a ledger names its head. A worker that wrote no ledger in a
+// recheck mirrored that example over #6114's real ledger (2026-10-22).
+const PLACEHOLDER_HEAD_RE = /^\s*LEDGER\s+PR\s+#\d+\s*@\s*</;
+
 /** The last (most recent) LEDGER block for the session's OWN PR, trimmed.
  * Blocks naming any other PR are ignored (reported via onIgnore) — even when
  * they appear after the own-PR block. With no own PR (overseer / garbage
- * QCR_PR) every block is ignored and nothing is returned. */
+ * QCR_PR) every block is ignored and nothing is returned. A block whose head is
+ * a `<placeholder>` is the format's example, never a ledger, and is skipped. */
 export function extractLedger(
   texts: string[],
   ownPr: number | undefined,
@@ -92,6 +99,7 @@ export function extractLedger(
   for (const text of texts) {
     for (const match of text.matchAll(LEDGER_RE)) {
       const pr = Number(match[2]);
+      if (PLACEHOLDER_HEAD_RE.test(match[0].trim())) continue;
       if (ownPr !== undefined && pr === ownPr) found = match[0].trim();
       else onIgnore(pr);
     }

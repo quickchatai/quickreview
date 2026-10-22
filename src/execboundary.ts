@@ -476,6 +476,36 @@ export interface PostingTraces {
    * marker format is public, so an unverified marker is a string anyone who
    * already got past layer 2 can type. */
   postingKeys: ReadonlySet<string>;
+  /** The PR's inline comments, by the review GitHub filed each under (the
+   * sweep's own read), and the comment ids the daemon registered as its own
+   * gated posts (`bot_comments`). GitHub files every thread reply under a
+   * COMMENTED review of its own with no body; such a review is accounted for
+   * only when EVERY comment in it is one the daemon registered, so an ungated
+   * reply is still reported. */
+  reviewComments?: ReadonlyMap<number, readonly number[]>;
+  gatedCommentIds?: ReadonlySet<number>;
+}
+
+/** Inline comments grouped by the review GitHub filed them under. */
+export function commentsByReview(
+  comments: readonly { id: number; pull_request_review_id: number | null }[],
+): Map<number, number[]> {
+  const out = new Map<number, number[]>();
+  for (const c of comments) {
+    if (c.pull_request_review_id === null) continue;
+    const list = out.get(c.pull_request_review_id) ?? [];
+    list.push(c.id);
+    out.set(c.pull_request_review_id, list);
+  }
+  return out;
+}
+
+/** A body-less COMMENTED review holding only comments the daemon registered:
+ * the wrapper GitHub makes for a gated thread reply. */
+function isGatedReplyWrapper(r: AuditedReview, traces: PostingTraces): boolean {
+  if ((r.body ?? "").trim() !== "") return false;
+  const comments = traces.reviewComments?.get(r.id) ?? [];
+  return comments.length > 0 && comments.every((id) => traces.gatedCommentIds?.has(id) === true);
 }
 
 export interface UngatedReview {
@@ -550,6 +580,7 @@ export function auditUngatedReviews(
       if (state !== "APPROVED") continue;
       if ((mark.posted_event ?? "").toUpperCase() === "APPROVE") continue;
     }
+    if (state === "COMMENTED" && isGatedReplyWrapper(r, traces)) continue;
     // The gate's mechanical pre-check COMMENT, which stamps no mark by design.
     if (state === "COMMENTED" && migrationExcusesLeft > 0) {
       migrationExcusesLeft--;

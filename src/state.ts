@@ -4324,6 +4324,14 @@ export class StateStore {
    * per-review ledger, read as a trace by the ungated-review audit.
    * Scoped per PR (unlike `importedReviewIds`) because the audit asks a
    * per-PR question and a global set would let one PR's row vouch for another. */
+  /** Every comment id the daemon registered as its own on this PR (`bot_comments`). */
+  botCommentIds(pr: number): Set<number> {
+    const rows = this.db
+      .prepare("SELECT comment_id AS id FROM bot_comments WHERE pr = ?")
+      .all(pr) as Array<{ id: number }>;
+    return new Set(rows.map((r) => r.id));
+  }
+
   postedReviewIds(pr: number): Set<number> {
     const rows = this.db
       .prepare("SELECT gh_review_id AS id FROM rounds WHERE pr = ? AND gh_review_id IS NOT NULL")

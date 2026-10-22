@@ -765,7 +765,12 @@ class PostOps {
         ],
       };
     }
-    const url = (res.response as { html_url?: string } | undefined)?.html_url;
+    const posted = res.response as { html_url?: string; id?: number } | undefined;
+    const url = posted?.html_url;
+    // The reply is the daemon's own gated comment: registered, so the reconcile's
+    // ungated-review audit accounts for the review GitHub files it under.
+    if (res.executed && typeof posted?.id === "number")
+      this.d.store.registerBotComment(posted.id, ctx.pr, "review_comment");
     this.audit(ctx, "post.reply", "posted");
     return {
       status: "posted",

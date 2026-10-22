@@ -149,6 +149,29 @@ describe("the layer that was NOT told about them", () => {
     postingKeys: new Set<string>(),
   };
 
+  it("accounts for a gated thread reply's wrapper review, and only that (2026-10-22: every reply read as ungated)", () => {
+    // GitHub files each thread reply under a COMMENTED review with no body.
+    const wrapper = review({ id: 900, state: "COMMENTED", body: "" });
+    const traces = {
+      ...noTraces,
+      reviewComments: new Map([[900, [11, 12]]]),
+      gatedCommentIds: new Set([11, 12]),
+    };
+    expect(auditUngatedReviews([wrapper], HEAD, traces, bot)).toEqual([]);
+    // one comment in it the daemon never registered: still reported
+    const partly = { ...traces, gatedCommentIds: new Set([11]) };
+    expect(auditUngatedReviews([wrapper], HEAD, partly, bot)).toHaveLength(1);
+    // a wrapper with a body, an approval, or no comments at all is no reply wrapper
+    for (const r of [
+      review({ id: 900, state: "COMMENTED", body: "a summary" }),
+      review({ id: 900, state: "APPROVED", body: "" }),
+    ])
+      expect(auditUngatedReviews([r], HEAD, traces, bot)).toHaveLength(1);
+    const empty = { ...traces, reviewComments: new Map([[900, []]]) };
+    expect(auditUngatedReviews([wrapper], HEAD, empty, bot)).toHaveLength(1);
+    expect(auditUngatedReviews([wrapper], HEAD, noTraces, bot)).toHaveLength(1);
+  });
+
   it("catches an approval the daemon never recorded, whatever posted it", () => {
     const found = auditUngatedReviews([review({})], HEAD, noTraces, bot);
     expect(found).toHaveLength(1);
