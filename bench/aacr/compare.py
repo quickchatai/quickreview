@@ -92,20 +92,78 @@ def cases_for(spec):
 SLIM_COST_KEY = "bench_cost_usd"
 
 
+LENS_TOOLS = ("lens", "lens_wave", "subagent", "launch_plan")
+LEDGER_FILE = "lens-ledger.jsonl"
+
+
+def _num(v):
+    return v if isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) != float("inf") else 0
+
+
+def _child_cost(r):
+    c = (r.get("usage") or {}).get("cost") if isinstance(r, dict) else None
+    return _num(c.get("total") if isinstance(c, dict) else c)
+
+
+def pi_cost(case_dir):
+    """A pi case's price, as src/bench/cost.ts EventCostMeter prices it: each
+    assistant message, each lens tool call's children (a call counts its
+    largest live figure until its end replaces it; a result with an `id` counts
+    once), then lens-ledger.jsonl lines for runs no tool result reported."""
+    total = 0.0
+    owner = {}
+    per_call = {}
+    ev = os.path.join(case_dir, "pi-events.jsonl")
+    ledger = os.path.join(case_dir, LEDGER_FILE)
+    lines = list(open(ev))
+    if os.path.exists(ledger):
+        lines += list(open(ledger))
+    for line in lines:
+        if not line.startswith("{"):
+            continue
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(e, dict):
+            continue
+        if e.get("v") == 1 and e.get("kind") in ("lens", "warmup") and isinstance(e.get("id"), str) and e["id"] \
+                and isinstance(e.get("usage"), dict) and isinstance(e.get("agent"), str):
+            if e["id"] not in owner:
+                owner[e["id"]] = "ledger"
+                total += _child_cost(e)
+            continue
+        if e.get("type") == "message_end" and (e.get("message") or {}).get("role") == "assistant":
+            total += _num((((e["message"].get("usage") or {}).get("cost")) or {}).get("total"))
+        elif e.get("type") in ("tool_execution_update", "tool_execution_end") and e.get("toolName") in LENS_TOOLS:
+            cid = e.get("toolCallId") if isinstance(e.get("toolCallId"), str) else None
+            who = cid or f"anon{len(per_call)}"
+            carrier = e.get("partialResult") or e.get("result") or {}
+            usd = 0.0
+            for r in (carrier.get("details") or {}).get("results") or [] if isinstance(carrier, dict) else []:
+                rid = r.get("id") if isinstance(r, dict) else None
+                if isinstance(rid, str) and rid:
+                    if owner.setdefault(rid, who) != who:
+                        continue
+                usd += _child_cost(r)
+            prev = per_call.get(who, 0)
+            if e["type"] == "tool_execution_end":
+                total += usd - prev
+                per_call.pop(who, None)
+                if cid:
+                    owner = {k: (v if v != who else f"{who}#closed") for k, v in owner.items()}
+            else:
+                nxt = max(prev, usd)
+                total += nxt - prev
+                per_call[who] = nxt
+    return total
+
+
 def usd_and_minutes(case_dir):
-    usd = 0.0
+    usd = None
     ev = os.path.join(case_dir, "pi-events.jsonl")
     if os.path.exists(ev):
-        for line in open(ev):
-            if not line.startswith("{"):
-                continue
-            e = json.loads(line)
-            if e.get("type") == "message_end" and (e.get("message") or {}).get("role") == "assistant":
-                usd += ((e["message"].get("usage") or {}).get("cost") or {}).get("total") or 0
-            elif e.get("type") == "tool_execution_end" and e.get("toolName") in ("subagent", "launch_plan"):
-                for r in ((e.get("result") or {}).get("details") or {}).get("results") or []:
-                    c = (r.get("usage") or {}).get("cost")
-                    usd += (c.get("total") if isinstance(c, dict) else c) or 0
+        usd = pi_cost(case_dir)
     s = os.path.join(case_dir, "case-summary.json")
     summary = json.load(open(s)) if os.path.exists(s) else {}
     b = summary.get("bridge")
