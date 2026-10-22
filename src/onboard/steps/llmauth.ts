@@ -50,7 +50,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { COMPANION_DEFAULTS, TUI_DEFAULTS } from "../../config.js";
 import { locateSecrets } from "../../install.js";
 import { CHOICE_KEYS, AUTH_ROUTES, authRouteOf, type AuthRoute } from "../choices.js";
@@ -152,12 +152,12 @@ function hostHome(): string {
 const SECTION_RE = /^\s*\[([^\]]+)\]\s*(?:#.*)?$/;
 // key = "value" or key = 'value' — the key may be bare or quoted (TOML allows
 // both for the dashed tier names); the value is a basic or a literal string,
-// as the loader reads either. Trailing text (a comment) is preserved verbatim.
-const STRING_KV_RE = /^(\s*)("?)([A-Za-z0-9_.-]+)\2(\s*=\s*)(?:"([^"]*)"|'([^']*)')(.*)$/;
+// single- or triple-quoted, as the loader reads any of them. Trailing text (a comment) is preserved verbatim.
+const STRING_KV_RE = /^(\s*)("?)([A-Za-z0-9_.-]+)\2(\s*=\s*)("""|'''|"|')(.*?)\5(.*)$/;
 
 /** The string value an STRING_KV_RE match carries, whichever quote it used. */
 function kvValue(kv: RegExpExecArray): string {
-  return kv[5] ?? kv[6]!;
+  return kv[6]!;
 }
 
 function isComment(line: string): boolean {
@@ -188,12 +188,20 @@ export function readTomlString(text: string, section: string, key: string): stri
  * daemon's loader reaches. The value is read the way every other onboarding
  * step reads it (`readTomlKey`: basic or literal string), so a single-quoted
  * secrets_dir names the same directory here as in memory and bring-up. */
-export function resolveSecretsDir(configText: string, home: string, envDir?: string): string {
-  return locateSecrets({
+export function resolveSecretsDir(
+  configText: string,
+  home: string,
+  envDir?: string,
+  root?: string,
+): string {
+  const located = locateSecrets({
     configured: readTomlKey(configText, "github", "secrets_dir"),
     override: envDir,
     env: { ...process.env, HOME: home },
   }).path;
+  // A relative answer is rooted at the sandbox, as every other step roots it —
+  // never at the wizard's cwd.
+  return root !== undefined && !isAbsolute(located) ? join(root, located) : located;
 }
 
 // ---- the model-string rewrite ----------------------------------------------
@@ -284,7 +292,7 @@ export function rewriteModelPrefixes(text: string, route: AuthRoute): RewriteRes
       unchanged.push(label);
       continue;
     }
-    const quote = kv[5] === undefined ? "'" : '"';
+    const quote = kv[5]!;
     lines[i] = `${kv[1]!}${kv[2]!}${kv[3]!}${kv[2]!}${kv[4]!}${quote}${next}${quote}${kv[7]!}`;
     rewritten.push(label);
   }
@@ -775,7 +783,6 @@ async function oauthLoginChecks(
         },
   );
   const runner = ctx.adapters.runner;
-  const companion = companionContainerName(configText);
   // The daemon runs where the topology says: on the VM route its container is
   // on the review host, so the probe goes there over ssh (the transport's own
   // facts: alias, container, sudo). The companion is always this machine's.
@@ -804,14 +811,7 @@ async function oauthLoginChecks(
       await probeContainerLogin(daemonRunner, daemon),
     ),
   );
-  checks.push(
-    loginCheck(
-      "companion_login",
-      "companion container",
-      localAttach(companion, companionSessionName(configText)),
-      await probeContainerLogin(runner, companion),
-    ),
-  );
+  checks.push(...(await companionLoginChecks(ctx, configText)));
   return checks;
 }
 
@@ -844,7 +844,12 @@ export function llmAuthStep(opts: { transport?: TransportOptions } = {}): Onboar
         });
       }
 
-      const secretsDir = resolveSecretsDir(cfg.text, home, process.env.QC_SECRETS_DIR);
+      const secretsDir = resolveSecretsDir(
+        cfg.text,
+        home,
+        process.env.QC_SECRETS_DIR,
+        rootOf(ctx.adapters),
+      );
       let keyFile = readKeyFileState(secretsDir);
       const hostLogin = hostHasOAuthLogin(hostAuthJsonPath(home));
 
@@ -1011,7 +1016,12 @@ export function llmAuthStep(opts: { transport?: TransportOptions } = {}): Onboar
       const checks: CheckResult[] = [
         { name: "route", ok: true, detail: `${route} route recorded` },
       ];
-      const secretsDir = resolveSecretsDir(cfg.text, home, process.env.QC_SECRETS_DIR);
+      const secretsDir = resolveSecretsDir(
+        cfg.text,
+        home,
+        process.env.QC_SECRETS_DIR,
+        rootOf(ctx.adapters),
+      );
       const keyFile = readKeyFileState(secretsDir);
 
       if (route === "api") {

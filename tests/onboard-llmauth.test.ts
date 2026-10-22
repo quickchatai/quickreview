@@ -390,6 +390,9 @@ describe("tolerant config reads", () => {
 
   it("reads a single-quoted secrets_dir the way every other onboarding step does", () => {
     expect(resolveSecretsDir("[github]\nsecrets_dir = '/lit/keys'\n", "/h")).toBe("/lit/keys");
+    expect(resolveSecretsDir('[github]\nsecrets_dir = "secrets"\n', "/h", undefined, "/box")).toBe(
+      "/box/secrets",
+    );
   });
 
   it("falls back to the shipped container names when config does not override them", () => {
@@ -447,6 +450,16 @@ describe("API key validation", () => {
   });
 });
 
+describe("triple-quoted model strings", () => {
+  it("are read and rewritten by their value, keeping their quotes", () => {
+    const text = '[models]\ndefault = """openai-codex/gpt-5.6-sol"""\n';
+    expect(readTomlString(text, "models", "default")).toBe("openai-codex/gpt-5.6-sol");
+    const out = rewriteModelPrefixes(text, "api");
+    expect(out.rewritten).toEqual(["models.default"]);
+    expect(out.text).toContain('default = """openai/gpt-5.6-sol"""');
+  });
+});
+
 describe("parseRouteAnswer", () => {
   it("understands both spellings of both routes and nothing else", () => {
     expect(parseRouteAnswer("1")).toBe("oauth");
@@ -472,6 +485,23 @@ describe("OAuth route", () => {
     // The containers do not exist yet: guided later, never a blocker now.
     expect(detailOf(result.checks, "daemon_login")).toMatch(/no container yet/);
     expect(detailOf(result.checks, "companion_login")).toMatch(/no container yet/);
+  });
+
+  it("verify: a companion on another provider is not probed for a ChatGPT login", async () => {
+    hostLogin();
+    await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
+    writeFileSync(
+      configPathFor(stateDir),
+      configText().replace("[companion]\n", '[companion]\nmodel = "anthropic/claude-x"\n'),
+    );
+    const world = {
+      containers: {
+        "quickreview-sandbox": { piHome: "/home/review/.pi", auth: true },
+        "qcr-companion": { piHome: "/home/companion/.pi", auth: false },
+      },
+    };
+    const report = await engine(world).verifyAll();
+    expect((report.results[0]?.failures ?? []).join(" ")).not.toContain("companion_login");
   });
 
   it("run: with no host login the step is red and tells you to /login in this session", async () => {

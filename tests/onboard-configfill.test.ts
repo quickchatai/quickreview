@@ -339,6 +339,20 @@ describe("derivables", () => {
     await runStep({ choices: { [CHOICE_KEYS.topology]: "local" } });
     expect(producedConfig().tui.container).toBe("operator-daemon");
   });
+  it("points a local fill's memory forward at the bundled Compose memory sidecar", async () => {
+    await runStep({ choices: { [CHOICE_KEYS.topology]: "local" } });
+    const compose = readFileSync(join(REPO_ROOT, "docker-compose.yml"), "utf8");
+    const project = /^name:\s*(\S+)/m.exec(compose)?.[1];
+    expect(compose).toMatch(/^ {2}memory:/m);
+    expect(producedConfig().tui.memory_container).toBe(`${project}-memory-1`);
+    const path = join(root, "config.toml");
+    writeFileSync(
+      path,
+      readFileSync(path, "utf8").replace(`${project}-memory-1`, "operator-memory"),
+    );
+    await runStep({ choices: { [CHOICE_KEYS.topology]: "local" } });
+    expect(producedConfig().tui.memory_container).toBe("operator-memory");
+  });
   it("enumerates every value computed instead of asked — the list cannot silently shrink", () => {
     expect(DERIVABLES.map((d) => d.id)).toEqual([
       "bot_login",
@@ -351,6 +365,7 @@ describe("derivables", () => {
       "sink_kind",
       "tui_target",
       "tui_container",
+      "tui_memory_container",
       "tui_ssh_host",
       "server_hostname",
       "companion_repo_dir",
