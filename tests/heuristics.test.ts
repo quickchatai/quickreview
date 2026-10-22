@@ -154,6 +154,8 @@ describe("selectLenses", () => {
     // A lockfile that ADDS lines with no package.json change still fires.
     expect(selectLenses([f("package-lock.json", 3, 3)])).toContain("pass-security");
     expect(selectLenses([f("backend/requirements.txt")])).toContain("pass-security");
+    expect(selectLenses([f("uv.lock", 3, 3)])).toContain("pass-security");
+    expect(selectLenses([f("composer.lock", 3, 3)])).toContain("pass-security");
     expect(selectLenses([f(".env.example")])).toContain("pass-security");
     expect(selectLenses([f("src/scenario_cache.py")])).toContain("pass-statelessness");
     expect(selectLenses([f("infra/main.tf")])).toContain("pass-prod-risk");

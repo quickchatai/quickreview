@@ -245,14 +245,17 @@ export function stripAgentSpawnTools(frontmatter: string): string {
 /** A frontmatter's `tools:` line. */
 const TOOLS_LINE_RE = /^tools:[ \t]*(.*)$/m;
 
-/** The names on a frontmatter's `tools:` line, trimmed, empties dropped;
+/** The names on a frontmatter's `tools:` line, trimmed, with a surrounding
+ * `[…]` and per-name quotes removed as the runtime registry does, empties dropped;
  * null when there is no such line (no allowlist, not an empty one). */
 function toolsList(frontmatter: string): string[] | null {
   const m = TOOLS_LINE_RE.exec(frontmatter);
   if (!m) return null;
-  return (m[1] ?? "")
+  const raw = (m[1] ?? "").trim();
+  const inner = raw.startsWith("[") && raw.endsWith("]") ? raw.slice(1, -1) : raw;
+  return inner
     .split(",")
-    .map((t) => t.trim())
+    .map((t) => t.trim().replace(/^(["'])(.*)\1$/, "$2").trim())
     .filter((t) => t.length > 0);
 }
 

@@ -38,6 +38,7 @@ export function trackDeadline(at: number): () => void {
   beatNow?.();
   return () => {
     deadlines.delete(entry);
+    beatNow?.();
   };
 }
 
