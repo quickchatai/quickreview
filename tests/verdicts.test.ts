@@ -2073,6 +2073,81 @@ describe("receipt-aware stage limits", () => {
     expect(store.getPr(304)?.state).toBe("queued");
   });
 
+  it("a deferred posting that is exhausted by the time the session is killed is never requeued over", async () => {
+    reviewingRound(307);
+    const { key } = stampPosting(307, 1);
+    const { hooks } = recordingHooks();
+    killed.length = 0;
+    hooks.killSession = async (pr) => {
+      killed.push(pr);
+      // The receipt changes while the session is being stopped: a deferred
+      // POST whose retry is over (no outbox job on record).
+      writePostingReceipt(307, 1, key, "REQUEST_CHANGES", {
+        status: "deferred",
+        deferred_at: "2026-08-13T12:00:00.000Z",
+        gh_review_id: undefined,
+        gh_commit_id: undefined,
+        gh_state: undefined,
+      });
+    };
+
+    expect(
+      await watcher(
+        { cfg: { ...cfg, dry_run: false }, now: at("2026-08-13T12:30:00Z") },
+        hooks,
+      ).recoverInfrastructureFailure(307, 1, "parent_finalize", "all passes terminal"),
+    ).toBe("retryable");
+
+    expect(killed).toEqual([307]);
+    expect(store.roundsFor(307)).toHaveLength(1);
+    expect(store.roundsFor(307)[0]).toMatchObject({ status: "running" });
+    expect(
+      (
+        store.db
+          .prepare("SELECT COUNT(*) c FROM events WHERE kind = 'round_self_requeued'")
+          .get() as any
+      ).c,
+    ).toBe(0);
+  });
+
+  it("a posting-proof failure that cannot open its incident leaves the round running, not cancelled", async () => {
+    reviewingRound(308);
+    stampPosting(308, 1);
+    const round = store.roundsFor(308)[0]!;
+    const open = store.openReviewFailure.bind(store);
+    store.openReviewFailure = () => {
+      throw new Error("database is locked");
+    };
+    await expect(
+      (watcher() as any).failPostingProof(round, "receipt contradicted"),
+    ).rejects.toThrow("database is locked");
+    store.openReviewFailure = open;
+
+    expect(store.roundsFor(308)[0]).toMatchObject({ status: "running" });
+    expect(store.openReviewFailure(308)).toBeUndefined();
+  });
+
+  it("a self-requeue that cannot record its measurement debt leaves the round running, not cancelled", async () => {
+    reviewingRound(309);
+    stampPosting(309, 1);
+    const hooks = killingHooks();
+    const owe = store.oweRoundMeasurement.bind(store);
+    store.oweRoundMeasurement = () => {
+      throw new Error("database is locked");
+    };
+    await expect(
+      watcher({ now: at("2026-08-13T12:30:00Z") }, hooks).recoverInfrastructureFailure(
+        309,
+        1,
+        "parent_finalize",
+        "all passes terminal",
+      ),
+    ).rejects.toThrow("database is locked");
+    store.oweRoundMeasurement = owe;
+
+    expect(store.roundsFor(309)[0]).toMatchObject({ status: "running" });
+  });
+
   it("the posted-tail grace is a config knob", async () => {
     reviewingRound(305);
     const { key } = stampPosting(305, 1);
@@ -3434,6 +3509,23 @@ describe("guarded no-op settlement", () => {
       trigger_provenance: "human",
     });
     expect(store.successorFor(510)?.head_sha).toBe("def456");
+  });
+
+  it("a successor owed at the head the skipped round proved reviewed is settled, not promoted", async () => {
+    const { roundId } = skippedRound(513);
+    store.recordSuccessor({
+      pr: 513,
+      predecessor_round_id: roundId,
+      head_sha: "abc123",
+      provenance: "human",
+      reason: "trigger-on-new-head",
+    });
+
+    await watcher().handleFile(write(513, 1, verdictFile({ pr: 513 })));
+
+    expect(store.successorFor(513)).toBeUndefined();
+    expect(store.getPr(513)?.state).not.toBe("queued");
+    expect(events("successor_promoted", 513)).toEqual([]);
   });
 
   it("the ordinary receipt paths are unchanged: confirmed still applies, absent still fails loud after grace", async () => {
@@ -5230,4 +5322,32 @@ describe("round tail survives process restart", () => {
       expect(completed).toBe(1);
     },
   );
+});
+
+describe("escalation facts from the reasoning record", () => {
+  it("a posted finding keeps the title the session wrote, not its reason", () => {
+    const findingsDir = join(dir, "findings");
+    mkdirSync(findingsDir, { recursive: true });
+    writeFileSync(
+      join(findingsDir, "pr-61-round-1.json"),
+      JSON.stringify({
+        pr: 61,
+        round_no: 1,
+        head_sha: "abc123",
+        findings: [
+          {
+            key: "f1",
+            lens: "pass-security",
+            severity: "P1",
+            disposition: "posted",
+            title: "the retry budget is unbounded",
+          },
+        ],
+      }),
+    );
+    const w = watcher({ findingsDir });
+    const facts = (w as any).escalationFindings(61, 1, true) as Array<{ title?: string | null }>;
+    expect(facts).toHaveLength(1);
+    expect(facts[0]?.title).toBe("the retry budget is unbounded");
+  });
 });
