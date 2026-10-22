@@ -659,6 +659,38 @@ function samePath(a: string, b: string): boolean {
   }
 }
 
+/**
+ * The command-scope config every git the daemon runs carries. The
+ * daemon's git runs in the base clone and the PR worktrees, whose repo-scope
+ * config and hooks the daemon wrote but a session could reach if a boundary
+ * failed; these settings shut the routes from a repo's config to running a
+ * program: hooks (a worktree add runs post-checkout), the fsmonitor command
+ * (every status and diff), and the `ext::` transport. Passed by git's
+ * GIT_CONFIG_COUNT environment, which outranks every config file and leaves the
+ * argv as it was.
+ */
+export const DAEMON_GIT_PINS: readonly (readonly [string, string])[] = [
+  ["core.hooksPath", "/dev/null"],
+  ["core.fsmonitor", "false"],
+  ["protocol.ext.allow", "never"],
+];
+
+/** The env that carries `DAEMON_GIT_PINS` on top of `base`. */
+export function pinnedGitEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...base, GIT_CONFIG_COUNT: String(DAEMON_GIT_PINS.length) };
+  DAEMON_GIT_PINS.forEach(([k, v], i) => {
+    env[`GIT_CONFIG_KEY_${i}`] = k;
+    env[`GIT_CONFIG_VALUE_${i}`] = v;
+  });
+  return env;
+}
+
+/** nodeExec, with `DAEMON_GIT_PINS` on every git it starts. */
+export const pinnedGitExec: ExecFn = (cmd, args, opts = {}) =>
+  cmd === "git"
+    ? nodeExec(cmd, args, { ...opts, env: pinnedGitEnv(opts.env ?? process.env) })
+    : nodeExec(cmd, args, opts);
+
 export class WorktreeManager {
   readonly root: string;
   readonly basePath: string;
@@ -671,7 +703,7 @@ export class WorktreeManager {
     this.basePath = join(opts.root, opts.cloneDir ?? repoCloneDirName(opts.repo));
     this.wtRoot = join(opts.root, "wt");
     this.cloneUrl = opts.cloneUrl ?? cloneUrlFor(opts.repo);
-    this.run = opts.run ?? nodeExec;
+    this.run = opts.run ?? pinnedGitExec;
   }
 
   private git(args: string[], cwd = this.basePath): Promise<ExecResult> {

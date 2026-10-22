@@ -82,6 +82,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/context-files.test.ts",
   "tests/cpu-gate.test.ts",
   "tests/cutover-wizard.test.ts", // the cutover wizard as a child process against stubbed ssh, deploy.sh and qcr
+  "tests/daemon-git-pins.test.ts",
   "tests/debug-pi.test.ts",
   "tests/debug-round-bot-smoke.test.ts", // the real pane chain and the real pi CLI in a pty, on a loopback endpoint
   "tests/deploy-manifest.test.ts",
