@@ -3877,6 +3877,60 @@ describe("integration review", () => {
       });
     });
 
+    // MUTATION: fail loud on every failed proof of a settled parent — a
+    // session that stopped on a failed pass and posted nothing is held for an
+    // operator instead of retried.
+    it("a settled parent that posted nothing is requeued, not failed loud", async () => {
+      reviewingRound(615);
+      stampPosting(615, 1);
+      adapter.listReviewsFull = async () => [];
+      const killed: number[] = [];
+      // No receipt: the grace runs from the round's start.
+      const pastGrace = () => new Date(Date.now() + 10 * 60_000);
+      const w = watcher({ cfg: live, now: pastGrace }, killingHooks(killed));
+
+      expect(
+        await w.recoverInfrastructureFailure(615, 1, "settled_without_verdict", "parent stopped"),
+      ).toBe("requeued");
+      await w.idle();
+      expect(killed).toEqual([]);
+      expect(store.openReviewFailure(615)).toBeUndefined();
+      expect(store.roundsFor(615)[0]).toMatchObject({
+        status: "cancelled",
+        cancel_cause: "infrastructure_failure",
+      });
+      expect(count("round_self_requeued", 615)).toBe(1);
+    });
+
+    it("a settled parent with a prepared POST GitHub does not show is requeued too", async () => {
+      reviewingRound(616);
+      const { key } = stampPosting(616, 1);
+      prepared(616, key);
+      adapter.listReviewsFull = async () => [];
+      const w = watcher({ cfg: live, now: at }, killingHooks([]));
+
+      expect(
+        await w.recoverInfrastructureFailure(616, 1, "settled_without_verdict", "parent stopped"),
+      ).toBe("requeued");
+      expect(store.openReviewFailure(616)).toBeUndefined();
+    });
+
+    it("a settled parent whose POST outcome is unknown still fails loud — never a requeue", async () => {
+      reviewingRound(617);
+      const { key } = stampPosting(617, 1);
+      prepared(617, key);
+      adapter.listReviewsFull = async () => {
+        throw new Error("GitHub 502");
+      };
+      const w = watcher({ cfg: live, now: at }, killingHooks([]));
+
+      expect(
+        await w.recoverInfrastructureFailure(617, 1, "settled_without_verdict", "parent stopped"),
+      ).toBe("failed_loud");
+      expect(count("round_self_requeued", 617)).toBe(0);
+      expect(store.openReviewFailure(617)).toMatchObject({ stage: "posting_receipt" });
+    });
+
     // MUTATION: drop the `contradicted` branch — the limit requeues a round
     // GitHub already shows two reviews for.
     it("evidence of a posting that contradicts the round fails loud — never a requeue", async () => {

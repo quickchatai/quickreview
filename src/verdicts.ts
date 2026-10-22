@@ -3922,8 +3922,15 @@ export class VerdictWatcher {
     }
     if (stage === "settled_without_verdict") {
       // The parent stopped, so an ambiguous receipt gets its grace and then
-      // fails loud — never a requeue that could post a second time.
+      // fails loud — never a requeue that could post a second time. Nothing
+      // went out (`unconfirmed`: no receipt, or GitHub read and no marker) is
+      // the caller's capped requeue, as at every other stage: a session that
+      // stopped on a failed pass, posting nothing, is a retry, not an incident.
       if (proof.kind === "waiting") return "retryable";
+      // The proof awaited GitHub: a round an operator ended meanwhile is
+      // theirs, as on the fail-loud path below.
+      if (proof.kind === "failed" && proof.failure === "unconfirmed")
+        return this.stillRunning(round) ? null : "settled";
       if (proof.kind === "failed") {
         return stageFailure(
           await this.failPostingProofUnlessVerdict(
