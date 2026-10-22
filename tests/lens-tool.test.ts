@@ -35,10 +35,10 @@ import {
   lensToolDefinitions,
   type LensToolDeps,
 } from "../src/engine/lens/tool.js";
-import { LensWave, launchWave, type WaveRunner } from "../src/engine/lens/wave.js";
+import { LensWave, launchWave, runSafely, type WaveRunner } from "../src/engine/lens/wave.js";
 import { roundSdkExtras } from "../src/engine/roundsdk.js";
 import { DEFAULT_TOOLS } from "../src/engine/pisdk.js";
-import { isLensTool, parseLedger } from "../src/lensresult.js";
+import { isLensTool, lensIdOf, parseLedger } from "../src/lensresult.js";
 import { createHostRig, useOfflineGuard, type HostRig } from "./pi-canary/harness.js";
 
 useOfflineGuard();
@@ -378,7 +378,40 @@ describe("[lens_wave] the join (D8)", () => {
   });
 });
 
+describe("[wave] a runner that rejects", () => {
+  it("is a failed pass with a run id, so repeated collections count it once", async () => {
+    const run = await runSafely(
+      {
+        run: () => Promise.reject(new Error("no host")),
+        liveSessions: () => 0,
+      } as unknown as WaveRunner,
+      { agent: "pass-a", task: "t" },
+    );
+    expect(run.result.errorMessage).toBe("no host");
+    expect(lensIdOf(run.result)).not.toBeNull();
+  });
+});
+
 describe("[lens] single, several, and refusals", () => {
+  it("several lenses stopped by the call's abort answer as an error, as lens_wave does", async () => {
+    rig.faux.setResponses(Array.from({ length: 2 }, hang));
+    const { lens } = tools(counting(createLensRunner(config())), new LensWave());
+    const callStop = new AbortController();
+    const pending = lens.execute(
+      "l1",
+      {
+        tasks: [
+          { agent: "pass-a", task: "t1" },
+          { agent: "pass-b", task: "t2" },
+        ],
+      },
+      callStop.signal,
+    );
+    await sleep(60);
+    callStop.abort();
+    expect((await pending).isError).toBe(true);
+  });
+
   it("runs one lens and answers its text; several at once in the order asked", async () => {
     slowAnswers(3, 1);
     const { lens } = tools(counting(createLensRunner(config())), new LensWave());

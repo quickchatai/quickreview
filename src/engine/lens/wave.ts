@@ -13,6 +13,7 @@
 // call. A row is forgotten only when the call that launched it was aborted: a
 // lens that failed or timed out stays on the board as the failure it was, and
 // the session re-runs it through `lens` if it wants it again.
+import { randomUUID } from "node:crypto";
 import type { Runtime } from "../port.js";
 import type { LaunchUnit } from "./launch-plan.js";
 import type { LensRequest, LensRun } from "./runlens.js";
@@ -48,6 +49,7 @@ export function runSafely(runner: WaveRunner, request: LensRequest): Promise<Len
     .catch((e: unknown): LensRun => ({
       text: "",
       result: {
+        id: randomUUID(),
         agent: request.agent,
         model: "unknown",
         usage: { input: 0, output: 0, cacheRead: 0, cost: 0 },

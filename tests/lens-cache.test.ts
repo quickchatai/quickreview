@@ -445,6 +445,64 @@ describe("[cache groups] the warm-up", () => {
     releaseWarm();
   });
 
+  it("the warm-up's hard stop repeats its abort until the turn settles, as an ordinary pass does", async () => {
+    let releaseWarm!: () => void;
+    const warmGate = new Promise<void>((r) => (releaseWarm = r));
+    const real = vi.mocked(rig.host.makeSession).getMockImplementation()!;
+    let warmAborts = 0;
+    vi.spyOn(rig.host, "makeSession").mockImplementation(async (spec) => {
+      const s = await real(spec);
+      if (spec.sessionId !== undefined && warmAborts === 0 && sessions.length === 1) {
+        const abort = s.abort.bind(s);
+        // The first aborts land before the agent runs: no-ops.
+        s.abort = async () => {
+          warmAborts += 1;
+          if (warmAborts >= 3) {
+            releaseWarm();
+            await abort();
+          }
+        };
+      }
+      return s;
+    });
+    const seen: Seen[] = [];
+    respondWith(
+      2,
+      codexLike(seen, new FakeTransport(), async (e) => {
+        if (seen.length === 1) await warmGate;
+        void e;
+      }),
+    );
+    const runner = createLensRunner(
+      config({ cache: { size: 2, staggerMs: 0, pack: PACK, warmupWaitMs: 50 } }),
+    );
+    await runner.run({ agent: "pass-a", task: "go" });
+    await waitFor(
+      () => ledger().some((l) => l.kind === "warmup"),
+      4000,
+      "the warm-up's ledger line",
+    );
+    expect(warmAborts).toBeGreaterThanOrEqual(3);
+    releaseWarm();
+  });
+
+  it("liveSessions counts the passes streaming, not the group ids they share", async () => {
+    const seen: Seen[] = [];
+    let live = -1;
+    let runner!: ReturnType<typeof createLensRunner>;
+    respondWith(
+      2,
+      codexLike(seen, new FakeTransport(), async () => {
+        await waitFor(() => seen.length === 2, 4000, "both passes streaming");
+        live = Math.max(live, runner.liveSessions());
+      }),
+    );
+    runner = createLensRunner(config({ cache: { size: 2, staggerMs: 0 } }));
+    await Promise.all(["pass-a", "pass-b"].map((agent) => runner.run({ agent, task: agent })));
+    expect(live).toBe(2);
+    expect(runner.liveSessions()).toBe(0);
+  });
+
   it("settledWithin reports who won and leaves no timer behind", async () => {
     expect(await settledWithin(Promise.resolve(), 10_000)).toBe(true);
     expect(await settledWithin(new Promise(() => {}), 20)).toBe(false);
