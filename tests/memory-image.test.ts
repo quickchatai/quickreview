@@ -892,3 +892,77 @@ describe("boot re-embed on the sidecar, against a copy of a store", () => {
 // Keep the type import honest: the sidecar takes the daemon's config shape.
 const _typeCheck: OpenVikingConfig = OPENVIKING_DEFAULTS;
 void _typeCheck;
+
+describe("memory entrypoint — executed against a stub app root", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "memory-entrypoint-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // A stub app root: every boot script records its name, the config module
+  // answers `enabled`, and sidecar-main records the secrets mount it was given.
+  function boot(enabled: boolean): { calls: string[]; mount: string } {
+    const app = join(dir, "app");
+    mkdirSync(join(app, "scripts"), { recursive: true });
+    mkdirSync(join(app, "dist/src/openviking"), { recursive: true });
+    const log = join(dir, "calls.log");
+    for (const s of ["openviking-ov-conf", "openviking-reembed", "openviking-provision"]) {
+      writeFileSync(
+        join(app, "scripts", `${s}.mjs`),
+        `import { appendFileSync } from "node:fs"; appendFileSync(${JSON.stringify(log)}, "${s}\\n");\n`,
+      );
+    }
+    writeFileSync(
+      join(app, "dist/src/config.js"),
+      `export const loadConfig = () => ({ openviking: { enabled: ${enabled} } });\n`,
+    );
+    writeFileSync(
+      join(app, "dist/src/openviking/sidecar-main.js"),
+      `import { appendFileSync } from "node:fs"; appendFileSync(${JSON.stringify(log)}, "main:" + process.env.QCR_SECRETS_MOUNT + "\\n");\n`,
+    );
+    writeFileSync(join(app, "package.json"), '{"type":"module"}\n');
+    const home = join(dir, "home");
+    mkdirSync(home);
+    const r = spawnSync("bash", [join(root, "docker/memory/entrypoint.sh")], {
+      env: {
+        PATH: process.env.PATH,
+        HOME: home,
+        QCR_APP_ROOT: app,
+        QCR_SECRETS: join(dir, "secrets"),
+        QCR_OPENVIKING_HOME: join(dir, "ovhome"),
+      },
+      encoding: "utf8",
+    });
+    expect(r.status, r.stderr).toBe(0);
+    const calls = existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : [];
+    const main = calls.find((c) => c.startsWith("main:")) ?? "";
+    return { calls: calls.filter((c) => !c.startsWith("main:")), mount: main.slice(5) };
+  }
+
+  it(
+    "runs the boot steps when memory is enabled and names the secrets mount to the supervisor",
+    { timeout: PROCESS_TIMEOUT_MS },
+    () => {
+      const r = boot(true);
+      expect(r.calls).toEqual([
+        "openviking-ov-conf",
+        "openviking-reembed",
+        "openviking-provision",
+      ]);
+      expect(r.mount).toBe(join(dir, "secrets"));
+    },
+  );
+
+  it(
+    "skips render, migration check and provisioning when memory is disabled",
+    { timeout: PROCESS_TIMEOUT_MS },
+    () => {
+      const r = boot(false);
+      expect(r.calls).toEqual([]);
+      expect(r.mount).toBe(join(dir, "secrets"));
+    },
+  );
+});
