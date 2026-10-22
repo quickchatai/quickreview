@@ -1067,12 +1067,16 @@ function caseFiles(outDir: string, c: BenchCase): [string, ...string[]] {
   ];
 }
 
-/** Remove one case's summary and result files. A variant whose result file
+/** Remove one case's summary, result files and judge inputs (review body and
+ * comments) — a retained input would be read as the next attempt's review. A variant whose result file
  * was there loses its metrics with it (they scored that file). Returns the
  * metrics files removed per variant. */
 function removeCaseFiles(outDir: string, c: BenchCase): MetricsDropped {
   const dropped: MetricsDropped = [];
   rmSync(caseFiles(outDir, c)[0], { force: true });
+  const caseDir = join(outDir, "cases", safeId(c.instance_id));
+  for (const f of [CASE_FILES.review, CASE_FILES.comments])
+    rmSync(join(caseDir, f), { force: true });
   for (const v of Object.keys(VARIANTS) as Variant[]) {
     const file = caseResultFile(outDir, c, v);
     if (!existsSync(file)) continue;
@@ -1191,6 +1195,10 @@ export function recordHostFailure(
   };
   const caseDir = join(outDir, "cases", safeId(c.instance_id));
   mkdirSync(caseDir, { recursive: true });
+  // The scored review of this case is empty: the session files the dead host
+  // wrote must not be collected into it by a results rebuild. The event
+  // stream stays.
+  for (const f of Object.values(CASE_FILES)) rmSync(join(caseDir, f), { force: true });
   writeResults(outDir, c, [], s);
   writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(s, null, 2) + "\n");
   return s;
