@@ -270,8 +270,11 @@ export async function cmdChecklist(parts?: ProductionParts): Promise<number> {
       today: zoneDateString(new Date(), cfg.eod.timezone),
     },
     tmux: {
-      listSessions: () => p.sessions.tmux.listSessions(),
-      requireOverseer: true,
+      // Workers are the only PR host and the overseer is retired (rule 9):
+      // judge the worker inventory, which is empty between rounds.
+      listSessions: () => liveWorkerSessions(runDirOf(join(root, "state"))),
+      requireOverseer: false,
+      requirePrSession: false,
     },
     restart: {
       statusPath: join(root, "state", "status.json"),

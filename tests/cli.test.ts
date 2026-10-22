@@ -19,6 +19,7 @@ import {
   debugRoundAttachLines,
   splitJsonFlag,
   takeoverAttachLines,
+  reembedScriptPath,
 } from "../src/cli.js";
 import { StateStore, type StatusSnapshot } from "../src/state.js";
 
@@ -565,6 +566,18 @@ describe("qcr global flags and attach hints", () => {
     );
     expect(debugRoundAttachLines(12, "other-box").join("\n")).toContain(
       "docker exec -it other-box tmux attach -t debug-pr-12",
+    );
+  });
+});
+
+describe("qcr memory reembed — receipt script path", () => {
+  it("follows the daemon container's layout, the sidecar's is /opt/qcr", () => {
+    expect(reembedScriptPath(true, "/opt/qcr")).toBe("/opt/qcr/scripts/openviking-reembed.mjs");
+    expect(reembedScriptPath(true, "/opt/quickreview/sandbox")).toBe(
+      "/opt/quickreview/sandbox/scripts/openviking-reembed.mjs",
+    );
+    expect(reembedScriptPath(false, "/opt/quickreview/sandbox")).toBe(
+      "/opt/qcr/scripts/openviking-reembed.mjs",
     );
   });
 });

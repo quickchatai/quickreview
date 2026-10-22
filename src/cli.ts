@@ -1628,10 +1628,13 @@ export async function cmdMemory(rest: string[]): Promise<number> {
     // memory sidecar (whose app root is /opt/qcr) under `endpoint = "remote"`.
     const { tuiMemoryContainer } = await import("./tui/memforward.js");
     const memoryContainer = tuiMemoryContainer(cfg.tui);
-    const script =
-      memoryContainer === cfg.tui.container
-        ? "/opt/quickreview/sandbox/scripts/openviking-reembed.mjs"
-        : "/opt/qcr/scripts/openviking-reembed.mjs";
+    // The daemon container's app root follows its `qcr.layout` label.
+    const { runnerFor } = await import("./tui/remote.js");
+    await resolveLayout(cfg.tui, runnerFor(cfg.tui));
+    const script = reembedScriptPath(
+      memoryContainer === cfg.tui.container,
+      remoteSandboxRoot(cfg.tui),
+    );
     console.log(
       "done. The daemon's journal still lists these namespaces as awaiting you; receipt them in the container so the heartbeat stops naming them:\n" +
         users
@@ -1643,6 +1646,12 @@ export async function cmdMemory(rest: string[]): Promise<number> {
     );
   }
   return ok ? 0 : 1;
+}
+
+/** Where the re-embed script lives in the container the journal is in: the
+ * daemon container's own app root, or the memory sidecar's /opt/qcr. */
+export function reembedScriptPath(inDaemonContainer: boolean, daemonRoot: string): string {
+  return `${inDaemonContainer ? daemonRoot : "/opt/qcr"}/scripts/openviking-reembed.mjs`;
 }
 
 const MEMORY_USAGE =

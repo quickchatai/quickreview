@@ -451,6 +451,26 @@ describe("⑧ tmux attach", () => {
     expect(r.detail).toContain("overseer=NO");
   });
 
+  it("worker topology: an empty inventory passes without overseer or pr sessions", async () => {
+    const r = await probeTmux({
+      listSessions: () => [],
+      requireOverseer: false,
+      requirePrSession: false,
+    });
+    expect(r.pass).toBe(true);
+  });
+
+  it("worker topology: an unreadable inventory still fails", async () => {
+    const r = await probeTmux({
+      listSessions: () => {
+        throw new Error("the worker leases could not be read (liveness unknown)");
+      },
+      requireOverseer: false,
+      requirePrSession: false,
+    });
+    expect(r.pass).toBe(false);
+  });
+
   it("reports a missing tmux server as a failure (the correct result off-VM)", async () => {
     const r = await probeTmux({
       listSessions: () => {
