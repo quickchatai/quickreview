@@ -213,8 +213,11 @@ export function lensExecute(deps: LensToolDeps): Execute {
       runSafely(deps.runner, { agent: t.agent, task: t.task, ...(signal ? { signal } : {}) }),
     );
     const entries: Entry[] = call.tasks.map((t) => ({ ...t, run: undefined }));
-    await awaitEntries(entries, runs, signal, update, {});
-    if (call.mode === "parallel") return parallelResult(entries);
+    const outcome = await awaitEntries(entries, runs, signal, update, {});
+    if (call.mode === "parallel") {
+      const result = parallelResult(entries);
+      return outcome === "aborted" ? { ...result, isError: true } : result;
+    }
     const run = entries[0]!.run;
     const only = call.tasks[0]!;
     if (run === undefined)

@@ -479,12 +479,28 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
       keep(session);
       stop.throwIfAborted();
       const s = session;
-      const onStop = (): void => void s.abort().catch(() => {});
+      // An abort that lands before pi's agent is running is a no-op there, so
+      // it is repeated until the turn has settled.
+      let repeat: ReturnType<typeof setInterval> | undefined;
+      let turnSettled = false;
+      const onStop = (): void => {
+        const again = (): void => {
+          if (turnSettled) {
+            if (repeat !== undefined) clearInterval(repeat);
+            return;
+          }
+          void s.abort().catch(() => {});
+        };
+        again();
+        repeat = setInterval(again, 100);
+      };
       stop.addEventListener("abort", onStop, { once: true });
       try {
         await s.prompt(`Task: ${WARMUP_REPLY_TASK}`);
       } finally {
+        turnSettled = true;
         stop.removeEventListener("abort", onStop);
+        if (repeat !== undefined) clearInterval(repeat);
       }
       const read = readSession(s);
       spent = addUsage(spent, read.usage);
@@ -708,5 +724,12 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     };
   }
 
-  return { run, liveSessions: () => live.size };
+  return {
+    run,
+    liveSessions: () => {
+      let n = 0;
+      for (const c of live.values()) n += c;
+      return n;
+    },
+  };
 }
