@@ -1296,6 +1296,8 @@ export class CaseWriter {
       if (inCaptureWindow(this.store.getPr(pr), nowMs)) continue;
       // A round queued while the last PR was captured: stop starting PRs.
       if (this.reviewsActive(out)) return;
+      // Memory turned unhealthy while the last PR was captured: stop starting PRs.
+      if (!this.healthyNow()) return;
       // The activity the capture is about to read: one arriving while it
       // runs is not in its fate, so it stays beyond the watermark and the
       // next tick catches it up.
@@ -1354,6 +1356,8 @@ export class CaseWriter {
       if (this.stopped) return;
       // A round queued while the last PR was read: stop starting PRs.
       if (this.reviewsActive(out)) return;
+      // Memory turned unhealthy while the last PR was read: stop starting PRs.
+      if (!this.healthyNow()) return;
       // ONE read of the PR's inline comments for the link facts — unless the
       // reconcile sweep already read the bot's comments on it.
       const seen = this.store.db

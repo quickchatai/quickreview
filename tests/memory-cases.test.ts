@@ -1420,6 +1420,26 @@ describe("the backfill: 60 days, state.db plus one adapter read, resumable, rate
     expect((await w.tick()).backfilled).toEqual([4003, 4002]);
   });
 
+  it("stops starting PRs once memory health turns unhealthy mid-tick", async () => {
+    const { h, read, reads } = aged();
+    let healthy = true;
+    const flipping = {
+      async listReviewCommentsFull(n: number): Promise<ReviewCommentFull[]> {
+        const comments = await read.listReviewCommentsFull(n);
+        healthy = false;
+        return comments;
+      },
+    };
+    const { w } = writer(h, {
+      read: flipping,
+      healthy: () => healthy,
+      backfillDays: 60,
+      backfillPrsPerTick: 2,
+    });
+    await w.tick();
+    expect(reads).toEqual([4003]);
+  });
+
   it("skips the adapter read when the reconcile sweep already read the PR's bot comments", async () => {
     const { h, read, reads } = aged();
     h.capture.observeBotComments(4003, [h.botComment({ id: 40030, round: 1, key: "K4003" })]);
