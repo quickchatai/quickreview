@@ -775,6 +775,16 @@ describe("anchorTouched", () => {
     // Unchanged is still a definite no.
     expect(await m.anchorTouched("logo.png", null, png2, gone)).toBe(false);
   });
+  it("a mode-only change (chmod +x) touches the file", async () => {
+    const before = commit("run.sh", "echo hi\n");
+    chmodSync(join(origin, "run.sh"), 0o755);
+    git(origin, "commit", "-q", "-a", "-m", "chmod run.sh");
+    const after = git(origin, "rev-parse", "HEAD").trim();
+    const m = mgr();
+    await m.ensureBaseClone();
+    expect(await m.anchorTouched("run.sh", null, before, after)).toBe(true);
+    expect(await m.anchorTouched("run.sh", 1, before, after)).toBe(true);
+  });
 });
 
 // A reply's "Fixed in <sha>" counts only when <sha> is a commit
