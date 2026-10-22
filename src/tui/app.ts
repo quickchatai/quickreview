@@ -216,6 +216,7 @@ export class App {
   private selectedPr: number | undefined;
   private detailSeq = 0;
   private progressSeq = 0;
+  private eventsSeq = 0;
   /** Stale-while-revalidate detail cache: paint the last known payload
    * instantly on selection, refresh over ssh behind it. */
   private readonly detailCache = new Map<number, { payload: WhyPayload; fetched_at: number }>();
@@ -706,8 +707,9 @@ export class App {
   }
 
   private async refreshEvents(): Promise<void> {
+    const seq = ++this.eventsSeq;
     const res = await this.ssh(this.cfg.ssh_host, eventsArgv(this.cfg, 50));
-    if (this.stopped || !res.ok) return;
+    if (this.stopped || !res.ok || seq !== this.eventsSeq) return; // a newer read superseded this one
     try {
       const parsed = JSON.parse(res.stdout) as {
         events: Array<{ ts: string; kind: string; pr: number | null; payload: string | null }>;
@@ -836,6 +838,7 @@ export class App {
    * follows it — the progress panel (another PR's is never shown), the
    * detail, and the mirrored session. */
   private selectionMoved(pr: number | undefined): void {
+    if (pr !== this.selectedPr) this.msgDraft = ""; // a cancelled draft belongs to the PR it was typed for
     this.selectedPr = pr;
     if (this.view.progress?.pr !== pr) this.view.progress = undefined;
     void this.refreshDetail();
@@ -1654,7 +1657,7 @@ export class App {
   private paintQuitPrompt(frame: Frame, cols: number, rows: number): void {
     if (!this.view.confirmQuit) return;
     const text = "  Quit qcr tui?  [y] yes   [any other key] no  ";
-    const w = Math.min(cols - 4, Math.max(text.length + 2, 24));
+    const w = Math.max(2, Math.min(cols - 4, Math.max(text.length + 2, 24)));
     const x = Math.max(0, Math.floor((cols - w) / 2));
     const y = Math.max(0, Math.floor(rows / 2) - 1);
     const box = [`┌${"─".repeat(w - 2)}┐`, `│${fit(text, w - 2)}│`, `└${"─".repeat(w - 2)}┘`];

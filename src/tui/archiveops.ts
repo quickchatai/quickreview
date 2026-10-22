@@ -86,7 +86,7 @@ export class ArchiveOpSender {
     if (!write.ok)
       return {
         ok: false,
-        reason: `command write failed (${write.stderr.trim() || `exit ${write.code}`})`,
+        reason: `command write failed (${resultReason(write.stderr, `exit ${write.code}`)})`,
       };
     const deadline = this.now().getTime() + archiveOpTimeoutMs(this.cfg);
     while (this.now().getTime() < deadline) {

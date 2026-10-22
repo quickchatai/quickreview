@@ -22,7 +22,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { parseEventTags } from "../memory/eventtags.js";
+import { EVENT_TAG_RE, parseEventTags } from "../memory/eventtags.js";
 import { memoryTextKey } from "../memory/textidentity.js";
 import { withHeaderTags, withoutHeaderTag } from "../memory/layout.js";
 import { claimTrackerId } from "../trackerid.js";
@@ -116,6 +116,17 @@ export function claimNextId(root: string, ticketRelPath: (n: string) => string):
   return claimTrackerId(root, ticketRelPath);
 }
 
+/** The prose of an entry text — `#tags`, `k=v` tokens (the memory vocabulary's
+ * one grammar) and `[[links]]` are not title material, wherever they sit. */
+export function entryProse(text: string): string {
+  return text
+    .split(/\s+/)
+    .filter(
+      (t) => t !== "" && !t.startsWith("#") && !EVENT_TAG_RE.test(t) && !/^\[\[[^\]]*\]\]$/.test(t),
+    )
+    .join(" ");
+}
+
 function slugify(text: string): string {
   const words = text
     .replace(/(^|\s)#[\w-]+/g, " ") // tags are not title material
@@ -134,7 +145,7 @@ export function ticketBody(
   paths: TrackerPaths,
   nowIso: string,
 ): { name: string; content: string } {
-  const firstSentence = e.text.replace(/\s+/g, " ").slice(0, 110);
+  const firstSentence = entryProse(e.text).slice(0, 110);
   const slug = slugify(firstSentence);
   const name = `FT-${id}-${slug}.md`;
   const content = `# Auto-filed defect: ${slugify(firstSentence).replace(/-/g, " ")}
