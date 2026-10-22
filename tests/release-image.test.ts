@@ -105,7 +105,9 @@ describe("release image — stages and pins", () => {
   });
 
   it("install lines reference the ARGs, never a literal version", () => {
-    expect(runWith("FATAL: pi versions disagree")).toContain("node_modules/${PI_PACKAGE}/package.json");
+    expect(runWith("FATAL: pi versions disagree")).toContain(
+      "node_modules/${PI_PACKAGE}/package.json",
+    );
     expect(code).not.toMatch(/pi-coding-agent@\d/);
     expect(dockerfile).toContain("tmux-${TMUX_VERSION}");
   });

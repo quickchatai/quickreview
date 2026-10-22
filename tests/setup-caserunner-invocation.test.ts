@@ -50,7 +50,9 @@ describe("piInvocation — resolves pi, never the host script", () => {
   it("a node driver script as host resolves to the pinned pi's CLI", () => {
     const driver = join(dir, "driver.mjs");
     writeFileSync(driver, "");
-    expect(piInvocation({ argv1: driver, execPath: NODE, piCli: () => PINNED })).toEqual(PINNED_RUN);
+    expect(piInvocation({ argv1: driver, execPath: NODE, piCli: () => PINNED })).toEqual(
+      PINNED_RUN,
+    );
   });
 
   it("pi's own CLI entry is reused under the running runtime — directly and through a .bin symlink", () => {

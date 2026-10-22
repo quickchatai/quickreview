@@ -1004,12 +1004,7 @@ describe("the login volume is shared through a fixed group", () => {
   const loginAs = (uid: number, rig: { r: Rig; script: string }): void => {
     const { r, script } = rig;
     const env = ["env", `HOME=${r.home}`, `PATH=${r.env["PATH"]}`, `QCR_APP_ROOT=${r.app}`];
-    const o = as(
-      uid,
-      [...env, script, "login"],
-      String(GROUP),
-      r.dir,
-    );
+    const o = as(uid, [...env, script, "login"], String(GROUP), r.dir);
     expect(o.status, o.stderr).toBe(0);
   };
 
