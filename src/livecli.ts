@@ -93,8 +93,12 @@ export function renderLiveEvent(e: LiveEvent, state: RenderState): string[] {
       return e.results.map(
         (r) =>
           `${t}    ${r.agent ?? `child ${r.slot}`} ${r.progress?.status ?? "…"}` +
-          (r.progress?.tool_count ? ` (${r.progress.tool_count} tools)` : "") +
-          (r.progress?.last_message ? ` ${oneLine(r.progress.last_message, 80)}` : ""),
+          ((r.progress?.tool_count ?? r.native?.tool_count)
+            ? ` (${r.progress?.tool_count ?? r.native?.tool_count} tools)`
+            : "") +
+          ((r.progress?.last_message ?? r.native?.last_text)
+            ? ` ${oneLine((r.progress?.last_message ?? r.native?.last_text)!, 80)}`
+            : ""),
       );
     case "tool_end": {
       const bits = [
@@ -199,6 +203,8 @@ function resolveTarget(
     // a round directory: .../state/live/<key>/r<n>
     const m = /^(.*)[/\\]([^/\\]+)[/\\]r(\d+)$/.exec(resolve(arg));
     if (!m) return `${arg} is not a round log directory (state/live/<key>/r<n>)`;
+    if (round !== undefined && round !== Number(m[3]))
+      return `${arg} is round ${m[3]}, not round ${round}`;
     return { ref: { dir: resolve(arg), key: m[2]!, round: Number(m[3]) }, pid };
   } else if (arg !== undefined && isDir(arg)) {
     roots = [resolve(arg)];
@@ -239,20 +245,25 @@ export async function runLive(
   let lens: string | undefined;
   let round: number | undefined;
   let follow = false;
+  // a usage error found before a later --json is still reported as JSON
+  const wantsJson = json || rest.includes("--json");
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]!;
     if (a === "--follow" || a === "-f") follow = true;
     else if (a === "--json") json = true;
-    else if (a === "--lens") lens = rest[++i];
-    else if (a === "--round") {
+    else if (a === "--lens") {
+      lens = rest[++i];
+      if (lens === undefined) return usage(deps, "--lens needs a lens id", wantsJson);
+    } else if (a === "--round") {
       const n = Number(rest[++i]);
-      if (!Number.isInteger(n) || n < 1) return usage(deps, "--round needs a round number");
+      if (!Number.isInteger(n) || n < 1)
+        return usage(deps, "--round needs a round number", wantsJson);
       round = n;
     } else if (!a.startsWith("-") && arg === undefined) arg = a;
-    else return usage(deps, `unknown argument ${a}`);
+    else return usage(deps, `unknown argument ${a}`, wantsJson);
   }
   if (lens === "" || (lens !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(lens)))
-    return usage(deps, "--lens needs a lens id");
+    return usage(deps, "--lens needs a lens id", wantsJson);
 
   const target = resolveTarget(arg, round, deps);
   if (typeof target === "string") {
@@ -310,7 +321,11 @@ function ended(runDir: string, run: Pick<Target, "pid" | "container">, deps: Liv
   return run.pid !== null && !deps.alive(run.pid);
 }
 
-function usage(deps: LiveCliDeps, why: string): number {
-  deps.out(`${LIVE_USAGE}\n(${why})`);
+function usage(deps: LiveCliDeps, why: string, json: boolean): number {
+  deps.out(
+    json
+      ? JSON.stringify({ ok: false, errors: [why], usage: LIVE_USAGE })
+      : `${LIVE_USAGE}\n(${why})`,
+  );
   return 2;
 }
