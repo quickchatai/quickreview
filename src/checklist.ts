@@ -12,6 +12,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { digestHeadline } from "./digest.js";
 import { signBody } from "./webhook.js";
 
 export interface ProbeResult {
@@ -249,6 +250,13 @@ export function probeDigest(deps: DigestProbeDeps): ProbeResult {
   }
   if (typeof headline !== "string" || headline.trim() === "")
     return bad(item, name, `${file} present but status.json has no digest_headline`);
+  const expected = digestHeadline(readFileSync(file, "utf8"));
+  if (expected !== undefined && headline !== expected)
+    return bad(
+      item,
+      name,
+      `${file} present but status.json digest_headline "${headline.slice(0, 60)}" is not its headline "${expected.slice(0, 60)}"`,
+    );
   return ok(item, name, `${file} (${size} chars), headline: "${headline.slice(0, 60)}"`);
 }
 

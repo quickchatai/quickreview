@@ -276,8 +276,7 @@ export async function cmdChecklist(parts?: ProductionParts): Promise<number> {
     restart: {
       statusPath: join(root, "state", "status.json"),
       // Dry pass: the workers a restarted daemon would find (their leases).
-      adoptExistingSessions: () =>
-        createWorkerLiveness({ runDir: runDirOf(join(root, "state")) }).liveSessions() ?? [],
+      adoptExistingSessions: () => liveWorkerSessions(runDirOf(join(root, "state"))),
     },
     bot_login: cfg.github.bot_login,
     labels: {
@@ -292,6 +291,15 @@ export async function cmdChecklist(parts?: ProductionParts): Promise<number> {
   } finally {
     store.close();
   }
+}
+
+/** The sessions workers run for now, from their leases. Leases that cannot be
+ * read are UNKNOWN and throw, so the checklist reports a failed look rather
+ * than an empty inventory. */
+export function liveWorkerSessions(runDir: string): string[] {
+  const names = createWorkerLiveness({ runDir }).liveSessions();
+  if (names === null) throw new Error("the worker leases could not be read (liveness unknown)");
+  return names;
 }
 
 /** The known mechanically authored COMMENT bodies carry no round verdict. */
