@@ -21,7 +21,7 @@ import {
   type EcosystemPreCheckIo,
 } from "../src/ecosystem.js";
 import type { GateResult } from "../src/gate.js";
-import type { PrFileEntry } from "../src/github.js";
+import { GitHubRequestError, type PrFileEntry } from "../src/github.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
 import { loadProfileEcosystem } from "../src/profiles.js";
 import { StateStore } from "../src/state.js";
@@ -598,6 +598,31 @@ describe("migration comment delivery recovery", () => {
       },
       findCollisionComment: async (pr: number, marker: string, head: string) =>
         pr === round.pr && head === round.head_sha && body.split("\n").includes(marker),
+    };
+    try {
+      await DJANGO_ECOSYSTEM.preCheck(io, round);
+      expect(await DJANGO_ECOSYSTEM.preCheck(io, round)).not.toHaveProperty("comment_undelivered");
+      expect(writes).toBe(1);
+    } finally {
+      store.close();
+    }
+  });
+  it("treats an HTTP 408 on the comment POST as unknown delivery, reconciled by marker rather than reposted", async () => {
+    const store = new StateStore(":memory:");
+    let writes = 0;
+    let body = "";
+    const io = {
+      logEvent: store.logEvent.bind(store),
+      migrationCollisionCommented: (pr: number, fp: string) =>
+        store.migrationCollisionCommented(pr, fp, { live: true }),
+      listBaseMigrations: async () => ["app/migrations/0042_existing.py"],
+      createReview: async (_pr: number, payload: { body: string }) => {
+        writes++;
+        body = payload.body;
+        throw new GitHubRequestError("POST", "/pulls/7/reviews", 408, "request timeout");
+      },
+      findCollisionComment: async (_pr: number, marker: string) =>
+        body.split("\n").includes(marker),
     };
     try {
       await DJANGO_ECOSYSTEM.preCheck(io, round);
