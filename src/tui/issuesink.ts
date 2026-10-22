@@ -24,12 +24,12 @@
 // scans ticket `Memory-key:` lines, github leans on the daemon's title dedup
 // (the re-filed duplicate is refused, not doubled).
 import { validateCommand } from "../commands.js";
-import { EVENT_TAG_RE } from "../memory/eventtags.js";
 import type { Config, IssueSinkKind, TuiConfig } from "../config.js";
 import { sinkTicketsEffort } from "../config.js";
 import {
   autofileDefects,
   filedAs,
+  entryProse,
   MEMORY_KEY_LINE,
   memoryKey,
   stampFiled,
@@ -88,12 +88,7 @@ export class WayfinderIssueSink implements IssueSink {
 /** The prose of an entry — `#tags`, `k=v` tokens (the memory vocabulary's
  * one grammar) and `[[links]]` are not title material, wherever they sit. */
 export function issueTitleFor(e: MemoryEntry): string {
-  const prose = e.text
-    .split(/\s+/)
-    .filter(
-      (t) => t !== "" && !t.startsWith("#") && !EVENT_TAG_RE.test(t) && !/^\[\[[^\]]*\]\]$/.test(t),
-    )
-    .join(" ");
+  const prose = entryProse(e.text);
   const head = (prose || "memory defect").slice(0, 90).trim();
   return `Auto-filed defect: ${head}`;
 }

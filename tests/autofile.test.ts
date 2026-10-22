@@ -185,6 +185,14 @@ describe("autofile", () => {
     await expect(autofileDefects(gone, [entry()], "2026-08-20T10:00:00Z")).resolves.toEqual([]);
   });
 
+  it("the title comes from the prose, not from a long header of tags and k=v tokens", () => {
+    const header = Array.from({ length: 12 }, (_, i) => `key${i}=value${i}`).join(" ");
+    const e = entry({ text: `#bug ${header} lingering recheck claim never released` });
+    const { name, content } = ticketBody("0134", e, paths, "2026-08-20T10:00:00Z");
+    expect(name).toBe("FT-0134-lingering-recheck-claim-never-released.md");
+    expect(content.split("\n")[0]).toBe("# Auto-filed defect: lingering recheck claim never released");
+  });
+
   it("ticket header follows the grammar (H1, blank, Id: block)", () => {
     const { content } = ticketBody("0133", entry(), paths, "2026-08-20T10:00:00Z");
     const lines = content.split("\n");

@@ -846,6 +846,21 @@ describe("the CLI client (`qcr archive run|restore <pr>`)", () => {
     ]);
   });
 
+  it("a failed command write reports its stderr as one line without control bytes", async () => {
+    const ssh: SshRunner = async () => ({
+      ok: false,
+      stdout: "",
+      stderr: "boom\x1b[2J\nsecond line\x07",
+      code: 255,
+    });
+    const out = await new ArchiveOpSender(tui, ssh, () => new Date(), async () => {}).send({
+      command: "archive-run",
+    });
+    expect(out.ok).toBe(false);
+    expect(out.reason).toContain("command write failed");
+    expect(out.reason).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+  });
+
   it("waits the daemon's own bound plus the message timeout — never less", async () => {
     expect(archiveOpTimeoutMs(tui)).toBe(OPERATOR_WAIT_MS + 30_000);
     let t = Date.parse("2026-10-21T12:00:00Z");

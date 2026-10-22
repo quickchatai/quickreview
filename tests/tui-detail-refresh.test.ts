@@ -213,3 +213,38 @@ it("drops an events response after the app stopped", async () => {
   await request;
   expect(callbacks).toBe(0);
 });
+
+it("an older events response finishing late never replaces a newer one", async () => {
+  const h = harness();
+  const finishes: Array<(r: RemoteResult) => void> = [];
+  (h.app as unknown as { ssh: SshRunner }).ssh = (() =>
+    new Promise<RemoteResult>((r) => finishes.push(r))) as SshRunner;
+  const app = h.app as unknown as { refreshEvents(): Promise<void>; rawEvents: unknown[] };
+  const older = app.refreshEvents();
+  const newer = app.refreshEvents();
+  const ev = (kind: string) => ({ ts: "2026-10-22T10:00:00Z", kind, pr: null, payload: null });
+  finishes[1]!({ ok: true, stdout: JSON.stringify({ events: [ev("newer")] }), stderr: "", code: 0 });
+  await newer;
+  finishes[0]!({ ok: true, stdout: JSON.stringify({ events: [ev("older")] }), stderr: "", code: 0 });
+  await older;
+  expect(app.rawEvents).toEqual([ev("newer")]);
+});
+
+it("selecting another PR (click, wheel, deep link) drops a cancelled message draft like j/k does", () => {
+  const h = harness();
+  h.poll(snap("aaa"));
+  const app = h.app as unknown as { msgDraft: string };
+  app.msgDraft = "cancelled text for 5012";
+  expect(h.app.selectPr(5013)).toBe(true);
+  expect(app.msgDraft).toBe("");
+});
+
+it("the quit prompt paints on a terminal narrower than its box", async () => {
+  const { Frame } = await import("../src/tui/paint.js");
+  const h = harness();
+  h.app.view.confirmQuit = true;
+  const paintQuit = h.app as unknown as {
+    paintQuitPrompt(f: InstanceType<typeof Frame>, cols: number, rows: number): void;
+  };
+  expect(() => paintQuit.paintQuitPrompt(new Frame(5, 10), 5, 10)).not.toThrow();
+});
