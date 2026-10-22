@@ -157,6 +157,31 @@ describe("onboarding regression seams", () => {
       true,
     );
   });
+  it("reads the active embedder from the memory sidecar, which owns ov.conf", async () => {
+    const c = ctx();
+    const execs: string[][] = [];
+    c.adapters.runner = {
+      run: async (_cmd, args) => {
+        if (args.includes("exec")) execs.push(args);
+        return {
+          code: 0,
+          stdout: args.includes("exec")
+            ? JSON.stringify({
+                provider: "openai",
+                model: "bge-small-en-v1.5-f16",
+                dimension: 384,
+                api_base: "http://127.0.0.1:1934/v1",
+              })
+            : JSON.stringify([{ Service: "daemon", State: "running" }]),
+          stderr: "",
+        };
+      },
+    };
+    await embeddingsStep().verify(c);
+    expect(execs).toHaveLength(1);
+    expect(execs[0]).toContain("memory");
+    expect(execs[0]).not.toContain("daemon");
+  });
   it("verifies a running local embedder whose active identity and boot inputs both match", async () => {
     const c = ctx();
     c.adapters.runner = {

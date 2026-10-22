@@ -32,6 +32,8 @@ import { TUI_DEFAULTS } from "../../config.js";
 import type { CheckResult, OnboardAdapters, ProcessResult, StepContext } from "../engine.js";
 import {
   DAEMON_SERVICE,
+  MEMORY_SERVICE,
+  composeArgs,
   composePs,
   containerStateCheck,
   daemonExecArgs,
@@ -85,6 +87,10 @@ export interface StackTransport {
   daemonState(): Promise<DaemonState>;
   /** Run an argv INSIDE the daemon container. */
   exec(argv: readonly string[]): Promise<ProcessResult>;
+  /** Run an argv INSIDE the container that owns the memory engine: the memory
+   * sidecar on the compose stack, `[tui] memory_container` (else the daemon's
+   * container) on the server route. */
+  execMemory(argv: readonly string[]): Promise<ProcessResult>;
   /** Layer 2 of verification: does the daemon answer `GET /health`? */
   health(): Promise<CheckResult>;
   /** Make the daemon re-read config.toml. */
@@ -147,6 +153,13 @@ function composeTransport(ctx: StepContext, opts: TransportOptions): StackTransp
 
     async exec(argv) {
       return ctx.adapters.runner.run("docker", daemonExecArgs(root, argv));
+    },
+
+    async execMemory(argv) {
+      return ctx.adapters.runner.run(
+        "docker",
+        composeArgs(root, ["exec", "-T", MEMORY_SERVICE, ...argv]),
+      );
     },
 
     async health() {
@@ -238,6 +251,10 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
     Math.ceil((opts.healthTimeoutMs ?? DEFAULT_HEALTH_TIMEOUT_MS) / 1000),
   );
   const dockerPrefix = facts.sudo ? ["sudo", "docker"] : ["docker"];
+  const configText = readConfigText(ctx.adapters);
+  const memoryContainer =
+    (configText ? readTomlKey(configText, "tui", "memory_container") : null)?.trim() ||
+    facts.container;
   const remote = (argv: readonly string[]): Promise<ProcessResult> =>
     ctx.adapters.runner.run("ssh", sshArgv(facts.alias, argv));
   const healthEndpoint = `http://127.0.0.1:${facts.port}/health`;
@@ -402,6 +419,12 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
       if (facts.alias === "")
         return { code: 1, stdout: "", stderr: "no ssh alias recorded for the server route" };
       return remote([...dockerPrefix, "exec", facts.container, ...argv]);
+    },
+
+    async execMemory(argv) {
+      if (facts.alias === "")
+        return { code: 1, stdout: "", stderr: "no ssh alias recorded for the server route" };
+      return remote([...dockerPrefix, "exec", memoryContainer, ...argv]);
     },
 
     async health() {

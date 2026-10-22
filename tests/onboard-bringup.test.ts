@@ -516,6 +516,18 @@ describe("no Docker where the wizard runs (D16)", () => {
     expect(detail).toMatch(/XDG_CONFIG_HOME/);
   });
 
+  it("carries the ngrok reserved domain from the project .env into the host .env", async () => {
+    seedChoices({ [UID_CHOICE_KEY]: 1234, [INGRESS_CHOICE_KEY]: "ngrok" });
+    writeFileSync(
+      join(root, ".env"),
+      "COMPOSE_PROFILES=ngrok-tunnel\nQCR_NGROK_DOMAIN=bot.ngrok.app\n",
+    );
+    const h = harness({ noDocker: true });
+    const result = await h.engine.runStep(BRINGUP_STEP_ID);
+    const detail = result.checks.find((c) => c.name === "host-commands")!.detail;
+    expect(detail).toContain("QCR_NGROK_DOMAIN=bot.ngrok.app");
+  });
+
   it("hostCommands creates the directories and says what to place there when given them", () => {
     const cmds = hostCommands({
       version: "1.2.3",

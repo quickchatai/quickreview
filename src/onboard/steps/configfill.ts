@@ -639,6 +639,18 @@ export const DERIVABLES: readonly Derivable[] = [
     holds: () => null,
   },
   {
+    id: "tui_memory_container",
+    path: "[tui] memory_container",
+    explain:
+      "the bundled local Compose project runs the memory sidecar as quickreview-memory-1, where the memory forward must relay; preserve an operator's custom container",
+    write: (f, fresh, existing) =>
+      f.topology === "local" && (fresh || (existing?.tui.memory_container ?? "") === "")
+        ? { section: "tui", key: "memory_container", value: tomlString("quickreview-memory-1") }
+        : null,
+    stable: false,
+    holds: () => null,
+  },
+  {
     id: "tui_ssh_host",
     path: "[tui] ssh_host",
     explain:

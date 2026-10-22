@@ -307,7 +307,15 @@ import {loadConfig} from "./dist/src/config.js";
 const cfg=loadConfig();
 const dense=JSON.parse(readFileSync(cfg.openviking.config_file,"utf8")).embedding?.dense;
 console.log(JSON.stringify({provider:dense?.provider,model:dense?.model,dimension:dense?.dimension,api_base:dense?.api_base}));`;
-  const result = await stackTransportFor(ctx).exec(["node", "--input-type=module", "-e", script]);
+  // ov.conf lives in the memory engine's container; its image keeps the app
+  // in /opt/qcr and exports QCR_CONFIG only inside its entrypoint.
+  const result = await stackTransportFor(ctx).execMemory([
+    "sh",
+    "-c",
+    'cd /opt/qcr 2>/dev/null; QCR_CONFIG="${QCR_CONFIG:-/opt/quickreview/config-home/${QCR_CONFIG_NAME:-config.toml}}" ' +
+      'exec node --input-type=module -e "$0"',
+    script,
+  ]);
   let actual: Record<string, unknown> | undefined;
   try {
     const value: unknown = JSON.parse(result.stdout);

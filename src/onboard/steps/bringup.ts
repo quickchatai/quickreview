@@ -174,6 +174,7 @@ function hostEnvLines(
   uid: number,
   profile: string,
   configText: string,
+  projectEnv: string,
 ): string[] {
   const { home, secrets } = hostPaths(configText);
   const lines: string[] = [
@@ -185,6 +186,8 @@ function hostEnvLines(
     `QCR_SECRETS_DIR=${secrets}`,
     `QCR_CLONE_DIR=${cloneDirOfConfig(configText)}`,
   ];
+  const ngrokDomain = readEnvKey(projectEnv, "QCR_NGROK_DOMAIN");
+  if (ngrokDomain !== null && ngrokDomain !== "") lines.push(`QCR_NGROK_DOMAIN=${ngrokDomain}`);
   for (const [key, value] of embedderEnvEntries(declaredEmbedderOf(configText)))
     lines.push(`${key}=${value}`);
   for (const [key, value] of localEmbedderEnvEntries(configText)) lines.push(`${key}=${value}`);
@@ -318,7 +321,7 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
         const commands = hostCommands({
           version,
           projectDir: "~/qcr-bot",
-          env: hostEnvLines(ctx, version, uid, profile, configText),
+          env: hostEnvLines(ctx, version, uid, profile, configText, envText),
           dirs: [`"${paths.home}"`, `"${paths.secrets}"`],
           notes: [
             `# Put ${basename(ctx.adapters.paths.configPath)} in ${paths.home} and your secrets in ${paths.secrets}:`,
