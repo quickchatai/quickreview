@@ -15,6 +15,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MutationGate } from "../src/gate.js";
 import {
   GH_READ_LOG_TAIL_BYTES,
+  GH_READ_MAX_IN_FLIGHT,
+  GH_READ_PER_MINUTE,
   GH_READ_OP,
   GH_READ_QUERIES,
   ghReadOps,
@@ -24,8 +26,8 @@ import {
 import { GitHubAdapter, cappedText } from "../src/github.js";
 import type { TokenMinter } from "../src/githubAuth.js";
 import { CapabilityStore, createCapabilityFd, socketPathOf } from "../src/ipc/capability.js";
-import type { CommandState } from "../src/ipc/protocol.js";
-import { IpcServer } from "../src/ipc/server.js";
+import { IpcError, type CommandState } from "../src/ipc/protocol.js";
+import { IpcServer, type RequestContext } from "../src/ipc/server.js";
 import { loadConfig } from "../src/config.js";
 
 const SANDBOX = resolve(import.meta.dirname, "..");
@@ -357,5 +359,74 @@ describe("the helpers read through the daemon, holding no token", () => {
   it("the op is served to a shim and a worker, and only to a live command", () => {
     const op = ghReadOps({ reader: {} as never })[GH_READ_OP]!;
     expect([...op.roles].sort()).toEqual(["shim", "worker"]);
+  });
+});
+
+describe("a read is the command's PR's, and bounded", () => {
+  const reader = (gate?: Promise<void>) => ({
+    owner: "acme",
+    repo: "webapp",
+    calls: 0,
+    async readText() {
+      this.calls++;
+      await gate;
+      return { status: 200, body: "{}", truncated: false };
+    },
+    async graphqlText() {
+      this.calls++;
+      await gate;
+      return { status: 200, body: "{}", truncated: false };
+    },
+  });
+  const ctxFor = (pr: number) =>
+    ({
+      pr,
+      requirePr(n: unknown) {
+        if (n !== pr) throw new IpcError("wrong_pr", `not pr ${pr}`);
+      },
+    }) as unknown as RequestContext;
+
+  it("refuses a read that names another PR, by REST path or GraphQL number", async () => {
+    const r = reader();
+    const op = ghReadOps({ reader: r })[GH_READ_OP]!;
+    for (const body of [
+      { kind: "rest", path: "/repos/acme/webapp/pulls/8/files" },
+      { kind: "rest", path: "/repos/acme/webapp/issues/8/comments" },
+      { kind: "graphql", name: "pr-threads", variables: { number: 8 } },
+    ])
+      await expect(op.handle(ctxFor(7), body)).rejects.toMatchObject({ code: "wrong_pr" });
+    expect(r.calls).toBe(0);
+    await expect(
+      op.handle(ctxFor(7), { kind: "rest", path: "/repos/acme/webapp/pulls/7/files" }),
+    ).resolves.toMatchObject({ status: 200 });
+    // a repo-wide read names no PR
+    await expect(
+      op.handle(ctxFor(7), { kind: "rest", path: "/repos/acme/webapp/commits/abc/check-runs" }),
+    ).resolves.toMatchObject({ status: 200 });
+  });
+
+  it("holds a PR to its in-flight and per-minute bounds, and lets another PR read", async () => {
+    let open!: () => void;
+    const gate = new Promise<void>((res) => (open = res));
+    const r = reader(gate);
+    let t = 0;
+    const op = ghReadOps({ reader: r, now: () => t })[GH_READ_OP]!;
+    const body = { kind: "rest", path: "/repos/acme/webapp/pulls/7" };
+    const held = Array.from({ length: GH_READ_MAX_IN_FLIGHT }, () => op.handle(ctxFor(7), body));
+    await expect(op.handle(ctxFor(7), body)).rejects.toMatchObject({ code: "rate_limited" });
+    // another PR is not held by PR 7's bound
+    const other = op.handle(ctxFor(9), { kind: "rest", path: "/repos/acme/webapp/pulls/9" });
+    open();
+    await Promise.all(held);
+    await expect(other).resolves.toMatchObject({ status: 200 });
+    // the minute's budget
+    let served = GH_READ_MAX_IN_FLIGHT;
+    while (served < GH_READ_PER_MINUTE) {
+      await op.handle(ctxFor(7), body);
+      served++;
+    }
+    await expect(op.handle(ctxFor(7), body)).rejects.toMatchObject({ code: "rate_limited" });
+    t += 60_000;
+    await expect(op.handle(ctxFor(7), body)).resolves.toMatchObject({ status: 200 });
   });
 });

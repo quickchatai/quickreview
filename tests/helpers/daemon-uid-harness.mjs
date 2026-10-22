@@ -30,12 +30,47 @@ write("daemon.json", {
   modes: Object.fromEntries(
     ["/opt/qcr/state", "/opt/qcr/verdict", "/opt/qcr/commands", "/opt/qcr/wt"].map((d) => [
       d,
-      spawnSync("stat", ["-c", "%a", d], { encoding: "utf8" }).stdout.trim(),
+      spawnSync("stat", ["-c", "%a %g", d], { encoding: "utf8" }).stdout.trim(),
     ]),
   ),
 });
 
 const { toolIdsOf, isolatedBashOperations, TOOL_UMASK } = await import(`${dist}/engine/tooluid.js`);
+const { StateStore } = await import(`${dist}/state.js`);
+
+// The daemon's own database, opened as the daemon opens it, and a built agent.
+const store = new StateStore("/opt/qcr/state/state.db");
+write(
+  "db-mode.txt",
+  spawnSync("stat", ["-c", "%a", "/opt/qcr/state/state.db"], { encoding: "utf8" }).stdout,
+);
+spawnSync("mkdir", ["-p", "/opt/qcr/state/agents"]);
+
+// The setid helper as the daemon holds it (its gate group): the tool identity,
+// and nothing else — root, root's group, the daemon's own uid.
+const helperRun = (reuid, regid, cmd) => {
+  const r = spawnSync(
+    "/usr/local/libexec/qcr/qcr-setid",
+    [
+      `--reuid=${reuid}`,
+      `--regid=${regid}`,
+      "--clear-groups",
+      "--inh-caps=-all",
+      "--ambient-caps=-all",
+      "--no-new-privs",
+      "--",
+      ...cmd,
+    ],
+    { encoding: "utf8" },
+  );
+  return { code: r.status, text: r.stdout + r.stderr };
+};
+write("helper.json", {
+  tool: helperRun(65534, 4749, ["sh", "-c", "id -u; id -g; id -G"]),
+  root: helperRun(0, 0, ["id", "-u"]),
+  rootGid: helperRun(65534, 0, ["id", "-u"]),
+  daemon: helperRun(1001, 1001, ["id", "-u"]),
+});
 const { IpcServer } = await import(`${dist}/ipc/server.js`);
 const { CapabilityStore, socketPathOf } = await import(`${dist}/ipc/capability.js`);
 
@@ -77,6 +112,11 @@ await bash(
 );
 await bash("state", "printf x > /opt/qcr/state/pr-1-round-1-review.md && echo state-ok");
 await bash("worktreeWrite", "touch /opt/qcr/wt/pr-1/new-file");
+await bash("readDb", "cat /opt/qcr/state/state.db");
+await bash("renameDb", "mv /opt/qcr/state/state.db /opt/qcr/state/stolen.db");
+await bash("renameRun", "mv /opt/qcr/state/run /opt/qcr/state/run-moved");
+await bash("renameAgents", "mv /opt/qcr/state/agents /opt/qcr/state/agents-moved");
+await bash("renameOperator", "mv /opt/qcr/commands/operator /opt/qcr/commands/operator-moved");
 await bash(
   "socket",
   `node -e 'require("net").connect(${JSON.stringify(sock)}).on("connect",()=>{console.log("connected");process.exit(0)}).on("error",(e)=>{console.log(e.code);process.exit(1)})'`,
@@ -87,10 +127,11 @@ await bash(
 );
 await bash(
   "helperBack",
-  "/usr/local/libexec/qcr/setpriv --reuid=1001 --regid=1001 --clear-groups -- id -u",
+  "/usr/local/libexec/qcr/qcr-setid --reuid=1001 --regid=1001 --clear-groups -- id -u",
 );
 write("bash.json", results);
 await server.stop();
+store.db.close();
 // the daemon's own uid reads its secrets, as it must
 write(
   "daemon-reads.txt",

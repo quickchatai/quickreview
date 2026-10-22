@@ -113,7 +113,7 @@ declare -A C=()
 REQUIRED_KEYS=(
   RUNSPEC_VERSION RUNSPEC_FINGERPRINT SANDBOX_ROOT APP_ROOT
   DAEMON_CONTAINER MEMORY_CONTAINER DAEMON_IMAGE_REPO MEMORY_IMAGE_REPO
-  MEMORY_NETWORK WEBHOOK_PORT CONTAINER_UID TOOL_UID TZ
+  MEMORY_NETWORK WEBHOOK_PORT CONTAINER_UID TOOL_UID TOOL_GID TZ
   DAEMON_CPUS DAEMON_MEMORY MEMORY_CPUS MEMORY_MEMORY
   MEMORY_STATE_DIR OPENVIKING_HOME OPENVIKING_PORT BASE_CLONE_DIR LEGACY_SANDBOX_ROOT
   BACKUP_DIR UPDATE_STATE_DIR
@@ -319,6 +319,23 @@ record_last_run() {
 OPERATOR_DIR="$ROOT/sandbox/commands/operator"
 RESULTS_DIR="$ROOT/sandbox/commands/results"
 
+# The operator channel's directory, made and sealed by root here, while no
+# container runs: commands/operator, root-owned 0755. The bot holds no
+# capability that lets root inside it create or take over a directory in the
+# daemon's commands/, so the operator's `docker exec -u 0` writes only
+# into this one, which root owns. A symlink in its place is refused, never
+# followed.
+ensure_operator_channel() {
+  local parent="$ROOT/sandbox/commands"
+  [[ -d "$parent" && ! -L "$parent" ]] || return 0
+  [[ ! -L "$OPERATOR_DIR" ]] || die "$OPERATOR_DIR is a symlink — refusing to seal the operator channel through it"
+  [[ -e "$OPERATOR_DIR" ]] || mkdir "$OPERATOR_DIR"
+  [[ -d "$OPERATOR_DIR" ]] || die "$OPERATOR_DIR is not a directory — cannot seal the operator channel"
+  if [[ $TEST_MODE -eq 0 ]]; then
+    chown -h 0:0 "$OPERATOR_DIR" && chmod 0755 "$OPERATOR_DIR"
+  fi
+}
+
 # Write one `drain on` command as root into the sealed operator directory and
 # wait for the daemon's receipt. 0 only when the receipt says draining=true.
 send_drain_on() {
@@ -520,6 +537,18 @@ if [[ "$image_runspec" -ge 2 || -n "$SETID_GID" ]]; then
 fi
 [[ "${C[TOOL_UID]}" =~ ^[1-9][0-9]*$ && "${C[TOOL_UID]}" != "${C[CONTAINER_UID]}" ]] ||
   die "$CONF TOOL_UID (${C[TOOL_UID]}) must be a non-zero uid other than CONTAINER_UID — re-run provision"
+[[ "${C[TOOL_GID]}" =~ ^[1-9][0-9]*$ && "${C[TOOL_GID]}" != "${C[CONTAINER_UID]}" ]] ||
+  die "$CONF TOOL_GID (${C[TOOL_GID]}) must be a non-zero gid other than the container's — re-run provision"
+# The helper switches to the identity compiled into the image and nothing else
+# (docker/setid/qcr-setid.c): the run spec must name that same identity.
+if [[ -n "$SETID_GID" ]]; then
+  for k in uid gid; do
+    want="$(image_label "$DAEMON_REF" "qcr.tool-$k")"
+    have="${C[TOOL_${k^^}]}"
+    [[ "$want" == "$have" ]] ||
+      die "$DAEMON_REF runs the model's tools as tool $k ${want:-?}, but $CONF says TOOL_${k^^}=$have — re-run provision"
+  done
+fi
 
 # ---- 5. stage the config and check it with the NEW image ---------------------------------------------------
 
@@ -677,15 +706,16 @@ daemon_args=(
   run -d --name "$DAEMON" --restart unless-stopped --init
   --cpus "${C[DAEMON_CPUS]}" --memory "${C[DAEMON_MEMORY]}" --memory-swap "${C[DAEMON_MEMORY]}"
   --user "$UID_GID"
-  # the model's tools run as TOOL_UID (QCR_TOOLS_AS), which cannot read
-  # secrets/ or pi's login; the bot reaches it through the image's setid helper,
-  # given by --group-add below. The bot stays this uid, so a `docker exec` lands
-  # as it. No capability beyond these: SETUID/SETGID for the helper's file
-  # capabilities, and CHOWN/DAC_OVERRIDE/FOWNER for the operator channel's
-  # `docker exec -u 0` (the root-owned commands/operator seal). no-new-privileges
-  # stays off: it would void the helper's file capabilities; the model's tools
-  # carry no_new_privs of their own.
-  --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER
+  # the model's tools run as TOOL_UID:TOOL_GID (QCR_TOOLS_AS), which cannot
+  # read secrets/ or pi's login; the bot reaches it through the image's setid
+  # helper, which switches to that one identity only, given by the --group-add
+  # below. The bot stays this uid, so a `docker exec` lands as it. No
+  # capability beyond SETUID/SETGID, the helper's file capabilities: the
+  # operator channel's `docker exec -u 0` writes into commands/operator, which
+  # is root's own (ensure_operator_channel), and needs none.
+  # no-new-privileges stays off: it would void the helper's file capabilities;
+  # the model's tools carry no_new_privs of their own.
+  --cap-drop ALL --cap-add SETUID --cap-add SETGID
   -e "QCR_TOOLS_AS=${C[TOOL_UID]}"
   -p "127.0.0.1:${C[WEBHOOK_PORT]}:${C[WEBHOOK_PORT]}"
   --network "${C[MEMORY_NETWORK]}"
@@ -710,7 +740,8 @@ daemon_args=(
   -e "QCR_CONFIG=$CONFIG_PATH_IN_CONTAINER"
 )
 if [[ -n "$SETID_GID" ]]; then
-  daemon_args+=(--group-add "$SETID_GID")
+  # the helper's gate group, and the tool gid the shared directories belong to
+  daemon_args+=(--group-add "$SETID_GID" --group-add "${C[TOOL_GID]}")
 fi
 if [[ -n "${C[DAEMON_ENV_FILE]:-}" && -f "${C[DAEMON_ENV_FILE]}" ]]; then
   daemon_args+=(--env-file "${C[DAEMON_ENV_FILE]}")
@@ -721,6 +752,7 @@ if container_exists "$DAEMON"; then
   d rename "$DAEMON" "$DAEMON-prev"
   OLD_DAEMON_RENAMED=1
 fi
+ensure_operator_channel
 NEW_DAEMON_STARTED=1
 d "${daemon_args[@]}" >/dev/null
 

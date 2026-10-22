@@ -53,6 +53,23 @@ ARG TMUX_VERSION=3.5a
 ARG PI_PACKAGE=@earendil-works/pi-coding-agent
 ARG PI_VERSION=1.3.0
 
+# The always-on bot's tool identity: the uid and gid the model's
+# tools run as, compiled into the setid helper, which can switch to nothing else.
+ARG QCR_TOOL_UID=65534
+ARG QCR_TOOL_GID=4749
+
+# ---- the setid helper ---------------------------------------------------------
+# docker/setid/qcr-setid.c, built here so the release stage carries the binary,
+# not a compiler. It takes setpriv's argv as the engine spells it and refuses any
+# identity but the one compiled in.
+FROM node:${NODE_MAJOR}-${NODE_DISTRO} AS setid-build
+ARG QCR_TOOL_UID
+ARG QCR_TOOL_GID
+COPY docker/setid/qcr-setid.c /src/qcr-setid.c
+RUN mkdir -p /out \
+    && gcc -O2 -Wall -Wextra -Werror -DTOOL_UID="${QCR_TOOL_UID}" -DTOOL_GID="${QCR_TOOL_GID}" \
+         -o /out/qcr-setid /src/qcr-setid.c
+
 # ---- tmux from source --------------------------------------------------------
 # bookworm ships 3.3a, below the >=3.5 that `extended-keys-format csi-u` needs
 # (modified keys actually reaching pi). Built once here so the release stage
@@ -190,19 +207,29 @@ RUN ! command -v claude
 RUN setpriv --version >/dev/null
 # The always-on bot's setid helper. The bot runs as its own uid, not
 # root, so a `docker exec` into it lands as that uid; docker gives a non-root
-# uid no ambient capabilities, so it reaches the tool uid through this copy of
-# setpriv, which carries CAP_SETUID/CAP_SETGID as FILE capabilities and which
-# only the gate group may run (the run spec's --group-add, the qcr.setid-gid
-# label below). The model's tools run with no_new_privs and without that group:
-# to them the helper is a plain, unrunnable binary. setcap comes last: a chown
-# or a copy afterwards would drop the capabilities.
+# uid no ambient capabilities, so it reaches the tool uid through
+# docker/setid/qcr-setid.c, which carries CAP_SETUID/CAP_SETGID as FILE
+# capabilities and switches to exactly one identity, QCR_TOOL_UID:QCR_TOOL_GID,
+# never root. Only the gate group may run it (the run spec's --group-add, the
+# qcr.setid-gid label below). The model's tools run with no_new_privs and
+# without that group: to them the helper is a plain, unrunnable binary. The
+# tool gid is its own group, shared with the daemon (its second --group-add)
+# only through the directories the model's scripts write. setcap comes last: a
+# chown or a copy afterwards would drop the capabilities.
 ARG QCR_SETID_GID=4748
+ARG QCR_TOOL_UID
+ARG QCR_TOOL_GID
+COPY --from=setid-build /out/qcr-setid /tmp/qcr-setid
 RUN install -d -o root -g root -m 0755 /usr/local/libexec/qcr \
-    && install -o root -g "${QCR_SETID_GID}" -m 0750 "$(command -v setpriv)" /usr/local/libexec/qcr/setpriv \
-    && setcap cap_setuid,cap_setgid=ep /usr/local/libexec/qcr/setpriv \
-    && getcap /usr/local/libexec/qcr/setpriv | grep -q 'cap_setgid,cap_setuid=ep' \
-    || { echo "FATAL: the setid helper has no cap_setuid,cap_setgid=ep ($(getcap /usr/local/libexec/qcr/setpriv 2>&1))" >&2; exit 1; }
-LABEL qcr.setid-gid="${QCR_SETID_GID}"
+    && install -o root -g "${QCR_SETID_GID}" -m 0750 /tmp/qcr-setid /usr/local/libexec/qcr/qcr-setid \
+    && rm -f /tmp/qcr-setid \
+    && setcap cap_setuid,cap_setgid=ep /usr/local/libexec/qcr/qcr-setid \
+    && getcap /usr/local/libexec/qcr/qcr-setid | grep -q 'cap_setgid,cap_setuid=ep' \
+    || { echo "FATAL: the setid helper has no cap_setuid,cap_setgid=ep ($(getcap /usr/local/libexec/qcr/qcr-setid 2>&1))" >&2; exit 1; }
+ENV QCR_IMAGE_TOOL_UID="${QCR_TOOL_UID}" QCR_IMAGE_TOOL_GID="${QCR_TOOL_GID}"
+LABEL qcr.setid-gid="${QCR_SETID_GID}" \
+      qcr.tool-uid="${QCR_TOOL_UID}" \
+      qcr.tool-gid="${QCR_TOOL_GID}"
 # flock (util-linux): the login refresher's single-instance lock and the login
 # mode's test for whether one is running (src/loginrefresh/lock.ts, P8.22).
 RUN flock --version >/dev/null

@@ -16,6 +16,7 @@
 !scripts
 !config.example.toml
 !docker/entrypoint.sh
+!docker/setid/qcr-setid.c
 !docker/vm/tmux.conf
 !docker/companion/agents
 !docker/companion/memory-health.mjs

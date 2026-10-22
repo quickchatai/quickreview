@@ -2139,7 +2139,9 @@ describe("deploy.sh — base clone name", () => {
       playbook.indexOf("- name: Runtime directories the containers mount"),
       playbook.indexOf("- name: Directories for the sidecar's store"),
     );
-    for (const d of mounted) expect(made, d).toMatch(new RegExp(`^\\s+- ${d}$`, "m"));
+    // a plain entry, or one of the tool-gid shared directories ({ path: d, mode })
+    for (const d of mounted)
+      expect(made, d).toMatch(new RegExp(`^\\s+- (?:${d}|\\{ path: ${d}, mode: "\\d+" \\})$`, "m"));
     expect(list).toContain("dist");
 
     for (const name of ["notes", "wt", "dist"]) {
@@ -2942,8 +2944,15 @@ describe("deploy — the memory sidecar", () => {
         playbook.indexOf("- name: Directories for the sidecar's store"),
       );
       for (const d of [...dirs, '"{{ base_clone_dir | mandatory }}"']) {
-        expect(made, d).toMatch(new RegExp(`^\\s+- ${d.replace(/[{}|"]/g, "\\$&")}$`, "m"));
+        const e = d.replace(/[{}|"]/g, "\\$&");
+        expect(made, d).toMatch(
+          new RegExp(`^\\s+- (?:${e}|\\{ path: ${e}, mode: "\\d+" \\})$`, "m"),
+        );
       }
+      // what the model's tools write is the tool gid's, setgid; commands/ sticky
+      expect(made).toContain('group: "{{ tool_gid }}"');
+      expect(made).toContain('{ path: commands, mode: "3775" }');
+      expect(made).toContain('{ path: verdict, mode: "2775" }');
       expect(made).toContain('owner: "{{ container_uid }}"');
       // Every runtime dir the deploy script reserves is mounted.
       const reserved = /BASE_CLONE_RESERVED=\(([^)]*)\)/.exec(readFileSync(deploySh, "utf8"))![1]!;

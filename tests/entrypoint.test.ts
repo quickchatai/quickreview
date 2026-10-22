@@ -135,6 +135,9 @@ function rig(base = tmpdir()): Rig {
       HOME: home,
       QCR_APP_ROOT: app,
       QCR_SETID_HELPER: join(bin, "setid-helper"),
+      // the image's tool gid (docker/Dockerfile ENV): here the runner's own, a
+      // group the "daemon" is in, as the run spec's --group-add makes it
+      QCR_IMAGE_TOOL_GID: String(process.getgid?.() ?? 1000),
     },
   };
   rigs.push(r);
@@ -465,7 +468,7 @@ describe("daemon mode: the model's tools run as another uid", () => {
     );
   const gid = String(process.getgid?.() ?? 1000);
 
-  it("probes the helper, then exports the tool uid, the daemon's own gid and the helper", () => {
+  it("probes the helper, then exports the tool uid, the image's tool gid and the helper", () => {
     const r = rig();
     report(r);
     const out = run(r, ["daemon"], { ...withConfig(r), QCR_TOOL_UID: "1", QCR_SETPRIV_BIN: "/x" });
@@ -495,10 +498,35 @@ describe("daemon mode: the model's tools run as another uid", () => {
     for (const d of ["verdict", "commands", "wt"]) mkdirSync(join(r.app, d), { mode: 0o755 });
     chmodSync(join(r.app, "state"), 0o755);
     expect(run(r, ["daemon"], withConfig(r)).status).toBe(0);
-    for (const d of ["state", "state/findings", "state/ledgers", "verdict", "commands"])
-      expect(statSync(join(r.app, d)).mode & 0o070, d).toBe(0o070);
+    for (const d of ["state", "state/findings", "state/ledgers", "verdict", "commands"]) {
+      const st = statSync(join(r.app, d));
+      expect(st.mode & 0o070, d).toBe(0o070);
+      // setgid: what either side makes there stays in the tool gid
+      expect(st.mode & 0o2000, d).toBe(0o2000);
+      expect(st.gid, d).toBe(process.getgid?.());
+    }
+    // sticky where the tool uid must not rename the daemon's entries (state.db,
+    // the IPC run dir, the operator channel); not verdict/, where
+    // commit-verdict.sh renames what the session's write tool staged
+    for (const d of ["state", "commands"])
+      expect(statSync(join(r.app, d)).mode & 0o1000, d).toBe(0o1000);
+    expect(statSync(join(r.app, "verdict")).mode & 0o1000).toBe(0);
     // the worktrees stay the daemon's
     expect(statSync(join(r.app, "wt")).mode & 0o020).toBe(0);
+  });
+
+  it("refuses to start when the daemon is not in the image's tool gid", () => {
+    // MUTATION: drop the `id -G` membership check — this fails
+    const r = rig();
+    report(r);
+    const groups = new Set((process.getgroups?.() ?? []).map(String));
+    let outside = 4749;
+    while (groups.has(String(outside))) outside++;
+    const out = run(r, ["daemon"], { ...withConfig(r), QCR_IMAGE_TOOL_GID: String(outside) });
+    expect(out.status).toBe(1);
+    expect(out.stdout).toBe("");
+    expect(out.stderr).toContain(`not in the tool gid ${outside}`);
+    expect(out.stderr).toContain(`--group-add ${outside}`);
   });
 
   it("refuses to start when the helper cannot switch, and runs nothing", () => {

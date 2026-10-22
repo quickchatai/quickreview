@@ -66,8 +66,13 @@ services:
   # base clone ...) arrives root-owned and unwritable by the daemon, and one
   # over a path the image has arrives world-writable (state/, pi's home), which
   # the model's tool uid must not get. It touches the volume roots only, never a
-  # file inside one: the daemon's own 0755, state/, verdict/ and commands/
-  # group-writable for the tool uid (the daemon's gid), pi's home 0700.
+  # file inside one: the daemon's own 0755; state/, verdict/ and commands/
+  # shared with the model's tools through their own gid (4749, the image's
+  # qcr.tool-gid) -- setgid, and state/ and commands/ sticky, as the daemon's
+  # entrypoint sets them; pi's home 0700; and the operator channel,
+  # commands/operator, made root's own 0755 here, so the operator's
+  # `docker exec -u 0` writes into a directory root owns and the daemon needs
+  # no capability for it.
   volume-init:
     image: ghcr.io/quickchatai/quickreview:${QCR_VERSION:?set QCR_VERSION to the release to run (the image tag)}
     user: "0:0"
@@ -77,14 +82,20 @@ services:
         set -eu;
         for d in /v/state /v/wt /v/archive /v/commands /v/digest /v/inject /v/verdict
         /v/pihome /v/base-clone /v/home-pi; do chown "$$QCR_UID:$$QCR_UID" "$$d"; done;
-        chmod 0775 /v/state /v/verdict /v/commands;
+        chgrp 4749 /v/state /v/verdict /v/commands;
+        chmod 3775 /v/state /v/commands;
+        chmod 2775 /v/verdict;
         chmod 0755 /v/wt /v/archive /v/digest /v/inject /v/pihome /v/base-clone;
-        chmod 0700 /v/home-pi
+        chmod 0700 /v/home-pi;
+        if [ -L /v/commands/operator ]; then echo 'commands/operator is a symlink' >&2; exit 1; fi;
+        mkdir -p /v/commands/operator;
+        chown -h 0:0 /v/commands/operator;
+        chmod 0755 /v/commands/operator
     environment:
       QCR_UID: ${QCR_UID:-1000}
     network_mode: none
     cap_drop: [ALL]
-    cap_add: [CHOWN, FOWNER]
+    cap_add: [CHOWN, FOWNER, DAC_OVERRIDE]
     security_opt:
       - no-new-privileges:true
     volumes:
@@ -107,15 +118,16 @@ services:
     # picks it. Your uid, so the 0600 files you own in the secrets mount stay
     # readable and nothing else is shared.
     user: "${QCR_UID:-1000}:${QCR_UID:-1000}"
-    # The model's tools run as another uid, which cannot read the secrets mount
-    # or pi's login (docker/entrypoint.sh): the daemon reaches it through the
-    # image's setid helper, which only this gate group may run (the image's
-    # qcr.setid-gid label). The same shape as the VM's (deploy/qcr-update.sh):
-    # SETUID/SETGID for the helper's file capabilities, CHOWN/DAC_OVERRIDE/
-    # FOWNER for the operator channel's `docker exec -u 0`, and no
-    # no-new-privileges, which would void the helper (the model's tools carry
-    # no_new_privs of their own).
-    group_add: ["4748"]
+    # The model's tools run as another uid and gid (65534:4749, the image's
+    # qcr.tool-uid / qcr.tool-gid), which cannot read the secrets mount or
+    # pi's login (docker/entrypoint.sh): the daemon reaches it through the
+    # image's setid helper, which switches to that one identity only and which
+    # only the gate group 4748 may run (the image's qcr.setid-gid label); 4749
+    # is how it shares the directories the tools write. The same shape as the
+    # VM's (deploy/qcr-update.sh): SETUID/SETGID for the helper's file
+    # capabilities and nothing else, and no no-new-privileges, which would void
+    # the helper (the model's tools carry no_new_privs of their own).
+    group_add: ["4748", "4749"]
     depends_on:
       volume-init:
         condition: service_completed_successfully
@@ -124,7 +136,7 @@ services:
     init: true
     restart: unless-stopped
     cap_drop: [ALL]
-    cap_add: [SETUID, SETGID, CHOWN, DAC_OVERRIDE, FOWNER]
+    cap_add: [SETUID, SETGID]
     # Resource caps -- same defaults as the live VM (a shared box). Raise via
     # QCR_CPUS / QCR_MEMORY if the host is yours alone.
     cpus: ${QCR_CPUS:-2}

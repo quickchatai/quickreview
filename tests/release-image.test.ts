@@ -97,26 +97,47 @@ describe("release image — stages and pins", () => {
     expect(/^RUNSPEC_VERSION=(\d+)$/m.exec(deploy)?.[1]).toBe("2");
   });
 
-  it("carries the bot's setid helper: setpriv with file capabilities, its gate group labelled", () => {
+  it("carries the bot's setid helper: qcr-setid with file capabilities, one identity, its gate group labelled", () => {
     // MUTATION: drop the setcap line — the build check and this test fail
     expect(dockerfile).toMatch(/ARG QCR_SETID_GID=4748\n/);
+    expect(dockerfile).toMatch(/ARG QCR_TOOL_UID=65534\n/);
+    expect(dockerfile).toMatch(/ARG QCR_TOOL_GID=4749\n/);
+    // built from the repo's own source, with the identity compiled in — never a
+    // copy of setpriv, which could switch to any uid (root among them)
     expect(dockerfile).toContain(
-      'install -o root -g "${QCR_SETID_GID}" -m 0750 "$(command -v setpriv)" /usr/local/libexec/qcr/setpriv',
+      'gcc -O2 -Wall -Wextra -Werror -DTOOL_UID="${QCR_TOOL_UID}" -DTOOL_GID="${QCR_TOOL_GID}"',
     );
-    expect(dockerfile).toContain("setcap cap_setuid,cap_setgid=ep /usr/local/libexec/qcr/setpriv");
+    expect(dockerfile).not.toMatch(/command -v setpriv\)" \/usr\/local\/libexec/);
+    expect(dockerfile).toContain(
+      'install -o root -g "${QCR_SETID_GID}" -m 0750 /tmp/qcr-setid /usr/local/libexec/qcr/qcr-setid',
+    );
+    expect(dockerfile).toContain(
+      "setcap cap_setuid,cap_setgid=ep /usr/local/libexec/qcr/qcr-setid",
+    );
     // the build fails unless the capabilities really are on the file
     expect(dockerfile).toMatch(
-      /getcap \/usr\/local\/libexec\/qcr\/setpriv \| grep -q 'cap_setgid,cap_setuid=ep'/,
+      /getcap \/usr\/local\/libexec\/qcr\/qcr-setid \| grep -q 'cap_setgid,cap_setuid=ep'/,
     );
     expect(dockerfile).toContain('LABEL qcr.setid-gid="${QCR_SETID_GID}"');
+    expect(dockerfile).toContain('qcr.tool-uid="${QCR_TOOL_UID}"');
+    expect(dockerfile).toContain('qcr.tool-gid="${QCR_TOOL_GID}"');
+    expect(dockerfile).toContain(
+      'ENV QCR_IMAGE_TOOL_UID="${QCR_TOOL_UID}" QCR_IMAGE_TOOL_GID="${QCR_TOOL_GID}"',
+    );
+    // the source refuses root at compile time, and every switch but the one identity
+    const src = read("docker/setid/qcr-setid.c");
+    expect(src).toContain("#if TOOL_UID == 0 || TOOL_GID == 0");
+    expect(src).toContain('"--reuid=" STR(TOOL_UID)');
+    expect(src).toContain('"--regid=" STR(TOOL_GID)');
+    expect(read("docker/Dockerfile.dockerignore")).toContain("!docker/setid/qcr-setid.c\n");
     // the capabilities are set after everything that could drop them, and the
     // world-readable sweep of the app root never reaches the helper
     const at = dockerfile.indexOf("setcap cap_setuid");
-    expect(dockerfile.slice(at)).not.toMatch(/(chown|chmod|install)[^\n]*libexec\/qcr\/setpriv/);
+    expect(dockerfile.slice(at)).not.toMatch(/(chown|chmod|install)[^\n]*libexec\/qcr\/qcr-setid/);
     expect(dockerfile).toMatch(/chmod -R a\+rX,go-w \/opt\/qcr &&/);
     // the entrypoint's default is the same path and gate group
     const entry = read("docker/entrypoint.sh");
-    expect(entry).toContain('SETID_HELPER="${QCR_SETID_HELPER:-/usr/local/libexec/qcr/setpriv}"');
+    expect(entry).toContain('SETID_HELPER="${QCR_SETID_HELPER:-/usr/local/libexec/qcr/qcr-setid}"');
     expect(entry).toContain("${QCR_SETID_GID:-4748}");
     // qcr.preflight says the image HAS `daemon --preflight` (P8.4b): it is labelled
     // by the change that adds the subcommand, never before it exists, so until then

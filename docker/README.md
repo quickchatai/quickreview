@@ -61,18 +61,25 @@ embedding model.
 ## What the stack is
 
 - **`daemon`** — `ghcr.io/quickchatai/quickreview`, run as `daemon` mode, as
-  your uid (`QCR_UID`). The model's tools run as another uid
-  (`QCR_TOOLS_AS`, default `65534`) that cannot read your secrets or pi's
-  login: the daemon reaches it through the image's setid helper, so it gets
-  the helper's gate group (`group_add`) and, of all capabilities, only
-  `SETUID`/`SETGID` (the helper) and `CHOWN`/`DAC_OVERRIDE`/`FOWNER` (the
-  operator channel's `docker exec -u 0`), and no `no-new-privileges`, which
-  would void the helper. It publishes one port, the webhook port `8787`, bound
+  your uid (`QCR_UID`). The model's tools run as another uid and gid
+  (`65534:4749`, compiled into the image) that cannot read your secrets or
+  pi's login: the daemon reaches it through the image's setid helper, which
+  switches to that one identity and nothing else. So the daemon gets the
+  helper's gate group and the tool gid (`group_add: 4748, 4749`) and, of all
+  capabilities, only `SETUID`/`SETGID` (the helper), and no
+  `no-new-privileges`, which would void the helper. The directories the
+  model's scripts write (`state/`, `verdict/`, `commands/`) belong to the tool
+  gid, setgid, with `state/` and `commands/` sticky, so the tools never rename
+  or remove the daemon's entries. Keep the host's `kernel.yama.ptrace_scope` at
+  1 or higher: every PR's tools share the one tool uid, and at 0 one PR's
+  tools could trace another's. It publishes one port, the webhook port `8787`, bound
   to `127.0.0.1` by default (`QCR_WEBHOOK_BIND` / `QCR_WEBHOOK_PORT` to
   change).
 - **`volume-init`** — a one-shot root container that runs before the daemon
   and hands the roots of the daemon's volumes to `QCR_UID` (it touches no file
-  inside them), then exits.
+  inside them), shares `state/`, `verdict/` and `commands/` with the tool gid,
+  makes the operator channel `commands/operator` root's own `0755`, then
+  exits.
 - **`memory`** — `ghcr.io/quickchatai/quickreview-memory`: OpenViking, its
   venv, llama-cpp-python and the pinned embedding model, in a container of its
   own. It boots offline. `config.toml` must say `[openviking] endpoint =

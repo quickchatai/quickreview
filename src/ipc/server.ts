@@ -14,7 +14,7 @@
 // The generation is a fence and nothing more: guessing or replaying one
 // authenticates nothing. Handlers get the command's PR, lease and may_post
 // and decide the rest (P7.2's post ops check them).
-import { chmodSync, lstatSync, unlinkSync } from "node:fs";
+import { chmodSync, chownSync, lstatSync, unlinkSync } from "node:fs";
 import net from "node:net";
 import { dirname } from "node:path";
 import { type CapabilityStore, ensurePrivateDir } from "./capability.js";
@@ -83,6 +83,14 @@ interface Conn {
   closed: boolean;
 }
 
+/** chgrp to the tool gid the entrypoint named (QCR_TOOL_GID), owner kept. */
+function shareWithToolGid(paths: readonly string[]): void {
+  const gid = process.env["QCR_TOOL_GID"];
+  if (gid === undefined || !/^[1-9][0-9]*$/.test(gid) || typeof process.getuid !== "function")
+    return;
+  for (const p of paths) chownSync(p, process.getuid(), Number(gid));
+}
+
 export class IpcServer {
   private server: net.Server | null = null;
   private readonly conns = new Set<Conn>();
@@ -114,6 +122,9 @@ export class IpcServer {
       });
     });
     chmodSync(socketPath, group ? 0o660 : 0o600);
+    // The tools run in a gid of their own: the run dir and the socket
+    // are handed to it, whatever group they were made in.
+    if (group) shareWithToolGid([dirname(socketPath), socketPath]);
     this.server = server;
     this.unsubscribe = this.opts.capabilities.onRevoke((id) => this.dropCommand(id));
   }

@@ -155,13 +155,15 @@
         state: directory
         mode: "{{ item.mode }}"
         owner: "{{ item.owner | default(container_uid) }}"
-        group: "{{ item.owner | default(container_uid) }}"
+        group: "{{ item.group | default(item.owner | default(container_uid)) }}"
       loop:
         - { path: "{{ sandbox_root }}", mode: "0755", owner: "root" }
         - { path: "{{ sandbox_root }}/sandbox", mode: "0755" }
-        # Group-writable: the model's tools (tool_uid, the container uid's
-        # gid) write the round's state files there.
-        - { path: "{{ sandbox_root }}/state", mode: "0775" }
+        # Shared with the model's tools through their own gid (tool_gid), as
+        # the bot's entrypoint sets it (share_tool_dirs): setgid, so what
+        # either side makes stays in that group, and sticky, so the tool uid
+        # never renames or removes the daemon's entries (state.db among them).
+        - { path: "{{ sandbox_root }}/state", mode: "3775", group: "{{ tool_gid }}" }
         # OpenViking's home: ~/.openviking is symlinked here at boot,
         # so memories + vector db + ov.conf survive an image rebuild. 0700 —
         # ov.conf carries the server's root key (and, under the hosted
@@ -308,13 +310,28 @@
       loop:
         - wt
         - archive
-        - commands
         - digest
         - inject
-        - verdict
         # the PR sessions' own HOME (<app root>/pihome)
         - pihome
         - "{{ base_clone_dir | mandatory }}"
+
+    # What the model's tools write (their scripts' verdicts and session
+    # commands), shared through the tool gid exactly as the bot's entrypoint
+    # sets it, so a provision never takes it back from a running bot: setgid on
+    # both; commands/ also sticky (the root-owned operator channel inside it
+    # cannot be renamed away); verdict/ not, since commit-verdict.sh, run as the
+    # tool uid, publishes by renaming what the session's write tool staged.
+    - name: Directories shared with the model's tools (tool gid {{ tool_gid }})
+      ansible.builtin.file:
+        path: "{{ sandbox_root }}/sandbox/{{ item.path }}"
+        state: directory
+        mode: "{{ item.mode }}"
+        owner: "{{ container_uid }}"
+        group: "{{ tool_gid }}"
+      loop:
+        - { path: commands, mode: "3775" }
+        - { path: verdict, mode: "2775" }
 
     # The memory sidecar's store directories. The sidecar CONTAINER and its
     # network are the updater's; its store is seeded from the daemon's once, by

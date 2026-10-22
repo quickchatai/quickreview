@@ -133,17 +133,17 @@ describe("the bot's setid helper", () => {
   const fs =
     (file: ReturnType<typeof st> | undefined, dir: ReturnType<typeof st> | undefined) =>
     (p: string) =>
-      p === "/usr/local/libexec/qcr/setpriv"
+      p === "/usr/local/libexec/qcr/qcr-setid"
         ? file
         : p === "/usr/local/libexec/qcr"
           ? dir
           : undefined;
-  const HELPER = { QCR_SETPRIV_BIN: "/usr/local/libexec/qcr/setpriv" };
+  const HELPER = { QCR_SETPRIV_BIN: "/usr/local/libexec/qcr/qcr-setid" };
 
   it("is trusted as a root-owned file in a root-owned dir, neither writable by group or others", () => {
     expect(setidHelperOf({}, fs(undefined, undefined))).toBeNull();
     expect(setidHelperOf(HELPER, fs(st(0, 0o100750, "file"), st(0, 0o40755, "dir")))).toEqual({
-      path: "/usr/local/libexec/qcr/setpriv",
+      path: "/usr/local/libexec/qcr/qcr-setid",
     });
     // MUTATION: drop the owner check in setidHelperOf — the first two pass
     for (const [file, dir] of [

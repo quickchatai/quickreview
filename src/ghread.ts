@@ -155,6 +155,23 @@ export interface GhReadAnswer {
   truncated: boolean;
 }
 
+/** The PR a read names, where it names one: a REST path under the repo's
+ * pulls/<n> or issues/<n>, or a GraphQL query's `number`. Null for a repo-wide
+ * read (a check run, a job log, a commit), which belongs to no PR. */
+export function readPr(read: GhRead): number | null {
+  if (read.kind === "graphql") return read.variables["number"] as number;
+  const m = /^\/repos\/[^/]+\/[^/]+\/(?:pulls|issues)\/(\d+)(?:\/|$)/.exec(
+    read.path.split("?")[0]!,
+  );
+  return m ? Number(m[1]) : null;
+}
+
+/** At most this many reads in flight for one PR, and this many a minute. A
+ * session's helpers make a handful per call; the bounds keep a looping one from
+ * spending the App's rate limit for every other PR. */
+export const GH_READ_MAX_IN_FLIGHT = 4;
+export const GH_READ_PER_MINUTE = 120;
+
 /** Serve one read. */
 export async function serveGhRead(reader: GhReader, read: GhRead): Promise<GhReadAnswer> {
   if (read.kind === "rest")
@@ -173,12 +190,30 @@ export async function serveGhRead(reader: GhReader, read: GhRead): Promise<GhRea
 export function ghReadOps(deps: {
   reader: GhReader;
   log?: (line: string) => void;
+  now?: () => number;
 }): Record<string, OpHandler> {
+  const now = deps.now ?? Date.now;
+  const inFlight = new Map<number, number>();
+  const recent = new Map<number, number[]>();
   return {
     [GH_READ_OP]: {
       roles: ["shim", "worker"],
       handle: async (ctx: RequestContext, body: unknown) => {
         const read = parseGhRead(body, deps.reader.owner, deps.reader.repo);
+        // A read that names a PR names the command's own (wrong_pr otherwise).
+        const named = readPr(read);
+        if (named !== null) ctx.requirePr(named);
+        const t = now();
+        const window = (recent.get(ctx.pr) ?? []).filter((at) => t - at < 60_000);
+        const flying = inFlight.get(ctx.pr) ?? 0;
+        if (flying >= GH_READ_MAX_IN_FLIGHT || window.length >= GH_READ_PER_MINUTE)
+          throw new IpcError(
+            "rate_limited",
+            `github.read: pr ${ctx.pr} has ${flying} reads in flight and ${window.length} in the last minute (at most ${GH_READ_MAX_IN_FLIGHT} and ${GH_READ_PER_MINUTE}) — wait and try again`,
+          );
+        window.push(t);
+        recent.set(ctx.pr, window);
+        inFlight.set(ctx.pr, flying + 1);
         try {
           return await serveGhRead(deps.reader, read);
         } catch (e) {
@@ -186,6 +221,10 @@ export function ghReadOps(deps: {
             `github.read for pr ${ctx.pr} (${read.kind === "rest" ? read.path : read.name}) failed: ${String(e)}`,
           );
           throw new IpcError("internal", `github.read: the request failed (${String(e)})`);
+        } finally {
+          const left = (inFlight.get(ctx.pr) ?? 1) - 1;
+          if (left > 0) inFlight.set(ctx.pr, left);
+          else inFlight.delete(ctx.pr);
         }
       },
     },

@@ -863,6 +863,7 @@ runspec_body() {
   printf 'WEBHOOK_PORT=%s\n' "$(v webhook_port 8787)"
   printf 'CONTAINER_UID=%s\n' "$(v container_uid 1001)"
   printf 'TOOL_UID=%s\n' "$(v tool_uid 65534)"
+  printf 'TOOL_GID=%s\n' "$(v tool_gid 4749)"
   printf 'TZ=%s\n' "$(v timezone Europe/Warsaw)"
   printf 'DAEMON_CPUS=%s\n' "$(v container_cpus 2)"
   printf 'DAEMON_MEMORY=%s\n' "$(v container_memory 8g)"

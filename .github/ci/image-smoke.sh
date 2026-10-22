@@ -115,26 +115,39 @@ fi
 
 # ---- 6. the bot's setid helper -------------------------------------------------
 # the always-on bot runs as its own uid and reaches the tool uid through
-# /usr/local/libexec/qcr/setpriv, whose CAP_SETUID/CAP_SETGID are FILE
+# /usr/local/libexec/qcr/qcr-setid, whose CAP_SETUID/CAP_SETGID are FILE
 # capabilities (docker/Dockerfile). A build or a registry that drops the xattr
 # leaves a helper that switches nothing, and the bot refuses to start; this is
 # where that is caught, in the run spec's shape (deploy/qcr-update.sh).
 
-step "the bot's setid helper switches to the tool uid"
-helper=/usr/local/libexec/qcr/setpriv
-gate="$(docker image inspect --format '{{index .Config.Labels "qcr.setid-gid"}}' "$IMAGE")" ||
+step "the bot's setid helper switches to the tool identity, and to nothing else"
+helper=/usr/local/libexec/qcr/qcr-setid
+label() { docker image inspect --format "{{index .Config.Labels \"$1\"}}" "$IMAGE"; }
+gate="$(label qcr.setid-gid)" && tuid="$(label qcr.tool-uid)" && tgid="$(label qcr.tool-gid)" ||
   fail "cannot read the image's labels"
-[[ "$gate" =~ ^[1-9][0-9]*$ ]] || fail "the image has no numeric qcr.setid-gid label ($gate)"
+for v in "$gate" "$tuid" "$tgid"; do
+  [[ "$v" =~ ^[1-9][0-9]*$ ]] || fail "the image lacks a numeric qcr.setid-gid / qcr.tool-uid / qcr.tool-gid label ($gate/$tuid/$tgid)"
+done
 bot() {
   docker run --rm --network none --user 1001:1001 --cap-drop ALL --cap-add SETUID --cap-add SETGID \
     "$@"
 }
-as_tool="$(bot --group-add "$gate" --entrypoint "$helper" "$IMAGE" \
-  --reuid=65534 --regid=1001 --clear-groups --inh-caps=-all --ambient-caps=-all --no-new-privs -- id -u)" ||
+sw() { printf '%s\n' --reuid="$1" --regid="$2" --clear-groups --inh-caps=-all --ambient-caps=-all --no-new-privs; }
+mapfile -t to_tool < <(sw "$tuid" "$tgid")
+as_tool="$(bot --group-add "$gate" --entrypoint "$helper" "$IMAGE" "${to_tool[@]}" -- sh -c 'id -u; id -g; id -G')" ||
   fail "the setid helper did not run as the bot's uid with its gate group"
-[ "$as_tool" = 65534 ] || fail "the setid helper switched to uid '$as_tool', not the tool uid 65534"
-if bot --entrypoint "$helper" "$IMAGE" --reuid=65534 --regid=1001 --clear-groups -- true >/dev/null 2>&1; then
+[ "$as_tool" = "$tuid
+$tgid
+$tgid" ] || fail "the setid helper switched to '$(echo $as_tool)', not $tuid:$tgid with no other group"
+if bot --entrypoint "$helper" "$IMAGE" "${to_tool[@]}" -- true >/dev/null 2>&1; then
   fail "the setid helper runs without its gate group"
 fi
+# the helper must not reach any other identity: root above all
+for other in "0 0" "0 $tgid" "$tuid 0" "1001 1001"; do
+  mapfile -t to_other < <(sw $other)
+  if bot --group-add "$gate" --entrypoint "$helper" "$IMAGE" "${to_other[@]}" -- true >/dev/null 2>&1; then
+    fail "the setid helper switched to $other: it must switch to $tuid:$tgid only"
+  fi
+done
 
 echo "image smoke: ok" >&2

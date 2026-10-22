@@ -4,7 +4,7 @@
 import { findingRowFields } from "./finding-row.js";
 import { roundStageDeadlines } from "./round-stage-deadlines.js";
 import Database from "better-sqlite3";
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { OpenVikingStatus } from "./openviking/types.js";
 import type { ArchiveStatus } from "./archive/status.js";
@@ -1856,6 +1856,23 @@ export interface RecheckClaimRow {
   receipt_checked_at: string | null;
 }
 
+/**
+ * state.db and its WAL files are the daemon's alone: where the
+ * model's tools run as another uid they share the state directory's group, and
+ * the database holds every PR's records. SQLite creates the -wal and -shm files
+ * with the database file's mode, so the three are set once here. Best effort: a
+ * file another uid owns is left as it is.
+ */
+function ownerOnly(path: string): void {
+  for (const f of [path, `${path}-wal`, `${path}-shm`]) {
+    try {
+      chmodSync(f, 0o600);
+    } catch {
+      // absent, or not ours to change
+    }
+  }
+}
+
 export class StateStore {
   readonly db: Database.Database;
 
@@ -1866,6 +1883,7 @@ export class StateStore {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.db = new Database(path);
     this.db.pragma("journal_mode = WAL");
+    if (path !== ":memory:") ownerOnly(path);
     // The inject bridge is a second WAL writer. A short daemon-side wait keeps
     // routine cross-process commits from turning into partial handoffs while
     // preserving a finite failure that supervisor health can expose. The wait

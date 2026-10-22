@@ -23,7 +23,7 @@
 // shared uid is accepted. Outside the image none of these names is set and
 // nothing changes.
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, readdirSync } from "node:fs";
+import { chmodSync, chownSync, existsSync, lstatSync, readdirSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { constants as osConstants } from "node:os";
@@ -129,21 +129,27 @@ export function checkToolUid(
 }
 
 /**
- * Opens `dir` and everything in it to the run gid, which the tool uid shares:
- * group read and write on files, and group access on directories. For a
- * process that runs as the tool uid and needs what the run uid made private
- * (a debug round's pi reading its agent dir); the owner's bits stay. Symbolic
- * links are left as they are, and a missing dir is nothing to share.
+ * Opens `dir` and everything in it to the tool uid's group: group read and
+ * write on files, and group access on directories, each entry handed to the
+ * tool gid (`QCR_TOOL_GID`) where that is not this process's own gid (the
+ * bot's tools run in a gid of their own,; the cli's share the run
+ * gid). For a process that runs as the tool uid and needs what the run uid
+ * made private (a debug round's pi reading its agent dir); the owner's bits
+ * stay. Symbolic links are left as they are, and a missing dir is nothing to
+ * share.
  */
-export function shareWithToolGroup(dir: string): void {
+export function shareWithToolGroup(dir: string, env: NodeJS.ProcessEnv = process.env): void {
   const st = lstatSync(dir, { throwIfNoEntry: false });
   if (st === undefined || st.isSymbolicLink()) return;
   // An entry another uid owns (the tool uid's own, made under its group-writable
   // umask) is not this process's to change, and needs no sharing.
   if (typeof process.getuid === "function" && st.uid !== process.getuid()) return;
+  const gid = env["QCR_TOOL_GID"];
+  if (gid !== undefined && /^[1-9][0-9]*$/.test(gid) && st.gid !== Number(gid))
+    chownSync(dir, st.uid, Number(gid));
   if (st.isDirectory()) {
     chmodSync(dir, (st.mode & 0o7777) | 0o070);
-    for (const name of readdirSync(dir)) shareWithToolGroup(join(dir, name));
+    for (const name of readdirSync(dir)) shareWithToolGroup(join(dir, name), env);
   } else if (st.isFile()) {
     chmodSync(dir, (st.mode & 0o7777) | 0o060);
   }

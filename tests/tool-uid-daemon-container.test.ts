@@ -58,8 +58,9 @@ afterAll(() => {
 /** As root: the image's helper and the VM's layout, then the bot's start. */
 const SETUP = `set -euo pipefail
 install -d -m 0755 /usr/local/libexec/qcr
-install -o root -g 4748 -m 0750 "$(command -v setpriv)" /usr/local/libexec/qcr/setpriv
-python3 -c 'import os, struct; os.setxattr("/usr/local/libexec/qcr/setpriv", "security.capability", struct.pack("<IIIII", 0x02000001, 0xc0, 0, 0, 0))'
+gcc -O2 -Wall -Wextra -Werror -DTOOL_UID=65534 -DTOOL_GID=4749 -o /tmp/qcr-setid /opt/qcr/docker/setid/qcr-setid.c
+install -o root -g 4748 -m 0750 /tmp/qcr-setid /usr/local/libexec/qcr/qcr-setid
+python3 -c 'import os, struct; os.setxattr("/usr/local/libexec/qcr/qcr-setid", "security.capability", struct.pack("<IIIII", 0x02000001, 0xc0, 0, 0, 0))'
 mkdir -p /opt/quickreview/secrets
 printf 'APP-KEY-MATERIAL' >/opt/quickreview/secrets/app.pem
 printf '1' >/opt/quickreview/secrets/app_id
@@ -71,12 +72,13 @@ printf '{"refresh":"LOGIN-REFRESH-TOKEN"}' >/home/qcr/.pi/agent/auth.json
 chown -R 1001:1001 /home/qcr
 chmod 0700 /home/qcr/.pi
 for d in state verdict commands wt pihome; do install -d -o 1001 -g 1001 -m 0755 /opt/qcr/$d; done
+install -d -o 0 -g 0 -m 0755 /opt/qcr/commands/operator
 git init -q /opt/qcr/wt/pr-1
 git -C /opt/qcr/wt/pr-1 -c user.email=a@b -c user.name=a commit -q --allow-empty -m base
 ln -s /opt/quickreview/secrets/app.pem /opt/qcr/wt/pr-1/innocent.md
 chown -R 1001:1001 /opt/qcr/wt
-exec setpriv --reuid=1001 --regid=1001 --groups=4748 --inh-caps=-all \\
-  --bounding-set=-all,+setuid,+setgid,+chown,+dac_override,+fowner \\
+exec setpriv --reuid=1001 --regid=1001 --groups=4748,4749 --inh-caps=-all \\
+  --bounding-set=-all,+setuid,+setgid \\
   -- /opt/qcr/docker/entrypoint.sh daemon
 `;
 
@@ -96,6 +98,7 @@ function runBot(): { status: number | null; stderr: string; out: string } {
     "scripts/mint-token.sh",
     "config.example.toml",
     "docker/vm/tmux.conf",
+    "docker/setid/qcr-setid.c",
   ])
     put(f, readFileSync(join(root, f), "utf8"));
   chmodSync(join(app, "docker/entrypoint.sh"), 0o755);
@@ -130,6 +133,10 @@ function runBot(): { status: number | null; stderr: string; out: string } {
       "PATH=/opt/qcr/bin:/usr/local/bin:/usr/bin:/bin",
       "-e",
       "QCR_APP_ROOT=/opt/qcr",
+      "-e",
+      "QCR_IMAGE_TOOL_UID=65534",
+      "-e",
+      "QCR_IMAGE_TOOL_GID=4749",
       "-e",
       "QCR_CONFIG=/opt/qcr/config.example.toml",
       "-e",
@@ -172,25 +179,38 @@ describe.skipIf(!hasDocker || !hasDist)(
         uid: 1001,
         gid: 1001,
         toolUid: "65534",
-        toolGid: "1001",
-        setprivBin: "/usr/local/libexec/qcr/setpriv",
+        toolGid: "4749",
+        setprivBin: "/usr/local/libexec/qcr/qcr-setid",
         umask: 0o022,
       });
       expect(daemon["groups"]).toContain(4748);
-      // the directories the model's scripts write are open to the group; the
-      // worktrees are not
+      expect(daemon["groups"]).toContain(4749);
+      // the directories the model's scripts write are the tool gid's, setgid,
+      // state/ and commands/ sticky; the worktrees are not shared
       expect(daemon["modes"]).toEqual({
-        "/opt/qcr/state": "775",
-        "/opt/qcr/verdict": "775",
-        "/opt/qcr/commands": "775",
-        "/opt/qcr/wt": "755",
+        "/opt/qcr/state": "3775 4749",
+        "/opt/qcr/verdict": "2775 4749",
+        "/opt/qcr/commands": "3775 4749",
+        "/opt/qcr/wt": "755 1001",
       });
+      // the helper switches the daemon to the tool identity and to nothing else
+      const helper = JSON.parse(read("helper.json")) as Record<
+        string,
+        { code: number; text: string }
+      >;
+      expect(helper["tool"]!.text.trim().split(/\s+/)).toEqual(["65534", "4749", "4749"]);
+      for (const other of ["root", "rootGid", "daemon"]) {
+        expect(helper[other]!.code, other).toBe(126);
+        expect(helper[other]!.text, other).toMatch(/qcr-setid: refused/);
+      }
+      // state.db is the daemon's alone
+      expect(read("db-mode.txt").trim()).toBe("600");
       // and it reads its own secrets
       expect(read("daemon-reads.txt")).toBe("APP-KEY-MATERIAL");
 
       const bash = JSON.parse(read("bash.json")) as Record<string, { code: number; text: string }>;
-      expect(bash["id"]!.text).toMatch(/^uid=65534\(nobody\) gid=1001 groups=1001\s*$/);
-      for (const label of ["secret", "secretsLs", "planted", "login", "environ", "mem"]) {
+      expect(bash["id"]!.text).toMatch(/^uid=65534\(nobody\) gid=4749 groups=4749\s*$/);
+      for (const label of ["secret", "secretsLs", "planted", "login", "environ", "mem", "readDb"]) {
         expect(bash[label]!.code, label).not.toBe(0);
         expect(bash[label]!.text, label).toMatch(/Permission denied/);
       }
@@ -211,6 +231,11 @@ describe.skipIf(!hasDocker || !hasDist)(
       expect(bash["state"]!.text.trim()).toBe("state-ok");
       expect(bash["socket"]!.text.trim()).toBe("connected");
       expect(bash["worktreeWrite"]!.code).not.toBe(0);
+      // the sticky directories: nothing of the daemon's (or root's) is renamed away
+      for (const label of ["renameDb", "renameRun", "renameAgents", "renameOperator"]) {
+        expect(bash[label]!.code, label).not.toBe(0);
+        expect(bash[label]!.text, label).toMatch(/Operation not permitted|Permission denied/);
+      }
     });
   },
 );

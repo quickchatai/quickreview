@@ -170,10 +170,15 @@ memory_container_memory: "3g"
 
 timezone: Europe/Warsaw
 container_uid: 1001                   # the uid the daemon runs as and the host directories belong to
-# The uid the model's tools run as (D32): never the container uid, so
-# they cannot read secrets/ or pi's login. It shares the container uid's gid,
-# which is how it writes the round's state files and verdicts.
+# The identity the model's tools run as (D32): never the container
+# uid, so they cannot read secrets/ or pi's login, and a gid of its own, which
+# the container user is given too (--group-add) and which owns only the
+# directories the model's scripts write (state/, verdict/, commands/). A MIRROR
+# of the release image's compiled-in identity (docker/Dockerfile QCR_TOOL_UID /
+# QCR_TOOL_GID, its qcr.tool-uid / qcr.tool-gid labels): the updater refuses a
+# run spec that names another.
 tool_uid: 65534
+tool_gid: 4749
 
 # Hard Docker limits — the VM may be shared with other workloads.
 container_cpus: "2"

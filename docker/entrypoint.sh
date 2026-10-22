@@ -52,7 +52,7 @@
 #     and every other verb that runs none are unaffected).
 # The daemon mode (the always-on bot) makes the same split from a
 # NON-root start, so `docker exec` into the bot keeps landing as its uid: the
-# image's setid helper (/usr/local/libexec/qcr/setpriv, file capabilities, gate
+# image's setid helper (/usr/local/libexec/qcr/qcr-setid, file capabilities, gate
 # group QCR_SETID_GID) is probed, and the daemon exports QCR_TOOL_UID (QCR_TOOLS_AS,
 # default 65534), QCR_TOOL_GID (its own gid) and QCR_SETPRIV_BIN; its workers run
 # every model command through the helper (src/engine/tooluid.ts setidHelperOf).
@@ -177,38 +177,52 @@ isolate_tools() {
 # the tool uid and runs `true`); where it does not, the bot refuses to start
 # rather than run the model's tools in the uid that reads secrets/, unless
 # QCR_ALLOW_SHARED_TOOL_UID=1 accepts that.
-SETID_HELPER="${QCR_SETID_HELPER:-/usr/local/libexec/qcr/setpriv}"
+SETID_HELPER="${QCR_SETID_HELPER:-/usr/local/libexec/qcr/qcr-setid}"
 daemon_setid_helper() {
-  local tool_uid="${QCR_TOOLS_AS:-65534}" uid gid
+  local tool_uid="${QCR_TOOLS_AS:-${QCR_IMAGE_TOOL_UID:-65534}}" tool_gid="${QCR_IMAGE_TOOL_GID:-}" uid
   uid="$(id -u)"
-  gid="$(id -g)"
   [[ "$tool_uid" =~ ^[1-9][0-9]*$ ]] || die "QCR_TOOLS_AS must be a non-zero numeric id ($tool_uid)"
   [ "$tool_uid" != "$uid" ] || die "the tool uid must differ from the daemon's uid ($uid)"
-  if [ -x "$SETID_HELPER" ] &&
-    "$SETID_HELPER" --reuid="$tool_uid" --regid="$gid" --clear-groups \
+  if [[ "$tool_gid" =~ ^[1-9][0-9]*$ ]] && [ -x "$SETID_HELPER" ] &&
+    "$SETID_HELPER" --reuid="$tool_uid" --regid="$tool_gid" --clear-groups \
       --inh-caps=-all --ambient-caps=-all --no-new-privs -- true 2>/dev/null; then
-    export QCR_TOOL_UID="$tool_uid" QCR_TOOL_GID="$gid" QCR_SETPRIV_BIN="$SETID_HELPER"
-    say "the model's tools run as uid $tool_uid (gid $gid) through $SETID_HELPER; the daemon keeps uid $uid"
+    # The daemon shares the directories the model's scripts write through the
+    # tool's own group, so it must be a member of it (the run spec's second
+    # --group-add); a daemon outside it could not read what the tools write.
+    id -G | tr ' ' '\n' | grep -qx "$tool_gid" ||
+      die "the daemon (uid $uid) is not in the tool gid $tool_gid: start it with --group-add $tool_gid (re-run provision)"
+    export QCR_TOOL_UID="$tool_uid" QCR_TOOL_GID="$tool_gid" QCR_SETPRIV_BIN="$SETID_HELPER"
+    say "the model's tools run as uid $tool_uid gid $tool_gid through $SETID_HELPER; the daemon keeps uid $uid"
     return 0
   fi
   if [ "${QCR_ALLOW_SHARED_TOOL_UID-}" = 1 ]; then
     say "WARNING: the model's tools run as the daemon's own uid $uid, which reads the secrets mount (QCR_ALLOW_SHARED_TOOL_UID is 1)"
     return 0
   fi
-  die "the model's tools cannot run as another uid: $SETID_HELPER is not runnable by uid $uid or switches no uid here. Start the bot with --group-add ${QCR_SETID_GID:-4748} (the helper's gate group) and without no-new-privileges, or as root (--user 0:0 --cap-drop ALL --cap-add SETUID --cap-add SETGID -e QCR_RUN_UID -e QCR_RUN_GID); setting QCR_ALLOW_SHARED_TOOL_UID to 1 accepts the shared uid"
+  die "the model's tools cannot run as another uid: $SETID_HELPER is not runnable by uid $uid or cannot switch to $tool_uid:${tool_gid:-?} here (it switches to the image's tool identity only). Start the bot with --group-add ${QCR_SETID_GID:-4748} (the helper's gate group) and without no-new-privileges, or as root (--user 0:0 --cap-drop ALL --cap-add SETUID --cap-add SETGID -e QCR_RUN_UID -e QCR_RUN_GID); setting QCR_ALLOW_SHARED_TOOL_UID to 1 accepts the shared uid"
 }
 
-# What the model's tools write through the sanctioned scripts, as the tool uid
-# (one gid with the daemon): the round's state files (render-review.sh, a
-# findings record), the verdicts (commit-verdict.sh), the ledgers a debug
-# round's pi pins, the session commands. Opened to the group, nothing else; the
-# rest of the tree stays the daemon's, and secrets/ and pi's login never open.
+# What the model's tools write through the sanctioned scripts, as the tool uid:
+# the round's rendered review (render-review.sh, state/), a findings record, the
+# verdicts (commit-verdict.sh), the ledgers a debug round's pi pins, the
+# session commands. Those directories, and only those, are handed to the tool's
+# own gid, setgid so every entry made in them stays in that group (the daemon
+# reads what the tools write, the tools what the daemon leaves there for them).
+# state/ and commands/ are also sticky: the tool uid may add entries but never
+# rename or remove one it does not own (state.db, the IPC run dir, the built
+# agents, status.json, the root-owned commands/operator seal). verdict/ is not:
+# commit-verdict.sh, run as the tool uid, publishes by renaming the file the
+# session's own write tool staged as the daemon's uid. The rest of the tree,
+# secrets/ and pi's login stay out of the tool's group.
 share_tool_dirs() {
   [ -n "${QCR_TOOL_UID:-}" ] || return 0
-  local d
+  local d gid="${QCR_TOOL_GID}"
   for d in "$STATE" "$STATE/findings" "$STATE/ledgers" "$APP/verdict" "$APP/commands"; do
-    { mkdir -p "$d" && chmod g+rwx "$d"; } 2>/dev/null ||
-      say "WARNING: $d could not be opened to the tool uid's group (gid $(id -g)): the model's scripts cannot write there"
+    { mkdir -p "$d" && chgrp "$gid" "$d" && chmod g+rwxs "$d"; } 2>/dev/null ||
+      say "WARNING: $d could not be opened to the tool gid $gid: the model's scripts cannot write there"
+  done
+  for d in "$STATE" "$APP/commands"; do
+    chmod +t "$d" 2>/dev/null || say "WARNING: $d could not be made sticky: the tool uid could rename the daemon's entries in it"
   done
 }
 

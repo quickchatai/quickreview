@@ -87,7 +87,12 @@ describe("the daemon and memory services are pulled, not built", () => {
     // MUTATION: put no-new-privileges back on the daemon — this fails
     const gate = /^ARG QCR_SETID_GID=(\d+)$/m.exec(dockerfile)?.[1];
     expect(gate).toBe("4748");
-    expect(daemon.group_add).toEqual([gate]);
+    // and the tool gid the shared directories belong to (the image's qcr.tool-gid)
+    const toolGid = /^ARG QCR_TOOL_GID=(\d+)$/m.exec(dockerfile)?.[1];
+    expect(toolGid).toBe("4749");
+    expect(daemon.group_add).toEqual([gate, toolGid]);
+    // nothing beyond the helper's two: the operator channel is root's own dir
+    expect([...(daemon.cap_add ?? [])].sort()).toEqual(["SETGID", "SETUID"]);
     expect(daemon.security_opt ?? []).not.toContain("no-new-privileges:true");
     const update = read("deploy/qcr-update.sh");
     const vmCaps = [...update.matchAll(/--cap-add (\w+)/g)].map((m) => m[1]!).sort();
@@ -232,7 +237,8 @@ describe("the daemon's writable trees are the VM's", () => {
     expect(init.image).toBe(daemon.image);
     expect(init.network_mode).toBe("none");
     expect(init.cap_drop).toEqual(["ALL"]);
-    expect([...(init.cap_add ?? [])].sort()).toEqual(["CHOWN", "FOWNER"]);
+    // DAC_OVERRIDE: it makes commands/operator, root's own, inside the daemon's commands/
+    expect([...(init.cap_add ?? [])].sort()).toEqual(["CHOWN", "DAC_OVERRIDE", "FOWNER"]);
     expect(init.security_opt).toContain("no-new-privileges:true");
     expect(daemon.depends_on).toEqual({
       "volume-init": { condition: "service_completed_successfully" },
@@ -245,7 +251,14 @@ describe("the daemon's writable trees are the VM's", () => {
     }
     const script = String((init as { command?: string[] }).command?.[0] ?? "");
     expect(script).toContain('chown "$$QCR_UID:$$QCR_UID"');
-    expect(script).toMatch(/chmod 0775 \/v\/state \/v\/verdict \/v\/commands;/);
+    // shared with the tool gid as the daemon's entrypoint and the playbook set it
+    expect(script).toMatch(/chgrp 4749 \/v\/state \/v\/verdict \/v\/commands;/);
+    expect(script).toMatch(/chmod 3775 \/v\/state \/v\/commands;/);
+    expect(script).toMatch(/chmod 2775 \/v\/verdict;/);
+    // the operator channel: root's own, never through a symlink
+    expect(script).toMatch(/if \[ -L \/v\/commands\/operator \]; then .*exit 1; fi;/);
+    expect(script).toMatch(/chown -h 0:0 \/v\/commands\/operator;/);
+    expect(script).toMatch(/chmod 0755 \/v\/commands\/operator/);
     expect(script).toMatch(/chmod 0700 \/v\/home-pi/);
   });
 

@@ -203,6 +203,8 @@ const NEW_LABELS: Record<string, string> = {
   "qcr.preflight": "true",
   "qcr.runspec": "2",
   "qcr.setid-gid": "4748",
+  "qcr.tool-uid": "65534",
+  "qcr.tool-gid": "4749",
 };
 
 function confText(
@@ -224,6 +226,7 @@ function confText(
     "WEBHOOK_PORT=8787",
     "CONTAINER_UID=1001",
     "TOOL_UID=65534",
+    "TOOL_GID=4749",
     "TZ=Europe/Warsaw",
     "DAEMON_CPUS=2",
     "DAEMON_MEMORY=8g",
@@ -655,12 +658,14 @@ describe("qcr-update — the happy path", () => {
     expect(argv.slice(-2)).toEqual([DAEMON_REF, "daemon"]);
     expect(pair("--user")).toBe("1001:1001");
     // the bot stays uid 1001 (a `docker exec` lands as it) and runs the
-    // model's tools as TOOL_UID through the image's setid helper, whose gate
-    // group it is given; no capability but the helper's and the operator
-    // channel's, and no no-new-privileges (it would void the helper)
-    expect(pair("--group-add")).toBe("4748");
+    // model's tools as TOOL_UID:TOOL_GID through the image's setid helper; it
+    // is given the helper's gate group and the tool gid; no capability but the
+    // helper's two (the operator channel is root's own directory), and no
+    // no-new-privileges (it would void the helper)
+    const groups = argv.filter((_a, i) => argv[i - 1] === "--group-add");
+    expect(groups).toEqual(["4748", "4749"]);
     const caps = argv.filter((_a, i) => argv[i - 1] === "--cap-add").sort();
-    expect(caps).toEqual(["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"]);
+    expect(caps).toEqual(["SETGID", "SETUID"]);
     expect(pair("--cap-drop")).toBe("ALL");
     expect(argv.join(" ")).not.toContain("no-new-privileges");
     expect(argv.filter((_a, i) => argv[i - 1] === "-e")).toContain("QCR_TOOLS_AS=65534");
@@ -884,6 +889,32 @@ describe("qcr-update — every refusal before the stop changes nothing", () => {
       expect(r.stderr, bad).toMatch(/qcr\.setid-gid|setid gate group/);
       expectUntouched(sb, "release");
     }
+  });
+
+  it("REFUSES a run spec whose tool identity is not the one compiled into the image, before anything stops", async () => {
+    // MUTATION: drop the qcr.tool-uid/gid check from qcr-update.sh — this recreates
+    sb = setup("release");
+    const labels = join(sb.fake, "images", DAEMON_REF.replace(/[/:@]/g, "_"), "labels");
+    for (const [label, bad] of [
+      ["qcr.tool-uid", "1000"],
+      ["qcr.tool-gid", "4242"],
+    ] as const) {
+      write(join(labels, label), bad);
+      const r = await runUpdater(sb, GOOD);
+      expect(r.code, label).toBe(1);
+      expect(r.stderr, label).toMatch(
+        /runs the model's tools as tool (uid|gid) .*re-run provision/,
+      );
+      expectUntouched(sb, "release");
+      write(join(labels, label), NEW_LABELS[label]!);
+    }
+  });
+
+  it("seals the operator channel as root before the bot starts, and never through a symlink", async () => {
+    sb = setup("release");
+    const r = await runUpdater(sb, GOOD);
+    expect(r.code, r.stderr).toBe(0);
+    expect(statSync(join(sb.root, "sandbox", "commands", "operator")).isDirectory()).toBe(true);
   });
 
   it("REFUSES a config tar that contains secrets/, an escaping path, a link, or any other top-level name", async () => {
