@@ -54,7 +54,8 @@
 # NON-root start, so `docker exec` into the bot keeps landing as its uid: the
 # image's setid helper (/usr/local/libexec/qcr/qcr-setid, file capabilities, gate
 # group QCR_SETID_GID) is probed, and the daemon exports QCR_TOOL_UID (QCR_TOOLS_AS,
-# default 65534), QCR_TOOL_GID (its own gid) and QCR_SETPRIV_BIN; its workers run
+# default 65534), QCR_TOOL_GID (the image's compiled tool gid, QCR_IMAGE_TOOL_GID; the
+# daemon must already be a member of it) and QCR_SETPRIV_BIN; its workers run
 # every model command through the helper (src/engine/tooluid.ts setidHelperOf).
 # A probe that fails refuses the start (QCR_ALLOW_SHARED_TOOL_UID=1 accepts the
 # shared uid). Started as root instead, the daemon drops to QCR_RUN_UID the way
