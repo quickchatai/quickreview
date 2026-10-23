@@ -417,3 +417,25 @@ describe("review state", () => {
     expect(state.branchTargetKey("o/r", "a")).not.toBe(state.branchTargetKey("p/r", "a"));
   });
 });
+
+describe("qcr review: a delta review with memory", () => {
+  it("seeds the follow-up prompt from the configured memory, as the full review is", async () => {
+    const repo = mkRepo("deltamem");
+    setLimit(repo);
+    const pi = scriptedPi("deltamem", [{ findings: first }, { findings: [], prior: [] }]);
+    expect(await runReviewCli([], false, harness(repo, pi.bin).deps)).toBe(0);
+    smallPush(repo);
+    const h = harness(repo, pi.bin);
+    const memory = {
+      assembler: {
+        pinnedHead: async () => ({ status: "read" as const, text: "PINNED-HEAD-MARK" }),
+        contextBlock: async () => ({ status: "read" as const, text: "CONTEXT-BLOCK-MARK" }),
+      },
+    };
+    expect(await runReviewCli([], true, { ...h.deps, memory })).toBe(0);
+    const order = pi.order(2);
+    expect(order).toMatch(/PRIOR FINDINGS TO VERIFY/);
+    expect(order).toContain("PINNED-HEAD-MARK");
+    expect(order).toContain("CONTEXT-BLOCK-MARK");
+  });
+});

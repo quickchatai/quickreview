@@ -37,6 +37,8 @@ export interface PostReview {
   event: typeof POST_EVENT;
   body: string;
   comments: RenderedComment[];
+  /** Findings rendered into the body instead of inline. */
+  inBody: number;
 }
 
 /** Add the visible marker above the hidden finding marker (or at the end). */
@@ -74,6 +76,7 @@ export function assemblePostReview(
     event: POST_EVENT,
     body: mark(rendered.body, visible),
     comments: rendered.comments.map((c) => ({ ...c, body: mark(c.body, visible) })),
+    inBody: rendered.in_body,
   };
 }
 

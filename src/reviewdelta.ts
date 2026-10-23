@@ -113,6 +113,7 @@ export function renderDeltaRound(i: {
   delta: DeltaFound;
   readFile?: FollowUpOneShotArgs["readFile"];
   profileLookup?: FollowUpOneShotArgs["profileLookup"];
+  memory?: FollowUpOneShotArgs["memory"];
 }): FollowUpOneShotPrompts {
   const last = lastRound(i.state);
   const list = openFindings(i.state, last.round_no + 1);
@@ -130,6 +131,7 @@ export function renderDeltaRound(i: {
     prevHead: last.head_sha,
     ...(i.readFile ? { readFile: i.readFile } : {}),
     ...(i.profileLookup ? { profileLookup: i.profileLookup } : {}),
+    ...(i.memory ? { memory: i.memory } : {}),
     decide: (ctx) =>
       planFollowUp(i.cfg, ctx.heuristics, {
         delta: i.delta,

@@ -424,4 +424,52 @@ describe("qcr review --to pr", () => {
     expect(h.text()).toMatch(/not posted/i);
     expect(h.text()).toMatch(/b is wrong/);
   });
+
+  it("a repeat that adds a body-only finding still posts it", async () => {
+    const repo = cwdRepo("post-body");
+    const api = stubApi();
+    const h1 = prHarness(repo, happyPi("post-body-a").bin, api);
+    await runReviewCli(["7", "--to", "pr"], false, h1.deps);
+    const withBody = JSON.stringify({
+      findings: [
+        ...findings,
+        {
+          id: "f3",
+          path: "src/a.ts",
+          line: 3,
+          severity: "P3",
+          title: "only in the body",
+          body: "no anchor.",
+          lens: "style",
+          disposition: "posted",
+          posted_as: "[nit]",
+          inline: false,
+        },
+      ],
+      verdict: "APPROVE",
+    });
+    const pi = fakePi("post-body-b", [
+      `printf '%s' ${JSON.stringify(withBody)} > "$cd/findings-record.json"`,
+      `printf '%s' ${JSON.stringify(outcome)} > "$cd/outcome.json"`,
+    ]);
+    const h2 = prHarness(repo, pi.bin, api);
+    expect(await runReviewCli(["7", "--to", "pr"], false, h2.deps)).toBe(0);
+    expect(api.posts).toHaveLength(2);
+    expect(api.posts[1]!.body.body).toContain("only in the body");
+  });
+
+  it("a malformed entry in the findings record does not stop the repeat filter", async () => {
+    const repo = cwdRepo("post-null");
+    const api = stubApi();
+    const h1 = prHarness(repo, happyPi("post-null-a").bin, api);
+    await runReviewCli(["7", "--to", "pr"], false, h1.deps);
+    const withNull = JSON.stringify({ findings: [...findings, null], verdict: "APPROVE" });
+    const pi = fakePi("post-null-b", [
+      `printf '%s' ${JSON.stringify(withNull)} > "$cd/findings-record.json"`,
+      `printf '%s' ${JSON.stringify(outcome)} > "$cd/outcome.json"`,
+    ]);
+    const h2 = prHarness(repo, pi.bin, api);
+    expect(await runReviewCli(["7", "--to", "pr"], false, h2.deps)).toBe(0);
+    expect(api.posts).toHaveLength(1);
+  });
 });
