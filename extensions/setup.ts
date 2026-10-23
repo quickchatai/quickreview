@@ -52,12 +52,12 @@ import type { ExtensionAPI, ExtensionFactory } from "@earendil-works/pi-coding-a
 import {
   registerQcrTool,
   textResult as text,
+  refusedResult as refused,
   type QcrTool,
-  type QcrToolResult,
 } from "./pi-tool.js";
 import { fileURLToPath } from "node:url";
 import { configHome, stateHome } from "../src/install.js";
-import { SetupEngine, type CutStatus, type CutView, type Refusal } from "../src/setup/engine.js";
+import { SetupEngine, type CutStatus, type CutView } from "../src/setup/engine.js";
 import type { HistoryTheme, HistoryThemesFile } from "../src/setup/history.js";
 import {
   HISTORY_SECTIONS,
@@ -130,10 +130,6 @@ export const DEFAULT_REVIEWED_REPO = "/reviewed-repo";
 
 const reviewedCheckout = (env: NodeJS.ProcessEnv): string =>
   env.QCR_REVIEWED_REPO?.trim() || DEFAULT_REVIEWED_REPO;
-
-function refused(what: string, r: Refusal): QcrToolResult {
-  return text(`${what} refused:\n${r.errors.map((e) => `✗ ${e}`).join("\n")}`);
-}
 
 // ---- rendering ---------------------------------------------------------------
 
