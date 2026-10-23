@@ -34,10 +34,10 @@
         "runspec"
       ],
       "properties": {
-        "pi": { "type": "string", "minLength": 1 },
-        "openviking": { "type": "string", "minLength": 1 },
-        "llama_cpp_python": { "type": "string", "minLength": 1 },
-        "embedder_file": { "type": "string", "minLength": 1 },
+        "pi": { "$ref": "#/$defs/pin" },
+        "openviking": { "$ref": "#/$defs/pin" },
+        "llama_cpp_python": { "$ref": "#/$defs/pin" },
+        "embedder_file": { "$ref": "#/$defs/pin" },
         "embedder_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "runspec": {
           "type": "integer",
@@ -49,6 +49,7 @@
   },
   "$defs": {
     "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "pin": { "type": "string", "pattern": "^[A-Za-z0-9_./:@+-]+$" },
     "image": {
       "type": "object",
       "additionalProperties": false,
