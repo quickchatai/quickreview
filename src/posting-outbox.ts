@@ -95,7 +95,8 @@ export function writePostingFile(path: string, value: unknown): void {
     closeSync(parent);
   }
 }
-function jobPath(dir: string, pr: number, round: number): string {
+/** The replayable job file of one PR round, in the posting-receipts dir. */
+export function jobPath(dir: string, pr: number, round: number): string {
   return join(dir, `pr-${pr}-round-${round}.outbox.json`);
 }
 export function readPostingJob(path: string): PostingJob | undefined {

@@ -27,7 +27,12 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { readPostingJob, writePostingFile, type PostingJob } from "./posting-outbox.js";
+import {
+  jobPath as postingJobPath,
+  readPostingJob,
+  writePostingFile,
+  type PostingJob,
+} from "./posting-outbox.js";
 import {
   postingMarker,
   postingReceiptPath,
@@ -114,7 +119,7 @@ export class PostingJournal {
     return postingReceiptPath(this.o.dir, pr, round);
   }
   jobPath(pr: number, round: number): string {
-    return join(this.o.dir, `pr-${pr}-round-${round}.outbox.json`);
+    return postingJobPath(this.o.dir, pr, round);
   }
   private iso(): string {
     return this.now().toISOString();

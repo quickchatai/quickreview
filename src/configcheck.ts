@@ -93,6 +93,8 @@ export function checkConfigHome(opts: { home: string; root?: string }): ConfigCh
   return result();
 }
 
+const CONFIG_USAGE = "usage: qcr config check [--json] [--config-home <dir>]";
+
 /** The verb: `qcr config check [--json] [--config-home <dir>]`. Exit 0 on a
  * clean home, 1 on any error, 2 on a usage error. */
 export function cmdConfig(
@@ -103,7 +105,7 @@ export function cmdConfig(
   const out = deps.out ?? ((l: string) => console.log(l));
   const [verb, ...args] = rest;
   if (verb !== "check") {
-    out("usage: qcr config check [--json] [--config-home <dir>]");
+    out(CONFIG_USAGE);
     return 2;
   }
   let home: string | undefined;
@@ -111,7 +113,7 @@ export function cmdConfig(
     if (args[i] === "--config-home" && args[i + 1] !== undefined) {
       home = args[++i];
     } else {
-      out("usage: qcr config check [--json] [--config-home <dir>]");
+      out(CONFIG_USAGE);
       return 2;
     }
   }

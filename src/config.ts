@@ -2773,6 +2773,23 @@ export const DEFAULT_ROUND_FINALIZE_GRACE_MIN = 5;
 export const DEFAULT_ROUND_POSTED_TAIL_GRACE_MIN = 15;
 /** `[daemon] follow_up_sweep_extra_min`'s default. */
 export const DEFAULT_FOLLOW_UP_SWEEP_EXTRA_MIN = 20;
+/** The round stage bounds in minutes, each with its code default: the one
+ * resolution status publication and the stage supervisor both use. */
+export function resolveRoundStageBounds(daemon: Config["daemon"]): {
+  first_pass_max_min: number;
+  passes_max_min: number;
+  running_max_min: number;
+  follow_up_sweep_extra_min: number;
+} {
+  return {
+    first_pass_max_min: daemon.round_first_pass_max_min ?? DEFAULT_ROUND_FIRST_PASS_MAX_MIN,
+    passes_max_min: daemon.round_passes_max_min ?? DEFAULT_ROUND_PASSES_MAX_MIN,
+    running_max_min:
+      daemon.session_command_running_max_min ?? DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN,
+    follow_up_sweep_extra_min:
+      daemon.follow_up_sweep_extra_min ?? DEFAULT_FOLLOW_UP_SWEEP_EXTRA_MIN,
+  };
+}
 export const DEFAULT_POSTING_RECEIPT_GRACE_S = 120;
 /** Three retries, exponential,
  * all inside an hour of the first failure. */
