@@ -47,6 +47,10 @@ const out = get("--out");
 fs.appendFileSync(process.env.HOST_LOG, JSON.stringify(a) + "\\n");
 const caseDir = out ? path.join(out, "cases", id) : null;
 if (caseDir) fs.mkdirSync(caseDir, { recursive: true });
+if (id.includes("torn")) {
+  fs.writeFileSync(path.join(caseDir, "case-summary.json"), '{"instance_id": "x", "stat');
+  process.kill(process.pid, "SIGKILL");
+}
 if (id.includes("crash")) {
   if (caseDir) fs.writeFileSync(path.join(caseDir, "pi-events.jsonl"), '{"type":"session"}\\n');
   process.kill(process.pid, "SIGKILL");
@@ -301,6 +305,19 @@ describe("the review's pool: a host that dies costs its case, recorded as a fail
     // The host's stream is kept for the cost reader; the earlier attempt's file is not.
     expect(existsSync(join(caseDir(c), "pi-events.jsonl"))).toBe(true);
     expect(existsSync(join(caseDir(c), "outcome.json"))).toBe(false);
+  });
+
+  it("records a host that died mid-write of its summary as failed, not as a thrown parse error", async () => {
+    const c = caseOf("torn");
+    mkdirSync(caseDir(c), { recursive: true });
+    const s = await reviewCaseHosted(c, pool("review"), {
+      root: tmp,
+      outDir,
+      fingerprint: fingerprint(),
+      timeoutMs: 60_000,
+    });
+    expect(s.status).toBe("failed");
+    expect(s.error).toMatch(/unreadable summary/);
   });
 
   it("records a host that exits without a summary as failed", async () => {
