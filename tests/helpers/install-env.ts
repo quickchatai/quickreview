@@ -13,6 +13,9 @@
 // `mktemp` a spawned script makes, lands under it — so nothing a test forgets
 // to remove outlives the file.
 //
+// A worker killed mid-file never runs afterAll, so each file's setup also
+// sweeps roots whose owning pid is gone (sweepStaleRoots).
+//
 // The root is removed when the file finishes (afterAll): setup files run
 // once per test file, and a process 'exit' hook never fires in a vitest worker
 // thread — without this every run would leak one dir per file, plus every
@@ -20,11 +23,12 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll } from "vitest";
-import { openTempRoot } from "./temp-root.js";
+import { openTempRoot, sweepStaleRoots } from "./temp-root.js";
 
 // The machine's real temp dir, captured before the redirect and inherited by
 // any later file in the same worker, so a root is never nested in another.
 const realTmp = (process.env.QCR_TEST_REAL_TMPDIR ??= tmpdir());
+sweepStaleRoots(realTmp, "qcr-test-xdg-");
 const temp = openTempRoot(realTmp, "qcr-test-xdg-");
 process.env.QCR_TEST_TEMP_ROOT = temp.root;
 process.env.XDG_CONFIG_HOME = join(temp.root, "config");
