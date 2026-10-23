@@ -37,6 +37,7 @@ import {
 } from "../src/setup/survey.js";
 import { SURVEY_FILE, type SurveyFile } from "../src/setup/surveyrun.js";
 import { renderSurveyPreview } from "../extensions/setup.js";
+import { waitFor } from "./helpers/wait-for.js";
 
 // ---- fakes -------------------------------------------------------------------
 
@@ -129,10 +130,8 @@ class FakeCases implements CaseRunner {
   }
 }
 
-const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 async function until(pred: () => boolean): Promise<void> {
-  for (let i = 0; i < 200 && !pred(); i++) await tick();
-  expect(pred()).toBe(true);
+  await waitFor(pred, "the survey condition");
 }
 
 function fakeRepo(

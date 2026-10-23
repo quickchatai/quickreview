@@ -34,6 +34,7 @@ import { companionStarter, installCompanionTabHooks } from "../src/tui/companion
 import { EVENT_TAIL_CAP, FeedWriter, eventKey, type FeedEvent } from "../src/tui/feed.js";
 import { stripAnsi } from "../src/tui/paint.js";
 import { CompanionSidebar } from "../src/tui/sidebar.js";
+import { waitFor } from "./helpers/wait-for.js";
 
 let dir = "";
 
@@ -876,8 +877,7 @@ describe("companion tab", () => {
     });
     const running = app.run();
     app.openCompanion();
-    for (let i = 0; i < 100 && !app.sidebar.focused; i++)
-      await new Promise((r) => setTimeout(r, 5));
+    await waitFor(() => app.sidebar?.focused === true, "the sidebar to be focused");
     expect(up).toBe(true);
     expect(wired).toBe(1);
     await start(); // any later start never wires a second time
@@ -945,8 +945,7 @@ describe("companion tab", () => {
     });
     const running = app.run();
     app.openCompanion();
-    for (let i = 0; i < 100 && !app.sidebar.focused; i++)
-      await new Promise((r) => setTimeout(r, 5));
+    await waitFor(() => app.sidebar?.focused === true, "the sidebar to be focused");
     expect(up).toBe(true);
     expect(app.sidebar.focused).toBe(true); // healed, then focused
     app.quit();

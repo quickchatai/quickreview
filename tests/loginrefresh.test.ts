@@ -336,10 +336,12 @@ describe("the single-instance lock", () => {
     await new Promise((r) => holder.once("exit", r));
     // the helper's pipe closed with it: the lock is free within a moment
     let again: Awaited<ReturnType<typeof acquireLoginLock>> | undefined;
-    for (let i = 0; i < 50 && !again; i++) {
+    const deadline = Date.now() + 10_000;
+    while (!again) {
       try {
         again = await acquireLoginLock(path);
-      } catch {
+      } catch (e) {
+        if (Date.now() > deadline) throw new Error("timed out waiting for the lock to be free again", { cause: e });
         await new Promise((r) => setTimeout(r, 50));
       }
     }

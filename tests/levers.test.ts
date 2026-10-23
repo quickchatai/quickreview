@@ -67,6 +67,7 @@ import { detailLines, leverHolderLabel, topBar, type BoardView } from "../src/tu
 import { stripAnsi } from "../src/tui/paint.js";
 import type { RemoteResult } from "../src/tui/remote.js";
 import { operatorCommandWriteScript } from "../src/tui/unwedge.js";
+import { waitFor } from "./helpers/wait-for.js";
 
 const cfg: Config = loadConfig(resolve(process.cwd(), "tests/fixtures/config.toml"));
 const T0 = new Date("2026-09-02T10:00:00.000Z");
@@ -905,8 +906,7 @@ describe("CommandWatcher over commands/operator/", () => {
     writeFileSync(join(opDir(), ".d3.json.tmp"), JSON.stringify({ command: "drain", on: true }));
     const { renameSync } = await import("node:fs");
     renameSync(join(opDir(), ".d3.json.tmp"), join(opDir(), "d3.json"));
-    for (let i = 0; i < 100 && issuers.length === 0; i++)
-      await new Promise((r) => setTimeout(r, 20));
+    await waitFor(() => issuers.length > 0, "the operator drain to be served");
     expect(issuers).toEqual(["operator"]);
     w.stop();
   });

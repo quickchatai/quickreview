@@ -12,6 +12,7 @@ import {
 } from "../src/commands.js";
 import type { OriginRecord } from "../src/slack/origin.js";
 import { StateStore } from "../src/state.js";
+import { waitFor } from "./helpers/wait-for.js";
 
 function makeDeps() {
   return {
@@ -692,9 +693,7 @@ describe("CommandWatcher", () => {
       join(cmdDir(), "live.json"),
       JSON.stringify({ command: "flag-owner", message: "hello" }),
     );
-    for (let i = 0; i < 50 && deps.flagOwner.mock.calls.length === 0; i++) {
-      await new Promise((r) => setTimeout(r, 20));
-    }
+    await waitFor(() => deps.flagOwner.mock.calls.length > 0, "flag-owner to be served");
     w.stop();
     expect(deps.flagOwner).toHaveBeenCalledWith("hello");
   });
@@ -721,9 +720,7 @@ describe("CommandWatcher", () => {
     await new Promise((r) => setTimeout(r, 50)); // let the watch event land
     release();
     await started;
-    for (let i = 0; i < 50 && deps.flagOwner.mock.calls.length === 0; i++) {
-      await new Promise((r) => setTimeout(r, 20));
-    }
+    await waitFor(() => deps.flagOwner.mock.calls.length > 0, "flag-owner to be served");
     w.stop();
     expect(deps.flagOwner).toHaveBeenCalledWith("mid-sweep");
     expect(deps.rerunRound).toHaveBeenCalledTimes(1);
