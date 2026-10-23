@@ -256,6 +256,23 @@ function clip(s: string, n: number): string {
   return one.length > n ? `${one.slice(0, n - 1)}…` : one;
 }
 
+/** Whether a result-file comment could be paired with the reference: the
+ * reference has a line range, the comment is on its file with numeric
+ * anchors, and the harness's line gate passes. */
+function commentInRefGate(
+  ref: RefOutcome,
+  c: { path?: unknown; start_line?: unknown; end_line?: unknown },
+): boolean {
+  return (
+    ref.from_line !== null &&
+    ref.to_line !== null &&
+    c.path === ref.path &&
+    typeof c.start_line === "number" &&
+    typeof c.end_line === "number" &&
+    lineGate(ref.from_line, ref.to_line, c.start_line, c.end_line)
+  );
+}
+
 /** Which comment of a variant's result file produced a matched note. */
 function originOf(outDir: string, variant: WhatifVariant, ref: RefOutcome, note: string): string {
   const instance = ref.instance_id;
@@ -273,14 +290,7 @@ function originOf(outDir: string, variant: WhatifVariant, ref: RefOutcome, note:
       }
     | undefined;
   const hit = file?.review?.comments?.find(
-    (c) =>
-      (c.content ?? "").trim() === note.trim() &&
-      c.path === ref.path &&
-      ref.from_line !== null &&
-      ref.to_line !== null &&
-      typeof c.start_line === "number" &&
-      typeof c.end_line === "number" &&
-      lineGate(ref.from_line, ref.to_line, c.start_line, c.end_line),
+    (c) => (c.content ?? "").trim() === note.trim() && commentInRefGate(ref, c),
   );
   const p = hit?.qcr_whatif;
   if (!p) return "?";
@@ -336,16 +346,11 @@ function refLine(r: RefOutcome, v: WhatifVariant, own?: RefOutcome): string {
  * holds. Non-empty means the round already posted there, and a gain is the
  * judge preferring other wording (or a second finding at the same spot). */
 function postedInGate(outDir: string, r: RefOutcome): string[] {
-  if (r.from_line === null || r.to_line === null) return [];
   const file = readJson(join(outDir, "results", "posted", `${safeId(r.instance_id)}.json`)) as
     { review?: { comments?: Array<Record<string, unknown>> } } | undefined;
   return (file?.review?.comments ?? [])
-    .filter(
-      (c) =>
-        c["path"] === r.path &&
-        typeof c["start_line"] === "number" &&
-        typeof c["end_line"] === "number" &&
-        lineGate(r.from_line!, r.to_line!, c["start_line"], c["end_line"]),
+    .filter((c) =>
+      commentInRefGate(r, { path: c["path"], start_line: c["start_line"], end_line: c["end_line"] }),
     )
     .map((c) => String(c["content"]));
 }
