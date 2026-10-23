@@ -969,6 +969,46 @@ describe("pinned heartbeat", () => {
     expect(cleared).toEqual([1]);
   });
 
+  it("an ambiguous heartbeat create is retried by a later tick of the same process", async () => {
+    const post = vi
+      .spyOn(slack, "postMessage")
+      .mockResolvedValueOnce({ ok: false, error: "response lost", ambiguous: true } as SlackPostResult);
+    const a = announcer();
+    expect(await a.heartbeat()).toBeUndefined();
+    expect(store.slackPost(HEARTBEAT_IDEM_KEY)).toMatchObject({ ok: 1, ts: null });
+    const ts = await a.heartbeat();
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(ts).toBeDefined();
+    expect(store.slackPost(HEARTBEAT_IDEM_KEY)).toMatchObject({ ok: 1, ts });
+  });
+
+  it("a store failure in a heartbeat tick is logged, not left as an unhandled rejection", async () => {
+    const ticks: Array<() => void> = [];
+    const logs: string[] = [];
+    vi.spyOn(store, "owedSlackReopenings").mockImplementation(() => {
+      throw new Error("db locked");
+    });
+    const a = announcer({
+      setIntervalFn: (fn) => {
+        ticks.push(fn);
+        return 1;
+      },
+      log: (m) => void logs.push(m),
+    });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (e: unknown) => void unhandled.push(e);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      a.startHeartbeat();
+      ticks[0]!();
+      await new Promise<void>((r) => setTimeout(r, 20));
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+    expect(unhandled).toEqual([]);
+    expect(logs.filter((m) => m.includes("heartbeat"))).toHaveLength(2);
+  });
+
   it("start/stop drive the interval and are idempotent", async () => {
     const a = announcer();
     a.startHeartbeat();
