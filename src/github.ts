@@ -409,24 +409,21 @@ export class GitHubAdapter {
     path: string,
     body?: unknown,
     auth: "installation" | "jwt" = "installation",
-    retried = false,
   ): Promise<T> {
-    const token = auth === "jwt" ? this.minter.appJwt() : await this.minter.installationToken();
-    const res = await this.fetchFn(`${this.apiBase}${path}`, {
-      method,
-      signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
-      headers: {
-        authorization: `Bearer ${token}`,
-        accept: "application/vnd.github+json",
-        "x-github-api-version": "2022-11-28",
-        ...(body !== undefined ? { "content-type": "application/json" } : {}),
-      },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
-    if (res.status === 401 && auth === "installation" && !retried) {
-      this.minter.invalidate();
-      return this.request(method, path, body, auth, true);
-    }
+    const send = (token: string): Promise<Response> =>
+      this.fetchFn(`${this.apiBase}${path}`, {
+        method,
+        signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
+        headers: {
+          authorization: `Bearer ${token}`,
+          accept: "application/vnd.github+json",
+          "x-github-api-version": "2022-11-28",
+          ...(body !== undefined ? { "content-type": "application/json" } : {}),
+        },
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+      });
+    const res =
+      auth === "jwt" ? await send(this.minter.appJwt()) : await this.sendInstallation(send);
     if (!res.ok) {
       const retryAfter = res.headers?.get("retry-after");
       const reset = res.headers?.get("x-ratelimit-reset");
@@ -449,23 +446,35 @@ export class GitHubAdapter {
     return (await res.json()) as T;
   }
 
-  /** One GraphQL query, with REST's deadline and its one re-mint on a 401. */
-  private async graphql<T>(
+  /** Send with an installation token; on a 401 drop the rejected response
+   * body, invalidate the cached token and send once more with a fresh one.
+   * The one owner of the installation-token 401 policy. */
+  private async sendInstallation(send: (token: string) => Promise<Response>): Promise<Response> {
+    let res = await send(await this.minter.installationToken());
+    if (res.status === 401) {
+      await res.body?.cancel().catch(() => {});
+      this.minter.invalidate();
+      res = await send(await this.minter.installationToken());
+    }
+    return res;
+  }
+
+  private graphqlFetch(
+    token: string,
     query: string,
     variables: Record<string, unknown>,
-    retried = false,
-  ): Promise<T> {
-    const token = await this.minter.installationToken();
-    const res = await this.fetchFn(`${this.apiBase}/graphql`, {
+  ): Promise<Response> {
+    return this.fetchFn(`${this.apiBase}/graphql`, {
       method: "POST",
       signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify({ query, variables }),
     });
-    if (res.status === 401 && !retried) {
-      this.minter.invalidate();
-      return this.graphql(query, variables, true);
-    }
+  }
+
+  /** One GraphQL query, with REST's deadline and its one re-mint on a 401. */
+  private async graphql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+    const res = await this.sendInstallation((token) => this.graphqlFetch(token, query, variables));
     if (!res.ok) {
       let detail = "";
       try {
@@ -491,19 +500,17 @@ export class GitHubAdapter {
    * throws. The caller has already checked `path` is a read of the reviewed repo.
    */
   async readText(path: string, o: RawReadOptions): Promise<RawReadAnswer> {
-    return this.rawAnswer(o, () =>
-      this.minter.installationToken().then((token) =>
-        this.fetchFn(`${this.apiBase}${path}`, {
-          method: "GET",
-          redirect: "follow",
-          signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
-          headers: {
-            authorization: `Bearer ${token}`,
-            accept: "application/vnd.github+json",
-            "x-github-api-version": "2022-11-28",
-          },
-        }),
-      ),
+    return this.rawAnswer(o, (token) =>
+      this.fetchFn(`${this.apiBase}${path}`, {
+        method: "GET",
+        redirect: "follow",
+        signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
+        headers: {
+          authorization: `Bearer ${token}`,
+          accept: "application/vnd.github+json",
+          "x-github-api-version": "2022-11-28",
+        },
+      }),
     );
   }
 
@@ -514,29 +521,15 @@ export class GitHubAdapter {
     variables: Record<string, unknown>,
     o: RawReadOptions,
   ): Promise<RawReadAnswer> {
-    return this.rawAnswer(o, () =>
-      this.minter.installationToken().then((token) =>
-        this.fetchFn(`${this.apiBase}/graphql`, {
-          method: "POST",
-          signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
-          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-          body: JSON.stringify({ query, variables }),
-        }),
-      ),
-    );
+    return this.rawAnswer(o, (token) => this.graphqlFetch(token, query, variables));
   }
 
   /** One raw request with REST's one re-mint on a 401, its body capped. */
   private async rawAnswer(
     o: RawReadOptions,
-    send: () => Promise<Response>,
+    send: (token: string) => Promise<Response>,
   ): Promise<RawReadAnswer> {
-    let res = await send();
-    if (res.status === 401) {
-      await res.body?.cancel().catch(() => {});
-      this.minter.invalidate();
-      res = await send();
-    }
+    const res = await this.sendInstallation(send);
     const { text, truncated } = await cappedText(res, o.maxBytes, o.tail === true);
     return { status: res.status, body: text, truncated };
   }
@@ -570,21 +563,33 @@ export class GitHubAdapter {
 
   // ---- triggered-set queries (reads) -------------------------------------
 
+  /** One page of issue search (100 hits). GitHub's search may time out and
+   * answer a partial set; absence read from it would be invented, so the read
+   * fails with `incompleteMessage` rather than answers. */
+  private async searchIssuePage(
+    q: string,
+    page: number,
+    incompleteMessage: string,
+  ): Promise<SearchIssueItem[]> {
+    const res = await this.request<{ items?: SearchIssueItem[]; incomplete_results?: boolean }>(
+      "GET",
+      `/search/issues?q=${encodeURIComponent(q)}&per_page=100&page=${page}`,
+    );
+    if (res.incomplete_results === true) throw new Error(incompleteMessage);
+    return res.items ?? [];
+  }
+
   /** Every hit, not the first 100: the reconcile pass reads a PR missing from
    * this list as trigger-ABSENT, so a truncated page would fake an absent →
    * present edge the moment search order reshuffled it back in. */
   private async searchIssues(q: string): Promise<SearchIssueItem[]> {
     const out: SearchIssueItem[] = [];
     for (let page = 1; page <= TRIGGER_SEARCH_MAX_PAGES; page++) {
-      const res = await this.request<{ items?: SearchIssueItem[]; incomplete_results?: boolean }>(
-        "GET",
-        `/search/issues?q=${encodeURIComponent(q)}&per_page=100&page=${page}`,
+      const items = await this.searchIssuePage(
+        q,
+        page,
+        `trigger search "${q}" answered incomplete results`,
       );
-      // GitHub's search may time out and answer a partial set; absence read
-      // from it would be invented, so the read fails rather than answers.
-      if (res.incomplete_results === true)
-        throw new Error(`trigger search "${q}" answered incomplete results`);
-      const items = res.items ?? [];
       out.push(...items);
       if (items.length < 100) return out;
     }
@@ -612,12 +617,7 @@ export class GitHubAdapter {
   async searchIssuesPaged(q: string, maxPages = 10): Promise<SearchIssueItem[]> {
     const out: SearchIssueItem[] = [];
     for (let page = 1; page <= maxPages; page++) {
-      const res = await this.request<{ items: SearchIssueItem[]; incomplete_results?: boolean }>(
-        "GET",
-        `/search/issues?q=${encodeURIComponent(q)}&per_page=100&page=${page}`,
-      );
-      if (res.incomplete_results === true) throw new Error("incomplete history search results");
-      const items = res.items ?? [];
+      const items = await this.searchIssuePage(q, page, "incomplete history search results");
       out.push(...items);
       if (items.length < 100) break;
     }
@@ -1463,7 +1463,8 @@ export class GitHubAdapter {
     });
   }
 
-  async listOpenBotIssues(): Promise<Array<{ number: number; title: string }>> {
+  /** Every open issue carrying the configured label, whoever filed it. */
+  async listOpenLabelledIssues(): Promise<Array<{ number: number; title: string }>> {
     const q = `repo:${this.cfg.github.repo} is:open is:issue label:"${this.cfg.github.issue_label}"`;
     return (await this.searchIssues(q)).map((i) => ({ number: i.number, title: i.title }));
   }

@@ -57,9 +57,10 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { writeAtomic } from "./channelfs.js";
 import { appStamp } from "./appstamp.js";
+import { isInside } from "./pathinside.js";
 import type { ScanSandboxConfig } from "./config.js";
 import type { LoginSummary } from "./engine/auth.js";
 import {
@@ -552,13 +553,9 @@ export function hostGitDirs(repo: string): GitDirs {
     return { ok: false, error: why };
   }
   const [gitDir = "", common = ""] = out.trim().split("\n");
-  const inside = (p: string, dir: string): boolean => {
-    const r = relative(dir, p);
-    return r === "" || (!r.startsWith("..") && !isAbsolute(r));
-  };
   const mounts: string[] = [];
   for (const d of [common, gitDir].map((x) => resolve(x))) {
-    if (inside(d, repo) || mounts.some((m) => inside(d, m))) continue;
+    if (isInside(d, repo) || mounts.some((m) => isInside(d, m))) continue;
     mounts.push(d);
   }
   return { ok: true, mounts };

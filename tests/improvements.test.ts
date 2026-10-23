@@ -862,7 +862,7 @@ describe("fileImprovementPr — the push goes through the gate in live mode", ()
     adapter = new GitHubAdapter(cfg, fakeMinter, gate, (async () => {
       throw new Error("no direct fetch expected");
     }) as unknown as typeof fetch);
-    vi.spyOn(adapter, "listOpenBotIssues").mockResolvedValue([]);
+    vi.spyOn(adapter, "listOpenLabelledIssues").mockResolvedValue([]);
   };
   const today = "1970-01-01T00:00:00.000Z";
 
@@ -1053,7 +1053,7 @@ describe("fileImprovementPr — the push goes through the gate in live mode", ()
     adapter = new GitHubAdapter(cfg, fakeMinter, gate, (async () => {
       throw new Error("no direct fetch expected");
     }) as unknown as typeof fetch);
-    vi.spyOn(adapter, "listOpenBotIssues").mockResolvedValue([]);
+    vi.spyOn(adapter, "listOpenLabelledIssues").mockResolvedValue([]);
     const { run } = liveRunner();
     const pr = await fileImprovementPr(
       {
