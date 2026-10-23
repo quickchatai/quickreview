@@ -19,14 +19,20 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { preview, review, type ReviewOptions } from "../src/reviewapi.js";
+import {
+  preview,
+  review,
+  type ReviewOptions,
+  type ReviewRuntime,
+  type ReviewStarted,
+} from "../src/reviewapi.js";
 import { parseCoreConfig } from "../src/reviewconfig.js";
 import { contextFrom } from "../src/engine/context.js";
 import { reviewSdkRuntime } from "../src/engine/reviewsdk.js";
 import { PiHost } from "../src/engine/pisdk.js";
 import type { Runtime } from "../src/engine/port.js";
-import { prepareHostRun } from "../src/hostroute.js";
 import { pricedFaux } from "./helpers/priced-faux.js";
+import { validate } from "./helpers/json-schema-lite.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";
 
 useOfflineGuard();
@@ -93,9 +99,15 @@ const record = JSON.stringify({
 });
 const outcome = JSON.stringify({ verdict: "REQUEST_CHANGES", passes: [] });
 
+const resultSchema = JSON.parse(
+  readFileSync(join(ROOT, "schemas", "review-result.v1.json"), "utf8"),
+) as Record<string, unknown>;
+/** The result object breaks no rule of the versioned schema. */
+const schemaErrors = (data: unknown): unknown[] => validate(resultSchema, data);
+
 /** The faux-hosted runtime; `created` counts the sessions it started. */
 function fauxRuntime(faux: ReturnType<typeof pricedFaux>): {
-  runtime: Runtime;
+  runtime: ReviewRuntime;
   created: () => number;
 } {
   let n = 0;
@@ -121,6 +133,10 @@ function fauxRuntime(faux: ReturnType<typeof pricedFaux>): {
 }
 
 function options(name: string, runtime: Runtime): ReviewOptions {
+  return optionsOver(name, () => runtime);
+}
+
+function optionsOver(name: string, runtime: ReviewOptions["runtime"]): ReviewOptions {
   return {
     repoDir: mkRepo(name),
     root,
@@ -131,7 +147,7 @@ function options(name: string, runtime: Runtime): ReviewOptions {
     config,
     ecosystem: ctx.ecosystem,
     runtime,
-    prepareHost: prepareHostRun,
+    // no prepareHost: core's own isolation of the run, as a plugin gets it
     limits: { limitUsd: 1000, timeoutMs: 60_000 },
   };
 }
@@ -185,11 +201,16 @@ describe("review(): the local review as a call", () => {
         },
       ]);
       const progress: string[] = [];
+      const started: ReviewStarted[] = [];
       withoutCallerContext();
-      const r = await review({ kind: "branch" }, opts, { progress: (l) => progress.push(l) });
+      const r = await review({ kind: "branch" }, opts, {
+        progress: (l) => progress.push(l),
+        started: (s) => started.push(s),
+      });
       vi.restoreAllMocks();
       expect(r.exitCode, r.text).toBe(0);
       expect(created()).toBe(1);
+      expect(schemaErrors(r.data)).toEqual([]);
       expect(r.data.schema_version).toBe(1);
       expect(Object.keys(r.data)[0]).toBe("schema_version");
       expect(r.data.ok).toBe(true);
@@ -203,6 +224,12 @@ describe("review(): the local review as a call", () => {
       // the preview and the memory notice went through the progress port
       expect(progress.join("\n")).toMatch(/price: \$\d+\.\d{2}/);
       expect(progress.join("\n")).toMatch(/memory: not set up/);
+      // the round's start reached the caller: where it runs, before it ran
+      expect(started).toHaveLength(1);
+      expect(started[0]!.outDir).toBe(r.data["out_dir"]);
+      expect(dirname(started[0]!.outDir)).toBe(started[0]!.runDir);
+      expect(started[0]!.lenses.length).toBeGreaterThan(0);
+      expect(started[0]!.estimateUsd).toBeGreaterThan(0);
       // the round was remembered in the store it was given, and nothing went
       // anywhere the caller's process would have named
       expect(readdirSync(opts.storeDir!)).toHaveLength(1);
@@ -220,6 +247,7 @@ describe("review(): the local review as a call", () => {
     vi.restoreAllMocks();
     expect(r.exitCode, r.text).toBe(0);
     expect(created()).toBe(0);
+    expect(schemaErrors(r.data)).toEqual([]);
     const p = r.data["preview"] as { lenses: string[]; estimate_usd: number; key: string };
     expect(p.lenses.length).toBeGreaterThan(0);
     expect(p.estimate_usd).toBeGreaterThan(0);
@@ -243,7 +271,75 @@ describe("review(): the local review as a call", () => {
     expect(created()).toBe(0);
     expect(r.exitCode).toBe(1);
     expect(r.data).toMatchObject({ ok: false, stopped: true, errors: ["the review was stopped"] });
+    expect(schemaErrors(r.data)).toEqual([]);
   });
+
+  it("a stop closes a question the port never answers", { timeout: 30_000 }, async () => {
+    const faux = pricedFaux(() => 0.25, { provider: "faux", models: [{ id: "m" }] });
+    const { runtime, created } = fauxRuntime(faux);
+    // a limit under any price: the run asks before it starts
+    const opts = { ...options("ask-abort", runtime), limits: { limitUsd: 0, timeoutMs: 60_000 } };
+    const stop = new AbortController();
+    let heard: AbortSignal | undefined;
+    const r = await review({ kind: "branch" }, opts, {
+      signal: stop.signal,
+      confirm: (_q, o) => {
+        heard = o?.signal;
+        setTimeout(() => stop.abort(), 10);
+        return new Promise<boolean>(() => {});
+      },
+    });
+    expect(heard).toBe(stop.signal);
+    expect(created()).toBe(0);
+    expect(r.data).toMatchObject({ ok: false, stopped: true });
+  });
+
+  it(
+    "one runtime hosts one run: a second review on it while the first runs is refused, and the runtime is disposed after",
+    { timeout: 60_000 },
+    async () => {
+      const faux = pricedFaux(() => 0.25, { provider: "faux", models: [{ id: "m" }] });
+      const built = fauxRuntime(faux);
+      let disposed = 0;
+      const shared: ReviewRuntime = { ...built.runtime, dispose: () => void disposed++ };
+      const asked: string[] = [];
+      const first = optionsOver("shared-a", ({ runDir }) => (asked.push(runDir), shared));
+      const second = optionsOver("shared-b", ({ runDir }) => (asked.push(runDir), shared));
+      let during: Awaited<ReturnType<typeof review>> | undefined;
+      faux.appendResponses([
+        async () => {
+          // the first run's round is in flight: the second asks for the same runtime
+          during = await review({ kind: "branch" }, second);
+          const out = outDirOf(first.runsDir);
+          writeFileSync(join(out, "findings-record.json"), record);
+          writeFileSync(join(out, "outcome.json"), outcome);
+          return fauxAssistantMessage("done");
+        },
+      ]);
+      const r = await review({ kind: "branch" }, first);
+      expect(r.exitCode, r.text).toBe(0);
+      expect(during?.exitCode).toBe(1);
+      expect(during?.text).toMatch(/already hosting another review/);
+      expect(built.created()).toBe(1);
+      // each run asked for its own runtime once, under its own run dir
+      expect(asked).toHaveLength(2);
+      expect(asked[0]!.startsWith(first.runsDir)).toBe(true);
+      expect(asked[1]!.startsWith(second.runsDir)).toBe(true);
+      expect(disposed).toBe(1);
+      // released: the next run may use it again
+      faux.appendResponses([
+        async () => {
+          const out = outDirOf(second.runsDir);
+          writeFileSync(join(out, "findings-record.json"), record);
+          writeFileSync(join(out, "outcome.json"), outcome);
+          return fauxAssistantMessage("done");
+        },
+      ]);
+      const again = await review({ kind: "branch" }, second);
+      expect(again.exitCode, again.text).toBe(0);
+      expect(disposed).toBe(2);
+    },
+  );
 
   it(
     "a signal aborted mid-round stops the turn and returns, recording nothing",
@@ -251,9 +347,16 @@ describe("review(): the local review as a call", () => {
     async () => {
       const faux = pricedFaux(() => 0.25, { provider: "faux", models: [{ id: "m" }] });
       const { runtime, created } = fauxRuntime(faux);
-      const opts = options("mid-abort", runtime);
+      // A round's budget long enough for its one continuation (which a round
+      // that stopped short gets when it has two minutes left): the stop must
+      // be what skips it.
+      const opts = {
+        ...options("mid-abort", runtime),
+        limits: { limitUsd: 1000, timeoutMs: 10 * 60_000 },
+      };
       const stop = new AbortController();
       let turnHeardStop = false;
+      let continued = false;
       faux.appendResponses([
         async (_context, streamOptions) => {
           // the findings are written, then the person stops the review
@@ -269,6 +372,11 @@ describe("review(): the local review as a call", () => {
           turnHeardStop = signal?.aborted === true;
           return fauxAssistantMessage("stopped", { stopReason: "aborted" });
         },
+        // the continuation a round that stopped short would get, were it not stopped
+        async () => {
+          continued = true;
+          return fauxAssistantMessage("continued");
+        },
       ]);
       const exit = vi.spyOn(process, "exit").mockImplementation(() => {
         throw new Error("review() exited the process");
@@ -277,6 +385,7 @@ describe("review(): the local review as a call", () => {
       expect(exit).not.toHaveBeenCalled();
       expect(created()).toBe(1);
       expect(turnHeardStop).toBe(true);
+      expect(continued).toBe(false);
       expect(r.exitCode).toBe(1);
       expect(r.data).toMatchObject({
         ok: false,

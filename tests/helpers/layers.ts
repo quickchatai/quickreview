@@ -66,6 +66,7 @@ export const CORE: readonly string[] = [
   "src/reviewrender.ts",
   "src/escalationprompt.ts",
   "src/reviewerstub.ts",
+  "src/reviewhost.ts",
   "src/round-progress.ts",
   "src/round-stage-deadlines.ts",
   "src/followup-mode.ts",

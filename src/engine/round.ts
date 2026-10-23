@@ -456,6 +456,10 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
       cliFlags: ["--approve", "-ne", "-ns"],
     });
     i.signal?.throwIfAborted();
+    // VERIFY-ON-PIN: a stop that lands once the first prompt is sent but before
+    // pi's agent has made the turn's own abort controller reaches an idle pi
+    // session's abort(); that pi then ends the turn it is about to start, rather
+    // than dropping the abort and running it in full, is assumed, not shown.
     i.signal?.addEventListener("abort", stopTurn, { once: true });
     // The live log hears every event, the `*_update`s too, from the first
     // prompt on; a log that cannot be opened never costs the review.

@@ -872,9 +872,9 @@ describe("the one install site", () => {
       "scripts/deploy.sh", // a name the base clone may not take
       "scripts/vm-postcutover-cleanup.sh", // the legacy sandbox's stub, kept and reported as legacy runtime data; it writes none
       "src/engine/roundsdk.ts", // the SDK round's stub as in-memory data for the session, never written to a checkout
-      "src/hostroute.ts", // the clone route's per-run copy, into the run's own out dir
       "src/resumecheck.ts", // the offline resume check compares a session's context file with the stub text; reads, never writes
       "src/reviewerstub.ts", // the neutral home of the stub's two names and the one resolver of its source (a checkout's or an image's); reads, never writes
+      "src/reviewhost.ts", // the host isolation's per-run copy, into the run's own out dir
       "src/usage.ts", // the cost split counts it as a context file
     ]);
   });
@@ -899,14 +899,23 @@ describe("the one install site", () => {
       .sort();
     // roundsdk.ts only hands the stub to the SDK session as data; it writes nothing.
     // reviewerstub.ts is the neutral home of the two names and finds the stub; it writes nothing.
-    expect(users).toEqual(["src/engine/roundsdk.ts", "src/hostroute.ts", "src/reviewerstub.ts"]);
+    // hostroute.ts re-exports the names for `qcr review`'s callers; it writes nothing.
+    expect(users).toEqual([
+      "src/engine/roundsdk.ts",
+      "src/hostroute.ts",
+      "src/reviewerstub.ts",
+      "src/reviewhost.ts",
+    ]);
+    expect(read("src/hostroute.ts")).not.toMatch(
+      /(writeFile|copyFile|cpSync|renameSync|symlinkSync)\w*\(/,
+    );
     expect(read("src/engine/roundsdk.ts")).not.toMatch(
       /(writeFile|copyFile|cpSync|renameSync|symlinkSync)\w*\(/,
     );
     expect(read("src/reviewerstub.ts")).not.toMatch(
       /(writeFile|copyFile|cpSync|renameSync|symlinkSync)\w*\(/,
     );
-    const text = read("src/hostroute.ts");
+    const text = read("src/reviewhost.ts");
     expect(text.match(/copyFileSync\([^\n]*HOST_CONTEXT_STUB\)/g)).toHaveLength(1);
     // …into the run's cwd only, after the guard that keeps it out of a checkout.
     expect(text).toMatch(

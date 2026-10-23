@@ -27,6 +27,11 @@
 //
 // Stopping: every session is in the live registry (livesessions.ts), which the
 // detached driver's signal handler aborts and disposes before it exits.
+//
+// One runtime hosts one review at a time: its lens board and its lens runner
+// are the run's (the round clears the board when it starts), so a caller that
+// runs reviews side by side builds a runtime per run (src/reviewapi.ts asks
+// for one per run) and disposes it after.
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { lensRunConfigFromEnv } from "../../extensions/lens.js";
@@ -81,8 +86,10 @@ export interface ReviewSdkOptions {
   homeDir?: string;
 }
 
-/** The review SDK runtime: a runtime, carrying the engine route when it has one. */
-export type ReviewSdkRuntime = EngineRouteRuntime;
+/** The review SDK runtime: a runtime, carrying the engine route when it has one.
+ * `dispose` releases every host it built (their sessions and in-memory logins);
+ * a later session builds a host again. */
+export type ReviewSdkRuntime = EngineRouteRuntime & { dispose(): Promise<void> };
 
 /** The lens runner's config on the review route's host: the passes read the agent
  * dir's agents, carry the reviewer stub (D34) and the same bash env allowlist as
@@ -113,7 +120,7 @@ const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
  */
 export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRuntime {
   const procEnv = options.processEnv ?? process.env;
-  const hosts = new Map<string, Promise<Runtime>>();
+  const hosts = new Map<string, Promise<{ rt: Runtime; host: PiHost }>>();
   const engine = options.engine;
   const wave = engine?.wave ?? new LensWave();
   // The tools of the host built last: one agent dir per review, so one.
@@ -131,15 +138,13 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRunti
     return options.lens(spec, host);
   }
 
-  function runtimeFor(spec: SessionSpec): Promise<Runtime> {
+  async function runtimeFor(spec: SessionSpec): Promise<Runtime> {
     const agentDir = spec.env[AGENT_DIR_ENV];
     if (agentDir === undefined || !isAbsolute(agentDir))
-      return Promise.reject(
-        new Error(`the review's spec names no absolute ${AGENT_DIR_ENV}: ${String(agentDir)}`),
-      );
+      throw new Error(`the review's spec names no absolute ${AGENT_DIR_ENV}: ${String(agentDir)}`);
     let built = hosts.get(agentDir);
     if (built === undefined) {
-      built = (async (): Promise<Runtime> => {
+      built = (async (): Promise<{ rt: Runtime; host: PiHost }> => {
         const auth: EngineAuth = engineCredentials({
           srcDir: agentDir,
           needMs: spec.limits.timeoutMs,
@@ -165,7 +170,7 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRunti
           ? engineLensTools(withWarn((engine.config ?? engineLensConfig)(host, spec)), wave)
           : undefined;
         if (tools) lens = tools;
-        return sdkRuntime(host, {
+        const rt = sdkRuntime(host, {
           extras:
             options.extras ??
             ((s) =>
@@ -175,12 +180,21 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRunti
               })(s)),
           ...(options.backstop ? { backstop: options.backstop } : {}),
         });
+        return { rt, host };
       })();
       // A host that failed to build is not kept: the next ask tries again.
       built.catch(() => hosts.delete(agentDir));
       hosts.set(agentDir, built);
     }
-    return built;
+    return (await built).rt;
+  }
+
+  async function dispose(): Promise<void> {
+    const all = [...hosts.values()];
+    hosts.clear();
+    lens = undefined;
+    for (const b of await Promise.allSettled(all))
+      if (b.status === "fulfilled") b.value.host.dispose();
   }
 
   async function open(
@@ -208,6 +222,7 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRunti
   return {
     create: (spec) => open(spec, (rt) => rt.create(spec)),
     resume: (file, spec) => open(spec, (rt) => rt.resume(file, spec)),
+    dispose,
     ...(route ? { engineLens: route } : {}),
   };
 }

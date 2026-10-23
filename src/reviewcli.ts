@@ -387,7 +387,9 @@ export async function runReviewCli(
     config: deps.cfg,
     ecosystem: deps.ecosystem,
     ...(deps.profileHomes ? { profileHomes: deps.profileHomes } : {}),
-    runtime: deps.runtime,
+    // `qcr review` runs one review per process: its one runtime is that run's,
+    // and what it holds goes with the process.
+    runtime: () => deps.runtime,
     prepareHost: prepareHostRun,
     ...(cmd.debugPi && deps.debugPi !== undefined ? { debugRound: deps.debugPi } : {}),
     ...(deps.memory !== undefined ? { memory: deps.memory } : {}),

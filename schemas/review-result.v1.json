@@ -24,6 +24,10 @@
       "type": "boolean",
       "description": "True when the review stopped at its cap before finishing."
     },
+    "stopped": {
+      "type": "boolean",
+      "description": "True when the caller stopped the review (the review API's abort signal) before it finished: {ok:false, stopped:true, errors:[\u2026]}. Nothing is recorded or posted; what the round wrote stays in its out dir."
+    },
     "coverage": {
       "type": "object",
       "required": ["planned", "started", "not_reached"],

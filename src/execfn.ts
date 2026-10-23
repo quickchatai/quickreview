@@ -12,6 +12,9 @@ export interface ExecOpts {
   env?: NodeJS.ProcessEnv;
   input?: string;
   timeoutMs?: number;
+  /** Stops the command: the child is killed and the call rejects with the
+   * signal's AbortError. */
+  signal?: AbortSignal;
 }
 
 export interface ExecResult {
@@ -42,6 +45,7 @@ export const nodeExec: ExecFn = (cmd, args, opts = {}) =>
       cwd: opts.cwd,
       env: opts.env,
       stdio: [opts.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+      ...(opts.signal ? { signal: opts.signal, killSignal: "SIGKILL" as const } : {}),
     });
     let stdout = "";
     let stderr = "";

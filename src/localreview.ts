@@ -23,6 +23,7 @@ import { normalizeDisposition, recordNumber, recordString } from "./findingkey.j
 import { severityRank } from "./severityrank.js";
 import { planKey } from "./plankey.js";
 import { parseUnifiedDiff } from "./diffinput.js";
+import { nodeExec, runOrThrow } from "./execfn.js";
 
 /** A git command's stdout, trimmed; throws with git's own words. */
 function git(
@@ -39,6 +40,26 @@ function git(
     maxBuffer: 256 * 1024 * 1024,
   });
   return opts.raw ? out : out.trim();
+}
+
+/** How long one git step of building a review tree may take. */
+const TREE_GIT_TIMEOUT_MS = 10 * 60_000;
+
+/** A git command run as a child the event loop waits on (a clone or checkout
+ * of a large repo takes a while, and the caller's stop must be heard while it
+ * runs); throws with git's own words, or the signal's AbortError. */
+async function gitAsync(
+  cwd: string,
+  args: readonly string[],
+  opts: { input?: string; signal?: AbortSignal } = {},
+): Promise<string> {
+  const res = await runOrThrow(nodeExec, "git", [...args], {
+    cwd,
+    timeoutMs: TREE_GIT_TIMEOUT_MS,
+    ...(opts.input !== undefined ? { input: opts.input } : {}),
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  });
+  return res.stdout.trim();
 }
 
 function tryGit(cwd: string, args: readonly string[]): string | null {
@@ -199,12 +220,17 @@ export function resolveBranch(cwd: string, asked?: string): BranchResolution {
  * files. The snapshot is a tree built in a throwaway index, and its objects
  * are written to a throwaway object store that borrows the repo's as an
  * alternate, so nothing is written into the reviewed repository and a
- * read-only checkout works. */
-export function resolveUncommitted(cwd: string): BranchResolution {
+ * read-only checkout works. The snapshot's scratch store goes under
+ * `scratchParent` (default: the OS temp dir) and is gone when this returns. */
+export function resolveUncommitted(
+  cwd: string,
+  o: { scratchParent?: string } = {},
+): BranchResolution {
   const head = admitRepo(cwd);
   if (!head.ok) return head;
   const headSha = head.headSha;
-  const scratch = mkdtempSync(join(tmpdir(), "qcr-snap-"));
+  if (o.scratchParent !== undefined) mkdirSync(o.scratchParent, { recursive: true });
+  const scratch = mkdtempSync(join(o.scratchParent ?? tmpdir(), "qcr-snap-"));
   let treeSha: string;
   let files: PrFileEntry[];
   let lines: number;
@@ -296,14 +322,14 @@ export function resolveDiff(cwd: string, text: string): BranchResolution {
  * (`git archive`, a read) and the diff is applied on top when it applies;
  * otherwise, or when it does not, the tree is the HEAD copy (or empty) and
  * the review reads the changes from the diff itself. Returns a warning when
- * the diff did not apply. */
+ * the diff did not apply. The HEAD archive is staged beside `dir`. */
 export function addDiffTree(cwd: string, dir: string, t: BranchTarget): string | null {
   mkdirSync(dir, { recursive: true });
   const top = tryGit(cwd, ["rev-parse", "--show-toplevel"]);
   const head =
     top === null ? null : tryGit(top, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]);
   if (top === null || head === null) return null;
-  const scratch = mkdtempSync(join(tmpdir(), "qcr-diff-"));
+  const scratch = mkdtempSync(join(dirname(resolve(dir)), ".qcr-diff-"));
   try {
     const tarball = join(scratch, "head.tar");
     git(top, ["archive", "--format=tar", "-o", tarball, head]);
@@ -325,21 +351,36 @@ export function addDiffTree(cwd: string, dir: string, t: BranchTarget): string |
 }
 
 /** The review's tree for an uncommitted target: HEAD, then the edits on top. */
-export function addUncommittedTree(cwd: string, dir: string, t: BranchTarget): void {
-  addReviewTree(cwd, dir, t.headSha);
+export async function addUncommittedTree(
+  cwd: string,
+  dir: string,
+  t: BranchTarget,
+  o: { signal?: AbortSignal } = {},
+): Promise<void> {
+  await addReviewTree(cwd, dir, t.headSha, o);
   if (!t.uncommitted) return;
   const { patch } = t.uncommitted;
-  if (patch) git(dir, ["apply", "--whitespace=nowarn"], { input: patch });
+  if (patch)
+    await gitAsync(dir, ["apply", "--whitespace=nowarn"], {
+      input: patch,
+      ...(o.signal ? { signal: o.signal } : {}),
+    });
 }
 
 /** A throwaway detached checkout of `sha`, for the review to read. A shared
  * clone, not a worktree: its objects come from the repository by alternates, so
  * nothing is written into the reviewed repo's .git (the wrapper and the Action
  * mount it read-only), and the tree is still a git checkout the lenses can ask. */
-export function addReviewTree(cwd: string, dir: string, sha: string): void {
+export async function addReviewTree(
+  cwd: string,
+  dir: string,
+  sha: string,
+  o: { signal?: AbortSignal } = {},
+): Promise<void> {
   const common = git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-  git(cwd, ["clone", "--quiet", "--shared", "--no-checkout", common, dir]);
-  git(dir, ["checkout", "--quiet", "--detach", sha]);
+  const signal = o.signal ? { signal: o.signal } : {};
+  await gitAsync(cwd, ["clone", "--quiet", "--shared", "--no-checkout", common, dir], signal);
+  await gitAsync(dir, ["checkout", "--quiet", "--detach", sha], signal);
 }
 
 export function removeReviewTree(_cwd: string, dir: string): void {

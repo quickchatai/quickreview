@@ -14,15 +14,20 @@
 // bot already posted, record the round, render, and post through the one gate
 // when asked.
 //
-// Nothing here reads the caller's cwd, home, environment or config file:
-// every path, the config and the runtime are options, and every word for a
-// person goes through the ports. A stop (`io.signal`) ends the run with a
-// result, never the process.
+// Nothing here reads the caller's cwd, home or config file: every path, the
+// config and the runtime are options, and every word for a person goes
+// through the ports. The process environment is still read where a child
+// needs it: git and the reviewer session inherit PATH and HOME (the session
+// also an API key the key route names, src/engine/round.ts), and a PR's
+// credential chain reads GH_TOKEN, GITHUB_TOKEN and `gh`'s login unless
+// `opts.github.env` (and its other sources) are given. A stop (`io.signal`)
+// ends the run with a result, never the process; every git step that can
+// take long (the PR fetch, the review tree's clone and checkout) runs as a
+// child the event loop waits on, so the stop is heard while it runs.
 //
 // Exit codes follow `qcr scan`: 0 done; 1 refused, declined, failed or
 // stopped short (partial); 2 usage.
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { CoreConfig } from "./reviewconfig.js";
 import type { Ecosystem } from "./ecosystem.js";
@@ -101,6 +106,7 @@ import {
   type ReviewState,
 } from "./reviewstate.js";
 import { openReviewStoreIn } from "./reviewstore.js";
+import { prepareReviewHost } from "./reviewhost.js";
 
 /** What is reviewed. */
 export type ReviewTarget =
@@ -124,8 +130,9 @@ export type ReviewTarget =
  * own: only a given limit stops the run. */
 export type ReviewRoute = "laptop" | "action";
 
-/** What the host's isolation of one run is given (the CLI's is
- * src/hostroute.ts `prepareHostRun`). */
+/** What the host's isolation of one run is given: core's is
+ * src/reviewhost.ts `prepareReviewHost`, which a host calls with its own words
+ * for a refused login (`qcr review`'s: src/hostroute.ts `prepareHostRun`). */
 export interface ReviewHostRequest {
   root: string;
   /** The operator's pi agent dir (its login). Read, never written. */
@@ -165,6 +172,16 @@ export interface ReviewLimits {
   timeoutMs: number;
 }
 
+/** A runtime for one run. `dispose`, when it has one, is called when the run
+ * ends (src/engine/reviewsdk.ts disposes the hosts it built). */
+export type ReviewRuntime = Runtime & { dispose?: () => Promise<void> | void };
+
+/** What a run's runtime is built for. */
+export interface ReviewRuntimeRequest {
+  /** The run's own directory. */
+  runDir: string;
+}
+
 export interface ReviewOptions {
   /** The repository (or a directory in it) the review stands in. A diff
    * needs none there: it is then only read for context. */
@@ -185,10 +202,16 @@ export interface ReviewOptions {
   ecosystem: Ecosystem;
   /** Where profiles are looked up before the asset tree's examples. */
   profileHomes?: readonly ProfilePlace[];
-  /** Hosts the review session. */
-  runtime: Runtime;
-  /** Isolates the run from the operator's pi home and every checkout. */
-  prepareHost: (req: ReviewHostRequest) => ReviewHostRun;
+  /** Builds the runtime that hosts one run's review session. Called once per
+   * run, when the round is about to start (a preview, a refusal or an
+   * unchanged head builds none), and the runtime is disposed when the run
+   * ends. A runtime carries the run's lens board and lens runner, so it hosts
+   * one run at a time: a runtime still hosting another run is refused. */
+  runtime: (run: ReviewRuntimeRequest) => ReviewRuntime;
+  /** Isolates the run from the operator's pi home and every checkout.
+   * Absent: core's isolation (src/reviewhost.ts) with the engine's words for
+   * a refused login. */
+  prepareHost?: (req: ReviewHostRequest) => ReviewHostRun;
   /** Runs the round inside interactive pi instead of on `runtime` (a debug
    * round: no live log, no cap, nothing posted, no destination asked). */
   debugRound?: (spec: RoundSpec) => Promise<OneShotResult>;
@@ -208,16 +231,39 @@ export interface ReviewOptions {
   github?: PrCredentialDeps & Pick<PrFetchRequest, "fetchFn" | "gitBase" | "apiBase">;
 }
 
+/** What a prompt port is given beside its question: the run's stop, which
+ * closes the question unanswered. */
+export interface AskOptions {
+  signal?: AbortSignal;
+}
+
+/** The round that is about to start, for a UI to show while it runs. */
+export interface ReviewStarted {
+  /** The run's directory: the round's live log is under it (src/live/). */
+  runDir: string;
+  /** Where the round writes its files. */
+  outDir: string;
+  /** The round's session name (the live log's key). */
+  sessionName: string;
+  lenses: readonly string[];
+  estimateUsd: number;
+  /** The hard stop in dollars; null: none. */
+  capUsd: number | null;
+}
+
 /** The ports: everything that reaches a person. */
 export interface ReviewIo {
-  /** Ask a yes/no question. Null or absent: nobody to ask. */
-  confirm?: ((question: string) => Promise<boolean>) | null;
+  /** Ask a yes/no question. Null or absent: nobody to ask. A stop closes the
+   * question: the run ends stopped, whatever the port answers. */
+  confirm?: ((question: string, o?: AskOptions) => Promise<boolean>) | null;
   /** Ask the person to pick one option. Absent: not interactive, so the
-   * destination question is never asked. */
-  choose?: (question: string, options: DestinationChoice[]) => Promise<Destination>;
+   * destination question is never asked. A stop closes it, as for `confirm`. */
+  choose?: (question: string, options: DestinationChoice[], o?: AskOptions) => Promise<Destination>;
   /** The run's own progress lines for a person (the preview before the run,
    * the memory notice). */
   progress?: (line: string) => void;
+  /** The round is about to start: where it runs and what it plans. */
+  started?: (run: ReviewStarted) => void;
   /** A warning said before the run. */
   warn?: (line: string) => void;
   /** The round's diagnostics. */
@@ -300,6 +346,18 @@ function renderStillOpen(open: readonly StillOpen[]): string[] {
   ];
 }
 
+/** A cleanup that removes `dir` when the run left nothing in it (a preview,
+ * a refusal), and keeps it otherwise. */
+function removeIfEmpty(dir: string): () => void {
+  return () => {
+    try {
+      rmdirSync(dir);
+    } catch {
+      // not empty, or never made: either way it stays as it is
+    }
+  };
+}
+
 /** The report a no-review shortcut writes when a file was asked for: the same
  * words the terminal gets, so a report file is never left unwritten. */
 function shortcutMarkdown(title: string, lines: readonly string[]): string {
@@ -338,6 +396,28 @@ function startedLenses(outDir: string): string[] {
 
 const STOPPED = "the review was stopped";
 
+/** A port's answer, or `STOP` once the signal fires first: a prompt that does
+ * not hear the signal never holds a stopped run. */
+const STOP: unique symbol = Symbol("stop");
+function unlessStopped<T>(
+  signal: AbortSignal | undefined,
+  ask: (o: AskOptions) => Promise<T>,
+): Promise<T | typeof STOP> {
+  if (signal === undefined) return ask({});
+  if (signal.aborted) return Promise.resolve(STOP);
+  let onAbort: () => void = () => {};
+  const stopped = new Promise<typeof STOP>((done) => {
+    onAbort = () => done(STOP);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  return Promise.race([ask({ signal }), stopped]).finally(() =>
+    signal.removeEventListener("abort", onAbort),
+  );
+}
+
+/** The runtimes hosting a run now: one runtime never hosts two at once. */
+const hosting = new WeakSet<Runtime>();
+
 /** Run the review of `target`: the plan, the price, the round, the record and,
  * when asked, the post. Never throws for a refusal; the result says it. */
 export function review(
@@ -358,16 +438,19 @@ export function preview(
   return withCleanups((cleanups) => runPipeline(target, opts, io, "preview", cleanups));
 }
 
+/** What the run leaves to undo, newest first when it ends. */
+type Cleanups = Array<() => void | Promise<void>>;
+
 async function withCleanups(
-  run: (cleanups: Array<() => void>) => Promise<ReviewResult>,
+  run: (cleanups: Cleanups) => Promise<ReviewResult>,
 ): Promise<ReviewResult> {
-  const cleanups: Array<() => void> = [];
+  const cleanups: Cleanups = [];
   try {
     return await run(cleanups);
   } finally {
-    for (const c of cleanups) {
+    for (const c of cleanups.reverse()) {
       try {
-        c();
+        await c();
       } catch {
         // a scratch tree that will not go is the OS temp cleaner's
       }
@@ -380,7 +463,7 @@ async function runPipeline(
   opts: ReviewOptions,
   io: ReviewIo,
   mode: "review" | "preview",
-  cleanups: Array<() => void>,
+  cleanups: Cleanups,
 ): Promise<ReviewResult> {
   const isPreview = mode === "preview";
   const debug = opts.debugRound !== undefined && !isPreview;
@@ -475,7 +558,9 @@ async function runPipeline(
     if (!parsed.ok) return refuse(1, [parsed.error]);
     const cred = await resolvePrCredential(opts.config.github.secrets_dir, gh);
     if (!cred.ok) return refuse(1, [cred.error]);
+    if (io.signal?.aborted) return stopped();
     runDir = join(opts.runsDir, `${stamp}-pr${parsed.number}`);
+    cleanups.push(removeIfEmpty(runDir));
     const scratch = join(runDir, "repo");
     cleanups.push(() => rmSync(scratch, { recursive: true, force: true }));
     const fetched = await fetchPrTarget({
@@ -486,8 +571,9 @@ async function runPipeline(
       ...(gh?.fetchFn ? { fetchFn: gh.fetchFn } : {}),
       ...(gh?.gitBase ? { gitBase: gh.gitBase } : {}),
       ...(gh?.apiBase ? { apiBase: gh.apiBase } : {}),
+      ...(io.signal ? { signal: io.signal } : {}),
     });
-    if (!fetched.ok) return refuse(1, [fetched.error]);
+    if (!fetched.ok) return io.signal?.aborted ? stopped() : refuse(1, [fetched.error]);
     gitDir = fetched.gitDir;
     prToken = cred.token;
     t = fetched.target;
@@ -512,22 +598,26 @@ async function runPipeline(
     } else
       resolved =
         target.kind === "uncommitted"
-          ? resolveUncommitted(repoDir)
+          ? resolveUncommitted(repoDir, { scratchParent: opts.runsDir })
           : resolveBranch(repoDir, target.base);
     if (!resolved.ok) return refuse(1, [resolved.error]);
     t = resolved.target;
     runDir = join(opts.runsDir, `${stamp}-${t.headSha.slice(0, 7)}`);
+    cleanups.push(removeIfEmpty(runDir));
   }
+  // Resolving the target can take a while (a PR's fetch): a stop that came
+  // meanwhile ends a preview as well as a review here.
+  if (io.signal?.aborted) return stopped();
   // The first interactive run in a repo asks where results go and keeps the
   // answer for it; a run with no terminal and no default never waits. The
   // answer comes before anything reads the destinations (posting to a PR
   // changes what is reviewed), and a preview, which starts nothing, never asks.
   if (explicit.length === 0 && saved === null && io.choose && !isPreview && !debug) {
-    const picked = await io.choose(
-      "Where should review results go?",
-      destinationChoices({ pr: prInfo !== null }),
+    const choose = io.choose;
+    const picked = await unlessStopped(io.signal, (o) =>
+      choose("Where should review results go?", destinationChoices({ pr: prInfo !== null }), o),
     );
-    if (io.signal?.aborted) return stopped();
+    if (picked === STOP || io.signal?.aborted) return stopped();
     dests = [picked];
     saveDefaultDestinationsIn(opts.storeDir, repoDir, dests);
   }
@@ -731,7 +821,8 @@ async function runPipeline(
     // authorizes is the one the run executes. Its warning is the run tree's.
     let planTree = gitDir;
     if (kind === "diff") {
-      planTree = mkdtempSync(join(tmpdir(), "qcr-plan-"));
+      mkdirSync(runDir, { recursive: true });
+      planTree = mkdtempSync(join(runDir, "plan-"));
       const scratch = planTree;
       cleanups.push(() => rmSync(scratch, { recursive: true, force: true }));
       addDiffTree(repoDir, scratch, t);
@@ -809,11 +900,36 @@ async function runPipeline(
         `the price ${usd(price)} is over the limit ${usd(limit!)} and there is no terminal to ask: ` +
           `qcr review --key ${key}`,
       ]);
-    } else if (!(await io.confirm(`Run for ${usd(price)}, over the ${usd(limit!)} limit?`))) {
-      return refuse(1, [`declined: ${usd(price)} is over the ${usd(limit!)} limit`]);
+    } else {
+      const confirm = io.confirm;
+      const yes = await unlessStopped(io.signal, (o) =>
+        confirm(`Run for ${usd(price)}, over the ${usd(limit!)} limit?`, o),
+      );
+      if (yes === STOP || io.signal?.aborted) return stopped();
+      if (!yes) return refuse(1, [`declined: ${usd(price)} is over the ${usd(limit!)} limit`]);
     }
   }
   if (io.signal?.aborted) return stopped();
+
+  // The run's own runtime: built now, disposed when the run ends.
+  let runtime: ReviewRuntime | null = null;
+  if (!debug) {
+    try {
+      runtime = opts.runtime({ runDir });
+    } catch (err) {
+      return refuse(1, [`the review's runtime could not be built: ${String(err).slice(0, 300)}`]);
+    }
+    if (hosting.has(runtime))
+      return refuse(1, [
+        "the runtime is already hosting another review: a runtime hosts one run at a time, so ReviewOptions.runtime builds one per run",
+      ]);
+    const rt = runtime;
+    hosting.add(rt);
+    cleanups.push(async () => {
+      hosting.delete(rt);
+      await rt.dispose?.();
+    });
+  }
 
   mkdirSync(runDir, { recursive: true });
   const runWarnings: string[] = overrides.ignored.map((l) => `profile: ${l}`);
@@ -822,7 +938,7 @@ async function runPipeline(
   // holding the reviewer stub (the host's `prepareHost`).
   let host: ReviewHostRun;
   try {
-    host = opts.prepareHost({
+    host = (opts.prepareHost ?? prepareReviewHost)({
       root: opts.root,
       srcAgentDir: opts.agentDir,
       agentDir: join(runDir, "agent"),
@@ -858,6 +974,7 @@ async function runPipeline(
         token: prInfo.token,
         ...(gh?.fetchFn ? { fetchFn: gh.fetchFn } : {}),
         ...(gh?.apiBase ? { apiBase: gh.apiBase } : {}),
+        ...(io.signal ? { signal: io.signal } : {}),
       })
     : { findings: [] as PostedFinding[] };
   if (bot.warning !== undefined) {
@@ -882,8 +999,9 @@ async function runPipeline(
         runWarnings.push(w);
         warn(w);
       }
-    } else if (kind === "uncommitted") addUncommittedTree(gitDir, treeDir, t);
-    else addReviewTree(gitDir, treeDir, t.headSha);
+    } else if (kind === "uncommitted")
+      await addUncommittedTree(gitDir, treeDir, t, io.signal ? { signal: io.signal } : {});
+    else await addReviewTree(gitDir, treeDir, t.headSha, io.signal ? { signal: io.signal } : {});
     const round: RoundSpec = {
       root: opts.root,
       cwd: host.cwd,
@@ -908,14 +1026,19 @@ async function runPipeline(
       ...(io.log ? { log: io.log } : {}),
       ...(io.signal ? { signal: io.signal } : {}),
     };
-    shot =
-      debug && opts.debugRound !== undefined
-        ? // inside interactive pi: no live log and no cap, the person is watching
-          await opts.debugRound({ ...round, live: undefined })
-        : await runOneShot({
-            ...round,
-            runtime: opts.runtime,
-          });
+    io.started?.({
+      runDir,
+      outDir,
+      sessionName,
+      lenses,
+      estimateUsd: price,
+      capUsd: cap,
+    });
+    if (runtime !== null) shot = await runOneShot({ ...round, runtime });
+    // inside interactive pi: no live log and no cap, the person is watching
+    else if (opts.debugRound !== undefined)
+      shot = await opts.debugRound({ ...round, live: undefined });
+    else throw new Error("the review has no runtime");
   } catch (err) {
     if (io.signal?.aborted) return stopped();
     return refuse(1, [`the review could not run: ${String(err).slice(0, 300)}`]);
