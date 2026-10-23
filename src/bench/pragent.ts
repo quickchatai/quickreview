@@ -316,12 +316,6 @@ export function reviewBody(review: PragentCapture | null, unlocated: PragentFind
 
 export type CommandStatus = "ok" | "failed" | "timeout" | "not-run";
 
-/** One command's outcome. PR-Agent exits 0 even when the model call failed (it
- * publishes "Failed to review PR" instead), so success is what it PRODUCED:
- * /review a structured review; /improve its published suggestions list — EMPTY
- * included: with no suggestions it publishes an empty artifact (the local
- * provider's "No code suggestions found for the PR.") — or an explicit "no
- * suggestions" comment. */
 /** The warning for a command that did not end ok: PR-Agent's own last comment
  * when it captured one, else the tail of stderr and the command log's name. */
 export function commandFailureWarning(
@@ -336,6 +330,12 @@ export function commandFailureWarning(
   return `${command}: ${status}${tail ? ` — stderr: ${tail}` : ""} (see pragent-${command}.log)`;
 }
 
+/** One command's outcome. PR-Agent exits 0 even when the model call failed (it
+ * publishes "Failed to review PR" instead), so success is what it PRODUCED:
+ * /review a structured review; /improve its published suggestions list — EMPTY
+ * included: with no suggestions it publishes an empty artifact (the local
+ * provider's "No code suggestions found for the PR.") — or an explicit "no
+ * suggestions" comment. */
 export function commandStatus(
   command: PragentCommand,
   r: { code: number; timedOut: boolean } | null,
