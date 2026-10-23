@@ -724,6 +724,21 @@ describe("qcr review --diff", () => {
     expect(readFileSync(seen, "utf8")).toBe("");
   });
 
+  it("plans over the repository's tree, so a style guide there is in the plan the person authorizes", async () => {
+    const repo = mainRepo("diff-plan");
+    writeFileSync(
+      join(repo, "STYLE.md"),
+      "# Style guide\n" +
+        Array.from({ length: 30 }, (_, i) => `- rule ${i}: keep it tidy`).join("\n") +
+        "\n",
+    );
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "style guide");
+    const h = piped({ repo, piBin: "false" }, DIFF);
+    expect(await runReviewCli(["--diff", "-", "--preview"], true, h.deps)).toBe(0);
+    expect(JSON.parse(h.lines[0]!).preview.lenses.join(" ")).toMatch(/pass-style/);
+  });
+
   it("reads a repository around it as context, the diff applied, and writes nothing to git", async () => {
     const repo = mainRepo("diff-ctx");
     setLimit(repo, 1000);
@@ -1128,4 +1143,23 @@ describe("qcr review --debug-pi", () => {
     // the real runtime path was never taken (piBin "false" would have failed it)
     expect(h.text()).not.toMatch(/could not run/);
   });
+});
+
+describe("qcr review: a session that runs out of time", () => {
+  it("is not a finished review, even with findings written: no checkpoint, so the next run reviews again", async () => {
+    const repo = mkRepo("timedout");
+    setLimit(repo, 1000);
+    const pi = fakePi("timedout", [
+      `printf '%s' ${JSON.stringify(record)} > "$cd/findings-record.json"`,
+      "sleep 60",
+    ]);
+    const h = harness({ repo, piBin: pi.bin });
+    const deps = { ...h.deps, timeoutMs: 3000 };
+    expect(await runReviewCli([], true, deps)).toBe(1);
+    const o = JSON.parse(h.lines[h.lines.length - 1]!);
+    expect(o.ok).toBe(false);
+    expect(o.errors.join(" ")).toMatch(/timed out/);
+    expect(await runReviewCli([], true, deps)).toBe(1);
+    expect(readFileSync(pi.calls, "utf8").trim().split("\n")).toHaveLength(2);
+  }, 60_000);
 });
