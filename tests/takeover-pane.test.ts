@@ -149,6 +149,20 @@ describe("[P8.13] the takeover's login is a refresh-blanked borrowed copy", () =
     expect(existsSync(join(dir, "spec.json"))).toBe(false);
   });
 
+  it("starts the pi the spec names when no entry override is given", async () => {
+    ownerAgent();
+    const seen: string[] = [];
+    const code = await runTakeover(specFile({ pi_bin: "/opt/own-pi" }), {
+      env: { PATH: "/usr/bin", HOME: "/home/qcr", QCR_IPC_CAP_FD: "3" },
+      run: async (cmd) => {
+        seen.push(cmd.bin);
+        return 0;
+      },
+    });
+    expect(code).toBe(0);
+    expect(seen).toEqual(["/opt/own-pi"]);
+  });
+
   it("copies from a dir it may only read, while the refresher holds its lock", () => {
     const agent = ownerAgent();
     chmodSync(join(agent, "auth.json"), 0o444);

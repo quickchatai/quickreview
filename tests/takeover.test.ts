@@ -625,6 +625,48 @@ describe("[P8.13] the lease expires after 30 minutes idle", () => {
     expect(r.store.hostLease(7)).toBeDefined();
   });
 
+  it("a rowless unstarted process lease is kept while tmux still lists its pane", async () => {
+    const r = rig();
+    expect((await r.mgr.grant(7)).ok).toBe(true);
+    const lease = r.mgr.leases.read("takeover-pr-7")!;
+    r.mgr.leases.forget("takeover-pr-7");
+    r.mgr.leases.create({ ...lease, pid: null, pgid: null, start_time: null });
+    r.store.releaseHostLease(7, r.store.hostLease(7)!.token);
+    // tmux cannot kill the session
+    const stuck = r.manager({
+      tmux: new Tmux({
+        exec: async (cmd, args) =>
+          args[0] === "kill-session"
+            ? { code: 1, stdout: "", stderr: "server busy" }
+            : r.host.exec(cmd, args),
+      }),
+    });
+    await stuck.recover();
+    expect(r.host.sessions.has("takeover-pr-7")).toBe(true);
+    expect(stuck.leases.read("takeover-pr-7")).toBeTruthy();
+  });
+
+  it("a sweep while the pane is still being created releases nothing", async () => {
+    const r = rig();
+    let open!: () => void;
+    const gate = new Promise<void>((res) => (open = res));
+    const slow = r.manager({
+      tmux: new Tmux({
+        exec: async (cmd, args) => {
+          if (args[0] === "new-session") await gate;
+          return r.host.exec(cmd, args);
+        },
+      }),
+    });
+    const granting = slow.grant(7);
+    await new Promise((res) => setTimeout(res, 20));
+    expect(await slow.sweep()).toEqual({ released: [], stuck: [] });
+    expect(r.store.hostLease(7)).toBeDefined();
+    open();
+    expect((await granting).ok).toBe(true);
+    expect(r.store.hostLease(7)).toBeDefined();
+  });
+
   it("a daemon restart ends every takeover and frees it once the pi is gone", async () => {
     const r = rig();
     expect((await r.mgr.grant(7)).ok).toBe(true);

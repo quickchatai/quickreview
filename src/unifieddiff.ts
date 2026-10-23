@@ -80,6 +80,28 @@ export function gitDiffHeaderPaths(tail: string): { a: string | null; b: string 
 }
 
 /**
+ * The two sides of a `Binary files <a> and <b> differ` line (the text between
+ * `Binary files ` and ` differ`). A name may itself contain ` and `, so the
+ * split is chosen: a split whose sides spell the same path wins, then the first
+ * split whose sides carry git's `a/` and `b/` prefixes (or `/dev/null`), then
+ * the first split.
+ */
+function binarySides(rest: string): [string, string] | null {
+  const splits: Array<[string, string]> = [];
+  for (let i = rest.indexOf(" and "); i >= 0; i = rest.indexOf(" and ", i + 1))
+    splits.push([rest.slice(0, i), rest.slice(i + 5)]);
+  const bare = (p: string): string => p.replace(/^"?[ab]\//, "");
+  const prefixed = (a: string, b: string): boolean =>
+    (a === "/dev/null" || /^"?a\//.test(a)) && (b === "/dev/null" || /^"?b\//.test(b));
+  return (
+    splits.find(([a, b]) => a !== "/dev/null" && b !== "/dev/null" && bare(a) === bare(b)) ??
+    splits.find(([a, b]) => prefixed(a, b)) ??
+    splits[0] ??
+    null
+  );
+}
+
+/**
  * The files of a unified diff (`git diff` output) in the shape GitHub's
  * files API returns and `buildPassPlan` reads: path, status, +/- counts and
  * the hunks as `patch` (absent for a binary). Paths come from the `+++`/`---`
@@ -123,10 +145,10 @@ export function parseUnifiedDiff(text: string): PrFileEntry[] {
       else if (line.startsWith("+++ "))
         to = line.slice(4) === "/dev/null" ? null : unq(line.slice(4));
       else if (line.startsWith("Binary files ")) {
-        const m = /^Binary files (.+?) and (.+?) differ$/.exec(line);
-        if (m) {
-          from = m[1] === "/dev/null" ? null : unq(m[1]!);
-          to = m[2] === "/dev/null" ? null : unq(m[2]!);
+        const sides = binarySides(line.slice("Binary files ".length, -" differ".length));
+        if (line.endsWith(" differ") && sides) {
+          from = sides[0] === "/dev/null" ? null : unq(sides[0]);
+          to = sides[1] === "/dev/null" ? null : unq(sides[1]);
         }
       }
     }

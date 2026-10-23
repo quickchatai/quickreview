@@ -1170,6 +1170,16 @@ describe("replay rules", () => {
     ]);
   });
 
+  it("a binary file whose name contains ' and ' keeps its real path", () => {
+    const diff = [
+      "diff --git a/foo and bar.png b/foo and bar.png",
+      "index 1111111..2222222 100644",
+      "Binary files a/foo and bar.png and b/foo and bar.png differ",
+      "",
+    ].join("\n");
+    expect(parseUnifiedDiff(diff).map((f) => f.filename)).toEqual(["foo and bar.png"]);
+  });
+
   it("a path's own trailing space survives; only git's tab after it goes", () => {
     const diff = [
       "diff --git a/notes  b/notes ",
