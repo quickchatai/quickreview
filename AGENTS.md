@@ -64,7 +64,7 @@ All three must be green before you commit. Notes that will bite otherwise:
 ## Conventions
 
 - **TypeScript strict**, plus `noUncheckedIndexedAccess` and
-  `noImplicitOverride` (`tsconfig.json`). Node **≥ 22** (`package.json`
+  `noImplicitOverride` (`tsconfig.json`). Node **≥ 26** (`package.json`
   `engines`).
 - **ESM, `module: NodeNext`** — local imports carry the **`.js` suffix** even
   from `.ts` files.
