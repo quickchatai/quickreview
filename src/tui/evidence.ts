@@ -143,6 +143,14 @@ export interface RoundManifest {
 
 export const MANIFEST_NAME = "manifest.json";
 
+/** The `round-<n>` directory names under a PR's evidence dir that hold a
+ * manifest, i.e. rounds that copied completely. The dir must exist. */
+export function completedRoundDirs(prDir: string): string[] {
+  return readdirSync(prDir).filter(
+    (name) => /^round-\d+$/.test(name) && existsSync(join(prDir, name, MANIFEST_NAME)),
+  );
+}
+
 /**
  * Locate a round's artefacts on the VM in ONE call, printing `role<space>path`
  * for each that exists.
@@ -532,11 +540,8 @@ export class EvidenceStore {
   copiedRounds(pr: number): number[] {
     const dir = join(this.dir, `pr-${pr}`);
     if (!existsSync(dir)) return [];
-    return readdirSync(dir)
-      .map((d) => /^round-(\d+)$/.exec(d)?.[1])
-      .filter((n): n is string => n !== undefined)
-      .map(Number)
-      .filter((n) => this.has(pr, n))
+    return completedRoundDirs(dir)
+      .map((d) => Number(d.slice("round-".length)))
       .sort((a, b) => a - b);
   }
 

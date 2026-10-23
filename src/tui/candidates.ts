@@ -48,7 +48,7 @@ import { readJsonFile, writeJsonFile } from "./jsonfile.js";
 import { parseEventTags, parseHashTags } from "../memory/eventtags.js";
 import { normalizeTag } from "../memory/store.js";
 import type { StatusSnapshot } from "../state.js";
-import { MANIFEST_NAME, prSignature, type RoundManifest, type WhyRound } from "./evidence.js";
+import { completedRoundDirs, MANIFEST_NAME, prSignature, type RoundManifest, type WhyRound } from "./evidence.js";
 
 // ---- the families ------------------------------------------------------------
 
@@ -80,6 +80,9 @@ export const FAMILY_TITLE: Record<CandidateFamily, string> = {
 
 /** What each family is evidence OF — carried into the rendered survey so the
  * companion never has to remember why a family exists. */
+/** Rounds at which a review is long, whatever its pattern (a definition, see Thresholds). */
+export const LONG_REVIEW_ROUNDS = 10;
+
 export const FAMILY_WHY: Record<CandidateFamily, string> = {
   "feedback-tag": "a human said so, in words, on the PR — the highest-confidence family",
   disagreement:
@@ -88,7 +91,7 @@ export const FAMILY_WHY: Record<CandidateFamily, string> = {
   "no-verdict": "the round died — overdue, malformed, orphaned or cancelled — and nobody was told",
   "repeat-blocks": "the same PR re-blocked round after round; the treadmill, not a fix cycle",
   "repeat-approvals": "approved, then approved again; the recheck forbids this, so watch it die",
-  "long-review": "ten rounds or more, whatever the pattern",
+  "long-review": `${LONG_REVIEW_ROUNDS} rounds or more, whatever the pattern`,
 };
 
 /**
@@ -97,7 +100,6 @@ export const FAMILY_WHY: Record<CandidateFamily, string> = {
  * invite making the survey quieter when it got noisy — which is the one failure
  * mode a survey cannot have.
  */
-export const LONG_REVIEW_ROUNDS = 10;
 /**
  * Three consecutive REQUEST_CHANGES rounds, not two.
  *
@@ -267,7 +269,8 @@ export function detectCandidates(facts: PrFacts): Detected[] {
     });
   }
 
-  const approvals = facts.rounds.filter((r) => verdictOf(r) === APPROVE).length;
+  const approvedRounds = facts.rounds.filter((r) => verdictOf(r) === APPROVE);
+  const approvals = approvedRounds.length;
   if (approvals >= REPEAT_APPROVAL_ROUNDS) {
     out.push({
       family: "repeat-approvals",
@@ -275,10 +278,7 @@ export function detectCandidates(facts: PrFacts): Detected[] {
       severity: approvals,
       headline: `approved ${approvals} times`,
       detail: [
-        `rounds ${facts.rounds
-          .filter((r) => verdictOf(r) === APPROVE)
-          .map((r) => r.round_no)
-          .join(", ")}`,
+        `rounds ${approvedRounds.map((r) => r.round_no).join(", ")}`,
       ],
     });
   }
@@ -334,8 +334,10 @@ export interface Candidate {
   author?: string;
   /** First sweep that saw it — never rewritten, so age is readable. */
   first_seen: string;
-  /** Last sweep that re-derived it. NOT an expiry input: nothing reads this to
-   * drop a row, and nothing may be added that does. */
+  /** Last sweep that re-derived it, as of the last list that changed: an
+   * unchanged sweep keeps the previous list, so this advances only when a
+   * re-detection lands in a materially changed list. NOT an expiry input:
+   * nothing reads this to drop a row, and nothing may be added that does. */
   last_seen: string;
   /** The PR's signature as of the last sweep — the "did it move" input. */
   signature: string;
@@ -607,9 +609,7 @@ export function renderSurvey(list: CandidateList): string {
 function localManifestCount(evidenceDir: string, pr: number): number {
   const dir = join(evidenceDir, `pr-${pr}`);
   if (!existsSync(dir)) return 0;
-  return readdirSync(dir).filter(
-    (name) => /^round-\d+$/.test(name) && existsSync(join(dir, name, MANIFEST_NAME)),
-  ).length;
+  return completedRoundDirs(dir).length;
 }
 
 /**
