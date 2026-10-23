@@ -146,7 +146,8 @@ export interface LensRunConfig {
   live?: (id: string, agent: string) => LiveSink;
   /** Hears every extension error pi reports instead of throwing. */
   onExtensionError?: (agent: string, id: string, error: ExtensionError) => void;
-  /** A ledger or progress write that failed (diagnostic only; never fatal). */
+  /** A ledger or progress write that failed (diagnostic only; never fatal).
+   * The host's sink: omitted, nowhere. */
   warn?: (message: string) => void;
   now?: () => number;
   newId?: () => string;
@@ -299,7 +300,8 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     config.permitPort ?? localPermits(lensSemaphoreFor(config.host, config.permits));
   const now = config.now ?? Date.now;
   const newId = config.newId ?? randomUUID;
-  const warn = config.warn ?? ((m: string): void => console.error(`[lens] ${m}`));
+  // The host's sink (it prefixes `[lens] ` where it prints); omitted: nowhere.
+  const warn = config.warn ?? ((): void => {});
   /** Sessions streaming now, by id. A host that handed two ungrouped passes
    * one id would cut one's websocket when the other is disposed (canary 1);
    * a cache group shares its id on purpose and disposes together. */

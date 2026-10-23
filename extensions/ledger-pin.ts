@@ -229,7 +229,7 @@ export async function pinnedCompaction(
   ctx: Partial<Pick<ExtensionContext, "modelRegistry" | "model" | "thinkingLevel">> | undefined,
   pinned: string,
   compactFn: CompactFn | undefined,
-  log: (msg: string) => void = (m) => console.error(m),
+  log: (msg: string) => void = () => {},
 ): Promise<SessionBeforeCompactResult | undefined> {
   const fail = (why: string): undefined => {
     log(
@@ -294,6 +294,9 @@ export const LEDGER_ENTRY_TYPE = "qcr-review-ledger";
 export interface LedgerPinDeps {
   /** Where pi's `compact()` comes from; tests inject a fake. */
   loadCompact?: () => Promise<CompactFn | undefined>;
+  /** Where the extension's diagnostics go, one line each (the host's: the env
+   * shim passes stderr). Omitted: nowhere. */
+  log?: (msg: string) => void;
 }
 
 /** What one ledger-pin extension needs, resolved: no env is read past here. */
@@ -332,6 +335,7 @@ export function createLedgerPin(config: LedgerPinConfig): ExtensionFactory {
 
 function registerLedgerPin(pi: ExtensionAPI, config: LedgerPinConfig): void {
   const loadCompact = config.loadCompact ?? loadPiCompact;
+  const log = config.log ?? ((): void => {});
   const { prMeta: meta, ownPr, snapshotPath } = config;
   let lastLedger = "";
   let persistedLedger = "";
@@ -339,7 +343,7 @@ function registerLedgerPin(pi: ExtensionAPI, config: LedgerPinConfig): void {
   const capture = (source: unknown): string => {
     const onIgnore = (pr: number): void => {
       const who = ownPr === undefined ? "session has no QCR_PR" : `own PR is #${ownPr}`;
-      console.error(`[ledger-pin] debug: ignoring LEDGER PR #${pr} (${who})`);
+      log(`[ledger-pin] debug: ignoring LEDGER PR #${pr} (${who})`);
     };
     const ledger = extractLedger(collectText(source), ownPr, onIgnore) ?? lastLedger;
     if (ledger) lastLedger = ledger;
@@ -348,7 +352,7 @@ function registerLedgerPin(pi: ExtensionAPI, config: LedgerPinConfig): void {
         writeSnapshot(snapshotPath, ledger);
         persistedLedger = ledger;
       } catch (err) {
-        console.error(`[ledger-pin] snapshot write failed: ${String(err)}`);
+        log(`[ledger-pin] snapshot write failed: ${String(err)}`);
       }
     }
     return ledger;
@@ -383,9 +387,9 @@ function registerLedgerPin(pi: ExtensionAPI, config: LedgerPinConfig): void {
       try {
         pi.appendEntry?.(LEDGER_ENTRY_TYPE, { pr: ownPr, ledger, meta });
       } catch (err) {
-        console.error(`[ledger-pin] appendEntry failed: ${String(err)}`);
+        log(`[ledger-pin] appendEntry failed: ${String(err)}`);
       }
-      return pinnedCompaction(event, ctx, pinnedBlock(meta, ledger), await loadCompact());
+      return pinnedCompaction(event, ctx, pinnedBlock(meta, ledger), await loadCompact(), log);
     },
   );
 }

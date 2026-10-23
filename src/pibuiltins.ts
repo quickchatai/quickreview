@@ -32,9 +32,8 @@
 // The mirrors (plain JS, they run before any build): the release image's
 // entrypoint (docker/entrypoint.sh, the VM's too), the companion's
 // (docker/companion/entrypoint.sh)
-// and the bench sandbox's
-// settings (src/bench/auth.ts benchSettings). tests/pibuiltins.test.ts pins
-// every mirror to this list.
+// and the sandbox settings below (`benchSettings`, the bench's and
+// `qcr review`'s). tests/pibuiltins.test.ts pins every mirror to this list.
 export const PI_DISABLED_BUILTINS = [
   "-builtin:mcp",
   "-builtin:codemode",
@@ -51,3 +50,41 @@ export const PI_DISABLED_BUILTINS = [
  * set it; tests/pibuiltins.test.ts pins each one to this value.
  */
 export const PI_TUI_MODE = "regular";
+
+/** pi's agent-level retry for a benchmark sandbox — every session and every
+ * lens child reads it (one agent dir). pi's own default (3 attempts, ≤ 60 s
+ * apart) gives up inside two minutes, and a provider's overload window
+ * (DigitalOcean "529 Platform overloaded", or a request timeout) is longer than
+ * that: the lens is lost and the review posts without it. This backs off from
+ * 5 s doubling to a 2-minute cap over 10 attempts — about 13 minutes of
+ * patience per request — so a PR is processed fully and fails only when the
+ * provider is really unavailable. Provider-level retries stay off (pi's advice:
+ * they would hide quota and usage-limit errors from pi). */
+export const BENCH_RETRY = {
+  enabled: true,
+  maxRetries: 10,
+  baseDelayMs: 5_000,
+  maxAgentDelayMs: 120_000,
+} as const;
+
+/** pi's global settings for the sandbox: pi's built-in extensions switched off
+ * (src/pibuiltins.ts — the reviewed checkout is exactly the untrusted ground a
+ * `.pi/mcp.json` would come from); every project trusted so no modal can stall
+ * a run; /opt/quickreview pre-trusted; and the durable retry above. No global
+ * bash-guard (P9.5, P9.12): every route that runs a model hands the guard to
+ * its sessions itself, as an `--extension` or a factory. */
+export function benchSettings(_root: string): { settings: string; trust: string } {
+  return {
+    settings:
+      JSON.stringify(
+        {
+          extensions: [...PI_DISABLED_BUILTINS],
+          defaultProjectTrust: "always",
+          retry: BENCH_RETRY,
+        },
+        null,
+        2,
+      ) + "\n",
+    trust: JSON.stringify({ "/opt/quickreview": true }, null, 2) + "\n",
+  };
+}

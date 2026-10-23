@@ -18,7 +18,7 @@ import { runPiCliInCwd } from "./engine/pisdk.js";
 
 // Run only as the entry point, not when a test imports this file.
 if (process.argv[1]?.endsWith("picwd.js")) {
-  runPiCliInCwd(process.argv.slice(2)).catch((e: unknown) => {
+  runPiCliInCwd(process.argv.slice(2), () => process.cwd()).catch((e: unknown) => {
     console.error(e instanceof Error ? (e.stack ?? e.message) : String(e));
     process.exit(1);
   });

@@ -38,7 +38,6 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { homedir } from "node:os";
 import { dirname, join, isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -163,15 +162,12 @@ export async function loadConfigureHttpDispatcher(): Promise<ConfigureHttpDispat
 type SessionOpen = typeof SessionManager.open;
 const CWD_PINNED = Symbol.for("qcr.picwd.pinned");
 
-/** Make `SessionManager.open` default its cwd to `cwd()` instead of the session
- * header's, the way `resumeFile` below opens a session in the spec's cwd. Idempotent.
+/** Make `SessionManager.open` default its cwd to `cwd()` (the launcher's, as its
+ * host resolves it) instead of the session header's, the way `resumeFile` below opens a session in the spec's cwd. Idempotent.
  * An explicit override (pi's own missing-cwd recovery) still wins. VERIFY-ON-PIN: pi's
  * CLI reaches the class's static `open` at call time (main.js createSessionManager;
  * tests/picwd.test.ts drives the real one). */
-export function pinSessionCwd(
-  manager: { open: SessionOpen } = SessionManager,
-  cwd: () => string = () => process.cwd(),
-): void {
+export function pinSessionCwd(manager: { open: SessionOpen }, cwd: () => string): void {
   const holder = manager as { open: SessionOpen; [CWD_PINNED]?: true };
   if (holder[CWD_PINNED]) return;
   const open = manager.open.bind(manager);
@@ -180,16 +176,16 @@ export function pinSessionCwd(
 }
 
 /** pi's own CLI entry (its cli.js: setupCli, then main) with the session cwd pinned
- * to this process's. setupCli's steps are repeated here because the package does not
- * export it: the same title and flags (so `insideCliPi` answers as in the CLI binary)
- * and the same HTTP dispatcher. */
-export async function runPiCliInCwd(argv: string[]): Promise<void> {
+ * to `cwd()`, the launching process's (src/picwd.ts). setupCli's steps are repeated
+ * here because the package does not export it: the same title and flags (so
+ * `insideCliPi` answers as in the CLI binary) and the same HTTP dispatcher. */
+export async function runPiCliInCwd(argv: string[], cwd: () => string): Promise<void> {
   process.title = piCliTitles()[0]!;
   process.env["PI_CODING_AGENT"] = "true";
   process.env["AI_AGENT"] = "pi";
   process.emitWarning = () => {};
   (await loadConfigureHttpDispatcher())();
-  pinSessionCwd();
+  pinSessionCwd(SessionManager, cwd);
   await piCliMain(argv);
 }
 
@@ -420,8 +416,13 @@ export interface PiHostOptions {
   /** The setpriv binary for `toolUid`: omitted, a system one by absolute path
    * (tooluid.ts trustedSetpriv). Tests hand a stand-in. */
   setprivBin?: string;
+  /** The user's home, as pi resolves `~` (the host resolves it: core reads no
+   * home of its own). The default fence keeps its `.pi` out of the file tools,
+   * and a tool's `~` path is expanded against it. Omitted: no home is fenced,
+   * and a `~` path is refused. */
+  homeDir?: string;
   /** What the file tools may not reach. Omitted: /proc, /run/qcr-in, /qcr-login,
-   * the host's agent dir, this home's pi dir, the login sources this process's
+   * the host's agent dir, `homeDir`'s pi dir, the login sources this process's
    * env names (PI_CODING_AGENT_DIR, QCR_SCAN_AUTH_SRC), the credentials it
    * points at (toolfence.ts credentialPaths) and `fenceDirs`.
    * `false` turns the fence off. */
@@ -601,7 +602,7 @@ export class PiHost {
             protectedWrite: isProtectedWriteTarget,
             dirs: [
               options.agentDir,
-              join(homedir(), ".pi"),
+              ...(options.homeDir !== undefined ? [join(options.homeDir, ".pi")] : []),
               ...loginSourceDirs(process.env),
               ...credentialPaths(process.env),
               ...(options.fenceDirs ?? []),
@@ -655,7 +656,7 @@ export class PiHost {
       write: () => createWriteToolDefinition(cwd, { operations: ops.write }),
     };
     return FENCED_TOOLS.filter((n) => names.includes(n)).map((n) =>
-      guardedTool(make[n]() as ToolDefinition, fence, cwd),
+      guardedTool(make[n]() as ToolDefinition, fence, cwd, this.options.homeDir),
     );
   }
 

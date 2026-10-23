@@ -32,8 +32,8 @@ import {
 import { dirname, join, relative, resolve } from "node:path";
 import { isInside } from "./pathinside.js";
 import type { Config } from "./config.js";
-import { buildBenchAgents } from "./bench/runner.js";
-import { benchSettings } from "./bench/auth.js";
+import { buildBenchAgents } from "./engine/roundagents.js";
+import { benchSettings } from "./pibuiltins.js";
 import { copyPiAuth } from "./engine/auth.js";
 import type { ProfileLookup } from "./profiles.js";
 import { HOST_CONTEXT_STUB, REVIEWER_STUB, reviewerStubSource } from "./reviewerstub.js";

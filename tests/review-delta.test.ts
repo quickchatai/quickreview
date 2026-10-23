@@ -27,6 +27,7 @@ vi.stubEnv(
 );
 
 const { runReviewCli } = await import("../src/reviewcli.js");
+const { reviewMemoryPort } = await import("../src/reviewmemory.js");
 const { contextFor } = await import("../src/bench/runner.js");
 const state = await import("../src/reviewstate.js");
 const { openReviewStore } = await import("../src/reviewstore.js");
@@ -463,12 +464,12 @@ describe("qcr review: a delta review with memory", () => {
     expect(await runReviewCli([], false, harness(repo, pi.bin).deps)).toBe(0);
     smallPush(repo);
     const h = harness(repo, pi.bin);
-    const memory = {
+    const memory = reviewMemoryPort({
       assembler: {
         pinnedHead: async () => ({ status: "read" as const, text: "PINNED-HEAD-MARK" }),
         contextBlock: async () => ({ status: "read" as const, text: "CONTEXT-BLOCK-MARK" }),
       },
-    };
+    });
     expect(await runReviewCli([], true, { ...h.deps, memory })).toBe(0);
     const order = pi.order(2);
     expect(order).toMatch(/PRIOR FINDINGS TO VERIFY/);

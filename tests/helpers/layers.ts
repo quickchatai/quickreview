@@ -49,6 +49,8 @@ export const CORE: readonly string[] = [
   "src/plankey.ts",
   "src/ledgercarry.ts",
   "src/contextpack.ts",
+  "src/datafence.ts",
+  "src/memoryport.ts",
   "src/depsources.ts",
   "src/severity.ts",
   "src/severityrank.ts",
@@ -88,9 +90,13 @@ export const CORE: readonly string[] = [
   "src/contract.ts",
   "src/ghcred.ts",
   "src/githubcore.ts",
-  // The LiveEvent log a round writes (viewers stay in the app).
+  "src/githubAuth.ts",
+  // The LiveEvent log a round writes (viewers stay in the app), and the
+  // heartbeat a turn's deadline is published on.
   "src/live/events.ts",
   "src/live/writer.ts",
+  "src/heartbeat.ts",
+  "src/session-command.ts",
   // Small shared leaves.
   "src/types.ts",
   "src/glob.ts",
@@ -113,7 +119,8 @@ export const CORE: readonly string[] = [
   "extensions/pi-tool.ts",
 ];
 
-/** Engine files that are hosts for the bot, bench or setup: app, not core. */
+/** Engine files that are hosts for the bot, bench or setup: app, not core
+ * (or the CLI's, where CLI lists them: `debugpi`). */
 export const CORE_EXCEPT: readonly string[] = [
   "src/engine/botsdk.ts",
   "src/engine/benchsdk.ts",
@@ -140,6 +147,11 @@ export const CLI: readonly string[] = [
   "src/picli.ts",
   "src/clonedir.ts",
   "src/homes.ts",
+  // `qcr review --debug-pi` (an engine file, so also in CORE_EXCEPT) and the
+  // run-dir readers of `qcr review status` and `qcr live`.
+  "src/engine/debugpi.ts",
+  "src/live/read.ts",
+  "src/live/projection.ts",
 ];
 
 function member(rel: string, list: readonly string[]): boolean {

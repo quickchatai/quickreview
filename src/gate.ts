@@ -399,8 +399,7 @@ export class MutationGate {
     private readonly executor: MutationExecutor,
     private readonly now: () => Date = () => new Date(),
     private guard?: MutationGuard,
-    private logFn: (msg: string, extra?: unknown) => void = (msg, extra) =>
-      console.log(`[quickreviewd] ${msg}`, extra ?? ""),
+    private logFn: (msg: string, extra?: unknown) => void = () => {},
   ) {}
 
   get isDryRun(): boolean {
@@ -415,8 +414,9 @@ export class MutationGate {
   }
 
   /** Attach the production logger (same late-binding shape as setGuard). The
-   * default logs to the console, so the app-self-config loud line can never
-   * be silenced by an unwired gate. */
+   * core has no console of its own, so the app-self-config loud line goes
+   * where the host says: every production gate is wired (src/wire.ts to the
+   * daemon log; src/daemon.ts, src/cli.ts and src/reviewpost.ts to stdout). */
   setLog(logFn: (msg: string, extra?: unknown) => void): void {
     this.logFn = logFn;
   }

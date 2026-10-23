@@ -29,10 +29,10 @@ import { launchVocab } from "./launchvocab.js";
 import {
   renderLensLessonsSection,
   renderLessonsFile,
+  VALIDATOR_LENS,
   type DeliveredLesson,
   type RoundLessonDelivery,
-} from "./memory/delivery.js";
-import { VALIDATOR_LENS } from "./memory/selection.js";
+} from "./memoryport.js";
 import { renderPriorTaskSection, LENS_PRIOR_STATUSES } from "./priortasks.js";
 import type { PassPlanEntry, RoundOrder } from "./types.js";
 

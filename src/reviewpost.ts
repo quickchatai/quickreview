@@ -137,7 +137,10 @@ export function localPostGate(o: {
     }
     return res.json().catch(() => ({}));
   };
-  return new MutationGate(o.dryRun, o.dryrunDir, executor);
+  const gate = new MutationGate(o.dryRun, o.dryrunDir, executor);
+  // The gate's loud line (app-self-config executions) on stdout.
+  gate.setLog((msg, extra) => console.log(`[quickreviewd] ${msg}`, extra ?? ""));
+  return gate;
 }
 
 const githubHeaders = (token: string) => ({

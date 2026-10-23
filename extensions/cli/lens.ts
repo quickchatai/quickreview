@@ -1,5 +1,6 @@
 // The env shim for the interactive pi's lens tools: the one place the process's
-// env and cwd become their config (extensions/lens.ts).
+// env, cwd, home and stderr become their config (extensions/lens.ts).
+import { homedir } from "node:os";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { interactiveHostFor, interactiveLens } from "../lens.js";
 
@@ -9,5 +10,10 @@ export default function activate(pi: ExtensionAPI): void {
     return;
   }
   const env = process.env;
-  void interactiveLens(env, () => process.cwd(), interactiveHostFor(env))(pi);
+  void interactiveLens(
+    env,
+    () => process.cwd(),
+    interactiveHostFor(env, homedir()),
+    (line) => console.error(line),
+  )(pi);
 }

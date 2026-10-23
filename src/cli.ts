@@ -117,9 +117,12 @@ export function parseOutcomesArgs(rest: readonly string[]): {
  * go direct, as every adapter read does; nothing can write.
  */
 export function recordOnlyGate(dryrunDir: string, command = "qcr outcomes"): MutationGate {
-  return new MutationGate(true, dryrunDir, async () => {
+  const gate = new MutationGate(true, dryrunDir, async () => {
     throw new Error(`${command} performs no mutations`);
   });
+  // The gate's loud line (app-self-config attempts) on stdout.
+  gate.setLog((msg, extra) => console.log(`[quickreviewd] ${msg}`, extra ?? ""));
+  return gate;
 }
 
 /**
@@ -2190,7 +2193,8 @@ export async function main(rawArgv: string[]): Promise<void> {
       // A daemonless review in the terminal (src/reviewcli.ts). Usage errors
       // are its own exit code 2.
       const { cmdReview } = await import("./reviewcli.js");
-      process.exitCode = await cmdReview(rest, json);
+      const { openReviewMemoryPort } = await import("./reviewmemory.js");
+      process.exitCode = await cmdReview(rest, json, { memory: openReviewMemoryPort });
       return;
     }
     case "open": {

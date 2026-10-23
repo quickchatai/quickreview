@@ -7,7 +7,7 @@
 // A LEAF: types and the data fence only. `passtasks.ts` and `priorfindings.ts`
 // import it, and `priorfindings.ts` reaches `passtasks.ts` back through the
 // findings record, so nothing here may import either at runtime.
-import { fenceAsData } from "./memory/datafence.js";
+import { fenceAsData } from "./datafence.js";
 import type { PriorFindingsList } from "./priorfindings.js";
 import type { PassPlanEntry, PriorAssignment, PriorTaskEntry } from "./types.js";
 

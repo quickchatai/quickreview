@@ -29,7 +29,7 @@ import {
 import type { WriteStream } from "node:fs";
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { splitModelSpec, type ThinkingLevel } from "../config.js";
-import { TurnBudget } from "./budget.js";
+import { TurnBudget, type BudgetReason } from "./budget.js";
 import { trackSession } from "./livesessions.js";
 import type { HostSessionSpec, PiHost } from "./pisdk.js";
 import {
@@ -68,6 +68,11 @@ export interface SdkRuntimeOptions {
   /** The route's own pieces for a spec. Without it a spec that names
    * `extensions` (paths) is refused: an SDK session loads factories, not files. */
   extras?: (spec: SessionSpec) => SessionExtras;
+  /** The last resort of a turn's budget, when its abort and its dispose both
+   * failed to end it (src/engine/budget.ts). A host that owns its process
+   * passes one that exits it; omitted, the abort and dispose are all a wedged
+   * turn gets, and the process is left to its owner. */
+  backstop?: (reason: BudgetReason) => void;
 }
 
 /** Grace between a hit limit's abort and the dispose that follows it. */
@@ -111,6 +116,7 @@ class SdkSession implements RuntimeSession {
     /** A reopened session: its history is the first turn, so a message may
      * follow it with no prompt. */
     private readonly resumed = false,
+    private readonly backstop: (reason: BudgetReason) => void = () => {},
   ) {
     this.events = createWriteStream(spec.eventsFile, { flags: "a" });
     // A full disk must end THIS turn as a recorded failure, not throw out of the
@@ -251,7 +257,7 @@ class SdkSession implements RuntimeSession {
         abort: () => this.session.abort(),
         dispose: async () => this.session.dispose(),
       },
-      { timeoutMs, capUsd, graceMs: GRACE_MS },
+      { timeoutMs, capUsd, graceMs: GRACE_MS, backstop: this.backstop },
     );
     this.budget = budget;
     this.writeHeader();
@@ -372,7 +378,7 @@ export function sdkRuntime(host: PiHost, options: SdkRuntimeOptions = {}): Runti
         appendFileSync(spec.stderrFile, `Extension error (${e.extensionPath}): ${e.error}\n`),
       ...options.extras?.(spec),
     };
-    return new SdkSession(spec, await host.makeSession(hostSpec), resumed);
+    return new SdkSession(spec, await host.makeSession(hostSpec), resumed, options.backstop);
   }
 
   return {

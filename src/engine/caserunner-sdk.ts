@@ -60,6 +60,7 @@ import { LENS_SESSIONS_DIR } from "./openable.js";
 import { PiHost } from "./pisdk.js";
 import type { Runtime, SessionSpec, TurnResult } from "./port.js";
 import { sdkRuntime, type SessionExtras } from "./sdkruntime.js";
+import { BUDGET_EXIT_CODE } from "./budget.js";
 
 /** A leaf turn's hard wall clock. The login's own case budget
  * (`SCAN_CASE_AUTH_BUDGET_MS`) is the usual bound and aborts first; this one
@@ -401,9 +402,12 @@ export function scanSdkCases(o: ScanSdkCasesOptions): CaseRunner {
         : PiHost.create({
             agentDir: o.agentDir,
             ownsProcess: true,
+            homeDir: homedir(),
             credentials: auth.credentials,
           }));
-      return sdkRuntime(host, { extras });
+      // The case driver owns its process: a turn its abort and dispose did not
+      // end exits it (src/engine/budget.ts).
+      return sdkRuntime(host, { extras, backstop: () => process.exit(BUDGET_EXIT_CODE) });
     },
   });
 }

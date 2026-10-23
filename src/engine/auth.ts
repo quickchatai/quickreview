@@ -33,7 +33,6 @@
 // re-takes the copy before every case) is here too: it is this module's copy
 // with the scan's words and budget.
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
   AuthOperationOptions,
@@ -460,23 +459,6 @@ export function syncScanAuth(o: {
   return copyPiAuth({ ...o, words: SCAN_AUTH_WORDS });
 }
 
-/** The container's one-shot copy (the doctor's probe): from the paths its
- * env names, the copy made or the refusal on stderr and exit 1. */
-export function syncScanAuthFromEnv(env: NodeJS.ProcessEnv, needMs: number): void {
-  const srcDir = env[SCAN_AUTH_SRC_ENV]?.trim();
-  const dstDir = env["PI_CODING_AGENT_DIR"]?.trim();
-  if (!srcDir || !dstDir) {
-    console.error(`scan auth: ${SCAN_AUTH_SRC_ENV} and PI_CODING_AGENT_DIR must both be set`);
-    process.exit(1);
-  }
-  try {
-    syncScanAuth({ srcDir, dstDir, needMs });
-  } catch (err) {
-    console.error(`scan auth: ${err instanceof Error ? err.message : String(err)}`);
-    process.exit(1);
-  }
-}
-
 /** A case runner over the borrowed login: before each case, the copy is
  * re-taken from the live source. A refused copy never starts the case — it
  * fails with the refusal and `onExpired` hears it, so the run can stop. */
@@ -522,15 +504,21 @@ export function scanAuthCases<S, O>(
 
 /** The driver's case runner: over the borrowed login in the scan container
  * (its env names the read-only source), the plain runner anywhere else —
- * `sandbox = "host"` runs on the host pi's own login. */
+ * `sandbox = "host"` runs on the host pi's own login. `homeDir` is the user's
+ * home as the host resolved it, for an env that names neither the agent dir
+ * nor HOME. */
 export function scanCasesForEnv<S, O>(
   inner: CaseRunnerOf<S, O>,
   env: NodeJS.ProcessEnv,
   onExpired: (reason: string) => void,
+  homeDir?: string,
 ): CaseRunnerOf<S, O | CaseRefused> {
   const srcDir = env[SCAN_AUTH_SRC_ENV]?.trim();
   if (!srcDir) return inner;
+  const home = env["HOME"]?.trim() || homeDir;
   const dstDir =
-    env["PI_CODING_AGENT_DIR"]?.trim() || join(env["HOME"]?.trim() || homedir(), ".pi", "agent");
+    env["PI_CODING_AGENT_DIR"]?.trim() || (home ? join(home, ".pi", "agent") : undefined);
+  if (!dstDir)
+    throw new Error("scan auth: PI_CODING_AGENT_DIR is not set and there is no home to default it");
   return scanAuthCases(inner, { srcDir, dstDir, needMs: SCAN_CASE_AUTH_BUDGET_MS, onExpired });
 }

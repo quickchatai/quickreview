@@ -36,7 +36,7 @@ import {
   type PriorStatus,
 } from "./findingsrecord.js";
 import { canonicalLensIds, storedLensIds } from "./lensids.js";
-import { fenceAsData } from "./memory/datafence.js";
+import { fenceAsData } from "./datafence.js";
 import { isPostedRow, predecessorOf } from "./finding-chain.js";
 import { priorFindingFields } from "./priortasks.js";
 import { bareTag, ordinaryPostTag } from "./severity.js";

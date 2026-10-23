@@ -39,6 +39,7 @@ import { LensWave, type EngineRoute, type EngineRouteRuntime } from "./lens/wave
 import { PiHost, type PiHostOptions } from "./pisdk.js";
 import { credentialPaths, loginSourceDirs } from "./toolfence.js";
 import { checkToolUid, toolIdsOf } from "./tooluid.js";
+import type { BudgetReason } from "./budget.js";
 import type { Runtime, RuntimeSession, SessionSpec } from "./port.js";
 import { BASH_ENV_ALLOW, reviewerStub, roundSdkExtras, type RoundLensTools } from "./roundsdk.js";
 import { sdkRuntime, type SessionExtras } from "./sdkruntime.js";
@@ -67,6 +68,17 @@ export interface ReviewSdkOptions {
     plannedWave: boolean;
     config?: (host: PiHost, spec: SessionSpec) => LensRunConfig;
   };
+  /** The last resort of a turn its abort and dispose did not end
+   * (src/engine/budget.ts). `qcr review` and the bench own their process and
+   * pass one that exits it. Omitted: the process is left to its owner. */
+  backstop?: (reason: BudgetReason) => void;
+  /** Where the round's diagnostics go, one line each: a lens runner's warnings
+   * (`[lens] …`, unless its config has a `warn` of its own) and ledger-pin's.
+   * Omitted: nowhere. */
+  warn?: (line: string) => void;
+  /** The user's home, resolved by the host: the tool fence keeps its `.pi` out
+   * and expands a tool's `~` against it (PiHostOptions.homeDir). */
+  homeDir?: string;
 }
 
 /** The review SDK runtime: a runtime, carrying the engine route when it has one. */
@@ -107,6 +119,12 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRunti
   // The tools of the host built last: one agent dir per review, so one.
   let lens: EngineLensTools | undefined;
 
+  /** The runner's config with the host's warn sink, unless it has its own. */
+  function withWarn(config: LensRunConfig): LensRunConfig {
+    const warn = options.warn;
+    return config.warn || !warn ? config : { ...config, warn: (m) => warn(`[lens] ${m}`) };
+  }
+
   function lensOf(spec: SessionSpec, host: PiHost): RoundLensTools {
     if (options.lens === undefined)
       throw new Error("the review runtime has no lens tool: pass `engine`, `lens` or `extras`");
@@ -130,6 +148,7 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRunti
         const hostOptions: PiHostOptions = {
           agentDir,
           ownsProcess: true,
+          ...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
           // The model's bash and every lens session's, as the tool uid (D32).
           ...(ids !== null && !("refused" in ids) ? { toolUid: ids } : {}),
           // The round's agent dir is a copy: the login it was copied from (the
@@ -143,7 +162,7 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRunti
         };
         const host = await (options.makeHost ?? PiHost.create)(hostOptions);
         const tools = engine
-          ? engineLensTools((engine.config ?? engineLensConfig)(host, spec), wave)
+          ? engineLensTools(withWarn((engine.config ?? engineLensConfig)(host, spec)), wave)
           : undefined;
         if (tools) lens = tools;
         return sdkRuntime(host, {
@@ -152,7 +171,9 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRunti
             ((s) =>
               roundSdkExtras({
                 lens: tools ?? lensOf(s, host),
+                ...(options.warn ? { log: options.warn } : {}),
               })(s)),
+          ...(options.backstop ? { backstop: options.backstop } : {}),
         });
       })();
       // A host that failed to build is not kept: the next ask tries again.

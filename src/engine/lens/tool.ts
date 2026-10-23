@@ -44,6 +44,9 @@ export interface LensToolDeps {
   /** The session's environment: `lens_wave` resolves its dirs against it
    * (QCR_SANDBOX_ROOT, QCR_PR, QCR_LAUNCH_PLAN_DIRS), as launch_plan does. */
   env: Readonly<Record<string, string | undefined>>;
+  /** The sandbox root `lens_wave` falls back to when `env` names none: the
+   * interactive pi's cwd, as its host resolves it. */
+  cwd?: () => string;
 }
 
 type Execute = QcrTool["execute"];
@@ -281,7 +284,7 @@ export function lensWaveExecute(deps: LensToolDeps): Execute {
           "Pass the round's task directory in `dirs`, or launch lenses yourself with `lens`.",
         );
     } else {
-      const plan = planLaunch(p, { ...deps.env });
+      const plan = planLaunch(p, { ...deps.env }, deps.cwd?.());
       if (!plan.ok)
         return error(
           LENS_WAVE_TOOL,

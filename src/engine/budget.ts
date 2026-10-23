@@ -4,11 +4,14 @@
 // lens tool call reports live on every update), so the cap bites mid-call.
 //
 // A hit ends the turn in steps: `abort()`, then `dispose()` if the turn is
-// still there after the grace, then the backstop (process exit by default) if
-// even that did not end it. Timers are what make this work, so it cannot save
+// still there after the grace, then the host's backstop if even that did not
+// end it. The core never owns the process: a host that does (the bot worker,
+// `qcr review`, the bench) passes a backstop that exits it; a host inside
+// another program's process (a pi plugin) passes a no-op, and the abort and
+// dispose are all it gets. Timers are what make this work, so it cannot save
 // a process whose event loop is frozen by a synchronous loop: that case is
 // covered from OUTSIDE (src/heartbeat.ts, the watchdog in src/reviewdetach.ts).
-import { EventCostMeter } from "../bench/cost.js";
+import { EventCostMeter } from "../pricing.js";
 import { trackDeadline } from "../heartbeat.js";
 import type { SessionEvent } from "./port.js";
 
@@ -34,14 +37,15 @@ export interface BudgetOptions {
   graceMs?: Grace;
   /** Told once, as the budget trips and before it stops anything. */
   onTrip?: (reason: BudgetReason) => void;
-  /** The last resort, run when `dispose()` did not end the turn either. Default:
-   * exit this process. A host whose turn is a child it can SIGKILL passes a
-   * no-op: that kill is final. */
-  backstop?: (reason: BudgetReason) => void;
+  /** The last resort, run when `dispose()` did not end the turn either. A host
+   * that owns its process passes one that exits it (`BUDGET_EXIT_CODE`); a host
+   * whose turn is a child it can SIGKILL, or that runs inside another
+   * program's process, passes a no-op. */
+  backstop: (reason: BudgetReason) => void;
 }
 
 const DEFAULT_GRACE_MS = 5_000;
-/** Exit code of the default backstop: `timeout(1)`'s. */
+/** Exit code of a host's exiting backstop: `timeout(1)`'s. */
 export const BUDGET_EXIT_CODE = 124;
 
 const graceFor = (g: Grace | undefined, reason: BudgetReason): number =>
@@ -140,10 +144,6 @@ export class TurnBudget {
     if (await ended()) return;
     attempt(() => this.target.dispose());
     if (await ended()) return;
-    (this.opts.backstop ?? exitBackstop)(reason);
+    this.opts.backstop(reason);
   }
-}
-
-function exitBackstop(): void {
-  process.exit(BUDGET_EXIT_CODE);
 }

@@ -54,6 +54,7 @@
 // could not be opened, 6 the operator aborted the round, 75 the daemon went away, 76 the daemon fenced this
 // worker (a stale generation or an inactive command), 143 terminated.
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { EventCostMeter } from "./bench/cost.js";
 import { CONTEXT_PACK_FILE } from "./contextpack.js";
@@ -68,6 +69,7 @@ import { COMMIT_VERDICT_RE } from "./engine/answerguard.js";
 import { NO_LENS, botSdkRuntime } from "./engine/botsdk.js";
 import { engineLensTools, type EngineLensTools } from "./engine/lens/engine-tools.js";
 import type { Permits } from "./engine/lens/permits.js";
+import type { LensRunConfig } from "./engine/lens/runlens.js";
 import { planLaunch, type LaunchUnit } from "./engine/lens/launch-plan.js";
 import { engineLensSection } from "./engine/lens/section.js";
 import { LensWave, launchWave, type WaveRow } from "./engine/lens/wave.js";
@@ -428,6 +430,7 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
       host = await (deps.makeHost ?? PiHost.create)({
         agentDir: spec.agent_dir,
         ownsProcess: true,
+        homeDir: homedir(),
         ...(ids !== null && !("refused" in ids) ? { toolUid: ids } : {}),
         fenceDirs: [...loginSourceDirs(env), ...credentialPaths(env, spec.env)],
         credentials: auth.credentials,
@@ -809,7 +812,10 @@ async function openSession(
     ...sessionSpecOf(spec, {}),
     env: { ...spec.env, PI_CODING_AGENT_DIR: spec.agent_dir },
   };
-  const base = engineLensConfig(host, lensSpec);
+  const base: LensRunConfig = {
+    ...engineLensConfig(host, lensSpec),
+    warn: (m) => console.error(`[lens] ${m}`),
+  };
   // The round's context pack sits beside its task files, not beside the ledger.
   const packFile = join(roundPassesDir(spec, round), CONTEXT_PACK_FILE);
   const pack = existsSync(packFile) ? readFileSync(packFile, "utf8") : "";

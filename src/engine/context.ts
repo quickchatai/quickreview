@@ -19,7 +19,7 @@ import { locateConfig } from "../install.js";
 import { applyProfileTuning } from "../lenstuning.js";
 import { loadProfileEcosystem, loadProfileLensTuning, loadProfilePosting } from "../profiles.js";
 import { applyProfilePosting } from "../postingpolicy.js";
-import { benchAuthMode, modelForAuth, type BenchAuthMode } from "../bench/auth.js";
+import { benchAuthMode, modelForAuth, type BenchAuthMode } from "./keyroute.js";
 
 /** The bench config: production config.toml with only the profile swapped.
  * Escalation stays whatever it ships as (off), so no escalation note renders.
@@ -80,7 +80,14 @@ const RETIRED_CONFIG_KEYS: ReadonlySet<string> = new Set([
  * specs, and a key the file sets explicitly still beats it. It therefore needs
  * the config text (`toml`); every other pair then overrides on top.
  */
-export function applyConfigOverrides(cfg: Config, spec: string, toml?: string): Config {
+export function applyConfigOverrides(
+  cfg: Config,
+  spec: string,
+  toml?: string,
+  /** Where a retired key's notice goes, one line: the host's (the bench CLI's
+   * stderr). Omitted: nowhere. */
+  warn: (line: string) => void = () => {},
+): Config {
   const pairs = spec
     .split(",")
     .map((p) => p.trim())
@@ -107,7 +114,7 @@ export function applyConfigOverrides(cfg: Config, spec: string, toml?: string): 
     // The overseer session is deleted: bench plans still pin its model, so
     // the key is accepted, named once and ignored (like the config file's).
     if (RETIRED_CONFIG_KEYS.has(pair.slice(0, eq).trim())) {
-      console.warn(
+      warn(
         `--config: ${pair.slice(0, eq).trim()} is deprecated and ignored (the overseer session was deleted)`,
       );
       continue;
@@ -177,11 +184,14 @@ export function contextFor(
   root: string,
   profile: string,
   overrides = "",
+  /** Where an override's notice goes (`applyConfigOverrides`). */
+  warn?: (line: string) => void,
 ): { cfg: Config; ecosystem: Ecosystem } {
   const levered = applyConfigOverrides(
     benchConfig(profile),
     overrides,
     readFileSync(locateConfig().path, "utf8"),
+    warn,
   );
   // The profile the run reviews under: `--profile`, or `--config
   // review.profile=<name>` (arm.sh's spelling) — every loader reads the same
@@ -200,7 +210,7 @@ export function contextFor(
 }
 
 /** Every model spec of the config as it runs on the bench's credential route
- * (src/bench/auth.ts): on the API-key route `openai-codex/` → `openai/`, the
+ * (src/engine/keyroute.ts): on the API-key route `openai-codex/` → `openai/`, the
  * same model on the public API; on the login route the config unchanged. */
 export function withAuthModels(cfg: Config, mode: BenchAuthMode = benchAuthMode()): Config {
   if (mode !== "api-key") return cfg;

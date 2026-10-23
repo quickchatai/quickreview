@@ -48,6 +48,8 @@ export interface RoundLensTools {
 export interface RoundSdkOptions {
   /** The route's lens tool. Omitted: the session has none. */
   lens?: RoundLensTools;
+  /** Where ledger-pin's diagnostics go, one line each. Omitted: nowhere. */
+  log?: (line: string) => void;
 }
 
 /** The names the model's bash may draw from the spec's env besides the host
@@ -81,7 +83,11 @@ export function roundSdkExtras(
       // tool, finding-clusters. The tool list in the request follows it.
       extensions: [
         createBashGuard(bashGuardConfigFromEnv(spec.env, spec.cwd)),
-        createLedgerPin(ledgerPinConfigFromEnv(spec.env, process.cwd())),
+        // The snapshot lands under the production tree (QCR_SANDBOX_ROOT),
+        // which a round's spec always names.
+        createLedgerPin(
+          ledgerPinConfigFromEnv(spec.env, root, options.log ? { log: options.log } : {}),
+        ),
         ...(lens?.factories ?? []),
         createFindingClusters(),
       ],

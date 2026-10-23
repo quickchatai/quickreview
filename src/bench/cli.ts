@@ -413,7 +413,7 @@ async function main(): Promise<number> {
     }
 
     const overrides = f.get("--config") ?? "";
-    const base = contextFor(root, profileFlag, overrides);
+    const base = contextFor(root, profileFlag, overrides, (l) => console.warn(l));
     // `--config review.profile=<name>` chooses the profile as `--profile` does.
     const profile = base.cfg.review.profile;
     const bench = benchCustomisation(root, profile, f.has("--allow-customised"));
@@ -1101,7 +1101,9 @@ async function main(): Promise<number> {
       // case is hosted by a process of its own (`--case-host` is that process,
       // told its one case by the pool).
       const runtimeKind = benchRuntimeKind(
-        applyConfigOverrides(benchConfig(""), f.get("--config") ?? "").engine.runtime,
+        applyConfigOverrides(benchConfig(""), f.get("--config") ?? "", undefined, (l) =>
+          console.warn(l),
+        ).engine.runtime,
       );
       const caseHost = f.has("--case-host");
       const hosts = !caseHost ? hostPool("defect-judge") : undefined;

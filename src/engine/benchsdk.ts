@@ -13,7 +13,10 @@
 // LENSES. The main session gets our `lens` / `lens_wave` over the agents
 // `buildBenchAgents` wrote, run in this process on the same host.
 import { createBashGuard, bashGuardConfigFromEnv } from "../../extensions/bash-guard.js";
-import { roundLensConfig, roundLensTools } from "./lens/round-lens.js";
+import { homedir } from "node:os";
+import { BUDGET_EXIT_CODE } from "./budget.js";
+import { engineLensTools } from "./lens/engine-tools.js";
+import { roundLensConfig } from "./lens/round-lens.js";
 import type { PiHostOptions, PiHost } from "./pisdk.js";
 import type { Runtime } from "./port.js";
 import { reviewSdkRuntime } from "./reviewsdk.js";
@@ -31,6 +34,14 @@ export interface BenchSdkOptions {
 /** What the model's bash may draw from the judge's env beyond the host defaults. */
 const JUDGE_BASH_ENV_ALLOW = ["GIT_*"] as const;
 
+/** A case host owns its process: a wedged turn exits it, the round's
+ * diagnostics go to its stderr, and the fence knows this user's home. */
+const CASE_HOST = {
+  backstop: (): void => process.exit(BUDGET_EXIT_CODE),
+  warn: (line: string): void => console.error(line),
+  homeDir: homedir(),
+};
+
 /** The review round's runtime. */
 export function benchSdkRuntime(o: BenchSdkOptions): Runtime {
   return reviewSdkRuntime({
@@ -38,7 +49,14 @@ export function benchSdkRuntime(o: BenchSdkOptions): Runtime {
     ...(o.processEnv ? { processEnv: o.processEnv } : {}),
     ...(o.plannedWave
       ? { engine: { plannedWave: true, config: (host, spec) => roundLensConfig(spec, host) } }
-      : { lens: (spec, host) => roundLensTools(spec, host) }),
+      : {
+          lens: (spec, host) =>
+            engineLensTools({
+              ...roundLensConfig(spec, host),
+              warn: (m) => CASE_HOST.warn(`[lens] ${m}`),
+            }),
+        }),
+    ...CASE_HOST,
   });
 }
 
@@ -49,6 +67,7 @@ export function judgeSdkRuntime(o: BenchSdkOptions = {}): Runtime {
   return reviewSdkRuntime({
     ...(o.makeHost ? { makeHost: o.makeHost } : {}),
     ...(o.processEnv ? { processEnv: o.processEnv } : {}),
+    ...CASE_HOST,
     extras: (spec) => ({
       extensions: [createBashGuard(bashGuardConfigFromEnv(spec.env, spec.cwd))],
       agentsFiles: [],

@@ -54,9 +54,11 @@ import { roundContextQuery } from "./context.js";
 import { parseEventTags, parseHashTags } from "./eventtags.js";
 import { CASES_AREA, EXPERIENCES_AREA, PINNED_AREA, isRetired } from "./layout.js";
 import { parseLesson, type LessonKind, type ParsedLesson } from "./lessons.js";
+import { VALIDATOR_LENS } from "../memoryport.js";
 
-/** The validator's lens id — it has no task file and judges every finding. */
-export const VALIDATOR_LENS = "pass-validate";
+/** The validator's lens id — it has no task file and judges every finding
+ * (the delivery's, src/memoryport.ts). */
+export { VALIDATOR_LENS };
 
 /** What each role may carry: items and an ESTIMATED token budget. */
 export const SELECTION_CAPS = Object.freeze({
