@@ -513,8 +513,9 @@ describe("[P8.3] held wakes", () => {
 
   it("a daemon that drops while wakes.take is in flight is a lost daemon, not a failed turn", async () => {
     daemon.onTake = async () => {
-      void daemon.stop();
-      await new Promise((r) => setTimeout(r, 2_000));
+      // stop() hangs up every connection before it returns, so the reply that follows
+      // this handler goes nowhere: the worker's take fails with the daemon gone
+      await daemon.stop();
     };
     const { code } = await round("ORDER\n", script([say("round done")]));
     expect(code).toBe(EXIT.lost);
