@@ -27,7 +27,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseInboxItem, type InboxClass, type InboxItem } from "../companioninbox.js";
+import { compareInboxItems, parseInboxItem, type InboxClass, type InboxItem } from "../companioninbox.js";
 import type { TuiConfig } from "../config.js";
 import { MAX_TITLE, type AlertTier } from "./alerts.js";
 import { inboxAckArgv, inboxListArgv, type SshRunner } from "./remote.js";
@@ -146,9 +146,7 @@ export async function pullCompanionInbox(deps: InboxPullDeps): Promise<InboxPull
     if (item) items.push(item);
     else skipped++;
   }
-  items.sort((a, b) =>
-    a.created_at === b.created_at ? a.id.localeCompare(b.id) : a.created_at < b.created_at ? -1 : 1,
-  );
+  items.sort(compareInboxItems);
   const delivered: InboxItem[] = [];
   const written: InboxItem[] = [];
   let error: string | undefined;
