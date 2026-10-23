@@ -1,4 +1,4 @@
-// The three layers (the pi plugin and npm CLI refactor). Pure
+// The three layers of the review system. Pure
 // functions over a repo root, so tests/layers.test.ts can run them on the real
 // tree AND on a planted copy: a fence that cannot be made to fail is not one.
 //
