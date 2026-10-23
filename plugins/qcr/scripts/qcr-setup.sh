@@ -2,8 +2,8 @@
 # qcr-setup — bring a laptop to a working `qcr`, in this order:
 #
 #   1. Docker      installed, and the daemon answers
-#   2. pull auth   the release image is private: gh auth refresh -s read:packages,
-#                  then gh auth token | docker login ghcr.io
+#   2. pull auth   the release image is public; only a private mirror needs
+#                  gh auth refresh -s read:packages, then docker login ghcr.io
 #   3. the wrapper docker run … install writes ~/.local/bin/qcr
 #   4. login       qcr login (pi's own /login), unless a login or an API key exists
 #
@@ -25,7 +25,7 @@ set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # Kept equal to plugin.json's and package.json's version; a test checks it.
-RELEASE_VERSION=1.0.7
+RELEASE_VERSION=1.0.8
 IMAGE="${QCR_IMAGE:-ghcr.io/quickchatai/quickreview:$RELEASE_VERSION}"
 DEST="${QCR_SETUP_BIN_DIR:-$HOME/.local/bin}"
 case "${QCR_SETUP_INTERACTIVE:-auto}" in
@@ -69,7 +69,7 @@ else
     needs_human 'gh auth refresh -s read:packages' \
       'gh auth token | docker login ghcr.io -u "$(gh api user --jq .login)" --password-stdin'
   fi
-  say "the image is private; granting this login read:packages"
+  say "the image is not public here (a private mirror?); granting this login read:packages"
   gh auth refresh -s read:packages || die "gh auth refresh failed — sign in with: gh auth login"
   user="$(gh api user --jq .login)" || die "gh could not tell who you are — sign in with: gh auth login"
   gh auth token | docker login ghcr.io -u "$user" --password-stdin >/dev/null ||

@@ -11,8 +11,8 @@
 #   docker run --rm --entrypoint tar ghcr.io/quickchatai/quickreview:<version> \
 #     -C /opt/qcr -cf - docker-compose.yml docker/tunnel | tar -xf -
 #
-# The images are private: `gh auth refresh -s read:packages`, then
-# `gh auth token | docker login ghcr.io -u <user> --password-stdin`.
+# The images are public; a private mirror needs `gh auth refresh -s read:packages`,
+# then `gh auth token | docker login ghcr.io -u <user> --password-stdin`.
 #
 # Needed on the host, all named in .env (the wizard's bring-up writes them):
 #   QCR_VERSION       the release to run (the image tag), e.g. 0.1.0

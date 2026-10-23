@@ -166,8 +166,8 @@ defects*](bench/aacr/paper/benchmark.pdf) (the defect key, the judge, eight
 reviewers; the frozen build in §8.7) and [*QuickReview: a multi-pass
 automated code reviewer*](bench/aacr/paper/quickreview.pdf) (design, cost,
 stability). Every run behind the tables — each review, verdict and score,
-and the charts drawn from them — is in the Hugging Face dataset and run
-archive<!-- TODO(launch): link the dataset and the run archive here -->,
+and the charts drawn from them — goes into a Hugging Face dataset and run
+archive, to be published after this repository (not out yet),
 and [`bench/aacr/README.md`](bench/aacr/README.md#reproduce) shows how to
 re-score it with no keys, re-judge it, or re-run the whole benchmark on your
 own API keys. Every run is one review per PR, and repeat runs differ by about
@@ -284,10 +284,8 @@ first-class ([docs/llm-setup.md](docs/llm-setup.md)).
 ## Quickstart
 
 ```sh
-# once: log in to the registry (the images are private) and install `qcr`,
-# the one-file host wrapper the image writes (docs/host-wrapper.md)
-gh auth refresh -s read:packages
-gh auth token | docker login ghcr.io -u <your github login> --password-stdin
+# once: install `qcr`, the one-file host wrapper the image writes
+# (docs/host-wrapper.md); the images are public on ghcr.io
 docker run --rm --user "$(id -u):$(id -g)" -v ~/.local/bin:/out \
   ghcr.io/quickchatai/quickreview:<version> install
 

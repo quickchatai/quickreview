@@ -159,13 +159,12 @@ describe("the entry point is the one the docs promise", () => {
     expect(read("scripts/install-wrapper.sh")).toContain("qcr");
   });
 
-  it("the user docs install the wrapper from the image, behind the private-registry login", () => {
+  it("the user docs install the wrapper from the public image, with no registry login", () => {
     for (const [name, doc] of [
       ["docs/onboarding.md", onboardingDoc],
       ["README.md", readme],
     ] as const) {
-      expect(doc, name).toContain("gh auth refresh -s read:packages");
-      expect(doc, name).toContain("docker login ghcr.io");
+      expect(doc, name).not.toContain("docker login ghcr.io");
       expect(doc, name).toMatch(/ghcr\.io\/quickchatai\/quickreview:<version>/);
     }
   });

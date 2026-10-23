@@ -1,7 +1,7 @@
 // Preflight — the first real onboarding step: the machine facts the
 // rest of the wizard stands on. Node ≥22 (the wizard's own floor), Docker and
 // Docker Compose present (the laptop route's runtime), the released image
-// reachable (the stack is pulled, never built, and the images are private), and
+// reachable (the stack is pulled, never built), and
 // the current uid captured — later steps write it to the project `.env` as
 // QCR_UID so the containers run as the user who owns the secrets.
 //
@@ -91,9 +91,8 @@ async function toolingChecks(ctx: StepContext): Promise<CheckResult[]> {
         },
   );
 
-  // The stack is pulled, not built, and the images are private: ask the
-  // registry for the manifest now, so a missing login is a preflight line with
-  // its fix, not a failed pull far into the wizard. Not a failure of this
+  // The stack is pulled, not built: ask the registry for the manifest now, so
+  // an unreachable image is a preflight line with its fix, not a failed pull far into the wizard. Not a failure of this
   // step, because preflight runs before the topology is chosen and the server
   // route builds on the server: bring-up's pull is the hard gate, and carries
   // the same fix.
@@ -119,9 +118,9 @@ async function toolingChecks(ctx: StepContext): Promise<CheckResult[]> {
             ok: true,
             detail:
               `cannot reach ${image} (exit ${manifest.code}): ${(manifest.stderr || manifest.stdout).trim().slice(0, 300) || "no output"}. ` +
-              "The images are private. Fix: `gh auth refresh -s read:packages`, then " +
-              "`gh auth token | docker login ghcr.io -u <your github login> --password-stdin`; " +
-              "if that is done, that release tag may not exist (QCR_VERSION in the project .env). " +
+              "The released images are public, so the usual cause is a release tag that does not exist (QCR_VERSION in the project .env). " +
+              "Pulling from a private mirror instead needs a login: `gh auth refresh -s read:packages`, then " +
+              "`gh auth token | docker login ghcr.io -u <your github login> --password-stdin`. " +
               "Only the laptop route pulls it (the server route builds on the server), so this does not stop the wizard here",
           },
     );
@@ -136,7 +135,7 @@ export function preflightStep(): OnboardingStep {
     title: "Preflight: Node, Docker, Compose, images, uid",
     explain:
       `Checks that this machine can run QuickReview at all: Node ${MIN_NODE_MAJOR} or newer, Docker, the Compose plugin, and whether ` +
-      "the released image can be pulled (it is private: a missing ghcr.io login is noted here, with the fix, and enforced by bring-up). " +
+      "the released image can be pulled (an unreachable image is noted here, with the fix, and enforced by bring-up). " +
       "It also captures your user id so the containers run as you and can read the secrets you own.",
     order: 10,
     async run(ctx): Promise<StepReport> {

@@ -17,8 +17,7 @@ retagged image names itself: `-e QCR_IMAGE=<tag>`. The registry path is the owne
 version (the tag), not a digest, because an image cannot see its own digest from
 inside.
 
-The image is private. Pull it once: `gh auth refresh -s read:packages`, then
-`gh auth token | docker login ghcr.io -u <user> --password-stdin`.
+The image is public on ghcr.io; a pull needs no login.
 
 ## What a call is
 

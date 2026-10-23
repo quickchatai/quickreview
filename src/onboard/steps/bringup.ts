@@ -97,8 +97,8 @@ export const FIRST_PULL_NOTICE = [
   "memory image carries its embedding model, so it is the larger of the two. How long that takes",
   "depends on your connection. That is expected, not a hang: every line Docker prints is shown",
   "below as it arrives. Later starts reuse the layers already here and take seconds.",
-  "The images come from ghcr.io (they are private: `gh auth refresh -s read:packages`, then",
-  "`gh auth token | docker login ghcr.io -u <user> --password-stdin`). The tunnel you chose, if any,",
+  "The images come from ghcr.io, where they are public (a private mirror needs `gh auth refresh -s read:packages`,",
+  "then `gh auth token | docker login ghcr.io -u <user> --password-stdin`). The tunnel you chose, if any,",
   "is built from a small wrapper over the vendor's own image. Nothing is posted to GitHub by this step.",
 ].join("\n");
 
@@ -409,8 +409,7 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
           ok: false,
           detail:
             `\`docker compose pull\` exited ${pull.code}. Last output:\n${tail(pull.stderr || pull.stdout)}\n` +
-            "Fix: the message above is Docker's own. The usual causes: not logged in to ghcr.io (the images are private — " +
-            "`gh auth refresh -s read:packages`, then `gh auth token | docker login ghcr.io -u <user> --password-stdin`), " +
+            "Fix: the message above is Docker's own. The usual causes: " +
             `no release tagged ${version} (QCR_VERSION in .env), no disk space (\`docker system df\`, then \`docker system prune\`), ` +
             "or a network failure mid-download — all safe to retry by running this step again, which resumes from the layers already here.",
         });

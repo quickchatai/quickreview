@@ -13,8 +13,8 @@ themselves whether the review was tuned to the test. Companion documents:
   disagree.
 
 Everything below is traceable to a file, a commit or a run directory. Run
-directories live outside the repo, in `$QCR_BENCH_RUNS_DIR`, and are published
-in the Hugging Face dataset and run archive<!-- TODO(launch): link -->; the ground-truth analysis scripts lived beside them in
+directories live outside the repo, in `$QCR_BENCH_RUNS_DIR`, and will be published
+in the Hugging Face dataset and run archive (not out yet); the ground-truth analysis scripts lived beside them in
 `<runs>/analysis/`. Commits in brackets are builds in the pre-publication
 history; the public history starts at its first commit, and each run's
 `run.json` records the build it ran on.
@@ -362,7 +362,7 @@ The hunt, verify and extension prompts are reproduced in `PROMPTS.md`.
 
 **In this repo**: the harness wrapper, every arm, sets, ground truth,
 the compare/charts scripts, METRICS and the two papers (with the figures they
-include). **In the Hugging Face dataset and run archive<!-- TODO(launch): link -->**: the run directories (reviews, transcripts,
+include). **In the Hugging Face dataset and run archive (to be published; not out yet)**: the run directories (reviews, transcripts,
 judge files, eval metrics), the generated charts and tables, and a slim
 re-score bundle; `../README.md` "Reproduce" says how to use each. A re-run
 reproduces the method, not the exact numbers: models are nondeterministic and

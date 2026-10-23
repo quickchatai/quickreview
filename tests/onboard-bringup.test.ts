@@ -554,14 +554,13 @@ describe("no Docker where the wizard runs (D16)", () => {
 });
 
 describe("bring-up failures — every one of them plain and re-runnable", () => {
-  it("a failed pull reports Docker's own tail and the usual causes, login first", async () => {
+  it("a failed pull reports Docker's own tail and the usual causes", async () => {
     const h = harness({ streamCode: 1, lines: ["#12 ERROR: pull access denied"] });
     const result = await h.engine.runStep(BRINGUP_STEP_ID);
     expect(result.ok).toBe(false);
     const detail = result.failures.join("\n");
     expect(detail).toMatch(/no space left on device/);
-    expect(detail).toMatch(/gh auth refresh -s read:packages/);
-    expect(detail).toMatch(/docker login ghcr\.io/);
+    expect(detail).toMatch(/no release tagged/);
     expect(detail).toMatch(/docker system prune/);
     expect(detail).toMatch(/safe to retry/);
     // the pull failed, so nothing was started
