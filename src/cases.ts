@@ -486,9 +486,6 @@ const fkey = (round: number, key: string): string => `${round}\u0000${key}`;
 const WRITABLE_CASE = "state = 'pending' AND content IS NOT NULL";
 const OWED_ORDER = "owed_since, name";
 
-/** The PR's author's login, from the live row or the backfill's — null when
- * neither knows (every reply then reads "a human"). */
-
 /**
  * The cases one PR's facts call for, and — for every posted finding — which
  * case it belongs to (its chain root's name), so a posting that joined an

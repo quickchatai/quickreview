@@ -51,7 +51,7 @@
 // written: `done` says), 1 a turn failed (timeout, cap, stream, refused
 // login), 2 bad usage, 3 the handshake or the
 // payload could not be trusted, 4 the login was refused up front, 5 the session
-// could not be opened, 75 the daemon went away, 76 the daemon fenced this
+// could not be opened, 6 the operator aborted the round, 75 the daemon went away, 76 the daemon fenced this
 // worker (a stale generation or an inactive command), 143 terminated.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -92,7 +92,7 @@ import {
   type WorkerSpec,
 } from "./ipc/workerspec.js";
 import { WorkerControls, ackSender } from "./botcontrol.js";
-import { operatorMayPost } from "./operatormessage.js";
+import { MAX_REPLY_CHARS, operatorMayPost } from "./operatormessage.js";
 import { sessionCommandMarker } from "./session-command.js";
 import { verifiedPayload } from "./session-command-payload.js";
 import { newestSessionFile } from "./sessionjsonl.js";
@@ -128,8 +128,6 @@ const IPC_ENV = [
   "QCR_IPC_GENERATION",
 ] as const;
 
-/** What an answer's reply is cut to in the `done` event (the wire line is 1 MiB). */
-const MAX_REPLY_CHARS = 100_000;
 /** The names of a round's identity in the session env. An answer has no round, so
  * the model's bash (and the post scripts it may run) carries none of them: a post
  * would claim a round and the daemon would refuse it. */
@@ -519,7 +517,7 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
       checkpoint();
       if (r.timedOut) throw new Stop(EXIT.failed, `${what}: the wall-clock cap ran out`);
       if (r.capped) throw new Stop(EXIT.failed, `${what}: the dollar cap was reached`);
-      if (r.streamError) throw new Stop(EXIT.failed, `${what}: output stream failed`);
+      if (r.streamError) throw new Stop(EXIT.failed, `${what}: output stream failed: ${r.streamError.slice(0, 300)}`);
       // A provider failure ends the turn as an assistant message, not as a throw.
       if (watch.lastError !== undefined) {
         const refused = classifyAuthFailure(watch.lastError);
@@ -723,12 +721,17 @@ async function handshake(client: IpcClient, args: WorkerArgs): Promise<WorkerSpe
   return spec;
 }
 
+/** The round's pass directory: its task files and its context pack. */
+function roundPassesDir(spec: WorkerSpec, round: number): string {
+  return join(spec.root, "state", `pr-${spec.pr}-round-${round}-passes`);
+}
+
 /** The planned discovery wave's task files: the round's own pass dir. */
 function plannedWave(
   spec: WorkerSpec,
   env: NodeJS.ProcessEnv,
 ): { dir: string; units: LaunchUnit[]; note?: string } {
-  const passes = join(spec.root, "state", `pr-${spec.pr}-round-${spec.round_no ?? 0}-passes`);
+  const passes = roundPassesDir(spec, spec.round_no ?? 0);
   const dir = join(passes, "tasks");
   if (!existsSync(dir)) return { dir, units: [] };
   const plan = planLaunch(
@@ -812,12 +815,7 @@ async function openSession(
   };
   const base = engineLensConfig(host, lensSpec);
   // The round's context pack sits beside its task files, not beside the ledger.
-  const packFile = join(
-    spec.root,
-    "state",
-    `pr-${spec.pr}-round-${round}-passes`,
-    CONTEXT_PACK_FILE,
-  );
+  const packFile = join(roundPassesDir(spec, round), CONTEXT_PACK_FILE);
   const pack = existsSync(packFile) ? readFileSync(packFile, "utf8") : "";
   const tools = engineLensTools(
     {
