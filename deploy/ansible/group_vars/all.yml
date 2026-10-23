@@ -29,7 +29,7 @@ app_root: /opt/qcr
 # before the cutover (git worktree metadata, pi session headers) still resolve.
 legacy_sandbox_root: /opt/quickreview/sandbox
 
-node_major: "22"
+node_major: "26"
 # pi CLI npm package + exact version pin (registry-verified). The image never
 # floats — bumping is a deliberate edit and a new release (CI builds the image).
 pi_npm_package: "@earendil-works/pi-coding-agent"

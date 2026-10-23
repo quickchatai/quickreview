@@ -67,7 +67,7 @@ jobs:
       # The base commit, never the pull request's own code: the review fetches
       # the pull request itself, and the repository's .qcr/ profile is read
       # from the base.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: github.event_name != 'issue_comment' || steps.pr.outputs.review == 'true'
         with:
           ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}

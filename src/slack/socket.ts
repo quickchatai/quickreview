@@ -35,8 +35,8 @@ const bridgedSockets = new Set<SlackWebSocketLike>();
 /**
  * Node's global WebSocket (undici) answers server pings itself and exposes
  * them only on the `undici:websocket:ping` diagnostics channel. Newer undici
- * (7+, Node 24+) carries the socket object; undici 6 — Node 22, the daemon's
- * runtime — carries ONLY the payload. So: a ping naming its socket reaches
+ * (7+, Node 24+) carries the socket object; undici 6 — Node 22, the oldest
+ * Node an npm install supports — carries ONLY the payload. So: a ping naming its socket reaches
  * that socket's `onping`; a ping naming none reaches every live bridged
  * socket (the Slack client is the process's only WebSocket user, so in
  * practice that is exactly one). Idempotent.

@@ -31,7 +31,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(root, "dist", "src");
 const CORE_DIST = join(root, "packages", "pi-plugin", "dist", "src");
 const HARNESS = join(root, "tests", "helpers", "daemon-uid-harness.mjs");
-const NODE_IMAGE = "node:22-bookworm";
+const NODE_IMAGE = "node:26-bookworm";
 const tmp = mkdtempSync(join(tmpdir(), "tool-uid-daemon-"));
 
 const hasDist = existsSync(join(CORE_DIST, "engine", "tooluid.js"));

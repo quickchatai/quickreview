@@ -14,7 +14,7 @@
 # the image copies: the built app (below).
 #
 # Deltas from the VM image:
-#   - node:22 base instead of ubuntu + NodeSource (same major, less plumbing).
+#   - node:26 base instead of ubuntu + NodeSource (same major, less plumbing).
 #   - no memory extension baked in: memory is OpenViking over the
 #     host-owned forward, through the vendored extension mounted at /workspace.
 #   - no gh CLI / mint-token credential helper / webhook port: the companion
@@ -22,7 +22,7 @@
 #   - its own pihome volume: never share the VM's auth.json (OAuth tokens
 #     refresh in place; two hosts refreshing one grant is a hazard). One-time
 #     `/login` inside the container is a HITL step.
-FROM node:22-bookworm
+FROM node:26-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=Europe/Warsaw
@@ -63,7 +63,7 @@ RUN npm install -g ${PI_PACKAGE}@${PI_VERSION}
 # very first alert file (the VM image's 1001 does not transfer to a laptop). Both
 # scripts/companion-e2e.sh and scripts/smoke-companion.sh build with
 # `--build-arg COMPANION_UID="$(id -u)"`; the default is the usual desktop
-# 1000. --non-unique because node:22 already ships a uid-1000 `node` user.
+# 1000. --non-unique because node:26 already ships a uid-1000 `node` user.
 ARG COMPANION_UID=1000
 RUN useradd --create-home --non-unique --uid ${COMPANION_UID} companion \
     && mkdir -p /home/companion/.pi /workspace /tracker /feed /alerts \
@@ -125,7 +125,7 @@ VOLUME ["/home/companion/.pi"]
 USER companion
 # HOME must be set EXPLICITLY. `useradd --non-unique --uid 1000 companion`
 # leaves two passwd entries at uid 1000, and docker resolves `USER companion`
-# back through the uid to the FIRST of them — node:22's own `node` user — so
+# back through the uid to the FIRST of them — node:26's own `node` user — so
 # HOME would be /home/node while the pihome volume is mounted on
 # /home/companion/.pi. Everything pi writes to $HOME/.pi (settings, trust,
 # `auth.json`) would then land on the container's writable layer and the OAuth

@@ -23,7 +23,7 @@
 # pin deliberately - config.toml + group_vars + this Dockerfile together, never
 # one alone - and never change the embedder under a live store without the
 # re-embed migration (docs/memory-embeddings.md).
-ARG NODE_MAJOR=22
+ARG NODE_MAJOR=26
 
 # ---- build ---------------------------------------------------------------------
 # Compiles the TypeScript; the sidecar ships dist/, the review core's

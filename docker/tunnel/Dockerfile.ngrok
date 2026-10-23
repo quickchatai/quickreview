@@ -13,7 +13,7 @@
 # the client as NGROK_AUTHTOKEN in its environment.
 #
 #   docker compose --profile ngrok build --no-cache
-ARG NODE_MAJOR=22
+ARG NODE_MAJOR=26
 ARG NGROK_VERSION=3.31.0
 
 FROM ngrok/ngrok:${NGROK_VERSION}-alpine AS client

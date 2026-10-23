@@ -29,10 +29,10 @@ jobs:
     runs-on: ${{ vars.QCR_RUNNERS == 'github' && 'ubuntu-latest' || 'blacksmith-16vcpu-ubuntu-2404' }}
     strategy:
       matrix:
-        node: ["22"]
+        node: ["26"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -94,10 +94,10 @@ jobs:
       matrix:
         pi: ["1.3.0"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "26"
           cache: npm
       - run: npm ci
       - run: npm run build
@@ -114,7 +114,7 @@ jobs:
     env:
       DOCKER_BUILDKIT: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Blacksmith's builder: `docker build` below reuses its layer cache. Off a
       # Blacksmith runner (QCR_RUNNERS=github) it is skipped.
       - uses: useblacksmith/setup-docker-builder@v2
@@ -133,10 +133,10 @@ jobs:
   clone:
     runs-on: ${{ vars.QCR_RUNNERS == 'github' && 'ubuntu-latest' || 'blacksmith-4vcpu-ubuntu-2404' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "26"
           cache: npm
       - run: npm ci
       - run: npm run build

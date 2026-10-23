@@ -38,6 +38,7 @@ import {
 import {
   LINEAR_HANG_GUARD_MS,
   LINEAR_RATIO_CEILING_10X,
+  LINEAR_RATIO_CEILING_10X_RETAINED,
   measureScaling,
 } from "./helpers/scaling.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
@@ -413,8 +414,13 @@ describe("linear, and never one long span (acceptance 9)", () => {
         })),
       })),
     });
-    const s = measureScaling((m: Manifest) => settledIndex(m), manifest(2_000), manifest(20_000));
-    expect(s.ratio).toBeLessThan(LINEAR_RATIO_CEILING_10X);
+    // The index is the run's result: 40,000 kept records on the large side, so
+    // the retained-result ceiling (a quadratic index still reads ~100), and the
+    // best of five interleaved samples per size.
+    const s = measureScaling((m: Manifest) => settledIndex(m), manifest(2_000), manifest(20_000), {
+      samples: 5,
+    });
+    expect(s.ratio, JSON.stringify(s)).toBeLessThan(LINEAR_RATIO_CEILING_10X_RETAINED);
   });
 
   it(

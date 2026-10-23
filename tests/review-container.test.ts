@@ -426,7 +426,7 @@ describe.skipIf(!hasDist)("the built cli in the env the wrapper gives a containe
 // The release image is not built here (building is the release job's). These run
 // the repo's own entrypoint and built code in a stock node image, started with the
 // flags the wrapper gives a call, so the kernel is the one the image will meet.
-const NODE_IMAGE = "node:22-bookworm";
+const NODE_IMAGE = "node:26-bookworm";
 const hasDocker = ((): boolean => {
   if (spawnSync("docker", ["image", "inspect", NODE_IMAGE], { stdio: "ignore" }).status !== 0)
     return false;

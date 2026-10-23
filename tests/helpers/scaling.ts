@@ -74,6 +74,14 @@ export function measureScaling<T>(
  * effects on the bigger input push it higher, never to 30), quadratic ~100. */
 export const LINEAR_RATIO_CEILING_10X = 30;
 
+/** Ceiling for a 10× input whose result the run keeps and returns (an index,
+ * a map): the large side's result outgrows the young generation and the CPU
+ * caches while the small side's does not, so a cache-thrashing neighbour on a
+ * shared runner slows the large side alone, and more samples cannot cancel
+ * that. Linear reads ~15 idle and was seen past 30 on a CI runner; quadratic
+ * reads ~100. Half the quadratic ratio: a quadratic regression still fails. */
+export const LINEAR_RATIO_CEILING_10X_RETAINED = 50;
+
 /** Per-test timeout for a scaling test: a hang guard only, never the
  * assertion — generous enough that a loaded machine never trips it on linear
  * code, while a quadratic regression is caught by the ratio long before. */

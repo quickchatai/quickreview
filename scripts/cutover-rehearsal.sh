@@ -471,7 +471,7 @@ start_stub() {
   docker rm -f "$STUB" >/dev/null 2>&1
   docker run -d --name "$STUB" --network "$NET" --network-alias stub --network-alias api.github.com --network-alias auth.openai.com \
     -v "$WRH/stub.mjs:/stub.mjs:ro" -v "$H/fixture.json:/fixture.json:ro" -v "$TLS:/tls:ro" -v "$LOGS:/logs" \
-    node:22-bookworm-slim node /stub.mjs /fixture.json /tls /logs/stub.jsonl >/dev/null || die "stub did not start"
+    node:26-bookworm-slim node /stub.mjs /fixture.json /tls /logs/stub.jsonl >/dev/null || die "stub did not start"
   wait_for 20 "the stub" grep -q '"port":8080' "$LOGS/stub.jsonl" || die "the stub is not up"
 }
 start_legacy() {

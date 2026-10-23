@@ -17,7 +17,7 @@
 # Bumping the pin is a deliberate act (tests/tunnel-sidecar.test.ts refuses a
 # floating `latest` and holds the compose file to this ARG default):
 #   docker compose --profile quick-tunnel build --no-cache
-ARG NODE_MAJOR=22
+ARG NODE_MAJOR=26
 ARG CLOUDFLARED_VERSION=2026.8.1
 
 FROM cloudflare/cloudflared:${CLOUDFLARED_VERSION} AS client

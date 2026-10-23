@@ -47,7 +47,7 @@
 # equal the version `npm ci` puts in node_modules (the image's one pi, checked
 # below), and tests/release-image.test.ts fails the moment either default
 # drifts. Bump them together, never one alone.
-ARG NODE_MAJOR=22
+ARG NODE_MAJOR=26
 # The Debian release under node. bookworm is the image; bench/aacr/Dockerfile's
 # ocr, claude and pragent arms need git >= 2.41 and python >= 3.12, so bench.sh
 # builds this same file with NODE_DISTRO=trixie for those three.

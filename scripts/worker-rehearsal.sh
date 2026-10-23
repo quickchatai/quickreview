@@ -235,7 +235,7 @@ docker network create --internal "$NET" >/dev/null || die "no network"
 : >"$LOGS/stub.jsonl"; chmod 666 "$LOGS/stub.jsonl"
 docker run -d --name "$STUB" --network "$NET" --network-alias stub --network-alias api.github.com --network-alias auth.openai.com \
   -v "$RH/stub.mjs:/stub.mjs:ro" -v "$H/fixture.json:/fixture.json:ro" -v "$TLS:/tls:ro" -v "$LOGS:/logs" \
-  node:22-bookworm-slim node /stub.mjs /fixture.json /tls /logs/stub.jsonl >/dev/null || die "stub did not start"
+  node:26-bookworm-slim node /stub.mjs /fixture.json /tls /logs/stub.jsonl >/dev/null || die "stub did not start"
 wait_for 20 "the stub" grep -q '"port":8080' "$LOGS/stub.jsonl" || die "the stub is not up"
 
 # the network has no way out
