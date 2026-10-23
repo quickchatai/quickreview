@@ -43,13 +43,12 @@ export class RoundProgressPublisher {
     this.warn = o.warn ?? ((m) => console.error(`[round-progress] ${m}`));
   }
 
-  /** Read what the log gained since the last call and publish the result.
-   * Never throws. */
+  /** Read what the log gained since the last call and publish the result,
+   * retrying any write an earlier call could not make. Never throws. */
   catchUp(): void {
     try {
       const read = readLiveEvents(this.o.logPath, this.offset);
       this.offset = read.nextOffset;
-      if (read.events.length === 0) return;
       for (const event of read.events) this.projection.apply(event);
     } catch (err) {
       this.warn(`live log not read: ${String(err)}`);

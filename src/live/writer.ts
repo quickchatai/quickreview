@@ -12,7 +12,7 @@
 // costs the session it watches.
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { isLensTool, lensIdOf, lensUsageOf } from "../lensresult.js";
+import { isLensTool, LENS_WAVE_TOOL, lensIdOf, lensUsageOf } from "../lensresult.js";
 import {
   LIVE_MAIN_FILE,
   lensLogName,
@@ -28,7 +28,8 @@ import {
 /** The delta window: how long text and updates are held before one line. */
 export const LIVE_COALESCE_MS = 250;
 
-/** The launch-plan tool, whose task slots the host resolves from the task dirs. */
+/** The launch-plan tool (and `lens_wave`, which takes the same arguments), whose
+ * task slots the host resolves from the task dirs. */
 const LAUNCH_PLAN = "launch_plan";
 
 type Bag = Record<string, unknown>;
@@ -510,7 +511,7 @@ class Sink implements LiveSink {
     const parent = text(e.parentToolCallId);
     const lens = isLensTool(tool);
     const executions = lens
-      ? tool === LAUNCH_PLAN
+      ? tool === LAUNCH_PLAN || tool === LENS_WAVE_TOOL
         ? (this.o.launchExecutions?.(args, this.o.env) ?? [])
         : subagentExecutions(args)
       : [];

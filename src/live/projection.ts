@@ -415,12 +415,15 @@ export class RoundProgressProjection {
     for (const [index, { agent, run }] of ended.entries()) {
       const key = this.bindRun(run, endKeys[index]!);
       const previous = this.agents.get(key);
+      // A child the call returns still running (a placeholder) carries no
+      // finish time, as in toolUpdate: the parser refuses the pair.
+      const { finished_at: previousFinished, ...kept } = previous ?? {};
       const finalAgent: LiveAgentProgress = {
-        ...previous,
+        ...kept,
         ...agent,
         execution_id: key,
         started_at: previous?.started_at ?? this.nowIso(),
-        finished_at: previous?.finished_at ?? this.nowIso(),
+        ...(agent.status === "running" ? {} : { finished_at: previousFinished ?? this.nowIso() }),
       };
       this.agents.set(key, finalAgent);
       finalAgents.push(finalAgent);
@@ -458,7 +461,7 @@ export class RoundProgressProjection {
     this.activity(
       finalAgents.length > 0
         ? `${finalAgents.map((agent) => `${agent.agent} ${agent.status}`).join(", ")}`
-        : `${ev.tool} completed`,
+        : `${ev.tool} ${ev.is_error ? "failed" : "completed"}`,
     );
   }
 

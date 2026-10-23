@@ -183,6 +183,22 @@ describe("the writer's lines", () => {
     });
   });
 
+  it("resolves a lens_wave call's task directories through the host's resolver too", () => {
+    const dir = roundDir();
+    const sink = createLiveWriter({
+      dir,
+      launchExecutions: () => [{ agent: "pass-a", phase: "sweep" }],
+    }).main(META);
+    sink.feed({
+      type: "tool_execution_start",
+      toolCallId: "lw",
+      toolName: "lens_wave",
+      args: { dirs: ["/x/tasks-sweep"] },
+    });
+    sink.close();
+    expect(read(dir)[1]).toMatchObject({ executions: [{ agent: "pass-a", phase: "sweep" }] });
+  });
+
   it("drops events a viewer has no use for", () => {
     const dir = roundDir();
     const sink = createLiveWriter({ dir }).main(META);
