@@ -1,0 +1,795 @@
+{
+  "provenance": "SYNTHETIC, hand-invented on 2026-10-23 for the open-source release. Every PR number, head SHA, reviewer login, path, diff hunk, review comment and note in this file was written from scratch about a fictional observatory's software (a Go telescope-time scheduler, a Rust image-calibration crate, a TypeScript booking portal, Python reduction scripts, SQL migrations and a CI workflow), reviewed by fictional reviewers whose logins start with 'fictional-'. It has no relation to any real repository, PR, person or review. It replaces an earlier synthetic set that had been paraphrased from a private review corpus, which made it unfit to publish. The shape is chosen to exercise the instrument: several cases per reviewer under the per-reviewer cap, APPROVED, COMMENTED and CHANGES_REQUESTED verdicts, MERGED and CLOSED PRs, all three expectation labels with expected-catch a minority, multi-line threads, single-line threads, and line-1 file-level comments with no hunk. Each finding's substance object is the output of classifySubstance in src/regression.ts on that comment, not a hand-typed value; the expectation labels and notes are the author's judgment, kept in regression-labels.json.",
+  "builtAt": "2026-10-23T12:00:00.000Z",
+  "cases": [
+    {
+      "id": "pr-507-fictional-otter",
+      "pr": 507,
+      "reviewer": "fictional-otter",
+      "submittedAt": "2025-02-18T10:41:07Z",
+      "state": "COMMENTED",
+      "prState": "MERGED",
+      "headSha": "b6ad67dd02a86dfe78dcd7ad843001a786b51743",
+      "changedFiles": 5,
+      "churn": 214,
+      "findings": [
+        {
+          "path": "scheduler/internal/alloc/queue.go",
+          "line": 147,
+          "startLine": 141,
+          "text": "`sort.Slice` is not stable, and two proposals with the same grade and the same requested hours compare equal here, so their order depends on whatever order the database returned them in. That matters because the allocator is meant to be reproducible: the time allocation committee re-runs it from the same inputs to audit a night, and it would hand them a different schedule. Suggest a total order with the proposal id as the last key:\n```go\nif a.RequestedHours != b.RequestedHours {\n\treturn a.RequestedHours < b.RequestedHours\n}\nreturn a.ID < b.ID\n```",
+          "plain": "sort.Slice is not stable, and two proposals with the same grade and the same requested hours compare equal here, so their order depends on whatever order the database returned them in. That matters because the allocator is meant to be reproducible: the time allocation committee re-runs it from the same inputs to audit a night, and it would hand them a different schedule. Suggest a total order with the proposal id as the last key:\nif a.RequestedHours != b.RequestedHours {\n\treturn a.RequestedHours < b.RequestedHours\n}\nreturn a.ID < b.ID",
+          "hunk": "@@ -139,6 +139,15 @@ type Queue struct {\n func (q *Queue) Rank(props []Proposal) []Proposal {\n+\t// Highest grade first; shorter requests break ties.\n+\tsort.Slice(props, func(i, j int) bool {\n+\t\ta, b := props[i], props[j]\n+\t\tif a.Grade != b.Grade {\n+\t\t\treturn a.Grade > b.Grade\n+\t\t}\n+\t\treturn a.RequestedHours < b.RequestedHours\n+\t})",
+          "resolved": true,
+          "gotReply": true,
+          "substance": {
+            "rung": 4,
+            "name": "L4 argued",
+            "contentFree": false,
+            "reason": true,
+            "alternative": true,
+            "context": false,
+            "question": false,
+            "multi": true,
+            "long": true
+          },
+          "expectation": "expected-catch",
+          "note": "Reproducibility follows from the comparator alone: anyone reading it can see there is no final tie-breaker."
+        },
+        {
+          "path": "scheduler/internal/alloc/queue.go",
+          "line": 178,
+          "startLine": 173,
+          "text": "Not blocking, but I would pull the lunar constraints out of this loop into a small `moonAllows(p, night)` helper next to the instrument table. Right now each new instrument means another branch in the middle of the allocation loop, and the thresholds live far from where the instruments are defined. Happy for that to be a follow-up if you'd rather keep this PR focused.",
+          "plain": "Not blocking, but I would pull the lunar constraints out of this loop into a small moonAllows(p, night) helper next to the instrument table. Right now each new instrument means another branch in the middle of the allocation loop, and the thresholds live far from where the instruments are defined. Happy for that to be a follow-up if you'd rather keep this PR focused.",
+          "hunk": "@@ -170,4 +170,19 @@ func (q *Queue) Allocate(night Night, ranked []Proposal) []Block {\n+\tcursor := night.Start\n+\tvar out []Block\n+\tfor _, p := range ranked {\n+\t\tif p.Instrument == InstrumentSpectrograph && night.MoonIllum > 0.6 {\n+\t\t\tcontinue\n+\t\t}\n+\t\tif p.Instrument == InstrumentWideField && night.MoonIllum > 0.3 {\n+\t\t\tcontinue\n+\t\t}",
+          "resolved": true,
+          "gotReply": true,
+          "substance": {
+            "rung": 4,
+            "name": "L4 argued",
+            "contentFree": false,
+            "reason": false,
+            "alternative": true,
+            "context": false,
+            "question": false,
+            "multi": true,
+            "long": true
+          },
+          "expectation": "expected-divergence",
+          "note": "Offered as an optional follow-up refactor; raising it and staying quiet are both reasonable."
+        },
+        {
+          "path": "scheduler/internal/alloc/queue.go",
+          "line": 186,
+          "startLine": 186,
+          "text": "This stamps the block with the wall-clock date at the moment the allocator runs, not with the night it belongs to. The nightly job starts in the afternoon, so today it happens to agree, but a re-run after midnight UTC (or the backfill command, which allocates past nights) files every block under the wrong date. `night.Date` is already on the struct, so I'd use that instead.",
+          "plain": "This stamps the block with the wall-clock date at the moment the allocator runs, not with the night it belongs to. The nightly job starts in the afternoon, so today it happens to agree, but a re-run after midnight UTC (or the backfill command, which allocates past nights) files every block under the wrong date. night.Date is already on the struct, so I'd use that instead.",
+          "hunk": "+\t\t\tcontinue\n+\t\t}\n+\t\tif !q.fits(p, night) {\n+\t\t\tcontinue\n+\t\t}\n+\t\tblk := Block{\n+\t\t\tProposal: p.ID,\n+\t\t\tStart:    cursor,\n+\t\t\tEnd:      cursor.Add(p.Duration()),\n+\t\t\tDate:     time.Now().UTC().Format(\"2006-01-02\"),",
+          "resolved": true,
+          "gotReply": false,
+          "substance": {
+            "rung": 4,
+            "name": "L4 argued",
+            "contentFree": false,
+            "reason": false,
+            "alternative": true,
+            "context": false,
+            "question": false,
+            "multi": true,
+            "long": true
+          },
+          "expectation": "expected-catch"
+        }
+      ]
+    },
+    {
+      "id": "pr-529-fictional-otter",
+      "pr": 529,
+      "reviewer": "fictional-otter",
+      "submittedAt": "2025-03-27T15:02:44Z",
+      "state": "APPROVED",
+      "prState": "MERGED",
+      "headSha": "b914b7d824a5935ccfbf9a15d63fbb0cf7567e63",
+      "changedFiles": 3,
+      "churn": 96,
+      "findings": [
+        {
+          "path": "calib/src/flatfield.rs",
+          "line": 52,
+          "startLine": 51,
+          "text": "Dead columns in the flat come through as exact zeros (the bad-pixel mask is applied later, in `stack.rs`), so `ff` is 0.0 for those pixels and this division writes `inf` into the science frame. Once an `inf` reaches the median combine it poisons the whole column. I would guard it here rather than rely on the mask running first:\n```rust\nlet ff = *f / mean;\n*px = if ff > f32::EPSILON { *px / ff } else { f32::NAN };\n```\nand let the combine skip NaNs, which it already does.",
+          "plain": "Dead columns in the flat come through as exact zeros (the bad-pixel mask is applied later, in stack.rs), so ff is 0.0 for those pixels and this division writes inf into the science frame. Once an inf reaches the median combine it poisons the whole column. I would guard it here rather than rely on the mask running first:\nlet ff = *f / mean;\n*px = if ff > f32::EPSILON { *px / ff } else { f32::NAN };\nand let the combine skip NaNs, which it already does.",
+          "hunk": "@@ -48,8 +48,17 @@ impl FlatField {\n     pub fn apply(&self, frame: &mut Frame) {\n-        for (px, f) in frame.pixels.iter_mut().zip(self.norm.iter()) {\n-            *px /= *f;\n-        }\n+        let mean = self.norm.iter().sum::<f32>() / self.norm.len() as f32;\n+        for (px, f) in frame.pixels.iter_mut().zip(self.norm.iter()) {\n+            let ff = *f / mean;\n+            *px = *px / ff;",
+          "resolved": true,
+          "gotReply": true,
+          "substance": {
+            "rung": 4,
+            "name": "L4 argued",
+            "contentFree": false,
+            "reason": false,
+            "alternative": true,
+            "context": false,
+            "question": false,
+            "multi": true,
+            "long": true
+          },
+          "expectation": "expected-catch"
+        },
+        {
+          "path": "calib/src/flatfield.rs",
+          "line": 51,
+          "startLine": 51,
+          "text": "I'd spell this `normalised_gain` instead of `ff`; every other name in the crate is a full word.",
+          "plain": "I'd spell this normalised_gain instead of ff; every other name in the crate is a full word.",
+          "hunk": "@@ -48,8 +48,17 @@ impl FlatField {\n     pub fn apply(&self, frame: &mut Frame) {\n-        for (px, f) in frame.pixels.iter_mut().zip(self.norm.iter()) {\n-            *px /= *f;\n-        }\n+        let mean = self.norm.iter().sum::<f32>() / self.norm.len() as f32;\n+        for (px, f) in frame.pixels.iter_mut().zip(self.norm.iter()) {\n+            let ff = *f / mean;",
+          "resolved": true,
+          "gotReply": false,
+          "substance": {
+            "rung": 3,
+            "name": "L3 justified or proposes a fix",
+            "contentFree": false,
+            "reason": false,
+            "alternative": true,
+            "context": false,
+            "question": false,
+            "multi": false,
+            "long": false
+          },
+          "expectation": "out-of-remit",
+          "note": "Identifier length is naming taste; the crate's own conventions and its maintainers decide it, not the reviewer."
+        }
+      ]
+    },
+    {
+      "id": "pr-588-fictional-otter",
+      "pr": 588,
+      "reviewer": "fictional-otter",
+      "submittedAt": "2025-06-30T08:15:19Z",
+      "state": "CHANGES_REQUESTED",
+      "prState": "CLOSED",
+      "headSha": "8085d8aa725afead2b405ab20ace33b95a46811c",
+      "changedFiles": 4,
+      "churn": 173,
+      "findings": [
+        {
+          "path": "reduce/pipeline/stack.py",
+          "line": 1,
+          "text": "This module reads every calibrated frame of the night into one `numpy` array before combining. A long winter night on the wide-field camera is around 240 frames of 9576x6388 float32, which is roughly 58 GB, and the reduction nodes have 32 GB. It will be killed by the OOM reaper on exactly the nights we care most about. Suggest combining in row strips with `np.memmap` (or `astropy.io.fits` with `memmap=True`) so only one strip of every frame is resident at a time.",
+          "plain": "This module reads every calibrated frame of the night into one numpy array before combining. A long winter night on the wide-field camera is around 240 frames of 9576x6388 float32, which is roughly 58 GB, and the reduction nodes have 32 GB. It will be killed by the OOM reaper on exactly the nights we care most about. Suggest combining in row strips with np.memmap (or astropy.io.fits with memmap=True) so only one strip of every frame is resident at a time.",
+          "resolved": false,
+          "gotReply": true,
+          "substance": {
+            "rung": 4,
+            "name": "L4 argued",
+            "contentFree": false,
+            "reason": false,
+            "alternative": true,
+            "context": false,
+            "question": false,
+            "multi": true,
+            "long": true
+          },
+          "expectation": "expected-catch",
+          "note": "A file-level comment with no hunk; the loading strategy and the frame size are both readable in the change."
+        },
+        {
+          "path": "reduce/pipeline/stack.py",
+          "line": 73,
+          "startLine": 72,
+          "text": "I would go with `sigma=2.5` here instead of 3.0. With only five to eight exposures per field, a 3-sigma clip almost never rejects anything, so satellite trails survive into the combined frame. That said, the right number depends on how many frames the typical program takes, which this PR doesn't tell us.",
+          "plain": "I would go with sigma=2.5 here instead of 3.0. With only five to eight exposures per field, a 3-sigma clip almost never rejects anything, so satellite trails survive into the combined frame. That said, the right number depends on how many frames the typical program takes, which this PR doesn't tell us.",
+          "hunk": "@@ -70,6 +70,12 @@ def combine(frames, method=\"median\"):\n     if method == \"mean\":\n         return np.mean(cube, axis=0)\n+    if method == \"clipped\":\n+        clipped = sigma_clip(cube, sigma=3.0, maxiters=5, axis=0)",
+          "resolved": false,
+          "gotReply": false,
+          "substance": {
+            "rung": 4,
+            "name": "L4 argued",
+            "contentFree": false,
+            "reason": false,
+            "alternative": true,
+            "context": false,
+            "question": false,
+            "multi": true,
+            "long": true
+          },
+          "expectation": "expected-divergence",
+          "note": "A tuning preference resting on how many exposures programs usually take, which the diff does not show; either answer holds up."
+        }
+      ]
+    },
+    {
+      "id": "pr-418-fictional-heron",
+      "pr": 418,
+      "reviewer": "fictional-heron",
+      "submittedAt": "2024-07-09T13:27:52Z",
+      "state": "CHANGES_REQUESTED",
+      "prState": "MERGED",
+      "headSha": "307c4f27c7d926b3bd709c7a871c4746930375ea",
+      "changedFiles": 2,
+      "churn": 48,
+      "findings": [
+        {
+          "path": "db/migrations/0042_observing_blocks_seeing.sql",
+          "line": 4,
+          "startLine": 3,
+          "text": "`observing_blocks` already has about four years of rows and none of them carry a seeing value, so `ADD COLUMN ... NOT NULL` with no default fails as soon as it runs, and the whole migration rolls back. I would make the column nullable, since blocks executed before the seeing monitor existed genuinely have no value; if it must be required, add it nullable, backfill, and set `NOT NULL` in a later migration.",
+          "plain": "observing_blocks already has about four years of rows and none of them carry a seeing value, so ADD COLUMN ... NOT NULL with no default fails as soon as it runs, and the whole migration rolls back. I would make the column nullable, since blocks executed before the seeing monitor existed genuinely have no value; if it must be required, add it nullable, backfill, and set NOT NULL in a later migration.",
+          "hunk": "@@ -0,0 +1,9 @@\n+-- Record the measured seeing for each executed block.\n+BEGIN;\n+ALTER TABLE observing_blocks\n+    ADD COLUMN seeing_arcsec real NOT NULL;",
+          "resolved": true,
+          "gotReply": true,
+          "substance": {
+            "rung": 4,
+            "name": "L4 argued",
+            "contentFree": false,
+            "reason": true,
+            "alternative": true,
+            "context": false,
+            "question": false,
+            "multi": true,
+            "long": true
+          },
+          "expectation": "expected-catch"
+        },
+        {
+          "path": "db/migrations/0042_observing_blocks_seeing.sql",
+          "line": 7,
+          "startLine": 6,
+          "text": "Could you run this against last month's restored snapshot and post how long the index build holds the lock? It blocks writes to `observing_blocks` because it is a plain `CREATE INDEX`, and if that takes more than a minute or two the night queue stalls while it waits to record executions.",
+          "plain": "Could you run this against last month's restored snapshot and post how long the index build holds the lock? It blocks writes to observing_blocks because it is a plain CREATE INDEX, and if that takes more than a minute or two the night queue stalls while it waits to record executions.",
+          "hunk": "@@ -0,0 +1,9 @@\n+-- Record the measured seeing for each executed block.\n+BEGIN;\n+ALTER TABLE observing_blocks\n+    ADD COLUMN seeing_arcsec real NOT NULL;\n+\n+CREATE INDEX observing_blocks_seeing_idx\n+    ON observing_blocks (seeing_arcsec);",
+          "resolved": true,
+          "gotReply": true,
+          "substance": {
+            "rung": 4,
+            "name": "L4 argued",
+            "contentFree": false,
+            "reason": true,
+            "alternative": false,
+            "context": false,
+            "question": true,
+            "multi": true,
+            "long": true
+          },
+          "expectation": "out-of-remit",
+          "note": "The ask is to run the migration on a restored database and time the lock; the reviewer reads code and never runs it."
+        }
+      ]
+    },
+    {
+      "id": "pr-604-fictional-heron",
+      "pr": 604,
+      "reviewer": "fictional-heron",
+      "submittedAt": "2025-08-14T09:50:36Z",
+      "state": "COMMENTED",
+      "prState": "MERGED",
+      "headSha": "38468d330602bebef55a04e2281aa8f1b6067ce4",
+      "changedFiles": 6,
+      "churn": 281,
+      "findings": [
+        {
+          "path": "portal/src/booking/NightPicker.tsx",
+          "line": 14,
+          "startLine": 14,
+          "text": "`semester.nights` are plain dates like `\"2025-09-14\"`, and `new Date()` parses a date-only string as midnight UTC. `toLocaleDateString` then renders it in the browser's zone, so anyone west of Greenwich (the southern partner site, for one) sees every night labelled as the day before and books the wrong one. Since these are calendar dates rather than instants, I would split the string into its parts, or pass `timeZone: \"UTC\"` in the options.",
+          "plain": "semester.nights are plain dates like \"2025-09-14\", and new Date() parses a date-only string as midnight UTC. toLocaleDateString then renders it in the browser's zone, so anyone west of Greenwich (the southern partner site, for one) sees every night labelled as the day before and books the wrong one. Since these are calendar dates rather than instants, I would split the string into its parts, or pass timeZone: \"UTC\" in the options.",
+          "hunk": "+interface NightPickerProps {\n+  semester: Semester;\n+  onPick: (iso: string) => void;\n+}\n+\n+function NightPicker({ semester, onPick }: NightPickerProps) {\n+  const [picked, setPicked] = useState<string | null>(null);\n+  const nights = semester.nights.map((iso) => ({\n+    iso,\n+    label: new Date(iso).toLocaleDateString(undefined, {",
+          "resolved": true,
+          "gotReply": true,
+          "substance": {
+            "rung": 4,
+            "name": "L4 argued",
+            "contentFree": false,
+            "reason": true,
+            "alternative": true,
+            "context": false,
+            "question": false,
+            "multi": true,
+            "long": true
+          },
+          "expectation": "expected-catch"
+        },
+        {
+          "path": "portal/src/booking/NightPicker.tsx",
+          "line": 27,
+          "startLine": 25,
+          "text": "On a narrow window the moon badge wraps under the button and the rows stop lining up with the hour grid beside them. I tried it at phone width on the preview deploy. Might be worth a `min-width` on the button, or letting the badge shrink instead.",
+          "plain": "On a narrow window the moon badge wraps under the button and the rows stop lining up with the hour grid beside them. I tried it at phone width on the preview deploy. Might be worth a min-width on the button, or letting the badge shrink instead.",
+          "hunk": "+    }),\n+    moon: semester.moon[iso],\n+  }));\n+\n+  return (\n+    <ul className=\"night-picker\">\n+      {nights.map((n) => (\n+        <li key={n.iso} className={n.iso === picked ? \"picked\" : undefined}>\n+          <button onClick={() => (setPicked(n.iso), onPick(n.iso))}>{n.label}</button>\n+          <MoonBadge illumination={n.moon} />",
+          "resolved": false,
+          "gotReply": false,
+          "substance": {
+            "rung": 4,
+            "name": "L4 argued",
+            "contentFree": false,
+            "reason": false,
+            "alternative": true,
+            "context": false,
+            "question": false,
+            "multi": true,
+            "long": true
+          },
+          "expectation": "out-of-remit",
+          "note": "Found by opening the page in a browser at a narrow width; the reviewer does not run the app."
+        },
+        {
+          "path": "portal/src/booking/NightPicker.tsx",
+          "line": 37,
+          "startLine": 37,
+          "text": "We keep named exports everywhere under `portal/src` so that renames stay greppable, and this adds a default export with a lint suppression to get it past CI. I would export it by name and have the lazy import do `.then((m) => ({ default: m.NightPicker }))` instead.",
+          "plain": "We keep named exports everywhere under portal/src so that renames stay greppable, and this adds a default export with a lint suppression to get it past CI. I would export it by name and have the lazy import do .then((m) => ({ default: m.NightPicker })) instead.",
+          "hunk": "+        </li>\n+      ))}\n+    </ul>\n+  );\n+}\n+\n+NightPicker.displayName = \"NightPicker\";\n+\n+// eslint-disable-next-line import/no-default-export\n+export default NightPicker;",
+          "resolved": true,
+          "gotReply": true,
+          "substance": {
+            "rung": 4,
+            "name": "L4 argued",
+            "contentFree": false,
+            "reason": true,
+            "alternative": true,
+            "context": false,
+            "question": false,
+            "multi": true,
+            "long": true
+          },
+          "expectation": "out-of-remit",
+          "note": "An export-style convention backed by a lint rule; the linter and the team own it."
+        }
+      ]
+    },
+    {
+      "id": "pr-640-fictional-heron",
+      "pr": 640,
+      "reviewer": "fictional-heron",
+      "submittedAt": "2025-10-02T16:12:05Z",
+      "state": "APPROVED",
+      "prState": "MERGED",
+      "headSha": "0c3859d64b09a46a0753358d47b697972bb74a6b",
+      "changedFiles": 4,
+      "churn": 132,
+      "findings": [
+        {
+          "path": "scheduler/cmd/tarnsched/main.go",
+          "line": 32,
+          "startLine": 30,
+          "text": "Consider making the retry budget a flag rather than a constant, since the dome controllers at the two sites fail differently. Fine to ship as is.",
+          "plain": "Consider making the retry budget a flag rather than a constant, since the dome controllers at the two sites fail differently. Fine to ship as is.",
+          "hunk": "@@ -28,7 +28,10 @@ const (\n     defaultListen   = \":8470\"\n     shutdownGrace   = 15 * time.Second\n+\t// How many times a failed telescope poll is retried before the\n+\t// telescope is marked unavailable for the night.\n+\tpollRetryBudget = 4",
+          "resolved": true,
+          "gotReply": false,
+          "substance": {
+            "rung": 3,
+            "name": "L3 justified or proposes a fix",
+            "contentFree": false,
+            "reason": true,
+            "alternative": true,
+            "context": false,
+            "question": false,
+            "multi": true,
+            "long": false
+          },
+          "expectation": "expected-divergence",
+          "note": "Explicitly optional and judged shippable as is; a configurability preference."
+        },
+        {
+          "path": "scheduler/internal/telemetry/poll.go",
+          "line": 48,
+          "startLine": 46,
+          "text": "`scheduler/go.mod` still declares `go 1.21`, so the loop variable is shared across iterations and every goroutine takes `&tel` of the same variable. In practice they all end up polling the last telescope in the slice and the others are never checked, which means a dome fault at the first site would not mark it unavailable. Either bump the module to 1.22 or copy it inside the loop (`tel := tel`).",
+          "plain": "scheduler/go.mod still declares go 1.21, so the loop variable is shared across iterations and every goroutine takes &tel of the same variable. In practice they all end up polling the last telescope in the slice and the others are never checked, which means a dome fault at the first site would not mark it unavailable. Either bump the module to 1.22 or copy it inside the loop (tel := tel).",
+          "hunk": " \treturn lastErr\n }\n+\n+// PollAll polls every telescope concurrently and returns the first error.\n+// A telescope that exhausts its retries is reported, not skipped.\n+func PollAll(ctx context.Context, scopes []Telescope) error {\n+\tg, ctx := errgroup.WithContext(ctx)\n+\tfor _, tel := range scopes {\n+\t\tg.Go(func() error {\n+\t\t\treturn pollWithRetry(ctx, &tel, pollRetryBudget)",
+          "resolved": true,
+          "gotReply": true,
+          "substance": {
+            "rung": 4,
+            "name": "L4 argued",
+            "contentFree": false,
+            "reason": true,
+            "alternative": false,
+            "context": true,
+            "question": false,
+            "multi": true,
+            "long": true
+          },
+          "expectation": "expected-catch",
+          "note": "Needs the module's Go version, which sits in the same tree; a reviewer that checks go.mod should reach it."
+        }
+      ]
+    },
+    {
+      "id": "pr-433-fictional-lynx",
+      "pr": 433,
+      "reviewer": "fictional-lynx",
+      "submittedAt": "2024-08-21T11:04:33Z",
+      "state": "CHANGES_REQUESTED",
+      "prState": "MERGED",
+      "headSha": "0438877332659db58609f7e193cdf7382e1675a1",
+      "changedFiles": 3,
+      "churn": 77,
+      "findings": [
+        {
+          "path": "calib/src/darkframe.rs",
+          "line": 82,
+          "startLine": 82,
+          "text": "`exposure_ms / dark.exposure_ms` is integer division on `u32`, so a 90 s science frame matched to the 60 s dark gets a factor of 1, and a 45 s frame against the same dark gets 0, so nothing is subtracted at all. Thermal signal grows linearly with exposure time, which is the whole reason for scaling. Suggest doing it in floating point:\n```rust\nlet factor = exposure_ms as f32 / dark.exposure_ms as f32;\n```",
+          "plain": "exposure_ms / dark.exposure_ms is integer division on u32, so a 90 s science frame matched to the 60 s dark gets a factor of 1, and a 45 s frame against the same dark gets 0, so nothing is subtracted at all. Thermal signal grows linearly with exposure time, which is the whole reason for scaling. Suggest doing it in floating point:\nlet factor = exposure_ms as f32 / dark.exposure_ms as f32;",
+          "hunk": "@@ -80,6 +80,12 @@ impl DarkLibrary {\n     pub fn scaled_for(&self, exposure_ms: u32) -> Frame {\n         let dark = self.nearest(exposure_ms);\n-        dark.frame.clone()\n+        let factor = exposure_ms / dark.exposure_ms;",
+          "resolved": true,
+          "gotReply": true,
+          "substance": {
+            "rung": 4,
+            "name": "L4 argued",
+            "contentFree": false,
+            "reason": true,
+            "alternative": true,
+            "context": false,
+            "question": false,
+            "multi": true,
+            "long": true
+          },
+          "expectation": "expected-catch"
+        },
+        {
+          "path": "calib/src/darkframe.rs",
+          "line": 87,
+          "startLine": 83,
+          "text": "Could you add a `criterion` bench for `scaled_for` and run it on the calibration node before and after? This now clones and walks a full-frame dark for every science frame, and since the nightly calibration handles a few thousand frames I would like to see the number rather than guess.",
+          "plain": "Could you add a criterion bench for scaled_for and run it on the calibration node before and after? This now clones and walks a full-frame dark for every science frame, and since the nightly calibration handles a few thousand frames I would like to see the number rather than guess.",
+          "hunk": "@@ -80,6 +80,12 @@ impl DarkLibrary {\n     pub fn scaled_for(&self, exposure_ms: u32) -> Frame {\n         let dark = self.nearest(exposure_ms);\n-        dark.frame.clone()\n+        let factor = exposure_ms / dark.exposure_ms;\n+        let mut out = dark.frame.clone();\n+        for px in out.pixels.iter_mut() {\n+            *px *= factor as f32;\n+        }\n+        out",
+          "resolved": false,
+          "gotReply": true,
+          "substance": {
+            "rung": 4,
+            "name": "L4 argued",
+            "contentFree": false,
+            "reason": true,
+            "alternative": true,
+            "context": false,
+            "question": true,
+            "multi": true,
+            "long": true
+          },
+          "expectation": "out-of-remit",
+          "note": "Asks for a benchmark to be written and run; the reviewer never executes code, so staying silent is correct."
+        }
+      ]
+    },
+    {
+      "id": "pr-671-fictional-lynx",
+      "pr": 671,
+      "reviewer": "fictional-lynx",
+      "submittedAt": "2025-11-05T07:33:48Z",
+      "state": "COMMENTED",
+      "prState": "CLOSED",
+      "headSha": "5201ccaae2147b222689313610a71a30d5b395aa",
+      "changedFiles": 2,
+      "churn": 64,
+      "findings": [
+        {
+          "path": ".github/workflows/calib.yml",
+          "line": 7,
+          "startLine": 6,
+          "text": "The other workflows name their jobs in kebab-case and the required checks match on those names, so I would call this `build-and-test` instead.",
+          "plain": "The other workflows name their jobs in kebab-case and the required checks match on those names, so I would call this build-and-test instead.",
+          "hunk": "@@ -0,0 +1,38 @@\n+name: Calib CI\n+on:\n+  pull_request:\n+    paths: [\"calib/**\"]\n+\n+jobs:\n+  BuildAndTest:",
+          "resolved": true,
+          "gotReply": false,
+          "substance": {
+            "rung": 3,
+            "name": "L3 justified or proposes a fix",
+            "contentFree": false,
+            "reason": false,
+            "alternative": true,
+            "context": false,
+            "question": false,
+            "multi": false,
+            "long": false
+          },
+          "expectation": "out-of-remit",
+          "note": "A CI naming convention plus repository settings the diff cannot show; a human or the repo's own tooling owns it."
+        },
+        {
+          "path": ".github/workflows/calib.yml",
+          "line": 18,
+          "startLine": 18,
+          "text": "The cache key hashes `calib/Cargo.toml`, which only changes when someone edits a version range. A `cargo update` moves `Cargo.lock` but keeps the key, and because the cache action never overwrites an existing key, the saved `target/` stays frozen at the first run's dependencies and every later run recompiles whatever moved. Hash `calib/Cargo.lock` instead, or both files.",
+          "plain": "The cache key hashes calib/Cargo.toml, which only changes when someone edits a version range. A cargo update moves Cargo.lock but keeps the key, and because the cache action never overwrites an existing key, the saved target/ stays frozen at the first run's dependencies and every later run recompiles whatever moved. Hash calib/Cargo.lock instead, or both files.",
+          "hunk": "+    steps:\n+      - uses: actions/checkout@v4\n+      - uses: dtolnay/rust-toolchain@stable\n+      - name: Cache cargo\n+        uses: actions/cache@v4\n+        with:\n+          path: |\n+            ~/.cargo/registry\n+            calib/target\n+          key: calib-${{ runner.os }}-${{ hashFiles('calib/Cargo.toml') }}",
+          "resolved": false,
+          "gotReply": false,
+          "substance": {
+            "rung": 4,
+            "name": "L4 argued",
+            "contentFree": false,
+            "reason": true,
+            "alternative": true,
+            "context": true,
+            "question": false,
+            "multi": true,
+            "long": true
+          },
+          "expectation": "expected-catch"
+        },
+        {
+          "path": ".github/workflows/calib.yml",
+          "line": 8,
+          "startLine": 8,
+          "text": "I would pin this to `ubuntu-24.04` rather than `ubuntu-latest`, since the last image switch broke the cfitsio build for a week. Then again the other workflows all track latest, so maybe this is one decision to make for all of them together.",
+          "plain": "I would pin this to ubuntu-24.04 rather than ubuntu-latest, since the last image switch broke the cfitsio build for a week. Then again the other workflows all track latest, so maybe this is one decision to make for all of them together.",
+          "hunk": "@@ -0,0 +1,38 @@\n+name: Calib CI\n+on:\n+  pull_request:\n+    paths: [\"calib/**\"]\n+\n+jobs:\n+  BuildAndTest:\n+    runs-on: ubuntu-latest",
+          "resolved": false,
+          "gotReply": true,
+          "substance": {
+            "rung": 4,
+            "name": "L4 argued",
+            "contentFree": false,
+            "reason": true,
+            "alternative": true,
+            "context": false,
+            "question": false,
+            "multi": true,
+            "long": true
+          },
+          "expectation": "expected-divergence",
+          "note": "Pinning the runner image versus tracking the latest one is defensible either way, and the comment itself defers it to a wider decision."
+        }
+      ]
+    },
+    {
+      "id": "pr-702-fictional-wren",
+      "pr": 702,
+      "reviewer": "fictional-wren",
+      "submittedAt": "2025-12-03T14:20:11Z",
+      "state": "APPROVED",
+      "prState": "MERGED",
+      "headSha": "5b40b1928e82573d9b17eb13cdae4277d257de70",
+      "changedFiles": 3,
+      "churn": 118,
+      "findings": [
+        {
+          "path": "reduce/pipeline/astrometry.py",
+          "line": 112,
+          "startLine": 103,
+          "text": "Could you plate-solve a handful of last month's crowded galactic-plane frames with this and compare the residuals to the old solver? A third-order fit on as few as 12 stars has barely more stars than free terms, so I suspect it will overfit at the edges, but I would rather see the numbers than argue about it.",
+          "plain": "Could you plate-solve a handful of last month's crowded galactic-plane frames with this and compare the residuals to the old solver? A third-order fit on as few as 12 stars has barely more stars than free terms, so I suspect it will overfit at the edges, but I would rather see the numbers than argue about it.",
+          "hunk": "+def solve_field(image, hint_ra, hint_dec, radius_deg=0.5):\n+    \"\"\"Plate-solve one frame against the local index files.\"\"\"\n+    sources = extract_sources(image, threshold=5.0)\n+    if len(sources) < 12:\n+        raise TooFewStars(len(sources))\n+    quads = build_quads(sources[:80])\n+    match = index.lookup(quads, hint_ra, hint_dec, radius_deg)\n+    if match is None:\n+        return None\n+    return fit_wcs(sources, match, order=3)",
+          "resolved": true,
+          "gotReply": true,
+          "substance": {
+            "rung": 4,
+            "name": "L4 argued",
+            "contentFree": false,
+            "reason": false,
+            "alternative": true,
+            "context": false,
+            "question": true,
+            "multi": true,
+            "long": true
+          },
+          "expectation": "out-of-remit",
+          "note": "The request is to run the solver on archived frames and compare residuals; the reviewer only reads code."
+        },
+        {
+          "path": "reduce/pipeline/astrometry.py",
+          "line": 104,
+          "startLine": 104,
+          "text": "This package uses numpy-style docstrings, so I would give this one `Parameters` and `Returns` sections instead of a one-liner.",
+          "plain": "This package uses numpy-style docstrings, so I would give this one Parameters and Returns sections instead of a one-liner.",
+          "hunk": "@@ -100,3 +100,27 @@ def build_quads(sources):\n     return quads\n \n \n+def solve_field(image, hint_ra, hint_dec, radius_deg=0.5):\n+    \"\"\"Plate-solve one frame against the local index files.\"\"\"",
+          "resolved": true,
+          "gotReply": false,
+          "substance": {
+            "rung": 3,
+            "name": "L3 justified or proposes a fix",
+            "contentFree": false,
+            "reason": false,
+            "alternative": true,
+            "context": false,
+            "question": false,
+            "multi": false,
+            "long": false
+          },
+          "expectation": "out-of-remit",
+          "note": "Docstring format is house style that documentation tooling and people own."
+        }
+      ]
+    },
+    {
+      "id": "pr-733-fictional-wren",
+      "pr": 733,
+      "reviewer": "fictional-wren",
+      "submittedAt": "2026-01-20T10:05:58Z",
+      "state": "COMMENTED",
+      "prState": "MERGED",
+      "headSha": "fd79aea67901fd49787c1dcacd2bc320f41bb30a",
+      "changedFiles": 2,
+      "churn": 89,
+      "findings": [
+        {
+          "path": "reduce/cli.py",
+          "line": 37,
+          "startLine": 37,
+          "text": "`type=bool` does not do what it looks like: argparse calls `bool(\"false\")`, which is `True` because any non-empty string is truthy. So `--keep-intermediate false` keeps the intermediates and fills the scratch disk anyway. Use `action=\"store_true\"` instead and drop the value.",
+          "plain": "type=bool does not do what it looks like: argparse calls bool(\"false\"), which is True because any non-empty string is truthy. So --keep-intermediate false keeps the intermediates and fills the scratch disk anyway. Use action=\"store_true\" instead and drop the value.",
+          "hunk": "@@ -33,6 +33,11 @@ def build_parser():\n     p.add_argument(\"night\", help=\"night to reduce, YYYY-MM-DD\")\n     p.add_argument(\"--camera\", choices=CAMERAS, default=\"wide\")\n+    p.add_argument(\n+        \"--keep-intermediate\",\n+        type=bool,",
+          "resolved": true,
+          "gotReply": true,
+          "substance": {
+            "rung": 4,
+            "name": "L4 argued",
+            "contentFree": false,
+            "reason": true,
+            "alternative": true,
+            "context": false,
+            "question": false,
+            "multi": true,
+            "long": true
+          },
+          "expectation": "expected-catch"
+        },
+        {
+          "path": "reduce/cli.py",
+          "line": 58,
+          "startLine": 58,
+          "text": "Logging calls elsewhere in this package pass their arguments lazily, as in `log.info(\"reducing %s on %s\", night, args.camera)`, so the message is only formatted when the level is enabled. I would keep to that style here; ruff's G004 rule would catch it if we enabled it for `reduce/`.",
+          "plain": "Logging calls elsewhere in this package pass their arguments lazily, as in log.info(\"reducing %s on %s\", night, args.camera), so the message is only formatted when the level is enabled. I would keep to that style here; ruff's G004 rule would catch it if we enabled it for reduce/.",
+          "hunk": "@@ -52,3 +52,13 @@ def parse_night(text):\n     return date.fromisoformat(text)\n \n \n+def main(argv=None):\n+    args = build_parser().parse_args(argv)\n+    night = parse_night(args.night)\n+    log.info(f\"reducing {night} on {args.camera}\")",
+          "resolved": true,
+          "gotReply": false,
+          "substance": {
+            "rung": 4,
+            "name": "L4 argued",
+            "contentFree": false,
+            "reason": false,
+            "alternative": true,
+            "context": true,
+            "question": false,
+            "multi": true,
+            "long": true
+          },
+          "expectation": "out-of-remit",
+          "note": "A logging-style rule a linter owns; outside what the reviewer is for."
+        },
+        {
+          "path": "reduce/cli.py",
+          "line": 1,
+          "text": "The night crew will run this by hand when the scheduled job fails, so I would add a short section to `docs/operations.md` with the usual invocation and what to do when the scratch disk fills up. Not something for this PR to block on.",
+          "plain": "The night crew will run this by hand when the scheduled job fails, so I would add a short section to docs/operations.md with the usual invocation and what to do when the scratch disk fills up. Not something for this PR to block on.",
+          "resolved": false,
+          "gotReply": false,
+          "substance": {
+            "rung": 4,
+            "name": "L4 argued",
+            "contentFree": false,
+            "reason": false,
+            "alternative": true,
+            "context": true,
+            "question": false,
+            "multi": true,
+            "long": true
+          },
+          "expectation": "out-of-remit",
+          "note": "A request for operations documentation outside the diff; a team process matter, not a code finding."
+        }
+      ]
+    },
+    {
+      "id": "pr-561-fictional-ibex",
+      "pr": 561,
+      "reviewer": "fictional-ibex",
+      "submittedAt": "2025-01-14T12:48:20Z",
+      "state": "CHANGES_REQUESTED",
+      "prState": "CLOSED",
+      "headSha": "b599b1b3a9460ffff85cead6671f3099ffe6f5a6",
+      "changedFiles": 5,
+      "churn": 246,
+      "findings": [
+        {
+          "path": "portal/src/api/client.ts",
+          "line": 73,
+          "startLine": 71,
+          "text": "This retries every 4xx, including the 409 the hold endpoint returns when another observer already holds the slot. Retrying a 409 cannot succeed, so the user waits through three backoffs (almost two seconds) before seeing the conflict, and a 400 from a malformed request is retried the same way. I would retry only on network errors, 429 and 5xx, and surface every other 4xx straight away.",
+          "plain": "This retries every 4xx, including the 409 the hold endpoint returns when another observer already holds the slot. Retrying a 409 cannot succeed, so the user waits through three backoffs (almost two seconds) before seeing the conflict, and a 400 from a malformed request is retried the same way. I would retry only on network errors, 429 and 5xx, and surface every other 4xx straight away.",
+          "hunk": "+const MAX_RETRIES = 3;\n+\n+const backoffMs = (n: number) => 250 * 2 ** n;\n+\n+async function send<T>(req: Request, attempt = 0): Promise<T> {\n+  const res = await fetch(req.clone());\n+  if (res.ok) return (await res.json()) as T;\n+  if (attempt < MAX_RETRIES && res.status >= 400) {\n+    await sleep(backoffMs(attempt));\n+    return send<T>(req, attempt + 1);",
+          "resolved": true,
+          "gotReply": true,
+          "substance": {
+            "rung": 4,
+            "name": "L4 argued",
+            "contentFree": false,
+            "reason": false,
+            "alternative": true,
+            "context": false,
+            "question": false,
+            "multi": true,
+            "long": true
+          },
+          "expectation": "expected-catch",
+          "note": "The 409 contract lives in the hold endpoint's handler in the same repository, so the evidence is reachable from the tree."
+        },
+        {
+          "path": "portal/src/api/client.ts",
+          "line": 82,
+          "startLine": 78,
+          "text": "Rather than threading `token` through every exported function, I would have `send` read it from the session store and refresh it on a 401 in one place. That way the next endpoint someone adds cannot forget the header. It's a bigger change than this PR wants, though.",
+          "plain": "Rather than threading token through every exported function, I would have send read it from the session store and refresh it on a 401 in one place. That way the next endpoint someone adds cannot forget the header. It's a bigger change than this PR wants, though.",
+          "hunk": "+    return send<T>(req, attempt + 1);\n+  }\n+  throw new ApiError(res.status, await res.text());\n+}\n+\n+export async function placeHold(slot: SlotId, token: string) {\n+  return send<Hold>(\n+    new Request(`${API}/holds`, {\n+      method: \"POST\",\n+      headers: { Authorization: `Bearer ${token}` },",
+          "resolved": false,
+          "gotReply": true,
+          "substance": {
+            "rung": 4,
+            "name": "L4 argued",
+            "contentFree": false,
+            "reason": true,
+            "alternative": true,
+            "context": false,
+            "question": false,
+            "multi": true,
+            "long": true
+          },
+          "expectation": "expected-divergence",
+          "note": "A structural refactor the author can fairly decline; raising it or not are both acceptable."
+        }
+      ]
+    },
+    {
+      "id": "pr-759-fictional-ibex",
+      "pr": 759,
+      "reviewer": "fictional-ibex",
+      "submittedAt": "2026-02-10T09:31:14Z",
+      "state": "COMMENTED",
+      "prState": "MERGED",
+      "headSha": "dc80348beb7d57b0625701829a613890b09f8b4e",
+      "changedFiles": 2,
+      "churn": 141,
+      "findings": [
+        {
+          "path": "scheduler/internal/alloc/queue_test.go",
+          "line": 31,
+          "startLine": 22,
+          "text": "These four tests differ only in moon illumination and instrument, so I would fold them into one table-driven test like the rest of the package.",
+          "plain": "These four tests differ only in moon illumination and instrument, so I would fold them into one table-driven test like the rest of the package.",
+          "hunk": "+func TestAllocateSkipsBrightNightForSpectrograph(t *testing.T) {\n+\tq := newTestQueue(t)\n+\tnight := Night{Date: \"2025-11-04\", MoonIllum: 0.8, Start: dusk, End: dawn}\n+\tgot := q.Allocate(night, []Proposal{spectroProposal(\"P-17\")})\n+\tif len(got) != 0 {\n+\t\tt.Fatalf(\"want no blocks on a bright night, got %d\", len(got))\n+\t}\n+}\n+\n+func TestAllocateKeepsDarkNightForSpectrograph(t *testing.T) {",
+          "resolved": true,
+          "gotReply": false,
+          "substance": {
+            "rung": 3,
+            "name": "L3 justified or proposes a fix",
+            "contentFree": false,
+            "reason": false,
+            "alternative": true,
+            "context": true,
+            "question": false,
+            "multi": false,
+            "long": false
+          },
+          "expectation": "out-of-remit",
+          "note": "How the tests are arranged is taste; they are correct as written."
+        },
+        {
+          "path": "scheduler/internal/alloc/queue_test.go",
+          "line": 74,
+          "startLine": 70,
+          "text": "Instead of checking three fields by hand, consider comparing the whole schedule against a golden file under `testdata/`. When the ranking rules change, the golden file's diff shows exactly what moved. I can see the case for explicit asserts though, since a golden file is easy to regenerate without reading it.",
+          "plain": "Instead of checking three fields by hand, consider comparing the whole schedule against a golden file under testdata/. When the ranking rules change, the golden file's diff shows exactly what moved. I can see the case for explicit asserts though, since a golden file is easy to regenerate without reading it.",
+          "hunk": "+func TestAllocateOrder(t *testing.T) {\n+\tq := newTestQueue(t)\n+\tranked := q.Rank(sampleProposals())\n+\tnight := Night{Date: \"2025-11-12\", MoonIllum: 0.1, Start: dusk, End: dawn}\n+\tgot := q.Allocate(night, ranked)\n+\tif got[0].Proposal != \"P-03\" {\n+\t\tt.Errorf(\"first block = %s, want P-03\", got[0].Proposal)\n+\t}\n+\tif got[1].Start != dusk.Add(90*time.Minute) {\n+\t\tt.Errorf(\"second block starts %v\", got[1].Start)",
+          "resolved": true,
+          "gotReply": true,
+          "substance": {
+            "rung": 4,
+            "name": "L4 argued",
+            "contentFree": false,
+            "reason": true,
+            "alternative": true,
+            "context": false,
+            "question": false,
+            "multi": true,
+            "long": true
+          },
+          "expectation": "expected-divergence",
+          "note": "Golden files versus explicit assertions trade off in both directions; a preference, not a defect."
+        }
+      ]
+    }
+  ]
+}

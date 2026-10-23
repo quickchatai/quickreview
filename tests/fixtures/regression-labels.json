@@ -1,0 +1,111 @@
+{
+  "_readme": [
+    "SYNTHETIC: the cases these labels belong to were hand-invented on 2026-10-23",
+    "(code from a fictional observatory, fictional reviewers; the provenance field",
+    "of regression-cases.json says more). Labels are a person's call, not the",
+    "builder's, so they sit in their own file: rebuilding the cases with",
+    "scripts/build-regression-set.mjs reads them back in and never overwrites them.",
+    "",
+    "  expected-catch      a finding the reviewer should arrive at. A miss is a",
+    "                      prompt to look closer, never a bug by itself.",
+    "  out-of-remit        outside the reviewer by ratified design: naming or style",
+    "                      preferences a linter or a person decides, team process,",
+    "                      and anything that would need code or the app executed",
+    "                      (the reviewer reads code and CI results, nothing more).",
+    "                      Silence on one of these scores as the right answer.",
+    "  expected-divergence a judgment call with a fair case on both sides: an",
+    "                      optional restructuring, a taste, or an argument that",
+    "                      depends on knowledge the diff lacks. Raising it and",
+    "                      skipping it both score as fine; the label keeps the set",
+    "                      from ratcheting toward one person's habits.",
+    "",
+    "Each key is `<case id> <path>:<line>`. A finding without an entry falls back to",
+    "expected-catch and carries no note, so an unlabelled finding is easy to spot."
+  ],
+  "labels": {
+    "pr-507-fictional-otter scheduler/internal/alloc/queue.go:147": {
+      "expectation": "expected-catch",
+      "note": "Reproducibility follows from the comparator alone: anyone reading it can see there is no final tie-breaker."
+    },
+    "pr-507-fictional-otter scheduler/internal/alloc/queue.go:178": {
+      "expectation": "expected-divergence",
+      "note": "Offered as an optional follow-up refactor; raising it and staying quiet are both reasonable."
+    },
+    "pr-529-fictional-otter calib/src/flatfield.rs:51": {
+      "expectation": "out-of-remit",
+      "note": "Identifier length is naming taste; the crate's own conventions and its maintainers decide it, not the reviewer."
+    },
+    "pr-588-fictional-otter reduce/pipeline/stack.py:1": {
+      "expectation": "expected-catch",
+      "note": "A file-level comment with no hunk; the loading strategy and the frame size are both readable in the change."
+    },
+    "pr-588-fictional-otter reduce/pipeline/stack.py:73": {
+      "expectation": "expected-divergence",
+      "note": "A tuning preference resting on how many exposures programs usually take, which the diff does not show; either answer holds up."
+    },
+    "pr-418-fictional-heron db/migrations/0042_observing_blocks_seeing.sql:7": {
+      "expectation": "out-of-remit",
+      "note": "The ask is to run the migration on a restored database and time the lock; the reviewer reads code and never runs it."
+    },
+    "pr-604-fictional-heron portal/src/booking/NightPicker.tsx:27": {
+      "expectation": "out-of-remit",
+      "note": "Found by opening the page in a browser at a narrow width; the reviewer does not run the app."
+    },
+    "pr-604-fictional-heron portal/src/booking/NightPicker.tsx:37": {
+      "expectation": "out-of-remit",
+      "note": "An export-style convention backed by a lint rule; the linter and the team own it."
+    },
+    "pr-640-fictional-heron scheduler/cmd/tarnsched/main.go:32": {
+      "expectation": "expected-divergence",
+      "note": "Explicitly optional and judged shippable as is; a configurability preference."
+    },
+    "pr-640-fictional-heron scheduler/internal/telemetry/poll.go:48": {
+      "expectation": "expected-catch",
+      "note": "Needs the module's Go version, which sits in the same tree; a reviewer that checks go.mod should reach it."
+    },
+    "pr-433-fictional-lynx calib/src/darkframe.rs:87": {
+      "expectation": "out-of-remit",
+      "note": "Asks for a benchmark to be written and run; the reviewer never executes code, so staying silent is correct."
+    },
+    "pr-671-fictional-lynx .github/workflows/calib.yml:7": {
+      "expectation": "out-of-remit",
+      "note": "A CI naming convention plus repository settings the diff cannot show; a human or the repo's own tooling owns it."
+    },
+    "pr-671-fictional-lynx .github/workflows/calib.yml:8": {
+      "expectation": "expected-divergence",
+      "note": "Pinning the runner image versus tracking the latest one is defensible either way, and the comment itself defers it to a wider decision."
+    },
+    "pr-702-fictional-wren reduce/pipeline/astrometry.py:112": {
+      "expectation": "out-of-remit",
+      "note": "The request is to run the solver on archived frames and compare residuals; the reviewer only reads code."
+    },
+    "pr-702-fictional-wren reduce/pipeline/astrometry.py:104": {
+      "expectation": "out-of-remit",
+      "note": "Docstring format is house style that documentation tooling and people own."
+    },
+    "pr-733-fictional-wren reduce/cli.py:58": {
+      "expectation": "out-of-remit",
+      "note": "A logging-style rule a linter owns; outside what the reviewer is for."
+    },
+    "pr-733-fictional-wren reduce/cli.py:1": {
+      "expectation": "out-of-remit",
+      "note": "A request for operations documentation outside the diff; a team process matter, not a code finding."
+    },
+    "pr-561-fictional-ibex portal/src/api/client.ts:73": {
+      "expectation": "expected-catch",
+      "note": "The 409 contract lives in the hold endpoint's handler in the same repository, so the evidence is reachable from the tree."
+    },
+    "pr-561-fictional-ibex portal/src/api/client.ts:82": {
+      "expectation": "expected-divergence",
+      "note": "A structural refactor the author can fairly decline; raising it or not are both acceptable."
+    },
+    "pr-759-fictional-ibex scheduler/internal/alloc/queue_test.go:31": {
+      "expectation": "out-of-remit",
+      "note": "How the tests are arranged is taste; they are correct as written."
+    },
+    "pr-759-fictional-ibex scheduler/internal/alloc/queue_test.go:74": {
+      "expectation": "expected-divergence",
+      "note": "Golden files versus explicit assertions trade off in both directions; a preference, not a defect."
+    }
+  }
+}
