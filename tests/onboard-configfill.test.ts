@@ -1056,7 +1056,7 @@ describe("interview validators agree with the sibling steps' predicates", () => 
   it("refuses an ssh alias with a leading dash (ssh reads it as an option)", () => {
     const q = QUESTIONS.find((x) => x.id === "ssh_host")!;
     expect(q.validate("-host")).not.toBeNull();
-    expect(q.validate("my-vm")).toBeNull();
+    expect(q.validate("my-vm-qc")).toBeNull();
   });
 
   it("refuses a hostname label longer than 63 characters", () => {
