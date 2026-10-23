@@ -265,6 +265,26 @@
         "kind": "gap",
         "needs": "a review stopped in the first moment of its first prompt whose session JSONL shows no assistant turn ran to its end; no extract field names it yet"
       }
+    },
+    {
+      "id": "plugin-auth-refresh-window",
+      "assumes": "Inside a running pi, the model registry's facade refreshes an OAuth login for pi's own five minutes of validity only; the longer minimum a review needs comes from pi's model runtime, which refreshes under the host's own lock.",
+      "files": { "packages/pi-plugin/extensions/quickreview.ts": 1 },
+      "signal": {
+        "source": "none",
+        "kind": "gap",
+        "needs": "a plugin review started with a login inside the longer minimum, seen to refresh before its round begins; no extract field names the refresh window yet"
+      }
+    },
+    {
+      "id": "tsc-buildinfo-fields",
+      "assumes": "TypeScript 5.9's incremental build info names pending and failed files with the field names src/tui/reload.ts reads.",
+      "files": { "src/tui/reload.ts": 1 },
+      "signal": {
+        "source": "none",
+        "kind": "gap",
+        "needs": "a typescript bump that re-reads a fresh tsbuildinfo and finds the same fields; nothing at runtime logs them, and no extract field names them"
+      }
     }
   ]
 }
