@@ -247,7 +247,7 @@ const TOML_ESCAPES: Readonly<Record<string, string>> = {
  * closing quote (a `#` inside it is part of the value, not a comment), a
  * basic string's escapes are decoded, and only a bare scalar has a trailing
  * comment stripped. */
-function tomlScalarText(value: string): string {
+export function tomlScalarText(value: string): string {
   const v = value.trim();
   if (v.startsWith("'") && !v.startsWith("'''")) {
     const end = v.indexOf("'", 1);

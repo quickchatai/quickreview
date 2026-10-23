@@ -63,7 +63,7 @@ import type {
   StepReport,
 } from "../engine.js";
 import { DAEMON_SERVICE, composeArgs, rootOf, writeAtomic } from "./compose.js";
-import { readTomlKey } from "./ingress.js";
+import { readTomlKey, tomlScalarText } from "./ingress.js";
 import { sshArgv } from "./ssh.js";
 import { topologyOf } from "./topology.js";
 import { remoteFactsFor } from "./transport.js";
@@ -177,7 +177,14 @@ export function readTomlString(text: string, section: string, key: string): stri
     }
     if (isComment(line) || current !== section) continue;
     const kv = STRING_KV_RE.exec(line);
-    if (kv && kv[3] === key) return kvValue(kv);
+    if (kv && kv[3] === key) {
+      // A basic string's escapes decode as readTomlKey decodes them.
+      if (kv[5] === '"')
+        return tomlScalarText(
+          line.slice(kv[1]!.length + kv[2]!.length + kv[3]!.length + kv[2]!.length + kv[4]!.length),
+        );
+      return kvValue(kv);
+    }
   }
   return null;
 }
@@ -434,7 +441,27 @@ export async function probeContainerLogin(
   return { state, destination, mount };
 }
 
-function loginCheck(name: string, label: string, attach: string, probe: LoginProbe): CheckResult {
+/** How an operator reaches a container's pi login: a tmux attach ends with a
+ * detach; a command that runs pi itself (the daemon's login entrypoint) ends
+ * when pi exits. */
+interface LoginRoute {
+  command: string;
+  tmux: boolean;
+}
+
+function loginSteps(route: LoginRoute): string {
+  return route.tmux
+    ? `${route.command} → /login → detach (Ctrl-b d)`
+    : `${route.command} → finish the browser login in pi, then exit pi`;
+}
+
+function loginCheck(
+  name: string,
+  label: string,
+  route: LoginRoute,
+  probe: LoginProbe,
+): CheckResult {
+  const steps = loginSteps(route);
   switch (probe.state) {
     case "ok":
       return {
@@ -448,7 +475,7 @@ function loginCheck(name: string, label: string, attach: string, probe: LoginPro
         ok: false,
         detail:
           `${label}: no auth.json on the pi home (${probe.mount}). Attach and log in: ` +
-          `${attach} → /login → detach (Ctrl-b d). ` +
+          `${steps}. ` +
           "Host tokens do not transfer — this container needs its own login.",
       };
     case "wrong-provider":
@@ -458,7 +485,7 @@ function loginCheck(name: string, label: string, attach: string, probe: LoginPro
         detail:
           `${label}: auth.json on the pi home (${probe.mount}) holds no ChatGPT (${OAUTH_PROVIDER}) OAuth login — ` +
           "a /login to another provider does not count. Attach and log in with the ChatGPT option: " +
-          `${attach} → /login → detach (Ctrl-b d).`,
+          `${steps}.`,
       };
     case "no-pi-volume":
       return {
@@ -495,11 +522,11 @@ function localAttach(container: string, session: string): string {
   return `docker exec -it ${container} tmux attach -t ${session}`;
 }
 
-/** The command that opens pi in the daemon container, where `/login` runs: the
- * daemon hosts no tmux session any more (the overseer was deleted), so the
- * login is an interactive pi in the container. */
+/** The command that opens pi in the daemon container with `/login` typed for
+ * the operator: the release image has no pi on the PATH and the daemon hosts no
+ * tmux session, so the login is the image's own `login` entrypoint mode. */
 function daemonLoginCommand(container: string): string {
-  return `docker exec -it ${container} pi`;
+  return `docker exec -it ${container} /opt/qcr/docker/entrypoint.sh login`;
 }
 
 /** Container names to probe, config first so a renamed deployment still works;
@@ -753,7 +780,7 @@ async function companionLoginChecks(ctx: StepContext, configText: string): Promi
     loginCheck(
       "companion_login",
       "companion container",
-      localAttach(name, companionSessionName(configText)),
+      { command: localAttach(name, companionSessionName(configText)), tmux: true },
       await probeContainerLogin(ctx.adapters.runner, name),
     ),
   ];
@@ -807,7 +834,7 @@ async function oauthLoginChecks(
     loginCheck(
       "daemon_login",
       "daemon container",
-      daemonAttach,
+      { command: daemonAttach, tmux: false },
       await probeContainerLogin(daemonRunner, daemon),
     ),
   );
@@ -915,6 +942,19 @@ export function llmAuthStep(opts: { transport?: TransportOptions } = {}): Onboar
             detail: `${OPENAI_KEY_FILE} present in ${secretsDir} — the daemon container's entrypoint exports it for every review session`,
           });
         }
+      }
+
+      // A refused credential leaves the previously working models and the
+      // running daemon exactly as they were: nothing is rewritten or delivered.
+      if (checks.some((c) => c.name === "credential" && !c.ok)) {
+        return {
+          ok: false,
+          checks,
+          data: {
+            restart_owed: ctx.data.restart_owed === true,
+            credentials_owed: ctx.data.credentials_owed === true,
+          },
+        };
       }
 
       // --- the model strings ---------------------------------------------
