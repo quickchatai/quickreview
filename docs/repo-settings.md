@@ -12,8 +12,8 @@ CI run.
 |---|---|
 | Outside code never runs on the paid runners | `ci.yml`: a PR from a fork runs on GitHub's hosted runners (free for a public repo), and Blacksmith's builder step is skipped for it |
 | No CI minute is spent before a maintainer looks | Actions setting "Require approval for all external contributors": a fork's workflow run waits for a maintainer's approval |
-| Every PR is a draft until it is complete | `pr-intake.yml` converts a PR opened as ready into a draft; `ci.yml` runs nothing for a draft, and is triggered only by `ready_for_review` and later pushes |
-| An outside PR links an open issue and carries its self-review | `pr-intake.yml`: a PR marked ready without both goes back to draft, with one comment naming what is missing |
+| A draft costs no CI | `ci.yml` runs nothing for a draft; it starts when a PR is opened as ready or marked ready, and runs again on later pushes |
+| An outside PR links an open issue and carries its self-review | `pr-intake.yml`: the intake check fails on a PR asking for review without both, with one comment naming what is missing; a maintainer's PR (admin or write on the repository) is not checked. The workflow's token cannot convert a PR to a draft, so the check never does |
 | Contributions come from forks | Outsiders cannot push branches here; forking is on |
 | One contributor cannot flood the queue | The open-PR limit for users without write access (manual, below) |
 | `main` cannot be rewritten or merged into unreviewed | The `main` ruleset: no deletion, no force push, squash-merged PRs with one approval and green CI; repository admins bypass it |
@@ -96,7 +96,7 @@ These are written against GitHub's documented behaviour and have not run on
 a fork PR yet. Check them with a test PR from a personal fork after the
 repository goes public:
 
-- `gh pr ready --undo` (GraphQL `convertPullRequestToDraft`) with the
-  workflow's own token, on a fork's PR.
 - A fork's CI run landing on `ubuntu-latest` and waiting for approval.
 - The intake comment edited in place on a second edit, not posted twice.
+- The intake's maintainer lookup (`collaborators/<author>/permission`) with
+  the workflow's own token, for a member whose org membership is private.

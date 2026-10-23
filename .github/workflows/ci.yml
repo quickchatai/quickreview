@@ -19,10 +19,9 @@
 # maintainer to approve the run (the repo's fork-PR approval setting,
 # docs/repo-settings.md).
 #
-# A draft pull request runs nothing. Every PR opens as a draft
-# (pr-intake.yml), so CI starts when it is marked ready for review and runs
-# again on each push after that; `opened` and `reopened` are not triggers,
-# because their payload still says "not a draft" while pr-intake converts it.
+# A draft pull request runs nothing. CI starts when a PR is opened (or
+# reopened) as ready, or marked ready for review, and runs again on each push
+# after that.
 # A newer push to the same PR cancels the run it replaces.
 name: CI
 
@@ -30,7 +29,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    types: [synchronize, ready_for_review]
+    types: [opened, reopened, synchronize, ready_for_review]
 
 permissions:
   contents: read
