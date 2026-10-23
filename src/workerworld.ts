@@ -343,6 +343,8 @@ export function buildWorkerWorld(o: WorkerWorldOptions): WorkerWorld {
     commands: composeLookups(debug.lookup, takeover.lookup, supervisor.lookup),
     ops: supervisor.ops(),
     onEvent,
+    // A GitHub read answers up to 4 MiB of body; its shim accepts this much.
+    maxResponseBytes: 64 * 1024 * 1024,
     log,
   });
 
