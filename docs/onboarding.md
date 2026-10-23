@@ -421,6 +421,15 @@ on GitHub's own page either way), the redirect URL, and the webhook URL. The
 permissions and events are whatever the pinned artifact says. The page does not auto-submit: you see what is about to be
 created, and the click is yours.
 
+On a hosted box whose browser is not on the same machine (a reverse proxy
+forwards a public https origin to the box's `127.0.0.1:8788`), set
+`QCR_ONBOARD_PUBLIC_ORIGIN=https://<public host>` before `qcr onboard`, and
+`QCR_ONBOARD_SETUP_URL` when the page you open is not the origin itself. The
+manifest's redirect URL becomes `<origin>/manifest-callback`, the listener
+admits the proxy's Host header beside loopback, and it binds port 8788
+strictly: a busy port is a clear refusal, never a silent move to a port the
+proxy does not forward.
+
 GitHub redirects back to the wizard with a one-time code, which it exchanges for
 the App id, private key and webhook secret — **the only moment GitHub ever
 reveals that webhook secret** — and writes all three into your secrets dir as
