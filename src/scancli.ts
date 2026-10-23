@@ -1084,7 +1084,7 @@ export async function cmdScan(rest: string[], json: boolean): Promise<number> {
     home,
     out: (line) => console.log(line),
     ...(inSandbox
-      ? { detach: detachDriver(env, home) }
+      ? { detach: detachDriver(env, home), units: engine }
       : await sandboxPorts(env, home, engine, settingsOf)),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     now: () => Date.now(),
