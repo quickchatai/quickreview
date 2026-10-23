@@ -24,9 +24,11 @@ import { archivedEventTotal } from "./rows.js";
 //     rate.
 //   - Mode `off` arms no timer at all.
 //
-// Every tick computes the PLAN (src/archive/plan.ts) — what a pass would move
-// — and reports it through status.json `archive`. A `plan` tick writes no
-// file, no directory and no row. In mode `on` a tick, in order:
+// A tick reports the PLAN (src/archive/plan.ts) — what a pass would move —
+// through status.json `archive`: the plan is recomputed when the last one is
+// older than PLAN_REFRESH_MS, and always fresh for the operator's `archive-run`.
+// A `plan` tick moves no file, no directory and no archive row; its only write
+// is anomaly bookkeeping (the live-cap alert). In mode `on` a tick, in order:
 //
 //   1. once per daemon start, CRASH RECOVERY (§7.6): stray `.partial` files
 //      in the archive dirs of PRs left `archiving`/`restoring`, and stray
@@ -94,7 +96,7 @@ import {
   type LiveSweepOptions,
   type LiveSweepResult,
 } from "./liveretention.js";
-import { archivePiGlobal } from "./piglobal.js";
+import { PI_GLOBAL_STORE, archivePiGlobal } from "./piglobal.js";
 import { archivePr, type PrPassResult } from "./prarchive.js";
 import { SpanMeter, injectDirOf, listLiveTree, knownInjectFiles } from "./prfiles.js";
 import {
@@ -1385,7 +1387,7 @@ export class Archiver {
       if (r.archived + r.removed + r.duplicatesRemoved > 0) {
         this.dbCache = null;
         this.deps.store.logEvent("archive_pass", null, {
-          phase: p.key === "overseer" ? OVERSEER_STORE : "pi-global",
+          phase: p.key === "overseer" ? OVERSEER_STORE : PI_GLOBAL_STORE,
           outcome: r.outcome,
           archived: r.archived,
           bytes_in: r.bytesIn,
@@ -1460,16 +1462,25 @@ export class Archiver {
   /** The quiet `archive_verify_failed` anomaly, once per incident (`key`) and
    * again only after ANOMALY_REPEAT_MS; a repeat inside it is logged only. */
   private raiseQuiet(key: string, detail: string): void {
+    if (this.raiseAnomaly("archive_verify_failed", null, key, detail)) this.dbCache = null;
+  }
+
+  /** The incident protocol both emitters share: admit `key` (or log the
+   * repeat), write the anomaly, and un-admit `key` when the write fails so the
+   * next occurrence raises it. True when the anomaly was written. */
+  private raiseAnomaly(kind: string, pr: number | null, key: string, detail: string): boolean {
     if (!this.admitIncident(key)) {
-      this.log(`archive: ${detail} (archive_verify_failed already raised for ${key})`);
-      return;
+      this.log(`archive: ${detail} (${kind} already raised for ${key})`);
+      return false;
     }
     try {
-      this.deps.store.logAnomaly("archive_verify_failed", null, null, detail);
-      this.dbCache = null;
+      this.deps.store.logAnomaly(kind, pr, null, detail);
+      return true;
     } catch (err) {
+      // Not recorded, so it holds no window: the next occurrence raises it.
       this.raised.delete(key);
-      this.log("archive: could not raise archive_verify_failed", err);
+      this.log(`archive: could not raise ${kind}`, err);
+      return false;
     }
   }
 
@@ -1792,17 +1803,7 @@ export class Archiver {
   /** A WAKE kind, once per incident (`key`) and again only after
    * ANOMALY_REPEAT_MS. */
   private raiseWake(kind: string, pr: number | null, key: string, detail: string): void {
-    if (!this.admitIncident(key)) {
-      this.log(`archive: ${detail} (${kind} already raised for ${key})`);
-      return;
-    }
-    try {
-      this.deps.store.logAnomaly(kind, pr, null, detail);
-    } catch (err) {
-      // Not recorded, so it holds no window: the next occurrence raises it.
-      this.raised.delete(key);
-      this.log(`archive: could not raise ${kind}`, err);
-    }
+    this.raiseAnomaly(kind, pr, key, detail);
   }
 
   /** The database figures, re-read at most every STATUS_DB_TTL_MS; each is

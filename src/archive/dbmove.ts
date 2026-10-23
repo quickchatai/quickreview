@@ -527,7 +527,7 @@ export class DbMover {
           err.outcome === "failed" || err.outcome === "aborted" || result.skips.length === 0
             ? err.outcome
             : "skipped";
-        if (err.outcome === "failed") result.error = err.message;
+        if (err.outcome === "failed" || err.outcome === "budget") result.error = err.message;
       } else {
         result.outcome = "failed";
         result.error = err instanceof Error ? err.message : String(err);
