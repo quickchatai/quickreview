@@ -217,12 +217,11 @@ function lazyRuntime(make: () => Promise<Runtime>): Runtime {
 /** The runtime a bench command hosts the review's main session on. */
 function benchRuntime(
   kind: EngineRuntimeKind,
-  lens: LensRuntimeKind,
   plannedWave: boolean,
 ): Runtime {
   return selectRuntime(kind, "bench", () =>
     lazyRuntime(() =>
-      import("../engine/benchsdk.js").then((m) => m.benchSdkRuntime({ lens, plannedWave })),
+      import("../engine/benchsdk.js").then((m) => m.benchSdkRuntime({ plannedWave })),
     ),
   );
 }
@@ -443,7 +442,7 @@ async function main(): Promise<number> {
     // own, so a crash or a frozen loop costs that case. arm.sh's `--phase case`
     // is already one container, hence one process, per case.
     const hosted = phase === "all" && !caseHost;
-    const runtime = hosted ? undefined : benchRuntime(runtimeKind, lensKind, wave);
+    const runtime = hosted ? undefined : benchRuntime(runtimeKind, wave);
     // A case container always resumes: its run was set up (and, if fresh,
     // cleared) by the init phase, so a finished case it finds is this run's.
     const resume = f.has("--resume") || phase === "case";
