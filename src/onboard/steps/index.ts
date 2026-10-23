@@ -7,6 +7,7 @@ import { bringUpStep } from "./bringup.js";
 import { configFillStep } from "./configfill.js";
 import { embeddingsStep } from "./embeddings.js";
 import { escalationStep } from "./escalation.js";
+import { githubAccountStep } from "./githubaccount.js";
 import { githubAppStep } from "./githubapp.js";
 import { goLiveStep } from "./golive.js";
 import { ingressStep } from "./ingress.js";
@@ -38,6 +39,12 @@ export function defaultSteps(): OnboardingStep[] {
   //   ssh_preflight (22) VM only, and FIRST on that route: the alias, the
   //                      agent and the passphrase trap, before anything is
   //                      minted, written or deployed;
+  //
+  // The GitHub route split is the second question, asked by github_account
+  // (33): "user" (the person's own account — token file, polling, no App) or
+  // "app". Once answered, exactly one of github_account (33) / github_app (40)
+  // is enabled, and app_slug_reconcile (65) runs only on the App route.
+  //
   //   vm_inventory (68)  VM only: the deploy inventory, from the answers;
   //   vm_deploy (71)     VM only: `scripts/deploy.sh`, composed, with every
   //                      preflight it has — the peer of bringup (70), which is
@@ -51,6 +58,10 @@ export function defaultSteps(): OnboardingStep[] {
     topologyStep(),
     sshPreflightStep(),
     llmAuthStep(),
+    // github_account (33) before the interview (35): the interview asks the
+    // App questions only on the App route, and takes the repo and login the
+    // own-account route already settled.
+    githubAccountStep(),
     configFillStep(),
     escalationStep(),
     embeddingsStep(),

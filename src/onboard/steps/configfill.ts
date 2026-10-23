@@ -63,6 +63,7 @@ import {
   type ChoiceName,
   botLoginFor,
   ingressChoiceOf,
+  userAuthRecorded,
   type IngressChoice,
 } from "../choices.js";
 import {
@@ -228,9 +229,17 @@ export interface FillFacts {
   secrets_dir: string;
   topology: string;
   ingress: string;
+  /** The GitHub route the github_account step recorded ("user" | "app"), ""
+   * while unanswered — which is the App route's interview. */
+  github_auth?: string;
+  /** The person's own login on the "user" route (`GET /user`). */
+  account_login?: string;
 }
 
-export type AnswerKey = Exclude<keyof FillFacts, "secrets_dir" | "topology" | "ingress">;
+export type AnswerKey = Exclude<
+  keyof FillFacts,
+  "secrets_dir" | "topology" | "ingress" | "github_auth" | "account_login"
+>;
 
 export interface Question {
   id: AnswerKey;
@@ -282,7 +291,9 @@ export const QUESTIONS: readonly Question[] = [
       "clone directory, backfill identity — is derived from this one answer.",
     prompt: 'Which repository should the reviewer watch? ("owner/name")',
     optional: false,
-    from: [CHOICE_KEYS.repo],
+    // On the own-account route the github_account step already asked, from
+    // the repos the person's account reaches.
+    from: [CHOICE_KEYS.accountRepo, CHOICE_KEYS.repo],
     read: (cfg) => cfg.github.repo,
     validate: (v) =>
       REPO_SLUG_RE.test(v)
@@ -325,6 +336,8 @@ export const QUESTIONS: readonly Question[] = [
     prompt: "What is your GitHub App's slug?",
     optional: false,
     from: [CHOICE_KEYS.appSlug],
+    // No App exists on the own-account route: `[github] app_slug` stays "".
+    asked: (choices) => !userAuthRecorded(choices),
     read: (cfg) => cfg.github.app_slug,
     validate: (v) =>
       SLUG_RE.test(v)
@@ -390,7 +403,7 @@ export const QUESTIONS: readonly Question[] = [
       "It is never used to authenticate anything — the App credential is the only identity that acts.",
     prompt: "What is your GitHub login? (Enter to skip)",
     optional: true,
-    from: [CHOICE_KEYS.ownerLogin],
+    from: [CHOICE_KEYS.accountLogin, CHOICE_KEYS.ownerLogin],
     read: (cfg) => cfg.owner.github_login,
     validate: validateGithubLogin,
   },
@@ -503,17 +516,31 @@ export const DERIVABLES: readonly Derivable[] = [
     id: "bot_login",
     path: "[github] bot_login",
     explain:
-      "the bot login is the App slug plus the [bot] suffix — asking for it twice is how the two drift apart",
-    write: (f) => ({
-      section: "github",
-      key: "bot_login",
-      value: tomlString(botLoginFor(f.app_slug)),
-    }),
+      "the bot login is the App slug plus the [bot] suffix — asking for it twice is how the two drift apart. On your own " +
+      "GitHub account it is your login: the reviews are posted as you",
+    write: (f) =>
+      f.github_auth === "user"
+        ? f.account_login
+          ? { section: "github", key: "bot_login", value: tomlString(f.account_login) }
+          : null
+        : {
+            section: "github",
+            key: "bot_login",
+            value: tomlString(botLoginFor(f.app_slug)),
+          },
     stable: true,
-    holds: (cfg) =>
-      cfg.github.bot_login === botLoginFor(cfg.github.app_slug)
+    holds: (cfg, f) => {
+      if (f.github_auth === "user") {
+        if (!cfg.github.bot_login.trim())
+          return "[github] bot_login is empty — on your own account it is your GitHub login; run the github_account step";
+        return f.account_login && cfg.github.bot_login !== f.account_login
+          ? `[github] bot_login is "${cfg.github.bot_login}" but your account is "${f.account_login}" — run the github_account step again`
+          : null;
+      }
+      return cfg.github.bot_login === botLoginFor(cfg.github.app_slug)
         ? null
-        : `[github] bot_login is "${cfg.github.bot_login}" but the App slug "${cfg.github.app_slug}" implies "${botLoginFor(cfg.github.app_slug)}"`,
+        : `[github] bot_login is "${cfg.github.bot_login}" but the App slug "${cfg.github.app_slug}" implies "${botLoginFor(cfg.github.app_slug)}"`;
+    },
   },
   {
     id: "clone_dir",
@@ -547,7 +574,7 @@ export const DERIVABLES: readonly Derivable[] = [
     holds: (cfg) =>
       cfg.github.secrets_dir.trim()
         ? null
-        : "[github] secrets_dir is empty — the App credential has nowhere to live",
+        : "[github] secrets_dir is empty — the GitHub credential has nowhere to live",
   },
   {
     id: "review_team",
@@ -588,10 +615,12 @@ export const DERIVABLES: readonly Derivable[] = [
       "the history importer's identity and labels cascade off [github] — never a second copy to keep in sync",
     write: () => null,
     stable: true,
-    holds: (cfg) => {
+    holds: (cfg, f) => {
       if (cfg.backfill.bot_login !== cfg.github.bot_login)
         return "[backfill] bot_login no longer follows [github] bot_login";
-      if (cfg.backfill.bot_actor !== cfg.github.app_slug)
+      // The actor is the App slug; the own-account route has no App, and the
+      // loader decides what stands in for it there.
+      if (f.github_auth !== "user" && cfg.backfill.bot_actor !== cfg.github.app_slug)
         return "[backfill] bot_actor no longer follows [github] app_slug";
       if (cfg.backfill.trigger_label !== cfg.github.trigger_label)
         return "[backfill] trigger_label no longer follows [github] trigger_label";
@@ -729,6 +758,9 @@ export const DEFAULT_SECRETS_DIR = "";
  * Read from ITS artefacts (the `deploy_shape` marker it writes) so this step
  * reports the same required set without duplicating the wizard's validators. */
 export const REQUIRED_SECRETS: readonly string[] = ["app_id", "app.pem", "webhook_secret"];
+/** The own-account route's one secret: the person's token, written by
+ * `qcr github-token sync` (the github_account step runs it). */
+export const USER_ROUTE_SECRETS: readonly string[] = ["github_token"];
 export const TUNNEL_SHAPE_SECRET = "tunnel_token";
 
 /** Unlike `readTextOrNull`, only ABSENCE is null: a file that exists and
@@ -918,6 +950,8 @@ export async function collectAnswers(
       DEFAULT_SECRETS_DIR,
     topology: str(choices, CHOICE_KEYS.topology),
     ingress: str(choices, CHOICE_KEYS.ingress),
+    github_auth: str(choices, CHOICE_KEYS.githubAuth),
+    account_login: str(choices, CHOICE_KEYS.accountLogin),
   };
   return { facts, missing, rejected, asked, ignored };
 }
@@ -992,7 +1026,17 @@ export function changedEdits(text: string, edits: readonly TomlEdit[]): TomlEdit
 }
 
 /** What the secrets dir holds, at the one resolution every step uses. */
-function secretsReport(dir: string): CheckResult {
+function secretsReport(dir: string, userRoute: boolean): CheckResult {
+  if (userRoute) {
+    const missing = USER_ROUTE_SECRETS.filter((f) => !existsSync(join(dir, f)));
+    return {
+      name: "secrets",
+      ok: true,
+      detail: missing.length
+        ? `${dir}: still missing ${missing.join(", ")} — the github_account step writes it from your GitHub sign-in (no App secrets on this route)`
+        : `${dir}: your GitHub token is present — the own-account route needs no App secrets`,
+    };
+  }
   if (!existsSync(dir)) {
     return {
       name: "secrets",
@@ -1221,11 +1265,14 @@ export function configFillStep(opts: { transport?: TransportOptions } = {}): Onb
         ok: true,
         detail:
           `topology ${facts.topology || "(unrecorded — filled for a daemon on this machine, so [tui] ssh_host stays empty)"}, ` +
-          `ingress ${facts.ingress || "(unrecorded — filled for an ingress that assigns its own hostname, so [server] hostname stays empty)"}` +
+          `ingress ${facts.ingress || "(unrecorded — filled for an ingress that assigns its own hostname, so [server] hostname stays empty)"}, ` +
+          `github ${facts.github_auth === "user" ? "own account (no App questions, no App secrets)" : "App"}` +
           `${str(ctx.choices, CHOICE_KEYS.authRoute) ? `, auth route ${str(ctx.choices, CHOICE_KEYS.authRoute)}` : ""}`,
       });
       // Read after the write, so the dir is the one the written config names.
-      checks.push(secretsReport(secretsDirFor(ctx.adapters, ctx.choices)));
+      checks.push(
+        secretsReport(secretsDirFor(ctx.adapters, ctx.choices), userAuthRecorded(ctx.choices)),
+      );
 
       const ok = checks.every((c) => c.ok);
       if (ok) recordChoices(ctx, facts, configPath, parsed);
@@ -1320,6 +1367,8 @@ export function configFillStep(opts: { transport?: TransportOptions } = {}): Onb
         secrets_dir: cfg.github.secrets_dir,
         topology: str(ctx.choices, CHOICE_KEYS.topology),
         ingress: str(ctx.choices, CHOICE_KEYS.ingress),
+        github_auth: str(ctx.choices, CHOICE_KEYS.githubAuth),
+        account_login: str(ctx.choices, CHOICE_KEYS.accountLogin),
       };
       for (const d of DERIVABLES) {
         if (!d.stable) continue;

@@ -18,11 +18,18 @@
 //           permanent hostname (the VM route's default). No rotation, so no
 //           self-heal: `[ingress] shape = "none"` and `[server] hostname`
 //           carries the name.
-//   polling No tunnel at all. The reconcile poll becomes the ONLY trigger
-//           path, at `[daemon] poll_interval_s`. What degrades is stated
-//           plainly in the step's own output (author-reply routing and the
-//           [feedback] loop are webhook-only), and the tunnel is offered as a
-//           later upgrade — re-running this step is the upgrade.
+//   polling No tunnel at all — THE DEFAULT on every route, and the only
+//           shape the own-account route (`[github] auth = "user"`) allows.
+//           `[ingress] shape = "polling"`. The reconcile poll becomes the ONLY
+//           trigger path, at `[daemon] poll_interval_s`. What degrades is
+//           stated plainly in the step's own output (author-reply routing and
+//           the [feedback] loop are webhook-only), and the tunnel is offered
+//           as a later upgrade — re-running this step is the upgrade.
+//
+// Called with no choice and none recorded, the step applies the default
+// (polling) and says so in one plain line, with the other shapes listed as
+// the later upgrade: a stated default is not a guess, and nothing about it is
+// irreversible.
 //
 // The step is deliberately self-contained: it owns the `[ingress]` section of
 // config.toml, the project `.env`'s COMPOSE_PROFILES line, and nothing else.
@@ -33,7 +40,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { INGRESS_DEFAULTS } from "../../config.js";
 import { locateSecrets } from "../../install.js";
-import { CHOICE_KEYS, INGRESS_CHOICES, type IngressChoice } from "../choices.js";
+import { CHOICE_KEYS, INGRESS_CHOICES, userAuthRecorded, type IngressChoice } from "../choices.js";
 import { topologyOf } from "./topology.js";
 import {
   readTextOrNull,
@@ -67,7 +74,7 @@ export interface IngressOption {
   /** Honest trade-offs — the good and the bad, in the operator's words. */
   tradeoffs: string[];
   /** `[ingress] shape` this choice configures. */
-  shape: "tunnel-file" | "none";
+  shape: "tunnel-file" | "none" | "polling";
   /** COMPOSE_PROFILES value ("" ⇒ no sidecar at all). */
   profile: string;
   /** Secrets-dir file this choice requires, if any. */
@@ -117,14 +124,14 @@ const INGRESS_OPTION_METADATA = {
     service: "tunnel-named",
   },
   polling: {
-    headline: "Polling only — no tunnel, nothing exposed",
+    headline: "Polling only (default) — no tunnel, nothing exposed",
     tradeoffs: [
       "nothing to install, nothing reachable from the internet: the daemon only makes outbound calls",
       "the reconcile poll becomes the ONLY trigger path, so a review starts up to one poll interval late ([daemon] poll_interval_s, 300s by default)",
       "what degrades, plainly: author replies do not route to the PR's session (the ping-pong path is webhook-driven), the [feedback] tuning loop never sees a comment, and the CI-completed retry of a withheld approval waits for the next sweep",
       "it is not a dead end — re-run this step later and pick a tunnel; nothing else has to change",
     ],
-    shape: "none",
+    shape: "polling",
     profile: "",
     secret: null,
     service: null,
@@ -163,6 +170,16 @@ const INGRESS_ANCHOR = /^\[daemon\]/m;
 
 /** The section body (header line included) for a choice. */
 export function ingressBlock(option: IngressOption): string {
+  if (option.shape === "polling") {
+    return [
+      "[ingress]",
+      "# Written by the onboarding wizard.",
+      "# Chosen shape: polling — no webhook reaches this daemon; the reconcile poll",
+      "# ([daemon] poll_interval_s) is the only trigger path.",
+      'shape = "polling"',
+      "",
+    ].join("\n");
+  }
   if (option.shape === "none") {
     return [
       "[ingress]",
@@ -433,24 +450,52 @@ function chosen(ctx: StepContext): IngressChoice | null {
  * both — on the server route the ones the playbook does not install mean "you
  * front the daemon's port yourself", which the inventory step spells out.
  */
-export function recommendedIngressFor(topology: string): IngressChoice {
-  return topology === "vm" ? "named" : "quick";
+export function recommendedIngressFor(_topology: string): IngressChoice {
+  return "polling";
+}
+
+/** The reconcile poll's interval in whole minutes, as the config states it
+ * (the shipped default when it does not). */
+export function pollMinutes(configText: string | null): number {
+  const raw = configText ? readTomlKey(configText, "daemon", "poll_interval_s") : null;
+  const seconds = raw !== null && /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : 300;
+  return Math.max(1, Math.round(seconds / 60));
+}
+
+/** The one plain line the default is applied with. */
+export function pollingDefaultLine(configText: string | null): string {
+  return (
+    `polling: the reviewer checks GitHub every ${pollMinutes(configText)} minutes for pull requests to review — ` +
+    "nothing to set up, nothing exposed to the internet. Webhooks (faster starts, author replies) are optional and " +
+    "can be added later by re-running this step with a tunnel choice."
+  );
 }
 
 function offerCheck(topology: string): CheckResult {
-  const recommended = recommendedIngressFor(topology);
   return {
     name: "choice",
     ok: false,
     detail:
       `pick one of ${CHOICE_IDS.join(" | ")} and call this step again with it (choice: "<id>").\n` +
+      `The default is "${recommendedIngressFor(topology)}" — nothing to set up and nothing exposed; webhooks are a later upgrade.` +
       (topology === "vm"
-        ? `On the server route the recommended answer is "${recommended}" — the deploy installs cloudflared on that machine from ` +
-          "your tunnel token, and an always-on installation deserves a hostname that never rotates. The others stay available: " +
-          "polling needs no ingress at all, and quick/ngrok mean you run that tunnel on the server yourself.\n"
-        : `On this machine the recommended answer is "${recommended}" — no account, nothing to sign up for, and the daemon ` +
-          "re-points its own webhook URL when the hostname rotates.\n") +
+        ? " On the server route the named tunnel is the upgrade worth having: the deploy installs cloudflared on that machine " +
+          "from your tunnel token, and a hostname that never rotates. quick/ngrok mean you run that tunnel on the server yourself.\n"
+        : " On this machine the quick tunnel is the no-account upgrade: the daemon re-points its own webhook URL when the " +
+          "hostname rotates.\n") +
       renderOptions(),
+  };
+}
+
+/** The own-account route has no webhook: no App exists to deliver one. */
+function userRouteRefusal(choice: IngressChoice): CheckResult {
+  return {
+    name: "choice",
+    ok: false,
+    detail:
+      `"${choice}" needs webhooks, and the own-account GitHub route ([github] auth = "user") has none — webhooks are ` +
+      'delivered to a GitHub App, and this install runs on your own account instead. It is polling only: run this step with choice: "polling" ' +
+      '(or with no choice). To use webhooks, switch to the App route first: the github_account step with github_auth: "app".',
   };
 }
 
@@ -493,13 +538,32 @@ export function ingressStep(opts: { stream?: StreamRunner } = {}): OnboardingSte
     },
 
     async run(ctx): Promise<StepReport> {
-      const choice = chosen(ctx);
-      if (choice === null)
+      const userRoute = userAuthRecorded(ctx.choices);
+      const typed = ctx.input.choice;
+      const typedAnswer = typeof typed === "string" && typed.trim() !== "";
+      let choice = chosen(ctx);
+      // An answer that names no shape is re-offered, never defaulted over.
+      if (choice === null && typedAnswer)
         return { ok: false, checks: [offerCheck(String(ctx.choices[CHOICE_KEYS.topology] ?? ""))] };
+      const defaulted = choice === null;
+      if (choice === null)
+        choice = recommendedIngressFor(String(ctx.choices[CHOICE_KEYS.topology] ?? ""));
+      if (userRoute && choice !== "polling") {
+        // A shape recorded before the route was switched is not an answer now.
+        if (!typedAnswer) choice = "polling";
+        else return { ok: false, checks: [userRouteRefusal(choice)] };
+      }
       const option = optionFor(choice)!;
       const root = sandboxRootOf(ctx.adapters);
       const checks: CheckResult[] = [
-        { name: "choice", ok: true, detail: `${option.id} — ${option.headline}` },
+        {
+          name: "choice",
+          ok: true,
+          detail:
+            defaulted && option.id === "polling"
+              ? `${pollingDefaultLine(readTextOrNull(ctx.adapters.paths.configPath))}\nThe other shapes, for later: ${CHOICE_IDS.filter((id) => id !== "polling").join(", ")}.`
+              : `${option.id} — ${option.headline}`,
+        },
         { name: "trade-offs", ok: true, detail: option.tradeoffs.map((t) => `• ${t}`).join("\n") },
       ];
 
@@ -580,7 +644,9 @@ export function ingressStep(opts: { stream?: StreamRunner } = {}): OnboardingSte
         detail:
           option.shape === "tunnel-file"
             ? '[ingress] shape = "tunnel-file" — the daemon watches the hostname file and re-points the App webhook URL when the tunnel rotates'
-            : '[ingress] shape = "none" — no webhook self-heal (this hostname does not rotate)',
+            : option.shape === "polling"
+              ? '[ingress] shape = "polling" — no webhook, the reconcile poll is the only trigger path'
+              : '[ingress] shape = "none" — no webhook self-heal (this hostname does not rotate)',
       });
 
       // 4. the compose profile — which sidecar (if any) comes up with the stack.
@@ -697,7 +763,9 @@ export function ingressStep(opts: { stream?: StreamRunner } = {}): OnboardingSte
               ok: false,
               detail: `${ctx.adapters.paths.configPath} is gone — re-run the ingress step after restoring it`,
             }
-          : shape === option.shape
+          : shape === option.shape ||
+              // a polling install from before the shape had its own name
+              (option.id === "polling" && shape === "none" && !userAuthRecorded(ctx.choices))
             ? { name: "config", ok: true, detail: `[ingress] shape = "${shape}"` }
             : {
                 name: "config",

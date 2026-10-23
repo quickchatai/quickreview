@@ -971,11 +971,13 @@ function checkSectionTimeZone<T extends { timezone: string }>(section: T, where:
  * to `hostname_file`, and the daemon re-points the App's own webhook URL when
  * it changes — through the app-self-config gate class, which executes even in
  * dry-run (AGENTS.md invariant 6). `none` (the default, and
- * what an absent section means) starts nothing at all.
+ * what an absent section means) starts nothing at all. `polling` starts
+ * nothing either and says why: no webhook reaches this daemon, the reconcile
+ * poll is the only trigger path — the shape `[github] auth = "user"` requires.
  */
 export interface IngressConfig {
-  /** "none" ⇒ no watcher is ever constructed; "tunnel-file" ⇒ self-heal on. */
-  shape: "none" | "tunnel-file";
+  /** "none" / "polling" ⇒ no watcher is ever constructed; "tunnel-file" ⇒ self-heal on. */
+  shape: "none" | "tunnel-file" | "polling";
   /** File the tunnel sidecar writes the bare public hostname into. Empty ⇒
    * `<root>/state/ingress/hostname` (see ingressHostnameFile). */
   hostname_file: string;
@@ -1729,9 +1731,9 @@ export function parseConfig(toml: string): Config {
     ...INGRESS_DEFAULTS,
     ...((raw.ingress ?? {}) as Partial<IngressConfig>),
   };
-  if (!["none", "tunnel-file"].includes(ingress.shape)) {
+  if (!["none", "tunnel-file", "polling"].includes(ingress.shape)) {
     throw new Error(
-      `config.toml [ingress]: shape must be "none" or "tunnel-file" (got ${JSON.stringify(ingress.shape)})`,
+      `config.toml [ingress]: shape must be "none", "tunnel-file" or "polling" (got ${JSON.stringify(ingress.shape)})`,
     );
   }
   const cfg: Config = {

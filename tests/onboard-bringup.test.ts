@@ -175,6 +175,10 @@ describe("the registered sequence's tail", () => {
       "topology",
       "ssh_preflight",
       "llm_auth",
+      // The GitHub question before the interview: on the own-account route
+      // the interview asks no App questions and takes the repo and login
+      // this step recorded.
+      "github_account",
       "config_fill",
       // The escalation question sits right after the interview — it
       // patches the config the interview just wrote, and "no" (the default,
