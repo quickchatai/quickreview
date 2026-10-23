@@ -229,6 +229,9 @@ function psRows(stdout: string): Array<{ name: string; rest: string }> {
     });
 }
 
+/** deploy.sh's default `memory_container_name` for the VM sidecar. */
+const DEPLOY_MEMORY_CONTAINER = "quickreview-memory";
+
 function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport {
   const root = rootOf(ctx.adapters);
   const facts = remoteFactsFor(ctx.adapters, ctx.choices);
@@ -254,7 +257,9 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
   const configText = readConfigText(ctx.adapters);
   const memoryContainer =
     (configText ? readTomlKey(configText, "tui", "memory_container") : null)?.trim() ||
-    facts.container;
+    // scripts/deploy.sh always deploys a sidecar of its own on the VM, named
+    // `memory_container_name` (default below) and never the daemon's name.
+    DEPLOY_MEMORY_CONTAINER;
   const remote = (argv: readonly string[]): Promise<ProcessResult> =>
     ctx.adapters.runner.run("ssh", sshArgv(facts.alias, argv));
   const healthEndpoint = `http://127.0.0.1:${facts.port}/health`;
