@@ -6,138 +6,24 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import {
-  chmodSync,
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { A, B, armIn, callsIn, setupArmFixture } from "./helpers/arm-fixture.js";
 
 const run = promisify(execFile);
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const A = "o__a@1111111";
-const B = "o__b@2222222";
-const C = "o__c@3333333"; // in `full` only: no ground truth
 
 let t: string;
 let runs: string;
 beforeEach(() => {
-  t = mkdtempSync(join(tmpdir(), "qcr-arm-"));
-  runs = join(t, "runs");
-  mkdirSync(runs);
-  const b = join(t, "bench", "aacr");
-  mkdirSync(join(b, "sets"), { recursive: true });
-  mkdirSync(join(b, "defects"));
-  for (const f of ["arm.sh", "compare.py"])
-    copyFileSync(join(ROOT, "bench", "aacr", f), join(b, f));
-  // change_line_count: the scheduler queues the longest PR first (B, C, A).
-  const size: Record<string, number> = { [A]: 10, [B]: 50, [C]: 30 };
-  const kase = (id: string) => ({
-    instance_id: id,
-    repo: "o/x",
-    base_commit: "b",
-    head_commit: "h",
-    change_line_count: size[id],
-  });
-  writeFileSync(join(b, "sets", "fresh10.json"), JSON.stringify({ cases: [kase(A), kase(B)] }));
-  writeFileSync(
-    join(b, "sets", "full.json"),
-    JSON.stringify({ cases: [kase(A), kase(B), kase(C)] }),
-  );
-  writeFileSync(
-    join(b, "defects", "fresh10.json"),
-    JSON.stringify({
-      version: "1",
-      cases: {
-        [A]: {
-          defects: [
-            { id: "D1", severity: "high" },
-            { id: "D2", severity: "low" },
-          ],
-        },
-        [B]: { defects: [{ id: "D1", severity: "medium", benchmark_limitation: "CI gate" }] },
-      },
-    }),
-  );
-  // The stub bench.sh: logs every call with the image it was given; `review`
-  // writes run.json unless told to fail (whole-run or --phase init); a
-  // --phase case call counts how many cases run at once and answers with the
-  // next scripted outcome from outcomes/<id> ("status retry limited"), ok by
-  // default.
-  mkdirSync(join(t, "outcomes"));
-  mkdirSync(join(t, "running"));
-  writeFileSync(
-    join(b, "bench.sh"),
-    `#!/usr/bin/env bash
-echo "IMG=\${QCR_BENCH_IMAGE:-} MEM=\${QCR_BENCH_MEMORY:-} $*" >> "${t}/calls.log"
-cmd="$1"; shift; run=""; set_name=""; only=""; phase=all
-while (($#)); do case "$1" in --run) run="$2"; shift 2;; --set) set_name="$2"; shift 2;; --only) only="$2"; shift 2;; --phase) phase="$2"; shift 2;; *) shift;; esac; done
-if [[ "$cmd" == review ]]; then
-  [[ -n "\${STUB_REVIEW_FAIL:-}" ]] && exit 3
-  if [[ "$phase" == case ]]; then
-    : > "${t}/running/$run.$only"
-    ls "${t}/running" | wc -l >> "${t}/conc.log"
-    sleep "\${STUB_CASE_SLEEP:-0}"
-    rm -f "${t}/running/$run.$only"
-    o="ok 0 0"
-    if [[ -s "${t}/outcomes/$only" ]]; then o="$(head -1 "${t}/outcomes/$only")"; sed -i '1d' "${t}/outcomes/$only"; fi
-    read -r st rt lm q sk <<< "$o"
-    echo "[00:00:00] result: $only $st retry=$rt limited=$lm\${q:+ quota=$q}\${sk:+ skipped}"
-    exit 0
-  fi
-  if [[ "$phase" == finish ]]; then echo "[00:00:00] review: 1/1 ok (ok 1) — results in /bench-out/results"; exit 0; fi
-  mkdir -p "$QCR_BENCH_RUNS_DIR/$run"
-  ids="$only"; [[ -z "$ids" ]] && ids=$(python3 -c "import json,sys; print(','.join(c['instance_id'] for c in json.load(open(sys.argv[1]))['cases']))" "$(dirname "$0")/sets/$set_name.json")
-  python3 -c "import json,sys; json.dump({'cases': sys.argv[1].split(','), 'qcr_commit': 'abc'}, open(sys.argv[2], 'w'))" "$ids" "$QCR_BENCH_RUNS_DIR/$run/run.json"
-fi
-[[ "$cmd" == judge ]] && echo "defect-judge: 1/1 judged — recall 0%"
-exit 0
-`,
-  );
-  chmodSync(join(b, "bench.sh"), 0o755);
-  mkdirSync(join(t, "bin"));
-  // The stub docker: `image inspect` answers an id; the image probe for
-  // eval_shards.py fails when STUB_OLD_IMAGE is set (an image from before the
-  // per-case scheduler).
-  writeFileSync(
-    join(t, "bin", "docker"),
-    '#!/bin/sh\ncase "$*" in *eval_shards.py*) [ -n "$STUB_OLD_IMAGE" ] && exit 1; exit 0;; esac\necho "sha256:img-$3"\n',
-  );
-  chmodSync(join(t, "bin", "docker"), 0o755);
+  ({ t, runs } = setupArmFixture());
 });
 afterEach(() => rmSync(t, { recursive: true, force: true }));
 
-const arm = (args: string[], env: Record<string, string> = {}) =>
-  run("bash", [join(t, "bench", "aacr", "arm.sh"), ...args], {
-    env: {
-      ...process.env,
-      PATH: `${join(t, "bin")}:${process.env.PATH}`,
-      QCR_BENCH_RUNS_DIR: runs,
-      QCR_BENCH_IMAGE: "qcr-bench:x",
-      QCR_BENCH_OCR_IMAGE: "qcr-bench-ocr:x",
-      QCR_BENCH_POLL: "0.05",
-      QCR_BENCH_LAUNCH_GAP: "0",
-      QCR_BENCH_RATE_LIMIT_PAUSE: "0",
-      QCR_BENCH_MEM_AVAILABLE_MB: "64000",
-      ...env,
-    },
-  }).then(
-    (r) => ({ code: 0, out: r.stdout }),
-    (e: { code: number; stdout: string }) => ({ code: e.code, out: e.stdout }),
-  );
-const calls = () =>
-  existsSync(join(t, "calls.log"))
-    ? readFileSync(join(t, "calls.log"), "utf8").trim().split("\n")
-    : [];
+const arm = (args: string[], env: Record<string, string> = {}) => armIn(t, runs, args, env);
+const calls = () => callsIn(t);
 
 describe("arm.sh", () => {
   it("a failed review is a failed arm: nothing is judged and the exit is non-zero", async () => {
@@ -292,160 +178,6 @@ describe("arm.sh", () => {
     const r = await arm(["--prefix", "p", "--cases", `fresh10:${A}`]);
     expect(r.code).toBe(2);
     expect(calls()).toEqual([]);
-  });
-
-  it("each case runs in its own container, longest PR first, never more than --parallel at once", async () => {
-    const one = await arm(["--prefix", "q", "--cases", "full", "--parallel", "1", "--no-judge"]);
-    expect(one.code).toBe(0);
-    const order = calls()
-      .filter((x) => x.includes(" review --phase case "))
-      .map((x) => /--only (\S+)/.exec(x)![1]);
-    expect(order).toEqual([B, C, A]);
-    for (const x of calls().filter((y) => y.includes("--phase case")))
-      expect(x).toContain("MEM=3g"); // the per-case container cap, not the old 8g
-    rmSync(join(t, "calls.log"));
-    rmSync(join(t, "conc.log"));
-    const two = await arm(
-      ["--prefix", "w", "--cases", "full+fresh10", "--parallel", "2", "--no-judge"],
-      {
-        STUB_CASE_SLEEP: "0.4",
-      },
-    );
-    expect(two.code).toBe(0);
-    const conc = readFileSync(join(t, "conc.log"), "utf8").trim().split("\n").map(Number);
-    expect(conc.length).toBe(5); // full's 3 + fresh10's 2, one queue
-    expect(Math.max(...conc)).toBe(2);
-  });
-
-  it("a case --resume skipped does not hold memory admission", async () => {
-    // Room for exactly one growing review: (4000 - 3072) / 768 = 1. Without the
-    // fix every skipped case counted as a review started in the last five
-    // minutes, so the second launch waited 300 s; the test's own timeout catches that.
-    for (const id of [A, B, C]) writeFileSync(join(t, "outcomes", id), "ok 0 0 0 skipped\n");
-    const r = await arm(["--prefix", "s", "--cases", "full", "--no-judge"], {
-      QCR_BENCH_MEM_AVAILABLE_MB: "4000",
-      QCR_BENCH_MAX_PARALLEL: "1",
-    });
-    expect(r.code).toBe(0);
-    expect(r.out).toMatch(/3\/3 done \(ok 3, not ok 0\)/);
-  }, 20000);
-
-  it("auto sizes the slots from MemAvailable, capped by the login's share", async () => {
-    const env = { QCR_BENCH_MEM_AVAILABLE_MB: "7000" }; // (7000 - 3072) / 768 = 5
-    expect(
-      (await arm(["--prefix", "a", "--cases", `fresh10:${A}`, "--no-judge"], env)).out,
-    ).toContain("5 review slot(s) to start — adaptive auto");
-    const capped = await arm(["--prefix", "b", "--cases", `fresh10:${A}`, "--no-judge"], {
-      ...env,
-      QCR_BENCH_MAX_PARALLEL: "2",
-    });
-    expect(capped.out).toContain("2 review slot(s) — auto");
-    expect(capped.out).toContain("fixed cap 2");
-    // Plenty of memory: adaptive auto starts at QCR_BENCH_START_PARALLEL, not at what RAM admits.
-    const big = await arm(["--prefix", "c", "--cases", `fresh10:${A}`, "--no-judge"], {
-      QCR_BENCH_START_PARALLEL: "6",
-    });
-    expect(big.out).toContain("6 review slot(s) to start");
-  });
-
-  // The AIMD target (bench/aacr/PERF.md): a full pool with work waiting and no
-  // pushback steps up; a rate-limited case halves it; the plan's usage limit
-  // stops every launch. Stub cases sleep so the pool is observably full.
-  const conc = () => readFileSync(join(t, "conc.log"), "utf8").trim().split("\n").map(Number);
-  const adaptive = {
-    QCR_BENCH_START_PARALLEL: "1",
-    QCR_BENCH_RAMP_SECS: "0",
-    QCR_BENCH_RAMP_STEP: "1",
-    QCR_BENCH_PARALLEL_CEILING: "2",
-    STUB_CASE_SLEEP: "0.5",
-  };
-
-  it("adaptive auto steps up while every slot is busy and cases wait, never past the ceiling", async () => {
-    const r = await arm(["--prefix", "g", "--cases", "full+fresh10", "--no-judge"], adaptive);
-    expect(r.code).toBe(0);
-    expect(r.out).toContain("1 review slot(s) to start");
-    expect(r.out).toMatch(
-      /concurrency 1 -> 2, no rate limit for 0s, every slot busy, cases waiting/,
-    );
-    expect(r.out).not.toContain("-> 3");
-    expect(Math.max(...conc())).toBe(2);
-    expect(readFileSync(join(runs, ".slots", "concurrency.log"), "utf8")).toContain("1 -> 2");
-  });
-
-  it("a fixed cap never ramps: --parallel N, or QCR_BENCH_MAX_PARALLEL set", async () => {
-    const fixed = await arm(
-      ["--prefix", "h", "--cases", "full", "--parallel", "1", "--no-judge"],
-      adaptive,
-    );
-    expect(fixed.out).not.toContain("concurrency ");
-    expect(Math.max(...conc())).toBe(1);
-    rmSync(join(t, "conc.log"));
-    const capped = await arm(["--prefix", "i", "--cases", "full", "--no-judge"], {
-      ...adaptive,
-      QCR_BENCH_MAX_PARALLEL: "1",
-    });
-    expect(capped.out).not.toContain("concurrency ");
-    expect(Math.max(...conc())).toBe(1);
-  });
-
-  it("a rate-limited case halves the target once per burst, pauses, and is retried", async () => {
-    writeFileSync(join(t, "outcomes", A), "no-verdict 1 3\nok 0 0\n");
-    const r = await arm(["--prefix", "j", "--cases", "fresh10", "--no-judge"], {
-      QCR_BENCH_START_PARALLEL: "4",
-    });
-    expect(r.code).toBe(0);
-    expect(r.out).toContain(`concurrency 4 -> 2, rate-limited case ${A}`);
-    expect(r.out).toContain(`${A}: RATE-LIMITED (3 model error(s))`);
-    expect(readFileSync(join(runs, ".slots", "target"), "utf8").trim()).toBe("2");
-    expect(existsSync(join(runs, ".slots", "last-limit"))).toBe(true);
-  });
-
-  it("the plan's usage limit stops every launch, loudly, and is never retried", async () => {
-    // B (the longest) runs first and hits the usage window; A must never start.
-    writeFileSync(join(t, "outcomes", B), "no-verdict 1 2 2\n");
-    const r = await arm(["--prefix", "k", "--cases", "fresh10", "--parallel", "1", "--no-judge"]);
-    expect(r.code).toBe(1);
-    expect(r.out).toContain(`${B}: USAGE LIMIT of the model login reached (2 call(s) refused)`);
-    const reviewed = calls()
-      .filter((x) => x.includes(" review --phase case "))
-      .map((x) => /--only (\S+)/.exec(x)![1]);
-    expect(reviewed).toEqual([B]);
-    expect(readFileSync(join(runs, ".slots", "usage-limit"), "utf8")).toContain(B);
-    // A later arm on the same machine is not stopped by an OLD marker.
-    const { utimesSync } = await import("node:fs");
-    const old = new Date(Date.now() - 3600_000);
-    utimesSync(join(runs, ".slots", "usage-limit"), old, old);
-    const later = await arm(["--prefix", "l", "--cases", `fresh10:${A}`, "--no-judge"]);
-    expect(later.code).toBe(0);
-  });
-
-  it("a target left by a finished arm is not adopted: a new arm starts from its own value", async () => {
-    mkdirSync(join(runs, ".slots"), { recursive: true });
-    writeFileSync(join(runs, ".slots", "target"), "17\n");
-    const r = await arm(["--prefix", "m", "--cases", `fresh10:${A}`, "--no-judge"], {
-      QCR_BENCH_START_PARALLEL: "3",
-    });
-    expect(r.code).toBe(0);
-    expect(r.out).not.toContain("adopting");
-    expect(r.out).toContain("3 at once (adaptive, ceiling 24)");
-    expect(readFileSync(join(runs, ".slots", "target"), "utf8").trim()).toBe("3");
-  });
-
-  it("a rate-limited case pauses the queue and is retried; an unfetchable one is not", async () => {
-    writeFileSync(join(t, "outcomes", A), "no-verdict 1 3\nok 0 0\n");
-    writeFileSync(join(t, "outcomes", B), "failed 0 0\n");
-    const r = await arm(["--prefix", "x", "--cases", "fresh10", "--parallel", "1", "--no-judge"]);
-    expect(r.code).toBe(1); // B never reviewed
-    const reviewed = calls()
-      .filter((x) => x.includes(" review --phase case "))
-      .map((x) => /--only (\S+)/.exec(x)![1]);
-    expect(reviewed.filter((x) => x === A).length).toBe(2);
-    expect(reviewed.filter((x) => x === B).length).toBe(1);
-    expect(r.out).toContain(`${A}: RATE-LIMITED (3 model error(s))`);
-    expect(r.out).toContain(`${B}: failed — not retried`);
-    expect(r.out).toContain("1/2 ok");
-    // The review log is the cases' own output, appended as each finishes.
-    expect(readFileSync(join(runs, "x-fresh10.review.log"), "utf8")).toContain(`result: ${A} ok`);
   });
 
   it("--retries 0 leaves a failed case for --resume", async () => {
