@@ -314,7 +314,8 @@ const NODE_BUILTINS = new Set([
 // `import … from 'x'` / `export … from 'x'`, `import 'x'`, `require('x')`,
 // `import('x')`. Deliberately a regex scan, not a parser: a false positive
 // costs nothing (an npm import must still be DECLARED in a manifest or
-// lockfile to be requested), a missed import costs one library.
+// lockfile to be requested, except in a tree with neither, where Resolver.npm
+// asks the registry for the bare name), a missed import costs one library.
 //
 // The `… from 'x'` form is NOT one regex: an `import … from` pattern needs an
 // unbounded gap, and a lazy gap re-scans the whole suffix at every `import`
@@ -595,6 +596,11 @@ function stripPyComment(line: string): string {
 }
 
 /** Absolute imports of a Python source; relative (`from .`) imports are skipped. */
+/** `a.b as c` → `a.b`. */
+function stripPyAlias(part: string): string {
+  return (part.trim().split(/\s+as\s+/)[0] ?? "").trim();
+}
+
 export function extractPythonImports(src: string): PyImport[] {
   const lines = src.replace(/\\\r?\n/g, " ").split(/\r?\n/);
   const out: PyImport[] = [];
@@ -603,7 +609,7 @@ export function extractPythonImports(src: string): PyImport[] {
       const imp = /^\s*import\s+(.+)$/.exec(stmt);
       if (imp) {
         for (const part of (imp[1] ?? "").split(",")) {
-          const mod = (part.trim().split(/\s+as\s+/)[0] ?? "").trim();
+          const mod = stripPyAlias(part);
           if (PY_MODULE_RE.test(mod)) out.push({ module: mod, names: [] });
         }
         continue;
@@ -622,7 +628,7 @@ export function extractPythonImports(src: string): PyImport[] {
       const names = rest
         .replace(/[()]/g, " ")
         .split(",")
-        .map((s) => (s.trim().split(/\s+as\s+/)[0] ?? "").trim())
+        .map(stripPyAlias)
         .filter((n) => /^[A-Za-z_]\w*$/.test(n));
       const module = from[1] ?? "";
       if (PY_MODULE_RE.test(module)) out.push({ module, names });
@@ -1399,6 +1405,11 @@ function isUnfetchable(x: { version: string | null; range?: string }): boolean {
   return x.version === null && x.range !== undefined && isNonRegistryRange(x.range);
 }
 
+/** Throws the skip for a request no registry can serve. */
+function rejectUnfetchable(req: DepRequest): void {
+  if (isUnfetchable(req)) throw new SkipError(`not a registry version (${clip(req.range!, 40)})`);
+}
+
 // ---------------------------------------------------------------------------
 // Manifest edits in the diff
 // ---------------------------------------------------------------------------
@@ -1820,15 +1831,15 @@ interface PyVersion {
 }
 
 const PY_VERSION_RE =
-  /^\s*v?(?:\d+!)?(\d+(?:\.\d+)*)((?:[-_.]?(?:a|b|c|rc|alpha|beta|pre|preview)(?:[-_.]?\d+)?)?)((?:-\d+|[-_.]?(?:post|rev|r)(?:[-_.]?\d+)?)?)((?:[-_.]?dev(?:[-_.]?\d+)?)?)(?:\+[a-z0-9]+(?:[-_.][a-z0-9]+)*)?\s*$/i;
+  /^\s*v?(?:(\d+)!)?(\d+(?:\.\d+)*)((?:[-_.]?(?:a|b|c|rc|alpha|beta|pre|preview)(?:[-_.]?\d+)?)?)((?:-\d+|[-_.]?(?:post|rev|r)(?:[-_.]?\d+)?)?)((?:[-_.]?dev(?:[-_.]?\d+)?)?)(?:\+[a-z0-9]+(?:[-_.][a-z0-9]+)*)?\s*$/i;
 
 function parsePyVersion(v: string): PyVersion | null {
   const m = PY_VERSION_RE.exec(v);
   if (!m) return null;
   return {
-    epoch: Number(/^\s*v?(\d+)!/i.exec(v)?.[1] ?? 0),
-    release: (m[1] ?? "0").split(".").map(Number),
-    final: !m[2] && !m[3] && !m[4],
+    epoch: Number(m[1] ?? 0),
+    release: (m[2] ?? "0").split(".").map(Number),
+    final: !m[3] && !m[4] && !m[5],
   };
 }
 
@@ -2078,13 +2089,9 @@ class Resolver {
       .map((line) => /^\s*registry\s*=\s*(.*?)\s*$/.exec(line))
       .filter((match) => match !== null)
       .at(-1)?.[1];
+    const parent = rel ? this.dir(relDirOf(rel)) : null;
     const npmDefaultForeign =
-      registry === undefined
-        ? rel
-          ? this.dir(posix.dirname(rel) === "." ? "" : posix.dirname(rel)).npmDefaultForeign
-          : false
-        : isForeignResolved(registry);
-    const parent = rel ? this.dir(posix.dirname(rel) === "." ? "" : posix.dirname(rel)) : null;
+      registry === undefined ? (parent?.npmDefaultForeign ?? false) : isForeignResolved(registry);
     const npmScopeForeign = new Map(parent?.npmScopeForeign);
     for (const line of npmrc?.split(/\r?\n/) ?? []) {
       const match = /^\s*(@[^:\s]+):registry\s*=\s*(.*?)\s*$/.exec(line);
@@ -2171,7 +2178,7 @@ class Resolver {
         !isLocalRange(req.range) &&
         (defaults.uv || (defaults.poetry && !defaults.publicPoetry.has(name)))
       )
-        pyDecl.set(name, { range: "@ index source", pin: null });
+        pyDecl.set(name, { range: `${PY_FOREIGN_PIN_PREFIX}index source`, pin: null });
     const info: DirInfo = {
       npmLocks,
       npmDefaultForeign,
@@ -2932,7 +2939,7 @@ function cacheDirFor(
   if (!SAFE_VERSION_RE.test(version) || version.includes("..")) return null;
   // A literal `+` would let `@a+b` alias `@a/b`; neither registry allows one.
   if (name.includes("+")) return null;
-  const flat = name.replace("/", "+");
+  const flat = flatPackageName(name);
   if (!/^@?[A-Za-z0-9][A-Za-z0-9._~-]*(?:\+[A-Za-z0-9._~-]+)?$/.test(flat) || flat.includes(".."))
     return null;
   return join(root, eco, cacheEntryName(name, version));
@@ -2940,7 +2947,12 @@ function cacheDirFor(
 
 /** A cache entry's directory name. */
 function cacheEntryName(name: string, version: string): string {
-  return `${name.replace("/", "+")}@${version}`;
+  return `${flatPackageName(name)}@${version}`;
+}
+
+/** A package name as one path component: `@s/p` → `@s+p`. */
+function flatPackageName(name: string): string {
+  return name.replace("/", "+");
 }
 
 function readMarker(dir: string): CacheMarker | null {
@@ -3080,14 +3092,14 @@ async function httpGet(
     const headers: Record<string, string> = { "user-agent": USER_AGENT };
     if (accept) headers.accept = accept;
     const res = await ctx.fetch(url, { signal: ac.signal, headers, redirect: "follow" });
-    if ((res.url && !res.url.startsWith(allowedPrefix)) || !res.ok) {
+    const offPrefix = !!res.url && !res.url.startsWith(allowedPrefix);
+    if (offPrefix || !res.ok) {
       // A rejected response is never consumed. Release its transfer before
       // clearing the request deadline; cleanup cannot delay preparation.
       void res.body?.cancel().catch(() => undefined);
       ac.abort();
     }
-    if (res.url && !res.url.startsWith(allowedPrefix))
-      throw new SkipError(`redirected off ${hostOf(allowedPrefix)}`);
+    if (offPrefix) throw new SkipError(`redirected off ${hostOf(allowedPrefix)}`);
     if (res.status === 404) throw new SkipError(`not found (404 from ${hostOf(url)})`);
     if (!res.ok) throw new SkipError(`HTTP ${res.status} from ${hostOf(url)}`);
     const len = Number(res.headers.get("content-length") ?? Number.NaN);
@@ -3256,7 +3268,7 @@ function encodeNpmName(name: string): string {
 async function prepareNpm(req: DepRequest, ctx: PrepCtx): Promise<Outcome> {
   const name = req.name;
   if (!NPM_NAME_RE.test(name)) throw new SkipError("not a valid npm package name");
-  if (isUnfetchable(req)) throw new SkipError(`not a registry version (${clip(req.range!, 40)})`);
+  rejectUnfetchable(req);
   let version = req.version;
   let resolvedFrom: string | undefined;
   if (version !== null) {
@@ -3349,7 +3361,7 @@ function choosePyFile(files: PyFile[]): PyFile | null {
 async function preparePypi(req: DepRequest, ctx: PrepCtx): Promise<Outcome> {
   const name = normPy(req.name);
   if (!/^[a-z0-9][a-z0-9.-]*$/.test(name)) throw new SkipError("not a valid PyPI project name");
-  if (isUnfetchable(req)) throw new SkipError(`not a registry version (${clip(req.range!, 40)})`);
+  rejectUnfetchable(req);
   let version = req.version;
   let resolvedFrom: string | undefined;
   let files: PyFile[];
@@ -3416,17 +3428,25 @@ async function preparePypi(req: DepRequest, ctx: PrepCtx): Promise<Outcome> {
   );
 }
 
+/** A request's identity in a skip: its pin, else its unresolved range. */
+function requestIdentity(req: DepRequest): { version?: string; range?: string } {
+  return req.version !== null
+    ? { version: req.version }
+    : req.range !== undefined
+      ? { range: req.range }
+      : {};
+}
+
 async function prepareOne(req: DepRequest, ctx: PrepCtx): Promise<Outcome> {
   let out: Outcome;
   try {
     out = req.ecosystem === "npm" ? await prepareNpm(req, ctx) : await preparePypi(req, ctx);
   } catch (e) {
     const reason = e instanceof SkipError ? e.message : `unpack failed: ${short(e)}`;
-    out = { ok: false, skip: { ecosystem: req.ecosystem, name: req.name, reason } };
-  }
-  if (!out.ok) {
-    if (req.version !== null) out.skip.version = req.version;
-    else if (req.range !== undefined) out.skip.range = req.range;
+    out = {
+      ok: false,
+      skip: { ecosystem: req.ecosystem, name: req.name, ...requestIdentity(req), reason },
+    };
   }
   if (out.ok)
     ctx.log(
@@ -3499,11 +3519,7 @@ export async function prepareDependencySources(
           skip: {
             ecosystem: r.ecosystem,
             name: r.name,
-            ...(r.version !== null
-              ? { version: r.version }
-              : r.range !== undefined
-                ? { range: r.range }
-                : {}),
+            ...requestIdentity(r),
             reason: "no fetch implementation",
           },
         };
@@ -3537,11 +3553,7 @@ export async function prepareDependencySources(
       manifest.skipped.push({
         ecosystem: r.ecosystem,
         name: r.name,
-        ...(r.version !== null
-          ? { version: r.version }
-          : r.range !== undefined
-            ? { range: r.range }
-            : {}),
+        ...requestIdentity(r),
         reason: "over the per-PR package cap",
       });
     log(`depsources: ${manifest.sources.length} source(s), ${manifest.skipped.length} skipped`);
