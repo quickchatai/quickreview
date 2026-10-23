@@ -32,7 +32,8 @@ effort = "low"
 
 # Off: the lenses that find true but non-bug issues (quality, style,
 # placement, intent drift) — the same a-priori set as `snappy`, minus
-# pass-ui, which finds UI bugs and is planned only on UI files.
+# pass-ui (which finds UI bugs and is planned only on UI files) and plus
+# pass-lint-conformance, which `snappy` leaves on.
 [lenses.pass-maintainability]
 enabled = false
 
