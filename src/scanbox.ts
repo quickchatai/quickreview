@@ -58,6 +58,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { writeAtomic } from "./channelfs.js";
 import { appStamp } from "./appstamp.js";
 import type { ScanSandboxConfig } from "./config.js";
 import type { LoginSummary } from "./engine/auth.js";
@@ -473,10 +474,7 @@ export function loginProblem(s: LoginSummary, now: number): string | null {
 /** The driver's side of the handshake: its start outcome, written whole
  * (aside, then renamed into place). */
 export function writeStartedFile(path: string, outcome: StartOutcome): void {
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(outcome)}\n`);
-  renameSync(tmp, path);
+  writeAtomic(path, `${JSON.stringify(outcome)}\n`);
 }
 
 // ---- the checks both the launch and the doctor make ------------------------------
