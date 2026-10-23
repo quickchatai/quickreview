@@ -114,40 +114,45 @@ export function adminHeaders(rootKey) {
  * "no users" would make it create users that already exist.
  */
 export function usersFromListing(body) {
-  const candidates = [body, body?.data, body?.result].filter((c) => c && typeof c === "object");
-  // The live 0.4.15 answers `{status:"ok", result:[...]}` — the envelope's
-  // `result`/`data` IS the array, not an object carrying one (verified against
-  // the deployed server). Missing it reads every listing as unreadable, and
-  // provisioning then creates nothing.
-  let list = Array.isArray(body)
-    ? body
-    : Array.isArray(body?.result)
-      ? body.result
-      : Array.isArray(body?.data)
-        ? body.data
-        : null;
-  for (const c of candidates) {
-    if (list) break;
-    for (const key of ["users", "items", "accounts"]) {
-      if (Array.isArray(c[key])) {
-        list = c[key];
-        break;
-      }
-    }
-  }
-  if (!Array.isArray(list)) return null;
+  const list = listingItems(body);
+  if (!list) return null;
   const out = [];
   for (const item of list) {
     if (typeof item === "string") {
       if (item.trim() !== "") out.push(item.trim());
       continue;
     }
-    if (item && typeof item === "object") {
-      const name = item.user ?? item.user_id ?? item.id ?? item.name;
-      if (typeof name === "string" && name.trim() !== "") out.push(name.trim());
-    }
+    const name = itemName(item);
+    if (name) out.push(name);
   }
   return out;
+}
+
+/**
+ * The item array of a listing envelope, or `null` when there is none. The live
+ * 0.4.15 answers `{status:"ok", result:[...]}` — the envelope's `result`/`data`
+ * IS the array, not an object carrying one (verified against the deployed
+ * server). Missing it reads every listing as unreadable, and provisioning then
+ * creates nothing.
+ */
+function listingItems(body) {
+  if (Array.isArray(body)) return body;
+  if (Array.isArray(body?.result)) return body.result;
+  if (Array.isArray(body?.data)) return body.data;
+  for (const c of [body, body?.data, body?.result]) {
+    if (!c || typeof c !== "object") continue;
+    for (const key of ["users", "items", "accounts"]) {
+      if (Array.isArray(c[key])) return c[key];
+    }
+  }
+  return null;
+}
+
+/** The trimmed identity of an object item (`user_id` first), or "". */
+function itemName(item) {
+  if (!item || typeof item !== "object") return "";
+  const name = item.user_id ?? item.user ?? item.id ?? item.name;
+  return typeof name === "string" ? name.trim() : "";
 }
 
 /**
@@ -161,29 +166,11 @@ export function usersFromListing(body) {
  * key are simply absent from the map (never guessed, never rotated).
  */
 export function userKeysFromListing(body) {
-  const candidates = [body, body?.data, body?.result];
-  let list = candidates.find((value) => Array.isArray(value));
-  if (!list) {
-    for (const candidate of candidates) {
-      if (!candidate || typeof candidate !== "object") continue;
-      list = ["users", "items", "accounts"].map((key) => candidate[key]).find(Array.isArray);
-      if (list) break;
-    }
-  }
   const out = {};
-  if (!Array.isArray(list)) return out;
-  for (const item of list) {
-    if (!item || typeof item !== "object") continue;
-    const name = item.user_id ?? item.user ?? item.id ?? item.name;
-    const key = item.api_key ?? item.user_key ?? item.key;
-    if (
-      typeof name === "string" &&
-      name.trim() !== "" &&
-      typeof key === "string" &&
-      key.trim() !== ""
-    ) {
-      out[name.trim()] = key.trim();
-    }
+  for (const item of listingItems(body) ?? []) {
+    const name = itemName(item);
+    const key = item && typeof item === "object" ? (item.api_key ?? item.user_key ?? item.key) : "";
+    if (name !== "" && typeof key === "string" && key.trim() !== "") out[name] = key.trim();
   }
   return out;
 }
@@ -343,11 +330,19 @@ export async function createUser({
     return { ok: true, existed: true, key: "", detail: "HTTP 409 — already present" };
   if (r.status >= 200 && r.status < 300 && !(r.body && r.body.status === "error")) {
     // The server MINTS the user's key at creation and returns it here — this is
-    // the only moment it is ever handed out. The boot path discards it; the
-    // wizard's mint path is what places it.
+    // the initial key (a root-authenticated listing hands it out again later).
+    // The boot path discards it; the wizard's mint path is what places it.
     return { ok: true, existed: false, key: keyFromCreate(r.body), detail: `HTTP ${r.status}` };
   }
-  return { ok: false, existed: false, key: "", detail: r.error ?? `HTTP ${r.status}` };
+  const reason = r.body?.error?.message ?? r.body?.error;
+  const described =
+    typeof reason === "string" && reason !== "" ? ` — ${reason.slice(0, 200)}` : "";
+  return {
+    ok: false,
+    existed: false,
+    key: "",
+    detail: r.error ?? `HTTP ${r.status}${described}`,
+  };
 }
 
 /**
@@ -502,12 +497,16 @@ export async function waitForReady({
 export function readyCheckOk(v) {
   if (v && typeof v === "object" && !Array.isArray(v)) {
     const o = /** @type {{ status?: unknown, checks?: unknown }} */ (v);
-    if (o.status !== "ok" && o.status !== "not_configured" && o.status !== "not_supported")
-      return false;
+    if (!readyStatusOk(o.status)) return false;
     if (o.checks === null || o.checks === undefined) return true;
     if (typeof o.checks !== "object") return false;
     return Object.values(/** @type {Record<string, unknown>} */ (o.checks)).every(readyCheckOk);
   }
+  return readyStatusOk(v);
+}
+
+/** One `/ready` status word the engine accepts. */
+function readyStatusOk(v) {
   return v === "ok" || v === "not_configured" || v === "not_supported";
 }
 

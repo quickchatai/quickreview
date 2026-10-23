@@ -116,6 +116,36 @@ describe("usersFromListing — tolerant of envelope shape, honest about garbage"
   });
 });
 
+describe("one identity reading for the user list and the key map", () => {
+  it("names a user the same way in both when the item carries conflicting aliases", () => {
+    const body = { result: [{ user: "alias", user_id: "real", api_key: "k1" }] };
+    expect(prov.usersFromListing(body)).toEqual(["real"]);
+    expect(prov.userKeysFromListing(body)).toEqual({ real: "k1" });
+  });
+});
+
+describe("createUser — a refused creation keeps the server's reason", () => {
+  it("carries the error envelope's message in the detail", async () => {
+    const { fetchFn } = fakeFetch([
+      {
+        match: /users/,
+        method: "POST",
+        status: 200,
+        body: { status: "error", error: { message: "quota exceeded" } },
+      },
+    ]);
+    const r = await prov.createUser({
+      base: BASE,
+      account: "default",
+      user: "reviewer",
+      rootKey: "root",
+      fetchFn,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.detail).toContain("quota exceeded");
+  });
+});
+
 describe("parseUserList", () => {
   it("splits the group_vars spelling", () => {
     expect(prov.parseUserList("reviewer,companion")).toEqual(["reviewer", "companion"]);
