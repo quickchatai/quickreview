@@ -57,7 +57,7 @@ export interface GithubConfig {
 /** Directory name of the base clone: `[github] clone_dir` when set, else the
  * repo slug's basename ("owner/name" → "name"; a URL's trailing path segment,
  * `.git` stripped), e.g. "acme/webapp" ⇒ "webapp". */
-export function githubCloneDir(g: GithubConfig): string {
+export function githubCloneDir(g: Pick<GithubConfig, "clone_dir" | "repo">): string {
   // ?? "": hand-rolled configs (tests) may omit both keys.
   const explicit = (g.clone_dir ?? "").trim();
   if (explicit) return explicit;

@@ -311,6 +311,18 @@ describe("the step", () => {
     expect(configText()).toBe(before);
   });
 
+  it("a non-credential HTTP failure carries GitHub's own message and does not blame the credentials", async () => {
+    writeConfig("quick-review");
+    writeCreds();
+    const h = harness({ appStatus: 503 });
+    const result = await h.engine.runStep(APP_SLUG_STEP_ID);
+    expect(result.ok).toBe(false);
+    const said = result.failures.join(" ");
+    expect(said).toMatch(/HTTP 503/);
+    expect(said).toMatch(/nope/);
+    expect(said).not.toMatch(/must belong to the same App/);
+  });
+
   it("a missing config.toml is red and names config_fill", async () => {
     writeCreds();
     const h = harness({ slug: "quick-review-9f2" });
