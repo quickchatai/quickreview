@@ -2378,3 +2378,24 @@ it("unpin publishes a revived URI immediately without waiting for a complete swe
   expect(published.at(-1)).not.toContain(`${ROOT}/${original.id}`);
   expect(published.at(-1)).toContain(`${ROOT}/${pinned.id}`);
 });
+
+describe("a successful envelope with the wrong result shape", () => {
+  const malformed = (): OpenVikingClient =>
+    new OpenVikingClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      user: "reviewer",
+      fetchFn: () => json(200, { status: "ok", result: {} }),
+      log: () => undefined,
+    });
+
+  it("content/read is a failure, never empty text", async () => {
+    const res = await malformed().readContent(`${ROOT}/preferences/pinned/x.md`);
+    expect(res.ok).toBe(false);
+  });
+
+  it("fs/ls is a failure, never an empty listing", async () => {
+    const res = await malformed().ls(`${ROOT}/preferences/pinned`);
+    expect(res.ok).toBe(false);
+  });
+});

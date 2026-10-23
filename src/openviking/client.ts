@@ -873,11 +873,12 @@ export class OpenVikingClient {
       { method: "GET" },
     );
     if (!res.ok) return res;
-    return {
-      ok: true,
-      status: res.status,
-      result: typeof res.result === "string" ? res.result : "",
-    };
+    // A successful envelope whose result is not text is a malformed answer,
+    // not an empty file: an empty read would pass for a healthy empty entry.
+    if (typeof res.result !== "string") {
+      return ovFailed(res.status, "MALFORMED_RESULT", "content/read result is not a string");
+    }
+    return { ok: true, status: res.status, result: res.result };
   }
 
   async ls(uri: string): Promise<OvOutcome<OvDirEntry[]>> {
@@ -885,7 +886,11 @@ export class OpenVikingClient {
       method: "GET",
     });
     if (!res.ok) return res;
-    const rows = Array.isArray(res.result) ? res.result : [];
+    // Likewise a non-array result is a malformed answer, not an empty directory.
+    if (!Array.isArray(res.result)) {
+      return ovFailed(res.status, "MALFORMED_RESULT", "fs/ls result is not a list");
+    }
+    const rows: unknown[] = res.result;
     return {
       ok: true,
       status: res.status,

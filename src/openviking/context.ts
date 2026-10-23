@@ -61,7 +61,7 @@ export function roundSearchQuotas(
   return out;
 }
 
-/** Is this recalled URI an entry a round may see: a file directly inside an
+/** Is this recalled URI an entry a round may see: a Markdown file directly inside an
  * area a round may search? Not a dot-file (the engine's folder blurbs,
  * `.abstract.md`/`.overview.md`) and not anything nested deeper — the same
  * rule the lesson selection applies (`inArea`, memory/selection.ts). */
@@ -71,7 +71,7 @@ export function inRoundSearchScope(uri: string): boolean {
     const at = uri.indexOf(marker);
     if (at < 0) return false;
     const rest = uri.slice(at + marker.length);
-    return rest !== "" && !rest.includes("/") && !rest.startsWith(".");
+    return rest !== "" && !rest.includes("/") && !rest.startsWith(".") && rest.endsWith(".md");
   });
 }
 
