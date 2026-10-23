@@ -46,9 +46,10 @@
 // Bot mode refuses a GitHub token in the session's env or in the host's own
 // (rule 3): the bot mints per command from the App credential, so a token in an
 // env is a leak waiting for the model's bash.
-import { fstatSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionFactory, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { capabilityFdOf } from "./capfd.js";
+import { prOfSession } from "../pr-session-lifecycle.js";
 import { createBashGuard, bashGuardConfigFromEnv } from "../../extensions/bash-guard.js";
 import {
   FINDING_CLUSTERS_TOOLS,
@@ -147,27 +148,13 @@ export function refuseGithubToken(where: string, env: Env): void {
     );
 }
 
-/** The descriptor the model's bash commands inherit: the IPC capability the
- * session's env names, which must be open in this process. */
-function capabilityFds(env: Env): number[] {
-  const named = env["QCR_IPC_CAP_FD"];
-  if (named === undefined || named === "") return [];
-  const fd = /^\d{1,4}$/.test(named) ? Number(named) : 0;
-  if (fd < 3) throw new Error(`QCR_IPC_CAP_FD is not an fd number (${JSON.stringify(named)})`);
-  try {
-    fstatSync(fd);
-  } catch {
-    throw new Error(`QCR_IPC_CAP_FD names fd ${fd}, which is not open in this process`);
-  }
-  return [fd];
-}
-
 /** The PR a bot session serves, from its name. */
 function prOf(env: Env): { session: string; pr: number } {
   const session = env["QCR_SESSION_NAME"]?.trim() ?? "";
-  const m = /^pr-(\d+)$/.exec(session);
-  if (!m) throw new Error(`a bot session is named pr-<n>, got ${JSON.stringify(session)}`);
-  return { session, pr: Number(m[1]) };
+  const pr = prOfSession(session);
+  if (pr === undefined)
+    throw new Error(`a bot session is named pr-<n>, got ${JSON.stringify(session)}`);
+  return { session, pr };
 }
 
 /** The pin values a spec carries, each required. */
@@ -199,7 +186,8 @@ export function botSdkExtras(options: BotSdkOptions): (spec: SessionSpec) => Ses
     if (home === undefined) throw new Error("a bot session's env names its pi HOME (HOME)");
     const pin = gitPin(spec.env);
     const answer = options.answer;
-    const inheritFds = answer && !answer.mayPost ? [] : capabilityFds(spec.env);
+    const capFd = answer && !answer.mayPost ? null : capabilityFdOf(spec.env);
+    const inheritFds = capFd === null ? [] : [capFd];
     const memory = openVikingConfigFromEnv({
       env: spec.env,
       argv: ["--approve"],

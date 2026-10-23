@@ -587,11 +587,12 @@ export class PiHost {
     private readonly options: PiHostOptions,
     modelRuntime: ModelRuntime,
     dispatcher: DispatcherOutcome,
+    httpIdleTimeoutMs: number,
   ) {
     this.agentDir = options.agentDir;
     this.modelRuntime = modelRuntime;
     this.dispatcher = dispatcher;
-    this.httpIdleTimeoutMs = options.httpIdleTimeoutMs ?? DEFAULT_HTTP_IDLE_TIMEOUT_MS;
+    this.httpIdleTimeoutMs = httpIdleTimeoutMs;
     this.fence =
       options.fence === false
         ? null
@@ -628,7 +629,7 @@ export class PiHost {
     });
     isolateProviderAuth(runtime);
     await options.configureModels?.(runtime);
-    return new PiHost(options, runtime, dispatcher);
+    return new PiHost(options, runtime, dispatcher, idle);
   }
 
   /** A fresh settings manager per session: sessions never share mutable
