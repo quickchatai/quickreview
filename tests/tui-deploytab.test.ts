@@ -26,12 +26,14 @@ import {
   parseUpdateStatus,
   planArgv,
   releasePackage,
+  renderDeployTab,
   versionRevArgv,
   type DeployDrainSender,
   type DeployState,
   type LocalRunner,
 } from "../src/tui/deploytab.js";
 import { stripAnsi } from "../src/tui/paint.js";
+import { layoutProbeArgv, resetLayoutCache } from "../src/tui/layout.js";
 import { MemoryDeployCeremonyStore } from "../src/tui/deploy-ceremony.js";
 import { configDrift, configDriftText, parseConfigFingerprint } from "../src/tui/confighome.js";
 import type { RemoteResult } from "../src/tui/remote.js";
@@ -148,6 +150,35 @@ describe("deploy tab argv + parsing", () => {
     expect(parsePublishedVersions("")).toEqual([]);
   });
 
+  it("orders prereleases by semver precedence: numeric identifiers numerically, before alphanumeric ones", () => {
+    expect(
+      parsePublishedVersions("1.2.3-rc.9\n1.2.3-rc.10\n1.2.3-rc.2\n1.2.3-alpha\n1.2.3-alpha.1\n1.2.3-1\n1.2.3\n"),
+    ).toEqual([
+      "1.2.3",
+      "1.2.3-rc.10",
+      "1.2.3-rc.9",
+      "1.2.3-rc.2",
+      "1.2.3-alpha.1",
+      "1.2.3-alpha",
+      "1.2.3-1",
+    ]);
+  });
+
+  it("the finished-deploy bar does not offer to close a log that awaiting-lift keeps open", () => {
+    const run = { kind: "deploy", running: false, code: 0, lines: [] } as unknown as DeployState["run"];
+    const awaiting = deployKeys(emptyState({ run, deployPhase: "awaiting-lift" })).bar;
+    expect(awaiting.map((b) => b.key)).toEqual(["x"]);
+    expect(awaiting[0]!.label).not.toContain("close log");
+    expect(deployKeys(emptyState({ run })).bar[0]!.label).toContain("close log");
+  });
+
+  it("the plan view clamps its scroll to the last page instead of painting blank", () => {
+    const at = (scroll: number): string =>
+      stripAnsi(renderDeployTab(emptyState({ scroll }), false, 100, 60).render());
+    const top = at(0);
+    expect(at(9999)).toBe(top);
+  });
+
   it("parses the bare CI build stamp `qcr metrics` reads, and rejects garbage", () => {
     const full = "0123456789abcdef0123456789abcdef01234567";
     expect(parseBuildSha(`${full}\n`)).toEqual({ sha: full, at: undefined, mode: undefined });
@@ -199,6 +230,29 @@ describe("RealDeployFetcher", () => {
     );
     return { f, localCalls, sshCalls };
   }
+
+  it("addresses the config fingerprint at the resolved container root, probing the layout first", async () => {
+    resetLayoutCache();
+    try {
+      const sshCalls: string[] = [];
+      const f = new RealDeployFetcher(
+        TUI_DEFAULTS,
+        async (_h, argv) => {
+          sshCalls.push(argv.join(" "));
+          if (argv.join(" ") === layoutProbeArgv(TUI_DEFAULTS).join(" "))
+            return ok("0123456789abcdef release\n");
+          return ok("");
+        },
+        async () => fail(),
+      );
+      await f.load();
+      const fp = sshCalls.find((c) => c.includes("config-fingerprint.sh"))!;
+      expect(fp).toContain("/opt/qcr/scripts/config-fingerprint.sh");
+      expect(fp).not.toContain("/opt/quickreview/sandbox");
+    } finally {
+      resetLayoutCache();
+    }
+  });
 
   it("shows the running version and revision against the newest published version, with the commits between", async () => {
     const { f, sshCalls } = fetcherWith(ok(RELEASE_REPORT), {
@@ -1727,6 +1781,39 @@ describe("deploy tab version choice and the legacy refusal", () => {
     publishStatus(app, 0);
     await settle();
     expect(shipped).toEqual(["1.4.0"]);
+    app.quit();
+    await run;
+  });
+
+  it("a version chosen while a load is pending is loaded after it, not overwritten by it", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    const loadsFor: Array<string | undefined> = [];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const st = installDeployHooks(
+      app,
+      {
+        load: async (version) => {
+          loadsFor.push(version);
+          if (loadsFor.length === 1) await gate;
+          return loaded({ version: version ?? "1.2.3" });
+        },
+      },
+      () => 1000,
+      quietDrain(),
+    );
+    const run = app.run();
+    streams.type("5");
+    await settle();
+    expect(loadsFor).toEqual([undefined]);
+    streams.type("V");
+    for (const ch of "1.4.0") streams.type(ch);
+    streams.type("\r");
+    release();
+    await settle();
+    expect(st.version).toBe("1.4.0");
+    expect(loadsFor).toEqual([undefined, "1.4.0"]);
     app.quit();
     await run;
   });

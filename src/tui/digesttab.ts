@@ -17,7 +17,7 @@ import { HEADING, MUTED, RESET, modeBadge } from "./design.js";
 import { emptyLine } from "./emptystate.js";
 import type { BoardKey } from "./keys.js";
 import type { LearningStore } from "./learning.js";
-import { Frame, rule } from "./paint.js";
+import { Frame, rule, sanitizeText } from "./paint.js";
 import { dockerShArgv, type SshRunner } from "./remote.js";
 import { remoteSandboxRoot, resolveLayout } from "./layout.js";
 
@@ -162,7 +162,7 @@ export function renderDigestTab(
   else if (st.contentError !== undefined)
     body.push(emptyLine({ kind: "unreadable", why: `${st.contentError} · r retries` }));
   else if (st.content === undefined) body.push(`${MUTED}loading ${file}…${RESET}`);
-  else for (const line of st.content.split("\n")) body.push(styleDigestLine(line));
+  else for (const line of sanitizeText(st.content).split("\n")) body.push(styleDigestLine(line));
 
   const from = Math.max(0, Math.min(st.scroll, body.length - bodyRows));
   for (let r = 0; r < bodyRows; r++) {
