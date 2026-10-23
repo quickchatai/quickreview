@@ -212,7 +212,7 @@ export function startupLines(steps: readonly StartupStep[], nowMs: number): stri
       case "running": {
         const elapsed = s.startedAt === undefined ? 0 : Math.max(0, nowMs - s.startedAt);
         if (elapsed >= STALL_AFTER_MS) {
-          return `${WARN}⚠ ${s.label} · ${secs(elapsed)} — still running, no result yet${RESET}`;
+          return `${WARN}⚠ ${s.label} · ${secs(elapsed)} — still running, no result yet${RESET}${MUTED}${detail}${RESET}`;
         }
         return `${ACCENT}⟳ ${s.label} · ${secs(elapsed)}${RESET}${MUTED}${detail}${RESET}`;
       }

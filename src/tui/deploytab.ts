@@ -41,6 +41,7 @@ import {
 import { Frame, displayWidth, rule, stripAnsi, truncate } from "./paint.js";
 import { dockerShArgv, transportOf, type RemoteResult, type SshRunner } from "./remote.js";
 import { CommandDrainSender, type DeployDrainSender } from "./deploy-drain.js";
+import { isFreshHealth } from "./poll.js";
 import { chainOnPoll } from "./poll-hooks.js";
 import {
   MemoryDeployCeremonyStore,
@@ -921,8 +922,7 @@ export function installDeployHooks(
     const health = theApp.view.health;
     return (
       snap !== undefined &&
-      health.kind !== "stale" &&
-      health.kind !== "unreachable" &&
+      isFreshHealth(health) &&
       snap.draining === true &&
       snap.running_rounds === 0
     );
@@ -1025,8 +1025,7 @@ export function installDeployHooks(
       if (
         saved &&
         snap &&
-        health.kind !== "stale" &&
-        health.kind !== "unreachable" &&
+        isFreshHealth(health) &&
         snap.draining !== true
       ) {
         const liftGenerationOk =
@@ -1045,8 +1044,7 @@ export function installDeployHooks(
       st.deployPhase === "awaiting-lift" &&
       snap &&
       postDeployGeneration &&
-      health.kind !== "stale" &&
-      health.kind !== "unreachable" &&
+      isFreshHealth(health) &&
       snap.draining !== true
     ) {
       st.deployPhase = "done";
@@ -1057,7 +1055,7 @@ export function installDeployHooks(
       return;
     }
     if (st.deployPhase !== "waiting-rounds") return;
-    if (!snap || health.kind === "stale" || health.kind === "unreachable") {
+    if (!snap || !isFreshHealth(health)) {
       const note = "waiting for a fresh daemon status before deploy";
       if (st.drainStatusNote !== note) line(run, `… ${note}`);
       st.drainStatusNote = note;

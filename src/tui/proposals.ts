@@ -53,7 +53,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import type { TuiConfig } from "../config.js";
-import { shellQuote } from "./remote.js";
+import { dockerShArgv, shellQuote } from "./remote.js";
 import { TRAILER_RATIFIED } from "./changelog-store.js";
 import { remoteSandboxRoot } from "./layout.js";
 
@@ -128,18 +128,6 @@ export function removeRubricDir(repoRoot: string, slug: string): void {
 
 // ---- improvement PRs/issues: a remote gh read ------------------------------
 
-function dockerSh(cfg: TuiConfig, script: string): string[] {
-  return [
-    ...(cfg.sudo_docker ? ["sudo"] : []),
-    "docker",
-    "exec",
-    cfg.container,
-    "sh",
-    "-c",
-    script,
-  ];
-}
-
 /** What the in-container script prints in place of a list whose gh call
  * failed — deliberately not JSON, so it can never parse as an empty list. */
 export const IMPROVEMENTS_FAILED = "QCR_GH_READ_FAILED";
@@ -159,7 +147,7 @@ export function improvementsArgv(
 ): string[] {
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error(`bad repo '${repo}'`);
   const gh = `GH_TOKEN="$(bash scripts/mint-token.sh)"`;
-  return dockerSh(
+  return dockerShArgv(
     cfg,
     `cd ${shellQuote(remoteSandboxRoot(cfg))} && ` +
       `{ ${gh} gh pr list -R '${repo}' --state all --limit 30 --search 'head:bot/improve' --json number,title,state 2>/dev/null || echo '${IMPROVEMENTS_FAILED}'; } && echo '---' && ` +

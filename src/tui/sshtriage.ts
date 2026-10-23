@@ -25,7 +25,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import type { TuiConfig } from "../config.js";
 import { masterCheckArgv } from "./connect.js";
-import { transportOf } from "./remote.js";
+import { shellQuote, transportOf } from "./remote.js";
 
 export type ConnectionClass =
   /** The VM answers — master alive, or a fresh connection succeeded. */
@@ -171,8 +171,10 @@ export function agentHoldsIdentity(p: ConnectionProbes): "yes" | "no" | "unknown
 /** The `ssh-add` line for this host's key, or the generic one when ssh named
  * no identity file at all. An unreachable agent needs starting first. */
 export function sshAddRemedy(p: ConnectionProbes): string {
-  const key = p.identity ?? p.identityFiles[0] ?? "~/.ssh/id_ed25519";
-  const add = `ssh-add ${key}`;
+  const named = p.identity ?? p.identityFiles[0];
+  // A resolved path is quoted so a space in it stays one argument; the generic
+  // fallback is left bare so the shell expands its `~`.
+  const add = `ssh-add ${named === undefined ? "~/.ssh/id_ed25519" : shellQuote(named)}`;
   return p.agent.reachable ? add : `eval "$(ssh-agent -s)" && ${add}`;
 }
 
@@ -337,7 +339,8 @@ export const realProbeRunner: ProbeRunner = (cmd, argv, timeoutMs) =>
  * ssh and on a config read some other way. `%C` (a hash of the connection
  * parameters) is NOT reproducible here, and returning "" for it would demote a
  * wedged master to `unknown` (`controlSocketExists` would go false). So it
- * falls back to the socket's DIRECTORY: if that exists we still
+ * leaves the unresolved token in the path, and `controlSocketPresent` falls
+ * back to the socket's DIRECTORY: if that exists we still
  * know multiplexing is configured, `mux` stderr still classifies, and the
  * remedy (`ssh -O exit <host>`, which needs no path) is unchanged.
  */
