@@ -694,6 +694,14 @@ export class PostingOutbox {
       if (receipt?.posting_key === j.posting_key && receipt.status === "confirmed") {
         j.status = "done";
         writePostingFile(path, j);
+        // A deferred delivery interrupted between its receipt and its ledger
+        // write still has a pending retry row; the receipt is the authority.
+        this.deps.deferred?.ledger.settlePostingRetry(
+          j.posting_key,
+          "confirmed",
+          null,
+          this.now().toISOString(),
+        );
         return;
       }
       if (receipt?.status === "skipped" || receipt?.status === "dryrun") {

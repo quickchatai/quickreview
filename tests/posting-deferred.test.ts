@@ -191,6 +191,36 @@ describe("deferred review posting", () => {
     });
   });
 
+  it("a confirmed receipt left beside a pending job and retry row settles both after a restart", async () => {
+    store.adoptPostingRetry({
+      posting_key: key,
+      pr: 12,
+      round_no: 1,
+      head_sha: head,
+      first_failed_at: new Date(t0).toISOString(),
+      now: new Date(t0).toISOString(),
+    });
+    // A crash after the delivery's receipt was written, before its job and ledger row were.
+    const receiptFile = postingReceiptPath(dir, 12, 1);
+    const receipt = JSON.parse(readFileSync(receiptFile, "utf8"));
+    writeFileSync(
+      receiptFile,
+      JSON.stringify({
+        ...receipt,
+        status: "confirmed",
+        confirmed_at: new Date(t0 + 4 * MIN).toISOString(),
+        gh_review_id: 90,
+        gh_commit_id: head,
+        gh_state: "CHANGES_REQUESTED",
+      }),
+    );
+    at(5);
+    await worker().tick();
+    expect(jobFile().status).toBe("done");
+    expect(store.postingRetry(key)?.status).toBe("confirmed");
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
   it("retries 3 times inside the hour, then exhausts loud", async () => {
     deliver.mockRejectedValue(unavailable());
     for (const [min, attempts] of [

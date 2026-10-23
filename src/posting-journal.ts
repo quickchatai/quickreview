@@ -155,7 +155,15 @@ export class PostingJournal {
     try {
       mkdirSync(reclaim);
     } catch {
-      return false;
+      // The reclamation section is synchronous and short; a mutex older than
+      // the quiet window was stranded by a dead reclaimer.
+      try {
+        if (this.now().getTime() - statSync(reclaim).mtimeMs < LOCK_QUIET_MS) return false;
+        rmSync(reclaim, { recursive: true });
+        mkdirSync(reclaim);
+      } catch {
+        return false;
+      }
     }
     try {
       const recorded = existsSync(join(lock, "pid"))
@@ -341,8 +349,9 @@ export class PostingJournal {
         gh_review_id: r.id,
         gh_commit_id: r.commit_id.toLowerCase(),
         gh_state: state,
-        // An APPROVE GitHub holds as a COMMENT was softened by guard 4 on the
-        // gate: the same withheld-approval evidence the outbox's delivery records.
+        // An APPROVE that GitHub holds as a COMMENT was softened by guard 4 on
+        // the gate after the CI preflight: the withheld-approval shape, which
+        // the outbox's confirmation stamps the same way.
         ...(o.intended === "APPROVE" && actual === "COMMENT"
           ? { delivered_by: "daemon_retry" as const }
           : {}),
