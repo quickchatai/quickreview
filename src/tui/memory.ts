@@ -416,9 +416,7 @@ export class TuiMemoryStore implements HealthyMemoryStore {
     const out: MemoryEntry[] = [];
     await Promise.all(
       this.ns.map(async (n) => {
-        if (n.busy === 0) n.gaps = [];
-        this.noteMissingKey(n, "ls");
-        n.busy += 1;
+        this.enter(n, "ls");
         let entries: MemoryEntry[] = [];
         try {
           entries = await n.store.read();
@@ -496,9 +494,7 @@ export class TuiMemoryStore implements HealthyMemoryStore {
   }
 
   private async applyIn(n: Namespace, op: MemoryOp): Promise<MemoryWriteResult> {
-    if (n.busy === 0) n.gaps = [];
-    this.noteMissingKey(n, op.op);
-    n.busy += 1;
+    this.enter(n, op.op);
     let res: MemoryWriteResult;
     try {
       res = await n.store.apply(op);
@@ -512,6 +508,14 @@ export class TuiMemoryStore implements HealthyMemoryStore {
       n.health = { user: n.user, ok: false, reason: this.describe(n.user, fatal), unreadable: 0 };
     }
     return res;
+  }
+
+  /** Start one operation on a namespace: the first concurrent one clears the
+   * previous gaps, a keyless namespace is noted, and the busy count rises. */
+  private enter(n: Namespace, op: string): void {
+    if (n.busy === 0) n.gaps = [];
+    this.noteMissingKey(n, op);
+    n.busy += 1;
   }
 
   /** A keyless namespace is down on every sweep, not only the one that
