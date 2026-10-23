@@ -102,19 +102,47 @@ fi
 
 # ---- single flight ----------------------------------------------------------
 
+# The lock dir holds its owner's pid. A waiter takes a lock over only when that
+# pid is gone, or the lock is older than the longest a mint can run (four
+# requests at --max-time 60 plus connects): a live minter is never robbed.
+LOCK_TICKS="${QCR_MINT_LOCK_TICKS:-120}"   # 0.5s each: ~60s waiting on a peer
+LOCK_STALE_S="${QCR_MINT_LOCK_STALE_S:-300}"
+
+lock_is_stale() {
+  local pid born age
+  pid="$(cat "$LOCK/pid" 2>/dev/null || true)"
+  if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then return 0; fi
+  born="$(python3 -c 'import os,sys; print(int(os.stat(sys.argv[1]).st_mtime))' "$LOCK" 2>/dev/null || now_epoch)"
+  age=$(( $(now_epoch) - born ))
+  (( age > LOCK_STALE_S ))
+}
+
+# Remove the lock only while it is still ours, so a holder whose lock was taken
+# over never deletes its successor's.
+release_lock() {
+  if [[ "$(cat "$LOCK/pid" 2>/dev/null || true)" == "$$" ]]; then
+    rm -f "$LOCK/pid"
+    rmdir "$LOCK" 2>/dev/null || true
+  fi
+}
+
 acquired=0
-for _ in $(seq 1 120); do            # up to ~60s waiting on a peer's mint
+for _ in $(seq 1 "$LOCK_TICKS"); do
   if mkdir "$LOCK" 2>/dev/null; then acquired=1; break; fi
   if [[ "$FORCE" != "1" ]] && token="$(cached_token)"; then
     printf '%s\n' "$token"; exit 0
   fi
+  if lock_is_stale; then
+    rm -rf "$LOCK"
+    continue
+  fi
   sleep 0.5
 done
 if [[ "$acquired" != "1" ]]; then
-  rmdir "$LOCK" 2>/dev/null || true   # assume a stale lock and take over
   mkdir "$LOCK" 2>/dev/null || die "could not acquire mint lock $LOCK"
 fi
-trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
+printf '%s\n' "$$" >"$LOCK/pid"
+trap release_lock EXIT
 
 # Someone may have minted while we waited for the lock.
 if [[ "$FORCE" != "1" ]] && token="$(cached_token)"; then
@@ -138,7 +166,7 @@ app_jwt() {
 }
 
 RESP="$(mktemp)"
-trap 'rm -f "$RESP"; rmdir "$LOCK" 2>/dev/null || true' EXIT
+trap 'rm -f "$RESP"; release_lock' EXIT
 
 # api <method> <path> <jwt> — body lands in $RESP, HTTP status on stdout.
 api() {

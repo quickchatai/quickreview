@@ -476,3 +476,142 @@ describe("qcr_locate_secrets / qcr_locate_keys_file ≡ src/install.ts", () => {
     expect(r.stderr).toContain(`unreadable app key: ${join(secretsHome(env), "app.pem")}`);
   });
 });
+
+describe("qcr_profiles_merged", () => {
+  const put = (p: string, text: string): void => {
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, text);
+  };
+
+  it("delivers the config home's profiles beside those next to an external QCR_CONFIG, home first", () => {
+    const home = join(dir, "home");
+    const xdg = join(dir, "xdg");
+    const env: InstallEnv = { HOME: home, XDG_CONFIG_HOME: xdg, QCR_CONFIG: join(dir, "ext", "c.toml") };
+    put(join(xdg, "qcr", "default", "profiles", "only-home", "profile.toml"), "home\n");
+    put(join(xdg, "qcr", "default", "profiles", "both", "profile.toml"), "home\n");
+    put(join(dir, "ext", "profiles", "both", "profile.toml"), "beside\n");
+    put(join(dir, "ext", "profiles", "only-beside", "profile.toml"), "beside\n");
+    put(join(root, "profiles", "default", "profile.toml"), "checkout\n");
+    const dest = join(dir, "out");
+    const r = spawnSync("bash", ["-c", '. "$1"; qcr_profiles_merged "$2" "$3"', "l", locatorSh, root, dest], {
+      encoding: "utf8",
+      cwd: dir,
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...env } as NodeJS.ProcessEnv,
+    });
+    expect(r.status, r.stderr).toBe(0);
+    const read = (n: string): string => readFileSync(join(dest, n, "profile.toml"), "utf8");
+    expect(read("only-home")).toBe("home\n");
+    expect(read("both")).toBe("home\n");
+    expect(read("only-beside")).toBe("beside\n");
+    expect(existsSync(join(dest, "default"))).toBe(false);
+  });
+});
+
+describe("mint-token lock", () => {
+  function run(lockSetup: (lock: string) => void): { status: number | null; stderr: string; lock: string } {
+    const env: InstallEnv = { HOME: join(dir, "home"), XDG_CONFIG_HOME: join(dir, "xdg") };
+    const secrets = secretsHome(env);
+    mkdirSync(secrets, { recursive: true });
+    writeFileSync(join(secrets, "app_id"), "7\n");
+    writeFileSync(join(secrets, "app.pem"), "not a key\n");
+    const cfg = join(dir, "c.toml");
+    writeFileSync(cfg, '[github]\nsecrets_dir = ""\n');
+    const runtime = join(dir, "run");
+    mkdirSync(runtime);
+    const lock = join(runtime, "quickreview-token-7.json.lock");
+    lockSetup(lock);
+    const r = spawnSync("bash", [join(repo, "scripts", "mint-token.sh")], {
+      encoding: "utf8",
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        ...env,
+        QCR_CONFIG: cfg,
+        XDG_RUNTIME_DIR: runtime,
+        QCR_MINT_LOCK_TICKS: "2",
+        GITHUB_API: "http://127.0.0.1:9",
+      } as NodeJS.ProcessEnv,
+    });
+    return { status: r.status, stderr: r.stderr, lock };
+  }
+
+  it("never takes over a live minter's lock", () => {
+    const r = run((lock) => {
+      mkdirSync(lock);
+      writeFileSync(join(lock, "pid"), `${process.pid}\n`);
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("could not acquire mint lock");
+    expect(readFileSync(join(r.lock, "pid"), "utf8").trim()).toBe(String(process.pid));
+  });
+
+  it("never takes over a lock that is still being claimed", () => {
+    const r = run((lock) => mkdirSync(lock));
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("could not acquire mint lock");
+  });
+
+  it("takes over a lock whose minter is gone", () => {
+    const dead = spawnSync("bash", ["-c", "echo $$"], { encoding: "utf8" }).stdout.trim();
+    const r = run((lock) => {
+      mkdirSync(lock);
+      writeFileSync(join(lock, "pid"), `${dead}\n`);
+    });
+    expect(r.stderr).not.toContain("could not acquire mint lock");
+    expect(existsSync(r.lock)).toBe(false);
+  });
+});
+
+describe("operator box scripts", () => {
+  const provision = join(repo, "scripts", ["oper", "ator-box-provision.sh"].join(""));
+  const setup = join(repo, "scripts", OPERATOR_BOX_SETUP);
+  const present = existsSync(provision) && existsSync(setup);
+  // A function's text, lifted out of a script that cannot be sourced whole.
+  const lift = (file: string, fn: string): string =>
+    spawnSync("sed", ["-n", `/^${fn}() {/,/^}/p`, file], { encoding: "utf8" }).stdout;
+
+  it.skipIf(!present)("a rotated box key replaces the retired one and keeps other identities", () => {
+    const fn = lift(setup, "ssh_keys_with");
+    expect(fn).not.toBe("");
+    const cur = "alice:ssh-ed25519 AAAA-alice a\nboxuser:ssh-ed25519 AAAA-old box\nboxuser-x:ssh-ed25519 AAAA-x x";
+    const r = spawnSync("bash", ["-c", `${fn}\nssh_keys_with "$1" boxuser "ssh-ed25519 AAAA-new box"`, "l", cur], {
+      encoding: "utf8",
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toBe(
+      "alice:ssh-ed25519 AAAA-alice a\nboxuser-x:ssh-ed25519 AAAA-x x\nboxuser:ssh-ed25519 AAAA-new box\n",
+    );
+  });
+
+  it.skipIf(!present)("a login hook is rewritten for a new root, and left alone when current", () => {
+    const fn = lift(provision, "install_hook");
+    expect(fn).not.toBe("");
+    const home = join(dir, "uhome");
+    mkdirSync(home);
+    const zp = join(home, ".zprofile");
+    writeFileSync(zp, "export A=1\n");
+    const script = `
+sudo() { if [[ $1 == -u ]]; then shift 2; fi; "$@"; }
+chown() { :; }
+ok() { echo "ok $*"; }
+MARK_OPEN="# >>> M >>>"; MARK_CLOSE="# <<< M <<<"
+${fn}
+HOOK="$MARK_OPEN
+run /old/bin
+$MARK_CLOSE"
+install_hook u "$1"
+HOOK="$MARK_OPEN
+run /new/bin
+$MARK_CLOSE"
+install_hook u "$1"
+install_hook u "$1"
+`;
+    const r = spawnSync("bash", ["-c", script, "l", home], { encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.split("\n").filter(Boolean)).toEqual([
+      "ok u: hook installed",
+      "ok u: hook updated",
+      "ok u: hook already present",
+    ]);
+    expect(readFileSync(zp, "utf8")).toBe("export A=1\n# >>> M >>>\nrun /new/bin\n# <<< M <<<\n");
+  });
+});
