@@ -260,8 +260,9 @@ services:
   # beside this file) the first time a profile selects one. None of them
   # publishes a port -- the tunnel dials OUT and reaches the daemon over the
   # compose network, so nothing new is exposed on the host. OpenViking's port
-  # (1933) stays unpublished and unreachable from any of them; the sidecars
-  # mount one directory and, at most, the secrets dir.
+  # (1933) stays unpublished on the host; it is reachable from the sidecars on
+  # the shared compose network, where its key is the access control. The
+  # sidecars mount one directory and, at most, the secrets dir.
 
   # The default laptop shape: no account, no signup, rotating hostname.
   # cloudflared prints the assigned *.trycloudflare.com name; the wrapper
