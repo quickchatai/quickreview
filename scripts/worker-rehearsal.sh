@@ -672,7 +672,7 @@ BUSY_WORKERS="$(cat "$H"/state/workers/*.log "$H"/state/workers/*.pi-stderr.log 
 BUSY_EVENTS="$(sql "select count(*) from events where payload like '%SQLITE_BUSY%' or payload like '%database is locked%'")"
 WORKERS_RUN="$(events worker_spawned)"
 if [[ "$BUSY_DAEMON$BUSY_WORKERS$BUSY_EVENTS" == "000" ]]; then
-  check BUSY-1 pass "concurrent daemon and worker activity leaves no SQLITE_BUSY" "0 hits in the daemon log, $(ls "$H"/state/workers/*.log | wc -l) worker logs and the events table, over $WORKERS_RUN worker spawns, 3 rounds, 2 answers, a takeover, a debug round and a restart"
+  check BUSY-1 pass "concurrent daemon and worker activity leaves no SQLITE_BUSY" "0 hits in the daemon log, $(ls "$H"/state/workers/*.log | wc -l) worker logs and the events table, over $WORKERS_RUN worker spawns; of ANSWER-1, TAKEOVER-1, DEBUG-1 and RESTART-1 this run executed: $(for s in ANSWER-1 TAKEOVER-1 DEBUG-1 RESTART-1; do want "$s" && printf '%s ' "$s"; done; true)"
 else
   check BUSY-1 fail "no SQLITE_BUSY" "daemon log $BUSY_DAEMON, worker logs $BUSY_WORKERS, events $BUSY_EVENTS"
 fi
@@ -766,8 +766,9 @@ fi
 # ---- the report -----------------------------------------------------------------------------------------------------------------------
 cp "$LOGS/stub.jsonl" "$WORK/stub.jsonl" 2>/dev/null
 docker logs "$DAEMON" >"$LOGS/daemon.log" 2>&1
-node "$RH/report.mjs" "$RESULTS" "$FACTS" "$OUT" "$HEAD_SHA" || log "the report failed"
+REPORT_RC=0
+node "$RH/report.mjs" "$RESULTS" "$FACTS" "$OUT" "$HEAD_SHA" || { REPORT_RC=1; log "the report failed"; }
 FAILS="$(grep -c -P '\tfail\t' "$RESULTS")"
 PASSES="$(grep -c -P '\tpass\t' "$RESULTS")"
 log "done: $PASSES passed, $FAILS failed; report $OUT"
-[[ "$FAILS" == 0 ]]
+[[ "$FAILS" == 0 && "$REPORT_RC" == 0 ]]
