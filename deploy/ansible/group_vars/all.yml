@@ -43,8 +43,10 @@ pi_version: "1.3.0"
 # is vendored in the repo, not installed from npm. An npm memory package here
 # would put a second memory engine in the image.
 
-# OpenViking (github.com/volcengine/OpenViking) — the context store the daemon
-# supervises as a second process inside the container, on LOOPBACK 1933.
+# OpenViking (github.com/volcengine/OpenViking) — the context store, run by the
+# memory sidecar container (docker/memory/) beside the daemon's. Its server
+# binds the container network; the local embedder it supervises stays on
+# loopback 1934.
 # Same pin discipline as pi_version: exact versions, never floating,
 # bumping is a deliberate edit and a new release.
 #
@@ -63,7 +65,7 @@ pi_version: "1.3.0"
 # (requires-python >=3.10; 24.04 ships 3.12), llama-cpp-python 0.3.35.
 openviking_version: "0.4.15"
 llama_cpp_python_version: "0.3.35"
-openviking_venv: /opt/openviking/venv
+openviking_venv: /opt/openviking/venv  # a mirror of the memory image's baked OPENVIKING_VENV, not forwarded to the sidecar: changing it here changes nothing at runtime
 openviking_port: 1933                 # never a published port: loopback in the container that runs it
 # WHO RUNS THE SERVER. "remote" (the VM's value) is the memory SIDECAR: a
 # second container beside the daemon's (docker/memory/, the `memory_*` knobs
