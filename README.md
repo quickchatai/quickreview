@@ -224,8 +224,17 @@ Slack concierge, a local companion session, opt-in escalation notes, and the
 ## Quickstart
 
 You need **Docker** with Compose v2 and **a GitHub account that can create an
-App** on the repository to review. No personal access token is used. On
-Windows, run everything inside **WSL2**.
+App** on the repository to review. On Windows, run everything inside **WSL2**.
+
+There is a second route that needs no App: `[github] auth = "user"` runs the
+reviewer on **your own GitHub account**. Use it on one box where `gh` is
+already signed in. It is polling-only, with no webhooks and no tunnel. Every
+review it posts is a COMMENT that states its verdict, because an automated
+verdict must never count as your approval and GitHub refuses either on your own
+PR. Your token reaches the daemon only as the 0600 file
+`<secrets dir>/github_token`, which `qcr github-token sync` refreshes from
+`gh`. It never comes from the environment or a command line. On the App route
+no personal access token is used.
 
 ```sh
 # once: install `qcr`, the host wrapper the image writes (docs/host-wrapper.md);
