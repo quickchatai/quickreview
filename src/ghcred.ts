@@ -86,8 +86,9 @@ export interface StagedHandoff {
 
 /**
  * The caller's half: write `token` to a 0600 file in a fresh 0700 dir. On
- * Linux the dir is under $XDG_RUNTIME_DIR (a tmpfs); elsewhere (macOS) it
- * comes from mkdtemp under $TMPDIR. The token is never put in env or argv.
+ * Linux the dir is under an absolute $XDG_RUNTIME_DIR (normally a tmpfs);
+ * without one, and elsewhere (macOS), it comes from mkdtemp under the OS
+ * temp dir ($TMPDIR), which may be disk-backed. The token is never put in env or argv.
  */
 export function stageHandoffToken(
   token: string,
