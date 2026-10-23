@@ -407,6 +407,30 @@ function fingerprintOf(e: Env): string {
   return m![1]!;
 }
 
+/** statusCmd's fingerprint, memoised: it is a pure function of the scratch
+ * inputs the provision plan renders from (group_vars, the inventory, the
+ * config in the home and in the checkout, the vendored upstream pin), and
+ * every release() case asked for it with an extra deploy.sh spawn. A case that
+ * changes any of them changes the key and recomputes. Tests that ASSERT on the
+ * fingerprint call fingerprintOf directly and never see the cache. */
+const fingerprintCache = new Map<string, string>();
+function cachedFingerprintOf(e: Env): string {
+  const read = (f: string): string => (existsSync(f) ? readFileSync(f, "utf8") : "\0absent");
+  const key = JSON.stringify([
+    read(join(e.ansible, "group_vars", "all.yml")),
+    read(join(e.ansible, "inventory.ini")),
+    read(join(e.home, "config.toml")),
+    read(join(e.sandbox, "config.toml")),
+    read(join(e.sandbox, "extensions", "vendor", "openviking-pi", "upstream.json")),
+  ]);
+  let fp = fingerprintCache.get(key);
+  if (fp === undefined) {
+    fp = fingerprintOf(e);
+    fingerprintCache.set(key, fp);
+  }
+  return fp;
+}
+
 interface VmState {
   layout?: string;
   draining?: boolean | null;
@@ -421,7 +445,7 @@ function statusCmd(e: Env, s: VmState = {}): string {
   const rounds = s.rounds === undefined ? 0 : s.rounds;
   const body =
     `{"layout":${j(s.layout ?? "release")},"daemon":null,"memory":null,` +
-    `"runspec":{"version":"1","fingerprint":${j(s.fingerprint ?? fingerprintOf(e))}},` +
+    `"runspec":{"version":"1","fingerprint":${j(s.fingerprint ?? cachedFingerprintOf(e))}},` +
     `"drain":{"draining":${draining === null ? "null" : draining},"running_rounds":${rounds === null ? "null" : rounds}},"last_run":null}`;
   return `printf '%s' '${body}'`;
 }
