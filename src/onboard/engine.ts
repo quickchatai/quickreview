@@ -279,7 +279,7 @@ export class OnboardingEngine {
     const loaded = readChecklist(adapters.paths.stateDir);
     if (loaded === null && existsSync(checklistPath(adapters.paths.stateDir))) {
       adapters.log?.(
-        "onboarding: checklist file unreadable — starting fresh (resume re-verifies against reality anyway)",
+        "onboarding: checklist file unreadable — starting fresh (recorded choices and step progress were reset)",
       );
     }
     this.checklist = loaded ?? this.fresh();
