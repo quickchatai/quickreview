@@ -122,4 +122,21 @@ describe("parseUnifiedDiff", () => {
     expect(parseUnifiedDiff("hello\nworld\n")).toEqual({ files: [], lines: 0 });
     expect(parseUnifiedDiff("")).toEqual({ files: [], lines: 0 });
   });
+
+  it("decodes every git escape and whole code points in a quoted header", () => {
+    const diff = [
+      '--- "a/a\\rb\\a\\b\\v\\f.ts"',
+      '+++ "b/a\\rb\\a\\b\\v\\f\\t\u{1F600}.ts"',
+      "@@ -1 +1 @@",
+      "-x",
+      "+y",
+      "",
+    ].join("\n");
+    expect(parseUnifiedDiff(diff).files[0]!.filename).toBe("a\rb\x07\b\v\f\t\u{1F600}.ts");
+  });
+
+  it("keeps trailing spaces of a filename before git's separator tab", () => {
+    const diff = ["--- a/report \t", "+++ b/report \t", "@@ -1 +1 @@", "-x", "+y", ""].join("\n");
+    expect(parseUnifiedDiff(diff).files[0]!.filename).toBe("report ");
+  });
 });
