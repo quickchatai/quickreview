@@ -408,6 +408,30 @@ describe("[cache groups] the warm-up", () => {
     await waitFor(() => ledger().some((l) => l.kind === "warmup"), 4000, "the warm-up's line");
   });
 
+  it("a lens request whose payload the pack-first rewrite cannot match is warned about once, naming the lens", async () => {
+    const seen: Seen[] = [];
+    const warm = codexLike(seen, new FakeTransport());
+    const odd: typeof warm = async (c, o, st, model) => {
+      const last = c.messages[c.messages.length - 1];
+      const text = JSON.stringify(last?.content ?? "");
+      if (text.includes(WARMUP_REPLY_TASK)) return warm(c, o, st, model);
+      await o?.onPayload?.({ messages: [] }, model as never);
+      await o?.onPayload?.({ messages: [] }, model as never);
+      return fauxAssistantMessage("ok");
+    };
+    respondWith(2, odd);
+    const warnings: string[] = [];
+    const runner = createLensRunner(
+      config({
+        cache: { size: 2, staggerMs: 0, pack: PACK, warmupWaitMs: 5_000 },
+        warn: (m) => warnings.push(m),
+      }),
+    );
+    expect((await runner.run({ agent: "pass-a", task: "go" })).result.exitCode).toBe(0);
+    const hits = warnings.filter((w) => /pass-a.*request shape not as expected/.test(w));
+    expect(hits).toHaveLength(1);
+  });
+
   it("a warm-up that fails costs the group nothing: its passes run, the failure is on the ledger", async () => {
     const seen: Seen[] = [];
     rig.faux.setResponses([
