@@ -385,6 +385,13 @@ describe("[P8.20a] the rehearsal's scripts and report", () => {
     ]);
   });
 
+  it("the cutover driver selects the legacy build by the same override as the database builder", () => {
+    const driver = readFileSync(join(ROOT, "scripts", "cutover-rehearsal.sh"), "utf8");
+    const builder = readFileSync(join(RH, "legacy-db.sh"), "utf8");
+    expect(builder).toContain("QCR_REHEARSAL_LEGACY_COMMIT");
+    expect(driver).toMatch(/^LEGACY_COMMIT="\$\{QCR_REHEARSAL_LEGACY_COMMIT:-8169df6f\}"$/m);
+  });
+
   it("report.mjs renders the results table and counts", () => {
     const dir = mkdtempSync(join(tmpdir(), "rh-report-"));
     try {
