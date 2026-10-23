@@ -9,6 +9,14 @@ export function splitTail(tail: string): { value: string; gap: string; comment: 
       if (ch === "\\" && quote.startsWith('"')) i++;
       else if (tail.startsWith(quote, i)) {
         i += quote.length - 1;
+        // A multi-line string may close after up to two extra quote characters.
+        if (quote.length === 3) {
+          let extra = 0;
+          while (extra < 2 && tail[i + 1] === quote[0]) {
+            i++;
+            extra++;
+          }
+        }
         quote = null;
       }
       continue;
