@@ -562,7 +562,7 @@ describe("finalChecks", () => {
     const checks = wiz.finalChecks({ ...good, users: { U0OTHER: "x" } });
     const c = checks.find((x: { label: string }) => x.label.includes("key in [slack.users]"));
     expect(c!.ok).toBe(false);
-    expect(c!.hint).toMatch(/own-PR rights/);
+    expect(c!.hint).toMatch(/identity map/);
   });
 
   it("fails on an empty channel, a bad kind, or a missing token file", () => {

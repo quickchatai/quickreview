@@ -43,12 +43,15 @@ globalThis.fetch = async (url) => {
 };
 `;
 
-function runWizard(stdin: string): Promise<{ code: number; out: string }> {
+function runWizard(
+  stdin: string,
+  botToken = "xoxb-1-2-stub",
+): Promise<{ code: number; out: string }> {
   const config = join(dir, "config.toml");
   copyFileSync(join(root, "tests/fixtures/config.toml"), config);
   const secrets = join(dir, "secrets");
-  mkdirSync(secrets);
-  writeFileSync(join(secrets, "slack_bot_token"), "xoxb-1-2-stub");
+  mkdirSync(secrets, { recursive: true });
+  writeFileSync(join(secrets, "slack_bot_token"), botToken);
   writeFileSync(join(secrets, "slack_app_token"), "xapp-1-A-2-stub");
   const preload = join(dir, "fetch-stub.mjs");
   writeFileSync(preload, STUB);
@@ -81,5 +84,12 @@ describe("collect-slack-secrets: input that runs out", () => {
     expect(out).toContain("Step 8");
     expect(out).toContain("./scripts/deploy.sh release <version>");
     expect(out).not.toContain("deploy.sh rebuild");
+  });
+
+  it("does not keep a whitespace-only token file as present", async () => {
+    const { out } = await runWizard("n\n\nC0ABCDEFG\n", "  \n");
+    expect(out).not.toContain("slack_bot_token already present");
+    const kept = await runWizard("n\n\nC0ABCDEFG\n");
+    expect(kept.out).toContain("slack_bot_token already present");
   });
 });

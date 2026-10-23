@@ -289,7 +289,8 @@ export function enableSlack(text) {
 
 /**
  * Surgically patch config.toml: only `channel`, `channel_kind`,
- * `legacy_owner_slack_id` and the [slack.users] table body change. Every comment,
+ * `legacy_owner_slack_id`, the [slack.users] table body and a nonempty
+ * `[owner] slack_id` (kept equal to `legacy_owner_slack_id`) change. Every comment,
  * every other key, and the whole [slack.policy] / [slack.policy.causes] block
  * survive byte-identical. `enabled` is deliberately NOT touched here.
  * Idempotent: patch(patch(t)) === patch(t).
@@ -465,7 +466,7 @@ export function finalChecks(state) {
     {
       ok: id !== "" && Object.prototype.hasOwnProperty.call(users, id),
       label: "legacy_owner_slack_id is a key in [slack.users]",
-      hint: "boot fails otherwise — it is the only source of own-PR rights",
+      hint: "boot fails otherwise — the owner's id must be in the identity map",
     },
     {
       ok: state.owner_id_conflict !== true,
@@ -691,7 +692,7 @@ async function main() {
 
   const filePresent = (p) => {
     try {
-      return statSync(p).size > 0;
+      return readFileSync(p, "utf8").trim() !== "";
     } catch {
       return false;
     }
@@ -984,8 +985,8 @@ async function main() {
 
   title("Step 5 — the identity map ([slack.users])");
   para("[slack.users] maps Slack member id → GitHub login. It is the ONLY source of");
-  para("own-PR rights: someone listed here can say “my PR” and be believed. Anyone");
-  para("NOT listed is read-only and must name a PR by number.");
+  para("identity: someone listed here is known by their GitHub login; the owner's id");
+  para("must be a key. Slack is outbound-only today — inbound messages are not answered.");
   para("legacy_owner_slack_id is the single tier-M identity and MUST also be a key in the");
   para("map — the daemon refuses to boot otherwise.");
 
