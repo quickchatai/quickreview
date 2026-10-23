@@ -1059,7 +1059,13 @@ function viewerHeaderTail(
   if (viewer.round === undefined) return `${FG.dim} · no round log yet${RESET}`;
   const round = `r${viewer.round}${viewer.rounds > 1 ? ` (${viewer.roundIndex}/${viewer.rounds})` : ""}${viewer.atLatest ? "" : " · past"}`;
   const stream = `${viewer.stream}${viewer.streams > 1 ? ` (${viewer.streamIndex}/${viewer.streams})` : ""}`;
-  const state = viewer.live === true ? "running" : viewer.live === false ? "settled" : "";
+  const state = pane.stale
+    ? "stale — refresh failing"
+    : viewer.live === true
+      ? "running"
+      : viewer.live === false
+        ? "settled"
+        : "";
   const follow =
     pane.offset > 0
       ? `${FG.accent} · ↑ ${pane.offset} rows back${RESET}${FG.dim} · End follows${RESET}`
