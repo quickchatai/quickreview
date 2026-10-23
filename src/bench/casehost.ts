@@ -223,8 +223,16 @@ export async function reviewCaseHosted(
     ...pool,
     timeoutMs: wall,
   });
-  if (existsSync(summaryFile)) return JSON.parse(readFileSync(summaryFile, "utf8")) as CaseSummary;
-  const why = describeHostEnd(end, wall);
+  let unreadable = false;
+  if (existsSync(summaryFile)) {
+    try {
+      return JSON.parse(readFileSync(summaryFile, "utf8")) as CaseSummary;
+    } catch {
+      // A host that died mid-write leaves a torn file: the same failure as no summary.
+      unreadable = true;
+    }
+  }
+  const why = `${describeHostEnd(end, wall)}${unreadable ? " (it left an unreadable summary)" : ""}`;
   pool.log(`review: ${c.instance_id} FAILED — ${why}`);
   // What the dead host left on the wt volume.
   const safe = safeId(c.instance_id);
