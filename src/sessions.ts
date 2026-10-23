@@ -38,6 +38,7 @@ import {
   type OvcliWriteResult,
 } from "./memory/ovsession.js";
 import { waitForSessionBridgeReady, writeSessionBridgeState } from "./session-bridge.js";
+import { messagePayload } from "./session-command-payload.js";
 import { piCliPath } from "./picli.js";
 import { Tmux } from "./tmux.js";
 import type { ExecFn } from "./tmux.js";
@@ -127,7 +128,7 @@ export function sessionGitConfigPins(piHome: string): Record<string, string> {
 }
 
 export function isSandboxSession(name: string): boolean {
-  return /^pr-\d+$/.test(name);
+  return prOfSession(name) !== undefined;
 }
 
 export interface PiCommandSpec {
@@ -187,7 +188,8 @@ export function buildPiCommand(spec: PiCommandSpec): string[] {
 
 /** The lifecycle's host for a manager that hosts no PR session. The lifecycle
  * is built for the paths, the archive record and the worktree sweep; a birth,
- * kill or fence through it is a bug, so each of those throws. */
+ * kill or fence through it is a bug. Only spawn throws; the kill, fence and
+ * reuse operations are inert (`false` / `undefined`). */
 const NO_PR_HOST: PrSessionHost = {
   liveSessions: async () => null,
   provenGone: async () => false,
@@ -224,11 +226,6 @@ export interface PiSessionManagerOptions {
    * session as QCR_CONFIG so its scripts read exactly the daemon's config
    * rather than re-locating one. Absent in unit wiring. */
   configPath?: string;
-}
-
-/** The exact newline policy both durable and direct wake files use. */
-function messagePayload(message: string): string {
-  return message.endsWith("\n") ? message : `${message}\n`;
 }
 
 export class PiSessionManager {
@@ -613,10 +610,10 @@ export class PiSessionManager {
 
   // ---- injection ---------------------------------------------------------
 
-  private injectFileName(commandId?: string): string {
+  private injectFileName(): string {
     const ts = this.now().toISOString().replace(/[:.]/g, "-");
     const prefix = `${ts}-${String(this.injectSeq++).padStart(4, "0")}`;
-    return commandId ? `${prefix}--cmd-${commandId}.md` : `${prefix}.md`;
+    return `${prefix}.md`;
   }
 
   private sessionBridgeReadyTimeoutMs(): number {

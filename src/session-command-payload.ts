@@ -1,6 +1,13 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
+/** The newline policy of a wake or command payload: exactly one trailing
+ * newline is guaranteed, an existing one is kept. Both the direct inject files
+ * and the durable worker commands write their bytes through it. */
+export function messagePayload(message: string): string {
+  return message.endsWith("\n") ? message : `${message}\n`;
+}
+
 /** A session command's saved payload, checked against the sha256 recorded at
  * dispatch — or why it cannot be replayed (unreadable, or not the bytes that
  * were dispatched). Every recovery route reads its payload through here and

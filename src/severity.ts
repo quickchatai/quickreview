@@ -28,11 +28,9 @@
 
 import type { Verdict as VerdictType } from "./types.js";
 
-/** Every severity, highest first — the one vocabulary the type and every
- * membership check derive from. */
-export const SEVERITIES = ["P0", "P1", "P2", "P3", "nit"] as const;
+import { SEVERITIES } from "./severityrank.js";
+export { SEVERITIES };
 export type Severity = (typeof SEVERITIES)[number];
-export type PostTag = "blocker" | "question" | "nit";
 
 /** How often the state a finding depends on actually arises. */
 export type Reachability = "routine" | "plausible" | "contrived";
@@ -366,7 +364,8 @@ export function isDeferredFinding(kind?: string | null): boolean {
 // the tag, never the severity behind it. The blocker bar does not move.
 
 /** The three posting tags, bare (no brackets) — `postTag`'s whole range. */
-export const POSTING_TAG_WORDS: readonly PostTag[] = ["blocker", "question", "nit"];
+export const POSTING_TAG_WORDS = ["blocker", "question", "nit"] as const;
+export type PostTag = (typeof POSTING_TAG_WORDS)[number];
 
 /** Every sanctioned tag, bracketed, in one list: the three posting tags plus
  * the marker prefixes. This is THE grammar — a tag not on it is not one. */
