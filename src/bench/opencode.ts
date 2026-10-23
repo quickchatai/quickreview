@@ -446,17 +446,17 @@ export function opencodeUsage(rowsJson: string): BridgeUsage | null {
   return out;
 }
 
+/** OpenCode's XDG data root under a case HOME (the env's XDG_DATA_HOME). */
+export function opencodeXdgDataHome(home: string): string {
+  return join(home, ".local", "share");
+}
+
 /** The environment OpenCode runs with: a fresh HOME and XDG tree per case (its
  * auth.json, sessions DB and caches live there and die with the case), the
  * per-case config, every phone-home off, git without any system/global
  * config. No pi agent dir and no token in the environment: on the bridge the
  * credential stays in the bridge; on the native provider it is the per-case
  * auth.json under that HOME (opencodeAuthFrom). */
-/** OpenCode's XDG data root under a case HOME (the env's XDG_DATA_HOME). */
-export function opencodeXdgDataHome(home: string): string {
-  return join(home, ".local", "share");
-}
-
 export function opencodeEnv(o: {
   path: string;
   home: string;
