@@ -293,6 +293,8 @@ export interface Daemon {
   retryDueReviewFailures(): Promise<number>;
   /** Public deterministic scan seam; the periodic loop calls the same object. */
   scanRoundStages(): Promise<void>;
+  /** Public deterministic verdict-sweep seam; the periodic tick calls the same watcher. */
+  sweepVerdicts(): Promise<unknown>;
   wakeThreadDecisions(): void;
   retryThreadDecision(commentId: number): { ok: boolean; reason?: string; file?: string };
   readonly store: StateStore;
@@ -1120,6 +1122,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     pump,
     retryDueReviewFailures,
     scanRoundStages: () => roundStages.scan(),
+    sweepVerdicts: () => verdicts.sweep(),
     wakeThreadDecisions: () => threadDecisions.requestSweep(),
     retryThreadDecision: (commentId) => threadDecisions.retryFailed(commentId),
 

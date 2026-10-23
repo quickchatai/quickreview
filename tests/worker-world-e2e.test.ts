@@ -317,7 +317,12 @@ describe.skipIf(!hasDist)("[P8.15w] the production daemon, with workers as its o
       await trigger(w);
 
       await vi.waitFor(
-        () => expect(w.store().roundsFor(PR)[0]?.status, "the round settles").toBe("done"),
+        async () => {
+          // The same sweep the daemon's 10 s tick makes: the first fs.watch handling can
+          // beat the posting receipt, and only a sweep retries it.
+          await w.daemon.sweepVerdicts();
+          expect(w.store().roundsFor(PR)[0]?.status, "the round settles").toBe("done");
+        },
         { timeout: 90_000, interval: 100 },
       );
       // The round-end measurement lands a moment after the round is marked done.
@@ -381,7 +386,12 @@ describe.skipIf(!hasDist)("[P8.15w] the production daemon, with workers as its o
       process.kill(-pid, "SIGKILL");
 
       await vi.waitFor(
-        () => expect(w.store().roundsFor(PR)[0]?.status, "the round settles").toBe("done"),
+        async () => {
+          // The same sweep the daemon's 10 s tick makes: the first fs.watch handling can
+          // beat the posting receipt, and only a sweep retries it.
+          await w.daemon.sweepVerdicts();
+          expect(w.store().roundsFor(PR)[0]?.status, "the round settles").toBe("done");
+        },
         { timeout: 90_000, interval: 100 },
       );
       const after = w.store().sessionCommandForRound(PR, 1)!;
