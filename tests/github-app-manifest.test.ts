@@ -25,6 +25,7 @@ import {
   type MutationKind,
 } from "../src/gate.js";
 import { parseConfig } from "../src/config.js";
+import { DEFAULT_WEBHOOK_PATH } from "../src/webhook.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifest = JSON.parse(
@@ -184,8 +185,8 @@ describe("github-app-manifest read surface", () => {
 
 describe("github-app-manifest webhook endpoint", () => {
   it("points at the /webhook path the server actually serves", () => {
-    expect(webhookSrc).toContain('deps.path ?? "/webhook"');
-    expect(new URL(manifest.hook_attributes.url).pathname).toBe("/webhook");
+    expect(webhookSrc).toContain("deps.path ?? DEFAULT_WEBHOOK_PATH");
+    expect(new URL(manifest.hook_attributes.url).pathname).toBe(DEFAULT_WEBHOOK_PATH);
     expect(manifest.hook_attributes.active).toBe(true);
   });
 
