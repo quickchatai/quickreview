@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Run an interactive wizard on a pty and answer its prompts by pattern (P8.20).
 
-  answer.py [--timeout S] --on REGEX=ANSWER ... -- CMD...
+  answer.py [--timeout S] --on REGEX=>ANSWER ... -- CMD...
 
-Each --on rule fires when REGEX appears in what the command printed since the last answer; ANSWER (with
+Each --on rule fires once, when REGEX appears in what the command printed since the last answer; ANSWER (with
 \\n for Enter) is typed. Nothing is typed until a prompt shows, so a child that reads its stdin (ssh, the
 CLI's docker exec) finds nothing to eat. Prints the output (ANSI stripped) and exits with the command's
 status; 124 when it was idle for TIMEOUT seconds.
@@ -54,9 +54,6 @@ while True:
                 used[i] = 1
                 pending = clean[m.end():]
                 break
-        # a rule may fire again on a later prompt: re-arm all once a new answer was given
-        if all(used):
-            used = [0] * len(rules) if False else used
     elif time.time() - last > a.timeout:
         os.kill(pid, signal.SIGKILL)
         status = 124
