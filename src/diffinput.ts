@@ -5,6 +5,7 @@
 // itself starts with `--` is not taken for a file header. Pure: no I/O.
 import { parseHunkHeader } from "./hunkheader.js";
 import type { PrFileEntry } from "./github.js";
+import { unquoteGitPath } from "./unifieddiff.js";
 
 export interface ParsedDiff {
   files: PrFileEntry[];
@@ -15,6 +16,9 @@ export interface ParsedDiff {
 /** A path as git prints it: quoted with C escapes when it has odd bytes. */
 function unquote(p: string): string {
   if (p.length < 2 || !p.startsWith('"') || !p.endsWith('"')) return p;
+  const strict = unquoteGitPath(p);
+  if (strict !== null) return strict;
+  // Malformed escapes (hand-written diffs): decode leniently.
   const bytes: number[] = [];
   const body = p.slice(1, -1);
   for (let i = 0; i < body.length; i++) {
@@ -37,7 +41,7 @@ function unquote(p: string): string {
 
 /** The path on a `---` / `+++` line: its first tab-separated field (git adds a
  * tab after a name with spaces, `diff -u` a timestamp), unquoted. */
-const headerPath = (rest: string): string => unquote(rest.split("\t")[0]!.trimEnd());
+const headerPath = (rest: string): string => unquote(rest.split("\t")[0]!.replace(/\r$/, ""));
 
 const NULL_PATH = "/dev/null";
 
