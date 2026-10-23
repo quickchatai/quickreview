@@ -1229,6 +1229,25 @@ describe("the server route's daemon copy of the reviewer key", () => {
   });
 });
 
+describe("forward command memory container", () => {
+  it("on the server route targets [tui] memory_container, else the daemon container", () => {
+    const flagsFor = (toml: string): string => {
+      writeFileSync(join(dirname(stateDir), "config.toml"), toml);
+      return forwardFlags({
+        adapters: adapters(fakeServer().fetchFn),
+        input: {},
+        choices: { topology: "vm", vm_ssh_alias: "review-box" },
+        data: {},
+        recordChoice: () => {},
+      });
+    };
+    expect(flagsFor('[tui]\ncontainer = "my-reviewer"\nmemory_container = "my-memory"\n')).toContain(
+      "--container my-memory",
+    );
+    expect(flagsFor('[tui]\ncontainer = "my-reviewer"\n')).toContain("--container my-reviewer");
+  });
+});
+
 describe("forward command privilege parity", () => {
   it.each([true, false])("uses sudo=%s for both compose lookup and relay Docker", (sudo) => {
     writeFileSync(join(dirname(stateDir), "config.toml"), `[tui]\nsudo_docker = ${String(sudo)}\n`);

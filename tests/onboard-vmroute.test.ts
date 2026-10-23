@@ -821,6 +821,7 @@ describe("the transport is the one decision point", () => {
     expect(remoteFactsFor(baseAdapters(IDLE_RUNNER), VM_CHOICES)).toEqual({
       alias: ALIAS,
       container: "quickreview-sandbox",
+      memoryContainer: "quickreview-sandbox",
       sudo: true,
       port: 8787,
     });
