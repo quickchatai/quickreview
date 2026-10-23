@@ -22,7 +22,7 @@
 // addressed by ref, never checked out.
 import { createHash } from "node:crypto";
 import { IMPROVEMENT_DENY_PREFIXES_DEFAULT, type Config } from "./config.js";
-import { localWallClockToInstant, zonedParts } from "./eod.js";
+import { zoneDayBounds, zonedParts } from "./eod.js";
 import { GitHubRequestError, type GitHubAdapter } from "./github.js";
 import type { MutationGate } from "./gate.js";
 import type { StateStore } from "./state.js";
@@ -274,12 +274,12 @@ export function checkDiffstat(entries: NumstatEntry[], caps: Config["caps"]): Di
  * the `[ops] timezone` day, the one knob that defines whose calendar day the
  * system runs on. A zone
  * whose midnight falls in a DST gap starts its day at the first wall time that
- * exists (`localWallClockToInstant`'s shifted-forward reading). The week cap
+ * exists (`zoneDayBounds`'s shifted-forward reading). The week cap
  * is a rolling seven days and has no day boundary to honour.
  */
 function startOfDayIso(now: Date, timeZone: string): string {
   const p = zonedParts(now, timeZone);
-  return localWallClockToInstant(p.year, p.month, p.day, 0, 0, timeZone).toISOString();
+  return zoneDayBounds(p.year, p.month, p.day, timeZone).start.toISOString();
 }
 
 function daysAgoIso(now: Date, days: number): string {
@@ -631,13 +631,7 @@ async function fileImprovementPrNow(
       dry_run: ctx.gate.isDryRun,
     });
     return {
-      ok: true,
-      branch: botBranch,
-      files: verdict.files,
-      lines: verdict.lines,
-      pushed,
-      pr: prNumber > 0 ? prNumber : null,
-      dry_run: ctx.gate.isDryRun,
+      ...creationOutcome,
       ...(labelWarning !== undefined ? { label_warning: labelWarning } : {}),
     };
   } catch (err) {
