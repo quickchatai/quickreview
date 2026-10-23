@@ -94,6 +94,10 @@ const SEQUENCES: Array<[string, string]> = [
   ["\x1b\x7f", "M-BSpace"],
 ];
 
+/** ESC [ with at least one parameter byte, optional intermediates and a final
+ * byte: a whole keyboard report, as opposed to a typed Alt-[. */
+const CSI_WITH_PARAMS = /^\x1b\[[0-9;:<=>?]+[ -/]*[@-~]/;
+
 /** Is `input` exactly one encoding of the End key (the pane's "back to
  * live")? Read off the same table the keys are translated by. */
 export function isEndKey(input: string): boolean {
@@ -147,6 +151,7 @@ export function keysToTmux(buf: Buffer): string[][] {
     names.push(name);
   };
 
+  let csi: RegExpExecArray | null;
   let i = 0;
   outer: while (i < s.length) {
     for (const [seq, name] of SEQUENCES) {
@@ -168,6 +173,13 @@ export function keysToTmux(buf: Buffer): string[][] {
       pushName("Tab");
     } else if (ch === "\x7f" || ch === "\b") {
       pushName("BSpace");
+    } else if (ch === "\x1b" && (csi = CSI_WITH_PARAMS.exec(s.slice(i))) !== null) {
+      // A complete CSI sequence the table does not name (Alt-Left ESC[1;3D,
+      // CSI-u keys): the application decodes it, so it travels whole.
+      flushNames();
+      literal += csi[0];
+      i += csi[0].length;
+      continue;
     } else if (ch === "\x1b") {
       // Alt-<printable> arrives as ESC + the character; a lone ESC is Escape.
       const next = s[i + 1];

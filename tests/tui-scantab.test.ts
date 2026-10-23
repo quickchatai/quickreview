@@ -269,6 +269,26 @@ describe("honest unknown — never 'no scan' for a record that was not read", ()
     });
   });
 
+  it("a lapsed driver lease reads interrupted while the companion is up — and offers no stop", async () => {
+    const { app, s, screen } = rig({ companionUp: true });
+    mkdirSync(join(s.home, DRIVER_DIR), { recursive: true });
+    writeFileSync(
+      join(s.home, DRIVER_DIR, "1.json"),
+      JSON.stringify({
+        holder: "h",
+        run: "scan-2",
+        pid: 1,
+        host: "box",
+        at: "2026-09-29T11:00:00Z",
+      }),
+    );
+    await driving(app, () => {
+      app.hooks.onPoll?.(app);
+      expect(screen()).toContain("interrupted");
+      expect(barLabels(app)).not.toContain("x stop");
+    });
+  });
+
   it("a known-down companion's run paints its running unit interrupted too, never the green running mark", () => {
     const { screen } = rig({ companionUp: false });
     const text = screen();

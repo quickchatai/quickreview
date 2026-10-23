@@ -527,13 +527,16 @@ function view(deps: ScanTabDeps, st: ScanTabState) {
  * stop for that run saying it drives no such run (a companion restart loses
  * the run in flight, and nothing else ever rewrites the record). A live
  * driver lease naming the run says it IS driven — by the companion or a
- * `qcr scan` driver — whatever the companion's state. */
+ * `qcr scan` driver — whatever the companion's state; a lapsed lease naming
+ * the run says its driver (the companion drives under the same lease) died. */
 function interruption(run: ScanRun, deps: ScanTabDeps): string | null {
   if (run.state !== "running") return null;
   const lease = deps.store.lease;
-  if (lease !== null && lease.run === run.id && leaseIsLive(lease, deps.now?.() ?? new Date()))
-    return null;
+  const lapsed =
+    lease !== null && lease.run === run.id && !leaseIsLive(lease, deps.now?.() ?? new Date());
+  if (lease !== null && lease.run === run.id && !lapsed) return null;
   if (deps.companionUp?.() === false) return "the companion is down";
+  if (lapsed) return "its driver's lease lapsed";
   const a = deps.store.stopAnswer;
   if (a !== null && a.run === run.id && a.in_flight !== undefined && a.in_flight !== run.id)
     return "the companion is not driving it";

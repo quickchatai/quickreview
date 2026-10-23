@@ -139,6 +139,11 @@ describe("sendKeysArgv", () => {
 describe("keysToTmux", () => {
   const t = (s: string): string[][] => keysToTmux(Buffer.from(s, "utf8"));
 
+  it("a complete CSI sequence the table does not name travels whole, never as Alt-[ plus its text", () => {
+    expect(t("\x1b[1;3D")).toEqual([["-l", "--", "\x1b[1;3D"]]);
+    expect(t("a\x1b[27;5;13~b")).toEqual([["-l", "--", "a\x1b[27;5;13~b"]]);
+  });
+
   it("batches a printable run into one literal send-keys", () => {
     expect(t("hello world")).toEqual([["-l", "--", "hello world"]]);
     expect(t("")).toEqual([]);
