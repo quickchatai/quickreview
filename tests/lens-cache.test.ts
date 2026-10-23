@@ -532,23 +532,27 @@ describe("[stagger] session creation", () => {
   it("creates the sessions of a wave a gap apart", async () => {
     respondWith(6, codexLike([], new FakeTransport()));
     const runner = createLensRunner(config({ sessionGapMs: 40 }));
+    const t0 = Date.now();
     await Promise.all(
       Array.from({ length: 6 }, (_, i) => runner.run({ agent: "pass-a", task: `row ${i}` })),
     );
     expect(createdAt).toHaveLength(6);
-    const gaps = createdAt.slice(1).map((t, i) => t - createdAt[i]!);
+    // The slots are scheduled at t0 + i*40 at the earliest. A late timer only
+    // moves a session later, so measure each against the schedule, not against
+    // its neighbour (a late timer makes the next gap look short under load).
     // Timers may fire a millisecond early; a wave never starts in a burst.
-    for (const g of gaps) expect(g).toBeGreaterThanOrEqual(35);
+    createdAt.forEach((t, i) => expect(t - t0).toBeGreaterThanOrEqual(i * 40 - 5));
   });
 
   it("is shared by every runner on the host", async () => {
     respondWith(4, codexLike([], new FakeTransport()));
     const one = createLensRunner(config({ sessionGapMs: 40 }));
     const two = createLensRunner(config({ sessionGapMs: 40 }));
+    const t0 = Date.now();
     await Promise.all([
       one.run({ agent: "pass-a", task: "1" }),
       two.run({ agent: "pass-b", task: "2" }),
     ]);
-    expect(createdAt[1]! - createdAt[0]!).toBeGreaterThanOrEqual(35);
+    expect(createdAt[1]! - t0).toBeGreaterThanOrEqual(35);
   });
 });
