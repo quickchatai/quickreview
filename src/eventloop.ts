@@ -148,6 +148,15 @@ export interface CpuStat {
   throttled_usec: number | null;
 }
 
+/** A cpu.stat that carries all three CFS bandwidth counters. */
+type BandwidthStat = CpuStat & {
+  nr_periods: number;
+  nr_throttled: number;
+  throttled_usec: number;
+};
+const hasBandwidth = (s: CpuStat): s is BandwidthStat =>
+  s.nr_periods !== null && s.nr_throttled !== null && s.throttled_usec !== null;
+
 /** Parse cpu.stat's `key value` lines; null when it is not a cpu.stat at all. */
 export function parseCpuStat(text: string): CpuStat | null {
   const map = new Map<string, number>();
@@ -203,7 +212,10 @@ export interface LoopBusy {
 
 export type LoopSampleSink = (lagMs: number, at: Date, busy?: LoopBusy) => void;
 
-/** Something that reports the loop's delay, one sample at a time. */
+/** Something that reports the loop's delay, one sample at a time. A sampler
+ * must fire every `SAMPLE_INTERVAL_MS` (500 ms) or report a `busy` span with
+ * each sample: the monitor takes that cadence as given when it publishes
+ * `sample_interval_ms` and when it sizes a sample's coverage without a span. */
 export interface LoopDelaySampler {
   start(onSample: LoopSampleSink): void;
   stop(): void;
@@ -303,7 +315,9 @@ export function driftSampler(opts: DriftSamplerOptions = {}): LoopDelaySampler {
 
 // ---- the status block --------------------------------------------------------
 
-export type EventLoopState = "unknown" | "ok" | "stalled";
+/** The states the event-loop block can report; the type derives from this list. */
+const EVENT_LOOP_STATES = ["unknown", "ok", "stalled"] as const;
+export type EventLoopState = (typeof EVENT_LOOP_STATES)[number];
 
 /** Why a stall happened, as far as the evidence goes: the daemon's own CPU
  * time across the stall says `loop_blocked` (and wins — it is the stall's own
@@ -757,7 +771,7 @@ export class DaemonLoadMonitor {
     const newest = this.cpuReadings[this.cpuReadings.length - 1];
     if (!newest) return unknown("not read yet");
     const s = newest.stat;
-    if (s.nr_periods === null || s.nr_throttled === null || s.throttled_usec === null)
+    if (!hasBandwidth(s))
       return unknown("no CPU quota: cpu.stat carries no CFS bandwidth counters", newest.at);
     if (s.nr_periods === 0)
       return unknown("no CPU quota: cpu.stat has counted no CFS period", newest.at);
@@ -768,7 +782,7 @@ export class DaemonLoadMonitor {
     // counters: its "delta" would be the whole cumulative count — a wildly
     // inflated ratio that reads as CPU starved. Unknown until a reading with
     // counters becomes the baseline (one window).
-    if (b.nr_periods === null || b.nr_throttled === null || b.throttled_usec === null)
+    if (!hasBandwidth(b))
       return unknown(
         "the window's baseline reading carried no CFS bandwidth counters (a CPU quota appeared since)",
         newest.at,
@@ -858,7 +872,6 @@ const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const isStr = (v: unknown): v is string => typeof v === "string";
-const EVENT_LOOP_STATES: readonly EventLoopState[] = ["unknown", "ok", "stalled"];
 
 /** The block's `cpu` as a reader may render it: the figures when they are all
  * there, else UNKNOWN with why. */
@@ -908,7 +921,7 @@ function readEventLoop(v: unknown): { ok: true; view: EventLoopView } | { ok: fa
   const bad = (why: string) => ({ ok: false as const, why });
   if (v === undefined) return bad("the daemon block carries no event_loop");
   if (!isObj(v)) return bad(`event_loop is ${shown(v)}, not an object`);
-  if (!EVENT_LOOP_STATES.includes(v.state as EventLoopState))
+  if (!(EVENT_LOOP_STATES as readonly string[]).includes(v.state as string))
     return bad(`state ${shown(v.state)} is not one this build knows`);
   for (const k of ["since", "started_at"] as const)
     if (!isStr(v[k])) return bad(`event_loop.${k} is ${shown(v[k])}, not a string`);

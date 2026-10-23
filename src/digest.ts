@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { sandboxRoot } from "./config.js";
-import { digestFiles, zoneDayBounds } from "./eod.js";
+import { DIGEST_DIR_NAME, digestFiles, zoneDayBounds } from "./eod.js";
 import {
   cancelCauseLabel,
   cancellationTotals,
@@ -16,7 +16,7 @@ import {
 export const HEADLINE_MAX = 200;
 
 export function defaultDigestDir(): string {
-  return join(sandboxRoot(), "digest");
+  return join(sandboxRoot(), DIGEST_DIR_NAME);
 }
 
 /** Write digest/<date>.md. Returns the path written. */

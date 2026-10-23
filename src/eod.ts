@@ -83,6 +83,9 @@ export function zoneDateString(instant: Date, timeZone: string): string {
 /** The digest files among `names` (`<YYYY-MM-DD>.md`, the sweep's own
  * naming), oldest first — lexicographic is chronological. The one reading the
  * daemon's headline and the TUI's digest tab share. */
+/** The sandbox-root subdirectory the day digests live in. */
+export const DIGEST_DIR_NAME = "digest";
+
 export function digestFiles(names: Iterable<string>): string[] {
   return [...names].filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f)).sort();
 }
@@ -607,6 +610,12 @@ export function startEodTimer(deps: EodTimerDeps): EodTimer {
     void fireSettled(date).then((outcome) => settle(date, outcome));
   };
 
+  // Move the target to the next daily fire and arm the wait for it.
+  const advance = (): void => {
+    target = nextEodFire(now(), deps.timeHHMM, deps.timeZone);
+    arm();
+  };
+
   const tick = (): void => {
     if (stopped) return;
     if (now().getTime() < target.getTime()) {
@@ -619,8 +628,7 @@ export function startEodTimer(deps: EodTimerDeps): EodTimer {
       owe(date);
       safely(() => deps.onHeld?.(date, why));
       armPoll();
-      target = nextEodFire(now(), deps.timeHHMM, deps.timeZone);
-      arm();
+      advance();
       return;
     }
     // The day is OWED until its fire settles: it rides the persisted set
@@ -633,13 +641,11 @@ export function startEodTimer(deps: EodTimerDeps): EodTimer {
       if (pollHandle !== null) clearT(pollHandle);
       poll();
       safely(() => deps.onHeld?.(date, "sweep_in_flight"));
-      target = nextEodFire(now(), deps.timeHHMM, deps.timeZone);
-      arm();
+      advance();
       return;
     }
     firing = true;
-    target = nextEodFire(now(), deps.timeHHMM, deps.timeZone);
-    arm();
+    advance();
     void fireSettled(date).then((outcome) => settle(date, outcome));
   };
 

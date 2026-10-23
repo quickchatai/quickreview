@@ -10,7 +10,7 @@
 // are different facts: the fetcher's `list` is undefined when the
 // listing itself failed, and the tab says so instead of showing an empty day.
 import type { TuiConfig } from "../config.js";
-import { digestFiles, zoneDateString } from "../eod.js";
+import { DIGEST_DIR_NAME, digestFiles, zoneDateString } from "../eod.js";
 import type { App } from "./app.js";
 import { barHeight, paintCmdBar, type LiveKeys } from "./cmdbar.js";
 import { HEADING, MUTED, RESET, modeBadge } from "./design.js";
@@ -26,12 +26,12 @@ export function digestListArgv(cfg: TuiConfig): string[] {
   // read — the sweep creates it with the first file. One that exists but
   // cannot be listed fails the exec, like a failed ssh, and the fetcher
   // reports both as undefined.
-  const dir = `${remoteSandboxRoot(cfg)}/digest`;
+  const dir = `${remoteSandboxRoot(cfg)}/${DIGEST_DIR_NAME}`;
   return dockerShArgv(cfg, `if [ -e '${dir}' ]; then ls '${dir}'; fi`);
 }
 
 export function digestCatArgv(cfg: TuiConfig, file: string): string[] {
-  return dockerShArgv(cfg, `cat '${remoteSandboxRoot(cfg)}/digest/${file}'`);
+  return dockerShArgv(cfg, `cat '${remoteSandboxRoot(cfg)}/${DIGEST_DIR_NAME}/${file}'`);
 }
 
 /** Digest file names are `<YYYY-MM-DD>.md`; anything else is ignored. */
