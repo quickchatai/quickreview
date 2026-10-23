@@ -19,7 +19,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { PrFileEntry } from "./github.js";
-import { normalizeDisposition, recordNumber } from "./findingkey.js";
+import { normalizeDisposition, recordNumber, recordString } from "./findingkey.js";
 import { severityRank } from "./severityrank.js";
 import { planKey } from "./plankey.js";
 import { parseUnifiedDiff } from "./diffinput.js";
@@ -145,11 +145,20 @@ function repoName(cwd: string): string {
   return originRepo(cwd) ?? `local/${basename(resolve(top))}`;
 }
 
-export function resolveBranch(cwd: string, asked?: string): BranchResolution {
+/** The repository check both resolvers start with: `cwd` is a work tree and
+ * HEAD names a commit. */
+function admitRepo(cwd: string): { ok: true; headSha: string } | { ok: false; error: string } {
   if (tryGit(cwd, ["rev-parse", "--is-inside-work-tree"]) !== "true")
     return { ok: false, error: `${cwd} is not a git repository` };
   const headSha = tryGit(cwd, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]);
   if (headSha === null) return { ok: false, error: "the repository has no commits yet" };
+  return { ok: true, headSha };
+}
+
+export function resolveBranch(cwd: string, asked?: string): BranchResolution {
+  const head = admitRepo(cwd);
+  if (!head.ok) return head;
+  const headSha = head.headSha;
   const base = baseOf(cwd, asked);
   if (base === null)
     return {
@@ -192,10 +201,9 @@ export function resolveBranch(cwd: string, asked?: string): BranchResolution {
  * alternate, so nothing is written into the reviewed repository and a
  * read-only checkout works. */
 export function resolveUncommitted(cwd: string): BranchResolution {
-  if (tryGit(cwd, ["rev-parse", "--is-inside-work-tree"]) !== "true")
-    return { ok: false, error: `${cwd} is not a git repository` };
-  const headSha = tryGit(cwd, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]);
-  if (headSha === null) return { ok: false, error: "the repository has no commits yet" };
+  const head = admitRepo(cwd);
+  if (!head.ok) return head;
+  const headSha = head.headSha;
   const scratch = mkdtempSync(join(tmpdir(), "qcr-snap-"));
   let treeSha: string;
   let files: PrFileEntry[];
@@ -454,8 +462,7 @@ export function groupFindings(record: unknown): Record<string, TerminalFinding[]
     if (HIDDEN.has(normalizeDisposition(e["disposition"]))) continue;
     const sev = typeof e["severity"] === "string" ? e["severity"].trim() : "";
     const rank = severityRank(sev);
-    const str = (v: unknown): string | null =>
-      typeof v === "string" && v.trim() ? v.trim() : null;
+    const str = recordString;
     rows.push({
       rank: rank ?? 99,
       path: str(e["path"]),
