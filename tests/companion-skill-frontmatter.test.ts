@@ -15,7 +15,7 @@
 //    held to here so the banner stays clean.
 // One check is stricter than pi: no comments in the block. A ` #` in a plain
 // scalar starts a comment, so it cuts a description short without any error.
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseSkillFrontmatter, type ScalarValue } from "./helpers/skill-frontmatter.js";
@@ -52,7 +52,9 @@ function skillFiles(dir: string): string[] {
 }
 
 const DIRS = registeredSkillDirs();
-const FILES = DIRS.flatMap(skillFiles);
+// The vendored `.claude/skills` set is manifest-excluded from the public tree.
+const FILES = DIRS.filter((d) => existsSync(d)).flatMap(skillFiles);
+const ALL_DIRS = DIRS.every((d) => existsSync(d));
 
 /**
  * Why pi would skip this SKILL.md or warn about it, as a list of problems
@@ -103,7 +105,7 @@ function shown(v: ScalarValue | null | undefined): string {
 }
 
 describe("companion skill front-matter parses the way pi parses it", () => {
-  it("covers both registered dirs: our own skills and the vendored set", () => {
+  it.skipIf(!ALL_DIRS)("covers both registered dirs: our own skills and the vendored set", () => {
     expect(DIRS.map((d) => relative(ROOT, d)).sort()).toEqual([
       ".claude/skills",
       "skills/companion",

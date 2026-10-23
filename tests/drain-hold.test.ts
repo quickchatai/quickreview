@@ -18,7 +18,7 @@
 //   * Visible in status.json (`draining_hold`), `qcr status` and the board's
 //     drain bar; an older daemon's snapshot without the marker reads unknown.
 import Database from "better-sqlite3";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -625,22 +625,26 @@ describe("qcr drain on --hold", () => {
   });
 });
 
-describe("the ratified levers text", () => {
-  // The decision's full text and the levers.ts note live in docs/rulebook/.
-  const claude = ["decisions.md", "architecture.md"]
-    .map((f) => readFileSync(resolve(__dirname, "..", "docs", "rulebook", f), "utf8"))
-    .join("\n")
-    .replace(/\s+/g, " ");
+// docs/rulebook/ is manifest-excluded from the public tree.
+describe.skipIf(!existsSync(resolve(__dirname, "..", "docs", "rulebook")))(
+  "the ratified levers text",
+  () => {
+    // The decision's full text and the levers.ts note live in docs/rulebook/.
+    const claude = ["decisions.md", "architecture.md"]
+      .map((f) => readFileSync(resolve(__dirname, "..", "docs", "rulebook", f), "utf8"))
+      .join("\n")
+      .replace(/\s+/g, " ");
 
-  it("CLAUDE.md carries the drain hold word for word, as ratified", () => {
-    for (const ratified of [
-      "[private rule text removed]",
-      "[private rule text removed]",
-      "The boot that adds the hold to state.db carries a standing operator drain over as one (`drain_hold_carried`); that is how the legacy daemon's cutover drain holds.",
-      "[private rule text removed]",
-      "[private rule text removed]",
-    ])
-      expect(claude).toContain(ratified);
-    expect(claude).not.toContain("lifts whatever stands");
-  });
-});
+    it("CLAUDE.md carries the drain hold word for word, as ratified", () => {
+      for (const ratified of [
+        "[private rule text removed]",
+        "[private rule text removed]",
+        "The boot that adds the hold to state.db carries a standing operator drain over as one (`drain_hold_carried`); that is how the legacy daemon's cutover drain holds.",
+        "[private rule text removed]",
+        "[private rule text removed]",
+      ])
+        expect(claude).toContain(ratified);
+      expect(claude).not.toContain("lifts whatever stands");
+    });
+  },
+);

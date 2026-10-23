@@ -138,36 +138,40 @@ describe("daemon topology", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("CLAUDE.md rule 9 is the ratified text (one session kind, workers, one host per PR)", () => {
-    // Rule text changes only by the owner's ratification, so the test pins it
-    // verbatim (whitespace folded: CLAUDE.md wraps it). The same words open
-    // docs/single-shepherd-invariant.md's amendment.
-    const RATIFIED =
-      "[private rule text removed]";
-    const text = readFileSync(
-      join(import.meta.dirname, "..", "docs", "rulebook", "hard-rules.md"),
-      "utf8",
-    );
-    const start = text.indexOf("\n9. ");
-    const end = text.indexOf("\n10. ", start);
-    expect(start).toBeGreaterThan(-1);
-    const rule = text
-      .slice(start + 4, end)
-      .replace(/\s+/g, " ")
-      .trim();
-    expect(rule).toBe(RATIFIED);
-    const doc = readFileSync(
-      join(import.meta.dirname, "..", "docs", "single-shepherd-invariant.md"),
-      "utf8",
-    );
-    // (whitespace folded: the doc wraps it, and the amendment breaks a line inside the names)
-    const folded = doc.replace(/\s+/g, " ");
-    expect(folded).toContain("Exactly two launchers");
-    expect(folded).toContain("`lens` / `lens_wave`");
-    expect(folded).toContain("**S5 \u2014 One host per PR at a time.**");
-    expect(folded).toContain("## Amendment: workers CLAUDE.md rule 9 is the authority");
-    expect(folded).not.toContain("Two daemon-owned pi session kinds");
-  });
+  // docs/rulebook/ is manifest-excluded from the public tree.
+  it.skipIf(!existsSync(join(import.meta.dirname, "..", "docs", "rulebook", "hard-rules.md")))(
+    "CLAUDE.md rule 9 is the ratified text (one session kind, workers, one host per PR)",
+    () => {
+      // Rule text changes only by the owner's ratification, so the test pins it
+      // verbatim (whitespace folded: CLAUDE.md wraps it). The same words open
+      // docs/single-shepherd-invariant.md's amendment.
+      const RATIFIED =
+        "[private rule text removed]";
+      const text = readFileSync(
+        join(import.meta.dirname, "..", "docs", "rulebook", "hard-rules.md"),
+        "utf8",
+      );
+      const start = text.indexOf("\n9. ");
+      const end = text.indexOf("\n10. ", start);
+      expect(start).toBeGreaterThan(-1);
+      const rule = text
+        .slice(start + 4, end)
+        .replace(/\s+/g, " ")
+        .trim();
+      expect(rule).toBe(RATIFIED);
+      const doc = readFileSync(
+        join(import.meta.dirname, "..", "docs", "single-shepherd-invariant.md"),
+        "utf8",
+      );
+      // (whitespace folded: the doc wraps it, and the amendment breaks a line inside the names)
+      const folded = doc.replace(/\s+/g, " ");
+      expect(folded).toContain("Exactly two launchers");
+      expect(folded).toContain("`lens` / `lens_wave`");
+      expect(folded).toContain("**S5 \u2014 One host per PR at a time.**");
+      expect(folded).toContain("## Amendment: workers CLAUDE.md rule 9 is the authority");
+      expect(folded).not.toContain("Two daemon-owned pi session kinds");
+    },
+  );
 
   it("S2: no daemon module invokes pi outside the session manager", () => {
     // sessions.ts owns the daemon's pi argv. tui/companion.ts is the COMPANION boundary — a

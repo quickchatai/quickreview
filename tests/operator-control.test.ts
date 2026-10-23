@@ -3,7 +3,7 @@
 // OPERATOR commands, valid only from the root-sealed commands/operator/ channel;
 // the owner and the companion share one verb set (the tier table); and the
 // CLAUDE.md bullets the viewer's input line rests on say what the code does.
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -261,62 +261,67 @@ describe("only the root-sealed operator directory serves them", () => {
   });
 });
 
-describe("the CLAUDE.md anchors", () => {
-  // The ratified decisions' full text lives in docs/rulebook/decisions.md.
-  const claude = readFileSync(resolve(process.cwd(), "docs", "rulebook", "decisions.md"), "utf8");
-  const lines = claude.split("\n");
-  /** The bullet that opens with `head`: its text on one line, and where it starts (1-based). */
-  const bullet = (head: string): { text: string; at: number } => {
-    const at = lines.findIndex((l) => l.startsWith(head));
-    expect(at, head).toBeGreaterThan(-1);
-    let end = at + 1;
-    while (end < lines.length && !lines[end]!.startsWith("- ") && lines[end]!.trim() !== "") end++;
-    return { text: lines.slice(at, end).join(" ").replace(/\s+/g, " "), at: at + 1 };
-  };
-  /** The 1-based line range of the `## <title>` section: a bullet's home is
-   * pinned by section, so a longer rule above it moves no anchor. */
-  const section = (title: string): { from: number; to: number } => {
-    const from = lines.findIndex((l) => l.startsWith(`## ${title}`));
-    expect(from, title).toBeGreaterThan(-1);
-    const next = lines.findIndex((l, i) => i > from && l.startsWith("## "));
-    return { from: from + 1, to: next === -1 ? lines.length : next };
-  };
-  const ratified = section("Ratified design decisions");
+// docs/rulebook/ is manifest-excluded from the public tree.
+describe.skipIf(!existsSync(resolve(process.cwd(), "docs", "rulebook")))(
+  "the CLAUDE.md anchors",
+  () => {
+    // The ratified decisions' full text lives in docs/rulebook/decisions.md.
+    const claude = readFileSync(resolve(process.cwd(), "docs", "rulebook", "decisions.md"), "utf8");
+    const lines = claude.split("\n");
+    /** The bullet that opens with `head`: its text on one line, and where it starts (1-based). */
+    const bullet = (head: string): { text: string; at: number } => {
+      const at = lines.findIndex((l) => l.startsWith(head));
+      expect(at, head).toBeGreaterThan(-1);
+      let end = at + 1;
+      while (end < lines.length && !lines[end]!.startsWith("- ") && lines[end]!.trim() !== "")
+        end++;
+      return { text: lines.slice(at, end).join(" ").replace(/\s+/g, " "), at: at + 1 };
+    };
+    /** The 1-based line range of the `## <title>` section: a bullet's home is
+     * pinned by section, so a longer rule above it moves no anchor. */
+    const section = (title: string): { from: number; to: number } => {
+      const from = lines.findIndex((l) => l.startsWith(`## ${title}`));
+      expect(from, title).toBeGreaterThan(-1);
+      const next = lines.findIndex((l, i) => i > from && l.startsWith("## "));
+      return { from: from + 1, to: next === -1 ? lines.length : next };
+    };
+    const ratified = section("Ratified design decisions");
 
-  it("the PR-pane bullet is the viewer's rule, part 2: the line sends a message when no round runs, answered at once", () => {
-    const b = bullet("- **An embedded pi surface is a TERMINAL");
-    expect(b.at).toBeGreaterThan(ratified.from);
-    expect(b.at).toBeLessThan(ratified.to);
-    expect(b.text).toContain("Never add a TUI-side input box");
-    expect(b.text).toContain("LIVE VIEWER");
-    expect(b.text).toContain("operator steer (rule 9's first exception)");
-    expect(b.text).toContain("[private rule text removed]");
-    expect(b.text).toContain("answered at once by a short worker that resumes the session");
-    expect(b.text).toContain("posts only when the operator marked the message may-post");
-    // the ratified P9.6 text: the pane's two pi terminals, by name, and
-    // every other pane the viewer
-    expect(b.text).toContain(
-      "[private rule text removed]",
-    );
-    expect(b.text).toContain("[private rule text removed]");
-    expect(b.text).toContain("`qcr open pr <n>` forks it into pi");
-    expect(b.text).not.toContain("worker-hosted PR's pane");
-    expect(b.text).toContain("tests/tui-pipane.test.ts");
-    expect(b.text).toContain("tests/tui-viewer-pane.test.ts");
-    expect(b.text).toContain("`Ctrl-q` is the only reserved byte");
-    expect(b.text).not.toMatch(/held as a wake/);
-    expect(b.text).toContain("tests/cmdbar.test.ts");
-    expect(b.text).toContain("tests/tui-sidebar.test.ts");
-  });
+    it("the PR-pane bullet is the viewer's rule, part 2: the line sends a message when no round runs, answered at once", () => {
+      const b = bullet("- **An embedded pi surface is a TERMINAL");
+      expect(b.at).toBeGreaterThan(ratified.from);
+      expect(b.at).toBeLessThan(ratified.to);
+      expect(b.text).toContain("Never add a TUI-side input box");
+      expect(b.text).toContain("LIVE VIEWER");
+      expect(b.text).toContain("operator steer (rule 9's first exception)");
+      expect(b.text).toContain("[private rule text removed]");
+      expect(b.text).toContain("answered at once by a short worker that resumes the session");
+      expect(b.text).toContain("posts only when the operator marked the message may-post");
+      // the ratified P9.6 text: the pane's two pi terminals, by name, and
+      // every other pane the viewer
+      expect(b.text).toContain(
+        "[private rule text removed]",
+      );
+      expect(b.text).toContain("[private rule text removed]");
+      expect(b.text).toContain("`qcr open pr <n>` forks it into pi");
+      expect(b.text).not.toContain("worker-hosted PR's pane");
+      expect(b.text).toContain("tests/tui-pipane.test.ts");
+      expect(b.text).toContain("tests/tui-viewer-pane.test.ts");
+      expect(b.text).toContain("`Ctrl-q` is the only reserved byte");
+      expect(b.text).not.toMatch(/held as a wake/);
+      expect(b.text).toContain("tests/cmdbar.test.ts");
+      expect(b.text).toContain("tests/tui-sidebar.test.ts");
+    });
 
-  it("the unwedge bullet names the viewer's writes and no longer the overseer's pi", () => {
-    const b = bullet("- **The operator can always unwedge from the board");
-    expect(b.at).toBeGreaterThan(ratified.from);
-    expect(b.at).toBeLessThan(ratified.to);
-    expect(b.text).toContain("the viewer's input line (steer, follow-up, abort-round, message)");
-    expect(b.text).toContain("**`commands/operator/`, created and written AS ROOT");
-    expect(b.text).toContain("through a model turn");
-    expect(b.text).not.toContain("overseer's pi");
-    expect(b.text).toContain("tests/tui-unwedge.test.ts");
-  });
-});
+    it("the unwedge bullet names the viewer's writes and no longer the overseer's pi", () => {
+      const b = bullet("- **The operator can always unwedge from the board");
+      expect(b.at).toBeGreaterThan(ratified.from);
+      expect(b.at).toBeLessThan(ratified.to);
+      expect(b.text).toContain("the viewer's input line (steer, follow-up, abort-round, message)");
+      expect(b.text).toContain("**`commands/operator/`, created and written AS ROOT");
+      expect(b.text).toContain("through a model turn");
+      expect(b.text).not.toContain("overseer's pi");
+      expect(b.text).toContain("tests/tui-unwedge.test.ts");
+    });
+  },
+);

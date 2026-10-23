@@ -4,13 +4,23 @@
 
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveGithubCredential, MISSING_CREDENTIAL_HELP } from "../src/ghcred.js";
 import { fetchPrTarget, parsePrTarget, resolvePostCredential } from "../src/prtarget.js";
 
+// docs/rulebook/ (the ratified rule texts) is manifest-excluded from the public tree.
+const HAS_RULEBOOK = existsSync(join(process.cwd(), "docs", "rulebook", "hard-rules.md"));
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "review-pr-target-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -247,7 +257,7 @@ describe("the daemon stays App-only (CLAUDE.md rule 3)", () => {
 
   // The rule names a private login; the published test file must not spell it out.
   const PRIVATE_LOGIN = ["mha", "le"].join("");
-  it("CLAUDE.md rule 3 is the ratified text (owner, 2026-10-19)", () => {
+  it.skipIf(!HAS_RULEBOOK)("CLAUDE.md rule 3 is the ratified text (owner, 2026-10-19)", () => {
     // Rule text changes only by the owner's ratification, so the test pins it
     // verbatim (whitespace folded: CLAUDE.md wraps it). The carve-out is the
     // credential only: the post still goes through the gate, and the token
@@ -265,26 +275,29 @@ describe("the daemon stays App-only (CLAUDE.md rule 3)", () => {
     expect(rule).toBe(RATIFIED.replace("${PRIVATE_LOGIN}", PRIVATE_LOGIN));
   });
 
-  it("CLAUDE.md rule 1 carries the ratified image paragraph (owner, 2026-10-19)", () => {
-    const PARAGRAPH =
-      "[private rule text removed]";
-    const text = readFileSync(join(ROOT, "docs", "rulebook", "hard-rules.md"), "utf8");
-    const start = text.indexOf("\n1. ");
-    const end = text.indexOf("\n2. ", start);
-    expect(start).toBeGreaterThan(-1);
-    const rule = text
-      .slice(start + 4, end)
-      .replace(/\s+/g, " ")
-      .trim();
-    expect(rule).toContain(PARAGRAPH);
-    // The paragraph follows the two exceptions and no others, and the workers
-    // paragraph (pinned word for word in tests/ratified-rule-texts.test.ts)
-    // follows it and closes the rule.
-    expect(rule).toContain("Two exceptions, and no others:");
-    const workers = rule.indexOf("**The bot's workers are not a route of their own.**");
-    expect(workers).toBeGreaterThan(rule.indexOf(PARAGRAPH) + PARAGRAPH.length - 1);
-    expect(rule.endsWith("No worker holds a GitHub token.")).toBe(true);
-  });
+  it.skipIf(!HAS_RULEBOOK)(
+    "CLAUDE.md rule 1 carries the ratified image paragraph (owner, 2026-10-19)",
+    () => {
+      const PARAGRAPH =
+        "[private rule text removed]";
+      const text = readFileSync(join(ROOT, "docs", "rulebook", "hard-rules.md"), "utf8");
+      const start = text.indexOf("\n1. ");
+      const end = text.indexOf("\n2. ", start);
+      expect(start).toBeGreaterThan(-1);
+      const rule = text
+        .slice(start + 4, end)
+        .replace(/\s+/g, " ")
+        .trim();
+      expect(rule).toContain(PARAGRAPH);
+      // The paragraph follows the two exceptions and no others, and the workers
+      // paragraph (pinned word for word in tests/ratified-rule-texts.test.ts)
+      // follows it and closes the rule.
+      expect(rule).toContain("Two exceptions, and no others:");
+      const workers = rule.indexOf("**The bot's workers are not a route of their own.**");
+      expect(workers).toBeGreaterThan(rule.indexOf(PARAGRAPH) + PARAGRAPH.length - 1);
+      expect(rule.endsWith("No worker holds a GitHub token.")).toBe(true);
+    },
+  );
 });
 
 // ---- the fetch, against a local bare repo -------------------------------------------
