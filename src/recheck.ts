@@ -44,12 +44,14 @@ import type { Config } from "./config.js";
 import { readFindingsRecord } from "./findingsrecord.js";
 import type { PrFileEntry } from "./github.js";
 import { isMigrationPath } from "./heuristics.js";
+import { parseHunkHeader } from "./hunkheader.js";
 import { applyEvent } from "./statemachine.js";
 import { recheckHead12, recheckKeyPrefix } from "./findingkey.js";
 import { recheckWakeReason, type StateStore } from "./state.js";
 import { normalizeVerdict, recheckPromptMarker, stampPrompt } from "./types.js";
 import { standingVerdict } from "./standing-review.js";
 import { wakeOrHold, withRepoFacts } from "./wakes.js";
+import { prWorktreeRel } from "./worktrees.js";
 import {
   readSettledJson,
   resolvePartialWritePolicy,
@@ -173,10 +175,9 @@ function parseHunks(patch: string): Hunk[] {
   let cur: Hunk | null = null;
   for (const line of patch.split("\n")) {
     if (line.startsWith("@@")) {
-      const start = /^@@ -(\d+)/.exec(line)?.[1];
       cur = {
         section: /^@@[^@]*@@ ?(.*)$/.exec(line)?.[1] ?? "",
-        oldStart: start === undefined ? null : Number(start),
+        oldStart: parseHunkHeader(line)?.old_start ?? null,
         lines: [],
       };
       hunks.push(cur);
@@ -250,13 +251,23 @@ function indentSignificant(path: string | undefined): boolean {
   return /\.(py|pyi|ya?ml|sass|styl)$/i.test(base) || base === "Makefile" || /\.mk$/i.test(base);
 }
 
+/** A shell script's basename (a Dockerfile counts). */
+function isShellFile(base: string): boolean {
+  return /\.(sh|bash|zsh|ksh)$/i.test(base) || base === "Dockerfile";
+}
+
+/** A Ruby file's basename (a Gemfile counts). */
+function isRubyFile(base: string): boolean {
+  return /\.rb$/i.test(base) || base === "Gemfile";
+}
+
 /** Languages where a line break ends a command or statement — in a shell
  * script `a\n-b` runs two commands where `a -b` runs one; Ruby and Go end a
  * statement at most line breaks. */
 function lineTerminated(path: string | undefined): boolean {
   if (!path) return false;
   const base = baseName(path);
-  return /\.(sh|bash|zsh|ksh|rb|go)$/i.test(base) || base === "Dockerfile" || base === "Gemfile";
+  return isShellFile(base) || isRubyFile(base) || /\.go$/i.test(base);
 }
 
 /**
@@ -411,8 +422,8 @@ const YAML_BLOCK_SCALAR = /(?:^|:|-)\s*[|>][-+1-9]{0,2}\s*(?:#.*)?$/;
  */
 function mayTouchMultilineLiteral(hunk: Hunk, path: string | undefined): boolean {
   const base = path === undefined ? "" : baseName(path);
-  const shell = /\.(sh|bash|zsh|ksh)$/i.test(base) || base === "Dockerfile";
-  const ruby = /\.rb$/i.test(base) || base === "Gemfile";
+  const shell = isShellFile(base);
+  const ruby = isRubyFile(base);
   const yaml = /\.ya?ml$/i.test(base);
   return [hunk.section, ...hunk.lines.map((l) => l.text)].some(
     (text) =>
@@ -682,10 +693,9 @@ export function classifyDelta(files: DeltaList, opts: ClassifyOpts = {}): DeltaC
   }
 
   const classified = files.map((f): FileClass => {
-    // A hand-resolved conflict beats every trivial rule, renumber included.
-    if (opts.resolvedFiles?.has(f.filename))
-      return { filename: f.filename, class: "significant", reason: "content" };
-    if (renumbered.has(f.filename)) {
+    // A hand-resolved conflict beats every trivial rule, renumber included:
+    // classifyFile alone decides it.
+    if (renumbered.has(f.filename) && !opts.resolvedFiles?.has(f.filename)) {
       // Ownership still wins: a migration that arrived with the base is a
       // base-merge file whatever its number does.
       const owned = !opts.prFiles || opts.prFiles.has(f.filename);
@@ -1231,7 +1241,7 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     standing_verdict: "APPROVE",
     last_reviewed_sha: lastReviewed,
     head_sha: head,
-    worktree: (deps.worktreeFor ?? ((n: number): string => `wt/pr-${n}`))(req.pr),
+    worktree: (deps.worktreeFor ?? prWorktreeRel)(req.pr),
     // A base advance's delta is the base branch's range, not anything since
     // the reviewed head: the evidence names the range that was compared.
     evidence:
@@ -1720,7 +1730,7 @@ export class RecheckWatcher {
       const d = parsed.decision;
       if (
         d.pr !== pr ||
-        d.head_sha.slice(0, 12).toLowerCase() !== (match[2] as string).toLowerCase()
+        recheckHead12(d.head_sha) !== (match[2] as string).toLowerCase()
       ) {
         this.deps.store.logEvent("recheck_decision_rejected", pr, {
           file: name,
@@ -1767,7 +1777,7 @@ export class RecheckWatcher {
           this.deps.log?.(m),
         );
         // Ledger freshness after the uphold (optional wiring).
-        if (this.deps.checkLedger) {
+        if (this.deps.checkLedger && this.deps.store.getPr(pr)?.state !== "closed") {
           try {
             await this.deps.checkLedger(pr, d.head_sha);
           } catch (err) {

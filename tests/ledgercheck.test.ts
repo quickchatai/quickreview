@@ -386,6 +386,39 @@ describe("RecheckWatcher ledger check on uphold", () => {
   });
 });
 
+describe("RecheckWatcher ledger check on a closed PR", () => {
+  it("does not run the ledger check for an uphold decision of a closed PR", async () => {
+    const calls: string[] = [];
+    const verdictDir = join(dir, "verdict");
+    mkdirSync(verdictDir, { recursive: true });
+    store.upsertPr({
+      number: 102,
+      state: "closed",
+      head_sha: HEAD,
+      title: "t",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    const watcher = new RecheckWatcher({
+      cfg,
+      store,
+      verdictDir,
+      partialWrite: { windowMs: 0 },
+      checkLedger: async (pr, head) => {
+        calls.push(`${pr}:${head}`);
+      },
+    });
+    writeFileSync(
+      join(verdictDir, `pr-102-recheck-${HEAD.slice(0, 12)}.json`),
+      JSON.stringify({ pr: 102, head_sha: HEAD, outcome: "uphold" }),
+    );
+    expect(await watcher.sweep()).toHaveLength(1);
+    expect(calls).toEqual([]);
+  });
+});
+
 describe("StateStore ledger nudge mark", () => {
   it("is keyed per (pr, key) and scans without a recency window", () => {
     expect(store.ledgerNudgeSent(7, "round-1")).toBe(false);
