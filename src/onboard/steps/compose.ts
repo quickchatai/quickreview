@@ -46,6 +46,7 @@ import {
   type StepContext,
 } from "../engine.js";
 import {
+  CONTAINER_STATE_DIR,
   INGRESS_CHOICE_KEY,
   isUp,
   optionFor,
@@ -71,10 +72,7 @@ export const MEMORY_SERVICE = "memory";
 export const RELEASE_IMAGE_REPO = "ghcr.io/quickchatai/quickreview";
 export const MEMORY_IMAGE_REPO = "ghcr.io/quickchatai/quickreview-memory";
 
-/** Where the container roots its state — the same absolute path the ingress
- * step's hostname check and the docs use (the release image's app root is
- * /opt/qcr, and <root>/state is its one writable directory). */
-export const CONTAINER_STATE_DIR = "/opt/qcr/state";
+export { CONTAINER_STATE_DIR };
 export const CONTAINER_DRYRUN_DIR = `${CONTAINER_STATE_DIR}/dryrun`;
 
 /** `<sandbox root>` — the engine's contract is stateDir = `<root>/state`. */
@@ -145,8 +143,13 @@ export function composeArgs(root: string, rest: readonly string[]): string[] {
  * images. The tunnel sidecars are built from their wrappers, not pulled, so
  * they are skipped (`--ignore-buildable`) rather than failing the pull. */
 export function pullArgs(root: string, profile: string): string[] {
-  const profileArgs = profile === "" ? [] : ["--profile", profile];
-  return composeArgs(root, [...profileArgs, "pull", "--ignore-buildable"]);
+  return composeArgs(root, composeTail(profile, ["pull", "--ignore-buildable"]));
+}
+
+/** The compose arguments after `compose`: the optional `--profile p`, then the
+ * subcommand — the one shape the run argv and the printed host commands share. */
+export function composeTail(profile: string, rest: readonly string[]): string[] {
+  return [...(profile === "" ? [] : ["--profile", profile]), ...rest];
 }
 
 /** `docker compose exec -T daemon <argv…>` — `-T` because there is no TTY. */
@@ -441,8 +444,8 @@ export interface HostCommandsInput {
  * credential stays in the files the secrets directory already holds.
  */
 export function hostCommands(input: HostCommandsInput): string[] {
-  const profile = input.profile === "" ? [] : ["--profile", input.profile];
-  const compose = ["docker", "compose", ...profile].join(" ");
+  const compose = (rest: readonly string[]): string =>
+    ["docker", "compose", ...composeTail(input.profile, rest)].join(" ");
   const dirs = input.dirs ?? [];
   return [
     `mkdir -p ${input.projectDir} && cd ${input.projectDir}`,
@@ -450,7 +453,7 @@ export function hostCommands(input: HostCommandsInput): string[] {
     ...(input.notes ?? []),
     extractCommand(input.version),
     ["cat > .env <<'QCR_ENV'", ...input.env, "QCR_ENV"].join("\n"),
-    `${compose} pull --ignore-buildable`,
-    `${compose} up -d`,
+    compose(["pull", "--ignore-buildable"]),
+    compose(["up", "-d"]),
   ];
 }

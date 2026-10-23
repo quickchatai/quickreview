@@ -54,6 +54,7 @@ import {
   composeAvailable,
   composePs,
   composeFileCheck,
+  composeTail,
   containerStateCheck,
   hostCommands,
   ingressOptionOf,
@@ -121,8 +122,7 @@ export function configMountOf(configPath: string): { dir: string; name: string }
  * daemon and memory images are pulled (`pullArgs`); only a tunnel sidecar that
  * is not built yet is built, and compose does that on its own. */
 export function bringUpArgs(root: string, profile: string): string[] {
-  const profileArgs = profile === "" ? [] : ["--profile", profile];
-  return composeArgs(root, [...profileArgs, "up", "-d"]);
+  return composeArgs(root, composeTail(profile, ["up", "-d"]));
 }
 
 /** The memory sidecar's compose service name: what `[openviking] host` must say. */
