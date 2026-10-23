@@ -72,8 +72,10 @@ import {
   runArmOf,
   scoredOcrComments,
   summarizeOcrRun,
+  unprefetchedOcrCase,
   type BridgeStats,
   type OcrCaseSummary,
+  type OcrFingerprint,
 } from "../src/bench/ocr.js";
 import { latestMetrics, metricsFiles, renderOcrReport, roundMetrics } from "../src/bench/report.js";
 import {
@@ -2066,6 +2068,20 @@ describe("report and result bookkeeping", () => {
         readFileSync(join(out, "results", "all", `${safeId(c.instance_id)}.json`), "utf8"),
       );
       expect(result.review.comments).toEqual([]);
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+
+  it("an unprefetched OCR attempt leaves no earlier attempt's argv, stdout or stderr behind", () => {
+    const out = mkdtempSync(join(tmpdir(), "bench-ocr-unprefetched-clear-"));
+    try {
+      const caseDir = join(out, "cases", safeId(c.instance_id));
+      mkdirSync(caseDir, { recursive: true });
+      const earlier = ["ocr-argv.json", "ocr-stdout.json", "ocr-stderr.log"];
+      for (const f of earlier) writeFileSync(join(caseDir, f), "earlier attempt\n");
+      unprefetchedOcrCase(out, c, {} as unknown as OcrFingerprint, "no store");
+      for (const f of earlier) expect(existsSync(join(caseDir, f)), f).toBe(false);
     } finally {
       rmSync(out, { recursive: true, force: true });
     }

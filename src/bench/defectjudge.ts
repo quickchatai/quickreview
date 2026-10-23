@@ -31,7 +31,7 @@ export interface JudgePiOptions {
   env: NodeJS.ProcessEnv;
   eventsPath: string;
   timeoutMs: number;
-  /** Hosts the judge session. Omitted: a process runtime. */
+  /** Hosts the judge session. Required in practice: omitted, the run throws. */
   runtime?: Runtime;
 }
 

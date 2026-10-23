@@ -165,13 +165,12 @@ export class EventCostMeter {
     this.instance.set(id, who);
     const usd = toolEventCostUsd(e, (lensId) => this.claim(lensId, who));
     const next = e.type === "tool_execution_end" ? usd : Math.max(prev, usd);
-    // A finished call is closed under a fresh key: the same id turning up
-    // again (pi-events.jsonl appends across a continuation's processes) is a
-    // new call, priced on its own, as a line-by-line sum always did.
+    // A finished call is forgotten: the same id turning up again
+    // (pi-events.jsonl appends across a continuation's processes) is a new
+    // call, priced on its own, as a line-by-line sum always did.
     if (e.type === "tool_execution_end") {
       this.instance.delete(id);
       this.perCall.delete(id);
-      this.perCall.set(`\0end${this.settled++}`, next);
     } else this.perCall.set(id, next);
     // Added in stream order, so a stream with no updates sums exactly as a
     // line-by-line sum of the prices would (float addition is not associative).
