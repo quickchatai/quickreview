@@ -75,13 +75,12 @@ import { applyEvent, restoreStandingLifecycle } from "./statemachine.js";
 import type { VerdictAnnouncer } from "./slack/announce.js";
 import { isLoudCancelCause, type CancelCause, type RoundRow, type StateStore } from "./state.js";
 import { enforceLedgerFreshness } from "./ledgercheck.js";
+import { findingsRecordPath, readFindingsRecord } from "./findingsrecord.js";
 import {
   enforceFindingsRecord,
-  findingsRecordPath,
   ingestRepairedFindingsRecords,
   resumeFindingsRecordedHooks,
-  readFindingsRecord,
-} from "./findingsrecord.js";
+} from "./findingscheck.js";
 import {
   normalizeVerdict,
   type RecordedAddablePass,

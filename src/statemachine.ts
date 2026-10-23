@@ -57,6 +57,7 @@
 // The never-retract-an-approval invariant is structural: no event and no
 // transition in this module touches an existing review (spec §8).
 import type { PrLifecycleState, StateStore, TriggerProvenance } from "./state.js";
+import { isBotAuthor } from "./guards.js";
 import { standingLifecycleState, type StandingDecidedVerdict } from "./standing-review.js";
 import type { Verdict } from "./types.js";
 
@@ -159,10 +160,10 @@ export function mergedOverBlock(
   return merged && priorState === "awaiting_author";
 }
 
-/** Bot-authored PRs never enter the machine (spec §3). */
-export function isBotAuthor(author: string, botLogin: string): boolean {
-  return author === botLogin || author.endsWith("[bot]");
-}
+/** Bot-authored PRs never enter the machine (spec §3). The predicate lives
+ * with the posting guards (src/guards.ts), which read a bot's approval as no
+ * human's. */
+export { isBotAuthor };
 
 export interface PrMeta {
   title?: string;

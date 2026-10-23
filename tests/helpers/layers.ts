@@ -29,6 +29,10 @@ export const CORE: readonly string[] = [
   // config.ts by steps U3 and U4).
   "src/planner.ts",
   "src/reviewconfig.ts",
+  // The PR-owned delta a follow-up round is planned from, and the exec seam
+  // its git runs through (split out of worktrees.ts and tmux.ts by U3).
+  "src/prdelta.ts",
+  "src/execfn.ts",
   // The agent build, the prompts and the renderers.
   "src/include.ts",
   "src/templates.ts",
@@ -52,10 +56,12 @@ export const CORE: readonly string[] = [
   "src/lintconfig.ts",
   "src/loosenedtests.ts",
   "src/ecosystem.ts",
+  "src/migrations.ts",
   "src/heuristics.ts",
   "src/profiles.ts",
   "src/profileoverrides.ts",
   "src/reviewrender.ts",
+  "src/escalationprompt.ts",
   "src/reviewerstub.ts",
   "src/round-progress.ts",
   "src/round-stage-deadlines.ts",
@@ -74,7 +80,9 @@ export const CORE: readonly string[] = [
   "src/hunkheader.ts",
   // Posting: the one gate, its policy and guards, the JSON contract.
   "src/gate.ts",
+  "src/postingkey.ts",
   "src/guards.ts",
+  "src/standing-review.ts",
   "src/cigate.ts",
   "src/postingpolicy.ts",
   "src/contract.ts",
@@ -96,6 +104,7 @@ export const CORE: readonly string[] = [
   "src/settledread.ts",
   "src/yieldloop.ts",
   "src/pricing.ts",
+  "src/pr-identity.ts",
   // The extensions a review session is built with.
   "extensions/lens.ts",
   "extensions/bash-guard.ts",
@@ -175,7 +184,11 @@ export function fencedFiles(root: string): string[] {
  */
 export function runtimeSpecifiers(text: string): string[] {
   const js = ts.transpileModule(text, {
-    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, removeComments: true },
+    compilerOptions: {
+      module: ts.ModuleKind.ESNext,
+      target: ts.ScriptTarget.ES2022,
+      removeComments: true,
+    },
   }).outputText;
   const out = new Set<string>();
   for (const m of js.matchAll(

@@ -20,7 +20,7 @@ import {
 import { renderBleedNote, renderLessonsNote } from "./memory/delivery.js";
 import { backtickFence, codePath, flatControls, promptTitle } from "./codespan.js";
 import { isSplitBaselineRow } from "./heuristics.js";
-import { renderEscalationPromptNote } from "./escalation.js";
+import { renderEscalationPromptNote } from "./escalationprompt.js";
 import { renderPostingPolicyNote } from "./postingpolicy.js";
 import { NEUTRAL_IDENTITY_VARS, substituteVariables, VARIABLE_RE } from "./include.js";
 import type { FileClass, RecheckOrder } from "./recheck.js";

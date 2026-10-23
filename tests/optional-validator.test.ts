@@ -18,9 +18,9 @@ import { whyJson } from "../src/cli.js";
 import { parseConfig, type Config } from "../src/config.js";
 import { buildPassPlan, buildRoundOrder, validatorTier } from "../src/dispatch.js";
 import { NONE_ECOSYSTEM } from "../src/ecosystem.js";
+import { enforceFindingsRecord } from "../src/findingscheck.js";
 import {
   DOUBT_WORDS,
-  enforceFindingsRecord,
   findingsRecordFile,
   isConformant,
   normalizeDisposition,

@@ -49,8 +49,14 @@ import {
 import { standingReview } from "./standing-review.js";
 import type { GuardsConfig } from "./config.js";
 import type { GateResult, MutationGuard, MutationIntent } from "./gate.js";
-import { isBotAuthor } from "./statemachine.js";
 import type { ReviewedHeadRow, StateStore } from "./state.js";
+
+/** A bot's login: the App's own, or any `[bot]` account. Bot-authored PRs
+ * never enter the state machine (spec §3, src/statemachine.ts re-exports
+ * this), and a bot's approval is no human's. */
+export function isBotAuthor(author: string, botLogin: string): boolean {
+  return author === botLogin || author.endsWith("[bot]");
+}
 
 /** Mutation kinds that put words on a PR — the ones the guards inspect. */
 export const POSTING_KINDS: ReadonlySet<string> = new Set([

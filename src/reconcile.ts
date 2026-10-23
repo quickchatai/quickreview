@@ -12,7 +12,8 @@ import {
   recordCapturedComment,
   type CapturedComment,
 } from "./capture.js";
-import { retryWithheldApproval, type CheckSummary } from "./cigate.js";
+import type { CheckSummary } from "./cigate.js";
+import { retryWithheldApproval } from "./ciretry.js";
 import {
   auditUngatedReviews,
   commentsByReview,

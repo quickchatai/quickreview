@@ -72,7 +72,7 @@ import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { parseScanTable, SCAN_PROFILE_KEYS, type ScanConfig } from "./config.js";
 import type { EcosystemName } from "./ecosystem.js";
-import { ALL_PASSES } from "./dispatch.js";
+import { ALL_PASSES } from "./passes.js";
 import { EMPTY_HEURISTICS, PROFILE_EXTENDABLE_LENSES } from "./heuristics.js";
 import type { HeuristicsExtension } from "./heuristics.js";
 import {

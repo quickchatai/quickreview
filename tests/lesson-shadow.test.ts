@@ -25,7 +25,7 @@ import {
   type TuiConfig,
 } from "../src/config.js";
 import { dispatchOnce, type DispatchAdapter } from "../src/dispatch.js";
-import { enforceFindingsRecord } from "../src/findingsrecord.js";
+import { enforceFindingsRecord } from "../src/findingscheck.js";
 import type { GateResult } from "../src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
 import { Learner } from "../src/learner/learner.js";

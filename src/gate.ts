@@ -8,7 +8,7 @@
 // and the gate, not the call site, decides whether it runs.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { postingMarker } from "./posting-receipt.js";
+import { postingMarker } from "./postingkey.js";
 
 export type MutationKind =
   | "add_label"
