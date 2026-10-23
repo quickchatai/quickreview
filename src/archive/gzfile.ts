@@ -39,6 +39,7 @@ import {
   identityOf,
   isZlibError,
   partialOf,
+  placeStagingOf,
   renameNoReplace,
   sameIdentity,
   sameRecordedIdentity,
@@ -316,7 +317,8 @@ function placeRestored(
 
 /** Remove a stray `.restore-partial` (a crash mid-restore). */
 export async function removeRestorePartial(target: string): Promise<boolean> {
-  return unlinkIfPresent(restorePartialOf(target));
+  const staged = await unlinkIfPresent(placeStagingOf(target));
+  return (await unlinkIfPresent(restorePartialOf(target))) || staged;
 }
 
 /** Unlink `path` only if it still has `identity` (the re-`lstat` before every

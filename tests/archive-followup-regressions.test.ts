@@ -18,7 +18,13 @@ import { ArchiveConn } from "../src/archive/archivedb.js";
 import { prFixture, onArchiver, put, reopen, type PrFixture } from "./helpers/archive-pr.js";
 import { rig, seedEvents, iso, T0, DAY, type Rig } from "./helpers/archive-rows.js";
 
-const race = vi.hoisted(() => ({ noLinks: false, target: "", arrived: false, crashUnlink: "" }));
+const race = vi.hoisted(() => ({
+  noLinks: false,
+  target: "",
+  arrived: false,
+  crashUnlink: "",
+  tearCopyTo: "",
+}));
 vi.mock("node:fs/promises", async (original) => {
   const real = await original<typeof import("node:fs/promises")>();
   const arrive = async (path: unknown): Promise<void> => {
@@ -50,6 +56,10 @@ vi.mock("node:fs/promises", async (original) => {
     },
     copyFile: async (...args: Parameters<typeof real.copyFile>) => {
       await arrive(args[1]);
+      if (race.tearCopyTo && String(args[1]).startsWith(race.tearCopyTo)) {
+        await real.writeFile(args[1], "torn");
+        throw new Error("process died mid-copy");
+      }
       return real.copyFile(...args);
     },
   };
@@ -61,6 +71,7 @@ afterEach(() => {
   race.noLinks = false;
   race.target = "";
   race.arrived = false;
+  race.tearCopyTo = "";
   vi.restoreAllMocks();
   for (const f of fixtures.splice(0)) f.close();
   for (const r of databases.splice(0)) r.close();
@@ -72,15 +83,28 @@ function scratch(): string {
   return dir;
 }
 
-it("keeps output that appears during no-hard-link exclusive placement", async () => {
+it("keeps output that already sits at the target during no-hard-link placement", async () => {
+  const dir = scratch(),
+    source = join(dir, "source"),
+    target = join(dir, "target");
+  writeFileSync(source, "archived bytes");
+  writeFileSync(target, "operator output");
+  race.noLinks = true;
+  expect(await renameNoReplace(source, target)).toBe("exists");
+  expect(readFileSync(target, "utf8")).toBe("operator output");
+  expect(readFileSync(source, "utf8")).toBe("archived bytes");
+  expect(existsSync(`${target}.place-partial`)).toBe(false);
+});
+
+it("never shows a torn copy at the final name when the no-hard-link copy dies", async () => {
   const dir = scratch(),
     source = join(dir, "source"),
     target = join(dir, "target");
   writeFileSync(source, "archived bytes");
   race.noLinks = true;
-  race.target = target;
-  expect(await renameNoReplace(source, target)).toBe("exists");
-  expect(readFileSync(target, "utf8")).toBe("operator output");
+  race.tearCopyTo = target;
+  await expect(renameNoReplace(source, target)).rejects.toThrow("mid-copy");
+  expect(existsSync(target)).toBe(false);
   expect(readFileSync(source, "utf8")).toBe("archived bytes");
 });
 
