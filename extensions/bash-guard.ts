@@ -194,8 +194,8 @@ function block(reason: string): BashCheck {
  * What the guard's policy is judged against, resolved: the sandbox root that
  * owns the sanctioned script bytes, whether this is a regression replay
  * session, and the secrets dirs. `createBashGuard` builds one from its config
- * at construction; the exported pure checkers build one from the process (the
- * ambient policy below) when a caller passes none.
+ * at construction; the exported pure checkers take one as an argument, and
+ * `extensions/cli/bash-guard-ambient.ts` supplies the process-derived one.
  */
 export interface GuardPolicy {
   sandboxRoot: string;
@@ -269,9 +269,9 @@ function scriptCwdForCommand(cmd: string, cwd: string | null, policy: GuardPolic
   for (const segment of splitShellSegments(cmd)) {
     const words = shellWords(segment).words;
     let at = 0;
-    while (words[at] === "env" || /^\w+=/.test(words[at] ?? "")) at++;
+    while (words[at] === "env" || ASSIGNMENT_RE.test(words[at] ?? "")) at++;
     const program = (words[at] ?? "").replace(/^\(+/, "");
-    if (program.slice(program.lastIndexOf("/") + 1) !== "cd") continue;
+    if (basenameOf(program) !== "cd") continue;
     const args = words.slice(at + 1).filter((word) => word !== "--");
     if (args.length !== 1 || !args[0]!.startsWith("/") || !trustedScriptCwd(args[0]!, policy))
       return null;
@@ -878,7 +878,7 @@ function checkSegment(
     // Program token found.
     const rawArgs = tokens.slice(i + 1);
     const args = rawArgs.map((t) => t.replace(/^['"]+|['"]+$/g, ""));
-    if (raw.slice(raw.lastIndexOf("/") + 1) === "bash") {
+    if (basenameOf(raw) === "bash") {
       // `bash -c <payload>` is a whole command line inside ONE word, so it is
       // judged from the RAW segment, never from these tokens.
       const lifted = bashCPayload(segment);
@@ -904,6 +904,10 @@ interface ShellWords {
    * `splitShellSegments` that means the segment was CUT at a `$(` or backtick:
    * the rest of the word is assembled at runtime by a substitution. */
   unterminated: boolean;
+  /** A `$'…'` held an escape this function does not decode (`\x3b`, `\073`,
+   * `\u003b`): the words carry the escape's letters, not what bash would
+   * produce, so a payload built from them is not what bash runs. */
+  undecoded: boolean;
 }
 
 /**
@@ -927,6 +931,7 @@ export function shellWords(s: string): ShellWords {
   let cur = "";
   let has = false;
   let q: "'" | '"' | "$'" | null = null;
+  let undecoded = false;
   for (let i = 0; i < s.length; i++) {
     const ch = s[i]!;
     if (q === "'") {
@@ -938,6 +943,7 @@ export function shellWords(s: string): ShellWords {
       if (ch === "'") q = null;
       else if (ch === "\\") {
         const next = s[i + 1] ?? "";
+        if (ANSI_C[next] === undefined) undecoded = true;
         cur += ANSI_C[next] ?? next;
         i++;
       } else cur += ch;
@@ -980,7 +986,7 @@ export function shellWords(s: string): ShellWords {
     has = true;
   }
   if (has) words.push(cur);
-  return { words, unterminated: q !== null };
+  return { words, unterminated: q !== null, undecoded };
 }
 
 type LiftedPayload =
@@ -1004,7 +1010,7 @@ type LiftedPayload =
  * refused outright.
  */
 function bashCPayload(segment: string): LiftedPayload {
-  const { words, unterminated } = shellWords(segment);
+  const { words, unterminated, undecoded } = shellWords(segment);
   let i = 0;
   while (i < words.length) {
     const w = words[i]!;
@@ -1020,7 +1026,7 @@ function bashCPayload(segment: string): LiftedPayload {
     break;
   }
   const prog = words[i];
-  if (prog === undefined || prog.slice(prog.lastIndexOf("/") + 1) !== "bash")
+  if (prog === undefined || basenameOf(prog) !== "bash")
     return { kind: "none" };
   for (let j = i + 1; j < words.length; j++) {
     const w = words[j]!;
@@ -1039,6 +1045,13 @@ function bashCPayload(segment: string): LiftedPayload {
           kind: "unliftable",
           reason:
             "exec policy: this 'bash -c' payload is assembled at runtime by a substitution or an unclosed quote — the reviewer runs only commands the guard can read",
+        };
+      }
+      if (undecoded) {
+        return {
+          kind: "unliftable",
+          reason:
+            "exec policy: this 'bash -c' payload uses a $'…' escape the guard cannot decode — the reviewer runs only commands the guard can read",
         };
       }
       const next = words[j + 1];
@@ -1068,7 +1081,7 @@ function checkProgram(
           notSanctioned(policy, direct.name, `exec policy: '${prog}' is not a sanctioned script`),
         );
   }
-  const base = prog.slice(prog.lastIndexOf("/") + 1);
+  const base = basenameOf(prog);
   if (base === "cd") return { allowed: true }; // builtin, argument is a path not a program
   // Checked before the allowlist so the reason is the directive one, and
   // before `sh`/`bash`, which have their own narrower rules below.
@@ -1668,9 +1681,7 @@ function expandShellWord(w: string, env: SecretPathContext["env"]): string {
     /\$\{?(HOME|XDG_CONFIG_HOME|QCR_INSTALL)\}?(?![A-Za-z0-9_])/g,
     (_m, n: string) => vars[n]!,
   );
-  if (out === "~") out = home;
-  else if (out.startsWith("~/")) out = `${home}/${out.slice(2)}`;
-  return out;
+  return expandTilde(out, home);
 }
 
 /** `{a,b}` brace expansion, bounded at 64 results. */
@@ -2441,7 +2452,8 @@ export function normalizeRedirections(cmd: string): string {
  * outright whatever their target. `sort -o`, `find -fprintf` and `awk` are
  * refused whole (reader-mode rules / off the allowlist), so they cannot reach a
  * target either. `sed -i` is the one allowlisted writer that names its target as
- * a plain argument rather than after a `>`, so it is covered by this scan. The
+ * a plain argument rather than after a `>`; the reader-mode rules already refuse
+ * `sed -i` outright, so this scan is defense in depth for it. The
  * redirection itself has more spellings than `>`/`>>` — see
  * `normalizeRedirections`, which folds all of them onto those two first.
  */
@@ -2790,6 +2802,10 @@ export function sedScriptDanger(script: string): string | null {
     }
     return false;
   };
+  // The two delimited parts of an `s` or `y` command; true when they cannot be
+  // read (no usable delimiter, or either part unterminated).
+  const badSedDelimiter = (d: string): boolean =>
+    d === "" || d === "\\" || d === "\n" || !delimited(d) || !delimited(d);
   const address = (): boolean => {
     const c = at();
     if (/[0-9]/.test(c)) {
@@ -2881,14 +2897,14 @@ export function sedScriptDanger(script: string): string | null {
       case "y": {
         const d = at();
         i++;
-        if (d === "" || d === "\\" || d === "\n" || !delimited(d) || !delimited(d))
+        if (badSedDelimiter(d))
           return "a y command the guard cannot read";
         break;
       }
       case "s": {
         const d = at();
         i++;
-        if (d === "" || d === "\\" || d === "\n" || !delimited(d) || !delimited(d))
+        if (badSedDelimiter(d))
           return "an s command the guard cannot read";
         // The flags: everything up to the end of the command. GNU's flags are
         // g p N i I m M e w — `e` runs the pattern space as a command, `w`
@@ -3121,7 +3137,7 @@ const READ_TOOLS = new Set(["read", "grep", "find", "ls", "read_file", "view", "
 
 /**
  * What one bash-guard needs, resolved: no env is read past this. Only these
- * three inputs are configurable. The policy itself (the program allowlist, the
+ * inputs are configurable. The policy itself (the program allowlist, the
  * secret-path and /proc rules, the protected write surfaces) is code in this
  * file, and the secrets dirs below are a FLOOR the guard adds the container's
  * own mount to; no profile layer (src/profileoverrides.ts) reaches either, and

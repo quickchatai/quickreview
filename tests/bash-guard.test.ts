@@ -2086,3 +2086,15 @@ describe("scan findings: spellings the guard must judge as the program receives 
     allow("sort --unique --key=2 input.txt");
   });
 });
+
+describe("scan findings: an ANSI-C escape the guard cannot decode in a bash -c payload", () => {
+  it("refuses a hex, octal or unicode escape rather than inspecting an approximation", () => {
+    block("bash -c $'git status \\x3b node evil.js'", "bash -c");
+    block("bash -c $'git status \\073 node evil.js'", "bash -c");
+    block("bash -c $'git status \\u003b node evil.js'", "bash -c");
+  });
+
+  it("still lifts a payload whose escapes it decodes", () => {
+    allow("bash -c $'git status\\t-s'");
+  });
+});
