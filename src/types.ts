@@ -100,6 +100,11 @@ export function higherTier(a: PassTier, b: PassTier): PassTier {
   return PASS_TIER_ORDER.indexOf(b) > PASS_TIER_ORDER.indexOf(a) ? b : a;
 }
 
+/** `tier` raised to `floor` when one is set (the profile's `min_tier`), never lowered. */
+export function flooredToMin(tier: PassTier, floor: PassTier | undefined): PassTier {
+  return floor ? higherTier(tier, floor) : tier;
+}
+
 /** Every tier at or above `floor`, ascending. */
 export function tiersAtOrAbove(floor: PassTier): PassTier[] {
   return PASS_TIER_ORDER.slice(PASS_TIER_ORDER.indexOf(floor));
