@@ -3,7 +3,15 @@
 // scenario's files are pinned as snapshots (timestamps blanked, key order kept):
 // they are the bytes scripts/posting-receipt.py wrote step for step until P9.3
 // deleted it, so the readers keep reading what they always read.
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -18,6 +26,7 @@ import { readPostingJob } from "../src/posting-outbox.js";
 import {
   postingMarker,
   readPostingReceipt,
+  retrySoftenedApproval,
   roundPostingKey,
   type PostingReceipt,
 } from "../src/posting-receipt.js";
@@ -250,6 +259,38 @@ describe("[P7.2] the journal writes the receipt and job files the readers expect
     expect(journal.check(PR, ROUND, KEY)).toBe("mismatch");
   });
 
+  it("confirm marks an APPROVE that GitHub holds as a COMMENT with the withheld-approval provenance", () => {
+    enqueue("APPROVE");
+    prepare("APPROVE");
+    journal.confirm({
+      key: KEY,
+      pr: PR,
+      round: ROUND,
+      head: HEAD,
+      intended: "APPROVE",
+      payload: payload("APPROVE"),
+      response: { id: 77, commit_id: HEAD, state: "COMMENTED" },
+    });
+    const receipt = readPostingReceipt(tsDir, PR, ROUND) as PostingReceipt;
+    expect(receipt).toMatchObject({ actual_event: "COMMENT", delivered_by: "daemon_retry" });
+    expect(retrySoftenedApproval(receipt)).toBe(true);
+  });
+
+  it("confirm leaves an APPROVE that landed as an APPROVE without that provenance", () => {
+    enqueue("APPROVE");
+    prepare("APPROVE");
+    journal.confirm({
+      key: KEY,
+      pr: PR,
+      round: ROUND,
+      head: HEAD,
+      intended: "APPROVE",
+      payload: payload("APPROVE"),
+      response: { id: 78, commit_id: HEAD, state: "APPROVED" },
+    });
+    expect(readPostingReceipt(tsDir, PR, ROUND)).not.toHaveProperty("delivered_by");
+  });
+
   it("confirm refuses a response that contradicts the attempt", () => {
     prepare();
     const base = {
@@ -285,6 +326,27 @@ describe("[P7.2] the posting lock", () => {
     });
     expect(await journal.locked(PR, ROUND, KEY, async () => "free")).toBe("free");
     expect(existsSync(join(tsDir, `${receiptName}.lock`))).toBe(false);
+  });
+
+  it("takes over a reclaim mutex a dead reclaimer left behind", async () => {
+    const lock = join(tsDir, `${receiptName}.lock`);
+    mkdirSync(lock, { recursive: true });
+    mkdirSync(`${lock}.reclaim`);
+    const old = new Date(Date.now() - 3_600_000);
+    for (const d of [lock, `${lock}.reclaim`]) utimesSync(d, old, old);
+    expect(await journal.locked(PR, ROUND, KEY, async () => "taken")).toBe("taken");
+    expect(existsSync(`${lock}.reclaim`)).toBe(false);
+  });
+
+  it("leaves a fresh reclaim mutex alone", async () => {
+    const lock = join(tsDir, `${receiptName}.lock`);
+    mkdirSync(lock, { recursive: true });
+    mkdirSync(`${lock}.reclaim`);
+    const old = new Date(Date.now() - 3_600_000);
+    utimesSync(lock, old, old);
+    await expect(journal.locked(PR, ROUND, KEY, async () => 1)).rejects.toThrow(
+      /another posting attempt owns/,
+    );
   });
 
   it("is released when the attempt throws", async () => {
