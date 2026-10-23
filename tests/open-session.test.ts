@@ -21,6 +21,7 @@ import {
   MAIN_OPEN_EXTENSIONS,
   findSession,
   openArgv,
+  openScratchDirs,
   openEnv,
   runOpen,
   type OpenDeps,
@@ -249,6 +250,31 @@ describe("[open] the environment", () => {
   });
 });
 
+describe("[open] scratch dirs", () => {
+  it("each invocation owns its agent dir and cwd", async () => {
+    expect(openScratchDirs("/r")).toEqual({ agentDir: "/r/open-agent", cwd: "/r/open-cwd" });
+    expect(openScratchDirs("/r", "42")).toEqual({
+      agentDir: "/r/open-agent-42",
+      cwd: "/r/open-cwd-42",
+    });
+    const out = round(join(home, "runs", "s1", "out"), { main: "M" });
+    const seen: Array<string | undefined> = [];
+    const base = deps();
+    const d: OpenDeps = {
+      ...base.d,
+      instance: "7",
+      prepare: (o) => {
+        seen.push(o.instance);
+        return base.d.prepare(o);
+      },
+    };
+    expect(await runOpen(["s1", "--print"], false, d)).toBe(0);
+    expect(base.calls.out.join("\n")).toContain(join(out, "open-agent-7"));
+    expect(await runOpen(["s1"], false, d)).toBe(0);
+    expect(seen).toEqual(["7"]);
+  });
+});
+
 describe("[open] finding the session", () => {
   it("names a `qcr review` run dir, its out/ and a bare run name", () => {
     const run = join(home, "runs", "20261019-abc1234");
@@ -284,6 +310,17 @@ describe("[open] finding the session", () => {
       for (const p of [join(home, "runs", r), join(home, "runs", r, "out")]) utimesSync(p, at, at);
     const f = findSession(undefined, undefined, deps().d);
     expect(f.ok && f.roundDir).toBe(newer);
+  });
+
+  it("an extracted archive with a main transcript and no worker rounds opens its main session", () => {
+    const arch = join(home, "extracted-pr");
+    const t = join(arch, "transcripts", "2026-10-03T10-00-00_c.jsonl");
+    jsonl(t, "MAINX");
+    const f = findSession(arch, undefined, deps().d);
+    expect(f.ok && f.file).toBe(t);
+    expect(f.ok && f.kind).toBe("main");
+    // a lens still needs a retained lens session
+    expect(findSession(arch, "pass-x", deps().d).ok).toBe(false);
   });
 
   it("a bench case dir holds session/ and lens-sessions/ directly", () => {

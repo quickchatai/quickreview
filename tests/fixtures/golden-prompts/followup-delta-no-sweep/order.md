@@ -235,6 +235,8 @@ with one `PRIOR <ref> <status> — <evidence>` line per finding. Do not
 repeat them in `extra`. `extra`, keyed by the row number, carries only a
 finding your LEDGER holds that the list does not, assigned the same way,
 and optionally a few lines of added focus — appended after the row's pointer.
+A row the engine already started ignores `extra`: verify such a finding in a
+launch of its own.
 A row you RAISE goes in `skip` and is launched through `subagent` at the
 higher variant with the same pointer; an ADDED lens has no file — write its
 task string and launch it through `subagent`. Both in the SAME turn as the
