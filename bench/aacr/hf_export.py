@@ -80,17 +80,28 @@ _REPO_DIR = os.environ.get(
 ).rstrip("/")
 _RUNS_DIR = os.environ.get("QCR_SCRUB_RUNS_DIR", os.path.join(os.path.dirname(_REPO_DIR), "qcr-bench-runs")).rstrip("/")
 
+# the identities, each comma-separated and set by the exporter (never spelled
+# in this file): $QCR_SCRUB_BOT (the review bot's app slugs; `<slug>[bot]` is
+# its login), $QCR_SCRUB_OWNER (the owner's name spellings) and
+# $QCR_SCRUB_OLD_NAME (the product's earlier names)
+def _env_list(key: str) -> list[str]:
+    return [t.strip() for t in os.environ.get(key, "").split(",") if t.strip()]
+SCRUB_BOTS = _env_list("QCR_SCRUB_BOT")
+SCRUB_OWNERS = _env_list("QCR_SCRUB_OWNER")
+SCRUB_OLD_NAMES = _env_list("QCR_SCRUB_OLD_NAME")
+
 SCRUB_RULES: list[tuple[str, str, str]] = [
     # (label, regex, replacement)
     ("host path: runs dir", re.escape(_RUNS_DIR), "<runs>"),
     ("host path: repo checkout", re.escape(_REPO_DIR), "<repo>"),
     ("host path: home", _HOME_RX + r"\b", "<home>"),
     ("host volume: pi login", r"companion-pihome", "<pi-login-volume>"),
-    ("review bot", r"example-review\[bot\]", "<review-bot>"),
-    ("review bot (bare)", r"example-review\b", "<review-bot>"),
-    ("old product name", r"quickreviewd", "quickreview"),
-    ("owner", r"the owner", "<owner>"),
-    ("owner (other case)", r"(?i)<owner>", "<owner>"),
+    # the earlier product name first: it may contain the bot's slug
+    *[("old product name", re.escape(n), "quickreview") for n in SCRUB_OLD_NAMES],
+    *[("review bot", re.escape(b) + r"\[bot\]", "<review-bot>") for b in SCRUB_BOTS],
+    *[("review bot (bare)", re.escape(b) + r"\b", "<review-bot>") for b in SCRUB_BOTS],
+    *[("owner", re.escape(o), "<owner>") for o in SCRUB_OWNERS],
+    *[("owner (other case)", r"(?i)" + re.escape(o), "<owner>") for o in SCRUB_OWNERS],
 ]
 _SCRUB = [(label, re.compile(rx), rep) for label, rx, rep in SCRUB_RULES]
 
@@ -1080,7 +1091,10 @@ def render_card(a, out: str, sizes: dict, checks: list[dict], counts: collection
     configs_yaml = "\n".join(
         f"- config_name: {n}\n  data_files:\n  - split: test\n    path: data/{n}.parquet" + ("\n  default: true" if n == "defects" else "")
         for n in CONFIGS)
-    scrub_tbl = "\n".join(f"| `{rx}` | `{rep}` | {counts.get(label, 0):,} |" for label, rx, rep in SCRUB_RULES)
+    # one row per kind of name, never the spelling itself: the patterns carry
+    # the exporter's own paths and identities
+    kinds = dict.fromkeys((label, rep) for label, _, rep in SCRUB_RULES)
+    scrub_tbl = "\n".join(f"| {label} | `{rep}` | {counts.get(label, 0):,} |" for label, rep in kinds)
     ok = sum(c["ok"] for c in checks)
     vals = {"REPO_ID": a.repo_id, "ARCHIVE": a.archive_url, "CONFIGS_YAML": configs_yaml, "CONFIG_ROWS": rows,
             "SCRUB_TABLE": scrub_tbl, "CHECKS": f"{ok} of {len(checks)}"}
@@ -1129,6 +1143,8 @@ def main():
     ap.add_argument("--no-figures", action="store_true")
     ap.add_argument("--no-load-check", action="store_true")
     a = ap.parse_args()
+    if not (SCRUB_BOTS and SCRUB_OWNERS):
+        sys.exit("set QCR_SCRUB_BOT and QCR_SCRUB_OWNER: the identities this export scrubs come from the exporter")
     a.runs_dir = os.path.abspath(os.path.expanduser(a.runs_dir))
     cache = os.path.join(os.path.dirname(a.runs_dir), "ext-cache", "qodo")
     a.qodo_gt = a.qodo_gt or os.path.join(cache, "git_code_review_bench_100_w_open_prs.jsonl")

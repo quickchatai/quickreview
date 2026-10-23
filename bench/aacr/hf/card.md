@@ -162,7 +162,7 @@ SWE-PRBench runs are in the run archive only, not here.
 Before export, every string in every table passed through one rewrite, the
 same one the run archive applies. Nothing else in the text was changed.
 
-| Pattern | Replaced with | Occurrences |
+| What | Replaced with | Occurrences |
 |---|---|---|
 {{SCRUB_TABLE}}
 

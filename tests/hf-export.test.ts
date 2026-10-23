@@ -35,6 +35,10 @@ function py(code: string, ...args: string[]): unknown {
         ...process.env,
         QCR_SCRUB_HOME: "/home/alice",
         QCR_SCRUB_RUNS_DIR: "/home/alice/projects/qcr-bench-runs",
+        // The identities come from the exporter; these are neutral plants.
+        QCR_SCRUB_OWNER: "Jordan",
+        QCR_SCRUB_BOT: "acme-review,acme-review-2",
+        QCR_SCRUB_OLD_NAME: "acme-reviewd",
       },
     },
   );
@@ -44,25 +48,27 @@ function py(code: string, ...args: string[]): unknown {
 describe("hf_export.scrub", () => {
   it("rewrites every listed name to its placeholder and counts each rule", () => {
     const text =
-      "Automated review by `example-review[bot]` (quickreviewd). Tell the owner; example-review is the app. " +
-      "Logs: /home/alice/projects/qcr-bench-runs/runs/x and /home/alice/.config, volume companion-pihome; OWNER.";
+      "Automated review by `acme-review[bot]` (acme-reviewd). Tell Jordan; acme-review is the app, " +
+      "acme-review-2[bot] its twin. " +
+      "Logs: /home/alice/projects/qcr-bench-runs/runs/x and /home/alice/.config, volume companion-pihome; JORDAN.";
     const r = py(
       "import collections; c = collections.Counter(); print(json.dumps([h.scrub(sys.argv[1], c), dict(c)]))",
       text,
     ) as [string, Record<string, number>];
     expect(r[0]).toBe(
-      "Automated review by `<review-bot>` (quickreview). Tell <owner>; <review-bot> is the app. " +
+      "Automated review by `<review-bot>` (quickreview). Tell <owner>; <review-bot> is the app, " +
+        "<review-bot> its twin. " +
         "Logs: <runs>/runs/x and <home>/.config, volume <pi-login-volume>; <owner>.",
     );
-    expect(r[0].toLowerCase()).not.toContain("owner_legacy");
-    expect(r[1]["review bot"]).toBe(1);
+    expect(r[0].toLowerCase()).not.toMatch(/jordan|acme/);
+    expect(r[1]["review bot"]).toBe(2);
     expect(r[1]["owner"]).toBe(1);
     expect(r[1]["owner (other case)"]).toBe(1);
   });
 
   it("walks nested values, keys included, and leaves non-strings alone", () => {
     const r = py(
-      "print(json.dumps(h.scrub_obj({'the owner': ['quickreviewd', 3, None, {'x': 'example-review[bot]'}]})))",
+      "print(json.dumps(h.scrub_obj({'Jordan': ['acme-reviewd', 3, None, {'x': 'acme-review[bot]'}]})))",
     );
     expect(r).toEqual({ "<owner>": ["quickreview", 3, null, { x: "<review-bot>" }] });
   });

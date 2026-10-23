@@ -23,9 +23,9 @@ hash and a link.
 Every shipped text file is rewritten while it streams, in this order, and
 nothing else in it changes:
 
-  * `example-review[bot]` (and the bare app slug `example-review`) -> `<review-bot>`,
-    then `the owner` (any case) -> `<owner>`;
-  * `quickreviewd` -> `quickreview` (the product's internal name);
+  * the review bot's login and bare app slug ($QCR_SCRUB_BOT) -> `<review-bot>`,
+    then the owner's name ($QCR_SCRUB_OWNER, any case) -> `<owner>`;
+  * the product's earlier name ($QCR_SCRUB_OLD_NAME) -> `quickreview`;
   * host paths: the bench runs dir ($QCR_SCRUB_RUNS_DIR) -> `<runs>`,
     the repo checkout ($QCR_SCRUB_REPO_DIR) -> `<repo>`, any other
     `$HOME` -> `<home>` (the home scrubbed is $QCR_SCRUB_HOME, default `~`), the docker volume `companion-pihome` -> `<pi-login-volume>`
@@ -88,6 +88,15 @@ SCRUB_HOSTS = [h for h in os.environ.get("QCR_SCRUB_HOSTS", "").split(",") if h.
 # rewrites — org handles, project ids, tracker names: $QCR_SCRUB_EXTRA_TOKENS
 # (comma-separated, default none)
 SCRUB_EXTRA = [t.strip() for t in os.environ.get("QCR_SCRUB_EXTRA_TOKENS", "").split(",") if t.strip()]
+# the identities rewritten to placeholders, each comma-separated and set by the
+# exporter (never spelled in this file): $QCR_SCRUB_BOT (the review bot's app
+# slugs; `<slug>[bot]` is its login), $QCR_SCRUB_OWNER (the owner's name
+# spellings) and $QCR_SCRUB_OLD_NAME (the product's earlier names)
+def _env_list(key: str) -> list[str]:
+    return [t.strip() for t in os.environ.get(key, "").split(",") if t.strip()]
+SCRUB_BOTS = _env_list("QCR_SCRUB_BOT")
+SCRUB_OWNERS = _env_list("QCR_SCRUB_OWNER")
+SCRUB_OLD_NAMES = _env_list("QCR_SCRUB_OLD_NAME")
 # the repo checkout and the bench runs dir: $QCR_SCRUB_REPO_DIR (default: this
 # checkout, a worktree resolved to its main checkout) and $QCR_SCRUB_RUNS_DIR
 # (default: `qcr-bench-runs` beside that checkout)
@@ -124,15 +133,25 @@ def _sig_keep(m):  # a base64 `signature` value right after a JSON quote: keep t
     return m.group(1) if m.string[m.start() - 1:m.start()] in (b'"', b"\\") else m.group(0)
 
 
-RULES = [
+def _identity_rules() -> list:
+    # the earlier product name first: it may contain the bot's slug
+    out = [("old-product-name", re.compile(re.escape(n.encode())), b"quickreview", n.encode())
+           for n in SCRUB_OLD_NAMES]
+    for bot in SCRUB_BOTS:
+        b = bot.encode()
+        out += [("review-bot", re.compile(re.escape(b) + BOT), b"<review-bot>", b),
+                ("review-bot-other-case", re.compile(rb"(?i:" + re.escape(b) + rb")" + BOT), b"<review-bot>", ("low", b.lower()))]
+    for owner in SCRUB_OWNERS:
+        o = owner.encode()
+        out += [("owner", re.compile(re.escape(o)), b"<owner>", o),
+                ("owner-other-case", re.compile(rb"(?i:" + re.escape(o) + rb")"), b"<owner>", ("low", o.lower()))]
+    return out
+
+
+NAME_RULES = _identity_rules() + [
     # (name, compiled regex, replacement, prefilter) — applied in this order. The
     # prefilter is a literal that must be in the data (or, as ("low", x), in its
     # lower-cased copy) before the regex runs: speed only, never a different result.
-    ("review-bot", re.compile(rb"example-review" + BOT), b"<review-bot>", b"example-review"),
-    ("review-bot-other-case", re.compile(rb"(?i:example-review)" + BOT), b"<review-bot>", ("low", b"example-review")),
-    ("owner", re.compile(rb"the owner"), b"<owner>", b"the owner"),
-    ("owner-other-case", re.compile(rb"(?i:<owner>)"), b"<owner>", ("low", b"owner_legacy")),
-    ("quickreviewd", re.compile(rb"quickreviewd"), b"quickreview", b"quickreviewd"),
     ("runs", re.compile(_path_rx(SCRUB_RUNS)[0]), b"<runs>", _path_rx(SCRUB_RUNS)[1]),
     ("repo", re.compile(_path_rx(SCRUB_REPO)[0]), b"<repo>", _path_rx(SCRUB_REPO)[1]),
     ("scratchpad", re.compile(rb"/tmp/claude-\d+/" + HOME_DASHED_RX + rb"-[A-Za-z0-9\-]*/[0-9a-f\-]{36}(?:/scratchpad)?"), b"<scratchpad>", b"/" + HOME_DASHED + b"-"),
@@ -141,11 +160,12 @@ RULES = [
     ("home-dashed", re.compile(HOME_DASHED_RX + rb"(?=[-/])"), b"-<home>", HOME_DASHED),
     ("home-escaped", re.compile(HOME_ESC_RX + rb"(?![A-Za-z0-9_\-])"), b"<home>", HOME_ESC),
     ("pi-login-volume", re.compile(rb"companion-pihome"), b"<pi-login-volume>", b"companion-pihome"),
+]  # the rules that also apply to member names
+RULES = NAME_RULES + [
     ("blob-encrypted_content", re.compile(rb"(encrypted_content" + ESCQ + rb")" + B64 + rb"+"), rb"\1", b"encrypted_content"),
     ("blob-thinkingSignature", re.compile(rb"(thinkingSignature" + ESCQ + rb")" + B64 + rb"{40,}"), rb"\1", b"thinkingSignature"),
     ("blob-signature", re.compile(rb"(signature" + ESCQ + rb")" + B64 + rb"{100,}"), _sig_keep, b"signature"),
 ]
-NAME_RULES = RULES[:13]  # the rules that also apply to member names
 
 
 def rewrite(data: bytes, counts: collections.Counter, rules=RULES) -> bytes:
@@ -691,8 +711,9 @@ def _write_manifest(out: Path, src: Path, results: list, a):
         "created": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "compression": f"zstd -{a.level} --long=27 (window 128 MiB: any zstd >= 1.3.2 decodes it without flags)",
         "volume_cap_bytes": a.cap,
-        "rewrites_applied": [r[0] for r in RULES],
-        "placeholders": {"the owner": "<owner>", "example-review[bot]": "<review-bot>", "quickreviewd": "quickreview",
+        "rewrites_applied": list(dict.fromkeys(r[0] for r in RULES)),
+        "placeholders": {"the owner's name": "<owner>", "the review bot's login and slug": "<review-bot>",
+                         "the product's earlier name": "quickreview",
                          "the bench runs dir": "<runs>",
                          "the repo checkout": "<repo>",
                          "the exporting user's home directory": "<home>", "companion-pihome": "<pi-login-volume>",
@@ -791,11 +812,11 @@ The archive is the run directories as the runs wrote them, with these
 mechanical rewrites applied to every text file and file name while it was
 packed. Nothing else in the text changed.
 
-- **Names.** `example-review[bot]` (the GitHub App persona, and its bare slug
-  `example-review`) became `<review-bot>`; the owner's first name `the owner`
-  became `<owner>`. One placeholder per name, everywhere: prompts,
-  transcripts, the model's own text, judge inputs, logs.
-- **The product's old name.** `quickreviewd` became `quickreview`. It is the
+- **Names.** The GitHub App persona's login (and its bare slug) became
+  `<review-bot>`; the owner's first name became `<owner>`. One placeholder per
+  name, everywhere: prompts, transcripts, the model's own text, judge inputs,
+  logs.
+- **The product's old name.** The product's earlier name became `quickreview`. It is the
   product's earlier name, not a person, so it gets the public name rather
   than a placeholder.
 - **Host paths** in driver logs and analysis: the bench runs directory
@@ -1046,8 +1067,10 @@ the modified-work statement and the citations).
 # ---------------------------------------------------------------- re-grep
 
 REGREP = {
-    "the owner": rb"the owner", "owner_legacy (any case)": rb"(?i:<owner>)", "example-review": rb"(?i:example-review)",
-    "quickreviewd": rb"quickreviewd", "home directory": HOME_RX,
+    **{f"owner name {i} (any case)": rb"(?i:" + re.escape(o.encode()) + rb")" for i, o in enumerate(SCRUB_OWNERS)},
+    **{f"review bot {i} (any case)": rb"(?i:" + re.escape(b.encode()) + rb")" for i, b in enumerate(SCRUB_BOTS)},
+    **{f"old product name {i}": re.escape(n.encode()) for i, n in enumerate(SCRUB_OLD_NAMES)},
+    "home directory": HOME_RX,
     "companion-pihome": rb"companion-pihome", "claude.env path": rb"[./\w-]*claude\.env",
     "sk- (substring)": rb"sk-", "ghp_ (substring)": rb"ghp_", "ghs_ (substring)": rb"ghs_", "gho_ (substring)": rb"gho_",
     "sk- key-shaped": rb"(?<![A-Za-z0-9])sk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,}",
@@ -1063,7 +1086,9 @@ REGREP = {
 # one PCRE pass over the decompressed stream (tar headers included, so member
 # names are searched too); every match is classified afterwards by REGREP
 REGREP_SCAN = (rb"(?<![A-Za-z0-9])sk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,}|(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{36}(?![A-Za-z0-9])|gAAAAA[A-Za-z0-9_\-=]{100,}"
-               rb"|(?i:<owner>)(?:-review)?|quickreviewd|" + HOME_RX + rb"|companion-pihome|[./\w-]*claude\.env"
+               + b"".join(rb"|(?i:" + re.escape(t.encode()) + rb")" for t in SCRUB_OWNERS + SCRUB_BOTS)
+               + b"".join(b"|" + re.escape(n.encode()) for n in SCRUB_OLD_NAMES)
+               + rb"|" + HOME_RX + rb"|companion-pihome|[./\w-]*claude\.env"
                rb"|" + HOME_DASHED_RX.lstrip(b"\\-")
                + b"".join(rb"|(?i:" + re.escape(t.encode()) + rb")" for t in SCRUB_EXTRA)
                + b"".join(b"|" + re.escape(h.strip().encode()) for h in SCRUB_HOSTS) + rb"|(?i:quickchat)|sk-|gh[psor]_")
@@ -1126,6 +1151,8 @@ def main():
             s.add_argument("--rebuild", action="store_true", help="rebuild groups the manifest already records")
             s.add_argument("--jobs", type=int, default=3)
     a = ap.parse_args()
+    if a.cmd in ("archive", "slim", "regrep") and not (SCRUB_BOTS and SCRUB_OWNERS):
+        sys.exit("set QCR_SCRUB_BOT and QCR_SCRUB_OWNER: the identities this export scrubs come from the exporter")
     {"plan": cmd_plan, "archive": cmd_archive, "slim": cmd_slim, "regrep": cmd_regrep,
      "readme": lambda a: write_readme(Path(a.out))}[a.cmd](a)
 
