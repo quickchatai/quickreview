@@ -343,6 +343,7 @@ export class LocalEmbedderSupervisor {
     this.cancelRestart = null;
     this.ready = false;
     this.everReady = false;
+    this.checkedAt = undefined; // the new child has not been probed
     try {
       const child = this.spawnFn(this.spec.python, localEmbedderArgv(this.spec), {
         env: { ...process.env },

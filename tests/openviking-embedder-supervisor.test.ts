@@ -338,6 +338,19 @@ describe("readiness and the restart ladder", () => {
     expect(h.sup.status().restarts).toBe(2);
   });
 
+  it("a replacement child has not been probed: the last child's probe time does not carry over", async () => {
+    const h = harness();
+    h.sup.start();
+    h.clock.fireMs(EMBEDDER_FAST_POLL_MS);
+    await flush();
+    expect(h.sup.status().checked_at).toBeDefined();
+    h.children[0]!.emit("exit", 3, null);
+    h.clock.fireMs(cfg().restart_backoff_ms[0]!);
+    expect(h.spawns).toHaveLength(2);
+    expect(h.sup.status()).toMatchObject({ running: true, ready: false });
+    expect(h.sup.status().checked_at).toBeUndefined();
+  });
+
   it("stop() SIGTERMs the child and cancels a pending restart", async () => {
     const h = harness();
     h.sup.start();
