@@ -178,6 +178,19 @@ describe("qcr review: a second run on an unchanged head", () => {
     expect(h.text()).toMatch(/c breaks the build/);
   });
 
+  it("--out FILE still writes the report on the unchanged-head shortcut", async () => {
+    const repo = mkRepo("unchangedout");
+    setLimit(repo);
+    const pi = scriptedPi("unchangedout", [{ findings: first }]);
+    await runReviewCli([], false, harness(repo, pi.bin).deps);
+    const out = join(repo, "report-out", "r.md");
+    const h = harness(repo, pi.bin);
+    expect(await runReviewCli(["--out", out], false, h.deps)).toBe(0);
+    expect(pi.calls()).toBe(1);
+    expect(existsSync(out)).toBe(true);
+    expect(readFileSync(out, "utf8")).toMatch(/c breaks the build/);
+  });
+
   it("--json says unchanged, with zero cost", async () => {
     const repo = mkRepo("unchangedjson");
     setLimit(repo);

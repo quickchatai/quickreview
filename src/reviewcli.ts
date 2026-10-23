@@ -395,6 +395,12 @@ function renderStillOpen(open: readonly StillOpen[]): string[] {
   ];
 }
 
+/** The report a no-review shortcut writes when a file was asked for: the same
+ * words the terminal gets, so `--out FILE` is never left unwritten. */
+function shortcutMarkdown(title: string, lines: readonly string[]): string {
+  return `# ${title}\n\n${lines.join("\n")}\n`;
+}
+
 /** Why a re-review is a full one, in words. */
 function fallbackWords(reason: string): string {
   switch (reason) {
@@ -498,7 +504,8 @@ async function runReview(
     if (to.has("terminal") || !to.has("json")) deps.out(human);
     if (to.has("json")) deps.out(JSON.stringify(withSchemaVersion(REVIEW_SCHEMA_VERSION, data)));
   };
-  const say = (human: string, data: Record<string, unknown>): void => deliver(human, data);
+  const say = (human: string, data: Record<string, unknown>, markdown?: string): void =>
+    deliver(human, data, markdown);
   const refuse = (code: number, errors: string[]): number => {
     say(errors.map((e) => `✗ ${e}`).join("\n"), { ok: false, errors });
     return code;
@@ -672,12 +679,12 @@ async function runReview(
     const last = lastRound(prev);
     if (last.head_sha === t.headSha && last.merge_base === t.mergeBase) {
       const open = stillOpen(prev);
+      const lines = [
+        `Nothing new: ${t.branch} is unchanged since the review at ${short(last.head_sha)} (${last.reviewed_at.slice(0, 10)}). Spent ${usd(0)}.`,
+        ...renderStillOpen(open),
+      ];
       say(
-        [
-          `Nothing new: ${t.branch} is unchanged since the review at ${short(last.head_sha)} (${last.reviewed_at.slice(0, 10)}). Spent ${usd(0)}.`,
-          ...renderStillOpen(open),
-          "Pass --full to review the whole branch again.",
-        ].join("\n"),
+        [...lines, "Pass --full to review the whole branch again."].join("\n"),
         {
           ok: true,
           unchanged: true,
@@ -686,7 +693,9 @@ async function runReview(
           cost_usd: 0,
           still_open: open,
         },
+        shortcutMarkdown(`Review of ${t.branch} against ${t.base} (${t.repo})`, lines),
       );
+      if (reportFailed) return 1;
       return 0;
     }
   }
@@ -716,14 +725,16 @@ async function runReview(
     };
     if (!cmd.preview) saveState(statePath, moved);
     const open = stillOpen(prev);
+    const lines = [
+      `Nothing new: ${t.branch} moved from ${short(last.head_sha)} to ${short(t.headSha)}, but none of its own changes did. Spent ${usd(0)}.`,
+      ...renderStillOpen(open),
+    ];
     say(
-      [
-        `Nothing new: ${t.branch} moved from ${short(last.head_sha)} to ${short(t.headSha)}, but none of its own changes did. Spent ${usd(0)}.`,
-        ...renderStillOpen(open),
-      ].join("\n"),
+      lines.join("\n"),
       { ok: true, unchanged: true, head_sha: t.headSha, cost_usd: 0, still_open: open },
+      shortcutMarkdown(`Review of ${t.branch} against ${t.base} (${t.repo})`, lines),
     );
-    return 0;
+    return reportFailed ? 1 : 0;
   }
 
   const outDir = join(runDir, "out");
