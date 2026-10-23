@@ -435,7 +435,14 @@ async function djangoPreCheck(
       });
     }
   } catch (err) {
-    if (err instanceof GitHubRequestError && err.status >= 400 && err.status < 500)
+    // 408 is not a refusal: the request may have been accepted, so its
+    // delivery stays unknown and the pending event is reconciled by marker.
+    if (
+      err instanceof GitHubRequestError &&
+      err.status >= 400 &&
+      err.status < 500 &&
+      err.status !== 408
+    )
       io.logEvent("migration_collision_comment_refused", round.pr, {
         head_sha: round.head_sha,
         fingerprint,
