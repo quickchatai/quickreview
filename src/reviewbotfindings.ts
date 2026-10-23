@@ -82,22 +82,14 @@ const norm = (s: string | null | undefined): string =>
     .replace(/\s+/g, " ")
     .trim();
 
-/** The finding was already posted: on the same file, its key or its title is
- * the bot's comment's. */
+/** The finding was already posted: on the same file, its title is the bot's
+ * comment's. Keys are per-round handles, so a key match proves nothing. */
 const alreadyPosted = (
-  f: {
-    key?: string | null;
-    path: string | null;
-    title?: string | null;
-    line?: number | null;
-  },
+  f: { path: string | null; title?: string | null },
   posted: readonly PostedFinding[],
 ): boolean =>
   posted.some((p) => {
     if (p.path === null || p.path !== f.path) return false;
-    // A key is only unique within its round, so it counts on the same line.
-    if (f.key && f.key === p.key && (f.line == null || p.line === null || f.line === p.line))
-      return true;
     const t = norm(f.title);
     return t !== "" && norm(p.text).includes(t);
   });
