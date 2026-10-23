@@ -234,6 +234,22 @@ function distinct(b: Build): LensAgent[] {
   return [...seen.values()].sort((x, y) => (x.name < y.name ? -1 : 1));
 }
 
+/** The request a lens puts on the wire depends only on its body, its tool list and whether the
+ * context stub is loaded (the task text is masked, the model is the fake one). A later build whose
+ * agent has the same tuple as one an earlier build already compared would repeat that comparison
+ * (bench shares ~29 of its 30 bodies with the VM build), so it is skipped; the tuple's first
+ * comparison stands for it. Each build still asserts it compared something and accounted for
+ * every agent. */
+const compared = new Set<string>();
+const requestKey = (b: Build, a: LensAgent) =>
+  createHash("sha1")
+    .update(a.body)
+    .update("\0")
+    .update((a.tools ?? []).join(","))
+    .update("\0")
+    .update(b.context ? "ctx" : "bare")
+    .digest("hex");
+
 describe("every built agent: the SDK lens prompt is the native --append-system-prompt prompt", () => {
   it("the tiers of one pass share a body, so one case stands for its tiers", () => {
     for (const b of builds) {
@@ -258,7 +274,18 @@ describe("every built agent: the SDK lens prompt is the native --append-system-p
 
   for (const b of builds) {
     it(`${b.name}: the requests are equal for every distinct agent`, async () => {
-      const cases = distinct(b);
+      const all = distinct(b);
+      const cases = all.filter((a) => {
+        const k = requestKey(b, a);
+        if (compared.has(k)) return false;
+        compared.add(k);
+        return true;
+      });
+      // Nothing is hidden: every agent was compared here or by an earlier build, and a build
+      // always compares at least its own first agents.
+      expect(cases.length, b.name).toBeGreaterThan(0);
+      expect(all.length - cases.length, `${b.name} skipped`).toBeLessThanOrEqual(all.length - 1);
+      if (b.name === "scan") expect(cases.length, "scan shares no request").toBe(all.length);
       answers(cases.length * 4);
       const failures: string[] = [];
       // A few pi children at a time: each is a process start.
