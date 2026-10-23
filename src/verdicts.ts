@@ -321,7 +321,8 @@ export interface VerdictDeps {
    */
   findingsDir?: string;
   /** Told when a round's findings record lands (the lesson shadow ledger's
-   * matcher). Absent ⇒ nothing is told. Must not throw. */
+   * matcher). Absent ⇒ nothing is told. A returned promise is awaited, and a
+   * throw or rejection keeps the obligation for a retry. */
   onFindingsRecorded?: (target: { pr: number; roundNo: number; roundId: number | null }) => unknown;
   now?: () => Date;
   log?: (msg: string, extra?: unknown) => void;
@@ -2495,6 +2496,10 @@ export class VerdictWatcher {
 
   /** The round-end ledger and findings-record checks, after the settle
    * delay — shared by a verdict and a receipt settlement. */
+  private tailDelayMs(): number {
+    return this.deps.ledgerCheckDelayMs ?? 90_000;
+  }
+
   private enqueueTail(
     pr: number,
     roundNo: number,
@@ -2509,9 +2514,7 @@ export class VerdictWatcher {
       pr,
       round_no: roundNo,
       payload: { roundId, headSha, lenses },
-      due_at: new Date(
-        this.now().getTime() + Math.max(0, this.deps.ledgerCheckDelayMs ?? 90_000),
-      ).toISOString(),
+      due_at: new Date(this.now().getTime() + Math.max(0, this.tailDelayMs())).toISOString(),
     });
     return key;
   }
@@ -2524,7 +2527,7 @@ export class VerdictWatcher {
     lenses: string,
   ): Promise<void> {
     const key = this.enqueueTail(pr, roundNo, roundId, headSha, lenses);
-    const delay = this.deps.ledgerCheckDelayMs ?? 90_000;
+    const delay = this.tailDelayMs();
     if (delay <= 0) await this.runRoundWorkKey(key);
     else {
       const timer = setTimeout(() => {
@@ -2792,7 +2795,8 @@ export class VerdictWatcher {
       .map((f) => ({ severity: String(f.severity), path: f.path, title: f.title ?? f.reason }));
   }
 
-  /** Check names whose latest run at the head is not a success — the same
+  /** Check names whose latest run at the head has the classified outcome
+   * "failed" (pending and inert runs are not listed) — the same
    * latest-run-per-name rule the CI gate uses, so an auto-cancelled
    * superseded run cannot escalate to a person forever. */
   private async escalationFailingChecks(pr: number, head: string): Promise<string[]> {
@@ -3744,8 +3748,8 @@ export class VerdictWatcher {
       detail,
     });
     const head = this.deps.store.getPr(pr)?.head_sha ?? "";
-    const cap = this.deps.cfg.daemon.max_self_requeues ?? DEFAULT_MAX_SELF_REQUEUES;
-    if (this.deps.store.selfRequeueCount(pr, head) >= cap) {
+    const cap = this.selfRequeueCap();
+    if (this.selfRequeueSpent(pr, head)) {
       const mode =
         stage === "settled_without_verdict" ? "infrastructure_settled" : "infrastructure_active";
       if (mode === "infrastructure_active" && !this.deps.hooks.killSession) return "retryable";
@@ -4257,17 +4261,26 @@ export class VerdictWatcher {
    * not age the PR). Held wakes stay held: the requeued round is about to
    * dispatch, and its own round-end paths flush them.
    */
+  private selfRequeueCap(): number {
+    return this.deps.cfg.daemon.max_self_requeues ?? DEFAULT_MAX_SELF_REQUEUES;
+  }
+
+  /** True when the per-head self-requeue budget has no attempt left. */
+  private selfRequeueSpent(pr: number, head: string): boolean {
+    return this.deps.store.selfRequeueCount(pr, head) >= this.selfRequeueCap();
+  }
+
   private async selfRequeue(
     round: RoundRow,
     mode: SelfRequeueMode = "dead",
     recovery?: { stage: "first_pass_start"; source_command_id: string; retry_epoch: number },
   ): Promise<boolean> {
-    const { store, cfg } = this.deps;
+    const { store } = this.deps;
     const row = store.getPr(round.pr);
     const head = row?.head_sha ?? "";
-    const cap = cfg.daemon.max_self_requeues ?? DEFAULT_MAX_SELF_REQUEUES;
+    const cap = this.selfRequeueCap();
     const attempt = store.selfRequeueCount(round.pr, head) + 1;
-    const exhausted = attempt > cap;
+    const exhausted = this.selfRequeueSpent(round.pr, head);
     const infrastructure = mode === "infrastructure_active" || mode === "infrastructure_settled";
     if (exhausted) {
       store.logEvent("self_requeue_cap_exhausted", round.pr, {
@@ -4618,11 +4631,17 @@ export class VerdictWatcher {
       )
         continue;
       overdue.push(round.pr);
+      const spent =
+        expensive && this.selfRequeueSpent(round.pr, store.getPr(round.pr)?.head_sha ?? "");
       await this.handleAnomaly(
         round.pr,
         round.round_no,
         `round ${round.round_no} passed its deadline (${round.deadline_at}); started ${round.started_at}` +
-          (expensive ? " — the self-requeue cap is exhausted; parking" : ""),
+          (spent
+            ? " — the self-requeue cap is exhausted; parking"
+            : expensive
+              ? " — recovery could not proceed (session not stopped or no recovery hook); parking"
+              : ""),
         "overdue",
       );
     }
