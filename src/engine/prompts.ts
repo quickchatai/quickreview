@@ -317,6 +317,8 @@ export interface FollowUpOneShotArgs {
   readFile?: (path: string) => string;
   /** The profile loaders' lookup, carrying the repo profile's layer. */
   profileLookup?: ProfileLookup;
+  /** The round's memory seed (src/reviewmemory.ts); absent => memory-less. */
+  memory?: RoundMemory;
 }
 
 /**
@@ -501,7 +503,7 @@ export function renderFollowUpOneShotPrompts(args: FollowUpOneShotArgs): FollowU
   const rendered = renderRoundPrompt(
     template,
     order,
-    MEMORY_LESS,
+    args.memory ?? MEMORY_LESS,
     cfg.owner.name,
     args.ecosystem,
     identity,

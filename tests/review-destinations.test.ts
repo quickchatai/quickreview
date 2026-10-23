@@ -292,4 +292,36 @@ describe("qcr review: destinations and the per-repo default", () => {
   it("refuses an unknown destination, exit 2", () => {
     expect(() => parseReviewArgs(["--to", "carrier-pigeon"])).toThrow(/usage: qcr review/);
   });
+
+  it("a capped review's markdown report carries the findings written before the stop", async () => {
+    const repo = mkRepo("capmd");
+    rich(repo);
+    const out = join(tmp, "report-capmd.md");
+    const pi = fakePi("capmd", [
+      `printf '%s' ${JSON.stringify(record)} > "$cd/findings-record.json"`,
+      `echo '{"type":"message_end","message":{"role":"assistant","usage":{"cost":{"total":9999}}}}'`,
+      "sleep 60",
+    ]);
+    const h = harness({ repo, piBin: pi.bin });
+    expect(await runReviewCli(["--out", out], true, h.deps)).toBe(1);
+    const data = jsonLine(h.lines);
+    expect(data.partial).toBe(true);
+    expect(Object.values(data.findings).flat()).toHaveLength(2);
+    const md = readFileSync(out, "utf8");
+    expect(md).not.toMatch(/No findings/);
+    expect(md).toMatch(/c breaks the build/);
+    expect(md).toMatch(/b is a magic number/);
+  });
+
+  it("a report that cannot be written fails the run, in the JSON and the exit status", async () => {
+    const repo = mkRepo("badout");
+    rich(repo);
+    const out = join(tmp, "report-is-a-dir");
+    mkdirSync(out);
+    const h = harness({ repo, piBin: happyPi("badout").bin });
+    expect(await runReviewCli(["--out", out], true, h.deps)).toBe(1);
+    const data = jsonLine(h.lines);
+    expect(data.ok).toBe(false);
+    expect(data.report_error).toEqual(expect.any(String));
+  });
 });

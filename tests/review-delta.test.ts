@@ -178,6 +178,19 @@ describe("qcr review: a second run on an unchanged head", () => {
     expect(h.text()).toMatch(/c breaks the build/);
   });
 
+  it("--out FILE still writes the report on the unchanged-head shortcut", async () => {
+    const repo = mkRepo("unchangedout");
+    setLimit(repo);
+    const pi = scriptedPi("unchangedout", [{ findings: first }]);
+    await runReviewCli([], false, harness(repo, pi.bin).deps);
+    const out = join(repo, "report-out", "r.md");
+    const h = harness(repo, pi.bin);
+    expect(await runReviewCli(["--out", out], false, h.deps)).toBe(0);
+    expect(pi.calls()).toBe(1);
+    expect(existsSync(out)).toBe(true);
+    expect(readFileSync(out, "utf8")).toMatch(/c breaks the build/);
+  });
+
   it("--json says unchanged, with zero cost", async () => {
     const repo = mkRepo("unchangedjson");
     setLimit(repo);
@@ -439,5 +452,27 @@ describe("review state", () => {
     });
     expect(two.fresh.map((e) => e.title)).toEqual(["unrelated null deref"]);
     expect(two.repeats).toHaveLength(1);
+  });
+});
+
+describe("qcr review: a delta review with memory", () => {
+  it("seeds the follow-up prompt from the configured memory, as the full review is", async () => {
+    const repo = mkRepo("deltamem");
+    setLimit(repo);
+    const pi = scriptedPi("deltamem", [{ findings: first }, { findings: [], prior: [] }]);
+    expect(await runReviewCli([], false, harness(repo, pi.bin).deps)).toBe(0);
+    smallPush(repo);
+    const h = harness(repo, pi.bin);
+    const memory = {
+      assembler: {
+        pinnedHead: async () => ({ status: "read" as const, text: "PINNED-HEAD-MARK" }),
+        contextBlock: async () => ({ status: "read" as const, text: "CONTEXT-BLOCK-MARK" }),
+      },
+    };
+    expect(await runReviewCli([], true, { ...h.deps, memory })).toBe(0);
+    const order = pi.order(2);
+    expect(order).toMatch(/PRIOR FINDINGS TO VERIFY/);
+    expect(order).toContain("PINNED-HEAD-MARK");
+    expect(order).toContain("CONTEXT-BLOCK-MARK");
   });
 });

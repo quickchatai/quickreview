@@ -357,13 +357,17 @@ function rawWithout(record: unknown, posted: readonly PostedFinding[]): unknown 
   if (posted.length === 0 || !Array.isArray(list)) return record;
   const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
   const kept = skipPosted(
-    list.map((e: Record<string, unknown>) => ({
-      e,
-      key: str(e["id"]) ?? str(e["key"]),
-      path: str(e["path"]),
-      title: str(e["title"]),
-      line: typeof e["line"] === "number" ? e["line"] : null,
-    })),
+    list.map((e: unknown) => {
+      // a malformed entry (null, a bare string) is kept as it is, as the other readers keep it
+      const o = typeof e === "object" && e !== null ? (e as Record<string, unknown>) : {};
+      return {
+        e,
+        key: str(o["id"]) ?? str(o["key"]),
+        path: str(o["path"]),
+        title: str(o["title"]),
+        line: typeof o["line"] === "number" ? o["line"] : null,
+      };
+    }),
     posted,
   ).fresh.map((x) => x.e);
   return { ...(record as object), findings: kept };
@@ -390,6 +394,12 @@ function renderStillOpen(open: readonly StillOpen[]): string[] {
       return `  ${where}  ${f.severity ? `[${f.severity}] ` : ""}${f.title}`;
     }),
   ];
+}
+
+/** The report a no-review shortcut writes when a file was asked for: the same
+ * words the terminal gets, so `--out FILE` is never left unwritten. */
+function shortcutMarkdown(title: string, lines: readonly string[]): string {
+  return `# ${title}\n\n${lines.join("\n")}\n`;
 }
 
 /** Why a re-review is a full one, in words. */
@@ -475,6 +485,8 @@ async function runReview(
   // known: the flags, else the saved default, else the fallback.
   let dests: readonly Destination[] = json ? ["json"] : FALLBACK_DESTINATIONS;
   let reportPath: string | null = null;
+  // The requested report could not be written: the run is not a success.
+  let reportFailed = false;
   const deliver = (human: string, data: Record<string, unknown>, markdown?: string): void => {
     const to = new Set(dests);
     if (markdown !== undefined && to.has("file") && reportPath !== null) {
@@ -484,14 +496,17 @@ async function runReview(
         human += `\nReport: ${reportPath}`;
         data = { ...data, report: reportPath };
       } catch (err) {
+        reportFailed = true;
         human += `\nThe report could not be written: ${String(err).slice(0, 200)}`;
+        data = { ...data, ok: false, report_error: String(err).slice(0, 200) };
       }
     }
     // A file-only destination still tells the terminal what happened.
     if (to.has("terminal") || !to.has("json")) deps.out(human);
     if (to.has("json")) deps.out(JSON.stringify(withSchemaVersion(REVIEW_SCHEMA_VERSION, data)));
   };
-  const say = (human: string, data: Record<string, unknown>): void => deliver(human, data);
+  const say = (human: string, data: Record<string, unknown>, markdown?: string): void =>
+    deliver(human, data, markdown);
   const refuse = (code: number, errors: string[]): number => {
     say(errors.map((e) => `✗ ${e}`).join("\n"), { ok: false, errors });
     return code;
@@ -665,12 +680,12 @@ async function runReview(
     const last = lastRound(prev);
     if (last.head_sha === t.headSha && last.merge_base === t.mergeBase) {
       const open = stillOpen(prev);
+      const lines = [
+        `Nothing new: ${t.branch} is unchanged since the review at ${short(last.head_sha)} (${last.reviewed_at.slice(0, 10)}). Spent ${usd(0)}.`,
+        ...renderStillOpen(open),
+      ];
       say(
-        [
-          `Nothing new: ${t.branch} is unchanged since the review at ${short(last.head_sha)} (${last.reviewed_at.slice(0, 10)}). Spent ${usd(0)}.`,
-          ...renderStillOpen(open),
-          "Pass --full to review the whole branch again.",
-        ].join("\n"),
+        [...lines, "Pass --full to review the whole branch again."].join("\n"),
         {
           ok: true,
           unchanged: true,
@@ -679,7 +694,9 @@ async function runReview(
           cost_usd: 0,
           still_open: open,
         },
+        shortcutMarkdown(`Review of ${t.branch} against ${t.base} (${t.repo})`, lines),
       );
+      if (reportFailed) return 1;
       return 0;
     }
   }
@@ -709,14 +726,16 @@ async function runReview(
     };
     if (!cmd.preview) saveState(statePath, moved);
     const open = stillOpen(prev);
+    const lines = [
+      `Nothing new: ${t.branch} moved from ${short(last.head_sha)} to ${short(t.headSha)}, but none of its own changes did. Spent ${usd(0)}.`,
+      ...renderStillOpen(open),
+    ];
     say(
-      [
-        `Nothing new: ${t.branch} moved from ${short(last.head_sha)} to ${short(t.headSha)}, but none of its own changes did. Spent ${usd(0)}.`,
-        ...renderStillOpen(open),
-      ].join("\n"),
+      lines.join("\n"),
       { ok: true, unchanged: true, head_sha: t.headSha, cost_usd: 0, still_open: open },
+      shortcutMarkdown(`Review of ${t.branch} against ${t.base} (${t.repo})`, lines),
     );
-    return 0;
+    return reportFailed ? 1 : 0;
   }
 
   const outDir = join(runDir, "out");
@@ -789,7 +808,7 @@ async function runReview(
     };
     let why = fallback;
     if (prev !== null && delta !== null) {
-      const fu = renderDeltaRound({ ...common, state: prev, delta });
+      const fu = renderDeltaRound({ ...common, state: prev, delta, ...(memory ? { memory } : {}) });
       if (fu.followUp.scope === "delta") return { prompts: fu, scope: "delta", fallback: null };
       why = { reason: fu.followUp.reason ?? "follow-up-full" };
     }
@@ -801,13 +820,15 @@ async function runReview(
   };
   let planned: ReturnType<typeof planRound>;
   try {
-    // a diff has no checkout to plan over: an empty scratch directory stands
-    // in, and the plan is rendered again over the review tree below
+    // a diff has no checkout to plan over: a scratch tree built the way the
+    // review tree is (HEAD plus the diff) stands in, so the plan the person
+    // authorizes is the one the run executes. Its warning is the run tree's.
     let planTree = gitDir;
     if (kind === "diff") {
       planTree = mkdtempSync(join(tmpdir(), "qcr-plan-"));
       const scratch = planTree;
       cleanups.push(() => rmSync(scratch, { recursive: true, force: true }));
+      addDiffTree(deps.cwd, scratch, t);
     }
     planned = planRound(planTree);
   } catch (err) {
@@ -1008,7 +1029,11 @@ async function runReview(
   // What a finished review adds to the target's state; an unfinished one
   // leaves the mark where it was. The findings the reader sees are this
   // round's own: a re-raised open finding is listed as still open, once.
-  const finished = !shot.capped && shot.error === undefined && shot.findings !== undefined;
+  // A session that hit its deadline before writing its outcome never finished,
+  // whatever findings it had written by then.
+  const timedOutShort = shot.piRun.timedOut && shot.outcome === undefined;
+  const finished =
+    !shot.capped && shot.error === undefined && shot.findings !== undefined && !timedOutShort;
   const round: ReviewRound = {
     round_no: roundNo,
     head_sha: t.headSha,
@@ -1068,13 +1093,17 @@ async function runReview(
             ...customNotes,
           ],
         },
-        groups,
+        unfinishedGroups,
       ),
     );
     return 1;
   }
-  if (shot.error !== undefined || shot.findings === undefined) {
-    const why = shot.error ?? "the review wrote no findings record";
+  if (shot.error !== undefined || shot.findings === undefined || timedOutShort) {
+    const why =
+      shot.error ??
+      (shot.findings === undefined
+        ? "the review wrote no findings record"
+        : "the review timed out before it finished");
     say(`\nThe review did not finish: ${why}\nFiles: ${outDir}`, {
       ok: false,
       partial: false,
@@ -1130,8 +1159,8 @@ async function runReview(
       verdict,
       summary: typeof shot.outcome?.["summary"] === "string" ? shot.outcome["summary"] : null,
     });
-    // Every finding was the bot's already: there is nothing to post, not even
-    // a review body to repeat.
+    // Every finding was the bot's already (none left inline or in the body):
+    // there is nothing to post, not even a review body to repeat.
     const res: PostResult = !id.ok
       ? id
       : skipped.skipped > 0 && review.comments.length === 0 && !review.bodyFindings
@@ -1185,7 +1214,7 @@ async function runReview(
     { ok: !postFailed, partial: false, ...data, ...(posted ? { post: posted } : {}) },
     renderMarkdown(mdMeta, groups),
   );
-  return postFailed ? 1 : 0;
+  return postFailed || reportFailed ? 1 : 0;
 }
 
 /** The run id and container name the host wrapper hands a review container
