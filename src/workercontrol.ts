@@ -42,15 +42,23 @@ const outcome = (r: ControlResult): FileOutcome =>
     ? { ok: true, ack: r.ack, command_id: r.command_id, ...(r.killed ? { killed: true } : {}) }
     : { ok: false, reason: r.reason };
 
+const handledOutcome = (r: {
+  session: string;
+  command_id: string;
+  message: string;
+}): FileOutcome => ({
+  ok: true,
+  ack: "handled",
+  session: r.session,
+  command_id: r.command_id,
+  message: r.message,
+});
+
 const takeoverOutcome = (r: TakeoverResult): FileOutcome =>
-  r.ok
-    ? { ok: true, ack: "handled", session: r.session, command_id: r.command_id, message: r.message }
-    : { ok: false, reason: r.reason };
+  r.ok ? handledOutcome(r) : { ok: false, reason: r.reason };
 
 const debugOutcome = (r: DebugResult): FileOutcome =>
-  r.ok
-    ? { ok: true, ack: "handled", session: r.session, command_id: r.command_id, message: r.message }
-    : { ok: false, reason: r.reason, code: r.code };
+  r.ok ? handledOutcome(r) : { ok: false, reason: r.reason, code: r.code };
 
 async function notServed(
   deps: WorkerControlDeps,

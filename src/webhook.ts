@@ -705,8 +705,11 @@ function interpretationPr(i: Interpretation): number | null {
   return i.pr;
 }
 
+/** The route the receiver listens on, and the one the webhook healer reads back, unless configured. */
+export const DEFAULT_WEBHOOK_PATH = "/webhook";
+
 export function createWebhookServer(deps: WebhookDeps): Server {
-  const path = deps.path ?? "/webhook";
+  const path = deps.path ?? DEFAULT_WEBHOOK_PATH;
   const log = deps.log ?? (() => {});
   let stopped = false;
   let timer: ReturnType<typeof setInterval> | undefined;
