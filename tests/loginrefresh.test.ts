@@ -663,6 +663,37 @@ describe("pi-ai's own refresh (the deep import)", () => {
     }
   });
 
+  it("refreshes a Sign in with ChatGPT login (provider openai) through pi-ai against a stubbed token endpoint", async () => {
+    const realFetch = globalThis.fetch;
+    const calls: Array<{ url: string; body: string }> = [];
+    globalThis.fetch = (async (url: unknown, init?: { body?: unknown }) => {
+      calls.push({ url: String(url), body: String(init?.body) });
+      return new Response(
+        JSON.stringify({
+          access_token: "A2",
+          refresh_token: "R2",
+          expires_in: 3600,
+          scope: "openid chatgpt.tokens.use.direct",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+    try {
+      const fresh = await piOAuthRefresh(
+        "openai",
+        { type: "oauth", access: "A1", refresh: "R1", expires: 1, clientId: "client-1" },
+        AbortSignal.timeout(5_000),
+      );
+      expect(fresh).toMatchObject({ access: "A2", refresh: "R2", clientId: "client-1" });
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.url).toContain("/oauth/token");
+      expect(calls[0]!.body).toContain("refresh_token=R1");
+      expect(calls[0]!.body).toContain("client_id=client-1");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
   it("an unknown provider is a failure, not a silent skip", async () => {
     await expect(
       piOAuthRefresh(
