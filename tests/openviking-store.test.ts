@@ -1876,6 +1876,34 @@ describe("the incremental sweep", () => {
     expect((await store.read()).map((e) => e.text)).toEqual(["bbbbbb"]);
   });
 
+  it("a named create that loses to an external writer forgets the cached destination", async () => {
+    const server = new FakeOpenViking();
+    const client = new OpenVikingClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      user: "reviewer",
+      fetchFn: async (url, init) => {
+        const res = await server.fetch(url, init);
+        if (!url.includes("/api/v1/fs/ls")) return res;
+        const body = JSON.parse(await res.text()) as { result: Array<Record<string, unknown>> };
+        for (const row of body.result) {
+          row["size"] = 7;
+          row["modTime"] = "2026-08-20T15:30:00.000Z";
+        }
+        return json(200, body);
+      },
+    });
+    const store = new OpenVikingStore({ client, now: () => NOW, cacheTtlMs: 0 });
+    const other = new OpenVikingStore({ client, now: () => NOW, cacheTtlMs: 0 });
+    expect((await store.apply({ op: "note", text: "aaaaaa", name: "fixed" })).ok).toBe(true);
+    expect((await store.read()).map((e) => e.text)).toEqual(["aaaaaa"]);
+    const [entry] = await other.read();
+    expect((await other.apply({ op: "edit", ...refOf(entry!), text: "bbbbbb" })).ok).toBe(true);
+    const lost = await store.apply({ op: "note", text: "cccccc", name: "fixed" });
+    expect(lost).toMatchObject({ ok: true, existed: true });
+    expect((await store.read()).map((e) => e.text)).toEqual(["bbbbbb"]);
+  });
+
   it("a sweep that read the OLD bytes before a same-size write cannot put them back", async () => {
     const server = new FakeOpenViking();
     let gate: Promise<void> | null = null;

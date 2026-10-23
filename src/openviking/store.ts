@@ -1106,7 +1106,8 @@ export class OpenVikingStore implements MemoryStore {
         wait: false,
       });
       if (res.ok && batchWriteLanded(res.result, uri)) {
-        this.invalidate();
+        this.forget(id);
+        if (isRetired(body)) this.noteRetired(uri);
         await this.mirrorTags(uri, body);
         const same = res.result.unchanged.includes(uri);
         return {
@@ -1131,7 +1132,7 @@ export class OpenVikingStore implements MemoryStore {
       }
       if (!res.conflict) return { ok: false, message: `memory write failed: ${res.message}` };
       if (name !== undefined) {
-        this.invalidate(); // An external writer won; the cached destination may predate it.
+        this.forget(id); // An external writer won; the cached destination may predate it.
         return {
           ok: true,
           existed: true,
