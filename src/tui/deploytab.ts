@@ -58,7 +58,7 @@ import {
   type ConfigRead,
 } from "./confighome.js";
 import { FG, RESET } from "./theme.js";
-import { remoteSandboxRoot } from "./layout.js";
+import { remoteSandboxRoot, resolveLayout } from "./layout.js";
 
 /** What the VM's updater reports: `sudo qcr-update status --json`, over ssh
  * (deploy.sh reads the same). Read-only. */
@@ -144,7 +144,21 @@ export function compareVersionsDesc(a: string, b: string): number {
   if (x[3] === y[3]) return 0;
   if (x[3] === "") return -1;
   if (y[3] === "") return 1;
-  return x[3] < y[3] ? 1 : -1;
+  // Semver precedence: dot-separated identifiers, numeric ones numerically
+  // and below alphanumeric ones, a shorter run below a longer one it prefixes.
+  const xs = x[3].split(".");
+  const ys = y[3].split(".");
+  for (let i = 0; i < Math.min(xs.length, ys.length); i++) {
+    const a = xs[i]!;
+    const b = ys[i]!;
+    if (a === b) continue;
+    const an = /^\d+$/.test(a);
+    const bn = /^\d+$/.test(b);
+    if (an && bn) return Number(a) < Number(b) ? 1 : -1;
+    if (an !== bn) return an ? 1 : -1;
+    return a < b ? 1 : -1;
+  }
+  return xs.length < ys.length ? 1 : -1;
 }
 
 /** The tag list -> the published versions, newest first, deduplicated. Tags
@@ -433,6 +447,8 @@ export class RealDeployFetcher implements DeployFetcher {
   ) {}
 
   async load(version?: string): Promise<Omit<DeployState, "loaded" | "loading" | "scroll">> {
+    // The remote paths below follow the container's root: settle it first.
+    await resolveLayout(this.cfg, this.ssh);
     const [update, status, head, dirty, published, cfgRemote, cfgLocal] = await Promise.all([
       this.ssh(this.cfg.ssh_host, UPDATE_STATUS_ARGV),
       this.ssh(this.cfg.ssh_host, containerStatusArgv(this.cfg)),
@@ -649,7 +665,9 @@ export function deployLines(st: DeployState, width: number): string[] {
 export function deployKeys(st: DeployState): LiveKeys {
   const bar: BarButton[] = [];
   if (st.run) {
-    bar.push({ key: "x", label: st.run.running ? "x abort" : "x close log" });
+    // Awaiting the drain's auto-lift keeps the finished log (x only says so).
+    const finished = st.deployPhase === "awaiting-lift" ? "x awaiting drain lift" : "x close log";
+    bar.push({ key: "x", label: st.run.running ? "x abort" : finished });
     return { bar, inline: [] };
   }
   bar.push({ key: "D", label: st.armedKind === "deploy" ? "D confirm deploy" : "D deploy" });
@@ -707,7 +725,11 @@ export function renderDeployTab(
       : run.code === 0
         ? `${OK}${STRONG}${label}${DRESET}`
         : `${BAD}${STRONG}${label}${DRESET}`;
-    const suffix = run.running ? "  streaming — j/k scroll · x abort" : "  x close log · r refresh";
+    const suffix = run.running
+      ? "  streaming — j/k scroll · x abort"
+      : st.deployPhase === "awaiting-lift"
+        ? "  log stays until the drain auto-lifts · r refresh"
+        : "  x close log · r refresh";
     frame.boxRow(1, [{ text: ` ${chip}${FG.dim}${suffix}${RESET}`, width: cols - 2 }]);
     st.buttonZone = undefined;
     st.powerZone = undefined;
@@ -789,8 +811,9 @@ export function renderDeployTab(
     }
   } else {
     const lines = deployLines(st, cols - 4);
+    const from = Math.max(0, Math.min(st.scroll, lines.length - bodyRows));
     for (let r = 0; r < bodyRows; r++) {
-      frame.boxRow(2 + r, [{ text: ` ${lines[st.scroll + r] ?? ""}`, width: cols - 2 }]);
+      frame.boxRow(2 + r, [{ text: ` ${lines[from + r] ?? ""}`, width: cols - 2 }]);
     }
   }
   paintCmdBar(frame, "deploy", cols, rows, live.bar);
@@ -816,8 +839,16 @@ export function installDeployHooks(
     if (st.loading) return;
     st.loading = true;
     try {
-      Object.assign(st, await f.load(st.version));
-      st.loaded = true;
+      // A version chosen while a load was pending makes that load stale: it
+      // is discarded and the choice loaded instead.
+      for (;;) {
+        const requested = st.version;
+        const result = await f.load(requested);
+        if (st.version !== requested) continue;
+        Object.assign(st, result);
+        st.loaded = true;
+        break;
+      }
     } finally {
       st.loading = false;
     }

@@ -427,6 +427,19 @@ describe("digest tab", () => {
     expect(body.slice(1, -1)).not.toContain("│");
   });
 
+  it("paints no carriage return or terminal control from the document", () => {
+    const st: DigestState = {
+      files: ["2026-08-12.md"],
+      back: 0,
+      scroll: 0,
+      content: "# Reviews\r\nline two\x1b[2Jtail\r\n",
+    };
+    const painted = renderDigestTab(st, true, "2026-08-13", 100, 24).lines.join("\n");
+    expect(painted).not.toContain("\r");
+    expect(painted).not.toContain("\x1b[2J");
+    expect(stripAnsi(painted)).toContain("line two");
+  });
+
   it("says which of the three empties it is: not listed, could not list, none written", () => {
     const unread = stripAnsi(
       renderDigestTab({ back: 0, scroll: 0 }, false, "2026-08-13", 100, 24).lines.join("\n"),

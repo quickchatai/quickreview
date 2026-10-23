@@ -130,7 +130,11 @@ function feedbackEpisode(e: MemoryEntry, signal: string): string {
   }
   if (signal === "bot_comment_deleted") {
     const id = /\bbot comment\s+(\d+)\b/.exec(e.text)?.[1];
-    if (id) return `deleted-comment-${id}`;
+    // An issue comment has its own id namespace; an unscoped entry is a review comment.
+    if (id) {
+      const scope = parseEventTags(e.text)["scope"];
+      return scope === "issue_comment" ? `deleted-issue-comment-${id}` : `deleted-comment-${id}`;
+    }
   }
   return `${signal || "feedback"}-${e.day}`;
 }
@@ -855,6 +859,9 @@ export function installFeedbackTab(
   const reloadChanges = (): void => {
     if (st.changesLoading) return;
     st.changesLoading = true;
+    // The selected commit's identity, so a newer commit sorting ahead of it
+    // does not move the selection (and the next R) onto a different one.
+    const selectedSha = (changes.register?.entries ?? [])[st.changeSel]?.sha;
     void changes
       .refresh()
       .catch(() => {
@@ -863,10 +870,10 @@ export function installFeedbackTab(
       })
       .finally(() => {
         st.changesLoading = false;
-        st.changeSel = Math.min(
-          st.changeSel,
-          Math.max(0, (changes.register?.entries.length ?? 1) - 1),
-        );
+        const entries = changes.register?.entries ?? [];
+        const rebound = selectedSha ? entries.findIndex((c) => c.sha === selectedSha) : -1;
+        st.changeSel =
+          rebound >= 0 ? rebound : Math.min(st.changeSel, Math.max(0, entries.length - 1));
         app.repaint();
       });
   };

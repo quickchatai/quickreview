@@ -146,6 +146,20 @@ describe("the signal, as a card", () => {
     expect(feedbackInbox([a, b, receipt])).toEqual([b]);
   });
 
+  it("a deleted issue comment and a deleted review comment with the same id are two episodes", () => {
+    const text = (scope: string): string =>
+      `#feedback #operations kind=feedback pr=5372 day=2026-08-25 signal=bot_comment_deleted${scope} bot comment 55 on PR #5372 was deleted by a human — the bluntest noise verdict there is; evidence: PR #5372 — 2026-08-25`;
+    const review = memoryEntry(text(""), "2026-08-25 09:00:00");
+    const issue = memoryEntry(text(" scope=issue_comment"), "2026-08-25 10:00:00");
+    expect(feedbackPresentation(review, [review, issue])!.episode).toBe("deleted-comment-55");
+    expect(feedbackPresentation(issue, [review, issue])!.episode).toBe("deleted-issue-comment-55");
+    const receipt = memoryEntry(
+      "#feedback-action #feedback pr=5372 episode=deleted-comment-55 action=landed acted=2026-08-25\nResult: noted.",
+      "2026-08-25 11:00:00",
+    );
+    expect(feedbackInbox([review, issue, receipt])).toEqual([issue]);
+  });
+
   it("RAW FEEDBACK is the comment's FULL text when the entry carries it — not the 280-character cut", async () => {
     const body = `[feedback] First line of the complaint.\nSECONDLINE says ${"why ".repeat(90)}and ends at TAILWORD.`;
     const full = memoryEntry(
@@ -541,6 +555,24 @@ describe("the revert, armed and confirmed", () => {
     const zone = frame.zones.find((z) => (z.action as { t: string }).t === "change")!;
     expect(zone.y1).toBeLessThanOrEqual(24);
     expect(stripAnsi(frame.render().split("\n")[zone.y1 - 1] ?? "")).toContain("severity change");
+  });
+
+  it("a refresh keeps the selected commit selected when a newer one sorts ahead of it", async () => {
+    const a = changeEntry("a".repeat(40), "older change");
+    const b = changeEntry("b".repeat(40), "selected change");
+    const changes = new FakeChanges([a, b]);
+    const rig = await loaded({ changes });
+    key(rig, { kind: "char", ch: "t" });
+    key(rig, { kind: "char", ch: "t" }); // focus changed
+    key(rig, { kind: "down" }); // b
+    changes.refresh = () => {
+      changes.register!.entries = [changeEntry("c".repeat(40), "newest change"), a, b];
+      return Promise.resolve(undefined);
+    };
+    key(rig, { kind: "refresh" });
+    await settle();
+    key(rig, { kind: "char", ch: "R" });
+    expect(rig.learning.feedback.armed).toBe("b".repeat(40));
   });
 
   it("the register is scanned once behind the first paint, and again on r", async () => {
