@@ -53,6 +53,11 @@ export function filterLabel(f: BoardFilter | null | undefined): string {
   return `⛉ ${bits.join(" · ")} — F clears`;
 }
 
+/** The normalised tag query, "" when there is no active filter. */
+function activeTag(tag: string | null | undefined): string {
+  return tag === null || tag === undefined ? "" : normalizeTag(tag);
+}
+
 /**
  * Filter memory timeline entries by tag: exact tag match, case-insensitive,
  * a leading '#' on the query is ignored (`#pinned` ≡ `pinned`). Null/empty
@@ -62,8 +67,8 @@ export function applyMemoryFilter<T extends Pick<MemoryEntry, "tags">>(
   entries: T[],
   tag: string | null | undefined,
 ): T[] {
-  if (tag === null || tag === undefined || normalizeTag(tag) === "") return entries;
-  const want = normalizeTag(tag);
+  const want = activeTag(tag);
+  if (want === "") return entries;
   return entries.filter((e) => e.tags.some((t) => normalizeTag(t) === want));
 }
 
@@ -79,6 +84,7 @@ export function visiblePrs(view: {
 
 /** The memory view's indicator, same shape as the board's. */
 export function memoryFilterLabel(tag: string | null | undefined): string {
-  if (tag === null || tag === undefined || normalizeTag(tag) === "") return "";
-  return `⛉ #${normalizeTag(tag)} — F clears`;
+  const want = activeTag(tag);
+  if (want === "") return "";
+  return `⛉ #${want} — F clears`;
 }

@@ -39,10 +39,9 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
-  renameSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { TUI_DEFAULTS, type TuiConfig } from "../config.js";
 import type { StatusSnapshot } from "../state.js";
 import {
@@ -52,6 +51,7 @@ import {
   type SettledRecord,
 } from "../archive/manifest.js";
 import { dockerShArgv, whyArgv, type RemoteResult, type SshRunner } from "./remote.js";
+import { errText, writeJsonFile } from "./jsonfile.js";
 import { remoteSandboxRoot } from "./layout.js";
 
 /** Roles a round bundle can carry, in copy order. `transcript` carries the pass
@@ -173,8 +173,8 @@ export function manifestArgv(
     `t=$(ls -1t "$r/${sessionDir}/pr-${pr}"/*.jsonl 2>/dev/null | head -1)`,
     `[ -z "$t" ] && t=$(ls -1t "$r/archive/pr-${pr}/transcripts"/*.gz 2>/dev/null | grep -v '/session-at-close-' | head -1)`,
     `[ -n "$t" ] && echo "transcript $t"`,
-    `[ -f "$r/state/ledgers/pr-${pr}.md" ] && echo "ledger $r/state/ledgers/pr-${pr}.md"`,
-    `[ -f "$r/state/session-prompts/pr-${pr}.md" ] && echo "prompt $r/state/session-prompts/pr-${pr}.md"`,
+    `[ -f "$r/${ledgerSource(pr)}" ] && echo "ledger $r/${ledgerSource(pr)}"`,
+    `[ -f "$r/${promptSource(pr)}" ] && echo "prompt $r/${promptSource(pr)}"`,
     `v=$(ls -1t "$r/verdict/pr-${pr}-round-${round}.json" "$r"/verdict/processed/*pr-${pr}-round-${round}.json 2>/dev/null | head -1)`,
     `[ -n "$v" ] && echo "verdict $v"`,
     `[ -f "$r/archive/pr-${pr}/manifest.json" ] && echo "${ARCHIVE_MANIFEST_LINE} $r/archive/pr-${pr}/manifest.json"`,
@@ -184,6 +184,11 @@ export function manifestArgv(
 }
 
 /** The listing line naming the PR's archive manifest. */
+/** A PR's ledger and session prompt, relative to the sandbox root: the live
+ * listing and the archive lookup both name them through these. */
+const ledgerSource = (pr: number): string => `state/ledgers/pr-${pr}.md`;
+const promptSource = (pr: number): string => `state/session-prompts/pr-${pr}.md`;
+
 export const ARCHIVE_MANIFEST_LINE = "archive-manifest";
 
 /** A VM-reported path is interpolated into the next command's shell script,
@@ -277,9 +282,9 @@ export function archivedRole(
   const match = (r: SettledRecord): boolean => {
     switch (role) {
       case "ledger":
-        return r.source === `state/ledgers/pr-${pr}.md`;
+        return r.source === ledgerSource(pr);
       case "prompt":
-        return r.source === `state/session-prompts/pr-${pr}.md`;
+        return r.source === promptSource(pr);
       case "verdict":
         return verdictRe.test(r.source);
       case "transcript":
@@ -494,10 +499,7 @@ export class SweepProgressFile implements SweepProgressStore {
           .map(([pr, { sig, stored }]) => [String(pr), { sig, stored }]),
       ),
     };
-    mkdirSync(dirname(this.path), { recursive: true });
-    const tmp = `${this.path}.tmp-${process.pid}`;
-    writeFileSync(tmp, `${JSON.stringify(record, null, 2)}\n`);
-    renameSync(tmp, this.path); // atomic: a re-exec never reads a torn record
+    writeJsonFile(this.path, record); // atomic: a re-exec never reads a torn record
   }
 }
 
@@ -549,10 +551,7 @@ export class EvidenceStore {
   writeManifest(m: RoundManifest): void {
     const dir = this.roundDir(m.pr, m.round_no);
     mkdirSync(dir, { recursive: true });
-    const target = join(dir, MANIFEST_NAME);
-    const tmp = `${target}.tmp`;
-    writeFileSync(tmp, `${JSON.stringify(m, null, 2)}\n`);
-    renameSync(tmp, target); // atomic: a reader never sees a half-written marker
+    writeJsonFile(join(dir, MANIFEST_NAME), m); // atomic: a reader never sees a half-written marker
   }
 }
 
@@ -998,6 +997,4 @@ function remoteCause(res: RemoteResult): string {
   return `: ${status}${last ? ` — ${last.length > 160 ? `${last.slice(0, 160)}…` : last}` : ""}`;
 }
 
-function msg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
+const msg = errText;

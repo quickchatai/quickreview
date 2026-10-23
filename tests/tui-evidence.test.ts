@@ -806,7 +806,7 @@ describe("the sweep's progress survives a re-exec", () => {
     file.write(store.dir, first, new Date());
     // The temp name is taken (a directory sits there), so the write fails
     // before the rename — and a direct write over the record would not have.
-    mkdirSync(`${recordPath}.tmp-${process.pid}`);
+    mkdirSync(`${recordPath}.${process.pid}.tmp`);
     expect(() =>
       file.write(store.dir, new Map([[2, { sig: "1//tracked/b", stored: true }]]), new Date()),
     ).toThrow();
