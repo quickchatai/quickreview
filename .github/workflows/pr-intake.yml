@@ -1,0 +1,98 @@
+# Pull request intake (CONTRIBUTING.md, "How a change gets in").
+#
+# Every PR starts as a draft: one opened as ready is turned into a draft. An
+# outside contributor's PR must link an open issue (`Closes #N`) and carry its
+# QuickReview self-review report; marking one ready without both sends it back
+# to draft, with one comment (edited in place) naming what is missing. A
+# maintainer's PR (author association OWNER, MEMBER or COLLABORATOR) is still
+# opened as a draft but is not checked; a bot's PR is left alone.
+#
+# The trigger is pull_request_target, so the run sees a fork's PR with a write
+# token and without waiting for the approval that fork CI waits for. That is
+# safe only because nothing here reads the PR's code: no checkout, no script
+# from the PR, and the PR's text reaches the shell as environment variables,
+# never interpolated into it. Keep it that way. It runs on GitHub's own runner,
+# never on Blacksmith's.
+name: PR intake
+
+on:
+  pull_request_target:
+    types: [opened, reopened, edited, ready_for_review]
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: write
+
+concurrency:
+  group: pr-intake-${{ github.event.pull_request.number }}
+
+jobs:
+  intake:
+    if: github.event.pull_request.user.type != 'Bot'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      ACTION: ${{ github.event.action }}
+      DRAFT: ${{ github.event.pull_request.draft }}
+      ASSOCIATION: ${{ github.event.pull_request.author_association }}
+      BODY: ${{ github.event.pull_request.body }}
+    steps:
+      - name: draft by default, an issue and the self-review before ready
+        run: |
+          set -euo pipefail
+          MARK="<!-- qcr-pr-intake -->"
+          to_draft() { gh pr ready "$PR" --repo "$REPO" --undo; }
+          comment_id() {
+            gh api "repos/$REPO/issues/$PR/comments" --paginate \
+              --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$MARK\"))) | .id" | head -n1 || true
+          }
+          say() {
+            local id
+            id=$(comment_id)
+            if [ -n "$id" ]; then
+              gh api -X PATCH "repos/$REPO/issues/comments/$id" -f body="$MARK"$'\n'"$1" >/dev/null
+            elif [ "${2:-}" != only-if-said ]; then
+              gh pr comment "$PR" --repo "$REPO" --body "$MARK"$'\n'"$1" >/dev/null
+            fi
+          }
+
+          if { [ "$ACTION" = opened ] || [ "$ACTION" = reopened ]; } && [ "$DRAFT" != true ]; then
+            to_draft
+            DRAFT=true
+          fi
+
+          case "$ASSOCIATION" in OWNER | MEMBER | COLLABORATOR) exit 0 ;; esac
+
+          body=$(printf '%s' "$BODY" | tr -d '\r')
+          missing=()
+
+          issue=$(printf '%s\n' "$body" | grep -ioE '\b(close[sd]?|fix(e[sd])?|resolve[sd]?) #[0-9]+' | head -n1 | grep -oE '[0-9]+$' || true)
+          if [ -z "$issue" ]; then
+            missing+=("- an open issue, linked as \`Closes #<issue>\`")
+          else
+            kind=$(gh api "repos/$REPO/issues/$issue" --jq 'if .pull_request then "a pull request" else .state end' 2>/dev/null || echo "not found")
+            [ "$kind" = open ] || missing+=("- an open issue: #$issue is $kind")
+          fi
+
+          # The report qcr review --out writes always says "N finding(s)." or
+          # "No findings." (renderMarkdown, packages/pi-plugin/src/reviewdest.ts).
+          review=$(printf '%s\n' "$body" | sed -n '/^## QuickReview self-review/,/^### What I did with each finding/p')
+          printf '%s\n' "$review" | grep -qE '^([0-9]+ findings?|No findings)\.$' ||
+            missing+=("- the QuickReview self-review: the whole \`qcr-review.md\` pasted under \"QuickReview self-review\"")
+
+          if [ ${#missing[@]} -eq 0 ]; then
+            say "Everything the intake asks for is here. Mark the PR ready for review when you are done." only-if-said
+            exit 0
+          fi
+          list=$(printf '%s\n' "${missing[@]}")
+          if [ "$DRAFT" != true ]; then
+            to_draft
+            say "This PR went back to draft. Before it is ready for review it needs:"$'\n\n'"$list"$'\n\n'"See CONTRIBUTING.md, \"How a change gets in\". Edit the description, then mark it ready again."
+          else
+            say "Thanks for the PR. It stays a draft until it has:"$'\n\n'"$list"$'\n\n'"See CONTRIBUTING.md, \"How a change gets in\". Edit the description, then mark it ready for review."
+          fi
+          echo "::notice::missing: ${missing[*]}"

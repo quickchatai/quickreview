@@ -1,0 +1,24 @@
+name: Proposal
+description: A change or a new feature. Open this before the pull request.
+labels: [proposal]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do, and what gets in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: The change you propose
+      description: Name any new dependency, config knob or surface; those are discussed before code.
+    validations:
+      required: true
+  - type: checkboxes
+    id: pr
+    attributes:
+      label: Pull request
+      options:
+        - label: I would like to send the pull request for this myself.
