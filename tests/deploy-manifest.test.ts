@@ -124,6 +124,14 @@ describe("the deploy manifest", () => {
     }
   });
 
+  it("a platform digest that is not a string is reported, never coerced", () => {
+    const digest = JSON.parse(edit(() => {})).images.daemon.platforms["linux/amd64"];
+    const problems = manifestProblems(
+      JSON.parse(edit((m) => (m.images.daemon.platforms["linux/amd64"] = [digest]))),
+    );
+    expect(problems).toContain('images.daemon.platforms["linux/amd64"]: not a sha256 digest');
+  });
+
   it("a repository that is not a string is reported, never passed on", () => {
     for (const bad of [null, 7, ["ghcr.io/x/y"], {}]) {
       const problems = manifestProblems(
