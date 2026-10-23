@@ -296,6 +296,10 @@ OLD_MEM_RENAMED=0
 OLD_MEM_STOPPED=0
 NEW_MEM_STARTED=0
 SEEDED=0
+RESCUE_OK=1
+SWAP_MARKER="${C[UPDATE_STATE_DIR]}/swap-pending"
+# the SQLite files the snapshot and the preflight scratch copy both carry
+STATE_DB_FILES=(state.db state.db-wal state.db-shm)
 NEW_DAEMON_STARTED=0
 DAEMON_STOPPED=0
 LAYOUT=none
@@ -396,11 +400,12 @@ rescue() {
   trap - ERR
   log "RESCUE after failure at step '$STEP': restoring the previous config and the old containers"
   local ok=1
+  [[ $SWAP_STATE -ge 1 ]] || rm -f "$SWAP_MARKER"
   if [[ $SWAP_STATE -ge 1 ]]; then
     # the new config is set aside as .failed, the previous one is current again
     rm -rf "$CFG.failed"
     if [[ -e "$CFG" ]]; then mv "$CFG" "$CFG.failed" || ok=0; fi
-    mv "$CFG.prev" "$CFG" || { log "RESCUE: could not restore $CFG.prev"; ok=0; }
+    if mv "$CFG.prev" "$CFG"; then rm -f "$SWAP_MARKER"; else log "RESCUE: could not restore $CFG.prev"; ok=0; fi
   fi
   if [[ $NEW_MEM_STARTED -eq 1 || $OLD_MEM_RENAMED -eq 1 ]]; then
     d rm -f "$MEM" >/dev/null 2>&1
@@ -438,6 +443,7 @@ rescue() {
       ok=0
     fi
   fi
+  RESCUE_OK=$ok
   [[ $ok -eq 1 ]] && log "RESCUE complete: the previous version is running again" || log "RESCUE INCOMPLETE — look at the VM"
   return 0
 }
@@ -454,7 +460,11 @@ on_exit() {
   if [[ $rc -ne 0 ]]; then
     if [[ "$PHASE" == rescuable ]]; then
       rescue
-      record_last_run "rescued" "failed at $STEP; previous version restored"
+      if [[ $RESCUE_OK -eq 1 ]]; then
+        record_last_run "rescued" "failed at $STEP; previous version restored"
+      else
+        record_last_run "rescue-incomplete" "failed at $STEP; the rescue did not complete, look at the VM"
+      fi
     elif [[ "$PHASE" == committed ]]; then
       log "FAILED at step '$STEP' AFTER the recreate: the drain stays on (a failed first reconcile never lifts it); fix forward"
       record_last_run "failed-forward" "failed at $STEP after the recreate"
@@ -477,6 +487,8 @@ step lock
 exec 9>"${C[UPDATE_STATE_DIR]}/update.lock"
 flock -n 9 || die "another qcr-update is running (lock ${C[UPDATE_STATE_DIR]}/update.lock)"
 LOCKED=1
+[[ ! -e "$SWAP_MARKER" ]] ||
+  die "a previous qcr-update was interrupted between the config swap and the recreate ($SWAP_MARKER): $CFG.prev holds the config the running daemon was started on. Put it back by hand (mv $CFG $CFG.failed; mv $CFG.prev $CFG), remove the marker, then retry"
 
 # The config tar, spooled first so a refusal below needs no stdin.
 step read-config
@@ -486,11 +498,19 @@ cat >"$WORK/config.tar"
 # ---- 2. the drain --------------------------------------------------------------------------
 
 step drain
+# A first install has nothing to drain: no daemon container, no heartbeat, no
+# state database. Anything less than all three is an existing install (a lost
+# container over live state), and keeps the drain requirement.
+FRESH=0
+if [[ "$(detect_layout)" == none && ! -e "$(STATUS_JSON)" && ! -e "${C[SANDBOX_ROOT]}/state/state.db" ]]; then
+  FRESH=1
+  log "fresh install: no daemon container, heartbeat or state database; nothing to drain or snapshot"
+fi
 draining="$(status_value draining)"
 rounds="$(status_value running_rounds)"
-[[ "$draining" == true ]] || die "refusing: the bot is not drained (draining=${draining:-unreadable}). Run \`qcr drain on\`, wait for running_rounds 0, retry"
-[[ "$rounds" =~ ^[0-9]+$ ]] || die "refusing: running_rounds is unreadable in status.json"
-[[ "$rounds" -eq 0 ]] || die "refusing: $rounds round(s) still running. Wait for running_rounds 0, retry"
+[[ $FRESH -eq 1 ]] || [[ "$draining" == true ]] || die "refusing: the bot is not drained (draining=${draining:-unreadable}). Run \`qcr drain on\`, wait for running_rounds 0, retry"
+[[ $FRESH -eq 1 ]] || [[ "$rounds" =~ ^[0-9]+$ ]] || die "refusing: running_rounds is unreadable in status.json"
+[[ $FRESH -eq 1 ]] || [[ "$rounds" -eq 0 ]] || die "refusing: $rounds round(s) still running. Wait for running_rounds 0, retry"
 
 # ---- 3. the layout ------------------------------------------------------------------------------
 
@@ -607,8 +627,8 @@ fi
 step snapshot
 mkdir -p "$BACKUP"
 chmod 0700 "${C[BACKUP_DIR]}" "$BACKUP"
-[[ -f "$STATE/state.db" ]] || die "no $STATE/state.db to snapshot"
-for f in state.db state.db-wal state.db-shm; do
+[[ $FRESH -eq 1 || -f "$STATE/state.db" ]] || die "no $STATE/state.db to snapshot"
+for f in "${STATE_DB_FILES[@]}"; do
   [[ -f "$STATE/$f" ]] && cp -p "$STATE/$f" "$BACKUP/$f"
 done
 if [[ -d "$STATE/pi-sessions" ]]; then
@@ -624,7 +644,7 @@ step preflight
 # (P8.4b): migrate the scratch db forward, resume the live JSONLs offline.
 SCRATCH="$WORK/preflight-state"
 mkdir -p "$SCRATCH"
-for f in state.db state.db-wal state.db-shm; do
+for f in "${STATE_DB_FILES[@]}"; do
   [[ -f "$BACKUP/$f" ]] && cp -p "$BACKUP/$f" "$SCRATCH/$f"
 done
 [[ -f "$BACKUP/pi-sessions.tar.gz" ]] && tar -xzf "$BACKUP/pi-sessions.tar.gz" -C "$SCRATCH"
@@ -645,6 +665,9 @@ if [[ "$LAYOUT" == legacy ]]; then
     mkdir -p "${C[MEMORY_STATE_DIR]}" "${C[OPENVIKING_HOME]}"
     chmod 0700 "${C[MEMORY_STATE_DIR]}"
     if [[ $TEST_MODE -eq 0 ]]; then chown "$UID_GID" "${C[MEMORY_STATE_DIR]}"; fi
+    # a copy that fails part way is already a stale partial store: marked before the
+    # copy, so the rescue sets it aside and the retry seeds from an empty directory
+    SEEDED=1
     # additive: no --delete, nothing on either side is removed
     rsync -a "${C[OPENVIKING_HOME]}/" "${C[MEMORY_STATE_DIR]}/"
     diff_out="$(rsync -a --checksum --dry-run --itemize-changes "${C[OPENVIKING_HOME]}/" "${C[MEMORY_STATE_DIR]}/")"
@@ -652,7 +675,6 @@ if [[ "$LAYOUT" == legacy ]]; then
     printf 'seeded from %s on %s\n' "${C[OPENVIKING_HOME]}" "$TS" >"$marker"
     chmod 0600 "$marker"
     if [[ $TEST_MODE -eq 0 ]]; then chown "$UID_GID" "$marker"; fi
-    SEEDED=1
     log "sidecar store seeded from ${C[OPENVIKING_HOME]} (copy verified; the old store is untouched)"
   else
     log "sidecar store already seeded"
@@ -661,6 +683,7 @@ fi
 
 step swap
 rm -rf "$CFG.prev"
+printf '%s\n' "$TS" >"$SWAP_MARKER"
 if [[ -d "$CFG" ]]; then mv "$CFG" "$CFG.prev"; else mkdir -p "$CFG.prev"; fi
 SWAP_STATE=1
 mv "$CFG.next" "$CFG"
@@ -759,6 +782,7 @@ d "${daemon_args[@]}" >/dev/null
 
 # ---- the point of no return ---------------------------------------------------------------------------------------------
 PHASE=committed
+rm -f "$SWAP_MARKER"
 step post-recreate
 d tag "$DAEMON_REF" "${C[DAEMON_IMAGE_REPO]}:$VERSION" >/dev/null 2>&1 || true
 d tag "$MEMORY_REF" "${C[MEMORY_IMAGE_REPO]}:$VERSION" >/dev/null 2>&1 || true

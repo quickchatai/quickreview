@@ -1071,6 +1071,11 @@ release_problem() {
     echo "the VM still runs the legacy layout: this deploy is the cutover (the first boot migrates forward). Re-run with --cutover-ack"
     return 0
   fi
+  # no daemon container: a first install has nothing to drain (the updater decides
+  # whether the state on the VM makes it one)
+  if [[ "$VM_LAYOUT" == none ]]; then
+    return 0
+  fi
   if [[ "$VM_DRAINING" != true ]]; then
     echo "the bot is not drained (draining=${VM_DRAINING:-unknown}): run \`qcr drain on\`, wait for running_rounds 0, then deploy"
     return 0
