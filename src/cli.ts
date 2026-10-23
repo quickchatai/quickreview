@@ -2161,6 +2161,21 @@ export async function main(rawArgv: string[]): Promise<void> {
       process.exitCode = await cmdPrLever(cmd, rest);
       return;
     }
+    case "github-token": {
+      // The own-account route's token refresher (src/githubtoken.ts): gh's
+      // token → <secrets>/github_token, 0600. The crontab entry runs this.
+      const { cmdGithubToken } = await import("./githubtoken.js");
+      process.exitCode = await cmdGithubToken(rest, {
+        secretsDir: () => {
+          try {
+            return loadConfig().github.secrets_dir;
+          } catch {
+            return locateSecrets({}).path;
+          }
+        },
+      });
+      return;
+    }
     case "message": {
       process.exitCode = await cmdMessage(rest);
       return;
@@ -2238,7 +2253,7 @@ export async function main(rawArgv: string[]): Promise<void> {
     }
     default:
       console.log(
-        "usage: qcr <version|config check [--config-home <dir>]|onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|takeover <n>|debug-round <n>|release <n>|tui [pr|overseer]|drain <on [--hold]|off>|pause-pr <pr> [--reason <text>]|resume-pr <pr>|message <pr> [--may-post] <text...>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
+        "usage: qcr <version|config check [--config-home <dir>]|onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|takeover <n>|debug-round <n>|release <n>|tui [pr|overseer]|drain <on [--hold]|off>|pause-pr <pr> [--reason <text>]|resume-pr <pr>|github-token sync [--gh <path>] [--secrets-dir <dir>]|message <pr> [--may-post] <text...>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
           "companion <up|down|status|rebuild>|review [start|status|stop|branch|--uncommitted|--diff FILE|-|<PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--json]|live [RUN_ID|DIR] [--lens ID] [--round N] [--follow] [--json]|open [RUN_ID|DIR|FILE.jsonl|scan[:RUN]|pr N [--round R]] [--lens ID] [--write] [--print]|scan <preview|start|status|stop|findings|matches|match|suggestions|stage2 propose|stage2 start|dismiss|units show|units propose|units adjust|units save|login|doctor|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine|shadow-report [--days <n>]|off|on|suppress <id>|unsuppress <id>]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );
