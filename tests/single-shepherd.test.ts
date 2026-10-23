@@ -144,7 +144,10 @@ describe("daemon topology", () => {
     // docs/single-shepherd-invariant.md's amendment.
     const RATIFIED =
       "[private rule text removed]";
-    const text = readFileSync(join(import.meta.dirname, "..", "CLAUDE.md"), "utf8");
+    const text = readFileSync(
+      join(import.meta.dirname, "..", "docs", "rulebook", "hard-rules.md"),
+      "utf8",
+    );
     const start = text.indexOf("\n9. ");
     const end = text.indexOf("\n10. ", start);
     expect(start).toBeGreaterThan(-1);

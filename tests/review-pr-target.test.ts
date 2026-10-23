@@ -232,7 +232,7 @@ describe("the daemon stays App-only (CLAUDE.md rule 3)", () => {
     // handoff is a read-and-unlinked file, never env or argv.
     const RATIFIED =
       "[private rule text removed]";
-    const text = readFileSync(join(ROOT, "CLAUDE.md"), "utf8");
+    const text = readFileSync(join(ROOT, "docs", "rulebook", "hard-rules.md"), "utf8");
     const start = text.indexOf("\n3. ");
     const end = text.indexOf("\n4. ", start);
     expect(start).toBeGreaterThan(-1);
@@ -246,7 +246,7 @@ describe("the daemon stays App-only (CLAUDE.md rule 3)", () => {
   it("CLAUDE.md rule 1 carries the ratified image paragraph (owner, 2026-10-19)", () => {
     const PARAGRAPH =
       "[private rule text removed]";
-    const text = readFileSync(join(ROOT, "CLAUDE.md"), "utf8");
+    const text = readFileSync(join(ROOT, "docs", "rulebook", "hard-rules.md"), "utf8");
     const start = text.indexOf("\n1. ");
     const end = text.indexOf("\n2. ", start);
     expect(start).toBeGreaterThan(-1);

@@ -626,7 +626,11 @@ describe("qcr drain on --hold", () => {
 });
 
 describe("the ratified levers text", () => {
-  const claude = readFileSync(resolve(__dirname, "..", "CLAUDE.md"), "utf8").replace(/\s+/g, " ");
+  // The decision's full text and the levers.ts note live in docs/rulebook/.
+  const claude = ["decisions.md", "architecture.md"]
+    .map((f) => readFileSync(resolve(__dirname, "..", "docs", "rulebook", f), "utf8"))
+    .join("\n")
+    .replace(/\s+/g, " ");
 
   it("CLAUDE.md carries the drain hold word for word, as ratified", () => {
     for (const ratified of [

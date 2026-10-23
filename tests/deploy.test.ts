@@ -3199,34 +3199,31 @@ describe("deploy.sh — the pull login and the token expiry warning", () => {
   });
 });
 
-describe.skipIf(!existsSync(join(root, "CLAUDE.md")))(
-  "CLAUDE.md rule 3 — the VM's registry pull login",
-  () => {
-    const claude = existsSync(join(root, "CLAUDE.md"))
-      ? readFileSync(join(root, "CLAUDE.md"), "utf8")
-      : "";
-    const rule3 = claude.slice(
-      claude.indexOf("\n3. **Only the App credential"),
-      claude.indexOf("\n4. **Never touch"),
-    );
+const HARD_RULES = join(root, "docs", "rulebook", "hard-rules.md");
+describe.skipIf(!existsSync(HARD_RULES))("CLAUDE.md rule 3 — the VM's registry pull login", () => {
+  // The full ratified text of the hard rules lives in docs/rulebook/.
+  const claude = existsSync(HARD_RULES) ? readFileSync(HARD_RULES, "utf8") : "";
+  const rule3 = claude.slice(
+    claude.indexOf("\n3. **Only the App credential"),
+    claude.indexOf("\n4. **Never touch"),
+  );
 
-    it("carries the ratified carve-out: the owner's classic read:packages token, in root's docker config on the VM host only", () => {
-      expect(rule3).toContain("**The VM's registry pull login (owner's ruling, 2026-10-19).**");
-      expect(rule3).toContain("CLASSIC personal access token, scoped `read:packages`");
-      expect(rule3).toContain("root's docker config on the VM");
-      expect(rule3).toContain("never in a container");
-      expect(rule3).toContain("scripts/vm-ghcr-login.sh");
-      expect(rule3).toContain("exactly `read:packages`");
-      expect(rule3).toContain("`deploy.sh verify` warns 14 days before");
-      // the ban it is an exception to is still there, and says so
-      expect(rule3).toContain("token (the VM's registry pull login below is the");
-    });
+  it("carries the ratified carve-out: the owner's classic read:packages token, in root's docker config on the VM host only", () => {
+    expect(rule3).toContain("**The VM's registry pull login (owner's ruling, 2026-10-19).**");
+    expect(rule3).toContain("CLASSIC personal access token, scoped `read:packages`");
+    expect(rule3).toContain("root's docker config on the VM");
+    expect(rule3).toContain("never in a container");
+    expect(rule3).toContain("scripts/vm-ghcr-login.sh");
+    expect(rule3).toContain("exactly `read:packages`");
+    expect(rule3).toContain("`deploy.sh verify` warns 14 days before");
+    // the ban it is an exception to is still there, and says so
+    expect(rule3).toContain("token (the VM's registry pull login below is the");
+  });
 
-    it("names only a script that exists", () => {
-      expect(existsSync(join(root, "scripts", "vm-ghcr-login.sh"))).toBe(true);
-    });
-  },
-);
+  it("names only a script that exists", () => {
+    expect(existsSync(join(root, "scripts", "vm-ghcr-login.sh"))).toBe(true);
+  });
+});
 
 describe("scripts/vm-ghcr-login.sh", () => {
   const script = join(root, "scripts", "vm-ghcr-login.sh");

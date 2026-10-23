@@ -919,7 +919,7 @@ describe("the docs (acceptance 7)", () => {
     expect(spec).toMatch(
       /^S4 \(operator verbs, the overseer and pi-global stores, the other readers\)/m,
     );
-    const claude = readFileSync(join(repo, "CLAUDE.md"), "utf8");
+    const claude = readFileSync(join(repo, "docs", "rulebook", "architecture.md"), "utf8");
     const entry = claude.slice(claude.indexOf("- `archive/` — the closed-PR ARCHIVER"));
     expect(entry.length).toBeGreaterThan(0);
     for (const mod of [

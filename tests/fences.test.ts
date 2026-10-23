@@ -405,10 +405,11 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
    *
    * MUTATION: change the version in rule 7's first sentence — this fails.
    */
-  it.skipIf(!has("CLAUDE.md"))(
+  it.skipIf(!has("docs/rulebook/hard-rules.md"))(
     "CLAUDE.md rule 7 quotes the real pi version (private tree only)",
     () => {
-      const rule7 = /^7\. pi is pinned \(`([^`]+)`/m.exec(read("CLAUDE.md"))?.[1];
+      // The full text of rule 7 lives in docs/rulebook/; CLAUDE.md quotes no version.
+      const rule7 = /^7\. pi is pinned \(`([^`]+)`/m.exec(read("docs/rulebook/hard-rules.md"))?.[1];
       expect(
         rule7,
         "rule 7 no longer quotes a pi version in the shape this fence reads",
