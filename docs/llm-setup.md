@@ -34,6 +34,13 @@ docker exec -it <container> pi
 # inside pi:  /login   → follow the browser flow, then quit pi
 ```
 
+**Pick "OpenAI Codex (legacy)" at `/login`.** pi 1.4 offers two ChatGPT
+subscription logins: "OpenAI Codex (legacy)", the `openai-codex` provider the
+review models run on, and a newer "Sign in with ChatGPT" on the `openai`
+provider. The newer one is fine for the wizard's own session, but a container
+holding only that one cannot run the `openai-codex/` models, and the wizard
+says so.
+
 The OAuth tokens land in `auth.json` under pi's home, which is a **named
 Docker volume** (`pihome`) — so the login survives container restarts and
 image rebuilds. You repeat `/login` only if that volume is deleted or the
