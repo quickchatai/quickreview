@@ -73,6 +73,7 @@ import type {
   ShadowMatchTier,
   StoredSelection,
 } from "./lessonledger.js";
+import { storedLensIds } from "./lensids.js";
 import { memoryLabel } from "./memory/delivery.js";
 import { classesRelated } from "./memory/lessons.js";
 import { parseCarriedTo } from "./outcomes.js";
@@ -579,13 +580,7 @@ export function shadowReport(ledger: LessonLedger, opts: ReportOptions): ShadowR
   // on the strongest tier any of them marked it on.
   const lensPairs = new Map<string, { lens: string; chain: string; tier: ShadowMatchTier }>();
   for (const m of marks) {
-    let lenses: string[] = [];
-    try {
-      const v = JSON.parse(m.lens) as unknown;
-      if (Array.isArray(v)) lenses = v.filter((x): x is string => typeof x === "string");
-    } catch {
-      lenses = [];
-    }
+    let lenses = storedLensIds(m.lens) ?? [];
     if (lenses.length === 0) lenses = ["(no lens)"];
     const chain = keyOf(m);
     for (const lens of lenses) {
