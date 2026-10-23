@@ -18,6 +18,7 @@ import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import type { TuiConfig } from "../config.js";
 import { tmuxCaptureArgs } from "./termmirror.js";
+import { INBOX_ID_RE, INBOX_REL_DIR } from "../companioninbox.js";
 import { remoteSandboxRoot } from "./layout.js";
 
 export interface RemoteResult {
@@ -64,7 +65,7 @@ export function dockerShArgv(cfg: TuiConfig, script: string): string[] {
 
 /** The bot's companion inbox (src/companioninbox.ts), inside the container. */
 export function inboxDirFor(cfg: TuiConfig): string {
-  return `${remoteSandboxRoot(cfg)}/inject/companion-inbox`;
+  return `${remoteSandboxRoot(cfg)}/${INBOX_REL_DIR}`;
 }
 
 /** Items one pull reads at most: a backlog drains over a few polls rather
@@ -86,9 +87,6 @@ export function inboxListArgv(cfg: TuiConfig): string[] {
   );
 }
 
-/** One id the TUI will put in a shell script: the bot's own item-id shape. */
-const INBOX_ID = /^[a-z0-9][a-z0-9._-]{0,95}$/;
-
 /**
  * Acknowledge delivered items: delete their files. This is the one write the
  * pull makes against the bot, and only for ids that came back from the bot's
@@ -96,7 +94,7 @@ const INBOX_ID = /^[a-z0-9][a-z0-9._-]{0,95}$/;
  * `rm -f` of an id that is already gone is the normal answer of a second TUI.
  */
 export function inboxAckArgv(cfg: TuiConfig, ids: readonly string[]): string[] {
-  for (const id of ids) if (!INBOX_ID.test(id)) throw new Error(`not an inbox item id: ${id}`);
+  for (const id of ids) if (!INBOX_ID_RE.test(id)) throw new Error(`not an inbox item id: ${id}`);
   const dir = shellQuote(inboxDirFor(cfg));
   return dockerShArgv(
     cfg,

@@ -28,9 +28,8 @@ import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync
 import { join } from "node:path";
 
 /** What an item is, so the companion's prompt can handle each kind. */
-export type InboxClass = "anomaly" | "heartbeat" | "login" | "eod";
-
-export const INBOX_CLASSES: readonly InboxClass[] = ["anomaly", "heartbeat", "login", "eod"];
+export const INBOX_CLASSES = ["anomaly", "heartbeat", "login", "eod"] as const;
+export type InboxClass = (typeof INBOX_CLASSES)[number];
 
 export interface InboxItem {
   id: string;
@@ -58,9 +57,13 @@ const KEEP_CLASSES: ReadonlySet<InboxClass> = new Set(["login", "eod"]);
 export const INBOX_ID_RE = /^[a-z0-9][a-z0-9._-]{0,95}$/;
 const ID_RE = INBOX_ID_RE;
 
+/** The inbox directory relative to a root, POSIX-spelled: the TUI's runner
+ * appends it to the container's root. */
+export const INBOX_REL_DIR = "inject/companion-inbox";
+
 /** The inbox directory under a root — the TUI's runner reads the same path. */
 export function companionInboxDir(root: string): string {
-  return join(root, "inject", "companion-inbox");
+  return join(root, INBOX_REL_DIR);
 }
 
 /** The anomaly kinds that mean "the bot's model login is failing or about to":
@@ -84,8 +87,13 @@ export function isItem(value: unknown): value is InboxItem {
     ID_RE.test(v.id) &&
     typeof v.text === "string" &&
     typeof v.created_at === "string" &&
-    INBOX_CLASSES.includes(v.class as InboxClass)
+    (INBOX_CLASSES as readonly unknown[]).includes(v.class)
   );
+}
+
+/** Oldest first; equal instants by id. The bot's listing and the TUI's pull share it. */
+export function compareInboxItems(a: InboxItem, b: InboxItem): number {
+  return a.created_at === b.created_at ? a.id.localeCompare(b.id) : a.created_at < b.created_at ? -1 : 1;
 }
 
 /** One item out of its file text (what the TUI's pull reads off the bot), or
@@ -185,13 +193,7 @@ export class CompanionInbox {
       const item = this.read(name.slice(0, -".json".length));
       if (item) items.push(item);
     }
-    return items.sort((a, b) =>
-      a.created_at === b.created_at
-        ? a.id.localeCompare(b.id)
-        : a.created_at < b.created_at
-          ? -1
-          : 1,
-    );
+    return items.sort(compareInboxItems);
   }
 
   /** The TUI's acknowledgement: the item is delivered, drop it. */
@@ -208,8 +210,8 @@ export class CompanionInbox {
 
   private read(id: string): InboxItem | null {
     try {
-      const parsed: unknown = JSON.parse(readFileSync(this.path(id), "utf8"));
-      return isItem(parsed) && parsed.id === id ? parsed : null;
+      const item = parseInboxItem(readFileSync(this.path(id), "utf8"));
+      return item !== null && item.id === id ? item : null;
     } catch {
       return null;
     }
