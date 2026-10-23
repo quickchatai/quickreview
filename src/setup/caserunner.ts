@@ -123,7 +123,7 @@ export function isPiCliEntry(script: string): boolean {
  * (src/picli.ts), so a non-pi host never spawns itself and never runs a `pi`
  * of another version off the PATH (the release image has none). A
  * bun-compiled pi (`/$bunfs/…`) takes that CLI too.
- * VERIFY-ON-PIN (0.87.1, re-read at 0.99.1, 1.0.0 and 1.3.0 — bin still dist/bundle/cli.js): pi's entry is a `bin` of its package, run by node. */
+ * VERIFY-ON-PIN (0.87.1, re-read at 0.99.1, 1.0.0, 1.3.0 and 1.4.0 — bin still dist/bundle/cli.js): pi's entry is a `bin` of its package, run by node. */
 export function piInvocation(
   host: { argv1: string | undefined; execPath: string; piCli?: () => string } = {
     argv1: process.argv[1],
@@ -416,7 +416,7 @@ export function pruneTranscripts(dir: string, keep: number, except: string): voi
  * the child (TERM, then KILL). Every outcome resolves — a temp directory that
  * cannot be made is a failed case, never a rejection.
  *
- * VERIFY-ON-PIN (0.87.1, re-read at 0.99.1, 1.0.0 and 1.3.0: examples/extensions/subagent the same but for its read-range rendering, CLI flag set identical but for the added --no-mcp; read from the published examples/extensions/subagent
+ * VERIFY-ON-PIN (0.87.1, re-read at 0.99.1, 1.0.0, 1.3.0 and 1.4.0: examples/extensions/subagent the same but for its read-range rendering, CLI flag set identical but for the added --no-mcp; read from the published examples/extensions/subagent
  * and dist/cli/args.js): the argv spelling, `--no-extensions`/`--approve`,
  * and the `message_end` event carrying `message.usage.cost.total`.
  */

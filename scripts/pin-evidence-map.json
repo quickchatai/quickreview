@@ -1,11 +1,11 @@
 {
   "version": 1,
-  "pi": "1.3.0",
+  "pi": "1.4.0",
   "note": "A VERIFY-ON-PIN tag is cleared by live production evidence only. Each entry names the tagged files (with how many tags each holds), the pi behaviour assumed, and the production signal that would prove it. `kind: jsonl` matches a JSON line of a state extract (a LiveEvent line under state/live, a pi session JSONL record, a scan transcript line) when every `where` clause holds; `kind: log` matches a text line by regex; `kind: gap` has no signal yet and says what would be needed. scripts/pin-evidence.mjs reads an extract and reports which entries have evidence; tests/pin-evidence.test.ts holds this map to the tags in the tree. No tag is removed by this map.",
   "entries": [
     {
       "id": "pi-argv-session",
-      "assumes": "The tmux bot's pi argv (--model, --session-dir, --name, --theme, --extension) is accepted by pi 1.3.0.",
+      "assumes": "The tmux bot's pi argv (--model, --session-dir, --name, --theme, --extension) is accepted by pi 1.4.0.",
       "files": { "src/sessions.ts": 3 },
       "signal": {
         "source": "live-event",

@@ -39,7 +39,7 @@
 # scripts/ and gh for its daemon mode; the runtime stage below removes both.
 #
 # Pins — each one a rule-7-style pin, bumped only on purpose:
-#   pi 1.3.0                           = config.toml [pi], package.json "pi"
+#   pi 1.4.0                           = config.toml [pi], package.json "pi"
 #   aacr-bench harness 68a5697         = the scorer's code
 #   AACR-Bench dataset v1.0 ab8af8d    = what every published row is scored on;
 #                                        its sha256 is verified at build time
@@ -81,7 +81,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3-venv fd
 # PATH, so the bench installs the release's pin (config.toml [pi]) globally, or
 # the pi QCR_BENCH_PI_VERSION asks for, e.g. the pi an earlier run's image carried.
 ARG PI_PACKAGE=@earendil-works/pi-coding-agent
-ARG PI_VERSION=1.3.0
+ARG PI_VERSION=1.4.0
 RUN [ "$(node -p "require('$(npm root -g)/${PI_PACKAGE}/package.json').version")" = "${PI_VERSION}" ] \
     || npm install -g ${PI_PACKAGE}@${PI_VERSION} --no-audit --no-fund
 
@@ -210,7 +210,7 @@ ENV OPENCODE_DISABLE_AUTOUPDATE=1 OPENCODE_DISABLE_SHARE=1 OPENCODE_DISABLE_MODE
 
 # ---- pireview: @zephyrdeng/pi-review, a pi code-review package ---------------------
 # Above `ocr` for the same reason as opencode (no BuildKit here). Built on
-# `runtime`, so pi (1.3.0 — the pin every arm shares), the scorer, the dataset
+# `runtime`, so pi (1.4.0 — the pin every arm shares), the scorer, the dataset
 # and the judge shim are the ones every other arm is scored with. The npm
 # TARBALL is fetched with `npm pack`, checked against the sha512 recorded HERE
 # (the registry's own dist.integrity for that version), and unpacked — never

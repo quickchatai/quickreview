@@ -34,7 +34,7 @@ describe("the deploy manifest", () => {
     expect(manifestLines(m)).toContain(
       "DAEMON_INDEX_DIGEST=sha256:1111111111111111111111111111111111111111111111111111111111111111",
     );
-    expect(manifestLines(m)).toContain("PIN_PI=1.3.0");
+    expect(manifestLines(m)).toContain("PIN_PI=1.4.0");
     expect(manifestLines(m)).toContain("PIN_RUNSPEC=1");
   });
 

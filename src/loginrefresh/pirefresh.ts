@@ -4,7 +4,7 @@
 // refresh is exactly what pi itself would do. The daemon never imports this
 // module: it spawns main.js, which does.
 //
-// VERIFY-ON-PIN (pi-ai 1.3.0): `dist/auth/oauth/load.js` exports the loaders
+// VERIFY-ON-PIN (pi-ai 1.3.0, re-read at 1.4.0): `dist/auth/oauth/load.js` exports the loaders
 // below, each resolving to an `OAuthAuth` whose `refresh(credential, signal)`
 // returns the new credential. A bump that moves or renames them makes the
 // refresh fail loudly (a `login_refresh_failed` anomaly), never silently.

@@ -14,7 +14,7 @@
 // not the expected shape goes out unchanged, and a throw inside the handler is
 // pi's to contain (it reports it as an extension error), never the request's.
 //
-// VERIFY-ON-PIN (pi 1.3.0): `before_provider_request` may return a replacement
+// VERIFY-ON-PIN (pi 1.3.0, re-read at 1.4.0): `before_provider_request` may return a replacement
 // payload; the codex payload carries `instructions` (string), `input` (an array
 // of `{ role, content: [{ type: "input_text", text }] }`) and `prompt_cache_key`.
 import { createHash } from "node:crypto";

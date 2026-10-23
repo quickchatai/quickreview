@@ -155,7 +155,7 @@ describe("the packed plugin, installed into a fresh pi", () => {
     ) as { assets: string; range: string; ext: string[] };
     const pkg = realpathSync(installed);
     expect(realpathSync(out.assets)).toBe(join(pkg, "assets"));
-    expect(out.range).toBe("^1.3.0");
+    expect(out.range).toBe("^1.4.0");
     for (const f of out.ext) {
       expect(realpathSync(f).startsWith(join(pkg, "dist", "extensions") + "/"), f).toBe(true);
     }

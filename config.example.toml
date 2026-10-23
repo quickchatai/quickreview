@@ -292,7 +292,7 @@ evidence_why_interval_s = 10      # evidence sweep pace: at most one
 # VERIFY-ON-PIN: package + version mirrored in package.json "qcrPi" block and the
 # ansible group_vars; the image never floats.
 package = "@earendil-works/pi-coding-agent"
-version = "1.3.0"
+version = "1.4.0"
 session_dir = "state/pi-sessions"
 # The lens settings that used to live here (subagent_max_concurrency,
 # subagent_cache_group, subagent_cache_stagger_ms, subagent_pass_deadline_min)

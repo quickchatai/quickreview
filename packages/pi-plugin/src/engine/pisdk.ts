@@ -580,7 +580,7 @@ function sessionManagerFor(spec: HostSessionSpec): SessionManager {
       persist.sessionDir,
       spec.sessionId !== undefined ? { id: spec.sessionId } : undefined,
     );
-  // VERIFY-ON-PIN (pi 1.3.0): inMemory({id}) sets the session id the provider
+  // VERIFY-ON-PIN (pi 1.3.0, re-read at 1.4.0): inMemory({id}) sets the session id the provider
   // keys its cache on (prompt_cache_key, session-id, x-client-request-id).
   return SessionManager.inMemory(spec.cwd, { id: spec.sessionId ?? randomUUID() });
 }

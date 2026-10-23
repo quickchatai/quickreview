@@ -30,7 +30,7 @@ export function piPackageDir(): string {
  * `bin`), the CLI entry node_modules/.bin/pi links to. A shebang script, so it
  * runs as a binary, through setpriv included. Throws when pi is not installed:
  * there is no other pi to fall back to.
- * VERIFY-ON-PIN (1.3.0: `"bin": {"pi": "dist/bundle/cli.js"}`): the bin's name. */
+ * VERIFY-ON-PIN (1.4.0: `"bin": {"pi": "dist/bundle/cli.js"}`): the bin's name. */
 export function piCliPath(dir: string = piPackageDir()): string {
   const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as {
     bin?: string | Record<string, string>;

@@ -27,7 +27,7 @@ pi install npm:@quickchatai/pi-quickreview
 
 ## Which pi
 
-The package declares `^1.3.0` for pi (`peerDependencies`): pi 1.3.0 and any
+The package declares `^1.4.0` for pi (`peerDependencies`): pi 1.4.0 and any
 later 1.x. At load the plugin reads the running pi's version, and outside
 that range it registers no command at all and says why, once. A review
 engine written against one pi's SDK never half-runs on another. Only pi

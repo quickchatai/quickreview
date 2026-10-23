@@ -53,10 +53,10 @@
   },
   "//peerDependencies": "Supplied by the running pi, never installed beside it. The pi range is the version gate's (src/plugin/versiongate.ts): the plugin registers no command on a pi outside it, and only versions the canaries ran on belong in it (`npm run canary:pi:range`).",
   "peerDependencies": {
-    "@earendil-works/pi-agent-core": "^1.3.0",
-    "@earendil-works/pi-ai": "^1.3.0",
-    "@earendil-works/pi-coding-agent": "^1.3.0",
-    "@earendil-works/pi-tui": "^1.3.0",
+    "@earendil-works/pi-agent-core": "^1.4.0",
+    "@earendil-works/pi-ai": "^1.4.0",
+    "@earendil-works/pi-coding-agent": "^1.4.0",
+    "@earendil-works/pi-tui": "^1.4.0",
     "typebox": "*"
   }
 }

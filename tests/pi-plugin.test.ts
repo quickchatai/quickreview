@@ -92,7 +92,7 @@ describe("the plugin's manifest", () => {
       expect(pkg.peerDependencies[p], p).toBeDefined();
       expect(pkg.dependencies[p], p).toBeUndefined();
     }
-    expect(pkg.peerDependencies["@earendil-works/pi-coding-agent"]).toBe("^1.3.0");
+    expect(pkg.peerDependencies["@earendil-works/pi-coding-agent"]).toBe("^1.4.0");
   });
 
   // pi reads a package.json `pi` key as a manifest: the app's root must never
@@ -152,10 +152,10 @@ describe("the version gate", () => {
   });
 
   it("is the range the package declares, and names both versions when it refuses", () => {
-    expect(declaredPiRange()).toBe("^1.3.0");
-    expect(piGate("1.3.0", "^1.3.0")).toBeNull();
-    const msg = piGate("2.0.0", "^1.3.0")!;
-    expect(msg).toMatch(/\^1\.3\.0/);
+    expect(declaredPiRange()).toBe("^1.4.0");
+    expect(piGate("1.4.0", "^1.4.0")).toBeNull();
+    const msg = piGate("2.0.0", "^1.4.0")!;
+    expect(msg).toMatch(/\^1\.4\.0/);
     expect(msg).toMatch(/2\.0\.0/);
   });
 });
@@ -202,7 +202,7 @@ describe("the extension", () => {
   // MUTATION: register the lens tool here — this fails.
   it("registers exactly its four commands, and no tool, on a pi inside the range", () => {
     const pi = fakePi();
-    createQuickReview({ ...config, piVersion: "1.3.0", range: "^1.3.0" })(pi.api);
+    createQuickReview({ ...config, piVersion: "1.4.0", range: "^1.4.0" })(pi.api);
     expect([...pi.commands.keys()].sort()).toEqual(["qcr-setup", "review", "scan", "selfimprove"]);
     expect(pi.tools).toEqual([]);
   });
@@ -210,7 +210,7 @@ describe("the extension", () => {
   // MUTATION: drop the gate — this fails.
   it("registers nothing on a pi outside the range, and says why once", () => {
     const pi = fakePi();
-    createQuickReview({ ...config, piVersion: "1.2.0", range: "^1.3.0" })(pi.api);
+    createQuickReview({ ...config, piVersion: "1.3.0", range: "^1.4.0" })(pi.api);
     expect(pi.commands.size).toBe(0);
     expect(pi.tools).toEqual([]);
     const notes: string[] = [];
@@ -218,7 +218,7 @@ describe("the extension", () => {
     for (const h of pi.handlers.get("session_start") ?? []) h({}, ctx);
     for (const h of pi.handlers.get("session_start") ?? []) h({}, ctx);
     expect(notes).toHaveLength(1);
-    expect(notes[0]).toMatch(/\^1\.3\.0.*1\.2\.0/);
+    expect(notes[0]).toMatch(/\^1\.4\.0.*1\.3\.0/);
   });
 });
 
@@ -481,7 +481,7 @@ function fakeHost(o: Partial<PluginHost> = {}): PluginHost {
       PATH: process.env.PATH,
     },
     home: dir,
-    piVersion: "1.3.0",
+    piVersion: "1.4.0",
     agentDir: join(dir, "agent"),
     auth: fakeAuth({ "openai-codex": { type: "oauth", expires: Date.now() + 10 * 3600_000 } }),
     runner: noRunner,
@@ -818,7 +818,7 @@ describe("/scan and /selfimprove (the qcr on PATH)", () => {
 });
 
 describe("/qcr-setup", () => {
-  const range = "^1.3.0";
+  const range = "^1.4.0";
 
   it("checks pi, the login, git, GitHub and qcr", async () => {
     const runner = scriptedRunner({ "gh auth status": { code: 0, stdout: "", stderr: "" } });

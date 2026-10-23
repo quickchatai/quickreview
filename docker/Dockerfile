@@ -54,7 +54,7 @@ ARG NODE_MAJOR=26
 ARG NODE_DISTRO=bookworm
 ARG TMUX_VERSION=3.5a
 ARG PI_PACKAGE=@earendil-works/pi-coding-agent
-ARG PI_VERSION=1.3.0
+ARG PI_VERSION=1.4.0
 
 # The always-on bot's tool identity: the uid and gid the model's
 # tools run as, compiled into the setid helper, which can switch to nothing else.

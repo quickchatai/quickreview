@@ -33,7 +33,7 @@ node_major: "26"
 # pi CLI npm package + exact version pin (registry-verified). The image never
 # floats — bumping is a deliberate edit and a new release (CI builds the image).
 pi_npm_package: "@earendil-works/pi-coding-agent"
-pi_version: "1.3.0"
+pi_version: "1.4.0"
 
 # No subagent-extension pin: lenses run through our own lens tool
 # (packages/pi-plugin/src/engine/lens/), so there is nothing to pin. Never add a third-party

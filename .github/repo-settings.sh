@@ -98,7 +98,7 @@ ruleset='{
     { "type": "required_status_checks", "parameters": {
         "strict_required_status_checks_policy": false,
         "required_status_checks": [
-          { "context": "test (26)" }, { "context": "pi-range (1.3.0)" },
+          { "context": "test (26)" }, { "context": "pi-range (1.4.0)" },
           { "context": "image" }, { "context": "clone" } ] } }
   ]
 }'

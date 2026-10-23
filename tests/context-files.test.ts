@@ -3,7 +3,7 @@
 //
 // pi loads the first of AGENTS.override.md / AGENTS.md / CLAUDE.md from its
 // agentDir and from its cwd and every ancestor of the cwd, into every session
-// and every lens pass (helpers/context-files.ts models pi 1.3.0's loader). So
+// and every lens pass (helpers/context-files.ts models pi 1.4.0's loader). So
 // the route's argv (`--no-context-files`), cwd, ancestors and agentDir decide
 // what rides each turn. The routes differ on purpose: the VM bot, the bench
 // image, the clone route (from the run's own dir outside the checkout)
@@ -262,7 +262,7 @@ async function captureTmuxSession(): Promise<{
       models: { default: "m", conversation: "m", overseer: "m", passes: {} },
       pi: {
         package: "@earendil-works/pi-coding-agent",
-        version: "1.3.0",
+        version: "1.4.0",
         session_dir: "state/pi-sessions",
       },
       engine: {
@@ -448,7 +448,7 @@ const LENS_NOTE =
   "A lens session runs in its parent's cwd with the parent's environment, so it loads what the parent loads.";
 
 /** Every route's observed row, filled in beforeAll. */
-const observed: Inventory = { pi: "1.3.0", routes: {} };
+const observed: Inventory = { pi: "1.4.0", routes: {} };
 /** Every fake-pi run, so the no-writes test knows what ran. */
 const ran: string[] = [];
 let reviewedRepo: string;
@@ -550,7 +550,7 @@ beforeAll(async () => {
   observed.routes["onboard"] = row(checkoutFs(CHECKOUT), {
     cwd: CHECKOUT,
     agentDir: "/operator-pi-agent",
-    argv: onboardingPiArgv({ package: "@earendil-works/pi-coding-agent", version: "1.3.0" }, ROOT),
+    argv: onboardingPiArgv({ package: "@earendil-works/pi-coding-agent", version: "1.4.0" }, ROOT),
   });
 
   // -- the clone route: `qcr review` from the qcr checkout -------------------

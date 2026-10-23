@@ -47,7 +47,7 @@ import { writeSessionBridgeState, type SessionBridgeCompaction } from "../src/se
  * Session name resolution, in order:
  *   1. QCR_SESSION_NAME — set by the daemon in the env it constructs for the
  *      tmux/pi process. Deterministic, so the bridge never has to guess.
- *   2. pi.session?.name — pi 1.3.0's ExtensionAPI declares no `session`
+ *   2. pi.session?.name — pi 1.4.0's ExtensionAPI declares no `session`
  *      accessor, so on a real pi this branch is inert. `getSessionName()` is
  *      deliberately not used: it would change which inject dir a session with
  *      no QCR_SESSION_NAME watches.

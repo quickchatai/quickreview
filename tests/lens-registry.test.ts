@@ -2,7 +2,7 @@
 // agents with the name / model / tools pi's example subagent parser gives.
 //
 // The example (examples/extensions/subagent/agents.ts) is imported HERE ONLY,
-// when a pi 1.3.0 install can be found (QCR_PI_PACKAGE_DIR, or the package
+// when a pi 1.4.0 install can be found (QCR_PI_PACKAGE_DIR, or the package
 // resolved from the repo). Without one the parity test skips and the
 // committed golden (tests/fixtures/lens-registry-golden.json, written from the
 // example's output with QCR_UPDATE_GOLDEN=1) stands in, so the contract is

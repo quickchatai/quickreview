@@ -1,9 +1,9 @@
-// A fake `pi` that models what pi 1.3.0 would DISCOVER, and records it.
+// A fake `pi` that models what pi 1.4.0 would DISCOVER, and records it.
 //
 // No network, no model: a node script behind a shell wrapper. Given pi's argv,
 // cwd and environment it works out, the way pi's resource loader does
 // (dist/core/resource-loader.js, package-manager.js, the subagent example's
-// agents.ts — pinned 1.3.0):
+// agents.ts — pinned 1.4.0):
 //  - extensions: the explicit `-e`/`--extension` paths; unless `-ne`, also the
 //    global settings' `extensions` (minus the `-`-prefixed disables), the
 //    agentDir's `extensions/` and the cwd's `.pi/extensions/` (every project

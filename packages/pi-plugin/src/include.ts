@@ -305,7 +305,7 @@ export const LENS_LEAVES_LOAD_MEMORY = false;
 
 /**
  * Names a seed's `tools:` line carries that are no tool at pi's pin. The
- * seeds were written for a harness with a `Glob` tool; pi 1.3.0's built-ins
+ * seeds were written for a harness with a `Glob` tool; pi 1.4.0's built-ins
  * are read, bash, powershell, edit, write, grep, find and ls (its
  * `allToolNames`), and an allowlisted name nothing registers is ignored. So
  * the name grants nothing, and the build drops it rather than carry a tool

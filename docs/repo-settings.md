@@ -47,7 +47,7 @@ running the script) and deployment policy, and the `proposal` label the issue
 form applies.
 
 The ruleset's required checks are the CI job names as GitHub reports them:
-`test (26)`, `pi-range (1.3.0)`, `image`, `clone`. A change to a job name or
+`test (26)`, `pi-range (1.4.0)`, `image`, `clone`. A change to a job name or
 a matrix value in `ci.yml` changes the check's name: update the script in the
 same PR, or every PR waits for a check that never comes.
 

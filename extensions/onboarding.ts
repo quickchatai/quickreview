@@ -220,7 +220,7 @@ function registerOnboarding(pi: ExtensionAPI, config: OnboardingConfig): void {
   const shutdown = (ctx?: Pick<ExtensionToolContext, "shutdown">): void => {
     const fn = ctx?.shutdown ?? (pi as { shutdown?: () => void | Promise<void> }).shutdown;
     if (typeof fn === "function") {
-      // VERIFY-ON-PIN: deferred clean shutdown with exit code 0 (pi 1.3.0's
+      // VERIFY-ON-PIN: deferred clean shutdown with exit code 0 (pi 1.4.0's
       // ExtensionContext.shutdown). Bound to the named onboarding smoke step.
       void fn.call(ctx ?? pi);
     } else {

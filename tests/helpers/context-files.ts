@@ -1,8 +1,8 @@
-// Which context file a pi session loads: a model of pi 1.3.0's loader, and the
+// Which context file a pi session loads: a model of pi 1.4.0's loader, and the
 // reader of the recorded inventory (tests/fixtures/context-files/inventory.json).
 //
 // pi builds the set in `loadProjectContextFiles` (dist/core/resource-loader.js,
-// pinned 1.3.0): the agentDir's context file first, then the context file of
+// pinned 1.4.0): the agentDir's context file first, then the context file of
 // the cwd and of EVERY ancestor of it, outermost first. Per directory it takes
 // the first of CONTEXT_CANDIDATES that is a file (`loadContextFileFromDir`).
 // `--no-context-files` / `-nc` skips all of it. (pi also drops an ancestor's
@@ -16,7 +16,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-/** pi 1.3.0's candidates, in the order it tries them in one directory. */
+/** pi 1.4.0's candidates, in the order it tries them in one directory. */
 export const CONTEXT_CANDIDATES: readonly string[] = [
   "AGENTS.override.md",
   "AGENTS.md",

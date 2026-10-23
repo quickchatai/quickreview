@@ -118,7 +118,7 @@ describe("/review: one faux round inside the host pi", () => {
       cwd: repo,
       env: { PATH: process.env.PATH, QCR_CONFIG: config, XDG_STATE_HOME: state },
       home: tmp,
-      piVersion: "1.3.0",
+      piVersion: "1.4.0",
       agentDir: join(tmp, "host-agent"),
       auth: { logins: () => ({}), configured: () => true, refresh: async () => {} },
       runner: { which: () => null, run: async () => ({ code: 1, stdout: "", stderr: "" }) },

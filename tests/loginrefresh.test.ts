@@ -622,7 +622,7 @@ describe("the pause", () => {
 });
 
 describe("pi-ai's own refresh (the deep import)", () => {
-  it("every provider id it maps has a loader pi-ai 1.3.0 exports", async () => {
+  it("every provider id it maps has a loader pi-ai 1.4.0 exports", async () => {
     const { piAiDir } = await import("../src/loginrefresh/pirefresh.js");
     const mod = (await import(join(piAiDir(), "dist", "auth", "oauth", "load.js"))) as Record<
       string,

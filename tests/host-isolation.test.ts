@@ -2,7 +2,7 @@
 // operator's pi home, the qcr checkout or the reviewed repo reaching the
 // session or its lens children, and the bench keeps its own placement.
 //
-// pi is a fake that MODELS what pi 1.3.0 discovers from its argv, cwd and
+// pi is a fake that MODELS what pi 1.4.0 discovers from its argv, cwd and
 // environment, and spawns a lens child of itself the way the retired native glue
 // did (tests/helpers/host-fake-pi.ts). No network, no model.
 import { piCliRuntime } from "./helpers/pi-cli-runtime.js";

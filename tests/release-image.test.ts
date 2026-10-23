@@ -391,7 +391,7 @@ describe("release image — the build-time checks fail when they should", () => 
       const step = runWith("FATAL: pi versions disagree");
       // the scratch tree has no node_modules pi: the step refuses…
       expect(sh(s, step).status).not.toBe(0);
-      // …and passes once node_modules and config both say 1.3.0
+      // …and passes once node_modules and config both say 1.4.0
       const pkg = join(s.dir, "opt-qcr", "node_modules", cfg.pi.package);
       mkdirSync(pkg, { recursive: true });
       writeFileSync(join(pkg, "package.json"), JSON.stringify({ version: cfg.pi.version }));

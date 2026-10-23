@@ -367,7 +367,7 @@ function registerCompanionGuard(pi: ExtensionAPI, config: CompanionGuardConfig):
   let warnedDegraded = false;
 
   pi.on("tool_call", (event) => {
-    // `arguments` is not on pi 1.3.0's ToolCallEvent; the probe stays for a
+    // `arguments` is not on pi 1.4.0's ToolCallEvent; the probe stays for a
     // pi that names the field that way (VERIFY-ON-PIN).
     const ev = event as ToolCallEvent & { arguments?: Record<string, unknown> };
     const input = (ev.input ?? ev.arguments) as

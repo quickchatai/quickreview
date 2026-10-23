@@ -45,7 +45,7 @@ describe("patch-toml.mjs", () => {
       const f = join(dir, "c.toml");
       writeFileSync(
         f,
-        'dry_run = false # the flag\n\n[github]\nrepo = ""  # fill\nbase_branch = "main"\n\n[models.tiers]\n"sol-high" = "x/y:high"\n\n[pi]\nversion = "1.3.0"\n',
+        'dry_run = false # the flag\n\n[github]\nrepo = ""  # fill\nbase_branch = "main"\n\n[models.tiers]\n"sol-high" = "x/y:high"\n\n[pi]\nversion = "1.4.0"\n',
       );
       execFileSync("node", [
         join(RH, "patch-toml.mjs"),
@@ -63,7 +63,7 @@ describe("patch-toml.mjs", () => {
         /\[github\]\nrepo = "o\/r"\nbase_branch = "main"\nclone_dir = "base-clone"\n/,
       );
       expect(out).toContain('"sol-high" = "local/m"');
-      expect(out).toContain('[pi]\nversion = "1.3.0"');
+      expect(out).toContain('[pi]\nversion = "1.4.0"');
       expect(out).toMatch(/\[tui\]\ntarget = "local"/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
