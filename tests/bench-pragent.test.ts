@@ -19,7 +19,9 @@ import { reviewForJudge } from "../src/bench/defects.js";
 import { run } from "../src/bench/exec.js";
 import { runArmOf } from "../src/bench/ocr.js";
 import {
+  commandFailureWarning,
   commandStatus,
+  readCapture,
   improveFindings,
   normalizePath,
   pragentDriverArgv,
@@ -307,6 +309,27 @@ describe("output → findings: key issues and suggestions with lines are comment
     expect(body).toContain("## Findings without a line range");
     expect(body).toContain("`util/io.py`: Leak");
     expect(body).toContain("Close file");
+  });
+
+  it("a failed command with no capture names its stderr tail and its log", () => {
+    expect(commandFailureWarning("review", "failed", null, "python: not found\n")).toBe(
+      "review: failed — stderr: python: not found (see pragent-review.log)",
+    );
+    expect(commandFailureWarning("improve", "failed", { comments: ["Failed x"] }, "noise")).toBe(
+      "improve: failed — PR-Agent said: Failed x",
+    );
+    expect(commandFailureWarning("review", "timeout", null, "")).toBe(
+      "review: timeout (see pragent-review.log)",
+    );
+  });
+
+  it("readCapture reads an object and refuses an array or a bad file", () => {
+    const d = mkdtempSync(join(tmpdir(), "cap-"));
+    writeFileSync(join(d, "a.json"), "[1]");
+    writeFileSync(join(d, "b.json"), '{"comments":["x"]}');
+    expect(readCapture(join(d, "a.json"))).toBeNull();
+    expect(readCapture(join(d, "b.json"))).toEqual({ comments: ["x"] });
+    expect(readCapture(join(d, "missing.json"))).toBeNull();
   });
 
   it("status is what PR-Agent PRODUCED: it exits 0 after a failed model call", () => {
