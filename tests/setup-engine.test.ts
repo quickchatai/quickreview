@@ -70,7 +70,7 @@ function engine(
     clock: () => now,
     memory: null,
     cases: { run: async () => ({ ok: false, reason: "no cases in these tests" }) },
-    tracker: notYetTrackerSink(""),
+    tracker: notYetTrackerSink(),
     github: { get: async () => ({ ok: false, reason: "no network in tests" }) },
   };
   return new SetupEngine(ports, caseBudget ? { caseBudget } : {});
@@ -314,9 +314,9 @@ describe("cases — the saved cut split to fit, names kept", () => {
 });
 
 describe("the later slices' ports are injected and honest", () => {
-  it("the not-yet tracker sink refuses, naming its ticket", async () => {
+  it("the not-yet tracker sink refuses, honestly", async () => {
     expect(
-      await notYetTrackerSink("").file({
+      await notYetTrackerSink().file({
         title: "t",
         body: "b",
         effort: "e",

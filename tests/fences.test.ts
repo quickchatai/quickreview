@@ -220,10 +220,10 @@ describe("[T3] union members have producers", () => {
 
       /**
        * Allowlist — event types with no producer, each with the reason it is
-       * still in the union and the ticket that will remove it.
+       * still in the union and what will remove it.
        *
        * This is not a place to park a member nobody wants to think about: an
-       * entry needs a ticket id, and the fence below refuses an entry that has
+       * entry needs a stated reason, and the fence below refuses an entry that has
        * quietly acquired a producer, so a resolved item cannot linger here
        * pretending to be debt.
        */
@@ -242,7 +242,7 @@ describe("[T3] union members have producers", () => {
         expect(declared, `${e.type} is allowlisted but is no longer in SmEventType`).toContain(
           e.type,
         );
-        expect(e.why).toMatch(/FT-\d{4}/);
+        expect(e.why.trim().length, `${e.type}: say why it has no producer`).toBeGreaterThan(20);
       }
 
       const constructed = new Set(declared.filter((t) => producers.includes(`type: "${t}"`)));
@@ -843,9 +843,9 @@ describe("the prose beside the posting map says what the map does", () => {
     // The directive paragraph is the last one of the module header; the
     // reachability paragraph above it legitimately says `contrived` "never blocks".
     const header = src.slice(0, src.indexOf("\nimport "));
-    const directive = header.slice(header.indexOf("//"));
-    expect(directive.length, "the paragraph is the header's last").toBeGreaterThan(0);
-    expect(directive).toMatch(/FT-\d{4}/);
+    const at = header.indexOf("// First-party directive provenance:");
+    expect(at, "the directive paragraph opens with its first words").toBeGreaterThan(0);
+    const directive = header.slice(at);
     expect(directive).not.toMatch(/never blocks/);
     expect(directive).not.toMatch(/posts as a \[question\]/);
     expect(src, "present-tense park narration").not.toMatch(/\bparks\b/);

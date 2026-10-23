@@ -304,10 +304,10 @@ export function tokenFileGitHubReader(opts: {
   };
 }
 
-/** A port that is not wired: every call is an honest refusal naming what
- * wires it, never a silent no-op that reads as done. */
-export function notYetTrackerSink(ticket: string): TrackerSink {
-  const reason = `the tracker sink is not wired yet (${ticket})`;
+/** A port that is not wired: every call is an honest refusal, never a
+ * silent no-op that reads as done. */
+export function notYetTrackerSink(): TrackerSink {
+  const reason = "the tracker sink is not wired yet";
   return {
     kind: "none",
     file: async () => ({ ok: false, reason }),

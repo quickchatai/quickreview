@@ -152,7 +152,7 @@ function engine(memory: MemoryStore | null) {
     clock: () => new Date("2026-09-29T13:00:00Z"),
     memory,
     cases: { run: async () => ({ ok: false, reason: "no cases in these tests" }) },
-    tracker: notYetTrackerSink(""),
+    tracker: notYetTrackerSink(),
     github: { get: async () => ({ ok: false, reason: "no network in tests" }) },
   });
   return {

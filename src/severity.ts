@@ -10,9 +10,8 @@
 // the mapping unchanged. The blocker bar itself does not move — a `routine`
 // P0/P1 blocks.
 //
-// (ids pinned by tests/fences.test.ts) — first-party
-// directive provenance: the reviewed repo's own agent-directive files
-// (.claude/**, prompts/**, AGENTS.md/CLAUDE.md and kin —
+// First-party directive provenance: the reviewed repo's own agent-directive
+// files (.claude/**, prompts/**, AGENTS.md/CLAUDE.md and kin —
 // `isFirstPartyDirectivePath`). Routine first-party instructions — directive
 // text inside a directive file doing its job — are suppressed at the
 // lens/validator layer and never reach this map as a finding. A

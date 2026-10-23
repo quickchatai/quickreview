@@ -393,7 +393,7 @@ describe("the survey tools", () => {
           )(spec);
         },
       },
-      tracker: notYetTrackerSink(""),
+      tracker: notYetTrackerSink(),
       github: { get: async () => ({ ok: false, reason: "none" }) },
     });
     engine.propose({

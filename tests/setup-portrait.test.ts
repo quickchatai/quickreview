@@ -88,7 +88,7 @@ function engine(opts: { repo?: ReturnType<typeof fakeRepo> | RepoReader; config?
     clock: () => now,
     memory: null,
     cases: { run: async () => ({ ok: false, reason: "no cases in these tests" }) },
-    tracker: notYetTrackerSink(""),
+    tracker: notYetTrackerSink(),
     github: { get: async () => ({ ok: false, reason: "no network in tests" }) },
   });
   return { e, repo };
@@ -560,7 +560,7 @@ describe("the honest unknowns and the refusals at the disk (review fixes)", () =
       clock: () => now,
       memory: null,
       cases: { run: async () => ({ ok: false, reason: "no cases in these tests" }) },
-      tracker: notYetTrackerSink(""),
+      tracker: notYetTrackerSink(),
       github: { get: async () => ({ ok: false, reason: "no network in tests" }) },
     });
     const key = assembled(e).current.key;
@@ -585,7 +585,7 @@ describe("the honest unknowns and the refusals at the disk (review fixes)", () =
       clock: () => now,
       memory: null,
       cases: { run: async () => ({ ok: false, reason: "no cases in these tests" }) },
-      tracker: notYetTrackerSink(""),
+      tracker: notYetTrackerSink(),
       github: { get: async () => ({ ok: false, reason: "no network in tests" }) },
     });
     expect(e.portraitAssemble()).toEqual({

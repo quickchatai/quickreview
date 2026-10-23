@@ -98,7 +98,7 @@ function engine(state = stateHomeFs(stateDir())): SetupEngine {
     clock: () => now,
     memory: null,
     cases: { run: async () => ({ ok: false, reason: "no cases here" }) },
-    tracker: notYetTrackerSink(""),
+    tracker: notYetTrackerSink(),
     github: { get: async () => ({ ok: false, reason: "no network" }) },
   });
 }

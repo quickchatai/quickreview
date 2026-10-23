@@ -112,7 +112,7 @@ function engine(
     clock: () => now,
     memory,
     cases: { run: async () => ({ ok: false, reason: "no cases here" }) },
-    tracker: notYetTrackerSink(""),
+    tracker: notYetTrackerSink(),
     github: { get: async () => ({ ok: false, reason: "no network" }) },
   });
 }

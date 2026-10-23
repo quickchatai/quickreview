@@ -214,7 +214,7 @@ function setup(
     clock: () => now,
     memory,
     cases,
-    tracker: notYetTrackerSink(""),
+    tracker: notYetTrackerSink(),
     github: { get: async () => ({ ok: false, reason: "no network in tests" }) },
   };
   const engine = new SetupEngine(ports, { surveyConcurrency: opts.concurrency ?? 4 });
