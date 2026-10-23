@@ -518,3 +518,11 @@ describe("the verdict path requeues instead of applying", () => {
     expect(store.reviewedHead(702)).toBeUndefined();
   });
 });
+
+describe("parsePlan", () => {
+  it("treats an array with non-object rows as unreadable", async () => {
+    const { parsePlan } = await import("../src/requiredpasses.js");
+    expect(parsePlan("[null]")).toBeNull();
+    expect(parsePlan('[{"lens":"pass-baseline","required":true}]')).toHaveLength(1);
+  });
+});

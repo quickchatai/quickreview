@@ -151,15 +151,7 @@ export const QUALIFYING_RUNG = 3;
  * (by a human reading the thread — the builder script proposes, it does not
  * decide), and the reason the set cannot ratchet: two of the three labels make
  * a divergence the expected outcome. */
-export type Expectation =
-  /** The reviewer is supposed to reach this. A miss is worth a look. */
-  | "expected-catch"
-  /** The reviewer's design puts this outside its remit (style lint owns,
-   * naming preference, product opinion). A miss is CORRECT. */
-  | "out-of-remit"
-  /** The human was argued down, or the thread merged unresolved. Raising it is
-   * not wrong and missing it is not wrong; recorded as context only. */
-  | "expected-divergence";
+export type Expectation = (typeof EXPECTATIONS)[number];
 
 export interface CaseFinding {
   path: string;
@@ -205,11 +197,7 @@ export interface CaseSet {
   cases: RegressionCase[];
 }
 
-const EXPECTATIONS: readonly Expectation[] = [
-  "expected-catch",
-  "out-of-remit",
-  "expected-divergence",
-];
+const EXPECTATIONS = ["expected-catch", "out-of-remit", "expected-divergence"] as const;
 
 /** Read a committed case set, refusing anything malformed. A silently-empty or
  * half-parsed set would produce a clean run out of nothing, which is the one
@@ -531,7 +519,7 @@ export function matchFinding(
     if (!sameFile(s.path, human.path)) continue;
     const near = typeof s.line === "number" && Math.abs(s.line - human.line) <= lineWindow;
     const score = Math.max(overlap(theme, findingTheme(s.text)), near ? threshold : 0);
-    if (score > bestScore) {
+    if (!best || score > bestScore) {
       bestScore = score;
       best = s;
     }
