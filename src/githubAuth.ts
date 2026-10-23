@@ -45,6 +45,18 @@ const REFRESH_MARGIN_MS = 5 * 60 * 1000;
  * stalled mint cannot hold every caller waiting on its shared promise. */
 export const GITHUB_REQUEST_TIMEOUT_MS = 60_000;
 
+/** GitHub's own words for a failed call (its `message`), capped, as ": <text>";
+ * empty when the body cannot be read. A 403's permission or rate-limit
+ * explanation is what tells operators two failures of one status apart. */
+async function explanation(res: Response): Promise<string> {
+  try {
+    const text = (await res.text()).replace(/\s+/g, " ").trim().slice(0, 300);
+    return text ? `: ${text}` : "";
+  } catch {
+    return "";
+  }
+}
+
 export class TokenMinter {
   private cache = new Map<number, InstallationToken>();
   private inflight = new Map<number, Promise<string>>();
@@ -76,7 +88,8 @@ export class TokenMinter {
       signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
       headers: { authorization: `Bearer ${this.appJwt()}`, accept: "application/vnd.github+json" },
     });
-    if (!res.ok) throw new Error(`GET /app/installations failed: ${res.status}`);
+    if (!res.ok)
+      throw new Error(`GET /app/installations failed: ${res.status}${await explanation(res)}`);
     const installs = (await res.json()) as Array<{ id: number }>;
     const first = installs[0];
     if (!first) throw new Error("app has no installations");
@@ -106,7 +119,8 @@ export class TokenMinter {
       signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
       headers: { authorization: `Bearer ${this.appJwt()}`, accept: "application/vnd.github+json" },
     });
-    if (!res.ok) throw new Error(`token mint failed for installation ${id}: ${res.status}`);
+    if (!res.ok)
+      throw new Error(`token mint failed for installation ${id}: ${res.status}${await explanation(res)}`);
     const tok = (await res.json()) as InstallationToken;
     this.cache.set(id, tok);
     return tok.token;

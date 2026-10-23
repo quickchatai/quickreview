@@ -235,6 +235,22 @@ describe("TokenMinter", () => {
     ).rejects.toThrow(/GET \/app\/installations failed: 500/);
   });
 
+  it("keeps GitHub's explanation in a failed mint and discovery error", async () => {
+    const failing = (async (url: string | URL) => {
+      if (String(url).endsWith("/app/installations")) return jsonResponse([{ id: 42 }]);
+      return jsonResponse({ message: "Resource not accessible by integration" }, 403);
+    }) as unknown as FetchFn;
+    await expect(
+      new TokenMinter(secretsDir, failing, "https://api.github.com", () => T0).installationToken(),
+    ).rejects.toThrow(/403.*Resource not accessible by integration/);
+
+    const limited = (async () =>
+      jsonResponse({ message: "API rate limit exceeded" }, 403)) as unknown as FetchFn;
+    await expect(
+      new TokenMinter(secretsDir, limited, "https://api.github.com", () => T0).resolveInstallationId(),
+    ).rejects.toThrow(/403.*API rate limit exceeded/);
+  });
+
   it("uses only the app PEM — no environment token is ever consulted", async () => {
     vi.stubEnv("GITHUB_TOKEN", "ghp_personal_should_never_be_used");
     const gh = fakeGitHub({ expiresAt: () => new Date(T0 + 3600_000).toISOString() });
