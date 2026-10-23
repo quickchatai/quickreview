@@ -5,6 +5,7 @@
 // config (createBashGuard).
 import {
   bashGuardConfigFromEnv as configFromEnv,
+  bashGuardFlagsFromEnv as flagsFromEnv,
   checkBashCommand as checkBash,
   checkProcSecrets as checkProc,
   checkReadPath as checkRead,
@@ -28,10 +29,8 @@ function processSecretContext(): SecretPathContext {
 function ambientPolicy(): GuardPolicy {
   const { cwd: _cwd, ...secrets } = processSecretContext();
   return {
-    sandboxRoot: process.env.QCR_SANDBOX_ROOT ?? process.cwd(),
+    ...flagsFromEnv(process.env, process.cwd()),
     cwd: process.cwd(),
-    replay: process.env.QCR_REPLAY === "1",
-    noPost: process.env.QCR_TAKEOVER === "1",
     secrets,
   };
 }
