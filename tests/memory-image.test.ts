@@ -46,6 +46,7 @@ import {
 import { sidecarConfig, startSidecar } from "../src/openviking/sidecar.js";
 import type { SupervisedChild } from "../src/openviking/index.js";
 import { PROCESS_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
+import { waitFor } from "./helpers/wait-for.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel: string): string => readFileSync(join(root, rel), "utf8");
@@ -861,8 +862,10 @@ describe("boot re-embed on the sidecar, against a copy of a store", () => {
         readOvConf: () => readFileSync(join(copy, "ov.conf"), "utf8"),
       });
       // The driver loads the real script by dynamic import.
-      for (let i = 0; i < 200 && sidecar.status().reembed?.state === "unknown"; i++)
-        await new Promise<void>((r) => setTimeout(r, 10));
+      await waitFor(
+        () => sidecar.status().reembed?.state !== "unknown",
+        "the reembed driver to load",
+      );
       expect(lines.filter((l) => /reembed/.test(l))).toEqual([
         expect.stringMatching(/outstanding \(pending\)/),
       ]);
@@ -873,8 +876,10 @@ describe("boot re-embed on the sidecar, against a copy of a store", () => {
       await clock.fire(cfg.openviking.health_interval_s * 1000); // the server's: /ready passes
       await clock.fire(0); // the driver's tick
       // The script polls its task on its own (real) cadence.
-      for (let i = 0; i < 300 && sidecar.status().reembed?.state === "pending"; i++)
-        await new Promise<void>((r) => setTimeout(r, 50));
+      await waitFor(
+        () => sidecar.status().reembed?.state !== "pending",
+        "the reembed script to finish",
+      );
       expect(reindexed).toHaveLength(1);
       expect(reindexed[0]!.auth).toBe("Bearer reviewer-secret");
       expect(sidecar.status().reembed?.state).toBe("completed");

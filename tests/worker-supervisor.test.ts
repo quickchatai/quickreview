@@ -1248,8 +1248,11 @@ describe("[P8.12] steer and follow-up are forwarded and acked", () => {
     const { r, row } = await liveWorker("controls");
     for (const bad of ["", "   ", 7, undefined, "x".repeat(CONTROL_TEXT_MAX + 1)])
       expect(await r.sup.control(PR, "steer", bad)).toMatchObject({ ok: false });
-    await new Promise((res) => setTimeout(res, 100));
-    expect(controlsSeen(r, row.id)).toEqual([]);
+    // Controls reach the worker in order, so a valid one sent last is the barrier:
+    // when it has arrived, any invalid one that was going to be forwarded already has.
+    expect(await r.sup.control(PR, "steer", "valid")).toMatchObject({ ok: true });
+    await until(() => controlsSeen(r, row.id).length > 0);
+    expect(controlsSeen(r, row.id).map((c) => c.body["text"])).toEqual(["valid"]);
   });
 
   it("refuses when no worker runs, when it is not past ready, and when it is ending", async () => {

@@ -16,6 +16,7 @@ import {
 import { HEARTBEAT_FILE, readBeat, type Beat } from "../src/heartbeat.js";
 import { sdkStubArgs, writeSdkDriverStub } from "./helpers/sdk-driver-stub.js";
 import { watchdogCommand } from "../src/reviewcli.js";
+import { waitFor } from "./helpers/wait-for.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "review-watchdog-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -211,8 +212,11 @@ const t = setInterval(() => { beat(); if (seq >= 5) { clearInterval(t); for (;;)
     expect(launched.ok).toBe(true);
     const pid = (launched as { pid: number }).pid;
     try {
-      // wait for the stub to freeze: its beats stop advancing
-      await new Promise((r) => setTimeout(r, 500));
+      // wait for the stub to freeze: its fifth beat is its last, the loop spins right after it
+      await waitFor(
+        () => (readBeat(join(dir, HEARTBEAT_FILE)) as { seq?: number } | null)?.seq === 5,
+        "the stub's last beat",
+      );
       const r = await runWatchdog(
         { dir, key: "k", pid },
         {
@@ -230,7 +234,7 @@ const t = setInterval(() => { beat(); if (seq >= 5) { clearInterval(t); for (;;)
       // not before deadline + grace; and promptly after, with slack for load
       expect(took).toBeGreaterThanOrEqual(DEADLINE_MS + GRACE_MS);
       expect(took).toBeLessThan(DEADLINE_MS + GRACE_MS + 5_000);
-      await new Promise((res) => setTimeout(res, 200));
+      await waitFor(() => !alive(pid) && !alive(pi.pid!), "the killed processes to be gone");
       expect(alive(pid)).toBe(false);
       expect(alive(pi.pid!)).toBe(false);
       expect(JSON.parse(readFileSync(join(dir, "exit.json"), "utf8")).code).toBe(

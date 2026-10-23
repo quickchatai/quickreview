@@ -16,6 +16,7 @@ import {
   type SessionEvent,
   type SessionSpec,
 } from "../../src/engine/port.js";
+import { waitFor } from "./wait-for.js";
 
 /** What the backend does with each turn it is given.
  *  - stream:    answers with one message priced at 0.75 a turn and ends on
@@ -55,13 +56,7 @@ const PS = String.fromCharCode(0x2029);
 export const STREAM_SPENT_USD = 0.75;
 
 /** Poll `ok` until it holds, inside the test's own timeout. */
-export async function pollUntil(ok: () => boolean, what: string, ms = 20_000): Promise<void> {
-  const deadline = Date.now() + ms;
-  while (!ok()) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
-    await new Promise((r) => setTimeout(r, 20));
-  }
-}
+export const pollUntil = waitFor;
 
 export function portContract(h: PortHarness): void {
   let dir: string;

@@ -29,6 +29,7 @@ import { ARCHIVE_DEFAULTS } from "../src/config.js";
 import { StateStore } from "../src/state.js";
 import { createWorkerLiveness } from "../src/workerliveness.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
+import { waitFor } from "./helpers/wait-for.js";
 
 const T0 = Date.parse("2026-10-21T12:00:00.000Z");
 const DAY = 86_400_000;
@@ -452,8 +453,7 @@ describe("the plan — what a pass would move (§7.2)", () => {
         schedule: () => () => {},
       });
       const tick = archiver.tick();
-      for (let i = 0; i < 20 && archiver.status().state !== "running"; i++)
-        await new Promise((r) => setImmediate(r));
+      await waitFor(() => archiver.status().state === "running", "the archiver to be running");
       expect(archiver.status().state).toBe("running");
       archiver.stop();
       const t = await tick;

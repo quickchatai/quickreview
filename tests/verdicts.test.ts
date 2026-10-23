@@ -38,6 +38,7 @@ import { reconcileOrphanedRounds } from "../src/reconcile.js";
 import { TranscriptIndex } from "../src/transcriptindex.js";
 import { MemoryTranscriptFs } from "./helpers/memory-transcript-fs.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
+import { waitFor } from "./helpers/wait-for.js";
 
 const cfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -3780,7 +3781,7 @@ describe("integration review", () => {
       const w = watcher({ cfg: { ...cfg, dry_run: false }, now: () => later });
 
       const first = w.checkDeadlines();
-      for (let i = 0; i < 200 && reads === 0; i++) await new Promise((r) => setTimeout(r, 5));
+      await waitFor(() => reads > 0, "the first receipt read");
       expect(reads).toBe(1);
       expect(await w.checkDeadlines()).toEqual([]);
       expect(reads).toBe(1);

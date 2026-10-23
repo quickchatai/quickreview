@@ -72,6 +72,7 @@ import { sha256Prefixed } from "../src/openviking/store.js";
 import { OutcomeCapture, inCaptureWindow } from "../src/outcomes.js";
 import { StateStore, type RoundFindingInput } from "../src/state.js";
 import { OV_ROOT, OvServer, ovStore } from "./helpers/ov-server.js";
+import { waitFor } from "./helpers/wait-for.js";
 
 const cfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -2398,8 +2399,7 @@ describe("what a case says and what the writer records around a send", () => {
       },
     });
     const tick = w.tick();
-    for (let i = 0; i < 20 && flagAtSend.length === 0; i++)
-      await new Promise((res) => setImmediate(res));
+    await waitFor(() => flagAtSend.length > 0, "the first write to be sent");
     expect(flagAtSend).toEqual([1]);
     // A restart's sync, where the finding no longer qualifies: the row is
     // owed a withdrawal, never dropped.

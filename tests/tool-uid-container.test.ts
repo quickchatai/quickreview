@@ -7,7 +7,7 @@
 //
 // Skipped where docker, the node image or the built tree is absent. The built
 // tree is `npm run build` (dist/); the release image is not built here.
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   copyFileSync,
@@ -23,6 +23,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.js";
+import { nodeModulesMounts } from "./helpers/docker-node-modules.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(root, "dist", "src");
@@ -50,8 +51,6 @@ const hasDocker = ((): boolean => {
 })();
 const docker = (args: string[], timeout = 120_000): ReturnType<typeof spawnSync> =>
   spawnSync("docker", args, { encoding: "utf8", timeout });
-const nodeModules = (): string =>
-  execFileSync("readlink", ["-f", join(root, "node_modules")], { encoding: "utf8" }).trim();
 
 afterAll(() => {
   if (keep) return;
@@ -232,8 +231,7 @@ function runHarness(
     `type=bind,src=${app},dst=/opt/qcr`,
     "--mount",
     `type=bind,src=${root},dst=${root},readonly`,
-    "--mount",
-    `type=bind,src=${nodeModules()},dst=${nodeModules()},readonly`,
+    ...nodeModulesMounts(root),
     ...(token ? ["--mount", `type=bind,src=${tokdir},dst=/run/qcr-in`] : []),
     "--mount",
     `type=bind,src=${login},dst=/qcr-login,readonly`,

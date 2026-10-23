@@ -253,12 +253,13 @@ describe("the real child", () => {
   it("a launched node process outlives the call that started it, and status --wait returns its findings", async () => {
     const home = join(tmp, "real");
     const stub = join(tmp, "stub.mjs");
+    const release = join(tmp, "real-release"); // the child works until the test lets it finish
     const dist = join(process.cwd(), "dist", "src", "reviewdetach.js");
     writeFileSync(
       stub,
       `import { runDetachedChild } from ${JSON.stringify(dist)};
 await runDetachedChild({ dir: process.argv[2], key: process.argv[3], run: async (out) => {
-  await new Promise((r) => setTimeout(r, 400));
+  while (!(await import("node:fs")).existsSync(${JSON.stringify(release)})) await new Promise((r) => setTimeout(r, 20));
   out(JSON.stringify({ ok: true, findings: { high: [{ title: "from the child" }] } }));
   return 0;
 } });
@@ -289,9 +290,11 @@ await runDetachedChild({ dir: process.argv[2], key: process.argv[3], run: async 
           env: process.env,
         }),
     };
-    const t0 = Date.now();
+    // start returns while the child is still working: it did not wait for it
     expect(await runDetachedVerb("start", [], true, deps)).toBe(0);
-    expect(Date.now() - t0).toBeLessThan(300);
+    expect(await runDetachedVerb("status", [], true, deps)).toBe(0);
+    expect(JSON.parse(lines[lines.length - 1]!).state).toBe("running");
+    writeFileSync(release, "");
     expect(await runDetachedVerb("status", ["--wait", "--timeout", "20"], true, deps)).toBe(0);
     const j = JSON.parse(lines[lines.length - 1]!);
     expect(j.state).toBe("done");

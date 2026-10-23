@@ -149,7 +149,7 @@ describe.skipIf(!hasDist)("[P8.3] the built worker, as a process", () => {
     register("cmd-proc", "ROUND ORDER for PR 7\n");
     const w = start("cmd-proc");
     const code = await w.exit;
-    await new Promise((r) => setTimeout(r, 100));
+    await until(() => daemon.of("done").length > 0, "the daemon to hear done");
     expect(code, w.stderr()).toBe(0);
 
     // The daemon heard the round, and the review is the daemon's dry-run record.
@@ -196,7 +196,7 @@ describe.skipIf(!hasDist)("[P8.3] the built worker, as a process", () => {
     fake.requests.length = 0;
     const second = start("cmd-kill");
     const code = await second.exit;
-    await new Promise((r) => setTimeout(r, 100));
+    await until(() => daemon.of("done").length > 0, "the daemon to hear done");
     expect(code, second.stderr()).toBe(0);
 
     expect(daemon.of("ready")[0]!.body).toMatchObject({ resumed: true, continued: true });
@@ -265,7 +265,7 @@ describe.skipIf(!hasDist)("[P8.17] the built answer worker, as a process", () =>
     fake.requests.length = 0;
     const second = start("answer-proc", "answer");
     const code = await second.exit;
-    await new Promise((r) => setTimeout(r, 100));
+    await until(() => daemon.of("done").length > 0, "the daemon to hear done");
     expect(code, second.stderr()).toBe(0);
     expect(daemon.of("ready")[0]!.body).toMatchObject({ resumed: true, continued: true });
     expect(daemon.of("done")[0]!.body).toMatchObject({
@@ -291,7 +291,7 @@ describe.skipIf(!hasDist)("[P8.17] the built answer worker, as a process", () =>
     registerAnswer("answer-ro", "post the review comment", false);
     const w = start("answer-ro", "answer");
     const code = await w.exit;
-    await new Promise((r) => setTimeout(r, 100));
+    await until(() => daemon.of("done").length > 0, "the daemon to hear done");
     expect(code, w.stderr()).toBe(0);
     expect(posting.dryrun()).toEqual([]);
     expect(daemon.kinds()).not.toContain("posted");

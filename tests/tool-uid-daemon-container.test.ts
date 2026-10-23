@@ -9,7 +9,7 @@
 // writes. No network, no model.
 //
 // Skipped where docker, the node image or the built tree is absent.
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   copyFileSync,
@@ -25,6 +25,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.js";
+import { nodeModulesMounts } from "./helpers/docker-node-modules.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(root, "dist", "src");
@@ -37,8 +38,6 @@ const hasDocker =
   spawnSync("docker", ["image", "inspect", NODE_IMAGE], { stdio: "ignore" }).status === 0;
 const docker = (args: string[], timeout = 120_000): ReturnType<typeof spawnSync> =>
   spawnSync("docker", args, { encoding: "utf8", timeout });
-const nodeModules = (): string =>
-  execFileSync("readlink", ["-f", join(root, "node_modules")], { encoding: "utf8" }).trim();
 
 afterAll(() => {
   // the container's uids own some of what it made
@@ -149,8 +148,7 @@ function runBot(): { status: number | null; stderr: string; out: string } {
       `type=bind,src=${app},dst=/opt/qcr`,
       "--mount",
       `type=bind,src=${root},dst=${root},readonly`,
-      "--mount",
-      `type=bind,src=${nodeModules()},dst=${nodeModules()},readonly`,
+      ...nodeModulesMounts(root),
       "--mount",
       `type=bind,src=${out},dst=/out`,
       "--entrypoint",

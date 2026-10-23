@@ -9,6 +9,7 @@ import {
   zonedParts,
 } from "../src/eod.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
+import { waitFor } from "./helpers/wait-for.js";
 
 const TZ = "Europe/Warsaw";
 
@@ -333,7 +334,7 @@ describe("startEodTimer", () => {
     });
     clock = new Date("2026-08-13T16:00:00Z");
     timers[0]!.cb();
-    await new Promise((r) => setTimeout(r, 30));
+    await waitFor(() => injected.length > 0, "the sweep to be injected");
     expect(injected).toEqual([
       [
         "sweep 2026-08-13",
@@ -382,7 +383,10 @@ describe("startEodTimer", () => {
     });
     clock = new Date("2026-08-13T16:00:00Z");
     timers[0]!.cb();
-    await new Promise((r) => setTimeout(r, 60));
+    await waitFor(
+      () => injected.length > 0 && missing.length > 0,
+      "the timed-out sweep to be injected and reported",
+    );
     expect(injected).toEqual(["sweep 2026-08-13"]);
     expect(missing).toEqual(["2026-08-13: no answer within 20 ms"]);
     timer.stop();
