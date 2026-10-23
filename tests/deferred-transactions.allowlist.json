@@ -132,11 +132,6 @@
   },
   {
     "file": "src/state.ts",
-    "fn": "StateStore.retrySessionCommandAfterFence",
-    "note": "deferred; reads via .get, getSessionCommand; writes via .run"
-  },
-  {
-    "file": "src/state.ts",
     "fn": "StateStore.terminalizeInfrastructureReviewFailure",
     "note": "deferred; reads via .get, getSessionCommand; writes via .run"
   },

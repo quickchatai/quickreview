@@ -2167,10 +2167,12 @@ export class StateStore {
         INSERT INTO session_commands
           (id, pr, session, kind, round_no, payload_sha256, payload_path, inject_path,
            status, owner_token, attempt, recovery_attempts, unknown_checks, redeliveries,
-           created_at, updated_at, next_check_at, started_at, settled_at, failed_at, failure)
+           created_at, updated_at, next_check_at, started_at, settled_at, failed_at, failure,
+           est_usd, lens_usd, usage_final)
         SELECT id, pr, session, kind, round_no, payload_sha256, payload_path, inject_path,
            status, owner_token, attempt, recovery_attempts, unknown_checks, redeliveries,
-           created_at, updated_at, next_check_at, started_at, settled_at, failed_at, failure
+           created_at, updated_at, next_check_at, started_at, settled_at, failed_at, failure,
+           est_usd, lens_usd, usage_final
           FROM session_commands_before_cancelled;
         DROP TABLE session_commands_before_cancelled;
         ${SESSION_COMMAND_INDEXES_SQL}
@@ -2812,16 +2814,23 @@ export class StateStore {
     commandId: string,
     usage: { est_usd: number; lens_usd: number | null; final: boolean },
   ): boolean {
-    const changed =
-      this.db
-        .prepare(
-          `UPDATE session_commands
+    // One transaction: the closed report and the round's re-stated cost land
+    // together, or a replay (which sees `usage_final = 1`) could never finish it.
+    return this.db
+      .transaction((): boolean => {
+        const changed =
+          this.db
+            .prepare(
+              `UPDATE session_commands
               SET est_usd = ?, lens_usd = ?, usage_final = ?, updated_at = ?
             WHERE id = ? AND usage_final = 0`,
-        )
-        .run(usage.est_usd, usage.lens_usd, usage.final ? 1 : 0, this.ts(), commandId).changes > 0;
-    if (changed && usage.final) this.restateMeasuredRoundUsd(commandId);
-    return changed;
+            )
+            .run(usage.est_usd, usage.lens_usd, usage.final ? 1 : 0, this.ts(), commandId)
+            .changes > 0;
+        if (changed && usage.final) this.restateMeasuredRoundUsd(commandId);
+        return changed;
+      })
+      .immediate();
   }
 
   /** Re-state the est_usd of the (already measured) round a command belongs to from
@@ -3421,7 +3430,10 @@ export class StateStore {
             .run(
               pr,
               payload,
-              `${OPERATOR_RECOVERED_WAKE_PREFIX}${row.kind}:${row.id}`,
+              // A recheck nudge keeps its `recheck:` class (a pause defers it).
+              `${OPERATOR_RECOVERED_WAKE_PREFIX}${
+                parseRecheckPromptMarker(payload) ? RECHECK_WAKE_PREFIX : ""
+              }${row.kind}:${row.id}`,
               row.created_at,
             );
           wakeIds.push(Number(inserted.lastInsertRowid));
@@ -3821,6 +3833,8 @@ export class StateStore {
    * start would skip redelivery and kill it too. Bounded all the same — every
    * replay spends one `recovery_attempts`. */
   retrySessionCommandAfterFence(id: string, expectedAttempt: number, nextCheckAt: string): boolean {
+    // `.immediate()`: the read below must wait inside busy_timeout for the write
+    // lock, not fail on the read-to-write upgrade.
     const retry = this.db.transaction((): boolean => {
       const row = this.getSessionCommand(id);
       if (
@@ -3856,7 +3870,7 @@ export class StateStore {
           .run({ id, attempt: expectedAttempt, ts, next: nextCheckAt }).changes === 1
       );
     });
-    return retry();
+    return retry.immediate();
   }
 
   /** A terminal command handed back for a fresh delivery (`redeliverRound`,
@@ -4342,10 +4356,12 @@ export class StateStore {
    * per-review ledger, read as a trace by the ungated-review audit.
    * Scoped per PR (unlike `importedReviewIds`) because the audit asks a
    * per-PR question and a global set would let one PR's row vouch for another. */
-  /** Every comment id the daemon registered as its own on this PR (`bot_comments`). */
+  /** Every inline review-comment id the daemon registered as its own on this PR
+   * (`bot_comments`, kind `review_comment`): an issue comment may share the
+   * number and is a different comment. */
   botCommentIds(pr: number): Set<number> {
     const rows = this.db
-      .prepare("SELECT comment_id AS id FROM bot_comments WHERE pr = ?")
+      .prepare("SELECT comment_id AS id FROM bot_comments WHERE pr = ? AND kind = 'review_comment'")
       .all(pr) as Array<{ id: number }>;
     return new Set(rows.map((r) => r.id));
   }
@@ -4909,6 +4925,13 @@ export class StateStore {
         });
       const row = this.getPr(arg.pr);
       const successor = this.successorFor(arg.pr);
+      // A human request already waiting in the queue keeps its identity and FIFO
+      // position; only an absent or system one is stamped with the failure's.
+      const keepQueuedHuman =
+        !successor &&
+        row?.state === "queued" &&
+        row.trigger_provenance === "human" &&
+        row.trigger_ts !== null;
       if (row && row.state !== "closed") {
         this.db
           .prepare(
@@ -4918,8 +4941,8 @@ export class StateStore {
           )
           .run(
             successor?.head_sha ?? arg.head_sha,
-            successor?.requested_at ?? ts,
-            successor?.provenance ?? "system",
+            successor?.requested_at ?? (keepQueuedHuman ? row.trigger_ts : ts),
+            successor?.provenance ?? (keepQueuedHuman ? "human" : "system"),
             ts,
             arg.pr,
           );

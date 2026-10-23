@@ -20,7 +20,7 @@
 // as durable successor work (`recordSuccessor`), queued once that round
 // settles.
 // `stale_recheck` + `trigger_ts` are cleared on dispatch AND on verdict/
-// round_overdue: a settled PR carries no trigger residue, and the
+// round_overdue/closed: a settled PR carries no trigger residue, and the
 // reconcile poll sweeps any legacy residue (a tracked/awaiting_author PR with
 // no round running never legitimately holds either).
 //
@@ -230,7 +230,10 @@ function applyEventTransaction(
   // staleness round (dispatch roundTypeFor) and let it jump the FIFO, and a
   // "human" provenance would read to the exact-head retirement as a fresh ask.
   const consumesTrigger =
-    event.type === "dispatched" || event.type === "verdict" || event.type === "round_overdue";
+    event.type === "dispatched" ||
+    event.type === "verdict" ||
+    event.type === "round_overdue" ||
+    event.type === "closed";
 
   let staleRecheck = existing?.stale_recheck ?? 0;
   if (event.type === "stale_detected") staleRecheck = 1;
