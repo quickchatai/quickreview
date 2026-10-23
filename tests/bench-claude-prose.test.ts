@@ -31,6 +31,11 @@ it("keeps a rejected located paragraph's explicit negative introduction for its 
   expect(parsed.findings).toEqual([]);
 });
 
+it("a location range with an invalid second endpoint is not a location", () => {
+  expect(findLocations("src/a.ts:12-0")).toEqual([]);
+  expect(findLocations("src/a.ts:12-14").map((l) => [l.start, l.end])).toEqual([[12, 14]]);
+});
+
 function fixture(id: string): { text: string; files: string[] | null } {
   const f = join(FX, `${id}.files.txt`);
   return {

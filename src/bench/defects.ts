@@ -28,7 +28,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { claudeRowsForJudge } from "./claudeshape.js";
-import { reanchorLeftLine } from "./aacr.js";
+import { benchPath, posInt, reanchorLeftLine } from "./aacr.js";
 
 export const SEVERITIES = ["high", "medium", "low"] as const;
 export type Severity = (typeof SEVERITIES)[number];
@@ -237,15 +237,20 @@ export function reviewForJudge(runDir: string, instanceId: string): ReviewForJud
     if (typeof r["side"] !== "string" || r["side"].toUpperCase() !== "LEFT") continue;
     const raw = typeof r["body"] === "string" ? r["body"] : "";
     if (!raw.trim()) continue;
-    const line = typeof r["line"] === "number" ? r["line"] : null;
+    const line = posInt(r["line"]) ?? null;
     const path = typeof r["path"] === "string" ? r["path"] : null;
-    const patch = path === null ? undefined : patches?.[path];
+    const scoredPath = path === null ? "" : benchPath(path);
+    const patch = path === null ? undefined : (patches?.[path] ?? patches?.[scoredPath]);
     const moved = line !== null && typeof patch === "string" ? reanchorLeftLine(patch, line) : null;
     if (moved) {
       const scoredIndex = rows.findIndex((row, i) => {
         if (matched.has(i) || typeof row !== "object" || row === null) return false;
         const scored = row as Record<string, unknown>;
-        return scored.path === path && scored.start_line === moved.line && scored.content === raw;
+        return (
+          scored.path === scoredPath &&
+          scored.start_line === moved.line &&
+          scored.content === raw.trim()
+        );
       });
       if (scoredIndex !== -1) {
         matched.add(scoredIndex);

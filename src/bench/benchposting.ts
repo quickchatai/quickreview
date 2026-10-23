@@ -47,7 +47,7 @@ import {
   withheldReason,
 } from "../reviewrender.js";
 import { entryDisposition, recordSide } from "../findingkey.js";
-import { stripSanctionedTags } from "../severity.js";
+import { bareTag, stripSanctionedTags } from "../severity.js";
 import {
   benchPath,
   CASE_FILES,
@@ -89,6 +89,8 @@ interface Item {
   title: string;
   /** The side its line counts on. */
   side: "LEFT" | "RIGHT";
+  /** A `[deferred]` finding: kept and posted, but never in the verdict totals. */
+  deferred?: boolean;
   /** An inline comment's span start, when it spans lines. */
   start_line?: number;
   /** inline: the session's raw row, written back verbatim when kept. */
@@ -245,6 +247,7 @@ export function policeBenchOutput(args: {
       severity: null,
       title: firstLineTitle(parsed.body),
       side: parsed.side === "LEFT" ? "LEFT" : "RIGHT",
+      ...(parsed.marker === "deferred" ? { deferred: true } : {}),
       ...(parsed.start_line !== undefined ? { start_line: parsed.start_line } : {}),
       row,
     });
@@ -254,6 +257,7 @@ export function policeBenchOutput(args: {
       line: parsed.line,
       ...(parsed.start_line !== undefined ? { start_line: parsed.start_line } : {}),
       tag: parsed.tag,
+      side: parsed.side,
     });
   }
   const places = placePosted(posted, args.reviewMd, sites);
@@ -277,6 +281,7 @@ export function policeBenchOutput(args: {
       severity: str(e["severity"]) || null,
       title: str(e["title"]) || str(e["reason"]).split("\n", 1)[0] || `${path}:${line}`,
       side: recordSide(e["side"]),
+      ...(bareTag(str(e["posted_as"])) === "deferred" ? { deferred: true } : {}),
       entry: e,
     });
   });
@@ -345,14 +350,15 @@ export function policeBenchOutput(args: {
   const byId = entriesById(entries);
   const representatives = new Map<string | Item, Item>();
   const strength = (item: Item): number =>
-    ({ blocker: 3, question: 2, nit: 1, check: 0 })[item.cls];
+    ({ blocker: 3, question: 2, nit: 1, check: 0 })[item.cls] * 2 + (item.deferred ? 0 : 1);
   for (const item of sel.kept) {
     const id = str(item.entry?.id);
     const key = id ? rootCauseId(id, str(item.entry?.same_as) || null, byId) : item;
     const previous = representatives.get(key);
     if (!previous || strength(item) > strength(previous)) representatives.set(key, item);
   }
-  for (const item of representatives.values()) if (item.cls !== "check") counts[item.cls] += 1;
+  for (const item of representatives.values())
+    if (item.cls !== "check" && !item.deferred) counts[item.cls] += 1;
   const label = verdictLabel(args.reviewMd, args.outcome.verdict);
   let reviewMd: string;
   if (policy.body === "verdict") {

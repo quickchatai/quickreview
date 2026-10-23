@@ -97,7 +97,7 @@ export function findLocations(s: string): Loc[] {
     if (!isFileLike(written)) continue;
     const a = Number(m[2]);
     const b = m[3] !== undefined ? Number(m[3]) : a;
-    if (!Number.isSafeInteger(a) || a < 1) continue;
+    if (!Number.isSafeInteger(a) || a < 1 || !Number.isSafeInteger(b) || b < 1) continue;
     out.push({ written, start: Math.min(a, b), end: Math.max(a, b), index: m.index ?? 0 });
   }
   return out;
