@@ -145,7 +145,9 @@ case "$1 $2" in
   "config check") [ -f "${dir}/badconfig" ] && { echo "retired key [engine] runtime"; exit 1; }; exit 0 ;;
 esac
 case "$1" in
-  pause-pr) [ -f "${dir}/pause-fails" ] && exit 1; echo "$2" >> "${dir}/paused" ;;
+  pause-pr) [ -f "${dir}/pause-fails" ] && exit 1; echo "$2" >> "${dir}/paused"
+    # late-pr: a PR the reconcile starts tracking while the pauses are being sent
+    if [ -f "${dir}/late-pr" ]; then cat "${dir}/late-pr" >> "${dir}/qcr-status"; rm "${dir}/late-pr"; fi ;;
   resume-pr) touch "${dir}/paused"; grep -vx "$2" "${dir}/paused" > "${dir}/paused.tmp"; mv "${dir}/paused.tmp" "${dir}/paused" ;;
 esac
 if [ "$1" = status ]; then cat "${dir}/qcr-status"; fi`,
@@ -564,6 +566,15 @@ describe("scripts/cutover.sh", () => {
       expect(res.out).toContain("waiting for the daemon's snapshot to show the pause of: #14");
       expect(res.out).not.toContain("not lifting");
       expect(r.calls()).toContain("qcr drain off");
+    });
+
+    it("never lifts while a PR tracked since the pauses were sent is not paused", () => {
+      const r = board();
+      writeFileSync(join(r.dir, "late-pr"), "#20    tracked           -      5555555555  late pr\n");
+      const res = r.run([...TO_STAGE_9, "13", "y", "y", "y"]);
+      expect(res.code).toBe(1);
+      expect(res.out).toContain("#20 is tracked but not paused");
+      expect(r.calls()).not.toContain("qcr drain off");
     });
 
     it("stops with the drain held when a pause fails", () => {
