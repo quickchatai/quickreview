@@ -1196,7 +1196,6 @@ describe("selection: one shared find for every addable lens, filtered per lens",
     const texts = new Map<string, string>();
     const sel = selectRound({
       pr: 1,
-      title: "T",
       rows,
       prFiles: ["backend/api/views.py"],
       root: MEM,

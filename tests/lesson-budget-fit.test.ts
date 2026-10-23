@@ -317,7 +317,6 @@ describe("two finds a round, through the selector", () => {
     const plan = s9aPlanFinds({ title: o.title, rows, prFiles, addable: o.addable_lenses });
     const reference = selectRound({
       pr: o.pr,
-      title: o.title,
       rows,
       prFiles,
       root: CORPUS_ROOT,

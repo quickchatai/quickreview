@@ -148,6 +148,16 @@ export function inArea(uri: string, root: string, area: string): boolean {
   return base.endsWith(".md") && !base.startsWith(".");
 }
 
+/** A hit's engine score, or 0 when it is missing or not finite. */
+function finiteScore(score: unknown): number {
+  return typeof score === "number" && Number.isFinite(score) ? score : 0;
+}
+
+/** The score as the ledger records it: three decimals. */
+function recordedScore(score: number): number {
+  return Math.round(score * 1000) / 1000;
+}
+
 function cmp(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
@@ -283,7 +293,7 @@ export function filterLessonHits(
     eligible.push({
       uri: h.uri,
       text: text.trim(),
-      score: typeof h.score === "number" && Number.isFinite(h.score) ? h.score : 0,
+      score: finiteScore(h.score),
       created,
       lesson: lesson as ParsedLesson & { kind: LessonKind },
       tokens: estimateTokens(text),
@@ -477,7 +487,7 @@ export function filterCaseHits(
     eligible.push({
       uri: h.uri,
       text: text.trim(),
-      score: typeof h.score === "number" && Number.isFinite(h.score) ? h.score : 0,
+      score: finiteScore(h.score),
       header,
       tokens: estimateTokens(text),
       lensHit: header.lens.some((l) => ctx.lenses.includes(l)),
@@ -684,7 +694,7 @@ function asSelected(c: LessonCandidate): SelectedLesson {
     evidence: c.lesson.evidence.length,
     format: c.lesson.format,
     tokens: c.tokens,
-    score: Math.round(c.score * 1000) / 1000,
+    score: recordedScore(c.score),
     created: c.created,
   };
 }
@@ -698,13 +708,12 @@ function caseSelected(c: CaseCandidate): SelectedCase {
     fate: c.header.fate,
     replies: c.header.replies,
     tokens: c.tokens,
-    score: Math.round(c.score * 1000) / 1000,
+    score: recordedScore(c.score),
   };
 }
 
 export interface SelectRoundInput {
   pr: number;
-  title: string;
   rows: readonly SelectionRow[];
   prFiles: readonly string[];
   root: string;

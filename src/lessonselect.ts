@@ -784,7 +784,6 @@ export class RoundLessonSelector implements RoundLessonHook {
     }
     const selections = selectRound({
       pr: order.pr,
-      title: order.title,
       rows,
       prFiles,
       root,
