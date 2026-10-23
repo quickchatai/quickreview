@@ -1050,6 +1050,7 @@ export class WorkerSupervisor {
     for (const [id, resolve] of [...rec.controls])
       resolve({ id, ack: "refused", reason: "the worker ended" });
     const { store } = this.deps;
+    let survivors = false;
     try {
       // The leader is gone; whatever it left in its group goes with it.
       const leftovers = await killLease(rec.lease, {
@@ -1060,7 +1061,10 @@ export class WorkerSupervisor {
       });
       if (leftovers.verdict === "members")
         this.log(`worker ${rec.row.id}: left members in its group; ended`);
-      if (leftovers.survivors) this.log(`worker ${rec.row.id}: group members survived the kill`);
+      if (leftovers.survivors) {
+        survivors = true;
+        this.log(`worker ${rec.row.id}: group members survived the kill`);
+      }
       this.deps.capabilities.revoke(rec.row.id);
       const outcome = decideOutcome({
         code,
@@ -1085,7 +1089,9 @@ export class WorkerSupervisor {
     } catch (e) {
       this.log(`settling worker ${rec.row.id} failed: ${String(e)}`);
     } finally {
-      this.leases.remove(rec.row.session, rec.token);
+      // A lease whose group members survived stays: it is what keeps a successor
+      // from launching beside them (launchHeld) until the process table shows them gone.
+      if (!survivors) this.leases.remove(rec.row.session, rec.token);
       this.byCommand.delete(rec.row.id);
       if (this.bySession.get(rec.row.session) === rec) this.bySession.delete(rec.row.session);
       rec.finish();
@@ -1258,13 +1264,44 @@ export class WorkerSupervisor {
     for (const row of this.deps.store.activeSessionCommands()) {
       if (row.status !== "running" || this.byCommand.has(row.id)) continue;
       if (unkillable.has(row.id)) {
-        this.failRow(row, null, "the previous worker's group could not be ended");
+        const why = "the previous worker's group could not be ended";
+        this.failRow(row, null, why);
+        this.tellLostAnswer(row, why);
         result.failed.push(row.id);
       } else if (this.requeueOrFail(row.id, null, "the daemon restarted"))
         result.requeued.push(row.id);
-      else result.failed.push(row.id);
+      else {
+        this.tellLostAnswer(row, "the daemon restarted");
+        result.failed.push(row.id);
+      }
     }
     return result;
+  }
+
+  /** An answer command a restart cancelled has no worker to settle it: tell the
+   * `settled` hook, which owes the operator the result file it advertised. */
+  private tellLostAnswer(row: SessionCommandRow, reason: string): void {
+    if (row.kind !== "answer" || !this.deps.settled) return;
+    const payload = verifiedPayload(row, "the command's payload");
+    try {
+      this.deps.settled({
+        command_id: row.id,
+        pr: row.pr,
+        session: row.session,
+        mode: "answer",
+        kind: row.kind,
+        outcome: "failed",
+        reason: `the worker was lost: ${reason}`,
+        code: null,
+        signal: null,
+        report: undefined,
+        posted: 0,
+        verdict_written: false,
+        may_post: payload.ok && operatorMayPost(payload.payload.toString("utf8")),
+      });
+    } catch (e) {
+      this.log(`worker settled hook failed: ${String(e)}`);
+    }
   }
 
   /** The daemon is going down: end every worker; their commands requeue. */

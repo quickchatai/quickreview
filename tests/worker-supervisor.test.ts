@@ -737,6 +737,62 @@ describe("[P8.5] a restart", () => {
   });
 });
 
+describe("[selfimprove] settlement and recovery keep their promises", () => {
+  it("keeps the lease of a worker whose group members survived the kill, so no successor launches beside them", async () => {
+    const r = await rig({ mode: "group", limits: { killGraceMs: 150 } });
+    const row = r.submit();
+    const info = await r.sup.launch(row.id);
+    await until(() => r.out(row.id, "grandchild.txt") !== "");
+    const grandchild = Number(r.out(row.id, "grandchild.txt"));
+    const leaseFile = join(r.runDir, "workers", `${SESSION}.lease.json`);
+    // The tool uid's members refuse the run uid's signals.
+    (r.sup as unknown as { signal: () => "denied" }).signal = () => "denied";
+    try {
+      process.kill(info.pid, "SIGKILL");
+      await until(finished(r.sup));
+      expect(alive(grandchild)).toBe(true);
+      expect(existsSync(leaseFile)).toBe(true);
+      expect(r.sup.runs(SESSION)).toBe(true);
+      await expect(r.sup.launch(row.id)).rejects.toThrow(WorkerLaunchError);
+    } finally {
+      try {
+        process.kill(grandchild, "SIGKILL");
+      } catch {
+        /* gone */
+      }
+    }
+  });
+
+  it("tells the settled hook when recovery cancels a lost answer worker's command", async () => {
+    const r = await rig();
+    const row = r.sup.submit({ pr: 62, kind: "answer", round_no: null, payload: "hello" });
+    r.store.claimSessionCommand(row.id, "tok", new Date().toISOString());
+    const told: Array<{
+      command_id: string;
+      kind: string;
+      mode: string;
+      outcome: string;
+      reason?: string;
+    }> = [];
+    const next = new WorkerSupervisor({
+      ...(r.sup["deps"] as ConstructorParameters<typeof WorkerSupervisor>[0]),
+      settled: (s) => told.push(s),
+    });
+    r.use(next);
+    const result = await next.recover();
+    expect(result.failed).toEqual([row.id]);
+    expect(r.store.getSessionCommand(row.id)!.status).toBe("cancelled");
+    expect(told).toHaveLength(1);
+    expect(told[0]).toMatchObject({
+      command_id: row.id,
+      kind: "answer",
+      mode: "answer",
+      outcome: "failed",
+    });
+    expect(told[0]!.reason).toBeTruthy();
+  });
+});
+
 describe("[P8.5] what an exit means", () => {
   const base = {
     code: 0 as number | null,
