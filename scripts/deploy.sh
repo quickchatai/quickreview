@@ -82,8 +82,9 @@
 #     [openviking] host and port must also name the sidecar (group_vars
 #     memory_container_name, openviking_port). A shipping mode also REFUSES
 #     "local": the release image carries no OpenViking.
-#   * refuses a config whose [tui] remote_sandbox_root is not the image's app
-#     root (group_vars app_root, /opt/qcr)
+#   * WARNS (release only, never refuses) when a config's explicit [tui]
+#     remote_sandbox_root is not the image's app root (group_vars app_root,
+#     /opt/qcr)
 #   * release refuses to ship without a config home: the located config.toml
 #     and the profiles/ beside it (never its secrets/) are the tar the updater
 #     takes. A config that lives only in the checkout is refused (`qcr install
@@ -216,23 +217,6 @@ fi
 
 # ---- helpers -----------------------------------------------------------------
 
-# config.toml [pi] version, without a TOML parser: take the `version = "…"`
-# that follows the [pi] table header.
-config_pi_version() {
-  awk '
-    /^\[pi\]/            { in_pi = 1; next }
-    /^\[/                { in_pi = 0 }
-    in_pi && /^[[:space:]]*version[[:space:]]*=/ {
-      line = $0
-      sub(/^[^=]*=[[:space:]]*/, "", line)
-      gsub(/["'"'"']/, "", line)
-      sub(/[[:space:]]*(#.*)?$/, "", line)
-      print line
-      exit
-    }
-  ' "$CONFIG"
-}
-
 # A `<key>: "<value>"` scalar out of the ansible group_vars.
 group_vars_key() {
   awk -v key="$1" '
@@ -248,8 +232,10 @@ group_vars_key() {
 }
 
 group_vars_pi_version() { group_vars_key pi_version; }
+config_pi_version() { config_table_key pi version; }
 
-# A `<key> = "<value>"` scalar out of a named config.toml table.
+# A `<key> = "<value>"` scalar out of a named config.toml table, without a
+# TOML parser.
 config_table_key() {
   awk -v table="$1" -v key="$2" '
     $0 ~ "^\\[" table "\\]"  { in_t = 1; next }
@@ -855,6 +841,9 @@ runspec_value() { effective_var_or "$1" "$2"; }
 runspec_body() {
   local v
   v() { runspec_value "$1" "$2"; }
+  local tz openviking_home
+  tz="$(v timezone Europe/Warsaw)"
+  openviking_home="$(v openviking_home /opt/quickreview/state/openviking)"
   printf 'RUNSPEC_VERSION=%s\n' "$RUNSPEC_VERSION"
   printf 'SANDBOX_ROOT=%s\n' "$(v sandbox_root /opt/quickreview)"
   printf 'APP_ROOT=%s\n' "$APP_ROOT"
@@ -867,13 +856,13 @@ runspec_body() {
   printf 'CONTAINER_UID=%s\n' "$(v container_uid 1001)"
   printf 'TOOL_UID=%s\n' "$(v tool_uid 65534)"
   printf 'TOOL_GID=%s\n' "$(v tool_gid 4749)"
-  printf 'TZ=%s\n' "$(v timezone Europe/Warsaw)"
+  printf 'TZ=%s\n' "$tz"
   printf 'DAEMON_CPUS=%s\n' "$(v container_cpus 2)"
   printf 'DAEMON_MEMORY=%s\n' "$(v container_memory 8g)"
   printf 'MEMORY_CPUS=%s\n' "$(v memory_container_cpus 1)"
   printf 'MEMORY_MEMORY=%s\n' "$(v memory_container_memory 3g)"
   printf 'MEMORY_STATE_DIR=%s\n' "$(v memory_state_dir /opt/quickreview/memory-state)"
-  printf 'OPENVIKING_HOME=%s\n' "$(v openviking_home /opt/quickreview/state/openviking)"
+  printf 'OPENVIKING_HOME=%s\n' "$openviking_home"
   printf 'OPENVIKING_PORT=%s\n' "$OV_PORT"
   printf 'BASE_CLONE_DIR=%s\n' "$CLONE_DIR"
   printf 'LEGACY_SANDBOX_ROOT=%s\n' "$(v legacy_sandbox_root /opt/quickreview/sandbox)"
@@ -882,8 +871,8 @@ runspec_body() {
   printf 'MEMORY_READY_TIMEOUT_S=%s\n' "$(v memory_ready_timeout_s 1800)"
   # The sidecar's boot knobs: docker/memory/entrypoint.sh renders ov.conf from
   # these, the values config.toml [openviking] is held equal to above.
-  printf 'SIDECAR_ENV_TZ=%s\n' "$(v timezone Europe/Warsaw)"
-  printf 'SIDECAR_ENV_QCR_OPENVIKING_HOME=%s\n' "$(v openviking_home /opt/quickreview/state/openviking)"
+  printf 'SIDECAR_ENV_TZ=%s\n' "$tz"
+  printf 'SIDECAR_ENV_QCR_OPENVIKING_HOME=%s\n' "$openviking_home"
   printf 'SIDECAR_ENV_QCR_OPENVIKING_PORT=%s\n' "$OV_PORT"
   printf 'SIDECAR_ENV_QCR_OPENVIKING_BIND_HOST=0.0.0.0\n'
   printf 'SIDECAR_ENV_QCR_OPENVIKING_WORKERS=%s\n' "$(v openviking_workers 1)"
@@ -1038,7 +1027,8 @@ tag_digest() {
   if [[ -n "${QC_TAG_DIGEST_CMD:-}" ]]; then
     bash -c "$QC_TAG_DIGEST_CMD" _ "$ref" 2>/dev/null
   elif command -v docker >/dev/null 2>&1; then
-    docker buildx imagetools inspect "$ref" --format '{{.Manifest.Digest}}' 2>/dev/null
+    # The plain listing's Digest line: not every buildx honours --format.
+    docker buildx imagetools inspect "$ref" 2>/dev/null | awk '/^Digest:/ { print $2; exit }'
   else
     return 1
   fi
@@ -1358,7 +1348,7 @@ memory_probe() {
 check_memory_sidecar() {
   local wait_s="${QC_MEMORY_WAIT_S:-240}" waited=0 which out=""
   for which in ready search; do
-    echo "--- memory sidecar $which (waits up to ${wait_s}s)"
+    echo "--- memory sidecar $which (${wait_s}s budget shared by both checks, $((wait_s - waited))s left)"
     while :; do
       out="$(memory_probe "$which" 2>&1)" && { echo "$out"; break; }
       if (( waited >= wait_s )); then
@@ -1398,6 +1388,7 @@ fi
 # adopt-or-bind) — skip silently; the restart or the probe failing warns and
 # never fails the deploy (memory never blocks a deploy, same rule as the boot); verify-only
 # runs skip it (no container was touched).
+memory_forward_answers() { curl -s -m 5 -o /dev/null "http://198.51.100.1:1933/health"; }
 refresh_memory_forward() {
   [[ "$MODE" == "verify" ]] && return 0
   # tests: a stubbed run never restarts the developer's own user unit
@@ -1407,7 +1398,7 @@ refresh_memory_forward() {
     note "memory forward: systemd unit not active (TUI-owned or absent) — not restarted"
     # Still close the grace window if the chain already answers (a TUI-owned
     # forward recovers by itself); otherwise the marker expires on its own.
-    curl -s -m 5 -o /dev/null "http://198.51.100.1:1933/health" && rm -f "$DEPLOY_MARKER_FILE"
+    memory_forward_answers && rm -f "$DEPLOY_MARKER_FILE"
     return 0
   fi
   note "memory forward: restarting qcr-memory-forward (its ssh state predates this deploy's container)"
@@ -1422,7 +1413,7 @@ refresh_memory_forward() {
   # relay churn; only then is a warning believable.
   local waited=0
   while (( waited < 180 )); do
-    if curl -s -m 5 -o /dev/null "http://198.51.100.1:1933/health"; then
+    if memory_forward_answers; then
       note "memory forward: answering on the qcr-memory bridge (${waited}s after restart)"
       rm -f "$DEPLOY_MARKER_FILE"
       return 0

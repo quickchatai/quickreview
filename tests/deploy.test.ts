@@ -1817,6 +1817,24 @@ describe("deploy.sh — release <version>", () => {
       expect(real.stderr).toContain("registry could not be read");
     });
 
+    it("reads the index digest off a buildx that prints the plain listing and ignores --format", () => {
+      env = scratch();
+      const bin = join(env.dir, "bin");
+      mkdirSync(bin, { recursive: true });
+      const listing = (d: string) =>
+        `Name:      example\nMediaType: application/vnd.oci.image.index.v1+json\nDigest:    ${d}\n`;
+      writeFileSync(
+        join(bin, "docker"),
+        `#!/bin/sh\ncase "$*" in\n  *quickreview-memory*) printf '${listing(MEMORY_DIGEST)}' ;;\n  *) printf '${listing(DAEMON_DIGEST)}' ;;\nesac\n`,
+        { mode: 0o755 },
+      );
+      const r = release(env, {
+        env: { QC_TAG_DIGEST_CMD: "", PATH: `${bin}:${process.env.PATH ?? ""}` },
+      });
+      expect(r.code, r.stderr).toBe(0);
+      expect(r.stderr).not.toContain("resolves to");
+    });
+
     it("downloads the release's attached manifest when none is named or beside us", () => {
       env = scratch();
       const src = writeManifest(env, undefined, "1.2.3", "attached.json");
