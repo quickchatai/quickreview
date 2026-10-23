@@ -278,7 +278,7 @@
     },
     {
       "id": "tsc-buildinfo-fields",
-      "assumes": "TypeScript 5.9's incremental build info names pending and failed files with the field names src/tui/reload.ts reads.",
+      "assumes": "TypeScript 6.0's incremental build info names pending and failed files with the field names src/tui/reload.ts reads (re-read on the 6.0.3 bump: unchanged from 5.9).",
       "files": { "src/tui/reload.ts": 1 },
       "signal": {
         "source": "none",

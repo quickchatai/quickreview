@@ -194,7 +194,7 @@ export class IpcClient {
     this.end(new IpcError("closed", "closed by this side"));
   }
 
-  private onData(chunk: Buffer, decoder: LineDecoder): void {
+  private onData(chunk: Buffer | string, decoder: LineDecoder): void {
     let lines: string[];
     try {
       lines = decoder.push(chunk);

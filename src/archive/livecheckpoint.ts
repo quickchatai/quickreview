@@ -139,7 +139,13 @@ export function workerCheckpointer(
     pending.delete(m.id);
     p.resolve(m);
   });
-  worker.on("error", (err) => failAll(new Error(`the checkpoint worker failed: ${err.message}`)));
+  worker.on("error", (err) =>
+    failAll(
+      new Error(
+        `the checkpoint worker failed: ${err instanceof Error ? err.message : String(err)}`,
+      ),
+    ),
+  );
   worker.on("exit", (code) => failAll(new Error(`the checkpoint worker exited (${code})`)));
 
   /** Wait for reply `id`, bounded; a timeout gives the worker up. */

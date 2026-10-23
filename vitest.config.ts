@@ -45,6 +45,10 @@ export default defineConfig({
     // would be added to the process project's list and pull every file in.
     // The install locator never sees the developer's own homes.
     setupFiles: ["tests/helpers/install-env.ts"],
+    // Vitest 5 clears every mock's call history before each test by default.
+    // The suite was written to vitest 4's default, where a test that records
+    // calls in a beforeAll or at module level still sees them, so it keeps it.
+    clearMocks: false,
     projects: [
       {
         extends: true,

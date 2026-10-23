@@ -290,7 +290,11 @@ export class LineDecoder {
 
   constructor(private readonly maxBytes = MAX_LINE_BYTES) {}
 
-  push(chunk: Buffer): string[] {
+  // A socket's "data" is typed `string | Buffer` (a string once setEncoding is
+  // called). No socket here sets one, so a chunk is bytes; a string is still
+  // taken as its UTF-8 bytes rather than mis-split by character offsets.
+  push(data: Buffer | string): string[] {
+    const chunk = typeof data === "string" ? Buffer.from(data, "utf8") : data;
     const lines: string[] = [];
     let start = 0;
     for (let nl = chunk.indexOf(0x0a, start); nl >= 0; nl = chunk.indexOf(0x0a, start)) {

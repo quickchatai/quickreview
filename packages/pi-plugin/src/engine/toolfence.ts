@@ -375,7 +375,7 @@ function lsOperations(fence: ToolFence): LsOperations {
         return false;
       }
     },
-    stat: checked(stat),
+    stat: checked((p) => stat(p)),
     readdir: checked((p) => readdir(p)),
   };
 }

@@ -236,7 +236,7 @@ describe("HotReloader — a core-only build with no stamp", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  const CLEAN = JSON.stringify({ fileNames: [], root: [], options: {}, version: "5.9.3" });
+  const CLEAN = JSON.stringify({ fileNames: [], root: [], options: {}, version: "6.0.3" });
   const FAILED = JSON.stringify({
     fileNames: [],
     root: [],
@@ -244,7 +244,7 @@ describe("HotReloader — a core-only build with no stamp", () => {
     semanticDiagnosticsPerFile: [[3, [{ code: 2322 }]]],
     affectedFilesPendingEmit: [3],
     errors: true,
-    version: "5.9.3",
+    version: "6.0.3",
   });
 
   function rig(init: { info?: string; infoAt?: number } = {}) {
@@ -381,7 +381,7 @@ describe("HotReloader — a core-only build with no stamp", () => {
 
 describe("buildInfoClean", () => {
   it("accepts a parsed build info with no unfinished business", () => {
-    expect(buildInfoClean(JSON.stringify({ fileNames: [], version: "5.9.3" }))).toBe(true);
+    expect(buildInfoClean(JSON.stringify({ fileNames: [], version: "6.0.3" }))).toBe(true);
   });
 
   it.each([
@@ -389,12 +389,12 @@ describe("buildInfoClean", () => {
     ["empty", ""],
     ["torn", '{"fileNames": ['],
     ["no version", JSON.stringify({ fileNames: [] })],
-    ["errors", JSON.stringify({ version: "5.9.3", errors: true })],
-    ["check pending", JSON.stringify({ version: "5.9.3", checkPending: true })],
-    ["diagnostics", JSON.stringify({ version: "5.9.3", semanticDiagnosticsPerFile: [[1, []]] })],
-    ["emit pending", JSON.stringify({ version: "5.9.3", affectedFilesPendingEmit: [2] })],
-    ["emit diagnostics", JSON.stringify({ version: "5.9.3", emitDiagnosticsPerFile: [[2, []]] })],
-    ["changed files", JSON.stringify({ version: "5.9.3", changeFileSet: [4] })],
+    ["errors", JSON.stringify({ version: "6.0.3", errors: true })],
+    ["check pending", JSON.stringify({ version: "6.0.3", checkPending: true })],
+    ["diagnostics", JSON.stringify({ version: "6.0.3", semanticDiagnosticsPerFile: [[1, []]] })],
+    ["emit pending", JSON.stringify({ version: "6.0.3", affectedFilesPendingEmit: [2] })],
+    ["emit diagnostics", JSON.stringify({ version: "6.0.3", emitDiagnosticsPerFile: [[2, []]] })],
+    ["changed files", JSON.stringify({ version: "6.0.3", changeFileSet: [4] })],
   ])("refuses %s", (_what, text) => {
     expect(buildInfoClean(text)).toBe(false);
   });

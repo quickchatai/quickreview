@@ -124,13 +124,13 @@
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@types/better-sqlite3": "9.6.0",
-    "@types/node": "22.20.1",
-    "eslint": "10.9.1",
-    "prettier": "3.9.6",
-    "typescript": "5.9.3",
-    "typescript-eslint": "8.69.0",
-    "vitest": "4.1.10",
-    "yaml": "2.9.0"
+    "@types/node": "26.6.5",
+    "eslint": "10.13.0",
+    "prettier": "3.9.10",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.0",
+    "vitest": "5.0.5",
+    "yaml": "2.9.1"
   },
   "qcrPi": {
     "//": "Named qcrPi, never `pi`: pi reads a package.json `pi` key as a package manifest, and this root is not a pi package (the plugin is packages/pi-plugin). pi and pi-ai are exact dependencies above (types for the extensions, and the VM boot's plain `npm ci` installs them beside the global CLI the image carries). This block is the mirror a bare checkout without config.toml reads: package and version must equal the dependencies, the lockfile, config.toml [pi], ansible group_vars and every Dockerfile ARG (tests/fences.test.ts [T12], tests/docker-daemon.test.ts). Lens sessions run through our own lens tools (src/engine/lens/), not a pi subagent extension, so no extra extension pin exists.",

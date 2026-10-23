@@ -93,8 +93,11 @@ export const APP_BUILD_INFO = "node_modules/.cache/qcr-tsbuildinfo";
  * and carries none of tsc's unfinished-business markers: `errors` (a failed
  * compile), `checkPending`, files still holding or awaiting diagnostics, and
  * files whose emit is pending or failed. Anything unreadable is not clean.
- * VERIFY-ON-PIN (typescript 5.9): the markers are tsc's incremental
- * program's own field names.
+ * VERIFY-ON-PIN (typescript 6.0): the markers are tsc's incremental
+ * program's own field names. Re-read on the 6.0.3 bump against fresh build
+ * info: the names are unchanged from 5.9, a clean build writes none of them,
+ * and a failed compile writes `semanticDiagnosticsPerFile` and
+ * `affectedFilesPendingEmit`.
  */
 export function buildInfoClean(text: string | undefined): boolean {
   if (text === undefined || text.trim() === "") return false;
