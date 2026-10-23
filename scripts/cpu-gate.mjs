@@ -460,6 +460,16 @@ function runCell(mode, n, opts) {
 
 const f1 = (v) => (Math.round(v * 10) / 10).toString();
 
+/** Why a measured cell is not a valid loaded measurement (empty when it is). */
+export function cellProblems(c) {
+  const out = [];
+  if (c.offlineViolations > 0) out.push(`offline violations ${c.offlineViolations}`);
+  if (!c.startup.allStreaming) out.push(`all streaming ${c.startup.allStreaming}`);
+  if (c.turnsFinishedBeforeAbort > 0)
+    out.push(`${c.turnsFinishedBeforeAbort} turns finished before the abort (idle load)`);
+  return out;
+}
+
 export function markdownTables(cells, meta) {
   const rows = cells.map((c) => {
     const l = c.steady.lag;
@@ -546,11 +556,9 @@ async function main() {
   process.stdout.write(md + "\n");
   if (opts.md) writeFileSync(opts.md, md + "\n");
   if (opts.json) writeFileSync(opts.json, JSON.stringify({ opts, loadavg, cells }, null, 2) + "\n");
-  const bad = cells.filter((c) => c.offlineViolations > 0 || !c.startup.allStreaming);
+  const bad = cells.filter((c) => cellProblems(c).length > 0);
   for (const c of bad)
-    process.stderr.write(
-      `INVALID cell ${c.mode} x${c.sessions}: offline violations ${c.offlineViolations}, all streaming ${c.startup.allStreaming}\n`,
-    );
+    process.stderr.write(`INVALID cell ${c.mode} x${c.sessions}: ${cellProblems(c).join("; ")}\n`);
   if (bad.length) return 2;
   const gate = cells.find((c) => c.mode === "sdk" && c.sessions === opts.gateSessions);
   if (!gate) return 0;

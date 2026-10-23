@@ -67,3 +67,39 @@ it("uninstall reports a rejected shutdown", () => {
   const { cfg } = forward.parseArgs(["uninstall"], {});
   expect(forward.uninstall(cfg, () => ({ status: 1, stdout: "", stderr: "denied" }))).toBe(1);
 });
+it("a local relay failure with no matching cause points at the local docker, not ssh", () => {
+  const { cfg } = forward.parseArgs(["run", "--local"], {});
+  const cause = forward.relayFailureCause(cfg, "something unexpected") as {
+    key: string;
+    remedy: string;
+  };
+  expect(cause.key).toBe("unknown");
+  expect(cause.remedy).not.toContain("ssh");
+  expect(cause.remedy).toContain("docker");
+});
+it("an explicit --stats-file rides the installed unit", () => {
+  const { cfg } = forward.parseArgs(["install", "--stats-file", "/custom/stats.json"], {});
+  expect(forward.unitText(cfg, {})).toContain("--stats-file /custom/stats.json");
+});
+it("the docker network is created with the gateway the listener binds, and the unit passes it on", () => {
+  const { cfg } = forward.parseArgs(
+    ["install", "--subnet", "10.9.0.0/24", "--gateway", "10.9.0.5"],
+    {},
+  );
+  const home = mkdtempSync(join(tmpdir(), "forward-gw-"));
+  const calls: string[][] = [];
+  try {
+    forward.install(cfg, {
+      home,
+      execute: (_bin: string, args: string[]) => {
+        calls.push(args);
+        return { status: args[1] === "inspect" ? 1 : 0, stdout: "", stderr: "" };
+      },
+    });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+  const create = calls.find((a) => a[0] === "network" && a[1] === "create");
+  expect(create).toEqual(expect.arrayContaining(["--gateway", "10.9.0.5"]));
+  expect(forward.unitText(cfg, {})).toMatch(/ensure-network .*--gateway 10\.9\.0\.5/);
+});

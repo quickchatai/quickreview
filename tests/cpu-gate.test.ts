@@ -9,6 +9,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
+  cellProblems,
   lagStats,
   markdownTables,
   parseCpuList,
@@ -22,6 +23,18 @@ const run = promisify(execFile);
 
 const built = existsSync(join(ROOT, "dist", "src", "engine", "sdkruntime.js"));
 const taskset = existsSync("/usr/bin/taskset") || existsSync("/bin/taskset");
+
+describe("[cpu-gate] cell validity", () => {
+  const ok = { offlineViolations: 0, startup: { allStreaming: true }, turnsFinishedBeforeAbort: 0 };
+  it("a clean cell has no problems", () => {
+    expect(cellProblems(ok)).toEqual([]);
+  });
+  it("a cell whose sessions finished before the abort measured an idle loop", () => {
+    expect(cellProblems({ ...ok, turnsFinishedBeforeAbort: 1 })).toEqual([
+      expect.stringContaining("finished before the abort"),
+    ]);
+  });
+});
 
 describe("[cpu-gate] the arithmetic", () => {
   it("percentile is nearest-rank", () => {
