@@ -455,7 +455,6 @@ describe("planFinds — TWO finds a round", () => {
     );
     const sel = selectRound({
       pr: 1,
-      title: "Wide",
       rows: many,
       prFiles: ["x.py"],
       root: ROOT,
@@ -558,7 +557,6 @@ describe("selectRound", () => {
     const plan = s9aPlanFinds({ title: "T", rows, prFiles });
     const sel = selectRound({
       pr: 42,
-      title: "T",
       rows,
       prFiles,
       root: ROOT,
@@ -614,7 +612,6 @@ describe("selectRound", () => {
     );
     const sel = selectRound({
       pr: 42,
-      title: "T",
       rows: planned,
       prFiles,
       root: ROOT,
@@ -639,7 +636,6 @@ describe("selectRound", () => {
     const plan = s9aPlanFinds({ title: "T", rows, prFiles });
     const sel = selectRound({
       pr: 42,
-      title: "T",
       rows,
       prFiles,
       root: ROOT,
@@ -677,7 +673,6 @@ describe("selectRound", () => {
     const run = (hits: FindHit[]) =>
       selectRound({
         pr: 42,
-        title: "T",
         rows,
         prFiles,
         root: ROOT,
@@ -734,7 +729,6 @@ describe("selectRound", () => {
     );
     const sel = selectRound({
       pr: 42,
-      title: "T",
       rows: five,
       prFiles,
       root: ROOT,
@@ -758,7 +752,6 @@ describe("selectRound", () => {
     const plan = s9aPlanFinds({ title: "T", rows, prFiles });
     const sel = selectRound({
       pr: 42,
-      title: "T",
       rows,
       prFiles,
       root: ROOT,
@@ -806,7 +799,6 @@ describe("selectRound", () => {
     const plan = s9aPlanFinds({ title: "T", rows: sweep, prFiles: files });
     const sel = selectRound({
       pr: 42,
-      title: "T",
       rows: sweep,
       prFiles: files,
       root: ROOT,
@@ -833,7 +825,6 @@ describe("selectRound", () => {
     const plan = s9aPlanFinds({ title: "T", rows, prFiles });
     const sel = selectRound({
       pr: 42,
-      title: "T",
       rows,
       prFiles,
       root: ROOT,
@@ -883,7 +874,6 @@ describe("selectRound", () => {
     );
     const sel = selectRound({
       pr: 42,
-      title: "T",
       rows: focused,
       prFiles,
       root: ROOT,
@@ -915,7 +905,6 @@ describe("selectRound", () => {
     const run = (h: FindHit[]) =>
       selectRound({
         pr: 42,
-        title: "T",
         rows,
         prFiles,
         root: ROOT,
@@ -1021,7 +1010,6 @@ describe("two-find equivalence — over an engine that returns the whole corpus,
       const run = (plan: FindPlan, texts: Map<string, string>, order?: "reversed") =>
         selectRound({
           pr: CORPUS_PR,
-          title: "Tidy the guide",
           rows,
           prFiles,
           root: CORPUS_ROOT,

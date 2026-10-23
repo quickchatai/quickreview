@@ -32,8 +32,9 @@
 
 /** One memory entry — the unit the timeline lists and the verbs address. */
 export interface MemoryEntry {
-  /** Batch id (the writing session's id prefix). NOT unique on its own — the
-   * address is the (ts, id) pair plus the block index. */
+  /** The entry's id: the file path under the memories root, extension
+   * included (see `src/openviking/store.ts`). The address is the (ts, id)
+   * pair plus the block index, which is always 0 for this store. */
   id: string;
   /** Wall-clock stamp of the batch, `YYYY-MM-DD HH:MM:SS`. */
   ts: string;
@@ -57,9 +58,9 @@ export interface MemoryEntry {
   hash: string;
 }
 
-/** Pinned-region budget: only the first ~1,991 chars / 75 lines of the
- * injection head survive truncation — past this, pins are warned about (the
- * TUI's memory tab; setup's pin proposals). */
+/** Advisory pinned-region budget: the pinned head is delivered in full, but
+ * past this many characters pins are warned about (the TUI's memory tab;
+ * setup's pin proposals). */
 export const PINNED_BUDGET_CHARS = 1900;
 
 /** What the pinned entries among `entries` take of that head. */
