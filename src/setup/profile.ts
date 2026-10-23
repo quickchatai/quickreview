@@ -12,7 +12,9 @@
 // A WRITE IS STAGED FIRST. The candidate files go into a scratch copy of the
 // config home's `profiles/`, the scratch copy is checked, and only a profile
 // that passes reaches the real directory — tmp+rename, file by file. A
-// refused write changes nothing.
+// refused write changes nothing. (Once a write passes, a later failure to
+// publish its handoff leaves the files in place; src/setup/tuning.ts keeps a
+// durable write intent to recover from.)
 //
 // THE EDIT IS SURGICAL. `profile.toml` is the operator's file too (comments,
 // `extends`, `ecosystem`, `[addenda]`, `[scan]`): only the `[lenses.<pass>]`
@@ -32,12 +34,12 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
-  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
+import { writeAtomic } from "../channelfs.js";
 import { parse as parseToml } from "smol-toml";
 import type { ScanConfig } from "../config.js";
 import {
@@ -496,9 +498,6 @@ export function writeProfileFiles(dir: string, files: ProfileFiles): void {
   mkdirSync(dir, { recursive: true });
   for (const [rel, text] of Object.entries(files)) {
     const full = join(dir, rel);
-    mkdirSync(dirname(full), { recursive: true });
-    const tmp = join(dirname(full), `.${rel.split("/").at(-1)}.tmp`);
-    writeFileSync(tmp, text);
-    renameSync(tmp, full);
+    writeAtomic(full, text);
   }
 }
