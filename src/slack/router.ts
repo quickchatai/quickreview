@@ -27,9 +27,9 @@ import type { SlackIdentity, SlackInboundEvent } from "./types.js";
 export const SLACK_INJECT_MARKER = "<!-- qcr:slack v1 -->";
 
 /**
- * The only inbound shape that becomes a model turn: a plain message with no
- * subtype. `message_changed` is the important one — an EDIT NEVER RE-TRIGGERS
- * an answer, otherwise a user could rewrite history under an answer already
+ * The only inbound shape the router treats as a plain message: one with no
+ * subtype (inbound turns are retired, so it ends as dropped_no_overseer).
+ * `message_changed` is the important one — an EDIT NEVER RE-TRIGGERS an answer, otherwise a user could rewrite history under an answer already
  * given (and a bot editing its own message would loop).
  */
 function isPlainMessage(ev: SlackInboundEvent): boolean {

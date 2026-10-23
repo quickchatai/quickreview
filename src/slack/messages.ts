@@ -257,7 +257,7 @@ export function causeMessage(cfg: Config, m: CauseMessageInput): string {
         `🔇 I've hit today's answer budget (${m.cap} turns). Verdicts and alerts keep posting; ` +
         `questions resume at midnight (or ask ${ownerRef(cfg)}).`
       );
-    // ---- OFF in v1 (config-disabled), templated so the flag is all it takes --
+    // ---- OFF in v1 (config-disabled), templated only; a producer must also raise them --
     case "reconcile.storm":
       return `🌀 reconcile corrected ${m.corrections} PRs in the last ${m.window_min} min — something upstream is flapping, I'm re-deriving from GitHub.`;
     case "digest.eod":

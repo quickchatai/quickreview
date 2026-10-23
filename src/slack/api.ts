@@ -130,7 +130,10 @@ export class SlackApiClient implements SlackWebApi {
 
   async authTest(): Promise<SlackIdentity | undefined> {
     const res = await this.callOnce("auth.test", {});
-    if (!res.ok || !res.raw) return undefined;
+    if (!res.ok || !res.raw) {
+      this.log("slack.api.auth_test_failed", { error: res.error });
+      return undefined;
+    }
     const raw = res.raw;
     const userId = typeof raw["user_id"] === "string" ? raw["user_id"] : "";
     if (!userId) return undefined;
