@@ -97,6 +97,11 @@ export async function atNearestExisting<T>(
   }
 }
 
+/** The name a link-less placement stages its copy under: never the final name,
+ * so a crash mid-copy cannot leave a torn file there. */
+export const PLACE_STAGING_SUFFIX = ".place-partial";
+export const placeStagingOf = (to: string): string => `${to}${PLACE_STAGING_SUFFIX}`;
+
 /** Codes for a filesystem that cannot make a hard link. */
 const NO_LINK = new Set(["EPERM", "ENOTSUP", "EOPNOTSUPP", "ENOSYS"]);
 
@@ -104,8 +109,9 @@ const NO_LINK = new Set(["EPERM", "ENOTSUP", "EOPNOTSUPP", "ENOSYS"]);
  * Move `from` to `to` WITHOUT replacing anything already at `to`: a hard link
  * (which fails on EEXIST), then the old name unlinked. Returns "exists" — with
  * `from` left in place — when `to` is taken. On a filesystem without hard
- * links it exclusively copies the verified source, syncs it, then removes
- * the old name; an existing destination is never replaced. A crash between the link and the unlink
+ * links it copies the verified source to a staging name, syncs it, renames
+ * it into place if the destination is still absent, then removes the old name;
+ * an existing destination is never replaced. A crash between the link and the unlink
  * leaves both names on one inode, which recovery's stray-partial sweep tidies.
  */
 export async function renameNoReplace(from: string, to: string): Promise<"placed" | "exists"> {
@@ -116,14 +122,24 @@ export async function renameNoReplace(from: string, to: string): Promise<"placed
     if (code === "EEXIST") return "exists";
     if (!NO_LINK.has(code)) throw err;
     const source = await lstat(from);
+    const staging = placeStagingOf(to);
     try {
-      await copyFile(from, to, constants.COPYFILE_EXCL);
+      await unlinkIfPresent(staging);
+      await copyFile(from, staging, constants.COPYFILE_EXCL);
+      await utimes(staging, source.atime, source.mtime);
+      await fsyncFile(staging);
+      if (await lstat(to).then(() => true, (e: NodeJS.ErrnoException) => {
+        if (e.code === "ENOENT") return false;
+        throw e;
+      })) {
+        await unlinkIfPresent(staging);
+        return "exists";
+      }
+      await rename(staging, to);
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === "EEXIST") return "exists";
+      await unlinkIfPresent(staging).catch(() => undefined);
       throw e;
     }
-    await utimes(to, source.atime, source.mtime);
-    await fsyncFile(to);
     await unlink(from);
     return "placed";
   }
