@@ -755,6 +755,32 @@ describe("reindexNamespace — one namespace, the user's own key", () => {
     expect(r.status).toBe("timeout");
     expect(r.task_id).toBe("task-1");
   });
+
+  it("names the last polling failure in the timeout detail", async () => {
+    const { fetchFn } = fakeFetch([
+      {
+        match: REINDEX,
+        method: "POST",
+        status: 200,
+        body: { status: "ok", result: { task_id: "task-1", status: "accepted" } },
+      },
+      { match: TASK, status: 500, body: { status: "error", error: { message: "disk gone" } } },
+    ]);
+    let t = 0;
+    const r = await reembed.reindexNamespace({
+      base: BASE,
+      key: "k",
+      user: "reviewer",
+      fetchFn,
+      sleep: noSleep,
+      now: () => (t += 1000),
+      deadlineMs: 5000,
+    });
+    expect(r.status).toBe("timeout");
+    expect(r.task_id).toBe("task-1");
+    expect(r.detail).toContain("did not settle");
+    expect(r.detail).toContain("HTTP 500");
+  });
 });
 
 describe("resume — journal in, journal out", () => {
