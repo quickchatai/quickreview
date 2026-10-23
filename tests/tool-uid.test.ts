@@ -276,6 +276,15 @@ describe("the SDK bash tool as the tool uid", () => {
     await expect(run("echo hi", { signal: ac.signal })).rejects.toThrow("aborted");
   });
 
+  it("ends a command whose abort arrives while the working directory is being checked", async () => {
+    const ac = new AbortController();
+    const t0 = Date.now();
+    const pending = run("sleep 30", { signal: ac.signal });
+    ac.abort(); // lands in the cwd access check, before the command is spawned
+    await expect(pending).rejects.toThrow("aborted");
+    expect(Date.now() - t0).toBeLessThan(5000);
+  });
+
   it("takes the descendants of the command down with it", async () => {
     const pidFile = join(dir, "child.pid");
     await expect(run(`sleep 30 & echo $! > ${pidFile}; wait`, { timeout: 0.4 })).rejects.toThrow(
