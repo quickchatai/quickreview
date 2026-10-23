@@ -33,7 +33,7 @@
 //      compose.ts's StreamRunner and why the short-command ProcessRunner
 //      cannot do this job), with an elapsed-time marker every few lines.
 //
-//   4. No Docker, no problem (D16). The wizard can run inside the release
+//   4. No Docker, no problem. The wizard can run inside the release
 //      image (`qcr onboard`), which has no docker CLI and no socket and never
 //      gets one. When this step finds no `docker compose` it starts nothing:
 //      it prints the exact commands for the host — the extraction of the
@@ -315,7 +315,7 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
       const profile = option ? option.profile : (readEnvKey(envText, "COMPOSE_PROFILES") ?? "");
 
       if (!hasDocker) {
-        // D16: no Docker here, so nothing is started from here. The commands
+        // No Docker here, so nothing is started from here. The commands
         // for the host, exactly, and a red step until the stack is seen up.
         const paths = hostPaths(configText);
         const commands = hostCommands({

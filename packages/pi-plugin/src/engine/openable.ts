@@ -1,4 +1,4 @@
-// What makes a finished round openable in pi (D10): where its session JSONLs
+// What makes a finished round openable in pi: where its session JSONLs
 // live under the run dir, and the small record `qcr open` needs to start pi on
 // them again. Pure: no pi SDK, no engine, so the CLI, the scan runner and the
 // extensions can all import it.

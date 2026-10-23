@@ -1,7 +1,7 @@
 // The adapter's CI read, over a loopback stub.
 //
 // `classifyCi` in `packages/pi-plugin/src/cigate.ts` is the one CI rule (the shell mirror in
-// scripts/guards.sh is deleted, P9.3), and guard 4 is the only guard that gates
+// scripts/guards.sh is deleted), and guard 4 is the only guard that gates
 // an approval. This file pins the half `tests/cigate.test.ts` cannot see: that
 // the adapter's `listChecks` reads EVERY page of check-runs and statuses, and
 // that an unreadable later page is an error, never a green read.

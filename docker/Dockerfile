@@ -6,7 +6,7 @@
 # Stages: `tmux-build` and `build` are throwaway; `release` is the image and
 # the default target. Bench is NOT a target here: it is bench/aacr/Dockerfile
 # built FROM this release image, so the claude arm lives only there
-# (CLAUDE.md rule 5) and this file asserts its absence.
+# (the no-Claude-Code rule) and this file asserts its absence.
 #
 # What the image is (all of it under /opt/qcr, root-owned, read-only to every
 # runtime uid):
@@ -17,7 +17,7 @@
 #     and its compiled dist/), which node_modules/@quickchatai/pi-quickreview
 #     links to;
 #   - the frozen seeds (agents/, prompts/, seeds/), the profiles, and the seed
-#     manifest, checked against each other at build time (CLAUDE.md rule 6);
+#     manifest, checked against each other at build time (AGENTS.md invariant 3);
 #   - the reviewer context stub as /opt/qcr/AGENTS.override.md: pi loads the
 #     first of AGENTS.override.md / AGENTS.md / CLAUDE.md from the cwd and each
 #     ancestor, and the engine's cwd here is /opt/qcr, so every session and
@@ -36,7 +36,7 @@
 # `qcr companion rebuild` builds it from the checkout (src/tui/companion.ts
 # appImageBuildArgv) and `docker run --user <host uid>` starts it, so its
 # extensions, prompt and agent set are the image's, never the /workspace mount
-# (D20: no hot reload for the companion - a change lands with a rebuild).
+# (no hot reload for the companion - a change lands with a rebuild).
 #
 # The build context is the repo root, narrowed by docker/Dockerfile.dockerignore
 # (BuildKit reads it in preference to the root .dockerignore, which belongs to
@@ -132,7 +132,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # git refuses every one of them as "dubious ownership".
 RUN git config --system --add safe.directory '*'
 
-# pi: ONE copy, the pinned package npm ci put in node_modules below (P9.9b).
+# pi: ONE copy, the pinned package npm ci put in node_modules below.
 # There is no global pi CLI: every pi the app starts is that package's own bin,
 # node_modules/.bin/pi (src/picli.ts), or its SDK. Lenses run on the SDK through
 # our own lens tool (packages/pi-plugin/src/engine/lens/).
@@ -158,7 +158,7 @@ COPY docker/entrypoint.sh ./docker/entrypoint.sh
 COPY docker/vm/tmux.conf ./docker/vm/tmux.conf
 # The companion mode's own files: its agent set (the lens tool's agents dir,
 # linked into pi's user scope) and the memory health watcher. They ride the
-# image, not the /workspace mount (D20: the companion runs the image's code).
+# image, not the /workspace mount (the companion runs the image's code).
 COPY docker/companion/agents ./docker/companion/agents
 COPY docker/companion/memory-health.mjs ./docker/companion/memory-health.mjs
 # The compose stack and the tunnel sidecars' build context, so a Docker-only
@@ -192,11 +192,11 @@ RUN printf '%s\n' "${BUILD_SHA}" > /opt/qcr/BUILD_SHA
 
 # The checks that make this the image it claims to be.
 #   - the seeds: the baked agents/ and prompts/ and their seeds/ canonical
-#     copies all hash to the manifest (rule 6). A drifted seed fails the build.
+#     copies all hash to the manifest (AGENTS.md invariant 3). A drifted seed fails the build.
 #   - pi: the one copy, in node_modules, is the ARG's version and the version
 #     config.example.toml [pi] pins; its bin is node_modules/.bin/pi, and no
 #     other pi is on the PATH.
-#   - claude: absent (rule 5). The claude arm exists only in bench/aacr/.
+#   - claude: absent (the no-Claude-Code rule). The claude arm exists only in bench/aacr/.
 RUN cd /opt/qcr \
     && jq -r '.files | to_entries[] | "\(.value)  seeds/\(.key)"' tests/fixtures/seed-manifest.json | sha256sum -c --quiet - \
     && jq -r '.files | to_entries[] | "\(.value)  \(.key)"' tests/fixtures/seed-manifest.json | sha256sum -c --quiet - \
@@ -210,7 +210,7 @@ RUN [ -x /opt/qcr/node_modules/.bin/pi ] && ! command -v pi \
     || { echo "FATAL: pi must be node_modules/.bin/pi alone (bin: $(ls -l /opt/qcr/node_modules/.bin/pi 2>&1); PATH: $(command -v pi || echo none))" >&2; exit 1; }
 RUN ! command -v claude
 # setpriv (util-linux): the engine starts pi through it, as another uid with no
-# capabilities, so the model's tools cannot read the token-holding process (D32).
+# capabilities, so the model's tools cannot read the token-holding process.
 RUN setpriv --version >/dev/null
 # The always-on bot's setid helper. The bot runs as its own uid, not
 # root, so a `docker exec` into it lands as that uid; docker gives a non-root
@@ -238,7 +238,7 @@ LABEL qcr.setid-gid="${QCR_SETID_GID}" \
       qcr.tool-uid="${QCR_TOOL_UID}" \
       qcr.tool-gid="${QCR_TOOL_GID}"
 # flock (util-linux): the login refresher's single-instance lock and the login
-# mode's test for whether one is running (src/loginrefresh/lock.ts, P8.22).
+# mode's test for whether one is running (src/loginrefresh/lock.ts).
 RUN flock --version >/dev/null
 
 # Root-owned, world-readable, writable by no runtime uid. The stub is 0444 on
@@ -258,13 +258,13 @@ RUN install -d -m 1777 /opt/qcr/state /opt/qcr/state/ingress && chmod 0555 /opt/
 # on: a volume mounted over a directory the image has takes that directory's
 # mode, one over a directory it lacks arrives root-owned and unwritable.
 #
-# pi's agent dir, which `qcr login` mounts the login volume over (P6.7). A new
+# pi's agent dir, which `qcr login` mounts the login volume over. A new
 # volume starts as this directory is, so it must be writable by whatever uid
 # the caller logs in as; the login mode then moves everything pi wrote into the
 # login group (docker/entrypoint.sh), and file modes keep it private.
 RUN install -d -m 1777 /home/qcr /home/qcr/.pi && install -d -m 0777 /home/qcr/.pi/agent
 
-# The shared tmux-socket volume (D35): the companion's tmux server listens in
+# The shared tmux-socket volume: the companion's tmux server listens in
 # it and the containerised TUI drives that server over it. Like the dirs above,
 # a new named volume takes this mode, so any uid can create the socket.
 RUN install -d -m 1777 /run/qcr-tmux
@@ -273,7 +273,7 @@ ENV HOME=/home/qcr
 # A default for a bare `docker run`; the wrapper always passes --user. A per-call
 # run that reaches a model starts as root instead (--user 0:0 --cap-drop ALL
 # --cap-add SETUID --cap-add SETGID): the entrypoint drops to QCR_RUN_UID and
-# runs the model's tools as QCR_TOOLS_AS (D32, docker/entrypoint.sh). Started as
+# runs the model's tools as QCR_TOOLS_AS (docker/entrypoint.sh). Started as
 # any other uid, the engine refuses to run the model's tools unless QCR_ALLOW_SHARED_TOOL_UID=1.
 USER 1000:1000
 WORKDIR /opt/qcr

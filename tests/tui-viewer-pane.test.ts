@@ -3,7 +3,7 @@
 // debug-pr-<n> / takeover-pr-<n> — every byte but Ctrl-q forwarded to pi, and
 // no viewer input line on it — and every other PR (worker, answer, idle, and a
 // runtime that is absent or unknown) gets the transcript viewer. There is no
-// `pr-<n>` tmux mirror (P9.6): the bot's rounds run in workers. The App runs against a fake state dir and a fake
+// `pr-<n>` tmux mirror: the bot's rounds run in workers. The App runs against a fake state dir and a fake
 // tmux; nothing here touches a box or a model.
 import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -254,29 +254,24 @@ describe("the PR pane picks its surface per PR from status.json runtime", () => 
   it.each([
     [5012, "no runtime at all"],
     [5013, "runtime tmux"],
-  ])(
-    "PR %i (%s) is the viewer — the bot has no `pr-<n>` tmux session to mirror (P9.6)",
-    async (pr) => {
-      await withApp(async (h) => {
-        h.captured.length = 0;
-        h.sent.length = 0;
-        await show(h, pr);
-        expect(h.app.view.pi?.viewer).toMatchObject({ round: 1, stream: "main" });
-        expect(liveReads(h.calls).some((p) => p.includes(`/live/pr-${pr}/r1/main.jsonl`))).toBe(
-          true,
-        );
-        expect(frame(h).join("\n")).toContain(`LIVE pr-${pr}`);
-        // focused, typing goes to the viewer's input line, never to tmux
-        h.app.repaint();
-        h.streams.type("\r");
-        h.streams.type("hello");
-        await vi.advanceTimersByTimeAsync(400);
-        expect(h.app.view.viewerInput?.text).toBe("hello");
-        expect(h.captured).toEqual([]);
-        expect(h.sent).toEqual([]);
-      });
-    },
-  );
+  ])("PR %i (%s) is the viewer — the bot has no `pr-<n>` tmux session to mirror", async (pr) => {
+    await withApp(async (h) => {
+      h.captured.length = 0;
+      h.sent.length = 0;
+      await show(h, pr);
+      expect(h.app.view.pi?.viewer).toMatchObject({ round: 1, stream: "main" });
+      expect(liveReads(h.calls).some((p) => p.includes(`/live/pr-${pr}/r1/main.jsonl`))).toBe(true);
+      expect(frame(h).join("\n")).toContain(`LIVE pr-${pr}`);
+      // focused, typing goes to the viewer's input line, never to tmux
+      h.app.repaint();
+      h.streams.type("\r");
+      h.streams.type("hello");
+      await vi.advanceTimersByTimeAsync(400);
+      expect(h.app.view.viewerInput?.text).toBe("hello");
+      expect(h.captured).toEqual([]);
+      expect(h.sent).toEqual([]);
+    });
+  });
 
   it("an idle PR gets the viewer, and so does an answer worker's", async () => {
     await withApp(async (h) => {

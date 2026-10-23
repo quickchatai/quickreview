@@ -698,7 +698,7 @@ function harness(over: Partial<RecheckDeps> = {}): Harness {
     number: PR,
     state: "tracked",
     head_sha: HEAD,
-    title: "Rewrite trimToLimit",
+    title: "Rewrite clampSelection",
     author: "alice",
     trigger_ts: null,
     stale_recheck: 0,
@@ -803,7 +803,7 @@ describe("runRecheck", () => {
         const injected: string[] = [];
         const ref = {
           number: PR,
-          title: "Rewrite trimToLimit",
+          title: "Rewrite clampSelection",
           author: "alice",
           head_sha: HEAD,
           base_ref: "master",

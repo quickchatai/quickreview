@@ -71,7 +71,7 @@ export const BENCH_RETRY = {
  * (packages/pi-plugin/src/pibuiltins.ts — the reviewed checkout is exactly the untrusted ground a
  * `.pi/mcp.json` would come from); every project trusted so no modal can stall
  * a run; /opt/quickreview pre-trusted; and the durable retry above. No global
- * bash-guard (P9.5, P9.12): every route that runs a model hands the guard to
+ * bash-guard: every route that runs a model hands the guard to
  * its sessions itself, as an `--extension` or a factory. */
 export function benchSettings(_root: string): { settings: string; trust: string } {
   return {

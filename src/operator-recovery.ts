@@ -23,7 +23,7 @@ export interface OperatorRecoveryDeps {
    * `restart-session` releases ownership only once none runs. Absent = the
    * caller has no worker host to ask. */
   workerRuns?: (pr: number) => boolean | null;
-  /** Worker-hosted PRs only (P8.12): a fresh worker RESUMES the newest JSONL, so
+  /** Worker-hosted PRs only: a fresh worker RESUMES the newest JSONL, so
    * restart-session must rotate it away or it would resume the very conversation
    * the operator is replacing. Called once the old worker is proven gone and before
    * the blocking command is released; returns the undo, run if the release fails.
@@ -96,7 +96,7 @@ async function recoverPrForOperatorNow(
     };
   }
 
-  // The worker crash-loop breaker (P8.5b) parked this PR after repeated worker
+  // The worker crash-loop breaker parked this PR after repeated worker
   // failures; either lever is the operator's word that it may run again.
   if (deps.store.clearWorkerBreaker(pr)) deps.store.logEvent("worker_unparked", pr, { by: mode });
 

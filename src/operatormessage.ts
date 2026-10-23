@@ -1,5 +1,5 @@
 // The operator's message to an idle PR, as the answer worker receives it
-// (P8.17, rule 9's second exception).
+// (rule 9's second exception).
 //
 // The daemon writes the message into the command's payload (the bytes the
 // worker verifies against the sha256 recorded at dispatch) so the one thing that

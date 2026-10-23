@@ -22,7 +22,7 @@ export interface DrainCommandOutcome {
   issuer?: "operator" | "session";
   /** When a bounded drain lapses; absent for the operator's until-lifted hold. */
   expires_at?: string;
-  /** The daemon's word on the no-auto-lift HOLD (P8.21b): true = no boot lifts
+  /** The daemon's word on the no-auto-lift HOLD: true = no boot lifts
    * it. Absent when the daemon said nothing (an older daemon). */
   hold?: boolean;
 }

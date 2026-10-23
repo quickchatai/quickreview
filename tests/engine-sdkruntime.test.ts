@@ -1,4 +1,4 @@
-// P2.9: sdkRuntime, the runtime port hosted in-process on the pi SDK. The shared
+// SdkRuntime, the runtime port hosted in-process on the pi SDK. The shared
 // port contract runs on it over pi-ai's faux provider (the real SDK, no model, no
 // network); what only a live, file-backed session has is tested after it, under
 // the runtime's own name. The wire parity with a real `pi` CLI child, on a local

@@ -1,4 +1,4 @@
-// P8.16 (D10): the per-round worker trees in a closed PR's archive, and their
+// The per-round worker trees in a closed PR's archive, and their
 // retention and cap.
 //
 //   state/live/<pr-n>/r<k>/   LiveEvent logs (main + one per lens)
@@ -173,7 +173,7 @@ async function archive(f: PrFixture, cfg = {}): Promise<void> {
   expect(archiveRow(f.store, f.pr)?.state).toBe("archived");
 }
 
-describe("[P8.16] the archive pass takes the worker trees", () => {
+describe("the archive pass takes the worker trees", () => {
   it(
     "every round log and lens JSONL is its own verified gzip, the sources are removed, nothing is bundled",
     { timeout: HEAVY_TIMEOUT_MS },
@@ -225,7 +225,7 @@ const opts = (f: PrFixture, to: string) => ({
   bytesPerS: 200 * 1024 * 1024,
 });
 
-describe("[P8.16] extraction restores the rounds, and qcr open reads them", () => {
+describe("extraction restores the rounds, and qcr open reads them", () => {
   it(
     "extracts every worker file byte-equal at files/<live path>, mtimes kept",
     { timeout: HEAVY_TIMEOUT_MS },
@@ -313,7 +313,7 @@ describe("[P8.16] extraction restores the rounds, and qcr open reads them", () =
   );
 });
 
-describe("[P8.16] retention", () => {
+describe("retention", () => {
   const retention = 30 * DAY;
   const now = new Date(T0 + 40 * DAY);
 
@@ -479,7 +479,7 @@ describe("[P8.16] retention", () => {
   );
 });
 
-describe("[P8.16] the cap alerts and never deletes", () => {
+describe("the cap alerts and never deletes", () => {
   const capAnomalies = (f: PrFixture): Array<{ detail?: unknown }> =>
     f.store.anomalies().filter((x) => x.kind === "archive_live_cap");
 

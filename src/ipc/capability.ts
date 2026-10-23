@@ -1,4 +1,4 @@
-// Per-command capabilities and how they reach a process (D23).
+// Per-command capabilities and how they reach a process.
 //
 // A capability is 128 random bits minted for ONE command. The daemon never puts
 // it in argv or env. It writes it into a 0600 file that it unlinks at once,

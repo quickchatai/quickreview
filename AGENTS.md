@@ -237,8 +237,9 @@ the same cases the gate suite runs in TypeScript.
 - **The publishability lint** ([`tests/publishability.test.ts`](tests/publishability.test.ts))
   walks every tracked file — the repository is public in full — and fails on
   private tokens: personal names, private hosts, absolute home paths, internal
-  tracker paths. The tokens are checked by digest, so the lint names none of
-  them. It carries a negative control that plants a canary and proves the
+  tracker paths. The tokens come from a denylist kept outside the repository
+  (see `tests/AGENTS.md`), so the lint names none of them, and without it
+  those checks skip; credential shapes are checked always. It carries a negative control that plants a canary and proves the
   scanner bites. If your change trips it, fix the content; an allowlist entry
   needs a named file, the kind of token and a real reason.
 - **Decisions** are recorded before they are built; comments state the rule, not

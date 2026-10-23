@@ -1,4 +1,4 @@
-// The daemon's post ops on the worker socket (P7.2): `post.review`,
+// The daemon's post ops on the worker socket: `post.review`,
 // `post.approval` and `post.reply`.
 //
 // A host (a round worker, an answer worker, a debug pi) and the post shims it
@@ -15,7 +15,7 @@
 // current generation, the PR it names) are not repeated here. What this adds:
 //   - a PR under a TAKEOVER lease can post nothing;
 //   - an ANSWER worker posts only when the operator's message carried `may_post`
-//     (P8.17); a debug-round lease may post (D38);
+//    ; a debug-round lease may post;
 //   - the body names the command's own PR (`requirePr`) and, for a keyed round,
 //     the command's own round and head;
 //   - a result file must be a plain file inside one of that PR's directories.
@@ -117,7 +117,7 @@ export interface PostOpsDeps {
   roundOf(commandId: string, pr: number): PostRound | null;
   /** Where this PR's result files may live. Default: `<root>/state` and
    * `<root>/verdict` (only `pr-<n>-*` files) and the command's own dir
-   * `<root>/state/commands/<command id>/` (the worker's, P8.3). */
+   * `<root>/state/commands/<command id>/` (the worker's). */
   resultDirs?(pr: number, commandId: string): ResultDir[];
   log?: (msg: string, extra?: unknown) => void;
 }
@@ -131,7 +131,7 @@ export interface PostOutcome {
   dryrun_file?: string;
 }
 
-/** The `roundOf` of a daemon that hosts workers (P8.7): the round a command
+/** The `roundOf` of a daemon that hosts workers: the round a command
  * posts for is its own session_commands row's. Only a `round` command has one;
  * an answer worker, a takeover or a debug command posts unkeyed. `headOf` is the
  * head the round reviewed (the order's `head_sha`, which its posting key names).

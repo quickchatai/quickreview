@@ -1,6 +1,6 @@
 /*
  * qcr-setid: the always-on bot's way to run the model's tools as the tool uid
- * (D32).
+ *.
  *
  * The bot runs as its own uid, not root, so a `docker exec` into it lands as
  * that uid, and docker gives a non-root uid no ambient capabilities. This

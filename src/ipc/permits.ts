@@ -1,4 +1,4 @@
-// The central lens permit broker (D25): the daemon's one count of lens sessions
+// The central lens permit broker: the daemon's one count of lens sessions
 // alive across every worker, and the worker's end of it.
 //
 // A worker's lens runner asks `permits.acquire{lens_id, weight}` before it
@@ -15,7 +15,7 @@
 //     periodic look at the daemon's own view of the command (`reap`).
 // The command and its generation come from the authenticated connection, never
 // from the request body: a worker cannot spend another command's permits. Warm-
-// ups take no permit (D7).
+// ups take no permit.
 //
 // Neutral, like the rest of src/ipc/: no engine, no pi, no state store. The
 // engine's lens runner reaches the broker through its `Permits` port

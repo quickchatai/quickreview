@@ -79,9 +79,9 @@ a proposal directory and their accept click in the TUI ratifies it.
 
 Two things travel with a review-side commit:
 
-- **`prompts/CLAUDE.md` is the map of what is frozen.** Seeded content
+- **`tests/seed-integrity.test.ts` is the map of what is frozen.** Seeded content
   (`pass-common.md`, `conversation-system.md`, `eod-sweep.md`,
-  the seeded `agents/pass-*.md`) is frozen under root rule 6 —
+  the seeded `agents/pass-*.md`) is frozen (`docs/ownership.md`) —
   a reseed is the owner's ratification, not yours. Ours to edit: the round
   templates, `companion.md`, `companion-day-open.md`, the Slack appendix. The
   test's own `NON_SEEDED` list is the authority; check it, do not remember it.
@@ -104,7 +104,7 @@ explicitly, and the recorded consequence is that the safety story for a gate
 edit is the ratifying turn plus a one-key revert, with no second structural
 barrier. Weigh that when you ask.
 
-What does *not* move: rule 1's shape. Every GitHub mutation still goes through
+What does *not* move: the gate's shape. Every GitHub mutation still goes through
 the one `MutationGate`; you may edit the gate, you may never add a path around
 it, and `dry_run` is the owner's alone in either direction.
 
@@ -154,7 +154,7 @@ theirs) — never as a commit you write first and mention after.
 
 - **One purpose per commit.** Touch only what this change justified. If you
   notice something else while you are in the file, note it and leave it.
-- **`master` in the real checkout, never a worktree** (root rule 11). That is
+- **`master` in the real checkout, never a worktree.** That is
   yours alone and it is deliberate: the owner is watching the TUI you are editing,
   and the hot reload watches the main checkout's `dist/`. The tree is shared
   with worktree agents who are under orders never to stash your work — so commit

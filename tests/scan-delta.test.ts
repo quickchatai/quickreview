@@ -482,7 +482,7 @@ describe("exact match first, then the companion, then fixed", () => {
   });
 });
 
-describe("content read before, superseded, then back: read again (selfscan def42498)", () => {
+describe("content read before, superseded, then back: read again", () => {
   // tools/x.py read at A (a finding), re-read at B (none: fixed), then
   // reverted to A. Coverage is the NEWEST reading per file, not every reading
   // ever — else A counts as covered, nothing re-reads it, and the finding

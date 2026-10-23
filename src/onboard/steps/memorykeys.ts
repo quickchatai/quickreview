@@ -24,7 +24,7 @@
 //   * the memory step's own checklist row goes green on its own terms at the
 //     next verifyAll (the engine promotes a pending step whose verify holds),
 //     so the two rows never disagree about reality;
-//   * there is never a second minting path (CLAUDE.md rule 8: one memory
+//   * there is never a second minting path (the companion boundary: one memory
 //     write path).
 import type { OnboardingStep, StepContext, StepReport } from "../engine.js";
 import { MEMORY_CHOICE_KEY, memoryStep, type MemoryStepOptions } from "./memory.js";

@@ -40,7 +40,7 @@ export type ArtifactClass = (typeof ARTIFACT_CLASSES)[number];
  * extraction lays a worker round out whole under `files/state/<tree>/pr-<n>/r<k>/`
  * (a lens JSONL is a pi session `qcr open` reads; it must not split between a
  * bundle and a `files/` gzip by its size). Both trees are written by the
- * per-round workers (P8.3, D10). */
+ * per-round workers. */
 export const OWN_GZIP_CLASSES: ReadonlySet<ArtifactClass> = new Set(["live_logs", "lens_sessions"]);
 
 /** The non-transcript classes; most are bundled, `OWN_GZIP_CLASSES` get standalone gzips. */
@@ -165,7 +165,7 @@ export interface LiveListing {
   unclassified: Groups;
 }
 
-/** The per-round worker trees under `state/` (P8.3, D10), each holding one
+/** The per-round worker trees under `state/`, each holding one
  * `pr-<n>/r<k>/` dir per PR round: the LiveEvent logs, and the lens passes'
  * session JSONLs with their ledger. */
 export const LIVE_TREES = [

@@ -25,7 +25,8 @@ import { describe, expect, it } from "vitest";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // A person's name is not a pattern here: tests/publishability.test.ts keeps
-// every private name out of every tracked file, comments included.
+// every private name out of every tracked file, comments included, from the
+// maintainers' denylist outside the repository (tests/helpers/private-tokens.ts).
 export const PROVENANCE_PATTERNS: readonly RegExp[] = [
   /\bFT-\d{4}\b/g,
   /\bowner\b[^\n]{0,20}\b20\d{2}-\d{2}-\d{2}\b/gi,

@@ -78,7 +78,7 @@ describe("A3 — the sweep packs 8 files a row and skips translation catalogs", 
   it("knows a translation catalog by its directory or its format", () => {
     for (const p of [
       "backend/app/frontend/Config/app/translation/de.json",
-      "app/translation/visitor_feedback/per_language_config/config_af_ZA.json",
+      "app/translation/onboarding/per_locale/strings_af_ZA.json",
       "web/src/locales/en/common.json",
       "i18n/fr.yaml",
       "po/messages.pot",

@@ -1,4 +1,4 @@
-// P5.9: `qcr open`. Finished sessions open in pi's own UI: which file a run, a
+// `qcr open`. Finished sessions open in pi's own UI: which file a run, a
 // case dir or a scan names, the argv pi gets (the round's extension set minus
 // anything that posts, a fork by default), the environment (no GitHub token), and
 // that the kept JSONL resumes under the same id. Pure over temp dirs and

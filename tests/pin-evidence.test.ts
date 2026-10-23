@@ -1,4 +1,4 @@
-// D29 evidence map (P9.8a): every VERIFY-ON-PIN tag in the tree belongs to a map
+// The evidence map: every VERIFY-ON-PIN tag in the tree belongs to a map
 // entry, and scripts/pin-evidence.mjs reports evidence from an extract.
 import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, statSync } from "node:fs";

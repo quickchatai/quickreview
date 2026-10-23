@@ -1,4 +1,4 @@
-// The bot login's single refresher (P8.22, the VM-only exception to D5).
+// The bot login's single refresher (the VM-only exception to the login-refresh rule).
 //
 // After the cutover no pi session lives long enough to refresh the bot's login:
 // workers borrow refresh-blanked copies (packages/pi-plugin/src/engine/auth.ts). So ONE process

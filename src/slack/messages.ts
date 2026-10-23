@@ -14,7 +14,7 @@
 //     GitHub login. Otherwise it is the bare login as PLAIN TEXT — a fabricated
 //     mention pings a stranger, so it is never constructed.
 //
-// CLAUDE.md hard rule 2 shows up here as a WORDING rule: nothing the daemon
+// AGENTS.md invariant 2 shows up here as a WORDING rule: nothing the daemon
 // says may claim a review was dismissed. Superseding is "read the newest one".
 import type { Config } from "../config.js";
 import type { RoundType, Verdict } from "@quickchatai/pi-quickreview/src/types.js";
@@ -191,7 +191,7 @@ export function reRoundMessage(m: {
 
 /**
  * A newer round replaced an older one. WORDING IS LOAD-BEARING: no approval and
- * no other identity's review is ever dismissed (CLAUDE.md hard rule 2) — the
+ * no other identity's review is ever dismissed (AGENTS.md invariant 2) — the
  * older review stays exactly where it is, this line only points at the newest.
  */
 export function supersededMessage(m: {

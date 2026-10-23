@@ -4,15 +4,7 @@
 
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,8 +20,6 @@ import {
 import { resolveSpecifier, runtimeSpecifiers } from "./helpers/layers.js";
 import { SRC_DIRS } from "./helpers/source-trees.js";
 
-// docs/rulebook/ (the ratified rule texts) is manifest-excluded from the public tree.
-const HAS_RULEBOOK = existsSync(join(process.cwd(), "docs", "rulebook", "hard-rules.md"));
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "review-pr-target-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -200,7 +190,7 @@ describe("resolvePostCredential", () => {
   });
 });
 
-describe("the daemon stays App-only (CLAUDE.md rule 3)", () => {
+describe("the daemon stays App-only (the App-only credential rule)", () => {
   // The daemon's GitHub code: its client and wiring, and the App's token
   // minting, which is the core's (packages/pi-plugin/src/githubAuth.ts).
   const DAEMON_GITHUB_FILES = [
@@ -296,11 +286,11 @@ describe("the daemon stays App-only (CLAUDE.md rule 3)", () => {
     // it resolves GITHUB_TOKEN, GH_TOKEN, gh (rule 3's carve-out) ...
     expect(wrapper).toMatch(/GITHUB_TOKEN/);
     expect(wrapper).toMatch(/gh auth token/);
-    // ... and hands it over only as the read-once file (D39)
+    // ... and hands it over only as the read-once file
     expect(wrapper).toMatch(/QCR_GH_TOKEN_FILE=\/run\/qcr-in\/gh-token/);
     expect(wrapper).not.toMatch(/-e\s+"?\$?\{?(GITHUB_TOKEN|GH_TOKEN)/);
     expect(wrapper).not.toMatch(/--env\b|--env-file/);
-    // no App on a laptop (D14): nothing mounts the secrets, nothing mints
+    // no App on a laptop: nothing mounts the secrets, nothing mints
     expect(wrapper).not.toMatch(/secrets|app\.pem|\bmint\b/);
     // and the daemon's own code never reads the wrapper's file variable
     for (const f of DAEMON_GITHUB_FILES)
@@ -312,48 +302,6 @@ describe("the daemon stays App-only (CLAUDE.md rule 3)", () => {
     expect(text).toMatch(/private readonly minter: TokenMinter/);
     expect(text).not.toMatch(/GITHUB_TOKEN|GH_TOKEN/);
   });
-
-  // The rule names a private login; the published test file must not spell it out.
-  const PRIVATE_LOGIN = ["mha", "le"].join("");
-  it.skipIf(!HAS_RULEBOOK)("CLAUDE.md rule 3 is the ratified text (owner, 2026-10-19)", () => {
-    // Rule text changes only by the owner's ratification, so the test pins it
-    // verbatim (whitespace folded: CLAUDE.md wraps it). The carve-out is the
-    // credential only: the post still goes through the gate, and the token
-    // handoff is a read-and-unlinked file, never env or argv.
-    const RATIFIED = "[private rule text removed]";
-    const text = readFileSync(join(ROOT, "docs", "rulebook", "hard-rules.md"), "utf8");
-    const start = text.indexOf("\n3. ");
-    const end = text.indexOf("\n4. ", start);
-    expect(start).toBeGreaterThan(-1);
-    const rule = text
-      .slice(start + 4, end)
-      .replace(/\s+/g, " ")
-      .trim();
-    expect(rule).toBe(RATIFIED.replace("${PRIVATE_LOGIN}", PRIVATE_LOGIN));
-  });
-
-  it.skipIf(!HAS_RULEBOOK)(
-    "CLAUDE.md rule 1 carries the ratified image paragraph (owner, 2026-10-19)",
-    () => {
-      const PARAGRAPH = "[private rule text removed]";
-      const text = readFileSync(join(ROOT, "docs", "rulebook", "hard-rules.md"), "utf8");
-      const start = text.indexOf("\n1. ");
-      const end = text.indexOf("\n2. ", start);
-      expect(start).toBeGreaterThan(-1);
-      const rule = text
-        .slice(start + 4, end)
-        .replace(/\s+/g, " ")
-        .trim();
-      expect(rule).toContain(PARAGRAPH);
-      // The paragraph follows the two exceptions and no others, and the workers
-      // paragraph (pinned word for word in tests/ratified-rule-texts.test.ts)
-      // follows it and closes the rule.
-      expect(rule).toContain("Two exceptions, and no others:");
-      const workers = rule.indexOf("**The bot's workers are not a route of their own.**");
-      expect(workers).toBeGreaterThan(rule.indexOf(PARAGRAPH) + PARAGRAPH.length - 1);
-      expect(rule.endsWith("No worker holds a GitHub token.")).toBe(true);
-    },
-  );
 });
 
 // ---- the fetch, against a local bare repo -------------------------------------------

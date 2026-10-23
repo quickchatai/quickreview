@@ -2,16 +2,16 @@
 
 Everything the rehearsal found on the way to a green run, and whether it is fixed. F1 to F3, F5 and F5b were
 defects in the cutover tooling itself and are fixed in product code with tests; F4 was a contradiction in the
-cutover procedure, fixed by the owner's ruling of 2026-10-21; the rest are properties worth knowing.
+cutover procedure, since fixed in the procedure; the rest are properties worth knowing.
 
-- **F1, product, FIXED: `deploy.sh` ignored `QCR_CUTOVER_ACK`.** The runbook (C.11, C.12) and the wizard
+- **F1, product, FIXED: `deploy.sh` ignored `QCR_CUTOVER_ACK`.** The cutover procedure and the wizard
   (`QCR_CUTOVER_ACK=<v> deploy.sh [--dry-run] release <v>`) spell the acknowledgement as an environment
   variable; `deploy.sh` read only the `--cutover-ack` flag, so on the legacy layout both the wizard's plan
   and its release stopped at "refusing the release — the VM still runs the legacy layout … Re-run with
   --cutover-ack". The first rehearsal run died there. `deploy.sh` now takes `QCR_CUTOVER_ACK=<version>` as
   the same acknowledgement, and an ack naming another version is refused (a stale one must not authorize
   this cutover). `tests/deploy.test.ts`.
-- **F2, product, FIXED: the plan did not name the point of no return.** Runbook C.11 asks that the
+- **F2, product, FIXED: the plan did not name the point of no return.** The cutover procedure asks that the
   dry-run plan shows "the recreate of quickreview-sandbox, named as the point of no return", and the wizard's
   stage 3 asks the owner to confirm it does. The plan said "recreate the daemon container" only. It now says
   "THE POINT OF NO RETURN on the legacy layout (the first boot migrates state.db forward; there is no way
@@ -19,16 +19,16 @@ cutover procedure, fixed by the owner's ruling of 2026-10-21; the rest are prope
 - **F3, product, FIXED: the wizard's reconcile-backstop stage compared GitHub with nothing.** Stage 7 read
   the daemon's tracked PRs from `qcr status` run on the OWNER'S machine, which reads that machine's own
   state dir ("no status.json yet"): no PR line, so every open PR was "not tracked" and the stage passed
-  vacuously, which is exactly the check runbook C.15 exists for. It now reads `qcr status` in the daemon's
+  vacuously, which is exactly the check the backstop stage exists for. It now reads `qcr status` in the daemon's
   container (`docker exec … node /opt/qcr/dist/src/cli.js status`) and fails when that prints no snapshot.
   `tests/cutover-wizard.test.ts`.
-- **F4, procedure, FIXED (owner ruling 2026-10-21): stage 9 could not do what it asked.** Stage 9 said the
+- **F4, procedure, FIXED: stage 9 could not do what it asked.** Stage 9 said the
   drain holds while the owner triggers ONE worker round and checks it, then lifts. Under any drain the dispatch
   pump starts nothing (`dispatch.ts`: `if (store.drainState().draining) return []`), the webhook delivery is
   dropped, and `qcr debug-round` is refused outright ("debug-round #7 refused (drained: the bot is draining: no
   worker starts)"); HOLD-3 records all three. So the first worker round can only be watched AFTER `qcr drain
   off`. In this rehearsal the lift was therefore the owner's command at the point stage 9 reaches it, and the
-  worker checks ran after it. The owner ruled: nothing runs under any drain, so the first round is watched after
+  worker checks ran after it. The procedure now says: nothing runs under any drain, so the first round is watched after
   the lift, one PR at a time. Stage 9 now lists the tracked open PRs from the daemon's `qcr status` in its
   container, asks which PR runs first, pauses every other tracked PR with the operator's pause (`qcr pause-pr`,
   new: the sealed operator channel, so the pause carries no expiry and no session lifts it), checks each shows
@@ -60,9 +60,9 @@ cutover procedure, fixed by the owner's ruling of 2026-10-21; the rest are prope
   (INJ-3) leaves no marker and copies again.
 - **F8, property: the release container keeps a tmux server and one empty `main` shell session.** The
   daemon-mode entrypoint starts it (the jump-in surface, and the host of the takeover and debug panes).
-  No PR session, no pi and no overseer exists, which is what runbook step 13 asks. The P8.20a TREE-1 check
-  expected the overseer's `main` session and a pi; it now expects the shell only, and P9.13's deletion is
-  what it proves. The event name `overseer_heartbeat` (the daily heartbeat's marker in `events`) outlived
+  No PR session, no pi and no overseer exists, which is what the cutover procedure asks. The worker rehearsal's TREE-1
+  check expected the overseer's `main` session and a pi; it now expects the shell only, which is what the
+  overseer's deletion proves. The event name `overseer_heartbeat` (the daily heartbeat's marker in `events`) outlived
   the overseer; it is a name, not a process.
 - **F9, rehearsal: what the unprivileged host needed.** The updater is run in the test mode its header
   documents (non-root). Four things a root updater does had to be stood in for, all in `vm-shims/`, none in
@@ -74,7 +74,7 @@ cutover procedure, fixed by the owner's ruling of 2026-10-21; the rest are prope
 
 ## Limits
 
-- **No KVM guest.** This machine has no qemu; the "VM" is a directory tree on this machine's docker,
+- **No KVM guest.** The rehearsal host has no qemu; the "VM" is a directory tree on the host's docker,
   reached over a throwaway unprivileged sshd on localhost (a forced command, `vm-shell.sh`, that maps the
   host path `/opt/quickreview` onto the rehearsal's directory for host-side commands and leaves
   `docker exec` commands alone). Nothing about a real VM's packages, systemd, cloudflared or a root
@@ -84,11 +84,8 @@ cutover procedure, fixed by the owner's ruling of 2026-10-21; the rest are prope
 - **The legacy bot is a stand-in** (`legacy-daemon.mjs`): the legacy build's own StateStore and its drain
   contract (heartbeat, operator channel, the first-reconcile lift, the strict command schema), not the legacy
   daemon. The first-boot migration, the hold and everything after it ran on the real release image over a
-  state.db the legacy build (8169df6f) wrote.
-- **The registry is `registry:2` on localhost**, the images single-arch; the manifests are in the P7.16
-  format but a real release's index is multi-arch. No ghcr login, attestation or CI is involved.
-- **The model, GitHub and OAuth are the P8.20a stub**; `dry_run = true` throughout, so a post ends in
-  `state/dryrun`. The worker checks are the P8.20a scenarios, unchanged apart from TREE-1.
-- **The owner's real config differs** in repo, profile, App identity and secrets; the shape that matters to
-  the cutover (remote openviking endpoint, `lens_permits = 20`, the `[tui]` block with an ssh target and no
-  `remote_*` keys) is the one rehearsed.
+  state.db the legacy build wrote.
+- **The registry is `registry:2` on localhost**, the images single-arch; the manifests are in the
+  deploy-manifest format but a real release's index is multi-arch. No ghcr login, attestation or CI is involved.
+- **The model, GitHub and OAuth are the worker rehearsal's stub**; `dry_run = true` throughout, so a post ends in
+  `state/dryrun`. The worker checks are the worker rehearsal's scenarios, unchanged apart from TREE-1.

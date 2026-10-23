@@ -51,7 +51,7 @@ diff --git a/extensions/vendor/openviking-pi/README.md b/extensions/vendor/openv
  
 +### 0007 — bounded recall, no commit (S3)
 +
-+Owner ruling R3 (2026-10-06): PR sessions keep this extension, bounded — the
++By the owner's ruling, PR sessions keep this extension, bounded — the
 +per-turn recall wait is capped at 500 ms and query expansion is off. Four
 +changes:
 +

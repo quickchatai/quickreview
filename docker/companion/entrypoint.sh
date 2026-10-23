@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The scan sandbox image's entrypoint (docker/companion/Dockerfile). Its one-shot
-# mode is all that is used since P7.8: the local companion is the release image
+# mode is all that is used now the local companion is the release image
 # in `companion` mode (docker/entrypoint.sh). The companion branch below is the
 # superseded one and goes with this image.
 #

@@ -2,7 +2,7 @@
 // SDK sessions import it (packages/pi-plugin/src/engine/pisdk.ts), and every pi CLI this code starts
 // is that same package's own `pi` bin — the file node_modules/.bin/pi links to —
 // never a `pi` looked up on the PATH. The release image carries no global pi
-// CLI (P9.9b), so a PATH lookup there finds nothing; on a laptop it could find
+// CLI, so a PATH lookup there finds nothing; on a laptop it could find
 // a pi of another version.
 //
 // A leaf: no SDK import (tests/fences-engine.test.ts allows that to pisdk.ts and

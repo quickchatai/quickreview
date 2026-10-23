@@ -931,7 +931,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         // way it got there — and this costs no
         // API call, because `listReviewsFull` was already fetched above.
         // Detection only: nothing below mutates GitHub, and nothing here can
-        // withdraw, retract or edit a review (CLAUDE.md rule 2 — structural,
+        // withdraw, retract or edit a review (AGENTS.md invariant 2 — structural,
         // not prompted; there is no such call in this module or its imports).
         try {
           const ungated = auditUngatedReviews(

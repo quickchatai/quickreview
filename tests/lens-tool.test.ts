@@ -1,5 +1,4 @@
-// P4.5: our lens tools, `lens` and `lens_wave` (D3), with the join semantics of
-// D8. Everything runs the real pi SDK on pi-ai's faux provider (no model, no
+// Our lens tools, `lens` and `lens_wave`, with their join semantics. Everything runs the real pi SDK on pi-ai's faux provider (no model, no
 // network): a 20-lens fan-out, a join that never relaunches a planned row, the
 // tools hosted as customTools on an SDK main session, and a replay of what the
 // tools return through the consumers that count lenses (cost, stages, usage,
@@ -192,7 +191,7 @@ interface Details {
 }
 const detailsOf = (r: { details?: unknown }): Details => r.details as Details;
 
-describe("[lens] the tool names (D3)", () => {
+describe("[lens] the tool names", () => {
   it("are lens and lens_wave, and a consumer reads them", () => {
     const { lens, lensWave } = tools(counting(createLensRunner(config())), new LensWave());
     expect([lens.name, lensWave.name]).toEqual([LENS_TOOL, LENS_WAVE_TOOL]);
@@ -251,7 +250,7 @@ describe("[lens_wave] a faux fan-out of 20 lenses", () => {
   });
 });
 
-describe("[lens_wave] the join (D8)", () => {
+describe("[lens_wave] the join", () => {
   it("does not relaunch a planned row and starts only the rows nobody has", async () => {
     slowAnswers(21);
     const runner = counting(createLensRunner(config()));

@@ -397,7 +397,7 @@ describe("qcr memory reembed — flags", () => {
   });
 });
 
-describe("[P8.17] qcr message", () => {
+describe("qcr message", () => {
   it("takes the PR and the words, and may_post only from the explicit flag", () => {
     expect(parseMessageArgs(["12", "is", "this", "safe?"])).toEqual({
       pr: 12,

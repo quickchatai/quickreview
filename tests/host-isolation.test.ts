@@ -1,4 +1,4 @@
-// Host-route isolation (P0.4): `qcr review` runs pi with nothing of the
+// Host-route isolation: `qcr review` runs pi with nothing of the
 // operator's pi home, the qcr checkout or the reviewed repo reaching the
 // session or its lens children, and the bench keeps its own placement.
 //
@@ -241,7 +241,7 @@ describe("pi's cwd and context", () => {
     expect(existsSync(join(ROOT, "AGENTS.md"))).toBe(true);
   });
 
-  it("agrees with the P0.4a inventory's D34 row", () => {
+  it("agrees with the inventory's context-files row", () => {
     const row = inventoryRow("clone-review");
     expect(row.contextFiles).toBe("default");
     expect(row.effective.map((f) => f.source)).toEqual([REVIEWER_STUB.replaceAll("\\", "/")]);
@@ -273,7 +273,7 @@ describe("what loads", () => {
     expect(ran.main.skills).toEqual([]);
   });
 
-  it("the private settings register no extension: a lens carries the guard as a factory, not from settings (P9.4)", () => {
+  it("the private settings register no extension: a lens carries the guard as a factory, not from settings", () => {
     expect(ran.child.extensions).toEqual([]);
     expect(ran.child.agentDir).toBe(ran.main.agentDir);
     expect(ran.child.cwd).toBe(ran.main.cwd);
@@ -442,7 +442,7 @@ describe("the bench keeps its placement", () => {
       );
     }
     // the guard is loaded by the session explicitly; the sandbox's global
-    // settings register none (P9.12), so a settings-only child loads nothing
+    // settings register none, so a settings-only child loads nothing
     // (lens passes get the guard from the lens tool's factory)
     expect(b.main.extensions.map((e) => basename(e))).toContain("bash-guard.ts");
     expect(b.child!.extensions.map((e) => basename(e))).toEqual([]);

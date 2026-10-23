@@ -545,7 +545,7 @@ export async function cmdReview(
     const det = await import("./reviewdetach.js");
     const { stateHome } = await import("./homes.js");
     // In the release image the host wrapper makes the run a container of its own
-    // (P6.8): it names the container and the id, and starts the driver itself.
+    //: it names the container and the id, and starts the driver itself.
     const container = containerRunEnv(process.env);
     return det.runDetachedVerb(verb, rest.slice(1), json, {
       home: join(stateHome(), "review", "detached"),

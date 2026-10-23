@@ -393,7 +393,7 @@ describe("checkBashCommand — git is read-only", () => {
   /**
    * `-c` after the verb is git's combined merge diff option, not config
    * injection — and the recheck audits a hand-resolved conflict against both
-   * merge parents, which is exactly what it is for (CLAUDE.md, post-approval
+   * merge parents, which is exactly what it is for (the post-approval
    * recheck).
    */
   it("still allows git show -c / log -c — the combined merge diff the recheck depends on", () => {
@@ -507,7 +507,7 @@ describe("quoted patterns and substitutions", () => {
     allow(
       "find . -maxdepth 3 -type f \\( -iname '*5270*' -o -iname '*ledger*' \\) -print | sort | head -100",
     );
-    allow(`git log --grep="dispatch_due|match_user_specified_topic" --oneline`);
+    allow(`git log --grep="flush_due|match_topic" --oneline`);
   });
 
   it("allows the sanctioned mint-token read pattern and plain scripts", () => {
@@ -1441,7 +1441,7 @@ describe("checkSecretPaths — the App's secret files and dir", () => {
     expect(res.allowed, `${cmd} → ${res.reason ?? ""}`).toBe(true);
   };
 
-  // Found by the worker rehearsal (P8.20a): a debug round writing its verdict by bash
+  // Found by the worker rehearsal: a debug round writing its verdict by bash
   // put `[{"name":"pass-a"}]` in a quoted printf argument; the word's `[name:pass-a]`
   // became a regex class with a reversed range and the guard THREW instead of answering.
   it("a glob class JavaScript cannot compile is judged, never thrown, and widened, never narrowed", () => {
@@ -1867,7 +1867,7 @@ describe("checkBashCommand — /proc/<pid>/environ, mem and cmdline", () => {
     block("cd /proc/self/task/1 && cat environ");
   });
 
-  it("refuses a process's descriptors: another command's IPC capability lives there (P7.2a)", () => {
+  it("refuses a process's descriptors: another command's IPC capability lives there", () => {
     block("cat /proc/4242/fd/9");
     block("cat /proc/$PPID/fd/3");
     block("ls /proc/4242/fdinfo");
@@ -1940,7 +1940,7 @@ describe("checkBashCommand — /proc/<pid>/environ, mem and cmdline", () => {
   });
 });
 
-// [P7.2a] The daemon's IPC run dir (<state>/run: the worker socket and the
+// The daemon's IPC run dir (<state>/run: the worker socket and the
 // capability launch files) is closed to the model's reads, whoever the reader.
 describe("checkBashCommand — the IPC run dir", () => {
   const ctx = (env: Record<string, string> = {}, cwd = "/work/wt/pr-7"): SecretPathContext =>

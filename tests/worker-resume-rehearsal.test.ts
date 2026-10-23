@@ -1,4 +1,4 @@
-// [P8.4] The offline resume rehearsal (docs/worker-resume-rehearsal.md).
+// The offline resume rehearsal (docs/worker-resume-rehearsal.md).
 //
 // Two halves in one file:
 //
@@ -8,7 +8,7 @@
 //     a legacy cwd header): the real bot worker resumes each on pi-ai's faux
 //     provider and nothing the ticket asks about is allowed to go wrong;
 //   - the run over real files, only when QCR_RESUME_REHEARSAL names them (the
-//     owner's read-only snapshot of the live PR JSONLs, the transcript mirror,
+//     operator's read-only snapshot of the live PR JSONLs, the transcript mirror,
 //     an `archive extract` tree). scripts/worker-resume-rehearsal.sh sets it up
 //     and writes the report. The real files are only ever read.
 //
@@ -246,7 +246,7 @@ const written = (name: string, text: string): string => {
   return file;
 };
 
-describe("[P8.4] inspecting a PR JSONL", () => {
+describe("inspecting a PR JSONL", () => {
   it("counts entries, custom entries, markers and legacy paths; keeps no text", () => {
     const facts = inspectSessionJsonl(written("inspect.jsonl", botJsonl({ compaction: true })), {
       stub: STUB,
@@ -295,7 +295,7 @@ describe("[P8.4] inspecting a PR JSONL", () => {
   });
 });
 
-describe("[P8.4] legacy cwd headers under the release image's mounts", () => {
+describe("legacy cwd headers under the release image's mounts", () => {
   const mounts = legacyMountDirs(UPDATER, "clone");
 
   it("reads the updater's legacy mounts: the worktrees and the base clone", () => {
@@ -321,7 +321,7 @@ describe("[P8.4] legacy cwd headers under the release image's mounts", () => {
   });
 });
 
-describe("[P8.4] the worker resumes a bot-shaped JSONL on the faux", () => {
+describe("the worker resumes a bot-shaped JSONL on the faux", () => {
   it(
     "keeps the id, the file and every earlier line; the cache key is the id; no model is called",
     { timeout: HEAVY_TIMEOUT_MS },
@@ -408,7 +408,7 @@ describe("[P8.4] the worker resumes a bot-shaped JSONL on the faux", () => {
   );
 });
 
-describe("[P8.4] an archived PR: qcr archive extract, then the resume", () => {
+describe("an archived PR: qcr archive extract, then the resume", () => {
   it(
     "the extracted transcript is byte-identical and the worker resumes it under its id",
     { timeout: HEAVY_TIMEOUT_MS },
@@ -447,7 +447,7 @@ describe("[P8.4] an archived PR: qcr archive extract, then the resume", () => {
   );
 });
 
-describe("[P8.4] the report", () => {
+describe("the report", () => {
   it("prints counts and hashes, never a PR number, a session id or a path of the machine", async () => {
     const row = await rehearseFile(written("r.jsonl", botJsonl()), "synthetic", born);
     const bad: RehearsalRow = {
@@ -499,7 +499,7 @@ function jsonlUnder(root: string): string[] {
   return found.sort();
 }
 
-describe.skipIf(!spec)("[P8.4] the rehearsal over real PR JSONLs", () => {
+describe.skipIf(!spec)("the rehearsal over real PR JSONLs", () => {
   it(
     "resumes every file, and writes the report when QCR_RESUME_REHEARSAL_OUT is set",
     { timeout: REAL_RUN_TIMEOUT_MS },

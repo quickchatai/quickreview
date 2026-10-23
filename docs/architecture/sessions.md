@@ -2,7 +2,7 @@
 
 > **Workers are the only PR host.** The tmux PR host described below (birth,
 > wake files, the inject bridge's PR half, kill and fence, round-end
-> compaction requests) was deleted in P9.2: `src/sessions.ts` keeps only the
+> compaction requests) was deleted: `src/sessions.ts` keeps only the
 > overseer's tmux session and the replay harness's, and a PR's session is the
 > per-round worker of `src/worker-session-host.ts`, where a worker's ack is the
 > receipt. The sections on PR sessions below describe the retired host.
@@ -241,7 +241,7 @@ rules:
 - **A PR's order is not a mailbox file.** The bridge once carried a durable
   command ledger and a start-lease redelivery for `pr-<n>` sessions
   (`extensions/session-command-ledger.ts`); a worker takes its order as its
-  first message, so both were deleted with the receipt scan (P9.1). The old
+  first message, so both were deleted with the receipt scan. The old
   `session_commands` rows stay in the state database for the daemon's own
   bookkeeping, and the bridge's JSONL entries are tolerated on resume.
 

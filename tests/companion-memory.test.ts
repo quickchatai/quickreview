@@ -290,7 +290,7 @@ describe("memory wiring on the container", () => {
 
   it("loads the vendored patched extension from the image, whatever the checkout holds", async () => {
     const { runner } = docker([networkUp()]);
-    // The extension rides the image (D20), so the host checkout is not asked.
+    // The extension rides the image, so the host checkout is not asked.
     const lc = new CompanionLifecycle(CFG, runner, {}, () => {}, fakeFs({}));
     const argv = lc.piArgv();
     expect(MEMORY.extension).toBe(`${CONTAINER.app}/extensions/vendor/openviking-pi/index.ts`);

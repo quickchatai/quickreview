@@ -90,7 +90,7 @@ describe("pi built-ins are switched off wherever we provision pi settings", () =
     });
   }
 
-  it("the bench sandbox's settings carry the same list and no global guard (P9.12)", () => {
+  it("the bench sandbox's settings carry the same list and no global guard", () => {
     const s = JSON.parse(benchSettings("/r").settings) as { extensions: string[] };
     expect(s.extensions).toEqual([...PI_DISABLED_BUILTINS]);
   });

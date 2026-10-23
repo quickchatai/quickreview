@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cutover-rehearsal.sh — the full cutover rehearsal (P8.20), the run that writes
+# cutover-rehearsal.sh — the full cutover rehearsal, the run that writes
 # docs/cutover-rehearsal.md. The REAL cutover tooling, end to end, against a throwaway legacy-shaped
 # "VM" on this machine:
 #
@@ -12,10 +12,10 @@
 #                    the scenarios always start from a copy of that pristine host.
 #   --fresh          throw the reused parts away and build them again
 #   --keep           leave the containers, the registry, sshd and the host directory up for a look
-#   --skip-worker    stop after the login checks: do not run the P8.20a worker scenarios on the release boot
+#   --skip-worker    stop after the login checks: do not run the worker scenarios on the release boot
 #
 # What runs for real (nothing of it is rewritten for the rehearsal):
-#   scripts/cutover.sh (the P8.21a wizard) -> scripts/deploy.sh (dry-run, release, verify, provision)
+#   scripts/cutover.sh (the wizard) -> scripts/deploy.sh (dry-run, release, verify, provision)
 #   -> ssh -> deploy/qcr-update.sh -> docker pull BY DIGEST from a registry -> the release and memory images
 #   built from this tree -> `qcr config check` and `daemon --preflight` of the NEW image on the staged
 #   config and a snapshot of the legacy state -> the sidecar -> the recreate -> the release daemon's
@@ -29,7 +29,7 @@
 #   - the legacy bot: a container with no qcr.layout label running scripts/cutover-rehearsal/legacy-daemon.mjs
 #     over the LEGACY build's own StateStore (commit 8169df6f). It is the legacy bot's drain contract, not
 #     its code: the heartbeat, the operator channel, the first-reconcile drain lift.
-#   - the registry: registry:2 on localhost; both images pushed as single-arch manifests (the P7.16
+#   - the registry: registry:2 on localhost; both images pushed as single-arch manifests (the release
 #     manifest's index digest is that manifest's digest, its platforms entries repeat it).
 #   - the model, GitHub and OAuth: scripts/worker-rehearsal/stub.mjs on an --internal network.
 #   - `deploy.sh provision`: the playbook needs root, apt and systemd; a stub ansible-playbook installs
@@ -265,7 +265,7 @@ for v in 0.9.1 0.9.2 0.9.3 0.9.4 $VERSION; do
   docker rmi "$REPO_D@$(digest_of "$v" 2)" "$REPO_M@$(digest_of "$v" 3)" >/dev/null 2>&1
 done
 fact registry "localhost:$REG_PORT; daemon $VERSION $(digest_of $VERSION 2); memory $VERSION $(digest_of $VERSION 3); never-ready memory 0.9.4 $(digest_of 0.9.4 3)"
-check REG-1 pass "the images are in a registry and the manifests are in the P7.16 format" \
+check REG-1 pass "the images are in a registry and the manifests are in the deploy-manifest format" \
   "registry:2 on localhost:$REG_PORT; deploy-manifest-<v>.json for 5 versions, each validated by scripts/deploy-manifest.mjs; daemon $VERSION $(digest_of $VERSION 2 | cut -c1-19), memory $(digest_of $VERSION 3 | cut -c1-19); the manifest's platforms entries repeat the single-arch manifest digest (CI's index is multi-arch)"
 
 # ---- the legacy stand-in image: no labels, the legacy dist beside node + better-sqlite3 ------------------
@@ -902,7 +902,7 @@ else
 fi
 
 # =================================================================================================
-# the P8.20a worker checks, on THIS release boot
+# the worker checks, on THIS release boot
 # =================================================================================================
 if [[ "$SKIP_WORKER" == 0 ]]; then
   cat >"$WORK/world.env" <<EOF

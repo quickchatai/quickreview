@@ -1,7 +1,7 @@
-// The names a round prompt uses for the tools that launch lenses (owner ruling
-// D3). The tmux bot's session launches through pi's `subagent` and the glue's
+// The names a round prompt uses for the tools that launch lenses (owner
+// ruling). The tmux bot's session launches through pi's `subagent` and the glue's
 // `launch_plan`; an engine route's main session has our `lens` and `lens_wave`
-// (packages/pi-plugin/src/engine/lens/tool.ts), and so does a bot worker's (P8.14): the daemon's
+// (packages/pi-plugin/src/engine/lens/tool.ts), and so does a bot worker's: the daemon's
 // order builder writes the host's names (`SessionHooks.lensRuntime`), and the
 // bot's renderer refuses an order written for the other host. A round order says
 // which it was written for (`lens_runtime`), and every launch block of the round
@@ -42,7 +42,7 @@ export function launchVocab(order: Pick<RoundOrder, "lens_runtime">): LaunchVoca
 
 /**
  * The tmux bot's prompt renderer is bound to the native vocabulary: its
- * sessions carried `subagent` and `launch_plan` (the glue is retired, P9.4) and
+ * sessions carried `subagent` and `launch_plan` (the glue is retired) and
  * not the engine tools, so an order written for the engine would tell the
  * session to call tools it does not have, and the round would end with no
  * verdict. Throws on such an order.

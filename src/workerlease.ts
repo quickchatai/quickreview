@@ -1,4 +1,4 @@
-// The worker lease (P8.5, D23): one small file per session that names the worker
+// The worker lease: one small file per session that names the worker
 // process the WorkerSupervisor started, so a daemon that comes back after a
 // crash can find the group it must kill, and can tell that group from a
 // stranger.

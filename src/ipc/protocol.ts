@@ -1,4 +1,4 @@
-// The worker-daemon wire protocol (D23): one JSON object per line over a Unix
+// The worker-daemon wire protocol: one JSON object per line over a Unix
 // socket, a `v` field on every message, typed errors.
 //
 // This directory is NEUTRAL by fence (tests/fences-ipc.test.ts): it imports
@@ -27,7 +27,7 @@ export const MAX_LINE_BYTES = 1024 * 1024;
 export const IPC_ROLES = ["worker", "shim"] as const;
 export type IpcRole = (typeof IPC_ROLES)[number];
 
-/** What the worker reports, in the order a round normally emits them (P8.3). */
+/** What the worker reports, in the order a round normally emits them. */
 export const IPC_EVENT_KINDS = [
   "ready",
   "accepted",
@@ -56,7 +56,7 @@ export const IPC_ERROR_CODES = [
   "lease_takeover", // the PR is under a takeover lease: it can post nothing
   "may_post_required", // an answer worker whose message did not carry may_post
   "bad_path", // a result file outside the PR's own dir, or not a plain readable file
-  "cancelled", // a permit wait ended by a release or by the command ending (P8.10)
+  "cancelled", // a permit wait ended by a release or by the command ending
   "blocked", // the gate or a guard refused the mutation: nothing was posted
   "post_failed", // GitHub answered the post with a refusal
   "rate_limited", // too many reads in flight or in the last minute for this PR (github.read)
@@ -127,7 +127,7 @@ export interface EventMessage {
   body?: unknown;
 }
 
-/** Daemon to worker: steer, followUp, abort (P8.12). */
+/** Daemon to worker: steer, followUp, abort. */
 export interface ControlMessage {
   v: string;
   type: "control";
@@ -327,10 +327,10 @@ export interface CommandState {
   active: boolean;
   /** Set only by the operator's message; the post ops of an ANSWER worker need it. */
   may_post: boolean;
-  /** True for an idle-PR answer worker's command (P8.17): its posts are refused
+  /** True for an idle-PR answer worker's command: its posts are refused
    * unless `may_post`. Absent for a round, takeover or debug command. */
   answer?: boolean;
-  /** A takeover refuses every post; a debug round may post (D38). */
+  /** A takeover refuses every post; a debug round may post. */
   lease: "none" | "takeover" | "debug";
 }
 

@@ -1,21 +1,21 @@
-// The worker world, assembled for the daemon (P8.15w): workers are the bot's ONLY host.
+// The worker world, assembled for the daemon: workers are the bot's ONLY host.
 //
-// P8.5 to P8.17 each built a part of it and left the daemon unwired; this is where wire.ts
+// Several steps each built a part of it and left the daemon unwired; this is where wire.ts
 // gets them put together, so it is one place that says what runs beside what:
 //
 //   - the capability store and the IPC server on `<state>/run/qcr.sock`, serving the
 //     supervisor's lookup and ops (spec, control acks, held wakes, the post ops, the permit
-//     broker's ops) and composing the worker's events with the spend intake (P8.9);
-//   - the WorkerSupervisor, whose spawn policy is the crash-loop breaker's (P8.5b) and whose
+//     broker's ops) and composing the worker's events with the spend intake;
+//   - the WorkerSupervisor, whose spawn policy is the crash-loop breaker's and whose
 //     spec is built here, from the same sources the tmux route's buildPiCommand used: the
 //     conversation system prompt, the OpenViking identity and the git config pins;
 //   - the WorkerSessionHost, the SessionHooks the daemon's state machine speaks;
-//   - the takeover (P8.13) and debug-round (P8.13b) leases, which keep workers out of a
-//     PR's session while an operator's pi is in it, and the idle-PR answer host (P8.17);
-//   - the operator's controls (P8.12) and the per-PR runtime status.
+//   - the takeover and debug-round leases, which keep workers out of a
+//     PR's session while an operator's pi is in it, and the idle-PR answer host;
+//   - the operator's controls and the per-PR runtime status.
 //
 // There is no switch and no tmux fallback: nothing here births a `pr-<n>` tmux session. The tmux
-// PiSessionManager that still exists serves what has not moved yet (the overseer, until P9.13)
+// PiSessionManager that still exists serves what has not moved yet (the overseer, for now)
 // and lends its path helpers and environment, which is what keeps a worker's session the same
 // session a tmux round saw.
 import { mkdirSync, readFileSync } from "node:fs";
@@ -80,7 +80,7 @@ export interface WorkerWorldOptions {
   adapter: PostAdapter;
   /** The helpers' GitHub reads (src/ghread.ts): the full adapter, in production. */
   reader?: GhReader;
-  /** The model's tools run as a separate uid of the daemon's group (D32): the
+  /** The model's tools run as a separate uid of the daemon's group: the
    * socket is opened to the group so their shims can dial in. */
   toolUid?: boolean;
   /** The tmux manager that still serves the overseer: lends the worktrees, the OpenViking

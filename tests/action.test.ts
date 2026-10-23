@@ -368,7 +368,7 @@ describe("scripts/action.sh run — the docker run line", () => {
     expect(a).toEqual(expect.arrayContaining(["--security-opt", "no-new-privileges"]));
     expect(a.join(" ")).not.toContain("docker.sock");
     expect(a.join(" ")).not.toContain("--privileged");
-    // the model's tools get another uid (D32): root start, ids named
+    // the model's tools get another uid: root start, ids named
     expect(a).toEqual(expect.arrayContaining(["--user", "0:0", "--cap-add", "SETUID"]));
     expect(a.some((x) => x.startsWith("QCR_RUN_UID="))).toBe(true);
     // the repo read-only

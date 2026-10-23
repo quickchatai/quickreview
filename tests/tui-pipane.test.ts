@@ -1,5 +1,5 @@
 // The board's live pi mirror — a debug round's or a takeover's pi terminal, the
-// only tmux sessions the PR pane mirrors (P9.6): capture argv, escape-sequence
+// only tmux sessions the PR pane mirrors: capture argv, escape-sequence
 // hygiene, and the debounced stale-while-revalidate cache.
 import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -23,7 +23,7 @@ const ok = (stdout: string): RemoteResult => ({ ok: true, stdout, stderr: "", co
 const fail = (): RemoteResult => ({ ok: false, stdout: "", stderr: "no such session", code: 1 });
 const debugOf = (pr: number): PiTerminalSession => `debug-pr-${pr}`;
 
-describe("[P9.6] the bot's PR sessions have no tmux path", () => {
+describe("the bot's PR sessions have no tmux path", () => {
   it("a `pr-<n>` session does not type-check as a capture or send-keys target", () => {
     // @ts-expect-error — the bot runs no `pr-<n>` tmux session
     captureArgv(TUI_DEFAULTS, "pr-5012");

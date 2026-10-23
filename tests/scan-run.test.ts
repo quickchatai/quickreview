@@ -708,7 +708,7 @@ describe("the validator — the skeptic; a profile may switch it off", () => {
   });
 });
 
-describe("an answer that is neither findings nor NONE is not a reading (selfscan a03e554c)", () => {
+describe("an answer that is neither findings nor NONE is not a reading", () => {
   it("a lens answering in prose fails its case: no ledger row, so nothing is certified clean", async () => {
     const answer = (spec: CaseSpec): string =>
       spec.unit === "app"
@@ -1004,7 +1004,7 @@ describe("a finding's severity follows the reachability axis (scan-loop)", () =>
     expect(back("contrived")).toMatchObject({ severity: "P3", capped_from: "P1" });
   });
 
-  it("the validator is shown each candidate's detail paragraph, and it round-trips (selfscan 9cfaa2db)", () => {
+  it("the validator is shown each candidate's detail paragraph, and it round-trips", () => {
     const [c] = parseScanAnswer(one("P1", "routine")).candidates;
     const withDetail = {
       ...c!,

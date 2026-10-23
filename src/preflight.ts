@@ -1,4 +1,4 @@
-// `daemon --preflight` (P8.4b): the cutover and release check, run by the VM's
+// `daemon --preflight`: the cutover and release check, run by the VM's
 // updater (deploy/qcr-update.sh) from the NEW image with --network none, after
 // the stop, on a scratch copy of the snapshot and before the point of no return.
 //
@@ -7,7 +7,7 @@
 //     the daemon's own StateStore, so a mount of the live state can be read-only;
 //   - every open PR's session JSONL is parsed (resumecheck.ts) and, as the worker
 //     does as its first act, opened by pi's SessionManager and its context rebuilt.
-//     No provider, no model, no round: the same check the P8.4 rehearsal makes
+//     No provider, no model, no round: the same check the rehearsal makes
 //     of the library half;
 //   - the login (auth.json) must be there, readable and either refreshable or
 //     good for the work window; models.json must parse; the IPC socket directory

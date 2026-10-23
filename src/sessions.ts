@@ -410,7 +410,7 @@ export class PiSessionManager {
    * process.env. Only the app credential path is reachable: the OpenAI key
    * comes out of the app secrets dir, and GitHub auth is minted per command by
    * scripts/mint-token.sh from the app PEM. No GH_TOKEN/GITHUB_TOKEN, no
-   * personal credential, is ever placed here (CLAUDE.md rule 3).
+   * personal credential, is ever placed here (the App-only credential rule).
    */
   buildEnv(session: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     const env: NodeJS.ProcessEnv = {

@@ -24,9 +24,9 @@ with unit tests before this run; the rest were the rehearsal's own expectations 
   which is the guard working: an answer is not a second review of the same head. The operator's
   "answer the author" is a thread reply, and that is what the rehearsal now asks for; it lands in
   `state/dryrun` through the post IPC and the one gate. Without `may_post` the worker holds no
-  posting tool at all (P8.17: read-only tools plus chat), so its bash call fails as "Tool bash not
+  posting tool at all (by design: read-only tools plus chat), so its bash call fails as "Tool bash not
   found" and nothing lands; the daemon's own `may_post_required` refusal of the post IPC is the
-  second belt, covered by P8.17's unit tests because no tool in that worker can reach it. The
+  second belt, covered by the answer worker's unit tests because no tool in that worker can reach it. The
   section also moved back after round 1: before it the PR is not tracked, and the message is
   refused.
 - **F4, rehearsal: a debug round ends itself** (DEBUG-1). The daemon stops the debug pi once the

@@ -587,8 +587,8 @@ compiled `dist/` guard.
 - **G5 is a path SHAPE, not a rooted path.** The guard does not know the
   session's cwd, so it refuses `scripts/…`, `dist/…`, `agents/…` and a
   `config.toml` under ANY prefix — including inside the reviewed repo's
-  worktree and under `/tmp`. A reviewer never writes those either (scoping
-  rule 2), so the over-reach costs a loud refusal on a write nobody makes; but
+  worktree and under `/tmp`. A reviewer never writes those either (it reads
+  code and never runs it), so the over-reach costs a loud refusal on a write nobody makes; but
   it is over-reach, and a legitimate future write under one of those names
   would have to be re-homed rather than exempted.
 - **G6 is a write veto by name, with no layer 4 behind it.** A write that

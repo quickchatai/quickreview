@@ -3,7 +3,7 @@
 // process, the launch runs the same `qcr scan … --foreground` driver in a
 // throwaway container (`docker run --rm`) from the scan sandbox image, which
 // carries the built app at /opt/qcr (docker/companion/Dockerfile; the local
-// companion is the release image since P7.8, so this image is the scan's
+// companion is now the release image, so this image is the scan's
 // alone, `qcr-scan` by default). The
 // container sees only what a scan needs:
 //

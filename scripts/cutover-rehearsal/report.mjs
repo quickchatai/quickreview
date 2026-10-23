@@ -39,11 +39,11 @@ const table = (list) => {
 const md = [];
 md.push("# Cutover rehearsal", "");
 md.push(
-  `P8.20. The real cutover tooling, end to end, against a throwaway legacy-shaped host: \`scripts/cutover.sh\` (the P8.21a wizard) driving \`scripts/deploy.sh\`, ssh, \`deploy/qcr-update.sh\`, a registry and the release and memory images built from this tree, over a host directory a LEGACY build wrote. Four failures are injected before the clean run; the clean run goes through the point of no return, verify, the first reconcile under the operator's hold and the owner's lift, and then the P8.20a worker checks run on the release boot the updater made.`,
+  `The real cutover tooling, end to end, against a throwaway legacy-shaped host: \`scripts/cutover.sh\` (the cutover wizard) driving \`scripts/deploy.sh\`, ssh, \`deploy/qcr-update.sh\`, a registry and the release and memory images built from this tree, over a host directory a LEGACY build wrote. Four failures are injected before the clean run; the clean run goes through the point of no return, verify, the first reconcile under the operator's hold and the owner's lift, and then the worker rehearsal's checks run on the release boot the updater made.`,
   "",
   `Run ${date} on ${sha.slice(0, 8)}. **${passed} of ${rows.length} checks passed, ${failed} failed.** Cost: $0 (no model, no GitHub, no ghcr; the containers sit on an internal docker network with a scripted stub).`,
   "",
-  "Re-run it: `scripts/cutover-rehearsal.sh` (about 25 minutes with the images built; `--work DIR` reuses the registry, the pushed images and the pristine legacy host; `--fresh`, `--keep` and `--skip-worker` are in the script's header). It exits 0 only when every check passed, and a full run rewrites this file. The images come from `scripts/worker-rehearsal/build-images.sh` (the same tooling as P8.20a).",
+  "Re-run it: `scripts/cutover-rehearsal.sh` (about 25 minutes with the images built; `--work DIR` reuses the registry, the pushed images and the pristine legacy host; `--fresh`, `--keep` and `--skip-worker` are in the script's header). It exits 0 only when every check passed, and a full run rewrites this file. The images come from `scripts/worker-rehearsal/build-images.sh` (the same tooling as the worker rehearsal).",
   "",
   "## What is real and what stands in",
   "",

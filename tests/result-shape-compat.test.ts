@@ -237,7 +237,7 @@ describe("new shape — each lens counts once", () => {
   });
 });
 
-describe("tool names (D3)", () => {
+describe("tool names", () => {
   it("accepts the old pair and the new pair, nothing else", () => {
     for (const n of ["subagent", "launch_plan", "lens", "lens_wave"])
       expect(isLensTool(n)).toBe(true);
@@ -306,7 +306,7 @@ describe("lens ledger lines", () => {
 
 describe("the core's src/lensresult.ts is neutral", () => {
   // The daemon-side usage.ts imports it, so it must stay outside src/engine/
-  // (the P2.1 fence) and depend on nothing itself.
+  // (the fence) and depend on nothing itself.
   it("has no imports, and the daemon-side consumers import it", () => {
     const src = readFileSync(
       join(import.meta.dirname, "..", "packages", "pi-plugin", "src", "lensresult.ts"),

@@ -1,4 +1,4 @@
-// P2.11: the offline CPU and RSS gate (scripts/cpu-gate.mjs). The measurement
+// The offline CPU and RSS gate (scripts/cpu-gate.mjs). The measurement
 // itself is run by hand and committed (docs/cpu-gate.md); what is pinned here is
 // that the script still works end to end on a tiny run, and that its pass/fail
 // verdict follows the limit it is given. The end-to-end cases need a built

@@ -1,8 +1,8 @@
-// [P8.14] The bot's route binding: every bot round renders the templates of the
+// The bot's route binding: every bot round renders the templates of the
 // host that runs it, and a debug round is delivered the same text.
 //
 // The bot has one host at a time (no mixed fleet). A worker's session has the
-// engine's `lens` and `lens_wave` and no `subagent` (rule 9, D3); the tmux host's
+// engine's `lens` and `lens_wave` and no `subagent` (rule 9); the tmux host's
 // has the old pair. Dispatch writes the host's names into the order it builds
 // (`SessionHooks.lensRuntime`), so the prompt, the task files and the saved payload of one
 // round name one pair of tools, whatever `[pi] lens_runtime` says; the production
@@ -150,7 +150,7 @@ async function dispatchFor(
 const WORKER: Pick<SessionHooks, "lensRuntime"> = { lensRuntime: "engine" };
 const TMUX: Pick<SessionHooks, "lensRuntime"> = {};
 
-describe("[P8.14] which host an order is written for", () => {
+describe("which host an order is written for", () => {
   let rig: WorkerHostRig | undefined;
   afterEach(() => rig?.dispose());
 
@@ -169,7 +169,7 @@ describe("[P8.14] which host an order is written for", () => {
   });
 });
 
-describe("[P8.14] a bot round on the worker host renders engine templates", () => {
+describe("a bot round on the worker host renders engine templates", () => {
   it("the order, the prompt and every task file name lens and lens_wave, and never the old pair", async () => {
     const r = await dispatchFor(WORKER, "native");
     expect(r.order.lens_runtime).toBe("engine");
@@ -193,7 +193,7 @@ describe("[P8.14] a bot round on the worker host renders engine templates", () =
   });
 });
 
-describe("[P8.14] a debug round is delivered the same engine templates", () => {
+describe("a debug round is delivered the same engine templates", () => {
   const dir = mkdtempSync(join(tmpdir(), "route-binding-"));
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 

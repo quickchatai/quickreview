@@ -1,4 +1,4 @@
-// The pane-side half of the launch-file handoff (D23).
+// The pane-side half of the launch-file handoff.
 //
 // tmux does not pass file descriptors into a pane, so a takeover or debug pi
 // is started as

@@ -567,7 +567,7 @@ import {
   WIRE_FORMAT_RE,
 } from "@quickchatai/pi-quickreview/src/heuristics.js";
 
-describe("planning: every planned lens says why (owner decision 2026-10-03)", () => {
+describe("planning: every planned lens says why (owner decision)", () => {
   it("each plan row but the validator carries a reason", () => {
     const files = [
       {
@@ -633,7 +633,7 @@ describe("planning: backcompat by content, claims on a stated behaviour", () => 
 import { LENS_PLANNING } from "@quickchatai/pi-quickreview/src/lensplanning.js";
 import { ALL_PASSES } from "@quickchatai/pi-quickreview/src/passes.js";
 
-describe("every lens documents when it runs and its priority (owner decision 2026-10-03)", () => {
+describe("every lens documents when it runs and its priority (owner decision)", () => {
   it("LENS_PLANNING covers exactly ALL_PASSES", () => {
     expect(Object.keys(LENS_PLANNING).sort()).toEqual([...ALL_PASSES].sort());
     for (const [l, p] of Object.entries(LENS_PLANNING)) expect(p.when.length, l).toBeGreaterThan(5);

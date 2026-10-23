@@ -1,4 +1,4 @@
-// The worker crash-loop breaker (P8.5b): what the daemon does when workers keep
+// The worker crash-loop breaker: what the daemon does when workers keep
 // dying, so a broken round, a dead login or a bad build cannot spend the bot's
 // budget one respawn at a time.
 //
@@ -13,8 +13,8 @@
 //     Only an explicit `drain off` lifts it (a boot's first healthy reconcile pass
 //     leaves a reasoned drain standing).
 //   - EVERY HOST. `gate` is the one question each host asks before it starts a
-//     round worker, an answer worker (P8.17) or a debug round (P8.13b): the bot
-//     is drained, or the PR is parked, and the answer is no. A takeover (P8.13)
+//     round worker, an answer worker or a debug round: the bot
+//     is drained, or the PR is parked, and the answer is no. A takeover
 //     never posts, so it does not ask.
 //
 // A daemon's own stop or an operator's kill is not a failure: the caller does not

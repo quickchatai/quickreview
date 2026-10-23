@@ -1,4 +1,4 @@
-// [P8.3] The bot worker opens no state.db. The daemon stays the only SQLite
+// The bot worker opens no state.db. The daemon stays the only SQLite
 // writer, so the worker's runtime import closure holds neither the state store
 // nor a SQLite binding, and the worker's own code does not name them. Verified
 // by mutation: the scan runs on the real tree (clean) and on planted trees.
@@ -27,7 +27,7 @@ function planted<T>(files: Record<string, string>, fn: (root: string) => T): T {
   }
 }
 
-describe("[P8.3] src/botworker.ts opens no state.db", () => {
+describe("src/botworker.ts opens no state.db", () => {
   it("its runtime import closure holds no state store and no SQLite binding", () => {
     expect(workerReachesStateStore(ROOT)).toEqual([]);
   });

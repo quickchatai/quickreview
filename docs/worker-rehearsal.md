@@ -1,6 +1,6 @@
 # Worker rehearsal
 
-P8.20a. The pre-deletion rehearsal of the worker world: HEAD's release and memory images, run with the cutover run spec's volumes and command (`deploy/qcr-update.sh`) over a legacy-shaped host directory, before any Phase 9 deletion. While the process runtime, the tmux host and the bridge still exist a failure is found before anything is gone.
+The pre-deletion rehearsal of the worker world: HEAD's release and memory images, run with the cutover run spec's volumes and command (`deploy/qcr-update.sh`) over a legacy-shaped host directory, before the legacy runtime was deleted. While the process runtime, the tmux host and the bridge still exist a failure is found before anything is gone.
 
 Run 2026-10-22 on d8c2754b. **21 of 21 checks passed, 0 failed.** Cost: $0 (no model, no GitHub, no registry; the containers cannot reach anything but a scripted stub).
 
@@ -9,8 +9,8 @@ Re-run it: `scripts/worker-rehearsal.sh` (about 10 minutes with the images built
 ## The rehearsal's world
 
 - **Images**, built from HEAD by `scripts/worker-rehearsal/build-images.sh` (the Dockerfiles' own allowlists, staged because this host has no BuildKit): release `sha256:72312484aef6` (654 MB), memory `sha256:a7a268e7d989` (1991 MB); run spec label 2 layout=release.
-- **The host directory** (`scripts/worker-rehearsal/layout.sh`) is what the VM's `/opt/quickreview` is the moment before the cutover: a `state.db` created by the LEGACY build (commit 8169df6f, the one the live bot runs) with the operator's drain standing and an earlier closed PR; PR 7's legacy interactive-pi JSONL under `state/pi-sessions` (2026-10-18T10-00-00-000Z_rh-legacy-7d00adc5.jsonl 8931 bytes), its header cwd the legacy sandbox root `/opt/quickreview/sandbox`; the legacy mounts (`sandbox/wt`, `archive`, `commands`, `digest`, `inject`, `verdict`, the base clone); a pihome with a far-future fake login; a generated App key and ids; `dry_run = true`.
-- **The containers** are started with the run spec's flags and volumes, in the run spec's order: the memory sidecar (seeded, key read back, restarted, `/ready`), then the daemon (`daemon`, `--restart unless-stopped --init`, 2 CPUs, 8 GiB, the same bind mounts including the legacy-path continuity mounts).
+- **The host directory** (`scripts/worker-rehearsal/layout.sh`) is what the VM's `/opt/quickreview` is the moment before the cutover: a `state.db` created by the LEGACY build with the operator's drain standing and an earlier closed PR; PR 7's legacy interactive-pi JSONL under `state/pi-sessions` (2026-10-18T10-00-00-000Z_rh-legacy-7d00adc5.jsonl 8931 bytes), its header cwd the legacy sandbox root `/opt/quickreview/sandbox`; the legacy mounts (`sandbox/wt`, `archive`, `commands`, `digest`, `inject`, `verdict`, the base clone); a pihome with a far-future fake login; a generated App key and ids; `dry_run = true`.
+- **The containers** are started with the run spec's flags and volumes, in the run spec's order: the memory sidecar (seeded, key read back, restarted, `/ready`), then the daemon (`daemon`, `--restart unless-stopped --init`, the run spec's CPU and memory caps, the same bind mounts including the legacy-path continuity mounts).
 - **The model** is `scripts/worker-rehearsal/stub.mjs`, an OpenAI-compatible server on the rehearsal network. pi reaches it through the pihome's own `models.json` (a `local` provider) and `config.toml` names `local/m` for every role and tier: no code hook, no real provider. It plays a playbook read off each request (the main session joins the wave with `lens_wave`, writes and commits the verdict, posts through the shim; a lens leaf answers `NONE`).
 - **GitHub** is the same stub, answering as `api.github.com` (a network alias, over TLS with a throwaway CA the containers trust through `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `CURL_CA_BUNDLE` and `GIT_SSL_CAINFO`) and `auth.openai.com` (pi-ai's own token refresh). The base clone's origin is a local bare repository; `git` fetches from it, not from GitHub.
 - **The network** is `docker network create --internal`: no route out. The capture is the stub's request log (every request it served) plus what the containers tried to reach and could not (failed lookups in the logs).
@@ -86,9 +86,9 @@ with unit tests before this run; the rest were the rehearsal's own expectations 
   which is the guard working: an answer is not a second review of the same head. The operator's
   "answer the author" is a thread reply, and that is what the rehearsal now asks for; it lands in
   `state/dryrun` through the post IPC and the one gate. Without `may_post` the worker holds no
-  posting tool at all (P8.17: read-only tools plus chat), so its bash call fails as "Tool bash not
+  posting tool at all (by design: read-only tools plus chat), so its bash call fails as "Tool bash not
   found" and nothing lands; the daemon's own `may_post_required` refusal of the post IPC is the
-  second belt, covered by P8.17's unit tests because no tool in that worker can reach it. The
+  second belt, covered by the answer worker's unit tests because no tool in that worker can reach it. The
   section also moved back after round 1: before it the PR is not tracked, and the message is
   refused.
 - **F4, rehearsal: a debug round ends itself** (DEBUG-1). The daemon stops the debug pi once the

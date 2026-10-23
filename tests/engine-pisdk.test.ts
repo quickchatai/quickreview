@@ -1,4 +1,4 @@
-// PiHost [P2.8]: the model's bash environment, and the host's own contract.
+// PiHost : the model's bash environment, and the host's own contract.
 // The isolation canaries (HOME, tools, dispatcher) live in tests/pi-canary/.
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

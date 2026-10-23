@@ -179,7 +179,7 @@ Where a person sees it:
 
 A measured `ok: true` is the only thing that ends a not-serving run.
 
-### The pin (rule 7)
+### The pin
 
 The model file is a pin like the server version. There are three mirrors,
 each checked:
@@ -372,8 +372,8 @@ too.
 
 ### The companion's namespace — the operator's half
 
-The daemon never holds the companion key (root `CLAUDE.md` rule 8), so it
-cannot rebuild `viking://user/companion`. You do, from the PC that holds both
+The daemon never holds the companion key (the companion boundary), so it
+cannot rebuild `viking://user/companion`. You do, from the machine that holds both
 user keys, over the memory forward:
 
 ```sh

@@ -1,4 +1,4 @@
-// The world a bot worker runs in, for the tests of src/botworker.ts (P8.3): a
+// The world a bot worker runs in, for the tests of src/botworker.ts: a
 // production-shaped root of its own (so scripts/ and verdict/ are real and
 // private), an agent dir with a login and the lens agents, a
 // round's task files, and a FAKE DAEMON: a real IpcServer on a real unix socket
@@ -247,9 +247,9 @@ export class FakeDaemon {
   /** Runs inside `wakes.take`, before it answers; a test drops the connection here. */
   onTake: (() => Promise<void>) | undefined;
   readonly acked: string[] = [];
-  /** The worker's `control.ack`s (P8.12), in arrival order. */
+  /** The worker's `control.ack`s, in arrival order. */
   readonly controlAcks: ControlAck[] = [];
-  /** The daemon's real permit broker (P8.10), no stagger: a worker's passes ask it. */
+  /** The daemon's real permit broker, no stagger: a worker's passes ask it. */
   readonly permits = new PermitBroker({ ceiling: 20, staggerMs: 0 });
   /** The lens ids that asked the broker for a permit, in order. */
   readonly permitAsks: string[] = [];

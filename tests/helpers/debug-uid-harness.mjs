@@ -1,4 +1,4 @@
-// [P7.12a] What tests/tool-uid-container.test.ts runs inside a container, as the
+// What tests/tool-uid-container.test.ts runs inside a container, as the
 // engine's run uid, to see a debug round (`qcr review --debug-pi`) start its
 // interactive pi under the tool uid split: the REAL pi CLI in a pty over a local
 // OpenAI-compatible endpoint (loopback; no model, nothing leaves the machine),

@@ -23,7 +23,7 @@ it:
 - Never label, re-label, or ask anyone to label a PR.
 - Never write an overseer inject asking for a re-review, a rerun, or a fresh
   round on any PR. Your one lever is not a replay mechanism.
-- Never touch `dry_run`. It is the owner's alone in both directions (root rule 1),
+- Never touch `dry_run`. It is the owner's alone in both directions (`docs/ownership.md`),
   and a replay that needs it flipped is a replay you must not run.
 - Never replay an **open** PR at all, whatever the mechanism.
 

@@ -84,9 +84,9 @@ describe("commit-verdict.sh", () => {
   });
 
   it("publishes a recheck outcome file the same way", async () => {
-    const name = "pr-5850-recheck-8693fde76890.json";
+    const name = "pr-4242-recheck-111111111111.json";
     expect(RECHECK_FILE_RE.test(name)).toBe(true);
-    writeFileSync(join(verdict, `${name}.tmp`), '{"pr":5850,"outcome":"uphold"}');
+    writeFileSync(join(verdict, `${name}.tmp`), '{"pr":4242,"outcome":"uphold"}');
     expect((await commit(name)).code).toBe(0);
     expect(existsSync(join(verdict, name))).toBe(true);
   });
@@ -161,7 +161,7 @@ describe("commit-verdict.sh", () => {
     const accepted = /^pr-[0-9]+-(round-[0-9]+|recheck-[0-9a-fA-F]{7,40})\.json$/;
     const script = readFileSync(join(repo, "scripts", "commit-verdict.sh"), "utf8");
     expect(script).toContain(accepted.source);
-    for (const name of ["pr-5885-round-2.json", "pr-5850-recheck-8693fde7.json"]) {
+    for (const name of ["pr-5885-round-2.json", "pr-4242-recheck-11111111.json"]) {
       expect(accepted.test(name)).toBe(true);
       expect(VERDICT_FILE_RE.test(name) || RECHECK_FILE_RE.test(name), name).toBe(true);
     }
@@ -317,7 +317,7 @@ describe("commit-verdict.sh", () => {
       expect(r.err).toContain("symlink");
       expect(existsSync(join(verdict, "pr-5885-round-2.json"))).toBe(false);
 
-      r = await commit("--from-record", "pr-5850-recheck-8693fde76890.json");
+      r = await commit("--from-record", "pr-4242-recheck-111111111111.json");
       expect(r.code).not.toBe(0);
       expect(r.err).toContain("round verdict only");
       for (const bad of ["../config.toml", "", "pr-1-round-1.json.tmp"]) {
@@ -333,7 +333,7 @@ describe("commit-verdict.sh", () => {
     for (const form of [
       "scripts/commit-verdict.sh pr-5885-round-2.json",
       "bash scripts/commit-verdict.sh pr-5885-round-2.json",
-      "./scripts/commit-verdict.sh pr-5850-recheck-8693fde76890.json",
+      "./scripts/commit-verdict.sh pr-4242-recheck-111111111111.json",
       "scripts/commit-verdict.sh --from-record pr-5885-round-2.json",
     ]) {
       const r = checkBashCommand(form);

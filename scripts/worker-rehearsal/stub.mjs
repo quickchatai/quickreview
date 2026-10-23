@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The rehearsal's one outside world (P8.20a): a scripted OpenAI-compatible model and a
+// The rehearsal's one outside world: a scripted OpenAI-compatible model and a
 // scripted GitHub REST API, in one process on the rehearsal's internal network, and a
 // log of every request either one served. Nothing else is reachable from the containers
 // (the network is `--internal`), so this log IS the network capture: a request to any

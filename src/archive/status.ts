@@ -56,7 +56,7 @@ export interface ArchiveTotals {
   duplicates_removed: number;
 }
 
-/** The per-round worker trees `state/live/` and `state/lens/` (P8.16): their
+/** The per-round worker trees `state/live/` and `state/lens/`: their
  * size at the last sweep against the cap, and what retention did. Null before
  * the first sweep. */
 export interface ArchiveLiveStatus {

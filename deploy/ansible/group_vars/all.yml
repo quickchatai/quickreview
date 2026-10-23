@@ -172,7 +172,7 @@ memory_container_memory: "3g"
 
 timezone: Europe/Warsaw
 container_uid: 1001                   # the uid the daemon runs as and the host directories belong to
-# The identity the model's tools run as (D32): never the container
+# The identity the model's tools run as: never the container
 # uid, so they cannot read secrets/ or pi's login, and a gid of its own, which
 # the container user is given too (--group-add) and which owns only the
 # directories the model's scripts write (state/, verdict/, commands/). A MIRROR

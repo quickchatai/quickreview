@@ -159,7 +159,7 @@ describe("InjectSender", () => {
     expect(states[states.length - 1]![1]).toContain("check the session before re-sending");
   });
 
-  it("refuses a PR session: nothing reads a PR's inject directory (P9.6)", async () => {
+  it("refuses a PR session: nothing reads a PR's inject directory", async () => {
     const { sender, states, calls, record } = senderWith([ok(""), ok("consumed\n")]);
     await sender.send("pr-5012", "x", record);
     expect(states).toEqual([
@@ -307,7 +307,7 @@ describe("quick-message input box", () => {
     streams.type("\r");
     await settle();
     expect(sent).toEqual([{ kind: "message", pr: 5012, text: "hi\nthere" }]);
-    expect(injected).toEqual([]); // a PR's message is never an inject file (P9.6)
+    expect(injected).toEqual([]); // a PR's message is never an inject file
     expect(app.view.inputBox).toBeUndefined();
     expect(app.view.noticeLine).toBe("✓ message #5012 delivered");
     streams.type("q");
@@ -849,7 +849,7 @@ describe("msg.ts routes a PR message by status.json runtime", () => {
     return { app, tmux, control };
   }
 
-  it("the route is a function of the runtime alone, and there is no tmux route (P9.6)", () => {
+  it("the route is a function of the runtime alone, and there is no tmux route", () => {
     expect(messageRoute(undefined)).toBe("control");
     expect(messageRoute("tmux")).toBe("control");
     expect(messageRoute("a runtime a later daemon invents")).toBe("control");

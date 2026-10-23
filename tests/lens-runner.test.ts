@@ -1,4 +1,4 @@
-// P4.3: runLens, the lens pass as an in-process SDK session. Everything here runs
+// RunLens, the lens pass as an in-process SDK session. Everything here runs
 // the real pi SDK on pi-ai's faux provider (no model, no network): the cap, the
 // abort, the deadline and its one retry, a dispose that leaves a sibling alone,
 // the leaf guarantee and the containment of a throwing extension.
@@ -162,7 +162,7 @@ describe("[runLens] the cap", () => {
 });
 
 describe("[runLens] a pass", () => {
-  it("is built the native way: the body appended, D34 context files as data, unique ids", async () => {
+  it("is built the native way: the body appended, context files as data, unique ids", async () => {
     rig.faux.setResponses([() => fauxAssistantMessage("a"), () => fauxAssistantMessage("b")]);
     const runner = createLensRunner(
       config({ agentsFiles: [{ path: join(dir, "AGENTS.md"), content: "REVIEWER-STUB-TEXT" }] }),

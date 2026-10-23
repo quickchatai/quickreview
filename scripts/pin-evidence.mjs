@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Which VERIFY-ON-PIN assumptions have live evidence in a state/log extract?
 //
-// D29: a tag is cleared by production evidence only. scripts/pin-evidence-map.json
+// A tag is cleared by production evidence only. scripts/pin-evidence-map.json
 // maps every tag group to the signal that would prove it; this reads an extract
 // and reports, per group, whether a line matching its signal exists. It removes
 // no tag and edits nothing.

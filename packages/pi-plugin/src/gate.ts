@@ -2,7 +2,7 @@
 // git push — is described as a MutationIntent and passed through execute().
 // In dry-run (config.dry_run) the intent is written to state/dryrun/ instead
 // of being executed. There is deliberately no review-dismissal intent kind:
-// the never-dismiss invariant is structural (CLAUDE.md rule 2).
+// the never-dismiss invariant is structural (AGENTS.md invariant 2).
 //
 // A git push is gated too: a git intent carries a `GitPerformer` (see below)
 // and the gate, not the call site, decides whether it runs.
@@ -15,7 +15,7 @@ export type MutationKind =
   | "remove_label"
   | "delete_team_review_request"
   // Reviewer nomination, the optional escalation feature's second delivery
-  // shape (CLAUDE.md rule 10). It is an ordinary kind and nothing about it
+  // shape (the never-hand-to-a-human rule). It is an ordinary kind and nothing about it
   // is special-cased: fully
   // gated, suppressed in dry-run like everything else, never `forceLive`,
   // never in APP_SELF_CONFIG_KINDS. It is reachable only from
@@ -37,10 +37,10 @@ export type MutationKind =
   // Post-review cleanup: the bot superseding ITS OWN stale non-APPROVED
   // review after posting a new one. No adapter method and no caller exist
   // today, so nothing is superseded; one that is added must enforce the
-  // owner+state guards in the adapter (CLAUDE.md rule 2) — dismissing an
+  // owner+state guards in the adapter (AGENTS.md invariant 2) — dismissing an
   // approval or another identity's review stays impossible.
   | "supersede_own_review"
-  // App-self-config class (CLAUDE.md rule 1): re-point the GitHub App's OWN
+  // App-self-config class (AGENTS.md invariant 6): re-point the GitHub App's OWN
   // webhook URL
   // (JWT-authed PATCH /app/hook/config). Touches only the App's own
   // configuration — never the reviewed repo. See APP_SELF_CONFIG_KINDS.
@@ -70,7 +70,7 @@ export const MUTATION_KINDS: readonly MutationKind[] = [
 ];
 
 /**
- * The app-self-config gate class (CLAUDE.md rule 1): mutations that touch
+ * The app-self-config gate class (AGENTS.md invariant 6): mutations that touch
  * ONLY the GitHub App's own configuration and can never reach the reviewed
  * repo. The gate EXECUTES this class even when `dry_run = true`, loudly
  * logged every time, because new users run dry-run during exactly the window
@@ -170,7 +170,7 @@ export type MutationExecutor = (intent: MutationIntent) => Promise<unknown>;
  *
  * A git push cannot go through the REST executor — `GitHubAdapter.executeMutation`
  * throws on `method === "git"` — yet it must still be gated in live mode
- * (CLAUDE.md rule 1). So the gate mediates the push: the caller — which is
+ * (AGENTS.md invariant 1). So the gate mediates the push: the caller — which is
  * the only thing that knows which clone the push must run in — hands the gate
  * a performer, and the
  * GATE, never the call site, decides whether it runs: the kind check, the
@@ -464,11 +464,11 @@ export class MutationGate {
       intent = post;
     }
     // The app-self-config class (see APP_SELF_CONFIG_KINDS): executes for real
-    // even in dry-run (CLAUDE.md rule 1), and every execution is loud. The
+    // even in dry-run (AGENTS.md invariant 6), and every execution is loud. The
     // intent's `note` names old and new URL, so the line does too.
     if ((APP_SELF_CONFIG_KINDS as readonly string[]).includes(intent.kind)) {
       this.logFn(
-        `gate: APP-SELF-CONFIG "${intent.kind}" executing FOR REAL${this.dryRun ? " despite dry_run (ratified rule-1 amendment, 2026-08-30)" : ""} — ${intent.note}`,
+        `gate: APP-SELF-CONFIG "${intent.kind}" executing FOR REAL${this.dryRun ? " despite dry_run (the app-self-config exception)" : ""} — ${intent.note}`,
       );
       const response = await this.executor(intent);
       const executed: GateResult = { executed: true, response };

@@ -333,7 +333,7 @@ skips cases already `ok`.
 
 Every container runs with `--read-only` root, `--cap-drop ALL`,
 `no-new-privileges`, a non-root uid (yours), pids/memory/CPU caps, and tmpfs
-or anonymous volumes for its scratch space. On this PC it can touch exactly:
+or anonymous volumes for its scratch space. On the benchmark host it can touch exactly:
 
 - `bench/aacr/runs/<id>/` — read-write, the run's own output. `bench.sh` never
   writes inside it or follows anything in it (the docker-command log sits
@@ -775,7 +775,7 @@ on stub and on real output: `tests/bench-pireview.test.ts`.
   `QCR_BENCH_PIREVIEW_VERSION` + `QCR_BENCH_PIREVIEW_SHA512` to `bench.sh build
 --arm pireview`), re-read `dist/prompt.js`, `resources/system-prompt.md` and
   the `PI_REVIEW_META_JSON` shape, and re-run the smoke test. pi itself is the
-  runtime's pin (rule 7) — bump it there, for every arm at once.
+  runtime's pin — bump it there, for every arm at once.
 - **Per case**: `cases/<id>/` holds `pireview-argv.json`, `pi-events.jsonl`
   (the child's pi event stream — `compare.py` prices it like our own
   sessions'), `pireview-stdout.txt`, `pireview-stderr.log`,
@@ -1140,7 +1140,7 @@ old `arm.sh --cases full` ran the whole set in one container at
   or overload pauses new launches for `QCR_BENCH_RATE_LIMIT_PAUSE` (300 s).
   Whatever is still not ok after that is what `--resume` re-runs.
 
-**Expected on this PC** (16 cores, 31 GB, no swap): memory is not what binds.
+**Expected on a 16-core, 31 GB host with no swap**: memory is not what binds.
 A review measured ~250 MB anonymous plus ~200 MB page cache, up to ~1 GB with
 six lens children at once; `auto` gives 10 slots with 14+ GB available. At 10
 slots `full` reviews in ~2.3 h (185 × 7.5 min / 10) plus a short tail, the

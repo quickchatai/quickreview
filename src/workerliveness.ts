@@ -1,4 +1,4 @@
-// Worker liveness (P8.8): what the archiver, the startup orphan sweep and
+// Worker liveness: what the archiver, the startup orphan sweep and
 // operator recovery ask of the machine instead of asking tmux.
 //
 // A PR has no session between rounds, only its JSONL. Whether anything runs for

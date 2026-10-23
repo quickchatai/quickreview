@@ -147,44 +147,10 @@ describe("daemon topology", () => {
     expect(offenders).toEqual([]);
   });
 
-  // docs/rulebook/ is manifest-excluded from the public tree.
-  it.skipIf(!existsSync(join(import.meta.dirname, "..", "docs", "rulebook", "hard-rules.md")))(
-    "CLAUDE.md rule 9 is the ratified text (one session kind, workers, one host per PR)",
-    () => {
-      // Rule text changes only by the owner's ratification, so the test pins it
-      // verbatim (whitespace folded: CLAUDE.md wraps it). The same words open
-      // docs/single-shepherd-invariant.md's amendment.
-      const RATIFIED = "[private rule text removed]";
-      const text = readFileSync(
-        join(import.meta.dirname, "..", "docs", "rulebook", "hard-rules.md"),
-        "utf8",
-      );
-      const start = text.indexOf("\n9. ");
-      const end = text.indexOf("\n10. ", start);
-      expect(start).toBeGreaterThan(-1);
-      const rule = text
-        .slice(start + 4, end)
-        .replace(/\s+/g, " ")
-        .trim();
-      expect(rule).toBe(RATIFIED);
-      const doc = readFileSync(
-        join(import.meta.dirname, "..", "docs", "single-shepherd-invariant.md"),
-        "utf8",
-      );
-      // (whitespace folded: the doc wraps it, and the amendment breaks a line inside the names)
-      const folded = doc.replace(/\s+/g, " ");
-      expect(folded).toContain("Exactly two launchers");
-      expect(folded).toContain("`lens` / `lens_wave`");
-      expect(folded).toContain("**S5 \u2014 One host per PR at a time.**");
-      expect(folded).toContain("## Amendment: workers CLAUDE.md rule 9 is the authority");
-      expect(folded).not.toContain("Two daemon-owned pi session kinds");
-    },
-  );
-
   it("S2: no daemon module invokes pi outside the session manager", () => {
     // sessions.ts owns the daemon's pi argv. tui/companion.ts is the COMPANION boundary — a
     // local container on the owner's PC that never reaches GitHub or the gate
-    // (CLAUDE.md hard rule 8), so its own pi argv is not a daemon spawn.
+    // (the companion boundary), so its own pi argv is not a daemon spawn.
     // bench/runner.ts is the AACR-Bench sandbox's one-shot `pi -p` round: it
     // runs only inside the qcr-bench image (no daemon, no gate, no scripts/,
     // no credential), under a `bench-<id>` name no adopt() can match, and the
@@ -205,13 +171,13 @@ describe("daemon topology", () => {
     // imports it (dynamically); no daemon module does.
     // opencli.ts is `qcr open` and engine/debugpi.ts is `qcr review --debug-pi`:
     // the operator's own terminal, pi on its interactive UI over a finished or a
-    // starting round (P5.9). Only cli.ts and reviewcli.ts import them (dynamically).
-    // takeoverpi.ts is the pane side of the takeover lease (P8.13, D27): the operator's own
+    // starting round. Only cli.ts and reviewcli.ts import them (dynamically).
+    // takeoverpi.ts is the pane side of the takeover lease: the operator's own
     // interactive pi on a PR's real session, in tmux `takeover-pr-<n>`, started by path by
     // the lease's manager (src/takeover.ts) on the operator's `takeover` command. It is not
     // a scheduled agent: it holds the session's lease, so no worker runs beside it, it has
     // the read tools only, and it posts nothing. No daemon module imports it.
-    // debugroundpi.ts is the pane side of the bot's debug round (P8.13b, D38): the PR's own
+    // debugroundpi.ts is the pane side of the bot's debug round: the PR's own
     // round, delivered to an interactive pi in tmux `debug-pr-<n>` by the lease's manager
     // (src/debuground.ts) in a worker's place, on the operator's `debug-round` command. It is
     // the PR's main session, not a second agent: the lease keeps every worker out, the round
@@ -263,7 +229,7 @@ describe("daemon topology", () => {
     // case runner in the operator's own one-shot process (as the companion
     // drives it in its container). It holds only while nothing but the CLI's
     // dispatch reaches it, which the check after this one pins.
-    // src/engine/caserunner-sdk.ts is the same runner's SDK twin (P5.7): it
+    // src/engine/caserunner-sdk.ts is the same runner's SDK twin: it
     // reads the leaf's agent file and event stream with the process runner's
     // own helpers, so it reaches setup/caserunner.js at runtime. Only
     // scancli.ts loads it (on demand, in the detached driver), pinned below.
@@ -469,7 +435,7 @@ describe("stripAgentSpawnTools", () => {
     expect(stripAgentSpawnTools("tools: read, launch_plan, grep\n")).toBe("tools: read, grep\n");
   });
 
-  it("drops the engine routes' lens tools (D3) the same way", () => {
+  it("drops the engine routes' lens tools the same way", () => {
     expect(stripAgentSpawnTools("tools: read, lens, grep\n")).toBe("tools: read, grep\n");
     expect(stripAgentSpawnTools("tools: read, lens_wave, grep\n")).toBe("tools: read, grep\n");
     expect(stripAgentSpawnTools("tools: read, Lens_Wave, lens, bash\n")).toBe(
@@ -528,7 +494,7 @@ describe("buildAgents — built passes cannot launch agents", () => {
     }
   });
 
-  it("strips the engine routes' lens tools a seed might grow (D3)", () => {
+  it("strips the engine routes' lens tools a seed might grow", () => {
     const src = join(dir, "agents");
     const out = join(dir, "built");
     mkdirSync(src, { recursive: true });
@@ -609,14 +575,14 @@ describe("buildAgents — built passes cannot launch agents", () => {
 // out with, whatever its frontmatter says.
 describe("subagents glue is never registered globally", () => {
   const root = join(import.meta.dirname, "..");
-  // The release image's entrypoint (P9.5) registers no global extension at all.
+  // The release image's entrypoint registers no global extension at all.
   it("docker/entrypoint.sh: the global extension list is empty", () => {
     const text = readFileSync(join(root, "docker/entrypoint.sh"), "utf8");
     expect(text).not.toContain("QCR_PI_REQUIRE_EXT");
     expect(text).not.toContain("settings.extensions.push");
   });
   // packages/pi-plugin/extensions/lens.ts hosts SDK lens sessions in an interactive pi (a debug
-  // round, the companion since P7.8). The argv lists that start a tmux
+  // round, the companion now). The argv lists that start a tmux
   // session and the bench's must not name it.
   for (const file of ["src/sessions.ts", "src/bench/runner.ts"]) {
     it(`${file}: the tmux bot's and the bench's pi never load extensions/lens.ts`, () => {

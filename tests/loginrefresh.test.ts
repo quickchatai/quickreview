@@ -1,4 +1,4 @@
-// The bot login's single refresher (P8.22, the VM-only exception to D5), against
+// The bot login's single refresher (the VM-only exception to the login-refresh rule), against
 // a fake OAuth endpoint: no pi, no model, no network beyond loopback. What is
 // pinned:
 //   - it refreshes a token inside pi's window plus the margin, and leaves one
@@ -957,7 +957,7 @@ describe("config", () => {
 
 // ---- the fences ------------------------------------------------------------------------
 
-describe("[P8.22] only the refresher and the login mode write the pihome's auth.json", () => {
+describe("only the refresher and the login mode write the pihome's auth.json", () => {
   it("every auth.json writer in the tree is the refresher or a named sandbox copy", () => {
     const writers = authJsonWriters(root);
     const stray = writers.filter(
@@ -1017,7 +1017,7 @@ describe("[P8.22] only the refresher and the login mode write the pihome's auth.
   });
 });
 
-describe("[P8.22] the daemon imports neither pi nor src/engine/", () => {
+describe("the daemon imports neither pi nor src/engine/", () => {
   it("no daemon module's import closure reaches src/engine/", () => {
     expect(daemonReachesEngine(root)).toEqual([]);
   });

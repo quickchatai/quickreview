@@ -403,7 +403,7 @@ describe("promotion files one ticket, never twice", () => {
   });
 });
 
-describe("a match never drops a ticket the fresh side already carries (selfscan 94faac13)", () => {
+describe("a match never drops a ticket the fresh side already carries", () => {
   const ask = (state: ReturnType<typeof setup>["state"], old: string, fresh: string): void => {
     const file = JSON.parse(state.read(FINDINGS_FILE)!) as FindingsFile;
     file.question = {
@@ -575,7 +575,7 @@ describe("a fixed finding's ticket closes with the scan sha", () => {
     expect((sink as FakeSink).filed).toHaveLength(1);
   });
 
-  it("a re-promotion after a closed ticket reopens its record: the next fix closes it again (selfscan d5ade550)", async () => {
+  it("a re-promotion after a closed ticket reopens its record: the next fix closes it again", async () => {
     const { findings, sink, triage } = setup();
     findings.report([reported(FP("a"))], { run: "scan-1", sha: SHA1, at: "t1" });
     await triage.promote({ fingerprint: FP("a"), effort: "billing" });
@@ -595,7 +595,7 @@ describe("a fixed finding's ticket closes with the scan sha", () => {
     expect((sink as FakeSink).closes).toHaveLength(2);
   });
 
-  it("a finding reported again while an earlier ticket's close is awaited is never closed on the stale snapshot (selfscan 43b64cf3)", async () => {
+  it("a finding reported again while an earlier ticket's close is awaited is never closed on the stale snapshot", async () => {
     const sink = new (class extends FakeSink {
       onClose: (() => void) | null = null;
       override async close(ref: string, note: string): Promise<SinkResult> {
@@ -714,7 +714,7 @@ describe("#scan memory: patterns and hotspots, capped per scan; findings never",
     expect(seen).toEqual([0, 1, 2]);
   });
 
-  it("two concurrent calls share one cap record: the second is judged after the first is counted (selfscan 3ec87ec3)", async () => {
+  it("two concurrent calls share one cap record: the second is judged after the first is counted", async () => {
     const { memory, triage, state } = setup();
     const [a, b] = await Promise.all([
       triage.writeMemory({

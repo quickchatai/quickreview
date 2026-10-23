@@ -7,7 +7,7 @@
 //
 //   the lens tools    `lens` and `lens_wave`, from packages/pi-plugin/extensions/lens.ts: the lens
 //                     passes are SDK sessions of THIS pi process, on its own
-//                     dispatcher (D4, PiHost ownsProcess false)
+//                     dispatcher (PiHost ownsProcess false)
 //   /qcr-round        the round's start. It launches the planned discovery wave
 //                     (the task files the engine wrote, pass-validate never among
 //                     them) and then sends the round order as the first message,
@@ -20,14 +20,14 @@
 // and the order went out and how many rows have settled, for anything watching
 // from outside.
 //
-// The bot's debug round (P8.13b, src/debuground.ts) loads the same file, and adds what
+// The bot's debug round (src/debuground.ts) loads the same file, and adds what
 // a round that POSTS needs. The daemon's pane entry (src/debugroundpi.ts) sets
 //
 //   QCR_DEBUG_STATUS_FILE / QCR_DEBUG_PACK_FILE   where the progress record goes and
 //                     where the round's context pack is read, when they are not beside
 //                     the ledger (a worker's round keeps its pass dir apart from it)
-//   QCR_DEBUG_LENS_DIR   where the lens ledger and the lens JSONLs are kept (D10)
-//   QCR_DEBUG_STUB_FILE  the reviewer stub (D34) the lens passes carry, when the cwd
+//   QCR_DEBUG_LENS_DIR   where the lens ledger and the lens JSONLs are kept
+//   QCR_DEBUG_STUB_FILE  the reviewer stub the lens passes carry, when the cwd
 //                     (the production tree) holds none of its own
 //   QCR_IPC_CAP_FD    the fd of the round's capability. pi's own bash tool starts each
 //                     command with nothing but stdio, so the extension registers a bash
@@ -118,7 +118,7 @@ export interface DebugStatus {
   wave_settled: number;
   /** Why the wave was not planned, if it was not. */
   wave_error?: string;
-  /** What the lens host did about the HTTP dispatcher (D4): "reused" is the CLI
+  /** What the lens host did about the HTTP dispatcher: "reused" is the CLI
    * pi's own, left in place; present once the first lens pass built its host. */
   dispatcher?: DispatcherOutcome;
 }
@@ -209,7 +209,7 @@ export function lensAdjust(o: {
 }): (config: LensRunConfig) => LensRunConfig {
   return (config) => ({
     ...config,
-    // The round's lens ledger and JSONLs are kept where the daemon says (D10).
+    // The round's lens ledger and JSONLs are kept where the daemon says.
     ...(o.lensDir !== undefined
       ? {
           ledgerPath: join(o.lensDir, LENS_LEDGER_FILE),
@@ -243,7 +243,7 @@ export function activateDebugRound(
   const ledger = env["QCR_LEDGER_FILE"];
   const roundDir = ledger ? dirname(ledger) : dirname(orderFile);
   /** What the lens passes carry beyond the shim's defaults: the reviewer stub the
-   * cwd holds (D34, as data), the bash env allowlist and the round's context pack. */
+   * cwd holds (as data), the bash env allowlist and the round's context pack. */
   const readOr = (path: string): string | undefined => {
     try {
       return readFileSync(path, "utf8");
@@ -262,7 +262,7 @@ export function activateDebugRound(
     () => cwd,
     async (dir) => {
       const host = await makeHost(dir);
-      // Evidence that the lens sessions share this pi's dispatcher (D4).
+      // Evidence that the lens sessions share this pi's dispatcher.
       patchStatus(statusFile, { dispatcher: host.dispatcher });
       return host;
     },

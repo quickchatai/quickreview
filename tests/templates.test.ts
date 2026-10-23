@@ -855,7 +855,7 @@ describe("system prompts", () => {
 
 const recheckOrder: RecheckOrder = {
   pr: 5109,
-  title: "Rewrite trimToLimit",
+  title: "Rewrite clampSelection",
   trigger: "push",
   standing_verdict: "APPROVE",
   last_reviewed_sha: "aaaaaaa",

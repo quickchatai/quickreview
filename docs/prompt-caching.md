@@ -2,10 +2,10 @@
 
 ## Why
 
-Every lens of a round reads the same diff and, mostly, the same few changed files. Each one read them as fresh, uncached tool output. In 12 live rounds (2026-10-09):
-- uncached input was 71–81% of every lens child's cost;
-- the children were 91–95% of a round's cost;
-- one file was read 78 times in one round.
+Every lens of a round reads the same diff and, mostly, the same few changed files. Each one read them as fresh, uncached tool output. Measured on real review rounds:
+- uncached input was most of every lens child's cost;
+- the children were nearly all of a round's cost;
+- one file was read dozens of times in a single round.
 
 The children's first turns read **0** cached tokens, even where two children's prompts were byte-identical.
 
@@ -13,7 +13,7 @@ The reason is that pi uses its session id as the provider's cache key (`prompt_c
 
 ## What the backend does (measured)
 
-About 30 short probe calls on 2026-10-09, all on the reviewer's own ChatGPT login and `gpt-6.1-sol`. Each case below is a pair of separate pi processes over the same ~24k-token prefix.
+About 30 short probe calls on `gpt-6.1-sol`. Each case below is a pair of separate pi processes over the same ~24k-token prefix.
 
 | Case | What the second request reads from cache |
 |---|---|
@@ -32,7 +32,7 @@ So a prefix the lenses share is reused only if each lens request extends a reque
 ## Shape
 
 **Cache groups** (`[engine] lens_cache_group`, default 5; `packages/pi-plugin/src/engine/lens/cache-group.ts`, `cache-run.ts`).
-- A lens session is created with its group's key as its session id, which pi turns into the provider's cache key and routing headers. The group shares one id (D7), so the sessions of a group are disposed together once the whole group is done: one lens's dispose would otherwise close a sibling's live transport.
+- A lens session is created with its group's key as its session id, which pi turns into the provider's cache key and routing headers. The group shares one id (see docs/probes/p4.6-codex-cache-routing.md), so the sessions of a group are disposed together once the whole group is done: one lens's dispose would otherwise close a sibling's live transport.
 - Sessions share a key in groups of N per model, so no single key carries a whole round's request rate.
 - Without a pack, a group's later sessions start `[engine] lens_cache_stagger_ms` (2500) after its first. Rows of one agent whose prompts differ only in a short task pointer, such as the sweep rows, then share their system prompt.
 
@@ -56,20 +56,17 @@ The task files tell the lens that the pack is the first message of its conversat
 
 Measured end to end (real pi 1.0.0 parent, the retired native glue): two lenses with different instructions over a 24k-token pack. Each paid ~1.2k uncached tokens and read 23,808 from cache, against ~25k uncached each without it.
 
-## The measured run (2026-10-09)
+## The measured run
 
-The pack moves each lens's instructions from the system prompt into a developer message after the pack, so it was measured before it was turned on. The run used 10 follow-up replay cases from October, each run under three arms on the bench: the old follow-up code, the new code with the pack off (cache groups on), and the new code with the pack on.
+The pack moves each lens's instructions from the system prompt into a developer message after the pack, so it was measured before it was turned on. The run used a set of follow-up replay cases, each run under three arms on the bench: the old follow-up code, the new code with the pack off (cache groups on), and the new code with the pack on.
 
 | | Old code | New, pack off | New, pack on |
 |---|---|---|---|
-| Total cost | $33.9 | $48.4 | **$28.9** |
-| Median cost per case | $3.46 | $4.99 | **$3.01** |
+| Total cost, relative to the old code | 1.00 | 1.43 | **0.85** |
 | Share of input read from cache | 0.68 | 0.69 | **0.88** |
 | The same, children's first turns | 0.21 | 0.15 | **0.83** |
-| Verdict matches the live round | 9/10 | 9/10 | **10/10** |
-| Live blockers found again | 3/4 | 4/4 | **4/4** |
 
-The pack was 40% cheaper than the same code without it, case by case, with no loss of verdict agreement or recall, so it is on by default. The pack-off arm cost more than the old code because the early pre-approval sweep then ran in rounds that ended in REQUEST_CHANGES; the early start was removed afterwards (docs/follow-up-rounds.md). The cache groups change nothing the model sees.
+The pack was about 40% cheaper than the same code without it, case by case, with no loss of verdict agreement with the recorded rounds and no loss of recall on their blockers, so it is on by default. The pack-off arm cost more than the old code because the early pre-approval sweep then ran in rounds that ended in REQUEST_CHANGES; the early start was removed afterwards (docs/follow-up-rounds.md). The cache groups change nothing the model sees.
 
 ## Debugging
 

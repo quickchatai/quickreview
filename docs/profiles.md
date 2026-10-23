@@ -284,7 +284,7 @@ consumer reads that one `cfg.lenses`. What each key moves
   switches the validator off (below).
 - **`emphasis`** — compiled into a `lens-emphasis-<pass>` addendum scoped to
   that lens, composed after the profile's own pack, so the addendum registry
-  stays the only route into a pass body (rule 6). ≤ 2000 characters.
+  stays the only route into a pass body (AGENTS.md invariant 4). ≤ 2000 characters.
 - **`max_severity`** — compiled into a `lens-ceiling-<pass>` addendum scoped
   to the lens and the validator. It REPLACES every other cap on that lens,
   higher or lower: `pass-placement` at `P1` lifts its built-in `P2` cap,

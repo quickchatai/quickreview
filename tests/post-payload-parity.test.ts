@@ -1,4 +1,4 @@
-// [P7.3] The Node/IPC posting route writes the payload bytes the shell route
+// The Node/IPC posting route writes the payload bytes the shell route
 // wrote, in dry-run.
 //
 // Every recorded round in tests/fixtures/post-parity/ is posted through the
@@ -7,7 +7,7 @@
 // the fixture's expected.json, apart from the wall clock and the log label.
 // expected.json was captured from the Node route on the day the legacy shell
 // route (scripts/guards.sh and the shell bodies of the three scripts) was
-// deleted (P9.3), after the test had shown the two routes byte-equal, record
+// deleted, after the test had shown the two routes byte-equal, record
 // by record, apart from each case's pinned known_divergence.
 //
 // A fixture is a directory: case.json (the kind of post, the round, the GitHub
@@ -144,7 +144,7 @@ function recordFiles(dir: string): string[] {
     : [];
 }
 
-describe("[P7.3] the Node posting route writes the recorded dry-run payloads", () => {
+describe("the Node posting route writes the recorded dry-run payloads", () => {
   let rig: Rig | undefined;
   let clients: IpcClient[];
   let fd: number | undefined;

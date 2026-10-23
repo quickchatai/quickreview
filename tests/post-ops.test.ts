@@ -1,4 +1,4 @@
-// [P7.2] The daemon's post ops on the worker socket: post.review, post.approval
+// The daemon's post ops on the worker socket: post.review, post.approval
 // and post.reply.
 //
 // Everything runs through the real stack a host would meet: a real IpcServer on
@@ -82,7 +82,7 @@ afterEach(async () => {
   if (rig) rmSync(rig.root, { recursive: true, force: true });
 });
 
-describe("[P7.2] post.review in dry-run", () => {
+describe("post.review in dry-run", () => {
   beforeEach(async () => {
     rig = await build(true);
     roundCommand();
@@ -238,7 +238,7 @@ describe("[P7.2] post.review in dry-run", () => {
   });
 });
 
-describe("[P7.2] post.review live", () => {
+describe("post.review live", () => {
   beforeEach(async () => {
     rig = await build(false);
     roundCommand();
@@ -415,7 +415,7 @@ describe("[P7.2] post.review live", () => {
   });
 });
 
-describe("[P7.2] post.approval", () => {
+describe("post.approval", () => {
   beforeEach(async () => {
     rig = await build(true);
     roundCommand();
@@ -478,7 +478,7 @@ describe("[P7.2] post.approval", () => {
   });
 });
 
-describe("[P7.2] post.reply", () => {
+describe("post.reply", () => {
   beforeEach(async () => {
     rig = await build(true);
     plainCommand("c-answer", { may_post: true, answer: true });
@@ -513,7 +513,7 @@ describe("[P7.2] post.reply", () => {
   });
 });
 
-describe("[P7.2] post.reply live", () => {
+describe("post.reply live", () => {
   beforeEach(async () => {
     rig = await build(false);
     plainCommand("c-answer", { may_post: true, answer: true });
@@ -542,7 +542,7 @@ describe("[P7.2] post.reply live", () => {
   });
 });
 
-describe("[P7.2] what a post can never be", () => {
+describe("what a post can never be", () => {
   const ASKS: Array<[string, (body: string, pr?: number) => Record<string, unknown>]> = [
     ["post.review", (body, pr = PR) => ({ pr, event: "COMMENT", body_file: body })],
     ["post.approval", (body, pr = PR) => ({ pr, body_file: body })],
@@ -704,7 +704,7 @@ describe("[P7.2] what a post can never be", () => {
     expect(existsSync(receiptsDir())).toBe(false);
   });
 
-  it.each(ASKS)("%s: a debug-round lease may post (D38)", async (op, ask) => {
+  it.each(ASKS)("%s: a debug-round lease may post", async (op, ask) => {
     roundCommand("c-debug", { lease: "debug" });
     const body = rig.write(`pr-${PR}-x.md`, "x");
     const c = await rig.connect("c-debug");
@@ -734,7 +734,7 @@ describe("[P7.2] what a post can never be", () => {
   });
 });
 
-describe("[P7.2] rule 2: no path here retracts a review", () => {
+describe("AGENTS.md invariant 2: no path here retracts a review", () => {
   it("registers exactly the three post ops and imports no dismissal", () => {
     const text = readFileSync(join(SANDBOX, "src", "postops.ts"), "utf8");
     expect(text).not.toMatch(/dismiss|supersede|forceLive|\bfetch\(/i);

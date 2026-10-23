@@ -1,4 +1,4 @@
-// Route-gated round templates (P5.8, owner ruling D3). A round order names the
+// Route-gated round templates (owner ruling). A round order names the
 // tools that launch its lenses: `subagent` / `launch_plan` natively (the tmux
 // bot), `lens` / `lens_wave` when it was built for an engine route
 // (`lens_runtime = "engine"`). Native output is byte-identical to what it was

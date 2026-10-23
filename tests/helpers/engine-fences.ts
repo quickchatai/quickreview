@@ -1,4 +1,4 @@
-// The scans behind the engine fences (P2.1). Pure functions over a
+// The scans behind the engine fences. Pure functions over a
 // repo root, so tests/fences-engine.test.ts can run them on the real tree AND
 // on a planted copy: a fence that cannot be made to fail is not a fence.
 import { readFileSync, readdirSync, existsSync } from "node:fs";
@@ -91,16 +91,16 @@ export const DAEMON_ROOTS = [
   "src/verdicts.ts",
   "src/dispatch.ts",
   "src/posting.ts",
-  // The worker supervisor (P8.5) is the daemon's end of the per-round worker. It
+  // The worker supervisor is the daemon's end of the per-round worker. It
   // spawns the worker BY PATH and imports its env allowlist's one shared name from
   // packages/pi-plugin/src/envstrip.ts, so the engine's dispatcher and sessions never enter the daemon.
   "src/workersupervisor.ts",
-  // The worker host (P8.6) is the SessionHooks the daemon speaks over that supervisor.
+  // The worker host is the SessionHooks the daemon speaks over that supervisor.
   "src/worker-session-host.ts",
-  // The takeover lease (P8.13) starts the operator's pi in tmux by path. Its pane side
+  // The takeover lease starts the operator's pi in tmux by path. Its pane side
   // (src/takeoverpi.ts) borrows the login through the engine and is not a daemon module.
   "src/takeover.ts",
-  // The bot's debug round (P8.13b) delivers a round order to an interactive pi in tmux by path.
+  // The bot's debug round delivers a round order to an interactive pi in tmux by path.
   // Its pane side (src/debugroundpi.ts) borrows the login through the engine and is not a daemon module.
   "src/debuground.ts",
 ];
@@ -155,8 +155,8 @@ export const SDK_HOST_MODULES = [
 
 /**
  * The extensions that host SDK sessions in a pi process, and the one host
- * module they may reach (P4.5; extensions/debug-round.ts is lens.ts's tools
- * with the command that starts a debug round, P5.9). packages/pi-plugin/extensions/lens.ts runs the lens passes of an
+ * module they may reach (extensions/debug-round.ts is lens.ts's tools
+ * with the command that starts a debug round). packages/pi-plugin/extensions/lens.ts runs the lens passes of an
  * interactive pi (a debug round, the companion) in-process, on a PiHost built
  * over that pi's own agent dir, with the CLI pi's HTTP dispatcher left alone
  * (PiHostOptions.ownsProcess false). It reaches the builder only: never the
@@ -166,7 +166,7 @@ export const SDK_HOST_MODULES = [
  */
 export const EXTENSION_SDK_HOST_ALLOWED: Readonly<Record<string, readonly string[]>> = {
   [`${CORE_PACKAGE}/extensions/lens.ts`]: [`${CORE_PACKAGE}/src/engine/pisdk.ts`],
-  // The debug round (P5.9) is lens.ts's tools plus the command that starts the
+  // The debug round is lens.ts's tools plus the command that starts the
   // round, so it reaches the builder through lens.ts and nothing else.
   "extensions/debug-round.ts": [`${CORE_PACKAGE}/src/engine/pisdk.ts`],
   // The env shims pi loads by path (extensions/cli/) reach the same modules.

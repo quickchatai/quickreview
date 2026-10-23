@@ -1,4 +1,4 @@
-// The operator's controls over a running worker (P8.12): steer, followUp and abort.
+// The operator's controls over a running worker: steer, followUp and abort.
 // Neutral, like the rest of src/ipc/: shapes and validators, no engine, no pi, no
 // state store.
 //

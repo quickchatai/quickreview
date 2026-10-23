@@ -54,7 +54,7 @@ index 1de7b943..bdd968a4 100644
  
  Touches: `index.ts`, `vendor-pi-types.d.ts` (deleted), this README.
  
-+### 0013 — `createOpenViking(cfg)`: a factory over a value (`[QCR PATCH 12]`, P3.4)
++### 0013 — `createOpenViking(cfg)`: a factory over a value (`[QCR PATCH 12]`)
 +
 +The extension no longer reads the process. `index.ts` exports
 +`createOpenViking(cfg): ExtensionFactory`, and its default export is the shim:

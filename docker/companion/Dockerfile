@@ -1,4 +1,4 @@
-# The clone route's scan sandbox image (src/scanbox.ts). Since P7.8 this is NOT
+# The clone route's scan sandbox image (src/scanbox.ts). Now this is NOT
 # the companion: the local companion is the release image (docker/Dockerfile)
 # in `companion` mode, built by `qcr companion rebuild`. What is left here is
 # the throwaway container `qcr scan start` drives a scan in
@@ -114,7 +114,7 @@ RUN printf '%s\n' "${BUILD_SHA}" > /opt/qcr/BUILD_SHA
 # config, and runs `node /opt/qcr/dist/src/cli.js scan … --foreground`
 # through the entrypoint's one-shot mode.
 #
-# Its ssh to the VM (CLAUDE.md rule 8, full ssh) is the host's agent socket,
+# Its ssh to the VM (the companion boundary, full ssh) is the host's agent socket,
 # ssh config and known_hosts, mounted read-only by src/tui/companion.ts — never
 # a key file. Memory does not ride it: OpenViking is reached over a forward
 # owned by the host (scripts/companion-memory-forward.mjs), at

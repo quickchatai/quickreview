@@ -132,7 +132,7 @@
           "source": "deploy/reviewer/AGENTS.override.md"
         }
       ],
-      "note": "An SDK lens session comes from the same makeSession with the same context files (D34: the stub on every route)."
+      "note": "An SDK lens session comes from the same makeSession with the same context files (the stub on every route)."
     },
     "scan-leaf-container": {
       "cwd": "/opt/qcr",
@@ -146,7 +146,7 @@
       "agentDir": "/operator-pi-agent",
       "contextFiles": "disabled",
       "effective": [],
-      "note": "[scan] sandbox = \"host\": cwd is sandboxRoot(), the qcr checkout, whose AGENTS.md the leaf does not load (-nc, P1.1); nothing is written there or into the scanned tree."
+      "note": "[scan] sandbox = \"host\": cwd is sandboxRoot(), the qcr checkout, whose AGENTS.md the leaf does not load (-nc); nothing is written there or into the scanned tree."
     },
     "companion": {
       "cwd": "/workspace",

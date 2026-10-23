@@ -725,7 +725,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // and `launch_plan`. Dispatch writes the host's names into every order it builds
   // (`SessionHooks.lensRuntime`), whatever `[engine] runtime`, `[pi] lens_runtime` or
   // `engine_wave` say, and this refuses an order written for the other pair.
-  // The central lens permit broker (D25, src/ipc/permits.ts): one count of lens
+  // The central lens permit broker (src/ipc/permits.ts): one count of lens
   // sessions across every worker. The WorkerSupervisor serves its ops on the worker
   // socket and status.json shows it.
   const lensPermits = new PermitBroker({
@@ -736,11 +736,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // The daemon's one store, built here so the worker world (the host the daemon's
   // state machine speaks to) can exist before the daemon does.
   const store = new StateStore(join(root, "state", "state.db"));
-  // The bot login's single refresher (src/loginrefresh/, P8.22), spawned by
+  // The bot login's single refresher (src/loginrefresh/), spawned by
   // path so this process imports neither pi nor src/engine/. Only built when
   // `[login_refresh] enabled`.
   let loginRefresh: LoginRefreshSupervisor | null = null;
-  // Workers are the bot's ONLY host (P8.15w): the IPC server,
+  // Workers are the bot's ONLY host: the IPC server,
   // the supervisor and its spec builder, the leases and the controls, assembled in
   // src/workerworld.ts. No config key picks the tmux route, and nothing births a
   // `pr-<n>` tmux session any more; `sessions` serves paths, worktrees and the replay harness.
@@ -751,7 +751,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     store,
     adapter,
     reader: adapter,
-    // The entrypoint names the tool uid (docker/entrypoint.sh, D32): the model's
+    // The entrypoint names the tool uid (docker/entrypoint.sh): the model's
     // shims then dial the socket as another uid of this group.
     toolUid: toolUidSplit(),
     sessions,
@@ -868,7 +868,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // Timer-armed, never awaited; its block rides inside the heartbeat's
   // `openviking` entry.
   let reembed: ReembedDriver | null = null;
-  // Worker liveness (P8.8): the archiver, the startup orphan sweep and operator
+  // Worker liveness: the archiver, the startup orphan sweep and operator
   // recovery read the supervisor's lease files, never a tmux listing.
   const workerLive = createWorkerLiveness({ runDir: runDirOf(join(root, "state")) });
   // The webhook-URL self-heal. Only ever constructed when [ingress]
@@ -1064,7 +1064,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     loginRefreshStatus: () => loginRefresh?.status(),
     // The lens permit broker's use and queue.
     permitStatus: () => lensPermits.status(),
-    // What hosts each PR's session, for status.json's per-PR `runtime` (P8.12).
+    // What hosts each PR's session, for status.json's per-PR `runtime`.
     runtimeOf: workerWorld.runtimeOf,
     // Whether memory works, beside whether the server is up — and what memory
     // still owes the [feedback] ledger.
@@ -1681,7 +1681,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             payload,
           );
         },
-        // The operator's round controls on a worker-hosted PR (P8.12): steer, follow-up,
+        // The operator's round controls on a worker-hosted PR: steer, follow-up,
         // abort, takeover, debug-round, release and the idle-PR message.
         operatorControl: workerWorld.operatorControl,
         // The two bounded levers: who is asking comes from the
@@ -1836,7 +1836,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
 
       // Webhook-URL self-heal: only under the tunnel-file ingress shape. The
       // gated PATCH rides the app-self-config class, so it executes even in
-      // dry-run (CLAUDE.md rule 1) — loudly.
+      // dry-run (AGENTS.md invariant 6) — loudly.
       if (cfg.ingress.shape === "tunnel-file") {
         webhookHeal = new WebhookHealer({
           hostnameFile: ingressHostnameFile(cfg, root),

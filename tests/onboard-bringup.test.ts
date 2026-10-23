@@ -4,7 +4,7 @@
 // properties are behavioural rather than incidental and are pinned here: the
 // slow-first-pull note is emitted BEFORE the pull starts, and Docker's output
 // is streamed line by line rather than swallowed. The stack is pulled, never
-// built; and where there is no Docker (the wizard inside the image, D16) the
+// built; and where there is no Docker (the wizard inside the image) the
 // step starts nothing and prints the host's commands.
 //
 // Everything faked: a fake StreamRunner stands in for `docker compose pull`
@@ -497,7 +497,7 @@ describe("the honest note and the progress", () => {
   });
 });
 
-describe("no Docker where the wizard runs (D16)", () => {
+describe("no Docker where the wizard runs", () => {
   it("starts nothing and prints the exact host commands, in order, red until the stack is seen", async () => {
     seedChoices({ [UID_CHOICE_KEY]: 1234, [INGRESS_CHOICE_KEY]: "quick" });
     const h = harness({ noDocker: true });

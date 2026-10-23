@@ -12,15 +12,15 @@
 //                      companion): it builds the lens runner on first use
 //
 // The tmux bot does NOT load this file. pi's native `subagent` and the glue's
-// `launch_plan` (extensions/subagents.ts) are retired (P9.4). A lens session is
+// `launch_plan` (extensions/subagents.ts) are retired. A lens session is
 // never given either of these tools (the runner refuses an agent file that
 // lists one, include.ts strips them at build time), so a pass cannot fan out.
 // They ride the session's own extension list, never the global settings.json.
 //
 // The shim's lens sessions are SDK sessions of this pi process. It builds a
 // PiHost over the pi's own agent dir (`PI_CODING_AGENT_DIR`) with a read-only
-// copy of its login (D5), and leaves the HTTP dispatcher to the CLI pi (D4:
-// `ownsProcess` false). The host is built when the first lens is asked for, so
+// copy of its login, and leaves the HTTP dispatcher to the CLI pi
+// (`ownsProcess` false). The host is built when the first lens is asked for, so
 // a missing login fails that call, never the pi's start-up. This is the one
 // extension that may reach packages/pi-plugin/src/engine/pisdk.ts (tests/helpers/engine-fences.ts).
 //
@@ -73,7 +73,7 @@ export function createLens(deps: LensToolDeps): ExtensionFactory {
   };
 }
 
-/** How long a lens session has before its login must not expire (D5): the
+/** How long a lens session has before its login must not expire: the
  * longest a round runs. */
 const LOGIN_WINDOW_MS = 90 * 60_000;
 
@@ -107,7 +107,7 @@ export function lensRunConfigFromEnv(
     env,
     bashGuard: createBashGuard(bashGuardConfigFromEnv(env, cwd)),
     ledgerPath: join(ledger ? dirname(ledger) : agentDir, LENS_LEDGER_FILE),
-    // A round's lens sessions are kept beside its ledger (D10); an interactive pi
+    // A round's lens sessions are kept beside its ledger; an interactive pi
     // with no round keeps none, and never writes into its own agent dir.
     ...(ledger ? { sessionsDir: join(dirname(ledger), LENS_SESSIONS_DIR) } : {}),
     ...(deadlineMs !== undefined ? { deadlineMs } : {}),

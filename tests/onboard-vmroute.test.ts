@@ -867,7 +867,7 @@ describe("the transport is the one decision point", () => {
     expect(ssh.cliCommand("events --tail 40")).toBe(
       `ssh ${ALIAS} sudo docker exec quickreview-sandbox node dist/src/cli.js events --tail 40`,
     );
-    // No attach command: the bot runs no `pr-<n>` tmux session (P9.6).
+    // No attach command: the bot runs no `pr-<n>` tmux session.
     expect("attachCommand" in ssh).toBe(false);
     expect("attachCommand" in compose).toBe(false);
   });

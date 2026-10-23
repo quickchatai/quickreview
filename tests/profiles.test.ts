@@ -359,16 +359,16 @@ describe("parseProfileHeuristics", () => {
   it("compiles paths verbatim (case-sensitive) and added_lines as added-line probes", () => {
     const ext = parseProfileHeuristics(
       F,
-      `[pass-security]\npaths = ['(^|/)settings[^/]*\\.py$']\n\n[pass-delivery]\nadded_lines = ['@background_decorator']\n`,
+      `[pass-security]\npaths = ['(^|/)settings[^/]*\\.py$']\n\n[pass-delivery]\nadded_lines = ['@background_task']\n`,
     );
     const settings = ext.paths["pass-security"]![0]!;
     expect(settings.test("project/settings_prod.py")).toBe(true);
     expect(settings.test("project/SETTINGS_prod.py")).toBe(false); // case-sensitive, like the core
     expect(settings.test("docs/settings_notes.md")).toBe(false);
     const probe = ext.addedLines["pass-delivery"]![0]!;
-    expect(probe.test("@@ -1 +1,2 @@\n+@background_decorator\n def handle():")).toBe(true);
-    expect(probe.test("@@ -1,2 +1 @@\n-@background_decorator\n pass")).toBe(false); // removed line: no
-    expect(probe.test(" @background_decorator")).toBe(false); // context line: no
+    expect(probe.test("@@ -1 +1,2 @@\n+@background_task\n def handle():")).toBe(true);
+    expect(probe.test("@@ -1,2 +1 @@\n-@background_task\n pass")).toBe(false); // removed line: no
+    expect(probe.test(" @background_task")).toBe(false); // context line: no
   });
 
   it("an empty file and an empty lens table are both legal (nothing to add)", () => {

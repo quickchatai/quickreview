@@ -76,7 +76,7 @@ port = 8787                                  # loopback only; your HTTPS ingress
 # its assigned bare hostname (e.g. "abc.trycloudflare.com") to `hostname_file`;
 # the daemon watches it and re-points the GitHub App's own webhook URL on
 # change (JWT-authed PATCH /app/hook/config, read-back verified). This is the
-# ONE mutation class that executes even in dry_run (CLAUDE.md rule 1) — loudly
+# ONE mutation class that executes even in dry_run (AGENTS.md invariant 6) — loudly
 # logged, structurally closed to this one kind; it
 # touches only the App's own configuration, never the reviewed repo. Off by
 # default: with the section absent (or shape = "none") no watcher ever starts —
@@ -315,7 +315,7 @@ session_dir = "state/pi-sessions"
 # of the judge's pool, runs in a host process of its own, so one crash or frozen
 # loop costs one case, and `[pi] lens_runtime = "engine"` gives the review our
 # lens tool. A route that has no host yet refuses "sdk".
-# In the image the SDK runs the model's bash as the separate tool uid (D32) and
+# In the image the SDK runs the model's bash as the separate tool uid and
 # fences the file tools off /proc, /run/qcr-in and the agent dir.
 # The scan runs its leaves on the SDK inside its own detached driver process
 # (`qcr scan start`), never inside the companion's pi; a scan the companion
@@ -711,7 +711,7 @@ on_base_advance = true   # the base branch moved; no PR-owned file changed => no
 # the review carries ONE short escalation comment
 # @-mentioning the most recent human author of the touched directive files. This is the fallback mention when git history yields no
 # attributable human login. It is a comment @-mention through the gated review
-# — never a GitHub reviewer nomination (CLAUDE.md rule 10).
+# — never a GitHub reviewer nomination (the never-hand-to-a-human rule).
 escalation_mention_default = ""             # ← FILL (8): fallback GitHub login for escalation @-mentions ("" = no @)
 # The review preset: "default" (the measured best value — every
 # benchmark-driven lever on, the lean plan), "max" (every model at its highest
@@ -955,7 +955,7 @@ live_retention_days = 30 # a worker round's logs (state/live, state/lens) leave 
                          # their last write, once the PR's archive holds a verified copy (clamped 7..3650)
 live_cap_gb = 20         # disk cap on state/live + state/lens; past it the archive_live_cap wake fires (0 = off, max 4096)
 
-# The bot login's single refresher (src/loginrefresh/, P8.22): the VM-only
+# The bot login's single refresher (src/loginrefresh/): the VM-only
 # exception to "only the owner's pi /login refreshes" (packages/pi-plugin/src/engine/auth.ts).
 # After the cutover ONE process the daemon spawns and supervises owns
 # pihome/agent/auth.json and every worker borrows a refresh-blanked copy.

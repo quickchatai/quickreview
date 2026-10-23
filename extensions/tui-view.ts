@@ -9,7 +9,7 @@
 // written to a file on a bind mount. Nothing here opens a socket, spawns a
 // process, or asks the TUI to go and get anything. That is not a matter of taste: the TUI's reach is
 // real (`src/tui/remote.ts` runs `ssh <host> …`, and the deploy tab can run
-// `deploy.sh sync`), and the companion's own reach (root CLAUDE.md rule 8) is
+// `deploy.sh sync`), and the companion's own reach (the companion boundary) is
 // its own ssh access and guarded tools, not the TUI's. A `tui_*` tool that
 // could trigger a fetch would let the companion make the TUI act on the VM on
 // its behalf — laundering the TUI's access through a read verb. So:

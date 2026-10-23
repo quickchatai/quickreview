@@ -1,4 +1,4 @@
-// [P7.2a] The IPC fence: src/ipc/ is a neutral module. It imports nothing from
+// The IPC fence: src/ipc/ is a neutral module. It imports nothing from
 // src/engine/, nothing from pi, no daemon module and no package, only node:
 // builtins and its own files. Verified by mutation: the scan runs on the real
 // tree (clean) and on a planted tree (must fail).
@@ -23,7 +23,7 @@ function planted<T>(files: Record<string, string>, fn: (root: string) => T): T {
   }
 }
 
-describe("[P7.2a] src/ipc imports no engine, no pi, no daemon module", () => {
+describe("src/ipc imports no engine, no pi, no daemon module", () => {
   it("holds on the real tree", () => {
     expect(ipcImportViolations(ROOT)).toEqual([]);
   });

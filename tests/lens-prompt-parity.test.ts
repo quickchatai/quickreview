@@ -1,12 +1,12 @@
-// P4.2: lens system-prompt parity. The system prompt an SDK lens session sends
+// Lens system-prompt parity. The system prompt an SDK lens session sends
 // is the one a native lens child sends today.
 //
 // Today a lens is `pi --mode json -p --no-session --model … --tools …
 // --append-system-prompt <file holding the agent's body> "Task: …"` (the native
 // subagent extension, extensions/subagents.ts): pi's own base prompt, then the
 // body as an addendum, then the context files it finds from the cwd. On the
-// SDK route runLens (P4.3) builds the same prompt from data: pi's base (no
-// system-prompt override), the D34 context files given to the host, and the
+// SDK route runLens builds the same prompt from data: pi's base (no
+// system-prompt override), the context files given to the host, and the
 // registry's body in `appendSystemPrompt`.
 //
 // Both are put in front of one local OpenAI-compatible endpoint (loopback only,
@@ -18,7 +18,7 @@
 // its execution policy would otherwise match itself).
 //
 // Not here: the engine route's own execution-policy wording is a separate
-// constant that P4.5 adds. Its diff against the native addendum is pinned in
+// constant that a later step adds. Its diff against the native addendum is pinned in
 // that ticket as a reviewed delta; this file pins the native text it is diffed
 // against (EXECUTION_POLICY_ADDENDUM stays byte-identical, rule 6).
 import { execFile } from "node:child_process";

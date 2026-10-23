@@ -1,5 +1,5 @@
 // The engine's model credentials: one module for every way a headless host gets
-// a pi login it must never refresh (D5).
+// a pi login it must never refresh.
 //
 // A pi login (its `auth.json`) has one owner: the pi home that ran `/login` and
 // keeps refreshing it. Everything else borrows. An engine host, the benchmark
@@ -16,7 +16,7 @@
 // owner. It holds an exclusive flock on pihome/agent/auth.json.lock for its whole
 // life, refreshes through pi-ai's own OAuth refresh and writes auth.json
 // atomically. Workers, takeover and debug pi are borrowers like any other: they
-// copy the file at spawn, blank, and take no lock. Everywhere else D5 is as
+// copy the file at spawn, blank, and take no lock. Everywhere else the login-refresh rule is as
 // above.
 //
 // Three ways in, one module:

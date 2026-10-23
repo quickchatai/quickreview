@@ -1,4 +1,4 @@
-// The worker's end of the operator's controls (P8.12): what a round's worker does
+// The worker's end of the operator's controls: what a round's worker does
 // when the daemon pushes it a steer, a follow-up or an abort (src/ipc/control.ts).
 //
 //   steer      goes straight to the running session (rule 9's one exception): the

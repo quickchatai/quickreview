@@ -1,4 +1,4 @@
-// `qcr review start | status | stop` as a container (P6.8). The host wrapper makes
+// `qcr review start | status | stop` as a container. The host wrapper makes
 // a detached run a container of its own; this file pins the image's half and the
 // way the two meet. In three layers, none of which reaches a model:
 //   - src/reviewdetach.ts with the container deps: the claim records a run with a
@@ -618,7 +618,7 @@ describe.skipIf(!hasDocker || !hasDist)("in a container (docker, no network, no 
   }, 120_000);
 
   it("the model's bash, started as the wrapper starts a call, sees no token and cannot read the token holder", () => {
-    // The repo's own entrypoint (D32's uid split, D39's handoff) around a stand-in
+    // The repo's own entrypoint (the uid split, the token handoff) around a stand-in
     // cli: it takes the token with the real ghcred, then runs a probe the way the
     // engine runs pi (toolIsolation: setpriv to the tool uid), as the model's bash.
     const dir = mkdtempSync(join(tmpdir(), "qcr-inimage-"));

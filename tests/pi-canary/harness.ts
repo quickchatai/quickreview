@@ -1,4 +1,4 @@
-// The offline pi canary rig [P2.7]. Every canary drives the REAL pi SDK
+// The offline pi canary rig . Every canary drives the REAL pi SDK
 // (@earendil-works/pi-coding-agent at the pinned version) against pi-ai's faux
 // provider, so a pi bump that breaks a behaviour we depend on fails here before
 // it reaches a route, and nothing costs money.

@@ -1,9 +1,9 @@
-// What hosts each PR's session, for status.json's per-PR `runtime` (P8.12).
+// What hosts each PR's session, for status.json's per-PR `runtime`.
 //
-//   takeover  the operator works in the PR's real session under a lease (P8.13)
-//   debug     a round runs inside interactive pi (P8.13b)
+//   takeover  the operator works in the PR's real session under a lease
+//   debug     a round runs inside interactive pi
 //   worker    a round's worker runs
-//   answer    an idle-PR answer worker runs (P8.17)
+//   answer    an idle-PR answer worker runs
 //   idle      nothing runs: the PR is its JSONL and waits for the next round
 //
 // The TUI's PR pane picks its surface from it (src/tui/viewer.ts `paneSurface`):

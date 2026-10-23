@@ -548,7 +548,7 @@ async function fileImprovementPrNow(
       note: `push ${botBranch} (${verdict.files} files, ${verdict.lines} lines)`,
     };
     // The push goes through the gate in both modes — never a direct push in
-    // live mode, which is the bypass CLAUDE.md rule 1 forbids. The gate owns
+    // live mode, which is the bypass AGENTS.md invariant 1 forbids. The gate owns
     // the decision (kind check, guards, dry-run branch) and calls this
     // performer only when the mutation is genuinely to happen.
     const pushResult = await ctx.gate.execute(pushIntent, async () => {

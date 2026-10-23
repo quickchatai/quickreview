@@ -1,4 +1,4 @@
-// The daemon's end of the worker socket (D23).
+// The daemon's end of the worker socket.
 //
 // Listens on <state>/run/qcr.sock: socket 0600, directory 0700, daemon uid (0660
 // and 0710 where the model's tools run as another uid of the daemon's group, so
@@ -13,7 +13,7 @@
 //   - the PR it names, if any, is the command's PR.
 // The generation is a fence and nothing more: guessing or replaying one
 // authenticates nothing. Handlers get the command's PR, lease and may_post
-// and decide the rest (P7.2's post ops check them).
+// and decide the rest (the post ops check them).
 import { chmodSync, chownSync, lstatSync, unlinkSync } from "node:fs";
 import net from "node:net";
 import { dirname } from "node:path";
@@ -68,7 +68,7 @@ export interface IpcServerOptions {
   /** The bound on a line the server SENDS (default: `maxLineBytes`); the requests it
    * reads stay under `maxLineBytes`. */
   maxResponseBytes?: number;
-  /** The model's tools run as another uid of this process's group (D32): its
+  /** The model's tools run as another uid of this process's group: its
    * post and read shims must reach the socket. The run dir becomes
    * 0710 and the socket 0660; the capability is what authenticates a caller, and
    * every other entry of the run dir stays 0700. Omitted: 0700 and 0600. */
@@ -104,7 +104,7 @@ export class IpcServer {
     this.ops = { ...opts.ops };
   }
 
-  /** Register an op; P7.2 adds `post.review` and friends this way. */
+  /** Register an op; the post ops add `post.review` and friends this way. */
   register(op: string, handler: OpHandler): void {
     this.ops[op] = handler;
   }

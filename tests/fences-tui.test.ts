@@ -564,8 +564,8 @@ describe("[T7] every repo path a script or doc points at exists", () => {
             // a clean checkout, and its presence is `scripts/verify-dist.mjs`'s
             // job, not this fence's.
             if (/^(?:packages\/[^/]+\/)?dist\//.test(rel) || listed.has(rel)) continue;
-            // The rule-text drafts are pinned word for word to CLAUDE.md
-            // (tests/release-docs.test.ts), so they keep naming the review
+            // The rule-text drafts are pinned word for word to the operating
+            // rules (in a private tree only), so they keep naming the review
             // core's files where they were before the core became
             // packages/pi-plugin; such a path counts while the moved file
             // exists, in that file only, until the texts are re-ratified.

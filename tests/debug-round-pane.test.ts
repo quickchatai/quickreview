@@ -1,4 +1,4 @@
-// [P8.13b] The pane's side of a bot debug round (src/debugroundpi.ts) and the debug
+// The pane's side of a bot debug round (src/debugroundpi.ts) and the debug
 // extension's additions (extensions/debug-round.ts): the borrowed login, the round order,
 // pi's argv and env, the resume that reads what the debug pi wrote, and the bash that
 // hands the capability fd to the model's commands.
@@ -143,7 +143,7 @@ function specFile(over: Partial<DebugRoundSpec> = {}): string {
   return file;
 }
 
-describe("[P8.13b] the debug pi's login is a refresh-blanked borrowed copy", () => {
+describe("the debug pi's login is a refresh-blanked borrowed copy", () => {
   it("has the disabled refresh token, in the pi's own agent dir, with the lens agents linked and nothing written to the owner's", async () => {
     const agent = ownerAgent();
     const before = readFileSync(join(agent, "auth.json"), "utf8");
@@ -258,7 +258,7 @@ describe("[P8.13b] the debug pi's login is a refresh-blanked borrowed copy", () 
   });
 });
 
-describe("[P8.13b] the round order the extension sends", () => {
+describe("the round order the extension sends", () => {
   it("is the saved order, the engine lens section and the command's marker, as a worker builds it", () => {
     const spec = specOf();
     const order = debugRoundOrder(spec);
@@ -288,7 +288,7 @@ describe("[P8.13b] the round order the extension sends", () => {
   });
 });
 
-describe("[P8.13b] the pi the pane starts", () => {
+describe("the pi the pane starts", () => {
   it("resumes the real session (not a fork), switches the tree's context files off, appends the stub and starts the round from the command", () => {
     const withFile = specOf({ session_file: "/r/state/pi-sessions/pr-7/s.jsonl" });
     const argv = debugRoundArgv(withFile);
@@ -357,7 +357,7 @@ describe("[P8.13b] the pi the pane starts", () => {
   });
 });
 
-describe("[P8.13b] the extension hands the capability fd to the model's commands", () => {
+describe("the extension hands the capability fd to the model's commands", () => {
   const fakePi = () => {
     const tools: Array<{ name: string; execute: (...a: unknown[]) => Promise<unknown> }> = [];
     const pi = {
@@ -459,7 +459,7 @@ describe("[P8.13b] the extension hands the capability fd to the model's commands
   });
 });
 
-describe("[P8.13b] the resume reads what the debug pi wrote", () => {
+describe("the resume reads what the debug pi wrote", () => {
   let born: RequestShape;
   beforeAll(async () => {
     born = await bornReference();

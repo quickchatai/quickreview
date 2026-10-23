@@ -1,4 +1,4 @@
-// The rig behind the post-op tests (P7.2): a real IpcServer on a real unix
+// The rig behind the post-op tests: a real IpcServer on a real unix
 // socket, the real post ops, the real GitHubAdapter (App minter stubbed) over a
 // scripted GitHub `fetch`, the real MutationGate with the real posting guards,
 // and the real receipt/outbox journal, all over a throwaway sandbox root.

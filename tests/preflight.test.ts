@@ -1,4 +1,4 @@
-// `daemon --preflight` (P8.4b): each named failure, the clean pass, and that the
+// `daemon --preflight`: each named failure, the clean pass, and that the
 // live inputs are only read (hash and mtime compare, mounted-read-only shape).
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";

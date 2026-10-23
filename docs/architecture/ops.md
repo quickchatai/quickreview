@@ -528,8 +528,10 @@ broken `config.toml` surfaces even on a typo.
 ## Publishability
 
 The repository is public in full; `tests/publishability.test.ts` keeps private
-tokens out of every tracked file. It checks them by digest
-(`tests/helpers/private-tokens.ts`), so the lint names none of them, and its
+tokens out of every tracked file. It reads them from a denylist kept outside
+the repository (`tests/helpers/private-tokens.ts` says where and in what
+format), so the tree names none of them; without that file the private-token
+checks skip and say why, while the credential-shape checks always run. Its
 one exemption channel is an in-file `ALLOWLIST` whose every entry names the
 file, the kind of token and the reason. A negative control plants a canary and
 proves the scanner bites. Prefer role words ("the owner", "the operator", "the

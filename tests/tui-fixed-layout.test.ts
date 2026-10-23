@@ -1,4 +1,4 @@
-// The TUI has one layout (CLAUDE.md, ratified design decisions): the tab on
+// The TUI has one layout (AGENTS.md invariant 10): the tab on
 // the left, the companion column on the right, on every frame, in every
 // configuration. Nothing takes the whole
 // terminal, nothing folds the column away, no config removes it. This file is

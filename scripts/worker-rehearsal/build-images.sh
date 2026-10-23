@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the release and memory images from HEAD for the worker rehearsal (P8.20a).
+# Build the release and memory images from HEAD for the worker rehearsal.
 #
 #   scripts/worker-rehearsal/build-images.sh <release-tag> <memory-tag>
 #

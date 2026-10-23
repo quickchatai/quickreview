@@ -2,25 +2,29 @@
 // of every commit instead of a one-time cleanup. The repository is public in
 // full, so the lint walks every tracked file (`git ls-files`) and asserts:
 //
-//   (a) no private token in any tracked text file. The tokens are checked by
-//       digest (tests/helpers/private-tokens.ts), so this file names none of
-//       them. The one exemption channel is the ALLOWLIST below: each entry
-//       names the file, the kinds of token granted, and the reason. Plus: the
-//       local-only files (the operator's config, the VM inventory, agent
-//       worktrees) are never tracked;
+//   (a) no private token in any tracked text file. The repository ships no
+//       private token, not even as a digest: the maintainers' denylist is
+//       read at run time from a file outside it (tests/helpers/private-tokens.ts),
+//       and without that file this check skips with the reason. The one
+//       exemption channel is the ALLOWLIST below: each entry names the file,
+//       the kinds of token granted, and the reason. Checks that need no
+//       private list always run: no credential-shaped string, no tracked
+//       denylist, and the local-only files (the operator's config, the VM
+//       inventory, agent worktrees) are never tracked;
 //   (b) LICENSE and THIRD-PARTY-NOTICES.md exist and are non-trivial;
 //   (c) config.example.toml exists and passes full config validation (the
 //       example-config suite in tests/config.test.ts owns the deeper
 //       assertions);
 //   (d) no tracked file under the runtime state directories except .gitkeep
 //       markers and memory/README.md;
-//   (e) a NEGATIVE control: the same scanner, fed planted canary tokens with
-//       their own test-only digests, reports the violations — the lint
-//       demonstrably bites;
+//   (e) a NEGATIVE control: the same scanner, fed planted canary tokens from
+//       a test-only denylist file, reports the violations — the lint
+//       demonstrably bites, with or without the maintainers' list;
 //   (f) no tracked Markdown file links to an untracked or missing path
 //       (tests/helpers/published-links.ts), with its own negative control.
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -30,15 +34,20 @@ import { deadLinks } from "./helpers/published-links.js";
 import {
   HOME_LABEL,
   HOST_LABEL,
+  loadDenylist,
+  parseDenylist,
+  PRIVATE_SKIP,
   PRIVATE_TOKENS,
   privateTokenHits,
-  tokenTables,
   type TokenTables,
 } from "./helpers/private-tokens.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
+// The label the denylist gives the owner's name, so the ALLOWLIST can grant it.
 const OWNER_NAME = "the owner's first name";
+const skipped = (name: string): string =>
+  PRIVATE_TOKENS ? name : `${name} (skipped: ${PRIVATE_SKIP})`;
 
 // ---------------------------------------------------------------------------
 // The allowlist — the ONLY sanctioned in-tree carriers of a private token.
@@ -90,7 +99,7 @@ interface Violation {
 
 function scanFiles(
   files: { path: string; text: string }[],
-  tables: TokenTables = PRIVATE_TOKENS,
+  tables: TokenTables | null = PRIVATE_TOKENS,
 ): Violation[] {
   const violations: Violation[] = [];
   for (const { path, text } of files) {
@@ -101,6 +110,40 @@ function scanFiles(
     }
   }
   return violations;
+}
+
+// Credential shapes: checked everywhere, with no private list. A test's fake
+// credential is the one sanctioned carrier, by file.
+const CREDENTIAL_SHAPES: Array<[string, RegExp]> = [
+  ["a GitHub token", /\b(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,})/],
+  ["a private key", /-----BEGIN [A-Z ]*PRIVATE KEY-----/],
+  ["an OpenAI-style key", /\bsk-[A-Za-z0-9_-]{32,}/],
+  ["a Slack token", /\bxox[abpr]-[0-9A-Za-z-]{10,}/],
+  ["an AWS access key id", /\bAKIA[0-9A-Z]{16}\b/],
+];
+const FAKE_CREDENTIAL_FILES = new Set([
+  "tests/collect-secrets.test.ts",
+  "tests/onboard-githubapp.test.ts",
+  "tests/onboard-llmauth.test.ts",
+  "tests/onboard-regressions.test.ts",
+  "tests/slack-setup-wizard.test.ts",
+  "tests/slack-wire.test.ts",
+  "tests/tool-fence.test.ts",
+]);
+
+function credentialHits(
+  files: { path: string; text: string }[],
+  exempt: ReadonlySet<string> = FAKE_CREDENTIAL_FILES,
+): string[] {
+  const out: string[] = [];
+  for (const { path, text } of files) {
+    if (exempt.has(path)) continue;
+    text.split("\n").forEach((line, i) => {
+      for (const [what, re] of CREDENTIAL_SHAPES)
+        if (re.test(line)) out.push(`${path}:${i + 1} [${what}]`);
+    });
+  }
+  return out;
 }
 
 // Binary files are exempt from the token sweep.
@@ -139,18 +182,23 @@ function trackedFiles(): string[] {
 
 // ---------------------------------------------------------------------------
 
+function trackedTexts(tracked: string[]): { path: string; text: string }[] {
+  const files: { path: string; text: string }[] = [];
+  for (const path of tracked) {
+    // A tracked symlink has no text of its own; its target is scanned at its real path.
+    if (lstatSync(join(repoRoot, path)).isSymbolicLink()) continue;
+    const buf = readFileSync(join(repoRoot, path));
+    if (isBinary(path, buf)) continue;
+    files.push({ path, text: buf.toString("utf8") });
+  }
+  return files;
+}
+
 describe("publishability lint", () => {
   const tracked = trackedFiles();
 
-  it("(a) no private token in any tracked text file", () => {
-    const files: { path: string; text: string }[] = [];
-    for (const path of tracked) {
-      // A tracked symlink has no text of its own; its target is scanned at its real path.
-      if (lstatSync(join(repoRoot, path)).isSymbolicLink()) continue;
-      const buf = readFileSync(join(repoRoot, path));
-      if (isBinary(path, buf)) continue;
-      files.push({ path, text: buf.toString("utf8") });
-    }
+  it.skipIf(!PRIVATE_TOKENS)(skipped("(a) no private token in any tracked text file"), () => {
+    const files = trackedTexts(tracked);
     expect(files.length).toBeGreaterThan(500);
     const violations = scanFiles(files);
     const rendered = violations
@@ -163,6 +211,26 @@ describe("publishability lint", () => {
     ).toEqual([]);
   });
 
+  it("(a) no credential-shaped string in any tracked text file", () => {
+    const files = trackedTexts(tracked);
+    expect(files.length).toBeGreaterThan(500);
+    const hits = credentialHits(files);
+    expect(hits, `credential-shaped strings in tracked files:\n${hits.join("\n")}`).toEqual([]);
+    for (const p of FAKE_CREDENTIAL_FILES) {
+      const text = readFileSync(join(repoRoot, p), "utf8");
+      expect(
+        credentialHits([{ path: p, text }], new Set()),
+        `${p}: carries no fake credential any more — remove it from FAKE_CREDENTIAL_FILES`,
+      ).not.toEqual([]);
+    }
+  });
+
+  it("(a) the repository tracks no denylist and no digest table of private tokens", () => {
+    expect(tracked.filter((p) => /publish-denylist/i.test(p))).toEqual([]);
+    const helper = readFileSync(join(repoRoot, "tests/helpers/private-tokens.ts"), "utf8");
+    expect(helper).not.toMatch(/\b[0-9a-f]{64}\b/);
+  });
+
   it("(a) the local-only files are never tracked", () => {
     const LOCAL_ONLY = ["config.toml", "deploy/ansible/inventory.ini", ".claude/worktrees/"];
     for (const p of LOCAL_ONLY) {
@@ -171,7 +239,7 @@ describe("publishability lint", () => {
     }
   });
 
-  it("allowlist hygiene: every entry's file is tracked and still carries a granted kind", () => {
+  it("allowlist hygiene: every entry is unique, tracked and reasoned", () => {
     const trackedSet = new Set(tracked);
     const seen = new Set<string>();
     for (const entry of ALLOWLIST) {
@@ -179,17 +247,27 @@ describe("publishability lint", () => {
       seen.add(entry.path);
       expect(trackedSet.has(entry.path), `${entry.path}: allowlisted but not tracked`).toBe(true);
       expect(entry.reason.trim().length, `${entry.path}: reason required`).toBeGreaterThan(10);
-      const carried = new Set(
-        privateTokenHits(readFileSync(join(repoRoot, entry.path), "utf8")).map((h) => h.label),
-      );
-      for (const label of entry.labels) {
-        expect(
-          carried.has(label),
-          `${entry.path}: allowlisted '${label}' no longer occurs — stale entry, remove it`,
-        ).toBe(true);
-      }
     }
   });
+
+  // The maintainers' denylist labels the owner's name OWNER_NAME, so the
+  // entries' granted kinds match what the scanner reports.
+  it.skipIf(!PRIVATE_TOKENS)(
+    skipped("allowlist hygiene: every entry's file still carries a granted kind"),
+    () => {
+      for (const entry of ALLOWLIST) {
+        const carried = new Set(
+          privateTokenHits(readFileSync(join(repoRoot, entry.path), "utf8")).map((h) => h.label),
+        );
+        for (const label of entry.labels) {
+          expect(
+            carried.has(label),
+            `${entry.path}: allowlisted '${label}' no longer occurs — stale entry, remove it`,
+          ).toBe(true);
+        }
+      }
+    },
+  );
 
   it("(b) LICENSE exists and is a real license", () => {
     const license = readFileSync(join(repoRoot, "LICENSE"), "utf8");
@@ -245,18 +323,31 @@ describe("publishability lint", () => {
   });
 
   it("(e) NEGATIVE control: planted canaries at an unexempted path are caught", () => {
-    // Each canary is a neutral token with its own test-only digest, so the
-    // control plants it in the clear without spelling any real token — one
-    // per class: a word (also as a dash-separated part), a home directory and
-    // a host name (also as a parent domain).
+    // The canaries are neutral tokens in a test-only denylist file, read by
+    // the same loader as the maintainers' list: one per class, a word (also
+    // as a dash-separated part), a home directory and a host name (also as a
+    // parent domain).
     const CANARY = "acme-canary-host";
-    const tables = tokenTables({
-      words: {
-        "the test canary": ["060df0ae0e810dd1f88a08154c9dfba216ab8cb7277d6e359a1ec463b014c0e8"],
-      },
-      homeUsers: ["f6e6d7b0c08b044a57d9b9f113a16e33243e2892edbdf73ad854e5aed6481e71"],
-      hosts: ["c53c443aa4b7c638b175c6d2803eaa3edd0de0104a86353bd86f08f5a695e285"],
-    });
+    const dir = mkdtempSync(join(tmpdir(), "qcr-denylist-"));
+    let tables: TokenTables | null;
+    try {
+      const path = join(dir, "publish-denylist.txt");
+      writeFileSync(
+        path,
+        [
+          "# test canaries",
+          "",
+          `${CANARY} the test canary`,
+          "user:acme-canary-user",
+          "host:canary.example.invalid",
+        ].join("\n"),
+      );
+      tables = loadDenylist(path);
+      expect(loadDenylist(join(dir, "absent.txt"))).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    expect(tables).not.toBeNull();
     const planted = scanFiles(
       [
         {
@@ -276,8 +367,13 @@ describe("publishability lint", () => {
       ["src/planted-control.ts", 3, HOME_LABEL],
       ["src/planted-control.ts", 4, HOST_LABEL],
     ]);
-    // The canaries are not real tokens: the production tables miss them.
-    expect(scanFiles([{ path: "src/planted-control.ts", text: CANARY }])).toEqual([]);
+    // The canaries are not real tokens: the maintainers' list misses them.
+    if (PRIVATE_TOKENS)
+      expect(scanFiles([{ path: "src/planted-control.ts", text: CANARY }])).toEqual([]);
+
+    // A malformed denylist line is an error, never a silent miss.
+    expect(() => parseDenylist("host:not-dotted")).toThrow(/line 1/);
+    expect(() => parseDenylist("# ok\nnope:x")).toThrow(/line 2/);
 
     // A source file with one stray NUL is still TEXT to the sweep — never
     // exempted as binary.
@@ -289,6 +385,13 @@ describe("publishability lint", () => {
     expect(
       scanFiles([{ path: "bench/aacr/paper/benchmark.tex", text: CANARY }], tables),
     ).not.toEqual([]);
+
+    // The credential sweep bites too.
+    expect(
+      credentialHits([
+        { path: "src/planted-control.ts", text: `const t = "ghp_${"a".repeat(36)}";` },
+      ]),
+    ).toEqual(["src/planted-control.ts:1 [a GitHub token]"]);
   });
 });
 

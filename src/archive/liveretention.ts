@@ -1,4 +1,4 @@
-// Retention and a disk cap for the per-round worker trees (P8.16, D10):
+// Retention and a disk cap for the per-round worker trees:
 //
 //   state/live/<pr-n>/r<k>/     the round's LiveEvent logs (main + one per lens)
 //   state/lens/<pr-n>/r<k>/     the lens passes' session JSONLs and their ledger

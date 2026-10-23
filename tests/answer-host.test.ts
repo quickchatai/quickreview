@@ -1,4 +1,4 @@
-// [P8.17] The daemon's side of the idle-PR answer worker (src/answerworker.ts), over
+// The daemon's side of the idle-PR answer worker (src/answerworker.ts), over
 // the real WorkerSupervisor, the real IPC server and a FAKE worker process
 // (tests/helpers/fake-worker.mjs, mode `answer`). No pi, no model, no network.
 //
@@ -203,7 +203,7 @@ const idle =
 const result = (r: Rig, id: string): Record<string, unknown> =>
   JSON.parse(readFileSync(answerResultFile(r.root, id), "utf8")) as Record<string, unknown>;
 
-describe("[P8.17] an idle message is answered now", () => {
+describe("an idle message is answered now", () => {
   it("spawns an answer worker for an answer command: caps, no wave, no posting right", async () => {
     const r = await rig();
     const out = (await r.message("is the null check enough?")) as Record<string, unknown>;
@@ -270,7 +270,7 @@ describe("[P8.17] an idle message is answered now", () => {
   });
 });
 
-describe("[P8.17] may_post is the operator's mark, and nothing else", () => {
+describe("may_post is the operator's mark, and nothing else", () => {
   it("a marked message carries it into the spec and the IPC lookup", async () => {
     const r = await rig({ hold: true });
     const out = (await r.message("approve it", true)) as Record<string, unknown>;
@@ -311,7 +311,7 @@ describe("[P8.17] may_post is the operator's mark, and nothing else", () => {
   });
 });
 
-describe("[P8.17] where a message goes", () => {
+describe("where a message goes", () => {
   it("during a round it is a steer", async () => {
     const r = await rig({ mode: "controls" });
     const row = r.sup.submit({ pr: PR, kind: "round", round_no: null, payload: "the order" });
@@ -401,7 +401,7 @@ describe("[P8.17] where a message goes", () => {
   });
 });
 
-describe("[P8.17] a round wake queued behind the answer worker", () => {
+describe("a round wake queued behind the answer worker", () => {
   it("waits on the one-active index, then goes through once the worker has exited", async () => {
     const r = await rig({ hold: true });
     const out = (await r.message("a long question")) as Record<string, unknown>;
@@ -447,7 +447,7 @@ describe("[P8.17] a round wake queued behind the answer worker", () => {
     const out = (await r.message("a question")) as Record<string, unknown>;
     const id = out["command_id"] as string;
     await until(() => r.sup.workers()[0]?.stage === "running");
-    // The daemon goes away: workers die (D23), and the next boot finds the row running.
+    // The daemon goes away: workers die, and the next boot finds the row running.
     await r.sup.stop();
     expect(r.store.getSessionCommand(id)!.status).toBe("cancelled");
     expect(result(r, id)).toMatchObject({ ok: false });
@@ -456,7 +456,7 @@ describe("[P8.17] a round wake queued behind the answer worker", () => {
   });
 });
 
-describe("[P8.17] operator recovery does not turn an answer into a wake", () => {
+describe("operator recovery does not turn an answer into a wake", () => {
   it("restart-session's blocker set leaves an answer out of the wakes it recovers", async () => {
     const r = await rig({ hold: true });
     const out = (await r.message("a question")) as Record<string, unknown>;
@@ -470,7 +470,7 @@ describe("[P8.17] operator recovery does not turn an answer into a wake", () => 
   });
 });
 
-describe("[P8.17] the answer caps are the config's", () => {
+describe("the answer caps are the config's", () => {
   it("default to ten minutes and two dollars, and follow [daemon] answer_timeout_s and answer_cap_usd", () => {
     expect(DEFAULT_ANSWER_TIMEOUT_S).toBe(600);
     expect(DEFAULT_ANSWER_CAP_USD).toBe(2);

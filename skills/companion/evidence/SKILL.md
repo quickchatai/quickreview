@@ -39,8 +39,8 @@ about *now* or is a supplement.
      of why it answered as it did. **PR-current at copy time**, not
      round-scoped.
    - `session.jsonl` — the transcript. **The lens passes are in here**: they run
-     as subagent children inside the PR's one session (root rule 9 — passes are
-     leaves), so there is no separate per-pass artefact and never was. This is
+     as subagent children inside the PR's one session (the single-shepherd invariant —
+     passes are leaves), so there is no separate per-pass artefact and never was. This is
      where "which lens raised it, and what did the validator do with it" is
      answered. Also **PR-current at copy time** (the newest session JSONL).
    - `ledger.md` — the session's own running account of the PR across rounds.

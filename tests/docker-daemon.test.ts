@@ -41,7 +41,7 @@ describe("the two images agree where they overlap", () => {
     expect(memoryFile).not.toMatch(/pi-coding-agent|PI_VERSION/);
   });
 
-  // Lenses are our own lens tool (P9.4): the images no longer depend on pi's
+  // Lenses are our own lens tool: the images no longer depend on pi's
   // shipped subagent example, and must never carry a third-party clone (an
   // unlicensed dependency).
   it("neither depends on pi's subagent example nor carries a third-party clone layer", () => {
@@ -77,7 +77,7 @@ describe("release entrypoint (daemon mode) — same invariants as the plain boot
     expect(release).toContain('QCR_PI_TRUST_DIR="$APP"');
   });
 
-  it("registers no extension globally and prunes the retired bash-guard entry (P9.5)", () => {
+  it("registers no extension globally and prunes the retired bash-guard entry", () => {
     expect(release).not.toContain("FATAL: pi extension missing");
     expect(release).not.toContain("QCR_PI_REQUIRE_EXT");
     expect(release).toContain("bash-guard is no longer global");

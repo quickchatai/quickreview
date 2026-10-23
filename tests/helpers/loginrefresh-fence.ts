@@ -1,4 +1,4 @@
-// The scan behind the P8.22 fence "only src/loginrefresh and the entrypoint's
+// The scan behind the fence "only src/loginrefresh and the entrypoint's
 // login mode (pi's /login) write the pihome's auth.json". Pure over a root, so
 // tests/loginrefresh.test.ts runs it on the real tree AND on a planted copy: a
 // fence that cannot be made to fail is not a fence.
@@ -44,13 +44,13 @@ export function authJsonWriters(root: string): string[] {
  */
 export const SANDBOX_AUTH_WRITERS: Readonly<Record<string, string>> = {
   "packages/pi-plugin/src/engine/auth.ts":
-    "copyPiAuth: the refresh-blanked copy in a sandbox's own agent dir (D5)",
+    "copyPiAuth: the refresh-blanked copy in a sandbox's own agent dir",
   "src/bench/auth.ts": "the benchmark sandbox's empty or blanked login in its own tmpfs",
   "src/bench/opencode.ts": "OpenCode's auth.json in the case's own data dir",
   "packages/pi-plugin/src/reviewhost.ts": "a review run's throwaway agent dir (the host isolation)",
   "scripts/action.sh": "the Action's per-run login dir, from its own input",
   "scripts/worker-rehearsal/layout.sh":
-    "the worker rehearsal's throwaway host dir: a fake far-future login in the pihome it lays out (P8.20a)",
+    "the worker rehearsal's throwaway host dir: a fake far-future login in the pihome it lays out",
 };
 
 /** Provisioning scripts that seed a fresh companion volume on another host. They

@@ -308,7 +308,7 @@ describe("importMemory — batching", () => {
     expect(reads.length).toBeGreaterThan(3); // initial + per-batch + pin read-back
   });
 
-  it("a destination sweep that could not read everything is not proof of absence (selfscan e290a572)", async () => {
+  it("a destination sweep that could not read everything is not proof of absence", async () => {
     // First run lands everything. On the rerun one imported entry fails a
     // transient read: the partial listing must not be planned against, or
     // that entry would be written a second time.

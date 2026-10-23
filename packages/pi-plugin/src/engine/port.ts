@@ -50,7 +50,7 @@ export interface SessionSpec {
   sessionDir?: string;
   /** The exact JSONL path of a persisted in-process session. */
   sessionFile?: string;
-  /** Context files handed to the session (D34), never written into a checkout.
+  /** Context files handed to the session, never written into a checkout.
    * A runtime that cannot deliver them refuses the spec. */
   agentsFiles?: readonly AgentsFile[];
   /** Where the session's event stream is written, one JSON event per line. */

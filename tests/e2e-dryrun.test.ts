@@ -125,7 +125,7 @@ afterEach(() => {
 
 describe("dry-run fixture round", () => {
   // The live config lives in the install's config home, out of every test's
-  // reach, and the live flag is the owner's alone (CLAUDE.md rule 1). What
+  // reach, and the live flag is the owner's alone (AGENTS.md invariant 6). What
   // this file can pin is its own premise: the fixture round it drives is a
   // DRY-RUN round.
   it(

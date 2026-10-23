@@ -1,16 +1,16 @@
-// Canary 10 (bare) [P2.9]: a bare SDK session's provider request is byte-equal to
+// Canary 10 (bare) : a bare SDK session's provider request is byte-equal to
 // a CLI pi started with the same flags.
 //
 // The route's parity claim ("the SDK route reviews the way the CLI route does")
 // starts at the request: the system prompt (pi's own text, the reviewer stub as
-// a context file per D34, a system-prompt file when the spec names one) and the
+// a context file, a system-prompt file when the spec names one) and the
 // built-in tool schemas. Both runtimes are put in front of the SAME local
 // OpenAI-compatible endpoint, so the comparison is of raw request bodies off the
 // wire, not of objects: a real `pi` child through piCliRuntime, and the SDK
 // in this process through sdkRuntime. Nothing leaves loopback and no model runs.
 //
-// Full parity with our factories and lens tools: canary-10-oneshot-request (P5.2)
-// and canary-10-bot-request (P8.2).
+// Full parity with our factories and lens tools: canary-10-oneshot-request
+// and canary-10-bot-request.
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";

@@ -1,4 +1,4 @@
-// The WorkerSupervisor (P8.5, D22/D23): the daemon's end of the per-round worker.
+// The WorkerSupervisor: the daemon's end of the per-round worker.
 //
 // One Node process serves one round of one PR (src/botworker.ts). This module
 // starts it, watches it and ends it:
@@ -27,31 +27,31 @@
 //     worker's `accepted`, finishes them from the exit, and requeues a round whose
 //     worker died. The one-active index (`session_commands_one_active`) gives one
 //     worker per session; a second spawn is refused before the row is claimed.
-//   - BREAKER (P8.5b, src/workerbreaker.ts). Every exit is counted: a worker that
+//   - BREAKER (src/workerbreaker.ts). Every exit is counted: a worker that
 //     served its round resets its PR's count; a non-zero exit, a `failed` event or
 //     a deadline kill adds one. Two in a row park the PR (no further spawn, a
 //     `worker_crash_loop` anomaly, the last error in status.json); failures on three
 //     PRs within 15 minutes drain the bot. A drained bot or a parked PR starts no
 //     worker, of any mode: `launch` refuses and `launchPending` skips. An end by the
 //     daemon's own stop or by the operator is not a failure.
-//   - CONTROL (P8.12). `control` forwards the operator's steer and follow-up to the
+//   - CONTROL. `control` forwards the operator's steer and follow-up to the
 //     round's worker over its own connection and answers with the worker's ack
 //     (queued, handled or refused); `abortRound` and the recovery `fence` ask the
 //     worker to abort and, when it has not gone within the grace period, SIGKILL its
 //     group (a lease the process table no longer confirms is never signalled).
-//   - TAKEOVER LEASE (P8.13, src/takeover.ts). While the operator holds a PR's
+//   - TAKEOVER LEASE (src/takeover.ts). While the operator holds a PR's
 //     session no worker starts for it, of any mode (`hostGate`): the command waits
 //     as it does behind a drain, and the lease is freed only once the takeover pi
 //     is confirmed gone. The lease is granted only when no worker command is active.
-//   - HOSTED COMMANDS (P8.13b). A round the debug round runs in interactive pi
+//   - HOSTED COMMANDS. A round the debug round runs in interactive pi
 //     (src/debuground.ts) has no worker process, but its row is still this module's to
 //     write: the debug manager asks for the claim, the start mark and the settlement
 //     (`claimHosted`, `markHostedStarted`, `settleHosted`).
 //   - RESTART. On a daemon restart every leased group is killed and its round is
 //     requeued under the same command id (`recover`), so the fresh worker resumes
-//     the JSONL and continues instead of sending the order again (D22).
+//     the JSONL and continues instead of sending the order again.
 //
-// The session host over it is src/worker-session-host.ts (P8.6): the SessionHooks
+// The session host over it is src/worker-session-host.ts: the SessionHooks
 // the daemon's state machine speaks, served by this supervisor.
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -317,12 +317,12 @@ export interface WorkerSupervisorDeps {
   nodeBin?: string;
   limits?: Partial<WorkerLimits>;
   /** What a command's IPC calls are told beyond its row: a takeover/debug lease
-   * (P8.13), and `may_post` for the kinds that carry it by another route (a debug
+   *, and `may_post` for the kinds that carry it by another route (a debug
    * round). An answer command's `may_post` is the operator's mark on its message,
-   * read from the payload the worker verified (P8.17), never from here. Omitted:
+   * read from the payload the worker verified, never from here. Omitted:
    * no post rights, no lease. */
   facts?: (row: SessionCommandRow) => Partial<Pick<CommandState, "may_post" | "lease">>;
-  /** The idle-PR answer worker's caps (P8.17): `[daemon] answer_timeout_s` and
+  /** The idle-PR answer worker's caps: `[daemon] answer_timeout_s` and
    * `answer_cap_usd`. They replace whatever the spec builder put for an answer
    * command, so no builder can lend an answer a round's budget. Omitted: the
    * config defaults. */
@@ -331,7 +331,7 @@ export interface WorkerSupervisorDeps {
    * revoked): what the host that submitted the command needs to close it out, such
    * as the answer worker's reply file. Never throws into the supervisor. */
   settled?: (s: WorkerSettled) => void;
-  /** The daemon's post ops (P8.7): `post.review`, `post.approval` and `post.reply`,
+  /** The daemon's post ops: `post.review`, `post.approval` and `post.reply`,
    * run through the one gate for a host's post shims. Omitted: the daemon does not
    * know the ops, and a shim's post is refused. */
   post?: PostOpsDeps;
@@ -339,20 +339,20 @@ export interface WorkerSupervisorDeps {
    * with the App's token for the scripts the model's tool uid runs. Omitted: the
    * daemon does not know the op. */
   ghRead?: GhReader;
-  /** Held wakes (P8.6). Omitted: the worker is told the daemon does not know the op. */
+  /** Held wakes. Omitted: the worker is told the daemon does not know the op. */
   wakes?: {
     take(ctx: RequestContext): WakeBatch[];
     ack(ctx: RequestContext, id: string): void;
   };
-  /** The central lens permit broker (D25). Given: its two ops ride `ops()`, its
+  /** The central lens permit broker. Given: its two ops ride `ops()`, its
    * permits return when a worker's capability is revoked (the worker exited) or
    * its command goes stale, and `start`/`stop` run and end its reaper. */
   permits?: PermitBroker;
-  /** Why no worker may start for a PR, or null (P8.13): a takeover lease stands,
+  /** Why no worker may start for a PR, or null: a takeover lease stands,
    * or its pi is not yet confirmed gone. Asked with the breaker's gate before
    * every spawn, of any mode; the row is left as it was. */
   hostGate?: (pr: number) => string | null;
-  /** The refresher's hold while a login rewrites auth.json (P8.22): a spawn waits. */
+  /** The refresher's hold while a login rewrites auth.json: a spawn waits. */
   loginGate?: { paused(): boolean; whenResumed(timeoutMs: number): Promise<boolean> };
   loginWaitMs?: number;
   /** Sends a control message down a command's worker connection (IpcServer.push);
@@ -387,7 +387,7 @@ interface LiveWorker {
   posted: number;
   failedReason: string | undefined;
   spawnError: string | undefined;
-  /** The worker's closing `done` body (P8.17: an answer's reply rides it). */
+  /** The worker's closing `done` body (an answer's reply rides it). */
   report: Record<string, unknown> | undefined;
   /** An answer worker only: the operator marked the message may-post. Read from
    * the payload that was verified at launch; false for every other command. */
@@ -514,7 +514,7 @@ export class WorkerSupervisor {
       generation: rec?.generation ?? row.attempt,
       active: live,
       // An answer worker posts only when the operator marked its message, and
-      // the daemon's word for that is the payload it dispatched (P8.17).
+      // the daemon's word for that is the payload it dispatched.
       may_post: answer ? rec?.mayPost === true : facts.may_post === true,
       lease: facts.lease ?? "none",
     };
@@ -522,7 +522,7 @@ export class WorkerSupervisor {
     return state;
   };
 
-  /** The ops the daemon serves a worker: its spec, its post ops (P8.7), and (P8.6)
+  /** The ops the daemon serves a worker: its spec, its post ops, and
    * its held wakes. */
   ops(): Record<string, OpHandler> {
     const ops: Record<string, OpHandler> = {
@@ -942,7 +942,7 @@ export class WorkerSupervisor {
     this.finishFailed(id, token, why);
   }
 
-  // ---- commands another host runs (P8.13b) ---------------------------------
+  // ---- commands another host runs ---------------------------------
 
   /** A round order claimed for a host that is no worker process of ours: the debug
    * round's interactive pi (src/debuground.ts). The supervisor stays the single writer
@@ -965,7 +965,7 @@ export class WorkerSupervisor {
   /**
    * The hosted command's host is gone (confirmed by the caller). Served: the round's
    * verdict was committed, so the row is acked. Otherwise the row goes back to
-   * `pending` for a worker, which resumes the session and continues (D22/D23), or
+   * `pending` for a worker, which resumes the session and continues, or
    * fails once the requeues are spent or its round has ended. Nothing counts against
    * the PR's crash-loop breaker: a person ended it.
    */
@@ -1224,7 +1224,7 @@ export class WorkerSupervisor {
   // ---- restart -------------------------------------------------------------
 
   /**
-   * The daemon's boot (D23): no worker of a previous daemon is wanted. Every
+   * The daemon's boot: no worker of a previous daemon is wanted. Every
    * leased group is killed (only when the leader still has the lease's start time
    * in the lease's boot/container), the leases are removed, and every command a
    * dead worker held is handed back to `pending` under its own id, so the fresh
@@ -1315,7 +1315,7 @@ export class WorkerSupervisor {
     await Promise.all(live.map((rec) => rec.done));
   }
 
-  // ---- the session host's questions (P8.6) -----------------------------------
+  // ---- the session host's questions -----------------------------------
 
   /**
    * Does a worker of this session run? Ours (a live child, or a launch under way),
@@ -1379,7 +1379,7 @@ export class WorkerSupervisor {
     );
   }
 
-  // ---- the operator's controls (P8.12) ---------------------------------------
+  // ---- the operator's controls ---------------------------------------
 
   /** The PR's worker, if it can be controlled: running, past `ready`, and not
    * already on its way out. A refusal says why. */

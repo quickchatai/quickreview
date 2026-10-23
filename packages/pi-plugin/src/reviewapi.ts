@@ -1202,7 +1202,7 @@ async function runPipeline(
             headSha: t.headSha,
             token: id.token,
             // The one gate, with the install's dry_run: a dry-run install records
-            // the review under its dryrun dir and sends nothing (CLAUDE.md rule 1).
+            // the review under its dryrun dir and sends nothing (AGENTS.md invariant 6).
             gate: localPostGate({
               dryRun: opts.config.dry_run,
               dryrunDir: opts.dryrunDir,

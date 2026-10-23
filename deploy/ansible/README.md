@@ -114,7 +114,7 @@ Slack token file names.
 **`release`** reads CI's deploy manifest (`deploy/manifest.schema.json`: the
 version, the revision, both images' index digests and per-arch digests, and the
 pins they were built with), holds those pins to `config.toml` and `group_vars`
-(rule 7 stays: pi, openviking, llama-cpp-python and the embedder file/sha256
+(the pins hold: pi, openviking, llama-cpp-python and the embedder file/sha256
 must agree), refuses a run-spec fingerprint the VM does not hold ("re-run
 provision"), and then sends the install's config home — `config.toml` and
 `profiles/`, never `secrets/` — as a tar to
@@ -201,7 +201,7 @@ when one names another root. `remote_state_dir` stays the host path.
 The images are private and are pulled BY the updater, on the VM, by digest. The VM pulls them with ONE credential: your own CLASSIC
 personal access token, scoped `read:packages` and nothing else, stored by
 `docker login` in root's docker config on the VM host (never in a container,
-env, argv or the secrets directory; CLAUDE.md rule 3). Not the token `gh auth
+env, argv or the secrets directory: the daemon holds only the App credential). Not the token `gh auth
 token` prints: that one carries the full scopes of your gh login.
 
 A deploy needs this login to exist before the first `release` (the pull is the
@@ -254,7 +254,7 @@ until the owner has triggered and checked one worker round and runs `qcr drain
 off`. (A plain drain on a release-layout VM is still lifted by the new boot's
 first healthy reconcile; `qcr drain on --hold` sets the hold by hand.) After
 the deploy, `deploy.sh verify` shows the image and its build stamp, that pi's
-`settings.json` carries no global bash-guard entry (P9.5), and that `AGENTS.override.md` in the app root
+`settings.json` carries no global bash-guard entry, and that `AGENTS.override.md` in the app root
 is the 12-line reviewer stub.
 
 ### Rollback

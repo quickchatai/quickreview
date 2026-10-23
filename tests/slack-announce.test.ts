@@ -607,7 +607,7 @@ describe("pinned heartbeat", () => {
     });
   });
 
-  describe("a recovered incident's correction (selfscan 3087bc73 / 89309b74)", () => {
+  describe("a recovered incident's correction", () => {
     async function recoveredIncident(a: SlackAnnouncer): Promise<string> {
       store.upsertPr({
         number: 5410,
@@ -1053,7 +1053,7 @@ function holdSlack(): () => void {
 }
 
 describe("concurrent posts", () => {
-  it("a not-picked-up notice and the pickup racing for one PR open ONE root (selfscan c3075124)", async () => {
+  it("a not-picked-up notice and the pickup racing for one PR open ONE root", async () => {
     queuedPr(5263, "2026-08-17T08:00:00.000Z");
     const a = announcer();
     const release = holdSlack();
@@ -1071,7 +1071,7 @@ describe("concurrent posts", () => {
     expect(root).toBe("1700000001.0001");
   });
 
-  it("two heartbeat ticks retrying a failed first post deliver ONE message (selfscan 0bfd2673)", async () => {
+  it("two heartbeat ticks retrying a failed first post deliver ONE message", async () => {
     slack.failNext = true;
     const a = announcer();
     expect(await a.heartbeat()).toBeUndefined();
@@ -1089,7 +1089,7 @@ describe("concurrent posts", () => {
     expect(slack.pins).toHaveLength(1);
   });
 
-  it("two anomalies admitted in one tick at cap-1 post ONE — the ceiling is re-read at claim time (selfscan 71870f5b)", async () => {
+  it("two anomalies admitted in one tick at cap-1 post ONE — the ceiling is re-read at claim time", async () => {
     cfg.slack.policy.announcements_per_hour = 2;
     const a = announcer();
     await a.anomaly({ pr: 5263, round_no: 1, kind: "overdue", deadline_min: 45 });

@@ -14,13 +14,13 @@
 //     template or theme is read from HOME, the agentDir, the cwd's .pi/ or
 //     .agents/ (the reviewed repo is untrusted input), or any ancestor. The
 //     only things a session sees are what the spec hands it: extension
-//     factories, the system prompt, and the context files (D34: the reviewer
+//     factories, the system prompt, and the context files (the reviewer
 //     stub, as data, never written into a checkout).
 //   - The model's bash gets an environment built from an allowlist over the
 //     spec's env, with the GitHub token names always stripped (envstrip.ts).
 //   - The tool list is an allowlist of exact names. A tool an extension
 //     registers that is not on it is dropped.
-//   - The model's tools do not reach what holds the run's secrets (D32). Its
+//   - The model's tools do not reach what holds the run's secrets. Its
 //     bash runs as the separate tool uid when the host is given one
 //     (`toolUid`, from the image's QCR_TOOL_UID), which the kernel keeps out of
 //     /proc/<pid>/mem and environ of this process. Its file tools (read, grep,
@@ -28,7 +28,7 @@
 //     goes through a fence (toolfence.ts) that refuses /proc, /run/qcr-in and
 //     the agent dirs and the login's source, after resolving symlinks.
 //
-// The HTTP dispatcher follows D4. pi's CLI installs an undici dispatcher at
+// The HTTP dispatcher follows the dispatcher ruling. pi's CLI installs an undici dispatcher at
 // startup (configureHttpDispatcher, which the package does not export); an
 // SDK host needs the same one, since provider requests and our own GitHub
 // fetches go through it. PiHost deep-imports pi's own function so the settings
@@ -78,7 +78,7 @@ import {
 } from "./toolfence.js";
 import { inheritingBashOperations, isolatedBashOperations, type ToolIds } from "./tooluid.js";
 
-// ---- the HTTP dispatcher (D4) -------------------------------------------------
+// ---- the HTTP dispatcher -------------------------------------------------
 
 const PI_PACKAGE = "@earendil-works/pi-coding-agent";
 /** Where undici keeps the process-global dispatcher: both Node's bundled fetch
@@ -137,7 +137,7 @@ export function piPackageDir(): string {
 export type ConfigureHttpDispatcher = (timeoutMs?: number) => void;
 
 /** pi's own configureHttpDispatcher, deep-imported by file path (the export map
- * does not publish it; D4). It is the same module instance pi's SDK uses, so
+ * does not publish it). It is the same module instance pi's SDK uses, so
  * its fetch bookkeeping stays single. Throws if pi moved or renamed it: that is
  * drift, and canary 6 is where a bump finds out. */
 export async function loadConfigureHttpDispatcher(): Promise<ConfigureHttpDispatcher> {
@@ -396,19 +396,19 @@ export interface PiHostOptions {
    * live in it. Never the operator's ~/.pi/agent. */
   agentDir: string;
   /** The route owns this process, so PiHost may install pi's HTTP dispatcher
-   * (D4). False inside a CLI pi or a host that someone else configured. */
+   *. False inside a CLI pi or a host that someone else configured. */
   ownsProcess?: boolean;
   /** Idle timeout for provider requests and the dispatcher. */
   httpIdleTimeoutMs?: number;
-  /** Credential storage in place of the file at authPath (read-only copies, D5). */
+  /** Credential storage in place of the file at authPath (read-only copies). */
   credentials?: CreateModelRuntimeOptions["credentials"];
   /** Runs once on the new ModelRuntime: register a provider, set a runtime key. */
   configureModels?: (runtime: ModelRuntime) => void | Promise<void>;
   /** In-memory pi settings, merged over the host defaults. */
   settings?: Parameters<typeof SettingsManager.inMemory>[0];
-  /** Context files every session gets unless its spec says otherwise (D34). */
+  /** Context files every session gets unless its spec says otherwise. */
   agentsFiles?: readonly AgentsFile[];
-  /** The uid and gid the model's bash runs as (D32): every command of every
+  /** The uid and gid the model's bash runs as: every command of every
    * session of this host is started through setpriv to them. The process must
    * hold CAP_SETUID/CAP_SETGID (the image's cli mode does). Omitted: the
    * model's bash runs as this process. */
@@ -447,7 +447,7 @@ export interface HostSessionSpec {
    * (a lens's body rides here, over pi's own base prompt). Literal text: never
    * read as a path, unlike the flag. Pieces join with a blank line. */
   appendSystemPrompt?: readonly string[];
-  /** Context files (D34), as data. Omitted: the host's. */
+  /** Context files, as data. Omitted: the host's. */
   agentsFiles?: readonly AgentsFile[];
   /** Extension factories: the only extensions the session loads. */
   extensions?: readonly ExtensionFactory[];
@@ -457,7 +457,7 @@ export interface HostSessionSpec {
   bashEnv?: BashEnvOptions;
   /** Descriptors of this process that each of the model's bash commands gets at
    * the same number, and nothing else (Node closes every other one): the bot
-   * worker's IPC capability, which the post scripts read (P8.3). Each must be
+   * worker's IPC capability, which the post scripts read. Each must be
    * open now. */
   inheritFds?: readonly number[];
   /** Persist the session's JSONL: at an exact file (a new session, written from
@@ -471,7 +471,7 @@ export interface HostSessionSpec {
    * the routing headers from it) and the provider-side resources held for it:
    * disposing any one of them closes the transports of all (pi's
    * cleanupSessionResources(id)). Only a caller that disposes the whole set
-   * together (a lens cache group, D7) may share one. With `persist.sessionDir`
+   * together (a lens cache group) may share one. With `persist.sessionDir`
    * the file is named `<time>_<id>.jsonl`, so sessions sharing an id still write
    * files of their own. Refused with the other `persist` shapes and with
    * `sessionManager`, which carry their own id. */

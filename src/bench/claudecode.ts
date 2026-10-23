@@ -1,7 +1,7 @@
 // The Claude Code arm of the AACR-Bench harness — a BENCHMARKED REVIEWER only.
 //
 // The project never spawns `claude`, with one sanctioned exception
-// (CLAUDE.md rule 5): Claude Code may run as a benchmarked reviewer inside
+// (the no-Claude-Code rule): Claude Code may run as a benchmarked reviewer inside
 // the locked-down bench/aacr docker sandbox (`bench.sh --arm claude`), never on
 // the host, never in the daemon/TUI/companion/review rounds, never as a tool
 // our reviewer calls. So this module never spawns `claude` itself: it spawns

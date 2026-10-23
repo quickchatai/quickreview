@@ -289,23 +289,22 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
    * `tests/release-image.test.ts` pins config.toml ↔ group_vars ↔ Dockerfile;
    * this file pins the others, among them `package.json`'s `pi` block
    * (`scripts/deploy.sh` only tells the operator to reconcile it by hand) and
-   * the version quoted in the operating rulebook's rule 7.
+   * the version quoted in the deploying skill.
    *
    * MUTATION: change `version` in the `pi` block of package.json — this fails.
    *
    * The spellings are split below into those that ship in every tree and the
-   * ones that do not; two more spellings (rule 7 and the deploying skill)
-   * follow, both private-only.
+   * ones that do not; one more spelling (the deploying skill) follows, and it
+   * is private-only.
    */
   /**
-   * Private-only spellings. Two of the places this fact is written down are
-   * absent from the published snapshot: the operating rulebook `CLAUDE.md`
-   * and the deploying skill (bound to the private VM). (The operator's live
-   * `config.toml` is outside the checkout; deploy.sh's preflight holds its
-   * pin, and the test fixture stands in below.) Each of their fences is
-   * guarded on the file existing, so in this tree drift still fails; in a
-   * published tree they skip visibly instead of reading a file that is not
-   * there. The public
+   * Private-only spellings. One of the places this fact is written down is
+   * absent from the published snapshot: the deploying skill (bound to the
+   * operator's VM). (The operator's live `config.toml` is outside the
+   * checkout; deploy.sh's preflight holds its pin, and the test fixture stands
+   * in below.) Its fence is guarded on the file existing, so where it exists
+   * drift still fails; in a published tree it skips visibly instead of reading
+   * a file that is not there. The public
    * spellings below are asserted unconditionally in every tree, and
    * `config.example.toml` — which carries the same pin — is the reference the
    * guarded ones are reconciled against.
@@ -401,26 +400,6 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
       "tests/fixtures/config.toml's pi version drifted from config.example.toml — reconcile it",
     ).toBe(realPin());
   });
-
-  /**
-   * The rulebook half: rule 7 must quote the real pin.
-   *
-   * MUTATION: change the version in rule 7's first sentence — this fails.
-   */
-  it.skipIf(!has("docs/rulebook/hard-rules.md"))(
-    "CLAUDE.md rule 7 quotes the real pi version (private tree only)",
-    () => {
-      // The full text of rule 7 lives in docs/rulebook/; CLAUDE.md quotes no version.
-      const rule7 = /^7\. pi is pinned \(`([^`]+)`/m.exec(read("docs/rulebook/hard-rules.md"))?.[1];
-      expect(
-        rule7,
-        "rule 7 no longer quotes a pi version in the shape this fence reads",
-      ).toBeTruthy();
-      expect(rule7, "rule 7's pi version drifted from the shipped pin — reconcile it").toBe(
-        realPin(),
-      );
-    },
-  );
 
   /**
    * The deploy checklist quotes the pin too ("currently `…`"), and an

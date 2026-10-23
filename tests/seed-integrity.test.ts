@@ -1,4 +1,4 @@
-// CLAUDE.md hard rule 6 made structural.
+// AGENTS.md invariant 3 made structural.
 //
 // `prompts/` + `agents/` seeded content is canonical — byte-identical to the
 // in-repo seeds/ copies — and must never be rewritten in-tree. Per-pass model
@@ -31,7 +31,7 @@ const manifest = JSON.parse(
 ) as SeedManifest;
 
 const RULE_6 =
-  "CLAUDE.md hard rule 6: prompts/ + agents/ seeded content is canonical " +
+  "AGENTS.md invariant 3: prompts/ + agents/ seeded content is canonical " +
   "(byte-identical to the seeds/ canonical copies) and must " +
   "never be rewritten. " +
   "Per-pass model overrides go through config.toml [models.passes]. " +
@@ -118,7 +118,7 @@ function sha256(path: string): string {
 
 const seededPaths = Object.keys(manifest.files).sort();
 
-describe("seed integrity (hard rule 6)", () => {
+describe("seed integrity (AGENTS.md invariant 3)", () => {
   it("manifest covers exactly the seeded set: 4 prompts + 9 pass agents", () => {
     expect(seededPaths).toEqual([
       "agents/pass-baseline.md",

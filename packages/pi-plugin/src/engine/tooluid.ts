@@ -1,4 +1,4 @@
-// The separate tool uid (D32): the image's entrypoint (docker/entrypoint.sh)
+// The separate tool uid: the image's entrypoint (docker/entrypoint.sh)
 // runs the engine as an unprivileged run uid that holds the GitHub token, with
 // CAP_SETUID/CAP_SETGID as ambient capabilities, and names the uid the model's
 // tools run as in QCR_TOOL_UID/QCR_TOOL_GID. This module is the one place that
@@ -30,7 +30,7 @@ import { constants as osConstants } from "node:os";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
 
 /** The names the image's entrypoint sets when the model's tools must run as
- * another uid than this process (D32). */
+ * another uid than this process. */
 export const TOOL_UID_ENVS = ["QCR_TOOL_UID", "QCR_TOOL_GID", "QCR_TOOL_UID_REQUIRED"] as const;
 
 /** The uid and gid the model's tools run as: non-zero numeric ids. */
@@ -375,7 +375,7 @@ function shellOperations(plan: ShellPlan, inherit: readonly number[]): BashOpera
  * switch back.
  *
  * `inherit` lists descriptors every command gets at the same number (the
- * bot worker's IPC capability, P8.3).
+ * bot worker's IPC capability).
  */
 export function isolatedBashOperations(
   ids: ToolIds,

@@ -1,5 +1,5 @@
 // `qcr open [RUN | DIR | FILE.jsonl] [--lens ID] [--write] [--print] [--json]` -
-// open a finished review session in pi's own interactive UI (D10).
+// open a finished review session in pi's own interactive UI.
 // `qcr open pr N [--round R] [--lens ID]` opens the bot's session for a PR: pulled
 // read-only from the bot's box first (src/openpr.ts), then forked here.
 //
@@ -61,7 +61,7 @@ export function openHelp(): string {
     "over the TUI's ssh runner (or, for a PR closed for 14 days, from its archive, verified like",
     "`qcr archive extract`), copied read-only into your state home, and forked here: the box",
     "does no work and nothing on it is written. --round R keeps the session as it stood when",
-    "round R finished. --lens ID opens a kept lens pass of the PR (workers keep them, P8.3).",
+    "round R finished. --lens ID opens a kept lens pass of the PR (workers keep them).",
     'A run dir literally named "pr" is opened as ./pr.',
   ].join("\n");
 }
@@ -196,7 +196,7 @@ const subdirs = (dir: string): string[] => {
   }
 };
 
-/** Where `qcr archive extract` puts a closed PR's worker rounds (P8.16, D10): the
+/** Where `qcr archive extract` puts a closed PR's worker rounds: the
  * lens passes' trees, `state/lens/<pr-n>/r<k>/`, laid out as the round dir
  * `qcr open` reads. The main session is a transcript, `transcripts/*.jsonl`. */
 const EXTRACTED_LENS = join("files", "state", "lens");

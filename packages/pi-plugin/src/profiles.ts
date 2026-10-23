@@ -634,7 +634,7 @@ export function applyProfileScan<C extends { scan: ScanConfig }>(
 //   paths = ['(^|/)settings[^/]*\.py$']       # RegExp sources over filenames
 //
 //   [pass-delivery]
-//   added_lines = ['@background_decorator']   # probes over ADDED patch lines
+//   added_lines = ['@background_task']   # probes over ADDED patch lines
 //
 // `paths` entries are compiled verbatim (case-sensitive, like the compiled-in
 // path predicates). `added_lines` entries are wrapped as `^\+.*(?:…)` with

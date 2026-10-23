@@ -72,7 +72,7 @@ export interface OverrideRecord {
   sha256: string;
   /** sha256 of the shipped file. */
   shipped_sha256: string;
-  /** Whether the shipped file is one of the frozen seeds (CLAUDE.md rule 6). */
+  /** Whether the shipped file is one of the frozen seeds (AGENTS.md invariant 3). */
   seed: boolean;
 }
 

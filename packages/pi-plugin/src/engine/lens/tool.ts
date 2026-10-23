@@ -1,6 +1,6 @@
-// Our lens tools: `lens` and `lens_wave` (owner ruling D3), the engine routes'
-// replacement for pi's native `subagent` and the glue's `launch_plan` (retired,
-// P9.4); a consumer still reads all four, for the transcripts and ledgers of
+// Our lens tools: `lens` and `lens_wave` (owner ruling), the engine routes'
+// replacement for pi's native `subagent` and the glue's `launch_plan` (retired);
+// a consumer still reads all four, for the transcripts and ledgers of
 // older rounds (packages/pi-plugin/src/lensresult.ts isLensTool).
 //
 //   lens        one pass, `{agent, task}`, or several at once, `{tasks: [...]}`:
@@ -9,7 +9,7 @@
 //               engine wrote (dirs: the round's tasks, tasks-optional and
 //               tasks-sweep, bounded and confined exactly as launch_plan's are,
 //               with the same `extra` / `skip`). The engine launches that wave
-//               itself at round start, so `lens_wave` JOINS it (D8): a row that
+//               itself at round start, so `lens_wave` JOINS it: a row that
 //               is running is waited for, a row that is done is returned, and
 //               a row that was never started is started. Nothing runs twice.
 //

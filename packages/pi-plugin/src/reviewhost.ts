@@ -20,7 +20,7 @@
 //    file written there.
 //
 // The stub is written nowhere else: never into the asset tree, never into
-// the reviewed repo (the D34 ruling; asserted by
+// the reviewed repo (the reviewer-stub ruling; asserted by
 // tests/context-files.test.ts and tests/host-isolation.test.ts).
 import {
   chmodSync,

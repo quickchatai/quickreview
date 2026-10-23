@@ -44,7 +44,7 @@ needed. The rounds row already carries the inputs: `lenses`, `validate_tier`,
 `executed_passes`, `additions/deletions/changed_files`, `comments_posted`,
 `est_usd` (state.ts RoundRow). Derive the label from those recorded facts.
 
-One honest caution: rule 10 retired the escalation-worthiness score, and
+One honest caution: the rule that the review is never handed to a human retired the escalation-worthiness score, and
 heuristics.ts:48-50 records why ("no code ever checked whether the score
 predicted anything"). An effort label is adjacent to that. If built, it should be
 a readout of measured round facts, not a new predictive heuristic — and whether
@@ -202,5 +202,5 @@ written rationale that a repo-set path could read ~/.ssh into the prompt
 `.pr_agent.toml` gets default-branch treatment by separate logic in
 github_provider.py:1064-1066, overridable by a host-side CONFIG_BRANCH). If
 anything repo-side or PR-side ever gets to configure reviewer behavior (the
-`.pi/settings.json` trust-modal incident,, was a brush with this),
+`.pi/settings.json` trust-modal incident was a brush with this),
 their code is the list of what it costs.

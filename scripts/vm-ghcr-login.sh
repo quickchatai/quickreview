@@ -3,9 +3,9 @@
 # release images. Run by the owner, on the controller. Idempotent: running it
 # again replaces the login and the recorded expiry.
 #
-# The credential is the owner's CLASSIC personal access token, scoped
-# read:packages and nothing else (CLAUDE.md rule 3, "the VM's registry pull
-# login"). This script
+# The credential is a CLASSIC personal access token, scoped read:packages and
+# nothing else (the one carve-out from the App-only credential rule, for the
+# VM's registry pull login). This script
 #
 #   1. reads the token from stdin, or from a 0600 file (--token-file). Never
 #      from argv or the environment, and it never puts it in either: GitHub's

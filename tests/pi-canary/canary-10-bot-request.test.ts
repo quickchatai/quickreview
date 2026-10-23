@@ -1,15 +1,15 @@
-// Canary 10, bot shape [P8.2]: the bot worker's main session on the SDK sends the
+// Canary 10, bot shape : the bot worker's main session on the SDK sends the
 // request the interactive build's `pi` sends.
 //
 // The tmux bot starts one interactive `pi` per PR, with the PR's system prompt,
 // the extension files of src/sessions.ts extensionPaths (the TUI-only and bridge
 // ones aside: none registers a tool or touches the prompt) and the reviewer stub
-// (D34) in its cwd. This test starts that pi for real, in a pty over a local
+// in its cwd. This test starts that pi for real, in a pty over a local
 // OpenAI-compatible endpoint (no model, nothing leaves loopback), and puts the SDK
 // build (src/engine/botsdk.ts), which gets the same things as data, in front of
 // the same endpoint. The raw request bodies off the wire are compared:
 //
-//   - the system prompt: the PR's own, then pi's, with the D34 context stub and
+//   - the system prompt: the PR's own, then pi's, with the context stub and
 //     the OpenViking extension's addition
 //   - the tools: pi's four, the factory-registered ones (cluster_findings,
 //     coverage_gaps), the memory tools the OpenViking extension registers once it
@@ -19,7 +19,7 @@
 // `--mode json` mark a pi as a pi-subagents leaf to the OpenViking extension
 // (qcr-leaf.ts), which then adds nothing to the prompt. The bot's pi is not a leaf.
 //
-// The lens slot is our `lens` and `lens_wave` (D3): packages/pi-plugin/extensions/lens.ts in the pi
+// The lens slot is our `lens` and `lens_wave`: packages/pi-plugin/extensions/lens.ts in the pi
 // (what the debug round and takeover load) and customTools in the session. pi's
 // native `subagent` and `launch_plan` are retired with their glue.
 //
@@ -314,7 +314,7 @@ describe.skipIf(!hasScript || process.platform !== "linux")(
   "[canary 10, bot] the SDK request == the interactive build's, with the engine's lens tools",
   () => {
     it(
-      "system prompt, D34 context stub, factory tools, memory tools, lens tools: the first request",
+      "system prompt, context stub, factory tools, memory tools, lens tools: the first request",
       { timeout: 120_000 },
       async () => {
         const pi = await interactive();

@@ -357,7 +357,7 @@ describe("CompanionLifecycle argv", () => {
     expect(argv).toContain("QCR_SESSION_NAME=companion");
     expect(argv).toContain(`QCR_INJECT_DIR=${CONTAINER.workspace}/inject/companion`);
     const pi = argv.slice(argv.indexOf(PI_BIN));
-    // Every extension, the theme and the prompt are the IMAGE's (D20), under
+    // Every extension, the theme and the prompt are the IMAGE's, under
     // /opt/qcr — none comes off the /workspace mount.
     const app = CONTAINER.app;
     expect(pi).toEqual([
@@ -736,7 +736,7 @@ describe("mount drift", () => {
   });
 
   it("recreates a container made by the retired companion image (pi home at /home/companion/.pi) and builds the release image", async () => {
-    // P7.8 moved the pi home to the release image's /home/qcr. An existing PC
+    // A release moved the pi home to the release image's /home/qcr. An existing PC
     // has a container with the old layout and an image under the old name: the
     // drift check recreates it, and the new image tag has to be built (the
     // volume, and the login on it, are kept).
@@ -1365,7 +1365,7 @@ describe("companion image", () => {
 
   it("runs the image's code, not the checkout's: no mode needs a pi subagent example", () => {
     // Every route loads our lens tool (below), and no mode checks a global pi
-    // CLI: the release image has only node_modules' pi (P9.9b).
+    // CLI: the release image has only node_modules' pi.
     const mode = entrypoint.slice(entrypoint.indexOf("mode_companion() {"));
     expect(mode).not.toContain("assert_subagent_example");
     expect(mode).not.toContain("assert_pinned_pi_cli");

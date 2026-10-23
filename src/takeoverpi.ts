@@ -1,4 +1,4 @@
-// The pane's side of a takeover (P8.13): what runs inside tmux `takeover-pr-<n>`.
+// The pane's side of a takeover: what runs inside tmux `takeover-pr-<n>`.
 //
 // The daemon (src/takeover.ts) starts
 //
@@ -9,7 +9,7 @@
 //
 //   1. reads the spec file the daemon wrote (0600, no secret) and removes it;
 //   2. makes the pi its OWN agent dir: the owner's login BORROWED as a
-//      refresh-blanked copy (D5; packages/pi-plugin/src/engine/auth.ts), never the refresher's file
+//      refresh-blanked copy (packages/pi-plugin/src/engine/auth.ts), never the refresher's file
 //      and never a write to it, plus the model and settings files. The pi cannot
 //      refresh, so it can neither rotate the grant nor hold a file the refresher
 //      reads; the copy is refused when its token would expire inside the lease's
@@ -21,7 +21,7 @@
 //   4. returns pi's exit code. The tmux session ends with this process, and the
 //      daemon's sweep frees the lease.
 //
-// The pi runs as the separate tool uid where the image has one (D32), as a debug
+// The pi runs as the separate tool uid where the image has one, as a debug
 // round's does. The env it gets is an allowlist: no GitHub token of any name.
 import { spawn } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, readFileSync, unlinkSync } from "node:fs";

@@ -1,4 +1,4 @@
-// [P2.1] The engine fences, laid before the engine grows.
+// The engine fences, laid before the engine grows.
 //
 //   S2 SDK allowlist  only the core's packages/pi-plugin/src/engine/pisdk.ts and the extension
 //                     factory modules import @earendil-works/pi-coding-agent
@@ -8,7 +8,7 @@
 //                     which keeps the process-global HTTP dispatcher out of
 //                     the daemon
 //   SDK host          no extension's import closure (the companion's pi, the
-//                     tmux bot's) reaches an SDK host module [P5.7]
+//                     tmux bot's) reaches an SDK host module
 //   packageability    src/engine/** (both) carries no image-only path and reads no
 //                     QCR_STATE_HOME, so a post-v1 pi package stays possible
 //
@@ -47,7 +47,7 @@ const SDK = '"@earendil-works/pi-coding-agent"';
 
 // The tree check for this fence is S2 in tests/single-shepherd.test.ts; the
 // scan and its planted cases live here.
-describe("[P2.1] S2: the pi SDK is imported at runtime by pisdk.ts and the extension factories only", () => {
+describe("S2: the pi SDK is imported at runtime by pisdk.ts and the extension factories only", () => {
   it("classifies the import shapes", () => {
     for (const yes of [
       `import { createAgentSession } from ${SDK};`,
@@ -98,7 +98,7 @@ describe("[P2.1] S2: the pi SDK is imported at runtime by pisdk.ts and the exten
   });
 });
 
-describe("[P2.1] no daemon module imports src/engine/", () => {
+describe("no daemon module imports src/engine/", () => {
   /**
    * MUTATION: add `import "./engine/envmap.js"` to src/wire.ts, or to anything
    * wire.ts, daemon.ts, sessions.ts, verdicts.ts, dispatch.ts or posting.ts
@@ -140,7 +140,7 @@ describe("[P2.1] no daemon module imports src/engine/", () => {
   });
 });
 
-describe("[P2.1] packageability (R22): src/engine/** holds no image-only path", () => {
+describe("packageability (R22): src/engine/** holds no image-only path", () => {
   /**
    * MUTATION: put `"/opt/qcr/dist"` or `process.env.QCR_STATE_HOME` in any
    * src/engine/ module — it appears here. Paths arrive through
@@ -182,7 +182,7 @@ describe("[P2.1] packageability (R22): src/engine/** holds no image-only path", 
   });
 });
 
-describe("[P5.7] no pi process hosts an SDK session: extensions/ never reach an SDK host module", () => {
+describe("no pi process hosts an SDK session: extensions/ never reach an SDK host module", () => {
   /**
    * MUTATION: add `import "../src/engine/caserunner-sdk.js"` (or the core's
    * pisdk.js, sdkruntime.js) to any extension, the app's or the core's, or to

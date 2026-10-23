@@ -1,6 +1,6 @@
-// P3.3: createBashGuard, the bash-guard factory. Its config is the three things
+// CreateBashGuard, the bash-guard factory. Its config is the three things
 // a host decides (the sandbox root, replay, the secrets dirs); the policy is
-// code and is never an input. The exec boundary's chains and the P1.9 /proc
+// code and is never an input. The exec boundary's chains and the /proc
 // denies are replayed through an in-process SDK session on pi-ai's faux
 // provider with the factory attached, so what is proven is that the veto fires
 // where an SDK route runs the model's bash, not only in the pure checker.
@@ -35,7 +35,7 @@ const EXEC_BOUNDARY = [
   "cat /opt/quickreview/secrets/app.pem",
 ];
 
-/** The P1.9 rule: a process's environment, memory and command line. */
+/** The rule: a process's environment, memory and command line. */
 const PROC_DENIES = [
   "cat /proc/self/environ",
   "cat /proc/1/environ",
@@ -127,7 +127,7 @@ describe("[createBashGuard] on an sdkRuntime faux session", () => {
     for (const o of out) expect(o.blocked, o.command).toBe(true);
   });
 
-  it("refuses the /proc environ, mem and cmdline reads (P1.9)", async () => {
+  it("refuses the /proc environ, mem and cmdline reads", async () => {
     const out = await replayThroughSdk(PROC_DENIES, configFor());
     for (const o of out) {
       expect(o.blocked, o.command).toBe(true);

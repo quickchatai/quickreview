@@ -1,11 +1,11 @@
-// Canary 9 [P2.7]: an extension's async throw is contained.
+// Canary 9 : an extension's async throw is contained.
 //
 // Extensions run inside the review session's process. A handler that rejects
 // (an OpenViking call timing out, a ledger write failing) must be reported
 // through pi's extension error channel and must not fail the turn, end the run
 // or surface as an unhandled rejection, which would take the whole worker
 // down. The bot's extensions rely on this containment; the OpenViking factory
-// adds its own timeout-plus-catch on top (P3.4), pinned in the last case here
+// adds its own timeout-plus-catch on top, pinned in the last case here
 // with a fake client; the others pin what pi itself does.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";

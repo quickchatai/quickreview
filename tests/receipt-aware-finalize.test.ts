@@ -1,18 +1,18 @@
-// A recorded live round, replayed through the REAL round-stage supervisor and
-// the REAL verdict watcher (wired as daemon.ts wires them). Without the
-// receipt check, the stage limit kills a round whose review is already
-// posted, and the re-run posts a second one.
+// A round that posts its review and then outlives the stage limit, replayed
+// through the REAL round-stage supervisor and the REAL verdict watcher (wired
+// as daemon.ts wires them). Without the receipt check, the stage limit kills a
+// round whose review is already posted, and the re-run posts a second one.
 //
-// The recorded timeline (UTC):
-//   08:28:10.849  round 5 dispatched at head 8693fde (round_id 2485)
+// The scenario's timeline (UTC):
+//   08:28:10.849  round 5 dispatched at the PR's head
 //   08:30:46 / 08:35:23  a human re-requests review → successor_required ×2
 //   ~08:49:18     the last pass finishes
-//   08:52:58.641  posting receipt CONFIRMED: REQUEST_CHANGES, review 5454096308
+//   08:52:58.641  posting receipt CONFIRMED: REQUEST_CHANGES
 //   08:54:18.408  the supervisor's parent_finalize limit fires (5 min after
 //                 the last pass) → cancelled infrastructure_failure, session
 //                 killed, self-requeued "before any merits verdict"
-//   09:08         round 6 re-reviews the same head; 09:29:32 a SECOND
-//                 REQUEST_CHANGES (review 5454497864)
+//   09:08         round 6 re-reviews the same head and posts a SECOND
+//                 REQUEST_CHANGES
 //
 // The limit asks the receipt first: the review is on GitHub, so the session's
 // tail gets its bounded grace and the round ends with ONE posting either way —
@@ -21,7 +21,7 @@
 // failure, kills the session and requeues.
 //
 // The finalize limit now also waits while the parent's run reads ACTIVE —
-// which on the recorded day it was, so the limit would not have fired at
+// which in this scenario it does, so the limit would not fire at
 // 08:54 at all (the first describe's last test replays exactly that). It still
 // fires for an "active" snapshot when tmux reports the session gone, so the
 // receipt tests below drive it that way: the receipt check is what is under
@@ -46,10 +46,10 @@ const cfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
 );
 
-const PR = 5850;
-const HEAD = "8693fde76890fb52717db6673473211d25d0bea9";
-const CMD = "a6682740-5454-471f-b636-4e8d7de9bded";
-const REVIEW_ID = 5454096308;
+const PR = 4242;
+const HEAD = "1111111111111111111111111111111111111111";
+const CMD = "00000000-0000-4000-8000-000000000001";
+const REVIEW_ID = 4000000101;
 
 class FakeAdapter implements VerdictAdapter {
   calls: string[] = [];
@@ -77,12 +77,12 @@ const set = (iso: string): void => {
 };
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "qcr-5850-"));
+  root = mkdtempSync(join(tmpdir(), "qcr-receipt-"));
   verdictDir = join(root, "verdict");
   mkdirSync(verdictDir, { recursive: true });
   killed = [];
   alive = true;
-  set("2026-10-08T07:00:00.000Z");
+  set("2026-01-15T07:00:00.000Z");
   store = new StateStore(":memory:", () => clock);
   store.upsertPr({
     number: PR,
@@ -90,7 +90,7 @@ beforeEach(() => {
     head_sha: HEAD,
     title: "feat(api): import status and label filter",
     author: "pr-author",
-    trigger_ts: "2026-10-08T08:15:46.079Z",
+    trigger_ts: "2026-01-15T08:15:46.079Z",
     stale_recheck: 0,
     migration_gate: 0,
   });
@@ -100,7 +100,7 @@ beforeEach(() => {
     store.finishRound(id, "REQUEST_CHANGES", null, null);
   }
   // 08:28:10.849 — round 5 dispatched; its command is accepted at 08:28:14.
-  set("2026-10-08T08:28:10.849Z");
+  set("2026-01-15T08:28:10.849Z");
   roundId = store.startRound(
     PR,
     "re-review",
@@ -117,13 +117,13 @@ beforeEach(() => {
     payload_sha256: "a".repeat(64),
     payload_path: join(root, "state", "session-commands", `${CMD}.md`),
     inject_path: join(root, "inject", `pr-${PR}`, `wake--cmd-${CMD}.md`),
-    next_check_at: "2026-10-08T08:30:10.849Z",
+    next_check_at: "2026-01-15T08:30:10.849Z",
   });
-  set("2026-10-08T08:28:14.000Z");
-  store.claimSessionCommand(CMD, "bridge-1", "2026-10-08T08:30:14.000Z");
-  store.markSessionCommandStarted(CMD, "bridge-1", "2026-10-08T09:13:14.000Z");
+  set("2026-01-15T08:28:14.000Z");
+  store.claimSessionCommand(CMD, "bridge-1", "2026-01-15T08:30:14.000Z");
+  store.markSessionCommandStarted(CMD, "bridge-1", "2026-01-15T09:13:14.000Z");
   // 08:30:46 and 08:35:23 — a human re-requests review while the round runs.
-  set("2026-10-08T08:30:46.092Z");
+  set("2026-01-15T08:30:46.092Z");
   store.recordSuccessor({
     pr: PR,
     predecessor_round_id: roundId,
@@ -131,7 +131,7 @@ beforeEach(() => {
     provenance: "human",
     reason: "trigger-while-reviewing",
   });
-  set("2026-10-08T08:35:23.128Z");
+  set("2026-01-15T08:35:23.128Z");
   store.recordSuccessor({
     pr: PR,
     predecessor_round_id: roundId,
@@ -149,7 +149,7 @@ afterEach(() => {
 /** 08:52:58 — post-review.sh confirms the POST and stamps the mark, as the
  * shell route does (posted_event, no verdict yet). */
 function postReview(): void {
-  set("2026-10-08T08:52:58.641Z");
+  set("2026-01-15T08:52:58.641Z");
   const key = roundPostingKey(PR, 5, HEAD);
   const dir = join(root, "state", "posting-receipts");
   mkdirSync(dir, { recursive: true });
@@ -166,14 +166,14 @@ function postReview(): void {
       actual_event: "REQUEST_CHANGES",
       status: "confirmed",
       payload_sha256: "b".repeat(64),
-      prepared_at: "2026-10-08T08:52:57.900Z",
-      confirmed_at: "2026-10-08T08:52:58.641Z",
+      prepared_at: "2026-01-15T08:52:57.900Z",
+      confirmed_at: "2026-01-15T08:52:58.641Z",
       gh_review_id: REVIEW_ID,
       gh_commit_id: HEAD,
       gh_state: "CHANGES_REQUESTED",
     }),
   );
-  set("2026-10-08T08:52:58.724Z");
+  set("2026-01-15T08:52:58.724Z");
   store.recordReviewedHead(PR, { head_sha: HEAD, posted_event: "REQUEST_CHANGES" });
 }
 
@@ -183,13 +183,13 @@ function progress(): RoundProgressSnapshot {
     version: 2,
     pr: PR,
     session: `pr-${PR}`,
-    run_started_at: "2026-10-08T08:28:14.000Z",
+    run_started_at: "2026-01-15T08:28:14.000Z",
     updated_at: clock.toISOString(),
     parent_status: "active",
     command_id: CMD,
     command_sha256: "a".repeat(64),
-    command_accepted_at: "2026-10-08T08:28:15.000Z",
-    first_lens_started_at: "2026-10-08T08:31:15.582Z",
+    command_accepted_at: "2026-01-15T08:28:15.000Z",
+    first_lens_started_at: "2026-01-15T08:31:15.582Z",
     last_activity_at: clock.toISOString(),
     last_activity: "writing the findings record",
     agents: [
@@ -199,8 +199,8 @@ function progress(): RoundProgressSnapshot {
         status: "completed",
         duration_ms: 1,
         tool_count: 1,
-        started_at: "2026-10-08T08:31:15.582Z",
-        finished_at: "2026-10-08T08:44:02.000Z",
+        started_at: "2026-01-15T08:31:15.582Z",
+        finished_at: "2026-01-15T08:44:02.000Z",
       },
       {
         execution_id: "lens-2:pass-validate",
@@ -208,8 +208,8 @@ function progress(): RoundProgressSnapshot {
         status: "completed",
         duration_ms: 1,
         tool_count: 1,
-        started_at: "2026-10-08T08:44:30.000Z",
-        finished_at: "2026-10-08T08:49:18.408Z",
+        started_at: "2026-01-15T08:44:30.000Z",
+        finished_at: "2026-01-15T08:49:18.408Z",
       },
     ],
   };
@@ -285,7 +285,7 @@ function expectOnePostingAndNothingOwed(): void {
   });
 }
 
-describe("#5850 round 5 replayed", () => {
+describe("a posted round 5 replayed", () => {
   it("a finished review survives an outage beyond stage limits and deadline, then settles without another round", async () => {
     const key = roundPostingKey(PR, 5, HEAD);
     const dir = join(root, "state", "posting-receipts");
@@ -315,18 +315,18 @@ describe("#5850 round 5 replayed", () => {
       }),
     );
     const { watcher, supervisor } = wire(true);
-    set("2026-10-08T08:54:18.408Z");
+    set("2026-01-15T08:54:18.408Z");
     await supervisor.scan();
     expect(round5().status).toBe("running");
     expect(killed).toEqual([]);
-    set("2026-10-09T10:00:00.000Z");
+    set("2026-01-16T10:00:00.000Z");
     await watcher.checkDeadlines();
     expect(round5().status).toBe("running");
     expect(store.openReviewFailure(PR)).toBeUndefined();
     expect(count("round_self_requeued")).toBe(0);
     // Recovery confirmation is the same receipt the shell/worker writes.
     postReview();
-    set("2026-10-09T10:30:00.000Z");
+    set("2026-01-16T10:30:00.000Z");
     await watcher.checkDeadlines();
     expectOnePostingAndNothingOwed();
   });
@@ -337,7 +337,7 @@ describe("#5850 round 5 replayed", () => {
     alive = false; // the active snapshot is not trusted: the limit fires
 
     // 08:54:18.408 — the limit fires.
-    set("2026-10-08T08:54:18.408Z");
+    set("2026-01-15T08:54:18.408Z");
     await supervisor.scan();
     expect(round5().status).toBe("running");
     expect(killed).toEqual([]);
@@ -347,13 +347,13 @@ describe("#5850 round 5 replayed", () => {
     expect(count("round_self_requeued")).toBe(0);
 
     // Later scans inside the grace change nothing and log nothing new.
-    set("2026-10-08T08:55:18.408Z");
+    set("2026-01-15T08:55:18.408Z");
     await supervisor.scan();
     expect(round5().status).toBe("running");
     expect(count("round_stage_posted_wait")).toBe(1);
 
     // 08:56:30 — the session's tail finishes: ledger, findings record, verdict.
-    set("2026-10-08T08:56:30.000Z");
+    set("2026-01-15T08:56:30.000Z");
     writeFileSync(
       join(verdictDir, `pr-${PR}-round-5.json`),
       JSON.stringify({
@@ -363,13 +363,13 @@ describe("#5850 round 5 replayed", () => {
         head_sha: HEAD,
         summary: "One blocker remains.",
         passes: [{ name: "pass-baseline", tier: "sol-med", findings: 2 }],
-        finished_at: "2026-10-08T08:56:29Z",
+        finished_at: "2026-01-15T08:56:29Z",
       }),
     );
     expect(await watcher.sweep()).toEqual([`pr-${PR}-round-5.json`]);
     store.finishSessionCommand(CMD, "bridge-1", "acked"); // the parent settles
 
-    set("2026-10-08T08:58:43.075Z");
+    set("2026-01-15T08:58:43.075Z");
     await supervisor.scan();
     expectOnePostingAndNothingOwed();
     expect(killed).toEqual([]); // the session was never killed
@@ -381,14 +381,14 @@ describe("#5850 round 5 replayed", () => {
     postReview();
     alive = false; // the active snapshot is not trusted: the limit fires
 
-    set("2026-10-08T08:54:18.408Z");
+    set("2026-01-15T08:54:18.408Z");
     await supervisor.scan();
-    set("2026-10-08T09:07:58.000Z"); // confirmed + 14m59s: still inside
+    set("2026-01-15T09:07:58.000Z"); // confirmed + 14m59s: still inside
     await supervisor.scan();
     expect(round5().status).toBe("running");
     expect(killed).toEqual([]);
 
-    set("2026-10-08T09:07:58.700Z"); // confirmed + 15 min
+    set("2026-01-15T09:07:58.700Z"); // confirmed + 15 min
     await supervisor.scan();
     expectOnePostingAndNothingOwed();
     expect(count("verdict_settled_from_receipt")).toBe(1);
@@ -396,7 +396,7 @@ describe("#5850 round 5 replayed", () => {
 
     // The next scan releases the still-running command (the merits lifecycle
     // won) — the supervisor's ordinary terminal-round path.
-    set("2026-10-08T09:08:58.700Z");
+    set("2026-01-15T09:08:58.700Z");
     await supervisor.scan();
     expect(killed).toEqual([PR]);
     expect(store.getSessionCommand(CMD)?.status).toBe("acked");
@@ -408,7 +408,7 @@ describe("#5850 round 5 replayed", () => {
     alive = false; // the active snapshot is not trusted: the limit fires
     // No postReview(): nothing reached GitHub.
 
-    set("2026-10-08T08:54:18.408Z");
+    set("2026-01-15T08:54:18.408Z");
     await supervisor.scan();
 
     expect(round5()).toMatchObject({
@@ -426,14 +426,14 @@ describe("#5850 round 5 replayed", () => {
     const { watcher, supervisor } = wire();
     postReview();
 
-    set("2026-10-08T08:54:18.408Z");
+    set("2026-01-15T08:54:18.408Z");
     await supervisor.scan();
     expect(round5().status).toBe("running");
     expect(store.getSessionCommand(CMD)?.status).toBe("running");
     expect(count("round_finalize_held_parent_active")).toBe(1);
     expect(count("round_stage_posted_wait")).toBe(0);
 
-    set("2026-10-08T08:56:30.000Z");
+    set("2026-01-15T08:56:30.000Z");
     writeFileSync(
       join(verdictDir, `pr-${PR}-round-5.json`),
       JSON.stringify({
@@ -443,13 +443,13 @@ describe("#5850 round 5 replayed", () => {
         head_sha: HEAD,
         summary: "One blocker remains.",
         passes: [{ name: "pass-baseline", tier: "sol-med", findings: 2 }],
-        finished_at: "2026-10-08T08:56:29Z",
+        finished_at: "2026-01-15T08:56:29Z",
       }),
     );
     expect(await watcher.sweep()).toEqual([`pr-${PR}-round-5.json`]);
     store.finishSessionCommand(CMD, "bridge-1", "acked");
 
-    set("2026-10-08T08:58:43.075Z");
+    set("2026-01-15T08:58:43.075Z");
     await supervisor.scan();
     expectOnePostingAndNothingOwed();
     expect(killed).toEqual([]);
@@ -482,9 +482,9 @@ describe("a deferred posting", () => {
         status: jobStatus,
         attempts: 0,
         payload_sha256: sha,
-        next_attempt_at: "2026-10-08T08:56:58.000Z",
-        created_at: "2026-10-08T08:52:57.000Z",
-        deferred_at: "2026-10-08T08:52:58.000Z",
+        next_attempt_at: "2026-01-15T08:56:58.000Z",
+        created_at: "2026-01-15T08:52:57.000Z",
+        deferred_at: "2026-01-15T08:52:58.000Z",
       }),
     );
     writeFileSync(
@@ -500,8 +500,8 @@ describe("a deferred posting", () => {
         actual_event: event,
         status: "deferred",
         payload_sha256: sha,
-        prepared_at: "2026-10-08T08:52:57.000Z",
-        deferred_at: "2026-10-08T08:52:58.000Z",
+        prepared_at: "2026-01-15T08:52:57.000Z",
+        deferred_at: "2026-01-15T08:52:58.000Z",
         defer_reason: "GitHub answered 502; marker read: none",
       }),
     );
@@ -520,7 +520,7 @@ describe("a deferred posting", () => {
         actual_event: actual,
         status: "confirmed",
         payload_sha256: "c".repeat(64),
-        prepared_at: "2026-10-08T08:52:57.000Z",
+        prepared_at: "2026-01-15T08:52:57.000Z",
         confirmed_at: clock.toISOString(),
         gh_review_id: REVIEW_ID,
         gh_commit_id: HEAD,
@@ -539,7 +539,7 @@ describe("a deferred posting", () => {
         head_sha: HEAD,
         summary: "done",
         passes: [{ name: "pass-baseline", tier: "sol-med", findings: 0 }],
-        finished_at: "2026-10-08T08:53:30Z",
+        finished_at: "2026-01-15T08:53:30Z",
       }),
     );
 
@@ -547,10 +547,10 @@ describe("a deferred posting", () => {
     writeDeferred("REQUEST_CHANGES");
     const { watcher, supervisor } = wire(true);
     verdictFile("REQUEST_CHANGES");
-    set("2026-10-08T08:54:00.000Z");
+    set("2026-01-15T08:54:00.000Z");
     expect(await watcher.sweep()).toEqual([]); // waiting on the posting
     store.finishSessionCommand(CMD, "bridge-1", "acked"); // the session finished its round
-    for (const at of ["2026-10-08T08:58:43.000Z", "2026-10-08T09:40:00.000Z"]) {
+    for (const at of ["2026-01-15T08:58:43.000Z", "2026-01-15T09:40:00.000Z"]) {
       set(at);
       await supervisor.scan();
       await watcher.checkDeadlines();
@@ -565,7 +565,7 @@ describe("a deferred posting", () => {
     expect(store.reviewedHead(PR)).toBeUndefined();
     expect(store.getPr(PR)?.state).toBe("reviewing");
 
-    set("2026-10-08T09:29:00.000Z");
+    set("2026-01-15T09:29:00.000Z");
     retryConfirmed("REQUEST_CHANGES", "REQUEST_CHANGES", "CHANGES_REQUESTED");
     store.recordReviewedHead(PR, { head_sha: HEAD, posted_event: "REQUEST_CHANGES" }); // the gate's after-step
     expect(await watcher.sweep()).toEqual([`pr-${PR}-round-5.json`]);
@@ -579,12 +579,12 @@ describe("a deferred posting", () => {
       pr: PR,
       round_no: 5,
       head_sha: HEAD,
-      first_failed_at: "2026-10-08T08:52:58.000Z",
-      now: "2026-10-08T08:52:58.000Z",
+      first_failed_at: "2026-01-15T08:52:58.000Z",
+      now: "2026-01-15T08:52:58.000Z",
     });
-    store.settlePostingRetry(key, "exhausted", "GitHub 502 ×3", "2026-10-08T09:29:00.000Z");
+    store.settlePostingRetry(key, "exhausted", "GitHub 502 ×3", "2026-01-15T09:29:00.000Z");
     const { supervisor } = wire(true);
-    set("2026-10-08T09:30:00.000Z");
+    set("2026-01-15T09:30:00.000Z");
     await supervisor.scan();
     expect(round5()).toMatchObject({ status: "cancelled" });
     expect(count("round_self_requeued")).toBe(0);
@@ -598,7 +598,7 @@ describe("a deferred posting", () => {
     writeDeferred("APPROVE");
     const { watcher } = wire(true);
     verdictFile("APPROVE");
-    set("2026-10-08T09:00:00.000Z");
+    set("2026-01-15T09:00:00.000Z");
     retryConfirmed("APPROVE", "COMMENT", "COMMENTED");
     expect(await watcher.sweep()).toEqual([`pr-${PR}-round-5.json`]);
     expect(round5()).toMatchObject({ status: "done", verdict: "APPROVE", posted_event: "COMMENT" });

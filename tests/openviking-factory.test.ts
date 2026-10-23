@@ -1,4 +1,4 @@
-// QCR PATCH 12 [P3.4]: createOpenViking(cfg), the shim that feeds it, and the
+// QCR PATCH 12 : createOpenViking(cfg), the shim that feeds it, and the
 // deadline-plus-catch every hook now runs under. Pi is replaced by a recording
 // stand-in and the OpenViking client by a fake, so nothing here touches a
 // network or the developer's home. The shim-versus-factory parity case

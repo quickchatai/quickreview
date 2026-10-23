@@ -10,7 +10,7 @@
 //     preview for the wrong branch or a missing dist/, and it hands the
 //     wrapper a scrubbed environment (no token, a throwaway HOME);
 //   - the user docs leave the clone route out (docs/onboarding.md: skipped
-//     until P6.15 rewrites it for the Docker install only).
+//     until it is rewritten for the Docker install only).
 import { afterEach, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import {

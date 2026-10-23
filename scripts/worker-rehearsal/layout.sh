@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Lay out a LEGACY-SHAPED host directory for the worker rehearsal (P8.20a): what the VM's
+# Lay out a LEGACY-SHAPED host directory for the worker rehearsal: what the VM's
 # /opt/quickreview looks like the moment before the cutover, in the shape deploy/qcr-update.sh's
 # run spec mounts.
 #
 #   scripts/worker-rehearsal/layout.sh <host-dir> <tls-dir>
 #
 #   <host>/state/state.db         a state db at the pre-cutover schema (legacy-db.sh), drained
-#   <host>/state/pi-sessions/     the P8.4 snapshot's shape: PR 7's legacy interactive-pi JSONL,
+#   <host>/state/pi-sessions/     the snapshot's shape: PR 7's legacy interactive-pi JSONL,
 #                                 its header cwd the LEGACY sandbox root, where the legacy tmux session ran
 #   <host>/sandbox/{wt,archive,commands,digest,inject,verdict,pihome,base-clone}
 #                                 the legacy mounts; base-clone is the base clone (github.clone_dir), its origin
@@ -73,7 +73,7 @@ cat >"$H/fixture.json" <<JSON
  "files":[{"filename":"src/app.ts","additions":3,"deletions":1,"changes":4,"status":"modified","sha":"$HEAD_SHA"}]}
 JSON
 
-# ---- the legacy state db and the P8.4-shaped JSONL snapshot --------------------------------------------
+# ---- the legacy state db and the resume-rehearsal-shaped JSONL snapshot --------------------------------------------
 "$HERE/legacy-db.sh" "$H/state/state.db" >&2
 SID="rh-legacy-$(printf '%s' "$HEAD_SHA" | cut -c1-8)"
 sed -e "s#{ROOT}#$LEGACY_ROOT#g" -e "s#5409#$PR#g" -e "s#fx-live-golden#$SID#" \

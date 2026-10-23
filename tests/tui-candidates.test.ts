@@ -390,7 +390,7 @@ describe("judged items return only if the PR moved", () => {
     expect(moved[0]!.returned).toBe(true);
   });
 
-  it("an adjudication OLDER than the candidate never judges it (selfscan d43776b7)", () => {
+  it("an adjudication OLDER than the candidate never judges it", () => {
     // PR 9 was adjudicated at 08:00 (for some other family); at 09:00 the
     // sweep detects a long-review candidate on it for the first time. Nobody
     // has looked at THAT one — it must stay open.
@@ -408,7 +408,7 @@ describe("judged items return only if the PR moved", () => {
     expect(openCandidates(judged)).toHaveLength(0);
   });
 
-  it("an adjudication observed late, after the PR moved, judges the state it was made against — the row returns (selfscan d43776b7)", () => {
+  it("an adjudication observed late, after the PR moved, judges the state it was made against — the row returns", () => {
     const first = mergeCandidates([], detected, { ...base, adjudications: new Map() });
     // 11:00 — the PR moves to sig-2, with no receipt observed yet.
     const moved = mergeCandidates(first, detected, {
@@ -632,7 +632,7 @@ describe("the sweep and the empty answer", () => {
     expect(second!.coverage.rounds_with_local_record).toBe(3);
   });
 
-  it("an expired round on disk never stands in for a reported round still being copied (selfscan 5ffa98a2)", async () => {
+  it("an expired round on disk never stands in for a reported round still being copied", async () => {
     // The daemon's snapshot counts rounds that are NOT expired; the manifests
     // on disk include expired ones. Round 1 (expired) lands first; round 2
     // (the one the snapshot's `rounds: 1` is about) lands a tick later with no

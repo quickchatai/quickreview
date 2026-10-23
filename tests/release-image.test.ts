@@ -139,7 +139,7 @@ describe("release image — stages and pins", () => {
     const entry = read("docker/entrypoint.sh");
     expect(entry).toContain('SETID_HELPER="${QCR_SETID_HELPER:-/usr/local/libexec/qcr/qcr-setid}"');
     expect(entry).toContain("${QCR_SETID_GID:-4748}");
-    // qcr.preflight says the image HAS `daemon --preflight` (P8.4b): it is labelled
+    // qcr.preflight says the image HAS `daemon --preflight`: it is labelled
     // by the change that adds the subcommand, never before it exists, so until then
     // qcr-update refuses every image (nothing deploys before the cutover).
     const hasSubcommand =
@@ -156,7 +156,7 @@ describe("release image — stages and pins", () => {
     expect(dockerfile).toContain("tmux-${TMUX_VERSION}");
   });
 
-  it("pi comes from npm ci alone: no global pi CLI (P9.9b)", () => {
+  it("pi comes from npm ci alone: no global pi CLI", () => {
     expect(lines).toContain("RUN npm ci --no-audit --no-fund");
     expect(code).not.toContain("npm install -g");
     expect(code).not.toContain("npm root -g");
@@ -198,7 +198,7 @@ describe("release image — any uid, a root-owned tree", () => {
     expect(runWith("/home/qcr")).toContain("install -d -m 1777 /home/qcr /home/qcr/.pi");
   });
 
-  it("makes pi's agent dir writable by any uid, so a new login volume starts that way (P6.7)", () => {
+  it("makes pi's agent dir writable by any uid, so a new login volume starts that way", () => {
     expect(runWith("/home/qcr")).toBe(
       "install -d -m 1777 /home/qcr /home/qcr/.pi && install -d -m 0777 /home/qcr/.pi/agent",
     );
@@ -262,7 +262,7 @@ describe("release image — any uid, a root-owned tree", () => {
   });
 });
 
-describe("release image — the reviewer stub (D34)", () => {
+describe("release image — the reviewer stub", () => {
   it("lands as /opt/qcr/AGENTS.override.md, read-only, in the engine's cwd", () => {
     expect(lines).toContain("COPY deploy/reviewer/AGENTS.override.md ./AGENTS.override.md");
     // no full contributor guide anywhere in the tree: pi would find it
@@ -342,7 +342,7 @@ function sh(s: Sandbox, script: string): { status: number | null; stderr: string
 describe("release image — the build-time checks fail when they should", () => {
   const hasJq = spawnSync("jq", ["--version"]).status === 0;
 
-  it("has no check on pi's subagent example: the lens tool is ours (P9.4)", () => {
+  it("has no check on pi's subagent example: the lens tool is ours", () => {
     expect(code).not.toContain("examples/extensions/subagent");
   });
 

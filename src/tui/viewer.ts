@@ -7,11 +7,11 @@
 //
 // WHICH surface a PR gets is decided by status.json `runtime`, per PR, with no
 // toggle (`paneSurface`). A PR whose runtime is `debug` or `takeover` runs inside
-// interactive pi, which is a pi TERMINAL under the PR-pane rule (CLAUDE.md): it
+// interactive pi, which is a pi TERMINAL under the PR-pane rule (docs/tui.md): it
 // gets the termmirror of its own tmux session and every byte goes to pi, so the
 // viewer — which is not a terminal — never paints there. Every other runtime,
 // absent and unknown included, gets the viewer: the bot runs no `pr-<n>` tmux
-// session to mirror (P9.6), and the viewer only reads.
+// session to mirror, and the viewer only reads.
 //
 // The viewer is read-only. The pane is bottom-anchored like the mirror: offset 0
 // follows the tail, a positive offset parks that many wrapped rows above it and
@@ -39,7 +39,7 @@ import { FG, RESET } from "./theme.js";
  *             (a debug round) or `takeover-pr-<n>` (a takeover).
  *
  * There is no third surface: the bot runs no `pr-<n>` tmux session, so nothing
- * mirrors one (P9.6). An unknown runtime reads as the viewer because the viewer
+ * mirrors one. An unknown runtime reads as the viewer because the viewer
  * only reads — the safe reading is the one that types into nothing.
  */
 export type PaneSurface = { kind: "viewer" } | { kind: "terminal"; session: PiTerminalSession };

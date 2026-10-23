@@ -1,4 +1,4 @@
-// [P7.12a] What tests/tool-uid-container.test.ts runs inside a container, as the
+// What tests/tool-uid-container.test.ts runs inside a container, as the
 // engine's run uid, after docker/entrypoint.sh has taken the token handoff and
 // made the tool uid split: `qcr review`'s SDK runtime over pi-ai's faux provider,
 // whose scripted model makes the calls an attacker's model would. No network, no
@@ -70,7 +70,7 @@ const makeHost = async (o) =>
 
 // The session as the engine route builds it, without the round's bash-guard
 // extension: the guard refuses `id` and the /proc reads before the kernel is
-// asked, and what is checked here is the kernel's answer (D32 drops the guard
+// asked, and what is checked here is the kernel's answer (the uid split drops the guard
 // in these containers).
 const rt = reviewSdkRuntime({
   makeHost,

@@ -1,12 +1,12 @@
 // What a round worker asks the daemon for over the socket, and what the daemon
-// answers (P8.3). Neutral, like the rest of src/ipc/: shapes and a validator,
+// answers. Neutral, like the rest of src/ipc/: shapes and a validator,
 // no engine, no pi, no state store.
 //
 // A worker never opens state.db. Everything it needs to know about its command
 // arrives through `worker.spec`, and the held wakes through `wakes.take` and
 // `wakes.ack`; everything it records goes back as events (protocol.ts). The
-// daemon side of the three ops is the WorkerSupervisor's (P8.5), serving the
-// wakes through HeldWakeHandoff (src/wakes.ts, P8.6); the worker treats a daemon
+// daemon side of the three ops is the WorkerSupervisor's, serving the
+// wakes through HeldWakeHandoff (src/wakes.ts); the worker treats a daemon
 // that does not know `wakes.take` as one holding no wakes.
 import { join } from "node:path";
 import { IpcError } from "./protocol.js";
@@ -59,18 +59,18 @@ export interface WorkerSpec {
   cap_usd?: number;
   /** `[pi] engine_wave`: start the round's planned discovery wave at round start. */
   planned_wave: boolean;
-  /** Where this round's lens ledger and lens JSONLs go (D10). Omitted: under
+  /** Where this round's lens ledger and lens JSONLs go. Omitted: under
    * `<root>/state/lens/<session>/r<round>`. */
   lens_dir?: string;
   /** Compact the conversation before exit (ledger-pin). Omitted: yes. */
   compact?: boolean;
   /** Milliseconds between the worker's heartbeat events. Omitted: 15 000. */
   heartbeat_ms?: number;
-  /** An answer worker only (P8.17): the operator marked the message may-post, so
+  /** An answer worker only: the operator marked the message may-post, so
    * the session also gets the bash tool for the post scripts. The daemon sets it
    * from its own record of the command; it is never read from the payload alone. */
   may_post?: boolean;
-  /** An answer worker only (P8.17): the round whose live log (`state/live/<key>/r<round>`)
+  /** An answer worker only: the round whose live log (`state/live/<key>/r<round>`)
    * its turns are appended to, so a viewer following the PR sees the answer. The
    * PR's newest round; omitted when it has none, and then no live log is written. */
   live_round?: number;
@@ -209,7 +209,7 @@ export function roundPassesDir(spec: Pick<WorkerSpec, "root" | "pr">, round: num
   return join(spec.root, "state", `pr-${spec.pr}-round-${round}-passes`);
 }
 
-/** Where this round's lens ledger and lens JSONLs go (D10): the spec's own override, else
+/** Where this round's lens ledger and lens JSONLs go: the spec's own override, else
  * state/lens/<session>/r<round>. */
 export function lensDirOf(
   spec: Pick<WorkerSpec, "root" | "session" | "round_no" | "lens_dir">,

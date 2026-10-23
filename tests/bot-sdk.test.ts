@@ -1,9 +1,9 @@
-// P8.2: the bot's SDK session factory (src/engine/botsdk.ts). What the request
+// The bot's SDK session factory (src/engine/botsdk.ts). What the request
 // looks like against the interactive build is canary 10, bot shape
 // (tests/pi-canary/canary-10-bot-request.test.ts); this file is the rest of the
 // contract: the exec boundary holds through the SDK for the whole corpus, the
 // model's bash gets the routing, the git pin and the memory identity and nothing
-// else, rule 3 refuses a GitHub token, and the live log carries round-progress.
+// else, the App-only credential rule refuses a GitHub token, and the live log carries round-progress.
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -226,7 +226,7 @@ describe("[bot SDK] the exec boundary holds through the SDK", () => {
     expect(existsSync(join(work, "config.toml"))).toBe(false);
   });
 
-  it("refuses the /proc environ, mem and cmdline reads (P1.9)", async () => {
+  it("refuses the /proc environ, mem and cmdline reads", async () => {
     const out = await replay(
       ["cat /proc/self/environ", "head -c 100 /proc/self/mem", "cat /proc/*/cmdline"].map(
         (command) => ({ tool: "bash", args: { command } }),
@@ -330,7 +330,7 @@ describe("[bot SDK] the session's pieces", () => {
     expect(extras().extensions).toHaveLength(4);
   });
 
-  it("hands the D34 reviewer stub over as data, at the cwd's context-file path", () => {
+  it("hands the reviewer stub over as data, at the cwd's context-file path", () => {
     expect(extras().agentsFiles).toEqual([
       {
         path: join(work, "AGENTS.override.md"),
@@ -360,7 +360,7 @@ describe("[bot SDK] the session's pieces", () => {
   });
 });
 
-describe("[bot SDK] rule 3: bot mode refuses any GitHub token env", () => {
+describe("[bot SDK] the App-only credential rule: bot mode refuses any GitHub token env", () => {
   it.each(["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"])(
     "refuses %s in the session's env, naming the variable and never the value",
     async (name) => {
@@ -374,7 +374,7 @@ describe("[bot SDK] rule 3: bot mode refuses any GitHub token env", () => {
         (e: Error) => e,
       );
       expect(failure?.message).toContain(name);
-      expect(failure?.message).toContain("rule 3");
+      expect(failure?.message).toContain("the App-only credential rule");
       expect(failure?.message).not.toContain("ghp_secret_value");
       // No session was built: the host holds nothing to dispose.
       expect((host as unknown as { sessions: Set<unknown> }).sessions.size).toBe(0);
@@ -386,7 +386,9 @@ describe("[bot SDK] rule 3: bot mode refuses any GitHub token env", () => {
       processEnv: { [name]: "ghp_host_secret" },
     });
     await expect(runtime.create(spec)).rejects.toThrow(new RegExp(`host env carries ${name}`));
-    await expect(runtime.resume(join(dir, "x.jsonl"), spec)).rejects.toThrow(/rule 3/);
+    await expect(runtime.resume(join(dir, "x.jsonl"), spec)).rejects.toThrow(
+      /the App-only credential rule/,
+    );
   });
 
   it("takes a blank value for no token", () => {

@@ -1,4 +1,4 @@
-// [P8.15w] The worker world is the bot's only host, and wire.ts says so.
+// The worker world is the bot's only host, and wire.ts says so.
 //
 // Two halves. The source half pins what wire.ts and the tree must not do again: build the tmux
 // manager as the bot host, bind it to the durable command store (its inject-file restore would

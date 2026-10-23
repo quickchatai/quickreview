@@ -1,4 +1,4 @@
-// [P8.5] The WorkerSupervisor's fences:
+// The WorkerSupervisor's fences:
 //   - the daemon never imports src/engine/, and the supervisor is a daemon root
 //     (it takes GITHUB_TOKEN_ENVS from packages/pi-plugin/src/envstrip.ts, which has no imports);
 //   - it is the single writer of worker-hosted session_commands rows: the
@@ -45,7 +45,7 @@ function callers(root: string, method: string): string[] {
     .sort();
 }
 
-describe("[P8.5] the supervisor stays out of src/engine/", () => {
+describe("the supervisor stays out of src/engine/", () => {
   it(
     "is a daemon root, and no chain from it reaches the engine",
     { timeout: HEAVY_TIMEOUT_MS },
@@ -82,7 +82,7 @@ describe("[P8.5] the supervisor stays out of src/engine/", () => {
   });
 });
 
-describe("[P8.5] the supervisor is the single writer of worker-hosted command rows", () => {
+describe("the supervisor is the single writer of worker-hosted command rows", () => {
   it("only src/workersupervisor.ts requeues a worker's command", () => {
     expect(callers(ROOT, "requeueWorkerCommand")).toEqual(["src/workersupervisor.ts"]);
   });

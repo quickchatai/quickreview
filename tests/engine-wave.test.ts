@@ -1,4 +1,4 @@
-// P5.4: the engine-launched discovery wave (rule 9). The round (round.ts) starts
+// The engine-launched discovery wave (rule 9). The round (round.ts) starts
 // the planned wave from its tasks/ before the main session's first turn, on a
 // runtime that hosts the engine's lens tools (reviewsdk.ts `engine`), and the
 // main session joins it through `lens_wave`. Everything here is the real pi SDK

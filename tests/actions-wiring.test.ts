@@ -518,7 +518,7 @@ describe("actions wiring: the watcher on a real App", () => {
     expect(unpinned!.ok).toBe(true);
     expect(unpinned!.trace).toMatch(/^companion ▸ memory unpin → /);
     // The ONLY op this channel ever hands the store is pin or unpin (the
-    // companion boundary, CLAUDE.md rule 8).
+    // companion boundary).
     expect(mem.applied.map((o) => o.op)).toEqual(["unpin"]);
   });
 

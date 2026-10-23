@@ -843,7 +843,7 @@ describe("renderBoard", () => {
       .lines.map(stripAnsi)
       .join("\n");
     // No pane of its own yet: the PR's live transcript, which is all a PR is
-    // between an operator's debug rounds and takeovers (P9.6).
+    // between an operator's debug rounds and takeovers.
     expect(text).toContain("LIVE pr-5012 · connecting…");
     expect(text).not.toContain("other pr");
   });
@@ -1517,7 +1517,7 @@ describe("the transcript viewer in the board's pane", () => {
         repo: undefined,
       }).inline;
     // Every runtime but a pi terminal's is the viewer, absent and unknown
-    // included: there is no `pr-<n>` tmux mirror any more (P9.6).
+    // included: there is no `pr-<n>` tmux mirror any more.
     for (const rt of ["worker", "answer", "idle", undefined, "tmux", "other"])
       expect(keysFor(rt), String(rt)).toEqual(["a", "[", "]", "<", ">"]);
     for (const rt of ["debug", "takeover"]) expect(keysFor(rt), rt).toEqual(["a"]);

@@ -5,7 +5,7 @@
 //   - the gate order: nothing but `publish` logs in or pushes, and publish
 //     needs the build and the e2e;
 //   - the paid e2e: its own environment, and the only job that reads a secret;
-//   - the arm64 runners (D15): native by default, QEMU on a variable;
+//   - the arm64 runners: native by default, QEMU on a variable;
 //   - provenance attestations for every pushed digest;
 //   - the `plan` step's version rules, run for real against a temp package.json.
 import { describe, expect, it } from "vitest";
@@ -129,7 +129,7 @@ describe("release.yml — the gates", () => {
     expect(jobText("build")).toContain("docker/memory/Dockerfile");
   });
 
-  it("native arm64 runners by default, QEMU when RELEASE_ARM64_RUNNER=qemu (D15)", () => {
+  it("native arm64 runners by default, QEMU when RELEASE_ARM64_RUNNER=qemu", () => {
     const inc = (wf.jobs.build!.strategy!.matrix.include as Record<string, string>[]).find(
       (i) => i.arch === "arm64",
     )!;

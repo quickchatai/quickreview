@@ -1,4 +1,4 @@
-// P4.4: cache groups for SDK lens passes (D7). The real pi SDK on pi-ai's faux
+// Cache groups for SDK lens passes. The real pi SDK on pi-ai's faux
 // provider (no model, no network). A faux response plays the provider's part: it
 // opens a fake transport socket under the request's session id and runs the
 // request payload through pi's before_provider_request hook (onPayload), as the

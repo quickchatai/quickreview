@@ -643,7 +643,7 @@ step preflight
 # The scratch copy: the snapshot's db files and the sessions, owned by the
 # container uid, mounted as the app's state dir. --network none: the preflight
 # reads, it reaches nothing. `daemon --preflight` is the image's own check
-# (P8.4b): migrate the scratch db forward, resume the live JSONLs offline.
+#: migrate the scratch db forward, resume the live JSONLs offline.
 SCRATCH="$WORK/preflight-state"
 mkdir -p "$SCRATCH"
 for f in "${STATE_DB_FILES[@]}"; do

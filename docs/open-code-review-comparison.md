@@ -227,7 +227,7 @@ agents and deletes anything without the tier suffix (`include.ts:829`,
 
 Fixing that and pointing it at a frozen set of about 30 to 50 historical PRs
 would turn "did this addendum help?" into a number, measured before a deploy.
-This is not the reviewer running code (scoping rule 2 is untouched). It is us
+This is not the reviewer running code (the reviewer still never executes what it reviews). It is us
 testing the reviewer. It costs real tokens per replay, so it should be run on
 demand and not on every commit.
 

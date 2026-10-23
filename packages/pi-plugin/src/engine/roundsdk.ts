@@ -10,12 +10,12 @@
 //                            the spec's env (bash-guard, ledger-pin,
 //                            finding-clusters), in the file order of the proc route
 //   the lens tool            a factory the route hands in (`lens`): today's native
-//                            one is a file only; the engine's lens tools (P4.5)
+//                            one is a file only; the engine's lens tools
 //                            take this slot
 //   the tool allowlist       pi's defaults plus every tool those extensions
 //                            register: pi's CLI activates all of them, and the
 //                            host drops anything not named
-//   the D34 context stub     the reviewer stub handed as data, at the path pi
+//   the context stub     the reviewer stub handed as data, at the path pi
 //                            would have read it from in the cwd; never read
 //                            from, or written into, a checkout
 //   the model's bash env     an allowlist over the spec's env, never a GitHub
@@ -57,7 +57,7 @@ export interface RoundSdkOptions {
  * The proc route's bash saw the whole env; the API keys in it are not carried. */
 export const BASH_ENV_ALLOW = ["GIT_*", "QCR_*"] as const;
 
-/** The reviewer stub (D34) as a context file at `<cwd>/AGENTS.override.md`. A
+/** The reviewer stub as a context file at `<cwd>/AGENTS.override.md`. A
  * checkout keeps it at `deploy/reviewer/`; the release and bench images install
  * it at the tree's root (docker/Dockerfile, bench/aacr/Dockerfile), so both
  * places are tried. A round without the stub fails here, loudly: a context file

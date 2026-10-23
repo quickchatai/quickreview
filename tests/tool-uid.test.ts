@@ -1,4 +1,4 @@
-// [P7.12a] The separate tool uid (packages/pi-plugin/src/engine/tooluid.ts), without root: the gate,
+// The separate tool uid (packages/pi-plugin/src/engine/tooluid.ts), without root: the gate,
 // the argv, and the SDK bash tool's execution against a stand-in `setpriv` that
 // records what it was asked and then runs the command as this user. The real
 // switch of uid, in a container, is tests/tool-uid-container.test.ts.

@@ -12,7 +12,7 @@
 // (through packages/pi-plugin/src/oneshot.ts). It takes a prepared tree, its file list, a target
 // description and an output directory; it knows nothing of bench cases,
 // stores or prefetching. No daemon, tmux, inject bridge or memory: a process
-// that exits when the round settles (CLAUDE.md rule 8's boundary: no GitHub
+// that exits when the round settles (the companion boundary: no GitHub
 // credential reaches it).
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
@@ -241,7 +241,7 @@ export interface PreparedRound {
   /** The environment the session's tools see (no GitHub token). */
   env: NodeJS.ProcessEnv;
   sessionName: string;
-  /** Where the main session's JSONL goes (D10: kept per round). */
+  /** Where the main session's JSONL goes (kept per round). */
   sessionDir: string;
   /** The session's event stream and stderr files. */
   events: string;
@@ -369,7 +369,7 @@ export function prepareRound(
         }
       : rendered;
     writeFileSync(join(outDir, "round-order.md"), prompts.order);
-    // What `qcr open` needs to start pi on this run's sessions again (D10).
+    // What `qcr open` needs to start pi on this run's sessions again.
     writeOpenMeta(outDir, {
       version: 1,
       sessionName,

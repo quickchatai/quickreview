@@ -1,4 +1,4 @@
-// [P8.13b] The bot's debug round (D38): a PR's next round runs inside interactive pi.
+// The bot's debug round: a PR's next round runs inside interactive pi.
 //
 // A FAKE host stands in for tmux and the process table (tests/helpers/fake-pane-host.ts):
 // sessions, pids with start times and process groups, signals that kill (or are ignored,
@@ -241,7 +241,7 @@ async function dispatch(r: Rg, pr = 7): Promise<SessionCommandRow> {
 const verdictFile = (r: Rg, pr = 7, round = 1): string =>
   join(r.root, "verdict", `pr-${pr}-round-${round}.json`);
 
-describe("[P8.13b] arming the lease", () => {
+describe("arming the lease", () => {
   it("takes the lease in debug mode and starts no pi until the round arrives", async () => {
     const r = rig();
     upsert(r.store, 7);
@@ -364,7 +364,7 @@ describe("[P8.13b] arming the lease", () => {
   });
 });
 
-describe("[P8.13b] the round is delivered to interactive pi, not to a worker", () => {
+describe("the round is delivered to interactive pi, not to a worker", () => {
   it("hands the dispatched round to tmux debug-pr-<n> on a spec file; no worker spawns", async () => {
     const r = rig();
     upsert(r.store, 7);
@@ -576,7 +576,7 @@ describe("[P8.13b] the round is delivered to interactive pi, not to a worker", (
   });
 });
 
-describe("[P8.13b] a PR that closes under a debug round", () => {
+describe("a PR that closes under a debug round", () => {
   it("stops the debug pi and frees the lease before its session counts as gone", async () => {
     const r = rig();
     upsert(r.store, 7);
@@ -604,7 +604,7 @@ describe("[P8.13b] a PR that closes under a debug round", () => {
   });
 });
 
-describe("[P8.13b] the round ends with the verdict commit", () => {
+describe("the round ends with the verdict commit", () => {
   it("marks the round started when the order went out, then ends it after the verdict and a quiet pane", async () => {
     const delivered: string[] = [];
     const r = rig({
@@ -853,7 +853,7 @@ describe("[P8.13b] the round ends with the verdict commit", () => {
   });
 });
 
-describe("[P8.13b] a sweep does not take an earlier round's evidence or a launch in flight for this round's", () => {
+describe("a sweep does not take an earlier round's evidence or a launch in flight for this round's", () => {
   it("a status file left by the PR's previous debug round is not this round's start receipt", async () => {
     const r = rig();
     upsert(r.store, 7);
@@ -901,7 +901,7 @@ describe("[P8.13b] a sweep does not take an earlier round's evidence or a launch
   });
 });
 
-describe("[P8.13b] it posts like any round: through the gate, with the install's dry_run", () => {
+describe("it posts like any round: through the gate, with the install's dry_run", () => {
   let po: Rig;
   const clients: IpcClient[] = [];
   afterEach(async () => {
@@ -1036,7 +1036,7 @@ describe("[P8.13b] it posts like any round: through the gate, with the install's
   });
 });
 
-describe("[P8.13b] the operator's verbs", () => {
+describe("the operator's verbs", () => {
   it("debug-round and release are served by the manager through the operator control route", async () => {
     const r = rig();
     upsert(r.store, 7);

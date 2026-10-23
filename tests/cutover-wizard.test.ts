@@ -1,4 +1,4 @@
-// scripts/cutover.sh (P8.21a) — the owner's cutover wizard, driven end to end
+// scripts/cutover.sh — the owner's cutover wizard, driven end to end
 // against stubbed ssh, deploy.sh and qcr. Nothing here touches a VM, GitHub,
 // docker or the network. Pinned:
 //   - a resumed run skips finished stages and never repeats the release
@@ -7,7 +7,7 @@
 //   - nothing runs without the explicit go (the typed version, the plan check)
 //   - the drain is HELD after the release and lifted only on the owner's go:
 //     the release's first boot keeps the operator's drain as the no-auto-lift
-//     hold (P8.21b), the wizard checks that it still stands as a hold after
+//     hold, the wizard checks that it still stands as a hold after
 //     the first healthy reconcile, and stops loudly — never re-drains — when
 //     it does not
 //   - only an operator drain goes into the release (a session-bounded one

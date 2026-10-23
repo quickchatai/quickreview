@@ -1,4 +1,4 @@
-// P5.1: the runtime selection keys. `[engine] runtime = sdk` (`proc` is retired
+// The runtime selection keys. `[engine] runtime = sdk` (`proc` is retired
 // and refused) and `[pi] lens_runtime = native|engine` parse with sdk/engine
 // defaults (X2), the shipped example config still validates, and a route that
 // has no SDK host refuses `sdk`.

@@ -1,4 +1,4 @@
-// [P7.12a] The SDK route under the separate tool uid, in real containers: the
+// The SDK route under the separate tool uid, in real containers: the
 // repo's own entrypoint and built code in a stock node image, started with the
 // flags the release e2e, the wrapper and the Action give a model-reaching call
 // (--user 0:0, only SETUID/SETGID, no-new-privileges), so the kernel is the one
@@ -274,7 +274,7 @@ function toolResults(file: string): ToolResult[] {
   return results;
 }
 
-// P7.12: the containers below run the shipped config, which names no [engine]
+// The containers below run the shipped config, which names no [engine]
 // key: the SDK, engine lenses and the planned wave are what that config selects
 // on the review route, so the root start is checked on the default route.
 describe("the shipped config selects the SDK route the containers run", () => {

@@ -188,7 +188,7 @@ describe("handleDelivery", () => {
   });
 
   it(
-    "caps and throttles bad-signature rows so an unauthenticated flood cannot fill the state volume (selfscan 4c15a23f)",
+    "caps and throttles bad-signature rows so an unauthenticated flood cannot fill the state volume",
     { timeout: HEAVY_TIMEOUT_MS },
     () => {
       // The endpoint is public through the tunnel and a rejection is logged
@@ -225,7 +225,7 @@ describe("handleDelivery", () => {
     },
   );
 
-  it("drops an event from another repository the App is installed on (selfscan b448dc04)", () => {
+  it("drops an event from another repository the App is installed on", () => {
     // The App's installation spans many repos and every one of them delivers
     // here. A PR closed elsewhere whose NUMBER matches a tracked PR must not
     // drive this repo's closed transition or archive its live session.

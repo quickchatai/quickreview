@@ -437,7 +437,7 @@ describe("drain auto-lift", () => {
     }
   });
 
-  it("does NOT lift a drain the worker breaker set (worker_failures) on a healthy boot; drain off does (P8.5b)", async () => {
+  it("does NOT lift a drain the worker breaker set (worker_failures) on a healthy boot; drain off does", async () => {
     store.engageDrain({ issuer: "operator", expires_at: null }, "worker_failures");
     const daemon = createDaemon({
       cfg: { ...loadConfig(resolve(process.cwd(), "tests/fixtures/config.toml")), dry_run: true },

@@ -14,10 +14,10 @@
 // pi never imports it: src/scancli.ts loads it on demand, and tests/
 // fences-engine.test.ts pins that no extension's import closure reaches it.
 // That keeps the SDK's process-global HTTP dispatcher and a frozen loop out of
-// the companion (CLAUDE.md rule 8).
+// the companion (the companion boundary).
 //
 // AUTH. Each case builds its own host on a fresh read-only copy of the owner's
-// login (engineCredentials, D5): a token the companion refreshed mid-scan is
+// login (engineCredentials): a token the companion refreshed mid-scan is
 // picked up at the next case, a token the case would not outlive is refused
 // before it starts, and nothing is ever refreshed or written here.
 import {
@@ -218,7 +218,7 @@ export function sdkCaseRunner(opts: SdkCaseRunnerOptions): CaseRunner {
           model,
           ...(agent.tools.length > 0 ? { tools: agent.tools } : {}),
           name: spec.id,
-          // The case's session JSONL beside its transcript (D10), so the case
+          // The case's session JSONL beside its transcript, so the case
           // opens in pi: `qcr open <run dir> --lens <case>`.
           ...(opts.transcriptDir !== undefined && opened !== null
             ? { sessionDir: caseSessionDir(opts.transcriptDir, opened.rel) }
@@ -352,7 +352,7 @@ export interface ScanSdkCasesOptions {
   /** Hears an expired or missing login, so the run can stop with the fix. */
   onExpired: (reason: string) => void;
   /** The host a case runs on, built from its credentials. Omitted: a PiHost that
-   * owns this process (the driver's) and installs pi's HTTP dispatcher (D4). */
+   * owns this process (the driver's) and installs pi's HTTP dispatcher. */
   makeHost?: (o: {
     agentDir: string;
     credentials: ReturnType<typeof engineCredentials>["credentials"];

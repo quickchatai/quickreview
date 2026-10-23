@@ -5,11 +5,11 @@
 // implementation choices:
 //
 //  1. **Selection is by SUBSTANCE, not by verdict.** The obvious pool is the
-//     354 human CHANGES_REQUESTED reviews, but blocking measures the REVIEWER,
-//     not the finding: 82% of blocking findings carry no correctness
-//     vocabulary, 231 are nothing but a question, 16 make no request at all,
-//     and one reviewer is 43% of the corpus. Selecting on the GitHub verdict
-//     would teach the reviewer to block on quote style. `selectCases` therefore
+//     human CHANGES_REQUESTED reviews, but blocking measures the REVIEWER, not
+//     the finding: most blocking findings carry no correctness vocabulary,
+//     many are nothing but a question, some make no request at all, and a
+//     single prolific reviewer can dominate the corpus. Selecting on the GitHub
+//     verdict would teach the reviewer to block on quote style. `selectCases` therefore
 //     NEVER reads `state` — the field is carried through only so the report can
 //     print it, and `tests/regression.test.ts` pins that by re-running the
 //     selection with every verdict flipped and demanding an identical result.
@@ -27,7 +27,8 @@
 //     ratchet the reviewer toward imitating one person's habits, which is not
 //     the goal and never was.
 //
-//  3. **Dry-run is asserted HERE, in this module's own code** (rule 1). Not
+//  3. **Dry-run is asserted HERE, in this module's own code** (AGENTS.md
+//     invariant 6: `dry_run` is the operator's flag alone). Not
 //     read from `config.toml`, not inherited, not printed as prose — see
 //     `src/compare.ts`'s `attestDryRun` for what that mistake looked like.
 //     `runRegression` refuses to start unless the gate it was handed reports
@@ -37,17 +38,15 @@
 //     path (that is how the cutover compare harness works, and it is not how
 //     this one does). Pinned structurally by `tests/regression.test.ts`.
 //
-// Scoping rule 2 holds throughout: this reads code, review text and CI results
-// off disk. It never executes reviewed code.
+// The reviewer's read-only boundary holds throughout (AGENTS.md invariant 5):
+// this reads code, review text and CI results off disk. It never executes
+// reviewed code.
 
 // ---- the substance ladder ----------------------------------------------------
 //
-// Verbatim from the review-corpus study's `substance.mjs` (its
-// `export/substance.md` publishes the same regexes and the measured
-// distribution). Reproduced rather than imported because that asset is
-// evidence, not a dependency — but it must stay
-// byte-equivalent in behaviour, and any change to it changes what "substance"
-// means for every case in the set.
+// The regexes that grade a finding's substance. They are written out here, not
+// imported, so the instrument can be read and judged in one place; any change
+// to them changes what "substance" means for every case in the set.
 
 /** A finding that carries no information without the diff in front of you. */
 export const PURE_MARKER =
@@ -62,14 +61,13 @@ export const ALTERNATIVE =
 export const CONTEXT =
   /(?:^|[\s`(])((?:[\w.-]+\/)+[\w.-]+\.\w+)|https?:\/\/|\b(elsewhere|other (file|place|module)|the rest of|in \S+\.py|in \S+\.tsx?|previous pr|earlier|convention)\b/i;
 
-/** The old `/auto-review` loop posted under a personal account and used this
- * grammar. In 1,387 PRs it fires on exactly one login in one date range and on
- * zero humans. A row it matches is the sandbox's
- * own output — scoring against it would be scoring the reviewer against itself. */
+/** A predecessor review loop used this grammar, and no human writes it. A row
+ * it matches is the tool's own output — scoring against it would be scoring
+ * the reviewer against itself. */
 export const BOT_TAG = /^\s*\[(blocker|question|nit|check this|note)\b/i;
 
-/** Polish appears freely in this corpus. Comparing an English lens against a
- * Polish finding measures translation, not review quality. */
+/** Non-English findings are skipped: comparing an English lens against a
+ * finding in another language measures translation, not review quality. */
 export const POLISH =
   /[ąćęłńóśźż]|\b(nie|jest|tutaj|żeby|może|trzeba|powinno|zobacz|który|tego|takie)\b/i;
 
@@ -78,9 +76,9 @@ export const POLISH =
 export const OFF_PR =
   /\bas (we )?discussed\b|\bon the call\b|\boffline\b|\bslack\b|@[a-z0-9-]{3,}|\bscreenshot\b|\bstandup\b/i;
 
-/** Nothing at or after this instant is human ground truth: 335 findings from
- * 2026-05-20 are the old loop's own output, and ~835 from 2026-03-01 are
- * suspected AI-assisted and cannot be separated. */
+/** Nothing at or after this instant is human ground truth: later findings mix
+ * a predecessor loop's own output with suspected AI-assisted ones, and the two
+ * cannot be separated. */
 export const CONTAMINATION_CUTOFF = "2026-03-01T00:00:00Z";
 
 export interface Substance {
@@ -140,7 +138,7 @@ export function classifySubstance(md: string, plain: string): Substance {
 
 /** The substance bar for admission to the set: the finding must state a reason
  * or propose a concrete alternative. L0/L1 are remarks and L2 is a pointed
- * claim with nothing behind it — 72.5% of the corpus, and a set built out of
+ * claim with nothing behind it — most of a typical corpus, and a set built out of
  * them would measure whether the reviewer likes the same lines, not whether it
  * reaches the same conclusions. */
 export const QUALIFYING_RUNG = 3;

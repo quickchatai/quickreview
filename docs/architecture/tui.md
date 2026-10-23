@@ -416,13 +416,13 @@ it. A second concurrent TUI attaches to the same container — `ensureUp()` and
 `spawnPi()` are both idempotent. `src/cli.ts` `cmdCompanion` exposes
 `up|down|status|rebuild|plan`; `rebuild` exists because the image is otherwise
 built only when missing, so a Dockerfile, entrypoint, extension or prompt change
-would never reach a machine that already has one (D20: the companion runs the
+would never reach a machine that already has one (the companion runs the
 image's code, so there is no hot reload for it) (the pihome volume is untouched, so the
 login and the conversation survive).
 
 **Two ways to reach the container's tmux** (`CompanionMode`). `docker` is the
 clone route above: `docker exec <container> tmux …`. `tmux-socket` is the
-containerised TUI (D35): the companion's tmux server listens on a socket in a
+containerised TUI: the companion's tmux server listens on a socket in a
 named volume (`QCR_TMUX_SOCKET`, `/run/qcr-tmux/<session>.sock`), and the TUI
 container, which has no `docker.sock`, mounts that volume and runs
 `tmux -S <socket>` (`src/tui/tmuxsocket.ts`, a `DockerRunner` that turns the
@@ -541,7 +541,7 @@ files validated against a strict schema and executed against a `TuiDriver`
 supplied at wiring time. The verb set is closed and is exactly what the
 operator's own keyboard can do — tab switches, PR selection, filters, digest
 and memory paging, metrics window/PR, quick-messages, the
-deploy-tab buttons, and (`memory_pin`, root CLAUDE.md rule 8) the memory
+deploy-tab buttons, and (`memory_pin`) the memory
 tab's `p`: pin or unpin one
 existing entry through the TUI's `MemoryStore`, awaited so the result file
 carries the store's answer, and nothing else about memory. Requests execute instantly; there is no confirmation step,

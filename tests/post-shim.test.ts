@@ -1,4 +1,4 @@
-// [P7.2] The Node post client behind post-review.sh, approve-pr.sh and
+// The Node post client behind post-review.sh, approve-pr.sh and
 // reply-thread.sh: argument parsing, the round identity it carries from env,
 // the capability read from the inherited fd for every post, the exit codes, and
 // the scripts' hand-over to it whenever the worker socket is in env.
@@ -34,7 +34,7 @@ import {
 
 const SANDBOX = resolve(import.meta.dirname, "..");
 
-describe("[P7.2] the client builds its request from the scripts' own arguments", () => {
+describe("the client builds its request from the scripts' own arguments", () => {
   const env = {};
   it("post-review: absolute file paths, the round identity from env", () => {
     const r = postRequest(
@@ -84,7 +84,7 @@ describe("[P7.2] the client builds its request from the scripts' own arguments",
   });
 });
 
-describe("[P7.2] the client posts through a daemon", () => {
+describe("the client posts through a daemon", () => {
   let rig: Rig;
   let clients: IpcClient[];
   let fd: number;
@@ -213,7 +213,7 @@ describe("[P7.2] the client posts through a daemon", () => {
   });
 });
 
-describe("[P7.2] the three scripts hand over to the client when the worker socket is in env", () => {
+describe("the three scripts hand over to the client when the worker socket is in env", () => {
   let root: string;
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "shim-script-"));
@@ -250,7 +250,7 @@ describe("[P7.2] the three scripts hand over to the client when the worker socke
   });
 
   it.each(["post-review.sh", "approve-pr.sh", "reply-thread.sh"])(
-    "%s is Node-only: it hands over unconditionally and holds no shell route (P9.3)",
+    "%s is Node-only: it hands over unconditionally and holds no shell route",
     (script) => {
       const body = readFileSync(join(SANDBOX, "scripts", script), "utf8");
       expect(body).toMatch(/^exec node "\$ROOT\/dist\/src\/ipc\/postshim\.js" \w+ "\$@"$/m);

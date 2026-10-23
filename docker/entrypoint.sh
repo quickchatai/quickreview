@@ -13,7 +13,7 @@
 #   mint       a GitHub App installation token on stdout (scripts/mint-token.sh).
 #   install    the host wrapper, pinned to this image (scripts/install-wrapper.sh):
 #              `-v ~/.local/bin:/out` writes /out/qcr, otherwise `| sh` installs it.
-#   worker     the per-round bot worker (a stub until P8.3).
+#   worker     the per-round bot worker.
 #
 # `install where|migrate` and `companion up|down|status|rebuild` are qcr verbs
 # that share a mode's name: with arguments they go to the cli.
@@ -28,8 +28,8 @@
 # every runtime uid, and <root>/state is a world-writable mount point.
 #
 # bash-guard (extensions/cli/bash-guard.ts) is no longer registered in pi's global
-# settings (P9.5): every lens and worker session gets it from the factory, and
-# the takeover and debug pi load it by path. D32's per-call cli mode runs in a
+# settings: every lens and worker session gets it from the factory, and
+# the takeover and debug pi load it by path. The per-call cli mode runs in a
 # throwaway container that is the sandbox, and puts the model's
 # tools under another uid, so the kernel keeps them off the
 # token-holding Node process (/proc/<pid>/mem and environ):
@@ -66,7 +66,7 @@
 # not separated. pi holds its own OAuth token as the tools' uid, which no
 # split hides from the tools it runs; the split protects the GitHub token.
 #
-# The login volume outlives every uid (P6.7). `login` runs as the caller and
+# The login volume outlives every uid. `login` runs as the caller and
 # leaves every entry of pi's agent dir in the fixed login group (QCR_LOGIN_GID,
 # default 4747) at 0660/2770 when pi exits; the wrapper gives every call that
 # mounts the volume that group (--group-add), and the cli mode keeps it across
@@ -77,7 +77,7 @@
 # The daemon is the live bot and keeps the guard, the pinned-CLI check and the
 # reviewer context stub it has always had (the VM's retired
 # deploy/ansible/templates/entrypoint.sh.j2).
-# The VM runs this image since the P7.10 cutover: deploy/ansible/playbook.yml.
+# The VM runs this image since the cutover: deploy/ansible/playbook.yml.
 #
 # Every mode that reaches pi needs a writable <root>/state and a writable HOME
 # (pi settings are merged under ~/.pi on every cli start, `version` included):
@@ -120,11 +120,11 @@ case "$mode" in
     ;;
 esac
 
-# ---- D32: the model's tools run as another uid ---------------------------------
+# ---- the model's tools run as another uid ---------------------------------
 
 # The cli mode and the daemon mode run the engine (`daemon --preflight` reads
 # mounts and runs none). See the header for the contract; the host wrapper
-# (P6.6) owns the docker flags that make the cli's root start possible, and the
+# owns the docker flags that make the cli's root start possible, and the
 # VM's updater (deploy/qcr-update.sh) the daemon's.
 isolate_tools() {
   case "$mode" in
@@ -229,7 +229,7 @@ share_tool_dirs() {
 
 isolate_tools "$@"
 
-# ---- the token handoff (D39) ------------------------------------------------------
+# ---- the token handoff ------------------------------------------------------
 
 # A GitHub token is never env or argv in this image. The caller bind-mounts a
 # 0700 dir at /run/qcr-in holding a 0600 file and names it in QCR_GH_TOKEN_FILE;
@@ -314,7 +314,7 @@ assert_state_writable() {
 #   QCR_PI_TRUST_DIR     a directory pre-seeded into pi's trust store.
 #   QCR_PI_AGENTS_TARGET where $HOME/.pi/agent/agents links (the lens tool's
 #                        agent discovery, <agent dir>/agents).
-# No extension is registered globally (P9.5): bash-guard rides every lens and
+# No extension is registered globally: bash-guard rides every lens and
 # worker session as a factory, and the takeover and debug pi load it by path.
 # A global entry would arm every lens leaf with ambient extension work.
 provision_pi_settings() {
@@ -409,7 +409,7 @@ PI_EXT_MERGE
 # ---- modes -------------------------------------------------------------------
 
 mode_daemon() {
-  # `daemon --preflight` (P8.4b): the updater's check on a scratch copy, run with
+  # `daemon --preflight`: the updater's check on a scratch copy, run with
   # --network none. It starts nothing (no tmux, no git config, no pi settings):
   # it reads the mounts and prints one JSON report.
   if [ "${1:-}" = "--preflight" ]; then
@@ -436,7 +436,7 @@ mode_daemon() {
 
   share_tool_dirs
 
-  # No global extension registration (P9.5, see provision_pi_settings).
+  # No global extension registration (see provision_pi_settings).
   QCR_PI_TRUST_DIR="$APP" \
     QCR_PI_AGENTS_TARGET="$STATE/agents" \
     provision_pi_settings >&2
@@ -474,7 +474,7 @@ mode_daemon() {
 # The companion's pi settings on top of the common merge: its skills, its
 # default model, its agent set, the /workspace trust. The agent set is the
 # image's (QCR_COMPANION_AGENTS, default $APP/docker/companion/agents): the
-# companion runs the image's code (D20), not the checkout's.
+# companion runs the image's code, not the checkout's.
 provision_companion_settings() {
   QCR_COMPANION_AGENTS="${QCR_COMPANION_AGENTS:-$APP/docker/companion/agents}" node <<'PI_COMPANION_MERGE'
 const fs = require("fs");
@@ -609,7 +609,7 @@ mode_companion() {
   trap term TERM INT
 
   if [ -n "${QCR_TMUX_SOCKET:-}" ]; then
-    # D35: the server listens on a socket in the volume the containerised TUI
+    # The server listens on a socket in the volume the containerised TUI
     # shares (`tmux -S`), and stays up with no session so the TUI can find it
     # before pi is spawned. A socket left by an earlier run is stale.
     mkdir -p "$(dirname "$QCR_TMUX_SOCKET")" 2>/dev/null || true
@@ -630,13 +630,13 @@ mode_companion() {
 mode_login() {
   # pi itself with `/login` typed and sent for the user: the one script
   # scanbox.ts `loginInPi` builds (it validates the provider name too), run on
-  # the image's one pi, node_modules/.bin/pi (there is no pi on the PATH, P9.9b).
+  # the image's one pi, node_modules/.bin/pi (there is no pi on the PATH).
   local script
   script="$(node --input-type=module -e '
     const { loginInPi } = await import(process.argv[1] + "/dist/src/scanbox.js");
     process.stdout.write(loginInPi(process.argv[2] || undefined, process.argv[1] + "/node_modules/.bin/pi")[2]);
   ' "$APP" "${1:-}")" || die "login: could not build the pi login command"
-  # The bot's login has ONE refresher (src/loginrefresh/, P8.22); when this
+  # The bot's login has ONE refresher (src/loginrefresh/); when this
   # container runs it, it stands down for the login and takes over again after.
   login_handover_begin
   # Not exec: the login is shared with the login group once pi has written it,
@@ -649,7 +649,7 @@ mode_login() {
 }
 
 # The handover between pi's /login and the bot container's login refresher
-# (P8.22). The refresher holds an exclusive flock on <agent>/auth.json.lock for
+#. The refresher holds an exclusive flock on <agent>/auth.json.lock for
 # its whole life: when that lock is held, a refresher is running, and a login
 # rewriting auth.json beside it would race its refresh. So the login asks it to
 # pause - writes <agent>/auth.json.pause - and waits for `"paused": true` in
@@ -743,7 +743,7 @@ case "$mode" in
     exec "$APP/scripts/install-wrapper.sh"
     ;;
   worker)
-    say "worker: the per-round bot worker is not shipped in this image yet (P8.3)"
+    say "worker: the per-round bot worker is not shipped in this image yet"
     exit 64
     ;;
 esac

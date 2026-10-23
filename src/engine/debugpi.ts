@@ -7,11 +7,11 @@
 //
 //   - the extensions of a round, our lens tools included, through
 //     extensions/debug-round.ts: lens passes are SDK sessions of that pi process,
-//     which reuse pi's own HTTP dispatcher and never install a second (D4)
+//     which reuse pi's own HTTP dispatcher and never install a second
 //   - `/qcr-round` as its first message, a command of that extension: it launches
 //     the planned discovery wave and then sends the order, which is what the
 //     engine does at round start (rule 9, the engine launches the planned wave)
-//   - the main session persisted under the round's `session/` (D10), and the lens
+//   - the main session persisted under the round's `session/`, and the lens
 //     passes under `lens-sessions/`, so the round opens again later (`qcr open`)
 //
 // When pi exits the round is read as any round is (round.ts settleRound). Pi in

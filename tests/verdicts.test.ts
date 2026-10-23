@@ -632,7 +632,7 @@ describe("measured round usage", () => {
     expect(round.spend_usd).toBeNull();
   });
 
-  // P8.9: a worker that closed its report is the round's est_usd; the tokens stay
+  // A worker that closed its report is the round's est_usd; the tokens stay
   // the transcripts'. Anything short of one closed, single-worker report falls back.
   describe("the worker's own report", () => {
     const costLine = (total: number): string =>
@@ -1480,7 +1480,7 @@ describe("settling from a confirmed posting receipt", () => {
   it("a malformed verdict whose APPROVE was confirmed posted settles as APPROVE — no FAILED_LOUD, no requeue", async () => {
     reviewingRound(5885);
     const { key } = stampPosting(5885, 1);
-    writePostingReceipt(5885, 1, key, "APPROVE", { gh_review_id: 5449445735 });
+    writePostingReceipt(5885, 1, key, "APPROVE", { gh_review_id: 4000000201 });
     const { hooks, overseer } = recordingHooks();
     const name = write(5885, 1, TRUNCATED(5885));
 
@@ -1489,7 +1489,7 @@ describe("settling from a confirmed posting receipt", () => {
     expect(store.roundsFor(5885)[0]).toMatchObject({
       status: "done",
       verdict: "APPROVE",
-      gh_review_id: 5449445735,
+      gh_review_id: 4000000201,
       posted_event: "APPROVE",
     });
     expect(store.roundsFor(5885)[0]!.summary).toContain("settled from the posted review");
@@ -1503,7 +1503,7 @@ describe("settling from a confirmed posting receipt", () => {
     expect(settledEvent(5885)).toMatchObject({
       via: "malformed_verdict",
       decided_verdict: "APPROVE",
-      gh_review_id: 5449445735,
+      gh_review_id: 4000000201,
     });
     const applied = store.db
       .prepare("SELECT payload FROM events WHERE kind = 'verdict_applied' AND pr = 5885")

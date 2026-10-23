@@ -57,7 +57,7 @@ import { WITHHOLD_WORDS } from "@quickchatai/pi-quickreview/src/postingpolicy.js
 
 /** The lifecycle states a PR can occupy. There is no "awaiting human" member:
  * the review is never handed to a human, so nothing produces or holds such a
- * state (CLAUDE.md rule 10). */
+ * state (the never-hand-to-a-human rule). */
 export type PrLifecycleState = "tracked" | "queued" | "reviewing" | "awaiting_author" | "closed";
 
 /** Who asked for the queued round. `human` = a fresh label add, a
@@ -492,13 +492,13 @@ export interface SlackCooldownRow {
   bypassed: number;
 }
 
-/** The `reason` of the drain the worker crash-loop breaker sets (P8.5b). */
+/** The `reason` of the drain the worker crash-loop breaker sets. */
 export const WORKER_FAILURES_DRAIN_REASON = "worker_failures";
 
-/** The kinds of host lease: the operator's takeover, and (P8.13b) a debug round. */
+/** The kinds of host lease: the operator's takeover, and a debug round. */
 export type HostLeaseKind = "takeover" | "debug";
 
-/** One PR's host lease row (P8.13). */
+/** One PR's host lease row. */
 export interface HostLeaseRow {
   pr: number;
   kind: HostLeaseKind;
@@ -516,7 +516,7 @@ export interface HostLeaseRow {
 export type HostLeaseGrant =
   { ok: true; row: HostLeaseRow } | { ok: false; why: "held" | "worker"; reason: string };
 
-/** One PR's worker crash-loop breaker row (P8.5b). */
+/** One PR's worker crash-loop breaker row. */
 export interface WorkerBreakerRow {
   pr: number;
   /** Consecutive failed workers since the last success. */
@@ -553,7 +553,7 @@ export type DrainState =
        * for a hand-set drain. A drain with a reason is lifted only by an explicit
        * `drain off`, never by a boot's first reconcile pass. */
       reason: string | null;
-      /** The operator's no-auto-lift HOLD (`qcr drain on --hold`, P8.21b): no
+      /** The operator's no-auto-lift HOLD (`qcr drain on --hold`): no
        * boot's first reconcile lifts it, only an explicit operator `drain off`.
        * Always the operator's, never with an expiry. */
       hold: boolean;
@@ -1046,7 +1046,7 @@ CREATE TABLE IF NOT EXISTS drain_state (
   since              TEXT,
   updated_at         TEXT NOT NULL
 );
--- Worker crash-loop breaker (P8.5b): consecutive worker failures per PR. A PR
+-- Worker crash-loop breaker: consecutive worker failures per PR. A PR
 -- with parked_at set gets no worker until the operator's rerun-round or
 -- restart-session clears the row. worker_breaker_global.epoch ticks at every
 -- worker success (and at the lift of the breaker's drain); a failure counts
@@ -1066,7 +1066,7 @@ CREATE TABLE IF NOT EXISTS worker_breaker_global (
   epoch      INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL
 );
--- The host lease (P8.13, D27): who holds a PR's session while the operator works
+-- The host lease: who holds a PR's session while the operator works
 -- in it. One row per PR, so a PR has one holder. It is granted only while no worker
 -- command owns the session (the grant checks session_commands in its own
 -- transaction), it holds dispatch and parks wakes while it stands, and a worker
@@ -1075,7 +1075,7 @@ CREATE TABLE IF NOT EXISTS worker_breaker_global (
 -- confirmed the process is gone (two writers never append to one JSONL).
 CREATE TABLE IF NOT EXISTS pr_host_leases (
   pr         INTEGER PRIMARY KEY,
-  kind       TEXT NOT NULL,       -- 'takeover' (a debug round shares the table, P8.13b)
+  kind       TEXT NOT NULL,       -- 'takeover' (a debug round shares the table)
   state      TEXT NOT NULL,       -- 'held' | 'ending'
   token      TEXT NOT NULL,       -- fences the row: only the grant's holder updates it
   command_id TEXT NOT NULL,       -- the host's IPC command id (its capability)
@@ -1783,7 +1783,7 @@ export class StateStore {
       // start lease ran out on a live, ready bridge — bounded on their own,
       // before any kill-and-replay recovery is spent.
       "ALTER TABLE session_commands ADD COLUMN redeliveries INTEGER NOT NULL DEFAULT 0",
-      // What the command's worker reported it spent (P8.9). `usage_final` is set
+      // What the command's worker reported it spent. `usage_final` is set
       // only by the worker's closing report; a figure without it is a crash's partial.
       "ALTER TABLE session_commands ADD COLUMN est_usd REAL",
       "ALTER TABLE session_commands ADD COLUMN lens_usd REAL",
@@ -1903,7 +1903,7 @@ export class StateStore {
   }
 
   /**
-   * The operator's no-auto-lift drain HOLD (P8.21b): `drain_state.hold`.
+   * The operator's no-auto-lift drain HOLD: `drain_state.hold`.
    *
    * The boot that adds the column CARRIES a standing operator drain over as a
    * hold. That drain was set by a daemon that could not spell a hold, and the
@@ -2583,7 +2583,7 @@ export class StateStore {
       .all() as RoundRow[];
   }
 
-  /** A worker's spend report for its command (P8.9). Overwrites: the figures only
+  /** A worker's spend report for its command. Overwrites: the figures only
    * grow within a worker, so the latest is the fullest. A closed report is never
    * reopened by a late partial.
    *
@@ -3435,7 +3435,7 @@ export class StateStore {
   }
 
   /**
-   * End an idle-PR answer command that did not serve its message (P8.17). It is
+   * End an idle-PR answer command that did not serve its message. It is
    * `cancelled`, never `failed`: a failed non-round command is owed work that
    * blocks its PR's next round until a replay settles it, and an operator's
    * message is answered now or not at all. The reason stays in `failure`.
@@ -3689,7 +3689,7 @@ export class StateStore {
   /**
    * A worker-hosted command whose worker is gone, handed back to `pending` so a
    * fresh worker resumes it under the SAME id (the JSONL's marker is what makes
-   * the worker continue instead of sending the order again; D22/D23). Only the
+   * the worker continue instead of sending the order again). Only the
    * WorkerSupervisor calls it. `ownerToken` fences the CAS to the spawn that held
    * the row; the daemon's boot passes null, since no owner survives a restart.
    * Spends one `recovery_attempts`, the bound the supervisor reads. A round's
@@ -6572,7 +6572,7 @@ export class StateStore {
     return { drain, pauses };
   }
 
-  // ---- host lease (P8.13) -------------------------------------------------
+  // ---- host lease -------------------------------------------------
 
   hostLease(pr: number): HostLeaseRow | undefined {
     return this.db.prepare("SELECT * FROM pr_host_leases WHERE pr = ?").get(pr) as
@@ -6609,7 +6609,7 @@ export class StateStore {
             reason: `PR #${o.pr} is already under a ${held.kind} lease (${held.holder}, ${held.state})`,
           };
         const command = this.activeSessionCommand(`pr-${o.pr}`);
-        // A debug round (P8.13b) is armed for the PR's NEXT round, so a round order
+        // A debug round is armed for the PR's NEXT round, so a round order
         // submitted and not yet claimed by anyone is the one it will take. A claimed
         // command (running), and any other kind, is a worker's.
         const adoptable =
@@ -6669,7 +6669,7 @@ export class StateStore {
       .immediate();
   }
 
-  // ---- worker crash-loop breaker (P8.5b) ----------------------------------
+  // ---- worker crash-loop breaker ----------------------------------
 
   workerBreaker(pr: number): WorkerBreakerRow | undefined {
     return this.db
@@ -7837,7 +7837,7 @@ export interface StatusSnapshot {
           since: string | null;
           expires_at: string | null;
         };
-        /** The worker crash-loop breaker (P8.5b): present while the PR has
+        /** The worker crash-loop breaker: present while the PR has
          * consecutive worker failures on record or is parked. `parked_at` set means
          * no worker is spawned for it until rerun-round or restart-session. */
         worker_crash?: {
@@ -7888,7 +7888,7 @@ export interface StatusSnapshot {
    * `paused`. Absent unless `[login_refresh] enabled`; readers say "not
    * reported". */
   login_refresh?: LoginRefreshStatus;
-  /** The central lens permit broker (D25, src/ipc/permits.ts): the ceiling,
+  /** The central lens permit broker (src/ipc/permits.ts): the ceiling,
    * the permits in use and the grants queued, with the split per command.
    * Absent while no daemon broker runs (the tmux bot, a stub daemon) —
    * readers say "not reported". */
@@ -7906,7 +7906,7 @@ export interface StatusSnapshot {
   draining_until?: string;
   /** Why a system engaged the drain (`worker_failures`); absent for a hand-set one. */
   draining_reason?: string;
-  /** The operator's no-auto-lift HOLD (P8.21b): true when no boot lifts this
+  /** The operator's no-auto-lift HOLD: true when no boot lifts this
    * drain (only `qcr drain off`), false when the next healthy boot would.
    * Always written while draining by a daemon that knows holds; ABSENT from
    * an older daemon's snapshot, which readers must show as unknown. */

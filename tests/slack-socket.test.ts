@@ -335,7 +335,7 @@ describe("server-ping watchdog", () => {
   });
 });
 
-describe("server-ping watchdog — protocol-level pings (selfscan 3dc7955f)", () => {
+describe("server-ping watchdog — protocol-level pings", () => {
   it("WebSocket ping frames alone keep a quiet connection alive", async () => {
     const h = harness({ pingTimeoutMs: 5000 });
     await h.client.startSocket(() => {});
@@ -394,7 +394,7 @@ describe("server-ping watchdog — protocol-level pings (selfscan 3dc7955f)", ()
   });
 });
 
-describe("stop during apps.connections.open (selfscan bd41fe9a)", () => {
+describe("stop during apps.connections.open", () => {
   it("a socket whose open resolves after stopSocket is never built", async () => {
     let release: (() => void) | null = null;
     const sockets: FakeWs[] = [];

@@ -18,7 +18,7 @@
 #                   ~/.local/bin/qcr that parses and is pinned to this image.
 #   5. ptrace_scope the runner's kernel.yama.ptrace_scope, seen from the host
 #                   and from inside a container, recorded in the job summary
-#                   (P6.5b: it decides whether a child can read its parent's
+#                   (it decides whether a child can read its parent's
 #                   memory, and a GitHub runner's value is not documented).
 #                   Recording never fails the job.
 #   6. setid helper the bot's helper switches the bot's uid to the

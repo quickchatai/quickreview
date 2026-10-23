@@ -147,7 +147,7 @@ interface Target {
   /** Set when the target is a registry run: where its exit lives. */
   runDir?: string;
   pid: number | null;
-  /** The container the run is, when it is one (P6.8). */
+  /** The container the run is, when it is one. */
   container?: string;
 }
 

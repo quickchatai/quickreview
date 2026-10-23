@@ -162,7 +162,7 @@ describe("operator PR recovery", () => {
     });
   });
 
-  it("rerun-round and restart-session unpark a PR the worker breaker parked (P8.5b)", async () => {
+  it("rerun-round and restart-session unpark a PR the worker breaker parked", async () => {
     const park = (store: StateStore, pr: number): void => {
       for (let i = 0; i < 2; i++)
         store.recordWorkerFailure(pr, { commandId: `w${i}`, error: "boom", at: T0, parkAfter: 2 });
@@ -304,7 +304,7 @@ describe("operator PR recovery", () => {
     expect(store.heldWakes(pr)).toEqual([]);
   });
 
-  it("restart-session rotates the session after the kill and before the command is released (P8.12)", async () => {
+  it("restart-session rotates the session after the kill and before the command is released", async () => {
     const { store, dir, pr } = setup();
     const c = command(store, dir, pr);
     const order: string[] = [];
@@ -332,7 +332,7 @@ describe("operator PR recovery", () => {
     expect(result).toMatchObject({ ok: true, redispatched: true });
   });
 
-  it("restart-session puts the rotated session back when the release is refused (P8.12)", async () => {
+  it("restart-session puts the rotated session back when the release is refused", async () => {
     const { store, dir, pr } = setup();
     const c = command(store, dir, pr);
     const undo = vi.fn();
@@ -810,7 +810,7 @@ describe("restart command delivery receipts", () => {
   });
 });
 
-describe("operator PR recovery reads worker liveness (P8.8)", () => {
+describe("operator PR recovery reads worker liveness", () => {
   it("rerun-round refuses a PR a worker runs for, and a lease directory it cannot read", async () => {
     const { store, pr } = setup();
     const pump = vi.fn(async () => {});

@@ -90,7 +90,7 @@ the operator's own words where possible) and `changes.patch` — a unified
 diff against `config.toml` that preserves the surrounding comments. The
 operator accepts or rejects it in the TUI; **nothing edits config without
 their explicit acceptance**, and a config proposal that touches `dry_run`
-is structurally refused at accept time — never propose one (rule 1: that
+is structurally refused at accept time — never propose one (that
 flag is the owner's alone). Review-taste answers that belong in prompt or
 lens wording go the same way as ordinary rubric proposals
 (`agents/`/`prompts/` targets).

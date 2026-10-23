@@ -353,7 +353,7 @@ describe("a bench review round on the SDK with the engine's planned wave", () =>
   });
 });
 
-describe("the bench's default config (P7.12)", () => {
+describe("the bench's default config", () => {
   it("is the SDK runtime with the engine lens tool and the planned wave, and the fingerprint records it", () => {
     const cfg = benchConfig("");
     expect(cfg.engine.runtime).toBe("sdk");

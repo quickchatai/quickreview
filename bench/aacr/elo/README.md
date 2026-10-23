@@ -86,8 +86,7 @@ their reasons: tracker ticket.
 
 ## Running it
 
-No run starts without the owner's explicit go (see the CLAUDE.md
-"Direction" section).
+No run starts without the owner's explicit go.
 
 ```sh
 export QCR_BENCH_RUNS_DIR=/path/to/qcr-bench-runs/runs   # outside any worktree

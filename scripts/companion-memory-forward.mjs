@@ -4,7 +4,7 @@
 // WHY THIS EXISTS
 // ---------------
 // The local pi companion must read and write memory that lives on the review VM,
-// while holding no VM credential (root CLAUDE.md rule 8). So the ssh runs
+// while holding no VM credential (the companion boundary). So the ssh runs
 // here, on the operator's PC, as a systemd --user service the operator owns:
 //
 //     companion container ──▶ 198.51.100.1:1933      (docker bridge `qcr-memory`)
@@ -1406,7 +1406,7 @@ ExecStart=${pathArg(process.execPath)} ${pathArg(script)} ${runArgs}
 Restart=always
 RestartSec=5
 # This process is the ONLY holder of a VM credential in the companion path.
-# It runs as the desktop user, never inside a container (root CLAUDE.md rule 8).
+# It runs as the desktop user, never inside a container (the companion boundary).
 NoNewPrivileges=${cfg.local && cfg.sudo ? "no" : "yes"}
 
 [Install]

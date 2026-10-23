@@ -1,9 +1,9 @@
-// The bot's per-round worker (P8.3, D22): one Node process that serves ONE round
+// The bot's per-round worker: one Node process that serves ONE round
 // of one PR and exits.
 //
 //     node dist/src/botworker.js --command <id> --mode round|answer
 //
-// `--mode answer` (P8.17, rule 9's second exception) serves an operator's message
+// `--mode answer` (rule 9's second exception) serves an operator's message
 // to an idle PR instead of a round: the same handshake, login and resume under the
 // same session id, then ONE user turn marked with operator provenance, and the
 // reply goes back in the `done` event. Its tools are the read-only repo tools and
@@ -29,7 +29,7 @@
 //   1. connect, ask for the spec, and verify the payload against the sha256 the
 //      daemon recorded at dispatch;
 //   2. borrow the login: a refresh-blanked copy read once from the agent dir the
-//      login refresher owns (P8.22), refused when the token would expire inside
+//      login refresher owns, refused when the token would expire inside
 //      this worker's wall-clock cap. The worker never refreshes it;
 //   3. open the PR's session: resume the newest JSONL under its session dir
 //      under the SAME id (the provider's cache key), or start one at birth;
@@ -41,7 +41,7 @@
 //   6. compact (ledger-pin pins the review ledger through pi's own compact());
 //   7. report usage and done, and exit.
 //
-// Throughout, the daemon may push the operator's controls (P8.12, src/botcontrol.ts):
+// Throughout, the daemon may push the operator's controls (src/botcontrol.ts):
 // a steer lands in the turn in flight, a follow-up behind the run, an abort stops the
 // session and the passes it started and ends the round with the aborted exit code.
 // Each is acked once over `control.ack`. The turns a control starts are waited for
@@ -378,7 +378,7 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
     }
   };
 
-  // A daemon that restarts takes the socket with it (D23): there is nobody left
+  // A daemon that restarts takes the socket with it: there is nobody left
   // to post for this worker, so it stops spending. The same for a daemon that
   // fences it (a newer generation, a command that is no longer active).
   let stopCode: number | undefined;
@@ -404,7 +404,7 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
     if (e.code === "stale_generation" || e.code === "command_inactive" || e.code === "unauthorized")
       void stopNow(EXIT.fenced, `the daemon fenced this worker: ${e.code}`);
   });
-  // The operator's controls (P8.12). They are taken from the moment the daemon
+  // The operator's controls. They are taken from the moment the daemon
   // connects: one that arrives before the session is open is refused, not lost.
   let turnLimits: () => TurnOptions = () => ({});
   const controls = new WorkerControls({
@@ -447,7 +447,7 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
     checkpoint();
 
     // The host, the lens tools and the session. The model's tools run as the
-    // tool uid wherever the image asks for it (D32).
+    // tool uid wherever the image asks for it.
     const wave = new LensWave();
     let lensUsd = 0;
     let lensRuns = 0;
@@ -465,7 +465,7 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
         credentials: auth.credentials,
         settings: agentDirSettings(spec.agent_dir),
       });
-      // The lens cap is the daemon's, over every worker (D25): a pass asks the broker.
+      // The lens cap is the daemon's, over every worker: a pass asks the broker.
       const permits = brokerPermits(client, (m) => log(`botworker: ${m}`));
       opened = await openSession(
         host,
@@ -525,7 +525,7 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
     // What the round has cost, priced the way the transcript is (src/bench/cost.ts):
     // the session's assistant messages and the passes its lens tools reported, each
     // run once, and, at the end, the lens ledger's warm-ups. The daemon's est_usd
-    // takes it in place of measuring the transcript (P8.9).
+    // takes it in place of measuring the transcript.
     const meter = new EventCostMeter();
     live.subscribe(
       (event) => {
@@ -820,7 +820,7 @@ function foldLensLedger(meter: EventCostMeter, file: string): void {
 }
 
 /** Open the PR's session: the engine's lens tools over this round's own ledger
- * and JSONLs (D10), the bot runtime over them, and then resume the newest JSONL
+ * and JSONLs, the bot runtime over them, and then resume the newest JSONL
  * under the PR's session dir (same id) or, with none, a session born there. */
 async function openSession(
   host: PiHost,
@@ -929,7 +929,7 @@ async function main(): Promise<void> {
     process.stderr.write(`botworker: ${parsed.error}\n`);
     process.exit(EXIT.usage);
   }
-  // Under the tool uid (D32) the run uid and the tool uid share one
+  // Under the tool uid the run uid and the tool uid share one
   // gid: what this worker's file tools write (a verdict staged, a review body)
   // the model's bash may rewrite (commit-verdict.sh, render-review.sh), and the
   // reverse, so both write group-writable files. The daemon keeps its own umask:

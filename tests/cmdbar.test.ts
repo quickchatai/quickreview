@@ -483,7 +483,7 @@ describe("clean exit", () => {
 describe("the focused companion column is a TERMINAL, not a text box", () => {
   // A TUI-side draft line in front of the column would keep the keys from
   // pi — no `/` commands, no completion menu, nothing clickable. Running pi
-  // under tmux is pointless if the bytes stop at the TUI. Root CLAUDE.md
+  // under tmux is pointless if the bytes stop at the TUI. docs/tui.md
   // carries the rule.
   function harness() {
     const out = new EventEmitter() as unknown as NodeJS.WriteStream;

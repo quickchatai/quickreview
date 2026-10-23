@@ -1,4 +1,4 @@
-// The pane's side of a bot debug round (P8.13b): what runs inside tmux `debug-pr-<n>`.
+// The pane's side of a bot debug round: what runs inside tmux `debug-pr-<n>`.
 //
 // The daemon (src/debuground.ts) starts
 //
@@ -9,7 +9,7 @@
 //
 //   1. reads the spec file the daemon wrote (0600, no secret) and removes it;
 //   2. makes the pi its OWN agent dir: the owner's login BORROWED as a
-//      refresh-blanked copy (D5; packages/pi-plugin/src/engine/auth.ts, the takeover's copy), never the
+//      refresh-blanked copy (packages/pi-plugin/src/engine/auth.ts, the takeover's copy), never the
 //      refresher's file and never a write to it, plus the model and settings files
 //      and a link to the built lens agents. The pi cannot refresh;
 //   3. writes the round order the extension sends as the first message: the round's
@@ -20,16 +20,16 @@
 //      header names the legacy tree (src/picwd.ts: its scripts, state/ and verdict/
 //      are there, and bash-guard sanctions the scripts only there), with the round's extensions, `/qcr-round` as its first
 //      message, and the capability fd inherited. The cwd's own context files are off
-//      and the reviewer stub (D34) is appended, so the dev instructions of the
+//      and the reviewer stub is appended, so the dev instructions of the
 //      production tree never reach a reviewer;
 //   5. returns pi's exit code. The tmux session ends with this process, and the
 //      daemon's sweep settles the round and frees the lease.
 //
 // The pi's bash hands the capability fd to each command it runs (the extension's
 // bash tool), so the post shims read it for every post and send the daemon the
-// P8.7 request: the pi holds no GitHub credential and the post goes through the
+// post request: the pi holds no GitHub credential and the post goes through the
 // one gate. The env it gets is an allowlist plus the round's own: no GitHub token of
-// any name. The pi runs as the separate tool uid where the image has one (D32).
+// any name. The pi runs as the separate tool uid where the image has one.
 import {
   chmodSync,
   existsSync,
@@ -143,7 +143,7 @@ export function debugRoundArgv(spec: DebugRoundSpec): string[] {
     // Pre-trust the cwd's project resources: the modal would stall the pane.
     "--approve",
     // pi discovers no extension or skill of its own, and reads none of the production
-    // tree's context files: the reviewer stub (D34) takes their place.
+    // tree's context files: the reviewer stub takes their place.
     "-ne",
     "-ns",
     "-nc",

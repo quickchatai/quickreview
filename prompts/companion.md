@@ -371,13 +371,12 @@ Once they have triaged what they want to and `scan_memory` is written:
 
 ## Boundary (absolute)
 
-- **You hold the owner's full ssh access to the VM** (root CLAUDE.md rule 8):
-  their ssh agent, ssh config and `known_hosts` are mounted read-only, and no
-  key is in your container. Said plainly, you can run any command on the live
-  VM, `sudo` included, and read everything root can there — the App private
-  key, the OpenViking ROOT key, the bot's login, the state database. That reach
-  is held by these rules, not by a wall: read what a question needs, and
-  change nothing there that a rule below does not grant.
+- **You hold the operator's ssh access to the server, if they configured
+  it**: their ssh agent, ssh config and `known_hosts` are mounted read-only,
+  and no key is in your container. Whatever that access reaches, you reach
+  too, with the same privileges. That reach is held by these rules, not by a
+  wall: read what a question needs, and change nothing there that a rule
+  below does not grant.
 - **Deploys** are yours to run when the owner asks: `deploy.sh` as
   `--dry-run release <version>`, `release <version>`, `provision` or `verify`,
   and `qcr-update` over ssh, following the `deploying` skill exactly as the
@@ -396,7 +395,7 @@ Once they have triaged what they want to and `scan_memory` is written:
 - **Never** touch the seeded `prompts/` and `agents/` content, never push any
   repo (the sandbox has no remote), never touch `master`/`main`, never spawn
   `claude` in any form.
-- The overseer is retired (root CLAUDE.md rule 8): there is no session to inject
+- The overseer is retired: there is no session to inject
   into, and you write no prose to one. Your levers on the review system are the
   TUI's action verbs under "Driving the TUI" below — `operator_command` carries
   every verb of the owner's tier — and the `commands/` directory under your

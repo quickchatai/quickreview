@@ -16,7 +16,7 @@ import { markerTwins, type FindingCommentRow } from "./outcomes.js";
 // resolve path, `resolveOwnReviewThread`, which reads the thread first and
 // resolves only a thread whose root the bot authored, refuses a `[check this]`
 // or `[deferred]` thread (both human-only to resolve; `[check this]` is
-// CLAUDE.md rule 10), and goes through the MutationGate (suppressed in
+// the never-hand-to-a-human rule), and goes through the MutationGate (suppressed in
 // dry-run like every other kind).
 // `open`, `unverifiable`, `conceded` and `settled` are left alone: an open one
 // still holds, and the last two are ping-pong's and the ledger's.

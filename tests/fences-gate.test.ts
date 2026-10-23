@@ -68,7 +68,7 @@ describe("no review-dismissing mutation can appear", () => {
    *
    * `reviewer` is deliberately not in the pattern: `request_reviewer` is a
    * sanctioned, default-off kind. The dismissal half is the half that must
-   * never move — CLAUDE.md hard rule 2, which has no knob and no exception.
+   * never move — AGENTS.md invariant 2, which has no knob and no exception.
    *
    * MUTATION: add `"retract_review"` to MUTATION_KINDS — this fails.
    */
@@ -76,7 +76,7 @@ describe("no review-dismissing mutation can appear", () => {
     const offenders = MUTATION_KINDS.filter((k) => /dismiss|retract|withdraw|revoke/i.test(k));
     expect(
       offenders,
-      "hard rule 2 has no exception: the bot never dismisses an approval or another identity's review",
+      "AGENTS.md invariant 2 has no exception: the bot never dismisses an approval or another identity's review",
     ).toEqual([]);
   });
 
@@ -131,7 +131,7 @@ describe("no review-dismissing mutation can appear", () => {
     }
     expect(
       dismissals,
-      "a dismissal route appeared — hard rule 2 forbids the code path, not merely the caller",
+      "a dismissal route appeared — AGENTS.md invariant 2 forbids the code path, not merely the caller",
     ).toEqual([]);
     expect(
       reviewerPosts.length,

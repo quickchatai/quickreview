@@ -1,5 +1,5 @@
 // What a PR's session JSONL looks like before a worker resumes it: the static half
-// of the resume rehearsal (P8.4), shared with the cutover preflight (P8.4b). Pure
+// of the resume rehearsal, shared with the cutover preflight. Pure
 // reading, nothing here opens a session, a provider or the state store, and no
 // file is written. The JSONL is the live bot's own transcript (private): only
 // counts, names and shapes leave this module, never text.
@@ -11,7 +11,7 @@
 //     `header`;
 //   - an entry type or custom entry the worker's pi does not know, which it must
 //     tolerate: `entryTypes`, `customTypes`, `markers` (the writers of the
-//     session-command ledger and the inject bridge go with P9.1, their entries
+//     session-command ledger and the inject bridge are gone, their entries
 //     stay in old files for ever);
 //   - a header cwd that the release image does not have: `legacyCwdResolution`.
 import { readFileSync, statSync } from "node:fs";
@@ -49,7 +49,7 @@ export interface StoredSystem {
   preambleTools: string[];
   /** The directory its `cwd` section tells the model it works in. */
   cwd: string | null;
-  /** The D34 reviewer stub against the context file the old session was shown:
+  /** The reviewer stub against the context file the old session was shown:
    * `current` holds the stub's text whole, `drifted` has a context file that is
    * not it, `absent` has none. `unchecked` when no stub was given. */
   stub: "current" | "drifted" | "absent" | "unchecked";

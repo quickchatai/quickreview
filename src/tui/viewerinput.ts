@@ -1,5 +1,5 @@
 // The transcript viewer's input line: what the operator types under a
-// worker-hosted PR's transcript (the PR-pane rule in CLAUDE.md). The viewer is
+// worker-hosted PR's transcript (the PR-pane rule in docs/tui.md). The viewer is
 // not a pi surface, so it has an input line of its own — the one exception to
 // "never add a TUI-side input box", and only on the worker, answer and idle
 // panes (`paneSurface`); a debug or takeover pane is a pi terminal and never

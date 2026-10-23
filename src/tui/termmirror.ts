@@ -110,7 +110,7 @@ export function isEndKey(input: string): boolean {
  */
 export const PANE_ESCAPE = 0x11;
 
-// The rule both embedded surfaces share (root CLAUDE.md): while focused, a pi
+// The rule both embedded surfaces share (docs/tui.md): while focused, a pi
 // pane forwards every byte except this one. `/` commands, completion, history
 // and Ctrl-C are pi's — never put a TUI-side input box in front of them. Same
 // byte in `sidebar.ts`, so there is one way out of every embedded surface.

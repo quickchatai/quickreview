@@ -1,4 +1,4 @@
-// [P8.8] Worker liveness: what the archiver, the startup orphan sweep and
+// Worker liveness: what the archiver, the startup orphan sweep and
 // operator recovery ask instead of tmux. A fake /proc stands in for the machine,
 // so "the pid was reused" and "another container" are cases, not hopes.
 import { createHash } from "node:crypto";
@@ -93,7 +93,7 @@ function roundCommand(pr: number, id = `cmd-${pr}`): void {
   });
 }
 
-describe("[P8.8] createWorkerLiveness", () => {
+describe("createWorkerLiveness", () => {
   it("a lease whose leader the process table confirms is a running worker", () => {
     leases(lease(7));
     const live = createWorkerLiveness({
@@ -155,7 +155,7 @@ describe("[P8.8] createWorkerLiveness", () => {
   });
 });
 
-describe("[P8.8] the archiver reads it: a worker holds its closed PR, an idle one is eligible", () => {
+describe("the archiver reads it: a worker holds its closed PR, an idle one is eligible", () => {
   function closed(pr: number): void {
     track(pr, "closed");
     store.logEvent("pr_closed", pr, { merged: true });
@@ -177,7 +177,7 @@ describe("[P8.8] the archiver reads it: a worker holds its closed PR, an idle on
   });
 });
 
-describe("[P8.8] the startup orphan sweep reads leases and the one-active index", () => {
+describe("the startup orphan sweep reads leases and the one-active index", () => {
   it("keeps a round a worker still runs, and cancels one nothing runs", () => {
     for (const pr of [20, 21]) {
       track(pr);
@@ -216,7 +216,7 @@ describe("[P8.8] the startup orphan sweep reads leases and the one-active index"
   });
 });
 
-describe("[P8.8] a boot with a legacy-shaped state: no tmux, no lease, every PR idle", () => {
+describe("a boot with a legacy-shaped state: no tmux, no lease, every PR idle", () => {
   it("finds no worker for any open PR, sweeps only the rounds that lost theirs, and archives the closed", async () => {
     // The state a pre-cutover host leaves: open PRs in every state, a round that
     // was running under tmux, a closed PR, no lease directory, no tmux anywhere.

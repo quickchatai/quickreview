@@ -3,8 +3,7 @@
 //
 // WHY THIS IS A WRITE CHANNEL AT ALL. The board is otherwise read-only over
 // ssh, and that property is worth keeping; this is a deliberate, narrow
-// exception (root CLAUDE.md, "The operator can always unwedge from the
-// board"). The alternative — typing into the overseer's pi — makes the lever
+// exception (the operator can always unwedge from the board, docs/tui.md). The alternative — typing into the overseer's pi — makes the lever
 // depend on an LLM turn, which fails exactly when things are already stuck.
 //
 // WHAT IT IS NOT. It writes ONE validated command file into the root-owned

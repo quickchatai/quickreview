@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "deploy-manifest-<version>.json",
-  "description": "What one release published: CI (P7.16) emits it next to the two images, and `scripts/deploy.sh release <version>` reads it. It names the images by digest, so the VM pulls exactly what CI built, and carries the pins the images were built with, so the controller can hold them to config.toml and group_vars before anything is sent to the VM. scripts/deploy-manifest.mjs is the validator; this file is its documentation and tests/deploy-manifest.test.ts holds the two together.",
+  "description": "What one release published: CI emits it next to the two images, and `scripts/deploy.sh release <version>` reads it. It names the images by digest, so the VM pulls exactly what CI built, and carries the pins the images were built with, so the controller can hold them to config.toml and group_vars before anything is sent to the VM. scripts/deploy-manifest.mjs is the validator; this file is its documentation and tests/deploy-manifest.test.ts holds the two together.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "version", "revision", "images", "pins"],

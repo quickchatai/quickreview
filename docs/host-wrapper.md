@@ -35,16 +35,16 @@ Every call is `docker run --rm -i --init` with `--cap-drop ALL` and
 | `/run/qcr-in`                                | a per-call dir holding the GitHub token file | read-write                                                            |
 
 Only the profiles directory of the config home is mounted, never the install
-home that holds `<install>/secrets/` (D39 amending R12). The gh config and
+home that holds `<install>/secrets/`. The gh config and
 `docker.sock` are never mounted, and the ssh agent only into the TUI container
 (below).
 
 A call that can reach a model or GitHub starts as root with only `CAP_SETUID`
 and `CAP_SETGID` and drops to your uid inside, so the model's tools run as
-another uid (D32, `docker/entrypoint.sh`). `version`, `help`, `install`, `tui`
+another uid (`docker/entrypoint.sh`). `version`, `help`, `install`, `tui`
 and `login` start as you.
 
-## The TUI and its companion (D35)
+## The TUI and its companion
 
 `qcr` (and `qcr tui`) is two containers and no `docker.sock` anywhere. A TUI in
 a container cannot run `docker exec`, and handing it the socket would make it
@@ -62,7 +62,7 @@ and the two containers meet in a named volume.
    volumes, so a recreate resumes. The companion is `qcr-tui-companion`, with its
    own pi home volume `qcr-companion-pihome`, so it never adopts or recreates a
    clone-route companion on the same machine. It has no ssh agent, no `~/.ssh`
-   and no `docker.sock` (rule 8), and no memory (the sidecar is opt-in on a
+   and no `docker.sock` (the companion boundary), and no memory (the sidecar is opt-in on a
    laptop). Its tmux server listens on `/run/qcr-tmux/companion.sock`, inside
    the `qcr-tui-companion-tmux` volume.
 2. **The TUI container.** It mounts that volume and drives the companion with
@@ -92,9 +92,9 @@ and the two containers meet in a named volume.
 
 `--no-companion` (or `QCR_NO_COMPANION`) runs the TUI alone. A plan that cannot
 be had, or a companion that will not run, does the same, with one line saying
-so. The owner's dev TUI with hot reload (rule 11) stays on the clone route.
+so. A contributor's dev TUI with hot reload stays on the clone route.
 
-## A review run is a container (P6.8)
+## A review run is a container
 
 `qcr review start` is a detached run, and in the image the run is a container.
 The wrapper makes it in two calls, so that the lock and the target logic of
@@ -160,11 +160,11 @@ other uid; the same line without `--group-add 4747` is refused.
 
 ## The GitHub token
 
-No GitHub App on a laptop (D14). The wrapper takes `GITHUB_TOKEN`, then
+No GitHub App on a laptop. The wrapper takes `GITHUB_TOKEN`, then
 `GH_TOKEN`, then `gh auth token`, writes it to a `0600` file in a fresh `0700`
 directory (under `$XDG_RUNTIME_DIR` on Linux, `$TMPDIR` elsewhere), mounts that
 directory and names the file in `QCR_GH_TOKEN_FILE`. The image reads the file
-once and unlinks it (`packages/pi-plugin/src/ghcred.ts`, D39 amending R7). The token is never in
+once and unlinks it (`packages/pi-plugin/src/ghcred.ts`). The token is never in
 `-e`, `--env` or any argument list, and the directory is removed when the call
 ends. Model API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`,
 `DIGITALOCEAN_API_KEY`) go by name only: docker reads the value from your

@@ -45,7 +45,7 @@ export function prodStats(files: PrFile[]): ProdStats {
 }
 
 // There is no escalation-worthiness score, and none may be reintroduced under
-// another name (CLAUDE.md rule 10): the tier ladder below keys on size and the
+// another name (the never-hand-to-a-human rule): the tier ladder below keys on size and the
 // migration gate alone.
 
 /** A path under a `migrations/` directory — the one spelling of "this file is
@@ -349,7 +349,7 @@ export function selectLenses(
 
   // Delivery semantics: at-least-once handler surfaces — webhooks, background
   // tasks/workers/crons, queue consumers (not email/notification content
-  // dirs). Product-local handler markers (e.g. a repo-specific @background_decorator)
+  // dirs). Product-local handler markers (e.g. a repo-specific @background_task)
   // come from the profile.
   if (
     any(/(^|\/)(webhooks?|tasks|jobs|workers?|crons?|consumers?|subscribers?)\//) ||

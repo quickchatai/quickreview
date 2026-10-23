@@ -27,7 +27,7 @@
 // `[tui]` target as those flags, so memory reaches the daemon the board reads.
 //
 // Nothing here holds a VM credential: the ssh runs on the operator's PC as
-// the operator, exactly as the unit runs it (root CLAUDE.md rule 8). The
+// the operator, exactly as the unit runs it (the companion boundary). The
 // forward carries bytes; the keys stay in the keys file that
 // `src/tui/memory.ts` reads.
 //

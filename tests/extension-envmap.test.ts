@@ -1,4 +1,4 @@
-// P1.2: every QCR_* and OPENVIKING_* name that appears under extensions/ (the
+// Every QCR_* and OPENVIKING_* name that appears under extensions/ (the
 // app's and the review core's) is classified in the core's packages/pi-plugin/src/engine/envmap.ts. The scan is the source of truth: a name
 // added to an extension without a row fails here, so the SDK session builder
 // can never miss one when it turns pi's env into factory config.
@@ -39,7 +39,7 @@ function scan(): Map<string, string[]> {
   return new Map([...found].map(([n, f]) => [n, [...f].sort()]));
 }
 
-describe("extension env inventory (P1.2)", () => {
+describe("extension env inventory", () => {
   const found = scan();
   const envFound = [...found.keys()].filter((n) => !(n in EXTENSION_NON_ENV_NAMES));
 

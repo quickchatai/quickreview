@@ -1,4 +1,4 @@
-// [P8.10] The central lens permit broker (D25). The daemon's one count of lens
+// The central lens permit broker. The daemon's one count of lens
 // sessions alive across every worker: a global ceiling (20), first-in first-out
 // across workers, grants spaced by a stagger, permits taken back when a worker
 // ends. Its ops ride the real IPC server on a real unix socket; the lens runner
@@ -10,7 +10,7 @@
 //     tests/worker-supervisor.test.ts by a real killed process);
 //   - consecutive grants are at least the stagger apart;
 //   - one-shot routes are unchanged (the local port is the semaphore as it was);
-//   - 20 staggered faux session creations keep the event-loop lag under the D6 bar.
+//   - 20 staggered faux session creations keep the event-loop lag under the CPU gate's bar.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { tmpdir } from "node:os";
@@ -46,7 +46,7 @@ useOfflineGuard();
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const who = (commandId: string, generation = 1) => ({ commandId, generation });
 
-describe("[P8.10] the broker: ceiling, order, stagger", () => {
+describe("the broker: ceiling, order, stagger", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -215,7 +215,7 @@ describe("[P8.10] the broker: ceiling, order, stagger", () => {
   });
 });
 
-describe("[P8.10] status.json shows the permits", () => {
+describe("status.json shows the permits", () => {
   it("carries the ceiling, the permits in use and the queue, per command", async () => {
     const b = new PermitBroker({ ceiling: 2, staggerMs: 0 });
     await b.acquire(who("w1"), "a");
@@ -320,7 +320,7 @@ async function daemon(broker: PermitBroker): Promise<Daemon> {
   };
 }
 
-describe("[P8.10] the broker on the worker socket", () => {
+describe("the broker on the worker socket", () => {
   let d: Daemon | undefined;
   afterEach(async () => {
     await d?.stop();
@@ -463,7 +463,7 @@ describe("[P8.10] the broker on the worker socket", () => {
 
 // ---- the lens runner behind the port ----------------------------------------
 
-describe("[P8.10] the lens runner's Permits port", () => {
+describe("the lens runner's Permits port", () => {
   let rig: HostRig;
   let dir: string;
   let d: Daemon | undefined;
@@ -595,7 +595,7 @@ describe("[P8.10] the lens runner's Permits port", () => {
     blocker.release();
   });
 
-  it("20 staggered faux session creations keep the event-loop lag under the D6 bar", async () => {
+  it("20 staggered faux session creations keep the event-loop lag under the CPU gate's bar", async () => {
     // The broker alone spaces the creations: the runner's own per-host gap is off.
     d = await daemon(new PermitBroker());
     expect(d.broker.status()).toMatchObject({ ceiling: 20, stagger_ms: 250 });
@@ -627,7 +627,7 @@ describe("[P8.10] the lens runner's Permits port", () => {
     lag.disable();
     expect(runs.every((r) => r.result.exitCode === 0)).toBe(true);
     expect(peak).toBeLessThanOrEqual(20);
-    // D6: p99 event-loop lag <= 200 ms (docs/cpu-gate.md).
+    // P99 event-loop lag <= 200 ms (docs/cpu-gate.md).
     expect(lag.percentile(99) / 1e6).toBeLessThanOrEqual(200);
     // The wave was spread over the stagger, not made in one burst.
     expect(Math.max(...created) - Math.min(...created)).toBeGreaterThanOrEqual(19 * 240);

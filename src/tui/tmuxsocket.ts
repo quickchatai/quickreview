@@ -1,4 +1,4 @@
-// The containerised TUI's companion transport (D35).
+// The containerised TUI's companion transport.
 //
 // The sidebar, the rollover and the lifecycle all drive the companion through
 // one `DockerRunner`, with `docker exec <container> tmux …` argv. A TUI that
@@ -88,7 +88,7 @@ export function tmuxSocketRunner(
   return async (argv, opts) => {
     if (argv[0] !== "exec" || argv[1] !== containerName)
       return refuse(
-        `docker ${argv[0] ?? ""} is not available in the tui container — the host wrapper runs the companion (D35)`,
+        `docker ${argv[0] ?? ""} is not available in the tui container — the host wrapper runs the companion`,
       );
     const [bin, ...rest] = argv.slice(2);
     if (bin === "tmux") {
@@ -123,7 +123,7 @@ export function tmuxSocketRunner(
           };
     }
     return refuse(
-      `docker exec ${bin ?? ""} is not available in the tui container — only tmux and sh -c reach the companion (D35)`,
+      `docker exec ${bin ?? ""} is not available in the tui container — only tmux and sh -c reach the companion`,
     );
   };
 }

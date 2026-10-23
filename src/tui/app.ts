@@ -3,7 +3,7 @@
 // side effects. The board, detail and events live here; quick-message and
 // the tabs plug in via AppHooks.
 //
-// ONE LAYOUT (root CLAUDE.md): the tab on the left, the companion
+// ONE LAYOUT (AGENTS.md invariant 10): the tab on the left, the companion
 // column on the right, on every frame. Nothing here may take the whole
 // terminal, fold the column away or paint without it — see `sidebarWidth`
 // and `repaint`, and tests/tui-fixed-layout.test.ts.
@@ -101,7 +101,7 @@ export interface AppHooks {
   tabs: Partial<Record<Exclude<Tab, "board">, TabHooks>>;
   // There is deliberately NO `attach` hook: the TUI has ONE layout — tab on
   // the left, companion column on the right — and nothing may take the whole
-  // terminal (root CLAUDE.md). The board's pi
+  // terminal (AGENTS.md invariant 10). The board's pi
   // pane and the companion column are the only terminals, both embedded.
   /** Open the quick-message box for the given session. */
   message?: (session: string, app: App) => void;
@@ -118,7 +118,7 @@ export interface AppHooks {
    * (src/tui/livecontrol.ts). */
   liveControl?: (req: ControlRequest, app: App) => Promise<ControlOutcome>;
   /** Forward one command of the companion's tier (every operator verb, root
-   * CLAUDE.md rule 8), already validated and authorised, down the same
+   * the companion boundary), already validated and authorised, down the same
    * operator route, and resolve with the daemon's answer. */
   operatorCommand?: (command: Command, app: App) => Promise<ControlOutcome>;
   /** The board's `I` — ask the companion to run its setup skill
@@ -278,7 +278,7 @@ export class App {
   }
 
   /** The pi terminal a pane types into and captures; undefined for the viewer
-   * (the bot runs no `pr-<n>` tmux session, P9.6). */
+   * (the bot runs no `pr-<n>` tmux session). */
   private sessionFor(pr: number): PiTerminalSession | undefined {
     return surfaceSession(this.surfaceOf(pr));
   }
@@ -1429,7 +1429,7 @@ export class App {
           return;
         }
         // ⏎ on a PR row focuses the board's EMBEDDED pane. Nothing may take
-        // the whole TUI (root CLAUDE.md, the fixed layout). With no PR
+        // the whole TUI (AGENTS.md invariant 10, the fixed layout). With no PR
         // selected there is nothing to focus, and nothing else to open.
         if (this.selectedPr !== undefined) {
           this.focusPiPane();
@@ -1599,7 +1599,7 @@ export class App {
    * DO NOT reintroduce a TUI-side draft line here: it would be a second, worse
    * input box in front of the real one, with no `/` commands and nothing
    * clickable. The rule is in
-   * root CLAUDE.md; `tests/tui-sidebar.test.ts` pins it.
+   * docs/tui.md; `tests/tui-sidebar.test.ts` pins it.
    *
    * Ctrl-q is the ONE byte that never travels — the same release chord the pi
    * pane uses, so there is one way out of every embedded surface. Everything

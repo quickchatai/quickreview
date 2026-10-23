@@ -1,4 +1,4 @@
-// [P8.14] `npm run smoke:worker` — the scripted smoke for the daemon↔worker boundary.
+// `npm run smoke:worker` — the scripted smoke for the daemon↔worker boundary.
 // It replaces smoke-session.ts, which birthed a REAL tmux + pi session and needed the
 // VM container and a model. This one needs neither: the worker (src/botworker.ts) runs
 // on pi's real SDK over pi-ai's faux provider, a fake daemon (a real IpcServer on a real
@@ -103,7 +103,7 @@ function assistantSaid(file: string, text: string): boolean {
     });
 }
 
-describe("[P8.14] a worker's birth and round on the faux provider", () => {
+describe("a worker's birth and round on the faux provider", () => {
   it("is born, runs the order, answers the marker into the JSONL and exits 0; the next worker resumes the same file", async () => {
     // BIRTH + ROUND
     const first = await smokeRound(

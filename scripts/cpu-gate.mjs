@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The offline CPU and RSS gate [P2.11]: can N review sessions share ONE node
+// The offline CPU and RSS gate : can N review sessions share ONE node
 // event loop on a 2-vCPU host?
 //
 // The in-process SDK runtime (packages/pi-plugin/src/engine/sdkruntime.ts) puts every lens
@@ -31,8 +31,8 @@
 //   node scripts/cpu-gate.mjs                      the gate: 8, 12, 20 sessions on sdk
 //   node scripts/cpu-gate.mjs --sessions 12 --modes sdk --window 10
 //   node scripts/cpu-gate.mjs --md out.md --json out.json
-// Exit status: 1 when the sdk cell at the gate size misses --limit-ms (D6:
-// p99 lag <= 200 ms at 12 sessions), 2 on a harness failure.
+// Exit status: 1 when the sdk cell at the gate size misses --limit-ms (the
+// bar: p99 lag <= 200 ms at 12 sessions), 2 on a harness failure.
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";

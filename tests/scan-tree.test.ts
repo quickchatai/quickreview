@@ -91,7 +91,7 @@ describe("gitScanSource", () => {
     expect(existsSync(join(state, SCAN_TREES_DIR, first))).toBe(false);
   });
 
-  it("materialises and reads a tracked top-level name that merely begins with two dots (selfscan 7057767c)", () => {
+  it("materialises and reads a tracked top-level name that merely begins with two dots", () => {
     mkdirSync(join(repo, "..fixtures"), { recursive: true });
     writeFileSync(join(repo, "..fixtures/a.ts"), "export const a = 1;\n");
     git("add", "-A");

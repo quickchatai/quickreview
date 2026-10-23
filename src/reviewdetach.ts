@@ -21,7 +21,7 @@
 // the beat names, once the deadline plus a grace has passed and the beat has
 // stopped advancing.
 //
-// In the release image (P6.8) a run is a container of its own, started by the
+// In the release image a run is a container of its own, started by the
 // host wrapper (scripts/qcr-host.sh): `start` is a short call that only claims
 // the target and writes the run (QCR_REVIEW_CONTAINER names the container the
 // wrapper is about to start, QCR_RUN_ID is the id it chose); the wrapper then

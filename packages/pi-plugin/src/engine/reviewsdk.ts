@@ -7,13 +7,13 @@
 // settings.json), and the round's spec names it (`PI_CODING_AGENT_DIR`). This
 // runtime builds its host on that dir when the first session is asked for:
 //
-//   login        read from the dir's auth.json by engineCredentials (D5): an
+//   login        read from the dir's auth.json by engineCredentials: an
 //                in-memory, read-only copy, refused up front when the token would
 //                expire inside the turn. An API key in the spec's env (the key
 //                route) is given to the runtime in memory.
 //   settings     the dir's settings.json supplies what the process route's pi
 //                reads from it: the durable retry and the HTTP idle timeout.
-//   dispatcher   pi's HTTP dispatcher is installed (D4): `qcr review` owns its
+//   dispatcher   pi's HTTP dispatcher is installed: `qcr review` owns its
 //                process.
 //   lens tool    the engine's own (`lens`, `lens_wave`: engineLensTools,
 //                packages/pi-plugin/src/engine/lens/engine-tools.ts), through the `lens` option, or,
@@ -92,7 +92,7 @@ export interface ReviewSdkOptions {
 export type ReviewSdkRuntime = EngineRouteRuntime & { dispose(): Promise<void> };
 
 /** The lens runner's config on the review route's host: the passes read the agent
- * dir's agents, carry the reviewer stub (D34) and the same bash env allowlist as
+ * dir's agents, carry the reviewer stub and the same bash env allowlist as
  * the main session, and (with a context pack beside the round's ledger) warm
  * their cache groups with it. */
 export function engineLensConfig(host: PiHost, spec: SessionSpec): LensRunConfig {
@@ -154,7 +154,7 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRunti
           agentDir,
           ownsProcess: true,
           ...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
-          // The model's bash and every lens session's, as the tool uid (D32).
+          // The model's bash and every lens session's, as the tool uid.
           ...(ids !== null && !("refused" in ids) ? { toolUid: ids } : {}),
           // The round's agent dir is a copy: the login it was copied from (the
           // wrapper's /qcr-login, group-readable by this uid) is fenced too.

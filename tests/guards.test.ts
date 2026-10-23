@@ -1008,7 +1008,7 @@ describe("postingRetry — a deferred session review delivered at its original h
 //
 // Sessions post through scripts/post-review.sh, approve-pr.sh and
 // reply-thread.sh, which are Node-only clients of the daemon's post endpoint
-// (P9.3); every post reaches the gate above. These cases were first pinned
+//; every post reaches the gate above. These cases were first pinned
 // against the shell guards on ONE world (the world rig's loopback GitHub stub,
 // state.db and config.toml, tests/helpers/guards-world-rig.ts) and now run on
 // the Node route alone: the real GitHubAdapter plus makePostingGuard
@@ -1111,7 +1111,7 @@ const guard1: ParityCase[] = [
     want: { sent: "COMMENT", bodyHas: ["@mhale"] },
   },
   {
-    what: "sees a human approval past the first 100 reviews (selfscan 91382fae)",
+    what: "sees a human approval past the first 100 reviews",
     action: RC,
     world: (s) =>
       (s.reviews = [
@@ -1330,7 +1330,7 @@ const guard5: ParityCase[] = [
     want: { sent: "COMMENT" },
     why:
       "the gate makes no read with guard 3 switched off, so guard 5 has no live head to " +
-      "compare with (owner-ruled behaviour, 2026-10-19): the route keeps posting",
+      "compare with (owner-ruled behaviour): the route keeps posting",
   },
 ];
 

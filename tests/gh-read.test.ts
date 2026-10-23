@@ -1,5 +1,5 @@
 // The session helpers' GitHub reads, served by the daemon. Under the
-// D32 split the model's bash runs as a uid that cannot read secrets/, so the
+// uid split the model's bash runs as a uid that cannot read secrets/, so the
 // helpers (pr-context.sh, pr-checks.sh, pr-threads.sh, pr-self.sh) can no longer
 // mint a token: on a daemon's host they ask the daemon over the worker socket
 // (src/ghread.ts, src/ipc/ghreadshim.ts). What is served is a read of the

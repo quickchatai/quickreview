@@ -59,21 +59,21 @@ describe("[T8] every src/ module (the app's and the core's) is reachable from a 
     {
       file: "packages/pi-plugin/src/engine/envmap.ts",
       why:
-        "the table classifying every QCR_* and OPENVIKING_* name the extensions carry (P1.2). It is read " +
+        "the table classifying every QCR_* and OPENVIKING_* name the extensions carry. It is read " +
         "only by tests/extension-envmap.test.ts until the SDK session builder (P2) and the extension " +
         "factories (P3) take it. Delete this entry with the first import.",
     },
     {
       file: "src/piauthcopy.ts",
       why:
-        "a re-export of src/engine/auth.ts (P2.10). The scan container imports it by path " +
+        "a re-export of src/engine/auth.ts. The scan container imports it by path " +
         "(`dist/src/piauthcopy.js`, src/scanbox.ts LOGIN_SUMMARY_SCRIPT), a driver this static scan cannot " +
         "follow. Delete it, and point the script at engine/auth.js, with the companion rebuild.",
     },
     {
       file: "src/scanauth.ts",
       why:
-        "a re-export of src/engine/auth.ts (P2.10). The scan container imports it by path " +
+        "a re-export of src/engine/auth.ts. The scan container imports it by path " +
         "(`dist/src/scanauth.js`, src/scanbox.ts SCAN_AUTH_COPY_SCRIPT), a driver this static scan cannot " +
         "follow. Delete it, and point the script at engine/auth.js, with the companion rebuild.",
     },
@@ -86,7 +86,7 @@ describe("[T8] every src/ module (the app's and the core's) is reachable from a 
     {
       file: "src/resumecheck.ts",
       why:
-        "the static half of the resume rehearsal (P8.4): what a PR's session JSONL looks like before a worker " +
+        "the static half of the resume rehearsal: what a PR's session JSONL looks like before a worker " +
         "resumes it. Read by the rehearsal tests and helpers, and by src/preflight.ts, which is itself " +
         "driven by the image entrypoint rather than imported (see its entry). Delete this entry once a " +
         "production import reaches it.",
@@ -94,7 +94,7 @@ describe("[T8] every src/ module (the app's and the core's) is reachable from a 
     {
       file: "src/preflight.ts",
       why:
-        "`daemon --preflight` (P8.4b): the cutover and release check. Run as `node dist/src/preflight.js` by " +
+        "`daemon --preflight`: the cutover and release check. Run as `node dist/src/preflight.js` by " +
         "docker/entrypoint.sh from the new image, so a real driver this static scan cannot follow; no wire.ts, " +
         "cli.ts or extension imports it.",
     },
@@ -108,33 +108,33 @@ describe("[T8] every src/ module (the app's and the core's) is reachable from a 
       file: "src/memory/legacy-file.ts",
       why: "the READ-ONLY reader over the archived MEMORY.md that the import above consumes. Same driver, same reason.",
     },
-    // The pane-side entries the daemon's tmux panes run by path (the takeover and debug pi, P8.13/P8.13b):
-    // the worker world is constructed in wire.ts (P8.15w) and names them as strings, which this static scan
+    // The pane-side entries the daemon's tmux panes run by path (the takeover and debug pi):
+    // the worker world is constructed in wire.ts and names them as strings, which this static scan
     // cannot follow. Delete an entry only when its file does.
     {
       file: "src/ipc/launcher.ts",
       why:
-        "the pane-side launcher (P7.2a): tmux runs `node dist/src/ipc/launcher.js <launch-file> -- pi ...` " +
+        "the pane-side launcher: tmux runs `node dist/src/ipc/launcher.js <launch-file> -- pi ...` " +
         "for a takeover or debug pi (src/workerworld.ts names it), a real driver this static scan cannot follow.",
     },
     {
       file: "src/picwd.ts",
       why:
         "the entry both of those panes start pi's interactive CLI through, by path (src/takeoverpi.ts " +
-        "PICWD_MAIN, P8.20a): pi's own CLI with the session cwd pinned to the pane's. A real driver this " +
+        "PICWD_MAIN): pi's own CLI with the session cwd pinned to the pane's. A real driver this " +
         "static scan cannot follow, not an orphan.",
     },
     ...["takeoverpi.ts", "debugroundpi.ts"].map((f) => ({
       file: `src/${f}`,
       why:
-        "the entry the TakeoverManager / DebugRoundManager run in their tmux pane by path (P8.13, P8.13b; " +
+        "the entry the TakeoverManager / DebugRoundManager run in their tmux pane by path (" +
         "src/workerworld.ts names it): the borrowed login, pi's argv and env. A real driver this static scan " +
         "cannot follow, not an orphan.",
     })),
     {
       file: "src/ipc/postshim.ts",
       why:
-        "the Node post client behind scripts/post-review.sh, approve-pr.sh and reply-thread.sh (P7.2). Driven " +
+        "the Node post client behind scripts/post-review.sh, approve-pr.sh and reply-thread.sh. Driven " +
         "by those scripts, which exec it out of dist/ whenever QCR_IPC_SOCKET and QCR_IPC_CAP_FD are in " +
         "env: a real driver this static scan cannot follow, not an orphan.",
     },
@@ -163,8 +163,8 @@ describe("[T8] every src/ module (the app's and the core's) is reachable from a 
       // (bench/aacr/in-container.sh) launches it; `openviking/sidecar-main.ts`
       // because the memory image's entrypoint (docker/memory/entrypoint.sh)
       // execs it out of dist/; `loginrefresh/main.ts` because the daemon
-      // spawns it by path (src/loginrefresh/supervisor.ts, P8.22); `botworker.ts`
-      // because the WorkerSupervisor (src/workersupervisor.ts, P8.5) spawns it by path for each round.
+      // spawns it by path (src/loginrefresh/supervisor.ts); `botworker.ts`
+      // because the WorkerSupervisor (src/workersupervisor.ts) spawns it by path for each round.
       const roots = [
         "src/wire.ts",
         "src/cli.ts",

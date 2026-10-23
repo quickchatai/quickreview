@@ -250,7 +250,7 @@ filters the memory timeline by tag and jumps to a day, `memory_filter` sets
 or clears the tag filter, and `memory_pin` pins or unpins one EXISTING entry
 through the TUI's memory store — the same move as `p`, answered in the result
 file (a refusal is a failed result). It is the channel's only memory verb and
-does nothing but pin and unpin (root CLAUDE.md rule 8): pinning is a move the
+does nothing but pin and unpin (the companion boundary): pinning is a move the
 TUI's store makes, and the companion's own keys have no such verb. Every
 other memory write is the companion's own. The vocabulary there is this
 vocabulary.

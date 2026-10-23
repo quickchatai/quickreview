@@ -28,8 +28,8 @@
 // lands, the step restarts it rather than leaving a live daemon on a stale
 // login.
 //
-// The dry-run flag is out of reach here as it is in config_fill (CLAUDE.md
-// rule 1): every edit this step makes goes through `assertNoDryRunEdit`, which
+// The dry-run flag is out of reach here as it is in config_fill (AGENTS.md
+// invariant 6): every edit this step makes goes through `assertNoDryRunEdit`, which
 // refuses an edit naming `dry_run` however it is spelled. The only onboarding
 // step that writes that flag is golive.ts, and only on an explicit
 // confirmation after a completed proof.

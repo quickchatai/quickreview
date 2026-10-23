@@ -272,7 +272,7 @@ export interface RunFingerprint {
    * without one keeps its fingerprint. */
   posting?: PostingPolicy;
   /** Present only on an SDK run (`[engine] runtime = "sdk"`, the config default
-   * since P7.12), with the lens tool it ran and `wave: true` when the engine
+   * since the engine route), with the lens tool it ran and `wave: true` when the engine
    * started the planned discovery wave (`[pi] engine_wave`, also the default).
    * A proc run keeps its fingerprint, and `--resume` never mixes a case reviewed
    * on one host, lens tool or wave setting with one reviewed on another. */

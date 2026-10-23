@@ -18,7 +18,7 @@
 // build that compiled, all of it.
 //
 // Every build reloads, unconditionally — there is no busy/defer check and one
-// must never be added (root CLAUDE.md, the hot-reload decision). A busy check
+// must never be added (the hot-reload decision, docs/tui.md). A busy check
 // keyed on `App.isBusy()` would hold a reload exactly while the companion
 // column is focused editing the TUI, and the change would silently never
 // appear. A reload at an awkward moment is visible and recoverable; a reload

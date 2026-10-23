@@ -1,4 +1,4 @@
-// The optional escalation feature (CLAUDE.md rule 10).
+// The optional escalation feature (the never-hand-to-a-human rule).
 //
 // OFF BY DEFAULT. With `[escalation] enabled = false` — what every shipped
 // config carries — nothing here runs: no rule is evaluated, no note is

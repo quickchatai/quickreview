@@ -1,5 +1,5 @@
 // src/picwd.ts (packages/pi-plugin/src/engine/pisdk.ts runPiCliInCwd): the panes' interactive pi runs in
-// its own cwd, whatever cwd the session JSONL's header records. Found by the worker rehearsal (P8.20a, DEBUG-1):
+// its own cwd, whatever cwd the session JSONL's header records. Found by the worker rehearsal (DEBUG-1):
 // a debug round on a PR the legacy tmux bot had reviewed opened the JSONL with its
 // legacy header cwd, so bash-guard refused `scripts/post-review.sh` ("not a
 // sanctioned script": the cwd was not the sandbox root) and the round never ended.
@@ -52,7 +52,7 @@ beforeAll(() => {
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-describe("[P8.20a] a pane's pi runs in its own cwd, not the legacy header's", () => {
+describe("a pane's pi runs in its own cwd, not the legacy header's", () => {
   it("pi's CLI opens `--session <file>` in the header's cwd unpinned, and in the launcher's once pinned", async () => {
     const open = () =>
       piMain.createSessionManager({ session: file }, root, join(dir, "sessions"), settings);

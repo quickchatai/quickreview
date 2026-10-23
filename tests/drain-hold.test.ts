@@ -18,7 +18,7 @@
 //   * Visible in status.json (`draining_hold`), `qcr status` and the board's
 //     drain bar; an older daemon's snapshot without the marker reads unknown.
 import Database from "better-sqlite3";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -622,28 +622,5 @@ describe("qcr drain on --hold", () => {
     expect(drainManualCommand(cfg.tui, true, T0, true)).toContain(
       '{"command":"drain","on":true,"hold":true}',
     );
-  });
-});
-
-// docs/rulebook/ is manifest-excluded from the public tree (a skipped
-// describe still runs its body, so the read is guarded too).
-const HAS_RULEBOOK = existsSync(resolve(__dirname, "..", "docs", "rulebook"));
-describe.skipIf(!HAS_RULEBOOK)("the ratified levers text", () => {
-  // The decision's full text and the levers.ts note live in docs/rulebook/.
-  const claude = (HAS_RULEBOOK ? ["decisions.md", "architecture.md"] : [])
-    .map((f) => readFileSync(resolve(__dirname, "..", "docs", "rulebook", f), "utf8"))
-    .join("\n")
-    .replace(/\s+/g, " ");
-
-  it("CLAUDE.md carries the drain hold word for word, as ratified", () => {
-    for (const ratified of [
-      "[private rule text removed]",
-      "[private rule text removed]",
-      "The boot that adds the hold to state.db carries a standing operator drain over as one (`drain_hold_carried`); that is how the legacy daemon's cutover drain holds.",
-      "[private rule text removed]",
-      "[private rule text removed]",
-    ])
-      expect(claude).toContain(ratified);
-    expect(claude).not.toContain("lifts whatever stands");
   });
 });

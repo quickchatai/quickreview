@@ -1,4 +1,4 @@
-// A fake OAuth token endpoint for the login refresher's tests (P8.22): the
+// A fake OAuth token endpoint for the login refresher's tests: the
 // refresh-token grant of a provider that ROTATES the refresh token, as the real
 // one does. A stale refresh token is refused (invalid_grant), so a second
 // refresher racing the first shows up as a failed refresh, not a silent pass.

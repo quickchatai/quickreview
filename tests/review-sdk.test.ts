@@ -164,7 +164,7 @@ describe("reviewSdkRuntime", () => {
     keyed = [];
   });
 
-  describe("the tool uid (D32)", () => {
+  describe("the tool uid", () => {
     const split = { QCR_TOOL_UID: "65534", QCR_TOOL_GID: "1000" };
 
     it("runs the host's sessions' bash as the tool uid where the image names one", async () => {

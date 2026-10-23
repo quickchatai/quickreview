@@ -1,4 +1,4 @@
-// A stand-in for dist/src/botworker.js (P8.5): the same invocation, the same
+// A stand-in for dist/src/botworker.js: the same invocation, the same
 // handshake, no pi and no model. It speaks the worker side of the IPC with plain
 // node (so no build is needed), and what it does after the handshake is chosen by
 // FAKE_WORKER_MODE in its env:
@@ -15,16 +15,16 @@
 //   stale     sends a request and an event for generation - 1, records the codes, then ok
 //   mute      never connects: alive for a minute
 //   group     spawns a sleeping child in its own group, records its pid, then busy
-//   permit-crash  ready, accepted, takes two lens permits from the broker (P8.10),
+//   permit-crash  ready, accepted, takes two lens permits from the broker,
 //             records the answers, then SIGKILL on itself
 //
-//   controls  ready, accepted, then heartbeats until the daemon pushes a control (P8.12):
+//   controls  ready, accepted, then heartbeats until the daemon pushes a control:
 //             steer and follow_up are recorded and acked `queued`; abort is recorded,
 //             acked `handled`, followed by a `failed` event and exit 6
 //   refuse    as controls, but acks every steer and follow_up `refused`
 //   deaf      ready, accepted, heartbeats, and ignores controls and SIGTERM: only
 //             the SIGKILL of the group ends it
-//   answer    an idle-PR answer worker (P8.17): ready, accepted, a `usage` event, then
+//   answer    an idle-PR answer worker: ready, accepted, a `usage` event, then
 //             heartbeats until `<out>/<id>.release` exists (at once without FAKE_WORKER_HOLD),
 //             then `done` with FAKE_WORKER_REPLY as the reply and exit 0. SIGTERM exits 143.
 //   answer-fail  as answer, but a `failed` event and exit 1 instead of the reply

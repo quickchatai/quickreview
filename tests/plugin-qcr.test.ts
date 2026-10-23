@@ -1,4 +1,4 @@
-// The qcr Claude Code plugin (plugins/qcr, P6.13): skills that call the qcr
+// The qcr Claude Code plugin (plugins/qcr): skills that call the qcr
 // host wrapper with --json, and /qcr-setup. No docker, no gh, no model, no
 // network: the scripts run against a fake qcr, docker and gh on PATH that log
 // every call, and against the recorded payloads of tests/fixtures/json-contract

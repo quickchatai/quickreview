@@ -1,4 +1,4 @@
-// The bot's debug round (P8.13b, D38): a PR's next round runs inside interactive pi.
+// The bot's debug round: a PR's next round runs inside interactive pi.
 //
 // `debug-round <pr>` (owner and companion tier) takes the PR's host lease in debug
 // mode. The lease does not start a pi by itself: it is ARMED for the PR's next round.
@@ -14,13 +14,13 @@
 //   - THE ROUND IS THE COMMAND'S. The manager claims the round's own session_commands
 //     row for the lease (the row's owner token is the lease's token), so the round
 //     has one command id, one generation, one capability, and posts like any round:
-//     its post shims (`post-review.sh` and the others) send the P8.7 IPC request with
+//     its post shims (`post-review.sh` and the others) send the IPC request with
 //     the command's capability and the daemon runs the one MutationGate with the
-//     install's dry_run (D38). Nothing here posts, and nothing here can.
-//   - THE CAPABILITY reaches the pi through the P7.2a launch file: the launcher in the
+//     install's dry_run. Nothing here posts, and nothing here can.
+//   - THE CAPABILITY reaches the pi through the launch file: the launcher in the
 //     pane claims and unlinks it, and the pane's entry (src/debugroundpi.ts) hands the
 //     fd to pi, whose bash tool (extensions/debug-round.ts) hands it to each command.
-//   - ITS LOGIN is a refresh-blanked COPY (D5), made by the pane's own entry.
+//   - ITS LOGIN is a refresh-blanked COPY, made by the pane's own entry.
 //   - END. The round ends with the verdict commit: once the verdict file is there and
 //     the pane has been quiet a few seconds, the pi is stopped. It also ends when the
 //     operator releases it, when the pi exits, after 30 minutes without activity, and
@@ -30,7 +30,7 @@
 //     lease is freed, and the lease is what keeps every worker out (`hostGate`), so
 //     two writers never append to the JSONL. Then the round's command is settled: acked
 //     when the verdict was committed, otherwise handed back to `pending` for a worker,
-//     which resumes the JSONL under its id and continues (D22/D23). The NEXT round
+//     which resumes the JSONL under its id and continues. The NEXT round
 //     goes back to a worker, because the lease is gone.
 //   - REFUSALS. Under a drain (reason `drained`) and for a parked PR no debug round is
 //     granted, and one armed before the drain starts nothing until it lifts: the debug
@@ -130,7 +130,7 @@ export interface DebugRoundSpec {
   session_dir: string;
   model: string;
   system_prompt_file: string;
-  /** The reviewer stub (D34), appended to the system prompt: the cwd's own context
+  /** The reviewer stub, appended to the system prompt: the cwd's own context
    * files are switched off, never written over. */
   stub_file?: string;
   /** Extensions by absolute path. */
@@ -143,7 +143,7 @@ export interface DebugRoundSpec {
   /** The round's planned wave: its pass dir (the task files are under `tasks/`). */
   planned_wave: boolean;
   passes_dir: string;
-  /** Where the round's lens ledger and lens JSONLs go (D10). */
+  /** Where the round's lens ledger and lens JSONLs go. */
   lens_dir: string;
   /** The model's env: the worker's own, with the IPC names and the debug names. */
   env: Record<string, string>;
@@ -334,7 +334,7 @@ export class DebugRoundManager {
 
   /** The IPC server's view of a debug round's command. Active while its lease is
    * held and its row is the lease's; `lease: "debug"` and `may_post`, because a debug
-   * round posts like any round (D38). A command whose lease ended answers inactive
+   * round posts like any round. A command whose lease ended answers inactive
    * with its generation bumped. Anything else is not this manager's: null. */
   readonly lookup: CommandLookup = (commandId) => {
     const gone = this.ended.get(commandId);

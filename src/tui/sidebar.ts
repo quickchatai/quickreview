@@ -15,7 +15,7 @@
 // pi's own colors) and `-J`, through the same local DockerRunner seam the
 // lifecycle uses. Input goes back as `tmux send-keys`, never a shell string.
 //
-// THE COLUMN IS A TERMINAL (root CLAUDE.md). While focused, every
+// THE COLUMN IS A TERMINAL (docs/tui.md). While focused, every
 // byte goes to pi — `/` commands and their menu, completion, history,
 // multi-line editing, Ctrl-C to interrupt a turn are all pi's, and running it
 // under tmux is pointless if the bytes stop here. `Ctrl-q` is the only
@@ -91,7 +91,7 @@ export function restorePreferredSidebarWidth(width: number | undefined): number 
 
 /**
  * Total width the column occupies — always its full width (the fixed-layout
- * decision, root CLAUDE.md). There is no collapsed spine, no auto-collapse
+ * decision, AGENTS.md invariant 10). There is no collapsed spine, no auto-collapse
  * on a narrow terminal and no hidden state: the layout is the tab on the left
  * and the companion on the right, whatever the terminal width, whatever the
  * config, whatever docker says. On a terminal too narrow for both minimums the

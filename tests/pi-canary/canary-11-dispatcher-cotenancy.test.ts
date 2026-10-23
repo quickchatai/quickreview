@@ -1,4 +1,4 @@
-// Canary 11 [P2.8]: the SDK host shares the process's HTTP dispatcher and never
+// Canary 11 : the SDK host shares the process's HTTP dispatcher and never
 // fights over it.
 //
 // Two shapes. Inside a CLI pi (the debug round, the companion) pi installed its

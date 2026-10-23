@@ -219,7 +219,7 @@ export interface CaptureRange {
  * The only tmux sessions the board's PR pane may capture or type into: the pi
  * an operator is inside, a debug round's (`debug-pr-<n>`) or a takeover's
  * (`takeover-pr-<n>`). The bot's rounds run in workers with no tmux session,
- * so a `pr-<n>` name does not type-check here (P9.6).
+ * so a `pr-<n>` name does not type-check here.
  */
 export type PiTerminalSession = `debug-pr-${number}` | `takeover-pr-${number}`;
 
@@ -240,7 +240,7 @@ export type PiTerminalSession = `debug-pr-${number}` | `takeover-pr-${number}`;
  * `resize-window -x/-y` flips the window's `window-size` option to `manual`.
  * A human attaching with plain `tmux attach` afterwards inherits that pinned
  * rectangle; the undo is `tmux set-window-option -t <session> window-size
- * latest` (root CLAUDE.md, "Run / deploy / observe").
+ * latest`.
  *
  * The bare `;` is tmux's command separator and reaches tmux intact because
  * this argv rides `realSshRunner`, which shell-quotes every element. Never

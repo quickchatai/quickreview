@@ -17,7 +17,7 @@
 // on ONE line; lists are comma-separated, values carry no whitespace (the tag
 // grammar of src/memory/eventtags.ts), lens ids are the built passes
 // (`ALL_PASSES`, the validator included), and an evidence ref is `<kind>:<id>`
-// (`pr:5312`, `comment:3832300186`, `case:case-5312-r2-…`, `commit:<sha>`,
+// (`pr:5312`, `comment:3000000302`, `case:case-5312-r2-…`, `commit:<sha>`,
 // and `cand:c42` — the learner's candidate the lesson adopts). Only the HEADER
 // is read: both parsers stop at the first word of prose, so a quoted comment
 // in the body can never mint a field.

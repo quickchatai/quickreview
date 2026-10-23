@@ -1,4 +1,4 @@
-// [P8.6] The worker host's own cases: what the shared conformance suite
+// The worker host's own cases: what the shared conformance suite
 // (session-hooks-conformance.test.ts) leaves to a host whose command IS its
 // delivery. The rig is the conformance one: the real WorkerSessionHost over a real
 // WorkerSupervisor whose spawn, process table and signals are fakes.
@@ -86,7 +86,7 @@ const births = (): number => rig.lifecycle().filter((e) => e.startsWith("birth")
 const events = (kind: string): unknown[] =>
   rig.store.db.prepare("SELECT payload FROM events WHERE kind = ?").all(kind);
 
-describe("[P8.6] what the worker host offers", () => {
+describe("what the worker host offers", () => {
   it("hands a round to one worker as one claimed command, bytes saved before the row exists", async () => {
     const row = await dispatched();
     expect(row).toMatchObject({ kind: "round", status: "running", attempt: 1, started_at: null });
@@ -107,7 +107,7 @@ describe("[P8.6] what the worker host offers", () => {
   });
 });
 
-describe("[P8.6] the ack is the receipt", () => {
+describe("the ack is the receipt", () => {
   it("reads null while the worker is starting, true once it accepted the order", async () => {
     await dispatched();
     expect(await rig.hooks.roundPromptAccepted(PR, 1, STARTED_MS)).toBeNull();
@@ -190,7 +190,7 @@ describe("[P8.6] the ack is the receipt", () => {
   });
 });
 
-describe("[P8.6] a refused launch is not a failed dispatch", () => {
+describe("a refused launch is not a failed dispatch", () => {
   it("leaves the pending command as the one obligation, and the daemon's timer starts it", async () => {
     trackPr(rig.store, PR);
     rig.store.startRound(PR, "first", ["pass-baseline"], 75);
@@ -228,7 +228,7 @@ describe("[P8.6] a refused launch is not a failed dispatch", () => {
   });
 });
 
-describe("[P8.6] redelivery is the cheap recovery", () => {
+describe("redelivery is the cheap recovery", () => {
   it("redeliverRound is a no-op while a worker holds the order, and says so", async () => {
     await dispatched();
     expect(await rig.hooks.redeliverRound(PR, 1)).toBe(false);
@@ -327,7 +327,7 @@ describe("[P8.6] redelivery is the cheap recovery", () => {
   });
 });
 
-describe("[P8.6] retry fences the old worker first", () => {
+describe("retry fences the old worker first", () => {
   it("ends the worker, then replays the same id and bytes under a fresh one", async () => {
     const original = await dispatched();
 
@@ -395,7 +395,7 @@ describe("[P8.6] retry fences the old worker first", () => {
   });
 });
 
-describe("[P8.6] the fence leaves the row to the caller", () => {
+describe("the fence leaves the row to the caller", () => {
   it("ends the worker and does not settle its command", async () => {
     const row = await dispatched();
 
@@ -410,7 +410,7 @@ describe("[P8.6] the fence leaves the row to the caller", () => {
   });
 });
 
-describe("[P8.6] a round's replay keeps its pinned checkout", () => {
+describe("a round's replay keeps its pinned checkout", () => {
   it("does not refresh the worktree from the PR ref when it retries a round", async () => {
     const original = await dispatched();
     mkdirSync(rig.host.worktrees.worktreePath(PR), { recursive: true });
@@ -426,7 +426,7 @@ describe("[P8.6] a round's replay keeps its pinned checkout", () => {
   });
 });
 
-describe("[P8.6] held wakes ride the round's own worker", () => {
+describe("held wakes ride the round's own worker", () => {
   const wakeDeps = (): WakeDeps => ({
     store: rig.store,
     inject: (pr, message) => rig.hooks.inject(pr, message),
@@ -608,7 +608,7 @@ describe("[P8.6] held wakes ride the round's own worker", () => {
   });
 });
 
-describe("[P8.6] closing a PR ends its worker", () => {
+describe("closing a PR ends its worker", () => {
   it("fences the worker, cancels a wake's command and refuses every later wake", async () => {
     trackPr(rig.store, PR);
     await rig.hooks.inject(PR, "author replied");
@@ -634,7 +634,7 @@ describe("[P8.6] closing a PR ends its worker", () => {
   });
 });
 
-describe("[P8.12] operator-recovery's restart-session on the worker host", () => {
+describe("operator-recovery's restart-session on the worker host", () => {
   const sessionDir = (): string => join(rig.root, "state", "pi-sessions", SESSION);
   const ledger = (): string => join(rig.root, "state", "ledgers", `pr-${PR}.md`);
 

@@ -1,4 +1,4 @@
-// [P8.5b] The worker crash-loop breaker: the store's counters, the TUI alert and
+// The worker crash-loop breaker: the store's counters, the TUI alert and
 // the worker log rotation. The supervisor's end of it (a fake failing worker, the
 // park, the drain, the replay that never re-posts) is in tests/worker-supervisor.test.ts.
 import {
@@ -40,7 +40,7 @@ const upsert = (store: StateStore, n: number): void =>
     migration_gate: 0,
   });
 
-describe("[P8.5b] the breaker over the store", () => {
+describe("the breaker over the store", () => {
   it("parks at the second consecutive failure and reports `newlyParked` once", () => {
     const store = new StateStore(":memory:");
     const b = new WorkerBreaker(store);
@@ -93,7 +93,7 @@ describe("[P8.5b] the breaker over the store", () => {
   });
 });
 
-describe("[P8.5b] the TUI alert", () => {
+describe("the TUI alert", () => {
   const snap = (over: Partial<ReturnType<typeof buildStatusSnapshot>> = {}) => {
     const store = new StateStore(":memory:");
     upsert(store, 9);
@@ -158,7 +158,7 @@ describe("[P8.5b] the TUI alert", () => {
   });
 });
 
-describe("[P8.5b] worker log rotation", () => {
+describe("worker log rotation", () => {
   const put = (name: string, bytes: number, ageMs = 0): void => {
     const f = join(dir, name);
     writeFileSync(f, "x".repeat(bytes));

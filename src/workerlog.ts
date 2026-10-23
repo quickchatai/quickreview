@@ -1,4 +1,4 @@
-// A worker's log file (P8.5b): `<logDir>/<command id>.log` (state/workers/), where
+// A worker's log file: `<logDir>/<command id>.log` (state/workers/), where
 // the worker's stdout and stderr go. One file per command, appended across the
 // worker generations of a requeued round, so it is rotated by size at the next
 // spawn and the directory is pruned by age and count: a crash loop cannot fill

@@ -2,7 +2,7 @@
 // hostname to a file on a shared volume; this watcher notices a change,
 // debounces it, and re-points the GitHub App's own webhook URL through the one
 // MutationGate — the `update_own_webhook_url` kind in the app-self-config
-// class, which executes even in dry-run (CLAUDE.md rule 1) because new users
+// class, which executes even in dry-run (AGENTS.md invariant 6) because new users
 // run dry-run during exactly the window the self-heal matters.
 //
 // Shape mirrors the verdict watcher: fs.watch is the fast path only, the

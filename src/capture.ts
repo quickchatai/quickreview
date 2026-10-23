@@ -28,7 +28,7 @@
 //
 //  3. **Capture never writes to GitHub.** Reads are direct (adapter
 //     convention); there is no mutation path in this module and none may be
-//     added (CLAUDE.md rule 1).
+//     added (AGENTS.md invariant 1).
 import { isFeedbackBody } from "./feedback.js";
 import type { IssueCommentFull, ReviewCommentFull, ReviewFull } from "./github.js";
 import type { StateStore } from "./state.js";

@@ -1,7 +1,7 @@
 // Quick-message — deliver a typed message to a session. A message to a PR
 // (`pr-<n>`) goes down the operator control route (`messageRoute`): the bot's
 // rounds run in workers, and nothing reads a PR's inject directory any more
-// (P9.6). A message to any other session goes via the
+//. A message to any other session goes via the
 // daemon's inject bridge: write `inject/<session>/<name>.md` inside the
 // container (atomic tmp+mv, matching the daemon's own writes), then poll for
 // the bridge's `.done/<name>` archive as the delivery confirmation. Never
@@ -104,7 +104,7 @@ export class InjectSender implements MessageSender {
       return;
     }
     // A PR's inject directory has no reader: the bot's rounds run in workers,
-    // whose order is their first message (P9.6). A PR message goes by the
+    // whose order is their first message. A PR message goes by the
     // control route (`messageRoute`), never as a file nothing would consume.
     if (isPrSession(session)) {
       onState(
@@ -168,7 +168,7 @@ export interface MessageOutcome {
  *   runtime not known      host and answers, queues or refuses with its reason,
  *                          so a runtime the TUI cannot read is never guessed at.
  *
- * There is no tmux route: the bot runs no `pr-<n>` tmux session (P9.6).
+ * There is no tmux route: the bot runs no `pr-<n>` tmux session.
  */
 export type MessageRoute = "control" | "terminal";
 

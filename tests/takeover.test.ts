@@ -1,4 +1,4 @@
-// [P8.13] The takeover lease (D27): the operator works in a PR's real session.
+// The takeover lease: the operator works in a PR's real session.
 //
 // A FAKE host stands in for tmux and the process table: sessions, pids with start
 // times and process groups, signals that kill (or are ignored, or cannot kill),
@@ -294,7 +294,7 @@ function supervisorOver(r: ReturnType<typeof rig>, log: string[]) {
 
 const spawnedPis = (host: FakeHost): string[] => [...host.sessions.keys()];
 
-describe("[P8.13] granting the lease", () => {
+describe("granting the lease", () => {
   it("starts interactive pi on the real session in tmux takeover-pr-<n>, with the lease in SQLite", async () => {
     const r = rig();
     upsert(r.store, 7);
@@ -416,7 +416,7 @@ describe("[P8.13] granting the lease", () => {
   });
 });
 
-describe("[P8.13] the lease and a worker refuse each other", () => {
+describe("the lease and a worker refuse each other", () => {
   it("the worker is refused while the lease is held, and its command waits", async () => {
     const r = rig();
     upsert(r.store, 7);
@@ -492,7 +492,7 @@ describe("[P8.13] the lease and a worker refuse each other", () => {
   });
 });
 
-describe("[P8.13] the lease holds dispatch and parks wakes", () => {
+describe("the lease holds dispatch and parks wakes", () => {
   it("holds a wake in pending_wakes; the release delivers it", async () => {
     const delivered: string[] = [];
     const inject = async (_pr: number, message: string): Promise<void> => {
@@ -581,7 +581,7 @@ describe("[P8.13] the lease holds dispatch and parks wakes", () => {
   );
 });
 
-describe("[P8.13] the lease expires after 30 minutes idle", () => {
+describe("the lease expires after 30 minutes idle", () => {
   it("ends at 30 minutes without activity (fake clock), and kills the pi first", async () => {
     const r = rig();
     expect((await r.mgr.grant(7)).ok).toBe(true);
@@ -677,7 +677,7 @@ describe("[P8.13] the lease expires after 30 minutes idle", () => {
   });
 });
 
-describe("[P8.13] the daemon refuses every post for a PR under the lease", () => {
+describe("the daemon refuses every post for a PR under the lease", () => {
   let po: Rig;
   const clients: IpcClient[] = [];
   afterEach(async () => {
@@ -779,7 +779,7 @@ describe("[P8.13] the daemon refuses every post for a PR under the lease", () =>
   });
 });
 
-describe("[P8.13] the operator's verbs", () => {
+describe("the operator's verbs", () => {
   it("takeover and release are served by the manager through the operator control route", async () => {
     const r = rig();
     const control = workerOperatorControl({

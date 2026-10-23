@@ -1,4 +1,4 @@
-// The offline resume rehearsal (P8.4): a PR's existing session JSONL is resumed by
+// The offline resume rehearsal: a PR's existing session JSONL is resumed by
 // the bot worker (src/botworker.ts, the real one) on pi-ai's faux provider, in the
 // worker rig's world (a fake daemon on a real socket, a production-shaped root).
 // Nothing reaches a provider: the model is the faux, and the offline guard of the
@@ -95,7 +95,7 @@ export interface RehearsalRow {
 }
 
 const REPO = resolve(import.meta.dirname, "..", "..");
-/** The reviewer stub (D34) the release image carries. */
+/** The reviewer stub the release image carries. */
 const STUB = readFileSync(join(REPO, REVIEWER_STUB), "utf8");
 
 const SYSTEM_PROMPT = "You are the reviewer of this PR.\n";

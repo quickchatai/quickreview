@@ -2,7 +2,7 @@
 // extension that exposes the SetupEngine as pi tools: the companion judges,
 // these tools act. Loaded per spawn by the companion's piArgv
 // (src/tui/companion.ts), never registered globally, never on the VM (no new
-// session kind — the single-shepherd invariant, CLAUDE.md rule 9).
+// session kind — the single-shepherd invariant, AGENTS.md invariant 7).
 //
 // Tools:
 //   - setup_repo_facts: the deterministic facts (stack, frameworks, CI,

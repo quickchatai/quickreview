@@ -52,7 +52,7 @@ export interface OnboardAdapters {
    * never read process globals themselves. `uid` is null where the platform
    * has no uid (Windows). `inContainer`: the wizard is running inside a
    * container (the release image), where there is no Docker to drive —
-   * bring-up then prints the host's commands instead (D16). */
+   * bring-up then prints the host's commands instead. */
   host: { nodeVersion: string; uid: number | null; inContainer?: boolean };
   /** Filesystem roots. `stateDir` is `<sandbox root>/state`; `configPath` is
    * the live config.toml as the install locator resolved it — the

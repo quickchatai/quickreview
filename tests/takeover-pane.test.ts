@@ -1,4 +1,4 @@
-// [P8.13] The pane's side of a takeover (src/takeoverpi.ts): the borrowed login,
+// The pane's side of a takeover (src/takeoverpi.ts): the borrowed login,
 // the pi's argv and env, and the resume that reads what the operator said.
 //
 // pi is a fake: the `run` seam gets the command pi would have been started with,
@@ -103,7 +103,7 @@ function specFile(over: Partial<TakeoverSpec> = {}): string {
 
 const listing = (d: string): string[] => readdirSync(d).sort();
 
-describe("[P8.13] the takeover's login is a refresh-blanked borrowed copy", () => {
+describe("the takeover's login is a refresh-blanked borrowed copy", () => {
   it("has the disabled refresh token, in the pi's own agent dir, and writes nothing to the owner's", async () => {
     const agent = ownerAgent();
     const before = readFileSync(join(agent, "auth.json"), "utf8");
@@ -214,7 +214,7 @@ describe("[P8.13] the takeover's login is a refresh-blanked borrowed copy", () =
   });
 });
 
-describe("[P8.13] the pi the pane starts", () => {
+describe("the pi the pane starts", () => {
   it("resumes the real session (not a fork) with the read tools and bash-guard only", () => {
     const spec = JSON.parse(readFileSync(specFile(), "utf8")) as TakeoverSpec;
     const argv = takeoverArgv(spec);
@@ -282,7 +282,7 @@ describe("[P8.13] the pi the pane starts", () => {
   });
 });
 
-describe("[P8.13] the resume reads the operator's turns", () => {
+describe("the resume reads the operator's turns", () => {
   let born: RequestShape;
   beforeAll(async () => {
     born = await bornReference();

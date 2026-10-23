@@ -92,7 +92,7 @@ new file mode 100644
 +// child running one lens pass. Leaves must never do ambient OpenViking work —
 +// no recall injection into their context, no turn sync, no commit — because:
 +//
-+//   * the single-shepherd invariant (root CLAUDE.md rule 9) says the PR's ONE
++//   * the single-shepherd invariant (AGENTS.md invariant 7) says the PR's ONE
 +//     main pi owns the review; a leaf is a stateless evaluator of a diff, and
 +//     memory injected under it is unaccounted context;
 +//   * a commit from a leaf would archive the SHEPHERD's session (the OV

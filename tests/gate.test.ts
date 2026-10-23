@@ -119,17 +119,17 @@ describe("the closed mutation vocabulary", () => {
         "push_branch",
         "remove_label",
         // Reviewer nomination: the optional escalation feature's second
-        // delivery shape (CLAUDE.md rule 10). An ordinary kind in every
+        // delivery shape (the never-hand-to-a-human rule). An ordinary kind in every
         // respect — see the describe below.
         "request_reviewer",
         // Bot-owned inline threads may be resolved after a checked author
         // response; this does not alter or dismiss a review verdict.
         "resolve_own_review_thread",
-        // The one review-verdict-mutating kind (CLAUDE.md rule 2):
+        // The one review-verdict-mutating kind (AGENTS.md invariant 2):
         // the bot superseding its own stale non-APPROVED review. No kind
         // for dismissing approvals or another identity's review exists.
         "supersede_own_review",
-        // The one app-self-config kind (CLAUDE.md rule 1):
+        // The one app-self-config kind (AGENTS.md invariant 6):
         // the App re-pointing its own webhook URL. Never touches the repo.
         "update_own_webhook_url",
       ].sort(),
@@ -301,7 +301,7 @@ describe("the app-self-config gate class (rule-1 exception)", () => {
   };
 
   it("is a CLOSED SET containing exactly update_own_webhook_url — adding a second kind fails here", () => {
-    // Mirrors the forceLive pin: widening the class is a CLAUDE.md rule 1
+    // Mirrors the forceLive pin: widening the class is an AGENTS.md invariant 6
     // change, never an edit that survives CI. Deep equality, not containment.
     expect([...APP_SELF_CONFIG_KINDS]).toEqual(["update_own_webhook_url"]);
   });

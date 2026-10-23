@@ -1,4 +1,4 @@
-// [P8.15w] The whole bot, end to end, with workers as its only host.
+// The whole bot, end to end, with workers as its only host.
 //
 // `createProductionDaemon` (src/wire.ts) runs for real: its worker world (the IPC server, the
 // WorkerSupervisor and its spec builder, the host), its dispatch, its verdict watcher, its post
@@ -302,7 +302,7 @@ afterEach(async () => {
   delete process.env["PI_CODING_AGENT_DIR"];
 });
 
-describe.skipIf(!hasDist)("[P8.15w] the production daemon, with workers as its only host", () => {
+describe.skipIf(!hasDist)("the production daemon, with workers as its only host", () => {
   beforeEach(() => {
     fake.requests.length = 0;
   });

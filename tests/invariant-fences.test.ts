@@ -1,7 +1,7 @@
 // The ratified invariants inside the prompt files we own are fenced, and the
 // fences are pinned here.
 //
-// Root CLAUDE.md rule 6 freezes the seeds; it says nothing about the round
+// AGENTS.md invariant 3 freezes the seeds; it says nothing about the round
 // templates and the post-seed lens agents, which are "ours to edit". But
 // "ours to edit" is a freeze exemption, not a decision exemption: those files
 // carry ratified rules (the CI gate, the reachability gate, the nit cap, the

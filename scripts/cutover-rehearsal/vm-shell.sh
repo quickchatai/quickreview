@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The "VM" side of the cutover rehearsal's ssh (P8.20): the forced command of the throwaway sshd's one
+# The "VM" side of the cutover rehearsal's ssh: the forced command of the throwaway sshd's one
 # authorized key. Whatever the controller sends (`sudo qcr-update ...`, `sudo docker ...`, `cat
 # /opt/quickreview/state/status.json`) lands here as SSH_ORIGINAL_COMMAND and runs in a shell whose PATH
 # leads with vm-shims/ (sudo, qcr-update, rsync). This is a TEST TOOL: it never ships.

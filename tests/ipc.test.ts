@@ -1,4 +1,4 @@
-// [P7.2a] The worker-daemon IPC: framing, the version gate, capabilities and
+// The worker-daemon IPC: framing, the version gate, capabilities and
 // how they reach a process, the server's per-request checks, launch files.
 import { spawn, execFileSync } from "node:child_process";
 import {
@@ -49,7 +49,7 @@ import { waitFor } from "./helpers/wait-for.js";
 
 const mode = (p: string): number => statSync(p).mode & 0o777;
 
-describe("[P7.2a] framing", () => {
+describe("framing", () => {
   it("splits lines across chunk boundaries, including a multibyte character", () => {
     const d = new LineDecoder();
     const line = JSON.stringify({ s: "zażółć" }) + "\n";
@@ -88,7 +88,7 @@ describe("[P7.2a] framing", () => {
   });
 });
 
-describe("[P7.2a] messages and the version gate", () => {
+describe("messages and the version gate", () => {
   const cap = "a".repeat(32);
 
   it("refuses an unknown major version before reading anything else", () => {
@@ -151,7 +151,7 @@ describe("[P7.2a] messages and the version gate", () => {
     ).toBe("bad_request");
   });
 
-  it("carries every event kind P8.3 reports", () => {
+  it("carries every event kind the worker reports", () => {
     expect([...IPC_EVENT_KINDS]).toEqual([
       "ready",
       "accepted",
@@ -166,7 +166,7 @@ describe("[P7.2a] messages and the version gate", () => {
   });
 });
 
-describe("[P7.2a] capability handoff", () => {
+describe("capability handoff", () => {
   let dir: string;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "ipc-cap-"));
@@ -284,7 +284,7 @@ describe("[P7.2a] capability handoff", () => {
   });
 });
 
-describe("[P7.2a] launch files", () => {
+describe("launch files", () => {
   let state: string;
   let store: CapabilityStore;
   beforeEach(() => {
@@ -395,7 +395,7 @@ function fakeCommands() {
   };
 }
 
-describe("[P7.2a] the server", () => {
+describe("the server", () => {
   let state: string;
   let store: CapabilityStore;
   let cmds: ReturnType<typeof fakeCommands>;

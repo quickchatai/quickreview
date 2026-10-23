@@ -11,10 +11,10 @@
 //             bytes are decompressed and sha256-verified by `extractPr` - the very
 //             code behind `qcr archive extract` - on a mirror of just those files.
 //   lenses    a worker keeps them in `<root>/state/lens/pr-<n>/r<k>/lens-sessions/
-//             <lens run id>/*.jsonl` (src/botworker.ts, D10); `<pr dir>/lens-sessions/`
+//             <lens run id>/*.jsonl` (src/botworker.ts); `<pr dir>/lens-sessions/`
 //             is also read. A tmux-hosted lens pass is a child of the PR's session and
-//             keeps no file of its own. The archive keeps the worker trees (P8.16;
-//             `qcr archive extract`, then `qcr open <dir>`).
+//             keeps no file of its own. The archive keeps the worker trees
+//             (`qcr archive extract`, then `qcr open <dir>`).
 //
 // Nothing is written on the box and nothing runs there but reads: the commands
 // are `ls`/`stat`/`cat`/`head`/`base64` and `qcr why --json`, through the TUI's
@@ -353,7 +353,7 @@ export async function pullPrSession(o: OpenPrOptions, deps: PrPullDeps): Promise
     if (lenses.length === 0)
       return fail(
         `pr-${o.pr} kept no lens sessions on ${where}: a tmux-hosted lens pass is a child of the PR's ` +
-          "session and has no file of its own; workers persist them (P8.3). Open the PR's session without --lens.",
+          "session and has no file of its own; workers persist them. Open the PR's session without --lens.",
       );
     const idOf = (l: Listed): string => basename(dirname(l.path));
     const ids = [...new Set(lenses.map(idOf))];

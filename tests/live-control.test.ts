@@ -2,7 +2,7 @@
 // WORKER: the write and the result probe are the real shell scripts the TUI
 // ships, run under sh in a temp state dir (chown shimmed: this test is not
 // root), and the "worker" is a function that answers each command file the way
-// the daemon will once it forwards it over IPC (P8.12): ack queued or handled,
+// the daemon will once it forwards it over IPC: ack queued or handled,
 // or a refusal. Nothing here touches a box, a model or the network.
 //
 // What the tests pin:

@@ -1,4 +1,4 @@
-// P4.1: the lens agent registry (packages/pi-plugin/src/engine/lens/registry.ts) loads the built
+// The lens agent registry (packages/pi-plugin/src/engine/lens/registry.ts) loads the built
 // agents with the name / model / tools pi's example subagent parser gives.
 //
 // The example (examples/extensions/subagent/agents.ts) is imported HERE ONLY,

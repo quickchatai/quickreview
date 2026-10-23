@@ -452,8 +452,8 @@ export const REVIEW_DEFAULTS: ReviewConfig = {
 };
 
 /**
- * [escalation] — the optional, OFF-BY-DEFAULT escalation feature (CLAUDE.md
- * rule 10).
+ * [escalation] — the optional, OFF-BY-DEFAULT escalation feature (the never-hand-to-a-human
+ * rule).
  *
  * Two invariants bound everything this table can express, and neither is a
  * knob:
@@ -1193,7 +1193,7 @@ export function req(obj: Record<string, unknown>, key: string): unknown {
   return v;
 }
 
-/** The overseer session is gone (P9.13): its two knobs are still ACCEPTED so a
+/** The overseer session is gone: its two knobs are still ACCEPTED so a
  * live config does not break, read by nothing, and named here once at parse. */
 export function configDeprecations(raw: Record<string, any>): string[] {
   const out: string[] = [];

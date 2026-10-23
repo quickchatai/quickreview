@@ -1,4 +1,4 @@
-// Where the reviewer stub (D34) lives and what pi loads it as. Neutral: the SDK
+// Where the reviewer stub lives and what pi loads it as. Neutral: the SDK
 // session factories (packages/pi-plugin/src/engine/roundsdk.ts) and the bot worker (src/botworker.ts)
 // need the two names, and neither may import src/hostroute.ts for them (its
 // closure reaches the state store, which a worker never opens).

@@ -14,7 +14,7 @@ notes keep validating byte for byte; new ones say "owner".
 
 `dry_run` in `config.toml` decides whether GitHub mutations execute or are
 written to `state/dryrun/` as would-be calls. Flipping it — in **either
-direction** — is the owner's explicit call, never an agent's (hard rule 1).
+direction** — is the owner's explicit call, never an agent's (AGENTS.md invariant 6).
 
 - Tripwire: `tests/config.test.ts` pins the live config's `dry_run` value, so
   an accidental flip reddens the suite.
@@ -63,7 +63,7 @@ fence or mints a new fence marker.
 ## 3. The frozen seeds and the divergence registry
 
 The 13 seeded files (9 `agents/pass-*.md` lenses + 4 `prompts/*.md` system
-prompts) are frozen outright (hard rule 6): byte-identical to the canonical
+prompts) are frozen outright (AGENTS.md invariant 3): byte-identical to the canonical
 copies in `seeds/`, sha-pinned by `tests/fixtures/seed-manifest.json`, both
 verified by `tests/seed-integrity.test.ts` on every run. Pass behaviour
 changes go through the `PASS_ADDENDA` registry (`packages/pi-plugin/src/include.ts`) — never

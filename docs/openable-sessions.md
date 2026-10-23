@@ -82,7 +82,7 @@ work for it and nothing on the box is written.
   a worker's `state/lens/pr-<N>/r<K>/lens-sessions/<run id>/*.jsonl` (or
   `<pr dir>/lens-sessions/<run id>/*.jsonl`). A tmux-hosted lens pass is a child of the
   PR's session with no file of its own, so its answer is "kept no lens sessions"; the
-  archive keeps the worker trees (P8.16). `--round` and `--lens` do not combine: `--round` cuts the PR's main session at a round's finish, and a lens pass is opened by its run id alone.
+  archive keeps the worker trees. `--round` and `--lens` do not combine: `--round` cuts the PR's main session at a round's finish, and a lens pass is opened by its run id alone.
 
 Pi starts with bash-guard alone: the bot's tools are the tmux era's `subagent` and
 `launch_plan`, which this machine does not run, and posting is the daemon's. The login copy
@@ -100,7 +100,7 @@ Runs the round inside pi's interactive UI. The route prepares the round as any
 round is prepared (task files, system prompt, order), then starts pi with the
 round's extensions and `extensions/debug-round.ts` in the lens tool's place, and
 `/qcr-round` as its first message. That command launches the planned discovery
-wave (the engine's job at round start, rule 9, never pass-validate) and then
+wave (the engine's job at round start under the single-shepherd invariant, never pass-validate) and then
 sends the order. The lens passes are SDK sessions of that pi process on pi's own
 HTTP dispatcher, so they show up in `lens_wave` as on any engine route.
 `debug-round.json` in the round dir records the wave, when the order went out

@@ -1,4 +1,4 @@
-// The takeover lease (P8.13, D27): the operator works in a PR's REAL session.
+// The takeover lease: the operator works in a PR's REAL session.
 //
 // A PR between rounds is its JSONL and nothing else (the worker world). A
 // takeover opens that JSONL in interactive pi, in tmux, in the bot container, as
@@ -17,7 +17,7 @@
 //     scripts are blocked there), read tools and no write tools, and the daemon's
 //     IPC refuses every post of a command under this lease (`lookup`, which says
 //     `lease: "takeover"`; src/postops.ts). Two layers, neither trusting the other.
-//   - ITS LOGIN. The pi reads a refresh-blanked COPY of the login (D5), made by
+//   - ITS LOGIN. The pi reads a refresh-blanked COPY of the login, made by
 //     the pane's own entry (src/takeoverpi.ts), never the refresher's file.
 //   - RELEASE. `release`, the pi exiting, or 30 minutes without activity. The
 //     daemon kills the pi (the tmux session, then its process group by the
@@ -26,7 +26,7 @@
 //     worker out, and the next sweep tries again. So a worker is never started
 //     behind a takeover pi that is still alive.
 //   - RESTART. A daemon that comes back ends every takeover (`recover`), as it does
-//     every worker (D23): the capability died with the old daemon.
+//     every worker: the capability died with the old daemon.
 //
 // Neutral by design (node builtins, the state store, the ipc capability module and
 // src/workerlease.ts), so the daemon imports it without reaching src/engine/. The

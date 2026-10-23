@@ -225,12 +225,12 @@ export interface DaemonDeps {
    * `login_refresh` key; a throwing implementation is swallowed like the others.
    */
   loginRefreshStatus?: () => import("./loginrefresh/types.js").LoginRefreshStatus | undefined;
-  /** The central lens permit broker's counts (D25), for status.json `permits`.
+  /** The central lens permit broker's counts, for status.json `permits`.
    * wire.ts hands the broker's `status()`; the WorkerSupervisor runs in the
-   * daemon (P8.6). Absent ⇒ no `permits` key. */
+   * daemon. Absent ⇒ no `permits` key. */
   permitStatus?: () => import("./ipc/permits.js").PermitStatus | undefined;
-  /** What hosts each PR's session, for status.json's per-PR `runtime` (P8.12,
-   * src/workerruntime.ts). Absent: no PR reports one, which readers take as tmux. */
+  /** What hosts each PR's session, for status.json's per-PR `runtime`
+   * (src/workerruntime.ts). Absent: no PR reports one, which readers take as tmux. */
   runtimeOf?: (pr: number) => import("./state.js").PrRuntime | undefined;
   /**
    * Seams of the daemon's event-loop watch (src/eventloop.ts):
@@ -817,7 +817,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   // In a multi-deploy window each healthy boot lifts the drain, so the
   // operator re-drains before each step. Two drains are never lifted here: a
   // system's (with a reason) and the operator's HOLD (`qcr drain on --hold`,
-  // P8.21b — the cutover's), which only an explicit `drain off` lifts.
+  // the cutover's), which only an explicit `drain off` lifts.
   //
   // One reconcile pass at a time: an overlapping pass would pay every step
   // again. A tick that finds a pass running is skipped; an explicit call

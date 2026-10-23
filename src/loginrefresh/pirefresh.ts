@@ -1,6 +1,6 @@
 // pi-ai's own OAuth refresh for a provider: the one file in the refresher that
 // touches pi. Deep-imported by file path (the package's export map publishes no
-// OAuth flow), like the SDK host's dispatcher (packages/pi-plugin/src/engine/pisdk.ts, D4), so the
+// OAuth flow), like the SDK host's dispatcher (packages/pi-plugin/src/engine/pisdk.ts), so the
 // refresh is exactly what pi itself would do. The daemon never imports this
 // module: it spawns main.js, which does.
 //

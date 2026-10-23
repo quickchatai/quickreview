@@ -341,7 +341,7 @@ function claimNextDelivery(
 }
 
 /**
- * The worker host's flush (P8.6, D22): the held wakes of a PR go through the
+ * The worker host's flush: the held wakes of a PR go through the
  * ROUND'S OWN worker, which takes them over IPC (`wakes.take`) once its turns are
  * over and acks each delivery (`wakes.ack`) after the session took it. Nothing is
  * injected into a session from outside: the daemon's `flushHeldWakes` still runs at

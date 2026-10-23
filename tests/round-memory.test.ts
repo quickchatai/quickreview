@@ -265,7 +265,7 @@ describe("the three states of the pinned head", () => {
     expect(renderContextBlockSection(mem)).toContain("ECONNREFUSED");
   });
 
-  it("a head gap does not throw away a context block that DID arrive (selfscan ee1e42d4)", async () => {
+  it("a head gap does not throw away a context block that DID arrive", async () => {
     // The two halves are fetched independently: a sweep that skipped one
     // entry makes the head unreadable while the search still answered.
     const mem = await assembleRoundMemory(
@@ -374,7 +374,7 @@ describe("memory sections in the round prompt", () => {
     expect(renderContextBlockSection(seeded({ block: "" }))).toContain("had nothing to add");
   });
 
-  it("an author's title cannot close the daemon's quotation of the memory query (selfscan 9a1190ba)", () => {
+  it("an author's title cannot close the daemon's quotation of the memory query", () => {
     // The {{title}} slot is escaped by promptTitle; the query quoted in the
     // memory section carries the same title and must be held to the same rule.
     const query = roundContextQuery({

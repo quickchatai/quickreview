@@ -1,4 +1,4 @@
-// The runtime side of lens cache groups (D7): who shares a group, when a group
+// The runtime side of lens cache groups: who shares a group, when a group
 // is warm, and when its sessions may be disposed. Pure over its injected clock
 // and key source (no pi, no filesystem); the runner supplies the sessions.
 //

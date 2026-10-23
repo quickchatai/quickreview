@@ -1,4 +1,4 @@
-// [P8.20a] The pre-deletion worker rehearsal's tooling (scripts/worker-rehearsal.sh and
+// The pre-deletion worker rehearsal's tooling (scripts/worker-rehearsal.sh and
 // scripts/worker-rehearsal/): the pieces that need no docker. The rehearsal itself is the
 // script's run, written up in docs/worker-rehearsal.md; this holds what it stands on.
 //
@@ -38,7 +38,7 @@ const freePort = (): Promise<number> =>
     });
   });
 
-describe("[P8.20a] patch-toml.mjs", () => {
+describe("patch-toml.mjs", () => {
   it("replaces a key in place, adds a missing one to its section and appends a missing section, keeping comments", () => {
     const dir = mkdtempSync(join(tmpdir(), "rh-toml-"));
     try {
@@ -71,7 +71,7 @@ describe("[P8.20a] patch-toml.mjs", () => {
   });
 });
 
-describe.skipIf(!hasOpenssl)("[P8.20a] the scripted stub", () => {
+describe.skipIf(!hasOpenssl)("the scripted stub", () => {
   let dir = "";
   let httpPort = 0;
   let httpsPort = 0;
@@ -366,7 +366,7 @@ describe.skipIf(!hasOpenssl)("[P8.20a] the scripted stub", () => {
   });
 });
 
-describe("[P8.20a] the rehearsal's scripts and report", () => {
+describe("the rehearsal's scripts and report", () => {
   it("every script parses", () => {
     for (const f of [
       "scripts/worker-rehearsal.sh",

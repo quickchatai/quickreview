@@ -1,4 +1,4 @@
-// The round's lens wave, as a board of rows in flight (D8).
+// The round's lens wave, as a board of rows in flight.
 //
 // On an engine route the round's engine launches the PLANNED discovery wave at
 // round start, and the main session runs alongside it. `lens_wave` is how the

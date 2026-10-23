@@ -1,4 +1,4 @@
-// Canary 2 [P2.7]: disposing 20 sessions at once, in flight, is clean.
+// Canary 2 : disposing 20 sessions at once, in flight, is clean.
 //
 // A review round ends (or is aborted) with many lens sessions alive. Disposing
 // them in one tick must not throw, must settle every pending prompt, must run

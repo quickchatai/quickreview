@@ -1,4 +1,4 @@
-// The worker's and the shims' end of the socket (D23).
+// The worker's and the shims' end of the socket.
 //
 // A host process or a post shim reads its capability from the inherited fd
 // (QCR_IPC_CAP_FD) with pread each time it connects, says hello, then sends
@@ -132,7 +132,7 @@ export class IpcClient {
       ...(body !== undefined ? { body } : {}),
     };
     const line = encodeMessage(msg, this.opts.maxLineBytes);
-    // `timeoutMs: 0` waits without a timer: a permit grant (P8.10) may queue behind
+    // `timeoutMs: 0` waits without a timer: a permit grant may queue behind
     // every other worker's lenses, and the worker's own wall clock bounds it.
     const waitMs = opts.timeoutMs ?? this.opts.timeoutMs ?? 10_000;
     const res = await new Promise<ResponseMessage>((resolve, reject) => {

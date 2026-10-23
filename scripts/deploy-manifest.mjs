@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // The deploy manifest's parser (deploy/manifest.schema.json documents the
 // shape). `scripts/deploy.sh release <version>` reads deploy-manifest-<version>.json
-// through this; CI emits it (P7.16). A hand-written validator rather than a
+// through this; CI emits it. A hand-written validator rather than a
 // schema library: the controller needs node and nothing installed.
 //
 //   node scripts/deploy-manifest.mjs <file> <version>

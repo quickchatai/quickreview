@@ -286,7 +286,7 @@ function makeScratch(opts: {
   );
   writeFileSync(
     join(ansible, "inventory.ini"),
-    opts.inventory ?? "[quickreview]\nquickreview-vm ansible_user=mat\n",
+    opts.inventory ?? "[quickreview]\nquickreview-vm ansible_user=deploy\n",
   );
 
   const git = (...args: string[]) =>
@@ -512,7 +512,7 @@ describe("deploy.sh --dry-run", () => {
       env = makeScratch({
         configPi: "0.84.1",
         groupVarsPi: "0.84.1",
-        inventory: `[quickreview]\n${line}\n\n[quickreview:vars]\nansible_user=mat\n`,
+        inventory: `[quickreview]\n${line}\n\n[quickreview:vars]\nansible_user=deploy\n`,
       });
       const r = run(env, ["--dry-run", "verify"]);
       rmSync(env.dir, { recursive: true, force: true });
@@ -1332,7 +1332,7 @@ describe("deploy.sh — OpenViking pin drift", () => {
         groupVarsOv: { ...base, ...LOCAL },
         inventory:
           "# written by the wizard\n[quickreview]\nquickreview-vm cloudflared_enabled=false openviking_embedding_provider=openai " +
-          "openviking_embedding_model=text-embedding-3-small openviking_embedding_dimension=1536\n\n[quickreview:vars]\nansible_user=mat\n",
+          "openviking_embedding_model=text-embedding-3-small openviking_embedding_dimension=1536\n\n[quickreview:vars]\nansible_user=deploy\n",
       });
       const r = run(env, ["--dry-run"]);
       expect(r.code).toBe(0);
@@ -3071,11 +3071,11 @@ describe("deploy — the memory sidecar", () => {
       }
       // The legacy entrypoint read this to skip its memory boot; the image has no such boot.
       expect(block).not.toContain("QCR_OPENVIKING_ENDPOINT");
-      // Nothing in env is a token (rule 3, D39).
+      // Nothing in env is a token (rule 3).
       expect(block).not.toMatch(/TOKEN|SECRET|PASSWORD|PEM/);
     });
 
-    it("the image's daemon mode does what the legacy entrypoint did, less the global bash-guard merge (P9.5): the stub, the agents link", () => {
+    it("the image's daemon mode does what the legacy entrypoint did, less the global bash-guard merge: the stub, the agents link", () => {
       const entry = readFileSync(join(root, "docker", "entrypoint.sh"), "utf8");
       const daemonMode = entry.slice(
         entry.indexOf("mode_daemon() {"),
@@ -3083,7 +3083,7 @@ describe("deploy — the memory sidecar", () => {
       );
       expect(daemonMode).not.toContain("QCR_PI_REQUIRE_EXT");
       expect(entry).not.toContain("FATAL: pi extension missing");
-      // P9.9b: the one pi is node_modules'; no mode asks for a global CLI
+      // The one pi is node_modules'; no mode asks for a global CLI
       expect(entry).not.toContain("assert_pinned_pi_cli");
       expect(daemonMode).not.toContain("assert_subagent_example");
       expect(daemonMode).toContain('QCR_PI_AGENTS_TARGET="$STATE/agents"');
@@ -3169,7 +3169,7 @@ describe("scripts/memory-search-check.mjs", () => {
   });
 });
 
-// ---- the VM's ghcr pull credential (P7.13) ----------------------------------
+// ---- the VM's ghcr pull credential ----------------------------------
 // The VM pulls the private release images with the owner's classic
 // read:packages login. The updater pulls BY DIGEST on the VM (a lapsed login
 // fails its pull before anything changes), `verify` and `release` warn before
@@ -3282,32 +3282,6 @@ describe("deploy.sh — the pull login and the token expiry warning", () => {
         "WARNING — the VM's ghcr pull token expires at 2026-10-25T00:00:00Z, in 5 day(s)",
       );
     });
-  });
-});
-
-const HARD_RULES = join(root, "docs", "rulebook", "hard-rules.md");
-describe.skipIf(!existsSync(HARD_RULES))("CLAUDE.md rule 3 — the VM's registry pull login", () => {
-  // The full ratified text of the hard rules lives in docs/rulebook/.
-  const claude = existsSync(HARD_RULES) ? readFileSync(HARD_RULES, "utf8") : "";
-  const rule3 = claude.slice(
-    claude.indexOf("\n3. **Only the App credential"),
-    claude.indexOf("\n4. **Never touch"),
-  );
-
-  it("carries the ratified carve-out: the owner's classic read:packages token, in root's docker config on the VM host only", () => {
-    expect(rule3).toContain("**The VM's registry pull login (owner's ruling, 2026-10-19).**");
-    expect(rule3).toContain("CLASSIC personal access token, scoped `read:packages`");
-    expect(rule3).toContain("root's docker config on the VM");
-    expect(rule3).toContain("never in a container");
-    expect(rule3).toContain("scripts/vm-ghcr-login.sh");
-    expect(rule3).toContain("exactly `read:packages`");
-    expect(rule3).toContain("`deploy.sh verify` warns 14 days before");
-    // the ban it is an exception to is still there, and says so
-    expect(rule3).toContain("token (the VM's registry pull login below is the");
-  });
-
-  it("names only a script that exists", () => {
-    expect(existsSync(join(root, "scripts", "vm-ghcr-login.sh"))).toBe(true);
   });
 });
 

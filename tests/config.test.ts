@@ -141,7 +141,7 @@ describe("parseConfig", () => {
       expect(() => parseConfig(set(bad)), bad).toThrow(/lens_grant_stagger_ms/);
   });
 
-  it("the idle-PR answer worker's caps default to 600 s and $2, and are checked (P8.17)", () => {
+  it("the idle-PR answer worker's caps default to 600 s and $2, and are checked", () => {
     expect(cfg.daemon.answer_timeout_s).toBe(600);
     expect(cfg.daemon.answer_cap_usd).toBe(2);
     const set = (line: string) =>

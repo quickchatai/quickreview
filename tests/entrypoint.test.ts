@@ -8,9 +8,9 @@
 //   - every mode refuses to start when config.toml [pi] version differs from
 //     the installed pi package;
 //   - the daemon mode carries the prune of the retired global bash-guard entry
-//     (P9.5) and the 0444 reviewer stub, and no mode asks for a global pi CLI
-//     (P9.9b: the image's one pi is node_modules/.bin/pi); the per-call cli mode registers no bash-guard and
-//     instead runs the model's tools as another uid (D32: the entrypoint's
+//     and the 0444 reviewer stub, and no mode asks for a global pi CLI
+//     (the image's one pi is node_modules/.bin/pi); the per-call cli mode registers no bash-guard and
+//     instead runs the model's tools as another uid (the entrypoint's
 //     privilege drop, the engine's setpriv launch, and - in a user namespace,
 //     where available - the kernel refusing the tools the token holder's
 //     /proc);
@@ -358,7 +358,7 @@ describe("daemon mode", () => {
     expect(settings(r).extensions).toEqual(first.extensions);
   });
 
-  it("prunes the global bash-guard entry an older image merged onto the pihome volume (P9.5)", () => {
+  it("prunes the global bash-guard entry an older image merged onto the pihome volume", () => {
     const r = rig();
     put(
       join(r.home, ".pi/agent/settings.json"),
@@ -382,7 +382,7 @@ describe("daemon mode", () => {
     expect(out.stderr).not.toContain("examples/extensions/subagent");
   });
 
-  it("asks for no global pi CLI: the one pi is node_modules' (P9.9b)", () => {
+  it("asks for no global pi CLI: the one pi is node_modules'", () => {
     const r = rig();
     const out = run(r, ["daemon"], withConfig(r));
     expect(out.status, out.stderr).toBe(0);
@@ -581,7 +581,7 @@ describe("daemon mode: the model's tools run as another uid", () => {
   });
 });
 
-describe("per-call modes register no bash-guard (D32; the uid split is checked below)", () => {
+describe("per-call modes register no bash-guard (the uid split is checked below)", () => {
   it.each([
     ["cli", ["version"]],
     ["login", ["login"]],
@@ -599,7 +599,7 @@ describe("per-call modes register no bash-guard (D32; the uid split is checked b
     expect(s["tuiMode"]).toBe("regular");
   });
 
-  it("no mode registers an extension globally (P9.5)", () => {
+  it("no mode registers an extension globally", () => {
     const text = read("docker/entrypoint.sh");
     expect(text).not.toContain("QCR_PI_REQUIRE_EXT");
     expect(text).not.toContain("FATAL: pi extension missing");
@@ -649,7 +649,7 @@ function nsEntrypoint(r: Rig): string {
   return copy;
 }
 
-describe("D32: the model's tools run as another uid", () => {
+describe("the model's tools run as another uid", () => {
   const ALLOW = { QCR_ALLOW_SHARED_TOOL_UID: "" };
 
   it("a cli start that is not root cannot split: it marks the uid as required and exports no tool uid", () => {
@@ -752,7 +752,7 @@ console.log(JSON.stringify({
         toolGid: "1000",
         required: null,
       });
-      // its gid, and the login group (P6.7) - nothing else
+      // its gid, and the login group - nothing else
       expect(seen["groups"]).toEqual([4747, 1000]);
       expect(seen["capAmb"]).toBe("00000000000000c0"); // CAP_SETGID (6) and CAP_SETUID (7)
       // the files it provisioned are reachable by the tool uid through the shared gid
@@ -881,7 +881,7 @@ describe("companion mode", () => {
   });
 });
 
-describe("D35: the tmux socket and the TUI's identity", () => {
+describe("the tmux socket and the TUI's identity", () => {
   it("companion mode with QCR_TMUX_SOCKET starts the server on that socket and keeps it up with no session", async () => {
     const r = rig();
     const socket = join(r.dir, "tmux", "companion.sock");
@@ -1027,7 +1027,7 @@ describe("the image wires it", () => {
   });
 });
 
-describe("the token handoff (D39)", () => {
+describe("the token handoff", () => {
   it("records Yama's ptrace_scope in the debug log, and only there", () => {
     const r = rig();
     const quiet = run(r, ["version"]);
@@ -1095,7 +1095,7 @@ describe.skipIf(!hasDist)("the real cli, through the entrypoint (no model)", () 
   });
 });
 
-// The login volume outlives the uid that wrote it (P6.7): `qcr login` runs as
+// The login volume outlives the uid that wrote it: `qcr login` runs as
 // the caller, a review later runs as whichever uid the wrapper hands it. The
 // login mode leaves every entry in the fixed login group (4747) at 0660/2770,
 // and the cli mode keeps that group, so no uid change loses the OAuth login.
@@ -1209,7 +1209,7 @@ console.log(JSON.stringify({ uid: process.getuid(), groups: process.getgroups(),
   });
 });
 
-// P8.22: the bot container's login refresher holds a flock on
+// The bot container's login refresher holds a flock on
 // <agent>/auth.json.lock for its whole life. The login mode hands over to it:
 // it writes <agent>/auth.json.pause, waits for `"paused": true` in the
 // refresher's status file, runs pi's /login, and removes the pause file

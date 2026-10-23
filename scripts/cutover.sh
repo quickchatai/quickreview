@@ -19,7 +19,7 @@
 #   4  release         the point of no return; typed go; deploy.sh release
 #   5  verify          deploy.sh verify
 #   6  first reconcile watched; the drain must still stand as the operator's
-#                      HOLD (P8.21b) after the new daemon's first healthy
+#                      HOLD after the new daemon's first healthy
 #                      reconcile, or the wizard stops loudly
 #   7  backstop        every open PR's head matches the daemon's, or a round
 #                      is queued for it
@@ -714,7 +714,7 @@ s_idle_pr() {
   say "and exits without posting:"
   step "qcr message <pr> <text...>"
   step "qcr open pr <n> on a finished worker round"
-  step "optional: qcr debug-round <n>   (posts through the gate, D38; its pane is the pi terminal)"
+  step "optional: qcr debug-round <n>   (posts through the gate; its pane is the pi terminal)"
   confirm "Answer worker replied, exited, and posted nothing?" || return 1
 }
 

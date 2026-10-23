@@ -14,7 +14,7 @@ import {
 // verdict file, and a round that blows its deadline. Both mark the round and
 // write the companion inbox. There is no path here that touches an existing review:
 // the invariant against retracting an approval is structural, not prompted
-// (CLAUDE.md rule 2).
+// (AGENTS.md invariant 2).
 import {
   normalizePassPhase,
   normalizeSweepClaim,
@@ -4548,7 +4548,7 @@ export class VerdictWatcher {
           round_no: round.round_no,
         });
         // Slack: "read the newest one" — no existing review is touched, ever
-        // (CLAUDE.md hard rule 2); the wording invariant lives in messages.ts.
+        // (AGENTS.md invariant 2); the wording invariant lives in messages.ts.
         const newest = store
           .roundsFor(round.pr)
           .reduce((a, b) => (b.round_no > a.round_no ? b : a), round);

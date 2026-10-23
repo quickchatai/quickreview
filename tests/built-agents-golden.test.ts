@@ -1,4 +1,4 @@
-// The native build, byte for byte (P4.5). The engine routes' tools (`lens`,
+// The native build, byte for byte. The engine routes' tools (`lens`,
 // `lens_wave`) join the names include.ts strips from a built agent's tool list;
 // that must not move a single byte of what the tmux bot, the bench and the scan
 // build out of the seeds. The golden holds the sha256 of every agent file each

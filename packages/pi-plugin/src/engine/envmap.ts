@@ -1,6 +1,6 @@
 // Inventory of every QCR_* and OPENVIKING_* name that appears in extensions/,
 // each classified by what the extension does with it. A pure table: nothing
-// imports it at runtime yet (P1.2). The engine's SDK session builder (P2) and
+// imports it at runtime yet. The engine's SDK session builder (P2) and
 // the extension factories (P3) read it to know which names must reach a session
 // as factory config and which stay a concern of the bash child or the companion.
 //
@@ -76,12 +76,12 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
   QCR_IPC_SOCKET: {
     kind: "extension-config",
     readers: ["bash-guard.ts"],
-    note: "the worker-daemon socket (P7.2a); its directory is the IPC run dir bash-guard closes to reads",
+    note: "the worker-daemon socket; its directory is the IPC run dir bash-guard closes to reads",
   },
   QCR_IPC_CAP_FD: {
     kind: "extension-config",
     readers: ["debug-round.ts"],
-    note: "the fd number of the round's IPC capability (P7.2a); a bot debug round's bash hands that fd to each command",
+    note: "the fd number of the round's IPC capability; a bot debug round's bash hands that fd to each command",
   },
   QCR_SECRETS_MOUNT: {
     kind: "extension-config",
@@ -96,7 +96,7 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
   QCR_TAKEOVER: {
     kind: "extension-config",
     readers: ["bash-guard.ts"],
-    note: "=1 on a takeover pi's own env (P8.13): the post scripts are not sanctioned there; read by guardFlagsFromEnv, which the ambient policy shares",
+    note: "=1 on a takeover pi's own env: the post scripts are not sanctioned there; read by guardFlagsFromEnv, which the ambient policy shares",
   },
 
   // ---- QCR_*: the inject bridge and the ledger mirror
@@ -123,7 +123,7 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
   QCR_DEBUG_STATUS_FILE: {
     kind: "extension-config",
     readers: ["debug-round.ts"],
-    note: "where a bot debug round (P8.13b) records its progress; the daemon reads order_sent_at off it",
+    note: "where a bot debug round records its progress; the daemon reads order_sent_at off it",
   },
   QCR_DEBUG_PACK_FILE: {
     kind: "extension-config",
@@ -133,12 +133,12 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
   QCR_DEBUG_STUB_FILE: {
     kind: "extension-config",
     readers: ["debug-round.ts"],
-    note: "the reviewer stub (D34) a bot debug round's lens passes carry; the production tree's cwd holds none",
+    note: "the reviewer stub a bot debug round's lens passes carry; the production tree's cwd holds none",
   },
   QCR_DEBUG_LENS_DIR: {
     kind: "extension-config",
     readers: ["debug-round.ts"],
-    note: "where a bot debug round keeps its lens ledger and lens JSONLs (D10)",
+    note: "where a bot debug round keeps its lens ledger and lens JSONLs",
   },
   QCR_SESSION_BRIDGE_GENERATION: {
     kind: "extension-config",

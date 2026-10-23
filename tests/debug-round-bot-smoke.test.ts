@@ -1,4 +1,4 @@
-// [P8.13b] The bot's debug round, end to end, with the REAL pi CLI in a pty.
+// The bot's debug round, end to end, with the REAL pi CLI in a pty.
 //
 // The chain is the one tmux runs: the manager (src/debuground.ts) delivers a PR's round
 // order, and the pane is `node dist/src/ipc/launcher.js <launch-file> -- node
@@ -115,7 +115,7 @@ async function until(pred: () => boolean, what: string, ms = 60_000): Promise<vo
 }
 
 describe.skipIf(!hasDist || !hasScript || process.platform !== "linux")(
-  "[P8.13b] smoke: the real pane chain and the real pi CLI in a pty, on a local endpoint",
+  "smoke: the real pane chain and the real pi CLI in a pty, on a local endpoint",
   () => {
     it(
       "posts from the model's own command through the gate, ends with the verdict, and a post after the release is refused",

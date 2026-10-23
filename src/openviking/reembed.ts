@@ -364,8 +364,8 @@ export interface OperatorReembedResult {
 
 /**
  * Re-embed the namespaces whose keys THIS machine holds — the operator's PC,
- * where the companion key lives and the daemon's never will (root CLAUDE.md
- * rule 8). Runs the script's own `reindexNamespace` per user over the memory
+ * where the companion key lives and the daemon's never will (the companion
+ * boundary). Runs the script's own `reindexNamespace` per user over the memory
  * forward; a user with no key in the keys file is reported, never skipped
  * silently. `ok` is true only when every namespace completed with zero failed
  * records.

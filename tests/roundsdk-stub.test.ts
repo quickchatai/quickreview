@@ -1,4 +1,4 @@
-// The SDK round's reviewer stub (D34) is found where a checkout keeps it and
+// The SDK round's reviewer stub is found where a checkout keeps it and
 // where the release and bench images install it.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

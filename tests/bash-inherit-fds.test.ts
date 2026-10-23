@@ -1,4 +1,4 @@
-// [P8.3] The model's bash commands inherit the descriptors a host names, and
+// The model's bash commands inherit the descriptors a host names, and
 // only those. Node closes every fd a child is not listed with, so the bot
 // worker's IPC capability (the fd the post scripts read) reaches `bash -c` and
 // the scripts under it only when the spawn names it: packages/pi-plugin/src/engine/tooluid.ts
@@ -37,7 +37,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe("[P8.3] commandStdio", () => {
+describe("commandStdio", () => {
   it("is stdin, stdout and stderr, and each named fd at its own number", () => {
     expect(commandStdio([])).toEqual(["ignore", "pipe", "pipe"]);
     expect(commandStdio([3])).toEqual(["ignore", "pipe", "pipe", 3]);
@@ -50,7 +50,7 @@ describe("[P8.3] commandStdio", () => {
   });
 });
 
-describe("[P8.3] a command reads the capability only where the host hands it over", () => {
+describe("a command reads the capability only where the host hands it over", () => {
   const read = (ops: ReturnType<typeof inheritingBashOperations>, command: string) => {
     let out = "";
     return ops
@@ -128,7 +128,7 @@ describe("[P8.3] a command reads the capability only where the host hands it ove
   });
 });
 
-describe("[P8.3] the bot session names the fd from QCR_IPC_CAP_FD", () => {
+describe("the bot session names the fd from QCR_IPC_CAP_FD", () => {
   const spec = (over: Record<string, string | undefined>): SessionSpec => ({
     cwd: dir,
     env: {

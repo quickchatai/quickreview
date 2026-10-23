@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run an interactive wizard on a pty and answer its prompts by pattern (P8.20).
+"""Run an interactive wizard on a pty and answer its prompts by pattern.
 
   answer.py [--timeout S] --on REGEX=>ANSWER ... -- CMD...
 

@@ -380,7 +380,7 @@ export class Archiver {
   private lastTickLine = new Map<string, string>();
   /** The file phase's last run. */
   private files: ArchiveFilesStatus | null = null;
-  /** The worker trees' last sweep (P8.16), and when it ran (ms). */
+  /** The worker trees' last sweep, and when it ran (ms). */
   private live: ArchiveLiveStatus | null = null;
   private liveSweptAtMs: number | null = null;
   /** Crash recovery (§7.6) has run once this start. */
@@ -604,7 +604,7 @@ export class Archiver {
           if (this.mutex.priorityWaiting()) return this.yieldToRestore(at, planned);
         }
       }
-      // The worker trees' retention and cap (P8.16): at the plan's cadence, and
+      // The worker trees' retention and cap: at the plan's cadence, and
       // never a reason to fail or hold a tick.
       if (failure === null) await this.livePhase(at, on, force || planned);
       // Sealing comes last (§10), and only after a DB phase that did not fail.
@@ -1740,7 +1740,7 @@ export class Archiver {
   }
 
   /**
-   * `state/live/` and `state/lens/` (P8.16, D10): measure them against the cap
+   * `state/live/` and `state/lens/`: measure them against the cap
    * and, in mode `on`, apply the retention (a file leaves only when the PR's
    * archive holds it verified, `liveretention.ts`). Past the cap the
    * `archive_live_cap` wake fires, once per incident and every 6 h; nothing is

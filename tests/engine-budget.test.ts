@@ -1,4 +1,4 @@
-// P2.6: TurnBudget, the one place a turn's deadline and $ cap are enforced.
+// TurnBudget, the one place a turn's deadline and $ cap are enforced.
 // A fake target stands in for a session; timers are faked, no process spawns.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {

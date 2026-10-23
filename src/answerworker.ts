@@ -1,4 +1,4 @@
-// The daemon's side of the idle-PR answer worker (P8.17, rule 9's second exception).
+// The daemon's side of the idle-PR answer worker (rule 9's second exception).
 //
 // An operator's `message` to a PR with no running worker and no lease is ANSWERED
 // NOW, not held as a wake for the next round: a short worker (src/botworker.ts
@@ -54,7 +54,7 @@ export interface AnswerHostDeps {
   >;
   /** The sandbox root: the result files live under `<root>/state/commands/`. */
   root: string;
-  /** The PR's host lease, once takeover and debug rounds exist (P8.13); null for none. */
+  /** The PR's host lease, once takeover and debug rounds exist; null for none. */
   lease?: (pr: number) => "takeover" | "debug" | null | undefined;
   /** Whether the PR has a session JSONL to resume. An answer never births one. */
   hasSession: (pr: number) => boolean;

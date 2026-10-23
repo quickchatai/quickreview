@@ -1,4 +1,4 @@
-// The companion the host wrapper runs for a containerised TUI (D35).
+// The companion the host wrapper runs for a containerised TUI.
 //
 // `qcr tui` in a container has no docker.sock. So the wrapper (scripts/qcr-host.sh,
 // plain sh on the host) starts the companion container itself, and a second
@@ -65,7 +65,7 @@ function absolute(name: string, value: string | undefined): string {
 /**
  * The install env both containers derive their paths from: the host's HOME and
  * XDG dirs, with the config home at `<xdg config>/qcr` (so `profiles/` is the
- * ruled `~/.config/qcr/profiles`, D39) and the state home beside the host's
+ * ruled `~/.config/qcr/profiles`) and the state home beside the host's
  * other qcr state. Never the container's own HOME. `QCR_CONFIG` passes through:
  * it names the config the TUI reads, and the companion's mirror is a copy of it.
  */

@@ -1,4 +1,4 @@
-// Canary 3 [P2.7]: abort under CPU load kills the bash children too.
+// Canary 3 : abort under CPU load kills the bash children too.
 //
 // A budget or deadline abort is the last line of defence against a runaway
 // lens. pi's bash tool must take the shell AND its background descendants down

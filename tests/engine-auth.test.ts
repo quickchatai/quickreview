@@ -1,5 +1,5 @@
-// The engine's credentials [P2.10]: the owner's pi login, borrowed read-only
-// (D5). The in-process route builds a CredentialStore from a refresh-blanked
+// The engine's credentials : the owner's pi login, borrowed read-only
+//. The in-process route builds a CredentialStore from a refresh-blanked
 // copy: no file is written anywhere, `modify` is never reached on a good run,
 // a token that would expire inside the run window is refused before a session
 // exists, and a refresh that is attempted anyway fails typed, offline.

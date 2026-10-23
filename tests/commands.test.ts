@@ -124,7 +124,7 @@ describe("validateCommand — whitelist", () => {
       { command: "slack_reply", thread: "1712345678.123456", text: "on it" },
       { command: "drain", on: true },
       { command: "drain", on: false },
-      { command: "retry-thread-decision", comment_id: 3856996601 },
+      { command: "retry-thread-decision", comment_id: 3000000303 },
       {
         command: "eod-curation-receipt",
         day: "2026-10-07",

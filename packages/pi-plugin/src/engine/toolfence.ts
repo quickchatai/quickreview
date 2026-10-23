@@ -1,4 +1,4 @@
-// The in-process file tools' fence (D32). The SDK session's read, grep, find,
+// The in-process file tools' fence. The SDK session's read, grep, find,
 // ls, edit and write tools run inside the Node process that holds the GitHub
 // token and the login, as the run uid, so a path they are given must not lead
 // to the places that hold them:

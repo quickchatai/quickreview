@@ -250,7 +250,7 @@ describe("honest status", () => {
     expect(lines.join("\n")).toContain("cannot be parsed");
   });
 
-  it("an operator's `settle` after completion reaches the heartbeat without a restart (selfscan bfd61967)", async () => {
+  it("an operator's `settle` after completion reaches the heartbeat without a restart", async () => {
     const state: FakeState = {
       journal: {
         state: "pending",

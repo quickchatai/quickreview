@@ -6,7 +6,7 @@
 // sessions can read it) is a check, not a paragraph of prose.
 //
 // THE THREE KEYS AND WHERE EACH ONE MAY LIVE. This is the whole point of the
-// step, and it is absolute (root CLAUDE.md rule 8, docs/companion-memory-access.md):
+// step, and it is absolute (the companion boundary, docs/companion-memory-access.md):
 //
 //   root      the SERVER's own credential. ONLY <secrets>/openviking_root_key,
 //             0600, on the daemon host. Never a client credential, never in the

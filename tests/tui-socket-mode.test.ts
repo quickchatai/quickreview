@@ -1,4 +1,4 @@
-// A real `runTui` in the containerised TUI's shape (D35): the companion is a
+// A real `runTui` in the containerised TUI's shape: the companion is a
 // container the host wrapper ran, reached through a shared tmux socket; the VM
 // is reached by ssh. No docker, no model, no network: child_process is replaced
 // by a fake tmux (which answers like the companion's server) and a fake remote

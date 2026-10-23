@@ -113,7 +113,7 @@ describe("[scan] sandbox, pihome_volume and image", () => {
       image: SCAN_IMAGE_DEFAULT,
     });
     // Not the companion's image: that is the release image in companion mode
-    // (P7.8), which the sandbox's one-shot entrypoint does not serve.
+    //, which the sandbox's one-shot entrypoint does not serve.
     expect(SCAN_IMAGE_DEFAULT).not.toBe(cfg.companion.image);
     expect(cfg.scan_sandbox.pihome_volume).toBe("companion-pihome");
   });
@@ -227,7 +227,7 @@ describe("the build stamp", () => {
 describe("the companion image build", () => {
   const cfg = resolveCompanionPaths({ ...COMPANION_DEFAULTS, repo_dir: "/host/rs" }, "/host/rs");
 
-  // The companion is the release image (P7.8): the scan sandbox's image is a
+  // The companion is the release image: the scan sandbox's image is a
   // separate build (`qcr scan rebuild`, below), so a companion rebuild can
   // never replace the image the sandbox's one-shot entrypoint needs.
   it("builds from the app root with the release Dockerfile, stamped, with no uid baked in", async () => {

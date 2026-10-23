@@ -1,4 +1,4 @@
-// The containerised TUI's companion (D35): a tmux server in the companion
+// The containerised TUI's companion: a tmux server in the companion
 // container, a socket in a shared named volume, and a TUI container that drives
 // it with `tmux -S` instead of `docker exec`. No docker.sock in either.
 //
@@ -377,7 +377,7 @@ describe("tmuxSocketRunner: docker exec argv, run on the shared socket", () => {
     [["exec", "another-container", "tmux", "ls"]],
     [["exec", "qcr-companion", "cat", "/etc/passwd"]],
     [["exec", "qcr-companion", "sh", "-c", "a", "b"]],
-  ])("refuses %j by name: the host wrapper owns the container (D35)", async (argv) => {
+  ])("refuses %j by name: the host wrapper owns the container", async (argv) => {
     const { runner, ran } = rig();
     const res = await runner(argv);
     expect(res.ok).toBe(false);

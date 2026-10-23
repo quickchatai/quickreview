@@ -161,7 +161,7 @@ export type Command =
   /** Deploy-window drain: a hard webhook stop + dispatch/recheck/ping-pong/EOD
    * hold while in-flight rounds finish naturally. `for_min` as on `pause-pr`;
    * only meaningful with `on: true`. `hold` asks for the operator's
-   * no-auto-lift drain (P8.21b): only with `on: true`, never with `for_min`.
+   * no-auto-lift drain: only with `on: true`, never with `for_min`.
    * The field says WHAT is asked, never who asks: the lever handler refuses a
    * hold to any issuer but the sealed operator directory's. */
   | { command: "drain"; on: boolean; for_min?: number; hold?: true }
@@ -660,8 +660,8 @@ function validateOperatorCommand(
  * `owner` is the owner's tier (legacy persisted records with the retired tier
  * spelling fold to it on read). The `companion` tier is not a column: it is the
  * owner's column read again (`tierAllows`), so the two are one shared set and a
- * verb added for the owner is the companion's in the same edit (ruled
- * 2026-10-19: the companion can do everything the owner can). `system` is the
+ * verb added for the owner is the companion's in the same edit (by ruling:
+ * the companion can do everything the owner can). `system` is the
  * daemon's own unattended turns (`OriginStore.writeLocal`): it is `true` on
  * every row but the operator's round controls (`CONTROL_COMMANDS`, which a
  * daemon turn has no standing to send) because a
@@ -811,7 +811,7 @@ export function authorizeCommand(
 
 /**
  * May the companion send this command? Not a Slack origin: the TUI forwards a
- * companion's action as an operator command (P8.19), and checks it here first.
+ * companion's action as an operator command, and checks it here first.
  * The verbs are the owner's, no more and no fewer (`tierAllows`).
  */
 export function authorizeCompanionCommand(command: Command): AuthorizationResult {

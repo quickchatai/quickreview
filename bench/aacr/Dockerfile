@@ -77,7 +77,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3-venv fd
     && rm -rf /var/lib/apt/lists/*
 
 # pi on the PATH. The release image carries one pi, in node_modules, and no CLI
-# on the PATH (P9.9b); the judge shim and the pi-review arm run `pi` from the
+# on the PATH; the judge shim and the pi-review arm run `pi` from the
 # PATH, so the bench installs the release's pin (config.toml [pi]) globally, or
 # the pi QCR_BENCH_PI_VERSION asks for, e.g. the pi an earlier run's image carried.
 ARG PI_PACKAGE=@earendil-works/pi-coding-agent

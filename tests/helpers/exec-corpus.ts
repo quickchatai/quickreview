@@ -21,7 +21,7 @@ export const EXEC_CORPUS = [
     via: "bash",
     chain: "gh pr review 5249 --approve",
     outcome: "APPROVED",
-    note: "the documented verb; the retro records the predecessor posting 47 approvals through it",
+    note: "the documented verb the predecessor used to approve",
   },
   {
     round: 2,

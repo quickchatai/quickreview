@@ -7,7 +7,7 @@
 // runs (a round worker, an answer worker, a takeover, a debug round) they now ask
 // the daemon instead, over the worker socket with the command's capability
 // (src/ipc/ghreadshim.ts), and the model's tools run as a uid that cannot read
-// secrets/ at all (docker/entrypoint.sh, D32).
+// secrets/ at all (docker/entrypoint.sh).
 //
 // What the daemon serves is a READ and nothing else, of the reviewed repo and
 // nothing else:

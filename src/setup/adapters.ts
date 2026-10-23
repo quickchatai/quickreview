@@ -2,7 +2,7 @@
 // caserunner.ts). Assembled by the companion's setup extension
 // (extensions/setup.ts) inside the companion container, where the reviewed
 // checkout is mounted read-only, the state home read-write and the config
-// home in part (`profiles/`, `portrait/`) (root CLAUDE.md rule 8). Tests use
+// home in part (`profiles/`, `portrait/`) (the companion boundary). Tests use
 // fakes and temp dirs; these are the only implementations that touch a real
 // disk or network.
 //

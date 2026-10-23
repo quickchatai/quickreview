@@ -1,4 +1,4 @@
-// A worker's spend report, taken in by the daemon (P8.9).
+// A worker's spend report, taken in by the daemon.
 //
 // The bot worker totals what its round cost as it runs (src/botworker.ts: the
 // session's assistant messages, the passes its lens tools reported and, at the
@@ -32,7 +32,7 @@ export function usageOfEvent(
   return { est_usd: est, lens_usd: money(b["lens_usd"]), final: kind === "done" };
 }
 
-/** The daemon's `onEvent` for the usage figures. P8.5's supervisor composes it with
+/** The daemon's `onEvent` for the usage figures. the supervisor composes it with
  * its own handling of the other kinds. A malformed body keeps nothing. */
 export function workerUsageHandler(store: CommandUsageStore): EventHandler {
   return (ctx, kind, body) => {

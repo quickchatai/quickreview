@@ -15,7 +15,7 @@
 // repeating it, the ledger beside the transcript). A result with no `id` is
 // the native shape: every such result counts, exactly as before.
 //
-// Tool names (owner ruling D3): the engine routes expose `lens` and
+// Tool names (owner ruling): the engine routes expose `lens` and
 // `lens_wave`; the tmux bot still runs `subagent` and `launch_plan`. A consumer
 // accepts all four (`isLensTool`) until the old pair is retired.
 

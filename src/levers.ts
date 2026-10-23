@@ -9,7 +9,7 @@
 //   * An OPERATOR lever is the deploy flow's valve. `qcr drain on` engages it,
 //     the new boot's first healthy reconcile pass lifts it (daemon.ts), and it
 //     has no expiry — a broken deploy must not resume work blind.
-//   * The operator's HOLD (`qcr drain on --hold`, P8.21b) is the one drain the
+//   * The operator's HOLD (`qcr drain on --hold`) is the one drain the
 //     boot does NOT lift: it stands until an explicit operator `drain off`.
 //     The cutover uses it, so no round starts until the owner has triggered
 //     and checked one worker round. Only the operator can set one — a

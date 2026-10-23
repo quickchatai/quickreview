@@ -1,4 +1,4 @@
-// What an idle-PR answer worker's bash may not do (P8.17). Its tools are read-only
+// What an idle-PR answer worker's bash may not do. Its tools are read-only
 // repo tools plus chat; when the operator marks the message may-post it also gets
 // the bash tool, for the post scripts (rule 1: through the daemon's one gate). The
 // exec policy (packages/pi-plugin/extensions/bash-guard.ts) already confines that bash. This adds the

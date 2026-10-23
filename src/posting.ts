@@ -141,7 +141,7 @@ export function directiveEscalationFiles(
  * the named files containing the proved injection. One comment total, however
  * many directive files the PR touches. It is a comment inside the gated review
  * — never a GitHub reviewer nomination (`request_reviewer` belongs only to the
- * optional escalation feature; CLAUDE.md rule 10).
+ * optional escalation feature; the never-hand-to-a-human rule).
  */
 export function renderDirectiveEscalationComment(
   mention: string,

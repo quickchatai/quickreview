@@ -21,8 +21,8 @@ not get a shell route; it is a new op on the daemon.
   (run by the owner, on the controller) gives the VM's docker its classic
   `read:packages` login for pulling the release images, and refuses any other
   scope. It never takes the token as an argument or env, and posts nothing.
-- `cutover.sh <version>` is the owner's one-time cutover window (runbook
-  sections C and D): resumable through a state file, a stop at every go, and
+- `cutover.sh <version>` is the owner's one-time cutover window, from
+  the legacy layout to the release layout: resumable through a state file, a stop at every go, and
   the drain HELD after the release. Its stage 9 pauses every tracked PR but one
   (the operator's `qcr pause-pr`, recorded in the state file), lifts the drain
   on the owner's go, and resumes exactly those PRs once the owner has checked

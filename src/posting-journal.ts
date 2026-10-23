@@ -1,5 +1,5 @@
 // The posting journal: the daemon's own writer of a round's receipt and outbox
-// job, the TypeScript successor of scripts/posting-receipt.py (P7.2; the script is deleted, P9.3).
+// job, the TypeScript successor of scripts/posting-receipt.py (the script is deleted).
 //
 // The shell route records a round's posting in two files under
 // state/posting-receipts/: `pr-<n>-round-<k>.json` (the receipt, what the

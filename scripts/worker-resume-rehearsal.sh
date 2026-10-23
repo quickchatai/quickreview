@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# worker-resume-rehearsal.sh — the offline resume rehearsal (P8.4), the run that
+# worker-resume-rehearsal.sh — the offline resume rehearsal, the run that
 # writes docs/worker-resume-rehearsal.md.
 #
 #   scripts/worker-resume-rehearsal.sh [--out FILE] <label>=<dir> [<label>=<dir> ...]
@@ -7,7 +7,7 @@
 # Each <dir> is searched for *.jsonl (read-only: every file is COPIED into a
 # scratch world and the copy is resumed). The labels the report knows:
 #
-#   live      the owner's read-only snapshot of the VM's state/pi-sessions
+#   live      a read-only snapshot of the VM's state/pi-sessions
 #   mirror    the transcript mirror pulled from the daemon
 #   archive   the transcripts/ of a `qcr archive extract <pr> --to <dir>`
 #
@@ -34,8 +34,8 @@ done
 
 what() {
   case "$1" in
-    live) echo "The owner's read-only snapshot of the live bot's \`state/pi-sessions\` (every PR JSONL modified in the last seven days): the files the cutover resumes." ;;
-    mirror) echo "The transcript mirror pulled from the live daemon on 2026-09-21: older interactive-pi JSONLs, from PRs that have since closed (the archiver's transcripts are these same bytes)." ;;
+    live) echo "A read-only snapshot of a running daemon's \`state/pi-sessions\` (every PR JSONL modified in the last seven days): the files the cutover resumes." ;;
+    mirror) echo "A transcript mirror pulled from the daemon: older interactive-pi JSONLs, from PRs that have since closed (the archiver's transcripts are these same bytes)." ;;
     archive) echo "Transcripts extracted by \`qcr archive extract\` from the closed-PR archive." ;;
     *) echo "JSONL files from the \`$1\` source." ;;
   esac

@@ -1,4 +1,4 @@
-// Canary 10, full [P5.2]: the one-shot main session's provider request on the SDK
+// Canary 10, full : the one-shot main session's provider request on the SDK
 // route is byte-equal to the process route's.
 //
 // canary-10-bare pins a BARE session. This one runs the review round itself
@@ -6,7 +6,7 @@
 // OpenAI-compatible endpoint, and compares the raw request bodies off the wire:
 //
 //   - the system prompt the round writes, plus pi's own
-//   - the D34 context files: the reviewer stub, found in the cwd by the pi child
+//   - the context files: the reviewer stub, found in the cwd by the pi child
 //     and handed to the SDK session as data
 //   - the tools: pi's four, the factory-registered ones (cluster_findings,
 //     coverage_gaps) and the lens tool schemas
@@ -170,7 +170,7 @@ async function round(kind: "proc" | "sdk"): Promise<Run> {
 const masked = (body: string, id: string): string => body.split(id).join("<session-id>");
 
 describe("[canary 10, full] the one-shot SDK request == the process route's", () => {
-  it("system prompt, D34 context files, factory tools, lens tools: the first request", async () => {
+  it("system prompt, context files, factory tools, lens tools: the first request", async () => {
     const proc = await round("proc");
     const sdk = await round("sdk");
     const a = proc.requests[0]!.body;

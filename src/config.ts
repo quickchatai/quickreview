@@ -443,7 +443,7 @@ export interface OpenVikingConfig {
    * NOT `openai_api_key` (pi's model credential), so the two can be set
    * independently. Read only by the ov.conf render, only under `openai`. */
   embedding_key_file: string;
-  /** The local embedder's MODEL FILE pin (CLAUDE.md rule 7): the GGUF the
+  /** The local embedder's MODEL FILE pin (the version-pinning rule): the GGUF the
    * image downloads at BUILD time from `local_embedder_url`, verified against
    * `local_embedder_sha256` there and again by the service at every start.
    * TRIPLE-MIRRORED like `version`: this block == group_vars
@@ -969,7 +969,7 @@ function checkSectionTimeZone<T extends { timezone: string }>(section: T, where:
  * public hostname (e.g. `abc.trycloudflare.com`, trailing newline tolerated)
  * to `hostname_file`, and the daemon re-points the App's own webhook URL when
  * it changes — through the app-self-config gate class, which executes even in
- * dry-run (CLAUDE.md rule 1). `none` (the default, and
+ * dry-run (AGENTS.md invariant 6). `none` (the default, and
  * what an absent section means) starts nothing at all.
  */
 export interface IngressConfig {
@@ -1072,7 +1072,7 @@ export interface Config extends CoreConfig {
      * and the bounded redelivery → kill-and-replay recovery takes over.
      * Readers default to DEFAULT_SESSION_COMPACTION_MAX_S. */
     session_compaction_max_s?: number;
-    /** The central lens permit ceiling (D25): the most lens sessions alive at
+    /** The central lens permit ceiling: the most lens sessions alive at
      * once across every worker. Readers default to DEFAULT_LENS_PERMITS (20,
      * ruled for the VM: the CPU gate measured 20 sessions fine on 2 cores). */
     lens_permits?: number;
@@ -1080,7 +1080,7 @@ export interface Config extends CoreConfig {
      * its sessions in one burst (the gate measured a 0.7 to 2.5 s loop stall for
      * 8 to 20 at once). 0 turns it off. Default DEFAULT_LENS_GRANT_STAGGER_MS (250). */
     lens_grant_stagger_ms?: number;
-    /** The idle-PR answer worker's wall-clock cap, in seconds (P8.17): the
+    /** The idle-PR answer worker's wall-clock cap, in seconds: the
      * operator's message to a PR with no running worker is answered by a short
      * worker that is ended at this age. Readers default to DEFAULT_ANSWER_TIMEOUT_S. */
     answer_timeout_s?: number;
@@ -1144,13 +1144,13 @@ export interface Config extends CoreConfig {
   /** The closed-PR archiver (`src/archive/`). Optional in the file;
    * the parser fills every key. */
   archive: ArchiveConfig;
-  /** The bot login's single refresher (`src/loginrefresh/`, P8.22). Optional
+  /** The bot login's single refresher (`src/loginrefresh/`). Optional
    * in the file; off unless the cutover's config turns it on. */
   login_refresh: LoginRefreshConfig;
 }
 
 /**
- * `[login_refresh]`: the VM-only exception to D5 (packages/pi-plugin/src/engine/auth.ts). After
+ * `[login_refresh]`: the VM-only exception to the login-refresh rule (packages/pi-plugin/src/engine/auth.ts). After
  * the cutover ONE refresher process, spawned and supervised by the daemon,
  * owns pihome/agent/auth.json and every worker borrows a refresh-blanked copy.
  * Off by default: while the bot's tmux pi sessions exist they refresh the file
@@ -1213,7 +1213,7 @@ export interface ScanSandboxConfig {
 }
 
 /** The scan sandbox's own image (docker/companion/Dockerfile, built by
- * `qcr scan rebuild`). Not the companion's: since P7.8 that is the release
+ * `qcr scan rebuild`). Not the companion's: now that is the release
  * image in `companion` mode, which the sandbox's one-shot entrypoint does not
  * serve. */
 export const SCAN_IMAGE_DEFAULT = "qcr-scan";
@@ -1354,7 +1354,7 @@ export interface ArchiveConfig {
   db_batch_rows: number;
   /** gzip level (clamped 1..9). */
   gzip_level: number;
-  /** A worker round's logs under `state/live/` and `state/lens/` (P8.16, D10)
+  /** A worker round's logs under `state/live/` and `state/lens/`
    * are removed from the live tree this many days after the round's last write,
    * and only once the PR's archive holds a verified copy (clamped 7..3650). A
    * log nothing archived is never removed. */
@@ -1623,7 +1623,7 @@ export const DEFAULT_SESSION_COMMAND_MAX_START_RETRIES = 2;
  * CPU-starved; ten minutes is several times the worst seen and still well
  * inside the 75-minute round deadline. */
 export const DEFAULT_SESSION_COMPACTION_MAX_S = 600;
-/** The idle-PR answer worker (P8.17): ten minutes of wall clock, two dollars. */
+/** The idle-PR answer worker: ten minutes of wall clock, two dollars. */
 export const DEFAULT_ANSWER_TIMEOUT_S = 600;
 export const DEFAULT_ANSWER_CAP_USD = 2;
 export const DEFAULT_ROUND_STAGE_SUPERVISOR_STALE_S = 180;

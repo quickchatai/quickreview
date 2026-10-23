@@ -1,5 +1,5 @@
-// P3.1: shim(env X) registers the same events, tools and resolved config as
-// createX(config X). One case per extension that has a factory; P3.2-P3.4 add
+// Shim(env X) registers the same events, tools and resolved config as
+// createX(config X). One case per extension that has a factory; later steps add
 // theirs here. The harness (tests/helpers/extension-parity.ts) runs both sides
 // through pi's own extension loader.
 import { describe, expect, it } from "vitest";
@@ -101,7 +101,7 @@ function readExisting(path: string): string | null {
   }
 }
 
-/** P3.3: bash-guard. The shim reads the sandbox root, replay and the secrets dirs
+/** bash-guard. The shim reads the sandbox root, replay and the secrets dirs
  * from env at activation; the factory takes them as config. What the guard
  * answers for the same calls (the /proc denies, a secrets dir named in the env,
  * a sanctioned script from and away from the root) must match. */
@@ -156,7 +156,7 @@ function bashGuardCase(): ParityCase<BashGuardConfig> {
   };
 }
 
-/** P9.7: the companion's extensions. Each shim under extensions/cli/ reads the
+/** The companion's extensions. Each shim under extensions/cli/ reads the
  * process's env and cwd; the factory takes the same facts as config. */
 function companionCases(): Record<string, ParityCase<never>> {
   const dir = mkdtempSync(join(tmpdir(), "qcr-parity-companion-"));
@@ -282,7 +282,7 @@ const CASES: Record<string, ParityCase<never>> = {
   },
 };
 
-/** P3.4: the OpenViking extension. The shim is index.ts's default export; the
+/** The OpenViking extension. The shim is index.ts's default export; the
  * factory is built from the config the shim resolves for the same env. What pi
  * records (seven hooks, the viking command) and what the uri guard answers
  * must match, and the factory's config must be the one the shim read. */

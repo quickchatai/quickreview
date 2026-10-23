@@ -2,7 +2,7 @@
 // tests/guards.test.ts: the real MutationGate with packages/pi-plugin/src/guards.ts installed and
 // the real GitHubAdapter doing the reads, over the world rig's loopback GitHub
 // stub, its state.db and its config.toml. The shell route these answers were
-// first pinned against (scripts/guards.sh) is deleted (P9.3); the answers are
+// first pinned against (scripts/guards.sh) is deleted; the answers are
 // now the contract on their own.
 //
 // Everything runs in dry-run, so nothing is sent: the outcome is read from the

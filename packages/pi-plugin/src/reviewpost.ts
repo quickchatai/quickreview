@@ -6,10 +6,10 @@
 // from qcr. A re-post is deduplicated against the comments already on the PR.
 //
 // This is the LOCAL route's write, made as the person with the credential
-// they already have (CLAUDE.md rule 3 carve-out). The write is a MutationIntent
+// they already have (the App-only credential rule carve-out). The write is a MutationIntent
 // through the one MutationGate, with the install's `dry_run`: in dry-run the
-// review is recorded under state/dryrun/ and nothing is sent (CLAUDE.md rule
-// 1). The reads stay direct, as every read does. The daemon never imports this
+// review is recorded under state/dryrun/ and nothing is sent (AGENTS.md
+// invariant 6). The reads stay direct, as every read does. The daemon never imports this
 // module; its writes go through its own gate.
 
 import { existsSync, readFileSync } from "node:fs";

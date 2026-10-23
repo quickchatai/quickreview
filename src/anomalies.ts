@@ -185,7 +185,7 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   // guarantee: a dropped reply's ping-pong claim refuses every redelivery, so
   // nobody would ever answer it.
   "author_reply_wake_dropped",
-  // src/workerbreaker.ts (P8.5b): a PR's workers failed twice in a row and the PR
+  // src/workerbreaker.ts: a PR's workers failed twice in a row and the PR
   // is parked, or workers failed on three PRs within 15 minutes and the bot is
   // draining (pr null). Every spawn is stopped until a person acts, so it is
   // human-attention grade; it fires once per park / per drain by construction.

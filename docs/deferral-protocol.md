@@ -52,7 +52,7 @@ A judgment, not a keyword list. **A legitimate refusal is a reason that is not
 ## The path a ticket takes
 
 There is exactly one route, and it is the one that already existed — **no second
-writer, no new mutation kind, no cap lifted** (hard rule 1):
+writer, no new mutation kind, no cap lifted** (AGENTS.md invariant 1):
 
 1. The review posts the finding with `[deferred]` leading the comment, before
    its posting tag.

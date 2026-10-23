@@ -23,6 +23,9 @@
   `setup-extension`, `scan-tree`, `setup-interview`, `setup-replay`.
   `publishability` and `fences-provenance` run `ls-files` on the checkout
   to list what they lint.
+- **The private-token denylist** lives outside the repo, at
+  `$QCR_PUBLISH_DENYLIST` or `~/.config/qcr/publish-denylist.txt` (format in
+  `helpers/private-tokens.ts`); without it the private-token checks skip with the reason.
 - **Other subprocesses** are this repo's own shell scripts and CLIs, never a
   network service or a VM. For example, `post-shim.test.ts` runs the
   three posting shims against a stub client.

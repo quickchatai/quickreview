@@ -301,7 +301,7 @@ describe("header spoofing", () => {
     expect(quoteUserText("")).toBe("> (no text)");
   });
 
-  it("a display name cannot pose as a header cell or the marker (selfscan 5926e304)", () => {
+  it("a display name cannot pose as a header cell or the marker", () => {
     const body = buildInjectBody({
       event: event(),
       threadTs: "1712345678.123456",

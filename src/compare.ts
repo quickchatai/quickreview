@@ -544,8 +544,8 @@ export function settledThreadViolations(
 // worse than one that says nothing, so the report says so loudly when it
 // cannot make the claim.
 //
-// Nothing here can change `dry_run` — it is the owner's alone (CLAUDE.md
-// rule 1). This only reports what the gate did.
+// Nothing here can change `dry_run` — it is the owner's alone (AGENTS.md
+// invariant 6). This only reports what the gate did.
 
 /** What the caller actually observed of the gate this comparison ran through.
  * Both fields are `null` when the caller could not observe it at all — which is

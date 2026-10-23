@@ -57,7 +57,7 @@
     // true, and with the buildinfo out of dist/ nothing else in that tree
     // moves on a failing build either.
     "noEmitOnError": true,
-    // P8.3: the bot worker runs from dist/ and loads the vendored OpenViking
+    // The bot worker runs from dist/ and loads the vendored OpenViking
     // extension's compiled .js, which imports its own plain-JS helpers
     // (`shared/*.mjs`, `lib/*.mjs`). tsc emits no .mjs it was not given, and pi
     // (which loads the .ts sources through jiti) never needed them in dist/. With

@@ -1,4 +1,4 @@
-// The companion inbox replaces every overseer wake (P8.18). Two halves:
+// The companion inbox replaces every overseer wake. Two halves:
 //
 //   * the inbox itself — durable (a file per item, written atomically),
 //     deduped by id, bounded, with the four-field item shape the TUI reads;

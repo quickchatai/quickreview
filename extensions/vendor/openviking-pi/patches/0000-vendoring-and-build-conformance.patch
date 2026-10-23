@@ -271,7 +271,7 @@ new file mode 100644
 +A pi-subagents child running one lens pass gets the read tools and nothing
 +else: no recall injection, no profile block, no turn sync, no commit.
 +
-+Two reasons. The single-shepherd invariant (root `CLAUDE.md` rule 9) makes the
++Two reasons. The single-shepherd invariant (`docs/single-shepherd-invariant.md`) makes the
 +PR's one main pi the owner of the review; a pass is a stateless evaluator of a
 +diff and memory injected under it is unaccounted context. And a commit from a
 +leaf would archive the **shepherd's** session, because the OV session id

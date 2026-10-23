@@ -1,4 +1,4 @@
-// [P8.12] The pieces of the operator's controls that need no process:
+// The pieces of the operator's controls that need no process:
 //   - the control wire shapes (src/ipc/control.ts) and their bounds;
 //   - the worker's control handler (src/botcontrol.ts) over a fake session: what it
 //     acks as queued, handled and refused, and when it stops taking steers;
@@ -52,7 +52,7 @@ afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-describe("[P8.12] the control wire", () => {
+describe("the control wire", () => {
   it("names the three controls, with the operator command's text bound", () => {
     expect([...CONTROL_KINDS]).toEqual(["steer", "follow_up", "abort"]);
     expect(CONTROL_TEXT_MAX).toBe(OPERATOR_TEXT_MAX);
@@ -161,7 +161,7 @@ function controls(session: FakeSession | undefined, over: Partial<WorkerControls
 
 const settled = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 80));
 
-describe("[P8.12] the worker's control handler", () => {
+describe("the worker's control handler", () => {
   it("acks a steer into a busy session queued, and counts it", async () => {
     const s = new FakeSession();
     s.busy = true;
@@ -312,7 +312,7 @@ describe("[P8.12] the worker's control handler", () => {
   });
 });
 
-describe("[P8.12] the daemon's operatorControl adapter", () => {
+describe("the daemon's operatorControl adapter", () => {
   const calls: unknown[][] = [];
   const supervisor = {
     control: async (...a: unknown[]): Promise<ControlResult> => (
@@ -381,7 +381,7 @@ describe("[P8.12] the daemon's operatorControl adapter", () => {
   });
 });
 
-describe("[P8.12] status.json carries runtime per PR", () => {
+describe("status.json carries runtime per PR", () => {
   const workers = [
     { pr: 1, mode: "round" as const },
     { pr: 2, mode: "answer" as const },
@@ -440,7 +440,7 @@ describe("[P8.12] status.json carries runtime per PR", () => {
   });
 });
 
-describe("[P8.12] rotating a PR's JSONLs", () => {
+describe("rotating a PR's JSONLs", () => {
   function sessionDir(): string {
     const dir = join(tmp(), "pr-9");
     mkdirSync(join(dir, "nested"), { recursive: true });

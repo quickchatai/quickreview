@@ -1,8 +1,8 @@
 # Offline CPU and RSS gate
 
-Can N review sessions share one node event loop on a 2-vCPU host? The in-process
-SDK runtime (`packages/pi-plugin/src/engine/sdkruntime.ts`) puts every session on one JS thread,
-which is what CPU forced the 10-08 cut over. This records what that costs against
+Can N review sessions share one node event loop on a small host (2 vCPUs is a
+sensible floor)? The in-process SDK runtime (`packages/pi-plugin/src/engine/sdkruntime.ts`)
+puts every session on one JS thread, so CPU is the question it has to answer. This records what that costs against
 the process runtime doing the same work, at $0: no model, no network.
 
 The measurement is `scripts/cpu-gate.mjs` (run it after `npm run build`; it needs
@@ -11,7 +11,7 @@ end to end.
 
 ## The gate
 
-D6: provisional **p99 event-loop lag <= 200 ms at 12 sessions on 2 vCPUs**,
+A provisional **p99 event-loop lag <= 200 ms at 12 sessions on 2 vCPUs**,
 adjustable once the numbers are in. The in-process (sdk) runtime at 12 sessions,
 steady state, three full runs on a loaded desktop:
 
@@ -80,12 +80,12 @@ VM and vary run to run; the three runs are all kept.
    does not stall the parent (start-up lag max 71 to 500 ms) but takes 9 to 27
    seconds to get every child streaming. If waves of lenses are started in one
    process, session creation should be staggered or moved off the hot path; the
-   gate does not cover it and the owner may want a start-up bound in D6.
-   Answered by the central permit broker (P8.10, `src/ipc/permits.ts`): lens
+   gate does not cover it and the owner may want a start-up bound in it.
+   Answered by the central permit broker (`src/ipc/permits.ts`): lens
    sessions in bot workers are granted FIFO across workers under
    `[daemon] lens_permits` (20), at least `lens_grant_stagger_ms` (250) apart,
    so a full wave of 20 is created over about 5 s and never in one burst
-   (`tests/permit-broker.test.ts` measures the loop lag against the D6 bar).
+   (`tests/permit-broker.test.ts` measures the loop lag against the gate's bar).
 5. **Proc is worse for the parent's loop under 2 cores.** With 12 to 20 children
    competing for the same two cores, the parent's lag p99 was 32 to 193 ms,
    higher than sdk's in every pair of cells, with ticks over 200 ms at 20 sessions

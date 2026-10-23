@@ -839,7 +839,7 @@ describe("the reconcile capture sweep", () => {
     store.close();
   });
 
-  it("a posting marker counts only with a key the daemon issued for this PR (selfscan 6475bc58)", async () => {
+  it("a posting marker counts only with a key the daemon issued for this PR", async () => {
     const store = trackedStore();
     const roundId = store.startRound(PR, "review", [], 75);
     store.stampPostingKey(roundId, `v1:${PR}:1:sha4242`);

@@ -8,16 +8,16 @@
 //     build time). The runner cannot be asked to nest.
 //   - Capped. A Permits port bounds the passes in flight: one WeightedSemaphore
 //     per PiHost on a one-shot route, the daemon's central broker in a bot worker
-//     (D25). A pass holds its permit from before its session exists until the
+//    . A pass holds its permit from before its session exists until the
 //     session is read and disposed, retry included.
-//   - Isolated. The session comes from PiHost.makeSession (the P2.1 fence: no
+//   - Isolated. The session comes from PiHost.makeSession (the fence: no
 //     other module builds an SDK session), in memory unless `sessionsDir` keeps
-//     its JSONL (D10), under an id of its own, so
+//     its JSONL, under an id of its own, so
 //     disposing one pass never cuts a sibling's provider socket (canary 1).
-//     Its system prompt is pi's base plus the agent's body appended, and the D34
+//     Its system prompt is pi's base plus the agent's body appended, and the
 //     context files ride as data; the pass reads the same bytes a native child
 //     reads (tests/lens-prompt-parity.test.ts).
-//   - Cache-grouped, when asked (config.cache, D7). The passes of one group, per
+//   - Cache-grouped, when asked (config.cache). The passes of one group, per
 //     model, share ONE session id, which is what routes their requests to one
 //     provider cache. Disposing a session closes the transports held for its id,
 //     so a grouped session is kept until the group's last pass is done and the
@@ -87,7 +87,7 @@ export interface LensProgressSink {
   commandId?: string;
 }
 
-/** Lens cache groups (D7). */
+/** Lens cache groups. */
 export interface LensCacheConfig {
   /** Passes per group, per model; below 1 there are no groups. */
   size: number;
@@ -111,7 +111,7 @@ export interface LensRunConfig {
    * `permitPort` is given. */
   permits: number;
   /** Where a pass gets its permit. Omitted: the host's local semaphore, sized by
-   * `permits`. A bot worker passes the daemon's broker client (D25). */
+   * `permits`. A bot worker passes the daemon's broker client. */
   permitPort?: Permits;
   registry: AgentRegistry;
   /** The passes' working directory (also their bash tool's). */
@@ -123,7 +123,7 @@ export interface LensRunConfig {
   bashGuard: ExtensionFactory;
   /** Append-only `lens-ledger.jsonl`; one line per pass. */
   ledgerPath: string;
-  /** D34 context files. Omitted: the host's. */
+  /** context files. Omitted: the host's. */
   agentsFiles?: readonly AgentsFile[];
   bashEnv?: BashEnvOptions;
   /** `provider/id` for an agent file that names no model. */
@@ -136,7 +136,7 @@ export interface LensRunConfig {
    * stagger off. Default DEFAULT_SESSION_GAP_MS. */
   sessionGapMs?: number;
   progress?: LensProgressSink;
-  /** Keep each pass's session JSONL under `<sessionsDir>/<run id>/` (D10), so a
+  /** Keep each pass's session JSONL under `<sessionsDir>/<run id>/`, so a
    * finished lens opens in pi (`qcr open --lens`). A retried pass writes a second
    * file beside the first. Omitted: the passes stay in memory. */
   sessionsDir?: string;

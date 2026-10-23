@@ -208,7 +208,7 @@ export interface GuardPolicy {
    * in it at all: the relative-spelling rule alone was reachable by
    * `cd <sandbox root> && bash scripts/post-review.sh …`. */
   replay: boolean;
-  /** A takeover (P8.13, `QCR_TAKEOVER=1` on its pi's own environment, which no bash
+  /** A takeover (`QCR_TAKEOVER=1` on its pi's own environment, which no bash
    * command can change): the operator works in the PR's real session and nothing
    * is posted from it. The scripts that post are not sanctioned there; the
    * reading ones are. The daemon refuses a takeover's posts as well. */
@@ -762,7 +762,7 @@ const COMMAND_INJECTING_ENV_RE = /^GIT_CONFIG_(KEY|VALUE)_\d+$/;
  * literally `false`, so one hand-written TOML file — created with the ordinary
  * write tool — turns guards 2 through 5 off on a REAL approval. The same file
  * carries `dry_run`, so it would also flip a dry-run install into posting for
- * real (hard rule 1).
+ * real (AGENTS.md invariant 6).
  *
  * `QCR_STATE_DB` relocates the database the guards query for the head mark and
  * the approval-withheld state; `QCR_DRYRUN_DIR` relocates where a suppressed
@@ -1861,7 +1861,7 @@ export function checkReadPath(path: string, c: SecretPathContext): BashCheck {
  * A process's environment, memory, command line and open descriptors —
  * `/proc/<pid>/environ`, `/mem`, `/cmdline`, `/fd/…` and `/fdinfo/…`.
  *
- * The descriptors are the IPC capability's door (D23): a worker host holds its
+ * The descriptors are the IPC capability's door: a worker host holds its
  * command's capability as an inherited fd, and on the bot every process shares
  * one uid, so `cat /proc/<pid>/fd/<n>` would hand another command's capability
  * to the model. The same spelling rule closes it.
@@ -2064,7 +2064,7 @@ export function isGitConfigSurface(path: string): boolean {
  *     posting scripts read `dry_run` and every `[guards]` knob out of it per
  *     invocation, and `guard_enabled` treats a knob as ON unless it is literally
  *     `false`, so ONE write turns guards 1-5 off and flips a dry-run install to
- *     live on the next sanctioned post — hard rule 1, by a redirection.
+ *     live on the next sanctioned post — AGENTS.md invariant 6, by a redirection.
  *   · `scripts/**`            — the sanctioned posting route (the shims that
  *     hand over to the daemon). Overwriting one posts around it.
  *   · `dist/**`               — the COMPILED artifacts the container actually
@@ -3145,7 +3145,7 @@ const READ_TOOLS = new Set(["read", "grep", "find", "ls", "read_file", "view", "
  * secret-path and /proc rules, the protected write surfaces) is code in this
  * file, and the secrets dirs below are a FLOOR the guard adds the container's
  * own mount to; no profile layer (packages/pi-plugin/src/profileoverrides.ts) reaches either, and
- * the engine host builds this from the install, never from a profile (D13).
+ * the engine host builds this from the install, never from a profile.
  */
 export interface BashGuardConfig {
   /** The daemon-selected checkout that owns the sanctioned script bytes. */
@@ -3155,7 +3155,7 @@ export interface BashGuardConfig {
   cwd?: string;
   /** A regression replay session: no sandbox script is sanctioned at all. */
   replay: boolean;
-  /** A takeover (P8.13): the scripts that post are not sanctioned. Omitted: false. */
+  /** A takeover: the scripts that post are not sanctioned. Omitted: false. */
   noPost?: boolean;
   /** Every secrets dir this install could be using, absolute. The container
    * mount (`CONTAINER_SECRETS_DIR`) is always added. */

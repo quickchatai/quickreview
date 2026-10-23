@@ -1,7 +1,7 @@
 // The GitHub credential chain of the LOCAL review route (`qcr review`).
 //
-// CLAUDE.md rule 3 (carve-out of 2026-10-18): the daemon holds only the App
-// credential. The local and Action review routes run as the person at their
+// The App-only credential rule, and its carve-out: the daemon holds only the
+// App credential. The local and Action review routes run as the person at their
 // own terminal, so they may also use the credentials that person already has.
 // This module is that route's alone: the daemon's code never imports it
 // (tests/review-pr-target.test.ts fences who may).
@@ -9,7 +9,7 @@
 // Order: the App if configured, then the token handed to a container as a
 // file (below), then GITHUB_TOKEN / GH_TOKEN, then `gh auth token`.
 //
-// The handoff (D39, amending R7): a token a container runs with is never env
+// The handoff: a token a container runs with is never env
 // and never argv. The caller (the host wrapper, or the Action) writes it to a
 // 0600 file in a fresh 0700 dir, bind-mounted at /run/qcr-in, and names the
 // file in QCR_GH_TOKEN_FILE. `takeHandoffToken` reads it ONCE at startup,

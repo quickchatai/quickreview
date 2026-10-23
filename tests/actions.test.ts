@@ -646,7 +646,7 @@ const TIER_SAMPLES: Record<string, Record<string, unknown>> = {
   "file-issue": { command: "file-issue", title: "t", body: "b" },
   slack_reply: { command: "slack_reply", thread: "1712345678.123456", text: "on it" },
   drain: { command: "drain", on: true },
-  "retry-thread-decision": { command: "retry-thread-decision", comment_id: 3856996601 },
+  "retry-thread-decision": { command: "retry-thread-decision", comment_id: 3000000303 },
   "eod-curation-receipt": { command: "eod-curation-receipt", day: "2026-10-07", decisions: [] },
   steer: { command: "steer", pr: 5049, text: "look at the lock order" },
   "follow-up": { command: "follow-up", pr: 5049, text: "then the migration" },

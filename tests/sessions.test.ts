@@ -296,7 +296,7 @@ describe("buildPiCommand", () => {
     expect(argv.join(" ")).not.toMatch(/update/i);
   });
 
-  // pi's native subagent extension and its glue are retired (P9.4): lenses are
+  // pi's native subagent extension and its glue are retired: lenses are
   // the engine's lens tool, and a session loads no subagent surface of any kind.
   it("loads no subagent glue or leaf-cache extension, and no stray lens hooks", () => {
     const joined = manager().extensionPaths().join("\n");

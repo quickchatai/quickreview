@@ -687,7 +687,7 @@ describe("scratch hygiene — a scan rig's temp home never outlives its test", (
   });
 });
 
-describe("a long finding's detail is never clipped out of reach (selfscan 9d631900)", () => {
+describe("a long finding's detail is never clipped out of reach", () => {
   it("the wheel scrolls the selected finding's detail down to its state and seen lines, and says how much is left", () => {
     const long = scanFinding({
       fingerprint: "long".padEnd(64, "0"),
@@ -712,7 +712,7 @@ describe("a long finding's detail is never clipped out of reach (selfscan 9d6319
   });
 });
 
-describe("a finding's detail paragraph reaches the detail pane (selfscan fc1128ac)", () => {
+describe("a finding's detail paragraph reaches the detail pane", () => {
   it("the failure mechanism a P0–P2 finding carries in `detail` is shown beside its evidence", () => {
     const f = scanFinding({
       fingerprint: "detail".padEnd(64, "0"),

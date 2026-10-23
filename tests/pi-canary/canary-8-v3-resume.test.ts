@@ -1,4 +1,4 @@
-// Canary 8 [P2.7]: resuming a v3 session JSONL keeps the session id.
+// Canary 8 : resuming a v3 session JSONL keeps the session id.
 //
 // The bot worker resumes a PR's session from its JSONL every round, and the
 // provider's prompt-cache key is the session id: a resume that mints a new id

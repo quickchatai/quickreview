@@ -742,7 +742,7 @@ describe("the App's own webhook config (app-self-config class)", () => {
       "https://new.trycloudflare.com/webhook",
       "https://old.example.com/webhook",
     );
-    // The app-self-config exception (CLAUDE.md rule 1): real execution despite dry-run, no dryrun record.
+    // The app-self-config exception (AGENTS.md invariant 6): real execution despite dry-run, no dryrun record.
     expect(result.executed).toBe(true);
     expect(readdirSync(dryrunDir)).toHaveLength(0);
     expect(calls[0]).toMatchObject({

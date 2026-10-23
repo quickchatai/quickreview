@@ -1,8 +1,8 @@
-// The scan behind the bot worker's fence (P8.3): src/botworker.ts never opens
+// The scan behind the bot worker's fence: src/botworker.ts never opens
 // state.db. A pure function over a repo root, so tests/botworker-fence.test.ts
 // runs it on the real tree AND on a planted one.
 //
-// The daemon is the only SQLite writer (the live SQLITE_BUSY lock is why: P8.3a).
+// The daemon is the only SQLite writer (the live SQLITE_BUSY lock is why).
 // A worker that opened the store would add a writer per round, so the worker's
 // RUNTIME import closure must not contain the state store or a SQLite binding.
 // Type-only imports are erased at build and load nothing, so they are not edges.

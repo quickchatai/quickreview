@@ -28,7 +28,7 @@ const text = (lines: readonly string[] | undefined): string[] =>
   (lines ?? []).map((l) => stripAnsi(l));
 
 describe("paneSurface — the runtime picks the surface, nothing else does", () => {
-  it("absent or tmux is the viewer: the bot runs no `pr-<n>` tmux session to mirror (P9.6)", () => {
+  it("absent or tmux is the viewer: the bot runs no `pr-<n>` tmux session to mirror", () => {
     expect(paneSurface(undefined, 7)).toEqual({ kind: "viewer" });
     expect(paneSurface("tmux", 7)).toEqual({ kind: "viewer" });
   });

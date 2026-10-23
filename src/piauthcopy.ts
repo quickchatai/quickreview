@@ -1,4 +1,4 @@
-// Moved to packages/pi-plugin/src/engine/auth.ts (P2.10). Kept as a re-export because the scan
+// Moved to packages/pi-plugin/src/engine/auth.ts. Kept as a re-export because the scan
 // container imports `dist/src/piauthcopy.js` by path (src/scanbox.ts), and the
 // companion image that carries that path is rebuilt on the owner's schedule.
 export {

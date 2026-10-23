@@ -1174,7 +1174,7 @@ export class GitHubAdapter {
 
   /**
    * Re-point the App's OWN webhook URL (`PATCH /app/hook/config`, JWT-authed).
-   * The one member of the app-self-config gate class (CLAUDE.md rule 1): it
+   * The one member of the app-self-config gate class (AGENTS.md invariant 6): it
    * touches only the App's own
    * configuration, never the reviewed repo, and the gate executes it for real
    * even in dry-run — loudly logged, with the note naming old and new URL.
@@ -1241,7 +1241,7 @@ export class GitHubAdapter {
 
   /**
    * Put named people in this PR's review-requested queue — the second
-   * delivery shape of the optional escalation feature (CLAUDE.md rule 10), an
+   * delivery shape of the optional escalation feature (the never-hand-to-a-human rule), an
    * ordinary gated mutation.
    *
    * Three things this is not:

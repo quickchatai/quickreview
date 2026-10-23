@@ -1,4 +1,4 @@
-// [P8.3] Which JSONL is a PR session's transcript: the one the daemon's
+// Which JSONL is a PR session's transcript: the one the daemon's
 // lifecycle archives and the bot worker resumes, from one function.
 import {
   chmodSync,
@@ -26,7 +26,7 @@ const touch = (path: string, seconds: number): void => {
   utimesSync(path, seconds, seconds);
 };
 
-describe("[P8.3] newestSessionFile", () => {
+describe("newestSessionFile", () => {
   it("is undefined for no directory and for one with no JSONL", () => {
     expect(newestSessionFile(join(dir, "missing"))).toBeUndefined();
     writeFileSync(join(dir, "notes.txt"), "x");

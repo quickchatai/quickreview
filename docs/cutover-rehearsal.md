@@ -1,14 +1,14 @@
 # Cutover rehearsal
 
-P8.20. The real cutover tooling, end to end, against a throwaway legacy-shaped host: `scripts/cutover.sh` (the P8.21a wizard) driving `scripts/deploy.sh`, ssh, `deploy/qcr-update.sh`, a registry and the release and memory images built from this tree, over a host directory a LEGACY build wrote. Four failures are injected before the clean run; the clean run goes through the point of no return, verify, the first reconcile under the operator's hold and the owner's lift, and then the P8.20a worker checks run on the release boot the updater made.
+The real cutover tooling, end to end, against a throwaway legacy-shaped host: `scripts/cutover.sh` (the cutover wizard) driving `scripts/deploy.sh`, ssh, `deploy/qcr-update.sh`, a registry and the release and memory images built from this tree, over a host directory a LEGACY build wrote. Four failures are injected before the clean run; the clean run goes through the point of no return, verify, the first reconcile under the operator's hold and the owner's lift, and then the worker rehearsal's checks run on the release boot the updater made.
 
 Run 2026-10-20 on 0bb52395. **40 of 40 checks passed, 0 failed.** Cost: $0 (no model, no GitHub, no ghcr; the containers sit on an internal docker network with a scripted stub).
 
-Re-run it: `scripts/cutover-rehearsal.sh` (about 25 minutes with the images built; `--work DIR` reuses the registry, the pushed images and the pristine legacy host; `--fresh`, `--keep` and `--skip-worker` are in the script's header). It exits 0 only when every check passed, and a full run rewrites this file. The images come from `scripts/worker-rehearsal/build-images.sh` (the same tooling as P8.20a).
+Re-run it: `scripts/cutover-rehearsal.sh` (about 25 minutes with the images built; `--work DIR` reuses the registry, the pushed images and the pristine legacy host; `--fresh`, `--keep` and `--skip-worker` are in the script's header). It exits 0 only when every check passed, and a full run rewrites this file. The images come from `scripts/worker-rehearsal/build-images.sh` (the same tooling as the worker rehearsal).
 
 ## What is real and what stands in
 
-Real: `scripts/cutover.sh`, `scripts/deploy.sh` (provision, `--dry-run release`, `release`, `verify`), ssh to a throwaway sshd, `deploy/qcr-update.sh` itself (lock, drain check, layout check, `docker pull` BY DIGEST from a registry, label checks, `qcr config check` and `daemon --preflight` of the NEW image on the staged config and a snapshot of the legacy state, the store copy and its checksum verification, the config swap, the sidecar, the recreate, the rescue), the release and memory images, the release daemon's first boot over a state.db the legacy build (8169df6f) wrote, the migrations, the hold, the login refresher, the entrypoint's login mode.
+Real: `scripts/cutover.sh`, `scripts/deploy.sh` (provision, `--dry-run release`, `release`, `verify`), ssh to a throwaway sshd, `deploy/qcr-update.sh` itself (lock, drain check, layout check, `docker pull` BY DIGEST from a registry, label checks, `qcr config check` and `daemon --preflight` of the NEW image on the staged config and a snapshot of the legacy state, the store copy and its checksum verification, the config swap, the sidecar, the recreate, the rescue), the release and memory images, the release daemon's first boot over a state.db the legacy build wrote, the migrations, the hold, the login refresher, the entrypoint's login mode.
 
 Stands in (a test tool; none of it ships): see Limits.
 
@@ -23,12 +23,12 @@ Stands in (a test tool; none of it ships): see Limits.
 | | check | result | evidence |
 |---|---|---|---|
 | IMG-1 | the release image is built from this tree and carries the labels the updater requires | pass | qcr.build-sha=0bb52395f28842a57828728f02e30dc373f5978d (HEAD is 0bb52395f28842a57828728f02e30dc373f5978d, differing only in the rehearsal's own tooling, tests and docs); qcr.layout=release qcr.preflight=true qcr.runspec=1 qcr.pi=1.3.0 |
-| REG-1 | the images are in a registry and the manifests are in the P7.16 format | pass | registry:2 on localhost:57373; deploy-manifest-<v>.json for 5 versions, each validated by scripts/deploy-manifest.mjs; daemon 1.0.0 sha256:20f253393853, memory sha256:e019caecd1ed; the manifest's platforms entries repeat the single-arch manifest digest (CI's index is multi-arch) |
+| REG-1 | the images are in a registry and the manifests are in the deploy-manifest format | pass | registry:2 on localhost:57373; deploy-manifest-<v>.json for 5 versions, each validated by scripts/deploy-manifest.mjs; daemon 1.0.0 sha256:20f253393853, memory sha256:e019caecd1ed; the manifest's platforms entries repeat the single-arch manifest digest (CI's index is multi-arch) |
 | NET-1 | the containers' network is internal: example.com is unreachable, api.github.com is the stub | pass | internal=true; example.com: curl: (6) Could not resolve host: example.com 000 rc=6 unresolved ; api.github.com via the stub: HTTP 200; the legacy stand-in runs --network none |
 | PROV-1 | deploy.sh provision installs the run spec; `sudo qcr-update status --json` answers over ssh and shows layout=legacy | pass | provision rc 0 (ansible-playbook is a stub that installs the rendered update.conf); layout=legacy; run spec v1 fingerprint 7ce6e15d350e19e3…; the stand-in container has no qcr.layout label (none) |
 | HOST-1 | the legacy host: a legacy-shaped bot is running over a state.db the LEGACY build wrote, with the legacy config and a populated OpenViking store | pass | container quickreview-sandbox (image qcr-cutrh/legacy-standin:1, no qcr.layout label), state.db 43 tables (the legacy schema), config-home holds the old-world config ([engine] runtime = "proc", openviking.endpoint local), 66 store files; no sidecar yet |
 | DRAIN-0 | qcr drain on drains the legacy bot (the operator's plain drain: the legacy daemon cannot spell a hold) | pass | [quickreviewd] config.toml [models] overseer is deprecated and ignored: the overseer session was deleted. Remove the key. drain on → cutover-vm:/opt/quickreview/sandbox/commands/ ✓ draining — 0 round(s) still finishing; deploy when `qcr status` draining_by=operator running_rounds=0 pending_wakes=0 |
-| PLAN-1 | the dry-run plan shows what runbook C.11 asks for | pass | legacy layout, the manifest digests and a pull by digest, the new image's config check, stop then snapshot then preflight, the seed, the swap, sidecar /ready, the recreate named as the point of no return; nothing executed |
+| PLAN-1 | the dry-run plan shows what the cutover procedure asks for | pass | legacy layout, the manifest digests and a pull by digest, the new image's config check, stop then snapshot then preflight, the seed, the swap, sidecar /ready, the recreate named as the point of no return; nothing executed |
 | INJ-1 | a failed config check changes nothing: the legacy bot is never stopped and stays drained | pass | the new image's config check refused the shipped config (a retired [engine] runtime key):                  stage the config to config-home.next; the NEW image's `qcr config check --json` on it; exit 1, last run 'refused config-check'; the legacy container 44bdf6a9c490 kept its id, config (sha 85b3102fb9139eaf), OpenViking store (checksum 06eed2b561acbbb8) and legacy schema (43 tables); no sidecar, no -prev container, no .next/.prev; drained by the operator again with 0 rounds; legacy bot boots 1 -> 1, drain lifts 1 -> 1, drain-on commands 1 -> 1 |
 | INJ-2 | a failed preflight is rescued: the legacy bot is restarted on its old config and drained after its first reconcile | pass | daemon --preflight of the new image refused the scratch copy of the snapshot: {"ok":false,"checks":[{"name":"migrations","ok":true,"detail":"the scratch copy migrated forward"},{"name":"resume","ok":false,"detail":"1 open PR(s), 1 session file(s) resumed offline, 0 without a session","reason":"1 s; the snapshot stayed under the backup dir (0.9.2-20261020T212258Z ); exit 1, last run 'rescued preflight'; the legacy container 44bdf6a9c490 kept its id, config (sha 85b3102fb9139eaf), OpenViking store (checksum 06eed2b561acbbb8) and legacy schema (43 tables); no sidecar, no -prev container, no .next/.prev; drained by the operator again with 0 rounds; legacy bot boots 1 -> 2, drain lifts 1 -> 2, drain-on commands 1 -> 2 |
 | INJ-3 | a failed store copy is rescued: the legacy bot is restarted on its old config and drained after its first reconcile | pass | the updater's checksum verification caught a byte flipped in the copy: qcr-update: the sidecar store copy does not verify by checksum: >fc.t...... ov.conf; the 'seeded' marker written: no; the config swap had not happened; exit 1, last run 'rescued seed'; the legacy container 44bdf6a9c490 kept its id, config (sha 85b3102fb9139eaf), OpenViking store (checksum 06eed2b561acbbb8) and legacy schema (43 tables); no sidecar, no -prev container, no .next/.prev; drained by the operator again with 0 rounds; legacy bot boots 2 -> 3, drain lifts 2 -> 3, drain-on commands 2 -> 3 |
@@ -83,16 +83,16 @@ Stands in (a test tool; none of it ships): see Limits.
 
 Everything the rehearsal found on the way to a green run, and whether it is fixed. F1 to F3, F5 and F5b were
 defects in the cutover tooling itself and are fixed in product code with tests; F4 was a contradiction in the
-cutover procedure, fixed by the owner's ruling of 2026-10-21; the rest are properties worth knowing.
+cutover procedure, since fixed in the procedure; the rest are properties worth knowing.
 
-- **F1, product, FIXED: `deploy.sh` ignored `QCR_CUTOVER_ACK`.** The runbook (C.11, C.12) and the wizard
+- **F1, product, FIXED: `deploy.sh` ignored `QCR_CUTOVER_ACK`.** The cutover procedure and the wizard
   (`QCR_CUTOVER_ACK=<v> deploy.sh [--dry-run] release <v>`) spell the acknowledgement as an environment
   variable; `deploy.sh` read only the `--cutover-ack` flag, so on the legacy layout both the wizard's plan
   and its release stopped at "refusing the release — the VM still runs the legacy layout … Re-run with
   --cutover-ack". The first rehearsal run died there. `deploy.sh` now takes `QCR_CUTOVER_ACK=<version>` as
   the same acknowledgement, and an ack naming another version is refused (a stale one must not authorize
   this cutover). `tests/deploy.test.ts`.
-- **F2, product, FIXED: the plan did not name the point of no return.** Runbook C.11 asks that the
+- **F2, product, FIXED: the plan did not name the point of no return.** The cutover procedure asks that the
   dry-run plan shows "the recreate of quickreview-sandbox, named as the point of no return", and the wizard's
   stage 3 asks the owner to confirm it does. The plan said "recreate the daemon container" only. It now says
   "THE POINT OF NO RETURN on the legacy layout (the first boot migrates state.db forward; there is no way
@@ -100,16 +100,16 @@ cutover procedure, fixed by the owner's ruling of 2026-10-21; the rest are prope
 - **F3, product, FIXED: the wizard's reconcile-backstop stage compared GitHub with nothing.** Stage 7 read
   the daemon's tracked PRs from `qcr status` run on the OWNER'S machine, which reads that machine's own
   state dir ("no status.json yet"): no PR line, so every open PR was "not tracked" and the stage passed
-  vacuously, which is exactly the check runbook C.15 exists for. It now reads `qcr status` in the daemon's
+  vacuously, which is exactly the check the backstop stage exists for. It now reads `qcr status` in the daemon's
   container (`docker exec … node /opt/qcr/dist/src/cli.js status`) and fails when that prints no snapshot.
   `tests/cutover-wizard.test.ts`.
-- **F4, procedure, FIXED (owner ruling 2026-10-21): stage 9 could not do what it asked.** Stage 9 said the
+- **F4, procedure, FIXED: stage 9 could not do what it asked.** Stage 9 said the
   drain holds while the owner triggers ONE worker round and checks it, then lifts. Under any drain the dispatch
   pump starts nothing (`dispatch.ts`: `if (store.drainState().draining) return []`), the webhook delivery is
   dropped, and `qcr debug-round` is refused outright ("debug-round #7 refused (drained: the bot is draining: no
   worker starts)"); HOLD-3 records all three. So the first worker round can only be watched AFTER `qcr drain
   off`. In this rehearsal the lift was therefore the owner's command at the point stage 9 reaches it, and the
-  worker checks ran after it. The owner ruled: nothing runs under any drain, so the first round is watched after
+  worker checks ran after it. The procedure now says: nothing runs under any drain, so the first round is watched after
   the lift, one PR at a time. Stage 9 now lists the tracked open PRs from the daemon's `qcr status` in its
   container, asks which PR runs first, pauses every other tracked PR with the operator's pause (`qcr pause-pr`,
   new: the sealed operator channel, so the pause carries no expiry and no session lifts it), checks each shows
@@ -141,9 +141,9 @@ cutover procedure, fixed by the owner's ruling of 2026-10-21; the rest are prope
   (INJ-3) leaves no marker and copies again.
 - **F8, property: the release container keeps a tmux server and one empty `main` shell session.** The
   daemon-mode entrypoint starts it (the jump-in surface, and the host of the takeover and debug panes).
-  No PR session, no pi and no overseer exists, which is what runbook step 13 asks. The P8.20a TREE-1 check
-  expected the overseer's `main` session and a pi; it now expects the shell only, and P9.13's deletion is
-  what it proves. The event name `overseer_heartbeat` (the daily heartbeat's marker in `events`) outlived
+  No PR session, no pi and no overseer exists, which is what the cutover procedure asks. The worker rehearsal's TREE-1
+  check expected the overseer's `main` session and a pi; it now expects the shell only, which is what the
+  overseer's deletion proves. The event name `overseer_heartbeat` (the daily heartbeat's marker in `events`) outlived
   the overseer; it is a name, not a process.
 - **F9, rehearsal: what the unprivileged host needed.** The updater is run in the test mode its header
   documents (non-root). Four things a root updater does had to be stood in for, all in `vm-shims/`, none in
@@ -155,7 +155,7 @@ cutover procedure, fixed by the owner's ruling of 2026-10-21; the rest are prope
 
 ## Limits
 
-- **No KVM guest.** This machine has no qemu; the "VM" is a directory tree on this machine's docker,
+- **No KVM guest.** The rehearsal host has no qemu; the "VM" is a directory tree on the host's docker,
   reached over a throwaway unprivileged sshd on localhost (a forced command, `vm-shell.sh`, that maps the
   host path `/opt/quickreview` onto the rehearsal's directory for host-side commands and leaves
   `docker exec` commands alone). Nothing about a real VM's packages, systemd, cloudflared or a root
@@ -165,11 +165,8 @@ cutover procedure, fixed by the owner's ruling of 2026-10-21; the rest are prope
 - **The legacy bot is a stand-in** (`legacy-daemon.mjs`): the legacy build's own StateStore and its drain
   contract (heartbeat, operator channel, the first-reconcile lift, the strict command schema), not the legacy
   daemon. The first-boot migration, the hold and everything after it ran on the real release image over a
-  state.db the legacy build (8169df6f) wrote.
-- **The registry is `registry:2` on localhost**, the images single-arch; the manifests are in the P7.16
-  format but a real release's index is multi-arch. No ghcr login, attestation or CI is involved.
-- **The model, GitHub and OAuth are the P8.20a stub**; `dry_run = true` throughout, so a post ends in
-  `state/dryrun`. The worker checks are the P8.20a scenarios, unchanged apart from TREE-1.
-- **The owner's real config differs** in repo, profile, App identity and secrets; the shape that matters to
-  the cutover (remote openviking endpoint, `lens_permits = 20`, the `[tui]` block with an ssh target and no
-  `remote_*` keys) is the one rehearsed.
+  state.db the legacy build wrote.
+- **The registry is `registry:2` on localhost**, the images single-arch; the manifests are in the
+  deploy-manifest format but a real release's index is multi-arch. No ghcr login, attestation or CI is involved.
+- **The model, GitHub and OAuth are the worker rehearsal's stub**; `dry_run = true` throughout, so a post ends in
+  `state/dryrun`. The worker checks are the worker rehearsal's scenarios, unchanged apart from TREE-1.

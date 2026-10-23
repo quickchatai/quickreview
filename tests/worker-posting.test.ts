@@ -1,4 +1,4 @@
-// [P8.7] A worker's posts reach the daemon's one gate through the supervisor.
+// A worker's posts reach the daemon's one gate through the supervisor.
 //
 // The REAL WorkerSupervisor starts a fake worker process (no pi, no model); the
 // real IpcServer serves the supervisor's lookup and ops, which now include the
@@ -163,7 +163,7 @@ async function rig(opts: { headOf?: (pr: number, round: number) => string | unde
   return { sup, store, gh, caps, roundNo, connect, dryrun, result, state };
 }
 
-describe("[P8.7] a worker posts through the supervisor's ops to the one gate", () => {
+describe("a worker posts through the supervisor's ops to the one gate", () => {
   it("a round's review lands in state/dryrun/ keyed by the command's own round, and replies with its outcome", async () => {
     const r = await rig();
     const row = r.sup.submit({ pr: PR, kind: "round", round_no: r.roundNo, payload: "order" });
@@ -249,7 +249,7 @@ describe("[P8.7] a worker posts through the supervisor's ops to the one gate", (
   });
 });
 
-describe("[P8.7] commandRoundOf", () => {
+describe("commandRoundOf", () => {
   const store = (row: Partial<SessionCommandRow> | undefined) =>
     ({ getSessionCommand: () => row }) as never;
   it("keys only a round command, by its own round and the order's head", () => {

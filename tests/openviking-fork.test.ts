@@ -1866,7 +1866,7 @@ describe("PATCH 10 — viking_write writes a typed lesson's header", () => {
     lens: ["pass-baseline", "validate"],
     class: "baseline.pre-existing-scope",
     paths: ["backend/**", "**/*.py"],
-    evidence: ["pr:5208", "cand:c42", "comment:3853760547"],
+    evidence: ["pr:5208", "cand:c42", "comment:3000000301"],
   };
 
   it("names the daemon's built passes and lesson kinds — one list, two readers", () => {
@@ -1885,7 +1885,7 @@ describe("PATCH 10 — viking_write writes a typed lesson's header", () => {
     if (!built.ok) return;
     const first = built.body.split("\n")[0];
     expect(first).toBe(
-      "#lesson kind=dont-raise lens=pass-baseline,pass-validate class=baseline.pre-existing-scope paths=backend/**,**/*.py evidence=pr:5208,cand:c42,comment:3853760547",
+      "#lesson kind=dont-raise lens=pass-baseline,pass-validate class=baseline.pre-existing-scope paths=backend/**,**/*.py evidence=pr:5208,cand:c42,comment:3000000301",
     );
     expect(built.body).toContain("\n\nDo not hold a focused PR on X.");
     expect(built.tags).toContain("lesson");
@@ -1896,7 +1896,7 @@ describe("PATCH 10 — viking_write writes a typed lesson's header", () => {
       lens: ["pass-baseline", "pass-validate"],
       class: "baseline.pre-existing-scope",
       paths: ["backend/**", "**/*.py"],
-      evidence: ["pr:5208", "cand:c42", "comment:3853760547"],
+      evidence: ["pr:5208", "cand:c42", "comment:3000000301"],
       candidates: [42],
       fieldsSource: "header",
     });

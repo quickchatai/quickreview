@@ -1,4 +1,4 @@
-// The reviewer stub (D34) has two homes: a checkout keeps it at
+// The reviewer stub has two homes: a checkout keeps it at
 // deploy/reviewer/AGENTS.override.md, the release and bench images install it at
 // the tree's root as AGENTS.override.md. Every route that copies or reads it
 // resolves it through packages/pi-plugin/src/reviewerstub.ts, so a route cannot look in one place

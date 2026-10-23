@@ -800,7 +800,7 @@ fi
 # What runs, and that it is the release layout: the image's build stamp (the
 # deploy tab reads the same label), then — once the heartbeat shows the
 # entrypoint has finished — that pi's settings carry no global bash-guard entry
-# (P9.5: the guard is a factory on every session; the entrypoint prunes the one
+# (the guard is a factory on every session; the entrypoint prunes the one
 # an older image left on the pihome volume), and the 12-line reviewer stub
 # every session loads instead of the contributor guide.
 SANDBOX_ROOT_EFF="$(effective_var_or sandbox_root /opt/quickreview)"

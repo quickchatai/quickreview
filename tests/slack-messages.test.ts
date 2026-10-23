@@ -317,7 +317,7 @@ describe("unprompted causes", () => {
   });
 });
 
-describe("hard rule 2 — nothing the daemon says implies a dismissal", () => {
+describe("AGENTS.md invariant 2 — nothing the daemon says implies a dismissal", () => {
   it("the word 'dismiss' appears in no rendered template", () => {
     const rendered = [
       pickupMessage(cfg, {

@@ -1,4 +1,4 @@
-// P5.9: `qcr review --debug-pi`, a review round inside pi's own interactive UI.
+// `qcr review --debug-pi`, a review round inside pi's own interactive UI.
 // The units pin what the route hands pi (argv, env, the round's order and wave);
 // the smoke runs the REAL `pi` CLI in a pty over a local OpenAI-compatible
 // endpoint (no model, nothing leaves loopback): the round starts from the

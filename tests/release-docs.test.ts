@@ -1,4 +1,4 @@
-// The release-side document of P6.16 (no docker, no model):
+// The release-side document (no docker, no model):
 // docs/macos-release-checklist.md ships, and covers what the ruling asked of
 // the Mac check: the wrapper install, the token handoff directory under
 // $TMPDIR, the Docker Desktop VM's ptrace_scope, and one run with no model.

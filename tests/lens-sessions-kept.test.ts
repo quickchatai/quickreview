@@ -1,4 +1,4 @@
-// P5.9 (D10): the lens passes of an engine round keep their session JSONL under
+// The lens passes of an engine round keep their session JSONL under
 // the round's dir, so a finished lens opens in pi (`qcr open --lens`). The real pi
 // SDK on pi-ai's faux provider: no model, no network. Pinned: a file per pass under
 // `<sessionsDir>/<run id>/` that pi's SessionManager opens under the id in its
@@ -63,7 +63,7 @@ function config(over: Partial<LensRunConfig> = {}): LensRunConfig {
 const header = (file: string): { type: string; version: number; id: string } =>
   JSON.parse(readFileSync(file, "utf8").split("\n", 1)[0]!) as never;
 
-describe("[runLens] the session is kept (D10)", () => {
+describe("[runLens] the session is kept", () => {
   it("writes one JSONL per pass under its run id, which pi opens under the id in its header", async () => {
     rig.faux.setResponses([fauxAssistantMessage("a: nothing"), fauxAssistantMessage("b: nothing")]);
     const runner = createLensRunner(config());

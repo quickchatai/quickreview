@@ -60,7 +60,7 @@ set; then the run stops hard at that limit. Nothing is ever asked.
 **The token never enters the container's environment.** The GitHub token is
 written to a `0600` file in a fresh `0700` directory under `$RUNNER_TEMP`, mounted
 at `/run/qcr-in` and named in `QCR_GH_TOKEN_FILE`; the image reads it once and
-unlinks it before any model tool exists (D39). `scripts/action.sh` refuses to
+unlinks it before any model tool exists. `scripts/action.sh` refuses to
 start docker if the token, an env file, a network or a memory service is in the
 command line.
 

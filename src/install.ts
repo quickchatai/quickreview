@@ -676,7 +676,7 @@ export function operatorStateHome(env: InstallEnv = process.env): string {
 }
 
 /** The companion's `commands/` directory under the state home it mounts rw
- * (root CLAUDE.md rule 8): the TUI forwards every file in it as a command of
+ * (the companion boundary): the TUI forwards every file in it as a command of
  * the companion's tier, so it is the companion's alone — every other container
  * that mounts the state home (the scan sandbox) gets it covered. */
 export const COMPANION_COMMANDS_DIR = "commands";

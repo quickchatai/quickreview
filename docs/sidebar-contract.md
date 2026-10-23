@@ -2,8 +2,8 @@
 
 The contract for the always-visible companion right column. The modules below
 are coded against these signatures, so the pieces meet without negotiation.
-This file is mechanics only; the layout rule itself is in the TUI's ratified
-decisions (root CLAUDE.md, "The TUI has ONE layout").
+This file is mechanics only; the layout rule itself is AGENTS.md invariant 10
+("The TUI has one layout").
 
 ## Geometry
 

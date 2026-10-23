@@ -2,7 +2,7 @@
 # The image's `install` mode (docker/entrypoint.sh): the host wrapper, pinned.
 #
 #   docker run --rm --user "$(id -u):$(id -g)" -v ~/.local/bin:/out IMAGE install
-#       writes /out/qcr (D14: the -v ~/.local/bin:/out shape);
+#       writes /out/qcr (the -v ~/.local/bin:/out shape);
 #   docker run --rm IMAGE install | sh
 #       with no /out mounted, prints a script that writes ~/.local/bin/qcr.
 #

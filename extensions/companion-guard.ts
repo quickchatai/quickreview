@@ -1,6 +1,6 @@
 // companion-guard — the companion's bright lines, made structural.
 //
-// The companion's boundary (CLAUDE.md rule 8) is partly structural: no GitHub
+// The companion boundary is partly structural: no GitHub
 // WRITE credential (its token is read-only), no App key, no gh binary in the
 // image. It does hold the owner's full ssh to the VM and may deploy, and this
 // guard cannot see inside a remote shell. Three

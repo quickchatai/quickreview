@@ -5,7 +5,7 @@
 // the current uid captured — later steps write it to the project `.env` as
 // QCR_UID so the containers run as the user who owns the secrets.
 //
-// Inside the release image there is no Docker and never will be (D16): the
+// Inside the release image there is no Docker and never will be: the
 // wizard then notes it and goes on, and bring-up prints the host's commands.
 //
 // Deterministic by construction: every fact comes through the adapters

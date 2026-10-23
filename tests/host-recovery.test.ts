@@ -1,4 +1,4 @@
-// [P8.6] The verdict processor and the command supervisor, driven by each host.
+// The verdict processor and the command supervisor, driven by each host.
 //
 // verdicts.test.ts and session-command-supervisor.test.ts stand in for the host
 // with hand-made hooks. What they cannot show is that the REAL hooks of each host

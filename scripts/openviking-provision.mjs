@@ -4,7 +4,7 @@
 //
 // Why this exists
 // ---------------
-// The two-user design (CLAUDE.md rule 8) rests on the server CONFINING each
+// The two-user design (the companion boundary) rests on the server CONFINING each
 // USER key to its own tree. `auth_mode: "dev"` bypasses authentication on
 // loopback, which makes that confinement nominal; `api_key` mode is the
 // required posture, and it only works if the users exist and hold the keys

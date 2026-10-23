@@ -1,5 +1,5 @@
 // The Node post client behind scripts/post-review.sh, approve-pr.sh and
-// reply-thread.sh (P7.2).
+// reply-thread.sh.
 //
 // On a host the daemon runs (a round worker, an answer worker, a debug pi) the
 // three scripts keep their seeded names and their arguments, and always hand

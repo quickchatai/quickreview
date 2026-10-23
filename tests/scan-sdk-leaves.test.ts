@@ -1,4 +1,4 @@
-// [P5.7] Scan leaves on the SDK: sdkCaseRunner (src/engine/caserunner-sdk.ts),
+// Scan leaves on the SDK: sdkCaseRunner (src/engine/caserunner-sdk.ts),
 // SetupEngine's CaseRunner over the runtime port, and the wiring that picks it
 // in scancli's driver and never in the companion's pi.
 //
@@ -79,7 +79,7 @@ const lines = (file: string): Record<string, unknown>[] =>
     .filter(Boolean)
     .map((l) => JSON.parse(l) as Record<string, unknown>);
 
-describe("[P5.7] sdkCaseRunner on the faux provider", () => {
+describe("sdkCaseRunner on the faux provider", () => {
   const hosts: PiHost[] = [];
   afterEach(() => {
     for (const h of hosts.splice(0)) h.dispose();
@@ -272,7 +272,7 @@ describe("[P5.7] sdkCaseRunner on the faux provider", () => {
     expect(out).toEqual({ ok: false, reason: "stopped", cost_usd: 0 });
   });
 
-  it("keeps the case's session JSONL beside its transcript, where `qcr open --lens CASE` finds it (D10)", async () => {
+  it("keeps the case's session JSONL beside its transcript, where `qcr open --lens CASE` finds it", async () => {
     const transcriptDir = join(dir, "transcripts-kept");
     await runner([fauxAssistantMessage("NONE")], { transcriptDir }).run(
       spec,
@@ -343,7 +343,7 @@ describe("[P5.7] sdkCaseRunner on the faux provider", () => {
   });
 });
 
-describe("[P5.7] the driver's host: a login per case, refused and read-only", () => {
+describe("the driver's host: a login per case, refused and read-only", () => {
   const hosts: PiHost[] = [];
   afterEach(() => {
     for (const h of hosts.splice(0)) h.dispose();
@@ -487,7 +487,7 @@ describe("[P5.7] the driver's host: a login per case, refused and read-only", ()
   });
 });
 
-describe("[P5.7] the same case on the SDK and on a real pi child, one local endpoint", () => {
+describe("the same case on the SDK and on a real pi child, one local endpoint", () => {
   let server: FakeOpenAI;
   beforeAll(async () => {
     server = await startFakeOpenAI();

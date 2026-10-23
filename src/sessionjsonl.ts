@@ -41,7 +41,7 @@ export interface RotatedFile {
 }
 
 /**
- * Rotate a PR session's JSONLs (P8.12): every `*.jsonl` under `root` is renamed in
+ * Rotate a PR session's JSONLs: every `*.jsonl` under `root` is renamed in
  * place to `<name>.rotated-<stamp>`, so `newestSessionFile` finds none and the next
  * worker BIRTHS a session instead of resuming the old conversation. The rotated file
  * stays beside the others (the archiver moves the whole dir; `pi --session <path>`

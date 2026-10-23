@@ -1,7 +1,7 @@
-// [P7.2] The TypeScript posting journal writes the receipt and outbox job
+// The TypeScript posting journal writes the receipt and outbox job
 // files the verdict watcher, the outbox and the deferred retry read. Each
 // scenario's files are pinned as snapshots (timestamps blanked, key order kept):
-// they are the bytes scripts/posting-receipt.py wrote step for step until P9.3
+// they are the bytes scripts/posting-receipt.py wrote step for step until it was retired
 // deleted it, so the readers keep reading what they always read.
 import {
   existsSync,
@@ -102,7 +102,7 @@ function prepare(intended: ReviewEvent = "REQUEST_CHANGES") {
   });
 }
 
-describe("[P7.2] the journal writes the receipt and job files the readers expect", () => {
+describe("the journal writes the receipt and job files the readers expect", () => {
   it("enqueue, prepare, confirm", () => {
     enqueue();
     same(jobName);
@@ -317,7 +317,7 @@ describe("[P7.2] the journal writes the receipt and job files the readers expect
   });
 });
 
-describe("[P7.2] the posting lock", () => {
+describe("the posting lock", () => {
   it("is held by one attempt at a time and released afterwards", async () => {
     let inner: Promise<unknown> | undefined;
     await journal.locked(PR, ROUND, KEY, async () => {

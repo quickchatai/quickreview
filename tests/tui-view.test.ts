@@ -590,7 +590,7 @@ describe("tui_* tools — the read surface", () => {
   });
 });
 
-// ---- the boundary (root CLAUDE.md rule 8) -----------------------------------
+// ---- the companion boundary ----------------------------------------------------
 
 describe("the tools read already-fetched state and can NEVER become a fetcher", () => {
   const source = readFileSync(new URL("../extensions/tui-view.ts", import.meta.url), "utf8");
@@ -677,7 +677,7 @@ describe("the tools read already-fetched state and can NEVER become a fetcher", 
       () => {},
       { exists: () => false, read: () => undefined, mode: () => undefined },
     );
-    // The companion's extensions are the image's (D20), not the checkout's.
+    // The companion's extensions are the image's, not the checkout's.
     expect(pi.piArgv()).toContain("/opt/qcr/extensions/cli/tui-view.ts");
     expect(pi.piEnvPrefix().some((v) => v.startsWith("QCR_FEED_DIR="))).toBe(true);
   });

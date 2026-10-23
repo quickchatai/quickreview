@@ -736,7 +736,7 @@ describe("fileImprovementPr / fileIssue (dry-run)", () => {
  * The suite above runs in dry-run, so it cannot tell a gated push from one
  * that shells straight to `git push` when live — a live push with no kind
  * check, no guard and no `after` hook would be the mutation path around the
- * gate that CLAUDE.md rule 1 forbids. These cases run the gate live.
+ * gate that AGENTS.md invariant 1 forbids. These cases run the gate live.
  */
 describe("fileImprovementPr — the push goes through the gate in live mode", () => {
   let dir: string;
@@ -849,7 +849,7 @@ describe("fileImprovementPr — the push goes through the gate in live mode", ()
     ).toBe(true);
   });
 
-  // selfscan 336e43a6: a POST GitHub may have carried out — a 5xx, a dropped
+  // A POST GitHub may have carried out — a 5xx, a dropped
   // connection, an undecodable body — throws before the ledger row. Freeing
   // the slot let a second slug open a second PR the same day. An ambiguous
   // creation keeps its cap charge; only a definite 4xx refusal frees it.

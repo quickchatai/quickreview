@@ -197,7 +197,7 @@ describe("selectLenses", () => {
         [
           {
             ...f("src/handlers.py"),
-            patch: "@@ -1 +1,2 @@\n+@background_decorator\n def handle():",
+            patch: "@@ -1 +1,2 @@\n+@background_task\n def handle():",
           },
           "pass-delivery",
         ],
@@ -567,7 +567,7 @@ function legacySelectLenses(files: PrFile[], intent?: { body?: string | null }):
   if (
     any(/(^|\/)(webhooks?|tasks|jobs|workers?|crons?|consumers?|subscribers?)\//) ||
     any(/(pubsub|pub_sub|cloud_tasks|celery)/i) ||
-    added(/^\+.*@background_decorator/m)
+    added(/^\+.*@background_task/m)
   )
     lenses.add("pass-delivery");
 
@@ -662,9 +662,7 @@ const CORPUS: Array<{ name: string; files: PrFile[]; body?: string | null }> = [
   },
   {
     name: "background decorator patch",
-    files: [
-      { ...f("src/handlers.py"), patch: "@@ -1 +1,2 @@\n+@background_decorator\n def handle():" },
-    ],
+    files: [{ ...f("src/handlers.py"), patch: "@@ -1 +1,2 @@\n+@background_task\n def handle():" }],
   },
   {
     name: "feature flag patch",
@@ -746,7 +744,7 @@ const CORPUS: Array<{ name: string; files: PrFile[]; body?: string | null }> = [
     files: [
       {
         ...f("app/tasks/sync.py", 120, 40),
-        patch: "@@ -1 +1,3 @@\n+@background_decorator\n+def sync():\n pass",
+        patch: "@@ -1 +1,3 @@\n+@background_task\n+def sync():\n pass",
       },
       f("app/management/commands/resync.py", 30, 0),
     ],

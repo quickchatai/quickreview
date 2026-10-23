@@ -9,7 +9,7 @@
 // the host runs in: what has reached a session's mailbox, what pi accepted,
 // whether the session is up.
 //
-// The worker host (P8.6), the only PR host, is `WorkerSessionHost` over a real
+// The worker host, the only PR host, is `WorkerSessionHost` over a real
 // `WorkerSupervisor` whose spawn, process table and signals are fakes — no
 // process, no socket, no model.
 import { createHash } from "node:crypto";

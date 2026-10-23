@@ -162,7 +162,7 @@ describe("rounds", () => {
     });
   });
 
-  it("recordCommandUsage keeps a worker's figure per command; a closed report is final (P8.9)", () => {
+  it("recordCommandUsage keeps a worker's figure per command; a closed report is final", () => {
     store.upsertPr(prRow(7, { state: "reviewing", head_sha: "h" }));
     const round = store.startRound(7, "initial", [], 45);
     store.createSessionCommand({
@@ -197,7 +197,7 @@ describe("rounds", () => {
     expect(store.workerReportedUsd(round)).toBeCloseTo(0.7, 9);
   });
 
-  it("a closing report re-states est_usd of an already-measured round only (P8.9)", () => {
+  it("a closing report re-states est_usd of an already-measured round only", () => {
     store.upsertPr(prRow(7, { state: "reviewing", head_sha: "h" }));
     const round = store.startRound(7, "initial", [], 45);
     store.createSessionCommand({

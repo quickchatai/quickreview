@@ -1184,7 +1184,7 @@ function runDrainLocal(on: boolean, hold: boolean): number {
 const DRAIN_USAGE = "usage: qcr drain <on [--hold]|off> [--local]";
 
 /** `qcr drain`'s arguments: exactly one of `on`/`off`, optionally `--local`,
- * and `--hold` with `on` only (the operator's no-auto-lift drain, P8.21b).
+ * and `--hold` with `on` only (the operator's no-auto-lift drain).
  * Anything else is refused before a transport is picked or a command file
  * written — a mistyped `--local` must not send the drain over ssh instead. */
 export function parseDrainArgs(rest: readonly string[]): {
@@ -1264,9 +1264,9 @@ async function cmdPrLever(verb: "pause-pr" | "resume-pr", rest: string[]): Promi
   return code;
 }
 
-// ---- takeover (P8.13, D27) -----------------------------------------------------
+// ---- takeover -----------------------------------------------------
 //
-// `qcr takeover <pr>`, `qcr debug-round <pr>` (P8.13b) and `qcr release <pr>` are three
+// `qcr takeover <pr>`, `qcr debug-round <pr>` and `qcr release <pr>` are three
 // of the operator's control commands (src/commands.ts CONTROL_COMMANDS), sent down the
 // same root-sealed operator route the TUI's input line uses (src/tui/livecontrol.ts).
 // The daemon grants the lease and starts interactive pi on the PR's real session in tmux
@@ -1285,7 +1285,7 @@ export function parseTakeoverArgs(rest: readonly string[]): number {
 /** The container name the attach hints print when no configured one is passed. */
 const DEFAULT_ATTACH_CONTAINER = "quickreview-sandbox";
 
-/** The lines that follow a granted debug round (P8.13b): the lease is armed for the
+/** The lines that follow a granted debug round: the lease is armed for the
  * PR's next round, which a worker would otherwise take. */
 export function debugRoundAttachLines(pr: number, container = DEFAULT_ATTACH_CONTAINER): string[] {
   const session = `debug-pr-${pr}`;
@@ -1328,7 +1328,7 @@ async function cmdTakeover(
   return ok ? 0 : 1;
 }
 
-// ---- the operator's message to a PR (P8.17) ------------------------------------
+// ---- the operator's message to a PR ------------------------------------
 
 const MESSAGE_USAGE = "usage: qcr message <pr> [--may-post] <text...>";
 
@@ -1514,7 +1514,7 @@ export async function rebuildCompanion(
 export async function cmdCompanion(sub: string | undefined): Promise<void> {
   if (sub === "plan") {
     // For the host wrapper: the docker run it makes for the containerised TUI's
-    // companion (D35). Needs no config and runs no docker.
+    // companion. Needs no config and runs no docker.
     const { companionPlan, renderPlan } = await import("./tui/companionplan.js");
     process.stdout.write(renderPlan(companionPlan(process.env)));
     return;
@@ -1586,8 +1586,8 @@ export async function cmdCompanion(sub: string | undefined): Promise<void> {
  * half of the embedder migration, run from the PC that holds the keys.
  *
  * The daemon re-embeds ITS OWN namespace (the reviewer's) by itself once the
- * server is ready; it holds no other key and never will (root CLAUDE.md rule
- * 8), so the companion's namespace — and any other provisioned user's — is
+ * server is ready; it holds no other key and never will (the companion
+ * boundary), so the companion's namespace — and any other provisioned user's — is
  * rebuilt from here, over the memory forward, with the keys in the operator's
  * keys file. Default: every provisioned user EXCEPT the daemon's own. The
  * reindex is an idempotent upsert, so re-running it (or naming the reviewer
@@ -2035,7 +2035,7 @@ export function splitJsonFlag(argv: string[]): { json: boolean; argv: string[] }
 
 export async function main(rawArgv: string[]): Promise<void> {
   const { json, argv } = splitJsonFlag(rawArgv);
-  // A GitHub token handed over as a file (packages/pi-plugin/src/ghcred.ts, D39) is read and
+  // A GitHub token handed over as a file (packages/pi-plugin/src/ghcred.ts) is read and
   // unlinked here, before any verb can start a pi or bash child. A file that
   // is named but cannot be taken is a one-line failure, never a stack trace.
   try {

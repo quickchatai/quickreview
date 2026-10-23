@@ -1,4 +1,4 @@
-// P9.7: an extension reads no ambient process state. The ban in eslint.config.js
+// An extension reads no ambient process state. The ban in eslint.config.js
 // (`extensionBan`) is exercised on fixture text, with the path each fixture
 // would have in the tree: a violation under extensions/ fails, the same text
 // under extensions/cli/ (the env shims) or as inline-bash.ts does not.
@@ -27,7 +27,7 @@ async function rulesHit(text: string, path: string): Promise<string[]> {
   return (res?.messages ?? []).map((m) => m.ruleId ?? "parse-error");
 }
 
-describe("extensions read no ambient process state (P9.7)", () => {
+describe("extensions read no ambient process state", () => {
   const BANNED: Array<[string, string]> = [
     ["process.env in a body", "export const a = () => process.env.QCR_ROOT;"],
     ["process.env as a default parameter", "export function a(env = process.env) { return env; }"],

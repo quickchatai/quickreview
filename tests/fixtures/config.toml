@@ -49,7 +49,7 @@ port = 8787                                  # loopback only; cloudflared on the
 [daemon]
 poll_interval_s = 300
 # Rounds are network-IO-bound (model calls), not CPU-bound; the container's
-# 2 CPU / 8 GB Docker cap is the hard resource guard (the owner, 2026-08-13).
+# 2 CPU / 8 GB Docker cap is the hard resource guard.
 max_concurrent_rounds = 12
 round_deadline_min = 75
 # a round overdue with no verdict whose session is dead is
@@ -397,13 +397,13 @@ recheck_pr_state_before_post = true  # re-read the PR right before posting; merg
 # Guard 4: no green CI at this head ⇒ APPROVE is unavailable,
 # regardless of findings. The review still posts, as a COMMENT with approval
 # withheld, and the PR is re-queued when CI goes green at that head.
-# Amended (the owner, 2026-08-19): only the MOST RECENT run of each check name
+# Only the MOST RECENT run of each check name
 # counts — GitHub auto-cancels superseded runs, and their permanent
 # `cancelled` husks were withholding every approval forever. The latest run
 # of every name must succeed; a genuinely failing/cancelled LATEST run still
 # blocks exactly like a failing test.
 block_approve_on_red_ci = true       # red/pending CI ⇒ approval withheld, review posts as COMMENT
-# Also the owner 2026-08-19: a head with ZERO check-runs (conflicted PR, CI not
+# Likewise, a head with ZERO check-runs (conflicted PR, CI not
 # started) carries no execution evidence — withhold there too. Set true for a repo that
 # always runs CI (then `none` means something is wrong, not "no CI setup").
 no_checks_is_red = true              # zero checks at head ⇒ approval withheld until checks pass
@@ -436,7 +436,7 @@ on_base_advance = true   # the base branch moved; no PR-owned file changed => no
 # the review carries ONE short escalation comment @-mentioning the most recent
 # human author of the touched directive files. This is the fallback mention when git history yields no
 # attributable human login. It is a comment @-mention through the gated review
-# — never a GitHub reviewer nomination (rule 10 amendment, the owner 2026-08-19).
+# — never a GitHub reviewer nomination (the never-hand-to-a-human rule).
 escalation_mention_default = "example-maintainer"
 # repo profile under profiles/ ("" = no profile — the generic addenda
 # set only). Tests select a profile explicitly where one is under test.

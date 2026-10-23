@@ -382,7 +382,7 @@ describe("a stage 2 proposal", () => {
     expect(p.rows[0]!.files.map((f) => f.path)).toContain("app/migrations/0001_init.py");
   });
 
-  it("never pairs a test that [scan] exclude keeps out of scans (selfscan 30a4d516)", async () => {
+  it("never pairs a test that [scan] exclude keeps out of scans", async () => {
     const s = new ScanRunner(ports(runner(), { scan: { exclude: ["gen/", "tests/lib/"] } }));
     await calibrate(s);
     const p = await propose(s, [CROSS]);

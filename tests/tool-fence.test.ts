@@ -1,4 +1,4 @@
-// [P7.12a] The in-process file tools' fence (packages/pi-plugin/src/engine/toolfence.ts), on real
+// The in-process file tools' fence (packages/pi-plugin/src/engine/toolfence.ts), on real
 // symlinks, and through a real SDK session over pi-ai's faux provider: the model
 // cannot read, search, list, edit or write /proc, /run/qcr-in or the run's agent
 // dir, not even through a link its own bash planted in the worktree.

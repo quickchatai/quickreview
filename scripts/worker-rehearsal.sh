@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# worker-rehearsal.sh — the pre-deletion worker rehearsal (P8.20a), the run that writes
+# worker-rehearsal.sh — the pre-deletion worker rehearsal, the run that writes
 # docs/worker-rehearsal.md. It is the worker half of the cutover rehearsal: HEAD's release and
 # memory images, run with the cutover run spec's volumes and command over a LEGACY-SHAPED host
 # directory, with a scripted stub as the model and as GitHub, on a network that has no way out.
@@ -478,7 +478,7 @@ fi
 # ---- D. the answer worker, with and without may_post (after round 1: the PR is tracked, has a session
 # and a review at its head) -----------------------------------------------------------------------------------
 # The operator asks the PR's session to answer the author's thread. Without may_post the worker holds
-# no posting tool (no bash: P8.17's read-only tools plus chat) and nothing lands; with --may-post it
+# no posting tool (no bash: the read-only tools plus chat) and nothing lands; with --may-post it
 # holds the three post shims, and its reply goes through the daemon's post IPC and the one gate into
 # state/dryrun. A REPLY, not a review: guard 2 (no new evidence) rightly refuses a second review at
 # the head round 1 reviewed, and a reply is what an operator's "answer them" asks for.

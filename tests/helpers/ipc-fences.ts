@@ -1,4 +1,4 @@
-// The scan behind the IPC fence (P7.2a). A pure function over a repo root, so
+// The scan behind the IPC fence. A pure function over a repo root, so
 // tests/fences-ipc.test.ts runs it on the real tree AND on a planted one.
 import { readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";

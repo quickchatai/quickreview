@@ -1,4 +1,4 @@
-// The canary suite's own guarantees [P2.7]: it is offline (proved by a guard
+// The canary suite's own guarantees : it is offline (proved by a guard
 // that is itself proved to catch an attempt), it runs the pinned pi, every
 // canary file is guarded, and `npm run canary:pi` and the CI step exist.
 import net from "node:net";
@@ -13,7 +13,7 @@ useOfflineGuard();
 const ROOT = join(import.meta.dirname, "..", "..");
 const read = (p: string): string => readFileSync(join(ROOT, p), "utf8");
 
-describe("[P2.7] the canary suite is offline", () => {
+describe("the canary suite is offline", () => {
   it("the guard catches fetch and TCP connects, and lets unix sockets through", async () => {
     const inner = installOfflineGuard();
     try {
@@ -68,7 +68,7 @@ describe("[P2.7] the canary suite is offline", () => {
   });
 });
 
-describe("[P2.7] the canaries run against the pinned pi", () => {
+describe("the canaries run against the pinned pi", () => {
   it("the installed pi and pi-ai are the exact versions package.json pins", () => {
     const pkg = JSON.parse(read("package.json")) as { dependencies: Record<string, string> };
     for (const name of ["@earendil-works/pi-coding-agent", "@earendil-works/pi-ai"]) {
@@ -80,7 +80,7 @@ describe("[P2.7] the canaries run against the pinned pi", () => {
   });
 });
 
-describe("[P2.7] npm run canary:pi and the CI requirement", () => {
+describe("npm run canary:pi and the CI requirement", () => {
   it("canary:pi runs exactly this directory", () => {
     const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
     expect(pkg.scripts["canary:pi"]).toBe("vitest run tests/pi-canary");

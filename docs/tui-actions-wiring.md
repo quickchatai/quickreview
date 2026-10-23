@@ -8,8 +8,7 @@ from this recipe.
 > **Historical, 2026-08-20.** This recipe places the action sweep
 > "right after the memedit sweep" and copies its busy-flag style. That
 > neighbour is **gone**: the companion memory-edit request channel retired
-> when the companion got direct OpenViking access (rule 8's superseding
-> amendment). The action sweep itself is unchanged and still the last
+> when the companion got direct OpenViking access. The action sweep itself is unchanged and still the last
 > `chainOnPoll` inside `if (companionUp)`; only the landmark moved.
 
 > **Historical, 2026-09-02 (→).** The recipe below predates
@@ -23,7 +22,7 @@ from this recipe.
 > …)` takes instead of `memState`; and the `changes` tab is the CHANGED pane of
 > `[7] feedback`. `docs/tui.md` is the current vocabulary.
 
-> **Added 2026-10-07 (root CLAUDE.md rule 8's fourth amendment).** `memory_pin` — `{"entry": "<TUI id
+> **Added later.** `memory_pin` — `{"entry": "<TUI id
 > or viking:// URI>", "pin": true|false}` — pins or unpins one EXISTING memory
 > entry, and is the channel's one memory verb and its one ASYNCHRONOUS verb:
 > `TuiDriver.memoryPin` returns a promise (a fresh read through the TUI's

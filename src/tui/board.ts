@@ -489,7 +489,7 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
   // many webhook deliveries were dropped so far — and by whom, and when it
   // lapses: an operator's drain holds until lifted, a session's always has an
   // expiry. An older daemon that reports neither is shown as such rather than
-  // guessed at. The operator's HOLD (P8.21b) says that no boot lifts it; an
+  // guessed at. The operator's HOLD says that no boot lifts it; an
   // operator drain from a daemon that reports no hold marker says "hold ?".
   const drainSeg = s?.draining
     ? `${FG.anomaly}⛔ DRAINING — ${s.running_rounds} round${s.running_rounds === 1 ? "" : "s"} finishing · ${s.drain_failed_loud ?? 0} failed loud · ${s.drained_deliveries ?? 0} dropped · ${leverHolderLabel(s.draining_by, s.draining_until)}${drainHoldLabel(s)}${s.draining_reason === "worker_failures" ? " · workers keep failing, drain off lifts it" : ""}${RESET}`
@@ -1091,7 +1091,7 @@ export function piHeader(
   const mine = pane && pane.pr === pr ? pane : undefined;
   // A pi terminal (a debug round's or a takeover's) names its tmux session;
   // everything else is the PR's live transcript — there is no `pr-<n>` tmux
-  // session to name (P9.6).
+  // session to name.
   const session = mine?.viewer ? undefined : mine?.session;
   const viewer = mine?.viewer;
   const name =

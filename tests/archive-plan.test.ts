@@ -109,7 +109,7 @@ function fixture(): Fixture {
   const stale = put(root, "inject/pr-100/stale.md", 83);
   put(root, "verdict/processed/20261001T000000Z-pr-100-round-1.json", 90);
   put(root, "verdict/failed/20261001T000000Z-pr-100-thread-1-comment-2.json", 91);
-  // The per-round worker trees (P8.16): the LiveEvent logs and the lens passes' JSONLs.
+  // The per-round worker trees: the LiveEvent logs and the lens passes' JSONLs.
   put(root, "state/live/pr-100/r1/main.jsonl", 20);
   put(root, "state/live/pr-100/r1/lens-L1.jsonl", 21);
   put(root, "state/lens/pr-100/r1/lens-sessions/L1/2026-10-01T10-00-00-000Z_x.jsonl", 200);

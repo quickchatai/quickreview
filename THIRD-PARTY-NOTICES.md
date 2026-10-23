@@ -57,10 +57,10 @@ its license, and where the full text and provenance live in this tree.
   `.claude/skills/VENDORED.md`.
 - License: **MIT** (Copyright (c) 2026 Matt Pocock). Full text:
   `.claude/skills/LICENSE`.
-- First-party exceptions (authored for this project, licensed under the
+- First-party exception (authored for this project, licensed under the
   repository's own `LICENSE`, NOT part of the upstream set): the
-  `deploying`, `runbook` and `feedback-mining` skills. The `skills/companion/`
-  directory at the repository root is likewise first-party.
+  `selfimprove` skill. The `skills/companion/` directory at the repository
+  root is likewise first-party.
 
 ## bench/aacr — third-party benchmark data
 
@@ -72,7 +72,9 @@ from the four below and name their source the same way). No third-party review-t
 comment text is committed: vendor reviews and SWE-PRBench's human review
 comments are fetched from the pinned sources at run time and verified by hash
 (`bench/aacr/ext/sweprbench/dataset-manifest.sha256`, the Martian manifest
-sha256 in `sets/martian*.json`).
+sha256 in `sets/martian*.json`). The exceptions are the reviewer-output
+fixtures and the verbatim prompts and harness code listed under "bench/aacr —
+reviewer prompts, harness code and output fixtures" below.
 
 - **AACR-Bench** — <https://github.com/alibaba/aacr-bench> (dataset commit
   `ab8af8d5`, harness commit `68a5697`), **Apache-2.0**. Derived here:
@@ -91,15 +93,38 @@ sha256 in `sets/martian*.json`).
   (PR metadata with each PR's title and description from the dataset's
   `prs.jsonl`); attribution: SWE-PRBench, FoundryHQ-AI.
 
+## bench/aacr — reviewer prompts, harness code and output fixtures
+
+`bench/aacr/docs/PROMPTS.md` reproduces, word for word, the prompts and code
+each compared reviewer ran with, so a reader can check what produced a number.
+The test suite keeps a few real outputs of those reviewers as parser fixtures.
+Each item names its source and, for code and prompt text, its license:
+
+- **AACR-Bench harness code** — <https://github.com/alibaba/aacr-bench>
+  (harness commit `68a5697`), **Apache-2.0**. Quoted unmodified in
+  `bench/aacr/docs/PROMPTS.md`: `evaluation/judge.py` (§3), the findings
+  prompt fragment of `reviewers/codex.py` (§5.2, §5.3; also restated in
+  `src/bench/opencode.ts`) and `reviewers/claude.py` (§5.5).
+- **OpenCode** — <https://github.com/sst/opencode>, **MIT**. Its built-in
+  `review` command template, copied verbatim from 1.18.33, is in
+  `src/bench/opencode.ts` and quoted in `bench/aacr/docs/PROMPTS.md` §5.3.
+- **pi-review** — [`@zephyrdeng/pi-review`](https://github.com/ZephyrDeng/pi-review)
+  0.18.0, **MIT**. Its `resources/system-prompt.md` (which carries its own
+  MIT credit for the prompt structure it was inspired by) and the output
+  contract of `dist/prompt.js` are quoted in `bench/aacr/docs/PROMPTS.md`
+  §5.4; `tests/fixtures/pireview-stdout-immich.txt` is one real pi-review
+  output on a public PR.
+- **Claude Code** `/code-review` output — `tests/fixtures/claude-prose/*.md`
+  are real outputs of the Claude Code arm on public benchmark PRs, kept as the
+  golden set of the prose parser (`tests/bench-claude-prose.test.ts`).
+  Claude Code's own prompt is not reproduced (it is internal to the CLI).
+
 ## Subagents — no third-party component
 
 Lenses run through the first-party lens tool (`packages/pi-plugin/src/engine/lens/`), SDK sessions
 of the host process — nothing is vendored or redistributed, so no notice entry
 is needed. (The pi-package example subagent extension that once filled this
-role, loaded by `extensions/subagents.ts`, is retired.) (History: the unlicensed third-party
-amosblomqvist/pi-subagents extension that used to fill this role was removed
-entirely on 2026-08-30 —'s licensing question dissolved by removal,
-.)
+role, loaded by `extensions/subagents.ts`, is retired.)
 
 ## npm dependencies
 

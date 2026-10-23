@@ -1,4 +1,4 @@
-// [P8.3] The built worker as a real process, the way the WorkerSupervisor (P8.5)
+// The built worker as a real process, the way the WorkerSupervisor
 // will start it: `node dist/src/botworker.js --command <id> --mode round`, the
 // command's capability on an inherited fd (stdio[3]), the socket and command in
 // env, nothing else. The model is a loopback endpoint that plays a script (no
@@ -139,7 +139,7 @@ const bashCall = (id: string, command: string) => ({
   toolCalls: [{ id, name: "bash", args: { command } }],
 });
 
-describe.skipIf(!hasDist)("[P8.3] the built worker, as a process", () => {
+describe.skipIf(!hasDist)("the built worker, as a process", () => {
   it("posts from the model's own command through the inherited capability, in dry-run", async () => {
     fake.script([
       bashCall("call_1", "scripts/commit-verdict.sh pr-7-round-1.json"),
@@ -210,7 +210,7 @@ describe.skipIf(!hasDist)("[P8.3] the built worker, as a process", () => {
   });
 });
 
-// ---- [P8.17] the idle-PR answer worker, as a process ----------------------------
+// ---- the idle-PR answer worker, as a process ----------------------------
 
 /** An answer command for PR 7, as the supervisor would register it. */
 function registerAnswer(id: string, text: string, mayPost: boolean) {
@@ -238,7 +238,7 @@ async function birthRound(): Promise<void> {
   fake.requests.length = 0;
 }
 
-describe.skipIf(!hasDist)("[P8.17] the built answer worker, as a process", () => {
+describe.skipIf(!hasDist)("the built answer worker, as a process", () => {
   it("with may_post a post from the model's own command lands in state/dryrun through the gate; the marker keeps it from repeating", async () => {
     await birthRound();
     fake.script([

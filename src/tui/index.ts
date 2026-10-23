@@ -255,7 +255,7 @@ export function buildTuiDriver(
     memoryPin: async (ref, pin) => {
       // The companion may pin or unpin an existing entry, and nothing else
       // about memory rides this channel — the only op built here is `pin` or
-      // `unpin` (CLAUDE.md rule 8). A memory write, not a keystroke: no tab
+      // `unpin` (the companion boundary). A memory write, not a keystroke: no tab
       // switch and no focus change (prep is for synthesized keys). It goes
       // through the one store — the same verb the tab's `p` uses — against
       // the entry as a new read finds it (the tab may never have been
@@ -439,7 +439,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // ---- phase 0: local only, ending in the first frame -----------------------
 
   const loaded = deps.config ?? loadConfig();
-  // D35: in the containerised TUI the companion is a container the host wrapper
+  // In the containerised TUI the companion is a container the host wrapper
   // runs, reached through a shared tmux socket. Its channel dirs are the
   // host's, named by the wrapper in env; nothing here can run docker.
   const socketMode = process.env[TUI_COMPANION_ENV] === TUI_COMPANION_TMUX_SOCKET;
@@ -1274,7 +1274,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     });
 
     // A PR parked by the worker crash-loop breaker, or the bot drained by it
-    // (P8.5b) — one notification per park / per drain, from a fresh snapshot.
+    // — one notification per park / per drain, from a fresh snapshot.
     const workerCrashMem = { written: new Set<string>() };
     chainOnPoll(app, (a) => {
       try {
@@ -1292,7 +1292,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     // No memory request-file channel here, and no memory feed: the companion
     // reaches OpenViking directly, over a host-owned forward, holding both
     // user keys. A second write path is exactly what must not exist — do not
-    // add one as an "offline fallback" (CLAUDE.md rule 8).
+    // add one as an "offline fallback" (the companion boundary).
 
     // The companion → TUI action channel. Sweep discipline is the usual one
     // (poll cadence, busy flag so a slow sweep never stacks);
@@ -1498,7 +1498,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // PID 1 ignores SIGTERM (so `docker stop` runs to its full timeout), must
   // not look like a hang.
   await stopCompanionOnQuit({
-    // The wrapper that ran the container stops it (D35): nothing here can.
+    // The wrapper that ran the container stops it: nothing here can.
     containerStarted: !socketMode && (companionContainerStarted || companionUp),
     stop: () => companion.gracefulStop(),
     write: (line) => out.write(line),

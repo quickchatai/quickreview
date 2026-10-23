@@ -22,9 +22,10 @@ fails on drift between the two.
 
 Every one of the twelve patches was tried as configuration first and does not
 exist there. The evidence is a spike against a **running v0.4.15 server plus
-the pinned pi 0.84.1** — `assets/findings.md` in the issue tracker,
-with transcripts. Read it before changing anything here; several of its
-findings contradict the OpenViking docs, which lead the tag.
+the pinned pi 0.84.1**, with transcripts, kept with the project's design
+records. The short version: several of its findings contradict the OpenViking
+docs, which lead the tag, so test against a running server before changing
+anything here.
 
 ## The patch series
 
@@ -98,7 +99,7 @@ Touches: `index.ts` (handler + the `compacted` flag it set), `config.ts`,
 A pi-subagents child running one lens pass gets the read tools and nothing
 else: no recall injection, no profile block, no turn sync, no commit.
 
-Two reasons. The single-shepherd invariant (root `CLAUDE.md` rule 9) makes the
+Two reasons. The single-shepherd invariant (`docs/single-shepherd-invariant.md`) makes the
 PR's one main pi the owner of the review; a pass is a stateless evaluator of a
 diff and memory injected under it is unaccounted context. And a commit from a
 leaf would archive the **shepherd's** session, because the OV session id
@@ -169,8 +170,8 @@ tool.
 The patch also deletes `viking_forget` (curation belongs to the EOD sweep and
 the TUI; retire is a tag+directory convention, not an `rm`, and a fuzzy
 `>0.8`-match delete is a silent data-loss path) and `viking_add_resource` (the
-reviewer reads code and CI results, it does not ingest the web — scoping
-rule 2 — and this was an unreviewed egress path).
+reviewer reads code and CI results, it does not ingest the web —
+and this was an unreviewed egress path).
 
 Remaining tool set: `viking_search`, `viking_read`, `viking_browse`,
 `viking_write`, `viking_archive_expand`. In a leaf, the same minus
@@ -251,9 +252,9 @@ read as empty answers.
 * **No failure reads as "No results found".** `find()` returns the envelope
   instead of collapsing every failure to `[]`, and `viking_search`,
   `viking_read` and `viking_browse` name a refused key, a dead server or a
-  busy directory as what it is (`failureText`): every PR-session memory call
-  in history came back "No results found." or "No content at …", two of them
-  inside the five-week `Invalid API Key` outage. "No content" / "Not found" /
+  busy directory as what it is (`failureText`): before this, every failed
+  memory call came back "No results found." or "No content at …", so an
+  authentication outage read as an empty memory. "No content" / "Not found" /
   "Empty directory" now mean exactly that (a NOT_FOUND or an empty answer).
 * **A refused key is re-read once.** The primary client's key is re-resolved
   from its source after an auth failure (`rereadApiKey` in `config.ts`) and
@@ -269,7 +270,7 @@ Touches: `qcr-honest.ts` (new), `qcr-write.ts` (`buildBatchWriteRequest`,
 
 ### 0007 — bounded recall, no commit (S3)
 
-Owner ruling R3 (2026-10-06): PR sessions keep this extension, bounded — the
+By the owner's ruling, PR sessions keep this extension, bounded — the
 per-turn recall wait is capped at 500 ms and query expansion is off. Four
 changes:
 
@@ -313,7 +314,7 @@ changes:
   `session_shutdown` and the `/viking commit` command are gone;
   `SyncManager.commit()` sends nothing and queues nothing, and a commit an
   older build queued on disk is answered with a final refusal on replay, so
-  it is dropped, never sent. Per-turn sync STAYS (R3); the raw tier ages out
+  it is dropped, never sent. Per-turn sync STAYS (same ruling); the raw tier ages out
   by the daemon's DELETE when the PR closes (and its reconcile sweep).
 
 Touches: `qcr-recall.ts` (new), `recall.ts` (the bounded, retired-aware
@@ -447,7 +448,7 @@ passes `undefined` exactly as before. Marked `[QCR build conformance]`.
 
 Touches: `index.ts`, `vendor-pi-types.d.ts` (deleted), this README.
 
-### 0013 — `createOpenViking(cfg)`: a factory over a value (`[QCR PATCH 12]`, P3.4)
+### 0013 — `createOpenViking(cfg)`: a factory over a value (`[QCR PATCH 12]`)
 
 The extension no longer reads the process. `index.ts` exports
 `createOpenViking(cfg): ExtensionFactory`, and its default export is the shim:

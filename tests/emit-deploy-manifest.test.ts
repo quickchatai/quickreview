@@ -1,5 +1,5 @@
 // scripts/emit-deploy-manifest.mjs: the manifest the release workflow attaches.
-// It must validate against the P7.14 parser (deploy-manifest.mjs, documented by
+// It must validate against the parser (deploy-manifest.mjs, documented by
 // deploy/manifest.schema.json) and carry the pins the checkout's Dockerfiles hold.
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";

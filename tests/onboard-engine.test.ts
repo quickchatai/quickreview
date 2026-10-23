@@ -170,7 +170,7 @@ describe("preflight step lifecycle", () => {
     expect(detail).toMatch(/requires authentication/);
   });
 
-  it("inside the image there is no Docker, and that is noted, not failed (D16)", async () => {
+  it("inside the image there is no Docker, and that is noted, not failed", async () => {
     const calls: string[] = [];
     const inImage = await engine({ dockerOk: false, inContainer: true }, calls).runStep(
       PREFLIGHT_STEP_ID,

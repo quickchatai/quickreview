@@ -1,4 +1,4 @@
-// The GitHub token handoff without env [P6.5b, D39]. The caller writes the
+// The GitHub token handoff without env. The caller writes the
 // token to a 0600 file in a fresh 0700 dir; packages/pi-plugin/src/ghcred.ts reads it once at
 // startup, unlinks it and keeps it in Node memory only. Pinned here:
 //   - the read: once, unlinked before the content is in memory, the variable

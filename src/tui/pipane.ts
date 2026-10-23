@@ -1,7 +1,7 @@
 // Live pi pane (the board's lower region) while an operator is inside a PR's
 // pi: a debug round (`debug-pr-<n>`) or a takeover (`takeover-pr-<n>`). Every
 // other PR pane is the transcript viewer (viewer.ts): the bot's rounds run in
-// workers, with no `pr-<n>` tmux session to mirror (P9.6).
+// workers, with no `pr-<n>` tmux session to mirror.
 //
 // The pane is an embedded terminal. Output comes from
 // `tmux capture-pane -e -p -J` inside the container (poll tick, ~400ms while

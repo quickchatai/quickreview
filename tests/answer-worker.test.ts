@@ -1,4 +1,4 @@
-// [P8.17] The idle-PR answer worker (src/botworker.ts `--mode answer`), on pi's REAL
+// The idle-PR answer worker (src/botworker.ts `--mode answer`), on pi's REAL
 // SDK over pi-ai's faux provider: no model, no network. A real round worker first
 // births the PR's JSONL; the answer worker then resumes it under the same id, takes
 // the operator's message as one turn, replies in its `done` event and exits.
@@ -198,7 +198,7 @@ const jsonl = (): string[] =>
 const header = (file: string): { id: string } =>
   JSON.parse(readFileSync(file, "utf8").split("\n", 1)[0]!) as never;
 
-describe("[P8.17] an idle message resumes the PR's session and is answered", () => {
+describe("an idle message resumes the PR's session and is answered", () => {
   it("resumes the same id, delivers the message as one operator-marked turn, replies in done and exits 0", async () => {
     const file = await birthed();
     const id0 = header(file).id;
@@ -312,7 +312,7 @@ describe("[P8.17] an idle message resumes the PR's session and is answered", () 
   });
 });
 
-describe("[P8.17] may_post gives the session the post scripts, and only those", () => {
+describe("may_post gives the session the post scripts, and only those", () => {
   it("without the mark the session has no bash and no way to the daemon", async () => {
     await birthed();
     // Asked to run a command anyway: there is no such tool, so nothing runs or posts.
@@ -388,7 +388,7 @@ describe("[P8.17] may_post gives the session the post scripts, and only those", 
   });
 });
 
-describe("[P8.17] a worker that died mid-answer is continued, not sent the message again", () => {
+describe("a worker that died mid-answer is continued, not sent the message again", () => {
   it("the marker keeps the message and the post from repeating", async () => {
     const file = await birthed();
     const dies: Step = async () => {

@@ -1,5 +1,5 @@
-// A FAKE host for the managers that start a pi in tmux (the takeover lease, P8.13, and
-// the bot's debug round, P8.13b): tmux sessions, pids with start times and process
+// A FAKE host for the managers that start a pi in tmux (the takeover lease, and
+// the bot's debug round): tmux sessions, pids with start times and process
 // groups, signals that kill (or are ignored, or cannot kill), and a clock that the
 // test moves. The managers' state store, leases, capabilities and launch files are the
 // real ones. No pi, no model, no network.

@@ -492,7 +492,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     });
   }
 
-  /** A round outlived by a newer one. Wording per CLAUDE.md hard rule 2. */
+  /** A round outlived by a newer one. Wording per AGENTS.md invariant 2. */
   async superseded(a: SupersededAnnouncement): Promise<void> {
     if (!this.lifecycleEnabled(LIFECYCLE_CAUSES.superseded)) return;
     await this.post({

@@ -10,7 +10,7 @@ if [[ "${1:-}" == run && " $* " == *" --name quickreview-memory "* ]]; then
 fi
 # The other: the release daemon must trust the rehearsal stub's throwaway CA (the stub answers as
 # api.github.com), and the run spec has no seam for extra environment on the daemon container. The CA
-# bundle's variables ride --env-file, as the P8.20a rehearsal gave them.
+# bundle's variables ride --env-file, as the rehearsal gave them.
 if [[ "${1:-}" == run && " $* " == *" --name quickreview-sandbox "* && -f "$QCR_RH_VM/daemon.env" ]]; then
   shift
   exec /usr/bin/docker run --env-file "$QCR_RH_VM/daemon.env" "$@"

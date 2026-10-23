@@ -36,7 +36,7 @@ export interface LoadedContext {
 
 /** How a route's context files are chosen: pi's own discovery ("default"), none
  * at all ("disabled"), or handed to an in-process session as data with
- * discovery off ("injected": the SDK host's agentsFilesOverride, D34). */
+ * discovery off ("injected": the SDK host's agentsFilesOverride). */
 export type ContextFlag = "default" | "disabled" | "injected";
 
 /** Whether an argv switches context files off (`--no-context-files`, `-nc`). */
@@ -120,8 +120,8 @@ export const INVENTORY_PATH = join(
   "inventory.json",
 );
 
-/** The recorded table. P0.4, P1.1, P2.8, P4.3, P6.4/P6.5 and the canary
- * parity checks (P5.2, P8.2) assert against it. */
+/** The recorded table. The route checks and the canary
+ * parity checks assert against it. */
 export function readInventory(path: string = INVENTORY_PATH): Inventory {
   return JSON.parse(readFileSync(path, "utf8")) as Inventory;
 }

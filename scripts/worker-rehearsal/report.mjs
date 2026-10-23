@@ -33,7 +33,7 @@ const mb = (n) => `${(Number(n) / 1e6).toFixed(0)} MB`;
 const md = [];
 md.push("# Worker rehearsal", "");
 md.push(
-  `P8.20a. The pre-deletion rehearsal of the worker world: HEAD's release and memory images, run with the cutover run spec's volumes and command (\`deploy/qcr-update.sh\`) over a legacy-shaped host directory, before any Phase 9 deletion. While the process runtime, the tmux host and the bridge still exist a failure is found before anything is gone.`,
+  `The pre-deletion rehearsal of the worker world: HEAD's release and memory images, run with the cutover run spec's volumes and command (\`deploy/qcr-update.sh\`) over a legacy-shaped host directory, before the legacy runtime was deleted. While the process runtime, the tmux host and the bridge still exist a failure is found before anything is gone.`,
   "",
   `Run ${date} on ${sha}. **${passed} of ${rows.length} checks passed, ${failed} failed.** Cost: $0 (no model, no GitHub, no registry; the containers cannot reach anything but a scripted stub).`,
   "",

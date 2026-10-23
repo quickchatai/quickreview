@@ -15,7 +15,7 @@
 # provisions the users, then execs src/openviking/sidecar-main.ts, which
 # supervises the server and the embedder and drives the re-embed.
 #
-# The four OpenViking pins of CLAUDE.md rule 7 move here intact (the vendored
+# The four OpenViking pins of the version-pinning rule move here intact (the vendored
 # extension's base commit rides the repo, not an image). The ARG defaults below
 # are a MIRROR of config.toml [openviking] and deploy/ansible/group_vars/
 # all.yml: tests/memory-image.test.ts fails the moment one drifts, the same

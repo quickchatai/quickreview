@@ -6,7 +6,7 @@
 #   qcr review …         one throwaway container per call (`docker run --rm`):
 #                        the container is the sandbox, there is no docker.sock
 #                        in it and no Docker-in-Docker.
-#   qcr review start …   a detached container of its own (P6.8): the target is
+#   qcr review start …   a detached container of its own: the target is
 #                        claimed in a short call, then the review runs in
 #                        `qcr-review-<run id>` until it ends; `status` and
 #                        `stop` find it by label. `stop` sends `docker stop -t
@@ -29,20 +29,20 @@
 #   the GitHub token's one-shot file         /run/qcr-in         read-write
 #
 # What it never gets: the gh config, the install home that holds
-# <install>/secrets/ (only the profiles dir is mounted, D39 amending R12), the
+# <install>/secrets/ (only the profiles dir is mounted), the
 # ssh agent, docker.sock. One call is the exception for the agent, never for
-# docker.sock (D35): the TUI container below. There is no GitHub App on a laptop (D14) and so no
+# docker.sock: the TUI container below. There is no GitHub App on a laptop and so no
 # container that mounts secrets: the token is GITHUB_TOKEN, GH_TOKEN or
 # `gh auth token`, resolved HERE on the host. It is handed over as a 0600 file
-# in a fresh 0700 directory, which the image reads once and unlinks (D39 amending
-# R7, packages/pi-plugin/src/ghcred.ts); it is never in -e/--env or in any argv.
+# in a fresh 0700 directory, which the image reads once and unlinks
+# (packages/pi-plugin/src/ghcred.ts); it is never in -e/--env or in any argv.
 #
 # Model-reaching calls start as root with only CAP_SETUID/CAP_SETGID and drop to
 # your uid inside, so the model's tools can run as another uid and the kernel
-# keeps them off the process that holds the token (D32, docker/entrypoint.sh).
+# keeps them off the process that holds the token (docker/entrypoint.sh).
 # Every call: --init, --cap-drop ALL, no-new-privileges.
 #
-# The TUI (D35) is two containers and no docker.sock anywhere:
+# The TUI is two containers and no docker.sock anywhere:
 #   the companion   started, adopted or recreated HERE, on the host, from the
 #                   `docker run` the image prints (`qcr companion plan`, so the
 #                   mount list lives in one place, src/tui/companion.ts). It gets
@@ -65,7 +65,7 @@ QCR_PINNED_IMAGE='@@QCR_IMAGE@@'
 IMAGE="${QCR_IMAGE:-$QCR_PINNED_IMAGE}"
 
 # The group that owns the login volume's files, so that a login made under one
-# uid is readable under any other (the entrypoint's share_login, P6.7).
+# uid is readable under any other (the entrypoint's share_login).
 LOGIN_GID=4747
 
 PULL_HINT='check the version exists; a private mirror needs gh auth refresh -s read:packages, then  gh auth token | docker login ghcr.io -u <your github user> --password-stdin'
@@ -211,7 +211,7 @@ if [ "$verb" = update ]; then
 fi
 
 # mode: the image's entrypoint mode. tty: the verbs that need a terminal.
-# split: a call that can reach a model or GitHub (the D32 root start, a token).
+# split: a call that can reach a model or GitHub (the root start, a token).
 # gh: whether the call is handed the GitHub token (not `open`).
 mode=cli
 tty=0
@@ -272,7 +272,7 @@ if [ "$verb" = scan ]; then
   [ "$fg" = 0 ] || set -- "$@" --foreground
 fi
 
-# ---- qcr review start|status|stop: a run is a container (P6.8) --------------------
+# ---- qcr review start|status|stop: a run is a container --------------------
 
 # phase is set on the two inner calls of a `review start` below: claim (a short
 # call that identifies the target, takes the lock and writes the run, with no
@@ -394,7 +394,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# ---- the companion (D35) ----------------------------------------------------------
+# ---- the companion ----------------------------------------------------------
 
 # The host's ssh agent socket as docker can bind it, or nothing. Docker Desktop
 # relays the host agent at a fixed path inside its VM.
@@ -552,7 +552,7 @@ if common="$(git -C "$root" rev-parse --git-common-dir 2>/dev/null)" && [ -n "$c
   fi
 fi
 
-# ---- the GitHub token (D14: GITHUB_TOKEN, GH_TOKEN, gh; no App on a laptop) -----
+# ---- the GitHub token (GITHUB_TOKEN, GH_TOKEN, gh; no App on a laptop) -----
 
 # The claim call only reads git: it needs no token, and a token file is read once.
 if [ "$split" = 1 ] && [ "$gh" = 1 ] && [ "$phase" != claim ]; then
@@ -618,7 +618,7 @@ else
   [ "$companion" = 1 ] || set -- "$@" -e QCR_STATE_HOME=/opt/qcr/state/home
   set -- "$@" --mount "type=volume,src=qcr-login,dst=/qcr-login,readonly"
 
-  # The user profile dir, read-only, and ONLY it (D39). Not the install home.
+  # The user profile dir, read-only, and ONLY it. Not the install home.
   profiles="${XDG_CONFIG_HOME:-$HOME/.config}/qcr/profiles"
   if [ -d "$profiles" ]; then
     profiles="$(cd "$profiles" && pwd -P)"
@@ -650,7 +650,7 @@ else
   fi
 fi
 
-# ---- the TUI container (D35) --------------------------------------------------------
+# ---- the TUI container --------------------------------------------------------
 
 if [ "$mode" = tui ]; then
   set -- "$@" --label qcr.role=tui

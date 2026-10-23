@@ -1,4 +1,4 @@
-// [P8.3] The bot's per-round worker (src/botworker.ts), on pi's REAL SDK over
+// The bot's per-round worker (src/botworker.ts), on pi's REAL SDK over
 // pi-ai's faux provider: no model, no network. A fake daemon (a real IpcServer on a
 // real unix socket) answers the worker's spec and wakes requests and records every
 // event; the model's bash runs the real commit-verdict.sh and the post scripts
@@ -8,7 +8,7 @@
 //   - a scripted round commits its verdict and posts, and the daemon is told
 //     (verdict_written, posted) in the order a round emits its events;
 //   - the resumed id is the JSONL's id, and a second round appends to the SAME file;
-//   - lens JSONLs are written beside the round's lens ledger (D10);
+//   - lens JSONLs are written beside the round's lens ledger;
 //   - held wakes are delivered before exit, in order, and acked one by one;
 //   - ledger-pin's session_before_compact fires at the end of the round;
 //   - a worker that died mid-round is continued, not given the order again;
@@ -187,7 +187,7 @@ const jsonl = (): string[] => readdirSync(world.sessionDir).filter((f) => f.ends
 const header = (file: string): { id: string; type: string } =>
   JSON.parse(readFileSync(file, "utf8").split("\n", 1)[0]!) as never;
 
-describe("[P8.3] the command line", () => {
+describe("the command line", () => {
   it("takes --command and --mode, and nothing else", () => {
     expect(parseWorkerArgs(["--command", "c1", "--mode", "round"])).toEqual({
       command: "c1",
@@ -216,7 +216,7 @@ describe("[P8.3] the command line", () => {
   });
 });
 
-describe("[P8.3] the spec the daemon answers with", () => {
+describe("the spec the daemon answers with", () => {
   const good = (): WorkerSpec => world.spec("c-spec", "order\n");
 
   it("round-trips a good spec", () => {
@@ -243,7 +243,7 @@ describe("[P8.3] the spec the daemon answers with", () => {
   });
 });
 
-describe("[P8.3] a round at birth", () => {
+describe("a round at birth", () => {
   it("opens a session, runs the order, reports each step and exits 0", async () => {
     world.stageVerdict(1);
     const root = world.root;
@@ -335,7 +335,7 @@ describe("[P8.3] a round at birth", () => {
   });
 });
 
-describe("[P8.3] resume under the same id", () => {
+describe("resume under the same id", () => {
   it("a second round appends to the SAME JSONL, under the id in its header", async () => {
     const first = await round("ORDER ONE\n", script([say("one done")]));
     expect(first.code).toBe(EXIT.ok);
@@ -360,8 +360,8 @@ describe("[P8.3] resume under the same id", () => {
   });
 });
 
-describe("[P8.3] the planned wave and the lens JSONLs", () => {
-  it("starts the wave before the first prompt, joins it through lens_wave, and keeps each pass's JSONL (D10)", async () => {
+describe("the planned wave and the lens JSONLs", () => {
+  it("starts the wave before the first prompt, joins it through lens_wave, and keeps each pass's JSONL", async () => {
     faux = pricedFaux(() => 0.25);
     const tasks = writeTasks(world, 1, ["pass-a", "pass-b"]);
     const { code } = await round(
@@ -387,7 +387,7 @@ describe("[P8.3] the planned wave and the lens JSONLs", () => {
     const text = readFileSync(file, "utf8");
     expect(text).toContain(`from the task files in ${tasks}`);
     expect(text).toContain("pass-a, pass-b");
-    // Both passes took a permit from the daemon's broker (D25) and gave it back.
+    // Both passes took a permit from the daemon's broker and gave it back.
     expect(daemon.permitAsks).toHaveLength(2);
     expect(daemon.permits.status()).toMatchObject({ in_use: 0, queued: 0 });
     // Both passes ran once, their JSONLs beside the round's lens ledger.
@@ -407,14 +407,14 @@ describe("[P8.3] the planned wave and the lens JSONLs", () => {
       .join("\n");
     expect(lensText).toContain("QCR_SESSION_NAME=pr-7");
     expect(lensText).not.toContain("QCR_IPC_");
-    // The round's spend is totalled for the daemon (P8.9), 0.25 a message: the main
+    // The round's spend is totalled for the daemon, 0.25 a message: the main
     // session's two messages and the passes' three, each run counted once.
     expect(daemon.of("done")[0]!.body["lens_usd"]).toBeCloseTo(0.75);
     expect(daemon.of("done")[0]!.body["total_usd"]).toBeCloseTo(1.25);
     expect(daemon.of("usage").at(-1)!.body["total_usd"]).toBeCloseTo(1.25);
   });
 
-  it("reports the very figure the daemon's transcript measurement reads off the same JSONL (P8.9)", async () => {
+  it("reports the very figure the daemon's transcript measurement reads off the same JSONL", async () => {
     faux = pricedFaux(() => 0.25);
     writeTasks(world, 1, ["pass-a", "pass-b"]);
     const { code } = await round(
@@ -446,7 +446,7 @@ describe("[P8.3] the planned wave and the lens JSONLs", () => {
   });
 });
 
-describe("[P8.3] held wakes", () => {
+describe("held wakes", () => {
   it("are delivered after the round and before the exit, in order, each acked", async () => {
     daemon.wakes.push(
       [
@@ -522,7 +522,7 @@ describe("[P8.3] held wakes", () => {
   });
 
   it("a daemon that does not know wakes.take holds none", async () => {
-    // The ops are the daemon's (P8.6); an older one answers unknown_op.
+    // The ops are the daemon's; an older one answers unknown_op.
     daemon.forget("wakes.take");
     const { code } = await round("ORDER\n", script([say("ok")]));
     expect(code).toBe(EXIT.ok);
@@ -530,7 +530,7 @@ describe("[P8.3] held wakes", () => {
   });
 });
 
-describe("[P8.3] compaction through ledger-pin", () => {
+describe("compaction through ledger-pin", () => {
   it("pi's compact() fires session_before_compact: the ledger is pinned and persisted", async () => {
     const ledger = "LEDGER PR #7 @ aaaaaaa\n- [ ] src/a.ts:2 off-by-one\n";
     // History long enough for pi to have something to summarise and a tail to keep.
@@ -567,7 +567,7 @@ describe("[P8.3] compaction through ledger-pin", () => {
   });
 });
 
-describe("[P8.3] a worker that died mid-round (D22)", () => {
+describe("a worker that died mid-round", () => {
   it("a fresh worker resumes the JSONL and continues: the order is not sent again, nothing is posted twice", async () => {
     // Worker one posts, then the daemon goes away while the model is still working.
     const dies: Step = async () => {
@@ -634,7 +634,7 @@ describe("[P8.3] a worker that died mid-round (D22)", () => {
   });
 });
 
-describe("[P8.3] the borrowed login (D5)", () => {
+describe("the borrowed login", () => {
   const writeLogin = (expires: number): string => {
     const file = join(world.agentDir, "auth.json");
     writeFileSync(
@@ -674,7 +674,7 @@ describe("[P8.3] the borrowed login (D5)", () => {
   });
 });
 
-describe("[P8.3] nothing runs on what the daemon did not dispatch", () => {
+describe("nothing runs on what the daemon did not dispatch", () => {
   it("a payload whose bytes are not the recorded sha256 starts no session", async () => {
     dispatching(faux, script([say("never")]));
     const spec = world.spec("cmd-bad", "THE ORDER\n");
@@ -724,7 +724,7 @@ describe("[P8.3] nothing runs on what the daemon did not dispatch", () => {
   });
 });
 
-describe("[P8.3] a round that fails", () => {
+describe("a round that fails", () => {
   it("a failed turn is reported and exits 1, with no wakes taken, no compaction and no done", async () => {
     daemon.wakes.push([{ id: "w1", message: "AUTHOR REPLY\n" }]);
     const failing: Step = fauxAssistantMessage([], {
@@ -761,7 +761,7 @@ describe("[P8.3] a round that fails", () => {
   });
 });
 
-// ---- [P8.12] the operator's controls, on the real SDK over the faux provider ------
+// ---- the operator's controls, on the real SDK over the faux provider ------
 
 async function until(cond: () => boolean, what: string, ms = 10_000): Promise<void> {
   const end = Date.now() + ms;
@@ -788,7 +788,7 @@ function held(text: string): { step: Step; release: () => void } {
   return { step, release };
 }
 
-describe("[P8.12] steer, follow-up and abort reach the running session", () => {
+describe("steer, follow-up and abort reach the running session", () => {
   it("a steer lands after the turn in flight: the model's next request carries it", async () => {
     const first = held("first answer");
     const second: string[] = [];

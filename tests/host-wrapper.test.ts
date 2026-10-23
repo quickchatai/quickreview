@@ -1,4 +1,4 @@
-// The host wrapper (P6.6): `docker run … install` writes ~/.local/bin/qcr, and
+// The host wrapper: `docker run … install` writes ~/.local/bin/qcr, and
 // the wrapper starts one throwaway container per call. No docker, no image, no
 // model: the installed sh runs against a fake `docker` (and a fake `gh`) on
 // PATH that log every argv. What is pinned:
@@ -11,9 +11,9 @@
 //     and qcr-login volumes, and the token dir;
 //   - the token: GITHUB_TOKEN, GH_TOKEN, then gh, staged as a 0600 file in a
 //     0700 dir that is gone after the call; in no -e/--env and no argv; no App
-//     and so no mint container and no secrets mount (D14);
+//     and so no mint container and no secrets mount;
 //   - the verbs: the model-reaching calls start as root with SETUID/SETGID for
-//     the D32 uid split, the others as the caller; tui/open/login/debug get a
+//     the uid split, the others as the caller; tui/open/login/debug get a
 //     terminal; a scan runs in the foreground inside the sandbox marker;
 //   - update: repins the file; the once-a-day notice never fires in CI.
 import { afterEach, describe, expect, it } from "vitest";
@@ -79,7 +79,7 @@ case "$1" in
   rm) rm -f "$FAKE_DIR/companion-state"; exit 0 ;;
   kill) exit 0 ;;
   ps)
-    # the review containers (P6.8): their names, or their run ids as labelled
+    # the review containers: their names, or their run ids as labelled
     case " $* " in
       *"qcr.role=review"*)
         case "$*" in
@@ -407,7 +407,7 @@ describe("install: the image writes the wrapper", () => {
 // ---- one container per call ----------------------------------------------------
 
 describe("a review call", () => {
-  it("is a throwaway, capless, no-new-privileges container with the D32 root start", () => {
+  it("is a throwaway, capless, no-new-privileges container with the root start", () => {
     const r = rig();
     const out = r.run(["review", "--preview", "--json"], { env: { GITHUB_TOKEN: TOKEN } });
     expect(out.status, out.stderr).toBe(0);
@@ -680,9 +680,9 @@ describe("the other verbs", () => {
   });
 });
 
-// ---- the TUI: a companion on the host, a TUI container, no docker.sock (D35) ----------
+// ---- the TUI: a companion on the host, a TUI container, no docker.sock ----------
 
-describe("the TUI and its companion (D35)", () => {
+describe("the TUI and its companion", () => {
   const NAME = "qcr-tui-companion";
   const TMUX_VOLUME = `${NAME}-tmux`;
   const withCompanion = { QCR_NO_COMPANION: "" };
@@ -1070,7 +1070,7 @@ describe("qcr-host.sh", () => {
 const callIndex = (r: Rig, argv: string[]): number =>
   r.calls(true).findIndex((c) => c.join("\n") === argv.join("\n"));
 
-// ---- a review run is a container (P6.8) -------------------------------------------
+// ---- a review run is a container -------------------------------------------
 
 describe("qcr review start | status | stop: the run is a detached container", () => {
   /** The image runs: `run` calls that are not the companion's. */

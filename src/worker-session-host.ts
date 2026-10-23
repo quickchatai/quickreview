@@ -1,6 +1,6 @@
-// The worker host (P8.6): the SessionHooks the daemon's state machine speaks,
-// served by the per-round WorkerSupervisor (P8.5) over the host-neutral
-// PrSessionLifecycle (P8.1). No tmux session and no inject bridge is involved:
+// The worker host: the SessionHooks the daemon's state machine speaks,
+// served by the per-round WorkerSupervisor over the host-neutral
+// PrSessionLifecycle. No tmux session and no inject bridge is involved:
 //
 //   - A PR's "session" is its JSONL and its OpenViking id. Nothing runs between
 //     rounds. A round or a wake is a durable command (`session_commands`), and
@@ -11,19 +11,19 @@
 //     started, so "did the order reach the session" is a column. The silent-round
 //     net (`roundPromptAccepted`) and the recheck sweep (`wakeReceiptPresent`)
 //     both read it, and neither reads a transcript. Their answers are definitive.
-//   - Compaction is the worker's, before it exits (D22); the daemon never asks
+//   - Compaction is the worker's, before it exits; the daemon never asks
 //     for one.
 //   - Held wakes of a running round are taken by that round's own worker
 //     (`HeldWakeHandoff` in src/wakes.ts). Whatever is still held when the worker
 //     is gone is flushed by `inject`, which starts a wake worker for it.
 //   - The fence is the supervisor's `fence`: end the worker, answer once it is
 //     reaped, leave the row to the caller (as a tmux kill leaves it).
-//   - A PR armed for a debug round (P8.13b, src/debuground.ts) is handed its round
+//   - A PR armed for a debug round (src/debuground.ts) is handed its round
 //     order in interactive pi: `start` gives the order to the debug manager in a
 //     worker's place, and the supervisor's host gate keeps every worker out.
 //
-// The daemon builds this host as the bot's ONLY host (src/workerworld.ts, P8.15w); the tmux manager
-// (src/sessions.ts) hosts no PR session and still serves the overseer until P9.13.
+// The daemon builds this host as the bot's ONLY host (src/workerworld.ts); the tmux manager
+// (src/sessions.ts) hosts no PR session and still serves the overseer for now.
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.js";
@@ -63,7 +63,7 @@ export interface WorkerSessionHostOptions {
   /** The durable command store the daemon and the supervisor share. */
   store: StateStore;
   supervisor: WorkerSupervisor;
-  /** The debug round (P8.13b): a round order of a PR whose lease is armed for one goes
+  /** The debug round: a round order of a PR whose lease is armed for one goes
    * to its interactive pi, in a worker's place. Omitted: every round goes to a worker. */
   debugRounds?: Pick<DebugRoundManager, "claims" | "deliver"> &
     Partial<Pick<DebugRoundManager, "holds" | "release">>;
@@ -253,7 +253,7 @@ export class WorkerSessionHost implements SessionHooks {
    * row stays the one obligation, the supervisor's own checks recover it, and the
    * event says why. */
   private async start(command: SessionCommandRow): Promise<void> {
-    // A PR armed for a debug round (P8.13b) takes its round order in a pi, not a worker.
+    // A PR armed for a debug round takes its round order in a pi, not a worker.
     if (this.debugRounds?.claims(command)) {
       const delivered = await this.debugRounds.deliver(command);
       if (!delivered.ok) {

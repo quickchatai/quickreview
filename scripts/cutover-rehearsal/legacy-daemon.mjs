@@ -1,4 +1,4 @@
-// The legacy bot, as far as the cutover can see it (P8.20). A STAND-IN, not the legacy daemon:
+// The legacy bot, as far as the cutover can see it. A STAND-IN, not the legacy daemon:
 // it runs inside a container whose image carries no qcr.layout label (so every consumer reads
 // "legacy"), over the legacy-shaped host directory, and speaks the contract the updater and the
 // operator's tools hold the legacy bot to:
@@ -84,7 +84,7 @@ const poll = () => {
         reason: `the legacy stand-in only knows drain (got ${cmd.command})`,
       });
     } else if (unknownDrainFields(cmd).length > 0) {
-      // the legacy command schema is strict: `hold` (P8.21b) is a field it has never heard of
+      // the legacy command schema is strict: `hold` is a field it has never heard of
       answer(base, {
         ok: false,
         reason: `unknown field in drain command: ${unknownDrainFields(cmd).join(",")}`,

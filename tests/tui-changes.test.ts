@@ -126,7 +126,7 @@ describe("building the register", () => {
       record(
         "d".repeat(40),
         "2026-08-25T12:00:00Z",
-        "mat",
+        "alice",
         'Revert "severity"',
         `Revert "severity"\n\nThis reverts commit ${target}.\n`,
       ) + landed(target, "2026-08-25T09:00:00Z", "severity");
@@ -144,14 +144,14 @@ describe("building the register", () => {
       record(
         "c".repeat(40),
         "2026-08-25T13:00:00Z",
-        "mat",
+        "alice",
         'Reapply "severity"',
         `Reapply\n\nThis reverts commit ${b}.\n`,
       ) +
       record(
         b,
         "2026-08-25T12:00:00Z",
-        "mat",
+        "alice",
         'Revert "severity"',
         `Revert\n\nThis reverts commit ${a}.\n`,
       ) +
@@ -162,7 +162,7 @@ describe("building the register", () => {
       record(
         "e".repeat(40),
         "2026-08-25T14:00:00Z",
-        "mat",
+        "alice",
         "Revert",
         `Revert\n\nThis reverts commit ${a}.\n`,
       ) + log;
@@ -175,7 +175,7 @@ describe("building the register", () => {
       record(
         "d".repeat(40),
         "2026-08-25T12:00:00Z",
-        "mat",
+        "alice",
         "Revert",
         `Revert\n\nThis reverts commit ${target.slice(0, 12)}.\n`,
       ) + landed(target, "2026-08-25T09:00:00Z", "severity");
@@ -377,7 +377,7 @@ describe("the revert, and everything it refuses", () => {
       record(
         "d".repeat(40),
         "2026-08-25T12:00:00Z",
-        "mat",
+        "alice",
         "Revert",
         `Revert\n\nThis reverts commit ${target}.\n`,
       ) + landed(target, "2026-08-25T09:00:00Z", "severity change");
@@ -453,7 +453,7 @@ describe("a revert of a change OLDER than the scan window", () => {
     log = record(
       "d".repeat(40),
       "2026-09-30T12:00:00Z",
-      "mat",
+      "alice",
       "Revert",
       `Revert\n\nThis reverts commit ${target}.\n`,
     );

@@ -1,4 +1,4 @@
-// [P8.5] The WorkerSupervisor: the daemon's end of the per-round worker (D22/D23).
+// The WorkerSupervisor: the daemon's end of the per-round worker.
 //
 // The worker is a FAKE node process (tests/helpers/fake-worker.mjs) that speaks
 // the real IPC to a real IpcServer on a real unix socket, with the supervisor's
@@ -64,7 +64,7 @@ interface RigOptions {
   extraEnv?: Record<string, string>;
   now?: () => number;
   buildEnv?: Record<string, string>;
-  /** The central lens permit broker (P8.10), handed to the supervisor. */
+  /** The central lens permit broker, handed to the supervisor. */
   permits?: PermitBroker;
 }
 
@@ -219,7 +219,7 @@ const finished =
   () =>
     !sup.isLive(SESSION);
 
-describe("[P8.5] the worker's life", () => {
+describe("the worker's life", () => {
   it("serves a round: spec over IPC, accepted starts the row, exit 0 acks it", async () => {
     const r = await rig();
     const row = r.submit();
@@ -304,7 +304,7 @@ describe("[P8.5] the worker's life", () => {
   });
 });
 
-describe("[P8.5] ending a worker", () => {
+describe("ending a worker", () => {
   it("hard-kills a busy loop that ignores SIGTERM, at its wall clock", async () => {
     const r = await rig({ mode: "busy", wallMs: 300 });
     r.sup.start();
@@ -407,7 +407,7 @@ describe("[P8.5] ending a worker", () => {
   });
 });
 
-describe("[P8.5] the fences", () => {
+describe("the fences", () => {
   it("rejects a stale generation's request and event, and does not act on them", async () => {
     const r = await rig({ mode: "stale" });
     const row = r.submit();
@@ -579,7 +579,7 @@ describe("[P8.5] the fences", () => {
   });
 });
 
-describe("[P8.5] the worker's env", () => {
+describe("the worker's env", () => {
   const secrets: NodeJS.ProcessEnv = {
     PATH: "/usr/bin",
     HOME: "/home/x",
@@ -637,7 +637,7 @@ describe("[P8.5] the worker's env", () => {
   });
 });
 
-describe("[P8.5] a restart", () => {
+describe("a restart", () => {
   it("kills the previous daemon's worker group and requeues its round under the same id", async () => {
     const r = await rig({ mode: "group", limits: { killGraceMs: 150 } });
     const row = r.submit();
@@ -793,7 +793,7 @@ describe("[selfimprove] settlement and recovery keep their promises", () => {
   });
 });
 
-describe("[P8.5] what an exit means", () => {
+describe("what an exit means", () => {
   const base = {
     code: 0 as number | null,
     signal: null as NodeJS.Signals | null,
@@ -822,7 +822,7 @@ describe("[P8.5] what an exit means", () => {
   });
 });
 
-describe("[P8.6] what the session host asks of it", () => {
+describe("what the session host asks of it", () => {
   it("fence ends a worker that ignores SIGTERM, answers once it is reaped, and leaves its row", async () => {
     const r = await rig({ mode: "busy", wallMs: 60_000 });
     const row = r.submit();
@@ -924,7 +924,7 @@ function plantLease(
   });
 }
 
-// ---- [P8.5b] the crash-loop breaker and the drain -------------------------------
+// ---- the crash-loop breaker and the drain -------------------------------
 
 type Rig = Awaited<ReturnType<typeof rig>>;
 
@@ -950,7 +950,7 @@ const spawned = (r: Rig): number => r.events("worker_spawned").length;
 const crashAnomalies = (r: Rig) =>
   r.store.anomalies().filter((a) => a.kind === "worker_crash_loop");
 
-describe("[P8.5b] the per-PR breaker", () => {
+describe("the per-PR breaker", () => {
   it("parks a PR after 2 consecutive failures: the anomaly, the last error, and no third spawn", async () => {
     const r = await rig();
     await runWorker(r, PR, "fail");
@@ -1059,7 +1059,7 @@ describe("[P8.5b] the per-PR breaker", () => {
   });
 });
 
-describe("[P8.5b] the global drain", () => {
+describe("the global drain", () => {
   it("three PRs failing within 15 min with no success set the drain; only drain off lifts it", async () => {
     const r = await rig();
     await runWorker(r, 21, "fail");
@@ -1162,7 +1162,7 @@ describe("[P8.5b] the global drain", () => {
   });
 });
 
-describe("[P8.5b] a requeued round never re-posts", () => {
+describe("a requeued round never re-posts", () => {
   it("a crash after `posted` requeues the round, and the replay finds the post already confirmed", async () => {
     const r = await rig({ mode: "posted-crash" });
     const journal = new PostingJournal({ dir: join(r.base, "receipts"), repo: "o/r" });
@@ -1209,7 +1209,7 @@ describe("[P8.5b] a requeued round never re-posts", () => {
   });
 });
 
-describe("[P8.5b] a worker's log", () => {
+describe("a worker's log", () => {
   it("is state/workers/<command>.log, rotated by size and pruned by age and count", async () => {
     const r = await rig({ mode: "ok" });
     const row = r.submit();
@@ -1221,7 +1221,7 @@ describe("[P8.5b] a worker's log", () => {
   });
 });
 
-describe("[P8.10] the permit broker behind the supervisor", () => {
+describe("the permit broker behind the supervisor", () => {
   it("serves the permit ops only when it was given a broker", async () => {
     const without = await rig();
     expect(Object.keys(without.sup.ops())).not.toContain("permits.acquire");
@@ -1250,7 +1250,7 @@ describe("[P8.10] the permit broker behind the supervisor", () => {
   });
 });
 
-// ---- [P8.12] the operator's controls, the abort and the fence ------------------
+// ---- the operator's controls, the abort and the fence ------------------
 
 const controlsSeen = (r: Rig, id: string): Array<{ kind: string; body: Record<string, unknown> }> =>
   JSON.parse(r.out(id, "controls.json") || "[]");
@@ -1264,7 +1264,7 @@ async function liveWorker(mode: string, limits: Partial<WorkerLimits> = {}) {
   return { r, row, info };
 }
 
-describe("[P8.12] steer and follow-up are forwarded and acked", () => {
+describe("steer and follow-up are forwarded and acked", () => {
   it("pushes a steer over IPC and answers with the worker's ack", async () => {
     const { r, row } = await liveWorker("controls");
     expect(await r.sup.control(PR, "steer", "look at the lock order")).toEqual({
@@ -1363,7 +1363,7 @@ describe("[P8.12] steer and follow-up are forwarded and acked", () => {
   });
 });
 
-describe("[P8.12] abort-round: the worker settles it, or the group is killed", () => {
+describe("abort-round: the worker settles it, or the group is killed", () => {
   it("asks the worker to abort; its row fails as ended by the operator, with no SIGKILL", async () => {
     const { r, row, info } = await liveWorker("controls");
     const res = await r.sup.abortRound(PR);
@@ -1422,7 +1422,7 @@ describe("[P8.12] abort-round: the worker settles it, or the group is killed", (
   });
 });
 
-describe("[P8.12] the recovery fence: abort, then a group SIGKILL", () => {
+describe("the recovery fence: abort, then a group SIGKILL", () => {
   it("lets a worker that obeys the abort go by itself and leaves its row", async () => {
     const { r, row, info } = await liveWorker("controls");
     expect(await r.sup.fence(SESSION)).toBe(true);

@@ -1,4 +1,4 @@
-// P5.9b: `qcr open pr <n> [--round r] [--lens id]`. A bot PR session from the box
+// `qcr open pr <n> [--round r] [--lens id]`. A bot PR session from the box
 // that hosts the bot, copied read-only into the state home and forked in pi on this
 // machine. The ssh runner here is real shell: each remote script runs under `sh -c`
 // against a fixture sandbox root, so what the box would be asked is what is run, and
@@ -488,7 +488,7 @@ describe("[open-pr] lens passes", () => {
     const got = await pullPrSession({ pr: 7, lens: "pass-a" }, rig(root).deps);
     expect(got.ok).toBe(false);
     expect(!got.ok && got.error).toContain("kept no lens sessions");
-    expect(!got.ok && got.error).toContain("P8.3");
+    expect(!got.ok && got.error).toContain("workers persist them");
   });
 
   it("opens a kept lens pass by id or unambiguous prefix, as its own leaf copy", async () => {

@@ -1,4 +1,4 @@
-// [P8.5] The worker lease: what a lease may and may not be trusted to kill.
+// The worker lease: what a lease may and may not be trusted to kill.
 // A fake /proc stands in for the machine, so "another container" and "the pid was
 // reused" are cases, not hopes.
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -56,7 +56,7 @@ function machine(
   };
 }
 
-describe("[P8.5] parseStat", () => {
+describe("parseStat", () => {
   it("reads the start time and group past a command name with spaces and parens", () => {
     const raw =
       "812 (node (worker) x) S 1 812 812 0 -1 4194560 100 0 0 0 5 1 0 0 20 0 11 0 987654 1 2";
@@ -76,7 +76,7 @@ describe("[P8.5] parseStat", () => {
   });
 });
 
-describe("[P8.5] judgeLease: a signal is sent only to what the lease really names", () => {
+describe("judgeLease: a signal is sent only to what the lease really names", () => {
   it("names the group when the leader has the recorded start time, group and boot", () => {
     const m = machine({ 500: { start: "1000", pgid: 500 } });
     expect(judgeLease(lease(), m)).toEqual({ kind: "group", pgid: 500 });
@@ -118,7 +118,7 @@ describe("[P8.5] judgeLease: a signal is sent only to what the lease really name
   });
 });
 
-describe("[P8.5] killLease", () => {
+describe("killLease", () => {
   it("sends TERM, waits, and sends KILL to a group that ignores it", async () => {
     const m = machine({ 500: { start: "1000", pgid: 500 } });
     const sent: Array<[number, string]> = [];
@@ -214,7 +214,7 @@ describe("[P8.5] killLease", () => {
   });
 });
 
-describe("[P8.5] the lease file", () => {
+describe("the lease file", () => {
   it("is created whole, once, 0600, and a second create is refused", () => {
     const leases = new WorkerLeases(join(dir, "workers"));
     leases.create(lease());

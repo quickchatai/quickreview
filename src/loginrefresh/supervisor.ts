@@ -1,4 +1,4 @@
-// The login refresher as a supervised child of the daemon (P8.22).
+// The login refresher as a supervised child of the daemon.
 //
 // The daemon spawns `dist/src/loginrefresh/main.js` BY PATH, like the local
 // embedder (src/openviking/embedder.ts), so it imports neither pi nor
@@ -12,8 +12,8 @@
 //     existing anomaly sink (`raiseAnomaly` is store.logAnomaly), so a refresh
 //     that cannot work is known at the first failure and not at authwatch's
 //     "expires in under 48 h" backstop;
-//   - `paused()` / `whenResumed()`: the spawn supervisor (the per-round worker,
-//     P8.3) holds spawns while a login has the refresher paused, because a
+//   - `paused()` / `whenResumed()`: the spawn supervisor (the per-round
+//     worker) holds spawns while a login has the refresher paused, because a
 //     borrower's copy of a file a login is rewriting may not parse.
 //
 // Only started when `[login_refresh] enabled` (the cutover's config): until the

@@ -1512,7 +1512,7 @@ describe("delivery", () => {
     expect(out[0]!.refused).toBe("already-delivered");
   });
 
-  it("never twice holds when the scope itself contains a '|' (selfscan 1deeb309)", async () => {
+  it("never twice holds when the scope itself contains a '|'", async () => {
     // The dedup key is `<target>|<scopeKey>`; `split("|", 2)` TRUNCATES in JS
     // rather than splitting once, so a decision named "use A | B" would look
     // up a scope_key that was never stored and be re-posted every round.

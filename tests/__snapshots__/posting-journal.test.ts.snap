@@ -1,6 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`[P7.2] the journal writes the receipt and job files the readers expect > enqueue, prepare, confirm > pr-12-round-2.json 1`] = `
+exports[`the journal writes the receipt and job files the readers expect > enqueue, prepare, confirm > pr-12-round-2.json 1`] = `
 "{
  "version": 1,
  "posting_key": "v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -16,7 +16,7 @@ exports[`[P7.2] the journal writes the receipt and job files the readers expect 
 }"
 `;
 
-exports[`[P7.2] the journal writes the receipt and job files the readers expect > enqueue, prepare, confirm > pr-12-round-2.json 2`] = `
+exports[`the journal writes the receipt and job files the readers expect > enqueue, prepare, confirm > pr-12-round-2.json 2`] = `
 "{
  "version": 1,
  "posting_key": "v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -36,7 +36,7 @@ exports[`[P7.2] the journal writes the receipt and job files the readers expect 
 }"
 `;
 
-exports[`[P7.2] the journal writes the receipt and job files the readers expect > enqueue, prepare, confirm > pr-12-round-2.outbox.json 1`] = `
+exports[`the journal writes the receipt and job files the readers expect > enqueue, prepare, confirm > pr-12-round-2.outbox.json 1`] = `
 "{
  "version": 1,
  "posting_key": "v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -68,7 +68,7 @@ exports[`[P7.2] the journal writes the receipt and job files the readers expect 
 }"
 `;
 
-exports[`[P7.2] the journal writes the receipt and job files the readers expect > enqueue, prepare, confirm > pr-12-round-2.outbox.json 2`] = `
+exports[`the journal writes the receipt and job files the readers expect > enqueue, prepare, confirm > pr-12-round-2.outbox.json 2`] = `
 "{
  "version": 1,
  "posting_key": "v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -101,7 +101,7 @@ exports[`[P7.2] the journal writes the receipt and job files the readers expect 
 }"
 `;
 
-exports[`[P7.2] the journal writes the receipt and job files the readers expect > enqueue, prepare, confirm > pr-12-round-2.outbox.json 3`] = `
+exports[`the journal writes the receipt and job files the readers expect > enqueue, prepare, confirm > pr-12-round-2.outbox.json 3`] = `
 "{
  "version": 1,
  "posting_key": "v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -134,7 +134,7 @@ exports[`[P7.2] the journal writes the receipt and job files the readers expect 
 }"
 `;
 
-exports[`[P7.2] the journal writes the receipt and job files the readers expect > enqueue, prepare, defer > pr-12-round-2.json 1`] = `
+exports[`the journal writes the receipt and job files the readers expect > enqueue, prepare, defer > pr-12-round-2.json 1`] = `
 "{
  "version": 1,
  "posting_key": "v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -152,7 +152,7 @@ exports[`[P7.2] the journal writes the receipt and job files the readers expect 
 }"
 `;
 
-exports[`[P7.2] the journal writes the receipt and job files the readers expect > enqueue, prepare, defer > pr-12-round-2.outbox.json 1`] = `
+exports[`the journal writes the receipt and job files the readers expect > enqueue, prepare, defer > pr-12-round-2.outbox.json 1`] = `
 "{
  "version": 1,
  "posting_key": "v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -187,7 +187,7 @@ exports[`[P7.2] the journal writes the receipt and job files the readers expect 
 }"
 `;
 
-exports[`[P7.2] the journal writes the receipt and job files the readers expect > enqueue, prepare, dry-run > pr-12-round-2.json 1`] = `
+exports[`the journal writes the receipt and job files the readers expect > enqueue, prepare, dry-run > pr-12-round-2.json 1`] = `
 "{
  "version": 1,
  "posting_key": "v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -204,7 +204,7 @@ exports[`[P7.2] the journal writes the receipt and job files the readers expect 
 }"
 `;
 
-exports[`[P7.2] the journal writes the receipt and job files the readers expect > enqueue, prepare, dry-run > pr-12-round-2.outbox.json 1`] = `
+exports[`the journal writes the receipt and job files the readers expect > enqueue, prepare, dry-run > pr-12-round-2.outbox.json 1`] = `
 "{
  "version": 1,
  "posting_key": "v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -237,7 +237,7 @@ exports[`[P7.2] the journal writes the receipt and job files the readers expect 
 }"
 `;
 
-exports[`[P7.2] the journal writes the receipt and job files the readers expect > skip > pr-12-round-2.json 1`] = `
+exports[`the journal writes the receipt and job files the readers expect > skip > pr-12-round-2.json 1`] = `
 "{
  "version": 1,
  "posting_key": "v1:12:2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",

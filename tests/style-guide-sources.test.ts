@@ -96,7 +96,7 @@ describe("findStyleGuide reads the style rules a repo wrote for its agents", () 
       ".github/instructions/code-style.instructions.md",
       `---\napplyTo: "**"\n---\n${rules(SECTION_MIN_LINES)}\n`,
     );
-    put(".github/instructions/logging.instructions.md", "Wrap fields in extra_data.\n");
+    put(".github/instructions/logging.instructions.md", "Log one event per line.\n");
     put(".github/instructions/python.instructions.md", `## Style\n${rules(SECTION_MIN_LINES)}\n`);
     expect(findStyleGuide(repo)).toEqual([
       ".github/instructions/code-style.instructions.md",
@@ -163,50 +163,50 @@ describe("findStyleGuide reads the style rules a repo wrote for its agents", () 
     expect(findStyleGuide(repo)).toEqual([`AGENTS.md:1-${1 + SECTION_MIN_LINES}`]);
   });
 
-  it("detects the first reviewed repo's real AGENTS.md (its heading outline, 2026-09-23)", () => {
-    // The live file's section structure: the style rules sit under
+  it("detects style rules split into per-stack subsections of a long AGENTS.md", () => {
+    // A typical directive file's section structure: the style rules sit under
     // `## Code Conventions`, split into per-stack `###`/`####` subsections,
-    // between `## Production Database` and `## Datadog Observability`.
+    // between `## Data Store` and `## Metrics`.
     const agents = [
-      "# Agent Guidelines for Acme",
-      "## Project Overview",
-      "Acme is a web platform.",
-      "## Forbidden Paths",
-      "- secrets/",
-      "## Working Guidelines",
-      "### Reviewing PRs",
-      "- read the diff",
-      "## Development Commands",
-      "### Running Tests",
-      "- pytest",
-      "## Production Database",
-      "### Writing migrations that touch large tables",
-      "- batch updates",
+      "# Agent Guide for Lantern",
+      "## About",
+      "Lantern is a small job scheduler.",
+      "## Off-limits Files",
+      "- vendor/",
+      "## How We Work",
+      "### Opening Changes",
+      "- keep diffs small",
+      "## Local Commands",
+      "### Linting",
+      "- make lint",
+      "## Data Store",
+      "### Changing the queue schema",
+      "- add columns, never drop them",
       "## Code Conventions", // line 15
-      "### Backend (Python & Django)",
-      "- Use Django Ninja for all new API endpoints",
-      "- Always use absolute imports rather than relative imports",
-      "- Always include typing for function inputs and outputs",
-      "- Try to use Literals or consts instead of raw strings",
-      "- Module-level constants belong at the top of the file",
-      "### Backend Testing",
-      "- Use pytest",
-      "- Write function-based tests rather than class-based tests",
-      "### Frontend (React & legacy HTML+JS)",
-      "- Use icons from `lucide-react`",
-      "- Use standard Tailwind text sizes",
-      "#### Color & Theme System",
-      "The app uses shadcn preset default.",
-      "## Datadog Observability", // line 30
-      "### Latency Awareness",
-      "- mind p99",
-      "## Design Context",
+      "### Service (Go)",
+      "- Return errors from handlers instead of panicking",
+      "- Keep package names short and lower-case",
+      "- Pass context.Context as the first argument",
+      "- Define interfaces where they are consumed",
+      "- Keep exported identifiers documented",
+      "### Service Tests",
+      "- Use table-driven tests",
+      "- Keep fixtures next to the test that reads them",
+      "### Web Console (TypeScript)",
+      "- Prefer named exports",
+      "- Keep components under 200 lines",
+      "#### Theming",
+      "The console uses plain CSS modules.",
+      "## Metrics", // line 30
+      "### Alert Budgets",
+      "- page only on user impact",
+      "## Roadmap",
       "- see docs",
     ].join("\n");
     put("AGENTS.md", agents + "\n");
     put(
       ".github/instructions/logging.instructions.md",
-      '---\napplyTo: "**"\n---\n\nWrap fields.\n',
+      '---\napplyTo: "**"\n---\n\nLog one event per line.\n',
     );
     expect(findStyleGuide(repo)).toEqual(["AGENTS.md:15-29"]);
   });

@@ -167,7 +167,7 @@ describe("the scan-mode anchor addendum rides only the scan build", () => {
 });
 
 describe("[scan] — config.toml defaults, the profile's overrides", () => {
-  it("an absent [scan] is the shipped defaults: the skeptic ON (owner ruling 2026-09-30), pass-scan at low", () => {
+  it("an absent [scan] is the shipped defaults: the skeptic ON (owner ruling), pass-scan at low", () => {
     expect(fixture.scan).toEqual(SCAN_DEFAULTS);
     expect(SCAN_DEFAULTS.validator).toBe(true);
     expect(SCAN_DEFAULTS.effort).toBe("low");

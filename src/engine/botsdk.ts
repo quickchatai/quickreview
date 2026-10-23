@@ -1,6 +1,6 @@
 // The bot's main session on the SDK: what the tmux `pi` of a PR gets as files,
 // an env and a command line, handed to an isolated PiHost session as data. This
-// is the factory a per-round bot worker (botworker.ts, P8.3) builds its session
+// is the factory a per-round bot worker (botworker.ts) builds its session
 // with; it is the bot's twin of roundsdk.ts (the one-shot's) and its request is
 // held byte-equal to the interactive build's by canary 10, bot shape
 // (tests/pi-canary/canary-10-bot-request.test.ts).
@@ -14,7 +14,7 @@
 //                            muted-theme (a TUI skin) and round-progress (the
 //                            LiveEvent projection below replaces it).
 //   customTools              the engine's lens tools (`lens`, `lens_wave`) and the
-//                            post tools of the route (P8.7), as definitions
+//                            post tools of the route, as definitions
 //   the model's bash env     an allowlist over the spec's env: the QCR_* routing,
 //                            the OPENVIKING_* identity, and the GIT_CONFIG_*
 //                            pin, which is also set explicitly so no allowlist
@@ -27,7 +27,7 @@
 //                            scripts under it read the capability from that fd.
 //                            Node closes any descriptor a child is not listed
 //                            with, so it is handed over explicitly
-//   the D34 reviewer stub    handed to the resource loader as data (its
+//   the reviewer stub    handed to the resource loader as data (its
 //                            agentsFilesOverride), never read from or written
 //                            into a checkout. A resumed PR JSONL does not store
 //                            the system prompt, pi rebuilds it from what the
@@ -37,7 +37,7 @@
 //                            (src/live/), and its round-progress v2 projection
 //                            is published beside it for the supervisor
 //
-// An idle-PR answer worker (P8.17, botworker.ts `--mode answer`) builds the same
+// An idle-PR answer worker (botworker.ts `--mode answer`) builds the same
 // session with `answer` set: the read-only repo tools and the memory lookups, no
 // lens tool, no finding tools, and the capability fd and bash only when the
 // operator marked the message may-post (src/engine/answerguard.ts adds that an
@@ -120,7 +120,7 @@ export const OPENVIKING_TOOL_NAMES = [
 /** pi's read-only built-ins: what an idle-PR answer worker reads the repo with. */
 export const ANSWER_READ_TOOLS = ["read", "grep", "find", "ls"] as const;
 
-/** The memory tools that only read (P8.17): the answer worker looks things up and
+/** The memory tools that only read: the answer worker looks things up and
  * writes nothing into the PR's notes. */
 export const ANSWER_MEMORY_TOOLS = [
   "viking_search",
@@ -138,10 +138,10 @@ export interface BotSdkOptions {
   /** The round's lens tools: the engine's (`engineLensTools`), or, until the bot
    * moves off them, the native pair as a factory. */
   lens: RoundLensTools;
-  /** The post tools of the route (P8.7), as definitions. They join `customTools`
+  /** The post tools of the route, as definitions. They join `customTools`
    * and the allowlist. */
   postTools?: readonly ToolDefinition[];
-  /** An idle-PR answer worker's session (P8.17, rule 9): read-only repo tools and
+  /** An idle-PR answer worker's session (rule 9): read-only repo tools and
    * the memory lookups, no lens tool, no finding tools, no verdict. With `mayPost`
    * (the operator marked the message) it also gets bash, for the post scripts, and
    * the capability fd those scripts read; without it the session has neither, so
@@ -165,7 +165,7 @@ export function refuseGithubToken(where: string, env: Env): void {
   const held = GITHUB_TOKEN_ENVS.filter((name) => (env[name] ?? "").trim() !== "");
   if (held.length > 0)
     throw new Error(
-      `bot mode: ${where} carries ${held.join(", ")}; the bot's GitHub credential is the App, minted per command (CLAUDE.md rule 3)`,
+      `bot mode: ${where} carries ${held.join(", ")}; the bot's GitHub credential is the App, minted per command (the App-only credential rule)`,
     );
 }
 

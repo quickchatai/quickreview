@@ -13,7 +13,7 @@
 // lands on the notice line, so a surprising action is visible the moment it
 // happens. Do not add a confirmation step here.
 //
-// One memory verb, and only one (`memory_pin`, root CLAUDE.md rule 8): the
+// One memory verb, and only one (`memory_pin`, the companion boundary): the
 // companion may pin or unpin an EXISTING entry, and the TUI performs it
 // through its one `MemoryStore` — the same copy-then-stub move as the memory
 // tab's `p`, against the entry as a fresh read finds it, and the result file

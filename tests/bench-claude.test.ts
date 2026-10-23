@@ -1,5 +1,5 @@
 // The Claude Code arm of the AACR benchmark (src/bench/claudecode.ts,
-// bench/aacr/claude_driver.py, `bench.sh --arm claude`). Root CLAUDE.md rule 5
+// bench/aacr/claude_driver.py, `bench.sh --arm claude`). The no-Claude-Code rule
 // forbids spawning `claude`, with one exception:
 // Claude Code as a BENCHMARKED REVIEWER inside the locked-down bench/aacr
 // sandbox only. What is pinned here:

@@ -1,4 +1,4 @@
-// P2.6: the external watchdog. A synchronous loop freezes the event loop, so the
+// The external watchdog. A synchronous loop freezes the event loop, so the
 // in-process budget's timers and the driver's signal handlers never run; the
 // watchdog (src/reviewdetach.ts runWatchdog) reads the driver's heartbeat from
 // outside and kills the group once deadline + grace has passed with a stale beat.

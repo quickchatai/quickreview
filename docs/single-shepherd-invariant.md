@@ -10,8 +10,8 @@ invariant means now that the bot runs in workers.
 **S1 — One daemon-owned pi session kind, and only one.**
 `pr-<n>` is the PR's ONE main session (pi): it owns that PR's review for its whole life —
 every round, every staleness check, every author exchange. There is no global
-watcher: the overseer retired into the companion (CLAUDE.md rule 8), which lives
-on the owner's PC and is a separate boundary. The daemon runs no pi itself: it
+watcher: the overseer retired into the companion, which lives
+on the operator's machine and is a separate boundary. The daemon runs no pi itself: it
 starts workers (S5).
 
 A PR's **OpenViking session** (`pr-<n>`) is not a second kind and does
@@ -66,7 +66,7 @@ one resumes the JSONL, so two writers never append to it.
 | S4 | **broken** | `daemon.ts` injected an author-reply wake into `pr-<n>` unconditionally, including while that PR's round was `reviewing` — two competing instructions to the one pi that owns the review, with the reply able to land between pass dispatch and posting. → **G3** |
 
 `prompts/pass-common.md`, `prompts/conversation-system.md` and `agents/pass-*.md`
-are canonical seeded content (CLAUDE.md rule 6) and are **not** edited. Every
+are canonical seeded content (AGENTS.md invariant 3) and are **not** edited. Every
 prompt-side reinforcement below goes through the build-time addendum in
 `include.ts`, which is code and already the established seam for exactly this.
 
@@ -135,7 +135,7 @@ advances when the bot replies, which cannot happen while the wake is held.
 
 ## Amendment: workers
 
-CLAUDE.md rule 9 is the authority for the wording; this section says what it
+The invariant above is the authority for the wording; this section says what it
 covers now that the bot runs in workers.
 
 - **One lens tool, one rule.** Our own lens tool runs on every route: `lens` /
@@ -151,7 +151,7 @@ covers now that the bot runs in workers.
   tool, and `include.ts` strips agent-spawning tools at build time (G1), so a
   pass cannot fan out on any route.
 - **Held wakes stay held.** Mid-round daemon wakes go to `pending_wakes` and are
-  flushed by the round's own worker before it exits (`src/wakes.ts`, G3, D22);
+  flushed by the round's own worker before it exits (`src/wakes.ts`, G3);
   the worker routes add no second wake channel.
 - **The operator's two exceptions.** A steer an operator sends from the viewer
   goes straight to the running session, like the quick-message box above. A

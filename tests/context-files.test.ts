@@ -6,7 +6,7 @@
 // and every lens pass (helpers/context-files.ts models pi 1.3.0's loader). So
 // the route's argv (`--no-context-files`), cwd, ancestors and agentDir decide
 // what rides each turn. The routes differ on purpose: the VM bot, the bench
-// image, the clone route (from the run's own dir outside the checkout, D34)
+// image, the clone route (from the run's own dir outside the checkout)
 // and their lenses load the reviewer stub; the companion loads the full
 // AGENTS.md; the bench judge, the onboarding session and the scan leaves
 // (-nc, on the host and in the container alike) load nothing.
@@ -16,8 +16,8 @@
 // artifact — the VM entrypoint, the bench Dockerfile — from that artifact's
 // text), and the effective set is computed from them. The table is then
 // compared with the committed fixture, so a change to any route's argv, cwd,
-// ancestors or agentDir that moves its context file fails here. P0.4, P1.1,
-// P2.8, P4.3, P6.4/P6.5 and the canary parity checks (P5.2, P8.2) assert
+// ancestors or agentDir that moves its context file fails here. The route checks and the
+// canary parity checks assert
 // against the same table (`inventoryRow`).
 //
 // No route may write a context file into a repo checkout. The VM's synced
@@ -364,7 +364,7 @@ function projectInstructions(systemPrompt: string): Array<{ path: string; conten
   ].map((m) => ({ path: m[1]!, content: m[2]! }));
 }
 
-/** The SDK host as `qcr review` builds it (P2.8, D34): a run dir outside every
+/** The SDK host as `qcr review` builds it: a run dir outside every
  * checkout, the stub handed over as data at <out>/AGENTS.override.md and never
  * written, and every lookalike a discovery would find planted around it. */
 async function captureSdkSessions(): Promise<{
@@ -553,7 +553,7 @@ beforeAll(async () => {
     argv: onboardingPiArgv({ package: "@earendil-works/pi-coding-agent", version: "1.3.0" }, ROOT),
   });
 
-  // -- the clone route: `qcr review` from the qcr checkout (D34) -------------------
+  // -- the clone route: `qcr review` from the qcr checkout -------------------
   // pi runs in the run's own out dir, outside every checkout, holding a copy of
   // the reviewer stub; its agentDir is a private one with no context file.
   const clone = await captureReviewCli(reviewedRepo);
@@ -598,7 +598,7 @@ beforeAll(async () => {
   });
   observed.routes["clone-review-lens"] = { ...observed.routes["clone-review"], note: LENS_NOTE };
 
-  // -- the SDK host: `qcr review` on the engine runtime (P2.8, D34) ---------------
+  // -- the SDK host: `qcr review` on the engine runtime ---------------
   // Discovery is off and the stub is injected as data. The path it carries is
   // <out>/AGENTS.override.md, the same file the clone route's CLI pi loads, but
   // nothing is written there; the planted AGENTS.md files around it never load.
@@ -626,7 +626,7 @@ beforeAll(async () => {
   );
   observed.routes["sdk-lens"] = sdkRow(
     sdk.lens,
-    "An SDK lens session comes from the same makeSession with the same context files (D34: the stub on every route).",
+    "An SDK lens session comes from the same makeSession with the same context files (the stub on every route).",
   );
 
   // -- scan leaves ---------------------------------------------------------------
@@ -662,7 +662,7 @@ beforeAll(async () => {
     cwd: at(leafOnHost.cwd, ROOT, CHECKOUT),
     agentDir: "/operator-pi-agent",
     argv: leafOnHost.argv,
-    note: '[scan] sandbox = "host": cwd is sandboxRoot(), the qcr checkout, whose AGENTS.md the leaf does not load (-nc, P1.1); nothing is written there or into the scanned tree.',
+    note: '[scan] sandbox = "host": cwd is sandboxRoot(), the qcr checkout, whose AGENTS.md the leaf does not load (-nc); nothing is written there or into the scanned tree.',
   });
 
   // -- the companion -------------------------------------------------------------
@@ -755,7 +755,7 @@ describe("the context-file inventory", () => {
     const { routes } = readInventory();
     const files = (r: string): string[] => routes[r]!.effective.map((f) => f.source);
     // The reviewer stub: the VM bot, the bench image, the clone route (from the
-    // run's own dir, D34) and their lenses.
+    // run's own dir) and their lenses.
     for (const r of [
       "vm-bot",
       "vm-lens",

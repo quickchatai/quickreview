@@ -2,7 +2,9 @@
 // provenance — no reviewed-repo PR numbers, no tracker ids, no dated asides,
 // no owner's or teammate's name. Scanned on the BUILT lens bodies and the
 // RENDERED round orders (what the model sees), never on the sources, whose
-// fence markers and code comments are not model-facing.
+// fence markers and code comments are not model-facing. Names and other
+// private tokens come from the maintainers' denylist outside the repository
+// (tests/helpers/private-tokens.ts); without it only the generic patterns run.
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -26,7 +28,7 @@ import {
   ROUND_TEMPLATE_FILES,
 } from "@quickchatai/pi-quickreview/src/templates.js";
 import type { RoundType } from "@quickchatai/pi-quickreview/src/types.js";
-import { privateTokenHits } from "./helpers/private-tokens.js";
+import { PRIVATE_SKIP, PRIVATE_TOKENS, privateTokenHits } from "./helpers/private-tokens.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const sandbox = join(import.meta.dirname, "..");
@@ -40,7 +42,7 @@ const LEAKS: Array<[string, RegExp]> = [
   ["a dated aside", /\b20\d\d-\d\d-\d\d\b/],
 ];
 
-/** A person's name (or any other private token) is checked by digest. */
+/** A person's name (or any other private token) is checked against the denylist, when present. */
 function leaks(text: string): string[] {
   const lines = text.split("\n");
   return [
@@ -72,6 +74,18 @@ const FILES = [
 ] as unknown as PrFileEntry[];
 
 describe("no provenance reaches a model", () => {
+  // Every scan below adds the private tokens when the denylist is present;
+  // this entry reports, in the run, whether they were checked.
+  it.skipIf(!PRIVATE_TOKENS)(
+    PRIVATE_TOKENS
+      ? "the private-token denylist is loaded and non-empty"
+      : `private-token checks (skipped: ${PRIVATE_SKIP})`,
+    () => {
+      const t = PRIVATE_TOKENS!;
+      expect(t.words.size + t.homeUsers.size + t.hosts.size).toBeGreaterThan(0);
+    },
+  );
+
   // Mutation: put a tracker id back into a lens heading outside its fence, or
   // stop stripping the RATIFIED marker lines in buildAgents → this fails.
   it("built lens bodies", { timeout: HEAVY_TIMEOUT_MS }, () => {

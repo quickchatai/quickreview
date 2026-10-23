@@ -8,7 +8,7 @@
 //
 // leafCache({ pack, cacheKey }) rewrites each request pack-first, and on a payload that carries
 // a `prompt_cache_key` sets it to the group's key. Under the shared session id
-// of a cache group (D7, docs/probes/p4.6-codex-cache-routing.md) the key already
+// of a cache group (docs/probes/p4.6-codex-cache-routing.md) the key already
 // equals that id, so the second edit is a belt for a pi that derives the key
 // another way, not what routes the cache. Fail-open, always: a payload that is
 // not the expected shape goes out unchanged, and a throw inside the handler is

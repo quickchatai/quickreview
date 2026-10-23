@@ -30,7 +30,7 @@
 
 // Nothing here knows about GitHub, and nothing here writes config.toml — the
 // only step that may touch `dry_run` is golive.ts, and it is the only
-// onboarding file that writes that key at all (root CLAUDE.md rule 1).
+// onboarding file that writes that key at all (AGENTS.md invariant 6).
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";

@@ -519,7 +519,7 @@ describe("api_key confinement", () => {
 
   it("the COMPANION key is never provisioned into this container", () => {
     // A review session runs INSIDE this container. A companion key it could
-    // read would defeat the confinement outright (root CLAUDE.md rule 8).
+    // read would defeat the confinement outright (the companion boundary).
     expect(entrypoint).not.toContain("openviking_companion_key");
     expect(groupVars).not.toContain("openviking_companion_key");
     expect(configToml).not.toContain("companion_key_file");

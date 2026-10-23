@@ -303,7 +303,7 @@ describe("every script that reads the live config reads it through the locator",
   // No reader builds the checkout path itself: the
   // `${QCR_CONFIG:-$ROOT/config.toml}` spelling appears in no script, and
   // each one that reads a config sources the shell locator (the three posting
-  // shims read none: they are Node-only clients, P9.3).
+  // shims read none: they are Node-only clients).
   const readers = [
     "deploy.sh",
     "mint-token.sh",

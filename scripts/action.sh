@@ -16,7 +16,7 @@
 #     directory read-only at /qcr-login, an anonymous volume for the state;
 #   - QCR_ROUTE=action, so the review is not capped unless `limit` is set and
 #     nothing is asked;
-#   - the GitHub token as a read-once file (D39 amending R7): a 0600 file in a
+#   - the GitHub token as a read-once file: a 0600 file in a
 #     fresh 0700 directory under $RUNNER_TEMP, mounted at /run/qcr-in and named
 #     in QCR_GH_TOKEN_FILE. The token is in no `-e`, no `--env-file` and no
 #     argument list; the image reads it and unlinks it before any pi or bash
@@ -350,7 +350,7 @@ run_review() {
   name="qcr-action-${GITHUB_RUN_ID:-local}-$$"
   local -a args=(docker run --rm --init --name "$name")
   # Model-reaching: start as root with only CAP_SETUID/CAP_SETGID and drop to the
-  # runner's uid inside, so the model's tools run as another uid (D32).
+  # runner's uid inside, so the model's tools run as another uid.
   args+=(--user 0:0 --cap-drop ALL --cap-add SETUID --cap-add SETGID)
   args+=(--security-opt no-new-privileges)
   args+=(-e "QCR_RUN_UID=$run_uid" -e "QCR_RUN_GID=$run_gid")

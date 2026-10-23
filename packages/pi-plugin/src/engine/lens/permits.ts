@@ -1,4 +1,4 @@
-// The lens cap's port (D25). A pass holds a permit from before its session exists
+// The lens cap's port. A pass holds a permit from before its session exists
 // until the session is read and disposed (runlens.ts). Where the permit comes from
 // depends on the route:
 //   - one-shot routes (review, scan, bench, the interactive pi's lens shim) own

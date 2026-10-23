@@ -123,7 +123,7 @@ export const CONTAINER = {
   home: "/home/qcr",
   piHome: "/home/qcr/.pi",
   /** The image's app root: the companion's extensions, its system prompt and
-   * its agent set are loaded from here (D20), never from the /workspace
+   * its agent set are loaded from here, never from the /workspace
    * mount, so a change to them lands with `qcr companion rebuild`. */
   app: "/opt/qcr",
   /** The owner's checkout, read-write: the repo the companion works on and
@@ -176,12 +176,12 @@ export const CONTAINER = {
   /** Finished-round evidence, read-only. The TUI holds the VM access and
    * copies each finished round's artefacts down here; the companion reads
    * plain files. That is the whole of the transport — it grants no ssh, no
-   * credential and no network reach (root CLAUDE.md rule 8).
+   * credential and no network reach (the companion boundary).
    * `:ro` because this is a record: read history, never rewrite it. */
   evidence: "/evidence",
   feed: "/feed",
   alerts: "/alerts",
-  /** The shared tmux-socket volume (`tmux-socket` mode, D35): the companion's
+  /** The shared tmux-socket volume (`tmux-socket` mode): the companion's
    * tmux server listens inside it, and the containerised TUI mounts the same
    * volume to drive that server with `tmux -S`. The image creates the dir
    * 1777, so a fresh named volume is writable by whatever uid runs. */
@@ -194,7 +194,7 @@ export const CONTAINER = {
  *                 default socket inside the container. The clone route, where
  *                 this process can run docker.
  *   tmux-socket   the server listens on a socket in a named volume that the
- *                 containerised TUI shares (D35), so the TUI drives it with
+ *                 containerised TUI shares, so the TUI drives it with
  *                 `tmux -S <socket>` and holds no docker.sock. The container
  *                 itself is run by the host wrapper (scripts/qcr-host.sh),
  *                 from the argv `qcr companion plan` prints. */
@@ -214,11 +214,11 @@ export function tmuxSocketPath(cfg: Pick<CompanionConfig, "session">): string {
  * entrypoint starts the tmux server on (docker/entrypoint.sh). */
 export const TMUX_SOCKET_ENV = "QCR_TMUX_SOCKET";
 
-/** The companion's ssh access to the VM (root CLAUDE.md rule 8: full ssh, so
+/** The companion's ssh access to the VM (the companion boundary: full ssh, so
  * it may deploy). Exactly three host
  * sources, each read-only and each only when the host has it: the ssh agent's
  * socket, the ssh config and `known_hosts` — the shape the containerised TUI
- * gets (D35). Never `~/.ssh` whole, never a private key file, never
+ * gets. Never `~/.ssh` whole, never a private key file, never
  * `docker.sock`: the keys stay in the host's agent. */
 export const SSH = {
   agent: "/run/qcr-ssh-agent",
@@ -607,7 +607,7 @@ export class CompanionLifecycle {
     // image's WORKDIR is its app root, whose reviewer stub is not the
     // companion's to load.
     argv.push("--user", hostUser(), "--workdir", CONTAINER.workspace);
-    // The wrapper-run companion (D35) is hardened like every other container
+    // The wrapper-run companion is hardened like every other container
     // the wrapper starts; nothing it does needs a capability.
     if (this.socketPath !== undefined)
       argv.push("--init", "--cap-drop", "ALL", "--security-opt", "no-new-privileges");
@@ -634,7 +634,7 @@ export class CompanionLifecycle {
    * The pi argv inside the companion's tmux session.
    *
    * Every extension, the theme and the system prompt are the IMAGE's
-   * (`CONTAINER.app`, D20): the companion runs the code it was built with, and
+   * (`CONTAINER.app`): the companion runs the code it was built with, and
    * the checkout at /workspace is the repo it works on, not where its hands
    * come from.
    *
@@ -656,7 +656,7 @@ export class CompanionLifecycle {
       // --approve: pre-trust project-local .pi resources for this run. Without
       // it a cwd carrying .pi/ hits pi's interactive "Trust project folder?"
       // modal and the session stalls forever. Same flag sessions.ts passes
-      // (the never-block-on-pi-input decision in root CLAUDE.md).
+      // (the reviewer never blocks on interactive pi input).
       "--approve",
       // The vendored patched OpenViking extension — the companion's memory
       // hands. It rides the image, so it is always there; with no memory
@@ -956,7 +956,7 @@ export class CompanionLifecycle {
    * the release Dockerfile (docker/Dockerfile): the image compiles the app
    * itself, so nothing needs building on the host first, and it is stamped
    * with the checkout's build stamp. The companion's extensions come from this
-   * image (D20), so a change to them lands only with a rebuild. */
+   * image, so a change to them lands only with a rebuild. */
   async buildImage(onProgress?: (line: string) => void): Promise<void> {
     this.checkBuildable();
     const ctx = this.cfg.build_context;
@@ -1074,7 +1074,7 @@ export class CompanionLifecycle {
    * change keeps the old set forever — `docker start` on it silently resurrects
    * the old boundary. That is not cosmetic: a stale container can carry a
    * mount the boundary does not grant (an `~/.ssh` whole, a key file, a dead
-   * agent socket) — root CLAUDE.md rule 8 means its mounts to be structural.
+   * agent socket) — the companion boundary means its mounts to be structural.
    *
    * So: compare what the container has against what `runArgv()` asks for, and
    * report the drift. Named volumes are compared by name, binds by host path.
@@ -1126,7 +1126,7 @@ export class CompanionLifecycle {
       { dest: CONTAINER.piHome, source: this.cfg.pihome_volume },
       { dest: CONTAINER.workspace, source: this.cfg.repo_dir, mode: "rw" },
     ];
-    // The tmux socket volume, shared with the containerised TUI (D35). The only
+    // The tmux socket volume, shared with the containerised TUI. The only
     // thing in it is the socket; it is no ssh agent and no docker.sock.
     if (this.socketPath !== undefined)
       spec.push({ dest: CONTAINER.tmuxDir, source: tmuxVolume(this.cfg), mode: "rw" });
