@@ -162,6 +162,14 @@ describe("the customised mark", () => {
     expect(overrideReader(root, set)).toBeUndefined();
   });
 
+  it("a user replacement over the size cap is reported, not dropped silently", () => {
+    const root = fakeRoot();
+    userProfile("mine", { "agents/pass-security.md": "x".repeat(256 * 1024 + 1) });
+    const set = resolveOverrides({ root, profile: "mine", lookup: { env } });
+    expect(set.ignored.join("\n")).toMatch(/mine\/agents\/pass-security\.md: over the size cap/);
+    expect(assessOverrides(root, set).customised).toBe(false);
+  });
+
   it("the shipped example profiles replace nothing, so a stock install is never customised", () => {
     for (const name of EXAMPLE_PROFILES) {
       for (const sub of ["agents", "prompts"])

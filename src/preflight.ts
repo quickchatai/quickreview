@@ -169,14 +169,31 @@ function resume(opts: PreflightOptions, scratch: string, db: string | null): Pre
   let withoutSession = 0;
   for (const pr of prs) {
     const dir = join(sessions, `pr-${pr}`);
-    let names: string[] = [];
-    try {
-      names = readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
-    } catch {
-      /* no session yet */
-    }
+    // Every *.jsonl anywhere under the PR's session dir, as runtime discovery
+    // does (src/sessionjsonl.ts). Only an absent dir is "no session yet".
+    const names: string[] = [];
+    let unlisted = false;
+    const walk = (sub: string): void => {
+      let entries;
+      try {
+        entries = readdirSync(join(dir, sub), { withFileTypes: true });
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "ENOENT") return;
+        failures.push(
+          `pr-${pr}/${sub}: cannot list the session directory: ${msgOf(e).slice(0, 160)}`,
+        );
+        unlisted = true;
+        return;
+      }
+      for (const e of entries) {
+        const rel = sub === "" ? e.name : join(sub, e.name);
+        if (e.isDirectory()) walk(rel);
+        else if (e.name.endsWith(".jsonl")) names.push(rel);
+      }
+    };
+    walk("");
     if (names.length === 0) {
-      withoutSession++;
+      if (!unlisted) withoutSession++;
       continue;
     }
     for (const name of names) {
@@ -188,8 +205,8 @@ function resume(opts: PreflightOptions, scratch: string, db: string | null): Pre
         if (facts.badLines > 0) throw new Error(`${facts.badLines} line(s) that are not JSON`);
         // pi's own parse, on a copy: what a worker pays before its first request.
         const out = join(sessionDirOut, `pr-${pr}`);
-        mkdirSync(out, { recursive: true });
         const copy = join(out, name);
+        mkdirSync(dirname(copy), { recursive: true });
         copyFileSync(src, copy);
         openSessionContext(copy, out, scratch);
       } catch (e) {

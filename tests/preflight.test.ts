@@ -132,6 +132,30 @@ describe("daemon --preflight", () => {
     expect(snapshot(dir)).toEqual(before);
   });
 
+  it("inspects a transcript nested under a cwd-named subdirectory, as runtime discovery does", () => {
+    const sess = join(opts.stateDir, "pi-sessions", "pr-7");
+    mkdirSync(join(sess, "--cwd--"));
+    writeFileSync(join(sess, "--cwd--", "n.jsonl"), "{not json\n");
+    const r = runPreflight(opts);
+    expect(failed(r)).toEqual(["resume"]);
+    expect(reason(r, "resume")).toContain("pr-7/--cwd--/n.jsonl");
+  });
+
+  it("a session directory that cannot be listed fails the check; an absent one is no session", () => {
+    const sess = join(opts.stateDir, "pi-sessions", "pr-7");
+    chmodSync(sess, 0o000);
+    try {
+      if (process.getuid?.() === 0) return; // root lists anything
+      const r = runPreflight(opts);
+      expect(failed(r)).toEqual(["resume"]);
+      expect(reason(r, "resume")).toContain("cannot list the session directory");
+    } finally {
+      chmodSync(sess, 0o700);
+    }
+    rmSync(sess, { recursive: true });
+    expect(failed(runPreflight(opts))).toEqual([]);
+  });
+
   it("fails a corrupt JSONL by name", () => {
     writeFileSync(join(opts.stateDir, "pi-sessions", "pr-7", "s.jsonl"), "{not json\n");
     const r = runPreflight(opts);

@@ -143,6 +143,21 @@ describe("which threads a round resolves", () => {
     ).toEqual([101, 202]);
   });
 
+  it("a later round re-posting the finding on its thread supersedes an older fixed report", () => {
+    const store = new StateStore(":memory:");
+    store.recordRoundFindings({ pr: 7, round_id: null, round_no: 1, head_sha: HEAD }, [
+      finding("f1", 101),
+    ]);
+    store.recordPriorReports(7, 2, HEAD, [
+      { round_no: 1, finding_key: "f1", status: "fixed", evidence: "x" },
+    ]);
+    expect(priorThreadsToResolve(store, 7, 2).threads.map((t) => t.comment_id)).toEqual([101]);
+    store.recordRoundFindings({ pr: 7, round_id: null, round_no: 3, head_sha: HEAD }, [
+      { ...finding("f1again", 101), raised_in_round: 1 },
+    ]);
+    expect(priorThreadsToResolve(store, 7, 2).threads).toEqual([]);
+  });
+
   it("a newer assignment without a report does not supersede a verified fix", () => {
     const store = setup();
     store.recordPriorListing(7, 4, HEAD, [{ round_no: 1, finding_key: "fixed1", blocking: false }]);
