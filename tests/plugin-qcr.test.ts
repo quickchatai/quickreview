@@ -290,6 +290,7 @@ case "$1" in
   manifest)
     # a tag that exists only on this machine is not in any registry
     [ -z "\${FAKE_LOCAL_IMAGE-}" ] || { echo "no such manifest" >&2; exit 1; }
+    if [ -f "$FAKE_DIR/logged-in" ] && [ -n "\${FAKE_AFTER_LOGIN_ERR-}" ]; then echo "$FAKE_AFTER_LOGIN_ERR" >&2; exit 1; fi
     if [ -f "$FAKE_DIR/logged-in" ] || [ -z "\${FAKE_NO_PULL-}" ]; then exit 0; fi
     echo "unauthorized" >&2; exit 1 ;;
   login) cat > "$FAKE_DIR/login-stdin"; : > "$FAKE_DIR/logged-in"; exit 0 ;;
@@ -432,6 +433,15 @@ describe("qcr-setup — step 1, Docker", () => {
 });
 
 describe("qcr-setup — the order on a fresh machine", () => {
+  it("a manifest failure after login shows the registry's own error", () => {
+    const rig = setupRig();
+    const r = rig.run({
+      env: { FAKE_NO_PULL: "1", QCR_SETUP_INTERACTIVE: "1", FAKE_AFTER_LOGIN_ERR: "manifest unknown: no such tag" },
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("manifest unknown: no such tag");
+  });
+
   it("Docker, then pull auth, then the wrapper, then login, then the version check", () => {
     const rig = setupRig();
     const r = rig.run({ env: { FAKE_NO_PULL: "1", QCR_SETUP_INTERACTIVE: "1" } });
