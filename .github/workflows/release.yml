@@ -113,7 +113,7 @@ jobs:
             want_e2e="$IN_E2E"
             publish="$IN_PUBLISH"
           fi
-          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] ||
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] ||
             die "'$version' is not X.Y.Z or X.Y.Z-suffix"
           scratch=false
           [[ "$version" == *-scratch* ]] && scratch=true

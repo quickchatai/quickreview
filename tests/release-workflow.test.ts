@@ -274,6 +274,11 @@ describe("release.yml — the plan step", () => {
     expect(runPlan(dispatch("1.2", true, false)).status).toBe(1);
   });
 
+  it("refuses a hyphen inside the suffix, which the deploy-side version checks reject", () => {
+    expect(runPlan(dispatch("1.2.3-rc-one", true, false)).status).toBe(1);
+    expect(runPlan(tag("v0.0.0-scratch-1")).status).toBe(1);
+  });
+
   it("a scratch tag skips the paid e2e, whatever package.json says", () => {
     const r = runPlan(tag("v0.0.0-scratch.1"));
     expect(r.status).toBe(0);
