@@ -51,6 +51,7 @@ import {
   leafEnv,
   parseAgentFile,
   pruneTranscripts,
+  stderrExcerpt,
   transcriptFile,
   type AgentFile,
 } from "../setup/caserunner.js";
@@ -84,9 +85,6 @@ const LEAF_BASH_ENV_ALLOW: readonly string[] = [
   "no_proxy",
   "all_proxy",
 ];
-
-/** The stderr a failed case's reason is taken from: its last characters. */
-const STDERR_TAIL_CHARS = 4000;
 
 /** The per-session pieces the runner hands whoever builds the runtime: the
  * `extras` of `sdkRuntime` (src/engine/sdkruntime.ts). */
@@ -291,12 +289,7 @@ export function sdkCaseRunner(opts: SdkCaseRunnerOptions): CaseRunner {
           if (result.code !== 0) {
             let tail = "";
             try {
-              tail = readFileSync(sessionSpec.stderrFile, "utf8")
-                .slice(-STDERR_TAIL_CHARS)
-                .trim()
-                .split("\n")
-                .slice(-3)
-                .join(" / ");
+              tail = stderrExcerpt(readFileSync(sessionSpec.stderrFile, "utf8"));
             } catch {
               // No stderr to quote.
             }

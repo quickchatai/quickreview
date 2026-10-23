@@ -9,8 +9,9 @@
 // under the write's commit id. Only the files setup writes are recorded
 // (`profile.toml`, the drafted `style-guide.md`): with them put back over the
 // profiles as they are now, the profile reads exactly as it did before that
-// write — a direct edit made since, to it or to a profile it extends, is part
-// of both sides.
+// write — a direct edit made since to a profile it extends is part of both
+// sides; one made to a recorded file itself reaches only the new side, since
+// restoring the baseline overwrites it on the old one.
 //
 // `<state home>/setup/profile-baselines.json`, newest last, the last
 // `BASELINES_KEPT` kept. An unreadable file is reported and never
