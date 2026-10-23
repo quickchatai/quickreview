@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -102,4 +102,22 @@ it("the docker network is created with the gateway the listener binds, and the u
   const create = calls.find((a) => a[0] === "network" && a[1] === "create");
   expect(create).toEqual(expect.arrayContaining(["--gateway", "10.9.0.5"]));
   expect(forward.unitText(cfg, {})).toMatch(/ensure-network .*--gateway 10\.9\.0\.5/);
+});
+it("readKeys reads a keys file exactly as the TUI's parseKeysEnv does", async () => {
+  const { parseKeysEnv } = await import("../src/tui/memory.js");
+  const text = [
+    'OPENVIKING_COMPANION_KEY="unmatched',
+    "OPENVIKING_REVIEWER_KEY='paired'",
+    'OPENVIKING_API_KEY="first"',
+    "OPENVIKING_API_KEY=",
+    "",
+  ].join("\n");
+  const dir = mkdtempSync(join(tmpdir(), "forward-keys-"));
+  try {
+    const path = join(dir, "keys.env");
+    writeFileSync(path, text);
+    expect(forward.readKeys(path)).toEqual(parseKeysEnv(text));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

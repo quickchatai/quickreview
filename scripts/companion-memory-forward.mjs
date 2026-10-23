@@ -1468,9 +1468,11 @@ export const PATHS = {
 /**
  * Auth + the cross-user selector.
  *
- * `X-OpenViking-User` is what names the namespace being addressed; the Bearer
- * key is what the server checks it against. That pairing IS the confinement
- * being proved: reviewer key + `X-OpenViking-User: companion` must be refused.
+ * The namespace being addressed is named by the URI (see PATHS); the server
+ * does not select it from `X-OpenViking-User`. The Bearer key identifies the
+ * caller, and the header states which user the caller claims to be. Confinement
+ * is proved by the probe's URIs: the reviewer key reading or writing a
+ * `viking://user/companion/` URI must be refused.
  */
 export function authHeaders(key, user, env = process.env) {
   const name = (env.QCR_OV_AUTH_HEADER ?? "Authorization").trim();
@@ -1553,7 +1555,11 @@ export function readKeys(path) {
   for (const line of text.split("\n")) {
     const m = /^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*)$/.exec(line);
     if (!m) continue;
-    out[m[1]] = m[2].trim().replace(/^["']|["']$/g, "");
+    // The TUI's parseKeysEnv policy (src/tui/memory.ts): only a matching quote
+    // pair is stripped, and an empty assignment is ignored.
+    let value = m[2].trim();
+    if (value.length >= 2 && /^(["']).*\1$/.test(value)) value = value.slice(1, -1);
+    if (value !== "") out[m[1]] = value;
   }
   return out;
 }
