@@ -20,10 +20,12 @@ import {
 import { dirname, join } from "node:path";
 import type { Config } from "./config.js";
 import { RESTORE_WAIT_MS } from "./archive/restore.js";
+import { withinBudget } from "./budget.js";
 import {
   OV_SESSION_SWEEP_BUDGET_MS,
   OV_SESSION_SWEEP_MAX,
   ovSessionIdForPr,
+  prOfOvSessionId,
   planStaleOvSessions,
   type OvSessionLifecycle,
 } from "./memory/ovsession.js";
@@ -39,8 +41,7 @@ export function prSessionName(pr: number): string {
 }
 
 export function prOfSession(name: string): number | undefined {
-  const m = /^pr-(\d+)$/.exec(name);
-  return m ? Number(m[1]) : undefined;
+  return prOfOvSessionId(name) ?? undefined;
 }
 
 /** What the lifecycle asks of whatever runs the PR's pi. Every method is
@@ -259,21 +260,12 @@ export class PrSessionLifecycle {
   async awaitBeforeBirth(pr: number): Promise<void> {
     const hook = this.beforeBirthHook;
     if (!hook) return;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await Promise.race([
-        hook(pr),
-        new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, RESTORE_WAIT_MS + 5_000);
-          timer.unref?.();
-        }),
-      ]);
+      await withinBudget(hook(pr), RESTORE_WAIT_MS + 5_000);
     } catch (err) {
       console.log(
         `[quickreviewd] sessions: the archive restore before pr-${pr}'s birth failed (${String(err)}) — born anyway`,
       );
-    } finally {
-      if (timer) clearTimeout(timer);
     }
   }
 
@@ -354,7 +346,10 @@ export class PrSessionLifecycle {
    * The reconcile sweep over the raw tier: delete the `pr-<n>` OpenViking
    * sessions of PRs the registry says are closed — the ones
    * `archiveAndClose` failed to delete or never got to. Bounded per pass
-   * (`OV_SESSION_SWEEP_MAX`), every outcome logged and recorded. A PR whose pi
+   * (`OV_SESSION_SWEEP_MAX`), every outcome logged and recorded. Before the
+   * raw tier, and whether or not memory is on, it also kills the surviving host
+   * session of every closed PR (the retry obligation), so a caller must not gate
+   * this call on memory. A PR whose pi
    * session is still alive keeps its raw tier until that session is gone (its
    * turn sync would otherwise write into nothing), and an id whose delete
    * failed waits an hour. Null when no raw tier is managed (memory switched
@@ -373,9 +368,8 @@ export class PrSessionLifecycle {
       closedProbeUnknown = names === null;
       let attempted = 0;
       for (const name of names ?? []) {
-        const match = /^pr-([1-9]\d*)$/.exec(name);
-        if (!match) continue;
-        const pr = Number(match[1]);
+        const pr = prOfSession(name);
+        if (pr === undefined) continue;
         if (!this.prClosed(pr) || this.prSessionBirths.has(pr)) continue;
         if (attempted++ >= Math.max(0, Math.floor(max))) break;
         try {

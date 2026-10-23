@@ -405,6 +405,8 @@ describe("[P7.2] post.review live", () => {
       "post_failed",
     );
     expect(receipt()).toMatchObject({ status: "prepared" });
+    // The daemon keeps GitHub's answer; the wire carries only status and route.
+    expect(rig.logs.some((l) => l.includes("upstream trouble"))).toBe(true);
     // Never a duplicate POST over an unknown outcome.
     rig.gh.failReviewPost = null;
     await expect(
