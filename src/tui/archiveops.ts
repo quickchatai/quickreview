@@ -17,7 +17,7 @@ import { validateCommand, type Command } from "../commands.js";
 import type { TuiConfig } from "../config.js";
 import {
   OPERATOR_WAIT_MS,
-  STORE_LABELS,
+  storeEntries,
   backlogPhrase,
   dbPhrase,
   filesPhrase,
@@ -170,10 +170,7 @@ export function renderArchiveOp(cmd: ArchiveOpCommand, out: ArchiveOpOutcome): s
     if (db) lines.push(`  ${db}`);
     const files = filesPhrase(view);
     if (files) lines.push(`  ${files}`);
-    for (const [label, st] of [
-      [STORE_LABELS.overseer, figures.stores?.overseer ?? null],
-      [STORE_LABELS.pi_global, figures.stores?.pi_global ?? null],
-    ] as const) {
+    for (const [label, st] of storeEntries(figures.stores)) {
       const line = storePhrase(label, st);
       if (line) lines.push(`  ${line}`);
     }

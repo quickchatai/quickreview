@@ -261,6 +261,20 @@ function numOrNull(o: Record<string, unknown>, k: string): number | null {
   return v as number;
 }
 
+/** Check each of `keys` on `src` as a finite number and copy it onto `out`;
+ * the diagnostic names the field as `<prefix>.<key>`. */
+function copyNumbers<K extends string>(
+  src: Record<string, unknown>,
+  prefix: string,
+  keys: readonly K[],
+  out: Record<K, number>,
+): void {
+  for (const key of keys) {
+    if (!isNum(src[key])) bad(`${prefix}.${key} is ${shown(src[key])}, not a number`);
+    out[key] = src[key] as number;
+  }
+}
+
 /** A nullable object of numeric fields, each checked. */
 function numbers<K extends string>(
   o: Record<string, unknown>,
@@ -271,10 +285,7 @@ function numbers<K extends string>(
   if (v === null) return null;
   if (!isObj(v)) return bad(`${k} is ${shown(v)}, not an object or null`);
   const out = {} as Record<K, number>;
-  for (const key of keys) {
-    if (!isNum(v[key])) bad(`${k}.${key} is ${shown(v[key])}, not a number`);
-    out[key] = v[key] as number;
-  }
+  copyNumbers(v, k, keys, out);
   return out;
 }
 
@@ -306,10 +317,7 @@ function readDb(v: unknown): ArchiveDbStatus | null {
     outcome: phase.outcome as string,
     skipped_reason: strOrNull(phase, "skipped_reason"),
   } as ArchiveDbStatus;
-  for (const k of DB_NUMBERS) {
-    if (!isNum(phase[k])) bad(`db.${k} is ${shown(phase[k])}, not a number`);
-    out[k] = phase[k] as number;
-  }
+  copyNumbers(phase, `db`, DB_NUMBERS, out);
   return out;
 }
 
@@ -336,10 +344,7 @@ function readFiles(v: unknown): ArchiveFilesStatus | null {
     outcome: phase.outcome as string,
     held_reason: strOrNull(phase, "held_reason"),
   } as ArchiveFilesStatus;
-  for (const k of FILES_NUMBERS) {
-    if (!isNum(phase[k])) bad(`files.${k} is ${shown(phase[k])}, not a number`);
-    out[k] = phase[k] as number;
-  }
+  copyNumbers(phase, `files`, FILES_NUMBERS, out);
   return out;
 }
 
@@ -362,10 +367,7 @@ function readStore(name: string, v: unknown): ArchiveStoreStatus | null {
     outcome: phase.outcome as string,
     reason: strOrNull(phase, "reason"),
   } as ArchiveStoreStatus;
-  for (const k of STORE_NUMBERS) {
-    if (!isNum(phase[k])) bad(`stores.${name}.${k} is ${shown(phase[k])}, not a number`);
-    out[k] = phase[k] as number;
-  }
+  copyNumbers(phase, `stores.${name}`, STORE_NUMBERS, out);
   return out;
 }
 
@@ -403,10 +405,7 @@ function readLive(v: unknown): ArchiveLiveStatus | null {
     cap_bytes: phase.cap_bytes as number | null,
     over_cap: phase.over_cap as boolean,
   } as ArchiveLiveStatus;
-  for (const k of LIVE_NUMBERS) {
-    if (!isNum(phase[k])) bad(`live.${k} is ${shown(phase[k])}, not a number`);
-    out[k] = phase[k] as number;
-  }
+  copyNumbers(phase, `live`, LIVE_NUMBERS, out);
   return out;
 }
 
@@ -583,6 +582,17 @@ export function filesPhrase(s: Pick<ArchiveStatus, "files">): string {
 /** One store's last pass in a few words. */
 export const STORE_LABELS = { overseer: "overseer store", pi_global: "pi-global store" } as const;
 
+/** The stores in report order, each with its label and last pass (null when
+ * it has not reported). */
+export function storeEntries(
+  stores: ArchiveStatus["stores"] | undefined,
+): readonly (readonly [string, ArchiveStoreStatus | null])[] {
+  return [
+    [STORE_LABELS.overseer, stores?.overseer ?? null],
+    [STORE_LABELS.pi_global, stores?.pi_global ?? null],
+  ];
+}
+
 export function storePhrase(label: string, st: ArchiveStoreStatus | null): string {
   if (!st) return "";
   if (st.outcome === "none") return `${label}: nothing to move (${st.kept_live} kept live)`;
@@ -600,10 +610,7 @@ export function storePhrase(label: string, st: ArchiveStoreStatus | null): strin
  * failed store, a verify failure) — the full lines are `qcr archive status`'s. */
 export function storesAlertPhrase(s: ArchiveStatus): string {
   const parts: string[] = [];
-  for (const [label, st] of [
-    [STORE_LABELS.overseer, s.stores?.overseer ?? null],
-    [STORE_LABELS.pi_global, s.stores?.pi_global ?? null],
-  ] as const)
+  for (const [label, st] of storeEntries(s.stores))
     if (st && (st.outcome === "failed" || st.outcome === "held" || st.verify_failures > 0))
       parts.push(storePhrase(label, st));
   return parts.join("; ");
