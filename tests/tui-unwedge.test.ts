@@ -182,10 +182,38 @@ describe("the unwedge command channel", () => {
       "failed",
       "✖ rerun-round #5 failed (write failed: /opt/quickreview/sandbox/commands/operator is a symlink - refusing[2J)",
     ]);
-    const silent: SshRunner = async () => ({ ok: false, stdout: "", stderr: "", code: 255 });
+    const refused: SshRunner = async () => ({ ok: false, stdout: "", stderr: "", code: 1 });
     const t2 = track();
-    await sender(silent).send("rerun-round", 5, t2.on);
-    expect(t2.states.at(-1)![1]).toBe("✖ rerun-round #5 failed (write failed: exit 255)");
+    await sender(refused).send("rerun-round", 5, t2.on);
+    expect(t2.states.at(-1)![1]).toBe("✖ rerun-round #5 failed (write failed: exit 1)");
+  });
+
+  it("a transport failure on the write is not proof of non-delivery: the result is still read", async () => {
+    // ssh can drop after the remote rename published the file.
+    const dropped = (code: number | null): SshRunner => {
+      let probes = 0;
+      return async (_h, argv) => {
+        if (!argv.some((a) => a.includes("result.json")))
+          return { ok: false, stdout: "", stderr: "", code };
+        probes++;
+        return { ok: true, stdout: probes < 2 ? "pending" : '{"ok":true}', stderr: "", code: 0 };
+      };
+    };
+    for (const code of [255, null]) {
+      const t = track();
+      await sender(dropped(code)).send("rerun-round", 5, t.on);
+      expect(t.states.at(-1)).toEqual(["done", "✓ rerun-round #5"]);
+    }
+    // No result either: the outcome is unknown, not a definite failure.
+    const down: SshRunner = async () => ({ ok: false, stdout: "", stderr: "", code: 255 });
+    let clock = NOW.getTime();
+    const s = new CommandFileSender(cfg, down, () => new Date((clock += 5_000)), async () => {});
+    const t2 = track();
+    await s.send("rerun-round", 5, t2.on);
+    expect(t2.states.at(-1)).toEqual([
+      "failed",
+      "✖ rerun-round #5 outcome unknown (write failed: exit 255; no result found)",
+    ]);
   });
 
   it("a result read mid-write is read again — the completed answer is what the operator sees", async () => {
