@@ -10,10 +10,11 @@
 //             the transcript's gzip and the manifest are read off the box, and the
 //             bytes are decompressed and sha256-verified by `extractPr` - the very
 //             code behind `qcr archive extract` - on a mirror of just those files.
-//   lenses    `<pr dir>/lens-sessions/<lens run id>/*.jsonl`, the layout of
-//             src/engine/openable.ts. A tmux-hosted lens pass is a child of the PR's
-//             session and keeps no file of its own, so there is none to open until
-//             workers persist them (P8.3, D10), and the archive keeps them (P8.16; `qcr archive extract`, then `qcr open <dir>`).
+//   lenses    a worker keeps them in `<root>/state/lens/pr-<n>/r<k>/lens-sessions/
+//             <lens run id>/*.jsonl` (src/botworker.ts, D10); `<pr dir>/lens-sessions/`
+//             is also read. A tmux-hosted lens pass is a child of the PR's session and
+//             keeps no file of its own. The archive keeps the worker trees (P8.16;
+//             `qcr archive extract`, then `qcr open <dir>`).
 //
 // Nothing is written on the box and nothing runs there but reads: the commands
 // are `ls`/`stat`/`cat`/`head`/`base64` and `qcr why --json`, through the TUI's
@@ -48,6 +49,10 @@ import { remoteSandboxRoot, resolveLayout } from "./tui/layout.js";
 /** A session bigger than this is refused rather than pulled whole over ssh. */
 export const OPEN_PR_MAX_BYTES = 128 * 1024 * 1024;
 
+/** Under the sandbox root: where a worker keeps a round's lens passes
+ * (`<this>/pr-<n>/r<k>/lens-sessions/`, `lensDirOf` in src/botworker.ts). */
+const WORKER_LENS_DIR = "state/lens";
+
 /** What the local copy records of where it came from. */
 export const OPEN_PR_RECORD = "open-pr.json";
 
@@ -79,8 +84,8 @@ export function openPrOptions(
     return {
       ok: false,
       error:
-        "--round and --lens cannot be combined: a lens pass belongs to a round, " +
-        "but nothing records which yet (workers will, P8.3)",
+        "--round and --lens cannot be combined: --round cuts the PR's main session " +
+        "at a round's finish, and a lens pass is opened by its run id alone",
     };
   return { ok: true, value };
 }
@@ -101,7 +106,7 @@ export function listArgv(cfg: TuiConfig, sessionDir: string, pr: number): string
     [
       `r="${root}"`,
       `for f in "${dir}"/*.jsonl; do [ -f "$f" ] && echo "live $(stat -c '%s %Y' "$f") $f"; done`,
-      `for f in "${dir}/${LENS_SESSIONS_DIR}"/*/*.jsonl; do [ -f "$f" ] && echo "lens $(stat -c '%s %Y' "$f") $f"; done`,
+      `for f in "${dir}/${LENS_SESSIONS_DIR}"/*/*.jsonl "$r/${WORKER_LENS_DIR}/pr-${pr}"/r*/${LENS_SESSIONS_DIR}/*/*.jsonl; do [ -f "$f" ] && echo "lens $(stat -c '%s %Y' "$f") $f"; done`,
       `[ -f "$r/archive/pr-${pr}/manifest.json" ] && echo "archive-manifest 0 0 $r/archive/pr-${pr}/manifest.json"`,
       `exit 0`,
     ].join("\n"),
@@ -126,6 +131,8 @@ export interface Listed {
   path: string;
 }
 
+const escapeRe = (t: string): string => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 /**
  * The listing, refusing any path that is not plainly inside the PR's own
  * directory and plainly shell-safe: the box's answer becomes the next command's
@@ -139,6 +146,9 @@ export function parseListing(
 ): Listed[] {
   const prDir = `${root}/${sessionDir}/pr-${pr}/`;
   const manifest = `${root}/archive/pr-${pr}/manifest.json`;
+  const workerLens = new RegExp(
+    `^${escapeRe(root)}/${WORKER_LENS_DIR}/pr-${pr}/r\\d+/${LENS_SESSIONS_DIR}/[^/]+/[^/]+\\.jsonl$`,
+  );
   const out: Listed[] = [];
   for (const line of stdout.split("\n")) {
     const m = /^(live|lens|archive-manifest) (\d+) (\d+) (\S+)$/.exec(line.trim());
@@ -146,6 +156,10 @@ export function parseListing(
     const path = m[4]!;
     if (!isShellSafePath(path) || path.includes("..")) continue;
     const kind = m[1] as Listed["kind"];
+    if (kind === "lens" && workerLens.test(path)) {
+      out.push({ kind, bytes: Number(m[2]), mtimeS: Number(m[3]), path });
+      continue;
+    }
     const placed = kind === "archive-manifest" ? path === manifest : path.startsWith(prDir);
     if (!placed) continue;
     // A live session sits directly in the PR's dir, a lens pass one level down.
@@ -187,6 +201,35 @@ const hasToolCall = (entry: unknown): boolean => {
   );
 };
 
+const toolCallIds = (entry: unknown): string[] =>
+  (
+    (entry as { message?: { content?: Array<{ type?: string; id?: unknown }> } }).message
+      ?.content ?? []
+  )
+    .filter((c) => c?.type === "toolCall" && typeof c.id === "string")
+    .map((c) => c.id as string);
+
+/** Pops the trailing assistant message that asks for tools, with the results
+ * after it, while any of its calls has no kept result. */
+function dropUnansweredCalls(kept: string[]): void {
+  for (;;) {
+    let at = -1;
+    for (let i = kept.length - 1; i > 0; i--)
+      if (hasToolCall(JSON.parse(kept[i]!))) {
+        at = i;
+        break;
+      }
+    if (at < 1) return;
+    const answered = new Set<string>();
+    for (const l of kept.slice(at + 1)) {
+      const m = (JSON.parse(l) as { message?: { role?: string; toolCallId?: unknown } }).message;
+      if (m?.role === "toolResult" && typeof m.toolCallId === "string") answered.add(m.toolCallId);
+    }
+    if (toolCallIds(JSON.parse(kept[at]!)).every((id) => answered.has(id))) return;
+    kept.length = at;
+  }
+}
+
 /**
  * The session as it stood at `untilMs`: the header and every entry stamped up to
  * then, the entries being appended in time order. A turn cut off mid-way (an
@@ -211,7 +254,7 @@ export function cutAtTime(
     if (i > 0 && Number.isFinite(at) && at > untilMs) break;
     kept.push(l);
   }
-  while (kept.length > 1 && hasToolCall(JSON.parse(kept[kept.length - 1]!))) kept.pop();
+  dropUnansweredCalls(kept);
   if (kept.length <= 1) return null;
   return {
     text: kept.join("\n") + "\n",
@@ -288,7 +331,8 @@ function record(dir: string, body: Record<string, unknown>): void {
   writeFileSync(join(dir, OPEN_PR_RECORD), `${JSON.stringify(body, null, 2)}\n`);
 }
 
-/** Pull what `o` names; see the file header. Never throws: an answer is a PrPull. */
+/** Pull what `o` names; see the file header. A refusal or a failed read of the box is a
+ * PrPull; a failure writing the local copy rejects. */
 export async function pullPrSession(o: OpenPrOptions, deps: PrPullDeps): Promise<PrPull> {
   const { cfg, ssh } = deps;
   const root = await resolveLayout(cfg, ssh);
@@ -322,7 +366,9 @@ export async function pullPrSession(o: OpenPrOptions, deps: PrPullDeps): Promise
       .sort((a, b) => b.mtimeS - a.mtimeS || b.path.localeCompare(a.path))[0]!;
     const read = await readLive(pick, deps);
     if ("error" in read) return fail(read.error);
-    const got = read.text;
+    const got = wholeLines(read.text);
+    if (got === null || sessionIdOf(got) === null)
+      return fail(`${pick.path} on ${where} is not a pi session (no header line)`);
     const file = placeCopy(base, join(LENS_SESSIONS_DIR, hit[0]!), basename(pick.path), got);
     record(base, {
       version: 1,
