@@ -36,7 +36,8 @@ step() { printf '\n--- %s\n' "$1"; }
 command -v docker >/dev/null 2>&1 || { echo "smoke:companion: docker is required" >&2; exit 2; }
 
 WORK="$(mktemp -d -t qcr-companion-smoke-XXXXXX)"
-trap 'rm -rf "$WORK"' EXIT
+# A run that did not succeed keeps the directory: its failure lines point at build.log and ssh.log.
+trap 'rc=$?; if [[ "$rc" -eq 0 ]]; then rm -rf "$WORK"; else echo "smoke:companion: logs kept in $WORK" >&2; fi' EXIT
 
 # dist must exist before any of the node one-liners below.
 (cd "$ROOT" && npm run --silent build)
@@ -68,10 +69,10 @@ DOCKER_ON_VM="docker"
 # (the same probe as src/tui/layout.ts).
 if [[ -z "$VM_ROOT" ]]; then
   LAYOUT="$(ssh "$SSH_HOST" "$DOCKER_ON_VM inspect -f '{{index .Config.Labels \"qcr.layout\"}}' $VM_CONTAINER" 2>/dev/null || true)"
-  case "$LAYOUT" in
-    release) VM_ROOT="/opt/qcr" ;;
-    *) VM_ROOT="/opt/quickreview/sandbox" ;;
-  esac
+  VM_ROOT="$(cd "$ROOT" && node --input-type=module -e '
+const { rootForLayout } = await import("./dist/src/tui/layout.js");
+console.log(rootForLayout(process.argv[1] === "release" ? "release" : "legacy"));
+' "$LAYOUT")"
 fi
 
 QCR="$ROOT/scripts/qcr"
