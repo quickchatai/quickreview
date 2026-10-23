@@ -18,7 +18,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { delimiter, dirname, join } from "node:path";
 import type { CoreConfig } from "../reviewconfig.js";
 import type { Ecosystem } from "../ecosystem.js";
-import type { PrFileEntry } from "../github.js";
+import type { PrFileEntry } from "../githubcore.js";
 import { CONTEXT_PACK_FILE } from "../contextpack.js";
 import type { RoundMemory } from "../memoryport.js";
 import { isDefaultPosting } from "../postingpolicy.js";

@@ -18,7 +18,7 @@ import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { codePath, flatControls } from "./codespan.js";
 import { fenceAsData } from "./datafence.js";
-import type { PrFileEntry } from "./github.js";
+import type { PrFileEntry } from "./githubcore.js";
 import { isTestFile } from "./heuristics.js";
 
 /** A changed file's text at the worktree's head, for the pack — or undefined.

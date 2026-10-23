@@ -28,6 +28,7 @@ import {
   type PrOwnedDelta,
 } from "./prdelta.js";
 import { unquoteGitPath } from "./unifieddiff.js";
+import type { PreparedTree } from "./planner.js";
 
 export { unquoteGitPath };
 export {
@@ -247,22 +248,10 @@ export const POST_MERGE_LIMITS = Object.freeze({
   prCommits: 300,
 });
 
-/** What one round's worktree preparation established about the tree on disk. */
-export interface WorktreeFacts {
+/** What one round's worktree preparation established about the tree on disk:
+ * the facts the planner reads (src/planner.ts), and where the tree lives. */
+export interface WorktreeFacts extends PreparedTree {
   path: string;
-  /** The sha the worktree is actually checked out at — the authority for the
-   * round. It is the just-fetched `refs/pull/<n>/head`, or the caller's
-   * `expectedHead` when that ref lags behind it. */
-  head_sha: string;
-  /** Branch the PR targets; "" when the caller did not supply one. */
-  base_ref: string;
-  /** Tip of base_ref at fetch time; "" when no base_ref was fetched. */
-  base_sha: string;
-  /** merge-base(base_sha, head_sha); "" when unavailable. */
-  merge_base: string;
-  /** Set when GitHub's `refs/pull/<n>/head` lagged the head the caller expected
-   * and the worktree holds that head instead: the stale commit the ref named. */
-  pull_ref_sha?: string;
 }
 
 export function cloneUrlFor(repo: string): string {

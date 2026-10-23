@@ -40,7 +40,12 @@ import { fenceAsData } from "./datafence.js";
 import { isPostedRow, predecessorOf } from "./finding-chain.js";
 import { priorFindingFields } from "./priortasks.js";
 import { bareTag, ordinaryPostTag } from "./severity.js";
-import type { PriorFindingCheckRow, RoundFindingRow, RoundRow, StateStore } from "./state.js";
+import type {
+  PriorFindingCheckRow,
+  ReviewedHeadRow,
+  RoundFindingRow,
+  RoundRow,
+} from "./storerows.js";
 
 /** At most this many findings in the prompt; the sidecar holds them all. */
 export const PRIOR_NOTE_MAX_ENTRIES = 40;
@@ -448,8 +453,27 @@ export function renderPriorFindingsNote(
 
 // ---- the StateStore-backed collector ------------------------------------------
 
+/** The store slice the collector reads and writes (src/state.ts's StateStore). */
+export interface PriorFindingsStore {
+  roundFindings(pr: number): RoundFindingRow[];
+  prEvents(
+    pr: number,
+    kinds: readonly string[],
+  ): Array<{ id: number; ts: string; kind: string; payload: Record<string, unknown> }>;
+  roundsFor(pr: number): RoundRow[];
+  priorFindingChecks(pr: number): PriorFindingCheckRow[];
+  reviewedHead(pr: number): ReviewedHeadRow | undefined;
+  recordPriorListing(
+    pr: number,
+    checkedRound: number,
+    headSha: string,
+    items: ReadonlyArray<{ round_no: number; finding_key: string; blocking: boolean }>,
+  ): void;
+  logEvent(kind: string, pr: number | null, payload?: unknown): void;
+}
+
 export interface PriorFindingsDeps {
-  store: StateStore;
+  store: PriorFindingsStore;
   /** `<root>/state/findings` — where round records live. */
   findingsDir: string;
 }

@@ -8,13 +8,13 @@
 // prompts.ts) and the bench's replays — the same plan everywhere. It reads
 // nothing but its arguments, and a follow-up decision reads the PR's history
 // through `FollowUpHistory`, a port the bot fills from its state store.
-import type { Config } from "./config.js";
+import type { CoreConfig } from "./reviewconfig.js";
 import { REVIEW_DEFAULTS } from "./reviewconfig.js";
 import { coverageEligible } from "./coverage.js";
 import { DJANGO_ECOSYSTEM, type Ecosystem } from "./ecosystem.js";
 import { promptTargetsFor } from "./escalationprompt.js";
 import { deltaFollowUpEnabled } from "./followup-mode.js";
-import type { PrFileEntry } from "./github.js";
+import type { PrFileEntry } from "./githubcore.js";
 import {
   INTENT_PASS,
   passTier,
@@ -48,7 +48,6 @@ import { roundPostingKey } from "./postingkey.js";
 import { deltaAsPrFiles, type PrOwnedDelta, type PrOwnedDeltaFile } from "./prdelta.js";
 import type { PriorFindingsList } from "./priorfindings.js";
 import { assignPriorFindings } from "./priortasks.js";
-import type { PrStateRow } from "./state.js";
 import { PASS_TIER_ORDER } from "./types.js";
 import type {
   LedgerCarry,
@@ -60,7 +59,6 @@ import type {
   RoundRecoveryContext,
   RoundType,
 } from "./types.js";
-import type { WorktreeFacts } from "./worktrees.js";
 
 /** A plan's lens names, each once, in plan order — the compatibility list
  * the rounds table, the event log and every order carry (a lens with several
@@ -74,7 +72,7 @@ export function lensesOf(plan: readonly PassPlanEntry[]): string[] {
  * and the prompt all name their head by. */
 export function reviewedHeadOf(
   tree: Pick<PreparedTree, "head_sha"> | undefined,
-  row: Pick<PrStateRow, "head_sha">,
+  row: Pick<PlannedPr, "head_sha">,
 ): string {
   return tree?.head_sha || row.head_sha;
 }
@@ -94,7 +92,7 @@ function raisableFrom(lens: string, tier: PassTier): string[] {
  * cannot make a stronger lens's finding vanish. Lens tiers are deliberately
  * not an input.
  */
-export function validatorTier(cfg: Pick<Config, "lenses" | "models">): PassTier {
+export function validatorTier(cfg: Pick<CoreConfig, "lenses" | "models">): PassTier {
   return flooredTier(cfg.lenses, VALIDATE_PASS, cfg.models.validate_tier);
 }
 
@@ -103,15 +101,36 @@ export function validatorTier(cfg: Pick<Config, "lenses" | "models">): PassTier 
  * rule): a risk pass exists only as `sol-high`; every other lens at `sol-med`,
  * or at the profile's `min_tier` for it when that is higher.
  */
-export function addTierOf(cfg: Config, lens: string): PassTier {
+export function addTierOf(cfg: CoreConfig, lens: string): PassTier {
   return cfg.models.risk_passes.includes(lens)
     ? "sol-high"
     : flooredTier(cfg.lenses, lens, "sol-med");
 }
 
 /** The facts a prepared worktree hands the round — the tree's own, less
- * where it lives. */
-export type PreparedTree = Omit<WorktreeFacts, "path">;
+ * where it lives (the app's worktree facts add the path). */
+export interface PreparedTree {
+  /** The sha the worktree is actually checked out at — the authority for the
+   * round. It is the just-fetched `refs/pull/<n>/head`, or the caller's
+   * `expectedHead` when that ref lags behind it. */
+  head_sha: string;
+  /** Branch the PR targets; "" when the caller did not supply one. */
+  base_ref: string;
+  /** Tip of base_ref at fetch time; "" when no base_ref was fetched. */
+  base_sha: string;
+  /** merge-base(base_sha, head_sha); "" when unavailable. */
+  merge_base: string;
+  /** Set when GitHub's `refs/pull/<n>/head` lagged the head the caller expected
+   * and the worktree holds that head instead: the stale commit the ref named. */
+  pull_ref_sha?: string;
+}
+
+/** The PR a round is planned for: the fields of its state row the plan reads. */
+export interface PlannedPr {
+  number: number;
+  head_sha: string;
+  title: string;
+}
 
 /** What `buildPassPlan` returns. */
 export interface PassPlan {
@@ -140,7 +159,7 @@ export interface PassPlan {
  * has no validator row at all; `enabled = true` on a lever-gated lens switches
  * it on whatever its `[review]` lever says. */
 export function buildPassPlan(
-  cfg: Config,
+  cfg: CoreConfig,
   files: PrFileEntry[],
   intent?: { title?: string | null; body?: string | null },
   /** Whose tier-forcing gate applies. Default Django; `none` never forces
@@ -536,7 +555,7 @@ export type PrOwnedDeltaReader = (q: {
  */
 export async function decideFollowUp(
   deps: {
-    cfg: Config;
+    cfg: CoreConfig;
     history: FollowUpHistory;
     /** The PR-owned delta reader (`WorktreeManager.prOwnedDelta`). Absent ⇒
      * `{full: "no-adapter"}`. */
@@ -621,7 +640,7 @@ export async function decideFollowUp(
  * change; a small one stays delta-only.
  */
 export function followUpSweepOwed(
-  cfg: Config,
+  cfg: CoreConfig,
   args: {
     standing: string | null;
     approvalWithheld: boolean;
@@ -651,7 +670,7 @@ export function followUpSweepOwed(
  * store; the bench's is the recorded case's.
  */
 export function planFollowUp(
-  cfg: Config,
+  cfg: CoreConfig,
   heuristics: HeuristicsExtension | undefined,
   args: {
     delta: Extract<PrOwnedDelta, { ok: true }>;
@@ -884,8 +903,8 @@ export function sweepOrderOf(order: RoundOrder, sweepPlan: PassPlanEntry[]): Rou
 
 /** Build the round order for one PR — pure once the files list is in hand. */
 export function buildRoundOrder(args: {
-  cfg: Config;
-  row: PrStateRow;
+  cfg: CoreConfig;
+  row: PlannedPr;
   files: PrFileEntry[];
   roundId: number;
   roundNo: number;

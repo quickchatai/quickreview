@@ -1,5 +1,5 @@
 import { canonicalLensIds } from "./lensids.js";
-import type { RoundFindingInput } from "./state.js";
+import type { RoundFindingInput } from "./storerows.js";
 
 /** Semantic finding fields shared by file fallback and durable ingestion. */
 export function findingRowFields(f: RoundFindingInput) {

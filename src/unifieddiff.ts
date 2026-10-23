@@ -3,7 +3,7 @@
 // plan lenses from a local `git diff`, and the regression replay may not
 // import src/setup/.
 
-import type { PrFileEntry } from "./github.js";
+import type { PrFileEntry } from "./githubcore.js";
 
 /** Git's C-style quoting of a path, undone. A name with a special or (under
  * the default `core.quotePath`) non-ASCII byte comes double-quoted, each such

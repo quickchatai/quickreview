@@ -15,7 +15,7 @@ import { dirname } from "node:path";
 import { normalizeDisposition, recordString, type FindingDisposition } from "./findingkey.js";
 import { parseFindingsRecord, type FindingsRecordEntry } from "./findingsrecord.js";
 import { computePriorFindings, type PriorFindingsList } from "./priorfindings.js";
-import type { RoundFindingRow } from "./state.js";
+import type { RoundFindingRow } from "./storerows.js";
 
 export const STATE_VERSION = 1;
 

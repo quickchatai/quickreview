@@ -4,7 +4,7 @@
 // (src/hostroute.ts).
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import type { Config } from "../config.js";
+import type { CoreConfig } from "../reviewconfig.js";
 import { buildAgents, configAddenda, identityVars, PASS_ADDENDA } from "../include.js";
 import { lensTuningAddenda, roundAgentModels } from "../lenstuning.js";
 import { postingPolicyAddenda } from "../postingpolicy.js";
@@ -18,7 +18,7 @@ import { loadProfileAddenda, loadProfileEcosystem, type ProfileLookup } from "..
  * dir's `agents` (src/hostroute.ts) and runs with the user scope. */
 export function buildBenchAgents(
   root: string,
-  cfg: Config,
+  cfg: CoreConfig,
   out: string = join(root, ".pi", "agents"),
   /** A profile's replacements (src/profileoverrides.ts): `readFile` serves a
    * replaced agent or prompt, `lookup` adds the repo profile's layer. Absent:

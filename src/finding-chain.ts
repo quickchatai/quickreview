@@ -1,5 +1,5 @@
 import { storedLensIds } from "./lensids.js";
-import type { RoundFindingRow } from "./state.js";
+import type { RoundFindingRow } from "./storerows.js";
 
 /** A finding continuation address; the key may itself contain colons. */
 export function carriedToRef(roundNo: number, findingKey: string): string {

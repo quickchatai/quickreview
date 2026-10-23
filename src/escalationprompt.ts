@@ -2,7 +2,7 @@
 // says what it is for): the targets a round order carries, and the block the
 // round prompt renders for them. The review core's half, so the planner and
 // the renderer never reach the daemon's delivery.
-import type { EscalationConfig } from "./config.js";
+import type { EscalationConfig } from "./reviewconfig.js";
 
 /**
  * The targets a round order carries, or none.

@@ -7,7 +7,6 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Config } from "../config.js";
 import type { CoreConfig } from "../reviewconfig.js";
 import {
   buildPassPlan,
@@ -24,7 +23,7 @@ import { parseLedgerCarry, settledFromLedger } from "../ledgercarry.js";
 import type { CiLinter } from "../lintconfig.js";
 import type { PriorFindingsList } from "../priorfindings.js";
 import type { Ecosystem } from "../ecosystem.js";
-import type { PrFileEntry } from "../github.js";
+import type { PrFileEntry } from "../githubcore.js";
 import { CONTEXT_PACK_FILE, readWorktreeFileForPack, renderContextPack } from "../contextpack.js";
 import { identityVars } from "../include.js";
 import { lensRuntimeOf } from "../launchvocab.js";
@@ -33,7 +32,6 @@ import { MEMORY_LESS, type RoundMemory } from "../memoryport.js";
 import { renderPassTasks } from "../passtasks.js";
 import { loadProfileHeuristics, type ProfileLookup } from "../profiles.js";
 import { firstPartyDirectiveFiles } from "../severity.js";
-import type { PrStateRow } from "../state.js";
 import {
   renderConversationSystemPrompt,
   renderGateNotes,
@@ -158,16 +156,9 @@ export function renderOneShotPrompts(args: {
   const title = target.title ?? target.fallbackTitle ?? `${target.repo}#${target.number}`;
   const body = boundBody(target.body);
   const directiveFiles = directiveFilesOf(cfg, args.files);
-  const row = {
-    number: target.number,
-    state: "reviewing",
-    head_sha: target.headSha,
-    title,
-    author: "",
-  } as unknown as PrStateRow;
+  const row = { number: target.number, head_sha: target.headSha, title };
   const built = buildRoundOrder({
-    // The planner still types the app's whole Config; it reads only the review sections.
-    cfg: cfg as Config,
+    cfg,
     row,
     files: args.files,
     roundId: 1,
@@ -339,13 +330,7 @@ export function renderFollowUpOneShotPrompts(args: FollowUpOneShotArgs): FollowU
   const title = target.title ?? target.fallbackTitle ?? `${target.repo}#${target.number}`;
   const body = boundBody(target.body);
   const directiveFiles = directiveFilesOf(cfg, args.files);
-  const row = {
-    number: target.number,
-    state: "reviewing",
-    head_sha: target.headSha,
-    title,
-    author: "",
-  } as unknown as PrStateRow;
+  const row = { number: target.number, head_sha: target.headSha, title };
   const heuristics = loadProfileHeuristics(root, cfg.review.profile, args.profileLookup);
   const styleGuide = lensEnabled(cfg.lenses, "pass-style", cfg.review.style_lens)
     ? findStyleGuide(tree)
@@ -353,10 +338,9 @@ export function renderFollowUpOneShotPrompts(args: FollowUpOneShotArgs): FollowU
   const ciLinters = lensEnabled(cfg.lenses, "pass-lint-conformance", cfg.review.lint_conformance)
     ? findCiLinters(tree)
     : [];
-  // The whole PR's plan, exactly as dispatch builds it before deciding. The
-  // planner still types the app's whole Config; it reads only the review sections.
+  // The whole PR's plan, exactly as dispatch builds it before deciding.
   const fullPlan = buildPassPlan(
-    cfg as Config,
+    cfg,
     args.files,
     { title, body: body ?? undefined },
     args.ecosystem,
@@ -416,8 +400,7 @@ export function renderFollowUpOneShotPrompts(args: FollowUpOneShotArgs): FollowU
     };
   }
   const built = buildRoundOrder({
-    // The planner still types the app's whole Config; it reads only the review sections.
-    cfg: cfg as Config,
+    cfg,
     row,
     files: args.files,
     roundId: 1,

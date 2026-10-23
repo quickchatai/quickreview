@@ -32,7 +32,7 @@
 //      nothing about what was decided: an approval withheld for red CI, a
 //      REQUEST_CHANGES softened by guard 1, or a legacy mechanical comment
 //      all look identical here. It is never guessed into a verdict.
-import type { ReviewedHeadRow } from "./state.js";
+import type { ReviewedHeadRow } from "./storerows.js";
 import { normalizeVerdict } from "./types.js";
 
 export type StandingDecidedVerdict = "APPROVE" | "REQUEST_CHANGES";

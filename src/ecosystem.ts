@@ -46,7 +46,7 @@ import {
   migrationGate as djangoMigrationGate,
   type PrFile,
 } from "./heuristics.js";
-import type { CollisionCommentRecord } from "./state.js";
+import type { CollisionCommentRecord } from "./storerows.js";
 import {
   collisionFingerprint,
   detectMigrationCollisions,

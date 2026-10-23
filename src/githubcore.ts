@@ -16,3 +16,14 @@ export class GitHubRequestError extends Error {
     this.name = "GitHubRequestError";
   }
 }
+
+export interface PrFileEntry {
+  filename: string;
+  additions: number;
+  deletions: number;
+  status: string;
+  /** Unified diff for the file when GitHub returns one (absent for binaries). */
+  patch?: string;
+  /** The path before a rename, when GitHub detected one (renumber detection). */
+  previous_filename?: string;
+}

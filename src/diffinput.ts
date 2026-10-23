@@ -4,7 +4,7 @@
 // are read leniently and the hunks by their counts, so a removed line that
 // itself starts with `--` is not taken for a file header. Pure: no I/O.
 import { parseHunkHeader } from "./hunkheader.js";
-import type { PrFileEntry } from "./github.js";
+import type { PrFileEntry } from "./githubcore.js";
 import { unquoteGitPath } from "./unifieddiff.js";
 
 export interface ParsedDiff {

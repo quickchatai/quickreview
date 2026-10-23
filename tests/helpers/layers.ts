@@ -114,6 +114,11 @@ export const CORE: readonly string[] = [
   "src/pricing.ts",
   "src/pr-identity.ts",
   "src/assetroot.ts",
+  // The record shapes the core shares with the app's store and recheck, and
+  // the sweep claim a verdict reports.
+  "src/storerows.ts",
+  "src/recheckorder.ts",
+  "src/sweepstatus.ts",
   // The local review pipeline below argument parsing, behind review() in
   // src/reviewapi.ts: target resolution, the price preview, delta history,
   // bot-finding skips, the run store, rendering and posting.
