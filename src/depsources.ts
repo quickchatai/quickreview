@@ -595,12 +595,12 @@ function stripPyComment(line: string): string {
   return i < 0 ? line : line.slice(0, i);
 }
 
-/** Absolute imports of a Python source; relative (`from .`) imports are skipped. */
 /** `a.b as c` → `a.b`. */
 function stripPyAlias(part: string): string {
   return (part.trim().split(/\s+as\s+/)[0] ?? "").trim();
 }
 
+/** Absolute imports of a Python source; relative (`from .`) imports are skipped. */
 export function extractPythonImports(src: string): PyImport[] {
   const lines = src.replace(/\\\r?\n/g, " ").split(/\r?\n/);
   const out: PyImport[] = [];
@@ -3448,6 +3448,8 @@ async function prepareOne(req: DepRequest, ctx: PrepCtx): Promise<Outcome> {
       skip: { ecosystem: req.ecosystem, name: req.name, ...requestIdentity(req), reason },
     };
   }
+  // A returned failure (an empty cache hit) names the request like a thrown one.
+  if (!out.ok) out.skip = { ...out.skip, ...requestIdentity(req) };
   if (out.ok)
     ctx.log(
       `depsources: ${req.ecosystem} ${out.source.name}@${out.source.version} ready (${out.source.files} files)`,
