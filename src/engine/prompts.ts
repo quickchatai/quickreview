@@ -31,7 +31,7 @@ import { lensEnabled } from "../lenstuning.js";
 import { MEMORY_LESS, type RoundMemory } from "../memory/context.js";
 import { renderPassTasks } from "../passtasks.js";
 import { loadProfileHeuristics, type ProfileLookup } from "../profiles.js";
-import { directiveVocabulary, isFirstPartyDirectivePath } from "../severity.js";
+import { firstPartyDirectiveFiles } from "../severity.js";
 import type { PrStateRow } from "../state.js";
 import {
   renderConversationSystemPrompt,
@@ -59,8 +59,7 @@ export function boundBody(body: string | null, maxBytes = 20_000): string | null
 /** The PR's first-party agent-directive files (src/severity.ts), which the
  * round order names — the same for a first round and a follow-up. */
 export function directiveFilesOf(cfg: Config, files: readonly PrFileEntry[]): string[] {
-  const vocab = directiveVocabulary(cfg.review.directives);
-  return files.filter((f) => isFirstPartyDirectivePath(f.filename, vocab)).map((f) => f.filename);
+  return firstPartyDirectiveFiles(files, cfg.review.directives);
 }
 
 /** `[review] context_pack = "pack-first"`, as dispatch writes it:

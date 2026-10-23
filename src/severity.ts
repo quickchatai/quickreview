@@ -95,6 +95,16 @@ export const DEFAULT_DIRECTIVE_VOCABULARY: DirectiveVocabulary = {
   files: new Set([".github/copilot-instructions.md"]),
 };
 
+/** The filenames among `files` that are first-party agent-directive paths
+ * under `extras` (the configured extension of the built-in vocabulary). */
+export function firstPartyDirectiveFiles(
+  files: readonly { filename: string }[],
+  extras: DirectiveVocabularyExtras = {},
+): string[] {
+  const vocab = directiveVocabulary(extras);
+  return files.filter((f) => isFirstPartyDirectivePath(f.filename, vocab)).map((f) => f.filename);
+}
+
 /** Built-ins ∪ the configured extras — EXTEND-only by construction. */
 export function directiveVocabulary(extras: DirectiveVocabularyExtras = {}): DirectiveVocabulary {
   const d = DEFAULT_DIRECTIVE_VOCABULARY;
