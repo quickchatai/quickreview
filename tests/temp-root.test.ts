@@ -7,7 +7,7 @@
 // spawned script makes — go away with the file, whether or not the test
 // cleaned up after itself.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -80,5 +80,34 @@ describe("the per-file temp root", () => {
     } finally {
       host.close();
     }
+  });
+
+  // pi's extension loader compiles .ts through jiti. jiti sends its on-disk
+  // cache to the machine's real temp dir (ignoring TMPDIR) whenever the
+  // process's cwd IS tmpdir(), which is exactly where a test-spawned child
+  // that runs in its temp dir sits. Every run then left thousands of compiled
+  // modules in the RAM-backed /tmp/jiti.
+  it("a child running in the temp root keeps jiti's compile cache inside it", () => {
+    // Where jiti falls back to when it ignores TMPDIR: tmpdir() with TMPDIR unset.
+    const { TMPDIR: _drop, ...noTmpdir } = process.env;
+    const real = execFileSync(process.execPath, ["-p", "require('os').tmpdir()"], {
+      env: noTmpdir,
+      encoding: "utf8",
+    }).trim();
+    const name = `jiti-probe-${process.pid}-${Date.now()}`;
+    const file = join(tmpdir(), `${name}.ts`);
+    writeFileSync(file, "export const probe: number = 42;\n");
+    const script =
+      `import { createJiti } from ${JSON.stringify(import.meta.resolve("jiti"))};` +
+      `await createJiti(import.meta.url, { moduleCache: false }).import(${JSON.stringify(file)});`;
+    execFileSync(process.execPath, ["--input-type=module", "-e", script], {
+      cwd: tmpdir(),
+      env: process.env,
+    });
+    const leaked = existsSync(join(real, "jiti"))
+      ? readdirSync(join(real, "jiti")).filter((f) => f.startsWith(name))
+      : [];
+    expect(leaked).toEqual([]);
+    expect(readdirSync(join(tmpdir(), "jiti")).some((f) => f.includes("jiti-probe"))).toBe(true);
   });
 });
