@@ -34,6 +34,7 @@ import {
 } from "../src/learner/learner.js";
 import {
   chainRoots,
+  datesBetween,
   digestBulletClass,
   findingClass,
   missedClass,
@@ -2589,4 +2590,11 @@ it("either-polarity candidates are not automatically described as contested", as
     .run();
   const text = renderPacketMarkdown(await h.learner.buildPacket("2026-10-07"));
   expect(text).not.toContain("either way (contested)");
+});
+
+it("datesBetween enumerates every date of a range longer than 400 days", () => {
+  const dates = datesBetween("2025-01-01", "2026-10-02");
+  expect(dates).toHaveLength(640);
+  expect(dates[0]).toBe("2025-01-01");
+  expect(dates[dates.length - 1]).toBe("2026-10-02");
 });
