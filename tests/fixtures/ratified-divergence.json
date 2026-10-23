@@ -4,7 +4,8 @@
     "prompts/pass-common.md": [
       "2026-08-24 the owner: reseed — RATIFIED fences around the two ratified invariants (passes post nothing, rule 9; the P0–nit severity ladder). Marker lines only; the fenced text is byte-identical to the asset",
       "2026-08-29 owner: de-identification reseed — ratified by the owner 2026-08-30 (in-session)",
-      "2026-10-03 owner ratified in-session: prompt-cleanup reseed — model-facing doc header dropped; findings schema completed with reachability, kind, detail and request"
+      "2026-10-03 owner ratified in-session: prompt-cleanup reseed — model-facing doc header dropped; findings schema completed with reachability, kind, detail and request",
+      "2026-10-23 owner ruling, history scrub: reseed — ticket ids dropped from the RATIFIED fence markers (the citation is now optional). Marker lines only; the fenced text is unchanged"
     ],
     "prompts/conversation-system.md": [
       "2026-08-18 the owner: reseed removing the retired ESCALATE verdict + mark-escalation-worthy (rule 10 de-escalation)",
@@ -13,7 +14,8 @@
       "2026-08-25 the owner: reseed (ratified in-session) — the Post step's 'Previously deferred, unchanged' review-body mandate removed, retired: the ledger carries round-to-round state and re-reviews carry only a one-line carried-over count; open findings stay on their existing threads, never restated in the body",
       "2026-08-29 owner: de-identification reseed — ratified by the owner 2026-08-30 (in-session)",
       "2026-09-26 the owner: reseed (ratified in-session) — the stale gpt-5.6 model line removed; a lens's model comes only from config.toml [models] at agent build time (the build always rewrote this header), and the prompt headers name the config key instead of a model",
-      "2026-10-03 owner ratified in-session: prompt-cleanup reseed — model-facing doc header dropped; the dated owner aside inside the decide-step fence removed"
+      "2026-10-03 owner ratified in-session: prompt-cleanup reseed — model-facing doc header dropped; the dated owner aside inside the decide-step fence removed",
+      "2026-10-23 owner ruling, history scrub: reseed — ticket ids dropped from the RATIFIED fence markers (the citation is now optional). Marker lines only; the fenced text is unchanged"
     ],
     "prompts/eod-sweep.md": [
       "2026-08-20 the owner: reseed — pinned/#manual/#bug memory discipline for the TUI management surface, and rubric proposals as state/rubric/<slug>/ dirs (PROPOSAL.md + changes.patch; the VM sandbox has no git, the branch instruction was unexecutable)",
@@ -21,7 +23,8 @@
       "2026-08-24 the owner: reseed — RATIFIED fences around the memory discipline and the improvement caps, and the rubric-proposal carrier retired: the curator flags rubric candidates in the digest and authors nothing (no state/rubric/<slug>/ dirs, no patch)",
       "2026-08-29 owner: de-identification reseed — ratified by the owner 2026-08-30 (in-session)",
       "2026-10-03 owner ratified in-session: prompt-cleanup reseed — model-facing doc header dropped",
-      "2026-10-07 owner ratified in-session (R8, \"Yes, ratify it\"): context-engine reseed — §1 starts from the daemon's outcomes packet (the 'Outcomes to curate' section, state/eod/{{date}}/outcomes.md) and names the events/ and experiences/ areas; learnings are typed lessons written through viking_write's lesson fields (kind repo-fact|look-for|dont-raise|convention, lens, class, paths, evidence) citing cand:c<id>; objective repo facts become repo-fact/convention lessons in experiences/ (the viking://resources/ promotion is gone); §1 closes with the eod-curation-receipt; the memory-discipline fence (marker annotated 'reseeded, 2026-10-07') names preferences/pinned/, #manual in preferences/ and kind=bug area=operations in an events/ entry's header, and an outage still writes the receipt; the digest's Learnings line counts the decisions"
+      "2026-10-07 owner ratified in-session (R8, \"Yes, ratify it\"): context-engine reseed — §1 starts from the daemon's outcomes packet (the 'Outcomes to curate' section, state/eod/{{date}}/outcomes.md) and names the events/ and experiences/ areas; learnings are typed lessons written through viking_write's lesson fields (kind repo-fact|look-for|dont-raise|convention, lens, class, paths, evidence) citing cand:c<id>; objective repo facts become repo-fact/convention lessons in experiences/ (the viking://resources/ promotion is gone); §1 closes with the eod-curation-receipt; the memory-discipline fence (marker annotated 'reseeded, 2026-10-07') names preferences/pinned/, #manual in preferences/ and kind=bug area=operations in an events/ entry's header, and an outage still writes the receipt; the digest's Learnings line counts the decisions",
+      "2026-10-23 owner ruling, history scrub: reseed — ticket ids dropped from the RATIFIED fence markers (the citation is now optional, the reseed annotation carries only its date), and the tracker and dashboard wording made generic (an issue-tracker ticket, the status dashboard). Marker lines and those two phrases only"
     ],
     "agents/pass-security.md": [
       "2026-08-29 owner: de-identification reseed — ratified by the owner 2026-08-30 (in-session)",

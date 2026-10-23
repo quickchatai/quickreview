@@ -43,19 +43,20 @@ Prompt files the system is allowed to edit still contain passages that are
 recheck transition, and kin. Each such passage is wrapped in a fence:
 
 ```
-<!-- RATIFIED FT-NNNN <slug> — do not edit; owner only -->
+<!-- RATIFIED <slug> — do not edit; owner only -->
 …the ratified text, byte for byte…
 <!-- /RATIFIED <slug> -->
 ```
 
-The citation is `FT-NNNN` (the ratifying ticket) or `RULE-N` (a hard rule that
-predates the ticket numbering). The role half accepts `owner only` (new) and
-`the owner only` (grandfathered). `tests/invariant-fences.test.ts` pins every
+A fence carries no citation, except the hard-rule invariants, which cite the
+rule number (`RULE-N`) before the slug. A reseed of a fence's words may be
+dated after the slug, ` (reseeded YYYY-MM-DD)`. The role half is always
+`owner only`. `tests/invariant-fences.test.ts` pins every
 fence by the sha256 of its contents; a changed passage and a deleted marker
 fail equally loudly.
 
 Changing fenced text is a ratification: the owner decides, and the hash is
-re-pinned in the same commit with the ratifying citation. The rubric-accept
+re-pinned in the same commit, which says so. The rubric-accept
 path (below) structurally refuses any proposal patch that reaches inside a
 fence or mints a new fence marker.
 

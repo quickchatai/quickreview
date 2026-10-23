@@ -19,7 +19,7 @@
   - one block of `proposals.test.ts`, the accept path through real
     `git apply`/`commit`
 - **Others shell out to git on the way to something else,** each in a scratch
-  repo or a scratch config home: `deploy`, `publish-snapshot`,
+  repo or a scratch config home: `deploy`,
   `setup-extension`, `scan-tree`, `setup-interview`, `setup-replay`.
   `publishability` and `fences-provenance` run `ls-files` on the checkout
   to list what they lint.
@@ -98,14 +98,13 @@ Fix the code, not the test.
 
 - **`invariant-fences.test.ts`** pins the ratified passages inside the
   editable prompt files.
-  - Each `<!-- RATIFIED <citation> <slug> — do not edit; owner only -->`
-    fence (citation `FT-NNNN` or `RULE-N`) is hashed by its contents, and a
-    missing marker fails as loudly as changed text.
-  - A failure names the ratifying citation. The fix is a ratification, not
-    a re-pin.
+  - Each `<!-- RATIFIED [RULE-N] <slug> — do not edit; owner only -->`
+    fence (the `RULE-N` citation only for a hard-rule invariant) is hashed by
+    its contents, and a missing marker fails as loudly as changed text.
+  - A failure names the fence. The fix is a ratification, not a re-pin.
   - A fenced frozen seed must also carry a `ratified-divergence.json` entry.
   - A marker may record a ratified reseed of its words after the slug —
-    ` (reseeded FT-NNNN, YYYY-MM-DD)`, that spelling only — and the pin's
+    ` (reseeded YYYY-MM-DD)`, that spelling only — and the pin's
     `reseeded` must match it both ways.
 - **`eod-seed-coherence.test.ts`** renders the real `prompts/eod-sweep.md`
   with the sections the daemon renders after it (`MEMORY_LAYOUT_NOTE`, the

@@ -191,7 +191,7 @@ describe("the ratified reseed is the seed on disk", () => {
     ) as { files: Record<string, string[]> };
     const notes = divergence.files["prompts/eod-sweep.md"] ?? [];
     // A ratified reseed is recorded by a human, with its date and citation.
-    expect(notes.at(-1)).toMatch(/^2026-10-07 owner ratified in-session \(R8, /);
+    expect(notes.some((n) => /^2026-10-07 owner ratified in-session \(R8, /.test(n))).toBe(true);
   });
 
   it("keeps its {{date}} placeholders, and nothing else the renderer would have to know", () => {
