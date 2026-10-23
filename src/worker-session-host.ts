@@ -65,7 +65,8 @@ export interface WorkerSessionHostOptions {
   supervisor: WorkerSupervisor;
   /** The debug round (P8.13b): a round order of a PR whose lease is armed for one goes
    * to its interactive pi, in a worker's place. Omitted: every round goes to a worker. */
-  debugRounds?: Pick<DebugRoundManager, "claims" | "deliver">;
+  debugRounds?: Pick<DebugRoundManager, "claims" | "deliver"> &
+    Partial<Pick<DebugRoundManager, "holds" | "release">>;
   ovSessions?: OvSessionLifecycle;
   /** Told at each birth whether the PR's raw-notes tier could be created, so the worker's
    * spec can leave the session memory-less when it could not (as the tmux birth did). */
@@ -118,13 +119,30 @@ export class WorkerSessionHost implements SessionHooks {
 
   /** What the lifecycle asks of whatever runs the PR's pi: here, the supervisor. */
   private workerHost(): PrSessionHost {
-    const { supervisor } = this;
+    const { supervisor, store } = this;
+    // A debug lease is a second consumer of the PR's session: the interactive pi
+    // it runs is neither a worker nor visible to the supervisor.
+    const debugHeld = (pr: number): boolean => this.debugRounds?.holds?.(pr) ?? false;
+    const endDebug = async (pr: number): Promise<boolean> => {
+      if (!debugHeld(pr)) return true;
+      const ended = await this.debugRounds?.release?.(pr, "the PR closed");
+      return ended?.ok === true;
+    };
     return {
-      liveSessions: async () => supervisor.workers().map((w) => w.session),
-      provenGone: async (pr) => !supervisor.runs(prSessionName(pr)),
-      killConfirmed: (pr) => supervisor.fence(prSessionName(pr)),
+      liveSessions: async () => {
+        const names = new Set(supervisor.workers().map((w) => w.session));
+        for (const lease of store.hostLeases())
+          if (lease.kind === "debug") names.add(prSessionName(lease.pr));
+        return [...names];
+      },
+      provenGone: async (pr) => !supervisor.runs(prSessionName(pr)) && !debugHeld(pr),
+      killConfirmed: async (pr) => {
+        const fenced = await supervisor.fence(prSessionName(pr));
+        return (await endDebug(pr)) && fenced;
+      },
       stop: async (pr) => {
         await supervisor.fence(prSessionName(pr));
+        await endDebug(pr);
       },
       reuseLive: async (pr) => (supervisor.runs(prSessionName(pr)) ? prSessionName(pr) : undefined),
       // Nothing runs between rounds: the session is born when its first worker is.
@@ -203,11 +221,11 @@ export class WorkerSessionHost implements SessionHooks {
   /** Born on first trigger, like the tmux host's rebirth: the archive comes back
    * first, the worktree is revived, the raw tier created. Throws when the PR is
    * closed or was never tracked, so no title is known. */
-  private async ensureSessionForWake(pr: number): Promise<void> {
+  private async ensureSessionForWake(pr: number, keepWorktree = false): Promise<void> {
     const closing = this.lifecycle.cleanupInFlight(pr);
     if (closing) {
       await closing.catch(() => undefined);
-      return this.ensureSessionForWake(pr);
+      return this.ensureSessionForWake(pr, keepWorktree);
     }
     const session = prSessionName(pr);
     if (this.lifecycle.prClosed(pr)) {
@@ -217,7 +235,12 @@ export class WorkerSessionHost implements SessionHooks {
     if (title === undefined || title === null)
       throw new Error(`no live session ${session} — dispatch a round to birth it first`);
     await this.lifecycle.awaitBeforeBirth(pr);
-    const worktree = await this.lifecycle.reviveWorktree(pr);
+    // A round's replay reads the checkout its dispatch pinned: refreshing it
+    // from the PR ref could land on a different commit than the order names.
+    const worktree =
+      keepWorktree && existsSync(this.lifecycle.worktreePathOf(pr))
+        ? this.lifecycle.worktreePathOf(pr)
+        : await this.lifecycle.reviveWorktree(pr);
     if (this.lifecycle.prClosed(pr)) {
       throw new Error(`PR #${pr} is closed — refusing to start a worker for ${session}`);
     }
@@ -415,7 +438,7 @@ export class WorkerSessionHost implements SessionHooks {
     }
     if (preparation) return preparation;
     try {
-      await this.ensureSessionForWake(command.pr);
+      await this.ensureSessionForWake(command.pr, command.kind === "round");
       await this.supervisor.launch(command.id);
     } catch (error) {
       // The pending row and its immutable payload remain the one obligation; the

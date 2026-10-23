@@ -177,6 +177,11 @@ export class PrSessionLifecycle {
     }
   }
 
+  /** The PR's worktree path, as it stands on disk (no fetch, no reset). */
+  worktreePathOf(pr: number): string {
+    return this.worktrees.worktreePath(pr);
+  }
+
   /** The PR's worktree path, re-ensured best-effort (a wake's message cites
    * it): an unfetchable worktree must not lose the wake — the session can
    * re-derive state from the message + GitHub reads. */
