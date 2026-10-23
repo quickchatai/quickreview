@@ -5,6 +5,7 @@ import type { RuntimeSession } from "./port.js";
 
 /** A session that runs `after` once, when it is disposed. */
 export function releasing(session: RuntimeSession, after: () => void): RuntimeSession {
+  let released = false;
   return {
     get id() {
       return session.id;
@@ -23,7 +24,10 @@ export function releasing(session: RuntimeSession, after: () => void): RuntimeSe
       try {
         await session.dispose();
       } finally {
-        after();
+        if (!released) {
+          released = true;
+          after();
+        }
       }
     },
   };

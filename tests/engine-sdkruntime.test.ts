@@ -335,6 +335,32 @@ describe("[sdkRuntime] what is its own", () => {
       await s.dispose();
     });
 
+    it("a turn the provider ended as an error message is code 1, not a clean 0", async () => {
+      const faux = pricedFaux(() => 0, { provider: "faux", models: [{ id: "m" }] });
+      faux.appendResponses([
+        fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded" }),
+        fauxAssistantMessage("ok"),
+      ]);
+      const host = await PiHost.create({
+        agentDir: join(dir, "agent-err"),
+        settings: { compaction: { enabled: false }, retry: { enabled: false } },
+        configureModels: (r) => {
+          r.registerNativeProvider(faux.provider);
+        },
+      });
+      try {
+        const s = await sdkRuntime(host).create(spec());
+        const failed = await s.prompt("go");
+        expect(failed.code).toBe(1);
+        // the next turn is judged on its own message
+        const next = await s.followUp("again");
+        expect(next).toMatchObject({ status: "handled", result: { code: 0 } });
+        await s.dispose();
+      } finally {
+        host.dispose();
+      }
+    });
+
     it("a route's extras hook is asked for the spec's extensions", async () => {
       const host = hosts.get(dir) ?? (await PiHost.create({ agentDir: join(dir, "agent") }));
       const seen: string[] = [];

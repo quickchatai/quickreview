@@ -54,6 +54,14 @@ describe("the fence on paths", () => {
     }
   };
 
+  it("checkTree refuses a root with a fenced path below it, and clears one without", () => {
+    const fence = createToolFence({ dirs: [agent] });
+    expect(() => fence.checkTree(dir)).toThrow(ToolFenceError);
+    expect(() => fence.checkTree("/")).toThrow(ToolFenceError);
+    expect(() => fence.checkTree(agent)).toThrow(ToolFenceError);
+    expect(() => fence.checkTree(work)).not.toThrow();
+  });
+
   it("refuses /proc, /run/qcr-in and the agent dir, as given", () => {
     const fence = createToolFence({ dirs: [agent] });
     for (const p of [
@@ -311,6 +319,15 @@ describe("the file tools of a real session", () => {
     expect(readFileSync(join(rig.host.agentDir, "auth.json"), "utf8")).toBe(
       '{"secret":"token-in-the-login"}',
     );
+  });
+
+  it("grep and find refuse a search root that holds a fenced directory below it", async () => {
+    // rig.dir is the parent of both the worktree and the agent dir
+    for (const tool of ["grep", "find"] as const) {
+      const r = await call(tool, { pattern: tool === "grep" ? "secret" : "*", path: rig.dir });
+      expect(r.isError, tool).toBe(true);
+      expect(r.text, tool).toContain("access refused");
+    }
   });
 
   it("a write through a dangling planted link does not create the file it points at", async () => {

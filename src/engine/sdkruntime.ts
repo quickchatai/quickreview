@@ -98,6 +98,9 @@ class SdkSession implements RuntimeSession {
   private budget: TurnBudget | null = null;
   private stopped = false;
   private streamError: string | null = null;
+  /** The error text of the turn's last assistant message when the provider
+   * ended it as an error (pi resolves the prompt for that, it does not throw). */
+  private providerError: string | null = null;
   private headerWritten = false;
   /** Forgets this session in the live registry (a signal handler stops what is there). */
   private readonly untrack: () => void;
@@ -242,6 +245,7 @@ class SdkSession implements RuntimeSession {
     capUsd: number | undefined,
   ): Promise<TurnResult> {
     this.stopped = false;
+    this.providerError = null;
     const budget = new TurnBudget(
       {
         abort: () => this.session.abort(),
@@ -265,6 +269,10 @@ class SdkSession implements RuntimeSession {
     // written so far must be on disk by then.
     await new Promise<void>((resolve) => this.events.write("", () => resolve()));
     const tripped = budget.tripped;
+    if (failure === null && this.providerError !== null) {
+      failure = this.providerError;
+      appendFileSync(this.spec.stderrFile, `${failure}\n`);
+    }
     return {
       // No exit status in process: 0 when the turn ran to its end, null when it
       // was stopped (by us, or a limit), 1 when pi refused or failed it.
@@ -288,6 +296,16 @@ class SdkSession implements RuntimeSession {
     // The cap reads the lens children's spend off the updates, so it sees them;
     // the file and the listeners do not.
     this.budget?.observe(event);
+    if (event.type === "message_end") {
+      const m = event.message as { role?: unknown; stopReason?: unknown; errorMessage?: unknown };
+      if (m.role === "assistant")
+        this.providerError =
+          m.stopReason === "error"
+            ? typeof m.errorMessage === "string" && m.errorMessage !== ""
+              ? m.errorMessage
+              : "the provider returned an error"
+            : null;
+    }
     if (isUpdate(event)) {
       // Not written, and not parsed: an update listener reads the event itself.
       for (const l of this.updateListeners) {

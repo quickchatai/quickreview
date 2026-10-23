@@ -24,7 +24,8 @@
 // really is (/proc/self/fd), so a symlink swapped in after the path check
 // still lands on a refusal. grep and find hand their search root to ripgrep
 // and fd, which pi starts itself as the run uid and do not follow symlinks;
-// those two are checked on the root alone, before the tool runs.
+// those two are checked before the tool runs: the root, and that no fenced
+// path lies below it.
 import { constants, lstatSync, readlinkSync, realpathSync, type PathLike } from "node:fs";
 import { mkdir, open, stat, readdir, access } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -130,6 +131,9 @@ function realOrIntended(p: string, links = 0): string {
 export interface ToolFence {
   /** Throws a ToolFenceError for a path that is, or leads to, a fenced one. */
   check(path: string): void;
+  /** `check`, and for a search root that ripgrep or fd walk: also refuses a
+   * root with a fenced path below it, which the walk would reach. */
+  checkTree(path: string): void;
   /** For a file already opened: refuses when the descriptor is a fenced file,
    * whatever path it was opened by. A no-op where /proc/self/fd does not exist. */
   checkOpened(fd: number, path: string): void;
@@ -181,6 +185,12 @@ export function createToolFence(
         throw new ToolFenceError(path);
       }
       if (fenced(abs) || fenced(real)) throw new ToolFenceError(path);
+    },
+    checkTree(path) {
+      this.check(path);
+      const abs = resolve(path);
+      const real = realOrIntended(abs);
+      if (roots().some((r) => within(r, abs) || within(r, real))) throw new ToolFenceError(path);
     },
     checkOpened(fd, path) {
       let real: string;
@@ -399,9 +409,13 @@ export function guardedTool(def: ToolDefinition, fence: ToolFence, cwd: string):
     ...def,
     execute: (id, params, signal, onUpdate, ctx) => {
       const given = (params as { path?: unknown }).path;
-      fence.check(
-        toolPath(typeof given === "string" && given !== "" ? given : ".", ctx?.cwd || cwd),
+      const root = toolPath(
+        typeof given === "string" && given !== "" ? given : ".",
+        ctx?.cwd || cwd,
       );
+      // grep and find walk the whole tree under the root.
+      if (def.name === "grep" || def.name === "find") fence.checkTree(root);
+      else fence.check(root);
       return run(id, params, signal, onUpdate, ctx);
     },
   } as ToolDefinition;
