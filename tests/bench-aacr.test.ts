@@ -83,6 +83,7 @@ import {
   benchConfig,
   collectComments,
   prepareReviewCases,
+  recordHostFailure,
   recordUnprefetched,
   HEAD_PATCHES_FILE,
   rebuildResults,
@@ -1740,6 +1741,43 @@ describe("prepareReviewCases: what a review run keeps of an earlier invocation",
       rmSync(out, { recursive: true, force: true });
     }
   };
+
+  it("an invalidated case loses its judge inputs with its summary and results", () => {
+    for (const resume of [true, false])
+      run((out) => {
+        const dir = join(out, "cases", safeId(cases[1]!.instance_id));
+        const kept = join(out, "cases", safeId(cases[0]!.instance_id));
+        for (const d of [dir, kept]) {
+          writeFileSync(join(d, "review.md"), "old body\n");
+          writeFileSync(join(d, "comments.json"), "[]\n");
+        }
+        prepareReviewCases(out, cases, { resume, fingerprint: fp }, () => {});
+        expect(existsSync(join(dir, "review.md"))).toBe(false);
+        expect(existsSync(join(dir, "comments.json"))).toBe(false);
+        // a case this fingerprint produced (resume) keeps what it wrote
+        expect(existsSync(join(kept, "review.md"))).toBe(resume);
+      });
+  });
+
+  it("a host failure stays empty through a results rebuild, whatever the dead host wrote", () => {
+    run((out) => {
+      const c = cases[1]!;
+      const dir = join(out, "cases", safeId(c.instance_id));
+      writeFileSync(
+        join(dir, "comments.json"),
+        JSON.stringify([{ path: "f.ts", line: 3, side: "RIGHT", body: "[blocker] partial" }]),
+      );
+      writeFileSync(join(dir, "pi-events.jsonl"), "{}\n");
+      recordHostFailure(out, c, "host died", fp, 5);
+      expect(existsSync(join(dir, "pi-events.jsonl"))).toBe(true);
+      const result = join(out, "results", "all", `${safeId(c.instance_id)}.json`);
+      const before = readFileSync(result, "utf8");
+      rebuildResults(out, [c], () => {});
+      expect(readFileSync(result, "utf8")).toBe(before);
+      const s = JSON.parse(readFileSync(join(dir, "case-summary.json"), "utf8")) as CaseSummary;
+      expect(s.comments.total).toBe(0);
+    });
+  });
 
   it("a resume under the same configuration drops nothing it produced, a never-prefetched case included", () => {
     run((out) => {

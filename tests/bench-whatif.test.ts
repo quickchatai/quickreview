@@ -770,6 +770,58 @@ describe("the record reader agrees with the production findings-record reader", 
     const extras = recordExtras(linkRecord(rec, [cand]), [cand], ["killed", "doubted"]);
     expect(extras.map((x) => x.content)).toEqual(["the lens's claim"]);
   });
+
+  it("reads a downgraded row with posted_as as posted and a killed validity veto as doubted, as the production reader does", () => {
+    const rows = parseFindingsRecord({
+      findings: [
+        {
+          id: "D1",
+          lens: "baseline",
+          path: "a.py",
+          line: 3,
+          disposition: "downgraded",
+          posted_as: "nit",
+        },
+        { id: "D2", lens: "baseline", path: "a.py", line: 4, disposition: "downgraded" },
+        {
+          id: "V1",
+          lens: "baseline",
+          path: "a.py",
+          line: 5,
+          disposition: "killed",
+          word: "refuted",
+        },
+        {
+          id: "K1",
+          lens: "baseline",
+          path: "a.py",
+          line: 6,
+          disposition: "killed",
+          word: "duplicate",
+        },
+      ],
+    });
+    expect(rows.map((r) => r.disposition)).toEqual(["posted", "downgraded", "doubted", "killed"]);
+  });
+
+  it("does not hand a record's old-side line to a head-side candidate", () => {
+    const cand: RawCandidate = {
+      ...WHO,
+      index: 0,
+      path: "a.py",
+      side: "RIGHT",
+      severity: "P2",
+      claim: "the lens's claim",
+    } as RawCandidate;
+    const rec = parseFindingsRecord({
+      findings: [{ lens: "baseline", path: "a.py", line: 3, side: "LEFT", disposition: "killed" }],
+    });
+    const links = linkRecord(rec, [cand]);
+    const killed = recordExtras(links, [cand], ["killed"]);
+    expect(killed.every((x) => x.line === undefined || x.side === "LEFT")).toBe(true);
+    const all = allCandidateExtras([cand], links);
+    expect(all.every((x) => x.line === undefined || x.side === "LEFT")).toBe(true);
+  });
 });
 
 describe("the report on control comments and missing inputs", () => {

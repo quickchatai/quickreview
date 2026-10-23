@@ -41,9 +41,9 @@
 import { singleLineComment } from "./artifacts.js";
 import { childResults } from "./aacr.js";
 import { isLensTool, lensIdOf, LensOnce } from "../lensresult.js";
-import { findingRecordKey, recordSide } from "../findingkey.js";
+import { entryDisposition, findingRecordKey, recordSide } from "../findingkey.js";
+import { DOUBT_WORDS } from "../doubtwords.js";
 import { canonicalLensIds } from "../lensids.js";
-import { normalizeDisposition } from "../findingsrecord.js";
 
 // ---- the lens outputs in pi's JSON event stream -------------------------------
 
@@ -370,7 +370,12 @@ export function parseFindingsRecord(raw: unknown): RecordFinding[] {
     const reason = str("reason");
     const kind = str("kind");
     const written = (str("disposition") ?? "").toLowerCase();
-    const disposition = normalizeDisposition(written);
+    // The production reader's rules: a downgrade that went out under a tag is
+    // posted, and a kill carrying a validity-veto word is a doubt.
+    const word = (str("word") ?? str("reason_word") ?? "").toLowerCase();
+    const entryDisp = entryDisposition(r);
+    const disposition =
+      entryDisp === "killed" && DOUBT_WORDS.includes(word) ? "doubted" : entryDisp;
     out.push({
       id: findingRecordKey(r, i),
       disposition: disposition === "unknown" ? written : disposition,
@@ -564,10 +569,13 @@ export interface OcrComment {
 }
 
 /** The line the session's record gave a finding, when it is in the same file
- * as the lens candidate linked to it — where the finding would have been
- * posted. */
+ * and on the same side as the lens candidate linked to it — where the
+ * finding would have been posted. A line on the other side is another
+ * coordinate and is not borrowed. */
 function recordLineFor(link: RecordLink, c: RawCandidate): number | undefined {
-  return link.record.line !== undefined && link.record.path === c.path
+  return link.record.line !== undefined &&
+    link.record.path === c.path &&
+    (link.record.side ?? "RIGHT") === c.side
     ? link.record.line
     : undefined;
 }
