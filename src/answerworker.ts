@@ -33,6 +33,7 @@ import type { ControlCommand } from "./commands.js";
 import { DEFAULT_ANSWER_CAP_USD, DEFAULT_ANSWER_TIMEOUT_S, type Config } from "./config.js";
 import type { FileOutcome } from "./improvements.js";
 import { MAX_REPLY_CHARS, operatorMessagePayload } from "./operatormessage.js";
+import { prSessionName } from "./pr-session-lifecycle.js";
 import type { StateStore } from "./state.js";
 import {
   WorkerLaunchError,
@@ -109,7 +110,7 @@ export class AnswerHost {
   async message(command: MessageCommand): Promise<FileOutcome> {
     const { supervisor, store } = this.deps;
     const pr = command.pr;
-    const session = `pr-${pr}`;
+    const session = prSessionName(pr);
     const mayPost = command.may_post === true;
     const refuse = (reason: string, code: string): FileOutcome => ({ ok: false, reason, code });
 

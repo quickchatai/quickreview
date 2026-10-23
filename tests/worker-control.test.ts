@@ -113,6 +113,7 @@ describe("[P8.12] the control wire", () => {
 class FakeSession implements Partial<RuntimeSession> {
   busy = false;
   steered: string[] = [];
+  steerOptions: unknown[] = [];
   followed: string[] = [];
   /** What the next steer/followUp answers; omitted: queued while busy, else handled. */
   answer: (() => Promise<Delivery>) | undefined;
@@ -127,8 +128,9 @@ class FakeSession implements Partial<RuntimeSession> {
         : { status: "handled", result: { code: 0, timedOut: false, streamError: null } },
     );
   }
-  steer(text: string): Promise<Delivery> {
+  steer(text: string, options?: unknown): Promise<Delivery> {
     this.steered.push(text);
+    this.steerOptions.push(options);
     return this.delivery();
   }
   followUp(text: string): Promise<Delivery> {
@@ -165,6 +167,14 @@ describe("[P8.12] the worker's control handler", () => {
     expect(s.steered).toEqual(["go left"]);
     expect(acks).toEqual([{ id: "c1", ack: "queued" }]);
     expect(c.counts).toEqual({ steer: 1, follow_up: 0, abort: 0 });
+  });
+
+  it("hands a steer the round's remaining limits, as a follow-up gets them", async () => {
+    const s = new FakeSession();
+    const { c } = controls(s);
+    c.receive("steer", { id: "c1", text: "go left" });
+    await c.flush();
+    expect(s.steerOptions).toEqual([{ timeoutMs: 1000 }]);
   });
 
   it("acks a follow-up on an idle session handled: the host acted", async () => {
