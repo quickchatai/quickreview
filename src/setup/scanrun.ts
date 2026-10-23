@@ -1142,6 +1142,13 @@ export class ScanRunner {
       .catch((err: unknown) => {
         // Belt: drive() records its own failures; this catches a bug in it.
         run.problems.push(`the scan stopped on an internal error: ${clean(err)}`);
+        // Cases the failed drive never reached are over with the run.
+        const at = this.ports.clock().toISOString();
+        for (const c of run.cases) {
+          if (c.status !== "pending" && c.status !== "running") continue;
+          c.status = "stopped";
+          c.finished_at = at;
+        }
         this.settle(file, run, "partial");
         this.ports.log?.(`setup: scan ${run.id} failed: ${clean(err)}`);
       })
@@ -1716,9 +1723,10 @@ export class ScanRunner {
     const onCost = (caseId: string, spentSoFar: number): void => {
       live.set(caseId, spentSoFar);
       if (
-        run.cap_usd > EPS &&
         !signal.aborted &&
-        run.spent_usd + liveTotal() >= run.cap_usd - EPS
+        (run.cap_usd > EPS
+          ? run.spent_usd + liveTotal() >= run.cap_usd - EPS
+          : run.spent_usd + liveTotal() > EPS)
       ) {
         capHit = true;
         abort.abort();
@@ -1726,14 +1734,16 @@ export class ScanRunner {
     };
     // May a case with this estimate start? Within the cap counting what is in
     // flight; a case with no estimate (calibration) only while the cap is not
-    // yet reached. A zero cap is a free run (the runner prices at zero).
+    // yet reached. A zero cap is a free run (the runner prices at zero): it admits cases only
+    // while nothing has been spent, and stops on the first real spending.
     let unknownSpend = false;
     const within = (extra: number): boolean =>
       !unknownSpend &&
-      (run.cap_usd <= EPS ||
-        (extra > 0
-          ? run.spent_usd + reserved + extra <= run.cap_usd + EPS
-          : run.spent_usd + reserved < run.cap_usd - EPS));
+      ((run.cap_usd <= EPS && run.spent_usd + reserved <= EPS) ||
+        (run.cap_usd > EPS &&
+          (extra > 0
+            ? run.spent_usd + reserved + extra <= run.cap_usd + EPS
+            : run.spent_usd + reserved < run.cap_usd - EPS)));
     const lane = async (): Promise<void> => {
       while (next < jobs.length && !signal.aborted) {
         const job = jobs[next]!;
@@ -1752,15 +1762,15 @@ export class ScanRunner {
         live.delete(plan.id);
         reserved -= est;
         run.spent_usd += spent;
-        // A case with no estimate (calibration) that ended with no price and
-        // no live report spent an UNKNOWN amount — never read as free. Under
+        // A case with no estimate (calibration) that ended with no total price
+        // (a live report is only a floor) spent an UNKNOWN amount — never read
+        // as free. Under
         // a cap, nothing more starts: the hard stop cannot be held blind.
         const done = run.cases.find((x) => x.id === plan.id);
         if (
           run.cap_usd > EPS &&
           !signal.aborted &&
           plan.estimate_usd === null &&
-          spent === 0 &&
           done?.started_at != null &&
           done.cost_usd === null &&
           !unknownSpend
@@ -1769,7 +1779,7 @@ export class ScanRunner {
           capHit = true;
           abort.abort();
           run.problems.push(
-            `case ${plan.id} ended and nothing priced it — what it spent is unknown, so no further case starts (the cap cannot be held without prices)`,
+            `case ${plan.id} ended with no total price — what it spent is unknown, so no further case starts (the cap cannot be held without prices)`,
           );
         }
         this.store(file);
@@ -1924,6 +1934,9 @@ export class ScanRunner {
     // are not in the tree (dropped).
     const anchor = (cand: ScanCandidate): { code: string; quoted: boolean } | null => {
       if (outside(cand)) return null;
+      // A focus file the lens never opened was not read: nothing it reports
+      // there was drawn from the code, whatever else the lens opened.
+      if (opened !== null && focusPaths.includes(cand.path) && !opened.has(cand.path)) return null;
       const text = inTree.has(cand.path) ? tree.read(cand.path) : null;
       const lines = text === null ? null : anchoredLines(text, cand.start, cand.end);
       if (lines === null) return null;
@@ -2102,6 +2115,10 @@ export class ScanRunner {
       if (!had || (had.doubt === null && r.doubt !== null)) byFp.set(r.fingerprint, r);
     }
     const reported = [...byFp.values()];
+    // Ownership is checked here, not left to the renewal timer: a driver
+    // resumed after its lease was taken over publishes nothing.
+    if (!this.fenced.has(run.id)) this.renewTick();
+    if (this.fenced.has(run.id)) return finish("stopped", "the scan driver lease was lost");
     const at = this.ports.clock().toISOString();
     try {
       this.findings.report(reported, { run: run.id, sha: run.sha, at });
