@@ -1,6 +1,6 @@
 {
   "name": "fast-smoke",
-  "note": "Smoke of the fast option (owner-approved 2026-10-04): profile fast + preset low + every model at low reasoning, on the frozen build's code. smoke10 only, to prove the profile reaches every lens before the broad run.",
+  "note": "Smoke of the fast option: profile fast + preset low + every model at low reasoning, on the frozen build's code. smoke10 only, to prove the profile reaches every lens before the broad run.",
   "image": "qcr-bench:fast1",
   "prefix": "fast1",
   "config": "models.default=openai-codex/gpt-6.1-sol,models.conversation=openai-codex/gpt-6.1-sol,models.overseer=openai-codex/gpt-6.1-sol,models.tiers.terra-med=openai-codex/gpt-6.1-sol:medium,models.tiers.sol-med=openai-codex/gpt-6.1-sol:medium,models.tiers.sol-high=openai-codex/gpt-6.1-sol:high,review.profile=fast,review.preset=low,models.effort=low",

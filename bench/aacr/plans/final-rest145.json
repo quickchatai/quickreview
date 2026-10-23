@@ -1,6 +1,6 @@
 {
   "name": "final-rest145",
-  "note": "Final run, part 1b: AACR rest145 on the same image (QCR_RERUN_SKIP_BUILD=1), only after the owner reviews part 1a.",
+  "note": "Final run, part 1b: AACR rest145 on the same image (QCR_RERUN_SKIP_BUILD=1), after part 1a is reviewed.",
   "image": "qcr-bench:final1",
   "prefix": "final1",
   "config": "models.default=openai-codex/gpt-6.1-sol,models.conversation=openai-codex/gpt-6.1-sol,models.overseer=openai-codex/gpt-6.1-sol,models.tiers.terra-med=openai-codex/gpt-6.1-sol:medium,models.tiers.sol-med=openai-codex/gpt-6.1-sol:medium,models.tiers.sol-high=openai-codex/gpt-6.1-sol:high",

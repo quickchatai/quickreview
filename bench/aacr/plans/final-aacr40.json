@@ -1,6 +1,6 @@
 {
   "name": "final-aacr40",
-  "note": "Final run, part 1a (owner: stop and compare after these 40, before rest145): AACR smoke10+dev10+holdout10+fresh10 on the freeze candidate, shipped defaults only. holdout10/fresh10 = confirmation only.",
+  "note": "Final run, part 1a (compared after these 40, before rest145): AACR smoke10+dev10+holdout10+fresh10 on the freeze candidate, shipped defaults only. holdout10/fresh10 = confirmation only.",
   "image": "qcr-bench:final1",
   "prefix": "final1",
   "config": "models.default=openai-codex/gpt-6.1-sol,models.conversation=openai-codex/gpt-6.1-sol,models.overseer=openai-codex/gpt-6.1-sol,models.tiers.terra-med=openai-codex/gpt-6.1-sol:medium,models.tiers.sol-med=openai-codex/gpt-6.1-sol:medium,models.tiers.sol-high=openai-codex/gpt-6.1-sol:high",

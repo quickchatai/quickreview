@@ -1,6 +1,6 @@
 {
   "name": "final-broad",
-  "note": "Final broad benchmark of the freeze candidate (owner-approved 2026-10-03): full AACR (smoke10+dev10+holdout10+fresh10+rest145 = 185), Martian 50 (comparators re-judged by the same judge), Qodo PR-Review-Bench 100 (vendor runs judged by the same judge). SWE-PRBench deliberately excluded. Shipped defaults (sol-high on baseline/sweep/behaviour-delta). Includes held-out sets as CONFIRMATION only.",
+  "note": "Final broad benchmark of the freeze candidate: full AACR (smoke10+dev10+holdout10+fresh10+rest145 = 185), Martian 50 (comparators re-judged by the same judge), Qodo PR-Review-Bench 100 (vendor runs judged by the same judge). SWE-PRBench deliberately excluded. Shipped defaults (sol-high on baseline/sweep/behaviour-delta). Includes held-out sets as CONFIRMATION only.",
   "image": "qcr-bench:final1",
   "prefix": "final1",
   "config": "models.default=openai-codex/gpt-6.1-sol,models.conversation=openai-codex/gpt-6.1-sol,models.overseer=openai-codex/gpt-6.1-sol,models.tiers.terra-med=openai-codex/gpt-6.1-sol:medium,models.tiers.sol-med=openai-codex/gpt-6.1-sol:medium,models.tiers.sol-high=openai-codex/gpt-6.1-sol:high",

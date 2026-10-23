@@ -188,23 +188,27 @@ describe("local case: a leak-proof store from a mirror, no network at all", () =
     );
   });
 
-  it("the shipped self-review set parses under its own pin", () => {
-    const set = parseCaseSet(
-      JSON.parse(
-        readFileSync(
-          join(import.meta.dirname, "..", "bench/aacr/sets/self-review-pc1.json"),
-          "utf8",
+  // The set is manifest-excluded from the public tree.
+  it.skipIf(!existsSync(join(import.meta.dirname, "..", "bench/aacr/sets/self-review-pc1.json")))(
+    "the shipped self-review set parses under its own pin",
+    () => {
+      const set = parseCaseSet(
+        JSON.parse(
+          readFileSync(
+            join(import.meta.dirname, "..", "bench/aacr/sets/self-review-pc1.json"),
+            "utf8",
+          ),
         ),
-      ),
-    );
-    expect(set.pin).toBe("self-review-local");
-    expect(set.references).toBe(0);
-    expect(set.cases[0]!.base_ref).toBe("master");
-    expect(set.cases[0]!.leakproof).toBeDefined();
-    expect(() => parseCaseSet({ ...set, cases: [{ ...set.cases[0], base_ref: "a b" }] })).toThrow(
-      /bad base_ref/,
-    );
-  });
+      );
+      expect(set.pin).toBe("self-review-local");
+      expect(set.references).toBe(0);
+      expect(set.cases[0]!.base_ref).toBe("master");
+      expect(set.cases[0]!.leakproof).toBeDefined();
+      expect(() => parseCaseSet({ ...set, cases: [{ ...set.cases[0], base_ref: "a b" }] })).toThrow(
+        /bad base_ref/,
+      );
+    },
+  );
 });
 
 describe("fork + mirror prefetch (Martian)", () => {
