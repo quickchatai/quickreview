@@ -31,7 +31,9 @@ import {
   normalizeDisposition,
   recordNumber,
   recordSide,
+  recordString,
 } from "./findingkey.js";
+import { codePath } from "./codespan.js";
 import { bareTag, ordinaryPostTag } from "./severity.js";
 import { severityRank } from "./severityrank.js";
 
@@ -52,7 +54,9 @@ export interface ClusterCandidate {
   fix_target?: string | null;
 }
 
-export type ClusterSignal = "close-lines" | "shared-identifier" | "same-fix-target";
+/** The signals a group can carry, in the order a group lists them. */
+const CLUSTER_SIGNALS = ["close-lines", "shared-identifier", "same-fix-target"] as const;
+export type ClusterSignal = (typeof CLUSTER_SIGNALS)[number];
 
 export interface FindingGroup {
   /** Stable: `G<n>` in the order of each group's first member. */
@@ -214,11 +218,14 @@ function qualifiedParts(tok: string): string[] {
   );
 }
 
+/** A backtick code span on one line; group 1 is its content. */
+const CODE_SPAN_RE = /`([^`\n]{1,200})`/;
+
 /** The named identifiers a finding's title and body name — in code spans,
  * and bare in the prose. */
 export function identifiersOf(text: string): Set<string> {
   const out = new Set<string>();
-  const prose = text.replace(/`[^`\n]{1,200}`/g, " ");
+  const prose = text.replace(new RegExp(CODE_SPAN_RE, "g"), " ");
   for (const t of prose.matchAll(BARE_IDENT_RE)) {
     const tok = t[0];
     if (FILE_LIKE.test(tok)) continue;
@@ -229,7 +236,7 @@ export function identifiersOf(text: string): Set<string> {
       out.add(part);
     }
   }
-  for (const m of text.matchAll(/`([^`\n]{1,200})`/g)) {
+  for (const m of text.matchAll(new RegExp(CODE_SPAN_RE, "g"))) {
     const span = m[1]!;
     if (FILE_LIKE.test(span.trim()) && !/\s/.test(span.trim())) continue;
     for (const t of span.matchAll(
@@ -320,9 +327,7 @@ export function clusterFindings(candidates: readonly ClusterCandidate[]): Cluste
     groups.push({
       group: `G${groups.length + 1}`,
       members: members.map((m) => candidates[m]!.id),
-      signals: (["close-lines", "shared-identifier", "same-fix-target"] as const).filter((s) =>
-        sig.has(s),
-      ),
+      signals: CLUSTER_SIGNALS.filter((s) => sig.has(s)),
       identifiers: [...idents].sort(),
     });
   }
@@ -344,7 +349,9 @@ export function renderGroups(
     L.push(`- **${g.group}** (${why})`);
     for (const id of g.members) {
       const c = byId.get(id);
-      const at = c?.path ? ` \`${c.path}${typeof c.line === "number" ? `:${c.line}` : ""}\`` : "";
+      const at = c?.path
+        ? ` ${codePath(`${c.path}${typeof c.line === "number" ? `:${c.line}` : ""}`)}`
+        : "";
       L.push(
         `  - ${id}${at} [${c?.severity ?? "?"}] ${c?.lens ?? "?"} — ${(c?.title ?? "").slice(0, 160)}`,
       );
@@ -359,7 +366,7 @@ export function renderGroups(
 const TAG_RANK: Record<string, number> = { blocker: 0, question: 1, nit: 2 };
 
 function s(v: unknown): string {
-  return typeof v === "string" ? v.trim() : "";
+  return recordString(v) ?? "";
 }
 /** Ranked by the ORDINARY tag the entry posts under (`ordinaryPostTag`), so
  * an `[ask your human]` or `[deferred]` P1 ranks as the blocker it is. */
@@ -472,7 +479,7 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
       // different recorded groups, the leftovers the validator never compared.
       if (!distinctGroups(A, B)) continue;
       if (groupsOf[a]!.some((g) => groupsOf[b]!.includes(g))) continue;
-      // The higher severity leads; equal → the earlier entry.
+      // The lower `rank` leads (ordinary posting tag first, then severity); equal → the earlier entry.
       const [lead, fol, folIdx] = rank(B) < rank(A) ? [B, A, a] : [A, B, b];
       const leadIdx = folIdx === a ? b : a;
       gone.add(folIdx);
@@ -491,7 +498,7 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
       for (const line of sites[folIdx]!) {
         if (line === leadLine || sites[leadIdx]!.includes(line)) continue;
         sites[leadIdx]!.push(line);
-        const site = `\`${s(fol.path)}:${line}\``;
+        const site = codePath(`${s(fol.path)}:${line}`);
         // The comment's body, or the reason the renderer posts in its place.
         const body = s(lead.body) || s(lead.reason);
         if (body && !body.includes(site)) lead.body = `${body}\n\nAlso at ${site}.`;
