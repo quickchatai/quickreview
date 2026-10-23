@@ -50,6 +50,8 @@ export function companionStarter(deps: {
 
 export function installCompanionTabHooks(app: App, deps: CompanionTabDeps): void {
   let retrying = false;
+  const notRunning = (theApp: App): void =>
+    theApp.notice(`companion not running: ${deps.failure?.() ?? "not started"}`);
 
   app.hooks.companionEnsure = async (theApp) => {
     if (deps.available()) {
@@ -60,7 +62,7 @@ export function installCompanionTabHooks(app: App, deps: CompanionTabDeps): void
     // "not started" is the last resort — a mislabel here points the operator
     // at a cause (such as a --no-companion flag) that is not the real one.
     if (retrying || !deps.retry) {
-      theApp.notice(`companion not running: ${deps.failure?.() ?? "not started"}`);
+      notRunning(theApp);
       return;
     }
     retrying = true;
@@ -73,7 +75,7 @@ export function installCompanionTabHooks(app: App, deps: CompanionTabDeps): void
     }
     theApp.repaint();
     if (!deps.available()) {
-      theApp.notice(`companion not running: ${deps.failure?.() ?? "not started"}`);
+      notRunning(theApp);
       return;
     }
     theApp.focusCompanion();

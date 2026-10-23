@@ -90,6 +90,8 @@ export class CommandDrainSender implements DeployDrainSender {
         // A concurrent reader can see the daemon still writing its receipt.
         continue;
       }
+      // Valid JSON that is not an object (null, an array, a number) is no receipt: read again.
+      if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
       if (value.ok !== true)
         return { ok: false, reason: resultReason(value.reason, "no reason given") };
       if (value.draining !== on)

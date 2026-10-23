@@ -11,9 +11,10 @@
 //   * red/green   — truth only (LIVE badge, CI red, REQUEST_CHANGES/blocked;
 //                   green for APPROVE/healthy). Yellow = warnings.
 //   * sections    — `▍TITLE` in accent+bold, muted subtitle beside it.
-//   * selection   — one style everywhere: accent background, dark ink
+//   * selection   — a selected row (selected()) is accent background, dark ink
 //                   (inner SGR stripped so the bar reads as one piece;
-//                   OSC-8 links survive).
+//                   OSC-8 links survive); mouse text selection (SELECTION)
+//                   is inverse video.
 import { ESC, SGR, stripAnsi } from "./paint.js";
 
 const fg256 = (n: number): string => `${ESC}38;5;${n}m`;
