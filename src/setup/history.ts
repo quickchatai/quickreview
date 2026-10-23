@@ -179,6 +179,11 @@ function authorsOf(d: ReviewHistoryDigest): Set<string> {
   return out;
 }
 
+/** Every window of QUOTE_WORDS consecutive words, joined by a space. */
+function* shinglesOf(w: readonly string[]): Generator<string> {
+  for (let i = 0; i + QUOTE_WORDS <= w.length; i++) yield w.slice(i, i + QUOTE_WORDS).join(" ");
+}
+
 /**
  * What a theme's text gives away, or [] when it gives nothing: a run of
  * QUOTE_WORDS words out of any raw comment, or a comment author's login —
@@ -187,17 +192,12 @@ function authorsOf(d: ReviewHistoryDigest): Set<string> {
  */
 export function leakChecker(d: ReviewHistoryDigest): (text: string) => string[] {
   const shingles = new Set<string>();
-  for (const raw of rawTexts(d)) {
-    const w = words(raw);
-    for (let i = 0; i + QUOTE_WORDS <= w.length; i++)
-      shingles.add(w.slice(i, i + QUOTE_WORDS).join(" "));
-  }
+  for (const raw of rawTexts(d)) for (const s of shinglesOf(words(raw))) shingles.add(s);
   const authors = authorsOf(d);
   return (text) => {
     const out: string[] = [];
     const tw = words(text);
-    for (let i = 0; i + QUOTE_WORDS <= tw.length; i++) {
-      const s = tw.slice(i, i + QUOTE_WORDS).join(" ");
+    for (const s of shinglesOf(tw)) {
       if (shingles.has(s)) {
         out.push(`quotes a raw review comment ("${s}…") — say it in your own words`);
         break;

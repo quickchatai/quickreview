@@ -199,7 +199,7 @@ export function readings(
     // Stable by time: equal stamps keep ledger order, as `newestRead` does.
     const sorted = rows
       .map((e, i) => ({ e, i }))
-      .sort((a, b) => (a.e.at < b.e.at ? -1 : a.e.at > b.e.at ? 1 : a.i - b.i));
+      .sort((a, b) => compareAt(a.e.at, b.e.at) || a.i - b.i);
     const newest = sorted[sorted.length - 1]!.e;
     const all: LedgerEntry[] = [];
     for (let k = sorted.length - 1; k >= 0 && sorted[k]!.e.blob === newest.blob; k--)
@@ -293,6 +293,11 @@ export function rateWhere(
 
 // ---- the delta's basis ----
 
+/** Timestamp order, the one rule `readings` and `newestRead` both sort by. */
+function compareAt(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 /** Each path's NEWEST content hash read by `lens` — the reading findings
  * are settled against. A path whose content is not that one has CHANGED
  * since it was scanned, even when an older, superseded reading saw exactly
@@ -302,7 +307,7 @@ export function newestRead(entries: readonly LedgerEntry[], lens: string): Map<s
   for (const e of entries) {
     if (e.lens !== lens) continue;
     const had = newest.get(e.path);
-    if (!had || e.at >= had.at) newest.set(e.path, e);
+    if (!had || compareAt(e.at, had.at) >= 0) newest.set(e.path, e);
   }
   return new Map([...newest].map(([path, e]) => [path, e.blob]));
 }

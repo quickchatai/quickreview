@@ -452,6 +452,16 @@ export class SetupEngine {
 
   // -- views --
 
+  /** A unit's case plans over its reviewable (not sweep-skipped) files. */
+  private unitCases(name: string, owned: readonly string[], lines: (p: string) => number): CasePlan[] {
+    return splitUnit(
+      name,
+      owned.filter((f) => !isSweepSkipped(f)),
+      lines,
+      this.budget,
+    );
+  }
+
   private view(cut: UnitCut, files: readonly string[], lines: (p: string) => number): CutView {
     const { errors, blocking_save } = checkCut(cut, files);
     // A cut with structural errors (a hand-edited file) still gets a
@@ -464,7 +474,7 @@ export class SetupEngine {
       let cases: CasePlan[] = [];
       let unavailable = false;
       try {
-        cases = splitUnit(u.name, reviewable, lines, this.budget);
+        cases = this.unitCases(u.name, owned, lines);
       } catch (err) {
         unavailable = true;
         sizeErrors.push(String(err));
@@ -690,8 +700,7 @@ export class SetupEngine {
     const cases: CasePlan[] = [];
     try {
       for (const u of file.saved.units) {
-        const owned = (a.byUnit.get(u.name) ?? []).filter((f) => !isSweepSkipped(f) && include(f));
-        if (owned.length > 0) cases.push(...splitUnit(u.name, owned, lines, this.budget));
+        cases.push(...this.unitCases(u.name, (a.byUnit.get(u.name) ?? []).filter(include), lines));
       }
     } catch (err) {
       return { ok: false, errors: [String(err)] };
