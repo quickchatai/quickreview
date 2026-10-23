@@ -238,7 +238,8 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   private readonly correctedIncidents = new Set<string>();
   /** Ledger keys this process claimed — an unsettled claim it did not make
    * is a previous run's, interrupted mid-post. */
-  private readonly claimedHere = new Set<string>();
+  /** Idem keys whose post request is awaiting Slack's answer in this process. */
+  private readonly inFlight = new Set<string>();
   /** Tail of each posting lane (one per PR, else one per idem key). */
   private readonly lanes = new Map<string, Promise<unknown>>();
   /** Corrections to one incident execute in order, including recovery edits. */
@@ -328,7 +329,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
       this.log(`slack: skipping duplicate post (${req.idemKey})`);
       return undefined;
     }
-    this.claimedHere.add(req.idemKey);
+    this.inFlight.add(req.idemKey);
 
     let result: { ok: boolean; ts?: string; error?: string; ambiguous?: boolean };
     try {
@@ -339,6 +340,8 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
       });
     } catch (err) {
       result = { ok: false, error: String(err), ambiguous: true };
+    } finally {
+      this.inFlight.delete(req.idemKey);
     }
     if (!result.ok || !result.ts) {
       if (result.ambiguous || result.ok) {
@@ -818,14 +821,14 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
       dry_run: cfg.dry_run,
     });
     let existing = store.slackPost(HEARTBEAT_IDEM_KEY);
-    // A claim with no message and no outcome that this process did not make
-    // is a previous run's, killed mid-post: settle it failed so the post is
-    // retried — a heartbeat lost for good is worse than one duplicate line.
+    // A claim with no message and no outcome whose request is not awaiting
+    // Slack in this process is a previous run's (killed mid-post) or this
+    // run's own ambiguous attempt: settle it failed so the post is retried — a heartbeat lost for good is worse than one duplicate line.
     if (
       existing &&
       existing.ok === 1 &&
       !existing.ts &&
-      !this.claimedHere.has(HEARTBEAT_IDEM_KEY)
+      !this.inFlight.has(HEARTBEAT_IDEM_KEY)
     ) {
       store.settleSlackPost(HEARTBEAT_IDEM_KEY, {
         ok: false,
@@ -868,9 +871,11 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   /** Drive the heartbeat on `heartbeat_interval_min`. Idempotent. */
   startHeartbeat(): void {
     if (!this.enabled || this.heartbeatTimer) return;
-    void this.heartbeat();
+    const tick = () =>
+      void this.heartbeat().catch((err) => this.log("slack: heartbeat tick failed", err));
+    tick();
     const every = Math.max(1, this.deps.cfg.slack.policy.heartbeat_interval_min) * 60_000;
-    this.heartbeatTimer = this.setIntervalFn(() => void this.heartbeat(), every);
+    this.heartbeatTimer = this.setIntervalFn(tick, every);
     unref(this.heartbeatTimer);
   }
 
