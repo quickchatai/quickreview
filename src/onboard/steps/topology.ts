@@ -85,7 +85,7 @@ const TOPOLOGY_OPTION_METADATA = {
     tradeoffs: [
       "it is on 24/7: pull requests opened while you sleep, while your laptop is shut, or while you are on a plane still get reviewed",
       "you bring the box (any ssh-reachable Linux machine — a cheap cloud VM is plenty); the wizard does not create one for you",
-      "setup rides the same Ansible deploy the maintainers use, with every one of its preflights: clean tree, version-pin coherence, disk space, and a warning when rounds are still running",
+      "setup rides the same Ansible deploy the maintainers use, with every one of its preflights: clean tree, version-pin coherence, disk space, and a refusal while the bot is not drained and idle (no review rounds running)",
       "your operator TUI reaches it over ssh, so you need an ssh alias and a key your agent can use — checked in the very next step, before anything is built",
       "the recommended webhook ingress here is a named Cloudflare tunnel on your own domain: a permanent hostname, no rotation",
     ],

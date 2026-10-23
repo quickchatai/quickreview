@@ -16,9 +16,9 @@
 //   * the release manifest CI emitted with the images, and every pin it records
 //     held to config.toml and group_vars (rule 7);
 //   * ansible-playbook on this machine and an inventory to run against;
-//   * the drain advisory — a WARNING when rounds are still running, because
-//     recreating the container orphans them (deliberately a warning, never a
-//     refusal, and the wizard neither hides it nor upgrades it);
+//   * the drain gate — a REFUSAL while the bot is not drained or rounds are
+//     still running, because recreating the container orphans them (the
+//     wizard shows the script's refusal as it is);
 //   * the playbook's own preflights on the box (the webhook port free, the
 //     minimum free disk);
 //   * the post-deploy checks over ssh, which the script runs itself and fails

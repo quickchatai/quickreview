@@ -124,8 +124,9 @@ export function nextPageUrl(link: string | null): string | null {
   return null;
 }
 
-/** The newest delivery of ANY event that is newer than `ping` and was NOT
- * accepted, or undefined. GitHub pings only when the webhook is (re)configured,
+/** The newest delivery of ANY event, when it is newer than `ping` and was NOT
+ * accepted; undefined otherwise (a successful newest delivery hides earlier
+ * failures, even ones newer than `ping`). GitHub pings only when the webhook is (re)configured,
  * so an accepted ping can be long stale: if the ingress stopped reaching the
  * daemon since, the deliveries after it say so and the ping must not speak
  * for the path as it is now. */
