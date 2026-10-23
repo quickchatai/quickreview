@@ -503,6 +503,17 @@ describe("connection triage", () => {
     expect(d.remedy).toBe("ssh-add /home/x/.ssh/google_compute_engine");
   });
 
+  it("quotes an identity path with a space so the printed ssh-add line pastes as one argument", async () => {
+    const { sshAddRemedy } = await import("../src/tui/sshtriage.js");
+    const remedy = sshAddRemedy({
+      ...base,
+      agent: { reachable: true, identities: [] },
+      identity: "/home/Alice Smith/.ssh/key",
+      identityFiles: ["/home/Alice Smith/.ssh/key"],
+    });
+    expect(remedy).toBe("ssh-add '/home/Alice Smith/.ssh/key'");
+  });
+
   it("starts an agent first when there is none", async () => {
     const { classifyConnection } = await import("../src/tui/sshtriage.js");
     const d = classifyConnection({
@@ -1065,6 +1076,18 @@ describe("startup progress", () => {
     expect(stalled).toContain("⚠");
     expect(stalled).toContain("still running, no result yet");
     expect(stalled).toContain("45s");
+  });
+
+  it("keeps the latest progress note on an overdue step", async () => {
+    const { STALL_AFTER_MS, StartupProgress, startupLines } = await import("../src/tui/startup.js");
+    let now = 0;
+    const p = new StartupProgress([{ key: "a", label: "companion container" }], { now: () => now });
+    p.begin("a");
+    now = STALL_AFTER_MS + 5_000;
+    p.note("a", "building the image");
+    const line = startupLines(p.steps(), now)[0]!.replace(/\x1b\[[0-9;]*m/g, "");
+    expect(line).toContain("still running, no result yet");
+    expect(line).toContain("building the image");
   });
 
   it("a progress note never restarts the stall clock", async () => {
