@@ -255,7 +255,6 @@ describe("historical dwell is kept, and reads as history", () => {
       ],
       resolvedPrs: new Map(),
       since: null,
-      nowIso: "2026-08-14T12:01:00.000Z",
     });
   };
 

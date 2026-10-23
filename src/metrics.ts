@@ -400,7 +400,6 @@ export interface WindowInput {
   archivedEvents?: Array<{ kind: string; n: number }>;
   /** Inclusive lower bound (ISO) or null for the "all" window. */
   since: string | null;
-  nowIso: string;
 }
 
 const within = (ts: string | null | undefined, since: string | null): boolean =>
@@ -766,7 +765,6 @@ export function computeMetrics(store: StateStore, opts: MetricsOptions = {}): Me
     threads,
     intervals,
     resolvedPrs,
-    nowIso,
   };
   const iso = (daysAgo: number): string =>
     new Date(now.getTime() - daysAgo * 86_400_000).toISOString();

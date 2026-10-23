@@ -6,6 +6,7 @@
 // only points.
 // Pure, no I/O; reads only the patches the PR files carry.
 
+import { parseHunkHeader } from "./hunkheader.js";
 import { isTestFile, type PrFile } from "./heuristics.js";
 
 export type LoosenedKind =
@@ -89,12 +90,12 @@ function hunks(patch: string): Hunk[] {
   let oldLn = 0;
   let newLn = 0;
   for (const raw of patch.split("\n")) {
-    const h = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(raw);
+    const h = parseHunkHeader(raw);
     if (h) {
       cur = { removed: [], added: [] };
       out.push(cur);
-      oldLn = Number(h[1]);
-      newLn = Number(h[2]);
+      oldLn = h.old_start;
+      newLn = h.new_start;
       continue;
     }
     // Inside a hunk every line is content: a removed `--x` arrives as `---x`.

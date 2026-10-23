@@ -450,6 +450,7 @@ export function renderMigrationCollisionComment(input: CollisionCommentInput): s
     "",
   ];
   for (const c of input.collisions) {
+    const targetNumber = String(c.target_number).padStart(4, "0");
     if (c.kind === "renamed-dependency") {
       const stale = c.stale_dependency ?? "";
       lines.push(
@@ -458,13 +459,13 @@ export function renderMigrationCollisionComment(input: CollisionCommentInput): s
       );
       if (c.renumber)
         lines.push(
-          `  - and rename it to ${codePath(c.target_path)} (number **${String(c.target_number).padStart(4, "0")}**) — its current number would sit below its renumbered dependency`,
+          `  - and rename it to ${codePath(c.target_path)} (number **${targetNumber}**) — its current number would sit below its renumbered dependency`,
         );
       continue;
     }
     lines.push(
       `- ${codePath(c.pr_path)} collides with ${codePath(c.base_path)} on ${flatControls(branch)}.`,
-      `  - rename it to ${codePath(c.target_path)} (number **${String(c.target_number).padStart(4, "0")}**)`,
+      `  - rename it to ${codePath(c.target_path)} (number **${targetNumber}**)`,
       `  - ${collisionDependencyAdvice(c)}`,
     );
   }
