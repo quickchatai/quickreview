@@ -12,7 +12,10 @@ export function sshAgentUnavailable(code: number | null, text: string): boolean 
   );
 }
 
-/** SSH's first scalar value wins; repeated identityfile rows remain separate. */
+/** Every `key value` row of the output, lowercased key, in order and unmerged.
+ * SSH's first scalar value wins, but this parser applies no precedence: the
+ * caller picks the first row of a scalar key, and repeated identityfile rows
+ * stay separate. */
 export function sshConfigRows(text: string): Array<readonly [string, string]> {
   return text.split("\n").flatMap((line) => {
     const match = /^(\S+)\s+(.+)$/.exec(line.trim());

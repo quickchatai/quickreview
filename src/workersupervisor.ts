@@ -92,7 +92,7 @@ import {
 import { DEFAULT_ANSWER_CAP_USD, DEFAULT_ANSWER_TIMEOUT_S } from "./config.js";
 import { operatorMayPost } from "./operatormessage.js";
 import { postOps, type PostOpsDeps } from "./postops.js";
-import { verifiedPayload } from "./session-command-payload.js";
+import { messagePayload, verifiedPayload } from "./session-command-payload.js";
 import {
   DEFAULT_WORKER_LOG_LIMITS,
   rotateWorkerLogs,
@@ -646,7 +646,7 @@ export class WorkerSupervisor {
         );
     }
     const id = randomUUID();
-    const payload = input.payload.endsWith("\n") ? input.payload : `${input.payload}\n`;
+    const payload = messagePayload(input.payload);
     const payloadPath = join(this.deps.payloadDir, `${id}.md`);
     mkdirSync(dirname(payloadPath), { recursive: true });
     const tmp = `${payloadPath}.tmp-${process.pid}`;
