@@ -389,6 +389,7 @@ export class AlertConsumer {
     }
     const claim = this.archive(file);
     if (claim === "taken" || (claim === "failed" && this.unarchivable.has(file))) return;
+    if (claim === "claimed" && this.unarchivable.delete(file)) return; // already routed by the fallback
     if (claim === "failed") this.unarchivable.add(file);
     const parsed = parseAlert(text, file, this.now);
     if (!parsed.ok) {
@@ -456,6 +457,15 @@ export class AlertConsumer {
   }
 }
 
+/** Publish `record` as `<alertsDir>/<name>` so a consumer never sees a partial
+ * file: written under a dot-name (`pending()` skips those), then renamed. */
+function publishAlert(alertsDir: string, name: string, record: unknown): void {
+  mkdirSync(alertsDir, { recursive: true });
+  const tmp = join(alertsDir, `.${name}.tmp`);
+  writeFileSync(tmp, JSON.stringify(record));
+  renameSync(tmp, join(alertsDir, name));
+}
+
 // ---- daemon-detected pi auth failures → the same alert pipeline ----------
 
 export interface PiAuthAlertMemory {
@@ -482,18 +492,14 @@ export function maybeWritePiAuthAlert(
   // Stale flags (e.g. a TUI opening hours later) are history, not an alert.
   if (now().getTime() - new Date(flag.last_at).getTime() > AUTH_FLAG_FRESH_MS) return undefined;
   const name = `${now().toISOString().replace(/[:.]/g, "-")}-pi-auth-expired.json`;
-  mkdirSync(alertsDir, { recursive: true });
-  writeFileSync(
-    join(alertsDir, name),
-    JSON.stringify({
+  publishAlert(alertsDir, name, {
       tier: "alert",
       cause: "pi-auth-expired",
       pr: null,
       title: "pi auth: API rejecting tokens as expired",
       body: `The daemon is seeing token-expired API errors in pi session logs (${flag.hits} hit(s), latest ${flag.last_at}). Reviews will wedge until /login is re-run in the container.`,
       ts: now().toISOString(),
-    }),
-  );
+    });
   mem.lastWritten = flag.last_at;
   return name;
 }
@@ -534,18 +540,14 @@ export function maybeWriteMemoryAlert(
   if (mem.lastWritten === key) return undefined;
   const auth = memory.state === "auth_failed";
   const name = `${now().toISOString().replace(/[:.]/g, "-")}-memory-${auth ? "auth-failed" : "down"}.json`;
-  mkdirSync(alertsDir, { recursive: true });
-  writeFileSync(
-    join(alertsDir, name),
-    JSON.stringify({
+  publishAlert(alertsDir, name, {
       tier: "alert",
       cause: auth ? "memory-auth-failed" : "memory-down",
       pr: null,
       title: auth ? "reviewer memory: a key is refused" : "reviewer memory: down",
       body: `${memoryStatusLine(memory, now())} — rounds run memory-less and nothing is learned until it is fixed (the TUI board shows it; qcr status has the detail).`,
       ts: now().toISOString(),
-    }),
-  );
+    });
   mem.lastWritten = key;
   return name;
 }
@@ -582,10 +584,7 @@ export function maybeWriteCurationAlert(
   if (mem.lastWritten === key) return undefined;
   const missing = c.state === "missing";
   const name = `${now().toISOString().replace(/[:.]/g, "-")}-eod-${missing ? "curation-missing" : "lessons-not-persisted"}.json`;
-  mkdirSync(alertsDir, { recursive: true });
-  writeFileSync(
-    join(alertsDir, name),
-    JSON.stringify({
+  publishAlert(alertsDir, name, {
       tier: "alert",
       cause: missing ? "eod-curation-missing" : "eod-lessons-not-persisted",
       pr: null,
@@ -596,8 +595,7 @@ export function maybeWriteCurationAlert(
         ? `The EOD sweep for ${c.day ?? "?"} offered ${c.offered} lesson candidate(s) and no curation receipt came back — nothing says the day's outcomes were curated (state/eod/${c.day ?? "?"}/outcomes.md).`
         : `${c.not_persisted} lesson(s) from the ${c.day ?? "?"} curation are not in reviewer memory (a write refused, or a claimed lesson no header cites); the candidates ride the next packet. qcr status has the detail.`,
       ts: now().toISOString(),
-    }),
-  );
+    });
   mem.lastWritten = key;
   return name;
 }
@@ -633,13 +631,9 @@ export function maybeWriteWorkerCrashAlerts(
     body: string,
   ): void => {
     if (mem.written.has(key)) return;
-    mem.written.add(key);
     const name = `${now().toISOString().replace(/[:.]/g, "-")}-${cause}${pr === null ? "" : `-${pr}`}.json`;
-    mkdirSync(alertsDir, { recursive: true });
-    writeFileSync(
-      join(alertsDir, name),
-      JSON.stringify({ tier: "alert", cause, pr, title, body, ts: now().toISOString() }),
-    );
+    publishAlert(alertsDir, name, { tier: "alert", cause, pr, title, body, ts: now().toISOString() });
+    mem.written.add(key);
     names.push(name);
   };
   for (const pr of snapshot.prs) {

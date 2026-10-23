@@ -569,6 +569,36 @@ describe("AlertConsumer", () => {
     expect(mine.notices).toEqual([]);
   });
 
+  // A file routed through the archive-failure fallback is delivered; when the
+  // move later succeeds the next scan only archives it. MUTATION: route a
+  // claimed file that was already delivered by the fallback — red.
+  it("a fallback-delivered alert is not routed again once archiving recovers", () => {
+    const f = fakeSinks();
+    let broken = true;
+    class Flaky extends AlertConsumer {
+      protected override archive(file: string): "claimed" | "taken" | "failed" {
+        return broken ? "failed" : super.archive(file);
+      }
+    }
+    const c = new Flaky(dir, new AlertPolicy(20), f.sinks);
+    dropAlert(dir, "a1.json", {
+      tier: "alert",
+      cause: "c",
+      pr: null,
+      title: "t",
+      body: "",
+      ts: "x",
+    });
+    c.scanOnce();
+    expect(f.notified).toHaveLength(1);
+    const noticesBefore = f.notices.length;
+    broken = false;
+    c.scanOnce();
+    expect(f.notified).toHaveLength(1);
+    expect(f.notices).toHaveLength(noticesBefore); // no second fold line either
+    expect(c.pending()).toEqual([]);
+  });
+
   it("surfaces a malformed file by name and never swallows it", () => {
     const f = fakeSinks();
     const c = new AlertConsumer(dir, new AlertPolicy(20), f.sinks);

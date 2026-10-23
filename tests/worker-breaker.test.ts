@@ -116,6 +116,17 @@ describe("[P8.5b] the TUI alert", () => {
     expect(maybeWriteWorkerCrashAlerts(alerts, s, true, mem)).toEqual([]);
   });
 
+  it("a failed write leaves the park unrecorded, so the next poll retries it", () => {
+    const blocker = join(dir, "blocker");
+    writeFileSync(blocker, "x");
+    const mem = { written: new Set<string>() };
+    const s = snap();
+    expect(() => maybeWriteWorkerCrashAlerts(join(blocker, "alerts"), s, true, mem)).toThrow();
+    expect(mem.written.size).toBe(0);
+    const names = maybeWriteWorkerCrashAlerts(join(dir, "alerts"), s, true, mem);
+    expect(names).toHaveLength(1);
+  });
+
   it("writes one alert for the breaker's drain", () => {
     const alerts = join(dir, "alerts");
     const mem = { written: new Set<string>() };
