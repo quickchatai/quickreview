@@ -399,7 +399,7 @@ describe("the two paths that actually happen", () => {
     const result = await h.engine.runStep(PROOF_STEP_ID, { pr: 17 });
     expect(result.ok).toBe(false);
     expect(result.failures.join(" ")).toMatch(/could not read the daemon's state/);
-    expect(result.failures.join(" ")).toMatch(/builds itself on first boot/);
+    expect(result.failures.join(" ")).toMatch(/may still be starting/);
   });
 
   it("a finished round with no recorded review points at dry_run first", async () => {

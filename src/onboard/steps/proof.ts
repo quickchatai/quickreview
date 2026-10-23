@@ -407,7 +407,7 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
                 ok: false,
                 detail:
                   `could not read the daemon's state (${detail}) — Fix: \`${transport.logsCommand(200)}\`. The daemon ` +
-                  "builds itself on first boot, so give it a minute after bring-up and run this step again",
+                  "may still be starting (the image is prebuilt; its first boot migrates state and reconciles), so give it a minute after bring-up and run this step again",
               },
             ],
           };
