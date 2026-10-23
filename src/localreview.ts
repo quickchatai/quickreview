@@ -19,7 +19,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { PrFileEntry } from "./github.js";
-import { normalizeDisposition } from "./findingkey.js";
+import { normalizeDisposition, recordNumber } from "./findingkey.js";
 import { severityRank } from "./severityrank.js";
 import { planKey } from "./plankey.js";
 import { parseUnifiedDiff } from "./diffinput.js";
@@ -97,17 +97,21 @@ function diffFiles(
   to: string,
   env?: Record<string, string>,
 ): { files: PrFileEntry[]; lines: number } {
-  const numstat = git(cwd, ["diff", "--no-renames", "--numstat", from, to], { env });
+  // -z: NUL-terminated records with the paths verbatim, never C-quoted.
+  const numstat = git(cwd, ["diff", "--no-renames", "-z", "--numstat", from, to], {
+    env,
+    raw: true,
+  });
   const names = new Map<string, string>();
-  for (const l of git(cwd, ["diff", "--no-renames", "--name-status", from, to], { env })
-    .split("\n")
-    .filter(Boolean)) {
-    const [s, ...p] = l.split("\t");
-    names.set(p.join("\t"), STATUS[s![0]!] ?? "modified");
-  }
+  const nameFields = git(cwd, ["diff", "--no-renames", "-z", "--name-status", from, to], {
+    env,
+    raw: true,
+  }).split("\0");
+  for (let i = 0; i + 1 < nameFields.length; i += 2)
+    names.set(nameFields[i + 1]!, STATUS[nameFields[i]![0]!] ?? "modified");
   const files: PrFileEntry[] = [];
   let lines = 0;
-  for (const l of numstat.split("\n").filter(Boolean)) {
+  for (const l of numstat.split("\0").filter(Boolean)) {
     const [a, d, ...p] = l.split("\t");
     const path = p.join("\t");
     const binary = a === "-";
@@ -439,7 +443,11 @@ export function groupFindings(record: unknown): Record<string, TerminalFinding[]
     typeof record === "object" &&
     Array.isArray((record as { findings?: unknown }).findings)
       ? ((record as { findings: unknown[] }).findings as Array<Record<string, unknown>>)
-      : [];
+      : record !== null &&
+          typeof record === "object" &&
+          Array.isArray((record as { candidates?: unknown }).candidates)
+        ? ((record as { candidates: unknown[] }).candidates as Array<Record<string, unknown>>)
+        : [];
   const rows: Array<TerminalFinding & { rank: number }> = [];
   for (const e of entries) {
     if (e === null || typeof e !== "object") continue;
@@ -451,7 +459,7 @@ export function groupFindings(record: unknown): Record<string, TerminalFinding[]
     rows.push({
       rank: rank ?? 99,
       path: str(e["path"]),
-      line: typeof e["line"] === "number" ? e["line"] : null,
+      line: recordNumber(e["line"]),
       severity:
         rank === undefined ? "other" : sev.toUpperCase() === "NIT" ? "nit" : sev.toUpperCase(),
       title: str(e["title"]) ?? str(e["reason"]) ?? "(untitled finding)",

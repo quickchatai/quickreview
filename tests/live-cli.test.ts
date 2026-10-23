@@ -215,9 +215,44 @@ describe("qcr live", () => {
     expect(await runLive(["--wat"], false, bad.deps)).toBe(2);
     expect(await runLive(["--lens", "../x"], false, bad.deps)).toBe(2);
   });
+
+  it("rejects a trailing --lens, and a round selector that names another round than the directory", async () => {
+    const { home, runId, roundDir } = registry({ settle: true });
+    const a = cliDeps(home);
+    expect(await runLive([runId, "--lens"], false, a.deps)).toBe(2);
+    const b = cliDeps(join(tmp, "elsewhere"));
+    expect(await runLive([roundDir, "--round", "9"], false, b.deps)).toBe(1);
+    expect(b.lines[0]).toMatch(/not round 9/);
+  });
+
+  it("reports a usage error as a JSON envelope under --json", async () => {
+    const { deps, lines } = cliDeps(join(tmp, "elsewhere"));
+    expect(await runLive(["--round", "x", "--json"], false, deps)).toBe(2);
+    expect(JSON.parse(lines[0]!)).toMatchObject({
+      ok: false,
+      errors: ["--round needs a round number"],
+    });
+  });
 });
 
 describe("renderLiveEvent", () => {
+  it("shows a native child's tool count and last text when it carries no progress", () => {
+    const out = renderLiveEvent(
+      {
+        v: 1,
+        seq: 1,
+        at: "2026-01-01T00:00:00.000Z",
+        type: "tool_update",
+        id: "t1",
+        tool: "subagent",
+        n: 1,
+        results: [{ slot: 0, agent: "explore", native: { tool_count: 4, last_text: "reading x" } }],
+      } as never,
+      newRenderState(),
+    );
+    expect(out.join("\n")).toMatch(/explore .*\(4 tools\) reading x/);
+  });
+
   const at = "2026-10-01T10:00:00.000Z";
   it("prints streamed text once, not again at the message's end", () => {
     const state = newRenderState();
