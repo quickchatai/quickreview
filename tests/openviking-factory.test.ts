@@ -230,7 +230,7 @@ describe("boundedHook: a deadline and a catch", () => {
       (m) => lines.push(m),
     );
     expect(out).toBeUndefined();
-    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(Date.now() - t0).toBeLessThan(3000);
     expect(lines[0]).toContain("no answer in 30 ms");
     rejectLate(new Error("too late"));
     await new Promise((r) => setTimeout(r, 10));

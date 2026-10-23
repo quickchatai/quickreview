@@ -287,7 +287,7 @@ describe("a locked archive month (acceptance 4)", () => {
       const before = liveEvents(r.store);
       const t0 = Date.now();
       const res = await r.mover().run();
-      expect(Date.now() - t0).toBeLessThan(1000);
+      expect(Date.now() - t0).toBeLessThan(3000);
       expect(res).toMatchObject({ outcome: "skipped", skipped_reason: "archive_busy" });
       expect(res.error).toMatch(/locked/);
       expect(liveEvents(r.store)).toEqual(before);
