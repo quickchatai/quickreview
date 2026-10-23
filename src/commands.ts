@@ -1663,8 +1663,13 @@ export class CommandWatcher {
       } else {
         try {
           renameSync(path, join(this.processedDir, `${name}.json`));
-        } catch {
-          /* best effort — a vanished file is fine */
+        } catch (err) {
+          // A vanished file is fine; any other failure leaves the source
+          // pending, so it is logged with the path and cause.
+          if ((err as NodeJS.ErrnoException).code !== "ENOENT")
+            this.log(
+              `[commands] could not archive ${path}: ${(err as NodeJS.ErrnoException).code ?? (err as Error).message}`,
+            );
         }
       }
     }
