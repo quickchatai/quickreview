@@ -89,6 +89,8 @@ import {
   WORKER_SPEC_OP,
   parseWakesTaken,
   parseWorkerSpec,
+  lensDirOf,
+  roundPassesDir,
   type WorkerMode,
   type WorkerSpec,
 } from "./ipc/workerspec.js";
@@ -721,11 +723,6 @@ async function handshake(client: IpcClient, args: WorkerArgs): Promise<WorkerSpe
   return spec;
 }
 
-/** The round's pass directory: its task files and its context pack. */
-function roundPassesDir(spec: WorkerSpec, round: number): string {
-  return join(spec.root, "state", `pr-${spec.pr}-round-${round}-passes`);
-}
-
 /** The planned discovery wave's task files: the round's own pass dir. */
 function plannedWave(
   spec: WorkerSpec,
@@ -774,10 +771,6 @@ function sessionSpecOf(
   };
 }
 
-/** Where this round's lens ledger and lens JSONLs go (D10). */
-function lensDirOf(spec: WorkerSpec): string {
-  return spec.lens_dir ?? join(spec.root, "state", "lens", spec.session, `r${spec.round_no ?? 0}`);
-}
 
 const lensLedgerOf = (spec: WorkerSpec): string => join(lensDirOf(spec), LENS_LEDGER_FILE);
 

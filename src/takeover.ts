@@ -47,6 +47,7 @@ import { type Tmux } from "./tmux.js";
 import {
   WorkerLeases,
   judgeLease,
+  leaseStillRuns,
   killLease,
   realProc,
   sendSignal,
@@ -197,7 +198,7 @@ export class TakeoverManager {
     const held = this.leases.read(takeoverSession(pr));
     if (held === undefined) return null;
     const verdict = held === null ? ({ kind: "dead" } as const) : judgeLease(held, this.proc);
-    return verdict.kind === "group" || verdict.kind === "members" || verdict.kind === "unstarted"
+    return leaseStillRuns(verdict)
       ? `a takeover pi for PR #${pr} still runs: no worker starts`
       : null;
   }
