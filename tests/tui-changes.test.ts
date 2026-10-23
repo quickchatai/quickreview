@@ -466,24 +466,30 @@ describe("a revert of a change OLDER than the scan window", () => {
   });
 });
 
-describe("the companion is told to stamp it", () => {
-  it("prompts/companion.md documents the trailer block, the never-omitted key, and the surface that reads it", () => {
+describe("the companion writes no trailers", () => {
+  // The history is public: a companion commit carries no quote of the
+  // owner's words, no session or ticket id and no trailer block. The register
+  // keeps reading the trailer, which only the TUI's rubric-accept path stamps.
+  const TRAILER_LINE = /^(?:Feedback-PR|Adjudication|Ratified-in-session): /m;
+
+  it("prompts/companion.md forbids the trailer block and names the surface that reads the register", () => {
     const prompt = readFileSync(join(process.cwd(), "prompts/companion.md"), "utf8");
-    // The same three trailers the `land` skill promises — no competing set.
-    for (const t of ["Feedback-PR:", "Adjudication:", "Ratified-in-session:"])
-      expect(prompt).toContain(t);
-    expect(prompt).toMatch(/`Ratified-in-session:` is never omitted/);
-    expect(prompt).toMatch(/last paragraph only/);
+    expect(prompt).toMatch(/The commit message carries no trailers/);
+    expect(prompt).not.toMatch(TRAILER_LINE);
+    expect(prompt).not.toMatch(/is never omitted/);
     // The register is the CHANGED pane of the feedback tab; there is no
     // `[5] changes` tab, and the prompt must not send the companion to one.
     expect(prompt.replace(/\s+/g, " ")).toContain("`[7] feedback` tab");
     expect(prompt).not.toMatch(/\[5\] changes/);
   });
 
-  it("the land skill and the register agree on the identifying trailer", () => {
-    const skill = readFileSync(join(process.cwd(), "skills/companion/land/SKILL.md"), "utf8");
-    expect(skill).toContain(`${TRAILER_RATIFIED}:`);
-    expect(skill).toMatch(/`Ratified-in-session:` is never omitted/);
+  it("the land and adjudicate skills template no trailer either", () => {
+    for (const name of ["land", "adjudicate"]) {
+      const skill = readFileSync(join(process.cwd(), `skills/companion/${name}/SKILL.md`), "utf8");
+      expect(skill, name).not.toMatch(TRAILER_LINE);
+      expect(skill, name).not.toMatch(/is never omitted/);
+    }
+    expect(TRAILER_RATIFIED).toBe("Ratified-in-session");
   });
 });
 

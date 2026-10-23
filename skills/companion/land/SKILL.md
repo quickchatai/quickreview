@@ -130,7 +130,7 @@ Some passages are the owner's, wherever they live. In the files we own they are
 **fenced**:
 
 ```
-<!-- RATIFIED FT-NNNN ci-gate — do not edit; owner only -->
+<!-- RATIFIED ci-gate — do not edit; owner only -->
 …the ratified text, byte for byte…
 <!-- /RATIFIED ci-gate -->
 ```
@@ -163,17 +163,10 @@ theirs) — never as a commit you write first and mention after.
   failures, then `npm run build` clean. Never commit with a red suite. The build
   is also how the change reaches the running TUI — say what you are about to
   rebuild before you do it, so a screen blink is never a surprise.
-- **Message**: `[companion]` prefix (plus `FT-NNNN` where relevant), and the
-  trailers that make the loop auditable and reversible:
-
-  ```
-  Feedback-PR: <n>
-  Adjudication: FT-NNNN
-  Ratified-in-session: <the session id, and their approving words>
-  ```
-
-  `Feedback-PR:` and `Adjudication:` are omitted when the change did not come
-  from an episode. `Ratified-in-session:` is never omitted.
+- **Message**: `[companion]` prefix and a plain body that says what changed
+  and why. No trailers (no `Feedback-PR:`, `Adjudication:` or
+  `Ratified-in-session:` line), no quote of the owner's words, no session or
+  ticket id: the history is public, and the approval lives in the session.
 - **Tell them what you changed, in one line**, naming the surface.
 
 ## Did it actually reach the reviewer?

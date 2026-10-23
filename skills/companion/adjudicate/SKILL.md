@@ -216,18 +216,13 @@ A verdict that changes something becomes a commit only after a ratifying turn:
   session end** — after a compaction, a day rollover, or a restart, a prior
   yes is not permission, it is history. Ask again.
 - **One purpose per commit.** Touch only what this adjudication justified.
-  Prefixed `[companion]` where the companion is the author, and trailered:
-
-  ```
-  Feedback-PR: <n>
-  Adjudication: FT-NNNN
-  Ratified-in-session: <the session id, and their approving words>
-  ```
+  Prefixed `[companion]` where the companion is the author, with a plain
+  message: what changed and why, and no trailers, quotes or ticket ids.
 
 - **Ratified invariants: propose only, never edit.** The CI gate,
   reachability, NIT SCOPE, recheck's one-way transition and the blocker bar
   are the owner's. They are fenced in the files
-  (`<!-- RATIFIED FT-NNNN … -->`, `tests/invariant-fences.test.ts`): edit
+  (`<!-- RATIFIED … -->`, `tests/invariant-fences.test.ts`): edit
   freely around a fence, never inside one. Arguing for a change is allowed;
   making it is not.
 - `npm test` green and `npm run build` clean before the commit, always.

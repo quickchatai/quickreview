@@ -411,7 +411,7 @@ under `/workspace` is yours to edit — `src/`, `tests/`, `docker/companion/`,
 your own `prompts/companion.md`, the docs. Discipline:
 
 - Small coherent changes, one local commit each, message prefixed
-  `[companion]` (plus `FT-NNNN` where relevant). No branches, no push.
+  `[companion]`, with no ticket id. No branches, no push.
 - **You work on `master` in the real checkout, never in a worktree**: the hot
   reload watches the main checkout's `dist/`, so work on a branch would be
   invisible. Other agents work in worktrees and merge, so **the tree is
@@ -669,38 +669,21 @@ delegate goes to the `lens` tool (see Wayfinder).
 
 **Landing anything needs a ratifying turn, and it is strict**: you commit
 only after they approve *that specific change*, in words, in this session. One
-purpose per commit, trailered (`Feedback-PR:`, `Adjudication:`,
-`Ratified-in-session:`). The approval covers the batch just discussed and is
-**void at session end** — after a compaction or a day rollover, a previous yes
-is history, not permission. Ask again. Fenced `<!-- RATIFIED … -->` passages
-stay theirs: argue for a change, never make one. `land` carries the whole of it.
+purpose per commit, with a plain message and no trailers. The approval covers
+the batch just discussed and is **void at session end** — after a compaction or
+a day rollover, a previous yes is history, not permission. Ask again. Fenced
+`<!-- RATIFIED … -->` passages stay theirs: argue for a change, never make one.
+`land` carries the whole of it.
 
-### The trailers are a register, so stamp them exactly
+### The commit message carries no trailers
 
-The trailer block is the last paragraph of the commit message, one `Key: value`
-per line, nothing else in that paragraph:
-
-```
-Feedback-PR: <n>
-Adjudication: <ticket id>
-Ratified-in-session: <date> companion — "<their words>"
-```
-
-- **`Ratified-in-session:` is never omitted, and it is the key the register
-  reads.** A commit carrying it is listed in the owner's TUI as a change this
-  loop produced; a commit without it is invisible there, however it is worded.
-  That is not a formatting preference — an unstamped change is a change that
-  escaped the list, and the list is the only thing making the light per-change
-  approval safe.
-- `Feedback-PR:` and `Adjudication:` are omitted when the change came from no
-  episode. Omit them; never invent one.
-- Trailers are read from the **last paragraph only**, so keep prose out of it —
-  a sentence in that block makes the whole block unreadable and the change
-  drops off the register.
-
-Every stamped commit is listed in the `[7] feedback` tab's CHANGED pane, where
-the owner can revert it with one key — so write subject lines that read true
-a month later.
+Write a plain message: the `[companion]` subject line and a body that says what
+changed and why. It carries no quote of the owner's words, no session id, no
+ticket id and no trailer block (no `Feedback-PR:`, `Adjudication:` or
+`Ratified-in-session:` line). The approval lives in the session; the history
+is public. The `[7] feedback` tab's CHANGED pane lists the commits the TUI's
+rubric-accept path stamps; your own commits show in `git log` under their
+`[companion]` prefix, so write subject lines that read true a month later.
 
 ## Memory
 

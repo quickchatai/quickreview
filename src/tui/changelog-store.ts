@@ -7,18 +7,18 @@
 // that the whole set is readable at once, and that any one of them comes back
 // out with one key. Without this list that light approval is unprotected.
 //
-// How a change is identified: the commit trailers the `land` skill already
-// promises (skills/companion/land/SKILL.md), and no new competing set:
+// How a change is identified: by commit trailers.
 //
 //     Feedback-PR: 5270            ← omitted when the change came from no episode
 //     Adjudication: FT-NNNN        ← omitted likewise
-//     Ratified-in-session: <session id, and the owner's approving words>
+//     Ratified-in-session: <what ratified it>
 //
-// `Ratified-in-session:` is the one trailer that is never omitted, so it — and
-// only it — is the register's key. A commit carrying it is a change this loop
-// produced; a commit without it is not, however it is worded. That keeps the
-// register honest in both directions: nothing lands unlisted without also
-// skipping the ratifying turn, which is itself forbidden.
+// `Ratified-in-session:` — and only it — is the register's key. A commit
+// carrying it is a change this loop produced; a commit without it is not,
+// however it is worded. Today the TUI's rubric-accept path is the one writer
+// (the owner's accept click is the ratification). The companion writes no
+// trailers: the history is public, so its commits carry no quote, session id
+// or ticket id (skills/companion/land/SKILL.md).
 //
 // Trailers are read from the last paragraph of the message only, the same
 // header-only discipline `src/memory/eventtags.ts` uses: a quoted line in a

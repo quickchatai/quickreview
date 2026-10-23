@@ -499,7 +499,8 @@ describe("companion skill descriptions", () => {
     expect(body).toMatch(/ratifying turn/i);
     expect(body).toMatch(/void at session end/i);
     expect(body).toMatch(/one purpose per commit/i);
-    expect(body).toMatch(/Ratified-in-session:/);
+    expect(body).toMatch(/No trailers/);
+    expect(body).not.toMatch(/^\s*Ratified-in-session: /m);
     expect(body).toMatch(/RATIFIED/);
   });
 
