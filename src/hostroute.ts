@@ -5,9 +5,10 @@
 // A run gets
 //  - a private agent dir (`<run>/agent`, replacing ~/.pi/agent): a
 //    refresh-disabled copy of the operator's login (src/engine/auth.ts), a
-//    settings.json in the bench's style that registers bash-guard GLOBALLY
-//    (lens children load only global extensions) and carries the project
-//    settings the clone used to inherit from `<root>/.pi/settings.json`, and
+//    settings.json in the bench's style without an `extensions` entry (the SDK
+//    host discovers none; every lens session gets bash-guard as a factory,
+//    src/engine/lens/runlens.ts) that carries the project settings the clone
+//    used to inherit from `<root>/.pi/settings.json`, and
 //    the lens agents built into `<agent>/agents` (the user scope). It holds no
 //    context file, no extension and no skill;
 //  - a cwd of its own: the run's `out` dir, outside every checkout, holding a
@@ -28,7 +29,8 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, relative, resolve, isAbsolute } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
+import { isInside } from "./pathinside.js";
 import type { Config } from "./config.js";
 import { buildBenchAgents } from "./bench/runner.js";
 import { benchSettings } from "./bench/auth.js";
@@ -74,11 +76,6 @@ export interface HostRun {
   /** Context files in an ancestor of `cwd`: pi would load them too. */
   strayContext: string[];
 }
-
-const isInside = (child: string, parent: string): boolean => {
-  const rel = relative(parent, child);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-};
 
 /** The path with symlinks resolved as far as it exists. */
 const real = (p: string): string => {

@@ -128,7 +128,7 @@ describe("triggered-set queries", () => {
 
   it("searches open bot-filed issues by label", async () => {
     const { adapter, calls } = build(() => ({ items: [{ number: 9, title: "t" }] }));
-    expect(await adapter.listOpenBotIssues()).toEqual([{ number: 9, title: "t" }]);
+    expect(await adapter.listOpenLabelledIssues()).toEqual([{ number: 9, title: "t" }]);
     expect(queryOf(calls[0]!.url)).toContain('label:"bot-filed"');
   });
 });

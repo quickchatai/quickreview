@@ -729,7 +729,7 @@ async function fileIssueNow(payload: IssuePayload, ctx: IssueContext): Promise<F
 
   let open: Array<{ number: number; title: string }> = [];
   try {
-    open = await ctx.adapter.listOpenBotIssues();
+    open = await ctx.adapter.listOpenLabelledIssues();
   } catch (err) {
     return reject(`dedup lookup failed: ${(err as Error).message}`);
   }
