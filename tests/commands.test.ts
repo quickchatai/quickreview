@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -615,6 +616,20 @@ describe("CommandWatcher", () => {
       .filter((e) => e.kind === "command_rejected");
     expect(rejected).toHaveLength(1);
     expect(Object.values(deps).every((fn) => fn.mock.calls.length === 0)).toBe(true);
+  });
+
+  it("logs the cause when a finished command cannot be archived", async () => {
+    writeFileSync(join(cmdDir(), "stuck.json"), JSON.stringify({ command: "merge-pr", pr: 5 }));
+    const log: string[] = [];
+    const w = watcher(makeDeps(), log);
+    mkdirSync(join(cmdDir(), "processed"), { recursive: true });
+    chmodSync(join(cmdDir(), "processed"), 0o555);
+    try {
+      await w.sweep();
+    } finally {
+      chmodSync(join(cmdDir(), "processed"), 0o755);
+    }
+    expect(log.join("\n")).toMatch(/could not archive .*stuck\.json.*EACCES/);
   });
 
   it("rejects unknown fields", async () => {
