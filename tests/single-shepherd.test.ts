@@ -145,8 +145,7 @@ describe("daemon topology", () => {
       // Rule text changes only by the owner's ratification, so the test pins it
       // verbatim (whitespace folded: CLAUDE.md wraps it). The same words open
       // docs/single-shepherd-invariant.md's amendment.
-      const RATIFIED =
-        "[private rule text removed]";
+      const RATIFIED = "[private rule text removed]";
       const text = readFileSync(
         join(import.meta.dirname, "..", "docs", "rulebook", "hard-rules.md"),
         "utf8",

@@ -1642,13 +1642,17 @@ describe("checkReadPath and the file-tool veto", () => {
     } as never);
     const veto = (toolName: string, input: Record<string, unknown>): unknown =>
       handler!({ type: "tool_call", toolName, toolCallId: "t", input });
-    expect(veto("read", { path: "/opt/quickreview/secrets/app.pem" })).toMatchObject({ block: true });
+    expect(veto("read", { path: "/opt/quickreview/secrets/app.pem" })).toMatchObject({
+      block: true,
+    });
     expect(veto("read", { path: "~/.openviking/ov.conf" })).toMatchObject({ block: true });
     expect(veto("grep", { pattern: "BEGIN", path: "/", glob: "*.pem" })).toMatchObject({
       block: true,
     });
     expect(veto("ls", { path: "/opt/quickreview/secrets" })).toMatchObject({ block: true });
-    expect(veto("edit", { path: "/opt/quickreview/secrets/app_id" })).toMatchObject({ block: true });
+    expect(veto("edit", { path: "/opt/quickreview/secrets/app_id" })).toMatchObject({
+      block: true,
+    });
     expect(veto("read", { path: "wt/pr-5/src/app.ts" })).toBeUndefined();
     expect(veto("grep", { pattern: "openai_api_key", path: "wt/pr-5" })).toBeUndefined();
   });

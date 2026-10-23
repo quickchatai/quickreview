@@ -443,7 +443,12 @@ describe("the miner — the feedback ledger and drained [feedback] comments", ()
   it("a [feedback] comment a drain dropped (pr_comments tagged=1, no ledger row) is mined once — and one the ledger has is not doubled", async () => {
     const h = harness();
     h.pr(21);
-    h.comment({ pr: 21, id: 9100, author: "pmercier", body: "[feedback] drained during the deploy" });
+    h.comment({
+      pr: 21,
+      id: 9100,
+      author: "pmercier",
+      body: "[feedback] drained during the deploy",
+    });
     h.comment({ pr: 21, id: 9101, author: "pmercier", body: "[feedback] seen by the webhook too" });
     h.store.recordFeedbackSignal({
       kind: "feedback_comment",

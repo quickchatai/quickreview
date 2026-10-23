@@ -255,10 +255,7 @@ describe("[T1] every registered key is answerable", () => {
           improvements: [],
         }
       ),
-      readTickets: () => (
-        fetched.push("tickets"),
-        [ticket(""), ticket(""), ticket("")]
-      ),
+      readTickets: () => (fetched.push("tickets"), [ticket(""), ticket(""), ticket("")]),
       changes,
     });
     const { app } = r;

@@ -352,7 +352,9 @@ describe("quick-message input box", () => {
 
 describe("digest tab", () => {
   it("builds read-only ls/cat argv inside the container", () => {
-    expect(digestListArgv(TUI_DEFAULTS).join(" ")).toContain("ls '/opt/quickreview/sandbox/digest'");
+    expect(digestListArgv(TUI_DEFAULTS).join(" ")).toContain(
+      "ls '/opt/quickreview/sandbox/digest'",
+    );
     expect(digestCatArgv(TUI_DEFAULTS, "2026-08-13.md").join(" ")).toContain(
       "cat '/opt/quickreview/sandbox/digest/2026-08-13.md'",
     );

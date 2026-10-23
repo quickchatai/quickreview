@@ -371,7 +371,11 @@ const SNAPSHOTS_REMOVED = [
   "1.0.10-20261019T000000Z",
   "1.0.2-20261020T120000Z",
 ];
-const IMAGES_REMOVED = ["quickreview-memory:v1", "quickreview-sandbox:dev", "quickreview-sandbox:v1"];
+const IMAGES_REMOVED = [
+  "quickreview-memory:v1",
+  "quickreview-sandbox:dev",
+  "quickreview-sandbox:v1",
+];
 
 function expectedRemovals(v: Vm): string[] {
   return [

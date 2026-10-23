@@ -232,7 +232,9 @@ describe("the secrets dir is the one deploy.sh and the daemon read", () => {
   it("falls back to <config home>/secrets when secrets_dir is empty", async () => {
     const env = isolated(`[github]\nsecrets_dir = ""\n`);
     const { out } = await runWizard("", { env });
-    expect(out).toContain(`quickreview secrets — ${join(dir, "xdg", "qcr", "default", "secrets")} `);
+    expect(out).toContain(
+      `quickreview secrets — ${join(dir, "xdg", "qcr", "default", "secrets")} `,
+    );
   });
 
   it("QC_SECRETS_DIR still wins over the configured dir", async () => {

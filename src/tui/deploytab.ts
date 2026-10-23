@@ -688,7 +688,10 @@ export function renderDeployTab(
 ): Frame {
   const frame = new Frame(cols, rows);
   const live = deployKeys(st);
-  frame.set(0, rule(cols, "┌", "┐", [`${HEADING}quickreview${DRESET}`, modeBadge(dryRun), "deploy"]));
+  frame.set(
+    0,
+    rule(cols, "┌", "┐", [`${HEADING}quickreview${DRESET}`, modeBadge(dryRun), "deploy"]),
+  );
 
   // The button row — deploy + power, both mouse-clickable, pinned under the
   // title. While a run streams, the row becomes its status chip.

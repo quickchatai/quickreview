@@ -188,7 +188,12 @@ describe("powerSpawnArgv", () => {
   });
 
   it("local mode runs the same words directly — no ssh", () => {
-    expect(powerSpawnArgv(LOCAL, "stop")).toEqual(["sudo", "docker", "stop", "quickreview-sandbox"]);
+    expect(powerSpawnArgv(LOCAL, "stop")).toEqual([
+      "sudo",
+      "docker",
+      "stop",
+      "quickreview-sandbox",
+    ]);
     expect(powerSpawnArgv({ ...LOCAL, sudo_docker: false }, "start")).toEqual([
       "docker",
       "start",

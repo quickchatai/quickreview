@@ -467,9 +467,7 @@ describe("the reviewed repo, read-only", () => {
     expect(mounts).toContain(`/host/example-app:${CONTAINER.reviewedRepo}:ro`);
     // `:ro` is the entire guarantee that reading the reviewed code can never
     // become writing it — rule 8's boundary is structural, not prompted.
-    expect(mounts.some((m) => m.startsWith("/host/example-app:") && m.endsWith(":rw"))).toBe(
-      false,
-    );
+    expect(mounts.some((m) => m.startsWith("/host/example-app:") && m.endsWith(":rw"))).toBe(false);
     expect(argv.slice(-2)).toEqual([COMPANION_DEFAULTS.image, COMPANION_MODE]); // image + mode still last
   });
 

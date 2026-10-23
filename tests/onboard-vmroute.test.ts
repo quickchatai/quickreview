@@ -861,7 +861,9 @@ describe("the transport is the one decision point", () => {
     );
 
     const ssh = stackTransportFor(ctxWith(VM_CHOICES, runner));
-    expect(ssh.logsCommand(200)).toBe(`ssh ${ALIAS} sudo docker logs --tail 200 quickreview-sandbox`);
+    expect(ssh.logsCommand(200)).toBe(
+      `ssh ${ALIAS} sudo docker logs --tail 200 quickreview-sandbox`,
+    );
     expect(ssh.cliCommand("events --tail 40")).toBe(
       `ssh ${ALIAS} sudo docker exec quickreview-sandbox node dist/src/cli.js events --tail 40`,
     );
@@ -902,7 +904,9 @@ describe("the ssh transport's probes and restart", () => {
     expect(check).toMatchObject({ ok: false });
     expect(check!.detail).toMatch(/is not there at all/);
     // The real one among siblings is found whatever the row order.
-    const both = sshWith(() => ok("quickreview-sandbox-old exited\nquickreview-sandbox running\n")).ctx;
+    const both = sshWith(() =>
+      ok("quickreview-sandbox-old exited\nquickreview-sandbox running\n"),
+    ).ctx;
     expect((await stackTransportFor(both).containerChecks(null))[0]).toMatchObject({ ok: true });
   });
 

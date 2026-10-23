@@ -17,8 +17,7 @@ describe("stripModelDocs", () => {
     expect(stripModelDocs(src)).toBe("# Title\n\nBody {{a}}\n");
   });
   it("drops the fence marker lines and keeps the fenced text byte for byte", () => {
-    const src =
-      "a\n<!-- RATIFIED x — do not edit; owner only -->\nkept\n<!-- /RATIFIED x -->\nb\n";
+    const src = "a\n<!-- RATIFIED x — do not edit; owner only -->\nkept\n<!-- /RATIFIED x -->\nb\n";
     expect(stripModelDocs(src)).toBe("a\nkept\nb\n");
   });
   it("leaves other HTML comments alone (the Slack origin marker is an instruction)", () => {

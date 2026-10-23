@@ -51,8 +51,7 @@ import type { ContextAssembler } from "../src/memory/context.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 import { listedFileStat } from "./helpers/ov-listing.js";
 
-const KEY =
-  "cWNy.cmV2aWV3ZXI.a2V5LWZvci10ZXN0cy1vbmx5LW5vdC1hLXJlYWwta2V5";
+const KEY = "cWNy.cmV2aWV3ZXI.a2V5LWZvci10ZXN0cy1vbmx5LW5vdC1hLXJlYWwta2V5";
 const BASE = "http://127.0.0.1:1933";
 const ROOT = "viking://user/reviewer/memories";
 const NOW = new Date("2026-08-20T15:30:00.000Z");

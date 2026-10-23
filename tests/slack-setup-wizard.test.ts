@@ -226,12 +226,18 @@ describe("readSlackValues", () => {
   });
 
   it("falls back to the legacy alias when [owner] slack_id is empty", () => {
-    const legacy = shipped.replace(/^legacy_owner_slack_id = ""/m, 'legacy_owner_slack_id = "U0LEGACY"');
+    const legacy = shipped.replace(
+      /^legacy_owner_slack_id = ""/m,
+      'legacy_owner_slack_id = "U0LEGACY"',
+    );
     expect(wiz.readSlackValues(legacy).legacy_owner_slack_id).toBe("U0LEGACY");
   });
 
   it("flags a conflicting pair, which the daemon refuses", () => {
-    const both = canonical.replace(/^legacy_owner_slack_id = ""/m, 'legacy_owner_slack_id = "U0OTHER"');
+    const both = canonical.replace(
+      /^legacy_owner_slack_id = ""/m,
+      'legacy_owner_slack_id = "U0OTHER"',
+    );
     expect(() => parseConfig(both)).toThrow(/both set and differ/);
     const v = wiz.readSlackValues(both);
     expect(v.legacy_owner_slack_id).toBe("U0OWNER");

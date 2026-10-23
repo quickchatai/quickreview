@@ -132,5 +132,7 @@ it.each(
   );
   expect(runMerge(file, home).theme).toBe("mine");
   expect(statSync(join(agent, name)).mode & 0o777).toBe(0o600);
-  expect(JSON.parse(readFileSync(join(agent, "trust.json"), "utf8"))["/opt/quickreview"]).toBe(true);
+  expect(JSON.parse(readFileSync(join(agent, "trust.json"), "utf8"))["/opt/quickreview"]).toBe(
+    true,
+  );
 });

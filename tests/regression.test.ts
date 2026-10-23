@@ -251,7 +251,10 @@ describe("matching", () => {
     ];
     expect(matchFinding(human, sibling).matched).toBe(false);
     // A path the session wrote with a tree prefix (or `./`) is still the same file.
-    for (const path of ["./src/a/index.ts", "/opt/quickreview/state/regression/pr-1/src/a/index.ts"])
+    for (const path of [
+      "./src/a/index.ts",
+      "/opt/quickreview/state/regression/pr-1/src/a/index.ts",
+    ])
       expect(matchFinding(human, [{ path, line: 45, text: "unrelated" }]).matched).toBe(true);
     // A relative path is the file it names: a bare basename, or a root file
     // against a nested one, never bridges two files.

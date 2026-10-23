@@ -538,9 +538,9 @@ describe("interpretEvent — behavioral signals", () => {
       by: "pmercier",
     });
     expect(interpretEvent("pull_request", "unlabeled", unlabel(BOT), deps()).kind).toBe("ignored");
-    expect(interpretEvent("pull_request", "unlabeled", unlabel("pmercier", "wip"), deps()).kind).toBe(
-      "ignored",
-    );
+    expect(
+      interpretEvent("pull_request", "unlabeled", unlabel("pmercier", "wip"), deps()).kind,
+    ).toBe("ignored");
     const teamSlug = cfg.github.review_team.split("/")[1]!;
     const unrequest = {
       action: "review_request_removed",
@@ -846,7 +846,9 @@ describe("FeedbackEngine.ingest", () => {
     expect(await engine.ingest({ kind: "bot_comment_deleted", pr: 1, comment_id: 3 })).toBe(
       "recorded",
     );
-    expect(await engine.ingest({ kind: "trigger_withdrawn", pr: 1, by: "pmercier" })).toBe("recorded");
+    expect(await engine.ingest({ kind: "trigger_withdrawn", pr: 1, by: "pmercier" })).toBe(
+      "recorded",
+    );
     expect(rebuildAgents).not.toHaveBeenCalled();
     expect(memory.applied).toHaveLength(2);
   });

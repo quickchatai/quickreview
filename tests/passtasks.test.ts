@@ -186,7 +186,9 @@ describe("a follow-up round's task files", () => {
       );
       expect(t.text).toContain("/s/state/pr-42-round-2-delta.patch");
       expect(t.text).toContain("`src/a.py` — modified, lines 12-15");
-      expect(t.text).toContain(`git -C /opt/quickreview/wt/pr-42 diff ${DELTA.tree} HEAD -- <path>`);
+      expect(t.text).toContain(
+        `git -C /opt/quickreview/wt/pr-42 diff ${DELTA.tree} HEAD -- <path>`,
+      );
       expect(t.text).toContain("not this round's review scope");
       expect(t.text).not.toContain("The PR's own changes are exactly");
       expect(t.text).not.toContain("The whole diff is yours");

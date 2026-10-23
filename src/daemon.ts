@@ -433,7 +433,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   const root = deps.root ?? sandboxRoot();
   const stateDir = join(root, "state");
   const log =
-    deps.log ?? ((msg: string, extra?: unknown) => console.log(`[quickreviewd] ${msg}`, extra ?? ""));
+    deps.log ??
+    ((msg: string, extra?: unknown) => console.log(`[quickreviewd] ${msg}`, extra ?? ""));
   const store = deps.store ?? new StateStore(join(stateDir, "state.db"));
   const hooks = deps.hooks ?? stubSessionHooks(root, log);
   const roundStageBounds = resolveRoundStageBounds(cfg.daemon);

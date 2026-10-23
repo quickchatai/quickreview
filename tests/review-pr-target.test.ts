@@ -300,8 +300,7 @@ describe("the daemon stays App-only (CLAUDE.md rule 3)", () => {
     // verbatim (whitespace folded: CLAUDE.md wraps it). The carve-out is the
     // credential only: the post still goes through the gate, and the token
     // handoff is a read-and-unlinked file, never env or argv.
-    const RATIFIED =
-      "[private rule text removed]";
+    const RATIFIED = "[private rule text removed]";
     const text = readFileSync(join(ROOT, "docs", "rulebook", "hard-rules.md"), "utf8");
     const start = text.indexOf("\n3. ");
     const end = text.indexOf("\n4. ", start);
@@ -316,8 +315,7 @@ describe("the daemon stays App-only (CLAUDE.md rule 3)", () => {
   it.skipIf(!HAS_RULEBOOK)(
     "CLAUDE.md rule 1 carries the ratified image paragraph (owner, 2026-10-19)",
     () => {
-      const PARAGRAPH =
-        "[private rule text removed]";
+      const PARAGRAPH = "[private rule text removed]";
       const text = readFileSync(join(ROOT, "docs", "rulebook", "hard-rules.md"), "utf8");
       const start = text.indexOf("\n1. ");
       const end = text.indexOf("\n2. ", start);

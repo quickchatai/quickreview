@@ -300,9 +300,7 @@ describe.skipIf(!existsSync(DECISIONS))("the CLAUDE.md anchors", () => {
     expect(b.text).toContain("posts only when the operator marked the message may-post");
     // the ratified P9.6 text: the pane's two pi terminals, by name, and
     // every other pane the viewer
-    expect(b.text).toContain(
-      "[private rule text removed]",
-    );
+    expect(b.text).toContain("[private rule text removed]");
     expect(b.text).toContain("[private rule text removed]");
     expect(b.text).toContain("`qcr open pr <n>` forks it into pi");
     expect(b.text).not.toContain("worker-hosted PR's pane");

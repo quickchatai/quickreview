@@ -1070,11 +1070,14 @@ async function main() {
   para("First: your own identity (tier-M).");
   let legacyOwnerSlackId = current.legacy_owner_slack_id;
   {
-    const id = await askSlackId(`your Slack member id${legacyOwnerSlackId ? ` [${legacyOwnerSlackId}]` : ""}`);
+    const id = await askSlackId(
+      `your Slack member id${legacyOwnerSlackId ? ` [${legacyOwnerSlackId}]` : ""}`,
+    );
     if (id) legacyOwnerSlackId = id;
     if (legacyOwnerSlackId) {
       const existing = users.get(legacyOwnerSlackId);
-      const login = existing && !FORCE ? existing : ((await askLogin(legacyOwnerSlackId)) ?? existing);
+      const login =
+        existing && !FORCE ? existing : ((await askLogin(legacyOwnerSlackId)) ?? existing);
       if (login) {
         users.delete(legacyOwnerSlackId);
         const rest = [...users.entries()];
