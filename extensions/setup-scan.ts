@@ -393,7 +393,7 @@ export function renderQuestion(q: MatchQuestionView | null, verbs: ScanVerbs = T
     ...q.unreported.map(row),
     `Fresh — first seen by the re-scan, possibly one of the above moved or reworded (${q.fresh.length}):`,
     ...q.fresh.map(row),
-    `Answer with ${verbs.match(q.key)} that are the SAME finding. Every unpaired old one becomes fixed; every unpaired fresh one stays new.`,
+    `Answer with ${verbs.match(q.key)} that are the SAME finding. Every unpaired old one becomes fixed (a dismissed one stays dismissed); every unpaired fresh one stays new.`,
   ].join("\n");
 }
 
@@ -910,7 +910,7 @@ export function scanToolDefinitions(
     description:
       "Answer the pending match question WHOLE: its key, and the pairs {old, new} (fingerprints) that are the same finding. A pair keeps " +
       "the old finding's state (dismissed stays dismissed, promoted stays promoted) under the new wording and position. Every unpaired " +
-      "old finding becomes fixed; every unpaired fresh one stays new. An empty `pairs` means none are the same. Refused whole on a stale key.",
+      "old finding becomes fixed (an unpaired dismissed finding stays dismissed); every unpaired fresh one stays new. An empty `pairs` means none are the same. Refused whole on a stale key.",
     promptSnippet: "Settle which re-scan findings are the same as old ones",
     parameters: {
       type: "object",
@@ -1102,6 +1102,7 @@ export function scanLeafRunner(
           ok: false,
           reason:
             "[engine] runtime = sdk is not available on the scan route in this process: scan leaves run on the SDK only in the `qcr scan` driver",
+          cost_usd: 0,
         };
       try {
         sdk ??= Promise.resolve(sdkLeaves());

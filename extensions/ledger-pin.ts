@@ -85,6 +85,19 @@ export function collectText(value: unknown, out: string[] = [], depth = 0): stri
 // recheck mirrored that example over #6114's real ledger (2026-10-22).
 const PLACEHOLDER_HEAD_RE = /^\s*LEDGER\s+PR\s+#\d+\s*@\s*</;
 
+/** A block opened right after a fence of four or more backticks runs to that
+ * fence's close, so a three-backtick quote inside it stays part of the ledger.
+ * undefined when no such fence encloses the header. */
+function wrappedBlock(text: string, match: RegExpMatchArray): string | undefined {
+  const start = (match.index ?? 0) + (match[1] ?? "").length;
+  const open = /(?:^|\n)(`{4,})[^\n`]*\n\s*$/.exec(text.slice(0, start));
+  if (!open) return undefined;
+  const rest = text.slice(start);
+  const close = new RegExp(`\\n\\s*${open[1]}\`*[ \\t]*(?:\\n|$)`).exec(rest);
+  const end = close ? close.index : rest.length;
+  return rest.slice(0, end);
+}
+
 /** The last (most recent) LEDGER block for the session's OWN PR, trimmed.
  * Blocks naming any other PR are ignored (reported via onIgnore) — even when
  * they appear after the own-PR block. With no own PR (overseer / garbage
@@ -99,8 +112,9 @@ export function extractLedger(
   for (const text of texts) {
     for (const match of text.matchAll(LEDGER_RE)) {
       const pr = Number(match[2]);
-      if (PLACEHOLDER_HEAD_RE.test(match[0].trim())) continue;
-      if (ownPr !== undefined && pr === ownPr) found = match[0].trim();
+      const block = wrappedBlock(text, match) ?? match[0];
+      if (PLACEHOLDER_HEAD_RE.test(block.trim())) continue;
+      if (ownPr !== undefined && pr === ownPr) found = block.trim();
       else onIgnore(pr);
     }
   }

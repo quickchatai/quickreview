@@ -39,10 +39,17 @@ export function readCandidates(raw: unknown): {
   if (!Array.isArray(arr))
     return { candidates: [], problems: [...problems, "candidates must be an array"] };
   const candidates: ClusterCandidate[] = [];
+  const seen = new Set<string>();
   arr.forEach((c, i) => {
     if (typeof c !== "object" || c === null) return void problems.push(`#${i + 1}: not an object`);
     const o = c as Record<string, unknown>;
-    const id = typeof o.id === "string" && o.id.trim() ? o.id.trim() : `#${i + 1}`;
+    let id = typeof o.id === "string" && o.id.trim() ? o.id.trim() : `#${i + 1}`;
+    if (seen.has(id)) {
+      const base = id;
+      id = `${base}#${i + 1}`;
+      problems.push(`#${i + 1}: duplicate id ${base}, renamed ${id}`);
+    }
+    seen.add(id);
     const line =
       typeof o.line === "number"
         ? o.line

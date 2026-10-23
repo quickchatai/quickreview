@@ -56,6 +56,12 @@ describe("extractLedger", () => {
     expect(extractLedger([`chatter\n\n${OWN}`], 42)).toBe(OWN);
   });
 
+  it("keeps a ledger whole when it sits in a longer fence and quotes a three-backtick block", () => {
+    const body = `${OWN}\n\`\`\`ts\nconst x = 1;\n\`\`\`\n- later: commitment after the quote`;
+    const text = `before\n\n\`\`\`\`\n${body}\n\`\`\`\`\nafter`;
+    expect(extractLedger([text], 42)).toBe(body);
+  });
+
   it("ignores a sibling block even when it appears AFTER the own block (same text)", () => {
     const ignored: number[] = [];
     const out = extractLedger([`${OWN}\n\n${SIBLING}`], 42, (pr) => ignored.push(pr));

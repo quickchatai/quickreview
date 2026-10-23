@@ -97,6 +97,13 @@ describe("cluster_findings on both routes", () => {
     expect(t).toContain("3 candidate(s) → 1 group(s), 1 alone.");
     expect(t).toContain("CANDIDATE GROUPS");
     expect(t).toContain("**G1**");
+    const dup = readCandidates([
+      { id: "F1", path: "a.ts", line: 10, title: "first" },
+      { id: "F1", path: "a.ts", line: 12, title: "second" },
+    ]);
+    expect(new Set(dup.candidates.map((c) => c.id)).size).toBe(2);
+    expect(dup.candidates.map((c) => c.title)).toEqual(["first", "second"]);
+    expect(dup.problems.join(";")).toMatch(/duplicate id/);
     expect(readCandidates("not json").problems[0]).toMatch(/not valid JSON/);
     expect(readCandidates({}).problems).toContain("candidates must be an array");
   });
