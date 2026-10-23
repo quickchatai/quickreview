@@ -114,6 +114,13 @@ describe("classify", () => {
     });
   });
 
+  it("a #wontfix thread is closed and stays behind", () => {
+    expect(classify(of("#bug #wontfix authors decided to keep this"))).toEqual({
+      keep: false,
+      reason: "closed-thread",
+    });
+  });
+
   it("#wontfix-pattern is a learning, not a closed thread", () => {
     // The closing-tag set is matched exactly — a substring rule would read
     // `wontfix-pattern` as `wontfix` and drop a whole class of lessons.
