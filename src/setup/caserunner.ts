@@ -26,7 +26,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { GITHUB_TOKEN_ENVS } from "../envstrip.js";
-import { piCliPath } from "../picli.js";
+import { PI_PACKAGE, piCliPath } from "../picli.js";
 import type { CaseOutcome, CaseRunner, CaseSpec } from "./engine.js";
 
 /** An agent file of the companion set: `name`/`tools`/`model` frontmatter
@@ -77,7 +77,7 @@ export type SpawnFn = (
  * pinned package is `@earendil-works/pi-coding-agent` (package.json `pi`
  * block); the legacy `@mariozechner` scope is what older installs carry. */
 export const PI_PACKAGES: readonly string[] = [
-  "@earendil-works/pi-coding-agent",
+  PI_PACKAGE,
   "@mariozechner/pi-coding-agent",
 ];
 
@@ -350,6 +350,12 @@ export function leafEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.Process
 /** The stderr a failed case's reason is taken from: its last characters. */
 const STDERR_TAIL_CHARS = 4000;
 
+/** The last three lines of the last `STDERR_TAIL_CHARS` characters of a failed
+ * leaf's stderr, joined with " / " — the excerpt a failure reason quotes. */
+export function stderrExcerpt(stderr: string): string {
+  return stderr.slice(-STDERR_TAIL_CHARS).trim().split("\n").slice(-3).join(" / ");
+}
+
 /** Transcript directories kept: the newest by modification time. */
 export const TRANSCRIPT_RUNS_KEPT = 20;
 
@@ -577,7 +583,7 @@ export function piCaseRunner(opts: {
             if (buffer.trim() !== "") onLine(buffer);
             if (signal.aborted) return finish({ ok: false, reason: "stopped", cost_usd: spent() });
             if (code !== 0) {
-              const tail = stderr.trim().split("\n").slice(-3).join(" / ");
+              const tail = stderrExcerpt(stderr);
               return finish({
                 ok: false,
                 reason: `pi exited ${code}${tail ? `: ${tail}` : ""}`,
