@@ -106,7 +106,7 @@ import { piUsageFromInclusive } from "./cost.js";
 import { GIT_ISOLATION_ENV, run } from "./exec.js";
 import { bridgeCall, bridgeDelta, type BridgeStats, type BridgeUsage } from "./ocr.js";
 import { prTextFor } from "./prtext.js";
-import { datasetLine, kTokens, roundMetrics } from "./report.js";
+import { datasetLine, formatToolCounts, kTokens, roundMetrics } from "./report.js";
 import { prepareTree } from "./runner.js";
 
 // ---- the harness's codex runner, mirrored -----------------------------------------
@@ -452,6 +452,11 @@ export function opencodeUsage(rowsJson: string): BridgeUsage | null {
  * config. No pi agent dir and no token in the environment: on the bridge the
  * credential stays in the bridge; on the native provider it is the per-case
  * auth.json under that HOME (opencodeAuthFrom). */
+/** OpenCode's XDG data root under a case HOME (the env's XDG_DATA_HOME). */
+export function opencodeXdgDataHome(home: string): string {
+  return join(home, ".local", "share");
+}
+
 export function opencodeEnv(o: {
   path: string;
   home: string;
@@ -465,7 +470,7 @@ export function opencodeEnv(o: {
     TMPDIR: o.tmpDir,
     LANG: "C.UTF-8",
     XDG_CONFIG_HOME: join(o.home, ".config"),
-    XDG_DATA_HOME: join(o.home, ".local", "share"),
+    XDG_DATA_HOME: opencodeXdgDataHome(o.home),
     XDG_CACHE_HOME: join(o.home, ".cache"),
     XDG_STATE_HOME: join(o.home, ".local", "state"),
     OPENCODE_CONFIG: o.configPath,
@@ -869,7 +874,7 @@ export async function reviewCaseOpencode(
     if (native) {
       // OpenCode's own login store, in the per-case data dir (removed below).
       if (!o.benchAuthFile) throw new Error("the native provider needs the sandbox's token copy");
-      const dataDir = join(home, ".local", "share", "opencode");
+      const dataDir = join(opencodeXdgDataHome(home), "opencode");
       mkdirSync(dataDir, { recursive: true, mode: 0o700 });
       writeFileSync(
         join(dataDir, "auth.json"),
@@ -965,7 +970,7 @@ export async function reviewCaseOpencode(
       summary.error = (events.errors.join(" | ") || stderr.trim() || stdout.trim()).slice(-1500);
     writeFileSync(join(caseDir, "opencode-result.txt"), events.resultText);
     // OpenCode's own log (it writes one per process under its data dir).
-    const logDir = join(home, ".local", "share", "opencode", "log");
+    const logDir = join(opencodeXdgDataHome(home), "opencode", "log");
     if (existsSync(logDir))
       for (const f of readdirSync(logDir)
         .filter((n) => n.endsWith(".log"))
@@ -1275,10 +1280,7 @@ export function renderOpencodeReport(set: CaseSet, outDir: string, cases: BenchC
     }
     reviewed.push(s);
     const b = s.bridge;
-    const tools = Object.entries(s.tools)
-      .sort((x, y) => y[1] - x[1])
-      .map(([t, m]) => `${t} ${m}`)
-      .join(", ");
+    const tools = formatToolCounts(s.tools);
     L.push(
       `| ${c.instance_id} | ${c.language} | ${c.references} | ${s.status} | ${s.comments} (${s.review_output_source ?? "?"}) | ${(s.duration_seconds / 60).toFixed(1)} | ${b ? `${b.requests} (${b.errors})` : "?"} | ${b ? `${k(b.input_tokens)} (${k(b.cached_tokens)}) / ${k(b.output_tokens)} (${k(b.reasoning_tokens)})` : "?"} | ${tools} |`,
     );

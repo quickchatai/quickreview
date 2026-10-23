@@ -161,6 +161,14 @@ export function metricNumber(v: number | undefined): string {
 }
 const n = metricNumber;
 
+/** Tool-call counts as "name n, name n", most-used first. */
+export function formatToolCounts(tools: Record<string, number>): string {
+  return Object.entries(tools)
+    .sort((x, y) => y[1] - x[1])
+    .map(([t, m]) => `${t} ${m}`)
+    .join(", ");
+}
+
 /** A token count in thousands, for a report cell. */
 export function kTokens(x: number): string {
   return `${Math.round(x / 1000)}k`;

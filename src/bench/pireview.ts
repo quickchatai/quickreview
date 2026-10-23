@@ -88,7 +88,7 @@ import { GIT_ISOLATION_ENV, run } from "./exec.js";
 import type { OcrShapedComment } from "./opencode.js";
 import { PI_DISABLED_BUILTINS } from "../pibuiltins.js";
 import { prTextFor } from "./prtext.js";
-import { datasetLine, kTokens, roundMetrics } from "./report.js";
+import { datasetLine, formatToolCounts, kTokens, roundMetrics } from "./report.js";
 import { prepareTree } from "./runner.js";
 
 // ---- how pi-review is invoked --------------------------------------------------------
@@ -360,7 +360,8 @@ export type { OcrShapedComment };
 
 /** A comment on the BASE side (deleted/old lines), kept for the defect judge
  * in the QuickReview `comments.json` shape — the AACR scorer reads only the
- * new side, so these stay out of the scored file (as the QuickReview arm's do). */
+ * new side, so these stay out of the scored file (the QuickReview arm instead re-anchors
+ * its eligible LEFT comments onto the head side before scoring). */
 export interface LeftSideComment {
   path: string;
   line: number | null;
@@ -1049,10 +1050,7 @@ export function renderPireviewReport(set: CaseSet, outDir: string, cases: BenchC
       continue;
     }
     reviewed.push(s);
-    const tools = Object.entries(s.tools)
-      .sort((x, y) => y[1] - x[1])
-      .map(([t, m]) => `${t} ${m}`)
-      .join(", ");
+    const tools = formatToolCounts(s.tools);
     const u = s.usage;
     L.push(
       `| ${c.instance_id} | ${c.language} | ${c.references} | ${s.status} | ${s.verdict ?? "?"} | ${s.comments}${s.left_side ? ` (+${s.left_side})` : ""} | ${s.findings} (${s.actionable}) | ${(s.duration_seconds / 60).toFixed(1)} | ${u ? `${k(u.input + u.cacheRead)} (${k(u.cacheRead)}) / ${k(u.output)}` : "?"} | ${s.cost_usd !== null ? `$${s.cost_usd.toFixed(2)}` : "?"} | ${tools} |`,
