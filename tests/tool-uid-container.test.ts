@@ -55,17 +55,21 @@ const docker = (args: string[], timeout = 120_000): ReturnType<typeof spawnSync>
 
 afterAll(() => {
   if (keep) return;
-  // the container's uids own some of what it made
-  docker([
-    "run",
-    "--rm",
-    "--mount",
-    `type=bind,src=${tmp},dst=/d`,
-    NODE_IMAGE,
-    "sh",
-    "-c",
-    "rm -rf /d/* /d/.[!.]* 2>/dev/null; true",
-  ]);
+  // the container's uids own some of what it made; without the image nothing ran,
+  // and a cleanup run must never pull it
+  if (hasDocker)
+    docker([
+      "run",
+      "--rm",
+      "--pull",
+      "never",
+      "--mount",
+      `type=bind,src=${tmp},dst=/d`,
+      NODE_IMAGE,
+      "sh",
+      "-c",
+      "rm -rf /d/* /d/.[!.]* 2>/dev/null; true",
+    ]);
   rmSync(tmp, { recursive: true, force: true });
 });
 
