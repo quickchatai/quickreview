@@ -12,6 +12,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { readLiveEvents } from "../src/live/events.js";
+import { projectRoundProgress } from "../src/live/projection.js";
 import { parseRoundProgress, roundExecutionStage } from "../src/round-progress.js";
 import {
   eventsFromSession,
@@ -251,6 +253,60 @@ describe("a live stream with updates", () => {
       "completed",
       "failed",
     ]);
+  });
+
+  const callEvents = (
+    tool: string,
+    args: unknown,
+    result: unknown,
+    isError: boolean,
+  ): TimedEvent[] => [
+    { at: at(0), event: { type: "agent_start" } },
+    {
+      at: at(0.1),
+      event: {
+        type: "message_start",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: `<!-- qcr-command:cmd-9:${sha} -->` }],
+        },
+      },
+    },
+    { at: at(2), event: { type: "tool_execution_start", toolCallId: "c", toolName: tool, args } },
+    {
+      at: at(4),
+      event: { type: "tool_execution_end", toolCallId: "c", toolName: tool, result, isError },
+    },
+    { at: at(9), event: { type: "agent_settled", aborted: false } },
+  ];
+
+  it("keeps a placeholder child that tool end returns still running, without a finish time", () => {
+    const r = run(() =>
+      callEvents(
+        "lens",
+        { agent: "pass-baseline--sol-high", task: "t" },
+        {
+          details: {
+            mode: "single",
+            results: [{ agent: "pass-baseline--sol-high", exitCode: -1 }],
+          },
+        },
+        true,
+      ),
+    );
+    const snapshot = parseRoundProgress(r.projection!.snapshotJson!);
+    expect(snapshot).toBeDefined();
+    expect(snapshot!.agents.map((a) => [a.status, a.finished_at])).toEqual([
+      ["running", undefined],
+    ]);
+  });
+
+  it("says a failed non-lens tool failed in the activity line", () => {
+    const r = run(() => callEvents("bash", { command: "false" }, {}, true));
+    const mid = projectRoundProgress(
+      readLiveEvents(r.logPath, 0).events.filter((e) => e.type !== "agent_settled"),
+    );
+    expect(parseRoundProgress(mid!.snapshotJson!)?.last_activity).toBe("bash failed");
   });
 
   it("holds the same line for a lens_wave that names its children only in its results", () => {

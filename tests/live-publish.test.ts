@@ -91,6 +91,26 @@ describe("RoundProgressPublisher", () => {
     expect(readFileSync(snapshotPath, "utf8")).toBe(r.goldenSnapshot);
   });
 
+  it("retries a failed write on the next catch-up even when the log gained nothing", () => {
+    const r = recorded();
+    const dir = scratch();
+    const blocked = join(dir, "state");
+    writeFileSync(blocked, "x");
+    const snapshotPath = join(blocked, "round-progress", `pr-${PR}.json`);
+    const publisher = new RoundProgressPublisher({
+      logPath: r.logPath,
+      snapshotPath,
+      who: { pr: PR, session: `pr-${PR}` },
+      warn: () => {},
+    });
+    publisher.catchUp();
+    expect(() => readFileSync(snapshotPath)).toThrow();
+    rmSync(blocked);
+    publisher.catchUp();
+    expect(readFileSync(snapshotPath, "utf8")).toBe(r.goldenSnapshot);
+    expect(readFileSync(progressLogPath(snapshotPath), "utf8")).toBe(r.goldenTransitions);
+  });
+
   it("warns, and never throws, when it cannot write", () => {
     const r = recorded();
     const dir = scratch();
