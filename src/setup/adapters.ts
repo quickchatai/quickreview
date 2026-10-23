@@ -13,15 +13,13 @@
 import { execFileSync } from "node:child_process";
 import {
   lstatSync,
-  mkdirSync,
   readdirSync,
   readFileSync,
   realpathSync,
-  renameSync,
   statSync,
-  writeFileSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
+import { isAbsolute, join, normalize, relative, sep } from "node:path";
+import { writeAtomic } from "../channelfs.js";
 import { OV_REVIEWER_USER } from "../memory/ovsession.js";
 import type { MemoryStore } from "../memory/store.js";
 import { OpenVikingClient } from "../openviking/client.js";
@@ -219,10 +217,7 @@ function homeFs(root: string, what: string): StateFs {
     },
     write: (rel, text) => {
       const full = resolve(rel);
-      mkdirSync(dirname(full), { recursive: true });
-      const tmp = join(dirname(full), `.${full.split("/").at(-1)}.tmp`);
-      writeFileSync(tmp, text);
-      renameSync(tmp, full);
+      writeAtomic(full, text);
     },
   };
 }

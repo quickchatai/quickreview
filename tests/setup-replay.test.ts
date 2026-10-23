@@ -385,6 +385,26 @@ describe("the two sides resolve the way the daemon resolves a profile", () => {
       { old, new_profile: newProfile },
     );
 
+  it("a pending profile write's recovery instruction is passed on, not reported as 'no profile'", () => {
+    tune({ security: "critical" });
+    write(join(stateRoot(), "setup", "qcr-profile-write.json"), "{}\n");
+    const r = sides();
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.errors.join(" ")).toContain("awaiting recovery");
+    expect(r.errors.join(" ")).not.toContain("no profile to replay");
+  });
+
+  it("an agent file that cannot be read says so; only a missing one is null", () => {
+    tune({ security: "critical" });
+    const r = sides();
+    if (!r.ok) throw new Error(r.errors.join("; "));
+    expect(r.sides.new.agentText("pass-no-such-agent")).toBeNull();
+    const dir = join(r.sides.new.agentsDir, "pass-unreadable.md");
+    mkdirSync(dir, { recursive: true });
+    expect(() => r.sides.new.agentText("pass-unreadable")).toThrow(/pass-unreadable/);
+  });
+
   it("by default: new = the profile setup wrote, old = what reviewed before its last write", () => {
     tune({ security: "critical" });
     const second = tune({ security: "critical", tests: "ignore" });

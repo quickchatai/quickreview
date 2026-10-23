@@ -14,8 +14,8 @@
 // profile wins, as in the daemon), and its build is `buildAgents` in `"pr"`
 // mode — the round build wire.ts makes, composed from the same addenda (the
 // registry, the config's, the profile's pack and its per-lens tuning) — with
-// read-only leaves (`readOnlyLeaves`): the companion's case runner runs them
-// with no extensions, so no bash guard and no memory tool exists there. What
+// read-only leaves (`readOnlyLeaves`): the companion's case runner loads
+// bash-guard as their only extension, so no memory tool exists there. What
 // the daemon's build adds and a replay leaves out is the same-day feedback
 // addendum (it is not the profile's).
 //
@@ -43,14 +43,13 @@ import {
   PROFILES_DIR,
   type InstallEnv,
 } from "../install.js";
-import { applyProfileTuning, lensTuningAddenda, roundAgentModels } from "../lenstuning.js";
-import { applyProfilePosting, postingPolicyAddenda } from "../postingpolicy.js";
+import { lensTuningAddenda, roundAgentModels } from "../lenstuning.js";
+import { postingPolicyAddenda } from "../postingpolicy.js";
 import {
+  applyProfileOverlays,
   loadProfileAddenda,
   loadProfileEcosystem,
   loadProfileHeuristics,
-  loadProfileLensTuning,
-  loadProfilePosting,
   type ProfileLookup,
 } from "../profiles.js";
 import { latestBaseline, readBaselines, type ProfileBaseline } from "./baselines.js";
@@ -137,7 +136,10 @@ export function replaySides(
       memory: null,
       clock: deps.clock,
     });
-    newProfile = "ok" in status ? "" : (status.profile ?? "");
+    // A refusal (a pending profile write awaiting recovery) carries the
+    // operator's next step; it is returned, not read as "no profile".
+    if ("ok" in status) return status;
+    newProfile = status.profile ?? "";
   }
   if (newProfile === "") {
     return {
@@ -340,10 +342,7 @@ function buildSide(deps: SidesDeps, name: SideName, src: SideSource, parsed: Con
   const lookup: ProfileLookup = { env: src.env };
   const base = structuredClone(parsed);
   base.review = { ...base.review, profile: src.profile };
-  const cfg = applyProfilePosting(
-    applyProfileTuning(base, loadProfileLensTuning(deps.root, src.profile, lookup)),
-    loadProfilePosting(deps.root, src.profile, lookup),
-  );
+  const cfg = applyProfileOverlays(deps.root, base, lookup);
   const ecosystemName = loadProfileEcosystem(deps.root, src.profile, lookup);
   const heuristics = loadProfileHeuristics(deps.root, src.profile, lookup);
   const outDir = join(deps.stateRoot, REPLAY_AGENTS_DIR, name);
@@ -378,8 +377,9 @@ function buildSide(deps: SidesDeps, name: SideName, src: SideSource, parsed: Con
       if (!/^[a-z][a-z0-9-]*$/.test(agent)) return null;
       try {
         return readFileSync(join(outDir, `${agent}.md`), "utf8");
-      } catch {
-        return null;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+        throw new Error(`the built agent ${agent} cannot be read: ${clean(err)}`);
       }
     },
   };
