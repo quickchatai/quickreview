@@ -125,6 +125,7 @@ import {
 } from "./openviking/provisionreport.js";
 import { countedGapSink } from "./openviking/gapsink.js";
 import { recoverPrForOperator } from "./operator-recovery.js";
+import { reviewNow } from "./reviewnow.js";
 import { createWorkerLiveness, inFlightPrs } from "./workerliveness.js";
 import { resolveTerminalFailure } from "./terminal-failure.js";
 import type { MemoryStore } from "./memory/store.js";
@@ -1694,6 +1695,23 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             },
             target,
             "restart-session",
+          );
+        },
+        // The operator's "review this PR now" (the onboarding proof round):
+        // the label path's state-machine trigger, with no GitHub write to ask.
+        reviewNow(pr) {
+          return reviewNow(
+            {
+              store: d.store,
+              getPr: (n) => adapter.getPr(n),
+              pump: () => d.pump(),
+              // On the own-account route the bot login is the person, whose
+              // own PRs are the point; only an App's bot is never reviewed.
+              ...((cfg.github as { auth?: unknown }).auth === "user"
+                ? {}
+                : { botLogin: cfg.github.bot_login }),
+            },
+            pr,
           );
         },
         resolveTerminalFailure(payload) {

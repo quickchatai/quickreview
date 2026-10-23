@@ -1230,12 +1230,13 @@ async function cmdDrain(rest: string[]): Promise<number> {
 // until `qcr resume-pr`, and no session lifts it. The cutover wizard's stage 9
 // pauses every tracked PR but one with it before the drain is lifted.
 
-export const PR_LEVER_USAGE = "usage: qcr pause-pr <pr> [--reason <text>] | qcr resume-pr <pr>";
+export const PR_LEVER_USAGE =
+  "usage: qcr pause-pr <pr> [--reason <text>] | qcr resume-pr <pr> | qcr review-now <pr>";
 
 /** `qcr pause-pr|resume-pr`'s arguments: one PR number, and for a pause an
  * optional `--reason <text>` (the reason the board and `qcr status` show). */
 export function parsePrLeverArgs(
-  verb: "pause-pr" | "resume-pr",
+  verb: "pause-pr" | "resume-pr" | "review-now",
   rest: readonly string[],
 ): import("./tui/prpause.js").PrLeverCommand {
   let pr: number | undefined;
@@ -1251,10 +1252,14 @@ export function parsePrLeverArgs(
   }
   if (pr === undefined) throw new Error(PR_LEVER_USAGE);
   if (verb === "resume-pr") return { command: "resume-pr", pr };
+  if (verb === "review-now") return { command: "review-now", pr };
   return { command: "pause-pr", pr, reason: reason ?? "paused by the operator (qcr pause-pr)" };
 }
 
-async function cmdPrLever(verb: "pause-pr" | "resume-pr", rest: string[]): Promise<number> {
+async function cmdPrLever(
+  verb: "pause-pr" | "resume-pr" | "review-now",
+  rest: string[],
+): Promise<number> {
   const cmd = parsePrLeverArgs(verb, rest);
   const cfg = loadConfig();
   const { runnerFor } = await import("./tui/remote.js");
@@ -2157,7 +2162,10 @@ export async function main(rawArgv: string[]): Promise<void> {
       return;
     }
     case "pause-pr":
-    case "resume-pr": {
+    case "resume-pr":
+    case "review-now": {
+      // review-now: the operator's "review this PR now" — queued as a
+      // human-asked round through the sealed operator channel, no label.
       process.exitCode = await cmdPrLever(cmd, rest);
       return;
     }
@@ -2253,7 +2261,7 @@ export async function main(rawArgv: string[]): Promise<void> {
     }
     default:
       console.log(
-        "usage: qcr <version|config check [--config-home <dir>]|onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|takeover <n>|debug-round <n>|release <n>|tui [pr|overseer]|drain <on [--hold]|off>|pause-pr <pr> [--reason <text>]|resume-pr <pr>|github-token sync [--gh <path>] [--secrets-dir <dir>]|message <pr> [--may-post] <text...>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
+        "usage: qcr <version|config check [--config-home <dir>]|onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|takeover <n>|debug-round <n>|release <n>|tui [pr|overseer]|drain <on [--hold]|off>|pause-pr <pr> [--reason <text>]|resume-pr <pr>|review-now <pr>|github-token sync [--gh <path>] [--secrets-dir <dir>]|message <pr> [--may-post] <text...>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
           "companion <up|down|status|rebuild>|review [start|status|stop|branch|--uncommitted|--diff FILE|-|<PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--json]|live [RUN_ID|DIR] [--lens ID] [--round N] [--follow] [--json]|open [RUN_ID|DIR|FILE.jsonl|scan[:RUN]|pr N [--round R]] [--lens ID] [--write] [--print]|scan <preview|start|status|stop|findings|matches|match|suggestions|stage2 propose|stage2 start|dismiss|units show|units propose|units adjust|units save|login|doctor|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine|shadow-report [--days <n>]|off|on|suppress <id>|unsuppress <id>]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );
