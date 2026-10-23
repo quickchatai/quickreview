@@ -510,6 +510,10 @@ describe("[cache groups] the warm-up", () => {
     setTimeout(() => stop.abort(), 10);
     expect(await settledWithin(new Promise(() => {}), 10_000, stop.signal)).toBe(false);
   });
+
+  it("settledWithin counts a rejected promise as settled", async () => {
+    expect(await settledWithin(Promise.reject(new Error("boom")), 10_000)).toBe(true);
+  });
 });
 
 describe("[cache groups] the pack-less stagger", () => {

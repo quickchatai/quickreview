@@ -10,11 +10,10 @@ import { lensRunConfigFromEnv } from "../../../extensions/lens.js";
 import type { PiHost } from "../pisdk.js";
 import type { SessionSpec } from "../port.js";
 import { BASH_ENV_ALLOW } from "../roundsdk.js";
+import { SCOPE_ENV } from "./env.js";
 import { engineLensTools, type EngineLensTools } from "./engine-tools.js";
 import { loadBuiltAgents } from "./registry.js";
 import type { LensRunConfig } from "./runlens.js";
-
-const SCOPE_ENV = "QCR_SUBAGENT_SCOPE";
 
 /** Where a round's built lens agents are: the nearest `.pi/agents` above the cwd
  * for the `project` scope (the bench's), else the agent dir's `agents` (the host

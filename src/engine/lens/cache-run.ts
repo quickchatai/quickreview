@@ -160,12 +160,13 @@ export async function settledWithin(
   const stop = new AbortController();
   const timeout = signal ? AbortSignal.any([signal, stop.signal]) : stop.signal;
   let won = false;
-  await Promise.race([
-    p.then(() => {
-      won = true;
-    }),
-    delay(ms, timeout),
-  ]);
-  stop.abort();
+  const settle = (): void => {
+    won = true;
+  };
+  try {
+    await Promise.race([p.then(settle, settle), delay(ms, timeout)]);
+  } finally {
+    stop.abort();
+  }
   return won;
 }
