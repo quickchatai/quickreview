@@ -41,7 +41,7 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { readBundleRecords } from "./bundle.js";
 import { fileDigest, gunzipToFile, renameNoReplace, unlinkIfPresent } from "./fsutil.js";
-import { ManifestUnreadable, readManifestIfPresent, type Manifest } from "./manifest.js";
+import { MANIFEST_FILE, ManifestUnreadable, readManifestIfPresent, type Manifest } from "./manifest.js";
 import { injectDirOf } from "./prfiles.js";
 import { holdsArchiveFiles } from "./restore.js";
 
@@ -317,7 +317,7 @@ export async function extractPr(opts: ExtractOptions): Promise<ExtractResult> {
 
   // The plain record, as it is.
   const copied: string[] = [];
-  for (const name of ["manifest.json", "ledger.md", "meta.json"]) {
+  for (const name of [MANIFEST_FILE, "ledger.md", "meta.json"]) {
     const src = join(dir, name);
     try {
       if (!(await lstat(src)).isFile()) continue;
