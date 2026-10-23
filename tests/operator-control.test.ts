@@ -262,7 +262,8 @@ describe("only the root-sealed operator directory serves them", () => {
 });
 
 describe("the CLAUDE.md anchors", () => {
-  const claude = readFileSync(resolve(process.cwd(), "CLAUDE.md"), "utf8");
+  // The ratified decisions' full text lives in docs/rulebook/decisions.md.
+  const claude = readFileSync(resolve(process.cwd(), "docs", "rulebook", "decisions.md"), "utf8");
   const lines = claude.split("\n");
   /** The bullet that opens with `head`: its text on one line, and where it starts (1-based). */
   const bullet = (head: string): { text: string; at: number } => {

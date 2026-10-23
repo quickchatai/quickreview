@@ -24,14 +24,12 @@ wizard composes exactly those tools rather than replacing them.
   release:
 
   ```sh
-  gh auth refresh -s read:packages
-  gh auth token | docker login ghcr.io -u <your github login> --password-stdin
   docker run --rm --user "$(id -u):$(id -g)" -v ~/.local/bin:/out \
     ghcr.io/quickchatai/quickreview:<version> install
   ```
 
-  The images are private, hence the registry login. `qcr update` moves the pin
-  to a newer release.
+  The images are public on ghcr.io, so no registry login is needed. `qcr update`
+  moves the pin to a newer release.
 
 - A GitHub account that can create a GitHub App and install it on the repository
   you want reviewed.
@@ -104,10 +102,8 @@ containers run as it, so they can read the 0600 files you own in the secrets
 directory. If you change user between here and the bring-up, this step goes red
 again on the next verification.
 
-The registry question is a note, not a failure: the images are private, so a
-missing `ghcr.io` login shows up here with its fix (`gh auth refresh -s
-read:packages`, then `gh auth token | docker login ghcr.io -u <you>
---password-stdin`), but only the laptop route pulls the image — the server route
+The registry question is a note, not a failure: an image it cannot reach (most
+often a `QCR_VERSION` no release carries) shows up here with its fix, but only the laptop route pulls the image — the server route
 builds on the server — and preflight runs before you have chosen. Bring-up's pull
 is the hard gate and carries the same fix.
 
@@ -577,10 +573,7 @@ expected, not a hang — the output is streamed line by line and the wizard
 prints an elapsed marker every 25 lines. Later starts reuse the layers already
 here and take seconds. The wizard says so before the pull starts, not after.
 
-A failed pull quotes Docker's own last lines. The usual causes are not being
-logged in to `ghcr.io` (the images are private: `gh auth refresh -s
-read:packages`, then `gh auth token | docker login ghcr.io -u <you>
---password-stdin`), a `QCR_VERSION` no release carries, no disk space (`docker
+A failed pull quotes Docker's own last lines. The usual causes are a `QCR_VERSION` no release carries, no disk space (`docker
 system df`, then `docker system prune`), and a network failure mid-download —
 all safe to retry, and a retry resumes from the layers already here.
 

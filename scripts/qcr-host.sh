@@ -68,7 +68,7 @@ IMAGE="${QCR_IMAGE:-$QCR_PINNED_IMAGE}"
 # uid is readable under any other (the entrypoint's share_login, P6.7).
 LOGIN_GID=4747
 
-PULL_HINT='the image is private: gh auth refresh -s read:packages, then  gh auth token | docker login ghcr.io -u <your github user> --password-stdin'
+PULL_HINT='check the version exists; a private mirror needs gh auth refresh -s read:packages, then  gh auth token | docker login ghcr.io -u <your github user> --password-stdin'
 
 say() { printf 'qcr: %s\n' "$*" >&2; }
 die() {

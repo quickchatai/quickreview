@@ -20,14 +20,7 @@ for a managed VM; both run the same daemon.
 
 ## Quick start
 
-The images are private, so log in to the registry once:
-
-```sh
-gh auth refresh -s read:packages
-gh auth token | docker login ghcr.io -u <your github login> --password-stdin
-```
-
-Then, in an empty directory (the project directory):
+The images are public on ghcr.io, so no registry login is needed. In an empty directory (the project directory):
 
 ```sh
 # 1. the compose file and the tunnels' build context, out of the image

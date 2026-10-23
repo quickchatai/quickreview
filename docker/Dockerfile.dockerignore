@@ -26,3 +26,7 @@
 !deploy/reviewer/AGENTS.override.md
 **/node_modules
 **/.git
+# The private rulebook annexes, never in an image (publish-manifest.json
+# excludes them from the public tree too, so an image built from either tree
+# carries the same rulebook files).
+**/CLAUDE.md

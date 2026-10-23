@@ -16,7 +16,7 @@ sh "${CLAUDE_PLUGIN_ROOT}/scripts/qcr-setup.sh"
 It checks, in order:
 
 1. **Docker** is installed and its daemon answers.
-2. **Pull access.** The image is private. If it cannot be pulled: `gh auth refresh -s read:packages`, then `gh auth token | docker login ghcr.io -u <user> --password-stdin`.
+2. **Pull access.** The image is public on ghcr.io. If it still cannot be pulled (a private mirror): `gh auth refresh -s read:packages`, then `gh auth token | docker login ghcr.io -u <user> --password-stdin`.
 3. **The wrapper.** `docker run … install` writes `~/.local/bin/qcr`, pinned to the image version.
 4. **Login.** `qcr login` runs pi's own `/login`. It is skipped when the login volume already holds a login or a model API key is in the environment.
 

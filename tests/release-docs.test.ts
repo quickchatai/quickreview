@@ -22,6 +22,17 @@ import { describe, expect, it } from "vitest";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel: string): string => readFileSync(join(root, rel), "utf8");
 const has = (rel: string): boolean => existsSync(join(root, rel));
+/** The private rulebook: CLAUDE.md's short form and the full texts it points
+ * at in docs/rulebook/, where the landed rules and decisions now sit. */
+const rulebook = (): string =>
+  [
+    "CLAUDE.md",
+    "docs/rulebook/hard-rules.md",
+    "docs/rulebook/decisions.md",
+    "docs/rulebook/architecture.md",
+  ]
+    .map(read)
+    .join("\n");
 
 interface Manifest {
   exclude: { path: string }[];
@@ -136,7 +147,7 @@ describe.skipIf(!has("docs/rule-text-drafts.md"))("docs/rule-text-drafts.md", ()
   });
 
   it("every drafted rule opens with the line CLAUDE.md's rule opens with, and rules 7 and 8 and 9 are whole", () => {
-    const claude = read("CLAUDE.md");
+    const claude = rulebook();
     const rules = blocks.filter((b) => b.kind === "proposed" && /^\d+\. /.test(b.body));
     // 1 and 3 twice (landed + delta), 5, 7, 8, and rule 9's landed stage (iii):
     // its stage (i) block is kept as `replaced` and stage (ii), skipped as moot,
@@ -162,13 +173,13 @@ describe.skipIf(!has("docs/rule-text-drafts.md"))("docs/rule-text-drafts.md", ()
     const sec = sections.find((x) => x.startsWith("Rule 8 "))!;
     const proposed = [...sec.matchAll(FENCE)].filter((m) => m[1] === "proposed");
     expect(proposed).toHaveLength(2);
-    for (const m of proposed) expect(read("CLAUDE.md")).toContain(m[3]!);
-    expect(read("CLAUDE.md")).not.toContain("never runs `scripts/deploy.sh`");
-    expect(read("CLAUDE.md")).not.toContain("No `~/.ssh` and no ssh-agent socket are ever mounted");
+    for (const m of proposed) expect(rulebook()).toContain(m[3]!);
+    expect(rulebook()).not.toContain("never runs `scripts/deploy.sh`");
+    expect(rulebook()).not.toContain("No `~/.ssh` and no ssh-agent socket are ever mounted");
   });
 
   it("rules 1 (IPC delta), 5 and 6 sit in CLAUDE.md word for word, as ratified 2026-10-20", () => {
-    const claude = read("CLAUDE.md");
+    const claude = rulebook();
     for (const head of ["Rule 1 — the IPC post path", "Rule 5 ", "Rule 6 "]) {
       const sec = sections.find((x) => x.startsWith(head))!;
       expect(sec, head).toMatch(/^LANDED in CLAUDE\.md \(ratified 2026-10-20\)/m);
@@ -181,7 +192,7 @@ describe.skipIf(!has("docs/rule-text-drafts.md"))("docs/rule-text-drafts.md", ()
   });
 
   it("rule 7 sits in CLAUDE.md word for word, as re-ratified at the cutover", () => {
-    const claude = read("CLAUDE.md");
+    const claude = rulebook();
     const sec = sections.find((x) => x.startsWith("Rule 7 "))!;
     expect(sec).toMatch(/^LANDED in CLAUDE\.md \(ratified 2026-10-21/m);
     const proposed = [...sec.matchAll(FENCE)].filter((m) => m[1] === "proposed");
@@ -193,7 +204,7 @@ describe.skipIf(!has("docs/rule-text-drafts.md"))("docs/rule-text-drafts.md", ()
   });
 
   it("rule 9 stage (iii), the single-shepherd doc's S1, S3, S4, S5, audit row and amendment, and the PR-pane rule's part 2 sit in place word for word", () => {
-    const claude = read("CLAUDE.md");
+    const claude = rulebook();
     const doc = read("docs/single-shepherd-invariant.md");
     const proposed = blocks.filter((b) => b.kind === "proposed");
     const rule9 = proposed.filter((b) => b.body.startsWith("9. "));
