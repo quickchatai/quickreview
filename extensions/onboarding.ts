@@ -39,6 +39,11 @@ import {
 } from "../src/onboard/engine.js";
 import { defaultSteps } from "../src/onboard/steps/index.js";
 import { locateConfig } from "../src/install.js";
+import {
+  ONBOARD_FINISH_TOOL,
+  ONBOARD_STATUS_TOOL,
+  onboardStepToolName,
+} from "../src/onboard/toolnames.js";
 
 const NO_PARAMS = { type: "object", properties: {} } as const;
 
@@ -114,7 +119,7 @@ export function toolDefinitions(
   shutdown: (ctx?: Pick<ExtensionToolContext, "shutdown">) => void,
 ): QcrTool[] {
   const stepTools: QcrTool[] = engine.stepDefs().map((step) => ({
-    name: `onboard_${step.id}`,
+    name: onboardStepToolName(step.id),
     label: step.title,
     description:
       `${step.explain} Deterministic: runs the "${step.id}" onboarding step's real checks and returns one ✓/✗ line per check. ` +
@@ -141,7 +146,7 @@ export function toolDefinitions(
   }));
 
   const status: QcrTool = {
-    name: "onboard_status",
+    name: ONBOARD_STATUS_TOOL,
     label: "Onboarding status",
     description:
       "The checklist: every step in order with its status. Re-verifies each claimed-done step against reality first " +
@@ -155,7 +160,7 @@ export function toolDefinitions(
   };
 
   const finish: QcrTool = {
-    name: "finish_and_exit",
+    name: ONBOARD_FINISH_TOOL,
     label: "Finish onboarding",
     description:
       "Re-run EVERY verification. While anything is red this refuses and returns the failures — it never exits on red. " +
