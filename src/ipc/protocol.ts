@@ -14,6 +14,10 @@ export const IPC_PROTOCOL_MAJOR = 1;
 export const IPC_PROTOCOL_MINOR = 0;
 export const IPC_VERSION = `${IPC_PROTOCOL_MAJOR}.${IPC_PROTOCOL_MINOR}`;
 
+/** The wire name of the GitHub read op: the daemon registers it
+ * (src/ghread.ts) and the read shim requests it. */
+export const GH_READ_OP = "github.read";
+
 /** The longest line, in bytes without the newline. A result file travels by
  * PATH, never inline, so nothing legitimate comes near this. */
 export const MAX_LINE_BYTES = 1024 * 1024;

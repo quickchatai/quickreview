@@ -1016,7 +1016,9 @@ export function isLightSweepFile(path: string): boolean {
 const SWEEP_DOC_RE = /\.(md|mdx|rst|adoc)$/i;
 
 /** Is `path` a file the sweep never reads? Exported for the setup engine's
- * case sizing: a unit is sized by what a pass would actually read. */
+ * case sizing: a unit is sized by what a pass would actually read. Prose is
+ * judged by path alone here (README.md reads as skipped); `sweepGroups` still
+ * reads prose when the PR also changes code, so this is the code-less answer. */
 export function isSweepSkipped(path: string): boolean {
   return SWEEP_SKIP_RE.test(path) || TRANSLATION_FILE_RE.test(path);
 }

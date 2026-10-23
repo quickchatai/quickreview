@@ -23,9 +23,9 @@
 // MutationGate: there is no mutation to gate.
 import type { RawReadAnswer, RawReadOptions } from "./github.js";
 import type { OpHandler, RequestContext } from "./ipc/server.js";
-import { IpcError } from "./ipc/protocol.js";
+import { GH_READ_OP, IpcError } from "./ipc/protocol.js";
 
-export const GH_READ_OP = "github.read";
+export { GH_READ_OP };
 
 /** The most of a body a read hands back, and of a job log's tail. */
 export const GH_READ_MAX_BYTES = 4 * 1024 * 1024;

@@ -13,9 +13,9 @@
 // printed on stdout.
 import { writeFileSync } from "node:fs";
 import { connectFromEnv, type IpcEnv } from "./client.js";
-import { IpcError } from "./protocol.js";
+import { GH_READ_OP, IpcError } from "./protocol.js";
 
-const OP = "github.read";
+const OP = GH_READ_OP;
 const USAGE =
   "usage: ghreadshim get <path> <outfile> | graphql <query-name> <outfile> <variables-json>";
 
