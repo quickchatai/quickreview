@@ -468,6 +468,8 @@ describe("every batch is its own bounded span (acceptance 5)", () => {
     // ~5 calls of 30 ms a batch: the 2 s synchronous budget ends the run.
     expect(res.outcome).toBe("budget");
     expect(res.sync_ms).toBeGreaterThanOrEqual(DB_SYNC_BUDGET_MS);
+    // The result says WHICH budget stopped the run.
+    expect(res.error).toBe("synchronous budget spent");
     expect(res.max_span_ms).toBe(30);
     // A run the budget cut never records its frontier: rows older than the
     // cut-off are still live and unexamined, so no month may seal on it.
@@ -966,7 +968,12 @@ describe("the archiver's DB phase, end to end", () => {
     try {
       expect((await a.tick()).state).toBe("failed");
       expect(a.status().last_error).toMatch(/manifest\.json is not JSON/);
-      expect(liveEvents(r.store)).toHaveLength(1);
+      // Nothing moved: the seeded row is live, beside the verify-failed anomaly
+      // the unreadable manifest raises.
+      expect(liveEvents(r.store).map((e) => e.kind)).toEqual([
+        "webhook_event",
+        "anomaly",
+      ]);
     } finally {
       a.stop();
     }
