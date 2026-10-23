@@ -655,7 +655,9 @@ describe("the supervisor", () => {
     }
   }
 
-  function supRig(over: { exists?: boolean; file?: () => string | null } = {}) {
+  function supRig(
+    over: { exists?: boolean; file?: () => string | null; raise?: (d: string) => void } = {},
+  ) {
     const spawned: Array<{ cmd: string; args: string[]; env: NodeJS.ProcessEnv }> = [];
     const children: FakeChild[] = [];
     const timers: Array<{ fn: () => void; ms: number; live: boolean }> = [];
@@ -668,7 +670,10 @@ describe("the supervisor", () => {
       marginMin: 90,
       gid: 4747,
       log: (m) => logs.push(m),
-      raiseAnomaly: (d) => anomalies.push(d),
+      raiseAnomaly: (d) => {
+        over.raise?.(d);
+        anomalies.push(d);
+      },
       exists: () => over.exists ?? true,
       readStatusFile: over.file ?? (() => fileText),
       spawn: ((cmd: string, args: string[], opts: { env: NodeJS.ProcessEnv }) => {
@@ -767,6 +772,26 @@ describe("the supervisor", () => {
     s.setFile({ error_since: "2026-10-21T08:00:00Z", last_error: "again" });
     s.fire(LOGIN_STATUS_POLL_MS);
     expect(s.anomalies).toHaveLength(2);
+  });
+
+  it("a failed anomaly write does not consume the episode: the next poll raises it again", () => {
+    let failNext = true;
+    const s = supRig({
+      raise: () => {
+        if (failNext) {
+          failNext = false;
+          throw new Error("db locked");
+        }
+      },
+    });
+    s.sup.start();
+    s.setFile({ error_since: "2026-10-20T08:00:00Z", last_error: "boom" });
+    s.fire(LOGIN_STATUS_POLL_MS);
+    expect(s.anomalies).toHaveLength(0); // the write failed
+    s.fire(LOGIN_STATUS_POLL_MS);
+    expect(s.anomalies).toHaveLength(1); // raised again, not skipped
+    s.fire(LOGIN_STATUS_POLL_MS);
+    expect(s.anomalies).toHaveLength(1); // and once raised, not again
   });
 
   it("the anomaly reaches the store as one login_refresh_failed event, a wake kind", () => {
