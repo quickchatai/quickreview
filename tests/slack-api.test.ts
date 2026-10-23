@@ -318,6 +318,14 @@ describe("auth.test and pins.add", () => {
     await expect(build(f.fetchFn).authTest()).resolves.toBeUndefined();
   });
 
+  it("auth.test logs the failure cause so a boot refusal can be told apart", async () => {
+    const f = fakeFetch(() => ({ payload: { ok: false, error: "invalid_auth" } }));
+    const logs: Array<[string, Record<string, unknown> | undefined]> = [];
+    const api = build(f.fetchFn, { log: (m, meta) => void logs.push([m, meta]) });
+    await api.authTest();
+    expect(logs).toContainEqual(["slack.api.auth_test_failed", { error: "invalid_auth" }]);
+  });
+
   it("pins.add is best-effort: no_permission comes back as a value, not a throw", async () => {
     const f = fakeFetch(() => ({ payload: { ok: false, error: "no_permission" } }));
     const res = await build(f.fetchFn).pinsAdd({ channel: "C1", ts: "1712345678.000100" });
