@@ -11,7 +11,7 @@
 // the exact remedy; pressing `s` is the operator asking for this prompt.
 import { spawnSync } from "node:child_process";
 import type { TuiConfig } from "../config.js";
-import { transportOf } from "./remote.js";
+import { NO_SSH_HOST_STDERR, transportOf } from "./remote.js";
 
 export function masterCheckArgv(cfg: TuiConfig): string[] {
   return ["-O", "check", cfg.ssh_host];
@@ -51,6 +51,12 @@ export function ensureSshMaster(
   // at the call sites) so the board's `s` reconnect hook and any future caller
   // inherit the guarantee: in local mode this function spawns nothing.
   if (transportOf(cfg) === "local") return { kind: "local" };
+  // No host, nothing to connect to: `ssh "" true` only ever fails on name
+  // resolution, and the passphrase prompt it promises would never come.
+  if (cfg.ssh_host.trim() === "") {
+    say(NO_SSH_HOST_STDERR);
+    return { kind: "failed", detail: NO_SSH_HOST_STDERR };
+  }
   if (ssh(masterCheckArgv(cfg), false).status === 0) return { kind: "alive" };
   say(
     `connecting to ${cfg.ssh_host} — enter the GCP key passphrase if asked (once; the connection is shared for 4h)`,

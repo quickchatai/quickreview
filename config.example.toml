@@ -261,7 +261,11 @@ small_diff_lines = 150
 #             memory forward follows this knob too — it reaches the daemon
 #             container's loopback memory engine with a plain `docker exec`
 #             (the forward script's --local mode) instead of the ssh hop.
-# Always explicit: an empty ssh_host does NOT mean local.
+# Onboarding writes this from the recorded topology. Until it has (ssh with an
+# EMPTY ssh_host), the TUI never runs `ssh ""`: on a compose project (the
+# checklist recorded the local topology, or the project .env pins
+# QCR_VERSION) it reads the local stack and says so once; otherwise every
+# surface says "ssh_host is empty — run qcr onboard".
 target = "ssh"
 ssh_host = ""                                # ← FILL (7): ssh alias of the VM running the container
                                              #   (leave "" when target = "local" — it is unused)
@@ -270,10 +274,14 @@ memory_container = ""             # the container the memory forward relays into
                                   # (OpenViking is the daemon container's child). On a VM running
                                   # the memory sidecar (the openviking table's endpoint =
                                   # "remote") set "quickreview-memory"; flip it back with the endpoint.
-remote_state_dir = "/opt/quickreview/state"  # host path on ssh; inside the daemon container on local
+remote_state_dir = "/opt/quickreview/state"  # host path on ssh; inside the daemon container on local,
+                                  # where this default reads as the release image's /opt/qcr/state
+                                  # (the compose state volume; onboarding writes it for local)
 remote_sandbox_root = ""         # "" = read the container's qcr.layout label (release: /opt/qcr, legacy: /opt/quickreview/sandbox);
                                   # a value here wins and is never probed
-sudo_docker = true                # docker on the VM needs sudo (root-owned socket)
+sudo_docker = true                # docker on the VM needs sudo (root-owned socket). On local, onboarding
+                                  # writes false, and the TUI drops sudo by itself when this user can open
+                                  # the docker socket (a sudo prompt behind the TUI can only fail)
 poll_interval_s = 3
 stale_after_s = 90                # DATA STALE banner past this written_at age
                                   # (the daemon rewrites status.json every ~30s)
@@ -594,7 +602,10 @@ local_embedder_threads = 1
 # (COMPANION_DEFAULTS) are the shipped configuration; uncomment to override.
 # enabled = true                  # `qcr tui` starts it unless --no-companion
 # container_name = "qcr-companion"
-# image = "qcr-companion:release" # the release image (docker/Dockerfile) in companion mode, built from the app root: qcr companion rebuild
+# image = "qcr-companion:release" # the release image (docker/Dockerfile) in companion mode, built from the app root: qcr companion rebuild.
+#                                  # Left unset on a compose box (the project .env pins QCR_VERSION), a first start runs the
+#                                  # already-pulled ghcr.io/quickchatai/quickreview:<QCR_VERSION> instead of building, unless a
+#                                  # local build exists; a ghcr.io/quickchatai/quickreview tag set here is pulled, never built over
 # pihome_volume = "companion-pihome"   # its OWN pi auth — never the VM's auth.json
 # session = "companion"           # tmux session inside the container
 # model = "openai-codex/gpt-6.1-sol:medium"

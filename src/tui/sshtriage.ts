@@ -25,13 +25,22 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import type { TuiConfig } from "../config.js";
 import { masterCheckArgv } from "./connect.js";
-import { shellQuote, transportOf } from "./remote.js";
+import { NO_SSH_HOST_STDERR, shellQuote, transportOf } from "./remote.js";
 
 export type ConnectionClass =
   /** The VM answers — master alive, or a fresh connection succeeded. */
   | "ok"
-  /** `[tui] target = "local"`: there is no ssh anywhere. */
+  /** `[tui] target = "local"`: there is no ssh anywhere, and the daemon
+   * container is running on this machine. */
   | "local"
+  /** Local route: Docker answers, but the daemon container is absent or not
+   * running (the stack is not up yet, or it stopped). */
+  | "local-down"
+  /** Local route: the local Docker itself did not answer this user. */
+  | "local-docker"
+  /** Nothing to connect to: `target = "ssh"` with no `ssh_host` (onboarding
+   * has not written the route yet). No ssh is ever spawned for it. */
+  | "unconfigured"
   /** The agent cannot offer the key ssh wants for this host. */
   | "no-agent-key"
   /** A ControlMaster socket is there and does not answer. */
@@ -413,6 +422,112 @@ export interface TriageDeps {
   run?: ProbeRunner;
   exists?: (path: string) => boolean;
   home?: string;
+  /** The compose project directory, for the local route's remedy line. */
+  projectDir?: string;
+  /** The route resolver's reason nothing can be reached (src/tui/route.ts);
+   * defaults to the empty-ssh_host sentence. */
+  unconfigured?: string;
+}
+
+/** Is this a local-route diagnosis (no ssh anywhere)? */
+export function isLocalDiagnosis(d: Pick<ConnectionDiagnosis, "kind">): boolean {
+  return d.kind === "local" || d.kind === "local-down" || d.kind === "local-docker";
+}
+
+/** A diagnosis under which the daemon can answer: the board's "connected". */
+export function connectionUsable(d: Pick<ConnectionDiagnosis, "kind">): boolean {
+  return d.kind === "ok" || d.kind === "local";
+}
+
+/** `docker inspect` of the daemon container's state, for the local route.
+ * `sudo -n` when sudo is configured: a password prompt behind the alt screen
+ * is a hang, so a sudo that would ask fails instead. */
+export function localDaemonProbeArgv(cfg: TuiConfig): { cmd: string; argv: string[] } {
+  const inspect = ["inspect", "-f", "{{.State.Status}}", cfg.container];
+  return cfg.sudo_docker
+    ? { cmd: "sudo", argv: ["-n", "docker", ...inspect] }
+    : { cmd: "docker", argv: inspect };
+}
+
+/** How to bring the stack up from here. */
+export function composeUpRemedy(projectDir: string | undefined, container: string): string {
+  return projectDir
+    ? `docker compose --project-directory ${shellQuote(projectDir)} up -d`
+    : `docker start ${shellQuote(container)}`;
+}
+
+/** Pure: the local route's diagnosis from one `docker inspect`. */
+export function classifyLocal(
+  cfg: TuiConfig,
+  res: ProbeResult,
+  projectDir?: string,
+): ConnectionDiagnosis {
+  const c = cfg.container;
+  const out = res.stdout.trim();
+  const evidence = firstLine(res.stderr);
+  const detail = evidence ? { detail: evidence } : {};
+  if (res.status === 0 && out === "running") {
+    return {
+      kind: "local",
+      cause: `local docker — the daemon container ${c} is running on this machine (no ssh)`,
+      remedy: "",
+    };
+  }
+  if (res.status === 0) {
+    return {
+      kind: "local-down",
+      cause: `the daemon container ${c} is ${out || "not running"} — start it`,
+      remedy: composeUpRemedy(projectDir, c),
+    };
+  }
+  if (res.timedOut) {
+    return {
+      kind: "local-docker",
+      cause: "local Docker did not answer in time",
+      remedy: "docker info",
+      ...detail,
+    };
+  }
+  const text = `${res.stderr}
+${res.stdout}`;
+  if (/no such (object|container)/i.test(text)) {
+    return {
+      kind: "local-down",
+      cause: `no daemon container ${c} on this machine — the compose stack is not up (it starts at onboarding's bring-up step)`,
+      remedy: composeUpRemedy(projectDir, c),
+    };
+  }
+  if (/a password is required|a terminal is required/i.test(text)) {
+    return {
+      kind: "local-docker",
+      cause: "[tui] sudo_docker is on and sudo wants a password the TUI cannot type",
+      remedy:
+        'sudo usermod -aG docker "$USER"   # then log in again, and set [tui] sudo_docker = false',
+      ...detail,
+    };
+  }
+  if (/permission denied/i.test(text)) {
+    return {
+      kind: "local-docker",
+      cause: "this user cannot open the local Docker socket",
+      remedy: 'sudo usermod -aG docker "$USER"   # then log in again',
+      ...detail,
+    };
+  }
+  if (/ENOENT|not found|no such file/i.test(text) && !/daemon/i.test(text)) {
+    return {
+      kind: "local-docker",
+      cause: "there is no docker command on this machine",
+      remedy: "docker --version",
+      ...detail,
+    };
+  }
+  return {
+    kind: "local-docker",
+    cause: `local Docker is not answering — ${evidence || "no error text"}`,
+    remedy: "docker info",
+    ...detail,
+  };
 }
 
 const CONFIG_TIMEOUT_MS = 5_000;
@@ -458,14 +573,20 @@ export async function triageConnection(
   cfg: TuiConfig,
   deps: TriageDeps = {},
 ): Promise<ConnectionDiagnosis> {
+  const run = deps.run ?? realProbeRunner;
   if (transportOf(cfg) === "local") {
+    // No ssh anywhere: the one probe is local docker's own answer about the
+    // daemon container.
+    const probe = localDaemonProbeArgv(cfg);
+    return classifyLocal(cfg, await run(probe.cmd, probe.argv, CONFIG_TIMEOUT_MS), deps.projectDir);
+  }
+  if (cfg.ssh_host.trim() === "") {
     return {
-      kind: "local",
-      cause: "local transport — the daemon runs on this machine, no ssh involved",
-      remedy: "",
+      kind: "unconfigured",
+      cause: deps.unconfigured ?? NO_SSH_HOST_STDERR,
+      remedy: "qcr onboard",
     };
   }
-  const run = deps.run ?? realProbeRunner;
   const exists = deps.exists ?? existsSync;
   const home = deps.home ?? homedir();
   const host = cfg.ssh_host;

@@ -40,6 +40,9 @@
 // status` reads them) rather than painted as zero.
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
+import type { TuiConfig } from "../config.js";
+import { shellQuote } from "./remote.js";
+import type { ProbeRunner } from "./sshtriage.js";
 
 /** The container OpenViking runs in, as the TUI and the memory forward reach
  * it: the memory sidecar when `[tui] memory_container` names one, else the
@@ -48,6 +51,33 @@ import { join } from "node:path";
 export function tuiMemoryContainer(tui: { container: string; memory_container?: string }): string {
   const named = (tui.memory_container ?? "").trim();
   return named !== "" ? named : tui.container;
+}
+
+/**
+ * The local route's account of the memory container, for a forward that
+ * binds but reaches nothing: absent, stopped, or running but not answering
+ * yet. One `docker inspect`; undefined when docker itself gave no usable
+ * answer (the generic line stands).
+ */
+export async function diagnoseLocalMemory(
+  cfg: Pick<TuiConfig, "container" | "memory_container" | "sudo_docker">,
+  projectDir: string,
+  run: ProbeRunner,
+): Promise<string | undefined> {
+  const container = tuiMemoryContainer(cfg);
+  const inspect = ["inspect", "-f", "{{.State.Status}}", container];
+  const res = cfg.sudo_docker
+    ? await run("sudo", ["-n", "docker", ...inspect], 5_000)
+    : await run("docker", inspect, 5_000);
+  const up = `docker compose --project-directory ${shellQuote(projectDir)} up -d memory`;
+  const state = res.stdout.trim();
+  if (res.status === 0 && state === "running")
+    return `the memory container ${container} is running but OpenViking is not answering yet (it takes a minute after a start) — r retries`;
+  if (res.status === 0)
+    return `the memory container ${container} is ${state || "not running"} — start it: ${up}`;
+  if (/no such (object|container)/i.test(`${res.stderr}\n${res.stdout}`))
+    return `the memory container ${container} is not running — it starts at onboarding's bring-up step, or: ${up}`;
+  return undefined;
 }
 
 /** What the forward's `stats()` reports — the fields painted. */
@@ -166,6 +196,10 @@ export interface MemForwardDeps {
    * forward `off` with it as the detail — no probe, no bind, no retry, and
    * nothing that reads as a failure. */
   offReason?: () => string | undefined | Promise<string | undefined>;
+  /** Asked when the forward listens but nothing answers through it: a precise
+   * account of the upstream (the memory container absent, stopped, still
+   * starting), or undefined to keep the generic line. Never throws. */
+  diagnoseUpstream?: () => Promise<string | undefined>;
 }
 
 const DEFAULT_PROBE_TIMEOUT_MS = 1_500;
@@ -195,12 +229,13 @@ async function httpProbe(baseUrl: string, timeoutMs: number): Promise<boolean> {
  */
 export class MemoryForward {
   private readonly deps: Required<
-    Omit<MemForwardDeps, "env" | "sshHost" | "container" | "offReason">
+    Omit<MemForwardDeps, "env" | "sshHost" | "container" | "offReason" | "diagnoseUpstream">
   > & {
     env: NodeJS.ProcessEnv;
     sshHost?: string;
     container?: string;
     offReason?: MemForwardDeps["offReason"];
+    diagnoseUpstream?: MemForwardDeps["diagnoseUpstream"];
   };
   private handle: ForwarderHandle | null = null;
   /** How many of its addresses our forward bound, kept with the handle so
@@ -228,6 +263,7 @@ export class MemoryForward {
       ...(deps.sshHost ? { sshHost: deps.sshHost } : {}),
       ...(deps.container ? { container: deps.container } : {}),
       ...(deps.offReason ? { offReason: deps.offReason } : {}),
+      ...(deps.diagnoseUpstream ? { diagnoseUpstream: deps.diagnoseUpstream } : {}),
     };
     this.status = {
       state: "off",
@@ -295,7 +331,8 @@ export class MemoryForward {
         alive ? "owned" : "failed",
         alive
           ? this.ownedDetail(this.binds?.bound, this.binds?.wanted)
-          : "the forward we started stopped answering — r retries",
+          : ((await this.upstreamDetail()) ??
+              "the forward we started stopped answering — r retries"),
       );
     }
     if (await this.deps.probe(this.deps.baseUrl, this.deps.probeTimeoutMs)) {
@@ -367,7 +404,10 @@ export class MemoryForward {
       if (!(await this.deps.probe(this.deps.baseUrl, this.deps.probeTimeoutMs))) {
         return this.settle(
           "failed",
-          "the forward we started is listening but upstream is not answering (ssh, VM container or OpenViking) — r retries",
+          (await this.upstreamDetail()) ??
+            (this.deps.local
+              ? "the forward we started is listening but upstream is not answering (the memory container or OpenViking) — r retries"
+              : "the forward we started is listening but upstream is not answering (ssh, VM container or OpenViking) — r retries"),
         );
       }
       return this.settle("owned", this.ownedDetail(bound, cfg.binds.length));
@@ -398,6 +438,15 @@ export class MemoryForward {
     };
     this.inFlight = (this.inFlight ?? Promise.resolve()).then(run);
     return this.inFlight;
+  }
+
+  /** The upstream's own account, when one was wired; total. */
+  private async upstreamDetail(): Promise<string | undefined> {
+    try {
+      return await this.deps.diagnoseUpstream?.();
+    } catch {
+      return undefined;
+    }
   }
 
   /** A partial bind is a working state, not a failure: loopback alone serves

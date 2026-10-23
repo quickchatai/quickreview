@@ -41,7 +41,7 @@ import {
   stateHome,
   type InstallEnv,
 } from "../install.js";
-import type { CompanionConfig } from "../config.js";
+import { COMPANION_IMAGE, type CompanionConfig } from "../config.js";
 import { writeAtomic } from "../channelfs.js";
 import { appStamp } from "../appstamp.js";
 import { TOKEN_FILE } from "./ghread.js";
@@ -453,6 +453,15 @@ export function companionInjectDir(cfg: Pick<CompanionConfig, "repo_dir" | "sess
  * `qcr scan` the companion runs) knows it is inside the companion container. */
 export const IN_COMPANION_ENV = "QCR_IN_COMPANION";
 
+/** The published release image's repository (src/onboard/steps/compose.ts
+ * RELEASE_IMAGE_REPO): a tag under it is pulled, never built locally. */
+const RELEASE_IMAGE_PREFIX = "ghcr.io/quickchatai/quickreview:";
+
+/** Is `image` a published release tag (pulled, never built over)? */
+export function isReleaseImage(image: string): boolean {
+  return image.startsWith(RELEASE_IMAGE_PREFIX);
+}
+
 /** The release image's mode word for the companion container
  * (docker/entrypoint.sh): provision pi, start the tmux server, stay alive. */
 export const COMPANION_MODE = "companion";
@@ -560,6 +569,23 @@ export class CompanionLifecycle {
    * companion's tmux server. A field so tests need not wait it out. */
   wrapperStartWaitMs = WRAPPER_START_WAIT_MS;
 
+  /** An image already on this machine to run instead of BUILDING the default
+   * one: the release image a compose box pulled (`ghcr.io/…:<QCR_VERSION>`,
+   * the same docker/Dockerfile CI built). Consulted only on a cold create,
+   * only while `[companion] image` is the shipped default, and only when no
+   * local build of that default exists — so an explicit image and a
+   * contributor's `qcr companion rebuild` both keep winning. */
+  preferredImage: string | undefined;
+
+  /** The image this instance runs: `[companion] image`, until a cold create
+   * adopts `preferredImage`. */
+  private imageInUse: string | undefined;
+
+  /** The image a create runs (and a build tags). */
+  get image(): string {
+    return this.imageInUse ?? this.cfg.image;
+  }
+
   /** The shared socket in `tmux-socket` mode, else undefined. */
   get socketPath(): string | undefined {
     return this.mode === "tmux-socket" ? tmuxSocketPath(this.cfg) : undefined;
@@ -620,7 +646,7 @@ export class CompanionLifecycle {
     // The agent is reached by its mounted socket; no key is in the container.
     if (this.sshSources().agent !== undefined) argv.push("--env", `SSH_AUTH_SOCK=${SSH.agent}`);
     // The release image, in its companion mode (docker/entrypoint.sh).
-    argv.push(this.cfg.image, COMPANION_MODE);
+    argv.push(this.image, COMPANION_MODE);
     return argv;
   }
 
@@ -926,8 +952,25 @@ export class CompanionLifecycle {
 
   /** True when the companion image exists locally. */
   async imageExists(): Promise<boolean> {
-    const res = await this.docker(["image", "inspect", this.cfg.image]);
+    const res = await this.docker(["image", "inspect", this.image]);
     return res.ok;
+  }
+
+  /**
+   * Before a cold create builds the default image: adopt the preferred
+   * (already-pulled release) image when the default is not built here and the
+   * preferred one is. True when the image to run now exists.
+   */
+  private async adoptPreferredImage(onProgress?: (line: string) => void): Promise<boolean> {
+    if (await this.imageExists()) return true;
+    const preferred = this.preferredImage;
+    if (preferred === undefined || preferred === "" || this.cfg.image !== COMPANION_IMAGE)
+      return false;
+    const res = await this.docker(["image", "inspect", preferred]);
+    if (!res.ok) return false;
+    this.imageInUse = preferred;
+    onProgress?.(`using the release image ${preferred}, already pulled — no local build`);
+    return true;
   }
 
   /** Remove the container, running or not. Volumes (pihome: OAuth, the
@@ -945,9 +988,22 @@ export class CompanionLifecycle {
     if (!res.ok) throw new Error(`docker rm ${this.cfg.container_name} failed: ${errText(res)}`);
   }
 
+  /** `docker pull` of a configured release image the machine does not have. */
+  private async pullImage(onProgress?: (line: string) => void): Promise<void> {
+    onProgress?.(`pulling ${this.image} (first run — a few minutes)…`);
+    const res = await this.docker(["pull", this.image], { timeoutMs: 1_800_000 });
+    if (!res.ok) throw new Error(`docker pull ${this.image} failed: ${errText(res)}`);
+    onProgress?.(`${this.image} pulled`);
+  }
+
   /** Throws when the image cannot be built (`imageBuildProblem`) — asked
    * before anything is removed for a rebuild. */
   checkBuildable(): void {
+    if (isReleaseImage(this.image))
+      throw new Error(
+        `${this.image} is a published release image — it is pulled (docker pull ${this.image}), never built over; ` +
+          `set [companion] image = "${COMPANION_IMAGE}" to build one from this checkout`,
+      );
     const problem = imageBuildProblem(this.cfg.build_context, (p) => this.fs.exists(p));
     if (problem !== null) throw new Error(problem);
   }
@@ -960,21 +1016,21 @@ export class CompanionLifecycle {
   async buildImage(onProgress?: (line: string) => void): Promise<void> {
     this.checkBuildable();
     const ctx = this.cfg.build_context;
-    onProgress?.(`building ${this.cfg.image} image (first run — takes a few minutes)…`);
+    onProgress?.(`building ${this.image} image (first run — takes a few minutes)…`);
     // The stamp is the checkout's; the build reads an assembled copy of the
     // release context, so it works on the legacy builder too.
     const stamp = this.stampOf(ctx);
     const built = this.assembleContext(ctx);
     let res;
     try {
-      res = await this.docker(appImageBuildArgv(this.cfg.image, built, stamp), {
+      res = await this.docker(appImageBuildArgv(this.image, built, stamp), {
         timeoutMs: 1_800_000,
       });
     } finally {
       if (built !== ctx) rmSync(built, { recursive: true, force: true });
     }
-    if (!res.ok) throw new Error(`docker build ${this.cfg.image} failed: ${errText(res)}`);
-    onProgress?.(`${this.cfg.image} image built`);
+    if (!res.ok) throw new Error(`docker build ${this.image} failed: ${errText(res)}`);
+    onProgress?.(`${this.image} image built`);
   }
 
   // ---- memory wiring --------------------------------------------------------
@@ -1266,8 +1322,13 @@ export class CompanionLifecycle {
       onProgress?.(`companion container unstartable (${firstLine(errText(started))}) — recreating`);
       await this.forceRemove();
     }
-    // Self-healing first run: build the image rather than failing on its absence.
-    if (!(await this.imageExists())) await this.buildImage(onProgress);
+    // Self-healing first run: the pulled release image when there is one,
+    // else build the image rather than failing on its absence — or, for a
+    // configured release image, pull it (a release tag is never built over).
+    if (!(await this.adoptPreferredImage(onProgress))) {
+      if (isReleaseImage(this.image)) await this.pullImage(onProgress);
+      else await this.buildImage(onProgress);
+    }
     const homes = this.hostHomes();
     this.ensureDirs([
       this.cfg.feed_dir,
@@ -1280,7 +1341,7 @@ export class CompanionLifecycle {
       homes.github,
     ]);
     const created = await this.docker(this.runArgv(), { timeoutMs: 120_000 });
-    if (!created.ok) throw new Error(`docker run ${this.cfg.image} failed: ${errText(created)}`);
+    if (!created.ok) throw new Error(`docker run ${this.image} failed: ${errText(created)}`);
     return st.exists || recreating ? "recreated" : "created";
   }
 

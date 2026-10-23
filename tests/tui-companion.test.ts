@@ -913,6 +913,75 @@ describe("CompanionLifecycle state machine", () => {
     expect(progress.some((l) => l.includes("building"))).toBe(true);
   });
 
+  it("on a compose box runs the already-pulled release image instead of building one", async () => {
+    const release = "ghcr.io/quickchatai/quickreview:1.1.0";
+    const { lc, calls } = withBuiltApp([
+      inspect("absent"),
+      // No local build of the default image; the release image is pulled.
+      (argv) =>
+        argv[0] === "image" && argv[2] === COMPANION_DEFAULTS.image
+          ? { ok: false, stdout: "", stderr: "No such image", code: 1 }
+          : undefined,
+      (argv) => (argv[0] === "image" && argv[2] === release ? OK : undefined),
+      okFor("run"),
+    ]);
+    lc.preferredImage = release;
+    const progress: string[] = [];
+    expect(await lc.ensureUp((l) => progress.push(l))).toBe("created");
+    expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect", "image", "image", "run"]);
+    expect(calls.some((c) => c[0] === "build")).toBe(false);
+    const run = calls.find((c) => c[0] === "run")!;
+    expect(run[run.length - 2]).toBe(release);
+    expect(lc.image).toBe(release);
+    expect(progress.some((l) => l.includes(`using the release image ${release}`))).toBe(true);
+  });
+
+  it("a local build of the default image, or an explicit image, still wins over the pulled one", async () => {
+    const release = "ghcr.io/quickchatai/quickreview:1.1.0";
+    const built = withBuiltApp([inspect("absent"), okFor("image"), okFor("run")]);
+    built.lc.preferredImage = release;
+    await built.lc.ensureUp();
+    expect(built.calls.filter((c) => c[0] === "image").map((c) => c[2])).toEqual([
+      COMPANION_DEFAULTS.image,
+    ]);
+    // An absent release image falls back to the build, as before.
+    const none = withBuiltApp([
+      inspect("absent"),
+      (argv) =>
+        argv[0] === "image"
+          ? { ok: false, stdout: "", stderr: "No such image", code: 1 }
+          : undefined,
+      okFor("build"),
+      okFor("run"),
+    ]);
+    none.lc.preferredImage = release;
+    await none.lc.ensureUp();
+    expect(containerCalls(none.calls).map((c) => c[0])).toEqual([
+      "inspect",
+      "image",
+      "image",
+      "build",
+      "run",
+    ]);
+  });
+
+  it("a configured release image is pulled when absent, and never built over", async () => {
+    const release = "ghcr.io/quickchatai/quickreview:1.1.0";
+    const { runner, calls } = fakeDocker([
+      inspect("absent"),
+      (argv) =>
+        argv[0] === "image"
+          ? { ok: false, stdout: "", stderr: "No such image", code: 1 }
+          : undefined,
+      okFor("pull"),
+      okFor("run"),
+    ]);
+    const lc = new CompanionLifecycle({ ...CFG, image: release }, runner, HOST_ENV, noDirs);
+    await lc.ensureUp();
+    expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect", "image", "pull", "run"]);
+    expect(() => lc.checkBuildable()).toThrow(/published release image .* never built over/);
+  });
+
   it("builds from an assembled release context, so a Docker without buildx works", async () => {
     const { lc, calls } = withBuiltApp(
       [

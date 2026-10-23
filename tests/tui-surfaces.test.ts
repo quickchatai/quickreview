@@ -252,7 +252,7 @@ describe("the key law: painted ⇔ registered ⇔ answers", () => {
     const chrome = new Set([
       ...TABS.map((t) => `${tabDigit(t)} ${t}`),
       "r refresh",
-      "s ssh",
+      "s check",
       "? help",
       "q quit",
     ]);
