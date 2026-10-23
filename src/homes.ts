@@ -96,7 +96,10 @@ export function stateHome(env: InstallEnv = process.env): string {
  * root-owned global prefix refuses the write, and an update replaces the
  * package directory with everything in it.
  */
-export function operatorStateDir(root: string, env: InstallEnv = process.env): string {
+export function operatorStateDir(
+  root: string,
+  env: InstallEnv & { readonly QCR_IMAGE_TOOL_UID?: string } = process.env,
+): string {
   const kind = detectInstall(root, env as Readonly<Record<string, string | undefined>>).kind;
   return kind === "global" || kind === "local" ? stateHome(env) : join(root, "state");
 }

@@ -60,7 +60,9 @@ describe("operatorStateDir", () => {
   // stateDir — this fails.
   it("is the one place the CLI's state directory comes from", () => {
     const src = readFileSync(resolve(import.meta.dirname, "..", "src", "cli.ts"), "utf8");
-    expect(src).toMatch(/function stateDir\(\): string \{\s*return operatorStateDir\(sandboxRoot\(\)\);/);
+    expect(src).toMatch(
+      /function stateDir\(\): string \{\s*return operatorStateDir\(sandboxRoot\(\)\);/,
+    );
     expect(src).not.toMatch(/join\(sandboxRoot\(\), "state"/);
   });
 });
@@ -99,7 +101,9 @@ describe("fsDeniedLine", () => {
       } catch (e) {
         err = e;
       }
-      expect(fsDeniedLine("spend", err)).toContain(`qcr spend: ${join(ro, "state")}: permission denied`);
+      expect(fsDeniedLine("spend", err)).toContain(
+        `qcr spend: ${join(ro, "state")}: permission denied`,
+      );
     } finally {
       chmodSync(ro, 0o700);
     }
