@@ -48,7 +48,7 @@ import {
   type EngineRouteRuntime,
   type WaveRow,
 } from "./lens/wave.js";
-import { LENS_SESSIONS_DIR, openEnvOf, writeOpenMeta } from "./openable.js";
+import { LENS_SESSIONS_DIR, MAIN_SESSION_DIR, openEnvOf, writeOpenMeta } from "./openable.js";
 import {
   engineLensSection,
   renderOneShotPrompts,
@@ -141,7 +141,8 @@ export interface RoundSpec {
    * when the token would expire inside `timeoutMs` (`AuthExpiring`). */
   auth?: Pick<EngineAuth, "expiresAt" | "provider">;
   /** pi's spill dir. Omitted: `<outDir>/tmp`, removed when the run ends. A
-   * given dir is the caller's to create and remove. */
+   * given dir is emptied here (what an earlier attempt left is not this
+   * attempt's) and is the caller's to remove. */
   tmpDir?: string;
   /** Prompts rendered by the caller (a bench follow-up). Omitted: the first
    * round's, rendered here. On an engine lens route the round appends the
@@ -319,6 +320,7 @@ export function prepareRound(
       QCR_SUBAGENT_MAX_CONCURRENCY: String(cfg.engine.lens_max_concurrency),
       QCR_SUBAGENT_CACHE_GROUP: String(cfg.engine.lens_cache_group),
       QCR_SUBAGENT_CACHE_STAGGER_MS: String(cfg.engine.lens_cache_stagger_ms),
+      QCR_SUBAGENT_PASS_DEADLINE_MIN: String(cfg.engine.lens_pass_deadline_min),
       // This run's task dirs are its sanctioned launch_plan dirs
       // (production's live under state/pr-<n>-round-<k>-passes/).
       QCR_LAUNCH_PLAN_DIRS: [
@@ -373,7 +375,7 @@ export function prepareRound(
       model: cfg.models.conversation,
       env: openEnvOf(env),
     });
-    const sessionDir = join(outDir, "session");
+    const sessionDir = join(outDir, MAIN_SESSION_DIR);
     // This attempt's session only: an earlier attempt's JSONL left here would
     // make `resumable` true and `--continue` would resume THAT conversation.
     rmSync(sessionDir, { recursive: true, force: true });
@@ -399,8 +401,9 @@ export function prepareRound(
 }
 
 /** Run one review round on `runtime`. A round that fails is a returned outcome
- * (`error`, absent `outcome`), never a throw; only an unwritable output dir, or
- * a login that cannot cover the run (`auth`), throws.
+ * (`error`, absent `outcome`), never a throw; only an unwritable output dir, a
+ * login that cannot cover the run (`auth`), or a runtime that cannot create the
+ * session (`runtime.create` rejects) throws.
  *
  * A runtime that hosts the engine's lens tools (`runtime.engineLens`, wave.ts)
  * makes this an engine lens route: the order gains the engine-only section

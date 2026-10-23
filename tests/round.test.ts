@@ -18,7 +18,7 @@ import { projectRoundProgress } from "../src/live/projection.js";
 import { PiHost } from "../src/engine/pisdk.js";
 import type { Runtime } from "../src/engine/port.js";
 import { piCliRuntime } from "./helpers/pi-cli-runtime.js";
-import { runRound, type RoundSpec } from "../src/engine/round.js";
+import { prepareRound, runRound, type RoundSpec } from "../src/engine/round.js";
 import { roundSdkExtras } from "../src/engine/roundsdk.js";
 import { sdkRuntime } from "../src/engine/sdkruntime.js";
 import { pricedFaux } from "./helpers/priced-faux.js";
@@ -377,5 +377,27 @@ describe.each([proc, sdk])("runRound on the $name runtime", (h) => {
       ),
     ).rejects.toBeInstanceOf(AuthExpiring);
     expect(existsSync(outDir)).toBe(false);
+  });
+});
+
+describe("prepareRound", () => {
+  it("hands the lens runner the configured per-pass deadline", () => {
+    const cfg = benchConfig("");
+    cfg.engine.lens_pass_deadline_min = 5;
+    const prep = prepareRound(
+      {
+        root: mkRoot(tmp, "root-deadline"),
+        agentDir: join(tmp, "agent"),
+        tree: mkTree(tmp, "tree-deadline"),
+        files: FILES,
+        target: TARGET,
+        outDir: join(tmp, "out-deadline"),
+        cfg,
+        ecosystem: ecosystemFor("none"),
+        timeoutMs: 10 * 60_000,
+      },
+      undefined,
+    );
+    expect(prep.env.QCR_SUBAGENT_PASS_DEADLINE_MIN).toBe("5");
   });
 });
