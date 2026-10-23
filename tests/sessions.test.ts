@@ -249,6 +249,7 @@ describe("session naming", () => {
     expect(prSessionName(42)).toBe("pr-42");
     expect(prOfSession("pr-42")).toBe(42);
     expect(prOfSession("misc")).toBeUndefined();
+    expect(prOfSession("pr-0")).toBeUndefined();
     expect(isSandboxSession("overseer")).toBe(false);
     expect(isSandboxSession("pr-7")).toBe(true);
     expect(isSandboxSession("scratch")).toBe(false);

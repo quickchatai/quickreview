@@ -155,6 +155,25 @@ export function renderDirectiveEscalationComment(
   );
 }
 
+/** What is wrong with a raw inline comment's common fields, if anything: "fields"
+ * (path, body, line as a positive integer) or "side" (present, not RIGHT/LEFT).
+ * The one contract the intake parse and the durable-job reload both hold. */
+export function inlineCommentFault(raw: unknown): "fields" | "side" | null {
+  const c = raw as { path?: unknown; line?: unknown; side?: unknown; body?: unknown } | null;
+  if (
+    !c ||
+    typeof c !== "object" ||
+    typeof c.path !== "string" ||
+    typeof c.body !== "string" ||
+    typeof c.line !== "number" ||
+    !Number.isInteger(c.line) ||
+    c.line < 1
+  )
+    return "fields";
+  if ("side" in c && c.side !== "RIGHT" && c.side !== "LEFT") return "side";
+  return null;
+}
+
 export interface InlineComment extends AnchorRequest {
   path: string;
   line: number;

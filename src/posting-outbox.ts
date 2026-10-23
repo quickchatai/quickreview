@@ -16,6 +16,7 @@ import {
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { GateResult } from "./gate.js";
+import { inlineCommentFault } from "./posting.js";
 import type { PostingRetryRow } from "./state.js";
 import {
   postingMarker,
@@ -130,25 +131,27 @@ export function readPostingJob(path: string): PostingJob | undefined {
       (j.payload.event !== j.intended_event && j.payload.event !== "COMMENT")
     )
       return undefined;
-    if (
-      j.payload.comments?.some((raw) => {
-        const c = raw as { path?: unknown; line?: unknown; side?: unknown; body?: unknown } | null;
-        return (
-          !c ||
-          typeof c.path !== "string" ||
-          typeof c.body !== "string" ||
-          typeof c.line !== "number" ||
-          !Number.isInteger(c.line) ||
-          c.line < 1 ||
-          (c.side !== undefined && c.side !== "RIGHT" && c.side !== "LEFT")
-        );
-      })
-    )
+    if (j.payload.comments?.some((raw) => inlineCommentFault(raw) !== null))
       return undefined;
     return j;
   } catch {
     return undefined;
   }
+}
+/** The reviews by one of `botLogins` at `head` that carry `key`'s posting
+ * marker: the one identity rule the immediate handoff and the outbox share. */
+export function markedReviewsOf<T extends { user: string; commit_id: string; body: string }>(
+  reviews: readonly T[],
+  botLogins: readonly string[],
+  head: string,
+  key: string,
+): T[] {
+  return reviews.filter(
+    (r) =>
+      botLogins.includes(r.user) &&
+      r.commit_id.toLowerCase() === head.toLowerCase() &&
+      r.body.includes(postingMarker(key)),
+  );
 }
 export function pendingPosting(dir: string, pr: number, round: number, key: string): boolean {
   const j = readPostingJob(jobPath(dir, pr, round));
@@ -391,12 +394,7 @@ export class PostingOutbox {
     reviews: readonly T[],
     j: PostingJob,
   ): T[] {
-    return reviews.filter(
-      (r) =>
-        this.deps.botLogins.includes(r.user) &&
-        r.commit_id.toLowerCase() === j.head_sha.toLowerCase() &&
-        r.body.includes(postingMarker(j.posting_key)),
-    );
+    return markedReviewsOf(reviews, this.deps.botLogins, j.head_sha, j.posting_key);
   }
   private confirm(
     path: string,

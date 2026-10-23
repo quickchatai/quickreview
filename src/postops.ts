@@ -55,9 +55,11 @@ import {
   approvalActions,
   submitReview,
   type AssembledReview,
+  inlineCommentFault,
   type InlineComment,
   type ReviewPayload,
 } from "./posting.js";
+import { markedReviewsOf } from "./posting-outbox.js";
 import { describeGap, parsePlan, readRoundProgress, requiredPassGap } from "./requiredpasses.js";
 import { snapshotMark } from "./standing-review.js";
 import type { StateStore } from "./state.js";
@@ -257,15 +259,10 @@ export function parseComments(text: string): InlineComment[] {
   const sides = ["RIGHT", "LEFT"];
   return list.map((c: unknown, i): InlineComment => {
     const x = c as Record<string, unknown> | null;
-    if (
-      !isRecord(x) ||
-      typeof x.path !== "string" ||
-      !Number.isInteger(x.line) ||
-      (x.line as number) < 1 ||
-      typeof x.body !== "string"
-    )
+    const fault = inlineCommentFault(x);
+    if (!isRecord(x) || fault === "fields")
       throw new IpcError("bad_request", `comment ${i}: need path(str), line(int>0), body(str)`);
-    if ("side" in x && !sides.includes(x.side as string))
+    if (fault === "side")
       throw new IpcError("bad_request", `comment ${i}: side must be RIGHT or LEFT`);
     if (
       "start_line" in x &&
@@ -276,6 +273,8 @@ export function parseComments(text: string): InlineComment[] {
       throw new IpcError("bad_request", "invalid multiline anchor");
     if ("start_side" in x && (!("start_line" in x) || !sides.includes(x.start_side as string)))
       throw new IpcError("bad_request", "invalid multiline side");
+    // An absent side stays absent (GitHub reads it as RIGHT), so the payload
+    // is byte-identical to the retired shell route's (post-payload-parity).
     const keep: Record<string, unknown> = {};
     for (const k of ["path", "line", "side", "start_line", "start_side", "body"])
       if (k in x) keep[k] = x[k];
@@ -345,6 +344,13 @@ class PostOps {
     this.d.log?.(msg, extra);
   }
 
+  /** The wire text of a failure; GitHub's own answer stays in the daemon's log. */
+  private describe(err: unknown): string {
+    if (err instanceof GitHubRequestError)
+      this.log(`post: GitHub refused: ${err.message.slice(0, 500)}`);
+    return describeFailure(err);
+  }
+
   private audit(ctx: RequestContext, op: string, outcome: string): void {
     this.d.store.logEvent("ipc_post", ctx.pr, {
       op,
@@ -372,15 +378,12 @@ class PostOps {
       );
   }
 
-  /** The head the review is about: the round's, else the caller's, else live. */
+  /** The head the review is about: the round's, else the PR's live head. */
   private async commitHead(
     pr: number,
     keyed: Keyed | null,
-    b: Record<string, unknown>,
   ): Promise<string> {
     if (keyed) return keyed.head;
-    if (typeof b.expected_head === "string" && b.expected_head !== "")
-      return b.expected_head.toLowerCase();
     try {
       return (await this.d.adapter.getPr(pr)).head_sha.toLowerCase();
     } catch {
@@ -403,7 +406,7 @@ class PostOps {
         ? undefined
         : parseComments(readResultFile(this.d, ctx, b.comments_file));
     const keyed = keyedRound(this.d, ctx, b);
-    const head = await this.commitHead(ctx.pr, keyed, b);
+    const head = await this.commitHead(ctx.pr, keyed);
     const out = await this.postReview(ctx, "post.review", { keyed, head, event, text, comments });
     return out;
   }
@@ -421,7 +424,7 @@ class PostOps {
         ? undefined
         : parseComments(readResultFile(this.d, ctx, b.comments_file));
     const keyed = keyedRound(this.d, ctx, b);
-    const head = await this.commitHead(ctx.pr, keyed, b);
+    const head = await this.commitHead(ctx.pr, keyed);
     const out = await this.postReview(ctx, "post.approval", {
       keyed,
       head,
@@ -445,7 +448,7 @@ class PostOps {
       } catch (e) {
         throw new IpcError(
           "post_failed",
-          `the approval is recorded but "${step.describe}" failed: ${describeFailure(e)}`,
+          `the approval is recorded but "${step.describe}" failed: ${this.describe(e)}`,
         );
       }
       if (res.blocked)
@@ -601,7 +604,7 @@ class PostOps {
     } catch (err) {
       if (ident && unanswered(err)) return this.handoff(ctx, ident, event, jobPayload, err);
       this.audit(ctx, op, "failed");
-      throw new IpcError("post_failed", describeFailure(err));
+      throw new IpcError("post_failed", this.describe(err));
     }
     const res = sub.result;
     if (res.blocked) {
@@ -652,7 +655,7 @@ class PostOps {
         this.audit(ctx, op, "posted-unconfirmed");
         throw new IpcError(
           "post_failed",
-          `the review was posted but its receipt could not be confirmed (${describeFailure(e)}); the daemon reconciles it`,
+          `the review was posted but its receipt could not be confirmed (${this.describe(e)}); the daemon reconciles it`,
         );
       }
     }
@@ -675,15 +678,15 @@ class PostOps {
     cause: unknown,
   ): Promise<PostOutcome> {
     const j = this.d.journal;
-    const why = describeFailure(cause);
+    const why = this.describe(cause);
     let marker:
       "none" | "unreadable" | "multiple" | { id: number; commit_id: string; state: string };
     try {
-      const found = (await this.d.adapter.listReviewsFull(ctx.pr)).filter(
-        (rv) =>
-          this.d.botLogins.includes(rv.user) &&
-          rv.commit_id.toLowerCase() === ident.head &&
-          rv.body.includes(postingMarker(ident.key)),
+      const found = markedReviewsOf(
+        await this.d.adapter.listReviewsFull(ctx.pr),
+        this.d.botLogins,
+        ident.head,
+        ident.key,
       );
       marker = found.length > 1 ? "multiple" : (found[0] ?? "none");
     } catch {
@@ -749,7 +752,7 @@ class PostOps {
       res = await this.d.adapter.createReviewCommentReply(ctx.pr, id, text);
     } catch (err) {
       this.audit(ctx, "post.reply", "failed");
-      throw new IpcError("post_failed", describeFailure(err));
+      throw new IpcError("post_failed", this.describe(err));
     }
     if (res.blocked) {
       this.audit(ctx, "post.reply", `blocked:${res.blocked}`);

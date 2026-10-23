@@ -110,6 +110,8 @@ export interface Rig {
   rows: Map<string, CommandState>;
   rounds: Map<string, PostRound>;
   dryrun: string;
+  /** What the post ops logged daemon-side. */
+  logs: string[];
   /** The daemon socket the shims dial. */
   sock: string;
   /** Write a result file the host would write, returning its path. */
@@ -144,6 +146,7 @@ export async function buildRig(dryRun: boolean, clients: IpcClient[]): Promise<R
   gate.setGuard(
     makePostingGuard({ store, adapter, botLogin: cfg.github.bot_login, guards: cfg.guards }),
   );
+  const logs: string[] = [];
   const caps = new CapabilityStore();
   const rows = new Map<string, CommandState>();
   const rounds = new Map<string, PostRound>();
@@ -162,6 +165,7 @@ export async function buildRig(dryRun: boolean, clients: IpcClient[]): Promise<R
     journal,
     cfg,
     botLogins: [BOT],
+    log: (m) => logs.push(m),
     roundOf: (id) => rounds.get(id) ?? null,
   });
   await server.start();
@@ -177,6 +181,7 @@ export async function buildRig(dryRun: boolean, clients: IpcClient[]): Promise<R
     rows,
     rounds,
     dryrun,
+    logs,
     sock: socketPathOf(sockDir),
     write(name, text, dir = state) {
       mkdirSync(dir, { recursive: true });
