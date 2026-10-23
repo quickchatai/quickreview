@@ -107,6 +107,10 @@ describe("skipPosted", () => {
       ).skipped,
     ).toBe(0);
   });
+  it("keeps a finding that reuses a posted key on another line of the same file", () => {
+    const r = skipPosted([{ key: "f1", path: "src/a.ts", line: 40, title: "unrelated" }], posted);
+    expect(r.skipped).toBe(0);
+  });
   it("with nothing posted, returns the findings untouched", () => {
     const f = [{ key: "a", path: "p", line: 1, title: "t" }];
     expect(skipPosted(f, [])).toEqual({ fresh: f, skipped: 0 });

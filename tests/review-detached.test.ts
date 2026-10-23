@@ -8,8 +8,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sdkStubArgs, writeSdkDriverStub, type SdkStubMode } from "./helpers/sdk-driver-stub.js";
 import {
+  CONTAINER_START_GRACE_MS,
   identifyTarget,
   launchDetached,
+  runIsAlive,
   driverSignals,
   runDetachedChild,
   runDetachedVerb,
@@ -116,6 +118,19 @@ describe("start", () => {
     const h = harness();
     await runDetachedVerb("start", [], true, h.deps);
     h.live.clear();
+    expect(await runDetachedVerb("start", [], true, h.deps)).toBe(0);
+  });
+
+  it("does not reclaim a lock whose starter has not yet published its run", async () => {
+    const h = harness();
+    await runDetachedVerb("start", [], true, h.deps);
+    const lock = join(h.deps.home, "locks", readdirSync(join(h.deps.home, "locks"))[0]!);
+    // the starter wrote the lock a moment ago and has no run.json yet
+    writeFileSync(lock, JSON.stringify({ run_id: "unpublished", at: h.clock.t }));
+    expect(await runDetachedVerb("start", [], true, h.deps)).toBe(1);
+    expect(h.launched).toHaveLength(1);
+    // once the claim is old, it is a dead starter's and is replaced
+    h.clock.t += CONTAINER_START_GRACE_MS + 1;
     expect(await runDetachedVerb("start", [], true, h.deps)).toBe(0);
   });
 
@@ -347,7 +362,38 @@ describe("identifyTarget for a diff", () => {
   });
 });
 
+describe("runIsAlive", () => {
+  it("calls a run with neither pid nor container dead once its start grace has passed", () => {
+    const deps = { alive: () => false, liveContainers: () => null, now: () => 100_000 };
+    const run = { pid: null, started_at: 100_000 - CONTAINER_START_GRACE_MS + 1 };
+    expect(runIsAlive(run, deps)).toBe(true);
+    expect(runIsAlive({ ...run, started_at: 100_000 - CONTAINER_START_GRACE_MS }, deps)).toBe(
+      false,
+    );
+  });
+});
+
 describe("runDetachedChild", () => {
+  it("leaves a target lock that a newer run now holds", async () => {
+    const home = join(tmp, "child2");
+    const dir = join(home, "runs", "old");
+    mkdirSync(dir, { recursive: true });
+    mkdirSync(join(home, "locks"), { recursive: true });
+    const { createHash } = await import("node:crypto");
+    const key = "k2";
+    const real = join(
+      home,
+      "locks",
+      `${createHash("sha256").update(key).digest("hex").slice(0, 20)}.json`,
+    );
+    writeFileSync(real, JSON.stringify({ run_id: "new" }));
+    await runDetachedChild({ dir, key, run: async () => 0 });
+    expect(JSON.parse(readFileSync(real, "utf8")).run_id).toBe("new");
+    writeFileSync(real, JSON.stringify({ run_id: "old" }));
+    await runDetachedChild({ dir, key, run: async () => 0 });
+    expect(() => readFileSync(real, "utf8")).toThrow();
+  });
+
   it("records exit code 1 and the error when the run throws", async () => {
     const dir = join(tmp, "child", "runs", "c1");
     mkdirSync(dir, { recursive: true });

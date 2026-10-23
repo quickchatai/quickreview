@@ -69,7 +69,10 @@ describe("assemblePostReview", () => {
   });
 });
 
-function stubGitHub(existing: Array<{ path: string; line: number; body: string }> = []) {
+function stubGitHub(
+  existing: Array<{ path: string; line: number; body: string }> = [],
+  reviews: Array<{ body: string }> = [],
+) {
   const calls: Array<{ method: string; url: string; body?: any; auth: string | null }> = [];
   const fetchFn = (async (u: string | URL | Request, init?: RequestInit) => {
     const url = String(u);
@@ -82,6 +85,8 @@ function stubGitHub(existing: Array<{ path: string; line: number; body: string }
     });
     if (method === "GET" && url.includes("/pulls/7/comments"))
       return new Response(JSON.stringify(url.includes("page=2") ? [] : existing), { status: 200 });
+    if (method === "GET" && url.includes("/pulls/7/reviews"))
+      return new Response(JSON.stringify(url.includes("page=2") ? [] : reviews), { status: 200 });
     if (method === "POST" && url.endsWith("/pulls/7/reviews"))
       return new Response(JSON.stringify({ id: 99, html_url: "https://x/review/99" }), {
         status: 200,
@@ -166,6 +171,56 @@ describe("postReviewToPr", () => {
     );
     const res = await postReviewToPr(req(gh.fetchFn, record("COMMENT")));
     expect(res).toMatchObject({ ok: true, posted: 0, skipped: 2 });
+    expect(gh.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+  });
+
+  it("posts a finding that reuses an earlier round's key on the same line", async () => {
+    const first = assemblePostReview(record("COMMENT"), { cfg, roundNo: 1, lenses: [] });
+    const gh = stubGitHub(
+      first.comments.map((c) => ({ path: c.path, line: c.line, body: c.body })),
+    );
+    const changed = record("COMMENT");
+    changed.findings[0]!.title = "an unrelated defect";
+    changed.findings[0]!.body = "something else entirely.";
+    const r = req(gh.fetchFn, changed);
+    r.review = assemblePostReview(changed, { cfg, roundNo: 2, lenses: [] });
+    const res = await postReviewToPr(r);
+    expect(res).toMatchObject({ ok: true, posted: 1, skipped: 1 });
+  });
+
+  it("posts a new body-only finding although every inline comment is already there", async () => {
+    const first = assemblePostReview(record("COMMENT"), { cfg, roundNo: 1, lenses: [] });
+    const gh = stubGitHub(
+      first.comments.map((c) => ({ path: c.path, line: c.line, body: c.body })),
+    );
+    const withBody = record("COMMENT");
+    withBody.findings.push({
+      id: "f3",
+      path: null as unknown as string,
+      line: null as unknown as number,
+      severity: "P2",
+      title: "a body-only finding",
+      body: "applies to the whole change.",
+      lens: "correctness",
+      disposition: "posted",
+      posted_as: "[question]",
+    });
+    const res = await postReviewToPr(req(gh.fetchFn, withBody));
+    expect(res).toMatchObject({ ok: true, posted: 0, skipped: 2 });
+    const posts = gh.calls.filter((c) => c.method === "POST");
+    expect(posts).toHaveLength(1);
+    expect(posts[0]!.body.body).toContain("a body-only finding");
+    expect(posts[0]!.body.comments).toHaveLength(0);
+  });
+
+  it("does not repost a review body already on the PR when it has no inline comment", async () => {
+    const bodyOnly = record("COMMENT");
+    for (const f of bodyOnly.findings) (f as { inline?: boolean }).inline = false;
+    const review = assemblePostReview(bodyOnly, { cfg, roundNo: 1, lenses: [] });
+    expect(review.comments).toHaveLength(0);
+    const gh = stubGitHub([], [{ body: review.body }]);
+    const res = await postReviewToPr(req(gh.fetchFn, bodyOnly));
+    expect(res).toMatchObject({ ok: true, posted: 0, url: null });
     expect(gh.calls.filter((c) => c.method === "POST")).toHaveLength(0);
   });
 
