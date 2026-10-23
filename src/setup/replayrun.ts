@@ -1032,7 +1032,8 @@ export function validated(
   const vetoes = answer.killed.filter((k) => DOUBT_WORDS.includes(k.word.trim().toLowerCase()));
   for (const d of [...answer.doubted, ...vetoes]) {
     const at = { path: d.path, start: d.line ?? 1, end: d.line ?? Number.MAX_SAFE_INTEGER };
-    const c = candidates.find((x) => !used.has(x) && near(at, x));
+    const open = candidates.filter((x) => !used.has(x) && near(at, x));
+    const c = open.find((x) => x.lens === d.lens) ?? open[0];
     if (!c) continue;
     used.add(c);
     doubted++;

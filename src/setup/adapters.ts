@@ -11,6 +11,7 @@
 // here throws into a tool call except the state port's "exists but cannot be
 // read", which the engine turns into a reported, write-refusing problem.
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import {
   lstatSync,
   mkdirSync,
@@ -18,6 +19,7 @@ import {
   readFileSync,
   realpathSync,
   renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -220,9 +222,17 @@ function homeFs(root: string, what: string): StateFs {
     write: (rel, text) => {
       const full = resolve(rel);
       mkdirSync(dirname(full), { recursive: true });
-      const tmp = join(dirname(full), `.${full.split("/").at(-1)}.tmp`);
-      writeFileSync(tmp, text);
-      renameSync(tmp, full);
+      const tmp = join(
+        dirname(full),
+        `.${full.split("/").at(-1)}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`,
+      );
+      try {
+        writeFileSync(tmp, text);
+        renameSync(tmp, full);
+      } catch (err) {
+        rmSync(tmp, { force: true });
+        throw err;
+      }
     },
   };
 }

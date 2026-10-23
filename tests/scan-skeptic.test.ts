@@ -279,6 +279,7 @@ describe("parseValidatorAnswer reads tiers, classes and kills", () => {
     const r = parseValidatorAnswer(answer, null);
     expect(r.doubted).toEqual([
       {
+        lens: "pass-scan",
         path: "app/a.py",
         line: 7,
         word: "refuted",
@@ -286,6 +287,7 @@ describe("parseValidatorAnswer reads tiers, classes and kills", () => {
         class: "guarded-elsewhere",
       },
       {
+        lens: "pass-scan",
         path: "app/a.py",
         line: 8,
         word: "unverifiable",
@@ -294,8 +296,9 @@ describe("parseValidatorAnswer reads tiers, classes and kills", () => {
       },
     ]);
     expect(r.killed).toEqual([
-      { path: "app/a.py", line: 9, word: "below-bar", reason: "", class: null },
+      { lens: "pass-scan", path: "app/a.py", line: 9, word: "below-bar", reason: "", class: null },
       {
+        lens: "pass-scan",
         path: "app/a.py",
         line: 11,
         word: "duplicate",

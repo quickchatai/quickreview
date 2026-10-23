@@ -1131,9 +1131,17 @@ export class FindingsStore {
       // report keeps, never the fresh record's alone.
       const merged = o.merged || n.merged ? [...(o.merged ?? []), ...(n.merged ?? [])] : null;
       const own = n.own_severity ?? n.severity;
+      const ownJudgement = n.own_judgement ?? judgementOf(n, n);
       byFp.set(nfp, {
         ...n,
-        ...(merged ? { own_severity: own, severity: aggregateSeverity(own, merged) } : {}),
+        ...(merged
+          ? {
+              own_severity: own,
+              severity: aggregateSeverity(own, merged),
+              own_judgement: ownJudgement,
+              ...aggregateJudgements(ownJudgement, merged),
+            }
+          : {}),
         state: triaged.state,
         fixed: null,
         first_seen: o.first_seen,

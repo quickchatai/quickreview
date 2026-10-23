@@ -1103,6 +1103,21 @@ describe("replay rules", () => {
     expect([v.kept, v.doubted, v.killed]).toEqual([1, 1, 1]);
   });
 
+  it("a doubt is attributed to the candidate of the lens it names", () => {
+    const cands = [
+      f({ lens: "pass-security", start: 20, end: 20 }),
+      f({ lens: "pass-baseline", start: 20, end: 20 }),
+    ];
+    const v = validated(
+      "FINDINGS pass-validate PR#1 @x\nNONE\nDOUBTED\n- pass-baseline a.py:20 — unverifiable: cannot see the caller",
+      "/t",
+      cands,
+    );
+    expect(v.findings.map((x) => [x.lens, x.doubt?.word ?? null])).toEqual([
+      ["pass-baseline", "unverifiable"],
+    ]);
+  });
+
   it("a validity veto written under KILLED is a doubt, kept — only other kills drop", () => {
     const cands = [f({ start: 20, end: 20 }), f({ path: "b.py", start: 5, end: 5 })];
     const v = validated(
