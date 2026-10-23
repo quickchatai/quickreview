@@ -9,10 +9,10 @@
 // written to a file on a bind mount. Nothing here opens a socket, spawns a
 // process, or asks the TUI to go and get anything. That is not a matter of taste: the TUI's reach is
 // real (`src/tui/remote.ts` runs `ssh <host> …`, and the deploy tab can run
-// `deploy.sh sync`), and root CLAUDE.md rule 8 says the companion holds no VM
-// credential. A `tui_*` tool that could trigger a fetch would let the companion
-// make the TUI act on the VM on its behalf — laundering the operator's access
-// through a read verb. So:
+// `deploy.sh sync`), and the companion's own reach (root CLAUDE.md rule 8) is
+// its own ssh access and guarded tools, not the TUI's. A `tui_*` tool that
+// could trigger a fetch would let the companion make the TUI act on the VM on
+// its behalf — laundering the TUI's access through a read verb. So:
 //
 //   * the only imports are `node:fs` (read) and `node:path` — no
 //     `node:child_process`, no `node:net/http/https`, no `fetch`, no import of
@@ -74,7 +74,16 @@ export function readFeedFile(dir: string, name: string): ReadResult {
     const path = join(dir, name);
     const body = readFileSync(path, "utf8");
     return { ok: true, body, mtimeMs: statSync(path).mtimeMs };
-  } catch {
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException)?.code;
+    if (code !== undefined && code !== "ENOENT") {
+      return {
+        ok: false,
+        error:
+          `The TUI's ${name} could not be read (${code}: ${join(dir, name)}). ` +
+          `The feed mount is present but unreadable; these tools only read what the TUI already wrote.`,
+      };
+    }
     return {
       ok: false,
       error:

@@ -10,7 +10,7 @@
 //     the module has nothing to fetch with. That is asserted here against the
 //     source, so a future edit that adds an ssh/spawn/fetch path fails loudly.
 import { EventEmitter } from "node:events";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -543,6 +543,15 @@ describe("tui_* tools — the read surface", () => {
     expect(missing.error).toContain("cannot fetch");
     expect(screenAnswer(dir, NOW)).toContain("cannot fetch");
     expect(deployAnswer(dir, NOW)).toContain("cannot fetch");
+  });
+
+  it("a read failure other than a missing file names its code and path, not 'not running'", () => {
+    mkdirSync(join(dir, "view.json"));
+    const r = readFeedFile(dir, "view.json");
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("EISDIR");
+    expect(r.error).toContain(join(dir, "view.json"));
+    expect(r.error).not.toContain("probably not running");
   });
 
   it("a torn view.json is an honest refusal, not a crash", () => {
