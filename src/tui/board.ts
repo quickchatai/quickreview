@@ -75,6 +75,8 @@ export interface BoardView {
   eventsFocus: boolean;
   eventsScroll: number;
   help: boolean;
+  /** First HELP_LINES entry shown by the overlay (j/k scroll it). */
+  helpScroll?: number;
   /** The quit prompt is up. Painted by App over the composed frame,
    * so it covers every tab without any renderer knowing about it. */
   confirmQuit?: boolean;
@@ -1044,7 +1046,7 @@ export const HELP_LINES = [
   "x / D          stop the running scan (the ledger resumes it) · ask the companion for a delta re-scan (it shows the price first)",
   "Ctrl-q         release a focused pi pane or the companion column back to the board",
   "",
-  "any key to close",
+  "↑/↓ scroll when the terminal is short · any other key closes",
 ];
 
 // ---- live pi pane ----------------------------------------------------------
@@ -1169,8 +1171,8 @@ function renderEventsOverlay(
     const e = slice[i];
     const text = e
       ? e.anomaly
-        ? `${FG.anomaly}${truncate(e.text, cols - 4)}${RESET}`
-        : truncate(e.text, cols - 4)
+        ? `${FG.anomaly}${truncate(oneLine(e.text), cols - 4)}${RESET}`
+        : truncate(oneLine(e.text), cols - 4)
       : "";
     frame.boxRow(top + 1 + i, [{ text: ` ${text}`, width: cols - 2 }]);
     const prMatch = e ? /#(\d+)/.exec(e.text) : null;
@@ -1263,10 +1265,14 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
     frame.boxRow(1, [
       { text: ` ${sectionTitle("KEYS", "everything the TUI answers to")}`, width: cols - 2 },
     ]);
-    HELP_LINES.forEach((l, i) => {
-      if (2 + i < rows - 1) frame.boxRow(2 + i, [{ text: `   ${l}`, width: cols - 2 }]);
+    const helpRows = Math.max(0, rows - 3);
+    const helpMax = Math.max(0, HELP_LINES.length - helpRows);
+    const helpTop = Math.min(Math.max(0, view.helpScroll ?? 0), helpMax);
+    frame.meta["helpMax"] = helpMax;
+    HELP_LINES.slice(helpTop, helpTop + helpRows).forEach((l, i) => {
+      frame.boxRow(2 + i, [{ text: `   ${l}`, width: cols - 2 }]);
     });
-    for (let r = 2 + HELP_LINES.length; r < rows - 1; r++)
+    for (let r = 2 + Math.min(HELP_LINES.length - helpTop, helpRows); r < rows - 1; r++)
       frame.boxRow(r, [{ text: "", width: cols - 2 }]);
     frame.set(rows - 1, rule(cols, "└", "┘", []));
     return frame;
@@ -1405,7 +1411,8 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
   }
 
   // EVENTS: a floating overlay on `e`.
-  if (view.eventsFocus) renderEventsOverlay(frame, view, cols, rows, barRows);
+  // The quick-message editor owns the keyboard while open, so it stays visible.
+  if (view.eventsFocus && !view.inputBox) renderEventsOverlay(frame, view, cols, rows, barRows);
 
   // The shared command bar: exactly the verbs this frame answers to.
   paintCmdBar(frame, "board", cols, rows, live.bar);

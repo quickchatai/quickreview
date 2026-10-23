@@ -121,8 +121,7 @@ export class DurableDeployProcess {
 
     let offset = 0;
     let done = false;
-    const pump = (): void => {
-      if (done) return;
+    const drainLog = (): void => {
       try {
         const text = readFileSync(logPath, "utf8");
         if (text.length > offset) {
@@ -132,9 +131,16 @@ export class DurableDeployProcess {
       } catch {
         // The detached child may not have opened its log yet.
       }
+    };
+    const pump = (): void => {
+      if (done) return;
+      drainLog();
       const finishWith = (result: Result): void => {
         done = true;
         clearInterval(timer);
+        // The runner writes its output before its result: read what landed
+        // after this pump's first read so the final lines are not lost.
+        drainLog();
         if (result.error) onData(`\ndeploy runner error: ${result.error}\n`);
         // A null code is a signal death; the log keeps which signal it was.
         if (result.code === null && result.signal)

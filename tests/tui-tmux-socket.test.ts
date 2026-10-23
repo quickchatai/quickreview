@@ -508,6 +508,24 @@ describe("qcr companion plan", () => {
     );
   });
 
+  it("hands the TUI the install name its channel paths derive from", () => {
+    expect(companionPlan({ ...ENV, QCR_INSTALL: "foo" }).tuiEnv).toContain("QCR_INSTALL=foo");
+    expect(companionPlan(ENV).tuiEnv.some((l) => l.startsWith("QCR_INSTALL="))).toBe(false);
+  });
+
+  it("lets the TUI's lifecycle see the config file it was handed, so the mirror is filled", () => {
+    const seen: string[] = [];
+    const fs = {
+      exists: (p: string) => (seen.push(p), true),
+      read: () => undefined,
+      mode: () => undefined,
+    };
+    const env = { ...ENV, QCR_CONFIG: "/qcr-config/config.toml" };
+    const lc = laptopLifecycle(env, async () => FAIL, undefined, fs);
+    expect(lc.hostHomes().configFile).toBe("/qcr-config/config.toml");
+    expect(laptopLifecycle(env, async () => FAIL).hostHomes().configFile).toBeUndefined();
+  });
+
   it("renders one tagged line per fact, and refuses a value with a newline", () => {
     const by = parse(renderPlan(companionPlan(ENV)));
     expect(Object.keys(by).sort()).toEqual(

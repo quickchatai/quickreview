@@ -533,14 +533,15 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // sidebar is only `available()` once the container answers, and the
   // container fills a column that was already the right size.
   const { CompanionSidebar, restorePreferredSidebarWidth } = await import("./sidebar.js");
-  const { CompanionLifecycle, realDockerRunner, tmuxSocketPath } = await import("./companion.js");
+  const { CompanionLifecycle, realCompanionFs, realDockerRunner, tmuxSocketPath } =
+    await import("./companion.js");
   // The one seam the lifecycle, the column and the rollover reach the companion
   // through: docker exec, or tmux -S over the shared socket.
   const companionDocker = socketMode
     ? tmuxSocketRunner(tmuxSocketPath(full.companion), full.companion.container_name)
     : realDockerRunner;
   const companion = socketMode
-    ? laptopLifecycle(process.env, companionDocker, loaded.companion)
+    ? laptopLifecycle(process.env, companionDocker, loaded.companion, realCompanionFs)
     : new CompanionLifecycle(full.companion, realDockerRunner);
   // The companion's read-only GitHub token, minted here from the App
   // credential this host holds and handed over as an env file in a dir the

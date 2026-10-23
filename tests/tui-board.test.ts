@@ -1005,6 +1005,48 @@ describe("renderBoard", () => {
     expect(scrolled).toContain("verdict_applied #5042");
   });
 
+  it("keeps the open quick-message editor visible over the events overlay", () => {
+    const events = Array.from({ length: 6 }, (_, i) => ({
+      ts: `t${i}`,
+      text: `10:00:0${i} verdict_applied #504${i}`,
+      anomaly: false,
+    }));
+    const text = renderBoard(
+      view({
+        events,
+        eventsFocus: true,
+        inputBox: { target: "#5012 (a message to its session)", text: "also check" },
+      }),
+      100,
+      24,
+    )
+      .lines.map(stripAnsi)
+      .join("\n");
+    expect(text).toContain("> also check");
+    expect(text).not.toContain("verdict_applied #5040");
+  });
+
+  it("paints an event as one inert line, whatever control bytes its text carries", () => {
+    const events = [{ ts: "t", text: "10:00 anomaly\nx\x1b[2Jy\rz", anomaly: true }];
+    const frame = renderBoard(view({ events, eventsFocus: true }), 100, 24);
+    for (const line of frame.lines)
+      expect(line.replace(/\x1b\[[0-9;]*m/g, "")).not.toMatch(/[\x00-\x1f\x7f-\x9f]/);
+  });
+
+  it("scrolls the help overlay so a short terminal can reach every section", () => {
+    const top = renderBoard(view({ help: true }), 100, 24)
+      .lines.map(stripAnsi)
+      .join("\n");
+    expect(top).not.toContain("[8] scan");
+    const max = renderBoard(view({ help: true }), 100, 24).meta["helpMax"] ?? 0;
+    expect(max).toBeGreaterThan(0);
+    const end = renderBoard(view({ help: true, helpScroll: 999 }), 100, 24)
+      .lines.map(stripAnsi)
+      .join("\n");
+    expect(end).toContain("[8] scan");
+    expect(end).toContain("any other key closes");
+  });
+
   it("renders the help overlay over the board", () => {
     const text = renderBoard(view({ help: true }), 100, 30)
       .lines.map(stripAnsi)
