@@ -3180,6 +3180,19 @@ function policyFromConfig(config: BashGuardConfig): GuardPolicy {
   };
 }
 
+/** The three env-decoded guard inputs: the sandbox root (QCR_SANDBOX_ROOT, else
+ * the cwd), QCR_REPLAY and QCR_TAKEOVER. The one place the env is read for them. */
+export function guardFlagsFromEnv(
+  env: Readonly<Record<string, string | undefined>>,
+  cwd: string,
+): { sandboxRoot: string; replay: boolean; noPost: boolean } {
+  return {
+    sandboxRoot: env.QCR_SANDBOX_ROOT ?? cwd,
+    replay: env.QCR_REPLAY === "1",
+    noPost: env.QCR_TAKEOVER === "1",
+  };
+}
+
 /** The config the env describes: QCR_SANDBOX_ROOT (else the cwd), QCR_REPLAY,
  * QCR_TAKEOVER, and the secrets dirs `defaultSecretPathContext` resolves from the same env. */
 export function bashGuardConfigFromEnv(
@@ -3188,9 +3201,7 @@ export function bashGuardConfigFromEnv(
 ): BashGuardConfig {
   return {
     cwd,
-    sandboxRoot: env.QCR_SANDBOX_ROOT ?? cwd,
-    replay: env.QCR_REPLAY === "1",
-    noPost: env.QCR_TAKEOVER === "1",
+    ...guardFlagsFromEnv(env, cwd),
     secretDirs: defaultSecretPathContext(env, cwd).dirs,
     pathEnv: {
       HOME: env.HOME,
