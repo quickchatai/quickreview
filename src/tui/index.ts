@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { liveConfigPath, loadConfig, sandboxRoot, type Config } from "../config.js";
 import type { TuiDriver } from "./actions.js";
 import { App } from "./app.js";
-import type { DeployState } from "./deploytab.js";
+import { powerActionFor, type DeployState } from "./deploytab.js";
 import type { LearningTabs } from "./learning.js";
 import type { MetricsView } from "./metricstab.js";
 import { ensureSshMaster } from "./connect.js";
@@ -330,7 +330,7 @@ export function buildTuiDriver(
           `deploy_tab ${action} refused — the container's state has not been read yet`,
         );
       }
-      const kind = !/^Up /.test(deployState.containerStatus) ? "start" : "stop";
+      const kind = powerActionFor(deployState.containerStatus);
       if (kind !== action)
         throw new Error(
           `deploy_tab ${action} refused — container is ${deployState.containerStatus}`,
@@ -355,6 +355,9 @@ export interface RunTuiDeps {
 }
 
 /** First slice of the quit-time wait for an in-flight bring-up. */
+/** Startup steps that exist only for the companion (the memory forward also serves the Memory tab). */
+const COMPANION_ONLY_STEPS = ["memory-namespaces", "container", "rollover", "companion-pi"] as const;
+
 const BRING_UP_QUIT_GRACE_MS = 250;
 
 /** True if the promise settled inside `ms`. The timer is unref'd, so a slow
@@ -1095,13 +1098,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       app.repaint();
     } catch (err) {
       companionError = String(err instanceof Error ? err.message : err);
-      for (const key of [
-        "memory-forward",
-        "memory-namespaces",
-        "container",
-        "rollover",
-        "companion-pi",
-      ] as const) {
+      for (const key of ["memory-forward", ...COMPANION_ONLY_STEPS] as const) {
         const step = progress.steps().find((s) => s.key === key);
         if (step?.state === "running") progress.fail(key, companionError);
         else if (step?.state === "pending") progress.skip(key, "companion unavailable");
@@ -1365,7 +1362,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     if (companionOn) {
       await startAndWire();
     } else {
-      for (const key of ["memory-namespaces", "container", "rollover", "companion-pi"] as const) {
+      for (const key of COMPANION_ONLY_STEPS) {
         progress.skip(key, "--no-companion");
       }
       // The Memory tab still needs the forward even with the companion off.

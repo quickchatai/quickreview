@@ -31,6 +31,7 @@ import {
   displayWidth,
   fit,
   rule,
+  RULE_SEGMENT_SEP,
   sanitizeText,
   stripAnsi,
   truncate,
@@ -537,7 +538,7 @@ export function topBar(view: BoardView, cols: number): string {
 export function alertZone(view: BoardView, cols: number): { x1: number; x2: number } | undefined {
   if (!view.alerts?.latest) return undefined;
   const before = barSegments(view, false);
-  const prefix = before.length > 0 ? `${before.join(" ── ")} ── ` : "";
+  const prefix = before.length > 0 ? `${before.join(RULE_SEGMENT_SEP)}${RULE_SEGMENT_SEP}` : "";
   const x1 = 3 + displayWidth(stripAnsi(prefix));
   const width = displayWidth(stripAnsi(alertSegment(view.alerts, view.alertFocus === true)));
   if (x1 >= cols) return undefined; // truncated away on a narrow terminal

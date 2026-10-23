@@ -204,9 +204,12 @@ export function fit(s: string, width: number): string {
   return t + " ".repeat(Math.max(0, width - displayWidth(t)));
 }
 
+/** Separator `rule` puts between its segments. */
+export const RULE_SEGMENT_SEP = " ── ";
+
 /** `┌ left ── mid ─┐`-style horizontal rule filling `width` cells. */
 export function rule(width: number, left: string, right: string, segments: string[]): string {
-  const inner = segments.filter((s) => s.length > 0).join(" ── ");
+  const inner = segments.filter((s) => s.length > 0).join(RULE_SEGMENT_SEP);
   const label = inner.length > 0 ? ` ${inner} ` : "";
   const fitted = truncate(label, Math.max(0, width - 2 - 2));
   const fill = Math.max(0, width - 2 - displayWidth(fitted));

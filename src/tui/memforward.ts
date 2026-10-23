@@ -157,8 +157,9 @@ export interface MemForwardDeps {
    * same daemon (the script's `--ssh-host`). SSH mode only; absent = the
    * script's own default and env. */
   sshHost?: string;
-  /** `[tui] container` — the daemon container the board reads (the script's
-   * `--container`). Absent = the script's own default and env. */
+  /** The OpenViking container the forward execs into (the script's
+   * `--container`): the memory sidecar when `[tui] memory_container` is set,
+   * else `[tui] container`. Absent = the script's own default and env. */
   container?: string;
 }
 
