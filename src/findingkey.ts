@@ -16,6 +16,13 @@ export function recordString(val: unknown): string | null {
   return t.length > 0 ? t : null;
 }
 
+/** The record's entry array: `findings` first, else the legacy `candidates`
+ * spelling, else null. The ONE precedence the parser and the renderer share. */
+export function recordEntries(rec: Record<string, unknown>): unknown[] | null {
+  if (Array.isArray(rec.findings)) return rec.findings;
+  return Array.isArray(rec.candidates) ? rec.candidates : null;
+}
+
 /** A record field as a number — a finite number, or a decimal string a
  * session wrote (`"0.7"`, `"12"`) — else null. The ONE coercion: the parser
  * stores what the renderer posts, so a value both read must read alike. */

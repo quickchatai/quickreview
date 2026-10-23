@@ -26,6 +26,7 @@ import {
   entryDisposition,
   findingRecordKey,
   normalizeDisposition,
+  recordEntries,
   recordNumber,
   recordString,
   type FindingDisposition,
@@ -387,11 +388,7 @@ export function parseFindingsRecord(
   // round's reasoning to another. Rejected, and the nudge asks for this one.
   if ((filePr !== null && filePr !== pr) || (fileRound !== null && fileRound !== roundNo))
     return { status: "wrong_round" };
-  const rawFindings = Array.isArray(v.findings)
-    ? v.findings
-    : Array.isArray(v.candidates)
-      ? v.candidates
-      : null;
+  const rawFindings = recordEntries(v);
   if (rawFindings === null) return { status: "no_findings_array" };
 
   const notes: string[] = [];
