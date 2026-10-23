@@ -46,8 +46,7 @@
 // command succeeded and the daemon container is running".
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
-import { repoCloneDirName } from "../../clonedir.js";
-import { parseConfig } from "../../config.js";
+import { githubCloneDir, parseConfig } from "../../config.js";
 import { installName } from "../../install.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 import {
@@ -58,6 +57,7 @@ import {
   containerStateCheck,
   hostCommands,
   ingressOptionOf,
+  MEMORY_SERVICE,
   memoryImage,
   memoryOn,
   nodeStreamRunner,
@@ -126,7 +126,7 @@ export function bringUpArgs(root: string, profile: string): string[] {
 }
 
 /** The memory sidecar's compose service name: what `[openviking] host` must say. */
-export const MEMORY_HOST = "memory";
+export const MEMORY_HOST = MEMORY_SERVICE;
 
 /**
  * Point the daemon at the memory sidecar: `[openviking] endpoint = "remote"`
@@ -158,10 +158,10 @@ function hostPaths(configText: string): { home: string; secrets: string } {
  * (`QCR_CLONE_DIR`): the config's `[github] clone_dir`, else the repo's name,
  * as the daemon's loader resolves it (config.ts githubCloneDir). */
 export function cloneDirOfConfig(configText: string): string {
-  const explicit = (readTomlKey(configText, "github", "clone_dir") ?? "").trim();
-  return explicit !== ""
-    ? explicit
-    : repoCloneDirName(readTomlKey(configText, "github", "repo") ?? "");
+  return githubCloneDir({
+    clone_dir: readTomlKey(configText, "github", "clone_dir") ?? "",
+    repo: readTomlKey(configText, "github", "repo") ?? "",
+  });
 }
 
 /** The project `.env` lines the host commands write, for a host this process
@@ -384,7 +384,7 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
           `.env: QCR_VERSION=${version} (${releaseImage(version)} and ${memoryImage(version)}), ` +
           `QCR_UID=${uid} (the containers' user, so they can read the files you own), ` +
           `COMPOSE_PROFILES=${profile === "" ? "(empty — daemon only, the polling shape)" : profile}` +
-          `${option ? ` for the ${option.id} ingress you chose` : " (no ingress shape recorded — bringing up the daemon alone)"}` +
+          `${option ? ` for the ${option.id} ingress you chose` : profile === "" ? " (no ingress shape recorded — bringing up the daemon alone)" : " (no ingress shape recorded — keeping the profile already in .env)"}` +
           `, and the memory embedder ${describeEmbedder(embedder)} from config.toml${embedder.provider === "local" ? " (local: no memory text leaves this machine)" : ""}`,
       });
 

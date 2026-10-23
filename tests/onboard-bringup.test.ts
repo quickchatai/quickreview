@@ -414,6 +414,18 @@ describe("bring-up, happy path", () => {
   });
 });
 
+describe("the pull-inputs note without a recorded ingress", () => {
+  it("names the tunnel profile it keeps from .env instead of claiming the daemon alone", async () => {
+    writeFileSync(join(root, ".env"), "COMPOSE_PROFILES=quick-tunnel\n");
+    const h = harness();
+    const result = await h.engine.runStep(BRINGUP_STEP_ID);
+    expect(result.ok).toBe(true);
+    const detail = result.checks.find((c) => c.name === "pull-inputs")?.detail ?? "";
+    expect(detail).not.toMatch(/daemon alone/);
+    expect(detail).toMatch(/quick-tunnel/);
+  });
+});
+
 describe("the memory sidecar endpoint", () => {
   it("writes [openviking] endpoint = remote and host = memory into config.toml, parseable, once", async () => {
     const before = readFileSync(join(root, "config.toml"), "utf8");

@@ -113,12 +113,19 @@ async function liveIdentity(
     };
   }
   if (status !== 200) {
+    const message = (body as { message?: unknown } | null)?.message;
+    const said =
+      typeof message === "string" && message.trim() !== ""
+        ? ` ("${message.trim().slice(0, 200)}")`
+        : "";
+    const credentialStatus = status === 401 || status === 403 || status === 404;
     return {
       ok: false,
       slug: "",
-      detail:
-        `GET /app answered HTTP ${status} — Fix: the App id and private key in ${secretsDir} must belong to the same App; ` +
-        "re-run the github_app step to re-create or re-verify them",
+      detail: credentialStatus
+        ? `GET /app answered HTTP ${status}${said} — Fix: the App id and private key in ${secretsDir} must belong to the same App; ` +
+          "re-run the github_app step to re-create or re-verify them"
+        : `GET /app answered HTTP ${status}${said} — Fix: this is GitHub's own answer, not a credential problem; run this step again in a moment`,
     };
   }
   const slug = (body as { slug?: unknown } | null)?.slug;
