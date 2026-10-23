@@ -258,11 +258,12 @@ export class LoginRefreshSupervisor {
       if (!this.current()) return;
       if (file.error_since === null || file.error_since === undefined) this.raisedFor = null;
       else if (this.raisedFor !== file.error_since) {
-        this.raisedFor = file.error_since;
         this.deps.raiseAnomaly(
           `the bot's model login could not be refreshed since ${file.error_since}: ${file.last_error ?? "no detail"}` +
             ` (token expires ${file.expires_at ?? "unknown"}); recover with the entrypoint's login mode`,
         );
+        // marked only once raised: a failed write leaves the episode to the next poll
+        this.raisedFor = file.error_since;
       }
       if (!this.paused()) for (const w of this.resumeWaiters.splice(0)) w();
     } catch (err) {
