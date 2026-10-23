@@ -610,7 +610,15 @@ export async function nodeReplayIo(opts: {
     }
 
     override extensionPaths(): string[] {
-      return super.extensionPaths().filter((p) => !p.split(/[\\/]/).includes("openviking-pi"));
+      // The exec guard is no longer a global pi registration, so a session
+      // has it only when its own argv loads it (layer 4 rides on it), and the
+      // lens tools the replay order asks for ride the same argv.
+      const root = this.root;
+      return [
+        join(root, "extensions", "cli", "bash-guard.ts"),
+        ...super.extensionPaths().filter((p) => !p.split(/[\\/]/).includes("openviking-pi")),
+        join(root, "extensions", "cli", "lens.ts"),
+      ];
     }
   }
   const mgr = new ReplaySessionManager({

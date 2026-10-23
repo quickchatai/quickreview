@@ -432,8 +432,10 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       // list is the one lagging. The closed-sync below settles which, from
       // the PR itself; triggering it first would overwrite the state that
       // sync reads (a merge over a standing block) and count a correction
-      // for a PR that owes no review.
-      if (openListed && !ref && local) continue;
+      // for a PR that owes no review. A PR never tracked here is skipped the
+      // same way: nothing would close it, and a genuinely open one the list
+      // lags on is picked up by the next pass.
+      if (openListed && !ref) continue;
       const meta = {
         title: ref?.title ?? group.item.title,
         head_sha: ref?.head_sha ?? local?.head_sha ?? "",
