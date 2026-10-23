@@ -1,7 +1,7 @@
 <!--
-Read CONTRIBUTING.md first. This PR opens as a draft; mark it ready for
-review when every section below is filled in. A PR marked ready without an
-open issue linked or without the review report goes back to draft.
+Read CONTRIBUTING.md first. Open this PR as a draft and mark it ready for
+review when every section below is filled in. A PR asking for review without
+an open issue linked or without the review report fails the intake check.
 -->
 
 Closes #

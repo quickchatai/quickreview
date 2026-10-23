@@ -3,7 +3,7 @@
 Thanks for looking at QuickReview. The project is small, strict and
 test-driven, and every pull request costs CI time and a maintainer's
 reading time. The process below keeps both well spent. A PR that skips it
-stays a draft and may be closed without review.
+fails the intake check and may be closed without review.
 
 Everyone taking part, in issues, pull requests and reviews, follows the
 [Code of Conduct](CODE_OF_CONDUCT.md).
@@ -21,12 +21,12 @@ Everyone taking part, in issues, pull requests and reviews, follows the
 4. **Review it with QuickReview** on the default profile (below), and deal
    with what it finds.
 5. **Open the PR from your fork.** Fill in the template: `Closes #<issue>`,
-   what changed and why, how you tested it, and the review report. Every PR
-   opens as a draft; if you open it as ready, a workflow turns it into a
-   draft.
-6. **Mark it ready for review** when the template is complete. A PR marked
-   ready without an open issue linked or without the review report goes back
-   to draft, with a comment that says what is missing.
+   what changed and why, how you tested it, and the review report. Open it
+   as a draft until the template is complete.
+6. **Mark it ready for review** when the template is complete. A PR asking
+   for review without an open issue linked or without the review report
+   fails the intake check, with a comment that says what is missing; edit
+   the description and the check runs again.
 7. **A maintainer reads it and approves the CI run.** CI does not start on
    an outside contributor's PR until a maintainer approves it, and it runs
    on GitHub's hosted runners, so a full run takes up to half an hour.
