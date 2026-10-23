@@ -27,6 +27,11 @@ import { openTempRoot } from "./temp-root.js";
 const realTmp = (process.env.QCR_TEST_REAL_TMPDIR ??= tmpdir());
 const temp = openTempRoot(realTmp, "qcr-test-xdg-");
 process.env.QCR_TEST_TEMP_ROOT = temp.root;
+// jiti (pi's extension loader) sends its compile cache to the machine's real
+// temp dir, ignoring TMPDIR, whenever a process's cwd is tmpdir() itself —
+// the case for a child a test runs inside its temp dir. Children inherit
+// this, so their cache stays inside the root and goes with it.
+process.env.JITI_RESPECT_TMPDIR_ENV = "1";
 process.env.XDG_CONFIG_HOME = join(temp.root, "config");
 process.env.XDG_STATE_HOME = join(temp.root, "state");
 delete process.env.QCR_CONFIG;
