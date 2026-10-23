@@ -818,7 +818,7 @@ describe("qcr review --diff", () => {
   it("a saved destination that posts does not apply to a diff", async () => {
     const repo = mainRepo("diff-saved");
     setLimit(repo, 1000);
-    const { saveDefaultDestinations } = await import("../src/reviewdest.js");
+    const { saveDefaultDestinations } = await import("../src/reviewhome.js");
     saveDefaultDestinations(repo, ["pr"]);
     const h = piped({ repo, piBin: happyPi("diff-saved").bin }, DIFF);
     expect(await runReviewCli(["--diff", "-"], false, h.deps)).toBe(0);
@@ -1015,7 +1015,7 @@ describe("qcr review <PR>", () => {
     const repo = cwdRepo("pr-debug-nopost");
     setLimit(repo, 1000);
     const { saveDefaultDestinations, loadDefaultDestinations } =
-      await import("../src/reviewdest.js");
+      await import("../src/reviewhome.js");
     saveDefaultDestinations(repo, ["pr"]);
     const pi = happyPi("pr-debug-nopost");
     const { runOneShot } = await import("../src/oneshot.js");

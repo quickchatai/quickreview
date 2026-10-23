@@ -27,9 +27,10 @@ vi.stubEnv(
 );
 
 const { runReviewCli } = await import("../src/reviewcli.js");
-const { saveDefaultDestinations, destinationChoices } = await import("../src/reviewdest.js");
+const { destinationChoices } = await import("../src/reviewdest.js");
+const { saveDefaultDestinations } = await import("../src/reviewhome.js");
 const { contextFor } = await import("../src/bench/runner.js");
-const { openReviewStore } = await import("../src/reviewstore.js");
+const { openReviewStore } = await import("../src/reviewhome.js");
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "review-cli-"));

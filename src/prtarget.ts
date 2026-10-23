@@ -54,6 +54,7 @@ export function parsePrTarget(
 }
 
 export { originRepo };
+export type { CredentialSource };
 
 export interface PrFetchRequest {
   repo: string;

@@ -1,9 +1,10 @@
-// Where `qcr review` keeps what it remembers about a repo: the delta history
+// Where a local review keeps what it remembers about a repo: the delta history
 // per target (src/reviewstate.ts) and the saved destination (src/reviewdest.ts).
 //
-// One directory per repo under the install's state home:
-//   $QCR_STATE_HOME/review/<key>/state/<hash>.json   one file per target
-//   $QCR_STATE_HOME/review/<key>/destination.json    the saved destinations
+// One directory per repo under the review home the host names (the CLI's is
+// `<state home>/review`, src/reviewhome.ts):
+//   <home>/<key>/state/<hash>.json   one file per target
+//   <home>/<key>/destination.json    the saved destinations
 // The key is the origin's owner/name plus the repo's root commit, so every
 // clone and worktree of a repo shares one history and a fork keeps its own.
 // A repo with no origin is keyed by its directory name instead of an owner.
@@ -13,7 +14,6 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { stateHome, type InstallEnv } from "./homes.js";
 import { originRepo } from "./localreview.js";
 
 const LEGACY_STATE_DIR = "qcr-review-state";
@@ -95,12 +95,13 @@ function importLegacy(cwd: string, store: ReviewStore): void {
   }
 }
 
-/** The repo's store; null outside a git repo. Opening is cheap and creates
- * nothing but, on the first open, the imported copies. */
-export function openReviewStore(cwd: string, env: InstallEnv = process.env): ReviewStore | null {
+/** The repo's store under the review home `home`; null outside a git repo.
+ * Opening is cheap and creates nothing but, on the first open, the imported
+ * copies. */
+export function openReviewStoreIn(home: string, cwd: string): ReviewStore | null {
   const key = repoKey(cwd);
   if (key === null) return null;
-  const dir = resolve(stateHome(env), "review", key);
+  const dir = resolve(home, key);
   const store: ReviewStore = {
     dir,
     statePath: (targetKey) =>

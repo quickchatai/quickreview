@@ -30,7 +30,7 @@ const { runReviewCli } = await import("../src/reviewcli.js");
 const { reviewMemoryPort } = await import("../src/reviewmemory.js");
 const { contextFor } = await import("../src/bench/runner.js");
 const state = await import("../src/reviewstate.js");
-const { openReviewStore } = await import("../src/reviewstore.js");
+const { openReviewStore } = await import("../src/reviewhome.js");
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "review-delta-"));

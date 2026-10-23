@@ -113,6 +113,20 @@ export const CORE: readonly string[] = [
   "src/pricing.ts",
   "src/pr-identity.ts",
   "src/assetroot.ts",
+  // The local review pipeline below argument parsing, behind review() in
+  // src/reviewapi.ts: target resolution, the price preview, delta history,
+  // bot-finding skips, the run store, rendering and posting.
+  "src/reviewapi.ts",
+  "src/localreview.ts",
+  "src/oneshot.ts",
+  "src/prtarget.ts",
+  "src/reviewstore.ts",
+  "src/reviewdelta.ts",
+  "src/reviewdest.ts",
+  "src/reviewstate.ts",
+  "src/reviewbotfindings.ts",
+  "src/reviewpost.ts",
+  "src/diffinput.ts",
   // The extensions a review session is built with.
   "extensions/lens.ts",
   "extensions/bash-guard.ts",
@@ -134,21 +148,12 @@ export const CORE_EXCEPT: readonly string[] = [
 /** CLI membership: the local verbs and their modules (step W3 moves them). */
 export const CLI: readonly string[] = [
   "src/reviewcli.ts",
-  "src/localreview.ts",
-  "src/oneshot.ts",
-  "src/prtarget.ts",
-  "src/reviewstore.ts",
   "src/reviewdetach.ts",
-  "src/reviewpost.ts",
-  "src/reviewdelta.ts",
-  "src/reviewdest.ts",
-  "src/reviewstate.ts",
-  "src/reviewbotfindings.ts",
   "src/hostroute.ts",
-  "src/diffinput.ts",
   "src/picli.ts",
   "src/clonedir.ts",
   "src/homes.ts",
+  "src/reviewhome.ts",
   // `qcr review --debug-pi` (an engine file, so also in CORE_EXCEPT) and the
   // run-dir readers of `qcr review status` and `qcr live`.
   "src/engine/debugpi.ts",

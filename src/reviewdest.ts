@@ -1,5 +1,5 @@
 // Where a local review's result goes (`qcr review`): the terminal, a markdown
-// file, or JSON back to the agent. The repo's own default is kept in the state
+// file, or JSON back to the agent. The repo's own default is kept in the review
 // home (src/reviewstore.ts: shared by its worktrees, never tracked, never
 // global); a flag overrides it for one run. Posting to a PR (src/reviewpost.ts) is offered, and
 // accepted, only for a target that has a PR.
@@ -7,7 +7,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { TerminalFinding } from "./localreview.js";
-import { openReviewStore } from "./reviewstore.js";
+import { openReviewStoreIn } from "./reviewstore.js";
 
 export type Destination = "terminal" | "file" | "json" | "pr";
 
@@ -48,8 +48,10 @@ export function parseDestinations(spec: string): Destination[] {
   return out;
 }
 
-export function loadDefaultDestinations(cwd: string): Destination[] | null {
-  const path = openReviewStore(cwd)?.destinationPath() ?? null;
+/** The repo's saved destinations under the review home `home`; null when none
+ * are saved, or when there is no home (nothing is remembered). */
+export function loadDefaultDestinationsIn(home: string | null, cwd: string): Destination[] | null {
+  const path = home === null ? null : (openReviewStoreIn(home, cwd)?.destinationPath() ?? null);
   if (path === null || !existsSync(path)) return null;
   try {
     const raw = JSON.parse(readFileSync(path, "utf8")) as { destinations?: unknown };
@@ -63,9 +65,14 @@ export function loadDefaultDestinations(cwd: string): Destination[] | null {
   }
 }
 
-/** Keep the choice for this repo. False when `cwd` is not in a git repo. */
-export function saveDefaultDestinations(cwd: string, d: readonly Destination[]): boolean {
-  const path = openReviewStore(cwd)?.destinationPath() ?? null;
+/** Keep the choice for this repo under the review home `home`. False when
+ * `cwd` is not in a git repo, or there is no home. */
+export function saveDefaultDestinationsIn(
+  home: string | null,
+  cwd: string,
+  d: readonly Destination[],
+): boolean {
+  const path = home === null ? null : (openReviewStoreIn(home, cwd)?.destinationPath() ?? null);
   if (path === null) return false;
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify({ destinations: d }, null, 2) + "\n");

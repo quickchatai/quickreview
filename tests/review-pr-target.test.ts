@@ -206,7 +206,7 @@ describe("the daemon stays App-only (CLAUDE.md rule 3)", () => {
       .filter((f) => /from "[^"]*\/ghcred\.js"|from "\.\/ghcred\.js"/.test(readFileSync(f, "utf8")))
       .map((f) => f.slice(ROOT.length + 1))
       .sort();
-    expect(importers).toEqual(["src/cli.ts", "src/prtarget.ts", "src/reviewcli.ts"].sort());
+    expect(importers).toEqual(["src/cli.ts", "src/prtarget.ts"].sort());
   });
 
   it("the daemon's GitHub code reads no personal token", () => {

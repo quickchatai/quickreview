@@ -144,6 +144,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/release-image.test.ts",
   "tests/release-workflow.test.ts",
   "tests/required-passes.test.ts",
+  "tests/review-api.test.ts",
   "tests/review-cli.test.ts",
   "tests/review-container.test.ts",
   "tests/review-core-defects.test.ts",

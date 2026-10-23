@@ -162,6 +162,10 @@ export interface RoundSpec {
   /** Where the round's LiveEvent log goes (src/live/). Omitted: none is written. */
   live?: RoundLive;
   log?: (line: string) => void;
+  /** Stops the round: an abort before the session exists starts none, and one
+   * during a turn aborts it (lens children with it) and skips the
+   * continuation. The round then settles what was written, as after any stop. */
+  signal?: AbortSignal;
 }
 
 export interface RoundResult {
@@ -421,7 +425,9 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
   let sink: LiveSink | undefined;
   let unhear: (() => void) | undefined;
   let endWave: () => Promise<void> = async () => {};
+  const stopTurn = (): void => void session?.abort();
   try {
+    i.signal?.throwIfAborted();
     // Host isolation: pi discovers nothing of its own. `-ne` leaves only the
     // extensions named below (so neither ~/.pi/agent, nor a project's `.pi/`,
     // nor a package can add one to the session) and `-ns` no skill; lens
@@ -449,6 +455,8 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
       limits: { timeoutMs: i.timeoutMs, ...(i.capUsd !== undefined ? { capUsd: i.capUsd } : {}) },
       cliFlags: ["--approve", "-ne", "-ns"],
     });
+    i.signal?.throwIfAborted();
+    i.signal?.addEventListener("abort", stopTurn, { once: true });
     // The live log hears every event, the `*_update`s too, from the first
     // prompt on; a log that cannot be opened never costs the review.
     if (i.live) {
@@ -524,7 +532,14 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
       result.error = `pi exited ${String(r.code)} before any assistant message — nothing to continue`;
     }
     const stoppedShort = !existsSync(outcomePath) || broken.length > 0 || missing.length > 0;
-    if (!r.timedOut && !r.streamError && !result.capped && stoppedShort && resumable) {
+    if (
+      !r.timedOut &&
+      !r.streamError &&
+      !result.capped &&
+      stoppedShort &&
+      resumable &&
+      !i.signal?.aborted
+    ) {
       const left = i.timeoutMs - (Date.now() - started);
       if (left > 120_000) {
         result.continued = true;
@@ -562,6 +577,7 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
     await endWave();
     return settleRound(i, prep, result, r, session.stats().spentUsd);
   } finally {
+    i.signal?.removeEventListener("abort", stopTurn);
     unhear?.();
     sink?.close();
     await endWave();
