@@ -1199,13 +1199,16 @@ describe("qcr-update — the rescue", () => {
   it("a rescue whose drain cannot be confirmed says so, and still exits non-zero", async () => {
     sb = setup("release");
     sb.stopDaemon();
-    const r = await runUpdater(sb, GOOD, tarOf(), { QCR_UPDATE_FAIL_AT: "swap" });
+    const r = await runUpdater(sb, GOOD, tarOf(), {
+      QCR_UPDATE_FAIL_AT: "swap",
+      QCR_DRAIN_RECEIPT_WAIT_S: "3",
+    });
     expect(r.code).not.toBe(0);
     expect(r.stderr).toContain("COULD NOT CONFIRM drain on");
     expect(r.stderr).toContain("RESCUE INCOMPLETE");
     expect(configText(sb)).toBe("# OLD CONFIG\n");
     sb.stopDaemon = () => {};
-  }, 30_000);
+  });
 
   it("nothing is rescued on a fresh VM with no daemon container: it fails non-zero, naming the step", async () => {
     sb = setup("none");

@@ -61,7 +61,7 @@
 # sha256 of every other KEY=VALUE line, in order; this script recomputes it.
 #
 # Test seam: run as a non-root user, QCR_UPDATE_CONF, QCR_UPDATE_DOCKER,
-# QCR_UPDATE_POLL_S, QCR_UPDATE_NAP_S, QCR_RESCUE_WAIT_S, QCR_MEMORY_READY_TIMEOUT_S and
+# QCR_UPDATE_POLL_S, QCR_UPDATE_NAP_S, QCR_RESCUE_WAIT_S, QCR_DRAIN_RECEIPT_WAIT_S, QCR_MEMORY_READY_TIMEOUT_S and
 # QCR_UPDATE_FAIL_AT=<step> are honoured. As root none of
 # them is: root reads /etc/qcr/update.conf and runs `docker`. (sudo also resets
 # the environment.) tests/qcr-update.test.ts drives it with a fake docker.
@@ -80,6 +80,7 @@ if [[ "$(id -u)" -eq 0 ]]; then
   POLL_S=5
   FAIL_AT=""
   RESCUE_WAIT_S=300
+  DRAIN_WAIT_S=120
   READY_WAIT_S=""
   NAP_S=5
 elif [[ -n "${QCR_UPDATE_CONF:-}" ]]; then
@@ -89,6 +90,7 @@ elif [[ -n "${QCR_UPDATE_CONF:-}" ]]; then
   POLL_S="${QCR_UPDATE_POLL_S:-5}"
   FAIL_AT="${QCR_UPDATE_FAIL_AT:-}"
   RESCUE_WAIT_S="${QCR_RESCUE_WAIT_S:-300}"
+  DRAIN_WAIT_S="${QCR_DRAIN_RECEIPT_WAIT_S:-120}"
   READY_WAIT_S="${QCR_MEMORY_READY_TIMEOUT_S:-}"
   NAP_S="${QCR_UPDATE_NAP_S:-$POLL_S}"
 else
@@ -436,7 +438,7 @@ rescue() {
   if [[ $DAEMON_STOPPED -eq 1 && "$LAYOUT" != none ]]; then
     d start "$DAEMON" >/dev/null 2>&1 || { log "RESCUE: the old daemon container did not start"; ok=0; }
     wait_first_reconcile "$DAEMON" "$RESCUE_WAIT_S"
-    if send_drain_on 120; then
+    if send_drain_on "$DRAIN_WAIT_S"; then
       log "RESCUE: drain on confirmed. Rounds may be running (held wakes started after the auto-lift): retry once running_rounds is 0"
     else
       log "RESCUE: COULD NOT CONFIRM drain on — drain by hand (qcr drain on) before anything else"
