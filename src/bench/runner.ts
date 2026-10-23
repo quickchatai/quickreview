@@ -52,12 +52,11 @@ export { boundBody, jsonProblem, missingOutputs, renderBenchOutputs, unparseable
 export type { PiRun };
 export {
   applyConfigOverrides,
-  benchConfig,
-  contextFor,
   OPEN_MAP_KEYS,
   withAuthModels,
   withPresetInToml,
 } from "../engine/context.js";
+export { benchConfig, contextFor } from "../reviewcontext.js";
 import type { Runtime, SessionSpec } from "../engine/port.js";
 import { publishChangedResult } from "./publication.js";
 import {} from "../reviewrender.js";
@@ -86,6 +85,8 @@ import {
   type Customisation,
 } from "../profileoverrides.js";
 import type { LensTuning } from "../lenstuning.js";
+import { homeProfileLookup } from "../install.js";
+import type { ProfileLookup } from "../profiles.js";
 import { isDefaultPosting, type PostingPolicy } from "../postingpolicy.js";
 // The round's lens agents are built by the core (`qcr review` builds them too).
 import { buildBenchAgents } from "../engine/roundagents.js";
@@ -417,8 +418,10 @@ export function benchCustomisation(
   root: string,
   profile: string,
   allow: boolean,
-): { readFile?: (path: string) => string; custom: Customisation } {
-  const set = resolveOverrides({ root, profile });
+): { readFile?: (path: string) => string; lookup: ProfileLookup; custom: Customisation } {
+  // The install's homes: the agents build looks the profile up there too.
+  const lookup = homeProfileLookup();
+  const set = resolveOverrides({ root, profile, lookup });
   const custom = assessOverrides(root, set);
   if (custom.customised && !allow)
     throw new Error(
@@ -427,7 +430,7 @@ export function benchCustomisation(
         "(the run is recorded as customised).",
     );
   const readFile = overrideReader(root, set);
-  return { ...(readFile ? { readFile } : {}), custom };
+  return { ...(readFile ? { readFile } : {}), lookup, custom };
 }
 
 /** Git reads no system or global configuration and never prompts — for the
@@ -513,6 +516,7 @@ export function renderCasePrompts(args: {
   const { c, meta } = args;
   return renderOneShotPrompts({
     root: args.root,
+    profileLookup: homeProfileLookup(),
     cfg: args.cfg,
     ecosystem: args.ecosystem,
     target: {
@@ -629,6 +633,7 @@ function renderFollowUpPrompts(args: Parameters<typeof renderCasePrompts>[0]): C
   const fu = c.followup!;
   return renderFollowUpOneShotPrompts({
     root: args.root,
+    profileLookup: homeProfileLookup(),
     ...(args.readFile ? { readFile: args.readFile } : {}),
     cfg: args.cfg,
     ecosystem: args.ecosystem,

@@ -53,6 +53,7 @@ import {
   migrateSecrets,
   repointComposeSecrets,
   composeRepointReport,
+  homeProfileLookup,
   secretsMigrateReport,
   stateHome,
   strandedCheckoutConfig,
@@ -1029,7 +1030,7 @@ export async function cmdRegression(rest: string[], json: boolean): Promise<numb
   // same function) — otherwise a lens the profile switched off would be
   // replayed.
   const { applyProfileOverlays } = await import("./profiles.js");
-  const cfg = applyProfileOverlays(root, loadConfig());
+  const cfg = applyProfileOverlays(root, loadConfig(), homeProfileLookup());
   const args = parseRegressionArgs(rest, json);
   const gate = recordOnlyGate(join(stateDir(), "dryrun"), "qcr regression");
   const scratchRoot = join(stateDir(), "regression");
@@ -2193,8 +2194,8 @@ export async function main(rawArgv: string[]): Promise<void> {
       // A daemonless review in the terminal (src/reviewcli.ts). Usage errors
       // are its own exit code 2.
       const { cmdReview } = await import("./reviewcli.js");
-      const { openReviewMemoryPort } = await import("./reviewmemory.js");
-      process.exitCode = await cmdReview(rest, json, { memory: openReviewMemoryPort });
+      const { openReviewMemoryPortAt } = await import("./reviewmemory.js");
+      process.exitCode = await cmdReview(rest, json, { memory: openReviewMemoryPortAt });
       return;
     }
     case "open": {

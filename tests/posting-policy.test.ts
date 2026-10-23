@@ -13,7 +13,12 @@ import { buildRoundOrder } from "../src/dispatch.js";
 import { NONE_ECOSYSTEM } from "../src/ecosystem.js";
 import { isKnownVocabularyWord, parseFindingsRecord } from "../src/findingsrecord.js";
 import type { PrFileEntry } from "../src/github.js";
-import { configHome, EXAMPLE_PROFILES, type InstallEnv } from "../src/install.js";
+import {
+  configHome,
+  EXAMPLE_PROFILES,
+  homeProfileLookup,
+  type InstallEnv,
+} from "../src/install.js";
 import { applyProfileTuning } from "../src/lenstuning.js";
 import { assembleReview, type Finding } from "../src/posting.js";
 import {
@@ -75,7 +80,7 @@ const fixture: Config = parseConfig(
 
 let dir: string;
 let env: InstallEnv;
-const lookup = () => ({ env });
+const lookup = () => homeProfileLookup(env);
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "qcr-posting-"));

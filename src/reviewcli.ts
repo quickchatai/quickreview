@@ -35,7 +35,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Config } from "./config.js";
+import type { CoreConfig } from "./reviewconfig.js";
 import type { Ecosystem } from "./ecosystem.js";
 import {
   addDiffTree,
@@ -56,6 +56,7 @@ import {
 } from "./localreview.js";
 import { MEMORY_NOT_SET_UP, type ReviewMemoryPort, type RoundMemory } from "./memoryport.js";
 import type { CredentialSource } from "./ghcred.js";
+import type { ProfilePlace } from "./profilelookup.js";
 import {
   assemblePostReview,
   loadPostIdentity,
@@ -315,10 +316,14 @@ export interface ReviewCliDeps {
   choose?: (question: string, options: DestinationChoice[]) => Promise<Destination>;
   /** The production tree (prompts/, extensions/, agents/). */
   root: string;
+  /** Where profiles are looked up before the checkout's generic examples: the
+   * install's homes (src/homes.ts `homeProfilePlaces`). Absent: the
+   * examples alone. */
+  profileHomes?: readonly ProfilePlace[];
   /** The operator's pi agent dir (its login): only read. The run's pi gets a
    * private agent dir of its own (src/hostroute.ts). */
   agentDir: string;
-  cfg: Config;
+  cfg: CoreConfig;
   ecosystem: Ecosystem;
   /** Hosts the review session (`[engine] runtime`, the SDK). */
   runtime: Runtime;
@@ -327,6 +332,9 @@ export interface ReviewCliDeps {
   debugPi?: (spec: RoundSpec) => Promise<OneShotResult>;
   /** Where each run keeps its throwaway tree and its files. */
   runsDir: string;
+  /** Where a dry-run install records the review it would have posted: under
+   * the state home, never inside the installed package. */
+  dryrunDir: string;
   timeoutMs: number;
   /** The install's memory, injected by the host (the app's OpenViking memory,
    * src/reviewmemory.ts). Absent or null: the review runs without memory and
@@ -755,6 +763,7 @@ async function runReview(
     overrides = resolveOverrides({
       root: deps.root,
       profile: deps.cfg.review.profile,
+      lookup: { homes: deps.profileHomes ?? [] },
       repo: { gitDir, baseRef: t.baseSha, destDir: join(runDir, "profile") },
     });
     custom = assessOverrides(deps.root, overrides);
@@ -774,11 +783,7 @@ async function runReview(
   }
   const readFile = overrideReader(deps.root, overrides);
   const profileLookup = overrides.lookup;
-  const repoProfile = profileLookup.repoProfile !== undefined;
-  const profileArgs = {
-    ...(readFile ? { readFile } : {}),
-    ...(repoProfile ? { profileLookup } : {}),
-  };
+  const profileArgs = { ...(readFile ? { readFile } : {}), profileLookup };
   const target = {
     repo: t.repo,
     number: prInfo?.number ?? 0,
@@ -928,7 +933,7 @@ async function runReview(
       checkouts: [deps.cwd, gitDir],
       profile: {
         ...(readFile ? { readFile } : {}),
-        ...(repoProfile ? { lookup: profileLookup } : {}),
+        lookup: profileLookup,
       },
     });
   } catch (err) {
@@ -1170,10 +1175,10 @@ async function runReview(
             headSha: t.headSha,
             token: id.token,
             // The one gate, with the install's dry_run: a dry-run install records
-            // the review under state/dryrun/ and sends nothing (CLAUDE.md rule 1).
+            // the review under its dryrun dir and sends nothing (CLAUDE.md rule 1).
             gate: localPostGate({
               dryRun: deps.cfg.dry_run,
-              dryrunDir: join(deps.root, "state", "dryrun"),
+              dryrunDir: deps.dryrunDir,
               token: id.token,
               ...(deps.pr?.fetchFn ? { fetchFn: deps.pr.fetchFn } : {}),
               ...(deps.pr?.apiBase ? { apiBase: deps.pr.apiBase } : {}),
@@ -1281,7 +1286,7 @@ export function watchdogCommand(
  * `[pi] lens_runtime = engine` is
  * the SDK runtime with our lens tools; with `[pi] engine_wave` the runtime
  * carries the board the round starts the planned wave on. */
-export function selectReviewRuntime(cfg: Pick<Config, "engine" | "pi">): EngineRouteRuntime {
+export function selectReviewRuntime(cfg: Pick<CoreConfig, "engine" | "pi">): EngineRouteRuntime {
   const engine = cfg.pi.lens_runtime === "engine";
   return selectRuntime(cfg.engine.runtime, "review", () => {
     // The SDK host loads on the first session, not at startup: a preview, a
@@ -1325,7 +1330,7 @@ export async function cmdReview(
     runsDir?: string;
     /** The install's memory, from its config; the host injects it (src/cli.ts
      * passes the app's, src/reviewmemory.ts). Absent: no memory. */
-    memory?: (cfg: Config) => ReviewMemoryPort | null;
+    memory?: (configPath: string) => ReviewMemoryPort | null;
   } = {},
 ): Promise<number> {
   // Detached runs for plugins (src/reviewdetach.ts): `start | status | stop`,
@@ -1334,7 +1339,7 @@ export async function cmdReview(
     const verb = rest[0];
     const { randomBytes } = await import("node:crypto");
     const det = await import("./reviewdetach.js");
-    const { stateHome } = await import("./install.js");
+    const { stateHome } = await import("./homes.js");
     // In the release image the host wrapper makes the run a container of its own
     // (P6.8): it names the container and the id, and starts the driver itself.
     const container = containerRunEnv(process.env);
@@ -1404,7 +1409,7 @@ export async function cmdReview(
     // The driver of a run the wrapper claimed: this container is the run.
     const container = containerRunEnv(process.env);
     if (!container || rest[1] !== container.id || rest.length !== 2) return 2;
-    const { stateHome } = await import("./install.js");
+    const { stateHome } = await import("./homes.js");
     const det = await import("./reviewdetach.js");
     const claimed = det.readContainerRun(
       join(stateHome(), "review", "detached"),
@@ -1457,13 +1462,18 @@ export async function cmdReview(
     });
     return code;
   }
-  const { sandboxRoot, loadConfig } = await import("./config.js");
-  const { stateHome } = await import("./install.js");
-  const { contextFor } = await import("./engine/context.js");
+  const { assetRoot } = await import("./assetroot.js");
+  const { homeProfilePlaces, loadOneShotConfig, stateHome } = await import("./homes.js");
+  const { contextFrom } = await import("./engine/context.js");
   const { createInterface } = await import("node:readline/promises");
-  const root = sandboxRoot();
-  const cfg0 = loadConfig();
-  const { cfg, ecosystem } = contextFor(root, cfg0.review.profile);
+  const { homedir } = await import("node:os");
+  const root = assetRoot();
+  // The install's config, or the shipped defaults when it has none.
+  const loaded = loadOneShotConfig({ root, warn: (l) => console.warn(l) });
+  const profileHomes = homeProfilePlaces();
+  const { cfg, ecosystem } = contextFrom(root, loaded, loaded.cfg.review.profile, "", {
+    homes: profileHomes,
+  });
   const interactive = Boolean(process.stdin.isTTY && process.stderr.isTTY);
   const readStdin = async (): Promise<string> => {
     if (process.stdin.isTTY) throw new Error("standard input is a terminal: pipe a diff in");
@@ -1522,6 +1532,7 @@ export async function cmdReview(
         }
       : {}),
     root,
+    profileHomes,
     agentDir,
     cfg,
     ecosystem,
@@ -1534,7 +1545,9 @@ export async function cmdReview(
         }
       : {}),
     runsDir: io.runsDir ?? join(stateHome(), "review", "runs"),
-    memory: io.memory?.(cfg0) ?? null,
+    dryrunDir: join(stateHome(), "review", "dryrun"),
+    // Memory reads the install's own config; the shipped defaults set none up.
+    memory: loaded.path === null ? null : (io.memory?.(loaded.path) ?? null),
     timeoutMs: 60 * 60_000,
     log: (l) => console.error(l),
   });

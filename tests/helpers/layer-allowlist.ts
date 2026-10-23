@@ -4,24 +4,7 @@
 // ever shrink. Both are empty when the refactor is done.
 
 /** Runtime edges pointing up the layers, as `from -> to`. */
-export const UPWARD_EDGES_ALLOWED: readonly string[] = [
-  "src/engine/context.ts -> src/config.ts",
-  "src/engine/context.ts -> src/install.ts",
-  "src/engine/lens/registry.ts -> src/config.ts",
-  "src/engine/lens/runlens.ts -> src/config.ts",
-  "src/engine/sdkruntime.ts -> src/config.ts",
-  "src/engine/select.ts -> src/config.ts",
-  "src/followup-mode.ts -> src/config.ts",
-  "src/include.ts -> src/config.ts",
-  "src/lenstuning.ts -> src/config.ts",
-  "src/planner.ts -> src/config.ts",
-  "src/profileoverrides.ts -> src/install.ts",
-  "src/profiles.ts -> src/config.ts",
-  "src/profiles.ts -> src/install.ts",
-  "src/reviewcli.ts -> src/config.ts",
-  "src/reviewcli.ts -> src/install.ts",
-  "src/reviewstore.ts -> src/install.ts",
-];
+export const UPWARD_EDGES_ALLOWED: readonly string[] = [];
 
 /** Forbidden process calls in core, as `file: name`. */
 export const CORE_FORBIDDEN_ALLOWED: readonly string[] = [];

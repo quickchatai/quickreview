@@ -64,6 +64,7 @@
 // nothing can post: this module imports no gate, adapter or token code, and the
 // image ships no `scripts/`, no `gh` and no credential.
 
+import { homeProfileLookup } from "../install.js";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
@@ -486,12 +487,10 @@ async function main(): Promise<number> {
     // A case host finds the agents its pool built; rebuilding them under its
     // siblings' feet would empty the dir while they read it.
     if (!caseHost) {
-      const agents = buildBenchAgents(
-        root,
-        ctx.cfg,
-        join(root, ".pi", "agents"),
-        bench.readFile ? { readFile: bench.readFile } : {},
-      );
+      const agents = buildBenchAgents(root, ctx.cfg, join(root, ".pi", "agents"), {
+        ...(bench.readFile ? { readFile: bench.readFile } : {}),
+        lookup: homeProfileLookup(),
+      });
       log(
         `review: ${agents} lens agents built (profile ${profile || "(generic)"}), ${cases.length} case(s)`,
       );

@@ -38,7 +38,7 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { THINKING_LEVELS } from "../../config.js";
+import { THINKING_LEVELS } from "../../reviewconfig.js";
 import type {
   AgentSession,
   ExtensionError,

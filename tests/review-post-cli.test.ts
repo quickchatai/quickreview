@@ -167,6 +167,7 @@ function harness(o: {
     ecosystem: ctx.ecosystem,
     runtime: piCliRuntime({ bin: o.piBin }),
     runsDir: join(tmp, `runs-${Math.random().toString(36).slice(2)}`),
+    dryrunDir: join(tmp, `dryrun-${Math.random().toString(36).slice(2)}`),
     timeoutMs: 10 * 60_000,
   };
   return { deps, lines, asked, offered, text: () => lines.join("\n") };
@@ -283,15 +284,16 @@ describe("qcr review --to pr", () => {
     expect(h.text()).toMatch(/Posted 2 comments/);
   });
 
-  it("on a dry_run install records the review under state/dryrun/ and posts nothing", async () => {
+  it("on a dry_run install records the review in its dryrun dir and posts nothing", async () => {
     const repo = cwdRepo("post-dry");
     const api = stubApi();
     const h = prHarness(repo, happyPi("post-dry").bin, api, {}, true);
     expect(await runReviewCli(["7", "--to", "terminal,pr"], false, h.deps)).toBe(0);
     expect(api.posts).toHaveLength(0);
     expect(h.text()).toMatch(/Dry run .*recorded, not posted/);
-    const dir = join(root, "state", "dryrun");
-    const files = readdirSync(dir).filter((f) => f.endsWith("-create_review.json"));
+    // The record lands in the dir the terminal side names (the state home's),
+    // never inside the installed package.
+    const files = readdirSync(h.deps.dryrunDir).filter((f) => f.endsWith("-create_review.json"));
     expect(files.length).toBeGreaterThan(0);
   });
 

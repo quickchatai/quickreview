@@ -9,7 +9,7 @@
 // nothing but its arguments, and a follow-up decision reads the PR's history
 // through `FollowUpHistory`, a port the bot fills from its state store.
 import type { Config } from "./config.js";
-import { REVIEW_DEFAULTS } from "./config.js";
+import { REVIEW_DEFAULTS } from "./reviewconfig.js";
 import { coverageEligible } from "./coverage.js";
 import { DJANGO_ECOSYSTEM, type Ecosystem } from "./ecosystem.js";
 import { promptTargetsFor } from "./escalationprompt.js";

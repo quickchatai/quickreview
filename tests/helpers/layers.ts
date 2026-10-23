@@ -61,6 +61,7 @@ export const CORE: readonly string[] = [
   "src/migrations.ts",
   "src/heuristics.ts",
   "src/profiles.ts",
+  "src/profilelookup.ts",
   "src/profileoverrides.ts",
   "src/reviewrender.ts",
   "src/escalationprompt.ts",
@@ -111,6 +112,7 @@ export const CORE: readonly string[] = [
   "src/yieldloop.ts",
   "src/pricing.ts",
   "src/pr-identity.ts",
+  "src/assetroot.ts",
   // The extensions a review session is built with.
   "extensions/lens.ts",
   "extensions/bash-guard.ts",

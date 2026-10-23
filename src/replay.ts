@@ -70,6 +70,7 @@ import { githubCloneDir, type Config } from "./config.js";
 import { buildPassPlan } from "./dispatch.js";
 import { ecosystemFor, type Ecosystem } from "./ecosystem.js";
 import type { HeuristicsExtension } from "./heuristics.js";
+import { homeProfileLookup } from "./install.js";
 import { findCiLinters, type CiLinter } from "./lintconfig.js";
 import { loadProfileEcosystem, loadProfileHeuristics } from "./profiles.js";
 import { findStyleGuide } from "./styleguide.js";
@@ -639,8 +640,14 @@ export async function nodeReplayIo(opts: {
     killSession: (name) => mgr.tmux.killSession(name),
     exists: existsSync,
     planningInputs: (tree) => ({
-      ecosystem: ecosystemFor(loadProfileEcosystem(opts.sandboxRoot, opts.cfg.review.profile)),
-      heuristics: loadProfileHeuristics(opts.sandboxRoot, opts.cfg.review.profile),
+      ecosystem: ecosystemFor(
+        loadProfileEcosystem(opts.sandboxRoot, opts.cfg.review.profile, homeProfileLookup()),
+      ),
+      heuristics: loadProfileHeuristics(
+        opts.sandboxRoot,
+        opts.cfg.review.profile,
+        homeProfileLookup(),
+      ),
       styleGuide: findStyleGuide(tree),
       ciLinters: findCiLinters(tree),
     }),

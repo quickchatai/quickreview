@@ -46,6 +46,7 @@ import {
   assertPathSegment,
   configHome,
   EXAMPLE_PROFILES,
+  homeProfileLookup,
   locateConfig,
   locateProfile,
   PROFILES_DIR,
@@ -149,7 +150,7 @@ export function plainTuning(t: LensTuning): Record<string, string | boolean> {
 /** Resolve `name` through every loader the daemon boots with. Any throw is
  * the answer — the daemon would refuse to start on the same profile. */
 export function checkProfile(home: ProfileHome, name: string): ProfileCheck {
-  const lookup = { env: home.env };
+  const lookup = homeProfileLookup(home.env);
   try {
     assertPathSegment("profile", name);
     if (!locateProfile({ root: home.root, profile: name, env: home.env })) {

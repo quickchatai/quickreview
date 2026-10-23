@@ -28,7 +28,7 @@ import {
 } from "node:fs";
 import type { WriteStream } from "node:fs";
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
-import { splitModelSpec, type ThinkingLevel } from "../config.js";
+import { splitModelSpec, type ThinkingLevel } from "../reviewconfig.js";
 import { TurnBudget, type BudgetReason } from "./budget.js";
 import { trackSession } from "./livesessions.js";
 import type { HostSessionSpec, PiHost } from "./pisdk.js";

@@ -34,7 +34,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseConfig, type Config } from "../config.js";
-import { locateConfig } from "../install.js";
+import { homeProfileLookup, locateConfig } from "../install.js";
 import {
   PASS_ADDENDA,
   buildAgents,
@@ -70,7 +70,11 @@ export const SCAN_AGENTS_SRC = "agents/scan";
 /** The config a scan runs with: config.toml parsed, the profile's per-lens
  * tuning and `[scan]` overrides applied (the profile wins). Throws on a bad
  * config or profile — the caller reports it. */
-export function scanConfig(root: string, toml: string, lookup: ProfileLookup = {}): Config {
+export function scanConfig(
+  root: string,
+  toml: string,
+  lookup: ProfileLookup = homeProfileLookup(),
+): Config {
   const parsed = parseConfig(toml);
   const profile = parsed.review.profile;
   const tuned = applyProfileTuning(parsed, loadProfileLensTuning(root, profile, lookup));
@@ -97,7 +101,7 @@ export function loadScanConfig(
     return { ok: false, errors: [`the live config ${path} cannot be read: ${String(err)}`] };
   }
   try {
-    return { ok: true, cfg: scanConfig(root, toml, { env }) };
+    return { ok: true, cfg: scanConfig(root, toml, homeProfileLookup(env)) };
   } catch (err) {
     return {
       ok: false,
@@ -135,7 +139,7 @@ export function buildScanAgents(
   root: string,
   outDir: string,
   cfg: Config,
-  lookup: ProfileLookup = {},
+  lookup: ProfileLookup = homeProfileLookup(),
 ): BuiltAgent[] {
   return buildAgents(join(root, "agents"), outDir, {
     root,

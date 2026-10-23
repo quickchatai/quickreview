@@ -18,7 +18,7 @@
 // profile that overrides a seed marks the output).
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { splitModelSpec } from "../../config.js";
+import { splitModelSpec } from "../../reviewconfig.js";
 import { splitFrontmatter } from "../../include.js";
 
 /** One source directory of agent `.md` files. */

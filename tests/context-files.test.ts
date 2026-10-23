@@ -348,6 +348,7 @@ async function captureReviewCli(
     ecosystem: ctx.ecosystem,
     runtime: piCliRuntime({ bin: pi.bin }),
     runsDir,
+    dryrunDir: join(tmp, "review-dryrun"),
     timeoutMs: 60_000,
   });
   if (code !== 0) throw new Error(`the fake-pi review failed (exit ${code}): ${lines.join(" ")}`);

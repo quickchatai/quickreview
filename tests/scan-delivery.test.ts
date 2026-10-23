@@ -16,7 +16,7 @@ import {
   buildAgents,
   type PassAddendum,
 } from "../src/include.js";
-import type { InstallEnv } from "../src/install.js";
+import { homeProfileLookup, type InstallEnv } from "../src/install.js";
 import {
   DIFF_ONLY_LENSES,
   parseScanAnswer,
@@ -118,7 +118,7 @@ describe("pass-delivery is a lens a scan runs", () => {
 
   it("its scan build carries the recast; every PR build is byte-identical without it", () => {
     const out = join(dir, "scan");
-    buildScanAgents(sandbox, out, fixture, { env });
+    buildScanAgents(sandbox, out, fixture, homeProfileLookup(env));
     for (const [name, body] of built(out))
       expect(body.includes(SCAN_DELIVERY_ADDENDUM), name).toBe(name.startsWith("pass-delivery--"));
     expect(prBuild("pr", PASS_ADDENDA)).toEqual(

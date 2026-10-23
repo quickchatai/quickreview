@@ -57,8 +57,8 @@
 //     either guide unless `max_severity` raises the lens's ceiling.
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
-import type { ModelsConfig, ReviewEffort } from "./config.js";
-import { effortLevel, normalizeEffort, withThinking } from "./config.js";
+import type { ModelsConfig, ReviewEffort } from "./reviewconfig.js";
+import { effortLevel, normalizeEffort, withThinking } from "./reviewconfig.js";
 import {
   passTierModels,
   sweepLightVariants,

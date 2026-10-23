@@ -38,7 +38,7 @@ import { FINDING_STATES } from "../src/setup/findings.js";
 import { join } from "node:path";
 import { textResult as text, refusedResult as refused, type QcrTool } from "./pi-tool.js";
 import { sandboxRoot } from "../src/config.js";
-import { stateHome } from "../src/install.js";
+import { homeProfileLookup, stateHome } from "../src/install.js";
 import { scanCasesForEnv } from "../src/engine/auth.js";
 import { piCaseRunner } from "../src/setup/caserunner.js";
 import type { CaseRunner, SetupEngine } from "../src/setup/engine.js";
@@ -1196,7 +1196,7 @@ export function buildScan(
       if (!loaded.ok) return loaded;
       const cfg = { ...loaded.cfg, scan: { ...loaded.cfg.scan, depth: settings.scan.depth } };
       try {
-        buildScanAgents(root, agentsDir, cfg, { env });
+        buildScanAgents(root, agentsDir, cfg, homeProfileLookup(env));
         return { ok: true };
       } catch (err) {
         return { ok: false, errors: [err instanceof Error ? err.message : String(err)] };

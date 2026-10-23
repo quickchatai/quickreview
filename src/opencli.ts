@@ -511,7 +511,7 @@ export async function runOpen(
 export async function cmdOpen(rest: string[], json: boolean): Promise<number> {
   const { sandboxRoot, loadConfig } = await import("./config.js");
   const { stateHome } = await import("./install.js");
-  const { contextFor } = await import("./engine/context.js");
+  const { contextFor } = await import("./reviewcontext.js");
   const { prepareHostRun } = await import("./hostroute.js");
   const { homedir } = await import("node:os");
   const { spawn } = await import("node:child_process");

@@ -18,6 +18,7 @@ import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig, REVIEW_DEFAULTS } from "./config.js";
 import { findingsRecordPath } from "./findingsrecord.js";
+import { homeProfileLookup } from "./install.js";
 import { applyProfilePosting } from "./postingpolicy.js";
 import { loadProfilePosting } from "./profiles.js";
 import {
@@ -89,7 +90,10 @@ export function renderConfig(
     review = { dedup_merge: loaded.review.dedup_merge };
     // The profile's `[posting]` policy, overlaid exactly as the daemon does
     // (wire.ts buildParts) — so this route enforces the cut the bench does.
-    posting = applyProfilePosting(loaded, load.profilePosting(root, loaded.review.profile)).posting;
+    posting = applyProfilePosting(
+      loaded,
+      load.profilePosting(root, loaded.review.profile, homeProfileLookup()),
+    ).posting;
   } catch (err) {
     unread = err instanceof Error ? err.message : String(err);
   }

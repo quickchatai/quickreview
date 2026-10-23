@@ -31,7 +31,7 @@ import {
   buildAgents,
   type PassAddendum,
 } from "../src/include.js";
-import { configHome, type InstallEnv } from "../src/install.js";
+import { configHome, homeProfileLookup, type InstallEnv } from "../src/install.js";
 import type { MemoryEntry, MemoryOp, MemoryStore, MemoryWriteResult } from "../src/memory/store.js";
 import { stateHomeFs } from "../src/setup/adapters.js";
 import type { CaseOutcome, SinkResult, TrackerSink, TrackerTicket } from "../src/setup/engine.js";
@@ -115,7 +115,7 @@ describe("the skeptic addendum is a scan-mode registry entry for the validator a
 
   it("the scan build composes it into EVERY tier's validator (the skeptic runs at the lens's tier), before the anchor rule", () => {
     const out = join(dir, "scan-agents");
-    buildScanAgents(sandbox, out, fixture, { env });
+    buildScanAgents(sandbox, out, fixture, homeProfileLookup(env));
     const agents = built(out);
     const validators = [...agents.keys()].filter((n) => n.startsWith(`${VALIDATE_PASS}--`)).sort();
     expect(validators).toEqual([
@@ -190,7 +190,7 @@ describe("the skeptic addendum is a scan-mode registry entry for the validator a
 
   it("the scan build's validator body carries the tightened rules", () => {
     const out = join(dir, "scan-agents-tight");
-    buildScanAgents(sandbox, out, fixture, { env });
+    buildScanAgents(sandbox, out, fixture, homeProfileLookup(env));
     const body = built(out).get(`${VALIDATE_PASS}--${SCAN_DEFAULTS.tier}`)!;
     expect(body).toContain("If any link is missing, it is at most **likely**");
     expect(body).toContain("untraced: <the link>");
@@ -916,6 +916,6 @@ describe("the default is on in config, and a profile may switch it off", () => {
       /^\[review\]$/m,
       '[review]\nprofile = "quiet"',
     );
-    expect(scanConfig(sandbox, toml, { env }).scan.validator).toBe(false);
+    expect(scanConfig(sandbox, toml, homeProfileLookup(env)).scan.validator).toBe(false);
   });
 });

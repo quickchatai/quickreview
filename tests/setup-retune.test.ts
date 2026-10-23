@@ -21,7 +21,7 @@ import { parseConfig, type Config } from "../src/config.js";
 import { buildPassPlan } from "../src/dispatch.js";
 import { NONE_ECOSYSTEM } from "../src/ecosystem.js";
 import type { PrFileEntry } from "../src/github.js";
-import { configHome, type InstallEnv } from "../src/install.js";
+import { configHome, homeProfileLookup, type InstallEnv } from "../src/install.js";
 import { applyProfileTuning } from "../src/lenstuning.js";
 import { loadProfileLensTuning } from "../src/profiles.js";
 import { configHomeFs, notYetTrackerSink, stateHomeFs } from "../src/setup/adapters.js";
@@ -341,7 +341,7 @@ function refusal(r: RetuneResult | Refusal): string {
 function tuned(name: string): Config {
   const cfg = structuredClone(fixture);
   cfg.review.profile = name;
-  return applyProfileTuning(cfg, loadProfileLensTuning(sandbox, name, { env }));
+  return applyProfileTuning(cfg, loadProfileLensTuning(sandbox, name, homeProfileLookup(env)));
 }
 
 const file = (filename: string): PrFileEntry => ({

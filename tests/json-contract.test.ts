@@ -296,6 +296,7 @@ async function reviewJson(
     ecosystem: ctx.ecosystem,
     runtime: piCliRuntime({ bin: piBin }),
     runsDir: join(tmp, `runs-${Math.random().toString(36).slice(2)}`),
+    dryrunDir: join(tmp, `dryrun-${Math.random().toString(36).slice(2)}`),
     timeoutMs: 10 * 60_000,
   });
   expect(lines).toHaveLength(1);
@@ -379,6 +380,7 @@ describe("qcr review --json", () => {
       ecosystem: ctx.ecosystem,
       runtime: piCliRuntime({ bin: "false" }),
       runsDir: join(tmp, "runs-tojson"),
+      dryrunDir: join(tmp, "dryrun-tojson"),
       timeoutMs: 60_000,
     });
     const o = JSON.parse(lines.find((l) => l.startsWith("{"))!) as Json;
