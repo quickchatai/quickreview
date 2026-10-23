@@ -271,7 +271,7 @@ class SdkSession implements RuntimeSession {
     const tripped = budget.tripped;
     if (failure === null && this.providerError !== null) {
       failure = this.providerError;
-      appendFileSync(this.spec.stderrFile, `${failure}\n`);
+      appendFileSync(this.spec.stderrFile, `${String(failure)}\n`);
     }
     return {
       // No exit status in process: 0 when the turn ran to its end, null when it

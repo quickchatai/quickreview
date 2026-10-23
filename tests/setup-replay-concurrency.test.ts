@@ -18,12 +18,12 @@ vi.mock("../extensions/setup-replay.js", async (orig) => {
 import { createSetup } from "../extensions/setup.js";
 
 describe("createSetup replay concurrency", () => {
-  it("takes the replay cap from the injected env, not process.env", () => {
+  it("takes the replay cap from the injected env, not process.env", async () => {
     const prev = process.env.QCR_SUBAGENT_MAX_CONCURRENCY;
     process.env.QCR_SUBAGENT_MAX_CONCURRENCY = "2";
     try {
       const pi = { registerTool: () => {}, on: () => {} };
-      createSetup({
+      await createSetup({
         env: { ...process.env, QCR_SUBAGENT_MAX_CONCURRENCY: "7" },
         cwd: process.cwd(),
       })(pi as never);

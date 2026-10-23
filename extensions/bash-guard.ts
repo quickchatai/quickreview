@@ -1677,7 +1677,7 @@ function expandShellWord(w: string, env: SecretPathContext["env"]): string {
     XDG_CONFIG_HOME: (env.XDG_CONFIG_HOME ?? "").trim() || `${home}/.config`,
     QCR_INSTALL: (env.QCR_INSTALL ?? "").trim() || "default",
   };
-  let out = w.replace(
+  const out = w.replace(
     /\$\{?(HOME|XDG_CONFIG_HOME|QCR_INSTALL)\}?(?![A-Za-z0-9_])/g,
     (_m, n: string) => vars[n]!,
   );

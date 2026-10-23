@@ -379,7 +379,7 @@ function buildSide(deps: SidesDeps, name: SideName, src: SideSource, parsed: Con
         return readFileSync(join(outDir, `${agent}.md`), "utf8");
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-        throw new Error(`the built agent ${agent} cannot be read: ${clean(err)}`);
+        throw new Error(`the built agent ${agent} cannot be read: ${clean(err)}`, { cause: err });
       }
     },
   };

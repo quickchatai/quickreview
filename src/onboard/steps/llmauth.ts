@@ -181,7 +181,7 @@ export function readTomlString(text: string, section: string, key: string): stri
       // A basic string's escapes decode as readTomlKey decodes them.
       if (kv[5] === '"')
         return tomlScalarText(
-          line.slice(kv[1]!.length + kv[2]!.length + kv[3]!.length + kv[2]!.length + kv[4]!.length),
+          line.slice(kv[1]!.length + kv[2]!.length + kv[3].length + kv[2]!.length + kv[4]!.length),
         );
       return kvValue(kv);
     }

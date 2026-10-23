@@ -134,7 +134,7 @@ export async function sweepLiveTrees(o: LiveSweepOptions): Promise<LiveSweepResu
         } catch (err) {
           if (!(err instanceof ManifestUnreadable)) throw err;
           unreadable.add(Number(pr![1]));
-          res.manifest_errors[pr![1]!] = (err as Error).message;
+          res.manifest_errors[pr![1]!] = err.message;
         }
       }
       for (const f of expired) {
@@ -151,10 +151,10 @@ export async function sweepLiveTrees(o: LiveSweepOptions): Promise<LiveSweepResu
           // The identity is read again at the unlink: a file written to since the
           // inventory is no longer the bytes the archive holds.
           const out = await unlinkIfIdentity(f.path, {
-            dev: rec!.dev,
-            ino: rec!.ino,
-            bytes: rec!.bytes,
-            mtime_ms: rec!.mtime_ms,
+            dev: rec.dev,
+            ino: rec.ino,
+            bytes: rec.bytes,
+            mtime_ms: rec.mtime_ms,
           });
           if (out === "removed") {
             res.removed_files += 1;
