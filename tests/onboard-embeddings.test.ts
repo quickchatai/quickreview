@@ -98,6 +98,8 @@ describe("the local default", () => {
       /^local\/bge-small-en-v1\.5-f16 \(384 dims\) — memory embeds LOCALLY/,
     );
     expect(detailOf(r.checks, "embedder")).toMatch(/nothing but the model call/);
+    expect(detailOf(r.checks, "embedder")).toMatch(/inside the memory container/);
+    expect(embeddingsStep().explain).not.toMatch(/inside the daemon/);
     expect(detailOf(r.checks, "config.toml")).toMatch(/already said this/);
     expect(r.checks.find((c) => c.name === "embeddings-key")).toBeUndefined();
     expect(r.data).toMatchObject({
@@ -405,6 +407,10 @@ describe("keyFileCheck", () => {
     const junk = keyFileCheck(secretsDir, "openai_embeddings_api_key");
     expect(junk.ok).toBe(false);
     expect(junk.detail).toMatch(/does not look like an OpenAI key/);
+    for (const bad of ["sk-", "sk-has space"]) {
+      writeFileSync(join(secretsDir, "openai_embeddings_api_key"), bad);
+      expect(keyFileCheck(secretsDir, "openai_embeddings_api_key").ok).toBe(false);
+    }
     writeFileSync(join(secretsDir, "openai_embeddings_api_key"), "sk-real\n");
     expect(keyFileCheck(secretsDir, "openai_embeddings_api_key").ok).toBe(true);
     expect(existsSync(join(secretsDir, "openai_api_key"))).toBe(false);

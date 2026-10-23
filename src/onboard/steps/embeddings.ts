@@ -45,6 +45,7 @@ import {
   writeAtomic,
 } from "./compose.js";
 import { assertNoDryRunEdit, patchToml, tomlString, type TomlEdit } from "./configfill.js";
+import { validateOpenAiKey } from "./llmauth.js";
 import { stackTransportFor } from "./transport.js";
 import { vmInventoryStep } from "./inventory.js";
 import { vmDeployStep } from "./vmdeploy.js";
@@ -217,7 +218,7 @@ export function describeEmbedder(e: {
 }
 
 const LOCAL_SENTENCE =
-  "memory embeds LOCALLY, inside the daemon container — no memory text leaves the machine, and nothing but the model call does. " +
+  "memory embeds LOCALLY, inside the memory container — no memory text leaves the machine, and nothing but the model call does. " +
   "No key is needed and none is read";
 const HOSTED_SENTENCE =
   "memory embeds through OpenAI's hosted embeddings endpoint: EVERY memory entry's text, and every search query, is sent there. " +
@@ -227,7 +228,7 @@ const HOSTED_SENTENCE =
 export function keyFileCheck(secretsDir: string, keyFile: string): CheckResult {
   const path = join(secretsDir, keyFile);
   const value = readTextOrNull(path)?.trim() ?? "";
-  if (value.startsWith("sk-")) {
+  if (validateOpenAiKey(value)) {
     return {
       name: "embeddings-key",
       ok: true,
@@ -335,7 +336,9 @@ console.log(JSON.stringify({provider:dense?.provider,model:dense?.model,dimensio
       name: "embedder-runtime",
       ok: false,
       detail:
-        "the active embedder configuration is unreadable — its provider is unknown; restore daemon access before verifying delivery",
+        `the active embedder configuration is unreadable (exit ${result.code}${
+          result.stderr.trim() ? `: ${result.stderr.trim().slice(0, 200)}` : ""
+        }) — its provider is unknown; restore access to the memory container before verifying delivery`,
     };
   const matches =
     actual.provider === expected.provider &&
@@ -357,7 +360,7 @@ export function embeddingsStep(): OnboardingStep {
     title: "Memory embeddings: local by default",
     explain:
       "Decides where the memory engine computes its vectors. The shipped default is LOCAL: a small English embedding model " +
-      `(${LOCAL_EMBEDDING.model}, pinned in the image) served on loopback inside the daemon ` +
+      `(${LOCAL_EMBEDDING.model}, pinned in the image) served on loopback inside the memory ` +
       "container, so nothing but the model call ever leaves the machine — memory text included — and no key is needed. Calling this " +
       "step with no arguments keeps whatever the config already declares (the local default on a fresh install); moving an " +
       'installation back to local takes an explicit `provider: "local"`. The alternative is OpenAI\'s hosted embeddings (`provider: "openai"`): every memory ' +

@@ -562,7 +562,7 @@ export const ROUTE_QUESTION =
 export const KEY_QUESTION = `paste the OpenAI API key (it is written straight to the ${OPENAI_KEY_FILE} secrets file, 0600, never to a command line):`;
 
 export const EMBEDDINGS_NOTE =
-  "memory embeddings need nothing from this step: the memory engine embeds LOCALLY by default, inside the daemon " +
+  "memory embeddings need nothing from this step: the memory engine embeds LOCALLY by default, inside the memory " +
   "container, so no memory text leaves the machine on either route. openai_api_key is pi's model credential alone and " +
   "is never read for embeddings; a hosted embedder is a separate, explicit opt-in (the embeddings step, order 38) with " +
   "its own openai_embeddings_api_key file.";

@@ -157,6 +157,20 @@ describe("onboarding regression seams", () => {
       true,
     );
   });
+  it("an unreadable active embedder names the exit and stderr and does not blame daemon access", async () => {
+    const c = ctx();
+    c.adapters.runner = {
+      run: async (_cmd, args) => ({
+        code: args.includes("exec") ? 3 : 0,
+        stdout: args.includes("exec") ? "" : JSON.stringify([{ Service: "daemon", State: "running" }]),
+        stderr: args.includes("exec") ? "ENOENT ov.conf" : "",
+      }),
+    };
+    const report = await embeddingsStep().verify(c);
+    const detail = report.checks.find((x) => x.name === "embedder-runtime")?.detail ?? "";
+    expect(detail).toContain("exit 3: ENOENT ov.conf");
+    expect(detail).not.toContain("daemon access");
+  });
   it("reads the active embedder from the memory sidecar, which owns ov.conf", async () => {
     const c = ctx();
     const execs: string[][] = [];
