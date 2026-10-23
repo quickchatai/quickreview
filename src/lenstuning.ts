@@ -67,7 +67,7 @@ import {
   type PassAddendum,
 } from "./include.js";
 import { SEVERITIES, type Severity } from "./severity.js";
-import { higherTier, PASS_TIER_ORDER, type PassTier } from "./types.js";
+import { flooredToMin, PASS_TIER_ORDER, type PassTier } from "./types.js";
 
 /** A style guide a profile points `pass-style` at. */
 export interface ProfileStyleGuide {
@@ -258,8 +258,7 @@ export function flooredTier(
   lens: string,
   tier: PassTier,
 ): PassTier {
-  const floor = lenses?.[lens]?.min_tier;
-  return floor ? higherTier(tier, floor) : tier;
+  return flooredToMin(tier, lenses?.[lens]?.min_tier);
 }
 
 /**

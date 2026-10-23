@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { KILL_WORDS } from "../src/findingsrecord.js";
 import {
   ALLOWED_COMMANDS_CLAUSE,
   EXECUTION_POLICY_ADDENDUM,
@@ -821,6 +822,11 @@ describe("the built pass contract", () => {
     expect(text).toContain("reachability: routine | plausible | contrived");
     expect(text).toContain("**never a kill reason on its own**");
     expect(text).toContain("do not let a `routine` P0/P1 be talked down");
+  });
+
+  it("lists every recorded kill word in the closed kill vocabulary", () => {
+    const validate = composeAddendum(VALIDATE_PASS);
+    for (const word of KILL_WORDS) expect(validate, word).toContain(`- \`${word}\` — `);
   });
 
   // The closed kill vocabulary must reach every built validator variant (the

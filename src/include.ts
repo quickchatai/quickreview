@@ -12,7 +12,8 @@
 //  - includes may nest; a cycle throws.
 //  - a missing include throws (never silently emits the literal directive).
 //  - frontmatter passes through byte-for-byte, except the `name:`/`model:`/
-//    `thinking:` fields the tier fan-out rewrites.
+//    `thinking:` fields the tier fan-out rewrites and the `tools:` line the
+//    build normalizes (spawning tools stripped, memory tools set).
 //
 // Tier fan-out: each seeded pass builds into per-tier variant files
 // `<pass>--<tier>.md`. Risk passes (config models.risk_passes) build only the
@@ -23,6 +24,7 @@
 // suffix); `thinking:` is still rewritten for human accuracy. The
 // addendum registry (`PASS_ADDENDA`, lens-keyed) is composed onto every BUILT
 // body in registry order — seeds untouched.
+import { LENS_TOOL, LENS_WAVE_TOOL, LEGACY_LENS_TOOLS } from "./lensresult.js";
 import { stripModelDocs } from "./promptdoc.js";
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, resolve, join } from "node:path";
@@ -35,7 +37,7 @@ import {
   type MemoryDelivery,
 } from "./config.js";
 import { SCAN_DEEP_LENSES } from "./passes.js";
-import { higherTier, PASS_TIER_ORDER, tiersAtOrAbove } from "./types.js";
+import { flooredToMin, PASS_TIER_ORDER, tiersAtOrAbove } from "./types.js";
 import type { PassTier } from "./types.js";
 import type { EcosystemName } from "./ecosystem.js";
 import type { LensTuningMap } from "./lenstuning.js";
@@ -214,11 +216,11 @@ export function applyThinkingOverride(frontmatter: string, thinking: string): st
  * scheduler of agents, so a nested fan-out is a topology violation, not a
  * capability. */
 const AGENT_SPAWN_TOOLS = new Set([
-  "subagent",
+  // The canonical lens launchers (`lensresult.ts`): never in a pass's list.
+  LENS_TOOL,
+  LENS_WAVE_TOOL,
+  ...LEGACY_LENS_TOOLS,
   "subagents",
-  "launch_plan", // launches the round's lens task files
-  "lens", // the engine routes' tools (D3): never in a pass's list
-  "lens_wave",
   "task",
   "agent",
   "agents",
@@ -563,7 +565,7 @@ const FINDING_SELF_SUFFICIENCY_VALIDATE_ADDENDUM =
 // unchanged. The counterevidence hunt stops a validator from SURVIVE-ing
 // everything untouched.
 const VALIDATE_KILL_VOCABULARY_ADDENDUM =
-  "\n## Kill and downgrade reasons — a closed vocabulary (sandbox rule)\nEvery kill reason comes from this closed set — never a free-text phrase, never a stretched word:\n\n- `refuted` — you found counterevidence by READING and it contradicts the claim; cite it (file:line or the command and what it showed) in the kill-log line.\n- `unverifiable` — the claim **cannot be verified by reading** the diff, the worktree, or CI output. If a grep or a file-open could settle it, you MUST do the read — \"I didn't check\" is not `unverifiable`. A claim one read could settle is never `unverifiable`: after the read it is either `refuted` (the read contradicts it) or it survives.\n- `bad-anchor` — the evidence is real but the `path:line` is wrong and the claim depends on the location. Your step 3 comes first: fix the anchor, or strip to a body-only finding, when the finding itself is sound; kill as `bad-anchor` only when the misplacement is the defect.\n- `duplicate` — the same defect as another finding this round, differently phrased; name the surviving finding it merges into.\n- `out-of-scope` — the finding is not about this PR's change or its blast radius (e.g. pre-existing code no changed line touches or depends on, or review of the review process itself).\n- `settled:<thread-id>` — re-raises a settled thread (your step 2, unchanged).\n- `nit-out-of-delta` — a new nit-class candidate outside the current delta while a NIT SCOPE block is armed (unchanged from the nit-scope rule above).\n- `below-bar` — true but beneath posting: too minor to clear the bar even as a `[nit]`. Severity honesty — use this word rather than inflating `unverifiable` or `out-of-scope` to cover it.\n- `nit-no-request` — a nit-class candidate that asks for no change. Nit-class only.\n- `self-narration` — the candidate's subject is one of the review's own earlier findings rather than the code.\n\n**Downgrades are not kills and carry their own discipline.** A demotion or adjustment (`security-demoted`, `intent-over-cap`, `design-over-cap`, `inflated`, `understated`, `overreachable`, `understated-reach`, `ask-human-unnamed-defect`, `tag-outside-grammar`) must name the axis moved — **severity**, **confidence**, or **reachability** — and say in one clause WHY that axis moved (e.g. `inflated — severity P1→P2: the error path logs and continues, no data loss`). An axis change without a why is not auditable and teaches the critic nothing.\n\n**Hunt counterevidence before SURVIVE.** For every `P0`–`P2` candidate, actively search the worktree for what would make the claim false — the guard clause upstream, the caller that already checks, the config default, the test that pins the behaviour — before you let it survive. Failing to refute is not the same as confirming: a validator that SURVIVEs everything untouched is not validating. If the hunt finds the counterevidence, the kill is `refuted` with the citation; if it finds nothing, say what you looked for.\n";
+  "\n## Kill and downgrade reasons — a closed vocabulary (sandbox rule)\nEvery kill reason comes from this closed set — never a free-text phrase, never a stretched word:\n\n- `refuted` — you found counterevidence by READING and it contradicts the claim; cite it (file:line or the command and what it showed) in the kill-log line.\n- `unverifiable` — the claim **cannot be verified by reading** the diff, the worktree, or CI output. If a grep or a file-open could settle it, you MUST do the read — \"I didn't check\" is not `unverifiable`. A claim one read could settle is never `unverifiable`: after the read it is either `refuted` (the read contradicts it) or it survives.\n- `bad-anchor` — the evidence is real but the `path:line` is wrong and the claim depends on the location. Your step 3 comes first: fix the anchor, or strip to a body-only finding, when the finding itself is sound; kill as `bad-anchor` only when the misplacement is the defect.\n- `duplicate` — the same defect as another finding this round, differently phrased; name the surviving finding it merges into.\n- `out-of-scope` — the finding is not about this PR's change or its blast radius (e.g. pre-existing code no changed line touches or depends on, or review of the review process itself).\n- `settled:<thread-id>` — re-raises a settled thread (your step 2, unchanged).\n- `nit-out-of-delta` — a new nit-class candidate outside the current delta while a NIT SCOPE block is armed (unchanged from the nit-scope rule above).\n- `below-bar` — true but beneath posting: too minor to clear the bar even as a `[nit]`. Severity honesty — use this word rather than inflating `unverifiable` or `out-of-scope` to cover it.\n- `nit-no-request` — a nit-class candidate that asks for no change. Nit-class only.\n- `self-narration` — the candidate's subject is one of the review's own earlier findings rather than the code.\n- `style-not-in-guide` — a style complaint from any lens but `pass-style` that the repo has no written guide or CI-enforced rule for (taste); a rule a CI job enforces is a build defect, never this reason.\n\n**Downgrades are not kills and carry their own discipline.** A demotion or adjustment (`security-demoted`, `intent-over-cap`, `design-over-cap`, `inflated`, `understated`, `overreachable`, `understated-reach`, `ask-human-unnamed-defect`, `tag-outside-grammar`) must name the axis moved — **severity**, **confidence**, or **reachability** — and say in one clause WHY that axis moved (e.g. `inflated — severity P1→P2: the error path logs and continues, no data loss`). An axis change without a why is not auditable and teaches the critic nothing.\n\n**Hunt counterevidence before SURVIVE.** For every `P0`–`P2` candidate, actively search the worktree for what would make the claim false — the guard clause upstream, the caller that already checks, the config default, the test that pins the behaviour — before you let it survive. Failing to refute is not the same as confirming: a validator that SURVIVEs everything untouched is not validating. If the hunt finds the counterevidence, the kill is `refuted` with the citation; if it finds nothing, say what you looked for.\n";
 
 // A validity veto is a mark, not a deletion. The validator runs at its own
 // tier, not the round's hottest lens tier, so it must not be able to make a
@@ -1987,8 +1989,7 @@ export function sweepLightVariants(
 /** `flooredTier` (src/lenstuning.ts), which this module cannot import at
  * runtime: the profile's `min_tier` for `pass` raises `tier`, never lowers it. */
 function floorTier(lenses: LensTuningMap | undefined, pass: string, tier: PassTier): PassTier {
-  const floor = lenses?.[pass]?.min_tier;
-  return floor ? higherTier(tier, floor) : tier;
+  return flooredToMin(tier, lenses?.[pass]?.min_tier);
 }
 
 /** The tiers a given pass fans out into.
