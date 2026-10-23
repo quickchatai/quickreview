@@ -32,7 +32,7 @@ import { dirname, join } from "node:path";
 import type { ControlCommand } from "./commands.js";
 import { DEFAULT_ANSWER_CAP_USD, DEFAULT_ANSWER_TIMEOUT_S, type Config } from "./config.js";
 import type { FileOutcome } from "./improvements.js";
-import { operatorMessagePayload } from "./operatormessage.js";
+import { MAX_REPLY_CHARS, operatorMessagePayload } from "./operatormessage.js";
 import type { StateStore } from "./state.js";
 import {
   WorkerLaunchError,
@@ -75,8 +75,6 @@ export function answerCapsOf(
   };
 }
 
-/** The longest reply the result file keeps, in characters. */
-export const MAX_REPLY_CHARS = 100_000;
 
 /** `<root>/state/commands/<id>/result.json`: the command's result file. */
 export const answerResultFile = (root: string, commandId: string): string =>

@@ -10,6 +10,10 @@
 //
 // Neutral by fence: shapes and two small functions, no engine, no pi, no store.
 
+/** The longest reply kept, in characters: the answer's result file and the worker's
+ * `done` event (the wire line is 1 MiB). */
+export const MAX_REPLY_CHARS = 100_000;
+
 const HEADER_RE = /^<!-- qcr-operator-message may_post=(0|1) -->\n/;
 
 /** What the session is told when the operator did not let it post. */
