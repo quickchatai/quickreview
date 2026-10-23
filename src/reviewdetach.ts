@@ -43,7 +43,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { stopLiveSessions } from "./engine/livesessions.js";
 import { HEARTBEAT_FILE, readBeat, startHeartbeat } from "./heartbeat.js";
 import { originRepo, resolveBranch, resolveUncommitted } from "./localreview.js";
@@ -131,7 +131,15 @@ export function runIsAlive(
       deps.now() - run.started_at < CONTAINER_START_GRACE_MS
     );
   }
-  return run.pid === null || deps.alive(run.pid);
+  if (run.pid === null)
+    // claimed, and the launch has not recorded a pid yet; a starter that died
+    // in between leaves it so for good
+    return (
+      run.started_at === undefined ||
+      deps.now === undefined ||
+      deps.now() - run.started_at < CONTAINER_START_GRACE_MS
+    );
+  return deps.alive(run.pid);
 }
 
 type Liveness = Pick<DetachDeps, "alive" | "liveContainers" | "now">;
@@ -471,11 +479,14 @@ function start(
   mkdirSync(dirname(lock), { recursive: true });
   for (let attempt = 0; ; attempt++) {
     try {
-      writeFileSync(lock, JSON.stringify({ run_id: runId }), { flag: "wx" });
+      writeFileSync(lock, JSON.stringify({ run_id: runId, at: deps.now() }), { flag: "wx" });
       break;
     } catch {
-      const held = readJson<{ run_id: string }>(lock);
+      const held = readJson<{ run_id: string; at?: number }>(lock);
       const o = held ? observe(deps.home, held.run_id, deps) : null;
+      // a starter that has the lock and has not yet published its run
+      if (o === null && held?.at !== undefined && deps.now() - held.at < CONTAINER_START_GRACE_MS)
+        return refuse(["another start of this review is in progress; try again"]);
       if (o !== null && o.state === "running")
         return refuse([
           `a review of ${id.label} is already running (run ${o.run.run_id}): ` +
@@ -631,7 +642,10 @@ export async function runDetachedChild(o: {
     proc.off("SIGTERM", onSignal);
   }
   writeFileSync(join(o.dir, "exit.json"), JSON.stringify({ code }));
-  rmSync(lockPath(dirname(dirname(o.dir)), o.key), { force: true });
+  // only this run's own claim: a stop frees the lock for a newer run
+  const lock = lockPath(dirname(dirname(o.dir)), o.key);
+  if (readJson<{ run_id?: string }>(lock)?.run_id === basename(o.dir))
+    rmSync(lock, { force: true });
 }
 
 // ---- the watchdog ----------------------------------------------------------------

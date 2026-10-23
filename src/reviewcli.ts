@@ -362,6 +362,7 @@ function rawWithout(record: unknown, posted: readonly PostedFinding[]): unknown 
       key: str(e["id"]) ?? str(e["key"]),
       path: str(e["path"]),
       title: str(e["title"]),
+      line: typeof e["line"] === "number" ? e["line"] : null,
     })),
     posted,
   ).fresh.map((x) => x.e);
@@ -1133,7 +1134,7 @@ async function runReview(
     // a review body to repeat.
     const res: PostResult = !id.ok
       ? id
-      : skipped.skipped > 0 && review.comments.length === 0
+      : skipped.skipped > 0 && review.comments.length === 0 && !review.bodyFindings
         ? { ok: true, posted: 0, skipped: skipped.skipped, url: null }
         : await postReviewToPr({
             repo: t.repo,

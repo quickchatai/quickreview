@@ -37,6 +37,8 @@ export interface PostReview {
   event: typeof POST_EVENT;
   body: string;
   comments: RenderedComment[];
+  /** Posted findings the body carries instead of an inline comment. */
+  bodyFindings?: number;
 }
 
 /** Add the visible marker above the hidden finding marker (or at the end). */
@@ -74,6 +76,7 @@ export function assemblePostReview(
     event: POST_EVENT,
     body: mark(rendered.body, visible),
     comments: rendered.comments.map((c) => ({ ...c, body: mark(c.body, visible) })),
+    bodyFindings: rendered.in_body,
   };
 }
 
@@ -164,9 +167,37 @@ const sameFinding = (c: RenderedComment, e: ExistingComment): boolean => {
   const mc = parseFindingMarker(c.body);
   const me = parseFindingMarker(e.body);
   const eLine = e.line ?? e.original_line ?? null;
-  if (mc && me && mc.key === me.key && eLine === c.line) return true;
+  // A finding key is only unique within its round.
+  if (mc && me && mc.round_no === me.round_no && mc.key === me.key && eLine === c.line) return true;
   return textOf(c.body) === textOf(e.body);
 };
+
+/** Whether a review with this body is already on the PR. Best-effort: a read
+ * that fails answers no. */
+async function bodyAlreadyPosted(
+  fetchFn: typeof fetch,
+  api: string,
+  headers: Record<string, string>,
+  req: PostRequest,
+): Promise<boolean> {
+  const mine = textOf(req.review.body);
+  try {
+    for (let page = 1; page <= 20; page++) {
+      const res = await fetchFn(
+        `${api}/repos/${req.repo}/pulls/${req.number}/reviews?per_page=100&page=${page}`,
+        { headers, signal: AbortSignal.timeout(60_000) },
+      );
+      if (!res.ok) return false;
+      const list = (await res.json()) as Array<{ body?: unknown }>;
+      if (!Array.isArray(list)) return false;
+      if (list.some((r) => typeof r.body === "string" && textOf(r.body) === mine)) return true;
+      if (list.length < 100) break;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
 
 export async function postReviewToPr(req: PostRequest): Promise<PostResult> {
   // The guard the whole route hangs on: a payload that is not a plain comment
@@ -204,8 +235,12 @@ export async function postReviewToPr(req: PostRequest): Promise<PostResult> {
   }
   const fresh = req.review.comments.filter((c) => !existing.some((e) => sameFinding(c, e)));
   const skipped = req.review.comments.length - fresh.length;
-  // Everything was already there: a second review would only repeat the body.
-  if (fresh.length === 0 && req.review.comments.length > 0)
+  // Everything was already there: a second review would only repeat the body,
+  // unless the body carries findings of its own.
+  if (fresh.length === 0 && req.review.comments.length > 0 && !req.review.bodyFindings)
+    return { ok: true, posted: 0, skipped, url: null };
+  // Nothing inline to post: the same body already on the PR is the same review.
+  if (fresh.length === 0 && (await bodyAlreadyPosted(fetchFn, api, headers, req)))
     return { ok: true, posted: 0, skipped, url: null };
   const intent: MutationIntent = {
     kind: "create_review",
