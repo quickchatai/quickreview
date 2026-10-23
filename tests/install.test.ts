@@ -1348,7 +1348,8 @@ describe("migrate repoints the compose .env", () => {
 describe("nothing but migrate (and a not-found's hint) touches the old places", () => {
   // No fallback reads remain: the locator's old-place
   // helpers are called from exactly the modules that move or name what is
-  // stranded — the locator itself (install.ts, homes.ts), `qcr install`
+  // stranded — the locator itself (install.ts, homes.ts, and the core's
+  // homes.ts it wraps), `qcr install`
   // (cli.ts), the loaders' not-found (config.ts, profiles.ts, homes.ts's
   // one-shot loader) and the companion column's missing-keys note — never
   // from a reader deciding where to read.
@@ -1358,6 +1359,7 @@ describe("nothing but migrate (and a not-found's hint) touches the old places", 
   const ALLOWED = new Set([
     "src/install.ts",
     "src/homes.ts",
+    `${CORE_PACKAGE}/src/homes.ts`,
     "src/cli.ts",
     "src/config.ts",
     `${CORE_PACKAGE}/src/profiles.ts`,
@@ -1399,10 +1401,15 @@ describe("nothing but migrate (and a not-found's hint) touches the old places", 
 
 describe("no reader builds the legacy secrets path itself", () => {
   // Every secrets reader resolves through the locator. Only the locator's
-  // migrate half and its spelling check (src/homes.ts) and the shell mirror's
-  // spelling check name the legacy dir.
+  // migrate half and its spelling check (the core's homes.ts, which
+  // src/homes.ts wraps) and the shell mirror's spelling check name the legacy dir.
   const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
-  const ALLOWED = new Set(["src/install.ts", "src/homes.ts", "scripts/install-locator.sh"]);
+  const ALLOWED = new Set([
+    "src/install.ts",
+    "src/homes.ts",
+    `${CORE_PACKAGE}/src/homes.ts`,
+    "scripts/install-locator.sh",
+  ]);
   const SPELLS = /quickreview-bot/;
 
   function* files(rel: string): Generator<string> {

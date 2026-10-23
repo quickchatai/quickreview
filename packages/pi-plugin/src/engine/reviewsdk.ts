@@ -13,8 +13,9 @@
 //                route) is given to the runtime in memory.
 //   settings     the dir's settings.json supplies what the process route's pi
 //                reads from it: the durable retry and the HTTP idle timeout.
-//   dispatcher   pi's HTTP dispatcher is installed: `qcr review` owns its
-//                process.
+//   dispatcher   pi's HTTP dispatcher is installed when the route owns its
+//                process (`qcr review`); inside a running pi (the plugin's
+//                /review, `hostPi`) pi's own is reused.
 //   lens tool    the engine's own (`lens`, `lens_wave`: engineLensTools,
 //                packages/pi-plugin/src/engine/lens/engine-tools.ts), through the `lens` option, or,
 //                with the `engine` option, over a runner this module builds on
@@ -50,8 +51,9 @@ import { BASH_ENV_ALLOW, reviewerStub, roundSdkExtras, type RoundLensTools } fro
 import { sdkRuntime, type SessionExtras } from "./sdkruntime.js";
 
 export interface ReviewSdkOptions {
-  /** Builds the host. Omitted: a PiHost that owns this process (installs pi's
-   * HTTP dispatcher) over the run's private agent dir. */
+  /** Builds the host. Omitted: a PiHost over the run's private agent dir, which
+   * owns this process (installs pi's HTTP dispatcher) unless `ownsProcess` or
+   * `hostPi` says otherwise. */
   makeHost?: (o: PiHostOptions) => Promise<PiHost>;
   /** The round's lens tool, given the spec it serves and the host its passes
    * run on. Omitted: the `engine` option's (or `extras`'). */
@@ -84,6 +86,20 @@ export interface ReviewSdkOptions {
   /** The user's home, resolved by the host: the tool fence keeps its `.pi` out
    * and expands a tool's `~` against it (PiHostOptions.homeDir). */
   homeDir?: string;
+  /** The route owns this process (`qcr review`, the bench): PiHost may install
+   * pi's HTTP dispatcher. Default true. */
+  ownsProcess?: boolean;
+  /** The runtime is built by an extension of the running pi (the pi plugin's
+   * /review): PiHostOptions.hostPi. Implies `ownsProcess: false`. */
+  hostPi?: boolean;
+  /** The stretch at the end of a login's life the run refuses on top of its
+   * time budget (`checkAuth`'s margin). Default pi's own refresh margin. A
+   * host whose pi refreshed the login for this run's whole window just before
+   * it (the plugin's borrowed login) passes 0. */
+  authMarginMs?: number;
+  /** Paths the tool fence keeps out beside the defaults: where the host's own
+   * login lives when no env names it (the plugin's host pi agent dir). */
+  fenceDirs?: readonly string[];
 }
 
 /** The review SDK runtime: a runtime, carrying the engine route when it has one.
@@ -148,17 +164,24 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRunti
         const auth: EngineAuth = engineCredentials({
           srcDir: agentDir,
           needMs: spec.limits.timeoutMs,
+          ...(options.authMarginMs !== undefined ? { marginMs: options.authMarginMs } : {}),
         });
         const ids = toolIdsOf(procEnv);
+        const hostPi = options.hostPi === true;
         const hostOptions: PiHostOptions = {
           agentDir,
-          ownsProcess: true,
+          ownsProcess: !hostPi && options.ownsProcess !== false,
+          ...(hostPi ? { hostPi: true } : {}),
           ...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
           // The model's bash and every lens session's, as the tool uid.
           ...(ids !== null && !("refused" in ids) ? { toolUid: ids } : {}),
           // The round's agent dir is a copy: the login it was copied from (the
           // wrapper's /qcr-login, group-readable by this uid) is fenced too.
-          fenceDirs: [...loginSourceDirs(procEnv), ...credentialPaths(procEnv, spec.env)],
+          fenceDirs: [
+            ...loginSourceDirs(procEnv),
+            ...credentialPaths(procEnv, spec.env),
+            ...(options.fenceDirs ?? []),
+          ],
           credentials: auth.credentials,
           settings: agentDirSettings(agentDir),
           configureModels: async (runtime) => {

@@ -49,9 +49,9 @@ describe("onboardingPiArgv", () => {
 });
 
 describe("piPinFromPackageJson", () => {
-  it("reads the pin mirror from the package.json pi block", () => {
+  it("reads the pin mirror from the package.json qcrPi block", () => {
     const pin = piPinFromPackageJson(ROOT, () =>
-      JSON.stringify({ pi: { package: "p", version: "1.2.3" } }),
+      JSON.stringify({ qcrPi: { package: "p", version: "1.2.3" } }),
     );
     expect(pin).toEqual({ package: "p", version: "1.2.3" });
   });
@@ -59,7 +59,9 @@ describe("piPinFromPackageJson", () => {
   it("returns null (never throws) on garbage or a missing block", () => {
     expect(piPinFromPackageJson(ROOT, () => "not json")).toBeNull();
     expect(piPinFromPackageJson(ROOT, () => JSON.stringify({}))).toBeNull();
-    expect(piPinFromPackageJson(ROOT, () => JSON.stringify({ pi: { package: "p" } }))).toBeNull();
+    expect(
+      piPinFromPackageJson(ROOT, () => JSON.stringify({ qcrPi: { package: "p" } })),
+    ).toBeNull();
   });
 });
 

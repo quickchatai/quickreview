@@ -70,8 +70,11 @@ describe("cluster_findings on both routes", () => {
     );
   });
   it("the bench session loads it (round.ts session spec)", () => {
-    expect(readFileSync(join(root, "packages/pi-plugin/src/engine/round.ts"), "utf8")).toMatch(
-      /extensions: \[[^\]]*join\(root, "packages", "pi-plugin", "extensions", "finding-clusters\.ts"\)/,
+    // The core's own extension modules, by name (engine/extfiles.ts).
+    const round = readFileSync(join(root, "packages/pi-plugin/src/engine/round.ts"), "utf8");
+    expect(round).toMatch(/ROUND_EXTENSIONS[^=]*=\s*\[[^\]]*"finding-clusters"/);
+    expect(round).toMatch(
+      /extensions: ROUND_EXTENSIONS\.map\(\(name\) => coreExtensionFile\(name\)\)/,
     );
   });
   it("answers groups for the validator, and reports malformed input instead of throwing", async () => {

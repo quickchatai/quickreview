@@ -193,6 +193,9 @@ export interface DaemonDeps {
   listen?: boolean;
   /** Latest digest headline for status.json (src/digest.ts). */
   digestHeadline?: () => string | undefined;
+  /** Where the daemon runs (src/runhost.ts): its warning is logged at start
+   * and the block rides status.json `run_host`. Absent ⇒ no key. */
+  runHost?: import("./runhost.js").RunHostStatus;
   /** pi's session-JSONL root(s) for the passive auth-failure watch
    * (packages/pi-plugin/src/authwatch.ts) — production passes `piAuthWatchDirs` (wire.ts).
    * Absent (tests, stubs) ⇒ the watch never runs. */
@@ -1094,6 +1097,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
               ...(job.deferred_at ? { deferred_since: job.deferred_at } : {}),
             };
         }
+      if (deps.runHost) snapshot.run_host = deps.runHost;
       writeStatusJson(stateDir, snapshot);
     } catch (err) {
       log("status.json write failed", err);
@@ -1122,6 +1126,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
 
     async start(): Promise<void> {
       log(`starting — ${cfg.dry_run ? "DRY-RUN" : "LIVE"} — repo ${cfg.github.repo}`);
+      if (deps.runHost?.warning) log(`WARNING: ${deps.runHost.warning}`);
       store.logEvent("daemon_start", null, { dry_run: cfg.dry_run, port: cfg.server.port });
       // First, so a boot that holds the loop is measured too.
       load.start();

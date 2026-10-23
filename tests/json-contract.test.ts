@@ -194,12 +194,12 @@ describe("qcr version", () => {
     expectContract(versionSchema, "version", VERSION_SCHEMA_VERSION, v as unknown as Json);
   });
 
-  it("falls back to package.json's pi block, and reads a stamped image's BUILD_SHA", () => {
+  it("falls back to package.json's qcrPi block, and reads a stamped image's BUILD_SHA", () => {
     const root = join(tmp, "image");
     mkdirSync(root);
     writeFileSync(
       join(root, "package.json"),
-      JSON.stringify({ version: "1.2.3", pi: { package: "p", version: "4.5.6" } }),
+      JSON.stringify({ version: "1.2.3", qcrPi: { package: "p", version: "4.5.6" } }),
     );
     expect(versionInfo(root)).toMatchObject({
       image: { version: "1.2.3", build_sha: null },

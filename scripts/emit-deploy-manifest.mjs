@@ -9,7 +9,7 @@
 //
 // <dir> holds digests-release.json and digests-memory.json, each
 // {"repository", "index", "amd64", "arm64"}. The pins are read from the
-// checkout the images were built from (package.json's pi block, the memory
+// checkout the images were built from (package.json's qcrPi block, the memory
 // Dockerfile's ARGs, the daemon Dockerfile's qcr.runspec label).
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -32,7 +32,7 @@ export function readPins(dir = root) {
   const rs = /qcr\.runspec="(\d+)"/.exec(daemon);
   if (!rs) throw new Error("docker/Dockerfile has no qcr.runspec label");
   return {
-    pi: pkg.pi.version,
+    pi: pkg.qcrPi.version,
     openviking: dockerfileArg(mem, "OPENVIKING_VERSION"),
     llama_cpp_python: dockerfileArg(mem, "LLAMA_CPP_PYTHON_VERSION"),
     embedder_file: `${dockerfileArg(mem, "LOCAL_EMBEDDER_DIR")}/${dockerfileArg(mem, "LOCAL_EMBEDDER_MODEL")}.gguf`,

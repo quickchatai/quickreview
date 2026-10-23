@@ -59,6 +59,7 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { writeAtomic } from "./channelfs.js";
+import { loginInPi } from "./pilogin.js";
 import { appStamp } from "./appstamp.js";
 import { isInside } from "@quickchatai/pi-quickreview/src/pathinside.js";
 import type { ScanSandboxConfig } from "./config.js";
@@ -95,6 +96,8 @@ import {
   type DockerRunner,
   type MemoryWiring,
 } from "./tui/companion.js";
+
+export { loginInPi } from "./pilogin.js";
 
 /** What a launch answers: the run the driver recorded (as `qcr scan`'s
  * `DetachOutcome` carries it — `R` is its run record), its log and, from a
@@ -305,37 +308,6 @@ export interface ScanLoginRoute {
   route: "exec" | "run";
   argv: string[];
   say: string;
-}
-
-/** pi itself, with `/login` (or `/login <provider>`) typed and sent for the
- * user: pi runs in a fresh tmux session; once its input box is drawn (two
- * editor borders on screen) the keys go in, and again every 0.3 s until pi's
- * login menu shows — an Enter sent while pi still starts is lost, and a
- * `/login` left in the editor then only needs the Enter. After 30 s the
- * terminal attaches regardless, so every login pi offers is there and
- * quitting pi ends it. `pi` is the pi to start: the companion image's CLI on
- * its PATH by default; the release image's entrypoint passes its one pi,
- * node_modules/.bin/pi (src/picli.ts `piCliIn`). */
-export function loginInPi(provider?: string, pi: string = "pi"): string[] {
-  if (provider !== undefined && !/^[A-Za-z0-9._-]+$/.test(provider))
-    throw new Error(
-      `scan login: provider ${JSON.stringify(provider)} is not a plain provider name`,
-    );
-  if (!/^[A-Za-z0-9._/-]+$/.test(pi))
-    throw new Error(`scan login: pi ${JSON.stringify(pi)} is not a plain path`);
-  const keys = provider ? `/login ${provider}` : "/login";
-  return [
-    "sh",
-    "-c",
-    `s=qcr-login-$$; tmux new-session -d -s "$s" ${pi} || exit 1; i=0; ` +
-      `while [ $i -lt 100 ]; do p=$(tmux capture-pane -p -t "$s"); ` +
-      `case "$p" in *"Select authentication"*|*"Select provider"*) break;; esac; ` +
-      `if [ "$(printf '%s\\n' "$p" | grep -cF '──────────')" -ge 2 ]; then ` +
-      `if printf '%s\\n' "$p" | grep -qxF '${keys}'; then tmux send-keys -t "$s" Enter; ` +
-      `else tmux send-keys -t "$s" -l '${keys}'; tmux send-keys -t "$s" Enter; fi; fi; ` +
-      `sleep 0.3; i=$((i+1)); done; ` +
-      `exec tmux attach -t "$s"`,
-  ];
 }
 
 /** `qcr scan login` opens pi on the companion's pi home — the login every

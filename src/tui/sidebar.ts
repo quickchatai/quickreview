@@ -114,6 +114,12 @@ export interface SidebarHeader {
   day: string; // ops-day token, e.g. "2026-08-21"
   lastWake: string; // "3m ago" | "—"
   memory: "ok" | "degraded" | "off";
+  /** Why memory is off, said in place of `mem off` (e.g. "memory off (no
+   * Docker)"). */
+  memoryNote?: string;
+  /** The companion runs natively on the host, with no container around it
+   * (src/tui/nativecompanion.ts): the header says so in place of its name. */
+  unsandboxed?: boolean;
 }
 
 export interface SidebarView {
@@ -178,14 +184,16 @@ function headerRows(h: SidebarHeader, off: string | undefined): [string, string]
     off !== undefined
       ? `${MUTED}companion off${RESET}`
       : h.up
-        ? "companion"
+        ? h.unsandboxed
+          ? `companion ${WARN}unsandboxed${RESET}`
+          : "companion"
         : `${MUTED}down${RESET}`;
   const mem =
     h.memory === "ok"
       ? `${OK}mem ok${RESET}`
       : h.memory === "degraded"
         ? `${WARN}mem degraded${RESET}`
-        : `${MUTED}mem off${RESET}`;
+        : `${MUTED}${h.memoryNote ?? "mem off"}${RESET}`;
   const day = h.day.length > 0 ? `${SEP}${MUTED}${h.day}${RESET}` : "";
   const pi = h.up && !h.piUp ? `${SEP}${BAD}pi down${RESET}` : "";
   return [` ${dot} ${name}${day}${SEP}${mem}`, ` ${MUTED}last wake${RESET} ${h.lastWake}${pi}`];
@@ -488,6 +496,8 @@ export class CompanionSidebar {
         day: this.patch.day ?? "",
         lastWake: this.patch.lastWake ?? "—",
         memory: this.patch.memory ?? "off",
+        ...(this.patch.memoryNote !== undefined ? { memoryNote: this.patch.memoryNote } : {}),
+        ...(this.patch.unsandboxed ? { unsandboxed: true } : {}),
       },
       lines: this.lines,
       focused: this.focused,

@@ -164,14 +164,19 @@ describe("[T8] every src/ module (the app's and the core's) is reachable from a 
       // because the memory image's entrypoint (docker/memory/entrypoint.sh)
       // execs it out of dist/; `loginrefresh/main.ts` because the daemon
       // spawns it by path (src/loginrefresh/supervisor.ts); `botworker.ts`
-      // because the WorkerSupervisor (src/workersupervisor.ts) spawns it by path for each round.
+      // because the WorkerSupervisor (src/workersupervisor.ts) spawns it by path for each round;
+      // the pi plugin's entry because pi loads it by the path its package's
+      // `pi.extensions` names; `qcrbin.ts` because the package's bin
+      // (bin/qcr.js) imports it out of dist/.
       const roots = [
         "src/wire.ts",
         "src/cli.ts",
+        "src/qcrbin.ts",
         "src/bench/cli.ts",
         "src/openviking/sidecar-main.ts",
         "src/loginrefresh/main.ts",
         "src/botworker.ts",
+        "packages/pi-plugin/src/plugin/index.ts",
       ].map((p) => join(ROOT, p));
       for (const f of EXTENSION_DIRS.flatMap((d) => tsFiles(join(ROOT, d)))) {
         for (const p of sourceSpecifiers(ROOT, f, stripComments(readFileSync(f, "utf8")))) {

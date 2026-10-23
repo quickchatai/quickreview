@@ -33,21 +33,21 @@ import type { ProfilePlace } from "@quickchatai/pi-quickreview/src/profilelookup
 import type { PrCredentialDeps, PrFetchRequest } from "@quickchatai/pi-quickreview/src/prtarget.js";
 import {
   FALLBACK_DESTINATIONS,
+  loadDefaultDestinationsIn,
   parseDestinations,
+  planDestinations,
+  saveDefaultDestinationsIn,
   type Destination,
-  type DestinationChoice,
+  type DestinationMenuItem,
+  type DestinationPick,
 } from "@quickchatai/pi-quickreview/src/reviewdest.js";
 import type { OneShotResult } from "@quickchatai/pi-quickreview/src/oneshot.js";
 import type { RoundSpec } from "@quickchatai/pi-quickreview/src/engine/round.js";
 import { BUDGET_EXIT_CODE } from "@quickchatai/pi-quickreview/src/engine/budget.js";
 import { prepareHostRun } from "./hostroute.js";
 import type { Runtime } from "@quickchatai/pi-quickreview/src/engine/port.js";
-import { selectRuntime } from "@quickchatai/pi-quickreview/src/engine/select.js";
-import {
-  LensWave,
-  type EngineRoute,
-  type EngineRouteRuntime,
-} from "@quickchatai/pi-quickreview/src/engine/lens/wave.js";
+import type { EngineRouteRuntime } from "@quickchatai/pi-quickreview/src/engine/lens/wave.js";
+import { lazyReviewRuntime } from "@quickchatai/pi-quickreview/src/engine/reviewruntime.js";
 import { markSdkRoute } from "@quickchatai/pi-quickreview/src/engine/livesessions.js";
 import {
   REVIEW_SCHEMA_VERSION,
@@ -99,8 +99,9 @@ export function reviewHelp(): string {
     "                    this pi's in-process sessions, and the round starts from the /qcr-round command.\n                    Needs a terminal, posts nothing, and finished sessions stay openable (qcr open)",
     "",
     "Destinations: with none given, the repo's saved default is used; with none saved, an",
-    "interactive run asks and saves the answer for this repo (in the install's state home), and a run",
-    "with no terminal prints the terminal text plus JSON and never waits.",
+    'interactive run asks every time, and an answer marked "always" is kept as this repo\'s default',
+    "(in the install's state home), which skips the question from then on. A run with no terminal",
+    "(piped, --json, CI) prints the terminal text plus JSON and never waits.",
     "",
     "Posting (--to pr, or saved as the default) sends one review whose event is always",
     "COMMENT, never an approval or a change request. Every comment says it came from qcr",
@@ -258,9 +259,11 @@ export interface ReviewCliDeps {
   out: (line: string) => void;
   /** Ask a yes/no question of the person at the terminal. Null: nobody to ask. */
   confirm: ((question: string) => Promise<boolean>) | null;
-  /** Ask the person to pick one option. Absent: the session is not interactive,
-   * so the destination question is never asked. */
-  choose?: (question: string, options: DestinationChoice[]) => Promise<Destination>;
+  /** Ask the person where this run's result goes (the destination menu,
+   * packages/pi-plugin/src/reviewdest.ts `destinationMenu`); null: they
+   * declined. Absent: the session is not interactive, so the destination
+   * question is never asked. */
+  pick?: (question: string, menu: DestinationMenuItem[]) => Promise<DestinationPick | null>;
   /** The production tree (prompts/, extensions/, agents/). */
   root: string;
   /** Where profiles are looked up before the checkout's generic examples: the
@@ -384,13 +387,38 @@ export async function runReviewCli(
     return refuse(2, [
       "--debug-pi runs the round inside pi's interactive UI and needs a terminal (not --json, not a detached run)",
     ]);
+  const storeDir = deps.storeDir !== undefined ? deps.storeDir : reviewHome();
+  // Where the result goes (packages/pi-plugin/src/reviewdest.ts): the flags,
+  // else the repo's saved default, else the person is asked, every time, else
+  // it is printed. A preview starts nothing and a debug round posts nothing,
+  // so neither asks: they keep the flags alone.
+  let destinations: Destination[] = [...(json ? (["json"] as const) : []), ...(cmd.to ?? [])];
+  if (!cmd.preview && !cmd.debugPi) {
+    const plan = planDestinations({
+      explicit: [...(cmd.to ?? []), ...(cmd.out !== undefined ? (["file"] as const) : [])],
+      json,
+      interactive: deps.pick !== undefined,
+      saved: loadDefaultDestinationsIn(storeDir, deps.cwd),
+      target: { pr: cmd.pr !== undefined },
+      surface: "terminal",
+    });
+    if (plan.kind === "fixed") destinations = plan.destinations;
+    else {
+      const picked = await deps.pick!("Where should the review go?", plan.menu);
+      if (picked === null) return refuse(1, ["review cancelled: no destination was picked"]);
+      destinations = picked.destinations;
+      const say = deps.warn ?? ((l: string) => console.error(l));
+      if (picked.remember && saveDefaultDestinationsIn(storeDir, deps.cwd, destinations))
+        say("kept as this repo's default: pass --to to choose otherwise");
+    }
+  }
   const opts: ReviewOptions = {
     repoDir: deps.cwd,
     root: deps.root,
     agentDir: deps.agentDir,
     runsDir: deps.runsDir,
     dryrunDir: deps.dryrunDir,
-    storeDir: deps.storeDir !== undefined ? deps.storeDir : reviewHome(),
+    storeDir,
     config: deps.cfg,
     ecosystem: deps.ecosystem,
     ...(deps.profileHomes ? { profileHomes: deps.profileHomes } : {}),
@@ -400,7 +428,7 @@ export async function runReviewCli(
     prepareHost: prepareHostRun,
     ...(cmd.debugPi && deps.debugPi !== undefined ? { debugRound: deps.debugPi } : {}),
     ...(deps.memory !== undefined ? { memory: deps.memory } : {}),
-    destinations: [...(json ? (["json"] as const) : []), ...(cmd.to ?? [])],
+    destinations,
     ...(cmd.out !== undefined ? { reportFile: resolve(deps.cwd, cmd.out) } : {}),
     full: cmd.full,
     limits: {
@@ -413,7 +441,6 @@ export async function runReviewCli(
   };
   const io: ReviewIo = {
     confirm: deps.confirm,
-    ...(deps.choose ? { choose: deps.choose } : {}),
     // The preview and the memory notice go before the run, unless the output is JSON.
     ...(json ? {} : { progress: deps.out }),
     warn: deps.warn ?? ((l) => console.error(l)),
@@ -491,37 +518,15 @@ export function watchdogCommand(
  * the SDK runtime with our lens tools; with `[pi] engine_wave` the runtime
  * carries the board the round starts the planned wave on. */
 export function selectReviewRuntime(cfg: Pick<CoreConfig, "engine" | "pi">): EngineRouteRuntime {
-  const engine = cfg.pi.lens_runtime === "engine";
-  return selectRuntime(cfg.engine.runtime, "review", () => {
-    // The SDK host loads on the first session, not at startup: a preview, a
-    // refusal and `review status` never pay for the pi SDK. A stop signal that
-    // arrives before it is built already ends the run as an SDK stop.
-    markSdkRoute();
-    const wave = new LensWave();
-    let host: Promise<EngineRouteRuntime> | undefined;
-    const load = (): Promise<EngineRouteRuntime> =>
-      (host ??= import("@quickchatai/pi-quickreview/src/engine/reviewsdk.js").then((m) =>
-        m.reviewSdkRuntime({
-          ...(engine ? { engine: { wave, plannedWave: cfg.pi.engine_wave } } : {}),
-          // `qcr review` owns its process: a wedged turn exits it, the round's
-          // diagnostics go to stderr, and the fence knows this user's home.
-          backstop: () => process.exit(BUDGET_EXIT_CODE),
-          warn: (line) => console.error(line),
-          homeDir: homedir(),
-        }),
-      ));
-    const engineLens: EngineRoute = {
-      wave,
-      runner: { run: async (request) => (await load()).engineLens!.runner.run(request) },
-      plannedWave: cfg.pi.engine_wave,
-    };
-    return {
-      create: async (spec) => (await load()).create(spec),
-      resume: async (file, spec) => (await load()).resume(file, spec),
-      // The round reads this before any session exists, so it is named here and
-      // reaches the runner the host builds.
-      ...(engine ? { engineLens } : {}),
-    };
+  // A stop signal that arrives before the host is built already ends the run
+  // as an SDK stop.
+  markSdkRoute();
+  return lazyReviewRuntime(cfg, {
+    // `qcr review` owns its process: a wedged turn exits it, the round's
+    // diagnostics go to stderr, and the fence knows this user's home.
+    backstop: () => process.exit(BUDGET_EXIT_CODE),
+    warn: (line) => console.error(line),
+    homeDir: homedir(),
   });
 }
 
@@ -688,10 +693,35 @@ export async function cmdReview(
   const agentDir =
     process.env["PI_CODING_AGENT_DIR"]?.trim() ||
     join(process.env["HOME"] || homedir(), ".pi", "agent");
-  if (!existsSync(join(agentDir, "auth.json")) && !json)
-    console.error(
-      `note: no pi login at ${agentDir} — run \`qcr scan login\` first if the review fails`,
-    );
+  const route = routeFromEnv(process.env);
+  const startsNothing = rest.some((a) => a === "--preview" || a === "--help" || a === "-h");
+  if (!startsNothing) {
+    if (route === "laptop") {
+      // A person's run needs a credential for every provider the review's
+      // models name; a key for another provider never stands in for one.
+      const { reviewLoginRefusal } = await import("./loginhint.js");
+      const { reviewProviders } = await import("@quickchatai/pi-quickreview/src/plugin/login.js");
+      const problem = reviewLoginRefusal({
+        providers: reviewProviders(cfg),
+        agentDir,
+        env: process.env,
+      });
+      if (problem !== null) {
+        const out = io.out ?? ((l: string) => console.log(l));
+        if (json)
+          out(
+            JSON.stringify(
+              withSchemaVersion(REVIEW_SCHEMA_VERSION, { ok: false, errors: [problem] }),
+            ),
+          );
+        else console.error(`✗ ${problem}`);
+        return 1;
+      }
+    } else if (!existsSync(join(agentDir, "auth.json")) && !json)
+      console.error(
+        `note: no pi login at ${agentDir} — run \`qcr login\` first if the review fails`,
+      );
+  }
   let runtime: Runtime;
   try {
     runtime = selectReviewRuntime(cfg);
@@ -702,7 +732,7 @@ export async function cmdReview(
   return runReviewCli(rest, json, {
     cwd: process.cwd(),
     readStdin,
-    route: routeFromEnv(process.env),
+    route,
     out: io.out ?? ((l) => console.log(l)),
     confirm: interactive
       ? async (q) => {
@@ -716,18 +746,17 @@ export async function cmdReview(
       : null,
     ...(interactive
       ? {
-          choose: async (q: string, options: DestinationChoice[]): Promise<Destination> => {
+          pick: async (q: string, menu: DestinationMenuItem[]): Promise<DestinationPick | null> => {
             const rl = createInterface({ input: process.stdin, output: process.stderr });
             try {
-              const menu = options.map((o, i) => `  ${i + 1}) ${o.label}`).join("\n");
+              const lines = menu.map((m, i) => `  ${i + 1}) ${m.label}`).join("\n");
               for (;;) {
-                const a = (
-                  await rl.question(
-                    `${q}\n${menu}\nThis is saved for this repo. [1-${options.length}] `,
-                  )
-                ).trim();
-                const o = options[Number(a) - 1] ?? options.find((x) => x.value === a);
-                if (o) return o.value;
+                const a = (await rl.question(`${q}\n${lines}\n[1-${menu.length}, q to cancel] `))
+                  .trim()
+                  .toLowerCase();
+                if (a === "q" || a === "quit") return null;
+                const m = menu[Number(a) - 1];
+                if (m) return m.pick;
               }
             } finally {
               rl.close();

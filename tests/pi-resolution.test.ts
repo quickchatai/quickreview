@@ -28,8 +28,8 @@ const ROOT = join(import.meta.dirname, "..");
 const PKG = "@earendil-works/pi-coding-agent";
 const PKG_AI = "@earendil-works/pi-ai";
 const PIN = (
-  JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { pi: { version: string } }
-).pi.version;
+  JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { qcrPi: { version: string } }
+).qcrPi.version;
 
 interface InstalledPi {
   /** The package directory, symlinks resolved. */

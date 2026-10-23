@@ -14,6 +14,14 @@ that core sit an operator TUI, a Slack concierge, an OpenViking-backed memory
 engine, and a guided onboarding wizard, each of which degrades cleanly when it
 is not configured.
 
+The repository publishes two npm packages. The root is
+`@quickchatai/quickreview`, the whole app with the `qcr` bin (TUI, daemon,
+companion, every verb); the release image runs this same package.
+`packages/pi-plugin` is `@quickchatai/pi-quickreview`, the review core and
+the pi plugin over it (`/review`, `/scan`, `/qcr-setup`, `/selfimprove`),
+installable on its own with `pi install npm:@quickchatai/pi-quickreview`. The
+app depends on the core at its exact version.
+
 Read [`README.md`](README.md) for what the system does for its user, and
 [`MANIFESTO.md`](MANIFESTO.md) for the beliefs it implements. This file is the
 map for *changing* it.
@@ -23,7 +31,7 @@ map for *changing* it.
 ```sh
 npm ci
 timeout 900 npm test        # vitest; the whole suite, offline, no secrets
-npm run build               # tsc -b (the app and packages/pi-plugin), then scripts/verify-dist.mjs
+npm run build               # tsc -b (packages/pi-plugin, then the app), verify-dist, the build stamp
 npm run typecheck:tests     # tsc -p tsconfig.tests.json (tests/ is not in the build)
 ```
 
@@ -40,6 +48,15 @@ All three must be green before you commit. Notes that will bite otherwise:
   what is on disk — a targeted `rm` inside `dist/` will not be rebuilt. The
   reliable cold build is
   `rm -rf dist packages/*/dist node_modules/.cache && npm run build`.
+- `tsc -b` builds two projects in order: the core into
+  `packages/pi-plugin/dist/`, then the app into `dist/`. `noEmitOnError` holds
+  per project, so a core edit that breaks the app still rewrites the core's
+  `dist/`. That is why "a whole build finished" is its own signal: every build
+  route (`npm run build`, `scripts/tsc-watch.mjs` after each clean pass,
+  `scripts/dev-tui.sh`) runs `scripts/build-stamp.mjs`, which touches
+  `state/build-complete` only after a whole pass succeeded. The TUI's hot
+  reload (`src/tui/reload.ts`) watches the app's `dist/` and that stamp, never
+  the core's `dist/`.
 - `vitest.config.ts` restricts collection to `tests/**` on purpose: the default
   globs also collect agent worktrees under `.claude/worktrees/`, which then
   judge this checkout's seeds against another branch's expectations.
@@ -51,16 +68,33 @@ All three must be green before you commit. Notes that will bite otherwise:
   `engines`).
 - **ESM, `module: NodeNext`** — local imports carry the **`.js` suffix** even
   from `.ts` files.
-- **The review core is its own package**, the npm workspace
-  `packages/pi-plugin` (`@quickchatai/pi-quickreview`): its `src/` and
-  `extensions/` keep the layout they had at the root. The app (everything
-  else) imports it by package specifier,
-  `@quickchatai/pi-quickreview/src/<file>.js`; the core imports only itself,
-  pi, `smol-toml` and `node:*` (`tests/layers.test.ts`). A test resolves the
-  specifier to the core's sources (`vitest.config.ts`, `tsconfig.tests.json`),
-  and a fence that walks the source walks both trees
-  (`tests/helpers/source-trees.ts`). The data the core reads (`prompts/`,
-  `agents/`, `seeds/`, …) stays at the root.
+- **Two layers, fenced.** The review core is its own package, the npm
+  workspace `packages/pi-plugin` (`@quickchatai/pi-quickreview`), with its own
+  `src/` and `extensions/`. **Core** is everything under `packages/pi-plugin/`;
+  **app** is the rest of the repo. The app imports the core by package
+  specifier, `@quickchatai/pi-quickreview/src/<file>.js`; the core imports
+  only itself, pi's root specifiers, `smol-toml` and `node:*`, never the app.
+  The core never owns the process either: no `process.exit`, `process.cwd`,
+  `console`, `homedir` or `node:readline` (a host passes those facts in),
+  except the plugin's entry, `src/plugin/index.ts`, which may read the home.
+  `tests/layers.test.ts` holds both rules on the real tree
+  (`tests/helpers/layers.ts`), and its ratchet,
+  `tests/helpers/layer-allowlist.ts`, is empty and stays empty: a violation is
+  fixed by moving code, never by an allowlist entry. A test resolves the
+  specifier to the core's sources (`vitest.config.ts`,
+  `tsconfig.tests.json`), and a fence that walks the source walks both trees
+  (`tests/helpers/source-trees.ts`).
+- **The core's data stays at the root.** `prompts/`, `agents/`, `seeds/`,
+  `schemas/`, `profiles/`, `deploy/reviewer/`, the seed manifest and
+  `config.example.toml` have one source, the repo root. The plugin's
+  `prepack` copies them into `packages/pi-plugin/assets/`
+  (`scripts/plugin-assets.mjs`), checks every copy's sha256 against its
+  source, and its `postpack` removes the copy again; `assets/` is gitignored
+  and never edited. The core finds its data through `assetRoot`
+  (`packages/pi-plugin/src/assetroot.ts`): `assets/` in an installed package,
+  the repo root in a checkout or the image. The seeds sit under `assets/`,
+  not at the package root, because pi turns a package's `prompts/` into slash
+  commands.
 - **Minimal dependencies.** Runtime: `better-sqlite3`, `smol-toml`. Dev: `typescript`, `vitest`, `@types/*`,
   `eslint` + `@eslint/js` + `typescript-eslint`, `prettier`. Adding
   one is a decision, not a convenience.
@@ -186,6 +220,8 @@ the fence.
 | Operator surfaces | `src/tui/` (board, tabs, companion column), `src/cli.ts` (`qcr`), `src/slack/`, `src/commands.ts` + `src/levers.ts` |
 | Assembly | `src/daemon.ts` (stub-wired core, test-friendly) vs `src/wire.ts` (production wiring) |
 | Onboarding | `src/onboard/`, `extensions/onboarding.ts`, [`docs/onboarding.md`](docs/onboarding.md) |
+| The pi plugin | `packages/pi-plugin/src/plugin/` (the entry `index.ts`, the commands, `versiongate.ts` for the `^1.3.0` pi range, `login.ts` for the borrowed host login), `packages/pi-plugin/src/reviewapi.ts`, [`packages/pi-plugin/README.md`](packages/pi-plugin/README.md) |
+| The npm CLI | `bin/qcr.js` → `src/qcrbin.ts` (the bin's front door: bare `qcr`, `review`, `login`, `pi`, `update`, `version`), `src/npmverbs.ts`, `src/updatenotice.ts`; every other verb goes to `src/cli.ts` |
 
 `agents/`, `prompts/`, `skills/companion/` and `extensions/` are shipped bot
 content (what the reviewer and companion sessions load); `.claude/` is

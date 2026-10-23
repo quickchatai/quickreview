@@ -75,6 +75,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/ci-clone-smoke.test.ts",
   "tests/ci-image-smoke.test.ts",
   "tests/cli-bin.test.ts",
+  "tests/cli-install-smoke.test.ts", // npm pack of both packages, an offline npm install and the installed qcr
   "tests/collect-secrets.test.ts",
   "tests/commit-verdict-shell.test.ts",
   "tests/companion-github.test.ts",
@@ -125,6 +126,9 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/pi-canary/canary-10-bot-request.test.ts", // a real pi child per PR session, against a loopback endpoint
   "tests/pi-canary/canary-10-oneshot-request.test.ts", // a real pi child per round, against a loopback endpoint
   "tests/pi-canary/canary-3-abort-cpu-load.test.ts", // bash children spawned by pi's own bash tool
+  "tests/pi-plugin-install.test.ts", // npm pack, an offline npm install and a real pi child in rpc mode
+  "tests/pi-plugin-round.test.ts", // git for the scratch repo the faux round reviews
+  "tests/pi-plugin.test.ts", // git for each fake host's scratch repo
   "tests/pi-resolution.test.ts",
   "tests/pibuiltins.test.ts",
   "tests/pin-evidence.test.ts", // the evidence script run under node against the map

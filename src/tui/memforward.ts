@@ -161,6 +161,11 @@ export interface MemForwardDeps {
    * `--container`): the memory sidecar when `[tui] memory_container` is set,
    * else `[tui] container`. Absent = the script's own default and env. */
   container?: string;
+  /** Asked at every `ensure()`: a reason memory is off on this host (no
+   * Docker for a local engine to run in), or undefined. A reason settles the
+   * forward `off` with it as the detail — no probe, no bind, no retry, and
+   * nothing that reads as a failure. */
+  offReason?: () => string | undefined | Promise<string | undefined>;
 }
 
 const DEFAULT_PROBE_TIMEOUT_MS = 1_500;
@@ -189,10 +194,13 @@ async function httpProbe(baseUrl: string, timeoutMs: number): Promise<boolean> {
  * that cannot start must cost the operator a red status line, never the TUI.
  */
 export class MemoryForward {
-  private readonly deps: Required<Omit<MemForwardDeps, "env" | "sshHost" | "container">> & {
+  private readonly deps: Required<
+    Omit<MemForwardDeps, "env" | "sshHost" | "container" | "offReason">
+  > & {
     env: NodeJS.ProcessEnv;
     sshHost?: string;
     container?: string;
+    offReason?: MemForwardDeps["offReason"];
   };
   private handle: ForwarderHandle | null = null;
   /** How many of its addresses our forward bound, kept with the handle so
@@ -219,6 +227,7 @@ export class MemoryForward {
       sudoDocker: deps.sudoDocker ?? true,
       ...(deps.sshHost ? { sshHost: deps.sshHost } : {}),
       ...(deps.container ? { container: deps.container } : {}),
+      ...(deps.offReason ? { offReason: deps.offReason } : {}),
     };
     this.status = {
       state: "off",
@@ -269,6 +278,16 @@ export class MemoryForward {
   private inFlight: Promise<ForwardStatus> | null = null;
 
   private async ensureOnce(): Promise<ForwardStatus> {
+    let off: string | undefined;
+    try {
+      off = await this.deps.offReason?.();
+    } catch {
+      off = undefined;
+    }
+    if (off !== undefined && !this.handle) {
+      if (this.status.state === "off" && this.status.detail === off) return this.view();
+      return this.settle("off", off);
+    }
     if (this.handle) {
       // We bound it; confirm it still answers rather than trusting the socket.
       const alive = await this.deps.probe(this.deps.baseUrl, this.deps.probeTimeoutMs);

@@ -176,12 +176,21 @@ function blankRefresh(parsed: AuthData): { expiresAt: number | null; provider: s
  * token replaced, everything else kept. Returns the earliest OAuth expiry, and
  * the provider it belongs to, so the caller can refuse work that would outlive it.
  */
-export function authCopyFrom(raw: string): {
+export function authCopyFrom(
+  raw: string,
+  /** Keep only these providers' entries: the copy, and its expiry check,
+   * then cover exactly what the run uses. Omitted: every entry. */
+  providers?: readonly string[],
+): {
   json: string;
   expiresAt: number | null;
   provider: string | null;
 } {
-  const parsed = JSON.parse(raw) as AuthData;
+  const all = JSON.parse(raw) as AuthData;
+  const parsed: AuthData =
+    providers === undefined
+      ? all
+      : Object.fromEntries(Object.entries(all).filter(([name]) => providers.includes(name)));
   const { expiresAt, provider } = blankRefresh(parsed);
   return { json: JSON.stringify(parsed, null, 2) + "\n", expiresAt, provider };
 }
@@ -312,6 +321,8 @@ export function engineCredentials(o: {
   needMs: number;
   now?: () => number;
   words?: AuthCopyWords;
+  /** The refusal margin on top of `needMs`; default pi's refresh margin. */
+  marginMs?: number;
 }): EngineAuth {
   const src = join(o.srcDir, "auth.json");
   const words = o.words ?? ENGINE_AUTH_WORDS;
@@ -340,10 +351,12 @@ export function copyPiAuth(o: {
   needMs: number;
   now?: () => number;
   words: AuthCopyWords;
+  /** Copy (and check) only these providers' logins; omitted: all of them. */
+  providers?: readonly string[];
 }): { expiresAt: number | null } {
   const src = join(o.srcDir, "auth.json");
   if (!existsSync(src)) throw new AuthExpiring(o.words.missing(src), { code: "missing" });
-  const { json, expiresAt, provider } = authCopyFrom(readOwnerAuth(src));
+  const { json, expiresAt, provider } = authCopyFrom(readOwnerAuth(src), o.providers);
   checkAuth(
     { expiresAt, provider },
     { needMs: o.needMs, marginMs: 0, words: o.words, ...(o.now ? { now: o.now } : {}) },

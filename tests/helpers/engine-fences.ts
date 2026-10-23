@@ -172,6 +172,16 @@ export const EXTENSION_SDK_HOST_ALLOWED: Readonly<Record<string, readonly string
   // The env shims pi loads by path (extensions/cli/) reach the same modules.
   "extensions/cli/lens.ts": [`${CORE_PACKAGE}/src/engine/pisdk.ts`],
   "extensions/cli/debug-round.ts": [`${CORE_PACKAGE}/src/engine/pisdk.ts`],
+  // The pi plugin's /review hosts a whole review, main session included, in
+  // the user's own pi: that is the plugin. Its host is built with
+  // PiHostOptions.hostPi, so pi's dispatcher is reused and never installed,
+  // no turn owns the process (a wedged one aborts its own sessions), and the
+  // SDK loads only when a review starts. The bot, the companion and the
+  // debug round never load this extension.
+  [`${CORE_PACKAGE}/extensions/quickreview.ts`]: [
+    `${CORE_PACKAGE}/src/engine/pisdk.ts`,
+    `${CORE_PACKAGE}/src/engine/sdkruntime.ts`,
+  ],
 };
 
 /**

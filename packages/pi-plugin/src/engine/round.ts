@@ -54,6 +54,16 @@ import {
   type OneShotTarget,
 } from "./prompts.js";
 import { renderBenchOutputs } from "./render.js";
+import { coreExtensionFile, type CoreExtension } from "./extfiles.js";
+
+/** The extensions a round's main session runs with, in load order: the
+ * command guard, the ledger pin, and the live PR session's `cluster_findings`
+ * tool (the same grouping code on both routes). */
+export const ROUND_EXTENSIONS: readonly CoreExtension[] = [
+  "bash-guard",
+  "ledger-pin",
+  "finding-clusters",
+];
 
 export type { PiRun };
 
@@ -441,13 +451,11 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
       model: cfg.models.conversation,
       systemPromptFile: sysPath,
       // The extension list is the whole list: the session discovers none.
-      extensions: [
-        join(root, "extensions", "cli", "bash-guard.ts"),
-        join(root, "extensions", "cli", "ledger-pin.ts"),
-        // The live PR session's `cluster_findings` tool (src/sessions.ts
-        // extensionPaths): the same grouping code on both routes.
-        join(root, "packages", "pi-plugin", "extensions", "finding-clusters.ts"),
-      ],
+      // The modules are the core's own, found beside this one however the
+      // package is installed; the SDK route loads their factories (the
+      // round's extras, roundsdk.ts) and a runtime without those extras
+      // refuses a spec that names extensions rather than run unguarded.
+      extensions: ROUND_EXTENSIONS.map((name) => coreExtensionFile(name)),
       name: sessionName,
       sessionDir,
       eventsFile: events,

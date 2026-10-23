@@ -161,6 +161,11 @@ describe("daemon topology", () => {
     // imports src/setup/), and each spawn is a `-p --no-session -ne` leaf
     // (bash-guard the one extension) with read-only tools, not a session.
     const allowed = ["sessions.ts", "companion.ts"];
+    // tui/nativecompanion.ts is the same companion on a host with no Docker:
+    // the TUI starts the very pi argv companion.ts gives the container (its
+    // guard extensions included) in a tmux server of its own on the
+    // operator's machine. It is inside the companion boundary, not a daemon
+    // spawn, and only the TUI's entry reaches it (pinned below).
     // scanbox.ts is the scan sandbox: its pi runs in a throwaway container
     // from the companion image (`qcr scan login` interactively, the doctor's
     // one-shot `-p --no-session --no-extensions` probe), or — the doctor's
@@ -183,7 +188,14 @@ describe("daemon topology", () => {
     // the PR's main session, not a second agent: the lease keeps every worker out, the round
     // is the command's own (one capability, one generation), and it posts through the daemon's
     // one gate. No daemon module imports it.
+    // qcrbin.ts and npmverbs.ts are the npm bin's front door: `qcr pi` (the
+    // person's own interactive pi with the plugin) and `qcr login` (pi's own
+    // /login). The person's own terminal, never a scheduled agent; only the
+    // package's bin imports qcrbin, and only qcrbin imports npmverbs (pinned
+    // below).
     const allowedPaths = [
+      "/src/qcrbin.ts",
+      "/src/npmverbs.ts",
       "/src/oneshot.ts",
       "/src/reviewcli.ts",
       "/src/opencli.ts",
@@ -193,6 +205,7 @@ describe("daemon topology", () => {
       "/src/bench/runner.ts",
       "/src/setup/caserunner.ts",
       "/src/scanbox.ts",
+      "/src/tui/nativecompanion.ts",
     ];
     const offenders = allSrcFiles()
       .filter((f) => !allowed.includes(f.slice(f.lastIndexOf("/") + 1)))
@@ -234,6 +247,14 @@ describe("daemon topology", () => {
     // own helpers, so it reaches setup/caserunner.js at runtime. Only
     // scancli.ts loads it (on demand, in the detached driver), pinned below.
     const operatorEntries = ["/src/scancli.ts", "/src/engine/caserunner-sdk.ts"];
+    const reachesBinVerbs = allSrcFiles()
+      .filter((f) => !f.endsWith("/src/qcrbin.ts"))
+      .filter((f) => /["'][^"']*\/(?:qcrbin|npmverbs)\.js["']/.test(readFileSync(f, "utf8")));
+    expect(reachesBinVerbs).toEqual([]);
+    const reachesNativeCompanion = allSrcFiles()
+      .filter((f) => !f.endsWith("/src/tui/index.ts"))
+      .filter((f) => /["'][^"']*\/nativecompanion\.js["']/.test(readFileSync(f, "utf8")));
+    expect(reachesNativeCompanion).toEqual([]);
     const reachesScanCli = allSrcFiles()
       .filter((f) => !f.endsWith("/src/cli.ts"))
       .filter((f) => /["'][^"']*\/scancli\.js["']/.test(readFileSync(f, "utf8")));

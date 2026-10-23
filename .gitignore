@@ -1,8 +1,9 @@
 node_modules/
 dist/
 # The data a workspace package's prepack copies in from the root (prompts/,
-# agents/, seeds/, …): the root copy is the one source.
+# agents/, seeds/, …) and the LICENSE: the root copy is the one source.
 /packages/*/assets/
+/packages/*/LICENSE
 state/*
 !state/.gitkeep
 inject/*

@@ -85,6 +85,7 @@ import {
 } from "@quickchatai/pi-quickreview/src/depsources.js";
 import { fileImprovementPr, fileIssue, gitRunner, type FileOutcome } from "./improvements.js";
 import { homeProfileLookup } from "./install.js";
+import { hostFacts, type HostFacts, type RunHostStatus } from "./runhost.js";
 import {
   EMBEDDER_GATE_MAX_WAIT_MS,
   LocalEmbedderSupervisor,
@@ -171,6 +172,13 @@ export interface ProductionParts {
   memoryRequests?: { sink: ((record: OvRequestRecord) => void) | null };
   /** Configured memory whose optional boot migration could not complete. */
   memoryBootFailure?: string;
+  /** Where the daemon runs (src/runhost.ts): logged at start, and status.json
+   * `run_host`. Absent: not asked (tests, the CLI's own parts). */
+  runHost?: RunHostStatus;
+  /** Memory configured on but switched off for this host — no Docker for
+   * the sidecar outside the image. The config's `openviking.enabled` is
+   * already false; this is the reason the status block says. */
+  memoryOff?: string;
 }
 
 /** A configured engine refused before it could open partial migrated state. */
@@ -190,7 +198,13 @@ export function migrationMemoryStatus(reason: string, at: Date = new Date()): Me
   };
 }
 
-export function buildParts(root = sandboxRoot(), loaded = loadConfig()): ProductionParts {
+export function buildParts(
+  root = sandboxRoot(),
+  loaded = loadConfig(),
+  /** The entry point's view of its host (`hostFacts`); absent, nothing about
+   * the host changes the config. */
+  host?: HostFacts,
+): ProductionParts {
   // The profile's per-lens tuning overlays the parsed config once, here, so
   // every consumer downstream (the plan, the agents build, the round row)
   // reads the one resolved `cfg.lenses` — the profile wins over
@@ -200,8 +214,11 @@ export function buildParts(root = sandboxRoot(), loaded = loadConfig()): Product
   const overlaid = applyProfileOverlays(root, loaded, homeProfileLookup());
   // A failed optional boot migration leaves its destination incomplete. No
   // client, raw session or supervisor may open it until the next clean boot.
+  // Memory switched off for this host (no Docker outside the image) is the
+  // same clean off: no client, no supervisor, no probe to fail.
+  const memoryOff = overlaid.openviking.enabled ? host?.memoryOff : undefined;
   const cfg =
-    process.env.QCR_OPENVIKING_BOOT_DISABLED === "1"
+    process.env.QCR_OPENVIKING_BOOT_DISABLED === "1" || memoryOff !== undefined
       ? { ...overlaid, openviking: { ...overlaid.openviking, enabled: false } }
       : overlaid;
   const memoryBootFailure =
@@ -248,6 +265,8 @@ export function buildParts(root = sandboxRoot(), loaded = loadConfig()): Product
     ...(ovSessions ? { ovSessions } : {}),
     memoryRequests,
     ...(memoryBootFailure ? { memoryBootFailure } : {}),
+    ...(host ? { runHost: host.runHost } : {}),
+    ...(memoryOff !== undefined && memoryBootFailure === undefined ? { memoryOff } : {}),
   };
 }
 
@@ -908,6 +927,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     root,
     store,
     adapter,
+    ...(parts.runHost ? { runHost: parts.runHost } : {}),
     postingDelivery: {
       createReview: async (pr, payload) => {
         // An approval queued by approve-pr.sh keeps that route's green-CI
@@ -1411,7 +1431,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // because that is an outage, not a choice, and must not be painted
       // like a deliberate off.
       if (!cfg.openviking.enabled) {
-        memoryUnmonitored = "[openviking] enabled = false";
+        memoryUnmonitored = parts.memoryOff ?? "[openviking] enabled = false";
+        if (parts.memoryOff)
+          log(
+            `${parts.memoryOff}: the memory engine runs as the Docker sidecar outside the release image, and no Docker answers here — memory stays off for this boot`,
+          );
       } else {
         // A rotated daemon key reaches the sessions too: their ovcli.conf is
         // rewritten the moment the key changes, not at the next session birth.
@@ -2096,7 +2120,13 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
 }
 
 async function main(): Promise<void> {
-  const daemon = createProductionDaemon();
+  // Where this daemon runs, asked once before anything is assembled: outside
+  // the release image it warns, and with no Docker its memory is off.
+  const root = sandboxRoot();
+  const loaded = loadConfig();
+  const daemon = createProductionDaemon(
+    buildParts(root, loaded, hostFacts(root, loaded.openviking.enabled)),
+  );
   const shutdown = (sig: string) => {
     void (async () => {
       console.log(`[quickreviewd] ${sig} — shutting down`);

@@ -261,7 +261,10 @@ describe("MANIFESTO.md is pinned by something", () => {
         why:
           "`[review] dependency_sources` (src/depsources.ts, benchmark 2026-09-26): the SOURCE of the npm packages a PR " +
           "imports, downloaded at their locked versions and unpacked as plain files for the passes to read — never " +
-          "installed, never run. What leaves the host is a package name and version; no code, no memory.",
+          "installed, never run. What leaves the host is a package name and version; no code, no memory. " +
+          "And an npm-installed `qcr`'s update notice (src/updatenotice.ts): at most once a day, never in CI, " +
+          "it asks for the CLI package's own latest version; what leaves the host is that one package name " +
+          "(QCR_NO_UPDATE_NOTICE=1 turns it off).",
       },
       {
         host: "pypi.org",

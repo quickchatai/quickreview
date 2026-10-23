@@ -144,13 +144,35 @@ function stripComments(text: string): string {
     .join("\n");
 }
 
-/** Every forbidden call in a core file, as `file: name` strings, sorted. */
-export function coreForbiddenCalls(root: string): string[] {
+/**
+ * The core's host entries: the files a host loads directly, where the
+ * process's own facts become the core's config. Each may make exactly the
+ * calls named here and no other forbidden one. This is not the ratchet (that
+ * is empty and stays empty): an entry here is the core's job of being loaded
+ * by a host, and each is pinned by name.
+ *
+ *   src/plugin/index.ts  the pi plugin's entry (the package's `pi.extensions`):
+ *                        pi loads it inside the user's pi, so the user's home
+ *                        has no other way in. It reads `HOME` first and asks
+ *                        the OS only when that is unset.
+ */
+export const CORE_HOST_ENTRIES: Readonly<Record<string, readonly string[]>> = {
+  [`${CORE_DIR}src/plugin/index.ts`]: ["homedir"],
+};
+
+/** Every forbidden call in a core file, as `file: name` strings, sorted. A
+ * host entry's own calls (`hostEntries`) are not hits. */
+export function coreForbiddenCalls(
+  root: string,
+  hostEntries: Readonly<Record<string, readonly string[]>> = CORE_HOST_ENTRIES,
+): string[] {
   const out = new Set<string>();
   for (const rel of fencedFiles(root)) {
     if (layerOf(rel) !== "core") continue;
     const code = stripComments(readFileSync(join(root, rel), "utf8"));
-    for (const f of CORE_FORBIDDEN) if (f.re.test(code)) out.add(`${rel}: ${f.name}`);
+    for (const f of CORE_FORBIDDEN)
+      if (f.re.test(code) && !(hostEntries[rel] ?? []).includes(f.name))
+        out.add(`${rel}: ${f.name}`);
   }
   return [...out].sort();
 }

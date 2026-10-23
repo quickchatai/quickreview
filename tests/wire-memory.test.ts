@@ -8,7 +8,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { MEMORY_DEFAULTS, parseConfig } from "../src/config.js";
-import { memoryStatusLine } from "../src/memory/health.js";
+import {
+  disabledMemoryStatus,
+  MEMORY_OFF_NO_DOCKER,
+  memoryStatusLine,
+} from "../src/memory/health.js";
+import { runHostStatus } from "../src/runhost.js";
 import { DEFAULT_CATEGORY } from "../src/openviking/store.js";
 import { buildParts, migrationMemoryStatus, roundMemorySeed } from "../src/wire.js";
 
@@ -178,8 +183,18 @@ describe("wire.ts: reviewer-memory health is actually connected", () => {
   });
 
   it("only memory switched OFF is 'not monitored' — a configured-on memory with no server is an outage", () => {
+    // The one branch that leaves memory unwatched is `enabled` off — by the
+    // config, or by the host's deliberate no-Docker switch-off (buildParts
+    // folds that into `enabled` and names it in `parts.memoryOff`). Nothing
+    // else sits between it and the monitored branch.
     expect(wire).toMatch(
-      /if \(!cfg\.openviking\.enabled\) \{\s*memoryUnmonitored = "\[openviking\] enabled = false";\s*\} else \{/,
+      /if \(!cfg\.openviking\.enabled\) \{\s*memoryUnmonitored = parts\.memoryOff \?\? "\[openviking\] enabled = false";\s*if \(parts\.memoryOff\)\s*log\(\s*`\$\{parts\.memoryOff\}:[^`]*`,?\s*\);\s*\} else \{/,
+    );
+    expect(wire.match(/memoryUnmonitored = /g)).toHaveLength(1);
+    // A host reason switches memory off only when memory is configured on, and
+    // only from the entry point's host facts — never from a missing server.
+    expect(wire).toMatch(
+      /const memoryOff = overlaid\.openviking\.enabled \? host\?\.memoryOff : undefined;/,
     );
     // The supervisor's "enabled" folds in a missing binary; it must not
     // decide whether memory is watched.
@@ -445,4 +460,46 @@ it("a failed boot migration disables every assembled memory consumer without cha
   } finally {
     vi.unstubAllEnvs();
   }
+});
+
+it("a host with no Docker outside the image boots with memory OFF, cleanly, saying why", () => {
+  const loaded = parseConfig(
+    readFileSync(join(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
+  );
+  expect(loaded.openviking.enabled).toBe(true);
+  const runHost = runHostStatus(
+    "/home/u/.npm-global/lib/node_modules/@quickchatai/quickreview",
+    {},
+  );
+  const parts = buildParts(process.cwd(), loaded, {
+    runHost,
+    memoryOff: MEMORY_OFF_NO_DOCKER,
+  });
+  // The same clean off as a configured one: no raw-tier client, no engine.
+  expect(parts.cfg.openviking.enabled).toBe(false);
+  expect(parts.sessions.cfg.openviking.enabled).toBe(false);
+  expect(parts.ovSessions).toBeUndefined();
+  expect(parts.memoryOff).toBe(MEMORY_OFF_NO_DOCKER);
+  expect(parts.memoryBootFailure).toBeUndefined();
+  expect(parts.runHost).toEqual(runHost);
+  // The operator's config is untouched.
+  expect(loaded.openviking.enabled).toBe(true);
+  // The status block says it as it stands, not as an outage.
+  const status = disabledMemoryStatus(parts.memoryOff!);
+  expect(status.enabled).toBe(false);
+  expect(memoryStatusLine(status)).toBe("memory off (no Docker)");
+  // MUTATION: drop `parts.memoryOff ??` from the unmonitored reason — this fails.
+  expect(wire).toMatch(
+    /memoryUnmonitored = parts\.memoryOff \?\? "\[openviking\] enabled = false";/,
+  );
+});
+
+it("without host facts buildParts changes nothing about memory", () => {
+  const loaded = parseConfig(
+    readFileSync(join(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
+  );
+  const parts = buildParts(process.cwd(), loaded);
+  expect(parts.cfg.openviking.enabled).toBe(true);
+  expect(parts.memoryOff).toBeUndefined();
+  expect(parts.runHost).toBeUndefined();
 });

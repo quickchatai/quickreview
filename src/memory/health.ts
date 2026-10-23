@@ -364,6 +364,10 @@ export function servingPhrase(s: ServingStatus | null | undefined): string {
   return `; NOT SERVING search${s.since ? ` since ${s.since}` : ""}${s.reason ? ` — ${s.reason.slice(0, 200)}` : ""}`;
 }
 
+/** Why memory is off on a host with no Docker outside the release image
+ * (src/runhost.ts): the line every reader shows for it, as it stands. */
+export const MEMORY_OFF_NO_DOCKER = "memory off (no Docker)";
+
 /**
  * The one-line memory status a person reads — `qcr status` prints it and the
  * TUI board banner paints a shorter cut of the same facts. An absent block
@@ -371,7 +375,10 @@ export function servingPhrase(s: ServingStatus | null | undefined): string {
  */
 export function memoryStatusLine(m: MemoryStatus | undefined, now: Date = new Date()): string {
   if (!m) return "memory: NOT REPORTED (this daemon predates the memory health block)";
-  if (!m.enabled) return `memory: not monitored${m.disabled_reason ? ` — ${m.disabled_reason}` : ""}`;
+  if (!m.enabled)
+    return m.disabled_reason === MEMORY_OFF_NO_DOCKER
+      ? MEMORY_OFF_NO_DOCKER
+      : `memory: not monitored${m.disabled_reason ? ` — ${m.disabled_reason}` : ""}`;
   const age = fmtDuration(now.getTime() - Date.parse(m.since));
   const creds = `daemon key ${credentialPhrase(m.credentials.daemon)}; sessions' ovcli.conf ${credentialPhrase(m.credentials.sessions)}${feedbackWritesPhrase(m.feedback_writes, now)}${curationPhrase(m.curation)}${lessonDeliveryPhrase(m.lessons)}`;
   const serving = servingPhrase(m.serving);

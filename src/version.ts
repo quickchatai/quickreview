@@ -24,7 +24,7 @@ export interface VersionInfo {
 
 /** Read the install's identity from `root` (the app dir: package.json, and
  * BUILD_SHA when the image was stamped). `pin` is the config's pi pin when
- * config.toml loads; package.json's "pi" block answers on a bare clone. */
+ * config.toml loads; package.json's "qcrPi" block answers on a bare clone. */
 export function versionInfo(
   root: string,
   pin?: { package: string; version: string } | null,
@@ -58,4 +58,23 @@ export function renderVersion(v: VersionInfo): string {
     `JSON schemas: review v${v.schemas.review}, scan v${v.schemas.scan}`,
     v.pi ? `pi: ${v.pi.package}@${v.pi.version}` : "pi: no pin found",
   ].join("\n");
+}
+
+/** The `qcr version` verb: the config's pi pin when config.toml loads, else
+ * package.json's mirror. Needs no state and no SQLite, so the npm bin
+ * (src/qcrbin.ts) and the image's entry (src/cli.ts) run the same code. */
+export async function cmdVersion(
+  json: boolean,
+  out: (line: string) => void = (l) => console.log(l),
+): Promise<void> {
+  const { loadConfig, sandboxRoot } = await import("./config.js");
+  let pin: { package: string; version: string } | null = null;
+  try {
+    const { package: pkg, version } = loadConfig().pi;
+    pin = { package: pkg, version };
+  } catch {
+    // a bare clone or a fresh npm install has no config.toml: package.json's qcrPi block answers
+  }
+  const info = versionInfo(sandboxRoot(), pin);
+  out(json ? JSON.stringify(info) : renderVersion(info));
 }

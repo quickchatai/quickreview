@@ -19,7 +19,10 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Destination } from "@quickchatai/pi-quickreview/src/reviewdest.js";
+import type {
+  Destination,
+  DestinationMenuItem,
+} from "@quickchatai/pi-quickreview/src/reviewdest.js";
 
 vi.stubEnv(
   "QCR_CONFIG",
@@ -125,6 +128,8 @@ function harness(o: {
   confirm?: ((q: string) => Promise<boolean>) | null;
   /** Present: the session is interactive and answers the destination question. */
   choose?: (options: string[]) => Destination;
+  /** The pick is kept as the repo's default ("always do this in this repo"). */
+  remember?: boolean;
 }) {
   const lines: string[] = [];
   const asked: string[] = [];
@@ -141,10 +146,17 @@ function harness(o: {
           },
     ...(o.choose
       ? {
-          choose: async (_q: string, opts: Array<{ value: string }>) => {
-            const values = opts.map((x) => x.value);
+          // the destination menu, answered by its first destination; `remember`
+          // picks the "always do this in this repo" twin
+          pick: async (_q: string, menu: DestinationMenuItem[]) => {
+            const values = [...new Set(menu.map((m) => m.pick.destinations[0]!))];
             offered.push(values);
-            return o.choose!(values);
+            const v = o.choose!(values);
+            const remember = o.remember ?? false;
+            return (
+              menu.find((m) => m.pick.destinations[0] === v && m.pick.remember === remember)
+                ?.pick ?? null
+            );
           },
         }
       : {}),
@@ -173,7 +185,8 @@ const jsonLine = (lines: string[]): Record<string, any> =>
   JSON.parse(lines.filter((l) => l.startsWith("{")).at(-1)!);
 
 describe("qcr review: destinations and the per-repo default", () => {
-  it("the first interactive run asks, saves the answer, and the next run reuses it without asking", async () => {
+  // MUTATION: save every answer — the second run below is never asked.
+  it("an interactive run asks every time, and a plain answer is not kept", async () => {
     const repo = mkRepo("ask");
     rich(repo);
     const pi = happyPi("ask");
@@ -181,13 +194,39 @@ describe("qcr review: destinations and the per-repo default", () => {
     expect(await runReviewCli([], false, h1.deps)).toBe(0);
     expect(h1.offered).toHaveLength(1);
     expect(h1.offered[0]).toEqual(expect.arrayContaining(["terminal", "file", "json"]));
-    expect(loadDefaultDestinations(repo)).toEqual(["json"]);
+    expect(loadDefaultDestinations(repo)).toBeNull();
     expect(jsonLine(h1.lines).ok).toBe(true);
+
+    const h2 = harness({ repo, piBin: pi.bin, choose: () => "terminal" });
+    expect(await runReviewCli([], false, h2.deps)).toBe(0);
+    expect(h2.offered).toHaveLength(1);
+    expect(h2.lines.filter((l) => l.startsWith("{"))).toHaveLength(0);
+  });
+
+  it("an answer kept as the repo's default skips the question from then on", async () => {
+    const repo = mkRepo("ask-always");
+    rich(repo);
+    const pi = happyPi("ask-always");
+    const h1 = harness({ repo, piBin: pi.bin, choose: () => "json", remember: true });
+    expect(await runReviewCli([], false, h1.deps)).toBe(0);
+    expect(h1.offered).toHaveLength(1);
+    expect(loadDefaultDestinations(repo)).toEqual(["json"]);
 
     const h2 = harness({ repo, piBin: pi.bin, choose: () => "terminal" });
     expect(await runReviewCli([], false, h2.deps)).toBe(0);
     expect(h2.offered).toHaveLength(0);
     expect(h2.lines.filter((l) => l.startsWith("{"))).toHaveLength(1);
+  });
+
+  it("declining the question starts nothing", async () => {
+    const repo = mkRepo("ask-decline");
+    rich(repo);
+    const pi = happyPi("ask-decline");
+    const h = harness({ repo, piBin: pi.bin });
+    const deps = { ...h.deps, pick: async () => null };
+    expect(await runReviewCli([], false, deps)).toBe(1);
+    expect(h.text()).toMatch(/cancelled/);
+    expect(existsSync(pi.calls)).toBe(false);
   });
 
   it("the default is stored per repo, never globally", async () => {

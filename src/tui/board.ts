@@ -6,7 +6,7 @@ import { archiveAttention, readArchiveStatus } from "../archive/status.js";
 import type { WhyPayload } from "../cli.js";
 import { readDaemonLoad, stallShortPhrase } from "../eventloop.js";
 import { curationNeedsAttention, earlierPhrase } from "../learner/status.js";
-import { fmtDuration, isAuthResult } from "../memory/health.js";
+import { fmtDuration, isAuthResult, MEMORY_OFF_NO_DOCKER } from "../memory/health.js";
 import { cancelCauseLabel, isLoudCancelCause, type StatusSnapshot } from "../state.js";
 import type { AlertBadge } from "./alerts.js";
 import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
@@ -364,7 +364,11 @@ export function memorySegment(
   if (!snapshot) return undefined;
   const m = snapshot.memory;
   if (!m) return { text: `${FG.dim}mem ?${RESET}`, loud: false };
-  if (!m.enabled) return { text: `${FG.dim}mem off${RESET}`, loud: false };
+  if (!m.enabled)
+    return {
+      text: `${FG.dim}${m.disabled_reason === MEMORY_OFF_NO_DOCKER ? MEMORY_OFF_NO_DOCKER : "mem off"}${RESET}`,
+      loud: false,
+    };
   const since = Date.parse(m.incident?.since ?? m.since);
   const age = Number.isFinite(since) ? ` ${fmtDuration(now.getTime() - since)}` : "";
   switch (m.state) {

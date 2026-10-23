@@ -12,7 +12,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  APP_BUILD_INFO,
   BUILD_STAMP,
+  buildInfoClean,
+  CORE_DIST,
   HotReloader,
   isSupervised,
   parseResumeArg,
@@ -223,6 +226,177 @@ describe("HotReloader", () => {
     reloader.start();
     vi.advanceTimersByTime(5_000);
     expect(reexecs).toHaveLength(0);
+  });
+});
+
+// A core-only change built by a route that writes no stamp (a raw `tsc -b`,
+// an IDE): the core's dist/ is watched but never acts, and the app's build
+// info, once newer than the core change and clean, reloads.
+describe("HotReloader — a core-only build with no stamp", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  const CLEAN = JSON.stringify({ fileNames: [], root: [], options: {}, version: "5.9.3" });
+  const FAILED = JSON.stringify({
+    fileNames: [],
+    root: [],
+    options: {},
+    semanticDiagnosticsPerFile: [[3, [{ code: 2322 }]]],
+    affectedFilesPendingEmit: [3],
+    errors: true,
+    version: "5.9.3",
+  });
+
+  function rig(init: { info?: string; infoAt?: number } = {}) {
+    const handlers = new Map<string, { recursive: boolean; cb: Parameters<WatchFn>[2] }>();
+    const mtimes = new Map<string, number>();
+    const texts = new Map<string, string>();
+    if (init.info !== undefined)
+      texts.set("/sandbox/node_modules/.cache/qcr-tsbuildinfo", init.info);
+    if (init.infoAt !== undefined)
+      mtimes.set("/sandbox/node_modules/.cache/qcr-tsbuildinfo", init.infoAt);
+    const reexecs: string[] = [];
+    const reloader = new HotReloader({
+      distDir: "/sandbox/dist",
+      buildStamp: `/sandbox/${BUILD_STAMP}`,
+      coreDistDir: `/sandbox/${CORE_DIST}`,
+      appBuildInfo: `/sandbox/${APP_BUILD_INFO}`,
+      readText: (p) => texts.get(p),
+      mtimeMs: (p) => mtimes.get(p),
+      stateFile: "/sandbox/state/tui-resume.json",
+      snapshot: () => ({ ...SNAP }),
+      reexec: (f) => reexecs.push(f),
+      watch: (d, opts, cb) => {
+        handlers.set(d, { recursive: opts.recursive, cb });
+        return { close: () => {} } as unknown as ReturnType<WatchFn>;
+      },
+      writeState: () => {},
+      now: () => new Date(1_000),
+    });
+    reloader.start();
+    const core = (name: string, at: number): void => {
+      mtimes.set(`/sandbox/${CORE_DIST}/${name}`, at);
+      handlers.get(`/sandbox/${CORE_DIST}`)!.cb("change", name);
+    };
+    const info = (text: string, at: number): void => {
+      texts.set(`/sandbox/${APP_BUILD_INFO}`, text);
+      mtimes.set(`/sandbox/${APP_BUILD_INFO}`, at);
+      handlers.get("/sandbox/node_modules/.cache")!.cb("change", "qcr-tsbuildinfo");
+    };
+    const settle = (): void => {
+      vi.advanceTimersByTime(500);
+    };
+    return { handlers, reexecs, core, info, settle };
+  }
+
+  it("watches the core's dist recursively and the build info's directory for its one name", () => {
+    const { handlers } = rig();
+    expect([...handlers.entries()].map(([d, h]) => [d, h.recursive])).toEqual([
+      ["/sandbox/dist", true],
+      ["/sandbox/state", false],
+      [`/sandbox/${CORE_DIST}`, true],
+      ["/sandbox/node_modules/.cache", false],
+    ]);
+  });
+
+  // MUTATION: let a core write reload by itself — this fails.
+  it("a write to the core's dist alone never reloads", () => {
+    const { reexecs, core, settle } = rig({ info: CLEAN, infoAt: 500 });
+    core("src/engine/x.js", 2_000);
+    settle();
+    expect(reexecs).toEqual([]);
+  });
+
+  it("reloads once the app's build info is written after the core change and is clean", () => {
+    const { reexecs, core, info, settle } = rig();
+    core("src/engine/x.js", 2_000);
+    settle();
+    info(CLEAN, 3_000);
+    settle();
+    expect(reexecs).toEqual(["/sandbox/state/tui-resume.json"]);
+  });
+
+  // MUTATION: drop the errors check in buildInfoClean — this fails.
+  it("a failed app build (errors recorded) never reloads; the fixed build does", () => {
+    const { reexecs, core, info, settle } = rig();
+    core("src/engine/x.js", 2_000);
+    info(FAILED, 3_000);
+    settle();
+    expect(reexecs).toEqual([]);
+    info(CLEAN, 4_000);
+    settle();
+    expect(reexecs).toHaveLength(1);
+  });
+
+  it("a half-written build info never reloads", () => {
+    const { reexecs, core, info, settle } = rig();
+    core("src/engine/x.js", 2_000);
+    info(CLEAN.slice(0, 20), 3_000);
+    settle();
+    expect(reexecs).toEqual([]);
+  });
+
+  // MUTATION: compare against the first core write instead of the newest —
+  // this fails.
+  it("a build info older than the newest core change does not count", () => {
+    const { reexecs, core, info, settle } = rig();
+    core("src/engine/x.js", 2_000);
+    core("src/engine/y.js", 5_000);
+    info(CLEAN, 4_000);
+    settle();
+    expect(reexecs).toEqual([]);
+    info(CLEAN, 6_000);
+    settle();
+    expect(reexecs).toHaveLength(1);
+  });
+
+  it("a build info write with no core change pending does nothing", () => {
+    const { reexecs, info, settle } = rig();
+    info(CLEAN, 3_000);
+    settle();
+    expect(reexecs).toEqual([]);
+  });
+
+  it("a core event that arrives after the clean build info still reloads (dated by the file's mtime)", () => {
+    const { reexecs, core, info, settle } = rig();
+    info(CLEAN, 3_000);
+    core("src/engine/x.js", 2_000);
+    settle();
+    expect(reexecs).toHaveLength(1);
+  });
+
+  it("names the build info tsconfig.json writes and the core's real output dir", () => {
+    const tsconfig = readFileSync(join(process.cwd(), "tsconfig.json"), "utf8");
+    expect(tsconfig).toMatch(
+      new RegExp(`"tsBuildInfoFile":\\s*"${APP_BUILD_INFO.replace(/\./g, "\\.")}"`),
+    );
+    const core = readFileSync(
+      join(process.cwd(), "packages", "pi-plugin", "tsconfig.json"),
+      "utf8",
+    );
+    expect(core).toMatch(/"outDir":\s*"dist"/);
+    expect(CORE_DIST).toBe("packages/pi-plugin/dist");
+  });
+});
+
+describe("buildInfoClean", () => {
+  it("accepts a parsed build info with no unfinished business", () => {
+    expect(buildInfoClean(JSON.stringify({ fileNames: [], version: "5.9.3" }))).toBe(true);
+  });
+
+  it.each([
+    ["unreadable", undefined],
+    ["empty", ""],
+    ["torn", '{"fileNames": ['],
+    ["no version", JSON.stringify({ fileNames: [] })],
+    ["errors", JSON.stringify({ version: "5.9.3", errors: true })],
+    ["check pending", JSON.stringify({ version: "5.9.3", checkPending: true })],
+    ["diagnostics", JSON.stringify({ version: "5.9.3", semanticDiagnosticsPerFile: [[1, []]] })],
+    ["emit pending", JSON.stringify({ version: "5.9.3", affectedFilesPendingEmit: [2] })],
+    ["emit diagnostics", JSON.stringify({ version: "5.9.3", emitDiagnosticsPerFile: [[2, []]] })],
+    ["changed files", JSON.stringify({ version: "5.9.3", changeFileSet: [4] })],
+  ])("refuses %s", (_what, text) => {
+    expect(buildInfoClean(text)).toBe(false);
   });
 });
 

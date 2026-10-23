@@ -90,7 +90,7 @@ export const SCAN_USAGE =
   "matches | match --key K [OLD=NEW…] | suggestions | " +
   "stage2 propose [--rows FILE|-] [--budget USD] [--deep|--standard] [--sha REF] | " +
   "stage2 start --key K [--rows ID,ID…] [--foreground] | dismiss FP… --reason TEXT | " +
-  "units show | units propose [--file F|-] | units adjust --file F|- | units save | login [--provider P] | doctor | rebuild   (every subcommand takes --json)";
+  "units show | units propose [--file F|-] | units adjust --file F|- | units save | login [--provider P] | doctor | rebuild   (every subcommand takes --json, and --sandbox host|docker over [scan] sandbox)";
 
 export { DETACH_TIMEOUT_MS, DRIVER_LOG, DRIVER_LOG_MAX };
 /** How often `status --wait` and `stop` look again. */
@@ -131,6 +131,28 @@ export type ScanCommand =
   | { verb: "rebuild" };
 
 const usage = (why?: string): Error => new Error(why ? `${SCAN_USAGE}\n(${why})` : SCAN_USAGE);
+
+/** `--sandbox host|docker`, taken off any subcommand's arguments: where this
+ * call runs a scan, over `[scan] sandbox`. The pi plugin's /scan passes
+ * `host` unless the person asked for docker. */
+export function takeSandboxFlag(rest: readonly string[]): {
+  rest: string[];
+  sandbox?: "host" | "docker";
+} {
+  const out: string[] = [];
+  let sandbox: "host" | "docker" | undefined;
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] !== "--sandbox") {
+      out.push(rest[i]!);
+      continue;
+    }
+    const v = rest[++i];
+    if (v !== "host" && v !== "docker") throw usage("--sandbox is host or docker");
+    if (sandbox !== undefined && sandbox !== v) throw usage("--sandbox given twice");
+    sandbox = v;
+  }
+  return sandbox ? { rest: out, sandbox } : { rest: out };
+}
 
 /** `qcr scan`'s arguments (`--json` taken off before). An unknown token is
  * refused, so a mistyped flag never runs something else. */
@@ -1054,7 +1076,20 @@ export function foregroundSignals(
 
 /** `qcr scan …`: assemble the companion's scan belt over this machine's
  * state home and run one subcommand. */
-export async function cmdScan(rest: string[], json: boolean): Promise<number> {
+export async function cmdScan(argv: string[], json: boolean): Promise<number> {
+  let picked: ReturnType<typeof takeSandboxFlag>;
+  try {
+    picked = takeSandboxFlag(argv);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.log(
+      json
+        ? JSON.stringify(withSchemaVersion(SCAN_SCHEMA_VERSION, { ok: false, errors: [msg] }))
+        : msg,
+    );
+    return 2;
+  }
+  const rest = picked.rest;
   const { buildEngine, sharedPorts, DEFAULT_REVIEWED_REPO } =
     await import("../extensions/setup.js");
   const { buildScan, watchTuiRequests, STAGE2_POLL_MS } =
@@ -1088,7 +1123,7 @@ export async function cmdScan(rest: string[], json: boolean): Promise<number> {
     out: (line) => console.log(line),
     ...(inSandbox
       ? { detach: detachDriver(env, home), units: engine }
-      : await sandboxPorts(env, home, engine, settingsOf)),
+      : await sandboxPorts(env, home, engine, settingsOf, picked.sandbox)),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     now: () => Date.now(),
     watchStops: (s) => {
@@ -1137,6 +1172,7 @@ async function sandboxPorts(
   home: string,
   engine: UnitCutPort,
   settingsOf: () => { scan: { tier: string } } | null,
+  sandboxOverride?: "host" | "docker",
 ): Promise<Pick<ScanCliDeps, "detach" | "units" | "doctor" | "login" | "rebuild">> {
   const [
     { buildScanImage, dockerDetach, effectiveSandbox, scanDoctor, scanLoginRoute },
@@ -1157,11 +1193,16 @@ async function sandboxPorts(
   } catch {
     // No readable config: the sandbox defaults; a start then refuses for it.
   }
-  const configured = cfg?.scan_sandbox ?? {
+  const base = cfg?.scan_sandbox ?? {
     ...cfgMod.SCAN_SANDBOX_DEFAULTS,
     pihome_volume: cfgMod.COMPANION_DEFAULTS.pihome_volume,
     image: cfgMod.SCAN_IMAGE_DEFAULT,
   };
+  // `--sandbox` on the command line is a set value: it wins over the config
+  // and over the companion's unset-means-host reading.
+  const configured = sandboxOverride
+    ? { ...base, sandbox: sandboxOverride, sandbox_set: true }
+    : base;
   const docker = companion.realDockerRunner;
   // Inside the companion container an unset sandbox is the host: there is
   // no docker there, and the container is the sandbox already.

@@ -19,7 +19,10 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Destination } from "@quickchatai/pi-quickreview/src/reviewdest.js";
+import type {
+  Destination,
+  DestinationMenuItem,
+} from "@quickchatai/pi-quickreview/src/reviewdest.js";
 
 vi.stubEnv(
   "QCR_CONFIG",
@@ -139,6 +142,8 @@ function harness(o: {
   confirm?: ((q: string) => Promise<boolean>) | null;
   /** Present: the session is interactive and answers the destination question. */
   choose?: (options: string[]) => Destination;
+  /** The pick is kept as the repo's default ("always do this in this repo"). */
+  remember?: boolean;
 }) {
   const lines: string[] = [];
   const asked: string[] = [];
@@ -155,10 +160,17 @@ function harness(o: {
           },
     ...(o.choose
       ? {
-          choose: async (_q: string, opts: Array<{ value: string }>) => {
-            const values = opts.map((x) => x.value);
+          // the destination menu, answered by its first destination; `remember`
+          // picks the "always do this in this repo" twin
+          pick: async (_q: string, menu: DestinationMenuItem[]) => {
+            const values = [...new Set(menu.map((m) => m.pick.destinations[0]!))];
             offered.push(values);
-            return o.choose!(values);
+            const v = o.choose!(values);
+            const remember = o.remember ?? false;
+            return (
+              menu.find((m) => m.pick.destinations[0] === v && m.pick.remember === remember)
+                ?.pick ?? null
+            );
           },
         }
       : {}),

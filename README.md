@@ -266,7 +266,9 @@ deploy paths. The full picture is in
 ## Prerequisites
 
 - **Docker**, and the **Compose v2 plugin** (`docker compose`). QuickReview is
-  one image; nothing else is installed on your machine.
+  one image; nothing else is installed on your machine. (Or install it with
+  npm on Node 22 or later and use Docker only where you choose to:
+  [Install with npm](#install-with-npm).)
 - **A GitHub account that can create an App** and install it on the repository
   you want reviewed. No personal access token is used, anywhere, and setup
   creates the App from a manifest in one click.
@@ -364,6 +366,54 @@ The Slack concierge is deliberately not part of onboarding. Set it up whenever
 you like with `npm run slack:setup`, which creates the app, collects the
 tokens, picks the channel and patches your config.
 
+## Install with npm
+
+The image is one route; npm is the other. The npm package is the whole app,
+the same code the image runs, installed as the `qcr` command on Node 22 or
+later (npm, pnpm and bun all work):
+
+```sh
+npm i -g @quickchatai/quickreview
+
+qcr login              # pi's own /login, in the pi qcr pins, for the review's models
+qcr review             # review this branch against its base, here, with no daemon
+qcr review 123         # review a pull request (or pass its URL)
+qcr pi                 # pi with the QuickReview plugin: /review /scan /selfimprove /qcr-setup
+qcr update             # update qcr with the package manager that installed it
+qcr                    # the admin TUI
+```
+
+A review runs on a pi login (a ChatGPT subscription through `/login`, for
+example). With only an API key for some other provider, `qcr review` stops
+and names `qcr login` rather than running on a model nobody chose. At a
+terminal, `qcr review` asks where the result goes every time (shown here,
+saved as markdown and JSON, or posted to the PR) and offers to keep your
+answer as that repo's default; piped, in CI or with `--json`, it prints.
+Posting reads the PR with the credential you already have (the App if you
+configured one, else `GITHUB_TOKEN`, `GH_TOKEN` or `gh auth token`), posts
+one comment-only review, and goes through the same mutation gate as the bot,
+so it posts only from an install whose config says `dry_run = false`.
+
+Already using pi? Install just the plugin:
+`pi install npm:@quickchatai/pi-quickreview`
+([packages/pi-plugin/README.md](packages/pi-plugin/README.md)). It runs the
+same review core inside your own pi session.
+
+**Docker is opt-in on this route.** Nothing above needs it. Where Docker is
+there, qcr uses it for what is better isolated: the scan sandbox (`qcr scan
+--sandbox docker`), the memory engine's sidecar and the companion's
+container. Where it is not:
+
+- **Memory is off.** The reviewer runs without its memory engine and says
+  so.
+- **The companion runs as a native pi**, with the same guard extensions it
+  has in its container, and warns, every start, that it is unsandboxed.
+- **The always-on bot can run from npm**, and warns at start that its
+  model's tools share your user. Running those tools as a separate uid is
+  opt-in: set `QCR_TOOL_UID` (and `QCR_TOOL_GID`) to an identity you created
+  for them. The release image does that for you, which is why a server
+  install should still prefer it ([docker/README.md](docker/README.md)).
+
 ## Configuring the reviewer for *your* repo
 
 - **Repo profile** ([docs/profiles.md](docs/profiles.md)): house-rule addenda
@@ -451,6 +501,7 @@ can be shown false. Please try.
 - [deploy/ansible/README.md](deploy/ansible/README.md) — the VM/server route: provisioning, deploy, verification
 - [docs/profiles.md](docs/profiles.md) — repo profiles: addenda packs, heuristics, per-lens tuning
 - [docs/host-wrapper.md](docs/host-wrapper.md) — the `qcr` host wrapper the release image installs: mounts, token handoff, update
+- [packages/pi-plugin/README.md](packages/pi-plugin/README.md) — the pi plugin: /review, /scan, /selfimprove and /qcr-setup in your own pi session
 - [docs/plugin.md](docs/plugin.md) — the Claude Code plugin: review, scan and setup skills that call `qcr --json` and refuse an unknown schema version
 - [docs/duplicate-merge.md](docs/duplicate-merge.md) — one comment per root cause
 - [docs/ownership.md](docs/ownership.md) — the owner-only surfaces (dry-run flag, frozen seeds, ratification)

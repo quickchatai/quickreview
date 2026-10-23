@@ -15,7 +15,7 @@ export interface PiPin {
   version: string;
 }
 
-/** The pin from package.json's "pi" block — the mirror that exists on a bare
+/** The pin from package.json's "qcrPi" block — the mirror that exists on a bare
  * public clone, where config.toml does not (the wizard writes it later).
  * config.toml [pi] stays the preferred source when it loads (cmdOnboard tries
  * it first); both mirror the same pinned version by rule 7's discipline. */
@@ -25,9 +25,9 @@ export function piPinFromPackageJson(
 ): PiPin | null {
   try {
     const pkg = JSON.parse(readFile(join(root, "package.json"))) as {
-      pi?: { package?: unknown; version?: unknown };
+      qcrPi?: { package?: unknown; version?: unknown };
     };
-    const pi = pkg.pi;
+    const pi = pkg.qcrPi;
     if (pi && typeof pi.package === "string" && typeof pi.version === "string") {
       return { package: pi.package, version: pi.version };
     }

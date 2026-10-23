@@ -20,7 +20,8 @@ import {
   statSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { TurnBudget, termThenKill } from "@quickchatai/pi-quickreview/src/engine/budget.js";
@@ -193,6 +194,24 @@ export function runPi(
   });
 }
 
+/** The checkout this helper is in: the app's env shims live under it. */
+const CHECKOUT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+/**
+ * The file a pi CHILD loads for an extension the spec names. A round names
+ * the core's own extension modules (packages/pi-plugin/src/engine/extfiles.ts),
+ * which are factories over their config and read no env; a pi child loads by
+ * path and needs the module that reads its config from the env, the app's
+ * shim under extensions/cli/ of the same name. One without a shim (a module
+ * with its own default export) is loaded as it is.
+ */
+export function childExtension(file: string): string {
+  const name = basename(file).replace(/\.(ts|js)$/, "");
+  const shim = join(CHECKOUT, "extensions", "cli", `${name}.ts`);
+  const core = /\/(packages\/pi-plugin|pi-quickreview)\/(dist\/)?extensions\/[^/]+\.(ts|js)$/;
+  return core.test(file) && existsSync(shim) ? shim : file;
+}
+
 /** What a pi child is started with, from the spec: its CLI-only flags first,
  * then the fields the port names, in the order pi's own docs list them. The
  * turn's `-p` (and, after the first turn, `--continue`) is the session's. */
@@ -204,7 +223,7 @@ export function piCliArgv(spec: SessionSpec): string[] {
     spec.model,
     ...(spec.sessionDir !== undefined ? ["--session-dir", spec.sessionDir] : []),
     ...(spec.systemPromptFile !== undefined ? ["--system-prompt", spec.systemPromptFile] : []),
-    ...(spec.extensions ?? []).flatMap((e) => ["--extension", e]),
+    ...(spec.extensions ?? []).flatMap((e) => ["--extension", childExtension(e)]),
     ...(spec.name !== undefined ? ["--name", spec.name] : []),
     "--mode",
     "json",

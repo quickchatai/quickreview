@@ -136,6 +136,11 @@ export function prepareReviewHost(o: {
   /** What a refused login says: each host names its own fix. Default: the
    * engine's words. */
   authWords?: AuthCopyWords;
+  /** Carry (and check) only these providers' logins into the run: a host
+   * whose login holds other providers' tokens (a person's own pi) gives the
+   * review's providers here, so an unrelated short-lived login neither rides
+   * along nor refuses the run. Omitted: the whole login. */
+  authProviders?: readonly string[];
   now?: () => number;
 }): HostRun {
   const cwd = resolve(o.cwd);
@@ -152,6 +157,7 @@ export function prepareReviewHost(o: {
       needMs: o.needMs,
       ...(o.now ? { now: o.now } : {}),
       words: o.authWords ?? ENGINE_AUTH_WORDS,
+      ...(o.authProviders ? { providers: o.authProviders } : {}),
     });
   } else {
     // No login: an API key in the environment is the route (as the bench's).

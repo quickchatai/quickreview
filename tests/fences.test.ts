@@ -287,11 +287,11 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
    * suite stays green unless every spelling is compared (OpenViking's pins
    * have the same check in tests/openviking.test.ts).
    * `tests/release-image.test.ts` pins config.toml ↔ group_vars ↔ Dockerfile;
-   * this file pins the others, among them `package.json`'s `pi` block
+   * this file pins the others, among them `package.json`'s `qcrPi` block
    * (`scripts/deploy.sh` only tells the operator to reconcile it by hand) and
    * the version quoted in the deploying skill.
    *
-   * MUTATION: change `version` in the `pi` block of package.json — this fails.
+   * MUTATION: change `version` in the `qcrPi` block of package.json — this fails.
    *
    * The spellings are split below into those that ship in every tree and the
    * ones that do not; one more spelling (the deploying skill) follows, and it
@@ -330,8 +330,9 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
    * more of them. */
   const publicPins = () => ({
     "config.example.toml [pi] version": tomlPiVersion("config.example.toml"),
-    "package.json pi.version": (JSON.parse(read("package.json")) as { pi?: { version?: string } })
-      .pi?.version,
+    "package.json qcrPi.version": (
+      JSON.parse(read("package.json")) as { qcrPi?: { version?: string } }
+    ).qcrPi?.version,
     "package.json dependency pi-coding-agent": dependency("@earendil-works/pi-coding-agent"),
     "package.json dependency pi-ai": dependency("@earendil-works/pi-ai"),
     "package-lock.json pi-coding-agent": lockVersion("@earendil-works/pi-coding-agent"),

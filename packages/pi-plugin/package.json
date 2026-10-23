@@ -2,7 +2,13 @@
   "name": "@quickchatai/pi-quickreview",
   "version": "1.0.8",
   "private": false,
-  "description": "QuickReview's review core as a pi package: the engine, the lens tools, the review planner, the agent build and the renderer the bot runs",
+  "description": "QuickReview for pi: /review (a PR, the branch or the uncommitted tree), /scan, /selfimprove and /qcr-setup in your own pi session, on the same review core the QuickReview bot runs",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "code-review",
+    "review"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -18,14 +24,27 @@
     "./extensions/*": "./dist/extensions/*",
     "./package.json": "./package.json"
   },
+  "files": [
+    "dist",
+    "assets",
+    "README.md",
+    "LICENSE"
+  ],
+  "//pi": "pi loads exactly this: the one extension below. No prompts/, skills/ or themes/ directory exists at the package root (the frozen seeds ship under assets/), so pi's conventional discovery finds nothing else; tests/pi-plugin-install.test.ts proves it on the packed tarball.",
+  "pi": {
+    "extensions": [
+      "./dist/src/plugin/index.js"
+    ]
+  },
   "scripts": {
     "build": "tsc -b",
-    "prepack": "node ../../scripts/plugin-assets.mjs",
+    "prepack": "tsc -b && node ../../scripts/plugin-assets.mjs",
     "postpack": "node ../../scripts/plugin-assets.mjs --clean"
   },
   "dependencies": {
     "smol-toml": "1.8.0"
   },
+  "//peerDependencies": "Supplied by the running pi, never installed beside it. The pi range is the version gate's (src/plugin/versiongate.ts): the plugin registers no command on a pi outside it, and only versions the canaries ran on belong in it (`npm run canary:pi:range`).",
   "peerDependencies": {
     "@earendil-works/pi-agent-core": "^1.3.0",
     "@earendil-works/pi-ai": "^1.3.0",

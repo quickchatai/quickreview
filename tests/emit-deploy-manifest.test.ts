@@ -71,7 +71,7 @@ describe("emit-deploy-manifest", () => {
     expect(m.images.memory.index_digest).toBe(d("4"));
     expect(m.revision).toBe("0123456789abcdef0123456789abcdef01234567");
     const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-    expect(m.pins.pi).toBe(pkg.pi.version);
+    expect(m.pins.pi).toBe(pkg.qcrPi.version);
     expect(m.pins.runspec).toBeGreaterThanOrEqual(1);
   });
 

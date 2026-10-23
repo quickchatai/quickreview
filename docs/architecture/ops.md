@@ -80,7 +80,7 @@ The operator TUI makes the same split separately, through `config.toml
 `src/onboard/launch.ts`. That launches **pi** at the pinned version through
 `npx` (`onboardingPiArgv`), so a bare clone with Node and the checkout is
 enough — pi is not a dependency of this repo. The pin is read from `config.toml
-[pi]` when that file exists and from the `pi` block in `package.json`
+[pi]` when that file exists and from the `qcrPi` block in `package.json`
 otherwise; both mirror the same version.
 
 The session is deliberately narrow: `--no-extensions --no-skills

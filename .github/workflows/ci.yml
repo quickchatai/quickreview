@@ -83,6 +83,26 @@ jobs:
         if: steps.pi.outputs.changed == 'true'
         run: timeout 300 npm run canary:pi
 
+  # The pi plugin's range: the offline canaries on each pi version the
+  # plugin's peer range (packages/pi-plugin/package.json) claims to hold. A
+  # version joins the matrix only once it passes here; the script refuses one
+  # outside the range.
+  pi-range:
+    runs-on: ${{ vars.QCR_RUNNERS == 'github' && 'ubuntu-latest' || 'blacksmith-4vcpu-ubuntu-2404' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        pi: ["1.3.0"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: timeout 600 npm run canary:pi:range -- --install ${{ matrix.pi }}
+
   # The release image, built and run once with no model: version, the schema
   # versions, review --preview on a fixture repo, the host wrapper installed
   # into a temp dir, and the runner's kernel.yama.ptrace_scope in the summary.

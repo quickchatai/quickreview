@@ -1,8 +1,19 @@
-// Where a local review's result goes (`qcr review`): the terminal, a markdown
-// file, or JSON back to the agent. The repo's own default is kept in the review
-// home (packages/pi-plugin/src/reviewstore.ts: shared by its worktrees, never tracked, never
-// global); a flag overrides it for one run. Posting to a PR (packages/pi-plugin/src/reviewpost.ts) is offered, and
-// accepted, only for a target that has a PR.
+// Where a local review's result goes: shown to the person, saved as files,
+// JSON back to an agent, or posted to the PR. The same rules hold for every
+// surface that runs a review (`qcr review` in a terminal, the pi plugin's
+// /review in a session):
+//
+//   - flags (`--to`, `--json`, `--out`) decide, when given;
+//   - else the repo's saved default, when it has one;
+//   - else an interactive run asks, every time; the person may keep the
+//     answer as the repo's default, which then skips the question;
+//   - else (piped, `--json`, CI, pi's print mode) the result is printed.
+//
+// `planDestinations` is that rule; `destinationMenu` is the question. The
+// repo's default is kept in the review home (packages/pi-plugin/src/reviewstore.ts: shared by
+// its worktrees, never tracked, never global), whose path every caller
+// passes. Posting to a PR (packages/pi-plugin/src/reviewpost.ts) is offered,
+// and accepted, only for a target that has a PR.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -24,17 +35,109 @@ export interface DestinationChoice {
   label: string;
 }
 
+/** Where the person reads a result: a terminal (`qcr review`), or a pi
+ * session (the plugin's /review), where "terminal" is the session itself and
+ * a saved report carries its JSON beside the markdown. */
+export type DestinationSurface = "terminal" | "session";
+
 /** The destinations a person can be asked to pick. `pr`: the target is a PR,
  * the only target that can be posted to. */
-export function destinationChoices(target: { pr: boolean }): DestinationChoice[] {
+export function destinationChoices(
+  target: { pr: boolean },
+  surface: DestinationSurface = "terminal",
+): DestinationChoice[] {
+  const post = target.pr
+    ? [{ value: "pr" as const, label: "post to the PR as a comment-only review" }]
+    : [];
+  if (surface === "session")
+    return [
+      { value: "terminal", label: "show it in this session" },
+      { value: "file", label: "save it as markdown and JSON" },
+      ...post,
+    ];
   return [
     { value: "terminal", label: "print in the terminal" },
     { value: "file", label: "write a markdown report" },
     { value: "json", label: "JSON for a coding agent" },
-    ...(target.pr
-      ? [{ value: "pr" as const, label: "post to the PR as a comment-only review" }]
-      : []),
+    ...post,
   ];
+}
+
+/** One answer to the destination question: where this run's result goes, and
+ * whether the repo keeps it as its default (which skips the question next time). */
+export interface DestinationPick {
+  destinations: Destination[];
+  remember: boolean;
+}
+
+export interface DestinationMenuItem {
+  label: string;
+  pick: DestinationPick;
+}
+
+/** What a run with nobody to ask prints, per surface: the CLI its text and
+ * the JSON (an agent reads the last line), a session its markdown. `--json`
+ * prints the JSON alone on both. */
+export function printDestinations(surface: DestinationSurface, json: boolean): Destination[] {
+  if (json) return ["json"];
+  return surface === "session" ? ["terminal"] : [...FALLBACK_DESTINATIONS];
+}
+
+/** The question an interactive run asks each time: every destination for this
+ * run, then each again to keep as this repo's default. Posting also shows the
+ * review where the person is, so a post is never the only copy they see. */
+export function destinationMenu(
+  target: { pr: boolean },
+  surface: DestinationSurface = "terminal",
+): DestinationMenuItem[] {
+  const choices = destinationChoices(target, surface);
+  const dests = (c: DestinationChoice): Destination[] =>
+    c.value === "pr" ? ["pr", "terminal"] : [c.value];
+  return [
+    ...choices.map((c) => ({ label: c.label, pick: { destinations: dests(c), remember: false } })),
+    ...choices.map((c) => ({
+      label: `${c.label}, and always do this in this repo`,
+      pick: { destinations: dests(c), remember: true },
+    })),
+  ];
+}
+
+/** How a run's destinations are settled, before it starts. */
+export type DestinationPlan =
+  | {
+      kind: "fixed";
+      destinations: Destination[];
+      /** flags: `--to`/`--json`/`--out`; saved: the repo's default; print:
+       * nobody to ask. */
+      source: "flags" | "saved" | "print";
+    }
+  | { kind: "ask"; menu: DestinationMenuItem[] };
+
+/**
+ * The destination rule (this file's header), shared by every surface. A saved
+ * default that posts does not apply to a target with no PR; what is left of
+ * it does, and an empty remainder is no default.
+ */
+export function planDestinations(o: {
+  /** What the flags asked for (`--to`, `--out` as "file"); empty: nothing. */
+  explicit: readonly Destination[];
+  /** `--json`: the result is printed as JSON, nothing is asked. */
+  json: boolean;
+  /** Somebody can be asked (a TTY, a pi session with dialogs). */
+  interactive: boolean;
+  /** The repo's saved default (`loadDefaultDestinationsIn`), or null. */
+  saved: readonly Destination[] | null;
+  target: { pr: boolean };
+  surface: DestinationSurface;
+}): DestinationPlan {
+  const explicit = [...(o.json ? (["json"] as const) : []), ...o.explicit].filter(
+    (d, i, a) => a.indexOf(d) === i,
+  );
+  if (explicit.length > 0) return { kind: "fixed", destinations: explicit, source: "flags" };
+  const saved = (o.saved ?? []).filter((d) => o.target.pr || d !== "pr");
+  if (saved.length > 0) return { kind: "fixed", destinations: saved, source: "saved" };
+  if (o.interactive) return { kind: "ask", menu: destinationMenu(o.target, o.surface) };
+  return { kind: "fixed", destinations: printDestinations(o.surface, false), source: "print" };
 }
 
 /** `terminal,json` → the list; throws on a word that is not a destination. */

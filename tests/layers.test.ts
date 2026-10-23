@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
+  CORE_HOST_ENTRIES,
   coreForbiddenCalls,
   fencedFiles,
   layerOf,
@@ -104,6 +105,26 @@ describe("the fence can fail", () => {
       "packages/pi-plugin/src/engine/x.ts: process.exit",
     );
     expect(coreForbiddenCalls(dir)).not.toContain("src/exits.ts: process.exit");
+  });
+
+  // MUTATION: drop the host-entry filter in coreForbiddenCalls, or widen an
+  // entry to every call — this fails.
+  it("lets a host entry make only its named calls, and nobody else", () => {
+    const plugin = join(dir, "packages/pi-plugin/src/plugin");
+    mkdirSync(plugin, { recursive: true });
+    writeFileSync(
+      join(plugin, "index.ts"),
+      'import { homedir } from "node:os";\nexport const h = homedir();\nexport const c = process.cwd();\n',
+    );
+    writeFileSync(join(plugin, "other.ts"), "export const h = homedir();\n");
+    const hits = coreForbiddenCalls(dir);
+    expect(hits).not.toContain("packages/pi-plugin/src/plugin/index.ts: homedir");
+    expect(hits).toContain("packages/pi-plugin/src/plugin/index.ts: process.cwd");
+    expect(hits).toContain("packages/pi-plugin/src/plugin/other.ts: homedir");
+    expect(coreForbiddenCalls(dir, {})).toContain(
+      "packages/pi-plugin/src/plugin/index.ts: homedir",
+    );
+    expect(CORE_HOST_ENTRIES).toEqual({ "packages/pi-plugin/src/plugin/index.ts": ["homedir"] });
   });
 
   it("classifies by package: the core package is core, the rest is the app", () => {

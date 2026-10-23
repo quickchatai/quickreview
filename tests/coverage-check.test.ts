@@ -183,7 +183,7 @@ describe("coverage_gaps on both routes", () => {
     expect(ext).toContain("FINDING_CLUSTERS_TOOLS");
     expect(readFileSync(join(root, "src/sessions.ts"), "utf8")).toMatch(/"finding-clusters\.ts"/);
     expect(readFileSync(join(root, "packages/pi-plugin/src/engine/round.ts"), "utf8")).toMatch(
-      /"finding-clusters\.ts"/,
+      /ROUND_EXTENSIONS[^=]*=\s*\[[^\]]*"finding-clusters"/,
     );
   });
   it("answers rows with reasons, and reports malformed input instead of throwing", async () => {

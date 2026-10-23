@@ -2,12 +2,26 @@
 // data the core reads into packages/pi-plugin/assets/, byte for byte, and the
 // core's asset lookup finds that copy in an installed package.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { assetRootFrom } from "@quickchatai/pi-quickreview/src/assetroot.js";
-import { ASSETS, cleanAssets, copyAssets } from "../scripts/plugin-assets.mjs";
+import {
+  ASSETS,
+  ROOT_FILES,
+  cleanAssets,
+  copyAssets,
+  verifyAssets,
+} from "../scripts/plugin-assets.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const sha = (p: string): string => createHash("sha256").update(readFileSync(p)).digest("hex");
@@ -42,10 +56,29 @@ describe("the plugin's packed data", () => {
     const pkg = JSON.parse(
       readFileSync(join(ROOT, "packages", "pi-plugin", "package.json"), "utf8"),
     ) as { scripts: Record<string, string> };
-    expect(pkg.scripts["prepack"]).toBe("node ../../scripts/plugin-assets.mjs");
+    expect(pkg.scripts["prepack"]).toBe("tsc -b && node ../../scripts/plugin-assets.mjs");
     expect(pkg.scripts["postpack"]).toBe("node ../../scripts/plugin-assets.mjs --clean");
     copyAssets(ROOT, plugin);
+    expect(ROOT_FILES).toEqual(["LICENSE"]);
+    expect(sha(join(plugin, "LICENSE"))).toBe(sha(join(ROOT, "LICENSE")));
     cleanAssets(plugin);
     expect(existsSync(join(plugin, "assets"))).toBe(false);
+    expect(existsSync(join(plugin, "LICENSE"))).toBe(false);
+  });
+
+  // MUTATION: make verifyAssets compare names only, or skip a directory —
+  // this fails.
+  it("fails the pack when a copied byte, a file or the LICENSE differs from the root's", () => {
+    copyAssets(ROOT, plugin);
+    expect(verifyAssets(ROOT, plugin)).toContain("agents/pass-baseline.md");
+    appendFileSync(join(plugin, "assets", "agents", "pass-baseline.md"), " ");
+    expect(() => verifyAssets(ROOT, plugin)).toThrow(/agents\/pass-baseline\.md differs/);
+    copyAssets(ROOT, plugin);
+    writeFileSync(join(plugin, "assets", "prompts", "extra.md"), "x");
+    expect(() => verifyAssets(ROOT, plugin)).toThrow(/exactly the files of prompts/);
+    copyAssets(ROOT, plugin);
+    writeFileSync(join(plugin, "LICENSE"), "not it");
+    expect(() => verifyAssets(ROOT, plugin)).toThrow(/LICENSE differs/);
+    cleanAssets(plugin);
   });
 });

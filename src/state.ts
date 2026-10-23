@@ -7770,6 +7770,9 @@ export type PrRuntime = (typeof PR_RUNTIMES)[number];
 export interface StatusSnapshot {
   written_at: string;
   dry_run: boolean;
+  /** Where the daemon runs (src/runhost.ts). Absent: not reported (an older
+   * daemon, or one assembled without its host facts). */
+  run_host?: import("./runhost.js").RunHostStatus;
   prs: Array<
     Pick<PrStateRow, "number" | "state" | "title" | "head_sha" | "stale_recheck"> &
       Partial<Pick<PrStateRow, "trigger_ts" | "updated_at" | "author" | "paused">> & {

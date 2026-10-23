@@ -513,7 +513,7 @@ $SELF: pi version mismatch — refusing to deploy.
     group_vars    pi_version   = "$GV_PI"
 
 Deploying would change the pinned pi version on the VM. That is a deliberate
-act: reconcile the two by hand (and package.json's "pi" block) and cut a new
+act: reconcile the two by hand (and package.json's "qcrPi" block) and cut a new
 release, so CI builds the image against the new pin.
 EOF
   exit 1

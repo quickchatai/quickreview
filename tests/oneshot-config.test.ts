@@ -158,6 +158,14 @@ describe("asset roots", () => {
       mkdirSync(dirname(link), { recursive: true });
       symlinkSync(join(repo, "packages/pi-plugin"), link);
       expect(assetRootFrom(join(link, "dist", "src"))).toBe(repo);
+      // A package really installed in a node_modules/ reads its own assets/,
+      // even when that node_modules/ is inside a checkout of this repo.
+      // MUTATION: drop installedPackageAssets — this fails.
+      const nested = join(repo, "node_modules", ".cache", "x", "node_modules", CORE_NAME);
+      mkdirSync(join(nested, "assets", "agents"), { recursive: true });
+      mkdirSync(join(nested, "dist", "src"), { recursive: true });
+      writeFileSync(join(nested, "package.json"), "{}\n");
+      expect(assetRootFrom(join(nested, "dist", "src"))).toBe(join(nested, "assets"));
       // agents/ alone is not the data root: prompts/ must be beside it.
       mkdirSync(join(t, "bare", "agents", "x"), { recursive: true });
       expect(() => assetRootFrom(join(t, "bare", "agents", "x"))).toThrow(/asset root not found/);

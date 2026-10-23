@@ -358,3 +358,71 @@ describe("the hot-reload handover releases the port before spawning the new buil
     expect(teardown.indexOf("memForward.stop()")).toBeLessThan(teardown.indexOf("app.quit()"));
   });
 });
+
+describe("MemoryForward — memory off on a host with no Docker", () => {
+  it("settles off with the reason: no probe, no bind, nothing that reads as a failure", async () => {
+    const f = fakeModule();
+    let probes = 0;
+    const logs: string[] = [];
+    const fwd = new MemoryForward({
+      baseUrl: BASE,
+      repoRoot: "/does/not/matter",
+      probe: () => {
+        probes += 1;
+        return Promise.resolve(false);
+      },
+      load: () => Promise.resolve(f.mod),
+      offReason: async () => "memory off (no Docker)",
+      log: (l) => logs.push(l),
+    });
+    const st = await fwd.ensure();
+    expect(st).toMatchObject({ state: "off", detail: "memory off (no Docker)" });
+    expect(fwd.up).toBe(false);
+    expect(probes).toBe(0);
+    expect(f.created()).toBe(0);
+    // A retry (the tab's refresh) says it once, never again as news.
+    await fwd.ensure();
+    await fwd.ensure();
+    expect(logs).toEqual(["memory-forward: off — memory off (no Docker)"]);
+  });
+
+  it("with no reason the forward starts as before", async () => {
+    const f = fakeModule();
+    // Nothing listening before the bind, upstream answering through it after:
+    // the same two probes a forward with no offReason runs.
+    const answers = [false, true];
+    let probes = 0;
+    let asked = 0;
+    const fwd = new MemoryForward({
+      baseUrl: BASE,
+      repoRoot: "/does/not/matter",
+      probe: () => Promise.resolve(answers[Math.min(probes++, answers.length - 1)] ?? false),
+      load: () => Promise.resolve(f.mod),
+      offReason: () => {
+        asked += 1;
+        return undefined;
+      },
+    });
+    expect((await fwd.ensure()).state).toBe("owned");
+    expect(asked).toBe(1);
+    expect(probes).toBe(2);
+    expect(f.created()).toBe(1);
+    fwd.stop();
+  });
+
+  it("with no reason a forward that reaches no upstream still fails — a socket is not memory", async () => {
+    const f = fakeModule();
+    const fwd = new MemoryForward({
+      baseUrl: BASE,
+      repoRoot: "/does/not/matter",
+      probe: () => Promise.resolve(false),
+      load: () => Promise.resolve(f.mod),
+      offReason: () => undefined,
+    });
+    const st = await fwd.ensure();
+    expect(st.state).toBe("failed");
+    expect(st.detail).toMatch(/not answering/);
+    expect(f.created()).toBe(1);
+    fwd.stop();
+  });
+});

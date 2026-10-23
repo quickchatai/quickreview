@@ -1124,8 +1124,11 @@ describe("companion image", () => {
     image.indexOf("mode_login() {"),
   );
   const noFs: CompanionFs = { exists: () => false, read: () => undefined, mode: () => undefined };
+  // The root's pi pin lives under `qcrPi`, never `pi`: pi would read a `pi`
+  // key as a package manifest, and the app root is not a pi package.
   const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")) as {
-    pi: { package: string; version: string; extensions?: Record<string, string> };
+    pi?: unknown;
+    qcrPi: { package: string; version: string; extensions?: Record<string, string> };
   };
 
   it("is the release image: built from docker/Dockerfile, no companion Dockerfile in the build", () => {
@@ -1144,8 +1147,9 @@ describe("companion image", () => {
   });
 
   it("pins pi to the same version as package.json", () => {
-    expect(dockerfile).toContain(`PI_VERSION=${pkg.pi.version}`);
-    expect(dockerfile).toContain(`PI_PACKAGE=${pkg.pi.package}`);
+    expect(pkg.pi).toBeUndefined();
+    expect(dockerfile).toContain(`PI_VERSION=${pkg.qcrPi.version}`);
+    expect(dockerfile).toContain(`PI_PACKAGE=${pkg.qcrPi.package}`);
   });
 
   // No second memory engine in the companion: pi-memory and qmd are not
@@ -1153,7 +1157,7 @@ describe("companion image", () => {
   // one writing a local MEMORY.md nobody reads, and one hooking
   // `session_before_compact`, which packages/pi-plugin/extensions/ledger-pin.ts must own alone.
   it("installs NO memory extension — memory is OpenViking over the host forward", () => {
-    expect(pkg.pi.extensions?.["pi-memory"]).toBeUndefined();
+    expect(pkg.qcrPi.extensions?.["pi-memory"]).toBeUndefined();
     // Mechanism, not mention: a comment explaining why they are absent may
     // name them; an install layer may not.
     const installs = dockerfile.split("\n").filter((l) => /^\s*(RUN|&&)\s+npm install/.test(l));

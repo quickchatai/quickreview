@@ -44,7 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get purge -y bison && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
 # pi — pinned, never floating. Pin must equal config.toml [pi], package.json's
-# `pi` block and deploy/ansible/group_vars, or every VERIFY-ON-PIN assumption
+# `qcrPi` block and deploy/ansible/group_vars, or every VERIFY-ON-PIN assumption
 # in this repo is void.
 ARG PI_PACKAGE=@earendil-works/pi-coding-agent
 ARG PI_VERSION=1.3.0

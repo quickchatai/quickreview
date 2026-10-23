@@ -33,8 +33,15 @@
 // SDK host needs the same one, since provider requests and our own GitHub
 // fetches go through it. PiHost deep-imports pi's own function so the settings
 // match exactly, and installs it only when the route says it owns the process.
-// Inside a CLI pi (the debug round, the companion) the dispatcher is pi's, and
-// PiHost leaves it alone. Canary 6 pins the function and its settings.
+// Inside a CLI pi (the debug round, the companion, the pi plugin's commands)
+// the dispatcher is pi's, and PiHost leaves it alone. Canary 6 pins the
+// function and its settings.
+//
+// A host built by an extension of the running pi (`hostPi`, the plugin's
+// /review) knows it is inside pi without the title heuristic, and loads
+// nothing from pi's dist/ by file path: the running pi may be a bundle or a
+// binary whose files are not the package's. pi's own location comes from its
+// exported getPackageDir(), never from a module-path walk.
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -61,6 +68,7 @@ import {
   createReadToolDefinition,
   createEditToolDefinition,
   createWriteToolDefinition,
+  getPackageDir,
   main as piCliMain,
 } from "@earendil-works/pi-coding-agent";
 import { isProtectedWriteTarget } from "../../extensions/bash-guard.js";
@@ -80,7 +88,6 @@ import { inheritingBashOperations, isolatedBashOperations, type ToolIds } from "
 
 // ---- the HTTP dispatcher -------------------------------------------------
 
-const PI_PACKAGE = "@earendil-works/pi-coding-agent";
 /** Where undici keeps the process-global dispatcher: both Node's bundled fetch
  * and the npm undici pi installs read this one symbol. */
 export const UNDICI_GLOBAL_DISPATCHER = Symbol.for("undici.globalDispatcher.1");
@@ -123,15 +130,11 @@ export function insideCliPi(
   return env["PI_CODING_AGENT"] === "true" && piCliTitles().includes(title);
 }
 
-/** The directory the installed pi package lives in. Found by walking the
- * module search path: the package's export map hides everything but its entry. */
+/** The directory of the pi package this module runs against: pi's own answer
+ * (its exported getPackageDir), so an extension inside a running pi, whose
+ * package directory holds no pi of its own, gets the running one. */
 export function piPackageDir(): string {
-  const req = createRequire(import.meta.url);
-  for (const base of req.resolve.paths(PI_PACKAGE) ?? []) {
-    const dir = join(base, PI_PACKAGE);
-    if (existsSync(join(dir, "package.json"))) return dir;
-  }
-  throw new Error(`pi SDK package ${PI_PACKAGE} not found on the module search path`);
+  return getPackageDir();
 }
 
 export type ConfigureHttpDispatcher = (timeoutMs?: number) => void;
@@ -225,9 +228,12 @@ export function loadImageSniffer(): Promise<ImageSniffer | null> {
 export async function ensureHttpDispatcher(o: {
   ownsProcess: boolean;
   idleTimeoutMs: number;
+  /** The caller is an extension of the running pi CLI: its dispatcher is in
+   * place, whatever the title says. */
+  hostPi?: boolean;
 }): Promise<DispatcherOutcome> {
   const g = globalThis as Record<symbol, unknown>;
-  if (insideCliPi()) return "reused";
+  if (o.hostPi === true || insideCliPi()) return "reused";
   const ours = g[INSTALLED_BY_PIHOST];
   if (ours !== undefined) return g[UNDICI_GLOBAL_DISPATCHER] === ours ? "installed" : "reused";
   if (!o.ownsProcess) return "none";
@@ -398,6 +404,11 @@ export interface PiHostOptions {
   /** The route owns this process, so PiHost may install pi's HTTP dispatcher
    *. False inside a CLI pi or a host that someone else configured. */
   ownsProcess?: boolean;
+  /** The host is built by an extension of the running pi CLI (the pi plugin):
+   * pi's dispatcher is reused, never installed, and nothing is loaded from
+   * pi's dist/ by file path (the read tool then tells no image from its bytes
+   * and reads every file as text). Implies `ownsProcess: false`. */
+  hostPi?: boolean;
   /** Idle timeout for provider requests and the dispatcher. */
   httpIdleTimeoutMs?: number;
   /** Credential storage in place of the file at authPath (read-only copies). */
@@ -615,9 +626,12 @@ export class PiHost {
       throw new Error(`PiHost needs an absolute private agentDir, got ${options.agentDir}`);
     mkdirSync(options.agentDir, { recursive: true });
     const idle = options.httpIdleTimeoutMs ?? DEFAULT_HTTP_IDLE_TIMEOUT_MS;
+    if (options.hostPi === true && options.ownsProcess === true)
+      throw new Error("a host inside a running pi does not own its process");
     const dispatcher = await ensureHttpDispatcher({
       ownsProcess: options.ownsProcess ?? false,
       idleTimeoutMs: idle,
+      ...(options.hostPi === true ? { hostPi: true } : {}),
     });
     const runtime = await ModelRuntime.create({
       authPath: join(options.agentDir, "auth.json"),
@@ -646,7 +660,10 @@ export class PiHost {
   private async fileTools(cwd: string, names: readonly string[]): Promise<ToolDefinition[]> {
     const fence = this.fence;
     if (fence === null) return [];
-    const ops = fencedOperations(fence, await loadImageSniffer());
+    const ops = fencedOperations(
+      fence,
+      this.options.hostPi === true ? null : await loadImageSniffer(),
+    );
     const make: Record<(typeof FENCED_TOOLS)[number], () => unknown> = {
       read: () => createReadToolDefinition(cwd, { operations: ops.read }),
       grep: () => createGrepToolDefinition(cwd, { operations: ops.grep }),

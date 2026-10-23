@@ -458,6 +458,7 @@ export function renderStatus(snapshot: StatusSnapshot): string {
   const lines: string[] = [];
   const mode = snapshot.dry_run ? "DRY-RUN" : "LIVE";
   lines.push(`quickreview — ${mode} — snapshot ${snapshot.written_at}`);
+  if (snapshot.run_host?.warning) lines.push(`WARNING: ${oneLine(snapshot.run_host.warning)}`);
   if (snapshot.digest_headline) lines.push(`digest: ${oneLine(snapshot.digest_headline)}`);
   lines.push(
     `rounds running: ${snapshot.running_rounds}   total spend: $${snapshot.total_spend_usd.toFixed(2)}`,
@@ -1845,7 +1846,7 @@ export async function cmdOnboard(): Promise<number> {
   const { checklistComplete } = await import("./onboard/engine.js");
   const { spawn } = await import("node:child_process");
   const root = sandboxRoot();
-  // Pin source: config.toml [pi] when it loads; package.json's "pi" block on a
+  // Pin source: config.toml [pi] when it loads; package.json's "qcrPi" block on a
   // bare clone (config.toml is written later, BY onboarding). Same pinned
   // version by the rule-7 mirror discipline.
   let pin: { package: string; version: string } | null = null;
@@ -1857,7 +1858,7 @@ export async function cmdOnboard(): Promise<number> {
   }
   if (!pin)
     throw new Error(
-      'onboard: pi pin not found (need config.toml [pi] or the package.json "pi" block)',
+      'onboard: pi pin not found (need config.toml [pi] or the package.json "qcrPi" block)',
     );
   mkdirSync(onboardingSessionDir(root), { recursive: true });
   const run = (cmd: string, args: string[]): Promise<number> =>
@@ -2210,17 +2211,8 @@ export async function main(rawArgv: string[]): Promise<void> {
     case "version": {
       // The install's identity for a plugin: image version, JSON schema
       // versions, pi pin (src/version.ts). Needs no config and no state.
-      const { versionInfo, renderVersion } = await import("./version.js");
-      let pin: { package: string; version: string } | null = null;
-      try {
-        const { package: pkg, version } = loadConfig().pi;
-        pin = { package: pkg, version };
-      } catch {
-        // a bare clone has no config.toml: package.json's pi block answers
-      }
-      const info = versionInfo(sandboxRoot(), pin);
-      console.log(json ? JSON.stringify(info) : renderVersion(info));
-      return;
+      const { cmdVersion } = await import("./version.js");
+      return cmdVersion(json);
     }
     case "install": {
       process.exitCode = cmdInstall(rest);

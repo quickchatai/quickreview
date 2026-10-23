@@ -24,7 +24,9 @@ import { isTab } from "./tabs.js";
 import { laptopCompanionConfig, laptopInstallEnv, laptopLifecycle } from "./companionplan.js";
 import { TUI_COMPANION_ENV, TUI_COMPANION_TMUX_SOCKET, tmuxSocketRunner } from "./tmuxsocket.js";
 import {
+  APP_BUILD_INFO,
   BUILD_STAMP,
+  CORE_DIST,
   HotReloader,
   parseResumeArg,
   readResumeState,
@@ -544,14 +546,43 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   const { CompanionSidebar, restorePreferredSidebarWidth } = await import("./sidebar.js");
   const { CompanionLifecycle, realCompanionFs, realDockerRunner, tmuxSocketPath } =
     await import("./companion.js");
+  const { NativeCompanion, SelectingCompanion, nativeAgentDir, probeDocker, UNSANDBOXED_WARNING } =
+    await import("./nativecompanion.js");
+  const { configHome: companionConfigHome } = await import("../install.js");
+  const { MEMORY_OFF_NO_DOCKER } = await import("../memory/health.js");
+  // Is Docker answering here? Asked once, in the bring-up — never before the
+  // first frame — and shared by the companion's choice and the memory forward.
+  let dockerProbe: Promise<boolean> | undefined;
+  const dockerUp = (): Promise<boolean> =>
+    (dockerProbe ??= probeDocker(realDockerRunner).catch(() => false));
+  // Docker answering → the container companion; else the native one on this
+  // host, with the same guards and an "unsandboxed" warning
+  // (nativecompanion.ts). The containerised TUI keeps its wrapper-run
+  // container: it has no Docker of its own to ask.
+  const containerLifecycle = new CompanionLifecycle(full.companion, realDockerRunner);
+  const selecting = socketMode
+    ? undefined
+    : new SelectingCompanion(containerLifecycle, realDockerRunner, {
+        dockerUp,
+        makeNative: () =>
+          new NativeCompanion(containerLifecycle, {
+            appRoot: sandboxRoot(),
+            agentDir: nativeAgentDir(),
+            configHome: companionConfigHome(),
+          }),
+        onNative: () => {
+          app.sidebar?.setHeader({ unsandboxed: true });
+          app.notice(`companion: ${UNSANDBOXED_WARNING}`);
+        },
+      });
   // The one seam the lifecycle, the column and the rollover reach the companion
-  // through: docker exec, or tmux -S over the shared socket.
-  const companionDocker = socketMode
-    ? tmuxSocketRunner(tmuxSocketPath(full.companion), full.companion.container_name)
-    : realDockerRunner;
-  const companion = socketMode
-    ? laptopLifecycle(process.env, companionDocker, loaded.companion, realCompanionFs)
-    : new CompanionLifecycle(full.companion, realDockerRunner);
+  // through: docker exec, the native host's tmux, or tmux -S over the shared
+  // socket.
+  const companionDocker = selecting
+    ? selecting.runner
+    : tmuxSocketRunner(tmuxSocketPath(full.companion), full.companion.container_name);
+  const companion: import("./nativecompanion.js").CompanionHost =
+    selecting ?? laptopLifecycle(process.env, companionDocker, loaded.companion, realCompanionFs);
   // The companion's read-only GitHub token, minted here from the App
   // credential this host holds and handed over as an env file in a dir the
   // container mounts read-only. Refreshed while the TUI runs (it lives an
@@ -682,6 +713,13 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     // OpenViking's own container: the memory sidecar once the VM flips
     // `[openviking] endpoint = "remote"`, else the daemon container.
     container: tuiMemoryContainer(cfg),
+    // A local engine runs in Docker; with none here, memory is off — said
+    // once as the forward's state, never retried as a failure.
+    ...(!socketMode && transportOf(cfg) === "local"
+      ? {
+          offReason: async () => ((await dockerUp()) ? undefined : MEMORY_OFF_NO_DOCKER),
+        }
+      : {}),
     log: (line) => app.notice(line),
   });
   const { buildIssueSink, ticketProjection } = await import("./issuesink.js");
@@ -826,9 +864,19 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   const { todayDate } = await import("./rollover.js");
   chainOnPoll(app, (a) => {
     const fwd = memForward.view();
+    // A native companion has no memory wiring: no Docker, no sidecar.
+    const noDocker =
+      selecting?.kind === "native" || (fwd.state === "off" && fwd.detail === MEMORY_OFF_NO_DOCKER);
     a.sidebar?.setHeader({
       day: todayDate(new Date(), process.env, full.ops.timezone),
-      memory: fwd.state === "failed" ? "degraded" : fwd.state === "off" ? "off" : "ok",
+      memory: noDocker
+        ? "off"
+        : fwd.state === "failed"
+          ? "degraded"
+          : fwd.state === "off"
+            ? "off"
+            : "ok",
+      memoryNote: noDocker ? MEMORY_OFF_NO_DOCKER : undefined,
     });
   });
 
@@ -1005,7 +1053,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       progress.begin("memory-forward");
       const fwd = await memForward.ensure();
       if (fwd.state === "failed") progress.fail("memory-forward", fwd.detail);
-      else progress.done("memory-forward", fwd.state);
+      else progress.done("memory-forward", fwd.state === "off" ? fwd.detail : fwd.state);
       if (forwardUsable(fwd)) {
         progress.begin("memory-namespaces");
         const notes = await memStore.ensureNamespaces();
@@ -1015,7 +1063,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
           notes.length > 0 ? `${notes.length} note${notes.length === 1 ? "" : "s"}` : "ready",
         );
       } else {
-        progress.skip("memory-namespaces", "forward down");
+        progress.skip("memory-namespaces", fwd.state === "off" ? fwd.detail : "forward down");
       }
       progress.begin("container");
       // Before the container, so a cold start finds the token already there.
@@ -1375,7 +1423,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       progress.begin("memory-forward");
       const fwd = await memForward.ensure();
       if (fwd.state === "failed") progress.fail("memory-forward", fwd.detail);
-      else progress.done("memory-forward", fwd.state);
+      else progress.done("memory-forward", fwd.state === "off" ? fwd.detail : fwd.state);
     }
     await triaged;
   };
@@ -1412,13 +1460,19 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     }
   }
 
-  // Hot-reload: watch our own dist/ and the build stamp, and re-exec when a
-  // whole build lands (reload.ts says why the core's dist/ is not watched).
+  // Hot-reload: watch our own dist/, the build stamp and (without acting) the
+  // core's dist/, and re-exec when a whole build lands (reload.ts says why a
+  // core write alone never reloads).
   const reloadState = resumeStatePath(sandboxRoot());
   const reloader = args.reload
     ? new HotReloader({
         distDir: join(sandboxRoot(), "dist"),
         buildStamp: join(sandboxRoot(), BUILD_STAMP),
+        // A core-only change built without the stamp (a raw `tsc -b`, an
+        // IDE): the core's dist/ only marks it, the app's clean build info
+        // reloads (reload.ts).
+        coreDistDir: join(sandboxRoot(), CORE_DIST),
+        appBuildInfo: join(sandboxRoot(), APP_BUILD_INFO),
         stateFile: reloadState,
         snapshot: () => ({
           tab: app.tab,

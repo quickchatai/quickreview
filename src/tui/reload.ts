@@ -1,16 +1,28 @@
 // TUI hot-reload. The TUI re-execs in place when a whole build has landed,
-// restoring tab + selected PR + scroll from a small state file. Two signals
+// restoring tab + selected PR + scroll from a small state file. Three signals
 // say so, and nothing else does:
 //   - the app's dist/, watched recursively. `tsc -b` builds the review core
 //     (packages/pi-plugin) first and the app last, so the app's dist/ changes
 //     only once every project compiled;
 //   - the build stamp (BUILD_STAMP, written by scripts/build-stamp.mjs), for a
 //     core-only change that leaves the app's output alone. Every build route
-//     writes it only after a whole pass succeeded.
-// The core's own dist/ is NOT watched. `noEmitOnError` holds per project, so
-// a core edit that breaks the app still rewrites packages/pi-plugin/dist, and
-// even a clean build writes it seconds before the app's: a watch there would
-// re-exec onto new core code beside old app code.
+//     writes it only after a whole pass succeeded;
+//   - a core change followed by a clean app build info, for the same change
+//     built by a route that writes no stamp (below).
+// The core's own dist/ never reloads by itself. `noEmitOnError` holds per
+// project, so a core edit that breaks the app still rewrites
+// packages/pi-plugin/dist, and even a clean build writes it seconds before the
+// app's: reloading on it would re-exec onto new core code beside old app code.
+//
+// But only the build routes of package.json write the stamp, so a core-only
+// change built by a raw `tsc -b` or an IDE would never reload. For that case
+// the core's dist/ is watched WITHOUT acting: a change there marks a core
+// change pending, and the reload happens once the app's build info
+// (tsconfig.json `tsBuildInfoFile`) is written after that change and records
+// no errors and nothing left to check or emit. `tsc -b` writes the app's
+// build info last, on success and on failure alike, so its contents decide —
+// a half-written file does not parse and a failed build records its errors,
+// and neither reloads.
 //
 // Why this is safe: a failed build touches neither signal (the app does not
 // emit on error, and the stamp follows only a clean pass), so a broken edit
@@ -40,6 +52,7 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
+  statSync,
   watch as fsWatch,
   writeFileSync,
   type FSWatcher,
@@ -67,6 +80,47 @@ export type WatchFn = (
  * succeeded (scripts/build-stamp.mjs names the same path). */
 export const BUILD_STAMP = "state/build-complete";
 
+/** The review core's build output, relative to the checkout: watched, never
+ * acted on by itself (see the header). */
+export const CORE_DIST = "packages/pi-plugin/dist";
+
+/** The app project's build info, relative to the checkout — tsconfig.json's
+ * `tsBuildInfoFile`, outside every dist/. */
+export const APP_BUILD_INFO = "node_modules/.cache/qcr-tsbuildinfo";
+
+/**
+ * Does this build info record a whole, clean compile? Only a file that parses
+ * and carries none of tsc's unfinished-business markers: `errors` (a failed
+ * compile), `checkPending`, files still holding or awaiting diagnostics, and
+ * files whose emit is pending or failed. Anything unreadable is not clean.
+ * VERIFY-ON-PIN (typescript 5.9): the markers are tsc's incremental
+ * program's own field names.
+ */
+export function buildInfoClean(text: string | undefined): boolean {
+  if (text === undefined || text.trim() === "") return false;
+  let info: unknown;
+  try {
+    info = JSON.parse(text);
+  } catch {
+    return false;
+  }
+  if (typeof info !== "object" || info === null || Array.isArray(info)) return false;
+  const o = info as Record<string, unknown>;
+  if (typeof o["version"] !== "string") return false;
+  if (o["errors"] === true || o["checkPending"] === true) return false;
+  const pending = (key: string): boolean => {
+    const v = o[key];
+    return Array.isArray(v) ? v.length > 0 : v !== undefined && v !== null && v !== false;
+  };
+  return ![
+    "semanticDiagnosticsPerFile",
+    "emitDiagnosticsPerFile",
+    "affectedFilesPendingEmit",
+    "changeFileSet",
+    "pendingEmit",
+  ].some(pending);
+}
+
 export interface ReloaderOptions {
   /** The app's build output, whose mtime tree signals "a new build landed". */
   distDir: string;
@@ -75,6 +129,18 @@ export interface ReloaderOptions {
    * not recursively, for that one name; a missing directory is skipped, as a
    * missing `distDir` is. */
   buildStamp?: string;
+  /** The review core's build output (`CORE_DIST`): watched recursively, and
+   * a change there only marks a core change pending — see the header. Needs
+   * `appBuildInfo`; either missing leaves this route off. */
+  coreDistDir?: string;
+  /** The app's build info (`APP_BUILD_INFO`): its directory is watched for
+   * that one name, and a write newer than the pending core change that
+   * `buildInfoClean` accepts reloads. */
+  appBuildInfo?: string;
+  /** File text, or undefined when unreadable. Injectable for tests. */
+  readText?: (path: string) => string | undefined;
+  /** A file's mtime in ms, or undefined when it is not there. */
+  mtimeMs?: (path: string) => number | undefined;
   /** Where the pre-re-exec snapshot is written. */
   stateFile: string;
   /** Snapshot of what must survive the re-exec. */
@@ -94,12 +160,27 @@ export class HotReloader {
   private watchers: FSWatcher[] = [];
   private debounce: NodeJS.Timeout | undefined;
   private fired = false;
+  /** The newest core change not yet carried by a clean app build (ms), or
+   * undefined when none is pending. */
+  private coreChangedAt: number | undefined;
   private readonly opts: Required<ReloaderOptions>;
 
   constructor(opts: ReloaderOptions) {
     this.opts = {
       ...opts,
       buildStamp: opts.buildStamp ?? "",
+      coreDistDir: opts.coreDistDir ?? "",
+      appBuildInfo: opts.appBuildInfo ?? "",
+      readText:
+        opts.readText ??
+        ((path) => {
+          try {
+            return readFileSync(path, "utf8");
+          } catch {
+            return undefined;
+          }
+        }),
+      mtimeMs: opts.mtimeMs ?? ((path) => statSync(path, { throwIfNoEntry: false })?.mtimeMs),
       debounceMs: opts.debounceMs ?? DEBOUNCE_MS,
       watch: opts.watch ?? fsWatch,
       writeState:
@@ -117,6 +198,39 @@ export class HotReloader {
     this.watchOne(this.opts.distDir, true, () => true);
     const stamp = this.opts.buildStamp;
     if (stamp) this.watchOne(dirname(stamp), false, (name) => name === basename(stamp));
+    const core = this.opts.coreDistDir;
+    const info = this.opts.appBuildInfo;
+    if (core && info) {
+      this.watchOne(core, true, (name) => {
+        this.noteCoreChange(name);
+        return this.coreBuildLanded();
+      });
+      this.watchOne(
+        dirname(info),
+        false,
+        (name) => name === basename(info) && this.coreBuildLanded(),
+      );
+    }
+  }
+
+  /** A write under the core's dist/: pending until a clean app build after
+   * it. Dated by the file's own mtime, so an event that arrives after the
+   * app's build info was written still counts as before it. */
+  private noteCoreChange(name: string | null): void {
+    const at =
+      (name ? this.opts.mtimeMs(join(this.opts.coreDistDir, name)) : undefined) ??
+      this.opts.now().getTime();
+    this.coreChangedAt = Math.max(this.coreChangedAt ?? at, at);
+  }
+
+  /** A core change is pending, and the app's build info is newer than it and
+   * records a whole, clean build. */
+  private coreBuildLanded(): boolean {
+    if (this.coreChangedAt === undefined) return false;
+    const info = this.opts.appBuildInfo;
+    const written = this.opts.mtimeMs(info);
+    if (written === undefined || written <= this.coreChangedAt) return false;
+    return buildInfoClean(this.opts.readText(info));
   }
 
   private watchOne(dir: string, recursive: boolean, counts: (name: string | null) => boolean) {

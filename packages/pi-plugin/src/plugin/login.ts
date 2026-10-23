@@ -1,0 +1,111 @@
+// The borrowed login: a review inside a user's pi runs on that pi's own
+// login, and only that pi ever refreshes it.
+//
+// Before a run, each provider the review's models name is checked against the
+// host pi:
+//   - an OAuth login that would not last the run's window is refreshed by the
+//     host pi itself (its model registry, under its own lock, written to its
+//     own storage), so a token near the end of its life is renewed rather
+//     than the run refused;
+//   - a provider pi has no credential for at all fails the run with a hint
+//     that names pi's /login. A key for some other provider is never a reason
+//     to run on another model: the review runs on the models its config
+//     names, or not at all.
+// The run then reads a refresh-disabled copy of the login (engine/auth.ts):
+// nothing in it can refresh, so a rotated token never leaves the host.
+import type { CoreConfig } from "../reviewconfig.js";
+import type { LoginSummary } from "../engine/auth.js";
+
+/** What the plugin asks of the host pi's auth, by shape (the extension wires
+ * it to `ctx.modelRegistry` and the host's auth file). */
+export interface HostAuth {
+  /** The host's stored logins, each with its type and expiry; never a token. */
+  logins(): LoginSummary;
+  /** Does pi have any credential for `provider` (a login, a stored key, an
+   * environment key)? */
+  configured(provider: string): boolean;
+  /** Ask the host pi to make `provider`'s OAuth token valid for at least
+   * `minValidityMs` more: it refreshes it if not. Rejects when it cannot. */
+  refresh(provider: string, minValidityMs: number): Promise<void>;
+}
+
+/** The providers the review's sessions run on: every model spec's
+ * `provider/` prefix, in first-seen order. */
+export function reviewProviders(cfg: Pick<CoreConfig, "models">): string[] {
+  const m = cfg.models;
+  const specs = [
+    m.conversation,
+    m.default,
+    ...Object.values(m.tiers),
+    ...Object.values(m.pass_models),
+  ];
+  const out: string[] = [];
+  for (const spec of specs) {
+    const slash = spec.indexOf("/");
+    if (slash <= 0) continue;
+    const p = spec.slice(0, slash);
+    if (!out.includes(p)) out.push(p);
+  }
+  return out;
+}
+
+export type BorrowResult = { ok: true; refreshed: string[] } | { ok: false; error: string };
+
+/** The hint for a provider pi has no credential for. */
+export function noLoginHint(provider: string, keyed: readonly string[]): string {
+  const keys =
+    keyed.length > 0
+      ? ` pi has a key for ${keyed.join(", ")}, and the review does not switch models to use it: to review on that provider, set the review's models to it in your qcr config.`
+      : "";
+  return (
+    `the review runs on ${provider}, and this pi has no login for it. ` +
+    `Run /login ${provider} in pi, then /review again.${keys}`
+  );
+}
+
+/**
+ * Make sure every provider the review needs is usable for `needMs` from now,
+ * refreshing a short OAuth login through the host. `marginMs` is added to the
+ * window the host must cover.
+ */
+export async function borrowLogin(o: {
+  providers: readonly string[];
+  host: HostAuth;
+  needMs: number;
+  marginMs: number;
+  now?: () => number;
+}): Promise<BorrowResult> {
+  const now = o.now ?? Date.now;
+  const want = o.needMs + o.marginMs;
+  const refreshed: string[] = [];
+  let logins = o.host.logins();
+  for (const p of o.providers) {
+    const login = logins[p];
+    if (login?.type === "oauth") {
+      if (login.expires !== null && login.expires >= now() + want) continue;
+      try {
+        await o.host.refresh(p, want);
+      } catch (err) {
+        return {
+          ok: false,
+          error: `pi could not refresh your ${p} login (${err instanceof Error ? err.message : String(err)}). Run /login ${p} in pi, then /review again.`,
+        };
+      }
+      logins = o.host.logins();
+      const after = logins[p];
+      if (after?.type !== "oauth" || after.expires === null || after.expires < now() + want)
+        return {
+          ok: false,
+          error: `your ${p} login does not last this review's ${Math.round(o.needMs / 60_000)} minutes even after pi refreshed it. Run /login ${p} in pi, then /review again.`,
+        };
+      refreshed.push(p);
+      continue;
+    }
+    if (o.host.configured(p)) continue;
+    const keyed = Object.entries(logins)
+      .filter(([name, l]) => name !== p && l.type === "api_key")
+      .map(([name]) => name);
+    return { ok: false, error: noLoginHint(p, keyed) };
+  }
+  return { ok: true, refreshed };
+}
