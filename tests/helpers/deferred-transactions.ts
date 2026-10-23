@@ -56,6 +56,12 @@ export function programOfRepo(root: string): ts.Program {
   });
 }
 
+/** Library and typings files parsed once and shared by every planted program:
+ * each case otherwise re-parses lib.es2023 and better-sqlite3's typings, the
+ * whole cost of the case and a fresh copy of them on the heap. Only the
+ * virtual file differs between programs, and it is never cached. */
+const SHARED_SOURCE_FILES = new Map<string, ts.SourceFile | undefined>();
+
 /** A program over one in-memory file at `<root>/<relPath>`, for planted cases.
  * It sees the repo's node_modules, so `import Database from "better-sqlite3"`
  * resolves to the real typings. */
@@ -80,8 +86,16 @@ export function programOfSource(root: string, relPath: string, text: string): ts
   host.getSourceFile = (f, lang, onError, shouldCreate) =>
     f === virtual
       ? ts.createSourceFile(f, text, lang, true)
-      : getSourceFile.call(host, f, lang, onError, shouldCreate);
+      : sharedSourceFile(f, () => getSourceFile.call(host, f, lang, onError, shouldCreate));
   return ts.createProgram({ rootNames: [virtual], options, host });
+}
+
+function sharedSourceFile(
+  file: string,
+  parse: () => ts.SourceFile | undefined,
+): ts.SourceFile | undefined {
+  if (!SHARED_SOURCE_FILES.has(file)) SHARED_SOURCE_FILES.set(file, parse());
+  return SHARED_SOURCE_FILES.get(file);
 }
 
 interface Effects {
