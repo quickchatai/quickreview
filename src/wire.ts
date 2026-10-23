@@ -28,7 +28,7 @@ import { drainLever, pauseLever, resumeLever, type LeverDeps } from "./levers.js
 import { CaseWriter } from "./cases.js";
 import { Archiver } from "./archive/archiver.js";
 import { piGlobalSessionsDir } from "./archive/piglobal.js";
-import { runDirOf } from "./ipc/capability.js";
+import { runDirOf, toolUidSplit } from "./ipc/capability.js";
 import { PermitBroker } from "./ipc/permits.js";
 import { LoginRefreshSupervisor } from "./loginrefresh/supervisor.js";
 import { pendingArchiveStatus } from "./archive/status.js";
@@ -146,6 +146,7 @@ import {
 import { assertOrderFitsHost } from "./launchvocab.js";
 import { nodeExec } from "./tmux.js";
 import type { RoundOrder, SessionHooks } from "./types.js";
+import { versionInfo } from "./version.js";
 import { WebhookHealer } from "./webhookheal.js";
 import { buildWorkerWorld } from "./workerworld.js";
 
@@ -262,14 +263,8 @@ function readPreviousStatus(path: string): string | undefined {
 
 /** package.json version for the `daemon.up` line; never worth failing a boot. */
 function packageVersion(root: string): string | undefined {
-  try {
-    const raw = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
-      version?: unknown;
-    };
-    return typeof raw.version === "string" ? raw.version : undefined;
-  } catch {
-    return undefined;
-  }
+  const version = versionInfo(root).image.version;
+  return version === "unknown" ? undefined : version;
 }
 
 // ---- the Slack concierge ---------------------------------------------------
@@ -525,8 +520,8 @@ function localSlackBelt(
  *
  * The gate reads `latestAny()`, not `latest()`: the belt must not lift merely
  * because a turn ran past the 15-minute TTL (text in the channel can ask for
- * exactly that — "take your time"). Only a daemon wake, which stamps a `local`
- * origin, supersedes a Slack origin here — once pi has accepted that wake.
+ * exactly that — "take your time"). Slack inbound turns are retired and no
+ * wake stamps an origin (see `slackOriginStore`), so the belt stays lifted.
  */
 export function buildLocalCommandWatcher(opts: {
   root: string;
@@ -752,7 +747,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     reader: adapter,
     // The entrypoint names the tool uid (docker/entrypoint.sh, D32): the model's
     // shims then dial the socket as another uid of this group.
-    toolUid: /^[1-9][0-9]*$/.test(process.env["QCR_TOOL_UID"] ?? ""),
+    toolUid: toolUidSplit(),
     sessions,
     ...(parts.ovSessions ? { ovSessions: parts.ovSessions } : {}),
     permits: lensPermits,
@@ -1592,7 +1587,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       if (cfg.login_refresh.enabled) {
         loginRefresh = new LoginRefreshSupervisor({
           repoRoot: root,
-          agentDir: process.env["PI_CODING_AGENT_DIR"]?.trim() || join(homedir(), ".pi", "agent"),
+          agentDir,
           marginMin: cfg.login_refresh.margin_min,
           log,
           // One anomaly per failure episode, through the one durable funnel.

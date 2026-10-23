@@ -14,6 +14,7 @@ import { existsSync, mkdirSync, readFileSync, watch, type FSWatcher } from "node
 import { basename, dirname } from "node:path";
 import { INGRESS_DEFAULTS } from "./config.js";
 import type { GateResult } from "./gate.js";
+import { DEFAULT_WEBHOOK_PATH } from "./webhook.js";
 
 /** A bare DNS hostname — no scheme, no path, no port. The sidecar's contract
  * is exactly this (plus tolerated surrounding whitespace/newline). */
@@ -76,7 +77,7 @@ export class WebhookHealer {
   }
 
   private webhookPath(): string {
-    return this.deps.webhookPath ?? "/webhook";
+    return this.deps.webhookPath ?? DEFAULT_WEBHOOK_PATH;
   }
 
   /** fs.watch fast path + periodic sweep (the reliable one). A watch that
