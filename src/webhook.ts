@@ -829,6 +829,9 @@ export async function applyInterpretation(
       // The refreshed head and its author-response fact commit together.
       local(() => {
         const before = store.getPr(i.pr);
+        // A closed PR's row is the close's authoritative snapshot; a push that was
+        // still in flight when it closed is history, not the head.
+        if (before?.state === "closed") return;
         const result = applyEventFor(store, i.pr, { type: "synchronize" }, i.meta, opts);
         if (!result.skipped && before && i.meta.head_sha && before.head_sha !== i.meta.head_sha)
           store.logEvent("head_push", i.pr, { head_sha: i.meta.head_sha, source: "webhook" });

@@ -30,6 +30,7 @@ import {
   debugSession,
   type DebugRoundSpec,
 } from "../src/debuground.js";
+import type { PrSessionHost } from "../src/pr-session-lifecycle.js";
 import { dispatchOnce, type DispatchAdapter } from "../src/dispatch.js";
 import type { GateResult } from "../src/gate.js";
 import {
@@ -556,6 +557,34 @@ describe("[P8.13b] the round is delivered to interactive pi, not to a worker", (
     expect(r.capabilities.get(row.id)).toBeUndefined();
     // a worker may take it now
     expect((await r.supervisor.launch(row.id)).command_id).toBe(row.id);
+  });
+});
+
+describe("[P8.13b] a PR that closes under a debug round", () => {
+  it("stops the debug pi and frees the lease before its session counts as gone", async () => {
+    const r = rig();
+    upsert(r.store, 7);
+    expect((await r.mgr.arm(7, "owner")).ok).toBe(true);
+    await dispatch(r);
+    expect([...r.host.sessions.keys()]).toEqual(["debug-pr-7"]);
+    r.store.db.prepare("UPDATE pr_state SET state = 'closed' WHERE number = 7").run();
+
+    await r.worker.lifecycle.archiveAndClose(7);
+
+    expect(r.host.sessions.size).toBe(0);
+    expect(r.store.hostLease(7)).toBeUndefined();
+  });
+
+  it("is not proven gone while the debug lease holds the session", async () => {
+    const r = rig();
+    upsert(r.store, 7);
+    expect((await r.mgr.arm(7, "owner")).ok).toBe(true);
+    r.store.db.prepare("UPDATE pr_state SET state = 'closed' WHERE number = 7").run();
+    const live = await (r.worker as unknown as { workerHost(): PrSessionHost })
+      .workerHost()
+      .liveSessions();
+
+    expect(live).toEqual(["pr-7"]);
   });
 });
 

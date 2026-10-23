@@ -26,7 +26,13 @@ import {
   type RoundOrder,
 } from "../src/types.js";
 import { sessionCommandMarker } from "../src/session-command.js";
-import { HeldWakeHandoff, flushHeldWakes, wakeOrHold, type WakeDeps } from "../src/wakes.js";
+import {
+  HeldWakeHandoff,
+  flushHeldWakes,
+  pauseDefersAllHeldWakes,
+  wakeOrHold,
+  type WakeDeps,
+} from "../src/wakes.js";
 import {
   HOST_NOW,
   openWorkerRig,
@@ -404,6 +410,22 @@ describe("[P8.6] the fence leaves the row to the caller", () => {
   });
 });
 
+describe("[P8.6] a round's replay keeps its pinned checkout", () => {
+  it("does not refresh the worktree from the PR ref when it retries a round", async () => {
+    const original = await dispatched();
+    mkdirSync(rig.host.worktrees.worktreePath(PR), { recursive: true });
+    const refreshed: number[] = [];
+    rig.host.worktrees.ensureWorktree = (async (pr: number) => {
+      refreshed.push(pr);
+      throw new Error("must not be fetched");
+    }) as typeof rig.host.worktrees.ensureWorktree;
+
+    expect(await rig.hooks.retrySessionCommand(original.id, "start lease expired")).toBe("retried");
+
+    expect(refreshed).toEqual([]);
+  });
+});
+
 describe("[P8.6] held wakes ride the round's own worker", () => {
   const wakeDeps = (): WakeDeps => ({
     store: rig.store,
@@ -434,6 +456,25 @@ describe("[P8.6] held wakes ride the round's own worker", () => {
     expect(rig.mailbox(SESSION)).toEqual(["late reply\n"]);
     expect(rig.store.activeSessionCommand(SESSION)?.kind).toBe("wake");
     expect(births()).toBe(2);
+  });
+
+  it("keeps conversation behind owed FAILED_LOUD review work, for a reply and a flush alike", async () => {
+    trackPr(rig.store, PR);
+    rig.store.openReviewFailure({
+      pr: PR,
+      head_sha: "sha42",
+      stage: "command_start",
+      detail: "no start",
+      attempts: 1,
+      retry_cap: 3,
+    });
+
+    expect(await wakeOrHold(wakeDeps(), PR, "author replied", "author_reply")).toBe("held");
+    expect(await wakeOrHold(wakeDeps(), PR, "second reply", "author_reply")).toBe("held");
+    expect(await flushHeldWakes(wakeDeps(), PR)).toBe(0);
+
+    expect(rig.store.heldWakes(PR)).toHaveLength(2);
+    expect(births()).toBe(0);
   });
 
   describe("the handoff the worker takes them through", () => {
@@ -528,6 +569,33 @@ describe("[P8.6] held wakes ride the round's own worker", () => {
 
       expect(new HeldWakeHandoff(store).take(PR)).toEqual([]);
       expect(store.heldWakes(PR)).toHaveLength(1);
+    });
+
+    it("reads an operator-recovered recheck as deferred by a pause, as the delivery does", () => {
+      hold("recheck: ci", "operator_recovered:recheck:ci");
+      expect(pauseDefersAllHeldWakes(store, PR)).toBe(false);
+      store.db.prepare("UPDATE pr_state SET paused = 1 WHERE number = ?").run(PR);
+
+      expect(pauseDefersAllHeldWakes(store, PR)).toBe(true);
+      expect(new HeldWakeHandoff(store).take(PR)).toEqual([]);
+      hold("author replied", AUTHOR_REPLY_WAKE_REASON);
+      expect(pauseDefersAllHeldWakes(store, PR)).toBe(false);
+    });
+
+    it("re-offers an unacked unit under the id it had, though more replies arrived since", () => {
+      const first = hold("reply one", AUTHOR_REPLY_WAKE_REASON);
+      const [offered] = new HeldWakeHandoff(store).take(PR);
+      expect(offered!.id).toBe(`held.${first}`);
+      hold("reply two", AUTHOR_REPLY_WAKE_REASON);
+      store.db.prepare("UPDATE pending_wakes SET claimed_at = ? WHERE id = ?").run(
+        "2000-01-01T00:00:00.000Z",
+        first,
+      );
+
+      const [again] = new HeldWakeHandoff(store).take(PR);
+
+      expect(again!.id).toBe(offered!.id);
+      expect(again!.message).toBe("reply one");
     });
 
     it("releases nothing on its own: an unacked delivery waits out its lease", () => {

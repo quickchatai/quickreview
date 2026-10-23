@@ -705,6 +705,35 @@ describe("applyInterpretation", () => {
     store.close();
   });
 
+  // A push still in flight when the close was observed is history: it must not
+  // put its head and title back over the close's snapshot.
+  it("lets a late synchronize change nothing on a closed PR", async () => {
+    const store = new StateStore(":memory:");
+    store.upsertPr({
+      number: 4242,
+      state: "closed",
+      head_sha: "closedhead",
+      title: "Closed title",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    await applyInterpretation(
+      { cfg, store },
+      interpretEvent("pull_request", "synchronize", synchronizePayload(), deps()),
+    );
+    expect(store.getPr(4242)).toMatchObject({
+      state: "closed",
+      head_sha: "closedhead",
+      title: "Closed title",
+    });
+    expect(
+      store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'head_push'").get(),
+    ).toEqual({ c: 0 });
+    store.close();
+  });
+
   // The poll's head refresh skips PRs nobody triggered; the webhook keeps
   // the same admission boundary — a push or a close adopts nothing.
   it("adopts no row for a PR nobody triggered — not on a push, not on a close", async () => {

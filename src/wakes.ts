@@ -85,7 +85,8 @@ export async function wakeOrHold(
       (opts.deferWhilePaused && store.getPr(pr)?.paused) ||
       store.hasRunningRound(pr) ||
       store.blockingSessionCommand(`pr-${pr}`) ||
-      store.hostLease(pr)
+      store.hostLease(pr) ||
+      store.openReviewFailure(pr)
     )
       return "held";
     // No network/process action runs inside the claim transaction.
@@ -105,7 +106,8 @@ export async function wakeOrHold(
   if (
     !store.hasRunningRound(pr) &&
     !store.blockingSessionCommand(`pr-${pr}`) &&
-    !store.hostLease(pr)
+    !store.hostLease(pr) &&
+    !store.openReviewFailure(pr) // owed review work keeps conversation behind it
   ) {
     // An existing backlog goes first (arrival order): queue behind it and
     // flush oldest-first, rather than letting this wake take the slot ahead of
@@ -220,8 +222,9 @@ export const RECHECK_WAKE_DROPPED_KIND = "recheck_wake_dropped";
  * stranded-wake sweep has nothing to deliver until the resume. */
 export function pauseDefersAllHeldWakes(store: StateStore, pr: number): boolean {
   if (!store.getPr(pr)?.paused) return false;
-  const held = store.heldWakes(pr);
-  return held.length > 0 && held.every((wake) => wake.reason.startsWith(RECHECK_WAKE_PREFIX));
+  // The delivery query's own filter (it sees through `operator_recovered:`), so the
+  // sweep and the flush agree on what a pause defers.
+  return store.hasHeldWakes(pr) && store.heldWakes(pr, RECHECK_WAKE_PREFIX).length === 0;
 }
 
 function isOwedWakeReason(wake: EvictedWake): boolean {
@@ -255,6 +258,18 @@ function leadingDeliveryCount(wakes: PendingWakeRow[]): number {
     isAuthorReplyWake(wakes[count]!)
   )
     count++;
+  return count;
+}
+
+/** A unit an earlier flusher claimed and never acked comes back as that same unit,
+ * however many wakes arrived since: its id names its members, and a worker that
+ * delivered it before dying recognises it by that id. Null when the oldest wake
+ * has no earlier claim. */
+function retryBatchCount(wakes: PendingWakeRow[]): number | null {
+  const token = wakes[0]?.claim_token;
+  if (!token) return null;
+  let count = 1;
+  while (count < wakes.length && wakes[count]!.claim_token === token) count++;
   return count;
 }
 
@@ -311,7 +326,7 @@ function claimNextDelivery(
   // A paused PR's recheck nudges wait for the resume; the rest go now.
   const skip = store.getPr(pr)?.paused ? RECHECK_WAKE_PREFIX : undefined;
   const queued = store.heldWakes(pr, skip);
-  const batchSize = leadingDeliveryCount(queued);
+  const batchSize = retryBatchCount(queued) ?? leadingDeliveryCount(queued);
   if (batchSize === 0) return null;
   const token = randomUUID();
   const wakes = store.claimHeldWakeBatch(
@@ -399,6 +414,7 @@ async function flushHeldWakeBatches(
     if (store.hasRunningRound(pr)) break;
     if (store.blockingSessionCommand(`pr-${pr}`)) break;
     if (store.hostLease(pr)) break; // a takeover holds the session: the wakes stay parked
+    if (store.openReviewFailure(pr)) break; // owed FAILED_LOUD review work goes first
     const claimed = claimNextDelivery(store, pr);
     if (!claimed) break;
     const { wakes, ids, token } = claimed;
