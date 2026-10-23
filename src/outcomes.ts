@@ -1513,9 +1513,12 @@ export class OutcomeCapture {
           const mb = marks.get(b.number)?.captured_at ?? "";
           return ma < mb ? -1 : ma > mb ? 1 : a.number - b.number;
         });
+      // Attempts, not successes: a capture that throws still spent its slot
+      // and its time, so failures cannot run the pass past either limit.
+      let attempted = 0;
       for (const p of candidates) {
-        if (report.captured >= max) break;
-        if (report.captured > 0 && performance.now() - started > budget) break;
+        if (attempted >= max) break;
+        if (attempted > 0 && performance.now() - started > budget) break;
         // A real event-loop turn per PR: a capture whose git answers are all
         // memoized (or with no git at all) never awaits real I/O, so a run of
         // them would otherwise block the loop as one long synchronous stretch.
@@ -1532,6 +1535,7 @@ export class OutcomeCapture {
             report.skipped++;
             continue;
           }
+          attempted++;
           const r = await this.capturePr(p.number);
           report.captured++;
           report.fates_changed += r.changed;

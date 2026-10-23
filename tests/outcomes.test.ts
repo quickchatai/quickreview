@@ -1360,6 +1360,29 @@ describe("the bounded pass", () => {
     expect(turns).toBeGreaterThanOrEqual(16);
   });
 
+  it("failed captures count against the pass's PR cap and time budget", async () => {
+    const h = harness();
+    for (let i = 1; i <= 5; i++)
+      h.store.upsertPr({
+        number: PR + i,
+        state: "tracked",
+        head_sha: H1,
+        title: `PR ${PR + i}`,
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
+    const spy = vi.spyOn(h.capture, "capturePr").mockRejectedValue(new Error("boom"));
+    const capped = await h.capture.sweep({ maxPrs: 2 });
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(capped.errors).toHaveLength(2);
+    spy.mockClear();
+    const timed = await h.capture.sweep({ budgetMs: -1 });
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(timed.errors).toHaveLength(1);
+  });
+
   it("captures, then skips a PR whose inputs have not moved, and recaptures when one does", async () => {
     const h = harness();
     h.round(H1, [posted({ key: "F1" })]);
