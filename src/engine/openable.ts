@@ -17,6 +17,8 @@ import { join } from "node:path";
 export const MAIN_SESSION_DIR = "session";
 /** Under a round's dir: one directory per lens pass, holding its session JSONL. */
 export const LENS_SESSIONS_DIR = "lens-sessions";
+/** A round's lens ledger, in the dir that keeps its lens sessions. */
+export const LENS_LEDGER_FILE = "lens-ledger.jsonl";
 export const OPEN_META_FILE = "open-meta.json";
 /** What a debug round (`qcr review --debug-pi`) records of itself in the round dir. */
 export const DEBUG_STATUS_FILE = "debug-round.json";
@@ -115,7 +117,7 @@ export function lensSessionsOf(roundDir: string): LensSessionRef[] {
 export function lensAgentsOf(roundDir: string): Map<string, string> {
   const out = new Map<string, string>();
   try {
-    for (const line of readFileSync(join(roundDir, "lens-ledger.jsonl"), "utf8").split("\n")) {
+    for (const line of readFileSync(join(roundDir, LENS_LEDGER_FILE), "utf8").split("\n")) {
       if (!line.trim()) continue;
       try {
         const row = JSON.parse(line) as { id?: unknown; agent?: unknown };

@@ -48,7 +48,7 @@ import {
 import type { DispatcherOutcome } from "../src/engine/pisdk.js";
 import { capabilityFdOf } from "../src/engine/capfd.js";
 import { CONTEXT_PACK_FILE } from "../src/contextpack.js";
-import { DEBUG_STATUS_FILE, LENS_SESSIONS_DIR } from "../src/engine/openable.js";
+import { DEBUG_STATUS_FILE, LENS_LEDGER_FILE, LENS_SESSIONS_DIR } from "../src/engine/openable.js";
 import { inheritingBashOperations } from "../src/engine/tooluid.js";
 import { launchWave, type WaveRow } from "../src/engine/lens/wave.js";
 import { planLaunch, type LaunchUnit } from "../src/engine/lens/launch-plan.js";
@@ -69,10 +69,12 @@ export const DEBUG_STUB_ENV = "QCR_DEBUG_STUB_FILE";
 export { capabilityFdOf };
 
 /** What the model's bash may draw from the env on a round (the same allowlist
- * as src/engine/roundsdk.ts BASH_ENV_ALLOW; tests/debug-pi.test.ts pins them equal). */
+ * as src/engine/roundsdk.ts BASH_ENV_ALLOW; tests/debug-pi.test.ts pins them equal.
+ * An extension may not import the SDK host, so the list is spelled here). */
 export const DEBUG_BASH_ENV_ALLOW = ["GIT_*", "QCR_*"] as const;
 
-/** The reviewer stub's name in the round's cwd (src/hostroute.ts names it). */
+/** The reviewer stub's name in the round's cwd (src/hostroute.ts names it; the
+ * context-files fences list the files that spell it). */
 const STUB_NAME = "AGENTS.override.md";
 
 export interface DebugRoundOptions {
@@ -197,7 +199,7 @@ export function lensAdjust(o: {
     // The round's lens ledger and JSONLs are kept where the daemon says (D10).
     ...(o.lensDir !== undefined
       ? {
-          ledgerPath: join(o.lensDir, "lens-ledger.jsonl"),
+          ledgerPath: join(o.lensDir, LENS_LEDGER_FILE),
           sessionsDir: join(o.lensDir, LENS_SESSIONS_DIR),
         }
       : {}),

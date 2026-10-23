@@ -73,7 +73,7 @@ import { engineLensSection } from "./engine/lens/section.js";
 import { LensWave, launchWave, type WaveRow } from "./engine/lens/wave.js";
 import type { LensRun } from "./engine/lens/runlens.js";
 import { stopLiveSessions } from "./engine/livesessions.js";
-import { LENS_SESSIONS_DIR } from "./engine/openable.js";
+import { LENS_LEDGER_FILE, LENS_SESSIONS_DIR } from "./engine/openable.js";
 import { PiHost, headerId, type PiHostOptions } from "./engine/pisdk.js";
 import type { RuntimeSession, SessionSpec, TurnOptions, TurnResult } from "./engine/port.js";
 import { engineLensConfig } from "./engine/reviewsdk.js";
@@ -779,7 +779,7 @@ function lensDirOf(spec: WorkerSpec): string {
   return spec.lens_dir ?? join(spec.root, "state", "lens", spec.session, `r${spec.round_no ?? 0}`);
 }
 
-const lensLedgerOf = (spec: WorkerSpec): string => join(lensDirOf(spec), "lens-ledger.jsonl");
+const lensLedgerOf = (spec: WorkerSpec): string => join(lensDirOf(spec), LENS_LEDGER_FILE);
 
 /** The ledger's lines priced into `meter`: a run a tool result already reported
  * adds nothing, a cache warm-up (which only the ledger records) is added. */

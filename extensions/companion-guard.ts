@@ -54,6 +54,15 @@ export interface BashRule {
   reason: string;
 }
 
+/** The grammar of "a script run in command position": the start of a command,
+ * a separator, `$(`, a backtick or `-exec`, then env assignments and the wrappers
+ * that run their argument, then the script. `tail` is the regex source that follows. */
+const commandPosition = (tail: string): RegExp =>
+  new RegExp(
+    String.raw`(^|[;&|\n(\`{]|\$\(|-exec(dir)?\s)\s*(([A-Za-z_]\w*=\S*|sudo|env|exec|nohup|command|time|eval|xargs|bash|sh|zsh|dash|source|\.|timeout(\s+-\S+)*\s+\S+)(\s+-\S+)*\s+)*['"]?(\S*\/)?` +
+      tail,
+  );
+
 /** Bash bright lines. Patterns are deliberately TIGHT: a false veto on a
  * legitimate command teaches the operator to want the guard gone. `git
  * checkout -b`, plain branch switches, `git restore --staged` and `git stash
@@ -74,8 +83,9 @@ export const BASH_RULES: BashRule[] = [
     // (`release`, `provision`, `verify`, optionally behind `--dry-run`) pass.
     // Spaces and tabs only between the words: a newline ends the command, so
     // `deploy.sh` on its own line is a bare call (deploy.sh's default mode).
-    pattern:
-      /(^|[;&|\n(`{]|\$\(|-exec(dir)?\s)\s*(([A-Za-z_]\w*=\S*|sudo|env|exec|nohup|command|time|eval|xargs|bash|sh|zsh|dash|source|\.|timeout(\s+-\S+)*\s+\S+)(\s+-\S+)*\s+)*['"]?(\S*\/)?deploy\.sh\b(?!['"]?[ \t]+(--dry-run[ \t]+)?(release|provision|verify)(?![\w-]))/,
+    pattern: commandPosition(
+      String.raw`deploy\.sh\b(?!['"]?[ \t]+(--dry-run[ \t]+)?(release|provision|verify)(?![\w-]))`,
+    ),
     reason:
       "rule 8: the companion runs scripts/deploy.sh only as `release <version>`, `provision` or `verify` (each may take --dry-run first), following the deploying skill: drain first, a version CI already built. Any other mode (sync, rebuild, a bare call) is the owner's.",
   },
@@ -88,8 +98,7 @@ export const BASH_RULES: BashRule[] = [
     // the wrappers that run their argument (bash/sh/source/./env/sudo/exec/
     // xargs/timeout/eval…). `git diff`, `cat`, `grep` and an editor name it
     // as an ARGUMENT and pass.
-    pattern:
-      /(^|[;&|\n(`{]|\$\(|-exec(dir)?\s)\s*(([A-Za-z_]\w*=\S*|sudo|env|exec|nohup|command|time|eval|xargs|bash|sh|zsh|dash|source|\.|timeout(\s+-\S+)*\s+\S+)(\s+-\S+)*\s+)*['"]?(\S*\/)?(post-review|approve-pr|reply-thread|mint-token)\.sh\b/,
+    pattern: commandPosition(String.raw`(post-review|approve-pr|reply-thread|mint-token)\.sh\b`),
     reason:
       "rule 8: the companion never touches the gate — the posting scripts and mint-token.sh are the daemon's route to GitHub, not yours.",
   },
