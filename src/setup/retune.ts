@@ -211,16 +211,22 @@ export function retune(deps: RetuneDeps, input: RetuneInput): RetuneResult | Ref
     } catch {
       current = "";
     }
-    const pointed = before.summary.lenses[STYLE_LENS]?.guide === DRAFTED_GUIDE_FILE;
+    const currentGuide = before.summary.lenses[STYLE_LENS]?.guide;
+    const pointed = currentGuide === DRAFTED_GUIDE_FILE;
+    const hasGuide = typeof currentGuide === "string" && currentGuide !== "";
     if (
       guide === null
-        ? pointed
+        ? hasGuide
         : typeof guide !== "string" || !pointed || current !== draftedGuideBytes(guide)
     ) {
       changes.push({
         key: GUIDE_REASON,
         input: "style guide",
-        from: pointed ? "the drafted guide" : "(none drafted)",
+        from: pointed
+          ? "the drafted guide"
+          : hasGuide
+            ? `the guide ${currentGuide}`
+            : "(none drafted)",
         to:
           guide === null
             ? "(none drafted)"
@@ -318,7 +324,7 @@ export function retune(deps: RetuneDeps, input: RetuneInput): RetuneResult | Ref
         ]).length === 0) ||
       (c.key === GUIDE_REASON &&
         guide === null &&
-        staged.summary.lenses[STYLE_LENS]?.guide === DRAFTED_GUIDE_FILE),
+        staged.summary.lenses[STYLE_LENS]?.guide === before.summary.lenses[STYLE_LENS]?.guide),
   );
   if (phantom.length > 0) {
     return {
