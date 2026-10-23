@@ -316,6 +316,8 @@ function shellOperations(plan: ShellPlan, inherit: readonly number[]): BashOpera
             }, timeout * 1000);
       const onAbort = (): void => killGroup();
       signal?.addEventListener("abort", onAbort, { once: true });
+      // an abort during the cwd check fired before the listener existed
+      if (signal?.aborted) onAbort();
       try {
         child.stdout!.on("data", onData);
         child.stderr!.on("data", onData);
