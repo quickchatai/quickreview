@@ -309,7 +309,7 @@ fi
 # notice when it comes back). Backgrounded and non-fatal by construction — an
 # unwired or unreachable memory path degrades the companion, it never wedges
 # it. With no QCR_MEMORY_ENDPOINT in the env the watcher exits immediately.
-if [ -n "${QCR_MEMORY_ENDPOINT:-}${OPENVIKING_URL:-}" ] && [ -f /usr/local/lib/qcr/memory-health.mjs ]; then
+if [ -n "${QCR_MEMORY_ENDPOINT:-}${OPENVIKING_URL:-}${OPENVIKING_BASE_URL:-}" ] && [ -f /usr/local/lib/qcr/memory-health.mjs ]; then
   node /usr/local/lib/qcr/memory-health.mjs &
 else
   echo "memory watcher idle: no OpenViking endpoint configured for this container"
