@@ -1443,12 +1443,14 @@ export class OpenVikingStore implements MemoryStore {
 
   /** A confirmed revival removes its former stub from recall exclusions. */
   private noteLive(uri: string): void {
+    this.takeRetiredSeed();
     if (this.knownRetired?.includes(uri))
       this.setKnownRetired(this.knownRetired.filter((retired) => retired !== uri));
   }
 
   /** A retirement this store wrote joins the published list at once. */
   private noteRetired(uri: string): void {
+    this.takeRetiredSeed();
     if (this.knownRetired !== null && !this.knownRetired.includes(uri))
       this.setKnownRetired([...this.knownRetired, uri].sort());
   }
@@ -1644,6 +1646,7 @@ export class OpenVikingStore implements MemoryStore {
       if (!r?.ok) continue;
       if (it.to !== undefined) {
         this.noteRetired(this.uriOf(it.id));
+        this.noteLive(this.uriOf(it.to));
         await this.mirrorTags(this.uriOf(it.to), content(it));
       } else if (isRetired(content(it))) {
         this.noteRetired(this.uriOf(it.id));
