@@ -127,7 +127,7 @@ const LEARNING_TAGS = new Set([
 
 /** A thread that has been closed out. Exact tags — `wontfix-pattern` is a
  * LEARNING tag and must never be read as a closing `wontfix`. */
-const CLOSED_TAGS = new Set(["resolved", "fixed", "closed", "done", "obsolete", "superseded"]);
+const CLOSED_TAGS = new Set(["resolved", "fixed", "closed", "done", "obsolete", "superseded", "wontfix"]);
 
 const hasTag = (e: MemoryEntry, want: Set<string>): boolean => e.tags.some((t) => want.has(normalizeTag(t)));
 
