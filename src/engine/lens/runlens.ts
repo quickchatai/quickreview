@@ -38,6 +38,7 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { THINKING_LEVELS } from "../../config.js";
 import type {
   AgentSession,
   ExtensionError,
@@ -203,15 +204,32 @@ async function awaitCreationSlot(host: PiHost, gapMs: number, signal?: AbortSign
   await delay(at - Date.now(), signal);
 }
 
-const THINKING_LEVELS: ReadonlySet<string> = new Set([
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-]);
+const THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS);
+
+/** A failed pass's envelope: no text, exit 1, `error` unless `extra` says more. */
+function failedRun(
+  id: string,
+  agent: string,
+  model: string,
+  usage: LensUsage,
+  errorMessage: string,
+  extra: Partial<LensResult> = {},
+): LensRun {
+  return {
+    text: "",
+    result: {
+      id,
+      agent,
+      model,
+      usage,
+      messages: [],
+      exitCode: 1,
+      stopReason: "error",
+      errorMessage,
+      ...extra,
+    },
+  };
+}
 
 const ZERO_USAGE: LensUsage = { input: 0, output: 0, cacheRead: 0, cost: 0 };
 
@@ -346,20 +364,15 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
       usage: LensUsage,
       errorMessage: string,
       extra: Partial<LensResult> = {},
-    ): LensRun => ({
-      text: "",
-      result: {
+    ): LensRun =>
+      failedRun(
         id,
-        agent: request.agent,
-        model: agent?.model ?? config.defaultModel ?? "unknown",
+        request.agent,
+        agent?.model ?? config.defaultModel ?? "unknown",
         usage,
-        messages: [],
-        exitCode: 1,
-        stopReason: "error",
         errorMessage,
-        ...extra,
-      },
-    });
+        extra,
+      );
     const finish = (out: LensRun): LensRun => {
       record(id, out.result, startedAt);
       return out;
@@ -567,23 +580,18 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     let spent = ZERO_USAGE;
     const modelSpec = agent.modelId ?? config.defaultModel;
     const thinking = agent.thinking;
-    const fail = (errorMessage: string, extra: Partial<LensResult> = {}): LensRun => ({
-      text: "",
-      result: {
+    const fail = (errorMessage: string, extra: Partial<LensResult> = {}): LensRun =>
+      failedRun(
         id,
-        agent: agent.name,
-        model: agent.model ?? config.defaultModel ?? "unknown",
-        usage: spent,
-        messages: [],
-        exitCode: 1,
-        stopReason: "error",
+        agent.name,
+        agent.model ?? config.defaultModel ?? "unknown",
+        spent,
         errorMessage,
-        ...extra,
-      },
-    });
+        extra,
+      );
     if (modelSpec === undefined)
       return fail(`agent ${agent.name} names no model and the run has no default`);
-    if (thinking !== null && !THINKING_LEVELS.has(thinking))
+    if (thinking !== null && !THINKING_LEVEL_SET.has(thinking))
       return fail(`agent ${agent.name} asks for an unknown thinking level "${thinking}"`);
 
     /** Dispose a finished session: now, or with its cache group, which shares
@@ -605,7 +613,15 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
           ...baseSpec(agent, modelSpec, [
             config.bashGuard,
             ...(lease !== undefined && pack !== undefined
-              ? [leafCache({ pack, cacheKey: lease.key, body: agent.body })]
+              ? [
+                  leafCache({
+                    pack,
+                    cacheKey: lease.key,
+                    body: agent.body,
+                    onUnexpected: () =>
+                      warn(`lens ${agent.name} ${id}: request shape not as expected; sent unchanged`),
+                  }),
+                ]
               : []),
           ]),
           appendSystemPrompt: [agent.body],

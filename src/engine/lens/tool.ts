@@ -102,10 +102,16 @@ function parallelResult(
     `Parallel: ${succeeded}/${entries.length} succeeded\n\n${summaries.join("\n\n---\n\n")}`,
     {
       mode: "parallel",
-      results: entries.map((e) => (e.run ? slot(e.run, e.task) : placeholder(e.agent, e.task))),
+      results: resultsOf(entries),
       ...extraDetails,
     },
   );
+}
+
+function resultsOf(
+  entries: ReadonlyArray<{ agent: string; task: string; run: LensRun | undefined }>,
+) {
+  return entries.map((e) => (e.run ? slot(e.run, e.task) : placeholder(e.agent, e.task)));
 }
 
 function progressUpdate(
@@ -117,7 +123,7 @@ function progressUpdate(
     `Parallel: ${done}/${entries.length} done, ${entries.length - done} running...`,
     {
       mode: "parallel",
-      results: entries.map((e) => (e.run ? slot(e.run, e.task) : placeholder(e.agent, e.task))),
+      results: resultsOf(entries),
       ...extraDetails,
     },
   );
