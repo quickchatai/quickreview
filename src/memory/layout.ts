@@ -22,7 +22,7 @@
 // edits a move needs. It knows nothing about HTTP or OpenViking — an id here
 // is the store's `<area>/<file>` (see src/openviking/store.ts), and only the
 // store turns it into a URI.
-import { EVENT_TAG_RE, parseEventTags, parseHashTags } from "./eventtags.js";
+import { EVENT_TAG_RE, HASH_TOKEN_RE, parseEventTags, parseHashTags } from "./eventtags.js";
 
 /** The guaranteed head. */
 export const PINNED_AREA = "preferences/pinned";
@@ -164,18 +164,18 @@ export const MEMORY_LAYOUT_NOTE = [
   "Write each entry where it belongs; `viking_write` takes the",
   "full URI, so the area is the directory you name:",
   "",
-  "- `experiences/` — the day's learnings (product 1). The ONLY area a review round",
+  "- `" + EXPERIENCES_AREA + "/` — the day's learnings (product 1). The ONLY area a review round",
   "  searches, so nothing else belongs here.",
-  "- `events/` — feedback, bug and ops signals. An operational defect of the review",
+  "- `" + EVENTS_AREA + "/` — feedback, bug and ops signals. An operational defect of the review",
   "  system is an `events/` entry whose header carries `kind=bug area=operations`;",
   "  an ops note that is not a defect carries `kind=ops area=operations`. The",
   "  day's `kind=feedback` entries are here too.",
-  "- `preferences/` — the owner's own words (`#manual`); the memory discipline above",
+  "- `" + PREFERENCES_AREA + "/` — the owner's own words (`#manual`); the memory discipline above",
   "  rules on them.",
-  "- `preferences/pinned/` — THE PINNED AREA: the owner's standing instructions,",
+  "- `" + PINNED_AREA + "/` — THE PINNED AREA: the owner's standing instructions,",
   "  delivered verbatim in every round. Never write, move, retire or rewrite",
   "  anything under it.",
-  "- `finding-cases/` — finding CASES, written by the daemon: one per posted finding a",
+  "- `" + CASES_AREA + "/` — finding CASES, written by the daemon: one per posted finding a",
   "  human answered or whose fate is known (fixed, refuted, upheld, or left open",
   "  at the PR's close), with the humans' replies quoted as data. Search them",
   "  (`viking_search`) for the evidence behind a learning;",
@@ -197,8 +197,6 @@ export const MEMORY_LAYOUT_NOTE = [
 // a bare `#` is a markdown title, not a header: a tag is then not spliced into
 // the title but put on a first line of its own.
 
-const HASH_RE = /^#[^\s#]+$/;
-
 /** Index (into the separator-keeping token array) just past the header run,
  * and whether the run holds a real tag. */
 function headerRun(tokens: string[]): { end: number; real: boolean } {
@@ -207,7 +205,7 @@ function headerRun(tokens: string[]): { end: number; real: boolean } {
   for (let i = 0; i < tokens.length; i += 2) {
     const t = tokens[i]!;
     if (t === "") continue;
-    const tag = HASH_RE.test(t) || EVENT_TAG_RE.test(t);
+    const tag = HASH_TOKEN_RE.test(t) || EVENT_TAG_RE.test(t);
     // A bare `#` after a real tag is a markdown title on the next line.
     if (!tag && real) break;
     if (tag || t.startsWith("#")) {

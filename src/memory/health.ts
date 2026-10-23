@@ -54,6 +54,11 @@ export type CredentialName = "daemon" | "sessions";
  *  `absent` — no credential file exists yet (no session born) — not a failure. */
 export type ProbeResult = "ok" | "auth_failed" | "no_key" | "unreachable" | "error" | "absent";
 
+/** A probe result that reads a failure: everything but an answer and a credential not in use. */
+function isProbeFailure(result: ProbeResult): boolean {
+  return result !== "ok" && result !== "absent";
+}
+
 export interface ProbeAnswer {
   result: ProbeResult;
   /** HTTP status, 0 for no answer / nothing sent. */
@@ -539,7 +544,7 @@ export class MemoryHealthMonitor {
         this.count("probe", answer.result === "ok" ? "ok" : isAuthResult(this.creds[name]) ? "auth" : "failed");
       }
       if (name === "daemon" && answer.result === "ok") this.lastOkAt = t;
-      if (answer.result !== "ok" && answer.result !== "absent") {
+      if (isProbeFailure(answer.result)) {
         this.noteError(t, `probe:${name}`, answer.status, answer.code, answer.detail ?? answer.result);
       }
     }
@@ -801,7 +806,7 @@ export class MemoryHealthMonitor {
   private credentialFailing(): boolean {
     return CREDENTIALS.some((n) => {
       const c = this.creds[n];
-      return c !== null && c.result !== "ok" && c.result !== "absent";
+      return c !== null && isProbeFailure(c.result);
     });
   }
 
