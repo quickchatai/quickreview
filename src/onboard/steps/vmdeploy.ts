@@ -391,7 +391,10 @@ export function vmDeployStep(opts: VmDeployStepOptions = {}): OnboardingStep {
             ? { host_vars: previous.host_vars }
             : {}),
       };
-      if (ok) ctx.recordChoice(CHOICE_KEYS.vmDeployed, record);
+      // The release exited 0, so the version is deployed whatever the follow-up
+      // container probe found; a probe failure must not leave the previous version
+      // recorded for the next config delivery to re-release.
+      ctx.recordChoice(CHOICE_KEYS.vmDeployed, record);
       return { ok, checks, data: { deploy: record } };
     },
 
