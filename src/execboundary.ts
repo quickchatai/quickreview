@@ -42,6 +42,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { POLICY_SURFACE_DIRS, POLICY_SURFACE_FILES } from "../extensions/bash-guard.js";
 import { homeProfileDirs, locateConfig, type InstallEnv } from "./install.js";
+import { postingKeyAnyHead } from "./posting-receipt.js";
 import { yieldToLoop } from "./yieldloop.js";
 
 // ---- git-config integrity ---------------------------------------------------
@@ -527,7 +528,7 @@ function hasIssuedMarker(body: string, commitId: string, issued: ReadonlySet<str
   for (const m of body.matchAll(POSTING_MARKER_RE)) {
     const key = m[1]!;
     if (!issued.has(key)) continue;
-    if (key.split(":").slice(3).join(":").toLowerCase() === commitId.toLowerCase()) return true;
+    if (postingKeyAnyHead(key).toLowerCase() === commitId.toLowerCase()) return true;
   }
   return false;
 }
