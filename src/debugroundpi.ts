@@ -30,7 +30,6 @@
 // P8.7 request: the pi holds no GitHub credential and the post goes through the
 // one gate. The env it gets is an allowlist plus the round's own: no GitHub token of
 // any name. The pi runs as the separate tool uid where the image has one (D32).
-import { spawn } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -41,7 +40,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { CAP_FD_INDEX } from "./ipc/capability.js";
 import {
   TOOL_UMASK,
   checkToolUid,
@@ -53,11 +51,11 @@ import { planLaunch } from "./engine/lens/launch-plan.js";
 import { engineLensSection } from "./engine/lens/section.js";
 import { CONTEXT_PACK_FILE } from "./contextpack.js";
 import { verifiedPayload } from "./session-command-payload.js";
-import { DEBUG_STATUS_NAME, type DebugRoundSpec } from "./debuground.js";
-import { paneLaunch, prepareBorrowedAgent, takeoverEnv } from "./takeoverpi.js";
+import { DEBUG_START_MESSAGE } from "./engine/debugpi.js";
+import { DEBUG_STATUS_NAME, debugSession, type DebugRoundSpec } from "./debuground.js";
+import { onTerminal, paneLaunch, prepareBorrowedAgent, takeoverEnv } from "./takeoverpi.js";
 
-/** pi's first message: the extension command that starts the round. */
-export const DEBUG_START_MESSAGE = "/qcr-round";
+export { DEBUG_START_MESSAGE };
 
 /** The order file's name inside the borrowed agent dir. */
 export const DEBUG_ORDER_NAME = "round-order.md";
@@ -75,7 +73,7 @@ export function readDebugSpec(file: string): DebugRoundSpec {
     !raw ||
     raw.v !== 1 ||
     typeof raw.pr !== "number" ||
-    raw.session !== `debug-pr-${raw.pr}` ||
+    raw.session !== debugSession(raw.pr) ||
     typeof raw.command_id !== "string" ||
     typeof raw.agent_dir !== "string" ||
     typeof raw.borrow_dir !== "string" ||
@@ -88,6 +86,9 @@ export function readDebugSpec(file: string): DebugRoundSpec {
     typeof raw.marker !== "string" ||
     typeof raw.passes_dir !== "string" ||
     typeof raw.lens_dir !== "string" ||
+    typeof raw.root !== "string" ||
+    (raw.round_no !== null && typeof raw.round_no !== "number") ||
+    typeof raw.planned_wave !== "boolean" ||
     typeof raw.idle_ms !== "number" ||
     !Array.isArray(raw.extensions) ||
     typeof raw.env !== "object" ||
@@ -191,40 +192,6 @@ export interface DebugPaneDeps {
     env: NodeJS.ProcessEnv;
   }) => Promise<number>;
   log?: (line: string) => void;
-}
-
-function onTerminal(cmd: {
-  bin: string;
-  args: string[];
-  cwd: string;
-  env: NodeJS.ProcessEnv;
-}): Promise<number> {
-  return new Promise((resolve) => {
-    // stdio[3] is the capability fd the launcher passed to this process.
-    const child = spawn(cmd.bin, cmd.args, {
-      cwd: cmd.cwd,
-      env: cmd.env,
-      stdio: ["inherit", "inherit", "inherit", CAP_FD_INDEX],
-    });
-    // The terminal's ^C reaches pi and this process alike; pi decides what it means.
-    const ignore = (): void => {};
-    const forward = (sig: NodeJS.Signals) => () => child.kill(sig);
-    const relays: Array<[NodeJS.Signals, () => void]> = [
-      ["SIGINT", ignore],
-      ["SIGTERM", forward("SIGTERM")],
-      ["SIGHUP", forward("SIGHUP")],
-    ];
-    for (const [sig, fn] of relays) process.on(sig, fn);
-    const done = (code: number): void => {
-      for (const [sig, fn] of relays) process.off(sig, fn);
-      resolve(code);
-    };
-    child.on("error", (e) => {
-      console.error(`could not start ${cmd.bin}: ${e.message}`);
-      done(1);
-    });
-    child.on("close", (code) => done(code ?? 1));
-  });
 }
 
 /** Run the debug round the spec describes; resolves pi's exit code. A login that

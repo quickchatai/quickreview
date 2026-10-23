@@ -239,6 +239,16 @@ describe("[P8.13b] the debug pi's login is a refresh-blanked borrowed copy", () 
     expect(lines.join("\n")).toMatch(/debug round/);
   });
 
+  it("refuses a spec missing root, round_no or planned_wave", () => {
+    for (const key of ["root", "round_no", "planned_wave"] as const) {
+      const spec: Record<string, unknown> = { ...specOf() };
+      delete spec[key];
+      const file = join(dir, `missing-${key}.json`);
+      writeFileSync(file, JSON.stringify(spec));
+      expect(() => readDebugSpec(file), key).toThrow(/not a debug-round spec/);
+    }
+  });
+
   it("refuses a file that is not a debug-round spec", async () => {
     const file = join(dir, "bad.json");
     writeFileSync(file, JSON.stringify({ v: 2 }));

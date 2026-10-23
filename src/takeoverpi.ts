@@ -193,7 +193,7 @@ export interface TakeoverRunDeps {
   log?: (line: string) => void;
 }
 
-function onTerminal(cmd: {
+export function onTerminal(cmd: {
   bin: string;
   args: string[];
   cwd: string;
