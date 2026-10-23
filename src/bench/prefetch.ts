@@ -357,7 +357,7 @@ async function prefetchLeakproof(
   }
 }
 
-/** Prefetch one case. Idempotent: a store whose meta.json validates and whose
+/** Prefetch one case. Idempotent: a store whose bench-meta.json validates and whose
  * two commits resolve is reused as-is (a full run is resumable). */
 export async function prefetchCase(c: BenchCase, o: PrefetchOptions): Promise<PrefetchMeta> {
   const log = o.log ?? (() => {});

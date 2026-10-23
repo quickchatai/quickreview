@@ -176,8 +176,7 @@ export interface PragentCapture {
 export function readCapture(path: string): PragentCapture | null {
   if (!existsSync(path)) return null;
   try {
-    const v = JSON.parse(readFileSync(path, "utf8")) as unknown;
-    return typeof v === "object" && v !== null ? v : null;
+    return (readJsonObject(path) as PragentCapture | undefined) ?? null;
   } catch {
     return null;
   }
@@ -187,7 +186,8 @@ function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : typeof v === "number" ? String(v) : "";
 }
 
-/** A path as the scorer reads it: repo-relative, no `./`, no git `a/`/`b/`. */
+/** A path as the scorer reads it: repo-relative, no `./`; a git `a/`/`b/` prefix is
+ * dropped only when `diffFiles` holds the stripped path and not the prefixed one. */
 export function normalizePath(p: string, diffFiles: string[] = []): string {
   let s = p.trim().replace(/^\.\//, "");
   if (/^[ab]\//.test(s) && !diffFiles.includes(s) && diffFiles.includes(s.slice(2))) s = s.slice(2);
@@ -315,6 +315,20 @@ export function reviewBody(review: PragentCapture | null, unlocated: PragentFind
 }
 
 export type CommandStatus = "ok" | "failed" | "timeout" | "not-run";
+
+/** The warning for a command that did not end ok: PR-Agent's own last comment
+ * when it captured one, else the tail of stderr and the command log's name. */
+export function commandFailureWarning(
+  command: PragentCommand,
+  status: CommandStatus,
+  cap: PragentCapture | null,
+  stderr: string,
+): string {
+  const said = cap?.comments?.at(-1);
+  if (said) return `${command}: ${status} — PR-Agent said: ${said.slice(0, 300)}`;
+  const tail = stderr.trim().replaceAll("\n", " ").slice(-300);
+  return `${command}: ${status}${tail ? ` — stderr: ${tail}` : ""} (see pragent-${command}.log)`;
+}
 
 /** One command's outcome. PR-Agent exits 0 even when the model call failed (it
  * publishes "Failed to review PR" instead), so success is what it PRODUCED:
@@ -605,9 +619,7 @@ export async function reviewCasePragent(
         summary.described = true;
       }
       if (st !== "ok")
-        summary.warnings.push(
-          `${command}: ${st}${caps[command]?.comments?.length ? ` — PR-Agent said: ${caps[command].comments.at(-1)!.slice(0, 300)}` : ""}`,
-        );
+        summary.warnings.push(commandFailureWarning(command, st, caps[command], r.stderr));
     }
     writeFileSync(join(caseDir, "pragent-argv.json"), JSON.stringify(argvs, null, 2) + "\n");
     const after = (await bridgeCall(o, "/stats")) as BridgeStats | null;
