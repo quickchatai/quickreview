@@ -470,8 +470,10 @@ if [[ ! "$CLONE_DIR" =~ ^[A-Za-z0-9._-]+$ || "$CLONE_DIR" == "." || "$CLONE_DIR"
 fi
 # Nor may it name a directory the daemon already owns at the sandbox root:
 # a repo called `notes` or `wt` would otherwise be cloned into (or over) a
-# runtime dir. tests/deploy.test.ts pins this list against the updater's mounts.
-BASE_CLONE_RESERVED=(.git .claude node_modules state wt archive commands digest inject verdict memory notes ledger.md AGENTS.override.md pihome dist)
+# runtime dir, and one named for something the release image keeps under the app
+# root would be mounted over it. tests/deploy.test.ts pins this list against the
+# updater's mounts and the image's COPY lines.
+BASE_CLONE_RESERVED=(.git .claude node_modules state wt archive commands digest inject verdict memory notes ledger.md AGENTS.override.md pihome dist package.json package-lock.json src extensions agents prompts seeds profiles schemas scripts config.example.toml docker docker-compose.yml tests)
 for reserved in "${BASE_CLONE_RESERVED[@]}"; do
   if [[ "$CLONE_DIR" == "$reserved" ]]; then
     die "base clone name '$CLONE_DIR' is a runtime or build directory of the sandbox root — set [github] clone_dir to a free name"
@@ -815,11 +817,12 @@ fi
 # (P9.5: the guard is a factory on every session; the entrypoint prunes the one
 # an older image left on the pihome volume), and the 12-line reviewer stub
 # every session loads instead of the contributor guide.
+SANDBOX_ROOT_EFF="$(effective_var_or sandbox_root /opt/quickreview)"
 VERIFY_CMDS+=(
   "sudo docker inspect -f '{{.Config.Image}} build {{index .Config.Labels \"qcr.build-sha\"}}' $CONTAINER"
   "sudo docker inspect -f '{{.Config.Image}} {{index .Config.Labels \"qcr.build-sha\"}}' $CONTAINER | grep -Eq ' [0-9a-f]{7,40}\$'"
   "sudo docker exec $CONTAINER tmux ls || echo 'no tmux sessions yet'"
-  "cat /opt/quickreview/state/status.json | head -20   # heartbeat for the status collector"
+  "cat $SANDBOX_ROOT_EFF/state/status.json | head -20   # heartbeat for the status collector"
 )
 BOOT_CMDS=(
   "sudo docker exec $CONTAINER sh -c '! grep -q bash-guard /home/qcr/.pi/agent/settings.json'"
@@ -1305,7 +1308,7 @@ heartbeat_probe() {
     bash -c "$QC_HEARTBEAT_PROBE_CMD"
   else
     ssh -o BatchMode=yes "$VM_HOST" \
-      "sudo docker inspect -f '{{.State.StartedAt}}' $CONTAINER; date -u +%Y-%m-%dT%H:%M:%SZ; sudo cat /opt/quickreview/state/status.json"
+      "sudo docker inspect -f '{{.State.StartedAt}}' $CONTAINER; date -u +%Y-%m-%dT%H:%M:%SZ; sudo cat $SANDBOX_ROOT_EFF/state/status.json"
   fi
 }
 check_heartbeat_fresh() {
