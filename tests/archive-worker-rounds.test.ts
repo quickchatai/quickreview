@@ -13,6 +13,7 @@
 // per incident and deletes nothing.
 import { spawnSync } from "node:child_process";
 import {
+  appendFileSync,
   chmodSync,
   existsSync,
   linkSync,
@@ -26,7 +27,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { createBashGuard } from "../extensions/bash-guard.js";
@@ -54,6 +55,23 @@ import { createHostRig, useOfflineGuard, type HostRig } from "./pi-canary/harnes
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 useOfflineGuard();
+
+// A seam on the retention sweep's archived-check: after the real check passes,
+// `afterHeldCheck` may touch the live file, as a writer racing the sweep would.
+const raceHook: { afterHeldCheck: ((id: { size: number }) => void) | null } = {
+  afterHeldCheck: null,
+};
+vi.mock("../src/archive/archivewrite.js", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../src/archive/archivewrite.js")>();
+  return {
+    ...real,
+    heldAsRecorded: (async (...a: Parameters<typeof real.heldAsRecorded>) => {
+      const held = await real.heldAsRecorded(...a);
+      if (held && a[2]) raceHook.afterHeldCheck?.(a[2]);
+      return held;
+    }) as typeof real.heldAsRecorded,
+  };
+});
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -389,6 +407,27 @@ describe("[P8.16] retention", () => {
   );
 
   it(
+    "a file written to after the inventory is kept, not removed on its stale identity",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const w = await workerPr();
+      await leftover(w);
+      const victim = [...w.files.keys()][0]!;
+      raceHook.afterHeldCheck = () => {
+        raceHook.afterHeldCheck = null;
+        appendFileSync(join(w.f.root, victim), "late bytes\n");
+      };
+      try {
+        const r = await sweepLiveTrees({ root: w.f.root, now, retentionMs: retention, remove: true });
+        expect(r.removed_files).toBe(w.files.size - 1);
+      } finally {
+        raceHook.afterHeldCheck = null;
+      }
+      expect(readFileSync(join(w.f.root, victim), "utf8")).toContain("late bytes");
+    },
+  );
+
+  it(
     "an unreadable manifest keeps its PR's files and says so",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
@@ -398,6 +437,7 @@ describe("[P8.16] retention", () => {
       const r = await sweepLiveTrees({ root: w.f.root, now, retentionMs: retention, remove: true });
       expect(r.removed_files).toBe(0);
       expect(r.manifest_unreadable).toEqual([w.f.pr]);
+      expect(r.manifest_errors[String(w.f.pr)]).toMatch(/manifest/);
       for (const rel of w.files.keys()) expect(existsSync(join(w.f.root, rel)), rel).toBe(true);
     },
   );

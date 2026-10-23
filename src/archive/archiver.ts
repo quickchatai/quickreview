@@ -1781,7 +1781,7 @@ export class Archiver {
       for (const pr of r.manifest_unreadable)
         this.raiseQuiet(
           `live:${pr}`,
-          `archive pr-${pr}: manifest unreadable — its worker logs were kept`,
+          `archive pr-${pr}: manifest unreadable (${r.manifest_errors[String(pr)] ?? "unknown"}) — its worker logs were kept`,
         );
       if (over) {
         this.raiseWake(

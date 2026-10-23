@@ -145,6 +145,7 @@ function rig(cfg: Partial<ArchiveConfig> = {}, extra: Partial<ArchiverDeps> = {}
       unarchived_files: 0,
       unarchived_bytes: 0,
       manifest_unreadable: [],
+      manifest_errors: {},
     }),
     now: () => new Date(clock.ms),
     schedule: (fn, ms) => {

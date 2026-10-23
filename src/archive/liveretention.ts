@@ -16,10 +16,11 @@
 // The cap is a measurement, not a deletion rule. `state/live/` plus `state/lens/`
 // past `live_cap_gb` is an alert (the archiver raises `archive_live_cap`), and
 // the files stay: a person decides what an over-cap tree is worth.
-import { rmdir, unlink } from "node:fs/promises";
+import { rmdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { yieldToLoop } from "../yieldloop.js";
 import { heldAsRecorded } from "./archivewrite.js";
+import { unlinkIfIdentity } from "./gzfile.js";
 import { identityOf, type FileIdentity } from "./fsutil.js";
 import { ManifestUnreadable, readManifestIfPresent, settledIndex } from "./manifest.js";
 import { LIVE_TREES, PR_DIR, listDir, walkFiles } from "./prfiles.js";
@@ -42,6 +43,8 @@ export interface LiveSweepResult {
   unarchived_bytes: number;
   /** PRs whose manifest could not be read: their files were kept untouched. */
   manifest_unreadable: number[];
+  /** Why each of those manifests could not be read, by PR number. */
+  manifest_errors: Record<string, string>;
 }
 
 export interface LiveSweepOptions {
@@ -101,6 +104,7 @@ export async function sweepLiveTrees(o: LiveSweepOptions): Promise<LiveSweepResu
     unarchived_files: 0,
     unarchived_bytes: 0,
     manifest_unreadable: [],
+    manifest_errors: {},
   };
   const unreadable = new Set<number>();
   for (const [, tree] of LIVE_TREES) {
@@ -130,6 +134,7 @@ export async function sweepLiveTrees(o: LiveSweepOptions): Promise<LiveSweepResu
         } catch (err) {
           if (!(err instanceof ManifestUnreadable)) throw err;
           unreadable.add(Number(pr![1]));
+          res.manifest_errors[pr![1]!] = (err as Error).message;
         }
       }
       for (const f of expired) {
@@ -143,12 +148,17 @@ export async function sweepLiveTrees(o: LiveSweepOptions): Promise<LiveSweepResu
           res.unarchived_files += 1;
           res.unarchived_bytes += f.id.size;
         } else if (o.remove) {
-          try {
-            await unlink(f.path);
+          // The identity is read again at the unlink: a file written to since the
+          // inventory is no longer the bytes the archive holds.
+          const out = await unlinkIfIdentity(f.path, {
+            dev: rec!.dev,
+            ino: rec!.ino,
+            bytes: rec!.bytes,
+            mtime_ms: rec!.mtime_ms,
+          });
+          if (out === "removed") {
             res.removed_files += 1;
             res.removed_bytes += f.id.size;
-          } catch (err) {
-            if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
           }
         }
         await yieldToLoop();
