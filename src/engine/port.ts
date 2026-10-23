@@ -125,8 +125,9 @@ export interface RuntimeSession {
   /** A message for after the current work: on an idle session it runs the next
    * turn now. */
   followUp(text: string, options?: TurnOptions): Promise<Delivery>;
-  /** A message into the turn in flight, if the runtime can reach it. */
-  steer(text: string): Promise<Delivery>;
+  /** A message into the turn in flight, if the runtime can reach it. On an idle
+   * session it starts a turn, which runs under `options` like a follow-up's. */
+  steer(text: string, options?: TurnOptions): Promise<Delivery>;
   /** Stop the running turn (and everything it started). */
   abort(): Promise<void>;
   /** Hear each event as it is written; returns the unsubscribe. */

@@ -155,9 +155,9 @@ class SdkSession implements RuntimeSession {
     return { status: "handled", result: await run };
   }
 
-  async steer(text: string): Promise<Delivery> {
+  async steer(text: string, options?: TurnOptions): Promise<Delivery> {
     // Nothing running: there is no turn to steer, so the message starts one.
-    if (this.pending === 0 || this.disposed) return this.followUp(text);
+    if (this.pending === 0 || this.disposed) return this.followUp(text, options);
     await this.session.steer(text);
     return { status: "queued" };
   }

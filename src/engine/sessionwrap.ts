@@ -15,7 +15,7 @@ export function releasing(session: RuntimeSession, after: () => void): RuntimeSe
     },
     prompt: (text, options) => session.prompt(text, options),
     followUp: (text, options) => session.followUp(text, options),
-    steer: (text) => session.steer(text),
+    steer: (text, options) => session.steer(text, options),
     abort: () => session.abort(),
     subscribe: (listener, options) => session.subscribe(listener, options),
     ...(session.compact ? { compact: () => session.compact!() } : {}),
