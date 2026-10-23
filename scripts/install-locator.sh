@@ -279,12 +279,12 @@ qcr_locate_keys_file() {
 #
 #   SHIPPED="$(qcr_shipped_config "$ROOT")" || exit 1
 #
-# The located config when it is one `deploy.sh sync|rebuild` can ship: the file
-# exists and its directory — the config home, with the profiles/ beside it —
+# The located config when it is one `deploy.sh release` can ship (it sends the
+# config home as a tar): the file exists and its directory — the config home, with the profiles/ beside it —
 # lies outside the checkout. Prints nothing (status 0) when there is none: no
 # config at all, or a $QCR_CONFIG naming a file inside the checkout, which
-# deploy never ships (it rides no route but the checkout rsync, and the VM
-# reads the shipped home).
+# deploy never ships (the tar carries the config home only, and the VM reads
+# the shipped home).
 # Status 1 only on a locator error.
 qcr_shipped_config() { # qcr_shipped_config <checkout-root>
   local root="$1" config dir rootp
