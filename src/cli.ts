@@ -62,7 +62,7 @@ import {
 } from "./install.js";
 import { sanitizeText } from "./tui/paint.js";
 import { operatorCommandWriteScript } from "./tui/unwedge.js";
-import { transportOf } from "./tui/remote.js";
+import { shellQuote, transportOf } from "./tui/remote.js";
 import { MutationGate } from "./gate.js";
 import type { GitHubAdapter } from "./github.js";
 import type { OutcomeCapture } from "./outcomes.js";
@@ -1082,14 +1082,14 @@ export function drainManualCommand(tui: TuiConfig, on: boolean, now: Date, hold 
   const name = `${now.toISOString().replace(/[:.]/g, "-")}-manual-drain.json`;
   // drainPayload's own object, compacted onto the one line.
   const payload = `printf '%s' '${JSON.stringify(JSON.parse(drainPayload(on, hold)))}' | `;
-  // Single quotes for the container's `sh -c`.
-  const script = operatorCommandWriteScript(tui, name).replace(/'/g, "'\\''");
-  if (transportOf(tui) === "local") return `${payload}${docker} sh -c '${script}'`;
+  // The script as the container's single `sh -c` argument.
+  const script = shellQuote(operatorCommandWriteScript(tui, name));
+  if (transportOf(tui) === "local") return `${payload}${docker} sh -c ${script}`;
   // Over ssh, also backslash, dollar, double quote and backtick for the LOCAL
   // double-quoted ssh argument, which would otherwise expand them on the
   // operator's machine.
   const remote = script.replace(/[\\$"`]/g, "\\$&");
-  return `${payload}ssh ${tui.ssh_host} "${docker} sh -c '${remote}'"`;
+  return `${payload}ssh ${tui.ssh_host} "${docker} sh -c ${remote}"`;
 }
 
 export interface DrainRunDeps {
@@ -1926,7 +1926,7 @@ export function parseArchiveArgs(rest: readonly string[]): ArchiveArgs {
  * `qcr archive …`:
  *   - `status [--plan] [--json]` — read-only, in this process. The daemon's
  *     status.json `archive` block, the archive ledger (`archive_prs`) — and
- *     with `--plan`, a plan computed HERE, now (tmux asked in this container;
+ *     with `--plan`, a plan computed HERE, now (worker leases asked in this container;
  *     the daemon's in-flight births are not visible from a CLI, and the daemon
  *     re-checks them before anything moves). Moves nothing.
  *   - `run`, `restore <pr>` — the operator's two verbs: ONE command file
