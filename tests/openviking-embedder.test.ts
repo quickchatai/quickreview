@@ -426,6 +426,16 @@ describe("serving the OpenAI embeddings contract", () => {
     expect(d.body.truncated_inputs).toBe(1);
   });
 
+  it("an input cut at the character limit counts as truncated even when its prefix fits the token budget", async () => {
+    const r = await post(server.base, {
+      model: LOCAL_EMBEDDING.model,
+      input: "x".repeat(70000),
+      input_type: "passage",
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.truncated_inputs).toBe(1);
+  });
+
   it("a list of inputs answers one vector per input, in order", async () => {
     const r = await post(server.base, {
       model: LOCAL_EMBEDDING.model,

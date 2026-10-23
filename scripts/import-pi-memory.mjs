@@ -19,8 +19,10 @@
 //   node scripts/import-pi-memory.mjs [--memory PATH] [--dest MODULE#EXPORT]
 //                                     [--batch-size N] [--archive] [--log FILE]
 //
-// The import is best effort with no gate: it always
-// exits 0 unless it could not even start. Read the log.
+// The import is best effort with no gate: it exits 0 unless it could not even
+// start, or unless re-reading the destination between batches comes back
+// incomplete after earlier batches were written (it then exits non-zero with
+// that progress kept). Read the log.
 import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";

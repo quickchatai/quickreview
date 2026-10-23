@@ -127,10 +127,11 @@ class Model:
         """`(text, tokens, truncated)` with `tokens <= max_tokens`: the longest
         character prefix that fits, found by bisection — model-agnostic, and
         it keeps the special tokens the tokenizer adds."""
+        clipped = len(text) > MAX_TEXT_CHARS
         text = text[:MAX_TEXT_CHARS]
         n = self.count(text)
         if n <= max_tokens:
-            return text, n, False
+            return text, n, clipped
         lo, hi = 0, len(text)
         while lo < hi:
             mid = (lo + hi + 1) // 2

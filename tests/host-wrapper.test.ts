@@ -353,6 +353,24 @@ describe("install: the image writes the wrapper", () => {
     expect(readFileSync(join(out, "qcr"), "utf8")).toContain("QCR_PINNED_IMAGE='qcr-ci:smoke'");
   });
 
+  it("refuses a wrapper template that has no image placeholder", () => {
+    const app = mkdtempSync(join(tmpdir(), "qcr-wrapper-app-"));
+    dirs.push(app);
+    mkdirSync(join(app, "scripts"));
+    writeFileSync(join(app, "scripts", "qcr-host.sh"), "#!/bin/sh\necho no placeholder\n");
+    const r = spawnSync(INSTALLER, [], {
+      env: {
+        PATH: process.env["PATH"]!,
+        QCR_APP_ROOT: app,
+        QCR_INSTALL_OUT: "/nonexistent",
+        QCR_IMAGE: "qcr-ci:smoke",
+      },
+      encoding: "utf8",
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("no image placeholder");
+  });
+
   it.each(["--privileged", "a b", "x;rm -rf ~", "i|j", "a&b"])(
     "refuses %j as an image reference",
     (image) => {

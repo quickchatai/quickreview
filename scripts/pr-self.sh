@@ -12,7 +12,7 @@
 # overrides, no request bodies — and its two delegates are the sibling
 # read-only scripts. There is no gate involvement because there is no mutation
 # path: posting always goes through post-review.sh / approve-pr.sh /
-# reply-thread.sh (which source guards.sh). Never add a write here.
+# reply-thread.sh (each asks the daemon over its post endpoint, which runs the gate). Never add a write here.
 # On a daemon's host the daemon reads (src/ghread.ts); elsewhere the
 # token comes from scripts/mint-token.sh only (app credential; never GH_TOKEN); when
 # no credential is available (test stubs) the read goes out unauthenticated.

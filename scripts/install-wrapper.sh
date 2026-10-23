@@ -42,8 +42,8 @@ case "$image" in
   '' | -* | *[!A-Za-z0-9._/:@-]*) die "QCR_IMAGE \"$image\" is not an image reference" ;;
 esac
 
+grep -q '@@QCR_IMAGE@@' "$template" || die "the wrapper template has no image placeholder"
 wrapper="$(sed "s|@@QCR_IMAGE@@|$image|" "$template")"
-case "$wrapper" in *@@QCR_IMAGE@@*) die "the wrapper template has no image placeholder" ;; esac
 case "$wrapper" in *QCR_WRAPPER_EOF*) die "the wrapper template holds the installer's terminator" ;; esac
 
 if [ -d "$OUT" ]; then
