@@ -124,8 +124,21 @@ async function loadOne(
   }
 }
 
-/** The shim, loaded from its file by pi's loader with `env` in place. */
-export async function loadShim<C>(c: ParityCase<C>): Promise<Loaded> {
+const SHIM_LOADS = new WeakMap<object, Promise<Loaded>>();
+
+/** The shim, loaded from its file by pi's loader with `env` in place. Loaded
+ * once per case: pi's loader re-transpiles the whole import tree on every load,
+ * and the same case (same env) yields the same registration each time. */
+export function loadShim<C>(c: ParityCase<C>): Promise<Loaded> {
+  let p = SHIM_LOADS.get(c);
+  if (!p) {
+    p = loadShimUncached(c);
+    SHIM_LOADS.set(c, p);
+  }
+  return p;
+}
+
+async function loadShimUncached<C>(c: ParityCase<C>): Promise<Loaded> {
   return withEnv(c.env, async () => {
     const ext = await loadOne({ path: c.shimPath });
     return {
