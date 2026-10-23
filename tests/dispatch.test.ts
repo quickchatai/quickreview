@@ -7,7 +7,7 @@ import {
   ALL_PASSES,
   buildPassPlan,
   capacity,
-  dispatchOnce,
+  dispatchOnce as realDispatchOnce,
   queuedInOrder,
   roundTypeFor,
   validatorTier,
@@ -24,6 +24,22 @@ import { renderRoundPrompt, roundTemplateFile } from "../src/templates.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 import type { ContextAssembler, MemoryRead, RoundMemory } from "../src/memory/context.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
+
+// Every dispatch hashes the whole policy surface for the round's integrity
+// baseline (hundreds of files, a loop turn each). Only the tests about that
+// baseline need the real hash; the rest get a constant one.
+const STUB_BASELINE = { digest: "stub", files: {} } as unknown as Awaited<
+  ReturnType<typeof fingerprintRoundIntegrity>
+>;
+function dispatchOnce(
+  deps: Parameters<typeof realDispatchOnce>[0],
+  ...rest: unknown[]
+): ReturnType<typeof realDispatchOnce> {
+  return (realDispatchOnce as (...a: unknown[]) => ReturnType<typeof realDispatchOnce>)(
+    { integrityFingerprint: async () => STUB_BASELINE, ...deps },
+    ...rest,
+  );
+}
 
 const baseCfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -595,7 +611,7 @@ describe("recording at round start", () => {
       adapter.files.set(29, [file("a.ts", 1, 1)]);
       const { hooks } = recordingHooks();
 
-      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+      await realDispatchOnce({ cfg: baseCfg, store, adapter, hooks });
 
       const round = store.roundsFor(29)[0]!;
       const fp = store.roundGitConfig(round.id) as
