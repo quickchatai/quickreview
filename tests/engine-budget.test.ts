@@ -209,11 +209,13 @@ describe("heartbeat", () => {
       expect(beat?.at).toBe(1_100);
       expect(beat?.deadline_at).toBeGreaterThan(0);
       b.end();
+      // releasing the deadline rewrites the beat at once too
+      expect(readBeat(file)).toMatchObject({ seq: 4, deadline_at: null });
       await vi.advanceTimersByTimeAsync(100);
-      expect(readBeat(file)?.deadline_at).toBeNull();
+      expect(readBeat(file)?.seq).toBe(5);
       stop();
       await vi.advanceTimersByTimeAsync(1_000);
-      expect(readBeat(file)?.seq).toBe(4);
+      expect(readBeat(file)?.seq).toBe(5);
       expect(readBeat(join(dir, "missing.json"))).toBeNull();
     } finally {
       rmSync(dir, { recursive: true, force: true });

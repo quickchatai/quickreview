@@ -395,6 +395,26 @@ describe("runDetachedChild", () => {
     });
     expect(during).toMatchObject({ seq: 2, deadline_at: 4_242_424 });
   });
+
+  it("rewrites the beat when a deadline is released, so a shorter turn's deadline shows at once", async () => {
+    const { trackDeadline } = await import("../src/heartbeat.js");
+    const dir = join(tmp, "child", "runs", "c4");
+    mkdirSync(dir, { recursive: true });
+    let after: { deadline_at: number | null } | null = null;
+    await runDetachedChild({
+      dir,
+      key: "k",
+      run: async () => {
+        const read = () => JSON.parse(readFileSync(join(dir, "heartbeat.json"), "utf8"));
+        const releaseLong = trackDeadline(9_000_000);
+        trackDeadline(1_000_000);
+        releaseLong();
+        after = read();
+        return 0;
+      },
+    });
+    expect(after).toMatchObject({ deadline_at: 1_000_000 });
+  });
 });
 
 describe("driverSignals", () => {

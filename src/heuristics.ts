@@ -185,7 +185,7 @@ const SIMPLICITY_BRANCH_RE = /^\+[ \t]*[)\]}]*[ \t]*(if|elif|else[ \t]+if|case|w
 
 // Dependency-manifest / lockfile shapes — a security surface (supply chain).
 const DEPS_MANIFEST_RE =
-  /(^|\/)(package(-lock)?\.json|yarn\.lock|pnpm-lock\.yaml|requirements[^/]*\.txt|poetry\.lock|pyproject\.toml|Pipfile(\.lock)?|go\.(mod|sum)|Gemfile(\.lock)?|Cargo\.(toml|lock))$/;
+  /(^|\/)(package(-lock)?\.json|yarn\.lock|pnpm-lock\.yaml|requirements[^/]*\.txt|poetry\.lock|uv\.lock|pyproject\.toml|Pipfile(\.lock)?|composer\.(json|lock)|go\.(mod|sum)|Gemfile(\.lock)?|Cargo\.(toml|lock))$/;
 
 // ---- profile heuristics extension -----------------------------------------
 //

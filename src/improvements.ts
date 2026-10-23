@@ -473,6 +473,16 @@ async function fileImprovementPrNow(
             recovered: true,
           };
           ctx.store.settleFiling(deliveryKey, receipt.slot, `#${number}`, outcome);
+          // The lost-response creation never reached its label step.
+          try {
+            await ctx.adapter.addLabel(number, ctx.cfg.github.improvement_label);
+          } catch (err) {
+            ctx.store.logEvent("improvement_pr_label_failed", number, {
+              branch: botBranch,
+              label: ctx.cfg.github.improvement_label,
+              error: (err as Error).message,
+            });
+          }
           return outcome;
         }
       } catch (err) {

@@ -939,6 +939,23 @@ describe("fileImprovementPr — the push goes through the gate in live mode", ()
     expect(store.filedSince("improvement_pr", today)).toBe(1);
   });
 
+  it("labels a recovered improvement PR as a normal creation would", async () => {
+    liveWith((kind) => (kind === "create_pull" ? new TypeError("lost response") : null));
+    const { run } = liveRunner();
+    const context = { ...ctx(run), deliveryKey: "operator/pr-delivery-label" };
+    const payload = {
+      branch: "wip/docs",
+      title: "Docs: clarify retry",
+      body: "rationale",
+      slug: "clarify-retry",
+    };
+    expect((await fileImprovementPr(payload, context)).ok).toBe(false);
+    Object.assign(adapter, { findFiledItem: vi.fn(async () => 4242) });
+    const label = vi.spyOn(adapter, "addLabel");
+    expect(await fileImprovementPr(payload, context)).toMatchObject({ ok: true, recovered: true });
+    expect(label).toHaveBeenCalledWith(4242, cfg.github.improvement_label);
+  });
+
   it("keeps a successful issue receipt across reopening the state database", async () => {
     store.close();
     const dbPath = join(dir, "receipts.sqlite");

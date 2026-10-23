@@ -466,6 +466,11 @@ describe("stripAgentSpawnTools", () => {
     expect(stripAgentSpawnTools("name: x\ntools: lens, lens_wave\n")).not.toContain("tools:");
   });
 
+  it("reads a bracketed or quoted list the way the runtime registry does", () => {
+    expect(stripAgentSpawnTools("tools: [read, subagent]\n")).toBe("tools: read\n");
+    expect(stripAgentSpawnTools('tools: ["read", "lens", \'grep\']\n')).toBe("tools: read, grep\n");
+  });
+
   it("leaves a clean tools line untouched", () => {
     expect(stripAgentSpawnTools("name: x\ntools: read, bash, grep, glob\n")).toBe(
       "name: x\ntools: read, bash, grep, glob\n",
