@@ -55,7 +55,8 @@
 import { assertArm } from "./ocr.js";
 import { finiteNumber as num } from "./values.js";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { publishText } from "./publication.js";
+import { publishChangedResult, readJsonValue as readJson } from "./publication.js";
+import { CASE_FILES } from "./artifacts.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { safeId, selectCases, type BenchCase, type CaseSet, type PrefetchMeta } from "./aacr.js";
@@ -415,7 +416,7 @@ export interface ClaudeCaseSummary {
   view_source?: ClaudeViewSource | null;
   /** `mcp_stream` | `stdout_fallback` — which channel save_result kept. */
   review_output_source: string | null;
-  /** True when review_output is the harness's raw-text fallback (scores 0). */
+  /** True when review_output is the harness's raw-text fallback (the harness's Claude reader scores it 0; the prose view can still hold findings). */
   raw_text_fallback: boolean;
   /** Every model Claude Code's JSON output reports usage for… */
   models: string[];
@@ -597,14 +598,6 @@ function writeClaudeSummary(outDir: string, s: ClaudeCaseSummary): void {
   writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(s, null, 2) + "\n");
 }
 
-function readJson(p: string): unknown {
-  try {
-    return JSON.parse(readFileSync(p, "utf8"));
-  } catch {
-    return undefined;
-  }
-}
-
 /** Review one case with Claude Code, through the harness's runner. Never
  * throws for a case that fails — a failure is a recorded outcome, and a
  * result file always exists so the case counts against recall. */
@@ -628,7 +621,7 @@ export async function reviewCaseClaude(
   rmSync(resultFile, { force: true });
   // An earlier attempt's body must not outlive it: the defect judge and
   // claude-rebuild read review.md whatever this attempt's status.
-  rmSync(join(caseDir, "review.md"), { force: true });
+  rmSync(join(caseDir, CASE_FILES.review), { force: true });
   try {
     await prepareTree(join(o.store, safe), tree, meta);
     for (const d of [home, tmpDir]) {
@@ -698,7 +691,7 @@ export async function reviewCaseClaude(
       summary,
       summarizeClaudeResult({ result, driverExit: r.code, driverTimedOut: r.timedOut, stdout }),
     );
-    if (finalText.trim()) writeFileSync(join(caseDir, "review.md"), finalText.trim() + "\n");
+    if (finalText.trim()) writeFileSync(join(caseDir, CASE_FILES.review), finalText.trim() + "\n");
     if (summary.status !== "ok") {
       const stderr = isObj(result) && typeof result["stderr"] === "string" ? result["stderr"] : "";
       summary.error = (
@@ -767,7 +760,7 @@ export function unprefetchedClaudeCase(
   writeClaudeSummary(outDir, s);
   // An earlier attempt's body must not outlive it: the defect judge and
   // claude-rebuild read review.md whatever this case's status.
-  rmSync(join(outDir, "cases", safeId(c.instance_id), "review.md"), { force: true });
+  rmSync(join(outDir, "cases", safeId(c.instance_id), CASE_FILES.review), { force: true });
   const dir = join(outDir, "results", "all");
   mkdirSync(dir, { recursive: true });
   writeFileSync(
@@ -837,14 +830,14 @@ export async function claudeRebuildRun(o: ClaudeRebuildCommand): Promise<ClaudeR
         files = null;
       }
     }
-    const md = join(o.outDir, "cases", safe, "review.md");
+    const md = join(o.outDir, "cases", safe, CASE_FILES.review);
     const next = withClaudeView(
       result,
       files,
       existsSync(md) ? readFileSync(md, "utf8") : undefined,
     );
     const text = JSON.stringify(next, null, 2) + "\n";
-    if (readFileSync(resultFile, "utf8") !== text) {
+    const published = publishChangedResult(resultFile, text, () => {
       // The metrics scored the old results: they go BEFORE the first result
       // changes, so a rebuild cut short never leaves them beside new findings
       // (and a re-run, finding those bytes already written, would not know).
@@ -855,9 +848,8 @@ export async function claudeRebuildRun(o: ClaudeRebuildCommand): Promise<ClaudeR
           "claude-rebuild",
           "the rebuilt view",
         );
-      changed++;
-      publishText(resultFile, text);
-    }
+    });
+    if (published) changed++;
     const view = claudeViewOf(next)!;
     const bench = next["bench"] as Obj;
     const prose = bench["claude_prose_parsed"] as ClaudeProseMarker | undefined;
