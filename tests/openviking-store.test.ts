@@ -2186,6 +2186,80 @@ describe("the incremental sweep", () => {
     expect(published.at(-1)).toEqual([`${ROOT_EXP}/20260802T000000-b.md`]);
   });
 
+  it("a note created with a #retired header joins the published list at once, even before any sweep seeded it", async () => {
+    const server = new FakeOpenViking();
+    const A = `${ROOT_EXP}/20260801T000000-a.md`;
+    const mk = (extra: Partial<ConstructorParameters<typeof OpenVikingStore>[0]>) =>
+      new OpenVikingStore({
+        client: new OpenVikingClient({
+          baseUrl: BASE,
+          apiKey: KEY,
+          user: "reviewer",
+          fetchFn: server.fetch,
+        }),
+        now: () => NOW,
+        cacheTtlMs: 0,
+        ...extra,
+      });
+    const seeded = mk({ initialRetired: [A] });
+    const res = await seeded.apply({
+      op: "note",
+      text: "#retired already gone",
+      category: "experiences",
+    });
+    expect(res.ok).toBe(true);
+    const uri = res.ok ? res.uri : undefined;
+    expect(uri).toBeDefined();
+    expect(await seeded.retiredUris()).toEqual([A, uri!].sort());
+
+    const swept = mk({});
+    await swept.read();
+    const res2 = await swept.apply({
+      op: "note",
+      text: "#retired also gone",
+      category: "experiences",
+    });
+    expect(res2.ok).toBe(true);
+    expect(await swept.retiredUris()).toContain(res2.ok ? res2.uri! : "");
+  });
+
+  it("a named create that loses to an external writer forgets the cached destination, so the winner's same-size bytes are read", async () => {
+    const server = new FakeOpenViking();
+    const X = `${ROOT_EXP}/x.md`;
+    server.files.set(X, "aaaaaa\n");
+    const store = new OpenVikingStore({
+      client: new OpenVikingClient({
+        baseUrl: BASE,
+        apiKey: KEY,
+        user: "reviewer",
+        fetchFn: async (url, init) => {
+          const res = await server.fetch(url, init);
+          if (!url.includes("/api/v1/fs/ls")) return res;
+          // A listing that never moves: only the store's own knowledge of a
+          // conflict can say the cached file is stale.
+          const body = JSON.parse(await res.text()) as { result: Array<Record<string, unknown>> };
+          for (const row of body.result) {
+            row["size"] = 7;
+            row["modTime"] = "2026-08-20T15:30:00.000Z";
+          }
+          return json(200, body);
+        },
+      }),
+      now: () => NOW,
+      cacheTtlMs: 0,
+    });
+    expect((await store.read()).map((e) => e.text)).toEqual(["aaaaaa"]);
+    server.files.set(X, "bbbbbb\n");
+    const res = await store.apply({
+      op: "note",
+      text: "cccccc",
+      category: "experiences",
+      name: "x",
+    });
+    expect(res).toMatchObject({ ok: true, existed: true });
+    expect((await store.read()).map((e) => e.text)).toEqual(["bbbbbb"]);
+  });
+
   // The published list is what every session's recall excludes,
   // so a sweep that could not read part of the store must not shrink it.
   it("a sweep that cannot read everything never shrinks the published retired list — only a complete one may", async () => {

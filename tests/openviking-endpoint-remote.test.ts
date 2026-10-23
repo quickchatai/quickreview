@@ -220,6 +220,32 @@ describe("OpenVikingSupervisor under endpoint = remote", () => {
     expect(sup.status().ready).toBe(false);
   });
 
+  it("a poll still in flight when stop runs installs nothing and fires no onReady", async () => {
+    const s = sidecar();
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    let gated = false;
+    const fetchFn: FetchLike = async (url, init) => {
+      if (gated) await held;
+      return s.fetchFn(url, init);
+    };
+    const readies: number[] = [];
+    const { sup } = make({}, fetchFn, () => readies.push(1));
+    s.state.ready = false;
+    sup.start();
+    await flush();
+    expect(sup.status()).toMatchObject({ reachable: true, ready: false });
+    s.state.ready = true;
+    gated = true;
+    const probing = sup.poll();
+    await flush();
+    await sup.stop();
+    release();
+    await probing;
+    expect(readies).toEqual([]);
+    expect(sup.status().ready).toBe(false);
+  });
+
   it("memory disabled still wins: no probing at all", async () => {
     const s = sidecar();
     const { sup, lines } = make({ enabled: false }, s.fetchFn);
