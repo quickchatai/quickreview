@@ -102,12 +102,47 @@ ruleset='{
           { "context": "image" }, { "context": "clone" } ] } }
   ]
 }'
-existing=$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name == "main") | .id')
-if [ -n "$existing" ]; then
-  call PUT "/rulesets/$existing" "$ruleset"
-else
-  call POST /rulesets "$ruleset"
-fi
+# A ruleset by name: updated when it exists, created when it does not.
+upsert_ruleset() {
+  local id
+  id=$(gh api "repos/$REPO/rulesets" --jq ".[] | select(.name == \"$1\") | .id")
+  if [ -n "$id" ]; then
+    call PUT "/rulesets/$id" "$2"
+  else
+    call POST /rulesets "$2"
+  fi
+}
+upsert_ruleset main "$ruleset"
+
+# Release tags: a v* tag push runs release.yml (ghcr publish, the npm stage),
+# and every org member can push to this repo, so only a repository admin may
+# create, move or delete one.
+upsert_ruleset "release tags" '{
+  "name": "release tags",
+  "target": "tag",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["refs/tags/v*"], "exclude": [] } },
+  "bypass_actors": [ { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" } ],
+  "rules": [ { "type": "creation" }, { "type": "update" }, { "type": "deletion" } ]
+}'
+
+# release-e2e holds RELEASE_E2E_PI_AUTH: a run reaches it only from main (a
+# dispatched scratch run) or a v*.*.* tag, and only after the admin running
+# this script approves the deployment (release.yml's "the owner as the
+# required reviewer", which a public repo's plan supports). A real release
+# cannot publish without its e2e, so this approval gates every publish.
+reviewer=$(gh api user --jq .id)
+call PUT /environments/release-e2e "{
+  \"reviewers\": [ { \"type\": \"User\", \"id\": $reviewer } ],
+  \"deployment_branch_policy\": { \"protected_branches\": false, \"custom_branch_policies\": true }
+}"
+have=$(gh api "repos/$REPO/environments/release-e2e/deployment-branch-policies" \
+  --jq '.branch_policies[] | .type + ":" + .name' 2>/dev/null || true)
+for want in branch:main 'tag:v*.*.*'; do
+  grep -qxF "$want" <<<"$have" ||
+    call POST /environments/release-e2e/deployment-branch-policies \
+      "{ \"type\": \"${want%%:*}\", \"name\": \"${want#*:}\" }"
+done
 
 # The label the proposal issue form applies (.github/ISSUE_TEMPLATE/proposal.yml).
 echo "label proposal"

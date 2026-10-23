@@ -333,7 +333,7 @@ never the same system ([MANIFESTO.md](MANIFESTO.md)).
 - [docs/memory-embeddings.md](docs/memory-embeddings.md) — the embedder: local by default, hosted opt-in
 - [bench/aacr/README.md](bench/aacr/README.md) — the benchmark harness
 - [AGENTS.md](AGENTS.md) — orientation for an AI agent editing this codebase
-- [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md)
+- [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) and [SECURITY.md](SECURITY.md)
 
 ## Appendix — setting up by hand
 

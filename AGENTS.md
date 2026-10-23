@@ -213,7 +213,7 @@ the fence.
 | Round planning | `src/dispatch.ts` (FIFO, concurrency cap), `packages/pi-plugin/src/planner.ts` (the lens plan, follow-up rounds, the round order), `packages/pi-plugin/src/heuristics.ts` (lens selection), `packages/pi-plugin/src/ecosystem.ts` + `packages/pi-plugin/src/migrations.ts` (framework pre-checks), `packages/pi-plugin/src/profiles.ts` |
 | Prompt assembly | `packages/pi-plugin/src/include.ts` (`{{include:}}`, tier rewriting, `PASS_ADDENDA`), `packages/pi-plugin/src/templates.ts` (round templates) |
 | Sessions | `src/sessions.ts`, `src/tmux.ts`, `src/worktrees.ts`, `src/wakes.ts`, `extensions/inject-bridge.ts` |
-| Verdict + posting | `src/verdicts.ts`, `packages/pi-plugin/src/gate.ts`, `packages/pi-plugin/src/guards.ts`, `packages/pi-plugin/src/cigate.ts`, `packages/pi-plugin/src/standing-review.ts`, `src/posting.ts`, `packages/pi-plugin/src/anchors.ts`, `scripts/post-review.sh` + `scripts/guards.sh` |
+| Verdict + posting | `src/verdicts.ts`, `packages/pi-plugin/src/gate.ts`, `packages/pi-plugin/src/guards.ts`, `packages/pi-plugin/src/cigate.ts`, `packages/pi-plugin/src/standing-review.ts`, `src/posting.ts`, `packages/pi-plugin/src/anchors.ts`, `src/postops.ts`, the session shims `scripts/post-review.sh`, `approve-pr.sh`, `reply-thread.sh` |
 | Review judgment | `packages/pi-plugin/src/severity.ts` (severity × confidence × reachability → tag), `src/recheck.ts`, `src/pingpong.ts`, `src/escalation.ts` |
 | Learning | `src/feedback.ts`, `src/eod.ts`, `src/digest.ts`, `packages/pi-plugin/src/findingsrecord.ts`, `src/improvements.ts` |
 | Memory | `src/memory/` (the seam), `src/openviking/` (the engine, supervised on loopback) |
@@ -262,11 +262,11 @@ the column. Contract: [`docs/tui.md`](docs/tui.md).
 caller. It must be ordinary: suppressed in dry-run, refused for `forceLive`, and
 outside `APP_SELF_CONFIG_KINDS`. `tests/fences-gate.test.ts` rejects any name
 suggesting dismissal; `tests/gate.test.ts` pins the two closed sets by deep
-equality. If the new kind posts to GitHub from a session, its shell script must
-source `scripts/guards.sh` and call the guards its route needs —
-`tests/fences-guards.test.ts` derives that coverage from the call sites, and
-`tests/guards-shell-*.test.ts` runs the real scripts against a loopback stub over
-the same cases the gate suite runs in TypeScript.
+equality. If the new kind posts to GitHub from a session, it is a new op on
+the daemon (`src/postops.ts`), never a shell route: the session shims only
+hand the daemon their result files ([`scripts/AGENTS.md`](scripts/AGENTS.md)),
+and the guard cases for it go in `tests/guards.test.ts`, which runs them
+through the real gate.
 
 ## Two more things to know
 

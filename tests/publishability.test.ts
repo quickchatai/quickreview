@@ -79,6 +79,11 @@ const ALLOWLIST: AllowlistEntry[] = [
     labels: [OWNER_NAME],
     reason: "the dataset card's citations name the papers' author",
   },
+  {
+    path: "CODE_OF_CONDUCT.md",
+    labels: [OWNER_NAME],
+    reason: "the conduct reports go to the maintainer's own address, by decision",
+  },
 ];
 
 function allowlisted(path: string, label: string): boolean {

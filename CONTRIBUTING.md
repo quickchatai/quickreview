@@ -5,6 +5,9 @@ test-driven, and every pull request costs CI time and a maintainer's
 reading time. The process below keeps both well spent. A PR that skips it
 stays a draft and may be closed without review.
 
+Everyone taking part, in issues, pull requests and reviews, follows the
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## How a change gets in
 
 1. **Start from an issue.** Open one, or pick an open one, before you write

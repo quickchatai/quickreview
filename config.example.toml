@@ -718,7 +718,7 @@ escalation_mention_default = ""             # ← FILL (8): fallback GitHub logi
 # reasoning level + the full lever plan; ~2x cost, ~3x time) or "low" (every
 # model at low reasoning; ~half default's cost and time, about the pre-lever
 # review's recall). REVIEW_PRESETS in
-# src/config.ts. A lever set below overrides the preset.
+# packages/pi-plugin/src/reviewconfig.ts. A lever set below overrides the preset.
 preset = "default"
 # The default preset fetches the SOURCE of the npm/PyPI packages a PR imports
 # (package names and versions go to the public registries; nothing is
