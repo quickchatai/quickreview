@@ -16,6 +16,10 @@ import {
   todayJson,
   whyHeaderLine,
   whyJson,
+  debugRoundAttachLines,
+  splitJsonFlag,
+  takeoverAttachLines,
+  reembedScriptPath,
 } from "../src/cli.js";
 import { StateStore, type StatusSnapshot } from "../src/state.js";
 
@@ -544,5 +548,36 @@ describe("qcr with an unknown command", () => {
       process.exitCode = saved;
       log.mockRestore();
     }
+  });
+});
+
+describe("qcr global flags and attach hints", () => {
+  it("--json is a global flag everywhere except inside a message's words", () => {
+    expect(splitJsonFlag(["metrics", "--json"])).toEqual({ json: true, argv: ["metrics"] });
+    expect(splitJsonFlag(["message", "12", "Please", "support", "--json"])).toEqual({
+      json: false,
+      argv: ["message", "12", "Please", "support", "--json"],
+    });
+  });
+
+  it("the attach hints name the configured container", () => {
+    expect(takeoverAttachLines(12, "other-box").join("\n")).toContain(
+      "docker exec -it other-box tmux attach -t takeover-pr-12",
+    );
+    expect(debugRoundAttachLines(12, "other-box").join("\n")).toContain(
+      "docker exec -it other-box tmux attach -t debug-pr-12",
+    );
+  });
+});
+
+describe("qcr memory reembed — receipt script path", () => {
+  it("follows the daemon container's layout, the sidecar's is /opt/qcr", () => {
+    expect(reembedScriptPath(true, "/opt/qcr")).toBe("/opt/qcr/scripts/openviking-reembed.mjs");
+    expect(reembedScriptPath(true, "/opt/quickreview/sandbox")).toBe(
+      "/opt/quickreview/sandbox/scripts/openviking-reembed.mjs",
+    );
+    expect(reembedScriptPath(false, "/opt/quickreview/sandbox")).toBe(
+      "/opt/qcr/scripts/openviking-reembed.mjs",
+    );
   });
 });

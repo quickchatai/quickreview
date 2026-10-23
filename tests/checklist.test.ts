@@ -412,6 +412,14 @@ describe("⑦ digest presence", () => {
     expect(r.detail).toContain("3 rounds");
   });
 
+  it("fails when status.json carries a different headline than today's digest", () => {
+    const r = probeDigest(
+      digestFixture({ digest: "# EOD\n\n3 rounds, $1.20", headline: "yesterday: 1 round" }),
+    );
+    expect(r.pass).toBe(false);
+    expect(r.detail).toContain("headline");
+  });
+
   it("fails without today's digest", () => {
     const r = probeDigest(digestFixture({ headline: "x" }));
     expect(r.pass).toBe(false);
@@ -441,6 +449,26 @@ describe("⑧ tmux attach", () => {
     const r = await probeTmux({ listSessions: () => ["pr-123"] });
     expect(r.pass).toBe(false);
     expect(r.detail).toContain("overseer=NO");
+  });
+
+  it("worker topology: an empty inventory passes without overseer or pr sessions", async () => {
+    const r = await probeTmux({
+      listSessions: () => [],
+      requireOverseer: false,
+      requirePrSession: false,
+    });
+    expect(r.pass).toBe(true);
+  });
+
+  it("worker topology: an unreadable inventory still fails", async () => {
+    const r = await probeTmux({
+      listSessions: () => {
+        throw new Error("the worker leases could not be read (liveness unknown)");
+      },
+      requireOverseer: false,
+      requirePrSession: false,
+    });
+    expect(r.pass).toBe(false);
   });
 
   it("reports a missing tmux server as a failure (the correct result off-VM)", async () => {
@@ -584,7 +612,7 @@ describe("runChecklist", () => {
     mkdirSync(digestDir);
     mkdirSync(injectDir);
     const today = "2026-08-13";
-    writeFileSync(join(digestDir, `${today}.md`), "# EOD\n2 rounds");
+    writeFileSync(join(digestDir, `${today}.md`), "# EOD\n2 rounds, $0.80");
     const statusPath = join(dir, "status.json");
     writeFileSync(
       statusPath,

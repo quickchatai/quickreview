@@ -1276,23 +1276,26 @@ export function parseTakeoverArgs(rest: readonly string[]): number {
   return Number(rest[0]);
 }
 
+/** The container name the attach hints print when no configured one is passed. */
+const DEFAULT_ATTACH_CONTAINER = "quickreview-sandbox";
+
 /** The lines that follow a granted debug round (P8.13b): the lease is armed for the
  * PR's next round, which a worker would otherwise take. */
-export function debugRoundAttachLines(pr: number): string[] {
+export function debugRoundAttachLines(pr: number, container = DEFAULT_ATTACH_CONTAINER): string[] {
   const session = `debug-pr-${pr}`;
   return [
     `the PR's next round runs in interactive pi: tmux attach -t ${session}`,
-    `(on the VM: docker exec -it quickreview-sandbox tmux attach -t ${session})`,
+    `(on the VM: docker exec -it ${container} tmux attach -t ${session})`,
     `it posts like any round, through the gate with the install's dry_run. \`qcr release ${pr}\` ends it; it ends with the verdict commit, and the round after goes back to a worker.`,
   ];
 }
 
 /** The lines that follow a granted takeover: how to reach the pi. */
-export function takeoverAttachLines(pr: number): string[] {
+export function takeoverAttachLines(pr: number, container = DEFAULT_ATTACH_CONTAINER): string[] {
   const session = `takeover-pr-${pr}`;
   return [
     `attach: tmux attach -t ${session}`,
-    `(on the VM: docker exec -it quickreview-sandbox tmux attach -t ${session})`,
+    `(on the VM: docker exec -it ${container} tmux attach -t ${session})`,
     `the TUI's PR pane shows it too. \`qcr release ${pr}\` ends it; it also ends after 30 minutes idle.`,
   ];
 }
@@ -1312,8 +1315,10 @@ async function cmdTakeover(
     },
   );
   const ok = outcome.state === "handled" || outcome.state === "queued";
-  if (ok && kind === "takeover") for (const line of takeoverAttachLines(pr)) console.log(line);
-  if (ok && kind === "debug-round") for (const line of debugRoundAttachLines(pr)) console.log(line);
+  if (ok && kind === "takeover")
+    for (const line of takeoverAttachLines(pr, cfg.tui.container)) console.log(line);
+  if (ok && kind === "debug-round")
+    for (const line of debugRoundAttachLines(pr, cfg.tui.container)) console.log(line);
   return ok ? 0 : 1;
 }
 
@@ -1623,10 +1628,13 @@ export async function cmdMemory(rest: string[]): Promise<number> {
     // memory sidecar (whose app root is /opt/qcr) under `endpoint = "remote"`.
     const { tuiMemoryContainer } = await import("./tui/memforward.js");
     const memoryContainer = tuiMemoryContainer(cfg.tui);
-    const script =
-      memoryContainer === cfg.tui.container
-        ? "/opt/quickreview/sandbox/scripts/openviking-reembed.mjs"
-        : "/opt/qcr/scripts/openviking-reembed.mjs";
+    // The daemon container's app root follows its `qcr.layout` label.
+    const { runnerFor } = await import("./tui/remote.js");
+    await resolveLayout(cfg.tui, runnerFor(cfg.tui));
+    const script = reembedScriptPath(
+      memoryContainer === cfg.tui.container,
+      remoteSandboxRoot(cfg.tui),
+    );
     console.log(
       "done. The daemon's journal still lists these namespaces as awaiting you; receipt them in the container so the heartbeat stops naming them:\n" +
         users
@@ -1638,6 +1646,12 @@ export async function cmdMemory(rest: string[]): Promise<number> {
     );
   }
   return ok ? 0 : 1;
+}
+
+/** Where the re-embed script lives in the container the journal is in: the
+ * daemon container's own app root, or the memory sidecar's /opt/qcr. */
+export function reembedScriptPath(inDaemonContainer: boolean, daemonRoot: string): string {
+  return `${inDaemonContainer ? daemonRoot : "/opt/qcr"}/scripts/openviking-reembed.mjs`;
 }
 
 const MEMORY_USAGE =
@@ -2006,9 +2020,15 @@ async function cmdArchive(rest: readonly string[], json: boolean): Promise<numbe
   }
 }
 
-export async function main(argv: string[]): Promise<void> {
-  const json = argv.includes("--json");
-  argv = argv.filter((a) => a !== "--json");
+/** Takes the global `--json` flag out of `argv`. `qcr message` carries free
+ * text, so a `--json` among its words stays words and the flag is not read. */
+export function splitJsonFlag(argv: string[]): { json: boolean; argv: string[] } {
+  if (argv[0] === "message") return { json: false, argv };
+  return { json: argv.includes("--json"), argv: argv.filter((a) => a !== "--json") };
+}
+
+export async function main(rawArgv: string[]): Promise<void> {
+  const { json, argv } = splitJsonFlag(rawArgv);
   // A GitHub token handed over as a file (src/ghcred.ts, D39) is read and
   // unlinked here, before any verb can start a pi or bash child. A file that
   // is named but cannot be taken is a one-line failure, never a stack trace.

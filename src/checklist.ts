@@ -12,6 +12,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { digestHeadline } from "./digest.js";
 import { signBody } from "./webhook.js";
 
 export interface ProbeResult {
@@ -249,6 +250,13 @@ export function probeDigest(deps: DigestProbeDeps): ProbeResult {
   }
   if (typeof headline !== "string" || headline.trim() === "")
     return bad(item, name, `${file} present but status.json has no digest_headline`);
+  const expected = digestHeadline(readFileSync(file, "utf8"));
+  if (expected !== undefined && headline !== expected)
+    return bad(
+      item,
+      name,
+      `${file} present but status.json digest_headline "${headline.slice(0, 60)}" is not its headline "${expected.slice(0, 60)}"`,
+    );
   return ok(item, name, `${file} (${size} chars), headline: "${headline.slice(0, 60)}"`);
 }
 
@@ -258,11 +266,15 @@ export interface TmuxProbeDeps {
   /** `tmux ls`-equivalent; on the VM this is `docker exec … tmux ls`. Throwing
    * (no server) is a legitimate failure, reported as such. */
   listSessions: () => Promise<string[]> | string[];
-  /** Session names the checklist insists on. */
+  /** Default true (legacy tmux topology): the `overseer` session must exist. */
   requireOverseer?: boolean;
+  /** Default true: at least one `pr-<n>` session must exist. A worker-hosted
+   * install lists its workers' sessions, which are none between rounds. */
+  requirePrSession?: boolean;
 }
 
-/** ⑧ The overseer session and at least one `pr-*` session must be attachable. */
+/** ⑧ The listing must answer; on a legacy topology the overseer and a `pr-*`
+ * session must also be attachable. */
 export async function probeTmux(deps: TmuxProbeDeps): Promise<ProbeResult> {
   const item = "⑧";
   const name = "tmux attach";
@@ -275,7 +287,8 @@ export async function probeTmux(deps: TmuxProbeDeps): Promise<ProbeResult> {
   const overseer = sessions.includes("overseer");
   const prSessions = sessions.filter((s) => /^pr-\d+$/.test(s));
   const wantOverseer = deps.requireOverseer !== false;
-  const pass = (!wantOverseer || overseer) && prSessions.length > 0;
+  const wantPr = deps.requirePrSession !== false;
+  const pass = (!wantOverseer || overseer) && (!wantPr || prSessions.length > 0);
   const detail = `sessions=[${sessions.join(", ") || "none"}] overseer=${overseer ? "yes" : "NO"} pr-sessions=${prSessions.length}`;
   return pass ? ok(item, name, detail) : bad(item, name, detail);
 }
