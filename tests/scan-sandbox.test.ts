@@ -48,7 +48,11 @@ import {
   writeStartedFile,
   type ScanBoxPlan,
 } from "../src/scanbox.js";
-import { SCAN_AUTH_SRC_ENV, SCAN_CASE_AUTH_BUDGET_MS } from "../src/engine/auth.js";
+import {
+  PI_REFRESH_MARGIN_MS,
+  SCAN_AUTH_SRC_ENV,
+  SCAN_CASE_AUTH_BUDGET_MS,
+} from "../src/engine/auth.js";
 import { scanEnv } from "../src/scancli.js";
 import {
   CompanionLifecycle,
@@ -841,6 +845,56 @@ describe("the sandboxed launch", () => {
     expect(calls.some(isDriverRun)).toBe(false);
   });
 
+  it("the doctor's probe copy brings the login's models.json along, as the SDK runner does", () => {
+    const stub = join(dir, "app");
+    mkdirSync(join(stub, "dist/src"), { recursive: true });
+    writeFileSync(join(stub, "dist/src/scanauth.js"), "export function syncScanAuthFromEnv() {}\n");
+    const src = join(dir, "login-src");
+    const dst = join(dir, "login-dst");
+    mkdirSync(src);
+    mkdirSync(dst);
+    writeFileSync(join(src, "models.json"), '{"providers":{}}');
+    const script = SCAN_AUTH_COPY_SCRIPT.replace(SCANBOX.app, stub);
+    execFileSync("node", ["--input-type=module", "-e", script], {
+      env: { ...process.env, [SCAN_AUTH_SRC_ENV]: src, PI_CODING_AGENT_DIR: dst },
+    });
+    expect(readFileSync(join(dst, "models.json"), "utf8")).toBe('{"providers":{}}');
+  });
+
+  it("mounts the profiles beside an explicit QCR_CONFIG where the container's config looks for them", async () => {
+    const adjacent = join(dir, "profiles");
+    mkdirSync(adjacent, { recursive: true });
+    const { calls, detach } = setup(
+      [
+        stamped("s1"),
+        (a) => (a[0] === "run" ? OK : undefined),
+        (a) => (a[0] === "inspect" ? fail("No such object") : undefined),
+      ],
+      { env: { HOME: dir, QCR_CONFIG: join(dir, "config.toml") } as NodeJS.ProcessEnv },
+    );
+    await detach(["start", "--key", "K"]);
+    expect(calls.find(isDriverRun)).toContain(
+      `type=bind,src=${adjacent},dst=/qcr-config/live/profiles,readonly`,
+    );
+  });
+
+  it("refuses a token the SDK runner would refuse: inside a case's budget plus pi's refresh margin", async () => {
+    const { calls, detach } = setup(
+      [stamped("s1")],
+      {},
+      {
+        "openai-codex": {
+          type: "oauth",
+          expires: SCAN_CASE_AUTH_BUDGET_MS + PI_REFRESH_MARGIN_MS - 1,
+        },
+      },
+    );
+    const r = await detach(["start", "--key", "K"]);
+    expect(r).toMatchObject({ ok: false });
+    expect((r as { errors: string[] }).errors[0]).toMatch(/never refreshes/);
+    expect(calls.some(isDriverRun)).toBe(false);
+  });
+
   it("hands the container the reviewer key alone, in a 0600 file of its own", async () => {
     const keys = join(dir, "keys.env");
     writeFileSync(
@@ -888,6 +942,26 @@ describe("the sandboxed launch", () => {
     );
     await detach(["start", "--key", "K"]);
     expect(calls.find(isDriverRun)).not.toContain("--env-file");
+  });
+
+  it("a transient inspect failure is not a confirmed exit: the launch keeps waiting for the driver", async () => {
+    let inspects = 0;
+    const { home, detach } = setup([
+      stamped("s1"),
+      (a) => (a[0] === "run" ? OK : undefined),
+      (a) => {
+        if (a[0] !== "inspect") return undefined;
+        inspects += 1;
+        if (inspects === 1) return fail("context deadline exceeded");
+        writeStartedFile(join(home, "scan/started/tok1.json"), {
+          ok: true,
+          run: RUN as never,
+          log: "/qcr-state/scan/driver.log",
+        });
+        return { ...OK, stdout: "true\n" };
+      },
+    ]);
+    expect(await detach(["start", "--key", "K"])).toMatchObject({ ok: true });
   });
 
   it("an outcome written as the timeout struck is still the answer", async () => {

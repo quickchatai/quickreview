@@ -62,6 +62,7 @@ import { appStamp } from "./appstamp.js";
 import type { ScanSandboxConfig } from "./config.js";
 import type { LoginSummary } from "./engine/auth.js";
 import {
+  PI_REFRESH_MARGIN_MS,
   SCAN_AUTH_FIX,
   SCAN_AUTH_SRC_ENV,
   SCAN_CASE_AUTH_BUDGET_MS,
@@ -165,6 +166,8 @@ export interface ScanBoxPlan {
   stateHome: string;
   configMirror: string;
   profiles: string;
+  /** The profiles beside an explicit QCR_CONFIG, a second place the locator looks. */
+  adjacentProfiles?: string;
   install: string;
   token: string;
   /** The memory env's non-secret half comes from `memory`; its key is this
@@ -209,6 +212,17 @@ export function scanMounts(p: ScanBoxPlan): ScanMount[] {
     ...loginMounts(p.pihomeVolume),
     { dest: SCANBOX.configLive, source: p.configMirror, mode: "ro" },
     { dest: SCANBOX.profiles, source: p.profiles, mode: "ro" },
+    // The container's config is the mirror, so `profiles/` beside it is the
+    // place the locator searches for a config outside the config home.
+    ...(p.adjacentProfiles
+      ? [
+          {
+            dest: `${SCANBOX.configLive}/profiles`,
+            source: p.adjacentProfiles,
+            mode: "ro" as const,
+          },
+        ]
+      : []),
   ];
 }
 
@@ -385,7 +399,11 @@ export const LOGIN_SUMMARY_SCRIPT =
  * for a token that outlives the doctor's probe. */
 export const SCAN_AUTH_COPY_SCRIPT =
   `const { syncScanAuthFromEnv } = await import("${SCANBOX.app}/dist/src/scanauth.js");` +
-  `syncScanAuthFromEnv(process.env, ${PI_PROBE_TIMEOUT_MS});`;
+  `syncScanAuthFromEnv(process.env, ${PI_PROBE_TIMEOUT_MS});` +
+  // The SDK runner copies the login's custom model list beside auth.json; so does the probe.
+  `const { copyFileSync, existsSync } = await import("node:fs");` +
+  `const models = process.env.${SCAN_AUTH_SRC_ENV} + "/models.json";` +
+  `if (existsSync(models)) copyFileSync(models, process.env.PI_CODING_AGENT_DIR + "/models.json");`;
 
 /** `docker run` reading the companion's login summary over a read-only mount. */
 export function loginSummaryArgv(image: string, pihomeVolume: string): string[] {
@@ -445,8 +463,10 @@ export function lifeWords(ms: number): string {
 export function loginProblem(s: LoginSummary, now: number): string | null {
   if (Object.keys(s).length === 0) return scanAuthMissing(`${SCANBOX.authSrc}/auth.json`);
   const e = earliestExpiry(s);
-  if (e !== null && e.expiresAt < now + SCAN_CASE_AUTH_BUDGET_MS)
-    return scanAuthExpiring({ ...e, needMs: SCAN_CASE_AUTH_BUDGET_MS });
+  // The scan's SDK runner admits a token only past the budget plus pi's
+  // refresh margin (engineCredentials), so launch and doctor ask the same.
+  const needMs = SCAN_CASE_AUTH_BUDGET_MS + PI_REFRESH_MARGIN_MS;
+  if (e !== null && e.expiresAt < now + needMs) return scanAuthExpiring({ ...e, needMs });
   return null;
 }
 
@@ -688,7 +708,18 @@ export function dockerDetach<R = unknown>(
     const log = prepareDriverLog(home, deps.logMax);
     if (!log.ok) return refuse(log.error);
     const profiles = join(configHome(deps.env), PROFILES_DIR);
-    const comma = commaProblem([...git.mounts, home, mirrorDir, profiles]);
+    const adjacentDir = (deps.env.QCR_CONFIG ?? "").trim()
+      ? join(dirname(source), PROFILES_DIR)
+      : "";
+    const adjacentProfiles =
+      adjacentDir !== "" && adjacentDir !== profiles && existsSync(adjacentDir) ? adjacentDir : "";
+    const comma = commaProblem([
+      ...git.mounts,
+      home,
+      mirrorDir,
+      profiles,
+      ...(adjacentProfiles ? [adjacentProfiles] : []),
+    ]);
     if (comma !== null) return refuse(comma);
     sweepStarted(join(home, STARTED_DIR), timeoutMs);
     try {
@@ -714,6 +745,7 @@ export function dockerDetach<R = unknown>(
       stateHome: home,
       configMirror: mirrorDir,
       profiles,
+      ...(adjacentProfiles ? { adjacentProfiles } : {}),
       install,
       token,
       ...(keys !== "" ? { keysFile: keys } : {}),
@@ -749,7 +781,12 @@ export function dockerDetach<R = unknown>(
       const o = read();
       if (o) return o;
       const st = await deps.docker(["inspect", "--format", "{{.State.Running}}", plan.name]);
-      if (!st.ok || st.stdout.trim() !== "true") {
+      // An inspect that failed for any reason but a missing container says
+      // nothing about the driver: keep waiting, bounded by the timeout below.
+      const gone = st.ok
+        ? st.stdout.trim() !== "true"
+        : /no such (object|container)/i.test(st.stderr);
+      if (gone) {
         // It may have written its outcome just before it went.
         const last = read();
         if (last) return last;

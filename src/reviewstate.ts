@@ -139,7 +139,7 @@ export interface RecordedRound {
 
 /**
  * Fold a finished round's findings record into the state. A finding that
- * re-raises one already open (the same key, a named older round, the same
+ * re-raises one already open (the same key on the same file, a named older round, the same
  * title on the same file, or the same lens on the same line) is a repeat: it
  * is kept in the state as `merged` (auditable) and never reaches the reader as
  * new, whatever the session did. The statuses the round reported for the prior
@@ -171,7 +171,9 @@ export function recordRound(
       open !== null &&
       open.findings.some(
         (p) =>
-          p.finding_key === e.key ||
+          // A key is a round-local handle: it names the same finding only on
+          // the same file.
+          (p.finding_key === e.key && p.path === e.path) ||
           (e.raised_in_round !== null && e.raised_in_round < round.round_no) ||
           (p.path !== null &&
             p.path === e.path &&

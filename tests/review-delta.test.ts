@@ -416,4 +416,28 @@ describe("review state", () => {
     expect(state.branchTargetKey("o/r", "a")).not.toBe(state.branchTargetKey("o/r", "b"));
     expect(state.branchTargetKey("o/r", "a")).not.toBe(state.branchTargetKey("p/r", "a"));
   });
+
+  it("does not read a reused round-local handle on another file as a repeat", () => {
+    const round = (n: number, scope: "full" | "delta") => ({
+      round_no: n,
+      head_sha: `h${n}`,
+      base_sha: "b",
+      merge_base: "b",
+      reviewed_at: "2026-01-01T00:00:00Z",
+      verdict: null,
+      scope,
+      cost_usd: null,
+    });
+    const one = state.recordRound(null, "t", round(1, "full"), {
+      findings: [f("f1", "src/a.ts", 3, "P0", "c breaks the build")],
+    });
+    const two = state.recordRound(one.state, "t", round(2, "delta"), {
+      findings: [
+        f("f1", "src/b.ts", 9, "P1", "unrelated null deref"),
+        f("f1", "src/a.ts", 3, "P0", "c breaks the build"),
+      ],
+    });
+    expect(two.fresh.map((e) => e.title)).toEqual(["unrelated null deref"]);
+    expect(two.repeats).toHaveLength(1);
+  });
 });
