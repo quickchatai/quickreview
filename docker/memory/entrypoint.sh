@@ -60,6 +60,22 @@ export QCR_SECRETS_MOUNT="$SECRETS"
 OV_ENABLED="$(node --input-type=module -e \
   'const m = await import(process.argv[1]); process.stdout.write(m.loadConfig().openviking.enabled ? "1" : "0")' \
   "$APP/dist/src/config.js" 2>/dev/null || echo 1)"
+# The credential file names: the environment wins (the VM's run spec passes it),
+# else the same config.toml [openviking] the supervisor loads, else the knob
+# defaults above.
+ov_config_value() {
+  node --input-type=module -e \
+    'const m = await import(process.argv[1]); process.stdout.write(String(m.loadConfig().openviking[process.argv[2]] ?? ""))' \
+    "$APP/dist/src/config.js" "$1" 2>/dev/null || true
+}
+if [[ -z "${QCR_OPENVIKING_ROOT_KEY_FILE:-}" ]]; then
+  OV_ROOT_KEY_FILE="$(ov_config_value root_key_file)"
+  OV_ROOT_KEY_FILE="${OV_ROOT_KEY_FILE:-openviking_root_key}"
+fi
+if [[ -z "${QCR_OPENVIKING_REVIEWER_KEY_FILE:-}" ]]; then
+  OV_REVIEWER_KEY_FILE="$(ov_config_value reviewer_key_file)"
+  OV_REVIEWER_KEY_FILE="${OV_REVIEWER_KEY_FILE:-openviking_reviewer_key}"
+fi
 if [[ "$OV_ENABLED" == 0 ]]; then
   BOOT_OK=0
   echo "openviking: memory is disabled in config.toml; boot steps skipped" >&2
