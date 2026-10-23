@@ -670,6 +670,11 @@ function esc(s: string): string {
   return s.replace(/\|/g, "\\|").replace(/\n+/g, " ").trim();
 }
 
+/** A blocker the old flow raised and the sandbox did not: a hard-gate miss. */
+const isMissedBlocker = (r: { status: string }): boolean => r.status === "missed-by-sandbox";
+/** An anchor that does not sit on a changed line: a hard-gate failure. */
+const isBadAnchor = (a: { status: string }): boolean => a.status !== "on-changed-line";
+
 export function comparePr(input: ComparePrInput): CompareResult {
   const oldFindings = input.oldReview ? extractBlockers(input.oldReview) : [];
   const sandboxFindings = input.sandboxReview ? extractBlockers(input.sandboxReview) : [];
@@ -681,8 +686,8 @@ export function comparePr(input: ComparePrInput): CompareResult {
     parseSettledThreads(input.ledgerMd),
   );
 
-  const missed = parity.filter((r) => r.status === "missed-by-sandbox");
-  const badAnchors = anchors.filter((a) => a.status !== "on-changed-line");
+  const missed = parity.filter(isMissedBlocker);
+  const badAnchors = anchors.filter(isBadAnchor);
   const gatesPass =
     missed.length === 0 &&
     violations.length === 0 &&
@@ -857,9 +862,9 @@ export function renderIndex(results: CompareResult[]): string {
   L.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const r of results) {
     L.push(
-      `| #${r.pr} | ${r.gatesPass ? "PASS" : "**FAIL**"} | ${r.parity.filter((p) => p.status === "missed-by-sandbox").length} | ${
+      `| #${r.pr} | ${r.gatesPass ? "PASS" : "**FAIL**"} | ${r.parity.filter(isMissedBlocker).length} | ${
         r.violations.length
-      } | ${r.anchors.filter((a) => a.status !== "on-changed-line").length} | ${r.settled.length} | ${
+      } | ${r.anchors.filter(isBadAnchor).length} | ${r.settled.length} | ${
         r.dryRun.substantiated ? "verified" : `**${r.dryRun.status}**`
       } | [\`${r.pr}-compare.md\`](./${r.pr}-compare.md) |`,
     );

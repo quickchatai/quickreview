@@ -17,6 +17,7 @@ import {
   DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN,
   DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S,
   DEFAULT_FOLLOW_UP_SWEEP_EXTRA_MIN,
+  resolveRoundStageBounds,
   type Config,
 } from "./config.js";
 import { sameSessionCommandOwner, sessionCommandMarker } from "./session-command.js";
@@ -636,15 +637,7 @@ export class SessionCommandSupervisor {
       (sweepOwed ? this.sweepExtraMin() : 0);
     const deadlines = roundStageDeadlines(
       started,
-      {
-        first_pass_max_min:
-          this.deps.cfg.daemon.round_first_pass_max_min ?? DEFAULT_ROUND_FIRST_PASS_MAX_MIN,
-        passes_max_min: this.deps.cfg.daemon.round_passes_max_min ?? DEFAULT_ROUND_PASSES_MAX_MIN,
-        running_max_min:
-          this.deps.cfg.daemon.session_command_running_max_min ??
-          DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN,
-        follow_up_sweep_extra_min: this.sweepExtraMin(),
-      },
+      resolveRoundStageBounds(this.deps.cfg.daemon),
       sweepOwed,
     );
     const firstPassAt = deadlines.first_pass_start;

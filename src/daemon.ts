@@ -13,10 +13,7 @@ import { AnomalyWakePolicy } from "./anomalies.js";
 import { CompanionInbox, type InboxWriter } from "./companioninbox.js";
 import { retryWithheldApproval, type CiAdapter, type WithheldRetryDeps } from "./cigate.js";
 import {
-  DEFAULT_ROUND_FIRST_PASS_MAX_MIN,
-  DEFAULT_ROUND_PASSES_MAX_MIN,
-  DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN,
-  DEFAULT_FOLLOW_UP_SWEEP_EXTRA_MIN,
+  resolveRoundStageBounds,
   DEFAULT_POSTING_RETRY_OFFSETS_MIN,
   DEFAULT_POSTING_RETRY_WINDOW_MIN,
   loadConfig,
@@ -75,6 +72,7 @@ import { prWorktreeRel } from "./worktrees.js";
 import { PrConversation, type ConversationAdapter } from "./pr-conversation.js";
 import {
   PostingOutbox,
+  jobPath as postingJobPath,
   outboxProcesses,
   readPostingJob,
   type PostingDeliveryAdapter,
@@ -434,14 +432,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     deps.log ?? ((msg: string, extra?: unknown) => console.log(`[quickreviewd] ${msg}`, extra ?? ""));
   const store = deps.store ?? new StateStore(join(stateDir, "state.db"));
   const hooks = deps.hooks ?? stubSessionHooks(root, log);
-  const roundStageBounds = {
-    first_pass_max_min: cfg.daemon.round_first_pass_max_min ?? DEFAULT_ROUND_FIRST_PASS_MAX_MIN,
-    passes_max_min: cfg.daemon.round_passes_max_min ?? DEFAULT_ROUND_PASSES_MAX_MIN,
-    running_max_min:
-      cfg.daemon.session_command_running_max_min ?? DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN,
-    follow_up_sweep_extra_min:
-      cfg.daemon.follow_up_sweep_extra_min ?? DEFAULT_FOLLOW_UP_SWEEP_EXTRA_MIN,
-  };
+  const roundStageBounds = resolveRoundStageBounds(cfg.daemon);
 
   // Companion-inbox policy: every logAnomaly flows through the one
   // severity map + dedup; WAKE classes write an inbox item, QUIET classes
@@ -1084,10 +1075,10 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         for (const pr of snapshot.prs) {
           if (!pr.current_round) continue;
           const job = readPostingJob(
-            join(
-              stateDir,
-              "posting-receipts",
-              `pr-${pr.number}-round-${pr.current_round.round_no}.outbox.json`,
+            postingJobPath(
+              join(stateDir, "posting-receipts"),
+              pr.number,
+              pr.current_round.round_no,
             ),
           );
           if (job && outboxProcesses(job, cfg.github.repo))
