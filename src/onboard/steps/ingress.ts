@@ -47,9 +47,11 @@ import {
 } from "../engine.js";
 
 export const INGRESS_STEP_ID = "ingress";
-/** Where the daemon container reads the tunnel's hostname file: <root>/state
- * under the release image's app root (compose.ts CONTAINER_STATE_DIR). */
-export const CONTAINER_HOSTNAME_FILE = "/opt/qcr/state/ingress/hostname";
+/** Where the container roots its state: <root>/state under the release
+ * image's app root (/opt/qcr), its one writable directory. */
+export const CONTAINER_STATE_DIR = "/opt/qcr/state";
+/** Where the daemon container reads the tunnel's hostname file. */
+export const CONTAINER_HOSTNAME_FILE = `${CONTAINER_STATE_DIR}/ingress/hostname`;
 /** Recorded choice keys later steps (and verify) read. */
 /** The daemon's webhook route — the same default `src/webhook.ts` serves and
  * `src/webhookheal.ts` re-points the App to. */
