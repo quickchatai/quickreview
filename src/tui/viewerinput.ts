@@ -21,7 +21,7 @@
 // `[ ] < >` step the viewer's streams and rounds only while the draft is empty:
 // once there is text they are text, so a message can contain brackets.
 import { CONTROL_TEXT_MAX } from "../commands.js";
-import { displayWidth, sanitizeText } from "./paint.js";
+import { displayWidth, sanitizeText, truncate } from "./paint.js";
 import { FG, RESET } from "./theme.js";
 
 export interface ViewerInput {
@@ -151,9 +151,10 @@ function tail(text: string, width: number): string {
 export function viewerInputRow(view: ViewerInputView, width: number): string {
   const w = Math.max(1, width);
   if (view.confirmAbort)
-    return `${FG.anomaly}abort the running round of #${view.pr}? y = abort · any other key cancels${RESET}`;
+    return `${FG.anomaly}${truncate(`abort the running round of #${view.pr}? y = abort · any other key cancels`, w)}${RESET}`;
   const verb = view.running ? "steer" : "message";
-  if (!view.focused) return `${FG.dim}⏎ focus this pane, then type to ${verb} #${view.pr}${RESET}`;
+  if (!view.focused)
+    return `${FG.dim}${truncate(`⏎ focus this pane, then type to ${verb} #${view.pr}`, w)}${RESET}`;
   const toggle = `[Alt-p ${mayPostLabel(view.mayPost)}]`;
   const right = view.mayPost ? `${FG.anomaly}${toggle}${RESET}` : `${FG.dim}${toggle}${RESET}`;
   const rightW = displayWidth(toggle);

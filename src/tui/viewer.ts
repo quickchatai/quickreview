@@ -140,14 +140,19 @@ class LogState {
   /** No more will be appended: a round that a later one has replaced. */
   final = false;
 
+  /** Rows the last `ingest` dropped to stay within MAX_ROWS, oldest first. */
+  dropped: Row[] = [];
+
   ingest(events: readonly LiveEvent[]): void {
+    this.dropped = [];
     for (const e of events) {
       if (e.seq <= this.lastSeq) continue; // a re-read of what was seen
       this.lastSeq = e.seq;
       this.one(e);
     }
     if (events.length > 0) {
-      if (this.rows.length > MAX_ROWS) this.rows.splice(0, this.rows.length - MAX_ROWS);
+      if (this.rows.length > MAX_ROWS)
+        this.dropped = this.rows.splice(0, this.rows.length - MAX_ROWS);
       this.version++;
     }
   }
@@ -320,7 +325,8 @@ export class TranscriptViewer {
       pr,
       lines,
       missing: false,
-      stale: false,
+      // A failed refresh over rows already cached: the rows are older than the box.
+      stale: s.error !== undefined && shown !== undefined && !shown.empty,
       offset: Math.min(s.offset, Math.max(0, lines.length - 1)),
       viewer: {
         round,
@@ -482,11 +488,17 @@ export class TranscriptViewer {
     }
     s.error = undefined;
     s.listed = true;
+    const round0 = this.roundOf(s);
     s.rounds = res.stdout
       .split("\n")
       .flatMap((n) => /^r(\d+)$/.exec(n.trim())?.[1] ?? [])
       .map(Number)
       .sort((a, b) => a - b);
+    // A newly followed round starts at its tail, as stepping onto one does.
+    if (round0 !== this.roundOf(s)) {
+      s.lens = undefined;
+      s.offset = 0;
+    }
     const round = this.roundOf(s);
     if (round === undefined) {
       s.files = [];
@@ -508,10 +520,11 @@ export class TranscriptViewer {
     if (!log) {
       log = new LogState();
       s.logs.set(k, log);
-      // Bounded: drop the oldest logs that are not the shown ones.
+      // Bounded: drop the oldest logs, keeping this one and its round's main log.
+      const keep = this.logKey(round, "main.jsonl");
       for (const old of s.logs.keys()) {
         if (s.logs.size <= MAX_LOGS) break;
-        if (old !== k && !old.endsWith("/main.jsonl")) s.logs.delete(old);
+        if (old !== k && old !== keep) s.logs.delete(old);
       }
     }
     if (log.final) return;
@@ -536,7 +549,10 @@ export class TranscriptViewer {
     const before = s.offset > 0 ? log.wrapped(cols).length : 0;
     log.offset += consumed;
     log.ingest(events);
-    if (s.offset > 0 && this.isShown(s, round, file)) s.offset += log.wrapped(cols).length - before;
+    // Rows dropped at the cap leave the log's top, so they count as well.
+    const gone = log.dropped.reduce((n, r) => n + wrapRow(r.t, cols).length, 0);
+    if (s.offset > 0 && this.isShown(s, round, file))
+      s.offset += log.wrapped(cols).length - before + gone;
     log.final = s.rounds.length > 0 && round < s.rounds[s.rounds.length - 1]!;
   }
 

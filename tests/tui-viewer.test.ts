@@ -506,3 +506,80 @@ describe("TranscriptViewer — a recorded PR session", () => {
     expect(view.lines.length).toBeGreaterThan(10);
   });
 });
+
+describe("TranscriptViewer — selfimprove src-tui-9", () => {
+  const rows = (from: number, to: number): string =>
+    Array.from({ length: to - from + 1 }, (_, i) =>
+      line(from + i, { type: "message_start", role: "user", text: `row ${from + i}` }),
+    ).join("");
+
+  it("following a newly listed round starts at its tail, like stepping onto it", async () => {
+    const root = ROOT("auto-follow");
+    put(root, "pr-7/r1/main.jsonl", rows(1, 30));
+    const { v } = viewerOver(root);
+    await v.refresh(7);
+    expect(v.scroll(7, 2)).toBe(6);
+    put(root, "pr-7/r2/main.jsonl", rows(1, 30));
+    clock += 10_000;
+    await v.refresh(7);
+    expect(v.view(7)!.viewer?.round).toBe(2);
+    expect(v.offsetFor(7)).toBe(0);
+    expect(text(v.view(7)!.lines).at(-1)).toContain("row 30");
+  });
+
+  it("a failed refresh over cached rows is marked stale, and clears on recovery", async () => {
+    const root = ROOT("stale");
+    put(root, "pr-7/r1/main.jsonl", rows(1, 5));
+    const inner = stateDirRunner(root);
+    let down = false;
+    const v = new TranscriptViewer(
+      TUI_DEFAULTS,
+      async (h, a, o) =>
+        down ? { ok: false, stdout: "", stderr: "ssh: timed out", code: 255 } : inner.ssh(h, a, o),
+      () => {},
+      0,
+      () => clock,
+    );
+    v.setViewport({ cols: 60, rows: 6 });
+    await v.refresh(7);
+    expect(v.view(7)!.stale).toBe(false);
+    down = true;
+    await v.refresh(7);
+    expect(text(v.view(7)!.lines).join("\n")).toContain("row 5");
+    expect(v.view(7)!.stale).toBe(true);
+    down = false;
+    await v.refresh(7);
+    expect(v.view(7)!.stale).toBe(false);
+  });
+
+  it("a parked window stays put once the row cap drops old rows", async () => {
+    const root = ROOT("cap");
+    const path = put(root, "pr-7/r1/main.jsonl", rows(1, 4000));
+    const { v } = viewerOver(root);
+    await v.refresh(7);
+    v.scroll(7, 2);
+    const shown = (view: ReturnType<typeof v.view>): string[] =>
+      text(view!.lines)
+        .slice(0, view!.lines.length - view!.offset)
+        .slice(-6);
+    const parked = shown(v.view(7));
+    appendFileSync(path, rows(4001, 4001));
+    await v.refresh(7);
+    expect(shown(v.view(7))).toEqual(parked);
+  });
+
+  it("the log cache stays bounded across visited rounds, main logs included", async () => {
+    const root = ROOT("bounded");
+    for (let r = 1; r <= 12; r++) put(root, `pr-7/r${r}/main.jsonl`, rows(1, 2));
+    const { v } = viewerOver(root);
+    await v.refresh(7);
+    for (let i = 0; i < 11; i++) {
+      v.stepRound(7, -1);
+      await v.refresh(7);
+    }
+    const logs = (v as unknown as { prs: Map<number, { logs: Map<string, unknown> }> }).prs.get(7)!
+      .logs;
+    expect(logs.size).toBeLessThanOrEqual(8);
+    expect(text(v.view(7)!.lines).join("\n")).toContain("row 2");
+  });
+});
