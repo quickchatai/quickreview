@@ -38,6 +38,8 @@ import { containerRunEnv } from "../src/reviewcli.js";
 import { runLive, type LiveCliDeps } from "../src/livecli.js";
 import { writeSdkDriverStub } from "./helpers/sdk-driver-stub.js";
 import { parseConfig } from "../src/config.js";
+import { HEARTBEAT_FILE, readBeat } from "../src/heartbeat.js";
+import { waitFor } from "./helpers/wait-for.js";
 import { nodeModulesMounts } from "./helpers/docker-node-modules.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -566,8 +568,13 @@ describe.skipIf(!hasDocker || !hasDist)("in a container (docker, no network, no 
     try {
       const isUp = (): boolean =>
         String(docker(["ps", "-q", "--filter", `name=^${name}$`]).stdout).trim() !== "";
-      // the loop has begun when the model's turn was reached: the faux response is the loop
-      await new Promise((r) => setTimeout(r, 4000));
+      // the loop has begun when the model's turn was reached: the faux response is the loop,
+      // and the beat names the turn's deadline once that turn has begun
+      await waitFor(
+        () => readBeat(join(dir, HEARTBEAT_FILE))?.deadline_at != null,
+        "the turn to begin in the container",
+        60_000,
+      );
       expect(isUp()).toBe(true);
 
       // the real wrapper, over the real docker for ps, stop and kill; only the call

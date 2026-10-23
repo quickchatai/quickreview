@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  watch,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -713,11 +721,22 @@ describe("CommandWatcher", () => {
     const w = watcher(deps);
     const started = w.start();
     await inHandler; // the sweep has snapshotted the directory and is awaiting
-    writeFileSync(
-      join(cmdDir(), "b-live.json"),
-      JSON.stringify({ command: "flag-owner", message: "mid-sweep" }),
-    );
-    await new Promise((r) => setTimeout(r, 50)); // let the watch event land
+    // A second watcher on the same directory is the observable for "the watch event
+    // landed": inotify hands one event to both watchers in the same loop turn, and the
+    // daemon's watcher was registered first, so it has been told when this one is.
+    let landed = false;
+    const probe = watch(cmdDir(), (_event, filename) => {
+      if (String(filename) === "b-live.json") landed = true;
+    });
+    try {
+      writeFileSync(
+        join(cmdDir(), "b-live.json"),
+        JSON.stringify({ command: "flag-owner", message: "mid-sweep" }),
+      );
+      await waitFor(() => landed, "the watch event for the mid-sweep file");
+    } finally {
+      probe.close();
+    }
     release();
     await started;
     await waitFor(() => deps.flagOwner.mock.calls.length > 0, "flag-owner to be served");
