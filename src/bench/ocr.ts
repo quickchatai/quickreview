@@ -397,6 +397,9 @@ export function writeOcrResult(
   );
 }
 
+/** The per-attempt diagnostics a case dir holds beside its summary. */
+const OCR_ATTEMPT_FILES = ["ocr-argv.json", "ocr-stdout.json", "ocr-stderr.log"] as const;
+
 /** Review one case with OCR and write its result file. Never throws for a
  * case that fails — a failure is a recorded outcome with an empty result. */
 export async function reviewCaseOcr(
@@ -410,6 +413,8 @@ export async function reviewCaseOcr(
   const tree = join(o.root, "wt", safe);
   const tmpDir = join(o.root, "wt", `${safe}.tmp`);
   mkdirSync(caseDir, { recursive: true });
+  // A failure before this attempt writes its argv must not leave an earlier one's.
+  for (const f of OCR_ATTEMPT_FILES) rmSync(join(caseDir, f), { force: true });
   const startedAt = new Date().toISOString();
   const started = Date.now();
   const summary = blankOcrSummary(c, o.fingerprint);
@@ -514,6 +519,8 @@ export function unprefetchedOcrCase(
   const summary: OcrCaseSummary = { ...blankOcrSummary(c, fingerprint), error };
   const caseDir = join(outDir, "cases", safeId(c.instance_id));
   mkdirSync(caseDir, { recursive: true });
+  // An earlier attempt's invocation and output would read as this one's.
+  for (const f of OCR_ATTEMPT_FILES) rmSync(join(caseDir, f), { force: true });
   writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(summary, null, 2) + "\n");
   writeOcrResult(
     outDir,
