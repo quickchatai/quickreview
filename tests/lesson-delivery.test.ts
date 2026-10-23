@@ -1003,6 +1003,7 @@ describe("repo facts for the touched paths — the recheck nudge and the ping-po
 
   async function recheckUnder(
     mode: MemoryDelivery,
+    engine: FakeEngine = new FakeEngine(),
   ): Promise<{ message: string; engine: FakeEngine; store: StateStore }> {
     const OLD = "1".repeat(40);
     const HEAD = "2".repeat(40);
@@ -1028,7 +1029,6 @@ describe("repo facts for the touched paths — the recheck nudge and the ping-po
       migration_gate: 0,
     });
     store.recordReviewedHead(PR, { head_sha: OLD, verdict: "APPROVE", round_no: 1 });
-    const engine = new FakeEngine();
     const selector = new RoundLessonSelector({
       ledger: new LessonLedger(store),
       mode: () => cfg.memory.delivery,
@@ -1102,6 +1102,19 @@ describe("repo facts for the touched paths — the recheck nudge and the ping-po
     } finally {
       on.store.close();
       shadow.store.close();
+    }
+  });
+
+  it("an unreadable repo-facts find records the engine's reason in its event", async () => {
+    const down = new FakeEngine(async () => ({ ok: false, reason: "401 key refused" }));
+    const on = await recheckUnder("on", down);
+    try {
+      expect(eventsOf(on.store, "lesson_repo_facts")[0]).toMatchObject({
+        status: "unreadable",
+        reason: "401 key refused",
+      });
+    } finally {
+      on.store.close();
     }
   });
 

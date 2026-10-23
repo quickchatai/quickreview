@@ -302,6 +302,8 @@ describe("a profile may point pass-style at a guide in the config home", () => {
     expect(pr).not.toContain("whole-repo scan");
     expect(scan).toContain("whole-repo scan, which has no plan row");
     expect(scan).not.toContain("plan row names");
+    expect(pr).toContain("cites the CHANGED line that breaks it");
+    expect(scan).not.toContain("CHANGED");
     expect(scan).toContain("Name booleans is_/has_.");
     expect(composeAddendum(VALIDATE_PASS, registry, "none", "scan")).toContain(
       "whole-repo scan, which has no plan row",
