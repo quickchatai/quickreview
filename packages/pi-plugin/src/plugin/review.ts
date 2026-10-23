@@ -135,17 +135,21 @@ export async function runReviewCommand(
       : `posting needs dry_run = false, and ${configPath} keeps dry_run on`);
   if (!cmd.preview && target.kind !== "diff" && target.kind !== "pr" && !isGitWorkTree(host.cwd))
     return fail(`${host.cwd} is not inside a git repository: /review reviews a git checkout`);
+  // The providers whose logins ride into the run: the config's, routed by
+  // borrowLogin to the OpenAI login that exists.
+  let runProviders = reviewProviders(cfg);
   if (!cmd.preview) {
     // The borrowed login first: refreshed by the host when short, refused
     // with a hint when pi has none for a provider the review runs on, before
     // the person is asked anything.
     const borrowed = await borrowLogin({
-      providers: reviewProviders(cfg),
+      providers: runProviders,
       host: host.auth,
       needMs: REVIEW_TIMEOUT_MS,
       marginMs: PI_REFRESH_MARGIN_MS,
     });
     if (!borrowed.ok) return fail(borrowed.error);
+    runProviders = borrowed.providers;
     if (postBlocked && cmd.to.includes("pr"))
       return fail(`${postBlocked}; the review was not started.`);
     const plan = planDestinations({
@@ -243,14 +247,14 @@ export async function runReviewCommand(
       });
     },
     // Only the review's providers ride into the run, as borrowLogin renewed
-    // them: a person's pi holds other logins, which neither go along nor
-    // refuse the run.
+    // (and, for an OpenAI model, routed) them: a person's pi holds other
+    // logins, which neither go along nor refuse the run.
     prepareHost: (req) =>
       prepareReviewHost({
         ...req,
         profile: req.profile,
         authWords: PLUGIN_AUTH_WORDS,
-        authProviders: reviewProviders(cfg),
+        authProviders: runProviders,
       }),
     memory: null,
     destinations,
