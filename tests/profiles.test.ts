@@ -32,6 +32,7 @@ import {
 } from "../src/profiles.js";
 import { PROFILE_EXTENDABLE_LENSES } from "../src/heuristics.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
+import { privateHandleLines } from "./helpers/private-handles.js";
 
 const sandbox = join(import.meta.dirname, "..");
 /** A fixture profile in `<root>/profiles/` — found because `at(root)` names a
@@ -235,7 +236,6 @@ describe("the shipped profiles", () => {
       for (const leaked of [
         "the owner",
         ["mh", "ale"].join(""), // the operator's handle, built from parts (publishability lint)
-        "gfrost",
         "quickchat",
         "2026-",
         "corpus",
@@ -243,6 +243,7 @@ describe("the shipped profiles", () => {
       ]) {
         expect(a.text.includes(leaked), `${a.id} leaks "${leaked}"`).toBe(false);
       }
+      expect(privateHandleLines(a.text), `${a.id} leaks a teammate's handle`).toEqual([]);
     }
   });
 

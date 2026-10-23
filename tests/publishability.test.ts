@@ -35,6 +35,7 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 import { isBinaryContent } from "../src/setup/textsniff.js";
 import { deadLinks } from "./helpers/published-links.js";
+import { privateHandleLines } from "./helpers/private-handles.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -129,11 +130,8 @@ const DENYLIST: { token: string; why: string }[] = [
     token: "review.example.com",
     why: "the private webhook hostname (subsumed by 'quickchat'; listed for documentation)",
   },
-  { token: "jbennett", why: "a teammate's GitHub handle" },
-  { token: "gfrost", why: "a teammate's GitHub handle" },
-  { token: "dwinchester", why: "a teammate's GitHub handle" },
-  { token: "avasquez-", why: "a teammate's GitHub handle prefix" },
-  { token: "pmercier", why: "a teammate's GitHub handle" },
+  // The teammates' GitHub handles are checked by digest, not spelled here
+  // (tests/helpers/private-handles.ts; reported as TEAMMATE_HANDLE).
   {
     token: t("my", "-vm"),
     why: "the private deployment VM's name and ssh aliases (incl. its -qc alias)",
@@ -516,7 +514,7 @@ const ALLOWLIST: AllowlistEntry[] = [
   //    these blocks when assembling the public tree).
   {
     path: "tests/profiles.test.ts",
-    tokens: ["quickchat", "owner_legacy", "gfrost"],
+    tokens: ["quickchat", "owner_legacy"],
     reason:
       "byte-pins the private quickchat pack's moved corpus rules (verbatim, incl. their leak-check list); its fixture copy tests/fixtures/profiles/quickchat/ is excluded beside profiles/quickchat/",
   },
@@ -564,16 +562,7 @@ const ALLOWLIST: AllowlistEntry[] = [
   },
   {
     path: "tests/publishability.test.ts",
-    tokens: [
-      "owner_legacy",
-      "quickchat",
-      "gfrost",
-      "jbennett",
-      "dwinchester",
-      "avasquez-",
-      "pmercier",
-      "review.example.com",
-    ],
+    tokens: ["owner_legacy", "quickchat", "review.example.com"],
     reason:
       "this lint — the denylist itself plus the negative-control plants (the operator-specific tokens are built from parts, so the file never spells them)",
   },
@@ -624,6 +613,8 @@ interface Violation {
   text: string;
 }
 
+const TEAMMATE_HANDLE = "<a teammate's GitHub handle>";
+
 function scanFiles(files: { path: string; text: string }[]): Violation[] {
   const violations: Violation[] = [];
   for (const { path, text } of files) {
@@ -639,6 +630,14 @@ function scanFiles(files: { path: string; text: string }[]): Violation[] {
         }
       }
     }
+    const lines = text.split("\n");
+    for (const line of privateHandleLines(text))
+      violations.push({
+        path,
+        token: TEAMMATE_HANDLE,
+        line,
+        text: lines[line - 1]!.trim().slice(0, 160),
+      });
   }
   return violations;
 }
@@ -855,6 +854,17 @@ describe("publishability lint", () => {
     });
     expect(offenders, "runtime state must never be tracked").toEqual([]);
   });
+
+  // The digests cannot be planted without spelling a handle, so the control
+  // is a private corpus that names teammates (manifest-excluded, so it runs
+  // only in the source tree).
+  it.skipIf(!existsSync(join(repoRoot, "docs", "corpus-rule-placements.md")))(
+    "(e) NEGATIVE control: the teammate-handle digests still match a corpus that names them",
+    () => {
+      const corpus = readFileSync(join(repoRoot, "docs", "corpus-rule-placements.md"), "utf8");
+      expect(privateHandleLines(corpus).length).toBeGreaterThan(0);
+    },
+  );
 
   it("(e) NEGATIVE control: a planted token at an unexempted path is caught", () => {
     const planted = scanFiles([
