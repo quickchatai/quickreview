@@ -141,7 +141,9 @@ export class LiveControlSender implements ControlSender, CommandSender {
     const write = await this.ssh(this.cfg.ssh_host, liveControlArgv(this.cfg, name), {
       stdin: payload,
     });
-    if (!write.ok) {
+    // A timed-out or dropped ssh (no exit code, or 255) may have published the
+    // file already: it is read back from the daemon below, never called failed.
+    if (!write.ok && write.code !== null && write.code !== 255) {
       const why = write.stderr.trim().split("\n").at(-1) ?? "";
       return say(
         "failed",

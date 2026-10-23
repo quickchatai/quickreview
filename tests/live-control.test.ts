@@ -177,6 +177,33 @@ describe("the control write", () => {
   });
 });
 
+describe("a write whose answer was lost", () => {
+  it("is not reported as failed: a timed-out write that published is read back from the daemon", async () => {
+    const w = worker(() => ({ ok: true }));
+    const ssh: SshRunner = async (_host, argv, opts) => {
+      const res = runSh(argv, opts?.stdin);
+      // the write ran, but its acknowledgement never came back
+      if (opts?.stdin !== undefined) return { ok: false, stdout: "", stderr: "", code: null };
+      return res;
+    };
+    const sender = new LiveControlSender(cfg, ssh, now, async (ms) => {
+      elapsedMs += ms;
+      w.tick();
+    });
+    const out = await sender.send({ kind: "abort-round", pr: 7 }, () => {});
+    expect(out.state).toBe("handled");
+  });
+
+  it("with no answer from the daemon it ends unconfirmed, never failed", async () => {
+    const ssh: SshRunner = async () => ({ ok: false, stdout: "", stderr: "", code: 255 });
+    const sender = new LiveControlSender(cfg, ssh, now, async (ms) => {
+      elapsedMs += ms;
+    });
+    const out = await sender.send({ kind: "abort-round", pr: 7 }, () => {});
+    expect(out.state).toBe("unacked");
+  });
+});
+
 describe("the ack, against a faux echo worker", () => {
   it("queued: the worker has it and acts when its turn allows", async () => {
     const r = rig(() => ({ ok: true, ack: "queued" }));
