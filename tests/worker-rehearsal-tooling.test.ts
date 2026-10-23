@@ -418,6 +418,9 @@ describe("[P8.20a] the rehearsal's scripts and report", () => {
     const script = readFileSync(join(ROOT, "scripts", "worker-rehearsal.sh"), "utf8");
     const ids = [...script.matchAll(/\bcheck ([A-Z]+-\d+) (?:pass|fail)/g)].map((m) => m[1]!);
     expect(ids.length).toBeGreaterThanOrEqual(15);
-    for (const id of new Set(ids)) expect(md, `check ${id}`).toContain(`| ${id} |`);
+    // A markdown formatter may column-pad the generated table, so match the id as a whole
+    // cell with optional spaces around it rather than the exact `| ID |` text.
+    for (const id of new Set(ids))
+      expect(md, `check ${id}`).toMatch(new RegExp(`\\|\\s*${id}\\s*\\|`));
   });
 });
