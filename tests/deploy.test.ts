@@ -1684,6 +1684,12 @@ describe("deploy.sh — release <version>", () => {
       );
     });
 
+    it("does not refuse a VM with no daemon container: a first install has nothing to drain", () => {
+      env = scratch();
+      const fresh = release(env, { vm: { layout: "none", draining: false } });
+      expect(fresh.stdout).not.toContain("REFUSED");
+    });
+
     it("REFUSES an undrained or busy board (the updater refuses it too)", () => {
       env = scratch();
       const undrained = release(env, { vm: { draining: false } });

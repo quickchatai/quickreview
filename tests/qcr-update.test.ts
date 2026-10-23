@@ -1217,6 +1217,89 @@ describe("qcr-update — the rescue", () => {
   });
 });
 
+describe("qcr-update — a first install, an interrupted swap, an incomplete rescue", () => {
+  it("a fresh VM (no daemon container, heartbeat or state database) installs without a drain", async () => {
+    sb = setup("none");
+    rmSync(sb.status);
+    rmSync(join(sb.root, "state", "state.db"));
+    rmSync(join(sb.root, "state", "state.db-wal"));
+    rmSync(join(sb.root, "state", "state.db-shm"));
+    const r = await runUpdater(sb, GOOD);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stderr).toContain("fresh install");
+    expect(running(sb, DAEMON)).toBe("true");
+    expect(imageOf(sb, DAEMON)).toBe(DAEMON_REF);
+    expect(configText(sb)).toBe("# NEW CONFIG\n");
+  });
+
+  it("a missing daemon container over live state is not a fresh install: the drain is still required", async () => {
+    sb = setup("none");
+    rmSync(sb.status);
+    const r = await runUpdater(sb, GOOD);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("not drained");
+  });
+
+  it("a rescue that could not finish is recorded as rescue-incomplete, not rescued", async () => {
+    sb = setup("release");
+    sb.stopDaemon();
+    const r = await runUpdater(sb, GOOD, tarOf(), { QCR_UPDATE_FAIL_AT: "swap" });
+    expect(r.stderr).toContain("RESCUE INCOMPLETE");
+    const last = JSON.parse(readFileSync(join(sb.upd, "last-run.json"), "utf8")) as {
+      result: string;
+    };
+    expect(last.result).toBe("rescue-incomplete");
+    sb.stopDaemon = () => {};
+  }, 30_000);
+
+  it("a run killed between the swap and the recreate leaves a marker: the retry refuses and keeps config-home.prev", async () => {
+    sb = setup("release");
+    mkdirSync(join(sb.root, "config-home.prev"), { recursive: true });
+    writeFileSync(join(sb.root, "config-home.prev", "config.toml"), "# ORIGINAL CONFIG\n");
+    mkdirSync(sb.upd, { recursive: true });
+    writeFileSync(join(sb.upd, "swap-pending"), "20261022T000000Z\n");
+    const r = await runUpdater(sb, GOOD);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("interrupted");
+    expect(readFileSync(join(sb.root, "config-home.prev", "config.toml"), "utf8")).toBe(
+      "# ORIGINAL CONFIG\n",
+    );
+    expect(configText(sb)).toBe("# OLD CONFIG\n");
+  });
+
+  it("a successful run and a rescued run leave no swap marker", async () => {
+    sb = setup("release");
+    const ok = await runUpdater(sb, GOOD);
+    expect(ok.code, ok.stderr).toBe(0);
+    expect(existsSync(join(sb.upd, "swap-pending"))).toBe(false);
+    const sb2 = setup("release");
+    const bad = await runUpdater(sb2, GOOD, tarOf(), { QCR_UPDATE_FAIL_AT: "sidecar-start" });
+    expect(bad.code).not.toBe(0);
+    expect(existsSync(join(sb2.upd, "swap-pending"))).toBe(false);
+    rmSync(sb2.dir, { recursive: true, force: true });
+    sb2.stopDaemon();
+  }, 30_000);
+
+  it("a store copy that fails part way is set aside by the rescue, so the retry seeds afresh", async () => {
+    sb = setup("legacy");
+    const bin = join(sb.dir, "bin");
+    mkdirSync(bin, { recursive: true });
+    const real = execFileSync("bash", ["-c", "command -v rsync"], { encoding: "utf8" }).trim();
+    writeFileSync(join(bin, "rsync"), `#!/bin/bash\n${real} "$@"\nexit 1\n`);
+    chmodSync(join(bin, "rsync"), 0o755);
+    const r = await runUpdater(sb, [...GOOD, "--cutover-ack", "1.2.3"], tarOf(), {
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+    });
+    expect(r.code).not.toBe(0);
+    expect(r.stderr).toContain("RESCUE");
+    expect(existsSync(sb.memState)).toBe(false);
+    const aside = readdirSync(dirname(sb.memState)).filter((n) =>
+      n.startsWith("memory-state.rescued-"),
+    );
+    expect(aside).toHaveLength(1);
+  }, 30_000);
+});
+
 describe("qcr-update — a failure AFTER the recreate", () => {
   it("keeps the drain on, rescues nothing, keeps the previous container, and exits non-zero (fix forward)", async () => {
     sb = setup("release");
