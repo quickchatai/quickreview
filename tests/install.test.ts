@@ -727,6 +727,29 @@ describe("migrateProfiles", () => {
     ]);
   });
 
+  it("a duplicate whose home copy holds a plain file where the checkout had a link deduplicates without a throw", () => {
+    putProfile(root, "house", "same\n");
+    putProfile(configHome(env), "house", "same\n");
+    const rule = join(root, "profiles", "house", "addenda", "10-rule.md");
+    symlinkSync(rule, join(root, "profiles", "house", "addenda", "linked.md"));
+    writeFileSync(join(configHome(env), "profiles", "house", "addenda", "linked.md"), "same\n");
+    expect(migrateProfiles({ root, env }).map((o) => o.kind)).toEqual(["deduplicated"]);
+    expect(migrateProfiles({ root, env })).toEqual([]);
+  });
+
+  it("a conflicted profile's link follows a sibling that moves into the home", () => {
+    putProfile(root, "house", "own\n");
+    putProfile(configHome(env), "house", "different\n");
+    putProfile(root, "other", "shared\n");
+    const at = join(root, "profiles", "house", "addenda", "linked.md");
+    symlinkSync("../../other/addenda/10-rule.md", at);
+    expect(migrateProfiles({ root, env }).map((o) => [o.kind, o.name])).toEqual([
+      ["conflict", "house"],
+      ["moved", "other"],
+    ]);
+    expect(readFileSync(at, "utf8")).toBe("shared\n");
+  });
+
   it("repairs an aliased profile's links when its sibling moves", () => {
     putProfile(root, "house", "own\n");
     putProfile(root, "other", "shared\n");

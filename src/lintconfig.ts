@@ -107,7 +107,8 @@ const TOOLS: readonly ToolSpec[] = [
     configs: [".golangci.yml", ".golangci.yaml", ".golangci.toml", ".golangci.json"],
     covers: /\.go$/i,
   },
-  { tool: "gofmt", invoked: /\bgofmt\b|\bgoimports\b|\bgo\s+vet\b/, configs: [], covers: /\.go$/i },
+  { tool: "gofmt", invoked: /\bgofmt\b|\bgoimports\b/, configs: [], covers: /\.go$/i },
+  { tool: "go vet", invoked: /\bgo\s+vet\b/, configs: [], covers: /\.go$/i },
   {
     tool: "clang-format",
     invoked: /\bclang-format\b/,
