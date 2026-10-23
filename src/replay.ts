@@ -65,7 +65,7 @@
 // cat-file, worktree add/remove, merge-base, diff) and nothing pushes: the
 // upstream repo is only ever fetched from.
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { githubCloneDir, type Config } from "./config.js";
 import { buildPassPlan } from "./dispatch.js";
 import { ecosystemFor, type Ecosystem } from "@quickchatai/pi-quickreview/src/ecosystem.js";
@@ -626,7 +626,12 @@ export async function nodeReplayIo(opts: {
       // has no src/, no packages/ and no node_modules/. The extensions take
       // their inject dir, ledger and guard config from env and cwd, never
       // from where they were loaded, so the session's state stays scratch.
-      const fromSandbox = (p: string): string => join(opts.sandboxRoot, relative(this.root, p));
+      // The core's extension is already outside the scratch, in the core
+      // package's own directory (src/coreext.ts), and stays where it is.
+      const fromSandbox = (p: string): string => {
+        const rel = relative(this.root, p);
+        return rel.split(/[\\/]/)[0] === ".." || isAbsolute(rel) ? p : join(opts.sandboxRoot, rel);
+      };
       return [
         join(opts.sandboxRoot, "extensions", "cli", "bash-guard.ts"),
         ...super

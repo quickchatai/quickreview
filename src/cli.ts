@@ -53,6 +53,7 @@ import {
   profileMigrateReport,
   profileSearchDirs,
   migrateSecrets,
+  operatorStateDir,
   repointComposeSecrets,
   composeRepointReport,
   homeProfileLookup,
@@ -75,8 +76,11 @@ import { remoteSandboxRoot, resolveLayout } from "./tui/layout.js";
 
 export { drainPayload } from "./tui/deploy-drain.js";
 
+/** Where the operator verbs keep the state database (src/homes.ts
+ * `operatorStateDir`): the state home for a package-manager install, the
+ * checkout's or the image's `state/` otherwise. */
 function stateDir(): string {
-  return join(sandboxRoot(), "state");
+  return operatorStateDir(sandboxRoot());
 }
 
 function openStore(): StateStore {
@@ -702,7 +706,7 @@ export async function enrichWhy(payload: WhyPayload, secretsDir?: string): Promi
     const { TokenMinter } = await import("@quickchatai/pi-quickreview/src/githubAuth.js");
     const { GitHubAdapter } = await import("./github.js");
     const cfg = loadConfig();
-    const gate = recordOnlyGate(join(sandboxRoot(), "state", "dryrun"), "qcr why");
+    const gate = recordOnlyGate(join(stateDir(), "dryrun"), "qcr why");
     const adapter = new GitHubAdapter(
       cfg,
       new TokenMinter(secretsDir ?? cfg.github.secrets_dir),
@@ -1414,6 +1418,7 @@ export function cmdInstall(
       );
       log(`config home ${located.home}`);
       log(`state home  ${stateHome(env)}`);
+      log(`state db    ${join(operatorStateDir(root, env), "state.db")}  (the operator verbs)`);
       log(
         `profiles    ${profileSearchDirs({ root, env }).join(" → ")}  (the checkout: generic examples only)`,
       );

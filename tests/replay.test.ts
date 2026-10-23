@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve } from "node:path";
 import { parseConfig, type Config } from "../src/config.js";
 import { buildPassPlan } from "../src/dispatch.js";
+import { coreExtensionPath } from "../src/coreext.js";
 import { DJANGO_ECOSYSTEM, NONE_ECOSYSTEM } from "@quickchatai/pi-quickreview/src/ecosystem.js";
 import { parseUnifiedDiff } from "@quickchatai/pi-quickreview/src/unifieddiff.js";
 import {
@@ -550,10 +551,13 @@ describe("selfscan2: replay harness faults and isolation", () => {
       // Every extension loads from the sandbox's own tree, never through the
       // scratch root, which links in only extensions/ and state/agents: pi
       // resolves an extension's imports (the core's package) from the path it
-      // was given. And each one is a file the real tree has.
+      // was given. And each one is a file the real tree has. The core's own
+      // extension is the core package's file, which the replay keeps as is.
       // MUTATION: build the paths from the scratch root — this fails.
       const sandbox = join(base, "sandbox");
-      const extensions = argv.filter((a) => a.endsWith(".ts"));
+      const core = coreExtensionPath("finding-clusters");
+      expect(argv).toContain(core);
+      const extensions = argv.filter((a) => a.endsWith(".ts") && a !== core);
       expect(extensions.length).toBeGreaterThan(3);
       for (const p of extensions) {
         expect(p.startsWith(`${sandbox}/`), p).toBe(true);

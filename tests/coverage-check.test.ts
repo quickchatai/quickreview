@@ -181,7 +181,9 @@ describe("coverage_gaps on both routes", () => {
       "utf8",
     );
     expect(ext).toContain("FINDING_CLUSTERS_TOOLS");
-    expect(readFileSync(join(root, "src/sessions.ts"), "utf8")).toMatch(/"finding-clusters\.ts"/);
+    expect(readFileSync(join(root, "src/sessions.ts"), "utf8")).toMatch(
+      /coreExtensionPath\("finding-clusters"\)/,
+    );
     expect(readFileSync(join(root, "packages/pi-plugin/src/engine/round.ts"), "utf8")).toMatch(
       /ROUND_EXTENSIONS[^=]*=\s*\[[^\]]*"finding-clusters"/,
     );

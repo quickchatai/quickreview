@@ -15,6 +15,8 @@
 // newer published version is mentioned once on stderr (src/updatenotice.ts).
 import { join } from "node:path";
 import { isSqliteUnavailable, sqliteHint } from "./sqlitehint.js";
+import { fsDeniedLine } from "./fsdenied.js";
+import { MissingConfigError } from "./missingconfig.js";
 
 /** The bin's own lines on top of the app's usage (`qcr help`). */
 export const BIN_HELP = [
@@ -167,9 +169,14 @@ export async function runBin(argv: readonly string[]): Promise<void> {
   try {
     await route(r);
   } catch (err) {
-    if (!isSqliteUnavailable(err)) throw err;
     const verb = r.route === "app" ? r.argv.find((a) => a !== "--json") : r.route;
-    console.error(sqliteHint(verb, err));
+    const line = isSqliteUnavailable(err)
+      ? sqliteHint(verb, err)
+      : err instanceof MissingConfigError
+        ? `qcr ${verb}: ${err.message}`
+        : fsDeniedLine(verb, err);
+    if (line === null) throw err;
+    console.error(line);
     process.exitCode = 1;
     return;
   }

@@ -1,14 +1,28 @@
 {
   "name": "@quickchatai/quickreview",
-  "version": "1.0.8",
+  "version": "1.1.0",
   "private": false,
   "//private": "The root is the published `qcr` CLI: the whole app (TUI, daemon, companion, every verb), installed with npm, pnpm or bun. It depends on the pi plugin (packages/pi-plugin) at its exact version and on pi at the exact pins below. Publishing is a release step of its own, never part of a build.",
-  "description": "QuickReview — a sovereign 24/7 AI code-review daemon: deterministic TypeScript core driving sticky LLM review sessions, with an operator TUI, Slack concierge, and a continuous learning loop your org owns end to end",
+  "description": "A 24/7 AI code reviewer for GitHub: a deterministic daemon driving pi review sessions, with an operator TUI and a local qcr review",
   "license": "MIT",
+  "keywords": [
+    "code-review",
+    "ai",
+    "github",
+    "pull-request",
+    "pi",
+    "cli"
+  ],
+  "homepage": "https://github.com/quickchatai/quickreview#readme",
+  "bugs": {
+    "url": "https://github.com/quickchatai/quickreview/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/quickchatai/quickreview.git",
-    "//": "placeholder until the public repo exists (snapshot); update on first publish"
+    "url": "git+https://github.com/quickchatai/quickreview.git"
   },
   "type": "module",
   "//workspaces": "The review core is its own package (packages/pi-plugin, the pi plugin). The app at the root declares it in dependencies at the exact workspace version, kept equal to this one's (tests/layers.test.ts), and npm links the workspace in its place.",
@@ -18,12 +32,22 @@
   "bin": {
     "qcr": "bin/qcr.js"
   },
-  "//files": "Exactly what the app reads at runtime from its package root: the build (dist/), the bin, the TypeScript sources pi loads as extensions (extensions/ and the src/ they import), the data the app and the companion read (agents/, prompts/, seeds/, schemas/, generic profiles/, skills/, the seed manifest), the scripts sessions and the bring-up run (scripts/), the deploy and docker files the onboarding, the companion and the memory sidecar use, and the shipped config defaults. Never tests, bench, docs, state, secrets, the private profile or the operator-only scripts; never a rulebook file. tests/cli-install-smoke.test.ts packs it and checks.",
+  "//files": "Exactly what the app reads at runtime from its package root: the build (dist/), the bin, the TypeScript sources pi loads as extensions (extensions/ and the src/ they import), the data the app and the companion read (agents/, prompts/, seeds/, schemas/, generic profiles/, skills/, the seed manifest), the scripts sessions and the bring-up run (scripts/), the deploy and docker files the onboarding, the companion and the memory sidecar use, the shipped config defaults, and the synthetic regression cases `qcr regression` reads by default. Never other tests, the bench (except the three modules the app imports: cost, exec, values), docs, state, secrets, the private profile or the operator-only and dev scripts (each excluded by file name: a `dir/` pattern does not match `dir.sh`); never a rulebook file. tests/cli-install-smoke.test.ts packs it and checks.",
   "files": [
     "bin/",
     "dist/",
     "!dist/**/*.tsbuildinfo",
+    "!dist/src/bench/**",
+    "dist/src/bench/cost.js",
+    "dist/src/bench/exec.js",
+    "dist/src/bench/values.js",
+    "!dist/src/engine/benchsdk.*",
     "src/",
+    "!src/bench/**",
+    "src/bench/cost.ts",
+    "src/bench/exec.ts",
+    "src/bench/values.ts",
+    "!src/engine/benchsdk.ts",
     "extensions/",
     "agents/",
     "prompts/",
@@ -33,14 +57,31 @@
     "!profiles/quickchat/",
     "skills/",
     "scripts/",
+    "!scripts/cutover.sh",
+    "!scripts/cutover-rehearsal.sh",
     "!scripts/cutover-rehearsal/",
+    "!scripts/worker-rehearsal.sh",
     "!scripts/worker-rehearsal/",
+    "!scripts/worker-resume-rehearsal.sh",
+    "!scripts/vm-postcutover-cleanup.sh",
+    "!scripts/cpu-gate.mjs",
+    "!scripts/import-pi-memory.mjs",
+    "!scripts/emit-deploy-manifest.mjs",
+    "!scripts/pi-canary-range.mjs",
+    "!scripts/pin-evidence.mjs",
+    "!scripts/pin-evidence-map.json",
+    "!scripts/plugin-assets.mjs",
+    "!scripts/dev-tui.sh",
+    "!scripts/tsc-watch.mjs",
+    "!scripts/build-regression-set.mjs",
+    "!scripts/action.sh",
     "deploy/",
     "!deploy/ansible/inventory.ini",
     "docker/",
     "docker-compose.yml",
     "config.example.toml",
     "tests/fixtures/seed-manifest.json",
+    "tests/fixtures/regression-cases.json",
     "THIRD-PARTY-NOTICES.md",
     "!**/CLAUDE.md",
     "!**/AGENTS.md"
@@ -75,10 +116,10 @@
   },
   "dependencies": {
     "@earendil-works/pi-ai": "1.3.0",
-    "@quickchatai/pi-quickreview": "1.0.8",
+    "@quickchatai/pi-quickreview": "1.1.0",
     "@earendil-works/pi-coding-agent": "1.3.0",
     "better-sqlite3": "13.0.3",
-    "smol-toml": "1.8.0"
+    "smol-toml": "1.9.1"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

@@ -51,6 +51,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { FINDING_CLUSTERS_ENTRY, extensionFile } from "./coreext.js";
 import { GITHUB_TOKEN_ENVS } from "@quickchatai/pi-quickreview/src/envstrip.js";
 import {
   type CapabilityStore,
@@ -85,14 +86,15 @@ export const DEBUG_IDLE_MS = 30 * 60_000;
  * stopped: the model's closing words are written to the JSONL first. */
 export const DEBUG_VERDICT_SETTLE_MS = 15_000;
 
-/** The extensions of a bot debug round, by path under the production tree: a
- * worker's own set (src/engine/botsdk.ts), with the debug extension (which carries
- * the lens tools) in the lens slot. */
+/** The extensions of a bot debug round: a worker's own set
+ * (src/engine/botsdk.ts), with the debug extension (which carries the lens
+ * tools) in the lens slot. The shims are paths under the production tree;
+ * cluster_findings is the core package's (`extensionFile`, src/coreext.ts). */
 export const DEBUG_BOT_EXTENSIONS = [
   "extensions/cli/bash-guard.ts",
   "extensions/cli/ledger-pin.ts",
   "extensions/cli/debug-round.ts",
-  "packages/pi-plugin/extensions/finding-clusters.ts",
+  FINDING_CLUSTERS_ENTRY,
   "extensions/vendor/openviking-pi/index.ts",
 ] as const;
 
@@ -608,7 +610,7 @@ export class DebugRoundManager {
       model: spec.model,
       system_prompt_file: spec.system_prompt_file,
       ...(stub ? { stub_file: stub } : {}),
-      extensions: DEBUG_BOT_EXTENSIONS.map((e) => join(spec.root, e)),
+      extensions: DEBUG_BOT_EXTENSIONS.map((e) => extensionFile(spec.root, e)),
       payload_path: row.payload_path,
       payload_sha256: row.payload_sha256,
       marker: sessionCommandMarker(row.id, row.payload_sha256),

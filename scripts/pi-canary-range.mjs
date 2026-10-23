@@ -55,7 +55,12 @@ for (const v of versions) {
     );
   }
   console.log(`== pi ${installed()} (range ${range}) ==`);
-  const r = spawnSync("npx", ["vitest", "run", "tests/pi-canary"], { cwd: ROOT, stdio: "inherit" });
+  // The canaries' pin check reads the version this run installed from here.
+  const r = spawnSync("npx", ["vitest", "run", "tests/pi-canary"], {
+    cwd: ROOT,
+    stdio: "inherit",
+    env: { ...process.env, QCR_CANARY_PI_VERSION: installed() },
+  });
   if (r.status !== 0) {
     console.error(`the canaries failed on pi ${v}`);
     failed++;

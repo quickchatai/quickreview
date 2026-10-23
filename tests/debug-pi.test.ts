@@ -35,6 +35,7 @@ import {
   eventsFromSession,
   runDebugRound,
 } from "../src/engine/debugpi.js";
+import { coreExtensionPath, extensionFile } from "../src/coreext.js";
 import { LensWave, type WaveRunner } from "@quickchatai/pi-quickreview/src/engine/lens/wave.js";
 import { mainSessionOf, lensSessionsOf } from "@quickchatai/pi-quickreview/src/engine/openable.js";
 import { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
@@ -83,11 +84,17 @@ describe("[debug-pi] what pi is started with", () => {
       "cli/debug-round.ts",
       "finding-clusters.ts",
     ]);
-    expect(DEBUG_ROUND_EXTENSIONS.map((e) => e.slice(e.indexOf("extensions/") + 11))).toEqual(
-      loaded,
-    );
-    // The shims are the app's; cluster_findings is the review core's own extension.
-    expect(argv).toContain("/root/packages/pi-plugin/extensions/finding-clusters.ts");
+    expect(
+      DEBUG_ROUND_EXTENSIONS.map((e) => {
+        const f = extensionFile("/root", e);
+        return f.slice(f.indexOf("/extensions/") + "/extensions/".length);
+      }),
+    ).toEqual(loaded);
+    // The shims are the app's, under the root; cluster_findings is the review
+    // core's own extension, from the core package, never under the root.
+    expect(argv).toContain("/root/extensions/cli/bash-guard.ts");
+    expect(argv).toContain(coreExtensionPath("finding-clusters"));
+    expect(argv).not.toContain("/root/packages/pi-plugin/extensions/finding-clusters.ts");
     // lens.ts is inside debug-round.ts: loading it too would register the tools twice
     expect(loaded).not.toContain("lens.ts");
     expect(argv.filter((a) => /post/i.test(a))).toEqual([]);

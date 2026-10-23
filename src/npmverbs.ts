@@ -15,17 +15,18 @@
 // `npmVerbDeps()` is the real assembly.
 import { spawnSync, type SpawnSyncOptions } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { delimiter, join } from "node:path";
+import { pluginPackageDir } from "./coreext.js";
 import { detectInstall, type Installer } from "./installkind.js";
 import { readLogins } from "./loginhint.js";
 import { piCliPath } from "./picli.js";
 
 /** The npm package this CLI is published as. */
 export const CLI_PACKAGE = "@quickchatai/quickreview";
-/** The pi plugin package the CLI depends on at its exact version. */
-export const PLUGIN_PACKAGE = "@quickchatai/pi-quickreview";
+// The plugin package and where it is installed live in a leaf of their own, so
+// the session manager can find the core's extension files without these verbs.
+export { PLUGIN_PACKAGE, pluginPackageDir } from "./coreext.js";
 // How this qcr was installed lives in a leaf of its own, so the daemon can ask
 // it (src/runhost.ts) without reaching the login verbs below.
 export { IMAGE_APP_ROOT, detectInstall, type InstallKind, type Installer } from "./installkind.js";
@@ -41,14 +42,6 @@ export function updateCommand(installer: Installer, pkg: string = CLI_PACKAGE): 
     case "bun":
       return ["bun", "add", "-g", spec];
   }
-}
-
-/** The directory of the installed qcr pi plugin package: the one `qcr pi`
- * preloads. Found through its exported package.json, wherever the package
- * manager put it. */
-export function pluginPackageDir(from: string = import.meta.url): string {
-  const req = createRequire(from);
-  return dirname(req.resolve(`${PLUGIN_PACKAGE}/package.json`));
 }
 
 /** pi's agent dir: `$PI_CODING_AGENT_DIR`, else `~/.pi/agent`, as pi reads it. */

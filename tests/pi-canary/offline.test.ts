@@ -6,6 +6,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { satisfiesRange } from "@quickchatai/pi-quickreview/src/plugin/versiongate.js";
 import { createRig, installOfflineGuard, useOfflineGuard } from "./harness.js";
 
 useOfflineGuard();
@@ -68,14 +69,30 @@ describe("the canary suite is offline", () => {
   });
 });
 
+// The range runner (scripts/pi-canary-range.mjs) runs these canaries on a pi
+// it installed in place of the pin and names that version in
+// QCR_CANARY_PI_VERSION; the installed pi must then be exactly that one, and
+// inside the plugin's range. Unset (`npm test`, `npm run canary:pi`), it must
+// be the pin.
+const RANGE_VERSION = process.env["QCR_CANARY_PI_VERSION"];
+
 describe("the canaries run against the pinned pi", () => {
-  it("the installed pi and pi-ai are the exact versions package.json pins", () => {
+  // MUTATION: compare against "1.0.0" instead of the expected version — this fails.
+  it("the installed pi and pi-ai are the exact versions package.json pins, or the range run names", () => {
     const pkg = JSON.parse(read("package.json")) as { dependencies: Record<string, string> };
     for (const name of ["@earendil-works/pi-coding-agent", "@earendil-works/pi-ai"]) {
       const installed = JSON.parse(read(`node_modules/${name}/package.json`)) as {
         version: string;
       };
-      expect(installed.version, name).toBe(pkg.dependencies[name]);
+      expect(installed.version, name).toBe(RANGE_VERSION ?? pkg.dependencies[name]);
+    }
+    if (RANGE_VERSION !== undefined) {
+      const plugin = JSON.parse(read("packages/pi-plugin/package.json")) as {
+        peerDependencies: Record<string, string>;
+      };
+      expect(
+        satisfiesRange(RANGE_VERSION, plugin.peerDependencies["@earendil-works/pi-coding-agent"]!),
+      ).toBe(true);
     }
   });
 });

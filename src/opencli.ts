@@ -23,6 +23,7 @@
 // itself holds, and with no GitHub token in its environment.
 import { copyFileSync, existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { FINDING_CLUSTERS_ENTRY, extensionFile } from "./coreext.js";
 import { GIT_ISOLATION_ENV } from "./bench/exec.js";
 import { CONTEXT_PACK_FILE } from "@quickchatai/pi-quickreview/src/contextpack.js";
 import { GITHUB_TOKEN_ENVS } from "@quickchatai/pi-quickreview/src/envstrip.js";
@@ -68,12 +69,14 @@ export function openHelp(): string {
 
 /** The extensions pi loads on the main session of a round: the same set the
  * round had (bash-guard, ledger-pin, the lens tool, cluster_findings). Nothing
- * here posts: the posting path is the gate's, never a session's. */
+ * here posts: the posting path is the gate's, never a session's. The shims are
+ * paths under the app's root; cluster_findings is the core package's
+ * (`extensionFile`, src/coreext.ts). */
 export const MAIN_OPEN_EXTENSIONS = [
   "extensions/cli/bash-guard.ts",
   "extensions/cli/ledger-pin.ts",
   "extensions/cli/lens.ts",
-  "packages/pi-plugin/extensions/finding-clusters.ts",
+  FINDING_CLUSTERS_ENTRY,
 ] as const;
 
 /** A lens pass is a leaf: the guard, and no lens tool. */
@@ -430,7 +433,7 @@ export async function runOpen(
     : found.kind === "main"
       ? MAIN_OPEN_EXTENSIONS
       : LENS_OPEN_EXTENSIONS;
-  const extensions = names.map((n) => join(deps.root, n));
+  const extensions = names.map((n) => extensionFile(deps.root, n));
   const meta = readOpenMeta(found.roundDir);
   const bin = deps.piBin ?? piCliPath();
   // Writing into a round that recorded how it ran keeps its ledger and lens
