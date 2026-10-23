@@ -679,6 +679,14 @@ describe("#scan memory: patterns and hotspots, capped per scan; findings never",
     expect(JSON.parse(state.read(SCAN_MEMORY_FILE)!).scans[SHA2].patterns).toHaveLength(1);
   });
 
+  it("two identical patterns in one request are one note and one cap slot", async () => {
+    const { memory, triage } = setup();
+    const r = await triage.writeMemory({ patterns: [pattern(1), pattern(1)] });
+    expect(r).toMatchObject({ ok: true, written: { patterns: 1 } });
+    expect(memory!.entries).toHaveLength(1);
+    expect((r as { left: { patterns: number } }).left.patterns).toBe(MAX_PATTERNS_PER_SCAN - 1);
+  });
+
   it("a unit named like an object member gets its hotspot like any other", async () => {
     const { triage } = setup({ units: ["constructor", "toString"] });
     expect(

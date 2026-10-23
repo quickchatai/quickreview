@@ -890,6 +890,25 @@ describe("pin proposals go to the operator", () => {
     hash: `h-${id}`,
   });
 
+  it("refuses to replace a prior proposals file it cannot read", async () => {
+    const mem = fakeMemory([entry("a", "#survey Views are thin.")]);
+    const real = stateHomeFs(join(dir, "state"));
+    const writes: string[] = [];
+    const state = {
+      ...real,
+      read: (rel: string) => {
+        if (rel === PIN_PROPOSALS_FILE) throw new Error("EACCES");
+        return real.read(rel);
+      },
+      write: (rel: string, text: string) => (writes.push(rel), real.write(rel, text)),
+    };
+    const r = await engine(mem, state).proposePins([
+      { id: "a", ts: "2026-09-29 09:00:00", block: 0, why: "every view PR trips on this" },
+    ]);
+    expect(r.ok).toBe(false);
+    expect(writes).toEqual([]);
+  });
+
   it("records live, unpinned entries with a reason — and pins nothing", async () => {
     const applied: MemoryOp[] = [];
     const mem = fakeMemory([

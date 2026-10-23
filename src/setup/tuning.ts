@@ -733,13 +733,15 @@ export async function proposePins(
       });
   }
   if (errors.length > 0) return { ok: false, errors };
-  const prior = (() => {
-    try {
-      return parsePinProposals(deps.state.read(PIN_PROPOSALS_FILE));
-    } catch (err) {
-      return { state: "unreadable" as const, error: String(err) };
-    }
-  })();
+  let prior: ReturnType<typeof parsePinProposals>;
+  try {
+    prior = parsePinProposals(deps.state.read(PIN_PROPOSALS_FILE));
+  } catch (err) {
+    return {
+      ok: false,
+      errors: [`${PIN_PROPOSALS_FILE} exists but cannot be read (${String(err)}) — not replacing it`],
+    };
+  }
   const file: PinProposalsFile = { proposed_at: deps.clock().toISOString(), entries: proposed };
   deps.state.write(PIN_PROPOSALS_FILE, `${JSON.stringify(file, null, 2)}\n`);
   const now = pinnedBudget(entries).chars;

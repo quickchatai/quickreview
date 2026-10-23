@@ -38,6 +38,7 @@ import type { MemoryStore } from "../memory/store.js";
 import type { Refusal, StateFs, TrackerSink, TrackerTicket } from "./engine.js";
 import { goneDismissal, settled, type FindingsStore, type ScanFinding } from "./findings.js";
 import { DISMISS_REASON_MAX, validityOf } from "./scanreport.js";
+import { findingLocation } from "./presentation.js";
 
 export const SCAN_TAG = "scan";
 export const SCAN_MEMORY_FILE = "scan/memory.json";
@@ -61,8 +62,7 @@ const tagValue = (v: string): string => v.trim().replace(/\s+/g, "_") || "-";
 
 const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
 
-const where = (f: ScanFinding): string =>
-  `${f.path}:${f.start === f.end ? f.start : `${f.start}-${f.end}`}`;
+const where = findingLocation;
 
 // ---- memory spellings -------------------------------------------------------------
 
@@ -685,7 +685,10 @@ export class ScanTriage {
           `patterns[${i}].occurrences must be an integer ≥ 2 — a pattern recurs; one occurrence is a finding`,
         );
       }
-      if (!rec.patterns.some((p) => p.text === text && p.occurrences === occ))
+      if (
+        !rec.patterns.some((p) => p.text === text && p.occurrences === occ) &&
+        !patterns.some((p) => p.text === text && p.occurrences === occ)
+      )
         patterns.push({ text, occurrences: occ as number });
     }
     const seenUnits = new Set<string>();
