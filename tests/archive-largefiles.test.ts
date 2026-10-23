@@ -42,10 +42,12 @@ it(
       const entry = manifestOf(f).entries.find((e) => e.kind === "file" && e.source === rel);
       expect(entry).toMatchObject({ snapshot: true, class: "ledger", bytes: bytes.length });
       expect(entry?.source_removed_at).toBeUndefined();
-      expect(readFileSync(join(f.root, rel))).toEqual(bytes);
+      expect(readFileSync(join(f.root, rel)).equals(bytes)).toBe(true);
       expect(
-        gunzipSync(readFileSync(join(f.root, "archive", `pr-${f.pr}`, String(entry?.archive)))),
-      ).toEqual(bytes);
+        gunzipSync(
+          readFileSync(join(f.root, "archive", `pr-${f.pr}`, String(entry?.archive))),
+        ).equals(bytes),
+      ).toBe(true);
       expect(archiveRow(f.store, f.pr)?.state_files).toBe(f.small.length);
       await a.tick();
       expect(
@@ -86,7 +88,7 @@ it.each([true, false])(
       });
       expect(existsSync(join(f.root, rel))).toBe(false);
       await a.operatorRestore(f.pr);
-      expect(readFileSync(join(f.root, rel))).toEqual(bytes);
+      expect(readFileSync(join(f.root, rel)).equals(bytes)).toBe(true);
     } finally {
       a.stop();
     }
