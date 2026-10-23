@@ -62,7 +62,9 @@ qcr "$IMAGE" version >/dev/null || fail "the text version exited non-zero"
 step "review --preview --json on a fixture repo"
 repo="$WORK/repo"
 mkdir "$repo"
-git_fixture() { git -C "$repo" -c user.email=smoke@example.com -c user.name=smoke "$@"; }
+# No automatic gc or maintenance: a detached one would still be writing .git
+# (its lock files come and go) while the chmod below walks the tree.
+git_fixture() { git -C "$repo" -c user.email=smoke@example.com -c user.name=smoke -c gc.auto=0 -c maintenance.auto=false "$@"; }
 git_fixture init -q -b main
 printf 'a\n' >"$repo/a.txt"
 git_fixture add .

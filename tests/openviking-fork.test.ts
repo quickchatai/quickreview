@@ -1386,8 +1386,10 @@ describe("PATCH 7 — bounded recall, no commit", () => {
     await f("/a", undefined, { timeoutMs: 10_000 });
     clock = 1400;
     await f("/b");
-    clock = 1500;
+    clock = 1497; // a sliver left: what a request aborted at its own timeout sees
     await expect(f("/c")).rejects.toBeInstanceOf(RecallBudgetSpent);
+    clock = 1500;
+    await expect(f("/d")).rejects.toBeInstanceOf(RecallBudgetSpent);
     expect(sent).toEqual(["/a@500", "/b@100"]);
     expect((await raceBudget(Promise.reject(new Error("x")), 50, "fallback")).value).toBe(
       "fallback",

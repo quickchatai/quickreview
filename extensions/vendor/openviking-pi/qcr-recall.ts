@@ -81,7 +81,7 @@ export function budgetedFetch(
 ): FetchLike {
   return async (path, init, options) => {
     const remaining = Math.floor(deadlineAt - now());
-    if (remaining <= 0) throw new RecallBudgetSpent();
+    if (remaining < 5) throw new RecallBudgetSpent(); // a few ms only race the abort that just fired
     const asked = Number(options?.timeoutMs);
     const timeoutMs = Number.isFinite(asked) && asked > 0 ? Math.min(asked, remaining) : remaining;
     return inner(path, init, { ...(options ?? {}), timeoutMs });
