@@ -65,6 +65,9 @@ export interface IpcServerOptions {
   ops?: Readonly<Record<string, OpHandler>>;
   onEvent?: EventHandler;
   maxLineBytes?: number;
+  /** The bound on a line the server SENDS (default: `maxLineBytes`); the requests it
+   * reads stay under `maxLineBytes`. */
+  maxResponseBytes?: number;
   /** The model's tools run as another uid of this process's group (D32): its
    * post and read shims must reach the socket. The run dir becomes
    * 0710 and the socket 0660; the capability is what authenticates a caller, and
@@ -296,7 +299,7 @@ export class IpcServer {
   private send(conn: Conn, msg: IpcMessage): void {
     if (conn.closed) return;
     try {
-      conn.socket.write(encodeMessage(msg, this.opts.maxLineBytes));
+      conn.socket.write(encodeMessage(msg, this.opts.maxResponseBytes ?? this.opts.maxLineBytes));
     } catch (e) {
       // A response too large to send: the caller gets a typed error instead.
       if (msg.type === "response" && e instanceof IpcError)

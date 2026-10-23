@@ -765,3 +765,72 @@ describe("[P7.2a] the server", () => {
     await server.start(); // afterEach stops it
   });
 });
+
+describe("[selfimprove] frames that share a chunk with hello_ok, and big answers", () => {
+  it("delivers a control frame that arrives in the same chunk as hello_ok", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ipc-hello-"));
+    const sock = join(dir, "s.sock");
+    const srv = net.createServer((s) => {
+      s.once("data", () => {
+        const ok = { v: IPC_VERSION, type: "hello_ok", command_id: "c1", pr: 7, generation: 1 };
+        const ctl = { v: IPC_VERSION, type: "control", kind: "abort", body: { n: 1 } };
+        s.write(`${JSON.stringify(ok)}\n${JSON.stringify(ctl)}\n`);
+      });
+    });
+    await new Promise<void>((r) => srv.listen(sock, r));
+    try {
+      const c = await IpcClient.connect({
+        socketPath: sock,
+        role: "worker",
+        commandId: "c1",
+        capability: "x",
+        generation: 1,
+        timeoutMs: 2000,
+      });
+      const got = new Promise<[string, unknown]>((resolve) =>
+        c.onControl((k, b) => resolve([k, b])),
+      );
+      expect(await got).toEqual(["abort", { n: 1 }]);
+      c.close();
+    } finally {
+      srv.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("sends a response over the request limit when maxResponseBytes allows it", async () => {
+    const state = mkdtempSync(join(tmpdir(), "ipc-big-"));
+    const store = new CapabilityStore();
+    const cmds = fakeCommands();
+    const server = new IpcServer({
+      socketPath: socketPathOf(state),
+      capabilities: store,
+      commands: cmds.lookup,
+      maxLineBytes: 4096,
+      maxResponseBytes: 200_000,
+    });
+    server.register("big", {
+      roles: ["shim"],
+      handle: () => "z".repeat(100_000),
+    });
+    await server.start();
+    try {
+      const cap = store.mint("c1");
+      cmds.set("c1", 5);
+      const c = await IpcClient.connect({
+        socketPath: socketPathOf(state),
+        role: "shim",
+        commandId: "c1",
+        capability: cap,
+        generation: 1,
+        timeoutMs: 2000,
+        maxLineBytes: 200_000,
+      });
+      expect(await c.request<string>("big")).toHaveLength(100_000);
+      c.close();
+    } finally {
+      await server.stop();
+      rmSync(state, { recursive: true, force: true });
+    }
+  });
+});

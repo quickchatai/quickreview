@@ -62,6 +62,8 @@ export class IpcClient {
     const timeoutMs = opts.timeoutMs ?? 10_000;
     const decoder = new LineDecoder(opts.maxLineBytes ?? MAX_LINE_BYTES);
     const socket = net.connect(opts.socketPath);
+    // Frames that arrived in the same chunk as hello_ok; the connection replays them.
+    let early: string[] = [];
     const hello = await new Promise<IpcMessage>((resolve, reject) => {
       const timer = setTimeout(() => {
         socket.destroy();
@@ -76,8 +78,9 @@ export class IpcClient {
       socket.once("close", () => fail(new IpcError("closed", "closed before hello_ok")));
       socket.on("data", (chunk) => {
         try {
-          const [line] = decoder.push(chunk);
+          const [line, ...rest] = decoder.push(chunk);
           if (line === undefined) return;
+          early = rest;
           clearTimeout(timer);
           socket.off("error", fail);
           resolve(decodeMessage(line));
@@ -105,7 +108,10 @@ export class IpcClient {
       socket.destroy();
       throw new IpcError("bad_request", "expected hello_ok");
     }
-    return new IpcClient(socket, opts, hello.pr, hello.generation, decoder);
+    const client = new IpcClient(socket, opts, hello.pr, hello.generation, decoder);
+    // After the caller has registered its handlers, as a frame read later would be.
+    if (early.length > 0) setImmediate(() => client.handleLines(early));
+    return client;
   }
 
   /** Call an op and wait for its answer; a refusal rejects with the typed error. */
@@ -197,6 +203,10 @@ export class IpcClient {
       this.socket.destroy();
       return;
     }
+    this.handleLines(lines);
+  }
+
+  private handleLines(lines: string[]): void {
     for (const line of lines) {
       let msg: IpcMessage;
       try {
