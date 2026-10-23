@@ -961,7 +961,7 @@ function segmentViolationKind(segment: string): ExecViolationKind | null {
     // whatever cat then reads.
     if (AUDIT_READERS.has(prog) || (prog === "git" && gitSearchReader(segment))) {
       const prefix = assignmentPrefix(segment);
-      if (prog === "git" && POLICY_RELOCATION_RE.test(prefix)) return "policy_relocation";
+      if (POLICY_RELOCATION_RE.test(prefix)) return "policy_relocation";
       return GIT_CONFIG_INJECTION_RE.test(prefix) ? "git_config_injection" : null;
     }
   }
