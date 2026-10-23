@@ -79,4 +79,28 @@ describe("state.db: a second writer holding the lock briefly", () => {
     expect(() => store.observeTriggerLevel(1, "label", true)).not.toThrow();
     await done(worker);
   });
+
+  it("retrySessionCommandAfterFence waits for the lock instead of throwing SQLITE_BUSY", async () => {
+    dir = mkdtempSync(join(tmpdir(), "qcr-busy-"));
+    const path = join(dir, "state.db");
+    store = new StateStore(path);
+    store.createSessionCommand({
+      id: "cmd-busy",
+      pr: 3,
+      session: "pr-3",
+      kind: "wake",
+      round_no: null,
+      payload_sha256: "a".repeat(64),
+      payload_path: "/p.md",
+      inject_path: "/i.md",
+      next_check_at: "2026-10-22T08:00:00.000Z",
+    });
+    const worker = await holdWriteLock(path, HOLD_MS);
+    const t0 = performance.now();
+    const retried = store.retrySessionCommandAfterFence("cmd-busy", 0, "2026-10-22T08:01:00.000Z");
+    const waited = performance.now() - t0;
+    await done(worker);
+    expect(retried).toBe(true);
+    expect(waited).toBeGreaterThanOrEqual(HOLD_MS - 50);
+  });
 });
