@@ -144,11 +144,25 @@ const CI_FILES = [
 const WRAPPERS = ["package.json", "Makefile", "justfile", "tox.ini", "noxfile.py", "Taskfile.yml"];
 const MAX_READ = 512 * 1024;
 
-function readInside(root: string, realRoot: string, rel: string): string | null {
+/**
+ * The real path of `rel` under `root` when it resolves inside `realRoot` (the
+ * checkout's own real path), else null: a link that leaves the checkout, a
+ * missing path or the root itself are all null.
+ */
+export function resolveInsideCheckout(root: string, realRoot: string, rel: string): string | null {
   try {
     const real = realpathSync(join(root, rel));
     const r = relative(realRoot, real);
-    if (r === "" || r.split(sep)[0] === ".." || isAbsolute(r)) return null;
+    return r === "" || r.split(sep)[0] === ".." || isAbsolute(r) ? null : real;
+  } catch {
+    return null;
+  }
+}
+
+function readInside(root: string, realRoot: string, rel: string): string | null {
+  const real = resolveInsideCheckout(root, realRoot, rel);
+  if (real === null) return null;
+  try {
     if (statSync(real).size > MAX_READ) return null;
     return readFileSync(real, "utf8");
   } catch {

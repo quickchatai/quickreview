@@ -33,7 +33,8 @@
 // enforces is CI's job, and the review reads CI, it never re-runs it.
 // Total: an unreadable tree is "no guide", never an error.
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { join, relative } from "node:path";
+import { resolveInsideCheckout } from "./lintconfig.js";
 
 export const GUIDE_MIN_LINES = 15;
 export const SECTION_MIN_LINES = 8;
@@ -251,15 +252,7 @@ export function findStyleGuide(root: string): string[] {
   } catch {
     return [];
   }
-  const inside = (rel: string): string | null => {
-    try {
-      const real = realpathSync(join(root, rel));
-      const r = relative(realRoot, real);
-      return r === "" || r.split(sep)[0] === ".." || isAbsolute(r) ? null : real;
-    } catch {
-      return null;
-    }
-  };
+  const inside = (rel: string): string | null => resolveInsideCheckout(root, realRoot, rel);
   const listing: string[] = [];
   for (const d of ["", "docs", "doc", ".github", ".github/instructions"]) {
     for (const name of list(join(root, d))) listing.push(relative(root, join(root, d, name)));
