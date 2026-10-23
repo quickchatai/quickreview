@@ -347,6 +347,10 @@ export function secretsDirFor(
 }
 
 /** A hostname the operator typed: bare, lowercase, no scheme or path. */
+/** A bare hostname: dotted labels of at most 63 letters, digits and inner dashes. */
+export const BARE_HOSTNAME_RE =
+  /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
+
 export function normalizeHostname(raw: unknown): string | null {
   const text = String(raw ?? "")
     .trim()
@@ -354,11 +358,7 @@ export function normalizeHostname(raw: unknown): string | null {
     .replace(/^https?:\/\//, "")
     .replace(/\/.*$/, "")
     .replace(/:\d+$/, "");
-  return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(
-    text,
-  )
-    ? text
-    : null;
+  return BARE_HOSTNAME_RE.test(text) ? text : null;
 }
 
 // ---- the running shape ------------------------------------------------------
