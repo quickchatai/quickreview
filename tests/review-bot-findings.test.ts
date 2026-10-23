@@ -96,10 +96,10 @@ describe("skipPosted", () => {
     expect(r.fresh.map((f) => f.key)).toEqual(["x10"]);
     expect(r.skipped).toBe(1);
   });
-  it("drops the same key on the same file, and keeps the same title on another file", () => {
+  it("keeps a new finding whose per-round key collides with a posted one, and drops the same title only on its own file", () => {
     expect(
       skipPosted([{ key: "f1", path: "src/a.ts", line: 2, title: "renamed" }], posted).skipped,
-    ).toBe(1);
+    ).toBe(0);
     expect(
       skipPosted(
         [{ key: "z", path: "src/other.ts", line: 2, title: "b is a magic number" }],
