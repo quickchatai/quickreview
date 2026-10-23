@@ -198,6 +198,7 @@ describe("[open-pr] arguments", () => {
   it("refuses --round with --lens: nothing records which round a lens pass belonged to", () => {
     const r = openPrOptions("7", "1", "pass-a");
     expect(r.ok).toBe(false);
+    expect(!r.ok && r.error).not.toContain("workers will");
   });
 });
 
@@ -298,6 +299,46 @@ describe("[open-pr] session text", () => {
     const cut = cutAtTime(text, Date.parse("2026-10-01T10:06:00.000Z"))!;
     expect(cut.text).not.toContain("toolCall");
     expect(cut.kept).toBe(2);
+  });
+
+  it("drops a batch of two tool calls when the cut falls between their results", () => {
+    const base = session("abc", "/x", TURNS.slice(0, 1)).split("\n").filter(Boolean);
+    const call = JSON.stringify({
+      type: "message",
+      id: "c1c1c1c1",
+      parentId: "a0000000",
+      timestamp: "2026-10-01T10:05:00.000Z",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "toolCall", id: "t1", name: "bash", arguments: { command: "ls" } },
+          { type: "toolCall", id: "t2", name: "bash", arguments: { command: "pwd" } },
+        ],
+        stopReason: "toolUse",
+      },
+    });
+    const result = (id: string, at: string): string =>
+      JSON.stringify({
+        type: "message",
+        id: `r-${id}`,
+        parentId: "c1c1c1c1",
+        timestamp: at,
+        message: { role: "toolResult", toolCallId: id, toolName: "bash", content: [] },
+      });
+    const text =
+      [
+        ...base,
+        call,
+        result("t1", "2026-10-01T10:07:00.000Z"),
+        result("t2", "2026-10-01T10:09:00.000Z"),
+      ].join("\n") + "\n";
+    const cut = cutAtTime(text, Date.parse("2026-10-01T10:08:00.000Z"))!;
+    expect(cut.text).not.toContain("toolCall");
+    expect(cut.text).not.toContain("toolResult");
+    expect(cut.kept).toBe(2);
+    // both results kept: the whole batch stays
+    const whole = cutAtTime(text, Date.parse("2026-10-01T10:10:00.000Z"))!;
+    expect(whole.kept).toBe(5);
   });
 
   it("refuses a cut before anything was recorded", () => {
@@ -466,6 +507,52 @@ describe("[open-pr] lens passes", () => {
     expect(!ambiguous.ok && ambiguous.error).toContain("more than one");
     const unknown = await pullPrSession({ pr: 7, lens: "zzz" }, r.deps);
     expect(!unknown.ok && unknown.error).toContain("abc123, abd456");
+  });
+
+  it("finds the lens passes a worker keeps under state/lens/pr-<n>/r<k>/", async () => {
+    const root = liveRoot(session("sess-live", VM_CWD, TURNS));
+    const lens = session("lens-w", VM_CWD, TURNS.slice(0, 1));
+    put(root, "state/lens/pr-7/r2/lens-sessions/wrk789/2026_w.jsonl", lens);
+    put(root, "state/lens/pr-8/r1/lens-sessions/other/2026_o.jsonl", lens);
+    const r = rig(root);
+    const got = await pullPrSession({ pr: 7, lens: "wrk" }, r.deps);
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.kind).toBe("lens");
+    expect(readFileSync(got.file, "utf8")).toBe(lens);
+    const other = await pullPrSession({ pr: 7, lens: "other" }, r.deps);
+    expect(!other.ok && other.error).toContain("it kept: wrk789");
+  });
+
+  it("copies a lens pass to whole lines only, and refuses one with no header", async () => {
+    const root = liveRoot(session("sess-live", VM_CWD, TURNS));
+    const lens = session("lens-t", VM_CWD, TURNS.slice(0, 1));
+    put(root, `${SESSION_DIR}/pr-7/lens-sessions/torn01/a.jsonl`, lens + '{"type":"mess');
+    put(root, `${SESSION_DIR}/pr-7/lens-sessions/nohead/a.jsonl`, '{"type":"mess');
+    const r = rig(root);
+    const got = await pullPrSession({ pr: 7, lens: "torn" }, r.deps);
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(readFileSync(got.file, "utf8")).toBe(lens);
+    const bad = await pullPrSession({ pr: 7, lens: "nohead" }, r.deps);
+    expect(!bad.ok && bad.error).toContain("not a pi session");
+  });
+
+  it("parses a worker-layout lens path of the PR itself and no other", () => {
+    const root = "/opt/qcr";
+    const mine = `${root}/state/lens/pr-7/r2/lens-sessions/L1/x.jsonl`;
+    const got = parseListing(
+      [
+        `lens 5 1 ${mine}`,
+        `lens 5 1 ${root}/state/lens/pr-8/r2/lens-sessions/L1/x.jsonl`,
+        `lens 5 1 ${root}/state/lens/pr-7/rx/lens-sessions/L1/x.jsonl`,
+        `lens 5 1 ${root}/state/lens/pr-7/r2/lens-sessions/x.jsonl`,
+      ].join("\n"),
+      root,
+      SESSION_DIR,
+      7,
+    );
+    expect(got.map((l) => l.path)).toEqual([mine]);
   });
 });
 

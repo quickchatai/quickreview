@@ -79,10 +79,10 @@ work for it and nothing on the box is written.
   round in it, which is why a round is a cut and not a file. A round still running, or one
   `why` does not list, is refused with the finished ones named.
 - **`--lens ID`** opens a kept lens pass of the PR by run id or unambiguous prefix, from
-  `<pr dir>/lens-sessions/<run id>/*.jsonl` (the layout above). A tmux-hosted lens pass is
-  a child of the PR's session with no file of its own, so today the answer is "kept no lens
-  sessions"; they appear once workers persist them (P8.3, D10), and their archive inclusion
-  is P8.16. `--round` and `--lens` do not combine yet: nothing records a lens pass's round.
+  a worker's `state/lens/pr-<N>/r<K>/lens-sessions/<run id>/*.jsonl` (or
+  `<pr dir>/lens-sessions/<run id>/*.jsonl`). A tmux-hosted lens pass is a child of the
+  PR's session with no file of its own, so its answer is "kept no lens sessions"; the
+  archive keeps the worker trees (P8.16). `--round` and `--lens` do not combine: `--round` cuts the PR's main session at a round's finish, and a lens pass is opened by its run id alone.
 
 Pi starts with bash-guard alone: the bot's tools are the tmux era's `subagent` and
 `launch_plan`, which this machine does not run, and posting is the daemon's. The login copy
