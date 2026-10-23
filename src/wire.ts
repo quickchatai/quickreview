@@ -81,6 +81,7 @@ import {
 import { postingPolicyAddenda } from "./postingpolicy.js";
 import { prepareDependencySources, renderDependencyNote } from "./depsources.js";
 import { fileImprovementPr, fileIssue, gitRunner, type FileOutcome } from "./improvements.js";
+import { homeProfileLookup } from "./install.js";
 import {
   EMBEDDER_GATE_MAX_WAIT_MS,
   LocalEmbedderSupervisor,
@@ -193,7 +194,7 @@ export function buildParts(root = sandboxRoot(), loaded = loadConfig()): Product
   // config.toml, the preset and the defaults. A malformed `[lenses]` table
   // fails the boot loudly, like every other profile loader.
   // The profile's `[posting]` policy rides the same overlay (src/postingpolicy.ts).
-  const overlaid = applyProfileOverlays(root, loaded);
+  const overlaid = applyProfileOverlays(root, loaded, homeProfileLookup());
   // A failed optional boot migration leaves its destination incomplete. No
   // client, raw session or supervisor may open it until the next clean boot.
   const cfg =
@@ -708,7 +709,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // malformed profile.toml fails the boot loudly). It decides the tier-forcing
   // migration gate, the round pre-check and the prompt's migration-gate prose;
   // "none" (no profile, no file, no key) runs none of that machinery.
-  const ecosystem = ecosystemFor(loadProfileEcosystem(root, cfg.review.profile));
+  const ecosystem = ecosystemFor(
+    loadProfileEcosystem(root, cfg.review.profile, homeProfileLookup()),
+  );
   log(`profile ${cfg.review.profile || "(none)"}: ecosystem ${ecosystem.name}`);
 
   // The identity variable map every prompt render and agent build
@@ -891,7 +894,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // The profile's lens-heuristics extension, loaded once here so a
   // malformed heuristics.toml fails the assembly loudly (same contract as the
   // addenda pack below) and every dispatch selects with the same predicates.
-  const profileHeuristics = loadProfileHeuristics(root, cfg.review.profile);
+  const profileHeuristics = loadProfileHeuristics(root, cfg.review.profile, homeProfileLookup());
 
   // The gate's loud line (app-self-config executions) goes to the
   // daemon log; the default console fallback covers any unwired gate.
@@ -1218,7 +1221,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // malformed pack fails the boot loudly (never a silent skip) and every
       // rebuild composes the same bytes. Composition order is fixed in the
       // `addenda` list below, with the same-day feedback addendum last.
-      const profileAddenda = loadProfileAddenda(root, cfg.review.profile);
+      const profileAddenda = loadProfileAddenda(root, cfg.review.profile, homeProfileLookup());
       if (cfg.review.profile !== "") {
         log(`profile ${cfg.review.profile}: ${profileAddenda.length} addenda loaded`);
         const tuned = Object.keys(cfg.lenses ?? {});

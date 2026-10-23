@@ -2,7 +2,7 @@
 // selection, sub-lens triggers, sweep / behaviour-delta / baseline grouping
 // and the pass tier. Consumed by dispatch; unit-tested directly.
 
-import type { PrFileEntry } from "./github.js";
+import type { PrFileEntry } from "./githubcore.js";
 import { packByBudget } from "./packing.js";
 
 export interface PrFile {

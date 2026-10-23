@@ -64,6 +64,7 @@
 // nothing can post: this module imports no gate, adapter or token code, and the
 // image ships no `scripts/`, no `gh` and no credential.
 
+import { homeProfileLookup } from "../install.js";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
@@ -413,7 +414,7 @@ async function main(): Promise<number> {
     }
 
     const overrides = f.get("--config") ?? "";
-    const base = contextFor(root, profileFlag, overrides);
+    const base = contextFor(root, profileFlag, overrides, (l) => console.warn(l));
     // `--config review.profile=<name>` chooses the profile as `--profile` does.
     const profile = base.cfg.review.profile;
     const bench = benchCustomisation(root, profile, f.has("--allow-customised"));
@@ -486,12 +487,10 @@ async function main(): Promise<number> {
     // A case host finds the agents its pool built; rebuilding them under its
     // siblings' feet would empty the dir while they read it.
     if (!caseHost) {
-      const agents = buildBenchAgents(
-        root,
-        ctx.cfg,
-        join(root, ".pi", "agents"),
-        bench.readFile ? { readFile: bench.readFile } : {},
-      );
+      const agents = buildBenchAgents(root, ctx.cfg, join(root, ".pi", "agents"), {
+        ...(bench.readFile ? { readFile: bench.readFile } : {}),
+        lookup: homeProfileLookup(),
+      });
       log(
         `review: ${agents} lens agents built (profile ${profile || "(generic)"}), ${cases.length} case(s)`,
       );
@@ -1101,7 +1100,9 @@ async function main(): Promise<number> {
       // case is hosted by a process of its own (`--case-host` is that process,
       // told its one case by the pool).
       const runtimeKind = benchRuntimeKind(
-        applyConfigOverrides(benchConfig(""), f.get("--config") ?? "").engine.runtime,
+        applyConfigOverrides(benchConfig(""), f.get("--config") ?? "", undefined, (l) =>
+          console.warn(l),
+        ).engine.runtime,
       );
       const caseHost = f.has("--case-host");
       const hosts = !caseHost ? hostPool("defect-judge") : undefined;

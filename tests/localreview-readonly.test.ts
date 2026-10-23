@@ -111,13 +111,13 @@ describe("resolveUncommitted on a read-only repository", () => {
     expect(() => git(ro, "cat-file", "-e", r.target.uncommitted!.treeSha)).toThrow();
   });
 
-  it("builds the same review tree from the patch the target carries", () => {
+  it("builds the same review tree from the patch the target carries", async () => {
     const repo = dirtyRepo("tree");
     const r = resolveUncommitted(repo);
     if (!r.ok) throw new Error(r.error);
     const dir = join(tmp, "tree-wt");
     try {
-      addUncommittedTree(repo, dir, r.target);
+      await addUncommittedTree(repo, dir, r.target);
       expect(git(dir, "status", "--porcelain")).toMatch(/src\/new\.ts/);
       expect(git(dir, "diff", "--stat", "HEAD").length).toBeGreaterThan(0);
     } finally {
@@ -125,7 +125,7 @@ describe("resolveUncommitted on a read-only repository", () => {
     }
   });
 
-  it("checks a commit out for the review without writing into a read-only repo", () => {
+  it("checks a commit out for the review without writing into a read-only repo", async () => {
     const repo = dirtyRepo("ro-tree");
     git(repo, "add", "-A");
     git(repo, "commit", "-q", "-m", "all");
@@ -134,7 +134,7 @@ describe("resolveUncommitted on a read-only repository", () => {
     const before = objectStore(repo);
     const dir = join(tmp, "ro-tree-wt");
     try {
-      addReviewTree(repo, dir, head);
+      await addReviewTree(repo, dir, head);
       expect(git(dir, "rev-parse", "HEAD")).toBe(head);
       expect(git(dir, "status", "--porcelain")).toBe("");
       expect(objectStore(repo)).toEqual(before);
@@ -143,6 +143,23 @@ describe("resolveUncommitted on a read-only repository", () => {
       removeReviewTree(repo, dir);
     }
     expect(() => statSync(dir)).toThrow();
+  });
+
+  it("a stop ends the review tree's checkout: the call rejects with the abort", async () => {
+    const repo = dirtyRepo("stop-tree");
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "all");
+    const head = git(repo, "rev-parse", "HEAD");
+    const stop = new AbortController();
+    stop.abort();
+    const dir = join(tmp, "stop-tree-wt");
+    try {
+      await expect(addReviewTree(repo, dir, head, { signal: stop.signal })).rejects.toMatchObject({
+        name: "AbortError",
+      });
+    } finally {
+      removeReviewTree(repo, dir);
+    }
   });
 
   it("still says there is nothing to review on a clean read-only repo", () => {

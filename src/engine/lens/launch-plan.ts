@@ -140,6 +140,10 @@ export function stringList(value: unknown): string[] | undefined {
 export function planLaunch(
   params: Record<string, unknown>,
   env: Record<string, string | undefined> = process.env,
+  /** The sandbox root when the env names none (QCR_SANDBOX_ROOT): the
+   * launching process's cwd, as its host resolves it. Every round's env names
+   * the root; an interactive pi's may not. */
+  cwd?: string,
 ): LaunchPlan {
   try {
     const dirs = stringList(params.dirs ?? params.dir);
@@ -162,7 +166,8 @@ export function planLaunch(
     if (extra.some(([, v]) => typeof v !== "string"))
       return { ok: false, error: "`extra` values must be text" };
 
-    const root = env.QCR_SANDBOX_ROOT?.trim() || process.cwd();
+    const root = env.QCR_SANDBOX_ROOT?.trim() || cwd;
+    if (!root) return { ok: false, error: "no sandbox root: QCR_SANDBOX_ROOT is not set" };
     const realRoot = realDir(root);
     if (!realRoot) return { ok: false, error: `sandbox root ${root} is not readable` };
     const extras = sanctionedExtras(env);

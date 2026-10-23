@@ -18,6 +18,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveGithubCredential, MISSING_CREDENTIAL_HELP } from "../src/ghcred.js";
 import { fetchPrTarget, parsePrTarget, resolvePostCredential } from "../src/prtarget.js";
+import { resolveSpecifier, runtimeSpecifiers } from "./helpers/layers.js";
 
 // docs/rulebook/ (the ratified rule texts) is manifest-excluded from the public tree.
 const HAS_RULEBOOK = existsSync(join(process.cwd(), "docs", "rulebook", "hard-rules.md"));
@@ -206,7 +207,44 @@ describe("the daemon stays App-only (CLAUDE.md rule 3)", () => {
       .filter((f) => /from "[^"]*\/ghcred\.js"|from "\.\/ghcred\.js"/.test(readFileSync(f, "utf8")))
       .map((f) => f.slice(ROOT.length + 1))
       .sort();
-    expect(importers).toEqual(["src/cli.ts", "src/prtarget.ts", "src/reviewcli.ts"].sort());
+    expect(importers).toEqual(["src/cli.ts", "src/prtarget.ts"].sort());
+  });
+
+  it("no daemon or worker entry reaches the local review route, however indirectly", () => {
+    // The review route (the credential chain, the PR fetch, the local post) is
+    // core, the layer the daemon shares: a direct-import check cannot see a
+    // daemon module that imports something that imports it. Every runtime edge
+    // from the daemon's process entries is walked.
+    const ROUTE = ["src/reviewapi.ts", "src/prtarget.ts", "src/ghcred.ts", "src/reviewpost.ts"];
+    const entries = [
+      "src/wire.ts",
+      "src/botworker.ts",
+      "src/answerworker.ts",
+      "src/loginrefresh/main.ts",
+      "src/openviking/sidecar-main.ts",
+    ];
+    const seen = new Set<string>();
+    const via = new Map<string, string>();
+    const queue = [...entries];
+    while (queue.length > 0) {
+      const f = queue.shift()!;
+      if (seen.has(f)) continue;
+      seen.add(f);
+      for (const spec of runtimeSpecifiers(readFileSync(join(ROOT, f), "utf8"))) {
+        const to = resolveSpecifier(ROOT, f, spec);
+        if (to === null || seen.has(to)) continue;
+        if (!via.has(to)) via.set(to, f);
+        queue.push(to);
+      }
+    }
+    // the walk reached the daemon's graph, not an empty set
+    expect(seen.size).toBeGreaterThan(100);
+    const chain = (f: string): string => {
+      const path = [f];
+      for (let at = via.get(f); at !== undefined; at = via.get(at)) path.unshift(at);
+      return path.join(" -> ");
+    };
+    expect(ROUTE.filter((f) => seen.has(f)).map(chain)).toEqual([]);
   });
 
   it("the daemon's GitHub code reads no personal token", () => {
@@ -420,6 +458,41 @@ describe("fetchPrTarget", () => {
     });
     expect(r.ok).toBe(false);
     expect(!r.ok && r.error).toMatch(/fetch/i);
+  });
+
+  it("runs git off the event loop, and a stop ends a fetch in flight", async () => {
+    const stop = new AbortController();
+    const seen: string[] = [];
+    let ticks = 0;
+    const timer = setInterval(() => ticks++, 5);
+    try {
+      const r = await fetchPrTarget({
+        repo: "o/r",
+        number: 7,
+        scratchDir: join(tmp, "scratch-stop"),
+        token: "tok",
+        fetchFn: apiFetch([]),
+        gitBase: remote.base,
+        signal: stop.signal,
+        // git's fetch hangs until the stop; the event loop keeps turning meanwhile
+        exec: (_cmd, args, o) => {
+          seen.push(args[0]!);
+          if (args[0] !== "fetch") return Promise.resolve({ code: 0, stdout: "", stderr: "" });
+          expect(o?.signal).toBe(stop.signal);
+          expect(o?.timeoutMs).toBeGreaterThan(0);
+          setTimeout(() => stop.abort(), 30);
+          return new Promise((_, fail) =>
+            o!.signal!.addEventListener("abort", () => fail(new Error("aborted")), { once: true }),
+          );
+        },
+      });
+      expect(r.ok).toBe(false);
+      expect(!r.ok && r.error).toMatch(/stopped/);
+      expect(seen).toEqual(["init", "fetch"]);
+      expect(ticks).toBeGreaterThan(0);
+    } finally {
+      clearInterval(timer);
+    }
   });
 
   it("never writes the token into the scratch repo's config", async () => {

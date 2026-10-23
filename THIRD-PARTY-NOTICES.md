@@ -104,6 +104,6 @@ entirely on 2026-08-30 —'s licensing question dissolved by removal,
 ## npm dependencies
 
 Runtime and development npm packages (`better-sqlite3`, `smol-toml`,
-`node-pty`, `@xterm/headless`, `typescript`, `vitest`, …) are installed from
+`typescript`, `vitest`, …) are installed from
 the registry, not vendored; their licenses ride the packages themselves under
 `node_modules/` and are all MIT/Apache-2.0/BSD-family. See `package.json`.

@@ -21,7 +21,7 @@ import {
   buildAgents,
   type PassAddendum,
 } from "../src/include.js";
-import type { InstallEnv } from "../src/install.js";
+import { homeProfileLookup, type InstallEnv } from "../src/install.js";
 import { buildScanAgents } from "../src/setup/scanbuild.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
@@ -127,7 +127,7 @@ describe("the PR build does not change", () => {
 describe("the scan build carries it where the refuted findings came from", () => {
   it("in every variant of the five lenses, and in no other lens's", () => {
     const out = join(dir, "scan-agents");
-    buildScanAgents(sandbox, out, fixture, { env });
+    buildScanAgents(sandbox, out, fixture, homeProfileLookup(env));
     const agents = built(out);
     const seen = new Set<string>();
     for (const [name, body] of agents) {

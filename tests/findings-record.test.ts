@@ -12,8 +12,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
+import { enforceFindingsRecord, type FindingsCheckDeps } from "../src/findingscheck.js";
 import {
-  enforceFindingsRecord,
   findingsRecordWake,
   isConformant,
   isKnownVocabularyWord,
@@ -22,7 +22,6 @@ import {
   parseFindingsRecord,
   parsePriorRef,
   readFindingsRecord,
-  type FindingsCheckDeps,
 } from "../src/findingsrecord.js";
 import type { GateResult } from "../src/gate.js";
 import { RecheckWatcher } from "../src/recheck.js";

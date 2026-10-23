@@ -4,8 +4,8 @@
 // factories), so a route passes `sdk` only once it has one; a route that does
 // not refuses the key rather than quietly running something else.
 
-import type { EngineRuntimeKind, LensRuntimeKind } from "../config.js";
-import { ENGINE_RUNTIME_KINDS } from "../config.js";
+import type { EngineRuntimeKind, LensRuntimeKind } from "../reviewconfig.js";
+import { ENGINE_RUNTIME_KINDS } from "../reviewconfig.js";
 import type { Runtime } from "./port.js";
 
 /** Read a runtime kind. Throws on anything but `sdk`. */

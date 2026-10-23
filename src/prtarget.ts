@@ -2,8 +2,8 @@
 // scratch repository for a read-only review. The credential comes from the
 // local route's chain (src/ghcred.ts); it is handed to git through the
 // environment, never written into a config file or a URL.
-import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
+import { ExecError, nodeExec, runOrThrow, type ExecFn } from "./execfn.js";
 import {
   CREDENTIAL_SOURCES,
   resolveGithubCredential,
@@ -54,6 +54,7 @@ export function parsePrTarget(
 }
 
 export { originRepo };
+export type { CredentialSource };
 
 export interface PrFetchRequest {
   repo: string;
@@ -65,7 +66,18 @@ export interface PrFetchRequest {
   /** Where git fetches from: `<gitBase>/<owner>/<name>.git`. */
   gitBase?: string;
   apiBase?: string;
+  /** Stops the fetch: the PR read and the git commands in flight end, and the
+   * result is a refusal. */
+  signal?: AbortSignal;
+  /** Runs git (a test seam). Default: a child process, never blocking the
+   * event loop, so the caller's stop is heard while the fetch runs. */
+  exec?: ExecFn;
 }
+
+/** How long the network fetch of a PR's head and base may take. */
+const FETCH_TIMEOUT_MS = 30 * 60_000;
+/** How long a local git step of the fetch may take. */
+const LOCAL_GIT_TIMEOUT_MS = 2 * 60_000;
 
 export type PrFetchResult =
   | {
@@ -95,7 +107,9 @@ export async function fetchPrTarget(req: PrFetchRequest): Promise<PrFetchResult>
   };
   try {
     const res = await fetchFn(`${apiBase}/repos/${req.repo}/pulls/${req.number}`, {
-      signal: AbortSignal.timeout(60_000),
+      signal: req.signal
+        ? AbortSignal.any([req.signal, AbortSignal.timeout(60_000)])
+        : AbortSignal.timeout(60_000),
       headers: {
         authorization: `Bearer ${req.token}`,
         accept: "application/vnd.github+json",
@@ -126,12 +140,10 @@ export async function fetchPrTarget(req: PrFetchRequest): Promise<PrFetchResult>
 
   mkdirSync(req.scratchDir, { recursive: true });
   const header = `Authorization: Basic ${Buffer.from(`x-access-token:${req.token}`).toString("base64")}`;
-  const run = (args: string[], auth = false): string =>
-    execFileSync("git", args, {
+  const exec = req.exec ?? nodeExec;
+  const run = async (args: string[], timeoutMs: number, auth = false): Promise<void> => {
+    await runOrThrow(exec, "git", args, {
       cwd: req.scratchDir,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      maxBuffer: 256 * 1024 * 1024,
       env: {
         ...process.env,
         GIT_TERMINAL_PROMPT: "0",
@@ -143,10 +155,13 @@ export async function fetchPrTarget(req: PrFetchRequest): Promise<PrFetchResult>
             }
           : {}),
       },
-    }).trim();
+      timeoutMs,
+      ...(req.signal ? { signal: req.signal } : {}),
+    });
+  };
   try {
-    run(["init", "-q"]);
-    run(
+    await run(["init", "-q"], LOCAL_GIT_TIMEOUT_MS);
+    await run(
       [
         "fetch",
         "-q",
@@ -155,13 +170,20 @@ export async function fetchPrTarget(req: PrFetchRequest): Promise<PrFetchResult>
         `+refs/pull/${req.number}/head:${HEAD_REF}`,
         `+refs/heads/${baseRef}:${SCRATCH_BASE_REF}`,
       ],
+      FETCH_TIMEOUT_MS,
       true,
     );
-    run(["update-ref", "--no-deref", "HEAD", HEAD_REF]);
+    await run(["update-ref", "--no-deref", "HEAD", HEAD_REF], LOCAL_GIT_TIMEOUT_MS);
   } catch (err) {
-    const msg = String((err as { stderr?: unknown }).stderr ?? err)
-      .replaceAll(req.token, "***")
-      .slice(0, 300);
+    if (req.signal?.aborted) return { ok: false, error: `the fetch of ${label} was stopped` };
+    // a killed git (its time ran out) exits with no code of its own
+    const words =
+      err instanceof ExecError
+        ? err.result.code === -1
+          ? "git took too long and was stopped"
+          : err.result.stderr.trim() || err.message
+        : String(err);
+    const msg = words.replaceAll(req.token, "***").slice(0, 300);
     return { ok: false, error: `git could not fetch ${label}: ${msg}` };
   }
   const resolved = resolveBranch(req.scratchDir, SCRATCH_BASE_REF);

@@ -29,6 +29,7 @@ vi.stubEnv(
 const { runReviewCli, parseReviewArgs, REVIEW_USAGE, reviewHelp } =
   await import("../src/reviewcli.js");
 const { contextFor } = await import("../src/bench/runner.js");
+const { reviewMemoryPort } = await import("../src/reviewmemory.js");
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "review-cli-"));
@@ -143,6 +144,7 @@ function harness(o: {
     ecosystem: ctx.ecosystem,
     runtime: piCliRuntime({ bin: o.piBin }),
     runsDir: join(tmp, `runs-${Math.random().toString(36).slice(2)}`),
+    dryrunDir: join(tmp, `dryrun-${Math.random().toString(36).slice(2)}`),
     timeoutMs: 10 * 60_000,
   };
   return { deps, lines, asked, text: () => lines.join("\n") };
@@ -816,7 +818,7 @@ describe("qcr review --diff", () => {
   it("a saved destination that posts does not apply to a diff", async () => {
     const repo = mainRepo("diff-saved");
     setLimit(repo, 1000);
-    const { saveDefaultDestinations } = await import("../src/reviewdest.js");
+    const { saveDefaultDestinations } = await import("../src/reviewhome.js");
     saveDefaultDestinations(repo, ["pr"]);
     const h = piped({ repo, piBin: happyPi("diff-saved").bin }, DIFF);
     expect(await runReviewCli(["--diff", "-"], false, h.deps)).toBe(0);
@@ -1013,7 +1015,7 @@ describe("qcr review <PR>", () => {
     const repo = cwdRepo("pr-debug-nopost");
     setLimit(repo, 1000);
     const { saveDefaultDestinations, loadDefaultDestinations } =
-      await import("../src/reviewdest.js");
+      await import("../src/reviewhome.js");
     saveDefaultDestinations(repo, ["pr"]);
     const pi = happyPi("pr-debug-nopost");
     const { runOneShot } = await import("../src/oneshot.js");
@@ -1048,12 +1050,13 @@ describe("qcr review <PR>", () => {
 });
 
 describe("qcr review: memory when set up", () => {
-  const memStub = (text: string) => ({
-    assembler: {
-      pinnedHead: async () => ({ status: "read" as const, text: "PINNED-HEAD-MARK" }),
-      contextBlock: async () => ({ status: "read" as const, text }),
-    },
-  });
+  const memStub = (text: string) =>
+    reviewMemoryPort({
+      assembler: {
+        pinnedHead: async () => ({ status: "read" as const, text: "PINNED-HEAD-MARK" }),
+        contextBlock: async () => ({ status: "read" as const, text }),
+      },
+    });
 
   it("seeds the review prompt from a configured memory, with no notice", async () => {
     const repo = mkRepo("memseed");
@@ -1086,7 +1089,10 @@ describe("qcr review: memory when set up", () => {
     const t0 = Date.now();
     const code = await runReviewCli([], false, {
       ...h.deps,
-      memory: { assembler: { pinnedHead: () => hang, contextBlock: () => hang }, timeoutMs: 100 },
+      memory: reviewMemoryPort({
+        assembler: { pinnedHead: () => hang, contextBlock: () => hang },
+        timeoutMs: 100,
+      }),
     });
     expect(code).toBe(0);
     expect(Date.now() - t0).toBeLessThan(20_000);

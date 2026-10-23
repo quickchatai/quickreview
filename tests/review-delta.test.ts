@@ -27,9 +27,10 @@ vi.stubEnv(
 );
 
 const { runReviewCli } = await import("../src/reviewcli.js");
+const { reviewMemoryPort } = await import("../src/reviewmemory.js");
 const { contextFor } = await import("../src/bench/runner.js");
 const state = await import("../src/reviewstate.js");
-const { openReviewStore } = await import("../src/reviewstore.js");
+const { openReviewStore } = await import("../src/reviewhome.js");
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "review-delta-"));
@@ -146,6 +147,7 @@ function harness(repo: string, piBin: string) {
     ecosystem: ctx.ecosystem,
     runtime: piCliRuntime({ bin: piBin }),
     runsDir: join(tmp, `runs-${Math.random().toString(36).slice(2)}`),
+    dryrunDir: join(tmp, `dryrun-${Math.random().toString(36).slice(2)}`),
     timeoutMs: 10 * 60_000,
   };
   return { deps, lines, text: () => lines.join("\n") };
@@ -463,12 +465,12 @@ describe("qcr review: a delta review with memory", () => {
     expect(await runReviewCli([], false, harness(repo, pi.bin).deps)).toBe(0);
     smallPush(repo);
     const h = harness(repo, pi.bin);
-    const memory = {
+    const memory = reviewMemoryPort({
       assembler: {
         pinnedHead: async () => ({ status: "read" as const, text: "PINNED-HEAD-MARK" }),
         contextBlock: async () => ({ status: "read" as const, text: "CONTEXT-BLOCK-MARK" }),
       },
-    };
+    });
     expect(await runReviewCli([], true, { ...h.deps, memory })).toBe(0);
     const order = pi.order(2);
     expect(order).toMatch(/PRIOR FINDINGS TO VERIFY/);

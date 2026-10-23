@@ -21,6 +21,7 @@ import { DJANGO_ECOSYSTEM, NONE_ECOSYSTEM } from "../src/ecosystem.js";
 import { loadProfileAddenda } from "../src/profiles.js";
 import { renderRoundPrompt, roundTemplateFile } from "../src/templates.js";
 import type { RoundOrder, RoundType } from "../src/types.js";
+import { homeProfileLookup } from "../src/install.js";
 import { stageFixtureProfile } from "./helpers/tracked-profiles.js";
 
 const sandbox = join(import.meta.dirname, "..");
@@ -224,7 +225,10 @@ describe("ecosystem django keeps today's bytes", () => {
 describe.skipIf(!HAS_QC)("quickchat reviews lose nothing", () => {
   let bodies: Map<string, string>;
   beforeEach(() => {
-    bodies = build([...PASS_ADDENDA, ...loadProfileAddenda(sandbox, "quickchat")], "django");
+    bodies = build(
+      [...PASS_ADDENDA, ...loadProfileAddenda(sandbox, "quickchat", homeProfileLookup())],
+      "django",
+    );
   });
   afterEach(() => bodies.clear());
 

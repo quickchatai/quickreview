@@ -2,7 +2,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ReviewedHeadRow } from "./state.js";
 import { snapshotMark, standingReview, type StandingMarkSnapshot } from "./standing-review.js";
+import { postingMarker } from "./postingkey.js";
 import type { VerdictFile } from "./types.js";
+
+export { postingKeyAnyHead, postingKeyHead, postingMarker, roundPostingKey } from "./postingkey.js";
 
 export type PostingReceiptStatus = "prepared" | "confirmed" | "dryrun" | "deferred";
 
@@ -81,28 +84,6 @@ export interface GuardedNoopReceipt {
 
 /** Everything the round's receipt file can legitimately hold. */
 export type PostingOutcome = PostingReceipt | GuardedNoopReceipt;
-
-export function roundPostingKey(pr: number, roundNo: number, headSha: string): string {
-  return `v1:${pr}:${roundNo}:${headSha.toLowerCase()}`;
-}
-
-/** The head a `roundPostingKey` names, when the key is one for exactly this
- * PR and round; undefined for any other key. */
-export function postingKeyHead(key: string, pr: number, roundNo: number): string | undefined {
-  const prefix = `v1:${pr}:${roundNo}:`;
-  if (!key.startsWith(prefix)) return undefined;
-  const head = key.slice(prefix.length);
-  return head !== "" && !head.includes(":") ? head : undefined;
-}
-
-/** The head of any `roundPostingKey`, whatever PR and round it names. */
-export function postingKeyAnyHead(key: string): string {
-  return key.split(":").slice(3).join(":");
-}
-
-export function postingMarker(key: string): string {
-  return `<!-- qcr-post:${key} -->`;
-}
 
 export function postingReceiptPath(dir: string, pr: number, roundNo: number): string {
   return join(dir, `pr-${pr}-round-${roundNo}.json`);

@@ -13,17 +13,18 @@ import { DJANGO_ECOSYSTEM, type Ecosystem } from "./ecosystem.js";
 import {
   ensurePinnedHead,
   MEMORY_LESS,
+  renderBleedNote,
   renderContextBlockSection,
+  renderLessonsNote,
   renderPinnedHeadSection,
   type RoundMemory,
-} from "./memory/context.js";
-import { renderBleedNote, renderLessonsNote } from "./memory/delivery.js";
+} from "./memoryport.js";
 import { backtickFence, codePath, flatControls, promptTitle } from "./codespan.js";
 import { isSplitBaselineRow } from "./heuristics.js";
-import { renderEscalationPromptNote } from "./escalation.js";
+import { renderEscalationPromptNote } from "./escalationprompt.js";
 import { renderPostingPolicyNote } from "./postingpolicy.js";
 import { NEUTRAL_IDENTITY_VARS, substituteVariables, VARIABLE_RE } from "./include.js";
-import type { FileClass, RecheckOrder } from "./recheck.js";
+import type { FileClass, RecheckOrder } from "./recheckorder.js";
 import type { PassPlanEntry, RoundOrder, RoundType } from "./types.js";
 
 export type TemplateVars = Record<string, string>;

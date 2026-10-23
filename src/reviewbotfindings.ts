@@ -27,6 +27,8 @@ export async function fetchBotFindings(req: {
   token: string;
   fetchFn?: typeof fetch;
   apiBase?: string;
+  /** Stops the read: what was not read is not skipped. */
+  signal?: AbortSignal;
 }): Promise<BotFindings> {
   const fetchFn = req.fetchFn ?? fetch;
   const apiBase = req.apiBase ?? "https://api.github.com";
@@ -41,7 +43,9 @@ export async function fetchBotFindings(req: {
       const res = await fetchFn(
         `${apiBase}/repos/${req.repo}/pulls/${req.number}/comments?per_page=100&page=${page}`,
         {
-          signal: AbortSignal.timeout(30_000),
+          signal: req.signal
+            ? AbortSignal.any([req.signal, AbortSignal.timeout(30_000)])
+            : AbortSignal.timeout(30_000),
           headers: {
             authorization: `Bearer ${req.token}`,
             accept: "application/vnd.github+json",

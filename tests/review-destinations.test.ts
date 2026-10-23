@@ -27,9 +27,9 @@ vi.stubEnv(
 );
 
 const { runReviewCli, parseReviewArgs } = await import("../src/reviewcli.js");
-const { loadDefaultDestinations, saveDefaultDestinations, destinationChoices, FINDINGS_JSON_KEYS } =
-  await import("../src/reviewdest.js");
-const { openReviewStore } = await import("../src/reviewstore.js");
+const { destinationChoices, FINDINGS_JSON_KEYS } = await import("../src/reviewdest.js");
+const { loadDefaultDestinations, saveDefaultDestinations, openReviewStore } =
+  await import("../src/reviewhome.js");
 const { contextFor } = await import("../src/bench/runner.js");
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -153,6 +153,7 @@ function harness(o: {
     ecosystem: ctx.ecosystem,
     runtime: piCliRuntime({ bin: o.piBin }),
     runsDir: join(tmp, `runs-${Math.random().toString(36).slice(2)}`),
+    dryrunDir: join(tmp, `dryrun-${Math.random().toString(36).slice(2)}`),
     timeoutMs: 10 * 60_000,
   };
   return { deps, lines, asked, offered, text: () => lines.join("\n") };

@@ -223,6 +223,12 @@ const ALLOWLIST: AllowlistEntry[] = [
       "the legacy [slack] legacy_owner_slack_id alias — accepted on input, folded to [owner] slack_id",
   },
   {
+    path: "src/reviewconfig.ts",
+    tokens: ["owner_legacy"],
+    reason:
+      "the legacy [slack] legacy_owner_slack_id alias — the core config's parse accepts it on input and folds it to [owner] slack_id",
+  },
+  {
     path: "src/state.ts",
     tokens: ["owner_legacy"],
     reason: "foldSlackTier accepts the retired 'owner_legacy' tier spelling on input",

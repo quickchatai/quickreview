@@ -811,7 +811,7 @@ describe("decideFollowUp + StateStore.fullLookSinceFirst", () => {
     async () => {
       const fullPlan = buildPassPlan(baseCfg, []);
       const r = await decideFollowUp(
-        { cfg: baseCfg, store, prOwnedDelta: async () => okDelta([]) },
+        { cfg: baseCfg, history: store, prOwnedDelta: async () => okDelta([]) },
         {
           pr: 60,
           markHead: OLD,
@@ -907,7 +907,7 @@ describe("follow-up rounds: review fixes", () => {
         styleGuide: [] as string[],
         ciLinters: [],
       };
-      const seam = { cfg: baseCfg, store, prOwnedDelta: async () => okDelta([]) };
+      const seam = { cfg: baseCfg, history: store, prOwnedDelta: async () => okDelta([]) };
       const empty = await decideFollowUp(seam, {
         ...args,
         fullPlan: { pass_plan: [], addable_lenses: [], sweep_unswept: [] },

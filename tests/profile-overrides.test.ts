@@ -21,7 +21,12 @@ import { createHash } from "node:crypto";
 import { parse as parseToml } from "smol-toml";
 import { parseConfig } from "../src/config.js";
 import { buildAgents } from "../src/include.js";
-import { configHome, EXAMPLE_PROFILES, type InstallEnv } from "../src/install.js";
+import {
+  configHome,
+  EXAMPLE_PROFILES,
+  homeProfileLookup,
+  type InstallEnv,
+} from "../src/install.js";
 import { loadProfileEcosystem, loadProfileLensTuning } from "../src/profiles.js";
 import {
   assessOverrides,
@@ -90,7 +95,7 @@ describe("the customised mark", () => {
     const root = join(dir, "bare"); // no manifest, no agents: nothing to compare against
     mkdirSync(root);
     userProfile("plain", {});
-    const set = resolveOverrides({ root, profile: "plain", lookup: { env } });
+    const set = resolveOverrides({ root, profile: "plain", lookup: homeProfileLookup(env) });
     expect(set.layers.map((l) => l.origin)).toEqual(["user"]);
     expect(assessOverrides(root, set)).toEqual({ customised: false, overrides: [] });
     expect(overrideReader(root, set)).toBeUndefined();
@@ -99,7 +104,7 @@ describe("the customised mark", () => {
   it("one override gives customised = true and names the file", () => {
     const root = fakeRoot();
     userProfile("mine", { "agents/pass-security.md": "---\nname: pass-security\n---\nmine\n" });
-    const set = resolveOverrides({ root, profile: "mine", lookup: { env } });
+    const set = resolveOverrides({ root, profile: "mine", lookup: homeProfileLookup(env) });
     const c = assessOverrides(root, set);
     expect(c.customised).toBe(true);
     expect(c.overrides).toEqual([
@@ -126,14 +131,17 @@ describe("the customised mark", () => {
     userProfile("copy", {
       "agents/pass-security.md": readFileSync(join(root, "agents", "pass-security.md"), "utf8"),
     });
-    const set = resolveOverrides({ root, profile: "copy", lookup: { env } });
+    const set = resolveOverrides({ root, profile: "copy", lookup: homeProfileLookup(env) });
     expect(assessOverrides(root, set)).toEqual({ customised: false, overrides: [] });
   });
 
   it("a file of ours (not a seed) is compared by its own hash", () => {
     const root = fakeRoot();
     userProfile("mine", { "agents/pass-intent.md": "---\nname: pass-intent\n---\nmine\n" });
-    const c = assessOverrides(root, resolveOverrides({ root, profile: "mine", lookup: { env } }));
+    const c = assessOverrides(
+      root,
+      resolveOverrides({ root, profile: "mine", lookup: homeProfileLookup(env) }),
+    );
     expect(c.overrides.map((o) => [o.path, o.seed])).toEqual([["agents/pass-intent.md", false]]);
   });
 
@@ -149,14 +157,17 @@ describe("the customised mark", () => {
       join(root, "seed-manifest.json"),
       JSON.stringify({ files: { "agents/pass-security.md": sha("something else") } }),
     );
-    const c = assessOverrides(root, resolveOverrides({ root, profile: "mine", lookup: { env } }));
+    const c = assessOverrides(
+      root,
+      resolveOverrides({ root, profile: "mine", lookup: homeProfileLookup(env) }),
+    );
     expect(c.customised).toBe(true);
   });
 
   it("a file with no shipped namesake replaces nothing and is reported", () => {
     const root = fakeRoot();
     userProfile("mine", { "agents/pass-invented.md": "---\nname: pass-invented\n---\nx\n" });
-    const set = resolveOverrides({ root, profile: "mine", lookup: { env } });
+    const set = resolveOverrides({ root, profile: "mine", lookup: homeProfileLookup(env) });
     expect(set.ignored.join("\n")).toMatch(/agents\/pass-invented\.md.*no shipped file/);
     expect(assessOverrides(root, set).customised).toBe(false);
     expect(overrideReader(root, set)).toBeUndefined();
@@ -165,7 +176,7 @@ describe("the customised mark", () => {
   it("a user replacement over the size cap is reported, not dropped silently", () => {
     const root = fakeRoot();
     userProfile("mine", { "agents/pass-security.md": "x".repeat(256 * 1024 + 1) });
-    const set = resolveOverrides({ root, profile: "mine", lookup: { env } });
+    const set = resolveOverrides({ root, profile: "mine", lookup: homeProfileLookup(env) });
     expect(set.ignored.join("\n")).toMatch(/mine\/agents\/pass-security\.md: over the size cap/);
     expect(assessOverrides(root, set).customised).toBe(false);
   });
@@ -204,7 +215,11 @@ describe("agents built from a replacement", () => {
         "\n---\nHOUSE RULE: profile body marker.\n",
       ),
     });
-    const set = resolveOverrides({ root: REPO_ROOT, profile: "mine", lookup: { env } });
+    const set = resolveOverrides({
+      root: REPO_ROOT,
+      profile: "mine",
+      lookup: homeProfileLookup(env),
+    });
     const read = overrideReader(REPO_ROOT, set)!;
     const stock = build(join(dir, "stock"));
     const custom = build(join(dir, "custom"), read);
@@ -224,7 +239,11 @@ describe("agents built from a replacement", () => {
         "tools: read, bash, subagent, launch_plan",
       ),
     });
-    const set = resolveOverrides({ root: REPO_ROOT, profile: "mine", lookup: { env } });
+    const set = resolveOverrides({
+      root: REPO_ROOT,
+      profile: "mine",
+      lookup: homeProfileLookup(env),
+    });
     const out = build(join(dir, "custom"), overrideReader(REPO_ROOT, set)!);
     for (const [f, text] of Object.entries(out)) {
       if (!f.startsWith("pass-security--")) continue;
@@ -382,7 +401,7 @@ describe("the repo profile is read from the base commit", () => {
     const both = resolveOverrides({
       root,
       profile: "mine",
-      lookup: { env },
+      lookup: homeProfileLookup(env),
       repo: { gitDir: repo, baseRef: base, destDir: join(dir, "r2") },
     });
     const c = assessOverrides(root, both);
@@ -401,7 +420,7 @@ describe("the repo profile is read from the base commit", () => {
     const set = resolveOverrides({
       root,
       profile: "",
-      lookup: { env },
+      lookup: homeProfileLookup(env),
       repo: { gitDir: repo, baseRef: base, destDir: join(dir, "r1") },
     });
     // no named profile: the repo's tuning and ecosystem alone
@@ -410,8 +429,8 @@ describe("the repo profile is read from the base commit", () => {
     );
     expect(loadProfileEcosystem(root, "", set.lookup)).toBe("django");
     // without the repo layer, nothing
-    expect(loadProfileLensTuning(root, "", { env })).toEqual({});
-    expect(loadProfileEcosystem(root, "", { env })).toBe("none");
+    expect(loadProfileLensTuning(root, "", homeProfileLookup(env))).toEqual({});
+    expect(loadProfileEcosystem(root, "", homeProfileLookup(env))).toBe("none");
     // a named profile that sets the same key wins
     userProfile("mine", {});
     writeFileSync(
@@ -421,7 +440,7 @@ describe("the repo profile is read from the base commit", () => {
     const layered = resolveOverrides({
       root,
       profile: "mine",
-      lookup: { env },
+      lookup: homeProfileLookup(env),
       repo: { gitDir: repo, baseRef: base, destDir: join(dir, "r2") },
     });
     expect(loadProfileLensTuning(root, "mine", layered.lookup)["pass-security"]?.emphasis).toBe(

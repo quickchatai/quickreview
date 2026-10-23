@@ -145,11 +145,13 @@ function lazyRunner(
 async function interactiveHost(
   agentDir: string,
   env: Readonly<Record<string, string | undefined>>,
+  homeDir: string | undefined,
 ): Promise<PiHost> {
   const auth = engineCredentials({ srcDir: agentDir, needMs: LOGIN_WINDOW_MS });
   return PiHost.create({
     agentDir,
     ownsProcess: false,
+    ...(homeDir !== undefined ? { homeDir } : {}),
     credentials: auth.credentials,
     settings: agentDirSettings(agentDir),
     configureModels: async (runtime) => {
@@ -182,20 +184,32 @@ export function interactiveLensBoard(
 ): InteractiveLens {
   const runner = lazyRunner(env, cwd, makeHost, adjust);
   const wave = new LensWave();
-  return { factory: createLens({ runner, wave, env }), runner, wave };
+  return { factory: createLens({ runner, wave, env, cwd }), runner, wave };
 }
 
 export function interactiveLens(
   env: Readonly<Record<string, string | undefined>>,
   cwd: () => string,
   makeHost: (agentDir: string) => Promise<PiHost>,
+  /** Where the runner's warnings go (`[lens] …`), one line each: the host's.
+   * Omitted: nowhere. */
+  warn?: (line: string) => void,
 ): ExtensionFactory {
-  return interactiveLensBoard(env, cwd, makeHost).factory;
+  return interactiveLensBoard(env, cwd, makeHost, lensWarnTo(warn)).factory;
 }
 
-/** The host an interactive pi's lens passes run on, from its env. */
+/** A runner config adjustment that sends its warnings to `warn`, prefixed. */
+export function lensWarnTo(
+  warn: ((line: string) => void) | undefined,
+): (config: LensRunConfig) => LensRunConfig {
+  return (c) => (warn ? { ...c, warn: (m) => warn(`[lens] ${m}`) } : c);
+}
+
+/** The host an interactive pi's lens passes run on, from its env. `homeDir` is
+ * the user's home the host resolved (the tool fence keeps its `.pi` out). */
 export function interactiveHostFor(
   env: Readonly<Record<string, string | undefined>>,
+  homeDir?: string,
 ): (agentDir: string) => Promise<PiHost> {
-  return (dir) => interactiveHost(dir, env);
+  return (dir) => interactiveHost(dir, env, homeDir);
 }

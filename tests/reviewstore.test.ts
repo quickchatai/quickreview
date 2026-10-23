@@ -16,8 +16,12 @@ import {
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openReviewStore, repoKey } from "../src/reviewstore.js";
-import { loadDefaultDestinations, saveDefaultDestinations } from "../src/reviewdest.js";
+import { repoKey } from "../src/reviewstore.js";
+import {
+  loadDefaultDestinations,
+  openReviewStore,
+  saveDefaultDestinations,
+} from "../src/reviewhome.js";
 import { branchTargetKey, emptyState, loadState, saveState } from "../src/reviewstate.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "reviewstore-"));

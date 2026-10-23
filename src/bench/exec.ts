@@ -9,14 +9,9 @@ import { spawn } from "node:child_process";
  * shape of. */
 export const HARNESS_TIMEOUT_MIN = 30;
 
-/** Git without any system or global config and never prompting: every
- * environment the bench hands a reviewer or a git call carries it. */
-export const GIT_ISOLATION_ENV = {
-  GIT_CONFIG_NOSYSTEM: "1",
-  GIT_CONFIG_SYSTEM: "/dev/null",
-  GIT_CONFIG_GLOBAL: "/dev/null",
-  GIT_TERMINAL_PROMPT: "0",
-} as const;
+/** Git without any system or global config and never prompting (core: the
+ * round hands it to its reviewer, src/envstrip.ts). */
+export { GIT_ISOLATION_ENV } from "../envstrip.js";
 
 export interface ExecResult {
   code: number;

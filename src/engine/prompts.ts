@@ -1,13 +1,13 @@
 // The one-shot review's prompts: the first round's and a follow-up round's
 // order and system prompt for a target, rendered by the production renderers
-// (dispatch.ts buildRoundOrder, templates.ts). Pure: the files the order names
+// (planner.ts buildRoundOrder, templates.ts). Pure: the files the order names
 // are returned for the runner to write; nothing here runs a session.
 //
 // Shared by the benchmark (src/bench/runner.ts), `qcr review` and the engine.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Config } from "../config.js";
+import type { CoreConfig } from "../reviewconfig.js";
 import {
   buildPassPlan,
   buildRoundOrder,
@@ -18,21 +18,20 @@ import {
   type FollowUpDecision,
   type FollowUpFullReason,
   type PassPlan,
-} from "../dispatch.js";
+} from "../planner.js";
 import { parseLedgerCarry, settledFromLedger } from "../ledgercarry.js";
 import type { CiLinter } from "../lintconfig.js";
 import type { PriorFindingsList } from "../priorfindings.js";
 import type { Ecosystem } from "../ecosystem.js";
-import type { PrFileEntry } from "../github.js";
+import type { PrFileEntry } from "../githubcore.js";
 import { CONTEXT_PACK_FILE, readWorktreeFileForPack, renderContextPack } from "../contextpack.js";
 import { identityVars } from "../include.js";
 import { lensRuntimeOf } from "../launchvocab.js";
 import { lensEnabled } from "../lenstuning.js";
-import { MEMORY_LESS, type RoundMemory } from "../memory/context.js";
+import { MEMORY_LESS, type RoundMemory } from "../memoryport.js";
 import { renderPassTasks } from "../passtasks.js";
 import { loadProfileHeuristics, type ProfileLookup } from "../profiles.js";
 import { firstPartyDirectiveFiles } from "../severity.js";
-import type { PrStateRow } from "../state.js";
 import {
   renderConversationSystemPrompt,
   renderGateNotes,
@@ -43,7 +42,7 @@ import {
 import type { PassPlanEntry, RoundOrder } from "../types.js";
 import { findCiLinters } from "../lintconfig.js";
 import { findStyleGuide } from "../styleguide.js";
-import { benchAppendix } from "../bench/aacr.js";
+import { benchAppendix } from "./caseout.js";
 
 /** Cut a PR body to a UTF-8 byte budget. The body is the one unbounded input
  * in the order, and it appears twice (the intent note and the override). */
@@ -58,7 +57,7 @@ export function boundBody(body: string | null, maxBytes = 20_000): string | null
 
 /** The PR's first-party agent-directive files (src/severity.ts), which the
  * round order names — the same for a first round and a follow-up. */
-export function directiveFilesOf(cfg: Config, files: readonly PrFileEntry[]): string[] {
+export function directiveFilesOf(cfg: CoreConfig, files: readonly PrFileEntry[]): string[] {
   return firstPartyDirectiveFiles(files, cfg.review.directives);
 }
 
@@ -67,7 +66,7 @@ export function directiveFilesOf(cfg: Config, files: readonly PrFileEntry[]): st
  * where the glue looks for a task file's pack), and the order the task files
  * render from, which then points at it. Off ⇒ the order unchanged, no file. */
 export function benchContextPack(
-  cfg: Config,
+  cfg: CoreConfig,
   built: RoundOrder,
   files: PrFileEntry[],
   tree: string,
@@ -131,7 +130,7 @@ export interface OneShotPrompts {
 /** The first round's order + system prompt for a target: production renderers. */
 export function renderOneShotPrompts(args: {
   root: string;
-  cfg: Config;
+  cfg: CoreConfig;
   ecosystem: Ecosystem;
   target: OneShotTarget;
   tree: string;
@@ -157,13 +156,7 @@ export function renderOneShotPrompts(args: {
   const title = target.title ?? target.fallbackTitle ?? `${target.repo}#${target.number}`;
   const body = boundBody(target.body);
   const directiveFiles = directiveFilesOf(cfg, args.files);
-  const row = {
-    number: target.number,
-    state: "reviewing",
-    head_sha: target.headSha,
-    title,
-    author: "",
-  } as unknown as PrStateRow;
+  const row = { number: target.number, head_sha: target.headSha, title };
   const built = buildRoundOrder({
     cfg,
     row,
@@ -286,7 +279,7 @@ export interface FollowUpOneShotPrompts extends OneShotPrompts {
 
 export interface FollowUpOneShotArgs {
   root: string;
-  cfg: Config;
+  cfg: CoreConfig;
   ecosystem: Ecosystem;
   target: OneShotTarget;
   tree: string;
@@ -337,13 +330,7 @@ export function renderFollowUpOneShotPrompts(args: FollowUpOneShotArgs): FollowU
   const title = target.title ?? target.fallbackTitle ?? `${target.repo}#${target.number}`;
   const body = boundBody(target.body);
   const directiveFiles = directiveFilesOf(cfg, args.files);
-  const row = {
-    number: target.number,
-    state: "reviewing",
-    head_sha: target.headSha,
-    title,
-    author: "",
-  } as unknown as PrStateRow;
+  const row = { number: target.number, head_sha: target.headSha, title };
   const heuristics = loadProfileHeuristics(root, cfg.review.profile, args.profileLookup);
   const styleGuide = lensEnabled(cfg.lenses, "pass-style", cfg.review.style_lens)
     ? findStyleGuide(tree)

@@ -27,6 +27,11 @@
 //
 // Stopping: every session is in the live registry (livesessions.ts), which the
 // detached driver's signal handler aborts and disposes before it exits.
+//
+// One runtime hosts one review at a time: its lens board and its lens runner
+// are the run's (the round clears the board when it starts), so a caller that
+// runs reviews side by side builds a runtime per run (src/reviewapi.ts asks
+// for one per run) and disposes it after.
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { lensRunConfigFromEnv } from "../../extensions/lens.js";
@@ -39,6 +44,7 @@ import { LensWave, type EngineRoute, type EngineRouteRuntime } from "./lens/wave
 import { PiHost, type PiHostOptions } from "./pisdk.js";
 import { credentialPaths, loginSourceDirs } from "./toolfence.js";
 import { checkToolUid, toolIdsOf } from "./tooluid.js";
+import type { BudgetReason } from "./budget.js";
 import type { Runtime, RuntimeSession, SessionSpec } from "./port.js";
 import { BASH_ENV_ALLOW, reviewerStub, roundSdkExtras, type RoundLensTools } from "./roundsdk.js";
 import { sdkRuntime, type SessionExtras } from "./sdkruntime.js";
@@ -67,10 +73,23 @@ export interface ReviewSdkOptions {
     plannedWave: boolean;
     config?: (host: PiHost, spec: SessionSpec) => LensRunConfig;
   };
+  /** The last resort of a turn its abort and dispose did not end
+   * (src/engine/budget.ts). `qcr review` and the bench own their process and
+   * pass one that exits it. Omitted: the process is left to its owner. */
+  backstop?: (reason: BudgetReason) => void;
+  /** Where the round's diagnostics go, one line each: a lens runner's warnings
+   * (`[lens] …`, unless its config has a `warn` of its own) and ledger-pin's.
+   * Omitted: nowhere. */
+  warn?: (line: string) => void;
+  /** The user's home, resolved by the host: the tool fence keeps its `.pi` out
+   * and expands a tool's `~` against it (PiHostOptions.homeDir). */
+  homeDir?: string;
 }
 
-/** The review SDK runtime: a runtime, carrying the engine route when it has one. */
-export type ReviewSdkRuntime = EngineRouteRuntime;
+/** The review SDK runtime: a runtime, carrying the engine route when it has one.
+ * `dispose` releases every host it built (their sessions and in-memory logins);
+ * a later session builds a host again. */
+export type ReviewSdkRuntime = EngineRouteRuntime & { dispose(): Promise<void> };
 
 /** The lens runner's config on the review route's host: the passes read the agent
  * dir's agents, carry the reviewer stub (D34) and the same bash env allowlist as
@@ -101,11 +120,17 @@ const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
  */
 export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRuntime {
   const procEnv = options.processEnv ?? process.env;
-  const hosts = new Map<string, Promise<Runtime>>();
+  const hosts = new Map<string, Promise<{ rt: Runtime; host: PiHost }>>();
   const engine = options.engine;
   const wave = engine?.wave ?? new LensWave();
   // The tools of the host built last: one agent dir per review, so one.
   let lens: EngineLensTools | undefined;
+
+  /** The runner's config with the host's warn sink, unless it has its own. */
+  function withWarn(config: LensRunConfig): LensRunConfig {
+    const warn = options.warn;
+    return config.warn || !warn ? config : { ...config, warn: (m) => warn(`[lens] ${m}`) };
+  }
 
   function lensOf(spec: SessionSpec, host: PiHost): RoundLensTools {
     if (options.lens === undefined)
@@ -113,15 +138,13 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRunti
     return options.lens(spec, host);
   }
 
-  function runtimeFor(spec: SessionSpec): Promise<Runtime> {
+  async function runtimeFor(spec: SessionSpec): Promise<Runtime> {
     const agentDir = spec.env[AGENT_DIR_ENV];
     if (agentDir === undefined || !isAbsolute(agentDir))
-      return Promise.reject(
-        new Error(`the review's spec names no absolute ${AGENT_DIR_ENV}: ${String(agentDir)}`),
-      );
+      throw new Error(`the review's spec names no absolute ${AGENT_DIR_ENV}: ${String(agentDir)}`);
     let built = hosts.get(agentDir);
     if (built === undefined) {
-      built = (async (): Promise<Runtime> => {
+      built = (async (): Promise<{ rt: Runtime; host: PiHost }> => {
         const auth: EngineAuth = engineCredentials({
           srcDir: agentDir,
           needMs: spec.limits.timeoutMs,
@@ -130,6 +153,7 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRunti
         const hostOptions: PiHostOptions = {
           agentDir,
           ownsProcess: true,
+          ...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
           // The model's bash and every lens session's, as the tool uid (D32).
           ...(ids !== null && !("refused" in ids) ? { toolUid: ids } : {}),
           // The round's agent dir is a copy: the login it was copied from (the
@@ -143,23 +167,34 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRunti
         };
         const host = await (options.makeHost ?? PiHost.create)(hostOptions);
         const tools = engine
-          ? engineLensTools((engine.config ?? engineLensConfig)(host, spec), wave)
+          ? engineLensTools(withWarn((engine.config ?? engineLensConfig)(host, spec)), wave)
           : undefined;
         if (tools) lens = tools;
-        return sdkRuntime(host, {
+        const rt = sdkRuntime(host, {
           extras:
             options.extras ??
             ((s) =>
               roundSdkExtras({
                 lens: tools ?? lensOf(s, host),
+                ...(options.warn ? { log: options.warn } : {}),
               })(s)),
+          ...(options.backstop ? { backstop: options.backstop } : {}),
         });
+        return { rt, host };
       })();
       // A host that failed to build is not kept: the next ask tries again.
       built.catch(() => hosts.delete(agentDir));
       hosts.set(agentDir, built);
     }
-    return built;
+    return (await built).rt;
+  }
+
+  async function dispose(): Promise<void> {
+    const all = [...hosts.values()];
+    hosts.clear();
+    lens = undefined;
+    for (const b of await Promise.allSettled(all))
+      if (b.status === "fulfilled") b.value.host.dispose();
   }
 
   async function open(
@@ -187,6 +222,7 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRunti
   return {
     create: (spec) => open(spec, (rt) => rt.create(spec)),
     resume: (file, spec) => open(spec, (rt) => rt.resume(file, spec)),
+    dispose,
     ...(route ? { engineLens: route } : {}),
   };
 }

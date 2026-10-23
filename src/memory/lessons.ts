@@ -40,12 +40,13 @@
 import { canonicalLensIds } from "../lensids.js";
 import { ALL_PASSES } from "../passes.js";
 import { IMPORT_TAG, parseEventTags, parseHashTags } from "./eventtags.js";
+import { LESSON_KINDS, type LessonKind } from "../memoryport.js";
 
 /** The hash tag a typed lesson's header opens with. */
 export const LESSON_TAG = "lesson";
 
-export const LESSON_KINDS = ["repo-fact", "look-for", "dont-raise", "convention"] as const;
-export type LessonKind = (typeof LESSON_KINDS)[number];
+// The kinds are the delivery's vocabulary too (src/memoryport.ts).
+export { LESSON_KINDS, type LessonKind };
 
 /** A lesson's class: the slug the learner clusters candidates by
  * (`baseline.authz`, `missed.backend`) and a lesson names to cover them. */

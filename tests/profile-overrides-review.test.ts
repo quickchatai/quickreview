@@ -28,6 +28,7 @@ vi.stubEnv(
 );
 
 const { runReviewCli } = await import("../src/reviewcli.js");
+const { homeProfilePlaces } = await import("../src/homes.js");
 const { contextFor, benchCustomisation, buildBenchAgents, runFingerprint } =
   await import("../src/bench/runner.js");
 
@@ -140,11 +141,13 @@ function harness(repo: string, piBin: string, profile = "") {
     out: (l: string) => lines.push(l),
     confirm: null,
     root,
+    profileHomes: homeProfilePlaces(),
     agentDir: join(tmp, "agent"),
     cfg: { ...ctx.cfg, review: { ...ctx.cfg.review, profile } },
     ecosystem: ctx.ecosystem,
     runtime: piCliRuntime({ bin: piBin }),
     runsDir: join(tmp, `runs-${Math.random().toString(36).slice(2)}`),
+    dryrunDir: join(tmp, `dryrun-${Math.random().toString(36).slice(2)}`),
     timeoutMs: 10 * 60_000,
     warn: () => {},
   };

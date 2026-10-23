@@ -283,11 +283,11 @@ describe("the posting module stays out of the daemon", () => {
     expect(text).not.toMatch(/\/reviews`,\s*\{\s*method/);
   });
 
-  it("only the review CLI imports it", () => {
+  it("only the local review route (src/reviewapi.ts) imports it", () => {
     const importers = readdirSync(join(ROOT, "src"))
       .filter((f) => f.endsWith(".ts") && f !== "reviewpost.ts")
       .filter((f) => /from "\.\/reviewpost\.js"/.test(readFileSync(join(ROOT, "src", f), "utf8")));
-    expect(importers).toEqual(["reviewcli.ts"]);
+    expect(importers).toEqual(["reviewapi.ts"]);
   });
 
   it("is not reachable from the daemon's files", () => {

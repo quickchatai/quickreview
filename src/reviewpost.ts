@@ -121,6 +121,8 @@ export function localPostGate(o: {
   token: string;
   fetchFn?: typeof fetch;
   apiBase?: string;
+  /** Hears the gate's loud line. Absent: the gate says nothing. */
+  log?: (msg: string, extra?: unknown) => void;
 }): MutationGate {
   const fetchFn = o.fetchFn ?? fetch;
   const api = o.apiBase ?? "https://api.github.com";
@@ -137,7 +139,10 @@ export function localPostGate(o: {
     }
     return res.json().catch(() => ({}));
   };
-  return new MutationGate(o.dryRun, o.dryrunDir, executor);
+  const gate = new MutationGate(o.dryRun, o.dryrunDir, executor);
+  // The gate's loud line (app-self-config executions), where the host says.
+  if (o.log) gate.setLog(o.log);
+  return gate;
 }
 
 const githubHeaders = (token: string) => ({

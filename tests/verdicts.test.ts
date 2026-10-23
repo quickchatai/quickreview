@@ -33,7 +33,7 @@ import {
   VerdictWatcher,
   type VerdictAdapter,
 } from "../src/verdicts.js";
-import { retryWithheldApproval } from "../src/cigate.js";
+import { retryWithheldApproval } from "../src/ciretry.js";
 import { reconcileOrphanedRounds } from "../src/reconcile.js";
 import { TranscriptIndex } from "../src/transcriptindex.js";
 import { MemoryTranscriptFs } from "./helpers/memory-transcript-fs.js";

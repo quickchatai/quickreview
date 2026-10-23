@@ -4,7 +4,7 @@
 // context block). Memory is a seasoning, never a precondition: not set up,
 // unreachable, slow or throwing, the review runs without it and says so once.
 import { join } from "node:path";
-import { openVikingBaseUrl, type Config } from "./config.js";
+import { loadConfig, openVikingBaseUrl, type Config } from "./config.js";
 import {
   MEMORY_LESS,
   assembleRoundMemory,
@@ -12,8 +12,8 @@ import {
   roundContextQuery,
   type ContextAssembler,
   type ContextQueryFile,
-  type RoundMemory,
 } from "./memory/context.js";
+import { MEMORY_NOT_SET_UP, type ReviewMemory, type ReviewMemoryPort } from "./memoryport.js";
 import { OV_REVIEWER_KEY_SECRET } from "./memory/ovsession.js";
 import { OpenVikingClient, keyFromFile } from "./openviking/client.js";
 import { openVikingContextAssembler } from "./openviking/context.js";
@@ -30,14 +30,7 @@ export interface ReviewMemorySource {
   maxTokens?: number;
 }
 
-export interface ReviewMemory {
-  memory: RoundMemory;
-  /** The prompt carries something from memory. */
-  used: boolean;
-  /** The one line saying the review ran without (all of) memory; null when it
-   * answered whole. */
-  notice: string | null;
-}
+export type { ReviewMemory };
 
 /** The real memory of this install, or null when it is switched off or has no
  * reviewer key on disk. Constructing it touches no network. */
@@ -69,6 +62,13 @@ export function openReviewMemory(cfg: Config): ReviewMemorySource | null {
   };
 }
 
+/** `openReviewMemory` for the install config at `path`: the memory sections
+ * belong to the whole file, not to the review's own (src/reviewconfig.ts),
+ * so the file is read whole, as the daemon reads it. */
+export function openReviewMemoryAt(path: string): ReviewMemorySource | null {
+  return openReviewMemory(loadConfig(path));
+}
+
 /** Seed one review from memory. Total: it never throws and never takes longer
  * than the source's timeout (plus a small grace). */
 export async function seedReviewMemory(
@@ -76,12 +76,7 @@ export async function seedReviewMemory(
   input: { title: string; files: readonly ContextQueryFile[] },
   log?: (line: string) => void,
 ): Promise<ReviewMemory> {
-  if (!source?.assembler)
-    return {
-      memory: MEMORY_LESS,
-      used: false,
-      notice: "memory: not set up on this install — reviewing without it",
-    };
+  if (!source?.assembler) return { ...MEMORY_NOT_SET_UP };
   const timeoutMs = source.timeoutMs ?? REVIEW_MEMORY_TIMEOUT_MS;
   const without = (why: string): ReviewMemory => ({
     memory: MEMORY_LESS,
@@ -115,4 +110,20 @@ export async function seedReviewMemory(
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+/** `source` as the port `qcr review` takes (src/memoryport.ts). */
+export function reviewMemoryPort(source: ReviewMemorySource | null | undefined): ReviewMemoryPort {
+  return { seed: (input, log) => seedReviewMemory(source, input, log) };
+}
+
+/** The install's memory as `qcr review` takes it: what `cmdReview`'s host
+ * injects (src/cli.ts). */
+export function openReviewMemoryPort(cfg: Config): ReviewMemoryPort {
+  return reviewMemoryPort(openReviewMemory(cfg));
+}
+
+/** The port over the config file at `path` (`qcr review`'s memory). */
+export function openReviewMemoryPortAt(path: string): ReviewMemoryPort {
+  return reviewMemoryPort(openReviewMemoryAt(path));
 }

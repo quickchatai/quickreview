@@ -13,6 +13,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseConfig, sandboxRoot, validateSlackConfig } from "./config.js";
+import { homeProfileLookup } from "./install.js";
 import {
   loadProfileAddenda,
   loadProfileEcosystem,
@@ -67,9 +68,11 @@ export function checkConfigHome(opts: { home: string; root?: string }): ConfigCh
 
   // Only this home's profiles/ and the image's generic examples are searched:
   // an XDG home that does not exist keeps the operator's own out of the answer.
-  const lookup: ProfileLookup = {
-    env: { ...process.env, QCR_CONFIG: file, XDG_CONFIG_HOME: join(home, ".no-xdg-home") },
-  };
+  const lookup: ProfileLookup = homeProfileLookup({
+    ...process.env,
+    QCR_CONFIG: file,
+    XDG_CONFIG_HOME: join(home, ".no-xdg-home"),
+  });
   const loaders: Array<[string, () => unknown]> = [
     ["addenda", () => loadProfileAddenda(root, profile, lookup)],
     ["ecosystem", () => loadProfileEcosystem(root, profile, lookup)],

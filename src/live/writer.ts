@@ -273,6 +273,7 @@ export interface LiveWriterOptions {
   /** Milliseconds; default the wall clock. */
   now?: () => number;
   coalesceMs?: number;
+  /** A write that failed (never fatal): the host's sink. Omitted: nowhere. */
   warn?: (message: string) => void;
   /** The environment a launch plan resolves its task dirs against (the
    * session's, not this process's). */
@@ -593,7 +594,7 @@ export function createLiveWriter(options: LiveWriterOptions): LiveWriter {
   const resolved = {
     now: options.now ?? Date.now,
     coalesceMs: options.coalesceMs ?? LIVE_COALESCE_MS,
-    warn: options.warn ?? ((m: string): void => console.error(`[live] ${m}`)),
+    warn: options.warn ?? ((): void => {}),
     env: options.env ?? process.env,
     ...(options.launchExecutions ? { launchExecutions: options.launchExecutions } : {}),
   };

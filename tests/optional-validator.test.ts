@@ -18,9 +18,9 @@ import { whyJson } from "../src/cli.js";
 import { parseConfig, type Config } from "../src/config.js";
 import { buildPassPlan, buildRoundOrder, validatorTier } from "../src/dispatch.js";
 import { NONE_ECOSYSTEM } from "../src/ecosystem.js";
+import { enforceFindingsRecord } from "../src/findingscheck.js";
 import {
   DOUBT_WORDS,
-  enforceFindingsRecord,
   findingsRecordFile,
   isConformant,
   normalizeDisposition,
@@ -28,7 +28,7 @@ import {
 } from "../src/findingsrecord.js";
 import type { PrFileEntry } from "../src/github.js";
 import { PASS_ADDENDA, buildAgents } from "../src/include.js";
-import { configHome, type InstallEnv } from "../src/install.js";
+import { configHome, homeProfileLookup, type InstallEnv } from "../src/install.js";
 import { applyProfileTuning, lensModelOverrides } from "../src/lenstuning.js";
 import { loadProfileLensTuning } from "../src/profiles.js";
 import { StateStore, type PrStateRow } from "../src/state.js";
@@ -43,7 +43,7 @@ const fixture: Config = parseConfig(
 
 let dir: string;
 let env: InstallEnv;
-const lookup = () => ({ env, log: () => {} });
+const lookup = () => homeProfileLookup(env);
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "qcr-optional-validator-"));

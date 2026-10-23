@@ -235,13 +235,10 @@ export function createFindingClusters(
   };
 }
 
+/** The pi that loads this file by path is the host: a pi without
+ * `registerTool` gets no tools (the core prints nothing of its own). */
 const activate = (pi: ExtensionAPI): void => {
-  if (typeof pi.registerTool !== "function") {
-    console.error(
-      "finding-clusters: pi.registerTool unavailable — cluster_findings not registered.",
-    );
-    return;
-  }
+  if (typeof pi.registerTool !== "function") return;
   createFindingClusters()(pi);
 };
 

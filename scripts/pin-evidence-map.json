@@ -67,7 +67,7 @@
     {
       "id": "usage-and-price",
       "assumes": "A message's usage.cost.total is a number, and a subagent result's usage is the child's sum; the codex price list matches pi's catalog.",
-      "files": { "src/bench/cost.ts": 1 },
+      "files": { "src/pricing.ts": 1 },
       "signal": {
         "source": "session-jsonl",
         "kind": "jsonl",
@@ -78,7 +78,7 @@
     {
       "id": "thinking-levels",
       "assumes": "pi's thinking levels and the model's top level (effort_max).",
-      "files": { "src/config.ts": 2 },
+      "files": { "src/reviewconfig.ts": 2 },
       "signal": {
         "source": "session-jsonl",
         "kind": "jsonl",
@@ -254,6 +254,16 @@
         "source": "none",
         "kind": "gap",
         "needs": "a companion transcript showing a /skill: command resolving; no extract field names it yet"
+      }
+    },
+    {
+      "id": "abort-before-turn-controller",
+      "assumes": "AgentSession.abort() on a session whose prompt was sent but whose agent has not yet made the turn's abort controller ends that turn, rather than being dropped.",
+      "files": { "src/engine/round.ts": 1 },
+      "signal": {
+        "source": "none",
+        "kind": "gap",
+        "needs": "a review stopped in the first moment of its first prompt whose session JSONL shows no assistant turn ran to its end; no extract field names it yet"
       }
     }
   ]

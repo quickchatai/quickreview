@@ -50,8 +50,7 @@ All three must be green before you commit. Notes that will bite otherwise:
   `engines`).
 - **ESM, `module: NodeNext`** — local imports carry the **`.js` suffix** even
   from `.ts` files.
-- **Minimal dependencies.** Runtime: `better-sqlite3`, `smol-toml`,
-  `@xterm/headless`, `node-pty`. Dev: `typescript`, `vitest`, `@types/*`,
+- **Minimal dependencies.** Runtime: `better-sqlite3`, `smol-toml`. Dev: `typescript`, `vitest`, `@types/*`,
   `eslint` + `@eslint/js` + `typescript-eslint`, `prettier`. Adding
   one is a decision, not a convenience.
 - **Tests mock all I/O**: fake fetch and adapters, `StateStore(":memory:")`,
@@ -166,7 +165,7 @@ the fence.
 |---|---|
 | Ingress | `src/webhook.ts` (HMAC, delivery dedupe), `src/reconcile.ts` (the authoritative poll — GitHub always wins) |
 | Lifecycle | `src/statemachine.ts` (transition table in the module header), `src/state.ts` (SQLite + `status.json` snapshot) |
-| Round planning | `src/dispatch.ts` (FIFO, concurrency cap), `src/heuristics.ts` (lens selection), `src/ecosystem.ts` + `src/migrations.ts` (framework pre-checks), `src/profiles.ts` |
+| Round planning | `src/dispatch.ts` (FIFO, concurrency cap), `src/planner.ts` (the lens plan, follow-up rounds, the round order), `src/heuristics.ts` (lens selection), `src/ecosystem.ts` + `src/migrations.ts` (framework pre-checks), `src/profiles.ts` |
 | Prompt assembly | `src/include.ts` (`{{include:}}`, tier rewriting, `PASS_ADDENDA`), `src/templates.ts` (round templates) |
 | Sessions | `src/sessions.ts`, `src/tmux.ts`, `src/worktrees.ts`, `src/wakes.ts`, `extensions/inject-bridge.ts` |
 | Verdict + posting | `src/verdicts.ts`, `src/gate.ts`, `src/guards.ts`, `src/cigate.ts`, `src/standing-review.ts`, `src/posting.ts`, `src/anchors.ts`, `scripts/post-review.sh` + `scripts/guards.sh` |

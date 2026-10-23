@@ -53,7 +53,12 @@ import { inheritingBashOperations } from "../src/engine/tooluid.js";
 import { launchWave, type WaveRow } from "../src/engine/lens/wave.js";
 import { planLaunch, type LaunchUnit } from "../src/engine/lens/launch-plan.js";
 import type { LensRunConfig } from "../src/engine/lens/runlens.js";
-import { interactiveHostFor, interactiveLensBoard, type InteractiveLens } from "./lens.js";
+import {
+  interactiveHostFor,
+  interactiveLensBoard,
+  lensWarnTo,
+  type InteractiveLens,
+} from "./lens.js";
 
 /** The command that starts the round. */
 export const DEBUG_ROUND_COMMAND = "qcr-round";
@@ -89,8 +94,9 @@ export interface DebugRoundOptions {
   /** The capability fd the model's commands inherit (a round that posts through the
    * daemon). Omitted: pi's own bash tool, which hands a command nothing but stdio. */
   capFd?: number;
-  /** The cwd the replacement bash tool runs commands in. Default: the process's own
-   * (".", resolved when a command starts). */
+  /** The cwd the replacement bash tool runs commands in, and the sandbox root the
+   * planned wave falls back to when `env` names none. Default: the process's own
+   * (".", resolved when a command starts); no wave fallback. */
   cwd?: string;
   now?: () => Date;
 }
@@ -159,7 +165,7 @@ export function createDebugRound(o: DebugRoundOptions): ExtensionFactory {
         o.lens.wave.clear();
         let rows: WaveRow[] = [];
         if (o.tasksDir !== null) {
-          const plan = planLaunch({ dirs: [o.tasksDir] }, { ...o.env });
+          const plan = planLaunch({ dirs: [o.tasksDir] }, { ...o.env }, o.cwd);
           if (plan.ok) {
             const units: LaunchUnit[] = plan.units;
             rows = launchWave(o.lens.wave, o.lens.runner, units, stop.signal);
@@ -212,12 +218,15 @@ export function lensAdjust(o: {
 }
 
 /** The debug round a pi loaded by path runs: the order, stub, pack, status file,
- * lens dir and capability fd all come from `env`, the cwd from `cwd`. The env
+ * lens dir and capability fd all come from `env`, the cwd from `cwd`, the home
+ * from `homeDir`. The env
  * shim is extensions/cli/debug-round.ts. */
 export function activateDebugRound(
   pi: ExtensionAPI,
   env: Readonly<Record<string, string | undefined>>,
   cwd: string,
+  /** The user's home (the lens host's tool fence keeps its `.pi` out). */
+  homeDir?: string,
 ): void {
   const orderFile = env[DEBUG_ORDER_ENV];
   if (orderFile === undefined || typeof pi.registerCommand !== "function") {
@@ -240,7 +249,7 @@ export function activateDebugRound(
   const statusFile = env[DEBUG_STATUS_ENV] ?? join(roundDir, DEBUG_STATUS_FILE);
   const lensDir = env[DEBUG_LENS_DIR_ENV];
   const capFd = capabilityFdOf(env);
-  const makeHost = interactiveHostFor(env);
+  const makeHost = interactiveHostFor(env, homeDir);
   const lens = interactiveLensBoard(
     env,
     () => cwd,
@@ -250,7 +259,8 @@ export function activateDebugRound(
       patchStatus(statusFile, { dispatcher: host.dispatcher });
       return host;
     },
-    lensAdjust({ cwd, lensDir, stub, pack }),
+    (config) =>
+      lensWarnTo((line) => console.error(line))(lensAdjust({ cwd, lensDir, stub, pack })(config)),
   );
   void createDebugRound({
     lens,
@@ -258,6 +268,7 @@ export function activateDebugRound(
     tasksDir: env[DEBUG_TASKS_ENV] ?? null,
     env,
     statusFile,
-    ...(capFd !== null ? { capFd, cwd } : {}),
+    ...(capFd !== null ? { capFd } : {}),
+    cwd,
   })(pi);
 }

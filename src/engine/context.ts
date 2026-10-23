@@ -1,34 +1,43 @@
 // The review context both one-shot routes build before a prompt is rendered:
-// the production config.toml with a profile (and `--config` levers) applied,
-// and the ecosystem that profile names. Shared by `qcr review`, the benchmark
-// and the engine; the bench's credential route decides only the model specs.
+// the loaded config with a profile (and `--config` levers) applied, and the
+// ecosystem that profile names. Shared by `qcr review`, the benchmark and the
+// engine; the bench's credential route decides only the model specs. Where
+// the config and the profiles live is the caller's: it hands the loaded
+// config in (src/homes.ts for the CLI, src/reviewcontext.ts for the app).
 
-import { readFileSync } from "node:fs";
+import { ecosystemFor, type Ecosystem } from "../ecosystem.js";
+import { applyProfileTuning } from "../lenstuning.js";
+import {
+  loadProfileEcosystem,
+  loadProfileLensTuning,
+  loadProfilePosting,
+  type ProfileLookup,
+} from "../profiles.js";
+import { applyProfilePosting } from "../postingpolicy.js";
 import {
   applyReviewEffort,
-  loadConfig,
-  parseConfig,
+  parseCoreConfig,
   parseEffort,
   parsePreset,
   validateLensKnobs,
-  type Config,
+  type CoreConfig,
   type ReviewPreset,
-} from "../config.js";
-import { ecosystemFor, type Ecosystem } from "../ecosystem.js";
-import { locateConfig } from "../install.js";
-import { applyProfileTuning } from "../lenstuning.js";
-import { loadProfileEcosystem, loadProfileLensTuning, loadProfilePosting } from "../profiles.js";
-import { applyProfilePosting } from "../postingpolicy.js";
-import { benchAuthMode, modelForAuth, type BenchAuthMode } from "../bench/auth.js";
+} from "../reviewconfig.js";
+import { benchAuthMode, modelForAuth, type BenchAuthMode } from "./keyroute.js";
 
-/** The bench config: production config.toml with only the profile swapped.
- * Escalation stays whatever it ships as (off), so no escalation note renders.
- * "Production config.toml" is the install locator's answer — inside
- * the bench image that is the copy bench.sh baked from the operator's own. */
-export function benchConfig(profile: string): Config {
-  const cfg = structuredClone(loadConfig(locateConfig().path));
-  cfg.review.profile = profile;
-  return cfg;
+/** A loaded config.toml: the parsed config and the text it was parsed from
+ * (a `review.preset` lever re-parses the text). */
+export interface LoadedConfig<C extends CoreConfig = CoreConfig> {
+  cfg: C;
+  toml: string;
+}
+
+/** The loaded config with only the profile swapped. Escalation stays
+ * whatever it ships as (off), so no escalation note renders. */
+export function withProfile<C extends CoreConfig>(cfg: C, profile: string): C {
+  const out = structuredClone(cfg);
+  out.review.profile = profile;
+  return out;
 }
 
 /**
@@ -80,7 +89,14 @@ const RETIRED_CONFIG_KEYS: ReadonlySet<string> = new Set([
  * specs, and a key the file sets explicitly still beats it. It therefore needs
  * the config text (`toml`); every other pair then overrides on top.
  */
-export function applyConfigOverrides(cfg: Config, spec: string, toml?: string): Config {
+export function applyConfigOverrides<C extends CoreConfig>(
+  cfg: C,
+  spec: string,
+  toml?: string,
+  /** Where a retired key's notice goes, one line: the host's (the bench CLI's
+   * stderr). Omitted: nowhere. */
+  warn: (line: string) => void = () => {},
+): C {
   const pairs = spec
     .split(",")
     .map((p) => p.trim())
@@ -95,8 +111,7 @@ export function applyConfigOverrides(cfg: Config, spec: string, toml?: string): 
     const preset = parsePreset(presetPair.slice(presetPair.indexOf("=") + 1));
     if (toml === undefined)
       throw new Error("--config: review.preset needs the config text to re-parse");
-    base = parseConfig(withPresetInToml(toml, preset));
-    base.review.profile = cfg.review.profile;
+    base = withPresetReparsed(cfg, withPresetInToml(toml, preset));
   }
   const rest = pairs.filter((p) => p !== presetPair);
   if (rest.length === 0) return base;
@@ -107,7 +122,7 @@ export function applyConfigOverrides(cfg: Config, spec: string, toml?: string): 
     // The overseer session is deleted: bench plans still pin its model, so
     // the key is accepted, named once and ignored (like the config file's).
     if (RETIRED_CONFIG_KEYS.has(pair.slice(0, eq).trim())) {
-      console.warn(
+      warn(
         `--config: ${pair.slice(0, eq).trim()} is deprecated and ignored (the overseer session was deleted)`,
       );
       continue;
@@ -156,7 +171,7 @@ export function applyConfigOverrides(cfg: Config, spec: string, toml?: string): 
           ? num(raw)
           : raw;
   }
-  const next = out as unknown as Config;
+  const next = out as unknown as C;
   if (rest.some((p) => p.startsWith("models.effort"))) {
     // Re-parse through the same validation the config file gets.
     let effort: ReturnType<typeof parseEffort>;
@@ -173,15 +188,39 @@ export function applyConfigOverrides(cfg: Config, spec: string, toml?: string): 
   return next;
 }
 
-export function contextFor(
+/**
+ * The config the preset's sections re-parse from `toml` give, over `cfg`:
+ * as if the file had said so. Only `[models]` and `[review]` read the
+ * preset, so the rest is `cfg`'s as loaded; the profile is `cfg`'s, and the
+ * profile overlays (`lenses`, `posting`) go, as a fresh parse has none.
+ */
+function withPresetReparsed<C extends CoreConfig>(cfg: C, toml: string): C {
+  const reparsed = parseCoreConfig(toml);
+  const { lenses: _lenses, posting: _posting, ...rest } = structuredClone(cfg);
+  return {
+    ...rest,
+    models: reparsed.models,
+    review: { ...reparsed.review, profile: cfg.review.profile },
+  } as C;
+}
+
+/** The review context for `profile`: the loaded config with the profile, the
+ * `--config` levers and then the profile's own overlays applied, and the
+ * ecosystem it names. `lookup` says where the profiles live. */
+export function contextFrom<C extends CoreConfig>(
   root: string,
+  loaded: LoadedConfig<C>,
   profile: string,
   overrides = "",
-): { cfg: Config; ecosystem: Ecosystem } {
+  lookup: ProfileLookup = {},
+  /** Where an override's notice goes (`applyConfigOverrides`). */
+  warn?: (line: string) => void,
+): { cfg: C; ecosystem: Ecosystem } {
   const levered = applyConfigOverrides(
-    benchConfig(profile),
+    withProfile(loaded.cfg, profile),
     overrides,
-    readFileSync(locateConfig().path, "utf8"),
+    loaded.toml,
+    warn,
   );
   // The profile the run reviews under: `--profile`, or `--config
   // review.profile=<name>` (arm.sh's spelling) — every loader reads the same
@@ -192,17 +231,20 @@ export function contextFor(
   // exactly as production overlays it after config.toml: the profile wins.
   const cfg = withAuthModels(
     applyProfilePosting(
-      applyProfileTuning(levered, loadProfileLensTuning(root, chosen)),
-      loadProfilePosting(root, chosen),
+      applyProfileTuning(levered, loadProfileLensTuning(root, chosen, lookup)),
+      loadProfilePosting(root, chosen, lookup),
     ),
   );
-  return { cfg, ecosystem: ecosystemFor(loadProfileEcosystem(root, chosen)) };
+  return { cfg, ecosystem: ecosystemFor(loadProfileEcosystem(root, chosen, lookup)) };
 }
 
 /** Every model spec of the config as it runs on the bench's credential route
- * (src/bench/auth.ts): on the API-key route `openai-codex/` → `openai/`, the
+ * (src/engine/keyroute.ts): on the API-key route `openai-codex/` → `openai/`, the
  * same model on the public API; on the login route the config unchanged. */
-export function withAuthModels(cfg: Config, mode: BenchAuthMode = benchAuthMode()): Config {
+export function withAuthModels<C extends CoreConfig>(
+  cfg: C,
+  mode: BenchAuthMode = benchAuthMode(),
+): C {
   if (mode !== "api-key") return cfg;
   const out = structuredClone(cfg);
   const m = out.models;

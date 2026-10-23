@@ -58,27 +58,11 @@ import {
 } from "./aacr.js";
 import { checkAnchor, runsByPath } from "../anchors.js";
 
-/** The session's own files, kept beside the policed ones. */
-export const POLICED_ORIGINALS = [
-  "comments.session.json",
-  "review.session.md",
-  "findings-record.session.json",
-  "posting-policy.json",
-] as const;
+// The kept originals' names and the report's shape are the round's own: it
+// writes them too (src/engine/caseout.ts).
+import { POLICED_ORIGINALS, type BenchPostingReport } from "../engine/caseout.js";
 
-export interface BenchPostingReport {
-  kept: number;
-  withheld: Array<{
-    path: string;
-    line: number;
-    source: "inline" | "body";
-    cls: PolicyClass;
-    severity: string | null;
-    word: WithholdWord;
-    title: string;
-  }>;
-  body: "full" | "verdict";
-}
+export { POLICED_ORIGINALS, type BenchPostingReport };
 
 interface Item {
   source: "inline" | "body";

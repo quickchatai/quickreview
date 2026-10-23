@@ -32,6 +32,7 @@ import {
 import { renderMigrationPrecheckDegradedNote } from "../src/ecosystem.js";
 import { renderNitScopeNote } from "../src/templates.js";
 import { loadProfileAddenda } from "../src/profiles.js";
+import { homeProfileLookup } from "../src/install.js";
 import { stageFixtureProfile } from "./helpers/tracked-profiles.js";
 
 /** In-memory fs for the pure expansion tests. */
@@ -1541,7 +1542,7 @@ describe.skipIf(!HAS_QC_PACK)(
     // proof for the extraction itself lives in tests/profiles.test.ts.
     const REGISTRY = [
       ...PASS_ADDENDA,
-      ...(HAS_QC_PACK ? loadProfileAddenda(sandbox, "quickchat") : []),
+      ...(HAS_QC_PACK ? loadProfileAddenda(sandbox, "quickchat", homeProfileLookup()) : []),
     ];
     let out: string;
     let bodies: Map<string, string>;

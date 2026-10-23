@@ -18,7 +18,7 @@ import { buildPassPlan } from "../src/dispatch.js";
 import { ecosystemFor } from "../src/ecosystem.js";
 import type { PrFileEntry } from "../src/github.js";
 import { PASS_ADDENDA, buildAgents } from "../src/include.js";
-import { configHome, type InstallEnv } from "../src/install.js";
+import { configHome, homeProfileLookup, type InstallEnv } from "../src/install.js";
 import {
   loadProfileAddenda,
   loadProfileEcosystem,
@@ -36,7 +36,7 @@ let env: InstallEnv;
 /** The checkout the loaders search last: this repo, so the shipped
  * `profiles/default` is found exactly where production finds it. */
 const root = sandbox;
-const lookup = () => ({ env });
+const lookup = () => homeProfileLookup(env);
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "qcr-profile-chain-"));

@@ -97,7 +97,7 @@ import { prActivity, type PrActivity } from "./pr-activity.js";
 // read-only and memoised; a commit the clone does not hold is UNKNOWN, never a
 // change and never no-change. Every failure is the sweep's own — reconcile's
 // health (which lifts a deploy drain) never waits on it.
-import { carriedToRef } from "./finding-chain.js";
+import { carriedToRef, isPostedRow, predecessorOf, sameSite } from "./finding-chain.js";
 import { parseFindingMarker } from "./findingkey.js";
 import { storedLensIds } from "./lensids.js";
 import type { ReviewCommentFull } from "./github.js";
@@ -111,12 +111,6 @@ import type {
   StateStore,
   PriorFindingCheckRow,
 } from "./state.js";
-
-/** Was this row posted on the PR? `posted` with a tag — a downgraded, killed,
- * doubted or withheld entry never reached the author as itself. */
-export function isPostedRow(r: RoundFindingRow): boolean {
-  return r.disposition === "posted" && r.posted_as !== null && r.posted_as.trim() !== "";
-}
 
 export const FINDING_FATES = [
   "fixed",
@@ -181,9 +175,6 @@ export const OUTCOME_RECAPTURE_MS = 6 * 60 * 60 * 1000;
  * deploy (every open PR, cold git) must not hold the pump for long. The PRs
  * left over come first next pass. */
 export const OUTCOME_SWEEP_BUDGET_MS = 10_000;
-/** How far a later round's entry may sit from a finding's line and still be
- * that finding (lines move as the branch moves). */
-export const CONTINUATION_LINES = 10;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS finding_comments (
@@ -287,6 +278,10 @@ export function markerTwins(rows: readonly FindingCommentRow[]): Map<number, num
 
 /** A `finding_outcomes.carried_to` address: `<round>:<key>`. */
 export { carriedToRef } from "./finding-chain.js";
+
+/** Which rows reached the PR, and which earlier entry a later one continues:
+ * the review core reads them too (src/priorfindings.ts). */
+export { CONTINUATION_LINES, isPostedRow, predecessorOf } from "./finding-chain.js";
 
 /** The finding a `carried_to` address names — split at the FIRST ':', since
  * the key itself may hold ':' — or null when the round part is not an
@@ -399,49 +394,6 @@ function ms(iso: string | null | undefined): number | null {
   if (!iso) return null;
   const t = Date.parse(iso);
   return Number.isFinite(t) ? t : null;
-}
-
-function lensIdsOf(row: RoundFindingRow): string[] {
-  return storedLensIds(row.lens_ids) ?? [];
-}
-
-/**
- * Which entry of the round `e` names in `raised_in_round` is `e` again? Only
- * an entry on the same path, sharing a lens, within `CONTINUATION_LINES`:
- * the one carrying `e`'s key when it is such an entry, else the single
- * nearest such entry (a file-level line counts as the farthest near one). A
- * tie is nobody's: two findings a few lines apart in one file and one lens
- * must not both inherit one entry's fate. Returns the owner's key, or null.
- *
- * An equal key ALONE is no match: sessions number their keys per round (f1,
- * f2, …), so a later round's `f1` is usually a different finding; a key-only
- * match would carry one finding's fate onto another far away in the file.
- */
-export function predecessorOf(
-  round: readonly RoundFindingRow[],
-  e: RoundFindingRow,
-): string | null {
-  const dist = (s: RoundFindingRow) =>
-    s.line === null || e.line === null ? CONTINUATION_LINES : Math.abs(s.line - e.line);
-  const candidates = round.filter((s) => sameSite(s, e));
-  const keyed = candidates.find((s) => s.finding_key === e.finding_key);
-  if (keyed) return keyed.finding_key;
-  if (candidates.length === 0) return null;
-  const best = Math.min(...candidates.map(dist));
-  const nearest = candidates.filter((s) => dist(s) === best);
-  return nearest.length === 1 ? nearest[0]!.finding_key : null;
-}
-
-/** Could `b` be `a` again? The same path, a shared lens, within
- * `CONTINUATION_LINES` (an entry without a line is near). The one eligibility
- * rule of predecessor ownership and of the weak next-round match; who wins
- * among the eligible is each caller's own rule. */
-function sameSite(a: RoundFindingRow, b: RoundFindingRow): boolean {
-  if (!a.path || a.path !== b.path) return false;
-  if (a.line !== null && b.line !== null && Math.abs(a.line - b.line) > CONTINUATION_LINES)
-    return false;
-  const ids = lensIdsOf(a);
-  return lensIdsOf(b).some((id) => ids.includes(id));
 }
 
 const fkey = (round: number, key: string): string => `${round}\u0000${key}`;

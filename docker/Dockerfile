@@ -86,7 +86,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ---- build -------------------------------------------------------------------
 # Compiles the TypeScript and leaves production-only node_modules (native
-# addons - better-sqlite3, node-pty - are built here for the target arch).
+# addons - better-sqlite3 - are built here for the target arch).
 FROM node:${NODE_MAJOR}-${NODE_DISTRO} AS build
 WORKDIR /src
 COPY package.json package-lock.json ./

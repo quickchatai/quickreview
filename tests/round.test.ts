@@ -16,7 +16,7 @@ import { AuthExpiring } from "../src/engine/auth.js";
 import { LIVE_MAIN_FILE, liveRoundDir, readLiveEvents } from "../src/live/events.js";
 import { projectRoundProgress } from "../src/live/projection.js";
 import { PiHost } from "../src/engine/pisdk.js";
-import type { Runtime } from "../src/engine/port.js";
+import type { Runtime, RuntimeSession } from "../src/engine/port.js";
 import { piCliRuntime } from "./helpers/pi-cli-runtime.js";
 import { prepareRound, runRound, type RoundSpec } from "../src/engine/round.js";
 import { roundSdkExtras } from "../src/engine/roundsdk.js";
@@ -399,5 +399,89 @@ describe("prepareRound", () => {
       undefined,
     );
     expect(prep.env.QCR_SUBAGENT_PASS_DEADLINE_MIN).toBe("5");
+  });
+});
+
+describe("runRound and a stop", () => {
+  /** A round spec under `id`, stopped by `signal`. */
+  const stopSpec = (id: string, signal: AbortSignal): RoundSpec => {
+    const cfg = benchConfig("");
+    cfg.models.conversation = "faux/m";
+    return {
+      root: mkRoot(tmp, `root-${id}`),
+      agentDir: join(tmp, "agent"),
+      tree: mkTree(tmp, `tree-${id}`),
+      files: FILES,
+      target: TARGET,
+      outDir: join(tmp, `out-${id}`),
+      cfg,
+      ecosystem: ecosystemFor("none"),
+      timeoutMs: 10 * 60_000,
+      signal,
+    };
+  };
+  /** A session that counts what the round asked of it. */
+  const countingSession = (): {
+    session: RuntimeSession;
+    prompted: () => number;
+    disposed: () => number;
+  } => {
+    let prompted = 0;
+    let disposed = 0;
+    const session = {
+      id: "s",
+      sessionFile: null,
+      prompt: () => {
+        prompted++;
+        return Promise.resolve({ code: 0, timedOut: false, streamError: null });
+      },
+      followUp: () => Promise.resolve({ status: "unsupported", reason: "test" }),
+      steer: () => Promise.resolve({ status: "unsupported", reason: "test" }),
+      abort: () => Promise.resolve(),
+      subscribe: () => () => {},
+      stats: () => ({ turns: 0, busy: false, spentUsd: 0, last: null }),
+      dispose: () => {
+        disposed++;
+        return Promise.resolve();
+      },
+    } satisfies RuntimeSession;
+    return { session, prompted: () => prompted, disposed: () => disposed };
+  };
+
+  it("a stop before the round starts asks for no session", async () => {
+    const stop = new AbortController();
+    stop.abort();
+    let asked = 0;
+    const rt: Runtime = {
+      create: () => (asked++, Promise.reject(new Error("no session may start"))),
+      resume: () => Promise.reject(new Error("no session may start")),
+    };
+    await expect(runRound(stopSpec("stop-before", stop.signal), rt)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(asked).toBe(0);
+  });
+
+  it("a stop while the session is being created sends no prompt and disposes the session", async () => {
+    const stop = new AbortController();
+    const { session, prompted, disposed } = countingSession();
+    let release: () => void = () => {};
+    const created = new Promise<void>((done) => (release = done));
+    let asked = 0;
+    const rt: Runtime = {
+      create: async () => {
+        asked++;
+        await created;
+        return session;
+      },
+      resume: () => Promise.reject(new Error("no resume")),
+    };
+    const run = runRound(stopSpec("stop-create", stop.signal), rt);
+    await vi.waitFor(() => expect(asked).toBe(1));
+    stop.abort();
+    release();
+    await expect(run).rejects.toMatchObject({ name: "AbortError" });
+    expect(prompted()).toBe(0);
+    expect(disposed()).toBe(1);
   });
 });

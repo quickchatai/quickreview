@@ -16,29 +16,27 @@
 // credential reaches it).
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
-import type { Config } from "../config.js";
+import type { CoreConfig } from "../reviewconfig.js";
 import type { Ecosystem } from "../ecosystem.js";
-import type { PrFileEntry } from "../github.js";
+import type { PrFileEntry } from "../githubcore.js";
 import { CONTEXT_PACK_FILE } from "../contextpack.js";
-import type { RoundMemory } from "../memory/context.js";
+import type { RoundMemory } from "../memoryport.js";
 import { isDefaultPosting } from "../postingpolicy.js";
 import {
-  CASE_FILES,
   modelErrorKind,
   modelErrorsFromEvents,
   stagesFromEvents,
   usageFromEvents,
   type ModelErrors,
   type Stages,
-} from "../bench/aacr.js";
-import { caseCostUsd } from "../bench/cost.js";
+} from "./roundevents.js";
+import { CASE_FILES, POLICED_ORIGINALS, type BenchPostingReport } from "./caseout.js";
+import { caseCostUsd } from "../pricing.js";
 import { lineHasAuthError } from "../authwatch.js";
 import { checkAuth, classifyAuthFailure, type AuthRejected, type EngineAuth } from "./auth.js";
 import type { PiRun, Runtime, RuntimeSession } from "./port.js";
-import { GIT_ISOLATION_ENV } from "../bench/exec.js";
-import { POLICED_ORIGINALS, type BenchPostingReport } from "../bench/benchposting.js";
-import { apiKeyEnv } from "../bench/auth.js";
-import { GITHUB_TOKEN_ENVS } from "../envstrip.js";
+import { apiKeyEnv } from "./keyroute.js";
+import { GIT_ISOLATION_ENV, GITHUB_TOKEN_ENVS } from "../envstrip.js";
 import { openRoundSink, type RoundLive } from "./livewire.js";
 import type { LiveSink } from "../live/writer.js";
 import { planLaunch, type LaunchUnit } from "./lens/launch-plan.js";
@@ -133,7 +131,7 @@ export interface RoundSpec {
   target: OneShotTarget;
   /** Where the session's files, the event stream and the rendered review go. */
   outDir: string;
-  cfg: Config;
+  cfg: CoreConfig;
   ecosystem: Ecosystem;
   timeoutMs: number;
   /** The login the run will use, as the engine's auth module read it
@@ -164,6 +162,10 @@ export interface RoundSpec {
   /** Where the round's LiveEvent log goes (src/live/). Omitted: none is written. */
   live?: RoundLive;
   log?: (line: string) => void;
+  /** Stops the round: an abort before the session exists starts none, and one
+   * during a turn aborts it (lens children with it) and skips the
+   * continuation. The round then settles what was written, as after any stop. */
+  signal?: AbortSignal;
 }
 
 export interface RoundResult {
@@ -340,7 +342,7 @@ export function prepareRound(
       ...(process.env.ANTHROPIC_API_KEY
         ? { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY }
         : {}),
-      // The API-key route (src/bench/auth.ts); nothing on the login route.
+      // The API-key route (src/engine/keyroute.ts); nothing on the login route.
       ...apiKeyEnv(),
     };
     // No GitHub credential reaches a process whose model runs bash.
@@ -423,7 +425,9 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
   let sink: LiveSink | undefined;
   let unhear: (() => void) | undefined;
   let endWave: () => Promise<void> = async () => {};
+  const stopTurn = (): void => void session?.abort();
   try {
+    i.signal?.throwIfAborted();
     // Host isolation: pi discovers nothing of its own. `-ne` leaves only the
     // extensions named below (so neither ~/.pi/agent, nor a project's `.pi/`,
     // nor a package can add one to the session) and `-ns` no skill; lens
@@ -451,6 +455,12 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
       limits: { timeoutMs: i.timeoutMs, ...(i.capUsd !== undefined ? { capUsd: i.capUsd } : {}) },
       cliFlags: ["--approve", "-ne", "-ns"],
     });
+    i.signal?.throwIfAborted();
+    // VERIFY-ON-PIN: a stop that lands once the first prompt is sent but before
+    // pi's agent has made the turn's own abort controller reaches an idle pi
+    // session's abort(); that pi then ends the turn it is about to start, rather
+    // than dropping the abort and running it in full, is assumed, not shown.
+    i.signal?.addEventListener("abort", stopTurn, { once: true });
     // The live log hears every event, the `*_update`s too, from the first
     // prompt on; a log that cannot be opened never costs the review.
     if (i.live) {
@@ -526,7 +536,14 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
       result.error = `pi exited ${String(r.code)} before any assistant message — nothing to continue`;
     }
     const stoppedShort = !existsSync(outcomePath) || broken.length > 0 || missing.length > 0;
-    if (!r.timedOut && !r.streamError && !result.capped && stoppedShort && resumable) {
+    if (
+      !r.timedOut &&
+      !r.streamError &&
+      !result.capped &&
+      stoppedShort &&
+      resumable &&
+      !i.signal?.aborted
+    ) {
       const left = i.timeoutMs - (Date.now() - started);
       if (left > 120_000) {
         result.continued = true;
@@ -564,6 +581,7 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
     await endWave();
     return settleRound(i, prep, result, r, session.stats().spentUsd);
   } finally {
+    i.signal?.removeEventListener("abort", stopTurn);
     unhear?.();
     sink?.close();
     await endWave();

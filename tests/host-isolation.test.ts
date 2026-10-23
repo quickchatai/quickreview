@@ -161,6 +161,7 @@ async function review(
     ecosystem: ctx.ecosystem,
     runtime: piCliRuntime({ bin: piBin }),
     runsDir,
+    dryrunDir: join(tmp, `dryrun-${name}`),
     timeoutMs: 60_000,
     warn: () => {},
   });

@@ -2,6 +2,7 @@
 // mutation is expressed as a MutationIntent and pushed through the gate
 // (dry-run writes it to state/dryrun/ instead of executing). There is no
 // review-dismissal function in this adapter, by design — never add one.
+import { GitHubRequestError, type PrFileEntry } from "./githubcore.js";
 import { ThreadResolutionRefusal } from "./thread-resolution-refusal.js";
 import type { CheckSummary } from "./cigate.js";
 import { reviewTeamSlug, type Config } from "./config.js";
@@ -65,16 +66,8 @@ export interface StalePr {
   approved_at: string;
 }
 
-export interface PrFileEntry {
-  filename: string;
-  additions: number;
-  deletions: number;
-  status: string;
-  /** Unified diff for the file when GitHub returns one (absent for binaries). */
-  patch?: string;
-  /** The path before a rename, when GitHub detected one (renumber detection). */
-  previous_filename?: string;
-}
+// A changed file as the files API reports it lives with the core's half.
+export type { PrFileEntry };
 
 export interface ReviewFull {
   id: number;
@@ -289,18 +282,8 @@ interface RawPrHistory {
 
 export type PrDisposition = { kind: "open" | "closed"; head_sha: string } | { kind: "absent" };
 
-export class GitHubRequestError extends Error {
-  constructor(
-    readonly method: string,
-    readonly path: string,
-    readonly status: number,
-    detail: string,
-    readonly retryAfterMs?: number,
-  ) {
-    super(`${method} ${path} → ${status}: ${detail}`);
-    this.name = "GitHubRequestError";
-  }
-}
+// The error a refused request throws is the review core's (src/githubcore.ts).
+export { GitHubRequestError };
 
 export interface SearchIssueItem {
   number: number;

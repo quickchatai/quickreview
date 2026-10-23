@@ -23,6 +23,7 @@ import {
 import type { GateResult } from "../src/gate.js";
 import { GitHubRequestError, type PrFileEntry } from "../src/github.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
+import { homeProfileLookup, homeProfilePlaces } from "../src/install.js";
 import { loadProfileEcosystem } from "../src/profiles.js";
 import { StateStore } from "../src/state.js";
 import { renderRoundPrompt, roundVars } from "../src/templates.js";
@@ -508,7 +509,7 @@ describe("loadProfileEcosystem", () => {
     // The quickchat pack's frozen fixture copy; dropped from the
     // assembled snapshots, where this expectation does not apply.
     if (stageFixtureProfile(repoRoot, "quickchat")) {
-      expect(loadProfileEcosystem(repoRoot, "quickchat")).toBe("django");
+      expect(loadProfileEcosystem(repoRoot, "quickchat", homeProfileLookup())).toBe("django");
     }
     expect(loadProfileEcosystem(repoRoot, "example-django")).toBe("django");
     expect(loadProfileEcosystem(repoRoot, "minimal")).toBe("none");
@@ -523,18 +524,18 @@ describe("loadProfileEcosystem", () => {
     mkdirSync(join(root, "profiles", "bare"), { recursive: true });
     expect(
       loadProfileEcosystem(root, "bare", {
-        env: { QCR_CONFIG: join(root, "config.toml"), HOME: root },
+        homes: homeProfilePlaces({ QCR_CONFIG: join(root, "config.toml"), HOME: root }),
       }),
     ).toBe("none"); // no file at all
     writeFileSync(join(root, "profiles", "bare", "profile.toml"), "# no ecosystem key\n");
     expect(
       loadProfileEcosystem(root, "bare", {
-        env: { QCR_CONFIG: join(root, "config.toml"), HOME: root },
+        homes: homeProfilePlaces({ QCR_CONFIG: join(root, "config.toml"), HOME: root }),
       }),
     ).toBe("none"); // file, no key
     expect(
       loadProfileEcosystem(root, "missing-profile-dir", {
-        env: { QCR_CONFIG: join(root, "config.toml"), HOME: root },
+        homes: homeProfilePlaces({ QCR_CONFIG: join(root, "config.toml"), HOME: root }),
       }),
     ).toBe("none");
   });
@@ -545,7 +546,7 @@ describe("loadProfileEcosystem", () => {
     writeFileSync(join(root, "profiles", "p", "profile.toml"), 'ecosystem = "rails"\n');
     expect(() =>
       loadProfileEcosystem(root, "p", {
-        env: { QCR_CONFIG: join(root, "config.toml"), HOME: root },
+        homes: homeProfilePlaces({ QCR_CONFIG: join(root, "config.toml"), HOME: root }),
       }),
     ).toThrow(/unknown ecosystem "rails"/);
   });
@@ -556,7 +557,7 @@ describe("loadProfileEcosystem", () => {
     writeFileSync(join(root, "profiles", "p", "profile.toml"), "ecosystem = [broken\n");
     expect(() =>
       loadProfileEcosystem(root, "p", {
-        env: { QCR_CONFIG: join(root, "config.toml"), HOME: root },
+        homes: homeProfilePlaces({ QCR_CONFIG: join(root, "config.toml"), HOME: root }),
       }),
     ).toThrow(/not valid TOML/);
   });

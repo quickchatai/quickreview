@@ -47,10 +47,16 @@ import {
   type CiState,
 } from "./cigate.js";
 import { standingReview } from "./standing-review.js";
-import type { GuardsConfig } from "./config.js";
+import type { GuardsConfig } from "./reviewconfig.js";
 import type { GateResult, MutationGuard, MutationIntent } from "./gate.js";
-import { isBotAuthor } from "./statemachine.js";
-import type { ReviewedHeadRow, StateStore } from "./state.js";
+import type { ReviewedHeadRow } from "./storerows.js";
+
+/** A bot's login: the App's own, or any `[bot]` account. Bot-authored PRs
+ * never enter the state machine (spec §3, src/statemachine.ts re-exports
+ * this), and a bot's approval is no human's. */
+export function isBotAuthor(author: string, botLogin: string): boolean {
+  return author === botLogin || author.endsWith("[bot]");
+}
 
 /** Mutation kinds that put words on a PR — the ones the guards inspect. */
 export const POSTING_KINDS: ReadonlySet<string> = new Set([
@@ -75,14 +81,24 @@ export interface GuardAdapter {
 
 /** The store slice: the reviewed-head mark, the withheld-approval mark, and
  * the event log. */
-export type GuardStore = Pick<
-  StateStore,
-  | "reviewedHead"
-  | "recordReviewedHead"
-  | "logEvent"
-  | "recordApprovalWithheld"
-  | "clearApprovalWithheld"
->;
+export interface GuardStore {
+  reviewedHead(pr: number): ReviewedHeadRow | undefined;
+  recordReviewedHead(
+    pr: number,
+    mark: {
+      head_sha: string;
+      verdict?: string | null;
+      posted_event?: string | null;
+      round_no?: number | null;
+    },
+  ): void;
+  logEvent(kind: string, pr: number | null, payload?: unknown): void;
+  recordApprovalWithheld(
+    pr: number,
+    mark: { head_sha: string; ci_state?: string | null; reason?: string | null },
+  ): void;
+  clearApprovalWithheld(pr: number): void;
+}
 
 export interface GuardDeps {
   store: GuardStore;
