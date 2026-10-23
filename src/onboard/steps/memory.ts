@@ -677,7 +677,7 @@ export function forwardFlags(ctx: StepContext): string {
       "--ssh-host",
       shellQuote(facts.alias || "<your-ssh-alias>"),
       "--container",
-      shellQuote(facts.container),
+      shellQuote(facts.memoryContainer),
       ...sudo,
     ].join(" ");
   }

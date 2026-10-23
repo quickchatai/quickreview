@@ -193,6 +193,8 @@ function composeTransport(ctx: StepContext, opts: TransportOptions): StackTransp
 export interface RemoteFacts {
   alias: string;
   container: string;
+  /** The container the memory engine runs in: `[tui] memory_container`, else `container`. */
+  memoryContainer: string;
   sudo: boolean;
   port: number;
 }
@@ -205,9 +207,12 @@ export function remoteFactsFor(
   const container = (text ? readTomlKey(text, "tui", "container") : null)?.trim();
   const sudo = (text ? readTomlKey(text, "tui", "sudo_docker") : null)?.trim();
   const port = (text ? readTomlKey(text, "server", "port") : null)?.trim();
+  const daemonContainer = container && container !== "" ? container : TUI_DEFAULTS.container;
+  const memory = (text ? readTomlKey(text, "tui", "memory_container") : null)?.trim();
   return {
     alias: sshAliasOf(choices),
-    container: container && container !== "" ? container : TUI_DEFAULTS.container,
+    container: daemonContainer,
+    memoryContainer: memory && memory !== "" ? memory : daemonContainer,
     // The playbook's Docker socket is root-owned; sudo is the shipped default
     // and only an explicit `false` turns it off.
     sudo: sudo === undefined || sudo === "" ? TUI_DEFAULTS.sudo_docker : sudo !== "false",
@@ -251,10 +256,7 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
     Math.ceil((opts.healthTimeoutMs ?? DEFAULT_HEALTH_TIMEOUT_MS) / 1000),
   );
   const dockerPrefix = facts.sudo ? ["sudo", "docker"] : ["docker"];
-  const configText = readConfigText(ctx.adapters);
-  const memoryContainer =
-    (configText ? readTomlKey(configText, "tui", "memory_container") : null)?.trim() ||
-    facts.container;
+  const memoryContainer = facts.memoryContainer;
   const remote = (argv: readonly string[]): Promise<ProcessResult> =>
     ctx.adapters.runner.run("ssh", sshArgv(facts.alias, argv));
   const healthEndpoint = `http://127.0.0.1:${facts.port}/health`;
