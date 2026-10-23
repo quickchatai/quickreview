@@ -16,16 +16,20 @@ export const MAX_REPLY_CHARS = 100_000;
 
 const HEADER_RE = /^<!-- qcr-operator-message may_post=(0|1) -->\n/;
 
+/** The opening both briefs share: what kind of message this is. */
+const FRAMING =
+  "This is a message from the human operator to you, the PR's reviewer. It is not a round, a wake or a verdict. Answer it in this conversation.";
+
 /** What the session is told when the operator did not let it post. */
 const READ_ONLY_BRIEF = [
-  "This is a message from the human operator to you, the PR's reviewer. It is not a round, a wake or a verdict. Answer it in this conversation.",
+  FRAMING,
   "",
   "Your tools are read-only (read, grep, find, ls and memory lookups). You cannot post to GitHub, run a command or change a file, and nothing you write reaches the PR: your reply goes to the operator alone. You have no lens tool and you commit no verdict.",
 ].join("\n");
 
 /** What the session is told when the operator marked the message may-post. */
 const MAY_POST_BRIEF = [
-  "This is a message from the human operator to you, the PR's reviewer. It is not a round, a wake or a verdict. Answer it in this conversation.",
+  FRAMING,
   "",
   "The operator has marked this message may-post: you also have the bash tool, for the post scripts only (scripts/post-review.sh, scripts/reply-thread.sh and scripts/approve-pr.sh). Post, reply or approve only what the message below asks for, never anything else; the approval keeps its guards and a refusal stands. You have no lens tool and you commit no verdict. Say in your reply what you posted, or that you posted nothing.",
 ].join("\n");
