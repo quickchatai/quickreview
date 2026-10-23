@@ -27,6 +27,7 @@ import {
   routes,
   seedMark,
   setGuardKnobs,
+  setPersonMode,
   setPr,
   type Blocked,
   type Outcome,
@@ -1463,6 +1464,72 @@ const guard4: ParityCase[] = [
   },
 ];
 
+// Person mode (`[github] auth = "user"`): the reviewer posts on the person's
+// own account, so no review reaches GitHub as APPROVE or REQUEST_CHANGES. The
+// verdict is the session's and is stated in the body; every other guard
+// binds exactly as it does for the App.
+const personMode: ParityCase[] = [
+  {
+    what: "an approval posts as a COMMENT stating APPROVE",
+    action: APPROVE,
+    world: setPersonMode,
+    want: {
+      sent: "COMMENT",
+      bodyHas: ["Verdict: APPROVE", "Automated review body."],
+      noteHas: "person mode",
+    },
+  },
+  {
+    what: "a REQUEST_CHANGES posts as a COMMENT stating it, findings intact",
+    action: RC,
+    world: setPersonMode,
+    want: {
+      sent: "COMMENT",
+      bodyHas: ["Verdict: REQUEST_CHANGES", "Automated review body."],
+      noteHas: "person mode",
+    },
+  },
+  {
+    what: "a COMMENT passes as it is",
+    action: COMMENT,
+    world: setPersonMode,
+    want: { sent: "COMMENT", bodyLacks: ["Verdict:"] },
+  },
+  {
+    what: "red CI still withholds the approval (guard 4), and nothing claims APPROVE",
+    action: APPROVE,
+    world: (s) => {
+      setPersonMode(s);
+      s.checkRuns = [run1("unit", "failure")];
+    },
+    want: { sent: "COMMENT", bodyLacks: ["Verdict: APPROVE"] },
+  },
+  {
+    what: "a merged PR is still refused (guard 3 runs first)",
+    action: RC,
+    world: (s) => {
+      setPersonMode(s);
+      setPr(s, { state: "closed", merged: true });
+    },
+    want: { sent: null, blocked: "pr-merged" },
+  },
+  {
+    what: "a moved head is still refused (guard 5)",
+    action: APPROVE,
+    world: (s) => {
+      setPersonMode(s);
+      setPr(s, { head: { sha: RIG_MOVED } });
+    },
+    want: { sent: null, blocked: "head-drift" },
+  },
+  {
+    what: "the person reviewing someone else's PR is posted the same way",
+    action: RC,
+    world: (s) => setPersonMode(s, "a-reviewer"),
+    want: { sent: "COMMENT", bodyHas: ["Verdict: REQUEST_CHANGES"] },
+  },
+];
+
 function expectOutcome(route: Route, got: Outcome, c: ParityCase): void {
   const want: Want = { ...c.want, ...(c.node ?? {}) };
   const at = `${route.name} route`;
@@ -1483,6 +1550,7 @@ describe("the posting guards over the Node route", () => {
     ["guard 3 (merged or closed)", guard3],
     ["guard 4 (red CI withholds an approval)", guard4],
     ["guard 5 (the head moved)", guard5],
+    ["person mode (auth = user: every review is a COMMENT)", personMode],
   ];
   for (const [title, cases] of groups) {
     describe(title, () => {

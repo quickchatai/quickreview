@@ -31,12 +31,13 @@ function save(): void {
   job.payload_sha256 = createHash("sha256").update(JSON.stringify(job.payload)).digest("hex");
   writeFileSync(join(dir, "pr-12-round-1.outbox.json"), JSON.stringify(job));
 }
-function worker(): PostingOutbox {
+function worker(personMode = false): PostingOutbox {
   return new PostingOutbox({
     dir,
     repo: "org/repo",
     dryRun: false,
     botLogins: ["review[bot]"],
+    ...(personMode ? { personMode } : {}),
     now: () => new Date(clock),
     adapter: { createReview, listReviewsFull },
     current: () => true,
@@ -123,6 +124,21 @@ describe("durable review delivery", () => {
       delivered_by: "daemon_retry",
     });
     expect(retrySoftenedApproval(receipt)).toBe(true);
+  });
+  it("person mode: an APPROVE delivered as a COMMENT is the rule, not a withheld approval", async () => {
+    job.intended_event = "APPROVE";
+    job.payload = { ...job.payload, event: "APPROVE" };
+    save();
+    await worker(true).tick();
+    const receipt = readPostingReceipt(dir, 12, 1) as PostingReceipt;
+    expect(receipt).toMatchObject({
+      status: "confirmed",
+      intended_event: "APPROVE",
+      actual_event: "COMMENT",
+      person_mode: true,
+    });
+    expect(receipt.delivered_by).toBeUndefined();
+    expect(retrySoftenedApproval(receipt)).toBe(false);
   });
   it("a delivered COMMENT that was asked for carries no delivery provenance", async () => {
     await worker().tick();

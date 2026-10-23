@@ -4,6 +4,7 @@
 // is re-queued when its CI turns green, so its session can decide again.
 //
 // Nothing here triggers, re-runs or cancels CI: the one CI call is a GET.
+import { botAccountLogin } from "@quickchatai/pi-quickreview/src/identity.js";
 import {
   classifyCi,
   type CheckSummary,
@@ -125,7 +126,7 @@ export async function retryWithheldApproval(
     { type: "trigger", source: "reconcile" },
     {},
     {
-      botLogin: cfg.github.bot_login,
+      botLogin: botAccountLogin(cfg.github),
       ...(deps.now ? { now: deps.now } : {}),
       reason: "ci-green:withheld-approval-retry",
     },

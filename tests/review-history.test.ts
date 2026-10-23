@@ -378,6 +378,32 @@ describe("humanCommentsOf", () => {
     );
     expect(out.map((c) => c.author)).toEqual(["yan"]);
   });
+
+  it("person mode (auth = user) keeps the person's own review words and drops only the reviewer's", () => {
+    const person: Config = {
+      ...cfg,
+      github: { ...cfg.github, auth: "user", app_slug: "", bot_login: "pat" },
+      backfill: { ...cfg.backfill, bot_login: "pat", bot_actor: "" },
+    };
+    const r = (body: string) => ({
+      author: { login: "pat", type: "User" },
+      state: "COMMENTED",
+      submitted_at: null,
+      body,
+      comments: [],
+    });
+    const out = humanCommentsOf(
+      pr([r("a review pat typed"), r("Findings\n\n<!-- qcr-post:v1:1:1:abc -->")]),
+      person,
+    );
+    expect(out.map((c) => c.body)).toEqual(["a review pat typed"]);
+  });
+
+  it("omits -author:app/<slug> from the merged-PR query when there is no App", () => {
+    const person: Config = { ...cfg, github: { ...cfg.github, auth: "user", app_slug: "" } };
+    expect(mergedPrsQuery(person, "2026-09-01")).not.toContain("-author:");
+    expect(mergedPrsQuery(cfg, "2026-09-01")).toContain(`-author:app/${cfg.github.app_slug}`);
+  });
 });
 
 describe("parseDigest", () => {
@@ -412,9 +438,16 @@ describe("structure", () => {
   it("the digest module cannot reach the gate: it imports neither the gate nor the adapter's write side", () => {
     const src = readFileSync(join(root, "src/reviewhistory.ts"), "utf8");
     const imports = [...src.matchAll(/^import[^;]*from "([^"]+)";/gm)].map((m) => m[1]);
-    expect(imports.sort()).toEqual(["./config.js", "./github.js", "./state.js"]);
-    for (const line of src.split("\n").filter((l) => l.startsWith("import")))
-      expect(line).toMatch(/^import type /);
+    const IDENTITY = "@quickchatai/pi-quickreview/src/identity.js";
+    expect(imports.sort()).toEqual(["./config.js", "./github.js", "./state.js", IDENTITY].sort());
+    // Every import is type-only, except the pure identity rules (whose own
+    // imports are type-only in turn, so the gate stays out of reach).
+    // MUTATION: import a value from the gate or the adapter here, or give
+    // identity.ts a runtime import — this fails.
+    for (const m of src.matchAll(/^import[^;]*from "([^"]+)";/gm))
+      if (m[1] !== IDENTITY) expect(m[0]).toMatch(/^import type /);
+    const identity = readFileSync(join(root, "packages/pi-plugin/src/identity.ts"), "utf8");
+    for (const m of identity.matchAll(/^import[^;]*;/gm)) expect(m[0]).toMatch(/^import type /);
     // The source interface is read-shaped: a search and a per-PR read.
     expect(src).toMatch(
       /interface ReviewHistorySource \{\n {2}searchIssuesPaged\([^)]*\): Promise<SearchIssueItem\[\]>;\n {2}prReviews\(n: number\): Promise<PrReviews \| null>;\n\}/,

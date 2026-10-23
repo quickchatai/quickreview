@@ -26,11 +26,13 @@ import { readPostingJob } from "../src/posting-outbox.js";
 import {
   postingMarker,
   readPostingReceipt,
+  receiptMatchesVerdict,
   retrySoftenedApproval,
   roundPostingKey,
   type PostingReceipt,
 } from "../src/posting-receipt.js";
 import type { StandingMarkSnapshot } from "@quickchatai/pi-quickreview/src/standing-review.js";
+import { decidedVerdictFromReceipt } from "../src/verdicts.js";
 
 const PR = 12;
 const ROUND = 2;
@@ -274,6 +276,78 @@ describe("the journal writes the receipt and job files the readers expect", () =
     const receipt = readPostingReceipt(tsDir, PR, ROUND) as PostingReceipt;
     expect(receipt).toMatchObject({ actual_event: "COMMENT", delivered_by: "daemon_retry" });
     expect(retrySoftenedApproval(receipt)).toBe(true);
+  });
+
+  it("person mode: an APPROVE posted as a COMMENT is the rule, not a withheld approval", () => {
+    // `[github] auth = "user"` posts every review as a COMMENT. The receipt
+    // says so (person_mode), keeps what was decided (intended_event), and must
+    // NOT read as guard 4's withheld approval — that would re-queue the PR on
+    // every green CI, forever.
+    journal = new PostingJournal({ dir: tsDir, repo: REPO, personMode: true });
+    enqueue("APPROVE");
+    prepare("APPROVE");
+    journal.confirm({
+      key: KEY,
+      pr: PR,
+      round: ROUND,
+      head: HEAD,
+      intended: "APPROVE",
+      payload: payload("APPROVE"),
+      response: { id: 79, commit_id: HEAD, state: "COMMENTED" },
+    });
+    const receipt = readPostingReceipt(tsDir, PR, ROUND) as PostingReceipt;
+    expect(receipt).toMatchObject({
+      intended_event: "APPROVE",
+      actual_event: "COMMENT",
+      person_mode: true,
+    });
+    expect(receipt.delivered_by).toBeUndefined();
+    expect(retrySoftenedApproval(receipt)).toBe(false);
+    expect(decidedVerdictFromReceipt(receipt)).toEqual({ verdict: "APPROVE" });
+    const verdict = {
+      pr: PR,
+      round_no: ROUND,
+      head_sha: HEAD,
+      finished_at: "2026-10-24T10:00:00Z",
+    };
+    expect(receiptMatchesVerdict(receipt, { ...verdict, verdict: "APPROVE" })).toBe(true);
+    expect(receiptMatchesVerdict(receipt, { ...verdict, verdict: "REQUEST_CHANGES" })).toBe(false);
+    // the same receipt without person mode is the withheld shape it always was
+    const { person_mode: _p, ...app } = receipt;
+    expect(receiptMatchesVerdict({ ...app }, { ...verdict, verdict: "APPROVE" })).toBe(false);
+  });
+
+  it("person mode: a REQUEST_CHANGES posted as a COMMENT still settles as REQUEST_CHANGES", () => {
+    journal = new PostingJournal({ dir: tsDir, repo: REPO, personMode: true });
+    enqueue("REQUEST_CHANGES");
+    prepare("REQUEST_CHANGES");
+    journal.confirm({
+      key: KEY,
+      pr: PR,
+      round: ROUND,
+      head: HEAD,
+      intended: "REQUEST_CHANGES",
+      payload: payload("REQUEST_CHANGES"),
+      response: { id: 80, commit_id: HEAD, state: "COMMENTED" },
+    });
+    const receipt = readPostingReceipt(tsDir, PR, ROUND) as PostingReceipt;
+    expect(receipt.person_mode).toBe(true);
+    expect(decidedVerdictFromReceipt(receipt)).toEqual({ verdict: "REQUEST_CHANGES" });
+    const verdict = {
+      pr: PR,
+      round_no: ROUND,
+      head_sha: HEAD,
+      finished_at: "2026-10-24T10:00:00Z",
+    };
+    expect(receiptMatchesVerdict(receipt, { ...verdict, verdict: "REQUEST_CHANGES" })).toBe(true);
+    expect(receiptMatchesVerdict(receipt, { ...verdict, verdict: "APPROVE" })).toBe(false);
+    // a reconciled (marker-synthesised) person-mode COMMENT matches any verdict
+    expect(
+      receiptMatchesVerdict(
+        { ...receipt, intended_event: "COMMENT", reconciled: true },
+        { ...verdict, verdict: "APPROVE" },
+      ),
+    ).toBe(true);
   });
 
   it("confirm leaves an APPROVE that landed as an APPROVE without that provenance", () => {

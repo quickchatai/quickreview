@@ -17,6 +17,11 @@ import {
   parsePrTarget,
   resolvePostCredential,
 } from "@quickchatai/pi-quickreview/src/prtarget.js";
+import {
+  githubCredential,
+  TokenMinter,
+  UserTokenSource,
+} from "@quickchatai/pi-quickreview/src/githubAuth.js";
 import { resolveSpecifier, runtimeSpecifiers } from "./helpers/layers.js";
 import { SRC_DIRS } from "./helpers/source-trees.js";
 
@@ -190,9 +195,17 @@ describe("resolvePostCredential", () => {
   });
 });
 
-describe("the daemon stays App-only (the App-only credential rule)", () => {
-  // The daemon's GitHub code: its client and wiring, and the App's token
-  // minting, which is the core's (packages/pi-plugin/src/githubAuth.ts).
+describe("the daemon's credential: the App, or the person's token FILE (rule 3 as amended)", () => {
+  // Hard rule 3 as amended (SECURITY.md): the daemon may run on the
+  // person's own GitHub credential (`[github] auth = "user"`) instead of an
+  // App — polling only, every mutation through the one gate — and that token
+  // reaches it as the FILE `<secrets dir>/github_token`, read through
+  // `UserTokenSource`, never through the environment or a command line. Every
+  // other personal-token route (GH_TOKEN, `gh auth token`, the credential
+  // chain, the handoff file) stays out of the daemon, exactly as before.
+  //
+  // The daemon's GitHub code: its client and wiring, and the credential seam,
+  // which is the core's (packages/pi-plugin/src/githubAuth.ts).
   const DAEMON_GITHUB_FILES = [
     "src/github.ts",
     "packages/pi-plugin/src/githubAuth.ts",
@@ -297,10 +310,65 @@ describe("the daemon stays App-only (the App-only credential rule)", () => {
       expect(readFileSync(join(ROOT, f), "utf8"), f).not.toMatch(/QCR_GH_TOKEN_FILE|HANDOFF/);
   });
 
-  it("GitHubAdapter's only credential source is the App TokenMinter", () => {
+  it("GitHubAdapter's only credential source is the one seam, and it has exactly two shapes", () => {
+    // MUTATION: give GitHubAdapter a second credential field, or add a third
+    // `implements GitHubCredential` class (say one over process.env) — this fails.
     const text = readFileSync(join(ROOT, "src", "github.ts"), "utf8");
-    expect(text).toMatch(/private readonly minter: TokenMinter/);
+    expect(text).toMatch(/private readonly credential: GitHubCredential/);
     expect(text).not.toMatch(/GITHUB_TOKEN|GH_TOKEN/);
+    const auth = readFileSync(join(ROOT, "packages", "pi-plugin", "src", "githubAuth.ts"), "utf8");
+    const shapes = [...auth.matchAll(/class (\w+) implements GitHubCredential/g)].map((m) => m[1]);
+    expect(shapes.sort()).toEqual(["TokenMinter", "UserTokenSource"]);
+  });
+
+  it("user mode reads the token from the secrets-dir file alone — never env or argv", async () => {
+    // MUTATION: let UserTokenSource fall back to process.env.GH_TOKEN (or any
+    // process.env / process.argv read) when the file is missing — this fails,
+    // structurally and behaviourally.
+    const auth = readFileSync(join(ROOT, "packages", "pi-plugin", "src", "githubAuth.ts"), "utf8");
+    expect(auth).not.toMatch(/process\.(env|argv)/);
+    expect(auth).toMatch(/USER_TOKEN_FILE = "github_token"/);
+    const start = auth.indexOf("export class UserTokenSource");
+    const body = auth.slice(start, auth.indexOf("\n}\n", start));
+    expect(start).toBeGreaterThan(0);
+    // the one read is of the file under the secrets dir
+    expect([...body.matchAll(/readFileSync\(([^,)]+)/g)].map((m) => m[1])).toEqual(["this.path"]);
+    expect(body).toMatch(/join\(this\.secretsDir, USER_TOKEN_FILE\)/);
+
+    // Behaviour: a token in the environment and on the command line is never
+    // picked up — an empty secrets dir is an error naming the file.
+    const empty = mkdtempSync(join(tmp, "no-token-"));
+    const saved = { gh: process.env.GH_TOKEN, gt: process.env.GITHUB_TOKEN, argv: process.argv };
+    process.env.GH_TOKEN = "ghp_from_env";
+    process.env.GITHUB_TOKEN = "ghp_from_env_too";
+    process.argv = [...saved.argv, "--token", "ghp_from_argv"];
+    try {
+      const src = githubCredential({ auth: "user", secrets_dir: empty });
+      expect(src).toBeInstanceOf(UserTokenSource);
+      await expect(src.installationToken()).rejects.toThrow(/github_token/);
+      writeFileSync(join(empty, "github_token"), "ghu_from_file");
+      expect(await src.installationToken()).toBe("ghu_from_file");
+    } finally {
+      if (saved.gh === undefined) delete process.env.GH_TOKEN;
+      else process.env.GH_TOKEN = saved.gh;
+      if (saved.gt === undefined) delete process.env.GITHUB_TOKEN;
+      else process.env.GITHUB_TOKEN = saved.gt;
+      process.argv = saved.argv;
+    }
+    // "app" (and a missing key) stays the App minter.
+    expect(githubCredential({ secrets_dir: empty })).toBeInstanceOf(TokenMinter);
+    expect(githubCredential({ auth: "app", secrets_dir: empty })).toBeInstanceOf(TokenMinter);
+  });
+
+  it("the git credential helper's user branch prints the token file and reads no token from env", () => {
+    // MUTATION: make mint-token.sh's user branch print "$GH_TOKEN" (or call
+    // `gh auth token`) — this fails.
+    const script = readFileSync(join(ROOT, "scripts", "mint-token.sh"), "utf8")
+      .split("\n")
+      .filter((l) => !l.trimStart().startsWith("#"))
+      .join("\n");
+    expect(script).toMatch(/TOKEN_FILE="\$SECRETS_DIR\/github_token"/);
+    expect(script).not.toMatch(/GH_TOKEN|GITHUB_TOKEN|gh auth token|QCR_GH_TOKEN_FILE/);
   });
 });
 

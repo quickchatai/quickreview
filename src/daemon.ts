@@ -18,6 +18,7 @@ import {
   DEFAULT_POSTING_RETRY_WINDOW_MIN,
   loadConfig,
   sandboxRoot,
+  webhooksEnabled,
   type Config,
 } from "./config.js";
 import { dispatchOnce, type DispatchAdapter, type PreparedTree } from "./dispatch.js";
@@ -30,7 +31,13 @@ import {
 } from "./eventloop.js";
 import { MutationGate, type MutationIntent } from "@quickchatai/pi-quickreview/src/gate.js";
 import { GitHubAdapter } from "./github.js";
-import { appActorAlias, TokenMinter } from "@quickchatai/pi-quickreview/src/githubAuth.js";
+import { githubCredential } from "@quickchatai/pi-quickreview/src/githubAuth.js";
+import {
+  botAccountLogin,
+  isPersonMode,
+  ownActorAlias,
+  ownLogins,
+} from "@quickchatai/pi-quickreview/src/identity.js";
 import { REVIEW_SET_ASIDE_STALE_WINDOW_MS, type FeedbackEvent } from "./feedback.js";
 import { enforceLedgerFreshness } from "./ledgercheck.js";
 import { readLedgerCarry } from "@quickchatai/pi-quickreview/src/ledgercarry.js";
@@ -313,13 +320,18 @@ export interface Daemon {
   firstHealthyReconcileAt(): Date | null;
 }
 
+/** The webhook HMAC secret — or "" under the polling shape, which takes no
+ * webhooks and needs no secret (the `/webhook` route then refuses every
+ * delivery, webhook.ts). `[github] auth = "user"` is always polling. */
 function readWebhookSecret(cfg: Config): string {
+  if (!webhooksEnabled(cfg)) return "";
   return readFileSync(join(cfg.github.secrets_dir, "webhook_secret"), "utf8").trim();
 }
 
-/** The real adapter: token minter → mutation gate (dry-run aware) → adapter. */
+/** The real adapter: credential (`[github] auth`) → mutation gate (dry-run
+ * aware) → adapter. */
 function buildGitHubAdapter(cfg: Config, stateDir: string): GitHubAdapter {
-  const minter = new TokenMinter(cfg.github.secrets_dir);
+  const minter = githubCredential(cfg.github);
   const gate: MutationGate = new MutationGate(
     cfg.dry_run,
     join(stateDir, "dryrun"),
@@ -496,7 +508,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         dir: join(stateDir, "posting-receipts"),
         repo: cfg.github.repo,
         dryRun: cfg.dry_run,
-        botLogins: [cfg.github.bot_login, `${cfg.github.app_slug}[bot]`],
+        botLogins: ownLogins(cfg.github),
+        personMode: isPersonMode(cfg.github),
         adapter: deps.postingDelivery,
         current: (job) => {
           const pr = store.getPr(job.pr);
@@ -587,7 +600,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     log,
     isDraining: () => store.drainState().draining,
     botLogin: cfg.github.bot_login,
-    ownerActorAlias: appActorAlias(cfg.github.bot_login, cfg.github.app_slug),
+    ownerActorAlias: ownActorAlias(cfg.github),
     // The author asked for a person on a review thread.
     //
     // There is no park to put them in: the state event is a deliberate no-op
@@ -606,7 +619,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         { type: "human_requested" },
         {},
         {
-          botLogin: cfg.github.bot_login,
+          botLogin: botAccountLogin(cfg.github),
           reason: "pingpong:human-requested",
         },
       );
@@ -806,6 +819,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   const outcomes = new OutcomeCapture({
     store,
     botLogin: cfg.github.bot_login,
+    personMode: isPersonMode(cfg.github),
     ...(deps.outcomeGit ? { git: deps.outcomeGit } : {}),
     ...(deps.now ? { now: deps.now } : {}),
   });

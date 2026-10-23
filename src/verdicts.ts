@@ -16,6 +16,11 @@ import {
 // the invariant against retracting an approval is structural, not prompted
 // (AGENTS.md invariant 2).
 import {
+  botAccountLogin,
+  isPersonMode,
+  ownLogins,
+} from "@quickchatai/pi-quickreview/src/identity.js";
+import {
   normalizePassPhase,
   normalizeSweepClaim,
   sweepSkippedOnApprove,
@@ -405,6 +410,15 @@ export function decidedVerdictFromReceipt(receipt: PostingReceipt): ReceiptDecis
   )
     return { verdict: "REQUEST_CHANGES" };
   if (receipt.intended_event === "APPROVE" && receipt.actual_event === "APPROVE")
+    return { verdict: "APPROVE" };
+  // Person mode posts every review as a COMMENT: the approval the session
+  // asked for is the decision, and it was not withheld.
+  if (
+    receipt.person_mode === true &&
+    receipt.intended_event === "APPROVE" &&
+    receipt.actual_event === "COMMENT" &&
+    receipt.reconciled !== true
+  )
     return { verdict: "APPROVE" };
   if (
     receipt.intended_event === "COMMENT" &&
@@ -1537,12 +1551,11 @@ export class VerdictWatcher {
     if (!this.deps.cfg.dry_run && this.deps.adapter.listReviewsFull) {
       try {
         const marker = postingMarker(round.posting_key);
-        const bot = this.deps.cfg.github.bot_login;
         const reviews = await this.deps.adapter.listReviewsFull(round.pr);
         reconciled = true;
         const matches = reviews.filter(
           (review) =>
-            (review.user === bot || review.user === `${this.deps.cfg.github.app_slug}[bot]`) &&
+            ownLogins(this.deps.cfg.github).includes(review.user) &&
             review.commit_id?.toLowerCase() === expectedHead.toLowerCase() &&
             review.body.includes(marker),
         );
@@ -1596,6 +1609,7 @@ export class VerdictWatcher {
             gh_commit_id: match.commit_id,
             gh_state: match.state,
             ...(verifiedIntent ? {} : { reconciled: true }),
+            ...(isPersonMode(this.deps.cfg.github) ? { person_mode: true as const } : {}),
           };
           if (verdict && !receiptMatchesVerdict(synthetic, verdict)) {
             return {
@@ -1804,7 +1818,7 @@ export class VerdictWatcher {
         );
       }
       const restored = restoreStandingLifecycle(store, round.pr, standing, {
-        botLogin: cfg.github.bot_login,
+        botLogin: botAccountLogin(cfg.github),
         now: () => this.now(),
         reason: standing
           ? `posting-guarded-noop:${standing}`
@@ -2339,7 +2353,11 @@ export class VerdictWatcher {
       v.pr,
       { type: "verdict", verdict: v.verdict },
       { head_sha: v.head_sha },
-      { botLogin: cfg.github.bot_login, now: () => this.now(), reason: `verdict:${v.verdict}` },
+      {
+        botLogin: botAccountLogin(cfg.github),
+        now: () => this.now(),
+        reason: `verdict:${v.verdict}`,
+      },
     );
     store.logEvent("verdict_applied", v.pr, {
       file: name,
@@ -3486,7 +3504,7 @@ export class VerdictWatcher {
       pr,
       { type: "round_overdue", standing },
       {},
-      { botLogin: cfg.github.bot_login, now: () => this.now(), reason: `anomaly:${kind}` },
+      { botLogin: botAccountLogin(cfg.github), now: () => this.now(), reason: `anomaly:${kind}` },
     );
     const command = round ? store.sessionCommandForRound(pr, round.round_no) : undefined;
     const successor = store.successorFor(pr);

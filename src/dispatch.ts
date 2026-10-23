@@ -15,6 +15,7 @@
 // plan and the order are built by the review planner (packages/pi-plugin/src/planner.ts), and the
 // prompt renderer (packages/pi-plugin/src/templates.ts) is injected so this module has no content
 // dependency.
+import { botAccountLogin } from "@quickchatai/pi-quickreview/src/identity.js";
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Config } from "./config.js";
@@ -1247,7 +1248,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           );
         }
         const restored = restoreStandingLifecycle(store, row.number, standing, {
-          botLogin: cfg.github.bot_login,
+          botLogin: botAccountLogin(cfg.github),
           now,
           reason: standing ? "no-new-evidence" : "no-new-evidence:standing-unknown",
         });
@@ -1329,7 +1330,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
             { type: "verdict", verdict: standing },
             {},
             {
-              botLogin: cfg.github.bot_login,
+              botLogin: botAccountLogin(cfg.github),
               now,
               reason: `dispatch-short-circuit:${sc.reason}`,
             },
@@ -2086,7 +2087,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         row.number,
         { type: "dispatched" },
         {},
-        { botLogin: cfg.github.bot_login, now },
+        { botLogin: botAccountLogin(cfg.github), now },
       );
       store.logEvent("round_dispatched", row.number, {
         round_id: roundId,
@@ -2182,7 +2183,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
               row.number,
               { type: "dispatched" },
               {},
-              { botLogin: cfg.github.bot_login, now },
+              { botLogin: botAccountLogin(cfg.github), now },
             );
           } catch (publishError) {
             log(

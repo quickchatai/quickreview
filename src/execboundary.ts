@@ -37,6 +37,7 @@
 //   · It detects; it never blocks. A detector that could wedge a review would
 //     be traded away the first time it misfired.
 
+import { carriesOwnMarker } from "@quickchatai/pi-quickreview/src/identity.js";
 import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -554,11 +555,22 @@ function hasIssuedMarker(body: string, commitId: string, issued: ReadonlySet<str
  * every GitHub App posts as a `Bot`, and another installed review bot has no
  * posting trace here by construction, so a type check would report each of
  * its reviews (and raise the severe wake on its approvals) as ours. */
-function isBotAuthored(review: AuditedReview, botLogin: string, appSlug?: string): boolean {
+function isBotAuthored(
+  review: AuditedReview,
+  botLogin: string,
+  appSlug?: string,
+  personMode = false,
+): boolean {
   const login = review.user.toLowerCase();
+  // Person mode: the login is the person's, who reviews by hand too. Only a
+  // review carrying the reviewer's marker or footer is the reviewer's — so a
+  // write outside the gate that carries neither is invisible here (recorded
+  // in docs/exec-boundary.md), and the person's own approval never alarms.
+  if (personMode)
+    return login === botLogin.toLowerCase() && botLogin !== "" && carriesOwnMarker(review.body);
   return (
     login === botLogin.toLowerCase() ||
-    (appSlug !== undefined && login === `${appSlug.toLowerCase()}[bot]`)
+    (appSlug !== undefined && appSlug !== "" && login === `${appSlug.toLowerCase()}[bot]`)
   );
 }
 
@@ -573,7 +585,7 @@ export function auditUngatedReviews(
   reviews: readonly AuditedReview[],
   headSha: string,
   traces: PostingTraces,
-  opts: { botLogin: string; appSlug?: string },
+  opts: { botLogin: string; appSlug?: string; personMode?: boolean },
 ): UngatedReview[] {
   const head = headSha.toLowerCase();
   const out: UngatedReview[] = [];
@@ -583,7 +595,7 @@ export function auditUngatedReviews(
   // recorded in docs/exec-boundary.md rather than implied away.
   let migrationExcusesLeft = traces.migrationPrecheck ? 1 : 0;
   for (const r of reviews) {
-    if (!isBotAuthored(r, opts.botLogin, opts.appSlug)) continue;
+    if (!isBotAuthored(r, opts.botLogin, opts.appSlug, opts.personMode === true)) continue;
     const state = (r.state ?? "").toUpperCase();
     if (state === "PENDING" || state === "DISMISSED") continue;
     if ((r.commit_id ?? "").toLowerCase() !== head) continue;

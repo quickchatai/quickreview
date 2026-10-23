@@ -106,6 +106,10 @@ export interface JournalOptions {
   /** `<state>/posting-receipts`, the dir the verdict watcher and the outbox read. */
   dir: string;
   repo: string;
+  /** `[github] auth = "user"`: every receipt says `person_mode`, the posting
+   * guard posts every event as a COMMENT, and an APPROVE posted as a COMMENT
+   * is NOT the withheld-approval shape (posting-receipt.ts). */
+  personMode?: boolean;
   now?: () => Date;
 }
 
@@ -357,7 +361,7 @@ export class PostingJournal {
         // An APPROVE that GitHub holds as a COMMENT was softened by guard 4 on
         // the gate after the CI preflight: the withheld-approval shape, which
         // the outbox's confirmation stamps the same way.
-        ...(o.intended === "APPROVE" && actual === "COMMENT"
+        ...(o.intended === "APPROVE" && actual === "COMMENT" && !this.o.personMode
           ? { delivered_by: "daemon_retry" as const }
           : {}),
       }),
@@ -519,6 +523,7 @@ export class PostingJournal {
       actual_event: actual,
       payload_sha256: payloadHash(payload),
       prepared_at: base.prepared_at ?? this.iso(),
+      ...(this.o.personMode ? { person_mode: true } : {}),
       ...extra,
     };
   }

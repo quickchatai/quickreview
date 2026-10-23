@@ -18,11 +18,16 @@ import {
   type ReviewPurpose,
 } from "@quickchatai/pi-quickreview/src/gate.js";
 import {
-  appActorAlias,
   GITHUB_REQUEST_TIMEOUT_MS,
-  type TokenMinter,
+  type GitHubCredential,
   type FetchFn,
 } from "@quickchatai/pi-quickreview/src/githubAuth.js";
+import {
+  excludeOwnAppQualifier,
+  isOwnContent,
+  isPersonMode,
+  ownActorAlias,
+} from "@quickchatai/pi-quickreview/src/identity.js";
 import type { PrReviews } from "./reviewhistory.js";
 
 export interface PrConversation {
@@ -377,7 +382,9 @@ export class GitHubAdapter {
 
   constructor(
     private readonly cfg: Config,
-    private readonly minter: TokenMinter,
+    /** The one credential source: the App's minter, or under
+     * `[github] auth = "user"` the person's token file (githubAuth.ts). */
+    private readonly credential: GitHubCredential,
     readonly gate: MutationGate,
     private readonly fetchFn: FetchFn = fetch,
     private readonly apiBase = "https://api.github.com",
@@ -409,7 +416,7 @@ export class GitHubAdapter {
         body: body !== undefined ? JSON.stringify(body) : undefined,
       });
     const res =
-      auth === "jwt" ? await send(this.minter.appJwt()) : await this.sendInstallation(send);
+      auth === "jwt" ? await send(await this.appJwt(path)) : await this.sendInstallation(send);
     if (!res.ok) {
       const retryAfter = res.headers?.get("retry-after");
       const reset = res.headers?.get("x-ratelimit-reset");
@@ -432,15 +439,25 @@ export class GitHubAdapter {
     return (await res.json()) as T;
   }
 
+  /** The App JWT, for the App's own routes only. Absent under the person's
+   * credential, where there is no App: refused before anything is sent. */
+  private async appJwt(path: string): Promise<string> {
+    if (!this.credential.appJwt || isPersonMode(this.cfg.github))
+      throw new Error(
+        `${path} needs the GitHub App's JWT, and [github] auth = "user" has no App — this route is off in that mode`,
+      );
+    return this.credential.appJwt();
+  }
+
   /** Send with an installation token; on a 401 drop the rejected response
    * body, invalidate the cached token and send once more with a fresh one.
    * The one owner of the installation-token 401 policy. */
   private async sendInstallation(send: (token: string) => Promise<Response>): Promise<Response> {
-    let res = await send(await this.minter.installationToken());
+    let res = await send(await this.credential.installationToken());
     if (res.status === 401) {
       await res.body?.cancel().catch(() => {});
-      this.minter.invalidate();
-      res = await send(await this.minter.installationToken());
+      this.credential.invalidate();
+      res = await send(await this.credential.installationToken());
     }
     return res;
   }
@@ -526,6 +543,17 @@ export class GitHubAdapter {
   executeMutation = async (intent: MutationIntent): Promise<unknown> => {
     if (intent.method === "git")
       throw new Error("git pushes are executed by the caller, not the REST executor");
+    // The brace under the posting guard's person-mode step: on the person's
+    // own account no review reaches GitHub as an APPROVE or REQUEST_CHANGES,
+    // even from a gate with no guard installed.
+    if (isPersonMode(this.cfg.github) && intent.kind === "create_review") {
+      const raw = (intent.body as { event?: unknown } | undefined)?.event;
+      const event = typeof raw === "string" ? raw : "";
+      if (event.toUpperCase() !== "COMMENT")
+        throw new Error(
+          `[github] auth = "user" posts every review as a COMMENT; refusing a ${event || "(no event)"} review on #${intent.pr ?? "?"}`,
+        );
+    }
     if (intent.path === "/graphql") {
       const body = intent.body as { query?: unknown; variables?: unknown } | undefined;
       if (
@@ -785,13 +813,13 @@ export class GitHubAdapter {
   /** PRs carrying the trigger label. Bot-authored PRs are excluded — the app
    * can never approve its own PRs. */
   async searchLabelTriggered(): Promise<SearchIssueItem[]> {
-    const q = `repo:${this.cfg.github.repo} is:open is:pr label:"${this.cfg.github.trigger_label}" -author:app/${this.cfg.github.app_slug}`;
+    const q = `repo:${this.cfg.github.repo} is:open is:pr label:"${this.cfg.github.trigger_label}"${excludeOwnAppQualifier(this.cfg.github)}`;
     return this.searchIssues(q);
   }
 
   /** PRs with a pending review-team request. */
   async searchTeamTriggered(): Promise<SearchIssueItem[]> {
-    const q = `repo:${this.cfg.github.repo} is:open is:pr team-review-requested:${this.cfg.github.review_team} -author:app/${this.cfg.github.app_slug}`;
+    const q = `repo:${this.cfg.github.repo} is:open is:pr team-review-requested:${this.cfg.github.review_team}${excludeOwnAppQualifier(this.cfg.github)}`;
     return this.searchIssues(q);
   }
 
@@ -1093,7 +1121,9 @@ export class GitHubAdapter {
     const { rows: res } = await this.pagedArray<any>(
       `/repos/${this.owner}/${this.repo}/pulls/${n}/comments?sort=created&direction=desc&per_page=100`,
     );
-    return res.filter((c) => c.user?.login === this.cfg.github.bot_login).map((c) => c.id);
+    // Person mode: the person's own inline comments are a human's, not the
+    // reviewer's — only marker-bearing ones join the bot-comment registry.
+    return res.filter((c) => isOwnContent(this.cfg.github, c.user?.login, c.body)).map((c) => c.id);
   }
 
   // ---- staleness scan (GraphQL) -------------------------------------------
@@ -1388,12 +1418,16 @@ export class GitHubAdapter {
     // filters use the `[bot]` login, while review-thread GraphQL actors use the
     // bare App slug. Both values are independently configured; recognize
     // exactly that pair here and nowhere else. Every unrelated identity stays
-    // structurally refused.
-    const bareAppActor = appActorAlias(this.cfg.github.bot_login, this.cfg.github.app_slug);
+    // structurally refused. In person mode the root must also carry the
+    // reviewer's marker: a thread the person opened by hand is theirs.
+    const bareAppActor = ownActorAlias(this.cfg.github);
     const ownActors = new Set(
       [this.cfg.github.bot_login, bareAppActor].filter((v): v is string => v !== undefined),
     );
-    if (!ownActors.has(found.author)) {
+    const own = isPersonMode(this.cfg.github)
+      ? isOwnContent(this.cfg.github, found.author, found.body)
+      : ownActors.has(found.author);
+    if (!own) {
       throw new ThreadResolutionRefusal(
         `refusing to resolve thread ${rootCommentId} on #${n}: root author is ${found.author || "unknown"}`,
       );
