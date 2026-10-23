@@ -636,6 +636,13 @@ here and says what to do: nothing later would mean anything until it is fixed.
    reported as not checked: nothing is exposed, so no ping can arrive, and the
    reconcile poll is the only trigger path.
 
+Beside the health layer, one more check, `tui-route`: the operator TUI's own
+read. It resolves `[tui]` exactly as `qcr tui` does (`src/tui/route.ts`) and
+reads `status.json` through the same runner — local docker into the daemon
+container on this machine, ssh on the server route — so a red check here is the
+board that would otherwise open on "unreachable". It does not stop the ping
+layer.
+
 If the last ping failed, the wizard redelivers it once and watches for about
 thirty seconds. If it still fails, the three things to check are: the webhook
 URL must be this daemon's public address (on a rotating tunnel the daemon

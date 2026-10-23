@@ -42,6 +42,7 @@ import { api as githubApi, readCredentials } from "./githubapp.js";
 import { readTomlKey, WEBHOOK_PATH } from "./ingress.js";
 import { sshCommandLine } from "./ssh.js";
 import { sshAliasOf, topologyOf } from "./topology.js";
+import { tuiRouteCheck, type TuiRouteCheckOptions } from "./tuiroute.js";
 import {
   DEFAULT_HEALTH_TIMEOUT_MS,
   stackTransportFor,
@@ -67,6 +68,8 @@ export interface VerifyStackStepOptions {
    * WHICH transport is never an option: `stackTransportFor` decides from the
    * recorded topology, and this step never learns which one it got. */
   transport?: TransportOptions;
+  /** The TUI-route check's seams (tuiroute.ts): its runner and route facts. */
+  tuiRoute?: TuiRouteCheckOptions;
 }
 
 // ---- GitHub's delivery log ---------------------------------------------------
@@ -415,6 +418,9 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
       });
       return { ok: false, checks };
     }
+    // The operator's own window onto the stack: can `qcr tui` read it the way
+    // it will? Independent of webhook delivery, so it never stops layer 3.
+    checks.push(await tuiRouteCheck(ctx, opts.tuiRoute));
     // Layer 3 exists only where GitHub can deliver. The polling topology
     // deliberately exposes nothing, so a ping can never land there — requiring
     // one would keep this step (and so onboarding's finish) red forever.

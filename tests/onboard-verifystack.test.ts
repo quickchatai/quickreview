@@ -108,11 +108,27 @@ function harness(
     attemptStatus?: number;
     redeliver?: boolean;
     noCredentials?: boolean;
+    /** What the TUI's own status read answers (default: a parseable status.json). */
+    tuiStatus?: { ok: boolean; stdout: string; stderr: string };
+    /** Keep the template's [tui] block (ssh, empty host) — the state before
+     * config_fill. Default: the [tui] block config_fill writes for local. */
+    templateTui?: boolean;
   } = {},
-): Harness {
+): Harness & { tuiReads: Array<{ host: string; argv: string[] }> } {
   const urls: string[] = [];
   const logs: string[] = [];
+  const tuiReads: Array<{ host: string; argv: string[] }> = [];
   if (o.noCredentials) rmSync(join(secretsDir, SECRET_FILES.appId));
+  if (!o.templateTui) {
+    const path = join(root, "config.toml");
+    let text = readFileSync(path, "utf8");
+    for (const [k, v] of [
+      ["target", "local"],
+      ["container", "quickreview-daemon-1"],
+    ] as const)
+      text = setTomlKey(text, "tui", k, v)!;
+    writeFileSync(path, text);
+  }
   let redelivered = false;
   const fetchFake = (async (input: unknown, init?: RequestInit) => {
     const url = String(input);
@@ -190,9 +206,68 @@ function harness(
     pingPollAttempts: 2,
     pingPollIntervalMs: 1,
     redeliver: o.redeliver,
+    tuiRoute: {
+      runner: () => async (host, argv) => {
+        tuiReads.push({ host, argv });
+        return { code: 0, ...(o.tuiStatus ?? { ok: true, stdout: '{"prs":[]}', stderr: "" }) };
+      },
+      facts: { dockerSocketAccess: true },
+      sleep: async () => undefined,
+    },
   });
-  return { engine: new OnboardingEngine([step], adapters), urls, logs };
+  return { engine: new OnboardingEngine([step], adapters), urls, logs, tuiReads };
 }
+
+describe("the TUI's own route", () => {
+  it("reads status.json exactly as `qcr tui` will — local docker into the compose daemon, no sudo", async () => {
+    seedChoices({ [INGRESS_CHOICE_KEY]: "quick", topology: "local" });
+    // config_fill has not written [tui] yet: the template's ssh route with an
+    // empty host, which the TUI resolves to the local stack.
+    const h = harness({
+      templateTui: true,
+      services: [
+        { Service: "daemon", State: "running" },
+        { Service: "memory", State: "running" },
+        { Service: "tunnel-quick", State: "running" },
+      ],
+    });
+    const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
+    const check = result.checks.find((c) => c.name === "tui-route");
+    expect(check?.ok, check?.detail).toBe(true);
+    expect(h.tuiReads[0]?.argv).toEqual([
+      "docker",
+      "exec",
+      "quickreview-daemon-1",
+      "cat",
+      "/opt/qcr/state/status.json",
+    ]);
+  });
+
+  it("is red, with its fix, when the TUI could not read status.json — and the ping layer still runs", async () => {
+    seedChoices({ [INGRESS_CHOICE_KEY]: "quick", topology: "local" });
+    const h = harness({
+      services: [
+        { Service: "daemon", State: "running" },
+        { Service: "memory", State: "running" },
+        { Service: "tunnel-quick", State: "running" },
+      ],
+      tuiStatus: {
+        ok: false,
+        stdout: "",
+        stderr: "cat: can't open '/opt/qcr/state/status.json'\n",
+      },
+    });
+    const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
+    expect(result.ok).toBe(false);
+    const check = result.checks.find((c) => c.name === "tui-route")!;
+    expect(check.ok).toBe(false);
+    expect(check.detail).toMatch(/could not read status\.json the way it will/);
+    expect(check.detail).toMatch(/Fix:/);
+    // Retried while a just-booted daemon may not have written it yet.
+    expect(h.tuiReads.length).toBe(4);
+    expect(result.checks.some((c) => c.name === "ping-delivery")).toBe(true);
+  });
+});
 
 describe("parsing GitHub's delivery log", () => {
   it("is total — junk yields no rows, and only 2xx counts as delivered", () => {
@@ -246,6 +321,7 @@ describe("all three layers green", () => {
       "memory-sidecar",
       "ingress-sidecar",
       "health",
+      "tui-route",
       "webhook-url",
       "ping-delivery",
     ]);
@@ -270,6 +346,7 @@ describe("the polling topology", () => {
       "containers",
       "memory-sidecar",
       "health",
+      "tui-route",
       "ping-delivery",
     ]);
     expect(result.checks.find((c) => c.name === "ping-delivery")!.detail).toMatch(/polling/);
