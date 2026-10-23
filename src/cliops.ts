@@ -7,6 +7,7 @@ import { runChecklist, type ChecklistDeps } from "./checklist.js";
 import { loadConfig, sandboxRoot, type Config } from "./config.js";
 import { dispatchOnce } from "./dispatch.js";
 import { ESCALATION_TAG } from "./escalation.js";
+import { MIGRATION_COMMENT_CLOSING, MIGRATION_COMMENT_HEADING } from "./migrations.js";
 import { zoneDateString } from "./eod.js";
 import type { GateResult } from "./gate.js";
 import type { GitHubAdapter, PrRef } from "./github.js";
@@ -309,8 +310,7 @@ export function liveWorkerSessions(runDir: string): string[] {
 function mechanicalReviewBody(body: string): boolean {
   return (
     body.startsWith(`${ESCALATION_TAG} @`) ||
-    (body.startsWith("### Migration numbering — renumber needed (mechanics, not a blocker)\n") &&
-      body.includes("This is posted as a comment on purpose:"))
+    (body.startsWith(`${MIGRATION_COMMENT_HEADING}\n`) && body.includes(MIGRATION_COMMENT_CLOSING))
   );
 }
 

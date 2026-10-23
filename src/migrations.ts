@@ -427,6 +427,13 @@ export interface CollisionCommentInput {
   base_sha: string;
 }
 
+/** The collision comment's heading line; `cliops` recognises the comment by it. */
+export const MIGRATION_COMMENT_HEADING =
+  "### Migration numbering — renumber needed (mechanics, not a blocker)";
+
+/** The collision comment's closing sentence opener; `cliops` recognises the comment by it. */
+export const MIGRATION_COMMENT_CLOSING = "This is posted as a comment on purpose:";
+
 /**
  * The comment body. It states the exact target number and the exact
  * `dependencies` value, and says in plain words that this is mechanics — no
@@ -442,7 +449,7 @@ export function renderMigrationCollisionComment(input: CollisionCommentInput): s
       ? "the migration number this PR claims"
       : "migration numbers this PR claims";
   const lines: string[] = [
-    "### Migration numbering — renumber needed (mechanics, not a blocker)",
+    MIGRATION_COMMENT_HEADING,
     "",
     `\`${branch}\`${at} already occupies ${subject}. GitHub still reports the PR mergeable ` +
       "(the filenames differ) and CI is green, so nothing else catches this — but the " +
@@ -471,7 +478,7 @@ export function renderMigrationCollisionComment(input: CollisionCommentInput): s
   }
   lines.push(
     "",
-    "This is posted as a comment on purpose: the fix is mechanical, it consumes no " +
+    `${MIGRATION_COMMENT_CLOSING} the fix is mechanical, it consumes no ` +
       "review verdict and it does not block the merge gate. Nothing else in this " +
       "round's review depends on it.",
   );
