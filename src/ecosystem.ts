@@ -51,7 +51,7 @@ import {
   collisionFingerprint,
   detectMigrationCollisions,
   collisionDependencyAdvice,
-  dependencyTuple,
+  renamedDependencyReplacement,
   renderMigrationCollisionComment,
   type MigrationCollision,
 } from "./migrations.js";
@@ -226,7 +226,7 @@ export function renderMigrationCollisionsNote(
     if (c.kind === "renamed-dependency") {
       const stale = c.stale_dependency ?? "";
       lines.push(
-        `- ${codePath(c.pr_path)} references renamed ${codePath(`"${stale}"`)} → in its dependencies replace ${codePath(dependencyTuple(c.dependency_app_label ?? c.app_label, stale))} with ${codePath(c.dependency)}, keeping every other entry` +
+        `- ${codePath(c.pr_path)} references renamed ${codePath(`"${stale}"`)} → in its dependencies ${renamedDependencyReplacement(c)}, keeping every other entry` +
           (c.renumber ? `; rename to ${codePath(c.target_path)}` : ""),
       );
       continue;
@@ -451,8 +451,10 @@ async function djangoPreCheck(
     // The COMMENT failed, but the collisions are real, already detected and
     // already logged — throwing them away here would leave the round's gate
     // note empty while the addendum still muzzles the lens, i.e. NOBODY
-    // holding the class. The check RAN (not degraded); the comment retries on
-    // the next round because the fingerprint is only marked on success.
+    // holding the class. The check RAN (not degraded); a refused comment
+    // retries on the next round because the fingerprint is only marked on
+    // success, while an uncertain delivery (pending, no refusal) is
+    // reconciled by marker and never resent.
     log(`dispatch: migration pre-check failed on #${round.pr}`, err);
     io.logEvent("migration_precheck_failed", round.pr, {
       head_sha: round.head_sha,

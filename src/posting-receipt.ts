@@ -95,6 +95,11 @@ export function postingKeyHead(key: string, pr: number, roundNo: number): string
   return head !== "" && !head.includes(":") ? head : undefined;
 }
 
+/** The head of any `roundPostingKey`, whatever PR and round it names. */
+export function postingKeyAnyHead(key: string): string {
+  return key.split(":").slice(3).join(":");
+}
+
 export function postingMarker(key: string): string {
   return `<!-- qcr-post:${key} -->`;
 }

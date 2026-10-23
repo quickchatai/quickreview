@@ -403,6 +403,13 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
   return out;
 }
 
+/** The renamed-dependency edit both renderers quote: the stale dependency
+ * tuple replaced by the renumbered one. */
+export function renamedDependencyReplacement(c: MigrationCollision): string {
+  const stale = c.stale_dependency ?? "";
+  return `replace ${codePath(dependencyTuple(c.dependency_app_label ?? c.app_label, stale))} with ${codePath(c.dependency)}`;
+}
+
 /** A serialization edge is additive: a partial diff cannot enumerate all
  * original parents, and no original edge may be discarded by the remedy. */
 export function collisionDependencyAdvice(c: MigrationCollision): string {
@@ -462,7 +469,7 @@ export function renderMigrationCollisionComment(input: CollisionCommentInput): s
       const stale = c.stale_dependency ?? "";
       lines.push(
         `- ${codePath(c.pr_path)} — its \`dependencies\` reference ${codePath(`"${stale}"`)}, which the renumber above moves to ${codePath(c.dependency_name)}.`,
-        `  - in its \`dependencies\`, replace ${codePath(dependencyTuple(c.dependency_app_label ?? c.app_label, stale))} with ${codePath(c.dependency)} — keep every other entry`,
+        `  - in its \`dependencies\`, ${renamedDependencyReplacement(c)} — keep every other entry`,
       );
       if (c.renumber)
         lines.push(
