@@ -1,4 +1,4 @@
-import { STORE_LABELS } from "./status.js";
+import { STORE_LABELS, storeEntries } from "./status.js";
 import { archivedEventTotal } from "./rows.js";
 // `qcr archive status [--plan]` (docs/archiving.md §11): the
 // archiver's block as the daemon published it, the archive ledger, the
@@ -171,10 +171,7 @@ export function renderArchiveReport(input: {
     if (s.freelist_pages !== null) lines.push(`state.db free pages: ${s.freelist_pages}`);
     // The stores that belong to no PR: each one's last pass, or that it
     // has not run (plan mode, not wired, or an older daemon).
-    for (const [label, st] of [
-      [STORE_LABELS.overseer, s.stores?.overseer ?? null],
-      [STORE_LABELS.pi_global, s.stores?.pi_global ?? null],
-    ] as const)
+    for (const [label, st] of storeEntries(s.stores))
       lines.push(storePhrase(label, st) || `${label}: no pass yet`);
   }
   lines.push(policyLine(input.policy));
