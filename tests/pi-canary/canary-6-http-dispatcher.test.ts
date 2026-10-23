@@ -1,4 +1,4 @@
-// Canary 6 : pi's HTTP dispatcher, as the SDK host installs it.
+// Canary 6: pi's HTTP dispatcher, as the SDK host installs it.
 //
 // pi does not export configureHttpDispatcher; PiHost deep-imports it by file
 // path so an SDK host runs provider requests through exactly the dispatcher the

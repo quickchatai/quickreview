@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The offline CPU and RSS gate : can N review sessions share ONE node
+// The offline CPU and RSS gate: can N review sessions share ONE node
 // event loop on a 2-vCPU host?
 //
 // The in-process SDK runtime (packages/pi-plugin/src/engine/sdkruntime.ts) puts every lens

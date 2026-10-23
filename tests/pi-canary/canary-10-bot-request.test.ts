@@ -1,4 +1,4 @@
-// Canary 10, bot shape : the bot worker's main session on the SDK sends the
+// Canary 10, bot shape: the bot worker's main session on the SDK sends the
 // request the interactive build's `pi` sends.
 //
 // The tmux bot starts one interactive `pi` per PR, with the PR's system prompt,

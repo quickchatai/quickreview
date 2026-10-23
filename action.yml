@@ -10,7 +10,7 @@
 # The review container gets: the checkout read-only, a generated config
 # (dry_run = false, memory off), the pi login read-only, QCR_ROUTE=action (no
 # default cost cap, nothing asked) and the GitHub token as a read-once file in
-# $RUNNER_TEMP, never in the environment or the command line (D39).
+# $RUNNER_TEMP, never in the environment or the command line.
 name: qcr review
 description: Review a pull request with qcr and post the findings as a comment-only review.
 

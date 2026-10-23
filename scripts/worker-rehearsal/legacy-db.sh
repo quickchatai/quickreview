@@ -3,7 +3,7 @@
 #
 #   scripts/worker-rehearsal/legacy-db.sh <out.db> [<legacy-commit>]
 #
-# The legacy commit (default: the one the live bot was last deployed from, 8169df6f) is
+# The legacy commit (default: the pre-cutover commit 8169df6f) is
 # built in a scratch dir and ITS StateStore creates the file, then a legacy-shaped PR
 # history is written through that store: a closed earlier PR, one event and the operator's
 # drain, so the migrations HEAD applies have rows to carry. Nothing from HEAD

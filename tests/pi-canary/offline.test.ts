@@ -1,4 +1,4 @@
-// The canary suite's own guarantees : it is offline (proved by a guard
+// The canary suite's own guarantees: it is offline (proved by a guard
 // that is itself proved to catch an attempt), it runs the pinned pi, every
 // canary file is guarded, and `npm run canary:pi` and the CI step exist.
 import net from "node:net";

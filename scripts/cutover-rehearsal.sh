@@ -606,9 +606,9 @@ MISS+="$(want_in_plan 'wait for /ready; recreate the daemon container' 'the side
 MISS+="$(want_in_plan 'cutover +first run on the legacy layout, acknowledged' 'the cutover acknowledgement')"
 MISS+="$(want_in_plan 'POINT OF NO RETURN' 'the recreate named as the point of no return')"
 if [[ "$PLAN_RC" == 0 && -z "$MISS" ]]; then
-  check PLAN-1 pass "the dry-run plan shows what runbook C.11 asks for" "legacy layout, the manifest digests and a pull by digest, the new image's config check, stop then snapshot then preflight, the seed, the swap, sidecar /ready, the recreate named as the point of no return; nothing executed"
+  check PLAN-1 pass "the dry-run plan shows what the cutover needs" "legacy layout, the manifest digests and a pull by digest, the new image's config check, stop then snapshot then preflight, the seed, the swap, sidecar /ready, the recreate named as the point of no return; nothing executed"
 else
-  check PLAN-1 fail "the dry-run plan shows what runbook C.11 asks for" "rc=$PLAN_RC ${MISS}(see $LOGS/plan.log)"
+  check PLAN-1 fail "the dry-run plan shows what the cutover needs" "rc=$PLAN_RC ${MISS}(see $LOGS/plan.log)"
 fi
 
 # =================================================================================================

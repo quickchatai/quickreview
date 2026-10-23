@@ -1,4 +1,4 @@
-// Canary 1 : a dispose cuts every session that shares its id.
+// Canary 1: a dispose cuts every session that shares its id.
 //
 // AgentSession.dispose() ends in pi-ai's cleanupSessionResources(sessionId),
 // which tells every registered transport to drop what it holds under that id.

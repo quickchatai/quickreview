@@ -1,4 +1,4 @@
-// Canary 10 (bare) : a bare SDK session's provider request is byte-equal to
+// Canary 10 (bare): a bare SDK session's provider request is byte-equal to
 // a CLI pi started with the same flags.
 //
 // The route's parity claim ("the SDK route reviews the way the CLI route does")

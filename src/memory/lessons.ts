@@ -3,7 +3,7 @@
 //
 // The typed header says which lens a lesson is for, whether it says "look for
 // X" or "do not raise X", and which human evidence it rests on — which is
-// what lets a lesson be delivered to the right lens, the look-for :
+// what lets a lesson be delivered to the right lens, the look-for:
 // don't-raise balance be measured, and an adopted candidate be traced. Prose
 // lessons with no header cannot say any of that reliably.
 //

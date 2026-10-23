@@ -1,4 +1,4 @@
-// Canary 4 : the SDK host touches nothing under HOME.
+// Canary 4: the SDK host touches nothing under HOME.
 //
 // pi defaults three paths to ~/.pi/agent when the caller names none
 // (model-runtime.js:81 models.json, models-store.js:30 models-store.json,

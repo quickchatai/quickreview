@@ -200,7 +200,7 @@ describe("a bench review round on the SDK with the engine's lens tool", () => {
     expect(r.costUsd).toBeGreaterThan(0.1);
   });
 
-  it("leaves the case dir openable in pi: the main JSONL, the pass's JSONL and the record `qcr open` reads (D10)", async () => {
+  it("leaves the case dir openable in pi: the main JSONL, the pass's JSONL and the record `qcr open` reads", async () => {
     const { r, outDir } = await engineLensRound(
       [
         callLens,

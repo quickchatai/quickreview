@@ -1,4 +1,4 @@
-// Canary 10, full : the one-shot main session's provider request on the SDK
+// Canary 10, full: the one-shot main session's provider request on the SDK
 // route is byte-equal to the process route's.
 //
 // canary-10-bare pins a BARE session. This one runs the review round itself

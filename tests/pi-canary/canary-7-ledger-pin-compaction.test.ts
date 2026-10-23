@@ -1,4 +1,4 @@
-// Canary 7 : pi honours what a session_before_compact hook returns.
+// Canary 7: pi honours what a session_before_compact hook returns.
 //
 // ledger-pin's whole value is that its { compaction } result REPLACES pi's
 // default summary. pi ignores any field it does not read, so a bump that

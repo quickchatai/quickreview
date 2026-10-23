@@ -1,4 +1,4 @@
-// Canary 9 : an extension's async throw is contained.
+// Canary 9: an extension's async throw is contained.
 //
 // Extensions run inside the review session's process. A handler that rejects
 // (an OpenViking call timing out, a ledger write failing) must be reported

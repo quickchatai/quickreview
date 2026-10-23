@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# cutover.sh — the owner's single cutover window (runbook sections C and D),
+# cutover.sh — the owner's single cutover window,
 # one idempotent, resumable wizard. Built with the /wizard skill.
 #
 #   scripts/cutover.sh X.Y.Z
@@ -350,7 +350,7 @@ s_preconditions() {
       (( left < 14 )) && warn "under 14 days left: renew with scripts/vm-ghcr-login.sh soon"
     fi
   else
-    bad "no registry login recorded ($exp_file): run scripts/vm-ghcr-login.sh --version $VERSION (runbook step 9)"; ok=1
+    bad "no registry login recorded ($exp_file): run scripts/vm-ghcr-login.sh --version $VERSION"; ok=1
   fi
 
   if read_vm_status; then
@@ -467,7 +467,7 @@ s_release() {
 
 # ── 5. verify ────────────────────────────────────────────────────────────
 s_verify() {
-  "$DEPLOY" verify || { bad "verify failed: keep the drain on and read the output above (runbook step 13)"; return 1; }
+  "$DEPLOY" verify || { bad "verify failed: keep the drain on and read the output above"; return 1; }
   say "It must have shown: both containers up on the manifest digests, the sidecar ready, the"
   say "heartbeat fresh with permits 0/20, the IPC socket, the login refresher holding auth.json.lock,"
   say "and no pi, overseer or tmux PR session in the process tree."

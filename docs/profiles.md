@@ -848,7 +848,7 @@ Lens selection (`packages/pi-plugin/src/heuristics.ts selectLenses`) is split in
   pass-intent substance bar. These describe repos in general.
 - **The repo-shaped predicates ride the profile**: framework settings-file
   globs (`settings*.py`), framework command dirs (`management/commands/`),
-  product-local markers (`@background_decorator`), framework filename
+  product-local markers (`@background_task`), framework filename
   vocabulary (DRF's `serializers.py`/`views.py`/`urls.py`), and
   framework-specific flag-library names (`waffle`).
 
@@ -859,7 +859,7 @@ The file is one table per lens, with up to two keys:
 paths = ['(^|/)settings[^/]*\.py$']      # RegExp sources over changed filenames
 
 [pass-delivery]
-added_lines = ['@background_decorator']  # probes over ADDED diff lines
+added_lines = ['@background_task']  # probes over ADDED diff lines
 ```
 
 - **`paths`** — compiled verbatim, case-sensitive, matched against every

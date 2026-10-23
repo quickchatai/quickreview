@@ -26,7 +26,7 @@
 # (ubuntu-latest, ubuntu-24.04-arm), with buildx and the gha cache: the route for
 # a repo without the app, the public snapshot included.
 #
-# ARM runners (D15): native by default, so the arm64 smoke runs on real arm64
+# ARM runners: native by default, so the arm64 smoke runs on real arm64
 # and the memory image's llama-cpp-python compiles natively. The repo variable
 # RELEASE_ARM64_RUNNER, when set, picks the label over both defaults. Set it to
 # `qemu` and the arm64 legs run on ubuntu-latest under QEMU instead: the
@@ -45,7 +45,7 @@
 #     RELEASE_ATTEST=true; without them the deploy manifest's digests still pin
 #     what the VM pulls.
 #
-# The paid e2e is counted against the small separate release grant (D37), not
+# The paid e2e is counted against the small separate release grant, not
 # the bench budget. Each run writes its ledger line (version, run, cap, spend)
 # to the job summary and to the e2e-ledger artifact.
 #
@@ -258,7 +258,7 @@ jobs:
 
   # The one paid step: the release image reviews a tiny fixture diff with a
   # real model. The environment's required reviewer is the approval; the
-  # pi login is that environment's only secret. Counted per D37.
+  # pi login is that environment's only secret. Counted against the release grant.
   e2e:
     needs: [plan, build]
     if: needs.plan.outputs.e2e == 'true'
@@ -286,7 +286,7 @@ jobs:
           work="$RUNNER_TEMP/e2e"
           rm -rf "$work"
           mkdir -p "$work/home/agent" "$work/repo"
-          # Group access only: the model's tool uid shares the run gid (D32) and
+          # Group access only: the model's tool uid shares the run gid and
           # pi, running as it, reads its login from here.
           chmod 0770 "$work/home" "$work/home/agent"
           (umask 007 && printf '%s' "$PI_AUTH" >"$work/home/agent/auth.json")
@@ -300,7 +300,7 @@ jobs:
           g commit -qam "rewrite total"
           chmod -R a+rX "$repo"
           # A model-reaching run starts as root and drops to the run uid; the
-          # model's tools get another uid (docker/entrypoint.sh, D32).
+          # model's tools get another uid (docker/entrypoint.sh).
           set +e
           docker run --rm -i --init --user 0:0 --cap-drop ALL --cap-add SETUID --cap-add SETGID \
             --security-opt no-new-privileges \
@@ -316,7 +316,7 @@ jobs:
           line="$(printf '%s release-e2e v%s run %s cap=%s spend=%s exit=%s' \
             "$(date -u +%Y-%m-%dT%H:%MZ)" "$VERSION" "$GITHUB_RUN_ID" "$LIMIT_USD" "$spend" "$rc")"
           echo "$line" >"$RUNNER_TEMP/ledger/e2e-ledger.txt"
-          printf '### Paid e2e (D37 ledger)\n\n`%s`\n\nCounts against the separate release grant, not the bench budget.\n' "$line" >>"$GITHUB_STEP_SUMMARY"
+          printf '### Paid e2e (release-grant ledger)\n\n`%s`\n\nCounts against the separate release grant, not the bench budget.\n' "$line" >>"$GITHUB_STEP_SUMMARY"
           [ "$rc" = 0 ] || { echo "::error::the e2e review exited $rc"; exit 1; }
           jq -e '.schema_version == 1 and .ok == true and (.partial // false) == false' "$work/result.json" >/dev/null ||
             { echo "::error::the e2e review did not finish ok"; exit 1; }

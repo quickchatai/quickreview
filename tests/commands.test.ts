@@ -1018,9 +1018,9 @@ describe("CommandWatcher", () => {
 
   it("legacy commands/ still runs during an owner Slack turn", async () => {
     const deps = makeDeps();
-    writeFileSync(join(cmdDir(), "mat.json"), JSON.stringify({ command: "rerun-round", pr: 7 }));
+    writeFileSync(join(cmdDir(), "alice.json"), JSON.stringify({ command: "rerun-round", pr: 7 }));
     await tierWatcher(deps, "local", () => origin({ tier: "owner" })).sweep();
-    expect(result("mat")).toMatchObject({ ok: true });
+    expect(result("alice")).toMatchObject({ ok: true });
     expect(deps.rerunRound).toHaveBeenCalledWith(7);
   });
 

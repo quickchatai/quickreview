@@ -107,7 +107,7 @@ describe("release.yml — the gates", () => {
     expect(wf.jobs.e2e!.environment).toBe("release-e2e");
     expect(jobText("e2e")).toContain("secrets.RELEASE_E2E_PI_AUTH");
     expect(jobText("e2e")).toMatch(/--limit/);
-    expect(jobText("e2e")).toContain("D37");
+    expect(jobText("e2e")).toContain("release-grant ledger");
     for (const name of ["plan", "build", "publish"]) {
       const secrets = [...jobText(name).matchAll(/secrets\.([A-Z_]+)/g)].map((m) => m[1]);
       expect(

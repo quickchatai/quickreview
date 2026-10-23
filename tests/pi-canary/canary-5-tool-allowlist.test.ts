@@ -1,4 +1,4 @@
-// Canary 5 : the session's tool list is the allowlist, exactly.
+// Canary 5: the session's tool list is the allowlist, exactly.
 //
 // A review session must hold the tools its route named and no others: not pi's
 // defaults, not an extension's extra, not an MCP or codemode tool a settings file
