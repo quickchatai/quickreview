@@ -19,6 +19,7 @@ CI run.
 | `main` cannot be rewritten or merged into unreviewed | The `main` ruleset: no deletion, no force push, squash-merged PRs with one approval and green CI; repository admins bypass it |
 | A leaked workflow token can do little | Default workflow token is read-only; Actions cannot approve PRs |
 | No one but an admin starts a release | The `release tags` ruleset: only repository admins create, move or delete a `v*` tag. Every org member can push to this repo, and a tag push runs `release.yml` |
+| Only a tagged release can put a version on npm, and only after a maintainer's 2FA | Each npm package's trusted publisher (`.github/npm-trust.sh`, below): `release.yml`'s `npm` job in the `npm-publish` environment, which deploys only from a `v*.*.*` tag, may stage a version and never publish one. No npm token exists for CI to leak |
 | The release's model login stays put | The `release-e2e` environment (`RELEASE_E2E_PI_AUTH`) deploys only from `main` or a `v*.*.*` tag, after the admin who ran the script approves. A real release cannot publish without its e2e, so that approval gates every publish |
 
 ## Applying the settings
@@ -50,6 +51,28 @@ The ruleset's required checks are the CI job names as GitHub reports them:
 `test (26)`, `pi-range (1.4.0)`, `image`, `clone`. A change to a job name or
 a matrix value in `ci.yml` changes the check's name: update the script in the
 same PR, or every PR waits for a check that never comes.
+
+## npm trusted publishing
+
+Both npm packages trust one workflow to stage their releases, and nothing
+else. [`.github/npm-trust.sh`](../.github/npm-trust.sh) sets that on each, run
+by an npm owner of the `quickchatai` org (every `npm trust` call asks for
+2FA):
+
+```sh
+.github/npm-trust.sh                 # prints every call, changes nothing
+.github/npm-trust.sh --apply         # makes them
+```
+
+Each publisher names the repository `quickchatai/quickreview`, the workflow
+`release.yml` and the environment `npm-publish`, and may stage only. npm sets
+a publisher only on a package that already exists, so a new package's first
+version goes out once by hand before its publisher can be set. With both
+publishers set, the script deletes any `NPM_TOKEN` left in the environment;
+revoke that token on npmjs too. A release then stages both packages and a
+maintainer approves each with 2FA, the plugin first (`npm stage approve
+<stage-id>`, or Approve on npmjs.com). `npm trust list <package>` shows what
+a package trusts.
 
 ## Manual settings
 
