@@ -246,4 +246,35 @@ describe("pr-checks.sh --why", () => {
     expect(stdout).toContain("log: not readable (HTTP 403)");
     expect(stdout).toContain("annotation rag/prompts/rewrite.py:49");
   });
+
+  it("dies instead of classifying when the check-run page limit is exhausted", async () => {
+    pagedRuns = Array.from({ length: 1000 }, (_, i) => ({
+      id: i + 1,
+      name: `c${i}`,
+      status: "completed",
+      conclusion: "success",
+      started_at: "2026-09-27T10:00:00Z",
+      html_url: "h",
+    }));
+    const err = await checks().catch((e) => e);
+    expect(err.code).not.toBe(0);
+    expect(err.stderr).toContain("incomplete check-runs");
+    expect(err.stdout ?? "").not.toContain("CLASSIFIED");
+  });
+
+  it("dies on a check-run page that carries no check_runs list", async () => {
+    const orig = server.listeners("request")[0] as (...a: unknown[]) => void;
+    server.removeAllListeners("request");
+    server.on("request", (req, res) => {
+      if ((req.url ?? "").includes("/check-runs")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end("{}");
+      }
+      orig(req, res);
+    });
+    const err = await checks().catch((e) => e);
+    expect(err.code).not.toBe(0);
+    expect(err.stderr).toContain("check-runs page");
+    expect(err.stdout ?? "").not.toContain("CLASSIFIED");
+  });
 });

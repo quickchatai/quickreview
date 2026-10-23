@@ -101,7 +101,7 @@ case "$1" in
   run)
     case " $* " in
       *" cli companion plan "*)
-        [ -z "\${FAKE_PLAN_FAIL-}" ] || exit 1
+        [ -z "\${FAKE_PLAN_FAIL-}" ] || { echo "planner: no ssh agent" >&2; exit 1; }
         cat "$FAKE_DIR/plan.txt"
         exit 0
         ;;
@@ -905,6 +905,7 @@ describe("the TUI and its companion (D35)", () => {
     const r = rig();
     const out = r.run([], { env: { ...withCompanion, ...env } });
     expect(out.stderr).toContain("the companion could not be started");
+    if ("FAKE_PLAN_FAIL" in env) expect(out.stderr).toContain("planner: no ssh agent");
     const tui = tuiCall(r);
     expect(tui.slice(tui.indexOf(IMAGE))).toEqual([IMAGE, "tui", "--no-companion"]);
     expect(envs(tui)).not.toContain("QCR_TUI_COMPANION=tmux-socket");
@@ -925,6 +926,19 @@ describe("the TUI and its companion (D35)", () => {
     expect(envs(review!)).toContain("QCR_CONFIG=/opt/qcr/config.example.toml");
     expect(mounts(review!).join("\n")).not.toContain(".ssh");
     expect(mounts(review!).join("\n")).not.toContain("agent");
+  });
+
+  it("reads the TUI's config from an absolute QCR_CONFIG_HOME, as the install locator does", () => {
+    const r = rig();
+    ssh(r);
+    const home = join(r.home, "custom-home");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, "config.toml"), "# the install's config\n");
+    r.run([], { env: { QCR_CONFIG_HOME: home } });
+    const [tui] = r.calls();
+    expect(mounts(tui!)).toContain(
+      `type=bind,src=${join(home, "config.toml")},dst=/qcr-config/config.toml,readonly`,
+    );
   });
 
   it("has no secrets, config home or ssh dir in what the companion is run with", () => {
