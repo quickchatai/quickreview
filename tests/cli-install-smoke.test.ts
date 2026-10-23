@@ -283,7 +283,11 @@ describe.skipIf(!BUILT)("the installed qcr, offline, with no config", () => {
     };
     expect(info.schema_version).toBe(VERSION_SCHEMA_VERSION);
     expect(info.image.version).toBe(ROOT_PKG.version);
-    expect(info.pi).toEqual(ROOT_PKG.qcrPi);
+    // the block's "//" note is package.json's, not part of the pin qcr reports
+    expect(info.pi).toEqual({
+      package: ROOT_PKG.qcrPi.package,
+      version: ROOT_PKG.qcrPi.version,
+    });
 
     const repo = fixtureRepo();
     const r = spawnSync(qcr, ["review", "--preview", "--json", "--base", "main"], {
