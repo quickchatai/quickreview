@@ -20,25 +20,23 @@ import type { Config } from "../config.js";
 import type { Ecosystem } from "../ecosystem.js";
 import type { PrFileEntry } from "../github.js";
 import { CONTEXT_PACK_FILE } from "../contextpack.js";
-import type { RoundMemory } from "../memory/context.js";
+import type { RoundMemory } from "../memoryport.js";
 import { isDefaultPosting } from "../postingpolicy.js";
 import {
-  CASE_FILES,
   modelErrorKind,
   modelErrorsFromEvents,
   stagesFromEvents,
   usageFromEvents,
   type ModelErrors,
   type Stages,
-} from "../bench/aacr.js";
-import { caseCostUsd } from "../bench/cost.js";
+} from "./roundevents.js";
+import { CASE_FILES, POLICED_ORIGINALS, type BenchPostingReport } from "./caseout.js";
+import { caseCostUsd } from "../pricing.js";
 import { lineHasAuthError } from "../authwatch.js";
 import { checkAuth, classifyAuthFailure, type AuthRejected, type EngineAuth } from "./auth.js";
 import type { PiRun, Runtime, RuntimeSession } from "./port.js";
-import { GIT_ISOLATION_ENV } from "../bench/exec.js";
-import { POLICED_ORIGINALS, type BenchPostingReport } from "../bench/benchposting.js";
-import { apiKeyEnv } from "../bench/auth.js";
-import { GITHUB_TOKEN_ENVS } from "../envstrip.js";
+import { apiKeyEnv } from "./keyroute.js";
+import { GIT_ISOLATION_ENV, GITHUB_TOKEN_ENVS } from "../envstrip.js";
 import { openRoundSink, type RoundLive } from "./livewire.js";
 import type { LiveSink } from "../live/writer.js";
 import { planLaunch, type LaunchUnit } from "./lens/launch-plan.js";
@@ -340,7 +338,7 @@ export function prepareRound(
       ...(process.env.ANTHROPIC_API_KEY
         ? { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY }
         : {}),
-      // The API-key route (src/bench/auth.ts); nothing on the login route.
+      // The API-key route (src/engine/keyroute.ts); nothing on the login route.
       ...apiKeyEnv(),
     };
     // No GitHub credential reaches a process whose model runs bash.

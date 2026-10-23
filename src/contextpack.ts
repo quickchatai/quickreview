@@ -17,7 +17,7 @@
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { codePath, flatControls } from "./codespan.js";
-import { fenceAsData } from "./memory/datafence.js";
+import { fenceAsData } from "./datafence.js";
 import type { PrFileEntry } from "./github.js";
 import { isTestFile } from "./heuristics.js";
 

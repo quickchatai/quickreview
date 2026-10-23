@@ -13,11 +13,12 @@ import { DJANGO_ECOSYSTEM, type Ecosystem } from "./ecosystem.js";
 import {
   ensurePinnedHead,
   MEMORY_LESS,
+  renderBleedNote,
   renderContextBlockSection,
+  renderLessonsNote,
   renderPinnedHeadSection,
   type RoundMemory,
-} from "./memory/context.js";
-import { renderBleedNote, renderLessonsNote } from "./memory/delivery.js";
+} from "./memoryport.js";
 import { backtickFence, codePath, flatControls, promptTitle } from "./codespan.js";
 import { isSplitBaselineRow } from "./heuristics.js";
 import { renderEscalationPromptNote } from "./escalation.js";

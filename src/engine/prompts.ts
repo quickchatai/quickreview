@@ -28,7 +28,7 @@ import { CONTEXT_PACK_FILE, readWorktreeFileForPack, renderContextPack } from ".
 import { identityVars } from "../include.js";
 import { lensRuntimeOf } from "../launchvocab.js";
 import { lensEnabled } from "../lenstuning.js";
-import { MEMORY_LESS, type RoundMemory } from "../memory/context.js";
+import { MEMORY_LESS, type RoundMemory } from "../memoryport.js";
 import { renderPassTasks } from "../passtasks.js";
 import { loadProfileHeuristics, type ProfileLookup } from "../profiles.js";
 import { firstPartyDirectiveFiles } from "../severity.js";
@@ -43,7 +43,7 @@ import {
 import type { PassPlanEntry, RoundOrder } from "../types.js";
 import { findCiLinters } from "../lintconfig.js";
 import { findStyleGuide } from "../styleguide.js";
-import { benchAppendix } from "../bench/aacr.js";
+import { benchAppendix } from "./caseout.js";
 
 /** Cut a PR body to a UTF-8 byte budget. The body is the one unbounded input
  * in the order, and it appears twice (the intent note and the override). */

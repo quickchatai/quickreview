@@ -1,10 +1,7 @@
 // Session artifact names are shared without importing any runner or report modules.
-export const CASE_FILES = {
-  comments: "comments.json",
-  review: "review.md",
-  findings: "findings-record.json",
-  outcome: "outcome.json",
-} as const;
+// The case dir's file names and the PR description payload are the offline
+// round's own (src/engine/caseout.ts).
+export { CASE_FILES, prDescription } from "../engine/caseout.js";
 
 /** Session comments accept both historical bare arrays and wrapped arrays. */
 export function commentsEnvelope(raw: unknown): unknown[] {
@@ -16,17 +13,6 @@ export function commentsEnvelope(raw: unknown): unknown[] {
   )
     return (raw as { comments: unknown[] }).comments;
   return [];
-}
-
-/** The shared title/body payload inside each arm's own context framing. */
-export function prDescription(meta: { title: string | null; body: string | null }): string[] {
-  return [
-    `Title: ${meta.title ?? "(unavailable)"}`,
-    "",
-    "```text",
-    (meta.body ?? "(no description)").replaceAll("```", "ʼʼʼ"),
-    "```",
-  ];
 }
 
 export function singleLineComment(

@@ -32,7 +32,7 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
@@ -54,8 +54,7 @@ import {
   reviewKey,
   type BranchTarget,
 } from "./localreview.js";
-import type { RoundMemory } from "./memory/context.js";
-import { seedReviewMemory, type ReviewMemorySource } from "./reviewmemory.js";
+import { MEMORY_NOT_SET_UP, type ReviewMemoryPort, type RoundMemory } from "./memoryport.js";
 import type { CredentialSource } from "./ghcred.js";
 import {
   assemblePostReview,
@@ -84,6 +83,7 @@ import {
 } from "./reviewdest.js";
 import { runOneShot, type OneShotResult } from "./oneshot.js";
 import type { RoundSpec } from "./engine/round.js";
+import { BUDGET_EXIT_CODE } from "./engine/budget.js";
 import { renderOneShotPrompts, type OneShotPrompts } from "./engine/prompts.js";
 import { prepareHostRun } from "./hostroute.js";
 import { AuthExpiring } from "./engine/auth.js";
@@ -328,9 +328,10 @@ export interface ReviewCliDeps {
   /** Where each run keeps its throwaway tree and its files. */
   runsDir: string;
   timeoutMs: number;
-  /** The install's OpenViking memory, when set up (src/reviewmemory.ts).
-   * Absent or null: the review runs without memory and says so once. */
-  memory?: ReviewMemorySource | null;
+  /** The install's memory, injected by the host (the app's OpenViking memory,
+   * src/reviewmemory.ts). Absent or null: the review runs without memory and
+   * says so once. */
+  memory?: ReviewMemoryPort | null;
   log?: (line: string) => void;
   /** The diff on standard input, for `--diff -`. Absent: stdin is not available. */
   readStdin?: () => Promise<string>;
@@ -960,11 +961,9 @@ async function runReview(
     (deps.warn ?? ((l) => console.error(l)))(bot.warning);
   }
   // Memory seasons the prompt; it never fails or holds up the review.
-  const seeded = await seedReviewMemory(
-    deps.memory,
-    { title: target.title, files: t.files },
-    deps.log,
-  );
+  const seeded = deps.memory
+    ? await deps.memory.seed({ title: target.title, files: t.files }, deps.log)
+    : MEMORY_NOT_SET_UP;
   if (seeded.notice !== null && !json) deps.out(seeded.notice);
   const memoryReport = { used: seeded.used, notice: seeded.notice };
   const sessionName = `review-${(kind === "diff" ? "diff" : cmd.uncommitted ? "uncommitted" : t.branch).replace(/[^A-Za-z0-9._-]/g, "-")}`;
@@ -1293,7 +1292,14 @@ export function selectReviewRuntime(cfg: Pick<Config, "engine" | "pi">): EngineR
     let host: Promise<EngineRouteRuntime> | undefined;
     const load = (): Promise<EngineRouteRuntime> =>
       (host ??= import("./engine/reviewsdk.js").then((m) =>
-        m.reviewSdkRuntime(engine ? { engine: { wave, plannedWave: cfg.pi.engine_wave } } : {}),
+        m.reviewSdkRuntime({
+          ...(engine ? { engine: { wave, plannedWave: cfg.pi.engine_wave } } : {}),
+          // `qcr review` owns its process: a wedged turn exits it, the round's
+          // diagnostics go to stderr, and the fence knows this user's home.
+          backstop: () => process.exit(BUDGET_EXIT_CODE),
+          warn: (line) => console.error(line),
+          homeDir: homedir(),
+        }),
       ));
     const engineLens: EngineRoute = {
       wave,
@@ -1314,7 +1320,13 @@ export function selectReviewRuntime(cfg: Pick<Config, "engine" | "pi">): EngineR
 export async function cmdReview(
   rest: string[],
   json: boolean,
-  io: { out?: (line: string) => void; runsDir?: string } = {},
+  io: {
+    out?: (line: string) => void;
+    runsDir?: string;
+    /** The install's memory, from its config; the host injects it (src/cli.ts
+     * passes the app's, src/reviewmemory.ts). Absent: no memory. */
+    memory?: (cfg: Config) => ReviewMemoryPort | null;
+  } = {},
 ): Promise<number> {
   // Detached runs for plugins (src/reviewdetach.ts): `start | status | stop`,
   // and the child `start` launches.
@@ -1418,6 +1430,7 @@ export async function cmdReview(
         code = await cmdReview([...claimed.argv, "--json"], true, {
           out,
           runsDir: join(claimed.dir, "work"),
+          ...(io.memory ? { memory: io.memory } : {}),
         });
         return code;
       },
@@ -1434,7 +1447,11 @@ export async function cmdReview(
       dir,
       key,
       run: async (out) => {
-        code = await cmdReview(rest.slice(3), true, { out, runsDir: join(dir, "work") });
+        code = await cmdReview(rest.slice(3), true, {
+          out,
+          runsDir: join(dir, "work"),
+          ...(io.memory ? { memory: io.memory } : {}),
+        });
         return code;
       },
     });
@@ -1444,8 +1461,6 @@ export async function cmdReview(
   const { stateHome } = await import("./install.js");
   const { contextFor } = await import("./engine/context.js");
   const { createInterface } = await import("node:readline/promises");
-  const { homedir } = await import("node:os");
-  const { openReviewMemory } = await import("./reviewmemory.js");
   const root = sandboxRoot();
   const cfg0 = loadConfig();
   const { cfg, ecosystem } = contextFor(root, cfg0.review.profile);
@@ -1519,7 +1534,7 @@ export async function cmdReview(
         }
       : {}),
     runsDir: io.runsDir ?? join(stateHome(), "review", "runs"),
-    memory: openReviewMemory(cfg0),
+    memory: io.memory?.(cfg0) ?? null,
     timeoutMs: 60 * 60_000,
     log: (l) => console.error(l),
   });

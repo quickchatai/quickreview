@@ -2,6 +2,7 @@
 // mutation is expressed as a MutationIntent and pushed through the gate
 // (dry-run writes it to state/dryrun/ instead of executing). There is no
 // review-dismissal function in this adapter, by design — never add one.
+import { GitHubRequestError } from "./githubcore.js";
 import { ThreadResolutionRefusal } from "./thread-resolution-refusal.js";
 import type { CheckSummary } from "./cigate.js";
 import { reviewTeamSlug, type Config } from "./config.js";
@@ -289,18 +290,8 @@ interface RawPrHistory {
 
 export type PrDisposition = { kind: "open" | "closed"; head_sha: string } | { kind: "absent" };
 
-export class GitHubRequestError extends Error {
-  constructor(
-    readonly method: string,
-    readonly path: string,
-    readonly status: number,
-    detail: string,
-    readonly retryAfterMs?: number,
-  ) {
-    super(`${method} ${path} → ${status}: ${detail}`);
-    this.name = "GitHubRequestError";
-  }
-}
+// The error a refused request throws is the review core's (src/githubcore.ts).
+export { GitHubRequestError };
 
 export interface SearchIssueItem {
   number: number;

@@ -322,6 +322,8 @@ function buildGitHubAdapter(cfg: Config, stateDir: string): GitHubAdapter {
     join(stateDir, "dryrun"),
     (intent: MutationIntent): Promise<unknown> => github.executeMutation(intent),
   );
+  // The gate's loud line (app-self-config executions) on stdout.
+  gate.setLog((msg, extra) => console.log(`[quickreviewd] ${msg}`, extra ?? ""));
   const github: GitHubAdapter = new GitHubAdapter(cfg, minter, gate);
   return github;
 }

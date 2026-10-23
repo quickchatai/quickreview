@@ -38,7 +38,7 @@
 //     implementations hold no state and dispatch keeps owning the store, the
 //     gate-backed adapter and the git seam — nothing here can grow a second
 //     mutation path.
-import { GitHubRequestError } from "./github.js";
+import { GitHubRequestError } from "./githubcore.js";
 import { codePath } from "./codespan.js";
 import type { GateResult } from "./gate.js";
 import {

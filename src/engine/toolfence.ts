@@ -28,7 +28,6 @@
 // path lies below it.
 import { constants, lstatSync, readlinkSync, realpathSync, type PathLike } from "node:fs";
 import { mkdir, open, stat, readdir, access } from "node:fs/promises";
-import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
@@ -245,12 +244,15 @@ const UNICODE_SPACES = new RegExp(
 );
 
 /** A tool's `path` argument as pi resolves it (utils/paths.js resolvePath with
- * unicode spaces and the `@` prefix normalised, `~` and file: URLs expanded). */
-export function toolPath(input: string, cwd: string): string {
+ * unicode spaces and the `@` prefix normalised, `~` and file: URLs expanded).
+ * `home` is the home pi expands `~` against, as the host resolved it; without
+ * one a `~` path cannot be shown clear of the fence and is refused. */
+export function toolPath(input: string, cwd: string, home?: string): string {
   let p = input.replace(UNICODE_SPACES, " ");
   if (p.startsWith("@")) p = p.slice(1);
-  if (p === "~") p = homedir();
-  else if (p.startsWith("~/")) p = join(homedir(), p.slice(2));
+  if ((p === "~" || p.startsWith("~/")) && home === undefined) throw new ToolFenceError(input);
+  if (p === "~") p = home!;
+  else if (p.startsWith("~/")) p = join(home!, p.slice(2));
   else if (/^file:\/\//.test(p)) p = fileURLToPath(p);
   return isAbsolute(p) ? resolve(p) : resolve(cwd, p);
 }
@@ -403,7 +405,12 @@ export function fencedOperations(
 /** `def` with a check of its `path` argument ahead of its execution: the
  * refusal says what it is, and the tools that start ripgrep and fd (which
  * `operations` does not reach) are covered. */
-export function guardedTool(def: ToolDefinition, fence: ToolFence, cwd: string): ToolDefinition {
+export function guardedTool(
+  def: ToolDefinition,
+  fence: ToolFence,
+  cwd: string,
+  home?: string,
+): ToolDefinition {
   const run = def.execute;
   return {
     ...def,
@@ -412,6 +419,7 @@ export function guardedTool(def: ToolDefinition, fence: ToolFence, cwd: string):
       const root = toolPath(
         typeof given === "string" && given !== "" ? given : ".",
         ctx?.cwd || cwd,
+        home,
       );
       // grep and find walk the whole tree under the root.
       if (def.name === "grep" || def.name === "find") fence.checkTree(root);

@@ -20,15 +20,35 @@
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { PI_DISABLED_BUILTINS } from "../pibuiltins.js";
 import {
   AuthExpiring,
   authCopyFrom,
   BENCH_AUTH_WORDS,
   copyPiAuth,
   DISABLED_REFRESH,
-  RUNTIME_KEY_ENVS,
 } from "../engine/auth.js";
+import { benchSettings } from "../pibuiltins.js";
+import {
+  benchAuthMode,
+  benchProvider,
+  KEY_ROUTE_PROVIDERS,
+  type BenchAuthMode,
+  type BenchProviderId,
+} from "../engine/keyroute.js";
+
+// The credential route itself (the mode, the model rewrite, the keys a pi
+// process sees) and the sandbox's pi settings are the one-shot round's, so
+// core (src/engine/keyroute.ts, src/pibuiltins.ts); the bench's callers still
+// import them here.
+export { BENCH_RETRY, benchSettings } from "../pibuiltins.js";
+export {
+  apiKeyEnv,
+  benchAuthMode,
+  benchProvider,
+  modelForAuth,
+  type BenchAuthMode,
+  type BenchProviderId,
+} from "../engine/keyroute.js";
 
 // The API-key route: the published runs used the login above; an outsider
 // re-running the benchmark brings their own API key instead.
@@ -40,8 +60,6 @@ import {
 //     rewritten to `openai/` — the same model id on the public OpenAI API;
 //   - every run fingerprint carries `auth: "api-key"`, so a keyed run never
 //     resumes over, or is mixed with, a login run.
-
-export type BenchAuthMode = "login" | "api-key";
 
 /** The benchmark's custom provider. Credentials remain environment references. */
 export function digitalOceanModels() {
@@ -125,34 +143,9 @@ export function googleModels() {
  * the key a sandbox's pi needs (by name; the value rides bench.sh's --env-file)
  * and the models.json the sandbox gets. */
 export const BENCH_PROVIDERS = {
-  digitalocean: { keyVar: RUNTIME_KEY_ENVS["digitalocean"]!, models: digitalOceanModels },
-  google: { keyVar: RUNTIME_KEY_ENVS["google"]!, models: googleModels },
-} as const;
-export type BenchProviderId = keyof typeof BENCH_PROVIDERS;
-
-export function benchProvider(env: NodeJS.ProcessEnv = process.env): BenchProviderId | undefined {
-  const provider = env["QCR_BENCH_PROVIDER"];
-  if (!provider) return undefined;
-  if (Object.hasOwn(BENCH_PROVIDERS, provider)) return provider as BenchProviderId;
-  throw new Error(
-    `QCR_BENCH_PROVIDER must be ${Object.keys(BENCH_PROVIDERS).join(" | ")} or unset`,
-  );
-}
-
-/** The sandbox's credential route, from `QCR_BENCH_AUTH` (unset = login). */
-export function benchAuthMode(env: NodeJS.ProcessEnv = process.env): BenchAuthMode {
-  const v = (env["QCR_BENCH_AUTH"] ?? "").trim();
-  if (v === "" || v === "login") return "login";
-  if (v === "api-key") return "api-key";
-  throw new Error(`QCR_BENCH_AUTH must be login | api-key (got "${v}")`);
-}
-
-/** A pi model spec as it runs under `mode`: the ChatGPT-login provider
- * `openai-codex/` becomes the public API's `openai/` on the key route;
- * every other spec (and every spec on the login route) is unchanged. */
-export function modelForAuth(spec: string, mode: BenchAuthMode = benchAuthMode()): string {
-  return mode === "api-key" ? spec.replace(/^openai-codex\//, "openai/") : spec;
-}
+  digitalocean: { keyVar: KEY_ROUTE_PROVIDERS.digitalocean, models: digitalOceanModels },
+  google: { keyVar: KEY_ROUTE_PROVIDERS.google, models: googleModels },
+} as const satisfies Record<BenchProviderId, { keyVar: string; models: () => unknown }>;
 
 /** Spread into an arm's fingerprint: empty on the login route (so every
  * published fingerprint is unchanged), `{ auth: "api-key" }` on the key route. */
@@ -178,26 +171,6 @@ export function authFingerprint(mode: BenchAuthMode = benchAuthMode()): {
     : {};
 }
 
-/** The API keys a pi process may see on the key route — read from the
- * container's environment (bench.sh's --env-file), passed on by NAME only.
- * Empty on the login route, so nothing changes there. */
-export function apiKeyEnv(
-  mode: BenchAuthMode = benchAuthMode(),
-  env: NodeJS.ProcessEnv = process.env,
-): Record<string, string> {
-  if (mode !== "api-key") return {};
-  const out: Record<string, string> = {};
-  const provider = benchProvider(env);
-  const keys = provider
-    ? [BENCH_PROVIDERS[provider].keyVar]
-    : ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"];
-  for (const k of keys) {
-    const v = env[k];
-    if (v) out[k] = v;
-  }
-  return out;
-}
-
 export { AuthExpiring, DISABLED_REFRESH };
 
 /**
@@ -208,44 +181,6 @@ export { AuthExpiring, DISABLED_REFRESH };
 export function benchAuthFrom(raw: string): { json: string; expiresAt: number | null } {
   const { json, expiresAt } = authCopyFrom(raw);
   return { json, expiresAt };
-}
-
-/** pi's agent-level retry for a benchmark sandbox — every session and every
- * lens child reads it (one agent dir). pi's own default (3 attempts, ≤ 60 s
- * apart) gives up inside two minutes, and a provider's overload window
- * (DigitalOcean "529 Platform overloaded", or a request timeout) is longer than
- * that: the lens is lost and the review posts without it. This backs off from
- * 5 s doubling to a 2-minute cap over 10 attempts — about 13 minutes of
- * patience per request — so a PR is processed fully and fails only when the
- * provider is really unavailable. Provider-level retries stay off (pi's advice:
- * they would hide quota and usage-limit errors from pi). */
-export const BENCH_RETRY = {
-  enabled: true,
-  maxRetries: 10,
-  baseDelayMs: 5_000,
-  maxAgentDelayMs: 120_000,
-} as const;
-
-/** pi's global settings for the sandbox: pi's built-in extensions switched off
- * (src/pibuiltins.ts — the reviewed checkout is exactly the untrusted ground a
- * `.pi/mcp.json` would come from); every project trusted so no modal can stall
- * a run; /opt/quickreview pre-trusted; and the durable retry above. No global
- * bash-guard (P9.5, P9.12): every route that runs a model hands the guard to
- * its sessions itself, as an `--extension` or a factory. */
-export function benchSettings(_root: string): { settings: string; trust: string } {
-  return {
-    settings:
-      JSON.stringify(
-        {
-          extensions: [...PI_DISABLED_BUILTINS],
-          defaultProjectTrust: "always",
-          retry: BENCH_RETRY,
-        },
-        null,
-        2,
-      ) + "\n",
-    trust: JSON.stringify({ "/opt/quickreview": true }, null, 2) + "\n",
-  };
 }
 
 /**

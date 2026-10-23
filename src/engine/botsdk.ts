@@ -72,6 +72,10 @@ import type { Runtime, RuntimeSession, SessionSpec } from "./port.js";
 import { BASH_ENV_ALLOW, reviewerStub, type RoundLensTools } from "./roundsdk.js";
 import { sdkRuntime, type SessionExtras } from "./sdkruntime.js";
 import { releasing } from "./sessionwrap.js";
+import { BUDGET_EXIT_CODE } from "./budget.js";
+
+/** ledger-pin's diagnostics, on the worker's stderr. */
+const STDERR_LOG = { log: (m: string): void => console.error(m) };
 
 /** What the model's bash draws from the spec's env on the bot: a round's names
  * and the session's memory identity (OPENVIKING_*, none of it a secret: the key
@@ -202,7 +206,7 @@ export function botSdkExtras(options: BotSdkOptions): (spec: SessionSpec) => Ses
       return {
         extensions: [
           createBashGuard(bashGuardConfigFromEnv(spec.env, spec.cwd)),
-          createLedgerPin(ledgerPinConfigFromEnv(spec.env, process.cwd())),
+          createLedgerPin(ledgerPinConfigFromEnv(spec.env, process.cwd(), STDERR_LOG)),
           createAnswerGuard(),
           createOpenViking((options.openViking ?? ((c) => c))(memory)),
         ],
@@ -217,7 +221,7 @@ export function botSdkExtras(options: BotSdkOptions): (spec: SessionSpec) => Ses
       // The tmux bot's `--extension` order, bash-guard first (it rides pi's
       // global settings there).
       createBashGuard(bashGuardConfigFromEnv(spec.env, spec.cwd)),
-      createLedgerPin(ledgerPinConfigFromEnv(spec.env, process.cwd())),
+      createLedgerPin(ledgerPinConfigFromEnv(spec.env, process.cwd(), STDERR_LOG)),
       ...lens.factories,
       createFindingClusters(),
       createOpenViking((options.openViking ?? ((c) => c))(memory)),
@@ -297,7 +301,12 @@ function withLiveLog(
 /** The bot's runtime on `host`: a session is the PR's main session, new or
  * resumed from its JSONL under the same id. */
 export function botSdkRuntime(host: PiHost, options: BotSdkOptions): Runtime {
-  const inner = sdkRuntime(host, { extras: botSdkExtras(options) });
+  // The worker owns its process: a turn its abort and dispose did not end
+  // exits it (src/engine/budget.ts).
+  const inner = sdkRuntime(host, {
+    extras: botSdkExtras(options),
+    backstop: () => process.exit(BUDGET_EXIT_CODE),
+  });
   const live = options.live;
   const attach = (session: RuntimeSession, spec: SessionSpec): RuntimeSession =>
     live === undefined
