@@ -1,33 +1,16 @@
-// The shipped-link check: every relative link in a PUBLISHED
-// Markdown file must land on a PUBLISHED path. "Published" is the tracked tree
-// minus publish-manifest.json's exclusions — the same rule the snapshot
-// assembly (scripts/publish-snapshot.sh) applies — so a link into an excluded
-// path (a lab notebook, a moved artefact, a private doc) fails here, in the
-// private checkout, before the snapshot ships a dead link. In an ASSEMBLED
-// tree the manifest's `exclude` is empty and the excluded files are simply
-// absent, so the same check reads "the target exists".
+// The shipped-link check: every relative link in a tracked Markdown file must
+// land on a tracked path, so the repository never carries a dead link (a moved
+// artefact, a deleted doc, a file that was never committed).
 //
-// Pure over (published paths, file texts) so its own test can feed it plants.
+// Pure over (tracked paths, file texts) so its own test can feed it plants.
 
 import { posix } from "node:path";
-
-export interface ManifestEntry {
-  path: string;
-}
-
-/** A manifest `path` ending in "/" is a directory prefix; otherwise exact. */
-export function matchesEntry(path: string, entry: ManifestEntry): boolean {
-  return entry.path.endsWith("/") ? path.startsWith(entry.path) : path === entry.path;
-}
 
 export interface DeadLink {
   file: string;
   line: number;
   target: string;
   resolved: string;
-  /** `excluded`: the target exists in the checkout but the snapshot drops it.
-   * `missing`: the target is not in the tracked tree at all. */
-  kind: "excluded" | "missing";
 }
 
 /** Blank out fenced code blocks and inline code spans, keeping line numbers. */
@@ -90,34 +73,18 @@ export function resolveLink(fromFile: string, target: string): string {
 
 export function deadLinks(o: {
   tracked: readonly string[];
-  exclude: readonly ManifestEntry[];
   files: readonly { path: string; text: string }[];
 }): DeadLink[] {
-  const excluded = (p: string) => o.exclude.some((e) => matchesEntry(p, e));
-  const published = o.tracked.filter((p) => !excluded(p));
-  const pubSet = new Set(published);
   const trackedSet = new Set(o.tracked);
-  const isPublished = (r: string) =>
-    r === "" || pubSet.has(r) || published.some((p) => p.startsWith(r + "/"));
   const isTracked = (r: string) =>
-    trackedSet.has(r) || o.tracked.some((p) => p.startsWith(r + "/"));
+    r === "" || trackedSet.has(r) || o.tracked.some((p) => p.startsWith(r + "/"));
   const out: DeadLink[] = [];
   for (const f of o.files) {
-    if (!f.path.endsWith(".md") || excluded(f.path)) continue;
+    if (!f.path.endsWith(".md")) continue;
     for (const { line, target } of relativeLinks(f.text)) {
       const resolved = resolveLink(f.path, target);
-      if (resolved.startsWith("..")) {
-        out.push({ file: f.path, line, target, resolved, kind: "missing" });
-        continue;
-      }
-      if (isPublished(resolved)) continue;
-      out.push({
-        file: f.path,
-        line,
-        target,
-        resolved,
-        kind: isTracked(resolved) ? "excluded" : "missing",
-      });
+      if (!resolved.startsWith("..") && isTracked(resolved)) continue;
+      out.push({ file: f.path, line, target, resolved });
     }
   }
   return out;

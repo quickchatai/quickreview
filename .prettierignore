@@ -57,13 +57,6 @@ package-lock.json
 # operator-facing files harder to read and buys nothing.
 deploy/ansible/
 
-# A hand-maintained decision TABLE, one line per excluded path, deliberately
-# kept at one object per line so the file reads as rows. Prettier expands each
-# entry to five lines and the table stops being one. Consumed by
-# tests/publishability.test.ts and the snapshot assembly, neither of which
-# cares about layout.
-publish-manifest.json
-
 # Vendored from the pinned upstream skills repo (see VENDORED.md) — provenance
 # is a comparison against that copy, so local reformatting would be drift.
 .claude/skills/

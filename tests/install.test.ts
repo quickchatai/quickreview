@@ -17,6 +17,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -835,25 +836,18 @@ describe("qcr install migrate — profiles", () => {
 describe("the checkout's profiles/ holds the generic examples", () => {
   const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-  it("every other directory there is a stranded install pack BOTH snapshots exclude", () => {
+  it("the tracked profiles/ is exactly the generic examples", () => {
     // A pack left there (the deployment's own, until `qcr install
     // migrate` moves it) is never read, and whatever it is called it must
-    // never ship — publicly or internally.
-    const dirs = readdirSync(join(repo, "profiles"), { withFileTypes: true })
-      .filter((e) => e.isDirectory())
-      .map((e) => e.name);
-    for (const manifest of ["publish-manifest.json", "publish-manifest.internal.json"]) {
-      // The PUBLIC snapshot excludes the internal manifest itself.
-      if (!existsSync(join(repo, manifest))) continue;
-      const excluded = (
-        JSON.parse(readFileSync(join(repo, manifest), "utf8")) as { exclude: { path: string }[] }
-      ).exclude.map((e) => e.path);
-      for (const name of dirs) {
-        if (EXAMPLE_PROFILES.includes(name)) continue;
-        expect(excluded, `${manifest}: ${name}`).toContain(`profiles/${name}/`);
-      }
-    }
-    for (const example of EXAMPLE_PROFILES) expect(dirs).toContain(example);
+    // never be committed: the repository is public.
+    const tracked = execFileSync("git", ["ls-files", "-z", "profiles"], {
+      cwd: repo,
+      encoding: "utf8",
+    })
+      .split("\0")
+      .filter((p) => p.length > 0);
+    const dirs = [...new Set(tracked.map((p) => p.split("/")[1]!))].sort();
+    expect(dirs).toEqual([...EXAMPLE_PROFILES].sort());
   });
 
   it(

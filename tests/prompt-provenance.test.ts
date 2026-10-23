@@ -22,6 +22,7 @@ import {
   ROUND_TEMPLATE_FILES,
 } from "../src/templates.js";
 import type { RoundType } from "../src/types.js";
+import { privateTokenHits } from "./helpers/private-tokens.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const sandbox = join(import.meta.dirname, "..");
@@ -33,14 +34,18 @@ const LEAKS: Array<[string, RegExp]> = [
   ["a PR number", /#(?!1234\b)\d{4,}/], // `#1234` is the placeholder spelling
   ["a tracker id", /\bFT-\d{4}\b/],
   ["a dated aside", /\b20\d\d-\d\d-\d\d\b/],
-  ["a person's name", /\b(the owner|Priya|Alex)\b/i],
 ];
 
+/** A person's name (or any other private token) is checked by digest. */
 function leaks(text: string): string[] {
-  return LEAKS.flatMap(([what, re]) => {
-    const m = re.exec(text);
-    return m ? [`${what}: …${text.slice(Math.max(0, m.index - 40), m.index + 30)}…`] : [];
-  });
+  const lines = text.split("\n");
+  return [
+    ...LEAKS.flatMap(([what, re]) => {
+      const m = re.exec(text);
+      return m ? [`${what}: …${text.slice(Math.max(0, m.index - 40), m.index + 30)}…`] : [];
+    }),
+    ...privateTokenHits(text).map((h) => `${h.label}: …${lines[h.line - 1]!.slice(0, 70)}…`),
+  ];
 }
 
 const FILES = [

@@ -32,7 +32,7 @@ import {
 } from "../src/profiles.js";
 import { PROFILE_EXTENDABLE_LENSES } from "../src/heuristics.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
-import { privateHandleLines } from "./helpers/private-handles.js";
+import { privateHandleLines } from "./helpers/private-tokens.js";
 
 const sandbox = join(import.meta.dirname, "..");
 /** A fixture profile in `<root>/profiles/` — found because `at(root)` names a

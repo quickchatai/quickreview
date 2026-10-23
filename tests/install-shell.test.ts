@@ -314,8 +314,7 @@ describe("every script that reads the live config reads it through the locator",
     OPERATOR_BOX_SETUP,
   ];
   for (const script of readers) {
-    // The internal operator tooling is excluded from the PUBLIC
-    // snapshot (publish-manifest.json): in that assembled tree it is absent.
+    // A script the tree does not carry is skipped.
     it.skipIf(!existsSync(join(repo, "scripts", script)))(script, () => {
       const text = readFileSync(join(repo, "scripts", script), "utf8");
       expect(text).toContain("install-locator.sh");

@@ -24,11 +24,12 @@ import { describe, expect, it } from "vitest";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
+// A person's name is not a pattern here: tests/publishability.test.ts keeps
+// every private name out of every tracked file, comments included.
 export const PROVENANCE_PATTERNS: readonly RegExp[] = [
   /\bFT-\d{4}\b/g,
-  /\bOwnerName\b/gi,
   /\bowner\b[^\n]{0,20}\b20\d{2}-\d{2}-\d{2}\b/gi,
-  /\(\s*(?:the owner|the owner)[^)]*20\d{2}/gi,
+  /\(\s*the owner\b[^)]*20\d{2}/gi,
   /\bruling R\d+\b/gi,
   /\bratified (?:in-session|by)\b/gi,
 ];
@@ -54,36 +55,6 @@ const ALLOWLIST: readonly AllowEntry[] = [
     file: "src/tui/issuesink.ts",
     token: "FT-0123",
     reason: "a format example of the tracker handle a filing returns",
-  },
-  {
-    file: "src/severity.ts",
-    token: "FT-0113",
-    reason: "tests/fences.test.ts locates the directive-provenance paragraph by this id",
-  },
-  {
-    file: "src/severity.ts",
-    token: "FT-0256",
-    reason: "tests/fences.test.ts asserts this id in the directive-provenance paragraph",
-  },
-  {
-    file: "src/wire.ts",
-    token: "owner_legacy",
-    reason: "the legacy file name owner-legacy.log, which still exists on disk",
-  },
-  {
-    file: "tests/legacy-acceptance.test.ts",
-    token: "owner_legacy",
-    reason: 'the retired wire spellings (tier "owner_legacy", flag-owner-legacy) the folds accept',
-  },
-  {
-    file: "bench/aacr/export_runs.py",
-    token: "owner_legacy",
-    reason: "the export scrubber's docstring names the strings it replaces",
-  },
-  {
-    file: "bench/aacr/export_runs.py",
-    token: "the owner",
-    reason: "the export scrubber's docstring names the strings it replaces",
   },
 ];
 
@@ -402,19 +373,18 @@ describe("no decision provenance in code comments", () => {
 describe("the extractor reads comments and only comments", () => {
   it("TS: line and block comments bite; strings, templates and regexes do not", () => {
     const src = [
-      'const a = "FT-0001 the owner";',
+      'const a = "FT-0001 (the owner, 2026)";',
       "const b = `x ${y /* FT-0002 */} FT-0003 ${`FT-0004`}`;",
       "const r = /FT-0005/g; // ruling R7",
-      "/* the owner, 2026-08-19 (the owner, 2026) */",
+      "/* owner, 2026-08-19 (the owner 2026) */",
       "const c = a / b; // ratified by someone",
     ].join("\n");
     const hits = provenanceHits("src/x.ts", src);
     expect(hits.map((h) => [h.line, h.match])).toEqual([
       [2, "FT-0002"],
       [3, "ruling R7"],
-      [4, "the owner"],
       [4, "owner, 2026-08-19"],
-      [4, "(the owner, 2026"],
+      [4, "(the owner 2026"],
       [5, "ratified by"],
     ]);
   });
@@ -427,12 +397,12 @@ describe("the extractor reads comments and only comments", () => {
       "cat <<'EOF'",
       "# FT-0012",
       "EOF",
-      "# the owner",
+      "# ruling R2",
       "n=${#arr[@]}",
     ].join("\n");
     expect(provenanceHits("scripts/x.sh", src).map((h) => [h.line, h.match])).toEqual([
       [3, "FT-0011"],
-      [7, "the owner"],
+      [7, "ruling R2"],
     ]);
   });
 

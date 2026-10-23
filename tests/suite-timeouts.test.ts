@@ -53,16 +53,7 @@ describe("which tests get a longer timeout", () => {
   });
 
   it("every PROCESS_SUITES entry is a real test file, listed once", () => {
-    // A suite the publish manifest dropped from this tree is absent by design.
-    const manifest = JSON.parse(readFileSync(join(ROOT, "publish-manifest.json"), "utf8")) as {
-      exclude?: { path: string }[];
-      applied_exclusions?: { path: string }[];
-    };
-    const dropped = new Set(
-      [...(manifest.exclude ?? []), ...(manifest.applied_exclusions ?? [])].map((e) => e.path),
-    );
-    for (const f of PROCESS_SUITES)
-      expect(existsSync(join(ROOT, f)) || dropped.has(f), f).toBe(true);
+    for (const f of PROCESS_SUITES) expect(existsSync(join(ROOT, f)), f).toBe(true);
     expect(new Set(PROCESS_SUITES).size).toBe(PROCESS_SUITES.length);
     expect([...PROCESS_SUITES].sort()).toEqual([...PROCESS_SUITES]);
   });

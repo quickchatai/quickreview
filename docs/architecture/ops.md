@@ -45,7 +45,7 @@ walkthroughs already exist and are not repeated here — this page links them:
 | Token/spend measurement | `src/usage.ts` |
 | Operator CLI | `src/cli.ts`, `src/cliops.ts`, `scripts/qcr` |
 | Slack concierge | `src/slack/`, `src/wire.ts` (`startSlack`) |
-| Public snapshot assembly | `scripts/publish-snapshot.sh`, `publish-manifest.json`, `tests/publishability.test.ts` |
+| Publishability lint | `tests/publishability.test.ts`, `tests/helpers/private-tokens.ts` |
 
 ## The two topologies
 
@@ -525,57 +525,15 @@ tmux session to attach to.
 An unrecognised command prints the usage line **and** loads the config, so a
 broken `config.toml` surfaces even on a typo.
 
-## The publish snapshot
+## Publishability
 
-The private checkout and the public tree are the same repository minus a
-declared exclusion list. Three pieces, one source of truth:
-
-- **`publish-manifest.json`** — the single declaration of what the public
-  snapshot excludes, each entry a `path` (trailing `/` means directory prefix,
-  otherwise exact) and a `reason`. It may also carry a `pending_reseed`
-  section: files that *are* published but are temporarily exempt from the token
-  scan.
-- **`tests/publishability.test.ts`** — the lint, running in the ordinary suite.
-  It walks `git ls-files` minus the exclusions and asserts: (a) no denylisted
-  private token in any published text file, case-insensitively, with two
-  sanctioned exemption channels — `pending_reseed` and an in-file `ALLOWLIST`
-  where every entry names the file, the exact tokens and the reason; (b)
-  `LICENSE` and `THIRD-PARTY-NOTICES.md` exist and are non-trivial; (c)
-  `config.example.toml` exists and passes full config validation; (d) no
-  tracked file under the runtime state directories except `.gitkeep` markers
-  and `memory/README.md`; (e) a **negative control** — the same scanner fed a
-  planted token at an unexempted path reports the violation, so the lint
-  demonstrably bites. The allowlist cannot go stale either: an entry whose file
-  is gone, or whose token no longer occurs there, fails.
-
-  The denylist covers personal names and handles, the private organisation and
-  reviewed repo, teammate handles, the deployment host alias, the cloud project
-  id, the private tracker's paths, and the original operator's home directory.
-  **Read the current denylist before writing any new doc**, and prefer role
-  words ("the owner", "the operator", "the reviewed repo") to any concrete
-  identity.
-- **`scripts/publish-snapshot.sh`** — assembles a candidate tree: tracked files
-  minus the exclusions, into a fresh single-commit history on `main`. It reads
-  the manifest and carries no second list. The assembled tree gets a
-  **rewritten** manifest whose `exclude` is empty — every exclusion was already
-  applied, so the lint travelling with the tree scans the *whole* public tree
-  and a reintroduced private path would be caught rather than silently exempted
-  — with `applied_exclusions` kept for provenance.
-
-  Guardrails, all fatal: a dirty tracked tree; a manifest still carrying
-  `pending_reseed` (overridable with `--allow-pending-reseed` for a rehearsal
-  assembly, behind a loud banner and a commit message that says so); clobbering
-  a non-empty target without `--force`; and no commit identity for the public
-  history — the script assumes none and asks for `QCR_PUBLISH_GIT_NAME` /
-  `QCR_PUBLISH_GIT_EMAIL`. It then verifies **inside the assembled tree**
-  (`npm ci`, the suite, `npm run build`) and fails the assembly if any step
-  fails: the acceptance bar is green on the exact tree being published, not on
-  the private checkout. `--skip-verify` exists only for the shell-level tests.
-
-  The script performs no remote operation of any kind. Creating the public
-  repository and pushing are the owner's acts. `--profile internal`
-  (`publish-manifest.internal.json`) assembles the internal snapshot from the
-  same mechanism with its own manifest.
+The repository is public in full; `tests/publishability.test.ts` keeps private
+tokens out of every tracked file. It checks them by digest
+(`tests/helpers/private-tokens.ts`), so the lint names none of them, and its
+one exemption channel is an in-file `ALLOWLIST` whose every entry names the
+file, the kind of token and the reason. A negative control plants a canary and
+proves the scanner bites. Prefer role words ("the owner", "the operator", "the
+reviewed repo") to any concrete identity in a new doc.
 
 ## Invariants to preserve
 
@@ -599,5 +557,4 @@ survive the edit:
    "unknown" rather than to a plausible number, and no published field is
    inferred from data the writer did not have.
 8. **The publishability lint is a gate, not a report.** Adding an allowlist
-   entry requires naming the file, the tokens and the reason; excluding a path
-   requires a reason in `publish-manifest.json`.
+   entry requires naming the file, the kind of token and the reason.

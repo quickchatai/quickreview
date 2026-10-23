@@ -104,6 +104,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/host-wrapper.test.ts",
   "tests/improvements-e2e.test.ts",
   "tests/install-shell.test.ts",
+  "tests/install.test.ts", // reads the tracked profiles/ through git
   "tests/ipc.test.ts",
   "tests/json-contract.test.ts",
   "tests/lens-prompt-parity.test.ts", // a real pi child per agent, against a loopback endpoint
@@ -120,7 +121,6 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/openviking-embedder.test.ts",
   "tests/openviking-reembed-lock.test.ts",
   "tests/openviking.test.ts",
-  "tests/operator-host.test.ts", // real setup shell against fake SSH/rsync adapters
   "tests/pi-canary/canary-10-bot-request.test.ts", // a real pi child per PR session, against a loopback endpoint
   "tests/pi-canary/canary-10-oneshot-request.test.ts", // a real pi child per round, against a loopback endpoint
   "tests/pi-canary/canary-3-abort-cpu-load.test.ts", // bash children spawned by pi's own bash tool
@@ -138,7 +138,6 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/profile-overrides-review.test.ts",
   "tests/profile-overrides.test.ts",
   "tests/proposals.test.ts",
-  "tests/publish-snapshot.test.ts",
   "tests/publishability.test.ts",
   "tests/qcr-update.test.ts", // the updater against a fake docker and a fake daemon
   "tests/release-image.test.ts",
