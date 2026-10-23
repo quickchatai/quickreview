@@ -148,13 +148,21 @@ export function priorThreadsToResolve(
   const seen = new Set<number>();
   const checks = store.priorFindingChecks(pr);
   const families = postedFindingChains(store.roundFindings(pr));
-  const newer = (round: number, key: string) =>
-    checks.some(
-      (c) =>
-        families.find(`${c.round_no}:${c.finding_key}`) === families.find(`${round}:${key}`) &&
-        c.checked_round > checkedRound &&
-        c.status !== null,
+  // A report decides only what came after the chain's latest posting (the
+  // prior-list rule, src/priorfindings.ts): a posting at or after the checked
+  // round re-opens the finding, and this round's fixed report no longer holds.
+  const newer = (round: number, key: string) => {
+    const root = families.find(`${round}:${key}`);
+    return (
+      (families.members.get(root) ?? []).some((m) => m.round_no >= checkedRound) ||
+      checks.some(
+        (c) =>
+          families.find(`${c.round_no}:${c.finding_key}`) === root &&
+          c.checked_round > checkedRound &&
+          c.status !== null,
+      )
     );
+  };
   for (const c of checks) {
     if (c.checked_round !== checkedRound || c.status === null) continue;
     if (newer(c.round_no, c.finding_key)) continue;

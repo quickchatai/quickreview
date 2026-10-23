@@ -126,7 +126,7 @@ export function loadSeedManifest(root: string): Record<string, string> | null {
 
 /** The override files a layer carries: `<dir>/agents/*.md` and
  * `<dir>/prompts/*.md`, regular files only, keyed by shipped path. */
-function layerFiles(layer: OverrideLayer): Map<string, string> {
+function layerFiles(layer: OverrideLayer, oversized?: string[]): Map<string, string> {
   const out = new Map<string, string>();
   for (const sub of SHIPPED_DIRS) {
     let names: string[];
@@ -142,6 +142,7 @@ function layerFiles(layer: OverrideLayer): Map<string, string> {
       try {
         const st = lstatSync(file);
         if (st.isFile() && st.size <= MAX_FILE_BYTES) out.set(`${sub}/${f}`, file);
+        else if (st.isFile()) oversized?.push(`${sub}/${f}`);
       } catch {
         // gone between the listing and the stat
       }
@@ -310,12 +311,15 @@ export function resolveOverrides(o: {
       : resolveProfileChain(o.root, o.profile, o.lookup ?? {});
   for (const l of named) layers.push({ origin: "user", name: l.name, dir: l.dir });
   const set: OverrideSet = { layers, ignored, lookup };
-  for (const layer of layers)
-    for (const path of layerFiles(layer).keys())
+  for (const layer of layers) {
+    const over: string[] = [];
+    for (const path of layerFiles(layer, over).keys())
       if (!shipped(o.root, path))
         ignored.push(
           `${layer.name}/${path}: no shipped file of that name to replace, so it applies to nothing`,
         );
+    for (const path of over) ignored.push(`${layer.name}/${path}: over the size cap`);
+  }
   set.ignored = capIgnored(ignored);
   return set;
 }
