@@ -38,6 +38,7 @@ import { containerRunEnv } from "../src/reviewcli.js";
 import { runLive, type LiveCliDeps } from "../src/livecli.js";
 import { writeSdkDriverStub } from "./helpers/sdk-driver-stub.js";
 import { parseConfig } from "../src/config.js";
+import { nodeModulesMounts } from "./helpers/docker-node-modules.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const TOKEN = "ghs_INIMAGE_SECRET_0123456789";
@@ -438,11 +439,6 @@ const uid = process.getuid?.() ?? 1000;
 const gid = process.getgid?.() ?? 1000;
 const docker = (args: string[], timeout = 60_000): ReturnType<typeof spawnSync> =>
   spawnSync("docker", args, { encoding: "utf8", timeout });
-const nodeModules = (): string => {
-  // a worktree links node_modules to the main one: both must exist at their own path
-  const p = join(root, "node_modules");
-  return execFileSync("readlink", ["-f", p], { encoding: "utf8" }).trim();
-};
 
 describe.skipIf(!hasDocker || !hasDist)("in a container (docker, no network, no model)", () => {
   it("the claim works over a read-only /repo with --uncommitted, and status sees it", () => {
@@ -468,8 +464,7 @@ describe.skipIf(!hasDocker || !hasDist)("in a container (docker, no network, no 
       "/repo",
       "--mount",
       `type=bind,src=${root},dst=${root},readonly`,
-      "--mount",
-      `type=bind,src=${nodeModules()},dst=${nodeModules()},readonly`,
+      ...nodeModulesMounts(root),
       "--mount",
       `type=bind,src=${state},dst=/state`,
       "-e",
@@ -553,8 +548,7 @@ describe.skipIf(!hasDocker || !hasDist)("in a container (docker, no network, no 
       "no-new-privileges",
       "--mount",
       `type=bind,src=${root},dst=${root},readonly`,
-      "--mount",
-      `type=bind,src=${nodeModules()},dst=${nodeModules()},readonly`,
+      ...nodeModulesMounts(root),
       "--mount",
       `type=bind,src=${dir},dst=${dir}`,
       "-e",
@@ -720,8 +714,7 @@ writeFileSync("/out/holder.txt", String(handedToken() === ${JSON.stringify(TOKEN
         `type=bind,src=${app},dst=/opt/qcr`,
         "--mount",
         `type=bind,src=${root},dst=${root},readonly`,
-        "--mount",
-        `type=bind,src=${nodeModules()},dst=${nodeModules()},readonly`,
+        ...nodeModulesMounts(root),
         "--mount",
         `type=bind,src=${tokdir},dst=/run/qcr-in`,
         "--mount",
