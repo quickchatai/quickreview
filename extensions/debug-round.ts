@@ -37,7 +37,7 @@
 // Not loaded by the tmux bot or by `qcr open`. VERIFY-ON-PIN: registerCommand,
 // sendUserMessage, registerTool replacing the built-in bash, and the session_shutdown
 // event, as in extensions/inject-bridge.ts.
-import { fstatSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   createBashToolDefinition,
@@ -46,6 +46,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { DispatcherOutcome } from "../src/engine/pisdk.js";
+import { capabilityFdOf } from "../src/engine/capfd.js";
 import { CONTEXT_PACK_FILE } from "../src/contextpack.js";
 import { DEBUG_STATUS_FILE, LENS_SESSIONS_DIR } from "../src/engine/openable.js";
 import { inheritingBashOperations } from "../src/engine/tooluid.js";
@@ -65,21 +66,7 @@ export const DEBUG_PACK_ENV = "QCR_DEBUG_PACK_FILE";
 export const DEBUG_LENS_DIR_ENV = "QCR_DEBUG_LENS_DIR";
 export const DEBUG_STUB_ENV = "QCR_DEBUG_STUB_FILE";
 
-/** The descriptor a round's commands inherit: the capability fd the env names
- * (`QCR_IPC_CAP_FD`), when it is a descriptor number and open in this process.
- * Null for a round with none (the engine route's debug round holds no capability). */
-export function capabilityFdOf(env: Readonly<Record<string, string | undefined>>): number | null {
-  const named = env["QCR_IPC_CAP_FD"];
-  if (named === undefined || named === "") return null;
-  const fd = /^\d{1,4}$/.test(named) ? Number(named) : 0;
-  if (fd < 3) throw new Error(`QCR_IPC_CAP_FD is not an fd number (${JSON.stringify(named)})`);
-  try {
-    fstatSync(fd);
-  } catch {
-    throw new Error(`QCR_IPC_CAP_FD names fd ${fd}, which is not open in this process`);
-  }
-  return fd;
-}
+export { capabilityFdOf };
 
 /** What the model's bash may draw from the env on a round (the same allowlist
  * as src/engine/roundsdk.ts BASH_ENV_ALLOW; tests/debug-pi.test.ts pins them equal). */
