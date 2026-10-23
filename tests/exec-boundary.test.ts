@@ -422,6 +422,10 @@ describe("the post-hoc audit is not blind to the corpus", () => {
     expect(kindOf(bashLine("QCR_POSTING_RECEIPT_DIR=/tmp/r scripts/approve-pr.sh 5 b.md"))).toBe(
       "policy_relocation",
     );
+    // A relocating assignment prefix is the environment a reader runs in, whichever reader.
+    expect(kindOf(bashLine("QCR_CONFIG=/tmp/other.toml cat file"))).toBe("policy_relocation");
+    expect(kindOf(bashLine("QCR_STATE_DB=/tmp/o.db rg -n x src"))).toBe("policy_relocation");
+    expect(kindOf(bashLine("rg -n QCR_CONFIG=x src"))).toBeUndefined();
     // QCR_INSTALL names the config home the install locator reads.
     expect(kindOf(bashLine("QCR_INSTALL=mine scripts/approve-pr.sh 5 b.md"))).toBe(
       "policy_relocation",
