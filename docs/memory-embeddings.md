@@ -2,7 +2,7 @@
 
 The memory engine (OpenViking) turns every memory entry, and every search
 query, into a vector. **Where that happens is a sovereignty question**, and
-the shipped answer is: **locally**, inside the daemon container. No key, no
+the shipped answer is: **locally**, inside the memory container. No key, no
 account, and no memory text ever leaves the machine — nothing but the model
 call does.
 
