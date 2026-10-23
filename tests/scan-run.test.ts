@@ -6,7 +6,7 @@
 // suggestions, the run record) and RETURNS (previews, refusals), never how.
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -350,7 +350,7 @@ describe("first-scan calibration, then previews from the ledger", () => {
     expect(r.specs).toHaveLength(1);
     expect(run.state).toBe("capped");
     expect(run.cases.filter((c) => c.status === "skipped")).toHaveLength(p.cases.length - 1);
-    expect(run.problems.some((x) => /nothing priced it/.test(x))).toBe(true);
+    expect(run.problems.some((x) => /no total price/.test(x))).toBe(true);
   });
 
   it("a change of settings is a new price: back to calibration", async () => {
@@ -1251,4 +1251,110 @@ it("publishes the active handle before an initial synchronous auth refusal stops
   await scan.idle();
   expect(stopped).toMatchObject({ ok: true });
   expect(scan.status().run?.state).toBe("stopped");
+});
+
+describe("scan runner hardening", () => {
+  const ROOT = `/state/scan/tree/${SHA1}`;
+
+  it("a finding on a focus file the lens never opened is not stored, though it opened another", async () => {
+    const unopened = new Set<string>();
+    const reads = (spec: CaseSpec): string[] => {
+      const last = spec.files.at(-1)!;
+      for (const f of spec.files) if (f !== last) unopened.add(f);
+      return [`${ROOT}/${last}`];
+    };
+    await runToEnd(new ScanRunner(ports(runner({ reads }))));
+    expect(unopened.size).toBeGreaterThan(0);
+    const { findings } = new FindingsStore(stateHomeFs(stateDir)).list();
+    expect(findings.length).toBeGreaterThan(0);
+    expect(findings.filter((f) => unopened.has(f.path))).toEqual([]);
+  });
+
+  it("a case still pending or running when a lane throws is settled with the run", async () => {
+    let failNext = false;
+    const base = stateHomeFs(stateDir);
+    const state = {
+      ...base,
+      write: (rel: string, text: string) => {
+        if (failNext && rel === RUN_FILE) {
+          failNext = false;
+          throw new Error("disk full");
+        }
+        base.write(rel, text);
+      },
+    };
+    const cases = {
+      specs: [] as CaseSpec[],
+      run: async (spec: CaseSpec): Promise<CaseOutcome> => {
+        failNext = true;
+        return { ok: true, output: scanAnswer(spec), cost_usd: 0.01 };
+      },
+    };
+    const s = new ScanRunner({ ...ports(cases, { concurrency: 1 }), state });
+    const p = await previewOf(s);
+    const r = await s.start({ key: p.key });
+    if (!r.ok) throw new Error(r.errors.join("; "));
+    await s.idle();
+    const run = s.status().run!;
+    expect(run.problems.some((x) => /internal error: disk full/.test(x))).toBe(true);
+    expect(run.cases.filter((c) => c.status === "pending" || c.status === "running")).toEqual([]);
+  });
+
+  it("a driver whose lease was taken over publishes no findings, even before its renewal timer notices", async () => {
+    let lost = false;
+    const lease = {
+      holder: "a",
+      lastError: null,
+      claim: () => true,
+      renew: () => !lost,
+      release: () => {},
+      other: () => (lost ? { holder: "b", run: "scan-other", at: "x" } : null),
+    } as unknown as NonNullable<ScanPorts["lease"]>;
+    const cases = {
+      specs: [] as CaseSpec[],
+      run: async (spec: CaseSpec): Promise<CaseOutcome> => {
+        lost = true;
+        return { ok: true, output: scanAnswer(spec), cost_usd: 0.01 };
+      },
+    };
+    const s = new ScanRunner({ ...ports(cases, { concurrency: 1 }), lease });
+    const p = await previewOf(s);
+    const r = await s.start({ key: p.key });
+    if (!r.ok) throw new Error(r.errors.join("; "));
+    await s.idle();
+    expect(new FindingsStore(stateHomeFs(stateDir)).list().findings).toEqual([]);
+    expect(existsSync(join(stateDir, LEDGER_FILE))).toBe(false);
+  });
+
+  it("a case that spent part of its cost measured and part unpriced stops further cases", async () => {
+    const r = runner({ perFile: 0.01 });
+    const inner = r.run;
+    r.run = async (spec, signal, onCost) => {
+      const out = await inner(spec, signal, onCost);
+      onCost?.(0.01);
+      return spec.agent.startsWith("pass-validate") ? { ...out, cost_usd: null } : out;
+    };
+    const s = new ScanRunner(ports(r, { concurrency: 1, validator: true }));
+    const p = await previewOf(s);
+    expect(p.mode).toBe("calibration");
+    const { run } = await runToEnd(s);
+    expect(r.specs.filter((x) => !x.agent.startsWith("pass-validate"))).toHaveLength(1);
+    expect(run.state).toBe("capped");
+  });
+
+  it("a zero-priced run does not admit more cases once a case reports real spending", async () => {
+    await runToEnd(
+      new ScanRunner(ports(runner({ perFile: 0 }), {}, fakeSource({ [SHA1]: TREE }, SHA1))),
+    );
+    const moved: Record<string, string> = {};
+    for (const [k, v] of Object.entries(TREE)) moved[k] = `${v}// moved\n`;
+    const r = runner({ perFile: 0.01 });
+    const src = fakeSource({ [SHA1]: TREE, [SHA2]: moved }, SHA1);
+    const s = new ScanRunner(ports(r, { concurrency: 1 }, src));
+    const { run, preview } = await runToEnd(s, SHA2);
+    expect(preview.estimate_usd).toBe(0);
+    expect(preview.cases.length).toBeGreaterThan(1);
+    expect(r.specs).toHaveLength(1);
+    expect(run.cases.some((c) => c.status === "skipped")).toBe(true);
+  });
 });
