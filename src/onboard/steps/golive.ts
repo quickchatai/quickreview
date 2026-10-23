@@ -39,6 +39,7 @@ import type {
   StepReport,
 } from "../engine.js";
 import { configPath, readConfigText, writeAtomic, type StreamRunner } from "./compose.js";
+import { parse as parseToml } from "smol-toml";
 import { patchToml } from "./configfill.js";
 import {
   PROOF_CHOICE_KEY,
@@ -132,6 +133,17 @@ export const SETUP_RECOMMENDATION =
 
 export class GoLiveRefused extends Error {}
 
+/** True when the document assigns a root `dry_run` key, in any spelling TOML
+ * allows (bare or quoted); a document that does not parse falls back to the
+ * bare-key line match. */
+function hasRootDryRunKey(toml: string): boolean {
+  try {
+    return Object.hasOwn(parseToml(toml), "dry_run");
+  } catch {
+    return /^\s*dry_run\s*=/m.test(toml);
+  }
+}
+
 /**
  * Set `dry_run = false` in a config document — the one writer of that key in
  * the wizard, and a total refusal without both guards.
@@ -155,7 +167,7 @@ export function flipDryRunToFalse(
       "refusing to change dry_run: the flip is only offered after a completed proof round",
     );
   }
-  if (!/^\s*dry_run\s*=/m.test(toml)) {
+  if (!hasRootDryRunKey(toml)) {
     throw new GoLiveRefused(
       "refusing to change dry_run: this config.toml has no dry_run key — edit it by hand and re-run",
     );
