@@ -909,7 +909,10 @@ describe("memory entrypoint — executed against a stub app root", () => {
 
   // A stub app root: every boot script records its name, the config module
   // answers `enabled`, and sidecar-main records the secrets mount it was given.
-  function boot(enabled: boolean): { calls: string[]; mount: string } {
+  function boot(
+    enabled: boolean,
+    extra: { cfg?: Record<string, unknown>; env?: Record<string, string> } = {},
+  ): { calls: string[]; mount: string } {
     const app = join(dir, "app");
     mkdirSync(join(app, "scripts"), { recursive: true });
     mkdirSync(join(app, "dist/src/openviking"), { recursive: true });
@@ -917,12 +920,12 @@ describe("memory entrypoint — executed against a stub app root", () => {
     for (const s of ["openviking-ov-conf", "openviking-reembed", "openviking-provision"]) {
       writeFileSync(
         join(app, "scripts", `${s}.mjs`),
-        `import { appendFileSync } from "node:fs"; appendFileSync(${JSON.stringify(log)}, "${s}\\n");\n`,
+        `import { appendFileSync } from "node:fs"; appendFileSync(${JSON.stringify(log)}, "${s} " + process.argv.slice(2).join(" ") + "\\n");\n`,
       );
     }
     writeFileSync(
       join(app, "dist/src/config.js"),
-      `export const loadConfig = () => ({ openviking: { enabled: ${enabled} } });\n`,
+      `export const loadConfig = () => ({ openviking: ${JSON.stringify({ enabled, ...extra.cfg })} });\n`,
     );
     writeFileSync(
       join(app, "dist/src/openviking/sidecar-main.js"),
@@ -930,7 +933,8 @@ describe("memory entrypoint — executed against a stub app root", () => {
     );
     writeFileSync(join(app, "package.json"), '{"type":"module"}\n');
     const home = join(dir, "home");
-    mkdirSync(home);
+    mkdirSync(home, { recursive: true });
+    rmSync(log, { force: true });
     const r = spawnSync("bash", [join(root, "docker/memory/entrypoint.sh")], {
       env: {
         PATH: process.env.PATH,
@@ -938,6 +942,7 @@ describe("memory entrypoint — executed against a stub app root", () => {
         QCR_APP_ROOT: app,
         QCR_SECRETS: join(dir, "secrets"),
         QCR_OPENVIKING_HOME: join(dir, "ovhome"),
+        ...extra.env,
       },
       encoding: "utf8",
     });
@@ -952,12 +957,31 @@ describe("memory entrypoint — executed against a stub app root", () => {
     { timeout: PROCESS_TIMEOUT_MS },
     () => {
       const r = boot(true);
-      expect(r.calls).toEqual([
+      expect(r.calls.map((c) => c.split(" ")[0])).toEqual([
         "openviking-ov-conf",
         "openviking-reembed",
         "openviking-provision",
       ]);
       expect(r.mount).toBe(join(dir, "secrets"));
+    },
+  );
+
+  it(
+    "provisions with the key file names config.toml sets, unless the environment names them",
+    { timeout: PROCESS_TIMEOUT_MS },
+    () => {
+      const secrets = join(dir, "secrets");
+      const cfg = { root_key_file: "custom_root", reviewer_key_file: "custom_rev" };
+      const provision = (r: { calls: string[] }): string =>
+        r.calls.find((c) => c.startsWith("openviking-provision")) ?? "";
+      const fromConfig = provision(boot(true, { cfg }));
+      expect(fromConfig).toContain(`--root-key-file ${secrets}/custom_root`);
+      expect(fromConfig).toContain(`--reviewer-key-file ${secrets}/custom_rev`);
+      const fromEnv = provision(
+        boot(true, { cfg, env: { QCR_OPENVIKING_ROOT_KEY_FILE: "env_root" } }),
+      );
+      expect(fromEnv).toContain(`--root-key-file ${secrets}/env_root`);
+      expect(fromEnv).toContain(`--reviewer-key-file ${secrets}/custom_rev`);
     },
   );
 
