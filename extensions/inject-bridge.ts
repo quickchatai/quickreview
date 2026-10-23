@@ -3,9 +3,9 @@
 // Modelled on pi's shipped examples/extensions/file-trigger.ts: fs.watch a
 // directory and offer the oldest pending *.md file to pi.sendUserMessage().
 // Pi's extension API is fire-and-forget, so the file remains pending until the
-// next `agent_start` acknowledges that Pi accepted a run. Only then is it moved
-// to .done/ (consumption means accepted delivery, never pickup or attempted
-// submission). The daemon writes files atomically (tmp + rename), so a watch
+// marker-correlated user `message_start` (after `agent_start`) acknowledges that
+// Pi accepted the wake. Only then is it moved to .done/ (consumption means
+// accepted delivery, never pickup or attempted submission). The daemon writes files atomically (tmp + rename), so a watch
 // event sees a complete file.
 //
 // The companion (its inbox) is the one session that still reads a mailbox. A PR's
@@ -423,7 +423,6 @@ function registerInjectBridge(pi: ExtensionAPI, config: InjectBridgeConfig): voi
       return false;
     } catch (err) {
       failBridge("command_read", `${file}: ${String(err)}`);
-      scheduleRetry();
       return false;
     }
   };
