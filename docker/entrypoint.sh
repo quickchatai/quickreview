@@ -588,7 +588,7 @@ mode_companion() {
   # Memory health watcher: backgrounded and non-fatal by construction.
   local watcher="$APP/docker/companion/memory-health.mjs"
   [ -f "$watcher" ] || watcher=/usr/local/lib/qcr/memory-health.mjs
-  if [ -n "${QCR_MEMORY_ENDPOINT:-}${OPENVIKING_URL:-}" ] && [ -f "$watcher" ]; then
+  if [ -n "${QCR_MEMORY_ENDPOINT:-}${OPENVIKING_URL:-}${OPENVIKING_BASE_URL:-}" ] && [ -f "$watcher" ]; then
     node "$watcher" &
   else
     say "memory watcher idle: no OpenViking endpoint configured for this container"

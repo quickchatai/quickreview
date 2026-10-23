@@ -941,6 +941,13 @@ describe("companion image carries the memory path, not a credential", () => {
     expect(entrypoint).toMatch(/wait "\$child" \|\| true/);
   });
 
+  it("starts the watcher for every endpoint variable watcherConfig reads", () => {
+    const companion = readFileSync(resolve(root, "docker/companion/entrypoint.sh"), "utf8");
+    for (const script of [entrypoint, companion]) {
+      expect(script).toContain("${OPENVIKING_BASE_URL:-}");
+    }
+  });
+
   it("keeps the alert dir as the watcher's only output surface", () => {
     expect(entrypoint).toContain("QCR_MEMORY_ENDPOINT");
     expect(entrypoint).not.toContain("ssh-agent");
