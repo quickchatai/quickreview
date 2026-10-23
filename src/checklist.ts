@@ -38,12 +38,24 @@ const bad = (item: string, name: string, detail: string): ProbeResult => ({
   detail,
 });
 
+/** Each automated probe's checklist marker and name, spelled once for its own
+ * result and for the failed result `safeProbe` builds when it throws. */
+export const PROBE_META = {
+  tunnel: { item: "①", name: "tunnel + HMAC" },
+  queue: { item: "②", name: "reconcile queue == manual queries" },
+  staleness: { item: "④", name: "push does not review" },
+  pingPong: { item: "⑤", name: "ping-pong reply" },
+  digest: { item: "⑦", name: "EOD digest" },
+  tmux: { item: "⑧", name: "tmux attach" },
+  restart: { item: "⑨", name: "restart recovery" },
+} as const;
+
 /** Run a probe so an exception is a failed item, never a crashed checklist. */
 export async function safeProbe(
-  item: string,
-  name: string,
+  meta: { item: string; name: string },
   fn: () => Promise<ProbeResult>,
 ): Promise<ProbeResult> {
+  const { item, name } = meta;
   try {
     return await fn();
   } catch (err) {
@@ -75,8 +87,7 @@ export interface TunnelProbeDeps {
 /** ① A signed test delivery is accepted (2xx); a bad-signature one is rejected
  * (401/403 — 400 accepted as a rejection too). Both must hold. */
 export async function probeTunnelHmac(deps: TunnelProbeDeps): Promise<ProbeResult> {
-  const item = "①";
-  const name = "tunnel + HMAC";
+  const { item, name } = PROBE_META.tunnel;
   const body = JSON.stringify({
     zen: "Non-blocking is better than blocking.",
     hook_id: 0,
@@ -101,7 +112,9 @@ export async function probeTunnelHmac(deps: TunnelProbeDeps): Promise<ProbeResul
 
   const goodOk = good.status >= 200 && good.status < 300;
   const forgedRejected = forged.status === 401 || forged.status === 403 || forged.status === 400;
-  const where = deps.hostname ? ` via ${deps.hostname} -> ${deps.url}` : ` at ${deps.url}`;
+  const where = deps.hostname
+    ? ` at ${deps.url} (local probe; the public hostname ${deps.hostname} is not exercised)`
+    : ` at ${deps.url}`;
   const detail = `signed -> ${good.status} (want 2xx), forged -> ${forged.status} (want 401/403)${where}`;
   return goodOk && forgedRejected ? ok(item, name, detail) : bad(item, name, detail);
 }
@@ -136,8 +149,7 @@ export function diffQueues(manual: number[], derived: number[]): QueueDiff {
 
 /** ② The derived queue must match the union of the two trigger searches exactly. */
 export async function probeQueueDiff(deps: QueueDiffDeps): Promise<ProbeResult> {
-  const item = "②";
-  const name = "reconcile queue == manual queries";
+  const { item, name } = PROBE_META.queue;
   const manual = [...(await deps.labelTriggered()), ...(await deps.teamTriggered())];
   const diff = diffQueues(manual, await deps.derivedQueue());
   const detail =
@@ -174,8 +186,7 @@ export interface StalenessProbeDeps {
 
 /** ④ A push must not produce a review; only an explicit re-request may. */
 export async function probeStalenessWake(deps: StalenessProbeDeps): Promise<ProbeResult> {
-  const item = "④";
-  const name = "push does not review";
+  const { item, name } = PROBE_META.staleness;
   await deps.injectStalePr(deps.fixture);
   await deps.runStalenessReconcile();
   const orders = await deps.issuedOrders();
@@ -210,8 +221,7 @@ function listDir(dir: string): string[] {
  * when the fixture PR is known — diffing only the top level passes solely on
  * the run that first creates the subdir. */
 export async function probePingPong(deps: PingPongProbeDeps): Promise<ProbeResult> {
-  const item = "⑤";
-  const name = "ping-pong reply";
+  const { item, name } = PROBE_META.pingPong;
   const watchDir = deps.pr === undefined ? deps.injectDir : join(deps.injectDir, `pr-${deps.pr}`);
   const before = new Set(listDir(watchDir));
   await deps.interpret(deps.event);
@@ -233,8 +243,7 @@ export interface DigestProbeDeps {
 
 /** ⑦ digest/<today>.md exists and the headline reached status.json. */
 export function probeDigest(deps: DigestProbeDeps): ProbeResult {
-  const item = "⑦";
-  const name = "EOD digest";
+  const { item, name } = PROBE_META.digest;
   const file = join(deps.digestDir, `${deps.today}.md`);
   if (!existsSync(file)) return bad(item, name, `missing ${file}`);
   const size = readFileSync(file, "utf8").trim().length;
@@ -276,8 +285,7 @@ export interface TmuxProbeDeps {
 /** ⑧ The listing must answer; on a legacy topology the overseer and a `pr-*`
  * session must also be attachable. */
 export async function probeTmux(deps: TmuxProbeDeps): Promise<ProbeResult> {
-  const item = "⑧";
-  const name = "tmux attach";
+  const { item, name } = PROBE_META.tmux;
   let sessions: string[];
   try {
     sessions = await deps.listSessions();
@@ -307,8 +315,7 @@ export interface RestartProbeDeps {
 
 /** ⑨ Heartbeat is fresh and the adopt pass converges without throwing. */
 export async function probeRestartRecovery(deps: RestartProbeDeps): Promise<ProbeResult> {
-  const item = "⑨";
-  const name = "restart recovery";
+  const { item, name } = PROBE_META.restart;
   const now = (deps.now ?? (() => new Date()))();
   const maxAge = deps.maxHeartbeatAgeS ?? 300;
   if (!existsSync(deps.statusPath))
@@ -464,13 +471,13 @@ export function exitCodeFor(results: ProbeResult[]): number {
 /** Run the seven automated probes in checklist order. */
 export async function runChecklistProbes(deps: ChecklistDeps): Promise<ProbeResult[]> {
   return [
-    await safeProbe("①", "tunnel + HMAC", () => probeTunnelHmac(deps.tunnel)),
-    await safeProbe("②", "reconcile queue == manual queries", () => probeQueueDiff(deps.queue)),
-    await safeProbe("④", "push does not review", () => probeStalenessWake(deps.staleness)),
-    await safeProbe("⑤", "ping-pong reply", () => probePingPong(deps.pingPong)),
-    await safeProbe("⑦", "EOD digest", async () => probeDigest(deps.digest)),
-    await safeProbe("⑧", "tmux attach", () => probeTmux(deps.tmux)),
-    await safeProbe("⑨", "restart recovery", () => probeRestartRecovery(deps.restart)),
+    await safeProbe(PROBE_META.tunnel, () => probeTunnelHmac(deps.tunnel)),
+    await safeProbe(PROBE_META.queue, () => probeQueueDiff(deps.queue)),
+    await safeProbe(PROBE_META.staleness, () => probeStalenessWake(deps.staleness)),
+    await safeProbe(PROBE_META.pingPong, () => probePingPong(deps.pingPong)),
+    await safeProbe(PROBE_META.digest, async () => probeDigest(deps.digest)),
+    await safeProbe(PROBE_META.tmux, () => probeTmux(deps.tmux)),
+    await safeProbe(PROBE_META.restart, () => probeRestartRecovery(deps.restart)),
   ];
 }
 

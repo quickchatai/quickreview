@@ -7,6 +7,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  DEFAULT_CHECKLIST_LABELS,
   manualItems,
   diffQueues,
   exitCodeFor,
@@ -76,6 +77,9 @@ describe("① tunnel + HMAC probe", () => {
     expect(r.pass).toBe(true);
     expect(r.detail).toContain("signed -> 200");
     expect(r.detail).toContain("forged -> 403");
+    expect(r.detail).toContain("http://127.0.0.1:8787/webhook");
+    expect(r.detail).toContain("not exercised");
+    expect(r.detail).not.toContain("via review.example.dev");
     expect(seen).toHaveLength(2);
     expect(seen[0]!["x-github-event"]).toBe("ping");
     expect(seen[0]!["x-github-delivery"]).not.toBe(seen[1]!["x-github-delivery"]);
@@ -596,11 +600,23 @@ describe("table + exit code + manual items", () => {
   });
 
   it("safeProbe turns a throwing probe into a failed item", async () => {
-    const r = await safeProbe("②", "x", async () => {
+    const r = await safeProbe({ item: "②", name: "x" }, async () => {
       throw new Error("boom");
     });
     expect(r).toMatchObject({ item: "②", pass: false });
     expect(r.detail).toContain("boom");
+  });
+});
+
+describe("shipped labels", () => {
+  it("the shipped label defaults equal config.example.toml", () => {
+    const toml = readFileSync(join(__dirname, "..", "config.example.toml"), "utf8");
+    const get = (k: string) => new RegExp(`^${k} = "([^"]*)"`, "m").exec(toml)?.[1];
+    expect(DEFAULT_CHECKLIST_LABELS).toEqual({
+      trigger: get("trigger_label"),
+      in_progress: get("in_progress_label"),
+      reviewed: get("reviewed_label"),
+    });
   });
 });
 
