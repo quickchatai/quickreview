@@ -35,7 +35,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { agentDirSettings } from "../src/engine/agentdir.js";
 import { applyEnvApiKeys, engineCredentials } from "../src/engine/auth.js";
-import { LENS_SESSIONS_DIR } from "../src/engine/openable.js";
+import { LENS_LEDGER_FILE, LENS_SESSIONS_DIR } from "../src/engine/openable.js";
 import { resolvePassDeadlineMs } from "../src/engine/lens/deadline.js";
 import { loadBuiltAgents, type AgentRegistry } from "../src/engine/lens/registry.js";
 import {
@@ -106,7 +106,7 @@ export function lensRunConfigFromEnv(
     cwd,
     env,
     bashGuard: createBashGuard(bashGuardConfigFromEnv(env, cwd)),
-    ledgerPath: join(ledger ? dirname(ledger) : agentDir, "lens-ledger.jsonl"),
+    ledgerPath: join(ledger ? dirname(ledger) : agentDir, LENS_LEDGER_FILE),
     // A round's lens sessions are kept beside its ledger (D10); an interactive pi
     // with no round keeps none, and never writes into its own agent dir.
     ...(ledger ? { sessionsDir: join(dirname(ledger), LENS_SESSIONS_DIR) } : {}),
