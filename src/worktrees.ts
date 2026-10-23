@@ -423,6 +423,12 @@ export type PrOwnedDelta =
  * ref already, so `refs/qcr/pr-<n>/…` could not be created. */
 const REVIEWED_HEAD_NAMESPACE = "refs/qcr/reviewed/";
 
+/** Recognises a reviewed-head pin (any 7–12 hex suffix, so legacy shorter
+ * pins match); group 1 is the PR number. */
+const REVIEWED_HEAD_REF_RE = new RegExp(
+  `^${REVIEWED_HEAD_NAMESPACE.replace(/\//g, "\\/")}pr-(\\d+)-[0-9a-f]{7,12}$`,
+);
+
 /** Every pin of PR `pr` starts with this — what creation writes and the
  * PR's removal lists. */
 function reviewedHeadPrefix(pr: number): string {
@@ -574,8 +580,9 @@ export const POST_MERGE_LIMITS = Object.freeze({
 /** What one round's worktree preparation established about the tree on disk. */
 export interface WorktreeFacts {
   path: string;
-  /** The sha the worktree is actually checked out at, resolved from the
-   * just-fetched `refs/pull/<n>/head` — the authority for the round. */
+  /** The sha the worktree is actually checked out at — the authority for the
+   * round. It is the just-fetched `refs/pull/<n>/head`, or the caller's
+   * `expectedHead` when that ref lags behind it. */
   head_sha: string;
   /** Branch the PR targets; "" when the caller did not supply one. */
   base_ref: string;
@@ -802,13 +809,11 @@ export class WorktreeManager {
    * evidence the ref lags. */
   private async refLags(fetched: string, want: string): Promise<boolean> {
     const cwd = this.basePath;
-    if ((await this.run("git", ["cat-file", "-e", `${want}^{commit}`], { cwd })).code !== 0) {
+    if (!(await this.hasCommit(want))) {
       if ((await this.run("git", ["fetch", "--force", "origin", want], { cwd })).code !== 0)
         return false;
     }
-    return (
-      (await this.run("git", ["merge-base", "--is-ancestor", fetched, want], { cwd })).code === 0
-    );
+    return (await this.isAncestor(fetched, want)) === true;
   }
 
   /**
@@ -824,17 +829,17 @@ export class WorktreeManager {
     if (existsSync(path) && (await this.isOwnWorktree(path))) {
       await this.git(["reset", "--hard", sha], path);
       await this.git(["clean", "-fdx"], path);
-    } else if (existsSync(path)) {
+      return path;
+    }
+    if (existsSync(path)) {
       // Not this clone's registered worktree — an interrupted `worktree add`,
       // a lost gitfile, a stray directory. Git run inside it would discover
       // whatever repository encloses the sandbox, so it is rebuilt instead.
-      // `--force` twice re-adds a path still registered (even locked, as an
-      // interrupted add leaves it) whose checkout is gone.
       rmSync(path, { recursive: true, force: true });
-      await this.git(["worktree", "add", "--force", "--force", "--detach", path, sha]);
-    } else {
-      await this.git(["worktree", "add", "--force", "--force", "--detach", path, sha]);
     }
+    // `--force` twice re-adds a path still registered (even locked, as an
+    // interrupted add leaves it) whose checkout is gone.
+    await this.git(["worktree", "add", "--force", "--force", "--detach", path, sha]);
     return path;
   }
 
@@ -1563,9 +1568,7 @@ export class WorktreeManager {
     if (!existsSync(join(this.basePath, ".git"))) return refs;
     const res = await this.git(["for-each-ref", "--format=%(refname)", "refs/qcr/"]);
     for (const ref of res.stdout.split("\n")) {
-      const match =
-        /^refs\/qcr\/pr-(\d+)$/.exec(ref) ??
-        /^refs\/qcr\/reviewed\/pr-(\d+)-[0-9a-f]{7,12}$/.exec(ref);
+      const match = /^refs\/qcr\/pr-(\d+)$/.exec(ref) ?? REVIEWED_HEAD_REF_RE.exec(ref);
       if (!match) continue;
       const pr = Number(match[1]);
       if (!Number.isSafeInteger(pr) || pr <= 0) continue;
