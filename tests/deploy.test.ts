@@ -2122,6 +2122,19 @@ describe("deploy.sh — base clone name", () => {
     expect(help).not.toContain("set -euo pipefail");
   });
 
+  it("refuses a clone name that would shadow the image's own contents under the app root", () => {
+    const reserved = /^BASE_CLONE_RESERVED=\(([^)]*)\)$/m.exec(readFileSync(deploySh, "utf8"))?.[1];
+    const list = reserved!.split(/\s+/).filter(Boolean);
+    // every top-level path the release image copies into /opt/qcr is mounted over by a clone of that name
+    const dockerfile = readFileSync(join(root, "docker", "Dockerfile"), "utf8");
+    const stage = dockerfile.slice(dockerfile.indexOf("WORKDIR /opt/qcr"));
+    const copied = new Set(
+      [...stage.matchAll(/^COPY (?:--from=\S+ )?\S+ \.\/([^/\s]+)/gm)].map((m) => m[1]!),
+    );
+    expect(copied.has("scripts")).toBe(true);
+    for (const d of copied) expect(list, d).toContain(d);
+  });
+
   it("refuses a clone name that is a runtime/build dir of the sandbox root — the list names every directory the updater mounts", () => {
     const reserved = /^BASE_CLONE_RESERVED=\(([^)]*)\)$/m.exec(readFileSync(deploySh, "utf8"))?.[1];
     expect(reserved).toBeDefined();
@@ -2242,6 +2255,29 @@ describe("deploy — the stale-image outage", () => {
 
   it("verify FAILS when the heartbeat cannot be read at all", () => {
     expect(verifyWith("exit 255").code).toBe(1);
+  });
+
+  it("verify reads the heartbeat under the effective sandbox_root, not the default", () => {
+    env = makeScratch({
+      configPi: "0.84.1",
+      groupVarsPi: "0.84.1",
+      inventory: "[quickreview]\nquickreview-vm sandbox_root=/srv/qcr\n",
+    });
+    const bin = join(env.dir, "bin");
+    mkdirSync(bin);
+    const log = join(env.dir, "ssh.log");
+    writeFileSync(join(bin, "ssh"), `#!/bin/sh\necho "$*" >> ${log}\necho stub-ok\n`, { mode: 0o755 });
+    run(env, ["verify"], {
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      QC_HEARTBEAT_PROBE_CMD: "",
+      QC_HEARTBEAT_WAIT_S: "0",
+    });
+    const calls = readFileSync(log, "utf8");
+    expect(calls).toContain("/srv/qcr/state/status.json");
+    expect(calls).not.toContain("/opt/quickreview/state/status.json");
+    const plan = run(env, ["--dry-run", "verify"]);
+    expect(plan.stdout).toContain("/srv/qcr/state/status.json");
+    expect(plan.stdout).not.toContain("/opt/quickreview/state/status.json");
   });
 
   it("verify passes on a polling-only VM (cloudflared_enabled=false), where no cloudflared service exists", () => {

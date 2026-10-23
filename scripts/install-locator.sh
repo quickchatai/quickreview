@@ -209,12 +209,6 @@ _qcr_expand_home() { # _qcr_expand_home <path>
   fi
 }
 
-_qcr_trim() { # _qcr_trim <text>
-  local t="$1"
-  t="${t#"${t%%[![:space:]]*}"}"
-  printf '%s\n' "${t%"${t##*[![:space:]]}"}"
-}
-
 # The old default's spelling, only to recognise it in a configured value.
 _qcr_old_secrets_dir() { printf '%s\n' "$(_qcr_home_dir)/.config/quickreview-bot"; }
 

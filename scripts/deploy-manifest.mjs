@@ -28,6 +28,8 @@ function checkImage(errors, where, img) {
   onlyKeys(errors, where, img, ["repository", "index_digest", "platforms"]);
   if (typeof img.repository === "string" && !REPO_RE.test(img.repository))
     errors.push(`${where}.repository: not an image repository`);
+  if ("repository" in img && typeof img.repository !== "string")
+    errors.push(`${where}.repository: not a string`);
   if (typeof img.index_digest === "string" && !DIGEST_RE.test(img.index_digest))
     errors.push(`${where}.index_digest: not a sha256 digest`);
   if ("index_digest" in img && typeof img.index_digest !== "string")

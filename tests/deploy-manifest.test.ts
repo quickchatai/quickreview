@@ -121,6 +121,15 @@ describe("the deploy manifest", () => {
     }
   });
 
+  it("a repository that is not a string is reported, never passed on", () => {
+    for (const bad of [null, 7, ["ghcr.io/x/y"], {}]) {
+      const problems = manifestProblems(
+        JSON.parse(edit((m) => (m.images.daemon.repository = bad))),
+      );
+      expect(problems, JSON.stringify(bad)).toContain("images.daemon.repository: not a string");
+    }
+  });
+
   it("the schema documents what the validator enforces (same required keys)", () => {
     expect([...schema.required].sort()).toEqual([
       "images",
