@@ -228,6 +228,31 @@ describe("the watchdog never delays or blocks the sweep", () => {
 });
 
 describe("window close and verdict", () => {
+  it("a judgement still reading its after-snapshot when the watchdog stops raises nothing", async () => {
+    let release!: (v: readonly PinnedEntryView[]) => void;
+    let reached!: () => void;
+    const started = new Promise<void>((r) => {
+      reached = r;
+    });
+    const h = harness([
+      [entry("b1", 0, "h1")],
+      () => {
+        reached();
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+      },
+    ]);
+    await h.watch.wrapInject(async () => {})("x");
+    h.advance(91 * 60_000);
+    h.tick();
+    await started;
+    h.watch.stop();
+    release([entry("b1", 0, "CHANGED")]);
+    await h.watch.settled();
+    expect(h.anomalies).toEqual([]);
+  });
+
   it("says nothing when the pinned area is unchanged", async () => {
     const pinned = [entry("b1", 0, "h1"), entry("b1", 1, "h2")];
     const h = harness([pinned, pinned]);

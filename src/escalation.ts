@@ -592,7 +592,12 @@ export function scopeForRule(rule: EscalationRule, facts: EscalationFacts): Esca
  * included.
  */
 export function questionForRule(rule: EscalationRule, scope: EscalationScope): string {
-  return `Your rule "${rule.name}" fires on this change. Is ${renderScope(scope)} right, in your judgement?`;
+  const full = `Your rule "${rule.name}" fires on this change. Is ${renderScope(scope)} right, in your judgement?`;
+  // Validation cuts a question at MAX_ESCALATION_QUESTION, which could drop the
+  // closing delimiter of a rendered path; a long one is left to the note's
+  // "Look at" line, which carries the scope whole.
+  if (full.length <= MAX_ESCALATION_QUESTION) return full;
+  return `Your rule "${rule.name}" fires on this change. Is the scope under "Look at" right, in your judgement?`;
 }
 
 /**
@@ -1023,7 +1028,15 @@ async function continueEscalation(
         return recoveryOutcome(row, false);
       }
       if (result.blocked) {
-        finish();
+        // pr-unreadable is a failed GitHub read inside the guard, not a
+        // decision about the PR: the obligation stays owed and is retried.
+        if (journal && result.blocked === "pr-unreadable")
+          store.retryEscalationComment(
+            row,
+            `comment blocked: ${result.blocked}`,
+            new Date(Date.now() + 30_000).toISOString(),
+          );
+        else finish();
         store.logEvent("escalation_blocked", row.pr, {
           target: row.target,
           scope_key: row.scope_key,

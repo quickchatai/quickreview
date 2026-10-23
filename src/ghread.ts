@@ -160,9 +160,19 @@ export interface GhReadAnswer {
  * read (a check run, a job log, a commit), which belongs to no PR. */
 export function readPr(read: GhRead): number | null {
   if (read.kind === "graphql") return read.variables["number"] as number;
-  const m = /^\/repos\/[^/]+\/[^/]+\/(?:pulls|issues)\/(\d+)(?:\/|$)/.exec(
-    read.path.split("?")[0]!,
-  );
+  // Percent-escapes are decoded first: `%38` names PR 8 as surely as `8` does.
+  const decoded = read.path
+    .split("?")[0]!
+    .split("/")
+    .map((seg) => {
+      try {
+        return decodeURIComponent(seg);
+      } catch {
+        return seg;
+      }
+    })
+    .join("/");
+  const m = /^\/repos\/[^/]+\/[^/]+\/(?:pulls|issues)\/(\d+)(?:\/|$)/.exec(decoded);
   return m ? Number(m[1]) : null;
 }
 
