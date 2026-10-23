@@ -50,8 +50,7 @@ All three must be green before you commit. Notes that will bite otherwise:
   `engines`).
 - **ESM, `module: NodeNext`** — local imports carry the **`.js` suffix** even
   from `.ts` files.
-- **Minimal dependencies.** Runtime: `better-sqlite3`, `smol-toml`,
-  `@xterm/headless`, `node-pty`. Dev: `typescript`, `vitest`, `@types/*`,
+- **Minimal dependencies.** Runtime: `better-sqlite3`, `smol-toml`. Dev: `typescript`, `vitest`, `@types/*`,
   `eslint` + `@eslint/js` + `typescript-eslint`, `prettier`. Adding
   one is a decision, not a convenience.
 - **Tests mock all I/O**: fake fetch and adapters, `StateStore(":memory:")`,
