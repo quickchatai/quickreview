@@ -46,6 +46,7 @@ function seedRoundCommand(
     attempt?: number;
     nextCheckAt?: string;
     lenses?: string[];
+    passPlan?: { lens: string; agent: string; tier: "sol-med"; raisable_to: string[] }[];
   } = {},
 ) {
   const id = opts.id ?? "cmd-1";
@@ -65,6 +66,7 @@ function seedRoundCommand(
     "first",
     opts.lenses ?? ["pass-baseline"],
     baseCfg.daemon.round_deadline_min,
+    opts.passPlan ? ({ pass_plan: opts.passPlan } as never) : {},
   );
   store.stampPostingKey(roundId, `v1:${pr}:1:abc123`);
   const round = store.roundsFor(pr)[0]!;
@@ -645,6 +647,43 @@ describe("bounded round-stage supervision", () => {
     );
   });
 
+  it("leaves a settled-running command alone while its verdict file is pending", async () => {
+    const { id, pr, round } = seedRoundCommand({ status: "running", started: true });
+    writeFileSync(join(verdictDir, `pr-${pr}-round-${round.round_no}.json`), "{}");
+    const onRoundFailure = vi.fn(async () => "requeued" as const);
+    const progress = () => ({
+      version: 1 as const,
+      pr,
+      session: `pr-${pr}`,
+      run_started_at: clock.toISOString(),
+      updated_at: clock.toISOString(),
+      parent_status: "settled" as const,
+      command_id: id,
+      command_sha256: "a".repeat(64),
+      last_activity_at: clock.toISOString(),
+      last_activity: "parent settled",
+      agents: [],
+    });
+    const killed: number[] = [];
+    const sup = supervisor(
+      hooks({
+        killSession: async (n) => {
+          killed.push(n);
+        },
+      }),
+      onRoundFailure,
+      baseCfg,
+      progress,
+    ).supervisor;
+    await sup.scan();
+    clock = new Date(clock.getTime() + 1_000);
+    await sup.scan();
+
+    expect(killed).toEqual([]);
+    expect(store.getSessionCommand(id)?.status).toBe("running");
+    expect(onRoundFailure).not.toHaveBeenCalled();
+  });
+
   it("leaves a settled command alone while its verdict file is pending", async () => {
     const { id, pr, round } = seedRoundCommand({ status: "acked", started: true });
     writeFileSync(join(verdictDir, `pr-${pr}-round-${round.round_no}.json`), "{}");
@@ -933,6 +972,61 @@ describe("bounded round-stage supervision", () => {
     );
     expect(store.roundsFor(pr).find((item) => item.id === round.id)?.fanout_started_at).toBe(
       "2026-08-27T20:01:00.000Z",
+    );
+  });
+
+  it("recovers a split lens with fewer terminal executions than planned rows at the pass deadline", async () => {
+    clock = new Date("2026-08-27T20:00:00.000Z");
+    const { id, pr, round } = seedRoundCommand({
+      status: "running",
+      started: true,
+      nextCheckAt: "2026-08-27T20:45:00.000Z",
+      lenses: ["pass-baseline"],
+      passPlan: [
+        { lens: "pass-baseline", agent: "pass-baseline--sol-med", tier: "sol-med", raisable_to: [] },
+        { lens: "pass-baseline", agent: "pass-baseline--sol-med", tier: "sol-med", raisable_to: [] },
+      ],
+    });
+    clock = new Date("2026-08-27T20:35:00.000Z");
+    const onRoundFailure = vi.fn(async () => "requeued" as const);
+    const progress = () => ({
+      version: 2 as const,
+      pr,
+      session: `pr-${pr}`,
+      run_started_at: "2026-08-27T20:00:00.000Z",
+      updated_at: clock.toISOString(),
+      parent_status: "active" as const,
+      command_id: id,
+      command_sha256: "a".repeat(64),
+      command_accepted_at: "2026-08-27T20:00:01.000Z",
+      first_lens_started_at: "2026-08-27T20:01:00.000Z",
+      last_activity_at: clock.toISOString(),
+      last_activity: "validator never launched",
+      agents: [
+        {
+          execution_id: "lens-1:pass-baseline--sol-med",
+          agent: "pass-baseline--sol-med",
+          status: "completed" as const,
+          duration_ms: 60_000,
+          tool_count: 1,
+          started_at: "2026-08-27T20:01:00.000Z",
+          finished_at: "2026-08-27T20:02:00.000Z",
+        },
+      ],
+    });
+
+    await supervisor(
+      hooks({ killSession: async () => {} }),
+      onRoundFailure,
+      baseCfg,
+      progress,
+    ).supervisor.scan();
+
+    expect(onRoundFailure).toHaveBeenCalledWith(
+      pr,
+      round.round_no,
+      "passes_incomplete",
+      expect.stringContaining("pass-baseline"),
     );
   });
 

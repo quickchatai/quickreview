@@ -1,10 +1,18 @@
 // [P8.3] Which JSONL is a PR session's transcript: the one the daemon's
 // lifecycle archives and the bot worker resumes, from one function.
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { newestSessionFile } from "../src/sessionjsonl.js";
+import { newestSessionFile, rotateSessionFiles } from "../src/sessionjsonl.js";
 
 let dir: string;
 beforeEach(() => {
@@ -37,4 +45,23 @@ describe("[P8.3] newestSessionFile", () => {
     touch(join(dir, "2026-10-01T11_b.jsonl"), 1000);
     expect(newestSessionFile(dir)).toBe(join(dir, "2026-10-01T11_b.jsonl"));
   });
+});
+
+describe("rotateSessionFiles", () => {
+  it.skipIf(process.getuid?.() === 0)(
+    "puts back the files it already moved when a later rename fails",
+    () => {
+      touch(join(dir, "a.jsonl"), 1000);
+      touch(join(dir, "sub", "b.jsonl"), 1000);
+      chmodSync(join(dir, "sub"), 0o555);
+      try {
+        expect(() => rotateSessionFiles(dir, "t1")).toThrow();
+      } finally {
+        chmodSync(join(dir, "sub"), 0o755);
+      }
+      expect(existsSync(join(dir, "a.jsonl"))).toBe(true);
+      expect(existsSync(join(dir, "a.jsonl.rotated-t1"))).toBe(false);
+      expect(existsSync(join(dir, "sub", "b.jsonl"))).toBe(true);
+    },
+  );
 });
