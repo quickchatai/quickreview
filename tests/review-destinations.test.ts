@@ -153,6 +153,7 @@ function harness(o: {
     ecosystem: ctx.ecosystem,
     runtime: piCliRuntime({ bin: o.piBin }),
     runsDir: join(tmp, `runs-${Math.random().toString(36).slice(2)}`),
+    dryrunDir: join(tmp, `dryrun-${Math.random().toString(36).slice(2)}`),
     timeoutMs: 10 * 60_000,
   };
   return { deps, lines, asked, offered, text: () => lines.join("\n") };

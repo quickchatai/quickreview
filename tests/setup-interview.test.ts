@@ -29,7 +29,7 @@ import { ALL_PASSES, buildPassPlan } from "../src/dispatch.js";
 import { NONE_ECOSYSTEM } from "../src/ecosystem.js";
 import type { PrFileEntry } from "../src/github.js";
 import { PASS_ADDENDA, buildAgents } from "../src/include.js";
-import { configHome, type InstallEnv } from "../src/install.js";
+import { configHome, homeProfileLookup, type InstallEnv } from "../src/install.js";
 import { applyProfileTuning, lensModelOverrides, lensTuningAddenda } from "../src/lenstuning.js";
 import type { MemoryEntry, MemoryOp, MemoryStore } from "../src/memory/store.js";
 import { loadProfileAddenda, loadProfileLensTuning } from "../src/profiles.js";
@@ -131,7 +131,7 @@ function applied(r: ApplyResult | Refusal): ApplyResult {
 function tuned(name: string): Config {
   const cfg = structuredClone(fixture);
   cfg.review.profile = name;
-  return applyProfileTuning(cfg, loadProfileLensTuning(sandbox, name, { env }));
+  return applyProfileTuning(cfg, loadProfileLensTuning(sandbox, name, homeProfileLookup(env)));
 }
 
 function agents(cfg: Config): Map<string, string> {
@@ -145,7 +145,7 @@ function agents(cfg: Config): Map<string, string> {
       models: lensModelOverrides(cfg.models, cfg.lenses),
       addenda: [
         ...PASS_ADDENDA,
-        ...loadProfileAddenda(sandbox, cfg.review.profile, { env }),
+        ...loadProfileAddenda(sandbox, cfg.review.profile, homeProfileLookup(env)),
         ...lensTuningAddenda(cfg.lenses),
       ],
     });

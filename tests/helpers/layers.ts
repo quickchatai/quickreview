@@ -54,6 +54,7 @@ export const CORE: readonly string[] = [
   "src/ecosystem.ts",
   "src/heuristics.ts",
   "src/profiles.ts",
+  "src/profilelookup.ts",
   "src/profileoverrides.ts",
   "src/reviewrender.ts",
   "src/reviewerstub.ts",
@@ -96,6 +97,7 @@ export const CORE: readonly string[] = [
   "src/settledread.ts",
   "src/yieldloop.ts",
   "src/pricing.ts",
+  "src/assetroot.ts",
   // The extensions a review session is built with.
   "extensions/lens.ts",
   "extensions/bash-guard.ts",
@@ -175,7 +177,11 @@ export function fencedFiles(root: string): string[] {
  */
 export function runtimeSpecifiers(text: string): string[] {
   const js = ts.transpileModule(text, {
-    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, removeComments: true },
+    compilerOptions: {
+      module: ts.ModuleKind.ESNext,
+      target: ts.ScriptTarget.ES2022,
+      removeComments: true,
+    },
   }).outputText;
   const out = new Set<string>();
   for (const m of js.matchAll(

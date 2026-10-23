@@ -16,6 +16,7 @@ import {
 } from "../src/heuristics.js";
 import { loadProfileHeuristics } from "../src/profiles.js";
 import type { PrFileEntry } from "../src/github.js";
+import { homeProfileLookup } from "../src/install.js";
 import { stageFixtureProfile } from "./helpers/tracked-profiles.js";
 
 const sandbox = join(import.meta.dirname, "..");
@@ -27,7 +28,9 @@ const sandbox = join(import.meta.dirname, "..");
  * proofs self-skip (HAS_QC) there — and only there: in the source tree a
  * missing fixture throws (tests/helpers/tracked-profiles.ts). */
 const HAS_QC = stageFixtureProfile(sandbox, "quickchat");
-const QC = HAS_QC ? loadProfileHeuristics(sandbox, "quickchat") : EMPTY_HEURISTICS;
+const QC = HAS_QC
+  ? loadProfileHeuristics(sandbox, "quickchat", homeProfileLookup())
+  : EMPTY_HEURISTICS;
 
 const f = (filename: string, additions = 1, deletions = 0): PrFile => ({
   filename,

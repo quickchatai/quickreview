@@ -36,8 +36,9 @@
 // duplicate or reserved id — throws with the offending path. A malformed pack
 // is a loud build failure, never a silent skip.
 //
-// Where a profile lives is the install locator's call
-// (`src/install.ts locateProfile`): the install's config home first, then the
+// Where a profile lives is the profile search's call (src/profilelookup.ts
+// `findProfile`): the homes the caller names (`ProfileLookup.homes`, the
+// install's, resolved by src/homes.ts `homeProfileLookup`) first, then the
 // checkout's generic examples — every loader below resolves the name through
 // it, so a name that could escape `profiles/` is refused before any read.
 //
@@ -70,7 +71,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
-import { parseScanTable, SCAN_PROFILE_KEYS, type ScanConfig } from "./config.js";
+import { parseScanTable, SCAN_PROFILE_KEYS, type ScanConfig } from "./reviewconfig.js";
 import type { EcosystemName } from "./ecosystem.js";
 import { ALL_PASSES } from "./dispatch.js";
 import { EMPTY_HEURISTICS, PROFILE_EXTENDABLE_LENSES } from "./heuristics.js";
@@ -84,11 +85,11 @@ import {
 } from "./include.js";
 import type { PassAddendum, PassAddendumScope } from "./include.js";
 import {
-  locateProfile,
-  profileSearchDirs,
-  strandedCheckoutProfile,
-  type InstallEnv,
-} from "./install.js";
+  findProfile,
+  profileSearchPlaces,
+  strandedProfile,
+  type ProfilePlace,
+} from "./profilelookup.js";
 import {
   applyProfilePosting,
   parsePostingTable,
@@ -103,10 +104,12 @@ import {
   type LensTuning,
 } from "./lenstuning.js";
 
-/** How a loader finds the profile: the environment the install locator reads
- * (default `process.env`). */
+/** How a loader finds the profile. */
 export interface ProfileLookup {
-  env?: InstallEnv;
+  /** The profile directories outside the checkout, searched first and in
+   * order: the install's, as src/homes.ts `homeProfileLookup` resolves them.
+   * Absent: the checkout's generic examples alone. */
+  homes?: readonly ProfilePlace[];
   /** The repo profile's extracted directory (`extractRepoProfile`): a layer
    * under the whole named chain, present even when no profile is named. */
   repoProfile?: { dir: string };
@@ -118,9 +121,11 @@ export const REPO_LAYER_NAME = ".qcr";
 /** Where a not-found looked — and, when the checkout still strands a profile
  * of that name (which is never read), the way out. */
 function notFoundWhere(root: string, profile: string, lookup: ProfileLookup): string {
-  const env = lookup.env ? { env: lookup.env } : {};
-  const looked = `looked in ${profileSearchDirs({ root, ...env }).join(", ")} (the checkout's: generic examples only)`;
-  const stranded = strandedCheckoutProfile({ root, profile, ...env });
+  const homes = lookup.homes ?? [];
+  const looked = `looked in ${profileSearchPlaces(root, homes)
+    .map((p) => p.dir)
+    .join(", ")} (the checkout's: generic examples only)`;
+  const stranded = strandedProfile({ root, profile, homes });
   return stranded === null
     ? looked
     : `${looked}; ${stranded} is no longer read — move it into the config home with \`qcr install migrate\``;
@@ -129,7 +134,7 @@ function notFoundWhere(root: string, profile: string, lookup: ProfileLookup): st
 /** The named profile's directory, wherever the locator finds it — or a loud
  * not-found naming every place it looked. */
 function profileDirOrThrow(root: string, profile: string, lookup: ProfileLookup): string {
-  const located = locateProfile({ root, profile, ...lookup });
+  const located = findProfile({ root, profile, homes: lookup.homes ?? [] });
   if (located) return located.dir;
   throw new Error(
     `[review] profile "${profile}" not found — ${notFoundWhere(root, profile, lookup)}`,
@@ -246,7 +251,7 @@ function profileChain(root: string, profile: string, lookup: ProfileLookup): Pro
         `[review] profile "${profile}": extends cycle ${[...seen, base].join(" → ")} — a profile chain must end in a profile that extends nothing`,
       );
     }
-    const located = locateProfile({ root, profile: base, ...lookup });
+    const located = findProfile({ root, profile: base, homes: lookup.homes ?? [] });
     if (!located) {
       throw new Error(
         `[review] profile "${name}" extends "${base}", which was not found — ${notFoundWhere(root, base, lookup)}`,
@@ -274,7 +279,7 @@ function chainOf(
   soft: boolean,
 ): ProfileLayer[] {
   const named =
-    profile === "" || (soft && !locateProfile({ root, profile, ...lookup }))
+    profile === "" || (soft && !findProfile({ root, profile, homes: lookup.homes ?? [] }))
       ? []
       : profileChain(root, profile, lookup);
   return [...repoLayer(lookup), ...named];

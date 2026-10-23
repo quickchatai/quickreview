@@ -20,7 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PASS_ADDENDA, SCAN_PASS, buildAgents } from "../src/include.js";
 import type { PassAddendum } from "../src/include.js";
-import { configHome, type InstallEnv } from "../src/install.js";
+import { configHome, homeProfileLookup, type InstallEnv } from "../src/install.js";
 import { stageFixtureProfile } from "./helpers/tracked-profiles.js";
 import {
   loadProfileAddenda,
@@ -40,9 +40,12 @@ const sandbox = join(import.meta.dirname, "..");
  * generic examples, so a fixture cannot just sit in one. The
  * config-home half is exercised in "the two locations" below. */
 const profileDir = (root: string, profile: string): string => join(root, "profiles", profile);
-const at = (root: string) => ({
-  env: { QCR_CONFIG: join(root, "config.toml"), HOME: root, XDG_CONFIG_HOME: join(root, "xdg") },
-});
+const at = (root: string) =>
+  homeProfileLookup({
+    QCR_CONFIG: join(root, "config.toml"),
+    HOME: root,
+    XDG_CONFIG_HOME: join(root, "xdg"),
+  });
 // The quickchat pack, as its frozen fixture copy (tests/fixtures/profiles/
 // quickchat — the live pack lives in the install's config home). The
 // fixture is dropped from the assembled publish snapshots, where the pins for
@@ -249,7 +252,7 @@ describe("the shipped profiles", () => {
   it.skipIf(!HAS_QC)(
     "quickchat carries the six moved corpus rules under their original ids, in registry order",
     () => {
-      const pack = loadProfileAddenda(sandbox, "quickchat");
+      const pack = loadProfileAddenda(sandbox, "quickchat", homeProfileLookup());
       expect(pack.map((a) => a.id)).toEqual([...LEGACY_PACK.map((a) => a.id), ...STACK_PACK_IDS]);
       expect(pack.slice(0, LEGACY_PACK.length).map((a) => a.scope)).toEqual(
         LEGACY_PACK.map((a) => a.scope),
@@ -264,7 +267,7 @@ describe("quickchat extraction is byte-preserving", () => {
   it.skipIf(!HAS_QC)(
     "every moved file's composed text is byte-identical to the legacy constant",
     () => {
-      const pack = loadProfileAddenda(sandbox, "quickchat");
+      const pack = loadProfileAddenda(sandbox, "quickchat", homeProfileLookup());
       expect(pack.length).toBe(LEGACY_PACK.length + STACK_PACK_IDS.length);
       for (let i = 0; i < LEGACY_PACK.length; i++) {
         expect(pack[i]!.text, pack[i]!.id).toBe(LEGACY_PACK[i]!.text);
@@ -297,7 +300,7 @@ describe("quickchat extraction is byte-preserving", () => {
     { timeout: HEAVY_TIMEOUT_MS },
     () => {
       // The six at the tail; the stack rules after them.
-      const pack = loadProfileAddenda(sandbox, "quickchat");
+      const pack = loadProfileAddenda(sandbox, "quickchat", homeProfileLookup());
       const expected = build([...PASS_ADDENDA, ...LEGACY_PACK, ...pack.slice(LEGACY_PACK.length)]);
       const actual = build([...PASS_ADDENDA, ...pack]);
       expect([...actual.keys()].sort()).toEqual([...expected.keys()].sort());
@@ -334,7 +337,11 @@ describe("quickchat extraction is byte-preserving", () => {
     };
     // The shipped pack where present (the private tree); the example pack in
     // the public snapshot — compose-last holds for any pack.
-    const pack = loadProfileAddenda(sandbox, HAS_QC ? "quickchat" : "example-django");
+    const pack = loadProfileAddenda(
+      sandbox,
+      HAS_QC ? "quickchat" : "example-django",
+      homeProfileLookup(),
+    );
     const files = build([...PASS_ADDENDA, ...pack, fb]);
     for (const [name, bytes] of files) {
       if (!name.startsWith("pass-validate--")) continue;
@@ -432,7 +439,7 @@ describe("loadProfileHeuristics", () => {
 
   it("the shipped quickchat and example-django files load and stay inside the extendable set", () => {
     for (const profile of HAS_QC ? ["quickchat", "example-django"] : ["example-django"]) {
-      const ext = loadProfileHeuristics(sandbox, profile);
+      const ext = loadProfileHeuristics(sandbox, profile, homeProfileLookup());
       for (const lens of [...Object.keys(ext.paths), ...Object.keys(ext.addedLines)]) {
         expect(PROFILE_EXTENDABLE_LENSES, `${profile}: ${lens}`).toContain(lens);
       }
@@ -452,7 +459,7 @@ describe("profiles load from the config home, then the checkout's examples", () 
   let dir: string;
   let root: string;
   let env: InstallEnv;
-  const lookup = () => ({ env });
+  const lookup = () => homeProfileLookup(env);
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "qcr-profiles-home-"));

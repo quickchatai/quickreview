@@ -4,7 +4,12 @@
 // TUI, the daemon's session env, and — through `scripts/install-locator.sh`,
 // its shell mirror, pinned by a differential test — the posting scripts,
 // mint-token and deploy.sh's pin/drift preflight. Every reader of the secrets
-// goes through it the same way (the section at the end).
+// goes through it the same way.
+//
+// The resolution itself — the homes, the config, profile and secrets lookups —
+// lives in src/homes.ts (the CLI's half, re-exported from here) and the pure
+// profile search in src/profilelookup.ts; this module adds `qcr install
+// migrate` and the operator-only homes.
 //
 // Two homes, split by kind:
 //   config home  $XDG_CONFIG_HOME/qcr/<install>/  config.toml, profiles/, secrets/,
@@ -59,155 +64,24 @@ import {
   writeFileSync,
 } from "node:fs";
 import { constants as fsConstants } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import {
+  CONFIG_FILE,
+  configHome,
+  EXAMPLE_PROFILES,
+  installName,
+  isLegacySecretsSpelling,
+  legacySecretsDir,
+  PROFILES_DIR,
+  secretsHome,
+  xdgBase,
+  type InstallEnv,
+} from "./homes.js";
+import { isDirectory, isPathSegment } from "./profilelookup.js";
 
-/** The slice of the environment the locator reads — nothing else. */
-export interface InstallEnv {
-  QCR_CONFIG?: string;
-  /** A whole-home override (absolute paths only): the companion
-   * container sets these to its `/qcr-config` and `/qcr-state` mounts, so the
-   * locator in there resolves the same homes the host mounted, not the
-   * container user's own `~/.config` / `~/.local/state`. Unset on a normal
-   * host, where the XDG derivation below is the answer. */
-  QCR_CONFIG_HOME?: string;
-  QCR_STATE_HOME?: string;
-  /** A daemon container's secrets mount (absolute paths only): both
-   * entrypoints export their read-only `/opt/quickreview/secrets`. config.toml
-   * is shared with the host, so a set `[github] secrets_dir` names a HOST
-   * path the container cannot see; inside one, the mount is the answer.
-   * Unset on a host. */
-  QCR_SECRETS_MOUNT?: string;
-  QCR_INSTALL?: string;
-  XDG_CONFIG_HOME?: string;
-  XDG_STATE_HOME?: string;
-  HOME?: string;
-}
-
-export const DEFAULT_INSTALL = "default";
-export const CONFIG_FILE = "config.toml";
-
-/** A single path segment an install or a profile may be named by.
- * No separators, no leading dot, so `..` and `a/../../b` are unspellable. */
-const SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-
-/** Whether `name` is a plain path segment — the one admission rule behind
- * `assertPathSegment` and every listing that skips what it would refuse. */
-function isPathSegment(name: string): boolean {
-  return SEGMENT_RE.test(name) && !name.includes("..");
-}
-
-/** Refuse a name that could escape its parent directory. `kind` names what the
- * segment is for, so the error says which knob is wrong. */
-export function assertPathSegment(kind: string, name: string): string {
-  if (!isPathSegment(name)) {
-    throw new Error(
-      `${kind} ${JSON.stringify(name)} is not a plain name — letters, digits, '.', '_' and '-' only, no path separators or '..'`,
-    );
-  }
-  return name;
-}
-
-export function installName(env: InstallEnv = process.env): string {
-  const raw = (env.QCR_INSTALL ?? "").trim();
-  return raw === "" ? DEFAULT_INSTALL : assertPathSegment("QCR_INSTALL", raw);
-}
-
-/** An XDG base dir: the variable when it is set AND absolute (the spec says a
- * relative value is invalid and must be ignored), else `$HOME/<fallback>`. */
-function xdgBase(value: string | undefined, env: InstallEnv, fallback: string): string {
-  const v = (value ?? "").trim();
-  if (v !== "" && isAbsolute(v)) return v;
-  return join(homeOf(env), fallback);
-}
-
-/** `$HOME`, else the OS's idea of it — the one fallback every derived path uses. */
-function homeOf(env: InstallEnv): string {
-  return (env.HOME ?? "").trim() || homedir();
-}
-
-/** A home override is taken only when it is set AND absolute — a relative
- * value would resolve against whatever the cwd happens to be. Trailing
- * slashes are dropped; nothing else is rewritten (the shell mirror,
- * `scripts/install-locator.sh`, applies the same rule). */
-function homeOverride(value: string | undefined): string | undefined {
-  const v = (value ?? "").trim();
-  if (v === "" || !isAbsolute(v)) return undefined;
-  return v.replace(/\/+$/, "") || "/";
-}
-
-/** `$XDG_CONFIG_HOME/qcr/<install>` — config.toml, profiles/, secrets/
- * (or `$QCR_CONFIG_HOME` as given, see `InstallEnv`). */
-export function configHome(env: InstallEnv = process.env): string {
-  const override = homeOverride(env.QCR_CONFIG_HOME);
-  if (override !== undefined) return override;
-  return join(xdgBase(env.XDG_CONFIG_HOME, env, ".config"), "qcr", installName(env));
-}
-
-/** `$XDG_STATE_HOME/qcr/<install>` — PC-only scan state, never shipped. */
-export function stateHome(env: InstallEnv = process.env): string {
-  const override = homeOverride(env.QCR_STATE_HOME);
-  if (override !== undefined) return override;
-  return join(xdgBase(env.XDG_STATE_HOME, env, join(".local", "state")), "qcr", installName(env));
-}
-
-/**
- * Where the live config came from:
- *   override — `$QCR_CONFIG`, taken as given (a missing file is the reader's
- *              error, never a reason to look elsewhere)
- *   home     — the install's config home, whether or not the file exists yet
- *              (that is where a new config is written, and a missing one is
- *              the reader's error — never a reason to read the checkout's)
- */
-export type ConfigSource = "override" | "home";
-
-export interface LocatedConfig {
-  path: string;
-  source: ConfigSource;
-  /** The install's config home, whichever source won — where migrate moves to. */
-  home: string;
-}
-
-export interface LocateOptions {
-  env?: InstallEnv;
-}
-
-export function locateConfig(opts: LocateOptions = {}): LocatedConfig {
-  const env = opts.env ?? process.env;
-  const home = configHome(env);
-  const override = (env.QCR_CONFIG ?? "").trim();
-  if (override !== "") return { path: resolve(override), source: "override", home };
-  return { path: join(home, CONFIG_FILE), source: "home", home };
-}
-
-/**
- * The checkout's own `config.toml` when it is still there and is not the
- * located config — i.e. an install that has not run `qcr install migrate`.
- * Nothing reads it; this only lets a not-found name the way out.
- * Null when `$QCR_CONFIG` names that very file (the operator's choice).
- */
-export function strandedCheckoutConfig(opts: {
-  root: string;
-  env?: InstallEnv;
-  exists?: (path: string) => boolean;
-}): string | null {
-  const exists = opts.exists ?? existsSync;
-  const stranded = join(opts.root, CONFIG_FILE);
-  if (!exists(stranded)) return null;
-  return locateConfig(opts).path === resolve(stranded) ? null : stranded;
-}
-
-/** What a reader says when the located config is missing — one wording for
- * every surface, naming `qcr install migrate` when the checkout strands one. */
-export function missingConfigMessage(located: LocatedConfig, stranded: string | null): string {
-  const base =
-    located.source === "override"
-      ? `no config at ${located.path} (named by QCR_CONFIG)`
-      : `no config at ${located.path} — the install's config home holds none (\`qcr onboard\` writes one)`;
-  return stranded === null
-    ? base
-    : `${base}; ${stranded} is no longer read — move it into the config home with \`qcr install migrate\``;
-}
+// The homes themselves (config, state, profiles, secrets) are resolved in
+// src/homes.ts; this module re-exports them, so its importers need not know.
+export * from "./homes.js";
 
 // ---- qcr install migrate ----------------------------------------------------
 
@@ -327,152 +201,6 @@ export function migrateReport(outcome: MigrateOutcome): { code: number; lines: s
         ],
       };
   }
-}
-
-// ---- repo profiles -----------------------------------------------------------
-
-/** The directory, in every home, that holds one subdirectory per profile. */
-export const PROFILES_DIR = "profiles";
-
-/** The directory in the config home that holds the repo portrait's narrative
- * — the companion's reading of the portrait facts, and the one it replaced
- * (`src/setup/portrait.ts`). Config, not state: it is the operator's
- * to read and keep (a config home that is a git repo versions it). Never
- * shipped: deploy's filter admits the config file and `profiles/` only. */
-export const PORTRAIT_DIR = "portrait";
-
-/**
- * The checkout's generic profiles — the ones that belong to the app, not to
- * any install: the examples, and `default`, the shipped behaviour every
- * generated profile extends. They are the only profiles the lookup reads
- * from the checkout. Any other directory under the checkout's `profiles/` is
- * an install's own profile stranded in its old place: never read, and
- * `qcr install migrate` moves it into the config home. A new example is
- * registered here (a test holds the checkout to it, and the shell mirror's
- * `QCR_EXAMPLE_PROFILES` to this list).
- */
-export const EXAMPLE_PROFILES: readonly string[] = [
-  "default",
-  "example-django",
-  "minimal",
-  "snappy",
-  "fast",
-];
-
-/** Which of `profileSearchDirs` a profile was found in. */
-export type ProfileSource = "home" | "override" | "checkout";
-
-/**
- * Where a profile is looked up, in order, deduplicated (the first place a
- * directory is reached by names its source):
- *   1. the install's config home — `<home>/profiles/`
- *   2. `profiles/` beside `$QCR_CONFIG`, when it is set (the compose route's
- *      mounted config home; the VM's shipped one; the bench image's)
- *   3. the checkout's `profiles/` — the generic examples only
- */
-function profileSearchPlaces(opts: {
-  root: string;
-  env?: InstallEnv;
-}): { dir: string; source: ProfileSource }[] {
-  const places: { dir: string; source: ProfileSource }[] = [
-    ...homeProfilePlaces(opts.env ?? process.env),
-    { dir: join(opts.root, PROFILES_DIR), source: "checkout" },
-  ];
-  return places.filter((p, i) => places.findIndex((q) => q.dir === p.dir) === i);
-}
-
-/** Search places 1 and 2: the profile directories the install's homes
- * provide, before the checkout's generic examples. */
-function homeProfilePlaces(env: InstallEnv): { dir: string; source: ProfileSource }[] {
-  const places: { dir: string; source: ProfileSource }[] = [
-    { dir: join(configHome(env), PROFILES_DIR), source: "home" },
-  ];
-  const override = (env.QCR_CONFIG ?? "").trim();
-  if (override !== "")
-    places.push({ dir: join(dirname(resolve(override)), PROFILES_DIR), source: "override" });
-  return places;
-}
-
-/** The directories of search places 1 and 2 — every place a profile is read
- * from outside the checkout. The exec boundary's integrity check watches
- * exactly these (`locatedPolicyWatchPaths`). */
-export function homeProfileDirs(env: InstallEnv = process.env): string[] {
-  return homeProfilePlaces(env).map((p) => p.dir);
-}
-
-/** The directories of `profileSearchPlaces`, for a not-found to name. */
-export function profileSearchDirs(opts: { root: string; env?: InstallEnv }): string[] {
-  return profileSearchPlaces(opts).map((p) => p.dir);
-}
-
-export interface LocatedProfile {
-  name: string;
-  dir: string;
-  source: ProfileSource;
-}
-
-function isDirectory(path: string): boolean {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Find the named profile: the first search place that holds it as a
- * directory — the checkout only for a generic example — or `null` when none
- * does (each loader words its own not-found). The name is a plain path
- * segment or a throw — `../x`, `a/b` and kin never reach a join.
- */
-export function locateProfile(opts: {
-  root: string;
-  profile: string;
-  env?: InstallEnv;
-  isDir?: (path: string) => boolean;
-}): LocatedProfile | null {
-  const name = assertPathSegment("profile", opts.profile);
-  const isDir = opts.isDir ?? isDirectory;
-  for (const place of profileSearchPlaces(opts)) {
-    if (place.source === "checkout" && !EXAMPLE_PROFILES.includes(name)) continue;
-    const dir = join(place.dir, name);
-    if (isDir(dir)) return { name, dir, source: place.source };
-  }
-  return null;
-}
-
-/**
- * The checkout's `profiles/<name>` when it is an install's own profile left
- * there (not a generic example) — stranded, never read. Only for a
- * not-found to name `qcr install migrate`; null when there is none, or when
- * `profiles/` beside `$QCR_CONFIG` is the checkout's (then it was read).
- */
-export function strandedCheckoutProfile(opts: {
-  root: string;
-  profile: string;
-  env?: InstallEnv;
-}): string | null {
-  const name = assertPathSegment("profile", opts.profile);
-  if (EXAMPLE_PROFILES.includes(name)) return null;
-  const checkout = join(opts.root, PROFILES_DIR);
-  if (!profileSearchPlaces(opts).some((p) => p.dir === checkout && p.source === "checkout"))
-    return null;
-  const dir = join(checkout, name);
-  return isDirectory(dir) ? dir : null;
-}
-
-/** Every stranded checkout profile (see `strandedCheckoutProfile`), sorted. */
-export function strandedCheckoutProfiles(opts: { root: string; env?: InstallEnv }): string[] {
-  let names: string[];
-  try {
-    names = readdirSync(join(opts.root, PROFILES_DIR)).sort();
-  } catch {
-    return [];
-  }
-  return names
-    .filter(isPathSegment)
-    .map((profile) => strandedCheckoutProfile({ ...opts, profile }))
-    .filter((dir): dir is string => dir !== null);
 }
 
 // ---- qcr install migrate: profiles -------------------------------------------
@@ -907,16 +635,7 @@ export function profileMigrateReport(outcomes: ProfileMigrateOutcome[]): {
   return { code, lines };
 }
 
-// ---- secrets ----------------------------------------------------------------
-//
-// The install's secrets live in `<config home>/secrets/` — one install, one
-// directory. The legacy `~/.config/quickreview-bot/` is never read; only
-// `qcr install migrate` opens it, to move what it still holds into the home.
-//
-// `[github] secrets_dir` names the dir outright when the operator set one.
-// Empty — or the legacy default spelling — means "the locator decides", so a
-// config that never touched the key reads the home, never the legacy dir it
-// happens to spell.
+// ---- secrets: what only migrate and the operator read ------------------------
 //
 // The companion's OpenViking key file is the one credential deliberately kept
 // out of the config home: that home is mounted into the reviewer container on
@@ -925,75 +644,7 @@ export function profileMigrateReport(outcomes: ProfileMigrateOutcome[]): {
 // in a sibling tree, `$XDG_CONFIG_HOME/qcr-operator/<install>/`, that nothing
 // mounts or ships.
 
-export const SECRETS_SUBDIR = "secrets";
 export const KEYS_FILE = "openviking-keys.env";
-/** The legacy default spelling of `secrets_dir`. */
-export const LEGACY_SECRETS_SPELLING = "~/.config/quickreview-bot";
-
-function expandHomeIn(path: string, env: InstallEnv): string {
-  if (path === "~") return homeOf(env);
-  return path.startsWith("~/") ? join(homeOf(env), path.slice(2)) : path;
-}
-
-/** `<config home>/secrets` — where an install's secrets belong. */
-export function secretsHome(env: InstallEnv = process.env): string {
-  return join(configHome(env), SECRETS_SUBDIR);
-}
-
-/** The legacy secrets dir, `$HOME/.config/quickreview-bot` (never XDG: it is
- * spelled `~/.config/…`). Nothing reads it but migrate. */
-export function legacySecretsDir(env: InstallEnv = process.env): string {
-  return join(homeOf(env), ".config", "quickreview-bot");
-}
-
-/** Is a configured `secrets_dir` just the legacy default? Then it names
- * no choice the operator made, and the locator decides — the home, never the
- * legacy dir itself. */
-export function isLegacySecretsSpelling(value: string, env: InstallEnv = process.env): boolean {
-  const v = value.trim().replace(/\/+$/, "");
-  return v === LEGACY_SECRETS_SPELLING || expandHomeIn(v, env) === legacySecretsDir(env);
-}
-
-/**
- * Where the secrets came from:
- *   mount      — `$QCR_SECRETS_MOUNT`: inside a daemon container the mount is
- *                the only place the secrets are, whatever the shared config
- *                names (that is a host path)
- *   configured — `[github] secrets_dir`, set to something other than the legacy
- *                default: the operator named it, it is taken as given
- *   override   — the caller's env override (`$QC_SECRETS_DIR`, the wizards')
- *   home       — `<config home>/secrets`, whether or not it exists yet (that
- *                is where new secrets are written)
- */
-export type SecretsSource = "mount" | "configured" | "override" | "home";
-
-export interface LocatedSecrets {
-  path: string;
-  source: SecretsSource;
-  /** `<config home>/secrets`, whichever source won — where migrate moves to. */
-  home: string;
-}
-
-export interface LocateSecretsOptions {
-  /** `[github] secrets_dir` as written (unexpanded), or null/"" when unset. */
-  configured?: string | null;
-  /** A caller's env override (`$QC_SECRETS_DIR`), below a configured value. */
-  override?: string | null;
-  env?: InstallEnv;
-}
-
-export function locateSecrets(opts: LocateSecretsOptions = {}): LocatedSecrets {
-  const env = opts.env ?? process.env;
-  const home = secretsHome(env);
-  const mount = (env.QCR_SECRETS_MOUNT ?? "").trim();
-  if (isAbsolute(mount)) return { path: mount, source: "mount", home };
-  const configured = (opts.configured ?? "").trim();
-  if (configured !== "" && !isLegacySecretsSpelling(configured, env))
-    return { path: expandHomeIn(configured, env), source: "configured", home };
-  const override = (opts.override ?? "").trim();
-  if (override !== "") return { path: expandHomeIn(override, env), source: "override", home };
-  return { path: home, source: "home", home };
-}
 
 /** The legacy secrets dir when it still holds anything — an install that has
  * not run `qcr install migrate`. Never read; only named, so a missing

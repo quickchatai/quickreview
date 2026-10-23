@@ -4,7 +4,7 @@
 // context block). Memory is a seasoning, never a precondition: not set up,
 // unreachable, slow or throwing, the review runs without it and says so once.
 import { join } from "node:path";
-import { openVikingBaseUrl, type Config } from "./config.js";
+import { loadConfig, openVikingBaseUrl, type Config } from "./config.js";
 import {
   MEMORY_LESS,
   assembleRoundMemory,
@@ -67,6 +67,13 @@ export function openReviewMemory(cfg: Config): ReviewMemorySource | null {
     timeoutMs,
     maxTokens: cfg.memory.context_tokens,
   };
+}
+
+/** `openReviewMemory` for the install config at `path`: the memory sections
+ * belong to the whole file, not to the review's own (src/reviewconfig.ts),
+ * so the file is read whole, as the daemon reads it. */
+export function openReviewMemoryAt(path: string): ReviewMemorySource | null {
+  return openReviewMemory(loadConfig(path));
 }
 
 /** Seed one review from memory. Total: it never throws and never takes longer

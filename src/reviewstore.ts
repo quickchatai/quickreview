@@ -13,7 +13,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { stateHome, type InstallEnv } from "./install.js";
+import { stateHome, type InstallEnv } from "./homes.js";
 import { originRepo } from "./localreview.js";
 
 const LEGACY_STATE_DIR = "qcr-review-state";

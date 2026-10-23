@@ -35,7 +35,7 @@ import {
   type ScanDepth,
   type NitPolicy,
   type MemoryDelivery,
-} from "./config.js";
+} from "./reviewconfig.js";
 import { SCAN_DEEP_LENSES } from "./passes.js";
 import { flooredToMin, PASS_TIER_ORDER, tiersAtOrAbove } from "./types.js";
 import type { PassTier } from "./types.js";

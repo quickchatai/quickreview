@@ -8,6 +8,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "../config.js";
+import type { CoreConfig } from "../reviewconfig.js";
 import {
   buildPassPlan,
   buildRoundOrder,
@@ -58,7 +59,7 @@ export function boundBody(body: string | null, maxBytes = 20_000): string | null
 
 /** The PR's first-party agent-directive files (src/severity.ts), which the
  * round order names — the same for a first round and a follow-up. */
-export function directiveFilesOf(cfg: Config, files: readonly PrFileEntry[]): string[] {
+export function directiveFilesOf(cfg: CoreConfig, files: readonly PrFileEntry[]): string[] {
   return firstPartyDirectiveFiles(files, cfg.review.directives);
 }
 
@@ -67,7 +68,7 @@ export function directiveFilesOf(cfg: Config, files: readonly PrFileEntry[]): st
  * where the glue looks for a task file's pack), and the order the task files
  * render from, which then points at it. Off ⇒ the order unchanged, no file. */
 export function benchContextPack(
-  cfg: Config,
+  cfg: CoreConfig,
   built: RoundOrder,
   files: PrFileEntry[],
   tree: string,
@@ -131,7 +132,7 @@ export interface OneShotPrompts {
 /** The first round's order + system prompt for a target: production renderers. */
 export function renderOneShotPrompts(args: {
   root: string;
-  cfg: Config;
+  cfg: CoreConfig;
   ecosystem: Ecosystem;
   target: OneShotTarget;
   tree: string;
@@ -165,7 +166,8 @@ export function renderOneShotPrompts(args: {
     author: "",
   } as unknown as PrStateRow;
   const built = buildRoundOrder({
-    cfg,
+    // The planner still types the app's whole Config; it reads only the review sections.
+    cfg: cfg as Config,
     row,
     files: args.files,
     roundId: 1,
@@ -286,7 +288,7 @@ export interface FollowUpOneShotPrompts extends OneShotPrompts {
 
 export interface FollowUpOneShotArgs {
   root: string;
-  cfg: Config;
+  cfg: CoreConfig;
   ecosystem: Ecosystem;
   target: OneShotTarget;
   tree: string;
@@ -351,9 +353,10 @@ export function renderFollowUpOneShotPrompts(args: FollowUpOneShotArgs): FollowU
   const ciLinters = lensEnabled(cfg.lenses, "pass-lint-conformance", cfg.review.lint_conformance)
     ? findCiLinters(tree)
     : [];
-  // The whole PR's plan, exactly as dispatch builds it before deciding.
+  // The whole PR's plan, exactly as dispatch builds it before deciding. The
+  // planner still types the app's whole Config; it reads only the review sections.
   const fullPlan = buildPassPlan(
-    cfg,
+    cfg as Config,
     args.files,
     { title, body: body ?? undefined },
     args.ecosystem,
@@ -413,7 +416,8 @@ export function renderFollowUpOneShotPrompts(args: FollowUpOneShotArgs): FollowU
     };
   }
   const built = buildRoundOrder({
-    cfg,
+    // The planner still types the app's whole Config; it reads only the review sections.
+    cfg: cfg as Config,
     row,
     files: args.files,
     roundId: 1,

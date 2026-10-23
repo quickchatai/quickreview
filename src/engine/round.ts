@@ -16,7 +16,7 @@
 // credential reaches it).
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
-import type { Config } from "../config.js";
+import type { CoreConfig } from "../reviewconfig.js";
 import type { Ecosystem } from "../ecosystem.js";
 import type { PrFileEntry } from "../github.js";
 import { CONTEXT_PACK_FILE } from "../contextpack.js";
@@ -133,7 +133,7 @@ export interface RoundSpec {
   target: OneShotTarget;
   /** Where the session's files, the event stream and the rendered review go. */
   outDir: string;
-  cfg: Config;
+  cfg: CoreConfig;
   ecosystem: Ecosystem;
   timeoutMs: number;
   /** The login the run will use, as the engine's auth module read it

@@ -22,7 +22,7 @@ import {
   addendaForPass,
   buildAgents,
 } from "../src/include.js";
-import type { InstallEnv } from "../src/install.js";
+import { homeProfileLookup, type InstallEnv } from "../src/install.js";
 import { buildScanAgents } from "../src/setup/scanbuild.js";
 
 const sandbox = join(import.meta.dirname, "..");
@@ -77,7 +77,7 @@ describe("the PR-round trigger rule is a PR-build rule", () => {
     });
 
     const out = join(dir, "scan");
-    buildScanAgents(sandbox, out, fixture, { env });
+    buildScanAgents(sandbox, out, fixture, homeProfileLookup(env));
     const agents = built(out);
     let seen = 0;
     for (const [name, body] of agents) {

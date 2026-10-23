@@ -52,12 +52,11 @@ export { boundBody, jsonProblem, missingOutputs, renderBenchOutputs, unparseable
 export type { PiRun };
 export {
   applyConfigOverrides,
-  benchConfig,
-  contextFor,
   OPEN_MAP_KEYS,
   withAuthModels,
   withPresetInToml,
 } from "../engine/context.js";
+export { benchConfig, contextFor } from "../reviewcontext.js";
 import type { Runtime, SessionSpec } from "../engine/port.js";
 import { publishChangedResult } from "./publication.js";
 import {} from "../reviewrender.js";
@@ -88,6 +87,7 @@ import {
 import { buildAgents, configAddenda, identityVars, PASS_ADDENDA } from "../include.js";
 import { lensTuningAddenda, roundAgentModels, type LensTuning } from "../lenstuning.js";
 import { loadProfileAddenda, loadProfileEcosystem, type ProfileLookup } from "../profiles.js";
+import { homeProfileLookup } from "../install.js";
 import { isDefaultPosting, postingPolicyAddenda, type PostingPolicy } from "../postingpolicy.js";
 import { enforceBenchPosting, POLICED_ORIGINALS, type BenchPostingReport } from "./benchposting.js";
 import {} from "../severity.js";
@@ -417,7 +417,7 @@ export function benchCustomisation(
   profile: string,
   allow: boolean,
 ): { readFile?: (path: string) => string; custom: Customisation } {
-  const set = resolveOverrides({ root, profile });
+  const set = resolveOverrides({ root, profile, lookup: homeProfileLookup() });
   const custom = assessOverrides(root, set);
   if (custom.customised && !allow)
     throw new Error(
@@ -456,6 +456,7 @@ export function buildBenchAgents(
   // (the root filesystem is read-only), and a mountpoint cannot be rmdir'd.
   mkdirSync(out, { recursive: true });
   for (const f of readdirSync(out)) rmSync(join(out, f), { recursive: true, force: true });
+  const lookup = profile.lookup ?? homeProfileLookup();
   const built = buildAgents(join(root, "agents"), out, {
     // The bench round runs without the memory extension (header: memory off).
     memory: false,
@@ -465,12 +466,12 @@ export function buildBenchAgents(
     riskPasses: cfg.models.risk_passes,
     validateTier: cfg.models.validate_tier,
     vars: identityVars(cfg),
-    ecosystem: loadProfileEcosystem(root, cfg.review.profile, profile.lookup),
+    ecosystem: loadProfileEcosystem(root, cfg.review.profile, lookup),
     models: roundAgentModels(cfg),
     addenda: [
       ...PASS_ADDENDA,
       ...configAddenda(cfg.review),
-      ...loadProfileAddenda(root, cfg.review.profile, profile.lookup),
+      ...loadProfileAddenda(root, cfg.review.profile, lookup),
       ...lensTuningAddenda(cfg.lenses),
       // The profile's `[posting]` policy, compiled for the validator.
       ...postingPolicyAddenda(cfg.posting),
@@ -554,6 +555,7 @@ export function renderCasePrompts(args: {
   const { c, meta } = args;
   return renderOneShotPrompts({
     root: args.root,
+    profileLookup: homeProfileLookup(),
     cfg: args.cfg,
     ecosystem: args.ecosystem,
     target: {
@@ -670,6 +672,7 @@ function renderFollowUpPrompts(args: Parameters<typeof renderCasePrompts>[0]): C
   const fu = c.followup!;
   return renderFollowUpOneShotPrompts({
     root: args.root,
+    profileLookup: homeProfileLookup(),
     ...(args.readFile ? { readFile: args.readFile } : {}),
     cfg: args.cfg,
     ecosystem: args.ecosystem,

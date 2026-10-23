@@ -53,6 +53,7 @@ import {
   migrateSecrets,
   repointComposeSecrets,
   composeRepointReport,
+  homeProfileLookup,
   secretsMigrateReport,
   stateHome,
   strandedCheckoutConfig,
@@ -1026,7 +1027,7 @@ export async function cmdRegression(rest: string[], json: boolean): Promise<numb
   // same function) — otherwise a lens the profile switched off would be
   // replayed.
   const { applyProfileOverlays } = await import("./profiles.js");
-  const cfg = applyProfileOverlays(root, loadConfig());
+  const cfg = applyProfileOverlays(root, loadConfig(), homeProfileLookup());
   const args = parseRegressionArgs(rest, json);
   const gate = recordOnlyGate(join(stateDir(), "dryrun"), "qcr regression");
   const scratchRoot = join(stateDir(), "regression");

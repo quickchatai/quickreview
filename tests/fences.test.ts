@@ -41,7 +41,7 @@ import {
 } from "../src/include.js";
 import { postTag } from "../src/severity.js";
 import { loadProfileAddenda } from "../src/profiles.js";
-import { locateProfile } from "../src/install.js";
+import { homeProfileLookup, locateProfile } from "../src/install.js";
 import { stageFixtureProfiles } from "./helpers/tracked-profiles.js";
 import { INITIAL_STATE, transition, type SmEvent } from "../src/statemachine.js";
 import { CANCEL_CAUSES, type PrLifecycleState } from "../src/state.js";
@@ -701,7 +701,7 @@ describe("what a built pass is told it may run is exactly what the guard lets th
         ["default", PASS_ADDENDA],
         ...profiles.map((name): [string, typeof PASS_ADDENDA] => [
           name,
-          [...PASS_ADDENDA, ...loadProfileAddenda(ROOT, name)],
+          [...PASS_ADDENDA, ...loadProfileAddenda(ROOT, name, homeProfileLookup())],
         ]),
       ];
       for (const [label, addenda] of compositions) {

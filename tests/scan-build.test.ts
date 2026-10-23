@@ -16,7 +16,7 @@ import {
   addendaForPass,
   buildAgents,
 } from "../src/include.js";
-import { configHome, type InstallEnv } from "../src/install.js";
+import { configHome, homeProfileLookup, type InstallEnv } from "../src/install.js";
 import { buildScanAgents, scanConfig, scanSettings } from "../src/setup/scanbuild.js";
 
 const sandbox = join(import.meta.dirname, "..");
@@ -51,7 +51,7 @@ function prBuild(): Map<string, string> {
 
 function scanBuild(cfg: Config = fixture): Map<string, string> {
   const out = join(dir, "scan-agents");
-  buildScanAgents(sandbox, out, cfg, { env });
+  buildScanAgents(sandbox, out, cfg, homeProfileLookup(env));
   return built(out);
 }
 
@@ -104,7 +104,11 @@ describe("the scan-mode anchor addendum rides only the scan build", () => {
   });
 
   it("builds pass-scan at the [scan] tier alone; the deep lenses keep every tier for stage 2", () => {
-    const cfg = scanConfig(sandbox, `${fixtureToml}\n[scan]\ntier = "terra-med"\n`, { env });
+    const cfg = scanConfig(
+      sandbox,
+      `${fixtureToml}\n[scan]\ntier = "terra-med"\n`,
+      homeProfileLookup(env),
+    );
     const agents = scanBuild(cfg);
     expect([...agents.keys()].filter((n) => n.startsWith("pass-scan--"))).toEqual([
       "pass-scan--terra-med",
@@ -210,7 +214,7 @@ describe("[scan] — config.toml defaults, the profile's overrides", () => {
     const cfg = scanConfig(
       sandbox,
       configWith("repo", `[scan]\neffort = "high"\nvalidator = false\nconcurrency = 2\n`),
-      { env },
+      homeProfileLookup(env),
     );
     expect(cfg.scan).toEqual({
       ...SCAN_DEFAULTS,
@@ -224,11 +228,11 @@ describe("[scan] — config.toml defaults, the profile's overrides", () => {
 
   it("a profile may not set the install's operating limits", () => {
     profile("repo", `[scan]\nconcurrency = 64\n`);
-    expect(() => scanConfig(sandbox, configWith("repo"), { env })).toThrow(
+    expect(() => scanConfig(sandbox, configWith("repo"), homeProfileLookup(env))).toThrow(
       /unknown key "concurrency"/,
     );
     profile("repo", `[scan]\nunmeasured_rate_factor = 1\n`);
-    expect(() => scanConfig(sandbox, configWith("repo"), { env })).toThrow(
+    expect(() => scanConfig(sandbox, configWith("repo"), homeProfileLookup(env))).toThrow(
       /unknown key "unmeasured_rate_factor"/,
     );
     expect(() => parseScanTable("x", { effort: "low" }, ["effort"])).not.toThrow();
@@ -236,7 +240,7 @@ describe("[scan] — config.toml defaults, the profile's overrides", () => {
 
   it("the profile's effort reaches the built pass-scan", () => {
     profile("repo", `[scan]\neffort = "medium"\n`);
-    const agents = scanBuild(scanConfig(sandbox, configWith("repo"), { env }));
+    const agents = scanBuild(scanConfig(sandbox, configWith("repo"), homeProfileLookup(env)));
     expect(/^model: (.*)$/m.exec(agents.get("pass-scan--sol-med")!)?.[1]).toMatch(/:medium$/);
   });
 });

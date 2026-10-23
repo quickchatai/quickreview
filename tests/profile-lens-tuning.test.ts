@@ -16,7 +16,7 @@ import { NONE_ECOSYSTEM } from "../src/ecosystem.js";
 import { DOWNGRADE_WORDS } from "../src/findingsrecord.js";
 import type { PrFileEntry } from "../src/github.js";
 import { PASS_ADDENDA, buildAgents } from "../src/include.js";
-import { configHome, type InstallEnv } from "../src/install.js";
+import { configHome, homeProfileLookup, type InstallEnv } from "../src/install.js";
 import {
   applyProfileTuning,
   lensModelOverrides,
@@ -41,7 +41,7 @@ fixture.models.pass_tiers = {};
 
 let dir: string;
 let env: InstallEnv;
-const lookup = () => ({ env });
+const lookup = () => homeProfileLookup(env);
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "qcr-lens-tuning-"));

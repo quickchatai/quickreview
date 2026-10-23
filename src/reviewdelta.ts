@@ -6,7 +6,8 @@
 // moved backwards, a delta too large to be a follow-up.
 import { execFileSync } from "node:child_process";
 import { basename, dirname } from "node:path";
-import { type Config } from "./config.js";
+import type { Config } from "./config.js";
+import type { CoreConfig } from "./reviewconfig.js";
 import { deltaFollowUpEnabled } from "./followup-mode.js";
 import { followUpSweepOwed, planFollowUp } from "./dispatch.js";
 import type { Ecosystem } from "./ecosystem.js";
@@ -91,7 +92,7 @@ export async function computeDelta(
 }
 
 /** `[review] follow_up = "full"` turns delta reviews off. */
-export function deltaEnabled(cfg: Config): boolean {
+export function deltaEnabled(cfg: CoreConfig): boolean {
   return deltaFollowUpEnabled(cfg);
 }
 
@@ -103,7 +104,7 @@ export function deltaEnabled(cfg: Config): boolean {
  */
 export function renderDeltaRound(i: {
   root: string;
-  cfg: Config;
+  cfg: CoreConfig;
   ecosystem: Ecosystem;
   target: OneShotTarget;
   tree: string;
@@ -134,7 +135,8 @@ export function renderDeltaRound(i: {
     ...(i.profileLookup ? { profileLookup: i.profileLookup } : {}),
     ...(i.memory ? { memory: i.memory } : {}),
     decide: (ctx) =>
-      planFollowUp(i.cfg, ctx.heuristics, {
+      // The planner still types the app's whole Config; it reads only the review sections.
+      planFollowUp(i.cfg as Config, ctx.heuristics, {
         delta: i.delta,
         fromSha: last.head_sha,
         files: i.files,
@@ -145,7 +147,7 @@ export function renderDeltaRound(i: {
         // The first review of a target is a full look; after an approval a
         // large push owes the sweep, as in production.
         sweepOwed: (deltaLines) =>
-          followUpSweepOwed(i.cfg, {
+          followUpSweepOwed(i.cfg as Config, {
             standing: last.verdict === "APPROVE" ? "APPROVE" : null,
             approvalWithheld: false,
             fullLookSinceFirst: () => i.state.rounds.some((r) => r.scope === "full"),

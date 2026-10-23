@@ -32,6 +32,7 @@ import {
 import { dirname, join, relative, resolve } from "node:path";
 import { isInside } from "./pathinside.js";
 import type { Config } from "./config.js";
+import type { CoreConfig } from "./reviewconfig.js";
 import { buildBenchAgents } from "./bench/runner.js";
 import { benchSettings } from "./bench/auth.js";
 import { copyPiAuth } from "./engine/auth.js";
@@ -127,7 +128,7 @@ export function prepareHostRun(o: {
   agentDir: string;
   /** The run's out dir: pi's cwd. */
   cwd: string;
-  cfg: Config;
+  cfg: CoreConfig;
   needMs: number;
   /** Checkouts the cwd must stay out of: the qcr tree, the reviewed repo. */
   checkouts: readonly string[];
@@ -170,7 +171,8 @@ export function prepareHostRun(o: {
   writeFileSync(join(o.agentDir, "settings.json"), hostSettings(o.root));
   // The lens agents, for the user scope (QCR_SUBAGENT_SCOPE=user): the lens
   // tool reads them from the agent dir's `agents`.
-  buildBenchAgents(o.root, o.cfg, join(o.agentDir, "agents"), o.profile);
+  // The agents build types the app's whole Config; it reads only the review sections.
+  buildBenchAgents(o.root, o.cfg as Config, join(o.agentDir, "agents"), o.profile);
   mkdirSync(cwd, { recursive: true });
   copyFileSync(reviewerStubSource(o.root), join(cwd, HOST_CONTEXT_STUB));
   return { agentDir: o.agentDir, cwd, strayContext: ancestorContextFiles(cwd) };

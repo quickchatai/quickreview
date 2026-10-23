@@ -27,7 +27,7 @@ import {
   buildAgents,
   type PassAddendum,
 } from "../src/include.js";
-import { configHome, type InstallEnv } from "../src/install.js";
+import { configHome, homeProfileLookup, type InstallEnv } from "../src/install.js";
 import type { LensTuningMap } from "../src/lenstuning.js";
 import { ALL_PASSES, SCAN_DEEP_FLOOR_LENSES } from "../src/passes.js";
 import { stateHomeFs } from "../src/setup/adapters.js";
@@ -135,12 +135,12 @@ describe("[scan] depth and deep_lenses", () => {
     const cfg = scanConfig(
       sandbox,
       configWith("repo", `[scan]\ndepth = "standard"\ndeep_lenses = ["pass-security"]\n`),
-      { env },
+      homeProfileLookup(env),
     );
     expect(cfg.scan.depth).toBe("deep");
     expect(cfg.scan.deep_lenses).toEqual(["pass-consistency"]);
     profile("bad", `[scan]\ndeep_lenses = ["pass-sweep"]\n`);
-    expect(() => scanConfig(sandbox, configWith("bad"), { env })).toThrow(
+    expect(() => scanConfig(sandbox, configWith("bad"), homeProfileLookup(env))).toThrow(
       /deep_lenses entry "pass-sweep"/,
     );
   });
@@ -316,7 +316,7 @@ describe("the deep addenda compose into a deep scan build alone", () => {
       sandbox,
       out,
       { ...fixture, scan: { ...fixture.scan, depth: "deep" } },
-      { env },
+      homeProfileLookup(env),
     );
     const agents = built(out);
     expect(agents.get(`pass-scan--${fixture.scan.tier}`)).toContain(SCAN_DEEP_SUGGEST_ADDENDUM);

@@ -39,6 +39,7 @@ import { PASS_ADDENDA, buildAgents, configAddenda, identityVars } from "../inclu
 import {
   assertPathSegment,
   configHome,
+  homeProfileLookup,
   locateConfig,
   PROFILES_DIR,
   type InstallEnv,
@@ -339,7 +340,7 @@ function restoreBaseline(
 /** One side's config and build: the live config under the side's profile,
  * composed the way wire.ts composes a round's build. */
 function buildSide(deps: SidesDeps, name: SideName, src: SideSource, parsed: Config): ReplaySide {
-  const lookup: ProfileLookup = { env: src.env };
+  const lookup: ProfileLookup = homeProfileLookup(src.env);
   const base = structuredClone(parsed);
   base.review = { ...base.review, profile: src.profile };
   const cfg = applyProfileOverlays(deps.root, base, lookup);

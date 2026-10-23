@@ -44,7 +44,7 @@ import {
 } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
-import { locateProfile } from "./install.js";
+import { findProfile } from "./profilelookup.js";
 import { REPO_LAYER_NAME, resolveProfileChain, type ProfileLookup } from "./profiles.js";
 
 /** The directory in the repo that holds the repo profile. */
@@ -306,7 +306,8 @@ export function resolveOverrides(o: {
   }
   // A profile found nowhere is no named chain, as for the tuning loaders.
   const named =
-    o.profile === "" || !locateProfile({ root: o.root, profile: o.profile, ...(o.lookup ?? {}) })
+    o.profile === "" ||
+    !findProfile({ root: o.root, profile: o.profile, homes: o.lookup?.homes ?? [] })
       ? []
       : resolveProfileChain(o.root, o.profile, o.lookup ?? {});
   for (const l of named) layers.push({ origin: "user", name: l.name, dir: l.dir });

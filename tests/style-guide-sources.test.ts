@@ -18,7 +18,7 @@ import { buildPassPlan } from "../src/dispatch.js";
 import { NONE_ECOSYSTEM } from "../src/ecosystem.js";
 import type { PrFileEntry } from "../src/github.js";
 import { PASS_ADDENDA, VALIDATE_PASS, buildAgents, composeAddendum } from "../src/include.js";
-import { configHome, type InstallEnv } from "../src/install.js";
+import { configHome, homeProfileLookup, type InstallEnv } from "../src/install.js";
 import {
   applyProfileTuning,
   lensModelOverrides,
@@ -37,7 +37,7 @@ const fixture: Config = parseConfig(
 let dir: string;
 let repo: string;
 let env: InstallEnv;
-const lookup = () => ({ env, log: () => {} });
+const lookup = () => homeProfileLookup(env);
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "qcr-style-sources-"));
