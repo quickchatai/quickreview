@@ -192,6 +192,8 @@ export class LoginRefresher {
         // The login ended: whatever it wrote is the file now. Look at once.
         this.paused = false;
         this.nextCheckAt = 0;
+        // A refreshed file held back from before the login is older than it.
+        this.unsaved = null;
         this.deps.log("login refresh: resumed");
         this.publish();
       }
@@ -237,6 +239,10 @@ export class LoginRefresher {
     }
 
     let parsed: Record<string, unknown> | null = null;
+    if (this.unsaved === null && !existsSync(this.auth)) {
+      this.expiresAt = null;
+      this.provider = null;
+    }
     if (this.unsaved === null && existsSync(this.auth)) {
       try {
         const v: unknown = JSON.parse(readFileSync(this.auth, "utf8"));

@@ -259,6 +259,17 @@ describe("the refresh", () => {
     expect(r.failures).toEqual([]);
   });
 
+  it("stops publishing an expiry once auth.json is gone", async () => {
+    const r = await rig();
+    writeLogin(r.dir, { expires: r.clk.now() + 24 * HOUR });
+    const refresher = await start(r);
+    expect(readStatus(r.dir).expires_at).not.toBeNull();
+    rmSync(join(r.dir, AUTH_FILE));
+    r.clk.advance(10 * 60_000);
+    await refresher.tick();
+    expect(readStatus(r.dir)).toMatchObject({ expires_at: null, provider: null });
+  });
+
   it("does nothing, and says nothing wrong, before the first login", async () => {
     const r = await rig();
     await start(r);
@@ -530,6 +541,33 @@ describe("the pause", () => {
     rmSync(pause);
     await refresher.tick();
     expect(readStatus(r.dir).paused).toBe(false);
+  });
+
+  it("a login made during a pause wins over a refreshed file that could not be written before it", async () => {
+    const r = await rig();
+    writeLogin(r.dir, { expires: r.clk.now() + HOUR });
+    writeFileSync(join(r.dir, LOCK_FILE), "", { mode: 0o660 });
+    chmodSync(r.dir, 0o500);
+    let refresher: LoginRefresher;
+    try {
+      refresher = await LoginRefresher.start(r.deps, { autoRun: false });
+    } finally {
+      chmodSync(r.dir, 0o700);
+    }
+    cleanups.push(() => refresher.stop());
+    if (r.failures.length === 0) return; // running as root: the directory mode does not bind
+    const pause = writePause(r);
+    await refresher.tick();
+    expect(readStatus(r.dir).paused).toBe(true);
+    writeLogin(r.dir, {
+      expires: r.clk.now() + 24 * HOUR,
+      refresh: "login-refresh",
+      access: "login-access",
+    });
+    rmSync(pause);
+    r.clk.advance(10 * 60_000);
+    await refresher.tick();
+    expect(readLogin(r.dir)["openai-codex"].refresh).toBe("login-refresh");
   });
 
   it("re-reads the new login after the pause and refreshes it with the NEW refresh token", async () => {
