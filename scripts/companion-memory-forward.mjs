@@ -269,8 +269,10 @@ export function relayFailureCause(cfg, text, deps = {}) {
   }
   return {
     key: "unknown",
-    cause: `the relay to ${cfg.container} on ${cfg.sshHost} exited without connecting`,
-    remedy: `ssh -v ${cfg.sshHost} true`,
+    cause: cfg.local
+      ? `the local relay to ${cfg.container} exited without connecting`
+      : `the relay to ${cfg.container} on ${cfg.sshHost} exited without connecting`,
+    remedy: cfg.local ? "docker ps" : `ssh -v ${cfg.sshHost} true`,
   };
 }
 
@@ -1399,7 +1401,7 @@ After=default.target
 
 [Service]
 Type=simple
-${auth.value === "" ? "" : `Environment=SSH_AUTH_SOCK=${auth.value}\n`}ExecStartPre=${pathArg(process.execPath)} ${pathArg(script)} ensure-network --network ${arg(cfg.network)} --subnet ${arg(cfg.subnet)}
+${auth.value === "" ? "" : `Environment=SSH_AUTH_SOCK=${auth.value}\n`}ExecStartPre=${pathArg(process.execPath)} ${pathArg(script)} ensure-network --network ${arg(cfg.network)} --subnet ${arg(cfg.subnet)} --gateway ${arg(cfg.gateway)}
 ExecStart=${pathArg(process.execPath)} ${pathArg(script)} ${runArgs}
 Restart=always
 RestartSec=5
@@ -1426,6 +1428,8 @@ export function unitLimitArgs(cfg, home = homedir()) {
     out.push("--queue-timeout", String(Math.round(lim.queueTimeoutMs / 1000)));
   if (!cfg.local && cfg.controlPath && cfg.controlPath !== defaultControlPath(home))
     out.push("--control-path", cfg.controlPath.replaceAll("%", "%%"));
+  if (cfg.statsFile && cfg.statsFile !== statsFilePath(process.env, cfg.port))
+    out.push("--stats-file", cfg.statsFile.replaceAll("%", "%%"));
   return out;
 }
 
@@ -1771,7 +1775,14 @@ function ensureNetwork(cfg, execute = run) {
     console.log(`docker network ${cfg.network} present (gateway ${inspect.stdout.trim()})`);
     return 0;
   }
-  const created = execute("docker", ["network", "create", "--subnet", cfg.subnet, cfg.network]);
+  const created = execute("docker", [
+    "network",
+    "create",
+    "--subnet",
+    cfg.subnet,
+    ...(cfg.gateway ? ["--gateway", cfg.gateway] : []),
+    cfg.network,
+  ]);
   if (created.status !== 0) {
     console.error(
       `could not create docker network ${cfg.network}: ${(created.stderr || "").trim()}`,
