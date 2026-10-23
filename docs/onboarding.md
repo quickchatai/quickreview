@@ -186,7 +186,11 @@ not transfer between your host and the containers**. Expect up to three separate
 browser logins — this wizard's own pi session, the daemon container, and the
 companion container. Each is guided where it happens, and each is verified to
 have landed on that container's *persistent* pi-home volume, so a later
-container recreate never silently costs you the login.
+container recreate never silently costs you the login. Any OpenAI login counts
+at each of them — "OpenAI Codex (legacy)", "OpenAI" (Sign in with ChatGPT), or
+an OpenAI API key at `/login` — because every model reaches pi on the OpenAI
+login that exists (see [docs/llm-setup.md](llm-setup.md)). The wizard's own
+session opens `/login` by itself the first time, when pi has no usable login.
 
 **An OpenAI API key.** One paste covers the daemon and its review sessions at
 once: it lands as the `openai_api_key` file in your secrets dir, `0600`, and the

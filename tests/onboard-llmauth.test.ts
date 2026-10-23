@@ -630,9 +630,14 @@ describe("OAuth route", () => {
     expect(exec?.join(" ")).not.toContain("$HOME");
   });
 
-  it("probeContainerLogin demands a ChatGPT (openai-codex) OAuth login — an empty store or another provider is not one", async () => {
+  it("probeContainerLogin accepts any OpenAI login — an empty store or another provider is not one", async () => {
     for (const [auth, state] of [
       [true, "ok"],
+      // pi 1.4's newer Sign in with ChatGPT, and an OpenAI API key stored by /login:
+      // the engine runs the openai-codex/ models on either (modelroute.ts).
+      ['{"openai":{"type":"oauth","access":"x","refresh":"y","expires":1}}', "ok"],
+      ['{"openai":{"type":"api_key","key":"sk-test"}}', "ok"],
+      ['{"openai":{"type":"api_key","key":"  "}}', "wrong-provider"],
       ["{}", "wrong-provider"],
       ['{"anthropic":{"type":"oauth","access":"x","refresh":"y","expires":1}}', "wrong-provider"],
       ['{"openai-codex":{"type":"api_key","key":"k"}}', "wrong-provider"],
@@ -658,9 +663,12 @@ describe("OAuth route", () => {
       },
     }).verifyAll();
     expect(report.ok).toBe(false);
-    expect(report.results[0]?.failures.join(" ")).toMatch(
-      /no ChatGPT \(openai-codex\) OAuth login/,
-    );
+    const failures = report.results[0]?.failures.join(" ") ?? "";
+    expect(failures).toMatch(/holds no OpenAI login/);
+    // one instruction, naming every login that works
+    expect(failures).toContain("any OpenAI login works");
+    expect(failures).toContain('"OpenAI Codex (legacy)"');
+    expect(failures).toContain("Sign in with ChatGPT");
   });
 
   it("verify on the VM route probes the daemon container ON THE REVIEW HOST, over ssh — the companion stays local", async () => {
@@ -975,6 +983,7 @@ describe("API route companion credentials", () => {
 // ---- the pi-driven wizard: no prompter, the answer is the step's input -------
 
 /** pi 1.4's newer "Sign in with ChatGPT" login, on the `openai` provider. */
+const API_KEY_LOGIN = '{"openai":{"type":"api_key","key":"sk-test-not-a-key"}}';
 const CHATGPT_LOGIN =
   '{"openai":{"type":"oauth","access":"redacted","refresh":"redacted","expires":1}}';
 
@@ -1027,18 +1036,46 @@ describe("the pi-driven route answer", () => {
     for (const a of auditModelStrings(configText())) expect(a.kind).toBe("oauth");
   });
 
-  it("a container holding only the newer login is told to choose OpenAI Codex (legacy)", async () => {
+  it("a container holding only the newer login is logged in: the engine runs the models on it", async () => {
     const adapters = fakeAdapters({
       containers: { c1: { piHome: "/home/review/.pi", auth: CHATGPT_LOGIN } },
     });
-    expect((await probeContainerLogin(adapters.runner, "c1")).state).toBe("newer-chatgpt");
+    expect((await probeContainerLogin(adapters.runner, "c1")).state).toBe("ok");
 
     hostLogin();
     await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
     const report = await engine({
       containers: { "quickreview-sandbox": { piHome: "/home/review/.pi", auth: CHATGPT_LOGIN } },
     }).verifyAll();
-    expect(report.ok).toBe(false);
-    expect(report.results[0]?.failures.join(" ")).toMatch(/choosing "OpenAI Codex \(legacy\)"/);
+    expect(report.ok, report.results[0]?.failures.join("; ")).toBe(true);
+    // the shipped prefix stays: the route, not a rewrite, serves the newer login
+    for (const a of auditModelStrings(configText())) expect(a.kind).toBe("oauth");
+  });
+
+  it("an OpenAI API key this host's pi stored at /login serves the wizard's own session on the oauth route", async () => {
+    hostLogin(API_KEY_LOGIN);
+    const result = await engine().runStep(LLM_AUTH_STEP_ID, { route: "oauth" });
+    expect(result.ok, result.failures.join("; ")).toBe(true);
+    expect(detailOf(result.checks, "wizard_login")).toMatch(/an OpenAI API key/);
+  });
+
+  it("with only an OpenAI API key at this host's /login, the api route is decided — the daemon's key file is still owed", async () => {
+    hostLogin(API_KEY_LOGIN);
+    const result = await engine().runStep(LLM_AUTH_STEP_ID);
+    expect(detailOf(result.checks, "route")).toMatch(
+      /api route — this host's pi signed in with an OpenAI API key/,
+    );
+    expect(result.ok).toBe(false);
+    expect(detailOf(result.checks, "credential")).toMatch(/collect-secrets/);
+  });
+
+  it("no OpenAI login at all on this host: one precise instruction that names every login that works", async () => {
+    hostLogin('{"anthropic":{"type":"oauth","access":"x","refresh":"y","expires":1}}');
+    const result = await engine().runStep(LLM_AUTH_STEP_ID, { route: "oauth" });
+    expect(result.ok).toBe(false);
+    const detail = detailOf(result.checks, "wizard_login");
+    expect(detail).toMatch(/no OpenAI login in this host's pi/);
+    expect(detail).toContain("any OpenAI login works");
+    expect(detail).not.toMatch(/choose "OpenAI Codex \(legacy\)"/);
   });
 });

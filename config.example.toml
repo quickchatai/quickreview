@@ -204,7 +204,9 @@ improvement_pr_deny_prefixes = ["migrations/", "infra/", "ansible/", ".github/wo
 [models]
 # default for every role; tiered pass models below
 # Provider prefix is `openai-codex/` — the ChatGPT-OAuth route's provider key
-# in pi's auth.json (direct `openai/` needs an API key we don't ship).
+# in pi's auth.json. Any OpenAI login serves it: when pi holds no
+# `openai-codex` login but an `openai` one (pi 1.4's Sign in with ChatGPT, or
+# an OpenAI API key), the same model runs on `openai` (docs/llm-setup.md).
 default = "openai-codex/gpt-6.1-sol"
 conversation = "openai-codex/gpt-6.1-sol"
 # Passes always run at sol-high — single variant, not raisable (already top).

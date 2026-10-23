@@ -130,34 +130,54 @@ export function hostAuthJsonPath(home: string): string {
  * without its slash, and the entry pi writes into auth.json on /login. */
 const OAUTH_PROVIDER = OAUTH_PREFIX.replace(/\/$/, "");
 
-/** pi's /login label for that provider (pi 1.4 renamed it). VERIFY-ON-PIN. */
-export const OAUTH_LOGIN_LABEL = "OpenAI Codex (legacy)";
-
-/** pi 1.4's newer "Sign in with ChatGPT" on the `openai` provider. It is a
- * ChatGPT subscription too, but the review models run on `openai-codex/`, so
- * it counts for this wizard's own session and not for the containers.
+/** pi's /login labels for the two ChatGPT subscription logins (pi 1.4.0).
  * VERIFY-ON-PIN. */
+export const OAUTH_LOGIN_LABEL = "OpenAI Codex (legacy)";
+export const CHATGPT_LOGIN_LABEL = "Sign in with ChatGPT";
+
+/** pi 1.4's newer "Sign in with ChatGPT" on the `openai` provider, which an
+ * OpenAI API key stored by /login also lands on. Every model spec reaches pi
+ * through the credential-aware route (packages/pi-plugin/src/modelroute.ts),
+ * so an `openai-codex/` model runs on this login when it is the one there:
+ * any OpenAI login serves the review. VERIFY-ON-PIN. */
 const CHATGPT_PROVIDER = API_PREFIX.replace(/\/$/, "");
 
-/** Does this host's auth.json hold a ChatGPT (openai-codex) OAuth login? The
- * file existing proves nothing: pi keeps every provider's login there, and a
- * logged-out pi can leave `{}` behind. Unreadable or malformed ⇒ false. */
-export function hostHasOAuthLogin(authPath: string): boolean {
-  return hostOAuthProviders(authPath).includes(OAUTH_PROVIDER);
-}
+/** Where to sign in, and which logins count: what every "log in" message
+ * says, in pi 1.4.0's /login labels. */
+export const ANY_OPENAI_LOGIN =
+  `any OpenAI login works: at pi's /login pick "Sign in with an account", then "OpenAI" (${CHATGPT_LOGIN_LABEL}) ` +
+  `or "${OAUTH_LOGIN_LABEL}"; or "Sign in with an API key", then "OpenAI"`;
 
-/** Every ChatGPT subscription login in this auth.json: the review provider
- * (`openai-codex`) and pi 1.4's newer `openai` one. Unreadable ⇒ none. */
-export function hostOAuthProviders(authPath: string): string[] {
+/** The OpenAI logins in a pi auth.json: each ChatGPT subscription login (the
+ * shipped `openai-codex` and pi 1.4's newer `openai`), and whether an OpenAI
+ * API key was stored by /login (`{"openai":{"type":"api_key","key":…}}`).
+ * The file existing proves nothing: pi keeps every provider's login there,
+ * and a logged-out pi can leave `{}` behind. Unreadable ⇒ none. */
+export function hostOpenAILogins(authPath: string): { oauth: string[]; apiKey: boolean } {
   try {
     const parsed = JSON.parse(readFileSync(authPath, "utf8")) as Record<string, unknown>;
-    return [OAUTH_PROVIDER, CHATGPT_PROVIDER].filter((provider) => {
-      const cred = parsed?.[provider] as Record<string, unknown> | undefined;
-      return typeof cred === "object" && cred !== null && cred.type === "oauth";
-    });
+    const cred = (provider: string): Record<string, unknown> | null => {
+      const c = parsed?.[provider];
+      return typeof c === "object" && c !== null ? (c as Record<string, unknown>) : null;
+    };
+    const key = cred(CHATGPT_PROVIDER);
+    return {
+      oauth: [OAUTH_PROVIDER, CHATGPT_PROVIDER].filter((p) => cred(p)?.type === "oauth"),
+      apiKey: key?.type === "api_key" && typeof key.key === "string" && key.key.trim() !== "",
+    };
   } catch {
-    return [];
+    return { oauth: [], apiKey: false };
   }
+}
+
+/** Does this host's auth.json hold a ChatGPT subscription login (either one)? */
+export function hostHasOAuthLogin(authPath: string): boolean {
+  return hostOAuthProviders(authPath).length > 0;
+}
+
+/** Every ChatGPT subscription login in this auth.json. Unreadable ⇒ none. */
+export function hostOAuthProviders(authPath: string): string[] {
+  return hostOpenAILogins(authPath).oauth;
 }
 
 function hostHome(): string {
@@ -370,30 +390,27 @@ export function writeKeyFile(secretsDir: string, value: string): string {
 // ---- container login verification -------------------------------------------
 
 export type LoginState =
-  | "absent"
-  | "no-pi-volume"
-  | "stopped"
-  | "no-auth"
-  | "wrong-provider"
-  | "newer-chatgpt"
-  | "ok"
-  | "undetectable";
+  "absent" | "no-pi-volume" | "stopped" | "no-auth" | "wrong-provider" | "ok" | "undetectable";
 
 /**
- * The in-container login check: the same question `hostHasOAuthLogin` asks of
- * the host — is there an `openai-codex` entry of type `oauth`? — asked by the
- * container's own node, so only an exit code ever leaves it (never a token,
- * which on the VM route would otherwise cross ssh). Exit 0 = logged in,
- * 3 = no auth.json / empty, 4 = an auth.json without that login (`{}`, or
- * another provider picked at pi's /login menu), 5 = only pi's newer `openai`
- * ChatGPT login, which the review models do not run on. Anything else (no
- * node) is undetectable, never a pass.
+ * The in-container login check: the same question `hostOpenAILogins` asks of
+ * the host — is there an OpenAI login? — asked by the container's own node, so
+ * only an exit code ever leaves it (never a token, which on the VM route would
+ * otherwise cross ssh). Any OpenAI login counts, because the engine runs the
+ * same model on whichever exists (packages/pi-plugin/src/modelroute.ts): an
+ * `openai-codex` or `openai` entry of type `oauth`, or an `openai` API key.
+ * Exit 0 = logged in, 3 = no auth.json / empty, 4 = an auth.json without an
+ * OpenAI login (`{}`, or another provider picked at pi's /login menu).
+ * Anything else (no node) is undetectable, never a pass.
  */
 export const CONTAINER_LOGIN_SCRIPT =
   "const fs=require('fs');let t='';try{t=fs.readFileSync(process.argv[1],'utf8')}catch{process.exit(3)}" +
   "if(!t.trim())process.exit(3);let a;try{a=JSON.parse(t)}catch{process.exit(4)}" +
-  "const o=(k)=>{const c=a&&a[k];return !!c&&typeof c==='object'&&c.type==='oauth'};" +
-  `process.exit(o(${JSON.stringify(OAUTH_PROVIDER)})?0:o(${JSON.stringify(CHATGPT_PROVIDER)})?5:4)`;
+  "const c=(k)=>{const v=a&&a[k];return !!v&&typeof v==='object'?v:null};" +
+  "const o=(k)=>c(k)?.type==='oauth';" +
+  `const key=c(${JSON.stringify(CHATGPT_PROVIDER)});` +
+  "const k=!!key&&key.type==='api_key'&&typeof key.key==='string'&&key.key.trim()!=='';" +
+  `process.exit(o(${JSON.stringify(OAUTH_PROVIDER)})||o(${JSON.stringify(CHATGPT_PROVIDER)})||k?0:4)`;
 
 export interface LoginProbe {
   state: LoginState;
@@ -463,9 +480,7 @@ export async function probeContainerLogin(
         ? "no-auth"
         : auth.code === 4
           ? "wrong-provider"
-          : auth.code === 5
-            ? "newer-chatgpt"
-            : "undetectable";
+          : "undetectable";
   return { state, destination, mount };
 }
 
@@ -511,18 +526,9 @@ function loginCheck(
         name,
         ok: false,
         detail:
-          `${label}: auth.json on the pi home (${probe.mount}) holds no ChatGPT (${OAUTH_PROVIDER}) OAuth login — ` +
-          `a /login to another provider does not count. Attach and log in, choosing "${OAUTH_LOGIN_LABEL}" at pi's /login: ` +
+          `${label}: auth.json on the pi home (${probe.mount}) holds no OpenAI login — ` +
+          `a /login to another provider does not count. Attach and log in (${ANY_OPENAI_LOGIN}): ` +
           `${steps}.`,
-      };
-    case "newer-chatgpt":
-      return {
-        name,
-        ok: false,
-        detail:
-          `${label}: the pi home (${probe.mount}) holds pi's newer "Sign in with ChatGPT" login (the ${CHATGPT_PROVIDER} provider), ` +
-          `but the review models run on the ${OAUTH_PREFIX} provider. Attach and log in again, choosing "${OAUTH_LOGIN_LABEL}" ` +
-          `at pi's /login: ${steps}.`,
       };
     case "no-pi-volume":
       return {
@@ -693,12 +699,16 @@ interface RouteDecision {
  *      route is what pi will really use, so the config must say so;
  *   3. otherwise a valid key file;
  *   4. otherwise the previously recorded route;
- *   5. otherwise: no answer yet — the step goes red with the choice text.
+ *   5. otherwise an OpenAI API key this host's pi stored at /login: the
+ *      wizard's own session runs on a key, so the api route is the one in use
+ *      (the daemon still takes its key from the secrets file);
+ *   6. otherwise: no answer yet — the step goes red with the choice text.
  */
 async function decideRoute(
   ctx: StepContext,
   keyFile: KeyFileState,
   hostLogin: boolean,
+  hostApiKey = false,
 ): Promise<RouteDecision> {
   const prompter = ctx.adapters.prompter;
   if (prompter) {
@@ -722,6 +732,12 @@ async function decideRoute(
     return { route: "api", source: `a valid ${OPENAI_KEY_FILE} is in the secrets dir` };
   const kept = recordedRoute(ctx);
   if (kept) return { route: kept, source: "the recorded route" };
+  if (hostApiKey)
+    return {
+      route: "api",
+      source:
+        "this host's pi signed in with an OpenAI API key (its /login), and holds no ChatGPT login",
+    };
   return { route: null, source: "nothing on disk says which route this installation uses" };
 }
 
@@ -854,20 +870,21 @@ async function oauthLoginChecks(
 ): Promise<CheckResult[]> {
   const checks: CheckResult[] = [];
   const authPath = hostAuthJsonPath(home);
-  const hostOk = hostOAuthProviders(authPath).length > 0;
+  const logins = hostOpenAILogins(authPath);
+  const hostOk = logins.oauth.length > 0 || logins.apiKey;
   checks.push(
     hostOk
       ? {
           name: "wizard_login",
           ok: true,
-          detail: `this host's pi is logged in (${authPath}) — login 1 of 3 done`,
+          detail: `this host's pi is logged in (${authPath}, ${[...logins.oauth, ...(logins.apiKey ? ["an OpenAI API key"] : [])].join(" + ")}) — login 1 of 3 done`,
         }
       : {
           name: "wizard_login",
           ok: false,
           detail:
-            `no ChatGPT OAuth login in this host's pi (${authPath}). Log in from this very session — type /login at pi's input line, ` +
-            `choose "${OAUTH_LOGIN_LABEL}" and follow the browser flow — then run this step again. This is login 1 of 3; ` +
+            `no OpenAI login in this host's pi (${authPath}). Log in from this very session — type /login at pi's input line ` +
+            `(${ANY_OPENAI_LOGIN}) and follow its flow — then run this step again. This is login 1 of 3; ` +
             "the two container logins come later.",
         },
   );
@@ -941,9 +958,10 @@ export function llmAuthStep(opts: { transport?: TransportOptions } = {}): Onboar
         rootOf(ctx.adapters),
       );
       let keyFile = readKeyFileState(secretsDir);
-      const hostLogin = hostOAuthProviders(hostAuthJsonPath(home)).length > 0;
+      const logins = hostOpenAILogins(hostAuthJsonPath(home));
+      const hostLogin = logins.oauth.length > 0;
 
-      const decision = await decideRoute(ctx, keyFile, hostLogin);
+      const decision = await decideRoute(ctx, keyFile, hostLogin, logins.apiKey);
       if (decision.route === null) {
         const question = ctx.adapters.prompter ? ROUTE_QUESTION : ROUTE_INPUT_QUESTION;
         checks.push({ name: "route", ok: false, detail: `${decision.source}.\n${question}` });

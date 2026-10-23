@@ -144,8 +144,10 @@ export async function cmdLogin(args: readonly string[], deps: NpmVerbDeps): Prom
         "",
         "Opens pi's own /login in the pi qcr runs on, so the review sessions can use it.",
         "The login is kept in pi's agent dir ($PI_CODING_AGENT_DIR, default ~/.pi/agent).",
-        "The default review models run on a ChatGPT login (openai-codex); an API key in the",
-        "environment does not stand in for it: log in, or set the review's models in your qcr config.",
+        'Any OpenAI login serves the default review models: "OpenAI Codex (legacy)" or "OpenAI"',
+        '(Sign in with ChatGPT) under "Sign in with an account", or an OpenAI API key (at /login, or',
+        "OPENAI_API_KEY in the environment). A key for another provider does not stand in for it:",
+        "log in, or set the review's models in your qcr config.",
       ].join("\n"),
     );
     return 0;
