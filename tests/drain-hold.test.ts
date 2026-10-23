@@ -625,26 +625,25 @@ describe("qcr drain on --hold", () => {
   });
 });
 
-// docs/rulebook/ is manifest-excluded from the public tree.
-describe.skipIf(!existsSync(resolve(__dirname, "..", "docs", "rulebook")))(
-  "the ratified levers text",
-  () => {
-    // The decision's full text and the levers.ts note live in docs/rulebook/.
-    const claude = ["decisions.md", "architecture.md"]
-      .map((f) => readFileSync(resolve(__dirname, "..", "docs", "rulebook", f), "utf8"))
-      .join("\n")
-      .replace(/\s+/g, " ");
+// docs/rulebook/ is manifest-excluded from the public tree (a skipped
+// describe still runs its body, so the read is guarded too).
+const HAS_RULEBOOK = existsSync(resolve(__dirname, "..", "docs", "rulebook"));
+describe.skipIf(!HAS_RULEBOOK)("the ratified levers text", () => {
+  // The decision's full text and the levers.ts note live in docs/rulebook/.
+  const claude = (HAS_RULEBOOK ? ["decisions.md", "architecture.md"] : [])
+    .map((f) => readFileSync(resolve(__dirname, "..", "docs", "rulebook", f), "utf8"))
+    .join("\n")
+    .replace(/\s+/g, " ");
 
-    it("CLAUDE.md carries the drain hold word for word, as ratified", () => {
-      for (const ratified of [
-        "[private rule text removed]",
-        "[private rule text removed]",
-        "The boot that adds the hold to state.db carries a standing operator drain over as one (`drain_hold_carried`); that is how the legacy daemon's cutover drain holds.",
-        "[private rule text removed]",
-        "[private rule text removed]",
-      ])
-        expect(claude).toContain(ratified);
-      expect(claude).not.toContain("lifts whatever stands");
-    });
-  },
-);
+  it("CLAUDE.md carries the drain hold word for word, as ratified", () => {
+    for (const ratified of [
+      "[private rule text removed]",
+      "[private rule text removed]",
+      "The boot that adds the hold to state.db carries a standing operator drain over as one (`drain_hold_carried`); that is how the legacy daemon's cutover drain holds.",
+      "[private rule text removed]",
+      "[private rule text removed]",
+    ])
+      expect(claude).toContain(ratified);
+    expect(claude).not.toContain("lifts whatever stands");
+  });
+});
