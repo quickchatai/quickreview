@@ -1,5 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -40,6 +48,31 @@ describe("DurableDeployProcess", () => {
     // The detached runner is started with the version the ceremony ships.
     expect(readFileSync(join(root, "versions"), "utf8")).toBe("1.2.3\n");
     expect(outputs.filter((line) => line.includes("sync started"))).toHaveLength(2);
+  });
+
+  it("delivers output written between the pump's log read and the result it observes", async () => {
+    const root = mkdtempSync(join(tmpdir(), "qcr-durable-deploy-tail-"));
+    roots.push(root);
+    const state = join(root, "state", "runs");
+    mkdirSync(state, { recursive: true });
+    const log = join(state, "tail-run-1234.log");
+    writeFileSync(log, "early\n");
+    writeFileSync(
+      join(state, "tail-run-1234.started.json"),
+      JSON.stringify({ pid: process.pid, started_at: new Date().toISOString(), state: "running" }),
+    );
+    const runner = new DurableDeployProcess(root, state, 5);
+    const priv = runner as unknown as { readResult: (p: string) => unknown };
+    priv.readResult = () => {
+      appendFileSync(log, "final failure explanation\n");
+      return { code: 1 };
+    };
+    const out: string[] = [];
+    const code = await new Promise<number | null>((resolve) => {
+      runner.startOrAttach("tail-run-1234", "1.2.3", (c) => out.push(c), resolve);
+    });
+    expect(code).toBe(1);
+    expect(out.join("")).toContain("final failure explanation");
   });
 
   it("refuses a version that is not a release spelling before anything starts", async () => {

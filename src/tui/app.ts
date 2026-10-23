@@ -1153,6 +1153,7 @@ export class App {
     if (this.view.help) {
       if (ev.kind === "click") {
         this.view.help = false;
+        this.view.helpScroll = 0;
         this.repaint();
       }
       return;
@@ -1280,7 +1281,14 @@ export class App {
     const key = decodeKey(buf);
 
     if (this.view.help) {
-      this.view.help = false;
+      if ((key.kind === "down" || key.kind === "up") && key.arrow) {
+        const max = this.lastFrame?.meta["helpMax"] ?? 0;
+        const next = (this.view.helpScroll ?? 0) + (key.kind === "down" ? 1 : -1);
+        this.view.helpScroll = Math.min(Math.max(0, next), max);
+      } else {
+        this.view.help = false;
+        this.view.helpScroll = 0;
+      }
       this.repaint();
       return;
     }

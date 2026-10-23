@@ -118,16 +118,24 @@ export function laptopCompanionConfig(
   };
 }
 
+// No file of the host is visible to the planner, and none is asked about: a
+// present-or-not decision (the reviewed repo) is already made by the config.
+const NO_HOST_FILES: CompanionFs = {
+  exists: () => false,
+  read: () => undefined,
+  mode: () => undefined,
+};
+
 /** The lifecycle of the wrapper-run companion, for a process that has none of
  * the host's files (the planner, or the TUI container). */
 export function laptopLifecycle(
   env: NodeJS.ProcessEnv,
   docker: DockerRunner,
   base?: CompanionConfig,
+  /** The planner passes none (no host file is visible to it); the TUI passes
+   * the real one, so `syncConfigMirror` finds the config the wrapper mounted. */
+  fs: CompanionFs = NO_HOST_FILES,
 ): CompanionLifecycle {
-  // No file of the host is visible from here, and none is asked about: a
-  // present-or-not decision (the reviewed repo) is already made by the config.
-  const fs: CompanionFs = { exists: () => false, read: () => undefined, mode: () => undefined };
   return new CompanionLifecycle(
     laptopCompanionConfig(env, base),
     docker,
@@ -203,6 +211,7 @@ export function companionPlan(env: NodeJS.ProcessEnv): CompanionPlan {
   const tuiEnv = [
     ...HOST_ENV_NAMES.map((n) => `${n}=${env[n] ?? ""}`).filter((l) => !l.endsWith("=")),
     `QCR_STATE_HOME=${installEnv.QCR_STATE_HOME ?? ""}`,
+    ...(installEnv["QCR_INSTALL"] ? [`QCR_INSTALL=${installEnv["QCR_INSTALL"]}`] : []),
     `QCR_IMAGE=${cfg.image}`,
   ];
   return {
