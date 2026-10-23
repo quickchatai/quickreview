@@ -20,7 +20,8 @@ stage() { # <dockerignore> <dest>
   local ign="$1" dest="$2" path
   mkdir -p "$dest"
   while IFS= read -r path; do
-    git -C "$ROOT" ls-files -z -- "$path" | (cd "$ROOT" && xargs -0 -r cp --parents -t "$dest")
+    git -C "$ROOT" ls-tree -r -z --name-only HEAD -- "$path" \
+      | xargs -0 -r git -C "$ROOT" archive HEAD -- | tar -x -C "$dest"
   done < <(sed -n 's/^!//p' "$ign")
   mkdir -p "$dest/docker"
 }

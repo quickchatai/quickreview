@@ -385,6 +385,41 @@ describe("[P8.20a] the rehearsal's scripts and report", () => {
     ]);
   });
 
+  it("build-images.sh stages the committed bytes of HEAD, not the working tree's edits", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rh-build-"));
+    const sh = (cmd: string) => execFileSync("bash", ["-c", cmd], { cwd: dir, encoding: "utf8" });
+    try {
+      sh(
+        "mkdir -p scripts/worker-rehearsal docker/memory bin out src && git init -q . && " +
+          "git config user.email t@t && git config user.name t",
+      );
+      writeFileSync(
+        join(dir, "scripts/worker-rehearsal/build-images.sh"),
+        readFileSync(join(RH, "build-images.sh")),
+      );
+      for (const d of ["docker", "docker/memory"]) {
+        writeFileSync(join(dir, d, "Dockerfile"), "FROM scratch\n");
+        writeFileSync(join(dir, d, "Dockerfile.dockerignore"), "*\n!src\n");
+      }
+      writeFileSync(join(dir, "src/a.txt"), "committed\n");
+      // A fake docker that records the staged file of each build context.
+      writeFileSync(
+        join(dir, "bin/docker"),
+        `#!/usr/bin/env bash\nctx="\${@: -1}"; cat "$ctx/src/a.txt" >> "${join(dir, "out/seen")}"\n`,
+        { mode: 0o755 },
+      );
+      sh("git add -A && git commit -qm init");
+      writeFileSync(join(dir, "src/a.txt"), "dirty\n");
+      execFileSync("bash", [join(dir, "scripts/worker-rehearsal/build-images.sh"), "r:t", "m:t"], {
+        env: { ...process.env, PATH: `${join(dir, "bin")}:${process.env.PATH}` },
+        stdio: "ignore",
+      });
+      expect(readFileSync(join(dir, "out/seen"), "utf8")).toBe("committed\ncommitted\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("the cutover driver selects the legacy build by the same override as the database builder", () => {
     const driver = readFileSync(join(ROOT, "scripts", "cutover-rehearsal.sh"), "utf8");
     const builder = readFileSync(join(RH, "legacy-db.sh"), "utf8");
