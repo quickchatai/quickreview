@@ -13,7 +13,9 @@ export function newestSessionFile(root: string): string | undefined {
   const walk = (dir: string): void => {
     let entries;
     try {
-      entries = readdirSync(dir, { withFileTypes: true });
+      entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
+        a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+      );
     } catch {
       return;
     }
@@ -68,7 +70,14 @@ export function rotateSessionFiles(root: string, stamp: string): RotatedFile[] {
       }
     }
   };
-  walk(root);
+  try {
+    walk(root);
+  } catch (err) {
+    // A rename that fails part-way leaves no half-rotated session: the moves
+    // already made are undone before the error reaches the caller.
+    restoreRotatedFiles(moves);
+    throw err;
+  }
   return moves;
 }
 

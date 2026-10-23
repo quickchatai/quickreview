@@ -278,6 +278,7 @@ export class SessionCommandSupervisor {
     }
     if (command.status === "running" && settled) {
       if (!due && this.hasDeferredStageCheck(command)) return;
+      if (this.verdictPending(command)) return; // the 10s verdict sweep owns it
       await this.settledWithoutVerdict(command);
       return;
     }
@@ -680,13 +681,15 @@ export class SessionCommandSupervisor {
     // execution only: a later run of the same lens is the sweep's, started
     // after the delta stage, and counts as ADDED — never as this lens missing.
     const deltaStage = sweepOwed ? firstExecutionPerLens(progress.agents) : null;
+    // A lens with several plan rows (a split baseline) owes one execution per row.
+    const rowCounts = plannedRowCounts(round);
     const missing = planned.filter((name) => {
       if (deltaStage) {
         const first = deltaStage.get(name);
         return first === undefined || !terminal(first.status);
       }
       const executions = progress.agents.filter((agent) => lensForAgent(agent.agent) === name);
-      return !executionsComplete(executions);
+      return executions.length < (rowCounts.get(name) ?? 1) || !executionsComplete(executions);
     });
     const addedRunning = progress.agents
       .filter(
@@ -1119,4 +1122,22 @@ function firstExecutionPerLens(
       first.set(lens, agent);
   }
   return first;
+}
+
+/** Plan rows per lens name from the round's recorded `pass_plan`; empty when
+ * it is absent or unreadable (every lens then owes one execution). */
+function plannedRowCounts(round: RoundRow): Map<string, number> {
+  const counts = new Map<string, number>();
+  if (!round.pass_plan) return counts;
+  try {
+    const rows: unknown = JSON.parse(round.pass_plan);
+    if (!Array.isArray(rows)) return counts;
+    for (const row of rows) {
+      const lens = (row as { lens?: unknown } | null)?.lens;
+      if (typeof lens === "string") counts.set(lens, (counts.get(lens) ?? 0) + 1);
+    }
+  } catch {
+    return new Map();
+  }
+  return counts;
 }
