@@ -10,7 +10,8 @@ Prints one line and exits:
 The shell mirror of src/requiredpasses.ts (`requiredPassGap`): the required
 rows are the round's recorded plan rows marked `required` by the plan builder
 (pass-baseline and the risk passes), the evidence is the session's live
-round-progress snapshot. Only positive evidence blocks: an unreadable plan or
+round-progress snapshot. Only positive evidence blocks: an unreadable plan supplies
+no required rows, so the result is complete; with required rows, an unreadable
 snapshot, or a snapshot of another round, is unknown and never blocks.
 tests/required-passes.test.ts runs this against the TypeScript rule.
 """
