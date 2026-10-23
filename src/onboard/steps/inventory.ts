@@ -432,7 +432,7 @@ export function vmInventoryStep(opts: VmInventoryOptions = {}): OnboardingStep {
         },
         python: {
           type: "string",
-          description: `Python interpreter path on the server. Omit for the Ubuntu/Debian default (${DEFAULT_PYTHON_INTERPRETER}).`,
+          description: `Python interpreter path on the server. Omit to keep the recorded override, or the Ubuntu/Debian default (${DEFAULT_PYTHON_INTERPRETER}) when none is recorded; to reset an override, pass the default path explicitly.`,
         },
       },
     },
