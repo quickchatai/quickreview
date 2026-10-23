@@ -94,19 +94,24 @@ HEAD_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["hea
 
 # Every page, as src/github.ts listChecks and guards.sh read them: a failing
 # or pending run past row 100 is still a check at this head. Up to 10 pages; a
-# short page ends it. The pages accumulate into $RUNS as one {check_runs: [...]}.
+# short page ends it, and a malformed page or an exhausted limit dies (no
+# CLASSIFIED line) rather than classifying part of the evidence. The pages accumulate into $RUNS as one {check_runs: [...]}.
 echo '{"check_runs": []}' >"$RUNS"
 for ((page = 1; page <= 10; page++)); do
   get "/repos/$REPO/commits/$HEAD_SHA/check-runs?per_page=100&page=$page"
   n="$(python3 -c '
 import json, sys
 acc = json.load(open(sys.argv[1]))
-rows = json.load(open(sys.argv[2])).get("check_runs") or []
+page_doc = json.load(open(sys.argv[2]))
+rows = page_doc.get("check_runs") if isinstance(page_doc, dict) else None
+if not isinstance(rows, list):
+    raise SystemExit("check-runs page has no check_runs list")
 acc["check_runs"] += rows
 json.dump(acc, open(sys.argv[1], "w"))
-print(len(rows))' "$RUNS" "$OUT")"
+print(len(rows))' "$RUNS" "$OUT")" || die "check-runs page $page unreadable"
   if ((n < 100)); then break; fi
 done
+((n < 100)) || die "incomplete check-runs: page limit reached"
 
 # The COMMIT STATUSES at the head, every page, as listChecks and guards.sh read
 # them, so a failing status (a deploy preview, an external CI that reports
@@ -119,12 +124,16 @@ for ((page = 1; page <= 10; page++)); do
   n="$(python3 -c '
 import json, sys
 acc = json.load(open(sys.argv[1]))
-rows = json.load(open(sys.argv[2])).get("statuses") or []
+page_doc = json.load(open(sys.argv[2]))
+rows = page_doc.get("statuses") if isinstance(page_doc, dict) else None
+if not isinstance(rows, list):
+    raise SystemExit("statuses page has no statuses list")
 acc["statuses"] += rows
 json.dump(acc, open(sys.argv[1], "w"))
-print(len(rows))' "$STATUSES" "$OUT")"
+print(len(rows))' "$STATUSES" "$OUT")" || die "statuses page $page unreadable"
   if ((n < 100)); then break; fi
 done
+((n < 100)) || die "incomplete statuses: page limit reached"
 
 python3 - "$RUNS" "$FAILING" "$STATUSES" <<'PY'
 import json, re, sys

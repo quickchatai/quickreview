@@ -432,7 +432,7 @@ ensure_companion() {
     ${ssh_agent:+-e "QCR_HOST_SSH_AUTH_SOCK=$ssh_agent"} \
     ${ssh_cfg:+-e "QCR_HOST_SSH_CONFIG=$ssh_cfg"} \
     ${ssh_kh:+-e "QCR_HOST_SSH_KNOWN_HOSTS=$ssh_kh"} \
-    "$IMAGE" cli companion plan 2>/dev/null)" || return 1
+    "$IMAGE" cli companion plan)" || return 1
   [ -n "$plan" ] || return 1
   name=''
   hash=''
@@ -632,7 +632,13 @@ else
   # target and ssh_host), the one file, read-only, never the config home.
   cfgfile=''
   if [ "$mode" = tui ]; then
-    cfgfile="${QCR_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/qcr/${QCR_INSTALL:-default}/config.toml}"
+    # The install locator's order: $QCR_CONFIG, an absolute $QCR_CONFIG_HOME,
+    # else the XDG install home.
+    case "${QCR_CONFIG_HOME:-}" in
+      /*) cfghome="${QCR_CONFIG_HOME%/}" ;;
+      *) cfghome="${XDG_CONFIG_HOME:-$HOME/.config}/qcr/${QCR_INSTALL:-default}" ;;
+    esac
+    cfgfile="${QCR_CONFIG:-$cfghome/config.toml}"
     [ -f "$cfgfile" ] || cfgfile=''
   fi
   if [ -n "$cfgfile" ]; then
