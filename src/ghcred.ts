@@ -30,7 +30,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-export type CredentialSource = "app" | "handoff" | "env:GITHUB_TOKEN" | "env:GH_TOKEN" | "gh";
+export const CREDENTIAL_SOURCES = ["app", "handoff", "gh", "env:GITHUB_TOKEN", "env:GH_TOKEN"] as const;
+export type CredentialSource = (typeof CREDENTIAL_SOURCES)[number];
 
 /** The variable that names the handed-over token file. */
 export const HANDOFF_FILE_ENV = "QCR_GH_TOKEN_FILE";

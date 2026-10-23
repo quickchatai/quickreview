@@ -113,7 +113,7 @@ export interface ProfileLookup {
 }
 
 /** The name the repo profile's layer carries in errors. */
-const REPO_LAYER_NAME = ".qcr";
+export const REPO_LAYER_NAME = ".qcr";
 
 /** Where a not-found looked — and, when the checkout still strands a profile
  * of that name (which is never read), the way out. */

@@ -45,10 +45,10 @@ import {
 import { join, relative, resolve, sep } from "node:path";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { locateProfile } from "./install.js";
-import { resolveProfileChain, type ProfileLookup } from "./profiles.js";
+import { REPO_LAYER_NAME, resolveProfileChain, type ProfileLookup } from "./profiles.js";
 
 /** The directory in the repo that holds the repo profile. */
-export const REPO_PROFILE_DIR = ".qcr";
+export const REPO_PROFILE_DIR = REPO_LAYER_NAME;
 
 /** Where a replacement came from. */
 export type OverrideOrigin = "user" | "repo";
