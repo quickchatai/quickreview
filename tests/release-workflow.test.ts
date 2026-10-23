@@ -2,15 +2,19 @@
 // GitHub, docker, two architectures and a model, so the suite pins what can be
 // read without any of them:
 //   - the triggers (a vX.Y.Z tag or a manual dispatch, nothing else);
-//   - the gate order: nothing but `publish` logs in or pushes, and publish
-//     needs the build and the e2e;
-//   - the paid e2e: its own environment, and the only job that reads a secret;
+//   - the gate order: nothing but `publish` logs in to ghcr or pushes, and
+//     publish needs the build and the e2e;
+//   - the paid e2e: its own environment, and the only job that reads an
+//     environment secret;
 //   - the arm64 runners: native by default, QEMU on a variable;
 //   - provenance attestations for every pushed digest;
-//   - the `plan` step's version rules, run for real against a temp package.json.
+//   - the `plan` step's version rules, run for real against a temp package.json;
+//   - the `npm` job: a real tag push only, after the images, on GitHub's own
+//     runner, and its version and publish steps run for real against temp
+//     package.json files and a fake npm on the PATH.
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,9 +64,11 @@ describe("release.yml — triggers and permissions", () => {
   it("is read-only by default; only publish may write packages or attest, only attach-manifest contents", () => {
     expect(wf.permissions).toEqual({ contents: "read" });
     for (const [name, job] of Object.entries(wf.jobs)) {
-      if (name !== "publish" && name !== "attach-manifest")
+      if (name !== "publish" && name !== "attach-manifest" && name !== "npm")
         expect(job.permissions, name).toBeUndefined();
     }
+    // MUTATION: give the npm job packages: write — this fails.
+    expect(wf.jobs.npm!.permissions).toEqual({ contents: "read", "id-token": "write" });
     // Actions sets permissions per job, so the contents write is its own job
     // and publish never holds it.
     expect(wf.jobs["attach-manifest"]!.permissions).toEqual({ contents: "write" });
@@ -90,6 +96,12 @@ describe("release.yml — the gates", () => {
       );
     }
     expect(jobText("publish")).toMatch(/docker\/login-action/);
+    // npmjs is the npm job's alone, and the npm job never touches ghcr
+    for (const [name] of Object.entries(wf.jobs)) {
+      if (name === "npm") continue;
+      expect(jobText(name), name).not.toMatch(/npm publish|registry\.npmjs\.org|NPM_TOKEN/);
+    }
+    expect(jobText("npm")).not.toMatch(/docker|ghcr/);
     const build = wf.jobs.build!.steps.find((s) => s.uses?.startsWith("docker/build-push-action"));
     expect(build).toBeDefined();
     expect(JSON.stringify(build)).toMatch(/"push":false/);
@@ -115,6 +127,10 @@ describe("release.yml — the gates", () => {
         name,
       ).toEqual([]);
     }
+    // the npm job reads the first release's token and nothing else
+    const npmSecrets = [...jobText("npm").matchAll(/secrets\.([A-Z_]+)/g)].map((m) => m[1]);
+    expect(npmSecrets).toEqual(["NPM_TOKEN"]);
+    expect(wf.jobs.npm!.environment).toBeUndefined();
     expect(wf.jobs.e2e!.if).toBe("needs.plan.outputs.e2e == 'true'");
   });
 
@@ -144,7 +160,7 @@ describe("release.yml — the gates", () => {
   it("runs on Blacksmith's runners and builder, and on GitHub's with QCR_RUNNERS=github", () => {
     for (const [name, job] of Object.entries(wf.jobs)) {
       const runsOn = job["runs-on"];
-      if (name === "build") continue;
+      if (name === "build" || name === "npm") continue;
       expect(runsOn, name).toMatch(
         /^\$\{\{ vars\.QCR_RUNNERS == 'github' && 'ubuntu-latest' \|\| 'blacksmith-\d+vcpu-ubuntu-2404' \}\}$/,
       );
@@ -297,6 +313,273 @@ describe("release.yml — the plan step", () => {
     const r = runPlan(dispatch("0.0.0-scratch.2", false, false));
     expect(r.status).toBe(0);
     expect(r.out).toMatchObject({ scratch: "true", e2e: "false", publish: "false" });
+  });
+
+  it("cleans up", () => {
+    for (const d of dirs) rmSync(d, { recursive: true, force: true });
+  });
+});
+
+describe("release.yml — the npm job", () => {
+  const job = wf.jobs.npm!;
+  type FullStep = Step & { if?: string; with?: Record<string, unknown> };
+  const steps = job.steps as FullStep[];
+  const versions = steps.find((s) => s.id === "versions")!;
+  const npmCheck = steps.find((s) => s.run?.includes("npm --version"))!;
+  const publish = steps.find((s) => s.run?.includes("npm publish"))!;
+  const dirs: string[] = [];
+
+  it("publishes on a real tag push only, after the build, the e2e and the images", () => {
+    expect(needs("npm").sort()).toEqual(["build", "e2e", "plan", "publish"]);
+    const cond = job.if!;
+    // MUTATION: drop the event check — a dispatch from a tag would publish to npm.
+    for (const want of [
+      "!cancelled()",
+      "github.event_name == 'push'",
+      "github.ref_type == 'tag'",
+      "needs.plan.outputs.publish == 'true'",
+      "needs.plan.outputs.scratch != 'true'",
+      "needs.build.result == 'success'",
+      "needs.e2e.result == 'success'",
+      "needs.publish.result == 'success'",
+    ])
+      expect(cond, want).toContain(want);
+    // a real version never skips the e2e, so a skipped e2e is no pass here
+    expect(cond).not.toContain("needs.e2e.result == 'skipped'");
+  });
+
+  it("runs on GitHub's ubuntu-latest, whatever QCR_RUNNERS says", () => {
+    // npm takes trusted publishing and provenance from GitHub-hosted runners only
+    expect(job["runs-on"]).toBe("ubuntu-latest");
+  });
+
+  it("sets up Node 26 against registry.npmjs.org with the workflow's action majors, no cache", () => {
+    const checkout = steps.find((s) => s.uses?.startsWith("actions/checkout@"))!;
+    expect(checkout.uses).toBe(wf.jobs.plan!.steps[0]!.uses);
+    const setup = steps.find((s) => s.uses?.startsWith("actions/setup-node@"))!;
+    expect(setup.uses).toBe("actions/setup-node@v7");
+    expect(setup.with).toEqual({
+      "node-version": "26",
+      "registry-url": "https://registry.npmjs.org",
+    });
+    // the version checks and the npm check come before npm ci, npm ci before the publish
+    const at = (s: FullStep): number => steps.indexOf(s);
+    const ci = steps.find((s) => s.run === "npm ci")!;
+    expect(at(versions)).toBeLessThan(at(ci));
+    expect(at(npmCheck)).toBeLessThan(at(ci));
+    expect(at(ci)).toBeLessThan(at(publish));
+  });
+
+  it("logs in with NPM_TOKEN when it exists, by OIDC when it does not, with provenance on a public repo", () => {
+    expect(publish.env).toEqual({
+      NODE_AUTH_TOKEN: "${{ secrets.NPM_TOKEN }}",
+      PUBLIC: "${{ github.event.repository.visibility == 'public' }}",
+    });
+  });
+
+  function scratch(): string {
+    const dir = mkdtempSync(join(tmpdir(), "release-npm-"));
+    dirs.push(dir);
+    return dir;
+  }
+  function packages(dir: string, root: string, plugin: string, pin: string): void {
+    writeFileSync(
+      join(dir, "package.json"),
+      JSON.stringify({
+        name: "@quickchatai/quickreview",
+        version: root,
+        dependencies: { "@quickchatai/pi-quickreview": pin },
+      }),
+    );
+    mkdirSync(join(dir, "packages", "pi-plugin"), { recursive: true });
+    writeFileSync(
+      join(dir, "packages", "pi-plugin", "package.json"),
+      JSON.stringify({ name: "@quickchatai/pi-quickreview", version: plugin }),
+    );
+  }
+  // A fake npm: `view` answers from a directory standing in for the registry,
+  // `publish` records its arguments and (unless told not to) makes the version
+  // visible, `--version` reports FAKE_NPM_VERSION. A no-op sleep keeps the
+  // visibility wait off the clock.
+  function fakeBin(dir: string): string {
+    const bin = join(dir, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(
+      join(bin, "npm"),
+      `#!/usr/bin/env node
+const fs = require("node:fs"), path = require("node:path");
+const a = process.argv.slice(2);
+fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify(a) + "\\n");
+const key = (s) => path.join(process.env.FAKE_REGISTRY, encodeURIComponent(s));
+if (a[0] === "--version") { console.log(process.env.FAKE_NPM_VERSION || "11.6.0"); process.exit(0); }
+if (a[0] === "view") {
+  if (fs.existsSync(key(a[1]))) { console.log(fs.readFileSync(key(a[1]), "utf8")); process.exit(0); }
+  console.error("npm error code E404"); process.exit(1);
+}
+if (a[0] === "publish") {
+  const w = a.indexOf("--workspace");
+  const p = JSON.parse(fs.readFileSync(path.join(w >= 0 ? a[w + 1] : ".", "package.json"), "utf8"));
+  if (process.env.FAKE_NEVER_VISIBLE !== "1") fs.writeFileSync(key(p.name + "@" + p.version), p.version);
+  process.exit(0);
+}
+process.exit(2);
+`,
+    );
+    writeFileSync(join(bin, "sleep"), "#!/bin/sh\nexit 0\n");
+    chmodSync(join(bin, "npm"), 0o755);
+    chmodSync(join(bin, "sleep"), 0o755);
+    return bin;
+  }
+  function runStep(
+    step: Step,
+    dir: string,
+    env: Record<string, string>,
+  ): { status: number | null; calls: string[][]; summary: string; stderr: string } {
+    const reg = join(dir, "registry");
+    mkdirSync(reg, { recursive: true });
+    const log = join(dir, "npm.log");
+    writeFileSync(log, "");
+    const sum = join(dir, "sum");
+    writeFileSync(sum, "");
+    const r = spawnSync("bash", ["-c", step.run!], {
+      cwd: dir,
+      env: {
+        PATH: `${fakeBin(dir)}:${process.env.PATH!}`,
+        GITHUB_STEP_SUMMARY: sum,
+        FAKE_LOG: log,
+        FAKE_REGISTRY: reg,
+        ...env,
+      },
+      encoding: "utf8",
+    });
+    const calls = readFileSync(log, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as string[]);
+    return {
+      status: r.status,
+      calls,
+      summary: readFileSync(sum, "utf8"),
+      stderr: r.stdout + r.stderr,
+    };
+  }
+  const onRegistry = (dir: string, spec: string, version: string): void => {
+    mkdirSync(join(dir, "registry"), { recursive: true });
+    writeFileSync(join(dir, "registry", encodeURIComponent(spec)), version);
+  };
+  const publishes = (calls: string[][]): string[][] => calls.filter((c) => c[0] === "publish");
+
+  it("the version step passes when both packages and the root's pin are the tag's version", () => {
+    const dir = scratch();
+    packages(dir, "1.2.3", "1.2.3", "1.2.3");
+    expect(runStep(versions, dir, { VERSION: "1.2.3", GITHUB_REF_NAME: "v1.2.3" }).status).toBe(0);
+  });
+
+  it("the version step refuses any package, or the pin, off the tag's version", () => {
+    for (const [root, plugin, pin] of [
+      ["1.2.4", "1.2.3", "1.2.3"],
+      ["1.2.3", "1.2.4", "1.2.3"],
+      ["1.2.3", "1.2.3", "^1.2.3"],
+    ] as const) {
+      const dir = scratch();
+      packages(dir, root, plugin, pin);
+      const r = runStep(versions, dir, { VERSION: "1.2.3", GITHUB_REF_NAME: "v1.2.3" });
+      expect(r.status, `${root} ${plugin} ${pin}`).toBe(1);
+    }
+    const dir = scratch();
+    packages(dir, "1.2.3", "1.2.3", "1.2.3");
+    expect(runStep(versions, dir, { VERSION: "1.2.3", GITHUB_REF_NAME: "v1.2.4" }).status).toBe(1);
+  });
+
+  it("refuses an npm older than 11.5.1, which trusted publishing needs", () => {
+    const dir = scratch();
+    for (const [v, ok] of [
+      ["11.5.0", false],
+      ["10.9.2", false],
+      ["11.5.1", true],
+      ["11.10.0", true],
+      ["12.0.0", true],
+    ] as const)
+      expect(runStep(npmCheck, dir, { FAKE_NPM_VERSION: v }).status, v).toBe(ok ? 0 : 1);
+  });
+
+  // MUTATION: swap the two `release` lines — the root publishes first and this fails.
+  it("publishes the plugin first, then the app, under latest, with provenance on a public repo", () => {
+    const dir = scratch();
+    packages(dir, "1.2.3", "1.2.3", "1.2.3");
+    const r = runStep(publish, dir, { VERSION: "1.2.3", PUBLIC: "true", NODE_AUTH_TOKEN: "" });
+    expect(r.status, r.stderr).toBe(0);
+    expect(publishes(r.calls)).toEqual([
+      ["publish", "--workspace", "packages/pi-plugin", "--tag", "latest", "--provenance"],
+      ["publish", "--tag", "latest", "--provenance"],
+    ]);
+    expect(r.summary).toContain(
+      "`@quickchatai/pi-quickreview@1.2.3`: published under dist-tag latest",
+    );
+    expect(r.summary).toContain(
+      "`@quickchatai/quickreview@1.2.3`: published under dist-tag latest",
+    );
+    expect(r.summary).toContain("trusted publishing (OIDC)");
+    expect(r.summary.indexOf("pi-quickreview@")).toBeLessThan(r.summary.indexOf("/quickreview@"));
+  });
+
+  it("names the token login and passes no --provenance on a private repo", () => {
+    const dir = scratch();
+    packages(dir, "1.2.3", "1.2.3", "1.2.3");
+    const r = runStep(publish, dir, { VERSION: "1.2.3", PUBLIC: "false", NODE_AUTH_TOKEN: "t" });
+    expect(r.status, r.stderr).toBe(0);
+    for (const c of publishes(r.calls)) expect(c).not.toContain("--provenance");
+    expect(r.summary).toContain("the NPM_TOKEN secret");
+    expect(r.summary).toContain("provenance: no");
+  });
+
+  it("a prerelease goes under next and never moves latest", () => {
+    const dir = scratch();
+    packages(dir, "1.3.0-rc.1", "1.3.0-rc.1", "1.3.0-rc.1");
+    const r = runStep(publish, dir, { VERSION: "1.3.0-rc.1", PUBLIC: "true", NODE_AUTH_TOKEN: "" });
+    expect(r.status, r.stderr).toBe(0);
+    expect(publishes(r.calls)).toHaveLength(2);
+    for (const c of publishes(r.calls)) {
+      expect(c.slice(c.indexOf("--tag"), c.indexOf("--tag") + 2)).toEqual(["--tag", "next"]);
+      expect(c).not.toContain("latest");
+    }
+  });
+
+  // MUTATION: drop the on_registry check before `npm publish` — a re-run
+  // publishes twice and this fails.
+  it("skips a package whose exact version is already on the registry", () => {
+    const dir = scratch();
+    packages(dir, "1.2.3", "1.2.3", "1.2.3");
+    onRegistry(dir, "@quickchatai/pi-quickreview@1.2.3", "1.2.3");
+    const r = runStep(publish, dir, { VERSION: "1.2.3", PUBLIC: "true", NODE_AUTH_TOKEN: "" });
+    expect(r.status, r.stderr).toBe(0);
+    expect(publishes(r.calls)).toEqual([["publish", "--tag", "latest", "--provenance"]]);
+    expect(r.summary).toContain("`@quickchatai/pi-quickreview@1.2.3`: already on the registry");
+    // every view asks for the exact version, never the bare name
+    for (const c of r.calls.filter((c) => c[0] === "view")) expect(c[1]).toMatch(/@1\.2\.3$/);
+
+    const both = scratch();
+    packages(both, "1.2.3", "1.2.3", "1.2.3");
+    onRegistry(both, "@quickchatai/pi-quickreview@1.2.3", "1.2.3");
+    onRegistry(both, "@quickchatai/quickreview@1.2.3", "1.2.3");
+    const again = runStep(publish, both, { VERSION: "1.2.3", PUBLIC: "true", NODE_AUTH_TOKEN: "" });
+    expect(again.status, again.stderr).toBe(0);
+    expect(publishes(again.calls)).toEqual([]);
+  });
+
+  it("fails, and never publishes the app, when the plugin never becomes visible", () => {
+    const dir = scratch();
+    packages(dir, "1.2.3", "1.2.3", "1.2.3");
+    const r = runStep(publish, dir, {
+      VERSION: "1.2.3",
+      PUBLIC: "true",
+      NODE_AUTH_TOKEN: "",
+      FAKE_NEVER_VISIBLE: "1",
+    });
+    expect(r.status).toBe(1);
+    expect(publishes(r.calls)).toEqual([
+      ["publish", "--workspace", "packages/pi-plugin", "--tag", "latest", "--provenance"],
+    ]);
   });
 
   it("cleans up", () => {

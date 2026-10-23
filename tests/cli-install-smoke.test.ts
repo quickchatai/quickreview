@@ -6,7 +6,8 @@
 //
 // What it holds:
 //   - the CLI tarball carries what the app reads at runtime and nothing of the
-//     repo's tests, bench, docs, state or rulebook files;
+//     repo's tests, bench, docs, state or rulebook files: of src/bench only the
+//     three modules the app imports, and none of the operator-only scripts;
 //   - `qcr version --json` and `qcr review --preview --json` work on the
 //     shipped defaults, with no config and no login;
 //   - nothing is written inside the install: every file the runs keep lands
@@ -192,6 +193,25 @@ describe.skipIf(!BUILT)("the packed CLI (needs `npm run build`)", () => {
   const EXCLUDED_DIRS = ROOT_PKG.files
     .filter((f) => f.startsWith("!") && f.endsWith("/"))
     .map((f) => f.slice(1));
+  // The bench modules the app itself imports; the rest of the bench stays home.
+  const BENCH_KEPT = ["cost", "exec", "values"];
+  const benchKept = (e: string): boolean =>
+    BENCH_KEPT.some(
+      (m) => e === `package/src/bench/${m}.ts` || e === `package/dist/src/bench/${m}.js`,
+    );
+  // Operator-only scripts, named here rather than read off `files`, so dropping
+  // a negation there fails this test.
+  const OPERATOR_SCRIPTS = [
+    "cutover.sh",
+    "cutover-rehearsal.sh",
+    "worker-rehearsal.sh",
+    "worker-resume-rehearsal.sh",
+    "vm-postcutover-cleanup.sh",
+  ];
+  const SHIPPED_FIXTURES = [
+    "package/tests/fixtures/seed-manifest.json",
+    "package/tests/fixtures/regression-cases.json",
+  ];
   // MUTATION: drop the `files` allowlist — tests/, bench/ and docs/ ship.
   it("carries what the app reads at runtime, and none of the repo's tests, bench, docs or state", () => {
     for (const want of [
@@ -201,12 +221,16 @@ describe.skipIf(!BUILT)("the packed CLI (needs `npm run build`)", () => {
       "package/dist/src/cli.js",
       "package/extensions/cli/bash-guard.ts",
       "package/config.example.toml",
-      "package/tests/fixtures/seed-manifest.json",
+      ...SHIPPED_FIXTURES,
+      ...BENCH_KEPT.map((m) => `package/dist/src/bench/${m}.js`),
     ])
       expect(entries, want).toContain(want);
     const bad = entries.filter(
       (e) =>
-        (e.startsWith("package/tests/") && e !== "package/tests/fixtures/seed-manifest.json") ||
+        (e.startsWith("package/tests/") && !SHIPPED_FIXTURES.includes(e)) ||
+        // MUTATION: drop "!src/bench/**" from `files` — the bench sources ship and this fails.
+        (/^package\/(dist\/)?src\/bench\//.test(e) && !benchKept(e)) ||
+        OPERATOR_SCRIPTS.some((f) => e === `package/scripts/${f}`) ||
         /^package\/(bench|docs|state|wt|verdict|inject|digest|archive|commands|packages)\//.test(
           e,
         ) ||
