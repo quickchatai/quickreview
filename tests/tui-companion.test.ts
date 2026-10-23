@@ -374,6 +374,10 @@ describe("CompanionLifecycle argv", () => {
       `${app}/extensions/cli/muted-theme.ts`,
       "--theme",
       `${app}/extensions/muted-theme.json`,
+      // The login route, before the inject bridge: the day-open delivery meets
+      // a model on a login that exists, or the hint says which logins work.
+      "--extension",
+      `${app}/extensions/cli/login-route.ts`,
       // The inject bridge delivers the day-open message.
       "--extension",
       `${app}/extensions/cli/inject-bridge.ts`,

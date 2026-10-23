@@ -672,6 +672,13 @@ export class CompanionLifecycle {
       "--theme",
       `${ext}/muted-theme.json`,
       "--extension",
+      // The login route (extensions/login-route.ts), before the inject bridge so
+      // the day-open delivery meets a routed model: a companion whose model's
+      // provider has no login runs the same model on the other OpenAI login
+      // when that one exists, and a companion with no usable login at all says
+      // which logins work and leaves `/login` on its input line.
+      `${ext}/cli/login-route.ts`,
+      "--extension",
       // Day-open channel: the daemon's inject bridge, unmodified. It
       // drains its directory on session_start before it starts watching, so
       // the rollover can queue the opening message before pi is spawned and

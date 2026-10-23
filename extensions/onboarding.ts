@@ -39,6 +39,7 @@ import {
 } from "../src/onboard/engine.js";
 import { defaultSteps } from "../src/onboard/steps/index.js";
 import { locateConfig } from "../src/install.js";
+import { registerLoginRoute } from "./login-route.js";
 import {
   ONBOARD_FINISH_TOOL,
   ONBOARD_STATUS_TOOL,
@@ -213,7 +214,20 @@ export function createOnboarding(config: OnboardingConfig): ExtensionFactory {
   return (pi) => registerOnboarding(pi, config);
 }
 
+/**
+ * The onboarding session's first-run login: when pi has no usable model
+ * login, pi's own /login menu opens with a widget that says which logins work
+ * (any OpenAI one), and an OpenAI model whose provider has no login runs on
+ * the twin login that exists (extensions/login-route.ts). `qcr onboard`
+ * registers it with the tools; a host that builds its own onboarding
+ * extension over `toolDefinitions` + `registerQcrTool` calls it too.
+ */
+export function registerOnboardingSession(pi: ExtensionAPI): void {
+  registerLoginRoute(pi, { open: "submit" });
+}
+
 function registerOnboarding(pi: ExtensionAPI, config: OnboardingConfig): void {
+  registerOnboardingSession(pi);
   if (typeof pi.registerTool !== "function") {
     // Degrade loudly, never wedge: pi still starts, the guide can only talk.
     console.error(

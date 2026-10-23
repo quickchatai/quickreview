@@ -53,7 +53,14 @@ import { CONTEXT_PACK_FILE } from "@quickchatai/pi-quickreview/src/contextpack.j
 import { verifiedPayload } from "./session-command-payload.js";
 import { DEBUG_START_MESSAGE } from "./engine/debugpi.js";
 import { DEBUG_STATUS_NAME, debugSession, type DebugRoundSpec } from "./debuground.js";
-import { onTerminal, paneLaunch, prepareBorrowedAgent, takeoverEnv } from "./takeoverpi.js";
+import {
+  onTerminal,
+  paneLaunch,
+  prepareBorrowedAgent,
+  readLogin,
+  takeoverEnv,
+} from "./takeoverpi.js";
+import { routeModelSpecForLogin } from "@quickchatai/pi-quickreview/src/modelroute.js";
 
 export { DEBUG_START_MESSAGE };
 
@@ -225,6 +232,9 @@ export async function runDebugRoundPane(
     return 3;
   }
   const env = debugRoundEnv(procEnv, spec);
+  // An OpenAI model runs on the OpenAI login the borrowed copy holds
+  // (packages/pi-plugin/src/modelroute.ts): the spec's own provider when it is there.
+  spec = { ...spec, model: routeModelSpecForLogin(spec.model, readLogin(spec.borrow_dir), env) };
   const pi = paneLaunch(debugRoundArgv(spec), deps.piBin ?? spec.pi_bin);
   const launch = toolIsolation(pi.bin, pi.argv, procEnv);
   if ("refused" in launch) {
