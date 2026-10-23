@@ -341,6 +341,13 @@ const GUIDE_WHEN: Record<BuildMode, string> = {
     `where the repo writes one, the repo's guide is the only standard and this section does not apply. `,
 };
 
+/** How a finding against the guide anchors: a PR round cites the changed
+ * line; a scan reads whole files, so it cites the line in the code as it is. */
+const GUIDE_CITE: Record<BuildMode, string> = {
+  pr: `and cites the CHANGED line that breaks it, exactly as for a repo guide. `,
+  scan: `and cites the line that breaks it, exactly as for a repo guide. `,
+};
+
 function guideText(g: ProfileStyleGuide, mode: BuildMode): string {
   return (
     `\n## This repo's profile style guide (\`${g.file}\`)\n` +
@@ -348,7 +355,7 @@ function guideText(g: ProfileStyleGuide, mode: BuildMode): string {
     GUIDE_WHEN[mode] +
     `It is not a file in the repo: do not look for it at head — the guide is the text below, so "guide missing or unreadable at head, answer NONE" never applies to it. ` +
     `A \`${STYLE_LENS}\` finding against it quotes the rule verbatim and cites it as \`profile style guide ${g.file}\` in place of a repo file and line, ` +
-    `and cites the CHANGED line that breaks it, exactly as for a repo guide. ` +
+    GUIDE_CITE[mode] +
     `Validator: audit such a finding against this text as you would a repo guide — a rule it does not state is \`refuted\`, and so is a finding citing it in a round whose style row named the repo's own guide.\n\n` +
     `----- begin profile style guide -----\n${g.text.replace(/\n*$/, "\n")}----- end profile style guide -----\n`
   );

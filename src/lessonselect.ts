@@ -601,6 +601,7 @@ export class RoundLessonSelector implements RoundLessonHook {
       ledger.store.logEvent("lesson_repo_facts", q.pr, {
         purpose: q.purpose,
         status: o.status,
+        ...(o.status === "unreadable" ? { reason: o.reason } : {}),
         paths: paths.length,
         lessons: uris,
         cuts,
