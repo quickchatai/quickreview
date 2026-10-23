@@ -36,6 +36,7 @@ import {
   normalizeDisposition,
   recordNumber,
   recordSide,
+  recordEntries,
   recordString,
 } from "./findingkey.js";
 import {
@@ -112,13 +113,7 @@ interface Posted {
 const str = recordString;
 
 /** The supported record array spellings, in parser precedence order. */
-function entriesOf(rec: Record<string, unknown>): unknown[] | null {
-  return Array.isArray(rec.findings)
-    ? rec.findings
-    : Array.isArray(rec.candidates)
-      ? rec.candidates
-      : null;
-}
+const entriesOf = recordEntries;
 
 export function entriesById(entries: readonly unknown[]): Map<string, Record<string, unknown>> {
   const byId = new Map<string, Record<string, unknown>>();
@@ -554,7 +549,7 @@ export function applyPostingPolicyToRecord(
     (e) => {
       return {
         cls: postedClassOf(e),
-        severity: typeof e.severity === "string" && e.severity.trim() ? e.severity.trim() : null,
+        severity: str(e.severity),
         key: keys.get(e)!,
       };
     },
@@ -572,8 +567,7 @@ export function applyPostingPolicyToRecord(
       path,
       line,
       cls: postedClassOf(item, "withheld_as"),
-      severity:
-        typeof item.severity === "string" && item.severity.trim() ? item.severity.trim() : null,
+      severity: str(item.severity),
       title: effectiveTitle(item),
       inline: path !== null && line !== null && item.inline !== false,
     });
@@ -598,12 +592,13 @@ export function renderPostedReview(
   withheld: PolicyWithheld[];
 } {
   const { dedupMerge, policy, ...renderOpts } = opts;
+  const candidates =
+    typeof record === "object" && record !== null && !Array.isArray(record)
+      ? recordEntries(record as Record<string, unknown>)
+      : null;
   const normalized =
-    typeof record === "object" &&
-    record !== null &&
-    !Array.isArray((record as Record<string, unknown>).findings) &&
-    Array.isArray((record as Record<string, unknown>).candidates)
-      ? { ...record, findings: (record as Record<string, unknown>).candidates }
+    candidates !== null && !Array.isArray((record as Record<string, unknown>).findings)
+      ? { ...(record as object), findings: candidates }
       : record;
   const checked = dedupMerge
     ? postCheckRecord(normalized)
