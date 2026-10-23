@@ -21,19 +21,18 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  renameSync,
   rmSync,
   statSync,
-  writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import {
   companionConfigMirrorDir,
   CONFIG_FILE,
   companionGithubDir,
   configHome,
   KEYS_FILE,
+  homeProfileDirs,
   legacySecretsDir,
   locateConfig,
   locateKeysFile,
@@ -43,6 +42,7 @@ import {
   type InstallEnv,
 } from "../install.js";
 import type { CompanionConfig } from "../config.js";
+import { writeAtomic } from "../channelfs.js";
 import { appStamp } from "../appstamp.js";
 import { TOKEN_FILE } from "./ghread.js";
 
@@ -332,10 +332,7 @@ export function mirrorConfigFile(source: string | undefined, dir: string): Confi
       current = undefined;
     }
     if (current === text) return "unchanged";
-    mkdirSync(dir, { recursive: true });
-    const tmp = join(dir, `.${CONFIG_FILE}.tmp`);
-    writeFileSync(tmp, text);
-    renameSync(tmp, target);
+    writeAtomic(target, text);
     return "copied";
   } catch (err) {
     return { failed: err instanceof Error ? err.message : String(err) };
@@ -1166,15 +1163,13 @@ export class CompanionLifecycle {
     );
     // The locator also searches beside an explicit config file. Keep that
     // fallback beside the mirrored config without mounting its secret home.
-    const override = (this.installEnv().QCR_CONFIG ?? "").trim();
-    const adjacent = override
-      ? join(dirname(locateConfig({ env: this.installEnv() }).path), PROFILES_DIR)
-      : undefined;
+    const adjacent = homeProfileDirs(this.installEnv())[1];
     if (adjacent && adjacent !== homes.profiles && this.fs.exists(adjacent))
       spec.push({ dest: `${CONTAINER.configLive}/profiles`, source: adjacent, mode: "rw" });
     // The VM access (rule 8): exactly these three, read-only, present ones
     // only. An agent socket moves with every login, so a new path is mount
-    // drift and the container is recreated onto it.
+    // drift and the container is recreated onto it, unless the previous
+    // socket still exists (mountDrift keeps the live agent's mount).
     const ssh = this.sshSources();
     if (ssh.agent !== undefined) spec.push({ dest: SSH.agent, source: ssh.agent, mode: "ro" });
     if (ssh.config !== undefined) spec.push({ dest: SSH.config, source: ssh.config, mode: "ro" });
