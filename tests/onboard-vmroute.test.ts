@@ -711,6 +711,18 @@ describe("the deploy composes the real script, at full strictness", () => {
     expect(h.engine.choices()[VM_DEPLOY_CHOICE_KEY]).toBeUndefined();
   });
 
+  it("a release that shipped is recorded even when the container probe afterwards fails", async () => {
+    writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
+    const h = deployHarness({
+      choices: { ...VM_CHOICES, [VM_DEPLOY_CHOICE_KEY]: RECORD() },
+      containerState: "exited",
+    });
+    const result = await h.engine.runStep(VM_DEPLOY_STEP_ID, { version: V });
+    expect(result.ok).toBe(false);
+    expect(verbs(h.runs)).toContain(`release ${V}`);
+    expect(h.engine.choices()[VM_DEPLOY_CHOICE_KEY]).toMatchObject({ version: V });
+  });
+
   it("a pin mismatch is the same story — the script's refusal, unsoftened", async () => {
     writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
     const h = deployHarness({
@@ -891,6 +903,26 @@ describe("the ssh transport's probes and restart", () => {
     // The real one among siblings is found whatever the row order.
     const both = sshWith(() => ok("quickreview-sandbox-old exited\nquickreview-sandbox running\n")).ctx;
     expect((await stackTransportFor(both).containerChecks(null))[0]).toMatchObject({ ok: true });
+  });
+
+  it("checks a separately deployed memory sidecar, and says when it is stopped", async () => {
+    writeFileSync(
+      join(root, "config.toml"),
+      setTomlKey(
+        setTomlKey(exampleConfig, "github", "secrets_dir", secretsDir)!,
+        "tui",
+        "memory_container",
+        "quickreview-memory",
+      )!,
+    );
+    const { ctx } = sshWith((line) =>
+      line.includes("name=quickreview-memory")
+        ? ok("quickreview-memory exited\n")
+        : ok("quickreview-sandbox running\n"),
+    );
+    const checks = await stackTransportFor(ctx).containerChecks(null);
+    expect(checks[0]).toMatchObject({ name: "containers", ok: true });
+    expect(checks.find((c) => c.name === "memory-sidecar")).toMatchObject({ ok: false });
   });
 
   it("the health probe honours the step's health budget", async () => {

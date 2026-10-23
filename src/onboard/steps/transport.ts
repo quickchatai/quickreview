@@ -343,6 +343,39 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
                 `Fix: \`${logsCommand(200)}\` says why it stopped; re-running the deploy step recreates it`,
             },
       ];
+      // A separately deployed memory sidecar (`[tui] memory_container` names one
+      // other than the daemon's container) is part of the stack: the daemon's
+      // health answers without it, so a stopped sidecar is checked here.
+      if (memoryContainer !== facts.container) {
+        const mem = await remote([
+          ...dockerPrefix,
+          "ps",
+          "--all",
+          "--filter",
+          `name=${memoryContainer}`,
+          "--format",
+          "{{.Names}} {{.State}}",
+        ]);
+        const memState =
+          mem.code === 0 ? (psRows(mem.stdout).find((r) => r.name === memoryContainer)?.rest ?? "") : null;
+        checks.push(
+          memState !== null && /running|up/i.test(memState)
+            ? {
+                name: "memory-sidecar",
+                ok: true,
+                detail: `the ${memoryContainer} memory sidecar on ${facts.alias} is ${memState}`,
+              }
+            : {
+                name: "memory-sidecar",
+                ok: false,
+                detail:
+                  `the ${memoryContainer} memory sidecar (OpenViking, the review memory) on ${facts.alias} is ` +
+                  `${memState === null ? "unreadable (docker ps failed)" : memState || "not there at all"} — ` +
+                  `Fix: \`${sshCommandLine(facts.alias, [...dockerPrefix, "logs", "--tail", "200", memoryContainer])}\` says why it stopped; ` +
+                  "re-running the deploy step recreates it",
+              },
+        );
+      }
       // The VM route's ingress is cloudflared as a HOST service (the playbook
       // installs it), never a compose sidecar — so this is the only ingress
       // shape there is anything to check for here.
