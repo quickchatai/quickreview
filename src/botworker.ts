@@ -64,6 +64,7 @@ import {
   type EngineAuth,
 } from "./engine/auth.js";
 import { agentDirSettings } from "./engine/agentdir.js";
+import { COMMIT_VERDICT_RE } from "./engine/answerguard.js";
 import { NO_LENS, botSdkRuntime } from "./engine/botsdk.js";
 import { engineLensTools, type EngineLensTools } from "./engine/lens/engine-tools.js";
 import type { Permits } from "./engine/lens/permits.js";
@@ -206,7 +207,6 @@ export function jsonlHasMarker(file: string, marker: string): boolean {
   }
 }
 
-const COMMIT_VERDICT_RE = /(?:^|[\s/;&|(])commit-verdict\.sh(?:\s|$)/;
 const POST_RE = /(?:^|[\s/;&|(])(post-review|approve-pr|reply-thread)\.sh(?:\s|$)/;
 
 /** What the daemon wants to know of the session's work: a verdict committed, a

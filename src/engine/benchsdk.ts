@@ -13,15 +13,12 @@
 // LENSES. The main session gets our `lens` / `lens_wave` over the agents
 // `buildBenchAgents` wrote, run in this process on the same host.
 import { createBashGuard, bashGuardConfigFromEnv } from "../../extensions/bash-guard.js";
-import type { LensRuntimeKind } from "../config.js";
 import { roundLensConfig, roundLensTools } from "./lens/round-lens.js";
 import type { PiHostOptions, PiHost } from "./pisdk.js";
 import type { Runtime } from "./port.js";
 import { reviewSdkRuntime } from "./reviewsdk.js";
 
 export interface BenchSdkOptions {
-  /** Which lens tool the review round's main session gets. */
-  lens: LensRuntimeKind;
   /** `[pi] engine_wave`, with the engine lens tool: the round starts the planned
    * discovery wave itself (rule 9) and the main session joins it. Off: the main
    * session launches the wave. */
@@ -48,7 +45,7 @@ export function benchSdkRuntime(o: BenchSdkOptions): Runtime {
 /** The defect judge's runtime: no skill, no context file, no project-local file,
  * the no-exec bash guard the only extension, and no lens tool (a judge reads
  * code to check a claim). The spec's `tools` is its allowlist. */
-export function judgeSdkRuntime(o: Omit<BenchSdkOptions, "lens"> = {}): Runtime {
+export function judgeSdkRuntime(o: BenchSdkOptions = {}): Runtime {
   return reviewSdkRuntime({
     ...(o.makeHost ? { makeHost: o.makeHost } : {}),
     ...(o.processEnv ? { processEnv: o.processEnv } : {}),

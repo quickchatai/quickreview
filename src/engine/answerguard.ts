@@ -5,8 +5,8 @@
 // one thing the answer worker is never given, a verdict: an answer is not a round.
 import type { ExtensionAPI, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
-/** `scripts/commit-verdict.sh`, however a command line spells the path. */
-export const COMMIT_VERDICT_RE = /(?:^|[\s/;&|(])commit-verdict\.sh(?:\s|$)/;
+/** `scripts/commit-verdict.sh`, however a command line spells the path, shell-quoted included. */
+export const COMMIT_VERDICT_RE = /(?:^|[\s/;&|("'])commit-verdict\.sh(?:[\s;&|)"']|$)/;
 
 export const ANSWER_VERDICT_REASON =
   "an answer to the operator commits no verdict: a verdict belongs to a round";

@@ -137,7 +137,6 @@ async function engineLensRound(
   };
   const [first, ...rest] = script;
   const runtime = benchSdkRuntime({
-    lens: "engine",
     makeHost: fauxHost(
       [
         (c) => {
@@ -292,8 +291,7 @@ describe("a bench review round on the SDK with the engine's planned wave", () =>
     const lensWave = (): ReturnType<typeof fauxAssistantMessage> =>
       fauxAssistantMessage([fauxToolCall("lens_wave", {})], { stopReason: "toolUse" });
     const runtime = benchSdkRuntime({
-      lens: "engine",
-      plannedWave: true,
+        plannedWave: true,
       makeHost: fauxHost(
         [
           () => {
@@ -350,7 +348,7 @@ describe("a bench review round on the SDK with the engine's planned wave", () =>
 
   it("the engine setting without the wave leaves the launch to the main session", () => {
     expect(
-      (benchSdkRuntime({ lens: "engine", plannedWave: false }) as { engineLens?: unknown })
+      (benchSdkRuntime({ plannedWave: false }) as { engineLens?: unknown })
         .engineLens,
     ).toBeUndefined();
   });
