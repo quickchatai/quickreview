@@ -10,7 +10,7 @@
 //   :443   (QCR_STUB_HTTPS_PORT) HTTPS as api.github.com (the daemon's, mint-token.sh's and git's GitHub; the CA is
 //          handed to the containers as a file, so no code path is changed for the rehearsal)
 //   :8080  (QCR_STUB_HTTP_PORT) HTTP, the model: POST /v1/chat/completions (what pi's `local` provider speaks),
-//          and the admin routes: GET /admin/requests, POST /admin/mode, POST /admin/reset
+//          and the admin routes: GET /admin/requests, POST /admin/mode
 //
 // The model plays a PLAYBOOK, chosen by the admin `mode` and read off each request: it keeps
 // no per-request script, so a worker that is killed and replaced, or a lens leaf that asks
@@ -183,8 +183,7 @@ function oauth(req, res, raw) {
 // The model
 // ---------------------------------------------------------------------------------------
 
-const state = { mode: "round", requests: 0, hold: {}, bySession: new Map() };
-const requests = [];
+const state = { mode: "round", requests: 0, hold: {} };
 
 const sse = (d) => `data: ${JSON.stringify(d)}\n\n`;
 function stream(reply, n) {
@@ -502,7 +501,6 @@ function model(req, res, raw) {
   }
   if (req.method === "POST" && req.url.startsWith("/v1/chat/completions")) {
     const body = JSON.parse(raw);
-    requests.push(body);
     const r = reply(body, req.socket.remoteAddress);
     if (r.error) {
       res.writeHead(r.error, { "content-type": "application/json" });
