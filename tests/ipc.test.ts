@@ -45,6 +45,7 @@ import {
   encodeMessage,
 } from "../src/ipc/protocol.js";
 import { type RequestContext, IpcServer } from "../src/ipc/server.js";
+import { waitFor } from "./helpers/wait-for.js";
 
 const mode = (p: string): number => statSync(p).mode & 0o777;
 
@@ -225,7 +226,18 @@ describe("[P7.2a] capability handoff", () => {
       },
     );
     try {
-      await new Promise((r) => setTimeout(r, 150));
+      // the child has exec'd once its environ carries the fd number, and the fd is the file
+      const readable = (): boolean => {
+        try {
+          return (
+            readFileSync(`/proc/${child.pid}/environ`, "utf8").includes("QCR_IPC_CAP_FD") &&
+            readFileSync(`/proc/${child.pid}/fd/${CAP_FD_INDEX}`, "utf8") === cap
+          );
+        } catch {
+          return false;
+        }
+      };
+      await waitFor(readable, "the child to start with its capability fd");
       const environ = readFileSync(`/proc/${child.pid}/environ`, "utf8");
       const cmdline = readFileSync(`/proc/${child.pid}/cmdline`, "utf8");
       expect(environ).not.toContain(cap);
@@ -457,6 +469,7 @@ describe("[P7.2a] the server", () => {
     const lines: string[] = [];
     const dec = new LineDecoder();
     let closed = false;
+    let seen = 0;
     s.on("data", (b) => lines.push(...dec.push(b)));
     s.on("close", () => (closed = true));
     s.on("error", () => {});
@@ -468,7 +481,13 @@ describe("[P7.2a] the server", () => {
       },
       lines,
       isClosed: () => closed,
-      settle: () => new Promise((r) => setTimeout(r, 120)),
+      /** Wait for the next line the server sends (or the hang-up). */
+      settle: async () => {
+        await waitFor(() => closed || lines.length > seen, "the server's next line");
+        seen = lines.length;
+      },
+      /** Wait for the server to hang up; every line it sent first has arrived by then. */
+      hangUp: () => waitFor(() => closed, "the server to hang up", 5000),
     };
   }
 
@@ -533,7 +552,7 @@ describe("[P7.2a] the server", () => {
     await r.send(
       JSON.stringify({ v: IPC_VERSION, type: "hello", role: "worker", command_id: "c1" }) + "\n",
     );
-    await r.settle();
+    await r.hangUp();
     expect(JSON.parse(r.lines[0]!).error.code).toBe("bad_request");
     expect(r.isClosed()).toBe(true);
     expect(await code("c1", cap1)).toBe("connected");
@@ -545,11 +564,11 @@ describe("[P7.2a] the server", () => {
       JSON.stringify({ v: IPC_VERSION, type: "request", id: "1", op: "echo", generation: 1 }) +
         "\n",
     );
-    await r.settle();
+    await r.hangUp();
     expect(JSON.parse(r.lines[0]!)).toMatchObject({ type: "error", error: { code: "no_hello" } });
     expect(r.isClosed()).toBe(true);
     const silent = raw();
-    await new Promise((r2) => setTimeout(r2, 450));
+    await silent.hangUp();
     expect(silent.isClosed()).toBe(true);
   });
 
@@ -558,7 +577,7 @@ describe("[P7.2a] the server", () => {
     const cap = store.mint("c1");
     const r = raw();
     await r.send(hello("c1", cap, "2.0"));
-    await r.settle();
+    await r.hangUp();
     expect(JSON.parse(r.lines[0]!).error.code).toBe("unsupported_version");
     expect(r.isClosed()).toBe(true);
   });
@@ -573,7 +592,7 @@ describe("[P7.2a] the server", () => {
     await r.send(hello("c1", cap));
     await r.settle();
     await r.send("x".repeat(5000)); // over the 4096 bound, no newline
-    await r.settle();
+    await r.hangUp();
     expect(r.lines.map((l) => JSON.parse(l).error?.code)).toContain("line_too_long");
     expect(r.isClosed()).toBe(true);
     // The other connection is untouched.
@@ -677,21 +696,22 @@ describe("[P7.2a] the server", () => {
     w.onError((e) => errors.push(e));
     w.event("ready", { session_id: "s-1" });
     w.event("progress", { stage: "wave" });
-    await new Promise((r) => setTimeout(r, 100));
+    await waitFor(() => events.length === 2, "the worker's two events");
     expect(events).toEqual([
       { id: "c1", kind: "ready", body: { session_id: "s-1" } },
       { id: "c1", kind: "progress", body: { stage: "wave" } },
     ]);
     cmds.set("c1", 7, { generation: 2 });
     w.event("done");
-    await new Promise((r) => setTimeout(r, 100));
+    // the server answers in order: the error is the proof the event was handled (and dropped)
+    await waitFor(() => errors.length > 0, "the stale-generation error");
     expect(events).toHaveLength(2);
     expect(errors.map((e) => e.code)).toEqual(["stale_generation"]);
     const shim = await connect("c1", cap, { role: "shim", generation: 2 });
     const shimErrors: IpcError[] = [];
     shim.onError((e) => shimErrors.push(e));
     shim.event("posted");
-    await new Promise((r) => setTimeout(r, 100));
+    await waitFor(() => shimErrors.length > 0, "the forbidden error");
     expect(shimErrors.map((e) => e.code)).toEqual(["forbidden"]);
     expect(events).toHaveLength(2);
   });
@@ -701,8 +721,10 @@ describe("[P7.2a] the server", () => {
     cmds.set("c2", 8);
     const c1 = await connect("c1", store.mint("c1"));
     const c2 = await connect("c2", store.mint("c2"));
+    let c1Closed = false;
+    c1.onClose(() => (c1Closed = true));
     store.revoke("c1");
-    await new Promise((r) => setTimeout(r, 100));
+    await waitFor(() => c1Closed, "the revoked command's connection to close");
     await expect(c1.request("echo")).rejects.toMatchObject({ code: "closed" });
     expect(await c2.request("echo")).toMatchObject({ pr: 8 });
   });
@@ -714,7 +736,7 @@ describe("[P7.2a] the server", () => {
     w.onControl((k, b) => got.push([k, b]));
     expect(server.push("c1", "steer", { text: "look at x" })).toBe(1);
     expect(server.push("nobody", "abort")).toBe(0);
-    await new Promise((r) => setTimeout(r, 100));
+    await waitFor(() => got.length > 0, "the control message");
     expect(got).toEqual([["steer", { text: "look at x" }]]);
   });
 
