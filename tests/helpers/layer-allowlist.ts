@@ -8,7 +8,6 @@ export const UPWARD_EDGES_ALLOWED: readonly string[] = [
   "extensions/ledger-pin.ts -> src/pr-identity.ts",
   "src/cigate.ts -> src/statemachine.ts",
   "src/contextpack.ts -> src/memory/datafence.ts",
-  "src/depsources.ts -> pkg:x",
   "src/ecosystem.ts -> src/github.ts",
   "src/ecosystem.ts -> src/migrations.ts",
   "src/engine/budget.ts -> src/bench/cost.ts",

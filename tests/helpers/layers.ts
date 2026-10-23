@@ -175,7 +175,7 @@ export function fencedFiles(root: string): string[] {
  */
 export function runtimeSpecifiers(text: string): string[] {
   const js = ts.transpileModule(text, {
-    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, removeComments: true },
   }).outputText;
   const out = new Set<string>();
   for (const m of js.matchAll(
