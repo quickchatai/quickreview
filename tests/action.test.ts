@@ -305,6 +305,40 @@ function rig(opts: { workspace?: boolean } = {}): Rig {
 const sh = (verb: string, env: NodeJS.ProcessEnv) =>
   spawnSync("bash", [SCRIPT, verb], { env, encoding: "utf8" });
 
+describe("scripts/action.sh run — a root runner", () => {
+  // A fake `id` (root) and `chown` (logs its argv) ahead of the fake docker.
+  function withFakeRoot(r: Rig, asRoot: boolean): { env: NodeJS.ProcessEnv; log: string } {
+    const bin = join(r.dir, "rootbin");
+    mkdirSync(bin);
+    const log = join(r.dir, "chown.log");
+    if (asRoot) writeFileSync(join(bin, "id"), "#!/bin/sh\necho 0\n");
+    if (asRoot) chmodSync(join(bin, "id"), 0o755);
+    writeFileSync(join(bin, "chown"), `#!/bin/sh\nprintf '%s\\n' "$*" >>"${log}"\n`);
+    chmodSync(join(bin, "chown"), 0o755);
+    const env = r.env();
+    env.PATH = [bin, env.PATH].join(delimiter);
+    return { env, log };
+  }
+
+  it("hands the staged token and pi login to the uid the image drops to", () => {
+    const r = rig();
+    const { env, log } = withFakeRoot(r, true);
+    const res = sh("run", { ...env, QCR_ACTION_PI_AUTH: "{}" });
+    expect(res.status, res.stderr).toBe(0);
+    const lines = readFileSync(log, "utf8").trim().split("\n");
+    expect(lines.some((l) => /^-R 1000:1000 .*qcr-in\./.test(l))).toBe(true);
+    expect(lines.some((l) => /^-R 1000:1000 .*\/login$/.test(l))).toBe(true);
+  });
+
+  it("changes no ownership for a non-root runner", () => {
+    const r = rig();
+    const { env, log } = withFakeRoot(r, false);
+    const res = sh("run", env);
+    expect(res.status, res.stderr).toBe(0);
+    expect(existsSync(log)).toBe(false);
+  });
+});
+
 describe("scripts/action.sh run — the docker run line", () => {
   it("starts the pinned image as the review verb for the PR, in the action route", () => {
     const r = rig();

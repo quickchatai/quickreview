@@ -341,6 +341,11 @@ run_review() {
   # The token handoff: a 0600 file in a fresh 0700 directory.
   tokdir="$(umask 077 && mktemp -d "$w/qcr-in.XXXXXX")" || die "no private directory for the GitHub token under $w"
   (umask 077 && printf '%s' "$token" >"$tokdir/gh-token") || die "could not stage the GitHub token"
+  # A root runner reviews as 1000 and the image drops to that uid before it
+  # reads these, so the private staging is handed to it.
+  if [ "$(id -u)" = 0 ]; then
+    chown -R "$run_uid:$run_gid" "$tokdir" "$login_dir" || die "could not hand the staged credentials to uid $run_uid"
+  fi
 
   name="qcr-action-${GITHUB_RUN_ID:-local}-$$"
   local -a args=(docker run --rm --init --name "$name")
