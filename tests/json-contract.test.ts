@@ -121,6 +121,26 @@ describe("the committed golden outputs", () => {
     expect(validate(scan, g)).toEqual([]);
   });
 
+  it("a detached review that ended without output reports result:null", () => {
+    const done = golden("review-status-done");
+    expect(validate(review, { ...done, state: "stopped", exit_code: null, result: null })).toEqual(
+      [],
+    );
+  });
+
+  it("a detached scan start and a scan stop validate", () => {
+    const started = {
+      schema_version: 1,
+      ok: true,
+      run: { id: "scan-1", mode: "calibration", sha: SHA, cases: 3, cap_usd: 3 },
+      log: "/tmp/x.log",
+    };
+    expect(validate(scan, started)).toEqual([]);
+    const stopped = { schema_version: 1, ok: true, run: "scan-1", answer: "scan scan-1 stopped" };
+    expect(validate(scan, stopped)).toEqual([]);
+    expect(validate(scan, { ...stopped, run: 5 })).not.toEqual([]);
+  });
+
   it.skipIf(UPDATE)("version validates against version.v1", () => {
     expect(validate(versionSchema, golden("version"))).toEqual([]);
   });

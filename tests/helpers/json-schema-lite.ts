@@ -37,7 +37,7 @@ function typeMatches(want: string, v: unknown): boolean {
   return got === want || (want === "number" && got === "integer");
 }
 
-export function validate(schema: Schema, value: unknown): string[] {
+export function validate(schema: Schema, value: unknown, root: Schema = schema): string[] {
   const errors: string[] = [];
   const walk = (s: Schema, v: unknown, at: string): void => {
     for (const k of Object.keys(s)) if (!KNOWN.has(k)) throw new Error(`unsupported keyword ${k}`);
@@ -45,9 +45,9 @@ export function validate(schema: Schema, value: unknown): string[] {
       const m = /^#\/\$defs\/(.+)$/.exec(s["$ref"]);
       const target =
         s["$ref"] === "#"
-          ? schema
+          ? root
           : m
-            ? (schema["$defs"] as Record<string, Schema> | undefined)?.[m[1]!]
+            ? (root["$defs"] as Record<string, Schema> | undefined)?.[m[1]!]
             : undefined;
       if (!target) throw new Error(`unresolved ${s["$ref"]}`);
       walk(target, v, at);
@@ -75,7 +75,7 @@ export function validate(schema: Schema, value: unknown): string[] {
       const alts = s[key] as Schema[] | undefined;
       if (!alts) continue;
       const passing = alts.filter(
-        (a) => validate({ ...a, $defs: schema["$defs"] }, v).length === 0,
+        (a) => validate(a, v, root).length === 0,
       );
       if (key === "oneOf" ? passing.length !== 1 : passing.length === 0)
         errors.push(`${at}: matches ${passing.length} of the ${key} alternatives`);

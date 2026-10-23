@@ -165,7 +165,7 @@
       }
     },
     "result": {
-      "$ref": "#",
+      "anyOf": [{ "type": "null" }, { "$ref": "#" }],
       "description": "A finished detached run's last JSON line: the review's own result (null if it printed none)."
     },
     "timed_out": {

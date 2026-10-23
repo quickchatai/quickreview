@@ -30,123 +30,13 @@
       "description": "preview: the arguments that start this exact scan; null when a blocker stands in the way."
     },
     "run": {
-      "type": ["object", "null"],
-      "description": "status, start --foreground: the run, or null when none has run.",
-      "required": [
-        "id",
-        "mode",
-        "sha",
-        "state",
-        "display",
-        "started_at",
-        "cases_total",
-        "cases_done",
-        "cases_failed",
-        "findings",
-        "doubted",
-        "cases"
-      ],
-      "properties": {
-        "id": {
-          "type": "string"
-        },
-        "mode": {
-          "type": "string"
-        },
-        "sha": {
-          "type": "string"
-        },
-        "state": {
-          "type": "string"
-        },
-        "display": {
-          "type": "string"
-        },
-        "depth": {
-          "type": "string"
-        },
-        "started_at": {
-          "type": "string"
-        },
-        "finished_at": {
-          "type": ["string", "null"]
-        },
-        "cap_usd": {
-          "type": ["number", "null"]
-        },
-        "estimate_usd": {
-          "type": ["number", "null"]
-        },
-        "spent_usd": {
-          "type": ["number", "null"]
-        },
-        "unpriced_cases": {
-          "type": "integer"
-        },
-        "cases_total": {
-          "type": "integer"
-        },
-        "cases_done": {
-          "type": "integer"
-        },
-        "cases_failed": {
-          "type": "integer"
-        },
-        "findings": {
-          "type": "integer"
-        },
-        "doubted": {
-          "type": "integer"
-        },
-        "matching": {
-          "type": ["object", "null"]
-        },
-        "tickets_closed": {
-          "type": "integer"
-        },
-        "problems": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "cases": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["id", "unit", "status", "findings", "doubted", "cost_usd", "error"],
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "unit": {
-                "type": "string"
-              },
-              "status": {
-                "type": "string"
-              },
-              "findings": {
-                "type": "integer"
-              },
-              "doubted": {
-                "type": "integer"
-              },
-              "cost_usd": {
-                "type": ["number", "null"]
-              },
-              "error": {
-                "type": ["string", "null"]
-              },
-              "lens": {
-                "type": "string"
-              },
-              "tier": {
-                "type": ["string", "null"]
-              }
-            }
-          }
-        }
-      }
+      "description": "status, start --foreground: the run, or null when none has run. A detached start: a summary {id, mode, sha, cases (a count), cap_usd}. stop: the stopped run's id.",
+      "anyOf": [
+        { "type": "null" },
+        { "type": "string" },
+        { "$ref": "#/$defs/runStatus" },
+        { "$ref": "#/$defs/runStarted" }
+      ]
     },
     "problems": {
       "type": "array",
@@ -199,6 +89,135 @@
     }
   },
   "$defs": {
+    "runStatus": {
+        "type": "object",
+        "required": [
+          "id",
+          "mode",
+          "sha",
+          "state",
+          "display",
+          "started_at",
+          "cases_total",
+          "cases_done",
+          "cases_failed",
+          "findings",
+          "doubted",
+          "cases"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "sha": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "display": {
+            "type": "string"
+          },
+          "depth": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "finished_at": {
+            "type": ["string", "null"]
+          },
+          "cap_usd": {
+            "type": ["number", "null"]
+          },
+          "estimate_usd": {
+            "type": ["number", "null"]
+          },
+          "spent_usd": {
+            "type": ["number", "null"]
+          },
+          "unpriced_cases": {
+            "type": "integer"
+          },
+          "cases_total": {
+            "type": "integer"
+          },
+          "cases_done": {
+            "type": "integer"
+          },
+          "cases_failed": {
+            "type": "integer"
+          },
+          "findings": {
+            "type": "integer"
+          },
+          "doubted": {
+            "type": "integer"
+          },
+          "matching": {
+            "type": ["object", "null"]
+          },
+          "tickets_closed": {
+            "type": "integer"
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cases": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "unit", "status", "findings", "doubted", "cost_usd", "error"],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "unit": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "findings": {
+                  "type": "integer"
+                },
+                "doubted": {
+                  "type": "integer"
+                },
+                "cost_usd": {
+                  "type": ["number", "null"]
+                },
+                "error": {
+                  "type": ["string", "null"]
+                },
+                "lens": {
+                  "type": "string"
+                },
+                "tier": {
+                  "type": ["string", "null"]
+                }
+              }
+            }
+          }
+        }
+      },
+    "runStarted": {
+      "type": "object",
+      "required": ["id", "mode", "sha", "cases", "cap_usd"],
+      "properties": {
+        "id": { "type": "string" },
+        "mode": { "type": "string" },
+        "sha": { "type": "string" },
+        "cases": { "type": "integer" },
+        "cap_usd": { "type": "number" }
+      }
+    },
     "seen": {
       "type": "object",
       "required": ["run", "sha"],
