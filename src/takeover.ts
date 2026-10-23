@@ -152,6 +152,8 @@ export interface SweepReport {
 
 export class TakeoverManager {
   readonly leases: WorkerLeases;
+  /** PRs whose grant is still starting the pane. */
+  private readonly launching = new Set<number>();
   private readonly idleMs: number;
   private readonly proc: ProcView;
   private readonly signal: SignalFn;
@@ -253,6 +255,9 @@ export class TakeoverManager {
     });
     if (!granted.ok) return refuse(granted.reason);
 
+    // The row stands before its pane exists: the sweep leaves it alone until
+    // the launch has settled, or it reads the missing pane as an exited pi.
+    this.launching.add(pr);
     const session = takeoverSession(pr);
     let specFile: string | undefined;
     try {
@@ -285,8 +290,10 @@ export class TakeoverManager {
         await this.finish(row, "the takeover could not start");
       }
       if (specFile) rmQuiet(specFile);
+      this.launching.delete(pr);
       return refuse(`takeover of PR #${pr} failed: ${e instanceof Error ? e.message : String(e)}`);
     }
+    this.launching.delete(pr);
     this.log(`takeover: #${pr} granted to ${holder} (${session})`);
     return {
       ok: true,
@@ -412,7 +419,7 @@ export class TakeoverManager {
     const report: SweepReport = { released: [], stuck: [] };
     const { store, tmux } = this.deps;
     for (const row of store.hostLeases()) {
-      if (row.kind !== "takeover") continue;
+      if (row.kind !== "takeover" || this.launching.has(row.pr)) continue;
       let why: string | null = null;
       if (row.state === "ending") why = row.ending_why ?? "ending";
       else {
@@ -480,7 +487,11 @@ export class TakeoverManager {
         sleep: this.sleep,
         now: this.now,
       });
-      if (!out.survivors) this.leases.forget(session);
+      // Forgotten only once tmux is confirmed not to list the pane: a kill that
+      // failed against an unstarted lease (no pid to judge) leaves the pi alive.
+      if (out.survivors) continue;
+      const names = await this.deps.tmux.listSessionsKnown();
+      if (names !== null && !names.includes(session)) this.leases.forget(session);
     }
     return report;
   }

@@ -255,7 +255,7 @@ export async function runTakeover(specFile: string, deps: TakeoverRunDeps = {}):
     return 3;
   }
   const env = takeoverEnv(procEnv, spec);
-  const pi = paneLaunch(takeoverArgv(spec), deps.piBin);
+  const pi = paneLaunch(takeoverArgv(spec), deps.piBin ?? spec.pi_bin);
   const launch = toolIsolation(pi.bin, pi.argv, procEnv);
   if ("refused" in launch) {
     log(`takeover: ${launch.refused}`);
