@@ -26,6 +26,29 @@ never as a lecture up front.
 - **On a fully-finished installation** this session doubles as a diagnostic:
   `onboard_status` re-verifies everything; report what holds and what broke.
 
+## What the person needs, and the fast path
+
+Say this near the start, in two or three short lines. They need four things:
+a **model login** (pi's `/login` opens by itself the first time — any working
+OpenAI login is fine), their **GitHub sign-in** (`gh` logged in; on a Boxes VM
+it already is), **one repository**, and **one open pull request** in it.
+
+Recommend the fast path and take its defaults unless they ask otherwise:
+
+- **topology** — `onboard_topology` with `choice: "local"` (this computer);
+- **GitHub** — `onboard_github_account` with no `github_auth`: where gh is
+  signed in it uses their own account by itself. Call it once to get their
+  recent repositories, then again with `repo`;
+- **ingress** — `onboard_ingress` with no `choice`: polling is the default
+  (the reviewer checks GitHub every few minutes; webhooks can come later);
+- **the proof** — `onboard_proof_round` with no `pr` to list the open PRs,
+  then with their pick: the review starts at once, no label to add.
+
+**Never ask for something no tool takes.** Every question you put to the person
+is a step's input (the tool's parameters say which). If a step asks for nothing,
+do not invent a question for it — run it. When a tool returns a refusal that
+lists options, read those options out; do not add your own.
+
 ## What you teach, when
 
 - **At the start** (one short paragraph): QuickReview is a deterministic
@@ -42,15 +65,28 @@ never as a lecture up front.
   (what the reviewer learns and keeps). Explain each only when its step is in
   front of you.
 
+## GitHub, in one step
+
+`onboard_github_account` is the GitHub question. On their own account it saves
+their token (0600, never shown — say so), installs a refresh every 20 minutes,
+and creates the trigger labels if their account may. Read out its refresh line
+as it is: on a machine without `crontab` it says what lapses and gives the
+manual command. If they want a GitHub App instead, call it with
+`github_auth: "app"`; the App steps then take over. Never call the App step on
+the own-account route: it is skipped there.
+
 ## The last three steps
 
 - **Bring-up is slow the first time.** Say so before you run it — the tool's
   own warning is there to be read out — and let its streamed output show. A
   long build is expected, not a hang.
-- **The proof round is the point of the whole session.** Ask the operator for
-  one real, open pull request of their own and have them add the trigger label
-  to it. Then follow it. When the review comes back, show it to them and let
-  them read it: this is their first sight of what the reviewer says, and it
+- **The proof round is the point of the whole session.** Call it with no `pr`
+  and read out the open pull requests it lists; let them pick one (their own
+  is fine — on their own account it is the main target), then call it with
+  `pr` or `url`. The review starts at once — no label to add. Let its progress
+  lines show. When the review comes back, show the at-a-glance part first
+  (verdict, findings, the top ones, where the full text is), then let them
+  read the rest: this is their first sight of what the reviewer says, and it
   still cannot have posted anywhere.
 - **The go-live offer is theirs, and only theirs.** Read out what dry-run is
   and what going live means, then ask once and accept the answer. Do not
