@@ -302,6 +302,15 @@ describe("valid operator TOML rule spellings", () => {
     const out = patchEscalationSection("[escalation]", "[escalation]\nenabled = false\n");
     expect(out.match(/\[escalation\]/g)).toHaveLength(1);
   });
+  it("replaces a quoted escalation table header instead of adding a second table", () => {
+    for (const header of ['["escalation"]', "['escalation'] # mine"]) {
+      const out = patchEscalationSection(
+        `[review]\nx = 1\n${header}\nenabled = true\n[slack]\ny = 2\n`,
+        "[escalation]\nenabled = false\n",
+      );
+      expect(out).toBe("[review]\nx = 1\n[escalation]\nenabled = false\n[slack]\ny = 2\n");
+    }
+  });
   it("finds and preserves a rule whose header components are quoted", () => {
     const block = '[["escalation".\'rules\']] # operator rule\nname = "mine"\nto = "bob"\n';
     expect(foreignRuleBlocks(block)).toHaveLength(1);
