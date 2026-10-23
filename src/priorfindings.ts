@@ -37,7 +37,6 @@ import {
 } from "./findingsrecord.js";
 import { canonicalLensIds, storedLensIds } from "./lensids.js";
 import { fenceAsData } from "./memory/datafence.js";
-import { carriedToRef } from "./finding-chain.js";
 import { isPostedRow, predecessorOf } from "./outcomes.js";
 import { priorFindingFields } from "./priortasks.js";
 import { bareTag, ordinaryPostTag } from "./severity.js";
