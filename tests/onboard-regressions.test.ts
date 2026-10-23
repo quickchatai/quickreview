@@ -276,6 +276,40 @@ describe("onboarding regression seams", () => {
       ["release", "1.2.0"],
     ]);
   });
+  it("never ships the release version recorded for another host", async () => {
+    const c = ctx();
+    c.choices = {
+      topology: "vm",
+      vm_ssh_alias: "new-vm",
+      vm_deployed: {
+        mode: "release",
+        version: "1.2.0",
+        provisioned: true,
+        at: "2026-10-17T12:00:00Z",
+        host: "old-vm",
+      },
+    };
+    const secrets = join(root, "secrets");
+    mkdirSync(secrets);
+    writeFileSync(join(secrets, "openai_api_key"), "sk-proj-test0000000000000000000000000");
+    writeFileSync(
+      join(root, "config.toml"),
+      template.replace(/^secrets_dir = .*$/m, `secrets_dir = "${secrets}"`),
+    );
+    mkdirSync(join(root, "deploy", "ansible"), { recursive: true });
+    writeFileSync(join(root, "deploy", "ansible", "inventory.ini"), "[quickreview]\nnew-vm\n");
+    c.adapters.runner = {
+      run: async (cmd) =>
+        cmd === "ssh"
+          ? { code: 0, stdout: "quickreview-sandbox Up", stderr: "" }
+          : { code: 1, stdout: "", stderr: "No such object" },
+    };
+    const stream = { run: vi.fn(async () => ({ code: 0, stdout: "", stderr: "" })) };
+    await llmAuthStep({ transport: { stream } }).run(c);
+    expect(
+      stream.run.mock.calls.some((call) => (call as unknown[])[1]?.toString().includes("1.2.0")),
+    ).toBe(false);
+  });
   it("delivers changed model routing and persists a failed restart", async () => {
     const c = ctx();
     c.input = { route: "api" };

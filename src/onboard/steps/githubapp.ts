@@ -672,7 +672,10 @@ export async function convertManifestCode(
   return {
     ok: false,
     restart: false,
-    detail: `conversion failed (${apiError(r)}) — this looks transient; run the step again`,
+    detail:
+      `conversion failed (${apiError(r)}) — this looks transient; run the step again. ` +
+      "Running it again creates a fresh App, so GitHub may still hold the one this run created: check your " +
+      "GitHub App settings and delete an App this run left behind before retrying.",
   };
 }
 
@@ -896,7 +899,12 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
   const pollIntervalMs = opts.installPollIntervalMs ?? 15_000;
 
   function resolveInputs(ctx: StepContext): Resolved | string {
-    const repo = parseRepoSlug(ctx.choices[CHOICE_KEYS.repo]);
+    // Config first, like the labels: a repository edited straight into
+    // config.toml is the one the daemon watches, so it is the one verified.
+    const config = readTextOrNull(ctx.adapters.paths.configPath);
+    const repo =
+      parseRepoSlug(config !== null ? readTomlKey(config, "github", "repo") : null) ??
+      parseRepoSlug(ctx.choices[CHOICE_KEYS.repo]);
     if (!repo) {
       // Reachable only when the interview genuinely has not run (or its answer
       // is unusable): CONFIG_FILL_STEP_ID is the step that records this key,
@@ -1360,6 +1368,25 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
 
       const target = await resolveTarget(ctx, r);
       const created = await createApp(ctx, r, target);
+      // A creation lands all three files, so surviving ones of an incomplete
+      // set are replaced by the new App's: say so.
+      const surviving = (
+        [
+          [SECRET_FILES.appId, existing.appId],
+          [SECRET_FILES.pem, existing.pem],
+          [SECRET_FILES.webhookSecret, existing.webhookSecret],
+        ] as const
+      )
+        .filter(([, value]) => value !== null)
+        .map(([name]) => name);
+      if (surviving.length > 0)
+        created.unshift({
+          name: "credentials replaced",
+          ok: true,
+          detail:
+            `${r.secretsDir} held an incomplete credential set (${existing.problems.join("; ")}); ` +
+            `${surviving.join(", ")} ${surviving.length === 1 ? "was" : "were"} replaced by the new App's credentials if its creation succeeded`,
+        });
       if (!created.every((c) => c.ok)) {
         created.push(orgCaveat(target));
         return { ok: false, checks: created };

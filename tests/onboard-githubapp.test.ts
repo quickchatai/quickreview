@@ -553,6 +553,22 @@ describe("happy path: one click to a credentialed, installed, labelled App", () 
 // ---- failure paths ------------------------------------------------------------
 
 describe("expired / stale / single-use codes", () => {
+  it("a transient conversion failure warns that GitHub may hold an orphan App", async () => {
+    const s = ghState({ conversion: { status: 500, body: { message: "boom" } } });
+    const { report } = await runStep(s, fakeServer({ code: "c" }).factory);
+    expect(report.ok).toBe(false);
+    expect(detail(report.checks, "manifest exchange")).toMatch(
+      /delete an App this run left behind/,
+    );
+  });
+
+  it("says which surviving credentials a creation replaces when the set was incomplete", async () => {
+    writeFileSync(join(secretsDir, SECRET_FILES.appId), "999\n");
+    const s = ghState();
+    const { report } = await runStep(s, fakeServer({ code: "c" }).factory);
+    expect(detail(report.checks, "credentials replaced")).toMatch(/app_id.*replaced/);
+  });
+
   it("a 404 conversion is plain guidance with a restart, and writes nothing", async () => {
     const s = ghState({ conversion: { status: 404, body: { message: "Not Found" } } });
     const server = fakeServer({ code: "stale-code" });
@@ -706,6 +722,21 @@ describe("labels are idempotent", () => {
     expect(report.ok).toBe(true);
     expect(state.labels.has("current-trigger")).toBe(true);
     expect(state.labels.has("stale-trigger")).toBe(false);
+  });
+
+  it("uses the current config repository ahead of the recorded one", async () => {
+    const path = join(stateDir, "current-repo.toml");
+    writeFileSync(path, '[github]\nrepo = "acme/moved"\n');
+    const state = ghState();
+    await runStep(
+      state,
+      fakeServer({ code: "c" }).factory,
+      {},
+      {},
+      { paths: { stateDir, configPath: path } },
+    );
+    expect(state.calls).toContain("POST /repos/acme/moved/labels");
+    expect(state.calls.some((c) => c.includes("/repos/acme/widgets"))).toBe(false);
   });
 
   it("keeps an unrecorded existing App target unknown in approval guidance", async () => {

@@ -162,6 +162,29 @@ function withoutRuleBlocks(toml: string): string {
     .reduce((text, block) => text.slice(0, block.start) + text.slice(block.end), toml);
 }
 
+/** The `[escalation]` table header, found through TOML's own quoted-key grammar
+ * (`["escalation"]` and `['escalation']` name the same table). */
+function escalationHeader(toml: string): { index: number; 0: string } | null {
+  let offset = 0;
+  for (const line of toml.split("\n")) {
+    const length = line.length + 1;
+    if (/^[ \t]*\[(?!\[)/.test(line)) {
+      try {
+        const doc = parseToml(`${line}\n__qcr_table_header__ = true\n`) as {
+          escalation?: Record<string, unknown>;
+        };
+        const keys = Object.keys(doc);
+        if (keys.length === 1 && doc.escalation?.["__qcr_table_header__"] === true)
+          return { index: offset, 0: toml.slice(offset, offset + length) };
+      } catch {
+        // not a header this grammar accepts
+      }
+    }
+    offset += length;
+  }
+  return null;
+}
+
 /**
  * Replace the `[escalation]` table AND every `[[escalation.rules]]` block in
  * the document with `body`. Every rule block is removed wherever it sits —
@@ -175,7 +198,7 @@ function withoutRuleBlocks(toml: string): string {
  */
 export function patchEscalationSection(original: string, body: string): string {
   const toml = withoutRuleBlocks(original);
-  const header = /^[ \t]*\[[ \t]*escalation[ \t]*\][^\n]*(?:\n|$)/m.exec(toml);
+  const header = escalationHeader(toml);
   // TOML allows whitespace before a header, inside its brackets and a comment
   // after it — every spelling of the next table ends the section, or the
   // rewrite would swallow it.

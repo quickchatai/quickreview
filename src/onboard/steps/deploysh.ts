@@ -23,6 +23,7 @@
 // it said — never to soften it.
 import { join } from "node:path";
 import { CHOICE_KEYS } from "../choices.js";
+import { sshAliasOf } from "./topology.js";
 
 /** `provision` installs the host (packages, Docker, secrets, the updater) and
  * ships no image; `release <version>` is the deploy (CI built the image once
@@ -47,6 +48,9 @@ export function releaseVersionOf(raw: unknown): string | null {
 export function recordedReleaseVersion(choices: Readonly<Record<string, unknown>>): string | null {
   const rec = choices[CHOICE_KEYS.vmDeployed];
   if (typeof rec !== "object" || rec === null) return null;
+  // A record is the target host's own: one written for another alias is no
+  // version to ship to the host the topology names now.
+  if ((rec as Record<string, unknown>).host !== sshAliasOf(choices)) return null;
   return releaseVersionOf((rec as Record<string, unknown>).version);
 }
 
