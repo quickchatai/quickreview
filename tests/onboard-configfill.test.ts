@@ -1047,3 +1047,17 @@ describe("semantically kept TOML scalar spellings", () => {
     },
   );
 });
+
+describe("interview validators agree with the sibling steps' predicates", () => {
+  it("refuses an ssh alias with a leading dash (ssh reads it as an option)", () => {
+    const q = QUESTIONS.find((x) => x.id === "ssh_host")!;
+    expect(q.validate("-host")).not.toBeNull();
+    expect(q.validate("my-vm")).toBeNull();
+  });
+
+  it("refuses a hostname label longer than 63 characters", () => {
+    const q = QUESTIONS.find((x) => x.id === "webhook_hostname")!;
+    expect(q.validate(`${"a".repeat(64)}.com`)).not.toBeNull();
+    expect(q.validate("Review.Example.com")).toBeNull();
+  });
+});

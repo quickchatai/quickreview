@@ -37,9 +37,11 @@
 // I/O: answers come as the tool's arguments (`ctx.input`, one string per
 // question id — the pi-driven wizard has no prompter), through the engine's
 // `prompter` adapter (the non-LLM fallback entry), or from choices a sibling
-// step already recorded; config reads/writes are plain files under the
-// sandbox root derived from `adapters.paths.stateDir`. Tests point stateDir at
-// a temp dir and fake the prompter — no network, no docker, no real repo write.
+// step already recorded; the config is read and written at
+// `adapters.paths.configPath` (the install-located file), the template and state
+// files live under the sandbox root derived from `adapters.paths.stateDir`.
+// Tests point both at a temp dir and fake the prompter — no network, no docker,
+// no real repo write.
 import { parse as parseToml } from "smol-toml";
 import { splitTail, tomlValueAt } from "../toml.js";
 export { splitTail } from "../toml.js";
@@ -74,7 +76,8 @@ import {
 } from "../engine.js";
 import { deliverConfigChange, configDeliveryChecks } from "./configdelivery.js";
 import type { TransportOptions } from "./transport.js";
-import { readTomlKey, secretsDirFor } from "./ingress.js";
+import { BARE_HOSTNAME_RE, readTomlKey, secretsDirFor } from "./ingress.js";
+import { SSH_ALIAS_RE } from "./topology.js";
 
 export const CONFIG_FILL_STEP_ID = "config_fill";
 
@@ -436,7 +439,7 @@ export const QUESTIONS: readonly Question[] = [
     asked: (choices) => str(choices, CHOICE_KEYS.topology) === "vm",
     read: (cfg) => cfg.tui.ssh_host,
     validate: (v) =>
-      /^[A-Za-z0-9._-]+$/.test(v)
+      SSH_ALIAS_RE.test(v)
         ? null
         : "an ssh alias as it appears in ~/.ssh/config — a Host name, not a URL",
   },
@@ -457,7 +460,7 @@ export const QUESTIONS: readonly Question[] = [
     },
     read: (cfg) => cfg.server.hostname,
     validate: (v) =>
-      /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$/.test(v)
+      BARE_HOSTNAME_RE.test(v)
         ? null
         : 'a bare hostname like "review.example.com" — no scheme, no path',
   },
