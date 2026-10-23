@@ -185,6 +185,7 @@ export class GithubIssueSink implements IssueSink {
         // A concurrent reader can see the daemon still writing its receipt.
         continue;
       }
+      if (typeof result !== "object" || result === null || Array.isArray(result)) continue;
       if (
         result.ok !== true &&
         typeof result.duplicate_of === "number" &&

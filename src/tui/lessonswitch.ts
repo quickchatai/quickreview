@@ -96,6 +96,7 @@ export class LessonSwitchSender {
         // A concurrent reader can see the daemon still writing its receipt.
         continue;
       }
+      if (typeof v !== "object" || v === null || Array.isArray(v)) continue;
       const issuer =
         v["issuer"] === "operator" || v["issuer"] === "session" ? v["issuer"] : undefined;
       if (v["ok"] !== true)
