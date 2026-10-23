@@ -538,14 +538,14 @@ const HOLD_WORDS: Record<ArchiveHoldReason, string> = {
 };
 
 /** The backlog phrase: the numbers, or UNKNOWN — never 0 for "not planned". */
-export function backlogPhrase(s: ArchiveStatus): string {
+export function backlogPhrase(s: Pick<ArchiveStatus, "backlog" | "plan_at">): string {
   const b = s.backlog;
   if (!b) return "backlog UNKNOWN (no plan has completed yet)";
   return `backlog ${b.prs} PR(s) · ${fmtBytes(b.bytes)} · ${fmtCount(b.event_rows)} event row(s) · ${fmtCount(b.delivery_rows)} delivery row(s)${s.plan_at ? ` (planned ${s.plan_at})` : ""}`;
 }
 
 /** The DB phase in a few words; "" before it has run. */
-export function dbPhrase(s: ArchiveStatus): string {
+export function dbPhrase(s: Pick<ArchiveStatus, "db">): string {
   const d = s.db;
   if (!d) return "";
   const moved = `db: ${fmtCount(d.events_moved)} event / ${fmtCount(d.deliveries_moved)} delivery row(s) moved last run`;
@@ -566,7 +566,7 @@ export function dbPhrase(s: ArchiveStatus): string {
 }
 
 /** The file phase in a few words; "" before it has run. */
-export function filesPhrase(s: ArchiveStatus): string {
+export function filesPhrase(s: Pick<ArchiveStatus, "files">): string {
   const f = s.files;
   if (!f) return "";
   if (f.outcome === "failed") return `files FAILED at ${f.last_run_at}`;
