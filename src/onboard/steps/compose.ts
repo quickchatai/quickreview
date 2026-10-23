@@ -74,6 +74,9 @@ export const MEMORY_IMAGE_REPO = "ghcr.io/quickchatai/quickreview-memory";
 
 export { CONTAINER_STATE_DIR };
 export const CONTAINER_DRYRUN_DIR = `${CONTAINER_STATE_DIR}/dryrun`;
+/** The daemon's command root in the release image (`<root>/commands`, with the
+ * root-sealed `operator/` under it and the result files in `results/`). */
+export const CONTAINER_COMMANDS_DIR = "/opt/qcr/commands";
 
 /** `<sandbox root>` — the engine's contract is stateDir = `<root>/state`. */
 export function rootOf(adapters: OnboardAdapters): string {
@@ -155,6 +158,12 @@ export function composeTail(profile: string, rest: readonly string[]): string[] 
 /** `docker compose exec -T daemon <argv…>` — `-T` because there is no TTY. */
 export function daemonExecArgs(root: string, argv: readonly string[]): string[] {
   return composeArgs(root, ["exec", "-T", DAEMON_SERVICE, ...argv]);
+}
+
+/** The same exec as uid 0 — the operator seal on `commands/operator/`, which
+ * the daemon's own uid (every session's) can read but not write. */
+export function daemonRootExecArgs(root: string, argv: readonly string[]): string[] {
+  return composeArgs(root, ["exec", "-T", "-u", "0", DAEMON_SERVICE, ...argv]);
 }
 
 export async function daemonExec(

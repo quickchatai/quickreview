@@ -37,6 +37,7 @@ import {
   composePs,
   containerStateCheck,
   daemonExecArgs,
+  daemonRootExecArgs,
   healthUrl,
   memoryOn,
   isUp,
@@ -87,6 +88,10 @@ export interface StackTransport {
   daemonState(): Promise<DaemonState>;
   /** Run an argv INSIDE the daemon container. */
   exec(argv: readonly string[]): Promise<ProcessResult>;
+  /** The same, as uid 0: the one way to write the root-sealed operator
+   * command directory (`commands/operator/`), as `qcr drain` and the TUI's
+   * levers do. Used for the operator's own commands only. */
+  execAsRoot(argv: readonly string[]): Promise<ProcessResult>;
   /** Run an argv INSIDE the container that owns the memory engine: the memory
    * sidecar on the compose stack, `[tui] memory_container` (else the daemon's
    * container) on the server route. */
@@ -153,6 +158,10 @@ function composeTransport(ctx: StepContext, opts: TransportOptions): StackTransp
 
     async exec(argv) {
       return ctx.adapters.runner.run("docker", daemonExecArgs(root, argv));
+    },
+
+    async execAsRoot(argv) {
+      return ctx.adapters.runner.run("docker", daemonRootExecArgs(root, argv));
     },
 
     async execMemory(argv) {
@@ -463,6 +472,12 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
       if (facts.alias === "")
         return { code: 1, stdout: "", stderr: "no ssh alias recorded for the server route" };
       return remote([...dockerPrefix, "exec", facts.container, ...argv]);
+    },
+
+    async execAsRoot(argv) {
+      if (facts.alias === "")
+        return { code: 1, stdout: "", stderr: "no ssh alias recorded for the server route" };
+      return remote([...dockerPrefix, "exec", "-u", "0", facts.container, ...argv]);
     },
 
     async execMemory(argv) {
