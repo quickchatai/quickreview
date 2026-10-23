@@ -182,6 +182,28 @@ describe("postCheckRecord — one root cause posted twice becomes one comment", 
     expect(f[2]).toMatchObject({ disposition: "posted" });
     expect(f[2]!.body).toBe("B body\n\nAlso at `a.ts:10`.\n\nAlso at `a.ts:11`.");
   });
+  it("a lead merged on an earlier render hands on the sites of followers already merged into it", () => {
+    const entry = (id: string, posted_as: string, severity: string, line: number) => ({
+      id,
+      disposition: "posted",
+      posted_as,
+      severity,
+      path: "a.ts",
+      line,
+      group: `G-${id}`,
+      title: "`retry` misbehaves",
+      body: `${id} body`,
+    });
+    const first = postCheckRecord({
+      findings: [entry("Q", "question", "P2", 10), entry("N", "nit", "P3", 11)],
+    }).record as { findings: Array<Record<string, unknown>> };
+    const { record } = postCheckRecord({
+      findings: [...first.findings, entry("B", "blocker", "P1", 12)],
+    });
+    const f = (record as { findings: Array<Record<string, unknown>> }).findings;
+    expect(f[2]).toMatchObject({ id: "B", disposition: "posted" });
+    expect(f[2]!.body).toBe("B body\n\nAlso at `a.ts:10`.\n\nAlso at `a.ts:11`.");
+  });
   it("is a no-op (same object) when nothing merges", () => {
     const r = {
       findings: [

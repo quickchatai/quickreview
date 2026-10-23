@@ -677,10 +677,22 @@ function addLink(lock: NpmLock, name: string, scope: string): void {
 
 /** Does `name` resolve to a local package for a file at `relInLockDir`? */
 function isLinked(lock: NpmLock, name: string, relInLockDir: string): boolean {
-  if (lock.links.has(name)) return true;
-  return (lock.scopedLinks.get(name) ?? []).some(
-    (scope) => relInLockDir === scope || relInLockDir.startsWith(`${scope}/`),
+  const covers = (scope: string): boolean =>
+    relInLockDir === scope || relInLockDir.startsWith(`${scope}/`);
+  // Node resolves from the NEAREST node_modules: a link is the answer only
+  // when no installed copy sits in a deeper workspace that also holds the file.
+  const linkDepth = Math.max(
+    lock.links.has(name) ? 0 : -1,
+    ...(lock.scopedLinks.get(name) ?? []).filter(covers).map((scope) => scope.length),
   );
+  if (linkDepth < 0) return false;
+  const copyDepth = Math.max(
+    -1,
+    ...(lock.entries.get(name) ?? [])
+      .filter((e) => e.scope && covers(e.scope))
+      .map((e) => e.scope?.length ?? 0),
+  );
+  return linkDepth >= copyDepth;
 }
 
 /** Per lock: `(name, version, scope, foreign)` → its entry plus the spec set,
@@ -1255,6 +1267,13 @@ function tomlStrings(line: string): string[] {
   return [...line.matchAll(TOML_STRING_RE)].map((m) => m[1] ?? m[2] ?? "");
 }
 
+/** The string tokens of a PEP 621 / PEP 735 array line, leaving out inline
+ * tables (`{ include-group = "test" }` names a group, not a requirement). */
+const TOML_INLINE_TABLE_RE = /\{(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^}"'])*\}/g;
+function requirementStrings(line: string): string[] {
+  return tomlStrings(line.replace(TOML_INLINE_TABLE_RE, ""));
+}
+
 /**
  * pyproject.toml dependency declarations: PEP 621 `[project] dependencies`
  * and `[project.optional-dependencies]`, PEP 735 `[dependency-groups]`,
@@ -1274,7 +1293,7 @@ export function parsePyprojectDeps(text: string, publicSources?: Set<string>): M
     const line = raw.trim();
     if (!line || line.startsWith("#")) continue;
     if (inArray) {
-      for (const s of tomlStrings(line)) add(s);
+      for (const s of requirementStrings(line)) add(s);
       if (stripTomlStrings(line).includes("]")) inArray = false;
       continue;
     }
@@ -1290,7 +1309,7 @@ export function parsePyprojectDeps(text: string, publicSources?: Set<string>): M
       (table === "tool.uv" && /^dev-dependencies\s*=/.test(line));
     if (pep621) {
       const after = line.slice(line.indexOf("=") + 1);
-      for (const s of tomlStrings(after)) add(s);
+      for (const s of requirementStrings(after)) add(s);
       if (!stripTomlStrings(after).includes("]")) inArray = true;
       continue;
     }
@@ -3111,18 +3130,21 @@ function verifyNpmIntegrity(
   shasum: string | undefined,
 ): boolean | null {
   if (integrity) {
-    const byAlg = new Map<string, string>();
+    const byAlg = new Map<string, string[]>();
     for (const tok of integrity.trim().split(/\s+/)) {
       const dash = tok.indexOf("-");
-      if (dash > 0)
-        byAlg.set(
-          tok.slice(0, dash).toLowerCase(),
+      if (dash > 0) {
+        const alg = tok.slice(0, dash).toLowerCase();
+        byAlg.set(alg, [
+          ...(byAlg.get(alg) ?? []),
           (tok.slice(dash + 1).split("?")[0] ?? "").trim(),
-        );
+        ]);
+      }
     }
     for (const alg of ["sha512", "sha384", "sha256", "sha1"]) {
-      const want = byAlg.get(alg);
-      if (want) return createHash(alg).update(buf).digest("base64") === want;
+      const want = byAlg.get(alg)?.filter(Boolean);
+      // SRI: any digest of the strongest algorithm present may match.
+      if (want?.length) return want.includes(createHash(alg).update(buf).digest("base64"));
     }
   }
   if (shasum) return createHash("sha1").update(buf).digest("hex") === shasum.toLowerCase();

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import {
+  parsePyprojectDeps,
   planDependencyRequests,
   pyVersionMatches,
   prepareDependencySources,
@@ -86,6 +87,30 @@ it("a nearer installed copy wins over an ancestor workspace link", () => {
   expect(planDependencyRequests(root, [{ filename: "apps/api/app.js" }])[0]).toMatchObject({
     version: "2.0.0",
   });
+});
+it("a nearer registry copy in the same lockfile wins over a root workspace link", () => {
+  const root = tree({
+    "package.json": JSON.stringify({ dependencies: { thing: "*" } }),
+    "package-lock.json": JSON.stringify({
+      lockfileVersion: 3,
+      packages: {
+        "node_modules/thing": { link: true, resolved: "packages/thing" },
+        "packages/web": { name: "web", version: "1.0.0" },
+        "packages/web/node_modules/thing": { version: "2.0.0" },
+      },
+    }),
+    "packages/web/package.json": JSON.stringify({ dependencies: { thing: "*" } }),
+    "packages/web/app.js": "import thing from 'thing';",
+  });
+  expect(planDependencyRequests(root, [{ filename: "packages/web/app.js" }])[0]).toMatchObject({
+    version: "2.0.0",
+  });
+});
+it("a pyproject include-group directive is not a requirement", () => {
+  const deps = parsePyprojectDeps(
+    '[dependency-groups]\ntest = ["pytest>=8"]\ndev = [{ include-group = "test" }]\n',
+  );
+  expect([...deps.keys()]).toEqual(["pytest"]);
 });
 it("compares Python epochs before release numbers", () => {
   expect(pyVersionMatches("2.0", ">=1!1.0")).toBe(false);
