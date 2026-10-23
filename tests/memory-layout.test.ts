@@ -1124,6 +1124,7 @@ describe("the round context block searches experiences/ only", () => {
     expect(inRoundSearchScope(`${ROOT}/experiences/.overview.md`)).toBe(false);
     expect(inRoundSearchScope(`${ROOT}/experiences/sub/x.md`)).toBe(false);
     expect(inRoundSearchScope(`${ROOT}/experiences/`)).toBe(false);
+    expect(inRoundSearchScope(`${ROOT}/experiences/x.txt`)).toBe(false);
   });
 
   it("never recalls import identity records or their engine summaries", async () => {
