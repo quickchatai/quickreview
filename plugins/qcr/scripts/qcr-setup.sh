@@ -74,8 +74,9 @@ else
   user="$(gh api user --jq .login)" || die "gh could not tell who you are — sign in with: gh auth login"
   gh auth token | docker login ghcr.io -u "$user" --password-stdin >/dev/null ||
     die "docker login ghcr.io failed"
-  docker manifest inspect "$IMAGE" >/dev/null 2>&1 ||
-    die "logged in, but $IMAGE is still not pullable — ask the owner for access to the package"
+  if ! why="$(docker manifest inspect "$IMAGE" 2>&1 >/dev/null)"; then
+    die "logged in, but $IMAGE is still not pullable (docker said: $why) — if it is a permission error, ask the owner for access to the package"
+  fi
   say "logged in to ghcr.io"
 fi
 
