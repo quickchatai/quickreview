@@ -92,7 +92,7 @@ import { LENS_PLANNING } from "./lensplanning.js";
 import { writeLessonFiles, writePassTasks } from "./passtasks.js";
 import { CONTEXT_PACK_FILE, readWorktreeFileForPack, renderContextPack } from "./contextpack.js";
 import { renderGateNotes } from "./templates.js";
-import { directiveVocabulary, isFirstPartyDirectivePath } from "./severity.js";
+import { firstPartyDirectiveFiles } from "./severity.js";
 import type { DispatchAnnouncer } from "./slack/announce.js";
 import { applyEvent, restoreStandingLifecycle, setPrGates } from "./statemachine.js";
 import type { ApprovalWithheldRow, PrStateRow, ReviewedHeadRow, StateStore } from "./state.js";
@@ -325,8 +325,10 @@ export function diffstatOf(files: PrFileEntry[]): {
   };
 }
 
-/** Round type: first ever round → "first"; a staleness recheck → "staleness";
- * anything else → "re-review". */
+/** Round type: no prior round → "first"; a staleness recheck → "staleness";
+ * anything else → "re-review". `priorRounds` counts live verdicted rounds
+ * only: backfilled rounds and cancelled or verdict-less attempts are not
+ * counted, so such an attempt leaves the next round "first". */
 export function roundTypeFor(row: PrStateRow, priorRounds: number): RoundType {
   if (priorRounds === 0) return "first";
   if (row.stale_recheck) return "staleness";
@@ -495,10 +497,7 @@ async function directiveEscalationFor(
   const log = deps.log ?? (() => {});
   // The vocabulary is the compiled-in default extended by [review.directives]
   // — extension only, never a narrowing.
-  const vocab = directiveVocabulary(deps.cfg.review.directives);
-  const directiveFiles = args.files
-    .filter((f) => isFirstPartyDirectivePath(f.filename, vocab))
-    .map((f) => f.filename);
+  const directiveFiles = firstPartyDirectiveFiles(args.files, deps.cfg.review.directives);
   if (directiveFiles.length === 0) return undefined;
   // An unset [review] escalation_mention_default falls back to the owner's
   // GitHub login — the config default itself stays "".
@@ -1422,8 +1421,9 @@ export interface FollowUpDecision {
  *
  * The plan is built over the DELTA's files with the intent text arms off
  * (the title and body did not change since the last review), its tier chosen
- * from the WHOLE PR. The sweep is owed while the standing verdict is not
- * APPROVE and no full look has happened since the first round; its plan is
+ * from the WHOLE PR. The sweep is owed as `followUpSweepOwed` decides (the
+ * standing verdict not APPROVE and no full look since the first round, or a
+ * large enough post-approval delta); its plan is
  * the whole PR's full plan, exactly as a full round would run it.
  */
 export async function decideFollowUp(
@@ -1668,10 +1668,7 @@ export const LEAN_ADDABLE_PASSES: readonly string[] = [...QUALITY_PASSES, STYLE_
 export function leanFollowUpPlan(plan: PassPlan): PassPlan {
   const movable = (p: PassPlanEntry): boolean =>
     LEAN_ADDABLE_PASSES.includes(p.lens) && p.required !== true;
-  const moved = plan.pass_plan
-    .filter(movable)
-    .map((p) => p.lens)
-    .filter((l, i, all) => all.indexOf(l) === i);
+  const moved = lensesOf(plan.pass_plan.filter(movable));
   return {
     ...plan,
     pass_plan: plan.pass_plan.filter((p) => p.lens !== SWEEP_PASS && !movable(p)),
