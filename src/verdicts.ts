@@ -1923,7 +1923,7 @@ export class VerdictWatcher {
         `posting receipt: ${detail}; work remains owed as ${failure.incident_id}`,
       );
       return { owed, failure };
-    })();
+    }).immediate();
     await this.safe(
       () => adapter.removeLabel(round.pr, cfg.github.in_progress_label),
       `remove ${cfg.github.in_progress_label} on #${round.pr}`,
@@ -4340,7 +4340,7 @@ export class VerdictWatcher {
       // The cancel and the owed measurement commit together: a kill between
       // them cannot leave a cancelled round that nothing ever measures.
       return { publication, owed: publication ? this.oweMeasurement(round) : null };
-    })();
+    }).immediate();
     if (!publication || !owed) return false;
     // A cancelled round burned real tokens and stays in every spend aggregate
     // (`SUM(est_usd) FROM rounds` has no status filter), so it must be

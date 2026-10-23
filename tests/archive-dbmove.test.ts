@@ -966,7 +966,14 @@ describe("the archiver's DB phase, end to end", () => {
     try {
       expect((await a.tick()).state).toBe("failed");
       expect(a.status().last_error).toMatch(/manifest\.json is not JSON/);
-      expect(liveEvents(r.store)).toHaveLength(1);
+      // The seeded row stays live (nothing moved); the only other row is the
+      // quiet archive_verify_failed anomaly the unreadable manifest raises.
+      const rows = liveEvents(r.store);
+      expect(rows.filter((e) => e.kind === "webhook_event")).toHaveLength(1);
+      const anomalies = rows.filter((e) => e.kind === "anomaly");
+      expect(anomalies).toHaveLength(1);
+      expect(JSON.parse(String(anomalies[0]?.payload)).kind).toBe("archive_verify_failed");
+      expect(rows).toHaveLength(2);
     } finally {
       a.stop();
     }
