@@ -17,12 +17,11 @@
 // result, never a throw.
 import { usd, findingLocation } from "../src/setup/presentation.js";
 import { readFileSync } from "node:fs";
-import { textResult as text, type QcrTool, type QcrToolResult } from "./pi-tool.js";
+import { textResult as text, refusedResult as refused, type QcrTool } from "./pi-tool.js";
 import { parseConfig, sandboxRoot } from "../src/config.js";
 import { locateConfig, stateHome } from "../src/install.js";
 import { stateHomeFs, tokenFileGitHubReader } from "../src/setup/adapters.js";
 import { piCaseRunner } from "../src/setup/caserunner.js";
-import type { Refusal } from "../src/setup/engine.js";
 import {
   MAX_REPLAY_PRS,
   REPLAY_CAP_FACTOR,
@@ -44,10 +43,6 @@ import {
 import { gitReplaySource } from "../src/setup/replaysource.js";
 
 const NO_PARAMS = { type: "object", properties: {} } as const;
-
-function refused(what: string, r: Refusal): QcrToolResult {
-  return text(`${what} refused:\n${r.errors.map((e) => `✗ ${e}`).join("\n")}`);
-}
 
 const pad = (s: string, n: number): string =>
   s.length >= n ? `${s.slice(0, n - 1)}…` : s.padEnd(n);

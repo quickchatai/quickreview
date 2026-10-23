@@ -36,12 +36,12 @@ import { usd, findingLocation } from "../src/setup/presentation.js";
 // result, never a throw.
 import { FINDING_STATES } from "../src/setup/findings.js";
 import { join } from "node:path";
-import { textResult as text, type QcrTool, type QcrToolResult } from "./pi-tool.js";
+import { textResult as text, refusedResult as refused, type QcrTool } from "./pi-tool.js";
 import { sandboxRoot } from "../src/config.js";
 import { stateHome } from "../src/install.js";
 import { scanCasesForEnv } from "../src/engine/auth.js";
 import { piCaseRunner } from "../src/setup/caserunner.js";
-import type { CaseRunner, Refusal, SetupEngine } from "../src/setup/engine.js";
+import type { CaseRunner, SetupEngine } from "../src/setup/engine.js";
 import type {
   FindingsFilter,
   FindingState,
@@ -90,10 +90,6 @@ import type { MatchResult } from "../src/setup/findings.js";
 import { fileLease, type ScanLease } from "../src/setup/scanlease.js";
 
 const NO_PARAMS = { type: "object", properties: {} } as const;
-
-function refused(what: string, r: Refusal): QcrToolResult {
-  return text(`${what} refused:\n${r.errors.map((e) => `✗ ${e}`).join("\n")}`);
-}
 
 // ---- rendering ---------------------------------------------------------------
 

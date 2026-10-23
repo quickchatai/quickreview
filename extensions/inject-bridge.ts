@@ -214,6 +214,7 @@ function registerInjectBridge(pi: ExtensionAPI, config: InjectBridgeConfig): voi
   let retryTimer: NodeJS.Timeout | undefined;
   let retryDelay = RETRY_BASE_MS;
   let startAckTimer: NodeJS.Timeout | undefined;
+  let archiveRetryTimer: NodeJS.Timeout | undefined;
   let settleDrainTimer: NodeJS.Timeout | undefined;
   let latestSettledGeneration: number | undefined;
   let idleRecheckTimer: NodeJS.Timeout | undefined;
@@ -316,6 +317,27 @@ function registerInjectBridge(pi: ExtensionAPI, config: InjectBridgeConfig): voi
       retryTimer = undefined;
       retryDelay = Math.min(retryDelay * 2, RETRY_MAX_MS);
       drain();
+    }, retryDelay);
+  };
+
+  // An accepted wake whose transport file could not be archived keeps the
+  // mailbox closed to successors. Settlement retries the archive once; if that
+  // fails too, no agent event is guaranteed to follow, so this timer keeps
+  // retrying (backing off) until the file is archived, then drains.
+  const archiveAcceptedWake = (): void => {
+    const wake = submitted;
+    if (closed || !wake?.accepted) return;
+    if (archive(wake)) {
+      submitted = undefined;
+      retryDelay = RETRY_BASE_MS;
+      return;
+    }
+    if (archiveRetryTimer) return;
+    archiveRetryTimer = setTimeout(() => {
+      archiveRetryTimer = undefined;
+      retryDelay = Math.min(retryDelay * 2, RETRY_MAX_MS);
+      archiveAcceptedWake();
+      if (!submitted) drain();
     }, retryDelay);
   };
 
@@ -476,11 +498,13 @@ function registerInjectBridge(pi: ExtensionAPI, config: InjectBridgeConfig): voi
     if (!bridgeFailed) publishBridgeState("closed");
     if (retryTimer) clearTimeout(retryTimer);
     if (startAckTimer) clearTimeout(startAckTimer);
+    if (archiveRetryTimer) clearTimeout(archiveRetryTimer);
     if (settleDrainTimer) clearTimeout(settleDrainTimer);
     if (idleRecheckTimer) clearTimeout(idleRecheckTimer);
     if (compactionDrainTimer) clearTimeout(compactionDrainTimer);
     retryTimer = undefined;
     startAckTimer = undefined;
+    archiveRetryTimer = undefined;
     settleDrainTimer = undefined;
     idleRecheckTimer = undefined;
     compactionDrainTimer = undefined;
@@ -496,21 +520,23 @@ function registerInjectBridge(pi: ExtensionAPI, config: InjectBridgeConfig): voi
   // run has FULLY SETTLED and no automatic retry, compaction, or queued
   // continuation will run", `turn_start`/`turn_end` = "at the start/end of
   // EACH TURN".
-  pi.on("agent_start", (_event, ctx) => {
-    remember(ctx);
-    // Auto-retry/continue emits another agent_start inside the SAME outer run,
-    // but only one agent_settled after the whole run. Do not count inner loop
-    // starts as separate runs or the mailbox would remain busy forever.
+  // Auto-retry/continue emits another agent_start inside the SAME outer run,
+  // but only one agent_settled after the whole run. Do not count inner loop
+  // starts as separate runs or the mailbox would remain busy forever.
+  const markRunActive = (): void => {
     if (!busy) runGeneration++;
     busy = true;
+  };
+  pi.on("agent_start", (_event, ctx) => {
+    remember(ctx);
+    markRunActive();
     republish();
   });
   // A turn cannot start outside a run, so this reaffirms `busy` but is NOT a
   // correlated acceptance ack.
   pi.on("turn_start", () => {
     // Belt for a missed agent_start. Further turns belong to the same run.
-    if (!busy) runGeneration++;
-    busy = true;
+    markRunActive();
     republish();
   });
 
@@ -535,12 +561,9 @@ function registerInjectBridge(pi: ExtensionAPI, config: InjectBridgeConfig): voi
       );
     });
     if (!matched) return;
-    if (!busy) {
-      // Belt for missed run-start events: a correlated user message can only
-      // be emitted from an active run.
-      runGeneration++;
-      busy = true;
-    }
+    // Belt for missed run-start events: a correlated user message can only
+    // be emitted from an active run.
+    markRunActive();
     republish();
     wake.accepted = true;
     clearStartAckTimer();
@@ -575,12 +598,7 @@ function registerInjectBridge(pi: ExtensionAPI, config: InjectBridgeConfig): voi
       // change generation because they belong to one outer run and share its
       // final settlement.
       if (busy || settledGeneration === undefined || runGeneration !== settledGeneration) return;
-      const wake = submitted;
-      if (wake?.accepted && archive(wake)) {
-        submitted = undefined;
-        activeWake = wake;
-        retryDelay = RETRY_BASE_MS;
-      }
+      archiveAcceptedWake();
       activeWake = undefined;
       republish(); // Only full settlement clears the run receipt, never agent_end.
       drain();

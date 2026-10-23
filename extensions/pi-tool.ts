@@ -33,6 +33,11 @@ export function textResult(text: string, details?: Record<string, unknown>): Qcr
   return { content: [{ type: "text", text }], details };
 }
 
+/** A refused setup call as the tool result: what was asked, then one line per error. */
+export function refusedResult(what: string, r: { errors: readonly string[] }): QcrToolResult {
+  return textResult(`${what} refused:\n${r.errors.map((e) => `✗ ${e}`).join("\n")}`);
+}
+
 /** `tool` as pi's contract has it: a synchronous `execute` awaited into the
  * Promise pi asks for. */
 export function toPiTool(tool: QcrTool): ToolDefinition {

@@ -77,6 +77,14 @@ export function createLens(deps: LensToolDeps): ExtensionFactory {
  * longest a round runs. */
 const LOGIN_WINDOW_MS = 90 * 60_000;
 
+/** The agent dir an interactive pi runs over; anything but an absolute path is refused. */
+function requireAgentDir(env: Readonly<Record<string, string | undefined>>): string {
+  const agentDir = env["PI_CODING_AGENT_DIR"];
+  if (agentDir === undefined || !isAbsolute(agentDir))
+    throw new Error(`lens: PI_CODING_AGENT_DIR is not an absolute path (${String(agentDir)})`);
+  return agentDir;
+}
+
 /** The runner of an interactive pi, from its environment. Exported so the shim's
  * wiring can be tested with a host of its own, and so an engine route (the bench)
  * can build its round's runner the same way over agents it keeps elsewhere
@@ -87,9 +95,7 @@ export function lensRunConfigFromEnv(
   cwd: string,
   registry?: AgentRegistry,
 ): LensRunConfig {
-  const agentDir = env["PI_CODING_AGENT_DIR"];
-  if (agentDir === undefined || !isAbsolute(agentDir))
-    throw new Error(`lens: PI_CODING_AGENT_DIR is not an absolute path (${String(agentDir)})`);
+  const agentDir = requireAgentDir(env);
   const ledger = env["QCR_LEDGER_FILE"];
   const group = resolveCacheGroup({ ...env });
   const deadlineMs = resolvePassDeadlineMs({ ...env });
@@ -121,9 +127,7 @@ function lazyRunner(
   let built: Promise<LensRunner> | undefined;
   const ensure = (): Promise<LensRunner> => {
     built ??= (async () => {
-      const agentDir = env["PI_CODING_AGENT_DIR"];
-      if (agentDir === undefined || !isAbsolute(agentDir))
-        throw new Error(`lens: PI_CODING_AGENT_DIR is not an absolute path (${String(agentDir)})`);
+      const agentDir = requireAgentDir(env);
       const host = await makeHost(agentDir);
       return createLensRunner(adjust(lensRunConfigFromEnv(env, host, cwd())));
     })();

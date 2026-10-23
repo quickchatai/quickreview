@@ -19,18 +19,13 @@
 // Convention (setup.ts): every tool answers a refusal as its result, never a
 // throw.
 import { dismissedLine } from "../src/setup/presentation.js";
-import { textResult as text, type QcrTool, type QcrToolResult } from "./pi-tool.js";
-import type { Refusal } from "../src/setup/engine.js";
+import { textResult as text, refusedResult as refused, type QcrTool } from "./pi-tool.js";
 import {
   MAX_PATTERNS_PER_SCAN,
   MEMORY_TEXT_MAX,
   REASON_MAX,
   type ScanTriage,
 } from "../src/setup/triage.js";
-
-function refused(what: string, r: Refusal): QcrToolResult {
-  return text(`${what} refused:\n${r.errors.map((e) => `✗ ${e}`).join("\n")}`);
-}
 
 const FP_PARAM = {
   type: "string",
