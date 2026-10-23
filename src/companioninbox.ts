@@ -93,7 +93,11 @@ export function isItem(value: unknown): value is InboxItem {
 
 /** Oldest first; equal instants by id. The bot's listing and the TUI's pull share it. */
 export function compareInboxItems(a: InboxItem, b: InboxItem): number {
-  return a.created_at === b.created_at ? a.id.localeCompare(b.id) : a.created_at < b.created_at ? -1 : 1;
+  return a.created_at === b.created_at
+    ? a.id.localeCompare(b.id)
+    : a.created_at < b.created_at
+      ? -1
+      : 1;
 }
 
 /** One item out of its file text (what the TUI's pull reads off the bot), or

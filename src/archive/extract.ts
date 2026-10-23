@@ -41,7 +41,12 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { readBundleRecords } from "./bundle.js";
 import { fileDigest, gunzipToFile, renameNoReplace, unlinkIfPresent } from "./fsutil.js";
-import { MANIFEST_FILE, ManifestUnreadable, readManifestIfPresent, type Manifest } from "./manifest.js";
+import {
+  MANIFEST_FILE,
+  ManifestUnreadable,
+  readManifestIfPresent,
+  type Manifest,
+} from "./manifest.js";
 import { injectDirOf } from "./prfiles.js";
 import { holdsArchiveFiles } from "./restore.js";
 

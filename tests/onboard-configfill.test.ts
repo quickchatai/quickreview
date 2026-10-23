@@ -601,7 +601,11 @@ describe("comment-preserving patch", () => {
     expect(splitTail('"a#b"   # tail')).toEqual({ value: '"a#b"', gap: "   ", comment: "# tail" });
     expect(splitTail('"unterminated')).toBeNull();
     // A multi-line string may end with up to two extra quote characters.
-    expect(splitTail('"""hello"""" # c')).toEqual({ value: '"""hello""""', gap: " ", comment: "# c" });
+    expect(splitTail('"""hello"""" # c')).toEqual({
+      value: '"""hello""""',
+      gap: " ",
+      comment: "# c",
+    });
     expect(splitTail("'''hi''''' # c")).toEqual({ value: "'''hi'''''", gap: " ", comment: "# c" });
     expect(rewriteFillMarker("# ← FILL (3): your GitHub App slug")).toBe(
       "# filled by qcr onboard: your GitHub App slug",

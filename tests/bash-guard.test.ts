@@ -2080,7 +2080,13 @@ describe("scan findings: spellings the guard must judge as the program receives 
   });
 
   it("refuses sort's output and compress-program under any unique abbreviation", () => {
-    for (const f of ["--out=config.toml", "--o=x", "--outp x", "--com=/tmp/payload", "--compress-p=x"])
+    for (const f of [
+      "--out=config.toml",
+      "--o=x",
+      "--outp x",
+      "--com=/tmp/payload",
+      "--compress-p=x",
+    ])
       block(`sort ${f} input.txt`, "sort");
     allow("sort --reverse input.txt");
     allow("sort --unique --key=2 input.txt");

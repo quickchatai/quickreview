@@ -970,9 +970,11 @@ describe("pinned heartbeat", () => {
   });
 
   it("an ambiguous heartbeat create is retried by a later tick of the same process", async () => {
-    const post = vi
-      .spyOn(slack, "postMessage")
-      .mockResolvedValueOnce({ ok: false, error: "response lost", ambiguous: true } as SlackPostResult);
+    const post = vi.spyOn(slack, "postMessage").mockResolvedValueOnce({
+      ok: false,
+      error: "response lost",
+      ambiguous: true,
+    } as SlackPostResult);
     const a = announcer();
     expect(await a.heartbeat()).toBeUndefined();
     expect(store.slackPost(HEARTBEAT_IDEM_KEY)).toMatchObject({ ok: 1, ts: null });

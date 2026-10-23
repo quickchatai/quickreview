@@ -493,13 +493,13 @@ export function maybeWritePiAuthAlert(
   if (now().getTime() - new Date(flag.last_at).getTime() > AUTH_FLAG_FRESH_MS) return undefined;
   const name = `${now().toISOString().replace(/[:.]/g, "-")}-pi-auth-expired.json`;
   publishAlert(alertsDir, name, {
-      tier: "alert",
-      cause: "pi-auth-expired",
-      pr: null,
-      title: "pi auth: API rejecting tokens as expired",
-      body: `The daemon is seeing token-expired API errors in pi session logs (${flag.hits} hit(s), latest ${flag.last_at}). Reviews will wedge until /login is re-run in the container.`,
-      ts: now().toISOString(),
-    });
+    tier: "alert",
+    cause: "pi-auth-expired",
+    pr: null,
+    title: "pi auth: API rejecting tokens as expired",
+    body: `The daemon is seeing token-expired API errors in pi session logs (${flag.hits} hit(s), latest ${flag.last_at}). Reviews will wedge until /login is re-run in the container.`,
+    ts: now().toISOString(),
+  });
   mem.lastWritten = flag.last_at;
   return name;
 }
@@ -541,13 +541,13 @@ export function maybeWriteMemoryAlert(
   const auth = memory.state === "auth_failed";
   const name = `${now().toISOString().replace(/[:.]/g, "-")}-memory-${auth ? "auth-failed" : "down"}.json`;
   publishAlert(alertsDir, name, {
-      tier: "alert",
-      cause: auth ? "memory-auth-failed" : "memory-down",
-      pr: null,
-      title: auth ? "reviewer memory: a key is refused" : "reviewer memory: down",
-      body: `${memoryStatusLine(memory, now())} — rounds run memory-less and nothing is learned until it is fixed (the TUI board shows it; qcr status has the detail).`,
-      ts: now().toISOString(),
-    });
+    tier: "alert",
+    cause: auth ? "memory-auth-failed" : "memory-down",
+    pr: null,
+    title: auth ? "reviewer memory: a key is refused" : "reviewer memory: down",
+    body: `${memoryStatusLine(memory, now())} — rounds run memory-less and nothing is learned until it is fixed (the TUI board shows it; qcr status has the detail).`,
+    ts: now().toISOString(),
+  });
   mem.lastWritten = key;
   return name;
 }
@@ -585,17 +585,17 @@ export function maybeWriteCurationAlert(
   const missing = c.state === "missing";
   const name = `${now().toISOString().replace(/[:.]/g, "-")}-eod-${missing ? "curation-missing" : "lessons-not-persisted"}.json`;
   publishAlert(alertsDir, name, {
-      tier: "alert",
-      cause: missing ? "eod-curation-missing" : "eod-lessons-not-persisted",
-      pr: null,
-      title: missing
-        ? `EOD curation missing for ${c.day ?? "?"}`
-        : `EOD lessons not persisted for ${c.day ?? "?"}`,
-      body: missing
-        ? `The EOD sweep for ${c.day ?? "?"} offered ${c.offered} lesson candidate(s) and no curation receipt came back — nothing says the day's outcomes were curated (state/eod/${c.day ?? "?"}/outcomes.md).`
-        : `${c.not_persisted} lesson(s) from the ${c.day ?? "?"} curation are not in reviewer memory (a write refused, or a claimed lesson no header cites); the candidates ride the next packet. qcr status has the detail.`,
-      ts: now().toISOString(),
-    });
+    tier: "alert",
+    cause: missing ? "eod-curation-missing" : "eod-lessons-not-persisted",
+    pr: null,
+    title: missing
+      ? `EOD curation missing for ${c.day ?? "?"}`
+      : `EOD lessons not persisted for ${c.day ?? "?"}`,
+    body: missing
+      ? `The EOD sweep for ${c.day ?? "?"} offered ${c.offered} lesson candidate(s) and no curation receipt came back — nothing says the day's outcomes were curated (state/eod/${c.day ?? "?"}/outcomes.md).`
+      : `${c.not_persisted} lesson(s) from the ${c.day ?? "?"} curation are not in reviewer memory (a write refused, or a claimed lesson no header cites); the candidates ride the next packet. qcr status has the detail.`,
+    ts: now().toISOString(),
+  });
   mem.lastWritten = key;
   return name;
 }
@@ -632,7 +632,14 @@ export function maybeWriteWorkerCrashAlerts(
   ): void => {
     if (mem.written.has(key)) return;
     const name = `${now().toISOString().replace(/[:.]/g, "-")}-${cause}${pr === null ? "" : `-${pr}`}.json`;
-    publishAlert(alertsDir, name, { tier: "alert", cause, pr, title, body, ts: now().toISOString() });
+    publishAlert(alertsDir, name, {
+      tier: "alert",
+      cause,
+      pr,
+      title,
+      body,
+      ts: now().toISOString(),
+    });
     mem.written.add(key);
     names.push(name);
   };

@@ -159,7 +159,13 @@ describe("github sink", () => {
       return { ok: true, stdout: isProbe ? '{"ok":true,"issue":5}' : "", stderr: "", code: 0 };
     };
     const auto = { ...tuiCfg, remote_sandbox_root: "" } as unknown as TuiConfig;
-    const sink = new GithubIssueSink(auto, ssh, undefined, () => NOW, async () => {});
+    const sink = new GithubIssueSink(
+      auto,
+      ssh,
+      undefined,
+      () => NOW,
+      async () => {},
+    );
     await sink.file([entry()], NOW_ISO);
     resetLayoutCache();
     const write = calls.find((a) => a.some((x) => x.includes("commands")));

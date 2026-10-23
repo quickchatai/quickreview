@@ -739,7 +739,9 @@ export async function proposePins(
   } catch (err) {
     return {
       ok: false,
-      errors: [`${PIN_PROPOSALS_FILE} exists but cannot be read (${String(err)}) — not replacing it`],
+      errors: [
+        `${PIN_PROPOSALS_FILE} exists but cannot be read (${String(err)}) — not replacing it`,
+      ],
     };
   }
   const file: PinProposalsFile = { proposed_at: deps.clock().toISOString(), entries: proposed };

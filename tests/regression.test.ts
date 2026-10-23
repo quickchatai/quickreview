@@ -232,7 +232,11 @@ describe("matching", () => {
 
   it("returns the nearest same-file finding even when it scores zero", () => {
     const human = set.cases[0]!.findings[0]!;
-    const far: SandboxFinding = { path: human.path, line: human.line + 500, text: "zzqx wholly unrelated" };
+    const far: SandboxFinding = {
+      path: human.path,
+      line: human.line + 500,
+      text: "zzqx wholly unrelated",
+    };
     const m = matchFinding(human, [far]);
     expect(m.matched).toBe(false);
     expect(m.best).toBe(far);

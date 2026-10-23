@@ -86,14 +86,23 @@ check_worker_exit ${rc} ${tsv}`;
 
 describe("cutover-rehearsal.sh login_expiry", () => {
   const expiry = (lr: string): string =>
-    spawnSync("bash", ["-c", `${fn("login_expiry")}\nlogin_expiry "$1"`, "bash", lr], { encoding: "utf8" }).stdout.trim();
+    spawnSync("bash", ["-c", `${fn("login_expiry")}\nlogin_expiry "$1"`, "bash", lr], {
+      encoding: "utf8",
+    }).stdout.trim();
   it("reads expires_at from the refresher's nested login block", () => {
-    const lr = JSON.stringify({ state: "running", login: { pid: 1, expires_at: "2027-01-02T03:04:05Z" } });
+    const lr = JSON.stringify({
+      state: "running",
+      login: { pid: 1, expires_at: "2027-01-02T03:04:05Z" },
+    });
     expect(expiry(lr)).toBe("2027-01-02T03:04:05Z");
   });
   it("is empty when the login block carries no expiry, or the status is empty", () => {
-    expect(expiry(JSON.stringify({ state: "running", login: { pid: 1, expires_at: null } }))).toBe("");
-    expect(expiry(JSON.stringify({ state: "running", expires_at: "top-level is not the shape" }))).toBe("");
+    expect(expiry(JSON.stringify({ state: "running", login: { pid: 1, expires_at: null } }))).toBe(
+      "",
+    );
+    expect(
+      expiry(JSON.stringify({ state: "running", expires_at: "top-level is not the shape" })),
+    ).toBe("");
     expect(expiry("")).toBe("");
   });
 });

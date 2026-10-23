@@ -619,7 +619,9 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
                     cacheKey: lease.key,
                     body: agent.body,
                     onUnexpected: () =>
-                      warn(`lens ${agent.name} ${id}: request shape not as expected; sent unchanged`),
+                      warn(
+                        `lens ${agent.name} ${id}: request shape not as expected; sent unchanged`,
+                      ),
                   }),
                 ]
               : []),

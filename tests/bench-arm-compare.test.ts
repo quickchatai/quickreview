@@ -313,15 +313,28 @@ describe("compare.py", () => {
       writeFileSync(join(d, "case-summary.json"), JSON.stringify({ duration_seconds: 60 }));
       const ev = [
         { type: "message_end", message: { role: "assistant", usage: { cost: { total: 1 } } } },
-        { type: "tool_execution_end", toolName: "lens", toolCallId: "c1", result: { details: { results: [lensRes("r1", 0.5)] } } },
-        { type: "tool_execution_end", toolName: "lens_wave", toolCallId: "c2", result: { details: { results: [lensRes("r1", 0.5), lensRes("r2", 0.25)] } } },
+        {
+          type: "tool_execution_end",
+          toolName: "lens",
+          toolCallId: "c1",
+          result: { details: { results: [lensRes("r1", 0.5)] } },
+        },
+        {
+          type: "tool_execution_end",
+          toolName: "lens_wave",
+          toolCallId: "c2",
+          result: { details: { results: [lensRes("r1", 0.5), lensRes("r2", 0.25)] } },
+        },
       ];
       writeFileSync(join(d, "pi-events.jsonl"), ev.map((e) => JSON.stringify(e)).join("\n") + "\n");
       const led = [
         { v: 1, kind: "lens", id: "r2", agent: "x", usage: { cost: 0.25 } },
         { v: 1, kind: "warmup", id: "w1", agent: "x", usage: { cost: 0.5 } },
       ];
-      writeFileSync(join(d, "lens-ledger.jsonl"), led.map((e) => JSON.stringify(e)).join("\n") + "\n");
+      writeFileSync(
+        join(d, "lens-ledger.jsonl"),
+        led.map((e) => JSON.stringify(e)).join("\n") + "\n",
+      );
     }
     // 1 + 0.5 + 0.25 + 0.5 warm-up = $2.25
     expect(await compare("eng=eng")).toContain("| $2.25 | 1.0 | 2/2 |");
@@ -332,7 +345,10 @@ describe("compare.py", () => {
     judgement("nul", B, found([]));
     for (const id of [A, B]) {
       mkdirSync(join(runs, "nul", "cases", id), { recursive: true });
-      writeFileSync(join(runs, "nul", "cases", id, "case-summary.json"), JSON.stringify({ arm: "claude", cost_usd: null, duration_seconds: 60 }));
+      writeFileSync(
+        join(runs, "nul", "cases", id, "case-summary.json"),
+        JSON.stringify({ arm: "claude", cost_usd: null, duration_seconds: 60 }),
+      );
     }
     expect(await compare("nul=nul")).toContain("| ? | 1.0 | 2/2 |");
   });

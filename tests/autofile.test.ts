@@ -190,7 +190,9 @@ describe("autofile", () => {
     const e = entry({ text: `#bug ${header} lingering recheck claim never released` });
     const { name, content } = ticketBody("0134", e, paths, "2026-08-20T10:00:00Z");
     expect(name).toBe("FT-0134-lingering-recheck-claim-never-released.md");
-    expect(content.split("\n")[0]).toBe("# Auto-filed defect: lingering recheck claim never released");
+    expect(content.split("\n")[0]).toBe(
+      "# Auto-filed defect: lingering recheck claim never released",
+    );
   });
 
   it("ticket header follows the grammar (H1, blank, Id: block)", () => {

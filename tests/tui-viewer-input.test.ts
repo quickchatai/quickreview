@@ -116,7 +116,11 @@ describe("viewerInputRow", () => {
 
   it("fits the abort prompt and the unfocused hint to the width", () => {
     for (const width of [1, 8, 20, 40])
-      for (const over of [{ confirmAbort: true }, { focused: false }, { focused: false, running: false }]) {
+      for (const over of [
+        { confirmAbort: true },
+        { focused: false },
+        { focused: false, running: false },
+      ]) {
         const row = stripAnsi(viewerInputRow(view(over), width));
         expect(displayWidth(row), `${width} ${JSON.stringify(over)}`).toBeLessThanOrEqual(width);
       }

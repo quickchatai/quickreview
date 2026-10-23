@@ -120,7 +120,9 @@ export class TokenMinter {
       headers: { authorization: `Bearer ${this.appJwt()}`, accept: "application/vnd.github+json" },
     });
     if (!res.ok)
-      throw new Error(`token mint failed for installation ${id}: ${res.status}${await explanation(res)}`);
+      throw new Error(
+        `token mint failed for installation ${id}: ${res.status}${await explanation(res)}`,
+      );
     const tok = (await res.json()) as InstallationToken;
     this.cache.set(id, tok);
     return tok.token;

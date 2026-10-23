@@ -519,7 +519,11 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
       checkpoint();
       if (r.timedOut) throw new Stop(EXIT.failed, `${what}: the wall-clock cap ran out`);
       if (r.capped) throw new Stop(EXIT.failed, `${what}: the dollar cap was reached`);
-      if (r.streamError) throw new Stop(EXIT.failed, `${what}: output stream failed: ${r.streamError.slice(0, 300)}`);
+      if (r.streamError)
+        throw new Stop(
+          EXIT.failed,
+          `${what}: output stream failed: ${r.streamError.slice(0, 300)}`,
+        );
       // A provider failure ends the turn as an assistant message, not as a throw.
       if (watch.lastError !== undefined) {
         const refused = classifyAuthFailure(watch.lastError);
@@ -770,7 +774,6 @@ function sessionSpecOf(
     },
   };
 }
-
 
 const lensLedgerOf = (spec: WorkerSpec): string => join(lensDirOf(spec), LENS_LEDGER_FILE);
 

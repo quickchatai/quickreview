@@ -891,7 +891,9 @@ function judgementLines(body: string | null, root: string | null): DoubtLine[] {
   const out: DoubtLine[] = [];
   if (body === null) return out;
   for (const raw of body.split("\n")) {
-    const m = /^\s*-\s+(\S+)\s+(\S+?)(?::(\d+)(?:-\d+)?)?\s+[—–-]+\s+([a-z-]+):?\s*(.*)$/i.exec(raw);
+    const m = /^\s*-\s+(\S+)\s+(\S+?)(?::(\d+)(?:-\d+)?)?\s+[—–-]+\s+([a-z-]+):?\s*(.*)$/i.exec(
+      raw,
+    );
     if (!m) continue;
     let reason = (m[5] ?? "").trim();
     let cls: string | null = null;

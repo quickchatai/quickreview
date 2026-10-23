@@ -983,8 +983,18 @@ describe("bounded round-stage supervision", () => {
       nextCheckAt: "2026-08-27T20:45:00.000Z",
       lenses: ["pass-baseline"],
       passPlan: [
-        { lens: "pass-baseline", agent: "pass-baseline--sol-med", tier: "sol-med", raisable_to: [] },
-        { lens: "pass-baseline", agent: "pass-baseline--sol-med", tier: "sol-med", raisable_to: [] },
+        {
+          lens: "pass-baseline",
+          agent: "pass-baseline--sol-med",
+          tier: "sol-med",
+          raisable_to: [],
+        },
+        {
+          lens: "pass-baseline",
+          agent: "pass-baseline--sol-med",
+          tier: "sol-med",
+          raisable_to: [],
+        },
       ],
     });
     clock = new Date("2026-08-27T20:35:00.000Z");

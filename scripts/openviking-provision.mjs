@@ -335,8 +335,7 @@ export async function createUser({
     return { ok: true, existed: false, key: keyFromCreate(r.body), detail: `HTTP ${r.status}` };
   }
   const reason = r.body?.error?.message ?? r.body?.error;
-  const described =
-    typeof reason === "string" && reason !== "" ? ` — ${reason.slice(0, 200)}` : "";
+  const described = typeof reason === "string" && reason !== "" ? ` — ${reason.slice(0, 200)}` : "";
   return {
     ok: false,
     existed: false,

@@ -577,8 +577,9 @@ describe("TranscriptViewer — selfimprove src-tui-9", () => {
       v.stepRound(7, -1);
       await v.refresh(7);
     }
-    const logs = (v as unknown as { prs: Map<number, { logs: Map<string, unknown> }> }).prs.get(7)!
-      .logs;
+    const logs = (v as unknown as { prs: Map<number, { logs: Map<string, unknown> }> }).prs.get(
+      7,
+    )!.logs;
     expect(logs.size).toBeLessThanOrEqual(8);
     expect(text(v.view(7)!.lines).join("\n")).toContain("row 2");
   });

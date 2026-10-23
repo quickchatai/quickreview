@@ -247,7 +247,12 @@ describe("TokenMinter", () => {
     const limited = (async () =>
       jsonResponse({ message: "API rate limit exceeded" }, 403)) as unknown as FetchFn;
     await expect(
-      new TokenMinter(secretsDir, limited, "https://api.github.com", () => T0).resolveInstallationId(),
+      new TokenMinter(
+        secretsDir,
+        limited,
+        "https://api.github.com",
+        () => T0,
+      ).resolveInstallationId(),
     ).rejects.toThrow(/403.*API rate limit exceeded/);
   });
 

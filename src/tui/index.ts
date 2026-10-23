@@ -356,7 +356,12 @@ export interface RunTuiDeps {
 
 /** First slice of the quit-time wait for an in-flight bring-up. */
 /** Startup steps that exist only for the companion (the memory forward also serves the Memory tab). */
-const COMPANION_ONLY_STEPS = ["memory-namespaces", "container", "rollover", "companion-pi"] as const;
+const COMPANION_ONLY_STEPS = [
+  "memory-namespaces",
+  "container",
+  "rollover",
+  "companion-pi",
+] as const;
 
 const BRING_UP_QUIT_GRACE_MS = 250;
 

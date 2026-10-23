@@ -329,9 +329,7 @@ export class DebugRoundManager {
     const held = this.leases.read(debugSession(pr));
     if (held === undefined) return null;
     const verdict = held === null ? ({ kind: "dead" } as const) : judgeLease(held, this.proc);
-    return leaseStillRuns(verdict)
-      ? `a debug pi for PR #${pr} still runs: no worker starts`
-      : null;
+    return leaseStillRuns(verdict) ? `a debug pi for PR #${pr} still runs: no worker starts` : null;
   }
 
   /** The IPC server's view of a debug round's command. Active while its lease is

@@ -862,7 +862,13 @@ describe("structured thread decision", () => {
     const name = "pr-77-thread-4000-comment-5001.json";
     writeFileSync(
       join(root, name),
-      JSON.stringify({ pr: 77, thread_id: 4000, comment_id: 5001, resolution: "resolve", reply: "" }),
+      JSON.stringify({
+        pr: 77,
+        thread_id: 4000,
+        comment_id: 5001,
+        resolution: "resolve",
+        reply: "",
+      }),
     );
     await watcher.sweep();
     expect(watcher.status().breaker_state).toBe("open");

@@ -207,7 +207,12 @@ describe("the unwedge command channel", () => {
     // No result either: the outcome is unknown, not a definite failure.
     const down: SshRunner = async () => ({ ok: false, stdout: "", stderr: "", code: 255 });
     let clock = NOW.getTime();
-    const s = new CommandFileSender(cfg, down, () => new Date((clock += 5_000)), async () => {});
+    const s = new CommandFileSender(
+      cfg,
+      down,
+      () => new Date((clock += 5_000)),
+      async () => {},
+    );
     const t2 = track();
     await s.send("rerun-round", 5, t2.on);
     expect(t2.states.at(-1)).toEqual([

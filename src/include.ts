@@ -257,7 +257,12 @@ function toolsList(frontmatter: string): string[] | null {
   const inner = raw.startsWith("[") && raw.endsWith("]") ? raw.slice(1, -1) : raw;
   return inner
     .split(",")
-    .map((t) => t.trim().replace(/^(["'])(.*)\1$/, "$2").trim())
+    .map((t) =>
+      t
+        .trim()
+        .replace(/^(["'])(.*)\1$/, "$2")
+        .trim(),
+    )
     .filter((t) => t.length > 0);
 }
 

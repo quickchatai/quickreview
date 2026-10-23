@@ -132,8 +132,7 @@ export function readPostingJob(path: string): PostingJob | undefined {
       (j.payload.event !== j.intended_event && j.payload.event !== "COMMENT")
     )
       return undefined;
-    if (j.payload.comments?.some((raw) => inlineCommentFault(raw) !== null))
-      return undefined;
+    if (j.payload.comments?.some((raw) => inlineCommentFault(raw) !== null)) return undefined;
     return j;
   } catch {
     return undefined;

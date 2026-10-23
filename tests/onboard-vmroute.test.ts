@@ -1151,7 +1151,11 @@ describe("the go-live flip on the server route", () => {
       run: async (cmd: string, args: string[]): Promise<ProcessResult> => {
         const line = args.join(" ");
         if (line.includes("docker ps"))
-          return { code: 0, stdout: "quickreview-sandbox running\nquickreview-memory running\n", stderr: "" };
+          return {
+            code: 0,
+            stdout: "quickreview-sandbox running\nquickreview-memory running\n",
+            stderr: "",
+          };
         if (line.includes("why")) {
           return {
             code: 0,

@@ -48,7 +48,13 @@ import { readJsonFile, writeJsonFile } from "./jsonfile.js";
 import { parseEventTags, parseHashTags } from "../memory/eventtags.js";
 import { normalizeTag } from "../memory/store.js";
 import type { StatusSnapshot } from "../state.js";
-import { completedRoundDirs, MANIFEST_NAME, prSignature, type RoundManifest, type WhyRound } from "./evidence.js";
+import {
+  completedRoundDirs,
+  MANIFEST_NAME,
+  prSignature,
+  type RoundManifest,
+  type WhyRound,
+} from "./evidence.js";
 
 // ---- the families ------------------------------------------------------------
 
@@ -277,9 +283,7 @@ export function detectCandidates(facts: PrFacts): Detected[] {
       pr: facts.pr,
       severity: approvals,
       headline: `approved ${approvals} times`,
-      detail: [
-        `rounds ${approvedRounds.map((r) => r.round_no).join(", ")}`,
-      ],
+      detail: [`rounds ${approvedRounds.map((r) => r.round_no).join(", ")}`],
     });
   }
 

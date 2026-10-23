@@ -2314,7 +2314,9 @@ describe("deploy — the stale-image outage", () => {
     const bin = join(env.dir, "bin");
     mkdirSync(bin);
     const log = join(env.dir, "ssh.log");
-    writeFileSync(join(bin, "ssh"), `#!/bin/sh\necho "$*" >> ${log}\necho stub-ok\n`, { mode: 0o755 });
+    writeFileSync(join(bin, "ssh"), `#!/bin/sh\necho "$*" >> ${log}\necho stub-ok\n`, {
+      mode: 0o755,
+    });
     run(env, ["verify"], {
       PATH: `${bin}:${process.env.PATH ?? ""}`,
       QC_HEARTBEAT_PROBE_CMD: "",

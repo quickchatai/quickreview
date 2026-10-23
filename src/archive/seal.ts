@@ -519,7 +519,11 @@ export async function recoverSeals(
       let verified = false;
       if (!names.includes(gzName)) why = " (it is missing)";
       else if (entry.bytes !== undefined && entry.sha256 !== undefined) {
-        const v = await verifyGzip(join(dir, gzName), { bytes: entry.bytes, sha256: entry.sha256 }, rate);
+        const v = await verifyGzip(
+          join(dir, gzName),
+          { bytes: entry.bytes, sha256: entry.sha256 },
+          rate,
+        );
         verified = v.kind === "verified";
         if (v.kind === "error") why = ` (${v.error.message})`;
       }

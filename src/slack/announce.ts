@@ -824,12 +824,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     // A claim with no message and no outcome whose request is not awaiting
     // Slack in this process is a previous run's (killed mid-post) or this
     // run's own ambiguous attempt: settle it failed so the post is retried — a heartbeat lost for good is worse than one duplicate line.
-    if (
-      existing &&
-      existing.ok === 1 &&
-      !existing.ts &&
-      !this.inFlight.has(HEARTBEAT_IDEM_KEY)
-    ) {
+    if (existing && existing.ok === 1 && !existing.ts && !this.inFlight.has(HEARTBEAT_IDEM_KEY)) {
       store.settleSlackPost(HEARTBEAT_IDEM_KEY, {
         ok: false,
         error: "claimed by an earlier run that never settled it",

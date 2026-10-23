@@ -853,7 +853,12 @@ describe("the CLI client (`qcr archive run|restore <pr>`)", () => {
       stderr: "boom\x1b[2J\nsecond line\x07",
       code: 255,
     });
-    const out = await new ArchiveOpSender(tui, ssh, () => new Date(), async () => {}).send({
+    const out = await new ArchiveOpSender(
+      tui,
+      ssh,
+      () => new Date(),
+      async () => {},
+    ).send({
       command: "archive-run",
     });
     expect(out.ok).toBe(false);

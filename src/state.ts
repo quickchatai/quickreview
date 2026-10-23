@@ -2825,8 +2825,8 @@ export class StateStore {
               SET est_usd = ?, lens_usd = ?, usage_final = ?, updated_at = ?
             WHERE id = ? AND usage_final = 0`,
             )
-            .run(usage.est_usd, usage.lens_usd, usage.final ? 1 : 0, this.ts(), commandId)
-            .changes > 0;
+            .run(usage.est_usd, usage.lens_usd, usage.final ? 1 : 0, this.ts(), commandId).changes >
+          0;
         if (changed && usage.final) this.restateMeasuredRoundUsd(commandId);
         return changed;
       })

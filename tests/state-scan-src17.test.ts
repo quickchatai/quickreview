@@ -133,9 +133,7 @@ describe("openReviewFailure and a queued human request", () => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-src17-"));
     dirs.push(dir);
     const asked = "2026-10-22T07:00:00.000Z";
-    store.upsertPr(
-      prRow(9, { state: "queued", trigger_ts: asked, trigger_provenance: "human" }),
-    );
+    store.upsertPr(prRow(9, { state: "queued", trigger_ts: asked, trigger_provenance: "human" }));
     makeCommand(store, dir, 9, "cmd-w", "wake", "reply");
     store.failPendingSessionCommand("cmd-w", "boom");
     store.openReviewFailure({

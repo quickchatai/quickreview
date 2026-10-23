@@ -366,7 +366,9 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
           "{{.Names}} {{.State}}",
         ]);
         const memState =
-          mem.code === 0 ? (psRows(mem.stdout).find((r) => r.name === sidecarContainer)?.rest ?? "") : null;
+          mem.code === 0
+            ? (psRows(mem.stdout).find((r) => r.name === sidecarContainer)?.rest ?? "")
+            : null;
         checks.push(
           memState !== null && /running|up/i.test(memState)
             ? {

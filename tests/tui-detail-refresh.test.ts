@@ -223,9 +223,19 @@ it("an older events response finishing late never replaces a newer one", async (
   const older = app.refreshEvents();
   const newer = app.refreshEvents();
   const ev = (kind: string) => ({ ts: "2026-10-22T10:00:00Z", kind, pr: null, payload: null });
-  finishes[1]!({ ok: true, stdout: JSON.stringify({ events: [ev("newer")] }), stderr: "", code: 0 });
+  finishes[1]!({
+    ok: true,
+    stdout: JSON.stringify({ events: [ev("newer")] }),
+    stderr: "",
+    code: 0,
+  });
   await newer;
-  finishes[0]!({ ok: true, stdout: JSON.stringify({ events: [ev("older")] }), stderr: "", code: 0 });
+  finishes[0]!({
+    ok: true,
+    stdout: JSON.stringify({ events: [ev("older")] }),
+    stderr: "",
+    code: 0,
+  });
   await older;
   expect(app.rawEvents).toEqual([ev("newer")]);
 });

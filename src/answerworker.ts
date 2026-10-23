@@ -76,7 +76,6 @@ export function answerCapsOf(
   };
 }
 
-
 /** `<root>/state/commands/<id>/result.json`: the command's result file. */
 export const answerResultFile = (root: string, commandId: string): string =>
   join(root, "state", "commands", commandId, "result.json");

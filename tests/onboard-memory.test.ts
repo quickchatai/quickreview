@@ -1241,9 +1241,9 @@ describe("forward command memory container", () => {
         recordChoice: () => {},
       });
     };
-    expect(flagsFor('[tui]\ncontainer = "my-reviewer"\nmemory_container = "my-memory"\n')).toContain(
-      "--container my-memory",
-    );
+    expect(
+      flagsFor('[tui]\ncontainer = "my-reviewer"\nmemory_container = "my-memory"\n'),
+    ).toContain("--container my-memory");
     expect(flagsFor('[tui]\ncontainer = "my-reviewer"\n')).toContain("--container my-reviewer");
   });
 });

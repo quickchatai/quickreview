@@ -418,7 +418,12 @@ describe("[P8.16] retention", () => {
         appendFileSync(join(w.f.root, victim), "late bytes\n");
       };
       try {
-        const r = await sweepLiveTrees({ root: w.f.root, now, retentionMs: retention, remove: true });
+        const r = await sweepLiveTrees({
+          root: w.f.root,
+          now,
+          retentionMs: retention,
+          remove: true,
+        });
         expect(r.removed_files).toBe(w.files.size - 1);
       } finally {
         raceHook.afterHeldCheck = null;

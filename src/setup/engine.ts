@@ -453,7 +453,11 @@ export class SetupEngine {
   // -- views --
 
   /** A unit's case plans over its reviewable (not sweep-skipped) files. */
-  private unitCases(name: string, owned: readonly string[], lines: (p: string) => number): CasePlan[] {
+  private unitCases(
+    name: string,
+    owned: readonly string[],
+    lines: (p: string) => number,
+  ): CasePlan[] {
     return splitUnit(
       name,
       owned.filter((f) => !isSweepSkipped(f)),

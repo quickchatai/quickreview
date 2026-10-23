@@ -350,7 +350,11 @@ function postedInGate(outDir: string, r: RefOutcome): string[] {
     { review?: { comments?: Array<Record<string, unknown>> } } | undefined;
   return (file?.review?.comments ?? [])
     .filter((c) =>
-      commentInRefGate(r, { path: c["path"], start_line: c["start_line"], end_line: c["end_line"] }),
+      commentInRefGate(r, {
+        path: c["path"],
+        start_line: c["start_line"],
+        end_line: c["end_line"],
+      }),
     )
     .map((c) => String(c["content"]));
 }

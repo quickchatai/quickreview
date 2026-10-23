@@ -177,7 +177,14 @@ describe("the deploy manifest", () => {
       const pattern = schema.$defs.pin.pattern as string | undefined;
       expect(pattern, k).toBeTypeOf("string");
       const re = new RegExp(pattern!);
-      for (const v of ["1.3.0", "models/a_b.gguf", "v1+x@y:z-1", "has space", "semi;colon", "$(x)"]) {
+      for (const v of [
+        "1.3.0",
+        "models/a_b.gguf",
+        "v1+x@y:z-1",
+        "has space",
+        "semi;colon",
+        "$(x)",
+      ]) {
         const refused = manifestProblems(
           JSON.parse(edit((m) => ((m.pins as Record<string, unknown>)[k] = v))),
         ).some((e) => e.startsWith(`pins.${k}:`));

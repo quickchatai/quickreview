@@ -34,13 +34,7 @@
 // gzip whole, so a corrupt one fails the copy rather than landing short); a
 // role whose file sits only inside a bundle is recorded as `archived`
 // with its pointer — the bundle and the path in it — never as `missing`.
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { TUI_DEFAULTS, type TuiConfig } from "../config.js";
 import type { StatusSnapshot } from "../state.js";

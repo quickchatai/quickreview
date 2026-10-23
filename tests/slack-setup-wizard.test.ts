@@ -616,13 +616,13 @@ describe("Slack setup config compatibility", () => {
 
 describe("enableSlack", () => {
   it("rewrites an existing assignment", () => {
-    expect(wiz.enableSlack("[slack]\nenabled = false\nchannel = \"x\"\n")).toBe(
-      "[slack]\nenabled = true\nchannel = \"x\"\n",
+    expect(wiz.enableSlack('[slack]\nenabled = false\nchannel = "x"\n')).toBe(
+      '[slack]\nenabled = true\nchannel = "x"\n',
     );
   });
 
   it("inserts the assignment when the section omits it", () => {
-    const out = wiz.enableSlack("[slack]\nchannel = \"x\"\n\n[owner]\nenabled = false\n");
+    const out = wiz.enableSlack('[slack]\nchannel = "x"\n\n[owner]\nenabled = false\n');
     expect(wiz.readSlackValues(out).enabled).toBe(true);
     expect(out).toContain("[owner]\nenabled = false");
   });

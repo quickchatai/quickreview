@@ -379,10 +379,7 @@ class PostOps {
   }
 
   /** The head the review is about: the round's, else the PR's live head. */
-  private async commitHead(
-    pr: number,
-    keyed: Keyed | null,
-  ): Promise<string> {
+  private async commitHead(pr: number, keyed: Keyed | null): Promise<string> {
     if (keyed) return keyed.head;
     try {
       return (await this.d.adapter.getPr(pr)).head_sha.toLowerCase();

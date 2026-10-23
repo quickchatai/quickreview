@@ -37,7 +37,10 @@ function checkImage(errors, where, img) {
   if (isObject(img.platforms)) {
     onlyKeys(errors, `${where}.platforms`, img.platforms, PLATFORMS);
     for (const p of PLATFORMS)
-      if (p in img.platforms && !(typeof img.platforms[p] === "string" && DIGEST_RE.test(img.platforms[p])))
+      if (
+        p in img.platforms &&
+        !(typeof img.platforms[p] === "string" && DIGEST_RE.test(img.platforms[p]))
+      )
         errors.push(`${where}.platforms["${p}"]: not a sha256 digest`);
   } else if ("platforms" in img) errors.push(`${where}.platforms: not an object`);
 }

@@ -1728,10 +1728,7 @@ export class RecheckWatcher {
         return true;
       }
       const d = parsed.decision;
-      if (
-        d.pr !== pr ||
-        recheckHead12(d.head_sha) !== (match[2] as string).toLowerCase()
-      ) {
+      if (d.pr !== pr || recheckHead12(d.head_sha) !== (match[2] as string).toLowerCase()) {
         this.deps.store.logEvent("recheck_decision_rejected", pr, {
           file: name,
           reason: "pr/head do not match the filename",

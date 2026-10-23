@@ -162,7 +162,9 @@ describe("onboarding regression seams", () => {
     c.adapters.runner = {
       run: async (_cmd, args) => ({
         code: args.includes("exec") ? 3 : 0,
-        stdout: args.includes("exec") ? "" : JSON.stringify([{ Service: "daemon", State: "running" }]),
+        stdout: args.includes("exec")
+          ? ""
+          : JSON.stringify([{ Service: "daemon", State: "running" }]),
         stderr: args.includes("exec") ? "ENOENT ov.conf" : "",
       }),
     };

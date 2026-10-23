@@ -778,8 +778,7 @@ export async function reindexNamespace({
       }
     } else {
       lastPollFailure =
-        task.error ??
-        `HTTP ${task.status}: ${errorMessage(task.body, "task poll refused")}`;
+        task.error ?? `HTTP ${task.status}: ${errorMessage(task.body, "task poll refused")}`;
     }
     if (now() >= deadline)
       return {

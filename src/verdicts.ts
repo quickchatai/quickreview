@@ -1888,43 +1888,45 @@ export class VerdictWatcher {
       );
       return false;
     }
-    const { owed, failure } = store.db.transaction(() => {
-      if (!resumedDone)
-        store.markRoundCancelled(
-          round.id,
-          `posting receipt failure — ${detail}`,
-          "infrastructure_failure",
+    const { owed, failure } = store.db
+      .transaction(() => {
+        if (!resumedDone)
+          store.markRoundCancelled(
+            round.id,
+            `posting receipt failure — ${detail}`,
+            "infrastructure_failure",
+          );
+        // This round ran a full review and burned its tokens — the receipt is
+        // what failed, not the work. It stays in `SUM(est_usd) FROM rounds` like
+        // every other row, so it must be measured here too. Its window closes now
+        // and no successor is running, so nothing double-counts. The cancel and
+        // the FAILED_LOUD incident land in one turn — a restart inside any await
+        // below must not leave a cancelled round with no loud failure behind it —
+        // and the label call and the reads (async) run after them, the reads
+        // owed durably from here, so a restart while they run resumes them.
+        const owed = this.oweMeasurement(round);
+        const command = store.sessionCommandForRound(round.pr, round.round_no);
+        const successor = store.successorFor(round.pr);
+        const failure = store.openReviewFailure({
+          pr: round.pr,
+          command_id: command?.id ?? null,
+          round_id: round.id,
+          round_no: round.round_no,
+          head_sha: successor?.head_sha ?? store.getPr(round.pr)?.head_sha ?? "",
+          stage,
+          detail,
+          attempts: command?.attempt ?? 1,
+          retry_cap: 0,
+        });
+        store.logAnomaly(
+          "review_failed_loud",
+          round.pr,
+          round.round_no,
+          `posting receipt: ${detail}; work remains owed as ${failure.incident_id}`,
         );
-      // This round ran a full review and burned its tokens — the receipt is
-      // what failed, not the work. It stays in `SUM(est_usd) FROM rounds` like
-      // every other row, so it must be measured here too. Its window closes now
-      // and no successor is running, so nothing double-counts. The cancel and
-      // the FAILED_LOUD incident land in one turn — a restart inside any await
-      // below must not leave a cancelled round with no loud failure behind it —
-      // and the label call and the reads (async) run after them, the reads
-      // owed durably from here, so a restart while they run resumes them.
-      const owed = this.oweMeasurement(round);
-      const command = store.sessionCommandForRound(round.pr, round.round_no);
-      const successor = store.successorFor(round.pr);
-      const failure = store.openReviewFailure({
-        pr: round.pr,
-        command_id: command?.id ?? null,
-        round_id: round.id,
-        round_no: round.round_no,
-        head_sha: successor?.head_sha ?? store.getPr(round.pr)?.head_sha ?? "",
-        stage,
-        detail,
-        attempts: command?.attempt ?? 1,
-        retry_cap: 0,
-      });
-      store.logAnomaly(
-        "review_failed_loud",
-        round.pr,
-        round.round_no,
-        `posting receipt: ${detail}; work remains owed as ${failure.incident_id}`,
-      );
-      return { owed, failure };
-    }).immediate();
+        return { owed, failure };
+      })
+      .immediate();
     await this.safe(
       () => adapter.removeLabel(round.pr, cfg.github.in_progress_label),
       `remove ${cfg.github.in_progress_label} on #${round.pr}`,
@@ -4330,30 +4332,32 @@ export class VerdictWatcher {
     if (infrastructure && this.runningRound(round.pr, round.round_no)?.status !== "running")
       return true;
     const cause = SELF_REQUEUE_CAUSE[mode];
-    const { publication, owed } = store.db.transaction(() => {
-      const publication = store.cancelRoundAndQueueRecovery({
-        pr: round.pr,
-        round_id: round.id,
-        round_no: round.round_no,
-        summary: `self-requeue ${attempt}/${cap} — ${reason}`,
-        cause,
-        fallback_head_sha: head,
-        trigger_ts: this.now().toISOString(),
-        ...(recovery
-          ? {
-              recovery: {
-                stage: recovery.stage,
-                source_command_id: recovery.source_command_id,
-                immediate_attempt: attempt,
-                retry_epoch: recovery.retry_epoch,
-              },
-            }
-          : {}),
-      });
-      // The cancel and the owed measurement commit together: a kill between
-      // them cannot leave a cancelled round that nothing ever measures.
-      return { publication, owed: publication ? this.oweMeasurement(round) : null };
-    }).immediate();
+    const { publication, owed } = store.db
+      .transaction(() => {
+        const publication = store.cancelRoundAndQueueRecovery({
+          pr: round.pr,
+          round_id: round.id,
+          round_no: round.round_no,
+          summary: `self-requeue ${attempt}/${cap} — ${reason}`,
+          cause,
+          fallback_head_sha: head,
+          trigger_ts: this.now().toISOString(),
+          ...(recovery
+            ? {
+                recovery: {
+                  stage: recovery.stage,
+                  source_command_id: recovery.source_command_id,
+                  immediate_attempt: attempt,
+                  retry_epoch: recovery.retry_epoch,
+                },
+              }
+            : {}),
+        });
+        // The cancel and the owed measurement commit together: a kill between
+        // them cannot leave a cancelled round that nothing ever measures.
+        return { publication, owed: publication ? this.oweMeasurement(round) : null };
+      })
+      .immediate();
     if (!publication || !owed) return false;
     // A cancelled round burned real tokens and stays in every spend aggregate
     // (`SUM(est_usd) FROM rounds` has no status filter), so it must be

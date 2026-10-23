@@ -1026,8 +1026,7 @@ function bashCPayload(segment: string): LiftedPayload {
     break;
   }
   const prog = words[i];
-  if (prog === undefined || basenameOf(prog) !== "bash")
-    return { kind: "none" };
+  if (prog === undefined || basenameOf(prog) !== "bash") return { kind: "none" };
   for (let j = i + 1; j < words.length; j++) {
     const w = words[j]!;
     // A non-option, or `--` / `-` (end of options), before any -c: this is
@@ -2897,15 +2896,13 @@ export function sedScriptDanger(script: string): string | null {
       case "y": {
         const d = at();
         i++;
-        if (badSedDelimiter(d))
-          return "a y command the guard cannot read";
+        if (badSedDelimiter(d)) return "a y command the guard cannot read";
         break;
       }
       case "s": {
         const d = at();
         i++;
-        if (badSedDelimiter(d))
-          return "an s command the guard cannot read";
+        if (badSedDelimiter(d)) return "an s command the guard cannot read";
         // The flags: everything up to the end of the command. GNU's flags are
         // g p N i I m M e w — `e` runs the pattern space as a command, `w`
         // writes a file.

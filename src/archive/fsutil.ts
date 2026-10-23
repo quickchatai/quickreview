@@ -128,10 +128,15 @@ export async function renameNoReplace(from: string, to: string): Promise<"placed
       await copyFile(from, staging, constants.COPYFILE_EXCL);
       await utimes(staging, source.atime, source.mtime);
       await fsyncFile(staging);
-      if (await lstat(to).then(() => true, (e: NodeJS.ErrnoException) => {
-        if (e.code === "ENOENT") return false;
-        throw e;
-      })) {
+      if (
+        await lstat(to).then(
+          () => true,
+          (e: NodeJS.ErrnoException) => {
+            if (e.code === "ENOENT") return false;
+            throw e;
+          },
+        )
+      ) {
         await unlinkIfPresent(staging);
         return "exists";
       }

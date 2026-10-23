@@ -570,7 +570,10 @@ describe("scripts/cutover.sh", () => {
 
     it("never lifts while a PR tracked since the pauses were sent is not paused", () => {
       const r = board();
-      writeFileSync(join(r.dir, "late-pr"), "#20    tracked           -      5555555555  late pr\n");
+      writeFileSync(
+        join(r.dir, "late-pr"),
+        "#20    tracked           -      5555555555  late pr\n",
+      );
       const res = r.run([...TO_STAGE_9, "13", "y", "y", "y"]);
       expect(res.code).toBe(1);
       expect(res.out).toContain("#20 is tracked but not paused");

@@ -215,10 +215,7 @@ function lazyRuntime(make: () => Promise<Runtime>): Runtime {
 }
 
 /** The runtime a bench command hosts the review's main session on. */
-function benchRuntime(
-  kind: EngineRuntimeKind,
-  plannedWave: boolean,
-): Runtime {
+function benchRuntime(kind: EngineRuntimeKind, plannedWave: boolean): Runtime {
   return selectRuntime(kind, "bench", () =>
     lazyRuntime(() =>
       import("../engine/benchsdk.js").then((m) => m.benchSdkRuntime({ plannedWave })),

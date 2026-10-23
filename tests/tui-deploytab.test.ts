@@ -152,7 +152,9 @@ describe("deploy tab argv + parsing", () => {
 
   it("orders prereleases by semver precedence: numeric identifiers numerically, before alphanumeric ones", () => {
     expect(
-      parsePublishedVersions("1.2.3-rc.9\n1.2.3-rc.10\n1.2.3-rc.2\n1.2.3-alpha\n1.2.3-alpha.1\n1.2.3-1\n1.2.3\n"),
+      parsePublishedVersions(
+        "1.2.3-rc.9\n1.2.3-rc.10\n1.2.3-rc.2\n1.2.3-alpha\n1.2.3-alpha.1\n1.2.3-1\n1.2.3\n",
+      ),
     ).toEqual([
       "1.2.3",
       "1.2.3-rc.10",
@@ -165,7 +167,12 @@ describe("deploy tab argv + parsing", () => {
   });
 
   it("the finished-deploy bar does not offer to close a log that awaiting-lift keeps open", () => {
-    const run = { kind: "deploy", running: false, code: 0, lines: [] } as unknown as DeployState["run"];
+    const run = {
+      kind: "deploy",
+      running: false,
+      code: 0,
+      lines: [],
+    } as unknown as DeployState["run"];
     const awaiting = deployKeys(emptyState({ run, deployPhase: "awaiting-lift" })).bar;
     expect(awaiting.map((b) => b.key)).toEqual(["x"]);
     expect(awaiting[0]!.label).not.toContain("close log");

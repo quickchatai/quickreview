@@ -98,7 +98,9 @@ export class WorkerControls {
       return this.say({ id: order.id, ack: "refused", reason: "the round is ending" });
     const text = order.text!;
     const sent: Promise<Delivery> =
-      order.kind === "steer" ? live.steer(text, this.deps.limits()) : live.followUp(text, this.deps.limits());
+      order.kind === "steer"
+        ? live.steer(text, this.deps.limits())
+        : live.followUp(text, this.deps.limits());
     // Whatever the session does with it, the worker waits for the turn it starts.
     const tracked = sent.then(
       (d) => d,

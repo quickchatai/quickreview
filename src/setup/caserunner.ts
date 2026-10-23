@@ -76,10 +76,7 @@ export type SpawnFn = (
 /** The package names pi's CLI ships under. VERIFY-ON-PIN (0.87.1, re-read at 0.99.1): the
  * pinned package is `@earendil-works/pi-coding-agent` (package.json `pi`
  * block); the legacy `@mariozechner` scope is what older installs carry. */
-export const PI_PACKAGES: readonly string[] = [
-  PI_PACKAGE,
-  "@mariozechner/pi-coding-agent",
-];
+export const PI_PACKAGES: readonly string[] = [PI_PACKAGE, "@mariozechner/pi-coding-agent"];
 
 /** True only when `script` is a `bin` entry of the pi package: the nearest
  * package.json above its real path names pi, and one of its `bin` targets

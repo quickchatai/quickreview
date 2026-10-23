@@ -397,27 +397,31 @@ describe("inject-bridge — start-acknowledged single flight", () => {
     expect(pending()).toHaveLength(0);
   });
 
-  it("retries archival on its own timer when it still fails at settlement", async () => {
-    const file = "2026-08-20T14-01-10-0000.md";
-    const next = "2026-08-20T14-01-11-0000.md";
-    writeFileSync(join(dir, file), "prompt");
-    mkdirSync(join(dir, ".done", file), { recursive: true });
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    activate(fakePi());
-    fire("session_start");
-    await vi.waitFor(() => expect(sends).toHaveLength(1));
-    acknowledgeLatest();
-    fire("agent_settled");
-    await sleep(30);
-    expect(pending()).toHaveLength(1);
+  it(
+    "retries archival on its own timer when it still fails at settlement",
+    async () => {
+      const file = "2026-08-20T14-01-10-0000.md";
+      const next = "2026-08-20T14-01-11-0000.md";
+      writeFileSync(join(dir, file), "prompt");
+      mkdirSync(join(dir, ".done", file), { recursive: true });
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      activate(fakePi());
+      fire("session_start");
+      await vi.waitFor(() => expect(sends).toHaveLength(1));
+      acknowledgeLatest();
+      fire("agent_settled");
+      await sleep(30);
+      expect(pending()).toHaveLength(1);
 
-    // The filesystem recovers after settlement; no further agent event fires.
-    rmSync(join(dir, ".done", file), { recursive: true });
-    writeFileSync(join(dir, next), "successor");
-    await vi.waitFor(() => expect(done()).toEqual([file]), { timeout: RETRY_BASE_MS * 3 });
-    await vi.waitFor(() => expect(sends).toHaveLength(2));
-    expect(sentBody(1)).toBe("successor");
-  }, HEAVY_TIMEOUT_MS);
+      // The filesystem recovers after settlement; no further agent event fires.
+      rmSync(join(dir, ".done", file), { recursive: true });
+      writeFileSync(join(dir, next), "successor");
+      await vi.waitFor(() => expect(done()).toEqual([file]), { timeout: RETRY_BASE_MS * 3 });
+      await vi.waitFor(() => expect(sends).toHaveLength(2));
+      expect(sentBody(1)).toBe("successor");
+    },
+    HEAVY_TIMEOUT_MS,
+  );
 
   it("handles correlated run events emitted during the submission call", async () => {
     sendImpl = (content) => {

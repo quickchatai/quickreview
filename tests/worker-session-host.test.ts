@@ -587,10 +587,9 @@ describe("[P8.6] held wakes ride the round's own worker", () => {
       const [offered] = new HeldWakeHandoff(store).take(PR);
       expect(offered!.id).toBe(`held.${first}`);
       hold("reply two", AUTHOR_REPLY_WAKE_REASON);
-      store.db.prepare("UPDATE pending_wakes SET claimed_at = ? WHERE id = ?").run(
-        "2000-01-01T00:00:00.000Z",
-        first,
-      );
+      store.db
+        .prepare("UPDATE pending_wakes SET claimed_at = ? WHERE id = ?")
+        .run("2000-01-01T00:00:00.000Z", first);
 
       const [again] = new HeldWakeHandoff(store).take(PR);
 

@@ -436,7 +436,11 @@ describe("qcr-setup — the order on a fresh machine", () => {
   it("a manifest failure after login shows the registry's own error", () => {
     const rig = setupRig();
     const r = rig.run({
-      env: { FAKE_NO_PULL: "1", QCR_SETUP_INTERACTIVE: "1", FAKE_AFTER_LOGIN_ERR: "manifest unknown: no such tag" },
+      env: {
+        FAKE_NO_PULL: "1",
+        QCR_SETUP_INTERACTIVE: "1",
+        FAKE_AFTER_LOGIN_ERR: "manifest unknown: no such tag",
+      },
     });
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("manifest unknown: no such tag");

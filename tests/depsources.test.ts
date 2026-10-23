@@ -1490,7 +1490,14 @@ describe("prepareDependencySources", () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(
       join(dir, ".qcr-complete"),
-      JSON.stringify({ name: "left-pad", version: "1.3.0", url: "", sha256: "", files: 0, bytes: 0 }),
+      JSON.stringify({
+        name: "left-pad",
+        version: "1.3.0",
+        url: "",
+        sha256: "",
+        files: 0,
+        bytes: 0,
+      }),
     );
     const { fetch } = fakeFetch({});
     const m = await prepareDependencySources(npmTree(), CHANGED, { cacheDir, fetch });

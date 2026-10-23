@@ -376,9 +376,9 @@ describe("management verbs", () => {
     rig.learning.store.reloadMemory();
     release();
     await settle();
-    expect(rig.learning.store.entries.some((e) => e.text.includes("fresh after the mutation"))).toBe(
-      true,
-    );
+    expect(
+      rig.learning.store.entries.some((e) => e.text.includes("fresh after the mutation")),
+    ).toBe(true);
   });
 
   it("a reload re-binds the selection to the same ENTRY, not the same ordinal", async () => {

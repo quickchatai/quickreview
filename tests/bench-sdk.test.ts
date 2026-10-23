@@ -291,7 +291,7 @@ describe("a bench review round on the SDK with the engine's planned wave", () =>
     const lensWave = (): ReturnType<typeof fauxAssistantMessage> =>
       fauxAssistantMessage([fauxToolCall("lens_wave", {})], { stopReason: "toolUse" });
     const runtime = benchSdkRuntime({
-        plannedWave: true,
+      plannedWave: true,
       makeHost: fauxHost(
         [
           () => {
@@ -348,8 +348,7 @@ describe("a bench review round on the SDK with the engine's planned wave", () =>
 
   it("the engine setting without the wave leaves the launch to the main session", () => {
     expect(
-      (benchSdkRuntime({ plannedWave: false }) as { engineLens?: unknown })
-        .engineLens,
+      (benchSdkRuntime({ plannedWave: false }) as { engineLens?: unknown }).engineLens,
     ).toBeUndefined();
   });
 });

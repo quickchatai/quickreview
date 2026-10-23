@@ -352,7 +352,8 @@ describe("the single-instance lock", () => {
       try {
         again = await acquireLoginLock(path);
       } catch (e) {
-        if (Date.now() > deadline) throw new Error("timed out waiting for the lock to be free again", { cause: e });
+        if (Date.now() > deadline)
+          throw new Error("timed out waiting for the lock to be free again", { cause: e });
         await new Promise((r) => setTimeout(r, 50));
       }
     }

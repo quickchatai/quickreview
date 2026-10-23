@@ -486,18 +486,26 @@ describe("qcr_profiles_merged", () => {
   it("delivers the config home's profiles beside those next to an external QCR_CONFIG, home first", () => {
     const home = join(dir, "home");
     const xdg = join(dir, "xdg");
-    const env: InstallEnv = { HOME: home, XDG_CONFIG_HOME: xdg, QCR_CONFIG: join(dir, "ext", "c.toml") };
+    const env: InstallEnv = {
+      HOME: home,
+      XDG_CONFIG_HOME: xdg,
+      QCR_CONFIG: join(dir, "ext", "c.toml"),
+    };
     put(join(xdg, "qcr", "default", "profiles", "only-home", "profile.toml"), "home\n");
     put(join(xdg, "qcr", "default", "profiles", "both", "profile.toml"), "home\n");
     put(join(dir, "ext", "profiles", "both", "profile.toml"), "beside\n");
     put(join(dir, "ext", "profiles", "only-beside", "profile.toml"), "beside\n");
     put(join(root, "profiles", "default", "profile.toml"), "checkout\n");
     const dest = join(dir, "out");
-    const r = spawnSync("bash", ["-c", '. "$1"; qcr_profiles_merged "$2" "$3"', "l", locatorSh, root, dest], {
-      encoding: "utf8",
-      cwd: dir,
-      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...env } as NodeJS.ProcessEnv,
-    });
+    const r = spawnSync(
+      "bash",
+      ["-c", '. "$1"; qcr_profiles_merged "$2" "$3"', "l", locatorSh, root, dest],
+      {
+        encoding: "utf8",
+        cwd: dir,
+        env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...env } as NodeJS.ProcessEnv,
+      },
+    );
     expect(r.status, r.stderr).toBe(0);
     const read = (n: string): string => readFileSync(join(dest, n, "profile.toml"), "utf8");
     expect(read("only-home")).toBe("home\n");
@@ -508,7 +516,11 @@ describe("qcr_profiles_merged", () => {
 });
 
 describe("mint-token lock", () => {
-  function run(lockSetup: (lock: string) => void): { status: number | null; stderr: string; lock: string } {
+  function run(lockSetup: (lock: string) => void): {
+    status: number | null;
+    stderr: string;
+    lock: string;
+  } {
     const env: InstallEnv = { HOME: join(dir, "home"), XDG_CONFIG_HOME: join(dir, "xdg") };
     const secrets = secretsHome(env);
     mkdirSync(secrets, { recursive: true });
@@ -569,27 +581,37 @@ describe("operator box scripts", () => {
   const lift = (file: string, fn: string): string =>
     spawnSync("sed", ["-n", `/^${fn}() {/,/^}/p`, file], { encoding: "utf8" }).stdout;
 
-  it.skipIf(!present)("a rotated box key replaces the retired one and keeps other identities", () => {
-    const fn = lift(setup, "ssh_keys_with");
-    expect(fn).not.toBe("");
-    const cur = "alice:ssh-ed25519 AAAA-alice a\nboxuser:ssh-ed25519 AAAA-old box\nboxuser-x:ssh-ed25519 AAAA-x x";
-    const r = spawnSync("bash", ["-c", `${fn}\nssh_keys_with "$1" boxuser "ssh-ed25519 AAAA-new box"`, "l", cur], {
-      encoding: "utf8",
-    });
-    expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout).toBe(
-      "alice:ssh-ed25519 AAAA-alice a\nboxuser-x:ssh-ed25519 AAAA-x x\nboxuser:ssh-ed25519 AAAA-new box\n",
-    );
-  });
+  it.skipIf(!present)(
+    "a rotated box key replaces the retired one and keeps other identities",
+    () => {
+      const fn = lift(setup, "ssh_keys_with");
+      expect(fn).not.toBe("");
+      const cur =
+        "alice:ssh-ed25519 AAAA-alice a\nboxuser:ssh-ed25519 AAAA-old box\nboxuser-x:ssh-ed25519 AAAA-x x";
+      const r = spawnSync(
+        "bash",
+        ["-c", `${fn}\nssh_keys_with "$1" boxuser "ssh-ed25519 AAAA-new box"`, "l", cur],
+        {
+          encoding: "utf8",
+        },
+      );
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout).toBe(
+        "alice:ssh-ed25519 AAAA-alice a\nboxuser-x:ssh-ed25519 AAAA-x x\nboxuser:ssh-ed25519 AAAA-new box\n",
+      );
+    },
+  );
 
-  it.skipIf(!present)("a login hook is rewritten for a new root, and left alone when current", () => {
-    const fn = lift(provision, "install_hook");
-    expect(fn).not.toBe("");
-    const home = join(dir, "uhome");
-    mkdirSync(home);
-    const zp = join(home, ".zprofile");
-    writeFileSync(zp, "export A=1\n");
-    const script = `
+  it.skipIf(!present)(
+    "a login hook is rewritten for a new root, and left alone when current",
+    () => {
+      const fn = lift(provision, "install_hook");
+      expect(fn).not.toBe("");
+      const home = join(dir, "uhome");
+      mkdirSync(home);
+      const zp = join(home, ".zprofile");
+      writeFileSync(zp, "export A=1\n");
+      const script = `
 sudo() { if [[ $1 == -u ]]; then shift 2; fi; "$@"; }
 chown() { :; }
 ok() { echo "ok $*"; }
@@ -605,13 +627,14 @@ $MARK_CLOSE"
 install_hook u "$1"
 install_hook u "$1"
 `;
-    const r = spawnSync("bash", ["-c", script, "l", home], { encoding: "utf8" });
-    expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout.split("\n").filter(Boolean)).toEqual([
-      "ok u: hook installed",
-      "ok u: hook updated",
-      "ok u: hook already present",
-    ]);
-    expect(readFileSync(zp, "utf8")).toBe("export A=1\n# >>> M >>>\nrun /new/bin\n# <<< M <<<\n");
-  });
+      const r = spawnSync("bash", ["-c", script, "l", home], { encoding: "utf8" });
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout.split("\n").filter(Boolean)).toEqual([
+        "ok u: hook installed",
+        "ok u: hook updated",
+        "ok u: hook already present",
+      ]);
+      expect(readFileSync(zp, "utf8")).toBe("export A=1\n# >>> M >>>\nrun /new/bin\n# <<< M <<<\n");
+    },
+  );
 });

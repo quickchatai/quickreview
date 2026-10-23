@@ -335,10 +335,9 @@ console.log(JSON.stringify({provider:dense?.provider,model:dense?.model,dimensio
     return {
       name: "embedder-runtime",
       ok: false,
-      detail:
-        `the active embedder configuration is unreadable (exit ${result.code}${
-          result.stderr.trim() ? `: ${result.stderr.trim().slice(0, 200)}` : ""
-        }) — its provider is unknown; restore access to the memory container before verifying delivery`,
+      detail: `the active embedder configuration is unreadable (exit ${result.code}${
+        result.stderr.trim() ? `: ${result.stderr.trim().slice(0, 200)}` : ""
+      }) — its provider is unknown; restore access to the memory container before verifying delivery`,
     };
   const matches =
     actual.provider === expected.provider &&

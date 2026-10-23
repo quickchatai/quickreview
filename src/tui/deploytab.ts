@@ -1053,12 +1053,7 @@ export function installDeployHooks(
     const snap = theApp.view.snapshot;
     if (!run || run.kind !== "deploy") {
       const saved = ceremony.read();
-      if (
-        saved &&
-        snap &&
-        isFreshHealth(health) &&
-        snap.draining !== true
-      ) {
+      if (saved && snap && isFreshHealth(health) && snap.draining !== true) {
         const liftGenerationOk =
           saved.phase !== "awaiting-lift" ||
           (saved.pre_deploy_snapshot_at !== undefined &&

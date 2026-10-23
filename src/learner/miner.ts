@@ -1223,8 +1223,7 @@ export function datesBetween(from: string, to: string): string[] {
   const b = Date.parse(`${to}T00:00:00Z`);
   if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) return [];
   const out: string[] = [];
-  for (let t = a; t <= b; t += DAY_MS)
-    out.push(new Date(t).toISOString().slice(0, 10));
+  for (let t = a; t <= b; t += DAY_MS) out.push(new Date(t).toISOString().slice(0, 10));
   return out;
 }
 

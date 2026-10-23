@@ -27,7 +27,12 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { compareInboxItems, parseInboxItem, type InboxClass, type InboxItem } from "../companioninbox.js";
+import {
+  compareInboxItems,
+  parseInboxItem,
+  type InboxClass,
+  type InboxItem,
+} from "../companioninbox.js";
 import type { TuiConfig } from "../config.js";
 import { MAX_TITLE, type AlertTier } from "./alerts.js";
 import { inboxAckArgv, inboxListArgv, type SshRunner } from "./remote.js";
@@ -137,7 +142,12 @@ export function why(r: { stderr: string; code: number | null }): string {
 export async function pullCompanionInbox(deps: InboxPullDeps): Promise<InboxPullResult> {
   const listed = await deps.ssh(deps.cfg.ssh_host, inboxListArgv(deps.cfg));
   if (!listed.ok)
-    return { delivered: [], written: [], skipped: 0, error: `inbox listing failed: ${why(listed)}` };
+    return {
+      delivered: [],
+      written: [],
+      skipped: 0,
+      error: `inbox listing failed: ${why(listed)}`,
+    };
   const items: InboxItem[] = [];
   let skipped = 0;
   for (const line of listed.stdout.split("\n")) {
@@ -153,7 +163,11 @@ export async function pullCompanionInbox(deps: InboxPullDeps): Promise<InboxPull
   for (const item of items) {
     try {
       const a = writeOnce(deps.injectDir, inboxInjectName(item), inboxInjectText(item));
-      const b = writeOnce(deps.alertsDir, inboxAlertName(item), `${JSON.stringify(inboxAlert(item))}\n`);
+      const b = writeOnce(
+        deps.alertsDir,
+        inboxAlertName(item),
+        `${JSON.stringify(inboxAlert(item))}\n`,
+      );
       delivered.push(item);
       if (a || b) written.push(item);
     } catch (err) {

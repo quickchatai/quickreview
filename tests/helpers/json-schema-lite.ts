@@ -74,9 +74,7 @@ export function validate(schema: Schema, value: unknown, root: Schema = schema):
     for (const key of ["oneOf", "anyOf"] as const) {
       const alts = s[key] as Schema[] | undefined;
       if (!alts) continue;
-      const passing = alts.filter(
-        (a) => validate(a, v, root).length === 0,
-      );
+      const passing = alts.filter((a) => validate(a, v, root).length === 0);
       if (key === "oneOf" ? passing.length !== 1 : passing.length === 0)
         errors.push(`${at}: matches ${passing.length} of the ${key} alternatives`);
     }
