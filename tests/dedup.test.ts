@@ -204,6 +204,24 @@ describe("postCheckRecord — one root cause posted twice becomes one comment", 
     expect(f[2]).toMatchObject({ id: "B", disposition: "posted" });
     expect(f[2]!.body).toBe("B body\n\nAlso at `a.ts:10`.\n\nAlso at `a.ts:11`.");
   });
+  it("renders a follower's site with codePath, so a backticked file name stays one code span", () => {
+    const entry = (id: string, posted_as: string, severity: string, line: number) => ({
+      id,
+      disposition: "posted",
+      posted_as,
+      severity,
+      path: "we`ird.ts",
+      line,
+      group: `G-${id}`,
+      title: "`retry` misbehaves",
+      body: `${id} body`,
+    });
+    const { record } = postCheckRecord({
+      findings: [entry("N", "nit", "P3", 11), entry("B", "blocker", "P1", 12)],
+    });
+    const f = (record as { findings: Array<Record<string, unknown>> }).findings;
+    expect(f[1]!.body).toBe("B body\n\nAlso at `` we`ird.ts:11 ``.");
+  });
   it("is a no-op (same object) when nothing merges", () => {
     const r = {
       findings: [
