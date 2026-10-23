@@ -27,6 +27,8 @@ const { StateStore } = await import("/opt/legacy/dist/src/state.js");
 const STATE = "/opt/quickreview/state";
 const CMD = "/opt/quickreview/sandbox/commands";
 const log = (m) => console.log(`[legacy-standin ${new Date().toISOString()}] ${m}`);
+const DRAIN_FIELDS = ["command", "on", "for_min"];
+const unknownDrainFields = (cmd) => Object.keys(cmd).filter((k) => !DRAIN_FIELDS.includes(k));
 
 const store = new StateStore(`${STATE}/state.db`);
 mkdirSync(`${CMD}/operator`, { recursive: true });
@@ -81,13 +83,11 @@ const poll = () => {
         ok: false,
         reason: `the legacy stand-in only knows drain (got ${cmd.command})`,
       });
-    } else if (Object.keys(cmd).some((k) => !["command", "on", "for_min"].includes(k))) {
+    } else if (unknownDrainFields(cmd).length > 0) {
       // the legacy command schema is strict: `hold` (P8.21b) is a field it has never heard of
       answer(base, {
         ok: false,
-        reason: `unknown field in drain command: ${Object.keys(cmd)
-          .filter((k) => !["command", "on", "for_min"].includes(k))
-          .join(",")}`,
+        reason: `unknown field in drain command: ${unknownDrainFields(cmd).join(",")}`,
       });
     } else if (cmd.on === true) {
       const r = store.engageDrain({ issuer: "operator", expires_at: null });
