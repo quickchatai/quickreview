@@ -840,6 +840,8 @@ export function parseScanAnswer(
 }
 
 export interface DoubtLine {
+  /** The lens the validator named on the line. */
+  lens: string;
   path: string;
   line: number | null;
   word: string;
@@ -889,9 +891,9 @@ function judgementLines(body: string | null, root: string | null): DoubtLine[] {
   const out: DoubtLine[] = [];
   if (body === null) return out;
   for (const raw of body.split("\n")) {
-    const m = /^\s*-\s+\S+\s+(\S+?)(?::(\d+)(?:-\d+)?)?\s+[—–-]+\s+([a-z-]+):?\s*(.*)$/i.exec(raw);
+    const m = /^\s*-\s+(\S+)\s+(\S+?)(?::(\d+)(?:-\d+)?)?\s+[—–-]+\s+([a-z-]+):?\s*(.*)$/i.exec(raw);
     if (!m) continue;
-    let reason = (m[4] ?? "").trim();
+    let reason = (m[5] ?? "").trim();
     let cls: string | null = null;
     const c = /^\[\s*`?([a-z-]+)`?\s*\]\s*(.*)$/i.exec(reason);
     if (c && SCAN_FALSE_POSITIVE_SLUGS.includes(c[1]!.toLowerCase())) {
@@ -899,9 +901,10 @@ function judgementLines(body: string | null, root: string | null): DoubtLine[] {
       reason = (c[2] ?? "").trim();
     }
     out.push({
-      path: cleanPath(m[1]!, root),
-      line: m[2] !== undefined ? Number(m[2]) : null,
-      word: m[3]!.toLowerCase(),
+      lens: m[1]!,
+      path: cleanPath(m[2]!, root),
+      line: m[3] !== undefined ? Number(m[3]) : null,
+      word: m[4]!.toLowerCase(),
       reason,
       class: cls,
     });

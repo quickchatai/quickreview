@@ -220,6 +220,50 @@ describe("near-duplicate findings collapse into one", () => {
     expect(f.aliases).toEqual(expect.arrayContaining([A932.fingerprint, A986.fingerprint]));
   });
 
+  it("a match keeps the best-supported judgement of the sightings it carries over", () => {
+    const st = store();
+    const doubt = { word: "unverifiable", reason: "r", class: null };
+    const own = { validated: false, doubt, validity: "doubtful" as const };
+    st.report(
+      [
+        { ...A932, ...own },
+        { ...A986, validated: true, validity: "confirmed", scenario: "a.ts:1 -> a.ts:2" },
+      ],
+      S("r1", "2026-09-30T10:00:00Z"),
+    );
+    expect(st.load().findings[0]).toMatchObject({ validity: "confirmed" });
+    const moved = {
+      ...A932,
+      ...own,
+      fingerprint: "cc".repeat(32),
+      blob: "b2",
+      start: 940,
+      end: 940,
+      claim: "Something else entirely about a moved check.",
+    };
+    st.report([moved], S("r2", "2026-09-30T11:00:00Z"));
+    const rows = ["pass-security", "pass-data-safety"].map((lens) => ({
+      path: A932.path,
+      blob: "b2",
+      lens,
+      tier: "t",
+      effort: "low",
+      validator: false,
+      sha: "sha-r2",
+      lines: 9,
+      cost_usd: 0,
+      run: "r2",
+      case: "u",
+      at: "2026-09-30T11:00:01Z",
+    }));
+    st.reconcile({ rows, tree: new Set([A932.path]), run: S("r2", "2026-09-30T11:00:02Z") });
+    const q = st.question().question!;
+    st.match({ key: q.key, pairs: [{ old: A932.fingerprint, new: moved.fingerprint }] });
+    const f = st.load().findings.find((x) => x.fingerprint === moved.fingerprint)!;
+    expect(f.merged).toHaveLength(1);
+    expect(f).toMatchObject({ validity: "confirmed", doubt: null });
+  });
+
   it("a fingerprint a match retired as an alias, reported again, is the matched finding — its triage kept, nothing added", () => {
     const st = store();
     st.report([A932], S("r1", "2026-09-30T10:00:00Z"));
