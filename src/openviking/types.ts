@@ -4,7 +4,8 @@
 
 /** One health sample: what `/health` and `/ready` said, plus what it cost. */
 export interface OpenVikingHealth {
-  /** `/health` answered at all (the process is up and serving). */
+  /** `/health` answered successfully (a non-2xx answer reads as unreachable,
+   * with the status in `error`). */
   reachable: boolean;
   /** `/ready` returned 200 — AGFS, VectorDB, key manager and embedding are all
    * usable. 503 means "up but not serving memory yet", which is a legitimate
@@ -15,6 +16,13 @@ export interface OpenVikingHealth {
   /** Why the probe failed, when it did. Never thrown — always reported. */
   error?: string;
   /** ISO instant of the probe. */
+  at: string;
+}
+
+/** How a supervised child last exited. */
+export interface ChildExit {
+  code: number | null;
+  signal: string | null;
   at: string;
 }
 
@@ -101,7 +109,7 @@ export interface LocalEmbedderStatus {
   restarts: number;
   pid?: number;
   started_at?: string;
-  last_exit?: { code: number | null; signal: string | null; at: string };
+  last_exit?: ChildExit;
   last_error?: string;
   checked_at?: string;
   rss_bytes?: number;
@@ -111,9 +119,10 @@ export interface LocalEmbedderStatus {
 /**
  * The `openviking` block of `state/status.json`.
  *
- * Everything here is a CACHED read: `OpenVikingSupervisor.status()` is
- * synchronous and never throws, because the heartbeat writer must not be able
- * to fail — or block — on the memory engine.
+ * The supervisor's fields are a CACHED read: `OpenVikingSupervisor.status()`
+ * is synchronous and never throws, because the heartbeat writer must not be
+ * able to fail — or block — on the memory engine. The `reembed` block is the
+ * exception: its status rereads the journal file synchronously.
  */
 export interface OpenVikingStatus {
   enabled: boolean;
@@ -124,7 +133,7 @@ export interface OpenVikingStatus {
   /** The supervisor believes a child process is alive. */
   running: boolean;
   pid?: number;
-  /** `/health` answered on the last poll. */
+  /** `/health` answered successfully on the last poll. */
   reachable: boolean;
   /** `/ready` returned 200 on the last poll — the gate that matters. */
   ready: boolean;
@@ -143,7 +152,7 @@ export interface OpenVikingStatus {
   restarts: number;
   /** ISO instant the current child started. */
   started_at?: string;
-  last_exit?: { code: number | null; signal: string | null; at: string };
+  last_exit?: ChildExit;
   /** Last spawn/probe failure, human-readable. */
   last_error?: string;
   /** Resident set size of the server process (measured ~400 MiB idle, ~460 MiB
