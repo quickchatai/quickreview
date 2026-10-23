@@ -14,6 +14,7 @@
 // the config FILE outright (not the home). Every locator takes the env as a
 // parameter (default `process.env`), so tests drive it with temp XDG homes.
 import { homedir } from "node:os";
+import { join } from "node:path";
 import * as core from "@quickchatai/pi-quickreview/src/homes.js";
 import type {
   InstallEnv,
@@ -22,6 +23,7 @@ import type {
   LocateSecretsOptions,
   OneShotConfig,
 } from "@quickchatai/pi-quickreview/src/homes.js";
+import { detectInstall } from "./installkind.js";
 import type {
   LocatedProfile,
   ProfilePlace,
@@ -84,6 +86,19 @@ export function configHome(env: InstallEnv = process.env): string {
 
 export function stateHome(env: InstallEnv = process.env): string {
   return core.stateHome(withHome(env));
+}
+
+/**
+ * The state directory the operator verbs open: `state.db`, `status.json`, the
+ * record-only gate's `dryrun/`. A checkout and the release image keep it at
+ * `<root>/state`, where their daemon writes it. An app installed by a package
+ * manager keeps it in the state home instead, never inside the package: a
+ * root-owned global prefix refuses the write, and an update replaces the
+ * package directory with everything in it.
+ */
+export function operatorStateDir(root: string, env: InstallEnv = process.env): string {
+  const kind = detectInstall(root, env as Readonly<Record<string, string | undefined>>).kind;
+  return kind === "global" || kind === "local" ? stateHome(env) : join(root, "state");
 }
 
 export function locateConfig(opts: LocateOptions = {}): LocatedConfig {
