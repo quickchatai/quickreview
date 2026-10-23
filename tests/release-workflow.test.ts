@@ -130,11 +130,13 @@ describe("release.yml — the gates", () => {
         name,
       ).toEqual([]);
     }
-    // the npm job reads its environment's stage-only token and nothing else
+    // the npm job logs in by trusted publishing alone and reads no secret.
+    // MUTATION: put `NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}` back on the
+    // stage step — this fails.
     const npmSecrets = [...jobText("npm").matchAll(/secrets\.([A-Z_]+)/g)].map((m) => m[1]);
-    expect(npmSecrets).toEqual(["NPM_TOKEN"]);
-    // NPM_TOKEN is a secret of the npm-publish environment, whose ref policy
-    // admits v*.*.* tags only, so a branch run never reaches it.
+    expect(npmSecrets).toEqual([]);
+    // Both packages' trusted publishers name the npm-publish environment, whose
+    // ref policy admits v*.*.* tags only, so a branch run cannot stage.
     // MUTATION: drop `environment: npm-publish` from the npm job — this fails.
     expect(wf.jobs.npm!.environment).toBe("npm-publish");
     expect(wf.jobs.e2e!.if).toBe("needs.plan.outputs.e2e == 'true'");
@@ -361,8 +363,8 @@ describe("release.yml — the npm job", () => {
     expect(job["runs-on"]).toBe("ubuntu-latest");
   });
 
-  // The token is stage-only, and staging is the route even once it is gone:
-  // nothing reaches the registry without a maintainer's 2FA approval.
+  // The trusted publishers may stage and never publish: nothing reaches the
+  // registry without a maintainer's 2FA approval.
   // MUTATION: replace `npm stage publish "$tgz"` with `npm publish "$tgz"` — this fails.
   it("never runs a plain npm publish, only npm stage publish", () => {
     const invocation = /(^|[;&|(]|\bthen|\bdo|\belse)\s*npm\s+publish\b/m;
@@ -370,15 +372,14 @@ describe("release.yml — the npm job", () => {
     expect(stage.run).toMatch(/^\s*if npm stage publish "\$tgz" "\$\{args\[@\]\}"; then$/m);
   });
 
-  it("sets up Node 26 against registry.npmjs.org with the workflow's action majors, no cache", () => {
+  // MUTATION: give setup-node a registry-url — its placeholder token lands in
+  // .npmrc and this fails.
+  it("sets up Node 26 with the workflow's action majors, no registry-url, no cache", () => {
     const checkout = steps.find((s) => s.uses?.startsWith("actions/checkout@"))!;
     expect(checkout.uses).toBe(wf.jobs.plan!.steps[0]!.uses);
     const setup = steps.find((s) => s.uses?.startsWith("actions/setup-node@"))!;
     expect(setup.uses).toBe("actions/setup-node@v7");
-    expect(setup.with).toEqual({
-      "node-version": "26",
-      "registry-url": "https://registry.npmjs.org",
-    });
+    expect(setup.with).toEqual({ "node-version": "26" });
     // the checks, then npm ci, then pack, then the artifact, then the stage
     const at = (s: FullStep): number => steps.indexOf(s);
     const ci = steps.find((s) => s.run === "npm ci")!;
@@ -403,9 +404,8 @@ describe("release.yml — the npm job", () => {
     });
   });
 
-  it("logs in with NPM_TOKEN when it exists, by OIDC when it does not, with provenance on a public repo", () => {
+  it("logs in by trusted publishing alone: no token reaches the stage step", () => {
     expect(stage.env).toEqual({
-      NODE_AUTH_TOKEN: "${{ secrets.NPM_TOKEN }}",
       PUBLIC: "${{ github.event.repository.visibility == 'public' }}",
       PLUGIN_TGZ: "${{ steps.pack.outputs.plugin }}",
       APP_TGZ: "${{ steps.pack.outputs.app }}",
@@ -581,7 +581,7 @@ process.exit(2);
     const dir = scratch();
     packages(dir, "1.2.3", "1.2.3", "1.2.3");
     const t = tarballs(dir, "1.2.3");
-    const r = runStage(dir, "1.2.3", { PUBLIC: "true", NODE_AUTH_TOKEN: "" });
+    const r = runStage(dir, "1.2.3", { PUBLIC: "true" });
     expect(r.status, r.log).toBe(0);
     expect(stages(r.calls)).toEqual([
       ["stage", "publish", t.PLUGIN_TGZ, "--tag", "latest", "--access", "public", "--provenance"],
@@ -591,7 +591,7 @@ process.exit(2);
       "`@quickchatai/pi-quickreview@1.2.3`: staged under dist-tag latest",
     );
     expect(r.summary).toContain("`@quickchatai/quickreview@1.2.3`: staged under dist-tag latest");
-    expect(r.summary).toContain("trusted publishing (OIDC)");
+    expect(r.summary).toContain("(trusted publishing, provenance: yes)");
     expect(r.summary.indexOf("pi-quickreview@")).toBeLessThan(r.summary.indexOf("/quickreview@"));
     // the approval commands, the plugin before the app
     const listPlugin = r.summary.indexOf("`npm stage list @quickchatai/pi-quickreview`");
@@ -602,14 +602,13 @@ process.exit(2);
   });
 
   // MUTATION: drop the PUBLIC check around `args+=(--provenance)` — this fails.
-  it("names the token login and passes no --provenance on a private repo", () => {
+  it("passes no --provenance on a private repo", () => {
     const dir = scratch();
     packages(dir, "1.2.3", "1.2.3", "1.2.3");
-    const r = runStage(dir, "1.2.3", { PUBLIC: "false", NODE_AUTH_TOKEN: "t" });
+    const r = runStage(dir, "1.2.3", { PUBLIC: "false" });
     expect(r.status, r.log).toBe(0);
     expect(stages(r.calls)).toHaveLength(2);
     for (const c of stages(r.calls)) expect(c).not.toContain("--provenance");
-    expect(r.summary).toContain("the NPM_TOKEN secret");
     expect(r.summary).toContain("provenance: no");
   });
 
@@ -617,7 +616,7 @@ process.exit(2);
   it("a prerelease is staged under next and never moves latest", () => {
     const dir = scratch();
     packages(dir, "1.3.0-rc.1", "1.3.0-rc.1", "1.3.0-rc.1");
-    const r = runStage(dir, "1.3.0-rc.1", { PUBLIC: "true", NODE_AUTH_TOKEN: "" });
+    const r = runStage(dir, "1.3.0-rc.1", { PUBLIC: "true" });
     expect(r.status, r.log).toBe(0);
     expect(stages(r.calls)).toHaveLength(2);
     for (const c of stages(r.calls)) {
@@ -632,7 +631,7 @@ process.exit(2);
     const dir = scratch();
     packages(dir, "1.2.3", "1.2.3", "1.2.3");
     onRegistry(dir, "@quickchatai/pi-quickreview@1.2.3", "1.2.3");
-    const r = runStage(dir, "1.2.3", { PUBLIC: "true", NODE_AUTH_TOKEN: "" });
+    const r = runStage(dir, "1.2.3", { PUBLIC: "true" });
     expect(r.status, r.log).toBe(0);
     expect(stages(r.calls)).toEqual([
       [
@@ -657,7 +656,7 @@ process.exit(2);
     packages(both, "1.2.3", "1.2.3", "1.2.3");
     onRegistry(both, "@quickchatai/pi-quickreview@1.2.3", "1.2.3");
     onRegistry(both, "@quickchatai/quickreview@1.2.3", "1.2.3");
-    const again = runStage(both, "1.2.3", { PUBLIC: "true", NODE_AUTH_TOKEN: "" });
+    const again = runStage(both, "1.2.3", { PUBLIC: "true" });
     expect(again.status, again.log).toBe(0);
     expect(stages(again.calls)).toEqual([]);
     expect(again.summary).not.toContain("npm stage approve");
@@ -666,13 +665,12 @@ process.exit(2);
   // MUTATION: let a refused stage `exit 1` on the spot — the app is never
   // attempted and this fails; drop the final `exit "$failed"` — the step
   // passes and this fails.
-  it("a refused plugin stage still attempts the app, then fails the step with the hand-publish route", () => {
+  it("a refused plugin stage still attempts the app, then fails the step naming the publisher and the hand route", () => {
     const dir = scratch();
     packages(dir, "1.2.3", "1.2.3", "1.2.3");
     const t = tarballs(dir, "1.2.3");
     const r = runStage(dir, "1.2.3", {
       PUBLIC: "true",
-      NODE_AUTH_TOKEN: "t",
       FAKE_STAGE_FAIL: "pi-quickreview",
     });
     expect(r.status).toBe(1);
@@ -681,13 +679,174 @@ process.exit(2);
       ["stage", "publish", t.APP_TGZ],
     ]);
     expect(r.summary).toContain("`@quickchatai/pi-quickreview@1.2.3`: failed to stage");
-    expect(r.summary).toContain("may refuse staging");
+    expect(r.summary).toContain("`.github/npm-trust.sh --apply` sets it");
     expect(r.summary).toContain(
       "`npm publish quickchatai-pi-quickreview-1.2.3.tgz --access public`",
     );
     expect(r.summary).toContain("npm-tarballs-1.2.3");
     expect(r.summary).toContain("`@quickchatai/quickreview@1.2.3`: staged under dist-tag latest");
     expect(r.log).toContain("::error::npm stage publish refused @quickchatai/pi-quickreview@1.2.3");
+  });
+
+  it("cleans up", () => {
+    for (const d of dirs) rmSync(d, { recursive: true, force: true });
+  });
+});
+
+// .github/npm-trust.sh sets the trusted publishers the `npm` job logs in by.
+// It runs against a fake npm and a fake gh on the PATH, which log their
+// arguments; `npm trust github <package>` fails for a package named in
+// FAKE_TRUST_FAIL, and the fake gh lists FAKE_SECRETS as the environment's.
+describe("npm-trust.sh — the trusted publishers", () => {
+  const script = join(root, ".github", "npm-trust.sh");
+  const body = readFileSync(script, "utf8");
+  const dirs: string[] = [];
+  const PLUGIN = "@quickchatai/pi-quickreview";
+  const APP = "@quickchatai/quickreview";
+  const trustArgs = (pkg: string): string[] => [
+    "trust",
+    "github",
+    pkg,
+    "--file",
+    "release.yml",
+    "--repository",
+    "quickchatai/quickreview",
+    "--environment",
+    "npm-publish",
+    "--allow-stage-publish",
+    "--yes",
+  ];
+
+  function run(args: string[], env: Record<string, string> = {}) {
+    const dir = mkdtempSync(join(tmpdir(), "npm-trust-"));
+    dirs.push(dir);
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    const log = join(dir, "calls.log");
+    writeFileSync(log, "");
+    const fake = (name: string, rest: string): void => {
+      writeFileSync(
+        join(bin, name),
+        `#!/usr/bin/env node
+const fs = require("node:fs");
+const a = process.argv.slice(2);
+fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify(["${name}", ...a]) + "\\n");
+${rest}
+`,
+      );
+      chmodSync(join(bin, name), 0o755);
+    };
+    fake(
+      "npm",
+      `if (a[0] === "--version") { console.log("11.20.0"); process.exit(0); }
+if (a[0] === "trust" && a.includes("--help")) {
+  if (process.env.FAKE_NO_STAGE_TRUST) console.log("--allow-publish");
+  else console.log("--allow-publish\\n--allow-stage-publish");
+  process.exit(0);
+}
+if (a[0] === "trust" && a[1] === "github") {
+  process.exit((process.env.FAKE_TRUST_FAIL || "").split(",").includes(a[2]) ? 1 : 0);
+}
+process.exit(2);`,
+    );
+    fake(
+      "gh",
+      `if (a[0] === "secret" && a[1] === "list") {
+  for (const s of (process.env.FAKE_SECRETS || "").split(",").filter(Boolean)) console.log(s);
+  process.exit(0);
+}
+if (a[0] === "secret" && a[1] === "delete") process.exit(0);
+process.exit(2);`,
+    );
+    const r = spawnSync("bash", [script, ...args], {
+      env: { PATH: `${bin}:${process.env.PATH!}`, FAKE_LOG: log, ...env },
+      encoding: "utf8",
+    });
+    const calls = readFileSync(log, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as string[])
+      .filter((c) => !c.includes("--help"));
+    return { status: r.status, calls, out: r.stdout, err: r.stderr };
+  }
+
+  // MUTATION: name another workflow or environment in the script — this fails.
+  it("names the workflow, the environment and the repository the npm job runs in", () => {
+    expect(body).toMatch(/^WORKFLOW=release\.yml$/m);
+    expect(body).toMatch(new RegExp(`^ENVIRONMENT=${wf.jobs.npm!.environment!}$`, "m"));
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
+      repository: { url: string };
+    };
+    const repo = /^REPO=(.+)$/m.exec(body)![1]!;
+    expect(pkg.repository.url).toBe(`git+https://github.com/${repo}.git`);
+  });
+
+  it("a dry run prints both publishers, the plugin first, stage-only, and calls nothing", () => {
+    const r = run([]);
+    expect(r.status, r.err).toBe(0);
+    expect(r.calls).toEqual([]);
+    const lines = r.out.split("\n");
+    expect(lines[0]).toBe(["npm", ...trustArgs(PLUGIN)].join(" "));
+    expect(lines[1]).toBe(["npm", ...trustArgs(APP)].join(" "));
+    expect(r.out).not.toContain("--allow-publish");
+  });
+
+  // MUTATION: add --allow-publish to the trust call — a publisher that can
+  // publish without a maintainer's approval, and this fails.
+  it("--apply sets both stage-only publishers, the plugin first, then deletes NPM_TOKEN", () => {
+    const r = run(["--apply"], { FAKE_SECRETS: "NPM_TOKEN" });
+    expect(r.status, r.err).toBe(0);
+    expect(r.calls).toEqual([
+      ["npm", ...trustArgs(PLUGIN)],
+      ["npm", ...trustArgs(APP)],
+      [
+        "gh",
+        "secret",
+        "list",
+        "--repo",
+        "quickchatai/quickreview",
+        "--env",
+        "npm-publish",
+        "--json",
+        "name",
+        "--jq",
+        ".[].name",
+      ],
+      [
+        "gh",
+        "secret",
+        "delete",
+        "NPM_TOKEN",
+        "--repo",
+        "quickchatai/quickreview",
+        "--env",
+        "npm-publish",
+      ],
+    ]);
+  });
+
+  it("--apply deletes nothing when no NPM_TOKEN is left", () => {
+    const r = run(["--apply"], { FAKE_SECRETS: "OTHER" });
+    expect(r.status, r.err).toBe(0);
+    expect(r.calls.filter((c) => c[0] === "gh" && c[2] === "delete")).toEqual([]);
+  });
+
+  // MUTATION: drop the `failed` check before the secret delete — this fails.
+  it("a refused publisher still tries the other, keeps NPM_TOKEN and fails", () => {
+    const r = run(["--apply"], { FAKE_SECRETS: "NPM_TOKEN", FAKE_TRUST_FAIL: PLUGIN });
+    expect(r.status).toBe(1);
+    expect(r.calls.filter((c) => c[0] === "npm")).toEqual([
+      ["npm", ...trustArgs(PLUGIN)],
+      ["npm", ...trustArgs(APP)],
+    ]);
+    expect(r.calls.filter((c) => c[0] === "gh")).toEqual([]);
+    expect(r.err).toContain("NPM_TOKEN is kept");
+  });
+
+  it("refuses an npm that cannot set a stage-only publisher", () => {
+    const r = run(["--apply"], { FAKE_NO_STAGE_TRUST: "1" });
+    expect(r.status).toBe(1);
+    expect(r.calls.filter((c) => c[0] === "npm" && c[1] === "trust")).toEqual([]);
   });
 
   it("cleans up", () => {
