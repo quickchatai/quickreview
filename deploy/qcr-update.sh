@@ -519,6 +519,15 @@ rounds="$(status_value running_rounds)"
 step layout
 LAYOUT="$(detect_layout)"
 log "layout: $LAYOUT"
+# No container of this name, yet a running container writes this state: the run
+# spec names the wrong daemon, and a second daemon would share its state.db.
+if [[ "$LAYOUT" == none && $FRESH -eq 0 ]]; then
+  for id in $(d ps -q); do
+    if d container inspect -f '{{range .Mounts}}{{.Source}} {{end}}' "$id" 2>/dev/null | tr ' ' '\n' | grep -qx "${C[SANDBOX_ROOT]}/state"; then
+      die "refusing: no container ${C[DAEMON_CONTAINER]}, but the running container $(d container inspect -f '{{.Name}}' "$id" | tr -d /) mounts ${C[SANDBOX_ROOT]}/state. The run spec names the wrong daemon: set image_name (and memory_container_name) to the containers this host runs, then provision again"
+    fi
+  done
+fi
 if [[ "$LAYOUT" == legacy && "$ACK" != "$VERSION" ]]; then
   die "refusing: the VM still runs the legacy layout, so this deploy is the cutover (the first boot migrates forward). Re-run with --cutover-ack $VERSION"
 fi

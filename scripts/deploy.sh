@@ -150,7 +150,6 @@ INVENTORY="${QC_INVENTORY:-$ANSIBLE_DIR/inventory.ini}"
 CONFIG="$(qcr_locate_config "$SANDBOX_DIR")" || exit 1
 GROUP_VARS="$ANSIBLE_DIR/group_vars/all.yml"
 PLAYBOOK="$ANSIBLE_DIR/playbook.yml"
-CONTAINER="quickreview-sandbox"
 OV_UPSTREAM="$SANDBOX_DIR/extensions/vendor/openviking-pi/upstream.json"
 
 # The run-spec version this script renders and the images' qcr.runspec label
@@ -667,6 +666,11 @@ OV_ENDPOINT="${OV_ENDPOINT:-local}"
 check_pin "openviking endpoint" \
   'config.toml   [openviking] endpoint' "$CFG_OV_ENDPOINT" \
   "$(effective_var_source openviking_endpoint)    openviking_endpoint" "$OV_ENDPOINT"
+# The daemon container's name: group_vars/inventory image_name, so an install
+# that predates the default (another name on the host) keeps its container.
+CONTAINER="$(effective_var_or image_name quickreview-sandbox)"
+[[ "$CONTAINER" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] ||
+  die "image_name \"$CONTAINER\" is not a plain container name — letters, digits, '.', '_' and '-' only"
 MEMORY_CONTAINER="$(effective_var memory_container_name || true)"
 MEMORY_CONTAINER="${MEMORY_CONTAINER:-quickreview-memory}"
 OV_PORT="$(effective_var openviking_port || true)"
