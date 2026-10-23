@@ -125,8 +125,8 @@ export interface InboxPullResult {
 }
 
 /** The last stderr line of a failed call, or its exit status. */
-function why(r: { stderr: string; code: number | null }): string {
-  return r.stderr.trim().split("\n").at(-1) || `exit ${r.code ?? "?"}`;
+export function why(r: { stderr: string; code: number | null }): string {
+  return r.stderr.trim().split("\n").filter(Boolean).at(-1) ?? `exit ${r.code ?? "?"}`;
 }
 
 /**

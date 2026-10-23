@@ -357,6 +357,10 @@ describe("clampScreen — plain text, never escape sequences", () => {
     expect(truncated).toBe(false);
   });
 
+  it("strips a colon-parameter SGR (underline style) whole", () => {
+    expect(clampScreen("a\u001b[4:3mb\u001b[0m").body).toBe("ab");
+  });
+
   it("bounds an absurd frame rather than handing over an unbounded read", () => {
     const { body, truncated } = clampScreen("x".repeat(SCREEN_MAX_CHARS + 500));
     expect(truncated).toBe(true);

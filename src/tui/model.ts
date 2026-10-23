@@ -61,6 +61,11 @@ export function historicalStateLabel(state: string): string {
 
 const SORT_ORDER: PrLifecycleState[] = ["reviewing", "queued", "awaiting_author", "tracked"];
 
+/** Whether a PR belongs on the board: closed ones do not. */
+export function onBoard(p: SnapshotPr): boolean {
+  return p.state !== "closed";
+}
+
 /** Board order: lifecycle groups, stable by PR number within
  * a group; closed PRs are dropped entirely. */
 export function sortPrs(prs: SnapshotPr[]): SnapshotPr[] {
@@ -69,7 +74,7 @@ export function sortPrs(prs: SnapshotPr[]): SnapshotPr[] {
     return i === -1 ? SORT_ORDER.length : i;
   };
   return prs
-    .filter((p) => p.state !== "closed")
+    .filter(onBoard)
     .slice()
     .sort((a, b) => rank(a.state) - rank(b.state) || a.number - b.number);
 }

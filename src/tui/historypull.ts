@@ -19,6 +19,7 @@ import type { TuiConfig } from "../config.js";
 import { parseDigest, type ReviewHistoryDigest } from "../reviewhistory.js";
 import { HISTORY_DIGEST_FILE } from "../setup/history.js";
 import { writePrivateAtomic } from "./ghread.js";
+import { why } from "./inboxpull.js";
 import { historyDigestArgv, type SshRunner } from "./remote.js";
 
 /** The VM reads one GraphQL query per merged PR at the backfill's gentle
@@ -57,8 +58,7 @@ export async function pullReviewHistory(deps: HistoryPullDeps): Promise<HistoryP
     timeoutMs: HISTORY_PULL_TIMEOUT_MS,
   });
   if (!res.ok) {
-    const why = res.stderr.trim().split("\n").filter(Boolean).at(-1) ?? `exit ${res.code ?? "?"}`;
-    return { ok: false, reason: `the VM could not produce the digest: ${why}` };
+    return { ok: false, reason: `the VM could not produce the digest: ${why(res)}` };
   }
   const parsed = parseDigest(res.stdout);
   if (!parsed.ok)

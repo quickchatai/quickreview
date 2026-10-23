@@ -42,6 +42,8 @@ import { archiveAttention, archiveStatusLine, readArchiveStatus } from "../archi
 import type { StatusSnapshot } from "../state.js";
 import type { DaemonLoadStatus } from "../eventloop.js";
 import type { MemoryStatus, RequestCounter } from "../memory/health.js";
+import { onBoard } from "./model.js";
+import { stripAnsi } from "./paint.js";
 import { configDrift, configDriftText, type ConfigRead } from "./confighome.js";
 
 /** A daemon event row as `qcr events --json` emits it. */
@@ -252,7 +254,7 @@ export function clampScreen(text: string): { body: string; truncated: boolean } 
   // Anything that could re-enter the terminal is removed here, not downstream:
   // OSC strings first, then CSI sequences, then any surviving C0 control (tab
   // and newline are kept — they are layout, not control).
-  const plain = text
+  const plain = stripAnsi(text)
     .replace(/\u001b\][\s\S]*?(?:\u0007|\u001b\\)/g, "")
     .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
     .replace(/\u001b[@-Z\\-_]/g, "")
@@ -314,7 +316,7 @@ export function buildTuiView(src: ViewSource): TuiView {
       dry_run: src.snapshot?.dry_run ?? null,
       health: src.health?.kind ?? "unknown",
       ...(healthAgeS(src.health) !== undefined ? { health_stale_s: healthAgeS(src.health) } : {}),
-      total: prs === undefined ? null : prs.filter((p) => p.state !== "closed").length,
+      total: prs === undefined ? null : prs.filter(onBoard).length,
       by_state,
       running_rounds: src.snapshot?.running_rounds,
       max_concurrent_rounds: src.snapshot?.max_concurrent_rounds,
