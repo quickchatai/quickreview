@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AnomalyWakePolicy } from "./anomalies.js";
 import { CompanionInbox, type InboxWriter } from "./companioninbox.js";
-import { retryWithheldApproval, type CiAdapter, type WithheldRetryDeps } from "./cigate.js";
+import { retryWithheldApproval, type CiAdapter, type WithheldRetryDeps } from "./ciretry.js";
 import {
   resolveRoundStageBounds,
   DEFAULT_POSTING_RETRY_OFFSETS_MIN,

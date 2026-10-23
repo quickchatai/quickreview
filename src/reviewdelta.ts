@@ -1,14 +1,14 @@
 // The delta half of a re-review: what changed since the last reviewed head,
-// computed offline with production's `WorktreeManager.prOwnedDelta` over the
-// repo the person is standing in, and the follow-up round planned over it by
-// production's `planFollowUp`. Any doubt answers a reason, and the caller runs
-// a full review: a history rewrite, a head git no longer has, a base that
-// moved backwards, a delta too large to be a follow-up.
+// computed offline with production's delta reader (src/prdelta.ts, the one
+// `WorktreeManager.prOwnedDelta` runs) over the repo the person is standing
+// in, and the follow-up round planned over it by production's `planFollowUp`.
+// Any doubt answers a reason, and the caller runs a full review: a history
+// rewrite, a head git no longer has, a base that moved backwards, a delta too
+// large to be a follow-up.
 import { execFileSync } from "node:child_process";
-import { basename, dirname } from "node:path";
 import { type Config } from "./config.js";
 import { deltaFollowUpEnabled } from "./followup-mode.js";
-import { followUpSweepOwed, planFollowUp } from "./dispatch.js";
+import { followUpSweepOwed, planFollowUp } from "./planner.js";
 import type { Ecosystem } from "./ecosystem.js";
 import type { PrFileEntry } from "./github.js";
 import {
@@ -19,8 +19,8 @@ import {
 } from "./engine/prompts.js";
 import { priorSidecarText, renderPriorFindingsNote } from "./priorfindings.js";
 import { lastRound, openFindings, type ReviewState } from "./reviewstate.js";
-import { nodeExec, type ExecFn } from "./tmux.js";
-import { WorktreeManager, type PrOwnedDelta } from "./worktrees.js";
+import { nodeExec, type ExecFn } from "./execfn.js";
+import { gitDeltaRepo, readPrOwnedDelta, type PrOwnedDelta } from "./prdelta.js";
 
 export type DeltaFound = Extract<PrOwnedDelta, { ok: true }>;
 
@@ -68,13 +68,7 @@ export async function computeDelta(
   if (!ancestor) return { ok: false, reason: "history-rewritten" };
   try {
     const top = tryGit(cwd, ["rev-parse", "--show-toplevel"]) ?? cwd;
-    const wm = new WorktreeManager({
-      root: dirname(top),
-      repo: "local/review",
-      cloneDir: basename(top),
-      run: exec,
-    });
-    const delta = await wm.prOwnedDelta({
+    const delta = await readPrOwnedDelta(gitDeltaRepo(exec, top), {
       pr: 0,
       from: last.head_sha,
       to: now.headSha,

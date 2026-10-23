@@ -1,6 +1,6 @@
 // The one-shot review's prompts: the first round's and a follow-up round's
 // order and system prompt for a target, rendered by the production renderers
-// (dispatch.ts buildRoundOrder, templates.ts). Pure: the files the order names
+// (planner.ts buildRoundOrder, templates.ts). Pure: the files the order names
 // are returned for the runner to write; nothing here runs a session.
 //
 // Shared by the benchmark (src/bench/runner.ts), `qcr review` and the engine.
@@ -18,7 +18,7 @@ import {
   type FollowUpDecision,
   type FollowUpFullReason,
   type PassPlan,
-} from "../dispatch.js";
+} from "../planner.js";
 import { parseLedgerCarry, settledFromLedger } from "../ledgercarry.js";
 import type { CiLinter } from "../lintconfig.js";
 import type { PriorFindingsList } from "../priorfindings.js";

@@ -11,11 +11,11 @@ import {
   ciBlocksApproval,
   classifyCi,
   latestRunPerName,
-  retryWithheldApproval,
   withheldApprovalNote,
   withholdApproval,
   type CheckSummary,
 } from "../src/cigate.js";
+import { retryWithheldApproval } from "../src/ciretry.js";
 import { parseConfig, GUARDS_DEFAULTS, type Config } from "../src/config.js";
 import { dispatchOnce, type DispatchAdapter } from "../src/dispatch.js";
 import { MutationGate, type GateResult, type MutationIntent } from "../src/gate.js";
