@@ -49,10 +49,10 @@ ANSI = re.compile(rb"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07|\x1b[()][A-Za-
 def text():
     return ANSI.sub(b"", buf).decode("utf8", "replace")
 
-alive = pump(a.settle)
+pump(a.settle)
 for s in a.send:
     os.write(fd, s.encode() + b"\r")
-    alive = pump(1.0) and alive
+    pump(1.0)
 ok = True
 if a.expect:
     rx = re.compile(a.expect, re.S)

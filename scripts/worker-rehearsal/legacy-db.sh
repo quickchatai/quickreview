@@ -5,8 +5,8 @@
 #
 # The legacy commit (default: the one the live bot was last deployed from, 8169df6f) is
 # built in a scratch dir and ITS StateStore creates the file, then a legacy-shaped PR
-# history is written through that store: a closed earlier PR with a finished round and a
-# posted review, so the migrations HEAD applies have rows to carry. Nothing from HEAD
+# history is written through that store: a closed earlier PR, one event and the operator's
+# drain, so the migrations HEAD applies have rows to carry. Nothing from HEAD
 # touches the file before the container does.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." && pwd)"
