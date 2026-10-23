@@ -559,7 +559,9 @@ export class CompanionSidebar {
    * buffer is handled only once its read SUCCEEDS — a failed read leaves it
    * new, so the next poll reads it again (up to `BUFFER_READ_TRIES`). */
   private noticeBuffers(buffers: string[]): void {
-    const newest = buffers[0] ?? "";
+    // tmuxsocket.ts's `qcr-run-*` buffers carry a runner's script output, not
+    // an operator selection: they are never the copy.
+    const newest = buffers.find((b) => !b.startsWith("qcr-run-")) ?? "";
     if (this.lastBuffer === undefined) {
       this.lastBuffer = newest; // the baseline: never re-copy a stale buffer
       return;

@@ -223,6 +223,19 @@ describe("the companion's paste buffers reach the host clipboard (pi /copy)", ()
     sb.stop();
   });
 
+  it("never copies a socket-transport buffer (qcr-run-*) another TUI's runner created", async () => {
+    const { sb, copied, calls } = rig([
+      listing("buffer0 100 3"),
+      listing("qcr-run-0123456789ab 200 40", "buffer0 100 3"),
+    ]);
+    await sb.refresh();
+    await sb.refresh();
+    await settle();
+    expect(copied).toEqual([]);
+    expect(calls.some((c) => c.includes("show-buffer"))).toBe(false);
+    sb.stop();
+  });
+
   it("copies each new buffer once, not on every refresh", async () => {
     const same = listing("buffer1 200 9", "buffer0 100 3");
     const { sb, copied } = rig([listing("buffer0 100 3"), same, same, same]);
