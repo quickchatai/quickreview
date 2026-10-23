@@ -391,7 +391,7 @@ export class OpenVikingSupervisor {
     // longer the tracked one: the exit already cleared the cache, and the next
     // poll reads the new child. Installing it would report a dead server ready
     // and fire onReady for it.
-    if (this.child !== child) return;
+    if (this.child !== child || this.stopping) return;
     this.health = health;
     // The server answered, so a spawn failure from before it came up is
     // history: the probe's own error (if any) is the current one.

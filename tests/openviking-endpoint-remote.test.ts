@@ -196,6 +196,30 @@ describe("OpenVikingSupervisor under endpoint = remote", () => {
     expect(clock.live()).toEqual([]);
   });
 
+  it("a probe that completes after stop() installs nothing and fires no onReady", async () => {
+    const s = sidecar();
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    let fired = 0;
+    const { sup } = make(
+      {},
+      async (url) => {
+        await held;
+        return s.fetchFn(url);
+      },
+      () => {
+        fired += 1;
+      },
+    );
+    sup.start();
+    await flush();
+    await sup.stop();
+    release();
+    await flush();
+    expect(fired).toBe(0);
+    expect(sup.status().ready).toBe(false);
+  });
+
   it("memory disabled still wins: no probing at all", async () => {
     const s = sidecar();
     const { sup, lines } = make({ enabled: false }, s.fetchFn);
