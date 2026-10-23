@@ -147,6 +147,26 @@ function githubSink(ssh: SshRunner, store?: MemoryStore): GithubIssueSink {
 }
 
 describe("github sink", () => {
+  it("resolves the container layout before it builds the command path", async () => {
+    const { resetLayoutCache } = await import("../src/tui/layout.js");
+    resetLayoutCache();
+    const calls: string[][] = [];
+    const ssh: SshRunner = async (_host, argv) => {
+      calls.push(argv);
+      if (argv.includes("inspect"))
+        return { ok: true, stdout: `${"a".repeat(12)} release\n`, stderr: "", code: 0 };
+      const isProbe = argv.some((a) => a.includes("result.json"));
+      return { ok: true, stdout: isProbe ? '{"ok":true,"issue":5}' : "", stderr: "", code: 0 };
+    };
+    const auto = { ...tuiCfg, remote_sandbox_root: "" } as unknown as TuiConfig;
+    const sink = new GithubIssueSink(auto, ssh, undefined, () => NOW, async () => {});
+    await sink.file([entry()], NOW_ISO);
+    resetLayoutCache();
+    const write = calls.find((a) => a.some((x) => x.includes("commands")));
+    expect(write?.join(" ")).toContain("/opt/qcr/");
+    expect(write?.join(" ")).not.toContain("/opt/quickreview/sandbox");
+  });
+
   it("writes a file-issue command the daemon's OWN schema accepts, on stdin, atomically", async () => {
     const { ssh, calls } = runner(['{"ok":true,"issue":123}']);
     const report = await githubSink(ssh, recordingStore()).file([entry()], NOW_ISO);

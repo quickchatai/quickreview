@@ -36,6 +36,7 @@ import {
   type TrackerPaths,
 } from "./autofile.js";
 import type { MemoryEntry, MemoryStore } from "./memory.js";
+import { resolveLayout } from "./layout.js";
 import type { SshRunner } from "./remote.js";
 import { commandFileName, commandResultArgv, commandWriteArgv, resultReason } from "./unwedge.js";
 
@@ -160,6 +161,9 @@ export class GithubIssueSink implements IssueSink {
     // this module can never produce a command the whitelist would not accept.
     const valid = validateCommand(payload);
     if (!valid.ok) return { ok: false, reason: `refused locally: ${valid.reason}` };
+    // Resolve the container layout first, as every other command sender does:
+    // the write path is built from the root it holds.
+    await resolveLayout(this.cfg, this.ssh);
     const name = commandFileName(this.now(), this.seq++);
     const write = await this.ssh(this.cfg.ssh_host, commandWriteArgv(this.cfg, name), {
       stdin: `${JSON.stringify(payload, null, 2)}\n`,
