@@ -23,6 +23,7 @@
 // A record, not a gate. Nothing here holds a round, refuses an approval or
 // touches GitHub. The listing rows (`prior_finding_checks`) record exactly
 // what was handed out; the reports are the session's.
+import { carriedToRef } from "./finding-chain.js";
 import { findingRowFields } from "./finding-row.js";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -103,7 +104,7 @@ export interface PriorFindingsList {
 }
 
 /** One finding's identity across rounds. */
-const rkey = (round: number, key: string): string => `${round}:${key}`;
+const rkey = carriedToRef;
 
 function idsOf(row: RoundFindingRow): string[] {
   return storedLensIds(row.lens_ids) ?? canonicalLensIds(row.lens);

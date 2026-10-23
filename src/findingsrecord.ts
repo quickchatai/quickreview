@@ -21,6 +21,7 @@ import { enqueueRoundWork, pendingRoundWork, finishRoundWork } from "./round-wor
 // a wedged PR (rule 9).
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { carriedToRef } from "./finding-chain.js";
 import { DOUBT_WORDS } from "./doubtwords.js";
 import {
   entryDisposition,
@@ -271,7 +272,7 @@ function parsePriorArray(
       st.sha !== null && (written === null || !written.includes(st.sha))
         ? `fixed@${st.sha}${written ? ` — ${written}` : ""}`.slice(0, PROSE_CAP)
         : written;
-    const canonical = `${ref.round_no}:${ref.finding_key}`;
+    const canonical = carriedToRef(ref.round_no, ref.finding_key);
     byRef.delete(canonical);
     byRef.set(canonical, {
       ref: canonical,

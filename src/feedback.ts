@@ -409,8 +409,7 @@ export function feedbackEventFromRow(row: FeedbackSignalRow): FeedbackEvent | nu
         in_reply_to_id: row.in_reply_to_id,
         author: row.author ?? "",
         body: row.body ?? "",
-        scope:
-          row.scope === "issue_comment" || row.scope === "review" ? row.scope : "review_comment",
+        scope: storedCommentScope(row.scope),
       };
     case "review_set_aside":
       return {
@@ -427,7 +426,7 @@ export function feedbackEventFromRow(row: FeedbackSignalRow): FeedbackEvent | nu
         kind: "bot_comment_deleted",
         pr: row.pr,
         comment_id: row.comment_id ?? 0,
-        scope: row.scope === "issue_comment" ? "issue_comment" : "review_comment",
+        scope: storedDeletionScope(row.scope),
       };
     case "trigger_withdrawn":
       return { kind: "trigger_withdrawn", pr: row.pr, by: row.author ?? "" };
@@ -479,16 +478,26 @@ export function legacyFeedbackEntry(
             : ownScope !== undefined
               ? "review_comment"
               : null;
-      const rowScope =
-        row.scope === "issue_comment" || row.scope === "review" ? row.scope : "review_comment";
-      if (scope !== rowScope) continue;
+      if (scope !== storedCommentScope(row.scope)) continue;
     } else if (row.kind === "bot_comment_deleted") {
       const scope = tags["scope"] === "issue_comment" ? "issue_comment" : "review_comment";
-      if (scope !== (row.scope === "issue_comment" ? "issue_comment" : "review_comment")) continue;
+      if (scope !== storedDeletionScope(row.scope)) continue;
     }
     return e;
   }
   return null;
+}
+
+/** A stored feedback-comment scope; an absent or unknown one is the historical review-comment namespace. */
+function storedCommentScope(
+  scope: string | null | undefined,
+): "review_comment" | "issue_comment" | "review" {
+  return scope === "issue_comment" || scope === "review" ? scope : "review_comment";
+}
+
+/** A stored deleted-comment scope; anything but an issue comment is a review comment. */
+function storedDeletionScope(scope: string | null | undefined): "review_comment" | "issue_comment" {
+  return scope === "issue_comment" ? "issue_comment" : "review_comment";
 }
 
 /** How the entry's sentence names its own signal's id (`proseFor`), or null
