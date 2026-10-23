@@ -438,7 +438,7 @@ function deployHarness(
       if (cmd === "ssh" && args.join(" ").includes("docker ps")) {
         return {
           code: 0,
-          stdout: `quickreview-sandbox ${o.containerState ?? "running"}\n`,
+          stdout: `quickreview-sandbox ${o.containerState ?? "running"}\nquickreview-memory running\n`,
           stderr: "",
         };
       }
@@ -711,6 +711,18 @@ describe("the deploy composes the real script, at full strictness", () => {
     expect(h.engine.choices()[VM_DEPLOY_CHOICE_KEY]).toBeUndefined();
   });
 
+  it("a release that shipped is recorded even when the container probe afterwards fails", async () => {
+    writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
+    const h = deployHarness({
+      choices: { ...VM_CHOICES, [VM_DEPLOY_CHOICE_KEY]: RECORD() },
+      containerState: "exited",
+    });
+    const result = await h.engine.runStep(VM_DEPLOY_STEP_ID, { version: V });
+    expect(result.ok).toBe(false);
+    expect(verbs(h.runs)).toContain(`release ${V}`);
+    expect(h.engine.choices()[VM_DEPLOY_CHOICE_KEY]).toMatchObject({ version: V });
+  });
+
   it("a pin mismatch is the same story — the script's refusal, unsoftened", async () => {
     writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
     const h = deployHarness({
@@ -894,6 +906,41 @@ describe("the ssh transport's probes and restart", () => {
     expect((await stackTransportFor(both).containerChecks(null))[0]).toMatchObject({ ok: true });
   });
 
+  it("checks a separately deployed memory sidecar, and says when it is stopped", async () => {
+    writeFileSync(
+      join(root, "config.toml"),
+      setTomlKey(
+        setTomlKey(exampleConfig, "github", "secrets_dir", secretsDir)!,
+        "tui",
+        "memory_container",
+        "quickreview-memory",
+      )!,
+    );
+    const { ctx } = sshWith((line) =>
+      line.includes("name=quickreview-memory")
+        ? ok("quickreview-memory exited\n")
+        : ok("quickreview-sandbox running\n"),
+    );
+    const checks = await stackTransportFor(ctx).containerChecks(null);
+    expect(checks[0]).toMatchObject({ name: "containers", ok: true });
+    expect(checks.find((c) => c.name === "memory-sidecar")).toMatchObject({ ok: false });
+  });
+
+  it("an empty memory_container still checks deploy.sh's default sidecar (quickreview-memory)", async () => {
+    writeFileSync(
+      join(root, "config.toml"),
+      setTomlKey(exampleConfig, "github", "secrets_dir", secretsDir)!,
+    );
+    const { ctx } = sshWith((line) =>
+      line.includes("name=quickreview-memory")
+        ? ok("quickreview-memory exited\n")
+        : ok("quickreview-sandbox running\n"),
+    );
+    const checks = await stackTransportFor(ctx).containerChecks(null);
+    expect(checks[0]).toMatchObject({ name: "containers", ok: true });
+    expect(checks.find((c) => c.name === "memory-sidecar")).toMatchObject({ ok: false });
+  });
+
   it("the health probe honours the step's health budget", async () => {
     const { ctx, calls } = sshWith(() => ok('{"ok":true}\n200'));
     await stackTransportFor(ctx, { healthTimeoutMs: 30_000 }).health();
@@ -950,7 +997,7 @@ describe("the layered verification runs over ssh, unchanged", () => {
         if (line.includes("docker ps"))
           return {
             code: 0,
-            stdout: `quickreview-sandbox ${o.containerState ?? "running"}\n`,
+            stdout: `quickreview-sandbox ${o.containerState ?? "running"}\nquickreview-memory running\n`,
             stderr: "",
           };
         if (line.includes("systemctl is-active"))
@@ -999,6 +1046,7 @@ describe("the layered verification runs over ssh, unchanged", () => {
     // The SAME check names as the laptop route: one implementation, not a copy.
     expect(result.checks.map((c) => c.name)).toEqual([
       "containers",
+      "memory-sidecar",
       "ingress-sidecar",
       "health",
       "webhook-url",
@@ -1103,7 +1151,7 @@ describe("the go-live flip on the server route", () => {
       run: async (cmd: string, args: string[]): Promise<ProcessResult> => {
         const line = args.join(" ");
         if (line.includes("docker ps"))
-          return { code: 0, stdout: "quickreview-sandbox running\n", stderr: "" };
+          return { code: 0, stdout: "quickreview-sandbox running\nquickreview-memory running\n", stderr: "" };
         if (line.includes("why")) {
           return {
             code: 0,

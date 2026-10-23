@@ -234,6 +234,9 @@ function psRows(stdout: string): Array<{ name: string; rest: string }> {
     });
 }
 
+/** deploy.sh's default `memory_container_name` for the VM sidecar. */
+const DEPLOY_MEMORY_CONTAINER = "quickreview-memory";
+
 function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport {
   const root = rootOf(ctx.adapters);
   const facts = remoteFactsFor(ctx.adapters, ctx.choices);
@@ -257,6 +260,11 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
   );
   const dockerPrefix = facts.sudo ? ["sudo", "docker"] : ["docker"];
   const memoryContainer = facts.memoryContainer;
+  // The sidecar the stack check probes: the one `[tui] memory_container` names
+  // apart from the daemon's container, else the sidecar scripts/deploy.sh always
+  // deploys on the VM (`memory_container_name`), never the daemon's own name.
+  const sidecarContainer =
+    memoryContainer !== facts.container ? memoryContainer : DEPLOY_MEMORY_CONTAINER;
   const remote = (argv: readonly string[]): Promise<ProcessResult> =>
     ctx.adapters.runner.run("ssh", sshArgv(facts.alias, argv));
   const healthEndpoint = `http://127.0.0.1:${facts.port}/health`;
@@ -345,6 +353,38 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
                 `Fix: \`${logsCommand(200)}\` says why it stopped; re-running the deploy step recreates it`,
             },
       ];
+      // The memory sidecar is part of the stack: the daemon's health answers
+      // without it, so a stopped sidecar is checked here.
+      {
+        const mem = await remote([
+          ...dockerPrefix,
+          "ps",
+          "--all",
+          "--filter",
+          `name=${sidecarContainer}`,
+          "--format",
+          "{{.Names}} {{.State}}",
+        ]);
+        const memState =
+          mem.code === 0 ? (psRows(mem.stdout).find((r) => r.name === sidecarContainer)?.rest ?? "") : null;
+        checks.push(
+          memState !== null && /running|up/i.test(memState)
+            ? {
+                name: "memory-sidecar",
+                ok: true,
+                detail: `the ${sidecarContainer} memory sidecar on ${facts.alias} is ${memState}`,
+              }
+            : {
+                name: "memory-sidecar",
+                ok: false,
+                detail:
+                  `the ${sidecarContainer} memory sidecar (OpenViking, the review memory) on ${facts.alias} is ` +
+                  `${memState === null ? "unreadable (docker ps failed)" : memState || "not there at all"} — ` +
+                  `Fix: \`${sshCommandLine(facts.alias, [...dockerPrefix, "logs", "--tail", "200", sidecarContainer])}\` says why it stopped; ` +
+                  "re-running the deploy step recreates it",
+              },
+        );
+      }
       // The VM route's ingress is cloudflared as a HOST service (the playbook
       // installs it), never a compose sidecar — so this is the only ingress
       // shape there is anything to check for here.
