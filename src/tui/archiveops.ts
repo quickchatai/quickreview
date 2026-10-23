@@ -17,12 +17,12 @@ import { validateCommand, type Command } from "../commands.js";
 import type { TuiConfig } from "../config.js";
 import {
   OPERATOR_WAIT_MS,
+  STORE_LABELS,
   backlogPhrase,
   dbPhrase,
   filesPhrase,
   readArchiveRunFigures,
   storePhrase,
-  type ArchiveStatus,
 } from "../archive/status.js";
 import type { SshRunner } from "./remote.js";
 import { commandResultArgv, commandWriteArgv, resultReason } from "./unwedge.js";
@@ -164,15 +164,15 @@ export function renderArchiveOp(cmd: ArchiveOpCommand, out: ArchiveOpOutcome): s
       lines.push("  the daemon's figures could not be read whole — see `qcr archive status`");
       return lines.map(clean);
     }
-    const view = { ...figures, plan_at: null } as ArchiveStatus;
+    const view = { ...figures, plan_at: null };
     lines.push(`  ${backlogPhrase(view)}`);
     const db = dbPhrase(view);
     if (db) lines.push(`  ${db}`);
     const files = filesPhrase(view);
     if (files) lines.push(`  ${files}`);
     for (const [label, st] of [
-      ["overseer store", figures.stores?.overseer ?? null],
-      ["pi-global store", figures.stores?.pi_global ?? null],
+      [STORE_LABELS.overseer, figures.stores?.overseer ?? null],
+      [STORE_LABELS.pi_global, figures.stores?.pi_global ?? null],
     ] as const) {
       const line = storePhrase(label, st);
       if (line) lines.push(`  ${line}`);
