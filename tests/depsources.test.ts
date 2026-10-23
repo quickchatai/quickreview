@@ -1484,6 +1484,27 @@ describe("zip", () => {
 // ---------------------------------------------------------------------------
 
 describe("prepareDependencySources", () => {
+  it("a cache hit with an empty marker is skipped, naming the locked version", async () => {
+    const cacheDir = tmp();
+    const dir = join(cacheDir, "npm", "left-pad@1.3.0");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, ".qcr-complete"),
+      JSON.stringify({ name: "left-pad", version: "1.3.0", url: "", sha256: "", files: 0, bytes: 0 }),
+    );
+    const { fetch } = fakeFetch({});
+    const m = await prepareDependencySources(npmTree(), CHANGED, { cacheDir, fetch });
+    expect(m.sources).toEqual([]);
+    expect(m.skipped).toEqual([
+      {
+        ecosystem: "npm",
+        name: "left-pad",
+        version: "1.3.0",
+        reason: "no readable source files in left-pad@1.3.0",
+      },
+    ]);
+  });
+
   it("fetches, verifies, unpacks and caches; a second call never touches the network", async () => {
     const tgz = npmTgz();
     const { fetch, calls } = fakeFetch(leftPadRoutes(tgz));
