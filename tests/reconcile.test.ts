@@ -416,6 +416,16 @@ describe("reconcileOnce", () => {
     expect(store.getPr(42)!.state).toBe("closed");
   });
 
+  it("a search-only PR never tracked here is not queued while the open list omits it", async () => {
+    const { hooks } = recordingHooks();
+    gh.open = [];
+    gh.labelTriggered = [item(45)];
+    const report = await reconcileOnce({ cfg, store, adapter: gh, hooks });
+    expect(report.corrections).toBe(0);
+    expect(corrections(store)).toEqual([]);
+    expect(store.getPr(45)).toBeUndefined();
+  });
+
   // A PR merged while the daemon was down, still tracked locally and still
   // listed by a lagging search: the closed-sync decides it from the PR, so the
   // search must not queue it first — that would erase the standing block the

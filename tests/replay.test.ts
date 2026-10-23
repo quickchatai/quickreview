@@ -540,6 +540,10 @@ describe("selfscan2: replay harness faults and isolation", () => {
       const argv = argvs[0] ?? [];
       expect(argv.some((a) => a.endsWith("inject-bridge.ts"))).toBe(true);
       expect(argv.some((a) => a.includes("openviking-pi"))).toBe(false);
+      // Layer 4 needs the exec guard in the session's own argv, and the
+      // order's lens passes need the lens tools.
+      expect(argv.some((a) => a.endsWith("cli/bash-guard.ts"))).toBe(true);
+      expect(argv.some((a) => a.endsWith("cli/lens.ts"))).toBe(true);
       expect(argv).toContain("QCR_REPLAY=1");
       expect(readFileSync(conf, "utf8")).toBe("live credentials stay untouched");
     } finally {
