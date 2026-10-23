@@ -1556,6 +1556,25 @@ describe("qcr memory relayout --apply", () => {
     expect(server.calls.some((c) => c.method === "DELETE")).toBe(false);
   });
 
+  it("a relocation that revives a destination over its rollback stub takes it off the retired list at once", async () => {
+    const server = new OvServer();
+    seed(server, [["experiences/a.md", "#operations #bug defect a"]]);
+    const { store } = wire(server);
+    const plan1 = planRelayout({ entries: (await store.sweep()).entries, retired: [] });
+    // A writer edits the SOURCE after the plan read it: the move is refused
+    // and the new copy is turned back into a retired pointer.
+    server.files.set(`${ROOT}/experiences/a.md`, "#operations #bug defect a, edited\n");
+    const first = await store.relocate(relocateItemsOf(plan1));
+    expect(first.results.every((r) => !r.ok)).toBe(true);
+    const dest = `${ROOT}/events/a.md`;
+    expect(await store.retiredUris()).toContain(dest);
+    const sweep = await store.sweep();
+    const plan2 = planRelayout({ entries: sweep.entries, retired: sweep.retired });
+    const second = await store.relocate(relocateItemsOf(plan2));
+    expect(second.results.every((r) => r.ok)).toBe(true);
+    expect(await store.retiredUris()).not.toContain(dest);
+  });
+
   it("a re-run after a refused source batch moves everything cleanly — no BLOCKED move, no false 'laid out'", async () => {
     const server = new OvServer();
     seed(server, [

@@ -1106,7 +1106,8 @@ export class OpenVikingStore implements MemoryStore {
         wait: false,
       });
       if (res.ok && batchWriteLanded(res.result, uri)) {
-        this.invalidate();
+        this.forget(id);
+        if (isRetired(body)) this.noteRetired(uri);
         await this.mirrorTags(uri, body);
         const same = res.result.unchanged.includes(uri);
         return {
@@ -1131,7 +1132,7 @@ export class OpenVikingStore implements MemoryStore {
       }
       if (!res.conflict) return { ok: false, message: `memory write failed: ${res.message}` };
       if (name !== undefined) {
-        this.invalidate(); // An external writer won; the cached destination may predate it.
+        this.forget(id); // An external writer won; the cached destination may predate it.
         return {
           ok: true,
           existed: true,
@@ -1442,12 +1443,14 @@ export class OpenVikingStore implements MemoryStore {
 
   /** A confirmed revival removes its former stub from recall exclusions. */
   private noteLive(uri: string): void {
+    this.takeRetiredSeed();
     if (this.knownRetired?.includes(uri))
       this.setKnownRetired(this.knownRetired.filter((retired) => retired !== uri));
   }
 
   /** A retirement this store wrote joins the published list at once. */
   private noteRetired(uri: string): void {
+    this.takeRetiredSeed();
     if (this.knownRetired !== null && !this.knownRetired.includes(uri))
       this.setKnownRetired([...this.knownRetired, uri].sort());
   }
@@ -1643,6 +1646,7 @@ export class OpenVikingStore implements MemoryStore {
       if (!r?.ok) continue;
       if (it.to !== undefined) {
         this.noteRetired(this.uriOf(it.id));
+        this.noteLive(this.uriOf(it.to));
         await this.mirrorTags(this.uriOf(it.to), content(it));
       } else if (isRetired(content(it))) {
         this.noteRetired(this.uriOf(it.id));
