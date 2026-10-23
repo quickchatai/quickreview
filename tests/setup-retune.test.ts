@@ -635,6 +635,29 @@ describe("the post-scan re-tune", () => {
     expect(tuned("acme").lenses?.["pass-style"]?.guide?.text).toBe("- no abbreviations\n");
   });
 
+  it("dropping the profile's own non-drafted guide needs its reason, so the report never omits the removal", () => {
+    const e = engine();
+    setUp(e);
+    write(
+      join(home(), "profiles/acme/profile.toml"),
+      `extends = "default"\n\n[lenses.pass-style]\nguide = "house-rules.md"\n`,
+    );
+    write(join(home(), "profiles/acme/house-rules.md"), "- no abbreviations\n");
+    finishedScan();
+    const profile = readFileSync(join(home(), "profiles/acme/profile.toml"), "utf8");
+    expect(
+      refusal(
+        e.retune({
+          priorities: { security: "critical" },
+          drop_style_guide: true,
+          reasons: { security: REASON },
+          write: true,
+        }),
+      ),
+    ).toMatch(/no reason for style guide/);
+    expect(readFileSync(join(home(), "profiles/acme/profile.toml"), "utf8")).toBe(profile);
+  });
+
   it("an emphasis-only re-tune leaves the operator's direct edit of a priority setting alone", () => {
     const e = engine();
     setUp(e);
