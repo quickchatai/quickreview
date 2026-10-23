@@ -112,6 +112,12 @@ import type {
   PriorFindingCheckRow,
 } from "./state.js";
 
+/** Was this row posted on the PR? `posted` with a tag — a downgraded, killed,
+ * doubted or withheld entry never reached the author as itself. */
+export function isPostedRow(r: RoundFindingRow): boolean {
+  return r.disposition === "posted" && r.posted_as !== null && r.posted_as.trim() !== "";
+}
+
 export const FINDING_FATES = [
   "fixed",
   "refuted_conceded",
@@ -929,10 +935,7 @@ export class OutcomeCapture {
     facts: PrFacts,
     threads: readonly number[],
   ): { strong: RoundFindingRow[]; next: { round: number; weak: RoundFindingRow[] } | null } {
-    const ownRound = (facts.byRound.get(f.round_no) ?? []).filter(
-      (row) =>
-        row.disposition === "posted" && row.posted_as !== null && row.posted_as.trim() !== "",
-    );
+    const ownRound = (facts.byRound.get(f.round_no) ?? []).filter(isPostedRow);
     const strong: RoundFindingRow[] = [];
     for (const e of facts.rows) {
       if (e.round_no <= f.round_no) continue;

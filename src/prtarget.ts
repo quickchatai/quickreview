@@ -5,6 +5,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import {
+  CREDENTIAL_SOURCES,
   resolveGithubCredential,
   ghAuthTokenFromCli,
   handedToken,
@@ -209,7 +210,7 @@ export async function resolvePostCredential(
   o: PrCredentialDeps = {},
 ): Promise<CredentialResolution> {
   if (postAs === null) return { ok: true, ...resolved };
-  const known = ["app", "handoff", "gh", "env:GITHUB_TOKEN", "env:GH_TOKEN"];
+  const known: readonly string[] = CREDENTIAL_SOURCES;
   if (!known.includes(postAs)) {
     return {
       ok: false,
@@ -226,5 +227,5 @@ export async function resolvePostCredential(
   });
   return r.ok
     ? r
-    : { ok: false, error: `post_as is ${postAs} but that credential is not available` };
+    : { ok: false, error: `post_as is ${postAs} but that credential is not available: ${r.error}` };
 }

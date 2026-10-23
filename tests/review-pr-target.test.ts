@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveGithubCredential, MISSING_CREDENTIAL_HELP } from "../src/ghcred.js";
-import { fetchPrTarget, parsePrTarget } from "../src/prtarget.js";
+import { fetchPrTarget, parsePrTarget, resolvePostCredential } from "../src/prtarget.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "review-pr-target-"));
@@ -156,6 +156,28 @@ describe("resolveGithubCredential: the order", () => {
     });
     expect(!r.ok && r.error).toMatch(/token mint failed: 401/);
     expect(!r.ok && r.error).toContain("gh auth login");
+  });
+});
+
+describe("resolvePostCredential", () => {
+  it("keeps the App's mint failure in the error for post_as=app", async () => {
+    const d = mkdtempSync(join(tmp, "secrets-post-"));
+    writeFileSync(join(d, "app_id"), "1");
+    writeFileSync(join(d, "app.pem"), "pem");
+    const r = await resolvePostCredential(
+      d,
+      "app",
+      { source: "gh", token: "t" },
+      {
+        env: {},
+        mintApp: async () => {
+          throw new Error("token mint failed: 401");
+        },
+      },
+    );
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.error).toMatch(/post_as is app but that credential is not available/);
+    expect(!r.ok && r.error).toMatch(/token mint failed: 401/);
   });
 });
 

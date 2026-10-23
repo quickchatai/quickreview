@@ -36,7 +36,8 @@ import {
 } from "./findingsrecord.js";
 import { canonicalLensIds, storedLensIds } from "./lensids.js";
 import { fenceAsData } from "./memory/datafence.js";
-import { predecessorOf } from "./outcomes.js";
+import { carriedToRef } from "./finding-chain.js";
+import { isPostedRow, predecessorOf } from "./outcomes.js";
 import { priorFindingFields } from "./priortasks.js";
 import { bareTag, ordinaryPostTag } from "./severity.js";
 import type { PriorFindingCheckRow, RoundFindingRow, RoundRow, StateStore } from "./state.js";
@@ -72,7 +73,7 @@ export interface PriorFinding {
   last_status: PriorStatus | null;
   last_status_round: number | null;
   last_evidence: string | null;
-  /** Sidecar only — never rendered into the prompt. */
+  /** Left out of the round note; rendered into the task of a lens the finding is assigned to. */
   reason: string | null;
   evidence: string | null;
 }
@@ -103,16 +104,10 @@ export interface PriorFindingsList {
 }
 
 /** One finding's identity across rounds. */
-const rkey = (round: number, key: string): string => `${round}:${key}`;
+const rkey = carriedToRef;
 
 function idsOf(row: RoundFindingRow): string[] {
   return storedLensIds(row.lens_ids) ?? canonicalLensIds(row.lens);
-}
-
-/** Was this row posted on the PR? `posted` with a tag — a downgraded, killed,
- * doubted or withheld entry never reached the author as itself. */
-function isPostedRow(r: RoundFindingRow): boolean {
-  return r.disposition === "posted" && r.posted_as !== null && r.posted_as.trim() !== "";
 }
 
 const RESOLVED: ReadonlySet<string> = new Set(PRIOR_RESOLVED_STATUSES);
