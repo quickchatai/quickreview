@@ -493,9 +493,9 @@ machine reaches it through the memory forward (`scripts/companion-memory-forward
 `--local` on the laptop route, where it bridges into the compose `memory`
 service, the container the engine runs in), and when nothing answers the step says which
 command starts one. On the server route the daemon reads the copy of the reviewer
-key a deploy shipped, and only a `rebuild` copies the secrets dir (a `sync`
+key a deploy shipped, and only `provision` copies the secrets dir (a `release`
 never does): step 72 compares the server's copy with yours by hash — never the
-key itself — and stays red, naming the rebuild, until they match.
+key itself — and stays red, naming the provision, until they match.
 
 Nothing is ever re-issued. A key that already exists is read back and
 redistributed; a rotation would orphan every copy already handed out, so a file
@@ -508,7 +508,7 @@ end-of-day curator and the `[feedback]` sink have nowhere to write. Declining
 mints and places nothing; its one write is `[openviking] enabled = false` in
 config.toml — the daemon's word for "off" — so memory health reports "not
 monitored" and raises nothing (on the server route it ships with the next
-deploy sync). Configuring memory later switches it back on. The difference
+release). Configuring memory later switches it back on. The difference
 matters: with memory left ON and no reviewer key, a missing key is what it is —
 a credential failure — and memory health treats it as one: every
 round prompt carries a short `MEMORY UNAVAILABLE THIS ROUND` note (the session
@@ -603,8 +603,11 @@ question.
 
 Runs `scripts/deploy.sh` — the same script, with the same preflights, that the
 maintainers run. The plan is always printed first (a `--dry-run` of the same
-mode), then the real run. The first deploy is a `rebuild`; later ones are
-`sync`, and you pass `rebuild` by name after bumping a pinned version.
+mode), then the real run. The first deploy is a `provision` (the host:
+packages, Docker, your secrets and the updater) followed by `release <version>`;
+later ones are `release <version>` alone, and you pass `provision` by name after
+changing the inventory's host settings or the secrets. A release needs the
+deploy manifest CI emitted for that version.
 
 The wizard passes no skip flag and no environment override — there is nowhere in
 the argv builder to put one — so the guided path gets byte-identically the
@@ -615,9 +618,10 @@ refuses, that refusal is quoted to you exactly; the wizard neither bypasses nor
 softens it. The two commonest on a first install are an uncommitted change and a
 version-pin mismatch.
 
-Same warning as the laptop route, for the same reason: the first deploy builds
-the image *on the server*, embedder included, and on a small VM that is tens of
-minutes.
+Nothing is built on the server: the release is the image CI built once from the
+tag, and the server pulls it by digest. The first pull downloads the daemon and
+memory images (the memory image carries its embedding model), which is the slow
+part on a small connection.
 
 After the deploy the wizard does not take the script's word for it — it asks
 Docker on that machine what is running.
@@ -704,7 +708,7 @@ lands in `state/dryrun/` for you to read. You can flip whenever you like.
 Accepting takes the explicit phrase `GO LIVE` — not "yes", because a flip is
 worth a sentence. The wizard then writes the flag, loads the result with the
 strict loader to prove it reads back false, restarts the daemon (on the server
-route that restart is `scripts/deploy.sh sync`, with all of its preflights
+route that restart is `scripts/deploy.sh release <version>`, with all of its preflights
 intact — so a flip can fail for a reason that looks unrelated, like a dirty
 tree), and re-reads the flag from disk to confirm.
 
