@@ -175,6 +175,12 @@ export type LeaseVerdict =
   /** The lease was taken but no process was ever recorded. */
   | { kind: "unstarted" };
 
+/** Does the verdict say a process of the lease may still run? The host gates of the
+ * debug round and the takeover refuse a worker on exactly these. */
+export function leaseStillRuns(verdict: LeaseVerdict): boolean {
+  return verdict.kind === "group" || verdict.kind === "members" || verdict.kind === "unstarted";
+}
+
 /** What a lease still names. The ONLY place that decides whether a signal may
  * be sent, so every kill goes through it. */
 export function judgeLease(lease: WorkerLease, proc: ProcView = realProc): LeaseVerdict {

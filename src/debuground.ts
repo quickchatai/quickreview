@@ -60,7 +60,7 @@ import {
   ipcEnv,
 } from "./ipc/capability.js";
 import type { CommandLookup } from "./ipc/protocol.js";
-import type { WorkerSpec } from "./ipc/workerspec.js";
+import { lensDirOf, roundPassesDir, type WorkerSpec } from "./ipc/workerspec.js";
 import { sessionCommandMarker } from "./session-command.js";
 import { findReviewerStub } from "./reviewerstub.js";
 import { verifiedPayload } from "./session-command-payload.js";
@@ -70,6 +70,7 @@ import type { Tmux } from "./tmux.js";
 import {
   WorkerLeases,
   judgeLease,
+  leaseStillRuns,
   realProc,
   sendSignal,
   type ProcView,
@@ -242,8 +243,6 @@ export interface DebugSweepReport {
 /** A round in a debug pi: what the manager holds in memory beside the lease row. */
 interface Running {
   commandId: string;
-  token: string;
-  generation: number;
   roundNo: number | null;
   root: string;
   sessionFile: string | undefined;
@@ -276,6 +275,8 @@ export class DebugRoundManager {
   private readonly stopping = new Map<number, Promise<boolean>>();
   /** PRs with a delivery under way: one pi per PR, whoever asks first. */
   private readonly delivering = new Set<number>();
+  /** The last undelivered reason logged per PR, so a repeating one logs once. */
+  private readonly undelivered = new Map<number, string>();
   private timer: NodeJS.Timeout | null = null;
 
   constructor(private readonly deps: DebugRoundDeps) {
@@ -328,7 +329,7 @@ export class DebugRoundManager {
     const held = this.leases.read(debugSession(pr));
     if (held === undefined) return null;
     const verdict = held === null ? ({ kind: "dead" } as const) : judgeLease(held, this.proc);
-    return verdict.kind === "group" || verdict.kind === "members" || verdict.kind === "unstarted"
+    return leaseStillRuns(verdict)
       ? `a debug pi for PR #${pr} still runs: no worker starts`
       : null;
   }
@@ -503,8 +504,6 @@ export class DebugRoundManager {
       });
       this.running.set(pr, {
         commandId: claimed.id,
-        token: lease.token,
-        generation: claimed.attempt,
         roundNo: claimed.round_no,
         root: spec.root,
         sessionFile: planned.spec.session_file,
@@ -591,8 +590,8 @@ export class DebugRoundManager {
     const borrow = join(dir, `${session}.agent`);
     const statusFile = join(borrow, DEBUG_STATUS_NAME);
     const round = row.round_no ?? 0;
-    const passes = join(spec.root, "state", `pr-${row.pr}-round-${round}-passes`);
-    const lensDir = spec.lens_dir ?? join(spec.root, "state", "lens", spec.session, `r${round}`);
+    const passes = roundPassesDir(spec, round);
+    const lensDir = lensDirOf(spec);
     const file = this.deps.newestSessionFile(spec.session_dir);
     const stub = findReviewerStub(spec.root);
     const out: DebugRoundSpec = {
@@ -704,6 +703,7 @@ export class DebugRoundManager {
     if (command)
       this.settle(command, row.token, force === "requeue" ? false : this.verdictOf(command));
     this.running.delete(row.pr);
+    this.undelivered.delete(row.pr);
     store.releaseHostLease(row.pr, row.token);
     this.log(`debug: #${row.pr} released (${why})`);
     try {
@@ -776,7 +776,14 @@ export class DebugRoundManager {
         if (run === undefined) {
           const waiting = store.activeSessionCommand(`pr-${row.pr}`);
           if (waiting && this.claims(waiting)) {
-            if ((await this.deliver(waiting)).ok) report.delivered.push(row.pr);
+            const delivery = await this.deliver(waiting);
+            if (delivery.ok) {
+              this.undelivered.delete(row.pr);
+              report.delivered.push(row.pr);
+            } else if (this.undelivered.get(row.pr) !== delivery.reason) {
+              this.undelivered.set(row.pr, delivery.reason);
+              this.log(`debug: #${row.pr} waiting order not delivered: ${delivery.reason}`);
+            }
             continue;
           }
           // A launch in flight has claimed its command but not yet registered its pi.
@@ -854,8 +861,9 @@ export class DebugRoundManager {
 
   /** The daemon's boot: no debug round of a previous daemon is wanted (its capability
    * died with it). Every lease is ended, its pi stopped, its round handed back to
-   * `pending`, and the lease freed once the pi is confirmed gone. Run before the
-   * supervisor's `recover`, which requeues any command still marked running. */
+   * `pending`, and the lease freed once the pi is confirmed gone. The daemon's start
+   * runs it after the supervisor's `recover`, which requeues any command still marked
+   * running. */
   async recover(): Promise<DebugSweepReport> {
     const report: DebugSweepReport = { released: [], stuck: [], delivered: [] };
     for (const row of this.deps.store.hostLeases()) {

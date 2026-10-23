@@ -542,6 +542,22 @@ describe("[P8.13b] the round is delivered to interactive pi, not to a worker", (
     expect(r.store.getSessionCommand(row.id)).toMatchObject({ status: "running" });
   });
 
+  it("logs why a sweep could not deliver the waiting order, once per distinct reason", async () => {
+    const lines: string[] = [];
+    const r = rig();
+    const mgr = r.manager({ log: (m) => lines.push(m) });
+    upsert(r.store, 7);
+    expect((await mgr.arm(7)).ok).toBe(true);
+    r.store.engageDrain({ issuer: "operator", expires_at: null });
+    await dispatch(r);
+    lines.length = 0;
+    await mgr.sweep();
+    await mgr.sweep();
+    expect(lines.filter((l) => l.includes("#7") && l.includes("not delivered"))).toHaveLength(1);
+    r.store.liftDrain("operator");
+    expect(await mgr.sweep()).toMatchObject({ delivered: [7] });
+  });
+
   it("leaves nothing behind when tmux cannot start the pi: the order goes back to pending", async () => {
     const r = rig();
     upsert(r.store, 7);

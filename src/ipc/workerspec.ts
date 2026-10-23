@@ -8,6 +8,7 @@
 // daemon side of the three ops is the WorkerSupervisor's (P8.5), serving the
 // wakes through HeldWakeHandoff (src/wakes.ts, P8.6); the worker treats a daemon
 // that does not know `wakes.take` as one holding no wakes.
+import { join } from "node:path";
 import { IpcError } from "./protocol.js";
 
 export const WORKER_SPEC_OP = "worker.spec";
@@ -201,4 +202,17 @@ export function parseWakesTaken(raw: unknown): WakesTaken {
     batches.push({ id, message });
   }
   return { batches };
+}
+
+/** The round's pass directory: its task files and its context pack. */
+export function roundPassesDir(spec: Pick<WorkerSpec, "root" | "pr">, round: number): string {
+  return join(spec.root, "state", `pr-${spec.pr}-round-${round}-passes`);
+}
+
+/** Where this round's lens ledger and lens JSONLs go (D10): the spec's own override, else
+ * state/lens/<session>/r<round>. */
+export function lensDirOf(
+  spec: Pick<WorkerSpec, "root" | "session" | "round_no" | "lens_dir">,
+): string {
+  return spec.lens_dir ?? join(spec.root, "state", "lens", spec.session, `r${spec.round_no ?? 0}`);
 }
