@@ -105,7 +105,6 @@ describe("[canary 7] a session_before_compact result is honoured", () => {
     const session = await rig.open({
       extensionFactories: [
         createLedgerPin({
-          session: "pr-42",
           prMeta: "PR #42 — canary",
           ownPr: 42,
           snapshotPath,

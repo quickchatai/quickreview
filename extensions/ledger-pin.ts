@@ -298,8 +298,6 @@ export interface LedgerPinDeps {
 
 /** What one ledger-pin extension needs, resolved: no env is read past here. */
 export interface LedgerPinConfig extends LedgerPinDeps {
-  /** The session name (identity; snapshotPath is already derived from it). */
-  session: string;
   /** PR meta line appended above the pinned ledger ("" for none). */
   prMeta: string;
   /** The session's own PR; undefined (the overseer) mirrors and pins nothing. */
@@ -318,7 +316,6 @@ export function ledgerPinConfigFromEnv(
 ): LedgerPinConfig {
   const session = env.QCR_SESSION_NAME?.trim() || "session";
   return {
-    session,
     prMeta: env.QCR_PR_META?.trim() ?? "",
     ownPr: parseOwnPr(env.QCR_PR),
     snapshotPath: ledgerSnapshotPath(env, session, cwd),

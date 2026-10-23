@@ -56,7 +56,7 @@ function ledgerPinCase(): ParityCase<never> {
     QCR_LEDGER_FILE: snapshotPath,
     QCR_SANDBOX_ROOT: undefined,
   };
-  const config = { session: "pr-42", prMeta: "PR #42 parity", ownPr: 42, snapshotPath };
+  const config = { prMeta: "PR #42 parity", ownPr: 42, snapshotPath };
   const message = (text: string) => ({
     message: { role: "assistant", content: [{ type: "text", text }] },
     toolResults: [],

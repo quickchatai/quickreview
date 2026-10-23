@@ -8,7 +8,7 @@
 //                      `customTools` (the engine routes hand them over data,
 //                      src/engine/lens/engine-tools.ts)
 //   createLens(deps)   the factory that registers them on a pi
-//   default export     the env shim for an interactive pi (a debug round, the
+//   extensions/cli/lens.ts  the env shim for an interactive pi (a debug round, the
 //                      companion): it builds the lens runner on first use
 //
 // The tmux bot does NOT load this file. pi's native `subagent` and the glue's
