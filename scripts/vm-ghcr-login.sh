@@ -48,6 +48,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$(dirname "${BASH_SOURCE[0]}")/install-locator.sh"
 
 RELEASE_VERSION_RE='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
+GITHUB_LOGIN_RE='^[A-Za-z0-9]([A-Za-z0-9-]{0,38})$'
 DAEMON_IMAGE="${QC_RELEASE_IMAGE:-ghcr.io/quickchatai/quickreview}"
 MEMORY_IMAGE="${QC_RELEASE_MEMORY_IMAGE:-ghcr.io/quickchatai/quickreview-memory}"
 API="${QC_GITHUB_API:-https://api.github.com}"
@@ -76,7 +77,7 @@ done
 
 [[ -n "$VERSION" ]] || die "--version is required: the login is checked against a published version of both images"
 [[ "$VERSION" =~ $RELEASE_VERSION_RE ]] || die "version '$VERSION' is not X.Y.Z (optionally -prerelease)"
-if [[ -n "$LOGIN" && ! "$LOGIN" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,38})$ ]]; then
+if [[ -n "$LOGIN" && ! "$LOGIN" =~ $GITHUB_LOGIN_RE ]]; then
   die "login '$LOGIN' is not a GitHub login"
 fi
 
@@ -157,7 +158,7 @@ NOW="${QC_NOW_EPOCH:-$(date -u +%s)}"
 (( EXPIRY_EPOCH > NOW )) || die "refusing the token: it expired at $EXPIRY_ISO"
 
 API_LOGIN="$(grep -o '"login"[[:space:]]*:[[:space:]]*"[^"]*"' <<<"$BODY" | head -1 | sed 's/.*:[[:space:]]*"\(.*\)"/\1/')"
-[[ "$API_LOGIN" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,38})$ ]] || die "GitHub did not say whose token this is"
+[[ "$API_LOGIN" =~ $GITHUB_LOGIN_RE ]] || die "GitHub did not say whose token this is"
 if [[ -n "$LOGIN" && "$LOGIN" != "$API_LOGIN" ]]; then
   die "the token belongs to \"$API_LOGIN\", not \"$LOGIN\""
 fi
