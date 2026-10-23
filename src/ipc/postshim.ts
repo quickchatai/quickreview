@@ -2,8 +2,9 @@
 // reply-thread.sh (P7.2).
 //
 // On a host the daemon runs (a round worker, an answer worker, a debug pi) the
-// three scripts keep their seeded names and their arguments, and hand over to
-// this client the moment QCR_IPC_SOCKET and QCR_IPC_CAP_FD are present:
+// three scripts keep their seeded names and their arguments, and always hand
+// over to this client; without QCR_IPC_SOCKET and QCR_IPC_CAP_FD in env the
+// client refuses:
 //
 //     exec node dist/src/ipc/postshim.js review|approval|reply "$@"
 //
