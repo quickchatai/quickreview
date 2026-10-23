@@ -33,7 +33,7 @@ export interface CurationStatus {
    *  `not_persisted` — receipted, but a claimed lesson is not in memory or a
    *                    write was refused (WOKEN), and that candidate is still
    *                    undecided;
-   *  `received`      — receipted, every adoption so far found.
+   *  `received`      — receipted; adoptions may still be verifying (`verifying`).
    *  The two WOKEN states stay reported until made good — the next day's
    *  packet does not clear them.
    */
@@ -53,7 +53,8 @@ export interface CurationStatus {
   /** Adoptions memory does not hold, and writes the curator reported refused. */
   not_persisted: number;
   expired_today: number;
-  /** Every candidate still undecided (offered ones), and the queued ones. */
+  /** Candidates still undecided that have been offered (queued ones are counted
+   * separately in `queued`). */
   open: number;
   queued: number;
   receipt_at: string | null;
