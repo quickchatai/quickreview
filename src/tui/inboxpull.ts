@@ -24,6 +24,7 @@
 // dirs and the ack (a delete of the item's own file on the bot). It touches no
 // GitHub and no session: delivery is a file, and what the companion does with
 // it is the companion's.
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseInboxItem, type InboxClass, type InboxItem } from "../companioninbox.js";
@@ -91,11 +92,12 @@ export function inboxAlert(item: InboxItem): Record<string, unknown> {
 }
 
 /** One file, tmp + rename, unless it (or the consumer's archived copy of it)
- * is already there. */
+ * is already there. The staging name is private to this call, so two TUIs
+ * pulling the same item never share a staging file. */
 function writeOnce(dir: string, name: string, text: string): boolean {
   if (existsSync(join(dir, name)) || existsSync(join(dir, ".done", name))) return false;
   mkdirSync(dir, { recursive: true });
-  const tmp = join(dir, `.${name}.tmp`);
+  const tmp = join(dir, `.${name}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
   writeFileSync(tmp, text);
   renameSync(tmp, join(dir, name));
   return true;
@@ -113,6 +115,9 @@ export interface InboxPullDeps {
 export interface InboxPullResult {
   /** Items now with the companion and acked on the bot. */
   delivered: InboxItem[];
+  /** The subset of `delivered` whose files this pull wrote (a retry of an
+   * item already on disk writes nothing). */
+  written: InboxItem[];
   /** Lines that were not an item (never acked, so never lost). */
   skipped: number;
   /** Set when the listing or the ack failed. The items stay on the bot. */
@@ -132,7 +137,7 @@ function why(r: { stderr: string; code: number | null }): string {
 export async function pullCompanionInbox(deps: InboxPullDeps): Promise<InboxPullResult> {
   const listed = await deps.ssh(deps.cfg.ssh_host, inboxListArgv(deps.cfg));
   if (!listed.ok)
-    return { delivered: [], skipped: 0, error: `inbox listing failed: ${why(listed)}` };
+    return { delivered: [], written: [], skipped: 0, error: `inbox listing failed: ${why(listed)}` };
   const items: InboxItem[] = [];
   let skipped = 0;
   for (const line of listed.stdout.split("\n")) {
@@ -145,12 +150,14 @@ export async function pullCompanionInbox(deps: InboxPullDeps): Promise<InboxPull
     a.created_at === b.created_at ? a.id.localeCompare(b.id) : a.created_at < b.created_at ? -1 : 1,
   );
   const delivered: InboxItem[] = [];
+  const written: InboxItem[] = [];
   let error: string | undefined;
   for (const item of items) {
     try {
-      writeOnce(deps.injectDir, inboxInjectName(item), inboxInjectText(item));
-      writeOnce(deps.alertsDir, inboxAlertName(item), `${JSON.stringify(inboxAlert(item))}\n`);
+      const a = writeOnce(deps.injectDir, inboxInjectName(item), inboxInjectText(item));
+      const b = writeOnce(deps.alertsDir, inboxAlertName(item), `${JSON.stringify(inboxAlert(item))}\n`);
       delivered.push(item);
+      if (a || b) written.push(item);
     } catch (err) {
       // Not delivered, so not acked: the item stays on the bot for the next pull.
       error = `inbox item ${item.id} not delivered: ${err instanceof Error ? err.message : String(err)}`;
@@ -167,7 +174,7 @@ export async function pullCompanionInbox(deps: InboxPullDeps): Promise<InboxPull
     if (!acked.ok)
       error = `inbox ack failed (items stay pending, re-delivery is a no-op): ${why(acked)}`;
   }
-  return { delivered, skipped, ...(error === undefined ? {} : { error }) };
+  return { delivered, written, skipped, ...(error === undefined ? {} : { error }) };
 }
 
 /** Minimum gap between pulls, whatever the poll cadence: the inbox is a slow
@@ -203,9 +210,10 @@ export class InboxPuller {
         } else {
           this.failing = false;
         }
-        if (res.delivered.length > 0)
+        // Never over the failure notice, and only for files this pull wrote.
+        if (res.error === undefined && res.written.length > 0)
           this.onResult(
-            `companion inbox ▸ ${res.delivered.length} new (${[...new Set(res.delivered.map((i) => i.class))].join(", ")})`,
+            `companion inbox ▸ ${res.written.length} new (${[...new Set(res.written.map((i) => i.class))].join(", ")})`,
           );
         return res;
       })

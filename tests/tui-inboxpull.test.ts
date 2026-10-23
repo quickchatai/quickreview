@@ -126,7 +126,7 @@ describe("the argv", () => {
 describe("pullCompanionInbox", () => {
   it("an empty or absent inbox pulls nothing", async () => {
     const { ssh } = localRunner();
-    expect(await pullCompanionInbox(deps(ssh))).toEqual({ delivered: [], skipped: 0 });
+    expect(await pullCompanionInbox(deps(ssh))).toEqual({ delivered: [], written: [], skipped: 0 });
     expect(existsSync(injectDir)).toBe(false);
   });
 
@@ -327,5 +327,37 @@ describe("InboxPuller", () => {
     t += 20_000;
     await puller.tick();
     expect(lines.filter((l) => l.startsWith("✖ companion inbox")).length).toBe(2);
+  });
+});
+
+describe("notices and staging", () => {
+  it("a failed-ack retry leaves the failure as the last notice and announces nothing new", async () => {
+    bot.add("anomaly", "[anomaly] one");
+    const lines: string[] = [];
+    let t = 1_000_000;
+    const flaky = localRunner({ failAck: true });
+    const puller = new InboxPuller(
+      deps(flaky.ssh),
+      (l) => lines.push(l),
+      () => t,
+      20_000,
+    );
+    await puller.tick();
+    expect(lines.at(-1)).toMatch(/^✖ companion inbox/);
+    t += 20_000;
+    await puller.tick(); // the item is already on disk: nothing was written
+    expect(lines.some((l) => l.includes("1 new"))).toBe(false);
+    expect(lines.at(-1)).toMatch(/^✖ companion inbox/);
+  });
+
+  it("stages each write under a private name, never a name another puller shares", async () => {
+    bot.add("anomaly", "[anomaly] one");
+    mkdirSync(injectDir, { recursive: true });
+    const item = bot.list()[0]!;
+    // Another puller holding the old shared staging name must not block this one.
+    mkdirSync(join(injectDir, `.${inboxInjectName(item)}.tmp`));
+    const res = await pullCompanionInbox(deps(localRunner().ssh));
+    expect(res.error).toBeUndefined();
+    expect(res.delivered).toHaveLength(1);
   });
 });
