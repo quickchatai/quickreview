@@ -2370,7 +2370,7 @@ export interface ScanSandboxConfig {
    * refresh-disabled copy per case; by default the companion's own
    * (`[companion] pihome_volume`), which alone refreshes it. */
   pihome_volume: string;
-  /** The image the sandbox runs; empty in the file means `SCAN_IMAGE_DEFAULT`. */
+  /** The image the sandbox runs; `SCAN_IMAGE_DEFAULT` when the key is omitted (an empty value is refused). */
   image: string;
 }
 
