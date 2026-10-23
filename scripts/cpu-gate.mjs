@@ -289,7 +289,7 @@ async function cellMain(mode, n, opts) {
   makeTree(tree);
   const cpus = allowedCpus();
   const lag = startLagSampler();
-  /** @type {{ dispose(): Promise<void>, abort(): Promise<void>, prompt(t: string): Promise<unknown>, ready: boolean }[]} */
+  /** @type {import("../dist/src/engine/port.js").RuntimeSession[]} */
   const sessions = [];
   let host;
   let runtime;

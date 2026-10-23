@@ -107,8 +107,11 @@ check_worker_exit() {
   fi
 }
 fact() { printf '%s\t%s\n' "$1" "$(printf '%s' "$2" | tr '\n\t' '  ')" >>"$FACTS"; }
-# finding <id> <fixed|open|rehearsal> <text>: a finding of this run, carried into the report
-finding() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >>"$WORK/findings.tsv"; }
+
+# login_expiry <login_refresh json>: the refresher's login.expires_at (the status nests its file under `login`); empty when absent.
+login_expiry() {
+  python3 -c "import json,sys;d=json.loads(sys.argv[1] or '{}');print((d.get('login') or {}).get('expires_at') or '')" "$1" 2>/dev/null
+}
 
 wait_for() {
   local secs="$1" what="$2"; shift 2
@@ -868,13 +871,13 @@ PIHOME_SUM_NOW="$(sha256sum "$H/pihome/agent/auth.json" | cut -c1-16)"
 PIHOME_SUM_0="$(sha256sum "$PRISTINE/pihome/agent/auth.json" | cut -c1-16)"
 LOCKED=no; dx flock -n /home/qcr/.pi/agent/auth.json.lock true 2>/dev/null || LOCKED=yes
 LR="$(status_get login_refresh)"
-EXP="$(python3 -c "import json,sys;d=json.loads(sys.argv[1] or '{}');print(d.get('expires_at') or d.get('expiresAt') or '')" "$LR" 2>/dev/null)"
+EXP="$(login_expiry "$LR")"
 fact login_refresh "$LR"
 REFRESHER_PS="$(dx sh -c 'for p in /proc/[0-9]*; do tr "\0" " " <$p/cmdline 2>/dev/null; echo; done' | grep -c loginrefresh)"
-if [[ "$LOCKED" == yes && "$PIHOME_SUM_NOW" == "$PIHOME_SUM_0" && -n "$LR" && "$LR" != null ]]; then
-  check REFRESH-1 pass "the login refresher took over the existing pihome login: it holds auth.json.lock, reports expires_at, and left the login file untouched (nothing was due)" "lock held: $LOCKED; auth.json sha $PIHOME_SUM_NOW == the legacy pihome's; status.json login_refresh: $(echo "$LR" | cut -c1-200); refresher processes: $REFRESHER_PS"
+if [[ "$LOCKED" == yes && "$PIHOME_SUM_NOW" == "$PIHOME_SUM_0" && -n "$LR" && "$LR" != null && -n "$EXP" ]]; then
+  check REFRESH-1 pass "the login refresher took over the existing pihome login: it holds auth.json.lock, reports expires_at, and left the login file untouched (nothing was due)" "lock held: $LOCKED; auth.json sha $PIHOME_SUM_NOW == the legacy pihome's; login expires_at: $EXP; status.json login_refresh: $(echo "$LR" | cut -c1-200); refresher processes: $REFRESHER_PS"
 else
-  check REFRESH-1 fail "the refresher took over the existing login" "locked=$LOCKED sum $PIHOME_SUM_NOW vs $PIHOME_SUM_0 login_refresh=$LR"
+  check REFRESH-1 fail "the refresher took over the existing login" "locked=$LOCKED sum $PIHOME_SUM_NOW vs $PIHOME_SUM_0 login_refresh=$LR expires_at=${EXP:-none}"
 fi
 
 # ---- LOGIN-PTY-1: an owner-style login through the entrypoint in a pty pauses and resumes the refresher -------------------------------------------
