@@ -27,6 +27,18 @@ describe("partially published command receipts", () => {
     );
     expect((await s.set(false)).ok).toBe(true);
   });
+  it.each(["null", "[]", "7"])("retries a drain receipt that decodes to %s", async (junk) => {
+    // layout probe, command write, then two receipt reads
+    const values = ["", "", junk, JSON.stringify({ ok: true, draining: false })];
+    const ssh: SshRunner = async () => ({
+      ok: true,
+      stdout: values.shift() ?? "pending",
+      stderr: "",
+      code: 0,
+    });
+    const s = new CommandDrainSender(TUI_DEFAULTS, ssh, now, sleep);
+    expect((await s.set(false)).ok).toBe(true);
+  });
   it("retries a lesson receipt until the valid verdict arrives", async () => {
     const s = new LessonSwitchSender(TUI_DEFAULTS, replies({ ok: true }), now, sleep);
     expect((await s.send({ command: "lessons-off" })).ok).toBe(true);
