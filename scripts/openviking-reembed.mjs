@@ -87,6 +87,7 @@ import { pathToFileURL } from "node:url";
 
 import {
   embedderSpecFromFlags,
+  parseUserList,
   readSecret,
   serverArgv,
   startEmbedder,
@@ -737,6 +738,7 @@ export async function reindexNamespace({
     }
   }
   const deadline = now() + deadlineMs;
+  let lastPollFailure = "";
   for (;;) {
     await sleep(pollMs);
     const task = await call(
@@ -774,13 +776,17 @@ export async function reindexNamespace({
           detail: `task ${t.status}: ${typeof t.error === "string" && t.error ? t.error : "no detail"}`,
         };
       }
+    } else {
+      lastPollFailure =
+        task.error ??
+        `HTTP ${task.status}: ${errorMessage(task.body, "task poll refused")}`;
     }
     if (now() >= deadline)
       return {
         status: "timeout",
         uri,
         task_id: taskId,
-        detail: `task ${taskId} did not settle within ${Math.round(deadlineMs / 1000)}s`,
+        detail: `task ${taskId} did not settle within ${Math.round(deadlineMs / 1000)}s${lastPollFailure ? ` (last poll: ${lastPollFailure})` : ""}`,
       };
   }
 }
@@ -943,10 +949,7 @@ export function parseArgs(argv, env = process.env) {
     command: positional[0] ?? "status",
     home,
     config: flags.get("config") ?? (home ? join(home, "ov.conf") : ""),
-    users: String(flags.get("users") ?? "reviewer,companion")
-      .split(/[,\s]+/)
-      .map((s) => s.trim())
-      .filter((s) => s !== ""),
+    users: parseUserList(flags.get("users") ?? "reviewer,companion"),
     base: flags.get("base") ?? env.QCR_OV_BASE ?? DEFAULTS.base,
     user: flags.get("user") ?? DEFAULTS.user,
     keyFile: flags.get("key-file") ?? "",
