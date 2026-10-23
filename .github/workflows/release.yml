@@ -1,6 +1,7 @@
 # Release: build both images on both architectures, smoke each offline, run
 # one paid end-to-end review behind a human approval, then push to ghcr with
-# provenance attestations, and publish both npm packages.
+# provenance attestations, and stage both npm packages for a maintainer's
+# approval.
 #
 #   plan -> build (image x arch) -> e2e (release-e2e) -> publish (image)
 #        -> manifest -> attach-manifest (a non-scratch version only)
@@ -10,8 +11,8 @@
 # moving it starts nothing), or workflow_dispatch. Nothing here runs
 # on a branch push or a pull request (ci.yml owns those). Two jobs log in to
 # a registry, each to one: `publish` to ghcr (the GITHUB_TOKEN), `npm` to
-# npmjs (trusted publishing, or the NPM_TOKEN secret for the first release).
-# No other job logs in or pushes.
+# npmjs (the npm-publish environment's NPM_TOKEN, or trusted publishing once
+# that secret is gone). No other job logs in or pushes.
 #
 # The images (docker/Dockerfile and docker/memory/Dockerfile):
 #   ghcr.io/quickchatai/quickreview:<version>          the release image
@@ -25,12 +26,17 @@
 #
 # The npm packages: @quickchatai/pi-quickreview (packages/pi-plugin, the core
 # and the pi plugin) and @quickchatai/quickreview (the root, the qcr app),
-# both at <version>, published in that order because the root pins the plugin
-# at its exact version. On npm a release goes under the dist-tag `latest`
-# (`qcr update` installs that tag: src/npmverbs.ts); a prerelease
-# (X.Y.Z-rc.N) goes under `next` and never moves `latest`. A version already
-# on the registry is not published again, so a re-run after a failed later
-# step is safe. A scratch version and a manual dispatch never publish to npm.
+# both at <version>. CI never publishes either directly: it packs both
+# tarballs, keeps them as the workflow artifact npm-tarballs-<version>, and
+# stages each with `npm stage publish`, the plugin first because the root pins
+# it at its exact version. Nothing reaches the public registry until a
+# maintainer approves each staged version with 2FA (`npm stage approve
+# <stage-id>`, or Approve on npmjs.com), the plugin before the app. On npm a
+# release goes under the dist-tag `latest` (`qcr update` installs that tag:
+# src/npmverbs.ts); a prerelease (X.Y.Z-rc.N) goes under `next` and never
+# moves `latest`. A version already on the registry is not staged again, so a
+# re-run after a failed later step is safe. A scratch version and a manual
+# dispatch never stage to npm.
 #
 # Runners: Blacksmith's (blacksmith-*, the org's Blacksmith app), with the image
 # builds on Blacksmith's Docker builder and its layer cache. The repository
@@ -48,7 +54,7 @@
 #
 # What the owner sets up once (this file creates none of it):
 #   - environment `release-e2e`, with the owner as the required reviewer;
-#     the e2e job is the only job that reads an environment secret;
+#     the e2e job is the only job that reads its secret;
 #   - secret `RELEASE_E2E_PI_AUTH` in that environment: the contents of a pi
 #     auth.json (a login for the model the e2e reaches), nothing else;
 #   - optional repo variables QCR_RUNNERS and RELEASE_ARM64_RUNNER (above) and
@@ -58,15 +64,21 @@
 #     provenance steps run only on a public repo or with the repo variable
 #     RELEASE_ATTEST=true; without them the deploy manifest's digests still pin
 #     what the VM pulls.
-#   - npmjs: the `quickchatai` org, which owns both packages. npm lets a
-#     trusted publisher be configured only on a package that already exists,
-#     so the first release logs in with a token: repo secret NPM_TOKEN, a
-#     short-lived granular npm token with publish rights on the org's
-#     packages. Once both packages exist, add a trusted publisher to each on
-#     npmjs (GitHub Actions, repository quickchatai/quickreview, workflow
-#     release.yml), then delete NPM_TOKEN from the repo and revoke it on
-#     npmjs. With no NPM_TOKEN the `npm` job logs in by OIDC alone (its
-#     id-token: write), and on a public repo npm attaches provenance itself.
+#   - npmjs: the `quickchatai` org, which owns both packages;
+#   - environment `npm-publish`, whose deployment ref policy admits only tags
+#     matching v*.*.*, so a run from master or a branch never reaches its
+#     secret; the `npm` job is the only job that reads it;
+#   - secret `NPM_TOKEN` in that environment: a stage-only granular npm token
+#     on the org's packages. It can `npm stage publish` and nothing more; a
+#     plain `npm publish` with it fails with E_STAGE_REQUIRED. Each release is
+#     staged by CI and approved by a maintainer with 2FA;
+#   - once both packages exist on npm (a trusted publisher can be configured
+#     only on an existing package), a trusted publisher on each: repository
+#     quickchatai/quickreview, workflow release.yml, environment npm-publish,
+#     allowed to stage-publish only (`npm trust github ...
+#     --allow-stage-publish`). Then delete NPM_TOKEN from the environment and
+#     revoke it on npmjs. With no NPM_TOKEN the `npm` job logs in by OIDC alone
+#     (its id-token: write), and on a public repo npm attaches provenance.
 #
 # The paid e2e is counted against the small separate release grant, not
 # the bench budget. Each run writes its ledger line (version, run, cap, spend)
@@ -520,14 +532,17 @@ jobs:
             gh release create "v$VERSION" --verify-tag --title "v$VERSION" --notes "Images: deploy-manifest-$VERSION.json lists them by digest."
           gh release upload "v$VERSION" "$RUNNER_TEMP/manifest/deploy-manifest-$VERSION.json" --clobber
 
-  # Publishes both npm packages from the tagged source, once the images of the
-  # same version are on ghcr. A real tag push only: never a scratch version,
-  # never a manual dispatch. The second registry login of this workflow, and
-  # npmjs's alone: by OIDC trusted publishing (id-token: write), or by the
-  # NPM_TOKEN secret while that secret exists (the first release). GitHub's
-  # own runner, whatever QCR_RUNNERS says: npm takes trusted publishing and
-  # provenance from GitHub-hosted runners only. No npm cache: a publish
-  # installs from the lockfile and nothing else.
+  # Stages both npm packages from the tagged source, once the images of the
+  # same version are on ghcr; a maintainer approves each staged version with
+  # 2FA, and only then is it public. A real tag push only: never a scratch
+  # version, never a manual dispatch. It runs in the npm-publish environment,
+  # which admits v*.*.* tags alone and holds NPM_TOKEN, a stage-only token:
+  # no step here runs a plain `npm publish`, which that token refuses. The
+  # second registry login of this workflow, and npmjs's alone: by that token
+  # while it exists, by OIDC trusted publishing (id-token: write) once it is
+  # gone. GitHub's own runner, whatever QCR_RUNNERS says: npm takes trusted
+  # publishing and provenance from GitHub-hosted runners only. No npm cache:
+  # the tarballs are built from the lockfile and nothing else.
   npm:
     needs: [plan, build, e2e, publish]
     if: >-
@@ -540,6 +555,7 @@ jobs:
       && needs.e2e.result == 'success'
       && needs.publish.result == 'success' }}
     runs-on: ubuntu-latest
+    environment: npm-publish
     timeout-minutes: 30
     permissions:
       contents: read
@@ -564,25 +580,51 @@ jobs:
           [ "$root" = "$VERSION" ] || die "package.json is $root, the tag is v$VERSION"
           [ "$plugin" = "$VERSION" ] || die "packages/pi-plugin/package.json is $plugin, the tag is v$VERSION"
           [ "$pin" = "$VERSION" ] || die "package.json pins @quickchatai/pi-quickreview at '$pin', not exactly $VERSION"
-      # Trusted publishing needs npm 11.5.1 or later; an older npm would fall
-      # through to no login at all once NPM_TOKEN is gone.
-      - name: npm is new enough for trusted publishing
+      # `npm stage` needs npm 11.15.0 or later (trusted publishing needs
+      # 11.5.1, which that covers); an older npm has no staged route at all.
+      - name: npm is new enough for staged publishing
         run: |
           set -euo pipefail
           have="$(npm --version)"
-          printf '11.5.1\n%s\n' "$have" | sort -V -C ||
-            { echo "::error::npm $have is older than 11.5.1, which trusted publishing needs"; exit 1; }
+          printf '11.15.0\n%s\n' "$have" | sort -V -C ||
+            { echo "::error::npm $have is older than 11.15.0, which npm stage needs"; exit 1; }
       - run: npm ci
-      - name: publish the plugin, then the app
+      # The tarballs are the unit: the same files are kept as the artifact and
+      # staged, so a hand publish after a refused stage ships exactly them.
+      - name: pack the plugin and the app
+        id: pack
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/npm"
+          mkdir -p "$dest"
+          npm pack --workspace packages/pi-plugin --pack-destination "$dest"
+          npm pack --pack-destination "$dest"
+          # npm names a tarball after the package, scope folded in:
+          # @scope/name -> scope-name-<version>.tgz
+          for k in plugin:packages/pi-plugin app:.; do
+            name="$(node -p "require('./${k#*:}/package.json').name")"
+            name="${name#@}"
+            tgz="$dest/${name//\//-}-$VERSION.tgz"
+            [ -f "$tgz" ] || { echo "::error::npm pack left no $tgz"; exit 1; }
+            echo "${k%%:*}=$tgz" >>"$GITHUB_OUTPUT"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: npm-tarballs-${{ env.VERSION }}
+          path: ${{ runner.temp }}/npm/*.tgz
+          if-no-files-found: error
+      - name: stage the plugin, then the app
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           PUBLIC: ${{ github.event.repository.visibility == 'public' }}
+          PLUGIN_TGZ: ${{ steps.pack.outputs.plugin }}
+          APP_TGZ: ${{ steps.pack.outputs.app }}
         run: |
           set -euo pipefail
           # A prerelease never moves `latest`: `qcr update` installs that tag.
           dist_tag=latest
           [[ "$VERSION" == *-* ]] && dist_tag=next
-          args=(--tag "$dist_tag")
+          args=(--tag "$dist_tag" --access public)
           provenance=no
           if [ "$PUBLIC" = true ]; then
             args+=(--provenance)
@@ -591,31 +633,34 @@ jobs:
           login="trusted publishing (OIDC)"
           [ -z "${NODE_AUTH_TOKEN:-}" ] || login="the NPM_TOKEN secret"
           on_registry() { [ "$(npm view "$1@$VERSION" version 2>/dev/null || true)" = "$VERSION" ]; }
-          release() {
-            local dir="$1" name
+          failed=0
+          staged=()
+          # A refused stage does not stop the other package's attempt; the
+          # step fails at the end if either was refused.
+          stage() {
+            local dir="$1" tgz="$2" name
             name="$(node -p "require('./$dir/package.json').name")"
             if on_registry "$name"; then
-              echo "- \`$name@$VERSION\`: already on the registry, not published again" >>"$GITHUB_STEP_SUMMARY"
+              echo "- \`$name@$VERSION\`: skipped, already on the registry" >>"$GITHUB_STEP_SUMMARY"
               return 0
             fi
-            if [ "$dir" = . ]; then
-              npm publish "${args[@]}"
+            if npm stage publish "$tgz" "${args[@]}"; then
+              staged+=("$name")
+              echo "- \`$name@$VERSION\`: staged under dist-tag $dist_tag (login: $login, provenance: $provenance)" >>"$GITHUB_STEP_SUMMARY"
             else
-              npm publish --workspace "$dir" "${args[@]}"
+              failed=1
+              echo "::error::npm stage publish refused $name@$VERSION"
+              echo "- \`$name@$VERSION\`: failed to stage. A package that does not exist on npm yet may refuse staging: then publish the tarball from the artifact npm-tarballs-$VERSION by hand, once, with 2FA (\`npm publish $(basename "$tgz") --access public\`), the plugin first." >>"$GITHUB_STEP_SUMMARY"
             fi
-            # Wait until the registry serves it, so the next package never
-            # names a version nobody can install yet.
-            for _ in $(seq 1 30); do
-              if on_registry "$name"; then
-                echo "- \`$name@$VERSION\`: published under dist-tag $dist_tag (login: $login, provenance: $provenance)" >>"$GITHUB_STEP_SUMMARY"
-                return 0
-              fi
-              sleep 10
-            done
-            echo "::error::$name@$VERSION was published but the registry does not serve it after 5 minutes"
-            exit 1
           }
           printf '### npm\n\n' >>"$GITHUB_STEP_SUMMARY"
           # The plugin first: the app pins it at exactly this version.
-          release packages/pi-plugin
-          release .
+          stage packages/pi-plugin "$PLUGIN_TGZ"
+          stage . "$APP_TGZ"
+          if [ "${#staged[@]}" -gt 0 ]; then
+            printf '\nNothing staged is public until a maintainer approves it with 2FA, the plugin before the app:\n\n' >>"$GITHUB_STEP_SUMMARY"
+            for name in "${staged[@]}"; do
+              printf -- "- \`npm stage list %s\`, then \`npm stage approve <stage-id>\` (or Approve on npmjs.com)\n" "$name" >>"$GITHUB_STEP_SUMMARY"
+            done
+          fi
+          exit "$failed"
