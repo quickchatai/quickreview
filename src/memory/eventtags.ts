@@ -14,6 +14,10 @@
  * entry's own header follows on the next line. */
 export const IMPORT_TAG = "imported";
 
+/** One `#word` token: the capture is the word. The ONE grammar every header
+ * reader and editor (layout.ts, relayout.ts) uses. */
+export const HASH_TOKEN_RE = /^#([^\s#]+)$/;
+
 /** One `k=v` token: bare (no `#`), value without whitespace — the ONE
  * grammar every header reader and editor (layout.ts, relayout.ts) uses. */
 export const EVENT_TAG_RE = /^([a-z][a-z0-9_-]*)=([^\s]+)$/;

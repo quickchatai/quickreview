@@ -48,7 +48,7 @@
 // NEVER A DELETE. A move is a new copy plus a `#retired #moved` stub at the
 // old address; a retirement is the `#retired` tag. Every write is a
 // batch-write with a hash precondition, one per directory.
-import { EVENT_TAG_RE, parseEventTags, parseHashTags } from "./eventtags.js";
+import { EVENT_TAG_RE, HASH_TOKEN_RE, parseEventTags, parseHashTags } from "./eventtags.js";
 import {
   EVENTS_AREA,
   PINNED_AREA,
@@ -143,8 +143,6 @@ const PROBE_RE = /^confinement probe [\w:.-]+$/;
 const FEEDBACK_HASH = new Set(["feedback", "feedback-review", "adjudication"]);
 const OPS_HASH = new Set(["bug", "operations", "openviking", "review-ops"]);
 
-const HASH_TOKEN = /^#([^\s#]+)$/;
-
 /**
  * The tags an entry carries ANYWHERE it states them: its header (the leading
  * run), any line made only of `#tag` / `k=v` tokens, and a `Tags:` line. The
@@ -171,9 +169,9 @@ export function looseTags(text: string): { hash: Set<string>; kv: Record<string,
     const line = raw.trim().replace(/^Tags:\s*/i, "");
     if (line === "") continue;
     const tokens = line.split(/\s+/);
-    if (!tokens.every((t) => HASH_TOKEN.test(t) || EVENT_TAG_RE.test(t))) continue;
+    if (!tokens.every((t) => HASH_TOKEN_RE.test(t) || EVENT_TAG_RE.test(t))) continue;
     for (const t of tokens) {
-      const h = HASH_TOKEN.exec(t);
+      const h = HASH_TOKEN_RE.exec(t);
       if (h) {
         hash.add(h[1]!.toLowerCase());
         continue;

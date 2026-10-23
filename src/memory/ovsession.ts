@@ -297,6 +297,14 @@ export function readServerRootKey(ovConfPath: string | undefined): string {
   }
 }
 
+/** Write `body` to `path` through a temp file and a rename, creating the directory; throws on failure. */
+function publishAtomically(path: string, body: string, mode: number): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = `${path}.tmp-${process.pid}`;
+  writeFileSync(tmp, body, { mode });
+  renameSync(tmp, path);
+}
+
 export interface WriteOvcliOptions {
   /** Path of the SERVER's ov.conf, so its root key can be recognised. */
   serverConfigPath?: string;
@@ -309,7 +317,7 @@ export interface OvcliWriteResult {
   written: boolean;
   /** A usable reviewer key landed in it. False ⇒ sessions run memory-less. */
   keyed: boolean;
-  /** `no-key` | `root-key-refused` | "" — why `keyed` is false. */
+  /** `no-key` | `root-key-refused` | `write-failed` | "" — why `keyed` is false. */
   reason: string;
 }
 
@@ -345,10 +353,7 @@ export function writeOvcliConf(
   }
   const body = renderOvcliConf({ ...identity, apiKey });
   try {
-    mkdirSync(dirname(path), { recursive: true });
-    const tmp = `${path}.tmp-${process.pid}`;
-    writeFileSync(tmp, body, { mode: 0o600 });
-    renameSync(tmp, path);
+    publishAtomically(path, body, 0o600);
   } catch (err) {
     log(`openviking: could not write ${path} (${(err as Error).message}) — sessions start memory-less`);
     return { path, written: false, keyed: false, reason: reason || "write-failed" };
@@ -391,10 +396,7 @@ export function writeRetiredUris(
     2,
   )}\n`;
   try {
-    mkdirSync(dirname(path), { recursive: true });
-    const tmp = `${path}.tmp-${process.pid}`;
-    writeFileSync(tmp, body, { mode: 0o644 });
-    renameSync(tmp, path);
+    publishAtomically(path, body, 0o644);
     return true;
   } catch (err) {
     opts.log?.(
@@ -448,10 +450,7 @@ export function writeRecallHint(
     2,
   )}\n`;
   try {
-    mkdirSync(dirname(path), { recursive: true });
-    const tmp = `${path}.tmp-${process.pid}`;
-    writeFileSync(tmp, body, { mode: 0o644 });
-    renameSync(tmp, path);
+    publishAtomically(path, body, 0o644);
     return true;
   } catch (err) {
     opts.log?.(
