@@ -340,6 +340,47 @@ describe("management verbs", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  it("auto-filing that stamps entries leaves the shown entries as the store now holds them", async () => {
+    const mem = new FakeMemory();
+    const sink = {
+      kind: "wayfinder" as const,
+      file: () => {
+        // the sink stamps `filed=` back through the store: the bytes move
+        mem.md = `<!-- 2026-08-21 10:00:00 [cc] -->\n#bug filed=FT-0999 stamped by the sink.\n\n${SAMPLE}`;
+        return Promise.resolve({ filed: [{ id: "FT-0999", key: "k" }] });
+      },
+    };
+    const rig = await loaded({ mem, sink });
+    expect(rig.learning.store.entries.some((e) => e.text.includes("stamped by the sink"))).toBe(
+      true,
+    );
+  });
+
+  it("a reload asked for while a read is in flight is read again, not dropped", async () => {
+    const mem = new FakeMemory();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let reads = 0;
+    const real = mem.read.bind(mem);
+    mem.read = async () => {
+      const n = ++reads;
+      const out = await real();
+      if (n === 1) await gate; // the first read is slow and returns old bytes
+      return out;
+    };
+    const rig = learningRig({ mem });
+    rig.app.tab = "memory";
+    rig.app.hooks.tabs.memory!.screen(rig.app, 110, 30);
+    await settle();
+    mem.md = `<!-- 2026-08-21 10:00:00 [cc] -->\n#eod fresh after the mutation.\n\n${SAMPLE}`;
+    rig.learning.store.reloadMemory();
+    release();
+    await settle();
+    expect(rig.learning.store.entries.some((e) => e.text.includes("fresh after the mutation"))).toBe(
+      true,
+    );
+  });
+
   it("a reload re-binds the selection to the same ENTRY, not the same ordinal", async () => {
     const mem = new FakeMemory();
     const rig = await loaded({ mem });

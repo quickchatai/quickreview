@@ -188,6 +188,9 @@ export class LearningStore {
   private readonly listeners = new Set<(part: LearningPart) => void>();
   /** Per-part in-flight guards: a paint during a load never stacks a second. */
   private readonly busy = { digest: false, memory: false, proposals: false };
+  /** An explicit reload asked for while that part was loading: the running
+   * read may predate the change that asked, so one more read follows it. */
+  private readonly rerun = { digest: false, memory: false, proposals: false };
 
   constructor(
     private readonly app: App,
@@ -214,12 +217,23 @@ export class LearningStore {
    * come from a tab's paint, and a TUI resumed on that tab paints it as its
    * first frame — nothing external (an ssh fetch, a directory scan) may run
    * before that frame is written. */
-  private guard(key: keyof LearningStore["busy"], run: () => Promise<void>): void {
-    if (this.busy[key]) return;
+  private guard(
+    key: keyof LearningStore["busy"],
+    run: () => Promise<void>,
+    explicit = false,
+  ): void {
+    if (this.busy[key]) {
+      if (explicit) this.rerun[key] = true;
+      return;
+    }
     this.busy[key] = true;
     queueMicrotask(() => {
       void run().finally(() => {
         this.busy[key] = false;
+        if (this.rerun[key]) {
+          this.rerun[key] = false;
+          this.guard(key, run);
+        }
       });
     });
   }
@@ -261,7 +275,7 @@ export class LearningStore {
 
   reloadMemory(): void {
     this.memLoaded = false;
-    this.guard("memory", () => this.loadMemoryPart());
+    this.guard("memory", () => this.loadMemoryPart(), true);
   }
 
   /** Transport first, then the store. Every path that reads memory goes
@@ -293,6 +307,10 @@ export class LearningStore {
         this.now().toISOString(),
       );
       if (report.filed.length > 0) {
+        // The sink stamped `filed=` onto those entries: show them as the store
+        // now holds them, so a verb's expected hash is the current one.
+        this.entries = await this.memory.read();
+        this.loadPinProposals();
         const ids = report.filed.map((f) => f.id).join(", ");
         this.status = `auto-filed ${ids}`;
         this.app.notice(`memory: auto-filed ${report.filed.length} defect(s): ${ids}`);
@@ -343,7 +361,7 @@ export class LearningStore {
 
   reloadProposals(): void {
     this.propLoaded = false;
-    this.guard("proposals", () => this.loadProposals());
+    this.guard("proposals", () => this.loadProposals(), true);
   }
 
   private async loadProposals(): Promise<void> {
