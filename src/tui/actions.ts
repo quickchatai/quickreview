@@ -325,8 +325,9 @@ export function parseCompanionCommand(
 
 /** Run one parsed action against the driver; returns the one-line human trace
  * for the notice line. The driver's methods are the whole side-effect surface.
- * The one memory write (`memory_pin` — pin/unpin of an existing entry) is
- * asynchronous and resolves once the store has answered; every other verb is
+ * The verbs that wait on an answer (`memory_pin` — pin/unpin of an existing
+ * entry — plus `msg_session` and `operator_command`) return a Promise that
+ * resolves once the store or the daemon has answered; every other verb is
  * synchronous. */
 export function executeTuiAction(a: TuiAction, driver: TuiDriver): string | Promise<string> {
   switch (a.verb) {

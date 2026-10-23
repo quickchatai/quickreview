@@ -1114,9 +1114,7 @@ export class App {
         const hit = width === 0 ? undefined : sidebarHit(ev.x, ev.y, cols, rows, width);
         if (hit !== undefined) {
           if (this.sidebar.available()) {
-            if (this.view.piFocus) this.blurPiPane();
-            this.sidebar.focus();
-            this.repaint();
+            this.focusCompanion();
           }
           return;
         }
@@ -1607,8 +1605,8 @@ export class App {
       return;
     }
     // Scrollback is the MIRROR's, not pi's: pi cannot scroll a pane it does
-    // not know is being mirrored. Only while parked, so an unparked PgUp still
-    // reaches pi (its own pager uses it).
+    // not know is being mirrored. PgUp always enters scrollback; PgDn is the
+    // mirror's only while parked (offset > 0), otherwise it reaches pi.
     const raw = buf.toString("utf8");
     if ((raw === "\x1b[5~" || raw === "\x1b[6~") && (raw === "\x1b[5~" || sidebar.offset > 0)) {
       sidebar.scroll(raw === "\x1b[5~" ? 1 : -1);
