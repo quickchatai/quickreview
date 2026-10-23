@@ -45,8 +45,10 @@ const refuse = (stderr: string): DockerResult => ({ ok: false, stdout: "", stder
 
 const shellQuote = (s: string): string => `'${s.replaceAll("'", `'\\''`)}'`;
 
-/** The `run-shell` command that runs `script` and hands its stdout back through
- * a tmux buffer, with the script's exit status appended as `x<code>`.
+/** The `run-shell` command that runs `script` and hands its output back
+ * through a tmux buffer: its stdout, the exit status appended as `x<code>`,
+ * then a line holding `buffer` (unique per call, so no output can forge it) and
+ * the script's stderr.
  *
  * `tmux run-shell` is not a reliable way to read a script's output: tmux 3.4
  * (Ubuntu 24.04) never sends it to the invoking client's stdout. It lands in
@@ -54,18 +56,25 @@ const shellQuote = (s: string): string => `'${s.replaceAll("'", `'\\''`)}'`;
  * client prints nothing. Newer tmux prints it. Worse, the view-mode swallows
  * the keys meant for the companion's pi. A buffer is read the same way on every
  * version, and the `x<code>` suffix keeps trailing newlines (the `$( )` would
- * strip them) and the exit status, which `run-shell` reports as its own. */
+ * strip them) and the exit status, which `run-shell` reports as its own. The
+ * stderr goes to a temp file so it reaches the caller (as `docker exec` would
+ * give it) instead of the pane's view-mode. */
 function captureCommand(socket: string, buffer: string, script: string): string {
   return (
-    `o=$(sh -c ${shellQuote(script)}; printf 'x%s' "$?"); ` +
-    `printf '%s' "$o" | tmux -S ${shellQuote(socket)} load-buffer -b ${buffer} -`
+    `e=$(mktemp) || e=/dev/null; ` +
+    `o=$(sh -c ${shellQuote(script)} 2>"$e"; printf 'x%s' "$?"); ` +
+    `{ printf '%s\n%s\n' "$o" ${shellQuote(buffer)}; cat "$e"; } | tmux -S ${shellQuote(socket)} load-buffer -b ${buffer} -; ` +
+    `rm -f "$e"`
   );
 }
 
-/** Splits a captured buffer into the script's stdout and its exit status. */
-function parseCaptured(text: string): { stdout: string; code: number } | undefined {
-  const m = /^([\s\S]*)x(\d+)$/.exec(text);
-  return m ? { stdout: m[1]!, code: Number(m[2]) } : undefined;
+/** Splits a captured buffer into the script's stdout, exit status and stderr. */
+function parseCaptured(
+  text: string,
+  buffer: string,
+): { stdout: string; code: number; stderr: string } | undefined {
+  const m = new RegExp(`^([\\s\\S]*)x(\\d+)\\n${buffer}\\n([\\s\\S]*)$`).exec(text);
+  return m ? { stdout: m[1]!, code: Number(m[2]), stderr: m[3]! } : undefined;
 }
 
 export function tmuxSocketRunner(
@@ -102,11 +111,16 @@ export function tmuxSocketRunner(
       const read = await run(["-S", socket, "show-buffer", "-b", buffer], opts);
       void run(["-S", socket, "delete-buffer", "-b", buffer], { timeoutMs: 5_000 });
       if (!read.ok) return read;
-      const got = parseCaptured(read.stdout);
+      const got = parseCaptured(read.stdout, buffer);
       if (!got) return refuse(`tmux returned no output for the script on ${socket}`);
       return got.code === 0
-        ? { ok: true, stdout: got.stdout, stderr: ran.stderr, code: 0 }
-        : { ok: false, stdout: got.stdout, stderr: `exit ${got.code}`, code: got.code };
+        ? { ok: true, stdout: got.stdout, stderr: got.stderr, code: 0 }
+        : {
+            ok: false,
+            stdout: got.stdout,
+            stderr: `exit ${got.code}${got.stderr === "" ? "" : `\n${got.stderr.trimEnd()}`}`,
+            code: got.code,
+          };
     }
     return refuse(
       `docker exec ${bin ?? ""} is not available in the tui container — only tmux and sh -c reach the companion (D35)`,

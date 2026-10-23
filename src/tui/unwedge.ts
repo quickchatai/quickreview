@@ -202,15 +202,22 @@ export class CommandFileSender implements UnwedgeSender {
     const write = await this.ssh(this.cfg.ssh_host, commandWriteArgv(this.cfg, name), {
       stdin: commandPayload(command, pr),
     });
+    // A transport failure (ssh exit 255, a timeout or spawn error: no exit
+    // code) can land after the remote rename published the file, so it is not
+    // proof of non-delivery: the result is still read, and the final notice
+    // says the write was unconfirmed. The write script's own refusal (any
+    // other exit code) is definite.
+    let unconfirmed: string | undefined;
     if (!write.ok) {
       // The write script's own refusal (no commands dir, a symlinked operator
       // dir) or the transport's failure — the operator acts on which.
       const why = write.stderr.trim().split("\n").at(-1) ?? "";
-      onState(
-        "failed",
-        `✖ ${command} #${pr} failed (write failed: ${resultReason(why, `exit ${write.code ?? "?"}`)})`,
-      );
-      return;
+      const reason = resultReason(why, `exit ${write.code ?? "?"}`);
+      if (write.code !== null && write.code !== 255) {
+        onState("failed", `✖ ${command} #${pr} failed (write failed: ${reason})`);
+        return;
+      }
+      unconfirmed = reason;
     }
     // Read the daemon's own verdict on the request rather than assuming the
     // write was the outcome. A refusal (tier belt, unknown PR) is a real
@@ -251,6 +258,13 @@ export class CommandFileSender implements UnwedgeSender {
       onState(
         "failed",
         `✖ ${command} #${pr} refused (${resultReason(result.reason, "no reason given")})`,
+      );
+      return;
+    }
+    if (unconfirmed !== undefined) {
+      onState(
+        "failed",
+        `✖ ${command} #${pr} outcome unknown (write failed: ${unconfirmed}; no result found)`,
       );
       return;
     }

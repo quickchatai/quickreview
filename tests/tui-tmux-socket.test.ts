@@ -284,13 +284,13 @@ describe("tmuxSocketRunner: docker exec argv, run on the shared socket", () => {
 
   // A fake tmux that behaves like a server: run-shell runs the script, which
   // loads its output into a named buffer; show-buffer and delete-buffer read it.
-  function scriptRig(output: string, status: number) {
+  function scriptRig(output: string, status: number, errText = "") {
     const buffers = new Map<string, string>();
     const r = rig((argv) => {
       const word = argv[2];
       if (word === "run-shell") {
         const name = /load-buffer -b (\S+) -/.exec(argv[3]!)?.[1];
-        buffers.set(name!, `${output}x${status}`);
+        buffers.set(name!, `${output}x${status}\n${name}\n${errText}`);
         return OK;
       }
       if (word === "show-buffer") return { ...OK, stdout: buffers.get(argv[4]!) ?? "" };
@@ -318,6 +318,23 @@ describe("tmuxSocketRunner: docker exec argv, run on the shared socket", () => {
     const { runner } = scriptRig("partial\n", 3);
     const res = await runner(["exec", "qcr-companion", "sh", "-c", "echo partial; exit 3"]);
     expect(res).toEqual({ ok: false, stdout: "partial\n", stderr: "exit 3", code: 3 });
+  });
+
+  it("hands back the script's stderr, on success and beside the exit code on failure", async () => {
+    const ok = scriptRig("out\n", 0, "warning: x\n");
+    expect(await ok.runner(["exec", "qcr-companion", "sh", "-c", "true"])).toEqual({
+      ok: true,
+      stdout: "out\n",
+      stderr: "warning: x\n",
+      code: 0,
+    });
+    const bad = scriptRig("", 1, "cat: /x: No such file or directory\n");
+    expect(await bad.runner(["exec", "qcr-companion", "sh", "-c", "cat /x"])).toEqual({
+      ok: false,
+      stdout: "",
+      stderr: "exit 1\ncat: /x: No such file or directory",
+      code: 1,
+    });
   });
 
   it("quotes a script that holds single quotes", async () => {
@@ -417,6 +434,8 @@ describe.skipIf(spawnSync("tmux", ["-V"]).status !== 0)(
       expect(bad.ok).toBe(false);
       expect(bad.stdout).toBe("before\n");
       expect(bad.stderr).toBe("exit 3");
+      const noisy = await exec("sh", "-c", "echo oops >&2; echo fine; exit 2");
+      expect(noisy).toMatchObject({ ok: false, stdout: "fine\n", stderr: "exit 2\noops" });
 
       const killed = await exec("tmux", "kill-session", "-t", "companion");
       expect(killed.ok).toBe(true);
