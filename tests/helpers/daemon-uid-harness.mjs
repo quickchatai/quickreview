@@ -5,12 +5,14 @@
 // network, no model. Everything it learns goes to $HARNESS_OUT.
 //
 //   HARNESS_DIST   the built tree's dist/src
+//   HARNESS_CORE_DIST  the review core's, packages/pi-plugin/dist/src
 //   HARNESS_OUT    a writable directory for the results
 import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const dist = process.env.HARNESS_DIST;
+const core = process.env.HARNESS_CORE_DIST;
 const out = process.env.HARNESS_OUT;
 const write = (name, value) =>
   writeFileSync(
@@ -35,7 +37,7 @@ write("daemon.json", {
   ),
 });
 
-const { toolIdsOf, isolatedBashOperations, TOOL_UMASK } = await import(`${dist}/engine/tooluid.js`);
+const { toolIdsOf, isolatedBashOperations, TOOL_UMASK } = await import(`${core}/engine/tooluid.js`);
 const { StateStore } = await import(`${dist}/state.js`);
 
 // The daemon's own database, opened as the daemon opens it, and a built agent.

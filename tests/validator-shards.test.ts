@@ -5,8 +5,8 @@
 // One shard (the default) or no validator row renders nothing.
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
-import { renderValidatorShardNote } from "../src/templates.js";
-import type { PassPlanEntry } from "../src/types.js";
+import { renderValidatorShardNote } from "@quickchatai/pi-quickreview/src/templates.js";
+import type { PassPlanEntry } from "@quickchatai/pi-quickreview/src/types.js";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";

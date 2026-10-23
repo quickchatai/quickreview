@@ -21,7 +21,7 @@ import {
   sweepSkippedOnApprove,
   sweepStatusOf,
   type SweepStatus,
-} from "./sweepstatus.js";
+} from "@quickchatai/pi-quickreview/src/sweepstatus.js";
 import { pendingPosting } from "./posting-outbox.js";
 
 export { sweepStatusOf, type SweepStatus };
@@ -37,7 +37,12 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import type { InboxWriter } from "./companioninbox.js";
-import { checkOutcome, classifyCi, latestRunPerName, type CheckSummary } from "./cigate.js";
+import {
+  checkOutcome,
+  classifyCi,
+  latestRunPerName,
+  type CheckSummary,
+} from "@quickchatai/pi-quickreview/src/cigate.js";
 import {
   deliverEscalations,
   resumeEscalations,
@@ -69,13 +74,16 @@ import {
 } from "./execboundary.js";
 import { estimateUsd, type ModelPricing } from "./usage.js";
 import { TranscriptIndex } from "./transcriptindex.js";
-import { withinBudget } from "./budget.js";
-import type { GateResult } from "./gate.js";
+import { withinBudget } from "@quickchatai/pi-quickreview/src/budget.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import { applyEvent, restoreStandingLifecycle } from "./statemachine.js";
 import type { VerdictAnnouncer } from "./slack/announce.js";
 import { isLoudCancelCause, type CancelCause, type RoundRow, type StateStore } from "./state.js";
 import { enforceLedgerFreshness } from "./ledgercheck.js";
-import { findingsRecordPath, readFindingsRecord } from "./findingsrecord.js";
+import {
+  findingsRecordPath,
+  readFindingsRecord,
+} from "@quickchatai/pi-quickreview/src/findingsrecord.js";
 import {
   enforceFindingsRecord,
   ingestRepairedFindingsRecords,
@@ -89,7 +97,7 @@ import {
   type MeritsVerdictFile,
   type VerdictFile,
   type VerdictPassEntry,
-} from "./types.js";
+} from "@quickchatai/pi-quickreview/src/types.js";
 import {
   guardedNoopMatchesMark,
   postingMarker,
@@ -104,7 +112,7 @@ import {
   standingReview,
   standingVerdict,
   type StandingDecidedVerdict,
-} from "./standing-review.js";
+} from "@quickchatai/pi-quickreview/src/standing-review.js";
 import { flushHeldWakes, pauseDefersAllHeldWakes } from "./wakes.js";
 import { prWorktreeRel } from "./worktrees.js";
 import {
@@ -118,7 +126,7 @@ import {
   readSettledJson,
   resolvePartialWritePolicy,
   type PartialWritePolicy,
-} from "./settledread.js";
+} from "@quickchatai/pi-quickreview/src/settledread.js";
 
 /** Self-requeue mode → the cancellation cause it records. Two modes mean the
  * same thing to a human — the round stopped dead with no verdict, whether its
@@ -325,7 +333,7 @@ export interface VerdictDeps {
   onFindingsRecorded?: (target: { pr: number; roundNo: number; roundId: number | null }) => unknown;
   now?: () => Date;
   log?: (msg: string, extra?: unknown) => void;
-  /** Partial-write tolerance (`src/settledread.ts`): how long an
+  /** Partial-write tolerance (`packages/pi-plugin/src/settledread.ts`): how long an
    * unparseable verdict file is treated as still being written before it is
    * called malformed. Defaults to DEFAULT_PARTIAL_WRITE_POLICY; a test that
    * wants one read to decide passes `{ windowMs: 0 }`. */

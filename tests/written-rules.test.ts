@@ -9,7 +9,11 @@ import { join, resolve } from "node:path";
 import { parseConfig, type Config } from "../src/config.js";
 import { buildPassPlan } from "../src/dispatch.js";
 import type { PrFileEntry } from "../src/github.js";
-import { addendaForPass, buildAgents, PASS_ADDENDA } from "../src/include.js";
+import {
+  addendaForPass,
+  buildAgents,
+  PASS_ADDENDA,
+} from "@quickchatai/pi-quickreview/src/include.js";
 
 const root = resolve(process.cwd());
 const NO_BENCHMARK_NAMES =

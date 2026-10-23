@@ -1,9 +1,9 @@
-// The unified-diff reader behind `qcr review --diff` (src/diffinput.ts):
+// The unified-diff reader behind `qcr review --diff` (packages/pi-plugin/src/diffinput.ts):
 // files, statuses and changed-line counts from what git and diff -u print.
 // Pure text in, no repository needed.
 
 import { describe, expect, it } from "vitest";
-import { parseUnifiedDiff } from "../src/diffinput.js";
+import { parseUnifiedDiff } from "@quickchatai/pi-quickreview/src/diffinput.js";
 
 const gitDiff = [
   "diff --git a/src/a.ts b/src/a.ts",

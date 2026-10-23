@@ -41,24 +41,33 @@
 import { existsSync, mkdirSync, readdirSync, renameSync, watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.js";
-import { readFindingsRecord } from "./findingsrecord.js";
+import { readFindingsRecord } from "@quickchatai/pi-quickreview/src/findingsrecord.js";
 import type { PrFileEntry } from "./github.js";
-import { isMigrationPath } from "./heuristics.js";
-import { parseHunkHeader } from "./hunkheader.js";
+import { isMigrationPath } from "@quickchatai/pi-quickreview/src/heuristics.js";
+import { parseHunkHeader } from "@quickchatai/pi-quickreview/src/hunkheader.js";
 import { applyEvent } from "./statemachine.js";
-import { recheckHead12, recheckKeyPrefix } from "./findingkey.js";
+import { recheckHead12, recheckKeyPrefix } from "@quickchatai/pi-quickreview/src/findingkey.js";
 import { recheckWakeReason, type StateStore } from "./state.js";
-import { normalizeVerdict, recheckPromptMarker, stampPrompt } from "./types.js";
-import { standingVerdict } from "./standing-review.js";
+import {
+  normalizeVerdict,
+  recheckPromptMarker,
+  stampPrompt,
+} from "@quickchatai/pi-quickreview/src/types.js";
+import { standingVerdict } from "@quickchatai/pi-quickreview/src/standing-review.js";
 import { wakeOrHold, withRepoFacts } from "./wakes.js";
 import { prWorktreeRel } from "./worktrees.js";
 import {
   readSettledJson,
   resolvePartialWritePolicy,
   type PartialWritePolicy,
-} from "./settledread.js";
-import type { FileClass, RecheckOrder, RecheckTrigger, TrivialReason } from "./recheckorder.js";
-// The order the core renders is its own (src/recheckorder.ts).
+} from "@quickchatai/pi-quickreview/src/settledread.js";
+import type {
+  FileClass,
+  RecheckOrder,
+  RecheckTrigger,
+  TrivialReason,
+} from "@quickchatai/pi-quickreview/src/recheckorder.js";
+// The order the core renders is its own (packages/pi-plugin/src/recheckorder.ts).
 export type { FileClass, RecheckOrder, RecheckTrigger, TrivialReason };
 
 /** A changed file as the compare/files APIs report it. */
@@ -1476,7 +1485,7 @@ export interface RecheckWatcherDeps {
   findingsDir?: string;
   now?: () => Date;
   log?: (msg: string, extra?: unknown) => void;
-  /** Partial-write tolerance (`src/settledread.ts`) — fs.watch
+  /** Partial-write tolerance (`packages/pi-plugin/src/settledread.ts`) — fs.watch
    * fires on creation, before the session's write completes; the same race,
    * and the same reader, as the VerdictWatcher's. `{ windowMs: 0 }` makes one
    * read decide (tests). */

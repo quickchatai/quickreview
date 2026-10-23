@@ -18,12 +18,22 @@ import {
   type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import type { AgentSession, ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import { createBashGuard } from "../extensions/bash-guard.js";
-import { CacheGroups, WARMUP_REPLY_TASK, settledWithin } from "../src/engine/lens/cache-run.js";
-import { leafCache, packFirstPayload } from "../src/engine/lens/leaf-cache.js";
-import { loadBuiltAgents } from "../src/engine/lens/registry.js";
-import { createLensRunner, type LensRunConfig } from "../src/engine/lens/runlens.js";
-import { parseLedger } from "../src/lensresult.js";
+import { createBashGuard } from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
+import {
+  CacheGroups,
+  WARMUP_REPLY_TASK,
+  settledWithin,
+} from "@quickchatai/pi-quickreview/src/engine/lens/cache-run.js";
+import {
+  leafCache,
+  packFirstPayload,
+} from "@quickchatai/pi-quickreview/src/engine/lens/leaf-cache.js";
+import { loadBuiltAgents } from "@quickchatai/pi-quickreview/src/engine/lens/registry.js";
+import {
+  createLensRunner,
+  type LensRunConfig,
+} from "@quickchatai/pi-quickreview/src/engine/lens/runlens.js";
+import { parseLedger } from "@quickchatai/pi-quickreview/src/lensresult.js";
 import {
   FakeTransport,
   createHostRig,

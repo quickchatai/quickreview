@@ -40,9 +40,9 @@ found two separate costs that both get called "duplicates":
 lives where both routes run the same code:
 
 - **The clustering** is a pi tool, `cluster_findings`, registered by
-  `extensions/finding-clusters.ts`. Both the daemon's PR sessions
+  `packages/pi-plugin/extensions/finding-clusters.ts`. Both the daemon's PR sessions
   (`SessionManager.extensionPaths`) and the bench session (`src/bench/runner.ts`)
-  load it, and it calls `clusterFindings` in `src/dedup.ts`.
+  load it, and it calls `clusterFindings` in `packages/pi-plugin/src/dedup.ts`.
 - **The round templates** (rendered by both routes) carry `{{dedup_note}}` in step
   3 when the knob is on. The session calls the tool once with every candidate
   from every lens, and hands the returned groups to `pass-validate`.
@@ -54,8 +54,8 @@ lives where both routes run the same code:
     lens count;
   - otherwise split, each part judged alone;
   - merged-away members are recorded `merged` with `group` and `merged_into`.
-- **The post-check** is `postCheckRecord` (`src/dedup.ts`), run by
-  `renderPostedReview` (`src/reviewrender.ts`) before it hands the record to
+- **The post-check** is `postCheckRecord` (`packages/pi-plugin/src/dedup.ts`), run by
+  `renderPostedReview` (`packages/pi-plugin/src/reviewrender.ts`) before it hands the record to
   `renderReviewFromRecord`. `renderPostedReview` is the one function both routes
   render the posted review through: the live route via
   `scripts/render-review.sh` → `src/reviewrendercli.ts`, the bench via
@@ -78,7 +78,7 @@ lives where both routes run the same code:
   follower rows of one root cause are withheld (`repeat-site`) wherever the
   policy is applied.
 
-### The grouping rule (`src/dedup.ts`)
+### The grouping rule (`packages/pi-plugin/src/dedup.ts`)
 
 Union-find over the candidates. Two candidates join a group when ANY of these holds:
 

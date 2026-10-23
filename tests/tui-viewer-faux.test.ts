@@ -1,5 +1,5 @@
 // The TUI against a fake state dir fed by a faux one-shot: the real review round
-// (src/engine/round.ts) runs on the SDK over pi-ai's faux provider — no network,
+// (packages/pi-plugin/src/engine/round.ts) runs on the SDK over pi-ai's faux provider — no network,
 // no model — and logs its LiveEvents under <root>/state/live/pr-<n>/r1/. The App
 // then reads that directory, as it would a box's state, for a PR whose runtime
 // is `worker`, and paints the transcript the one-shot actually produced.
@@ -9,10 +9,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { PiHost } from "../src/engine/pisdk.js";
-import { runRound } from "../src/engine/round.js";
-import { roundSdkExtras } from "../src/engine/roundsdk.js";
-import { sdkRuntime } from "../src/engine/sdkruntime.js";
+import { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import { runRound } from "@quickchatai/pi-quickreview/src/engine/round.js";
+import { roundSdkExtras } from "@quickchatai/pi-quickreview/src/engine/roundsdk.js";
+import { sdkRuntime } from "@quickchatai/pi-quickreview/src/engine/sdkruntime.js";
 import { TUI_DEFAULTS } from "../src/config.js";
 import type { StatusSnapshot } from "../src/state.js";
 import { App } from "../src/tui/app.js";
@@ -34,7 +34,7 @@ import { useOfflineGuard } from "./pi-canary/harness.js";
 
 vi.stubEnv("QCR_CONFIG", FIXTURE_CONFIG);
 const { benchConfig } = await import("../src/bench/runner.js");
-const { ecosystemFor } = await import("../src/ecosystem.js");
+const { ecosystemFor } = await import("@quickchatai/pi-quickreview/src/ecosystem.js");
 
 useOfflineGuard();
 

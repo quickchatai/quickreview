@@ -27,8 +27,12 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { lensForAgent, parseRoundProgress, type RoundProgressSnapshot } from "./round-progress.js";
-import type { PassPlanEntry } from "./types.js";
+import {
+  lensForAgent,
+  parseRoundProgress,
+  type RoundProgressSnapshot,
+} from "@quickchatai/pi-quickreview/src/round-progress.js";
+import type { PassPlanEntry } from "@quickchatai/pi-quickreview/src/types.js";
 
 export interface MissingPass {
   lens: string;

@@ -25,7 +25,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { AUTH_FLAG_FRESH_MS } from "../authwatch.js";
+import { AUTH_FLAG_FRESH_MS } from "@quickchatai/pi-quickreview/src/authwatch.js";
 import { zoneDateString } from "../eod.js";
 import { curationNeedsAttention } from "../learner/status.js";
 import { memoryStatusLine, type MemoryStatus } from "../memory/health.js";
@@ -475,7 +475,7 @@ export interface PiAuthAlertMemory {
 
 /**
  * Bridge from the polled status.json flag (`pi_auth_expired`, written by the
- * daemon's passive src/authwatch.ts) into the alert pipeline: write one
+ * daemon's passive packages/pi-plugin/src/authwatch.ts) into the alert pipeline: write one
  * alert-tier file per fresh detection into the alerts dir the AlertConsumer
  * already watches — badge, notify-send and per-cause
  * cooldown all come from the existing machinery. Writes at most one file per

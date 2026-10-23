@@ -1,14 +1,17 @@
 // The reviewer stub (D34) has two homes: a checkout keeps it at
 // deploy/reviewer/AGENTS.override.md, the release and bench images install it at
 // the tree's root as AGENTS.override.md. Every route that copies or reads it
-// resolves it through src/reviewerstub.ts, so a route cannot look in one place
+// resolves it through packages/pi-plugin/src/reviewerstub.ts, so a route cannot look in one place
 // only (the 1.0.0 release e2e failed exactly that way: the review route looked
 // for the checkout's path inside the image).
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { findReviewerStub, reviewerStubSource } from "../src/reviewerstub.js";
+import {
+  findReviewerStub,
+  reviewerStubSource,
+} from "@quickchatai/pi-quickreview/src/reviewerstub.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "qcr-reviewerstub-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));

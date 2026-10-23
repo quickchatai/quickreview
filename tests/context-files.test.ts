@@ -51,7 +51,7 @@ import { PassThrough } from "node:stream";
 import { fauxProvider } from "@earendil-works/pi-ai";
 import { COMPANION_AGENTS_DIR } from "../extensions/setup.js";
 import { COMPANION_DEFAULTS, resolveCompanionPaths, sandboxRoot } from "../src/config.js";
-import { PiHost } from "../src/engine/pisdk.js";
+import { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import { stateHome } from "../src/install.js";
 import { onboardingPiArgv } from "../src/onboard/launch.js";
 import { SCANBOX, scanRunArgv, type ScanBoxPlan } from "../src/scanbox.js";
@@ -76,9 +76,9 @@ import {
 vi.stubEnv("QCR_CONFIG", join(import.meta.dirname, "fixtures", "config.toml"));
 
 const { runReviewCli } = await import("../src/reviewcli.js");
-const { runOneShot } = await import("../src/oneshot.js");
+const { runOneShot } = await import("@quickchatai/pi-quickreview/src/oneshot.js");
 const { benchConfig, buildBenchAgents, contextFor } = await import("../src/bench/runner.js");
-const { ecosystemFor } = await import("../src/ecosystem.js");
+const { ecosystemFor } = await import("@quickchatai/pi-quickreview/src/ecosystem.js");
 
 const ROOT = realpathSync(resolve(import.meta.dirname, ".."));
 const UPDATE = process.env.UPDATE_CONTEXT_FILES === "1";
@@ -622,7 +622,7 @@ beforeAll(async () => {
   });
   observed.routes["sdk"] = sdkRow(
     sdk.main,
-    "PiHost.makeSession (src/engine/pisdk.ts): the ResourceLoader discovers nothing and agentsFilesOverride hands over the reviewer stub at the run's out dir; the file is never written, and the planted AGENTS.md in the cwd, its ancestor and the agentDir do not load.",
+    "PiHost.makeSession (packages/pi-plugin/src/engine/pisdk.ts): the ResourceLoader discovers nothing and agentsFilesOverride hands over the reviewer stub at the run's out dir; the file is never written, and the planted AGENTS.md in the cwd, its ancestor and the agentDir do not load.",
   );
   observed.routes["sdk-lens"] = sdkRow(
     sdk.lens,
@@ -834,6 +834,7 @@ describe("the one install site", () => {
       "--",
       "src",
       "extensions",
+      "packages",
       "scripts",
       "docker",
       "deploy",
@@ -867,20 +868,20 @@ describe("the one install site", () => {
       "docker/Dockerfile", // COPY into the release image's cwd
       "docker/Dockerfile.dockerignore", // the build's allowlist
       "docker/entrypoint.sh", // the release image's daemon mode: keeps the baked 0444 stub, in its own /opt/qcr
-      "extensions/bash-guard.ts", // a policy surface no session may write
       "extensions/debug-round.ts", // a debug round's lens passes carry the stub the cwd holds, as data; it writes none
+      "packages/pi-plugin/extensions/bash-guard.ts", // a policy surface no session may write
+      "packages/pi-plugin/src/engine/roundsdk.ts", // the SDK round's stub as in-memory data for the session, never written to a checkout
+      "packages/pi-plugin/src/reviewerstub.ts", // the neutral home of the stub's two names and the one resolver of its source (a checkout's or an image's); reads, never writes
+      "packages/pi-plugin/src/reviewhost.ts", // the host isolation's per-run copy, into the run's own out dir
       "scripts/deploy.sh", // a name the base clone may not take
       "scripts/vm-postcutover-cleanup.sh", // the legacy sandbox's stub, kept and reported as legacy runtime data; it writes none
-      "src/engine/roundsdk.ts", // the SDK round's stub as in-memory data for the session, never written to a checkout
       "src/resumecheck.ts", // the offline resume check compares a session's context file with the stub text; reads, never writes
-      "src/reviewerstub.ts", // the neutral home of the stub's two names and the one resolver of its source (a checkout's or an image's); reads, never writes
-      "src/reviewhost.ts", // the host isolation's per-run copy, into the run's own out dir
       "src/usage.ts", // the cost split counts it as a context file
     ]);
   });
 
   it("no source file writes a context file by name", () => {
-    const writers = git(ROOT, "ls-files", "-z", "--", "src", "extensions", "scripts")
+    const writers = git(ROOT, "ls-files", "-z", "--", "src", "extensions", "packages", "scripts")
       .split("\0")
       .filter((f) => /\.(ts|sh|mjs|js)$/.test(f))
       .filter((f) =>
@@ -892,7 +893,7 @@ describe("the one install site", () => {
   });
 
   it("the clone route's copy is the only source-side write, and it refuses a checkout", () => {
-    const users = git(ROOT, "ls-files", "-z", "--", "src", "extensions", "scripts")
+    const users = git(ROOT, "ls-files", "-z", "--", "src", "extensions", "packages", "scripts")
       .split("\0")
       .filter((f) => /\.(ts|sh|mjs|js)$/.test(f))
       .filter((f) => read(f).includes("HOST_CONTEXT_STUB"))
@@ -901,21 +902,21 @@ describe("the one install site", () => {
     // reviewerstub.ts is the neutral home of the two names and finds the stub; it writes nothing.
     // hostroute.ts re-exports the names for `qcr review`'s callers; it writes nothing.
     expect(users).toEqual([
-      "src/engine/roundsdk.ts",
+      "packages/pi-plugin/src/engine/roundsdk.ts",
+      "packages/pi-plugin/src/reviewerstub.ts",
+      "packages/pi-plugin/src/reviewhost.ts",
       "src/hostroute.ts",
-      "src/reviewerstub.ts",
-      "src/reviewhost.ts",
     ]);
     expect(read("src/hostroute.ts")).not.toMatch(
       /(writeFile|copyFile|cpSync|renameSync|symlinkSync)\w*\(/,
     );
-    expect(read("src/engine/roundsdk.ts")).not.toMatch(
+    expect(read("packages/pi-plugin/src/engine/roundsdk.ts")).not.toMatch(
       /(writeFile|copyFile|cpSync|renameSync|symlinkSync)\w*\(/,
     );
-    expect(read("src/reviewerstub.ts")).not.toMatch(
+    expect(read("packages/pi-plugin/src/reviewerstub.ts")).not.toMatch(
       /(writeFile|copyFile|cpSync|renameSync|symlinkSync)\w*\(/,
     );
-    const text = read("src/reviewhost.ts");
+    const text = read("packages/pi-plugin/src/reviewhost.ts");
     expect(text.match(/copyFileSync\([^\n]*HOST_CONTEXT_STUB\)/g)).toHaveLength(1);
     // …into the run's cwd only, after the guard that keeps it out of a checkout.
     expect(text).toMatch(

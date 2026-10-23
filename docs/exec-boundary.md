@@ -5,12 +5,12 @@ except through the sanctioned scripts, which mirror the one mutation gate.
 
 This document states what that boundary **guarantees** — as claims that can be
 shown false, not as reassurance. Two earlier docstrings in
-`extensions/bash-guard.ts` asserted a closedness that did not hold; both were
+`packages/pi-plugin/extensions/bash-guard.ts` asserted a closedness that did not hold; both were
 disproved by someone running a command. Assume this one can be too, and try.
 
 ## Why there is more than one layer
 
-`extensions/bash-guard.ts` vets **command strings**, and `checkWritePath` /
+`packages/pi-plugin/extensions/bash-guard.ts` vets **command strings**, and `checkWritePath` /
 `checkProtectedWrites` vet **write targets**. The command guard was hardened over
 seven adversarial review rounds, and every round but the last looked complete to
 its author and passed a green suite while a live bypass stood; an eighth
@@ -100,7 +100,7 @@ keeps `rg`, `grep`, `jq`, `cut`, `sort`, `uniq`, `head`, `tail`, `wc`, `nl`,
    works), `GIT_CONFIG_SYSTEM=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`. It rides the
    `env K=V … pi …` **argv**, because tmux panes inherit the tmux *server*
    environment. The global/XDG search path is never consulted.
-2. **Command guard** — `checkBashCommand`, `extensions/bash-guard.ts`. Program
+2. **Command guard** — `checkBashCommand`, `packages/pi-plugin/extensions/bash-guard.ts`. Program
    allowlist; `gh` and `git` by read-verb allowlist; the config-injection and
    config-relocation option and env families; and `checkReaderModes`, which gates the write and exec modes of the three
    programs allowlisted for *reading*: `sed`, which is PARSED rather than
@@ -143,7 +143,8 @@ keeps `rg`, `grep`, `jq`, `cut`, `sort`, `uniq`, `head`, `tail`, `wc`, `nl`,
    - **this system's own policy surface** (`isPolicySurface`):
      `config.toml`, `scripts/**`, `dist/**`, `extensions/**`, the frozen
      seeds `prompts/**` / `agents/**` / `seeds/**` (the built `state/agents/**`
-     pass bodies included), and pi's project dir `.pi/**`. These are the files that decide what every
+     pass bodies included), pi's project dir `.pi/**`, and the review core's
+     export map `packages/pi-plugin/package.json`. These are the files that decide what every
      layer here DOES. See "The policy surface" below.
    - **the memory-scope files a session's own recall reads**
      (`isMemoryScopeSurface`): `recall-hints/**` (the daemon's
@@ -183,7 +184,7 @@ Three write targets were `allowed: true` on both source and the compiled
 
 ```
 cat /tmp/evil > config.toml                      → the guards' OWN config
-cat /tmp/evil > dist/extensions/bash-guard.js    → the COMPILED guard
+cat /tmp/evil > packages/pi-plugin/dist/extensions/bash-guard.js    → the COMPILED guard
 printf 'x'   > scripts/post-review.sh            → the gate's shell mirror
 ```
 
@@ -191,7 +192,7 @@ The first is a hard-rule-1 gate bypass on its own. The posting scripts read
 `dry_run` and every `[guards]` knob out of `config.toml` per invocation, and
 `guard_enabled` treats a knob as ON unless it is literally `false`, so ONE write
 turns guards 1-5 off and flips a dry-run install to live on the very next
-sanctioned post. The second is worse in reach: `dist/extensions/bash-guard.js` is
+sanctioned post. The second is worse in reach: `packages/pi-plugin/dist/extensions/bash-guard.js` is
 the guard the container actually runs, so overwriting it disables the boundary
 for every later round in that container. `scripts/guards.sh` and
 `scripts/approve-pr.sh` were equally writable.
@@ -238,7 +239,13 @@ until runtime, was re-parsed as the empty string and allowed.
   (`AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, `CLAUDE.MD`:
   pi loads the first one it finds in the cwd into every session and pass, and
   they all run in the sandbox root); `scripts/`, `dist/`, `extensions/`,
-  `prompts/`, `agents/`, `seeds/`, `.pi/`. The write/edit tool veto and the shell
+  `prompts/`, `agents/`, `seeds/`, `.pi/`. `POLICY_SURFACE_PATHS` adds whole
+  paths under the root, today one: `packages/pi-plugin/package.json`, the
+  review core's export map. Every shim and worker loads the compiled guard and
+  gate through `@quickchatai/pi-quickreview/...`, which that map resolves
+  (`./extensions/*` to `./dist/extensions/*`), so repointing it would swap the
+  guard without touching `dist/`; a `package.json` anywhere else is not
+  policy. The write/edit tool veto and the shell
   redirection / `sed -i` scan both read it as a path SHAPE through
   `isProtectedWriteTarget`; layer 4 reads it as concrete paths under the sandbox
   root through `policySurfaceWatchPaths`. A session cannot write through one
@@ -251,7 +258,7 @@ until runtime, was re-parsed as the empty string and allowed.
   planted there loads into every later session and pass in that root: an
   extension is code, an `mcp.json` launches server processes that never pass
   through a tool call, and a project `+builtin:mcp` overrides the global
-  `-builtin:mcp` the entrypoints provision (`src/pibuiltins.ts`). As a shape it
+  `-builtin:mcp` the entrypoints provision (`packages/pi-plugin/src/pibuiltins.ts`). As a shape it
   also refuses `<pi home>/.pi/agent/…`, the session's own global settings and
   login. Layer 4 watches `<sandbox root>/.pi` like the other six directories
   (the pi home is NOT watched: pi itself rewrites its login there).
@@ -642,7 +649,7 @@ by someone running a command. So:
 2. **Probe the compiled artifact.** The container runs `dist/`; tests assert the
    source. Rounds two and three both shipped source fixes whose compiled form
    was never exercised. `tests/exec-boundary.test.ts` replays the corpus against
-   `dist/extensions/bash-guard.js` and asserts source and build agree.
+   `packages/pi-plugin/dist/extensions/bash-guard.js` and asserts source and build agree.
 3. **The corpus is the regression suite.** `CORPUS` in
    `tests/exec-boundary.test.ts` holds every chain proven to execute or POST.
    Add to it; never quietly drop from it.

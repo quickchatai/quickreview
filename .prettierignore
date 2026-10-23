@@ -1,6 +1,7 @@
-# Build output and dependencies.
+# Build output and dependencies, and the seed data a package's prepack copies in.
 dist/
 node_modules/
+packages/*/assets/
 
 # Runtime state written by the daemon, the TUI and the tests. Gitignored
 # already; listed so a stray local file can never be reformatted. The

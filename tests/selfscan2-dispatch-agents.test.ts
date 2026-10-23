@@ -9,17 +9,20 @@ import {
   DJANGO_ECOSYSTEM,
   type EcosystemPreCheckIo,
   renderMigrationCollisionsNote,
-} from "../src/ecosystem.js";
-import type { GateResult } from "../src/gate.js";
-import { detectMigrationCollisions, renderMigrationCollisionComment } from "../src/migrations.js";
-import { findStyleGuide } from "../src/styleguide.js";
+} from "@quickchatai/pi-quickreview/src/ecosystem.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
+import {
+  detectMigrationCollisions,
+  renderMigrationCollisionComment,
+} from "@quickchatai/pi-quickreview/src/migrations.js";
+import { findStyleGuide } from "@quickchatai/pi-quickreview/src/styleguide.js";
 import {
   renderConversationSystemPrompt,
   renderDeltaFiles,
   renderDirectiveEscalationNote,
   renderPassPlan,
   renderValidatorNote,
-} from "../src/templates.js";
+} from "@quickchatai/pi-quickreview/src/templates.js";
 
 describe("migration collisions: a base with two migrations on one number", () => {
   // Django names migrations by app + full name, so a merged graph can hold

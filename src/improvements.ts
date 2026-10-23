@@ -24,7 +24,7 @@ import { createHash } from "node:crypto";
 import { IMPROVEMENT_DENY_PREFIXES_DEFAULT, type Config } from "./config.js";
 import { zoneDayBounds, zonedParts } from "./eod.js";
 import { GitHubRequestError, type GitHubAdapter } from "./github.js";
-import type { MutationGate } from "./gate.js";
+import type { MutationGate } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { StateStore } from "./state.js";
 import { runOrThrow, type ExecFn } from "./tmux.js";
 

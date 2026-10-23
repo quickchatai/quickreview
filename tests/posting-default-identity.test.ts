@@ -12,14 +12,28 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseConfig, type Config } from "../src/config.js";
 import { buildRoundOrder } from "../src/dispatch.js";
-import { NONE_ECOSYSTEM } from "../src/ecosystem.js";
+import { NONE_ECOSYSTEM } from "@quickchatai/pi-quickreview/src/ecosystem.js";
 import type { PrFileEntry } from "../src/github.js";
-import { PASS_ADDENDA, buildAgents, configAddenda } from "../src/include.js";
-import { applyProfileTuning, lensModelOverrides, lensTuningAddenda } from "../src/lenstuning.js";
-import { loadProfileAddenda, loadProfileLensTuning } from "../src/profiles.js";
+import {
+  PASS_ADDENDA,
+  buildAgents,
+  configAddenda,
+} from "@quickchatai/pi-quickreview/src/include.js";
+import {
+  applyProfileTuning,
+  lensModelOverrides,
+  lensTuningAddenda,
+} from "@quickchatai/pi-quickreview/src/lenstuning.js";
+import {
+  loadProfileAddenda,
+  loadProfileLensTuning,
+} from "@quickchatai/pi-quickreview/src/profiles.js";
 import type { PrStateRow } from "../src/state.js";
-import { renderRoundPrompt, ROUND_TEMPLATE_FILES } from "../src/templates.js";
-import type { RoundType } from "../src/types.js";
+import {
+  renderRoundPrompt,
+  ROUND_TEMPLATE_FILES,
+} from "@quickchatai/pi-quickreview/src/templates.js";
+import type { RoundType } from "@quickchatai/pi-quickreview/src/types.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 import * as posting from "./helpers/posting-hooks.js";
 

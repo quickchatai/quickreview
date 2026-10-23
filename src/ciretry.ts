@@ -1,10 +1,14 @@
 // The withheld-approval retry: CI went green, ask for the verdict again. The
-// bot's half of the red-CI gate (src/cigate.ts says the rule and holds the
+// bot's half of the red-CI gate (packages/pi-plugin/src/cigate.ts says the rule and holds the
 // classifier both halves share): a PR whose approval was withheld for red CI
 // is re-queued when its CI turns green, so its session can decide again.
 //
 // Nothing here triggers, re-runs or cancels CI: the one CI call is a GET.
-import { classifyCi, type CheckSummary, type CiState } from "./cigate.js";
+import {
+  classifyCi,
+  type CheckSummary,
+  type CiState,
+} from "@quickchatai/pi-quickreview/src/cigate.js";
 import type { Config } from "./config.js";
 import { applyEvent } from "./statemachine.js";
 import type { StateStore } from "./state.js";

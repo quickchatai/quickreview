@@ -66,7 +66,7 @@ The 13 seeded files (9 `agents/pass-*.md` lenses + 4 `prompts/*.md` system
 prompts) are frozen outright (hard rule 6): byte-identical to the canonical
 copies in `seeds/`, sha-pinned by `tests/fixtures/seed-manifest.json`, both
 verified by `tests/seed-integrity.test.ts` on every run. Pass behaviour
-changes go through the `PASS_ADDENDA` registry (`src/include.ts`) — never
+changes go through the `PASS_ADDENDA` registry (`packages/pi-plugin/src/include.ts`) — never
 through a seed edit.
 
 A **ratified reseed** — the owner explicitly ordering a seed change — is

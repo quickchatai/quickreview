@@ -22,7 +22,7 @@
 // — the case then runs today's full re-review (`round-re-review.md`), and the
 // case summary says why.
 
-import { deltaFollowUpEnabled } from "../followup-mode.js";
+import { deltaFollowUpEnabled } from "@quickchatai/pi-quickreview/src/followup-mode.js";
 import { basename, dirname } from "node:path";
 import { type Config } from "../config.js";
 import {
@@ -32,16 +32,16 @@ import {
   type FollowUpFullReason,
   type PassPlan,
 } from "../dispatch.js";
-import type { Ecosystem } from "../ecosystem.js";
+import type { Ecosystem } from "@quickchatai/pi-quickreview/src/ecosystem.js";
 import type { PrFileEntry } from "../github.js";
-import type { HeuristicsExtension } from "../heuristics.js";
-import type { CiLinter } from "../lintconfig.js";
+import type { HeuristicsExtension } from "@quickchatai/pi-quickreview/src/heuristics.js";
+import type { CiLinter } from "@quickchatai/pi-quickreview/src/lintconfig.js";
 import {
   computePriorFindings,
   renderPriorFindingsNote,
   priorSidecarText,
   type PriorFindingsList,
-} from "../priorfindings.js";
+} from "@quickchatai/pi-quickreview/src/priorfindings.js";
 import type { RoundFindingRow } from "../state.js";
 import type { ExecFn } from "../tmux.js";
 import { WorktreeManager, type PrOwnedDelta } from "../worktrees.js";

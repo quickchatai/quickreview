@@ -17,7 +17,7 @@ import { prActivity, type PrActivity } from "./pr-activity.js";
 //   the title line) and the link itself: `(round_no, finding_key)` and how it
 //   was made (`via`). Linking, most trusted first:
 //     1. `marker` — the hidden `<!-- qcr:f=<round>:<key> -->` the live render
-//        route stamps into every comment (src/findingkey.ts). Exact.
+//        route stamps into every comment (packages/pi-plugin/src/findingkey.ts). Exact.
 //     2. `thread_id` — the record's own `thread_id` names the comment.
 //     3. `path_line` — the one posted finding at that path and line in the
 //        comment's round (the round its review id names, else the registry's
@@ -97,12 +97,17 @@ import { prActivity, type PrActivity } from "./pr-activity.js";
 // read-only and memoised; a commit the clone does not hold is UNKNOWN, never a
 // change and never no-change. Every failure is the sweep's own — reconcile's
 // health (which lifts a deploy drain) never waits on it.
-import { carriedToRef, isPostedRow, predecessorOf, sameSite } from "./finding-chain.js";
-import { parseFindingMarker } from "./findingkey.js";
-import { storedLensIds } from "./lensids.js";
+import {
+  carriedToRef,
+  isPostedRow,
+  predecessorOf,
+  sameSite,
+} from "@quickchatai/pi-quickreview/src/finding-chain.js";
+import { parseFindingMarker } from "@quickchatai/pi-quickreview/src/findingkey.js";
+import { storedLensIds } from "@quickchatai/pi-quickreview/src/lensids.js";
 import type { ReviewCommentFull } from "./github.js";
-import { bareTag } from "./severity.js";
-import { yieldToLoop } from "./yieldloop.js";
+import { bareTag } from "@quickchatai/pi-quickreview/src/severity.js";
+import { yieldToLoop } from "@quickchatai/pi-quickreview/src/yieldloop.js";
 import type {
   PrCommentRow,
   PrStateRow,
@@ -277,11 +282,15 @@ export function markerTwins(rows: readonly FindingCommentRow[]): Map<number, num
 }
 
 /** A `finding_outcomes.carried_to` address: `<round>:<key>`. */
-export { carriedToRef } from "./finding-chain.js";
+export { carriedToRef } from "@quickchatai/pi-quickreview/src/finding-chain.js";
 
 /** Which rows reached the PR, and which earlier entry a later one continues:
- * the review core reads them too (src/priorfindings.ts). */
-export { CONTINUATION_LINES, isPostedRow, predecessorOf } from "./finding-chain.js";
+ * the review core reads them too (packages/pi-plugin/src/priorfindings.ts). */
+export {
+  CONTINUATION_LINES,
+  isPostedRow,
+  predecessorOf,
+} from "@quickchatai/pi-quickreview/src/finding-chain.js";
 
 /** The finding a `carried_to` address names — split at the FIRST ':', since
  * the key itself may hold ':' — or null when the round part is not an

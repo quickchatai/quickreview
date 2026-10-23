@@ -10,8 +10,8 @@ import { spawn } from "node:child_process";
 export const HARNESS_TIMEOUT_MIN = 30;
 
 /** Git without any system or global config and never prompting (core: the
- * round hands it to its reviewer, src/envstrip.ts). */
-export { GIT_ISOLATION_ENV } from "../envstrip.js";
+ * round hands it to its reviewer, packages/pi-plugin/src/envstrip.ts). */
+export { GIT_ISOLATION_ENV } from "@quickchatai/pi-quickreview/src/envstrip.js";
 
 export interface ExecResult {
   code: number;

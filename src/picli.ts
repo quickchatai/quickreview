@@ -1,5 +1,5 @@
 // The one pi (rule 7): the pinned package in this install's node_modules. The
-// SDK sessions import it (src/engine/pisdk.ts), and every pi CLI this code starts
+// SDK sessions import it (packages/pi-plugin/src/engine/pisdk.ts), and every pi CLI this code starts
 // is that same package's own `pi` bin — the file node_modules/.bin/pi links to —
 // never a `pi` looked up on the PATH. The release image carries no global pi
 // CLI (P9.9b), so a PATH lookup there finds nothing; on a laptop it could find

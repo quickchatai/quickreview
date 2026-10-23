@@ -38,12 +38,12 @@
 #     (default 1000:1000) with CAP_SETUID/CAP_SETGID as ambient capabilities,
 #     and exports QCR_TOOL_UID/QCR_TOOL_GID (QCR_TOOLS_AS, default 65534, and the run gid);
 #   - the engine then runs everything that executes the model's commands
-#     through setpriv (src/engine/tooluid.ts): the SDK session's bash tool
-#     (src/engine/pisdk.ts), a pi child (toolIsolation), a debug round's
+#     through setpriv (packages/pi-plugin/src/engine/tooluid.ts): the SDK session's bash tool
+#     (packages/pi-plugin/src/engine/pisdk.ts), a pi child (toolIsolation), a debug round's
 #     interactive pi (src/engine/debugpi.ts). They get the tool uid, no
 #     capabilities and no_new_privs. The SDK session's file tools (read, grep,
 #     find, ls, edit, write) run in the engine's own uid, so they are fenced off
-#     /proc, /run/qcr-in and the agent dir (src/engine/toolfence.ts). The tool
+#     /proc, /run/qcr-in and the agent dir (packages/pi-plugin/src/engine/toolfence.ts). The tool
 #     uid shares the run gid, which is how it reaches the group-writable state;
 #     it is a different uid, so /proc/<node pid>/mem and environ are closed to it;
 #   - started as any other uid, no separation is possible: the cli mode says
@@ -56,7 +56,7 @@
 # group QCR_SETID_GID) is probed, and the daemon exports QCR_TOOL_UID (QCR_TOOLS_AS,
 # default 65534), QCR_TOOL_GID (the image's compiled tool gid, QCR_IMAGE_TOOL_GID; the
 # daemon must already be a member of it) and QCR_SETPRIV_BIN; its workers run
-# every model command through the helper (src/engine/tooluid.ts setidHelperOf).
+# every model command through the helper (packages/pi-plugin/src/engine/tooluid.ts setidHelperOf).
 # A probe that fails refuses the start (QCR_ALLOW_SHARED_TOOL_UID=1 accepts the
 # shared uid). Started as root instead, the daemon drops to QCR_RUN_UID the way
 # the cli mode does. Either way the daemon opens the directories the model's
@@ -233,7 +233,7 @@ isolate_tools "$@"
 
 # A GitHub token is never env or argv in this image. The caller bind-mounts a
 # 0700 dir at /run/qcr-in holding a 0600 file and names it in QCR_GH_TOKEN_FILE;
-# src/ghcred.ts reads and unlinks it as the first thing cli.js does, before any
+# packages/pi-plugin/src/ghcred.ts reads and unlinks it as the first thing cli.js does, before any
 # pi or bash child exists, and drops the variable. This script never reads it.
 # What keeps the model's bash off the Node process that then holds the token:
 #   - the tools' uid (above) where the split is possible;
@@ -352,10 +352,10 @@ if (stale.length) {
 settings.defaultProjectTrust = "always";
 // pi 1.0 made the interactive TUI fullscreen by default. Sessions run under
 // tmux and the operator TUI mirrors and scrolls their panes, so keep the
-// terminal's normal scrollback (pi 0.99's default) — src/pibuiltins.ts PI_TUI_MODE.
+// terminal's normal scrollback (pi 0.99's default) — packages/pi-plugin/src/pibuiltins.ts PI_TUI_MODE.
 settings.tuiMode = "regular";
 // pi 0.99's built-in extensions (mcp, codemode, tool-search, llama.cpp) are
-// switched OFF, reasons per built-in in src/pibuiltins.ts, the list this
+// switched OFF, reasons per built-in in packages/pi-plugin/src/pibuiltins.ts, the list this
 // mirrors. Any other global `builtin:` entry is dropped first, so this list is
 // the only word the user settings say about built-ins.
 const DISABLED_BUILTINS = ["-builtin:mcp", "-builtin:codemode", "-builtin:tool-search", "-builtin:llama.cpp"];
@@ -516,7 +516,7 @@ if (trust["/workspace"] !== true) {
 }
 console.log("pi project trust: /workspace pre-trusted");
 
-// Agent discovery for the lens tool (extensions/lens.ts reads the agents dir
+// Agent discovery for the lens tool (packages/pi-plugin/extensions/lens.ts reads the agents dir
 // under pi's agent dir): link it at the companion agent set in the image.
 // Symlink-or-absent only: a REAL directory here is someone's own agents and is
 // never clobbered.

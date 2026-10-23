@@ -7,7 +7,7 @@ import {
   readSettledJson,
   resolvePartialWritePolicy,
   type SettledReadIo,
-} from "../src/settledread.js";
+} from "@quickchatai/pi-quickreview/src/settledread.js";
 
 const errno = (code: string): NodeJS.ErrnoException =>
   Object.assign(new Error(`${code}: scripted`), { code });

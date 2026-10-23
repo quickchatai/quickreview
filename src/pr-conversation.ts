@@ -2,11 +2,11 @@
 // PR's one main session judges; the daemon posts a claimed answer.
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
-import type { GateResult } from "./gate.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { StateStore } from "./state.js";
-import { standingVerdict } from "./standing-review.js";
+import { standingVerdict } from "@quickchatai/pi-quickreview/src/standing-review.js";
 import { isFeedbackBody } from "./feedback.js";
-import { DEFAULT_PARTIAL_WRITE_POLICY } from "./settledread.js";
+import { DEFAULT_PARTIAL_WRITE_POLICY } from "@quickchatai/pi-quickreview/src/settledread.js";
 import { wakeOrHold } from "./wakes.js";
 
 export function blockedPrAuthor(store: StateStore, pr: number): string | undefined {

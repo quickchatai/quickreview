@@ -34,7 +34,7 @@ import {
   copyPiAuth,
   engineCredentials,
   readOwnerAuth,
-} from "../src/engine/auth.js";
+} from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import { LoginLockHeld, acquireLoginLock } from "../src/loginrefresh/lock.js";
 import {
   AUTH_FILE,
@@ -63,6 +63,7 @@ import {
   stripComments,
 } from "./helpers/engine-fences.js";
 import {
+  SANDBOX_AUTH_WRITERS,
   isSandboxAuthWriter,
   authJsonWriters,
   daemonReachedLoginRefresh,
@@ -965,6 +966,14 @@ describe("[P8.22] only the refresher and the login mode write the pihome's auth.
     expect(stray).toEqual([]);
   });
 
+  it("every named sandbox writer is a real file that the scan sees (a move fails loudly)", () => {
+    const writers = authJsonWriters(root);
+    for (const f of Object.keys(SANDBOX_AUTH_WRITERS)) {
+      expect(existsSync(join(root, f)), f).toBe(true);
+      expect(writers, f).toContain(f);
+    }
+  });
+
   it("the entrypoint's login mode never writes auth.json itself: pi's own /login does", () => {
     const text = readFileSync(join(root, "docker/entrypoint.sh"), "utf8");
     // the pause file and the lock are named; auth.json is only ever read, found, or shared (chmod/chgrp)
@@ -994,6 +1003,17 @@ describe("[P8.22] only the refresher and the login mode write the pihome's auth.
       `#!/bin/sh\necho '{}' > "$HOME/.pi/agent/auth.json"\n`,
     );
     expect(authJsonWriters(dir)).toEqual(["scripts/rogue.sh", "src/rogue.ts"]);
+    // the review core's package is source too
+    mkdirSync(join(dir, "packages/pi-plugin/src"), { recursive: true });
+    writeFileSync(
+      join(dir, "packages/pi-plugin/src/rogue.ts"),
+      `import { writeFileSync } from "node:fs";\nwriteFileSync(join(home, ".pi", "agent", "auth.json"), "{}");\n`,
+    );
+    expect(authJsonWriters(dir)).toEqual([
+      "packages/pi-plugin/src/rogue.ts",
+      "scripts/rogue.sh",
+      "src/rogue.ts",
+    ]);
   });
 });
 

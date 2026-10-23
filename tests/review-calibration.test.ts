@@ -6,9 +6,17 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { addendaForPass, buildAgents, PASS_ADDENDA, VALIDATE_PASS } from "../src/include.js";
-import { ALL_PASSES } from "../src/passes.js";
-import { DOWNGRADE_WORDS, isKnownVocabularyWord } from "../src/findingsrecord.js";
+import {
+  addendaForPass,
+  buildAgents,
+  PASS_ADDENDA,
+  VALIDATE_PASS,
+} from "@quickchatai/pi-quickreview/src/include.js";
+import { ALL_PASSES } from "@quickchatai/pi-quickreview/src/passes.js";
+import {
+  DOWNGRADE_WORDS,
+  isKnownVocabularyWord,
+} from "@quickchatai/pi-quickreview/src/findingsrecord.js";
 
 const root = resolve(process.cwd());
 

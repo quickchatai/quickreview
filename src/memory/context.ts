@@ -36,12 +36,12 @@
 // Nothing here knows about HTTP or OpenViking: an implementation
 // of `ContextAssembler` is injected (see src/dispatch.ts `DispatchDeps.memory`).
 
-import { withinBudget } from "../budget.js";
+import { withinBudget } from "@quickchatai/pi-quickreview/src/budget.js";
 import { MEMORY_DEFAULTS } from "../config.js";
-import { MEMORY_LESS, type MemoryGap, type RoundMemory } from "../memoryport.js";
+import { MEMORY_LESS, type MemoryGap, type RoundMemory } from "@quickchatai/pi-quickreview/src/memoryport.js";
 import type { RoundActivityWindow } from "./roundactivity.js";
 
-// The seed's shape and its renderers are the review core's (src/memoryport.ts):
+// The seed's shape and its renderers are the review core's (packages/pi-plugin/src/memoryport.ts):
 // it renders a seed it is handed, and never reads memory itself.
 export {
   describeGaps,
@@ -52,7 +52,7 @@ export {
   renderPinnedHeadSection,
   type MemoryGap,
   type RoundMemory,
-} from "../memoryport.js";
+} from "@quickchatai/pi-quickreview/src/memoryport.js";
 
 /**
  * What one read of memory produced: the text the store holds — `""` when it

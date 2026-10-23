@@ -1,7 +1,7 @@
 // [P8.3] The model's bash commands inherit the descriptors a host names, and
 // only those. Node closes every fd a child is not listed with, so the bot
 // worker's IPC capability (the fd the post scripts read) reaches `bash -c` and
-// the scripts under it only when the spawn names it: src/engine/tooluid.ts
+// the scripts under it only when the spawn names it: packages/pi-plugin/src/engine/tooluid.ts
 // `commandStdio`, `inheritingBashOperations` and the third argument of
 // `isolatedBashOperations`, and src/engine/botsdk.ts for where the number comes from.
 import {
@@ -17,12 +17,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { botSdkExtras } from "../src/engine/botsdk.js";
-import type { SessionSpec } from "../src/engine/port.js";
+import type { SessionSpec } from "@quickchatai/pi-quickreview/src/engine/port.js";
 import {
   commandStdio,
   inheritingBashOperations,
   isolatedBashOperations,
-} from "../src/engine/tooluid.js";
+} from "@quickchatai/pi-quickreview/src/engine/tooluid.js";
 import { sessionGitConfigPins } from "../src/sessions.js";
 
 let dir: string;

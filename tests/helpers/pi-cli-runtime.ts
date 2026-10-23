@@ -23,7 +23,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
-import { TurnBudget, termThenKill } from "../../src/engine/budget.js";
+import { TurnBudget, termThenKill } from "@quickchatai/pi-quickreview/src/engine/budget.js";
 import {
   RuntimeUnsupportedError,
   type PiRun,
@@ -36,8 +36,8 @@ import {
   type SubscribeOptions,
   type TurnOptions,
   type TurnResult,
-} from "../../src/engine/port.js";
-import { toolIsolation } from "../../src/engine/tooluid.js";
+} from "@quickchatai/pi-quickreview/src/engine/port.js";
+import { toolIsolation } from "@quickchatai/pi-quickreview/src/engine/tooluid.js";
 
 /** Feed `onLine` each LF-terminated line of `input` (a trailing CR dropped, a
  * last unterminated line delivered at end). pi's JSON mode frames events by

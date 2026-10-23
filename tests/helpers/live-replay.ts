@@ -12,8 +12,12 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { vi } from "vitest";
-import { roundLiveWriter } from "../../src/engine/livewire.js";
-import { liveRoundDir, LIVE_MAIN_FILE, readLiveEvents } from "../../src/live/events.js";
+import { roundLiveWriter } from "@quickchatai/pi-quickreview/src/engine/livewire.js";
+import {
+  liveRoundDir,
+  LIVE_MAIN_FILE,
+  readLiveEvents,
+} from "@quickchatai/pi-quickreview/src/live/events.js";
 import { projectRoundProgress, type RoundProgressProjection } from "../../src/live/projection.js";
 
 export interface TimedEvent {

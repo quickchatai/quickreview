@@ -136,7 +136,7 @@ same script the clone route's `qcr scan login` uses (`loginInPi`,
 `src/scanbox.ts`). It is the only call that mounts the `qcr-login` volume
 read-write (at pi's agent dir); it holds no repo, no state, no profiles and no
 GitHub token. Every other call mounts it read-only at `/qcr-login`, and the
-engine takes a refresh-disabled copy of it (`src/engine/auth.ts`): only a
+engine takes a refresh-disabled copy of it (`packages/pi-plugin/src/engine/auth.ts`): only a
 login ever refreshes. A headless run with `OPENAI_API_KEY` (or another model
 key) in the environment reads no login at all, and nothing ever starts one.
 
@@ -164,7 +164,7 @@ No GitHub App on a laptop (D14). The wrapper takes `GITHUB_TOKEN`, then
 `GH_TOKEN`, then `gh auth token`, writes it to a `0600` file in a fresh `0700`
 directory (under `$XDG_RUNTIME_DIR` on Linux, `$TMPDIR` elsewhere), mounts that
 directory and names the file in `QCR_GH_TOKEN_FILE`. The image reads the file
-once and unlinks it (`src/ghcred.ts`, D39 amending R7). The token is never in
+once and unlinks it (`packages/pi-plugin/src/ghcred.ts`, D39 amending R7). The token is never in
 `-e`, `--env` or any argument list, and the directory is removed when the call
 ends. Model API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`,
 `DIGITALOCEAN_API_KEY`) go by name only: docker reads the value from your

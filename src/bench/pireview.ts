@@ -86,7 +86,7 @@ import {
 import { apiKeyEnv, authFingerprint, AuthExpiring, benchAuthMode, syncBenchAuth } from "./auth.js";
 import { GIT_ISOLATION_ENV, run } from "./exec.js";
 import type { OcrShapedComment } from "./opencode.js";
-import { PI_DISABLED_BUILTINS } from "../pibuiltins.js";
+import { PI_DISABLED_BUILTINS } from "@quickchatai/pi-quickreview/src/pibuiltins.js";
 import { prTextFor } from "./prtext.js";
 import { datasetLine, formatToolCounts, kTokens, roundMetrics } from "./report.js";
 import { prepareTree } from "./runner.js";
@@ -190,7 +190,7 @@ export function pireviewEnv(o: {
 export const PIREVIEW_PI_SETTINGS = { defaultProjectTrust: "always" } as const;
 
 /** pi from 0.99.0 on ships built-in extensions loaded by default (mcp,
- * codemode, tool-search, llama.cpp — src/pibuiltins.ts), and pi-review runs
+ * codemode, tool-search, llama.cpp — packages/pi-plugin/src/pibuiltins.ts), and pi-review runs
  * with its cwd INSIDE the reviewed checkout, whose own `.pi/mcp.json` a
  * built-in mcp would read. pi-review's children already run
  * `--no-extensions` (which drops built-ins from the final set in 0.99.1,

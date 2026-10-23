@@ -40,7 +40,7 @@
 // holding the sweep on memory, which the first property forbids.
 
 import { createHash } from "node:crypto";
-import { withinBudget } from "./budget.js";
+import { withinBudget } from "@quickchatai/pi-quickreview/src/budget.js";
 import { EOD_PINNED_WATCHDOG_WINDOW_MIN } from "./config.js";
 import { zoneDateString, zonedParts, type TimerHandle } from "./eod.js";
 

@@ -1314,7 +1314,8 @@ describe("bench.sh --arm claude: its own credential file, and the same hardening
 // ---- the fences -------------------------------------------------------------------
 
 /** Every file of this repo a host-side path could run: sources, scripts,
- * tests, the bench, extensions, docker and deploy — no node_modules, no dist,
+ * tests, the bench, extensions, docker, deploy and the workspace packages
+ * (the review core lives in packages/pi-plugin) — no node_modules, no dist,
  * no worktrees, no run outputs. */
 function repoFiles(): string[] {
   const skip = new Set([
@@ -1339,7 +1340,17 @@ function repoFiles(): string[] {
         out.push(p);
     }
   };
-  for (const d of ["src", "scripts", "tests", "bench", "extensions", "docker", "deploy", "bin"])
+  for (const d of [
+    "src",
+    "scripts",
+    "tests",
+    "bench",
+    "extensions",
+    "docker",
+    "deploy",
+    "bin",
+    "packages",
+  ])
     if (existsSync(join(ROOT, d))) walk(join(ROOT, d));
   // config.example.toml is the tracked config; the live config.toml is untracked.
   for (const f of ["package.json", "config.example.toml"]) out.push(join(ROOT, f));

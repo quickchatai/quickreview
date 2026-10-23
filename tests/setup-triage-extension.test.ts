@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { QcrTool } from "../extensions/pi-tool.js";
+import type { QcrTool } from "@quickchatai/pi-quickreview/extensions/pi-tool.js";
 import { scanToolDefinitions } from "../extensions/setup-scan.js";
 import { triageToolDefinitions } from "../extensions/setup-triage.js";
 import { SCAN_DEFAULTS } from "../src/config.js";

@@ -23,7 +23,7 @@ import {
   UNDICI_GLOBAL_DISPATCHER,
   insideCliPi,
   loadConfigureHttpDispatcher,
-} from "../../src/engine/pisdk.js";
+} from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import { saveDispatcherState } from "../helpers/dispatcher-state.js";
 import { createHostRig, useOfflineGuard } from "./harness.js";
 

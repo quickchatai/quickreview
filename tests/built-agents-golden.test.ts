@@ -20,9 +20,9 @@ import {
   buildAgents,
   configAddenda,
   identityVars,
-} from "../src/include.js";
-import { lensTuningAddenda, roundAgentModels } from "../src/lenstuning.js";
-import { postingPolicyAddenda } from "../src/postingpolicy.js";
+} from "@quickchatai/pi-quickreview/src/include.js";
+import { lensTuningAddenda, roundAgentModels } from "@quickchatai/pi-quickreview/src/lenstuning.js";
+import { postingPolicyAddenda } from "@quickchatai/pi-quickreview/src/postingpolicy.js";
 import { buildScanAgents } from "../src/setup/scanbuild.js";
 
 const ROOT = resolve(import.meta.dirname, "..");

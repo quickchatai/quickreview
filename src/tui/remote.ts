@@ -140,7 +140,7 @@ function livePath(cfg: TuiConfig, rel: readonly string[]): string {
 }
 
 /**
- * Read a LiveEvent log (src/live/events.ts) from byte `fromOffset` on: `cat`
+ * Read a LiveEvent log (packages/pi-plugin/src/live/events.ts) from byte `fromOffset` on: `cat`
  * for the whole file, `tail -c +<offset+1>` for what has been appended since.
  * The argv is the same on both transports, like every other state read here —
  * `stateReadArgv`'s container prefix on the laptop, a bare command on the VM

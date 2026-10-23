@@ -31,9 +31,9 @@ import {
   type RecheckDeps,
 } from "../src/recheck.js";
 import { reconcileOnce } from "../src/reconcile.js";
-import { hasNewEvidence } from "../src/guards.js";
+import { hasNewEvidence } from "@quickchatai/pi-quickreview/src/guards.js";
 import { flushHeldWakes } from "../src/wakes.js";
-import { standingVerdict } from "../src/standing-review.js";
+import { standingVerdict } from "@quickchatai/pi-quickreview/src/standing-review.js";
 import { StateStore } from "../src/state.js";
 import { applyInterpretation, interpretEvent, type Interpretation } from "../src/webhook.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";

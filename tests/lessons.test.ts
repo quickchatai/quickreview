@@ -20,7 +20,7 @@ import {
   validateLessonFields,
   type IndexedLesson,
 } from "../src/memory/lessons.js";
-import { ALL_PASSES } from "../src/passes.js";
+import { ALL_PASSES } from "@quickchatai/pi-quickreview/src/passes.js";
 
 const fields = {
   kind: "look-for",

@@ -44,10 +44,10 @@ import {
   readDebugSpec,
   runDebugRoundPane,
 } from "../src/debugroundpi.js";
-import { DISABLED_REFRESH } from "../src/engine/auth.js";
-import { LensWave } from "../src/engine/lens/wave.js";
+import { DISABLED_REFRESH } from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import { LensWave } from "@quickchatai/pi-quickreview/src/engine/lens/wave.js";
 import { createCapabilityFd } from "../src/ipc/capability.js";
-import { sessionCommandMarker } from "../src/session-command.js";
+import { sessionCommandMarker } from "@quickchatai/pi-quickreview/src/session-command.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";
 import { bornReference, rehearseFile, type RequestShape } from "./helpers/resume-rehearsal.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";

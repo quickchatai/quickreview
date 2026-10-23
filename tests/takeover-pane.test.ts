@@ -22,7 +22,7 @@ import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { DISABLED_REFRESH } from "../src/engine/auth.js";
+import { DISABLED_REFRESH } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import {
   prepareBorrowedAgent,
   readTakeoverSpec,

@@ -22,7 +22,7 @@ import {
   loadProfilePosting,
   loadProfileScan,
   type ProfileLookup,
-} from "./profiles.js";
+} from "@quickchatai/pi-quickreview/src/profiles.js";
 
 export const CONFIG_FILE_NAME = "config.toml";
 

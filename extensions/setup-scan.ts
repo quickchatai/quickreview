@@ -36,10 +36,14 @@ import { usd, findingLocation } from "../src/setup/presentation.js";
 // result, never a throw.
 import { FINDING_STATES } from "../src/setup/findings.js";
 import { join } from "node:path";
-import { textResult as text, refusedResult as refused, type QcrTool } from "./pi-tool.js";
+import {
+  textResult as text,
+  refusedResult as refused,
+  type QcrTool,
+} from "@quickchatai/pi-quickreview/extensions/pi-tool.js";
 import { sandboxRoot } from "../src/config.js";
 import { homeProfileLookup, stateHome } from "../src/install.js";
-import { scanCasesForEnv } from "../src/engine/auth.js";
+import { scanCasesForEnv } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import { piCaseRunner } from "../src/setup/caserunner.js";
 import type { CaseRunner, SetupEngine } from "../src/setup/engine.js";
 import type {

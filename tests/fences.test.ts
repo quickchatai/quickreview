@@ -31,21 +31,22 @@ import { readFileSync, readdirSync, existsSync, mkdtempSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ALLOWED_PROGRAMS } from "../extensions/bash-guard.js";
+import { ALLOWED_PROGRAMS } from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
 import { checkBashCommand } from "../extensions/cli/bash-guard-ambient.js";
 import {
   ALLOWED_COMMANDS_CLAUSE,
   EXECUTION_POLICY_ADDENDUM,
   PASS_ADDENDA,
   buildAgents,
-} from "../src/include.js";
-import { postTag } from "../src/severity.js";
-import { loadProfileAddenda } from "../src/profiles.js";
+} from "@quickchatai/pi-quickreview/src/include.js";
+import { postTag } from "@quickchatai/pi-quickreview/src/severity.js";
+import { loadProfileAddenda } from "@quickchatai/pi-quickreview/src/profiles.js";
 import { homeProfileLookup, locateProfile } from "../src/install.js";
 import { stageFixtureProfiles } from "./helpers/tracked-profiles.js";
 import { INITIAL_STATE, transition, type SmEvent } from "../src/statemachine.js";
 import { CANCEL_CAUSES, type PrLifecycleState } from "../src/state.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
+import { SRC_DIRS } from "./helpers/source-trees.js";
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -60,7 +61,8 @@ function tsFiles(dir: string): string[] {
   );
 }
 
-const SRC_FILES = tsFiles(join(ROOT, "src"));
+// The app's src/ and the review core's: a producer in either counts.
+const SRC_FILES = SRC_DIRS.flatMap((d) => tsFiles(join(ROOT, d)));
 
 /** Comments removed — a fence that reads prose asserts about prose. */
 function stripComments(text: string): string {
@@ -481,7 +483,7 @@ describe("the sanctioned-script set is DERIVED from the prompts, not maintained 
     }
     // Notes the daemon renders INTO a round prompt are prompts too: the
     // render-review note (`[review] render_outputs`) names its script.
-    const { renderRenderNote } = await import("../src/reviewrender.js");
+    const { renderRenderNote } = await import("@quickchatai/pi-quickreview/src/reviewrender.js");
     for (const m of renderRenderNote({ render_outputs: true, pr: 5, round_no: 1 }).matchAll(
       /scripts\/([a-z0-9._-]+\.sh)/g,
     ))
@@ -546,7 +548,7 @@ describe("no env prefix can move the posting guards' own configuration", () => {
    * is unwritable at both boundaries).
    *
    * MUTATION: remove "QCR_CONFIG" from POLICY_RELOCATING_ENV in
-   * extensions/bash-guard.ts — this fails.
+   * packages/pi-plugin/extensions/bash-guard.ts — this fails.
    */
   it("refuses the relocators and still allows the per-call arguments", async () => {
     const { checkBashCommand } = await import("../extensions/cli/bash-guard-ambient.js");
@@ -800,18 +802,18 @@ describe("what a built pass is told it may run is exactly what the guard lets th
   });
 
   /**
-   * Probe the compiled artifact: the daemon builds `state/agents` from
-   * `dist/src/include.js`, so the sentence
+   * Probe the compiled artifact: the daemon builds `state/agents` from the
+   * core's `packages/pi-plugin/dist/src/include.js`, so the sentence
    * the VM's passes read is the compiled module's, not the source's.
    */
   it(
     "the COMPILED execution policy is the source's, and names no awk",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
-      const dist = join(ROOT, "dist", "src", "include.js");
+      const dist = join(ROOT, "packages", "pi-plugin", "dist", "src", "include.js");
       if (!existsSync(dist)) {
         throw new Error(
-          "dist/src/include.js is missing — run `npm run build`; the shipped prompt is unverified",
+          "packages/pi-plugin/dist/src/include.js is missing — run `npm run build`; the shipped prompt is unverified",
         );
       }
       const compiled = (await import(dist)) as { EXECUTION_POLICY_ADDENDUM: string };
@@ -823,7 +825,7 @@ describe("what a built pass is told it may run is exactly what the guard lets th
 
 describe("the prose beside the posting map says what the map does", () => {
   /**
-   * `src/severity.ts`'s module header must not claim a first-party directive
+   * `packages/pi-plugin/src/severity.ts`'s module header must not claim a first-party directive
    * injection "never blocks" or "posts as a [question]" while `postTag` maps
    * exactly that finding to a blocker. A header that contradicts its own
    * function is easy for a grep-shaped sweep to miss when the same paragraph
@@ -839,7 +841,7 @@ describe("the prose beside the posting map says what the map does", () => {
    * `needsHuman` — fails.
    */
   it("src/severity.ts does not claim a first-party directive injection never blocks, and postTag agrees", () => {
-    const src = readFileSync(join(ROOT, "src", "severity.ts"), "utf8");
+    const src = readFileSync(join(ROOT, "packages", "pi-plugin", "src", "severity.ts"), "utf8");
     // The directive paragraph is the last one of the module header; the
     // reachability paragraph above it legitimately says `contrived` "never blocks".
     const header = src.slice(0, src.indexOf("\nimport "));

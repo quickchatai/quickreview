@@ -22,11 +22,11 @@ import {
   parseFindingsRecord,
   parsePriorRef,
   readFindingsRecord,
-} from "../src/findingsrecord.js";
-import type { GateResult } from "../src/gate.js";
+} from "@quickchatai/pi-quickreview/src/findingsrecord.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import { RecheckWatcher } from "../src/recheck.js";
 import { StateStore } from "../src/state.js";
-import type { SessionHooks } from "../src/types.js";
+import type { SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { VerdictWatcher, type VerdictAdapter, type VerdictDeps } from "../src/verdicts.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 

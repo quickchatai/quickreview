@@ -10,7 +10,7 @@ import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { classifyCi } from "../src/cigate.js";
+import { classifyCi } from "@quickchatai/pi-quickreview/src/cigate.js";
 
 const run = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -174,7 +174,7 @@ describe("pr-checks.sh --why", () => {
 
   // Commit statuses are read beside check-runs: reading check-runs alone
   // prints CLASSIFIED: green for a failing status beside green runs, while
-  // guard 4 — src/cigate.ts and guards.sh alike — says red. A status is its
+  // guard 4 — packages/pi-plugin/src/cigate.ts and guards.sh alike — says red. A status is its
   // own check, never collapsed with a run of its context.
   // MUTATION: drop the status read (or `or any(... statuses)`) — these fail.
   it("reads the commit statuses too: a failing status beside green runs is red", async () => {

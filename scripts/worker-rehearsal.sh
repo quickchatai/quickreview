@@ -215,7 +215,7 @@ else
   check IMG-1 fail "the release image is built from HEAD" "labels: sha=$IMG_SHA layout=$(label_of "$REL_IMG" qcr.layout); HEAD $HEAD_SHA"
 fi
 log "building the operator's CLI (dist) at HEAD"
-(cd "$ROOT" && npx tsc -p tsconfig.json --tsBuildInfoFile "/tmp/claude-$(id -u)/tsbi/rehearsal-op.tsbuildinfo" >"$LOGS/tsc.log" 2>&1 && node scripts/verify-dist.mjs >>"$LOGS/tsc.log" 2>&1) || { tail -20 "$LOGS/tsc.log" >&2; die "tsc failed"; }
+(cd "$ROOT" && npx tsc -b packages/pi-plugin && npx tsc -p tsconfig.json --tsBuildInfoFile "/tmp/claude-$(id -u)/tsbi/rehearsal-op.tsbuildinfo" >"$LOGS/tsc.log" 2>&1 && node scripts/verify-dist.mjs >>"$LOGS/tsc.log" 2>&1) || { tail -20 "$LOGS/tsc.log" >&2; die "tsc failed"; }
 
 # ---- 1. the host, the network, the stub -------------------------------------------------------------
 log "laying out the legacy-shaped host directory"

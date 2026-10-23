@@ -17,8 +17,12 @@ import {
   type MemoryRead,
   type RoundMemory,
 } from "../src/memory/context.js";
-import { renderRoundPrompt, roundTemplateFile, roundVars } from "../src/templates.js";
-import type { RoundOrder, RoundType } from "../src/types.js";
+import {
+  renderRoundPrompt,
+  roundTemplateFile,
+  roundVars,
+} from "@quickchatai/pi-quickreview/src/templates.js";
+import type { RoundOrder, RoundType } from "@quickchatai/pi-quickreview/src/types.js";
 
 const order: RoundOrder = {
   pr: 5412,

@@ -9,7 +9,12 @@
 // a line a writer is still finishing is left for the next poll.
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { LIVE_MAIN_FILE, lensLogName, readLiveEvents, type LiveEvent } from "./live/events.js";
+import {
+  LIVE_MAIN_FILE,
+  lensLogName,
+  readLiveEvents,
+  type LiveEvent,
+} from "@quickchatai/pi-quickreview/src/live/events.js";
 import { latestLiveRound, lensLogIds, listLiveRounds, type LiveRoundRef } from "./live/read.js";
 
 export const LIVE_USAGE =

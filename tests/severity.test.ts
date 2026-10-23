@@ -23,7 +23,7 @@ import {
   reachabilityCappedSeverity,
   type Reachability,
   type Severity,
-} from "../src/severity.js";
+} from "@quickchatai/pi-quickreview/src/severity.js";
 
 describe("postTag", () => {
   it("always blocks on P0/P1 regardless of confidence", () => {

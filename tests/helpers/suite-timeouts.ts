@@ -74,6 +74,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/botworker.test.ts", // the model's bash runs the real verdict and post scripts, through the worker
   "tests/ci-clone-smoke.test.ts",
   "tests/ci-image-smoke.test.ts",
+  "tests/cli-bin.test.ts",
   "tests/collect-secrets.test.ts",
   "tests/commit-verdict-shell.test.ts",
   "tests/companion-github.test.ts",

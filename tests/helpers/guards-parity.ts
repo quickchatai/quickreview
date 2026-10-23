@@ -1,5 +1,5 @@
 // The Node posting route behind one interface, for the guard block in
-// tests/guards.test.ts: the real MutationGate with src/guards.ts installed and
+// tests/guards.test.ts: the real MutationGate with packages/pi-plugin/src/guards.ts installed and
 // the real GitHubAdapter doing the reads, over the world rig's loopback GitHub
 // stub, its state.db and its config.toml. The shell route these answers were
 // first pinned against (scripts/guards.sh) is deleted (P9.3); the answers are
@@ -12,9 +12,9 @@ import { join, resolve } from "node:path";
 import { vi } from "vitest";
 import { parse } from "smol-toml";
 import { GUARDS_DEFAULTS, parseConfig, type Config } from "../../src/config.js";
-import { MutationGate, type MutationIntent } from "../../src/gate.js";
+import { MutationGate, type MutationIntent } from "@quickchatai/pi-quickreview/src/gate.js";
 import { GitHubAdapter } from "../../src/github.js";
-import { makePostingGuard } from "../../src/guards.js";
+import { makePostingGuard } from "@quickchatai/pi-quickreview/src/guards.js";
 import { StateStore } from "../../src/state.js";
 import type { GuardsWorld, PrStub } from "./guards-world-rig.js";
 import { HEAD as RIG_HEAD } from "./guards-world-rig.js";

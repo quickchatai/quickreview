@@ -13,10 +13,10 @@ import {
   CONTAINER_SECRETS_DIR,
   createBashGuard,
   type BashGuardConfig,
-} from "../extensions/bash-guard.js";
+} from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
 import { bashGuardConfigFromEnv, checkBashCommand } from "../extensions/cli/bash-guard-ambient.js";
-import { PiHost } from "../src/engine/pisdk.js";
-import { sdkRuntime } from "../src/engine/sdkruntime.js";
+import { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import { sdkRuntime } from "@quickchatai/pi-quickreview/src/engine/sdkruntime.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";
 
 useOfflineGuard();
@@ -247,7 +247,7 @@ describe("[createBashGuard] the config", () => {
 describe("[createBashGuard] the policy is not an input", () => {
   it("BashGuardConfig carries no policy field, only the host's facts", () => {
     const src = readFileSync(
-      join(import.meta.dirname, "..", "extensions", "bash-guard.ts"),
+      join(import.meta.dirname, "..", "packages", "pi-plugin", "extensions", "bash-guard.ts"),
       "utf8",
     );
     const body = /export interface BashGuardConfig \{([\s\S]*?)\n\}/.exec(src)![1]!;
@@ -256,7 +256,10 @@ describe("[createBashGuard] the policy is not an input", () => {
   });
 
   it("no profile layer imports the guard", () => {
-    const src = readFileSync(join(import.meta.dirname, "..", "src", "profileoverrides.ts"), "utf8");
+    const src = readFileSync(
+      join(import.meta.dirname, "..", "packages", "pi-plugin", "src", "profileoverrides.ts"),
+      "utf8",
+    );
     expect(src).not.toMatch(/from ["'][^"']*bash-guard/);
   });
 });

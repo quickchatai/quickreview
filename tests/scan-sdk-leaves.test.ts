@@ -26,10 +26,13 @@ import {
   sdkCaseRunner,
 } from "../src/engine/caserunner-sdk.js";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { LENS_SESSIONS_DIR, lensSessionsOf } from "../src/engine/openable.js";
-import { PiHost } from "../src/engine/pisdk.js";
-import type { Runtime } from "../src/engine/port.js";
-import { sdkRuntime } from "../src/engine/sdkruntime.js";
+import {
+  LENS_SESSIONS_DIR,
+  lensSessionsOf,
+} from "@quickchatai/pi-quickreview/src/engine/openable.js";
+import { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import type { Runtime } from "@quickchatai/pi-quickreview/src/engine/port.js";
+import { sdkRuntime } from "@quickchatai/pi-quickreview/src/engine/sdkruntime.js";
 import { piCaseRunner } from "../src/setup/caserunner.js";
 import type { CaseOutcome, CaseSpec } from "../src/setup/engine.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";

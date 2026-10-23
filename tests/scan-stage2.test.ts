@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SCAN_DEFAULTS, type ScanConfig } from "../src/config.js";
-import type { LensTuningMap } from "../src/lenstuning.js";
+import type { LensTuningMap } from "@quickchatai/pi-quickreview/src/lenstuning.js";
 import { stateHomeFs } from "../src/setup/adapters.js";
 import type { CaseOutcome, CaseSpec } from "../src/setup/engine.js";
 import { FindingsStore } from "../src/setup/findings.js";

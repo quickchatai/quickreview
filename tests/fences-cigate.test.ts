@@ -1,6 +1,6 @@
 // The adapter's CI read, over a loopback stub.
 //
-// `classifyCi` in `src/cigate.ts` is the one CI rule (the shell mirror in
+// `classifyCi` in `packages/pi-plugin/src/cigate.ts` is the one CI rule (the shell mirror in
 // scripts/guards.sh is deleted, P9.3), and guard 4 is the only guard that gates
 // an approval. This file pins the half `tests/cigate.test.ts` cannot see: that
 // the adapter's `listChecks` reads EVERY page of check-runs and statuses, and
@@ -10,11 +10,11 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { classifyCi, type CheckSummary } from "../src/cigate.js";
+import { classifyCi, type CheckSummary } from "@quickchatai/pi-quickreview/src/cigate.js";
 import { parseConfig } from "../src/config.js";
-import { MutationGate } from "../src/gate.js";
+import { MutationGate } from "@quickchatai/pi-quickreview/src/gate.js";
 import { GitHubAdapter } from "../src/github.js";
-import type { FetchFn, TokenMinter } from "../src/githubAuth.js";
+import type { FetchFn, TokenMinter } from "@quickchatai/pi-quickreview/src/githubAuth.js";
 
 const ROOT = join(import.meta.dirname, "..");
 const cfg = parseConfig(readFileSync(join(ROOT, "tests", "fixtures", "config.toml"), "utf8"));

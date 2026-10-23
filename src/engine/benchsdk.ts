@@ -1,6 +1,6 @@
 // The runtimes the bench hosts its sessions on when `[engine] runtime = "sdk"`:
 // the review round's main session and the defect judge's session, each as an
-// in-process SDK session. They are `reviewSdkRuntime` (src/engine/reviewsdk.ts)
+// in-process SDK session. They are `reviewSdkRuntime` (packages/pi-plugin/src/engine/reviewsdk.ts)
 // with the bench's pieces: the bench is its own host, so the HTTP dispatcher and
 // the login are built from the case's private agent dir exactly as `qcr review`
 // builds them.
@@ -12,14 +12,17 @@
 //
 // LENSES. The main session gets our `lens` / `lens_wave` over the agents
 // `buildBenchAgents` wrote, run in this process on the same host.
-import { createBashGuard, bashGuardConfigFromEnv } from "../../extensions/bash-guard.js";
+import {
+  createBashGuard,
+  bashGuardConfigFromEnv,
+} from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
 import { homedir } from "node:os";
-import { BUDGET_EXIT_CODE } from "./budget.js";
-import { engineLensTools } from "./lens/engine-tools.js";
-import { roundLensConfig } from "./lens/round-lens.js";
-import type { PiHostOptions, PiHost } from "./pisdk.js";
-import type { Runtime } from "./port.js";
-import { reviewSdkRuntime } from "./reviewsdk.js";
+import { BUDGET_EXIT_CODE } from "@quickchatai/pi-quickreview/src/engine/budget.js";
+import { engineLensTools } from "@quickchatai/pi-quickreview/src/engine/lens/engine-tools.js";
+import { roundLensConfig } from "@quickchatai/pi-quickreview/src/engine/lens/round-lens.js";
+import type { PiHostOptions, PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import type { Runtime } from "@quickchatai/pi-quickreview/src/engine/port.js";
+import { reviewSdkRuntime } from "@quickchatai/pi-quickreview/src/engine/reviewsdk.js";
 
 export interface BenchSdkOptions {
   /** `[pi] engine_wave`, with the engine lens tool: the round starts the planned

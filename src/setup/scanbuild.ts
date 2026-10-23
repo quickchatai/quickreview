@@ -6,7 +6,7 @@
 // addendum and run at the tier of the lens it judges, so every tier's variant
 // is built), and stage 2's deep lenses (every suggestible lens the profile
 // leaves on, at the tier its row names) — built by the one agent build
-// (`src/include.ts buildAgents`) in `"scan"` mode:
+// (`packages/pi-plugin/src/include.ts buildAgents`) in `"scan"` mode:
 //
 //   * the scan-mode anchor addendum composes (`mode: "scan"` in PASS_ADDENDA)
 //     — in this build and in no other: the daemon's, the bench's and the
@@ -41,14 +41,14 @@ import {
   configAddenda,
   identityVars,
   type BuiltAgent,
-} from "../include.js";
+} from "@quickchatai/pi-quickreview/src/include.js";
 import {
   applyProfileTuning,
   effortSpec,
   lensModelOverrides,
   lensTuningAddenda,
-} from "../lenstuning.js";
-import { PASS_TIER_ORDER } from "../types.js";
+} from "@quickchatai/pi-quickreview/src/lenstuning.js";
+import { PASS_TIER_ORDER } from "@quickchatai/pi-quickreview/src/types.js";
 import {
   applyProfileScan,
   loadProfileAddenda,
@@ -56,7 +56,7 @@ import {
   loadProfileLensTuning,
   loadProfileScan,
   type ProfileLookup,
-} from "../profiles.js";
+} from "@quickchatai/pi-quickreview/src/profiles.js";
 import type { Refusal } from "./engine.js";
 import { SCAN_PASS } from "./scan.js";
 import type { ScanSettings } from "./scanrun.js";

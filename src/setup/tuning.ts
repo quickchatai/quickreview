@@ -26,7 +26,11 @@ import {
   type MemoryEntry,
   type MemoryStore,
 } from "../memory/store.js";
-import { EMPHASIS_MAX_CHARS, PROFILE_GUIDE_MAX_CHARS, STYLE_LENS } from "../lenstuning.js";
+import {
+  EMPHASIS_MAX_CHARS,
+  PROFILE_GUIDE_MAX_CHARS,
+  STYLE_LENS,
+} from "@quickchatai/pi-quickreview/src/lenstuning.js";
 import { lineDiff } from "./portrait.js";
 import {
   parsePinProposals,

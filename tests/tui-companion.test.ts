@@ -44,8 +44,8 @@ import {
   type DockerResult,
   type DockerRunner,
 } from "../src/tui/companion.js";
-import { lensRunConfigFromEnv } from "../extensions/lens.js";
-import type { PiHost } from "../src/engine/pisdk.js";
+import { lensRunConfigFromEnv } from "@quickchatai/pi-quickreview/extensions/lens.js";
+import type { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import { RETIRED_FILE_ENV } from "../extensions/vendor/openviking-pi/qcr-recall.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
@@ -1151,7 +1151,7 @@ describe("companion image", () => {
   // No second memory engine in the companion: pi-memory and qmd are not
   // installed. Installing either would put a SECOND memory engine there:
   // one writing a local MEMORY.md nobody reads, and one hooking
-  // `session_before_compact`, which extensions/ledger-pin.ts must own alone.
+  // `session_before_compact`, which packages/pi-plugin/extensions/ledger-pin.ts must own alone.
   it("installs NO memory extension — memory is OpenViking over the host forward", () => {
     expect(pkg.pi.extensions?.["pi-memory"]).toBeUndefined();
     // Mechanism, not mention: a comment explaining why they are absent may
@@ -1376,7 +1376,7 @@ describe("companion image", () => {
 });
 
 // Lens passes in the companion — our lens tools (`lens`, `lens_wave`), loaded
-// from the image (extensions/lens.ts), stand where pi's example subagent
+// from the image (packages/pi-plugin/extensions/lens.ts), stand where pi's example subagent
 // extension stood. A pass is an SDK session of the companion's own pi; the
 // agents are the companion agent set, linked by the entrypoint into pi's agent
 // dir, which the tool reads. Nothing is vendored (a third-party pi-subagents

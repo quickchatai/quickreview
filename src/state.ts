@@ -1,8 +1,8 @@
 // SQLite state store (state/state.db) + the atomic status.json snapshot.
 // Core tables: pr_state, rounds, bot_comments (registry), deliveries
 // (webhook dedupe), events (append log).
-import { findingRowFields } from "./finding-row.js";
-import { roundStageDeadlines } from "./round-stage-deadlines.js";
+import { findingRowFields } from "@quickchatai/pi-quickreview/src/finding-row.js";
+import { roundStageDeadlines } from "@quickchatai/pi-quickreview/src/round-stage-deadlines.js";
 import Database from "better-sqlite3";
 import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -13,7 +13,7 @@ import type { LoginRefreshStatus } from "./loginrefresh/types.js";
 import type { DaemonLoadStatus } from "./eventloop.js";
 import type { MemoryIncident, MemoryStatus } from "./memory/health.js";
 import type { RoundStageSupervisorHealth } from "./session-command-supervisor.js";
-import type { SweepStatus } from "./sweepstatus.js";
+import type { SweepStatus } from "@quickchatai/pi-quickreview/src/sweepstatus.js";
 import type {
   CollisionCommentRecord,
   PriorFindingCheckRow,
@@ -21,8 +21,8 @@ import type {
   RoundFindingInput,
   RoundFindingRow,
   RoundRow,
-} from "./storerows.js";
-// The records the core reads are its own (src/storerows.ts).
+} from "@quickchatai/pi-quickreview/src/storerows.js";
+// The records the core reads are its own (packages/pi-plugin/src/storerows.ts).
 export type {
   CollisionCommentRecord,
   PriorFindingCheckRow,
@@ -46,14 +46,14 @@ import {
   type PassPlanEntry,
   type SessionCommandObservation,
   type VerdictPassEntry,
-} from "./types.js";
+} from "@quickchatai/pi-quickreview/src/types.js";
 import {
   standingLifecycleState,
   standingVerdict as standingReviewVerdict,
-} from "./standing-review.js";
-import { canonicalLensIds } from "./lensids.js";
+} from "@quickchatai/pi-quickreview/src/standing-review.js";
+import { canonicalLensIds } from "@quickchatai/pi-quickreview/src/lensids.js";
 import { postingKeyHead } from "./posting-receipt.js";
-import { WITHHOLD_WORDS } from "./postingpolicy.js";
+import { WITHHOLD_WORDS } from "@quickchatai/pi-quickreview/src/postingpolicy.js";
 
 /** The lifecycle states a PR can occupy. There is no "awaiting human" member:
  * the review is never handed to a human, so nothing produces or holds such a
@@ -1811,7 +1811,7 @@ export class StateStore {
       // Outcome capture: the posted comment's one-line title as
       // the session wrote it (null when the record carries none — it is never
       // invented), and the canonical lens ids parsed from the free-text
-      // `lens` (src/lensids.ts; JSON array, `[]` = raised outside any known
+      // `lens` (packages/pi-plugin/src/lensids.ts; JSON array, `[]` = raised outside any known
       // lens). Both nullable and additive; the boot fills `lens_ids` for rows
       // recorded before the column (`fillLensIds`).
       "ALTER TABLE round_findings ADD COLUMN title TEXT",
@@ -7855,7 +7855,7 @@ export interface StatusSnapshot {
   today_spend_usd?: number;
   digest_headline?: string;
   /** Present while pi sessions are failing API calls with token-expired
-   * errors (src/authwatch.ts, fresh < 30 min). The TUI raises an alert. */
+   * errors (packages/pi-plugin/src/authwatch.ts, fresh < 30 min). The TUI raises an alert. */
   pi_auth_expired?: { last_at: string; hits: number };
   /** The supervised OpenViking server: reachable, `/ready`, reported
    * version (drift-checked against the pin), RSS and CPU. Absent in snapshots

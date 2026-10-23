@@ -5,8 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
-import { DEFAULT_BASH_ENV_ALLOW, PiHost, buildBashEnv } from "../src/engine/pisdk.js";
-import { GITHUB_TOKEN_ENVS } from "../src/envstrip.js";
+import {
+  DEFAULT_BASH_ENV_ALLOW,
+  PiHost,
+  buildBashEnv,
+} from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import { GITHUB_TOKEN_ENVS } from "@quickchatai/pi-quickreview/src/envstrip.js";
 import { type HostRig, createHostRig, useOfflineGuard } from "./pi-canary/harness.js";
 
 useOfflineGuard();

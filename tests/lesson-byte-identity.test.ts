@@ -15,8 +15,8 @@ import { parseCaseSet, type PrefetchMeta } from "../src/bench/aacr.js";
 import { renderCasePrompts, runFingerprint } from "../src/bench/runner.js";
 import { parseConfig, sandboxRoot, type Config, type MemoryDelivery } from "../src/config.js";
 import { dispatchOnce, type DispatchAdapter } from "../src/dispatch.js";
-import { ecosystemFor } from "../src/ecosystem.js";
-import type { GateResult } from "../src/gate.js";
+import { ecosystemFor } from "@quickchatai/pi-quickreview/src/ecosystem.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
 import {
   buildAgents,
@@ -26,14 +26,17 @@ import {
   PASS_ADDENDA,
   passTierModels,
   VALIDATE_PASS,
-} from "../src/include.js";
-import { lensModelOverrides, lensTuningAddenda } from "../src/lenstuning.js";
+} from "@quickchatai/pi-quickreview/src/include.js";
+import {
+  lensModelOverrides,
+  lensTuningAddenda,
+} from "@quickchatai/pi-quickreview/src/lenstuning.js";
 import { LessonLedger } from "../src/lessonledger.js";
 import { RoundLessonSelector } from "../src/lessonselect.js";
 import type { ContextAssembler } from "../src/memory/context.js";
 import { BLEED_RULE_DELIVERED, BLEED_RULE_VERBATIM } from "../src/memory/delivery.js";
 import type { FindHit, LessonEngine } from "../src/memory/selection.js";
-import { postingPolicyAddenda } from "../src/postingpolicy.js";
+import { postingPolicyAddenda } from "@quickchatai/pi-quickreview/src/postingpolicy.js";
 import { StateStore } from "../src/state.js";
 import { buildWakeMessage } from "../src/pingpong.js";
 import { runRecheck, type DeltaFile } from "../src/recheck.js";
@@ -42,8 +45,8 @@ import {
   renderRecheckPrompt,
   renderRoundPrompt,
   roundTemplateFile,
-} from "../src/templates.js";
-import type { RoundOrder, RoundType, SessionHooks } from "../src/types.js";
+} from "@quickchatai/pi-quickreview/src/templates.js";
+import type { RoundOrder, RoundType, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const ROOT = resolve(process.cwd());

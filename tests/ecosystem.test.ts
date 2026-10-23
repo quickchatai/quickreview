@@ -19,15 +19,15 @@ import {
   NONE_ECOSYSTEM,
   ecosystemFor,
   type EcosystemPreCheckIo,
-} from "../src/ecosystem.js";
-import type { GateResult } from "../src/gate.js";
+} from "@quickchatai/pi-quickreview/src/ecosystem.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import { GitHubRequestError, type PrFileEntry } from "../src/github.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
 import { homeProfileLookup, homeProfilePlaces } from "../src/install.js";
-import { loadProfileEcosystem } from "../src/profiles.js";
+import { loadProfileEcosystem } from "@quickchatai/pi-quickreview/src/profiles.js";
 import { StateStore } from "../src/state.js";
-import { renderRoundPrompt, roundVars } from "../src/templates.js";
-import type { RoundOrder, SessionHooks } from "../src/types.js";
+import { renderRoundPrompt, roundVars } from "@quickchatai/pi-quickreview/src/templates.js";
+import type { RoundOrder, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { stageFixtureProfile } from "./helpers/tracked-profiles.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 

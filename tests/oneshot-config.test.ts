@@ -1,22 +1,31 @@
 // The one-shot review's config: the review sections parsed by the core
-// (src/reviewconfig.ts) exactly as the whole-file parser parses them, and
+// (packages/pi-plugin/src/reviewconfig.ts) exactly as the whole-file parser parses them, and
 // zero-config — with no config of the install's own, `qcr review` runs on the
 // shipped defaults (config.example.toml) while the daemon still refuses to
 // start. Every case hands the locator an explicit env of temp homes.
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { assetRoot } from "../src/assetroot.js";
+import { assetRoot, assetRootFrom } from "@quickchatai/pi-quickreview/src/assetroot.js";
 import { loadConfig, parseConfig, sandboxRoot } from "../src/config.js";
-import { contextFrom } from "../src/engine/context.js";
+import { contextFrom } from "@quickchatai/pi-quickreview/src/engine/context.js";
 import {
   homeProfileLookup,
   loadOneShotConfig,
   locateSecrets,
   SHIPPED_CONFIG_FILE,
 } from "../src/homes.js";
-import { parseCoreConfig } from "../src/reviewconfig.js";
+import { parseCoreConfig } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import { CORE_NAME } from "./helpers/source-trees.js";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const EXAMPLE = readFileSync(join(ROOT, SHIPPED_CONFIG_FILE), "utf8");
@@ -118,8 +127,42 @@ describe("zero-config", () => {
 });
 
 describe("asset roots", () => {
-  it("the core's data root is the package it ships in (today the checkout)", () => {
+  it("the core's data root is the checkout's, above packages/pi-plugin", () => {
     expect(assetRoot()).toBe(ROOT);
     expect(sandboxRoot()).toBe(ROOT);
+  });
+
+  // MUTATION: drop the `assets/agents` branch of assetRootFrom — the installed
+  // case resolves to nothing; drop the agents+prompts pair — the checkout's does.
+  it("finds an installed package's assets/, and the checkout's root above the package", () => {
+    const t = mkdtempSync(join(tmpdir(), "qcr-assetroot-"));
+    try {
+      const installed = join(t, "node_modules", "@quickchatai/pi-quickreview");
+      mkdirSync(join(installed, "assets", "agents"), { recursive: true });
+      mkdirSync(join(installed, "dist", "src"), { recursive: true });
+      expect(assetRootFrom(join(installed, "dist", "src"))).toBe(join(installed, "assets"));
+      const repo = join(t, "repo");
+      for (const d of ["agents", "prompts", "packages/pi-plugin/src/engine"])
+        mkdirSync(join(repo, d), { recursive: true });
+      expect(assetRootFrom(join(repo, "packages/pi-plugin/src/engine"))).toBe(repo);
+      // A pack in the checkout leaves a frozen, gitignored copy in the
+      // package's assets/ (no extensions/, edits after the pack missing); the
+      // checkout's own root still wins over it.
+      // MUTATION: look for assets/agents before the checkout — this fails.
+      mkdirSync(join(repo, "packages/pi-plugin/assets/agents"), { recursive: true });
+      mkdirSync(join(repo, "packages/pi-plugin/dist/src"), { recursive: true });
+      writeFileSync(join(repo, "packages/pi-plugin/package.json"), "{}\n");
+      expect(assetRootFrom(join(repo, "packages/pi-plugin/dist/src"))).toBe(repo);
+      // …reached through the workspace link under node_modules/ too
+      const link = join(repo, "node_modules", CORE_NAME);
+      mkdirSync(dirname(link), { recursive: true });
+      symlinkSync(join(repo, "packages/pi-plugin"), link);
+      expect(assetRootFrom(join(link, "dist", "src"))).toBe(repo);
+      // agents/ alone is not the data root: prompts/ must be beside it.
+      mkdirSync(join(t, "bare", "agents", "x"), { recursive: true });
+      expect(() => assetRootFrom(join(t, "bare", "agents", "x"))).toThrow(/asset root not found/);
+    } finally {
+      rmSync(t, { recursive: true, force: true });
+    }
   });
 });

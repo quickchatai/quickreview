@@ -20,7 +20,7 @@
 #     fresh 0700 directory under $RUNNER_TEMP, mounted at /run/qcr-in and named
 #     in QCR_GH_TOKEN_FILE. The token is in no `-e`, no `--env-file` and no
 #     argument list; the image reads it and unlinks it before any pi or bash
-#     child exists (src/ghcred.ts);
+#     child exists (packages/pi-plugin/src/ghcred.ts);
 #   - model keys by NAME only (docker reads the value from this environment).
 # The config is the image's own config.example.toml with two lines changed
 # (`gen_config`): `dry_run = false`, because the Action is a live reviewer on

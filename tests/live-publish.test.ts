@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { RoundProgressPublisher, roundProgressPath } from "../src/live/publish.js";
-import { progressLogPath } from "../src/round-progress.js";
+import { progressLogPath } from "@quickchatai/pi-quickreview/src/round-progress.js";
 import { eventsFromSession, mkReplayRoot, replay, type Replayed } from "./helpers/live-replay.js";
 
 const PR = 5409;

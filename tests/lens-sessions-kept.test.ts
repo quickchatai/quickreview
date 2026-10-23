@@ -11,10 +11,17 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { createBashGuard } from "../extensions/bash-guard.js";
-import { loadBuiltAgents } from "../src/engine/lens/registry.js";
-import { createLensRunner, type LensRunConfig } from "../src/engine/lens/runlens.js";
-import { LENS_SESSIONS_DIR, lensAgentsOf, lensSessionsOf } from "../src/engine/openable.js";
+import { createBashGuard } from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
+import { loadBuiltAgents } from "@quickchatai/pi-quickreview/src/engine/lens/registry.js";
+import {
+  createLensRunner,
+  type LensRunConfig,
+} from "@quickchatai/pi-quickreview/src/engine/lens/runlens.js";
+import {
+  LENS_SESSIONS_DIR,
+  lensAgentsOf,
+  lensSessionsOf,
+} from "@quickchatai/pi-quickreview/src/engine/openable.js";
 import { createHostRig, useOfflineGuard, type HostRig } from "./pi-canary/harness.js";
 
 useOfflineGuard();

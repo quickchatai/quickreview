@@ -1,16 +1,19 @@
 // The CLI's review home: where `qcr review` keeps each repo's delta history
 // and saved destination, `<state home>/review` (src/homes.ts). The store and
-// the destinations themselves are core (src/reviewstore.ts,
-// src/reviewdest.ts) and take the home as an argument; these are the same
+// the destinations themselves are core (packages/pi-plugin/src/reviewstore.ts,
+// packages/pi-plugin/src/reviewdest.ts) and take the home as an argument; these are the same
 // calls with the install's home filled in.
 import { join } from "node:path";
 import { stateHome, type InstallEnv } from "./homes.js";
-import { openReviewStoreIn, type ReviewStore } from "./reviewstore.js";
+import {
+  openReviewStoreIn,
+  type ReviewStore,
+} from "@quickchatai/pi-quickreview/src/reviewstore.js";
 import {
   loadDefaultDestinationsIn,
   saveDefaultDestinationsIn,
   type Destination,
-} from "./reviewdest.js";
+} from "@quickchatai/pi-quickreview/src/reviewdest.js";
 
 /** `<state home>/review`: the per-repo stores live under it. */
 export function reviewHome(env: InstallEnv = process.env): string {

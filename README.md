@@ -81,7 +81,7 @@ fresh install never posts anything.
 
 The lens catalogue with each lens's trigger and severity cap is in the
 [QuickReview report](bench/aacr/paper/quickreview.pdf) (§3); the selection
-code is `src/heuristics.ts` and `src/dispatch.ts`.
+code is `packages/pi-plugin/src/heuristics.ts` and `src/dispatch.ts`.
 
 ## Benchmarks
 

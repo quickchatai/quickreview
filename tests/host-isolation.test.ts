@@ -27,13 +27,13 @@ import { inventoryRow } from "./helpers/context-files.js";
 vi.stubEnv("QCR_CONFIG", join(import.meta.dirname, "fixtures", "config.toml"));
 
 const { runReviewCli } = await import("../src/reviewcli.js");
-const { runOneShot } = await import("../src/oneshot.js");
+const { runOneShot } = await import("@quickchatai/pi-quickreview/src/oneshot.js");
 const { HOST_HTTP_IDLE_TIMEOUT_MS, REVIEWER_STUB, hostSettings } =
   await import("../src/hostroute.js");
 const { benchConfig, buildBenchAgents, contextFor } = await import("../src/bench/runner.js");
 const { benchSettings } = await import("../src/bench/auth.js");
-const { DISABLED_REFRESH } = await import("../src/engine/auth.js");
-const { ecosystemFor } = await import("../src/ecosystem.js");
+const { DISABLED_REFRESH } = await import("@quickchatai/pi-quickreview/src/engine/auth.js");
+const { ecosystemFor } = await import("@quickchatai/pi-quickreview/src/ecosystem.js");
 
 const ROOT = realpathSync(resolve(import.meta.dirname, ".."));
 const tmp = realpathSync(mkdtempSync(join(tmpdir(), "host-isolation-")));

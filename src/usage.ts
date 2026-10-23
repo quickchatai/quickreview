@@ -10,7 +10,7 @@
 // session dir removed when they exit), so they leave no transcript anywhere
 // the walk reads; counting the main session alone undercounts a round many
 // times over. Their usage IS in the parent's transcript: the `subagent` / `launch_plan`
-// (or `lens` / `lens_wave`, src/lensresult.ts) tool result carries
+// (or `lens` / `lens_wave`, packages/pi-plugin/src/lensresult.ts) tool result carries
 // `details.results[]`, each child's model and its summed `usage` (input,
 // output, cacheRead, cost — native runSingleAgent). Each child counts there,
 // once (`childUsage`), surfaced via `children_included`. A lens-ledger line
@@ -26,14 +26,19 @@
 // skipped, never thrown.
 // The guard's TOKENISER — not its policy. The rules below stay an
 // independent implementation on purpose (see execViolationKind).
-import { isLensTool, ledgerLineFrom, lensIdOf, type LensLedgerLine } from "./lensresult.js";
+import {
+  isLensTool,
+  ledgerLineFrom,
+  lensIdOf,
+  type LensLedgerLine,
+} from "@quickchatai/pi-quickreview/src/lensresult.js";
 import {
   normalizeRedirections,
   opensUnmodelledQuoting,
   redirectTargets,
   sedWords,
   splitShellSegments,
-} from "../extensions/bash-guard.js";
+} from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
 
 export interface ModelUsage {
   in: number;
@@ -310,7 +315,7 @@ export function estimateUsd(
  *
  * What this is and is not. It is TELEMETRY: a durable event and an overseer
  * line, not a control. It is deliberately an INDEPENDENT implementation rather
- * than a call into `extensions/bash-guard.ts` — a shared implementation shares
+ * than a call into `packages/pi-plugin/extensions/bash-guard.ts` — a shared implementation shares
  * its blind spots, and the point of a second reader is that it fails
  * differently. It is coarse and high-recall by design: a false line costs an
  * operator ten seconds, a missing line costs the incident.
@@ -454,6 +459,8 @@ const POLICY_SURFACE_FILES = [
   "AGENTS.md",
   "CLAUDE.MD",
   "CLAUDE.md",
+  // a whole path, not a bare name: the review core's export map
+  "packages/pi-plugin/package.json",
 ] as const;
 const POLICY_SURFACE_DIRS = [
   "scripts",
@@ -1067,7 +1074,7 @@ function bashCommandsIn(value: unknown, out: string[]): void {
 }
 
 /** Tool names that write a file, as recorded in the transcript. Mirrors
- * WRITE_TOOLS in extensions/bash-guard.ts — deliberately broad. */
+ * WRITE_TOOLS in packages/pi-plugin/extensions/bash-guard.ts — deliberately broad. */
 const WRITE_TOOL_NAMES = new Set([
   "write",
   "edit",

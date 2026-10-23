@@ -1,4 +1,4 @@
-// The one-shot review runner (src/oneshot.ts): one `pi -p --mode json` main
+// The one-shot review runner (packages/pi-plugin/src/oneshot.ts): one `pi -p --mode json` main
 // session with the production round order on stdin, the findings rendered by
 // the production review renderer, one `--continue` when outputs are missing.
 // It takes a prepared tree, a file list, a target description and an output
@@ -28,9 +28,9 @@ vi.stubEnv(
   resolve(dirname(fileURLToPath(import.meta.url)), "fixtures", "config.toml"),
 );
 
-const { runOneShot } = await import("../src/oneshot.js");
+const { runOneShot } = await import("@quickchatai/pi-quickreview/src/oneshot.js");
 const { benchConfig } = await import("../src/bench/runner.js");
-const { ecosystemFor } = await import("../src/ecosystem.js");
+const { ecosystemFor } = await import("@quickchatai/pi-quickreview/src/ecosystem.js");
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "oneshot-"));

@@ -2,7 +2,7 @@
 // spec "Profile resolution" + "Interview mapping").
 //
 // VALIDATION IS THE DAEMON'S OWN. `checkProfile` resolves a profile through
-// every loader the daemon runs at boot (src/profiles.ts — the addenda pack,
+// every loader the daemon runs at boot (packages/pi-plugin/src/profiles.ts — the addenda pack,
 // the ecosystem, the per-lens tuning, the heuristics, the `[scan]` table —
 // and the addenda the tuning compiles into), so "valid here" means "boots
 // there". The same check serves a DIRECT edit (the operator's editor; the
@@ -52,8 +52,12 @@ import {
   PROFILES_DIR,
   type InstallEnv,
 } from "../install.js";
-import type { PostingPolicy } from "../postingpolicy.js";
-import { LENS_TUNING_KEYS, lensTuningAddenda, type LensTuning } from "../lenstuning.js";
+import type { PostingPolicy } from "@quickchatai/pi-quickreview/src/postingpolicy.js";
+import {
+  LENS_TUNING_KEYS,
+  lensTuningAddenda,
+  type LensTuning,
+} from "@quickchatai/pi-quickreview/src/lenstuning.js";
 import {
   loadProfileAddenda,
   loadProfileEcosystem,
@@ -62,7 +66,7 @@ import {
   loadProfilePosting,
   loadProfileScan,
   resolveProfileChain,
-} from "../profiles.js";
+} from "@quickchatai/pi-quickreview/src/profiles.js";
 
 /** Where profiles are looked up and written: the app checkout (the generic
  * examples) and the install environment the locator reads. */
@@ -130,7 +134,7 @@ export interface ProfileSummary {
   /** Lenses the heuristics extension adds predicates to. */
   heuristics: string[];
   scan: Partial<ScanConfig>;
-  /** The `[posting]` keys the chain sets (src/postingpolicy.ts); {} = today's posting. */
+  /** The `[posting]` keys the chain sets (packages/pi-plugin/src/postingpolicy.ts); {} = today's posting. */
   posting: Partial<PostingPolicy>;
 }
 

@@ -1,5 +1,5 @@
 {
-  "name": "quickreview",
+  "name": "@quickchatai/quickreview",
   "version": "1.0.8",
   "private": true,
   "//private": "kept deliberately: this repo is an application, not an npm library — the flag blocks an accidental `npm publish` and nothing in the toolchain depends on its absence",
@@ -11,12 +11,19 @@
     "//": "placeholder until the public repo exists (snapshot); update on first publish"
   },
   "type": "module",
+  "//workspaces": "The review core is its own package (packages/pi-plugin, the pi plugin). The app at the root declares it in dependencies at the exact workspace version, kept equal to this one's (tests/layers.test.ts), and npm links the workspace in its place.",
+  "workspaces": [
+    "packages/pi-plugin"
+  ],
+  "bin": {
+    "qcr": "bin/qcr.js"
+  },
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && node scripts/verify-dist.mjs",
-    "watch": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "build": "tsc -b && node scripts/verify-dist.mjs && node scripts/build-stamp.mjs",
+    "watch": "node scripts/tsc-watch.mjs -b --watch --preserveWatchOutput",
     "dev": "bash scripts/dev-tui.sh",
     "onboard": "bash scripts/qcr onboard",
     "test": "vitest run",
@@ -38,6 +45,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-ai": "1.3.0",
+    "@quickchatai/pi-quickreview": "1.0.8",
     "@earendil-works/pi-coding-agent": "1.3.0",
     "better-sqlite3": "13.0.3",
     "smol-toml": "1.8.0"

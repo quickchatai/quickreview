@@ -138,8 +138,12 @@ import {
 import { clearJudgeCase, judgeCase, judgeLabel, loadJudgements } from "./defectjudge.js";
 import { codexCommand } from "./codexcli.js";
 import { LENS_RUNTIME_KINDS, type EngineRuntimeKind, type LensRuntimeKind } from "../config.js";
-import type { Runtime } from "../engine/port.js";
-import { checkLensRuntime, parseRuntimeKind, selectRuntime } from "../engine/select.js";
+import type { Runtime } from "@quickchatai/pi-quickreview/src/engine/port.js";
+import {
+  checkLensRuntime,
+  parseRuntimeKind,
+  selectRuntime,
+} from "@quickchatai/pi-quickreview/src/engine/select.js";
 import {
   CASE_HOST_AUTH_STOP,
   exitWithParent,

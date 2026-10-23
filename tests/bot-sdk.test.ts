@@ -10,8 +10,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-coding-agent";
-import { lensTools } from "../extensions/lens.js";
-import { toPiTool, textResult } from "../extensions/pi-tool.js";
+import { lensTools } from "@quickchatai/pi-quickreview/extensions/lens.js";
+import { toPiTool, textResult } from "@quickchatai/pi-quickreview/extensions/pi-tool.js";
 import {
   BOT_BASH_ENV_ALLOW,
   GIT_CONFIG_PIN_NAMES,
@@ -20,15 +20,23 @@ import {
   botSdkRuntime,
   refuseGithubToken,
 } from "../src/engine/botsdk.js";
-import { LensWave } from "../src/engine/lens/wave.js";
-import { LENS_TOOL, LENS_WAVE_TOOL } from "../src/engine/lens/tool.js";
-import { buildBashEnv, DEFAULT_TOOLS, PiHost } from "../src/engine/pisdk.js";
-import type { SessionSpec } from "../src/engine/port.js";
-import type { RoundLensTools } from "../src/engine/roundsdk.js";
+import { LensWave } from "@quickchatai/pi-quickreview/src/engine/lens/wave.js";
+import { LENS_TOOL, LENS_WAVE_TOOL } from "@quickchatai/pi-quickreview/src/engine/lens/tool.js";
+import {
+  buildBashEnv,
+  DEFAULT_TOOLS,
+  PiHost,
+} from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import type { SessionSpec } from "@quickchatai/pi-quickreview/src/engine/port.js";
+import type { RoundLensTools } from "@quickchatai/pi-quickreview/src/engine/roundsdk.js";
 import { REVIEWER_STUB } from "../src/hostroute.js";
-import { liveRoundDir, LIVE_MAIN_FILE, readLiveEvents } from "../src/live/events.js";
+import {
+  liveRoundDir,
+  LIVE_MAIN_FILE,
+  readLiveEvents,
+} from "@quickchatai/pi-quickreview/src/live/events.js";
 import { roundProgressPath } from "../src/live/publish.js";
-import { parseRoundProgress } from "../src/round-progress.js";
+import { parseRoundProgress } from "@quickchatai/pi-quickreview/src/round-progress.js";
 import { sessionGitConfigPins } from "../src/sessions.js";
 import { EXEC_CORPUS } from "./helpers/exec-corpus.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";

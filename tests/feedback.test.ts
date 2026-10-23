@@ -22,7 +22,7 @@ import {
   type FeedbackEvent,
 } from "../src/feedback.js";
 import { opsDay } from "../src/eod.js";
-import { VALIDATE_PASS, buildAgents } from "../src/include.js";
+import { VALIDATE_PASS, buildAgents } from "@quickchatai/pi-quickreview/src/include.js";
 import type { MemoryEntry, MemoryOp, MemoryStore, MemoryWriteResult } from "../src/memory/store.js";
 import { StateStore, type FeedbackSignalRow } from "../src/state.js";
 import { applyInterpretation, interpretEvent, type Interpretation } from "../src/webhook.js";

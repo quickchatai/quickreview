@@ -61,7 +61,7 @@
 import type Database from "better-sqlite3";
 import { performance } from "node:perf_hooks";
 import type { StateStore } from "../state.js";
-import { yieldToLoop } from "../yieldloop.js";
+import { yieldToLoop } from "@quickchatai/pi-quickreview/src/yieldloop.js";
 import {
   CHECKPOINT_WAL_BYTES,
   dayOf,

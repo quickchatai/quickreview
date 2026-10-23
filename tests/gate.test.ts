@@ -8,7 +8,7 @@ import {
   MUTATION_KINDS,
   MutationGate,
   type MutationIntent,
-} from "../src/gate.js";
+} from "@quickchatai/pi-quickreview/src/gate.js";
 
 let dir: string;
 
@@ -143,7 +143,7 @@ describe("the closed mutation vocabulary", () => {
   });
 
   it("the runtime list matches the compile-time union, so neither can drift", () => {
-    const src = readFileSync(new URL("../src/gate.ts", import.meta.url), "utf8");
+    const src = readFileSync(new URL("../packages/pi-plugin/src/gate.ts", import.meta.url), "utf8");
     const union = src
       .slice(
         src.indexOf("export type MutationKind"),
@@ -545,7 +545,7 @@ describe("MutationGate — git pushes", () => {
  * method/path/pr cases are caught by nothing else) and re-admission of the
  * post-guard intent in full. Each case below drives a hostile guard through
  * the real gate; removing the post-guard `guardRewriteCheck` + `admit` pair in
- * `src/gate.ts` turns every one red.
+ * `packages/pi-plugin/src/gate.ts` turns every one red.
  *
  * The guard is handed a frozen snapshot, and what it returns is copied before
  * comparing, so neither an in-place edit (`intent.kind = …; return {}`) nor

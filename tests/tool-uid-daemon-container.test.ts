@@ -29,11 +29,12 @@ import { nodeModulesMounts } from "./helpers/docker-node-modules.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(root, "dist", "src");
+const CORE_DIST = join(root, "packages", "pi-plugin", "dist", "src");
 const HARNESS = join(root, "tests", "helpers", "daemon-uid-harness.mjs");
 const NODE_IMAGE = "node:22-bookworm";
 const tmp = mkdtempSync(join(tmpdir(), "tool-uid-daemon-"));
 
-const hasDist = existsSync(join(DIST, "engine", "tooluid.js"));
+const hasDist = existsSync(join(CORE_DIST, "engine", "tooluid.js"));
 const hasDocker =
   spawnSync("docker", ["image", "inspect", NODE_IMAGE], { stdio: "ignore" }).status === 0;
 const docker = (args: string[], timeout = 120_000): ReturnType<typeof spawnSync> =>
@@ -140,6 +141,8 @@ function runBot(): { status: number | null; stderr: string; out: string } {
       "QCR_CONFIG=/opt/qcr/config.example.toml",
       "-e",
       `HARNESS_DIST=${DIST}`,
+      "-e",
+      `HARNESS_CORE_DIST=${CORE_DIST}`,
       "-e",
       "HARNESS_OUT=/out",
       "--tmpfs",

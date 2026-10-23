@@ -1,4 +1,4 @@
-// The cost estimator (priceReview in src/localreview.ts) against what reviews
+// The cost estimator (priceReview in packages/pi-plugin/src/localreview.ts) against what reviews
 // actually cost. The table is read from disk, not produced by a run: the final1
 // bench runs' per-case usage priced at the model's list prices
 // (tests/fixtures/review-cost/recorded.json).
@@ -13,7 +13,7 @@ import {
   hardStopFor,
   priceReview,
   type ReviewSettings,
-} from "../src/localreview.js";
+} from "@quickchatai/pi-quickreview/src/localreview.js";
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const table = JSON.parse(

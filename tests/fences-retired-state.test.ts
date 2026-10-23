@@ -14,6 +14,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { SRC_DIRS } from "./helpers/source-trees.js";
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -53,7 +54,7 @@ describe("[#10] the retired park's readers are counted, not assumed gone", () =>
 
   it("no module reads awaiting_human that is not on the record, and none reads it more often", () => {
     const found = new Map<string, number>();
-    for (const f of tsFiles(join(ROOT, "src"))) {
+    for (const f of SRC_DIRS.flatMap((d) => tsFiles(join(ROOT, d)))) {
       const n = (readFileSync(f, "utf8").match(/awaiting_human/g) ?? []).length;
       if (n > 0) found.set(relative(ROOT, f), n);
     }
@@ -80,7 +81,7 @@ describe("[#10] the retired park's readers are counted, not assumed gone", () =>
   });
 
   it("the total is the number the audit will be measured against", () => {
-    const total = tsFiles(join(ROOT, "src")).reduce(
+    const total = SRC_DIRS.flatMap((d) => tsFiles(join(ROOT, d))).reduce(
       (n, f) => n + (readFileSync(f, "utf8").match(/awaiting_human/g) ?? []).length,
       0,
     );

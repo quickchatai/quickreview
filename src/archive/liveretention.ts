@@ -18,7 +18,7 @@
 // the files stay: a person decides what an over-cap tree is worth.
 import { rmdir } from "node:fs/promises";
 import { join, relative } from "node:path";
-import { yieldToLoop } from "../yieldloop.js";
+import { yieldToLoop } from "@quickchatai/pi-quickreview/src/yieldloop.js";
 import { heldAsRecorded } from "./archivewrite.js";
 import { unlinkIfIdentity } from "./gzfile.js";
 import { identityOf, type FileIdentity } from "./fsutil.js";

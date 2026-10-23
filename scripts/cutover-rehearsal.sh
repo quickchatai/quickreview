@@ -188,7 +188,7 @@ fact build_sha "$IMG_SHA (HEAD $HEAD_FULL)"
 
 log "building the operator's CLI (dist) at HEAD"
 mkdir -p "/tmp/claude-$(id -u)/tsbi"
-(cd "$ROOT" && npx tsc -p tsconfig.json --tsBuildInfoFile "/tmp/claude-$(id -u)/tsbi/cutover-rehearsal.tsbuildinfo" >"$LOGS/tsc.log" 2>&1 && node scripts/verify-dist.mjs >>"$LOGS/tsc.log" 2>&1) \
+(cd "$ROOT" && npx tsc -b packages/pi-plugin && npx tsc -p tsconfig.json --tsBuildInfoFile "/tmp/claude-$(id -u)/tsbi/cutover-rehearsal.tsbuildinfo" >"$LOGS/tsc.log" 2>&1 && node scripts/verify-dist.mjs >>"$LOGS/tsc.log" 2>&1) \
   || { tail -20 "$LOGS/tsc.log" >&2; die "tsc failed"; }
 
 # ---- the registry, and both images pushed ------------------------------------------------------------

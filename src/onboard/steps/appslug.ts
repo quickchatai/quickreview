@@ -33,7 +33,7 @@
 // refuses an edit naming `dry_run` however it is spelled. The only onboarding
 // step that writes that flag is golive.ts, and only on an explicit
 // confirmation after a completed proof.
-import { mintAppJwt } from "../../githubAuth.js";
+import { mintAppJwt } from "@quickchatai/pi-quickreview/src/githubAuth.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 import {
   configPath,

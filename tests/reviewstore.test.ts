@@ -1,4 +1,4 @@
-// The review store (src/reviewstore.ts): one directory per repo under the
+// The review store (packages/pi-plugin/src/reviewstore.ts): one directory per repo under the
 // install's state home, keyed by origin owner/name plus the root commit, with
 // a one-time copy of what the git dir held before. Real throwaway repos, temp
 // XDG homes (tests/helpers/install-env.ts), no network, no model.
@@ -16,13 +16,18 @@ import {
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { repoKey } from "../src/reviewstore.js";
+import { repoKey } from "@quickchatai/pi-quickreview/src/reviewstore.js";
 import {
   loadDefaultDestinations,
   openReviewStore,
   saveDefaultDestinations,
 } from "../src/reviewhome.js";
-import { branchTargetKey, emptyState, loadState, saveState } from "../src/reviewstate.js";
+import {
+  branchTargetKey,
+  emptyState,
+  loadState,
+  saveState,
+} from "@quickchatai/pi-quickreview/src/reviewstate.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "reviewstore-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));

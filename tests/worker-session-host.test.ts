@@ -15,7 +15,7 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { readLedgerCarry } from "../src/ledgercarry.js";
+import { readLedgerCarry } from "@quickchatai/pi-quickreview/src/ledgercarry.js";
 import { recoverPrForOperator } from "../src/operator-recovery.js";
 import { newestSessionFile } from "../src/sessionjsonl.js";
 import { AUTHOR_REPLY_WAKE_REASON, StateStore } from "../src/state.js";
@@ -24,8 +24,8 @@ import {
   roundPromptMarker,
   stampPrompt,
   type RoundOrder,
-} from "../src/types.js";
-import { sessionCommandMarker } from "../src/session-command.js";
+} from "@quickchatai/pi-quickreview/src/types.js";
+import { sessionCommandMarker } from "@quickchatai/pi-quickreview/src/session-command.js";
 import {
   HeldWakeHandoff,
   flushHeldWakes,

@@ -52,7 +52,7 @@
 // This is the discipline the codebase already has twice — `[check this]`
 // inline comments and the `### For a human to double-check` review section
 // both hand a person a small, minutes-verifiable job beside a finished verdict
-// (see `src/severity.ts`). Escalation is that mechanism WITH A NAMED
+// (see `packages/pi-plugin/src/severity.ts`). Escalation is that mechanism WITH A NAMED
 // RECIPIENT, not a new one, and the rendered text deliberately reads like
 // them.
 //
@@ -98,10 +98,10 @@ import { createHash } from "node:crypto";
 import { GitHubRequestError } from "./github.js";
 import type { EscalationRecoveryRow, StateStore } from "./state.js";
 import type { EscalationConfig, EscalationRule, EscalationSeverityFloor } from "./config.js";
-import { codePath } from "./codespan.js";
-import { globBody } from "./glob.js";
-import { severityRank } from "./severityrank.js";
-import type { GateResult } from "./gate.js";
+import { codePath } from "@quickchatai/pi-quickreview/src/codespan.js";
+import { globBody } from "@quickchatai/pi-quickreview/src/glob.js";
+import { severityRank } from "@quickchatai/pi-quickreview/src/severityrank.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 
 // ---- what to look at ------------------------------------------------------
 
@@ -652,7 +652,7 @@ export function evaluateEscalationRules(
 // ---- the rendered note ----------------------------------------------------
 
 /** The marker every escalation comment opens with — one grammar, greppable,
- * and never confusable with the three finding markers in `src/severity.ts`. */
+ * and never confusable with the three finding markers in `packages/pi-plugin/src/severity.ts`. */
 export const ESCALATION_TAG = "[one thing to look at]";
 
 export interface EscalationRenderContext {
@@ -731,8 +731,11 @@ export function renderEscalationComment(
 // ---- the prompt-side half -------------------------------------------------
 
 // The targets a round order carries and the round-prompt block live in
-// src/escalationprompt.ts (the review core renders the prompt); re-exported.
-export { promptTargetsFor, renderEscalationPromptNote } from "./escalationprompt.js";
+// packages/pi-plugin/src/escalationprompt.ts (the review core renders the prompt); re-exported.
+export {
+  promptTargetsFor,
+  renderEscalationPromptNote,
+} from "@quickchatai/pi-quickreview/src/escalationprompt.js";
 
 /** The most `escalations` entries one verdict file is read for. */
 const MAX_SESSION_ESCALATIONS = 10;

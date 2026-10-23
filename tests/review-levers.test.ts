@@ -26,10 +26,19 @@ import {
   SWEEP_PASS,
   sweepGroups,
   type PrFile,
-} from "../src/heuristics.js";
-import { addendaForPass, composeAddendum, splitModelSpec, VALIDATE_PASS } from "../src/include.js";
-import { DOWNGRADE_WORDS } from "../src/findingsrecord.js";
-import { renderPassPlan, renderRoundPrompt, roundTemplateFile } from "../src/templates.js";
+} from "@quickchatai/pi-quickreview/src/heuristics.js";
+import {
+  addendaForPass,
+  composeAddendum,
+  splitModelSpec,
+  VALIDATE_PASS,
+} from "@quickchatai/pi-quickreview/src/include.js";
+import { DOWNGRADE_WORDS } from "@quickchatai/pi-quickreview/src/findingsrecord.js";
+import {
+  renderPassPlan,
+  renderRoundPrompt,
+  roundTemplateFile,
+} from "@quickchatai/pi-quickreview/src/templates.js";
 import type { PrStateRow } from "../src/state.js";
 
 const fixture = readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8");

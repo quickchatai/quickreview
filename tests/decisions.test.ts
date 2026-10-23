@@ -3,7 +3,7 @@
 // pass-tests, the repeated-copy design finding and the regression-test
 // request. PR builds only; no benchmark names in prompts.
 import { describe, expect, it } from "vitest";
-import { addendaForPass, PASS_ADDENDA } from "../src/include.js";
+import { addendaForPass, PASS_ADDENDA } from "@quickchatai/pi-quickreview/src/include.js";
 
 const NO_BENCHMARK_NAMES =
   /qodo|martian|swe-?prbench|aacr|ghost|aspnetcore|firefox|tauri|prefect|dify|redis|pipecat|metaflow|spyder|cal\.com|keycloak|sentry|grafana|discourse|freecad|clickhouse|dbeaver|ollama|lvgl|electron|immich|ragflow|filament|kestra|browser-use|cherry/i;
@@ -73,7 +73,11 @@ describe("regression-test request on a bug fix", () => {
   });
 });
 
-import { behaviourDeltaGroups, behaviourDeltaRisk, type PrFile } from "../src/heuristics.js";
+import {
+  behaviourDeltaGroups,
+  behaviourDeltaRisk,
+  type PrFile,
+} from "@quickchatai/pi-quickreview/src/heuristics.js";
 
 const file = (patch: string | undefined, extra: Partial<PrFile> = {}): PrFile =>
   ({
@@ -161,7 +165,10 @@ import { readFileSync as readFile } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { parseConfig, type Config } from "../src/config.js";
 import { buildPassPlan } from "../src/dispatch.js";
-import { detectLoosenedAssertions, loosenedReason } from "../src/loosenedtests.js";
+import {
+  detectLoosenedAssertions,
+  loosenedReason,
+} from "@quickchatai/pi-quickreview/src/loosenedtests.js";
 import type { PrFileEntry } from "../src/github.js";
 
 const t = (filename: string, patch: string): PrFile => ({

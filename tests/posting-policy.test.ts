@@ -1,5 +1,5 @@
 // tests/posting-policy.test.ts — the profile's `[posting]` policy
-// (src/postingpolicy.ts; bench/aacr/ext/SNAPPY-PLAN.md): parse, validation,
+// (packages/pi-plugin/src/postingpolicy.ts; bench/aacr/ext/SNAPPY-PLAN.md): parse, validation,
 // inheritance, the shipped `snappy` profile, and the mechanical enforcement on
 // both routes — production assembly (src/posting.ts) and the benchmark export
 // (src/bench/benchposting.ts). The default's byte-identity is pinned in
@@ -10,8 +10,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseConfig, type Config } from "../src/config.js";
 import { buildRoundOrder } from "../src/dispatch.js";
-import { NONE_ECOSYSTEM } from "../src/ecosystem.js";
-import { isKnownVocabularyWord, parseFindingsRecord } from "../src/findingsrecord.js";
+import { NONE_ECOSYSTEM } from "@quickchatai/pi-quickreview/src/ecosystem.js";
+import {
+  isKnownVocabularyWord,
+  parseFindingsRecord,
+} from "@quickchatai/pi-quickreview/src/findingsrecord.js";
 import type { PrFileEntry } from "../src/github.js";
 import {
   configHome,
@@ -19,7 +22,7 @@ import {
   homeProfileLookup,
   type InstallEnv,
 } from "../src/install.js";
-import { applyProfileTuning } from "../src/lenstuning.js";
+import { applyProfileTuning } from "@quickchatai/pi-quickreview/src/lenstuning.js";
 import { assembleReview, type Finding } from "../src/posting.js";
 import {
   applyProfilePosting,
@@ -31,18 +34,18 @@ import {
   selectPosted,
   type PolicyView,
   type PostingPolicy,
-} from "../src/postingpolicy.js";
+} from "@quickchatai/pi-quickreview/src/postingpolicy.js";
 import {
   loadProfileAddenda,
   loadProfileLensTuning,
   loadProfilePosting,
   reservedAddendumIds,
-} from "../src/profiles.js";
+} from "@quickchatai/pi-quickreview/src/profiles.js";
 import { bodyPostedFindings, parseSessionComments } from "../src/bench/aacr.js";
 import { enforceBenchPosting, policeBenchOutput } from "../src/bench/benchposting.js";
 import { collectComments, runFingerprint } from "../src/bench/runner.js";
 import type { PrStateRow } from "../src/state.js";
-import { renderRoundPrompt } from "../src/templates.js";
+import { renderRoundPrompt } from "@quickchatai/pi-quickreview/src/templates.js";
 
 const sandbox = join(import.meta.dirname, "..");
 it("the handwritten route follows same_as through withheld leads and differently titled followers", () => {

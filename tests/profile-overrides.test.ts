@@ -1,5 +1,5 @@
 // Profile overrides of shipped agents and prompts, and the "customised" mark
-// (src/profileoverrides.ts): the user's named profile and the repo's `.qcr/`
+// (packages/pi-plugin/src/profileoverrides.ts): the user's named profile and the repo's `.qcr/`
 // (read from the BASE commit) may replace a shipped file; one replacement with
 // different bytes makes the run customised, none leaves it exactly as it was;
 // the repo profile can say less than the user's; nothing here writes a seed.
@@ -20,14 +20,17 @@ import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { parse as parseToml } from "smol-toml";
 import { parseConfig } from "../src/config.js";
-import { buildAgents } from "../src/include.js";
+import { buildAgents } from "@quickchatai/pi-quickreview/src/include.js";
 import {
   configHome,
   EXAMPLE_PROFILES,
   homeProfileLookup,
   type InstallEnv,
 } from "../src/install.js";
-import { loadProfileEcosystem, loadProfileLensTuning } from "../src/profiles.js";
+import {
+  loadProfileEcosystem,
+  loadProfileLensTuning,
+} from "@quickchatai/pi-quickreview/src/profiles.js";
 import {
   assessOverrides,
   customisedNote,
@@ -35,12 +38,12 @@ import {
   loadSeedManifest,
   overrideReader,
   resolveOverrides,
-} from "../src/profileoverrides.js";
+} from "@quickchatai/pi-quickreview/src/profileoverrides.js";
 import {
   assemblePostReview,
   QCR_CUSTOMISED_MARKER,
   QCR_VISIBLE_MARKER,
-} from "../src/reviewpost.js";
+} from "@quickchatai/pi-quickreview/src/reviewpost.js";
 
 const REPO_ROOT = resolve(import.meta.dirname, "..");
 const sha = (s: string): string => createHash("sha256").update(s).digest("hex");

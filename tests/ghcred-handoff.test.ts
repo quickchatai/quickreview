@@ -1,5 +1,5 @@
 // The GitHub token handoff without env [P6.5b, D39]. The caller writes the
-// token to a 0600 file in a fresh 0700 dir; src/ghcred.ts reads it once at
+// token to a 0600 file in a fresh 0700 dir; packages/pi-plugin/src/ghcred.ts reads it once at
 // startup, unlinks it and keeps it in Node memory only. Pinned here:
 //   - the read: once, unlinked before the content is in memory, the variable
 //     gone from env, a refusal (not a fallback) when the file cannot go;
@@ -36,7 +36,7 @@ import {
   resolveGithubCredential,
   stageHandoffToken,
   takeHandoffToken,
-} from "../src/ghcred.js";
+} from "@quickchatai/pi-quickreview/src/ghcred.js";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import bashGuard from "../extensions/cli/bash-guard.js";
 import { main } from "../src/cli.js";

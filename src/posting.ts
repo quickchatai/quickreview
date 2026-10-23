@@ -3,14 +3,14 @@
 // Everything here is pure assembly plus one gated submit. The summary format:
 // verdict line → lenses line → severity sections → the
 // "Start here" handoff guide on NEEDS_HUMAN → footer. Inline comments are anchor-
-// validated (src/anchors.ts) and capped at 50; anything stripped or overflowing
+// validated (packages/pi-plugin/src/anchors.ts) and capped at 50; anything stripped or overflowing
 // is appended to the body rather than dropped, and rather than failing the
 // whole call.
 //
 // There is deliberately no path here that retracts a posted review — the
-// never-retract invariant is structural (see src/gate.ts).
+// never-retract invariant is structural (see packages/pi-plugin/src/gate.ts).
 import type { GitHubAdapter } from "./github.js";
-import type { GateResult } from "./gate.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { StateStore } from "./state.js";
 import {
   firstSentence,
@@ -21,7 +21,7 @@ import {
   type PolicyClass,
   type PostingPolicy,
   type WithholdWord,
-} from "./postingpolicy.js";
+} from "@quickchatai/pi-quickreview/src/postingpolicy.js";
 import {
   checkAnchor,
   partitionByAnchor,
@@ -29,7 +29,7 @@ import {
   ANCHOR_REASON_TEXT,
   type AnchorRequest,
   type Side,
-} from "./anchors.js";
+} from "@quickchatai/pi-quickreview/src/anchors.js";
 import {
   ASK_HUMAN_TAG,
   DEFERRED_TAG,
@@ -42,8 +42,11 @@ import {
   type Reachability,
   type Severity,
   type Verdict,
-} from "./severity.js";
-import { INLINE_COMMENT_CAP, renderedFooter as reviewFooter } from "./reviewrender.js";
+} from "@quickchatai/pi-quickreview/src/severity.js";
+import {
+  INLINE_COMMENT_CAP,
+  renderedFooter as reviewFooter,
+} from "@quickchatai/pi-quickreview/src/reviewrender.js";
 
 // The inline cap and the footer are the live render route's, so the two
 // cannot drift.
@@ -107,7 +110,7 @@ export interface ReviewInput {
    */
   bot_login?: string;
   /**
-   * The profile's `[posting]` policy (src/postingpolicy.ts). Absent or
+   * The profile's `[posting]` policy (packages/pi-plugin/src/postingpolicy.ts). Absent or
    * all-default => the unpoliced assembly, byte for byte. Otherwise the findings are
    * cut to the policy BEFORE anchoring (blockers never) and what is cut is
    * returned as `withheld` for the findings record, never dropped silently.
@@ -123,7 +126,7 @@ export interface ReviewInput {
  * proven malicious or source-to-sink case, not routine directive prose. */
 export function directiveEscalationFiles(
   findings: readonly Finding[],
-  vocab?: import("./severity.js").DirectiveVocabulary,
+  vocab?: import("@quickchatai/pi-quickreview/src/severity.js").DirectiveVocabulary,
 ): string[] {
   const files: string[] = [];
   for (const f of findings) {

@@ -12,6 +12,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { EXTENSION_DIRS, SRC_DIRS, sourceSpecifiers } from "./helpers/source-trees.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const ROOT = join(import.meta.dirname, "..");
@@ -43,7 +44,7 @@ function tsFiles(dir: string): string[] {
   );
 }
 
-describe("[T8] every src/ module is reachable from a real entrypoint", () => {
+describe("[T8] every src/ module (the app's and the core's) is reachable from a real entrypoint", () => {
   /**
    * The modules nothing in production can reach, each with what it is
    * and who drives it. Set equality both ways: a new orphan fails, and a
@@ -56,7 +57,7 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
    */
   const NOT_REACHED_FROM_PRODUCTION: ReadonlyArray<{ file: string; why: string }> = [
     {
-      file: "src/engine/envmap.ts",
+      file: "packages/pi-plugin/src/engine/envmap.ts",
       why:
         "the table classifying every QCR_* and OPENVIKING_* name the extensions carry (P1.2). It is read " +
         "only by tests/extension-envmap.test.ts until the SDK session builder (P2) and the extension " +
@@ -151,11 +152,11 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
     "only the recorded modules are unreachable from wire.ts, cli.ts or an extension",
     { timeout: HEAVY_TIMEOUT_MS },
     () => {
-      const files = tsFiles(join(ROOT, "src"));
+      const files = SRC_DIRS.flatMap((d) => tsFiles(join(ROOT, d)));
       const importsOf = (f: string): string[] =>
-        [...stripComments(readFileSync(f, "utf8")).matchAll(/["'](\.[^"']+)\.js["']/g)]
-          .map((m) => join(f, "..", `${m[1]!}.ts`))
-          .filter((p) => files.includes(p));
+        sourceSpecifiers(ROOT, f, stripComments(readFileSync(f, "utf8"))).filter((p) =>
+          files.includes(p),
+        );
 
       // The roots: the two process entrypoints, the operator one-shots, and
       // whatever the pi extensions reach into. `bench/cli.ts` because the qcr-bench sandbox image's entrypoint
@@ -172,11 +173,8 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "src/loginrefresh/main.ts",
         "src/botworker.ts",
       ].map((p) => join(ROOT, p));
-      for (const f of tsFiles(join(ROOT, "extensions"))) {
-        for (const m of stripComments(readFileSync(f, "utf8")).matchAll(
-          /["'](\.[^"']+)\.js["']/g,
-        )) {
-          const p = join(f, "..", `${m[1]!}.ts`);
+      for (const f of EXTENSION_DIRS.flatMap((d) => tsFiles(join(ROOT, d)))) {
+        for (const p of sourceSpecifiers(ROOT, f, stripComments(readFileSync(f, "utf8")))) {
           if (files.includes(p)) roots.push(p);
         }
       }

@@ -29,13 +29,13 @@ allowed to execute).
 | One base clone + one worktree per PR | `src/worktrees.ts` |
 | Wake-file delivery inside pi (the overseer's and the companion's mailbox) | `extensions/inject-bridge.ts` |
 | Bridge readiness receipt (any tmux-hosted session) | `src/session-bridge.ts` |
-| Durable command marker | `src/session-command.ts` |
+| Durable command marker | `packages/pi-plugin/src/session-command.ts` |
 | Daemon-side reconciler over that slot | `src/session-command-supervisor.ts` |
-| Live lens progress (publisher / reader) | `src/live/publish.ts`, `src/round-progress.ts` |
-| Ledger survival across compaction | `extensions/ledger-pin.ts` |
-| Lens agent build + addendum registry | `src/include.ts` |
-| Prompt rendering | `src/templates.ts` |
-| The lens tool (`lens`, `lens_wave`) | `src/engine/lens/`, `extensions/lens.ts` |
+| Live lens progress (publisher / reader) | `src/live/publish.ts`, `packages/pi-plugin/src/round-progress.ts` |
+| Ledger survival across compaction | `packages/pi-plugin/extensions/ledger-pin.ts` |
+| Lens agent build + addendum registry | `packages/pi-plugin/src/include.ts` |
+| Prompt rendering | `packages/pi-plugin/src/templates.ts` |
+| The lens tool (`lens`, `lens_wave`) | `packages/pi-plugin/src/engine/lens/`, `packages/pi-plugin/extensions/lens.ts` |
 | Model tiers, session dir, fan-out cap | `config.example.toml` `[models]`, `[pi]`, `[engine]`; `src/config.ts` |
 
 ## Two session kinds, and only two
@@ -91,7 +91,7 @@ The extensions are listed by `extensionPaths()` and their order is load-bearing
 (pi registers handlers in load order):
 
 1. `extensions/inject-bridge.ts` — the wake channel.
-2. `extensions/ledger-pin.ts` — owns compaction.
+2. `packages/pi-plugin/extensions/ledger-pin.ts` — owns compaction.
 3. `extensions/muted-theme.ts` — colours only.
 4. `extensions/vendor/openviking-pi/index.ts` — memory tools, deliberately
    last, and the only extension here that is vendored rather than written
@@ -255,9 +255,9 @@ agent is busy.
 
 | Marker | Minted by | Shape | Read by |
 | --- | --- | --- | --- |
-| Round prompt | `stampRoundPrompt` (`src/types.ts`), appended to the rendered prompt at dispatch | `<!-- qcr-round: pr-<n> round-<k> -->` | `SessionHooks.roundPromptAccepted` |
-| Recheck nudge | `recheckPromptMarker` (`src/types.ts`) | `<!-- qcr-recheck: pr-<n> <fingerprint> -->` | `SessionHooks.wakeReceiptPresent` |
-| Durable command | `sessionCommandMarker` (`src/session-command.ts`), appended by the bridge at submit | `<!-- qcr-command:<id>:<sha256> -->` | the bridge's own `message_start` correlation, and the supervisor |
+| Round prompt | `stampRoundPrompt` (`packages/pi-plugin/src/types.ts`), appended to the rendered prompt at dispatch | `<!-- qcr-round: pr-<n> round-<k> -->` | `SessionHooks.roundPromptAccepted` |
+| Recheck nudge | `recheckPromptMarker` (`packages/pi-plugin/src/types.ts`) | `<!-- qcr-recheck: pr-<n> <fingerprint> -->` | `SessionHooks.wakeReceiptPresent` |
+| Durable command | `sessionCommandMarker` (`packages/pi-plugin/src/session-command.ts`), appended by the bridge at submit | `<!-- qcr-command:<id>:<sha256> -->` | the bridge's own `message_start` correlation, and the supervisor |
 
 `PiSessionManager.wakeReceiptPresent(pr, marker, sinceMs)` is the one reader.
 It walks the session's transcript directory, skips files older than the window,
@@ -363,7 +363,7 @@ writes `state/round-progress/pr-<n>.json`. It returns immediately when `QCR_PR`
 is absent, so the overseer publishes nothing. It never drives a session and
 never writes daemon state.
 
-`src/round-progress.ts` is the reader. `parseRoundProgress` validates an
+`packages/pi-plugin/src/round-progress.ts` is the reader. `parseRoundProgress` validates an
 untrusted sidecar hard — version, identity, monotonic milestones, per-agent
 started/finished coherence, unique execution ids — and returns `undefined` for
 anything malformed. `roundExecutionStage` classifies the parent as `unknown`,
@@ -379,7 +379,7 @@ A PR session maintains a fenced block beginning `LEDGER PR #<n> @ <sha>` — the
 running record of what the review has established. pi's compaction is
 token-driven and would summarise it away.
 
-`extensions/ledger-pin.ts` prevents that. On `turn_end` it extracts the newest
+`packages/pi-plugin/extensions/ledger-pin.ts` prevents that. On `turn_end` it extracts the newest
 ledger block and mirrors it to `state/ledgers/<session>.md` (only on change).
 On `session_before_compact` it returns a real `compaction`: pi's own
 default summary, made by calling the package's exported `compact()` with the
@@ -393,7 +393,7 @@ depends on the summariser.
 
 The daemon hands the ledger back too, without any pi API:
 every round order carries the mirrored block from `state/ledgers/pr-<n>.md`
-(`src/ledgercarry.ts`, bounded, the path named, rendered as
+(`packages/pi-plugin/src/ledgercarry.ts`, bounded, the path named, rendered as
 `{{ledger_note}}`), and the ledger's `SETTLED:` items become the order's
 `settled_digest`. No ledger file, or another PR's, means no section and an
 empty digest.
@@ -421,7 +421,7 @@ never types `/compact` into the pane.
 
 ## Prompts and rendering
 
-`src/templates.ts` renders every piece of prompt text the daemon hands pi. Its
+`packages/pi-plugin/src/templates.ts` renders every piece of prompt text the daemon hands pi. Its
 one contract: `render` substitutes `{{name}}` placeholders and **throws** on a
 placeholder it was given no value for (`UnknownPlaceholderError`). A supplied
 value the template does not use is fine — templates are edited independently of
@@ -430,7 +430,7 @@ the renderer — but a `{{…}}` reaching a model is treated as a bug.
 - **The system prompt**, substituted at session birth:
   `renderConversationSystemPrompt` (`prompts/conversation-system.md`, given the
   PR number, title and worktree). It also receives the identity variables
-  (`owner_name`, `repo`, `bot_login`) from `identityVars` in `src/include.ts`,
+  (`owner_name`, `repo`, `bot_login`) from `identityVars` in `packages/pi-plugin/src/include.ts`,
   which degrade to neutral role wording when the config leaves them empty.
 - **Round prompts**: `ROUND_TEMPLATE_FILES` maps each round type to
   `prompts/round-first.md`, `round-re-review.md` or `round-staleness.md`;
@@ -453,7 +453,7 @@ by `dispatchRound` — see [Receipts](#receipts-three-markers-one-question).
 
 The pass definitions under `agents/` are markdown files with YAML frontmatter,
 and they are not what pi reads. `buildAgents(srcDir, outDir, opts)` in
-`src/include.ts` compiles them into `state/agents/`, and the container
+`packages/pi-plugin/src/include.ts` compiles them into `state/agents/`, and the container
 entrypoints symlink `$HOME/.pi/agent/agents` at that directory so the subagent
 tool's default "user" discovery scope finds exactly the built variants.
 `src/wire.ts` runs the build once at daemon start, and rebuilds it when the
@@ -493,7 +493,7 @@ Most of `agents/pass-*.md`, and `prompts/pass-common.md`, are frozen seeds —
 `tests/seed-integrity.test.ts` enforces both the hashes and the rule that files
 we *do* own never sneak into that manifest. Every rule that binds pass
 behaviour is therefore delivered as an **addendum**: an entry in
-`PASS_ADDENDA` (`src/include.ts`) appended to the BUILT body, never written into
+`PASS_ADDENDA` (`packages/pi-plugin/src/include.ts`) appended to the BUILT body, never written into
 a seed. An entry declares `id`, `scope` and `text`; `scope` is `"all"`,
 `"lenses"` (every pass that produces findings, i.e. all but `pass-validate`), or
 an explicit list of pass names. **Declaration order is composition order**, so a
@@ -505,7 +505,7 @@ the same-day feedback addendum if there is one.
 
 One addendum is *derived* rather than written: `ALLOWED_COMMANDS_CLAUSE` renders
 the "Allowed commands" sentence from `ALLOWED_PROGRAMS` in
-`extensions/bash-guard.ts`, so the prompt cannot advertise a command the guard
+`packages/pi-plugin/extensions/bash-guard.ts`, so the prompt cannot advertise a command the guard
 has stopped admitting. See [the exec boundary](../exec-boundary.md).
 
 **This registry is the only sanctioned way to change pass behaviour.** Editing a
@@ -515,7 +515,7 @@ may ratify a reseed.
 
 ### Tiers
 
-`PassTier` (`src/types.ts`) is `terra-med` | `sol-med` | `sol-high`, ascending,
+`PassTier` (`packages/pi-plugin/src/types.ts`) is `terra-med` | `sol-med` | `sol-high`, ascending,
 with `PASS_TIER_ORDER` as the single place the order is written down.
 `tiersForPass(pass, riskPasses, validateTier)` decides the fan-out:
 
@@ -537,7 +537,7 @@ reader, but the runner ignores it. `splitModelSpec` is the parser.
 
 Lenses run through our own tool, `lens` (one or a parallel batch) and
 `lens_wave` (join the round's planned discovery wave), from
-`src/engine/lens/`; the companion loads the same code as `extensions/lens.ts`.
+`packages/pi-plugin/src/engine/lens/`; the companion loads the same code as `packages/pi-plugin/extensions/lens.ts`.
 Each lens is an SDK session of the process that hosts the round. pi's own
 subagent example and the glue that wrapped it (`extensions/subagents.ts`, with
 its `cwd` stripping, chunking and spawn patch) are retired: an SDK lens has no

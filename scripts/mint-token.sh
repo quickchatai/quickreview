@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # mint-token.sh — GitHub App installation token for the pi sessions' `gh` prefixing.
 #
-# Shell equivalent of src/githubAuth.ts:
+# Shell equivalent of packages/pi-plugin/src/githubAuth.ts:
 #   * RS256 app JWT, iat = now-60s, exp = iat+9min (≤10 min ceiling)
 #   * installation id resolved via GET /app/installations
 #   * POST /app/installations/{id}/access_tokens for the installation token

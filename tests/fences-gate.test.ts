@@ -17,8 +17,9 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { MUTATION_KINDS } from "../src/gate.js";
+import { MUTATION_KINDS } from "@quickchatai/pi-quickreview/src/gate.js";
 import { TYPECHECK_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
+import { SRC_DIRS } from "./helpers/source-trees.js";
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -41,6 +42,11 @@ function codeOf(path: string): string {
     .filter((l) => !/^\s*(\/\/|\*)/.test(l))
     .map((l) => l.replace(/\/\/.*$/, ""))
     .join("\n");
+}
+
+/** Every .ts under the app's src/ and the review core's (packages/pi-plugin/src). */
+function srcTs(): string[] {
+  return SRC_DIRS.flatMap((d) => tsFiles(join(ROOT, d)));
 }
 
 function allFiles(dir: string): string[] {
@@ -79,7 +85,7 @@ describe("no review-dismissing mutation can appear", () => {
    *
    * `supersede_own_review` is a declared kind whose sanctioned endpoint is
    * GitHub's dismissal endpoint. Nothing constructs it. So the claim is true
-   * of the executable path and false of the type — a reader of `src/gate.ts`
+   * of the executable path and false of the type — a reader of `packages/pi-plugin/src/gate.ts`
    * alone would conclude a dismissal is representable. This is what makes the
    * difference checkable.
    *
@@ -88,7 +94,7 @@ describe("no review-dismissing mutation can appear", () => {
    */
   it("supersede_own_review has no caller in src/ or scripts/", () => {
     const callers: string[] = [];
-    for (const f of [...tsFiles(join(ROOT, "src")), ...allFiles(join(ROOT, "scripts"))]) {
+    for (const f of [...srcTs(), ...allFiles(join(ROOT, "scripts"))]) {
       if (f.endsWith("/gate.ts")) continue; // the declaration, the kind list and the forceLive guard
       const text = readFileSync(f, "utf8");
       if (/kind:\s*["']supersede_own_review["']|supersede_own_review["']?\s*[,)]/.test(text)) {
@@ -113,7 +119,7 @@ describe("no review-dismissing mutation can appear", () => {
   it("no /dismissals path exists, and requested_reviewers has exactly one POST builder", () => {
     const dismissals: string[] = [];
     const reviewerPosts: string[] = [];
-    for (const f of [...tsFiles(join(ROOT, "src")), ...allFiles(join(ROOT, "scripts"))]) {
+    for (const f of [...srcTs(), ...allFiles(join(ROOT, "scripts"))]) {
       const text = readFileSync(f, "utf8");
       if (text.includes("/dismissals")) dismissals.push(f.slice(ROOT.length + 1));
       // A POST to that route, in either the adapter's or the shell's spelling.
@@ -154,7 +160,7 @@ describe("every process entrypoint that builds a gate installs its guards", () =
    */
   it("no entrypoint builds a live, unguarded MutationGate", () => {
     const offenders: string[] = [];
-    for (const f of tsFiles(join(ROOT, "src"))) {
+    for (const f of srcTs()) {
       const text = codeOf(f);
       const isEntrypoint = /process\.argv\[1\]|import\.meta\.main/.test(text);
       if (!isEntrypoint) continue;

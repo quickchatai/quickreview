@@ -46,7 +46,7 @@ import {
   roundExecutionStage,
   type LiveAgentProgress,
   type RoundProgressSnapshot,
-} from "../round-progress.js";
+} from "@quickchatai/pi-quickreview/src/round-progress.js";
 import type { ConnectionDiagnosis } from "./sshtriage.js";
 import { FG, RESET, fmtAge, legendLine, osc8, prUrl, stateColor, verdictChip } from "./theme.js";
 

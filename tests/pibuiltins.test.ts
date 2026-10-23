@@ -1,6 +1,6 @@
 // pi 0.99's built-in extensions (mcp, codemode, tool-search, llama.cpp) are
 // switched OFF on every surface we provision pi settings for — the reasons per
-// built-in are in src/pibuiltins.ts. This runs each entrypoint's REAL settings
+// built-in are in packages/pi-plugin/src/pibuiltins.ts. This runs each entrypoint's REAL settings
 // merge (the `node <<'PI_EXT_MERGE'` heredoc, extracted verbatim) against a
 // scratch HOME, so it pins behaviour, not spelling: a merge that drops the
 // disables or keeps a `+builtin:mcp` an older volume carried goes red here.
@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { benchSettings } from "../src/bench/auth.js";
-import { PI_DISABLED_BUILTINS, PI_TUI_MODE } from "../src/pibuiltins.js";
+import { PI_DISABLED_BUILTINS, PI_TUI_MODE } from "@quickchatai/pi-quickreview/src/pibuiltins.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const VM_GUARD = "/opt/quickreview/sandbox/extensions/cli/bash-guard.ts";

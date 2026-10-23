@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { planLaunch } from "../src/engine/lens/launch-plan.js";
+import { planLaunch } from "@quickchatai/pi-quickreview/src/engine/lens/launch-plan.js";
 import { parseConfig, type Config } from "../src/config.js";
 import {
   buildPassPlan,
@@ -20,16 +20,16 @@ import {
   optionalOrderOf,
   planFollowUp,
 } from "../src/dispatch.js";
-import { DJANGO_ECOSYSTEM } from "../src/ecosystem.js";
+import { DJANGO_ECOSYSTEM } from "@quickchatai/pi-quickreview/src/ecosystem.js";
 import type { PrFileEntry } from "../src/github.js";
-import { SWEEP_PASS } from "../src/heuristics.js";
-import { normalizeSweepClaim, sweepStatusOf } from "../src/sweepstatus.js";
+import { SWEEP_PASS } from "@quickchatai/pi-quickreview/src/heuristics.js";
+import { normalizeSweepClaim, sweepStatusOf } from "@quickchatai/pi-quickreview/src/sweepstatus.js";
 import {
   renderExtentNote,
   renderExtentVerdictNote,
   renderSweepDecisionNote,
-} from "../src/templates.js";
-import type { PassPlanEntry, RoundOrder } from "../src/types.js";
+} from "@quickchatai/pi-quickreview/src/templates.js";
+import type { PassPlanEntry, RoundOrder } from "@quickchatai/pi-quickreview/src/types.js";
 import { normalizeExtentClaim, validateVerdict } from "../src/verdicts.js";
 import type { PrOwnedDeltaFile } from "../src/worktrees.js";
 

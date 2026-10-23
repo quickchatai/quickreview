@@ -19,7 +19,11 @@
 // Convention (setup.ts): every tool answers a refusal as its result, never a
 // throw.
 import { dismissedLine } from "../src/setup/presentation.js";
-import { textResult as text, refusedResult as refused, type QcrTool } from "./pi-tool.js";
+import {
+  textResult as text,
+  refusedResult as refused,
+  type QcrTool,
+} from "@quickchatai/pi-quickreview/extensions/pi-tool.js";
 import {
   MAX_PATTERNS_PER_SCAN,
   MEMORY_TEXT_MAX,

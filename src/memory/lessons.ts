@@ -37,15 +37,15 @@
 //   * `#convention #corpus topic=… source=…` (corpus conventions).
 //
 // A leaf: the tag parsers and the lens vocabulary, nothing engine-specific.
-import { canonicalLensIds } from "../lensids.js";
-import { ALL_PASSES } from "../passes.js";
+import { canonicalLensIds } from "@quickchatai/pi-quickreview/src/lensids.js";
+import { ALL_PASSES } from "@quickchatai/pi-quickreview/src/passes.js";
 import { IMPORT_TAG, parseEventTags, parseHashTags } from "./eventtags.js";
-import { LESSON_KINDS, type LessonKind } from "../memoryport.js";
+import { LESSON_KINDS, type LessonKind } from "@quickchatai/pi-quickreview/src/memoryport.js";
 
 /** The hash tag a typed lesson's header opens with. */
 export const LESSON_TAG = "lesson";
 
-// The kinds are the delivery's vocabulary too (src/memoryport.ts).
+// The kinds are the delivery's vocabulary too (packages/pi-plugin/src/memoryport.ts).
 export { LESSON_KINDS, type LessonKind };
 
 /** A lesson's class: the slug the learner clusters candidates by

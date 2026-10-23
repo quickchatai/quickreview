@@ -83,8 +83,11 @@ RUN chmod 0755 /usr/local/bin/entrypoint.sh && chmod 0644 /usr/local/lib/qcr/mem
 # user reads it and never writes it. The list is src/appstamp.ts BAKED_PATHS.
 WORKDIR /opt/qcr
 COPY package.json package-lock.json /opt/qcr/
+# The review core's workspace manifest first: `npm ci` links the package.
+COPY packages/pi-plugin/package.json /opt/qcr/packages/pi-plugin/package.json
 RUN npm ci --omit=dev && npm cache clean --force
 COPY dist /opt/qcr/dist
+COPY packages/pi-plugin /opt/qcr/packages/pi-plugin
 COPY src /opt/qcr/src
 COPY extensions /opt/qcr/extensions
 COPY agents /opt/qcr/agents

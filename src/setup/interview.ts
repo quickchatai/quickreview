@@ -13,7 +13,7 @@
 // priority — that is how "covers the four points" is a property of the tool
 // rather than a hope about the conversation.
 //
-// The table owns four keys of `[lenses.<pass>]` (src/lenstuning.ts) — `enabled`,
+// The table owns four keys of `[lenses.<pass>]` (packages/pi-plugin/src/lenstuning.ts) — `enabled`,
 // `min_tier`, `effort`, `max_severity` — on every lens a concern names, and
 // nothing else: `emphasis` is the companion's words, `guide` is a drafted
 // style guide, and a lens no concern names is never touched. `normal` is the
@@ -22,7 +22,7 @@
 // one concern off never switches off a lens another concern still wants.
 //
 // Pure — no port, no clock, no disk.
-import type { LensTuning } from "../lenstuning.js";
+import type { LensTuning } from "@quickchatai/pi-quickreview/src/lenstuning.js";
 
 /** The four points every setup interview covers. */
 export const FIXED_POINTS = [

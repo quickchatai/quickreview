@@ -16,17 +16,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
-import { PiHost, type PiHostOptions } from "../src/engine/pisdk.js";
+import { PiHost, type PiHostOptions } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import { benchSdkRuntime, judgeSdkRuntime } from "../src/engine/benchsdk.js";
-import { lensAgentsDir } from "../src/engine/lens/round-lens.js";
+import { lensAgentsDir } from "@quickchatai/pi-quickreview/src/engine/lens/round-lens.js";
 import {
   lensAgentsOf,
   lensSessionsOf,
   mainSessionOf,
   readOpenMeta,
-} from "../src/engine/openable.js";
-import { runRound } from "../src/engine/round.js";
-import { sdkRuntime } from "../src/engine/sdkruntime.js";
+} from "@quickchatai/pi-quickreview/src/engine/openable.js";
+import { runRound } from "@quickchatai/pi-quickreview/src/engine/round.js";
+import { sdkRuntime } from "@quickchatai/pi-quickreview/src/engine/sdkruntime.js";
 import { findSession } from "../src/opencli.js";
 import { pricedFaux } from "./helpers/priced-faux.js";
 import {
@@ -44,7 +44,7 @@ vi.stubEnv("QCR_CONFIG", FIXTURE_CONFIG);
 const { benchConfig, judgeSessionSpec, runFingerprint, runJudgeSession } =
   await import("../src/bench/runner.js");
 const { readJudgeEvents } = await import("../src/bench/defectjudge.js");
-const { ecosystemFor } = await import("../src/ecosystem.js");
+const { ecosystemFor } = await import("@quickchatai/pi-quickreview/src/ecosystem.js");
 
 useOfflineGuard();
 

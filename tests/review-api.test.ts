@@ -1,4 +1,4 @@
-// review() and preview() (src/reviewapi.ts): the local review as a typed call,
+// review() and preview() (packages/pi-plugin/src/reviewapi.ts): the local review as a typed call,
 // driven directly over pi-ai's faux provider on the real SDK runtime. The
 // caller hands in every path, the config and the ports, so the call needs no
 // $HOME, no cwd and no config file, returns the versioned JSON and the
@@ -25,12 +25,12 @@ import {
   type ReviewOptions,
   type ReviewRuntime,
   type ReviewStarted,
-} from "../src/reviewapi.js";
-import { parseCoreConfig } from "../src/reviewconfig.js";
-import { contextFrom } from "../src/engine/context.js";
-import { reviewSdkRuntime } from "../src/engine/reviewsdk.js";
-import { PiHost } from "../src/engine/pisdk.js";
-import type { Runtime } from "../src/engine/port.js";
+} from "@quickchatai/pi-quickreview/src/reviewapi.js";
+import { parseCoreConfig } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import { contextFrom } from "@quickchatai/pi-quickreview/src/engine/context.js";
+import { reviewSdkRuntime } from "@quickchatai/pi-quickreview/src/engine/reviewsdk.js";
+import { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import type { Runtime } from "@quickchatai/pi-quickreview/src/engine/port.js";
 import { pricedFaux } from "./helpers/priced-faux.js";
 import { validate } from "./helpers/json-schema-lite.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";

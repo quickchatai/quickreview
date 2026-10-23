@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { CheckSummary } from "../src/cigate.js";
+import type { CheckSummary } from "@quickchatai/pi-quickreview/src/cigate.js";
 import { parseConfig, type Config } from "../src/config.js";
 import type { PrRef, StalePr } from "../src/github.js";
 import { roundTypeFor } from "../src/dispatch.js";
-import { recheckPromptMarker } from "../src/types.js";
+import { recheckPromptMarker } from "@quickchatai/pi-quickreview/src/types.js";
 import {
   reconcileOnce,
   reconcileOrphanedRounds,
@@ -14,7 +14,7 @@ import {
 } from "../src/reconcile.js";
 import { applyEvent } from "../src/statemachine.js";
 import { StateStore, type PrLifecycleState } from "../src/state.js";
-import type { SessionHooks } from "../src/types.js";
+import type { SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const cfg: Config = parseConfig(

@@ -5,12 +5,14 @@
 // model. Everything it learns goes to $HARNESS_OUT, for the test to read.
 //
 //   HARNESS_DIST   the built tree's dist/src
+//   HARNESS_CORE_DIST  the review core's, packages/pi-plugin/dist/src
 //   HARNESS_OUT    a writable directory for the results
 //   HARNESS_ROOT   the production tree (QCR_SANDBOX_ROOT)
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const dist = process.env.HARNESS_DIST;
+const core = process.env.HARNESS_CORE_DIST;
 const out = process.env.HARNESS_OUT;
 const write = (name, value) =>
   writeFileSync(
@@ -18,7 +20,7 @@ const write = (name, value) =>
     typeof value === "string" ? value : JSON.stringify(value, null, 1),
   );
 
-const { takeHandoffToken, handedToken } = await import(`${dist}/ghcred.js`);
+const { takeHandoffToken, handedToken } = await import(`${core}/ghcred.js`);
 takeHandoffToken();
 write("holder.json", {
   pid: process.pid,
@@ -28,8 +30,8 @@ write("holder.json", {
 // what this process's env names, for "QCR_ALLOW_SHARED_TOOL_UID is nowhere"
 write("node-env-names.json", Object.keys(process.env).sort());
 
-const { reviewSdkRuntime } = await import(`${dist}/engine/reviewsdk.js`);
-const { PiHost } = await import(`${dist}/engine/pisdk.js`);
+const { reviewSdkRuntime } = await import(`${core}/engine/reviewsdk.js`);
+const { PiHost } = await import(`${core}/engine/pisdk.js`);
 const { fauxProvider, fauxAssistantMessage, fauxToolCall } = await import("@earendil-works/pi-ai");
 
 const base = mkdtempSync("/tmp/qcr-tu-");

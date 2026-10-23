@@ -21,12 +21,12 @@ import {
   type DispatchAdapter,
   type DispatchDeps,
 } from "../src/dispatch.js";
-import { DJANGO_ECOSYSTEM } from "../src/ecosystem.js";
-import { renderPassPlan } from "../src/templates.js";
-import type { GateResult } from "../src/gate.js";
+import { DJANGO_ECOSYSTEM } from "@quickchatai/pi-quickreview/src/ecosystem.js";
+import { renderPassPlan } from "@quickchatai/pi-quickreview/src/templates.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
 import { StateStore } from "../src/state.js";
-import type { RoundOrder, SessionHooks } from "../src/types.js";
+import type { RoundOrder, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import type { PrOwnedDelta, PrOwnedDeltaFile } from "../src/worktrees.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 

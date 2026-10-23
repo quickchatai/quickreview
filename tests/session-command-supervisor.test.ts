@@ -3,14 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
-import { sessionCommandMarker } from "../src/session-command.js";
+import { sessionCommandMarker } from "@quickchatai/pi-quickreview/src/session-command.js";
 import { SessionCommandSupervisor } from "../src/session-command-supervisor.js";
 import { StateStore } from "../src/state.js";
 import type {
   RoundRecoveryDisposition,
   SessionCommandObservation,
   SessionHooks,
-} from "../src/types.js";
+} from "@quickchatai/pi-quickreview/src/types.js";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
@@ -173,7 +173,8 @@ function supervisor(
     async () => "requeued",
   ),
   cfg = baseCfg,
-  progress?: () => import("../src/round-progress.js").RoundProgressSnapshot | undefined,
+  progress?: () =>
+    import("@quickchatai/pi-quickreview/src/round-progress.js").RoundProgressSnapshot | undefined,
 ) {
   return {
     supervisor: new SessionCommandSupervisor({
@@ -1777,7 +1778,7 @@ describe("parent finalize waits for an active parent run", () => {
     });
     const progressWith =
       (parent: "active" | "settled") =>
-      (): import("../src/round-progress.js").RoundProgressSnapshot => ({
+      (): import("@quickchatai/pi-quickreview/src/round-progress.js").RoundProgressSnapshot => ({
         version: 2,
         pr: seeded.pr,
         session: `pr-${seeded.pr}`,

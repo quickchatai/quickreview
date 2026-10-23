@@ -7,6 +7,7 @@
 // helpers it imports.
 //
 //   HARNESS_DIST   the built tree's dist/src
+//   HARNESS_CORE_DIST  the review core's, packages/pi-plugin/dist/src
 //   HARNESS_OUT    a writable directory for the results
 //   HARNESS_ROOT   the repo (read-only)
 import { spawn } from "node:child_process";
@@ -22,6 +23,7 @@ import {
 import { join } from "node:path";
 
 const dist = process.env.HARNESS_DIST;
+const core = process.env.HARNESS_CORE_DIST;
 const out = process.env.HARNESS_OUT;
 const repo = process.env.HARNESS_ROOT;
 process.env.QCR_CONFIG = join(repo, "tests", "fixtures", "config.toml");
@@ -37,8 +39,8 @@ const { startFakeOpenAI, writeFakeProvider, FAKE_MODEL } = await import(
 const { mkRoot, mkTree, FILES, TARGET } = await import(`${repo}/tests/helpers/round-rig.ts`);
 const { runDebugRound } = await import(`${dist}/engine/debugpi.js`);
 const { benchConfig } = await import(`${dist}/bench/runner.js`);
-const { ecosystemFor } = await import(`${dist}/ecosystem.js`);
-const { mainSessionOf, lensSessionsOf } = await import(`${dist}/engine/openable.js`);
+const { ecosystemFor } = await import(`${core}/ecosystem.js`);
+const { mainSessionOf, lensSessionsOf } = await import(`${core}/engine/openable.js`);
 const { REVIEWER_STUB, HOST_CONTEXT_STUB } = await import(`${dist}/hostroute.js`);
 
 write("holder.json", { uid: process.getuid(), toolUid: process.env.QCR_TOOL_UID ?? null });

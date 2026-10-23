@@ -59,7 +59,7 @@ type BenchCase = import("../src/bench/aacr.js").BenchCase;
 type PrefetchMeta = import("../src/bench/aacr.js").PrefetchMeta;
 const { prefetchCase, storeDir } = await import("../src/bench/prefetch.js");
 const { benchConfig, changedFiles, reviewCase } = await import("../src/bench/runner.js");
-const { ecosystemFor } = await import("../src/ecosystem.js");
+const { ecosystemFor } = await import("@quickchatai/pi-quickreview/src/ecosystem.js");
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(here, "..");

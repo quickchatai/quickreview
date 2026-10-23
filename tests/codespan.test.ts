@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { codePath } from "../src/codespan.js";
+import { codePath } from "@quickchatai/pi-quickreview/src/codespan.js";
 
 /** CommonMark's code-span content rule: strip the fence, then one space from
  * each end when the content both starts and ends with one and is not all

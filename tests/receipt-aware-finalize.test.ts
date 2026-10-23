@@ -32,13 +32,13 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
-import type { GateResult } from "../src/gate.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
-import type { RoundProgressSnapshot } from "../src/round-progress.js";
+import type { RoundProgressSnapshot } from "@quickchatai/pi-quickreview/src/round-progress.js";
 import { SessionCommandSupervisor } from "../src/session-command-supervisor.js";
-import { standingReview } from "../src/standing-review.js";
+import { standingReview } from "@quickchatai/pi-quickreview/src/standing-review.js";
 import { StateStore } from "../src/state.js";
-import type { SessionHooks } from "../src/types.js";
+import type { SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
 import { createHash } from "node:crypto";
 

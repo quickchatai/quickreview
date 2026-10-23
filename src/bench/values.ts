@@ -1,6 +1,6 @@
 // Shared scalar readings for benchmark adapters. Artifact traversal stays with each adapter.
-// finiteNumber and usageCost are core (src/pricing.ts): a round prices itself.
-export { finiteNumber, usageCost } from "../pricing.js";
+// finiteNumber and usageCost are core (packages/pi-plugin/src/pricing.ts): a round prices itself.
+export { finiteNumber, usageCost } from "@quickchatai/pi-quickreview/src/pricing.js";
 
 export function integerOrNull(value: unknown): number | null {
   if (typeof value === "number" && Number.isInteger(value)) return value;

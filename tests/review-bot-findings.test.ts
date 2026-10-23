@@ -1,9 +1,13 @@
 // The bot's posted findings on a PR, read through the resolved credential and
-// skipped (src/reviewbotfindings.ts). GitHub is a stub; no network.
+// skipped (packages/pi-plugin/src/reviewbotfindings.ts). GitHub is a stub; no network.
 
 import { describe, expect, it } from "vitest";
-import { findingMarker } from "../src/findingkey.js";
-import { fetchBotFindings, skipPosted, type PostedFinding } from "../src/reviewbotfindings.js";
+import { findingMarker } from "@quickchatai/pi-quickreview/src/findingkey.js";
+import {
+  fetchBotFindings,
+  skipPosted,
+  type PostedFinding,
+} from "@quickchatai/pi-quickreview/src/reviewbotfindings.js";
 
 const comment = (o: { path: string; line: number | null; body: string }) => ({
   path: o.path,

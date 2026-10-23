@@ -17,7 +17,7 @@ import {
   CHECK_THIS_RE,
   DEFERRED_RE,
   postTag,
-} from "../src/severity.js";
+} from "@quickchatai/pi-quickreview/src/severity.js";
 
 const PATCH = `@@ -1,4 +1,8 @@
  ctx

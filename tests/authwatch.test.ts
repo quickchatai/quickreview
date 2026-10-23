@@ -1,4 +1,4 @@
-// Passive pi auth-failure detection (src/authwatch.ts) + its surfaces:
+// Passive pi auth-failure detection (packages/pi-plugin/src/authwatch.ts) + its surfaces:
 // status.json flag, wake-grade anomaly, and the TUI alert bridge. No smoke
 // calls: detection is purely observational over the session JSONLs pi
 // already writes.
@@ -20,7 +20,7 @@ import {
   PI_AUTH_ERROR_RE,
   PiAuthWatch,
   scanPiAuthErrors,
-} from "../src/authwatch.js";
+} from "@quickchatai/pi-quickreview/src/authwatch.js";
 import { anomalySeverity } from "../src/anomalies.js";
 import { buildStatusSnapshot, StateStore } from "../src/state.js";
 import { maybeWritePiAuthAlert } from "../src/tui/alerts.js";

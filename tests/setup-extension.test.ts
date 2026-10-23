@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { QcrTool, QcrToolResult } from "../extensions/pi-tool.js";
+import type { QcrTool, QcrToolResult } from "@quickchatai/pi-quickreview/extensions/pi-tool.js";
 import { EventEmitter } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
 import { PassThrough } from "node:stream";

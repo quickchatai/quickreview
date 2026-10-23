@@ -5,9 +5,12 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseConfig, REVIEW_DEFAULTS } from "../src/config.js";
-import { configAddenda } from "../src/include.js";
-import { renderDedupNote } from "../src/templates.js";
-import { CLUSTER_TOOL, readCandidates } from "../extensions/finding-clusters.js";
+import { configAddenda } from "@quickchatai/pi-quickreview/src/include.js";
+import { renderDedupNote } from "@quickchatai/pi-quickreview/src/templates.js";
+import {
+  CLUSTER_TOOL,
+  readCandidates,
+} from "@quickchatai/pi-quickreview/extensions/finding-clusters.js";
 
 const root = resolve(process.cwd());
 
@@ -63,12 +66,12 @@ describe("the validator rule", () => {
 describe("cluster_findings on both routes", () => {
   it("the daemon's PR sessions load it (sessions.ts extensionPaths)", () => {
     expect(readFileSync(join(root, "src/sessions.ts"), "utf8")).toMatch(
-      /join\(this\.root, "extensions", "finding-clusters\.ts"\)/,
+      /join\(this\.root, "packages", "pi-plugin", "extensions", "finding-clusters\.ts"\)/,
     );
   });
   it("the bench session loads it (round.ts session spec)", () => {
-    expect(readFileSync(join(root, "src/engine/round.ts"), "utf8")).toMatch(
-      /extensions: \[[^\]]*join\(root, "extensions", "finding-clusters\.ts"\)/,
+    expect(readFileSync(join(root, "packages/pi-plugin/src/engine/round.ts"), "utf8")).toMatch(
+      /extensions: \[[^\]]*join\(root, "packages", "pi-plugin", "extensions", "finding-clusters\.ts"\)/,
     );
   });
   it("answers groups for the validator, and reports malformed input instead of throwing", async () => {

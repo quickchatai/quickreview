@@ -41,8 +41,9 @@ const { prefetchCase, storeDir } = await import("../src/bench/prefetch.js");
 const { benchConfig, followUpOutcomeOf, prepareTree, renderCasePrompts } =
   await import("../src/bench/runner.js");
 const { benchDelta, benchPriorList } = await import("../src/bench/followup.js");
-const { ecosystemFor } = await import("../src/ecosystem.js");
-const { buildAgents, identityVars, PASS_ADDENDA } = await import("../src/include.js");
+const { ecosystemFor } = await import("@quickchatai/pi-quickreview/src/ecosystem.js");
+const { buildAgents, identityVars, PASS_ADDENDA } =
+  await import("@quickchatai/pi-quickreview/src/include.js");
 
 const exec = promisify(execFile);
 const tmp = mkdtempSync(join(tmpdir(), "bench-followup-"));

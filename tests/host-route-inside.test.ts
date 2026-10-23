@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { prepareHostRun } from "../src/hostroute.js";
-import { isInside } from "../src/pathinside.js";
+import { isInside } from "@quickchatai/pi-quickreview/src/pathinside.js";
 
 const tmp = realpathSync(mkdtempSync(join(tmpdir(), "host-inside-")));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));

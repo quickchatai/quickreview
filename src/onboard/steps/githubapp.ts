@@ -47,7 +47,7 @@ import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { isAbsolute, join } from "node:path";
 import type { Socket } from "node:net";
-import { mintAppJwt } from "../../githubAuth.js";
+import { mintAppJwt } from "@quickchatai/pi-quickreview/src/githubAuth.js";
 import { CHOICE_KEYS, REPO_SLUG_RE, botLoginFor } from "../choices.js";
 import { CONFIG_FILL_STEP_ID } from "./configfill.js";
 import { readTomlKey, secretsDirFor } from "./ingress.js";

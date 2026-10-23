@@ -31,13 +31,31 @@
     // `checkJs` stays off because the .mjs files are not written to the
     // strict settings above and would fail on their own terms.
     "allowJs": true,
-    "checkJs": false
+    "checkJs": false,
+    // The review core's package specifiers resolve to its SOURCES here, the
+    // way vitest.config.ts aliases them, so the suite is type-checked against
+    // the code it runs and never against a stale packages/pi-plugin/dist.
+    "paths": {
+      "@quickchatai/pi-quickreview/*": ["./packages/pi-plugin/*"]
+    }
   },
-  "include": ["tests/**/*.ts", "src/**/*.ts", "extensions/**/*.ts"],
+  "include": [
+    "tests/**/*.ts",
+    "src/**/*.ts",
+    "extensions/**/*.ts",
+    "packages/pi-plugin/src/**/*.ts",
+    "packages/pi-plugin/extensions/**/*.ts"
+  ],
   // `extensions/vendor/**` is VENDORED VERBATIM (rule 7's extension pin) — its
   // provenance is a byte-comparison against upstream, so an unused-parameter
   // cleanup in it would be a local modification we are forbidden to make. The
   // BUILD config still type-checks it under the shared strict settings; only
   // the unused-symbol rules added here are lifted.
-  "exclude": ["node_modules", "dist", "extensions/inline-bash.ts", "extensions/vendor"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "packages/*/dist",
+    "extensions/inline-bash.ts",
+    "extensions/vendor"
+  ]
 }

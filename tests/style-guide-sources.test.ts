@@ -15,18 +15,26 @@ import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { parseConfig, type Config } from "../src/config.js";
 import { buildPassPlan } from "../src/dispatch.js";
-import { NONE_ECOSYSTEM } from "../src/ecosystem.js";
+import { NONE_ECOSYSTEM } from "@quickchatai/pi-quickreview/src/ecosystem.js";
 import type { PrFileEntry } from "../src/github.js";
-import { PASS_ADDENDA, VALIDATE_PASS, buildAgents, composeAddendum } from "../src/include.js";
+import {
+  PASS_ADDENDA,
+  VALIDATE_PASS,
+  buildAgents,
+  composeAddendum,
+} from "@quickchatai/pi-quickreview/src/include.js";
 import { configHome, homeProfileLookup, type InstallEnv } from "../src/install.js";
 import {
   applyProfileTuning,
   lensModelOverrides,
   lensTuningAddenda,
   PROFILE_GUIDE_MAX_CHARS,
-} from "../src/lenstuning.js";
-import { loadProfileAddenda, loadProfileLensTuning } from "../src/profiles.js";
-import { findStyleGuide, SECTION_MIN_LINES } from "../src/styleguide.js";
+} from "@quickchatai/pi-quickreview/src/lenstuning.js";
+import {
+  loadProfileAddenda,
+  loadProfileLensTuning,
+} from "@quickchatai/pi-quickreview/src/profiles.js";
+import { findStyleGuide, SECTION_MIN_LINES } from "@quickchatai/pi-quickreview/src/styleguide.js";
 import { runFingerprint } from "../src/bench/runner.js";
 
 const sandbox = join(import.meta.dirname, "..");

@@ -1,4 +1,4 @@
-// `qcr review --to pr` end to end (src/reviewpost.ts via src/reviewcli.ts).
+// `qcr review --to pr` end to end (packages/pi-plugin/src/reviewpost.ts via src/reviewcli.ts).
 // A real throwaway git repo is the branch fixture; pi is a fake shell script
 // (no network, no model, no docker, no GitHub).
 
@@ -19,7 +19,7 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Destination } from "../src/reviewdest.js";
+import type { Destination } from "@quickchatai/pi-quickreview/src/reviewdest.js";
 
 vi.stubEnv(
   "QCR_CONFIG",
@@ -27,7 +27,7 @@ vi.stubEnv(
 );
 
 const { runReviewCli } = await import("../src/reviewcli.js");
-const { destinationChoices } = await import("../src/reviewdest.js");
+const { destinationChoices } = await import("@quickchatai/pi-quickreview/src/reviewdest.js");
 const { saveDefaultDestinations } = await import("../src/reviewhome.js");
 const { contextFor } = await import("../src/bench/runner.js");
 const { openReviewStore } = await import("../src/reviewhome.js");

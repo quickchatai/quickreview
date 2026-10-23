@@ -32,11 +32,11 @@
 // and request), the current run, and the rates measured from finished cases
 // (what later previews price with).
 import { buildPassPlan } from "../dispatch.js";
-import { DOUBT_WORDS } from "../doubtwords.js";
-import { VALIDATE_PASS } from "../include.js";
-import { findStyleGuide } from "../styleguide.js";
-import { findCiLinters } from "../lintconfig.js";
-import type { PassTier } from "../types.js";
+import { DOUBT_WORDS } from "@quickchatai/pi-quickreview/src/doubtwords.js";
+import { VALIDATE_PASS } from "@quickchatai/pi-quickreview/src/include.js";
+import { findStyleGuide } from "@quickchatai/pi-quickreview/src/styleguide.js";
+import { findCiLinters } from "@quickchatai/pi-quickreview/src/lintconfig.js";
+import type { PassTier } from "@quickchatai/pi-quickreview/src/types.js";
 import type { CaseOutcome, CaseRunner, Refusal, StateFs } from "./engine.js";
 import {
   bySeverity,

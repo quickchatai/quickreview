@@ -24,7 +24,7 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Destination } from "../src/reviewdest.js";
+import type { Destination } from "@quickchatai/pi-quickreview/src/reviewdest.js";
 
 vi.stubEnv(
   "QCR_CONFIG",
@@ -33,7 +33,7 @@ vi.stubEnv(
 
 const { runReviewCli, detachedCommand, detachedEntry } = await import("../src/reviewcli.js");
 const { contextFor } = await import("../src/bench/runner.js");
-const { findingMarker } = await import("../src/findingkey.js");
+const { findingMarker } = await import("@quickchatai/pi-quickreview/src/findingkey.js");
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "review-core-defects-"));

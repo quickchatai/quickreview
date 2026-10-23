@@ -21,7 +21,7 @@ import {
   SCAN_MODE_ANCHOR_ADDENDUM,
   addendaForPass,
   buildAgents,
-} from "../src/include.js";
+} from "@quickchatai/pi-quickreview/src/include.js";
 import { homeProfileLookup, type InstallEnv } from "../src/install.js";
 import { buildScanAgents } from "../src/setup/scanbuild.js";
 

@@ -15,8 +15,8 @@
 // Nothing is inferred from absence — a repo with no CI config has `ci: []`,
 // which says "no config file found", not "no CI".
 import { parse as parseToml } from "smol-toml";
-import { DEFAULT_DIRECTIVE_VOCABULARY } from "../severity.js";
-import { styleGuideRefsIn } from "../styleguide.js";
+import { DEFAULT_DIRECTIVE_VOCABULARY } from "@quickchatai/pi-quickreview/src/severity.js";
+import { styleGuideRefsIn } from "@quickchatai/pi-quickreview/src/styleguide.js";
 import { escapeControls } from "./textsniff.js";
 
 export type RepoRead = (rel: string) => string | null;

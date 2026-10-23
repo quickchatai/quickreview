@@ -23,27 +23,36 @@
 import { spawn } from "node:child_process";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { GITHUB_TOKEN_ENVS } from "../envstrip.js";
+import { GITHUB_TOKEN_ENVS } from "@quickchatai/pi-quickreview/src/envstrip.js";
 import { piCliPath } from "../picli.js";
-import { DEBUG_STATUS_FILE, mainSessionOf } from "./openable.js";
-import { checkToolUid, shareWithToolGroup, toolIsolation, toolUidEnv } from "./tooluid.js";
+import {
+  DEBUG_STATUS_FILE,
+  mainSessionOf,
+} from "@quickchatai/pi-quickreview/src/engine/openable.js";
+import {
+  checkToolUid,
+  shareWithToolGroup,
+  toolIsolation,
+  toolUidEnv,
+} from "@quickchatai/pi-quickreview/src/engine/tooluid.js";
 import {
   prepareRound,
   settleRound,
   type PreparedRound,
   type RoundResult,
   type RoundSpec,
-} from "./round.js";
-import type { PiRun } from "./port.js";
+} from "@quickchatai/pi-quickreview/src/engine/round.js";
+import type { PiRun } from "@quickchatai/pi-quickreview/src/engine/port.js";
 
-/** The extensions of a debug round, by file name in the production tree's
- * `extensions/`: the round's own set with the debug extension (which carries the
- * lens tools) in the lens tool's place. Nothing here posts. */
+/** The extensions of a debug round, by path under the production tree: the
+ * round's own set with the debug extension (which carries the lens tools) in
+ * the lens tool's place. The env shims are the app's (`extensions/cli/`);
+ * `cluster_findings` is the review core's own extension. Nothing here posts. */
 export const DEBUG_ROUND_EXTENSIONS = [
-  "cli/bash-guard.ts",
-  "cli/ledger-pin.ts",
-  "cli/debug-round.ts",
-  "finding-clusters.ts",
+  "extensions/cli/bash-guard.ts",
+  "extensions/cli/ledger-pin.ts",
+  "extensions/cli/debug-round.ts",
+  "packages/pi-plugin/extensions/finding-clusters.ts",
 ] as const;
 
 /** pi's first message: the extension command that starts the round. */
@@ -69,7 +78,7 @@ export function debugArgv(o: {
     o.sysPath,
     "--session-dir",
     o.sessionDir,
-    ...DEBUG_ROUND_EXTENSIONS.flatMap((e) => ["--extension", join(o.root, "extensions", e)]),
+    ...DEBUG_ROUND_EXTENSIONS.flatMap((e) => ["--extension", join(o.root, e)]),
     "--name",
     o.sessionName,
     DEBUG_START_MESSAGE,

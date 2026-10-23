@@ -1,4 +1,4 @@
-import { postedFindingChains } from "./priorfindings.js";
+import { postedFindingChains } from "@quickchatai/pi-quickreview/src/priorfindings.js";
 import { markerTwins, type FindingCommentRow } from "./outcomes.js";
 // Resolving the bot's own threads for findings a follow-up round verified
 // FIXED.
@@ -40,7 +40,7 @@ import { markerTwins, type FindingCommentRow } from "./outcomes.js";
 
 import { ThreadResolutionRefusal } from "./thread-resolution-refusal.js";
 import { readFileSync } from "node:fs";
-import { parsePriorRef } from "./findingsrecord.js";
+import { parsePriorRef } from "@quickchatai/pi-quickreview/src/findingsrecord.js";
 import type { GitHubAdapter } from "./github.js";
 import type { StateStore } from "./state.js";
 
@@ -149,7 +149,7 @@ export function priorThreadsToResolve(
   const checks = store.priorFindingChecks(pr);
   const families = postedFindingChains(store.roundFindings(pr));
   // A report decides only what came after the chain's latest posting (the
-  // prior-list rule, src/priorfindings.ts): a posting at or after the checked
+  // prior-list rule, packages/pi-plugin/src/priorfindings.ts): a posting at or after the checked
   // round re-opens the finding, and this round's fixed report no longer holds.
   const newer = (round: number, key: string) => {
     const root = families.find(`${round}:${key}`);
@@ -196,7 +196,7 @@ export function priorThreadsToResolve(
 export interface PriorResolveDeps {
   store: StateStore;
   adapter: Pick<GitHubAdapter, "resolveOwnReviewThread">;
-  /** The round's prior-list sidecar path (src/priorfindings.ts), for the
+  /** The round's prior-list sidecar path (packages/pi-plugin/src/priorfindings.ts), for the
    * earlier postings of carried findings. */
   sidecarPath?: (pr: number, roundNo: number) => string;
   log?: (msg: string, extra?: unknown) => void;

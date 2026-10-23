@@ -4,7 +4,7 @@
 // the caller can read it back.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { RoundOrder, SessionHooks } from "./types.js";
+import type { RoundOrder, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 
 let written = 0;
 

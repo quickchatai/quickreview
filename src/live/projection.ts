@@ -5,7 +5,7 @@
 // listening to pi's events. This module reproduces both from the LiveEvent log
 // alone, so the engine routes - which have no such extension - and a viewer
 // reading a finished or running round all get the same snapshot, with the
-// contract in src/round-progress.ts unchanged: board.ts, requiredpasses.ts and
+// contract in packages/pi-plugin/src/round-progress.ts unchanged: board.ts, requiredpasses.ts and
 // the supervisor read it as they always have.
 //
 // The extension is the REFERENCE. Every rule here mirrors the handler it
@@ -16,7 +16,7 @@
 // `started_at` taken from an update can differ from the extension's by that
 // much. Nothing the supervisor decides on (the milestones' order, statuses,
 // command identity) depends on it.
-import { parseSessionCommandMarker } from "../session-command.js";
+import { parseSessionCommandMarker } from "@quickchatai/pi-quickreview/src/session-command.js";
 import {
   isLiveAgentStatus,
   type LiveAgentProgress,
@@ -25,8 +25,8 @@ import {
   type ProgressLogLine,
   type ProgressTransition,
   type RoundProgressSnapshot,
-} from "../round-progress.js";
-import type { LiveEvent, LiveResult } from "./events.js";
+} from "@quickchatai/pi-quickreview/src/round-progress.js";
+import type { LiveEvent, LiveResult } from "@quickchatai/pi-quickreview/src/live/events.js";
 
 function text(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;

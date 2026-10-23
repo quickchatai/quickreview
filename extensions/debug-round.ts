@@ -1,11 +1,11 @@
 // debug-round - a review round inside interactive pi (`qcr review --debug-pi`),
 // so the round can be watched, and steered, live.
 //
-// The route prepares the round exactly as a normal one does (src/engine/round.ts
+// The route prepares the round exactly as a normal one does (packages/pi-plugin/src/engine/round.ts
 // prepareRound: the task files, the system prompt, the order, the env) and starts
 // pi on it with this extension and the round's others. This file gives pi:
 //
-//   the lens tools    `lens` and `lens_wave`, from extensions/lens.ts: the lens
+//   the lens tools    `lens` and `lens_wave`, from packages/pi-plugin/extensions/lens.ts: the lens
 //                     passes are SDK sessions of THIS pi process, on its own
 //                     dispatcher (D4, PiHost ownsProcess false)
 //   /qcr-round        the round's start. It launches the planned discovery wave
@@ -45,20 +45,27 @@ import {
   type ExtensionFactory,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type { DispatcherOutcome } from "../src/engine/pisdk.js";
-import { capabilityFdOf } from "../src/engine/capfd.js";
-import { CONTEXT_PACK_FILE } from "../src/contextpack.js";
-import { DEBUG_STATUS_FILE, LENS_LEDGER_FILE, LENS_SESSIONS_DIR } from "../src/engine/openable.js";
-import { inheritingBashOperations } from "../src/engine/tooluid.js";
-import { launchWave, type WaveRow } from "../src/engine/lens/wave.js";
-import { planLaunch, type LaunchUnit } from "../src/engine/lens/launch-plan.js";
-import type { LensRunConfig } from "../src/engine/lens/runlens.js";
+import type { DispatcherOutcome } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import { capabilityFdOf } from "@quickchatai/pi-quickreview/src/engine/capfd.js";
+import { CONTEXT_PACK_FILE } from "@quickchatai/pi-quickreview/src/contextpack.js";
+import {
+  DEBUG_STATUS_FILE,
+  LENS_LEDGER_FILE,
+  LENS_SESSIONS_DIR,
+} from "@quickchatai/pi-quickreview/src/engine/openable.js";
+import { inheritingBashOperations } from "@quickchatai/pi-quickreview/src/engine/tooluid.js";
+import { launchWave, type WaveRow } from "@quickchatai/pi-quickreview/src/engine/lens/wave.js";
+import {
+  planLaunch,
+  type LaunchUnit,
+} from "@quickchatai/pi-quickreview/src/engine/lens/launch-plan.js";
+import type { LensRunConfig } from "@quickchatai/pi-quickreview/src/engine/lens/runlens.js";
 import {
   interactiveHostFor,
   interactiveLensBoard,
   lensWarnTo,
   type InteractiveLens,
-} from "./lens.js";
+} from "@quickchatai/pi-quickreview/extensions/lens.js";
 
 /** The command that starts the round. */
 export const DEBUG_ROUND_COMMAND = "qcr-round";
@@ -74,7 +81,7 @@ export const DEBUG_STUB_ENV = "QCR_DEBUG_STUB_FILE";
 export { capabilityFdOf };
 
 /** What the model's bash may draw from the env on a round (the same allowlist
- * as src/engine/roundsdk.ts BASH_ENV_ALLOW; tests/debug-pi.test.ts pins them equal.
+ * as packages/pi-plugin/src/engine/roundsdk.ts BASH_ENV_ALLOW; tests/debug-pi.test.ts pins them equal.
  * An extension may not import the SDK host, so the list is spelled here). */
 export const DEBUG_BASH_ENV_ALLOW = ["GIT_*", "QCR_*"] as const;
 

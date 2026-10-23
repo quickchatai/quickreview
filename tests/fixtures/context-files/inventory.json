@@ -120,7 +120,7 @@
           "source": "deploy/reviewer/AGENTS.override.md"
         }
       ],
-      "note": "PiHost.makeSession (src/engine/pisdk.ts): the ResourceLoader discovers nothing and agentsFilesOverride hands over the reviewer stub at the run's out dir; the file is never written, and the planted AGENTS.md in the cwd, its ancestor and the agentDir do not load."
+      "note": "PiHost.makeSession (packages/pi-plugin/src/engine/pisdk.ts): the ResourceLoader discovers nothing and agentsFilesOverride hands over the reviewer stub at the run's out dir; the file is never written, and the planted AGENTS.md in the cwd, its ancestor and the agentDir do not load."
     },
     "sdk-lens": {
       "cwd": "/home/op/.local/state/qcr/default/review/runs/RUN/out",

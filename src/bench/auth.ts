@@ -6,7 +6,7 @@
 // which the companion loads with its much wider authority. So the companion's
 // dir is mounted read-only at `/pi-agent-src`, and every case gets a private
 // copy of the access token in a tmpfs agent dir, with the refresh token
-// replaced by a value no OAuth server accepts (src/engine/auth.ts, the copy the
+// replaced by a value no OAuth server accepts (packages/pi-plugin/src/engine/auth.ts, the copy the
 // scan sandbox takes too). The sandbox therefore:
 //   - never writes anything the companion reads;
 //   - never refreshes, so it can never rotate (and invalidate) the companion's
@@ -26,21 +26,21 @@ import {
   BENCH_AUTH_WORDS,
   copyPiAuth,
   DISABLED_REFRESH,
-} from "../engine/auth.js";
-import { benchSettings } from "../pibuiltins.js";
+} from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import { benchSettings } from "@quickchatai/pi-quickreview/src/pibuiltins.js";
 import {
   benchAuthMode,
   benchProvider,
   KEY_ROUTE_PROVIDERS,
   type BenchAuthMode,
   type BenchProviderId,
-} from "../engine/keyroute.js";
+} from "@quickchatai/pi-quickreview/src/engine/keyroute.js";
 
 // The credential route itself (the mode, the model rewrite, the keys a pi
 // process sees) and the sandbox's pi settings are the one-shot round's, so
-// core (src/engine/keyroute.ts, src/pibuiltins.ts); the bench's callers still
+// core (packages/pi-plugin/src/engine/keyroute.ts, packages/pi-plugin/src/pibuiltins.ts); the bench's callers still
 // import them here.
-export { BENCH_RETRY, benchSettings } from "../pibuiltins.js";
+export { BENCH_RETRY, benchSettings } from "@quickchatai/pi-quickreview/src/pibuiltins.js";
 export {
   apiKeyEnv,
   benchAuthMode,
@@ -48,7 +48,7 @@ export {
   modelForAuth,
   type BenchAuthMode,
   type BenchProviderId,
-} from "../engine/keyroute.js";
+} from "@quickchatai/pi-quickreview/src/engine/keyroute.js";
 
 // The API-key route: the published runs used the login above; an outsider
 // re-running the benchmark brings their own API key instead.
@@ -174,7 +174,7 @@ export function authFingerprint(mode: BenchAuthMode = benchAuthMode()): {
 export { AuthExpiring, DISABLED_REFRESH };
 
 /**
- * The sandbox copy of a pi `auth.json` (src/engine/auth.ts `authCopyFrom`):
+ * The sandbox copy of a pi `auth.json` (packages/pi-plugin/src/engine/auth.ts `authCopyFrom`):
  * every OAuth entry's refresh token replaced, everything else kept, and the
  * earliest OAuth expiry so the caller can refuse a case that would outlive it.
  */

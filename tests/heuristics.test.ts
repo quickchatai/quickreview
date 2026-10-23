@@ -13,8 +13,8 @@ import {
   prodStats,
   selectLenses,
   type PrFile,
-} from "../src/heuristics.js";
-import { loadProfileHeuristics } from "../src/profiles.js";
+} from "@quickchatai/pi-quickreview/src/heuristics.js";
+import { loadProfileHeuristics } from "@quickchatai/pi-quickreview/src/profiles.js";
 import type { PrFileEntry } from "../src/github.js";
 import { homeProfileLookup } from "../src/install.js";
 import { stageFixtureProfile } from "./helpers/tracked-profiles.js";
@@ -88,7 +88,10 @@ describe("prodStats", () => {
 
 describe("escalationWorthy is gone", () => {
   it("exports no escalation heuristic at all", async () => {
-    const mod = (await import("../src/heuristics.js")) as Record<string, unknown>;
+    const mod = (await import("@quickchatai/pi-quickreview/src/heuristics.js")) as Record<
+      string,
+      unknown
+    >;
     for (const name of ["escalationWorthy", "ESCALATION_PATH_PATTERNS", "escalationReasons"]) {
       expect(mod[name], name).toBeUndefined();
     }
@@ -511,7 +514,7 @@ const LEGACY_DEPS_MANIFEST_RE =
 const LEGACY_DEEP_INDENT_RE = /^\+(?: {20,}|\t{5,})\S/m;
 const LEGACY_BRANCH_RE = /^\+[ \t]*[)\]}]*[ \t]*(if|elif|else[ \t]+if|case|when)\b/gm;
 
-/** Verbatim compiled-in selectLenses (src/heuristics.ts at commit 50ca772). */
+/** Verbatim compiled-in selectLenses (packages/pi-plugin/src/heuristics.ts at commit 50ca772). */
 /** The thresholds the frozen legacy selection was written with (the default
  * preset raises them): the equivalence proof is about the
  * profile's PREDICATES, so it holds the thresholds at the legacy values. */

@@ -1,9 +1,13 @@
 // `qcr version`: what this install is, for a plugin that has to decide whether
 // it can talk to it — the image's version, the JSON schema versions it prints
-// (src/contract.ts) and the pi pin it runs.
+// (packages/pi-plugin/src/contract.ts) and the pi pin it runs.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { REVIEW_SCHEMA_VERSION, SCAN_SCHEMA_VERSION, VERSION_SCHEMA_VERSION } from "./contract.js";
+import {
+  REVIEW_SCHEMA_VERSION,
+  SCAN_SCHEMA_VERSION,
+  VERSION_SCHEMA_VERSION,
+} from "@quickchatai/pi-quickreview/src/contract.js";
 import { piPinFromPackageJson } from "./onboard/launch.js";
 
 export interface VersionInfo {

@@ -6,7 +6,11 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { addendaForPass, buildAgents, PASS_ADDENDA } from "../src/include.js";
+import {
+  addendaForPass,
+  buildAgents,
+  PASS_ADDENDA,
+} from "@quickchatai/pi-quickreview/src/include.js";
 
 const root = resolve(process.cwd());
 const NO_BENCHMARK_NAMES =

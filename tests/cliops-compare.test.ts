@@ -1,4 +1,4 @@
-import { renderMigrationCollisionComment } from "../src/migrations.js";
+import { renderMigrationCollisionComment } from "@quickchatai/pi-quickreview/src/migrations.js";
 import { ESCALATION_TAG } from "../src/escalation.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

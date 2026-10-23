@@ -20,7 +20,7 @@ import {
 import { dirname, join } from "node:path";
 import type { Config } from "./config.js";
 import { RESTORE_WAIT_MS } from "./archive/restore.js";
-import { withinBudget } from "./budget.js";
+import { withinBudget } from "@quickchatai/pi-quickreview/src/budget.js";
 import {
   OV_SESSION_SWEEP_BUDGET_MS,
   OV_SESSION_SWEEP_MAX,
@@ -31,7 +31,7 @@ import {
 } from "./memory/ovsession.js";
 import { newestSessionFile } from "./sessionjsonl.js";
 import type { StateStore } from "./state.js";
-import type { OvSessionSweepReport, RoundOrder } from "./types.js";
+import type { OvSessionSweepReport, RoundOrder } from "@quickchatai/pi-quickreview/src/types.js";
 import type { WorktreeManager } from "./worktrees.js";
 
 /** The PR's tmux session name — by design the same string as its OpenViking

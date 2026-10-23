@@ -3,6 +3,7 @@
 // on a planted copy: a fence that cannot be made to fail is not a fence.
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join, relative } from "node:path";
+import { CORE_PACKAGE, EXTENSION_DIRS, SRC_DIRS, sourceSpecifiers } from "./source-trees.js";
 
 /** Every .ts under a tree, recursively; [] when the tree does not exist. */
 export function tsFilesUnder(dir: string): string[] {
@@ -51,28 +52,35 @@ export function importsSdkAtRuntime(text: string): boolean {
   ).test(code);
 }
 
+/** Every .ts under the app's and the core's src/ and extensions/. */
+export function sourceFiles(root: string): string[] {
+  return [...SRC_DIRS, ...EXTENSION_DIRS].flatMap((d) => tsFilesUnder(join(root, d)));
+}
+
 /**
- * S2's SDK allowlist: the .ts files under src/ and extensions/ that import the
- * pi SDK at runtime, relative to `root`. Only src/engine/pisdk.ts and the
- * extension factory modules (extensions/) may. runLens and every other engine
- * module reach the SDK through PiHost.makeSession, never by importing it.
+ * S2's SDK allowlist: the .ts files under src/ and extensions/ (the app's and
+ * the core's) that import the pi SDK at runtime, relative to `root`. Only the
+ * core's packages/pi-plugin/src/engine/pisdk.ts and the extension factory modules (extensions/)
+ * may. runLens and every other engine module reach the SDK through
+ * PiHost.makeSession, never by importing it.
  */
 export function runtimeSdkImporters(root: string): string[] {
-  return [...tsFilesUnder(join(root, "src")), ...tsFilesUnder(join(root, "extensions"))]
+  return sourceFiles(root)
     .filter((f) => importsSdkAtRuntime(readFileSync(f, "utf8")))
     .map((f) => relative(root, f))
     .sort();
 }
 
-/** Import specifiers (static, re-export, dynamic) that resolve to a .ts under `files`. */
-function importsOf(f: string, text: string, files: ReadonlySet<string>): string[] {
-  return [...stripComments(text).matchAll(/["'](\.[^"']+)\.js["']/g)]
-    .map((m) => join(f, "..", `${m[1]!}.ts`))
-    .filter((p) => files.has(p));
+/** Import specifiers (static, re-export, dynamic) that resolve to a .ts under
+ * `files`: relative ones, and the core's package specifiers, which name its
+ * sources (`@quickchatai/pi-quickreview/src/x.js` is packages/pi-plugin/src/x.ts). */
+function importsOf(root: string, f: string, text: string, files: ReadonlySet<string>): string[] {
+  return sourceSpecifiers(root, f, stripComments(text)).filter((p) => files.has(p));
 }
 
 /**
- * The daemon modules whose import closure must not reach src/engine/. The
+ * The daemon modules whose import closure must not reach the engine (the
+ * app's src/engine/ hosts and the core's src/engine/). The
  * engine installs a process-global HTTP dispatcher (pi's configureHttpDispatcher)
  * that must never leak into the daemon's own fetches.
  */
@@ -85,7 +93,7 @@ export const DAEMON_ROOTS = [
   "src/posting.ts",
   // The worker supervisor (P8.5) is the daemon's end of the per-round worker. It
   // spawns the worker BY PATH and imports its env allowlist's one shared name from
-  // src/envstrip.ts, so the engine's dispatcher and sessions never enter the daemon.
+  // packages/pi-plugin/src/envstrip.ts, so the engine's dispatcher and sessions never enter the daemon.
   "src/workersupervisor.ts",
   // The worker host (P8.6) is the SessionHooks the daemon speaks over that supervisor.
   "src/worker-session-host.ts",
@@ -98,15 +106,13 @@ export const DAEMON_ROOTS = [
 ];
 
 /**
- * Edges "daemon root -> ... -> src/engine/**", one chain per offending engine
- * file, as "a.ts > b.ts > src/engine/x.ts". Empty when the fence holds.
+ * Edges "daemon root -> ... -> src/engine/**" (the app's or the core's), one
+ * chain per offending engine file, as "a.ts > b.ts > src/engine/x.ts". Empty
+ * when the fence holds.
  */
 export function daemonReachesEngine(root: string): string[] {
-  const files = new Set([
-    ...tsFilesUnder(join(root, "src")),
-    ...tsFilesUnder(join(root, "extensions")),
-  ]);
-  const engineDir = join(root, "src", "engine") + "/";
+  const files = new Set(sourceFiles(root));
+  const engineDirs = SRC_DIRS.map((d) => join(root, d, "engine") + "/");
   const parent = new Map<string, string | null>();
   const queue: string[] = [];
   for (const r of DAEMON_ROOTS) {
@@ -119,13 +125,13 @@ export function daemonReachesEngine(root: string): string[] {
   const hits: string[] = [];
   while (queue.length > 0) {
     const f = queue.shift()!;
-    if (f.startsWith(engineDir)) {
+    if (engineDirs.some((d) => f.startsWith(d))) {
       const chain: string[] = [];
       for (let c: string | null = f; c; c = parent.get(c) ?? null) chain.unshift(relative(root, c));
       hits.push(chain.join(" > "));
       continue; // report the way in, not the engine's own imports
     }
-    for (const n of importsOf(f, readFileSync(f, "utf8"), files)) {
+    for (const n of importsOf(root, f, readFileSync(f, "utf8"), files)) {
       if (parent.has(n)) continue;
       parent.set(n, f);
       queue.push(n);
@@ -142,15 +148,15 @@ export function daemonReachesEngine(root: string): string[] {
  * detached driver, a bench case), not to a long-lived pi.
  */
 export const SDK_HOST_MODULES = [
-  "src/engine/pisdk.ts",
-  "src/engine/sdkruntime.ts",
+  `${CORE_PACKAGE}/src/engine/pisdk.ts`,
+  `${CORE_PACKAGE}/src/engine/sdkruntime.ts`,
   "src/engine/caserunner-sdk.ts",
 ];
 
 /**
  * The extensions that host SDK sessions in a pi process, and the one host
  * module they may reach (P4.5; extensions/debug-round.ts is lens.ts's tools
- * with the command that starts a debug round, P5.9). extensions/lens.ts runs the lens passes of an
+ * with the command that starts a debug round, P5.9). packages/pi-plugin/extensions/lens.ts runs the lens passes of an
  * interactive pi (a debug round, the companion) in-process, on a PiHost built
  * over that pi's own agent dir, with the CLI pi's HTTP dispatcher left alone
  * (PiHostOptions.ownsProcess false). It reaches the builder only: never the
@@ -159,13 +165,13 @@ export const SDK_HOST_MODULES = [
  * (tests/lens-tool.test.ts).
  */
 export const EXTENSION_SDK_HOST_ALLOWED: Readonly<Record<string, readonly string[]>> = {
-  "extensions/lens.ts": ["src/engine/pisdk.ts"],
+  [`${CORE_PACKAGE}/extensions/lens.ts`]: [`${CORE_PACKAGE}/src/engine/pisdk.ts`],
   // The debug round (P5.9) is lens.ts's tools plus the command that starts the
   // round, so it reaches the builder through lens.ts and nothing else.
-  "extensions/debug-round.ts": ["src/engine/pisdk.ts"],
+  "extensions/debug-round.ts": [`${CORE_PACKAGE}/src/engine/pisdk.ts`],
   // The env shims pi loads by path (extensions/cli/) reach the same modules.
-  "extensions/cli/lens.ts": ["src/engine/pisdk.ts"],
-  "extensions/cli/debug-round.ts": ["src/engine/pisdk.ts"],
+  "extensions/cli/lens.ts": [`${CORE_PACKAGE}/src/engine/pisdk.ts`],
+  "extensions/cli/debug-round.ts": [`${CORE_PACKAGE}/src/engine/pisdk.ts`],
 };
 
 /**
@@ -175,13 +181,10 @@ export const EXTENSION_SDK_HOST_ALLOWED: Readonly<Record<string, readonly string
  * chain EXTENSION_SDK_HOST_ALLOWED names is not reported.
  */
 export function extensionsReachSdkHost(root: string): string[] {
-  const files = new Set([
-    ...tsFilesUnder(join(root, "src")),
-    ...tsFilesUnder(join(root, "extensions")),
-  ]);
+  const files = new Set(sourceFiles(root));
   const hosts = new Set(SDK_HOST_MODULES.map((m) => join(root, m)));
   const hits: string[] = [];
-  for (const entry of tsFilesUnder(join(root, "extensions"))) {
+  for (const entry of EXTENSION_DIRS.flatMap((d) => tsFilesUnder(join(root, d)))) {
     const parent = new Map<string, string | null>([[entry, null]]);
     const queue = [entry];
     while (queue.length > 0) {
@@ -194,7 +197,7 @@ export function extensionsReachSdkHost(root: string): string[] {
           hits.push(chain.join(" > "));
         continue;
       }
-      for (const n of importsOf(f, readFileSync(f, "utf8"), files)) {
+      for (const n of importsOf(root, f, readFileSync(f, "utf8"), files)) {
         if (parent.has(n)) continue;
         parent.set(n, f);
         queue.push(n);
@@ -221,10 +224,11 @@ export const IMAGE_ONLY_PATTERNS: ReadonlyArray<{ re: RegExp; what: string }> = 
   },
 ];
 
-/** "file: what" for every image-only literal under src/engine/. */
+/** "file: what" for every image-only literal under src/engine/ (the app's
+ * and the core's). */
 export function engineImageOnlyPaths(root: string): string[] {
   const out: string[] = [];
-  for (const f of tsFilesUnder(join(root, "src", "engine"))) {
+  for (const f of SRC_DIRS.flatMap((d) => tsFilesUnder(join(root, d, "engine")))) {
     const code = stripComments(readFileSync(f, "utf8"));
     for (const { re, what } of IMAGE_ONLY_PATTERNS)
       if (re.test(code)) out.push(`${relative(root, f)}: ${what}`);

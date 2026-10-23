@@ -35,12 +35,12 @@ import {
   type WorkerDeps,
 } from "../src/botworker.js";
 import { createCapabilityFd, ipcEnv, runDirOf } from "../src/ipc/capability.js";
-import { LIVE_MAIN_FILE, liveRoundDir } from "../src/live/events.js";
-import { DISABLED_REFRESH } from "../src/engine/auth.js";
-import { PiHost, type PiHostOptions } from "../src/engine/pisdk.js";
+import { LIVE_MAIN_FILE, liveRoundDir } from "@quickchatai/pi-quickreview/src/live/events.js";
+import { DISABLED_REFRESH } from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import { PiHost, type PiHostOptions } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import { parseWorkerSpec, type WorkerSpec } from "../src/ipc/workerspec.js";
 import { TranscriptIndex } from "../src/transcriptindex.js";
-import { sessionCommandMarker } from "../src/session-command.js";
+import { sessionCommandMarker } from "@quickchatai/pi-quickreview/src/session-command.js";
 import { newestSessionFile } from "../src/sessionjsonl.js";
 import { pricedFaux } from "./helpers/priced-faux.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";

@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { reviewerStub } from "../src/engine/roundsdk.js";
+import { reviewerStub } from "@quickchatai/pi-quickreview/src/engine/roundsdk.js";
 
 let dirs: string[] = [];
 afterEach(() => {

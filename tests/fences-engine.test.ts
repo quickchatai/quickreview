@@ -1,13 +1,15 @@
 // [P2.1] The engine fences, laid before the engine grows.
 //
-//   S2 SDK allowlist  only src/engine/pisdk.ts and the extension factory
-//                     modules import @earendil-works/pi-coding-agent at runtime
-//   daemon / engine   no daemon module's import closure reaches src/engine/,
+//   S2 SDK allowlist  only the core's packages/pi-plugin/src/engine/pisdk.ts and the extension
+//                     factory modules import @earendil-works/pi-coding-agent
+//                     at runtime
+//   daemon / engine   no daemon module's import closure reaches src/engine/
+//                     (the app's hosts or the core's, packages/pi-plugin),
 //                     which keeps the process-global HTTP dispatcher out of
 //                     the daemon
 //   SDK host          no extension's import closure (the companion's pi, the
 //                     tmux bot's) reaches an SDK host module [P5.7]
-//   packageability    src/engine/** carries no image-only path and reads no
+//   packageability    src/engine/** (both) carries no image-only path and reads no
 //                     QCR_STATE_HOME, so a post-v1 pi package stays possible
 //
 // Each fence is verified by mutation, in this file: the scan runs on the real
@@ -73,16 +75,24 @@ describe("[P2.1] S2: the pi SDK is imported at runtime by pisdk.ts and the exten
   it("fails on a planted runtime import from a runLens-shaped engine module", () => {
     planted(
       {
-        "src/engine/pisdk.ts": `import { createAgentSession } from ${SDK};\n`,
-        "src/engine/lens/runlens.ts": `import { createAgentSession } from ${SDK};\n`,
+        "packages/pi-plugin/src/engine/pisdk.ts": `import { createAgentSession } from ${SDK};\n`,
+        "packages/pi-plugin/src/engine/lens/runlens.ts": `import { createAgentSession } from ${SDK};\n`,
         "src/typeonly.ts": `import type { Pi } from ${SDK};\n`,
+        "src/engine/host.ts": `import { createAgentSession } from ${SDK};\n`,
         "extensions/factory.ts": `import { x } from ${SDK};\n`,
+        "packages/pi-plugin/extensions/factory.ts": `import { x } from ${SDK};\n`,
       },
       (root) => {
         const offenders = runtimeSdkImporters(root).filter(
-          (f) => f !== "src/engine/pisdk.ts" && !f.startsWith("extensions/"),
+          (f) =>
+            f !== "packages/pi-plugin/src/engine/pisdk.ts" &&
+            !f.startsWith("extensions/") &&
+            !f.startsWith("packages/pi-plugin/extensions/"),
         );
-        expect(offenders).toEqual(["src/engine/lens/runlens.ts"]);
+        expect(offenders).toEqual([
+          "packages/pi-plugin/src/engine/lens/runlens.ts",
+          "src/engine/host.ts",
+        ]);
       },
     );
   });
@@ -98,17 +108,20 @@ describe("[P2.1] no daemon module imports src/engine/", () => {
     expect(daemonReachesEngine(ROOT)).toEqual([]);
   });
 
-  it("fails on a planted import, direct and transitive", () => {
+  it("fails on a planted import, direct, transitive and through the core's package", () => {
     planted(
       {
-        "src/wire.ts": `import { helper } from "./util.js";\nimport { a } from "./engine/direct.js";\n`,
+        "src/wire.ts": `import { helper } from "./util.js";\nimport { a } from "./engine/direct.js";\nimport { c } from "./corered.js";\n`,
         "src/util.ts": `export { b } from "./engine/lens/deep.js";\n`,
+        "src/corered.ts": `export { c } from "@quickchatai/pi-quickreview/src/engine/core.js";\n`,
         "src/engine/direct.ts": `export const a = 1;\n`,
         "src/engine/lens/deep.ts": `export const b = 1;\n`,
+        "packages/pi-plugin/src/engine/core.ts": `export const c = 1;\n`,
         "src/cli.ts": `import "./engine/direct.js";\n`, // not a daemon root
       },
       (root) => {
         expect(daemonReachesEngine(root)).toEqual([
+          "src/wire.ts > src/corered.ts > packages/pi-plugin/src/engine/core.ts",
           "src/wire.ts > src/engine/direct.ts",
           "src/wire.ts > src/util.ts > src/engine/lens/deep.ts",
         ]);
@@ -145,18 +158,23 @@ describe("[P2.1] packageability (R22): src/engine/** holds no image-only path", 
     [`export const h = process.env.QCR_STATE_HOME;\n`, "QCR_STATE_HOME"],
     [`export const d = join(home, "state/pi-sessions");\n`, "a state-home layout literal"],
   ])("fails on a planted literal %#", (text, what) => {
-    planted({ "src/engine/lens/bad.ts": text }, (root) => {
-      const found = engineImageOnlyPaths(root);
-      expect(found.length).toBe(1);
-      expect(found[0]).toContain("src/engine/lens/bad.ts");
-      expect(found[0]).toContain(what);
-    });
+    planted(
+      { "packages/pi-plugin/src/engine/lens/bad.ts": text, "src/engine/bad.ts": text },
+      (root) => {
+        const found = engineImageOnlyPaths(root);
+        expect(found.length).toBe(2);
+        expect(found[0]).toContain("packages/pi-plugin/src/engine/lens/bad.ts");
+        expect(found[1]).toContain("src/engine/bad.ts");
+        expect(found[1]).toContain(what);
+        expect(found[0]).toContain(what);
+      },
+    );
   });
 
   it("ignores prose in comments and files outside src/engine/", () => {
     planted(
       {
-        "src/engine/ok.ts": `// the image carries it at /opt/qcr\n/* QCR_STATE_HOME */\nexport const x = 1;\n`,
+        "packages/pi-plugin/src/engine/ok.ts": `// the image carries it at /opt/qcr\n/* QCR_STATE_HOME */\nexport const x = 1;\n`,
         "src/other.ts": `export const APP = "/opt/qcr";\n`,
       },
       (root) => expect(engineImageOnlyPaths(root)).toEqual([]),
@@ -166,8 +184,9 @@ describe("[P2.1] packageability (R22): src/engine/** holds no image-only path", 
 
 describe("[P5.7] no pi process hosts an SDK session: extensions/ never reach an SDK host module", () => {
   /**
-   * MUTATION: add `import "../src/engine/caserunner-sdk.js"` (or pisdk.js,
-   * sdkruntime.js) to any extension, or to anything an extension imports —
+   * MUTATION: add `import "../src/engine/caserunner-sdk.js"` (or the core's
+   * pisdk.js, sdkruntime.js) to any extension, the app's or the core's, or to
+   * anything an extension imports —
    * src/scancli.ts included — and the chain appears here. scancli loads the
    * scan's SDK leaf runner only inside the detached driver, by a dynamic
    * import that no extension reaches.
@@ -179,45 +198,47 @@ describe("[P5.7] no pi process hosts an SDK session: extensions/ never reach an 
   it("fails on a planted import, direct, transitive and dynamic", () => {
     planted(
       {
-        "extensions/setup.ts": `import { scan } from "../src/scan.js";\nimport "../src/engine/pisdk.js";\n`,
+        "extensions/setup.ts": `import { scan } from "../src/scan.js";\nimport "@quickchatai/pi-quickreview/src/engine/pisdk.js";\n`,
         "extensions/other.ts": `const m = await import("../src/lazy.js");\n`,
-        "extensions/clean.ts": `import { a } from "../src/engine/auth.js";\n`,
+        "extensions/clean.ts": `import { a } from "@quickchatai/pi-quickreview/src/engine/auth.js";\n`,
+        "packages/pi-plugin/extensions/core.ts": `import { s } from "../src/engine/sdkruntime.js";\n`,
         "src/scan.ts": `export { x } from "./engine/caserunner-sdk.js";\n`,
-        "src/lazy.ts": `import("./engine/sdkruntime.js");\n`,
-        "src/engine/pisdk.ts": `export const p = 1;\n`,
-        "src/engine/sdkruntime.ts": `export const r = 1;\n`,
+        "src/lazy.ts": `import("@quickchatai/pi-quickreview/src/engine/sdkruntime.js");\n`,
+        "packages/pi-plugin/src/engine/pisdk.ts": `export const p = 1;\n`,
+        "packages/pi-plugin/src/engine/sdkruntime.ts": `export const r = 1;\n`,
         "src/engine/caserunner-sdk.ts": `export const c = 1;\n`,
-        "src/engine/auth.ts": `export const a = 1;\n`,
+        "packages/pi-plugin/src/engine/auth.ts": `export const a = 1;\n`,
       },
       (root) => {
         expect(extensionsReachSdkHost(root)).toEqual([
-          "extensions/other.ts > src/lazy.ts > src/engine/sdkruntime.ts",
-          "extensions/setup.ts > src/engine/pisdk.ts",
+          "extensions/other.ts > src/lazy.ts > packages/pi-plugin/src/engine/sdkruntime.ts",
+          "extensions/setup.ts > packages/pi-plugin/src/engine/pisdk.ts",
           "extensions/setup.ts > src/scan.ts > src/engine/caserunner-sdk.ts",
+          "packages/pi-plugin/extensions/core.ts > packages/pi-plugin/src/engine/sdkruntime.ts",
         ]);
       },
     );
   });
 
-  it("lets extensions/lens.ts reach the host builder and nothing else, and no other extension", () => {
+  it("lets the core's extensions/lens.ts reach the host builder and nothing else, and no other extension", () => {
     planted(
       {
-        "extensions/lens.ts": `import { H } from "../src/engine/pisdk.js";\nimport "../src/engine/sdkruntime.js";\n`,
-        "extensions/other.ts": `import "../src/engine/pisdk.js";\n`,
-        "src/engine/pisdk.ts": `export const H = 1;\n`,
-        "src/engine/sdkruntime.ts": `export const r = 1;\n`,
+        "packages/pi-plugin/extensions/lens.ts": `import { H } from "../src/engine/pisdk.js";\nimport "../src/engine/sdkruntime.js";\n`,
+        "extensions/other.ts": `import "@quickchatai/pi-quickreview/src/engine/pisdk.js";\n`,
+        "packages/pi-plugin/src/engine/pisdk.ts": `export const H = 1;\n`,
+        "packages/pi-plugin/src/engine/sdkruntime.ts": `export const r = 1;\n`,
       },
       (root) =>
         expect(extensionsReachSdkHost(root)).toEqual([
-          "extensions/lens.ts > src/engine/sdkruntime.ts",
-          "extensions/other.ts > src/engine/pisdk.ts",
+          "extensions/other.ts > packages/pi-plugin/src/engine/pisdk.ts",
+          "packages/pi-plugin/extensions/lens.ts > packages/pi-plugin/src/engine/sdkruntime.ts",
         ]),
     );
     planted(
       {
-        "extensions/lens.ts": `import { x } from "../src/engine/lens/tool.js";\n`,
-        "src/engine/lens/tool.ts": `import type { H } from "../pisdk.js";\nexport const x = 1;\n`,
-        "src/engine/pisdk.ts": `export const H = 1;\n`,
+        "packages/pi-plugin/extensions/lens.ts": `import { x } from "../src/engine/lens/tool.js";\n`,
+        "packages/pi-plugin/src/engine/lens/tool.ts": `import type { H } from "../pisdk.js";\nexport const x = 1;\n`,
+        "packages/pi-plugin/src/engine/pisdk.ts": `export const H = 1;\n`,
       },
       (root) => expect(extensionsReachSdkHost(root)).toEqual([]),
     );
@@ -226,8 +247,8 @@ describe("[P5.7] no pi process hosts an SDK session: extensions/ never reach an 
   it("ignores a commented-out import", () => {
     planted(
       {
-        "extensions/setup.ts": `// import "../src/engine/pisdk.js";\n`,
-        "src/engine/pisdk.ts": `export const p = 1;\n`,
+        "extensions/setup.ts": `// import "@quickchatai/pi-quickreview/src/engine/pisdk.js";\n`,
+        "packages/pi-plugin/src/engine/pisdk.ts": `export const p = 1;\n`,
       },
       (root) => expect(extensionsReachSdkHost(root)).toEqual([]),
     );

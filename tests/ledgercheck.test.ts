@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
-import type { GateResult } from "../src/gate.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import {
   classifyLedger,
   enforceLedgerFreshness,
@@ -16,7 +16,7 @@ import {
 } from "../src/ledgercheck.js";
 import { RecheckWatcher } from "../src/recheck.js";
 import { StateStore } from "../src/state.js";
-import type { SessionHooks } from "../src/types.js";
+import type { SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 

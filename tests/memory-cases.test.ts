@@ -55,7 +55,7 @@ import {
   memoryEntryForRow,
   type FeedbackEvent,
 } from "../src/feedback.js";
-import { findingMarker } from "../src/findingkey.js";
+import { findingMarker } from "@quickchatai/pi-quickreview/src/findingkey.js";
 import type { ReviewCommentFull } from "../src/github.js";
 import { cleanQuotedText, fenceAsData, readFencedData } from "../src/memory/datafence.js";
 import { parseEventTags, parseHashTags } from "../src/memory/eventtags.js";

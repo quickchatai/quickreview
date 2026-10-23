@@ -24,8 +24,8 @@
 import { copyFileSync, existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { GIT_ISOLATION_ENV } from "./bench/exec.js";
-import { CONTEXT_PACK_FILE } from "./contextpack.js";
-import { GITHUB_TOKEN_ENVS } from "./envstrip.js";
+import { CONTEXT_PACK_FILE } from "@quickchatai/pi-quickreview/src/contextpack.js";
+import { GITHUB_TOKEN_ENVS } from "@quickchatai/pi-quickreview/src/envstrip.js";
 import {
   hasSessions,
   lensAgentsOf,
@@ -34,7 +34,7 @@ import {
   readOpenMeta,
   type LensSessionRef,
   type OpenMeta,
-} from "./engine/openable.js";
+} from "@quickchatai/pi-quickreview/src/engine/openable.js";
 import { openPrOptions, type OpenPrOptions, type PrPull } from "./openpr.js";
 import { piCliPath } from "./picli.js";
 
@@ -70,14 +70,14 @@ export function openHelp(): string {
  * round had (bash-guard, ledger-pin, the lens tool, cluster_findings). Nothing
  * here posts: the posting path is the gate's, never a session's. */
 export const MAIN_OPEN_EXTENSIONS = [
-  "cli/bash-guard.ts",
-  "cli/ledger-pin.ts",
-  "cli/lens.ts",
-  "finding-clusters.ts",
+  "extensions/cli/bash-guard.ts",
+  "extensions/cli/ledger-pin.ts",
+  "extensions/cli/lens.ts",
+  "packages/pi-plugin/extensions/finding-clusters.ts",
 ] as const;
 
 /** A lens pass is a leaf: the guard, and no lens tool. */
-export const LENS_OPEN_EXTENSIONS = ["cli/bash-guard.ts"] as const;
+export const LENS_OPEN_EXTENSIONS = ["extensions/cli/bash-guard.ts"] as const;
 
 /** The bot's own session (`qcr open pr`): the guard alone. The bot's tools are
  * the tmux era's subagent/launch_plan, which this machine does not run, and the
@@ -430,7 +430,7 @@ export async function runOpen(
     : found.kind === "main"
       ? MAIN_OPEN_EXTENSIONS
       : LENS_OPEN_EXTENSIONS;
-  const extensions = names.map((n) => join(deps.root, "extensions", n));
+  const extensions = names.map((n) => join(deps.root, n));
   const meta = readOpenMeta(found.roundDir);
   const bin = deps.piBin ?? piCliPath();
   // Writing into a round that recorded how it ran keeps its ledger and lens

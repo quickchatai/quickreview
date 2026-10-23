@@ -85,7 +85,7 @@ import {
   type RoleSelection,
   type SelectionRow,
 } from "./memory/selection.js";
-import type { RoundOrder } from "./types.js";
+import type { RoundOrder } from "@quickchatai/pi-quickreview/src/types.js";
 
 /** A timer the prefetch races against — injected so a test drives it with a
  * fake clock. `cancel` must make `promise` never settle (or be ignored). */

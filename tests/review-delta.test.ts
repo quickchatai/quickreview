@@ -1,4 +1,4 @@
-// `qcr review` re-reviews (src/reviewcli.ts + src/reviewstate.ts): local state
+// `qcr review` re-reviews (src/reviewcli.ts + packages/pi-plugin/src/reviewstate.ts): local state
 // per target gives a delta review with no repeated findings. A real throwaway
 // git repo is the branch fixture; pi is a fake shell script (no network, no
 // model, no docker, no GitHub).
@@ -29,7 +29,7 @@ vi.stubEnv(
 const { runReviewCli } = await import("../src/reviewcli.js");
 const { reviewMemoryPort } = await import("../src/reviewmemory.js");
 const { contextFor } = await import("../src/bench/runner.js");
-const state = await import("../src/reviewstate.js");
+const state = await import("@quickchatai/pi-quickreview/src/reviewstate.js");
 const { openReviewStore } = await import("../src/reviewhome.js");
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");

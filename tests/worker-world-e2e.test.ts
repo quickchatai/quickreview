@@ -10,7 +10,7 @@
 // the worker reported. A worker killed mid-round has its round requeued and a fresh worker
 // started by the host's `launchPending` timer, which resumes the same JSONL.
 //
-// Skipped without a build (`npx tsc -p tsconfig.json`): it runs dist/.
+// Skipped without a build (`npm run build`): it runs dist/.
 import {
   chmodSync,
   copyFileSync,
@@ -29,9 +29,9 @@ import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadConfig, type Config } from "../src/config.js";
 import type { DaemonAdapter } from "../src/daemon.js";
-import { MutationGate, type MutationIntent } from "../src/gate.js";
+import { MutationGate, type MutationIntent } from "@quickchatai/pi-quickreview/src/gate.js";
 import { GitHubAdapter, type PrRef } from "../src/github.js";
-import type { TokenMinter } from "../src/githubAuth.js";
+import type { TokenMinter } from "@quickchatai/pi-quickreview/src/githubAuth.js";
 import { runDirOf } from "../src/ipc/capability.js";
 import { WorkerLeases, leaseDirOf } from "../src/workerlease.js";
 import { PiSessionManager } from "../src/sessions.js";

@@ -13,7 +13,7 @@
 import { existsSync, mkdirSync, readFileSync, watch, type FSWatcher } from "node:fs";
 import { basename, dirname } from "node:path";
 import { INGRESS_DEFAULTS } from "./config.js";
-import type { GateResult } from "./gate.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import { DEFAULT_WEBHOOK_PATH } from "./webhook.js";
 
 /** A bare DNS hostname — no scheme, no path, no port. The sidecar's contract

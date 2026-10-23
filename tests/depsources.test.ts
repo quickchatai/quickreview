@@ -1,4 +1,4 @@
-// Third-party dependency sources (src/depsources.ts): which packages a PR
+// Third-party dependency sources (packages/pi-plugin/src/depsources.ts): which packages a PR
 // needs, lockfile parsing, range matching, archive safety and the
 // fetch → verify → unpack → cache pipeline. All offline: a fake `fetch`,
 // hand-built tar/zip archives and temp dirs — no network, no package manager.
@@ -47,7 +47,7 @@ import {
   safeArchivePath,
   satisfiesRange,
   unpackEntries,
-} from "../src/depsources.js";
+} from "@quickchatai/pi-quickreview/src/depsources.js";
 import {
   LINEAR_HANG_GUARD_MS,
   LINEAR_RATIO_CEILING_10X,

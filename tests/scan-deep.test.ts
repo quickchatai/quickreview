@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { QcrTool } from "../extensions/pi-tool.js";
+import type { QcrTool } from "@quickchatai/pi-quickreview/extensions/pi-tool.js";
 import { renderPreview, renderStatus, scanToolDefinitions } from "../extensions/setup-scan.js";
 import { parseConfig, SCAN_DEFAULTS, type Config, type ScanConfig } from "../src/config.js";
 import {
@@ -26,10 +26,10 @@ import {
   addendaForPass,
   buildAgents,
   type PassAddendum,
-} from "../src/include.js";
+} from "@quickchatai/pi-quickreview/src/include.js";
 import { configHome, homeProfileLookup, type InstallEnv } from "../src/install.js";
-import type { LensTuningMap } from "../src/lenstuning.js";
-import { ALL_PASSES, SCAN_DEEP_FLOOR_LENSES } from "../src/passes.js";
+import type { LensTuningMap } from "@quickchatai/pi-quickreview/src/lenstuning.js";
+import { ALL_PASSES, SCAN_DEEP_FLOOR_LENSES } from "@quickchatai/pi-quickreview/src/passes.js";
 import { stateHomeFs } from "../src/setup/adapters.js";
 import type { CaseOutcome, CaseSpec } from "../src/setup/engine.js";
 import {

@@ -16,7 +16,7 @@ import {
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { ExecFn, ExecResult } from "./tmux.js";
 import { nodeExec, runOrThrow } from "./tmux.js";
-import { parseHunkHeader } from "./hunkheader.js";
+import { parseHunkHeader } from "@quickchatai/pi-quickreview/src/hunkheader.js";
 import { repoCloneDirName } from "./clonedir.js";
 import {
   fetchMissingCommits,
@@ -26,9 +26,9 @@ import {
   readPrOwnedDelta,
   sectionPath,
   type PrOwnedDelta,
-} from "./prdelta.js";
-import { unquoteGitPath } from "./unifieddiff.js";
-import type { PreparedTree } from "./planner.js";
+} from "@quickchatai/pi-quickreview/src/prdelta.js";
+import { unquoteGitPath } from "@quickchatai/pi-quickreview/src/unifieddiff.js";
+import type { PreparedTree } from "@quickchatai/pi-quickreview/src/planner.js";
 
 export { unquoteGitPath };
 export {
@@ -45,7 +45,7 @@ export {
   type PrOwnedDelta,
   type PrOwnedDeltaFile,
   type PrOwnedDeltaUnavailable,
-} from "./prdelta.js";
+} from "@quickchatai/pi-quickreview/src/prdelta.js";
 
 export interface WorktreeManagerOptions {
   /** Sandbox root — the clone lives at <root>/<cloneDir>, worktrees at <root>/wt. */
@@ -147,7 +147,7 @@ export function parseDiffHunksByFile(diff: string): Map<string, DiffHunk[]> {
 
 // ---- the PR-owned inter-round delta ----------------------------------------
 
-// The delta's parsers, its types and its reader live in src/prdelta.ts (the
+// The delta's parsers, its types and its reader live in packages/pi-plugin/src/prdelta.ts (the
 // review core); `WorktreeManager.prOwnedDelta` reads it over the base clone.
 
 /** Where reviewed-head pins live. Their own namespace: `refs/qcr/pr-<n>` is a
@@ -249,7 +249,7 @@ export const POST_MERGE_LIMITS = Object.freeze({
 });
 
 /** What one round's worktree preparation established about the tree on disk:
- * the facts the planner reads (src/planner.ts), and where the tree lives. */
+ * the facts the planner reads (packages/pi-plugin/src/planner.ts), and where the tree lives. */
 export interface WorktreeFacts extends PreparedTree {
   path: string;
 }
@@ -1012,7 +1012,7 @@ export class WorktreeManager {
 
   /**
    * The PR-owned change between two reviewed heads, read over the base clone
-   * (src/prdelta.ts `readPrOwnedDelta`, which says how): fetch on miss, the
+   * (packages/pi-plugin/src/prdelta.ts `readPrOwnedDelta`, which says how): fetch on miss, the
    * clone's memoised commit and path reads. Total: any unknown is
    * `{ok:false, reason}` and the caller runs the full round.
    */

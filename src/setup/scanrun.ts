@@ -79,9 +79,9 @@
 // and its answer (`scan/stop.json`, `scan/stop-result.json` —
 // scanreport.ts, which also owns the run record's name and parser).
 import { posix } from "node:path";
-import { VALIDATE_PASS } from "../include.js";
-import type { LensTuningMap } from "../lenstuning.js";
-import { higherTier, type PassTier } from "../types.js";
+import { VALIDATE_PASS } from "@quickchatai/pi-quickreview/src/include.js";
+import type { LensTuningMap } from "@quickchatai/pi-quickreview/src/lenstuning.js";
+import { higherTier, type PassTier } from "@quickchatai/pi-quickreview/src/types.js";
 import type { ScanConfig, ScanDepth } from "../config.js";
 import type { CaseOutcome, CaseRunner, Refusal, StateFs } from "./engine.js";
 import {

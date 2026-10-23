@@ -8,8 +8,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ROUND_STATS_SQL, StateStore } from "../src/state.js";
+import { SRC_DIRS } from "./helpers/source-trees.js";
 
 const SRC = join(import.meta.dirname, "..", "src");
+/** Every .ts under the app's src/ and the review core's. */
+const allSrc = (): string[] =>
+  SRC_DIRS.flatMap((d) => srcFiles(join(import.meta.dirname, "..", d)));
 
 function srcFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((f) => {
@@ -120,7 +124,7 @@ describe("the archive tables and indexes exist after construction", () => {
 
 describe("rounds_pr_round is declared once (it came with the boot-stall fix)", () => {
   it("one CREATE INDEX for it in src/, and one index on rounds(pr, round_no)", () => {
-    const decls = srcFiles(SRC).flatMap((f) =>
+    const decls = allSrc().flatMap((f) =>
       [...readFileSync(f, "utf8").matchAll(/CREATE INDEX IF NOT EXISTS rounds_pr_round\b/g)].map(
         () => f,
       ),
@@ -138,7 +142,7 @@ describe("rounds_pr_round is declared once (it came with the boot-stall fix)", (
       });
       expect(onPrRound.map((i) => i.name)).toEqual(["rounds_pr_round"]);
       // And bot_comments_pr is declared once too.
-      const botDecls = srcFiles(SRC).flatMap((f) =>
+      const botDecls = allSrc().flatMap((f) =>
         [...readFileSync(f, "utf8").matchAll(/CREATE INDEX IF NOT EXISTS bot_comments_pr\b/g)].map(
           () => f,
         ),

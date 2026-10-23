@@ -33,8 +33,11 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import { bashGuardConfigFromEnv, createBashGuard } from "../../extensions/bash-guard.js";
-import { CASE_STOP_GRACE_MS } from "../casebudget.js";
+import {
+  bashGuardConfigFromEnv,
+  createBashGuard,
+} from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
+import { CASE_STOP_GRACE_MS } from "@quickchatai/pi-quickreview/src/casebudget.js";
 import { splitModelSpec } from "../config.js";
 import {
   AuthError,
@@ -44,7 +47,7 @@ import {
   engineCredentials,
   scanAuthExpiring,
   scanAuthMissing,
-} from "./auth.js";
+} from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import {
   TRANSCRIPT_RUNS_KEPT,
   caseReadout,
@@ -56,11 +59,18 @@ import {
   type AgentFile,
 } from "../setup/caserunner.js";
 import type { CaseOutcome, CaseRunner, CaseSpec } from "../setup/engine.js";
-import { LENS_SESSIONS_DIR } from "./openable.js";
-import { PiHost } from "./pisdk.js";
-import type { Runtime, SessionSpec, TurnResult } from "./port.js";
-import { sdkRuntime, type SessionExtras } from "./sdkruntime.js";
-import { BUDGET_EXIT_CODE } from "./budget.js";
+import { LENS_SESSIONS_DIR } from "@quickchatai/pi-quickreview/src/engine/openable.js";
+import { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import type {
+  Runtime,
+  SessionSpec,
+  TurnResult,
+} from "@quickchatai/pi-quickreview/src/engine/port.js";
+import {
+  sdkRuntime,
+  type SessionExtras,
+} from "@quickchatai/pi-quickreview/src/engine/sdkruntime.js";
+import { BUDGET_EXIT_CODE } from "@quickchatai/pi-quickreview/src/engine/budget.js";
 
 /** A leaf turn's hard wall clock. The login's own case budget
  * (`SCAN_CASE_AUTH_BUDGET_MS`) is the usual bound and aborts first; this one
@@ -88,7 +98,7 @@ const LEAF_BASH_ENV_ALLOW: readonly string[] = [
 ];
 
 /** The per-session pieces the runner hands whoever builds the runtime: the
- * `extras` of `sdkRuntime` (src/engine/sdkruntime.ts). */
+ * `extras` of `sdkRuntime` (packages/pi-plugin/src/engine/sdkruntime.ts). */
 export type LeafExtras = (spec: SessionSpec) => SessionExtras;
 
 export interface SdkCaseRunnerOptions {
@@ -406,7 +416,7 @@ export function scanSdkCases(o: ScanSdkCasesOptions): CaseRunner {
             credentials: auth.credentials,
           }));
       // The case driver owns its process: a turn its abort and dispose did not
-      // end exits it (src/engine/budget.ts).
+      // end exits it (packages/pi-plugin/src/engine/budget.ts).
       return sdkRuntime(host, { extras, backstop: () => process.exit(BUDGET_EXIT_CODE) });
     },
   });

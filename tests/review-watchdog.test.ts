@@ -13,7 +13,7 @@ import {
   WATCHDOG_EXIT_CODE,
   type WatchdogDeps,
 } from "../src/reviewdetach.js";
-import { HEARTBEAT_FILE, readBeat, type Beat } from "../src/heartbeat.js";
+import { HEARTBEAT_FILE, readBeat, type Beat } from "@quickchatai/pi-quickreview/src/heartbeat.js";
 import { sdkStubArgs, writeSdkDriverStub } from "./helpers/sdk-driver-stub.js";
 import { watchdogCommand } from "../src/reviewcli.js";
 import { waitFor } from "./helpers/wait-for.js";
@@ -186,7 +186,7 @@ describe("a driver stuck in a synchronous busy loop", () => {
     pi.unref();
     const DEADLINE_MS = 800;
     const GRACE_MS = 400;
-    // The stub writes the beat format of src/heartbeat.ts by hand (it cannot
+    // The stub writes the beat format of packages/pi-plugin/src/heartbeat.ts by hand (it cannot
     // import TypeScript), beats five times, then spins forever in a sync loop.
     const stub = join(dir, "stub.mjs");
     writeFileSync(

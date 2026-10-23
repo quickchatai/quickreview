@@ -2,8 +2,12 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { behaviourDeltaRisk, sweepGroups, type PrFile } from "../src/heuristics.js";
-import { findCiLinters } from "../src/lintconfig.js";
+import {
+  behaviourDeltaRisk,
+  sweepGroups,
+  type PrFile,
+} from "@quickchatai/pi-quickreview/src/heuristics.js";
+import { findCiLinters } from "@quickchatai/pi-quickreview/src/lintconfig.js";
 
 const dirs: string[] = [];
 afterEach(() => {

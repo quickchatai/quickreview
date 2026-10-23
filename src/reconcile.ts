@@ -12,7 +12,7 @@ import {
   recordCapturedComment,
   type CapturedComment,
 } from "./capture.js";
-import type { CheckSummary } from "./cigate.js";
+import type { CheckSummary } from "@quickchatai/pi-quickreview/src/cigate.js";
 import { retryWithheldApproval } from "./ciretry.js";
 import {
   auditUngatedReviews,
@@ -23,16 +23,16 @@ import {
 import { ledgerFeedbackSignal } from "./feedback.js";
 import { wakeOrHold } from "./wakes.js";
 import { recheckFingerprint } from "./recheck.js";
-import { recheckPromptMarker } from "./types.js";
-import { standingVerdict } from "./standing-review.js";
+import { recheckPromptMarker } from "@quickchatai/pi-quickreview/src/types.js";
+import { standingVerdict } from "@quickchatai/pi-quickreview/src/standing-review.js";
 import { DEFAULT_ROUND_STALL_GRACE_MIN, type Config } from "./config.js";
 import type { IssueCommentFull, PrRef, ReviewCommentFull, ReviewFull } from "./github.js";
 import type { OutcomeCapture, OutcomeSweepReport } from "./outcomes.js";
 import { applyEvent, isBotAuthor, mergedOverBlock } from "./statemachine.js";
 import type { RoundRow, StateStore } from "./state.js";
-import type { OvSessionSweepReport, SessionHooks } from "./types.js";
+import type { OvSessionSweepReport, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { performance } from "node:perf_hooks";
-import { yieldToLoop } from "./yieldloop.js";
+import { yieldToLoop } from "@quickchatai/pi-quickreview/src/yieldloop.js";
 
 export interface ReconcileSearchItem {
   number: number;

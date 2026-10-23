@@ -11,7 +11,12 @@
 // union does not name, because a misbehaving pass can invent one and
 // `normalizeReachability` folds it to `routine`.
 import { describe, expect, it } from "vitest";
-import { postTag, REACHABILITY_VALUES, type Reachability, type Severity } from "../src/severity.js";
+import {
+  postTag,
+  REACHABILITY_VALUES,
+  type Reachability,
+  type Severity,
+} from "@quickchatai/pi-quickreview/src/severity.js";
 
 const SEVERITIES: Severity[] = ["P0", "P1", "P2", "P3", "nit"];
 const CONFIDENCES = [0, 0.5, 0.79, 0.8, 1];
@@ -30,7 +35,7 @@ describe("the reachability gate over the whole matrix", () => {
    * whole space instead of a slice.
    *
    * MUTATION: change `if (reach === "plausible" && severity === "P2")` to
-   * `severity === "P1"` in src/severity.ts — this fails, because a P1 that
+   * `severity === "P1"` in packages/pi-plugin/src/severity.ts — this fails, because a P1 that
    * would have blocked now returns a question at a reachability that is not
    * `contrived`… and the contrived-only rule below fails too.
    */

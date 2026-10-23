@@ -23,7 +23,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { WorkerControls, type WorkerControlsDeps } from "../src/botcontrol.js";
 import { CONTROL_COMMANDS, CONTROL_TEXT_MAX as OPERATOR_TEXT_MAX } from "../src/commands.js";
 import type { ControlCommand } from "../src/commands.js";
-import type { Delivery, RuntimeSession, SessionStats } from "../src/engine/port.js";
+import type {
+  Delivery,
+  RuntimeSession,
+  SessionStats,
+} from "@quickchatai/pi-quickreview/src/engine/port.js";
 import {
   CONTROL_KINDS,
   CONTROL_TEXT_MAX,

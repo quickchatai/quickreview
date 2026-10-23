@@ -65,7 +65,7 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   "findings_record_unresolved",
   // pi sessions failing API calls with token-expired errors — every round in
   // flight is doomed until someone logs in again, so this
-  // is human-attention grade. Detected passively (src/authwatch.ts), never by
+  // is human-attention grade. Detected passively (packages/pi-plugin/src/authwatch.ts), never by
   // a smoke call.
   "pi_auth_expired",
   // The bot login's refresher could not refresh (src/loginrefresh/): the same

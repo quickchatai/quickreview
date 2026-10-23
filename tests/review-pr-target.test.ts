@@ -1,5 +1,5 @@
 // `qcr review <PR>`: the target, the credential chain and the daemon fence
-// (src/prtarget.ts, src/ghcred.ts). Git is real (a local bare repo stands in
+// (packages/pi-plugin/src/prtarget.ts, packages/pi-plugin/src/ghcred.ts). Git is real (a local bare repo stands in
 // for github.com); the GitHub API, `gh` and the App are stubs. No network.
 
 import { afterAll, describe, expect, it } from "vitest";
@@ -16,9 +16,17 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveGithubCredential, MISSING_CREDENTIAL_HELP } from "../src/ghcred.js";
-import { fetchPrTarget, parsePrTarget, resolvePostCredential } from "../src/prtarget.js";
+import {
+  resolveGithubCredential,
+  MISSING_CREDENTIAL_HELP,
+} from "@quickchatai/pi-quickreview/src/ghcred.js";
+import {
+  fetchPrTarget,
+  parsePrTarget,
+  resolvePostCredential,
+} from "@quickchatai/pi-quickreview/src/prtarget.js";
 import { resolveSpecifier, runtimeSpecifiers } from "./helpers/layers.js";
+import { SRC_DIRS } from "./helpers/source-trees.js";
 
 // docs/rulebook/ (the ratified rule texts) is manifest-excluded from the public tree.
 const HAS_RULEBOOK = existsSync(join(process.cwd(), "docs", "rulebook", "hard-rules.md"));
@@ -193,6 +201,15 @@ describe("resolvePostCredential", () => {
 });
 
 describe("the daemon stays App-only (CLAUDE.md rule 3)", () => {
+  // The daemon's GitHub code: its client and wiring, and the App's token
+  // minting, which is the core's (packages/pi-plugin/src/githubAuth.ts).
+  const DAEMON_GITHUB_FILES = [
+    "src/github.ts",
+    "packages/pi-plugin/src/githubAuth.ts",
+    "src/daemon.ts",
+    "src/wire.ts",
+    "src/sessions.ts",
+  ];
   const srcFiles = (dir: string): string[] =>
     readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
       e.isDirectory()
@@ -203,11 +220,11 @@ describe("the daemon stays App-only (CLAUDE.md rule 3)", () => {
     );
 
   it("only the local review route (and cli.ts's startup handoff read) imports the credential chain", () => {
-    const importers = srcFiles(join(ROOT, "src"))
+    const importers = SRC_DIRS.flatMap((d) => srcFiles(join(ROOT, d)))
       .filter((f) => /from "[^"]*\/ghcred\.js"|from "\.\/ghcred\.js"/.test(readFileSync(f, "utf8")))
       .map((f) => f.slice(ROOT.length + 1))
       .sort();
-    expect(importers).toEqual(["src/cli.ts", "src/prtarget.ts"].sort());
+    expect(importers).toEqual(["src/cli.ts", "packages/pi-plugin/src/prtarget.ts"].sort());
   });
 
   it("no daemon or worker entry reaches the local review route, however indirectly", () => {
@@ -215,7 +232,12 @@ describe("the daemon stays App-only (CLAUDE.md rule 3)", () => {
     // core, the layer the daemon shares: a direct-import check cannot see a
     // daemon module that imports something that imports it. Every runtime edge
     // from the daemon's process entries is walked.
-    const ROUTE = ["src/reviewapi.ts", "src/prtarget.ts", "src/ghcred.ts", "src/reviewpost.ts"];
+    const ROUTE = [
+      "packages/pi-plugin/src/reviewapi.ts",
+      "packages/pi-plugin/src/prtarget.ts",
+      "packages/pi-plugin/src/ghcred.ts",
+      "packages/pi-plugin/src/reviewpost.ts",
+    ];
     const entries = [
       "src/wire.ts",
       "src/botworker.ts",
@@ -248,8 +270,8 @@ describe("the daemon stays App-only (CLAUDE.md rule 3)", () => {
   });
 
   it("the daemon's GitHub code reads no personal token", () => {
-    for (const f of ["github.ts", "githubAuth.ts", "daemon.ts", "wire.ts", "sessions.ts"]) {
-      const text = readFileSync(join(ROOT, "src", f), "utf8");
+    for (const f of DAEMON_GITHUB_FILES) {
+      const text = readFileSync(join(ROOT, f), "utf8");
       expect(text, f).not.toMatch(/process\.env\[?\.?["']?(GITHUB_TOKEN|GH_TOKEN)/);
       expect(text, f).not.toMatch(/gh auth token/);
       expect(text, f).not.toMatch(/ghcred|prtarget/);
@@ -281,10 +303,8 @@ describe("the daemon stays App-only (CLAUDE.md rule 3)", () => {
     // no App on a laptop (D14): nothing mounts the secrets, nothing mints
     expect(wrapper).not.toMatch(/secrets|app\.pem|\bmint\b/);
     // and the daemon's own code never reads the wrapper's file variable
-    for (const f of ["github.ts", "githubAuth.ts", "daemon.ts", "wire.ts", "sessions.ts"])
-      expect(readFileSync(join(ROOT, "src", f), "utf8"), f).not.toMatch(
-        /QCR_GH_TOKEN_FILE|HANDOFF/,
-      );
+    for (const f of DAEMON_GITHUB_FILES)
+      expect(readFileSync(join(ROOT, f), "utf8"), f).not.toMatch(/QCR_GH_TOKEN_FILE|HANDOFF/);
   });
 
   it("GitHubAdapter's only credential source is the App TokenMinter", () => {

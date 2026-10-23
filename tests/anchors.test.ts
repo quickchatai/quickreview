@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { changedRuns, checkAnchor, partitionByAnchor, runsByPath } from "../src/anchors.js";
+import {
+  changedRuns,
+  checkAnchor,
+  partitionByAnchor,
+  runsByPath,
+} from "@quickchatai/pi-quickreview/src/anchors.js";
 
 // A realistic two-hunk patch as GitHub returns it in the files API.
 const PATCH = `@@ -10,7 +10,9 @@ def handler(request):

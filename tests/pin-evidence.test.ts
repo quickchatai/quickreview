@@ -18,7 +18,15 @@ const map = JSON.parse(readFileSync(join(root, "scripts", "pin-evidence-map.json
   entries: Entry[];
 };
 
-const SCANNED = ["src", "extensions", "tests", "docker", "config.example.toml", "tsconfig.json"];
+const SCANNED = [
+  "src",
+  "extensions",
+  "packages",
+  "tests",
+  "docker",
+  "config.example.toml",
+  "tsconfig.json",
+];
 const SKIPPED = new Set(["node_modules", "dist", "patches", "fixtures"]);
 // Prose about the convention, not a tag on an assumption.
 const NOT_TAGS = new Set(["src/CLAUDE.md", "tests/pin-evidence.test.ts"]);

@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadConfig } from "../src/config.js";
 import { createDaemon, type DaemonAdapter } from "../src/daemon.js";
-import type { GateResult } from "../src/gate.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { PrRef } from "../src/github.js";
 import { PingPongLedger } from "../src/pingpong.js";
 import { StateStore } from "../src/state.js";

@@ -26,18 +26,22 @@
 ARG NODE_MAJOR=22
 
 # ---- build ---------------------------------------------------------------------
-# Compiles the TypeScript; the sidecar ships dist/ and the one runtime package
-# its import closure reaches (smol-toml - tests/memory-image.test.ts holds the
-# closure to the COPY below).
+# Compiles the TypeScript; the sidecar ships dist/, the review core's
+# compiled package (the config parser's review half is the core's), and the
+# one runtime package their import closure reaches (smol-toml -
+# tests/memory-image.test.ts holds the closure to the COPY lines below).
 FROM node:${NODE_MAJOR}-bookworm AS build
 WORKDIR /src
 COPY package.json package-lock.json ./
+# A workspace's manifest must be in place before `npm ci`, which links it.
+COPY packages/pi-plugin/package.json packages/pi-plugin/package.json
 RUN npm ci --no-audit --no-fund
 COPY tsconfig.json ./
 COPY scripts/verify-dist.mjs scripts/verify-dist.mjs
+COPY packages packages
 COPY src src
 COPY extensions extensions
-RUN npx tsc -p tsconfig.json && node scripts/verify-dist.mjs
+RUN npx tsc -b && node scripts/verify-dist.mjs
 
 # ---- memory --------------------------------------------------------------------
 FROM ubuntu:24.04 AS memory
@@ -152,6 +156,10 @@ WORKDIR /opt/qcr
 COPY package.json ./
 COPY --from=build /src/dist ./dist
 COPY --from=build /src/node_modules/smol-toml ./node_modules/smol-toml
+# The review core's package, where an install puts it: its manifest (the
+# export map) and its compiled tree.
+COPY --from=build /src/packages/pi-plugin/package.json ./node_modules/@quickchatai/pi-quickreview/package.json
+COPY --from=build /src/packages/pi-plugin/dist ./node_modules/@quickchatai/pi-quickreview/dist
 COPY scripts ./scripts
 COPY config.example.toml ./config.example.toml
 COPY docker/memory/entrypoint.sh /usr/local/bin/entrypoint.sh

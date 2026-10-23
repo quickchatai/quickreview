@@ -34,7 +34,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseConfig } from "../src/config.js";
 import { loginInPi } from "../src/scanbox.js";
-import { toolIsolation } from "../src/engine/tooluid.js";
+import { toolIsolation } from "@quickchatai/pi-quickreview/src/engine/tooluid.js";
 import { LoginLockHeld, acquireLoginLock } from "../src/loginrefresh/lock.js";
 import { LoginRefresher, type RefreshFn } from "../src/loginrefresh/refresher.js";
 

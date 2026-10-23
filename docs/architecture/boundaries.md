@@ -14,14 +14,14 @@ whose limits are unstated is a boundary people trust further than it goes.
 
 | Boundary | Code | Tests |
 |---|---|---|
-| The one mutation gate | `src/gate.ts` | `tests/gate.test.ts`, `tests/fences-gate.test.ts` |
-| Posting-time guards 1–5 | `src/guards.ts` | `tests/guards.test.ts`, `tests/fences-guards.test.ts` |
-| The CI gate | `src/cigate.ts` | `tests/cigate.test.ts`, `tests/fences-cigate.test.ts` |
+| The one mutation gate | `packages/pi-plugin/src/gate.ts` | `tests/gate.test.ts`, `tests/fences-gate.test.ts` |
+| Posting-time guards 1–5 | `packages/pi-plugin/src/guards.ts` | `tests/guards.test.ts`, `tests/fences-guards.test.ts` |
+| The CI gate | `packages/pi-plugin/src/cigate.ts` | `tests/cigate.test.ts`, `tests/fences-cigate.test.ts` |
 | Shell mirror of the guards | `scripts/guards.sh` | `tests/guards-shell-*.test.ts` |
 | Session posting routes | `scripts/post-review.sh`, `scripts/approve-pr.sh`, `scripts/reply-thread.sh` | `tests/guards-shell-*.test.ts` |
-| Exec boundary (5 layers) | `extensions/bash-guard.ts`, `src/execboundary.ts` | `tests/bash-guard.test.ts`, `tests/exec-boundary.test.ts` |
-| Migration collision pre-check | `src/migrations.ts`, `src/dispatch.ts` | `tests/migrations.test.ts`, `tests/migration-precheck.test.ts` |
-| Severity → tag, reachability gate | `src/severity.ts` | `tests/severity.test.ts`, `tests/fences-severity.test.ts` |
+| Exec boundary (5 layers) | `packages/pi-plugin/extensions/bash-guard.ts`, `src/execboundary.ts` | `tests/bash-guard.test.ts`, `tests/exec-boundary.test.ts` |
+| Migration collision pre-check | `packages/pi-plugin/src/migrations.ts`, `src/dispatch.ts` | `tests/migrations.test.ts`, `tests/migration-precheck.test.ts` |
+| Severity → tag, reachability gate | `packages/pi-plugin/src/severity.ts` | `tests/severity.test.ts`, `tests/fences-severity.test.ts` |
 | Improvement-channel caps | `src/improvements.ts` | `tests/improvements.test.ts`, `tests/improvements-e2e.test.ts` |
 | Drain / pause levers | `src/levers.ts`, `src/commands.ts` | `tests/levers.test.ts`, `tests/commands.test.ts` |
 
@@ -33,7 +33,7 @@ Related pages: [the exec boundary in full](../exec-boundary.md),
 
 ## 1. The mutation gate
 
-**`src/gate.ts`.** Every write to GitHub — REST, GraphQL or `git push` — is
+**`packages/pi-plugin/src/gate.ts`.** Every write to GitHub — REST, GraphQL or `git push` — is
 described as a `MutationIntent` and passed to `MutationGate.execute()`. Reads
 are not gated and go direct through the adapter (`src/github.ts`); a read
 changes nothing.
@@ -134,7 +134,7 @@ any kind but `push_branch`, and re-checks both after the guard step.
 
 ## 2. Posting-time guards
 
-**`src/guards.ts`,** installed on the one gate as a `MutationGuard`. Five
+**`packages/pi-plugin/src/guards.ts`,** installed on the one gate as a `MutationGuard`. Five
 refusals, each fired seconds before a review reaches GitHub, on the mutation
 kinds in `POSTING_KINDS` (`create_review`, `create_review_comment_reply`,
 `create_issue_comment`). Guard 3 binds all three; the other four bind
@@ -157,7 +157,7 @@ Details worth knowing before editing:
   (`humanApprovalAtHead`): a later CHANGES_REQUESTED or DISMISSED retires an
   approval, and COMMENTED/PENDING carry no verdict. A failed review listing
   logs and proceeds — the worst case is the pre-guard behaviour.
-- **Guard 2** reads the mark through `src/standing-review.ts`, the one
+- **Guard 2** reads the mark through `packages/pi-plugin/src/standing-review.ts`, the one
   interpretation of `reviewed_heads` for lifecycle decisions, so this guard and
   dispatch's skip cannot disagree. An undecided mark never suppresses a posting.
   A reply timestamp equal to the review's counts as new evidence (`>=`, not
@@ -194,7 +194,7 @@ Details worth knowing before editing:
 
 ## 3. The CI gate
 
-**`src/cigate.ts`** — the classifier both posting routes answer from, plus the
+**`packages/pi-plugin/src/cigate.ts`** — the classifier both posting routes answer from, plus the
 retry that keeps a withheld approval from becoming a stuck PR.
 
 `classifyCi` maps the checks at a head onto four states:
@@ -327,7 +327,7 @@ The shape, so this inventory is complete:
 | Layer | Code | Asks |
 |---|---|---|
 | 1. Config-scope pin | `sessionGitConfigPins`, `src/sessions.ts` | which files can git read config from at all? |
-| 2. Command guard | `checkBashCommand`, `extensions/bash-guard.ts` | is this command string allowed? |
+| 2. Command guard | `checkBashCommand`, `packages/pi-plugin/extensions/bash-guard.ts` | is this command string allowed? |
 | 3. Write veto | `checkWritePath` / `checkProtectedWrites` / `isProtectedWriteTarget`, same file | may this write target be written? |
 | 4. Round-boundary integrity | `fingerprintRoundIntegrity` / `integrityChanges`, `src/execboundary.ts` | did any watched file change during the round? |
 | 5. Outcome detection | `auditUngatedReviews`, `src/execboundary.ts` | is there a bot review on GitHub the daemon has no record of posting? |
@@ -338,7 +338,7 @@ a `.git` directory, `.gitconfig`, `<any>/git/config`, `.gitattributes`) and
 **this system's own policy surface** — `POLICY_SURFACE_FILES` (`config.toml`
 and the agent-directive files such as `AGENTS.md` and `CLAUDE.md`) and
 `POLICY_SURFACE_DIRS` (`scripts`, `dist`, `extensions`, `prompts`, `agents`,
-`seeds`, `.pi`) in `extensions/bash-guard.ts`.
+`seeds`, `.pi`) in `packages/pi-plugin/extensions/bash-guard.ts`.
 
 The single most important thing to carry away: **layers 2 and 3 read command
 strings and are not closed, and are not claimed to be.**
@@ -350,7 +350,7 @@ newly found bypass of that class is not another spelling in a list.
 
 ## 6. The migration collision pre-check
 
-**`src/migrations.ts`** (pure detection and comment text) run from
+**`packages/pi-plugin/src/migrations.ts`** (pure detection and comment text) run from
 `src/dispatch.ts` `ecosystemPreCheck`, per round, after the worktree is
 prepared and before the session is handed its order.
 
@@ -367,7 +367,7 @@ a `create_review` with `event: "COMMENT"` and
 gate (§1) and why the guard after-step will not let it claim the head.
 `collisionFingerprint` plus the `migration_collision_comment` event dedupe it.
 
-The ecosystem is selected by the repo profile (`src/ecosystem.ts`); `none` is a
+The ecosystem is selected by the repo profile (`packages/pi-plugin/src/ecosystem.ts`); `none` is a
 first-class configured-off — nothing runs, nothing is read, nothing is logged.
 
 **A degraded check is never quieter than no check.** If the PR touches
@@ -375,7 +375,7 @@ migrations and the check could not run, three things happen together: the round
 prompt renders an explicit "the pre-check did not run — check collisions
 yourself" note, that note un-muzzles the withdrawn collision rule in
 `pass-data-safety` for exactly that round (`MIGRATION_NUMBERING_ADDENDUM` in
-`src/include.ts`), and an overseer anomaly is raised. A *withheld* comment (the
+`packages/pi-plugin/src/include.ts`), and an overseer anomaly is raised. A *withheld* comment (the
 ledger holds a collision-comment row it cannot read, so a duplicate cannot be
 ruled out) is different: the check DID run, so nothing is un-muzzled. The
 gate note hands the collisions' remedy to the session, which puts it in its
@@ -392,7 +392,7 @@ migrations are named otherwise is simply not covered.
 
 ## 7. Severity → tag, and the reachability gate
 
-**`src/severity.ts`.** `postTag(severity, confidence, reachability)` is the
+**`packages/pi-plugin/src/severity.ts`.** `postTag(severity, confidence, reachability)` is the
 deterministic map from a finding's fields to the tag it posts under. It is
 where the blocker bar lives, and the bar does not move.
 

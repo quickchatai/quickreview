@@ -1,7 +1,7 @@
 // General bug-class rules for PR builds only, with no benchmark names in any
 // prompt text.
 import { describe, expect, it } from "vitest";
-import { addendaForPass, PASS_ADDENDA } from "../src/include.js";
+import { addendaForPass, PASS_ADDENDA } from "@quickchatai/pi-quickreview/src/include.js";
 
 const NO_BENCHMARK_NAMES =
   /qodo|martian|swe-?prbench|aacr|ghost|aspnetcore|firefox|tauri|prefect|dify|redis|pipecat|spyder|cal\.com|keycloak|sentry|grafana|discourse|freecad|clickhouse|dbeaver|ollama|lvgl|electron|immich|ragflow|filament/i;
@@ -35,8 +35,15 @@ import { resolve } from "node:path";
 import { parseConfig, type Config } from "../src/config.js";
 import { buildPassPlan, buildRoundOrder } from "../src/dispatch.js";
 import type { PrStateRow } from "../src/state.js";
-import { renderPassPlan, renderRoundPrompt, roundTemplateFile } from "../src/templates.js";
-import { behaviourDeltaGroups, BEHAVIOUR_DELTA_PASS } from "../src/heuristics.js";
+import {
+  renderPassPlan,
+  renderRoundPrompt,
+  roundTemplateFile,
+} from "@quickchatai/pi-quickreview/src/templates.js";
+import {
+  behaviourDeltaGroups,
+  BEHAVIOUR_DELTA_PASS,
+} from "@quickchatai/pi-quickreview/src/heuristics.js";
 import type { PrFileEntry } from "../src/github.js";
 
 const cfg = (): Config => parseConfig(readFileSync(resolve("tests/fixtures/config.toml"), "utf8"));
@@ -143,8 +150,8 @@ describe("pass-behaviour-delta", () => {
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { findCiLinters, lintersForFiles } from "../src/lintconfig.js";
-import { LINT_CONFORMANCE_PASS } from "../src/heuristics.js";
+import { findCiLinters, lintersForFiles } from "@quickchatai/pi-quickreview/src/lintconfig.js";
+import { LINT_CONFORMANCE_PASS } from "@quickchatai/pi-quickreview/src/heuristics.js";
 
 describe("pass-lint-conformance: planned only on linters a CI job runs", () => {
   const repo = (files: Record<string, string>) => {
@@ -554,7 +561,11 @@ describe("sweep: prose focus files and paths left behind by a move", () => {
   });
 });
 
-import { selectSubLenses, PUBLIC_SIGNATURE_RE, WIRE_FORMAT_RE } from "../src/heuristics.js";
+import {
+  selectSubLenses,
+  PUBLIC_SIGNATURE_RE,
+  WIRE_FORMAT_RE,
+} from "@quickchatai/pi-quickreview/src/heuristics.js";
 
 describe("planning: every planned lens says why (owner decision 2026-10-03)", () => {
   it("each plan row but the validator carries a reason", () => {
@@ -619,8 +630,8 @@ describe("planning: backcompat by content, claims on a stated behaviour", () => 
   });
 });
 
-import { LENS_PLANNING } from "../src/lensplanning.js";
-import { ALL_PASSES } from "../src/passes.js";
+import { LENS_PLANNING } from "@quickchatai/pi-quickreview/src/lensplanning.js";
+import { ALL_PASSES } from "@quickchatai/pi-quickreview/src/passes.js";
 
 describe("every lens documents when it runs and its priority (owner decision 2026-10-03)", () => {
   it("LENS_PLANNING covers exactly ALL_PASSES", () => {
@@ -633,7 +644,7 @@ describe("every lens documents when it runs and its priority (owner decision 202
   });
 });
 
-import { clusterFindings, identifiersOf } from "../src/dedup.js";
+import { clusterFindings, identifiersOf } from "@quickchatai/pi-quickreview/src/dedup.js";
 
 describe("dedup hygiene: identifiers without backticks", () => {
   it("reads camelCase, PascalCase, snake_case, SCREAMING_CASE, calls and dotted names from plain prose", () => {
@@ -673,7 +684,7 @@ describe("dedup hygiene: identifiers without backticks", () => {
     expect(r.groups[0]!.signals).toContain("shared-identifier");
   });
   it("the validator keeps each merged member's anchor and never folds a second fix in", async () => {
-    const { configAddenda } = await import("../src/include.js");
+    const { configAddenda } = await import("@quickchatai/pi-quickreview/src/include.js");
     const t = configAddenda({ dedup_merge: true }).find(
       (a) => a.id === "dedup-group-validate",
     )!.text;

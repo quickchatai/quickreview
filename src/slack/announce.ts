@@ -38,7 +38,7 @@ import {
   type SlackPostKind,
   type StateStore,
 } from "../state.js";
-import type { RoundType } from "../types.js";
+import type { RoundType } from "@quickchatai/pi-quickreview/src/types.js";
 import {
   causeMessage,
   formatGap,

@@ -15,12 +15,16 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PASS_ADDENDA, buildAgents, type PassAddendum } from "../src/include.js";
-import type { EcosystemName } from "../src/ecosystem.js";
-import { DJANGO_ECOSYSTEM, NONE_ECOSYSTEM } from "../src/ecosystem.js";
-import { loadProfileAddenda } from "../src/profiles.js";
-import { renderRoundPrompt, roundTemplateFile } from "../src/templates.js";
-import type { RoundOrder, RoundType } from "../src/types.js";
+import {
+  PASS_ADDENDA,
+  buildAgents,
+  type PassAddendum,
+} from "@quickchatai/pi-quickreview/src/include.js";
+import type { EcosystemName } from "@quickchatai/pi-quickreview/src/ecosystem.js";
+import { DJANGO_ECOSYSTEM, NONE_ECOSYSTEM } from "@quickchatai/pi-quickreview/src/ecosystem.js";
+import { loadProfileAddenda } from "@quickchatai/pi-quickreview/src/profiles.js";
+import { renderRoundPrompt, roundTemplateFile } from "@quickchatai/pi-quickreview/src/templates.js";
+import type { RoundOrder, RoundType } from "@quickchatai/pi-quickreview/src/types.js";
 import { homeProfileLookup } from "../src/install.js";
 import { stageFixtureProfile } from "./helpers/tracked-profiles.js";
 

@@ -32,7 +32,7 @@ import {
 } from "../src/debuground.js";
 import type { PrSessionHost } from "../src/pr-session-lifecycle.js";
 import { dispatchOnce, type DispatchAdapter } from "../src/dispatch.js";
-import type { GateResult } from "../src/gate.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import {
   CapabilityStore,
   LaunchFiles,
@@ -44,7 +44,7 @@ import type { IpcClient } from "../src/ipc/client.js";
 import { runPostShim } from "../src/ipc/postshim.js";
 import type { WorkerSpec } from "../src/ipc/workerspec.js";
 import { newestSessionFile } from "../src/sessionjsonl.js";
-import { sessionCommandMarker } from "../src/session-command.js";
+import { sessionCommandMarker } from "@quickchatai/pi-quickreview/src/session-command.js";
 import { StateStore, type SessionCommandRow } from "../src/state.js";
 import { TakeoverManager, composeHostGates, composeLookups } from "../src/takeover.js";
 import { Tmux } from "../src/tmux.js";
@@ -53,7 +53,7 @@ import { runtimeOfPr } from "../src/workerruntime.js";
 import { WorkerSessionHost } from "../src/worker-session-host.js";
 import { WorkerLaunchError, WorkerSupervisor } from "../src/workersupervisor.js";
 import { WorktreeManager } from "../src/worktrees.js";
-import type { RoundOrder } from "../src/types.js";
+import type { RoundOrder } from "@quickchatai/pi-quickreview/src/types.js";
 import { FakePaneHost } from "./helpers/fake-pane-host.js";
 import { COMMENTS, HEAD, PR, buildRig, dryrunRecords, type Rig } from "./helpers/post-ops-rig.js";
 import { HOST_NOW, trackPr } from "./helpers/session-hooks-host.js";
@@ -412,7 +412,7 @@ describe("[P8.13b] the round is delivered to interactive pi, not to a worker", (
       "extensions/cli/bash-guard.ts",
       "extensions/cli/ledger-pin.ts",
       "extensions/cli/debug-round.ts",
-      "extensions/finding-clusters.ts",
+      "packages/pi-plugin/extensions/finding-clusters.ts",
       "extensions/vendor/openviking-pi/index.ts",
     ]);
     // the post shims' names are in the env, the secret is not; no GitHub token of any name

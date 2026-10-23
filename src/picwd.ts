@@ -13,8 +13,8 @@
 // ran its bash in the legacy dir, so bash-guard refused every sanctioned script
 // (the cwd was not the sandbox root) and a debug round could neither commit its
 // verdict nor post. The SDK route already keeps a resumed session in the spec's
-// cwd; src/engine/pisdk.ts `runPiCliInCwd` gives the CLI the same.
-import { runPiCliInCwd } from "./engine/pisdk.js";
+// cwd; packages/pi-plugin/src/engine/pisdk.ts `runPiCliInCwd` gives the CLI the same.
+import { runPiCliInCwd } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 
 // Run only as the entry point, not when a test imports this file.
 if (process.argv[1]?.endsWith("picwd.js")) {

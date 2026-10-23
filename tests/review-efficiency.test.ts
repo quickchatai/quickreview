@@ -15,25 +15,28 @@ import {
   isTranslationFile,
   SWEEP_PASS,
   sweepGroups,
-} from "../src/heuristics.js";
+} from "@quickchatai/pi-quickreview/src/heuristics.js";
 import {
   addendaForPass,
   configAddenda,
   passTierModels,
   sweepLightVariants,
   VALIDATE_PASS,
-} from "../src/include.js";
-import { renderPassTask, renderPassTaskNote } from "../src/passtasks.js";
-import type { PriorFinding } from "../src/priorfindings.js";
-import { assignPriorFindings, renderPriorTaskSection } from "../src/priortasks.js";
+} from "@quickchatai/pi-quickreview/src/include.js";
+import { renderPassTask, renderPassTaskNote } from "@quickchatai/pi-quickreview/src/passtasks.js";
+import type { PriorFinding } from "@quickchatai/pi-quickreview/src/priorfindings.js";
+import {
+  assignPriorFindings,
+  renderPriorTaskSection,
+} from "@quickchatai/pi-quickreview/src/priortasks.js";
 import {
   renderRoundPrompt,
   renderValidatorOutputNote,
   templateFileForOrder,
-} from "../src/templates.js";
-import type { RoundOrder } from "../src/types.js";
+} from "@quickchatai/pi-quickreview/src/templates.js";
+import type { RoundOrder } from "@quickchatai/pi-quickreview/src/types.js";
 import type { PrStateRow } from "../src/state.js";
-import type { PassPlanEntry, RoundDelta } from "../src/types.js";
+import type { PassPlanEntry, RoundDelta } from "@quickchatai/pi-quickreview/src/types.js";
 
 const fixture = readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8");
 const baseCfg: Config = parseConfig(fixture);

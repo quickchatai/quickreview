@@ -17,7 +17,7 @@
 // A frozen driver (a synchronous loop stops every timer and signal handler in
 // it) is beyond its own deadline's reach. `start` therefore also launches a
 // watchdog, a second small process of its own group: it reads the driver's
-// heartbeat (src/heartbeat.ts) and kills the driver's group, and the pi groups
+// heartbeat (packages/pi-plugin/src/heartbeat.ts) and kills the driver's group, and the pi groups
 // the beat names, once the deadline plus a grace has passed and the beat has
 // stopped advancing.
 //
@@ -44,13 +44,24 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { stopLiveSessions } from "./engine/livesessions.js";
-import { HEARTBEAT_FILE, readBeat, startHeartbeat } from "./heartbeat.js";
-import { originRepo, resolveBranch, resolveUncommitted } from "./localreview.js";
+import { stopLiveSessions } from "@quickchatai/pi-quickreview/src/engine/livesessions.js";
+import {
+  HEARTBEAT_FILE,
+  readBeat,
+  startHeartbeat,
+} from "@quickchatai/pi-quickreview/src/heartbeat.js";
+import {
+  originRepo,
+  resolveBranch,
+  resolveUncommitted,
+} from "@quickchatai/pi-quickreview/src/localreview.js";
 import { latestLiveRound, viewRound } from "./live/read.js";
-import { parsePrTarget } from "./prtarget.js";
+import { parsePrTarget } from "@quickchatai/pi-quickreview/src/prtarget.js";
 import { parseReviewArgs } from "./reviewcli.js";
-import { REVIEW_SCHEMA_VERSION, withSchemaVersion } from "./contract.js";
+import {
+  REVIEW_SCHEMA_VERSION,
+  withSchemaVersion,
+} from "@quickchatai/pi-quickreview/src/contract.js";
 
 export const DETACHED_USAGE =
   "usage: qcr review start [branch | --uncommitted | --diff FILE | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--key K] [--limit USD] [--full] [--to DEST] [--out FILE] --json\n" +

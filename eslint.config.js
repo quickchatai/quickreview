@@ -23,7 +23,7 @@ import tseslint from "typescript-eslint";
 // caught the same as a read in a body.
 // -----------------------------------------------------------------------
 export const extensionBan = {
-  files: ["extensions/**/*.ts"],
+  files: ["extensions/**/*.ts", "packages/pi-plugin/extensions/**/*.ts"],
   ignores: ["extensions/cli/**", "extensions/inline-bash.ts"],
   rules: {
     "no-restricted-properties": [
@@ -61,6 +61,9 @@ export default tseslint.config(
     ignores: [
       "dist/**",
       "node_modules/**",
+      // The workspace packages' build output, and the data a pack copies in.
+      "packages/*/dist/**",
+      "packages/*/assets/**",
 
       // Runtime state the daemon, TUI and tests write. Gitignored already.
       // The reviewed repo's base clone is absent from this list on purpose:
@@ -101,10 +104,11 @@ export default tseslint.config(
   },
 
   // -----------------------------------------------------------------------
-  // TypeScript: src/, extensions/ (minus the vendored files above), tests/.
+  // TypeScript: src/, extensions/ (minus the vendored files above), tests/,
+  // and the review core's package (packages/pi-plugin).
   // -----------------------------------------------------------------------
   {
-    files: ["src/**/*.ts", "extensions/**/*.ts", "tests/**/*.ts"],
+    files: ["src/**/*.ts", "extensions/**/*.ts", "packages/*/**/*.ts", "tests/**/*.ts"],
     extends: [js.configs.recommended, tseslint.configs.recommendedTypeChecked],
     languageOptions: {
       parserOptions: {
@@ -113,7 +117,8 @@ export default tseslint.config(
         // the editor do — no hand-maintained project list to drift.
         //
         // It covers src/ and extensions/, which the root tsconfig.json
-        // includes. tests/ needs the override below: see there.
+        // includes, and packages/pi-plugin/, which its own tsconfig.json
+        // does. tests/ needs the override below: see there.
         projectService: true,
         tsconfigRootDir: import.meta.dirname,
       },
@@ -313,7 +318,7 @@ export default tseslint.config(
   // everything is `any`.
   // -----------------------------------------------------------------------
   {
-    files: ["scripts/*.mjs", "deploy/*.mjs", "*.js", "*.mjs"],
+    files: ["scripts/*.mjs", "deploy/*.mjs", "bin/*.js", "*.js", "*.mjs"],
     extends: [js.configs.recommended, tseslint.configs.disableTypeChecked],
     languageOptions: {
       ecmaVersion: 2023,

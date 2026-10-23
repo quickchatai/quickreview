@@ -17,7 +17,7 @@
 // CLAUDE.md hard rule 2 shows up here as a WORDING rule: nothing the daemon
 // says may claim a review was dismissed. Superseding is "read the newest one".
 import type { Config } from "../config.js";
-import type { RoundType, Verdict } from "../types.js";
+import type { RoundType, Verdict } from "@quickchatai/pi-quickreview/src/types.js";
 
 /** Slack mrkdwn escaping — `&` first, or the other two double-escape. */
 export function escapeMrkdwn(text: string): string {

@@ -1,7 +1,7 @@
 // tests/profile-inheritance.test.ts — `extends` chains and the default base.
 //
 // Every case resolves a profile the way wire.ts does (the three loaders in
-// src/profiles.ts) and asserts on what the resolved profile makes the PLAN
+// packages/pi-plugin/src/profiles.ts) and asserts on what the resolved profile makes the PLAN
 // (`buildPassPlan`) and the BUILT AGENTS (`buildAgents`) do — never on the
 // resolver's internals. The merge rules under test:
 //   * addenda — base first; same id replaces in place; new id appends;
@@ -15,15 +15,15 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseConfig, type Config } from "../src/config.js";
 import { buildPassPlan } from "../src/dispatch.js";
-import { ecosystemFor } from "../src/ecosystem.js";
+import { ecosystemFor } from "@quickchatai/pi-quickreview/src/ecosystem.js";
 import type { PrFileEntry } from "../src/github.js";
-import { PASS_ADDENDA, buildAgents } from "../src/include.js";
+import { PASS_ADDENDA, buildAgents } from "@quickchatai/pi-quickreview/src/include.js";
 import { configHome, homeProfileLookup, type InstallEnv } from "../src/install.js";
 import {
   loadProfileAddenda,
   loadProfileEcosystem,
   loadProfileHeuristics,
-} from "../src/profiles.js";
+} from "@quickchatai/pi-quickreview/src/profiles.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const sandbox = join(import.meta.dirname, "..");

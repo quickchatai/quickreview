@@ -5,8 +5,9 @@
 // a model or a repository: runDetachedChild around an sdkRuntime session on
 // pi-ai's faux provider, with the route marked as SDK. Zero LLM, no network.
 //
-// It imports the BUILT modules (dist/src), like the stub of the process-route
-// orphan test, so a build comes first.
+// It imports the BUILT modules (the app's dist/src, the review core's
+// packages/pi-plugin/dist/src), like the stub of the process-route orphan
+// test, so a build comes first.
 //
 // Modes, by what the faux model does in its one turn:
 //   ok      answers at once; the stub's process must then end by itself
@@ -30,12 +31,13 @@ import { pathToFileURL } from "node:url";
 const [dir, key, mode, root, timeoutMs] = process.argv.slice(2);
 process.on("exit", (c) => appendFileSync(join(dir, "exit-code"), String(c)));
 const dist = join(root, "dist", "src");
+const core = join(root, "packages", "pi-plugin", "dist", "src");
 const load = (...p) => import(pathToFileURL(join(...p)).href);
 const ai = await load(root, "node_modules", "@earendil-works", "pi-ai", "dist", "index.js");
 const { runDetachedChild } = await load(dist, "reviewdetach.js");
-const { PiHost } = await load(dist, "engine", "pisdk.js");
-const { sdkRuntime } = await load(dist, "engine", "sdkruntime.js");
-const { markSdkRoute } = await load(dist, "engine", "livesessions.js");
+const { PiHost } = await load(core, "engine", "pisdk.js");
+const { sdkRuntime } = await load(core, "engine", "sdkruntime.js");
+const { markSdkRoute } = await load(core, "engine", "livesessions.js");
 markSdkRoute();
 await runDetachedChild({
   dir,

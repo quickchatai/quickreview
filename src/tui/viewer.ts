@@ -1,6 +1,6 @@
 // The board's transcript viewer: what the PR pane shows unless an operator is
 // inside the PR's pi. Its source is the LiveEvent log of the PR's rounds
-// (src/live/events.ts) under state/live/pr-<n>/r<round>/ — the main session's
+// (packages/pi-plugin/src/live/events.ts) under state/live/pr-<n>/r<round>/ — the main session's
 // main.jsonl and one lens-<id>.jsonl per lens session — read over the same
 // runner as every other state read (`liveReadArgv`: cat, then tail -c +offset),
 // so it looks the same over ssh and locally.
@@ -18,10 +18,10 @@
 // stays put while the log grows. `[` `]` step through the round's streams (the
 // main session, then each lens), `<` `>` through its rounds.
 import type { TuiConfig } from "../config.js";
-import type { LiveEvent } from "../live/events.js";
-import { parseLiveLines } from "../live/events.js";
+import type { LiveEvent } from "@quickchatai/pi-quickreview/src/live/events.js";
+import { parseLiveLines } from "@quickchatai/pi-quickreview/src/live/events.js";
 import { newRenderState, renderLiveEvent, type RenderState } from "../livecli.js";
-import { lensForAgent } from "../round-progress.js";
+import { lensForAgent } from "@quickchatai/pi-quickreview/src/round-progress.js";
 import type { PiPaneView } from "./pipane.js";
 import { charWidth, displayWidth, sanitizeText } from "./paint.js";
 import { liveListArgv, liveReadArgv, type PiTerminalSession, type SshRunner } from "./remote.js";

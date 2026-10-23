@@ -10,7 +10,7 @@
 //     manifest following, and a dropped handler cannot leave a stale event;
 //   * every event maps to the App permission GitHub requires for delivering
 //     it, and the manifest must grant at least read there;
-//   * every MutationKind in src/gate.ts maps to the permission its REST/
+//   * every MutationKind in packages/pi-plugin/src/gate.ts maps to the permission its REST/
 //     GraphQL/git path writes through, and the manifest must grant write
 //     there — the Record<MutationKind, …> makes a NEW kind a compile error
 //     until it is mapped.
@@ -23,7 +23,7 @@ import {
   MUTATION_KINDS,
   type AppSelfConfigKind,
   type MutationKind,
-} from "../src/gate.js";
+} from "@quickchatai/pi-quickreview/src/gate.js";
 import { parseConfig } from "../src/config.js";
 import { DEFAULT_WEBHOOK_PATH } from "../src/webhook.js";
 

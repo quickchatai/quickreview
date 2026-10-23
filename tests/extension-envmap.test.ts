@@ -1,15 +1,20 @@
-// P1.2: every QCR_* and OPENVIKING_* name that appears under extensions/ is
-// classified in src/engine/envmap.ts. The scan is the source of truth: a name
+// P1.2: every QCR_* and OPENVIKING_* name that appears under extensions/ (the
+// app's and the review core's) is classified in the core's packages/pi-plugin/src/engine/envmap.ts. The scan is the source of truth: a name
 // added to an extension without a row fails here, so the SDK session builder
 // can never miss one when it turns pi's env into factory config.
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { EXTENSION_ENV, EXTENSION_NON_ENV_NAMES, extensionEnvNames } from "../src/engine/envmap.js";
+import {
+  EXTENSION_ENV,
+  EXTENSION_NON_ENV_NAMES,
+  extensionEnvNames,
+} from "@quickchatai/pi-quickreview/src/engine/envmap.js";
+import { EXTENSION_DIRS } from "./helpers/source-trees.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const EXT = join(ROOT, "extensions");
+const EXTS = EXTENSION_DIRS.map((d) => join(ROOT, d));
 const NAME = /\b(?:QCR|OPENVIKING)_[A-Z0-9_]*[A-Z0-9]/g;
 const CODE = /\.(?:ts|mts|mjs|js)$/;
 
@@ -21,11 +26,11 @@ function walk(dir: string): string[] {
   });
 }
 
-/** name -> sorted files (relative to extensions/) whose text carries it. */
+/** name -> sorted files (relative to their extensions/) whose text carries it. */
 function scan(): Map<string, string[]> {
   const found = new Map<string, Set<string>>();
-  for (const file of walk(EXT)) {
-    const rel = relative(EXT, file);
+  for (const [ext, file] of EXTS.flatMap((e) => walk(e).map((f) => [e, f] as const))) {
+    const rel = relative(ext, file);
     for (const name of new Set(readFileSync(file, "utf8").match(NAME) ?? [])) {
       if (!found.has(name)) found.set(name, new Set());
       found.get(name)!.add(rel);

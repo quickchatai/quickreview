@@ -14,19 +14,23 @@ import {
   type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import type { AgentSession, ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import { createBashGuard } from "../extensions/bash-guard.js";
+import { createBashGuard } from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
 import {
   createLensRunner,
   lensSemaphoreFor,
   type LensRunConfig,
-} from "../src/engine/lens/runlens.js";
-import { loadBuiltAgents } from "../src/engine/lens/registry.js";
-import { LENS_LEAVES_LOAD_MEMORY, PASS_TIERS, buildAgents } from "../src/include.js";
-import type { PassTier } from "../src/types.js";
+} from "@quickchatai/pi-quickreview/src/engine/lens/runlens.js";
+import { loadBuiltAgents } from "@quickchatai/pi-quickreview/src/engine/lens/registry.js";
+import {
+  LENS_LEAVES_LOAD_MEMORY,
+  PASS_TIERS,
+  buildAgents,
+} from "@quickchatai/pi-quickreview/src/include.js";
+import type { PassTier } from "@quickchatai/pi-quickreview/src/types.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
-import { lensLogName, readLiveEvents } from "../src/live/events.js";
-import { createLiveWriter } from "../src/live/writer.js";
-import { parseLedger } from "../src/lensresult.js";
+import { lensLogName, readLiveEvents } from "@quickchatai/pi-quickreview/src/live/events.js";
+import { createLiveWriter } from "@quickchatai/pi-quickreview/src/live/writer.js";
+import { parseLedger } from "@quickchatai/pi-quickreview/src/lensresult.js";
 import {
   FakeTransport,
   createHostRig,

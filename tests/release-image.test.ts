@@ -171,7 +171,7 @@ describe("release image — stages and pins", () => {
   });
 
   it("the build stage compiles with tsc and verifies dist", () => {
-    expect(lines).toContain("RUN npx tsc -p tsconfig.json && node scripts/verify-dist.mjs");
+    expect(lines).toContain("RUN npx tsc -b && node scripts/verify-dist.mjs");
     // …then ships production dependencies only
     expect(runWith("npm prune")).toContain("--omit=dev");
   });
@@ -223,6 +223,9 @@ describe("release image — any uid, a root-owned tree", () => {
     );
     expect(lines).toContain("COPY --from=build /src/dist ./dist");
     expect(lines).toContain("COPY --from=build /src/node_modules ./node_modules");
+    // the review core: node_modules/@quickchatai/pi-quickreview is a link to
+    // ../../packages/pi-plugin, so without this every core import dangles
+    expect(lines).toContain("COPY --from=build /src/packages ./packages");
   });
 
   it("every host path the Dockerfile copies is admitted by its own .dockerignore", () => {

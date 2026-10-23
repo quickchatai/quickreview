@@ -50,7 +50,7 @@ import type { Command } from "../commands.js";
 import { newViewerInput, viewerInputKey, type ViewerInput } from "./viewerinput.js";
 import { PANE_ESCAPE, isEndKey, keysToTmux } from "./termmirror.js";
 import { Poller } from "./poll.js";
-import { parseRoundProgress } from "../round-progress.js";
+import { parseRoundProgress } from "@quickchatai/pi-quickreview/src/round-progress.js";
 import { prUrl } from "./theme.js";
 import {
   type CompanionSidebar,

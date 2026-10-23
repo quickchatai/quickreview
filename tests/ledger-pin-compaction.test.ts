@@ -24,7 +24,7 @@ import {
   pinnedBlock,
   pinnedCompaction,
   stripPinned,
-} from "../extensions/ledger-pin.js";
+} from "@quickchatai/pi-quickreview/extensions/ledger-pin.js";
 
 type PiCompactionPreparation = SessionBeforeCompactEvent["preparation"];
 type PiEventContext = Pick<ExtensionContext, "modelRegistry" | "model" | "thinkingLevel">;

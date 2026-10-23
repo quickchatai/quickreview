@@ -54,7 +54,7 @@ import {
   textResult as text,
   refusedResult as refused,
   type QcrTool,
-} from "./pi-tool.js";
+} from "@quickchatai/pi-quickreview/extensions/pi-tool.js";
 import { fileURLToPath } from "node:url";
 import { configHome, stateHome } from "../src/install.js";
 import { SetupEngine, type CutStatus, type CutView } from "../src/setup/engine.js";
@@ -89,7 +89,7 @@ import {
   type PortraitView,
   type SectionDiff,
 } from "../src/setup/portrait.js";
-import { resolveMaxConcurrency } from "../src/engine/lens/env.js";
+import { resolveMaxConcurrency } from "@quickchatai/pi-quickreview/src/engine/lens/env.js";
 import {
   ciText,
   displayRoot,

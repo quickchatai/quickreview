@@ -23,7 +23,7 @@ map for *changing* it.
 ```sh
 npm ci
 timeout 900 npm test        # vitest; the whole suite, offline, no secrets
-npm run build               # tsc -p tsconfig.json, then scripts/verify-dist.mjs
+npm run build               # tsc -b (the app and packages/pi-plugin), then scripts/verify-dist.mjs
 npm run typecheck:tests     # tsc -p tsconfig.tests.json (tests/ is not in the build)
 ```
 
@@ -38,7 +38,8 @@ All three must be green before you commit. Notes that will bite otherwise:
 - `npm run build` chains `scripts/verify-dist.mjs` because `incremental` +
   `noEmitOnError` mean tsc decides what to emit from its build info, not from
   what is on disk — a targeted `rm` inside `dist/` will not be rebuilt. The
-  reliable cold build is `rm -rf dist node_modules/.cache && npm run build`.
+  reliable cold build is
+  `rm -rf dist packages/*/dist node_modules/.cache && npm run build`.
 - `vitest.config.ts` restricts collection to `tests/**` on purpose: the default
   globs also collect agent worktrees under `.claude/worktrees/`, which then
   judge this checkout's seeds against another branch's expectations.
@@ -50,6 +51,16 @@ All three must be green before you commit. Notes that will bite otherwise:
   `engines`).
 - **ESM, `module: NodeNext`** — local imports carry the **`.js` suffix** even
   from `.ts` files.
+- **The review core is its own package**, the npm workspace
+  `packages/pi-plugin` (`@quickchatai/pi-quickreview`): its `src/` and
+  `extensions/` keep the layout they had at the root. The app (everything
+  else) imports it by package specifier,
+  `@quickchatai/pi-quickreview/src/<file>.js`; the core imports only itself,
+  pi, `smol-toml` and `node:*` (`tests/layers.test.ts`). A test resolves the
+  specifier to the core's sources (`vitest.config.ts`, `tsconfig.tests.json`),
+  and a fence that walks the source walks both trees
+  (`tests/helpers/source-trees.ts`). The data the core reads (`prompts/`,
+  `agents/`, `seeds/`, …) stays at the root.
 - **Minimal dependencies.** Runtime: `better-sqlite3`, `smol-toml`. Dev: `typescript`, `vitest`, `@types/*`,
   `eslint` + `@eslint/js` + `typescript-eslint`, `prettier`. Adding
   one is a decision, not a convenience.
@@ -86,7 +97,7 @@ These are structural: each is enforced by code shape or by a pinned test, not by
 convention. If your change trips one, the change is wrong — fix the code, never
 the fence.
 
-1. **One mutation gate.** Every GitHub write goes through `src/gate.ts`, whose
+1. **One mutation gate.** Every GitHub write goes through `packages/pi-plugin/src/gate.ts`, whose
    `MUTATION_KINDS` is a closed list; an unknown kind throws. Reads go direct
    (`src/github.ts`). The gate reads the caller's intent **once** into a frozen
    snapshot and admits that snapshot; guards receive it and may **soften** a
@@ -110,14 +121,14 @@ the fence.
    around a fence, never inside one, and deleting the marker fails just as
    loudly.
 4. **Pass behaviour changes go through the addendum registry.** `PASS_ADDENDA`
-   in `src/include.ts` composes binding rules onto the **built** pass bodies in
+   in `packages/pi-plugin/src/include.ts` composes binding rules onto the **built** pass bodies in
    `state/agents/`; repo-specific house rules go in a profile pack
-   (`profiles/<name>/addenda/`, loaded by `src/profiles.ts`). Both are the same
+   (`profiles/<name>/addenda/`, loaded by `packages/pi-plugin/src/profiles.ts`). Both are the same
    mechanism — a pack extends the registry rather than bypassing it. There is no
    third path.
 5. **The reviewer reads code; it never executes it.** Five independent layers
    hold that boundary — a git config-scope pin on the session argv
-   (`src/sessions.ts`), a command guard (`extensions/bash-guard.ts`), a write
+   (`src/sessions.ts`), a command guard (`packages/pi-plugin/extensions/bash-guard.ts`), a write
    veto over git's configuration surface *and* this system's own policy surface,
    a round-boundary integrity fingerprint (`src/execboundary.ts`), and an
    ungated-review outcome detector. None may be traded for another; the
@@ -128,13 +139,13 @@ the fence.
 6. **`dry_run` is the operator's flag alone.** It ships `true`; in dry-run the
    gate writes each intended call to `state/dryrun/` instead of executing it.
    Nothing in the codebase may move it in either direction. The one class that
-   executes anyway is `APP_SELF_CONFIG_KINDS` in `src/gate.ts` — a closed set
+   executes anyway is `APP_SELF_CONFIG_KINDS` in `packages/pi-plugin/src/gate.ts` — a closed set
    pinned by deep equality, so adding a member fails `tests/gate.test.ts`. See
    [`docs/ownership.md`](docs/ownership.md) for every owner-only surface.
 7. **Single shepherd.** Two daemon-owned session kinds exist: one main session
    per PR and one global overseer. The daemon *nudges* (round order, wake file)
    and never schedules an agent; lens passes are leaves, enforced at agent build
-   time by `src/include.ts` stripping spawn tools. Anything wanting a session's
+   time by `packages/pi-plugin/src/include.ts` stripping spawn tools. Anything wanting a session's
    attention mid-round goes through `wakeOrHold` in `src/wakes.ts`. Pinned by
    `tests/single-shepherd.test.ts`; the topology is
    [`docs/single-shepherd-invariant.md`](docs/single-shepherd-invariant.md).
@@ -165,12 +176,12 @@ the fence.
 |---|---|
 | Ingress | `src/webhook.ts` (HMAC, delivery dedupe), `src/reconcile.ts` (the authoritative poll — GitHub always wins) |
 | Lifecycle | `src/statemachine.ts` (transition table in the module header), `src/state.ts` (SQLite + `status.json` snapshot) |
-| Round planning | `src/dispatch.ts` (FIFO, concurrency cap), `src/planner.ts` (the lens plan, follow-up rounds, the round order), `src/heuristics.ts` (lens selection), `src/ecosystem.ts` + `src/migrations.ts` (framework pre-checks), `src/profiles.ts` |
-| Prompt assembly | `src/include.ts` (`{{include:}}`, tier rewriting, `PASS_ADDENDA`), `src/templates.ts` (round templates) |
+| Round planning | `src/dispatch.ts` (FIFO, concurrency cap), `packages/pi-plugin/src/planner.ts` (the lens plan, follow-up rounds, the round order), `packages/pi-plugin/src/heuristics.ts` (lens selection), `packages/pi-plugin/src/ecosystem.ts` + `packages/pi-plugin/src/migrations.ts` (framework pre-checks), `packages/pi-plugin/src/profiles.ts` |
+| Prompt assembly | `packages/pi-plugin/src/include.ts` (`{{include:}}`, tier rewriting, `PASS_ADDENDA`), `packages/pi-plugin/src/templates.ts` (round templates) |
 | Sessions | `src/sessions.ts`, `src/tmux.ts`, `src/worktrees.ts`, `src/wakes.ts`, `extensions/inject-bridge.ts` |
-| Verdict + posting | `src/verdicts.ts`, `src/gate.ts`, `src/guards.ts`, `src/cigate.ts`, `src/standing-review.ts`, `src/posting.ts`, `src/anchors.ts`, `scripts/post-review.sh` + `scripts/guards.sh` |
-| Review judgment | `src/severity.ts` (severity × confidence × reachability → tag), `src/recheck.ts`, `src/pingpong.ts`, `src/escalation.ts` |
-| Learning | `src/feedback.ts`, `src/eod.ts`, `src/digest.ts`, `src/findingsrecord.ts`, `src/improvements.ts` |
+| Verdict + posting | `src/verdicts.ts`, `packages/pi-plugin/src/gate.ts`, `packages/pi-plugin/src/guards.ts`, `packages/pi-plugin/src/cigate.ts`, `packages/pi-plugin/src/standing-review.ts`, `src/posting.ts`, `packages/pi-plugin/src/anchors.ts`, `scripts/post-review.sh` + `scripts/guards.sh` |
+| Review judgment | `packages/pi-plugin/src/severity.ts` (severity × confidence × reachability → tag), `src/recheck.ts`, `src/pingpong.ts`, `src/escalation.ts` |
+| Learning | `src/feedback.ts`, `src/eod.ts`, `src/digest.ts`, `packages/pi-plugin/src/findingsrecord.ts`, `src/improvements.ts` |
 | Memory | `src/memory/` (the seam), `src/openviking/` (the engine, supervised on loopback) |
 | Operator surfaces | `src/tui/` (board, tabs, companion column), `src/cli.ts` (`qcr`), `src/slack/`, `src/commands.ts` + `src/levers.ts` |
 | Assembly | `src/daemon.ts` (stub-wired core, test-friendly) vs `src/wire.ts` (production wiring) |
@@ -187,7 +198,7 @@ modules it describes — live under
 ## How to make the four common changes
 
 **Add or change a lens rule.** Add an entry to `PASS_ADDENDA` in
-`src/include.ts` (scope `"all"`, `"lenses"`, or a named lens list; declaration
+`packages/pi-plugin/src/include.ts` (scope `"all"`, `"lenses"`, or a named lens list; declaration
 order is composition order), or, for house rules about one repository, a file
 under `profiles/<name>/addenda/`. Do **not** edit a seed under `agents/` or
 `prompts/`. Fences that will fail if you do: `tests/seed-integrity.test.ts`
@@ -211,7 +222,7 @@ variant that nothing constructs (a click target that cannot be clicked), and
 `tests/tui-fixed-layout.test.ts` fails anything that takes the terminal or folds
 the column. Contract: [`docs/tui.md`](docs/tui.md).
 
-**Add a gate kind.** Add it to `MUTATION_KINDS` in `src/gate.ts` and give it a
+**Add a gate kind.** Add it to `MUTATION_KINDS` in `packages/pi-plugin/src/gate.ts` and give it a
 caller. It must be ordinary: suppressed in dry-run, refused for `forceLive`, and
 outside `APP_SELF_CONFIG_KINDS`. `tests/fences-gate.test.ts` rejects any name
 suggesting dismissal; `tests/gate.test.ts` pins the two closed sets by deep

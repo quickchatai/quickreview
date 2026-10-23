@@ -13,6 +13,9 @@
 #   - the compiled app (dist/), its production dependencies (pi among them,
 #     from `npm ci`), and src/ + extensions/ so a pi extension loaded from here
 #     resolves its imports;
+#   - the review core's workspace package, packages/pi-plugin (its sources
+#     and its compiled dist/), which node_modules/@quickchatai/pi-quickreview
+#     links to;
 #   - the frozen seeds (agents/, prompts/, seeds/), the profiles, and the seed
 #     manifest, checked against each other at build time (CLAUDE.md rule 6);
 #   - the reviewer context stub as /opt/qcr/AGENTS.override.md: pi loads the
@@ -90,12 +93,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 FROM node:${NODE_MAJOR}-${NODE_DISTRO} AS build
 WORKDIR /src
 COPY package.json package-lock.json ./
+# A workspace's manifest must be in place before `npm ci`, which links it.
+COPY packages/pi-plugin/package.json packages/pi-plugin/package.json
 RUN npm ci --no-audit --no-fund
 COPY tsconfig.json ./
 COPY scripts/verify-dist.mjs scripts/verify-dist.mjs
+COPY packages packages
 COPY src src
 COPY extensions extensions
-RUN npx tsc -p tsconfig.json && node scripts/verify-dist.mjs
+RUN npx tsc -b && node scripts/verify-dist.mjs
 RUN npm prune --omit=dev --no-audit --no-fund && npm cache clean --force
 
 # ---- release -----------------------------------------------------------------
@@ -129,7 +135,7 @@ RUN git config --system --add safe.directory '*'
 # pi: ONE copy, the pinned package npm ci put in node_modules below (P9.9b).
 # There is no global pi CLI: every pi the app starts is that package's own bin,
 # node_modules/.bin/pi (src/picli.ts), or its SDK. Lenses run on the SDK through
-# our own lens tool (src/engine/lens/).
+# our own lens tool (packages/pi-plugin/src/engine/lens/).
 
 # The app. COPY lands root-owned; the chmod below makes it world-readable and
 # writable by nobody.
@@ -137,6 +143,7 @@ WORKDIR /opt/qcr
 COPY package.json package-lock.json ./
 COPY --from=build /src/node_modules ./node_modules
 COPY --from=build /src/dist ./dist
+COPY --from=build /src/packages ./packages
 COPY src ./src
 COPY extensions ./extensions
 COPY agents ./agents

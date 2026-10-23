@@ -214,6 +214,7 @@ describe("memory image — build context", () => {
   });
 
   it("ships exactly the runtime packages the sidecar's import closure reaches", () => {
+    const CORE = "@quickchatai/pi-quickreview";
     const seen = new Set<string>();
     const externals = new Set<string>();
     const walk = (rel: string): void => {
@@ -232,16 +233,27 @@ describe("memory image — build context", () => {
         const spec = m[1]!;
         if (spec.startsWith(".")) {
           walk(relative(root, resolve(root, dirname(rel), spec.replace(/\.js$/, ".ts"))));
+        } else if (spec.startsWith(`${CORE}/`)) {
+          // The review core's package: shipped whole, and its own imports walked.
+          externals.add(CORE);
+          walk(`packages/pi-plugin/${spec.slice(CORE.length + 1).replace(/\.js$/, ".ts")}`);
         } else if (!spec.startsWith("node:")) {
           externals.add(spec);
         }
       }
     };
     walk("src/openviking/sidecar-main.ts");
-    const shipped = [...dockerfile.matchAll(/--from=build \/src\/node_modules\/(\S+)/g)].map(
-      (m) => m[1],
-    );
+    const shipped = [
+      ...dockerfile.matchAll(/--from=build \/src\/node_modules\/(\S+)/g),
+      ...dockerfile.matchAll(
+        /--from=build \/src\/packages\/pi-plugin\/dist \.\/node_modules\/(\S+)\/dist/g,
+      ),
+    ].map((m) => m[1]);
     expect([...externals].sort()).toEqual(shipped.sort());
+    // The core ships with its manifest, whose export map resolves its specifiers.
+    expect(dockerfile).toContain(
+      `COPY --from=build /src/packages/pi-plugin/package.json ./node_modules/${CORE}/package.json`,
+    );
   });
 });
 

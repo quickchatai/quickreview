@@ -1,12 +1,12 @@
-// src/promptdoc.ts — maintainer-only text never reaches a model: the
+// packages/pi-plugin/src/promptdoc.ts — maintainer-only text never reaches a model: the
 // `> Sandbox file:` doc header and the RATIFIED fence marker lines stay in the
 // source (people and tests/invariant-fences.test.ts read them there) and are
 // stripped on every load path that hands a prompt file to a model.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { stripModelDocs } from "../src/promptdoc.js";
-import { renderRecheckPrompt } from "../src/templates.js";
+import { stripModelDocs } from "@quickchatai/pi-quickreview/src/promptdoc.js";
+import { renderRecheckPrompt } from "@quickchatai/pi-quickreview/src/templates.js";
 
 const ROOT = join(import.meta.dirname, "..");
 

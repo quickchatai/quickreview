@@ -4,7 +4,7 @@
 // scheduler. Delivery remains inject-bridge-owned; round recovery remains the
 // VerdictWatcher's existing self-requeue path. The supervisor only classifies
 // finite start/finish obligations from durable command state + JSONL receipts.
-import { roundStageDeadlines } from "./round-stage-deadlines.js";
+import { roundStageDeadlines } from "@quickchatai/pi-quickreview/src/round-stage-deadlines.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -20,16 +20,22 @@ import {
   resolveRoundStageBounds,
   type Config,
 } from "./config.js";
-import { sameSessionCommandOwner, sessionCommandMarker } from "./session-command.js";
+import {
+  sameSessionCommandOwner,
+  sessionCommandMarker,
+} from "@quickchatai/pi-quickreview/src/session-command.js";
 import {
   isTerminalAgentStatus,
   executionsComplete,
   lensForAgent,
   plannedFanoutAgents,
   type RoundProgressSnapshot,
-} from "./round-progress.js";
+} from "@quickchatai/pi-quickreview/src/round-progress.js";
 import type { RoundRow, SessionCommandRow, StateStore, SupervisorLeaseRow } from "./state.js";
-import type { RoundRecoveryDisposition, SessionHooks } from "./types.js";
+import type {
+  RoundRecoveryDisposition,
+  SessionHooks,
+} from "@quickchatai/pi-quickreview/src/types.js";
 
 export const ROUND_STAGE_SUPERVISOR = "round-stage";
 

@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { KILL_WORDS } from "../src/findingsrecord.js";
+import { KILL_WORDS } from "@quickchatai/pi-quickreview/src/findingsrecord.js";
 import {
   ALLOWED_COMMANDS_CLAUSE,
   EXECUTION_POLICY_ADDENDUM,
@@ -28,10 +28,10 @@ import {
   splitFrontmatter,
   splitModelSpec,
   tiersForPass,
-} from "../src/include.js";
-import { renderMigrationPrecheckDegradedNote } from "../src/ecosystem.js";
-import { renderNitScopeNote } from "../src/templates.js";
-import { loadProfileAddenda } from "../src/profiles.js";
+} from "@quickchatai/pi-quickreview/src/include.js";
+import { renderMigrationPrecheckDegradedNote } from "@quickchatai/pi-quickreview/src/ecosystem.js";
+import { renderNitScopeNote } from "@quickchatai/pi-quickreview/src/templates.js";
+import { loadProfileAddenda } from "@quickchatai/pi-quickreview/src/profiles.js";
 import { homeProfileLookup } from "../src/install.js";
 import { stageFixtureProfile } from "./helpers/tracked-profiles.js";
 
@@ -654,7 +654,7 @@ describe("addendum registry", () => {
 
   // The withdrawal must not outlive the check it relies on.
   // A degraded round (pre-check skipped or failed) renders "the migration
-  // pre-check did not run" into the GATE NOTES (src/templates.ts), and the
+  // pre-check did not run" into the GATE NOTES (packages/pi-plugin/src/templates.ts), and the
   // addendum must hand the class back to the lens for exactly that round.
   it("makes the migration-numbering withdrawal conditional on the pre-check having run", () => {
     const dataSafety = composeAddendum("pass-data-safety");
@@ -672,7 +672,7 @@ describe("addendum registry", () => {
   // The nit treadmill: without a stopping rule each re-review mints fresh nits
   // on code already reviewed and the push re-arms the trigger. The pass halves of the
   // stopping rule ride the registry; the round-side half is the NIT SCOPE
-  // block the session copies into every task string (src/templates.ts).
+  // block the session copies into every task string (packages/pi-plugin/src/templates.ts).
   it("arms the nit-scope stopping rule for lenses and its enforcement for the validator", () => {
     const lens = composeAddendum("pass-security");
     expect(lens).toContain("## Nit scope — no new nits on unchanged surfaces (sandbox rule)");

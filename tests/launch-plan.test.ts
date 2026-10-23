@@ -1,4 +1,4 @@
-// `planLaunch` (src/engine/lens/launch-plan.ts), the one-turn discovery launch
+// `planLaunch` (packages/pi-plugin/src/engine/lens/launch-plan.ts), the one-turn discovery launch
 // made structural: which discovery task files a launch covers. These tests pin
 // every discovery row in order, the validator never, the path confinement
 // (sanctioned task dirs only, symlinks resolved), the per-row extra text and
@@ -8,7 +8,11 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { LAUNCH_PLAN_DIRS_ENV, planLaunch, taskPointer } from "../src/engine/lens/launch-plan.js";
+import {
+  LAUNCH_PLAN_DIRS_ENV,
+  planLaunch,
+  taskPointer,
+} from "@quickchatai/pi-quickreview/src/engine/lens/launch-plan.js";
 
 let root: string;
 let passes: string;

@@ -28,12 +28,12 @@ import {
   type DaemonLoadMonitorDeps,
   type DaemonLoadStatus,
 } from "./eventloop.js";
-import { MutationGate, type MutationIntent } from "./gate.js";
+import { MutationGate, type MutationIntent } from "@quickchatai/pi-quickreview/src/gate.js";
 import { GitHubAdapter } from "./github.js";
-import { appActorAlias, TokenMinter } from "./githubAuth.js";
+import { appActorAlias, TokenMinter } from "@quickchatai/pi-quickreview/src/githubAuth.js";
 import { REVIEW_SET_ASIDE_STALE_WINDOW_MS, type FeedbackEvent } from "./feedback.js";
 import { enforceLedgerFreshness } from "./ledgercheck.js";
-import { readLedgerCarry } from "./ledgercarry.js";
+import { readLedgerCarry } from "@quickchatai/pi-quickreview/src/ledgercarry.js";
 import type { RepoFactsQuery } from "./lessonselect.js";
 import { sweepExpiredLevers } from "./levers.js";
 import {
@@ -58,13 +58,13 @@ import {
 import type { DispatchAnnouncer, VerdictAnnouncer } from "./slack/announce.js";
 import { applyEvent } from "./statemachine.js";
 import { buildPipelineStatus, buildStatusSnapshot, StateStore, writeStatusJson } from "./state.js";
-import { PiAuthWatch } from "./authwatch.js";
+import { PiAuthWatch } from "@quickchatai/pi-quickreview/src/authwatch.js";
 import { SessionCommandSupervisor } from "./session-command-supervisor.js";
 import { readRoundProgress } from "./requiredpasses.js";
 import { SingleFlight } from "./singleflight.js";
-import { yieldToLoop } from "./yieldloop.js";
+import { yieldToLoop } from "@quickchatai/pi-quickreview/src/yieldloop.js";
 import { stubSessionHooks } from "./stubs.js";
-import type { SessionHooks } from "./types.js";
+import type { SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { VerdictWatcher, type VerdictAdapter } from "./verdicts.js";
 import { applyInterpretation, createWebhookServer, type Interpretation } from "./webhook.js";
 import { wakeOrHold, withRepoFacts } from "./wakes.js";
@@ -123,7 +123,7 @@ export interface DaemonDeps {
    * argument is the round's assembled memory seed — MEMORY_LESS
    * when nothing is wired or the store was unreachable. */
   renderPrompt?: (
-    order: import("./types.js").RoundOrder,
+    order: import("@quickchatai/pi-quickreview/src/types.js").RoundOrder,
     memory: import("./memory/context.js").RoundMemory,
   ) => string;
   /** The pinned head + budgeted context block seeded into each round prompt.
@@ -143,7 +143,7 @@ export interface DaemonDeps {
   /** Profile lens-heuristics extension: the selected repo profile's
    * extra per-lens selection predicates, loaded once at assembly by wire.ts.
    * Absent ⇒ dispatch selects with the compiled-in generic core alone. */
-  heuristics?: import("./heuristics.js").HeuristicsExtension;
+  heuristics?: import("@quickchatai/pi-quickreview/src/heuristics.js").HeuristicsExtension;
   /** The outcome capture's git read: did the code at a posted
    * finding's anchor change between two commits? wire.ts passes the
    * WorktreeManager (read-only git in the base clone). Absent ⇒ every such
@@ -171,7 +171,7 @@ export interface DaemonDeps {
    * Absent ⇒ no git: the pre-check is skipped and logged. */
   listBaseMigrations?: (baseSha: string) => Promise<string[]>;
   /** Unpack the third-party sources a PR touches and return the round's note
-   * (src/depsources.ts; `[review] dependency_sources`). Absent ⇒ no note. */
+   * (packages/pi-plugin/src/depsources.ts; `[review] dependency_sources`). Absent ⇒ no note. */
   dependencySources?: (
     worktreePath: string,
     files: import("./github.js").PrFileEntry[],
@@ -179,7 +179,7 @@ export interface DaemonDeps {
   /** The profile-selected ecosystem seam, handed through to dispatch.
    * Absent ⇒ dispatch's own default (Django); wire.ts always passes the
    * profile's selection. */
-  ecosystem?: import("./ecosystem.js").Ecosystem;
+  ecosystem?: import("@quickchatai/pi-quickreview/src/ecosystem.js").Ecosystem;
   /** Most recent human author of paths at a sha (the escalation mention
    * pick). Absent ⇒ no git: the config fallback mention is used. */
   directiveAuthor?: (
@@ -194,7 +194,7 @@ export interface DaemonDeps {
   /** Latest digest headline for status.json (src/digest.ts). */
   digestHeadline?: () => string | undefined;
   /** pi's session-JSONL root(s) for the passive auth-failure watch
-   * (src/authwatch.ts) — production passes `piAuthWatchDirs` (wire.ts).
+   * (packages/pi-plugin/src/authwatch.ts) — production passes `piAuthWatchDirs` (wire.ts).
    * Absent (tests, stubs) ⇒ the watch never runs. */
   piSessionsDir?: string | readonly string[];
   /**

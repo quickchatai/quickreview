@@ -1,7 +1,7 @@
 // Session artifact names are shared without importing any runner or report modules.
 // The case dir's file names and the PR description payload are the offline
-// round's own (src/engine/caseout.ts).
-export { CASE_FILES, prDescription } from "../engine/caseout.js";
+// round's own (packages/pi-plugin/src/engine/caseout.ts).
+export { CASE_FILES, prDescription } from "@quickchatai/pi-quickreview/src/engine/caseout.js";
 
 /** Session comments accept both historical bare arrays and wrapped arrays. */
 export function commentsEnvelope(raw: unknown): unknown[] {

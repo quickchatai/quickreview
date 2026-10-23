@@ -24,6 +24,7 @@ import { isTab } from "./tabs.js";
 import { laptopCompanionConfig, laptopInstallEnv, laptopLifecycle } from "./companionplan.js";
 import { TUI_COMPANION_ENV, TUI_COMPANION_TMUX_SOCKET, tmuxSocketRunner } from "./tmuxsocket.js";
 import {
+  BUILD_STAMP,
   HotReloader,
   parseResumeArg,
   readResumeState,
@@ -1411,11 +1412,13 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     }
   }
 
-  // Hot-reload: watch our own dist/ and re-exec when a new build lands.
+  // Hot-reload: watch our own dist/ and the build stamp, and re-exec when a
+  // whole build lands (reload.ts says why the core's dist/ is not watched).
   const reloadState = resumeStatePath(sandboxRoot());
   const reloader = args.reload
     ? new HotReloader({
         distDir: join(sandboxRoot(), "dist"),
+        buildStamp: join(sandboxRoot(), BUILD_STAMP),
         stateFile: reloadState,
         snapshot: () => ({
           tab: app.tab,

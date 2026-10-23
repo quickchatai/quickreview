@@ -24,9 +24,9 @@ import {
   recordOnlyGate,
 } from "../src/cli.js";
 import { createDaemon, type DaemonAdapter } from "../src/daemon.js";
-import { findingMarker } from "../src/findingkey.js";
+import { findingMarker } from "@quickchatai/pi-quickreview/src/findingkey.js";
 import type { PrRef, ReviewCommentFull } from "../src/github.js";
-import { canonicalLensIds } from "../src/lensids.js";
+import { canonicalLensIds } from "@quickchatai/pi-quickreview/src/lensids.js";
 import {
   OUTCOME_RECAPTURE_MS,
   OutcomeCapture,
@@ -40,7 +40,7 @@ import {
 } from "../src/outcomes.js";
 import { reconcileOnce, type ReconcileAdapter } from "../src/reconcile.js";
 import { StateStore, type RoundFindingInput } from "../src/state.js";
-import type { SessionHooks } from "../src/types.js";
+import type { SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 
 const cfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),

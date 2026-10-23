@@ -15,19 +15,19 @@ in the loop. The model runs inside the per-PR session, which the daemon only
 | Webhook receipt, signature, event interpretation | `src/webhook.ts` |
 | The authoritative poll that rebuilds truth from GitHub | `src/reconcile.ts` |
 | PR states and the transition table | `src/statemachine.ts` |
-| Reading "what review currently stands" off a mark | `src/standing-review.ts` |
+| Reading "what review currently stands" off a mark | `packages/pi-plugin/src/standing-review.ts` |
 | FIFO pump, round order, worktree, pre-checks | `src/dispatch.ts` |
-| Lens selection and pass tiers (pure functions) | `src/heuristics.ts` |
-| The daemon↔session contract and prompt receipts | `src/types.ts` |
+| Lens selection and pass tiers (pure functions) | `packages/pi-plugin/src/heuristics.ts` |
+| The daemon↔session contract and prompt receipts | `packages/pi-plugin/src/types.ts` |
 | Verdict file consumption, anomalies, self-requeue | `src/verdicts.ts` |
 | Post-approval recheck + the trivial-delta classifier | `src/recheck.ts` |
 | Author-reply exchanges | `src/pingpong.ts` |
 | Blocked author's PR-level objections and answers | `src/pr-conversation.ts` |
 | Holding wakes while a round is in flight | `src/wakes.ts` |
-| Posting-time guards, "new evidence" test | `src/guards.ts` |
-| CI gate and withheld approvals | `src/cigate.ts` |
+| Posting-time guards, "new evidence" test | `packages/pi-plugin/src/guards.ts` |
+| CI gate and withheld approvals | `packages/pi-plugin/src/cigate.ts` |
 | Optional escalation notes (off by default) | `src/escalation.ts` |
-| Every GitHub write | `src/gate.ts` |
+| Every GitHub write | `packages/pi-plugin/src/gate.ts` |
 | Production assembly of all of the above | `src/wire.ts`, `src/daemon.ts` |
 
 ## 1. The trigger set
@@ -73,7 +73,7 @@ only by the pure `transition()` in `src/statemachine.ts`:
 There is no "awaiting a human" state. The review is never handed to a person:
 sessions always decide on the merits and put residual doubt into a
 `### For a human to double-check` section plus inline `[check this]` comments
-(grammar in `src/severity.ts`). Nothing in `transition()` can produce a park.
+(grammar in `packages/pi-plugin/src/severity.ts`). Nothing in `transition()` can produce a park.
 
 The transition table, as the code implements it:
 
@@ -99,7 +99,7 @@ advanced, a durable *successor* obligation is recorded
 (`store.recordSuccessor`).
 ² `closed` is terminal until a `reopened` event; dispatch filters on `queued`
 anyway.
-³ A legacy input spelling only (`normalizeVerdict` in `src/types.ts` also folds
+³ A legacy input spelling only (`normalizeVerdict` in `packages/pi-plugin/src/types.ts` also folds
 the older `ESCALATE` into it). It means "review posted, no approval implied" and
 the machine lands it on `tracked`.
 ⁴ A blown or malformed round returns the PR to the state its *standing* verdict
@@ -121,7 +121,7 @@ route stamps `head_sha` and `posted_event` the moment a review reaches GitHub;
 the verdict watcher later enriches the same row with `verdict` and `round_no`.
 A crash between the two leaves a substantive row with a null `verdict`.
 
-`src/standing-review.ts` is the single interpretation every lifecycle consumer
+`packages/pi-plugin/src/standing-review.ts` is the single interpretation every lifecycle consumer
 uses, in this order:
 
 1. a decided `verdict` wins (normalized);
@@ -202,7 +202,7 @@ a round already running never gets a second.
 - *No new evidence.* With `[guards] skip_unchanged_head`, a re-trigger at a head
   that is already reviewed with no author reply since consumes the triggers,
   posts nothing, and restores the standing lifecycle. This uses exactly the test
-  posting guard 2 uses (`hasNewEvidence` in `src/guards.ts`) read through
+  posting guard 2 uses (`hasNewEvidence` in `packages/pi-plugin/src/guards.ts`) read through
   `standing-review.ts`, so dispatch and the posting guard can never disagree —
   the failure this prevents is paying for a full round whose review the guard is
   guaranteed to refuse. A mark that cannot be read (`kind: "unknown"`) skips the
@@ -243,7 +243,7 @@ bounded supervisor owns its recovery.
 
 ### Lens selection and tiers
 
-`selectLenses()` in `src/heuristics.ts` is a pure function of the changed-file
+`selectLenses()` in `packages/pi-plugin/src/heuristics.ts` is a pure function of the changed-file
 shape. `pass-baseline` always runs; the conditional lenses key on paths and on
 added-line content signals — UI extensions, serializer/schema/integration dirs,
 migrations and raw SQL, auth/secret/dependency-manifest shapes, in-process state
@@ -320,7 +320,7 @@ largest PRs.
 
 ### The round order and its receipt
 
-`RoundOrder` in `src/types.ts` is the daemon↔session contract: pass plan,
+`RoundOrder` in `packages/pi-plugin/src/types.ts` is the daemon↔session contract: pass plan,
 addable lenses, gates, migration collisions, the head/base/merge-base shas the
 worktree is actually at, the worktree path, the PR body when the intent lens is
 planned, the settled digest carried from the last verdict, and an optional
@@ -367,7 +367,7 @@ strings coerce to numbers, `ESCALATE` folds to `NEEDS_HUMAN`, the self-reported
 transcripts), and malformed `passes` or `escalations` degrade to "unknown"
 rather than rejecting the verdict they ride on. An UNPARSEABLE file is treated
 as still being written while its bytes are moving — by its mtime, or between the
-watcher's own looks — and is re-read with backoff (`src/settledread.ts`): it is
+watcher's own looks — and is re-read with backoff (`packages/pi-plugin/src/settledread.ts`): it is
 called malformed only once it has sat unchanged for 3 s across several looks,
 or after a 30 s hard window, so a slow write on a CPU-starved container is
 never misread as a malformed verdict. A file that parses is complete and its
@@ -448,7 +448,7 @@ loop.
 
 ## 6. CI and withheld approvals
 
-`src/cigate.ts` classifies the checks at a head, collapsing to the most recent
+`packages/pi-plugin/src/cigate.ts` classifies the checks at a head, collapsing to the most recent
 run of each check name. With `[guards] block_approve_on_red_ci`, an approval at
 a head that is not green is **withheld**: the review posts as a COMMENT and a
 withheld-approval mark is recorded. `retryWithheldApproval()` re-reads the
@@ -622,13 +622,13 @@ self-requeue.
 `[escalation] enabled = false` is the shipped default, and off means nothing
 happens: no rule is evaluated, no note renders into any prompt, no mutation is
 built, no extra API call is made. `promptTargetsFor()` returns undefined, so
-`{{escalation_note}}` in `src/templates.ts` renders empty.
+`{{escalation_note}}` in `packages/pi-plugin/src/templates.ts` renders empty.
 
 Switched on, escalation adds a note **beside** a finished verdict. Two
 invariants hold it there, both structural:
 
 1. **The reviewer still decides.** `src/escalation.ts` does not import
-   `src/types.js`; nothing in its exported surface returns, accepts or
+   `packages/pi-plugin/src/types.js`; nothing in its exported surface returns, accepts or
    constructs a `Verdict`. The decided verdict reaches it as a plain string, to
    be quoted. `deliverEscalations()` resolves to `EscalationOutcome[]` — a
    delivery record with no channel back into the verdict — and the one caller in

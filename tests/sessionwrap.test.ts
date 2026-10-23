@@ -1,7 +1,7 @@
 // releasing(): the step beside a session runs once, however often the session is disposed.
 import { describe, expect, it } from "vitest";
-import type { RuntimeSession } from "../src/engine/port.js";
-import { releasing } from "../src/engine/sessionwrap.js";
+import type { RuntimeSession } from "@quickchatai/pi-quickreview/src/engine/port.js";
+import { releasing } from "@quickchatai/pi-quickreview/src/engine/sessionwrap.js";
 
 describe("releasing", () => {
   it("runs its step once when the session is disposed more than once", async () => {

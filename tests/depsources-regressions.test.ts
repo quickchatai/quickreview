@@ -8,7 +8,7 @@ import {
   pyVersionMatches,
   prepareDependencySources,
   renderDependencyNote,
-} from "../src/depsources.js";
+} from "@quickchatai/pi-quickreview/src/depsources.js";
 const dirs: string[] = [];
 afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });

@@ -30,14 +30,17 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { createBashGuard } from "../extensions/bash-guard.js";
+import { createBashGuard } from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
 import { extractPr } from "../src/archive/extract.js";
 import { overLiveCap, sweepLiveTrees } from "../src/archive/liveretention.js";
 import { archiveRow } from "../src/archive/rows.js";
 import { archiveStatusLine, archiveAttention, readArchiveStatus } from "../src/archive/status.js";
-import { loadBuiltAgents } from "../src/engine/lens/registry.js";
-import { createLensRunner } from "../src/engine/lens/runlens.js";
-import { LENS_SESSIONS_DIR, lensSessionsOf } from "../src/engine/openable.js";
+import { loadBuiltAgents } from "@quickchatai/pi-quickreview/src/engine/lens/registry.js";
+import { createLensRunner } from "@quickchatai/pi-quickreview/src/engine/lens/runlens.js";
+import {
+  LENS_SESSIONS_DIR,
+  lensSessionsOf,
+} from "@quickchatai/pi-quickreview/src/engine/openable.js";
 import { runOpen, type OpenDeps } from "../src/opencli.js";
 import {
   DAY,

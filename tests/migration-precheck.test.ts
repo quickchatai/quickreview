@@ -10,12 +10,16 @@ import { join, resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import { dispatchOnce, type DispatchAdapter } from "../src/dispatch.js";
-import { MutationGate, type MutationIntent, type GateResult } from "../src/gate.js";
+import {
+  MutationGate,
+  type MutationIntent,
+  type GateResult,
+} from "@quickchatai/pi-quickreview/src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
 import { StateStore } from "../src/state.js";
-import { renderRoundPrompt } from "../src/templates.js";
-import type { RoundOrder, SessionHooks } from "../src/types.js";
+import { renderRoundPrompt } from "@quickchatai/pi-quickreview/src/templates.js";
+import type { RoundOrder, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const cfg: Config = parseConfig(
@@ -247,7 +251,7 @@ describe("migration collision pre-check", () => {
   // nothing, pass-data-safety re-derives the same collision and REQUEST_CHANGES
   // is posted anyway — the merge gate consumed, the re-review round owed. So
   // the pre-check's result must arrive in the prompt the session is actually
-  // injected with (the round template rendered through src/templates.ts).
+  // injected with (the round template rendered through packages/pi-plugin/src/templates.ts).
   it(
     "tells the session, in the real rendered prompt, that the collision is already handled",
     { timeout: HEAVY_TIMEOUT_MS },

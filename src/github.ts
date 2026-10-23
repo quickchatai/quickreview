@@ -2,24 +2,27 @@
 // mutation is expressed as a MutationIntent and pushed through the gate
 // (dry-run writes it to state/dryrun/ instead of executing). There is no
 // review-dismissal function in this adapter, by design — never add one.
-import { GitHubRequestError, type PrFileEntry } from "./githubcore.js";
+import {
+  GitHubRequestError,
+  type PrFileEntry,
+} from "@quickchatai/pi-quickreview/src/githubcore.js";
 import { ThreadResolutionRefusal } from "./thread-resolution-refusal.js";
-import type { CheckSummary } from "./cigate.js";
+import type { CheckSummary } from "@quickchatai/pi-quickreview/src/cigate.js";
 import { reviewTeamSlug, type Config } from "./config.js";
-import { CHECK_THIS_RE, DEFERRED_RE } from "./severity.js";
+import { CHECK_THIS_RE, DEFERRED_RE } from "@quickchatai/pi-quickreview/src/severity.js";
 import {
   APP_SELF_CONFIG_KINDS,
   type MutationGate,
   type MutationIntent,
   type GateResult,
   type ReviewPurpose,
-} from "./gate.js";
+} from "@quickchatai/pi-quickreview/src/gate.js";
 import {
   appActorAlias,
   GITHUB_REQUEST_TIMEOUT_MS,
   type TokenMinter,
   type FetchFn,
-} from "./githubAuth.js";
+} from "@quickchatai/pi-quickreview/src/githubAuth.js";
 import type { PrReviews } from "./reviewhistory.js";
 
 export interface PrConversation {
@@ -282,7 +285,7 @@ interface RawPrHistory {
 
 export type PrDisposition = { kind: "open" | "closed"; head_sha: string } | { kind: "absent" };
 
-// The error a refused request throws is the review core's (src/githubcore.ts).
+// The error a refused request throws is the review core's (packages/pi-plugin/src/githubcore.ts).
 export { GitHubRequestError };
 
 export interface SearchIssueItem {

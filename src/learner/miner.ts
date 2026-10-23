@@ -81,7 +81,10 @@
 // as data when rendered (src/memory/datafence.ts); whose words they are is
 // `quoteAuthor` (a person's, the review system's own digest bullet, or the
 // reviewer's own re-check conclusion).
-import { findingChains, walkFindingChain as outcomeChain } from "../finding-chain.js";
+import {
+  findingChains,
+  walkFindingChain as outcomeChain,
+} from "@quickchatai/pi-quickreview/src/finding-chain.js";
 import { prAuthorOf as prAuthor } from "../pr-author.js";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -89,8 +92,8 @@ import { join } from "node:path";
 import { isBotIdentity } from "../capture.js";
 import { caseName } from "../cases.js";
 import { FEEDBACK_PREFIX_RE } from "../feedback.js";
-import { recheckHead12, recheckKeyPrefix } from "../findingkey.js";
-import { canonicalLensIds, storedLensIds } from "../lensids.js";
+import { recheckHead12, recheckKeyPrefix } from "@quickchatai/pi-quickreview/src/findingkey.js";
+import { canonicalLensIds, storedLensIds } from "@quickchatai/pi-quickreview/src/lensids.js";
 import { cleanQuotedText } from "../memory/datafence.js";
 import { LESSON_CLASS_RE } from "../memory/lessons.js";
 import { carriedToRef } from "../outcomes.js";

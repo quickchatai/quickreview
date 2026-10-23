@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { caseCostUsd, ratesFor } from "../src/bench/cost.js";
 import { nativeModelEntry, opencodeConfig, opencodeModels } from "../src/bench/opencode.js";
 import { piHasBuiltins, pireviewPiSettings, PIREVIEW_PI_SETTINGS } from "../src/bench/pireview.js";
-import { PI_DISABLED_BUILTINS } from "../src/pibuiltins.js";
+import { PI_DISABLED_BUILTINS } from "@quickchatai/pi-quickreview/src/pibuiltins.js";
 
 const B = join(import.meta.dirname, "..", "bench", "aacr");
 const tmps: string[] = [];

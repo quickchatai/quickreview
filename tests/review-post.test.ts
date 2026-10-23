@@ -1,4 +1,4 @@
-// `qcr review` posting to a PR (src/reviewpost.ts): one COMMENT review, marked,
+// `qcr review` posting to a PR (packages/pi-plugin/src/reviewpost.ts): one COMMENT review, marked,
 // deduplicated. GitHub is a stub fetch; nothing is sent anywhere.
 
 import { afterAll, describe, expect, it } from "vitest";
@@ -6,15 +6,17 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { MutationGate, type MutationIntent } from "../src/gate.js";
+import { MutationGate, type MutationIntent } from "@quickchatai/pi-quickreview/src/gate.js";
 import {
   QCR_VISIBLE_MARKER,
   assemblePostReview,
   localPostGate,
   postReviewToPr,
   type PostRequest,
-} from "../src/reviewpost.js";
-import { parseFindingMarker } from "../src/findingkey.js";
+} from "@quickchatai/pi-quickreview/src/reviewpost.js";
+import { parseFindingMarker } from "@quickchatai/pi-quickreview/src/findingkey.js";
+import { SRC_DIRS } from "./helpers/source-trees.js";
+import { CORE_NAME, escapeRe } from "./helpers/source-trees.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -276,22 +278,33 @@ describe("postReviewToPr", () => {
 
 describe("the posting module stays out of the daemon", () => {
   it("has no fetch write of its own: the review POST is a gate intent", () => {
-    const text = readFileSync(join(ROOT, "src", "reviewpost.ts"), "utf8");
+    const text = readFileSync(join(ROOT, "packages", "pi-plugin", "src", "reviewpost.ts"), "utf8");
     // The one fetch with a method is the gate executor's; the reads carry none.
     expect(text.match(/method:/g)?.length).toBe(2); // the intent's and the executor's
     expect(text).toMatch(/req\.gate\.execute\(/);
     expect(text).not.toMatch(/\/reviews`,\s*\{\s*method/);
   });
 
-  it("only the local review route (src/reviewapi.ts) imports it", () => {
-    const importers = readdirSync(join(ROOT, "src"))
-      .filter((f) => f.endsWith(".ts") && f !== "reviewpost.ts")
-      .filter((f) => /from "\.\/reviewpost\.js"/.test(readFileSync(join(ROOT, "src", f), "utf8")));
-    expect(importers).toEqual(["reviewapi.ts"]);
+  it("only the local review route (the core's src/reviewapi.ts) imports it", () => {
+    const importers = SRC_DIRS.flatMap((d) =>
+      readdirSync(join(ROOT, d))
+        .filter((f) => f.endsWith(".ts") && f !== "reviewpost.ts")
+        .filter((f) =>
+          new RegExp(`from "(\\./|${escapeRe(CORE_NAME)}/src/)reviewpost\\.js"`).test(
+            readFileSync(join(ROOT, d, f), "utf8"),
+          ),
+        )
+        .map((f) => `${d}/${f}`),
+    );
+    expect(importers).toEqual(["packages/pi-plugin/src/reviewapi.ts"]);
   });
 
   it("is not reachable from the daemon's files", () => {
     for (const f of ["github.ts", "daemon.ts", "wire.ts", "sessions.ts", "posting.ts"])
       expect(readFileSync(join(ROOT, "src", f), "utf8"), f).not.toMatch(/reviewpost/);
+    // …nor from the core's own GitHub half, which the daemon's client re-exports.
+    expect(readFileSync(join(ROOT, "packages/pi-plugin/src/githubcore.ts"), "utf8")).not.toMatch(
+      /reviewpost/,
+    );
   });
 });

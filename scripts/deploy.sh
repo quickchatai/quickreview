@@ -459,7 +459,7 @@ fi
 # runtime dir, and one named for something the release image keeps under the app
 # root would be mounted over it. tests/deploy.test.ts pins this list against the
 # updater's mounts and the image's COPY lines.
-BASE_CLONE_RESERVED=(.git .claude node_modules state wt archive commands digest inject verdict memory notes ledger.md AGENTS.override.md pihome dist package.json package-lock.json src extensions agents prompts seeds profiles schemas scripts config.example.toml docker docker-compose.yml tests)
+BASE_CLONE_RESERVED=(.git .claude node_modules state wt archive commands digest inject verdict memory notes ledger.md AGENTS.override.md pihome dist packages package.json package-lock.json src extensions agents prompts seeds profiles schemas scripts config.example.toml docker docker-compose.yml tests)
 for reserved in "${BASE_CLONE_RESERVED[@]}"; do
   if [[ "$CLONE_DIR" == "$reserved" ]]; then
     die "base clone name '$CLONE_DIR' is a runtime or build directory of the sandbox root — set [github] clone_dir to a free name"

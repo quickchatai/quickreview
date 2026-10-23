@@ -1,14 +1,14 @@
 // `qcr review` — a daemonless review from a terminal. This module is the
 // terminal's side of it: argv, the homes, the config, the prompts on stdin and
 // the printing. The review itself is core, `review()` / `preview()` in
-// src/reviewapi.ts: it previews the price first, runs automatically under the
+// packages/pi-plugin/src/reviewapi.ts: it previews the price first, runs automatically under the
 // repo's configured limit (otherwise asks), runs the shared one-shot core
-// (src/oneshot.ts) on the host, stops hard at the price it showed, and returns
+// (packages/pi-plugin/src/oneshot.ts) on the host, stops hard at the price it showed, and returns
 // the findings grouped by severity.
 //
-// Re-review: the state kept per target (src/reviewstate.ts) makes a second run
+// Re-review: the state kept per target (packages/pi-plugin/src/reviewstate.ts) makes a second run
 // on an unchanged head free, and a run after a push a delta review over the
-// production follow-up plan (src/reviewdelta.ts) with the open findings handed
+// production follow-up plan (packages/pi-plugin/src/reviewdelta.ts) with the open findings handed
 // over to verify and never repeated; a rewrite or a doubtful delta is a full
 // review.
 //
@@ -26,26 +26,33 @@ import { existsSync, openSync, readFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { CoreConfig } from "./reviewconfig.js";
-import type { Ecosystem } from "./ecosystem.js";
-import type { ReviewMemoryPort } from "./memoryport.js";
-import type { ProfilePlace } from "./profilelookup.js";
-import type { PrCredentialDeps, PrFetchRequest } from "./prtarget.js";
+import type { CoreConfig } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import type { Ecosystem } from "@quickchatai/pi-quickreview/src/ecosystem.js";
+import type { ReviewMemoryPort } from "@quickchatai/pi-quickreview/src/memoryport.js";
+import type { ProfilePlace } from "@quickchatai/pi-quickreview/src/profilelookup.js";
+import type { PrCredentialDeps, PrFetchRequest } from "@quickchatai/pi-quickreview/src/prtarget.js";
 import {
   FALLBACK_DESTINATIONS,
   parseDestinations,
   type Destination,
   type DestinationChoice,
-} from "./reviewdest.js";
-import type { OneShotResult } from "./oneshot.js";
-import type { RoundSpec } from "./engine/round.js";
-import { BUDGET_EXIT_CODE } from "./engine/budget.js";
+} from "@quickchatai/pi-quickreview/src/reviewdest.js";
+import type { OneShotResult } from "@quickchatai/pi-quickreview/src/oneshot.js";
+import type { RoundSpec } from "@quickchatai/pi-quickreview/src/engine/round.js";
+import { BUDGET_EXIT_CODE } from "@quickchatai/pi-quickreview/src/engine/budget.js";
 import { prepareHostRun } from "./hostroute.js";
-import type { Runtime } from "./engine/port.js";
-import { selectRuntime } from "./engine/select.js";
-import { LensWave, type EngineRoute, type EngineRouteRuntime } from "./engine/lens/wave.js";
-import { markSdkRoute } from "./engine/livesessions.js";
-import { REVIEW_SCHEMA_VERSION, withSchemaVersion } from "./contract.js";
+import type { Runtime } from "@quickchatai/pi-quickreview/src/engine/port.js";
+import { selectRuntime } from "@quickchatai/pi-quickreview/src/engine/select.js";
+import {
+  LensWave,
+  type EngineRoute,
+  type EngineRouteRuntime,
+} from "@quickchatai/pi-quickreview/src/engine/lens/wave.js";
+import { markSdkRoute } from "@quickchatai/pi-quickreview/src/engine/livesessions.js";
+import {
+  REVIEW_SCHEMA_VERSION,
+  withSchemaVersion,
+} from "@quickchatai/pi-quickreview/src/contract.js";
 import {
   preview,
   review,
@@ -55,7 +62,7 @@ import {
   type ReviewResult,
   type ReviewRoute,
   type ReviewTarget,
-} from "./reviewapi.js";
+} from "@quickchatai/pi-quickreview/src/reviewapi.js";
 import { reviewHome } from "./reviewhome.js";
 
 export const REVIEW_USAGE =
@@ -339,7 +346,7 @@ function targetOf(
 }
 
 /** Run one `qcr review`; resolves its exit code. Parses the flags, runs
- * `review()` or `preview()` (src/reviewapi.ts) with the terminal's ports, and
+ * `review()` or `preview()` (packages/pi-plugin/src/reviewapi.ts) with the terminal's ports, and
  * prints the result where it goes: the text for a person, the JSON object for
  * an agent, or both. */
 export async function runReviewCli(
@@ -493,7 +500,7 @@ export function selectReviewRuntime(cfg: Pick<CoreConfig, "engine" | "pi">): Eng
     const wave = new LensWave();
     let host: Promise<EngineRouteRuntime> | undefined;
     const load = (): Promise<EngineRouteRuntime> =>
-      (host ??= import("./engine/reviewsdk.js").then((m) =>
+      (host ??= import("@quickchatai/pi-quickreview/src/engine/reviewsdk.js").then((m) =>
         m.reviewSdkRuntime({
           ...(engine ? { engine: { wave, plannedWave: cfg.pi.engine_wave } } : {}),
           // `qcr review` owns its process: a wedged turn exits it, the round's
@@ -659,9 +666,9 @@ export async function cmdReview(
     });
     return code;
   }
-  const { assetRoot } = await import("./assetroot.js");
+  const { assetRoot } = await import("@quickchatai/pi-quickreview/src/assetroot.js");
   const { homeProfilePlaces, loadOneShotConfig, stateHome } = await import("./homes.js");
-  const { contextFrom } = await import("./engine/context.js");
+  const { contextFrom } = await import("@quickchatai/pi-quickreview/src/engine/context.js");
   const { createInterface } = await import("node:readline/promises");
   const { homedir } = await import("node:os");
   const root = assetRoot();

@@ -18,11 +18,14 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import { createBashGuard } from "../extensions/bash-guard.js";
-import { localPermits } from "../src/engine/lens/permits.js";
-import { loadBuiltAgents } from "../src/engine/lens/registry.js";
-import { createLensRunner, type LensRunConfig } from "../src/engine/lens/runlens.js";
-import { WeightedSemaphore } from "../src/engine/lens/semaphore.js";
+import { createBashGuard } from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
+import { localPermits } from "@quickchatai/pi-quickreview/src/engine/lens/permits.js";
+import { loadBuiltAgents } from "@quickchatai/pi-quickreview/src/engine/lens/registry.js";
+import {
+  createLensRunner,
+  type LensRunConfig,
+} from "@quickchatai/pi-quickreview/src/engine/lens/runlens.js";
+import { WeightedSemaphore } from "@quickchatai/pi-quickreview/src/engine/lens/semaphore.js";
 import { CapabilityStore, socketPathOf } from "../src/ipc/capability.js";
 import { IpcClient } from "../src/ipc/client.js";
 import {

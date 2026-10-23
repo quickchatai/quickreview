@@ -260,7 +260,7 @@ not exist yet and when the operator directory is a symlink, and it `chown -h`s
 so a link swapped in after the check is still not followed. The daemon's side
 of the seal is `operatorSealVerdict` in `src/commands.ts`.
 
-Neither path touches GitHub and neither goes near `src/gate.ts`.
+Neither path touches GitHub and neither goes near `packages/pi-plugin/src/gate.ts`.
 
 The board's PR pane also sends keystrokes (`sendKeysArgv`), which is a write in
 the trivial sense that the operator is typing into a session; it creates no
@@ -480,7 +480,7 @@ Extensions are passed **per spawn**, never registered globally, and all of them
 are the image's (`/opt/qcr/extensions`): the vendored patched memory extension,
 `extensions/muted-theme.ts`, `extensions/inject-bridge.ts` (the same bridge
 the daemon uses, pointed at the companion's own inject directory),
-`extensions/tui-view.ts`, `extensions/lens.ts` (our `lens` / `lens_wave`
+`extensions/tui-view.ts`, `packages/pi-plugin/extensions/lens.ts` (our `lens` / `lens_wave`
 tools at cap 8, in place of pi's example subagent),
 `extensions/companion-guard.ts` and `extensions/inline-bash.ts`. Routing vars
 ride the command line as an `env K=V …` prefix (`piEnvPrefix()`) rather than
@@ -639,7 +639,7 @@ What that leaves the companion able to do: read `/workspace` and edit it,
 commit locally, read the tracker and write to it, read the reviewed repo and
 the evidence store, read and write its own memory namespace, raise alerts, and
 drive the TUI through the closed action verb set. It never pushes, never talks
-to GitHub, never passes a mutation through `src/gate.ts`, never runs a deploy,
+to GitHub, never passes a mutation through `packages/pi-plugin/src/gate.ts`, never runs a deploy,
 and holds no credential for the deployment host.
 
 ## Sibling docs

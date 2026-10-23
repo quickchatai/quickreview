@@ -8,6 +8,7 @@
 !package.json
 !package-lock.json
 !dist
+!packages/pi-plugin
 !src
 !extensions
 !agents
@@ -15,5 +16,6 @@
 !seeds
 !profiles
 !docker/companion
+packages/pi-plugin/assets
 **/node_modules
 **/.git

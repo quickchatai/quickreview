@@ -12,9 +12,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readLiveEvents } from "../src/live/events.js";
+import { readLiveEvents } from "@quickchatai/pi-quickreview/src/live/events.js";
 import { projectRoundProgress } from "../src/live/projection.js";
-import { parseRoundProgress, roundExecutionStage } from "../src/round-progress.js";
+import {
+  parseRoundProgress,
+  roundExecutionStage,
+} from "@quickchatai/pi-quickreview/src/round-progress.js";
 import {
   eventsFromSession,
   mkReplayRoot,

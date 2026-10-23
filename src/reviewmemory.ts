@@ -13,7 +13,11 @@ import {
   type ContextAssembler,
   type ContextQueryFile,
 } from "./memory/context.js";
-import { MEMORY_NOT_SET_UP, type ReviewMemory, type ReviewMemoryPort } from "./memoryport.js";
+import {
+  MEMORY_NOT_SET_UP,
+  type ReviewMemory,
+  type ReviewMemoryPort,
+} from "@quickchatai/pi-quickreview/src/memoryport.js";
 import { OV_REVIEWER_KEY_SECRET } from "./memory/ovsession.js";
 import { OpenVikingClient, keyFromFile } from "./openviking/client.js";
 import { openVikingContextAssembler } from "./openviking/context.js";
@@ -63,7 +67,7 @@ export function openReviewMemory(cfg: Config): ReviewMemorySource | null {
 }
 
 /** `openReviewMemory` for the install config at `path`: the memory sections
- * belong to the whole file, not to the review's own (src/reviewconfig.ts),
+ * belong to the whole file, not to the review's own (packages/pi-plugin/src/reviewconfig.ts),
  * so the file is read whole, as the daemon reads it. */
 export function openReviewMemoryAt(path: string): ReviewMemorySource | null {
   return openReviewMemory(loadConfig(path));
@@ -112,7 +116,7 @@ export async function seedReviewMemory(
   }
 }
 
-/** `source` as the port `qcr review` takes (src/memoryport.ts). */
+/** `source` as the port `qcr review` takes (packages/pi-plugin/src/memoryport.ts). */
 export function reviewMemoryPort(source: ReviewMemorySource | null | undefined): ReviewMemoryPort {
   return { seed: (input, log) => seedReviewMemory(source, input, log) };
 }

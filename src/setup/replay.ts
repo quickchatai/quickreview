@@ -24,8 +24,8 @@
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import type { PrFileEntry } from "../github.js";
-import { splitFrontmatter } from "../include.js";
-import type { PassTier } from "../types.js";
+import { splitFrontmatter } from "@quickchatai/pi-quickreview/src/include.js";
+import type { PassTier } from "@quickchatai/pi-quickreview/src/types.js";
 import { candidateItem, SEVERITIES, type ScanCandidate } from "./scan.js";
 
 export const REPLAY_FILE = "setup/replay.json";
@@ -74,7 +74,7 @@ export interface ReplayTree {
   lines(path: string): number | null;
 }
 
-export { parseUnifiedDiff } from "../unifieddiff.js";
+export { parseUnifiedDiff } from "@quickchatai/pi-quickreview/src/unifieddiff.js";
 
 // ---- the price -----------------------------------------------------------------------
 

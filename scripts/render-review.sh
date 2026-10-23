@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # render-review.sh — render this round's review body and inline comments from
-# its findings record (`[review] render_outputs`, src/reviewrender.ts).
+# its findings record (`[review] render_outputs`, packages/pi-plugin/src/reviewrender.ts).
 #
 #   reads  state/findings/pr-<n>-round-<k>.json
 #   writes state/pr-<n>-round-<k>-review.md and state/pr-<n>-round-<k>-comments.json

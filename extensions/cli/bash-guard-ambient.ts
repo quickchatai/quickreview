@@ -1,5 +1,5 @@
 // bash-guard's checkers with the process as their default context: the cwd,
-// the env and the secrets dirs of THIS process, where extensions/bash-guard.ts
+// the env and the secrets dirs of THIS process, where packages/pi-plugin/extensions/bash-guard.ts
 // takes them as arguments. Exported checkers that a test or a tool calls with
 // no policy of its own come here; a session's guard is built from an explicit
 // config (createBashGuard).
@@ -14,7 +14,7 @@ import {
   type BashCheck,
   type GuardPolicy,
   type SecretPathContext,
-} from "../bash-guard.js";
+} from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
 
 let cachedSecretDirs: SecretPathContext | null = null;
 /** The live process's context: dirs resolved once, the cwd read every call. */

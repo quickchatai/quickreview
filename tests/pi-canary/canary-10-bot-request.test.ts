@@ -19,7 +19,7 @@
 // `--mode json` mark a pi as a pi-subagents leaf to the OpenViking extension
 // (qcr-leaf.ts), which then adds nothing to the prompt. The bot's pi is not a leaf.
 //
-// The lens slot is our `lens` and `lens_wave` (D3): extensions/lens.ts in the pi
+// The lens slot is our `lens` and `lens_wave` (D3): packages/pi-plugin/extensions/lens.ts in the pi
 // (what the debug round and takeover load) and customTools in the session. pi's
 // native `subagent` and `launch_plan` are retired with their glue.
 //
@@ -40,13 +40,13 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { lensTools } from "../../extensions/lens.js";
+import { lensTools } from "@quickchatai/pi-quickreview/extensions/lens.js";
 import { botSdkRuntime } from "../../src/engine/botsdk.js";
-import { LensWave } from "../../src/engine/lens/wave.js";
-import { LENS_TOOL, LENS_WAVE_TOOL } from "../../src/engine/lens/tool.js";
-import { PiHost } from "../../src/engine/pisdk.js";
-import type { SessionSpec } from "../../src/engine/port.js";
-import type { RoundLensTools } from "../../src/engine/roundsdk.js";
+import { LensWave } from "@quickchatai/pi-quickreview/src/engine/lens/wave.js";
+import { LENS_TOOL, LENS_WAVE_TOOL } from "@quickchatai/pi-quickreview/src/engine/lens/tool.js";
+import { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import type { SessionSpec } from "@quickchatai/pi-quickreview/src/engine/port.js";
+import type { RoundLensTools } from "@quickchatai/pi-quickreview/src/engine/roundsdk.js";
 import { HOST_CONTEXT_STUB, REVIEWER_STUB } from "../../src/hostroute.js";
 import { openVikingSessionEnv } from "../../src/memory/ovsession.js";
 import { sessionGitConfigPins } from "../../src/sessions.js";
@@ -57,6 +57,7 @@ import {
   type FakeOpenAI,
 } from "../helpers/fake-openai.js";
 import { mkRoot } from "../helpers/round-rig.js";
+import { coreBuildProblem } from "../helpers/core-build.js";
 import { useOfflineGuard } from "./harness.js";
 
 useOfflineGuard({ loopback: true });
@@ -75,6 +76,9 @@ let server: FakeOpenAI;
 let memory: Server;
 let memoryUrl: string;
 beforeAll(async () => {
+  // The interactive pi loads the shims, and through them the compiled core.
+  const unbuilt = coreBuildProblem(ROOT);
+  if (unbuilt) throw new Error(unbuilt);
   server = await startFakeOpenAI();
   memory = createServer((req, res) => {
     req.resume();
@@ -87,8 +91,9 @@ beforeAll(async () => {
   memoryUrl = `http://127.0.0.1:${(memory.address() as AddressInfo).port}`;
 });
 afterAll(async () => {
-  await server.close();
-  await new Promise((done) => memory.close(done));
+  // nothing to close when the build check refused the suite
+  await server?.close();
+  if (memory) await new Promise((done) => memory.close(done));
 });
 
 let dir: string;
@@ -158,7 +163,8 @@ function botExtensions(): string[] {
     ext(join("cli", "bash-guard.ts")),
     ext(join("cli", "ledger-pin.ts")),
     ext(join("cli", "lens.ts")),
-    ext("finding-clusters.ts"),
+    // The review core's own extension, in its package.
+    join(root, "packages", "pi-plugin", "extensions", "finding-clusters.ts"),
     ext(join("vendor", "openviking-pi", "index.ts")),
   ];
 }

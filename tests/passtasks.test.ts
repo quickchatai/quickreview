@@ -1,4 +1,4 @@
-// `[review] task_files` (src/passtasks.ts, bench/aacr/PERF.md §6 proposal 2):
+// `[review] task_files` (packages/pi-plugin/src/passtasks.ts, bench/aacr/PERF.md §6 proposal 2):
 // the daemon writes each discovery row's complete lens task, so the session
 // launches lenses with a pointer instead of generating every task string.
 // What a hand-written task string carries (round-first.md step 2) must all be
@@ -13,9 +13,9 @@ import {
   renderPassTaskNote,
   renderPassTasks,
   writePassTasks,
-} from "../src/passtasks.js";
+} from "@quickchatai/pi-quickreview/src/passtasks.js";
 import { sweepOrderOf } from "../src/dispatch.js";
-import type { RoundOrder } from "../src/types.js";
+import type { RoundOrder } from "@quickchatai/pi-quickreview/src/types.js";
 
 function order(over: Partial<RoundOrder> = {}): RoundOrder {
   return {

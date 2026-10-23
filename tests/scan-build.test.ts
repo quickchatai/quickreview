@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, parseScanTable, SCAN_DEFAULTS, type Config } from "../src/config.js";
-import { globMatcher, globProblem } from "../src/glob.js";
+import { globMatcher, globProblem } from "@quickchatai/pi-quickreview/src/glob.js";
 import {
   PASS_ADDENDA,
   SCAN_LEAF_TOOLS,
@@ -15,7 +15,7 @@ import {
   VALIDATE_PASS,
   addendaForPass,
   buildAgents,
-} from "../src/include.js";
+} from "@quickchatai/pi-quickreview/src/include.js";
 import { configHome, homeProfileLookup, type InstallEnv } from "../src/install.js";
 import { buildScanAgents, scanConfig, scanSettings } from "../src/setup/scanbuild.js";
 

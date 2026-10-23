@@ -15,7 +15,7 @@ import {
 } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
-import type { GateResult } from "./gate.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import { inlineCommentFault } from "./posting.js";
 import type { PostingRetryRow } from "./state.js";
 import {

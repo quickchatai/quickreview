@@ -39,7 +39,7 @@ import {
   type PostingReceipt,
   type PostingReceiptStatus,
 } from "./posting-receipt.js";
-import type { StandingMarkSnapshot } from "./standing-review.js";
+import type { StandingMarkSnapshot } from "@quickchatai/pi-quickreview/src/standing-review.js";
 
 export type ReviewEvent = PostingReceipt["intended_event"];
 

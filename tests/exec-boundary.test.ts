@@ -31,10 +31,11 @@ import {
   MEMORY_SCOPE_SURFACE,
   POLICY_SURFACE_DIRS,
   POLICY_SURFACE_FILES,
+  POLICY_SURFACE_PATHS,
   checkWritePath,
   isMemoryScopeSurface,
   isPolicySurface,
-} from "../extensions/bash-guard.js";
+} from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
 import { checkBashCommand } from "../extensions/cli/bash-guard-ambient.js";
 import { toolScopeAreas } from "../extensions/vendor/openviking-pi/qcr-hint.js";
 import { ovRecallHintPathIn, ovRetiredPathIn } from "../src/memory/ovsession.js";
@@ -73,10 +74,11 @@ const INDIRECTION_CHAIN = "T=.git/config; cat payload >> $T";
 const POLICY_INDIRECTION_CHAIN = "T=config.toml; cat payload > $T";
 
 describe("the four proven bypasses, replayed against the COMPILED guard", () => {
-  // The container runs `dist/`, not `extensions/*.ts`, so a source fix must be
+  // The container runs the compiled guard (the review core's
+  // packages/pi-plugin/dist/), not `extensions/*.ts`, so a source fix must be
   // exercised in its compiled form. `npm run build` first — when dist is
   // absent the probe says so loudly instead of passing vacuously.
-  const distPath = resolve(process.cwd(), "dist/extensions/bash-guard.js");
+  const distPath = resolve(process.cwd(), "packages/pi-plugin/dist/extensions/bash-guard.js");
   const distAmbientPath = resolve(process.cwd(), "dist/extensions/cli/bash-guard-ambient.js");
   /** The build's checkers: the write check from the guard, the command check
    * from its ambient wrapper (this process as the policy). */
@@ -409,6 +411,11 @@ describe("the post-hoc audit is not blind to the corpus", () => {
     expect(kindOf(bashLine("cat /tmp/evil > config.toml"))).toBe("policy_surface_write");
     expect(kindOf(bashLine("printf 'x' > scripts/post-review.sh"))).toBe("policy_surface_write");
     expect(kindOf(writeLine("dist/extensions/bash-guard.js"))).toBe("policy_surface_write");
+    // the core's export map, by its whole path
+    expect(kindOf(writeLine("packages/pi-plugin/package.json"))).toBe("policy_surface_write");
+    expect(kindOf(bashLine("printf x > packages/pi-plugin/package.json"))).toBe(
+      "policy_surface_write",
+    );
     expect(
       kindOf(
         bashLine(
@@ -683,7 +690,7 @@ describe("the write class that no command string can show", () => {
     }
   });
 
-  // MUTATION: drop ".pi" from POLICY_SURFACE_DIRS in extensions/bash-guard.ts —
+  // MUTATION: drop ".pi" from POLICY_SURFACE_DIRS in packages/pi-plugin/extensions/bash-guard.ts —
   // both cases go green on nothing: layer 4 stops watching the project pi dir.
   it("watches pi's project dir `.pi/` — a planted mcp.json or a `.pi/` created mid-round is a change (pi 0.99)", async () => {
     const disk = sandbox();
@@ -885,20 +892,28 @@ describe("the write class that no command string can show", () => {
     expect(splitIntegrityChanges(changes, undefined).policy).toEqual([]);
   });
 
-  // MUTATION: add a name to POLICY_SURFACE_DIRS in extensions/bash-guard.ts
+  // MUTATION: add a name to POLICY_SURFACE_DIRS in packages/pi-plugin/extensions/bash-guard.ts
   // without touching src/execboundary.ts — this stays GREEN, which is the
   // point: the watch list is derived, not copied. Then instead hand-edit
-  // `policySurfaceWatchPaths` to drop one name — this goes red.
+  // `policySurfaceWatchPaths` to drop one name, or the review core's
+  // package root — this goes red.
   it("layer 4 watches EXACTLY the set the write veto refuses — one definition, three consumers", () => {
     const watched = policySurfaceWatchPaths("/sb/");
-    expect(watched).toEqual(
-      [...POLICY_SURFACE_FILES, ...POLICY_SURFACE_DIRS].map((n) => `/sb/${n}`),
-    );
+    const names = [...POLICY_SURFACE_FILES, ...POLICY_SURFACE_DIRS];
+    expect(watched).toEqual([
+      ...names.map((n) => `/sb/${n}`),
+      ...names.map((n) => `/sb/packages/pi-plugin/${n}`),
+      ...POLICY_SURFACE_PATHS.map((p) => `/sb/${p}`),
+    ]);
+    for (const w of watched)
+      expect(isPolicySurface(`${w}/anything`) || isPolicySurface(w)).toBe(true);
     for (const file of POLICY_SURFACE_FILES)
       expect(isPolicySurface(`/sb/${file}`), file).toBe(true);
     for (const dir of POLICY_SURFACE_DIRS) {
       expect(isPolicySurface(`/sb/${dir}/anything`), dir).toBe(true);
       expect(checkWritePath(`${dir}/anything`).allowed, dir).toBe(false);
+      // The core's compiled gate and guard live in its package: the same shape refuses them.
+      expect(checkWritePath(`packages/pi-plugin/${dir}/anything`).allowed, dir).toBe(false);
     }
     // …and the set is pinned here, so a silent widening or narrowing of the
     // policy surface is a diff in this file.
@@ -919,6 +934,16 @@ describe("the write class that no command string can show", () => {
       "scripts",
       "seeds",
     ]);
+    // The core's export map picks the compiled guard and gate every shim and
+    // worker loads (`./extensions/*` -> `./dist/extensions/*`), so repointing
+    // it swaps the guard without touching dist/. Policy by its whole path; a
+    // package.json anywhere else is not.
+    // MUTATION: drop it from POLICY_SURFACE_PATHS — this fails.
+    expect([...POLICY_SURFACE_PATHS]).toEqual(["packages/pi-plugin/package.json"]);
+    expect(checkWritePath("packages/pi-plugin/package.json").allowed).toBe(false);
+    expect(checkBashCommand("printf x > packages/pi-plugin/package.json").allowed).toBe(false);
+    expect(checkWritePath("web/package.json").allowed).toBe(true);
+    expect(watched).toContain("/sb/packages/pi-plugin/package.json");
   });
 
   // The memory-scope files are refused at the write boundary
@@ -1483,9 +1508,9 @@ const SECRET_READ_CORPUS = [
 ];
 describe("custom config-home secret reads against source and compiled guard", () => {
   it("refuses each expanded secrets-directory read and keeps public files readable", async () => {
-    const source = await import("../extensions/bash-guard.js");
+    const source = await import("@quickchatai/pi-quickreview/extensions/bash-guard.js");
     const compiled = (await import(
-      resolve(process.cwd(), "dist/extensions/bash-guard.js")
+      resolve(process.cwd(), "packages/pi-plugin/dist/extensions/bash-guard.js")
     )) as typeof source;
     for (const guard of [source, compiled]) {
       const ctx = guard.defaultSecretPathContext(

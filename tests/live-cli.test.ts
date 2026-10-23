@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { newRenderState, renderLiveEvent, runLive, type LiveCliDeps } from "../src/livecli.js";
-import { liveRoundDir } from "../src/live/events.js";
-import { createLiveWriter } from "../src/live/writer.js";
+import { liveRoundDir } from "@quickchatai/pi-quickreview/src/live/events.js";
+import { createLiveWriter } from "@quickchatai/pi-quickreview/src/live/writer.js";
 import { runDetachedVerb, type DetachDeps } from "../src/reviewdetach.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "live-cli-"));

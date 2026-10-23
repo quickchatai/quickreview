@@ -10,7 +10,7 @@ state/live/<key>/r<round>/lens-<id>.jsonl     one lens session
 
 `<key>` is `pr-<n>` on the bot and the review's name on a one-shot; a one-shot
 keeps the tree inside its run directory (`<run>/state/live/...`). The format is
-`src/live/events.ts`, the writer `src/live/writer.ts`, the reader and the
+`packages/pi-plugin/src/live/events.ts`, the writer `packages/pi-plugin/src/live/writer.ts`, the reader and the
 round-progress projection `src/live/read.ts` and `src/live/projection.ts`.
 
 ## Lines
@@ -46,7 +46,7 @@ one line.
 
 `projectRoundProgress(events)` reproduces what the retired tmux
 round-progress extension published: the `state/round-progress/pr-<n>.json` snapshot (v2, the contract in
-`src/round-progress.ts` unchanged) and the append-only transition log. The
+`packages/pi-plugin/src/round-progress.ts` unchanged) and the append-only transition log. The
 extension was the reference: `tests/live-projection-golden.test.ts` holds the
 projection byte-equal to golden files recorded from it
 (`tests/fixtures/live-events/golden/`).
@@ -58,7 +58,7 @@ order, statuses and command identity do not depend on it.
 
 ## Who writes and reads
 
-- `runRound` (`src/engine/round.ts`) writes the main log when its spec carries
+- `runRound` (`packages/pi-plugin/src/engine/round.ts`) writes the main log when its spec carries
   `live: {root, key, round}`; `qcr review` passes its run directory. The runtime
   port's `subscribe(listener, {updates: true})` is how the writer hears the
   update events the ordinary stream leaves out.

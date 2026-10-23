@@ -22,7 +22,7 @@ import {
   type ReconcileSearchItem,
 } from "../src/reconcile.js";
 import { StateStore } from "../src/state.js";
-import type { SessionHooks } from "../src/types.js";
+import type { SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { handleDelivery, signBody } from "../src/webhook.js";
 
 const cfg: Config = parseConfig(

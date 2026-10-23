@@ -25,7 +25,7 @@ import type { ControlCommand } from "./commands.js";
 import type { Config } from "./config.js";
 import { DebugRoundManager } from "./debuground.js";
 import type { FileOutcome } from "./improvements.js";
-import { identityVars } from "./include.js";
+import { identityVars } from "@quickchatai/pi-quickreview/src/include.js";
 import {
   CapabilityStore,
   LaunchFiles,
@@ -51,7 +51,7 @@ import {
   takeoverPlanFor,
   type TakeoverPlan,
 } from "./takeover.js";
-import { renderConversationSystemPrompt } from "./templates.js";
+import { renderConversationSystemPrompt } from "@quickchatai/pi-quickreview/src/templates.js";
 import { HeldWakeHandoff } from "./wakes.js";
 import { WorkerSessionHost } from "./worker-session-host.js";
 import { workerOperatorControl } from "./workercontrol.js";

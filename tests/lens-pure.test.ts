@@ -18,9 +18,9 @@ import {
   passTimeoutMessage,
   resolvePassDeadlineMs,
   runUnderDeadline,
-} from "../src/engine/lens/deadline.js";
-import { lensAgentsDir } from "../src/engine/lens/round-lens.js";
-import { WeightedSemaphore } from "../src/engine/lens/semaphore.js";
+} from "@quickchatai/pi-quickreview/src/engine/lens/deadline.js";
+import { lensAgentsDir } from "@quickchatai/pi-quickreview/src/engine/lens/round-lens.js";
+import { WeightedSemaphore } from "@quickchatai/pi-quickreview/src/engine/lens/semaphore.js";
 
 const tick = () => new Promise<void>((r) => setTimeout(r, 5));
 const DEADLINE_MS = 120;

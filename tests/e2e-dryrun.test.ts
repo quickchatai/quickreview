@@ -14,13 +14,13 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../src/config.js";
-import { MutationGate } from "../src/gate.js";
+import { MutationGate } from "@quickchatai/pi-quickreview/src/gate.js";
 import { GitHubAdapter } from "../src/github.js";
-import { TokenMinter } from "../src/githubAuth.js";
+import { TokenMinter } from "@quickchatai/pi-quickreview/src/githubAuth.js";
 import { StateStore } from "../src/state.js";
-import { buildAgents } from "../src/include.js";
+import { buildAgents } from "@quickchatai/pi-quickreview/src/include.js";
 import { assembleReview, approvalActions, submitReview, type Finding } from "../src/posting.js";
-import { selectLenses } from "../src/heuristics.js";
+import { selectLenses } from "@quickchatai/pi-quickreview/src/heuristics.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const SANDBOX = join(import.meta.dirname, "..");

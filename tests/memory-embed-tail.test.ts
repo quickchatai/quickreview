@@ -36,7 +36,7 @@ import {
   type Config,
 } from "../src/config.js";
 import { dispatchOnce, reviewsInFlight, type DispatchAdapter } from "../src/dispatch.js";
-import type { GateResult } from "../src/gate.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
 import {
   ROUND_CONTEXT_DEFAULTS,
@@ -50,7 +50,7 @@ import {
   OpenVikingContextAssembler,
 } from "../src/openviking/context.js";
 import { StateStore } from "../src/state.js";
-import type { SessionHooks } from "../src/types.js";
+import type { SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const never = <T>(): Promise<T> => new Promise<T>(() => {});

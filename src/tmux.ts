@@ -1,8 +1,13 @@
 // A thin tmux wrapper (spec §9: tmux lives inside the container; the local
 // build targets the same commands). Every session-manager command — git, tmux,
-// pi — goes through the injectable ExecFn (src/execfn.ts, re-exported here) so
+// pi — goes through the injectable ExecFn (packages/pi-plugin/src/execfn.ts, re-exported here) so
 // tests can record invocations instead of spawning anything.
-import { nodeExec, runOrThrow, type ExecFn, type ExecResult } from "./execfn.js";
+import {
+  nodeExec,
+  runOrThrow,
+  type ExecFn,
+  type ExecResult,
+} from "@quickchatai/pi-quickreview/src/execfn.js";
 
 export {
   ExecError,
@@ -11,7 +16,7 @@ export {
   type ExecFn,
   type ExecOpts,
   type ExecResult,
-} from "./execfn.js";
+} from "@quickchatai/pi-quickreview/src/execfn.js";
 
 /** `Tmux.listSessionsKnown`'s default bound: a tmux that has not answered by
  * then is killed and read as "could not ask" (null). */

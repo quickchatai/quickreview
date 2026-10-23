@@ -28,7 +28,7 @@
 // operator's saved cut, and silently starting fresh over it would lose that.
 import { isSampleable } from "./survey.js";
 import type { MemoryStore } from "../memory/store.js";
-import { isSweepSkipped } from "../heuristics.js";
+import { isSweepSkipped } from "@quickchatai/pi-quickreview/src/heuristics.js";
 import {
   repoFacts,
   unitCandidates,

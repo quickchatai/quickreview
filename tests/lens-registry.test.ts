@@ -1,4 +1,4 @@
-// P4.1: the lens agent registry (src/engine/lens/registry.ts) loads the built
+// P4.1: the lens agent registry (packages/pi-plugin/src/engine/lens/registry.ts) loads the built
 // agents with the name / model / tools pi's example subagent parser gives.
 //
 // The example (examples/extensions/subagent/agents.ts) is imported HERE ONLY,
@@ -31,16 +31,16 @@ import {
   configAddenda,
   identityVars,
   type BuiltAgent,
-} from "../src/include.js";
+} from "@quickchatai/pi-quickreview/src/include.js";
 import {
   loadAgentRegistry,
   loadBuiltAgents,
   parseAgentFile,
   type AgentRegistry,
-} from "../src/engine/lens/registry.js";
+} from "@quickchatai/pi-quickreview/src/engine/lens/registry.js";
 import { buildScanAgents } from "../src/setup/scanbuild.js";
-import { lensTuningAddenda, roundAgentModels } from "../src/lenstuning.js";
-import { postingPolicyAddenda } from "../src/postingpolicy.js";
+import { lensTuningAddenda, roundAgentModels } from "@quickchatai/pi-quickreview/src/lenstuning.js";
+import { postingPolicyAddenda } from "@quickchatai/pi-quickreview/src/postingpolicy.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const GOLDEN = join(ROOT, "tests", "fixtures", "lens-registry-golden.json");
@@ -324,7 +324,10 @@ describe("parseAgentFile and layers", () => {
   });
 
   it("registry reads nothing from the environment", () => {
-    const src = readFileSync(join(ROOT, "src", "engine", "lens", "registry.ts"), "utf8");
+    const src = readFileSync(
+      join(ROOT, "packages", "pi-plugin", "src", "engine", "lens", "registry.ts"),
+      "utf8",
+    );
     expect(src).not.toMatch(/process\.env|getAgentDir/);
   });
 });

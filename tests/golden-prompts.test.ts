@@ -49,7 +49,7 @@ const pinNativeLens = (cfg: { pi: { lens_runtime: string; engine_wave: boolean }
   cfg.pi.engine_wave = false;
 };
 const { benchDelta } = await import("../src/bench/followup.js");
-const { ecosystemFor } = await import("../src/ecosystem.js");
+const { ecosystemFor } = await import("@quickchatai/pi-quickreview/src/ecosystem.js");
 
 const SMOKE = parseCaseSet(
   JSON.parse(readFileSync(join(ROOT, "bench", "aacr", "sets", "smoke10.json"), "utf8")),

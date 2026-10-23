@@ -19,7 +19,7 @@
 //
 // Neutral, like the rest of src/ipc/: no engine, no pi, no state store. The
 // engine's lens runner reaches the broker through its `Permits` port
-// (src/engine/lens/permits.ts); `brokerPermits` below is the adapter the worker
+// (packages/pi-plugin/src/engine/lens/permits.ts); `brokerPermits` below is the adapter the worker
 // builds over its IPC client.
 import { type CommandLookup, IpcError, type IpcRole } from "./protocol.js";
 
@@ -308,7 +308,7 @@ function abortReason(signal: AbortSignal): Error {
   return r instanceof Error ? r : new Error("aborted");
 }
 
-/** The engine's `Permits` port (src/engine/lens/permits.ts) over the broker. */
+/** The engine's `Permits` port (packages/pi-plugin/src/engine/lens/permits.ts) over the broker. */
 export function brokerPermits(
   client: PermitRequester,
   warn: (message: string) => void = () => {},

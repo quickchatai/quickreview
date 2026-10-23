@@ -9,9 +9,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
-import { MutationGate } from "../src/gate.js";
+import { MutationGate } from "@quickchatai/pi-quickreview/src/gate.js";
 import { GitHubAdapter, type SearchIssueItem } from "../src/github.js";
-import type { FetchFn, TokenMinter } from "../src/githubAuth.js";
+import type { FetchFn, TokenMinter } from "@quickchatai/pi-quickreview/src/githubAuth.js";
 import {
   COMMENT_BODY_MAX,
   collectReviewHistory,

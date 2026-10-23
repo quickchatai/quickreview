@@ -34,7 +34,11 @@ import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 import { parseConfig } from "../src/config.js";
 import { routeFromEnv } from "../src/reviewcli.js";
-import { assemblePostReview, localPostGate, postReviewToPr } from "../src/reviewpost.js";
+import {
+  assemblePostReview,
+  localPostGate,
+  postReviewToPr,
+} from "@quickchatai/pi-quickreview/src/reviewpost.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel: string): string => readFileSync(join(root, rel), "utf8");

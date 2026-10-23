@@ -1,4 +1,4 @@
-// The live-session registry (src/engine/livesessions.ts): what a stop signal
+// The live-session registry (packages/pi-plugin/src/engine/livesessions.ts): what a stop signal
 // aborts and disposes on the SDK runtime, in that order, and never past its grace.
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -8,7 +8,7 @@ import {
   resetLiveSessions,
   stopLiveSessions,
   trackSession,
-} from "../src/engine/livesessions.js";
+} from "@quickchatai/pi-quickreview/src/engine/livesessions.js";
 
 afterEach(() => resetLiveSessions());
 

@@ -8,20 +8,20 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseConfig, GUARDS_DEFAULTS, type Config } from "../src/config.js";
 import { dispatchOnce, type DispatchAdapter } from "../src/dispatch.js";
-import { MutationGate, type MutationIntent } from "../src/gate.js";
+import { MutationGate, type MutationIntent } from "@quickchatai/pi-quickreview/src/gate.js";
 import {
   downgradeForHumanApproval,
   hasNewEvidence,
   humanApprovalAtHead,
   makePostingGuard,
   type GuardAdapter,
-} from "../src/guards.js";
-import type { GateResult } from "../src/gate.js";
+} from "@quickchatai/pi-quickreview/src/guards.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
 import { StateStore } from "../src/state.js";
 import { applyEvent } from "../src/statemachine.js";
 import { applyInterpretation } from "../src/webhook.js";
-import type { RoundOrder, SessionHooks } from "../src/types.js";
+import type { RoundOrder, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import {
   WORLD_HEAD,
   routes,

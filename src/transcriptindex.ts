@@ -78,8 +78,8 @@ import {
   type LineContribution,
   type RoundUsage,
 } from "./usage.js";
-import { LensOnce } from "./lensresult.js";
-import { yieldToLoop } from "./yieldloop.js";
+import { LensOnce } from "@quickchatai/pi-quickreview/src/lensresult.js";
+import { yieldToLoop } from "@quickchatai/pi-quickreview/src/yieldloop.js";
 
 /** One synchronous parse step: a chunk's complete lines. */
 export const TRANSCRIPT_CHUNK_BYTES = 1 << 20;

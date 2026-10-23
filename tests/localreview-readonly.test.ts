@@ -1,4 +1,4 @@
-// `qcr review --uncommitted` on a read-only repository (src/localreview.ts
+// `qcr review --uncommitted` on a read-only repository (packages/pi-plugin/src/localreview.ts
 // resolveUncommitted): the snapshot tree is built in a scratch object store, so
 // nothing is written into the reviewed repo's .git and a :ro mount works.
 // A real throwaway git repo is the fixture; no model, no network.
@@ -22,7 +22,7 @@ import {
   addUncommittedTree,
   removeReviewTree,
   resolveUncommitted,
-} from "../src/localreview.js";
+} from "@quickchatai/pi-quickreview/src/localreview.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "localreview-ro-"));
 

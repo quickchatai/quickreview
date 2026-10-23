@@ -52,7 +52,7 @@ Timestamps are ISO-8601 strings in `TEXT` columns throughout. Booleans are
 
 `reviewed_heads` is deliberately **not** part of `pr_state`: the mark outlives
 lifecycle churn. Every lifecycle consumer reads it through the single
-interpreter in `src/standing-review.ts`, never by inspecting columns directly.
+interpreter in `packages/pi-plugin/src/standing-review.ts`, never by inspecting columns directly.
 
 ### 1.2 Round execution and recovery
 
@@ -89,7 +89,7 @@ distinct, which would void the comment-key dedupe.
 `round_findings` has a unique index on `(pr, round_no, finding_key)`, so
 re-recording a round replaces its rows instead of doubling them. `lens_ids`
 is a JSON array of the known pass ids the free-text `lens` names
-(`src/lensids.ts`; `[]` for an entry raised outside any lens), filled at boot
+(`packages/pi-plugin/src/lensids.ts`; `[]` for an entry raised outside any lens), filled at boot
 for rows recorded before the column; `title` is the posted comment's title as
 the record wrote it, null when it wrote none.
 
@@ -221,12 +221,12 @@ losing the review record, except `state.db` itself.
 | --- | --- | --- | --- |
 | `state/state.db` (`-wal`, `-shm`) | SQLite | `src/state.ts` | the record of everything above |
 | `state/status.json` | JSON | `writeStatusJson` (`src/state.ts`), from the daemon's timer | the heartbeat snapshot; written temp + rename |
-| `state/dryrun/` | one JSON file per intent | `MutationGate` (`src/gate.ts`) | what a GitHub mutation *would* have been while `dry_run = true` |
-| `state/agents/` | built pass agent bodies, one file per lens × tier | `buildAgents` (`src/include.ts`), called from `src/wire.ts` | the only path by which built passes reach the subagent extension |
-| `state/findings/` | `pr-<n>-round-<k>.json` | the PR session | parsed into `round_findings` by `src/findingsrecord.ts` |
+| `state/dryrun/` | one JSON file per intent | `MutationGate` (`packages/pi-plugin/src/gate.ts`) | what a GitHub mutation *would* have been while `dry_run = true` |
+| `state/agents/` | built pass agent bodies, one file per lens × tier | `buildAgents` (`packages/pi-plugin/src/include.ts`), called from `src/wire.ts` | the only path by which built passes reach the subagent extension |
+| `state/findings/` | `pr-<n>-round-<k>.json` | the PR session | parsed into `round_findings` by `packages/pi-plugin/src/findingsrecord.ts` |
 | `state/posting-receipts/` | `pr-<n>-round-<k>.json` | the shell posting route (`scripts/post-review.sh`) | read by `src/posting-receipt.ts` / `src/verdicts.ts` |
 | `state/round-prompts/` | `pr-<n>-round-<k>.md` | `SessionManager` | the exact dispatched bytes, so a redelivery re-sends them rather than re-rendering |
-| `state/round-progress/` | `pr-<n>.json` | the worker's LiveEvent projection (`src/live/`) | ephemeral live pass telemetry; parsed by `src/round-progress.ts` |
+| `state/round-progress/` | `pr-<n>.json` | the worker's LiveEvent projection (`src/live/`) | ephemeral live pass telemetry; parsed by `packages/pi-plugin/src/round-progress.ts` |
 | `state/session-prompts/` | `<session>.md` | `SessionManager` | the session's system prompt |
 | `state/session-commands/` | `<id>.md` | `SessionManager` | the payload bytes a `session_commands` row points at |
 | `state/sessions/` | `<session>.json`, `<session>.bridge-<generation>.json` | `SessionManager` | birth record and inject-bridge readiness receipt |
@@ -257,7 +257,7 @@ malformed file surfaced rather than silently dropped.**
 
 ### 4.1 Verdict file — `verdict/pr-<n>-round-<k>.json`
 
-Declared as `VerdictFile` in `src/types.ts`, consumed by `src/verdicts.ts`.
+Declared as `VerdictFile` in `packages/pi-plugin/src/types.ts`, consumed by `src/verdicts.ts`.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -273,7 +273,7 @@ Declared as `VerdictFile` in `src/types.ts`, consumed by `src/verdicts.ts`.
 | `finished_at` | ISO string | — |
 
 The round prompt carries a receipt token (`roundPromptMarker` in
-`src/types.ts`) which pi echoes into its session JSONL only when it *accepted*
+`packages/pi-plugin/src/types.ts`) which pi echoes into its session JSONL only when it *accepted*
 the message. Present means delivered, absent means never arrived, unreadable
 means unknown — and unknown is never read as loss.
 
@@ -292,7 +292,7 @@ Optional blocks, each absent rather than faked when its source has nothing to
 say — a reader must default rather than assume:
 
 - `pi_auth_expired` — `{ last_at, hits }` while pi sessions are failing with
-  token-expired errors (`src/authwatch.ts`).
+  token-expired errors (`packages/pi-plugin/src/authwatch.ts`).
 - `openviking` — the supervised memory server's reachability, version, RSS and
   CPU (unauthenticated: whether the server is UP).
 - `memory` — reviewer-memory health (`MemoryStatus` in
@@ -471,7 +471,7 @@ may be omitted entirely; its defaults constant then supplies the whole block.
 
 | Section | Optional? | Parsed by (`src/config.ts`) | Primary consumers |
 | --- | --- | --- | --- |
-| root `dry_run` | no | `parseConfig` | `src/gate.ts` |
+| root `dry_run` | no | `parseConfig` | `packages/pi-plugin/src/gate.ts` |
 | `[ops]` | yes (`OPS_DEFAULTS`) | `parseConfig` | every day-scoped feature |
 | `[github]` | no | `parseConfig` | `src/github.ts`, `src/reconcile.ts` |
 | `[owner]` | yes (`OWNER_DEFAULTS`) | `parseConfig` | rendered prose, Slack tiering |
@@ -480,7 +480,7 @@ may be omitted entirely; its defaults constant then supplies the whole block.
 | `[daemon]` | no | `parseConfig` | `src/daemon.ts`, `src/dispatch.ts`, `src/session-command-supervisor.ts` |
 | `[eod]` | no | `parseConfig` | `src/eod.ts`, `src/eodpinwatch.ts` |
 | `[caps]` | no | `parseCaps` | `src/improvements.ts` |
-| `[models]` (+ `.tiers`, `.pricing`) | no | `parseModels` | `src/include.ts`, `src/dispatch.ts`, `src/usage.ts` |
+| `[models]` (+ `.tiers`, `.pricing`) | no | `parseModels` | `packages/pi-plugin/src/include.ts`, `src/dispatch.ts`, `src/usage.ts` |
 | `[pi]` | no | `parseConfig` | `src/sessions.ts` |
 | `[memory]` | yes (`MEMORY_DEFAULTS`) | `parseConfig` | `src/memory/context.ts` |
 | `[openviking]` | yes (`OPENVIKING_DEFAULTS`) | `parseOpenViking` | `src/openviking/` |
@@ -488,9 +488,9 @@ may be omitted entirely; its defaults constant then supplies the whole block.
 | `[companion]` | yes (`COMPANION_DEFAULTS`) | `parseConfig` + `resolveCompanionPaths` | `src/tui/companion.ts` |
 | `[sink]` | yes (`SINK_DEFAULTS`) | `parseSink` | `src/tui/issuesink.ts`, `src/tui/trackertickets.ts` |
 | `[backfill]` | yes (defaults off `[github]`) | `parseConfig` | `src/backfill.ts` |
-| `[guards]` | yes (`GUARDS_DEFAULTS`) | `parseConfig` | `src/guards.ts`, `scripts/guards.sh` |
+| `[guards]` | yes (`GUARDS_DEFAULTS`) | `parseConfig` | `packages/pi-plugin/src/guards.ts`, `scripts/guards.sh` |
 | `[recheck]` | yes (`RECHECK_DEFAULTS`) | `parseConfig` | `src/recheck.ts` |
-| `[review]` (+ `.directives`) | yes (`REVIEW_DEFAULTS`) | `parseConfig` | `src/severity.ts`, `src/profiles.ts` |
+| `[review]` (+ `.directives`) | yes (`REVIEW_DEFAULTS`) | `parseConfig` | `packages/pi-plugin/src/severity.ts`, `packages/pi-plugin/src/profiles.ts` |
 | `[escalation]` | yes (`ESCALATION_DEFAULTS`) | `parseEscalation` | `src/escalation.ts` |
 | `[levers]` | yes (`LEVERS_DEFAULTS`) | `parseLevers` | `src/levers.ts` |
 | `[archive]` | yes (`ARCHIVE_DEFAULTS`) | `parseArchive` | `src/archive/` |
@@ -664,7 +664,7 @@ ones from the sandbox root.
 **`[guards]`** — all boolean, all `true`: `downgrade_on_human_approval`,
 `skip_unchanged_head`, `recheck_pr_state_before_post`,
 `block_approve_on_red_ci`, `no_checks_is_red`, `refuse_on_head_drift`. Both
-posting routes read these knobs — `src/guards.ts` for the daemon's own gate
+posting routes read these knobs — `packages/pi-plugin/src/guards.ts` for the daemon's own gate
 and `scripts/guards.sh` for the sessions' shell route — so no route goes
 around them.
 
@@ -679,7 +679,7 @@ annotated in `config.example.toml`. `[review.directives]`
 carries five extend-only string arrays, all `[]`:
 `extra_basenames`, `extra_dir_segments`, `extra_root_dirs`, `extra_files`,
 `extra_vendored_segments`. They *add* to the built-in agent-directive
-vocabulary in `src/severity.ts`; nothing can remove a built-in.
+vocabulary in `packages/pi-plugin/src/severity.ts`; nothing can remove a built-in.
 
 **`[escalation]`** — `enabled` (bool, `false`), `shape` (`"comment"` \|
 `"review_request"`, default `"comment"`), `targets` (string array of logins,
@@ -729,7 +729,7 @@ for the owner's Slack id is still accepted on input and folded to
 | --- | --- |
 | What tables exist, and what does a column mean? | `src/state.ts` (the `SCHEMA` template, top of file) |
 | How do I read or write a table? | a named method on `StateStore`, same file |
-| What does a verdict file look like? | `VerdictFile` in `src/types.ts`; consumer `src/verdicts.ts` |
+| What does a verdict file look like? | `VerdictFile` in `packages/pi-plugin/src/types.ts`; consumer `src/verdicts.ts` |
 | What does the heartbeat contain? | `StatusSnapshot` + `buildStatusSnapshot` in `src/state.ts` |
 | What does the companion see? | `TuiView` / `FeedWriter` in `src/tui/feed.ts` |
 | What commands exist and who may issue them? | `COMMAND_WHITELIST` + `operatorSealVerdict` in `src/commands.ts` |

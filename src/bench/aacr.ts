@@ -28,17 +28,26 @@
 // impossible rather than merely forbidden.
 
 import { commentsEnvelope, singleLineComment } from "./artifacts.js";
-import { postedSeverityTag } from "../reviewrender.js";
-import type { Usage } from "../engine/roundevents.js";
-import { ASK_HUMAN_TAG, CHECK_THIS_TAG, DEFERRED_TAG, POSTING_TAG_WORDS } from "../severity.js";
+import { postedSeverityTag } from "@quickchatai/pi-quickreview/src/reviewrender.js";
+import type { Usage } from "@quickchatai/pi-quickreview/src/engine/roundevents.js";
+import {
+  ASK_HUMAN_TAG,
+  CHECK_THIS_TAG,
+  DEFERRED_TAG,
+  POSTING_TAG_WORDS,
+} from "@quickchatai/pi-quickreview/src/severity.js";
 import type { PrFileEntry } from "../github.js";
-import { parseHunkHeader } from "../hunkheader.js";
-import { entryDisposition, recordSide } from "../findingkey.js";
+import { parseHunkHeader } from "@quickchatai/pi-quickreview/src/hunkheader.js";
+import { entryDisposition, recordSide } from "@quickchatai/pi-quickreview/src/findingkey.js";
 
 // The offline override (`benchAppendix`) and the event-stream readers are the
-// one-shot round's own, so they live in the core (src/engine/caseout.ts,
-// src/engine/roundevents.ts); the bench's callers still import them here.
-export { benchAppendix, CASE_FILES, type AppendixArgs } from "../engine/caseout.js";
+// one-shot round's own, so they live in the core (packages/pi-plugin/src/engine/caseout.ts,
+// packages/pi-plugin/src/engine/roundevents.ts); the bench's callers still import them here.
+export {
+  benchAppendix,
+  CASE_FILES,
+  type AppendixArgs,
+} from "@quickchatai/pi-quickreview/src/engine/caseout.js";
 export {
   childResults,
   modelErrorKind,
@@ -53,7 +62,7 @@ export {
   type Stages,
   type StageTotals,
   type Usage,
-} from "../engine/roundevents.js";
+} from "@quickchatai/pi-quickreview/src/engine/roundevents.js";
 
 // ---- the case set -------------------------------------------------------------
 
@@ -108,7 +117,7 @@ export interface BenchCase {
 }
 
 /** One finding an earlier round of the recorded PR POSTED and left open —
- * the replay's prior-findings list (src/priorfindings.ts's vocabulary). */
+ * the replay's prior-findings list (packages/pi-plugin/src/priorfindings.ts's vocabulary). */
 export interface BenchPriorFinding {
   /** `<round_no>:<finding_key>`, as the daemon issues it. */
   ref: string;

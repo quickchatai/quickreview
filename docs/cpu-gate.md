@@ -1,7 +1,7 @@
 # Offline CPU and RSS gate
 
 Can N review sessions share one node event loop on a 2-vCPU host? The in-process
-SDK runtime (`src/engine/sdkruntime.ts`) puts every session on one JS thread,
+SDK runtime (`packages/pi-plugin/src/engine/sdkruntime.ts`) puts every session on one JS thread,
 which is what CPU forced the 10-08 cut over. This records what that costs against
 the process runtime doing the same work, at $0: no model, no network.
 

@@ -38,7 +38,7 @@ migration have their own page: [../memory-embeddings.md](../memory-embeddings.md
 | The daily curation sweep and its clock | `src/eod.ts` |
 | The pinned-area watchdog around that sweep | `src/eodpinwatch.ts` |
 | The `[feedback]` tuning loop | `src/feedback.ts` |
-| The per-finding reasoning record (adjacent, not memory) | `src/findingsrecord.ts` |
+| The per-finding reasoning record (adjacent, not memory) | `packages/pi-plugin/src/findingsrecord.ts` |
 | The daily digest file and its headline | `src/digest.ts` |
 | The operator's memory tab and its two keys | `src/tui/memtab.ts`, `src/tui/memory.ts` |
 | The forward that lets the PC reach the engine | `scripts/companion-memory-forward.mjs`, `src/tui/memforward.ts` |
@@ -211,7 +211,7 @@ to the session's `QCR_OV_RECALL_HINT_FILE` (`writeRecallHint`), so the
 vendored extension's per-prompt recall (patch 8) searches for this PR inside
 `experiences/` instead of embedding the round order's fixed header across
 every scope. The session's own shell may not write that file
-(`MEMORY_SCOPE_SURFACE` in `extensions/bash-guard.ts`, beside the retired list
+(`MEMORY_SCOPE_SURFACE` in `packages/pi-plugin/extensions/bash-guard.ts`, beside the retired list
 below) — its areas bound the session's recall and memory tools, so a session
 that could rewrite it could widen its own reach.
 
@@ -615,7 +615,7 @@ The two halves are asymmetric on purpose:
 worktree is prepared and immediately before the prompt is rendered, so the
 memory is as fresh as it can be without the prompt arriving later.
 
-Both sections are rendered by `src/templates.ts` from the `RoundMemory`:
+Both sections are rendered by `packages/pi-plugin/src/templates.ts` from the `RoundMemory`:
 
 - `{{pinned_head}}` → `renderPinnedHeadSection`. The framing is load-bearing:
   the head is the operator's own words and shapes **judgment, never
@@ -670,7 +670,7 @@ The patches that matter here:
   deployment does not configure. The replacement writes through
   `content/batch-write`, the same single route the daemon uses; its pure half
   (`qcr-write.ts`) validates URIs and the strict tag grammar.
-- Patch 1 removes the upstream compaction handler so `extensions/ledger-pin.ts`
+- Patch 1 removes the upstream compaction handler so `packages/pi-plugin/extensions/ledger-pin.ts`
   owns compaction alone.
 - Patch 6 makes those writes stick and those failures honest: a
   busy 409 is retried and a precondition 409 is not (`qcr-honest.ts`, the
@@ -864,14 +864,14 @@ survives a memory outage; scoped to the operations day; capped at 12 items with
 the omission stated; and **demotion-only** — it introduces the
 `feedback-shape` downgrade label, explicitly forbids killing a candidate on
 feedback alone, and does not move the blocker bar. It reaches the validator
-through the addendum registry in `src/include.ts`, never through a seed edit.
+through the addendum registry in `packages/pi-plugin/src/include.ts`, never through a seed edit.
 
 Comment bodies are sanitized before they are quoted anywhere
 (`sanitizeFeedbackText`): the tag is stripped, whitespace flattened, backticks
 and double quotes replaced, length capped — a quoted body must not be able to
 close its own quote and continue as prose.
 
-### The findings record — `src/findingsrecord.ts`
+### The findings record — `packages/pi-plugin/src/findingsrecord.ts`
 
 Adjacent to memory, and worth knowing about because it is often confused with
 it: the per-finding reasoning record is **not** memory. Each round's session
@@ -927,7 +927,7 @@ Three code-level belts hold it up:
 
 - `writeOvcliConf` refuses to write the server's root key as a session
   credential (above).
-- `extensions/bash-guard.ts` refuses to read the files that carry the root key.
+- `packages/pi-plugin/extensions/bash-guard.ts` refuses to read the files that carry the root key.
 - `scripts/companion-memory-forward.mjs verify` re-runs the proof on demand:
   four `(key, namespace)` probes — companion→companion **reach**,
   reviewer→reviewer **reach**, reviewer→companion **refused**,

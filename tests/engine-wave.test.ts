@@ -15,15 +15,15 @@ import {
   type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { stagesFromEvents } from "../src/bench/aacr.js";
-import { PiHost, type PiHostOptions } from "../src/engine/pisdk.js";
+import { PiHost, type PiHostOptions } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import {
   engineLensConfig,
   reviewSdkRuntime,
   type ReviewSdkRuntime,
-} from "../src/engine/reviewsdk.js";
-import { runRound, type RoundSpec } from "../src/engine/round.js";
-import type { OneShotPrompts } from "../src/engine/prompts.js";
-import { parseLedger } from "../src/lensresult.js";
+} from "@quickchatai/pi-quickreview/src/engine/reviewsdk.js";
+import { runRound, type RoundSpec } from "@quickchatai/pi-quickreview/src/engine/round.js";
+import type { OneShotPrompts } from "@quickchatai/pi-quickreview/src/engine/prompts.js";
+import { parseLedger } from "@quickchatai/pi-quickreview/src/lensresult.js";
 import { pricedFaux } from "./helpers/priced-faux.js";
 import {
   FILES,
@@ -38,7 +38,7 @@ import { useOfflineGuard } from "./pi-canary/harness.js";
 
 vi.stubEnv("QCR_CONFIG", FIXTURE_CONFIG);
 const { benchConfig } = await import("../src/bench/runner.js");
-const { ecosystemFor } = await import("../src/ecosystem.js");
+const { ecosystemFor } = await import("@quickchatai/pi-quickreview/src/ecosystem.js");
 
 useOfflineGuard();
 

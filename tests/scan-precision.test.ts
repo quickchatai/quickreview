@@ -20,7 +20,7 @@ import {
   addendaForPass,
   buildAgents,
   type PassAddendum,
-} from "../src/include.js";
+} from "@quickchatai/pi-quickreview/src/include.js";
 import { homeProfileLookup, type InstallEnv } from "../src/install.js";
 import { buildScanAgents } from "../src/setup/scanbuild.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";

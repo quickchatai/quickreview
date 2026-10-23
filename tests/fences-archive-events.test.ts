@@ -32,6 +32,7 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { ARCHIVE_EVENT_KINDS } from "../src/archive/kinds.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
+import { SRC_DIRS } from "./helpers/source-trees.js";
 
 const ROOT = join(import.meta.dirname, "..");
 const SRC = join(ROOT, "src");
@@ -398,7 +399,11 @@ function violations(s: Scan): string[] {
   return out;
 }
 
-const REAL: Array<[string, string]> = srcFiles(SRC).map((p) => [p, readFileSync(p, "utf8")]);
+// The app's src/ and the review core's: a kind reader in either is read.
+const REAL: Array<[string, string]> = SRC_DIRS.flatMap((d) => srcFiles(join(ROOT, d))).map((p) => [
+  p,
+  readFileSync(p, "utf8"),
+]);
 
 /** The real sources with one file's text replaced. */
 function mutated(rel: string, edit: (text: string) => string): Array<[string, string]> {

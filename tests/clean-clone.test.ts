@@ -21,17 +21,18 @@ import { describe, expect, it } from "vitest";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-/** Every `dist/<path>.<js|mjs|cjs>` literal, wherever it appears. */
-const DIST_REF = /dist\/[A-Za-z0-9_./-]+\.(?:js|mjs|cjs)/g;
+/** Every `dist/<path>.<js|mjs|cjs>` literal, the app's or a workspace
+ * package's (`packages/<name>/dist/…`), wherever it appears. */
+const DIST_REF = /(?:packages\/[A-Za-z0-9_-]+\/)?dist\/[A-Za-z0-9_./-]+\.(?:js|mjs|cjs)/g;
 
 /**
  * The source file a `dist/` path is compiled from. `tsconfig.json` sets
- * `outDir: "dist"` over `src/**` and `extensions/**` with no `rootDir`, so the
- * inferred common root is the repo root and the layout is `dist/<dir>/<file>.js`
- * ⟵ `<dir>/<file>.ts`.
+ * `outDir: "dist"` over `src/**` and `extensions/**` with `rootDir: "."`, so
+ * the layout is `dist/<dir>/<file>.js` ⟵ `<dir>/<file>.ts`; a workspace package
+ * (packages/pi-plugin) does the same inside its own directory.
  */
 function sourceFor(distPath: string): string {
-  return distPath.replace(/^dist\//, "").replace(/\.(js|mjs|cjs)$/, ".ts");
+  return distPath.replace(/^(packages\/[^/]+\/)?dist\//, "$1").replace(/\.(js|mjs|cjs)$/, ".ts");
 }
 
 function filesUnder(dir: string): string[] {

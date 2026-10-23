@@ -48,13 +48,13 @@ import { digestWritten, eodDigestContext, latestDigestHeadline } from "./digest.
 import { startHeartbeat, type HeartbeatTimer } from "./anomalies.js";
 import { CompanionInbox, type InboxWriter } from "./companioninbox.js";
 import { opsDay, promptReader, startEodTimer, type EodTimer } from "./eod.js";
-import { MutationGate, type MutationIntent } from "./gate.js";
+import { MutationGate, type MutationIntent } from "@quickchatai/pi-quickreview/src/gate.js";
 import { GitHubAdapter } from "./github.js";
-import { priorSidecarPath } from "./priorfindings.js";
+import { priorSidecarPath } from "@quickchatai/pi-quickreview/src/priorfindings.js";
 import { completeRecordedFindings } from "./recordedfindings.js";
-import { makePostingGuard } from "./guards.js";
-import { classifyCi, ciBlocksApproval } from "./cigate.js";
-import { TokenMinter } from "./githubAuth.js";
+import { makePostingGuard } from "@quickchatai/pi-quickreview/src/guards.js";
+import { classifyCi, ciBlocksApproval } from "@quickchatai/pi-quickreview/src/cigate.js";
+import { TokenMinter } from "@quickchatai/pi-quickreview/src/githubAuth.js";
 import {
   FeedbackEngine,
   FeedbackMemoryPump,
@@ -69,17 +69,20 @@ import {
   configAddenda,
   lessonAddendaFor,
   identityVars,
-} from "./include.js";
-import { ecosystemFor } from "./ecosystem.js";
-import { lensTuningAddenda, roundAgentModels } from "./lenstuning.js";
+} from "@quickchatai/pi-quickreview/src/include.js";
+import { ecosystemFor } from "@quickchatai/pi-quickreview/src/ecosystem.js";
+import { lensTuningAddenda, roundAgentModels } from "@quickchatai/pi-quickreview/src/lenstuning.js";
 import {
   applyProfileOverlays,
   loadProfileAddenda,
   loadProfileEcosystem,
   loadProfileHeuristics,
-} from "./profiles.js";
-import { postingPolicyAddenda } from "./postingpolicy.js";
-import { prepareDependencySources, renderDependencyNote } from "./depsources.js";
+} from "@quickchatai/pi-quickreview/src/profiles.js";
+import { postingPolicyAddenda } from "@quickchatai/pi-quickreview/src/postingpolicy.js";
+import {
+  prepareDependencySources,
+  renderDependencyNote,
+} from "@quickchatai/pi-quickreview/src/depsources.js";
 import { fileImprovementPr, fileIssue, gitRunner, type FileOutcome } from "./improvements.js";
 import { homeProfileLookup } from "./install.js";
 import {
@@ -143,10 +146,10 @@ import {
   renderRecheckPrompt,
   renderRoundPrompt,
   templateFileForOrder,
-} from "./templates.js";
-import { assertOrderFitsHost } from "./launchvocab.js";
+} from "@quickchatai/pi-quickreview/src/templates.js";
+import { assertOrderFitsHost } from "@quickchatai/pi-quickreview/src/launchvocab.js";
 import { nodeExec } from "./tmux.js";
-import type { RoundOrder, SessionHooks } from "./types.js";
+import type { RoundOrder, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { versionInfo } from "./version.js";
 import { WebhookHealer } from "./webhookheal.js";
 import { buildWorkerWorld } from "./workerworld.js";
@@ -193,7 +196,7 @@ export function buildParts(root = sandboxRoot(), loaded = loadConfig()): Product
   // reads the one resolved `cfg.lenses` — the profile wins over
   // config.toml, the preset and the defaults. A malformed `[lenses]` table
   // fails the boot loudly, like every other profile loader.
-  // The profile's `[posting]` policy rides the same overlay (src/postingpolicy.ts).
+  // The profile's `[posting]` policy rides the same overlay (packages/pi-plugin/src/postingpolicy.ts).
   const overlaid = applyProfileOverlays(root, loaded, homeProfileLookup());
   // A failed optional boot migration leaves its destination incomplete. No
   // client, raw session or supervisor may open it until the next clean boot.
@@ -717,7 +720,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // The identity variable map every prompt render and agent build
   // resolves {{owner_name}}/{{repo}}/{{bot_login}} against.
   const identity = identityVars(cfg);
-  // The prompt is bound to the host's lens tools (src/launchvocab.ts). The worker
+  // The prompt is bound to the host's lens tools (packages/pi-plugin/src/launchvocab.ts). The worker
   // host's sessions have `lens` and `lens_wave`; the tmux host's have `subagent`
   // and `launch_plan`. Dispatch writes the host's names into every order it builds
   // (`SessionHooks.lensRuntime`), whatever `[engine] runtime`, `[pi] lens_runtime` or

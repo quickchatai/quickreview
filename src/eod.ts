@@ -19,11 +19,11 @@
 //     time. Nothing is skipped.
 //   * Ambiguous wall times (inside a repeated fall-back hour — again not 18:00
 //     in Warsaw): fire at the FIRST (earlier, still-DST) occurrence, once only.
-import { stripModelDocs } from "./promptdoc.js";
+import { stripModelDocs } from "@quickchatai/pi-quickreview/src/promptdoc.js";
 import { readFileSync } from "node:fs";
-import { withinBudget } from "./budget.js";
-import { NEUTRAL_IDENTITY_VARS } from "./include.js";
-import { render, type TemplateVars } from "./templates.js";
+import { withinBudget } from "@quickchatai/pi-quickreview/src/budget.js";
+import { NEUTRAL_IDENTITY_VARS } from "@quickchatai/pi-quickreview/src/include.js";
+import { render, type TemplateVars } from "@quickchatai/pi-quickreview/src/templates.js";
 
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 const DAY_MS = 86_400_000;

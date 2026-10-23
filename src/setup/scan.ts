@@ -23,19 +23,23 @@
 // unreadable then, readable now) or cut short between ranges. Those are
 // owed, not skipped: a delta that left them out would leave a file no
 // lens ever read out of every delta for as long as it stays unchanged.
-import { planKey } from "../plankey.js";
+import { planKey } from "@quickchatai/pi-quickreview/src/plankey.js";
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
-import { globMatcher } from "../glob.js";
-import { isSweepSkipped, isTestFile } from "../heuristics.js";
+import { globMatcher } from "@quickchatai/pi-quickreview/src/glob.js";
+import { isSweepSkipped, isTestFile } from "@quickchatai/pi-quickreview/src/heuristics.js";
 import {
   SCAN_DEEP_MAX_SUGGESTIONS,
   SCAN_FALSE_POSITIVE_CLASSES,
   SCAN_PASS,
   VALIDATE_PASS,
-} from "../include.js";
-import { SCAN_DEEP_LENSES } from "../passes.js";
-import { REACHABILITY_VALUES, reachabilityCappedSeverity, type Reachability } from "../severity.js";
+} from "@quickchatai/pi-quickreview/src/include.js";
+import { SCAN_DEEP_LENSES } from "@quickchatai/pi-quickreview/src/passes.js";
+import {
+  REACHABILITY_VALUES,
+  reachabilityCappedSeverity,
+  type Reachability,
+} from "@quickchatai/pi-quickreview/src/severity.js";
 import { isMigrationFile } from "./facts.js";
 import { assign, splitUnit, type CaseBudget, type UnitCut } from "./unitcut.js";
 
@@ -44,7 +48,7 @@ export { SCAN_PASS };
 
 /** Lenses a stage-1 suggestion may NOT name (passes.ts), and the deep lenses
  * stage 1 may point stage 2 at. */
-export { DIFF_ONLY_LENSES, SCAN_DEEP_LENSES } from "../passes.js";
+export { DIFF_ONLY_LENSES, SCAN_DEEP_LENSES } from "@quickchatai/pi-quickreview/src/passes.js";
 
 export { isMigrationFile };
 
@@ -442,7 +446,7 @@ export async function drainLanes(
   if (failed !== null) throw (failed as { err: unknown }).err;
 }
 
-/** What a preview's key covers (src/plankey.ts, shared with `qcr review`). */
+/** What a preview's key covers (packages/pi-plugin/src/plankey.ts, shared with `qcr review`). */
 export { planKey };
 
 // ---- the prompts -----------------------------------------------------------------

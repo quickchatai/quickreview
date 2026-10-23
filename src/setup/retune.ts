@@ -22,7 +22,7 @@
 //
 // A preview (the default) writes nothing, the log included.
 import { PROFILES_DIR } from "../install.js";
-import { STYLE_LENS } from "../lenstuning.js";
+import { STYLE_LENS } from "@quickchatai/pi-quickreview/src/lenstuning.js";
 import type { Refusal } from "./engine.js";
 import { CONCERNS, parsePriorities, TABLE_KEYS, unansweredConcerns } from "./interview.js";
 import { checkProfile, DRAFTED_GUIDE_FILE, readProfileFile, writeTarget } from "./profile.js";

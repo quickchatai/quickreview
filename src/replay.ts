@@ -41,7 +41,7 @@
 //   4. **No sandbox script runs in a replay session.** The sanctioned posting
 //      route is `scripts/post-review.sh` / `approve-pr.sh`. The replay's pi
 //      is spawned with `QCR_REPLAY=1`, and under it the no-exec guard
-//      (`extensions/bash-guard.ts`) sanctions NO script in any spelling — so
+//      (`packages/pi-plugin/extensions/bash-guard.ts`) sanctions NO script in any spelling — so
 //      `cd <sandbox root> && bash scripts/post-review.sh …`, which a missing
 //      `scripts/` symlink alone never stopped (`cd` is allowed), is blocked.
 //      The scratch root still symlinks in only `extensions/` and
@@ -65,22 +65,25 @@
 // cat-file, worktree add/remove, merge-base, diff) and nothing pushes: the
 // upstream repo is only ever fetched from.
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { githubCloneDir, type Config } from "./config.js";
 import { buildPassPlan } from "./dispatch.js";
-import { ecosystemFor, type Ecosystem } from "./ecosystem.js";
-import type { HeuristicsExtension } from "./heuristics.js";
+import { ecosystemFor, type Ecosystem } from "@quickchatai/pi-quickreview/src/ecosystem.js";
+import type { HeuristicsExtension } from "@quickchatai/pi-quickreview/src/heuristics.js";
 import { homeProfileLookup } from "./install.js";
-import { findCiLinters, type CiLinter } from "./lintconfig.js";
-import { loadProfileEcosystem, loadProfileHeuristics } from "./profiles.js";
-import { findStyleGuide } from "./styleguide.js";
+import { findCiLinters, type CiLinter } from "@quickchatai/pi-quickreview/src/lintconfig.js";
+import {
+  loadProfileEcosystem,
+  loadProfileHeuristics,
+} from "@quickchatai/pi-quickreview/src/profiles.js";
+import { findStyleGuide } from "@quickchatai/pi-quickreview/src/styleguide.js";
 // Type-only, erased at build: `buildPassPlan` takes the file list shape the
 // files API returns, and this module builds one out of a local `git diff`.
 import type { PrFileEntry } from "./github.js";
-import { renderPassPlan } from "./templates.js";
+import { renderPassPlan } from "@quickchatai/pi-quickreview/src/templates.js";
 import type { ExecFn } from "./tmux.js";
-import type { PassPlanEntry } from "./types.js";
-import { parseUnifiedDiff } from "./unifieddiff.js";
+import type { PassPlanEntry } from "@quickchatai/pi-quickreview/src/types.js";
+import { parseUnifiedDiff } from "@quickchatai/pi-quickreview/src/unifieddiff.js";
 import {
   assertReplaySafe,
   parseCaseSet,
@@ -614,11 +617,23 @@ export async function nodeReplayIo(opts: {
       // The exec guard is no longer a global pi registration, so a session
       // has it only when its own argv loads it (layer 4 rides on it), and the
       // lens tools the replay order asks for ride the same argv.
-      const root = this.root;
+      //
+      // Every extension loads from the sandbox's own tree, never through the
+      // scratch root (this manager's root): the scratch holds only links to
+      // extensions/ and state/agents, so the core's extensions are missing
+      // there, and pi's loader resolves an extension's own imports (`../`,
+      // the core's package) from the path it was given, where the scratch
+      // has no src/, no packages/ and no node_modules/. The extensions take
+      // their inject dir, ledger and guard config from env and cwd, never
+      // from where they were loaded, so the session's state stays scratch.
+      const fromSandbox = (p: string): string => join(opts.sandboxRoot, relative(this.root, p));
       return [
-        join(root, "extensions", "cli", "bash-guard.ts"),
-        ...super.extensionPaths().filter((p) => !p.split(/[\\/]/).includes("openviking-pi")),
-        join(root, "extensions", "cli", "lens.ts"),
+        join(opts.sandboxRoot, "extensions", "cli", "bash-guard.ts"),
+        ...super
+          .extensionPaths()
+          .filter((p) => !p.split(/[\\/]/).includes("openviking-pi"))
+          .map(fromSandbox),
+        join(opts.sandboxRoot, "extensions", "cli", "lens.ts"),
       ];
     }
   }

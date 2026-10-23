@@ -6,7 +6,7 @@
 //
 // So the search here excludes the parser. A knob is "read" only if its name
 // appears somewhere that is NOT the parser — `src/config.ts` and its review
-// half, `src/reviewconfig.ts`: elsewhere in `src/`, in
+// half, `packages/pi-plugin/src/reviewconfig.ts`: elsewhere in `src/`, in
 // `extensions/`, `scripts/`, `deploy/` or `docker/` — the places a knob can
 // legitimately be consumed, including by ansible and by the entrypoint
 // templates.
@@ -34,6 +34,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
+import { SRC_DIRS } from "./helpers/source-trees.js";
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -62,14 +63,12 @@ function stripComments(text: string): string {
     .join("\n");
 }
 
-/** The parser: the whole config's module and its review half. */
-const PARSERS = ["config.ts", "reviewconfig.ts"];
+/** The parser: the whole config's module and its review half (the core's). */
+const PARSERS = ["src/config.ts", "packages/pi-plugin/src/reviewconfig.ts"];
 
 /** Every property declared on a `*Config` interface in the parser. */
 function declaredKnobs(): string[] {
-  const cfg = PARSERS.map((p) => stripComments(readFileSync(join(ROOT, "src", p), "utf8"))).join(
-    "\n",
-  );
+  const cfg = PARSERS.map((p) => stripComments(readFileSync(join(ROOT, p), "utf8"))).join("\n");
   const names = new Set<string>();
   for (const m of cfg.matchAll(
     /(?:export\s+)?interface\s+\w*Config(?:\s+extends\s+[\w,\s]+?)?\s*\{([\s\S]*?)\n\}/g,
@@ -82,11 +81,17 @@ function declaredKnobs(): string[] {
 /** Everything that could legitimately consume a knob, minus the parser. */
 function consumerText(): string {
   const parts: string[] = [];
-  for (const f of tsFiles(join(ROOT, "src"))) {
-    if (PARSERS.some((p) => f.endsWith(`/${p}`))) continue;
+  for (const f of SRC_DIRS.flatMap((d) => tsFiles(join(ROOT, d)))) {
+    if (PARSERS.some((p) => f === join(ROOT, p))) continue;
     parts.push(stripComments(readFileSync(f, "utf8")));
   }
-  for (const dir of ["extensions", "scripts", "deploy", "docker"]) {
+  for (const dir of [
+    "extensions",
+    "packages/pi-plugin/extensions",
+    "scripts",
+    "deploy",
+    "docker",
+  ]) {
     for (const f of allFiles(join(ROOT, dir))) {
       if (/\.(png|jpg|jpeg|ico|gz|pem|lock)$/.test(f)) continue;
       parts.push(readFileSync(f, "utf8"));

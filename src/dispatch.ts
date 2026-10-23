@@ -12,8 +12,8 @@
 // reply since (guard 2's daemon half): it settles on the standing verdict.
 //
 // The round order (types.ts `RoundOrder`) is the daemon↔session contract; the
-// plan and the order are built by the review planner (src/planner.ts), and the
-// prompt renderer (src/templates.ts) is injected so this module has no content
+// plan and the order are built by the review planner (packages/pi-plugin/src/planner.ts), and the
+// prompt renderer (packages/pi-plugin/src/templates.ts) is injected so this module has no content
 // dependency.
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -26,16 +26,16 @@ import {
   type IntegrityFingerprint,
   type RoundIntegrityOpts,
 } from "./execboundary.js";
-import { withinBudget } from "./budget.js";
-import type { GateResult } from "./gate.js";
+import { withinBudget } from "@quickchatai/pi-quickreview/src/budget.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { PrFileEntry } from "./github.js";
-import { DJANGO_ECOSYSTEM, type Ecosystem } from "./ecosystem.js";
-import { STYLE_PASS, LINT_CONFORMANCE_PASS } from "./heuristics.js";
-import type { HeuristicsExtension } from "./heuristics.js";
-import { lensEnabled } from "./lenstuning.js";
-import type { MigrationCollision } from "./migrations.js";
-import { VALIDATE_PASS } from "./include.js";
-import { hasNewEvidence } from "./guards.js";
+import { DJANGO_ECOSYSTEM, type Ecosystem } from "@quickchatai/pi-quickreview/src/ecosystem.js";
+import { STYLE_PASS, LINT_CONFORMANCE_PASS } from "@quickchatai/pi-quickreview/src/heuristics.js";
+import type { HeuristicsExtension } from "@quickchatai/pi-quickreview/src/heuristics.js";
+import { lensEnabled } from "@quickchatai/pi-quickreview/src/lenstuning.js";
+import type { MigrationCollision } from "@quickchatai/pi-quickreview/src/migrations.js";
+import { VALIDATE_PASS } from "@quickchatai/pi-quickreview/src/include.js";
+import { hasNewEvidence } from "@quickchatai/pi-quickreview/src/guards.js";
 import {
   addTierOf,
   buildPassPlan,
@@ -51,7 +51,7 @@ import {
   type FollowUpFullReason,
   type PassPlan,
   type PreparedTree,
-} from "./planner.js";
+} from "@quickchatai/pi-quickreview/src/planner.js";
 import {
   assembleRoundMemory,
   describeGaps,
@@ -81,17 +81,21 @@ import {
   onlyWritten,
   type RoundLessonDelivery,
 } from "./memory/delivery.js";
-import { findStyleGuide } from "./styleguide.js";
-import { findCiLinters } from "./lintconfig.js";
-import { writeLessonFiles, writePassTasks } from "./passtasks.js";
-import { CONTEXT_PACK_FILE, readWorktreeFileForPack, renderContextPack } from "./contextpack.js";
-import { renderGateNotes } from "./templates.js";
-import { firstPartyDirectiveFiles } from "./severity.js";
+import { findStyleGuide } from "@quickchatai/pi-quickreview/src/styleguide.js";
+import { findCiLinters } from "@quickchatai/pi-quickreview/src/lintconfig.js";
+import { writeLessonFiles, writePassTasks } from "@quickchatai/pi-quickreview/src/passtasks.js";
+import {
+  CONTEXT_PACK_FILE,
+  readWorktreeFileForPack,
+  renderContextPack,
+} from "@quickchatai/pi-quickreview/src/contextpack.js";
+import { renderGateNotes } from "@quickchatai/pi-quickreview/src/templates.js";
+import { firstPartyDirectiveFiles } from "@quickchatai/pi-quickreview/src/severity.js";
 import type { DispatchAnnouncer } from "./slack/announce.js";
 import { applyEvent, restoreStandingLifecycle, setPrGates } from "./statemachine.js";
 import type { ApprovalWithheldRow, PrStateRow, ReviewedHeadRow, StateStore } from "./state.js";
-import { snapshotMark, standingReview } from "./standing-review.js";
-import { roundPromptMarker } from "./types.js";
+import { snapshotMark, standingReview } from "@quickchatai/pi-quickreview/src/standing-review.js";
+import { roundPromptMarker } from "@quickchatai/pi-quickreview/src/types.js";
 import type {
   LedgerCarry,
   PassPlanEntry,
@@ -102,8 +106,8 @@ import type {
   RoundRecoveryContext,
   RoundType,
   SessionHooks,
-} from "./types.js";
-import { preparePriorFindings } from "./priorfindings.js";
+} from "@quickchatai/pi-quickreview/src/types.js";
+import { preparePriorFindings } from "@quickchatai/pi-quickreview/src/priorfindings.js";
 import { type PrOwnedDelta, prWorktreeRel } from "./worktrees.js";
 
 /** The slice of GitHubAdapter dispatch needs — all mutations are gated inside
@@ -179,7 +183,7 @@ export interface DispatchDeps {
   settledDigest?: (pr: number) => string;
   /**
    * The PR's mirrored ledger, re-handed in every round order
-   * (src/ledgercarry.ts). Production reads `state/ledgers/pr-<n>.md`
+   * (packages/pi-plugin/src/ledgercarry.ts). Production reads `state/ledgers/pr-<n>.md`
    * (daemon.ts). Total: undefined carry ⇒ the order has no `ledger_carry`.
    * Absent ⇒ no carry and an empty digest.
    */
@@ -258,7 +262,7 @@ export interface DispatchDeps {
   integrityBudgetMs?: number;
   /**
    * Unpack the third-party sources this PR touches and return the rendered
-   * note for the order (src/depsources.ts; `[review] dependency_sources`).
+   * note for the order (packages/pi-plugin/src/depsources.ts; `[review] dependency_sources`).
    * Must never throw or hang past its own budget. Absent ⇒ no note.
    */
   dependencySources?: (worktreePath: string, files: PrFileEntry[]) => Promise<string>;
@@ -361,7 +365,7 @@ function alreadyConsumed(err: unknown): boolean {
  * per round after the worktree is prepared and BEFORE the session is handed
  * the order.
  *
- * The behavior is the ecosystem's (`src/ecosystem.ts`): Django detects
+ * The behavior is the ecosystem's (`packages/pi-plugin/src/ecosystem.ts`): Django detects
  * migration-number collisions at the pinned base sha and posts the remedy as a
  * gated **COMMENT** — never a blocker, never a verdict — while `none` is a
  * first-class configured-off (`{ status: "off" }`): nothing runs, nothing is
@@ -376,7 +380,7 @@ function alreadyConsumed(err: unknown): boolean {
  * reliable, never quieter"): the caller renders an explicit
  * "the pre-check did not run — check collisions yourself" note into the round
  * prompt, which is what conditionally un-muzzles pass-data-safety's withdrawn
- * finding class for exactly that round (see src/include.ts,
+ * finding class for exactly that round (see packages/pi-plugin/src/include.ts,
  * MIGRATION_NUMBERING_ADDENDUM) — and raises the overseer anomaly. "off"
  * takes none of those paths: configured-off is not degradation.
  *
@@ -964,9 +968,9 @@ function logSupersededSettlement(
   );
 }
 
-export { ALL_PASSES } from "./passes.js";
+export { ALL_PASSES } from "@quickchatai/pi-quickreview/src/passes.js";
 
-// The review planner moved to src/planner.ts (the review core); re-exported so
+// The review planner moved to packages/pi-plugin/src/planner.ts (the review core); re-exported so
 // the app's importers keep their one module.
 export {
   addTierOf,
@@ -991,7 +995,7 @@ export {
   type PassPlan,
   type PreparedTree,
   type PrOwnedDeltaReader,
-} from "./planner.js";
+} from "@quickchatai/pi-quickreview/src/planner.js";
 
 /** What the round row records of a plan — the same projection on the
  * normal path and on the patch-write fallback, so the stored round and the
@@ -1865,7 +1869,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           })
         : null;
 
-      // `[review] task_files` (src/passtasks.ts): each discovery row's
+      // `[review] task_files` (packages/pi-plugin/src/passtasks.ts): each discovery row's
       // complete lens task, written beside the round's pass outputs so the
       // session launches lenses with a pointer instead of generating every
       // task string. Total: a write that fails leaves the order without task

@@ -35,7 +35,8 @@ import {
   openEnvOf,
   readOpenMeta,
   writeOpenMeta,
-} from "../src/engine/openable.js";
+} from "@quickchatai/pi-quickreview/src/engine/openable.js";
+import { sourcePath } from "./helpers/source-trees.js";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const tmp = mkdtempSync(join(tmpdir(), "open-session-"));
@@ -122,7 +123,7 @@ function deps(over: Partial<OpenDeps> = {}): { d: OpenDeps; calls: Calls } {
 }
 
 describe("[open] the argv", () => {
-  const main = MAIN_OPEN_EXTENSIONS.map((e) => join(ROOT, "extensions", e));
+  const main = MAIN_OPEN_EXTENSIONS.map((e) => join(ROOT, e));
 
   it("forks by default, so the finished session is look-only", () => {
     const argv = openArgv({ file: "/s/a.jsonl", mode: "fork", extensions: main });
@@ -157,8 +158,12 @@ describe("[open] the argv", () => {
   it("carries no posting tool: no extension named for posting, and none of them registers one", () => {
     for (const name of [...MAIN_OPEN_EXTENSIONS, ...LENS_OPEN_EXTENSIONS]) {
       expect(name).not.toMatch(/post|inject|review-submit/i);
-      // The shim names nothing; the tools are registered by the module behind it.
-      const code = readFileSync(join(ROOT, "extensions", name.replace(/^cli\//, "")), "utf8");
+      // The shim names nothing; the tools are registered by the module behind
+      // it, the app's (extensions/) or the review core's (packages/pi-plugin/extensions/).
+      const code = readFileSync(
+        join(ROOT, sourcePath(ROOT, name.replace(/^extensions\/cli\//, "extensions/"))),
+        "utf8",
+      );
       const tools = [...code.matchAll(/\bname:\s*"([a-z_]+)"/g)].map((m) => m[1]!);
       for (const t of tools) expect(t).not.toMatch(/post|submit|comment|review_pr/i);
     }
@@ -173,7 +178,7 @@ describe("[open] the argv", () => {
       deps().d,
     );
     expect(found.ok && found.kind).toBe("lens");
-    expect([...LENS_OPEN_EXTENSIONS]).toEqual(["cli/bash-guard.ts"]);
+    expect([...LENS_OPEN_EXTENSIONS]).toEqual(["extensions/cli/bash-guard.ts"]);
     const { d, calls } = deps();
     const dir = round(join(home, "r2"), { lenses: [{ id: "L1", agent: "pass-a" }] });
     expect(await runOpen([dir, "--lens", "L1"], false, d)).toBe(0);

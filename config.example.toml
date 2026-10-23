@@ -502,7 +502,7 @@ auth_mode = "api_key"
 # needs it to run in api_key mode and boot provisioning needs it to mint users.
 # It is the server's credential, never a client's: no daemon surface, no review
 # session and no companion process ever holds it (writeOvcliConf refuses it as
-# a session credential; extensions/bash-guard.ts refuses to read the files that
+# a session credential; packages/pi-plugin/extensions/bash-guard.ts refuses to read the files that
 # carry it). Mirrored as openviking_root_key_file.
 root_key_file = "openviking_root_key"
 # The users boot provisioning ENSURES exist — created if absent, left exactly
@@ -660,7 +660,7 @@ kind = "none"                      # ← FILL (10): "github", "wayfinder", or "n
 # max_search_pages = 10                 # 100 hits/page; search caps at 1,000
 
 [guards]
-# Posting-time guards. Enforced on the single MutationGate (src/guards.ts).
+# Posting-time guards. Enforced on the single MutationGate (packages/pi-plugin/src/guards.ts).
 # The sessions' post scripts (post-review.sh, approve-pr.sh, reply-thread.sh)
 # hold no guard logic: they ask the daemon to post over its IPC socket
 # (src/ipc/postshim.ts, src/postops.ts), so every post meets the same guards.
@@ -753,7 +753,7 @@ preset = "default"
 #   task_files — the daemon writes each lens's complete task to a file, and
 #     the engine starts the planned discovery wave from those files at
 #     round start and the session's `lens_wave` tool joins it
-#     (src/engine/lens/tool.ts; off ⇒ hand-written per-row `lens` calls);
+#     (packages/pi-plugin/src/engine/lens/tool.ts; off ⇒ hand-written per-row `lens` calls);
 #   render_outputs — the review body and inline comments are rendered from
 #     the findings record instead of being written out a second time;
 #   validator_shards — EXPERIMENTAL, off (1), unvalidated: split the
@@ -829,7 +829,7 @@ preset = "default"
 profile = ""
 
 # EXTENSIONS to the first-party directive-path vocabulary the
-# directive-edit escalation flow keys on (src/severity.ts). Extend-only by design:
+# directive-edit escalation flow keys on (packages/pi-plugin/src/severity.ts). Extend-only by design:
 # these ADD names, the built-ins (.claude/**, .cursor/**, root prompts/**,
 # AGENTS.md/AGENT.md/CLAUDE.md/.cursorrules anywhere,
 # .github/copilot-instructions.md) can never be removed — dropping one would
@@ -956,7 +956,7 @@ live_retention_days = 30 # a worker round's logs (state/live, state/lens) leave 
 live_cap_gb = 20         # disk cap on state/live + state/lens; past it the archive_live_cap wake fires (0 = off, max 4096)
 
 # The bot login's single refresher (src/loginrefresh/, P8.22): the VM-only
-# exception to "only the owner's pi /login refreshes" (src/engine/auth.ts).
+# exception to "only the owner's pi /login refreshes" (packages/pi-plugin/src/engine/auth.ts).
 # After the cutover ONE process the daemon spawns and supervises owns
 # pihome/agent/auth.json and every worker borrows a refresh-blanked copy.
 # Off until the cutover's config turns it on: while tmux pi sessions exist they

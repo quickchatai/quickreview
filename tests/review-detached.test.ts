@@ -427,7 +427,7 @@ describe("runDetachedChild", () => {
   });
 
   it("writes a beat the moment a turn's deadline is tracked, so a loop that freezes at once still leaves it", async () => {
-    const { trackDeadline } = await import("../src/heartbeat.js");
+    const { trackDeadline } = await import("@quickchatai/pi-quickreview/src/heartbeat.js");
     const dir = join(tmp, "child", "runs", "c3");
     mkdirSync(dir, { recursive: true });
     let during: { seq: number; deadline_at: number | null } | null = null;
@@ -446,7 +446,7 @@ describe("runDetachedChild", () => {
   });
 
   it("rewrites the beat when a deadline is released, so a shorter turn's deadline shows at once", async () => {
-    const { trackDeadline } = await import("../src/heartbeat.js");
+    const { trackDeadline } = await import("@quickchatai/pi-quickreview/src/heartbeat.js");
     const dir = join(tmp, "child", "runs", "c4");
     mkdirSync(dir, { recursive: true });
     let after: { deadline_at: number | null } | null = null;

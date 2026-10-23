@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { QcrTool } from "../extensions/pi-tool.js";
+import type { QcrTool } from "@quickchatai/pi-quickreview/extensions/pi-tool.js";
 import {
   byValidity,
   renderFindings,

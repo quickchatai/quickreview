@@ -16,7 +16,7 @@
 //     the JSONL it leaves is the PR's own: the same id after the round, appended to;
 //   - the manager sees the verdict, ends the pi, and a post after the release is refused.
 //
-// Skipped without a build (`npx tsc -p tsconfig.json`) or without `script`: it runs dist/.
+// Skipped without a build (`npm run build`) or without `script`: it runs dist/.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import {
   existsSync,
@@ -35,7 +35,7 @@ import { DEBUG_STATUS_NAME, DebugRoundManager } from "../src/debuground.js";
 import { LaunchFiles, capsDirOf, createCapabilityFd, ipcEnv } from "../src/ipc/capability.js";
 import { runPostShim } from "../src/ipc/postshim.js";
 import { newestSessionFile } from "../src/sessionjsonl.js";
-import { sessionCommandMarker } from "../src/session-command.js";
+import { sessionCommandMarker } from "@quickchatai/pi-quickreview/src/session-command.js";
 import { StateStore } from "../src/state.js";
 import { composeLookups } from "../src/takeover.js";
 import { Tmux } from "../src/tmux.js";

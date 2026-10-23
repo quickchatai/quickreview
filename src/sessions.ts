@@ -66,7 +66,7 @@ const ARGV_ENV_PREFIXES = ["QCR_", "OPENVIKING_", "GIT_CONFIG_"] as const;
  * The config-scope pin: which files git may read configuration from, decided by
  * the daemon at spawn time rather than discovered by git at run time.
  *
- * Why this exists. `extensions/bash-guard.ts` vets command strings, and a
+ * Why this exists. `packages/pi-plugin/extensions/bash-guard.ts` vets command strings, and a
  * command-string guard cannot see git's implicit config search path:
  * `HOME=/tmp/evil git diff --no-index A B` executes arbitrary shell out of
  * `$HOME/.gitconfig`, and a session can equally write the real
@@ -313,7 +313,7 @@ export class PiSessionManager {
       // before pass-validate (`[review] dedup_merge`). The bench session
       // loads the same file (src/bench/runner.ts), so both routes group
       // candidates with one code path. Pure: it reads and writes nothing.
-      join(this.root, "extensions", "finding-clusters.ts"),
+      join(this.root, "packages", "pi-plugin", "extensions", "finding-clusters.ts"),
       // The vendored + patched OpenViking extension: the memory tools a
       // session reaches. Last on purpose — it is the only extension
       // here we did not write, and pi registers handlers in load order, so

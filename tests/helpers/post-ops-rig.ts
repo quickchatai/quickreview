@@ -13,10 +13,10 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { loadConfig, type Config } from "../../src/config.js";
-import { MutationGate, type MutationIntent } from "../../src/gate.js";
+import { MutationGate, type MutationIntent } from "@quickchatai/pi-quickreview/src/gate.js";
 import { GitHubAdapter } from "../../src/github.js";
-import { makePostingGuard } from "../../src/guards.js";
-import type { TokenMinter } from "../../src/githubAuth.js";
+import { makePostingGuard } from "@quickchatai/pi-quickreview/src/guards.js";
+import type { TokenMinter } from "@quickchatai/pi-quickreview/src/githubAuth.js";
 import { CapabilityStore, socketPathOf } from "../../src/ipc/capability.js";
 import { IpcClient } from "../../src/ipc/client.js";
 import type { CommandState } from "../../src/ipc/protocol.js";

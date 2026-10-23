@@ -27,6 +27,7 @@ import { nodeModulesMounts } from "./helpers/docker-node-modules.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(root, "dist", "src");
+const CORE_DIST = join(root, "packages", "pi-plugin", "dist", "src");
 const HARNESS = join(root, "tests", "helpers", "tool-uid-harness.mjs");
 const DEBUG_HARNESS = join(root, "tests", "helpers", "debug-uid-harness.mjs");
 const NODE_IMAGE = "node:22-bookworm";
@@ -38,7 +39,7 @@ const LOGIN_SECRET_JSON = JSON.stringify({
 const keep = process.env["KEEP_TOOL_UID_TMP"];
 const tmp = mkdtempSync(join(keep ?? tmpdir(), "tool-uid-container-"));
 
-const hasDist = existsSync(join(DIST, "engine", "tooluid.js"));
+const hasDist = existsSync(join(CORE_DIST, "engine", "tooluid.js"));
 const hasDocker = ((): boolean => {
   if (spawnSync("docker", ["image", "inspect", NODE_IMAGE], { stdio: "ignore" }).status !== 0)
     return false;
@@ -220,6 +221,8 @@ function runHarness(
     "QCR_CONFIG=/opt/qcr/config.example.toml",
     "-e",
     `HARNESS_DIST=${DIST}`,
+    "-e",
+    `HARNESS_CORE_DIST=${CORE_DIST}`,
     "-e",
     `HARNESS_ROOT=${root}`,
     "-e",

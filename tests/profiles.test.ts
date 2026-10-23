@@ -18,8 +18,8 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PASS_ADDENDA, SCAN_PASS, buildAgents } from "../src/include.js";
-import type { PassAddendum } from "../src/include.js";
+import { PASS_ADDENDA, SCAN_PASS, buildAgents } from "@quickchatai/pi-quickreview/src/include.js";
+import type { PassAddendum } from "@quickchatai/pi-quickreview/src/include.js";
 import { configHome, homeProfileLookup, type InstallEnv } from "../src/install.js";
 import { stageFixtureProfile } from "./helpers/tracked-profiles.js";
 import {
@@ -29,8 +29,8 @@ import {
   parseProfileAddendum,
   parseProfileHeuristics,
   reservedAddendumIds,
-} from "../src/profiles.js";
-import { PROFILE_EXTENDABLE_LENSES } from "../src/heuristics.js";
+} from "@quickchatai/pi-quickreview/src/profiles.js";
+import { PROFILE_EXTENDABLE_LENSES } from "@quickchatai/pi-quickreview/src/heuristics.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 import { privateHandleLines } from "./helpers/private-tokens.js";
 

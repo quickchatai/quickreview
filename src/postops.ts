@@ -37,9 +37,9 @@ import {
   realpathSync,
 } from "node:fs";
 import { isAbsolute, join, sep } from "node:path";
-import { ciBlocksApproval, classifyCi } from "./cigate.js";
+import { ciBlocksApproval, classifyCi } from "@quickchatai/pi-quickreview/src/cigate.js";
 import type { Config, GuardsConfig } from "./config.js";
-import type { GateResult } from "./gate.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import { GitHubRequestError, type GitHubAdapter } from "./github.js";
 import { IpcError } from "./ipc/protocol.js";
 import type { OpHandler, RequestContext } from "./ipc/server.js";
@@ -61,7 +61,7 @@ import {
 } from "./posting.js";
 import { markedReviewsOf } from "./posting-outbox.js";
 import { describeGap, parsePlan, readRoundProgress, requiredPassGap } from "./requiredpasses.js";
-import { snapshotMark } from "./standing-review.js";
+import { snapshotMark } from "@quickchatai/pi-quickreview/src/standing-review.js";
 import type { StateStore } from "./state.js";
 
 /** The most a result file may hold. A review body is far below this. */

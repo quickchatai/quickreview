@@ -57,9 +57,12 @@
 // The never-retract-an-approval invariant is structural: no event and no
 // transition in this module touches an existing review (spec §8).
 import type { PrLifecycleState, StateStore, TriggerProvenance } from "./state.js";
-import { isBotAuthor } from "./guards.js";
-import { standingLifecycleState, type StandingDecidedVerdict } from "./standing-review.js";
-import type { Verdict } from "./types.js";
+import { isBotAuthor } from "@quickchatai/pi-quickreview/src/guards.js";
+import {
+  standingLifecycleState,
+  type StandingDecidedVerdict,
+} from "@quickchatai/pi-quickreview/src/standing-review.js";
+import type { Verdict } from "@quickchatai/pi-quickreview/src/types.js";
 
 /** Every event name. `applyEvent` types the name it logs as this union, so an
  * `SmEvent` member it does not list fails to compile, and the fences that read
@@ -161,7 +164,7 @@ export function mergedOverBlock(
 }
 
 /** Bot-authored PRs never enter the machine (spec §3). The predicate lives
- * with the posting guards (src/guards.ts), which read a bot's approval as no
+ * with the posting guards (packages/pi-plugin/src/guards.ts), which read a bot's approval as no
  * human's. */
 export { isBotAuthor };
 

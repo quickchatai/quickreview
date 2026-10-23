@@ -33,7 +33,7 @@ no *"this"* (which `[check this]` owns, and which would make a `[track this]` or
 `[fix this]` read as its sibling), no *"human"*, no imperative. One word, a past
 participle, naming a status rather than issuing an instruction.
 
-The grammar lives in `src/severity.ts` (`CHECK_THIS_TAG`, `ASK_HUMAN_TAG`,
+The grammar lives in `packages/pi-plugin/src/severity.ts` (`CHECK_THIS_TAG`, `ASK_HUMAN_TAG`,
 `DEFERRED_TAG` and their regexes, all listed in `SANCTIONED_TAGS`), and
 `tests/severity.test.ts` pins that no marker's regex ever matches another and
 that none is a substring of another.

@@ -6,7 +6,7 @@
 //   - SPAWN. `node dist/src/botworker.js --command <id> --mode round|answer`, in
 //     a process group of its own, with the command's capability on an inherited
 //     fd (stdio[3]) and a small env built from an ALLOWLIST. No GitHub credential
-//     of any name is in it (GITHUB_TOKEN_ENVS, from src/envstrip.ts, so this
+//     of any name is in it (GITHUB_TOKEN_ENVS, from packages/pi-plugin/src/envstrip.ts, so this
 //     module never imports src/engine/), and the capability is on the fd only.
 //   - LISTEN. It serves `worker.spec` and the worker's events over the IPC socket
 //     (src/ipc/server.ts). A request or event is accepted only for the command's
@@ -57,7 +57,7 @@ import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, mkdirSync, openSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { GITHUB_TOKEN_ENVS } from "./envstrip.js";
+import { GITHUB_TOKEN_ENVS } from "@quickchatai/pi-quickreview/src/envstrip.js";
 import {
   type CapabilityStore,
   createCapabilityFd,
@@ -135,7 +135,7 @@ export const WORKER_ENV_ALLOW: readonly string[] = [
   "https_proxy",
   "no_proxy",
   "PI_CODING_AGENT_DIR",
-  // The separate tool uid (src/engine/tooluid.ts TOOL_UID_ENVS; named here
+  // The separate tool uid (packages/pi-plugin/src/engine/tooluid.ts TOOL_UID_ENVS; named here
   // because the daemon never imports src/engine/).
   "QCR_TOOL_UID",
   "QCR_TOOL_GID",

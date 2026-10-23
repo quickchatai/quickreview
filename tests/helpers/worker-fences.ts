@@ -6,9 +6,12 @@
 // A worker that opened the store would add a writer per round, so the worker's
 // RUNTIME import closure must not contain the state store or a SQLite binding.
 // Type-only imports are erased at build and load nothing, so they are not edges.
+// The closure crosses into the review core (packages/pi-plugin) through the
+// core's package specifiers, which name its sources.
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { stripComments, tsFilesUnder } from "./engine-fences.js";
+import { CORE_NAME, CORE_PACKAGE, EXTENSION_DIRS, SRC_DIRS } from "./source-trees.js";
 
 /** The packages that open a SQLite file. */
 const SQLITE_PACKAGES = /^(?:better-sqlite3|node:sqlite|sqlite3|sqlite)$/;
@@ -38,10 +41,9 @@ export function runtimeSpecifiers(text: string): string[] {
  * the fence holds.
  */
 export function workerReachesStateStore(root: string, entry = "src/botworker.ts"): string[] {
-  const files = new Set([
-    ...tsFilesUnder(join(root, "src")),
-    ...tsFilesUnder(join(root, "extensions")),
-  ]);
+  const files = new Set(
+    [...SRC_DIRS, ...EXTENSION_DIRS].flatMap((d) => tsFilesUnder(join(root, d))),
+  );
   const start = join(root, entry);
   if (!files.has(start)) throw new Error(`${entry} does not exist under ${root}`);
   const parent = new Map<string, string | null>([[start, null]]);
@@ -63,8 +65,11 @@ export function workerReachesStateStore(root: string, entry = "src/botworker.ts"
         hits.push(chain(f, spec));
         continue;
       }
-      if (!spec.startsWith(".")) continue;
-      const next = resolve(dirname(f), spec.replace(/\.js$/, ".ts"));
+      const inCore = spec.startsWith(`${CORE_NAME}/`)
+        ? join(root, CORE_PACKAGE, spec.slice(CORE_NAME.length + 1))
+        : null;
+      if (inCore === null && !spec.startsWith(".")) continue;
+      const next = (inCore ?? resolve(dirname(f), spec)).replace(/\.js$/, ".ts");
       if (!files.has(next) || parent.has(next)) continue;
       parent.set(next, f);
       queue.push(next);

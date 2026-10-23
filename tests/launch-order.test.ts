@@ -19,11 +19,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseConfig, type Config } from "../src/config.js";
 import { buildPassPlan, buildRoundOrder, slowestFirst } from "../src/dispatch.js";
-import { NONE_ECOSYSTEM } from "../src/ecosystem.js";
+import { NONE_ECOSYSTEM } from "@quickchatai/pi-quickreview/src/ecosystem.js";
 import type { PrFileEntry } from "../src/github.js";
-import { renderPassTaskNote, writePassTasks } from "../src/passtasks.js";
+import { renderPassTaskNote, writePassTasks } from "@quickchatai/pi-quickreview/src/passtasks.js";
 import type { PrStateRow } from "../src/state.js";
-import { PASS_TIER_ORDER, type PassPlanEntry } from "../src/types.js";
+import { PASS_TIER_ORDER, type PassPlanEntry } from "@quickchatai/pi-quickreview/src/types.js";
 
 const sandbox = join(import.meta.dirname, "..");
 const fixture: Config = parseConfig(

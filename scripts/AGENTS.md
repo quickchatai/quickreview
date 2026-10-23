@@ -10,7 +10,7 @@ daemon over the worker socket (`QCR_IPC_SOCKET`, capability from
 `QCR_IPC_CAP_FD`), and without them it refuses. The daemon (`src/postops.ts`)
 validates the paths, builds the intent and posts through the one
 `MutationGate` with the install's `dry_run`, the posting-time guards
-(`src/guards.ts`, `src/cigate.ts`) installed on it, and the receipt and outbox
+(`packages/pi-plugin/src/guards.ts`, `packages/pi-plugin/src/cigate.ts`) installed on it, and the receipt and outbox
 (`src/posting-journal.ts`). There is no shell mirror of the guards any more:
 the guards are tested once, through the gate, in `tests/guards.test.ts`, and
 the client in `tests/post-shim.test.ts`. A new script that posts to GitHub does

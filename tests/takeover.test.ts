@@ -10,12 +10,12 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync }
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createBashGuard } from "../extensions/bash-guard.js";
+import { createBashGuard } from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
 import { workerOperatorControl } from "../src/workercontrol.js";
 import { parseTakeoverArgs, takeoverAttachLines } from "../src/cli.js";
 import { parseConfig, type Config } from "../src/config.js";
 import { dispatchOnce, type DispatchAdapter } from "../src/dispatch.js";
-import type { GateResult } from "../src/gate.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import { CapabilityStore, LaunchFiles, capsDirOf } from "../src/ipc/capability.js";
 import type { IpcClient } from "../src/ipc/client.js";
 import { StateStore, type SessionCommandRow } from "../src/state.js";

@@ -24,7 +24,7 @@
 // nothing reads or writes memory.
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { yieldToLoop } from "../yieldloop.js";
+import { yieldToLoop } from "@quickchatai/pi-quickreview/src/yieldloop.js";
 import {
   archiveStamp,
   freshPassId,

@@ -9,9 +9,13 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import { buildRoundOrder } from "../src/dispatch.js";
-import { NONE_ECOSYSTEM } from "../src/ecosystem.js";
+import { NONE_ECOSYSTEM } from "@quickchatai/pi-quickreview/src/ecosystem.js";
 import type { PrFileEntry } from "../src/github.js";
-import { PASS_ADDENDA, buildAgents, configAddenda } from "../src/include.js";
+import {
+  PASS_ADDENDA,
+  buildAgents,
+  configAddenda,
+} from "@quickchatai/pi-quickreview/src/include.js";
 import type { PrStateRow } from "../src/state.js";
 import {
   FOLLOW_UP_TEMPLATE_FILE,
@@ -20,8 +24,8 @@ import {
   renderRecheckPrompt,
   renderRoundPrompt,
   ROUND_TEMPLATE_FILES,
-} from "../src/templates.js";
-import type { RoundType } from "../src/types.js";
+} from "@quickchatai/pi-quickreview/src/templates.js";
+import type { RoundType } from "@quickchatai/pi-quickreview/src/types.js";
 import { privateTokenHits } from "./helpers/private-tokens.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 

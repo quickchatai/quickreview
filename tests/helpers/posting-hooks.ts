@@ -1,9 +1,15 @@
 // The production composition of the `[posting]` policy, in one place for the
 // tests: the overlay wire.ts/the bench apply, and the addenda they compose.
 import type { Config } from "../../src/config.js";
-import type { PassAddendum } from "../../src/include.js";
-import { applyProfilePosting, postingPolicyAddenda } from "../../src/postingpolicy.js";
-import { loadProfilePosting, type ProfileLookup } from "../../src/profiles.js";
+import type { PassAddendum } from "@quickchatai/pi-quickreview/src/include.js";
+import {
+  applyProfilePosting,
+  postingPolicyAddenda,
+} from "@quickchatai/pi-quickreview/src/postingpolicy.js";
+import {
+  loadProfilePosting,
+  type ProfileLookup,
+} from "@quickchatai/pi-quickreview/src/profiles.js";
 
 export function applyPosting(
   cfg: Config,

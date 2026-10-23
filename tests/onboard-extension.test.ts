@@ -15,7 +15,7 @@ import {
   type OnboardAdapters,
 } from "../src/onboard/engine.js";
 import { preflightStep } from "../src/onboard/steps/preflight.js";
-import type { QcrTool, QcrToolResult } from "../extensions/pi-tool.js";
+import type { QcrTool, QcrToolResult } from "@quickchatai/pi-quickreview/extensions/pi-tool.js";
 
 let stateDir: string;
 

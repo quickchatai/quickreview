@@ -27,7 +27,7 @@ import {
   type DryrunRecord,
   type ReviewSnapshot,
 } from "../src/compare.js";
-import { MUTATION_KINDS } from "../src/gate.js";
+import { MUTATION_KINDS } from "@quickchatai/pi-quickreview/src/gate.js";
 
 const tmpDirs: string[] = [];
 function scratch(): string {

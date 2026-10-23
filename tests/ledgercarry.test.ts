@@ -11,9 +11,13 @@ import {
   readLedgerCarry,
   SETTLED_DIGEST_MAX_CHARS,
   settledFromLedger,
-} from "../src/ledgercarry.js";
-import { renderLedgerNote, renderRoundPrompt, roundTemplateFile } from "../src/templates.js";
-import type { RoundOrder, RoundType } from "../src/types.js";
+} from "@quickchatai/pi-quickreview/src/ledgercarry.js";
+import {
+  renderLedgerNote,
+  renderRoundPrompt,
+  roundTemplateFile,
+} from "@quickchatai/pi-quickreview/src/templates.js";
+import type { RoundOrder, RoundType } from "@quickchatai/pi-quickreview/src/types.js";
 
 const SOURCE = "/opt/quickreview/state/ledgers/pr-412.md";
 const LEDGER = [

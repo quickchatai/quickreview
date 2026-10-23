@@ -116,7 +116,7 @@ import type { ReviewCommentFull } from "./github.js";
 import { cleanQuotedText, fenceAsData } from "./memory/datafence.js";
 import { formatEventTags, parseEventTags, parseHashTags } from "./memory/eventtags.js";
 import { MEMORY_DEFAULTS } from "./config.js";
-import { storedLensIds } from "./lensids.js";
+import { storedLensIds } from "@quickchatai/pi-quickreview/src/lensids.js";
 import type { CaseWritesStatus } from "./memory/health.js";
 import { CASES_AREA } from "./memory/layout.js";
 import type { RoundActivityGate } from "./memory/roundactivity.js";
@@ -133,7 +133,7 @@ import {
   type ReviewOutcomeRow,
 } from "./outcomes.js";
 import type { PrCommentRow, RoundFindingRow, StateStore } from "./state.js";
-import { yieldToLoop } from "./yieldloop.js";
+import { yieldToLoop } from "@quickchatai/pi-quickreview/src/yieldloop.js";
 
 /** The `#tag` and the `kind=` category every case carries. */
 export const CASE_TAG = "case";

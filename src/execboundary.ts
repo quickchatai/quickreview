@@ -1,7 +1,7 @@
 // The exec boundary's OUTCOME layer (docs/exec-boundary.md).
 //
 // Everything else in this system that defends the exec boundary asks about an
-// ATTEMPT: `extensions/bash-guard.ts` inspects a command string, `usage.ts`
+// ATTEMPT: `packages/pi-plugin/extensions/bash-guard.ts` inspects a command string, `usage.ts`
 // re-reads those strings after the fact. A guard which must enumerate every
 // way a general-purpose tool reaches `exec` (`gh api … --input`,
 // `-fevent=APPROVE`, `git --git-dir=`, `HOME` / `XDG_CONFIG_HOME` …) will
@@ -40,17 +40,21 @@
 import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { POLICY_SURFACE_DIRS, POLICY_SURFACE_FILES } from "../extensions/bash-guard.js";
+import {
+  POLICY_SURFACE_DIRS,
+  POLICY_SURFACE_FILES,
+  POLICY_SURFACE_PATHS,
+} from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
 import { homeProfileDirs, locateConfig, type InstallEnv } from "./install.js";
 import { postingKeyAnyHead } from "./posting-receipt.js";
-import { yieldToLoop } from "./yieldloop.js";
+import { yieldToLoop } from "@quickchatai/pi-quickreview/src/yieldloop.js";
 
 // ---- git-config integrity ---------------------------------------------------
 //
 // The second thing in this file that asks about an OUTCOME rather than an
 // attempt.
 //
-// The write veto in `extensions/bash-guard.ts` reads command strings, and a
+// The write veto in `packages/pi-plugin/extensions/bash-guard.ts` reads command strings, and a
 // write to `<clone>/.git/config` makes a later plain `git diff <base> <head>`
 // execute config-supplied shell. Some spellings of that write can never be
 // seen by a string scan:
@@ -158,14 +162,27 @@ export function gitConfigWatchPaths(opts: {
   return paths;
 }
 
+/** Where the review core's own package sits under the sandbox root. It
+ * carries a compiled tree and extensions of its own (`dist/`, `extensions/`),
+ * which the guard's name shape already refuses a write to. */
+export const CORE_PACKAGE_DIR = "packages/pi-plugin";
+
 /**
  * This system's own policy surface under the sandbox root — the
  * files that decide what every layer of the exec boundary DOES. The names come
- * from the guard's own definition, never a second list here.
+ * from the guard's own definition, never a second list here, and are watched
+ * under the root and under the review core's package (whose compiled gate and
+ * guard are what a round runs), plus the guard's whole paths under the root
+ * (the core's export map, which picks the compiled guard a shim loads).
  */
 export function policySurfaceWatchPaths(sandboxRoot: string): string[] {
   const root = sandboxRoot.replace(/\/+$/, "");
-  return [...POLICY_SURFACE_FILES, ...POLICY_SURFACE_DIRS].map((name) => `${root}/${name}`);
+  return [
+    ...[root, `${root}/${CORE_PACKAGE_DIR}`].flatMap((base) =>
+      [...POLICY_SURFACE_FILES, ...POLICY_SURFACE_DIRS].map((name) => `${base}/${name}`),
+    ),
+    ...POLICY_SURFACE_PATHS.map((path) => `${root}/${path}`),
+  ];
 }
 
 /**

@@ -7,8 +7,8 @@ import {
   parseRoundProgress,
   progressLogPath,
   roundExecutionStage,
-} from "../src/round-progress.js";
-import { PASS_TIER_ORDER } from "../src/types.js";
+} from "@quickchatai/pi-quickreview/src/round-progress.js";
+import { PASS_TIER_ORDER } from "@quickchatai/pi-quickreview/src/types.js";
 
 const dirs: string[] = [];
 afterEach(() => {

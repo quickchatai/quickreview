@@ -7,17 +7,17 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("../src/styleguide.js", async (orig) => ({
-  ...(await orig<typeof import("../src/styleguide.js")>()),
+vi.mock("@quickchatai/pi-quickreview/src/styleguide.js", async (orig) => ({
+  ...(await orig<typeof import("@quickchatai/pi-quickreview/src/styleguide.js")>()),
   findStyleGuide: () => ["AGENTS.md:10-40"],
 }));
 
 import { parseConfig, type Config } from "../src/config.js";
 import { dispatchOnce, type DispatchAdapter } from "../src/dispatch.js";
-import type { GateResult } from "../src/gate.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
 import { StateStore } from "../src/state.js";
-import type { RoundOrder, SessionHooks } from "../src/types.js";
+import type { RoundOrder, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const cfg: Config = parseConfig(

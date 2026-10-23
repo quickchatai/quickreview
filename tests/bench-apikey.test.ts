@@ -50,7 +50,11 @@ import {
   withAuthModels,
   type CaseSummary,
 } from "../src/bench/runner.js";
-import { buildAgents, identityVars, PASS_ADDENDA } from "../src/include.js";
+import {
+  buildAgents,
+  identityVars,
+  PASS_ADDENDA,
+} from "@quickchatai/pi-quickreview/src/include.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const EXAMPLE = join(ROOT, "config.example.toml");

@@ -12,7 +12,7 @@ import {
   unitCandidates,
   vendoredRoots,
 } from "../src/setup/facts.js";
-import { findStyleGuide, styleGuideRefsIn } from "../src/styleguide.js";
+import { findStyleGuide, styleGuideRefsIn } from "@quickchatai/pi-quickreview/src/styleguide.js";
 
 function repo(files: Record<string, string>): {
   files: string[];

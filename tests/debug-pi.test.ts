@@ -35,11 +35,11 @@ import {
   eventsFromSession,
   runDebugRound,
 } from "../src/engine/debugpi.js";
-import { LensWave, type WaveRunner } from "../src/engine/lens/wave.js";
-import { mainSessionOf, lensSessionsOf } from "../src/engine/openable.js";
-import { PiHost } from "../src/engine/pisdk.js";
-import { BASH_ENV_ALLOW } from "../src/engine/roundsdk.js";
-import { sdkRuntime } from "../src/engine/sdkruntime.js";
+import { LensWave, type WaveRunner } from "@quickchatai/pi-quickreview/src/engine/lens/wave.js";
+import { mainSessionOf, lensSessionsOf } from "@quickchatai/pi-quickreview/src/engine/openable.js";
+import { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import { BASH_ENV_ALLOW } from "@quickchatai/pi-quickreview/src/engine/roundsdk.js";
+import { sdkRuntime } from "@quickchatai/pi-quickreview/src/engine/sdkruntime.js";
 import { HOST_CONTEXT_STUB, REVIEWER_STUB } from "../src/hostroute.js";
 import { findSession, runOpen } from "../src/opencli.js";
 import {
@@ -52,7 +52,7 @@ import { FILES, FIXTURE_CONFIG, TARGET, mkRoot, mkTree } from "./helpers/round-r
 
 vi.stubEnv("QCR_CONFIG", FIXTURE_CONFIG);
 const { benchConfig } = await import("../src/bench/runner.js");
-const { ecosystemFor } = await import("../src/ecosystem.js");
+const { ecosystemFor } = await import("@quickchatai/pi-quickreview/src/ecosystem.js");
 
 const ROOT = resolve(import.meta.dirname, "..");
 const PI_BIN = join(ROOT, "node_modules", ".bin", "pi");
@@ -83,7 +83,11 @@ describe("[debug-pi] what pi is started with", () => {
       "cli/debug-round.ts",
       "finding-clusters.ts",
     ]);
-    expect([...DEBUG_ROUND_EXTENSIONS]).toEqual(loaded);
+    expect(DEBUG_ROUND_EXTENSIONS.map((e) => e.slice(e.indexOf("extensions/") + 11))).toEqual(
+      loaded,
+    );
+    // The shims are the app's; cluster_findings is the review core's own extension.
+    expect(argv).toContain("/root/packages/pi-plugin/extensions/finding-clusters.ts");
     // lens.ts is inside debug-round.ts: loading it too would register the tools twice
     expect(loaded).not.toContain("lens.ts");
     expect(argv.filter((a) => /post/i.test(a))).toEqual([]);

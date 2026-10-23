@@ -7,7 +7,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { isPolicySurface } from "../extensions/bash-guard.js";
+import { isPolicySurface } from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
 
 const ROOT = join(import.meta.dirname, "..");
 const read = (p: string): string => readFileSync(join(ROOT, p), "utf8");

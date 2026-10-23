@@ -172,13 +172,13 @@ if (!Array.isArray(cfg.extensions)) cfg.extensions = [];
 cfg.defaultProjectTrust = "always";
 // pi 1.0 made the interactive TUI fullscreen by default. Sessions run under
 // tmux and the operator TUI mirrors and scrolls their panes, so keep the
-// terminal's normal scrollback (pi 0.99's default) — src/pibuiltins.ts PI_TUI_MODE.
+// terminal's normal scrollback (pi 0.99's default) — packages/pi-plugin/src/pibuiltins.ts PI_TUI_MODE.
 cfg.tuiMode = "regular";
 // pi 0.99's built-in extensions (mcp, codemode, tool-search, llama.cpp) are
 // switched OFF, as on the VM: MCP launches server processes from any trusted
 // mcp.json — a path around companion-guard, which vetoes TOOL CALLS — and the
 // other three change the tool/provider set (reasons per built-in:
-// src/pibuiltins.ts, the list this mirrors). Documented switch: a
+// packages/pi-plugin/src/pibuiltins.ts, the list this mirrors). Documented switch: a
 // `-builtin:<name>` entry in the global `extensions`. This one key overrides
 // "hand edits win": any other global `builtin:` entry is dropped first.
 const DISABLED_BUILTINS = ["-builtin:mcp", "-builtin:codemode", "-builtin:tool-search", "-builtin:llama.cpp"];
@@ -269,7 +269,7 @@ if (trust["/workspace"] !== true) {
 console.log("pi project trust: defaultProjectTrust=always, /workspace pre-trusted");
 }
 
-// Agent discovery for the lens tool (extensions/lens.ts): its agent dir's
+// Agent discovery for the lens tool (packages/pi-plugin/extensions/lens.ts): its agent dir's
 // `agents` is $HOME/.pi/agent/agents; link that at the companion agent set (explore/evidence/study) riding the
 // /workspace mount. Same degrade discipline as the skills dirs: a missing
 // /workspace leaves the link dangling and discovery simply finds no agents —

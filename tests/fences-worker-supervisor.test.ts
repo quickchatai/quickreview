@@ -1,6 +1,6 @@
 // [P8.5] The WorkerSupervisor's fences:
 //   - the daemon never imports src/engine/, and the supervisor is a daemon root
-//     (it takes GITHUB_TOKEN_ENVS from src/envstrip.ts, which has no imports);
+//     (it takes GITHUB_TOKEN_ENVS from packages/pi-plugin/src/envstrip.ts, which has no imports);
 //   - it is the single writer of worker-hosted session_commands rows: the
 //     requeue only it may call, and no worker-side module names the table.
 // Each is verified by mutation: the scan runs on the real tree (clean) and on a
@@ -15,7 +15,9 @@ import {
   stripComments,
   tsFilesUnder,
 } from "./helpers/engine-fences.js";
+import { SRC_DIRS } from "./helpers/source-trees.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
+import { CORE_NAME, escapeRe } from "./helpers/source-trees.js";
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -32,9 +34,9 @@ function planted<T>(files: Record<string, string>, fn: (root: string) => T): T {
   }
 }
 
-/** The src/ files (not the store itself) whose code calls `method(`. */
+/** The src/ files, the app's and the core's (not the store itself), whose code calls `method(`. */
 function callers(root: string, method: string): string[] {
-  return tsFilesUnder(join(root, "src"))
+  return SRC_DIRS.flatMap((d) => tsFilesUnder(join(root, d)))
     .map((f) => relative(root, f))
     .filter((f) => f !== "src/state.ts")
     .filter((f) =>
@@ -53,9 +55,13 @@ describe("[P8.5] the supervisor stays out of src/engine/", () => {
     },
   );
 
-  it("takes the GitHub credential names from src/envstrip.ts", () => {
+  it("takes the GitHub credential names from the core's src/envstrip.ts", () => {
     const text = stripComments(readFileSync(join(ROOT, "src/workersupervisor.ts"), "utf8"));
-    expect(text).toMatch(/import \{ GITHUB_TOKEN_ENVS \} from "\.\/envstrip\.js"/);
+    expect(text).toMatch(
+      new RegExp(
+        `import \\{ GITHUB_TOKEN_ENVS \\} from "${escapeRe(CORE_NAME)}/src/envstrip\\.js"`,
+      ),
+    );
     expect(text).not.toMatch(/["']GITHUB_TOKEN["']/);
   });
 

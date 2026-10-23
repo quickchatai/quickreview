@@ -8,11 +8,11 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 import { createDaemon, RECONCILE_OVERDUE_INTERVALS, type DaemonAdapter } from "../src/daemon.js";
-import type { GateResult } from "../src/gate.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { PrRef } from "../src/github.js";
 import type { RoundStageSupervisorHealth } from "../src/session-command-supervisor.js";
 import { buildPipelineStatus, buildStatusSnapshot, StateStore } from "../src/state.js";
-import { recheckPromptMarker } from "../src/types.js";
+import { recheckPromptMarker } from "@quickchatai/pi-quickreview/src/types.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 let dir: string;

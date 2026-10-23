@@ -25,7 +25,7 @@ import { stat } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { StateStore } from "../state.js";
-import { yieldToLoop } from "../yieldloop.js";
+import { yieldToLoop } from "@quickchatai/pi-quickreview/src/yieldloop.js";
 import { prEligibility, type IneligibleReason } from "./eligibility.js";
 import { atNearestExisting } from "./fsutil.js";
 import {

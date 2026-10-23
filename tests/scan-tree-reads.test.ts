@@ -21,7 +21,7 @@ import { describe, expect, it } from "vitest";
 import { COMPANION_AGENTS_DIR } from "../extensions/setup.js";
 import { piCaseRunner, resolvedReadPath, type SpawnFn } from "../src/setup/caserunner.js";
 import type { CaseSpec } from "../src/setup/engine.js";
-import { SCAN_MODE_ANCHOR_ADDENDUM } from "../src/include.js";
+import { SCAN_MODE_ANCHOR_ADDENDUM } from "@quickchatai/pi-quickreview/src/include.js";
 import { focusLine, scanCasePrompt, scanValidatorPrompt } from "../src/setup/scan.js";
 import { unreadFocus } from "../src/setup/scanrun.js";
 import { stage2CasePrompt } from "../src/setup/stage2.js";

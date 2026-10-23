@@ -22,9 +22,9 @@
 // adapter, and the output is markdown on disk.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { checkAnchor, runsByPath, type Side } from "./anchors.js";
-import { MUTATION_KINDS, type MutationKind } from "./gate.js";
-import { parseHunkHeader } from "./hunkheader.js";
+import { checkAnchor, runsByPath, type Side } from "@quickchatai/pi-quickreview/src/anchors.js";
+import { MUTATION_KINDS, type MutationKind } from "@quickchatai/pi-quickreview/src/gate.js";
+import { parseHunkHeader } from "@quickchatai/pi-quickreview/src/hunkheader.js";
 
 // ---- shapes ------------------------------------------------------------------
 
@@ -424,7 +424,7 @@ export function invariantScan(records: DryrunRecord[], pr: number): InvariantVio
 
 // ---- (c) anchor validity -----------------------------------------------------
 //
-// The verdict comes from src/anchors.ts — the same changed-run containment
+// The verdict comes from packages/pi-plugin/src/anchors.ts — the same changed-run containment
 // check the posting path uses, so the report cannot disagree with what the
 // daemon would have accepted. The local diff walker below is kept only to
 // classify a *failed* anchor for the human (context line inside a hunk vs
@@ -461,7 +461,7 @@ export interface AnchorCheck {
 
 /** Provenance line for the report: which module judged the anchors. */
 export const ANCHOR_SOURCE =
-  "src/anchors.ts (changed-run containment, on each comment's own side and range)";
+  "packages/pi-plugin/src/anchors.ts (changed-run containment, on each comment's own side and range)";
 
 export function checkAnchors(
   comments: ReviewComment[],

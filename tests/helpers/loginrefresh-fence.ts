@@ -5,6 +5,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { stripComments } from "./engine-fences.js";
+import { EXTENSION_DIRS, SRC_DIRS, sourceSpecifiers } from "./source-trees.js";
 
 const WRITE =
   /\b(writeFileSync|writeFile|renameSync|rename|copyFileSync|copyFile|appendFileSync|appendFile|createWriteStream|writeFileAtomic|rsync|cp|install|tee)\b|>>?\s*["']?[^\s"']*auth\.json/;
@@ -24,8 +25,8 @@ function sources(dir: string): string[] {
  */
 export function authJsonWriters(root: string): string[] {
   const hits: string[] = [];
-  for (const f of ["src", "extensions", "scripts", "docker", "deploy", "bench"].flatMap((d) =>
-    sources(join(root, d)),
+  for (const f of [...SRC_DIRS, ...EXTENSION_DIRS, "scripts", "docker", "deploy", "bench"].flatMap(
+    (d) => sources(join(root, d)),
   )) {
     const raw = readFileSync(f, "utf8");
     const text = f.endsWith(".ts") ? stripComments(raw) : raw.replace(/^\s*#.*$/gm, "");
@@ -42,10 +43,11 @@ export function authJsonWriters(root: string): string[] {
  * writes an auth.json must be added here with its reason, or be the refresher.
  */
 export const SANDBOX_AUTH_WRITERS: Readonly<Record<string, string>> = {
-  "src/engine/auth.ts": "copyPiAuth: the refresh-blanked copy in a sandbox's own agent dir (D5)",
+  "packages/pi-plugin/src/engine/auth.ts":
+    "copyPiAuth: the refresh-blanked copy in a sandbox's own agent dir (D5)",
   "src/bench/auth.ts": "the benchmark sandbox's empty or blanked login in its own tmpfs",
   "src/bench/opencode.ts": "OpenCode's auth.json in the case's own data dir",
-  "src/reviewhost.ts": "a review run's throwaway agent dir (the host isolation)",
+  "packages/pi-plugin/src/reviewhost.ts": "a review run's throwaway agent dir (the host isolation)",
   "scripts/action.sh": "the Action's per-run login dir, from its own input",
   "scripts/worker-rehearsal/layout.sh":
     "the worker rehearsal's throwaway host dir: a fake far-future login in the pihome it lays out (P8.20a)",
@@ -63,7 +65,9 @@ export function isSandboxAuthWriter(path: string): boolean {
 /** Every .ts under `src/loginrefresh/` that the daemon's import closure reaches. */
 export function daemonReachedLoginRefresh(root: string, daemonRoots: readonly string[]): string[] {
   const all = new Set(
-    ["src", "extensions"].flatMap((d) => sources(join(root, d)).filter((f) => f.endsWith(".ts"))),
+    [...SRC_DIRS, ...EXTENSION_DIRS].flatMap((d) =>
+      sources(join(root, d)).filter((f) => f.endsWith(".ts")),
+    ),
   );
   const seen = new Set<string>();
   const queue = daemonRoots.map((r) => join(root, r)).filter((f) => all.has(f));
@@ -71,10 +75,8 @@ export function daemonReachedLoginRefresh(root: string, daemonRoots: readonly st
     const f = queue.shift()!;
     if (seen.has(f)) continue;
     seen.add(f);
-    for (const m of stripComments(readFileSync(f, "utf8")).matchAll(/["'](\.[^"']+)\.js["']/g)) {
-      const p = join(f, "..", `${m[1]!}.ts`);
+    for (const p of sourceSpecifiers(root, f, stripComments(readFileSync(f, "utf8"))))
       if (all.has(p) && !seen.has(p)) queue.push(p);
-    }
   }
   return [...seen]
     .map((f) => f.slice(root.length + 1))

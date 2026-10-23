@@ -1,4 +1,4 @@
-// `qcr review` and the bench under profile overrides (src/profileoverrides.ts):
+// `qcr review` and the bench under profile overrides (packages/pi-plugin/src/profileoverrides.ts):
 // a user profile and the repo's `.qcr/` on the base commit replace shipped
 // agents and prompts; the JSON, the terminal, the markdown report say the run
 // is customised; an uncustomised run feeds the model exactly what it always

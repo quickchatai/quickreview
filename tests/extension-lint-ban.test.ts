@@ -77,7 +77,10 @@ describe("extensions read no ambient process state (P9.7)", () => {
         extensionBan as never,
       ],
     });
-    const results = await real.lintFiles(["extensions/**/*.ts"]);
+    const results = await real.lintFiles([
+      "extensions/**/*.ts",
+      "packages/pi-plugin/extensions/**/*.ts",
+    ]);
     const hits = results.flatMap((r) =>
       r.messages
         .filter((m) => m.ruleId?.startsWith("no-restricted"))

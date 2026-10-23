@@ -7,8 +7,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.js";
-import type { Runtime } from "../src/engine/port.js";
-import { checkLensRuntime, parseRuntimeKind, selectRuntime } from "../src/engine/select.js";
+import type { Runtime } from "@quickchatai/pi-quickreview/src/engine/port.js";
+import {
+  checkLensRuntime,
+  parseRuntimeKind,
+  selectRuntime,
+} from "@quickchatai/pi-quickreview/src/engine/select.js";
 import { scanLeafRunner } from "../extensions/setup-scan.js";
 import type { CaseRunner, CaseSpec } from "../src/setup/engine.js";
 

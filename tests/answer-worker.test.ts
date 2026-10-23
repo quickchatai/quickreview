@@ -34,12 +34,12 @@ import {
   type WorkerDeps,
 } from "../src/botworker.js";
 import { ANSWER_MEMORY_TOOLS, ANSWER_READ_TOOLS } from "../src/engine/botsdk.js";
-import { PiHost, type PiHostOptions } from "../src/engine/pisdk.js";
+import { PiHost, type PiHostOptions } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import { createCapabilityFd, ipcEnv, runDirOf } from "../src/ipc/capability.js";
 import { WAKES_TAKE_OP, type WorkerSpec } from "../src/ipc/workerspec.js";
-import { LIVE_MAIN_FILE, liveRoundDir } from "../src/live/events.js";
+import { LIVE_MAIN_FILE, liveRoundDir } from "@quickchatai/pi-quickreview/src/live/events.js";
 import { operatorMessagePayload } from "../src/operatormessage.js";
-import { sessionCommandMarker } from "../src/session-command.js";
+import { sessionCommandMarker } from "@quickchatai/pi-quickreview/src/session-command.js";
 import { newestSessionFile } from "../src/sessionjsonl.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";
 import { FakeDaemon, buildWorld, type World } from "./helpers/worker-rig.js";

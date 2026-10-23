@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
-import { globMatcher } from "../src/glob.js";
-import { parseUnifiedDiff } from "../src/unifieddiff.js";
-import { detectLoosenedAssertions } from "../src/loosenedtests.js";
+import { globMatcher } from "@quickchatai/pi-quickreview/src/glob.js";
+import { parseUnifiedDiff } from "@quickchatai/pi-quickreview/src/unifieddiff.js";
+import { detectLoosenedAssertions } from "@quickchatai/pi-quickreview/src/loosenedtests.js";
 
 it("recursive exclusions include legal line terminators in filenames and descendants", () => {
   for (const path of ["src/a\nb/x.ts", "src/a\rb/x.ts", "src/a\u2028b/x.ts"])

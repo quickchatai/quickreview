@@ -18,6 +18,7 @@ export const BAKED_PATHS = [
   "package.json",
   "package-lock.json",
   "dist",
+  "packages/pi-plugin",
   "src",
   "extensions",
   "agents",
@@ -27,8 +28,10 @@ export const BAKED_PATHS = [
   "docker/companion",
 ] as const;
 
-/** Directory names never descended: none of them is copied into the image. */
-const SKIP = new Set(["node_modules", ".git"]);
+/** Directory names never descended: none of them is copied into the image.
+ * `assets` is the review core package's packed copy of the seed data, made
+ * only by its prepack; the image's ignore list leaves it out too. */
+const SKIP = new Set(["node_modules", ".git", "assets"]);
 
 /** The stamp of the baked files under `root`: 16 hex digits of a sha256
  * over each file's path, length and bytes, in path order. A missing path adds

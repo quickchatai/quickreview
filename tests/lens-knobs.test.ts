@@ -15,7 +15,7 @@ import {
   type Config,
 } from "../src/config.js";
 import { buildPassPlan } from "../src/dispatch.js";
-import { lensModelOverrides } from "../src/lenstuning.js";
+import { lensModelOverrides } from "@quickchatai/pi-quickreview/src/lenstuning.js";
 import type { PrFileEntry } from "../src/github.js";
 import {
   buildAgents,
@@ -23,8 +23,8 @@ import {
   PASS_ADDENDA,
   passTierModels,
   VALIDATE_PASS,
-} from "../src/include.js";
-import { QUALITY_PASSES, SWEEP_PASS } from "../src/heuristics.js";
+} from "@quickchatai/pi-quickreview/src/include.js";
+import { QUALITY_PASSES, SWEEP_PASS } from "@quickchatai/pi-quickreview/src/heuristics.js";
 
 const ROOT = process.cwd();
 const fixture = readFileSync(resolve(ROOT, "tests/fixtures/config.toml"), "utf8");

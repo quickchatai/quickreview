@@ -16,12 +16,16 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, parseEscalation, type Config } from "../src/config.js";
-import type { GateResult } from "../src/gate.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import { StateStore, type ReviewedHeadRow } from "../src/state.js";
 import { fingerprintRoundIntegrity } from "../src/execboundary.js";
 import { githubCloneDir } from "../src/config.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
-import type { PassPlanEntry, SessionHooks, VerdictFile } from "../src/types.js";
+import type {
+  PassPlanEntry,
+  SessionHooks,
+  VerdictFile,
+} from "@quickchatai/pi-quickreview/src/types.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
 import type { InboxWriter } from "../src/companioninbox.js";
 import {
@@ -48,7 +52,9 @@ const cfg: Config = parseConfig(
 class FakeAdapter implements VerdictAdapter {
   calls: string[] = [];
   /** Optional checks read (ci_state stamping); absent by default. */
-  listChecks?: (ref: string) => Promise<import("../src/cigate.js").CheckSummary[]>;
+  listChecks?: (
+    ref: string,
+  ) => Promise<import("@quickchatai/pi-quickreview/src/cigate.js").CheckSummary[]>;
   listReviewsFull?: VerdictAdapter["listReviewsFull"];
   async addLabel(n: number, label: string): Promise<GateResult> {
     this.calls.push(`addLabel:${n}:${label}`);

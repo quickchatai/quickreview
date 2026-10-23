@@ -8,7 +8,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyEvent } from "../src/statemachine.js";
 import { StateStore } from "../src/state.js";
-import { parseRecheckPromptMarker, recheckPromptMarker } from "../src/types.js";
+import {
+  parseRecheckPromptMarker,
+  recheckPromptMarker,
+} from "@quickchatai/pi-quickreview/src/types.js";
 
 const T0 = "2026-10-22T08:00:00.000Z";
 const stores: StateStore[] = [];

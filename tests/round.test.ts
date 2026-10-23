@@ -1,4 +1,4 @@
-// The review round (src/engine/round.ts runRound) on both runtimes: the process
+// The review round (packages/pi-plugin/src/engine/round.ts runRound) on both runtimes: the process
 // runtime over a fake `pi` shell script, and the SDK runtime over pi-ai's faux
 // provider (the real SDK, no network, no model). The same scenarios run on each:
 // the round neither knows nor cares which hosts the session.
@@ -12,15 +12,23 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
-import { AuthExpiring } from "../src/engine/auth.js";
-import { LIVE_MAIN_FILE, liveRoundDir, readLiveEvents } from "../src/live/events.js";
+import { AuthExpiring } from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import {
+  LIVE_MAIN_FILE,
+  liveRoundDir,
+  readLiveEvents,
+} from "@quickchatai/pi-quickreview/src/live/events.js";
 import { projectRoundProgress } from "../src/live/projection.js";
-import { PiHost } from "../src/engine/pisdk.js";
-import type { Runtime, RuntimeSession } from "../src/engine/port.js";
+import { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import type { Runtime, RuntimeSession } from "@quickchatai/pi-quickreview/src/engine/port.js";
 import { piCliRuntime } from "./helpers/pi-cli-runtime.js";
-import { prepareRound, runRound, type RoundSpec } from "../src/engine/round.js";
-import { roundSdkExtras } from "../src/engine/roundsdk.js";
-import { sdkRuntime } from "../src/engine/sdkruntime.js";
+import {
+  prepareRound,
+  runRound,
+  type RoundSpec,
+} from "@quickchatai/pi-quickreview/src/engine/round.js";
+import { roundSdkExtras } from "@quickchatai/pi-quickreview/src/engine/roundsdk.js";
+import { sdkRuntime } from "@quickchatai/pi-quickreview/src/engine/sdkruntime.js";
 import { pricedFaux } from "./helpers/priced-faux.js";
 import {
   FILES,
@@ -35,7 +43,7 @@ import { useOfflineGuard } from "./pi-canary/harness.js";
 
 vi.stubEnv("QCR_CONFIG", FIXTURE_CONFIG);
 const { benchConfig } = await import("../src/bench/runner.js");
-const { ecosystemFor } = await import("../src/ecosystem.js");
+const { ecosystemFor } = await import("@quickchatai/pi-quickreview/src/ecosystem.js");
 
 useOfflineGuard();
 

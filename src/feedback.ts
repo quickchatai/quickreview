@@ -39,8 +39,12 @@
 // from the LEDGER (`feedbackCommentsForDay`), never from memory — it therefore
 // survives a memory outage untouched.
 import { opsDay } from "./eod.js";
-import { withinBudget } from "./budget.js";
-import { FEEDBACK_DAY_ADDENDUM_ID, VALIDATE_PASS, type PassAddendum } from "./include.js";
+import { withinBudget } from "@quickchatai/pi-quickreview/src/budget.js";
+import {
+  FEEDBACK_DAY_ADDENDUM_ID,
+  VALIDATE_PASS,
+  type PassAddendum,
+} from "@quickchatai/pi-quickreview/src/include.js";
 import { FEEDBACK_FULL_TEXT_LABEL, cleanQuotedText, fenceAsData } from "./memory/datafence.js";
 import { formatEventTags, parseEventTags } from "./memory/eventtags.js";
 import { EVENTS_AREA } from "./memory/layout.js";

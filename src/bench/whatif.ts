@@ -40,10 +40,14 @@
 
 import { singleLineComment } from "./artifacts.js";
 import { childResults } from "./aacr.js";
-import { isLensTool, lensIdOf, LensOnce } from "../lensresult.js";
-import { entryDisposition, findingRecordKey, recordSide } from "../findingkey.js";
-import { DOUBT_WORDS } from "../doubtwords.js";
-import { canonicalLensIds } from "../lensids.js";
+import { isLensTool, lensIdOf, LensOnce } from "@quickchatai/pi-quickreview/src/lensresult.js";
+import {
+  entryDisposition,
+  findingRecordKey,
+  recordSide,
+} from "@quickchatai/pi-quickreview/src/findingkey.js";
+import { DOUBT_WORDS } from "@quickchatai/pi-quickreview/src/doubtwords.js";
+import { canonicalLensIds } from "@quickchatai/pi-quickreview/src/lensids.js";
 
 // ---- the lens outputs in pi's JSON event stream -------------------------------
 
@@ -316,7 +320,7 @@ export function rawCandidatesFromEvents(lines: Iterable<string>): {
 // ---- the findings record, linked back onto the raw candidates -----------------
 
 export interface RecordFinding {
-  /** The row's key by the findings record's own rule (src/findingkey.ts):
+  /** The row's key by the findings record's own rule (packages/pi-plugin/src/findingkey.ts):
    * its `id`, else its `key`, else `<lens>@<path>:<line>#<index>`. */
   id: string;
   /** The record reader's closed set (`posted`, `merged`, `folded`, `killed`,

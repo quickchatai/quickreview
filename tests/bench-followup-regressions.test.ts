@@ -3,7 +3,7 @@ import { panelFindings } from "../src/bench/pireview.js";
 import { parseFindingsRecord } from "../src/bench/whatif.js";
 import { parseClaudeProse } from "../src/bench/claudeprose.js";
 import { policeBenchOutput } from "../src/bench/benchposting.js";
-import { DEFAULT_POSTING_POLICY } from "../src/postingpolicy.js";
+import { DEFAULT_POSTING_POLICY } from "@quickchatai/pi-quickreview/src/postingpolicy.js";
 it("panel fallback borrows a complete path and location pair", () => {
   const findings = panelFindings({
     verdict: "APPROVE",

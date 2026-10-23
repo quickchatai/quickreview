@@ -7,12 +7,14 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  realpathSync,
   renameSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import { takeHandoffToken } from "./ghcred.js";
+import { takeHandoffToken } from "@quickchatai/pi-quickreview/src/ghcred.js";
 import { loadConfig, sandboxRoot, type Config, type TuiConfig } from "./config.js";
 import { daemonLoadLine } from "./eventloop.js";
 import {
@@ -64,7 +66,7 @@ import {
 import { sanitizeText } from "./tui/paint.js";
 import { operatorCommandWriteScript } from "./tui/unwedge.js";
 import { shellQuote, transportOf } from "./tui/remote.js";
-import { MutationGate } from "./gate.js";
+import { MutationGate } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { GitHubAdapter } from "./github.js";
 import type { OutcomeCapture } from "./outcomes.js";
 import type { Learner, MineReport } from "./learner/learner.js";
@@ -198,7 +200,7 @@ export async function cmdOutcomes(rest: string[], json: boolean): Promise<number
     if (capture) {
       let read: GitHubAdapter | undefined;
       if (readGithub) {
-        const { TokenMinter } = await import("./githubAuth.js");
+        const { TokenMinter } = await import("@quickchatai/pi-quickreview/src/githubAuth.js");
         const { GitHubAdapter } = await import("./github.js");
         read = new GitHubAdapter(
           cfg,
@@ -696,7 +698,7 @@ export interface DoubtedFinding {
  * when the developer machine carries the app credential. */
 export async function enrichWhy(payload: WhyPayload, secretsDir?: string): Promise<WhyPayload> {
   try {
-    const { TokenMinter } = await import("./githubAuth.js");
+    const { TokenMinter } = await import("@quickchatai/pi-quickreview/src/githubAuth.js");
     const { GitHubAdapter } = await import("./github.js");
     const cfg = loadConfig();
     const gate = recordOnlyGate(join(sandboxRoot(), "state", "dryrun"), "qcr why");
@@ -921,7 +923,7 @@ export async function cmdBackfill(
   limit: number | undefined,
   json: boolean,
 ): Promise<void> {
-  const { TokenMinter } = await import("./githubAuth.js");
+  const { TokenMinter } = await import("@quickchatai/pi-quickreview/src/githubAuth.js");
   const { GitHubAdapter } = await import("./github.js");
   const { runBackfill } = await import("./backfill.js");
   const cfg = loadConfig();
@@ -969,7 +971,7 @@ export async function cmdHistory(rest: string[]): Promise<number> {
   const months = intFlag(rest, "--months", HISTORY_USAGE);
   if (sub === "digest") {
     const limit = intFlag(rest, "--limit", HISTORY_USAGE);
-    const { TokenMinter } = await import("./githubAuth.js");
+    const { TokenMinter } = await import("@quickchatai/pi-quickreview/src/githubAuth.js");
     const { GitHubAdapter } = await import("./github.js");
     const { collectReviewHistory } = await import("./reviewhistory.js");
     const cfg = loadConfig();
@@ -1029,7 +1031,7 @@ export async function cmdRegression(rest: string[], json: boolean): Promise<numb
   // profile's overlays exactly as the daemon does (wire.ts buildParts, the
   // same function) — otherwise a lens the profile switched off would be
   // replayed.
-  const { applyProfileOverlays } = await import("./profiles.js");
+  const { applyProfileOverlays } = await import("@quickchatai/pi-quickreview/src/profiles.js");
   const cfg = applyProfileOverlays(root, loadConfig(), homeProfileLookup());
   const args = parseRegressionArgs(rest, json);
   const gate = recordOnlyGate(join(stateDir(), "dryrun"), "qcr regression");
@@ -2033,7 +2035,7 @@ export function splitJsonFlag(argv: string[]): { json: boolean; argv: string[] }
 
 export async function main(rawArgv: string[]): Promise<void> {
   const { json, argv } = splitJsonFlag(rawArgv);
-  // A GitHub token handed over as a file (src/ghcred.ts, D39) is read and
+  // A GitHub token handed over as a file (packages/pi-plugin/src/ghcred.ts, D39) is read and
   // unlinked here, before any verb can start a pi or bash child. A file that
   // is named but cannot be taken is a one-line failure, never a stack trace.
   try {
@@ -2250,6 +2252,23 @@ export async function main(rawArgv: string[]): Promise<void> {
   }
 }
 
-if (process.argv[1]?.endsWith("cli.js")) {
+/** Whether `entry` (the process's argv[1]) is this very module, links
+ * resolved: `node dist/src/cli.js`, the image's `qcr`. The npm bin
+ * (bin/qcr.js, reached through a package manager's link whose name is never
+ * cli.js) imports this module and calls `main` itself, and another script
+ * that merely shares the name is not this one. */
+export function isEntryModule(
+  entry: string | undefined,
+  self: string = fileURLToPath(import.meta.url),
+): boolean {
+  if (!entry) return false;
+  try {
+    return realpathSync(entry) === realpathSync(self);
+  } catch {
+    return false;
+  }
+}
+
+if (isEntryModule(process.argv[1])) {
   void main(process.argv.slice(2));
 }

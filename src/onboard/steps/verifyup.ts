@@ -35,7 +35,7 @@
 // GitHub's OWN delivery log, which is the same record wherever the daemon
 // runs, and that is exactly why it is the layer that proves the path.
 import { CHOICE_KEYS } from "../choices.js";
-import { mintAppJwt } from "../../githubAuth.js";
+import { mintAppJwt } from "@quickchatai/pi-quickreview/src/githubAuth.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 import { ingressOptionOf, secretsDirFor, readConfigText } from "./compose.js";
 import { api as githubApi, readCredentials } from "./githubapp.js";

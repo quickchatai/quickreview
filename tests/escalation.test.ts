@@ -40,15 +40,15 @@ import {
   type EscalationFacts,
   type EscalationRequest,
 } from "../src/escalation.js";
-import { MutationGate, type MutationIntent } from "../src/gate.js";
+import { MutationGate, type MutationIntent } from "@quickchatai/pi-quickreview/src/gate.js";
 import { GitHubRequestError } from "../src/github.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
-import { makePostingGuard, type GuardAdapter } from "../src/guards.js";
+import { makePostingGuard, type GuardAdapter } from "@quickchatai/pi-quickreview/src/guards.js";
 import { buildRoundOrder } from "../src/dispatch.js";
 import { StateStore } from "../src/state.js";
-import { renderRoundPrompt, roundVars } from "../src/templates.js";
-import type { GateResult } from "../src/gate.js";
-import type { SessionHooks, VerdictFile } from "../src/types.js";
+import { renderRoundPrompt, roundVars } from "@quickchatai/pi-quickreview/src/templates.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
+import type { SessionHooks, VerdictFile } from "@quickchatai/pi-quickreview/src/types.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
@@ -156,7 +156,7 @@ afterEach(() => {
 describe("INVARIANT 1 — the reviewer still decides; escalation rides beside the verdict", () => {
   it("STRUCTURAL: src/escalation.ts cannot express a verdict at all", () => {
     // The strongest form available in TypeScript: the module does not import
-    // the vocabulary. `Verdict` lives in src/types.ts, and escalation.ts
+    // the vocabulary. `Verdict` lives in packages/pi-plugin/src/types.ts, and escalation.ts
     // imports neither the type nor the module — so no function here can
     // accept, return, or construct one, and adding such a signature is a
     // compile-visible change to this fence rather than a quiet edit.

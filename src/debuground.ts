@@ -9,7 +9,7 @@
 //   - THE SESSION. The pi runs `--session` on the PR's own JSONL (write, not fork; a
 //     PR with none gets one born in its session dir), so the round's history is the
 //     one the next worker resumes. The round order is the pi's first message, behind
-//     the same marker a worker's order carries (src/session-command.ts), so a worker
+//     the same marker a worker's order carries (packages/pi-plugin/src/session-command.ts), so a worker
 //     that takes the round over continues instead of sending the order again.
 //   - THE ROUND IS THE COMMAND'S. The manager claims the round's own session_commands
 //     row for the lease (the row's owner token is the lease's token), so the round
@@ -51,7 +51,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { GITHUB_TOKEN_ENVS } from "./envstrip.js";
+import { GITHUB_TOKEN_ENVS } from "@quickchatai/pi-quickreview/src/envstrip.js";
 import {
   type CapabilityStore,
   type LaunchFiles,
@@ -61,8 +61,8 @@ import {
 } from "./ipc/capability.js";
 import type { CommandLookup } from "./ipc/protocol.js";
 import { lensDirOf, roundPassesDir, type WorkerSpec } from "./ipc/workerspec.js";
-import { sessionCommandMarker } from "./session-command.js";
-import { findReviewerStub } from "./reviewerstub.js";
+import { sessionCommandMarker } from "@quickchatai/pi-quickreview/src/session-command.js";
+import { findReviewerStub } from "@quickchatai/pi-quickreview/src/reviewerstub.js";
 import { verifiedPayload } from "./session-command-payload.js";
 import type { HostLeaseRow, SessionCommandRow, StateStore } from "./state.js";
 import { killHostPane } from "./takeover.js";
@@ -92,7 +92,7 @@ export const DEBUG_BOT_EXTENSIONS = [
   "extensions/cli/bash-guard.ts",
   "extensions/cli/ledger-pin.ts",
   "extensions/cli/debug-round.ts",
-  "extensions/finding-clusters.ts",
+  "packages/pi-plugin/extensions/finding-clusters.ts",
   "extensions/vendor/openviking-pi/index.ts",
 ] as const;
 

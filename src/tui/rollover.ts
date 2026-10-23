@@ -20,7 +20,7 @@
 // writing the file before spawning pi is race-free. The alternative — a pi CLI
 // initial-message flag — is undocumented for 0.84.1; if one turns up it is a
 // drop-in replacement for writeDayOpen().
-import { stripModelDocs } from "../promptdoc.js";
+import { stripModelDocs } from "@quickchatai/pi-quickreview/src/promptdoc.js";
 import { isNoTmuxServer } from "../tmux.js";
 import {
   existsSync,

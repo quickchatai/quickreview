@@ -14,10 +14,10 @@
 // the price the export computed from the full case dir (`bench_cost_usd`,
 // null = unpriced), which wins for every arm, as compare.py reads it.
 //
-// The price table and the event-stream meter are core (src/pricing.ts): a
+// The price table and the event-stream meter are core (packages/pi-plugin/src/pricing.ts): a
 // round prices itself with them. This module adds the run-level report.
 import { finiteNumber as num } from "./values.js";
-import { caseCostUsd, ratesFor } from "../pricing.js";
+import { caseCostUsd, ratesFor } from "@quickchatai/pi-quickreview/src/pricing.js";
 
 export {
   CODEX_USD_PER_MTOK,
@@ -31,7 +31,7 @@ export {
   ratesFor,
   type CaseCost,
   type PricedModel,
-} from "../pricing.js";
+} from "@quickchatai/pi-quickreview/src/pricing.js";
 
 /** The defect report's dollar figures over a run's case dirs: the per-PR
  * average over the cases that recorded a price, their total, and how many of

@@ -18,7 +18,11 @@
 // becomes one UNPINNED `#survey` memory entry, and a re-survey supersedes the
 // entries of the run before it.
 import { createHash } from "node:crypto";
-import { CODE_FILE_RE, isSweepSkipped, isTestFile } from "../heuristics.js";
+import {
+  CODE_FILE_RE,
+  isSweepSkipped,
+  isTestFile,
+} from "@quickchatai/pi-quickreview/src/heuristics.js";
 import { dehash, formatEventTags, parseEventTags, parseHashTags } from "../memory/eventtags.js";
 import { normalizeTag, type MemoryEntry } from "../memory/store.js";
 import { isMigrationFile, isVendored } from "./facts.js";

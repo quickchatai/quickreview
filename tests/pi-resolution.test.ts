@@ -127,7 +127,7 @@ async function runProbe(pi: InstalledPi, name: string): Promise<Probe> {
     probe,
     [
       `import { writeFileSync } from "node:fs";`,
-      `import { loadPiCompact } from ${JSON.stringify(join(ROOT, "extensions", "ledger-pin.ts"))};`,
+      `import { loadPiCompact } from ${JSON.stringify(join(ROOT, "packages", "pi-plugin", "extensions", "ledger-pin.ts"))};`,
       `export default async function (pi: { on(e: string, h: () => Promise<void>): void }) {`,
       `  pi.on("session_start", async () => {`,
       `    const m = (await import(${JSON.stringify(PKG)})) as {`,

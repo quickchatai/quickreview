@@ -274,8 +274,9 @@ describe("qcr review: under and over the limit", () => {
   it("hosts the session on the SDK runtime ([engine] runtime = sdk), over the faux provider", async () => {
     const repo = mkRepo("sdk");
     setLimit(repo, 1000);
-    const { reviewSdkRuntime } = await import("../src/engine/reviewsdk.js");
-    const { PiHost } = await import("../src/engine/pisdk.js");
+    const { reviewSdkRuntime } =
+      await import("@quickchatai/pi-quickreview/src/engine/reviewsdk.js");
+    const { PiHost } = await import("@quickchatai/pi-quickreview/src/engine/pisdk.js");
     const { fauxAssistantMessage } = await import("@earendil-works/pi-ai");
     const { pricedFaux } = await import("./helpers/priced-faux.js");
     const h = harness({ repo, piBin: "false" });
@@ -1018,7 +1019,7 @@ describe("qcr review <PR>", () => {
       await import("../src/reviewhome.js");
     saveDefaultDestinations(repo, ["pr"]);
     const pi = happyPi("pr-debug-nopost");
-    const { runOneShot } = await import("../src/oneshot.js");
+    const { runOneShot } = await import("@quickchatai/pi-quickreview/src/oneshot.js");
     const methods: string[] = [];
     const recording = (async (u: string | URL | Request, init?: RequestInit) => {
       methods.push(init?.method ?? "GET");
@@ -1127,7 +1128,7 @@ describe("qcr review --debug-pi", () => {
     const repo = mkRepo("debug-run");
     setLimit(repo, 1000);
     const pi = happyPi("debug-run");
-    const { runOneShot } = await import("../src/oneshot.js");
+    const { runOneShot } = await import("@quickchatai/pi-quickreview/src/oneshot.js");
     const h = harness({ repo, piBin: "false" });
     const specs: Array<Record<string, unknown>> = [];
     const code = await runReviewCli(["--debug-pi"], false, {

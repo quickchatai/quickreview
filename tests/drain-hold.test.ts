@@ -33,7 +33,7 @@ import {
 } from "../src/commands.js";
 import { loadConfig, type Config } from "../src/config.js";
 import { createDaemon, type DaemonAdapter } from "../src/daemon.js";
-import type { GateResult } from "../src/gate.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { PrRef } from "../src/github.js";
 import { drainLever, mergeHold, minutesFromNow, type LeverDeps } from "../src/levers.js";
 import { buildStatusSnapshot, StateStore } from "../src/state.js";

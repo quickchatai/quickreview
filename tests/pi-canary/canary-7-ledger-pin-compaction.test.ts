@@ -18,7 +18,7 @@ import {
   PIN_CLOSE,
   PIN_OPEN,
   createLedgerPin,
-} from "../../extensions/ledger-pin.js";
+} from "@quickchatai/pi-quickreview/extensions/ledger-pin.js";
 import { type Rig, createRig, useOfflineGuard } from "./harness.js";
 
 useOfflineGuard();

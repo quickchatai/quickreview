@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { checkBashCommand } from "../extensions/cli/bash-guard-ambient.js";
 import { COMPANION_DEFAULTS, resolveCompanionPaths, type Config } from "../src/config.js";
 import {
@@ -24,7 +24,7 @@ import {
   buildAgents,
   stripAgentSpawnTools,
   type BuildAgentsOptions,
-} from "../src/include.js";
+} from "@quickchatai/pi-quickreview/src/include.js";
 import { PrSessionLifecycle, prSessionName } from "../src/pr-session-lifecycle.js";
 import { isSandboxSession } from "../src/sessions.js";
 import { MAX_HELD_WAKES, StateStore } from "../src/state.js";
@@ -32,6 +32,7 @@ import { CompanionLifecycle } from "../src/tui/companion.js";
 import { flushHeldWakes, pauseDefersAllHeldWakes, wakeOrHold } from "../src/wakes.js";
 import type { WorktreeManager } from "../src/worktrees.js";
 import { runtimeSdkImporters } from "./helpers/engine-fences.js";
+import { SRC_DIRS } from "./helpers/source-trees.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 // ---- S1/S2: the daemon spawns one session kind and launches no agent ------
@@ -47,6 +48,11 @@ function srcFiles(dir: string): string[] {
   );
 }
 
+/** Every .ts under the app's src/ and the review core's (packages/pi-plugin/src). */
+function allSrcFiles(): string[] {
+  return SRC_DIRS.flatMap((d) => srcFiles(join(import.meta.dirname, "..", d)));
+}
+
 describe("daemon topology", () => {
   const src = join(import.meta.dirname, "..", "src");
 
@@ -58,7 +64,7 @@ describe("daemon topology", () => {
     // pinned in tests/replay.test.ts), and kills it before returning. Its
     // session owns no PR, holds no gate and posts nothing; its whole contract
     // is "read a scratch tree, write one JSON file".
-    const offenders = srcFiles(src)
+    const offenders = allSrcFiles()
       .filter((f) => !["sessions.ts", "replay.ts"].includes(f.slice(f.lastIndexOf("/") + 1)))
       .filter((f) => /\bspawnSession\s*\(/.test(readFileSync(f, "utf8")));
     expect(offenders).toEqual([]);
@@ -133,7 +139,10 @@ describe("daemon topology", () => {
     // build) are free; extensions/ are the factory modules pi loads. The scan
     // and its planted cases are in tests/fences-engine.test.ts.
     const offenders = runtimeSdkImporters(join(import.meta.dirname, "..")).filter(
-      (f) => f !== "src/engine/pisdk.ts" && !f.startsWith("extensions/"),
+      (f) =>
+        f !== "packages/pi-plugin/src/engine/pisdk.ts" &&
+        !f.startsWith("extensions/") &&
+        !f.startsWith("packages/pi-plugin/extensions/"),
     );
     expect(offenders).toEqual([]);
   });
@@ -219,7 +228,7 @@ describe("daemon topology", () => {
       "/src/setup/caserunner.ts",
       "/src/scanbox.ts",
     ];
-    const offenders = srcFiles(src)
+    const offenders = allSrcFiles()
       .filter((f) => !allowed.includes(f.slice(f.lastIndexOf("/") + 1)))
       .filter((f) => !allowedPaths.some((p) => f.endsWith(p)))
       .filter((f) => /["'`]pi["'`]\s*,|piBin|--no-session/.test(readFileSync(f, "utf8")));
@@ -259,21 +268,21 @@ describe("daemon topology", () => {
     // own helpers, so it reaches setup/caserunner.js at runtime. Only
     // scancli.ts loads it (on demand, in the detached driver), pinned below.
     const operatorEntries = ["/src/scancli.ts", "/src/engine/caserunner-sdk.ts"];
-    const reachesScanCli = srcFiles(src)
+    const reachesScanCli = allSrcFiles()
       .filter((f) => !f.endsWith("/src/cli.ts"))
       .filter((f) => /["'][^"']*\/scancli\.js["']/.test(readFileSync(f, "utf8")));
     expect(reachesScanCli).toEqual([]);
     // The scan sandbox's pi allowance above holds only while `qcr scan` is
     // the one module that reaches it.
-    const reachesSdkLeaves = srcFiles(src)
+    const reachesSdkLeaves = allSrcFiles()
       .filter((f) => !f.endsWith("/src/scancli.ts"))
       .filter((f) => /["'][^"']*\/caserunner-sdk\.js["']/.test(readFileSync(f, "utf8")));
     expect(reachesSdkLeaves).toEqual([]);
-    const reachesScanBox = srcFiles(src)
+    const reachesScanBox = allSrcFiles()
       .filter((f) => !f.endsWith("/src/scancli.ts"))
       .filter((f) => /["'][^"']*\/scanbox\.js["']/.test(readFileSync(f, "utf8")));
     expect(reachesScanBox).toEqual([]);
-    const reachesSetup = srcFiles(src)
+    const reachesSetup = allSrcFiles()
       .filter((f) => !f.includes("/src/setup/"))
       .filter((f) => !operatorEntries.some((p) => f.endsWith(p)))
       .filter((f) =>
@@ -326,7 +335,7 @@ describe("S4: every PR-session wake goes through wakes.ts", () => {
     // `inject(pr, …)`: a replay session owns no PR, runs no round and can
     // therefore never be mid-round, so there is nothing for wakes.ts to hold.)
     const allowed = new Set(["wakes.ts", "daemon.ts", "verdicts.ts", "wire.ts"]);
-    const offenders = srcFiles(src)
+    const offenders = allSrcFiles()
       .filter((f) => !allowed.has(f.slice(f.lastIndexOf("/") + 1)))
       .filter((f) => {
         const text = readFileSync(f, "utf8");
@@ -426,7 +435,7 @@ describe("S4: every PR-session wake goes through wakes.ts", () => {
       // pass a rogue writer using the second: a detector tuned to today's call
       // sites is the same false all-clear as grepping for a name instead of a
       // reader.
-      const writers = srcFiles(src)
+      const writers = allSrcFiles()
         .filter((f) => {
           const code = readFileSync(f, "utf8")
             .replace(/\/\*[\s\S]*?\*\//g, "")
@@ -436,7 +445,8 @@ describe("S4: every PR-session wake goes through wakes.ts", () => {
             .join("\n");
           return /inject\/|["']inject["']/.test(code);
         })
-        .map((f) => f.slice(f.indexOf("/src/") + 1))
+        // repo-relative, so a core writer keeps its packages/pi-plugin/ prefix
+        .map((f) => relative(join(src, ".."), f))
         .sort();
 
       expect(
@@ -605,7 +615,7 @@ describe("subagents glue is never registered globally", () => {
     expect(text).not.toContain("QCR_PI_REQUIRE_EXT");
     expect(text).not.toContain("settings.extensions.push");
   });
-  // extensions/lens.ts hosts SDK lens sessions in an interactive pi (a debug
+  // packages/pi-plugin/extensions/lens.ts hosts SDK lens sessions in an interactive pi (a debug
   // round, the companion since P7.8). The argv lists that start a tmux
   // session and the bench's must not name it.
   for (const file of ["src/sessions.ts", "src/bench/runner.ts"]) {

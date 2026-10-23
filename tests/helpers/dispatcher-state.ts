@@ -7,7 +7,7 @@
 // before the first test and `reset()` puts it back.
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { UNDICI_GLOBAL_DISPATCHER } from "../../src/engine/pisdk.js";
+import { UNDICI_GLOBAL_DISPATCHER } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 
 const INSTALLED_BY_PIHOST = Symbol.for("qcr.pisdk.dispatcher");
 /** undici 8 keeps the real dispatcher in slot 2 and a v1 wrapper of it in slot 1. */

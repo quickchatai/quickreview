@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseConfig, type Config } from "../src/config.js";
-import { MutationGate } from "../src/gate.js";
+import { MutationGate } from "@quickchatai/pi-quickreview/src/gate.js";
 import { GitHubAdapter } from "../src/github.js";
 import { ThreadResolutionRefusal } from "../src/thread-resolution-refusal.js";
-import type { FetchFn, TokenMinter } from "../src/githubAuth.js";
+import type { FetchFn, TokenMinter } from "@quickchatai/pi-quickreview/src/githubAuth.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const cfg: Config = parseConfig(readFileSync(join(root, "tests/fixtures/config.toml"), "utf8"));

@@ -35,7 +35,7 @@
 // this process from the read-only secrets mount, is used for the admin calls
 // below, and is never logged, never put on an argv, never copied into any file
 // this process writes. `writeOvcliConf` (src/memory/ovsession.ts) refuses to
-// hand it to a pi session, and `extensions/bash-guard.ts` refuses bash commands
+// hand it to a pi session, and `packages/pi-plugin/extensions/bash-guard.ts` refuses bash commands
 // that read the files carrying it.
 //
 // MEMORY NEVER BLOCKS THE BOOT. Every failure here is a log line, a report

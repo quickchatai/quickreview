@@ -19,7 +19,7 @@ import {
   fauxProvider,
   registerSessionResourceCleanup,
 } from "@earendil-works/pi-ai";
-import { type PiHostOptions, PiHost } from "../../src/engine/pisdk.js";
+import { type PiHostOptions, PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import {
   type AgentSession,
   type CreateAgentSessionOptions,

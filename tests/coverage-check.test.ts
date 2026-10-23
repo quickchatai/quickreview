@@ -1,4 +1,4 @@
-// `[review] coverage_check` (src/coverage.ts):
+// `[review] coverage_check` (packages/pi-plugin/src/coverage.ts):
 // a changed non-test source file no lens raised a finding on gets a targeted
 // pass-sweep row (at most two, packed by line budget), each saying why, so a
 // changed file no lens produced anything on still gets read. With the knob
@@ -12,9 +12,12 @@ import {
   coverageGaps,
   coverageReason,
   COVERAGE_MAX_GROUPS,
-} from "../src/coverage.js";
-import { renderCoverageNote } from "../src/templates.js";
-import { COVERAGE_TOOL, readCoverageArgs } from "../extensions/finding-clusters.js";
+} from "@quickchatai/pi-quickreview/src/coverage.js";
+import { renderCoverageNote } from "@quickchatai/pi-quickreview/src/templates.js";
+import {
+  COVERAGE_TOOL,
+  readCoverageArgs,
+} from "@quickchatai/pi-quickreview/extensions/finding-clusters.js";
 
 const root = resolve(process.cwd());
 const f = (filename: string, additions = 10, status = "modified", deletions = 0) => ({
@@ -173,10 +176,13 @@ describe("the knob and the note", () => {
 
 describe("coverage_gaps on both routes", () => {
   it("rides the finding-clusters extension both routes load", () => {
-    const ext = readFileSync(join(root, "extensions/finding-clusters.ts"), "utf8");
+    const ext = readFileSync(
+      join(root, "packages/pi-plugin/extensions/finding-clusters.ts"),
+      "utf8",
+    );
     expect(ext).toContain("FINDING_CLUSTERS_TOOLS");
     expect(readFileSync(join(root, "src/sessions.ts"), "utf8")).toMatch(/"finding-clusters\.ts"/);
-    expect(readFileSync(join(root, "src/engine/round.ts"), "utf8")).toMatch(
+    expect(readFileSync(join(root, "packages/pi-plugin/src/engine/round.ts"), "utf8")).toMatch(
       /"finding-clusters\.ts"/,
     );
   });

@@ -184,7 +184,7 @@ because "position drift" was one of the three failures they measured in
 general agents.
 
 Our route is based on line numbers, and there is a gap in it.
-`src/anchors.ts` holds the right discipline: validate every anchor against
+`packages/pi-plugin/src/anchors.ts` holds the right discipline: validate every anchor against
 the changed-line runs and strip invalid ones into the body overflow, because
 "GitHub rejects the *whole* review call when a single inline comment fails to
 anchor". But `anchors.ts` is **off the live path**. It is imported only by

@@ -12,15 +12,21 @@ import {
   bashGuardConfigFromEnv,
   createBashGuard,
   type BashGuardConfig,
-} from "../extensions/bash-guard.js";
-import { createFindingClusters } from "../extensions/finding-clusters.js";
-import { createLedgerPin, ledgerPinConfigFromEnv } from "../extensions/ledger-pin.js";
+} from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
+import { createFindingClusters } from "@quickchatai/pi-quickreview/extensions/finding-clusters.js";
+import {
+  createLedgerPin,
+  ledgerPinConfigFromEnv,
+} from "@quickchatai/pi-quickreview/extensions/ledger-pin.js";
 import {
   createCompanionGuard,
   companionGuardConfigFromEnv,
 } from "../extensions/companion-guard.js";
 import { createInjectBridge } from "../extensions/inject-bridge.js";
-import { interactiveHostFor, interactiveLens } from "../extensions/lens.js";
+import {
+  interactiveHostFor,
+  interactiveLens,
+} from "@quickchatai/pi-quickreview/extensions/lens.js";
 import { createMutedTheme } from "../extensions/muted-theme.js";
 import { createOnboarding } from "../extensions/onboarding.js";
 import { createSetup } from "../extensions/setup.js";
@@ -252,7 +258,7 @@ const CASES: Record<string, ParityCase<never>> = {
   "ledger-pin": ledgerPinCase(),
   "bash-guard": bashGuardCase() as never,
   "finding-clusters": {
-    shimPath: join(ROOT, "extensions", "finding-clusters.ts"),
+    shimPath: join(ROOT, "packages", "pi-plugin", "extensions", "finding-clusters.ts"),
     env: {},
     config: {} as never,
     factory: createFindingClusters,

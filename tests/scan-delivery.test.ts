@@ -15,7 +15,7 @@ import {
   addendaForPass,
   buildAgents,
   type PassAddendum,
-} from "../src/include.js";
+} from "@quickchatai/pi-quickreview/src/include.js";
 import { homeProfileLookup, type InstallEnv } from "../src/install.js";
 import {
   DIFF_ONLY_LENSES,

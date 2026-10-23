@@ -17,7 +17,11 @@
 // result, never a throw.
 import { usd, findingLocation } from "../src/setup/presentation.js";
 import { readFileSync } from "node:fs";
-import { textResult as text, refusedResult as refused, type QcrTool } from "./pi-tool.js";
+import {
+  textResult as text,
+  refusedResult as refused,
+  type QcrTool,
+} from "@quickchatai/pi-quickreview/extensions/pi-tool.js";
 import { parseConfig, sandboxRoot } from "../src/config.js";
 import { locateConfig, stateHome } from "../src/install.js";
 import { stateHomeFs, tokenFileGitHubReader } from "../src/setup/adapters.js";

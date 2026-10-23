@@ -1,0 +1,36 @@
+{
+  "name": "@quickchatai/pi-quickreview",
+  "version": "1.0.8",
+  "private": false,
+  "description": "QuickReview's review core as a pi package: the engine, the lens tools, the review planner, the agent build and the renderer the bot runs",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/quickchatai/quickreview.git",
+    "directory": "packages/pi-plugin"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    "./src/*": "./dist/src/*",
+    "./extensions/*": "./dist/extensions/*",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "prepack": "node ../../scripts/plugin-assets.mjs",
+    "postpack": "node ../../scripts/plugin-assets.mjs --clean"
+  },
+  "dependencies": {
+    "smol-toml": "1.8.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": "^1.3.0",
+    "@earendil-works/pi-ai": "^1.3.0",
+    "@earendil-works/pi-coding-agent": "^1.3.0",
+    "@earendil-works/pi-tui": "^1.3.0",
+    "typebox": "*"
+  }
+}

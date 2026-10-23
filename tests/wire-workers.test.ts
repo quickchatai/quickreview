@@ -49,6 +49,7 @@ describe("wire.ts: workers are the only bot host", () => {
       }
     };
     walk(SRC);
+    walk(resolve(SRC, "..", "packages", "pi-plugin", "src"));
     expect(callers).toEqual([]);
   });
 

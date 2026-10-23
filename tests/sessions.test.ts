@@ -29,7 +29,7 @@ import { writeSessionBridgeState } from "../src/session-bridge.js";
 import { type StateStore } from "../src/state.js";
 import { WorktreeManager } from "../src/worktrees.js";
 import { piAuthWatchDirs } from "../src/wire.js";
-import { PiAuthWatch } from "../src/authwatch.js";
+import { PiAuthWatch } from "@quickchatai/pi-quickreview/src/authwatch.js";
 
 let root: string;
 let secrets: string;
@@ -312,7 +312,8 @@ describe("buildPiCommand", () => {
     // session_before_compact and must be registered first; the fork's own
     // compaction handler is deleted (PATCH 1), but the ordering is the
     // belt-and-braces half of that invariant.
-    expect(paths.indexOf(join(root, "extensions", "ledger-pin.ts"))).toBeLessThan(
+    expect(paths.indexOf(join(root, "extensions", "cli", "ledger-pin.ts"))).toBeGreaterThan(-1);
+    expect(paths.indexOf(join(root, "extensions", "cli", "ledger-pin.ts"))).toBeLessThan(
       paths.indexOf(ov),
     );
     // It rides argv, not a settings.json discovery dir: subagent children

@@ -3,7 +3,11 @@ import { generateKeyPairSync, createVerify } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TokenMinter, mintAppJwt, type FetchFn } from "../src/githubAuth.js";
+import {
+  TokenMinter,
+  mintAppJwt,
+  type FetchFn,
+} from "@quickchatai/pi-quickreview/src/githubAuth.js";
 
 // A real throwaway RSA key, generated in-process — no filesystem secret and no
 // network anywhere in this file.

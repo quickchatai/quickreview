@@ -63,6 +63,21 @@ describe("[P8.3] src/botworker.ts opens no state.db", () => {
     ]);
   });
 
+  it("the closure follows the core's package specifiers into packages/pi-plugin", () => {
+    const hits = planted(
+      {
+        "src/botworker.ts": `import { a } from "@quickchatai/pi-quickreview/src/engine/a.js";\n`,
+        "packages/pi-plugin/src/engine/a.ts": `import { b } from "../b.js";\n`,
+        "packages/pi-plugin/src/b.ts": `import { DatabaseSync } from "node:sqlite";\n`,
+        "packages/pi-plugin/extensions/x.ts": `import Database from "better-sqlite3";\n`,
+      },
+      (root) => workerReachesStateStore(root),
+    );
+    expect(hits).toEqual([
+      "src/botworker.ts > packages/pi-plugin/src/engine/a.ts > packages/pi-plugin/src/b.ts > node:sqlite",
+    ]);
+  });
+
   it("a re-export is an edge", () => {
     const hits = planted(
       {

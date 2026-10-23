@@ -2,7 +2,7 @@
 // The offline CPU and RSS gate [P2.11]: can N review sessions share ONE node
 // event loop on a 2-vCPU host?
 //
-// The in-process SDK runtime (src/engine/sdkruntime.ts) puts every lens
+// The in-process SDK runtime (packages/pi-plugin/src/engine/sdkruntime.ts) puts every lens
 // session on the same JS thread, which is why CPU forced the 10-08 cut. This
 // measures what that costs:
 //
@@ -43,7 +43,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
-const DIST = join(ROOT, "dist", "src", "engine");
+// The engine is the review core's, compiled into its own package.
+const DIST = join(ROOT, "packages", "pi-plugin", "dist", "src", "engine");
 const MODEL = "faux/m";
 const TICK_MS = 10;
 const CLK_TCK = 100; // getconf CLK_TCK on every Linux this runs on
@@ -289,7 +290,7 @@ async function cellMain(mode, n, opts) {
   makeTree(tree);
   const cpus = allowedCpus();
   const lag = startLagSampler();
-  /** @type {import("../dist/src/engine/port.js").RuntimeSession[]} */
+  /** @type {import("../packages/pi-plugin/dist/src/engine/port.js").RuntimeSession[]} */
   const sessions = [];
   let host;
   let runtime;

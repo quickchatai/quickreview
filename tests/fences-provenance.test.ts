@@ -5,7 +5,7 @@
 //
 // What is read: COMMENTS ONLY, in the tracked source tree (`git ls-files`, as
 // tests/publishability.test.ts lists it) under src/, extensions/ (not the
-// vendored fork), scripts/, deploy/, docker/, tests/ (not fixtures) and the
+// vendored fork), packages/ (the review core's package), scripts/, deploy/, docker/, tests/ (not fixtures) and the
 // bench's code files. TS/JS comments come from the TypeScript scanner with
 // trivia, so a string or template literal is never read as a comment. Shell,
 // Python, YAML, TOML, Dockerfile and j2 comments are `#` comments outside
@@ -71,8 +71,8 @@ function inScope(path: string): boolean {
   if (path.startsWith("extensions/vendor/")) return false;
   if (path.startsWith("tests/fixtures/")) return false;
   if (path.startsWith("bench/")) return /\.(?:py|sh|ts|mjs)$/.test(path);
-  return ["src/", "extensions/", "scripts/", "deploy/", "docker/", "tests/"].some((d) =>
-    path.startsWith(d),
+  return ["src/", "extensions/", "packages/", "scripts/", "deploy/", "docker/", "tests/"].some(
+    (d) => path.startsWith(d),
   );
 }
 

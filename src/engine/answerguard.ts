@@ -1,7 +1,7 @@
 // What an idle-PR answer worker's bash may not do (P8.17). Its tools are read-only
 // repo tools plus chat; when the operator marks the message may-post it also gets
 // the bash tool, for the post scripts (rule 1: through the daemon's one gate). The
-// exec policy (extensions/bash-guard.ts) already confines that bash. This adds the
+// exec policy (packages/pi-plugin/extensions/bash-guard.ts) already confines that bash. This adds the
 // one thing the answer worker is never given, a verdict: an answer is not a round.
 import type { ExtensionAPI, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 

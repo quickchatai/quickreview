@@ -15,7 +15,7 @@ Round 1 is unchanged and byte-identical.
 
 Every later re-review round is a **follow-up round** (a staleness round never is: it keeps `round-staleness.md` and no scope) (`order.scope = "delta"`, template `prompts/round-follow-up.md`):
 
-1. **Verify prior findings.** The daemon renders the open findings posted in earlier rounds (`{{prior_findings_note}}`, `src/priorfindings.ts`).
+1. **Verify prior findings.** The daemon renders the open findings posted in earlier rounds (`{{prior_findings_note}}`, `packages/pi-plugin/src/priorfindings.ts`).
    - Each one is verified mechanically at the new head: `fixed`, `open`, `conceded`, `settled`, `obsolete` or `unverifiable` (which keeps it open).
    - The list covers every verdicted earlier round, and every unverdicted one that may have posted (a posting outcome or review id on its row, or the reviewed-head mark at its head with no verdicted round there). A round whose record cannot be read makes the list INCOMPLETE, never shorter.
    - The statuses go back in the findings record's top-level `prior` array, so the next round's list shrinks.
@@ -34,7 +34,7 @@ Every later re-review round is a **follow-up round** (a staleness round never is
    - The sweep is owed when the standing verdict is not APPROVE (an approval withheld for CI does not count as one: GitHub never saw it) and no full look has happened since the first round. A full look is a legacy full re-review, a full-scope re-review round, or a round whose sweep ran — never a staleness round.
    - The sweep note lists the full plan's files left over the per-round sweep cap, as round 1 does.
    - After a posted approval it is owed only when the PR-owned change since then reaches `follow_up_post_approval_sweep_lines` (500), whatever full looks came before. A smaller push after an approval is delta-only. In the live data, the blockers that post-approval re-reviews found outside the change sat behind 618–1204-line pushes; 47 of the 69 post-approval rounds changed fewer than 500 lines. Three tiny pushes (19–36 lines) on large PRs also drew such blockers; the floor deliberately does not chase those.
-5. **Decide, post, verdict.** Unchanged fences. The verdict carries `"sweep": "ran" | "not_owed" | "not_reached"` — or `"skipped"` under `follow_up_extent = "session"` — and each pass entry carries `"phase": "delta" | "sweep"`. An APPROVE claiming `not_reached` or `not_owed` beside an owed sweep is a contradiction, recorded `unknown` (`src/sweepstatus.ts`).
+5. **Decide, post, verdict.** Unchanged fences. The verdict carries `"sweep": "ran" | "not_owed" | "not_reached"` — or `"skipped"` under `follow_up_extent = "session"` — and each pass entry carries `"phase": "delta" | "sweep"`. An APPROVE claiming `not_reached` or `not_owed` beside an owed sweep is a contradiction, recorded `unknown` (`packages/pi-plugin/src/sweepstatus.ts`).
 
 ## Fallback to a full round (today's re-review, unchanged template)
 

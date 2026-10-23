@@ -3,9 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
-import { MutationGate } from "../src/gate.js";
+import { MutationGate } from "@quickchatai/pi-quickreview/src/gate.js";
 import { GitHubAdapter, GitHubRequestError } from "../src/github.js";
-import type { TokenMinter } from "../src/githubAuth.js";
+import type { TokenMinter } from "@quickchatai/pi-quickreview/src/githubAuth.js";
 import { StateStore } from "../src/state.js";
 import {
   botBranchFor,

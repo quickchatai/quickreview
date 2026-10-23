@@ -21,7 +21,9 @@ const ROOT = resolve(import.meta.dirname, "..");
 const SCRIPT = join(ROOT, "scripts", "cpu-gate.mjs");
 const run = promisify(execFile);
 
-const built = existsSync(join(ROOT, "dist", "src", "engine", "sdkruntime.js"));
+const built = existsSync(
+  join(ROOT, "packages", "pi-plugin", "dist", "src", "engine", "sdkruntime.js"),
+);
 const taskset = existsSync("/usr/bin/taskset") || existsSync("/bin/taskset");
 
 describe("[cpu-gate] cell validity", () => {

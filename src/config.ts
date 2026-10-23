@@ -1,6 +1,6 @@
 // Typed access to config.toml — the single source of every runtime knob.
 // The review sections (their types, defaults and parsers) live in
-// src/reviewconfig.ts, the core's half; this module adds every other
+// packages/pi-plugin/src/reviewconfig.ts, the core's half; this module adds every other
 // surface's, the install homes and the live config's loader, and re-exports
 // the review half so its importers need not know where a knob lives.
 import { existsSync, readFileSync } from "node:fs";
@@ -14,7 +14,7 @@ import {
   missingConfigMessage,
   strandedCheckoutConfig,
 } from "./install.js";
-import { packageRootFrom } from "./assetroot.js";
+import { packageRootFrom } from "@quickchatai/pi-quickreview/src/assetroot.js";
 import { repoCloneDirName } from "./clonedir.js";
 import { DEFAULT_LENS_GRANT_STAGGER_MS, DEFAULT_LENS_PERMITS } from "./ipc/permits.js";
 import {
@@ -39,9 +39,9 @@ import {
   type GithubConfig,
   type MemoryDelivery,
   type OwnerConfig,
-} from "./reviewconfig.js";
+} from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 
-export * from "./reviewconfig.js";
+export * from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 
 /** Directory name of the base clone: `[github] clone_dir` when set, else the
  * repo slug's basename ("owner/name" → "name"; a URL's trailing path segment,
@@ -1150,7 +1150,7 @@ export interface Config extends CoreConfig {
 }
 
 /**
- * `[login_refresh]`: the VM-only exception to D5 (src/engine/auth.ts). After
+ * `[login_refresh]`: the VM-only exception to D5 (packages/pi-plugin/src/engine/auth.ts). After
  * the cutover ONE refresher process, spawned and supervised by the daemon,
  * owns pihome/agent/auth.json and every worker borrows a refresh-blanked copy.
  * Off by default: while the bot's tmux pi sessions exist they refresh the file
@@ -1629,7 +1629,7 @@ export const DEFAULT_ANSWER_CAP_USD = 2;
 export const DEFAULT_ROUND_STAGE_SUPERVISOR_STALE_S = 180;
 
 /** The app's root: the checkout (or image tree) this module runs from. The
- * review core's shipped data is found through `assetRoot` (src/assetroot.ts). */
+ * review core's shipped data is found through `assetRoot` (packages/pi-plugin/src/assetroot.ts). */
 export function sandboxRoot(): string {
   return packageRootFrom(dirname(fileURLToPath(import.meta.url)), "sandbox root");
 }

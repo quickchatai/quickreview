@@ -12,6 +12,12 @@
     "forceConsistentCasingInFileNames": true,
     "declaration": false,
     "sourceMap": true,
+    // The app compiles src/ and extensions/ into dist/ (dist/src/cli.js is
+    // the image's `qcr`). The review core is its own project,
+    // packages/pi-plugin (referenced below): `tsc -b` builds it first, into
+    // packages/pi-plugin/dist, and the app reads its .d.ts through the
+    // workspace link node_modules/@quickchatai/pi-quickreview.
+    "rootDir": ".",
     "outDir": "dist",
     // `scripts/dev-tui.sh` blocks on a full build before the
     // TUI starts (so the watcher's first emit cannot re-exec it the moment it
@@ -30,7 +36,7 @@
     // THE ONE STALENESS `incremental` HAS, stated plainly because it is the
     // case people actually hit: a TARGETED delete is unsafe. tsc decides what
     // to emit from its build info, never from what is on disk, so
-    //     rm dist/src/tui/startup.js && npx tsc -p tsconfig.json
+    //     rm dist/src/tui/startup.js && npx tsc -b
     // emits nothing and exits 0 over a dist/ that is missing a module. An
     // interrupted build and a half-copied tree land in the same state.
     // `scripts/verify-dist.mjs` is the guard: `npm run build` chains it, and
@@ -38,7 +44,9 @@
     // the VM, so "the build succeeded" means the output is really there.
     // Wiping the WHOLE tree is the safe move only when the cache goes too —
     // the reliable cold build is
-    // `rm -rf dist node_modules/.cache && npm run build`.
+    // `rm -rf dist packages/*/dist node_modules/.cache && npm run build`.
+    // packages/pi-plugin keeps its build info beside this one, for the same
+    // reasons (its tsconfig.json).
     "incremental": true,
     "tsBuildInfoFile": "node_modules/.cache/qcr-tsbuildinfo",
     // `reload.ts` states — as the reason the hot reload is safe — that "a
@@ -66,5 +74,6 @@
   // it would fail every build without making the runtime any safer, and
   // widening the ambient types for someone else's code would erode the
   // VERIFY-ON-PIN discipline. Provenance + pin: its file header.
-  "exclude": ["node_modules", "dist", "tests", "extensions/inline-bash.ts"]
+  "exclude": ["node_modules", "dist", "tests", "extensions/inline-bash.ts"],
+  "references": [{ "path": "packages/pi-plugin" }]
 }

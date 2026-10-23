@@ -1,5 +1,5 @@
 // The profile's `[posting]` policy on the BENCHMARK route — the offline twin
-// of src/posting.ts `assembleReview`'s policy step (src/postingpolicy.ts).
+// of src/posting.ts `assembleReview`'s policy step (packages/pi-plugin/src/postingpolicy.ts).
 //
 // A benchmark session posts nothing: it writes `comments.json` (the inline
 // comments), `review.md` (the body) and `findings-record.json` into its case
@@ -37,7 +37,7 @@ import {
   type PolicyClass,
   type PostingPolicy,
   type WithholdWord,
-} from "../postingpolicy.js";
+} from "@quickchatai/pi-quickreview/src/postingpolicy.js";
 import {
   entriesById,
   rootCauseId,
@@ -45,9 +45,9 @@ import {
   postedClassOf,
   recordPostingKeys,
   withheldReason,
-} from "../reviewrender.js";
-import { entryDisposition, recordSide } from "../findingkey.js";
-import { bareTag, stripSanctionedTags } from "../severity.js";
+} from "@quickchatai/pi-quickreview/src/reviewrender.js";
+import { entryDisposition, recordSide } from "@quickchatai/pi-quickreview/src/findingkey.js";
+import { bareTag, stripSanctionedTags } from "@quickchatai/pi-quickreview/src/severity.js";
 import {
   benchPath,
   CASE_FILES,
@@ -56,11 +56,14 @@ import {
   posInt,
   type BenchSite,
 } from "./aacr.js";
-import { checkAnchor, runsByPath } from "../anchors.js";
+import { checkAnchor, runsByPath } from "@quickchatai/pi-quickreview/src/anchors.js";
 
 // The kept originals' names and the report's shape are the round's own: it
-// writes them too (src/engine/caseout.ts).
-import { POLICED_ORIGINALS, type BenchPostingReport } from "../engine/caseout.js";
+// writes them too (packages/pi-plugin/src/engine/caseout.ts).
+import {
+  POLICED_ORIGINALS,
+  type BenchPostingReport,
+} from "@quickchatai/pi-quickreview/src/engine/caseout.js";
 
 export { POLICED_ORIGINALS, type BenchPostingReport };
 

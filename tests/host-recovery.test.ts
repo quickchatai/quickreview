@@ -16,9 +16,13 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
-import type { GateResult } from "../src/gate.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import { SessionCommandSupervisor } from "../src/session-command-supervisor.js";
-import { roundPromptMarker, type RoundOrder, type VerdictFile } from "../src/types.js";
+import {
+  roundPromptMarker,
+  type RoundOrder,
+  type VerdictFile,
+} from "@quickchatai/pi-quickreview/src/types.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
 import {
   HOST_NOW,

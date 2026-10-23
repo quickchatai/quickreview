@@ -16,7 +16,9 @@ import {
   standingLifecycleState,
   standingReview,
   standingVerdict,
-} from "../src/standing-review.js";
+} from "@quickchatai/pi-quickreview/src/standing-review.js";
+import { SRC_DIRS } from "./helpers/source-trees.js";
+import { CORE_NAME, escapeRe } from "./helpers/source-trees.js";
 
 const HEAD = "a746573675f8eae0f13e69ad83006190aa8436e4";
 
@@ -155,7 +157,7 @@ function rawMarkVerdictReads(text: string): string[] {
  */
 const CONSUMERS: ReadonlyArray<{ file: string; rawReadsAllowed: number }> = [
   { file: "src/dispatch.ts", rawReadsAllowed: 0 },
-  { file: "src/guards.ts", rawReadsAllowed: 0 },
+  { file: "packages/pi-plugin/src/guards.ts", rawReadsAllowed: 0 },
   { file: "src/recheck.ts", rawReadsAllowed: 0 },
   { file: "src/reconcile.ts", rawReadsAllowed: 0 },
   { file: "src/verdicts.ts", rawReadsAllowed: 0 },
@@ -167,8 +169,8 @@ describe("every lifecycle consumer reads the mark through standing-review (fence
   it("each named consumer imports the helper", () => {
     for (const { file } of CONSUMERS) {
       const text = readFileSync(join(ROOT, file), "utf8");
-      expect(text, `${file} must import from ./standing-review.js`).toMatch(
-        /from "\.\/standing-review\.js"/,
+      expect(text, `${file} must import the core's standing-review.js`).toMatch(
+        new RegExp(`from "(\\./|${escapeRe(CORE_NAME)}/src/)standing-review\\.js"`),
       );
     }
   });
@@ -176,9 +178,9 @@ describe("every lifecycle consumer reads the mark through standing-review (fence
   it("no src module reads `.verdict` off a reviewed-head mark directly", () => {
     const allowed = new Map(CONSUMERS.map((c) => [c.file, c.rawReadsAllowed]));
     const offenders: string[] = [];
-    for (const path of tsFiles(join(ROOT, "src"))) {
+    for (const path of SRC_DIRS.flatMap((d) => tsFiles(join(ROOT, d)))) {
       const rel = path.slice(ROOT.length + 1);
-      if (rel === "src/standing-review.ts") continue;
+      if (rel === "packages/pi-plugin/src/standing-review.ts") continue;
       const text = readFileSync(path, "utf8");
       const hits = rawMarkVerdictReads(text);
       const budget = allowed.get(rel) ?? 0;

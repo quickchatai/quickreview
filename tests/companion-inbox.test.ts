@@ -23,6 +23,7 @@ import {
 import { startEodTimer } from "../src/eod.js";
 import { startEodPinWatch, type PinnedEntryView } from "../src/eodpinwatch.js";
 import { StateStore } from "../src/state.js";
+import { EXTENSION_DIRS, SRC_DIRS } from "./helpers/source-trees.js";
 
 let root: string;
 let clock: Date;
@@ -391,10 +392,12 @@ describe("no overseer wake is left", () => {
   it("nothing in src/ or extensions/ names the retired overseer inject, and SessionHooks lost it", () => {
     // spelled in two halves so this very file stays out of the repo-wide grep
     const retired = new RegExp(["inject", "Overseer"].join(""));
-    const hits = [...walk(join(repo, "src")), ...walk(join(repo, "extensions"))].filter((file) =>
-      retired.test(readFileSync(file, "utf8")),
-    );
+    const hits = [...SRC_DIRS, ...EXTENSION_DIRS]
+      .flatMap((d) => walk(join(repo, d)))
+      .filter((file) => retired.test(readFileSync(file, "utf8")));
     expect(hits).toEqual([]);
-    expect(readFileSync(join(repo, "src", "types.ts"), "utf8")).not.toMatch(retired);
+    expect(readFileSync(join(repo, "packages/pi-plugin/src/types.ts"), "utf8")).not.toMatch(
+      retired,
+    );
   });
 });

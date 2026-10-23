@@ -1,4 +1,4 @@
-// [P7.12a] The in-process file tools' fence (src/engine/toolfence.ts), on real
+// [P7.12a] The in-process file tools' fence (packages/pi-plugin/src/engine/toolfence.ts), on real
 // symlinks, and through a real SDK session over pi-ai's faux provider: the model
 // cannot read, search, list, edit or write /proc, /run/qcr-in or the run's agent
 // dir, not even through a link its own bash planted in the worktree.
@@ -17,14 +17,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
-import { loadImageSniffer } from "../src/engine/pisdk.js";
+import { loadImageSniffer } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import {
   ToolFenceError,
   createToolFence,
   credentialPaths,
   loginSourceDirs,
   toolPath,
-} from "../src/engine/toolfence.js";
+} from "@quickchatai/pi-quickreview/src/engine/toolfence.js";
 import { type HostRig, createHostRig, useOfflineGuard } from "./pi-canary/harness.js";
 
 useOfflineGuard();

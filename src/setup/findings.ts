@@ -94,7 +94,7 @@ import { createHash } from "node:crypto";
 import type { StateFs } from "./engine.js";
 import { readings, type LedgerEntry, type Reading } from "./ledger.js";
 import { SEVERITIES, type ScanSeverity } from "./scan.js";
-import type { Reachability } from "../severity.js";
+import type { Reachability } from "@quickchatai/pi-quickreview/src/severity.js";
 import {
   FINDING_STATES,
   FINDINGS_FILE,

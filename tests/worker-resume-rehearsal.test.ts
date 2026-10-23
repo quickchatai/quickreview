@@ -27,7 +27,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { extractPr } from "../src/archive/extract.js";
-import { REVIEWER_STUB } from "../src/reviewerstub.js";
+import { REVIEWER_STUB } from "@quickchatai/pi-quickreview/src/reviewerstub.js";
 import {
   LEGACY_SANDBOX_ROOT,
   inspectSessionJsonl,

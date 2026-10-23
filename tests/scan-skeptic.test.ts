@@ -16,7 +16,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { QcrTool } from "../extensions/pi-tool.js";
+import type { QcrTool } from "@quickchatai/pi-quickreview/extensions/pi-tool.js";
 import { scanToolDefinitions } from "../extensions/setup-scan.js";
 import { triageToolDefinitions } from "../extensions/setup-triage.js";
 import { parseConfig, SCAN_DEFAULTS, type Config, type ScanConfig } from "../src/config.js";
@@ -30,7 +30,7 @@ import {
   addendaForPass,
   buildAgents,
   type PassAddendum,
-} from "../src/include.js";
+} from "@quickchatai/pi-quickreview/src/include.js";
 import { configHome, homeProfileLookup, type InstallEnv } from "../src/install.js";
 import type { MemoryEntry, MemoryOp, MemoryStore, MemoryWriteResult } from "../src/memory/store.js";
 import { stateHomeFs } from "../src/setup/adapters.js";

@@ -48,13 +48,13 @@ as the image's wizard does where it can; to run a locally built image through
    canonical and integrity-pinned (`tests/seed-integrity.test.ts`: sha256
    manifest + byte-identity against `seeds/`). Never edit a seed in a PR.
    Pass-behaviour changes go through the **addendum registry**
-   (`PASS_ADDENDA` in `src/include.ts`) or a **profile pack**
+   (`PASS_ADDENDA` in `packages/pi-plugin/src/include.ts`) or a **profile pack**
    (`profiles/<name>/addenda/` — see [docs/profiles.md](docs/profiles.md)).
    A genuine reseed is the owner's to ratify — see
    [docs/ownership.md](docs/ownership.md), which lists every owner-only
    surface (the dry-run flag, ratification fences, the divergence registry,
    rubric acceptance, the caps).
-2. **One mutation gate.** Every GitHub write flows through `src/gate.ts`
+2. **One mutation gate.** Every GitHub write flows through `packages/pi-plugin/src/gate.ts`
    (shell twin: `scripts/guards.sh`). Never add a write path around it, and
    never add a review-dismissal mutation — that one is structurally absent on
    purpose. `request_reviewer` exists (the optional, off-by-default escalation

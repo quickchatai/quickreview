@@ -24,8 +24,8 @@ import { basename, dirname, join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { extractPr } from "../src/archive/extract.js";
 import { TUI_DEFAULTS, type TuiConfig } from "../src/config.js";
-import { PiHost } from "../src/engine/pisdk.js";
-import { sdkRuntime } from "../src/engine/sdkruntime.js";
+import { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import { sdkRuntime } from "@quickchatai/pi-quickreview/src/engine/sdkruntime.js";
 import { HOST_CONTEXT_STUB, REVIEWER_STUB } from "../src/hostroute.js";
 import { BOT_OPEN_EXTENSIONS, runOpen, type OpenDeps } from "../src/opencli.js";
 import {
@@ -700,7 +700,7 @@ describe("[open-pr] the verb", () => {
         : [],
     );
     expect(loaded).toEqual(["cli/bash-guard.ts"]);
-    expect([...BOT_OPEN_EXTENSIONS]).toEqual(["cli/bash-guard.ts"]);
+    expect([...BOT_OPEN_EXTENSIONS]).toEqual(["extensions/cli/bash-guard.ts"]);
     expect(cmd.args.join(" ")).not.toMatch(/post|inject|submit/i);
     expect(cmd.env["GITHUB_TOKEN"]).toBeUndefined();
     expect(cmd.env["GH_TOKEN"]).toBeUndefined();

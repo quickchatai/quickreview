@@ -1,5 +1,5 @@
 // The findings record's enforcement: the daemon's half of the durable
-// reasoning record (src/findingsrecord.ts says what the record is, and holds
+// reasoning record (packages/pi-plugin/src/findingsrecord.ts says what the record is, and holds
 // its parser). After a round, the record is parsed into queryable rows; a
 // missing or unparseable one costs an anomaly every time and at most ONE
 // nudge, through `wakeOrHold`, and a record that lands after its nudge is
@@ -12,7 +12,7 @@ import {
   readFindingsRecord,
   type FindingsRecordFile,
   type ParsedFindingsRecord,
-} from "./findingsrecord.js";
+} from "@quickchatai/pi-quickreview/src/findingsrecord.js";
 import { enqueueRoundWork, finishRoundWork, pendingRoundWork } from "./round-work.js";
 import type { StateStore } from "./state.js";
 import { wakeOrHold } from "./wakes.js";

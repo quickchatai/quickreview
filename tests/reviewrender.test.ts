@@ -1,4 +1,4 @@
-// `[review] render_outputs` (src/reviewrender.ts, bench/aacr/PERF.md §6
+// `[review] render_outputs` (packages/pi-plugin/src/reviewrender.ts, bench/aacr/PERF.md §6
 // proposal 3): the posted review rendered from the findings record. What the
 // round template's step 6 asks of a hand-written body and comment must come
 // out of the renderer: the opener first, the verdict line counting ROOT
@@ -19,14 +19,18 @@ import {
   renderRenderNote,
   renderReviewFromRecord,
   renderedFooter,
-} from "../src/reviewrender.js";
+} from "@quickchatai/pi-quickreview/src/reviewrender.js";
 import { renderBenchOutputs } from "../src/bench/runner.js";
 import { parseConfig } from "../src/config.js";
 import { renderConfig } from "../src/reviewrendercli.js";
-import { parseFindingsRecord } from "../src/findingsrecord.js";
-import { findingMarker, parseFindingMarker, stripFindingMarkers } from "../src/findingkey.js";
+import { parseFindingsRecord } from "@quickchatai/pi-quickreview/src/findingsrecord.js";
+import {
+  findingMarker,
+  parseFindingMarker,
+  stripFindingMarkers,
+} from "@quickchatai/pi-quickreview/src/findingkey.js";
 import { reviewFooter } from "../src/posting.js";
-import { CHECK_THIS_RE } from "../src/severity.js";
+import { CHECK_THIS_RE } from "@quickchatai/pi-quickreview/src/severity.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 

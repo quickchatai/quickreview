@@ -48,7 +48,7 @@ import {
 import { LEVERS_DEFAULTS, loadConfig, parseLevers, type Config } from "../src/config.js";
 import { createDaemon, type DaemonAdapter } from "../src/daemon.js";
 import { queuedInOrder } from "../src/dispatch.js";
-import type { GateResult } from "../src/gate.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { PrRef } from "../src/github.js";
 import {
   boundSessionGrant,

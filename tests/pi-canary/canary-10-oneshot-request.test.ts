@@ -2,7 +2,7 @@
 // route is byte-equal to the process route's.
 //
 // canary-10-bare pins a BARE session. This one runs the review round itself
-// (src/engine/round.ts runRound) on both runtimes, over the SAME local
+// (packages/pi-plugin/src/engine/round.ts runRound) on both runtimes, over the SAME local
 // OpenAI-compatible endpoint, and compares the raw request bodies off the wire:
 //
 //   - the system prompt the round writes, plus pi's own
@@ -22,14 +22,18 @@ import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { PiHost } from "../../src/engine/pisdk.js";
-import type { Runtime, RuntimeSession, SessionSpec } from "../../src/engine/port.js";
+import { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import type {
+  Runtime,
+  RuntimeSession,
+  SessionSpec,
+} from "@quickchatai/pi-quickreview/src/engine/port.js";
 import { piCliRuntime } from "../helpers/pi-cli-runtime.js";
-import { runRound, type RoundSpec } from "../../src/engine/round.js";
-import { roundSdkExtras } from "../../src/engine/roundsdk.js";
-import { sdkRuntime } from "../../src/engine/sdkruntime.js";
+import { runRound, type RoundSpec } from "@quickchatai/pi-quickreview/src/engine/round.js";
+import { roundSdkExtras } from "@quickchatai/pi-quickreview/src/engine/roundsdk.js";
+import { sdkRuntime } from "@quickchatai/pi-quickreview/src/engine/sdkruntime.js";
 import { HOST_CONTEXT_STUB, REVIEWER_STUB } from "../../src/hostroute.js";
-import type { OneShotPrompts } from "../../src/engine/prompts.js";
+import type { OneShotPrompts } from "@quickchatai/pi-quickreview/src/engine/prompts.js";
 import {
   FAKE_MODEL,
   startFakeOpenAI,
@@ -42,8 +46,8 @@ import { useOfflineGuard } from "./harness.js";
 
 vi.stubEnv("QCR_CONFIG", FIXTURE_CONFIG);
 const { benchConfig } = await import("../../src/bench/runner.js");
-const { ecosystemFor } = await import("../../src/ecosystem.js");
-const { renderOneShotPrompts } = await import("../../src/engine/prompts.js");
+const { ecosystemFor } = await import("@quickchatai/pi-quickreview/src/ecosystem.js");
+const { renderOneShotPrompts } = await import("@quickchatai/pi-quickreview/src/engine/prompts.js");
 
 useOfflineGuard({ loopback: true });
 

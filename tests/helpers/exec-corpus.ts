@@ -317,7 +317,7 @@ export const EXEC_CORPUS = [
   // started in the sandbox root, and every project is trusted (the no-stall
   // decision). `.pi/mcp.json` launches server processes, and a `+builtin:mcp`
   // in `.pi/settings.json` overrides the global `-builtin:mcp`
-  // (src/pibuiltins.ts), so `.pi/` is policy surface.
+  // (packages/pi-plugin/src/pibuiltins.ts), so `.pi/` is policy surface.
   {
     round: 9,
     via: "bash",

@@ -26,8 +26,8 @@ import {
   strandedProfile,
   type LocatedProfile,
   type ProfilePlace,
-} from "./profilelookup.js";
-import { parseCoreConfig, type CoreConfig } from "./reviewconfig.js";
+} from "@quickchatai/pi-quickreview/src/profilelookup.js";
+import { parseCoreConfig, type CoreConfig } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 
 export {
   assertPathSegment,
@@ -36,7 +36,7 @@ export {
   type LocatedProfile,
   type ProfilePlace,
   type ProfileSource,
-} from "./profilelookup.js";
+} from "@quickchatai/pi-quickreview/src/profilelookup.js";
 
 /** The slice of the environment the locator reads — nothing else. */
 export interface InstallEnv {
@@ -174,7 +174,7 @@ export function missingConfigMessage(located: LocatedConfig, stranded: string | 
 export const PORTRAIT_DIR = "portrait";
 
 /** The profile directories the install's homes provide, searched before the
- * checkout's generic examples (src/profilelookup.ts):
+ * checkout's generic examples (packages/pi-plugin/src/profilelookup.ts):
  *   1. the install's config home — `<home>/profiles/`
  *   2. `profiles/` beside `$QCR_CONFIG`, when it is set */
 export function homeProfilePlaces(env: InstallEnv = process.env): ProfilePlace[] {
@@ -185,7 +185,7 @@ export function homeProfilePlaces(env: InstallEnv = process.env): ProfilePlace[]
   return places;
 }
 
-/** The profile loaders' lookup (src/profiles.ts `ProfileLookup`) for this
+/** The profile loaders' lookup (packages/pi-plugin/src/profiles.ts `ProfileLookup`) for this
  * install's homes. */
 export function homeProfileLookup(env: InstallEnv = process.env): { homes: ProfilePlace[] } {
   return { homes: homeProfilePlaces(env) };
@@ -204,7 +204,7 @@ export function profileSearchDirs(opts: { root: string; env?: InstallEnv }): str
 }
 
 /** Find the named profile in this install's homes, then the checkout's
- * generic examples (src/profilelookup.ts `findProfile`). */
+ * generic examples (packages/pi-plugin/src/profilelookup.ts `findProfile`). */
 export function locateProfile(opts: {
   root: string;
   profile: string;
@@ -220,7 +220,7 @@ export function locateProfile(opts: {
 }
 
 /** The checkout's `profiles/<name>` when it is an install's own profile left
- * there — stranded, never read (src/profilelookup.ts `strandedProfile`). */
+ * there — stranded, never read (packages/pi-plugin/src/profilelookup.ts `strandedProfile`). */
 export function strandedCheckoutProfile(opts: {
   root: string;
   profile: string;
@@ -342,7 +342,7 @@ export interface OneShotConfig {
 
 /**
  * The config `qcr review` runs on: the located config.toml's review sections
- * (src/reviewconfig.ts `parseCoreConfig`), with `[github] secrets_dir`
+ * (packages/pi-plugin/src/reviewconfig.ts `parseCoreConfig`), with `[github] secrets_dir`
  * located as the daemon locates it. Zero-config: when the install's config
  * home holds no config, the shipped defaults (`<root>/config.example.toml`)
  * stand in. A `$QCR_CONFIG` that names a missing file is still an error — it

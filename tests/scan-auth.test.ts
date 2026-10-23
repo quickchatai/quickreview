@@ -1,4 +1,4 @@
-// The scan sandbox's pi login (src/engine/auth.ts): the
+// The scan sandbox's pi login (packages/pi-plugin/src/engine/auth.ts): the
 // companion's pi home is the only login and the only refresher. A scan reads
 // it read-only and, before every case, takes a fresh private copy of its
 // auth.json with every refresh token neutralised — the copy the benchmark
@@ -29,7 +29,7 @@ import {
   SCAN_AUTH_SRC_ENV,
   SCAN_CASE_AUTH_BUDGET_MS,
   syncScanAuth,
-} from "../src/engine/auth.js";
+} from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import { LOGIN_SUMMARY_SCRIPT, SCAN_AUTH_COPY_SCRIPT, SCANBOX } from "../src/scanbox.js";
 import type { CaseOutcome, CaseRunner, CaseSpec } from "../src/setup/engine.js";
 

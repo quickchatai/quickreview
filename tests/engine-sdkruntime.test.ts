@@ -17,15 +17,15 @@ import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { fauxAssistantMessage, fauxToolCall, type TranscriptContext } from "@earendil-works/pi-ai";
 import { stagesFromEvents, usageFromEvents } from "../src/bench/aacr.js";
-import { PiHost } from "../src/engine/pisdk.js";
+import { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import {
   RuntimeUnsupportedError,
   type Runtime,
   type SessionEvent,
   type SessionSpec,
-} from "../src/engine/port.js";
+} from "@quickchatai/pi-quickreview/src/engine/port.js";
 import { piCliRuntime } from "./helpers/pi-cli-runtime.js";
-import { sdkRuntime } from "../src/engine/sdkruntime.js";
+import { sdkRuntime } from "@quickchatai/pi-quickreview/src/engine/sdkruntime.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";
 import {
   startFakeOpenAI,

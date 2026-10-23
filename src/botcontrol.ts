@@ -20,7 +20,11 @@
 import type { ControlAck, ControlKind } from "./ipc/control.js";
 import { CONTROL_ACK_OP, parseControl } from "./ipc/control.js";
 import { IpcError } from "./ipc/protocol.js";
-import type { Delivery, RuntimeSession, TurnOptions } from "./engine/port.js";
+import type {
+  Delivery,
+  RuntimeSession,
+  TurnOptions,
+} from "@quickchatai/pi-quickreview/src/engine/port.js";
 
 /** How long the ack waits for the session to say what it did with a message before
  * it reports the turn as running ("handled"): an idle session runs the whole turn

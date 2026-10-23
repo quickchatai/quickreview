@@ -1,11 +1,20 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ReviewedHeadRow } from "./state.js";
-import { snapshotMark, standingReview, type StandingMarkSnapshot } from "./standing-review.js";
-import { postingMarker } from "./postingkey.js";
-import type { VerdictFile } from "./types.js";
+import {
+  snapshotMark,
+  standingReview,
+  type StandingMarkSnapshot,
+} from "@quickchatai/pi-quickreview/src/standing-review.js";
+import { postingMarker } from "@quickchatai/pi-quickreview/src/postingkey.js";
+import type { VerdictFile } from "@quickchatai/pi-quickreview/src/types.js";
 
-export { postingKeyAnyHead, postingKeyHead, postingMarker, roundPostingKey } from "./postingkey.js";
+export {
+  postingKeyAnyHead,
+  postingKeyHead,
+  postingMarker,
+  roundPostingKey,
+} from "@quickchatai/pi-quickreview/src/postingkey.js";
 
 export type PostingReceiptStatus = "prepared" | "confirmed" | "dryrun" | "deferred";
 

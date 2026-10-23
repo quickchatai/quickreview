@@ -93,7 +93,7 @@ Fix the code, not the test.
   - `NON_SEEDED` lists the files that are ours to edit.
 
   A failure means a seed was edited. Revert it and change pass behaviour
-  through the addendum registry (`PASS_ADDENDA` in `src/include.ts`). Never
+  through the addendum registry (`PASS_ADDENDA` in `packages/pi-plugin/src/include.ts`). Never
   re-pin the manifest.
 
 - **`invariant-fences.test.ts`** pins the ratified passages inside the

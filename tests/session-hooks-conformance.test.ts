@@ -1,4 +1,4 @@
-// The SessionHooks contract (src/types.ts), stated once and run against every
+// The SessionHooks contract (packages/pi-plugin/src/types.ts), stated once and run against every
 // host in tests/helpers/session-hooks-host.ts. The per-round worker host
 // (`WorkerSessionHost`, P8.6) is the only PR host; a worker IS its command, and
 // its ack is the receipt. The worker's own recovery cases are in
@@ -23,7 +23,7 @@ import {
   roundPromptMarker,
   stampPrompt,
   type RoundOrder,
-} from "../src/types.js";
+} from "@quickchatai/pi-quickreview/src/types.js";
 import { flushHeldWakes, wakeOrHold, type WakeDeps } from "../src/wakes.js";
 import {
   HOST_NOW,

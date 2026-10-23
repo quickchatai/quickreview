@@ -1,4 +1,4 @@
-// A round's inputs for the tests that run src/engine/round.ts: a production-
+// A round's inputs for the tests that run packages/pi-plugin/src/engine/round.ts: a production-
 // shaped root, a prepared tree, a target and its file list. Shared by the round
 // tests and the one-shot canary (tests/pi-canary/canary-10-oneshot-request).
 import { mkdirSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";

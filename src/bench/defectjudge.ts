@@ -8,7 +8,7 @@
 // (`defect-report`) with no model call at all.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import type { Runtime } from "../engine/port.js";
+import type { Runtime } from "@quickchatai/pi-quickreview/src/engine/port.js";
 import { publishText, readJsonObject } from "./publication.js";
 import { usageFromEvents } from "./aacr.js";
 import { runJudgeSession } from "./runner.js";

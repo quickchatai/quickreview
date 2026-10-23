@@ -16,7 +16,7 @@
 // THE MATCHER is deterministic and runs on what state.db already holds — the
 // round's recorded selection (src/lessonledger.ts) and its findings record
 // (round_findings) — at the moment the findings record lands
-// (src/findingsrecord.ts `onRecorded`), and again when a selection is
+// (packages/pi-plugin/src/findingsrecord.ts `onRecorded`), and again when a selection is
 // recorded after its round's findings (it never is in practice: the
 // selection runs at dispatch). A posted finding is MARKED by a dont-raise
 // lesson selected for the round (for any discovery row or the validator)
@@ -64,7 +64,7 @@
 //
 // Nothing here writes memory or GitHub, and nothing here is on a round's path.
 import type { MemoryDelivery } from "./config.js";
-import { globMatcherOrNothing } from "./glob.js";
+import { globMatcherOrNothing } from "@quickchatai/pi-quickreview/src/glob.js";
 import { findingClass, lensIdsOf, tableExists } from "./learner/miner.js";
 import type {
   LessonLedger,
@@ -73,7 +73,7 @@ import type {
   ShadowMatchTier,
   StoredSelection,
 } from "./lessonledger.js";
-import { storedLensIds } from "./lensids.js";
+import { storedLensIds } from "@quickchatai/pi-quickreview/src/lensids.js";
 import { memoryLabel } from "./memory/delivery.js";
 import { classesRelated } from "./memory/lessons.js";
 import { parseCarriedTo } from "./outcomes.js";

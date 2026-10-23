@@ -1,4 +1,4 @@
-// src/localreview.ts: a changed file with a non-ASCII or tab-bearing name keeps
+// packages/pi-plugin/src/localreview.ts: a changed file with a non-ASCII or tab-bearing name keeps
 // its real path (git's numstat would C-quote it), and a capped run's raw
 // findings record reads the way a finished run's does. Real throwaway git repo.
 
@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { groupFindings, resolveUncommitted } from "../src/localreview.js";
+import { groupFindings, resolveUncommitted } from "@quickchatai/pi-quickreview/src/localreview.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "localreview-paths-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));

@@ -1,8 +1,18 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  BUILD_STAMP,
   HotReloader,
   isSupervised,
   parseResumeArg,
@@ -36,7 +46,7 @@ function fakeWatch(): {
   closed: () => boolean;
   dir: () => string | undefined;
 } {
-  let cb: (() => void) | undefined;
+  let cb: Parameters<WatchFn>[2] | undefined;
   let closed = false;
   let dir: string | undefined;
   const watch: WatchFn = (d, _opts, handler) => {
@@ -44,7 +54,7 @@ function fakeWatch(): {
     cb = handler;
     return { close: () => (closed = true) } as unknown as ReturnType<WatchFn>;
   };
-  return { watch, fire: () => cb?.(), closed: () => closed, dir: () => dir };
+  return { watch, fire: () => cb?.("change", "src/x.js"), closed: () => closed, dir: () => dir };
 }
 
 function build(over: Partial<Parameters<typeof makeOpts>[0]> = {}) {
@@ -79,6 +89,62 @@ describe("HotReloader", () => {
     expect(w.dir()).toBe("/sandbox/dist");
     reloader.stop();
     expect(w.closed()).toBe(true);
+  });
+
+  // `tsc -b` writes the core's dist/ before it checks the app, and keeps it
+  // when the app then fails, so that tree is never a reload signal. A
+  // core-only build reloads through the build stamp, written after a whole
+  // pass succeeded; the stamp's directory is watched for that one name.
+  // MUTATION: watch packages/pi-plugin/dist again, or fire on any name in the
+  // stamp's directory — this fails.
+  it("reloads on the app's dist and the build stamp, never on the core's dist", () => {
+    const handlers = new Map<string, { recursive: boolean; cb: Parameters<WatchFn>[2] }>();
+    const reexecs: string[] = [];
+    const reloader = new HotReloader({
+      distDir: "/sandbox/dist",
+      buildStamp: `/sandbox/${BUILD_STAMP}`,
+      stateFile: "/sandbox/state/tui-resume.json",
+      snapshot: () => ({ ...SNAP }),
+      reexec: (f) => reexecs.push(f),
+      watch: (d, opts, cb) => {
+        handlers.set(d, { recursive: opts.recursive, cb });
+        return { close: () => {} } as unknown as ReturnType<WatchFn>;
+      },
+      writeState: () => {},
+    });
+    reloader.start();
+    expect([...handlers.entries()].map(([d, h]) => [d, h.recursive])).toEqual([
+      ["/sandbox/dist", true],
+      ["/sandbox/state", false],
+    ]);
+    // a failing build: the core emitted, the app did not, no stamp — another
+    // file beside the stamp moves, and that is not a signal
+    handlers.get("/sandbox/state")!.cb("change", "tsc-watch.log");
+    vi.advanceTimersByTime(500);
+    expect(reexecs).toEqual([]);
+    // the whole build finished: the stamp moves
+    handlers.get("/sandbox/state")!.cb("change", "build-complete");
+    vi.advanceTimersByTime(500);
+    expect(reexecs).toEqual(["/sandbox/state/tui-resume.json"]);
+  });
+
+  it("a missing stamp directory leaves the app's dist watched", () => {
+    const dirs: string[] = [];
+    const reloader = new HotReloader({
+      distDir: "/sandbox/dist",
+      buildStamp: `/sandbox/${BUILD_STAMP}`,
+      stateFile: "/sandbox/state/tui-resume.json",
+      snapshot: () => ({ ...SNAP }),
+      reexec: () => {},
+      watch: (d) => {
+        if (d.endsWith("/state")) throw new Error("ENOENT");
+        dirs.push(d);
+        return { close: () => {} } as unknown as ReturnType<WatchFn>;
+      },
+      writeState: () => {},
+    });
+    reloader.start();
+    expect(dirs).toEqual(["/sandbox/dist"]);
   });
 
   it("persists the snapshot and re-execs after the debounce", () => {
@@ -466,7 +532,7 @@ describe("the compiler settings the unfiltered dist watch depends on", () => {
     const ignore = readFileSync(join(process.cwd(), "docker", "Dockerfile.dockerignore"), "utf8");
     expect(ignore.split("\n")).toContain("**/node_modules");
     const dockerfile = readFileSync(join(process.cwd(), "docker", "Dockerfile"), "utf8");
-    expect(dockerfile).toMatch(/RUN npx tsc -p tsconfig\.json && node scripts\/verify-dist\.mjs/);
+    expect(dockerfile).toMatch(/RUN npx tsc -b && node scripts\/verify-dist\.mjs/);
     // …and the build stage's COPY lines do not bring a build info along.
     const build = dockerfile.slice(
       dockerfile.indexOf("AS build"),
@@ -502,10 +568,125 @@ describe("the compiler settings the unfiltered dist watch depends on", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  // tsc never deletes the output of an input that is gone, so a source that
+  // moved (the review core into packages/pi-plugin) leaves its old compiled
+  // module in the app's dist/, importable and baked into anything built from it.
+  // MUTATION: drop the orphan walk from verify-dist — this fails.
+  it("that check also reports a compiled module whose source is gone", async () => {
+    const { orphanedArtifacts } = (await import("../scripts/verify-dist.mjs")) as unknown as {
+      orphanedArtifacts(root: string): string[];
+    };
+    const root = mkdtempSync(join(tmpdir(), "qcr-dist-"));
+    mkdirSync(join(root, "src"), { recursive: true });
+    writeFileSync(
+      join(root, "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { outDir: "dist" }, include: ["src/**/*.ts"] }),
+    );
+    writeFileSync(join(root, "src", "kept.ts"), "export const a = 1;");
+    mkdirSync(join(root, "dist", "src"), { recursive: true });
+    writeFileSync(join(root, "dist", "src", "kept.js"), "export const a = 1;");
+    writeFileSync(join(root, "dist", "src", "kept.js.map"), "{}");
+    expect(orphanedArtifacts(root)).toEqual([]);
+    writeFileSync(join(root, "dist", "src", "gate.js"), "export const g = 1;");
+    expect(orphanedArtifacts(root)).toEqual(["dist/src/gate.js"]);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  // Every existing checkout carries the moved core's old output in dist/; the
+  // build removes it rather than failing until someone runs a cold build.
+  // MUTATION: drop the removal from verify-dist — this fails.
+  it("the build removes a compiled module whose source is gone", async () => {
+    const { removeOrphanedArtifacts } = (await import("../scripts/verify-dist.mjs")) as unknown as {
+      removeOrphanedArtifacts(root: string): string[];
+    };
+    const root = mkdtempSync(join(tmpdir(), "qcr-dist-"));
+    mkdirSync(join(root, "src"), { recursive: true });
+    writeFileSync(
+      join(root, "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { outDir: "dist" }, include: ["src/**/*.ts"] }),
+    );
+    writeFileSync(join(root, "src", "kept.ts"), "export const a = 1;");
+    mkdirSync(join(root, "dist", "src"), { recursive: true });
+    writeFileSync(join(root, "dist", "src", "kept.js"), "export const a = 1;");
+    for (const f of ["gate.js", "gate.js.map", "gate.d.ts"])
+      writeFileSync(join(root, "dist", "src", f), "");
+    expect(removeOrphanedArtifacts(root)).toEqual(["dist/src/gate.js"]);
+    expect(readdirSync(join(root, "dist", "src"))).toEqual(["kept.js"]);
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it("does not emit JavaScript from a failing build", () => {
     // Without this tsc emits on error by default: one type error re-emits
     // files into dist/, and the "failed build touches nothing" guarantee
     // does not hold.
     expect(tsconfig.compilerOptions.noEmitOnError).toBe(true);
+  });
+});
+
+// The hot reload hears about a core-only build through one stamp, written
+// after a whole `tsc -b` pass succeeded (src/tui/reload.ts says why the
+// core's dist/ is not watched). Every build route writes it, and only after a
+// clean pass that emitted something.
+describe("the build stamp", () => {
+  const repo = process.cwd();
+
+  it("names one path in the reloader and in the script that writes it", async () => {
+    const stamp = (await import("../scripts/build-stamp.mjs")) as unknown as {
+      BUILD_STAMP: string;
+    };
+    expect(stamp.BUILD_STAMP).toBe(BUILD_STAMP);
+    // the checkout's own state/: outside every dist/, and outside a
+    // node_modules/ a worktree may share
+    expect(BUILD_STAMP.startsWith("state/")).toBe(true);
+  });
+
+  // MUTATION: stamp unconditionally — the watcher's first pass over an
+  // up-to-date tree then re-execs the TUI the moment it opens.
+  it("is written when an output is newer than it, and only then", async () => {
+    const { stampIfNewer } = (await import("../scripts/build-stamp.mjs")) as unknown as {
+      stampIfNewer(root: string): boolean;
+    };
+    const root = mkdtempSync(join(tmpdir(), "qcr-stamp-"));
+    try {
+      expect(stampIfNewer(root)).toBe(false); // no build at all
+      mkdirSync(join(root, "packages", "pi-plugin", "dist", "src"), { recursive: true });
+      const out = join(root, "packages", "pi-plugin", "dist", "src", "m.js");
+      writeFileSync(out, "export {};");
+      expect(stampIfNewer(root)).toBe(true);
+      expect(existsSync(join(root, BUILD_STAMP))).toBe(true);
+      expect(stampIfNewer(root)).toBe(false); // nothing emitted since
+      const later = new Date(Date.now() + 5_000);
+      utimesSync(out, later, later);
+      expect(stampIfNewer(root)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // MUTATION: stamp on any "Found N errors" line — a pass where the core
+  // compiled and the app did not then reloads onto the mismatched tree.
+  it("the watch wrapper stamps after a clean pass only", async () => {
+    const { isCleanPass } = (await import("../scripts/tsc-watch.mjs")) as unknown as {
+      isCleanPass(line: string): boolean;
+    };
+    expect(isCleanPass("5:12:14 PM - Found 0 errors. Watching for file changes.")).toBe(true);
+    expect(isCleanPass("5:12:14 PM - Found 1 error. Watching for file changes.")).toBe(false);
+    expect(isCleanPass("5:12:14 PM - Found 10 errors. Watching for file changes.")).toBe(false);
+    expect(
+      isCleanPass("5:12:14 PM - File change detected. Starting incremental compilation..."),
+    ).toBe(false);
+  });
+
+  it("every build route writes it: npm run build, npm run watch and dev-tui.sh", () => {
+    const pkg = JSON.parse(readFileSync(join(repo, "package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    expect(pkg.scripts.build).toMatch(/verify-dist\.mjs && node scripts\/build-stamp\.mjs$/);
+    expect(pkg.scripts.watch).toContain("scripts/tsc-watch.mjs -b --watch");
+    const dev = readFileSync(join(repo, "scripts", "dev-tui.sh"), "utf8");
+    expect(dev).toContain("node scripts/build-stamp.mjs");
+    expect(dev).toContain('scripts/tsc-watch.mjs" -b --watch');
+    // the blocking build is stamped before the TUI starts watching
+    expect(dev.indexOf("build-stamp.mjs")).toBeLessThan(dev.indexOf('dist/src/cli.js" tui'));
   });
 });

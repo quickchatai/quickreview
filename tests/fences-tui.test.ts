@@ -557,13 +557,23 @@ describe("[T7] every repo path a script or doc points at exists", () => {
           )
             continue;
           for (const m of line.matchAll(
-            /(?<![\w./-])(?:dist|src|extensions|prompts|agents|deploy|docker)\/[A-Za-z0-9._/-]+\.(?:ts|js|mjs|md|sh|json|yml|j2|toml)\b/g,
+            /(?<![\w./-])(?:dist|src|extensions|packages|prompts|agents|deploy|docker)\/[A-Za-z0-9._/-]+\.(?:ts|js|mjs|md|sh|json|yml|j2|toml)\b/g,
           )) {
             const rel = m[0];
-            // dist/ is a build product: absent on a clean checkout, and its
-            // presence is `scripts/verify-dist.mjs`'s job, not this fence's.
-            if (rel.startsWith("dist/") || listed.has(rel)) continue;
-            if (!existsSyncSafe(join(ROOT, rel))) missing.push(`${dir}/${f.name} → ${rel}`);
+            // dist/ is a build product (the app's and a package's): absent on
+            // a clean checkout, and its presence is `scripts/verify-dist.mjs`'s
+            // job, not this fence's.
+            if (/^(?:packages\/[^/]+\/)?dist\//.test(rel) || listed.has(rel)) continue;
+            // The rule-text drafts are pinned word for word to CLAUDE.md
+            // (tests/release-docs.test.ts), so they keep naming the review
+            // core's files where they were before the core became
+            // packages/pi-plugin; such a path counts while the moved file
+            // exists, in that file only, until the texts are re-ratified.
+            const ratifiedOldCorePath =
+              `${dir}/${f.name}` === draftsRel &&
+              existsSyncSafe(join(ROOT, "packages", "pi-plugin", rel));
+            if (!existsSyncSafe(join(ROOT, rel)) && !ratifiedOldCorePath)
+              missing.push(`${dir}/${f.name} → ${rel}`);
           }
         }
       }

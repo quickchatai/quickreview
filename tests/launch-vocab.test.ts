@@ -15,8 +15,8 @@ import {
   launchVocab,
   lensRuntimeOf,
   NATIVE_VOCAB,
-} from "../src/launchvocab.js";
-import { renderPassTaskNote } from "../src/passtasks.js";
+} from "@quickchatai/pi-quickreview/src/launchvocab.js";
+import { renderPassTaskNote } from "@quickchatai/pi-quickreview/src/passtasks.js";
 import {
   renderExtentNote,
   renderPassPlan,
@@ -26,14 +26,14 @@ import {
   renderValidatorShardNote,
   ROUND_TEMPLATE_FILES,
   FOLLOW_UP_TEMPLATE_FILE,
-} from "../src/templates.js";
-import type { PassPlanEntry, RoundOrder } from "../src/types.js";
+} from "@quickchatai/pi-quickreview/src/templates.js";
+import type { PassPlanEntry, RoundOrder } from "@quickchatai/pi-quickreview/src/types.js";
 import { FILES, FIXTURE_CONFIG, TARGET, mkRoot, mkTree } from "./helpers/round-rig.js";
 
 vi.stubEnv("QCR_CONFIG", FIXTURE_CONFIG);
 const { benchConfig } = await import("../src/bench/runner.js");
-const { ecosystemFor } = await import("../src/ecosystem.js");
-const { renderOneShotPrompts } = await import("../src/engine/prompts.js");
+const { ecosystemFor } = await import("@quickchatai/pi-quickreview/src/ecosystem.js");
+const { renderOneShotPrompts } = await import("@quickchatai/pi-quickreview/src/engine/prompts.js");
 const { buildRoundOrder } = await import("../src/dispatch.js");
 
 const read = (file: string): string =>

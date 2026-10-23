@@ -15,30 +15,42 @@ import {
   type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import type { AgentSession, ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import { createBashGuard } from "../extensions/bash-guard.js";
-import { interactiveLens, lensRunConfigFromEnv, lensTools } from "../extensions/lens.js";
+import { createBashGuard } from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
+import {
+  interactiveLens,
+  lensRunConfigFromEnv,
+  lensTools,
+} from "@quickchatai/pi-quickreview/extensions/lens.js";
 import { usageFromEvents, stagesFromEvents } from "../src/bench/aacr.js";
 import { EventCostMeter } from "../src/bench/cost.js";
 import { lensOutputsFromEvents } from "../src/bench/whatif.js";
-import { engineLensTools } from "../src/engine/lens/engine-tools.js";
-import { planLaunch, type LaunchUnit } from "../src/engine/lens/launch-plan.js";
-import { loadBuiltAgents } from "../src/engine/lens/registry.js";
+import { engineLensTools } from "@quickchatai/pi-quickreview/src/engine/lens/engine-tools.js";
+import {
+  planLaunch,
+  type LaunchUnit,
+} from "@quickchatai/pi-quickreview/src/engine/lens/launch-plan.js";
+import { loadBuiltAgents } from "@quickchatai/pi-quickreview/src/engine/lens/registry.js";
 import {
   createLensRunner,
   type LensRun,
   type LensRunConfig,
   type LensRunner,
-} from "../src/engine/lens/runlens.js";
+} from "@quickchatai/pi-quickreview/src/engine/lens/runlens.js";
 import {
   LENS_TOOL,
   LENS_WAVE_TOOL,
   lensToolDefinitions,
   type LensToolDeps,
-} from "../src/engine/lens/tool.js";
-import { LensWave, launchWave, runSafely, type WaveRunner } from "../src/engine/lens/wave.js";
-import { roundSdkExtras } from "../src/engine/roundsdk.js";
-import { DEFAULT_TOOLS } from "../src/engine/pisdk.js";
-import { isLensTool, lensIdOf, parseLedger } from "../src/lensresult.js";
+} from "@quickchatai/pi-quickreview/src/engine/lens/tool.js";
+import {
+  LensWave,
+  launchWave,
+  runSafely,
+  type WaveRunner,
+} from "@quickchatai/pi-quickreview/src/engine/lens/wave.js";
+import { roundSdkExtras } from "@quickchatai/pi-quickreview/src/engine/roundsdk.js";
+import { DEFAULT_TOOLS } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import { isLensTool, lensIdOf, parseLedger } from "@quickchatai/pi-quickreview/src/lensresult.js";
 import { createHostRig, useOfflineGuard, type HostRig } from "./pi-canary/harness.js";
 
 useOfflineGuard();

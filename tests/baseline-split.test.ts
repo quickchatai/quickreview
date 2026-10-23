@@ -14,17 +14,17 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import { buildPassPlan, buildRoundOrder } from "../src/dispatch.js";
-import { NONE_ECOSYSTEM } from "../src/ecosystem.js";
+import { NONE_ECOSYSTEM } from "@quickchatai/pi-quickreview/src/ecosystem.js";
 import type { PrFileEntry } from "../src/github.js";
 import {
   BASELINE_SPLIT_MAX_ROWS,
   baselineGroups,
   baselineSplitLines,
   isSplitBaselineRow,
-} from "../src/heuristics.js";
-import { renderPassTask } from "../src/passtasks.js";
+} from "@quickchatai/pi-quickreview/src/heuristics.js";
+import { renderPassTask } from "@quickchatai/pi-quickreview/src/passtasks.js";
 import type { PrStateRow } from "../src/state.js";
-import { renderPassPlan } from "../src/templates.js";
+import { renderPassPlan } from "@quickchatai/pi-quickreview/src/templates.js";
 
 const sandbox = resolve(import.meta.dirname, "..");
 const fixture: Config = parseConfig(

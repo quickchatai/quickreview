@@ -78,7 +78,10 @@ import type { ScanRunner, ScanRun, ScanSettings, ScanStatus } from "./setup/scan
 import { lensTiers, stage2Lenses, MAX_STAGE2_ROWS } from "./setup/stage2.js";
 import type { StoredStage2Proposal } from "./setup/stage2request.js";
 import type { CloseFixedResult, ScanTriage } from "./setup/triage.js";
-import { SCAN_SCHEMA_VERSION, withSchemaVersion } from "./contract.js";
+import {
+  SCAN_SCHEMA_VERSION,
+  withSchemaVersion,
+} from "@quickchatai/pi-quickreview/src/contract.js";
 
 export const SCAN_USAGE =
   "usage: qcr scan preview [--sha REF] [--delta] | start --key K [--sha REF] [--delta] [--foreground] | " +

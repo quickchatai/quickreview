@@ -413,7 +413,7 @@ function playRound(s) {
         "c3",
         `QCR_EXPECTED_HEAD=${head} QCR_ROUND_NO=${round} scripts/post-review.sh ${pr} REQUEST_CHANGES state/pr-${pr}-round-${round}-review.md`,
       ),
-    // The findings record the round templates ask for (src/findingsrecord.ts): none raised.
+    // The findings record the round templates ask for (packages/pi-plugin/src/findingsrecord.ts): none raised.
     () =>
       canWrite
         ? { tools: [{ id: "c4", name: "write", args: { path: findingsFile, content: findings } }] }

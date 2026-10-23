@@ -31,7 +31,7 @@ import {
   type PostingReceipt,
 } from "../src/posting-receipt.js";
 import type { PostOutcome } from "../src/postops.js";
-import type { PassPlanEntry } from "../src/types.js";
+import type { PassPlanEntry } from "@quickchatai/pi-quickreview/src/types.js";
 import {
   BOT,
   COMMENTS,

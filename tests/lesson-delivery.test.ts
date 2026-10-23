@@ -20,11 +20,11 @@ import { join, resolve } from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { parseConfig, sandboxRoot, type Config, type MemoryDelivery } from "../src/config.js";
 import { dispatchOnce, type DispatchAdapter } from "../src/dispatch.js";
-import { ecosystemFor } from "../src/ecosystem.js";
+import { ecosystemFor } from "@quickchatai/pi-quickreview/src/ecosystem.js";
 import { feedbackDayAddendum } from "../src/feedback.js";
-import { DOWNGRADE_WORDS, KILL_WORDS } from "../src/findingsrecord.js";
+import { DOWNGRADE_WORDS, KILL_WORDS } from "@quickchatai/pi-quickreview/src/findingsrecord.js";
 import { serveAuthorReply, withRepoFacts } from "../src/daemon.js";
-import type { GateResult } from "../src/gate.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
 import {
   buildAgents,
@@ -36,7 +36,7 @@ import {
   lessonAddendaFor,
   PASS_ADDENDA,
   VALIDATE_PASS,
-} from "../src/include.js";
+} from "@quickchatai/pi-quickreview/src/include.js";
 import { LessonLedger } from "../src/lessonledger.js";
 import { RoundLessonSelector, type RoundLessonHook } from "../src/lessonselect.js";
 import { assembleRoundMemory, type ContextAssembler } from "../src/memory/context.js";
@@ -66,8 +66,8 @@ import {
   type FindOutcome,
   type LessonEngine,
 } from "../src/memory/selection.js";
-import { writeLessonFiles } from "../src/passtasks.js";
-import { reservedAddendumIds } from "../src/profiles.js";
+import { writeLessonFiles } from "@quickchatai/pi-quickreview/src/passtasks.js";
+import { reservedAddendumIds } from "@quickchatai/pi-quickreview/src/profiles.js";
 import { runRecheck, type DeltaFile } from "../src/recheck.js";
 import { StateStore } from "../src/state.js";
 import {
@@ -75,8 +75,8 @@ import {
   renderRecheckPrompt,
   renderRoundPrompt,
   roundTemplateFile,
-} from "../src/templates.js";
-import type { RoundOrder, RoundType, SessionHooks } from "../src/types.js";
+} from "@quickchatai/pi-quickreview/src/templates.js";
+import type { RoundOrder, RoundType, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const ROOT = resolve(process.cwd());

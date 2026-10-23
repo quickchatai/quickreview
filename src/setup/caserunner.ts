@@ -8,7 +8,7 @@
 // fence checks it too) — and what it spawns is a leaf: `-p --no-session -ne`
 // with bash-guard the one extension, read-only tools, no memory, no fan-out
 // (root rule 9: no new session kind, nothing on the VM).
-import { CASE_STOP_GRACE_MS } from "../casebudget.js";
+import { CASE_STOP_GRACE_MS } from "@quickchatai/pi-quickreview/src/casebudget.js";
 import { spawn as nodeSpawn } from "node:child_process";
 import {
   appendFileSync,
@@ -25,7 +25,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { GITHUB_TOKEN_ENVS } from "../envstrip.js";
+import { GITHUB_TOKEN_ENVS } from "@quickchatai/pi-quickreview/src/envstrip.js";
 import { PI_PACKAGE, piCliPath } from "../picli.js";
 import type { CaseOutcome, CaseRunner, CaseSpec } from "./engine.js";
 
@@ -291,7 +291,7 @@ export function caseReadout(
 
 /** What a leaf's pi process may inherit, by exact name. The leaf's model runs
  * bash, so the process env is allowlisted rather than copied: no GitHub
- * credential (src/envstrip.ts) and nothing else of the driver's reaches it. */
+ * credential (packages/pi-plugin/src/envstrip.ts) and nothing else of the driver's reaches it. */
 const LEAF_ENV_NAMES: ReadonlySet<string> = new Set([
   "PATH",
   "HOME",
@@ -425,7 +425,7 @@ export function piCaseRunner(opts: {
   cwd: string;
   /** Where each case's event stream is kept; absent, none is. */
   transcriptDir?: string;
-  /** The production tree holding extensions/bash-guard.ts. Omitted: `cwd`
+  /** The production tree holding packages/pi-plugin/extensions/bash-guard.ts. Omitted: `cwd`
    * (the app root in every production caller). */
   root?: string;
   /** The env the leaf's env is filtered from. Omitted: process.env. */

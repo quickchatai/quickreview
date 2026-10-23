@@ -11,7 +11,7 @@ posted real finding. This replays, from stored data only (no review, no judge):
 KIND is aacr | martian | qodo | swepr (lens_yield.py's adapters). For every case
 it rebuilds the PR's per-file patches from the local caches (AACR: the code
 dir's pr.diff; Martian / Qodo / SWE-PRBench: `git diff` in the bare caches at
-the reviewed base and head), runs the BUILT heuristics (dist/src/heuristics.js,
+the reviewed base and head), runs the BUILT heuristics (packages/pi-plugin/dist/src/heuristics.js,
 run `npm run build` first) with and without the patches — without = the old
 trigger — and reports:
 
@@ -147,7 +147,7 @@ def main() -> None:
             posted_any = any(DELTA in g["raisers"] and g["posted"] for g in groups)
             raised = any(DELTA in g["raisers"] for g in groups)
             meta[key] = {"no_patch": pt is None, "posted_real": posted_real, "posted": posted_any, "raised": raised}
-    dist = ROOT / "dist" / "src" / "heuristics.js"
+    dist = ROOT / "packages" / "pi-plugin" / "dist" / "src" / "heuristics.js"
     r = subprocess.run(["node", "--input-type=commonjs", "-e", f"(async()=>{{{NODE}}})()", str(dist)],
                        input=json.dumps(payload), capture_output=True, text=True)
     if r.returncode != 0:

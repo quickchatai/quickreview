@@ -42,7 +42,7 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { StateStore } from "../state.js";
-import { yieldToLoop } from "../yieldloop.js";
+import { yieldToLoop } from "@quickchatai/pi-quickreview/src/yieldloop.js";
 import {
   existsOnDisk,
   isBusy,

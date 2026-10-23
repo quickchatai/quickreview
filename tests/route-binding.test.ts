@@ -16,16 +16,19 @@ import { parseConfig, sandboxRoot, type Config } from "../src/config.js";
 import { dispatchOnce, type DispatchAdapter } from "../src/dispatch.js";
 import { debugRoundOrder } from "../src/debugroundpi.js";
 import type { DebugRoundSpec } from "../src/debuground.js";
-import { ecosystemFor } from "../src/ecosystem.js";
-import type { GateResult } from "../src/gate.js";
+import { ecosystemFor } from "@quickchatai/pi-quickreview/src/ecosystem.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
-import { identityVars } from "../src/include.js";
-import { assertOrderFitsHost } from "../src/launchvocab.js";
-import { sessionCommandMarker } from "../src/session-command.js";
+import { identityVars } from "@quickchatai/pi-quickreview/src/include.js";
+import { assertOrderFitsHost } from "@quickchatai/pi-quickreview/src/launchvocab.js";
+import { sessionCommandMarker } from "@quickchatai/pi-quickreview/src/session-command.js";
 import { PiSessionManager } from "../src/sessions.js";
 import { StateStore } from "../src/state.js";
-import { renderRoundPrompt, templateFileForOrder } from "../src/templates.js";
-import type { RoundOrder, SessionHooks } from "../src/types.js";
+import {
+  renderRoundPrompt,
+  templateFileForOrder,
+} from "@quickchatai/pi-quickreview/src/templates.js";
+import type { RoundOrder, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { openWorkerRig, type WorkerHostRig } from "./helpers/session-hooks-host.js";
 
 const ROOT = resolve(process.cwd());

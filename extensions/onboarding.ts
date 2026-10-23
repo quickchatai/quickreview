@@ -25,7 +25,11 @@ import type {
   ExtensionFactory,
   ExtensionToolContext,
 } from "@earendil-works/pi-coding-agent";
-import { registerQcrTool, textResult as text, type QcrTool } from "./pi-tool.js";
+import {
+  registerQcrTool,
+  textResult as text,
+  type QcrTool,
+} from "@quickchatai/pi-quickreview/extensions/pi-tool.js";
 import {
   OnboardingEngine,
   type CheckResult,

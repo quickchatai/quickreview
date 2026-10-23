@@ -1,7 +1,7 @@
 // The bot login's single refresher (P8.22, the VM-only exception to D5).
 //
 // After the cutover no pi session lives long enough to refresh the bot's login:
-// workers borrow refresh-blanked copies (src/engine/auth.ts). So ONE process
+// workers borrow refresh-blanked copies (packages/pi-plugin/src/engine/auth.ts). So ONE process
 // owns `pihome/agent/auth.json`: this one. It is a separate small Node process
 // (main.ts) the daemon spawns and supervises by path, so the daemon imports
 // neither pi nor src/engine/.

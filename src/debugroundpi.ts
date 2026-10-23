@@ -9,7 +9,7 @@
 //
 //   1. reads the spec file the daemon wrote (0600, no secret) and removes it;
 //   2. makes the pi its OWN agent dir: the owner's login BORROWED as a
-//      refresh-blanked copy (D5; src/engine/auth.ts, the takeover's copy), never the
+//      refresh-blanked copy (D5; packages/pi-plugin/src/engine/auth.ts, the takeover's copy), never the
 //      refresher's file and never a write to it, plus the model and settings files
 //      and a link to the built lens agents. The pi cannot refresh;
 //   3. writes the round order the extension sends as the first message: the round's
@@ -46,10 +46,10 @@ import {
   shareWithToolGroup,
   toolIsolation,
   toolUidEnv,
-} from "./engine/tooluid.js";
-import { planLaunch } from "./engine/lens/launch-plan.js";
-import { engineLensSection } from "./engine/lens/section.js";
-import { CONTEXT_PACK_FILE } from "./contextpack.js";
+} from "@quickchatai/pi-quickreview/src/engine/tooluid.js";
+import { planLaunch } from "@quickchatai/pi-quickreview/src/engine/lens/launch-plan.js";
+import { engineLensSection } from "@quickchatai/pi-quickreview/src/engine/lens/section.js";
+import { CONTEXT_PACK_FILE } from "@quickchatai/pi-quickreview/src/contextpack.js";
 import { verifiedPayload } from "./session-command-payload.js";
 import { DEBUG_START_MESSAGE } from "./engine/debugpi.js";
 import { DEBUG_STATUS_NAME, debugSession, type DebugRoundSpec } from "./debuground.js";

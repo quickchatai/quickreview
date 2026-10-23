@@ -33,7 +33,7 @@ walkthroughs already exist and are not repeated here — this page links them:
 | Compose helpers shared by the bring-up tail | `src/onboard/steps/compose.ts` |
 | GitHub App manifest exchange | `src/onboard/steps/githubapp.ts`, `deploy/github-app-manifest.json` |
 | Webhook ingress choice and config | `src/onboard/steps/ingress.ts`, `docker/tunnel/sidecar.mjs` |
-| Webhook URL self-heal | `src/webhookheal.ts`, `src/gate.ts` (`update_own_webhook_url`) |
+| Webhook URL self-heal | `src/webhookheal.ts`, `packages/pi-plugin/src/gate.ts` (`update_own_webhook_url`) |
 | Secrets collection (interactive) | `deploy/collect-secrets.sh`, `deploy/collect-slack-secrets.mjs` |
 | Laptop topology runtime | `docker-compose.yml`, `docker/README.md` |
 | Server topology runtime | `deploy/ansible/playbook.yml`, `deploy/ansible/group_vars/all.yml` |
@@ -276,7 +276,7 @@ sometimes rewrite the file within a second. Outcomes are explicit — `noop`,
 `healed`, `missing`, `invalid`, `failed` — and every failure surfaces as a log
 event plus an anomaly, never a crash and never silence.
 
-The mutation itself is `update_own_webhook_url` in `src/gate.ts` — a JWT-authed
+The mutation itself is `update_own_webhook_url` in `packages/pi-plugin/src/gate.ts` — a JWT-authed
 `PATCH /app/hook/config`. It is the sole member of `APP_SELF_CONFIG_KINDS`, the
 one class the gate executes even in dry-run, because a new installation runs
 dry-run during exactly the window the self-heal matters, and because the call
@@ -540,7 +540,7 @@ reviewed repo") to any concrete identity in a new doc.
 If you are editing anything on this page, these are the properties that must
 survive the edit:
 
-1. **One mutation gate.** Every GitHub write goes through `src/gate.ts`.
+1. **One mutation gate.** Every GitHub write goes through `packages/pi-plugin/src/gate.ts`.
    `APP_SELF_CONFIG_KINDS` stays a closed set of one, pinned by deep equality.
 2. **`dry_run` is not a wizard output.** Only `flipDryRunToFalse` writes it, and
    only with the confirmation phrase and a re-verified proof record.

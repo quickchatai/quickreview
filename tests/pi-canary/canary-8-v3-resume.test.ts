@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { PiHost } from "../../src/engine/pisdk.js";
+import { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import { type Rig, createRig, useOfflineGuard } from "./harness.js";
 
 useOfflineGuard();

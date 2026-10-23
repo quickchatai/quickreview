@@ -57,30 +57,59 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { EventCostMeter } from "./bench/cost.js";
-import { CONTEXT_PACK_FILE } from "./contextpack.js";
+import { CONTEXT_PACK_FILE } from "@quickchatai/pi-quickreview/src/contextpack.js";
 import {
   AuthError,
   classifyAuthFailure,
   engineCredentials,
   type EngineAuth,
-} from "./engine/auth.js";
-import { agentDirSettings } from "./engine/agentdir.js";
+} from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import { agentDirSettings } from "@quickchatai/pi-quickreview/src/engine/agentdir.js";
 import { COMMIT_VERDICT_RE } from "./engine/answerguard.js";
 import { NO_LENS, botSdkRuntime } from "./engine/botsdk.js";
-import { engineLensTools, type EngineLensTools } from "./engine/lens/engine-tools.js";
-import type { Permits } from "./engine/lens/permits.js";
-import type { LensRunConfig } from "./engine/lens/runlens.js";
-import { planLaunch, type LaunchUnit } from "./engine/lens/launch-plan.js";
-import { engineLensSection } from "./engine/lens/section.js";
-import { LensWave, launchWave, type WaveRow } from "./engine/lens/wave.js";
-import type { LensRun } from "./engine/lens/runlens.js";
-import { stopLiveSessions } from "./engine/livesessions.js";
-import { LENS_LEDGER_FILE, LENS_SESSIONS_DIR } from "./engine/openable.js";
-import { PiHost, headerId, type PiHostOptions } from "./engine/pisdk.js";
-import type { RuntimeSession, SessionSpec, TurnOptions, TurnResult } from "./engine/port.js";
-import { engineLensConfig } from "./engine/reviewsdk.js";
-import { credentialPaths, loginSourceDirs } from "./engine/toolfence.js";
-import { TOOL_UMASK, checkToolUid, toolIdsOf } from "./engine/tooluid.js";
+import {
+  engineLensTools,
+  type EngineLensTools,
+} from "@quickchatai/pi-quickreview/src/engine/lens/engine-tools.js";
+import type { Permits } from "@quickchatai/pi-quickreview/src/engine/lens/permits.js";
+import type { LensRunConfig } from "@quickchatai/pi-quickreview/src/engine/lens/runlens.js";
+import {
+  planLaunch,
+  type LaunchUnit,
+} from "@quickchatai/pi-quickreview/src/engine/lens/launch-plan.js";
+import { engineLensSection } from "@quickchatai/pi-quickreview/src/engine/lens/section.js";
+import {
+  LensWave,
+  launchWave,
+  type WaveRow,
+} from "@quickchatai/pi-quickreview/src/engine/lens/wave.js";
+import type { LensRun } from "@quickchatai/pi-quickreview/src/engine/lens/runlens.js";
+import { stopLiveSessions } from "@quickchatai/pi-quickreview/src/engine/livesessions.js";
+import {
+  LENS_LEDGER_FILE,
+  LENS_SESSIONS_DIR,
+} from "@quickchatai/pi-quickreview/src/engine/openable.js";
+import {
+  PiHost,
+  headerId,
+  type PiHostOptions,
+} from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import type {
+  RuntimeSession,
+  SessionSpec,
+  TurnOptions,
+  TurnResult,
+} from "@quickchatai/pi-quickreview/src/engine/port.js";
+import { engineLensConfig } from "@quickchatai/pi-quickreview/src/engine/reviewsdk.js";
+import {
+  credentialPaths,
+  loginSourceDirs,
+} from "@quickchatai/pi-quickreview/src/engine/toolfence.js";
+import {
+  TOOL_UMASK,
+  checkToolUid,
+  toolIdsOf,
+} from "@quickchatai/pi-quickreview/src/engine/tooluid.js";
 import { connectFromEnv, type IpcClient } from "./ipc/client.js";
 import { brokerPermits } from "./ipc/permits.js";
 import { IpcError, type IpcEventKind } from "./ipc/protocol.js";
@@ -98,7 +127,7 @@ import {
 } from "./ipc/workerspec.js";
 import { WorkerControls, ackSender } from "./botcontrol.js";
 import { MAX_REPLY_CHARS, operatorMayPost } from "./operatormessage.js";
-import { sessionCommandMarker } from "./session-command.js";
+import { sessionCommandMarker } from "@quickchatai/pi-quickreview/src/session-command.js";
 import { verifiedPayload } from "./session-command-payload.js";
 import { newestSessionFile } from "./sessionjsonl.js";
 

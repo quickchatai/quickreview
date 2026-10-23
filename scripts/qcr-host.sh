@@ -35,7 +35,7 @@
 # container that mounts secrets: the token is GITHUB_TOKEN, GH_TOKEN or
 # `gh auth token`, resolved HERE on the host. It is handed over as a 0600 file
 # in a fresh 0700 directory, which the image reads once and unlinks (D39 amending
-# R7, src/ghcred.ts); it is never in -e/--env or in any argv.
+# R7, packages/pi-plugin/src/ghcred.ts); it is never in -e/--env or in any argv.
 #
 # Model-reaching calls start as root with only CAP_SETUID/CAP_SETGID and drop to
 # your uid inside, so the model's tools can run as another uid and the kernel

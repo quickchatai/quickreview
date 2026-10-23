@@ -26,13 +26,20 @@ import { dirname, join, relative, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import { ALL_PASSES, buildPassPlan } from "../src/dispatch.js";
-import { NONE_ECOSYSTEM } from "../src/ecosystem.js";
+import { NONE_ECOSYSTEM } from "@quickchatai/pi-quickreview/src/ecosystem.js";
 import type { PrFileEntry } from "../src/github.js";
-import { PASS_ADDENDA, buildAgents } from "../src/include.js";
+import { PASS_ADDENDA, buildAgents } from "@quickchatai/pi-quickreview/src/include.js";
 import { configHome, homeProfileLookup, type InstallEnv } from "../src/install.js";
-import { applyProfileTuning, lensModelOverrides, lensTuningAddenda } from "../src/lenstuning.js";
+import {
+  applyProfileTuning,
+  lensModelOverrides,
+  lensTuningAddenda,
+} from "@quickchatai/pi-quickreview/src/lenstuning.js";
 import type { MemoryEntry, MemoryOp, MemoryStore } from "../src/memory/store.js";
-import { loadProfileAddenda, loadProfileLensTuning } from "../src/profiles.js";
+import {
+  loadProfileAddenda,
+  loadProfileLensTuning,
+} from "@quickchatai/pi-quickreview/src/profiles.js";
 import { notYetTrackerSink, stateHomeFs } from "../src/setup/adapters.js";
 import { processProfileCommits, refusePath, type GitRun } from "../src/setup/configcommit.js";
 import { SetupEngine, type Refusal } from "../src/setup/engine.js";

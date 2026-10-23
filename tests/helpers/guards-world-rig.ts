@@ -1,6 +1,6 @@
 // The world behind the posting-guard parity block in tests/guards.test.ts: a
 // loopback GitHub stub, a temp home with state.db and config.toml. The Node
-// route (the real MutationGate with src/guards.ts and the real GitHubAdapter)
+// route (the real MutationGate with packages/pi-plugin/src/guards.ts and the real GitHubAdapter)
 // reads it; the shell route that once read it too is gone (P9.3).
 //
 // No real GitHub and no real credential: the adapter's base URL points at the

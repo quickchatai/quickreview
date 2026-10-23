@@ -64,7 +64,7 @@ export const TAKEOVER_IDLE_MS = 30 * 60_000;
 export const TAKEOVER_TOOLS = "read,grep,find,ls,bash";
 
 /** The names the pane's entry reads to mark the pi as a takeover: bash-guard
- * blocks the post scripts when it is set (extensions/bash-guard.ts). */
+ * blocks the post scripts when it is set (packages/pi-plugin/extensions/bash-guard.ts). */
 export const TAKEOVER_ENV = "QCR_TAKEOVER";
 
 export const takeoverSession = (pr: number): string => `takeover-pr-${pr}`;

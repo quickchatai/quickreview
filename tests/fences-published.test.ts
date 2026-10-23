@@ -135,7 +135,7 @@ describe("MANIFESTO.md is pinned by something", () => {
    * true at publication and false a month later; the rule is structural, not
    * a style note.
    *
-   * MUTATION: write "3 of 105 rounds" or "`src/gate.ts`" anywhere in
+   * MUTATION: write "3 of 105 rounds" or "`packages/pi-plugin/src/gate.ts`" anywhere in
    * MANIFESTO.md — this fails naming the line.
    */
   it("states no number and names no implementation", () => {
@@ -157,7 +157,7 @@ describe("MANIFESTO.md is pinned by something", () => {
    */
   it("ALL_PASSES and agents/pass-*.md agree", () => {
     const passFiles = readdirSync(join(ROOT, "agents")).filter((f) => /^pass-.*\.md$/.test(f));
-    const allPasses = arrayMembers("src/passes.ts", "ALL_PASSES");
+    const allPasses = arrayMembers("packages/pi-plugin/src/passes.ts", "ALL_PASSES");
     expect(
       allPasses.length,
       "ALL_PASSES and agents/pass-*.md disagree — a lens with no agent file, or an agent file with no plan entry",
@@ -287,7 +287,7 @@ describe("MANIFESTO.md is pinned by something", () => {
     ];
 
     const seen = new Map<string, string>();
-    for (const root of ["src", "deploy", "docker"]) {
+    for (const root of ["src", "packages/pi-plugin/src", "deploy", "docker"]) {
       for (const f of allFiles(join(ROOT, root))) {
         if (/\.(png|jpg|jpeg|ico|gz|pem|lock)$/.test(f)) continue;
         for (const m of readFileSync(f, "utf8").matchAll(/https?:\/\/([A-Za-z0-9._-]+)/g)) {
@@ -330,7 +330,7 @@ describe("MANIFESTO.md is pinned by something", () => {
    */
   it("nothing in the code invokes the feedback-mining skill", () => {
     const hits: string[] = [];
-    for (const root of ["src", "scripts"]) {
+    for (const root of ["src", "packages/pi-plugin/src", "scripts"]) {
       for (const f of allFiles(join(ROOT, root))) {
         if (readFileSync(f, "utf8").includes("feedback-mining"))
           hits.push(f.slice(ROOT.length + 1));

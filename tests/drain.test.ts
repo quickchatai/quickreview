@@ -29,7 +29,7 @@ import { loadConfig, parseConfig, type Config } from "../src/config.js";
 import { createDaemon, type DaemonAdapter } from "../src/daemon.js";
 import { dispatchOnce, type DispatchAdapter } from "../src/dispatch.js";
 import { startEodTimer } from "../src/eod.js";
-import type { GateResult } from "../src/gate.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { PrRef } from "../src/github.js";
 import { runBaseAdvance, runRecheck } from "../src/recheck.js";
 import { buildStatusSnapshot, StateStore } from "../src/state.js";

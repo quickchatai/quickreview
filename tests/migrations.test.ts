@@ -6,7 +6,7 @@ import {
   detectMigrationCollisions,
   parseMigrationPath,
   renderMigrationCollisionComment,
-} from "../src/migrations.js";
+} from "@quickchatai/pi-quickreview/src/migrations.js";
 
 const BASE = [
   "backend/chat/migrations/__init__.py",

@@ -21,7 +21,7 @@
 //
 // The login is the companion's: one login, refreshed by the companion alone.
 // Before every case the driver copies its auth.json into the tmpfs pi home
-// with the refresh token neutralised (src/engine/auth.ts), so the scan never
+// with the refresh token neutralised (packages/pi-plugin/src/engine/auth.ts), so the scan never
 // refreshes and never writes anything the companion reads; a case the access
 // token would not outlive is refused.
 //
@@ -60,9 +60,9 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { writeAtomic } from "./channelfs.js";
 import { appStamp } from "./appstamp.js";
-import { isInside } from "./pathinside.js";
+import { isInside } from "@quickchatai/pi-quickreview/src/pathinside.js";
 import type { ScanSandboxConfig } from "./config.js";
-import type { LoginSummary } from "./engine/auth.js";
+import type { LoginSummary } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import {
   PI_REFRESH_MARGIN_MS,
   SCAN_AUTH_FIX,
@@ -70,7 +70,7 @@ import {
   SCAN_CASE_AUTH_BUDGET_MS,
   scanAuthExpiring,
   scanAuthMissing,
-} from "./engine/auth.js";
+} from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import {
   COMPANION_COMMANDS_DIR,
   configHome,
@@ -389,7 +389,7 @@ export async function scanLoginRoute(
 /** Prints the login summary of the agent dir named by its argument
  * (`loginSummary`: providers and expiries, never a token). Both scripts import
  * the container's built dist by path: src/piauthcopy.js and src/scanauth.js are
- * re-exports of src/engine/auth.js until the companion image is rebuilt. */
+ * re-exports of packages/pi-plugin/src/engine/auth.js until the companion image is rebuilt. */
 export const LOGIN_SUMMARY_SCRIPT =
   `const { readFileSync } = await import("node:fs");` +
   `const { loginSummary } = await import("${SCANBOX.app}/dist/src/piauthcopy.js");` +

@@ -14,7 +14,7 @@ import {
   protectedPatternHit,
   redirectTargets,
   type SecretPathContext,
-} from "../extensions/bash-guard.js";
+} from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
 import activate from "../extensions/cli/bash-guard.js";
 import {
   bashGuardConfigFromEnv,
@@ -637,7 +637,7 @@ describe("checkWritePath / git's configuration surface", () => {
 // these writes a policy file, and was verified by execution:
 //
 //     cat /tmp/evil > config.toml                     → the guards' own config
-//     cat /tmp/evil > dist/extensions/bash-guard.js   → the compiled guard
+//     cat /tmp/evil > packages/pi-plugin/dist/extensions/bash-guard.js   → the compiled guard
 //     printf 'x'   > scripts/post-review.sh           → the gate's shell mirror
 //
 // One predicate (`isProtectedWriteTarget`) binds BOTH boundaries — the
@@ -657,7 +657,7 @@ describe("checkWritePath / this system's own policy surface", () => {
   };
 
   // MUTATION: drop "scripts" (or "dist") from POLICY_SURFACE_DIRS, or
-  // "config.toml" from POLICY_SURFACE_FILES, in extensions/bash-guard.ts — the
+  // "config.toml" from POLICY_SURFACE_FILES, in packages/pi-plugin/extensions/bash-guard.ts — the
   // matching lines fail, in this test AND in the redirection test below,
   // because both read the one definition.
   it("refuses a write to every policy-carrying file, through the write tool", () => {
@@ -711,7 +711,7 @@ describe("checkWritePath / this system's own policy surface", () => {
   });
 
   // MUTATION: delete any one `.replace` line from `normalizeRedirections` in
-  // extensions/bash-guard.ts — the matching spelling below goes green (and so
+  // packages/pi-plugin/extensions/bash-guard.ts — the matching spelling below goes green (and so
   // does its `.git/config` twin: each spelling would bypass the git-config
   // veto too).
   it("knows every spelling of an output redirection, not only `>` and `>>`", () => {
@@ -741,7 +741,7 @@ describe("checkWritePath / this system's own policy surface", () => {
     allow("cat x 1>&- 2>/dev/null");
   });
 
-  // MUTATION: change `dequote` in extensions/bash-guard.ts to strip only the
+  // MUTATION: change `dequote` in packages/pi-plugin/extensions/bash-guard.ts to strip only the
   // leading/trailing quotes — the first three lines go green.
   it("judges the target by the name bash would OPEN, not by its spelling", () => {
     // bash concatenates `con"fig".toml`, `config\.toml` and `'config'.toml`
@@ -769,7 +769,7 @@ describe("checkWritePath / this system's own policy surface", () => {
     block("echo f | xargs sed -i 's/a/b/' config.toml", "policy surface");
   });
 
-  // MUTATION: in `checkSegment` (extensions/bash-guard.ts) delete the
+  // MUTATION: in `checkSegment` (packages/pi-plugin/extensions/bash-guard.ts) delete the
   // `if (raw.slice(…) === "bash")` block that lifts the payload, and make
   // checkProgram's bash branch return { allowed: true } on -c — every door-4
   // line goes green: the sanctioned script launders what follows it.
@@ -921,7 +921,7 @@ describe("checkWritePath / the memory-scope files a session's recall reads", () 
   };
 
   // MUTATION: drop either entry of MEMORY_SCOPE_SURFACE_RE in
-  // extensions/bash-guard.ts (or `isMemoryScopeSurface` from
+  // packages/pi-plugin/extensions/bash-guard.ts (or `isMemoryScopeSurface` from
   // `isProtectedWriteTarget`) — the matching lines here AND in the
   // redirection test below fail, because both read the one predicate.
   it("refuses the very paths the daemon writes, through the write tool", () => {
@@ -1066,7 +1066,7 @@ describe("checkWritePath / the wake-delivery files", () => {
   };
 
   // MUTATION: drop any entry of DELIVERY_SURFACE_RE in
-  // extensions/bash-guard.ts (or `isDeliverySurface` from
+  // packages/pi-plugin/extensions/bash-guard.ts (or `isDeliverySurface` from
   // `isProtectedWriteTarget`) — the matching lines here fail.
   it("refuses the inject dirs, the bridge's .done/ and a wake file, through the write tool", () => {
     writeBlocked(`${INJECT}/.done/${WAKE}`);

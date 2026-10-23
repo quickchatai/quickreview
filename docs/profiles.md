@@ -2,7 +2,7 @@
 
 A repo profile matches the reviewer's house-rule knowledge to the repo it
 reviews. Generic review behaviour lives in the compiled-in addendum registry
-(`PASS_ADDENDA`, `src/include.ts`); a team's house rules — "we always make new
+(`PASS_ADDENDA`, `packages/pi-plugin/src/include.ts`); a team's house rules — "we always make new
 columns nullable for the deploy window", "global mocks are our style, do not
 campaign against them" — live in a profile: a directory of addenda files an
 operator can edit without touching this codebase. A profile also carries
@@ -78,7 +78,7 @@ extends = "default"          # any profile name the locator can find
 drop = ["some-inherited-id"] # optional: inherited addenda to remove
 ```
 
-Every loader resolves the WHOLE chain (`src/profiles.ts`), each name through
+Every loader resolves the WHOLE chain (`packages/pi-plugin/src/profiles.ts`), each name through
 the install locator exactly like the selected profile — so a base can live in
 the config home or be one of the checkout's generic profiles. The chain is
 merged base first, the selected profile last, one rule per kind:
@@ -190,8 +190,8 @@ ecosystem = "django"   # or "none"
 ```
 
 The selection is loaded once at daemon assembly (`loadProfileEcosystem`,
-`src/profiles.ts`) and picks the implementation of the ONE ecosystem seam
-(`src/ecosystem.ts` — one interface, total methods, the same discipline as the
+`packages/pi-plugin/src/profiles.ts`) and picks the implementation of the ONE ecosystem seam
+(`packages/pi-plugin/src/ecosystem.ts` — one interface, total methods, the same discipline as the
 memory seam). It governs four things:
 
 - **the round pre-check** — for `django`, the migration-number
@@ -258,7 +258,7 @@ chain merged — per lens, per key, the nearest profile that sets it wins) is
 overlaid on the parsed config at assembly (`applyProfileTuning` in
 `buildParts`, and last of all in the bench's `contextFor`), and every
 consumer reads that one `cfg.lenses`. What each key moves
-(`src/lenstuning.ts`):
+(`packages/pi-plugin/src/lenstuning.ts`):
 
 - **`min_tier`** — plan time (`buildPassPlan`): a floor under the tier the
   plan would pick, so the lens's row, its `raisable_to`, the sweep's rows
@@ -297,7 +297,7 @@ consumer reads that one `cfg.lenses`. What each key moves
   absolute, `..`, a link leaving the directory, a missing or empty file, or
   one over 32,000 characters fails the boot. **A guide the repo writes wins**:
   the style lens is planned on the profile's guide only when
-  `src/styleguide.ts` finds none in the repo (a guide file, a CONTRIBUTING
+  `packages/pi-plugin/src/styleguide.ts` finds none in the repo (a guide file, a CONTRIBUTING
   style section, or the style sections of AGENTS.md / CLAUDE.md /
   `.github/copilot-instructions.md` / `.github/instructions/`), and the plan
   row says which it is. The text is compiled into a `lens-guide-pass-style`
@@ -333,7 +333,7 @@ No raise is needed because a validity veto (`refuted`, `unverifiable`,
 `bad-anchor`) does not delete a finding, so a cheaper validator cannot make a
 stronger lens's finding vanish. The validator lists it under DOUBTED
 (`validate-doubt-not-kill` addendum), the session records it with disposition
-`doubted` (`src/findingsrecord.ts` also folds a `killed` entry carrying one of
+`doubted` (`packages/pi-plugin/src/findingsrecord.ts` also folds a `killed` entry carrying one of
 those words onto `doubted`), it is never posted on the PR (a doubted entry
 with a `posted_as` is a `review_output_unreasoned` anomaly), and the TUI's
 detail pane lists it under DOUBTED — "may not be valid". Every other kill (a
@@ -575,7 +575,7 @@ over its pi home volume, and
 says which. The companion alone keeps refreshing the login. The scan reads that login read-only and,
 before every case, re-takes a private copy of its `auth.json` into the tmpfs
 pi home with every refresh token replaced by a value no OAuth server accepts
-(the copy the benchmark takes, `src/engine/auth.ts`). So a scan never refreshes
+(the copy the benchmark takes, `packages/pi-plugin/src/engine/auth.ts`). So a scan never refreshes
 — a second refresher would rotate, and so invalidate, the companion's grant —
 never writes a file the companion reads, and picks up a token the companion
 refreshed at its next case. The price: a scan case cannot outlive the access
@@ -690,7 +690,7 @@ that sets nothing (or only default values) changes nothing: no round-order
 note, no addendum, no enforcement, pinned byte for byte by
 `tests/posting-default-identity.test.ts`.
 
-Three places carry a non-default policy (`src/postingpolicy.ts`):
+Three places carry a non-default policy (`packages/pi-plugin/src/postingpolicy.ts`):
 
 1. **The round order** — a POSTING POLICY note before step 6
    (`{{posting_policy_note}}`), telling the session what posts and that every
@@ -705,7 +705,7 @@ Three places carry a non-default policy (`src/postingpolicy.ts`):
    findings as single claims.
 3. **Mechanically, in the render step both routes run** —
    `selectPosted` over the findings record's posted entries
-   (`applyPostingPolicyToRecord` in `src/reviewrender.ts renderPostedReview`),
+   (`applyPostingPolicyToRecord` in `packages/pi-plugin/src/reviewrender.ts renderPostedReview`),
    which the live route runs through `scripts/render-review.sh`
    (`src/reviewrendercli.ts`, overlaying the profile's policy exactly as
    `wire.ts` does) and the benchmark runs in `src/bench/runner.ts
@@ -753,7 +753,7 @@ quality lenses, the sweep rows). A trigger is narrowed only where stored runs
 show the lens planned with nothing to do, and never below a case behind one
 of its unique real findings.
 
-`src/lensplanning.ts` `LENS_PLANNING` is the one table of every lens's
+`packages/pi-plugin/src/lensplanning.ts` `LENS_PLANNING` is the one table of every lens's
 **when** and **priority**, held equal to `ALL_PASSES` by a test, so a new lens
 cannot ship without documenting its planning:
 
@@ -792,7 +792,7 @@ revisit with the next run's data.
 ### The per-file coverage check — `[review] coverage_check`
 
 After the planned lenses return, the round calls the `coverage_gaps` tool
-(`src/coverage.ts`, loaded on both routes with `cluster_findings`) with the
+(`packages/pi-plugin/src/coverage.ts`, loaded on both routes with `cluster_findings`) with the
 order's coverage-eligible files — changed, non-test source code, not
 generated, lock, vendored, binary or prose — and every file path a lens raised
 a finding on. A file no lens raised anything on gets a targeted `pass-sweep`
@@ -839,7 +839,7 @@ follows a pinned lens.
 
 ## Lens-selection heuristics — `heuristics.toml`
 
-Lens selection (`src/heuristics.ts selectLenses`) is split in two:
+Lens selection (`packages/pi-plugin/src/heuristics.ts selectLenses`) is split in two:
 
 - **The generic core stays compiled in**: frontend extensions, wire-format
   files (`.proto`/`.graphql`), `migrations//backfills/` and raw SQL, auth and
@@ -877,7 +877,7 @@ added_lines = ['@background_decorator']  # probes over ADDED diff lines
   (deliberately no path predicate: one is planned by content, the other
   only on demand, never by file shape).
   `pass-concurrency` is planned by content alone, by the compiled sub-lens
-  trigger in `src/heuristics.ts`: a changed line of a non-test code file that touches
+  trigger in `packages/pi-plugin/src/heuristics.ts`: a changed line of a non-test code file that touches
   synchronisation in its own language — Go `sync.Mutex`/`RWMutex`/atomics/
   goroutines/channels, Java/Kotlin `synchronized`/`volatile`/`Lock`/
   `Concurrent*`/`Atomic*`, Rust `Mutex`/`RwLock`/`Arc`/atomics, C/C++

@@ -54,7 +54,7 @@ import {
   type PrefetchMeta,
 } from "../src/bench/aacr.js";
 import { parseReferenceLabels, recallByQuality, renderReport } from "../src/bench/report.js";
-import { renderReviewFromRecord } from "../src/reviewrender.js";
+import { renderReviewFromRecord } from "@quickchatai/pi-quickreview/src/reviewrender.js";
 import {
   AuthExpiring,
   benchAuthFrom,
@@ -99,8 +99,12 @@ import {
   type RunFingerprint,
 } from "../src/bench/runner.js";
 import { loadConfig } from "../src/config.js";
-import { ecosystemFor } from "../src/ecosystem.js";
-import { buildAgents, identityVars, PASS_ADDENDA } from "../src/include.js";
+import { ecosystemFor } from "@quickchatai/pi-quickreview/src/ecosystem.js";
+import {
+  buildAgents,
+  identityVars,
+  PASS_ADDENDA,
+} from "@quickchatai/pi-quickreview/src/include.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(here, "..");

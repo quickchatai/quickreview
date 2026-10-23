@@ -26,7 +26,7 @@ import {
 } from "../src/config.js";
 import { dispatchOnce, type DispatchAdapter } from "../src/dispatch.js";
 import { enforceFindingsRecord } from "../src/findingscheck.js";
-import type { GateResult } from "../src/gate.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
 import { Learner } from "../src/learner/learner.js";
 import { LessonLedger } from "../src/lessonledger.js";
@@ -70,7 +70,7 @@ import type { RemoteResult, SshRunner } from "../src/tui/remote.js";
 import { lessonsHeadline } from "../src/tui/feedbacktab.js";
 import { stripAnsi } from "../src/tui/paint.js";
 import { LessonSwitchSender, lessonSwitchPayload, lessonUriOf } from "../src/tui/lessonswitch.js";
-import type { RoundOrder, SessionHooks } from "../src/types.js";
+import type { RoundOrder, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const ROOT = "viking://user/reviewer/memories";

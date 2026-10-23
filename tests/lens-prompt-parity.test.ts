@@ -29,17 +29,20 @@ import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildBenchAgents } from "../src/bench/runner.js";
 import { loadConfig, type Config } from "../src/config.js";
-import { loadBuiltAgents, type LensAgent } from "../src/engine/lens/registry.js";
-import { PiHost } from "../src/engine/pisdk.js";
+import {
+  loadBuiltAgents,
+  type LensAgent,
+} from "@quickchatai/pi-quickreview/src/engine/lens/registry.js";
+import { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import {
   EXECUTION_POLICY_ADDENDUM,
   PASS_ADDENDA,
   buildAgents,
   configAddenda,
   identityVars,
-} from "../src/include.js";
-import { lensTuningAddenda, roundAgentModels } from "../src/lenstuning.js";
-import { postingPolicyAddenda } from "../src/postingpolicy.js";
+} from "@quickchatai/pi-quickreview/src/include.js";
+import { lensTuningAddenda, roundAgentModels } from "@quickchatai/pi-quickreview/src/lenstuning.js";
+import { postingPolicyAddenda } from "@quickchatai/pi-quickreview/src/postingpolicy.js";
 import { buildScanAgents } from "../src/setup/scanbuild.js";
 import {
   FAKE_MODEL,

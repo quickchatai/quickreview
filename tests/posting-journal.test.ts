@@ -30,7 +30,7 @@ import {
   roundPostingKey,
   type PostingReceipt,
 } from "../src/posting-receipt.js";
-import type { StandingMarkSnapshot } from "../src/standing-review.js";
+import type { StandingMarkSnapshot } from "@quickchatai/pi-quickreview/src/standing-review.js";
 
 const PR = 12;
 const ROUND = 2;

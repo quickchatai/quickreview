@@ -12,7 +12,7 @@ import { closeSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { MutationGate } from "../src/gate.js";
+import { MutationGate } from "@quickchatai/pi-quickreview/src/gate.js";
 import {
   GH_READ_LOG_TAIL_BYTES,
   GH_READ_MAX_IN_FLIGHT,
@@ -24,7 +24,7 @@ import {
   readablePath,
 } from "../src/ghread.js";
 import { GitHubAdapter, cappedText } from "../src/github.js";
-import type { TokenMinter } from "../src/githubAuth.js";
+import type { TokenMinter } from "@quickchatai/pi-quickreview/src/githubAuth.js";
 import { CapabilityStore, createCapabilityFd, socketPathOf } from "../src/ipc/capability.js";
 import { IpcError, type CommandState } from "../src/ipc/protocol.js";
 import { IpcServer, type RequestContext } from "../src/ipc/server.js";

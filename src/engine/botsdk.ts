@@ -48,31 +48,48 @@
 // env is a leak waiting for the model's bash.
 import { join } from "node:path";
 import type { ExtensionFactory, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { capabilityFdOf } from "./capfd.js";
+import { capabilityFdOf } from "@quickchatai/pi-quickreview/src/engine/capfd.js";
 import { prOfSession } from "../pr-session-lifecycle.js";
-import { createBashGuard, bashGuardConfigFromEnv } from "../../extensions/bash-guard.js";
+import {
+  createBashGuard,
+  bashGuardConfigFromEnv,
+} from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
 import {
   FINDING_CLUSTERS_TOOLS,
   createFindingClusters,
-} from "../../extensions/finding-clusters.js";
-import { createLedgerPin, ledgerPinConfigFromEnv } from "../../extensions/ledger-pin.js";
+} from "@quickchatai/pi-quickreview/extensions/finding-clusters.js";
+import {
+  createLedgerPin,
+  ledgerPinConfigFromEnv,
+} from "@quickchatai/pi-quickreview/extensions/ledger-pin.js";
 import { createOpenViking } from "../../extensions/vendor/openviking-pi/index.js";
 import {
   openVikingConfigFromEnv,
   type OpenVikingConfig,
 } from "../../extensions/vendor/openviking-pi/qcr-shim.js";
-import { GITHUB_TOKEN_ENVS } from "../envstrip.js";
-import { LIVE_COALESCE_MS, type LiveSink } from "../live/writer.js";
+import { GITHUB_TOKEN_ENVS } from "@quickchatai/pi-quickreview/src/envstrip.js";
+import { LIVE_COALESCE_MS, type LiveSink } from "@quickchatai/pi-quickreview/src/live/writer.js";
 import { RoundProgressPublisher, roundProgressPath } from "../live/publish.js";
 import { createAnswerGuard } from "./answerguard.js";
-import { openRoundSink, type RoundLive } from "./livewire.js";
-import { DEFAULT_TOOLS } from "./pisdk.js";
-import type { PiHost } from "./pisdk.js";
-import type { Runtime, RuntimeSession, SessionSpec } from "./port.js";
-import { BASH_ENV_ALLOW, reviewerStub, type RoundLensTools } from "./roundsdk.js";
-import { sdkRuntime, type SessionExtras } from "./sdkruntime.js";
-import { releasing } from "./sessionwrap.js";
-import { BUDGET_EXIT_CODE } from "./budget.js";
+import { openRoundSink, type RoundLive } from "@quickchatai/pi-quickreview/src/engine/livewire.js";
+import { DEFAULT_TOOLS } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import type { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import type {
+  Runtime,
+  RuntimeSession,
+  SessionSpec,
+} from "@quickchatai/pi-quickreview/src/engine/port.js";
+import {
+  BASH_ENV_ALLOW,
+  reviewerStub,
+  type RoundLensTools,
+} from "@quickchatai/pi-quickreview/src/engine/roundsdk.js";
+import {
+  sdkRuntime,
+  type SessionExtras,
+} from "@quickchatai/pi-quickreview/src/engine/sdkruntime.js";
+import { releasing } from "@quickchatai/pi-quickreview/src/engine/sessionwrap.js";
+import { BUDGET_EXIT_CODE } from "@quickchatai/pi-quickreview/src/engine/budget.js";
 
 /** ledger-pin's diagnostics, on the worker's stderr. */
 const STDERR_LOG = { log: (m: string): void => console.error(m) };
@@ -302,7 +319,7 @@ function withLiveLog(
  * resumed from its JSONL under the same id. */
 export function botSdkRuntime(host: PiHost, options: BotSdkOptions): Runtime {
   // The worker owns its process: a turn its abort and dispose did not end
-  // exits it (src/engine/budget.ts).
+  // exits it (packages/pi-plugin/src/engine/budget.ts).
   const inner = sdkRuntime(host, {
     extras: botSdkExtras(options),
     backstop: () => process.exit(BUDGET_EXIT_CODE),

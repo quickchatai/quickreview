@@ -42,7 +42,10 @@ import {
   readWhyRounds,
 } from "./tui/evidence.js";
 import type { TuiConfig } from "./config.js";
-import { LENS_SESSIONS_DIR, MAIN_SESSION_DIR } from "./engine/openable.js";
+import {
+  LENS_SESSIONS_DIR,
+  MAIN_SESSION_DIR,
+} from "@quickchatai/pi-quickreview/src/engine/openable.js";
 import { dockerShArgv, whyArgv, type RemoteResult, type SshRunner } from "./tui/remote.js";
 import { remoteSandboxRoot, resolveLayout } from "./tui/layout.js";
 

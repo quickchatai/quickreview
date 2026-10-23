@@ -38,7 +38,7 @@ import { containerRunEnv } from "../src/reviewcli.js";
 import { runLive, type LiveCliDeps } from "../src/livecli.js";
 import { writeSdkDriverStub } from "./helpers/sdk-driver-stub.js";
 import { parseConfig } from "../src/config.js";
-import { HEARTBEAT_FILE, readBeat } from "../src/heartbeat.js";
+import { HEARTBEAT_FILE, readBeat } from "@quickchatai/pi-quickreview/src/heartbeat.js";
 import { waitFor } from "./helpers/wait-for.js";
 import { nodeModulesMounts } from "./helpers/docker-node-modules.js";
 
@@ -655,10 +655,10 @@ describe.skipIf(!hasDocker || !hasDist)("in a container (docker, no network, no 
         "dist/src/cli.js",
         `import { spawnSync } from "node:child_process";
 import { readdirSync, writeFileSync } from "node:fs";
-const dist = ${JSON.stringify(join(root, "dist", "src"))};
-const { takeHandoffToken, handedToken } = await import(dist + "/ghcred.js");
+const core = ${JSON.stringify(join(root, "packages", "pi-plugin", "dist", "src"))};
+const { takeHandoffToken, handedToken } = await import(core + "/ghcred.js");
 takeHandoffToken();
-const iso = (await import(dist + "/engine/tooluid.js")).toolIsolation;
+const iso = (await import(core + "/engine/tooluid.js")).toolIsolation;
 const probe =
   'echo "uid=$(id -u)"; env; echo "--mount"; ls -A /run/qcr-in; echo "--environ"; ' +
   'cat "/proc/$HOLDER/environ" 2>&1 | head -c 300; echo; echo "--mem"; head -c 4 "/proc/$HOLDER/mem" 2>&1 | head -c 200; echo; ' +

@@ -25,7 +25,7 @@ import {
   type Config,
 } from "../src/config.js";
 import { dispatchOnce, type DispatchAdapter } from "../src/dispatch.js";
-import type { GateResult } from "../src/gate.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
 import { LessonLedger } from "../src/lessonledger.js";
 import { prefetchLessons, RoundLessonSelector, type PrefetchTimer } from "../src/lessonselect.js";
@@ -40,7 +40,11 @@ import {
   type RoleSelection,
 } from "../src/memory/selection.js";
 import { StateStore } from "../src/state.js";
-import type { PassPlanEntry, RoundOrder, SessionHooks } from "../src/types.js";
+import type {
+  PassPlanEntry,
+  RoundOrder,
+  SessionHooks,
+} from "@quickchatai/pi-quickreview/src/types.js";
 import {
   caseCorpus,
   CORPUS_PR,

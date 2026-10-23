@@ -14,17 +14,21 @@ import {
   withheldApprovalNote,
   withholdApproval,
   type CheckSummary,
-} from "../src/cigate.js";
+} from "@quickchatai/pi-quickreview/src/cigate.js";
 import { retryWithheldApproval } from "../src/ciretry.js";
 import { parseConfig, GUARDS_DEFAULTS, type Config } from "../src/config.js";
 import { dispatchOnce, type DispatchAdapter } from "../src/dispatch.js";
-import { MutationGate, type GateResult, type MutationIntent } from "../src/gate.js";
-import { makePostingGuard, type GuardAdapter } from "../src/guards.js";
+import {
+  MutationGate,
+  type GateResult,
+  type MutationIntent,
+} from "@quickchatai/pi-quickreview/src/gate.js";
+import { makePostingGuard, type GuardAdapter } from "@quickchatai/pi-quickreview/src/guards.js";
 import { GitHubAdapter, type PrFileEntry } from "../src/github.js";
-import type { FetchFn, TokenMinter } from "../src/githubAuth.js";
+import type { FetchFn, TokenMinter } from "@quickchatai/pi-quickreview/src/githubAuth.js";
 import { reconcileOrphanedRounds } from "../src/reconcile.js";
 import { StateStore } from "../src/state.js";
-import type { RoundOrder, SessionHooks } from "../src/types.js";
+import type { RoundOrder, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { applyInterpretation, interpretEvent } from "../src/webhook.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 

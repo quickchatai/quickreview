@@ -35,7 +35,7 @@ import {
   sameSessionCommandOwner,
   sessionCommandMarker,
   type SessionCommandOwnership,
-} from "./session-command.js";
+} from "@quickchatai/pi-quickreview/src/session-command.js";
 import type { SessionCommandRow, StateStore } from "./state.js";
 import {
   roundPromptMarker,
@@ -46,7 +46,7 @@ import {
   type SessionCommandRedeliveryResult,
   type SessionCommandRetryResult,
   type SessionHooks,
-} from "./types.js";
+} from "@quickchatai/pi-quickreview/src/types.js";
 import type { DebugRoundManager } from "./debuground.js";
 import type { WorktreeManager } from "./worktrees.js";
 import { WorkerLaunchError, type WorkerSupervisor } from "./workersupervisor.js";
@@ -542,7 +542,7 @@ export class WorkerSessionHost implements SessionHooks {
    * so the next worker births a fresh session (a worker resumes the newest JSONL,
    * where a killed tmux pi was simply born again). Refused while a worker of the
    * session runs; returns the undo. The review ledger is not touched: the next
-   * round order re-hands it (src/ledgercarry.ts). */
+   * round order re-hands it (packages/pi-plugin/src/ledgercarry.ts). */
   rotateSession(pr: number): () => void {
     const session = prSessionName(pr);
     if (this.supervisor.runs(session))

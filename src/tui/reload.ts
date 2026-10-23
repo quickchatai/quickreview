@@ -1,10 +1,21 @@
-// TUI hot-reload. The TUI watches its own dist/ and
-// re-execs in place when it changes, restoring tab + selected PR + scroll from
-// a small state file.
+// TUI hot-reload. The TUI re-execs in place when a whole build has landed,
+// restoring tab + selected PR + scroll from a small state file. Two signals
+// say so, and nothing else does:
+//   - the app's dist/, watched recursively. `tsc -b` builds the review core
+//     (packages/pi-plugin) first and the app last, so the app's dist/ changes
+//     only once every project compiled;
+//   - the build stamp (BUILD_STAMP, written by scripts/build-stamp.mjs), for a
+//     core-only change that leaves the app's output alone. Every build route
+//     writes it only after a whole pass succeeded.
+// The core's own dist/ is NOT watched. `noEmitOnError` holds per project, so
+// a core edit that breaks the app still rewrites packages/pi-plugin/dist, and
+// even a clean build writes it seconds before the app's: a watch there would
+// re-exec onto new core code beside old app code.
 //
-// Why this is safe: a failed `tsc` emits nothing, so a broken edit produces no
-// mtime change and the running TUI is untouched — the reload path can only be
-// entered by a build that compiled.
+// Why this is safe: a failed build touches neither signal (the app does not
+// emit on error, and the stamp follows only a clean pass), so a broken edit
+// leaves the running TUI untouched — the reload path can only be entered by a
+// build that compiled, all of it.
 //
 // Every build reloads, unconditionally — there is no busy/defer check and one
 // must never be added (root CLAUDE.md, the hot-reload decision). A busy check
@@ -33,7 +44,7 @@ import {
   writeFileSync,
   type FSWatcher,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 export interface ReloadState {
   tab: string;
@@ -46,11 +57,24 @@ export interface ReloadState {
   saved_at: string;
 }
 
-export type WatchFn = (dir: string, opts: { recursive: boolean }, cb: () => void) => FSWatcher;
+export type WatchFn = (
+  dir: string,
+  opts: { recursive: boolean },
+  cb: (event: string, filename: string | null) => void,
+) => FSWatcher;
+
+/** The build stamp, relative to the checkout: written after a whole build
+ * succeeded (scripts/build-stamp.mjs names the same path). */
+export const BUILD_STAMP = "state/build-complete";
 
 export interface ReloaderOptions {
-  /** Directory whose mtime tree signals "a new build landed". */
+  /** The app's build output, whose mtime tree signals "a new build landed". */
   distDir: string;
+  /** The build stamp's absolute path: a change to it signals the same, for a
+   * core-only build that leaves `distDir` alone. Its directory is watched,
+   * not recursively, for that one name; a missing directory is skipped, as a
+   * missing `distDir` is. */
+  buildStamp?: string;
   /** Where the pre-re-exec snapshot is written. */
   stateFile: string;
   /** Snapshot of what must survive the re-exec. */
@@ -67,7 +91,7 @@ const DEBOUNCE_MS = 400;
 
 /** Watches dist/ and re-execs the process when a new build lands. */
 export class HotReloader {
-  private watcher: FSWatcher | undefined;
+  private watchers: FSWatcher[] = [];
   private debounce: NodeJS.Timeout | undefined;
   private fired = false;
   private readonly opts: Required<ReloaderOptions>;
@@ -75,6 +99,7 @@ export class HotReloader {
   constructor(opts: ReloaderOptions) {
     this.opts = {
       ...opts,
+      buildStamp: opts.buildStamp ?? "",
       debounceMs: opts.debounceMs ?? DEBOUNCE_MS,
       watch: opts.watch ?? fsWatch,
       writeState:
@@ -88,19 +113,28 @@ export class HotReloader {
   }
 
   start(): void {
-    if (this.watcher) return;
+    if (this.watchers.length > 0) return;
+    this.watchOne(this.opts.distDir, true, () => true);
+    const stamp = this.opts.buildStamp;
+    if (stamp) this.watchOne(dirname(stamp), false, (name) => name === basename(stamp));
+  }
+
+  private watchOne(dir: string, recursive: boolean, counts: (name: string | null) => boolean) {
     try {
-      this.watcher = this.opts.watch(this.opts.distDir, { recursive: true }, () => this.onChange());
+      this.watchers.push(
+        this.opts.watch(dir, { recursive }, (_event, name) => {
+          if (counts(name)) this.onChange();
+        }),
+      );
     } catch {
       // No dist/ (running from source, e.g. vitest or tsx) — hot-reload is a
       // convenience, never a startup requirement.
-      this.watcher = undefined;
     }
   }
 
   stop(): void {
-    this.watcher?.close();
-    this.watcher = undefined;
+    for (const w of this.watchers) w.close();
+    this.watchers = [];
     if (this.debounce) clearTimeout(this.debounce);
     this.debounce = undefined;
   }

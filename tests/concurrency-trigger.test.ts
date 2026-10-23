@@ -15,9 +15,13 @@ import {
   SUBLENS_TRIGGERS,
   selectSubLenses,
   type PrFile,
-} from "../src/heuristics.js";
-import { ALL_PASSES } from "../src/passes.js";
-import { addendaForPass, buildAgents, PASS_ADDENDA } from "../src/include.js";
+} from "@quickchatai/pi-quickreview/src/heuristics.js";
+import { ALL_PASSES } from "@quickchatai/pi-quickreview/src/passes.js";
+import {
+  addendaForPass,
+  buildAgents,
+  PASS_ADDENDA,
+} from "@quickchatai/pi-quickreview/src/include.js";
 import { mkdtempSync, readFileSync as rf, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

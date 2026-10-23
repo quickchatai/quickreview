@@ -7,11 +7,19 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, REVIEW_PRESETS, type Config } from "../src/config.js";
 import { ALL_PASSES, buildPassPlan } from "../src/dispatch.js";
-import { DOWNGRADE_WORDS, KILL_WORDS } from "../src/findingsrecord.js";
+import { DOWNGRADE_WORDS, KILL_WORDS } from "@quickchatai/pi-quickreview/src/findingsrecord.js";
 import type { PrFileEntry } from "../src/github.js";
-import { QUALITY_MIN_ADDED_LINES, QUALITY_PASSES, STYLE_PASS } from "../src/heuristics.js";
-import { addendaForPass, VALIDATE_PASS } from "../src/include.js";
-import { findStyleGuide, GUIDE_MIN_LINES, SECTION_MIN_LINES } from "../src/styleguide.js";
+import {
+  QUALITY_MIN_ADDED_LINES,
+  QUALITY_PASSES,
+  STYLE_PASS,
+} from "@quickchatai/pi-quickreview/src/heuristics.js";
+import { addendaForPass, VALIDATE_PASS } from "@quickchatai/pi-quickreview/src/include.js";
+import {
+  findStyleGuide,
+  GUIDE_MIN_LINES,
+  SECTION_MIN_LINES,
+} from "@quickchatai/pi-quickreview/src/styleguide.js";
 
 const baseCfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -152,7 +160,7 @@ describe("findStyleGuide", () => {
 
 describe("code files", () => {
   it("counts ESM/CJS TypeScript modules as code (a .mts-only PR once got no code lenses)", async () => {
-    const { CODE_FILE_RE } = await import("../src/heuristics.js");
+    const { CODE_FILE_RE } = await import("@quickchatai/pi-quickreview/src/heuristics.js");
     for (const f of ["a.mts", "a.cts", "a.cxx", "a.hh", "a.dart"])
       expect(CODE_FILE_RE.test(f)).toBe(true);
     const l = lenses(baseCfg, [file("scripts/make.mts", 45)]);
@@ -163,8 +171,8 @@ describe("code files", () => {
 
 describe("[review] nits — strict by default, open on request", () => {
   it("defaults to strict, accepts open, refuses anything else", async () => {
-    const { configAddenda } = await import("../src/include.js");
-    const { renderNitPolicyNote } = await import("../src/templates.js");
+    const { configAddenda } = await import("@quickchatai/pi-quickreview/src/include.js");
+    const { renderNitPolicyNote } = await import("@quickchatai/pi-quickreview/src/templates.js");
     expect(baseCfg.review.nits).toBe("strict");
     const toml = readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8");
     const withNits = (v: string) => toml.replace(/^\[review\]$/m, `[review]\nnits = "${v}"`);
@@ -208,7 +216,7 @@ describe("[review] nits — strict by default, open on request", () => {
 
 describe("the validator demotes a true observation instead of killing it", () => {
   it("is on by default, and quality-lens findings are judged on the cost they name", async () => {
-    const { configAddenda } = await import("../src/include.js");
+    const { configAddenda } = await import("@quickchatai/pi-quickreview/src/include.js");
     expect(configAddenda(baseCfg.review).map((a) => a.id)).toEqual([
       "validate-demote-not-kill",
       "dedup-group-validate",

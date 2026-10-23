@@ -52,7 +52,7 @@ import {
   PI_REFRESH_MARGIN_MS,
   SCAN_AUTH_SRC_ENV,
   SCAN_CASE_AUTH_BUDGET_MS,
-} from "../src/engine/auth.js";
+} from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import { scanEnv } from "../src/scancli.js";
 import {
   CompanionLifecycle,

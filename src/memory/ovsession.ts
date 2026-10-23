@@ -30,7 +30,7 @@
 //   3. MEMORY NEVER BLOCKS A ROUND. Every call here is total: bounded by a
 //      deadline, swallowing every throw, returning a boolean. A session whose
 //      OpenViking session could not be created simply runs without a raw tier.
-import { withinBudget } from "../budget.js";
+import { withinBudget } from "@quickchatai/pi-quickreview/src/budget.js";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 

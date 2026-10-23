@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # qcr tui in reload mode, from one command and one terminal.
 #
-# The TUI's hot reload (src/tui/reload.ts) watches `dist/` and NEVER builds —
-# so without a compiler running, editing `src/` changes nothing on screen. This
-# script owns both halves: a `tsc --watch` in the background and the TUI in the
-# foreground, in one process group that dies together.
+# The TUI's hot reload (src/tui/reload.ts) watches `dist/` and the build
+# stamp (scripts/build-stamp.mjs), and NEVER builds — so without a compiler
+# running, editing `src/` changes nothing on screen. This script owns both
+# halves: a `tsc -b --watch` (both projects, through scripts/tsc-watch.mjs,
+# which writes the stamp after each clean pass) in the background and the TUI
+# in the foreground, in one process group that dies together.
 #
 # Two things make it safe to run a compiler under a full-screen TUI:
 #   1. tsc's output goes to a LOG, never the terminal. A stray compiler line
@@ -16,7 +18,7 @@
 #
 # That blocking build must stay — it is the only thing stopping the re-exec
 # above — and it is incremental (`incremental` + `tsBuildInfoFile` in
-# tsconfig.json), so a warm start costs about a second. An up-to-date tree makes
+# tsconfig.json and packages/pi-plugin/tsconfig.json), so a warm start costs about a second. An up-to-date tree makes
 # the watcher's first pass emit nothing at all, so it cannot trigger a reload
 # either.
 #
@@ -31,7 +33,7 @@ LOG="$ROOT/state/tsc-watch.log"
 mkdir -p "$ROOT/state"
 
 echo "qcr dev: building…" >&2
-if ! (cd "$ROOT" && npx tsc -p tsconfig.json); then
+if ! (cd "$ROOT" && npx tsc -b); then
   echo "qcr dev: build failed — fix the errors above, then run again." >&2
   exit 1
 fi
@@ -43,11 +45,14 @@ if ! (cd "$ROOT" && node scripts/verify-dist.mjs); then
   echo "qcr dev: refusing to start the TUI from an incomplete dist/." >&2
   exit 1
 fi
+# Stamp this build now, before the TUI watches the stamp, so the watcher's
+# first pass (which emits nothing over an up-to-date tree) finds it current.
+(cd "$ROOT" && node scripts/build-stamp.mjs)
 
 # --preserveWatchOutput: without it tsc clears the screen on every rebuild,
 # and that clear lands on the TUI even with stdout redirected (it is an escape
 # sequence written to the tty tsc inherited, not to the log).
-(cd "$ROOT" && exec node "$ROOT/node_modules/typescript/bin/tsc" -p tsconfig.json --watch --preserveWatchOutput) >"$LOG" 2>&1 &
+(cd "$ROOT" && exec node "$ROOT/scripts/tsc-watch.mjs" -b --watch --preserveWatchOutput) >"$LOG" 2>&1 &
 WATCH_PID=$!
 
 # The compiler must not outlive the TUI — an orphaned watcher keeps rebuilding
@@ -59,7 +64,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 echo "qcr dev: watching src/ → dist/ (compiler log: ${LOG/#$HOME/\~})" >&2
-echo "qcr dev: edit anything under src/ and the TUI re-execs itself." >&2
+echo "qcr dev: edit anything under src/ or packages/ and the TUI re-execs itself." >&2
 
 # Foreground, sharing this terminal. The TUI re-execs ITSELF on a dist change
 # (spawnSync, stdio inherited), so this call does not return until the whole

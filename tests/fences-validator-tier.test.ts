@@ -20,7 +20,11 @@ import { parseConfig, type Config } from "../src/config.js";
 import { buildPassPlan, validatorTier } from "../src/dispatch.js";
 import type { PrFileEntry } from "../src/github.js";
 import { StateStore } from "../src/state.js";
-import { PASS_TIER_ORDER, type PassTier, type VerdictPassEntry } from "../src/types.js";
+import {
+  PASS_TIER_ORDER,
+  type PassTier,
+  type VerdictPassEntry,
+} from "@quickchatai/pi-quickreview/src/types.js";
 
 const tierIndex = (t: string | null | undefined): number => PASS_TIER_ORDER.indexOf(t as PassTier);
 

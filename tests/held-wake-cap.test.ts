@@ -25,7 +25,11 @@ import type { PrRef } from "../src/github.js";
 import { recheckFingerprint } from "../src/recheck.js";
 import { reconcileOnce, type ReconcileAdapter } from "../src/reconcile.js";
 import { MAX_HELD_WAKES, StateStore } from "../src/state.js";
-import { recheckPromptMarker, stampPrompt, type SessionHooks } from "../src/types.js";
+import {
+  recheckPromptMarker,
+  stampPrompt,
+  type SessionHooks,
+} from "@quickchatai/pi-quickreview/src/types.js";
 import {
   AUTHOR_REPLY_DROPPED_KIND,
   MAX_AUTHOR_REPLIES_PER_DELIVERY,

@@ -12,7 +12,7 @@
 //   - a worker that is SIGKILLed mid-round is continued by a fresh one, which
 //     resumes the same JSONL, does not send the order again and does not post twice.
 //
-// Skipped without a build (`npx tsc -p tsconfig.json`): it runs dist/.
+// Skipped without a build (`npm run build`): it runs dist/.
 import { spawn, type ChildProcess } from "node:child_process";
 import {
   closeSync,
@@ -31,7 +31,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { createCapabilityFd, ipcEnv } from "../src/ipc/capability.js";
 import { operatorMessagePayload } from "../src/operatormessage.js";
 import { jsonlHasMarker } from "../src/botworker.js";
-import { sessionCommandMarker } from "../src/session-command.js";
+import { sessionCommandMarker } from "@quickchatai/pi-quickreview/src/session-command.js";
 import { newestSessionFile } from "../src/sessionjsonl.js";
 import {
   FAKE_MODEL,

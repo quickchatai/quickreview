@@ -17,7 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { lineHasAuthError } from "../src/authwatch.js";
+import { lineHasAuthError } from "@quickchatai/pi-quickreview/src/authwatch.js";
 import {
   applyEnvApiKeys,
   AuthError,
@@ -34,10 +34,10 @@ import {
   keyOnlyCredentials,
   PI_REFRESH_MARGIN_MS,
   setRuntimeApiKey,
-} from "../src/engine/auth.js";
+} from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import * as piauthcopy from "../src/piauthcopy.js";
 import * as scanauth from "../src/scanauth.js";
-import * as engineAuth from "../src/engine/auth.js";
+import * as engineAuth from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import { createHostRig, useOfflineGuard, type HostRig } from "./pi-canary/harness.js";
 
 useOfflineGuard();
@@ -341,7 +341,9 @@ describe("the process route keeps its behaviour", () => {
         (engineAuth as Record<string, unknown>)[name],
       );
     }
-    for (const name of Object.keys(scanauth)) {
+    // syncScanAuthFromEnv is scanauth's own: the container's one-shot probe owns
+    // its process, which the engine never does.
+    for (const name of Object.keys(scanauth).filter((n) => n !== "syncScanAuthFromEnv")) {
       expect((scanauth as Record<string, unknown>)[name], name).toBe(
         (engineAuth as Record<string, unknown>)[name],
       );

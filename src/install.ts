@@ -8,7 +8,7 @@
 //
 // The resolution itself — the homes, the config, profile and secrets lookups —
 // lives in src/homes.ts (the CLI's half, re-exported from here) and the pure
-// profile search in src/profilelookup.ts; this module adds `qcr install
+// profile search in packages/pi-plugin/src/profilelookup.ts; this module adds `qcr install
 // migrate` and the operator-only homes.
 //
 // Two homes, split by kind:
@@ -77,7 +77,7 @@ import {
   xdgBase,
   type InstallEnv,
 } from "./homes.js";
-import { isDirectory, isPathSegment } from "./profilelookup.js";
+import { isDirectory, isPathSegment } from "@quickchatai/pi-quickreview/src/profilelookup.js";
 
 // The homes themselves (config, state, profiles, secrets) are resolved in
 // src/homes.ts; this module re-exports them, so its importers need not know.

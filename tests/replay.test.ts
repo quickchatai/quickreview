@@ -14,14 +14,14 @@
 //      against whatever the PR ref points at today;
 //   5. the session is always killed and the scratch tree always removed.
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { parseConfig, type Config } from "../src/config.js";
 import { buildPassPlan } from "../src/dispatch.js";
-import { DJANGO_ECOSYSTEM, NONE_ECOSYSTEM } from "../src/ecosystem.js";
-import { parseUnifiedDiff } from "../src/unifieddiff.js";
+import { DJANGO_ECOSYSTEM, NONE_ECOSYSTEM } from "@quickchatai/pi-quickreview/src/ecosystem.js";
+import { parseUnifiedDiff } from "@quickchatai/pi-quickreview/src/unifieddiff.js";
 import {
   ReplayRefused,
   parseCaseSet,
@@ -46,6 +46,7 @@ import {
 } from "../src/replay.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = join(here, "..");
 const SRC_PATH = join(here, "..", "src", "replay.ts");
 const cfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -546,6 +547,19 @@ describe("selfscan2: replay harness faults and isolation", () => {
       expect(argv.some((a) => a.endsWith("cli/lens.ts"))).toBe(true);
       expect(argv).toContain("QCR_REPLAY=1");
       expect(readFileSync(conf, "utf8")).toBe("live credentials stay untouched");
+      // Every extension loads from the sandbox's own tree, never through the
+      // scratch root, which links in only extensions/ and state/agents: pi
+      // resolves an extension's imports (the core's package) from the path it
+      // was given. And each one is a file the real tree has.
+      // MUTATION: build the paths from the scratch root — this fails.
+      const sandbox = join(base, "sandbox");
+      const extensions = argv.filter((a) => a.endsWith(".ts"));
+      expect(extensions.length).toBeGreaterThan(3);
+      for (const p of extensions) {
+        expect(p.startsWith(`${sandbox}/`), p).toBe(true);
+        const rel = relative(sandbox, p);
+        expect(existsSync(join(REPO_ROOT, rel)), rel).toBe(true);
+      }
     } finally {
       rmSync(base, { recursive: true, force: true });
     }

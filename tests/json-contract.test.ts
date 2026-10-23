@@ -1,4 +1,4 @@
-// The versioned JSON contract (src/contract.ts, schemas/*.v1.json): every
+// The versioned JSON contract (packages/pi-plugin/src/contract.ts, schemas/*.v1.json): every
 // `--json` payload of `qcr review` and `qcr scan` leads with schema_version and
 // validates against its schema, and `qcr version --json` names the versions.
 //
@@ -35,7 +35,7 @@ import {
   SCAN_SCHEMA_VERSION,
   VERSION_SCHEMA_VERSION,
   withSchemaVersion,
-} from "../src/contract.js";
+} from "@quickchatai/pi-quickreview/src/contract.js";
 import { renderVersion, versionInfo } from "../src/version.js";
 import { validate } from "./helpers/json-schema-lite.js";
 import { FILES, SHA, scanRig } from "./helpers/scan-cli-rig.js";

@@ -5,6 +5,7 @@
 !package.json
 !package-lock.json
 !tsconfig.json
+!packages
 !src
 !extensions
 !scripts
@@ -12,5 +13,8 @@
 !docker/memory/entrypoint.sh
 **/node_modules
 **/.git
+# A package's build output and its packed data are built in the image.
+packages/*/dist
+packages/*/assets
 # Agent instruction files, never in an image.
 **/CLAUDE.md

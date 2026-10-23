@@ -30,10 +30,14 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
-import { openSessionContext } from "./engine/pisdk.js";
+import { openSessionContext } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import { checkConfigHome } from "./configcheck.js";
 import { parseConfig, sandboxRoot } from "./config.js";
-import { DISABLED_REFRESH, PI_REFRESH_MARGIN_MS, loginSummary } from "./engine/auth.js";
+import {
+  DISABLED_REFRESH,
+  PI_REFRESH_MARGIN_MS,
+  loginSummary,
+} from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import { ensurePrivateDir, runDirOf, socketPathOf } from "./ipc/capability.js";
 import { locateConfig } from "./install.js";
 import { inspectSessionJsonl } from "./resumecheck.js";

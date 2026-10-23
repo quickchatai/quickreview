@@ -39,7 +39,7 @@ import {
   type ReconcileSearchItem,
 } from "../src/reconcile.js";
 import { StateStore, type PrLifecycleState } from "../src/state.js";
-import type { SessionHooks } from "../src/types.js";
+import type { SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const tmpDirs: string[] = [];

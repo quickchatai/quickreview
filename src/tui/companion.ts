@@ -293,7 +293,7 @@ export const MEMORY = {
   retiredFile: "openviking/companion-retired-uris.json",
 } as const;
 
-/** The companion's lens tools (`lens`, `lens_wave`; extensions/lens.ts), which
+/** The companion's lens tools (`lens`, `lens_wave`; packages/pi-plugin/extensions/lens.ts), which
  * stand where pi's example subagent extension used to. They run a lens pass as
  * an SDK session of the companion's own pi process, over its own login and
  * reusing pi's HTTP dispatcher, and read their agents from the agents dir
@@ -687,7 +687,7 @@ export class CompanionLifecycle {
       `${ext}/cli/tui-view.ts`,
       "--extension",
       // Our lens tools (`lens`, `lens_wave`) at cap 8 — see LENS and
-      // extensions/lens.ts. First-party and always in the image, so it loads
+      // packages/pi-plugin/extensions/lens.ts. First-party and always in the image, so it loads
       // unconditionally like inject-bridge; its lens sessions are SDK
       // sessions of this pi, over pi's own dispatcher. The cap rides
       // QCR_SUBAGENT_MAX_CONCURRENCY in piEnvPrefix (LENS.maxConcurrency).
@@ -752,7 +752,7 @@ export class CompanionLifecycle {
       // Survey and scan fan out one case per unit — see LENS.
       `QCR_SUBAGENT_MAX_CONCURRENCY=${LENS.maxConcurrency}`,
       // The lens tool builds its SDK host over pi's own agent dir and refuses
-      // a relative or absent one (extensions/lens.ts); name the one pi uses.
+      // a relative or absent one (packages/pi-plugin/extensions/lens.ts); name the one pi uses.
       `PI_CODING_AGENT_DIR=${CONTAINER.piHome}/agent`,
       // The retired URIs the recall excludes — see MEMORY.retiredFile.
       `QCR_OV_RETIRED_FILE=${CONTAINER.stateHome}/${MEMORY.retiredFile}`,

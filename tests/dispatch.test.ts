@@ -13,15 +13,15 @@ import {
   validatorTier,
   type DispatchAdapter,
 } from "../src/dispatch.js";
-import type { GateResult } from "../src/gate.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
 import { fingerprintRoundIntegrity } from "../src/execboundary.js";
 import { recheckFingerprint } from "../src/recheck.js";
 import { StateStore } from "../src/state.js";
 import { applyEvent } from "../src/statemachine.js";
-import { PASS_TIER_ORDER } from "../src/types.js";
-import { renderRoundPrompt, roundTemplateFile } from "../src/templates.js";
-import type { RoundOrder, SessionHooks } from "../src/types.js";
+import { PASS_TIER_ORDER } from "@quickchatai/pi-quickreview/src/types.js";
+import { renderRoundPrompt, roundTemplateFile } from "@quickchatai/pi-quickreview/src/templates.js";
+import type { RoundOrder, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import type { ContextAssembler, MemoryRead, RoundMemory } from "../src/memory/context.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
@@ -817,7 +817,7 @@ describe("buildPassPlan", () => {
   // example-django pack every tree ships (the same Django settings/DRF
   // predicates) — never skipped, in any tree.
   it("threads the profile heuristics extension into selection", async () => {
-    const { loadProfileHeuristics } = await import("../src/profiles.js");
+    const { loadProfileHeuristics } = await import("@quickchatai/pi-quickreview/src/profiles.js");
     const qc = loadProfileHeuristics(resolve(import.meta.dirname, ".."), "example-django");
     const files = [file("project/settings_prod.py", 12, 1)];
     // Without the extension the settings glob is not in the generic core…

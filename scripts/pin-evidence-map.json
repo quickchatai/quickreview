@@ -38,7 +38,7 @@
     {
       "id": "pi-builtins",
       "assumes": "The four pi built-in extensions and the -builtin:<name> spelling that switches them off.",
-      "files": { "src/pibuiltins.ts": 1, "tests/pibuiltins.test.ts": 1 },
+      "files": { "packages/pi-plugin/src/pibuiltins.ts": 1, "tests/pibuiltins.test.ts": 1 },
       "signal": {
         "source": "none",
         "kind": "gap",
@@ -67,7 +67,7 @@
     {
       "id": "usage-and-price",
       "assumes": "A message's usage.cost.total is a number, and a subagent result's usage is the child's sum; the codex price list matches pi's catalog.",
-      "files": { "src/pricing.ts": 1 },
+      "files": { "packages/pi-plugin/src/pricing.ts": 1 },
       "signal": {
         "source": "session-jsonl",
         "kind": "jsonl",
@@ -78,7 +78,7 @@
     {
       "id": "thinking-levels",
       "assumes": "pi's thinking levels and the model's top level (effort_max).",
-      "files": { "src/reviewconfig.ts": 2 },
+      "files": { "packages/pi-plugin/src/reviewconfig.ts": 2 },
       "signal": {
         "source": "session-jsonl",
         "kind": "jsonl",
@@ -89,7 +89,7 @@
     {
       "id": "session-cwd-and-cache-id",
       "assumes": "SessionManager.open defaults its cwd to the spec's; inMemory({id}) sets the id the provider keys its cache on.",
-      "files": { "src/engine/pisdk.ts": 2 },
+      "files": { "packages/pi-plugin/src/engine/pisdk.ts": 2 },
       "signal": {
         "source": "session-jsonl",
         "kind": "jsonl",
@@ -100,7 +100,7 @@
     {
       "id": "lens-prefix-cache",
       "assumes": "before_provider_request may return a replacement payload with the pack first and a pinned prompt_cache_key.",
-      "files": { "src/engine/lens/leaf-cache.ts": 1 },
+      "files": { "packages/pi-plugin/src/engine/lens/leaf-cache.ts": 1 },
       "signal": {
         "source": "session-jsonl",
         "kind": "jsonl",
@@ -137,8 +137,8 @@
       "id": "tool-definition-shape",
       "assumes": "defineTool/registerTool's definition shape and execute's positional signature; a plain JSON-Schema parameters object.",
       "files": {
-        "extensions/lens.ts": 1,
-        "extensions/finding-clusters.ts": 1,
+        "packages/pi-plugin/extensions/lens.ts": 1,
+        "packages/pi-plugin/extensions/finding-clusters.ts": 1,
         "extensions/tui-view.ts": 2,
         "extensions/vendor/openviking-pi/qcr-leaf.ts": 1
       },
@@ -182,7 +182,7 @@
     {
       "id": "ledger-pin-compaction",
       "assumes": "session_before_compact's payload and result, turn_end, appendEntry, and pi's exported compact().",
-      "files": { "extensions/ledger-pin.ts": 7 },
+      "files": { "packages/pi-plugin/extensions/ledger-pin.ts": 7 },
       "signal": {
         "source": "session-jsonl",
         "kind": "jsonl",
@@ -197,7 +197,7 @@
       "id": "guard-tool-call-fields",
       "assumes": "The tool_call event's toolName and input fields, the write/read tool names, and pi's context-file candidates; a block reason reaches the model.",
       "files": {
-        "extensions/bash-guard.ts": 5,
+        "packages/pi-plugin/extensions/bash-guard.ts": 5,
         "tests/bash-guard.test.ts": 1
       },
       "signal": {
@@ -259,7 +259,7 @@
     {
       "id": "abort-before-turn-controller",
       "assumes": "AgentSession.abort() on a session whose prompt was sent but whose agent has not yet made the turn's abort controller ends that turn, rather than being dropped.",
-      "files": { "src/engine/round.ts": 1 },
+      "files": { "packages/pi-plugin/src/engine/round.ts": 1 },
       "signal": {
         "source": "none",
         "kind": "gap",

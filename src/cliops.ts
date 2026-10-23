@@ -7,19 +7,22 @@ import { runChecklist, type ChecklistDeps } from "./checklist.js";
 import { loadConfig, sandboxRoot, type Config } from "./config.js";
 import { dispatchOnce } from "./dispatch.js";
 import { ESCALATION_TAG } from "./escalation.js";
-import { MIGRATION_COMMENT_CLOSING, MIGRATION_COMMENT_HEADING } from "./migrations.js";
+import {
+  MIGRATION_COMMENT_CLOSING,
+  MIGRATION_COMMENT_HEADING,
+} from "@quickchatai/pi-quickreview/src/migrations.js";
 import { zoneDateString } from "./eod.js";
-import type { GateResult } from "./gate.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { GitHubAdapter, PrRef } from "./github.js";
 import { readDryrunDir, runCompare, type CompareDeps, type ReviewSnapshot } from "./compare.js";
 import { runDirOf } from "./ipc/capability.js";
 import { recheckFingerprint } from "./recheck.js";
 import { reconcileOnce } from "./reconcile.js";
-import { standingVerdict } from "./standing-review.js";
+import { standingVerdict } from "@quickchatai/pi-quickreview/src/standing-review.js";
 import { isBotAuthor } from "./statemachine.js";
 import { StateStore } from "./state.js";
 import { stubSessionHooks } from "./stubs.js";
-import type { RoundOrder } from "./types.js";
+import type { RoundOrder } from "@quickchatai/pi-quickreview/src/types.js";
 import { createWorkerLiveness } from "./workerliveness.js";
 import { applyInterpretation, interpretEvent } from "./webhook.js";
 import { buildParts, type ProductionParts } from "./wire.js";

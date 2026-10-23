@@ -110,7 +110,7 @@ import {
   parseLesson,
   validateLessonFields,
 } from "../src/memory/lessons.js";
-import { ALL_PASSES } from "../src/passes.js";
+import { ALL_PASSES } from "@quickchatai/pi-quickreview/src/passes.js";
 
 const ROOT = join(import.meta.dirname, "..");
 const FORK = join(ROOT, "extensions", "vendor", "openviking-pi");
@@ -192,7 +192,10 @@ describe("PATCH 1 — ledger-pin is the sole owner of compaction", () => {
   });
 
   it("keeps ledger-pin's own handler — the invariant is that exactly one exists", () => {
-    const ledgerPin = readFileSync(join(ROOT, "extensions", "ledger-pin.ts"), "utf8");
+    const ledgerPin = readFileSync(
+      join(ROOT, "packages", "pi-plugin", "extensions", "ledger-pin.ts"),
+      "utf8",
+    );
     expect(ledgerPin).toMatch(/session_before_compact/);
   });
 

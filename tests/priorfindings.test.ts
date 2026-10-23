@@ -11,9 +11,12 @@ import {
   preparePriorFindings,
   renderPriorFindingsNote,
   type PriorFindingsList,
-} from "../src/priorfindings.js";
+} from "@quickchatai/pi-quickreview/src/priorfindings.js";
 import { StateStore, type RoundFindingInput } from "../src/state.js";
-import { assignPriorFindings, renderPriorTaskSection } from "../src/priortasks.js";
+import {
+  assignPriorFindings,
+  renderPriorTaskSection,
+} from "@quickchatai/pi-quickreview/src/priortasks.js";
 
 const HEAD = "abcdef1234567890abcdef1234567890abcdef12";
 

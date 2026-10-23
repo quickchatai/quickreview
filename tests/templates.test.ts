@@ -18,12 +18,12 @@ import {
   roundVars,
   RECHECK_TEMPLATE_FILE,
   FOLLOW_UP_TEMPLATE_FILE,
-} from "../src/templates.js";
-import { DJANGO_ECOSYSTEM, NONE_ECOSYSTEM } from "../src/ecosystem.js";
+} from "@quickchatai/pi-quickreview/src/templates.js";
+import { DJANGO_ECOSYSTEM, NONE_ECOSYSTEM } from "@quickchatai/pi-quickreview/src/ecosystem.js";
 import { RECHECK_FILE_RE, recheckDecisionFile, type RecheckOrder } from "../src/recheck.js";
 import { VERDICT_FILE_RE } from "../src/verdicts.js";
 import { checkBashCommand } from "../extensions/cli/bash-guard-ambient.js";
-import type { RoundOrder, RoundType } from "../src/types.js";
+import type { RoundOrder, RoundType } from "@quickchatai/pi-quickreview/src/types.js";
 
 const order: RoundOrder = {
   pr: 412,
@@ -457,7 +457,7 @@ describe("shipped round templates", () => {
     it(`${tplFile} dispatches via the subagent tool, no bash fan-out, no spend_usd`, () => {
       // spend_usd is gone from the verdict contract — the daemon measures usage.
       expect(text).not.toContain("spend_usd");
-      // Launch mechanism: the lens tool (`subagent` natively, src/launchvocab.ts),
+      // Launch mechanism: the lens tool (`subagent` natively, packages/pi-plugin/src/launchvocab.ts),
       // one turn; the bash fan-out is only ever mentioned as forbidden.
       expect(text).toContain("`{{lens_tool}}` tool");
       expect(text).toMatch(/ONE assistant turn/);

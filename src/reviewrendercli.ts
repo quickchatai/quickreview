@@ -1,5 +1,5 @@
 // `scripts/render-review.sh <pr> <round>` → this. Renders the round's posted
-// review from its findings record (src/reviewrender.ts) into the two pinned
+// review from its findings record (packages/pi-plugin/src/reviewrender.ts) into the two pinned
 // scratch files the posting scripts read, and prints what it rendered and
 // what the record lacked. It reads the record and writes the two files (and,
 // when the duplicate-merge post-check merged anything, the record back with
@@ -17,18 +17,18 @@
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig, REVIEW_DEFAULTS } from "./config.js";
-import { findingsRecordPath } from "./findingsrecord.js";
+import { findingsRecordPath } from "@quickchatai/pi-quickreview/src/findingsrecord.js";
 import { homeProfileLookup } from "./install.js";
-import { applyProfilePosting } from "./postingpolicy.js";
-import { loadProfilePosting } from "./profiles.js";
+import { applyProfilePosting } from "@quickchatai/pi-quickreview/src/postingpolicy.js";
+import { loadProfilePosting } from "@quickchatai/pi-quickreview/src/profiles.js";
 import {
   postedRenderOptions,
   renderPostedReview,
   type PolicyWithheld,
   type PostedRenderConfig,
   type RenderedReview,
-} from "./reviewrender.js";
-import type { PostCheckMerge } from "./dedup.js";
+} from "@quickchatai/pi-quickreview/src/reviewrender.js";
+import type { PostCheckMerge } from "@quickchatai/pi-quickreview/src/dedup.js";
 
 /** Render one round's files from its record. Pure apart from the files under
  * `root/state/` it reads and writes. */

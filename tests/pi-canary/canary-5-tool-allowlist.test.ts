@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Type, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_TOOLS } from "../../src/engine/pisdk.js";
+import { DEFAULT_TOOLS } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import { type HostRig, createHostRig, useOfflineGuard } from "./harness.js";
 
 useOfflineGuard();

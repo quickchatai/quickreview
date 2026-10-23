@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import activate from "../extensions/cli/ledger-pin.js";
-import { extractLedger, parseOwnPr } from "../extensions/ledger-pin.js";
+import { extractLedger, parseOwnPr } from "@quickchatai/pi-quickreview/extensions/ledger-pin.js";
 
 /** A handler as the fake pi records it. */
 type PiEventHandler = (event: Record<string, unknown>) => unknown;

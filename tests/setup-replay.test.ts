@@ -31,7 +31,7 @@ import {
   replayToolDefinitions,
 } from "../extensions/setup-replay.js";
 import { renderApply } from "../extensions/setup.js";
-import { SCAN_LEAF_TOOLS, VALIDATE_PASS } from "../src/include.js";
+import { SCAN_LEAF_TOOLS, VALIDATE_PASS } from "@quickchatai/pi-quickreview/src/include.js";
 import { configHome, type InstallEnv } from "../src/install.js";
 import { notYetTrackerSink, stateHomeFs } from "../src/setup/adapters.js";
 import { PROFILE_BASELINES_FILE, readBaselines } from "../src/setup/baselines.js";

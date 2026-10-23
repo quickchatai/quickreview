@@ -38,7 +38,7 @@
 //
 // Nothing here writes memory or GitHub, and nothing here is on the round
 // path. Its tables live on the state database beside the outcome capture's.
-import { withinBudget } from "../budget.js";
+import { withinBudget } from "@quickchatai/pi-quickreview/src/budget.js";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MEMORY_DEFAULTS } from "../config.js";

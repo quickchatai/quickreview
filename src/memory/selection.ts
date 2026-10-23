@@ -48,16 +48,16 @@
 // included (one shared find, filtered per lens), and, for the recheck and the
 // ping-pong wake, the repo facts for the paths they touch
 // (`selectRepoFacts`).
-import { globMatcherOrNothing } from "../glob.js";
-import { canonicalLensIds } from "../lensids.js";
+import { globMatcherOrNothing } from "@quickchatai/pi-quickreview/src/glob.js";
+import { canonicalLensIds } from "@quickchatai/pi-quickreview/src/lensids.js";
 import { roundContextQuery } from "./context.js";
 import { parseEventTags, parseHashTags } from "./eventtags.js";
 import { CASES_AREA, EXPERIENCES_AREA, PINNED_AREA, isRetired } from "./layout.js";
 import { parseLesson, type LessonKind, type ParsedLesson } from "./lessons.js";
-import { VALIDATOR_LENS } from "../memoryport.js";
+import { VALIDATOR_LENS } from "@quickchatai/pi-quickreview/src/memoryport.js";
 
 /** The validator's lens id — it has no task file and judges every finding
- * (the delivery's, src/memoryport.ts). */
+ * (the delivery's, packages/pi-plugin/src/memoryport.ts). */
 export { VALIDATOR_LENS };
 
 /** What each role may carry: items and an ESTIMATED token budget. */

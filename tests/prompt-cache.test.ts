@@ -9,22 +9,25 @@ import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { CACHE_GROUP_MAX_AGE_MS, CacheGrouper } from "../src/engine/lens/cache-group.js";
+import {
+  CACHE_GROUP_MAX_AGE_MS,
+  CacheGrouper,
+} from "@quickchatai/pi-quickreview/src/engine/lens/cache-group.js";
 import {
   DEFAULT_CACHE_STAGGER_MS,
   DEFAULT_MAX_CONCURRENCY,
   resolveCacheGroup,
   resolveCacheStagger,
   resolveMaxConcurrency,
-} from "../src/engine/lens/env.js";
-import { packFirstPayload } from "../src/engine/lens/leaf-cache.js";
+} from "@quickchatai/pi-quickreview/src/engine/lens/env.js";
+import { packFirstPayload } from "@quickchatai/pi-quickreview/src/engine/lens/leaf-cache.js";
 import {
   CHARS_PER_TOKEN,
   mustSeeCandidates,
   omittedNote,
   readWorktreeFileForPack,
   renderContextPack,
-} from "../src/contextpack.js";
+} from "@quickchatai/pi-quickreview/src/contextpack.js";
 import {
   DEFAULT_LENS_CACHE_STAGGER_MS,
   DEFAULT_LENS_MAX_CONCURRENCY,

@@ -28,7 +28,7 @@ import {
   sweepStatusOf,
   type SweepClaim,
   type SweepStatus,
-} from "../sweepstatus.js";
+} from "@quickchatai/pi-quickreview/src/sweepstatus.js";
 import {
   jsonProblem,
   missingOutputs,
@@ -37,14 +37,14 @@ import {
   unparseableOutputs,
   PI_RUN_FILES,
   type PiRun,
-} from "../oneshot.js";
+} from "@quickchatai/pi-quickreview/src/oneshot.js";
 import {
   boundBody,
   renderFollowUpOneShotPrompts,
   renderOneShotPrompts,
   type OneShotPrompts,
-} from "../engine/prompts.js";
-import { renderBenchOutputs } from "../engine/render.js";
+} from "@quickchatai/pi-quickreview/src/engine/prompts.js";
+import { renderBenchOutputs } from "@quickchatai/pi-quickreview/src/engine/render.js";
 
 // The prompts, render and context moved to src/engine/; their callers still
 // import them from here.
@@ -55,11 +55,11 @@ export {
   OPEN_MAP_KEYS,
   withAuthModels,
   withPresetInToml,
-} from "../engine/context.js";
+} from "@quickchatai/pi-quickreview/src/engine/context.js";
 export { benchConfig, contextFor } from "../reviewcontext.js";
-import type { Runtime, SessionSpec } from "../engine/port.js";
+import type { Runtime, SessionSpec } from "@quickchatai/pi-quickreview/src/engine/port.js";
 import { publishChangedResult } from "./publication.js";
-import {} from "../reviewrender.js";
+import {} from "@quickchatai/pi-quickreview/src/reviewrender.js";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import {} from "node:child_process";
@@ -74,27 +74,33 @@ import {
 import {} from "../dispatch.js";
 import type { PrOwnedDelta } from "../worktrees.js";
 import { benchDelta, benchPriorFindings, decideBenchFollowUp } from "./followup.js";
-import type { Ecosystem } from "../ecosystem.js";
+import type { Ecosystem } from "@quickchatai/pi-quickreview/src/ecosystem.js";
 import type { PrFileEntry } from "../github.js";
-import {} from "../contextpack.js";
-import { prepareDependencySources, renderDependencyNote } from "../depsources.js";
+import {} from "@quickchatai/pi-quickreview/src/contextpack.js";
+import {
+  prepareDependencySources,
+  renderDependencyNote,
+} from "@quickchatai/pi-quickreview/src/depsources.js";
 import {
   assessOverrides,
   overrideReader,
   resolveOverrides,
   type Customisation,
-} from "../profileoverrides.js";
-import type { LensTuning } from "../lenstuning.js";
+} from "@quickchatai/pi-quickreview/src/profileoverrides.js";
+import type { LensTuning } from "@quickchatai/pi-quickreview/src/lenstuning.js";
 import { homeProfileLookup } from "../install.js";
-import type { ProfileLookup } from "../profiles.js";
-import { isDefaultPosting, type PostingPolicy } from "../postingpolicy.js";
+import type { ProfileLookup } from "@quickchatai/pi-quickreview/src/profiles.js";
+import {
+  isDefaultPosting,
+  type PostingPolicy,
+} from "@quickchatai/pi-quickreview/src/postingpolicy.js";
 // The round's lens agents are built by the core (`qcr review` builds them too).
-import { buildBenchAgents } from "../engine/roundagents.js";
+import { buildBenchAgents } from "@quickchatai/pi-quickreview/src/engine/roundagents.js";
 export { buildBenchAgents };
 import { enforceBenchPosting, POLICED_ORIGINALS, type BenchPostingReport } from "./benchposting.js";
-import {} from "../severity.js";
-import type { PassPlanEntry } from "../types.js";
-import {} from "../templates.js";
+import {} from "@quickchatai/pi-quickreview/src/severity.js";
+import type { PassPlanEntry } from "@quickchatai/pi-quickreview/src/types.js";
+import {} from "@quickchatai/pi-quickreview/src/templates.js";
 import {
   CASE_FILES,
   filesFromGitDiff,
@@ -624,7 +630,7 @@ export function followUpOutcomeOf(
 
 /**
  * The order of a follow-up replay case: production's round k, built by the
- * shared follow-up renderer (src/oneshot.ts) with the case's own answers to
+ * shared follow-up renderer (packages/pi-plugin/src/oneshot.ts) with the case's own answers to
  * what the daemon's state would supply (`decideBenchFollowUp`, the recorded
  * prior findings and ledger).
  */

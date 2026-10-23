@@ -3,11 +3,14 @@
 // renderer, the post-check, the record parser and the bench readers used to
 // read only `posted`, which dropped these survivors silently.
 import { describe, expect, it } from "vitest";
-import { entryDisposition } from "../src/findingkey.js";
-import { parseFindingsRecord } from "../src/findingsrecord.js";
-import { applyPostingPolicyToRecord, renderReviewFromRecord } from "../src/reviewrender.js";
+import { entryDisposition } from "@quickchatai/pi-quickreview/src/findingkey.js";
+import { parseFindingsRecord } from "@quickchatai/pi-quickreview/src/findingsrecord.js";
+import {
+  applyPostingPolicyToRecord,
+  renderReviewFromRecord,
+} from "@quickchatai/pi-quickreview/src/reviewrender.js";
 import { policeBenchOutput } from "../src/bench/benchposting.js";
-import { DEFAULT_POSTING_POLICY } from "../src/postingpolicy.js";
+import { DEFAULT_POSTING_POLICY } from "@quickchatai/pi-quickreview/src/postingpolicy.js";
 
 function entry(over: Record<string, unknown>): Record<string, unknown> {
   return {

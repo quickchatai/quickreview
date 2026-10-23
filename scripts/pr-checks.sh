@@ -117,7 +117,7 @@ done
 # them, so a failing status (a deploy preview, an external CI that reports
 # through the status API) classifies red here exactly as guard 4 does. A status
 # is its own check: never collapsed with a check-run of its context, nor with
-# another status (the src/cigate.ts latestRunPerName rule).
+# another status (the packages/pi-plugin/src/cigate.ts latestRunPerName rule).
 echo '{"statuses": []}' >"$STATUSES"
 for ((page = 1; page <= 10; page++)); do
   get "/repos/$REPO/commits/$HEAD_SHA/status?per_page=100&page=$page"
@@ -139,7 +139,7 @@ python3 - "$RUNS" "$FAILING" "$STATUSES" <<'PY'
 import json, re, sys
 runs = json.load(open(sys.argv[1])).get("check_runs", [])
 statuses = json.load(open(sys.argv[3])).get("statuses", [])
-# Latest-run-per-name (mirrors src/cigate.ts latestRunPerName, where the rule
+# Latest-run-per-name (mirrors packages/pi-plugin/src/cigate.ts latestRunPerName, where the rule
 # is stated exactly): GitHub auto-cancels superseded runs, so only the most
 # recent run of each check name counts.
 # Recency collapses ONLY runs that carry a started_at (latest wins, an equal
@@ -192,7 +192,7 @@ for s in statuses:
 print(f"SUMMARY: {passed} passed / {failed} failed / {pending} pending (latest run per check only)")
 # The one line the Decide step reads. Same table as the daemon gate + guards.sh:
 # check-runs (latest per name) and commit statuses (each its own check). A
-# failure decides red even while another check still runs — src/cigate.ts
+# failure decides red even while another check still runs — packages/pi-plugin/src/cigate.ts
 # classifyCi and guards.sh's jq both put red first.
 if not latest and not statuses:
     print("CLASSIFIED: none")

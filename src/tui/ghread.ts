@@ -29,7 +29,7 @@
 import { randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { mintAppJwt, type FetchFn } from "../githubAuth.js";
+import { mintAppJwt, type FetchFn } from "@quickchatai/pi-quickreview/src/githubAuth.js";
 
 /** The only permissions the companion's token is ever minted with. */
 export const COMPANION_GITHUB_PERMISSIONS: Readonly<Record<string, "read">> = Object.freeze({

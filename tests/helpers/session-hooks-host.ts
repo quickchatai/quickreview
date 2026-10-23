@@ -1,7 +1,7 @@
 // Hosts for the SessionHooks conformance suite (tests/session-hooks-conformance
 // .test.ts).
 //
-// `SessionHooks` (src/types.ts) is the one seam between the daemon's state
+// `SessionHooks` (packages/pi-plugin/src/types.ts) is the one seam between the daemon's state
 // machine and whatever runs the per-PR pi. The conformance suite states the
 // contract once and runs it against every host in `SESSION_HOSTS`; a host joins
 // by adding one entry here and passing the same cases. The suite never reaches
@@ -23,7 +23,7 @@ import { CapabilityStore } from "../../src/ipc/capability.js";
 import type { WorkerSpec } from "../../src/ipc/workerspec.js";
 import { prSessionName } from "../../src/sessions.js";
 import { StateStore } from "../../src/state.js";
-import type { SessionHooks } from "../../src/types.js";
+import type { SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { WorkerSessionHost } from "../../src/worker-session-host.js";
 import { WorkerSupervisor } from "../../src/workersupervisor.js";
 import { WorktreeManager } from "../../src/worktrees.js";

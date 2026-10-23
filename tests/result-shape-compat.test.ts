@@ -1,4 +1,4 @@
-// LensResult v1 and the lens ledger (src/lensresult.ts) against the consumers
+// LensResult v1 and the lens ledger (packages/pi-plugin/src/lensresult.ts) against the consumers
 // that read lens results: caseCostUsd / EventCostMeter (bench/cost.ts),
 // stagesFromEvents and usageFromEvents (bench/aacr.ts), lensOutputsFromEvents
 // (bench/whatif.ts) and the round usage that feeds est_usd (usage.ts, through
@@ -30,8 +30,9 @@ import {
   parseLedger,
   parseLedgerLine,
   serializeLedgerLine,
-} from "../src/lensresult.js";
+} from "@quickchatai/pi-quickreview/src/lensresult.js";
 import { MemoryTranscriptFs } from "./helpers/memory-transcript-fs.js";
+import { CORE_NAME } from "./helpers/source-trees.js";
 
 const FIXTURES = join(import.meta.dirname, "fixtures");
 const COMPAT = join(FIXTURES, "result-shape-compat");
@@ -303,16 +304,19 @@ describe("lens ledger lines", () => {
   });
 });
 
-describe("src/lensresult.ts is neutral", () => {
+describe("the core's src/lensresult.ts is neutral", () => {
   // The daemon-side usage.ts imports it, so it must stay outside src/engine/
   // (the P2.1 fence) and depend on nothing itself.
   it("has no imports, and the daemon-side consumers import it", () => {
-    const src = readFileSync(join(import.meta.dirname, "..", "src", "lensresult.ts"), "utf8");
+    const src = readFileSync(
+      join(import.meta.dirname, "..", "packages", "pi-plugin", "src", "lensresult.ts"),
+      "utf8",
+    );
     expect(src).not.toMatch(/^\s*(import|export)\b[^;]*\bfrom\s/m);
     expect(src).not.toMatch(/\bimport\s*\(/);
     for (const f of ["usage.ts", "transcriptindex.ts"])
       expect(readFileSync(join(import.meta.dirname, "..", "src", f), "utf8")).toContain(
-        '"./lensresult.js"',
+        `"${CORE_NAME}/src/lensresult.js"`,
       );
   });
 });

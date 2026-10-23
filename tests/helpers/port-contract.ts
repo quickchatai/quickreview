@@ -1,4 +1,4 @@
-// The runtime port's contract (src/engine/port.ts), written against a harness
+// The runtime port's contract (packages/pi-plugin/src/engine/port.ts), written against a harness
 // so any runtime can be put through it. tests/engine-sdkruntime.test.ts runs it
 // on the in-process SDK runtime, the one runtime.
 //
@@ -15,7 +15,7 @@ import {
   type Runtime,
   type SessionEvent,
   type SessionSpec,
-} from "../../src/engine/port.js";
+} from "@quickchatai/pi-quickreview/src/engine/port.js";
 import { waitFor } from "./wait-for.js";
 
 /** What the backend does with each turn it is given.

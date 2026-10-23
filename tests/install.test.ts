@@ -51,6 +51,7 @@ import {
 } from "../src/install.js";
 import { loadConfig, parseConfig } from "../src/config.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
+import { CORE_PACKAGE, EXTENSION_DIRS, SRC_DIRS } from "./helpers/source-trees.js";
 
 const linkFault = vi.hoisted(() => ({ path: "" }));
 vi.mock("node:fs", async (original) => {
@@ -354,9 +355,9 @@ describe("no TypeScript reader builds the checkout config path itself", () => {
     }
   }
 
-  it("src/, extensions/ and deploy/ name config.toml only through the locator", () => {
+  it("src/, extensions/ (the app's and the core's) and deploy/ name config.toml only through the locator", () => {
     const offenders: string[] = [];
-    for (const top of ["src", "extensions", "deploy"]) {
+    for (const top of [...SRC_DIRS, ...EXTENSION_DIRS, "deploy"]) {
       for (const rel of sources(top)) {
         if (ALLOWED.has(rel)) continue;
         const text = readFileSync(join(repo, rel), "utf8");
@@ -870,7 +871,7 @@ describe("the checkout's profiles/ holds the generic examples", () => {
           }
         }
       };
-      for (const top of ["src", "extensions"]) walk(top);
+      for (const top of [...SRC_DIRS, ...EXTENSION_DIRS]) walk(top);
       expect(offenders).toEqual([]);
     },
   );
@@ -1359,10 +1360,10 @@ describe("nothing but migrate (and a not-found's hint) touches the old places", 
     "src/homes.ts",
     "src/cli.ts",
     "src/config.ts",
-    "src/profiles.ts",
+    `${CORE_PACKAGE}/src/profiles.ts`,
     "src/tui/companion.ts",
   ]);
-  it("src/ and extensions/ call the old-place helpers only where they move or name a strand", () => {
+  it("src/ and extensions/ (the app's and the core's) call the old-place helpers only where they move or name a strand", () => {
     const offenders: string[] = [];
     const walk = (rel: string): void => {
       for (const entry of readdirSync(join(repo, rel), { withFileTypes: true })) {
@@ -1378,7 +1379,7 @@ describe("nothing but migrate (and a not-found's hint) touches the old places", 
         }
       }
     };
-    for (const top of ["src", "extensions"]) walk(top);
+    for (const top of [...SRC_DIRS, ...EXTENSION_DIRS]) walk(top);
     expect(offenders).toEqual([]);
   });
 
@@ -1413,9 +1414,9 @@ describe("no reader builds the legacy secrets path itself", () => {
     }
   }
 
-  it("src/, extensions/, scripts/, deploy/ and docker/ name it only in comments and prose", () => {
+  it("src/, extensions/ (the app's and the core's), scripts/, deploy/ and docker/ name it only in comments and prose", () => {
     const offenders: string[] = [];
-    for (const top of ["src", "extensions", "scripts", "deploy", "docker"]) {
+    for (const top of [...SRC_DIRS, ...EXTENSION_DIRS, "scripts", "deploy", "docker"]) {
       for (const rel of files(top)) {
         if (ALLOWED.has(rel)) continue;
         readFileSync(join(repo, rel), "utf8")

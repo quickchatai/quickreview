@@ -1,4 +1,4 @@
-// reviewSdkRuntime (src/engine/reviewsdk.ts): the runtime `qcr review` hosts its
+// reviewSdkRuntime (packages/pi-plugin/src/engine/reviewsdk.ts): the runtime `qcr review` hosts its
 // main session on under `[engine] runtime = "sdk"`, here over pi-ai's faux
 // provider (the real SDK, no network, no model). What it builds its host from,
 // what it refuses before any host exists, and what the process env carries while
@@ -8,10 +8,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { AuthExpiring, DISABLED_REFRESH } from "../src/engine/auth.js";
-import { PiHost, type PiHostOptions } from "../src/engine/pisdk.js";
-import type { SessionSpec } from "../src/engine/port.js";
-import { reviewSdkRuntime } from "../src/engine/reviewsdk.js";
+import { AuthExpiring, DISABLED_REFRESH } from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import { PiHost, type PiHostOptions } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import type { SessionSpec } from "@quickchatai/pi-quickreview/src/engine/port.js";
+import { reviewSdkRuntime } from "@quickchatai/pi-quickreview/src/engine/reviewsdk.js";
 import { REPO_ROOT } from "./helpers/round-rig.js";
 import { pricedFaux } from "./helpers/priced-faux.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";
@@ -245,7 +245,8 @@ describe("reviewSdkRuntime", () => {
 describe("selectReviewRuntime ([engine] runtime for qcr review)", () => {
   it("selects the SDK runtime and marks the route; the retired proc is refused at config load", async () => {
     const { selectReviewRuntime } = await import("../src/reviewcli.js");
-    const { onSdkRoute, resetLiveSessions } = await import("../src/engine/livesessions.js");
+    const { onSdkRoute, resetLiveSessions } =
+      await import("@quickchatai/pi-quickreview/src/engine/livesessions.js");
     const { parseConfig } = await import("../src/config.js");
     const base = readFileSync(join(REPO_ROOT, "tests", "fixtures", "config.toml"), "utf8");
     resetLiveSessions();
@@ -263,7 +264,8 @@ describe("selectReviewRuntime ([engine] runtime for qcr review)", () => {
 
   it("lens_runtime = engine carries the engine route with it", async () => {
     const { selectReviewRuntime } = await import("../src/reviewcli.js");
-    const { resetLiveSessions } = await import("../src/engine/livesessions.js");
+    const { resetLiveSessions } =
+      await import("@quickchatai/pi-quickreview/src/engine/livesessions.js");
     const { parseConfig } = await import("../src/config.js");
     const base = readFileSync(join(REPO_ROOT, "tests", "fixtures", "config.toml"), "utf8");
     const withPi = (lines: string, extra = ""): ReturnType<typeof parseConfig> =>

@@ -46,7 +46,7 @@ import {
 import { mkdir, readdir, rmdir } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import type { StateStore } from "../state.js";
-import { yieldToLoop } from "../yieldloop.js";
+import { yieldToLoop } from "@quickchatai/pi-quickreview/src/yieldloop.js";
 import {
   BUNDLE_RECORD_MAX_BYTES,
   readBundleRecords,

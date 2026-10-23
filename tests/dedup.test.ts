@@ -1,9 +1,14 @@
-// src/dedup.ts — the duplicate merge's two deterministic halves
+// packages/pi-plugin/src/dedup.ts — the duplicate merge's two deterministic halves
 // (docs/duplicate-merge.md): candidate groups before the validator, and the
 // render-time post-check over the posted findings.
 import { describe, expect, it } from "vitest";
-import { clusterFindings, identifiersOf, postCheckRecord, renderGroups } from "../src/dedup.js";
-import { renderReviewFromRecord } from "../src/reviewrender.js";
+import {
+  clusterFindings,
+  identifiersOf,
+  postCheckRecord,
+  renderGroups,
+} from "@quickchatai/pi-quickreview/src/dedup.js";
+import { renderReviewFromRecord } from "@quickchatai/pi-quickreview/src/reviewrender.js";
 
 describe("identifiersOf", () => {
   it("takes named identifiers from code spans, not prose, paths or common words", () => {

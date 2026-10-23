@@ -9,7 +9,7 @@
 //
 //   1. reads the spec file the daemon wrote (0600, no secret) and removes it;
 //   2. makes the pi its OWN agent dir: the owner's login BORROWED as a
-//      refresh-blanked copy (D5; src/engine/auth.ts), never the refresher's file
+//      refresh-blanked copy (D5; packages/pi-plugin/src/engine/auth.ts), never the refresher's file
 //      and never a write to it, plus the model and settings files. The pi cannot
 //      refresh, so it can neither rotate the grant nor hold a file the refresher
 //      reads; the copy is refused when its token would expire inside the lease's
@@ -27,16 +27,20 @@ import { spawn } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, readFileSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { GITHUB_TOKEN_ENVS } from "./envstrip.js";
+import { GITHUB_TOKEN_ENVS } from "@quickchatai/pi-quickreview/src/envstrip.js";
 import { CAP_FD_INDEX } from "./ipc/capability.js";
-import { PI_REFRESH_MARGIN_MS, ENGINE_AUTH_WORDS, copyPiAuth } from "./engine/auth.js";
+import {
+  PI_REFRESH_MARGIN_MS,
+  ENGINE_AUTH_WORDS,
+  copyPiAuth,
+} from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import {
   TOOL_UMASK,
   checkToolUid,
   shareWithToolGroup,
   toolIsolation,
   toolUidEnv,
-} from "./engine/tooluid.js";
+} from "@quickchatai/pi-quickreview/src/engine/tooluid.js";
 import type { TakeoverSpec } from "./takeover.js";
 
 /** The env names the pane's pi may inherit. Everything else is dropped. */

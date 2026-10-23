@@ -93,7 +93,7 @@ sha256 in `sets/martian*.json`).
 
 ## Subagents — no third-party component
 
-Lenses run through the first-party lens tool (`src/engine/lens/`), SDK sessions
+Lenses run through the first-party lens tool (`packages/pi-plugin/src/engine/lens/`), SDK sessions
 of the host process — nothing is vendored or redistributed, so no notice entry
 is needed. (The pi-package example subagent extension that once filled this
 role, loaded by `extensions/subagents.ts`, is retired.) (History: the unlicensed third-party

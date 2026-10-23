@@ -17,7 +17,7 @@ import { readFileSync } from "node:fs";
 import type { StateStore } from "./state.js";
 import { wakeOrHold } from "./wakes.js";
 
-/** The mirrored snapshot's header (see extensions/ledger-pin.ts LEDGER_RE):
+/** The mirrored snapshot's header (see packages/pi-plugin/extensions/ledger-pin.ts LEDGER_RE):
  * `LEDGER PR #<n> @ <sha>`. The sha is whatever the session wrote — often
  * abbreviated — so freshness accepts a ≥7-char hex prefix of the round head. */
 export const LEDGER_HEADER_RE = /LEDGER\s+PR\s+#(\d+)\s*@\s*([0-9a-fA-F]+)/;

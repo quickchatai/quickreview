@@ -20,7 +20,7 @@ import {
 import { join } from "node:path";
 import type Database from "better-sqlite3";
 import { GitHubRequestError, type GitHubAdapter } from "./github.js";
-import type { GateResult } from "./gate.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { StateStore } from "./state.js";
 
 /** Three exchanges per finding, then concede or hold. */

@@ -12,8 +12,11 @@
 // A write that fails is a warning, never the round's failure.
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { appendProgressLog, progressLogPath } from "../round-progress.js";
-import { readLiveEvents } from "./events.js";
+import {
+  appendProgressLog,
+  progressLogPath,
+} from "@quickchatai/pi-quickreview/src/round-progress.js";
+import { readLiveEvents } from "@quickchatai/pi-quickreview/src/live/events.js";
 import { RoundProgressProjection, type ProjectionIdentity } from "./projection.js";
 
 /** `<root>/state/round-progress/pr-<n>.json`, where the supervisor reads it. */

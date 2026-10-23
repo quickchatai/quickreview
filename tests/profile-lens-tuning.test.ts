@@ -12,21 +12,24 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { applyReviewEffort, parseConfig, type Config } from "../src/config.js";
 import { addTierOf, buildPassPlan, buildRoundOrder } from "../src/dispatch.js";
-import { NONE_ECOSYSTEM } from "../src/ecosystem.js";
-import { DOWNGRADE_WORDS } from "../src/findingsrecord.js";
+import { NONE_ECOSYSTEM } from "@quickchatai/pi-quickreview/src/ecosystem.js";
+import { DOWNGRADE_WORDS } from "@quickchatai/pi-quickreview/src/findingsrecord.js";
 import type { PrFileEntry } from "../src/github.js";
-import { PASS_ADDENDA, buildAgents } from "../src/include.js";
+import { PASS_ADDENDA, buildAgents } from "@quickchatai/pi-quickreview/src/include.js";
 import { configHome, homeProfileLookup, type InstallEnv } from "../src/install.js";
 import {
   applyProfileTuning,
   lensModelOverrides,
   lensTuningAddenda,
   PROFILE_CAP_WORD,
-} from "../src/lenstuning.js";
-import { loadProfileAddenda, loadProfileLensTuning } from "../src/profiles.js";
+} from "@quickchatai/pi-quickreview/src/lenstuning.js";
+import {
+  loadProfileAddenda,
+  loadProfileLensTuning,
+} from "@quickchatai/pi-quickreview/src/profiles.js";
 import { runFingerprint } from "../src/bench/runner.js";
 import { buildParts } from "../src/wire.js";
-import { renderAddableLenses } from "../src/templates.js";
+import { renderAddableLenses } from "@quickchatai/pi-quickreview/src/templates.js";
 import type { PrStateRow } from "../src/state.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 

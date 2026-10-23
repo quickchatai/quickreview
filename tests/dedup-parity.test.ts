@@ -16,8 +16,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderRound } from "../src/reviewrendercli.js";
 import { renderBenchOutputs } from "../src/bench/runner.js";
-import type { PostedRenderConfig } from "../src/reviewrender.js";
-import { parseFindingMarker, stripFindingMarkers } from "../src/findingkey.js";
+import type { PostedRenderConfig } from "@quickchatai/pi-quickreview/src/reviewrender.js";
+import {
+  parseFindingMarker,
+  stripFindingMarkers,
+} from "@quickchatai/pi-quickreview/src/findingkey.js";
 
 const RECORD = {
   verdict: "REQUEST_CHANGES",

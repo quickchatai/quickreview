@@ -17,7 +17,7 @@ import { join, resolve } from "node:path";
 import { whyJson } from "../src/cli.js";
 import { parseConfig, type Config } from "../src/config.js";
 import { buildPassPlan, buildRoundOrder, validatorTier } from "../src/dispatch.js";
-import { NONE_ECOSYSTEM } from "../src/ecosystem.js";
+import { NONE_ECOSYSTEM } from "@quickchatai/pi-quickreview/src/ecosystem.js";
 import { enforceFindingsRecord } from "../src/findingscheck.js";
 import {
   DOUBT_WORDS,
@@ -25,14 +25,17 @@ import {
   isConformant,
   normalizeDisposition,
   parseFindingsRecord,
-} from "../src/findingsrecord.js";
+} from "@quickchatai/pi-quickreview/src/findingsrecord.js";
 import type { PrFileEntry } from "../src/github.js";
-import { PASS_ADDENDA, buildAgents } from "../src/include.js";
+import { PASS_ADDENDA, buildAgents } from "@quickchatai/pi-quickreview/src/include.js";
 import { configHome, homeProfileLookup, type InstallEnv } from "../src/install.js";
-import { applyProfileTuning, lensModelOverrides } from "../src/lenstuning.js";
-import { loadProfileLensTuning } from "../src/profiles.js";
+import {
+  applyProfileTuning,
+  lensModelOverrides,
+} from "@quickchatai/pi-quickreview/src/lenstuning.js";
+import { loadProfileLensTuning } from "@quickchatai/pi-quickreview/src/profiles.js";
 import { StateStore, type PrStateRow } from "../src/state.js";
-import { renderRoundPrompt } from "../src/templates.js";
+import { renderRoundPrompt } from "@quickchatai/pi-quickreview/src/templates.js";
 import { detailLines } from "../src/tui/board.js";
 import { stripAnsi } from "../src/tui/paint.js";
 

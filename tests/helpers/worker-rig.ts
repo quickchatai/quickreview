@@ -34,10 +34,10 @@ import {
 } from "../../src/ipc/workerspec.js";
 import { sessionGitConfigPins } from "../../src/sessions.js";
 import { loadConfig } from "../../src/config.js";
-import { MutationGate, type MutationIntent } from "../../src/gate.js";
+import { MutationGate, type MutationIntent } from "@quickchatai/pi-quickreview/src/gate.js";
 import { GitHubAdapter } from "../../src/github.js";
-import type { TokenMinter } from "../../src/githubAuth.js";
-import { makePostingGuard } from "../../src/guards.js";
+import type { TokenMinter } from "@quickchatai/pi-quickreview/src/githubAuth.js";
+import { makePostingGuard } from "@quickchatai/pi-quickreview/src/guards.js";
 import { PostingJournal } from "../../src/posting-journal.js";
 import { registerPostOps } from "../../src/postops.js";
 import { StateStore } from "../../src/state.js";

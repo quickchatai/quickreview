@@ -1,9 +1,9 @@
-// Moved to src/engine/auth.ts (P2.10). Kept as a re-export because the scan
+// Moved to packages/pi-plugin/src/engine/auth.ts (P2.10). Kept as a re-export because the scan
 // container imports `dist/src/scanauth.js` by path (src/scanbox.ts), and the
 // companion image that carries that path is rebuilt on the owner's schedule.
 // `syncScanAuthFromEnv` lives here: it is the container's one-shot probe, a
 // host that owns its process (the engine never exits one).
-import { SCAN_AUTH_SRC_ENV, syncScanAuth } from "./engine/auth.js";
+import { SCAN_AUTH_SRC_ENV, syncScanAuth } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 
 export {
   SCAN_AUTH_FIX,
@@ -16,7 +16,7 @@ export {
   syncScanAuth,
   type CaseRefused,
   type CaseRunnerOf,
-} from "./engine/auth.js";
+} from "@quickchatai/pi-quickreview/src/engine/auth.js";
 
 /** The container's one-shot copy (the doctor's probe): from the paths its
  * env names, the copy made or the refusal on stderr and exit 1. */

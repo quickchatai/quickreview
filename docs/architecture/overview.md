@@ -95,9 +95,9 @@ Step by step:
    trigger time, at most `[daemon] max_concurrent_rounds` in flight. Before
    building the order it prepares the PR's worktree at the resolved head sha
    (`src/worktrees.ts`), so the prompt cites the sha the passes actually read;
-   it selects lens passes from the diff (`src/heuristics.ts`, extended by the
+   it selects lens passes from the diff (`packages/pi-plugin/src/heuristics.ts`, extended by the
    repo profile), raises the validator to the round's highest lens tier, and
-   runs the ecosystem pre-check (`src/migrations.ts` for Django) whose remedy
+   runs the ecosystem pre-check (`packages/pi-plugin/src/migrations.ts` for Django) whose remedy
    posts as a comment, never a blocker.
 4. **Wake.** The order is written as a Markdown file into `inject/<session>/`.
    The `extensions/inject-bridge.ts` pi extension watches that directory and
@@ -108,14 +108,14 @@ Step by step:
    end (`src/wakes.ts`).
 5. **Fan-out and validation.** The PR's session launches the planned passes as
    blank-slate leaves through the subagents extension; each pass is built from
-   a frozen seed plus composed addenda (`src/include.ts`). An adversarial
+   a frozen seed plus composed addenda (`packages/pi-plugin/src/include.ts`). An adversarial
    validator pass re-derives every candidate finding before anything posts.
    Severity, reachability and the tag vocabulary are decided by code:
-   `src/severity.ts`.
+   `packages/pi-plugin/src/severity.ts`.
 6. **Posting.** The session posts through `scripts/post-review.sh`,
    `scripts/approve-pr.sh` and `scripts/reply-thread.sh`, all of which source
    `scripts/guards.sh` — the shell mirror of the daemon's posting-time guards
-   (`src/guards.ts`) and CI gate (`src/cigate.ts`). Credentials come only from
+   (`packages/pi-plugin/src/guards.ts`) and CI gate (`packages/pi-plugin/src/cigate.ts`). Credentials come only from
    `scripts/mint-token.sh` (App JWT → installation token).
 7. **Verdict.** The session writes `verdict/pr-<n>-round-<k>.json` (staged,
    then published by one rename through `scripts/commit-verdict.sh`).
@@ -134,7 +134,7 @@ state — is [lifecycle.md](lifecycle.md).
 ## The mutation boundary
 
 Every GitHub write the daemon makes is a `MutationIntent` passed through the
-single gate in `src/gate.ts`. In dry-run the intent is written to
+single gate in `packages/pi-plugin/src/gate.ts`. In dry-run the intent is written to
 `state/dryrun/` instead of executed. There is deliberately no
 review-dismissal intent kind, so "never dismisses a review" is a structural
 property rather than a prompt instruction.
@@ -172,7 +172,7 @@ Both are summarised in [boundaries.md](boundaries.md).
 
 **Frozen seeds.** Files under `prompts/` and `agents/` that appear in
 `seeds/` are byte-pinned; editing one fails the suite. Changing what a pass
-does is done by adding to the `PASS_ADDENDA` registry in `src/include.ts`,
+does is done by adding to the `PASS_ADDENDA` registry in `packages/pi-plugin/src/include.ts`,
 which composes binding rules onto the *built* bodies in `state/agents/`, never
 onto a seed. Ratified passages inside the editable files are additionally
 fenced with `<!-- RATIFIED … -->` markers and hashed by
@@ -231,12 +231,12 @@ frame — and the TUI re-execs itself whenever `dist/` changes.
 | question | file |
 |---|---|
 | what happens when a PR is labelled | `src/webhook.ts`, `src/statemachine.ts` |
-| why a round did or did not run | `src/dispatch.ts`, `src/heuristics.ts` |
-| why a review posted as a comment instead of an approval | `src/guards.ts`, `src/cigate.ts`, `scripts/guards.sh` |
-| what may be written to GitHub at all | `src/gate.ts` |
-| how a pass's instructions are assembled | `src/include.ts` (`PASS_ADDENDA`), `agents/`, `prompts/pass-common.md` |
-| how findings become tags and blockers | `src/severity.ts` |
-| what a session is allowed to run | `extensions/bash-guard.ts`, `src/execboundary.ts` |
+| why a round did or did not run | `src/dispatch.ts`, `packages/pi-plugin/src/heuristics.ts` |
+| why a review posted as a comment instead of an approval | `packages/pi-plugin/src/guards.ts`, `packages/pi-plugin/src/cigate.ts`, `scripts/guards.sh` |
+| what may be written to GitHub at all | `packages/pi-plugin/src/gate.ts` |
+| how a pass's instructions are assembled | `packages/pi-plugin/src/include.ts` (`PASS_ADDENDA`), `agents/`, `prompts/pass-common.md` |
+| how findings become tags and blockers | `packages/pi-plugin/src/severity.ts` |
+| what a session is allowed to run | `packages/pi-plugin/extensions/bash-guard.ts`, `src/execboundary.ts` |
 | what the daemon persists | `src/state.ts` |
 | how the operator sees any of it | `src/cli.ts`, `src/tui/` |
 

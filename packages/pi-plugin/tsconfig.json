@@ -1,0 +1,22 @@
+{
+  // The review core: its own composite project, so the app (the root
+  // tsconfig.json, which references it) type-checks against the emitted
+  // .d.ts, and an import from the core to anything outside it does not
+  // compile. The compiler settings are the root's; what differs is below.
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": ".",
+    "outDir": "dist",
+    "declaration": true,
+    "declarationMap": true,
+    // The build info sits beside the app's, in the root node_modules/.cache/,
+    // out of every dist/ (tsc writes it even when the compile fails), so the
+    // cold build the root tsconfig.json names clears both. The TUI's hot
+    // reload does not watch this package's dist/ at all: it is written before
+    // the app is checked, so src/tui/reload.ts waits for the build stamp.
+    "tsBuildInfoFile": "../../node_modules/.cache/qcr-pi-plugin-tsbuildinfo"
+  },
+  "include": ["src/**/*.ts", "extensions/**/*.ts"],
+  "exclude": ["node_modules", "dist", "assets"]
+}

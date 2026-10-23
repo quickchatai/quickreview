@@ -15,8 +15,13 @@ import {
   roundTemplateFile,
   roundVars,
   templateFileForOrder,
-} from "../src/templates.js";
-import type { PassPlanEntry, RoundDelta, RoundOrder, RoundType } from "../src/types.js";
+} from "@quickchatai/pi-quickreview/src/templates.js";
+import type {
+  PassPlanEntry,
+  RoundDelta,
+  RoundOrder,
+  RoundType,
+} from "@quickchatai/pi-quickreview/src/types.js";
 
 const read = (file: string): string =>
   readFileSync(resolve(process.cwd(), "prompts", file), "utf8");

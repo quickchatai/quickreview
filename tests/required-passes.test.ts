@@ -20,14 +20,17 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_MAX_SELF_REQUEUES, parseConfig, type Config } from "../src/config.js";
 import { buildPassPlan } from "../src/dispatch.js";
-import { NONE_ECOSYSTEM } from "../src/ecosystem.js";
-import type { GateResult } from "../src/gate.js";
+import { NONE_ECOSYSTEM } from "@quickchatai/pi-quickreview/src/ecosystem.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
-import type { LiveAgentProgress, RoundProgressSnapshot } from "../src/round-progress.js";
+import type {
+  LiveAgentProgress,
+  RoundProgressSnapshot,
+} from "@quickchatai/pi-quickreview/src/round-progress.js";
 import { requiredPassGap, requiredRows } from "../src/requiredpasses.js";
 import { StateStore } from "../src/state.js";
-import type { PassPlanEntry, SessionHooks } from "../src/types.js";
-import { roundPromptMarker } from "../src/types.js";
+import type { PassPlanEntry, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
+import { roundPromptMarker } from "@quickchatai/pi-quickreview/src/types.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
 

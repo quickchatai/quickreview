@@ -33,9 +33,14 @@ import {
 } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { parseConfig, type Config } from "../config.js";
-import { ecosystemFor, type Ecosystem } from "../ecosystem.js";
-import type { HeuristicsExtension } from "../heuristics.js";
-import { PASS_ADDENDA, buildAgents, configAddenda, identityVars } from "../include.js";
+import { ecosystemFor, type Ecosystem } from "@quickchatai/pi-quickreview/src/ecosystem.js";
+import type { HeuristicsExtension } from "@quickchatai/pi-quickreview/src/heuristics.js";
+import {
+  PASS_ADDENDA,
+  buildAgents,
+  configAddenda,
+  identityVars,
+} from "@quickchatai/pi-quickreview/src/include.js";
 import {
   assertPathSegment,
   configHome,
@@ -44,15 +49,15 @@ import {
   PROFILES_DIR,
   type InstallEnv,
 } from "../install.js";
-import { lensTuningAddenda, roundAgentModels } from "../lenstuning.js";
-import { postingPolicyAddenda } from "../postingpolicy.js";
+import { lensTuningAddenda, roundAgentModels } from "@quickchatai/pi-quickreview/src/lenstuning.js";
+import { postingPolicyAddenda } from "@quickchatai/pi-quickreview/src/postingpolicy.js";
 import {
   applyProfileOverlays,
   loadProfileAddenda,
   loadProfileEcosystem,
   loadProfileHeuristics,
   type ProfileLookup,
-} from "../profiles.js";
+} from "@quickchatai/pi-quickreview/src/profiles.js";
 import { latestBaseline, readBaselines, type ProfileBaseline } from "./baselines.js";
 import type { Refusal, StateFs } from "./engine.js";
 import { checkProfile, unlinkWritePath } from "./profile.js";
