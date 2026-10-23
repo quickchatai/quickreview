@@ -90,7 +90,14 @@ else
   fail "container $CONTAINER started"
   exit 1
 fi
-if docker exec "$CONTAINER" tmux -V >/dev/null 2>&1; then
+# show-options never starts a server, so it passes only once the entrypoint's
+# server answers on its socket; the entrypoint needs a moment after `run`.
+tmux_up=0
+for _ in $(seq 1 30); do
+  if docker exec "$CONTAINER" tmux show-options -s exit-empty >/dev/null 2>&1; then tmux_up=1; break; fi
+  sleep 1
+done
+if [[ "$tmux_up" -eq 1 ]]; then
   pass "tmux server reachable in the container"
 else
   fail "tmux server reachable in the container"
@@ -229,10 +236,10 @@ fi
 step "pi session (needs a one-time /login)"
 if docker volume inspect "$PIHOME_VOLUME" >/dev/null 2>&1 &&
    docker run --rm --volume "$PIHOME_VOLUME:/pi:ro" --entrypoint sh "$IMAGE" -c 'test -f /pi/agent/auth.json' >/dev/null 2>&1; then
-  if docker exec "$CONTAINER" sh -c 'command -v pi' >/dev/null 2>&1; then
-    pass "pi is on PATH in the image"
+  if docker exec "$CONTAINER" test -x /opt/qcr/node_modules/.bin/pi >/dev/null 2>&1; then
+    pass "pi is the image's package-local bin"
   else
-    fail "pi is on PATH in the image"
+    fail "pi is the image's package-local bin"
   fi
   skip "pi turn (auth present, but a real turn spends money — run npm run smoke:companion)"
 else
