@@ -515,16 +515,15 @@ export async function recoverSeals(
       const kept = `${leftovers.join(", ")} left as found`;
       const gzName = entry.gz_file ?? `${entry.file}.gz`;
       // A stop is never a verdict on the .gz; a read error is named.
-      let gzBack: { bytes: number; sha256: string } | null = null;
-      let why = names.includes(gzName) ? "" : " (it is missing)";
-      if (!why)
-        try {
-          gzBack = await gunzipDigest(join(dir, gzName), rate);
-        } catch (err) {
-          if (deps.signal?.aborted) throw err;
-          why = ` (${err instanceof Error ? err.message : String(err)})`;
-        }
-      if (!gzBack || gzBack.bytes !== entry.bytes || gzBack.sha256 !== entry.sha256) {
+      let why = "";
+      let verified = false;
+      if (!names.includes(gzName)) why = " (it is missing)";
+      else if (entry.bytes !== undefined && entry.sha256 !== undefined) {
+        const v = await verifyGzip(join(dir, gzName), { bytes: entry.bytes, sha256: entry.sha256 }, rate);
+        verified = v.kind === "verified";
+        if (v.kind === "error") why = ` (${v.error.message})`;
+      }
+      if (!verified) {
         problem(
           entry.file,
           "sealed_gz_unverified",

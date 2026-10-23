@@ -43,7 +43,7 @@ export type ArtifactClass = (typeof ARTIFACT_CLASSES)[number];
  * per-round workers (P8.3, D10). */
 export const OWN_GZIP_CLASSES: ReadonlySet<ArtifactClass> = new Set(["live_logs", "lens_sessions"]);
 
-/** The small (bundled) classes — every class but the transcripts. */
+/** The non-transcript classes; most are bundled, `OWN_GZIP_CLASSES` get standalone gzips. */
 export type SmallClass = Exclude<ArtifactClass, "transcripts">;
 
 /** Measures the synchronous spans it is handed. */
@@ -354,14 +354,9 @@ export async function prInventory(
     for (const e of await listDir(injectDir)) {
       const p = join(injectDir, e.name);
       if (e.isDirectory() && (e.name === ".done" || e.name === ".terminal")) {
-        const files: string[] = [];
-        const dirs: string[] = [];
-        await walkFiles(p, files, signal, dirs);
-        for (const f of files) {
-          const s = await fileSize(f);
-          if (s !== null) addSmall({ path: f, size: s, cls: "inject_done" });
-        }
-        inv.dirs.push(...dirs.reverse(), p);
+        const walked = await inventoryFiles(p, signal);
+        for (const f of walked.files) addSmall({ path: f.path, size: f.size, cls: "inject_done" });
+        inv.dirs.push(...walked.dirs);
       } else if (e.isFile() && INJECT_RECOVERY.test(e.name)) {
         const s = await fileSize(p);
         if (s !== null) addSmall({ path: p, size: s, cls: "inject_done" });
