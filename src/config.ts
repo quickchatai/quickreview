@@ -998,7 +998,7 @@ export interface ModelsConfig {
   pricing: Record<string, ModelPricing>;
   /** ONE reasoning-effort setting for the whole review (`""` = off: every
    * role and tier keeps the level its own spec names). When set, the thinking
-   * suffix of EVERY model spec above — default, conversation, overseer and all
+   * suffix of EVERY model spec above — default, conversation and all
    * three tiers — is replaced: `low` → `:low`, `medium` → `:medium`, `high` →
    * the model's highest level (`effort_max`). Applied once, at parse time, so
    * every consumer (sessions, the agents build, the bench) sees the same
@@ -2821,7 +2821,7 @@ export function expandHome(p: string): string {
   return p.startsWith("~/") || p === "~" ? resolve(homedir(), p.slice(2)) : p;
 }
 
-/** Absolute host paths for every companion mount; "" means derive from root. */
+/** Host paths for every companion mount: a set path gets its `~` expanded (a relative one stays relative); "" means derive from root. */
 export function resolveCompanionPaths(
   c: CompanionConfig,
   root: string = sandboxRoot(),
