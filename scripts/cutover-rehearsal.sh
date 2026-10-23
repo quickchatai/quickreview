@@ -99,6 +99,13 @@ check() {
   printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$detail" >>"$RESULTS"
   if [[ "$2" == pass ]]; then log "PASS $1 $3"; else log "FAIL $1 $3 -- $detail"; fi
 }
+# check_worker_exit <rc> <results.tsv>: a worker rehearsal that exited nonzero without writing a failed row
+# (killed, or died before its results file) is a failed check of this report, not a silent pass.
+check_worker_exit() {
+  if [[ "$1" != 0 ]] && ! grep -q -P '\tfail\t' "$2" 2>/dev/null; then
+    check WORKER-RUN fail "the worker rehearsal exits 0" "exit $1 and no failed row in its results"
+  fi
+}
 fact() { printf '%s\t%s\n' "$1" "$(printf '%s' "$2" | tr '\n\t' '  ')" >>"$FACTS"; }
 # finding <id> <fixed|open|rehearsal> <text>: a finding of this run, carried into the report
 finding() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >>"$WORK/findings.tsv"; }
@@ -121,8 +128,8 @@ teardown_containers() {
 }
 cleanup() {
   local rc=$?
-  [[ -z "$SSHD_PID" ]] || kill "$SSHD_PID" 2>/dev/null
   if [[ "$KEEP" == 1 ]]; then log "kept: work $WORK (registry $REG, containers, sshd)"; return; fi
+  [[ -z "$SSHD_PID" ]] || kill "$SSHD_PID" 2>/dev/null
   teardown_containers
   docker rm -f "$REG" >/dev/null 2>&1
   rm_host "$H"; rm_host "$PRISTINE"
@@ -907,10 +914,16 @@ EOF
   "$ROOT/scripts/worker-rehearsal.sh" --adopt "$WORK/world.env" --work "$WORK/worker" --out "$WORK/worker-report.md" >"$LOGS/worker.log" 2>&1; WORKER_RC=$?
   tail -5 "$LOGS/worker.log" | sed 's/^/    | /' >&2
   cat "$WORK/worker/results.tsv" >>"$RESULTS" 2>/dev/null
+  check_worker_exit "$WORKER_RC" "$WORK/worker/results.tsv"
   fact worker_run "rc=$WORKER_RC; $(grep -c -P '\tpass\t' "$WORK/worker/results.tsv") passed, $(grep -c -P '\tfail\t' "$WORK/worker/results.tsv") failed; $(cat "$WORK/worker/facts.tsv" | grep -E '^(permits_status|burst|first_worker)' | cut -c1-200 | tr '\n' ' ')"
 fi
 
 # ---- wizard run B: stages 9-11 -----------------------------------------------------------------------------------------------------------------
+# Stage 9 lifts the drain itself and refuses a drain that was lifted outside it, so the owner's hold goes back on
+# (LIFT-1 and the worker checks needed it off) and the heartbeat must show it before the wizard reads it.
+op drain on --hold >"$WORK/drain-hold-b.txt" 2>&1
+hb_held() { [[ "$(status_get draining)" == True ]]; }
+wait_for 60 "the heartbeat to show the hold again" hb_held || check WIZ-B-HOLD fail "the hold goes back on before wizard run B" "$(tr '\n' ' ' <"$WORK/drain-hold-b.txt" | cut -c1-200)"
 python3 "$RH/answer.py" --timeout 300 \
   --on 'Ready to start\?=>\n' --on 'PR number for the commands below.*=>'"$PR"'\n' --on 'Was the worker round checked and is it good\?.*\[y/N\]=>y\n' \
   --on 'Lift the drain now.*\[y/N\]=>y\n' --on 'Answer worker replied.*\[y/N\]=>y\n' \

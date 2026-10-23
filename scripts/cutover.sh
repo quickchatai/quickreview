@@ -660,6 +660,13 @@ s_first_round() {
       if (( polls > MAX_POLLS )); then bad "not shown as paused by the operator in the daemon's \`qcr status\`:$missing: not lifting"; return 1; fi
       note "waiting for the daemon's snapshot to show the pause of:$missing"; sleep "$POLL_S"
     done
+    # A PR the reconcile started tracking while the pauses were sent is in this snapshot but was never paused.
+    while read -r num state; do
+      [[ -n "$num" && "$num" != "$pr" ]] || continue
+      grep -qxF "$num" <<<"$op" && continue
+      bad "#$num is tracked but not paused (it appeared after the pauses were sent): not lifting; re-run $SELF $VERSION to pause it"
+      return 1
+    done <<<"$(tracked_prs "$status")"
     warn "Lifting the drain lets #$pr start a worker round (and nothing else: every other tracked PR is paused)."
     confirm "Lift the drain now (qcr drain off)?" || { say "The drain stays on; the pauses stay recorded. Re-run $SELF $VERSION when ready."; return 1; }
     state_set lift sent

@@ -81,6 +81,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/compose-stack.test.ts",
   "tests/context-files.test.ts",
   "tests/cpu-gate.test.ts",
+  "tests/cutover-rehearsal-script.test.ts", // two helpers of the rehearsal script, extracted and run in bash
   "tests/cutover-wizard.test.ts", // the cutover wizard as a child process against stubbed ssh, deploy.sh and qcr
   "tests/daemon-git-pins.test.ts",
   "tests/debug-pi.test.ts",
