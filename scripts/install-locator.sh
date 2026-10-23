@@ -173,6 +173,29 @@ qcr_profile_dir() { # qcr_profile_dir <checkout-root> <name>
   return 0
 }
 
+# Copy the profiles the locator would resolve into <dest>, one directory per
+# name taken from the first qcr_profile_dirs place that holds it (the home's,
+# then beside $QCR_CONFIG). The checkout's own profiles/ is left out unless
+# $QCR_CONFIG sits beside it: a snapshot of the checkout carries those.
+qcr_profiles_merged() { # qcr_profiles_merged <checkout-root> <dest>
+  local root="$1" dest="$2" override="${QCR_CONFIG:-}" beside="" dir entry name
+  override="$(_qcr_trim "$override")"
+  if [[ -n "$override" ]]; then
+    [[ "$override" == /* ]] || override="$PWD/$override"
+    beside="$(dirname "$override")/profiles"
+  fi
+  mkdir -p "$dest"
+  while IFS= read -r dir; do
+    [[ "$dir" == "$root/profiles" && "$dir" != "$beside" ]] && continue
+    [[ -d "$dir" ]] || continue
+    for entry in "$dir"/* "$dir"/.[!.]*; do
+      [[ -e "$entry" ]] || continue
+      name="$(basename "$entry")"
+      [[ -e "$dest/$name" ]] || cp -RL "$entry" "$dest/$name"
+    done
+  done < <(qcr_profile_dirs "$root")
+}
+
 # ---- secrets -----------------------------------------------------------------
 #
 #   SECRETS_DIR="$(qcr_locate_secrets "$configured" "${QC_SECRETS_DIR:-}")" || exit 1
