@@ -50,6 +50,7 @@ import {
   type InstallEnv,
 } from "../src/install.js";
 import { loadConfig, parseConfig } from "../src/config.js";
+import { MissingConfigError } from "../src/missingconfig.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 import { CORE_PACKAGE, EXTENSION_DIRS, SRC_DIRS } from "./helpers/source-trees.js";
 
@@ -198,6 +199,9 @@ describe("locateConfig", () => {
       expect(() => load()).toThrow(
         new RegExp(`no config at ${join(configHome(env), "config.toml")}`),
       );
+      // the class the `qcr` bin prints as one line (tests/qcrbin-fs-denied.test.ts)
+      // MUTATION: throw a plain Error from loadConfig — this fails.
+      expect(() => load()).toThrow(MissingConfigError);
       // The real checkout may strand one; either way the message is the locator's.
       const stranded = strandedCheckoutConfig({ root: sandboxRoot(), env });
       if (stranded) expect(() => load()).toThrow(/qcr install migrate/);

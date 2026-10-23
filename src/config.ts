@@ -16,6 +16,7 @@ import {
 } from "./install.js";
 import { packageRootFrom } from "@quickchatai/pi-quickreview/src/assetroot.js";
 import { repoCloneDirName } from "./clonedir.js";
+import { MissingConfigError } from "./missingconfig.js";
 import { DEFAULT_LENS_GRANT_STAGGER_MS, DEFAULT_LENS_PERMITS } from "./ipc/permits.js";
 import {
   configDeprecations,
@@ -2038,7 +2039,7 @@ export function loadConfig(path?: string): Config {
   if (!path && !existsSync(p)) {
     // A missing live config says where it was looked for, and — when the
     // checkout still strands one — how to move it.
-    throw new Error(
+    throw new MissingConfigError(
       missingConfigMessage(locateConfig(), strandedCheckoutConfig({ root: sandboxRoot() })),
     );
   }

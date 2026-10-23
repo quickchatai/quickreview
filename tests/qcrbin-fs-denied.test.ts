@@ -1,7 +1,8 @@
 // The `qcr` bin's top-level error path: a filesystem refusal (EACCES, EPERM,
-// EROFS) on a path is one line on stderr naming it and exit 1, never a stack;
-// any other error propagates unchanged. The app's `main` is faked to throw.
+// EROFS) on a path, or a missing live config, is one line on stderr and exit
+// 1, never a stack; any other error propagates unchanged. The app's `main` is faked to throw.
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MissingConfigError } from "../src/missingconfig.js";
 import { runBin } from "../src/qcrbin.js";
 
 const thrown: { err: unknown } = { err: null };
@@ -33,6 +34,21 @@ describe("the bin's top-level error path", () => {
     expect(errs).toHaveLength(1);
     expect(errs[0]).toContain(`qcr today: ${path}: permission denied`);
     expect(errs[0]).not.toContain("\n");
+  });
+
+  // MUTATION: drop the MissingConfigError branch from runBin's catch — a
+  // fresh install's first config-reading verb prints a stack and this fails.
+  it("turns a missing config into one line on stderr and exit 1", async () => {
+    thrown.err = new MissingConfigError(
+      "no config at /h/.config/qcr/default/config.toml — the install's config home holds none (`qcr onboard` writes one)",
+    );
+    const errs: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((l: unknown) => void errs.push(String(l)));
+    await runBin(["regression"]);
+    expect(process.exitCode).toBe(1);
+    expect(errs).toEqual([
+      "qcr regression: no config at /h/.config/qcr/default/config.toml — the install's config home holds none (`qcr onboard` writes one)",
+    ]);
   });
 
   it("lets any other error propagate", async () => {
