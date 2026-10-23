@@ -27,6 +27,7 @@ import {
   BENCH_AUTH_WORDS,
   copyPiAuth,
   DISABLED_REFRESH,
+  RUNTIME_KEY_ENVS,
 } from "../engine/auth.js";
 
 // The API-key route: the published runs used the login above; an outsider
@@ -124,8 +125,8 @@ export function googleModels() {
  * the key a sandbox's pi needs (by name; the value rides bench.sh's --env-file)
  * and the models.json the sandbox gets. */
 export const BENCH_PROVIDERS = {
-  digitalocean: { keyVar: "DIGITALOCEAN_API_KEY", models: digitalOceanModels },
-  google: { keyVar: "GEMINI_API_KEY", models: googleModels },
+  digitalocean: { keyVar: RUNTIME_KEY_ENVS["digitalocean"]!, models: digitalOceanModels },
+  google: { keyVar: RUNTIME_KEY_ENVS["google"]!, models: googleModels },
 } as const;
 export type BenchProviderId = keyof typeof BENCH_PROVIDERS;
 
