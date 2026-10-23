@@ -30,6 +30,7 @@ import {
   debugSession,
   type DebugRoundSpec,
 } from "../src/debuground.js";
+import { coreExtensionPath } from "../src/coreext.js";
 import type { PrSessionHost } from "../src/pr-session-lifecycle.js";
 import { dispatchOnce, type DispatchAdapter } from "../src/dispatch.js";
 import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
@@ -408,11 +409,15 @@ describe("the round is delivered to interactive pi, not to a worker", () => {
     });
     // a PR with no JSONL gets one born; the pi's extensions carry the lens tools
     expect(spec.session_file).toBeUndefined();
-    expect(spec.extensions.map((e) => e.slice(r.root.length + 1))).toEqual([
+    // The shims are under the production tree; cluster_findings is the core
+    // package's own file, never a path under the root.
+    expect(
+      spec.extensions.map((e) => (e.startsWith(`${r.root}/`) ? e.slice(r.root.length + 1) : e)),
+    ).toEqual([
       "extensions/cli/bash-guard.ts",
       "extensions/cli/ledger-pin.ts",
       "extensions/cli/debug-round.ts",
-      "packages/pi-plugin/extensions/finding-clusters.ts",
+      coreExtensionPath("finding-clusters"),
       "extensions/vendor/openviking-pi/index.ts",
     ]);
     // the post shims' names are in the env, the secret is not; no GitHub token of any name

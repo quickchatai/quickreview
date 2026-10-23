@@ -23,6 +23,7 @@
 import { spawn } from "node:child_process";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { FINDING_CLUSTERS_ENTRY, extensionFile } from "../coreext.js";
 import { GITHUB_TOKEN_ENVS } from "@quickchatai/pi-quickreview/src/envstrip.js";
 import { piCliPath } from "../picli.js";
 import {
@@ -44,15 +45,16 @@ import {
 } from "@quickchatai/pi-quickreview/src/engine/round.js";
 import type { PiRun } from "@quickchatai/pi-quickreview/src/engine/port.js";
 
-/** The extensions of a debug round, by path under the production tree: the
- * round's own set with the debug extension (which carries the lens tools) in
- * the lens tool's place. The env shims are the app's (`extensions/cli/`);
- * `cluster_findings` is the review core's own extension. Nothing here posts. */
+/** The extensions of a debug round: the round's own set with the debug
+ * extension (which carries the lens tools) in the lens tool's place. The env
+ * shims are the app's, by path under the production tree (`extensions/cli/`);
+ * `cluster_findings` is the review core's own extension, found in the core
+ * package (`extensionFile`, src/coreext.ts). Nothing here posts. */
 export const DEBUG_ROUND_EXTENSIONS = [
   "extensions/cli/bash-guard.ts",
   "extensions/cli/ledger-pin.ts",
   "extensions/cli/debug-round.ts",
-  "packages/pi-plugin/extensions/finding-clusters.ts",
+  FINDING_CLUSTERS_ENTRY,
 ] as const;
 
 /** pi's first message: the extension command that starts the round. */
@@ -78,7 +80,7 @@ export function debugArgv(o: {
     o.sysPath,
     "--session-dir",
     o.sessionDir,
-    ...DEBUG_ROUND_EXTENSIONS.flatMap((e) => ["--extension", join(o.root, e)]),
+    ...DEBUG_ROUND_EXTENSIONS.flatMap((e) => ["--extension", extensionFile(o.root, e)]),
     "--name",
     o.sessionName,
     DEBUG_START_MESSAGE,

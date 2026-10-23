@@ -65,8 +65,9 @@ describe("the validator rule", () => {
 
 describe("cluster_findings on both routes", () => {
   it("the daemon's PR sessions load it (sessions.ts extensionPaths)", () => {
+    // From the core package (src/coreext.ts), never under the app's root.
     expect(readFileSync(join(root, "src/sessions.ts"), "utf8")).toMatch(
-      /join\(this\.root, "packages", "pi-plugin", "extensions", "finding-clusters\.ts"\)/,
+      /coreExtensionPath\("finding-clusters"\)/,
     );
   });
   it("the bench session loads it (round.ts session spec)", () => {

@@ -18,6 +18,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { coreExtensionPath } from "./coreext.js";
 import type { Config } from "./config.js";
 import {
   DEFAULT_SESSION_BRIDGE_READY_TIMEOUT_S,
@@ -313,7 +314,9 @@ export class PiSessionManager {
       // before pass-validate (`[review] dedup_merge`). The bench session
       // loads the same file (src/bench/runner.ts), so both routes group
       // candidates with one code path. Pure: it reads and writes nothing.
-      join(this.root, "packages", "pi-plugin", "extensions", "finding-clusters.ts"),
+      // It is the review core's, so it comes from the core package's own
+      // directory (src/coreext.ts), never from under this root.
+      coreExtensionPath("finding-clusters"),
       // The vendored + patched OpenViking extension: the memory tools a
       // session reaches. Last on purpose — it is the only extension
       // here we did not write, and pi registers handlers in load order, so

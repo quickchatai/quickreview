@@ -23,6 +23,7 @@ import {
   prSessionName,
   secretsMountEnv,
 } from "../src/sessions.js";
+import { coreExtensionPath } from "../src/coreext.js";
 import { Tmux } from "../src/tmux.js";
 import type { ExecFn } from "../src/tmux.js";
 import { writeSessionBridgeState } from "../src/session-bridge.js";
@@ -302,6 +303,15 @@ describe("buildPiCommand", () => {
     const joined = manager().extensionPaths().join("\n");
     for (const gone of ["subagents.ts", "leaf-cache.ts", "register-lens-agents", "pi-subagents"])
       expect(joined, gone).not.toContain(gone);
+  });
+
+  // An npm install of the app has no packages/ under its root: the core is its
+  // own package, so cluster_findings comes from that package's directory.
+  // MUTATION: put back join(this.root, "packages", "pi-plugin", …) — this fails.
+  it("loads cluster_findings from the core package, never from under its root", () => {
+    const paths = manager().extensionPaths();
+    expect(paths).toContain(coreExtensionPath("finding-clusters"));
+    expect(paths.filter((p) => p.startsWith(join(root, "packages")))).toEqual([]);
   });
 
   it("loads the vendored OpenViking fork, after ledger-pin", () => {

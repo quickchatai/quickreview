@@ -36,6 +36,7 @@ import {
   readOpenMeta,
   writeOpenMeta,
 } from "@quickchatai/pi-quickreview/src/engine/openable.js";
+import { coreExtensionPath, extensionFile } from "../src/coreext.js";
 import { sourcePath } from "./helpers/source-trees.js";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -123,7 +124,7 @@ function deps(over: Partial<OpenDeps> = {}): { d: OpenDeps; calls: Calls } {
 }
 
 describe("[open] the argv", () => {
-  const main = MAIN_OPEN_EXTENSIONS.map((e) => join(ROOT, e));
+  const main = MAIN_OPEN_EXTENSIONS.map((e) => extensionFile(ROOT, e));
 
   it("forks by default, so the finished session is look-only", () => {
     const argv = openArgv({ file: "/s/a.jsonl", mode: "fork", extensions: main });
@@ -153,6 +154,8 @@ describe("[open] the argv", () => {
     expect(argv).toEqual(expect.arrayContaining(["-ne", "-ns", "--approve"]));
     // `-nc` is absent on purpose: the cwd's context file is the reviewer stub.
     expect(argv).not.toContain("-nc");
+    // cluster_findings is the core package's file, wherever that package is.
+    expect(argv).toContain(coreExtensionPath("finding-clusters"));
   });
 
   it("carries no posting tool: no extension named for posting, and none of them registers one", () => {
@@ -160,10 +163,10 @@ describe("[open] the argv", () => {
       expect(name).not.toMatch(/post|inject|review-submit/i);
       // The shim names nothing; the tools are registered by the module behind
       // it, the app's (extensions/) or the review core's (packages/pi-plugin/extensions/).
-      const code = readFileSync(
-        join(ROOT, sourcePath(ROOT, name.replace(/^extensions\/cli\//, "extensions/"))),
-        "utf8",
-      );
+      const file = name.startsWith("extensions/")
+        ? join(ROOT, sourcePath(ROOT, name.replace(/^extensions\/cli\//, "extensions/")))
+        : extensionFile(ROOT, name);
+      const code = readFileSync(file, "utf8");
       const tools = [...code.matchAll(/\bname:\s*"([a-z_]+)"/g)].map((m) => m[1]!);
       for (const t of tools) expect(t).not.toMatch(/post|submit|comment|review_pr/i);
     }
