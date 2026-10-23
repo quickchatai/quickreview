@@ -156,6 +156,12 @@ describe("flipDryRunToFalse — the ONE writer of the flag", () => {
     ).toThrow(/no dry_run key/);
   });
 
+  it("accepts a quoted root dry_run key, the spelling the loader and patchToml read", () => {
+    const quoted = exampleConfig.replace(/^dry_run = true/m, '"dry_run" = true');
+    const after = flipDryRunToFalse(quoted, { confirmation: GO_LIVE_CONFIRMATION, proof: PROOF });
+    expect(after).toMatch(/^"dry_run" = false/m);
+  });
+
   it(
     "flips exactly one key, and leaves the rest of the file alone",
     { timeout: HEAVY_TIMEOUT_MS },
