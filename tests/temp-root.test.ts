@@ -7,11 +7,11 @@
 // spawned script makes — go away with the file, whether or not the test
 // cleaned up after itself.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { openTempRoot } from "./helpers/temp-root.js";
+import { openTempRoot, sweepStaleRoots } from "./helpers/temp-root.js";
 
 describe("the per-file temp root", () => {
   it("is installed for this file: tmpdir() is the root, and it lives in the real temp dir", () => {
@@ -52,6 +52,33 @@ describe("the per-file temp root", () => {
       // Restored even on a failed assertion, so the rest of the file keeps
       // its root (a lost TMPDIR would send later temp dirs to the real /tmp).
       process.env.TMPDIR = saved;
+    }
+  });
+
+  it("sweeps the roots of dead pids and old pid-less ones, never a live pid's or a fresh one", () => {
+    const real = process.env.QCR_TEST_REAL_TMPDIR!;
+    const host = openTempRoot(real, "qcr-test-sweep-host-");
+    try {
+      const mk = (n: string) => {
+        mkdirSync(join(host.root, n));
+        return join(host.root, n);
+      };
+      // pid 2**22 + 1 exceeds Linux's default pid_max, so it is never alive.
+      const dead = mk("p-4194305-aaaaaa");
+      const mine = mk(`p-${process.pid}-bbbbbb`);
+      const parent = mk(`p-${process.ppid}-cccccc`);
+      const fresh = mk("p-dddddd");
+      const old = mk("p-eeeeee");
+      mk("other-4194305-ffffff");
+      const hours = (h: number) => Date.now() - h * 3_600_000;
+      utimesSync(old, new Date(hours(7)), new Date(hours(7)));
+      const removed = sweepStaleRoots(host.root, "p-");
+      expect(removed.sort()).toEqual([dead, old].sort());
+      for (const keep of [mine, parent, fresh, join(host.root, "other-4194305-ffffff")]) {
+        expect(existsSync(keep)).toBe(true);
+      }
+    } finally {
+      host.close();
     }
   });
 });
