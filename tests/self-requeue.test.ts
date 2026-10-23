@@ -706,6 +706,22 @@ describe("live-but-stuck recovery", () => {
     expect(events("round_overdue")).toHaveLength(0);
   });
 
+  it("an overdue anomaly after a session that could not be stopped does not claim the cap is exhausted", async () => {
+    const roundId = reviewingRound(314);
+    pastDeadline();
+    const { hooks, overseer } = hooksWith(true);
+    hooks.killSession = async () => {
+      throw new Error("tmux gone");
+    };
+
+    expect(await watcher(hooks).checkDeadlines()).toEqual([314]);
+    expect(roundStatus(roundId)).toBe("overdue");
+    expect(events("self_requeue_cap_exhausted")).toHaveLength(0);
+    const anomaly = overseer.find((m) => m.startsWith("ANOMALY (overdue)"));
+    expect(anomaly).toBeDefined();
+    expect(anomaly).not.toContain("cap is exhausted");
+  });
+
   // MUTATION: keep the post-kill verdict check infrastructure-only — the
   // round is cancelled and requeued under a verdict that won the race.
   it("a verdict committed while the wedged session is being stopped wins: no requeue, no anomaly", async () => {
