@@ -1,5 +1,6 @@
 // Preflight — the first real onboarding step: the machine facts the
-// rest of the wizard stands on. Node ≥22 (the wizard's own floor), Docker and
+// rest of the wizard stands on. Node 26 or newer (the supported Node; an older one
+// is noted, never refused), Docker and
 // Docker Compose present (the laptop route's runtime), the released image
 // reachable (the stack is pulled, never built), and
 // the current uid captured — later steps write it to the project `.env` as
@@ -16,9 +17,10 @@ import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../en
 import { releaseImage, releaseVersion, rootOf } from "./compose.js";
 
 export const PREFLIGHT_STEP_ID = "preflight";
-/** The daemon's Node floor — package.json `engines.node` says the same
- * (tests/onboard-engine.test.ts holds the two equal). */
-export const MIN_NODE_MAJOR = 22;
+/** The supported Node — package.json `engines.node` says the same
+ * (tests/onboard-engine.test.ts holds the two equal). An older Node is not
+ * refused: the check passes and says it is unsupported. */
+export const MIN_NODE_MAJOR = 26;
 /** The choice key later steps read the captured uid from (QCR_UID input). */
 export const UID_CHOICE_KEY = CHOICE_KEYS.uid;
 
@@ -38,12 +40,12 @@ async function toolingChecks(ctx: StepContext): Promise<CheckResult[]> {
       ? {
           name: "node",
           ok: true,
-          detail: `Node ${host.nodeVersion} (>= ${MIN_NODE_MAJOR} required)`,
+          detail: `Node ${host.nodeVersion} (${MIN_NODE_MAJOR} or newer is supported)`,
         }
       : {
           name: "node",
-          ok: false,
-          detail: `Node >= ${MIN_NODE_MAJOR} is required; this is ${host.nodeVersion}`,
+          ok: true,
+          detail: `Node ${host.nodeVersion} is older than the supported Node ${MIN_NODE_MAJOR}; it is not refused, but it is not supported either`,
         },
   );
 
@@ -134,7 +136,7 @@ export function preflightStep(): OnboardingStep {
     id: PREFLIGHT_STEP_ID,
     title: "Preflight: Node, Docker, Compose, images, uid",
     explain:
-      `Checks that this machine can run QuickReview at all: Node ${MIN_NODE_MAJOR} or newer, Docker, the Compose plugin, and whether ` +
+      `Checks that this machine can run QuickReview at all: Node ${MIN_NODE_MAJOR} or newer (older is noted, not refused), Docker, the Compose plugin, and whether ` +
       "the released image can be pulled (an unreachable image is noted here, with the fix, and enforced by bring-up). " +
       "It also captures your user id so the containers run as you and can read the secrets you own.",
     order: 10,

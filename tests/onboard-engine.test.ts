@@ -131,12 +131,12 @@ describe("preflight step lifecycle", () => {
     expect(file?.choices[UID_CHOICE_KEY]).toBe(1000);
   });
 
-  it("old Node fails the run with a plain failure; the step stays pending", async () => {
-    const e = engine({ nodeVersion: "v20.11.0" });
+  it("an older Node is noted as unsupported but never refused", async () => {
+    const e = engine({ nodeVersion: "v22.11.0" });
     const result = await e.runStep(PREFLIGHT_STEP_ID);
-    expect(result.ok).toBe(false);
-    expect(result.failures.join(" ")).toMatch(/Node >= 22/);
-    expect(readChecklist(stateDir)?.steps[PREFLIGHT_STEP_ID]?.status).toBe("pending");
+    expect(result.ok).toBe(true);
+    expect(result.failures.join(" ")).not.toMatch(/node:/);
+    expect(readChecklist(stateDir)?.steps[PREFLIGHT_STEP_ID]?.status).toBe("done");
   });
 
   it("missing docker / compose / uid each fail with their own check line", async () => {

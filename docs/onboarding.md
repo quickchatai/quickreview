@@ -95,7 +95,8 @@ topology chose.
 
 ### 10 — Preflight
 
-Checks Node ≥ 22 (the wizard's own, which the image carries),
+Checks Node ≥ 26 (the supported Node, which the image carries; an older one is
+noted, not refused),
 `docker --version` and `docker compose version`, asks the registry whether the
 release image can be pulled, and captures your user id. The uid matters: the
 containers run as it, so they can read the 0600 files you own in the secrets

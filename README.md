@@ -267,7 +267,7 @@ deploy paths. The full picture is in
 
 - **Docker**, and the **Compose v2 plugin** (`docker compose`). QuickReview is
   one image; nothing else is installed on your machine. (Or install it with
-  npm on Node 22 or later and use Docker only where you choose to:
+  npm on Node 26 or later and use Docker only where you choose to:
   [Install with npm](#install-with-npm).)
 - **A GitHub account that can create an App** and install it on the repository
   you want reviewed. No personal access token is used, anywhere, and setup
@@ -369,8 +369,9 @@ tokens, picks the channel and patches your config.
 ## Install with npm
 
 The image is one route; npm is the other. The npm package is the whole app,
-the same code the image runs, installed as the `qcr` command on Node 22 or
-later (npm, pnpm and bun all work):
+the same code the image runs, installed as the `qcr` command on Node 26 or
+later (npm, pnpm and bun all work; an older Node is not blocked, but only 26+
+is supported):
 
 ```sh
 npm i -g @quickchatai/quickreview

@@ -18,7 +18,7 @@
 //   that wizard only writes flat files. This one also makes read-only Slack Web
 //   API calls (JSON) and surgically patches config.toml (comment-preserving text
 //   editing). Both are miserable in bash. It is still a *standalone* script:
-//   ESM, Node >= 22, global fetch, zero imports outside node: — no npm deps, so
+//   ESM, Node 26+ (supported), global fetch, zero imports outside node: — no npm deps, so
 //   it runs before/without an install. The visual language deliberately mirrors
 //   collect-secrets.sh (bold/ok/bad/info, same colours, hidden input).
 //

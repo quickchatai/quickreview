@@ -17,7 +17,7 @@
   },
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=26"
   },
   "exports": {
     "./src/*": "./dist/src/*",

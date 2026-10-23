@@ -134,7 +134,7 @@ Registered in `defaultSteps()` (`src/onboard/steps/index.ts`), executed in
 
 | Order | Id | File | What it establishes / verifies |
 |---|---|---|---|
-| 10 | `preflight` | `preflight.ts` | Node ≥ 22, Docker and Compose present, the release image noted as pullable (a missing ghcr.io login comes with its fix), the operator's uid captured (later written as `QCR_UID`, the containers' user, so they can read the secrets the operator owns) |
+| 10 | `preflight` | `preflight.ts` | Node ≥ 26 (older noted, not refused), Docker and Compose present, the release image noted as pullable (a missing ghcr.io login comes with its fix), the operator's uid captured (later written as `QCR_UID`, the containers' user, so they can read the secrets the operator owns) |
 | 20 | `topology` | `topology.ts` | Where the reviewer lives. Both answers first-class; switching later demands an explicit confirmation phrase and tears nothing down behind the operator |
 | 22 | `ssh_preflight` | `ssh.ts` | *(vm only, and first on that route)* the alias resolves, an agent holds the key, `ansible-playbook` is on this machine, remote sudo is passwordless — all under `BatchMode=yes` |
 | 30 | `llm_auth` | `llmauth.ts` | The model-credential route, and the whole installation made consistent with it (including rewriting model prefixes for the API-key route). No credential value ever reaches an argv or a tool result |

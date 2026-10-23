@@ -19,7 +19,7 @@ repos, shell scripts against a loopback HTTP stub, local subprocesses) are
 listed in `tests/AGENTS.md`.
 
 Conventions: TypeScript strict, ESM (`"type": "module"`, NodeNext — local
-imports use the `.js` suffix), Node ≥ 22, minimal dependencies.
+imports use the `.js` suffix), Node ≥ 26, minimal dependencies.
 
 ## Running from a clone
 

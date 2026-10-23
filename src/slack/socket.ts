@@ -1,5 +1,5 @@
 // Raw Socket Mode client — no @slack/socket-mode dependency: this
-// is a few hundred lines over Node >=22's global WebSocket + fetch, both
+// is a few hundred lines over Node's global WebSocket + fetch, both
 // injected so tests script frames deterministically.
 //
 // This file is PURE TRANSPORT. It acks, it reconnects, it normalizes — it does
@@ -35,8 +35,8 @@ const bridgedSockets = new Set<SlackWebSocketLike>();
 /**
  * Node's global WebSocket (undici) answers server pings itself and exposes
  * them only on the `undici:websocket:ping` diagnostics channel. Newer undici
- * (7+, Node 24+) carries the socket object; undici 6 — Node 22, the oldest
- * Node an npm install supports — carries ONLY the payload. So: a ping naming its socket reaches
+ * (7+, Node 24+) carries the socket object; undici 6 — Node 22, older than
+ * the supported Node but not refused — carries ONLY the payload. So: a ping naming its socket reaches
  * that socket's `onping`; a ping naming none reaches every live bridged
  * socket (the Slack client is the process's only WebSocket user, so in
  * practice that is exactly one). Idempotent.

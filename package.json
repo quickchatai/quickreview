@@ -46,7 +46,7 @@
     "!**/AGENTS.md"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=26"
   },
   "scripts": {
     "build": "tsc -b && node scripts/verify-dist.mjs && node scripts/build-stamp.mjs",
