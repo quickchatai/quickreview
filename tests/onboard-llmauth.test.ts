@@ -371,6 +371,10 @@ describe("tolerant config reads", () => {
     expect(readTomlString(EXAMPLE_CONFIG, "companion", "model")).toBeNull(); // commented out
     expect(readTomlString(EXAMPLE_CONFIG, "models", "nope")).toBeNull();
     expect(readTomlString("[tui]\ncontainer = 'my-box'\n", "tui", "container")).toBe("my-box");
+    // A basic string's escapes are decoded as the loader decodes them.
+    expect(readTomlString('[tui]\ncontainer = "my\\u002dbox" # c\n', "tui", "container")).toBe(
+      "my-box",
+    );
   });
 
   it("resolves the secrets dir: config first, then $QC_SECRETS_DIR, then the install locator", async () => {
@@ -557,7 +561,9 @@ describe("OAuth route", () => {
     const report = await e.verifyAll();
     expect(report.ok).toBe(false);
     expect(report.results[0]?.failures.join(" ")).toMatch(/no auth\.json on the pi home/);
-    expect(report.results[0]?.failures.join(" ")).toMatch(/docker exec -it \S+ pi\b/);
+    expect(report.results[0]?.failures.join(" ")).toMatch(
+      /docker exec -it \S+ \/opt\/qcr\/docker\/entrypoint\.sh login/,
+    );
   });
 
   it("verify: the companion's login repair attaches to the COMPANION's session, never a daemon tmux session", async () => {
@@ -595,7 +601,9 @@ describe("OAuth route", () => {
     expect(report.ok).toBe(false);
     const failures = report.results[0]?.failures.join(" ") ?? "";
     expect(failures).toMatch(/daemon container: no auth\.json/);
-    expect(failures).toContain("docker exec -it quickreview-daemon-1 pi");
+    expect(failures).toContain(
+      "docker exec -it quickreview-daemon-1 /opt/qcr/docker/entrypoint.sh login",
+    );
   });
 
   it("verify: a stopped container and an undetectable docker are notes, not failures", async () => {
@@ -680,7 +688,11 @@ describe("OAuth route", () => {
     expect(calls.some((c) => c[0] === "ssh" && c.includes("review-vm"))).toBe(true);
     // The repair command reaches the same host and container the probe did.
     expect(report.results[0]?.failures.join(" ")).toContain(
-      "ssh -t review-vm sudo docker exec -it quickreview-sandbox pi → /login",
+      "ssh -t review-vm sudo docker exec -it quickreview-sandbox /opt/qcr/docker/entrypoint.sh login",
+    );
+    // That command opens pi directly (no tmux), so no tmux detach advice rides it.
+    expect(report.results[0]?.failures.join(" ")).not.toMatch(
+      /sandbox \/opt\/qcr\/docker\/entrypoint\.sh login[^;]*detach/,
     );
     // The companion is this machine's: never probed over ssh.
     expect(
@@ -771,6 +783,18 @@ describe("API-key route", () => {
     const result = await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
     expect(result.ok).toBe(false);
     expect(detailOf(result.checks, "wizard_login")).toMatch(/\/login/);
+  });
+
+  it("run: a cancelled or invalid key paste leaves an OAuth install's models and delivery untouched", async () => {
+    for (const answer of ["", "not-a-key"]) {
+      const calls: string[][] = [];
+      const result = await engine({}, calls, ["api", answer]).runStep(LLM_AUTH_STEP_ID);
+      expect(result.ok).toBe(false);
+      expect(detailOf(result.checks, "credential")).not.toBe("");
+      // Still the working ChatGPT-OAuth models: nothing was rewritten or delivered.
+      expect(configText()).toBe(EXAMPLE_CONFIG.replace("SECRETS_DIR", secretsDir));
+      expect(result.checks.map((c) => c.name)).not.toContain("models");
+    }
   });
 
   it("run: an invalid key file on disk sends you to collect-secrets.sh rather than the LLM", async () => {
