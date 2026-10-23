@@ -13,7 +13,9 @@ interface Pending {
   path: string;
   identity: FileIdentity;
 }
-const prefix = (pr: number): string => `duplicate.unlink.${pr}.`;
+const NAMESPACE = "duplicate.unlink.";
+const PR_OF_KEY = new RegExp(`^${NAMESPACE.replaceAll(".", "\\.")}([1-9][0-9]*)\\.`);
+const prefix = (pr: number): string => `${NAMESPACE}${pr}.`;
 
 export function prepareDuplicateCount(store: StateStore, pr: number, value: Pending): string {
   const key = prefix(pr) + createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -73,11 +75,11 @@ export async function recoverAllDuplicateCounts(
   failed: (pr: number, error: unknown) => void,
 ): Promise<number> {
   const rows = store.db
-    .prepare("SELECT name FROM archive_marks WHERE name GLOB 'duplicate.unlink.*'")
-    .all() as Array<{ name: string }>;
+    .prepare("SELECT name FROM archive_marks WHERE name GLOB ?")
+    .all(`${NAMESPACE}*`) as Array<{ name: string }>;
   const prs = new Set<number>();
   for (const row of rows) {
-    const match = /^duplicate\.unlink\.([1-9][0-9]*)\./.exec(row.name);
+    const match = PR_OF_KEY.exec(row.name);
     if (match && Number.isSafeInteger(Number(match[1]))) prs.add(Number(match[1]));
   }
   let recovered = 0;
