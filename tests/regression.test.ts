@@ -230,6 +230,14 @@ describe("matching", () => {
     expect(matchFinding(human, []).matched).toBe(false);
   });
 
+  it("returns the nearest same-file finding even when it scores zero", () => {
+    const human = set.cases[0]!.findings[0]!;
+    const far: SandboxFinding = { path: human.path, line: human.line + 500, text: "zzqx wholly unrelated" };
+    const m = matchFinding(human, [far]);
+    expect(m.matched).toBe(false);
+    expect(m.best).toBe(far);
+  });
+
   // Same basename is not the same file: `src/a/index.ts` and `src/b/index.ts`
   // are different places, and proximity alone must not bridge them.
   it("keeps repo-relative file identity: a same-named file elsewhere is not a match", () => {

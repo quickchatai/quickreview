@@ -125,7 +125,9 @@ export function parsePlan(raw: string | null): PassPlanEntry[] | null {
   if (!raw) return null;
   try {
     const value = JSON.parse(raw) as unknown;
-    return Array.isArray(value) ? (value as PassPlanEntry[]) : null;
+    return Array.isArray(value) && value.every((r) => typeof r === "object" && r !== null)
+      ? (value as PassPlanEntry[])
+      : null;
   } catch {
     return null;
   }

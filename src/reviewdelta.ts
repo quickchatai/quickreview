@@ -6,7 +6,8 @@
 // moved backwards, a delta too large to be a follow-up.
 import { execFileSync } from "node:child_process";
 import { basename, dirname } from "node:path";
-import { REVIEW_DEFAULTS, type Config } from "./config.js";
+import { type Config } from "./config.js";
+import { deltaFollowUpEnabled } from "./followup-mode.js";
 import { followUpSweepOwed, planFollowUp } from "./dispatch.js";
 import type { Ecosystem } from "./ecosystem.js";
 import type { PrFileEntry } from "./github.js";
@@ -91,7 +92,7 @@ export async function computeDelta(
 
 /** `[review] follow_up = "full"` turns delta reviews off. */
 export function deltaEnabled(cfg: Config): boolean {
-  return (cfg.review.follow_up ?? REVIEW_DEFAULTS.follow_up) === "delta";
+  return deltaFollowUpEnabled(cfg);
 }
 
 /**

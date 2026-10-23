@@ -25,7 +25,10 @@ export const LEGACY_SANDBOX_ROOT = "/opt/quickreview/sandbox";
  * the resumed history keeps: `<!-- qcr-<name>:`. Counted by name. */
 const MARKER_RE = /<!-- (qcr-[a-z-]+):/g;
 /** A path under the legacy sandbox root, to its first component. */
-const LEGACY_PATH_RE = /\/opt\/quickreview\/sandbox\/([A-Za-z0-9._-]+)/g;
+const LEGACY_PATH_RE = new RegExp(
+  `${LEGACY_SANDBOX_ROOT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/([A-Za-z0-9._-]+)`,
+  "g",
+);
 
 export interface SessionHeader {
   id: string;
