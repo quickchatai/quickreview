@@ -457,7 +457,7 @@ can be shown false. Please try.
 - [docs/exec-boundary.md](docs/exec-boundary.md) — what stops a review session running your code: the layers, the guarantees, the residual gaps
 - [docs/memory-embeddings.md](docs/memory-embeddings.md) — the embedder: local by default, the hosted opt-in
 - [bench/aacr/README.md](bench/aacr/README.md) — the benchmark harness: run the production reviewer on public PRs in a locked-down local sandbox
-- [docs/provenance.md](docs/provenance.md) — what the FT-#### citations in this codebase mean
+- [docs/provenance.md](docs/provenance.md) — how design decisions are recorded
 - [CONTRIBUTING.md](CONTRIBUTING.md) — build, test, and the frozen-seed rule
 - [SECURITY.md](SECURITY.md) — reporting vulnerabilities
 

@@ -77,11 +77,8 @@ as the image's wizard does where it can; to run a locally built image through
 - Keep PRs small and behaviour-focused; every behaviour change needs a test
   at the seam it changes (see `tests/AGENTS.md` for the house test style).
 - Run `npm test && npm run build` before pushing.
-- Reference the issue you're addressing. FT-#### ids you'll find in test
-  names, data strings and commit messages are the project's internal
-  design-history citations
-  ([docs/provenance.md](docs/provenance.md)) — you don't need them for new
-  work.
+- Reference the issue you're addressing (how decisions are recorded:
+  [docs/provenance.md](docs/provenance.md)).
 
 ## Reporting bugs / security issues
 

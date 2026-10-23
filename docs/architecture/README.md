@@ -27,5 +27,5 @@ always be checked against the code.
 - [../single-shepherd-invariant.md](../single-shepherd-invariant.md) — why the daemon never schedules an agent
 - [../profiles.md](../profiles.md) — repo profiles: house-rule addenda and lens heuristics
 - [../tui.md](../tui.md) — the TUI's operator-facing reference
-- [../provenance.md](../provenance.md) — what the `FT-####` citations in this codebase mean
+- [../provenance.md](../provenance.md) — how design decisions are recorded
 - [../../CONTRIBUTING.md](../../CONTRIBUTING.md) — build, test, and the frozen-seed rule
