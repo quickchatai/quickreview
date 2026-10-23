@@ -208,6 +208,12 @@ describe.skipIf(!BUILT)("the packed CLI (needs `npm run build`)", () => {
     "worker-resume-rehearsal.sh",
     "vm-postcutover-cleanup.sh",
   ];
+  // The rehearsals' own trees (shims, reports, findings), which nothing but
+  // the excluded rehearsal scripts reads. Named here for the same reason.
+  const OPERATOR_SCRIPT_DIRS = ["cutover-rehearsal/", "worker-rehearsal/"];
+  // The bench's SDK runtimes live under src/engine/ but only the bench CLI
+  // imports them.
+  const BENCH_ONLY_ENGINE = /^package\/(src\/engine\/benchsdk\.ts|dist\/src\/engine\/benchsdk\.)/;
   const SHIPPED_FIXTURES = [
     "package/tests/fixtures/seed-manifest.json",
     "package/tests/fixtures/regression-cases.json",
@@ -231,6 +237,10 @@ describe.skipIf(!BUILT)("the packed CLI (needs `npm run build`)", () => {
         // MUTATION: drop "!src/bench/**" from `files` — the bench sources ship and this fails.
         (/^package\/(dist\/)?src\/bench\//.test(e) && !benchKept(e)) ||
         OPERATOR_SCRIPTS.some((f) => e === `package/scripts/${f}`) ||
+        // MUTATION: drop "!scripts/worker-rehearsal/" from `files` — its shims ship and this fails.
+        OPERATOR_SCRIPT_DIRS.some((d) => e.startsWith(`package/scripts/${d}`)) ||
+        // MUTATION: drop "!dist/src/engine/benchsdk.*" from `files` — this fails.
+        BENCH_ONLY_ENGINE.test(e) ||
         /^package\/(bench|docs|state|wt|verdict|inject|digest|archive|commands|packages)\//.test(
           e,
         ) ||
