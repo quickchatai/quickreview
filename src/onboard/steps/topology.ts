@@ -81,7 +81,7 @@ export interface TopologyOption {
 const TOPOLOGY_OPTION_METADATA = {
   vm: {
     headline:
-      "A VM or server over ssh — RECOMMENDED, because a reviewer that is asleep reviews nothing",
+      "A VM or server over ssh — RECOMMENDED when this computer sleeps (a laptop), because a reviewer that is asleep reviews nothing",
     tradeoffs: [
       "it is on 24/7: pull requests opened while you sleep, while your laptop is shut, or while you are on a plane still get reviewed",
       "you bring the box (any ssh-reachable Linux machine — a cheap cloud VM is plenty); the wizard does not create one for you",
@@ -91,12 +91,13 @@ const TOPOLOGY_OPTION_METADATA = {
     ],
   },
   local: {
-    headline: "This computer — everything in Docker on the machine you are sitting at",
+    headline:
+      "This computer — everything in Docker on the machine this wizard runs on; THE pick when it is itself an always-on server (a cloud VM you are logged into)",
     tradeoffs: [
-      "nothing else to own: `docker compose up` and the whole system is here — daemon, memory engine, tunnel",
-      "it reviews only while this machine is awake and the containers are running; close the lid and the reviewer stops",
-      "zero third-party signup on the default path: the quick tunnel needs no account, and the daemon re-points its own webhook URL when that hostname rotates",
-      "the honest way to try QuickReview, and a perfectly good permanent setup for one person on a desktop that stays on",
+      "nothing else to own: `docker compose up` and the whole system is here — daemon and memory engine, and the TUI reads them locally with no ssh",
+      "it reviews only while this machine is on and the containers are running: on a server that is always; on a laptop, close the lid and the reviewer stops",
+      "nothing to expose on the default path: the daemon polls GitHub for new pull requests every few minutes, with no webhook, tunnel or public URL",
+      "the honest way to try QuickReview, and a perfectly good permanent setup on a desktop that stays on or a cloud VM",
       "you can switch to a server later by re-running this step — the answers you gave (repo, App, keys) are kept",
     ],
   },

@@ -143,8 +143,8 @@ errors instead, and the deploy script has its own preflights.
 The first real question, and it shapes everything after it. Both answers are
 first-class; neither is the advanced one.
 
-**A VM or server over ssh — the recommendation**, because a reviewer that is
-asleep reviews nothing.
+**A VM or server over ssh — the recommendation when this computer sleeps** (a
+laptop), because a reviewer that is asleep reviews nothing.
 
 - It is on 24/7: pull requests opened while you sleep still get reviewed.
 - You bring the box — any ssh-reachable Linux machine, a cheap cloud VM is
@@ -156,16 +156,18 @@ asleep reviews nothing.
   agent can use — checked in the very next step, before anything is built.
 - The recommended ingress here is a named Cloudflare tunnel on your own domain.
 
-**This computer — everything in Docker on the machine you are sitting at.**
+**This computer — everything in Docker on the machine the wizard runs on.** The
+pick when that machine is itself an always-on server, such as a cloud VM you are
+logged into.
 
-- Nothing else to own: `docker compose up` and the whole system is here — daemon,
-  memory engine, tunnel.
-- It reviews only while this machine is awake and the containers are running.
-- Zero third-party signup on the default path: the quick tunnel needs no
-  account, and the daemon re-points its own webhook URL when that hostname
-  rotates.
-- The honest way to try QuickReview, and a perfectly good permanent setup for
-  one person on a desktop that stays on.
+- Nothing else to own: `docker compose up` and the whole system is here — the
+  daemon and the memory engine, and the TUI reads them locally with no ssh.
+- It reviews only while this machine is on and the containers are running:
+  always, on a server; on a laptop, until you close the lid.
+- Nothing to expose on the default path: the daemon polls GitHub for new pull
+  requests every few minutes, with no webhook, tunnel or public URL.
+- The honest way to try QuickReview, and a perfectly good permanent setup on a
+  desktop that stays on or a cloud VM.
 
 On the server route you give the **ssh alias** here — the name you would type
 after `ssh`, as it appears in `~/.ssh/config`. Not a URL, not `user@host`. If

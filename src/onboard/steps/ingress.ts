@@ -85,7 +85,7 @@ export interface IngressOption {
 
 const INGRESS_OPTION_METADATA = {
   quick: {
-    headline: "Cloudflare quick tunnel (default) — no account, nothing to sign up for",
+    headline: "Cloudflare quick tunnel — no account, nothing to sign up for",
     tradeoffs: [
       "no account, no credential, no DNS: it works within seconds of `docker compose up`",
       "the *.trycloudflare.com hostname ROTATES on every tunnel restart — the daemon re-points the App's webhook URL itself, so this costs you nothing to operate",
@@ -442,13 +442,12 @@ function chosen(ctx: StepContext): IngressChoice | null {
 }
 
 /**
- * The recommended default differs by topology, and saying so is the honest
- * part. On a laptop the quick tunnel wins: no account, and the daemon
- * re-points its own rotating hostname. On a server the named tunnel wins: the
- * playbook installs cloudflared there from your token, and a permanent
- * installation deserves a permanent hostname. Every option stays selectable on
- * both — on the server route the ones the playbook does not install mean "you
- * front the daemon's port yourself", which the inventory step spells out.
+ * The recommended default is polling on every topology: nothing to install,
+ * nothing exposed, and the only shape the own-account route allows. A tunnel
+ * (quick on a laptop, named on a server) is the later upgrade for webhook
+ * latency and the reply-driven paths. Every option stays selectable on both
+ * topologies — on the server route the ones the playbook does not install mean
+ * "you front the daemon's port yourself", which the inventory step spells out.
  */
 export function recommendedIngressFor(_topology: string): IngressChoice {
   return "polling";
@@ -509,7 +508,7 @@ export function ingressStep(opts: { stream?: StreamRunner } = {}): OnboardingSte
     title: "Webhook ingress: how GitHub reaches your daemon",
     explain:
       "GitHub delivers webhooks to an HTTPS URL, so your daemon needs one. Offer the four shapes with their real " +
-      "trade-offs — quick tunnel (the default: no account, rotating hostname the daemon re-points itself), ngrok " +
+      "trade-offs — quick tunnel (no account, rotating hostname the daemon re-points itself), ngrok " +
       "(stable hostname, free-tier caps), a named Cloudflare tunnel (your own domain), or polling-only (no tunnel; " +
       "the reconcile poll triggers reviews, and author-reply routing plus the feedback loop go quiet). The recommended " +
       "answer depends on where the reviewer lives: the quick tunnel on this computer, the named tunnel on a server (the " +
