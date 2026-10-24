@@ -250,6 +250,11 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
     readers: [`${OV}/qcr-shim.ts`, `${OV}/sync.ts`],
     note: "session id that survives the tmux server env",
   },
+  QCR_LOGIN_OPEN: {
+    kind: "companion-only",
+    readers: ["cli/login-route.ts", "login-route.ts"],
+    note: "submit opens pi's /login by itself (the wizard's first run); else the command is only typed in",
+  },
 
   // ---- OPENVIKING_*: upstream plugin config, read in-process by the vendored extension
   OPENVIKING_ACCOUNT: {

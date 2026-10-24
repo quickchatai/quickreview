@@ -1,6 +1,6 @@
 {
   "name": "@quickchatai/quickreview",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": false,
   "//private": "The root is the published `qcr` CLI: the whole app (TUI, daemon, companion, every verb), installed with npm, pnpm or bun. It depends on the pi plugin (packages/pi-plugin) at its exact version and on pi at the exact pins below. Publishing is a release step of its own, never part of a build.",
   "description": "A 24/7 AI code reviewer for GitHub: a deterministic daemon driving pi review sessions, with an operator TUI and a local qcr review",
@@ -116,7 +116,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-ai": "1.4.0",
-    "@quickchatai/pi-quickreview": "1.1.0",
+    "@quickchatai/pi-quickreview": "1.2.0",
     "@earendil-works/pi-coding-agent": "1.4.0",
     "better-sqlite3": "13.0.3",
     "smol-toml": "1.9.1"
