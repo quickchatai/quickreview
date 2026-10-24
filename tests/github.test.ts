@@ -127,6 +127,17 @@ describe("triggered-set queries", () => {
     expect(calls).toEqual([]);
   });
 
+  it("queues no team-request deletion when no review team is configured", async () => {
+    // MUTATION: drop the empty-team return in deleteTeamReviewRequest — this fails.
+    const { adapter, calls } = build(() => ({}), true, { review_team: "" });
+    expect(await adapter.deleteTeamReviewRequest(3)).toEqual({
+      executed: false,
+      response: { no_review_team: true },
+    });
+    expect(calls).toEqual([]);
+    expect(dryrunRecords()).toEqual([]);
+  });
+
   it("does not expose an awaiting-reviewer search", () => {
     const { adapter } = build(() => ({ items: [] }));
     expect(

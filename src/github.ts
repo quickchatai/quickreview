@@ -1255,8 +1255,12 @@ export class GitHubAdapter {
     }
   }
 
-  /** Consume the team trigger: DELETE with the JSON body, then verify. */
+  /** Consume the team trigger: DELETE with the JSON body, then verify. With
+   * no `[github] review_team` there is no team request to clear, and nothing
+   * is asked of the gate. */
   async deleteTeamReviewRequest(n: number): Promise<GateResult> {
+    if (this.cfg.github.review_team.trim() === "")
+      return { executed: false, response: { no_review_team: true } };
     const teamSlug = reviewTeamSlug(this.cfg.github.review_team);
     const result = await this.gate.execute({
       kind: "delete_team_review_request",
