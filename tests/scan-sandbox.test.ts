@@ -485,13 +485,14 @@ describe("the scan container's argv", () => {
     const [sh, c, script] = loginInPi();
     expect([sh, c]).toEqual(["sh", "-c"]);
     expect(script).toMatch(/tmux new-session -d -s "\$s" pi/);
-    // Keys go in once pi's input box is drawn, and again until its login
-    // menu shows: an Enter sent while pi still starts is lost.
-    expect(script).toContain("grep -cF '──────────'");
-    expect(script).toContain("Select authentication");
+    // Keys go in while pi's input box (between its two editor borders) is
+    // empty or still holds them, never on a menu, whatever its title; what a
+    // key does on each screen is tests/pilogin.test.ts.
+    expect(script).toContain("/──────────/");
+    expect(script).not.toContain("Select");
     expect(script).toMatch(/tmux send-keys -t "\$s" -l '\/login'/);
     expect(script).not.toContain("/ commands");
-    expect(script).toMatch(/exec tmux attach -t "\$s"/);
+    expect(script).toContain('tmux attach -t "$s" || { tmux kill-session -t "$s"');
   });
 
   it("`qcr scan login --provider P` types /login P; a provider that is not a plain name is refused", () => {
