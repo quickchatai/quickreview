@@ -20,6 +20,9 @@ const PI_AI = "@earendil-works/pi-ai";
 export const OAUTH_LOADERS: Readonly<Record<string, string>> = {
   anthropic: "loadAnthropicOAuth",
   "openai-codex": "loadOpenAICodexOAuth",
+  // pi 1.4's "Sign in with ChatGPT" (the provider `openai`, type oauth): a
+  // newer OpenAI login is refreshed by the same owner.
+  openai: "loadOpenAIChatGPTOAuth",
   "github-copilot": "loadGitHubCopilotOAuth",
   openrouter: "loadOpenRouterOAuth",
   "kimi-coding": "loadKimiCodingOAuth",

@@ -34,12 +34,23 @@ docker exec -it <container> pi
 # inside pi:  /login   → follow the browser flow, then quit pi
 ```
 
-**Pick "OpenAI Codex (legacy)" at `/login`.** pi 1.4 offers two ChatGPT
-subscription logins: "OpenAI Codex (legacy)", the `openai-codex` provider the
-review models run on, and a newer "Sign in with ChatGPT" on the `openai`
-provider. The newer one is fine for the wizard's own session, but a container
-holding only that one cannot run the `openai-codex/` models, and the wizard
-says so.
+**Any OpenAI login works.** pi 1.4's `/login` offers three, and each one
+serves the review models:
+
+- "Sign in with an account", then **"OpenAI Codex (legacy)"**: the
+  `openai-codex` provider the shipped model strings name;
+- "Sign in with an account", then **"OpenAI"** ("Sign in with ChatGPT"):
+  pi 1.4's newer subscription login, on the `openai` provider;
+- "Sign in with an API key", then **"OpenAI"**: a metered key, also on the
+  `openai` provider (or `OPENAI_API_KEY` in the environment).
+
+The two providers serve the same model ids, so the model strings keep their
+`openai-codex/` prefix either way: wherever a model reaches pi (the review
+sessions, the lenses, the companion, a takeover or debug round), the
+provider it names is used when its login exists, and otherwise the same model
+runs on the other OpenAI login. An install already logged in as
+"OpenAI Codex (legacy)" runs exactly as before. `qcr onboard` opens `/login`
+for you the first time, and the wizard's login checks accept any of the three.
 
 The OAuth tokens land in `auth.json` under pi's home, which is a **named
 Docker volume** (`pihome`) — so the login survives container restarts and

@@ -37,8 +37,17 @@ describe("onboardingPiArgv", () => {
   it("carries the onboarding system prompt and the restricted read-only tool belt", () => {
     const sp = argv.indexOf("--system-prompt");
     expect(argv[sp + 1]).toBe("/clone/prompts/onboarding.md");
-    const tools = argv.indexOf("--tools");
-    expect(argv[tools + 1]).toBe("read,ls,grep");
+    const tools = argv[argv.indexOf("--tools") + 1]!.split(",");
+    // pi's --tools allowlist covers extension tools too: the read-only belt,
+    // then every wizard tool (tests/onboard-tools-sdk.test.ts on the real SDK).
+    expect(tools.slice(0, 3)).toEqual(["read", "ls", "grep"]);
+    expect(tools).toContain("onboard_status");
+    expect(tools).toContain("finish_and_exit");
+    expect(tools).toContain("onboard_llm_auth");
+    for (const t of ["bash", "write", "edit"]) expect(tools).not.toContain(t);
+    expect(onboardingPiArgv(PIN, ROOT, ["a", "b"])[argv.indexOf("--tools") + 1]).toBe(
+      "read,ls,grep,onboard_a,onboard_b,onboard_status,finish_and_exit",
+    );
   });
 
   it("uses a dedicated session dir under state/ so onboarding never pollutes other session stores", () => {

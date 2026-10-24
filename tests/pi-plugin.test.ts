@@ -344,7 +344,7 @@ describe("the borrowed login", () => {
     const long = fakeAuth({ "openai-codex": { type: "oauth", expires: now + 5 * 3600_000 } });
     expect(
       await borrowLogin({ providers: ["openai-codex"], host: long, needMs: 3600_000, marginMs: 0 }),
-    ).toEqual({ ok: true, refreshed: [] });
+    ).toEqual({ ok: true, refreshed: [], providers: ["openai-codex"] });
     expect(long.refreshed).toEqual([]);
     // MUTATION: refuse a short login instead of asking the host — this fails.
     const short = fakeAuth({ "openai-codex": { type: "oauth", expires: now + 600_000 } });
@@ -355,7 +355,7 @@ describe("the borrowed login", () => {
         needMs: 3600_000,
         marginMs: 300_000,
       }),
-    ).toEqual({ ok: true, refreshed: ["openai-codex"] });
+    ).toEqual({ ok: true, refreshed: ["openai-codex"], providers: ["openai-codex"] });
     expect(short.refreshed).toEqual([["openai-codex", 3900_000]]);
   });
 
@@ -386,10 +386,40 @@ describe("the borrowed login", () => {
     expect(!r2.ok && r2.error).toMatch(/does not last/);
   });
 
-  // Only a key and no login fails with a hint; the review never
-  // switches models. MUTATION: accept any configured provider — this fails.
+  // MUTATION: drop routeProvider from borrowLogin — the openai-codex review is
+  // refused although an OpenAI login exists.
+  it("an openai-codex review runs on whichever OpenAI login pi has, and carries only that one", async () => {
+    const now = Date.now();
+    for (const login of [
+      { type: "api_key", expires: null },
+      { type: "oauth", expires: now + 5 * 3600_000 },
+    ] as const) {
+      const r = await borrowLogin({
+        providers: ["openai-codex", "anthropic"],
+        host: fakeAuth({ openai: login, anthropic: { type: "api_key", expires: null } }),
+        needMs: 3600_000,
+        marginMs: 0,
+      });
+      expect(r).toEqual({ ok: true, refreshed: [], providers: ["openai", "anthropic"] });
+    }
+    // the provider the spec names wins when its login exists
+    const both = await borrowLogin({
+      providers: ["openai-codex"],
+      host: fakeAuth({
+        openai: { type: "api_key", expires: null },
+        "openai-codex": { type: "oauth", expires: now + 5 * 3600_000 },
+      }),
+      needMs: 3600_000,
+      marginMs: 0,
+    });
+    expect(both).toEqual({ ok: true, refreshed: [], providers: ["openai-codex"] });
+  });
+
+  // Only a key for another provider and no login fails with a hint; the review
+  // never switches models across providers. MUTATION: accept any configured
+  // provider — this fails.
   it("fails a provider pi has no login for, naming /login, even with a key for another", async () => {
-    const keyOnly = fakeAuth({ openai: { type: "api_key", expires: null } });
+    const keyOnly = fakeAuth({ anthropic: { type: "api_key", expires: null } });
     const r = await borrowLogin({
       providers: ["openai-codex"],
       host: keyOnly,
@@ -403,7 +433,7 @@ describe("the borrowed login", () => {
     const keyed = fakeAuth({}, { configured: ["anthropic"] });
     expect(
       await borrowLogin({ providers: ["anthropic"], host: keyed, needMs: 1, marginMs: 0 }),
-    ).toEqual({ ok: true, refreshed: [] });
+    ).toEqual({ ok: true, refreshed: [], providers: ["anthropic"] });
   });
 });
 
@@ -593,7 +623,7 @@ describe("/review over fake ports", () => {
   it("refuses with pi's /login when only a key is there, before anything runs", async () => {
     const deps = fakeReview();
     const ui = fakeUi({ picks: ["show it in this session"] });
-    const host = fakeHost({ auth: fakeAuth({ openai: { type: "api_key", expires: null } }) });
+    const host = fakeHost({ auth: fakeAuth({ anthropic: { type: "api_key", expires: null } }) });
     await runReviewCommand("", host, ui, deps);
     expect(deps.calls).toHaveLength(0);
     expect(ui.notes.find(([l]) => l === "error")?.[1]).toMatch(/\/login openai-codex/);

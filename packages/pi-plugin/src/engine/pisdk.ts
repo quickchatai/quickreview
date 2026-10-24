@@ -73,6 +73,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { isProtectedWriteTarget } from "../../extensions/bash-guard.js";
 import { GITHUB_TOKEN_ENVS } from "../envstrip.js";
+import { routeProvider, splitProvider, twinProvider } from "../modelroute.js";
 import type { AgentsFile } from "./port.js";
 import {
   FENCED_TOOLS,
@@ -504,10 +505,35 @@ function checkToolAllowlist(tools: readonly string[]): void {
       throw new Error(`tool allowlist entries are exact names, got ${JSON.stringify(t)}`);
 }
 
-function resolveModel(runtime: ModelRuntime, model: string | Model<Api>): Model<Api> {
+/**
+ * The spec's model on this host. An OpenAI spec runs on the login that exists
+ * (modelroute.ts): the provider it names when that provider has a credential,
+ * else its twin (`openai-codex` <-> `openai`) when the twin has one and serves
+ * the same id. pi's own offline auth check decides (ModelRuntime.checkAuth
+ * reads the credential store and the runtime keys; the host's snapshot is
+ * empty, since it is created without a refresh).
+ */
+export async function resolveModel(
+  runtime: Pick<ModelRuntime, "getModel" | "checkAuth">,
+  model: string | Model<Api>,
+): Promise<Model<Api>> {
   if (typeof model !== "string") return model;
-  const at = model.indexOf("/");
-  const found = at > 0 ? runtime.getModel(model.slice(0, at), model.slice(at + 1)) : undefined;
+  const parts = splitProvider(model);
+  if (parts === null) throw new Error(`model ${JSON.stringify(model)} is not known to the host`);
+  const twin = twinProvider(parts.provider);
+  let provider = parts.provider;
+  if (twin !== undefined) {
+    // VERIFY-ON-PIN (pi 1.4.0): checkAuth resolves undefined for a provider with
+    // no credential and an AuthCheck for one with an OAuth or API-key credential.
+    const usable = new Set<string>();
+    for (const p of [parts.provider, twin])
+      if ((await runtime.checkAuth(p).catch(() => undefined)) !== undefined) usable.add(p);
+    provider = routeProvider(parts.provider, parts.rest, {
+      hasCredential: (p) => usable.has(p),
+      hasModel: (p, id) => runtime.getModel(p, id) !== undefined,
+    });
+  }
+  const found = runtime.getModel(provider, parts.rest);
   if (!found) throw new Error(`model ${JSON.stringify(model)} is not known to the host`);
   return found;
 }
@@ -720,7 +746,7 @@ export class PiHost {
     const { session } = await createAgentSession({
       cwd: spec.cwd,
       agentDir: this.agentDir,
-      model: resolveModel(this.modelRuntime, spec.model),
+      model: await resolveModel(this.modelRuntime, spec.model),
       ...(spec.thinkingLevel ? { thinkingLevel: spec.thinkingLevel } : {}),
       modelRuntime: this.modelRuntime,
       resourceLoader,

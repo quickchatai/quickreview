@@ -860,6 +860,42 @@ describe("companion mode", () => {
     expect(await exited).toBe(0);
   });
 
+  // MUTATION: drop the twin branch from PI_COMPANION_MERGE — the default stays
+  // openai-codex and the first expectation fails.
+  it.each([
+    [
+      "only a Sign in with ChatGPT login",
+      { openai: { type: "oauth", refresh: "r", access: "a", expires: 1 } },
+      "openai",
+    ],
+    ["only an OpenAI API key", { openai: { type: "api_key", key: "sk-test" } }, "openai"],
+    [
+      "both OpenAI logins",
+      { openai: { type: "oauth" }, "openai-codex": { type: "oauth" } },
+      "openai-codex",
+    ],
+    ["no login at all", {}, "openai-codex"],
+  ])(
+    "the default model runs on the OpenAI login that exists: %s",
+    async (_name, auth, provider) => {
+      const r = rig();
+      put(join(r.home, ".pi/agent/auth.json"), JSON.stringify(auth));
+      const child = spawn(ENTRYPOINT, ["companion"], {
+        env: { ...r.env, QCR_PI_DEFAULT_MODEL: "openai-codex/gpt-6.1-sol:medium" },
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      const exited = new Promise<number | null>((res) => child.on("exit", (code) => res(code)));
+      const log = join(r.dir, "tmux.log");
+      for (let i = 0; i < 200 && !existsSync(log); i++)
+        await new Promise((r2) => setTimeout(r2, 50));
+      const s = settings(r);
+      expect(s["defaultProvider"]).toBe(provider);
+      expect(s["defaultModel"]).toBe("gpt-6.1-sol");
+      child.kill("SIGTERM");
+      await exited;
+    },
+  );
+
   it("runs the image's code: agents linked at the image's agent set", async () => {
     const r = rig();
     const child = spawn(ENTRYPOINT, ["companion"], {

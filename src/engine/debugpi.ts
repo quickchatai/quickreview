@@ -25,6 +25,7 @@ import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { FINDING_CLUSTERS_ENTRY, extensionFile } from "../coreext.js";
 import { GITHUB_TOKEN_ENVS } from "@quickchatai/pi-quickreview/src/envstrip.js";
+import { routeModelSpecForLogin } from "@quickchatai/pi-quickreview/src/modelroute.js";
 import { piCliPath } from "../picli.js";
 import {
   DEBUG_STATUS_FILE,
@@ -56,6 +57,15 @@ export const DEBUG_ROUND_EXTENSIONS = [
   "extensions/cli/debug-round.ts",
   FINDING_CLUSTERS_ENTRY,
 ] as const;
+
+/** The login file in an agent dir, as text; null when there is none. */
+function loginIn(agentDir: string): string | null {
+  try {
+    return readFileSync(join(agentDir, "auth.json"), "utf8");
+  } catch {
+    return null;
+  }
+}
 
 /** pi's first message: the extension command that starts the round. */
 export const DEBUG_START_MESSAGE = "/qcr-round";
@@ -186,16 +196,18 @@ export async function runDebugRound(i: RoundSpec, deps: DebugRoundDeps = {}): Pr
     // an earlier attempt's progress record is not this round's
     rmSync(join(i.outDir, DEBUG_STATUS_FILE), { force: true });
     log(`review: ${label} - debug round in pi, lenses ${prep.prompts.plannedLenses.join(" ")}`);
-    const args = debugArgv({
-      root: i.root,
-      model: i.cfg.models.conversation,
-      sysPath: prep.sysPath,
-      sessionDir: prep.sessionDir,
-      sessionName: prep.sessionName,
-    });
     const env = debugEnv(deps.env ?? process.env, prep, {
       order: join(i.outDir, "round-order.md"),
       tasksDir: join(i.outDir, "tasks"),
+    });
+    const args = debugArgv({
+      root: i.root,
+      // An OpenAI model runs on the OpenAI login the run's agent dir holds
+      // (packages/pi-plugin/src/modelroute.ts).
+      model: routeModelSpecForLogin(i.cfg.models.conversation, loginIn(i.agentDir), env),
+      sysPath: prep.sysPath,
+      sessionDir: prep.sessionDir,
+      sessionName: prep.sessionName,
     });
     // The whole pi runs as the tool uid, as the process route's did: its bash,
     // and the lens sessions of its extension, get no capability and cannot read
