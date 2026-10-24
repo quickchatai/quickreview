@@ -35,6 +35,7 @@ import {
 } from "../extensions/debug-round.js";
 import { jsonlHasMarker } from "../src/botworker.js";
 import type { DebugRoundSpec } from "../src/debuground.js";
+import { LOCK_FILE } from "../src/loginrefresh/refresher.js";
 import {
   DEBUG_ORDER_NAME,
   DEBUG_START_MESSAGE,
@@ -87,7 +88,7 @@ function ownerAgent(expiresInMs = 24 * HOUR): string {
     }),
     { mode: 0o660 },
   );
-  writeFileSync(join(agent, "auth.json.lock"), "");
+  writeFileSync(join(agent, LOCK_FILE), "");
   writeFileSync(join(agent, "models.json"), "{}");
   writeFileSync(join(agent, "agents", "pass-a.md"), "---\nname: pass-a\n---\nYou are pass-a.\n");
   return agent;

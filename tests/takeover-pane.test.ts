@@ -31,6 +31,7 @@ import {
   takeoverEnv,
 } from "../src/takeoverpi.js";
 import { TAKEOVER_TOOLS, type TakeoverSpec } from "../src/takeover.js";
+import { LOCK_FILE } from "../src/loginrefresh/refresher.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";
 import { bornReference, rehearseFile, type RequestShape } from "./helpers/resume-rehearsal.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
@@ -70,7 +71,7 @@ function ownerAgent(expiresInMs = 24 * HOUR): string {
     }),
     { mode: 0o660 },
   );
-  writeFileSync(join(agent, "auth.json.lock"), "");
+  writeFileSync(join(agent, LOCK_FILE), "");
   writeFileSync(join(agent, "models.json"), "{}");
   return agent;
 }

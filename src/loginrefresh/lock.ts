@@ -1,5 +1,12 @@
 // The single-instance lock: an exclusive flock on a SEPARATE lock file
-// (`pihome/agent/auth.json.lock`), held for the refresher's whole life.
+// (`pihome/agent/loginrefresh.lock`), held for the refresher's whole life.
+//
+// Why not `auth.json.lock`: that path is pi's. pi guards auth.json with
+// proper-lockfile, whose lock is a DIRECTORY `<file>.lock` (mkdir; a stale one
+// is rmdir'd). A plain file at that path makes every pi CLI fail at startup
+// (`ENOTDIR: not a directory, rmdir '…/auth.json.lock'`), so this lock is named
+// for this process and never `<anything pi locks>.lock`. Earlier builds did use
+// `auth.json.lock`; `removeLegacyLockFile` clears what they left behind.
 //
 // Why not a lock on auth.json: every refresh replaces auth.json by rename
 // (atomic.ts), so a lock on it stays on the old inode, a second refresher could
@@ -12,8 +19,16 @@
 // lock lasts exactly as long as the pipe's write end does: release() closes it,
 // and a refresher that is killed in any way closes it too (the kernel closes its
 // descriptors), so a crash can never leave the lock held by an orphan.
-import { spawn } from "node:child_process";
-import { chmodSync, chownSync, closeSync, mkdirSync, openSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  chownSync,
+  closeSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  unlinkSync,
+} from "node:fs";
 import { dirname } from "node:path";
 
 /** flock's exit status when the lock is held by someone else (-E). */
@@ -101,4 +116,40 @@ export function acquireLoginLock(
       else reject(new Error(`flock exited ${code}: ${stderr.trim() || "no output"}`));
     });
   });
+}
+
+/** What `removeLegacyLockFile` found at the old lock path. */
+export type LegacyLockOutcome = "absent" | "not-a-file" | "removed" | "unremovable";
+
+/**
+ * Remove the plain lock FILE an earlier refresher left at `path` (the old
+ * `auth.json.lock`, which is pi's proper-lockfile path and breaks every pi CLI
+ * while it is a file). Only a regular file is removed: a directory there is
+ * pi's own live lock and a symlink is not ours, so both are left alone. Throws
+ * `LoginLockHeld` when a refresher of an earlier build still holds a flock on
+ * it (the two would otherwise run side by side on different lock files).
+ */
+export function removeLegacyLockFile(
+  path: string,
+  o: { flockBin?: string } = {},
+): LegacyLockOutcome {
+  let isFile: boolean;
+  try {
+    isFile = lstatSync(path).isFile();
+  } catch {
+    return "absent";
+  }
+  if (!isFile) return "not-a-file";
+  const probe = spawnSync(
+    o.flockBin ?? "flock",
+    ["-n", "-E", String(LOCK_HELD_EXIT), path, "true"],
+    { stdio: "ignore" },
+  );
+  if (probe.status === LOCK_HELD_EXIT) throw new LoginLockHeld(path);
+  try {
+    unlinkSync(path);
+    return "removed";
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "ENOENT" ? "absent" : "unremovable";
+  }
 }

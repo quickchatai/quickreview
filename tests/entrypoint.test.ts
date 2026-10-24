@@ -36,7 +36,12 @@ import { parseConfig } from "../src/config.js";
 import { loginInPi } from "../src/scanbox.js";
 import { toolIsolation } from "@quickchatai/pi-quickreview/src/engine/tooluid.js";
 import { LoginLockHeld, acquireLoginLock } from "../src/loginrefresh/lock.js";
-import { LoginRefresher, type RefreshFn } from "../src/loginrefresh/refresher.js";
+import {
+  LEGACY_LOCK_FILE,
+  LOCK_FILE,
+  LoginRefresher,
+  type RefreshFn,
+} from "../src/loginrefresh/refresher.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ENTRYPOINT = join(root, "docker", "entrypoint.sh");
@@ -1285,7 +1290,7 @@ console.log(JSON.stringify({ uid: process.getuid(), groups: process.getgroups(),
 });
 
 // The bot container's login refresher holds a flock on
-// <agent>/auth.json.lock for its whole life. The login mode hands over to it:
+// <agent>/loginrefresh.lock for its whole life. The login mode hands over to it:
 // it writes <agent>/auth.json.pause, waits for `"paused": true` in the
 // refresher's status file, runs pi's /login, and removes the pause file
 // afterwards. The refresher is the real one (src/loginrefresh/), in this
@@ -1317,7 +1322,7 @@ describe("the login mode's handover to the bot's login refresher", () => {
       [
         "#!/bin/sh",
         `A="${agent}"`,
-        `flock -n -E 75 "$A/auth.json.lock" true; echo "lockrc=$?" > "${out}"`,
+        `flock -n -E 75 "$A/${LOCK_FILE}" true; echo "lockrc=$?" > "${out}"`,
         `grep -c '"paused": true' "$A/loginrefresh.status.json" >> "${out}"`,
         `[ -e "$A/auth.json.pause" ] && echo pause-present >> "${out}"`,
         // what pi does: its own file, 0600
@@ -1426,9 +1431,7 @@ describe("the login mode's handover to the bot's login refresher", () => {
       );
       expect(statSync(join(agent, "auth.json")).mode & 0o777).toBe(0o660);
       // and it never let go of the lock
-      await expect(acquireLoginLock(join(agent, "auth.json.lock"))).rejects.toBeInstanceOf(
-        LoginLockHeld,
-      );
+      await expect(acquireLoginLock(join(agent, LOCK_FILE))).rejects.toBeInstanceOf(LoginLockHeld);
     },
   );
 
@@ -1437,7 +1440,7 @@ describe("the login mode's handover to the bot's login refresher", () => {
     async () => {
       const r = rig();
       const agent = agentOf(r);
-      put(join(agent, "auth.json.lock"), "", 0o660); // a lock file nobody holds
+      put(join(agent, LOCK_FILE), "", 0o660); // a lock file nobody holds
       const out = stubLogin(
         r,
         agent,
@@ -1451,12 +1454,47 @@ describe("the login mode's handover to the bot's login refresher", () => {
     },
   );
 
+  // MUTATION: drop the `login_clear_legacy_lock "$dir"` call from
+  // login_handover_begin — the first case fails (the file is still there).
+  it.skipIf(!hasPty)(
+    "removes the plain lock file an earlier build left at pi's lock path before pi starts",
+    async () => {
+      const r = rig();
+      const agent = agentOf(r);
+      put(join(agent, LEGACY_LOCK_FILE), "", 0o660); // what an earlier refresher left
+      const out = stubLogin(
+        r,
+        agent,
+        authText({ access: "a", refresh: "b", expires: Date.now() + HOUR }),
+      );
+      const done = await loginInPty(r);
+      expect(done.status, done.output).toBe(0);
+      expect(existsSync(out)).toBe(true); // pi's /login ran
+      expect(existsSync(join(agent, LEGACY_LOCK_FILE))).toBe(false);
+      expect(done.output).toContain("removed the old lock file");
+    },
+  );
+
+  it.skipIf(!hasPty)(
+    "leaves a directory at pi's lock path alone: that is pi's live lock",
+    async () => {
+      const r = rig();
+      const agent = agentOf(r);
+      mkdirSync(join(agent, LEGACY_LOCK_FILE));
+      stubLogin(r, agent, authText({ access: "a", refresh: "b", expires: Date.now() + HOUR }));
+      const done = await loginInPty(r);
+      expect(done.status, done.output).toBe(0);
+      expect(statSync(join(agent, LEGACY_LOCK_FILE)).isDirectory()).toBe(true);
+      expect(done.output).not.toContain("removed the old lock file");
+    },
+  );
+
   it.skipIf(!hasPty)(
     "refuses to log in beside a lock holder that never pauses, and cleans up its pause file",
     async () => {
       const r = rig();
       const agent = agentOf(r);
-      const lock = await acquireLoginLock(join(agent, "auth.json.lock")); // held, but nothing answers the pause
+      const lock = await acquireLoginLock(join(agent, LOCK_FILE)); // held, but nothing answers the pause
       logins.push(() => lock.release());
       const out = stubLogin(
         r,

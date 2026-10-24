@@ -634,7 +634,7 @@ fi
 
 # ---- I. the refresher --------------------------------------------------------------------------------------------------------------
 if want LOGIN-1; then
-LOCKED=no; dx flock -n "/home/qcr/.pi/agent/auth.json.lock" true 2>/dev/null || LOCKED=yes
+LOCKED=no; dx flock -n "/home/qcr/.pi/agent/loginrefresh.lock" true 2>/dev/null || LOCKED=yes
 OLD_REFRESH="$(python3 -c "import json;print(json.load(open('$H/pihome/agent/auth.json'))['openai-codex']['refresh'])")"
 # a login that is due: stop the daemon, make the token expire inside the refresh margin, start it
 BOOTS_LOGIN="$(boots)"
@@ -650,7 +650,7 @@ refreshed() { [[ "$(python3 -c "import json;print(json.load(open('$H/pihome/agen
 wait_for 120 "the refresh" refreshed
 NEW_REFRESH="$(python3 -c "import json;d=json.load(open('$H/pihome/agent/auth.json'))['openai-codex'];print(d['refresh'], d['expires'])")"
 sleep 3
-LOCKED2=no; dx flock -n "/home/qcr/.pi/agent/auth.json.lock" true 2>/dev/null || LOCKED2=yes
+LOCKED2=no; dx flock -n "/home/qcr/.pi/agent/loginrefresh.lock" true 2>/dev/null || LOCKED2=yes
 SECOND="$(dx node "$APP_ROOT/dist/src/loginrefresh/main.js" 2>&1; echo "exit=$?")"
 SECOND_RC="${SECOND##*exit=}"
 TOKEN_POSTS="$(grep -c '"path":"/oauth/token"' "$LOGS/stub.jsonl")"
@@ -658,7 +658,7 @@ STATUS_LR="$(python3 -c "import json;print(json.dumps(json.load(open('$H/state/s
 fact login_refresh "$STATUS_LR"
 # NEW_REFRESH is "<refresh token> <expires>": the token alone must have rotated
 if [[ "$LOCKED" == yes && "$LOCKED2" == yes && "$SECOND_RC" == 75 && "$TOKEN_POSTS" -ge 1 && "${NEW_REFRESH%% *}" != "$OLD_REFRESH" ]]; then
-  check LOGIN-1 pass "the refresher holds auth.json.lock; after a real refresh a second refresher is refused" "lock held before and after the refresh; the due token was refreshed through pi-ai's own OAuth refresh against the stub ($TOKEN_POSTS token POST(s), the refresh token rotated); a second refresher exited $SECOND_RC: ${SECOND%%exit=*}"
+  check LOGIN-1 pass "the refresher holds loginrefresh.lock; after a real refresh a second refresher is refused" "lock held before and after the refresh; the due token was refreshed through pi-ai's own OAuth refresh against the stub ($TOKEN_POSTS token POST(s), the refresh token rotated); a second refresher exited $SECOND_RC: ${SECOND%%exit=*}"
 else
   check LOGIN-1 fail "the refresher and its lock" "locked=$LOCKED/$LOCKED2 second rc=$SECOND_RC ($SECOND) token_posts=$TOKEN_POSTS refresh '$OLD_REFRESH' -> '$NEW_REFRESH'"
 fi

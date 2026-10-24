@@ -13,7 +13,7 @@
 // One exception, the VM's: after the cutover no pi session lives long enough to
 // refresh the bot's login, so ONE locked refresher in the bot container
 // (src/loginrefresh/, spawned and supervised by the daemon by path) is its
-// owner. It holds an exclusive flock on pihome/agent/auth.json.lock for its whole
+// owner. It holds an exclusive flock on pihome/agent/loginrefresh.lock for its whole
 // life, refreshes through pi-ai's own OAuth refresh and writes auth.json
 // atomically. Workers, takeover and debug pi are borrowers like any other: they
 // copy the file at spawn, blank, and take no lock. Everywhere else the login-refresh rule is as

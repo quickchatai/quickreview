@@ -469,7 +469,7 @@ s_release() {
 s_verify() {
   "$DEPLOY" verify || { bad "verify failed: keep the drain on and read the output above"; return 1; }
   say "It must have shown: both containers up on the manifest digests, the sidecar ready, the"
-  say "heartbeat fresh with permits 0/20, the IPC socket, the login refresher holding auth.json.lock,"
+  say "heartbeat fresh with permits 0/20, the IPC socket, the login refresher holding loginrefresh.lock,"
   say "and no pi, overseer or tmux PR session in the process tree."
   confirm "Does verify show all of that?" || return 1
 }

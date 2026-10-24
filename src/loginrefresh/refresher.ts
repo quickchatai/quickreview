@@ -6,8 +6,18 @@
 // (main.ts) the daemon spawns and supervises by path, so the daemon imports
 // neither pi nor src/engine/.
 //
-//   Lock      an exclusive flock on `auth.json.lock` for its whole life (lock.ts);
-//             a second refresher is refused, before and after any refresh.
+//   Lock      an exclusive flock on `loginrefresh.lock` for its whole life (lock.ts);
+//             a second refresher is refused, before and after any refresh. Never
+//             `auth.json.lock`: that is pi's own proper-lockfile path (a
+//             directory), and a file there breaks every pi CLI. A plain file an
+//             earlier build left there is removed at start.
+//   pi lock   not taken: the refresher does not hold pi's proper-lockfile lock
+//             around its read-refresh-write (proper-lockfile is pi's dependency,
+//             not ours). It needs none while it is healthy: it refreshes far
+//             ahead of pi's own window, so a pi on this file has nothing to
+//             refresh, and a login goes through the entrypoint's pause below. A
+//             raw `pi` + `/login` that bypasses the pause can lose its new
+//             login to a refresh that lands in the same moment.
 //   Refresh   every 10 minutes, any OAuth entry that is inside pi's refresh
 //             window plus a margin longer than the longest worker cap is
 //             refreshed through `deps.refresh` (pi-ai's own, pirefresh.ts) and
@@ -26,11 +36,14 @@
 import { existsSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "./atomic.js";
-import { acquireLoginLock, type LoginLock } from "./lock.js";
+import { acquireLoginLock, removeLegacyLockFile, type LoginLock } from "./lock.js";
 import type { LoginRefreshFileStatus } from "./types.js";
 
 export const AUTH_FILE = "auth.json";
-export const LOCK_FILE = "auth.json.lock";
+/** The single-instance lock. Not `${AUTH_FILE}.lock`: that is pi's (lock.ts). */
+export const LOCK_FILE = "loginrefresh.lock";
+/** Where earlier builds kept the lock: pi's proper-lockfile path, cleared at start. */
+export const LEGACY_LOCK_FILE = "auth.json.lock";
 export const PAUSE_FILE = "auth.json.pause";
 export const STATUS_FILE = "loginrefresh.status.json";
 
@@ -134,10 +147,26 @@ export class LoginRefresher {
    * keep looking.
    */
   static async start(deps: RefresherDeps, o: { autoRun?: boolean } = {}): Promise<LoginRefresher> {
+    const flock = deps.flockBin ? { flockBin: deps.flockBin } : {};
     const lock = await acquireLoginLock(join(deps.agentDir, LOCK_FILE), {
-      ...(deps.flockBin ? { flockBin: deps.flockBin } : {}),
+      ...flock,
       gid: deps.gid,
     });
+    const legacy = join(deps.agentDir, LEGACY_LOCK_FILE);
+    let outcome: ReturnType<typeof removeLegacyLockFile>;
+    try {
+      outcome = removeLegacyLockFile(legacy, flock);
+    } catch (err) {
+      // a refresher of an earlier build still runs on the old lock
+      await lock.release();
+      throw err;
+    }
+    if (outcome === "removed")
+      deps.log(`login refresh: removed the old lock file ${legacy} (it is pi's lock path)`);
+    if (outcome === "unremovable")
+      deps.log(
+        `login refresh: could not remove the old lock file ${legacy}; pi fails until it goes`,
+      );
     const r = new LoginRefresher(deps, lock);
     r.publish();
     await r.tick();
