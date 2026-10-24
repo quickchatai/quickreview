@@ -99,7 +99,10 @@ export const CONTROL_TEXT_MAX = 8000;
  * session's command file cannot spell them: in the session directories, and
  * in an UNSEALED operator directory (served as a session's), they are refused
  * at validation, and `executeCommand` refuses
- * them again for any issuer but the operator. The kill switch's state lives
+ * them again for any issuer but the operator. `review-now` is the operator's
+ * "review this PR now": one PR queued as a human-asked round, exactly as a
+ * fresh trigger label would queue it, with no GitHub write to ask for it (the
+ * onboarding wizard's proof round sends it). The kill switch's state lives
  * in state.db (src/lessonledger.ts), never as a memory tag anyone holding a
  * key could write.
  */
@@ -110,6 +113,7 @@ export const OPERATOR_COMMANDS = [
   "unsuppress-lesson",
   "archive-run",
   "archive-restore",
+  "review-now",
   ...CONTROL_COMMANDS,
 ] as const;
 
@@ -180,6 +184,9 @@ export type Command =
    * valid in a session's file. */
   | { command: "archive-run" }
   | { command: "archive-restore"; pr: number }
+  /** The operator's "review this PR now" (`OPERATOR_COMMANDS`): never valid
+   * in a session's file. */
+  | { command: "review-now"; pr: number }
   /** The operator's round controls (`CONTROL_COMMANDS`): never valid in a
    * session's file. */
   | { command: "steer"; pr: number; text: string }
@@ -263,6 +270,9 @@ export interface CommandDeps {
    * only for an operator-issued command; optional like `drain`. */
   archiveRun?(file: string): Promise<FileOutcome | void> | FileOutcome | void;
   archiveRestore?(pr: number, file: string): Promise<FileOutcome | void> | FileOutcome | void;
+  /** The operator's "review this PR now": queue one PR for a human-asked
+   * round. Reached only for an operator-issued command; optional like `drain`. */
+  reviewNow?(pr: number, file: string): Promise<FileOutcome | void> | FileOutcome | void;
   /** The operator's round controls (`CONTROL_COMMANDS`), forwarded to the PR's
    * host. Reached only for an operator-issued command; optional like `drain`,
    * so a daemon with no worker host refuses them with a reason. */
@@ -338,7 +348,7 @@ export function validateCommand(raw: unknown, opts: ValidateOptions = {}): Valid
         ok: false,
         reason:
           `command '${name}' is the OPERATOR's alone: it is accepted only from the root-sealed commands/operator/ ` +
-          "channel (`qcr lessons off|on|suppress|unsuppress`, `qcr archive run|restore`), never from a session's command file",
+          "channel (`qcr lessons off|on|suppress|unsuppress`, `qcr archive run|restore`, `qcr review-now`), never from a session's command file",
       };
     return validateOperatorCommand(name, obj);
   }
@@ -608,6 +618,12 @@ function validateOperatorCommand(
       if (err) return { ok: false, reason: err };
       if (!isPrNumber(obj["pr"])) return { ok: false, reason: "'pr' must be a positive integer" };
       return { ok: true, command: { command: "archive-restore", pr: obj["pr"] } };
+    }
+    case "review-now": {
+      const err = fieldError(obj, ["pr"]);
+      if (err) return { ok: false, reason: err };
+      if (!isPrNumber(obj["pr"])) return { ok: false, reason: "'pr' must be a positive integer" };
+      return { ok: true, command: { command: "review-now", pr: obj["pr"] } };
     }
     case "steer":
     case "follow-up":
@@ -970,6 +986,16 @@ export async function executeCommand(
       if (!deps.archiveRestore)
         return { ok: false, reason: "archive-restore is not wired on this daemon" };
       return normalize(await deps.archiveRestore(command.pr, ctx.delivery_key ?? ctx.file));
+    }
+    case "review-now": {
+      // The belt behind validation's brace, as for the kill switch.
+      if (ctx.issuer !== "operator")
+        return {
+          ok: false,
+          reason: `'${command.command}' is the operator's alone — refused for issuer '${ctx.issuer}'`,
+        };
+      if (!deps.reviewNow) return { ok: false, reason: "review-now is not wired on this daemon" };
+      return normalize(await deps.reviewNow(command.pr, ctx.delivery_key ?? ctx.file));
     }
     case "steer":
     case "follow-up":

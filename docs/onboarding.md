@@ -31,8 +31,11 @@ wizard composes exactly those tools rather than replacing them.
   The images are public on ghcr.io, so no registry login is needed. `qcr update`
   moves the pin to a newer release.
 
-- A GitHub account that can create a GitHub App and install it on the repository
-  you want reviewed.
+- **A GitHub sign-in on this machine** — `gh` logged in (`gh auth login`; on a
+  Quickchat Boxes VM the Boxes GitHub connector has already done it). That is
+  all the fast path needs: the reviewer runs on your own account. Only the App
+  route needs a GitHub account that can create a GitHub App and install it on
+  the repository you want reviewed.
 - **On the server route only**: a Linux machine you already reach as `ssh
   <alias>`, with passwordless sudo there, and `ansible-playbook` installed on
   *your* machine — the deploy is an Ansible run from here, over your ssh.
@@ -66,11 +69,30 @@ Start every session by asking for the status (the guide does this itself): it
 reconciles the file against the world and demotes anything that no longer holds,
 naming what broke.
 
+### What you need, and the fast path
+
+Four things, and only four:
+
+1. **a model login** — pi's `/login` opens by itself the first time; any working
+   OpenAI login does (see [The LLM route](#30--the-llm-route));
+2. **your GitHub sign-in** — `gh` logged in here (already true on a Boxes VM);
+3. **one repository** you can read;
+4. **one open pull request** in it, to watch the first review.
+
+The recommended path takes the defaults all the way: the reviewer on **this
+computer** (`local`), **polling** instead of webhooks, **your own GitHub
+account** instead of an App, and at the end **review this one PR now** — the
+review starts the moment you name the PR, with no label to add. Every question
+the guide asks maps to a step's input; it never asks you for anything a tool
+cannot take.
+
 ## The checklist
 
-Eighteen steps, in this order. Three are specific to the server route and one
+Nineteen steps, in this order. Three are specific to the server route and one
 to the laptop route; the rest run on both, over whichever transport your
-topology chose.
+topology chose. The GitHub question splits the list a second way: your own
+account (`user`) runs step 33, a GitHub App (`app`) runs steps 40 and 65 — once
+it is answered, exactly one of 33 and 40 is enabled.
 
 | # | step | route |
 |---|---|---|
@@ -78,19 +100,20 @@ topology chose.
 | 20 | topology — where the reviewer lives | both |
 | 22 | ssh preflight | server |
 | 30 | LLM auth | both |
+| 33 | GitHub: your own account (the default), or an App | own account |
 | 35 | interview and `config.toml` | both |
 | 36 | escalation (optional, off by default) | both |
 | 38 | memory embeddings: local by default | both |
 | 39 | webhook ingress | both |
-| 40 | GitHub App: create, install, label | both |
+| 40 | GitHub App: create, install, label | App |
 | 60 | memory keys, phase A | both |
-| 65 | reconcile the App's real slug | both |
+| 65 | reconcile the App's real slug | App |
 | 68 | deploy inventory | server |
 | 70 | bring the compose stack up | laptop |
 | 71 | deploy to the server | server |
 | 72 | memory keys, phase B | both |
 | 74 | verify the running system | both |
-| 76 | the proof round | both |
+| 76 | the proof round: review this one PR now | both |
 | 78 | go live, or stay in dry-run | both |
 
 ### 10 — Preflight
@@ -214,6 +237,51 @@ locally by default, inside the memory container, so no memory text leaves the
 machine on either route — and `openai_api_key` is pi's credential alone, never
 read for embeddings. A hosted embedder is a separate, explicit opt-in with its
 own key file: step 38. This step says so as a note, never a blocker.
+
+### 33 — GitHub: your own account, or a GitHub App
+
+The step asks one thing, `github_auth`: **`user`** (your own GitHub account) or
+**`app`** (a GitHub App). Where `gh auth token` works on this machine, `user` is
+the default and the step goes straight ahead with no answer at all; with no
+working sign-in and no answer it offers both and records nothing.
+
+**`user` — your own account (recommended).** No App to create, nothing to paste,
+any repository your account can read. It is **polling only** — webhooks are
+delivered to Apps — and reviews are posted **as you**, as `COMMENT` reviews whose
+body states the verdict (GitHub will not let anyone approve their own PR, and an
+AI approval must never count as yours). What the step does, one ✓/✗ line each:
+
+- **the token** — `qcr github-token sync`, run in-process: `gh auth token`
+  (from the `gh` this shell resolves; `GH_TOKEN` / `GITHUB_TOKEN` when there is
+  no gh), `GET /user` to prove it and name your login, then
+  `<secrets>/github_token` written atomically, `0600`, the token alone. The
+  login and the token's kind (`ghu_`/`gho_`/`ghp_`/`github_pat_`) are shown;
+  the token never is.
+- **the refresh** — a user crontab entry every 20 minutes, marked
+  `# qcr github-token sync` (a re-run replaces it), running absolute `node` and
+  `cli.js` with `--gh <the gh this wizard found>` and `--secrets-dir`, because
+  cron's `PATH` is not yours (on Boxes the signed-in gh is the broker wrapper
+  in `/usr/local/bin`, and the `/usr/bin/gh` beside it has no login). Boxes'
+  gh hands out an 8-hour `ghu_` token, so there the refresh is what keeps the
+  reviewer signed in; a `gho_`/`ghp_` token does not expire. A machine with no
+  `crontab` gets the manual command and a plain statement of what lapses.
+- **the repository** — call the step with `repo` (`owner/name` or its GitHub
+  URL); with none, it lists the 15 repositories your account pushed to most
+  recently. `GET /repos/{owner}/{repo}` proves your account can read it, which
+  is enough to review and comment.
+- **the labels** — the three trigger labels of [step 40](#40--github-app-create-install-label),
+  created the same way, with your token, when your account may manage labels
+  (triage or better). Otherwise they are skipped with the reason: nothing needs
+  them for the first review.
+- **the config** — `[github] auth = "user"`, `bot_login = "<your login>"`,
+  `app_slug = ""` and `[ingress] shape = "polling"`. No App secrets exist on this
+  route.
+
+**`app` — a GitHub App.** The step records the answer; steps 40 and 65 do the
+rest.
+
+You can switch later by running the step again with the other answer. Nothing
+is deleted either way: an App's secrets and your token file stay where they are.
 
 ### 35 — The interview, and `config.toml`
 
@@ -340,8 +408,15 @@ has the whole shape, the journal, and the rehearsal recipe.
 
 ### 39 — Webhook ingress
 
-GitHub delivers webhooks to an HTTPS URL, so your daemon needs one. Four shapes,
-with their real trade-offs. The recommendation follows your topology: the quick
+**The default is `polling`, on every route**: called with no answer, the step
+applies it and says so in one line — the reviewer checks GitHub every few
+minutes (`[daemon] poll_interval_s`) for pull requests to review; webhooks are
+optional and can be added later by re-running this step. On your own GitHub
+account (step 33) polling is the only shape: a tunnel answer is refused with
+the reason.
+
+Webhooks need an HTTPS URL for GitHub to deliver to. Four shapes, with their
+real trade-offs. The upgrade worth having follows your topology: the quick
 tunnel on this computer, the named tunnel on a server.
 
 **`quick` — Cloudflare quick tunnel. No account, nothing to sign up for.**
@@ -378,7 +453,8 @@ tunnel on this computer, the named tunnel on a server.
 - The same token works on either topology: as the compose sidecar here, or as
   the cloudflared service the Ansible playbook installs on the server.
 
-**`polling` — no tunnel, nothing exposed.**
+**`polling` — no tunnel, nothing exposed (the default).** `[ingress] shape =
+"polling"`.
 
 - Nothing to install, nothing reachable from the internet: the daemon only makes
   outbound calls.
@@ -638,7 +714,8 @@ here and says what to do: nothing later would mean anything until it is fixed.
    accepted. This proves the whole path from GitHub through your ingress into
    the daemon, end to end. Under the polling shape this layer is skipped and
    reported as not checked: nothing is exposed, so no ping can arrive, and the
-   reconcile poll is the only trigger path.
+   reconcile poll is the only trigger path. On your own GitHub account it is
+   skipped too, with that reason: there is no App, so no App webhook to read.
 
 If the last ping failed, the wizard redelivers it once and watches for about
 thirty seconds. If it still fails, the three things to check are: the webhook
@@ -654,16 +731,25 @@ that App-scoped webhook redelivery — never a review, a label or a comment.
 
 The wizard does not call itself done until you have watched the reviewer work.
 
-Pick a real, open pull request of yours in the repository — one you would
-actually want reviewed — and add the trigger label to it. **That label is the
-trigger**: the reviewer never reviews anything on its own initiative. The wizard
-does not create a demo PR for you, deliberately.
+Call it with no answer and it lists the five most recently updated open pull
+requests in the repository, yours marked (on your own account your PRs are the
+main target). Name one — `pr` (its number) or `url` (its link) — and **the review
+starts immediately**: no label to add. The wizard writes one `review-now`
+command into the daemon's root-sealed operator channel (`commands/operator/`,
+the channel `qcr drain` uses; `qcr review-now <pr>` is the same command from the
+host), which queues the PR exactly as a fresh trigger label would, with no
+GitHub write. The label stays the way later reviews are asked for — the
+reviewer never reviews anything on its own initiative. The wizard does not
+create a demo PR for you, deliberately. On a LIVE installation
+(`dry_run = false`) it asks first, because that review posts.
 
 Then it follows the round through the daemon's own state store, checking every
 thirty seconds for up to thirty minutes, and when a verdict lands it **shows you
 the review**, read out of `state/dryrun/` — so you judge the output while it is
 still structurally impossible for it to have posted anywhere. It shows the
-verdict it would have submitted, the review body, and each inline comment with
+verdict (on the merits, and the event it would have been posted as), how many
+findings, the top five, and where the full text is (the dry-run file, with the
+command that prints it) — then the review body and each inline comment with
 its file and line, alongside a count of every other would-be GitHub call the
 gate recorded instead of executing.
 

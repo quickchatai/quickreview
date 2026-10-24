@@ -23,7 +23,15 @@
 // stack and are covered by onboard-memory / onboard-verifystack / onboard-proof
 // / onboard-golive / onboard-vmroute. This file owns the HANDOFFS.
 import { generateKeyPairSync } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,6 +63,11 @@ const PEM = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
 const REAL_SLUG = "quick-review-abc123";
 const TYPED_SLUG = "acme-reviewer";
 const REPO = "acme/widgets";
+/** The person's GitHub login on the own-account route. */
+const PERSON = "dana-op";
+/** Where a Boxes VM's signed-in gh lives — not the /usr/bin/gh cron would find. */
+const GH_PATH = "/usr/local/bin/gh";
+const GH_TOKEN_VALUE = "gho_personTokenValue0123456789abcdef";
 const HOSTNAME = "review.example.com";
 /** A customised trigger label: the App step must create THIS, not the default. */
 const TRIGGER_LABEL = "please review";
@@ -65,6 +78,10 @@ let checkout: string;
 let calls: string[];
 let labels: Set<string>;
 let prompts: string[];
+/** The person's gh sign-in, when the fixture has one (the own-account route). */
+let ghToken: string | null;
+/** The user crontab, as `crontab <file>` last installed it. */
+let crontab: string | null;
 
 /** The operator's answers to the interview, by question id. */
 function answers(): Record<AnswerKey, string> {
@@ -110,6 +127,27 @@ function runner(): OnboardAdapters["runner"] {
       if (cmd === "docker" && args[0] === "inspect")
         return { code: 1, stdout: "", stderr: "No such object" };
       if (/compose .*ps/.test(line)) return { code: 0, stdout: "", stderr: "" }; // nothing up yet
+      // The own-account route's host tools: a signed-in gh at the broker
+      // wrapper's path (NOT /usr/bin/gh), and a crontab.
+      if (cmd === "sh" && args[1] === "command -v gh")
+        return ghToken
+          ? { code: 0, stdout: `${GH_PATH}\n`, stderr: "" }
+          : { code: 1, stdout: "", stderr: "" };
+      if (cmd === GH_PATH && args.join(" ") === "auth token")
+        return ghToken
+          ? { code: 0, stdout: `${ghToken}\n`, stderr: "" }
+          : { code: 1, stdout: "", stderr: "" };
+      if (cmd === "sh" && args[1] === "command -v crontab")
+        return { code: 0, stdout: "/usr/bin/crontab\n", stderr: "" };
+      if (cmd === "crontab" && args[0] === "-l")
+        return crontab === null
+          ? { code: 1, stdout: "", stderr: "no crontab for dana" }
+          : { code: 0, stdout: crontab, stderr: "" };
+      if (cmd === "crontab" && args.length === 1) {
+        crontab = readFileSync(args[0]!, "utf8");
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (cmd === "gh") return { code: 1, stdout: "", stderr: "not logged in" };
       return { code: 0, stdout: "", stderr: "" };
     },
   };
@@ -150,8 +188,29 @@ function ghFetch(): typeof fetch {
       labels.add(body.name);
       return json(201, { name: body.name });
     }
+    // The person's own account (the own-account route), read with their token.
+    const personal =
+      String(new Headers(init?.headers).get("authorization") ?? "") === `Bearer ${ghToken}`;
+    if (method === "GET" && url.pathname === "/user" && personal)
+      return json(200, { login: PERSON });
+    if (method === "GET" && url.pathname === "/user/repos" && personal)
+      return json(200, [
+        {
+          full_name: "dana-op/old",
+          pushed_at: "2026-01-01T00:00:00Z",
+          permissions: { pull: true, push: true },
+        },
+        {
+          full_name: REPO,
+          pushed_at: "2026-08-30T00:00:00Z",
+          permissions: { pull: true, push: true },
+        },
+      ]);
     if (method === "GET" && /^\/repos\/[^/]+\/[^/]+$/.test(url.pathname))
-      return json(200, { full_name: url.pathname.slice(7) });
+      return json(200, {
+        full_name: url.pathname.slice(7),
+        permissions: { pull: true, triage: true, push: true },
+      });
     if (method === "GET" && url.pathname.startsWith("/users/"))
       return json(200, { login: url.pathname.slice(7), type: "Organization" });
     return json(500, { message: `unrouted ${method} ${path}` });
@@ -181,6 +240,8 @@ beforeEach(() => {
   calls = [];
   prompts = [];
   labels = new Set<string>();
+  ghToken = null;
+  crontab = null;
 
   // A checkout-shaped root: the template the interview patches, plus an
   // existing config.toml (the LLM step would otherwise seed one) pointed at
@@ -265,6 +326,9 @@ function ctxOverChoices(engine: OnboardingEngine): StepContext {
 
 const LAPTOP_INPUTS: Inputs = {
   topology: { choice: "local" },
+  // The App route, answered: this fixture's gh is signed out, so the GitHub
+  // question has no default and the App route is the operator's word.
+  github_account: { github_auth: "app" },
   ingress: { choice: "named", hostname: HOSTNAME },
   // The escalation step ASKS, and refuses to guess — with no answer
   // it returns its teach-and-offer refusal and the composed flow goes red.
@@ -546,5 +610,146 @@ describe("the checklist the flow leaves behind", () => {
         key,
       );
     }
+  });
+});
+
+// ---- the own-account route, end to end ---------------------------------------
+//
+// The same rule as above: NOTHING is seeded. The person's gh is signed in, so
+// the GitHub question defaults to "user" with no answer at all; every later
+// step reads what github_account actually recorded.
+
+const USER_INPUTS: Inputs = {
+  topology: { choice: "local" },
+  // No github_auth: gh is signed in here, so "user" is the default. The repo
+  // is the one input the route needs.
+  github_account: { repo: `https://github.com/${REPO}` },
+  escalation: { enable: "no" },
+  // No ingress answer either: the route is polling only.
+};
+
+describe("the own-account route hands its choices on (nothing seeded)", () => {
+  beforeEach(() => {
+    ghToken = GH_TOKEN_VALUE;
+    // No App on this route: none of its secrets exist.
+    for (const f of Object.values(SECRET_FILES)) rmSync(join(secretsDir, f), { force: true });
+  });
+
+  it(
+    "drives preflight → … → github_account → interview → ingress with every step green",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const engine = new OnboardingEngine(defaultSteps(), adapters());
+      const d = await drive(engine, USER_INPUTS, "app_slug_reconcile", SKIP);
+      const failed = [...d.results]
+        .filter(([, r]) => !r.ok)
+        .map(([id, r]) => `${id}: ${r.failures.join("; ")}`);
+      expect(failed, "a step in the composed own-account flow went red").toEqual([]);
+      // The App steps are not part of this route — the engine never ran them.
+      expect(d.results.has(GITHUB_APP_STEP_ID)).toBe(false);
+      expect(d.results.has("app_slug_reconcile")).toBe(false);
+      const status = new Map(engine.list().map((l) => [l.id, l.status]));
+      expect(status.get(GITHUB_APP_STEP_ID)).toBe("disabled");
+      expect(status.get("app_slug_reconcile")).toBe("disabled");
+      expect(status.get("github_account")).toBe("done");
+      expect(calls.some((c) => c.startsWith("GET /app"))).toBe(false);
+    },
+  );
+
+  it("HANDOFF U1 — the route, login and repo github_account records reach the interview", async () => {
+    const engine = new OnboardingEngine(defaultSteps(), adapters());
+    const d = await drive(engine, USER_INPUTS, "config_fill", SKIP);
+    expect(engine.choices()[CHOICE_KEYS.githubAuth]).toBe("user");
+    expect(engine.choices()[CHOICE_KEYS.accountLogin]).toBe(PERSON);
+    expect(engine.choices()[CHOICE_KEYS.accountRepo]).toBe(REPO);
+    // The interview took the repo and login from it, and never asked for an App slug.
+    expect(engine.choices()[CHOICE_KEYS.repo]).toBe(REPO);
+    const slugPrompt = QUESTIONS.find((q) => q.id === "app_slug")!.prompt;
+    expect(prompts.some((p) => p.includes(slugPrompt))).toBe(false);
+    expect(detail(d, "config_fill", "shape")).toContain("github own account");
+    expect(detail(d, "config_fill", "secrets")).toMatch(/github token is present/i);
+    const cfg = producedConfig();
+    expect(cfg.github.repo).toBe(REPO);
+    expect(cfg.github.app_slug).toBe("");
+    expect(cfg.github.bot_login).toBe(PERSON);
+    expect(cfg.owner.github_login).toBe(PERSON);
+    expect((cfg.github as unknown as { auth?: string }).auth).toBe("user");
+  });
+
+  it("HANDOFF U2 — the token file is written 0600, and no output carries the token", async () => {
+    const engine = new OnboardingEngine(defaultSteps(), adapters());
+    const d = await drive(engine, USER_INPUTS, "github_account", SKIP);
+    const file = join(secretsDir, "github_token");
+    expect(readFileSync(file, "utf8")).toBe(GH_TOKEN_VALUE);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(detail(d, "github_account", "token")).toContain(`signed in as ${PERSON}`);
+    expect(detail(d, "github_account", "token")).toContain("gho_");
+    const everything = JSON.stringify([...d.results.values()]);
+    expect(everything).not.toContain(GH_TOKEN_VALUE);
+    expect(readFileSync(join(root, "state", "onboarding", "checklist.json"), "utf8")).not.toContain(
+      GH_TOKEN_VALUE,
+    );
+  });
+
+  it("HANDOFF U3 — the crontab refresh runs the gh this environment resolved, not cron's PATH", async () => {
+    const engine = new OnboardingEngine(defaultSteps(), adapters());
+    await drive(engine, USER_INPUTS, "github_account", SKIP);
+    const marked = (crontab ?? "").split("\n").filter((l) => l.includes("# qcr github-token sync"));
+    expect(marked).toHaveLength(1);
+    expect(marked[0]).toMatch(/^\*\/20 \* \* \* \* \//);
+    expect(marked[0]).toContain(` --gh ${GH_PATH} `);
+    expect(marked[0]).toContain(` --secrets-dir ${secretsDir} `);
+    expect(marked[0]).toContain(" github-token sync ");
+    // …and the step records that same path, which its verify holds the entry to.
+    const checklist = JSON.parse(
+      readFileSync(join(root, "state", "onboarding", "checklist.json"), "utf8"),
+    ) as { steps: Record<string, { data: Record<string, unknown> }> };
+    expect(checklist.steps.github_account!.data.gh_path).toBe(GH_PATH);
+    expect(calls).toContain("sh -c command -v gh");
+    // A second run replaces, never adds.
+    await engine.runStep("github_account", USER_INPUTS.github_account!);
+    expect(
+      (crontab ?? "").split("\n").filter((l) => l.includes("# qcr github-token sync")),
+    ).toHaveLength(1);
+  });
+
+  it("HANDOFF U4 — the ingress step reads the route: polling, no tunnel, and the config loads", async () => {
+    const engine = new OnboardingEngine(defaultSteps(), adapters());
+    await drive(engine, USER_INPUTS, "ingress", SKIP);
+    expect(engine.choices()[CHOICE_KEYS.ingress]).toBe("polling");
+    expect(producedConfig().ingress.shape).toBe("polling");
+    expect(readFileSync(join(root, ".env"), "utf8")).toContain("COMPOSE_PROFILES=\n");
+    const refused = await engine.runStep("ingress", { choice: "quick" });
+    expect(refused.ok).toBe(false);
+    expect(refused.failures.join(" ")).toMatch(/polling only/);
+  });
+
+  it("HANDOFF U5 — the labels are created on the picked repo with the person's token", async () => {
+    const engine = new OnboardingEngine(defaultSteps(), adapters());
+    await drive(engine, USER_INPUTS, "github_account", SKIP);
+    expect([...labels]).toContain(TRIGGER_LABEL);
+    expect(calls).toContain(`POST /repos/${REPO}/labels`);
+  });
+
+  it("with no repo answer, github_account offers the account's repos, most recently pushed first", async () => {
+    const engine = new OnboardingEngine(defaultSteps(), adapters());
+    const d = await drive(engine, { ...USER_INPUTS, github_account: {} }, "github_account", SKIP);
+    const r = d.results.get("github_account")!;
+    expect(r.ok).toBe(false);
+    const offer = detail(d, "github_account", "repo");
+    expect(offer.indexOf(REPO)).toBeLessThan(offer.indexOf("dana-op/old"));
+    expect(offer).toMatch(/repo: "owner\/name"/);
+    expect(engine.choices()[CHOICE_KEYS.githubAuth]).toBeUndefined();
+  });
+
+  it("a signed-out gh with no answer offers both routes and records nothing", async () => {
+    ghToken = null;
+    const engine = new OnboardingEngine(defaultSteps(), adapters());
+    const d = await drive(engine, { ...USER_INPUTS, github_account: {} }, "github_account", SKIP);
+    const r = d.results.get("github_account")!;
+    expect(r.ok).toBe(false);
+    expect(r.failures.join(" ")).toMatch(/gh auth login/);
+    expect(r.failures.join(" ")).toMatch(/github_auth: "user" or github_auth: "app"/);
+    expect(engine.choices()[CHOICE_KEYS.githubAuth]).toBeUndefined();
   });
 });

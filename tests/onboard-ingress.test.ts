@@ -237,11 +237,24 @@ describe("deterministic file surgery", () => {
 // ---- the offer --------------------------------------------------------------
 
 describe("the offer", () => {
-  it("called with no choice, it lists all four shapes with honest trade-offs and stays pending", async () => {
+  it("called with no choice and none recorded, it applies the polling default and says so in one plain line", async () => {
     const f = fake();
     const result = await f.engine.runStep(INGRESS_STEP_ID);
+    expect(result.ok, result.failures.join("; ")).toBe(true);
+    const line = result.checks.find((c) => c.name === "choice")!.detail;
+    expect(line).toMatch(/^polling: the reviewer checks GitHub every 5 minutes/);
+    expect(line).toMatch(/Webhooks .* optional and\s+can be added later/);
+    expect(line).toMatch(/quick, ngrok, named/);
+    expect(readTomlKey(configText(), "ingress", "shape")).toBe("polling");
+    expect(readEnvKey(envText(), "COMPOSE_PROFILES")).toBe("");
+  });
+
+  it("an answer that names no shape lists all four with honest trade-offs and stays pending", async () => {
+    const f = fake();
+    const result = await f.engine.runStep(INGRESS_STEP_ID, { choice: "something" });
     expect(result.ok).toBe(false);
     const text = result.failures.join("\n");
+    expect(text).toMatch(/The default is "polling"/);
     for (const id of ["quick", "ngrok", "named", "polling"]) expect(text).toContain(`${id}:`);
     // The bad news is in the offer, not only the good.
     expect(text).toMatch(/ROTATES/);
@@ -344,13 +357,52 @@ describe("choosing a shape", () => {
     const f = fake();
     const result = await f.engine.runStep(INGRESS_STEP_ID, { choice: "polling" });
     expect(result.ok).toBe(true);
-    expect(readTomlKey(configText(), "ingress", "shape")).toBe("none");
+    expect(readTomlKey(configText(), "ingress", "shape")).toBe("polling");
     expect(readEnvKey(envText(), "COMPOSE_PROFILES")).toBe("");
     const tradeoffs = result.checks.find((c) => c.name === "trade-offs")?.detail ?? "";
     expect(tradeoffs).toMatch(/poll_interval_s/);
     expect(tradeoffs).toMatch(/author replies do not route/);
     expect(tradeoffs).toMatch(/\[feedback\] tuning loop never sees a comment/);
     expect(tradeoffs).toMatch(/re-run this step later/);
+  });
+
+  it("the own-account GitHub route is polling only: a tunnel is refused, and no answer means polling", async () => {
+    mkdirSync(join(root, "state", "onboarding"), { recursive: true });
+    writeFileSync(
+      join(root, "state", "onboarding", "checklist.json"),
+      JSON.stringify({
+        version: 1,
+        created_at: "2026-08-30T10:00:00Z",
+        updated_at: "2026-08-30T10:00:00Z",
+        completed_at: null,
+        choices: { github_auth: "user", [INGRESS_CHOICE_KEY]: "quick" },
+        steps: {},
+      }),
+    );
+    const refused = await fake().engine.runStep(INGRESS_STEP_ID, { choice: "quick" });
+    expect(refused.ok).toBe(false);
+    expect(refused.failures.join(" ")).toMatch(/own-account GitHub route .* has none/);
+    expect(refused.failures.join(" ")).toMatch(/github_auth: "app"/);
+    expect(readTomlKey(configText(), "ingress", "shape")).toBeNull();
+    // A shape recorded before the route switch is not an answer: polling.
+    const forced = await fake().engine.runStep(INGRESS_STEP_ID);
+    expect(forced.ok, forced.failures.join("; ")).toBe(true);
+    expect(readTomlKey(configText(), "ingress", "shape")).toBe("polling");
+    // …and "none" does not pass for polling on this route: the loader needs the name.
+    writeFileSync(
+      join(root, "config.toml"),
+      patchTomlSection(configText(), "ingress", '[ingress]\nshape = "none"\n'),
+    );
+    expect((await fake().engine.verifyAll()).ok).toBe(false);
+  });
+
+  it("a polling install from before the shape had its name still verifies (App route)", async () => {
+    await fake().engine.runStep(INGRESS_STEP_ID, { choice: "polling" });
+    writeFileSync(
+      join(root, "config.toml"),
+      patchTomlSection(configText(), "ingress", '[ingress]\nshape = "none"\n'),
+    );
+    expect((await fake().engine.verifyAll()).ok).toBe(true);
   });
 
   it("switching shape later rewrites both files cleanly — polling is never a dead end", async () => {
@@ -602,12 +654,12 @@ describe("registration", () => {
       (def!.parameters as { properties: Record<string, unknown> }).properties.choice,
     ).toBeDefined();
 
-    const offered = await def!.execute("call-1", {});
+    const offered = await def!.execute("call-1", { choice: "carrier-pigeon" });
     expect(offered.content.map((c) => c.text).join("\n")).toMatch(/pick one of/);
 
     const answered = await def!.execute("call-2", { choice: "polling" });
     expect(answered.content.map((c) => c.text).join("\n")).toMatch(/completed and recorded/);
-    expect(readTomlKey(configText(), "ingress", "shape")).toBe("none");
+    expect(readTomlKey(configText(), "ingress", "shape")).toBe("polling");
   });
 });
 

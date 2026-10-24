@@ -20,8 +20,10 @@ import type { SshRunner } from "./remote.js";
 import { commandResultArgv, commandWriteArgv, resultReason } from "./unwedge.js";
 import { resolveLayout } from "./layout.js";
 
-/** The two payloads, read from the daemon's own `Command`. */
-export type PrLeverCommand = Extract<Command, { command: "pause-pr" | "resume-pr" }>;
+/** The payloads, read from the daemon's own `Command`: the pause pair, and
+ * `review-now` (one PR queued for a human-asked round), which rides the same
+ * sealed channel and the same receipt. */
+export type PrLeverCommand = Extract<Command, { command: "pause-pr" | "resume-pr" | "review-now" }>;
 
 export interface PrLeverOutcome {
   ok: boolean;
@@ -132,6 +134,13 @@ export function renderPrLever(
     return { lines, code: 1 };
   }
   if (cmd.command === "resume-pr") return { lines: [`✓ ${pr} resumed`], code: 0 };
+  if (cmd.command === "review-now")
+    return {
+      lines: [
+        `✓ ${pr} queued for review${out.outcome ? ` (${out.outcome})` : ""} — follow it with \`qcr why ${cmd.pr}\` or on the board`,
+      ],
+      code: 0,
+    };
   if (out.issuer !== "operator") {
     return {
       lines: [

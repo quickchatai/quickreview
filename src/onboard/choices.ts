@@ -41,6 +41,12 @@ export type IngressChoice = (typeof INGRESS_CHOICES)[number];
 export const AUTH_ROUTES = ["oauth", "api"] as const;
 export type AuthRoute = (typeof AUTH_ROUTES)[number];
 
+/** How the daemon authenticates to GitHub (`config.toml [github] auth`):
+ * "user" is the person's own account (polling only, no App), "app" a GitHub
+ * App. Answered as the github_account step's input; absent ⇒ unanswered. */
+export const GITHUB_AUTH_CHOICES = ["user", "app"] as const;
+export type GithubAuth = (typeof GITHUB_AUTH_CHOICES)[number];
+
 /** "owner/name" — the reviewed repo as the interview records it and the App
  * step parses it: no URL, no trailing `.git`. */
 export const REPO_SLUG_RE = /^([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/;
@@ -70,6 +76,20 @@ export const CHOICE_KEYS = {
 
   /** `AuthRoute`. Written by the LLM step; read by the interview's shape line. */
   authRoute: "llm_auth_route",
+
+  /** `GithubAuth`. Written by the github_account step (the operator's answer,
+   * defaulted to "user" where `gh auth token` works); read by everything that
+   * differs between the own-account route and the App route — which of
+   * github_account / github_app / app_slug_reconcile is enabled, the
+   * interview's App questions, the ingress shapes on offer, verification. */
+  githubAuth: "github_auth",
+  /** The person's GitHub login, from `GET /user` with their own token (own-
+   * account route). The interview's owner-login answer and `[github]
+   * bot_login` both come from it. */
+  accountLogin: "github_account_login",
+  /** "owner/name" the person picked from the repos their account reaches
+   * (own-account route). The interview reads it as its repo answer. */
+  accountRepo: "github_account_repo",
 
   /** "owner/name" of the reviewed repo. Written by the interview; read by the
    * GitHub App step and the proof round. */
@@ -144,6 +164,9 @@ export type ChoiceKey = (typeof CHOICE_KEYS)[ChoiceName];
  */
 export const CHOICE_WRITERS: Record<ChoiceName, readonly string[]> = {
   uid: ["preflight"],
+  githubAuth: ["github_account"],
+  accountLogin: ["github_account"],
+  accountRepo: ["github_account"],
   topology: ["topology"],
   sshAlias: ["topology"],
   sshUser: ["ssh_preflight"],
@@ -158,7 +181,7 @@ export const CHOICE_WRITERS: Record<ChoiceName, readonly string[]> = {
   dryRun: ["config_fill"],
   labels: ["config_fill"],
   appSlug: ["config_fill", "github_app", "app_slug_reconcile"],
-  botLogin: ["github_app", "app_slug_reconcile"],
+  botLogin: ["github_account", "github_app", "app_slug_reconcile"],
   appId: ["github_app"],
   appTarget: ["github_app"],
   appName: ["github_app"],
@@ -214,6 +237,16 @@ export function memberOf<T extends string>(vocabulary: readonly T[], value: stri
 /** The recorded auth route, or null when the LLM step has not run. */
 export function authRouteOf(choices: Readonly<Record<string, unknown>>): AuthRoute | null {
   return memberOf(AUTH_ROUTES, raw(choices, CHOICE_KEYS.authRoute));
+}
+
+/** The recorded GitHub auth route, or null while unanswered. */
+export function githubAuthOf(choices: Readonly<Record<string, unknown>>): GithubAuth | null {
+  return memberOf(GITHUB_AUTH_CHOICES, raw(choices, CHOICE_KEYS.githubAuth));
+}
+
+/** Is the own-account route recorded? (Unanswered is NOT user mode.) */
+export function userAuthRecorded(choices: Readonly<Record<string, unknown>>): boolean {
+  return githubAuthOf(choices) === "user";
 }
 
 /** The recorded ingress shape, or null when the ingress step has not run. */

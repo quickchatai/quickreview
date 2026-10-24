@@ -34,7 +34,7 @@
 // server, a curl on the box). Layer 3 needs no transport at all: it reads
 // GitHub's OWN delivery log, which is the same record wherever the daemon
 // runs, and that is exactly why it is the layer that proves the path.
-import { CHOICE_KEYS } from "../choices.js";
+import { CHOICE_KEYS, userAuthRecorded } from "../choices.js";
 import { mintAppJwt } from "@quickchatai/pi-quickreview/src/githubAuth.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 import { ingressOptionOf, secretsDirFor, readConfigText } from "./compose.js";
@@ -414,6 +414,19 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
           "the ping-delivery layer was not run — GitHub cannot deliver to a daemon that is not answering",
       });
       return { ok: false, checks };
+    }
+    // Layer 3 reads the App's own hook config and delivery log — App-JWT
+    // calls. The own-account route has no App, so there is no hook to read
+    // and nothing to deliver: the layer is skipped, and the reason said.
+    if (userAuthRecorded(ctx.choices)) {
+      checks.push({
+        name: "ping-delivery",
+        ok: true,
+        detail:
+          'not checked — this install runs on your own GitHub account ([github] auth = "user"), which has no GitHub App, ' +
+          "so there is no webhook and no App delivery log to read; the reconcile poll is the only trigger path",
+      });
+      return { ok: checks.every((c) => c.ok), checks };
     }
     // Layer 3 exists only where GitHub can deliver. The polling topology
     // deliberately exposes nothing, so a ping can never land there — requiring

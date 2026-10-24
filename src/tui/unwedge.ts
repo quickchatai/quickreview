@@ -26,6 +26,7 @@ import type { App } from "./app.js";
 import { sanitizeText } from "./paint.js";
 import type { SshRunner } from "./remote.js";
 import { remoteSandboxRoot, resolveLayout } from "./layout.js";
+import { operatorCommandWriteScriptAt } from "../operatorwrite.js";
 
 /** The commands this channel may produce. Deliberately a closed set: the
  * daemon's whitelist is the authority, and this is the narrower subset that
@@ -94,20 +95,7 @@ export function commandFileName(now: Date, seq: number, client?: string): string
  * (`tests/levers.test.ts`).
  */
 export function operatorCommandWriteScript(cfg: TuiConfig, name: string): string {
-  const root = commandDirFor(cfg);
-  const dir = operatorCommandDirFor(cfg);
-  const tmp = `.${name}.tmp`;
-  return (
-    `[ -d '${root}' ] || { echo 'daemon commands dir ${root} missing - is the daemon running?' >&2; exit 1; }; ` +
-    `mkdir -p '${dir}' || exit 1; ` +
-    `[ ! -L '${dir}' ] || { echo '${dir} is a symlink - refusing to write the operator command' >&2; exit 1; }; ` +
-    `R=$(cd -P '${root}' && pwd -P) || exit 1; ` +
-    `cd -P '${dir}' || exit 1; ` +
-    `[ "$(pwd -P)" = "$R/operator" ] || { echo '${dir} was replaced while writing - refusing to write the operator command' >&2; exit 1; }; ` +
-    `chown -h 0:0 . && chmod 0755 . || exit 1; ` +
-    `find . -maxdepth 1 -name '*.json' -mmin +1440 -delete 2>/dev/null; ` +
-    `rm -f '${tmp}' '${name}' && cat > '${tmp}' && chmod 0644 '${tmp}' && mv '${tmp}' '${name}'`
-  );
+  return operatorCommandWriteScriptAt(commandDirFor(cfg), name);
 }
 
 /** argv for the atomic command write. The payload rides STDIN, never the

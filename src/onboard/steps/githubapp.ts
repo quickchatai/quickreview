@@ -48,7 +48,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { isAbsolute, join } from "node:path";
 import type { Socket } from "node:net";
 import { mintAppJwt } from "@quickchatai/pi-quickreview/src/githubAuth.js";
-import { CHOICE_KEYS, REPO_SLUG_RE, botLoginFor } from "../choices.js";
+import { CHOICE_KEYS, REPO_SLUG_RE, botLoginFor, userAuthRecorded } from "../choices.js";
 import { CONFIG_FILL_STEP_ID } from "./configfill.js";
 import { readTomlKey, secretsDirFor } from "./ingress.js";
 import {
@@ -720,7 +720,7 @@ export async function findInstallation(
   };
 }
 
-async function installationToken(
+export async function installationToken(
   fetchFn: typeof fetch,
   apiBase: string,
   jwt: string,
@@ -863,8 +863,18 @@ interface Resolved {
 }
 
 function resolveLabels(ctx: StepContext): Resolved["labels"] {
-  const config = readTextOrNull(ctx.adapters.paths.configPath);
-  const recorded = (ctx.choices[CHOICE_KEYS.labels] ?? {}) as Partial<
+  return labelSpecs(readTextOrNull(ctx.adapters.paths.configPath), ctx.choices);
+}
+
+/** The three trigger/status labels this installation means — config.toml
+ * first, then the names the interview recorded, then the shipped defaults —
+ * with the colour and description the wizard creates them with. Shared with
+ * the own-account step, which creates the same labels with the person's token. */
+export function labelSpecs(
+  config: string | null,
+  choices: Readonly<Record<string, unknown>>,
+): Array<{ name: string; color: string; description: string }> {
+  const recorded = (choices[CHOICE_KEYS.labels] ?? {}) as Partial<
     Record<keyof typeof DEFAULT_LABELS, unknown>
   >;
   return LABEL_META.map((meta) => {
@@ -1319,6 +1329,10 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
     // ingress step (39), whose recorded webhook URL goes into the manifest;
     // before the bring-up steps.
     order: 40,
+    // The App route only. The own-account route (github_account, order 33)
+    // needs no App at all; an unanswered route keeps this step, so a
+    // checklist from before the question existed still verifies its App.
+    enabled: (choices) => !userAuthRecorded(choices),
     // The reviewed repo is NOT a parameter: it is the interview's answer, read
     // from the checklist (CHOICE_KEYS.repo). The only thing the operator may
     // supply here is what nothing else can derive — the App's display name.
