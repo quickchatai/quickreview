@@ -1,6 +1,7 @@
 // qcr checklist / qcr compare — production wiring of the cutover harnesses. Local
 // runs exercise the offline halves; the live halves (tunnel, real searches,
 // live rounds) light up on the VM where the daemon and pi are running.
+import { botAccountLogin } from "@quickchatai/pi-quickreview/src/identity.js";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { runChecklist, type ChecklistDeps } from "./checklist.js";
@@ -253,7 +254,7 @@ export async function cmdChecklist(parts?: ProductionParts): Promise<number> {
           await p.adapter.searchLabelTriggered(),
           "label",
           cfg.dry_run,
-          cfg.github.bot_login,
+          botAccountLogin(cfg.github),
           store,
         ),
       teamTriggered: async () =>
@@ -261,7 +262,7 @@ export async function cmdChecklist(parts?: ProductionParts): Promise<number> {
           await p.adapter.searchTeamTriggered(),
           "team_request",
           cfg.dry_run,
-          cfg.github.bot_login,
+          botAccountLogin(cfg.github),
           store,
         ),
       derivedQueue: () => derivedQueueOf(store.allPrs(), cfg.dry_run),

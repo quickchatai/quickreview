@@ -476,6 +476,26 @@ const hooks = (): SessionHooks =>
   }) as unknown as SessionHooks;
 
 describe("the reconcile capture sweep", () => {
+  it("person mode (auth = user): the person's own words are captured, the reviewer's are not", async () => {
+    // The configured login is the person's: a comment of theirs without the
+    // reviewer's marker is a human comment; one with it is the reviewer's.
+    const person: Config = {
+      ...cfg,
+      github: { ...cfg.github, auth: "user", app_slug: "", bot_login: "alice" },
+    };
+    const store = trackedStore();
+    const gh = new SweepGitHub();
+    gh.open = [ref(PR)];
+    gh.inline.set(PR, [
+      rc({ id: 511, user: "alice", body: "why not a set here? (typed by the person)" }),
+      rc({ id: 512, user: "alice", body: "[nit] use a set\n\n<!-- qcr:f=1:k -->" }),
+    ]);
+    const report = await reconcileOnce({ cfg: person, store, adapter: gh, hooks: hooks() });
+    expect(report.captured_comments).toBe(1);
+    expect(store.prComments(PR).map((r) => r.comment_id)).toEqual([511]);
+    store.close();
+  });
+
   it("picks up a comment the webhook missed, and re-running captures nothing twice", async () => {
     const store = trackedStore();
     const gh = new SweepGitHub();

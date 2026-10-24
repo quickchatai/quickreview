@@ -2,8 +2,11 @@
 // provider the review's models run on? A login in pi's agent dir counts, and
 // so does the provider's own API key in the environment. An API key for some
 // OTHER provider never does: the review runs on the models its config names,
-// or not at all, and it never switches models to use a key. The refusal names
-// `qcr login`, the way to get the login.
+// or not at all, and it never switches models to use a key. The one exception
+// is the OpenAI family: an `openai-codex/` model runs on an `openai` login or
+// OPENAI_API_KEY (and back), the same model id on either
+// (packages/pi-plugin/src/modelroute.ts), so either login counts for it. The
+// refusal names `qcr login`, the way to get the login.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -11,6 +14,7 @@ import {
   RUNTIME_KEY_ENVS,
   type LoginSummary,
 } from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import { routeProvider } from "@quickchatai/pi-quickreview/src/modelroute.js";
 
 /** pi's stored logins in `agentDir`; empty when it holds none. */
 export function readLogins(
@@ -37,8 +41,9 @@ export function reviewLoginRefusal(o: {
     const name = RUNTIME_KEY_ENVS[p];
     return name !== undefined && (o.env[name] ?? "").trim() !== "" ? name : null;
   };
+  const usable = (p: string): boolean => logins[p] !== undefined || keyOf(p) !== null;
   for (const p of o.providers) {
-    if (logins[p] !== undefined || keyOf(p) !== null) continue;
+    if (usable(routeProvider(p, "", { hasCredential: usable }))) continue;
     const otherKeys = Object.keys(RUNTIME_KEY_ENVS)
       .filter((q) => q !== p)
       .map(keyOf)

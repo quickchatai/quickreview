@@ -841,6 +841,13 @@ export class App {
     if (pr !== this.selectedPr) this.msgDraft = ""; // a cancelled draft belongs to the PR it was typed for
     this.selectedPr = pr;
     if (this.view.progress?.pr !== pr) this.view.progress = undefined;
+    // An offered row (not tracked yet) has no detail, round or session to
+    // read: its pane is the PR list's own fields and the way to review it.
+    if (pr !== undefined && this.offeredSelected()) {
+      this.syncPiPane();
+      if (!this.view.piFocus) this.selectPane(undefined);
+      return;
+    }
     void this.refreshDetail();
     void this.refreshProgress();
     this.followSelection();
@@ -965,6 +972,38 @@ export class App {
   selectedPrNumber(): number | undefined {
     const sorted = visiblePrs(this.view);
     return sorted[this.view.selected]?.number;
+  }
+
+  /** Is the selected row an offered one (open on GitHub, not tracked yet)? */
+  private offeredSelected(): boolean {
+    return visiblePrs(this.view)[this.view.selected]?.offered === true;
+  }
+
+  /** A PR verb on an offered row: there is no session or round to act on. */
+  private refuseOffered(): boolean {
+    if (!this.offeredSelected()) return false;
+    this.notice(`#${this.selectedPrNumber()} is not reviewed yet — R reviews it now`);
+    return true;
+  }
+
+  /** `R`: ask the daemon to review the selected PR now — the operator's
+   * `review-now` command over the sealed channel, the same as
+   * `qcr review-now <n>`. Any open PR of the repo, tracked or not. */
+  private reviewNow(): void {
+    const pr = this.selectedPrNumber();
+    if (pr === undefined) {
+      this.notice("select a pull request first (j/k), then R reviews it");
+      return;
+    }
+    if (!this.hooks.operatorCommand) {
+      this.notice("review now: not wired (no remote runner)");
+      return;
+    }
+    this.notice(`asking the daemon to review #${pr} now…`);
+    void this.hooks
+      .operatorCommand({ command: "review-now", pr }, this)
+      .then(() => this.poller.tick())
+      .catch(() => {});
   }
 
   /** Synthesize a keypress through the normal input path — the command bar's
@@ -1432,6 +1471,7 @@ export class App {
         // the whole TUI (AGENTS.md invariant 10, the fixed layout). With no PR
         // selected there is nothing to focus, and nothing else to open.
         if (this.selectedPr !== undefined) {
+          if (this.refuseOffered()) break;
           this.focusPiPane();
           this.repaint();
         }
@@ -1443,6 +1483,7 @@ export class App {
       case "message": {
         const session = this.selectedSession();
         if (!session) break;
+        if (this.refuseOffered()) break;
         if (this.hooks.message) this.hooks.message(session, this);
         else this.openMessageBox(session);
         break;
@@ -1457,6 +1498,7 @@ export class App {
         // overseer command, where the extra deliberation is the point.
         const pr = this.selectedPrNumber();
         if (pr === undefined) break;
+        if (this.refuseOffered()) break;
         if (this.hooks.unwedge) this.hooks.unwedge(pr, this);
         else this.notice("unwedge: not wired (no remote runner)");
         break;
@@ -1480,6 +1522,11 @@ export class App {
         // F clears the board filter — the indicator promises it.
         if (key.ch === "F" && this.tab === "board" && this.view.boardFilter != null) {
           this.setBoardFilter(null);
+          break;
+        }
+        // R reviews the selected PR now — tracked or offered.
+        if (key.ch === "R" && this.tab === "board") {
+          this.reviewNow();
           break;
         }
         // I starts setup — the companion takes it from there.

@@ -27,8 +27,22 @@ timezone = "UTC"                             # ← FILL: your IANA timezone, e.g
 
 [github]
 repo = ""                                    # ← FILL (1): the repo to review, "owner/name"
-app_slug = ""                                # ← FILL (2): your GitHub App slug
-bot_login = ""                               # ← FILL (3): the App bot login, "<app_slug>[bot]"
+# Whose GitHub credential the daemon runs on:
+#   "app"  (the default; a missing key means "app") — a GitHub App: its
+#          installation token, webhooks, APPROVE / REQUEST_CHANGES reviews.
+#   "user" — your OWN GitHub account, no App. Polling only: [ingress] shape
+#          must be "polling" (config load refuses anything else), no webhooks,
+#          no webhook self-heal. Every review posts as a COMMENT whose body
+#          states the verdict (an automated verdict never counts as your
+#          approval, and GitHub refuses either on your own PR). The token is
+#          read from the FILE <secrets dir>/github_token (0600, the token
+#          alone), which `qcr github-token sync` writes from your `gh` login;
+#          never from the environment or a command line. app_slug may be "";
+#          bot_login is your own GitHub login. The App secrets (app_id,
+#          app.pem, webhook_secret) are not needed.
+#auth = "app"
+app_slug = ""                                # ← FILL (2): your GitHub App slug ("" under auth = "user")
+bot_login = ""                               # ← FILL (3): the App bot login, "<app_slug>[bot]" (your login under auth = "user")
 review_team = ""                            # ← FILL (4): "org/team" whose review request triggers
 # There is no reviewer knob here. The reviewer never hands a PR back: it always
 # decides on the merits and posts a verdict. If you want a named person told
@@ -39,7 +53,8 @@ in_progress_label = "AI review in progress"
 reviewed_label = "Automatic Review"
 improvement_label = "Bot improvement"
 issue_label = "bot-filed"
-# secrets dir: app_id, app.pem, webhook_secret, tunnel_token; optional openai_api_key (pi, API-key
+# secrets dir: app_id, app.pem, webhook_secret, tunnel_token (auth = "user": github_token instead
+# of the first three); optional openai_api_key (pi, API-key
 # route) and openai_embeddings_api_key (only with embedding_provider = "openai" in the openviking table)
 # "" (recommended) = the install's config home, $XDG_CONFIG_HOME/qcr/<install>/secrets (the old
 # ~/.config/quickreview-bot is never read — `qcr install migrate` moves it). A path here wins.
@@ -81,8 +96,12 @@ port = 8787                                  # loopback only; your HTTPS ingress
 # touches only the App's own configuration, never the reviewed repo. Off by
 # default: with the section absent (or shape = "none") no watcher ever starts —
 # a stable hostname (named tunnel, VM route) needs none of this.
+# shape = "polling" takes no webhooks at all: the daemon's /webhook route
+# refuses every delivery, no webhook_secret is read, and the reconcile poll
+# (poll_interval_s, below) is the only trigger. [github] auth = "user"
+# requires it.
 #[ingress]
-#shape = "tunnel-file"                       # "none" (default) | "tunnel-file"
+#shape = "tunnel-file"                       # "none" (default) | "tunnel-file" | "polling"
 #hostname_file = ""                          # "" ⇒ <root>/state/ingress/hostname
 #debounce_ms = 3000                          # settle time after a file change
 #sweep_interval_s = 300                      # polling backstop behind fs.watch
@@ -204,7 +223,9 @@ improvement_pr_deny_prefixes = ["migrations/", "infra/", "ansible/", ".github/wo
 [models]
 # default for every role; tiered pass models below
 # Provider prefix is `openai-codex/` — the ChatGPT-OAuth route's provider key
-# in pi's auth.json (direct `openai/` needs an API key we don't ship).
+# in pi's auth.json. Any OpenAI login serves it: when pi holds no
+# `openai-codex` login but an `openai` one (pi 1.4's Sign in with ChatGPT, or
+# an OpenAI API key), the same model runs on `openai` (docs/llm-setup.md).
 default = "openai-codex/gpt-6.1-sol"
 conversation = "openai-codex/gpt-6.1-sol"
 # Passes always run at sol-high — single variant, not raisable (already top).
@@ -261,7 +282,11 @@ small_diff_lines = 150
 #             memory forward follows this knob too — it reaches the daemon
 #             container's loopback memory engine with a plain `docker exec`
 #             (the forward script's --local mode) instead of the ssh hop.
-# Always explicit: an empty ssh_host does NOT mean local.
+# Onboarding writes this from the recorded topology. Until it has (ssh with an
+# EMPTY ssh_host), the TUI never runs `ssh ""`: on a compose project (the
+# checklist recorded the local topology, or the project .env pins
+# QCR_VERSION) it reads the local stack and says so once; otherwise every
+# surface says "ssh_host is empty — run qcr onboard".
 target = "ssh"
 ssh_host = ""                                # ← FILL (7): ssh alias of the VM running the container
                                              #   (leave "" when target = "local" — it is unused)
@@ -270,10 +295,14 @@ memory_container = ""             # the container the memory forward relays into
                                   # (OpenViking is the daemon container's child). On a VM running
                                   # the memory sidecar (the openviking table's endpoint =
                                   # "remote") set "quickreview-memory"; flip it back with the endpoint.
-remote_state_dir = "/opt/quickreview/state"  # host path on ssh; inside the daemon container on local
+remote_state_dir = "/opt/quickreview/state"  # host path on ssh; inside the daemon container on local,
+                                  # where this default reads as the release image's /opt/qcr/state
+                                  # (the compose state volume; onboarding writes it for local)
 remote_sandbox_root = ""         # "" = read the container's qcr.layout label (release: /opt/qcr, legacy: /opt/quickreview/sandbox);
                                   # a value here wins and is never probed
-sudo_docker = true                # docker on the VM needs sudo (root-owned socket)
+sudo_docker = true                # docker on the VM needs sudo (root-owned socket). On local, onboarding
+                                  # writes false, and the TUI drops sudo by itself when this user can open
+                                  # the docker socket (a sudo prompt behind the TUI can only fail)
 poll_interval_s = 3
 stale_after_s = 90                # DATA STALE banner past this written_at age
                                   # (the daemon rewrites status.json every ~30s)
@@ -594,7 +623,10 @@ local_embedder_threads = 1
 # (COMPANION_DEFAULTS) are the shipped configuration; uncomment to override.
 # enabled = true                  # `qcr tui` starts it unless --no-companion
 # container_name = "qcr-companion"
-# image = "qcr-companion:release" # the release image (docker/Dockerfile) in companion mode, built from the app root: qcr companion rebuild
+# image = "qcr-companion:release" # the release image (docker/Dockerfile) in companion mode, built from the app root: qcr companion rebuild.
+#                                  # Left unset on a compose box (the project .env pins QCR_VERSION), a first start runs the
+#                                  # already-pulled ghcr.io/quickchatai/quickreview:<QCR_VERSION> instead of building, unless a
+#                                  # local build exists; a ghcr.io/quickchatai/quickreview tag set here is pulled, never built over
 # pihome_volume = "companion-pihome"   # its OWN pi auth — never the VM's auth.json
 # session = "companion"           # tmux session inside the container
 # model = "openai-codex/gpt-6.1-sol:medium"

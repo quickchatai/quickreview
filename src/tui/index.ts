@@ -34,7 +34,10 @@ import {
   RELOAD_EXIT_CODE,
   resumeStatePath,
 } from "./reload.js";
-import { killInFlightSsh, runnerFor, transportOf } from "./remote.js";
+import { NO_SSH_HOST_STDERR, killInFlightSsh, runnerFor, transportOf } from "./remote.js";
+import { diagnoseLocalMemory } from "./memforward.js";
+import { realProbeRunner } from "./sshtriage.js";
+import { setupLine } from "./setupstate.js";
 import { chainOnPoll } from "./poll-hooks.js";
 import { deliverMessage } from "./msg.js";
 import type { ConnectionDiagnosis } from "./sshtriage.js";
@@ -60,7 +63,7 @@ export function parseTarget(
   return { kind: "bad", reason: `unknown target '${arg}' — expected a PR number` };
 }
 
-export const TUI_HELP = `qcr tui — live board and operator console for the review daemon (over ssh)
+export const TUI_HELP = `qcr tui — live board and operator console for the review daemon (over ssh, or local docker)
 
 usage: qcr tui [<pr>] [--no-companion] [--no-reload]
 
@@ -95,7 +98,8 @@ keys: 1…8 the eight surfaces — board · memory · digest · tickets · deplo
       board: j/k select · ⏎ focus the PR's pi pane · m quick-message ·
       g github · u unwedge · e events overlay · I set up the repo ·
       Ctrl-q release focus · Ctrl-c ×3 hard-kill the TUI ·
-      s reconnect ssh (GCP passphrase, once) · r refresh ·
+      s re-check the connection (VM: ssh, the one passphrase prompt;
+      local: the daemon container) · r refresh ·
       ? full key map · q quit
 
 troubleshooting:
@@ -106,6 +110,12 @@ troubleshooting:
                      not answering. Nothing is run for you; s re-checks and
                      reports, and offers the one GCP passphrase prompt when a
                      key is what is missing
+  local route        [tui] target = "local" (or an empty ssh_host on a compose
+                     project): every read is docker exec into the daemon
+                     container, no ssh. The board names an absent or stopped
+                     container with the docker compose command that starts it
+  setup not finished the onboarding checklist is not complete: run qcr onboard
+                     (the board names the next step)
   ▲ DATA STALE       ssh works but status.json stopped updating — the
                      container is down or the daemon hung (qcr-side:
                      ssh <host> sudo docker ps / docker logs)
@@ -355,6 +365,8 @@ export interface RunTuiDeps {
   input?: NodeJS.ReadStream;
   config?: Config;
   exit?: (code: number) => void;
+  /** The route facts (src/tui/route.ts); default: read from this checkout. */
+  routeFacts?: import("./route.js").RouteFacts;
 }
 
 /** First slice of the quit-time wait for an in-flight bring-up. */
@@ -440,7 +452,15 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
 
   // ---- phase 0: local only, ending in the first frame -----------------------
 
-  const loaded = deps.config ?? loadConfig();
+  const fileConfig = deps.config ?? loadConfig();
+  // The route — which daemon the board reads, and how — from [tui] plus the
+  // facts this checkout holds locally (the compose project's .env, the
+  // onboarding checklist, the Docker socket's mode). Two small file reads and
+  // one access(2): no docker, network or walk, so it may precede the frame.
+  const { readRouteFacts, resolveTuiRoute, pinnedVersion } = await import("./route.js");
+  const routeFacts = deps.routeFacts ?? readRouteFacts(sandboxRoot());
+  const route = resolveTuiRoute(fileConfig.tui, routeFacts);
+  const loaded: Config = { ...fileConfig, tui: route.cfg };
   // In the containerised TUI the companion is a container the host wrapper
   // runs, reached through a shared tmux socket. Its channel dirs are the
   // host's, named by the wrapper in env; nothing here can run docker.
@@ -454,6 +474,11 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   const runner = runnerFor(cfg);
 
   const app = new App(cfg, runner, out, input);
+  // A half-finished onboarding is stated on the first frame: the checklist is
+  // the file read above, and the step titles are the wizard's own registry.
+  const { setupStateOf } = await import("./setupstate.js");
+  app.view.setup = await setupStateOf(routeFacts.checklist);
+  for (const line of route.notes) app.notice(line);
 
   // The terminal must come back whatever kills us — raw mode + alt screen
   // surviving a crash is exactly the "only closing the terminal works" trap.
@@ -560,6 +585,17 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // (nativecompanion.ts). The containerised TUI keeps its wrapper-run
   // container: it has no Docker of its own to ask.
   const containerLifecycle = new CompanionLifecycle(full.companion, realDockerRunner);
+  // On a compose box the release image is already pulled (QCR_VERSION in the
+  // project .env): a first start uses it rather than building one from this
+  // checkout. An explicit [companion] image, or a local build already
+  // present, still wins (CompanionLifecycle.ensureUp).
+  {
+    const version = pinnedVersion(routeFacts.projectEnv);
+    if (version !== "") {
+      const { releaseImage } = await import("../onboard/steps/compose.js");
+      containerLifecycle.preferredImage = releaseImage(version);
+    }
+  }
   const selecting = socketMode
     ? undefined
     : new SelectingCompanion(containerLifecycle, realDockerRunner, {
@@ -593,6 +629,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     dir: companionGithubDir(socketMode ? laptopInstallEnv(process.env) : undefined),
     repo: full.github.repo,
     secretsDir: full.github.secrets_dir,
+    auth: full.github.auth ?? "app",
   });
   let configMirrorTimer: NodeJS.Timeout | undefined;
   const CONFIG_MIRROR_EVERY_MS = 30_000;
@@ -620,8 +657,17 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // never written to the normal screen, where the alt screen's clear would
   // erase them (a visible flicker). With the companion off the same column
   // carries the skipped steps, and stays as the place that says why it is off.
-  const { StartupProgress } = await import("./startup.js");
-  const progress = new StartupProgress(undefined, {
+  const { StartupProgress, STARTUP_STEPS } = await import("./startup.js");
+  // The connection step is named for the route it checks: ssh to the VM, or
+  // the daemon container on this machine.
+  const startupSteps = STARTUP_STEPS.map((step) =>
+    step.key === "ssh" && transportOf(cfg) === "local"
+      ? { ...step, label: "daemon container" }
+      : step.key === "ssh" && route.unconfigured !== undefined
+        ? { ...step, label: "connection" }
+        : step,
+  );
+  const progress = new StartupProgress(startupSteps, {
     onUpdate: (p) => {
       // Kept after the bring-up settles on purpose: a `✗ companion container ·
       // docker is not running` is the most useful thing the column can show,
@@ -714,12 +760,20 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     // `[openviking] endpoint = "remote"`, else the daemon container.
     container: tuiMemoryContainer(cfg),
     // A local engine runs in Docker; with none here, memory is off — said
-    // once as the forward's state, never retried as a failure.
-    ...(!socketMode && transportOf(cfg) === "local"
-      ? {
-          offReason: async () => ((await dockerUp()) ? undefined : MEMORY_OFF_NO_DOCKER),
-        }
-      : {}),
+    // once as the forward's state, never retried as a failure. With no ssh
+    // host there is nowhere to forward to: off, with the one remedy, rather
+    // than a relay dialing the script's default host.
+    ...(transportOf(cfg) === "ssh" && cfg.ssh_host.trim() === ""
+      ? { offReason: () => route.unconfigured ?? NO_SSH_HOST_STDERR }
+      : !socketMode && transportOf(cfg) === "local"
+        ? {
+            offReason: async () => ((await dockerUp()) ? undefined : MEMORY_OFF_NO_DOCKER),
+            // A forward that binds but reaches nothing: say whether the memory
+            // container is there at all, and how it is started.
+            diagnoseUpstream: () =>
+              diagnoseLocalMemory(cfg, routeFacts.projectDir, realProbeRunner),
+          }
+        : {}),
     log: (line) => app.notice(line),
   });
   const { buildIssueSink, ticketProjection } = await import("./issuesink.js");
@@ -1005,12 +1059,26 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // gating the first paint and, on a bad day, an interactive prompt. Nothing
   // here is self-healing by design; the TUI reports the cause and the exact
   // command, and `s` re-runs the check.
-  const { diagnosisLine, triageConnection } = await import("./sshtriage.js");
+  const { connectionUsable, diagnosisLine, triageConnection } = await import("./sshtriage.js");
+  const triageDeps = {
+    projectDir: routeFacts.projectDir,
+    ...(route.unconfigured !== undefined ? { unconfigured: route.unconfigured } : {}),
+  };
   const applyDiagnosis = (d: ConnectionDiagnosis): void => {
     app.view.connection = d;
-    if (d.kind === "ok" || d.kind === "local") progress.done("ssh", d.cause);
+    const usable = connectionUsable(d);
+    // Under an unfinished onboarding a stack that is not up yet is expected,
+    // not a fault: the step is skipped with the setup line, never failed.
+    if (usable) progress.done("ssh", d.cause);
+    else if (app.view.setup) progress.skip("ssh", setupLine(app.view.setup));
     else progress.fail("ssh", diagnosisLine(d));
-    app.notice(d.kind === "ok" || d.kind === "local" ? `✓ ${d.cause}` : `✖ ${diagnosisLine(d)}`);
+    app.notice(
+      usable
+        ? `✓ ${d.cause}`
+        : app.view.setup
+          ? setupLine(app.view.setup)
+          : `✖ ${diagnosisLine(d)}`,
+    );
     app.repaint();
   };
   // `s` starts its own async chain, independent of the bring-up. Tracked for
@@ -1018,9 +1086,13 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   let pendingReconnect: Promise<void> = Promise.resolve();
   app.hooks.reconnect = () => {
     progress.begin("ssh", "re-checking");
-    app.notice("checking the connection to the VM…");
+    app.notice(
+      transportOf(cfg) === "local"
+        ? "checking the daemon container…"
+        : "checking the connection to the VM…",
+    );
     pendingReconnect = (async () => {
-      let d = await triageConnection(cfg);
+      let d = await triageConnection(cfg, triageDeps);
       // A missing key is the one class the operator can clear from here: `s`
       // is them asking for the single native passphrase prompt. A wedged
       // master or a dead host is reported with its command instead — prompting
@@ -1029,7 +1101,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
         onRealTerminal(() => {
           ensureSshMaster(cfg);
         });
-        d = await triageConnection(cfg);
+        d = await triageConnection(cfg, triageDeps);
       }
       applyDiagnosis(d);
       // Awaited, not fired and forgotten: it is part of "re-run the check and
@@ -1397,7 +1469,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     // says "nobody has reached this yet", which would be a lie the moment the
     // probes start.
     progress.begin("ssh");
-    const triaged = triageConnection(cfg)
+    const triaged = triageConnection(cfg, triageDeps)
       .then(applyDiagnosis)
       .catch((err: unknown) =>
         progress.fail("ssh", `probe failed: ${String(err instanceof Error ? err.message : err)}`),
@@ -1439,12 +1511,31 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       return;
     }
     if (step?.state === "running" && a.poller.state.consecutiveFailures >= 2) {
-      progress.fail(
-        "poll",
-        app.view.connection ? diagnosisLine(app.view.connection) : "status.json unreadable",
-      );
+      if (app.view.setup) progress.skip("poll", setupLine(app.view.setup));
+      else
+        progress.fail(
+          "poll",
+          app.view.connection ? diagnosisLine(app.view.connection) : "status.json unreadable",
+        );
     }
   });
+  // The checklist moves while the wizard runs in another terminal: re-read it
+  // each poll (one small file), and recompute the next step only when it
+  // changed. Finishing onboarding clears the banner on its own.
+  {
+    const { readChecklist } = await import("../onboard/engine.js");
+    let seen = routeFacts.checklist?.updated_at ?? null;
+    chainOnPoll(app, () => {
+      const now = readChecklist(join(routeFacts.projectDir, "state"));
+      const stamp = now?.updated_at ?? null;
+      if (stamp === seen) return;
+      seen = stamp;
+      void setupStateOf(now).then((next) => {
+        app.view.setup = next;
+        app.repaint();
+      });
+    });
+  }
 
   // Restore a hot-reload snapshot before run(), so the first paint is already
   // on the right tab with the right selection.

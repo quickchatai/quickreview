@@ -38,6 +38,7 @@
 //  5. **No GitHub write lives here.** The module reads (compare, files) and
 //     writes nothing; the session posts its review through the gated scripts.
 //     The MutationGate keeps its monopoly by this module having no mutation.
+import { botAccountLogin } from "@quickchatai/pi-quickreview/src/identity.js";
 import { existsSync, mkdirSync, readdirSync, renameSync, watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.js";
@@ -1647,7 +1648,7 @@ export class RecheckWatcher {
       { type: "verdict", verdict: "REQUEST_CHANGES" },
       {},
       {
-        botLogin: this.deps.cfg.github.bot_login,
+        botLogin: botAccountLogin(this.deps.cfg.github),
         ...(this.deps.now ? { now: this.deps.now } : {}),
         reason: "recheck:request-changes",
       },

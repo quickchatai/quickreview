@@ -285,6 +285,10 @@ export class PostingOutbox {
       repo: string;
       dryRun: boolean;
       botLogins: string[];
+      /** `[github] auth = "user"`: receipts say `person_mode`, and an APPROVE
+       * delivered as a COMMENT is the person-mode rule, not a guard-4
+       * softening (posting-receipt.ts). */
+      personMode?: boolean;
       adapter: PostingDeliveryAdapter;
       current: (job: PostingJob) => boolean;
       now?: () => Date;
@@ -432,10 +436,13 @@ export class PostingOutbox {
       gh_state: state,
       // An APPROVE that GitHub holds as a COMMENT was softened by guard 4 on
       // the gate, which only the daemon's delivery passes through (the shell
-      // route refuses a red-CI approval): the withheld-approval shape.
-      ...(deliveredBy || (j.intended_event === "APPROVE" && event === "COMMENT")
+      // route refuses a red-CI approval): the withheld-approval shape. Not in
+      // person mode, where every review is a COMMENT by rule.
+      ...(deliveredBy ||
+      (j.intended_event === "APPROVE" && event === "COMMENT" && !this.deps.personMode)
         ? { delivered_by: "daemon_retry" as const }
         : {}),
+      ...(this.deps.personMode ? { person_mode: true as const } : {}),
     } satisfies PostingReceipt);
     j.status = "done";
     writePostingFile(path, j);
@@ -762,6 +769,7 @@ export class PostingOutbox {
         status: "prepared",
         payload_sha256: j.payload_sha256,
         prepared_at: j.attempted_at,
+        ...(this.deps.personMode ? { person_mode: true as const } : {}),
       } satisfies PostingReceipt);
       try {
         const result = await this.deps.adapter.createReview(j.pr, j.payload);

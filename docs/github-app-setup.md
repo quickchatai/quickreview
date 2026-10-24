@@ -3,7 +3,16 @@
 quickreviewd authenticates as a **GitHub App** you register yourself: the daemon
 mints a short-lived App JWT from the App's private key, exchanges it for an
 installation token, reads the PR through that token, and posts every mutation
-through its single gated path. No personal access token is ever used, anywhere.
+through its single gated path. On this route no personal access token is used,
+anywhere.
+
+The other route, `[github] auth = "user"`, needs no App and none of this guide.
+The daemon runs on your own GitHub token, read from the file
+`<secrets dir>/github_token` (see `config.example.toml`). That route is
+polling-only (`[ingress] shape = "polling"`): webhooks, the webhook self-heal
+and everything below that needs the App are off. Every review posts as a
+COMMENT that states its verdict. The App stays the default and the only
+webhook route.
 
 This guide takes you from nothing to a working App. Everything the App needs —
 permissions and webhook events — is declared in

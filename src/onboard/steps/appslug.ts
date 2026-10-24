@@ -50,7 +50,7 @@ import {
   tomlString,
   type TomlEdit,
 } from "./configfill.js";
-import { CHOICE_KEYS, botLoginFor } from "../choices.js";
+import { CHOICE_KEYS, botLoginFor, userAuthRecorded } from "../choices.js";
 import { api, readCredentials } from "./githubapp.js";
 
 export const APP_SLUG_STEP_ID = "app_slug_reconcile";
@@ -254,6 +254,9 @@ export function appSlugStep(opts: AppSlugStepOptions = {}): OnboardingStep {
       "slug, so this step asks the App itself who it is and corrects [github] app_slug and bot_login to match. It matters more " +
       "than it looks: bot_login is how the reviewer recognises its own reviews and comments, and a wrong one fails silently.",
     order: 65,
+    // There is no App slug on the own-account route: `[github] app_slug` is ""
+    // and bot_login is the person's login (the github_account step writes both).
+    enabled: (choices) => !userAuthRecorded(choices),
     async run(ctx): Promise<StepReport> {
       return reconcile(ctx, true);
     },

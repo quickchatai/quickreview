@@ -38,7 +38,14 @@ import {
   type StepStatusLine,
 } from "../src/onboard/engine.js";
 import { defaultSteps } from "../src/onboard/steps/index.js";
+import { openStepMemoryForward } from "../src/onboard/stepforward.js";
 import { locateConfig } from "../src/install.js";
+import { registerLoginRoute } from "./login-route.js";
+import {
+  ONBOARD_FINISH_TOOL,
+  ONBOARD_STATUS_TOOL,
+  onboardStepToolName,
+} from "../src/onboard/toolnames.js";
 
 const NO_PARAMS = { type: "object", properties: {} } as const;
 
@@ -71,6 +78,7 @@ export function realAdapters(root: string): OnboardAdapters {
     // $QCR_CONFIG, else the install's config home (never the checkout's).
     paths: { stateDir: join(root, "state"), configPath: locateConfig().path },
     log: (line) => console.error(line),
+    memoryForward: (req) => openStepMemoryForward(req),
   };
 }
 
@@ -89,7 +97,14 @@ export function renderStatus(
   reconciled: ReconcileReport,
 ): string {
   const rows = lines.map((l) => {
-    const mark = l.status === "done" ? "[done]" : l.status === "disabled" ? "[skipped]" : "[ ]";
+    const mark =
+      l.status === "done"
+        ? "[done]"
+        : l.status === "disabled"
+          ? "[skipped]"
+          : l.optional
+            ? "[after setup]"
+            : "[ ]";
     return `${mark} ${l.id} — ${l.title}${l.note ? ` (${l.note})` : ""}`;
   });
   const demoted = reconciled.demoted.map(
@@ -114,7 +129,7 @@ export function toolDefinitions(
   shutdown: (ctx?: Pick<ExtensionToolContext, "shutdown">) => void,
 ): QcrTool[] {
   const stepTools: QcrTool[] = engine.stepDefs().map((step) => ({
-    name: `onboard_${step.id}`,
+    name: onboardStepToolName(step.id),
     label: step.title,
     description:
       `${step.explain} Deterministic: runs the "${step.id}" onboarding step's real checks and returns one ✓/✗ line per check. ` +
@@ -141,7 +156,7 @@ export function toolDefinitions(
   }));
 
   const status: QcrTool = {
-    name: "onboard_status",
+    name: ONBOARD_STATUS_TOOL,
     label: "Onboarding status",
     description:
       "The checklist: every step in order with its status. Re-verifies each claimed-done step against reality first " +
@@ -155,7 +170,7 @@ export function toolDefinitions(
   };
 
   const finish: QcrTool = {
-    name: "finish_and_exit",
+    name: ONBOARD_FINISH_TOOL,
     label: "Finish onboarding",
     description:
       "Re-run EVERY verification. While anything is red this refuses and returns the failures — it never exits on red. " +
@@ -167,7 +182,7 @@ export function toolDefinitions(
       const result = await engine.finish();
       if (!result.ok) {
         const red = result.results
-          .filter((r) => !r.ok)
+          .filter((r) => !r.ok && !r.optional)
           .map((r) => `✗ ${r.id}: ${r.failures.join("; ") || "not verified"}`);
         return text(
           `Not finished — these verifications are red:\n${red.join("\n")}\n` +
@@ -182,7 +197,8 @@ export function toolDefinitions(
       return text(
         `Every step verified green — onboarding is complete (recorded ${result.completed_at}).\n` +
           `${result.marker_written ? "First-run marker written for the companion greeting." : "First-run marker already present — left untouched."}\n` +
-          "This session now shuts down and the TUI opens.",
+          "This session now shuts down and the TUI opens: the board lists the repository's open pull requests — " +
+          "select one and press R to review it now (dry-run: nothing is posted).",
       );
     },
   };
@@ -208,7 +224,20 @@ export function createOnboarding(config: OnboardingConfig): ExtensionFactory {
   return (pi) => registerOnboarding(pi, config);
 }
 
+/**
+ * The onboarding session's first-run login: when pi has no usable model
+ * login, pi's own /login menu opens with a widget that says which logins work
+ * (any OpenAI one), and an OpenAI model whose provider has no login runs on
+ * the twin login that exists (extensions/login-route.ts). `qcr onboard`
+ * registers it with the tools; a host that builds its own onboarding
+ * extension over `toolDefinitions` + `registerQcrTool` calls it too.
+ */
+export function registerOnboardingSession(pi: ExtensionAPI): void {
+  registerLoginRoute(pi, { open: "submit" });
+}
+
 function registerOnboarding(pi: ExtensionAPI, config: OnboardingConfig): void {
+  registerOnboardingSession(pi);
   if (typeof pi.registerTool !== "function") {
     // Degrade loudly, never wedge: pi still starts, the guide can only talk.
     console.error(

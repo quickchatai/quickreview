@@ -23,6 +23,14 @@
 // `companion-guard` additionally vetoes write-shaped calls against the API
 // (belt); the token's own scope is the brace.
 //
+// Under `[github] auth = "user"` (the person's own credential, SECURITY.md)
+// there is no App to mint from. The companion then gets a COPY of
+// the person's token file (`<secrets dir>/github_token`), re-copied whenever
+// the host refresher rewrites it, in the same env file and the same
+// read-only mount. That token is the person's and is NOT down-scoped: in this
+// mode `companion-guard`'s veto of write-shaped calls is the only fence, and
+// the env file's header says so.
+//
 // Everything here is total at the edge the TUI calls: `refresh()` answers an
 // outcome, never throws — a companion without GitHub is under-equipped, never
 // a companion that does not start.
@@ -160,7 +168,11 @@ const TOKEN_VALUE_RE = /^[A-Za-z0-9_.-]+$/;
 /** The env file's text. Every value is checked against a character set that
  * is inert in both a docker env file and a `source`d shell file. A token
  * outside that set is refused, and the refusal never echoes it. */
-export function renderTokenEnv(tok: ReadToken, repo: string): string {
+export function renderTokenEnv(
+  tok: ReadToken,
+  repo: string,
+  source: "app" | "user" = "app",
+): string {
   if (!TOKEN_VALUE_RE.test(tok.token))
     throw new Error(
       "the minted token has a character an env file cannot carry safely (only A-Z a-z 0-9 _ . - are allowed)",
@@ -169,11 +181,16 @@ export function renderTokenEnv(tok: ReadToken, repo: string): string {
     throw new Error("the token expiry is not a timestamp");
   if (!REPO_RE.test(repo))
     throw new Error(`[github] repo ${JSON.stringify(repo)} is not owner/name`);
+  const header =
+    source === "user"
+      ? '# Copied on the host by qcr from the person\'s own GitHub token ([github] auth = "user").\n' +
+        "# It is NOT down-scoped: it can do what that person can. The companion uses it for reads\n" +
+        "# only, and companion-guard vetoes write-shaped calls. Re-copied when the host refreshes it.\n"
+      : "# Minted on the host by qcr: a READ-ONLY GitHub App installation token\n" +
+        "# (contents / issues / pull requests: read) for one repository. Re-minted before\n" +
+        "# it expires. It cannot write to GitHub.\n";
   return (
-    "# Minted on the host by qcr: a READ-ONLY GitHub App installation token\n" +
-    "# (contents / issues / pull requests: read) for one repository. Re-minted before\n" +
-    "# it expires. It cannot write to GitHub.\n" +
-    `${TOKEN_VAR}=${tok.token}\n${EXPIRES_VAR}=${tok.expires_at}\n${REPO_VAR}=${repo}\n`
+    header + `${TOKEN_VAR}=${tok.token}\n${EXPIRES_VAR}=${tok.expires_at}\n${REPO_VAR}=${repo}\n`
   );
 }
 
@@ -227,10 +244,22 @@ export function tokenExpiry(dir: string, repo?: string): number | undefined {
   return Number.isFinite(ms) ? ms : undefined;
 }
 
+/** The token the env file holds, or undefined. */
+function heldToken(dir: string): string | undefined {
+  try {
+    const text = readFileSync(join(dir, TOKEN_FILE), "utf8");
+    return new RegExp(`^${TOKEN_VAR}=(.*)$`, "m").exec(text)?.[1]?.trim();
+  } catch {
+    return undefined;
+  }
+}
+
 export type TokenOutcome =
   /** The file holds a token with more than the margin left: nothing minted. */
   | { kind: "fresh"; expiresAt: string }
   | { kind: "minted"; expiresAt: string }
+  /** `auth = "user"`: the person's token file was copied in (it changed). */
+  | { kind: "copied"; expiresAt: string }
   /** No App credential on this host: the companion simply has no GitHub. */
   | { kind: "unavailable"; reason: string }
   | { kind: "failed"; reason: string };
@@ -242,6 +271,8 @@ export function tokenOutcomeLine(o: TokenOutcome): string {
       return `read-only GitHub token valid until ${o.expiresAt}`;
     case "minted":
       return `read-only GitHub token minted (valid until ${o.expiresAt})`;
+    case "copied":
+      return "GitHub token copied from the person's own token file (auth = user; used read-only)";
     case "unavailable":
       return `no read-only GitHub token — ${o.reason}`;
     case "failed":
@@ -254,9 +285,12 @@ export interface CompanionGithubTokenOptions {
   dir: string;
   /** `[github] repo`, owner/name. */
   repo: string;
-  /** The resolved App secrets dir (`app_id`, `app.pem`). Read here, on the
-   * host; nothing from it is ever written into `dir`. */
+  /** The resolved secrets dir (`app_id`, `app.pem`; or `github_token` under
+   * `auth = "user"`). Read here, on the host; under "app" nothing from it is
+   * ever written into `dir`. */
   secretsDir: string;
+  /** `[github] auth`. Absent ⇒ "app". */
+  auth?: "app" | "user";
   fetchFn?: FetchFn;
   apiBase?: string;
   now?: () => number;
@@ -276,6 +310,7 @@ export class CompanionGithubToken {
   }
 
   private async doRefresh(): Promise<TokenOutcome> {
+    if (this.opts.auth === "user") return this.copyUserToken();
     const now = (this.opts.now ?? Date.now)();
     const current = tokenExpiry(this.opts.dir, this.opts.repo);
     if (current !== undefined && current - now > REFRESH_MARGIN_MS)
@@ -302,6 +337,38 @@ export class CompanionGithubToken {
       });
       writeTokenEnv(this.opts.dir, renderTokenEnv(tok, this.opts.repo));
       return { kind: "minted", expiresAt: tok.expires_at };
+    } catch (err) {
+      return { kind: "failed", reason: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /** `auth = "user"`: copy the person's token file in when it differs from
+   * what the env file holds (or the repo changed). The expiry the file
+   * carries is a re-check time, not GitHub's: a user token's own expiry is
+   * not known here. */
+  private copyUserToken(): TokenOutcome {
+    const source = join(this.opts.secretsDir, "github_token");
+    let token: string;
+    try {
+      token = readFileSync(source, "utf8").trim();
+    } catch {
+      return {
+        kind: "unavailable",
+        reason: `no user token at ${source} (run \`qcr github-token sync\` on the host)`,
+      };
+    }
+    if (token === "")
+      return { kind: "unavailable", reason: `the user token file ${source} is empty` };
+    const expiresAt = new Date((this.opts.now ?? Date.now)() + REFRESH_MARGIN_MS * 2).toISOString();
+    const heldUntil = tokenExpiry(this.opts.dir, this.opts.repo);
+    if (heldUntil !== undefined && heldToken(this.opts.dir) === token)
+      return { kind: "fresh", expiresAt: new Date(heldUntil).toISOString() };
+    try {
+      writeTokenEnv(
+        this.opts.dir,
+        renderTokenEnv({ token, expires_at: expiresAt, permissions: {} }, this.opts.repo, "user"),
+      );
+      return { kind: "copied", expiresAt };
     } catch (err) {
       return { kind: "failed", reason: err instanceof Error ? err.message : String(err) };
     }

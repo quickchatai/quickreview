@@ -337,8 +337,16 @@ export function killInFlightSsh(): number {
   return killed;
 }
 
+/** What the ssh runner answers for an empty host — spawned, `ssh "" …` would
+ * die on "Could not resolve hostname" and every surface would print an ssh
+ * remedy with no host in it. */
+export const NO_SSH_HOST_STDERR =
+  '[tui] ssh_host is empty — run `qcr onboard`, or set [tui] target = "local"';
+
 export const realSshRunner: SshRunner = (host, argv, opts) =>
-  runChild("ssh", ["-o", "BatchMode=yes", host, argv.map(shellQuote).join(" ")], opts);
+  host.trim() === ""
+    ? Promise.resolve({ ok: false, stdout: "", stderr: NO_SSH_HOST_STDERR, code: null })
+    : runChild("ssh", ["-o", "BatchMode=yes", host, argv.map(shellQuote).join(" ")], opts);
 
 /**
  * The laptop topology's runner — the same argv every builder above

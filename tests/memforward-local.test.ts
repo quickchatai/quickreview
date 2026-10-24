@@ -7,7 +7,15 @@
 import { connect, type Socket } from "node:net";
 import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { MemoryForward, type ForwardModule, type ForwarderHandle } from "../src/tui/memforward.js";
+import {
+  MemoryForward,
+  diagnoseLocalMemory,
+  tuiMemoryContainer,
+  type ForwardModule,
+  type ForwarderHandle,
+} from "../src/tui/memforward.js";
+import { TUI_DEFAULTS } from "../src/config.js";
+import { resolveTuiRoute } from "../src/tui/route.js";
 
 const forward = await import("../scripts/companion-memory-forward.mjs");
 
@@ -221,5 +229,105 @@ describe("MemoryForward hands the transport to the ONE script (argv-level)", () 
     expect(f.created()).toBe(0);
     expect(f.argvSeen()).toBeUndefined();
     fwd.stop(); // not ours — stop() must have nothing to close
+  });
+});
+
+describe("memory on one box: the compose memory sidecar, without sudo", () => {
+  const route = resolveTuiRoute(
+    { ...TUI_DEFAULTS, ssh_host: "" },
+    {
+      projectDir: "/srv/qcr",
+      projectEnv: "QCR_VERSION=1.1.0\n",
+      checklist: null,
+      dockerSocketAccess: true,
+    },
+  ).cfg;
+
+  it("the template config, resolved, relays into quickreview-memory-1 with plain docker", async () => {
+    let argvSeen: string[] | undefined;
+    const handle: ForwarderHandle = { listen: () => Promise.resolve(1), close: () => {} };
+    const fwd = new MemoryForward({
+      baseUrl: "http://127.0.0.1:1933",
+      repoRoot: "/x",
+      probe: () => Promise.resolve(false),
+      load: () =>
+        Promise.resolve({
+          parseArgs: (argv) => {
+            argvSeen = argv;
+            return { cfg: { binds: ["127.0.0.1"], port: 1933, sshHost: "", container: "" } };
+          },
+          createForwarder: () => handle,
+        }),
+      local: route.target === "local",
+      sudoDocker: route.sudo_docker,
+      container: tuiMemoryContainer(route),
+    });
+    await fwd.ensure();
+    expect(argvSeen).toEqual([
+      "run",
+      "--local",
+      "--no-sudo",
+      "--container",
+      "quickreview-memory-1",
+    ]);
+  });
+
+  it("a forward that binds but reaches nothing says what the memory container is doing", async () => {
+    const handle: ForwarderHandle = { listen: () => Promise.resolve(1), close: () => {} };
+    const fwd = new MemoryForward({
+      baseUrl: "http://127.0.0.1:1933",
+      repoRoot: "/x",
+      probe: () => Promise.resolve(false),
+      load: () =>
+        Promise.resolve({
+          parseArgs: () => ({
+            cfg: { binds: ["127.0.0.1"], port: 1933, sshHost: "", container: "" },
+          }),
+          createForwarder: () => handle,
+        }),
+      local: true,
+      sudoDocker: false,
+      diagnoseUpstream: () =>
+        diagnoseLocalMemory(route, "/srv/qcr", async () => ({
+          status: 1,
+          stdout: "",
+          stderr: "Error: No such object: quickreview-memory-1",
+          timedOut: false,
+        })),
+    });
+    const st = await fwd.ensure();
+    expect(st.state).toBe("failed");
+    expect(st.detail).toBe(
+      "the memory container quickreview-memory-1 is not running — it starts at onboarding's bring-up step, " +
+        "or: docker compose --project-directory /srv/qcr up -d memory",
+    );
+    fwd.stop();
+  });
+
+  it("diagnoseLocalMemory: running-but-silent, stopped, and an unusable docker answer", async () => {
+    const answer =
+      (status: number | null, stdout: string, stderr = "") =>
+      async () => ({
+        status,
+        stdout,
+        stderr,
+        timedOut: false,
+      });
+    expect(await diagnoseLocalMemory(route, "/p", answer(0, "running\n"))).toMatch(
+      /is running but OpenViking is not answering yet/,
+    );
+    expect(await diagnoseLocalMemory(route, "/p", answer(0, "exited\n"))).toMatch(
+      /is exited — start it: docker compose --project-directory \/p up -d memory/,
+    );
+    expect(
+      await diagnoseLocalMemory(route, "/p", answer(1, "", "permission denied")),
+    ).toBeUndefined();
+    // sudo, when on, never prompts behind the TUI.
+    const seen: string[][] = [];
+    await diagnoseLocalMemory({ ...route, sudo_docker: true }, "/p", async (cmd, argv) => {
+      seen.push([cmd, ...argv]);
+      return { status: 0, stdout: "running", stderr: "", timedOut: false };
+    });
+    expect(seen[0]?.slice(0, 3)).toEqual(["sudo", "-n", "docker"]);
   });
 });

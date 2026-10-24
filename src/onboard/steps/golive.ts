@@ -267,6 +267,8 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
       'arguments to get the explanation to read out; then call it again with decision: "stay_dry_run", or with ' +
       `decision: "go_live" AND confirm: "${GO_LIVE_CONFIRMATION}" if — and only if — they said so explicitly.`,
     order: 78,
+    // After setup: the board offers it; finish never waits on it.
+    optional: true,
     parameters: {
       type: "object",
       properties: {

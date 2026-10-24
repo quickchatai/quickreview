@@ -74,6 +74,9 @@ export const MEMORY_IMAGE_REPO = "ghcr.io/quickchatai/quickreview-memory";
 
 export { CONTAINER_STATE_DIR };
 export const CONTAINER_DRYRUN_DIR = `${CONTAINER_STATE_DIR}/dryrun`;
+/** The daemon's command root in the release image (`<root>/commands`, with the
+ * root-sealed `operator/` under it and the result files in `results/`). */
+export const CONTAINER_COMMANDS_DIR = "/opt/qcr/commands";
 
 /** `<sandbox root>` — the engine's contract is stateDir = `<root>/state`. */
 export function rootOf(adapters: OnboardAdapters): string {
@@ -157,6 +160,12 @@ export function daemonExecArgs(root: string, argv: readonly string[]): string[] 
   return composeArgs(root, ["exec", "-T", DAEMON_SERVICE, ...argv]);
 }
 
+/** The same exec as uid 0 — the operator seal on `commands/operator/`, which
+ * the daemon's own uid (every session's) can read but not write. */
+export function daemonRootExecArgs(root: string, argv: readonly string[]): string[] {
+  return composeArgs(root, ["exec", "-T", "-u", "0", DAEMON_SERVICE, ...argv]);
+}
+
 export async function daemonExec(
   runner: ProcessRunner,
   root: string,
@@ -172,9 +181,31 @@ export interface PsReport {
   detail: string;
 }
 
+/** docker-compose.yml's `name:` — the project label on its containers. */
+export const COMPOSE_PROJECT = "quickreview";
+
+/** `docker ps` over the compose project label, one compose-ps-shaped JSON row
+ * per running container: asks Docker without reading the compose file. */
+export function projectPsArgs(): string[] {
+  return [
+    "ps",
+    "--filter",
+    `label=com.docker.compose.project=${COMPOSE_PROJECT}`,
+    "--format",
+    '{"Service":"{{.Label "com.docker.compose.service"}}","State":"{{.State}}"}',
+  ];
+}
+
 export async function composePs(runner: ProcessRunner, root: string): Promise<PsReport> {
   const ps = await runner.run("docker", composeArgs(root, ["ps", "--format", "json"]));
   if (ps.code !== 0) {
+    // `docker compose ps` interpolates the compose file first, and before the
+    // bring-up has written the project .env (QCR_SECRETS_DIR and the rest) it
+    // refuses to run at all. That is a question about the file, not the
+    // stack: Docker itself still answers which of the project's containers
+    // run. Only when Docker cannot answer either is the state unknown.
+    const plain = await runner.run("docker", projectPsArgs());
+    if (plain.code === 0) return { ok: true, rows: parseComposePs(plain.stdout), detail: "" };
     return {
       ok: false,
       rows: [],

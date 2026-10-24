@@ -85,9 +85,12 @@ otherwise; both mirror the same version.
 
 The session is deliberately narrow: `--no-extensions --no-skills
 --no-context-files`, exactly one extension (`extensions/onboarding.ts`), a
-read-only built-in tool belt (`--tools read,ls,grep`), `--approve` so it can
+read-only built-in tool belt, `--approve` so it can
 never stall on a trust modal, and its own session store at
 `state/onboarding/pi-sessions/` — never the reviewer's or the companion's.
+pi's `--tools` allowlist covers extension tools as well as built-ins, so the
+argv names `read,ls,grep` and then every wizard tool, derived from the step
+registry (`src/onboard/toolnames.ts`); bash, write and edit are never on it.
 
 `extensions/onboarding.ts` registers **one tool per engine step**, named
 `onboard_<step id>`, plus `onboard_status` (reconcile + listing) and

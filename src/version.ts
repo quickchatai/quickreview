@@ -8,7 +8,7 @@ import {
   SCAN_SCHEMA_VERSION,
   VERSION_SCHEMA_VERSION,
 } from "@quickchatai/pi-quickreview/src/contract.js";
-import { piPinFromPackageJson } from "./onboard/launch.js";
+import { piPinFromPackageJson } from "./onboard/pipin.js";
 
 export interface VersionInfo {
   schema_version: number;

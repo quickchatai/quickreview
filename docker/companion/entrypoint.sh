@@ -237,6 +237,23 @@ if (defMatch) {
   cfg.defaultProvider = defMatch[1];
   cfg.defaultModel = defMatch[2];
   if (defMatch[3]) cfg.defaultThinkingLevel = defMatch[3];
+  // Any OpenAI login serves the model: `openai-codex` (the legacy Codex login)
+  // and `openai` (Sign in with ChatGPT, or an API key) carry the same ids. When
+  // the named provider has no login and its twin has one, the default is the
+  // twin (the rule of packages/pi-plugin/src/modelroute.ts, which the companion's
+  // login-route extension applies again inside pi).
+  const twin = { "openai-codex": "openai", openai: "openai-codex" }[cfg.defaultProvider];
+  if (twin) {
+    let logins = {};
+    try { logins = JSON.parse(fs.readFileSync(process.env.HOME + "/.pi/agent/auth.json", "utf8")); } catch {}
+    const has = (p) => {
+      const c = logins[p];
+      if (c && c.type === "oauth") return true;
+      if (c && c.type === "api_key" && typeof c.key === "string" && c.key.trim() !== "") return true;
+      return p === "openai" && (process.env.OPENAI_API_KEY || "").trim() !== "";
+    };
+    if (!has(cfg.defaultProvider) && has(twin)) cfg.defaultProvider = twin;
+  }
 }
 
 fs.writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
@@ -302,7 +319,9 @@ fi
 # OpenAI auth: the OAuth route (`/login` once inside a pi session) persists in
 # $PI_HOME_DIR/agent/auth.json on the volume and takes precedence over the env
 # var. OPENAI_API_KEY is honored when the caller passes one.
-# Provider prefix under OAuth is `openai-codex/`, not `openai/`.
+# Any OpenAI login works: the shipped model prefix is `openai-codex/` (the
+# legacy Codex login), and a model whose provider has no login runs on the
+# other OpenAI login (`openai/`: Sign in with ChatGPT, or an API key).
 
 # Memory health watcher: probes OpenViking through the host-owned
 # forward and drops an alert file into /alerts when it stops answering (and a

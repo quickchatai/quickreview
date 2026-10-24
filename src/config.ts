@@ -974,8 +974,11 @@ function checkSectionTimeZone<T extends { timezone: string }>(section: T, where:
  * what an absent section means) starts nothing at all.
  */
 export interface IngressConfig {
-  /** "none" ⇒ no watcher is ever constructed; "tunnel-file" ⇒ self-heal on. */
-  shape: "none" | "tunnel-file";
+  /** "none" ⇒ no watcher is ever constructed; "tunnel-file" ⇒ self-heal on;
+   * "polling" ⇒ no webhooks at all: the daemon's `/webhook` route refuses
+   * every delivery, no webhook secret is read, and the reconcile poll is the
+   * only trigger. `[github] auth = "user"` requires "polling". */
+  shape: "none" | "tunnel-file" | "polling";
   /** File the tunnel sidecar writes the bare public hostname into. Empty ⇒
    * `<root>/state/ingress/hostname` (see ingressHostnameFile). */
   hostname_file: string;
@@ -993,6 +996,13 @@ export const INGRESS_DEFAULTS: IngressConfig = {
   debounce_ms: 3000,
   sweep_interval_s: 300,
 };
+
+/** Does this install take webhooks at all? Not under the polling shape
+ * (and so never under `[github] auth = "user"`, which requires it): there the
+ * `/webhook` route refuses every delivery and no webhook secret is read. */
+export function webhooksEnabled(cfg: Pick<Config, "ingress">): boolean {
+  return cfg.ingress.shape !== "polling";
+}
 
 /** The hostname file's resolved path — the one place the default is spelled. */
 export function ingressHostnameFile(cfg: Config, root: string): string {
@@ -1729,9 +1739,19 @@ export function parseConfig(toml: string): Config {
     ...INGRESS_DEFAULTS,
     ...((raw.ingress ?? {}) as Partial<IngressConfig>),
   };
-  if (!["none", "tunnel-file"].includes(ingress.shape)) {
+  if (!["none", "tunnel-file", "polling"].includes(ingress.shape)) {
     throw new Error(
-      `config.toml [ingress]: shape must be "none" or "tunnel-file" (got ${JSON.stringify(ingress.shape)})`,
+      `config.toml [ingress]: shape must be "none", "tunnel-file" or "polling" (got ${JSON.stringify(ingress.shape)})`,
+    );
+  }
+  // The person's own credential has no webhook: GitHub delivers webhooks to
+  // an App, and the person has none. So that mode is polling-only, and any
+  // other shape is refused here rather than left to run half-wired.
+  if (github.auth === "user" && ingress.shape !== "polling") {
+    throw new Error(
+      `config.toml: [github] auth = "user" runs polling-only — set [ingress] shape = "polling" ` +
+        `(got ${JSON.stringify(ingress.shape)}${raw.ingress === undefined ? ", the default for an absent [ingress]" : ""}). ` +
+        `Webhooks and the webhook self-heal need a GitHub App: use auth = "app" for them.`,
     );
   }
   const cfg: Config = {

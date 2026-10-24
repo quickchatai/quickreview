@@ -18,6 +18,11 @@
 // Total at the edge: a PR that cannot be read is counted, never fatal; an
 // empty repo — no merged PRs, no rounds, no feedback — is an ordinary, EMPTY
 // digest, not an error.
+import {
+  excludeOwnAppQualifier,
+  isOwnContent,
+  isPersonMode,
+} from "@quickchatai/pi-quickreview/src/identity.js";
 import type { Config } from "./config.js";
 import type { SearchIssueItem } from "./github.js";
 import type { FeedbackSignalRow, RoundRow } from "./state.js";
@@ -146,7 +151,7 @@ export function mergedPrsQuery(cfg: Config, since: string, until?: string): stri
     until === undefined
       ? `>=${since.slice(0, 10)}`
       : `${since.slice(0, 10)}..${until.slice(0, 10)}`;
-  return `repo:${cfg.github.repo} is:pr is:merged merged:${range} -author:app/${cfg.github.app_slug}`;
+  return `repo:${cfg.github.repo} is:pr is:merged merged:${range}${excludeOwnAppQualifier(cfg.github)}`;
 }
 
 /**
@@ -173,11 +178,20 @@ function clip(body: string): string {
 }
 
 /** A human, and not the PR's own author (their replies answer a review; they
- * are not one) nor this App under either spelling. `[feedback]` comments are
- * left out here: they are the feedback half, read from the ledger. */
-function humanReviewer(a: HumanReviewAuthor | null, pr: PrReviews, cfg: Config): string | null {
+ * are not one) nor this App under either spelling. In person mode
+ * (`[github] auth = "user"`) the login is the person's: their words are a
+ * human's, and only the reviewer's marker-bearing ones are left out.
+ * `[feedback]` comments are left out here: they are the feedback half, read
+ * from the ledger. */
+function humanReviewer(
+  a: HumanReviewAuthor | null,
+  pr: PrReviews,
+  cfg: Config,
+  body: string,
+): string | null {
   if (!a || a.type !== "User" || a.login === "") return null;
   if (a.login === pr.author) return null;
+  if (isPersonMode(cfg.github)) return isOwnContent(cfg.github, a.login, body) ? null : a.login;
   if (a.login === cfg.backfill.bot_login || a.login === cfg.backfill.bot_actor) return null;
   return a.login;
 }
@@ -187,7 +201,7 @@ export function humanCommentsOf(pr: PrReviews, cfg: Config): HumanComment[] {
   const out: HumanComment[] = [];
   const keep = (body: string): boolean => body.trim() !== "" && !/^\s*\[feedback\]/i.test(body);
   for (const r of pr.reviews) {
-    const reviewer = humanReviewer(r.author, pr, cfg);
+    const reviewer = humanReviewer(r.author, pr, cfg, r.body);
     if (reviewer !== null && keep(r.body)) {
       out.push({
         pr: pr.number,
@@ -200,7 +214,7 @@ export function humanCommentsOf(pr: PrReviews, cfg: Config): HumanComment[] {
       });
     }
     for (const c of r.comments) {
-      const who = humanReviewer(c.author, pr, cfg);
+      const who = humanReviewer(c.author, pr, cfg, c.body);
       if (who === null || !keep(c.body)) continue;
       out.push({
         pr: pr.number,

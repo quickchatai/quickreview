@@ -5,7 +5,8 @@
 // they never touch the poller's snapshot or the memory store.
 import { normalizeTag } from "../memory/store.js";
 import type { MemoryEntry } from "./memory.js";
-import { sortPrs, type SnapshotPr } from "./model.js";
+import type { StatusSnapshot } from "../state.js";
+import { offeredPrs, sortPrs, type SnapshotPr } from "./model.js";
 
 export interface BoardFilter {
   /** Case-insensitive substring match against the PR author login. */
@@ -76,10 +77,13 @@ export function applyMemoryFilter<T extends Pick<MemoryEntry, "tags">>(
  * companion driver all derive rows from here, so a verb can never address a
  * row the filter hid. */
 export function visiblePrs(view: {
-  snapshot?: { prs: SnapshotPr[] };
+  snapshot?: { prs: SnapshotPr[]; open_prs?: StatusSnapshot["open_prs"] };
   boardFilter?: BoardFilter | null;
 }): SnapshotPr[] {
-  return applyBoardFilter(sortPrs(view.snapshot?.prs ?? []), view.boardFilter);
+  const tracked = applyBoardFilter(sortPrs(view.snapshot?.prs ?? []), view.boardFilter);
+  // The repo's other open PRs follow, offered for review — under a filter the
+  // board shows only what the filter names.
+  return view.boardFilter != null ? tracked : [...tracked, ...offeredPrs(view.snapshot)];
 }
 
 /** The memory view's indicator, same shape as the board's. */

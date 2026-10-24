@@ -68,6 +68,7 @@ import { sanitizeText } from "./tui/paint.js";
 import { operatorCommandWriteScript } from "./tui/unwedge.js";
 import { shellQuote, transportOf } from "./tui/remote.js";
 import { MutationGate } from "@quickchatai/pi-quickreview/src/gate.js";
+import { botAccountLogin, isPersonMode } from "@quickchatai/pi-quickreview/src/identity.js";
 import type { GitHubAdapter } from "./github.js";
 import type { OutcomeCapture } from "./outcomes.js";
 import type { Learner, MineReport } from "./learner/learner.js";
@@ -198,17 +199,18 @@ export async function cmdOutcomes(rest: string[], json: boolean): Promise<number
     const outcomes = new OutcomeCapture({
       store,
       botLogin: cfg.github.bot_login,
+      personMode: isPersonMode(cfg.github),
       ...(existsSync(worktrees.basePath) ? { git: worktrees } : {}),
     });
     const since = new Date(Date.now() - days * 86_400_000).toISOString();
     if (capture) {
       let read: GitHubAdapter | undefined;
       if (readGithub) {
-        const { TokenMinter } = await import("@quickchatai/pi-quickreview/src/githubAuth.js");
+        const { githubCredential } = await import("@quickchatai/pi-quickreview/src/githubAuth.js");
         const { GitHubAdapter } = await import("./github.js");
         read = new GitHubAdapter(
           cfg,
-          new TokenMinter(cfg.github.secrets_dir),
+          githubCredential(cfg.github),
           recordOnlyGate(join(stateDir(), "dryrun")),
         );
       }
@@ -365,7 +367,8 @@ export async function cmdLessons(rest: string[], json: boolean): Promise<number>
       root,
       eodTime: cfg.eod.time,
       timeZone: cfg.eod.timezone,
-      botLogin: cfg.github.bot_login,
+      // The bot ACCOUNT ("" in person mode, where the person's words are a human's).
+      botLogin: botAccountLogin(cfg.github),
       baseBranch: cfg.github.base_branch,
       config: learnerKnobsOf(cfg.memory),
       ...(existsSync(worktrees.basePath) ? { git: worktrees } : {}),
@@ -703,13 +706,13 @@ export interface DoubtedFinding {
  * when the developer machine carries the app credential. */
 export async function enrichWhy(payload: WhyPayload, secretsDir?: string): Promise<WhyPayload> {
   try {
-    const { TokenMinter } = await import("@quickchatai/pi-quickreview/src/githubAuth.js");
+    const { githubCredential } = await import("@quickchatai/pi-quickreview/src/githubAuth.js");
     const { GitHubAdapter } = await import("./github.js");
     const cfg = loadConfig();
     const gate = recordOnlyGate(join(stateDir(), "dryrun"), "qcr why");
     const adapter = new GitHubAdapter(
       cfg,
-      new TokenMinter(secretsDir ?? cfg.github.secrets_dir),
+      githubCredential({ ...cfg.github, secrets_dir: secretsDir ?? cfg.github.secrets_dir }),
       gate,
     );
     const convo = await adapter.prConversation(payload.pr, 3);
@@ -928,14 +931,22 @@ export async function cmdBackfill(
   limit: number | undefined,
   json: boolean,
 ): Promise<void> {
-  const { TokenMinter } = await import("@quickchatai/pi-quickreview/src/githubAuth.js");
+  const { githubCredential } = await import("@quickchatai/pi-quickreview/src/githubAuth.js");
   const { GitHubAdapter } = await import("./github.js");
   const { runBackfill } = await import("./backfill.js");
   const cfg = loadConfig();
+  // The import reads "reviews by the bot's login" as the bot's history. Under
+  // the person's own credential that login is the person's, and their own
+  // reviews are not the bot's: there is nothing this importer can tell apart.
+  if (isPersonMode(cfg.github))
+    throw new Error(
+      'qcr backfill imports a GitHub App\'s review history; under [github] auth = "user" the login is ' +
+        "your own, so your reviews and the bot's cannot be told apart by it — nothing to import",
+    );
   // A gate that can only ever record: the importer performs no mutations, and
   // this keeps that structural rather than prompted.
   const gate = recordOnlyGate(join(stateDir(), "dryrun"), "qcr backfill");
-  const adapter = new GitHubAdapter(cfg, new TokenMinter(cfg.github.secrets_dir), gate);
+  const adapter = new GitHubAdapter(cfg, githubCredential(cfg.github), gate);
   const store = openStore();
   try {
     const stats = await runBackfill(store, adapter, cfg, {
@@ -976,12 +987,12 @@ export async function cmdHistory(rest: string[]): Promise<number> {
   const months = intFlag(rest, "--months", HISTORY_USAGE);
   if (sub === "digest") {
     const limit = intFlag(rest, "--limit", HISTORY_USAGE);
-    const { TokenMinter } = await import("@quickchatai/pi-quickreview/src/githubAuth.js");
+    const { githubCredential } = await import("@quickchatai/pi-quickreview/src/githubAuth.js");
     const { GitHubAdapter } = await import("./github.js");
     const { collectReviewHistory } = await import("./reviewhistory.js");
     const cfg = loadConfig();
     const gate = recordOnlyGate(join(stateDir(), "dryrun"), "qcr history");
-    const adapter = new GitHubAdapter(cfg, new TokenMinter(cfg.github.secrets_dir), gate);
+    const adapter = new GitHubAdapter(cfg, githubCredential(cfg.github), gate);
     const store = openStore();
     try {
       const digest = await collectReviewHistory(adapter, store, cfg, {
@@ -1230,12 +1241,13 @@ async function cmdDrain(rest: string[]): Promise<number> {
 // until `qcr resume-pr`, and no session lifts it. The cutover wizard's stage 9
 // pauses every tracked PR but one with it before the drain is lifted.
 
-export const PR_LEVER_USAGE = "usage: qcr pause-pr <pr> [--reason <text>] | qcr resume-pr <pr>";
+export const PR_LEVER_USAGE =
+  "usage: qcr pause-pr <pr> [--reason <text>] | qcr resume-pr <pr> | qcr review-now <pr>";
 
 /** `qcr pause-pr|resume-pr`'s arguments: one PR number, and for a pause an
  * optional `--reason <text>` (the reason the board and `qcr status` show). */
 export function parsePrLeverArgs(
-  verb: "pause-pr" | "resume-pr",
+  verb: "pause-pr" | "resume-pr" | "review-now",
   rest: readonly string[],
 ): import("./tui/prpause.js").PrLeverCommand {
   let pr: number | undefined;
@@ -1251,10 +1263,14 @@ export function parsePrLeverArgs(
   }
   if (pr === undefined) throw new Error(PR_LEVER_USAGE);
   if (verb === "resume-pr") return { command: "resume-pr", pr };
+  if (verb === "review-now") return { command: "review-now", pr };
   return { command: "pause-pr", pr, reason: reason ?? "paused by the operator (qcr pause-pr)" };
 }
 
-async function cmdPrLever(verb: "pause-pr" | "resume-pr", rest: string[]): Promise<number> {
+async function cmdPrLever(
+  verb: "pause-pr" | "resume-pr" | "review-now",
+  rest: string[],
+): Promise<number> {
   const cmd = parsePrLeverArgs(verb, rest);
   const cfg = loadConfig();
   const { runnerFor } = await import("./tui/remote.js");
@@ -1540,6 +1556,7 @@ export async function cmdCompanion(sub: string | undefined): Promise<void> {
       dir: companionGithubDir(),
       repo: full.github.repo,
       secretsDir: full.github.secrets_dir,
+      auth: full.github.auth ?? "app",
     }).refresh();
     console.log(`companion ${cfg.container_name}: ${tokenOutcomeLine(gh)}`);
     const mirror = lc.syncConfigMirror();
@@ -2157,8 +2174,26 @@ export async function main(rawArgv: string[]): Promise<void> {
       return;
     }
     case "pause-pr":
-    case "resume-pr": {
+    case "resume-pr":
+    case "review-now": {
+      // review-now: the operator's "review this PR now" — queued as a
+      // human-asked round through the sealed operator channel, no label.
       process.exitCode = await cmdPrLever(cmd, rest);
+      return;
+    }
+    case "github-token": {
+      // The own-account route's token refresher (src/githubtoken.ts): gh's
+      // token → <secrets>/github_token, 0600. The crontab entry runs this.
+      const { cmdGithubToken } = await import("./githubtoken.js");
+      process.exitCode = await cmdGithubToken(rest, {
+        secretsDir: () => {
+          try {
+            return loadConfig().github.secrets_dir;
+          } catch {
+            return locateSecrets({}).path;
+          }
+        },
+      });
       return;
     }
     case "message": {
@@ -2238,7 +2273,7 @@ export async function main(rawArgv: string[]): Promise<void> {
     }
     default:
       console.log(
-        "usage: qcr <version|config check [--config-home <dir>]|onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|takeover <n>|debug-round <n>|release <n>|tui [pr|overseer]|drain <on [--hold]|off>|pause-pr <pr> [--reason <text>]|resume-pr <pr>|message <pr> [--may-post] <text...>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
+        "usage: qcr <version|config check [--config-home <dir>]|onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|takeover <n>|debug-round <n>|release <n>|tui [pr|overseer]|drain <on [--hold]|off>|pause-pr <pr> [--reason <text>]|resume-pr <pr>|review-now <pr>|github-token sync [--gh <path>] [--secrets-dir <dir>]|message <pr> [--may-post] <text...>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
           "companion <up|down|status|rebuild>|review [start|status|stop|branch|--uncommitted|--diff FILE|-|<PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--json]|live [RUN_ID|DIR] [--lens ID] [--round N] [--follow] [--json]|open [RUN_ID|DIR|FILE.jsonl|scan[:RUN]|pr N [--round R]] [--lens ID] [--write] [--print]|scan <preview|start|status|stop|findings|matches|match|suggestions|stage2 propose|stage2 start|dismiss|units show|units propose|units adjust|units save|login|doctor|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine|shadow-report [--days <n>]|off|on|suppress <id>|unsuppress <id>]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );

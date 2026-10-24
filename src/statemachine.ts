@@ -205,7 +205,10 @@ function applyEventTransaction(
   const now = opts.now ?? (() => new Date());
   const existing = store.getPr(pr);
   const author = meta.author ?? existing?.author ?? "";
-  if (opts.botLogin && author && isBotAuthor(author, opts.botLogin)) {
+  // `botLogin` is the bot ACCOUNT (identity.ts `botAccountLogin`): "" in
+  // person mode, where the person's own PRs are the target and only
+  // `[bot]`-suffixed accounts are skipped. Absent ⇒ nothing is skipped.
+  if (opts.botLogin !== undefined && author && isBotAuthor(author, opts.botLogin)) {
     return {
       pr,
       from: existing?.state ?? null,

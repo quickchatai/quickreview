@@ -10,11 +10,14 @@
 //   - a provider pi has no credential for at all fails the run with a hint
 //     that names pi's /login. A key for some other provider is never a reason
 //     to run on another model: the review runs on the models its config
-//     names, or not at all.
+//     names, or not at all. The one exception is the OpenAI family: an
+//     `openai-codex/` model runs on an `openai` login (and back) when only
+//     that one exists (modelroute.ts), the same model id on either.
 // The run then reads a refresh-disabled copy of the login (engine/auth.ts):
 // nothing in it can refresh, so a rotated token never leaves the host.
 import type { CoreConfig } from "../reviewconfig.js";
 import type { LoginSummary } from "../engine/auth.js";
+import { routeProvider } from "../modelroute.js";
 
 /** What the plugin asks of the host pi's auth, by shape (the extension wires
  * it to `ctx.modelRegistry` and the host's auth file). */
@@ -49,7 +52,15 @@ export function reviewProviders(cfg: Pick<CoreConfig, "models">): string[] {
   return out;
 }
 
-export type BorrowResult = { ok: true; refreshed: string[] } | { ok: false; error: string };
+export type BorrowResult =
+  | {
+      ok: true;
+      refreshed: string[];
+      /** The providers the run uses, each OpenAI one on the login that exists:
+       * the run's login copy carries exactly these. */
+      providers: string[];
+    }
+  | { ok: false; error: string };
 
 /** The hint for a provider pi has no credential for. */
 export function noLoginHint(provider: string, keyed: readonly string[]): string {
@@ -79,7 +90,14 @@ export async function borrowLogin(o: {
   const want = o.needMs + o.marginMs;
   const refreshed: string[] = [];
   let logins = o.host.logins();
-  for (const p of o.providers) {
+  const providers: string[] = [];
+  for (const named of o.providers) {
+    const p = routeProvider(named, "", {
+      hasCredential: (q) => logins[q] !== undefined || o.host.configured(q),
+    });
+    if (!providers.includes(p)) providers.push(p);
+  }
+  for (const p of providers) {
     const login = logins[p];
     if (login?.type === "oauth") {
       if (login.expires !== null && login.expires >= now() + want) continue;
@@ -107,5 +125,5 @@ export async function borrowLogin(o: {
       .map(([name]) => name);
     return { ok: false, error: noLoginHint(p, keyed) };
   }
-  return { ok: true, refreshed };
+  return { ok: true, refreshed, providers };
 }

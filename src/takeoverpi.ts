@@ -28,6 +28,7 @@ import { chmodSync, copyFileSync, existsSync, readFileSync, unlinkSync } from "n
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { GITHUB_TOKEN_ENVS } from "@quickchatai/pi-quickreview/src/envstrip.js";
+import { routeModelSpecForLogin } from "@quickchatai/pi-quickreview/src/modelroute.js";
 import { CAP_FD_INDEX } from "./ipc/capability.js";
 import {
   PI_REFRESH_MARGIN_MS,
@@ -100,6 +101,15 @@ export function readTakeoverSpec(file: string): TakeoverSpec {
   )
     throw new Error("not a takeover spec");
   return raw as TakeoverSpec;
+}
+
+/** The login file in an agent dir, as text; null when there is none. */
+export function readLogin(agentDir: string): string | null {
+  try {
+    return readFileSync(join(agentDir, "auth.json"), "utf8");
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -259,6 +269,9 @@ export async function runTakeover(specFile: string, deps: TakeoverRunDeps = {}):
     return 3;
   }
   const env = takeoverEnv(procEnv, spec);
+  // An OpenAI model runs on the OpenAI login the borrowed copy holds
+  // (packages/pi-plugin/src/modelroute.ts): the spec's own provider when it is there.
+  spec = { ...spec, model: routeModelSpecForLogin(spec.model, readLogin(spec.borrow_dir), env) };
   const pi = paneLaunch(takeoverArgv(spec), deps.piBin ?? spec.pi_bin);
   const launch = toolIsolation(pi.bin, pi.argv, procEnv);
   if ("refused" in launch) {

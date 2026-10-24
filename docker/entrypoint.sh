@@ -503,6 +503,23 @@ if (defMatch) {
   cfg.defaultProvider = defMatch[1];
   cfg.defaultModel = defMatch[2];
   if (defMatch[3]) cfg.defaultThinkingLevel = defMatch[3];
+  // Any OpenAI login serves the model: `openai-codex` (the legacy Codex login)
+  // and `openai` (Sign in with ChatGPT, or an API key) carry the same ids. When
+  // the named provider has no login and its twin has one, the default is the
+  // twin (the rule of packages/pi-plugin/src/modelroute.ts, which the
+  // companion's login-route extension applies again inside pi).
+  const twin = { "openai-codex": "openai", openai: "openai-codex" }[cfg.defaultProvider];
+  if (twin) {
+    let logins = {};
+    try { logins = JSON.parse(fs.readFileSync(path.join(home, ".pi", "agent", "auth.json"), "utf8")); } catch {}
+    const has = (p) => {
+      const c = logins[p];
+      if (c && c.type === "oauth") return true;
+      if (c && c.type === "api_key" && typeof c.key === "string" && c.key.trim() !== "") return true;
+      return p === "openai" && (process.env.OPENAI_API_KEY || "").trim() !== "";
+    };
+    if (!has(cfg.defaultProvider) && has(twin)) cfg.defaultProvider = twin;
+  }
 }
 fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + "\n");
 console.log("pi skills registered: " + (cfg.skills.join(", ") || "none"));

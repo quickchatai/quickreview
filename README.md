@@ -223,9 +223,19 @@ Slack concierge, a local companion session, opt-in escalation notes, and the
 
 ## Quickstart
 
-You need **Docker** with Compose v2 and **a GitHub account that can create an
-App** on the repository to review. No personal access token is used. On
-Windows, run everything inside **WSL2**.
+You need **Docker** with Compose v2, a model login, and either `gh` signed in
+to your own GitHub account or **a GitHub account that can create an App** on
+the repository to review. On Windows, run everything inside **WSL2**.
+
+There is a second route that needs no App: `[github] auth = "user"` runs the
+reviewer on **your own GitHub account**. Use it on one box where `gh` is
+already signed in. It is polling-only, with no webhooks and no tunnel. Every
+review it posts is a COMMENT that states its verdict, because an automated
+verdict must never count as your approval and GitHub refuses either on your own
+PR. Your token reaches the daemon only as the 0600 file
+`<secrets dir>/github_token`, which `qcr github-token sync` refreshes from
+`gh`. It never comes from the environment or a command line. On the App route
+no personal access token is used.
 
 ```sh
 # once: install `qcr`, the host wrapper the image writes (docs/host-wrapper.md);
@@ -237,28 +247,34 @@ qcr onboard          # the whole setup, guided
 ```
 
 `qcr onboard` is a pi agent that walks you through setup using named,
-deterministic tools whose results you see. It checks the machine, asks where
-the reviewer lives and which LLM route you use (a ChatGPT subscription or an
-OpenAI API key, [docs/llm-setup.md](docs/llm-setup.md)), **creates your
-GitHub App in one click** from a pinned manifest, wires the webhook ingress,
-mints the memory keys, brings the stack up, and then **watches a real review
-land in the dry-run record** on a PR you label. Only then does it offer to go
-live. It is resumable, and re-running it on a working install is a
-diagnostic. Every step: [docs/onboarding.md](docs/onboarding.md).
+deterministic tools whose results you see. pi's `/login` opens by itself the
+first time; any OpenAI login works ([docs/llm-setup.md](docs/llm-setup.md)).
+It checks the machine, takes your own GitHub account where `gh` is signed in
+(or **creates your GitHub App in one click** from a pinned manifest, if you
+want a bot identity or webhooks), asks for one repository, defaults to polling,
+mints the memory keys and brings the stack up. Setup ends there, and the TUI
+opens on the board: it lists every open pull request of the repository, and
+**`R` on the one you select reviews it now**, with no label to add, its
+progress on the board and, in dry-run, the review recorded instead of posted.
+Re-run `qcr onboard` to go live once you have read a review. It is resumable,
+and re-running it on a working install is a diagnostic. Every step:
+[docs/onboarding.md](docs/onboarding.md).
 
 ### Where the reviewer lives
 
-- **A server over ssh (recommended)**, because a reviewer that is asleep
-  reviews nothing. Setup rides the Ansible deploy
+- **This computer**, in Docker ([docker/README.md](docker/README.md)): the
+  pick when the machine is itself an always-on server, such as a cloud VM;
+  on a laptop it reviews only while the machine is awake.
+- **A server over ssh**, recommended when your own computer sleeps. Setup
+  rides the Ansible deploy
   ([deploy/ansible/README.md](deploy/ansible/README.md)); it needs
   passwordless sudo there and `ansible-playbook` on your machine.
-- **This computer**, in Docker, reviewing while the machine is awake
-  ([docker/README.md](docker/README.md)).
 
-GitHub needs an HTTPS URL to deliver webhooks to: a Cloudflare quick tunnel,
-ngrok, your own named Cloudflare tunnel, or polling only, which exposes
-nothing but delays triggers by up to one poll interval and silences
-author-reply routing and the `[feedback]` loop. The trade-offs are in
+Polling is the default: the daemon checks GitHub every few minutes and
+exposes nothing, at the cost of trigger latency up to one poll interval and
+quiet author-reply routing and `[feedback]` loop. Webhooks need an HTTPS URL:
+a Cloudflare quick tunnel, ngrok or your own named Cloudflare tunnel, on the
+App route only. The trade-offs are in
 [docker/README.md](docker/README.md).
 
 `dry_run = true` stays on until you flip it, through the wizard's go-live

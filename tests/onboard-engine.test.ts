@@ -317,6 +317,38 @@ describe("kill / resume re-verification", () => {
 });
 
 describe("finish", () => {
+  it("completes without an optional (after-setup) step, which is reported but never holds it red", async () => {
+    // The first review and the go-live flip happen on the board after setup.
+    // MUTATION: drop `|| r.optional === true` in verifyAll — this fails.
+    const later: import("../src/onboard/engine.js").OnboardingStep = {
+      id: "later_step",
+      title: "After setup",
+      explain: "",
+      order: 99,
+      optional: true,
+      run: async () => ({ ok: false, checks: [{ name: "x", ok: false, detail: "not yet" }] }),
+      verify: async () => ({ ok: false, checks: [{ name: "x", ok: false, detail: "not yet" }] }),
+    };
+    const e = new OnboardingEngine([preflightStep(), later], fakeAdapters());
+    await e.runStep(PREFLIGHT_STEP_ID);
+    const result = await e.finish();
+    expect(result.ok).toBe(true);
+    expect(checklistComplete(stateDir)).toBe(true);
+    expect(e.list().find((l) => l.id === "later_step")).toMatchObject({
+      status: "pending",
+      optional: true,
+    });
+  });
+
+  it("the first review and go-live are the registry's after-setup steps", async () => {
+    const { defaultSteps } = await import("../src/onboard/steps/index.js");
+    expect(
+      defaultSteps()
+        .filter((s) => s.optional)
+        .map((s) => s.id),
+    ).toEqual(["proof_round", "go_live"]);
+  });
+
   it("refuses while any check is red and writes no marker", async () => {
     const e = engine({ dockerOk: false });
     const result = await e.finish();

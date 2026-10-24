@@ -19,6 +19,7 @@
 // The finish path writes the first-run marker state/companion/first-run.json
 // ({"completed_at": "<iso>"}) exactly once — the contract the companion's
 // first-run greeting consumes. Keep the path and shape stable.
+import type { StepForward, StepForwardRequest } from "./stepforward.js";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
@@ -60,6 +61,11 @@ export interface OnboardAdapters {
    * so no step builds a config path itself. */
   paths: { stateDir: string; configPath: string };
   log?: (line: string) => void;
+  /** Opens the local memory forward for one step call (src/onboard/stepforward.ts):
+   * the compose route's memory engine is reachable from this machine only
+   * through it. The real assembly sets it; absent (every test), no forward is
+   * opened and the step sees whatever already listens. */
+  memoryForward?: (req: StepForwardRequest) => Promise<StepForward | null>;
 }
 
 // ---- step vocabulary --------------------------------------------------------
@@ -116,6 +122,10 @@ export interface OnboardingStep {
    * input, which is the common case. */
   parameters?: unknown;
   enabled?(choices: Readonly<Record<string, unknown>>): boolean;
+  /** After setup: the step still runs and verifies like any other, but the
+   * checklist completes without it — finish never waits on it. (The first
+   * review and the go-live flip: the board offers them once setup is done.) */
+  optional?: boolean;
   run(ctx: StepContext): Promise<StepReport>;
   verify(ctx: StepContext): Promise<StepReport>;
 }
@@ -242,6 +252,8 @@ export interface StepStatusLine {
   explain: string;
   status: "pending" | "done" | "disabled";
   note: string | null;
+  /** The step's `optional` flag: setup completes without it. */
+  optional?: boolean;
 }
 
 export interface ReconcileReport {
@@ -260,7 +272,8 @@ export interface StepRunResult {
 
 export interface VerifyAllResult {
   ok: boolean;
-  results: Array<{ id: string; ok: boolean; failures: string[] }>;
+  /** `optional` results are reported but never hold `ok` false. */
+  results: Array<{ id: string; ok: boolean; failures: string[]; optional?: boolean }>;
 }
 
 export type FinishResult =
@@ -364,6 +377,7 @@ export class OnboardingEngine {
         explain: step.explain,
         status: this.enabled(step) ? (rec?.status ?? "pending") : "disabled",
         note: rec?.note ?? null,
+        ...(step.optional ? { optional: true } : {}),
       };
     });
   }
@@ -483,10 +497,15 @@ export class OnboardingEngine {
           rec.note = "verified green without a recorded run";
         }
       }
-      results.push({ id: step.id, ok: outcome.ok, failures: failures(outcome.checks) });
+      results.push({
+        id: step.id,
+        ok: outcome.ok,
+        failures: failures(outcome.checks),
+        ...(step.optional ? { optional: true } : {}),
+      });
     }
     this.save();
-    return { ok: results.every((r) => r.ok), results };
+    return { ok: results.every((r) => r.ok || r.optional === true), results };
   }
 
   /**

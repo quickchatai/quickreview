@@ -11,7 +11,7 @@ import { cancelCauseLabel, isLoudCancelCause, type StatusSnapshot } from "../sta
 import type { AlertBadge } from "./alerts.js";
 import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
 import { filterLabel, visiblePrs, type BoardFilter } from "./filters.js";
-import { glyphFor, type EventLine, type SnapshotPr } from "./model.js";
+import { glyphFor, OFFERED_GLYPH, type EventLine, type SnapshotPr } from "./model.js";
 import { windowStart } from "./panes.js";
 import {
   ACCENT,
@@ -47,7 +47,8 @@ import {
   type LiveAgentProgress,
   type RoundProgressSnapshot,
 } from "@quickchatai/pi-quickreview/src/round-progress.js";
-import type { ConnectionDiagnosis } from "./sshtriage.js";
+import { isLocalDiagnosis, type ConnectionDiagnosis } from "./sshtriage.js";
+import { setupLine, type SetupState } from "./setupstate.js";
 import { FG, RESET, fmtAge, legendLine, osc8, prUrl, stateColor, verdictChip } from "./theme.js";
 
 /** Every clickable thing the board declares. */
@@ -109,6 +110,9 @@ export interface BoardView {
   /** Active board filter (companion `board_filter` verb; F clears).
    * Consumed through `visiblePrs` — never filter a sortPrs call directly. */
   boardFilter?: BoardFilter | null;
+  /** Set while onboarding's checklist exists and is not complete
+   * (src/tui/setupstate.ts): the board says so before anything else. */
+  setup?: SetupState;
 }
 
 // ---- layout ----------------------------------------------------------------
@@ -197,22 +201,26 @@ export function listWidth(prs: SnapshotPr[], cols: number, now: Date = new Date(
 export function boardKeys(
   view: Pick<BoardView, "snapshot" | "boardFilter" | "selected" | "repo">,
 ): LiveKeys {
-  const selected = visiblePrs(view)[view.selected] !== undefined;
+  const row = visiblePrs(view)[view.selected];
+  const selected = row !== undefined;
+  // An offered row (open on GitHub, not tracked yet) has no session, round or
+  // pane: `R` reviews it and `g` opens it, and nothing else addresses it.
+  const tracked = selected && row.offered !== true;
   const bar: BarButton[] = [];
-  if (selected) bar.push({ key: "\r", label: "⏎ pi pane" }, { key: "m", label: "m message" });
+  if (selected) bar.push({ key: "R", label: "R review now" });
+  if (tracked) bar.push({ key: "\r", label: "⏎ pi pane" }, { key: "m", label: "m message" });
   if (selected && view.repo) bar.push({ key: "g", label: "g github" });
   bar.push({ key: "e", label: "e events" });
-  if (selected) bar.push({ key: "u", label: "u unwedge" });
+  if (tracked) bar.push({ key: "u", label: "u unwedge" });
   // Setup is about the repo, not a PR — offered whatever is selected.
   bar.push({ key: "I", label: "I setup" });
   const inline: string[] = [];
-  if (selected) inline.push("a");
+  if (tracked) inline.push("a");
   if (view.boardFilter != null) inline.push("F");
   // A worker-hosted PR's pane is the transcript viewer: `[ ]` step its streams
   // and `< >` its rounds. They are the pane header's keys (painted there), so
   // they exist only while the selected PR's pane is the viewer.
-  const pr = visiblePrs(view)[view.selected];
-  if (pr !== undefined && paneSurface(pr.runtime, pr.number).kind === "viewer")
+  if (tracked && paneSurface(row.runtime, row.number).kind === "viewer")
     inline.push("[", "]", "<", ">");
   return { bar, inline };
 }
@@ -287,6 +295,9 @@ const CONNECTION_LABEL: Record<ConnectionDiagnosis["kind"], string> = {
   "wedged-master": "ssh master wedged",
   "host-unreachable": "host down",
   unknown: "cause unknown",
+  "local-down": "daemon container not running",
+  "local-docker": "local docker not answering",
+  unconfigured: "no ssh_host",
 };
 
 /**
@@ -297,12 +308,30 @@ const CONNECTION_LABEL: Record<ConnectionDiagnosis["kind"], string> = {
  * the truth is "I could not ask"), the reason is named, and the remedy is a
  * command the operator can paste into their own shell.
  */
-export function unknownSourceLines(conn: ConnectionDiagnosis | undefined, width: number): string[] {
+export function unknownSourceLines(
+  conn: ConnectionDiagnosis | undefined,
+  width: number,
+  setup?: SetupState,
+): string[] {
   const lines = [
     `${FG.anomaly}the daemon has not answered yet${RESET}`,
     `${FG.dim}nothing below is a measurement — it is not known${RESET}`,
     "",
   ];
+  if (setup) {
+    // A half-finished onboarding is the whole explanation: the stack is
+    // started by one of its later steps, so daemon or ssh troubleshooting
+    // here would send the operator after a fault that is not one.
+    for (const l of wrap(setupLine(setup), width)) lines.push(`${WARN}${l}${DRESET}`);
+    for (const l of wrap(
+      "the daemon, its memory and this board's connection are set up by the wizard's remaining steps",
+      width,
+    ))
+      lines.push(`${FG.dim}${l}${RESET}`);
+    lines.push("");
+    lines.push(`${FG.dim}r refreshes${RESET}`);
+    return lines.map((l) => truncate(l, width));
+  }
   if (conn && conn.kind !== "ok" && conn.kind !== "local") {
     for (const l of wrap(stripAnsi(conn.cause), width)) lines.push(`${FG.dim}${l}${RESET}`);
     if (conn.remedy !== "") {
@@ -337,7 +366,8 @@ export function unknownDetailLines(conn: ConnectionDiagnosis | undefined, width:
   ];
   if (conn?.detail) {
     lines.push("");
-    for (const l of wrap(`ssh said: ${stripAnsi(conn.detail)}`, width))
+    const who = isLocalDiagnosis(conn) ? "docker" : "ssh";
+    for (const l of wrap(`${who} said: ${stripAnsi(conn.detail)}`, width))
       lines.push(`${FG.dim}${l}${RESET}`);
   }
   return lines.map((l) => truncate(l, width));
@@ -482,9 +512,17 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
       health = `${WARN}▲ DATA STALE (${view.health.dataAgeS}s)${DRESET}`;
       break;
     case "unreachable":
-      health = `${FG.anomaly}✖ unreachable${view.connection ? ` · ${CONNECTION_LABEL[view.connection.kind]}` : ""}${RESET}`;
+      // Under an unfinished setup the setup segment that replaces this is the
+      // cause; a transport label would only point at a fault that is not one
+      // (the list still says, in full, that the daemon has not answered).
+      health = view.setup
+        ? ""
+        : `${FG.anomaly}✖ unreachable${view.connection ? ` · ${CONNECTION_LABEL[view.connection.kind]}` : ""}${RESET}`;
       break;
   }
+  // Short on the bar, where every segment competes for the width; the list
+  // carries the full sentence with the next step.
+  const setupSeg = view.setup ? `${WARN}▲ setup not finished — qcr onboard${DRESET}` : "";
   const s = view.snapshot;
   const rounds = s ? `rounds ${s.running_rounds}/${s.max_concurrent_rounds ?? "?"}` : "";
   const spend = s?.today_spend_usd !== undefined ? `today $${s.today_spend_usd.toFixed(2)}` : "";
@@ -512,6 +550,7 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
     `${HEADING}quickreview${DRESET}`,
     mode,
     health,
+    setupSeg,
     mem?.loud ? mem.text : "",
     loop?.loud ? loop.text : "",
     curation,
@@ -547,6 +586,51 @@ export function alertZone(view: BoardView, cols: number): { x1: number; x2: numb
   const width = displayWidth(stripAnsi(alertSegment(view.alerts, view.alertFocus === true)));
   if (x1 >= cols) return undefined; // truncated away on a narrow terminal
   return { x1, x2: Math.min(cols - 1, x1 + width - 1) };
+}
+
+/**
+ * The board's own guide to the first review, under the PRS header. With open
+ * PRs offered and none tracked it says what to do; with no open PR at all it
+ * says that, naming the repo; once a PR is tracked it is silent. Absent
+ * `open_prs` (a daemon that has not listed yet, or an older one) is unknown,
+ * so the guide says nothing rather than "no open PRs".
+ */
+export function reviewGuideLines(
+  view: Pick<BoardView, "snapshot" | "boardFilter" | "repo">,
+  tracked: number,
+  offered: number,
+  width: number,
+): string[] {
+  if (view.boardFilter != null || tracked > 0 || view.snapshot?.open_prs === undefined) return [];
+  if (offered === 0)
+    return [
+      truncate(
+        `${FG.dim}no open pull requests in ${view.repo ?? "the repository"} — open one, and it is listed here within a few minutes${RESET}`,
+        width,
+      ),
+    ];
+  return [
+    truncate(`${FG.accent}select a pull request (j/k), then R reviews it now${RESET}`, width),
+  ];
+}
+
+/** The detail pane of an offered row: what is known (the PR list's own
+ * fields) and the one thing to do with it. */
+function offeredDetailLines(pr: SnapshotPr, width: number, now: Date): string[] {
+  return [
+    `${FG.dim}${OFFERED_GLYPH}${RESET} ${STRONG}#${pr.number}${RESET} ${STRONG}${truncate(sanitizeText(pr.title), width - 8 - String(pr.number).length)}${RESET}`,
+    truncate(
+      `${FG.author}${pr.author ?? ""}${RESET} ${FG.dim}· updated ${fmtAge(pr.updated_at, now)}${RESET}`,
+      width,
+    ),
+    "",
+    "not reviewed yet",
+    "",
+    truncate(`${STRONG}R${RESET} reviews it now: the reviewer runs one full round`, width),
+    truncate("on this pull request, and its progress shows here.", width),
+    truncate(`${FG.dim}In dry-run (the top bar says so) the review is recorded,${RESET}`, width),
+    truncate(`${FG.dim}never posted to GitHub.${RESET}`, width),
+  ];
 }
 
 function styledRow(
@@ -811,6 +895,7 @@ export function detailLines(
 ): string[] {
   const lines: string[] = [];
   if (!pr) return ["no PR selected"];
+  if (pr.offered) return offeredDetailLines(pr, width, now);
   lines.push(
     `${stateColor(pr.state)}${STRONG}#${pr.number}${RESET} ${STRONG}${truncate(sanitizeText(pr.title), width - 8 - String(pr.number).length)}${RESET}`,
   );
@@ -1010,7 +1095,7 @@ export function detailLines(
 export const HELP_LINES = [
   "1…8            the eight surfaces: board · memory · digest · tickets · deploy · metrics · feedback · scan",
   "               the bar at the foot shows what THIS frame answers to; a button that is not there is a key that would do nothing",
-  "r / s / ? / q  refresh · reconnect VM ssh (the one ssh key-passphrase prompt) · this overlay · quit (asks first)",
+  "r / s / ? / q  refresh · re-check the connection (VM route: ssh, the one key-passphrase prompt; local route: the daemon container) · this overlay · quit (asks first)",
   "Ctrl-c ×3      kill the TUI from anywhere (terminal restored) — the un-stuck hatch",
   "               an alert in the top bar: click it or ⏎ to open the companion",
   "the companion column down the right edge is on every tab:",
@@ -1025,6 +1110,7 @@ export const HELP_LINES = [
   "< / >          past / later round in the viewer; PgUp / wheel parks it, End follows the tail again",
   "               its input line (focused pane): ⏎ steers the running round, or sends a message to an idle PR; Alt-⏎ queues a follow-up",
   "               Alt-p marks the next message may-post (shown, reset after send); Ctrl-c asks to abort the round (y confirms); [ ] < > are keys only while the line is empty",
+  "R              review the selected PR now — any open PR, tracked or not (○ not reviewed): one round, nothing posted in dry-run",
   "m              quick-message the selected PR's session",
   "u              unwedge: cancel the running round and re-queue it (nothing posted, no GitHub write)",
   "e              events overlay (j/k scroll, e/Esc close; click an event → its PR)",
@@ -1296,11 +1382,22 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
   // detail pane says "no data" rather than "no PR selected".
   const known = view.snapshot !== undefined;
   const flabel = filterLabel(view.boardFilter);
+  const offered = sorted.filter((p) => p.offered === true).length;
   const listLines: string[] = known
-    ? [section(`PRS (${sorted.length})`, flabel !== "" ? flabel : "the daemon's live set")]
+    ? [
+        section(
+          `PRS (${sorted.length})`,
+          flabel !== ""
+            ? flabel
+            : offered > 0
+              ? `${sorted.length - offered} tracked · ${offered} open, not reviewed`
+              : "the daemon's live set",
+        ),
+        ...reviewGuideLines(view, sorted.length - offered, offered, listW - 1),
+      ]
     : [
         section("PRS (?)", "unknown — the daemon has not answered"),
-        ...unknownSourceLines(view.connection, listW - 1),
+        ...unknownSourceLines(view.connection, listW - 1, view.setup),
       ];
   // The list scrolls with the selection: the verbs act on the selected PR, so
   // it must never sit off-screen (`windowStart`, the tabs' shared rule). The

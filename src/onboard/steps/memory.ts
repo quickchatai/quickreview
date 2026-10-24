@@ -700,6 +700,15 @@ function serverUnreachableDetail(ctx: StepContext, base: string, why: string): s
   const flags = forwardFlags(ctx);
   const cmd = (sub: string): string =>
     `\`cd ${root} && node scripts/companion-memory-forward.mjs ${sub} ${flags}\``;
+  if (topologyOf(ctx.choices) !== "vm")
+    return (
+      `no OpenViking answering at ${base} (${why}). The root key is in place, which is what the daemon needs at boot. ` +
+      "Before the bring-up that is expected, and nothing is needed from you: the bring-up step starts the memory engine, " +
+      "and the memory_user_keys step after it reaches it through a memory forward the wizard opens itself, then mints " +
+      "the two user keys. If the stack is already up, the memory container is the thing to check " +
+      "(`docker compose ps memory`, `docker compose logs memory`); a forward that stays up outside the wizard is " +
+      `${cmd("install")} (the systemd unit) or \`qcr tui\`, which starts one.`
+    );
   return (
     `no OpenViking answering at ${base} (${why}). The root key is in place, which is what the daemon needs at boot. ` +
     "The memory engine listens only on its own container's loopback (the memory sidecar on the laptop route), so this machine reaches it through the memory " +
@@ -896,7 +905,7 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
     };
   };
 
-  return {
+  const step: OnboardingStep = {
     id: MEMORY_STEP_ID,
     title: "Memory: mint, place and confine the OpenViking keys",
     explain:
@@ -1215,6 +1224,54 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
       if (onServer) checks.push(onServer);
       return { ok: checks.every((c) => c.ok), checks };
     },
+  };
+
+  // On the compose route the engine is reachable from this machine only
+  // through the memory forward, and the wizard runs before any TUI has opened
+  // one: each call holds one open for its own duration (adopting a running
+  // forward, closing one it started). A declined memory needs no server.
+  const withForward = async (
+    ctx: StepContext,
+    body: () => Promise<StepReport>,
+  ): Promise<StepReport> => {
+    const open = ctx.adapters.memoryForward;
+    const declined =
+      ctx.input.choice === "declined" ||
+      (ctx.input.choice === undefined && ctx.choices[MEMORY_CHOICE_KEY] === "declined");
+    if (!open || declined || topologyOf(ctx.choices) === "vm") return body();
+    const facts = remoteFactsFor(ctx.adapters, ctx.choices);
+    let forward: Awaited<ReturnType<typeof open>> = null;
+    try {
+      forward = await open({
+        baseUrl: resolvePaths(opts, ctx).base,
+        repoRoot: rootOf(ctx.adapters),
+        container: facts.memoryContainer,
+        sudoDocker: facts.sudo,
+        log: (line) => ctx.adapters.log?.(line),
+      });
+    } catch {
+      forward = null;
+    }
+    try {
+      const report = await body();
+      return forward?.started
+        ? {
+            ...report,
+            checks: [
+              { name: "memory-forward", ok: true, detail: forward.detail },
+              ...report.checks,
+            ],
+          }
+        : report;
+    } finally {
+      forward?.stop();
+    }
+  };
+
+  return {
+    ...step,
+    run: (ctx) => withForward(ctx, () => step.run(ctx)),
+    verify: (ctx) => withForward(ctx, () => step.verify(ctx)),
   };
 }
 

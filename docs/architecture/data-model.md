@@ -525,8 +525,9 @@ mutation is recorded to `state/dryrun/` instead of executed.
 | Key | Type | Default |
 | --- | --- | --- |
 | `repo` | string | `""` (must be filled: `owner/name`) |
-| `app_slug` | string | `""` |
-| `bot_login` | string | `""` (`<app_slug>[bot]`) |
+| `auth` | `"app"` \| `"user"` | `"app"` (`"user"`: the person's own token, polling-only, every review a COMMENT) |
+| `app_slug` | string | `""` (may stay `""` under `auth = "user"`) |
+| `bot_login` | string | `""` (`<app_slug>[bot]`; the person's login under `auth = "user"`) |
 | `review_team` | string | `""` (`org/team`) |
 | `trigger_label` | string | `"AI review requested"` |
 | `in_progress_label` | string | `"AI review in progress"` |
@@ -542,7 +543,8 @@ mutation is recorded to `state/dryrun/` instead of executed.
 
 **`[server]`** — `hostname` (string, `""`), `port` (number, `8787`, loopback).
 
-**`[ingress]`** — `shape` (`"none"` \| `"tunnel-file"`, default `"none"`),
+**`[ingress]`** — `shape` (`"none"` \| `"tunnel-file"` \| `"polling"`, default
+`"none"`; `"polling"` refuses every webhook and is required by `[github] auth = "user"`),
 `hostname_file` (path, `""` → `<root>/state/ingress/hostname`), `debounce_ms`
 (number, `3000`), `sweep_interval_s` (number, `300`).
 

@@ -11,6 +11,36 @@ This file is the contract the `?` overlay (`HELP_LINES`) and the command bar's
 vocabulary (`TAB_VOCABULARY`, `TAB_INLINE_KEYS` in `src/tui/cmdbar.ts`) are
 pinned against — `tests/tui-surfaces.test.ts` fails when they disagree.
 
+## Where the daemon is
+
+`[tui] target` picks the route: `ssh` to the VM, or `local` — the compose
+stack on this machine, where every read is a plain `docker exec` and no ssh
+process is ever spawned. Before the first frame the TUI resolves the route
+once (`src/tui/route.ts`) from `[tui]` plus three local facts that cost no
+docker call: the project `.env`, the onboarding checklist, and whether this
+user can open the Docker socket.
+
+- `target = "ssh"` with an empty `ssh_host` is never `ssh ""`. On a compose
+  project (the checklist recorded the local topology, or the `.env` pins
+  `QCR_VERSION`) the TUI reads the local stack and says so once; otherwise the
+  board says "ssh_host is empty — run `qcr onboard`, or set [tui] target =
+  "local"" and the memory forward stays off with the same words.
+- On the local route the VM-shaped defaults are read for one box: the state
+  dir is the release image's `/opt/qcr/state`, a compose `-daemon-N`
+  container implies its `-memory-N` sidecar for the memory forward, and sudo
+  is dropped when the socket answers without it. A value the file sets
+  differently from the shipped default always wins.
+- The connection step and the board name the local causes in local terms —
+  the daemon container absent or stopped (with the `docker compose … up -d`
+  that starts it), or Docker itself not answering — never an ssh fix.
+- While onboarding's checklist exists and is not complete, the first frame
+  says so: the top bar carries "setup not finished — qcr onboard", and where
+  the PR list would be, the full line names the wizard's next step instead of
+  any daemon or ssh troubleshooting. The data stays unknown (`PRS (?)`).
+- The companion runs the release image the compose stack already pulled
+  (`ghcr.io/quickchatai/quickreview:<QCR_VERSION>`) on a first start, unless
+  `[companion] image` names another or a local build of the default exists.
+
 ## The surfaces
 
 | # | surface | what it is for |
@@ -51,7 +81,7 @@ Three rules hold everywhere:
 | `1` … `8` | open that surface |
 | `j` / `k`, `↓` / `↑` | move the selection (or scroll a document) |
 | `r` | refresh |
-| `s` | re-check the VM ssh connection — the one ssh key-passphrase prompt |
+| `s` | re-check the connection — on the VM route ssh (the one ssh key-passphrase prompt), on the local route the daemon container |
 | `?` | this key map |
 | `q` | quit (asks first); Ctrl-C twice also quits, Ctrl-C ×3 kills the TUI from anywhere |
 | `/` | focus the companion column — and reach pi, so its command menu opens |
@@ -63,8 +93,15 @@ The verbs act on the **selected PR**, so they exist only while one is
 selected — and only on the board. `e` and `I` are the exceptions: the events
 overlay and setup are about the whole repo.
 
+The list is the PRs the daemon tracks, then every other open PR of the
+repository (status.json `open_prs`, from the reconcile poll), marked `○ not
+reviewed`. An offered row has no session or round yet: `R` reviews it and `g`
+opens it, and the detail pane says so. While nothing is tracked, a line under
+the PRS header says what to do: select a pull request, then `R`.
+
 | key | does |
 | --- | --- |
+| `R` | review the selected PR now — any open PR of the repo, tracked or not: the daemon queues one round (the `review-now` operator command, as `qcr review-now <n>`), and in dry-run nothing is posted |
 | `⏎` / `a` | focus the selected PR's pane (embedded below the list; Ctrl-q back) |
 | `[` / `]` | transcript viewer only: previous / next stream of the shown round — the main session, then each lens (a click on a lens row of the progress panel picks that lens) |
 | `<` / `>` | transcript viewer only: an earlier / later round; the newest round is followed |

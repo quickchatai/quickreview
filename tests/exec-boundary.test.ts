@@ -174,6 +174,40 @@ describe("the layer that was NOT told about them", () => {
     expect(auditUngatedReviews([wrapper], HEAD, noTraces, bot)).toHaveLength(1);
   });
 
+  it("person mode (auth = user) counts only marker-bearing reviews under the person's login", () => {
+    // MUTATION: drop the marker requirement in isBotAuthored's person-mode
+    // branch — the person's own hand-written approval then alarms, and this fails.
+    const person = { botLogin: "alice", appSlug: "", personMode: true };
+    const byPerson = (over: Partial<AuditedReview>) =>
+      review({ user: "alice", user_type: "User", ...over });
+    // the person approving by hand is a human review, never an alarm
+    expect(
+      auditUngatedReviews([byPerson({ body: "LGTM, ship it" })], HEAD, noTraces, person),
+    ).toEqual([]);
+    // the reviewer's words (its footer, or a qcr marker) with no posting record ARE reported
+    for (const body of [
+      "Findings…\n\n_Automated review by `alice` (quickreview sandbox). Reply…_",
+      "Findings…\n\n<!-- qcr-post:v1:9:1:feedface -->",
+    ]) {
+      const found = auditUngatedReviews(
+        [byPerson({ state: "COMMENTED", body })],
+        HEAD,
+        noTraces,
+        person,
+      );
+      expect(found, body).toHaveLength(1);
+    }
+    // someone else carrying a marker is not the reviewer
+    expect(
+      auditUngatedReviews(
+        [review({ user: "bob", body: "<!-- qcr-post:v1:9:1:feedface -->" })],
+        HEAD,
+        noTraces,
+        person,
+      ),
+    ).toEqual([]);
+  });
+
   it("catches an approval the daemon never recorded, whatever posted it", () => {
     const found = auditUngatedReviews([review({})], HEAD, noTraces, bot);
     expect(found).toHaveLength(1);

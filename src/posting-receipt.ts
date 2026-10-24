@@ -52,6 +52,11 @@ export interface PostingReceipt {
    * (APPROVE posted as a COMMENT, approval withheld for red CI) is something
    * the verdict file cannot know: see `retrySoftenedApproval`. */
   delivered_by?: "daemon_retry";
+  /** Written by a person-mode install (`[github] auth = "user"`): the posting
+   * guard posts EVERY review as a COMMENT there, so `actual_event` COMMENT
+   * proves nothing about the decision — `intended_event` carries it, and an
+   * APPROVE posted as a COMMENT is not a withheld approval. */
+  person_mode?: true;
   /** In memory only, never written by the posting scripts: the
    * daemon SYNTHESISED this receipt from a bot review carrying the round's
    * marker, because the shell never persisted its own. `intended_event` is
@@ -209,6 +214,7 @@ export function parsePostingReceipt(raw: string): PostingOutcome | undefined {
         value.status !== "deferred") ||
       (value.status === "deferred" && !isoDate(value.deferred_at)) ||
       (value.delivered_by !== undefined && value.delivered_by !== "daemon_retry") ||
+      (value.person_mode !== undefined && value.person_mode !== true) ||
       typeof value.payload_sha256 !== "string" ||
       !/^[a-f0-9]{64}$/.test(value.payload_sha256) ||
       !isoDate(value.prepared_at)
@@ -245,6 +251,7 @@ export function parsePostingReceipt(raw: string): PostingOutcome | undefined {
  * the receipt is the evidence that the approval was withheld. */
 export function retrySoftenedApproval(receipt: PostingReceipt): boolean {
   return (
+    receipt.person_mode !== true &&
     receipt.delivered_by === "daemon_retry" &&
     receipt.status === "confirmed" &&
     receipt.intended_event === "APPROVE" &&
@@ -259,6 +266,16 @@ export function receiptMatchesVerdict(receipt: PostingReceipt, verdict: VerdictF
     receipt.head_sha.toLowerCase() !== verdict.head_sha.toLowerCase()
   )
     return false;
+  // Person mode posts every review as a COMMENT. A receipt synthesised from
+  // GitHub knows nothing more than that; any other one is matched on what
+  // the session asked for, as if it had been posted as asked.
+  if (receipt.person_mode === true && receipt.actual_event === "COMMENT") {
+    if (receipt.reconciled === true) return true;
+    const asAsked: PostingReceipt = { ...receipt, actual_event: receipt.intended_event };
+    delete asAsked.person_mode;
+    delete asAsked.delivered_by;
+    return receiptMatchesVerdict(asAsked, verdict);
+  }
   if (verdict.verdict === "REQUEST_CHANGES")
     return receipt.actual_event === "REQUEST_CHANGES" || receipt.actual_event === "COMMENT";
   if (verdict.verdict === "APPROVE" && retrySoftenedApproval(receipt)) return true;

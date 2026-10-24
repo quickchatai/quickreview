@@ -55,6 +55,57 @@ async function fixture(onFeedback = async (_e: unknown) => {}) {
 }
 
 it(
+  "the polling shape boots with no webhook_secret on disk and hands the server none (auth = user needs no App secret)",
+  { timeout: HEAVY_TIMEOUT_MS },
+  async () => {
+    // MUTATION: make readWebhookSecret read the file regardless of the shape —
+    // the boot then throws ENOENT on the empty secrets dir, and this fails.
+    const root = mkdtempSync(join(tmpdir(), "qcr-webhook-poll-"));
+    const store = new StateStore(":memory:");
+    let captured: webhook.WebhookDeps | undefined;
+    vi.spyOn(webhook, "createWebhookServer").mockImplementation((deps) => {
+      captured = deps;
+      return {
+        listen: (_port: number, _host: string, cb: () => void) => cb(),
+        close: (cb: () => void) => cb(),
+      } as unknown as ReturnType<typeof webhook.createWebhookServer>;
+    });
+    const person = {
+      ...cfg,
+      github: {
+        ...cfg.github,
+        auth: "user" as const,
+        app_slug: "",
+        secrets_dir: join(root, "no-secrets"),
+      },
+      ingress: { ...cfg.ingress, shape: "polling" as const },
+    };
+    const daemon = createDaemon({
+      cfg: person,
+      root,
+      store,
+      adapter: {
+        searchLabelTriggered: async () => [],
+        searchTeamTriggered: async () => [],
+        searchAwaitingEscalationReviewer: async () => [],
+        listOpenPrs: async () => [],
+        stalenessScan: async () => [],
+        listBotReviewComments: async () => [],
+      } as unknown as DaemonAdapter,
+      log: () => {},
+    });
+    try {
+      await daemon.start();
+      expect(captured?.secret).toBe("");
+    } finally {
+      await daemon.stop();
+      store.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+it(
   "production ingress forwards the GUID so lifecycle publication runs once across callback retries",
   { timeout: HEAVY_TIMEOUT_MS },
   async () => {

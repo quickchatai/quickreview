@@ -310,7 +310,8 @@ describe("going live", () => {
     seedChoices({ [PROOF_CHOICE_KEY]: PROOF, [GO_LIVE_CHOICE_KEY]: "live" });
     const h = harness();
     const all = await h.engine.verifyAll();
-    expect(all.ok).toBe(false);
+    // After setup: the step is red, the checklist does not wait on it.
+    expect(all.results[0]!.ok).toBe(false);
     expect(all.results[0]!.failures.join(" ")).toMatch(/the flip did not stick/);
   });
 });
@@ -420,7 +421,7 @@ describe("declining is a first-class outcome", () => {
   it("with no answer at all the step is red — the wizard wants a decision, not a default", async () => {
     const h = harness();
     const all = await h.engine.verifyAll();
-    expect(all.ok).toBe(false);
+    expect(all.results[0]!.ok).toBe(false);
     expect(all.results[0]!.failures.join(" ")).toMatch(
       /staying in dry-run is a complete, finished installation/,
     );
@@ -484,9 +485,9 @@ describe("the restart that makes the flip real is never forgotten", () => {
     });
     expect(flip.ok).toBe(false);
     expect(dryRunOnDisk()).toBe(false);
-    const red = await failing.engine.finish();
-    expect(red.ok).toBe(false);
-    if (!red.ok) expect(red.results[0]!.failures.join(" ")).toMatch(/restart .* did not complete/);
+    const red = await failing.engine.verifyAll();
+    expect(red.results[0]!.ok).toBe(false);
+    expect(red.results[0]!.failures.join(" ")).toMatch(/restart .* did not complete/);
 
     const healthy = harness();
     const paid = await healthy.engine.runStep(GO_LIVE_STEP_ID, {

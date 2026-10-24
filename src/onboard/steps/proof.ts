@@ -4,14 +4,23 @@
 // the review it produced before anything could ever reach GitHub.
 //
 // The shape:
-//   1. ask for a real PR of theirs with the trigger label on it (the wizard
-//      never creates a demo PR);
-//   2. follow the round to completion THROUGH THE STATE STORE — the daemon's
+//   1. ask for one real, open PR (a number or its URL; the five most recently
+//      updated open PRs of the repo are offered, the person's own included —
+//      on the own-account route those are the main target). The wizard never
+//      creates a demo PR;
+//   2. start its review IMMEDIATELY: one `review-now` command into the
+//      daemon's root-sealed operator channel (src/commands.ts, the channel
+//      `qcr drain` and the TUI's levers use), which queues the PR exactly as a
+//      fresh trigger label would — with no GitHub write and no label for the
+//      person to add. A daemon that cannot take the command (an older image)
+//      falls back to the label, said plainly;
+//   3. follow the round to completion THROUGH THE STATE STORE — the daemon's
 //      own record, read with the daemon's own `qcr why --json` inside the
 //      container, so the wizard is reading exactly what the operator would;
-//   3. SHOW the finished review, read out of the dry-run record — the file the
-//      mutation gate wrote INSTEAD of calling GitHub. The operator judges the
-//      output while it is still impossible for it to have posted.
+//   4. SHOW the finished review, read out of the dry-run record — the file the
+//      mutation gate wrote INSTEAD of calling GitHub: the verdict, how many
+//      findings, the top ones, and where the full text is. The operator judges
+//      the output while it is still impossible for it to have posted.
 //
 // Two paths get real guidance rather than a spinner, because they are the two
 // that actually happen: the round never starts (label spelling, webhook not
@@ -19,11 +28,16 @@
 // is cancelled (the daemon's own event log says why). Neither ever hangs: the
 // poll is bounded and every attempt logs where it got to.
 //
-// Nothing here writes anything anywhere. It reads the state store, reads the
-// dry-run directory, and records what it saw on the checklist — the record the
-// go-live step later demands before it will even offer the flip.
+// The one thing it writes is that operator command file. Otherwise it reads the
+// state store, the dry-run directory and (to offer PRs) GitHub, and records
+// what it saw on the checklist — the record the go-live step later demands
+// before it will even offer the flip.
+import { join } from "node:path";
+import { mintAppJwt, USER_TOKEN_FILE } from "@quickchatai/pi-quickreview/src/githubAuth.js";
 import { loadConfig } from "../../config.js";
-import { CHOICE_KEYS } from "../choices.js";
+import { operatorCommandWriteScriptAt } from "../../operatorwrite.js";
+import { CHOICE_KEYS, userAuthRecorded } from "../choices.js";
+import { readTextOrNull } from "../engine.js";
 import type {
   CheckResult,
   OnboardAdapters,
@@ -37,12 +51,30 @@ import {
   type DryrunRecord,
   type ReviewSnapshot,
 } from "../../compare.js";
-import { CONTAINER_DRYRUN_DIR, configPath, readConfigText } from "./compose.js";
-import { readTomlKey } from "./ingress.js";
-import { DEFAULT_LABELS } from "./githubapp.js";
+import {
+  CONTAINER_COMMANDS_DIR,
+  CONTAINER_DRYRUN_DIR,
+  configPath,
+  readConfigText,
+} from "./compose.js";
+import { readTomlKey, secretsDirFor } from "./ingress.js";
+import {
+  DEFAULT_LABELS,
+  api,
+  findInstallation,
+  installationToken,
+  parseRepoSlug,
+  readCredentials,
+  type RepoSlug,
+} from "./githubapp.js";
 import { stackTransportFor, type StackTransport, type TransportOptions } from "./transport.js";
 
 export const PROOF_STEP_ID = "proof_round";
+
+/** A string input or choice, else "" — never an object's stringification. */
+function textOf(v: unknown): string {
+  return typeof v === "string" ? v : "";
+}
 /** The completed-proof record. The go-live step will not offer the flip
  * without it AND a state-store re-verification of it. */
 export const PROOF_CHOICE_KEY = CHOICE_KEYS.proof;
@@ -238,14 +270,58 @@ export function recordForPr(r: DryrunRecord, pr: number): boolean {
   return r.pr === pr || new RegExp(`/(pulls|issues)/${pr}(/|$)`).test(r.path);
 }
 
+/** How many findings the summary lists before "and N more". */
+export const TOP_FINDINGS = 5;
+
+export interface ReviewRenderExtras {
+  /** The round's verdict on the merits (the review EVENT can be COMMENT on
+   * the own-account route, where the verdict is stated in the body). */
+  verdict?: string | null;
+  /** Where the full record is, and the command that prints it. */
+  file?: string;
+  readCommand?: string;
+}
+
+/** The first line of a comment, trimmed to one readable line. */
+function headline(body: string): string {
+  const line =
+    body
+      .trim()
+      .split("\n")
+      .find((l) => l.trim() !== "") ?? "";
+  const flat = line.trim();
+  return flat.length > 160 ? `${flat.slice(0, 157)}…` : flat;
+}
+
 /** The would-be review, rendered for a human to judge. */
-export function renderReview(review: ReviewSnapshot, pr: number): string {
+export function renderReview(
+  review: ReviewSnapshot,
+  pr: number,
+  extras: ReviewRenderExtras = {},
+): string {
+  const top = review.comments
+    .slice(0, TOP_FINDINGS)
+    .map((c, i) => `  ${i + 1}. ${c.path}:${c.line} — ${headline(c.body)}`);
+  const more = review.comments.length - top.length;
   const head = [
     `This is the review your reviewer produced for #${pr}. It was NOT posted: dry_run is on, so the`,
     `mutation gate wrote it to state/dryrun/ instead of calling GitHub.`,
     "",
     `Verdict it would have submitted: ${review.state}`,
+    ...(extras.verdict && extras.verdict !== review.state
+      ? [
+          `Verdict on the merits: ${extras.verdict} (stated in the review body; GitHub gets it as a ${review.state} review)`,
+        ]
+      : []),
     `Inline comments: ${review.comments.length}`,
+    ...(top.length > 0
+      ? ["Top findings:", ...top, ...(more > 0 ? [`  … and ${more} more, below`] : [])]
+      : []),
+    ...(extras.file
+      ? [
+          `Full text: state/dryrun/${extras.file} in the daemon's state${extras.readCommand ? ` — \`${extras.readCommand}\`` : ""}`,
+        ]
+      : []),
     "",
     "--- review body ---",
     review.body.trim() === "" ? "(empty body)" : review.body.trim(),
@@ -268,7 +344,17 @@ export interface ProofStepOptions {
    * `stackTransportFor` decides it from the recorded topology, so the proof
    * round is the same act on a laptop and on a server. */
   transport?: TransportOptions;
+  /** GitHub's API base (the open-PR offer). */
+  apiBase?: string;
+  /** Secrets dir for the offer's read token; default: the one resolution. */
+  secretsDir?: string;
+  /** How many times the review-now result file is read before giving up. */
+  resultAttempts?: number;
+  resultIntervalMs?: number;
 }
+
+/** How many open PRs the offer lists. */
+export const PR_OFFER_SIZE = 5;
 
 function triggerLabelOf(adapters: OnboardAdapters): string {
   const text = readConfigText(adapters);
@@ -283,15 +369,116 @@ function repoOf(choices: Readonly<Record<string, unknown>>, adapters: OnboardAda
   return (text ? readTomlKey(text, "github", "repo") : null) ?? "your repository";
 }
 
+/** A PR answer: 17, "17", "#17", or the PR's URL (github.com/o/r/pull/17).
+ * A URL names its repo too, which the caller checks against the reviewed one. */
+export function parsePrAnswer(raw: unknown): { pr: number; repo: string | null } | null {
+  if (typeof raw === "number")
+    return Number.isInteger(raw) && raw > 0 ? { pr: raw, repo: null } : null;
+  if (typeof raw !== "string") return null;
+  const v = raw.trim();
+  const url =
+    /^(?:https?:\/\/)?(?:www\.)?github\.com\/([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)\/pull\/(\d+)(?:[/?#].*)?$/.exec(
+      v,
+    );
+  if (url) return { pr: Number(url[2]), repo: url[1]! };
+  const n = /^#?(\d+)$/.exec(v);
+  return n && Number(n[1]) > 0 ? { pr: Number(n[1]), repo: null } : null;
+}
+
 function prFrom(
   input: Readonly<Record<string, unknown>>,
   choices: Readonly<Record<string, unknown>>,
-): number | null {
-  for (const raw of [input.pr, parseProofRecord(choices[PROOF_CHOICE_KEY])?.pr]) {
-    const n = typeof raw === "string" ? Number(raw.trim()) : raw;
-    if (typeof n === "number" && Number.isInteger(n) && n > 0) return n;
+): { pr: number; repo: string | null } | null {
+  for (const raw of [input.pr, input.url, parseProofRecord(choices[PROOF_CHOICE_KEY])?.pr]) {
+    const parsed = parsePrAnswer(raw);
+    if (parsed) return parsed;
   }
   return null;
+}
+
+/** A command file name the daemon's watcher serves (`*.json`), unique per call. */
+export function reviewNowFileName(now: Date, pr: number): string {
+  return `${now.toISOString().replace(/[:.]/g, "-")}-onboard-reviewnow-${pr}.json`;
+}
+
+/** The argv that writes one `review-now` command into the root-sealed
+ * operator directory, through the same script the TUI's levers use. The
+ * payload is built here from a number, so it can carry no quote. */
+export function reviewNowWriteArgv(name: string, pr: number): string[] {
+  if (!Number.isInteger(pr) || pr <= 0) throw new Error(`not a PR number: ${pr}`);
+  const payload = JSON.stringify({ command: "review-now", pr });
+  return [
+    "sh",
+    "-c",
+    `printf '%s\\n' '${payload}' | ( ${operatorCommandWriteScriptAt(CONTAINER_COMMANDS_DIR, name)} )`,
+  ];
+}
+
+/** The argv that prints the daemon's result for that command, or `pending`. */
+export function reviewNowResultArgv(name: string): string[] {
+  const file = `${CONTAINER_COMMANDS_DIR}/results/${name.replace(/\.json$/, "")}.result.json`;
+  return ["sh", "-c", `if [ -f '${file}' ]; then cat '${file}'; else echo pending; fi`];
+}
+
+export interface OpenPr {
+  number: number;
+  title: string;
+  author: string;
+  updated_at: string;
+  draft: boolean;
+}
+
+/** A token that can read the reviewed repo: the person's token file on the
+ * own-account route, an App installation token on the App route; null when
+ * neither is to hand (the offer is then skipped, never guessed). */
+async function readToken(
+  ctx: StepContext,
+  repo: RepoSlug,
+  apiBase: string,
+  secretsDir: string,
+): Promise<string | null> {
+  if (userAuthRecorded(ctx.choices)) {
+    const token = (readTextOrNull(join(secretsDir, USER_TOKEN_FILE)) ?? "").trim();
+    return token === "" ? null : token;
+  }
+  const creds = readCredentials(secretsDir);
+  if (!creds.complete) return null;
+  try {
+    const jwt = mintAppJwt(creds.appId!, creds.pem!, () => ctx.adapters.clock().getTime());
+    const found = await findInstallation(ctx.adapters.fetch, apiBase, jwt, repo.owner);
+    if (found.status !== "found") return null;
+    const minted = await installationToken(ctx.adapters.fetch, apiBase, jwt, found.id);
+    return "token" in minted ? minted.token : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The repo's most recently updated open PRs (any author — the person's own
+ * included). Empty when GitHub cannot be read. */
+export async function listOpenPrs(
+  fetchFn: typeof fetch,
+  apiBase: string,
+  token: string,
+  repo: RepoSlug,
+  limit = PR_OFFER_SIZE,
+): Promise<OpenPr[]> {
+  const r = await api(
+    fetchFn,
+    `${apiBase}/repos/${repo.owner}/${repo.name}/pulls?state=open&sort=updated&direction=desc&per_page=${limit}`,
+    { headers: { authorization: `Bearer ${token}` } },
+  );
+  if (r.status !== 200 || !Array.isArray(r.body)) return [];
+  return (r.body as Array<Record<string, unknown>>)
+    .filter((p) => typeof p.number === "number")
+    .slice(0, limit)
+    .map((p) => ({
+      number: p.number as number,
+      title: typeof p.title === "string" ? p.title : "",
+      author: textOf((p.user as { login?: unknown } | null)?.login),
+      updated_at: typeof p.updated_at === "string" ? p.updated_at : "",
+      draft: p.draft === true,
+    }));
 }
 
 export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
@@ -299,6 +486,9 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
   const pollIntervalMs = opts.pollIntervalMs ?? 30_000;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const dryrunLimit = opts.dryrunLimit ?? 40;
+  const apiBase = opts.apiBase ?? "https://api.github.com";
+  const resultAttempts = opts.resultAttempts ?? 15;
+  const resultIntervalMs = opts.resultIntervalMs ?? 2_000;
 
   function log(ctx: StepContext, line: string): void {
     ctx.adapters.log?.(`${PROOF_STEP_ID}: ${line}`);
@@ -322,23 +512,132 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
       : { obs: null, detail: `\`qcr why\` did not answer JSON: ${r.stdout.slice(0, 200)}` };
   }
 
+  /** Send `review-now` for `pr` and wait for the daemon's receipt. `refused`
+   * means the daemon read the command and said no (its reason is the answer);
+   * otherwise a failure is the channel itself (write or no receipt). */
+  async function requestReview(
+    ctx: StepContext,
+    transport: StackTransport,
+    pr: number,
+  ): Promise<{ ok: boolean; refused: boolean; detail: string }> {
+    const name = reviewNowFileName(ctx.adapters.clock(), pr);
+    const write = await transport.execAsRoot(reviewNowWriteArgv(name, pr));
+    if (write.code !== 0)
+      return {
+        ok: false,
+        refused: false,
+        detail: `the command write failed: ${(write.stderr || write.stdout).trim().slice(0, 200) || `exit ${write.code}`}`,
+      };
+    for (let attempt = 1; attempt <= resultAttempts; attempt += 1) {
+      await sleep(resultIntervalMs);
+      const read = await transport.exec(reviewNowResultArgv(name));
+      const body = read.code === 0 ? read.stdout.trim() : "";
+      if (body === "" || body === "pending") continue;
+      let v: Record<string, unknown>;
+      try {
+        v = JSON.parse(body) as Record<string, unknown>;
+      } catch {
+        continue; // the daemon may still be writing its receipt
+      }
+      if (v.ok === true)
+        return {
+          ok: true,
+          refused: false,
+          detail: `queued${typeof v.state === "string" ? `, state ${v.state}` : ""}`,
+        };
+      return {
+        ok: false,
+        refused: true,
+        detail:
+          typeof v.reason === "string"
+            ? v.reason.replace(/\s+/g, " ").slice(0, 300)
+            : "no reason given",
+      };
+    }
+    return {
+      ok: false,
+      refused: false,
+      detail: `no answer to ${name} after ${resultAttempts} reads — the daemon may still be starting`,
+    };
+  }
+
+  /** No PR yet: offer the repo's open PRs, and say what happens next. */
+  async function askCheck(
+    ctx: StepContext,
+    repo: string,
+    label: string,
+    posture: string | null,
+    typed: boolean,
+  ): Promise<CheckResult> {
+    const slug = parseRepoSlug(repo);
+    let offer: OpenPr[] = [];
+    if (slug) {
+      const token = await readToken(
+        ctx,
+        slug,
+        apiBase,
+        opts.secretsDir ?? secretsDirFor(ctx.adapters, ctx.choices),
+      );
+      if (token) offer = await listOpenPrs(ctx.adapters.fetch, apiBase, token, slug);
+    }
+    const me = textOf(ctx.choices[CHOICE_KEYS.accountLogin]);
+    const rows = offer.map(
+      (p) =>
+        `  #${p.number} ${p.title}${p.draft ? " (draft)" : ""} — by ${p.author}${me !== "" && p.author === me ? " (yours)" : ""}, updated ${p.updated_at}`,
+    );
+    const assurance =
+      posture === "true"
+        ? "Nothing will be posted to GitHub: dry_run is on, so every would-be comment and review is written to a file instead, and you will read it here before deciding anything."
+        : posture === "false"
+          ? "This installation is LIVE (dry_run = false): the review will be posted to GitHub. The flag belongs to you; these instructions do not change it."
+          : "The dry_run posture could not be read, so posting is unknown. Check the live config before reviewing a PR.";
+    return {
+      name: "ask",
+      ok: false,
+      detail:
+        (typed ? "That is not a pull request number or link.\n" : "") +
+        "Read this out, then call this tool again with the PR number (pr) or its link (url).\n\n" +
+        (rows.length > 0
+          ? `The ${rows.length} most recently updated open pull requests in ${repo}:\n${rows.join("\n")}\n` +
+            "Pick one of these — or any other open PR in it — one you would actually want reviewed.\n"
+          : `Pick a real, open pull request in ${repo} — one you would actually want reviewed (your own is fine).\n`) +
+        "Its review starts as soon as you name it: nothing to add to the PR. (For later reviews, the trigger is the label " +
+        `"${label}" — the reviewer never reviews anything on its own initiative.)\n` +
+        assurance,
+    };
+  }
+
   return {
     id: PROOF_STEP_ID,
     title: "The proof: watch a real PR get reviewed",
     explain:
-      "The wizard does not call itself done until you have seen the reviewer work. Ask the operator to open (or pick) one of " +
-      "their own pull requests and put the trigger label on it, then call this tool with that PR number. It follows the round " +
-      "through the daemon's own state until a verdict lands, and then SHOWS them the review it produced — read out of the " +
-      "dry-run record, so they judge the output while it is still impossible for it to have posted to GitHub. If nothing " +
-      "happens, or the round fails, it says what to check rather than waiting forever.",
+      "The wizard does not call itself done until you have seen the reviewer work, on one real, open pull request. Call this " +
+      "tool with no arguments to get the repo's five most recently updated open PRs (the operator's own included) to pick " +
+      "from, then call it again with pr (a number) or url (the PR's link). The review starts IMMEDIATELY — no label to add: " +
+      "the wizard asks the daemon directly. It follows the round through the daemon's own state until a verdict lands, then " +
+      "SHOWS the review — the verdict, how many findings, the top ones, and where the full text is — read out of the " +
+      "dry-run record, so they judge it while it is still impossible for it to have posted to GitHub. If nothing happens, " +
+      "or the round fails, it says what to check rather than waiting forever.",
     order: 76,
+    // After setup: the board offers it; finish never waits on it.
+    optional: true,
     parameters: {
       type: "object",
       properties: {
         pr: {
           type: "integer",
           description:
-            "The pull request number the operator labelled. Call with no arguments first to get the exact instructions to read out.",
+            "The pull request number to review now. Call with no arguments first to get the open PRs to choose from.",
+        },
+        url: {
+          type: "string",
+          description:
+            "The pull request's URL, instead of its number (github.com/<owner>/<repo>/pull/<n>).",
+        },
+        confirm_live: {
+          type: "string",
+          description:
+            'Only when the installation is LIVE (dry_run = false): "yes" means the operator agreed that this review posts to GitHub.',
         },
       },
     },
@@ -347,20 +646,19 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
       const transport = stackTransportFor(ctx, opts.transport);
       const repo = repoOf(ctx.choices, ctx.adapters);
       const label = triggerLabelOf(ctx.adapters);
-      const pr = prFrom(ctx.input, ctx.choices);
-      if (pr === null) {
-        let posture: string | null = null;
-        try {
-          posture = String(loadConfig(configPath(ctx.adapters)).dry_run);
-        } catch {
-          /* Unknown posture stays explicit. */
-        }
-        const assurance =
-          posture === "true"
-            ? "Nothing will be posted to GitHub: dry_run is on, so every would-be comment and review is written to a file instead, and you will read it here before deciding anything."
-            : posture === "false"
-              ? "This installation is LIVE (dry_run = false): adding the label can post the review to GitHub. The flag belongs to you; these instructions do not change it."
-              : "The dry_run posture could not be read, so posting is unknown. Check the live config before adding the trigger label.";
+      let posture: string | null = null;
+      try {
+        posture = String(loadConfig(configPath(ctx.adapters)).dry_run);
+      } catch {
+        /* Unknown posture stays explicit. */
+      }
+      const answer = prFrom(ctx.input, ctx.choices);
+      const typed = ctx.input.pr !== undefined || ctx.input.url !== undefined;
+      if (answer === null || (typed && parsePrAnswer(ctx.input.pr ?? ctx.input.url) === null)) {
+        return { ok: false, checks: [await askCheck(ctx, repo, label, posture, typed)] };
+      }
+      const pr = answer.pr;
+      if (answer.repo !== null && answer.repo.toLowerCase() !== repo.toLowerCase()) {
         return {
           ok: false,
           checks: [
@@ -368,10 +666,25 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
               name: "ask",
               ok: false,
               detail:
-                `Read this out, then call this tool again with the PR number.\n\n` +
-                `Pick a real, open pull request of yours in ${repo} — one you would actually want reviewed. Add the label ` +
-                `"${label}" to it. That label IS the trigger: the reviewer never reviews anything on its own initiative.\n` +
-                assurance,
+                `that link is a pull request in ${answer.repo}, but this reviewer reviews ${repo}. Pick an open PR in ${repo} ` +
+                "(or change the reviewed repo in the earlier GitHub step)",
+            },
+          ],
+        };
+      }
+      if (posture !== "true" && textOf(ctx.input.confirm_live).trim().toLowerCase() !== "yes") {
+        return {
+          ok: false,
+          checks: [
+            {
+              name: "live",
+              ok: false,
+              detail:
+                posture === "false"
+                  ? `This installation is LIVE (dry_run = false): reviewing #${pr} now POSTS the review to GitHub. Ask the operator; ` +
+                    'only on their yes, call this step again with confirm_live: "yes". The flag is theirs; this step never changes it.'
+                  : `The dry_run posture could not be read (${configPath(ctx.adapters)}), so whether this review would post is unknown. ` +
+                    'Fix the config first — or, on the operator\'s explicit yes, call again with confirm_live: "yes".',
             },
           ],
         };
@@ -391,28 +704,73 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
         };
       }
 
+      // Where the PR stands before anything is asked of the daemon.
+      const first = await observe(transport, pr);
+      if (first.obs === null)
+        return { ok: false, checks: [stateStoreCheck(first.detail, transport)] };
+      const before = first.obs.rounds.at(-1);
+      const recorded = parseProofRecord(ctx.choices[PROOF_CHOICE_KEY]);
+      const resumable =
+        recorded !== null &&
+        recorded.pr === pr &&
+        before !== undefined &&
+        before.round_no === recorded.round_no &&
+        completedRound(before);
+      const inFlight =
+        before?.status === "running" ||
+        first.obs.state === "queued" ||
+        first.obs.state === "reviewing";
+      const initial = classifyRounds(first.obs);
+      log(
+        ctx,
+        initial.kind === "waiting"
+          ? initial.detail
+          : `#${pr} has ${first.obs.rounds.length} round${first.obs.rounds.length === 1 ? "" : "s"} on record (newest: round ${before?.round_no}, ${before?.status})`,
+      );
+
+      // Ask for the review — unless one is already under way, or this is a
+      // re-run that only has to show the round it already recorded.
+      let requested = false;
+      let requestNote = "";
+      if (!resumable && !inFlight) {
+        const sent = await requestReview(ctx, transport, pr);
+        requested = sent.ok;
+        requestNote = sent.detail;
+        if (!sent.ok && sent.refused)
+          return {
+            ok: false,
+            checks: [
+              {
+                name: "review-now",
+                ok: false,
+                detail:
+                  `the daemon refused to review #${pr} now: ${sent.detail}. ` +
+                  `If this daemon predates "review this one PR now", add the label "${label}" to the PR instead and run this step again — ` +
+                  "the label is the trigger the daemon has always understood.",
+              },
+            ],
+          };
+        log(
+          ctx,
+          sent.ok
+            ? `asked the daemon to review #${pr} now (${sent.detail}) — no label needed`
+            : `could not ask the daemon directly (${sent.detail}); following #${pr} in case it is labelled "${label}"`,
+        );
+      }
+      // Only a round NEWER than the ones before the request answers it.
+      const floor = requested ? (before?.round_no ?? 0) : -Infinity;
+
       log(
         ctx,
         `following #${pr} — checking the daemon's state every ${Math.round(pollIntervalMs / 1000)}s, up to ${pollAttempts} times`,
       );
       let last = "";
+      let settledPolls = 0;
       for (let attempt = 1; attempt <= pollAttempts; attempt += 1) {
         const { obs, detail } = await observe(transport, pr);
-        if (obs === null) {
-          return {
-            ok: false,
-            checks: [
-              {
-                name: "state-store",
-                ok: false,
-                detail:
-                  `could not read the daemon's state (${detail}) — Fix: \`${transport.logsCommand(200)}\`. The daemon ` +
-                  "may still be starting (the image is prebuilt; its first boot migrates state and reconciles), so give it a minute after bring-up and run this step again",
-              },
-            ],
-          };
-        }
-        const outcome = classifyRounds(obs);
+        if (obs === null) return { ok: false, checks: [stateStoreCheck(detail, transport)] };
+        const fresh = { ...obs, rounds: obs.rounds.filter((r) => r.round_no > floor) };
+        const outcome = classifyRounds(fresh);
         if (outcome.kind === "done") {
           log(ctx, `round ${outcome.round.round_no} finished with ${outcome.round.verdict}`);
           return finish(ctx, transport, pr, outcome.round);
@@ -420,16 +778,47 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
         if (outcome.kind === "failed") {
           return { ok: false, checks: [roundFailedCheck(outcome.round, pr, transport)] };
         }
+        // Asked, but the daemon settled the PR without a new round (nothing
+        // changed since a review of this same head): that review is the answer.
+        if (
+          requested &&
+          outcome.kind === "waiting" &&
+          obs.state !== "queued" &&
+          obs.state !== "reviewing"
+        ) {
+          settledPolls += 1;
+          const standing = obs.rounds.at(-1);
+          if (settledPolls >= 2 && completedRound(standing)) {
+            log(
+              ctx,
+              `the daemon reviewed nothing new — #${pr}'s head was already reviewed in round ${standing.round_no}; showing that review`,
+            );
+            return finish(ctx, transport, pr, standing);
+          }
+        } else settledPolls = 0;
         last =
           outcome.kind === "running"
             ? `round ${outcome.round.round_no} is running (started ${outcome.round.started_at})`
-            : outcome.detail;
+            : requested && obs.state === "queued"
+              ? "queued — the round starts as soon as a review slot is free"
+              : outcome.detail;
         log(ctx, `${last} — attempt ${attempt}/${pollAttempts}`);
         if (attempt < pollAttempts) await sleep(pollIntervalMs);
       }
       return {
         ok: false,
-        checks: [timeoutCheck(pr, repo, label, last, pollAttempts, pollIntervalMs, transport)],
+        checks: [
+          timeoutCheck(
+            pr,
+            repo,
+            label,
+            last,
+            pollAttempts,
+            pollIntervalMs,
+            transport,
+            requested ? requestNote : null,
+          ),
+        ],
       };
     },
 
@@ -537,7 +926,19 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
       return { ok: false, checks };
     }
     const other = records.filter((r) => r.kind !== "create_review").length;
-    checks.push({ name: "review", ok: true, detail: renderReview(review, pr) });
+    const file = records
+      .filter((r) => r.kind === "create_review" && r.reviewPurpose === undefined)
+      .at(-1)?.file;
+    checks.push({
+      name: "review",
+      ok: true,
+      detail: renderReview(review, pr, {
+        verdict: round.verdict,
+        ...(file
+          ? { file, readCommand: transport.execCommand(`cat ${CONTAINER_DRYRUN_DIR}/${file}`) }
+          : {}),
+      }),
+    });
     checks.push({
       name: "nothing-posted",
       ok: true,
@@ -596,6 +997,16 @@ function roundFailedCheck(
   };
 }
 
+function stateStoreCheck(detail: string, transport: StackTransport): CheckResult {
+  return {
+    name: "state-store",
+    ok: false,
+    detail:
+      `could not read the daemon's state (${detail}) — Fix: \`${transport.logsCommand(200)}\`. The daemon ` +
+      "may still be starting (the image is prebuilt; its first boot migrates state and reconciles), so give it a minute after bring-up and run this step again",
+  };
+}
+
 function timeoutCheck(
   pr: number,
   repo: string,
@@ -604,6 +1015,8 @@ function timeoutCheck(
   attempts: number,
   intervalMs: number,
   transport: StackTransport,
+  /** Set when the review was asked for directly (review-now): its receipt. */
+  requested: string | null = null,
 ): CheckResult {
   const minutes = Math.round((attempts * intervalMs) / 60_000);
   return {
@@ -612,6 +1025,11 @@ function timeoutCheck(
     detail:
       `no finished round for #${pr} after ${minutes} minutes of watching (last seen: ${last || "nothing at all"}). ` +
       "Nothing is broken by this — the wizard simply stopped waiting, and running this step again picks the watch back up.\n" +
+      (requested !== null
+        ? `The review WAS asked for directly (the daemon answered: ${requested}), so no label is needed. A first round on a ` +
+          "big PR can take a while; `qcr tui " +
+          `${pr}\` shows the round's own live log. If it never started:\n`
+        : "") +
       "What to check, in the order that actually finds it:\n" +
       `① the label on #${pr} must be exactly "${label}" — the daemon matches the name from [github] trigger_label, and a ` +
       "near-miss looks like nothing happening;\n" +

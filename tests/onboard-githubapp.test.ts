@@ -26,7 +26,7 @@ import {
   writeFileSync,
   mkdirSync,
 } from "node:fs";
-import { connect } from "node:net";
+import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -54,6 +54,7 @@ import {
   convertManifestCode,
   findInstallation,
   githubAppStep,
+  hostedCallbackFromEnv,
   loadManifest,
   manifestPageHtml,
   manifestPath,
@@ -267,6 +268,8 @@ function step(
     installPollAttempts: 3,
     installPollIntervalMs: 1,
     randomToken: (bytes) => "a".repeat(bytes * 2),
+    // Hermetic: never this shell's QCR_ONBOARD_* knobs.
+    env: {},
     ...over,
   });
 }
@@ -1011,6 +1014,143 @@ describe("the loopback callback listener (real, on an ephemeral port)", () => {
       await listener.close();
     }
   });
+});
+
+describe("a hosted setup (QCR_ONBOARD_PUBLIC_ORIGIN): a proxy forwards a public origin to the listener", () => {
+  it("reads the origin and the page URL from env, and refuses anything but a bare https origin", () => {
+    expect(hostedCallbackFromEnv({})).toEqual({});
+    expect(
+      hostedCallbackFromEnv({ QCR_ONBOARD_PUBLIC_ORIGIN: "https://box.example.com/" }),
+    ).toEqual({
+      hosted: { origin: "https://box.example.com", pageUrl: "https://box.example.com/" },
+    });
+    expect(
+      hostedCallbackFromEnv({
+        QCR_ONBOARD_PUBLIC_ORIGIN: "https://box.example.com",
+        QCR_ONBOARD_SETUP_URL: "https://box.example.com/setup?t=1",
+      }).hosted?.pageUrl,
+    ).toBe("https://box.example.com/setup?t=1");
+    for (const bad of ["http://box.example.com", "https://box.example.com/sub", "not a url"])
+      expect(hostedCallbackFromEnv({ QCR_ONBOARD_PUBLIC_ORIGIN: bad }).problem).toMatch(
+        /QCR_ONBOARD_PUBLIC_ORIGIN/,
+      );
+  });
+
+  it("the step hands the origin to the listener, and an unusable one starts nothing", async () => {
+    // Refused first: once credentials land, the step only verifies.
+    const refused = await runStep(
+      ghState(),
+      refusingServer,
+      {},
+      {
+        env: { QCR_ONBOARD_PUBLIC_ORIGIN: "http://box.example.com" },
+      },
+    );
+    expect(refused.report.ok).toBe(false);
+    expect(detail(refused.report.checks, "callback listener")).toMatch(/bare https origin/);
+
+    const seen: Array<unknown> = [];
+    const server = fakeServer({ code: "one-time-code" });
+    const recording: CallbackServerFactory = async (o) => {
+      seen.push(o.hosted);
+      return server.factory(o);
+    };
+    await runStep(
+      ghState(),
+      recording,
+      {},
+      {
+        env: { QCR_ONBOARD_PUBLIC_ORIGIN: "https://box.example.com" },
+      },
+    );
+    expect(seen).toEqual([
+      { origin: "https://box.example.com", pageUrl: "https://box.example.com/" },
+    ]);
+  });
+
+  const rawGet = (port: number, path: string, host: string): Promise<string> =>
+    new Promise((resolveRaw, rejectRaw) => {
+      const sock = connect(port, "127.0.0.1", () =>
+        sock.write(`GET ${path} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`),
+      );
+      let out = "";
+      sock.setEncoding("utf8");
+      sock.on("data", (d) => (out += String(d)));
+      sock.on("close", () => resolveRaw(out));
+      sock.on("error", rejectRaw);
+    });
+
+  it(
+    "redirects GitHub to <origin>/manifest-callback and admits the proxy's Host",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const hosted = { origin: "https://box.example.com", pageUrl: "https://box.example.com/" };
+      // A free port, as the proxy's fixed upstream would be.
+      const probe = createServer();
+      await new Promise<void>((r) => probe.listen(0, "127.0.0.1", () => r()));
+      const port = (probe.address() as { port: number }).port;
+      await new Promise<void>((r) => probe.close(() => r()));
+      const listener = await nodeCallbackServer({
+        state: "state-token",
+        port,
+        timeoutMs: 5_000,
+        hosted,
+        page: (bound) => `<html>state-token ${bound.redirectUrl}</html>`,
+      });
+      try {
+        expect(listener.url).toBe("https://box.example.com/");
+        expect(listener.redirectUrl).toBe(`https://box.example.com${CALLBACK_PATH}`);
+        // The proxy's Host header is the public one: the page, then the callback.
+        const page = await rawGet(port, "/", "box.example.com");
+        expect(page).toMatch(/^HTTP\/1\.1 200/);
+        expect(page).toContain(`https://box.example.com${CALLBACK_PATH}`);
+        expect(await rawGet(port, "/", "box.example.com:443")).toMatch(/^HTTP\/1\.1 200/);
+        // Any other name is still a rebinding attempt.
+        expect(await rawGet(port, "/", "attacker.example")).toMatch(/^HTTP\/1\.1 421/);
+        const cb = await rawGet(
+          port,
+          `${CALLBACK_PATH}?code=real-code&state=state-token`,
+          "box.example.com",
+        );
+        expect(cb).toMatch(/^HTTP\/1\.1 200/);
+        await expect(listener.waitForCode()).resolves.toMatchObject({ code: "real-code" });
+      } finally {
+        await listener.close();
+      }
+    },
+  );
+
+  it(
+    "behind a hosted origin the port is strict: a busy one is a clear refusal, never an ephemeral fallback",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const blocker = createServer();
+      await new Promise<void>((r) => blocker.listen(0, "127.0.0.1", () => r()));
+      const port = (blocker.address() as { port: number }).port;
+      try {
+        await expect(
+          nodeCallbackServer({
+            state: "s",
+            port,
+            timeoutMs: 1_000,
+            hosted: { origin: "https://box.example.com", pageUrl: "https://box.example.com/" },
+            page: () => "",
+          }),
+        ).rejects.toThrow(new RegExp(`port ${port} is busy.*needs exactly that port`));
+        // Without a hosted origin the same busy port still falls back.
+        const local = await nodeCallbackServer({
+          state: "s",
+          port,
+          timeoutMs: 1_000,
+          page: () => "",
+        });
+        expect(local.url).not.toContain(`:${port}/`);
+        await local.close();
+      } finally {
+        await new Promise<void>((r) => blocker.close(() => r()));
+      }
+    },
+  );
 });
 
 describe("installation pages", () => {

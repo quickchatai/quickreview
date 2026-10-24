@@ -7767,12 +7767,30 @@ export interface RoundStageBounds {
 export const PR_RUNTIMES = ["tmux", "worker", "answer", "idle", "debug", "takeover"] as const;
 export type PrRuntime = (typeof PR_RUNTIMES)[number];
 
+/** One open pull request as the board lists it (src/reconcile.ts lists them). */
+export interface OpenPrSummary {
+  number: number;
+  title: string;
+  author: string;
+  draft: boolean;
+  updated_at: string;
+}
+
+export interface OpenPrsSnapshot {
+  listed_at: string;
+  prs: OpenPrSummary[];
+}
+
 export interface StatusSnapshot {
   written_at: string;
   dry_run: boolean;
   /** Where the daemon runs (src/runhost.ts). Absent: not reported (an older
    * daemon, or one assembled without its host facts). */
   run_host?: import("./runhost.js").RunHostStatus;
+  /** Every open pull request of the reviewed repo, as the last successful
+   * reconcile pass listed it (tracked or not): what the board offers to
+   * review. Absent until a pass has listed them. */
+  open_prs?: OpenPrsSnapshot;
   prs: Array<
     Pick<PrStateRow, "number" | "state" | "title" | "head_sha" | "stale_recheck"> &
       Partial<Pick<PrStateRow, "trigger_ts" | "updated_at" | "author" | "paused">> & {

@@ -51,7 +51,9 @@ const NAV: ReadonlyArray<BarButton & { tab: Tab }> = TABS.map((tab) => ({
 /** Row A right: always the same four, always in the same place. */
 const GLOBALS: readonly BarButton[] = [
   { key: "r", label: "r refresh" },
-  { key: "s", label: "s ssh" },
+  // Transport-neutral: on the VM route `s` re-checks ssh (and offers the one
+  // key-passphrase prompt), on the local route the daemon container.
+  { key: "s", label: "s check" },
   { key: "?", label: "? help" },
   { key: "q", label: "q quit" },
 ];
@@ -73,6 +75,7 @@ export const GLOBAL_KEYS: readonly string[] = [
  */
 export const TAB_VOCABULARY: Readonly<Record<Tab, readonly BarButton[]>> = {
   board: [
+    { key: "R", label: "R review now" },
     { key: "\r", label: "⏎ pi pane" },
     { key: "m", label: "m message" },
     { key: "g", label: "g github" },

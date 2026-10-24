@@ -54,7 +54,11 @@ import { priorSidecarPath } from "@quickchatai/pi-quickreview/src/priorfindings.
 import { completeRecordedFindings } from "./recordedfindings.js";
 import { makePostingGuard } from "@quickchatai/pi-quickreview/src/guards.js";
 import { classifyCi, ciBlocksApproval } from "@quickchatai/pi-quickreview/src/cigate.js";
-import { TokenMinter } from "@quickchatai/pi-quickreview/src/githubAuth.js";
+import {
+  githubCredential,
+  type GitHubCredential,
+} from "@quickchatai/pi-quickreview/src/githubAuth.js";
+import { botAccountLogin, isPersonMode } from "@quickchatai/pi-quickreview/src/identity.js";
 import {
   FeedbackEngine,
   FeedbackMemoryPump,
@@ -125,6 +129,7 @@ import {
 } from "./openviking/provisionreport.js";
 import { countedGapSink } from "./openviking/gapsink.js";
 import { recoverPrForOperator } from "./operator-recovery.js";
+import { reviewNow } from "./reviewnow.js";
 import { createWorkerLiveness, inFlightPrs } from "./workerliveness.js";
 import { resolveTerminalFailure } from "./terminal-failure.js";
 import type { MemoryStore } from "./memory/store.js";
@@ -158,7 +163,8 @@ import { buildWorkerWorld } from "./workerworld.js";
 export interface ProductionParts {
   cfg: Config;
   root: string;
-  minter: TokenMinter;
+  /** The `[github] auth` credential: the App minter, or the person's token file. */
+  minter: GitHubCredential;
   gate: MutationGate;
   adapter: GitHubAdapter;
   /** The tmux manager: it serves what has not moved to workers yet (the overseer) and
@@ -225,7 +231,7 @@ export function buildParts(
     process.env.QCR_OPENVIKING_BOOT_DISABLED === "1" && overlaid.openviking.enabled
       ? "OpenViking state migration is incomplete; memory is unavailable for this boot — original files were retained; retry after correcting storage and restarting"
       : undefined;
-  const minter = new TokenMinter(cfg.github.secrets_dir);
+  const minter = githubCredential(cfg.github);
   const gate: MutationGate = new MutationGate(
     cfg.dry_run,
     join(root, "state", "dryrun"),
@@ -1052,7 +1058,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     // the base clone; the daemon's own bot identity never qualifies.
     directiveAuthor: (sha, paths) =>
       sessions.worktrees.lastHumanAuthor(sha, paths, {
-        botLogins: [cfg.github.bot_login, cfg.github.app_slug],
+        // Person mode has no bot account: the person's own commits are a
+        // human's, and they may well be the one to mention.
+        botLogins: isPersonMode(cfg.github) ? [] : [cfg.github.bot_login, cfg.github.app_slug],
       }),
     log,
     // Lazy on purpose: the Slack subsystem is built in onStart, after the
@@ -1552,7 +1560,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           outcomes: d.outcomes,
           memory,
           repo: cfg.github.repo,
-          botLogin: cfg.github.bot_login,
+          // The bot ACCOUNT, against captured human comments: none in person
+          // mode, where the person's replies are a human's.
+          botLogin: botAccountLogin(cfg.github),
           healthy: () => health.currentState() === "healthy",
           // No case batch starts while a review round reads memory (its seed,
           // its lesson selection); every batch sent reports its embedding
@@ -1580,7 +1590,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           root,
           eodTime: cfg.eod.time,
           timeZone: cfg.eod.timezone,
-          botLogin: cfg.github.bot_login,
+          botLogin: botAccountLogin(cfg.github),
           baseBranch: cfg.github.base_branch,
           config: learnerKnobsOf(cfg.memory),
           git: sessions.worktrees,
@@ -1694,6 +1704,21 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             },
             target,
             "restart-session",
+          );
+        },
+        // The operator's "review this PR now" (the onboarding proof round):
+        // the label path's state-machine trigger, with no GitHub write to ask.
+        reviewNow(pr) {
+          return reviewNow(
+            {
+              store: d.store,
+              getPr: (n) => adapter.getPr(n),
+              pump: () => d.pump(),
+              // On the own-account route the bot login is the person, whose
+              // own PRs are the point; only an App's bot is never reviewed.
+              ...(isPersonMode(cfg.github) ? {} : { botLogin: cfg.github.bot_login }),
+            },
+            pr,
           );
         },
         resolveTerminalFailure(payload) {
@@ -1861,7 +1886,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // Webhook-URL self-heal: only under the tunnel-file ingress shape. The
       // gated PATCH rides the app-self-config class, so it executes even in
       // dry-run (AGENTS.md invariant 6) — loudly.
-      if (cfg.ingress.shape === "tunnel-file") {
+      // Never under the person's credential: there is no App whose webhook
+      // URL could be re-pointed (config load already refuses the shape).
+      if (cfg.ingress.shape === "tunnel-file" && !isPersonMode(cfg.github)) {
         webhookHeal = new WebhookHealer({
           hostnameFile: ingressHostnameFile(cfg, root),
           readConfig: () => adapter.getAppWebhookConfig(),
@@ -2112,6 +2139,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       adapter,
       botLogin: cfg.github.bot_login,
       guards: cfg.guards,
+      // Person mode: every review event posts as COMMENT (guards.ts).
+      personMode: isPersonMode(cfg.github),
       log,
     }),
   );
