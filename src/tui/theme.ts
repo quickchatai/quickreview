@@ -3,7 +3,7 @@
 // legend — a glance at the color tells the state without reading. Verdicts
 // and anomalies get their own fixed colors.
 import { ACCENT, MUTED } from "./design.js";
-import { STATE_GLYPHS } from "./model.js";
+import { OFFERED_GLYPH, STATE_GLYPHS } from "./model.js";
 import { ESC, rgb } from "./paint.js";
 
 export const FG = {
@@ -78,6 +78,7 @@ export function legendLine(): string {
     [STATE_GLYPHS.queued, "queued", FG.queued],
     [STATE_GLYPHS.awaiting_author, "author", FG.awaiting_author],
     [STATE_GLYPHS.tracked, "tracked", FG.tracked],
+    [OFFERED_GLYPH, "not reviewed", FG.dim],
     ["↻", "stale", FG.accent],
   ];
   return parts

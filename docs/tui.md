@@ -93,8 +93,15 @@ The verbs act on the **selected PR**, so they exist only while one is
 selected — and only on the board. `e` and `I` are the exceptions: the events
 overlay and setup are about the whole repo.
 
+The list is the PRs the daemon tracks, then every other open PR of the
+repository (status.json `open_prs`, from the reconcile poll), marked `○ not
+reviewed`. An offered row has no session or round yet: `R` reviews it and `g`
+opens it, and the detail pane says so. While nothing is tracked, a line under
+the PRS header says what to do: select a pull request, then `R`.
+
 | key | does |
 | --- | --- |
+| `R` | review the selected PR now — any open PR of the repo, tracked or not: the daemon queues one round (the `review-now` operator command, as `qcr review-now <n>`), and in dry-run nothing is posted |
 | `⏎` / `a` | focus the selected PR's pane (embedded below the list; Ctrl-q back) |
 | `[` / `]` | transcript viewer only: previous / next stream of the shown round — the main session, then each lens (a click on a lens row of the progress panel picks that lens) |
 | `<` / `>` | transcript viewer only: an earlier / later round; the newest round is followed |

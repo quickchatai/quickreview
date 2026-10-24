@@ -64,7 +64,13 @@ import {
 } from "./recheck.js";
 import type { DispatchAnnouncer, VerdictAnnouncer } from "./slack/announce.js";
 import { applyEvent } from "./statemachine.js";
-import { buildPipelineStatus, buildStatusSnapshot, StateStore, writeStatusJson } from "./state.js";
+import {
+  buildPipelineStatus,
+  buildStatusSnapshot,
+  StateStore,
+  writeStatusJson,
+  type OpenPrsSnapshot,
+} from "./state.js";
 import { PiAuthWatch } from "@quickchatai/pi-quickreview/src/authwatch.js";
 import { SessionCommandSupervisor } from "./session-command-supervisor.js";
 import { readRoundProgress } from "./requiredpasses.js";
@@ -824,6 +830,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     ...(deps.now ? { now: deps.now } : {}),
   });
 
+  /** The open PRs the last listing reconcile pass saw (status.json `open_prs`). */
+  let openPrs: OpenPrsSnapshot | undefined;
   let firstReconcileSeen = false;
   let firstHealthyReconcileAt: Date | null = null;
   // Deploy-window drain auto-lift: only the boot's first reconcile pass may
@@ -907,6 +915,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         // starts on the next pass to keep the boot pass short.
         receiptSweep: !bootFirstPass,
       });
+      // The board's "review a PR" list: kept from the last pass that listed.
+      if (report.open_list) openPrs = { listed_at: report.ran_at, prs: report.open_list };
       log(
         `reconcile: open=${report.open_prs} triggered=${report.triggered.length} ` +
           `closed=${report.closed.length} captured=${report.captured_comments} ` +
@@ -1112,6 +1122,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
             };
         }
       if (deps.runHost) snapshot.run_host = deps.runHost;
+      if (openPrs) snapshot.open_prs = openPrs;
       writeStatusJson(stateDir, snapshot);
     } catch (err) {
       log("status.json write failed", err);

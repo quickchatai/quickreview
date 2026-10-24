@@ -71,18 +71,21 @@ naming what broke.
 
 ### What you need, and the fast path
 
-Four things, and only four:
+Three things, and only three:
 
 1. **a model login** — pi's `/login` opens by itself the first time; any working
-   OpenAI login does (see [The LLM route](#30--the-llm-route));
+   OpenAI login does (see [The LLM route](#30--the-llm-route)). The reviewer's
+   container needs its own login too, once the stack is up: the LLM step names
+   the one command;
 2. **your GitHub sign-in** — `gh` logged in here (already true on a Boxes VM);
-3. **one repository** you can read;
-4. **one open pull request** in it, to watch the first review.
+3. **one repository** you can read.
 
 The recommended path takes the defaults all the way: the reviewer on **this
-computer** (`local`), **polling** instead of webhooks, **your own GitHub
-account** instead of an App, and at the end **review this one PR now** — the
-review starts the moment you name the PR, with no label to add. Every question
+computer** (`local`), **polling** instead of webhooks, and **your own GitHub
+account** instead of an App. Setup ends there: once the stack verifies, the
+wizard opens the TUI on the board, which lists every open pull request of the
+repository. **Select one and press `R`** — the review starts at once, with no
+label to add, and its progress shows on the board. Every question
 the guide asks maps to a step's input; it never asks you for anything a tool
 cannot take.
 
@@ -113,8 +116,13 @@ it is answered, exactly one of 33 and 40 is enabled.
 | 71 | deploy to the server | server |
 | 72 | memory keys, phase B | both |
 | 74 | verify the running system | both |
-| 76 | the proof round: review this one PR now | both |
-| 78 | go live, or stay in dry-run | both |
+| 76 | the proof round: review this one PR now (after setup) | both |
+| 78 | go live, or stay in dry-run (after setup) | both |
+
+Steps 76 and 78 are **after setup**: they run and verify like the others, but
+the checklist completes without them, so the wizard finishes once the stack
+verifies and the first review happens on the board (`R`). Re-run `qcr onboard`
+later to go live; it offers the flip once a review has completed.
 
 ### 10 — Preflight
 
@@ -748,9 +756,12 @@ timeout means the tunnel is not reaching the daemon.
 This step is safe to run as often as you like. The only write it can make is
 that App-scoped webhook redelivery — never a review, a label or a comment.
 
-### 76 — The proof round
+### 76 — The proof round (after setup)
 
-The wizard does not call itself done until you have watched the reviewer work.
+The first review normally happens on the board, after setup: `R` on a selected
+pull request sends the same `review-now` command. The step stays for a
+re-run of `qcr onboard` (go-live reads its record) and for anyone who asks the
+guide to review from the chat.
 
 Call it with no answer and it lists the five most recently updated open pull
 requests in the repository, yours marked (on your own account your PRs are the
@@ -782,9 +793,10 @@ verification step and the daemon's event log. If a round *failed*, the commonest
 first-install cause is the review session having no working model credential —
 attach to the session and a login prompt there is your answer.
 
-### 78 — Go live, or stay in dry-run
+### 78 — Go live, or stay in dry-run (after setup)
 
-The last decision, and it is yours alone. It is offered only after a completed
+The last decision, and it is yours alone, made after setup: re-run `qcr onboard`
+and ask for it. It is offered only after a completed
 proof round, and the wizard re-checks that round against the daemon's own state
 store first: this is the one decision it will not make on the strength of a
 checklist file.

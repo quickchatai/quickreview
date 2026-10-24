@@ -34,7 +34,7 @@ import {
   isOwnContent,
   isPersonMode,
 } from "@quickchatai/pi-quickreview/src/identity.js";
-import type { RoundRow, StateStore } from "./state.js";
+import type { OpenPrSummary, RoundRow, StateStore } from "./state.js";
 import type { OvSessionSweepReport, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { performance } from "node:perf_hooks";
 import { yieldToLoop } from "@quickchatai/pi-quickreview/src/yieldloop.js";
@@ -137,6 +137,9 @@ export const RECEIPT_SWEEP_BUDGET_MS = 20_000;
 export interface ReconcileReport {
   ran_at: string;
   open_prs: number;
+  /** The open PRs this pass listed, tracked or not; absent when the list
+   * step failed. The daemon publishes it in status.json for the board. */
+  open_list?: OpenPrSummary[];
   triggered: number[];
   closed: number[];
   backfilled_comments: number;
@@ -296,6 +299,13 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
     for (const pr of await adapter.listOpenPrs()) open.set(pr.number, pr);
     openListed = true;
     report.open_prs = open.size;
+    report.open_list = [...open.values()].map((p) => ({
+      number: p.number,
+      title: p.title,
+      author: p.author,
+      draft: p.draft,
+      updated_at: p.updated_at,
+    }));
     for (const pr of open.values()) {
       if (isBotAuthor(pr.author, botLogin)) continue;
       const local = store.getPr(pr.number);

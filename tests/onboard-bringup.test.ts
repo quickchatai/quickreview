@@ -779,10 +779,10 @@ describe("memory phase B — driven, never duplicated", () => {
     const result = await engine.runStep(MEMORY_KEYS_STEP_ID);
     expect(result.ok).toBe(false);
     const said = result.failures.join(" ");
-    expect(said).toMatch(/bring the stack up/);
+    expect(said).toMatch(/the bring-up step starts the memory engine/);
     // The engine is never published: the guidance names the memory forward.
     expect(said).toMatch(/memory forward/);
-    expect(said).toMatch(/run this step again/);
+    expect(said).toMatch(/nothing is needed from you/);
     expect(existsSync(join(root, "secrets", "openviking_root_key"))).toBe(true);
   });
 });

@@ -619,6 +619,8 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
       "dry-run record, so they judge it while it is still impossible for it to have posted to GitHub. If nothing happens, " +
       "or the round fails, it says what to check rather than waiting forever.",
     order: 76,
+    // After setup: the board offers it; finish never waits on it.
+    optional: true,
     parameters: {
       type: "object",
       properties: {

@@ -43,6 +43,12 @@ export async function reviewNow(deps: ReviewNowDeps, pr: number): Promise<FileOu
   const local = deps.store.getPr(pr);
   if (local?.paused)
     return { ok: false, reason: `PR #${pr} is paused — resume it first (qcr resume-pr ${pr})` };
+  // The worker crash-loop breaker parks a PR after repeated worker failures
+  // (a missing model login is the usual first-install cause). Asking for this
+  // PR's review is the operator's word that it may run again, exactly as
+  // rerun-round's unpark is — without it the new round could never start.
+  if (deps.store.clearWorkerBreaker(pr))
+    deps.store.logEvent("worker_unparked", pr, { by: "review-now" });
   const result = applyEvent(
     deps.store,
     pr,

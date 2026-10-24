@@ -553,7 +553,7 @@ describe("verify and resumability", () => {
   it("with no proof recorded, verify is red and says the wizard is not finished", async () => {
     const h = harness();
     const all = await h.engine.verifyAll();
-    expect(all.ok).toBe(false);
+    expect(all.results[0]!.ok).toBe(false);
     expect(all.results[0]!.failures.join(" ")).toMatch(/not finished until you have watched/);
   });
 
@@ -581,7 +581,7 @@ describe("verify and resumability", () => {
     });
     const stale = harness({ whyRounds: [[{ round_no: 1, status: "done", verdict: "APPROVE" }]] });
     const all = await stale.engine.verifyAll();
-    expect(all.ok).toBe(false);
+    expect(all.results[0]!.ok).toBe(false);
     expect(all.results[0]!.failures.join(" ")).toMatch(/no longer shows #17 round 9/);
   });
 

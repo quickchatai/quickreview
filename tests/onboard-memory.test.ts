@@ -870,7 +870,9 @@ describe("degraded modes stay legal and loud", () => {
     expect(result.ok).toBe(false);
     expect(detailOf(result, "root-key")?.ok).toBe(true);
     expect(existsSync(join(secretsDir, ROOT_KEY_FILE))).toBe(true);
-    expect(detailOf(result, "memory-server")?.detail).toMatch(/the bring-up step starts the memory engine/);
+    expect(detailOf(result, "memory-server")?.detail).toMatch(
+      /the bring-up step starts the memory engine/,
+    );
     // No user key was invented while the server was unreachable.
     expect(existsSync(keysFile)).toBe(false);
     expect(existsSync(join(secretsDir, REVIEWER_KEY_FILE))).toBe(false);

@@ -75,6 +75,7 @@ export const GLOBAL_KEYS: readonly string[] = [
  */
 export const TAB_VOCABULARY: Readonly<Record<Tab, readonly BarButton[]>> = {
   board: [
+    { key: "R", label: "R review now" },
     { key: "\r", label: "⏎ pi pane" },
     { key: "m", label: "m message" },
     { key: "g", label: "g github" },

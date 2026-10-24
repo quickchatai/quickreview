@@ -3,7 +3,16 @@
 // selection movement.
 import type { PrLifecycleState, StatusSnapshot } from "../state.js";
 
-export type SnapshotPr = StatusSnapshot["prs"][number];
+export type SnapshotPr = StatusSnapshot["prs"][number] & {
+  /** A board-only row: an open PR of the repo the daemon does not track yet
+   * (status.json `open_prs`). It is offered for review (`R`); nothing about it
+   * is known beyond what the PR list says, so no PR verb but `R` and `g`
+   * acts on it. */
+  offered?: true;
+};
+
+/** The glyph of an offered row: open on GitHub, not reviewed yet. */
+export const OFFERED_GLYPH = "○";
 
 export const STATE_GLYPHS: Record<PrLifecycleState, string> = {
   queued: "●",
@@ -14,7 +23,8 @@ export const STATE_GLYPHS: Record<PrLifecycleState, string> = {
 };
 
 /** `↻` prefixes the state glyph when a stale recheck is pending. */
-export function glyphFor(pr: Pick<SnapshotPr, "state" | "stale_recheck">): string {
+export function glyphFor(pr: Pick<SnapshotPr, "state" | "stale_recheck" | "offered">): string {
+  if (pr.offered) return OFFERED_GLYPH;
   const base = STATE_GLYPHS[pr.state] ?? "?";
   return pr.stale_recheck ? `↻${base}` : base;
 }
@@ -77,6 +87,30 @@ export function sortPrs(prs: SnapshotPr[]): SnapshotPr[] {
     .filter(onBoard)
     .slice()
     .sort((a, b) => rank(a.state) - rank(b.state) || a.number - b.number);
+}
+
+/** The repo's open PRs the daemon does not track (status.json `open_prs`),
+ * newest activity first, as offered board rows. A tracked PR is never offered
+ * twice: its own row is the one the verbs act on. */
+export function offeredPrs(
+  snapshot: Pick<StatusSnapshot, "prs" | "open_prs"> | undefined,
+): SnapshotPr[] {
+  const open = snapshot?.open_prs?.prs ?? [];
+  const tracked = new Set((snapshot?.prs ?? []).filter(onBoard).map((p) => p.number));
+  return open
+    .filter((p) => !tracked.has(p.number))
+    .slice()
+    .sort((a, b) => b.updated_at.localeCompare(a.updated_at) || b.number - a.number)
+    .map((p) => ({
+      number: p.number,
+      state: "tracked" as const,
+      title: p.draft ? `[draft] ${p.title}` : p.title,
+      head_sha: "",
+      stale_recheck: 0,
+      author: p.author,
+      updated_at: p.updated_at,
+      offered: true as const,
+    }));
 }
 
 export interface EventLine {

@@ -1257,7 +1257,10 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
       return forward?.started
         ? {
             ...report,
-            checks: [{ name: "memory-forward", ok: true, detail: forward.detail }, ...report.checks],
+            checks: [
+              { name: "memory-forward", ok: true, detail: forward.detail },
+              ...report.checks,
+            ],
           }
         : report;
     } finally {

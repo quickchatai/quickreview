@@ -28,10 +28,13 @@ never as a lecture up front.
 
 ## What the person needs, and the fast path
 
-Say this near the start, in two or three short lines. They need four things:
+Say this near the start, in two or three short lines. They need three things:
 a **model login** (pi's `/login` opens by itself the first time — any working
 OpenAI login is fine), their **GitHub sign-in** (`gh` logged in; on a Boxes VM
-it already is), **one repository**, and **one open pull request** in it.
+it already is), and **one repository**. Setup ends once the defaults are in
+place and verified; the TUI then opens on the board, which lists the
+repository's open pull requests — they pick one there and press `R` to review
+it.
 
 Recommend the fast path and take its defaults unless they ask otherwise:
 
@@ -41,8 +44,9 @@ Recommend the fast path and take its defaults unless they ask otherwise:
   recent repositories, then again with `repo`;
 - **ingress** — `onboard_ingress` with no `choice`: polling is the default
   (the reviewer checks GitHub every few minutes; webhooks can come later);
-- **the proof** — `onboard_proof_round` with no `pr` to list the open PRs,
-  then with their pick: the review starts at once, no label to add.
+- **the first review** — not part of setup: after `finish_and_exit` the board
+  lists the open pull requests, and `R` on one starts its review at once, no
+  label to add.
 
 **Never ask for something no tool takes.** Every question you put to the person
 is a step's input (the tool's parameters say which). If a step asks for nothing,
@@ -75,36 +79,35 @@ manual command. If they want a GitHub App instead, call it with
 `github_auth: "app"`; the App steps then take over. Never call the App step on
 the own-account route: it is skipped there.
 
-## The last three steps
+## The last steps
 
 - **Bring-up is slow the first time.** Say so before you run it — the tool's
   own warning is there to be read out — and let its streamed output show. A
   long build is expected, not a hang.
-- **The proof round is the point of the whole session.** Call it with no `pr`
-  and read out the open pull requests it lists; let them pick one (their own
-  is fine — on their own account it is the main target), then call it with
-  `pr` or `url`. The review starts at once — no label to add. Let its progress
-  lines show. When the review comes back, show the at-a-glance part first
-  (verdict, findings, the top ones, where the full text is), then let them
-  read the rest: this is their first sight of what the reviewer says, and it
-  still cannot have posted anywhere.
-- **The go-live offer is theirs, and only theirs.** Read out what dry-run is
-  and what going live means, then ask once and accept the answer. Do not
-  advocate, do not repeat the offer, and never call the tool with a decision
-  they did not say. Staying in dry-run is a finished, fully working
-  installation — say so plainly if they choose it, and mention that they can
-  flip later whenever they like.
+- **The reviewer needs its own model login.** The review sessions run in the
+  daemon's container, and a login never transfers from this machine into it.
+  Once the stack is up, the LLM auth step's `daemon_login` check names the one
+  command that opens it; ask them to run it in a second terminal, sign in, and
+  tell you — then re-run the LLM auth step. Without it the first review on the
+  board would fail at once.
+- **The first review and go-live come after setup.** `onboard_proof_round` and
+  `onboard_go_live` are marked "after setup": setup finishes without them. Do
+  not run them here unless the person asks. Say plainly that the installation
+  stays in dry-run (every intended GitHub write is recorded, nothing is
+  posted), and that going live is their decision later: re-run `qcr onboard`
+  and ask for it once a review on the board has shown them what it says.
 
 ## Finishing
 
-When every step reports done, say that `finish_and_exit` will re-verify the
-whole checklist one last time and, only if all green, close this session and
-open the TUI. If it returns red checks, that is the answer: explain them, fix
+When every setup step reports done (the "after setup" ones need not be), say
+that `finish_and_exit` will re-verify the whole checklist one last time and,
+only if all green, close this session and open the TUI on the board: there they
+select a pull request and press `R` to review it now. If it returns red checks, that is the answer: explain them, fix
 what can be fixed through the step tools, and try again. Never present
 onboarding as finished while anything is red, and never tell the operator to
 quit around a red check.
 
-Before `finish_and_exit`, pass on what comes next, as the go-live step's
-`next` line says it: set up the repo with `qcr setup` (or `I` on the TUI
-board). Until then the reviewer knows nothing about this codebase. It is a
+Before `finish_and_exit`, pass on what comes next: the first review is `R` on
+a pull request on the board; then set up the repo with `qcr setup` (or `I` on
+the TUI board). Until then the reviewer knows nothing about this codebase. It is a
 recommendation, once — never start it from here.

@@ -11,7 +11,7 @@ import { cancelCauseLabel, isLoudCancelCause, type StatusSnapshot } from "../sta
 import type { AlertBadge } from "./alerts.js";
 import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
 import { filterLabel, visiblePrs, type BoardFilter } from "./filters.js";
-import { glyphFor, type EventLine, type SnapshotPr } from "./model.js";
+import { glyphFor, OFFERED_GLYPH, type EventLine, type SnapshotPr } from "./model.js";
 import { windowStart } from "./panes.js";
 import {
   ACCENT,
@@ -201,22 +201,26 @@ export function listWidth(prs: SnapshotPr[], cols: number, now: Date = new Date(
 export function boardKeys(
   view: Pick<BoardView, "snapshot" | "boardFilter" | "selected" | "repo">,
 ): LiveKeys {
-  const selected = visiblePrs(view)[view.selected] !== undefined;
+  const row = visiblePrs(view)[view.selected];
+  const selected = row !== undefined;
+  // An offered row (open on GitHub, not tracked yet) has no session, round or
+  // pane: `R` reviews it and `g` opens it, and nothing else addresses it.
+  const tracked = selected && row.offered !== true;
   const bar: BarButton[] = [];
-  if (selected) bar.push({ key: "\r", label: "⏎ pi pane" }, { key: "m", label: "m message" });
+  if (selected) bar.push({ key: "R", label: "R review now" });
+  if (tracked) bar.push({ key: "\r", label: "⏎ pi pane" }, { key: "m", label: "m message" });
   if (selected && view.repo) bar.push({ key: "g", label: "g github" });
   bar.push({ key: "e", label: "e events" });
-  if (selected) bar.push({ key: "u", label: "u unwedge" });
+  if (tracked) bar.push({ key: "u", label: "u unwedge" });
   // Setup is about the repo, not a PR — offered whatever is selected.
   bar.push({ key: "I", label: "I setup" });
   const inline: string[] = [];
-  if (selected) inline.push("a");
+  if (tracked) inline.push("a");
   if (view.boardFilter != null) inline.push("F");
   // A worker-hosted PR's pane is the transcript viewer: `[ ]` step its streams
   // and `< >` its rounds. They are the pane header's keys (painted there), so
   // they exist only while the selected PR's pane is the viewer.
-  const pr = visiblePrs(view)[view.selected];
-  if (pr !== undefined && paneSurface(pr.runtime, pr.number).kind === "viewer")
+  if (tracked && paneSurface(row.runtime, row.number).kind === "viewer")
     inline.push("[", "]", "<", ">");
   return { bar, inline };
 }
@@ -584,6 +588,51 @@ export function alertZone(view: BoardView, cols: number): { x1: number; x2: numb
   return { x1, x2: Math.min(cols - 1, x1 + width - 1) };
 }
 
+/**
+ * The board's own guide to the first review, under the PRS header. With open
+ * PRs offered and none tracked it says what to do; with no open PR at all it
+ * says that, naming the repo; once a PR is tracked it is silent. Absent
+ * `open_prs` (a daemon that has not listed yet, or an older one) is unknown,
+ * so the guide says nothing rather than "no open PRs".
+ */
+export function reviewGuideLines(
+  view: Pick<BoardView, "snapshot" | "boardFilter" | "repo">,
+  tracked: number,
+  offered: number,
+  width: number,
+): string[] {
+  if (view.boardFilter != null || tracked > 0 || view.snapshot?.open_prs === undefined) return [];
+  if (offered === 0)
+    return [
+      truncate(
+        `${FG.dim}no open pull requests in ${view.repo ?? "the repository"} — open one, and it is listed here within a few minutes${RESET}`,
+        width,
+      ),
+    ];
+  return [
+    truncate(`${FG.accent}select a pull request (j/k), then R reviews it now${RESET}`, width),
+  ];
+}
+
+/** The detail pane of an offered row: what is known (the PR list's own
+ * fields) and the one thing to do with it. */
+function offeredDetailLines(pr: SnapshotPr, width: number, now: Date): string[] {
+  return [
+    `${FG.dim}${OFFERED_GLYPH}${RESET} ${STRONG}#${pr.number}${RESET} ${STRONG}${truncate(sanitizeText(pr.title), width - 8 - String(pr.number).length)}${RESET}`,
+    truncate(
+      `${FG.author}${pr.author ?? ""}${RESET} ${FG.dim}· updated ${fmtAge(pr.updated_at, now)}${RESET}`,
+      width,
+    ),
+    "",
+    "not reviewed yet",
+    "",
+    truncate(`${STRONG}R${RESET} reviews it now: the reviewer runs one full round`, width),
+    truncate("on this pull request, and its progress shows here.", width),
+    truncate(`${FG.dim}In dry-run (the top bar says so) the review is recorded,${RESET}`, width),
+    truncate(`${FG.dim}never posted to GitHub.${RESET}`, width),
+  ];
+}
+
 function styledRow(
   pr: SnapshotPr,
   selected: boolean,
@@ -846,6 +895,7 @@ export function detailLines(
 ): string[] {
   const lines: string[] = [];
   if (!pr) return ["no PR selected"];
+  if (pr.offered) return offeredDetailLines(pr, width, now);
   lines.push(
     `${stateColor(pr.state)}${STRONG}#${pr.number}${RESET} ${STRONG}${truncate(sanitizeText(pr.title), width - 8 - String(pr.number).length)}${RESET}`,
   );
@@ -1060,6 +1110,7 @@ export const HELP_LINES = [
   "< / >          past / later round in the viewer; PgUp / wheel parks it, End follows the tail again",
   "               its input line (focused pane): ⏎ steers the running round, or sends a message to an idle PR; Alt-⏎ queues a follow-up",
   "               Alt-p marks the next message may-post (shown, reset after send); Ctrl-c asks to abort the round (y confirms); [ ] < > are keys only while the line is empty",
+  "R              review the selected PR now — any open PR, tracked or not (○ not reviewed): one round, nothing posted in dry-run",
   "m              quick-message the selected PR's session",
   "u              unwedge: cancel the running round and re-queue it (nothing posted, no GitHub write)",
   "e              events overlay (j/k scroll, e/Esc close; click an event → its PR)",
@@ -1331,8 +1382,19 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
   // detail pane says "no data" rather than "no PR selected".
   const known = view.snapshot !== undefined;
   const flabel = filterLabel(view.boardFilter);
+  const offered = sorted.filter((p) => p.offered === true).length;
   const listLines: string[] = known
-    ? [section(`PRS (${sorted.length})`, flabel !== "" ? flabel : "the daemon's live set")]
+    ? [
+        section(
+          `PRS (${sorted.length})`,
+          flabel !== ""
+            ? flabel
+            : offered > 0
+              ? `${sorted.length - offered} tracked · ${offered} open, not reviewed`
+              : "the daemon's live set",
+        ),
+        ...reviewGuideLines(view, sorted.length - offered, offered, listW - 1),
+      ]
     : [
         section("PRS (?)", "unknown — the daemon has not answered"),
         ...unknownSourceLines(view.connection, listW - 1, view.setup),

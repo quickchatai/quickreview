@@ -97,7 +97,14 @@ export function renderStatus(
   reconciled: ReconcileReport,
 ): string {
   const rows = lines.map((l) => {
-    const mark = l.status === "done" ? "[done]" : l.status === "disabled" ? "[skipped]" : "[ ]";
+    const mark =
+      l.status === "done"
+        ? "[done]"
+        : l.status === "disabled"
+          ? "[skipped]"
+          : l.optional
+            ? "[after setup]"
+            : "[ ]";
     return `${mark} ${l.id} — ${l.title}${l.note ? ` (${l.note})` : ""}`;
   });
   const demoted = reconciled.demoted.map(
@@ -175,7 +182,7 @@ export function toolDefinitions(
       const result = await engine.finish();
       if (!result.ok) {
         const red = result.results
-          .filter((r) => !r.ok)
+          .filter((r) => !r.ok && !r.optional)
           .map((r) => `✗ ${r.id}: ${r.failures.join("; ") || "not verified"}`);
         return text(
           `Not finished — these verifications are red:\n${red.join("\n")}\n` +
@@ -190,7 +197,8 @@ export function toolDefinitions(
       return text(
         `Every step verified green — onboarding is complete (recorded ${result.completed_at}).\n` +
           `${result.marker_written ? "First-run marker written for the companion greeting." : "First-run marker already present — left untouched."}\n` +
-          "This session now shuts down and the TUI opens.",
+          "This session now shuts down and the TUI opens: the board lists the repository's open pull requests — " +
+          "select one and press R to review it now (dry-run: nothing is posted).",
       );
     },
   };

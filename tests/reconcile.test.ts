@@ -141,6 +141,26 @@ const corrections = (s: StateStore) =>
   ).map((r) => ({ pr: r.pr, ...JSON.parse(r.payload) }));
 
 describe("reconcileOnce", () => {
+  it("reports every open PR it listed, tracked or not — the board's review list", async () => {
+    // MUTATION: drop report.open_list in the listOpenPrs step — this fails.
+    gh.open = [ref(5), ref(6, { draft: true, author: "bo" })];
+    seed(5, "tracked");
+    const { hooks } = recordingHooks();
+    const report = await reconcileOnce({ cfg, store, adapter: gh, hooks });
+    expect(report.open_list).toEqual([
+      {
+        number: 5,
+        title: "PR 5",
+        author: "alice",
+        draft: false,
+        updated_at: "2026-08-13T09:00:00Z",
+      },
+      { number: 6, title: "PR 6", author: "bo", draft: true, updated_at: "2026-08-13T09:00:00Z" },
+    ]);
+    // Listing an untracked PR still adopts nothing.
+    expect(store.getPr(6)).toBeUndefined();
+  });
+
   it(
     "adopts a hand-edited divergent pr_state from GitHub truth",
     { timeout: HEAVY_TIMEOUT_MS },

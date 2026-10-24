@@ -27,7 +27,10 @@ function runner(compose: ProcessResult, plain: ProcessResult) {
 describe("composePs", () => {
   it("answers from Docker's project label when the compose file cannot be read yet", async () => {
     // MUTATION: return the compose failure without asking `docker ps` — this fails.
-    const r = runner({ code: 1, stdout: "", stderr: INTERPOLATION }, { code: 0, stdout: "", stderr: "" });
+    const r = runner(
+      { code: 1, stdout: "", stderr: INTERPOLATION },
+      { code: 0, stdout: "", stderr: "" },
+    );
     expect(await composePs(r, "/checkout")).toEqual({ ok: true, rows: [], detail: "" });
     expect(r.calls[1]).toEqual(projectPsArgs());
     expect(projectPsArgs()).toContain(`label=com.docker.compose.project=${COMPOSE_PROJECT}`);
@@ -36,7 +39,11 @@ describe("composePs", () => {
   it("reads a running project container through the fallback in compose ps's own shape", async () => {
     const r = runner(
       { code: 1, stdout: "", stderr: INTERPOLATION },
-      { code: 0, stdout: '{"Service":"daemon","State":"running"}\n{"Service":"memory","State":"running"}\n', stderr: "" },
+      {
+        code: 0,
+        stdout: '{"Service":"daemon","State":"running"}\n{"Service":"memory","State":"running"}\n',
+        stderr: "",
+      },
     );
     expect((await composePs(r, "/checkout")).rows).toEqual([
       { service: "daemon", state: "running" },

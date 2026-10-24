@@ -38,6 +38,7 @@ export async function setupStateOf(
     const steps = [...defaultSteps()].sort((a, b) => a.order - b.order);
     const pending = steps.find(
       (s) =>
+        !s.optional &&
         (s.enabled ? s.enabled(checklist.choices) : true) &&
         checklist.steps[s.id]?.status !== "done",
     );

@@ -116,6 +116,24 @@ describe("the handler queues one human-asked round", () => {
     expect(pumped).toBe(1);
   });
 
+  it("unparks a PR the worker breaker parked: the person's ask is the operator's word", async () => {
+    // A first install with no model login parks the PR after two worker
+    // failures; a review-now after the login must be able to run.
+    // MUTATION: drop the clearWorkerBreaker call in reviewNow — this fails.
+    const store = new StateStore(":memory:");
+    for (const at of ["2026-10-24T08:00:00Z", "2026-10-24T08:01:00Z"])
+      store.recordWorkerFailure(17, {
+        commandId: `c-${at}`,
+        error: "no pi login",
+        at,
+        parkAfter: 2,
+      });
+    expect(store.workerBreaker(17)?.parked_at).not.toBeNull();
+    const out = await reviewNow({ store, getPr: async () => pr(), pump: async () => {} }, 17);
+    expect(out).toMatchObject({ ok: true });
+    expect(store.workerBreaker(17)).toBeUndefined();
+  });
+
   it("refuses a merged, closed or paused PR with its reason, and queues nothing", async () => {
     const store = new StateStore(":memory:");
     const pump = async (): Promise<void> => undefined;
@@ -173,7 +191,9 @@ describe("the handler queues one human-asked round", () => {
     expect(at).toBeGreaterThan(0);
     const body = wire.slice(at, at + 700);
     expect(body).toMatch(/getPr: \(n\) => adapter\.getPr\(n\)/);
-    expect(body).toMatch(/isPersonMode\(cfg\.github\) \? \{\} : \{ botLogin: cfg\.github\.bot_login \}/);
+    expect(body).toMatch(
+      /isPersonMode\(cfg\.github\) \? \{\} : \{ botLogin: cfg\.github\.bot_login \}/,
+    );
   });
 });
 

@@ -122,6 +122,10 @@ export interface OnboardingStep {
    * input, which is the common case. */
   parameters?: unknown;
   enabled?(choices: Readonly<Record<string, unknown>>): boolean;
+  /** After setup: the step still runs and verifies like any other, but the
+   * checklist completes without it — finish never waits on it. (The first
+   * review and the go-live flip: the board offers them once setup is done.) */
+  optional?: boolean;
   run(ctx: StepContext): Promise<StepReport>;
   verify(ctx: StepContext): Promise<StepReport>;
 }
@@ -248,6 +252,8 @@ export interface StepStatusLine {
   explain: string;
   status: "pending" | "done" | "disabled";
   note: string | null;
+  /** The step's `optional` flag: setup completes without it. */
+  optional?: boolean;
 }
 
 export interface ReconcileReport {
@@ -266,7 +272,8 @@ export interface StepRunResult {
 
 export interface VerifyAllResult {
   ok: boolean;
-  results: Array<{ id: string; ok: boolean; failures: string[] }>;
+  /** `optional` results are reported but never hold `ok` false. */
+  results: Array<{ id: string; ok: boolean; failures: string[]; optional?: boolean }>;
 }
 
 export type FinishResult =
@@ -370,6 +377,7 @@ export class OnboardingEngine {
         explain: step.explain,
         status: this.enabled(step) ? (rec?.status ?? "pending") : "disabled",
         note: rec?.note ?? null,
+        ...(step.optional ? { optional: true } : {}),
       };
     });
   }
@@ -489,10 +497,15 @@ export class OnboardingEngine {
           rec.note = "verified green without a recorded run";
         }
       }
-      results.push({ id: step.id, ok: outcome.ok, failures: failures(outcome.checks) });
+      results.push({
+        id: step.id,
+        ok: outcome.ok,
+        failures: failures(outcome.checks),
+        ...(step.optional ? { optional: true } : {}),
+      });
     }
     this.save();
-    return { ok: results.every((r) => r.ok), results };
+    return { ok: results.every((r) => r.ok || r.optional === true), results };
   }
 
   /**
