@@ -26,7 +26,7 @@ import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 const NAV: Array<[string, string]> = TABS.map((t, i) => [String(i + 1), `${i + 1} ${t}`]);
 const GLOBALS: Array<[string, string]> = [
   ["r", "r refresh"],
-  ["s", "s ssh"],
+  ["s", "s check"],
   ["?", "? help"],
   ["q", "q quit"],
 ];

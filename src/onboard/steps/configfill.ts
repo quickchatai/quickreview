@@ -77,8 +77,8 @@ import {
 } from "../engine.js";
 import { deliverConfigChange, configDeliveryChecks } from "./configdelivery.js";
 import type { TransportOptions } from "./transport.js";
-import { BARE_HOSTNAME_RE, readTomlKey, secretsDirFor } from "./ingress.js";
-import { SSH_ALIAS_RE } from "./topology.js";
+import { BARE_HOSTNAME_RE, CONTAINER_STATE_DIR, readTomlKey, secretsDirFor } from "./ingress.js";
+import { SSH_ALIAS_RE, topologyOf, type Topology } from "./topology.js";
 
 export const CONFIG_FILL_STEP_ID = "config_fill";
 
@@ -506,10 +506,20 @@ export interface Derivable {
   holds(cfg: Config, facts: FillFacts): string | null;
 }
 
-/** The TUI transport a recorded topology implies; null while it is unrecorded. */
-function tuiTargetFor(topology: string): "local" | "ssh" | null {
-  return topology === "local" ? "local" : topology === "vm" ? "ssh" : null;
+/** The topology a fill is for: the recorded one, and "local" while none is
+ * recorded — `topologyOf`'s reading, the one every other step uses. */
+function fillTopology(topology: string): Topology {
+  return topologyOf({ [CHOICE_KEYS.topology]: topology });
 }
+
+/** The TUI transport a topology implies (an unrecorded one is local). */
+function tuiTargetFor(topology: string): "local" | "ssh" {
+  return fillTopology(topology) === "vm" ? "ssh" : "local";
+}
+
+/** The release image's state dir inside the compose daemon container (the
+ * `qcr-state` volume), where the local TUI reads status.json. */
+const LOCAL_TUI_STATE_DIR = CONTAINER_STATE_DIR;
 
 export const DERIVABLES: readonly Derivable[] = [
   {
@@ -644,15 +654,12 @@ export const DERIVABLES: readonly Derivable[] = [
     path: "[tui] target",
     explain:
       'follows the recorded topology: "local" when the daemon runs on this machine (the TUI talks to local Docker), "ssh" on the VM route',
-    write: (f) => {
-      const target = tuiTargetFor(f.topology);
-      return target ? { section: "tui", key: "target", value: tomlString(target) } : null;
-    },
+    write: (f) => ({ section: "tui", key: "target", value: tomlString(tuiTargetFor(f.topology)) }),
     stable: true,
     holds: (cfg, f) => {
       const want = tuiTargetFor(f.topology);
-      return want && cfg.tui.target !== want
-        ? `[tui] target = "${cfg.tui.target}", but the recorded topology is ${f.topology} — the TUI would ` +
+      return cfg.tui.target !== want
+        ? `[tui] target = "${cfg.tui.target}", but the topology is ${f.topology || "local (none recorded)"} — the TUI would ` +
             `${want === "local" ? "look for the daemon over ssh" : "look for the daemon in local Docker"}. ` +
             `Fix: run this step again (it writes target = "${want}")`
         : null;
@@ -664,7 +671,8 @@ export const DERIVABLES: readonly Derivable[] = [
     explain:
       "the bundled local Compose project runs service daemon as quickreview-daemon-1; preserve an operator's custom container",
     write: (f, fresh, existing) =>
-      f.topology === "local" && (fresh || existing?.tui.container === TUI_DEFAULTS.container)
+      fillTopology(f.topology) === "local" &&
+      (fresh || existing?.tui.container === TUI_DEFAULTS.container)
         ? { section: "tui", key: "container", value: tomlString("quickreview-daemon-1") }
         : null,
     stable: false,
@@ -676,8 +684,37 @@ export const DERIVABLES: readonly Derivable[] = [
     explain:
       "the bundled local Compose project runs the memory sidecar as quickreview-memory-1, where the memory forward must relay; preserve an operator's custom container",
     write: (f, fresh, existing) =>
-      f.topology === "local" && (fresh || (existing?.tui.memory_container ?? "") === "")
+      fillTopology(f.topology) === "local" &&
+      (fresh || (existing?.tui.memory_container ?? "") === "")
         ? { section: "tui", key: "memory_container", value: tomlString("quickreview-memory-1") }
+        : null,
+    stable: false,
+    holds: () => null,
+  },
+  {
+    id: "tui_remote_state_dir",
+    path: "[tui] remote_state_dir",
+    explain:
+      `on this machine the TUI reads status.json inside the daemon container, where the release image keeps its state (${LOCAL_TUI_STATE_DIR}, ` +
+      "the compose state volume) — the shipped default is the VM host's path; preserve an operator's custom path",
+    write: (f, fresh, existing) =>
+      fillTopology(f.topology) === "local" &&
+      (fresh || existing?.tui.remote_state_dir === TUI_DEFAULTS.remote_state_dir)
+        ? { section: "tui", key: "remote_state_dir", value: tomlString(LOCAL_TUI_STATE_DIR) }
+        : null,
+    stable: false,
+    holds: () => null,
+  },
+  {
+    id: "tui_sudo_docker",
+    path: "[tui] sudo_docker",
+    explain:
+      "off on this machine: the wizard's own bring-up drives docker without sudo, so the TUI does too (a sudo password " +
+      "prompt behind the TUI's screen can only fail); on the VM route sudo stays the shipped default",
+    write: (f, fresh, existing) =>
+      fillTopology(f.topology) === "local" &&
+      (fresh || existing?.tui.sudo_docker === TUI_DEFAULTS.sudo_docker)
+        ? { section: "tui", key: "sudo_docker", value: "false" }
         : null,
     stable: false,
     holds: () => null,

@@ -47,7 +47,8 @@ import {
   type LiveAgentProgress,
   type RoundProgressSnapshot,
 } from "@quickchatai/pi-quickreview/src/round-progress.js";
-import type { ConnectionDiagnosis } from "./sshtriage.js";
+import { isLocalDiagnosis, type ConnectionDiagnosis } from "./sshtriage.js";
+import { setupLine, type SetupState } from "./setupstate.js";
 import { FG, RESET, fmtAge, legendLine, osc8, prUrl, stateColor, verdictChip } from "./theme.js";
 
 /** Every clickable thing the board declares. */
@@ -109,6 +110,9 @@ export interface BoardView {
   /** Active board filter (companion `board_filter` verb; F clears).
    * Consumed through `visiblePrs` — never filter a sortPrs call directly. */
   boardFilter?: BoardFilter | null;
+  /** Set while onboarding's checklist exists and is not complete
+   * (src/tui/setupstate.ts): the board says so before anything else. */
+  setup?: SetupState;
 }
 
 // ---- layout ----------------------------------------------------------------
@@ -287,6 +291,9 @@ const CONNECTION_LABEL: Record<ConnectionDiagnosis["kind"], string> = {
   "wedged-master": "ssh master wedged",
   "host-unreachable": "host down",
   unknown: "cause unknown",
+  "local-down": "daemon container not running",
+  "local-docker": "local docker not answering",
+  unconfigured: "no ssh_host",
 };
 
 /**
@@ -297,12 +304,30 @@ const CONNECTION_LABEL: Record<ConnectionDiagnosis["kind"], string> = {
  * the truth is "I could not ask"), the reason is named, and the remedy is a
  * command the operator can paste into their own shell.
  */
-export function unknownSourceLines(conn: ConnectionDiagnosis | undefined, width: number): string[] {
+export function unknownSourceLines(
+  conn: ConnectionDiagnosis | undefined,
+  width: number,
+  setup?: SetupState,
+): string[] {
   const lines = [
     `${FG.anomaly}the daemon has not answered yet${RESET}`,
     `${FG.dim}nothing below is a measurement — it is not known${RESET}`,
     "",
   ];
+  if (setup) {
+    // A half-finished onboarding is the whole explanation: the stack is
+    // started by one of its later steps, so daemon or ssh troubleshooting
+    // here would send the operator after a fault that is not one.
+    for (const l of wrap(setupLine(setup), width)) lines.push(`${WARN}${l}${DRESET}`);
+    for (const l of wrap(
+      "the daemon, its memory and this board's connection are set up by the wizard's remaining steps",
+      width,
+    ))
+      lines.push(`${FG.dim}${l}${RESET}`);
+    lines.push("");
+    lines.push(`${FG.dim}r refreshes${RESET}`);
+    return lines.map((l) => truncate(l, width));
+  }
   if (conn && conn.kind !== "ok" && conn.kind !== "local") {
     for (const l of wrap(stripAnsi(conn.cause), width)) lines.push(`${FG.dim}${l}${RESET}`);
     if (conn.remedy !== "") {
@@ -337,7 +362,8 @@ export function unknownDetailLines(conn: ConnectionDiagnosis | undefined, width:
   ];
   if (conn?.detail) {
     lines.push("");
-    for (const l of wrap(`ssh said: ${stripAnsi(conn.detail)}`, width))
+    const who = isLocalDiagnosis(conn) ? "docker" : "ssh";
+    for (const l of wrap(`${who} said: ${stripAnsi(conn.detail)}`, width))
       lines.push(`${FG.dim}${l}${RESET}`);
   }
   return lines.map((l) => truncate(l, width));
@@ -482,9 +508,17 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
       health = `${WARN}▲ DATA STALE (${view.health.dataAgeS}s)${DRESET}`;
       break;
     case "unreachable":
-      health = `${FG.anomaly}✖ unreachable${view.connection ? ` · ${CONNECTION_LABEL[view.connection.kind]}` : ""}${RESET}`;
+      // Under an unfinished setup the setup segment that replaces this is the
+      // cause; a transport label would only point at a fault that is not one
+      // (the list still says, in full, that the daemon has not answered).
+      health = view.setup
+        ? ""
+        : `${FG.anomaly}✖ unreachable${view.connection ? ` · ${CONNECTION_LABEL[view.connection.kind]}` : ""}${RESET}`;
       break;
   }
+  // Short on the bar, where every segment competes for the width; the list
+  // carries the full sentence with the next step.
+  const setupSeg = view.setup ? `${WARN}▲ setup not finished — qcr onboard${DRESET}` : "";
   const s = view.snapshot;
   const rounds = s ? `rounds ${s.running_rounds}/${s.max_concurrent_rounds ?? "?"}` : "";
   const spend = s?.today_spend_usd !== undefined ? `today $${s.today_spend_usd.toFixed(2)}` : "";
@@ -512,6 +546,7 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
     `${HEADING}quickreview${DRESET}`,
     mode,
     health,
+    setupSeg,
     mem?.loud ? mem.text : "",
     loop?.loud ? loop.text : "",
     curation,
@@ -1010,7 +1045,7 @@ export function detailLines(
 export const HELP_LINES = [
   "1…8            the eight surfaces: board · memory · digest · tickets · deploy · metrics · feedback · scan",
   "               the bar at the foot shows what THIS frame answers to; a button that is not there is a key that would do nothing",
-  "r / s / ? / q  refresh · reconnect VM ssh (the one ssh key-passphrase prompt) · this overlay · quit (asks first)",
+  "r / s / ? / q  refresh · re-check the connection (VM route: ssh, the one key-passphrase prompt; local route: the daemon container) · this overlay · quit (asks first)",
   "Ctrl-c ×3      kill the TUI from anywhere (terminal restored) — the un-stuck hatch",
   "               an alert in the top bar: click it or ⏎ to open the companion",
   "the companion column down the right edge is on every tab:",
@@ -1300,7 +1335,7 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
     ? [section(`PRS (${sorted.length})`, flabel !== "" ? flabel : "the daemon's live set")]
     : [
         section("PRS (?)", "unknown — the daemon has not answered"),
-        ...unknownSourceLines(view.connection, listW - 1),
+        ...unknownSourceLines(view.connection, listW - 1, view.setup),
       ];
   // The list scrolls with the selection: the verbs act on the selected PR, so
   // it must never sit off-screen (`windowStart`, the tabs' shared rule). The

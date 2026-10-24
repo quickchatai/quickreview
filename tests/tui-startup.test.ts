@@ -212,6 +212,10 @@ async function startTui(
   tmp: string,
   argv: string[] = ["--no-reload"],
   companionEnabled = true,
+  over: {
+    tui?: Partial<import("../src/config.js").TuiConfig>;
+    routeFacts?: Partial<import("../src/tui/route.js").RouteFacts>;
+  } = {},
 ): Promise<Harness> {
   const { loadConfig } = await import("../src/config.js");
   const base = loadConfig(join(process.cwd(), "tests/fixtures/config.toml"));
@@ -227,6 +231,7 @@ async function startTui(
   );
   const config = {
     ...base,
+    tui: { ...base.tui, ...over.tui },
     sink: {
       ...base.sink,
       kind: "wayfinder" as const,
@@ -257,7 +262,15 @@ async function startTui(
   const { out, input, written, painted } = fakeTerminal();
   const startedAt = Date.now();
   const { runTui } = await import("../src/tui/index.js");
-  const running = runTui(argv, { out, input, config, exit: () => {} });
+  // Hermetic route facts: never this checkout's own .env or checklist.
+  const routeFacts = {
+    projectDir: tmp,
+    projectEnv: null,
+    checklist: null,
+    dockerSocketAccess: undefined,
+    ...over.routeFacts,
+  };
+  const running = runTui(argv, { out, input, config, exit: () => {}, routeFacts });
   // Wait for the FRAME as an event. `running` only settles on quit, so if it
   // settles here the TUI exited without ever painting — a real failure, and
   // one worth naming rather than timing out over.
@@ -419,6 +432,60 @@ describe("the first frame (structural, not timed)", () => {
     // …and the board did not grow into the space: the unknown block is the
     // connection triage only, not a second copy of the checklist.
     expect(plain).not.toContain("starting up\n");
+    await h.stop();
+  });
+
+  it('a half-finished onboarding with no ssh_host says so on the FIRST frame — never `ssh ""`', async () => {
+    // The real box: config.toml still the template (`target = "ssh"`,
+    // `ssh_host = ""`), the checklist at config_fill, no stack up yet.
+    const checklist = {
+      version: 1,
+      created_at: "2026-10-24T00:00:00Z",
+      updated_at: "2026-10-24T00:00:00Z",
+      completed_at: null,
+      choices: { topology: "local" },
+      steps: {
+        preflight: { status: "done", completed_at: null, verified_at: null, note: null, data: {} },
+        topology: { status: "done", completed_at: null, verified_at: null, note: null, data: {} },
+        llm_auth: { status: "done", completed_at: null, verified_at: null, note: null, data: {} },
+      },
+    } as unknown as import("../src/onboard/engine.js").ChecklistFile;
+    const h = await startTui(tmp, ["--no-reload", "--no-companion"], false, {
+      tui: { target: "ssh", ssh_host: "" },
+      routeFacts: { checklist, projectEnv: "QCR_VERSION=1.1.0\n" },
+    });
+    const first = stripAnsi(h.written.join(""));
+    // The top bar says it in short, the board's list in full (wrapped to its
+    // width), naming the step the wizard would run next.
+    expect(first).toContain("▲ setup not finished — qcr onboard");
+    expect(first).toContain("next:");
+    expect(first).toContain("Interview and fill");
+    const plain = stripAnsi(await board(h));
+    expect(plain).toContain("setup not finished");
+    // The route is the local stack, and nothing on the board is ssh advice.
+    await pollUntil(async () => {
+      h.written.length = 0;
+      await h.press("\x00");
+      return /daemon container/.test(stripAnsi(h.frame()));
+    });
+    const later = stripAnsi(h.frame());
+    expect(later).not.toMatch(/ssh -v|ssh-add|host down|\[s ssh\]/);
+    expect(h.log.entries.filter((e) => /^(spawn|execFile|spawnSync) ssh\b/.test(e))).toEqual([]);
+    await h.stop();
+  });
+
+  it("an empty ssh_host on no compose project names the one remedy, and spawns no ssh", async () => {
+    const h = await startTui(tmp, ["--no-reload", "--no-companion"], false, {
+      tui: { target: "ssh", ssh_host: "" },
+    });
+    await board(h);
+    await pollUntil(() => /✖ unreachable · no ssh_host/.test(stripAnsi(h.frame())));
+    const plain = stripAnsi(h.frame());
+    // The top bar's short form, and the full sentence where the list would be.
+    expect(plain).toContain("✖ unreachable · no ssh_host");
+    expect(plain).toContain("ssh_host is empty");
+    expect(plain).not.toMatch(/ssh -v|Could not resolve hostname/);
+    expect(h.log.entries.filter((e) => /^(spawn|execFile|spawnSync) ssh\b/.test(e))).toEqual([]);
     await h.stop();
   });
 
@@ -803,22 +870,99 @@ describe("connection triage", () => {
     expect(auth.remedy).toBe("ssh-add /home/x/.ssh/derived_key");
   });
 
-  it("is silent when the master is alive, and never spawns anything in local mode", async () => {
+  it("is silent when the master is alive, and never spawns ssh in local mode", async () => {
     const { TUI_DEFAULTS } = await import("../src/config.js");
     const { classifyConnection, triageConnection } = await import("../src/tui/sshtriage.js");
     expect(classifyConnection({ ...base, masterAlive: true }).kind).toBe("ok");
-    const ran: string[] = [];
+    const ran: string[][] = [];
     const d = await triageConnection(
-      { ...TUI_DEFAULTS, target: "local" },
+      { ...TUI_DEFAULTS, target: "local", container: "quickreview-daemon-1", sudo_docker: false },
       {
-        run: async (cmd) => {
-          ran.push(cmd);
-          return { status: 0, stdout: "", stderr: "", timedOut: false };
+        run: async (cmd, argv) => {
+          ran.push([cmd, ...argv]);
+          return { status: 0, stdout: "running\n", stderr: "", timedOut: false };
         },
       },
     );
     expect(d.kind).toBe("local");
+    // The one probe is local docker's own answer about the daemon container.
+    expect(ran).toEqual([["docker", "inspect", "-f", "{{.State.Status}}", "quickreview-daemon-1"]]);
+  });
+
+  it("names a local daemon container that is absent or stopped, with the compose command", async () => {
+    const { TUI_DEFAULTS } = await import("../src/config.js");
+    const { triageConnection, diagnosisLine } = await import("../src/tui/sshtriage.js");
+    const local = { ...TUI_DEFAULTS, target: "local" as const, container: "quickreview-daemon-1" };
+    const absent = await triageConnection(local, {
+      projectDir: "/srv/qcr",
+      run: async () => ({
+        status: 1,
+        stdout: "",
+        stderr: "Error: No such object: quickreview-daemon-1\n",
+        timedOut: false,
+      }),
+    });
+    expect(absent.kind).toBe("local-down");
+    expect(absent.cause).toMatch(/no daemon container quickreview-daemon-1/);
+    expect(absent.remedy).toBe("docker compose --project-directory /srv/qcr up -d");
+    expect(diagnosisLine(absent)).not.toMatch(/ssh/);
+    const stopped = await triageConnection(local, {
+      projectDir: "/srv/qcr",
+      run: async () => ({ status: 0, stdout: "exited\n", stderr: "", timedOut: false }),
+    });
+    expect(stopped.kind).toBe("local-down");
+    expect(stopped.cause).toMatch(/is exited/);
+    // sudo rides `-n`: a password prompt behind the alt screen is a hang.
+    const seen: string[][] = [];
+    const denied = await triageConnection(
+      { ...local, sudo_docker: true },
+      {
+        run: async (cmd, argv) => {
+          seen.push([cmd, ...argv]);
+          return {
+            status: 1,
+            stdout: "",
+            stderr: "sudo: a password is required\n",
+            timedOut: false,
+          };
+        },
+      },
+    );
+    expect(seen[0]?.slice(0, 3)).toEqual(["sudo", "-n", "docker"]);
+    expect(denied.kind).toBe("local-docker");
+    expect(denied.cause).toMatch(/sudo_docker/);
+  });
+
+  it("an EMPTY ssh_host is unconfigured: one precise remedy, and no ssh is ever spawned", async () => {
+    const { TUI_DEFAULTS } = await import("../src/config.js");
+    const { triageConnection, diagnosisLine } = await import("../src/tui/sshtriage.js");
+    const ran: string[] = [];
+    const d = await triageConnection(
+      { ...TUI_DEFAULTS, ssh_host: "" },
+      {
+        run: async (cmd) => {
+          ran.push(cmd);
+          return { status: 255, stdout: "", stderr: "", timedOut: false };
+        },
+      },
+    );
     expect(ran).toEqual([]);
+    expect(d.kind).toBe("unconfigured");
+    expect(d.cause).toBe(
+      '[tui] ssh_host is empty — run `qcr onboard`, or set [tui] target = "local"',
+    );
+    expect(diagnosisLine(d)).not.toMatch(/ssh -v/);
+    // The runner refuses an empty host the same way, without spawning.
+    const { realSshRunner } = await import("../src/tui/remote.js");
+    const before = startupLog().entries.length;
+    const res = await realSshRunner("", ["cat", "/x"]);
+    expect(res.ok).toBe(false);
+    expect(res.stderr).toMatch(/ssh_host is empty/);
+    expect(
+      startupLog()
+        .entries.slice(before)
+        .filter((e) => e.startsWith("spawn ssh")),
+    ).toEqual([]);
   });
 
   it("collects the probes ssh itself answers with — key, control path, agent", async () => {

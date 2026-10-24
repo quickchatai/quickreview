@@ -51,7 +51,9 @@ const NAV: ReadonlyArray<BarButton & { tab: Tab }> = TABS.map((tab) => ({
 /** Row A right: always the same four, always in the same place. */
 const GLOBALS: readonly BarButton[] = [
   { key: "r", label: "r refresh" },
-  { key: "s", label: "s ssh" },
+  // Transport-neutral: on the VM route `s` re-checks ssh (and offers the one
+  // key-passphrase prompt), on the local route the daemon container.
+  { key: "s", label: "s check" },
   { key: "?", label: "? help" },
   { key: "q", label: "q quit" },
 ];

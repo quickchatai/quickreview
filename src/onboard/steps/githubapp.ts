@@ -416,9 +416,54 @@ export interface CallbackServerOptions {
   page: (bound: { url: string; redirectUrl: string }) => string;
   state: string;
   /** Preferred loopback port; a busy port falls back to an ephemeral one and
-   * the manifest's redirect_url follows the port actually bound. */
+   * the manifest's redirect_url follows the port actually bound — except
+   * behind a `hosted` origin, where the port is strict. */
   port: number;
   timeoutMs: number;
+  /** A hosted setup (`QCR_ONBOARD_PUBLIC_ORIGIN`): a reverse proxy forwards
+   * this public https origin to the loopback listener on `port`. */
+  hosted?: HostedCallback;
+}
+
+/** The hosted callback's shape: GitHub redirects to `<origin>/manifest-callback`,
+ * the operator opens `pageUrl`, and the proxy's Host header is admitted. */
+export interface HostedCallback {
+  /** `https://host[:port]`, no path. */
+  origin: string;
+  /** The page URL the operator is told to open (default: the origin). */
+  pageUrl: string;
+}
+
+/** The env knobs of a hosted setup. Total: an unusable origin is a refusal
+ * with its reason, never a silent fallback to loopback. */
+export function hostedCallbackFromEnv(env: NodeJS.ProcessEnv): {
+  hosted?: HostedCallback;
+  problem?: string;
+} {
+  const raw = (env["QCR_ONBOARD_PUBLIC_ORIGIN"] ?? "").trim();
+  if (raw === "") return {};
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return {
+      problem: `QCR_ONBOARD_PUBLIC_ORIGIN=${raw} is not a URL — set an https origin like https://<public host>`,
+    };
+  }
+  if (
+    u.protocol !== "https:" ||
+    u.username ||
+    u.password ||
+    (u.pathname !== "/" && u.pathname !== "") ||
+    u.search ||
+    u.hash
+  )
+    return {
+      problem: `QCR_ONBOARD_PUBLIC_ORIGIN=${raw} must be a bare https origin (https://host[:port], no path) — GitHub redirects to <origin>${CALLBACK_PATH}`,
+    };
+  const origin = u.origin;
+  const page = (env["QCR_ONBOARD_SETUP_URL"] ?? "").trim();
+  return { hosted: { origin, pageUrl: page !== "" ? page : `${origin}/` } };
 }
 
 export type CallbackServerFactory = (o: CallbackServerOptions) => Promise<CallbackListener>;
@@ -516,13 +561,30 @@ export const nodeCallbackServer: CallbackServerFactory = async (o) => {
   let port: number;
   try {
     port = await listen(o.port);
-  } catch {
+  } catch (err) {
+    // Behind a hosted origin the proxy forwards to exactly this port, so
+    // another one would be a listener nothing reaches: refuse, and say so.
+    if (o.hosted)
+      throw new Error(
+        `port ${o.port} is busy, and the hosted callback (${o.hosted.origin} → 127.0.0.1:${o.port}) needs exactly ` +
+          `that port — stop whatever holds it and run the step again (${String(err instanceof Error ? err.message : err)})`,
+        { cause: err },
+      );
     port = await listen(0); // preferred port busy — any loopback port will do
   }
 
   allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
-  const url = `http://127.0.0.1:${port}/`;
-  const redirectUrl = `http://127.0.0.1:${port}${CALLBACK_PATH}`;
+  let url = `http://127.0.0.1:${port}/`;
+  let redirectUrl = `http://127.0.0.1:${port}${CALLBACK_PATH}`;
+  if (o.hosted) {
+    // The proxy's own Host header is the public one: admitted by name, with
+    // and without the scheme's default port, alongside loopback.
+    const pub = new URL(o.hosted.origin);
+    allowedHosts.add(pub.host.toLowerCase());
+    if (pub.port === "") allowedHosts.add(`${pub.hostname.toLowerCase()}:443`);
+    url = o.hosted.pageUrl;
+    redirectUrl = `${o.hosted.origin}${CALLBACK_PATH}`;
+  }
   html = o.page({ url, redirectUrl });
 
   const timer = setTimeout(
@@ -851,6 +913,9 @@ export interface GithubAppStepOptions {
   randomToken?: (bytes: number) => string;
   /** Try to open the operator's browser at the page (best effort, never fatal). */
   openBrowser?: boolean;
+  /** Env for the hosted-callback knobs (`QCR_ONBOARD_PUBLIC_ORIGIN`,
+   * `QCR_ONBOARD_SETUP_URL`); default the process env. */
+  env?: NodeJS.ProcessEnv;
 }
 
 interface Resolved {
@@ -1158,12 +1223,17 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
     // The page can only be rendered once the port is known (the manifest's
     // redirect_url must name the port actually bound), so the listener builds
     // it from its own bound address.
+    const hostedEnv = hostedCallbackFromEnv(opts.env ?? process.env);
+    if (hostedEnv.problem) {
+      return [{ name: "callback listener", ok: false, detail: hostedEnv.problem }];
+    }
     let listener: CallbackListener;
     try {
       listener = await serve({
         state,
         port: opts.callbackPort ?? DEFAULT_CALLBACK_PORT,
         timeoutMs: callbackTimeoutMs,
+        ...(hostedEnv.hosted ? { hosted: hostedEnv.hosted } : {}),
         page: (bound) =>
           manifestPageHtml({
             postUrl: appCreationUrl(target, r.githubBase),

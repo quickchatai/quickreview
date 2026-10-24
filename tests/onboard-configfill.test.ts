@@ -277,6 +277,17 @@ describe("the full interview", () => {
     expect(producedConfig().tui.target).toBe("ssh");
   });
 
+  it("treats an UNRECORDED topology as local, as every other step does", async () => {
+    // The TUI opened before onboarding recorded a topology must not keep the
+    // template's ssh route with an empty host: unrecorded means local.
+    const { report } = await runStep();
+    expect(failed(report)).toBe("");
+    const cfg = producedConfig();
+    expect(cfg.tui.target).toBe("local");
+    expect(cfg.tui.container).toBe("quickreview-daemon-1");
+    expect(cfg.tui.memory_container).toBe("quickreview-memory-1");
+  });
+
   it("verify is red when [tui] target disagrees with the recorded topology", async () => {
     await runStep({ choices: { [CHOICE_KEYS.topology]: "local" } });
     const path = join(root, "config.toml");
@@ -339,6 +350,34 @@ describe("derivables", () => {
     await runStep({ choices: { [CHOICE_KEYS.topology]: "local" } });
     expect(producedConfig().tui.container).toBe("operator-daemon");
   });
+  it("reads the local stack's state where the release image keeps it, with plain docker", async () => {
+    await runStep({ choices: { [CHOICE_KEYS.topology]: "local" } });
+    const compose = readFileSync(join(REPO_ROOT, "docker-compose.yml"), "utf8");
+    // The compose state volume's mount point is the dir the TUI must read.
+    expect(compose).toMatch(/qcr-state:\/opt\/qcr\/state/);
+    expect(producedConfig().tui.remote_state_dir).toBe("/opt/qcr/state");
+    expect(producedConfig().tui.sudo_docker).toBe(false);
+    // An operator's own values survive a re-run.
+    const path = join(root, "config.toml");
+    writeFileSync(
+      path,
+      readFileSync(path, "utf8")
+        .replace('remote_state_dir = "/opt/qcr/state"', 'remote_state_dir = "/srv/state"')
+        .replace("sudo_docker = false", "sudo_docker = true"),
+    );
+    await runStep({ choices: { [CHOICE_KEYS.topology]: "local" } });
+    expect(producedConfig().tui.remote_state_dir).toBe("/srv/state");
+    // true is the shipped default, so it reads as unset and is derived again.
+    expect(producedConfig().tui.sudo_docker).toBe(false);
+    // The VM route keeps the VM-shaped defaults.
+    rmSync(path);
+    await runStep({
+      choices: { [CHOICE_KEYS.topology]: "vm", [CHOICE_KEYS.ingress]: "named" },
+    });
+    expect(producedConfig().tui.remote_state_dir).toBe("/opt/quickreview/state");
+    expect(producedConfig().tui.sudo_docker).toBe(true);
+  });
+
   it("points a local fill's memory forward at the bundled Compose memory sidecar", async () => {
     await runStep({ choices: { [CHOICE_KEYS.topology]: "local" } });
     const compose = readFileSync(join(REPO_ROOT, "docker-compose.yml"), "utf8");
@@ -366,6 +405,8 @@ describe("derivables", () => {
       "tui_target",
       "tui_container",
       "tui_memory_container",
+      "tui_remote_state_dir",
+      "tui_sudo_docker",
       "tui_ssh_host",
       "server_hostname",
       "companion_repo_dir",

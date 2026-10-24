@@ -977,6 +977,8 @@ describe("the layered verification runs over ssh, unchanged", () => {
   interface Layered {
     engine: OnboardingEngine;
     calls: string[][];
+    /** The TUI-route check's reads: the board's own status.json read. */
+    tuiReads: Array<{ host: string; argv: string[] }>;
   }
 
   function layered(
@@ -1034,13 +1036,28 @@ describe("the layered verification runs over ssh, unchanged", () => {
       }
       throw new Error(`unexpected fetch ${url}`);
     }) as unknown as typeof fetch;
+    // config_fill has run: [tui] names the alias, as the TUI will read it.
+    const cfgPath = join(root, "config.toml");
+    writeFileSync(cfgPath, setTomlKey(readFileSync(cfgPath, "utf8"), "tui", "ssh_host", ALIAS)!);
+    const tuiReads: Array<{ host: string; argv: string[] }> = [];
     const step = verifyStackStep({
       apiBase: API,
       secretsDir,
       sleep: async () => undefined,
       redeliver: false,
+      tuiRoute: {
+        runner: () => async (host, argv) => {
+          tuiReads.push({ host, argv });
+          return { ok: true, stdout: '{"prs":[]}', stderr: "", code: 0 };
+        },
+        sleep: async () => undefined,
+      },
     });
-    return { engine: new OnboardingEngine([step], baseAdapters(runner, fetchFake)), calls };
+    return {
+      engine: new OnboardingEngine([step], baseAdapters(runner, fetchFake)),
+      calls,
+      tuiReads,
+    };
   }
 
   it("all three layers green: docker over ssh, health by curl ON the box, and GitHub's own delivery log", async () => {
@@ -1053,12 +1070,18 @@ describe("the layered verification runs over ssh, unchanged", () => {
       "memory-sidecar",
       "ingress-sidecar",
       "health",
+      "tui-route",
       "webhook-url",
       "ping-delivery",
     ]);
     expect(result.checks.find((c) => c.name === "ping-delivery")!.detail).toMatch(
       /proven end to end/,
     );
+    // The TUI's own read, as the board makes it: the VM host's state dir over ssh.
+    expect(h.tuiReads[0]).toEqual({
+      host: ALIAS,
+      argv: ["cat", "/opt/quickreview/state/status.json"],
+    });
     // Every hop carries BatchMode, and the health probe runs on the VM's
     // loopback (the daemon's port is deliberately not exposed off the box).
     for (const call of h.calls) expect(call.join(" ")).toMatch(/-o BatchMode=yes/);

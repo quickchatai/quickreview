@@ -501,6 +501,15 @@ on GitHub's own page either way), the redirect URL, and the webhook URL. The
 permissions and events are whatever the pinned artifact says. The page does not auto-submit: you see what is about to be
 created, and the click is yours.
 
+On a hosted box whose browser is not on the same machine (a reverse proxy
+forwards a public https origin to the box's `127.0.0.1:8788`), set
+`QCR_ONBOARD_PUBLIC_ORIGIN=https://<public host>` before `qcr onboard`, and
+`QCR_ONBOARD_SETUP_URL` when the page you open is not the origin itself. The
+manifest's redirect URL becomes `<origin>/manifest-callback`, the listener
+admits the proxy's Host header beside loopback, and it binds port 8788
+strictly: a busy port is a clear refusal, never a silent move to a port the
+proxy does not forward.
+
 GitHub redirects back to the wizard with a one-time code, which it exchanges for
 the App id, private key and webhook secret — **the only moment GitHub ever
 reveals that webhook secret** — and writes all three into your secrets dir as
@@ -716,6 +725,13 @@ here and says what to do: nothing later would mean anything until it is fixed.
    reported as not checked: nothing is exposed, so no ping can arrive, and the
    reconcile poll is the only trigger path. On your own GitHub account it is
    skipped too, with that reason: there is no App, so no App webhook to read.
+
+Beside the health layer, one more check, `tui-route`: the operator TUI's own
+read. It resolves `[tui]` exactly as `qcr tui` does (`src/tui/route.ts`) and
+reads `status.json` through the same runner — local docker into the daemon
+container on this machine, ssh on the server route — so a red check here is the
+board that would otherwise open on "unreachable". It does not stop the ping
+layer.
 
 If the last ping failed, the wizard redelivers it once and watches for about
 thirty seconds. If it still fails, the three things to check are: the webhook

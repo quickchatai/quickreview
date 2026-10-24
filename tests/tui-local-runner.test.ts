@@ -269,3 +269,26 @@ describe("the transcript viewer's live reads", () => {
     ]);
   });
 });
+
+describe("an EMPTY ssh_host never reaches ssh", () => {
+  // The template config before onboarding: `ssh ""` only ever dies on name
+  // resolution, and every surface would then print an ssh remedy with no
+  // host in it.
+  it("the ssh runner refuses it with the one remedy, spawning nothing", async () => {
+    const res = await realSshRunner("", ["cat", "/opt/quickreview/state/status.json"]);
+    expect(res).toMatchObject({ ok: false, code: null });
+    expect(res.stderr).toBe(
+      '[tui] ssh_host is empty — run `qcr onboard`, or set [tui] target = "local"',
+    );
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("the passphrase bootstrap says so instead of prompting for nothing", () => {
+    const ssh = vi.fn() as unknown as SyncSsh;
+    const said: string[] = [];
+    const r = ensureSshMaster({ ...TUI_DEFAULTS, ssh_host: "" }, ssh, (l) => said.push(l));
+    expect(r.kind).toBe("failed");
+    expect(ssh).not.toHaveBeenCalled();
+    expect(said.join("\n")).toMatch(/ssh_host is empty/);
+  });
+});
