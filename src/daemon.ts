@@ -1121,8 +1121,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
               ...(job.deferred_at ? { deferred_since: job.deferred_at } : {}),
             };
         }
-      if (deps.runHost) snapshot.run_host = deps.runHost;
       if (openPrs) snapshot.open_prs = openPrs;
+      if (deps.runHost) snapshot.run_host = deps.runHost;
       writeStatusJson(stateDir, snapshot);
     } catch (err) {
       log("status.json write failed", err);
