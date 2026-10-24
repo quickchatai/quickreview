@@ -817,8 +817,12 @@ export class GitHubAdapter {
     return this.searchIssues(q);
   }
 
-  /** PRs with a pending review-team request. */
+  /** PRs with a pending review-team request. The team trigger is optional:
+   * with no `[github] review_team` there is nothing to search, and the bare
+   * `team-review-requested:` qualifier is a 422 that would fail the whole
+   * triggered-set pass, the label search with it. */
   async searchTeamTriggered(): Promise<SearchIssueItem[]> {
+    if (this.cfg.github.review_team.trim() === "") return [];
     const q = `repo:${this.cfg.github.repo} is:open is:pr team-review-requested:${this.cfg.github.review_team}${excludeOwnAppQualifier(this.cfg.github)}`;
     return this.searchIssues(q);
   }

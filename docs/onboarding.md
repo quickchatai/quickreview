@@ -579,8 +579,11 @@ fails: a probe that cannot tell reach from refusal is never a pass.
 The memory engine is never published on a host port, on either route: this
 machine reaches it through the memory forward (`scripts/companion-memory-forward.mjs`,
 `--local` on the laptop route, where it bridges into the compose `memory`
-service, the container the engine runs in), and when nothing answers the step says which
-command starts one. On the server route the daemon reads the copy of the reviewer
+service, the container the engine runs in). On the laptop route the wizard opens
+that forward itself for each memory step call and closes it when the call ends
+(a forward that is already running, from `qcr tui` or the systemd unit, is used
+and left alone), so step 72 needs nothing from you once the stack is up. On the
+server route the step says which command starts one. There the daemon reads the copy of the reviewer
 key a deploy shipped, and only `provision` copies the secrets dir (a `release`
 never does): step 72 compares the server's copy with yours by hash — never the
 key itself — and stays red, naming the provision, until they match.

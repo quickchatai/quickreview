@@ -19,6 +19,7 @@
 // The finish path writes the first-run marker state/companion/first-run.json
 // ({"completed_at": "<iso>"}) exactly once — the contract the companion's
 // first-run greeting consumes. Keep the path and shape stable.
+import type { StepForward, StepForwardRequest } from "./stepforward.js";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
@@ -60,6 +61,11 @@ export interface OnboardAdapters {
    * so no step builds a config path itself. */
   paths: { stateDir: string; configPath: string };
   log?: (line: string) => void;
+  /** Opens the local memory forward for one step call (src/onboard/stepforward.ts):
+   * the compose route's memory engine is reachable from this machine only
+   * through it. The real assembly sets it; absent (every test), no forward is
+   * opened and the step sees whatever already listens. */
+  memoryForward?: (req: StepForwardRequest) => Promise<StepForward | null>;
 }
 
 // ---- step vocabulary --------------------------------------------------------

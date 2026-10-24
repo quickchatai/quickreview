@@ -309,8 +309,10 @@ export const QUESTIONS: readonly Question[] = [
       "The companion — the local pi that sits beside the TUI — reads the code a review is about. Your checkout is " +
       "mounted READ-ONLY into its container: it can read every file and change none of them. A missing checkout only " +
       "makes the companion less informed; it never breaks the reviewer.",
-    prompt: "Where is your local checkout of that repository?",
-    optional: false,
+    prompt:
+      "Where is your local checkout of that repository? (Enter if there is none here — the companion starts without it)",
+    // A fresh box has no checkout, and the daemon clones the repository itself.
+    optional: true,
     from: [CHOICE_KEYS.repoDir],
     read: (cfg) => cfg.companion.reviewed_repo_dir,
     validate: (v) => {

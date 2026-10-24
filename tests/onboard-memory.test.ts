@@ -870,7 +870,7 @@ describe("degraded modes stay legal and loud", () => {
     expect(result.ok).toBe(false);
     expect(detailOf(result, "root-key")?.ok).toBe(true);
     expect(existsSync(join(secretsDir, ROOT_KEY_FILE))).toBe(true);
-    expect(detailOf(result, "memory-server")?.detail).toMatch(/bring the stack up/);
+    expect(detailOf(result, "memory-server")?.detail).toMatch(/the bring-up step starts the memory engine/);
     // No user key was invented while the server was unreachable.
     expect(existsSync(keysFile)).toBe(false);
     expect(existsSync(join(secretsDir, REVIEWER_KEY_FILE))).toBe(false);
@@ -1115,9 +1115,10 @@ describe("reaching the server", () => {
     const result = await runStep(engineWith(fakeServer({ unreachable: true }).fetchFn));
     const detail = detailOf(result, "memory-server")?.detail ?? "";
     expect(detail).toMatch(/memory forward/);
-    expect(detail).toMatch(/from the repo root/);
+    // The wizard opens its own forward on this route; the command is for one
+    // that stays up outside it.
     expect(detail).toContain(
-      `cd ${dirname(stateDir)} && node scripts/companion-memory-forward.mjs run --local`,
+      `cd ${dirname(stateDir)} && node scripts/companion-memory-forward.mjs install --local`,
     );
     expect(detail).toContain(`--container "$(sudo docker compose ps --format '{{.Name}}' memory)"`);
   });
@@ -1303,5 +1304,72 @@ describe("memory phase delivery and provisioning readiness", () => {
     expect((await engine.runStep(MEMORY_KEYS_STEP_ID, { choice: "declined" })).ok).toBe(true);
     expect(restarts).toBe(2);
     expect((await engine.verifyAll()).ok).toBe(true);
+  });
+});
+
+describe("the step-scoped memory forward (compose route)", () => {
+  // The wizard runs before any TUI: on the compose route each memory step call
+  // holds the memory forward open for its own duration, through the adapter
+  // seam the real assembly fills. The fake records what it was asked.
+  function forwarded(fetchFn: typeof fetch, started = true) {
+    const asked: Array<{ container: string; baseUrl: string }> = [];
+    let stops = 0;
+    const a: OnboardAdapters = {
+      ...adapters(fetchFn),
+      memoryForward: async (req) => {
+        asked.push({ container: req.container, baseUrl: req.baseUrl });
+        return { started, detail: "opened for the test", stop: () => void stops++ };
+      },
+    };
+    return { a, asked, stops: () => stops };
+  }
+
+  it("opens one around a run and closes it when the step ends, saying so", async () => {
+    // MUTATION: return step.run(ctx) without withForward in memoryStep — this fails.
+    const server = fakeServer();
+    const f = forwarded(server.fetchFn);
+    const engine = new OnboardingEngine([memoryStep(stepOptions())], f.a);
+    const result = await engine.runStep(MEMORY_STEP_ID);
+    expect(result.ok).toBe(true);
+    expect(f.asked).toEqual([{ container: "quickreview-sandbox", baseUrl: "http://memory.test" }]);
+    expect(f.stops()).toBe(1);
+    expect(detailOf(result, "memory-forward")?.detail).toBe("opened for the test");
+  });
+
+  it("adopts a forward that already runs without adding a line, and still releases it", async () => {
+    const server = fakeServer();
+    const f = forwarded(server.fetchFn, false);
+    const engine = new OnboardingEngine([memoryStep(stepOptions())], f.a);
+    const result = await engine.runStep(MEMORY_STEP_ID);
+    expect(detailOf(result, "memory-forward")).toBeUndefined();
+    expect(f.stops()).toBe(1);
+  });
+
+  it("phase B drives the same wrapped step: the keys step opens it too", async () => {
+    const server = fakeServer();
+    const f = forwarded(server.fetchFn);
+    const options = stepOptions();
+    const engine = new OnboardingEngine([memoryStep(options), memoryUserKeysStep(options)], f.a);
+    expect((await engine.runStep(MEMORY_KEYS_STEP_ID)).ok).toBe(true);
+    expect(f.asked).toHaveLength(1);
+  });
+
+  it("opens none for a declined memory, which needs no server", async () => {
+    const server = fakeServer();
+    const f = forwarded(server.fetchFn);
+    const engine = new OnboardingEngine([memoryStep(stepOptions())], f.a);
+    await engine.runStep(MEMORY_STEP_ID, { choice: "declined" });
+    expect(f.asked).toEqual([]);
+  });
+
+  it("before the bring-up, says nothing is needed from the operator on the compose route", async () => {
+    const server = fakeServer({ unreachable: true });
+    const engine = engineWith(server.fetchFn);
+    const result = await runStep(engine);
+    expect(result.ok).toBe(false);
+    const detail = detailOf(result, "memory-server")?.detail ?? "";
+    expect(detail).toMatch(/nothing is needed from you/);
+    expect(detail).toMatch(/memory_user_keys step after it/);
+    expect(detail).not.toMatch(/in another terminal/);
   });
 });

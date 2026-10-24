@@ -119,6 +119,14 @@ describe("triggered-set queries", () => {
     expect(q).toContain("-author:app/example-review");
   });
 
+  it("asks GitHub nothing for the team trigger when no review team is configured", async () => {
+    // A fresh install leaves review_team empty; `team-review-requested:` alone is a 422.
+    // MUTATION: drop the empty-team return in searchTeamTriggered — this fails.
+    const { adapter, calls } = build(() => ({ items: [{ number: 1 }] }), true, { review_team: "" });
+    expect(await adapter.searchTeamTriggered()).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
   it("does not expose an awaiting-reviewer search", () => {
     const { adapter } = build(() => ({ items: [] }));
     expect(

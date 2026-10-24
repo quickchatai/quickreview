@@ -38,6 +38,7 @@ import {
   type StepStatusLine,
 } from "../src/onboard/engine.js";
 import { defaultSteps } from "../src/onboard/steps/index.js";
+import { openStepMemoryForward } from "../src/onboard/stepforward.js";
 import { locateConfig } from "../src/install.js";
 import { registerLoginRoute } from "./login-route.js";
 import {
@@ -77,6 +78,7 @@ export function realAdapters(root: string): OnboardAdapters {
     // $QCR_CONFIG, else the install's config home (never the checkout's).
     paths: { stateDir: join(root, "state"), configPath: locateConfig().path },
     log: (line) => console.error(line),
+    memoryForward: (req) => openStepMemoryForward(req),
   };
 }
 
