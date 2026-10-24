@@ -1,7 +1,9 @@
 # The gate and the boundaries
 
 The reviewer is an LLM driving a terminal inside a container that holds a
-GitHub App credential. Nothing about that arrangement is safe on its own. What
+GitHub credential: a GitHub App's by default, or under `[github] auth = "user"`
+the operator's own token (see "The credential" below). Nothing about that
+arrangement is safe on its own. What
 makes it safe is a small number of **deterministic boundaries written in
 plain code**, each of which the model cannot reason its way past because the
 model is not asked.
@@ -14,6 +16,7 @@ whose limits are unstated is a boundary people trust further than it goes.
 
 | Boundary | Code | Tests |
 |---|---|---|
+| The credential seam | `packages/pi-plugin/src/githubAuth.ts`, `packages/pi-plugin/src/identity.ts` | `tests/githubAuth.test.ts`, `tests/identity.test.ts`, `tests/review-pr-target.test.ts` |
 | The one mutation gate | `packages/pi-plugin/src/gate.ts` | `tests/gate.test.ts`, `tests/fences-gate.test.ts` |
 | Posting-time guards 1–5 | `packages/pi-plugin/src/guards.ts` | `tests/guards.test.ts`, `tests/fences-guards.test.ts` |
 | The CI gate | `packages/pi-plugin/src/cigate.ts` | `tests/cigate.test.ts`, `tests/fences-cigate.test.ts` |
@@ -28,6 +31,53 @@ whose limits are unstated is a boundary people trust further than it goes.
 Related pages: [the exec boundary in full](../exec-boundary.md),
 [the single-shepherd invariant](../single-shepherd-invariant.md),
 [owner-only surfaces](../ownership.md).
+
+---
+
+## 0. The credential
+
+**`packages/pi-plugin/src/githubAuth.ts`.** The adapter (`src/github.ts`)
+authenticates through one seam, `GitHubCredential`, which has exactly two
+implementations, picked by `[github] auth`:
+
+- **`"app"`** (the default; a missing key means it): `TokenMinter`, App JWT →
+  installation token. This is the only route that takes webhooks.
+- **`"user"`**: `UserTokenSource`, the operator's own token. Owner ruling
+  2026-10-24, amending hard rule 3: the daemon may run on the person's own
+  credential instead of an App. The token is read from the **file**
+  `<secrets dir>/github_token` (0600, the token alone, rewritten atomically by
+  the host-side `qcr github-token sync`). It is read on first use, every five
+  minutes, and after a 401. It is never read from the environment or a
+  command line. The git credential helper (`scripts/mint-token.sh`) prints the
+  same file.
+
+What `"user"` changes, and what it does not:
+
+- **Polling only.** Config load refuses any `[ingress] shape` but
+  `"polling"`. Under it, `/webhook` refuses every delivery unread and no
+  webhook secret is read. The reconcile poll is the only trigger.
+- **No App.** The credential has no JWT, so the adapter refuses the App's own
+  routes (hook deliveries, hook config, the self-heal's re-point) before
+  sending anything.
+- **The same gate.** Every mutation still goes through §1 and its guards.
+- **Every review is a COMMENT.** The posting guard's last step rewrites
+  APPROVE / REQUEST_CHANGES to COMMENT and states the verdict in the body,
+  and the REST executor refuses any other event on the person's account. The
+  verdict is still decided on the merits and recorded as decided. The posting
+  receipt carries `person_mode`, so an APPROVE posted as a COMMENT never reads
+  as guard 4's withheld approval.
+- **"Ours" is the marker.** The login is the person's, so the reviewer's own
+  reviews and comments are recognised by its hidden `<!-- qcr… -->` markers
+  or its footer, not by the login (`identity.ts`). A comment the person typed
+  is a human comment, and their own PRs are reviewed, not skipped as a bot's.
+
+### Not guaranteed
+
+- The token is the person's, with whatever scope they gave it. Nothing
+  down-scopes it, and the companion's copy of it is not read-only: in this
+  mode the companion guard's write veto is the companion's only fence.
+- §5's outcome detector sees only marker-bearing reviews here. A write
+  outside the gate that carries no marker looks like the person's own review.
 
 ---
 
@@ -149,7 +199,10 @@ kinds in `POSTING_KINDS` (`create_review`, `create_review_comment_reply`,
 | 5 | The PR's live head is not the head the review's `commit_id` names | Refuse: the review is stale | `refuse_on_head_drift` |
 
 Ordering matters: 3 runs first (an unreadable PR state **fails closed** and
-refuses), then 5, then 2, then 1, then 4.
+refuses), then 5, then 2, then 1, then 4. Under `[github] auth = "user"` one
+more step runs last, on whatever the five decided. It is not a refusal: a
+review that would still post APPROVE or REQUEST_CHANGES posts as a COMMENT
+with the verdict stated in its body (§0).
 
 Details worth knowing before editing:
 

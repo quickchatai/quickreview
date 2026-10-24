@@ -281,6 +281,69 @@ describe("CompanionGithubToken — the env file the companion mounts", () => {
 // An env-file renderer that accepted only plain word characters would refuse
 // every real token, so the companion would never receive one and every refresh
 // would mint a token and throw it away.
+describe('CompanionGithubToken under [github] auth = "user" — a copy of the person\'s token file', () => {
+  const userSecrets = (token: string | null): string => {
+    const dir = mkdtempSync(join(tmp, "user-secrets-"));
+    if (token !== null) writeFileSync(join(dir, "github_token"), token, { mode: 0o600 });
+    return dir;
+  };
+
+  it("copies the token file in, says it is the person's and not down-scoped, and calls no App route", async () => {
+    const dir = join(tmp, "user-out-1");
+    const gh = fakeGithub();
+    const t = new CompanionGithubToken({
+      dir,
+      repo: "acme/widgets",
+      secretsDir: userSecrets("ghu_person123\n"),
+      auth: "user",
+      fetchFn: gh.fetchFn,
+      now: () => NOW,
+    });
+    const outcome = await t.refresh();
+    expect(outcome.kind).toBe("copied");
+    expect(gh.calls).toEqual([]);
+    const text = readFileSync(join(dir, TOKEN_FILE), "utf8");
+    expect(text).toContain(`${TOKEN_VAR}=ghu_person123\n`);
+    expect(text).toContain(`${REPO_VAR}=acme/widgets\n`);
+    expect(text).toMatch(/NOT down-scoped/);
+    expect(text).not.toMatch(/^(GH_TOKEN|GITHUB_TOKEN)=/m);
+    expect(statSync(join(dir, TOKEN_FILE)).mode & 0o777).toBe(0o600);
+    expect(tokenOutcomeLine(outcome)).toMatch(/copied from the person's own token file/);
+    expect(tokenOutcomeLine(outcome)).not.toContain("ghu_person123");
+  });
+
+  it("re-copies when the host refresher rewrote the file, and only then", async () => {
+    const dir = join(tmp, "user-out-2");
+    const src = userSecrets("ghu_one");
+    const t = new CompanionGithubToken({
+      dir,
+      repo: "acme/widgets",
+      secretsDir: src,
+      auth: "user",
+      now: () => NOW,
+    });
+    expect((await t.refresh()).kind).toBe("copied");
+    expect((await t.refresh()).kind).toBe("fresh");
+    writeFileSync(join(src, "github_token"), "ghu_two");
+    expect((await t.refresh()).kind).toBe("copied");
+    expect(readFileSync(join(dir, TOKEN_FILE), "utf8")).toContain(`${TOKEN_VAR}=ghu_two\n`);
+  });
+
+  it("no token file is an outcome naming the refresher — never a throw, never the App's files", async () => {
+    const t = new CompanionGithubToken({
+      dir: join(tmp, "user-out-3"),
+      repo: "acme/widgets",
+      secretsDir: userSecrets(null),
+      auth: "user",
+      now: () => NOW,
+    });
+    const outcome = await t.refresh();
+    expect(outcome.kind).toBe("unavailable");
+    expect(tokenOutcomeLine(outcome)).toMatch(/qcr github-token sync/);
+    expect(tokenOutcomeLine(outcome)).not.toMatch(/app\.pem/);
+  });
+});
+
 describe("GitHub's current token format — the env file carries it, and only safe characters", () => {
   it("the sample has the real token's shape", () => {
     expect(REAL_FORMAT_TOKEN).toHaveLength(383);

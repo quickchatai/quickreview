@@ -48,14 +48,16 @@ import {
 } from "./cigate.js";
 import { standingReview } from "./standing-review.js";
 import type { GuardsConfig } from "./reviewconfig.js";
-import type { GateResult, MutationGuard, MutationIntent } from "./gate.js";
+import type { GateResult, GuardDecision, MutationGuard, MutationIntent } from "./gate.js";
 import type { ReviewedHeadRow } from "./storerows.js";
 
 /** A bot's login: the App's own, or any `[bot]` account. Bot-authored PRs
  * never enter the state machine (spec §3, src/statemachine.ts re-exports
- * this), and a bot's approval is no human's. */
+ * this), and a bot's approval is no human's. `botLogin` is the bot ACCOUNT
+ * (identity.ts `botAccountLogin`); "" — person mode, which has none — names
+ * no login, so only `[bot]` accounts match. */
 export function isBotAuthor(author: string, botLogin: string): boolean {
-  return author === botLogin || author.endsWith("[bot]");
+  return (botLogin !== "" && author === botLogin) || author.endsWith("[bot]");
 }
 
 /** Mutation kinds that put words on a PR — the ones the guards inspect. */
@@ -105,6 +107,10 @@ export interface GuardDeps {
   adapter: GuardAdapter;
   botLogin: string;
   guards: GuardsConfig;
+  /** `[github] auth = "user"` (person mode): the review posts on the person's
+   * own account, so every APPROVE / REQUEST_CHANGES is posted as a COMMENT
+   * whose body states the verdict (`personModeComment`). */
+  personMode?: boolean;
   log?: (msg: string, extra?: unknown) => void;
 }
 
@@ -221,7 +227,67 @@ async function readCi(
   }
 }
 
+// ---- person mode: every review is a COMMENT ------------------------------
+
+/** The line a person-mode review carries in place of the GitHub event it
+ * could not use. The verdict is the session's, decided on the merits; only
+ * the event changed. */
+export function personModeNote(verdict: "APPROVE" | "REQUEST_CHANGES"): string {
+  const said =
+    verdict === "APPROVE"
+      ? "**Verdict: APPROVE** — no blockers found."
+      : "**Verdict: REQUEST_CHANGES** — the blockers above need fixing before this merges.";
+  return (
+    `_${said} Posted as a comment: this reviewer runs on a person's own GitHub account, ` +
+    "and an automated verdict must never count as that person's approval or block " +
+    "(GitHub refuses both on an author's own pull request)._"
+  );
+}
+
+/** APPROVE / REQUEST_CHANGES → COMMENT, findings untouched, the verdict
+ * stated in the body. A COMMENT (and anything else) passes as it is. */
+export function personModeComment(body: ReviewBody): ReviewBody {
+  const event = (body.event ?? "").toUpperCase();
+  if (event !== "APPROVE" && event !== "REQUEST_CHANGES") return body;
+  return {
+    ...body,
+    event: "COMMENT",
+    body: `${body.body ?? ""}\n\n${personModeNote(event)}`,
+  };
+}
+
+/** The person-mode step, after every other guard: whatever they decided
+ * (refuse, soften, nothing), a review that would still post a verdict event
+ * posts as a COMMENT. Never on a refused intent; only `body` and `note`
+ * change, as every guard rewrite. */
+function personModeStep(intent: MutationIntent, decision: GuardDecision): GuardDecision {
+  if (decision.block) return decision;
+  const current = decision.intent ?? intent;
+  if (current.kind !== "create_review") return decision;
+  const body = (current.body ?? {}) as ReviewBody;
+  const rewritten = personModeComment(body);
+  if (rewritten === body) return decision;
+  return {
+    intent: {
+      ...current,
+      body: rewritten,
+      note: `post COMMENT review on #${current.pr ?? "?"} (person mode: verdict ${(body.event ?? "").toUpperCase()} stated in the body)`,
+    },
+  };
+}
+
 export function makePostingGuard(deps: GuardDeps): MutationGuard {
+  const guard = makeAppPostingGuard(deps);
+  if (!deps.personMode) return guard;
+  return {
+    async before(intent: MutationIntent) {
+      return personModeStep(intent, await guard.before(intent));
+    },
+    ...(guard.after ? { after: guard.after.bind(guard) } : {}),
+  };
+}
+
+function makeAppPostingGuard(deps: GuardDeps): MutationGuard {
   const log = deps.log ?? (() => {});
 
   const refuse = (

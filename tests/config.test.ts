@@ -9,12 +9,14 @@ import {
   expandHome,
   githubCloneDir,
   ingressHostnameFile,
+  webhooksEnabled,
   loadConfig,
   parseCaps,
   parseConfig,
   tierModel,
 } from "../src/config.js";
 import { tuiMemoryContainer } from "../src/tui/memforward.js";
+import { parseCoreConfig } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // The suite parses the neutral fixture, never the operator's live config
@@ -487,6 +489,56 @@ describe("[ingress] (webhook-URL self-heal)", () => {
     expect(() => parseConfig(`${shipped}\n[ingress]\nshape = "carrier-pigeon"\n`)).toThrowError(
       /\[ingress\]: shape must be/,
     );
+  });
+
+  it("parses the polling shape: no webhooks at all", () => {
+    const cfg = parseConfig(`${shipped}\n[ingress]\nshape = "polling"\n`);
+    expect(cfg.ingress.shape).toBe("polling");
+    expect(webhooksEnabled(cfg)).toBe(false);
+    expect(webhooksEnabled(parseConfig(shipped))).toBe(true);
+  });
+});
+
+describe("[github] auth (the App, or the person's own credential)", () => {
+  const shipped = readFileSync(configPath, "utf8");
+  const user = (rest = '\n[ingress]\nshape = "polling"\n') =>
+    `${shipped.replace("[github]\n", '[github]\nauth = "user"\n')}${rest}`;
+
+  it("defaults to app: a missing key means the App", () => {
+    expect(parseConfig(shipped).github.auth).toBe("app");
+  });
+
+  it('parses auth = "user" with the polling shape, an empty app_slug allowed', () => {
+    const cfg = parseConfig(user().replace(/^app_slug = .*$/m, 'app_slug = ""'));
+    expect(cfg.github.auth).toBe("user");
+    expect(cfg.github.app_slug).toBe("");
+  });
+
+  it("lets a user-mode config leave app_slug out entirely", () => {
+    const text = user().replace(/^app_slug = .*$/m, "");
+    expect(parseConfig(text).github.app_slug).toBe("");
+  });
+
+  it('refuses auth = "user" with any shape but polling, saying what to set', () => {
+    // MUTATION: drop the user-mode shape check in parseConfig — this fails.
+    for (const rest of [
+      "",
+      '\n[ingress]\nshape = "none"\n',
+      '\n[ingress]\nshape = "tunnel-file"\n',
+    ])
+      expect(() => parseConfig(user(rest))).toThrowError(
+        /auth = "user" runs polling-only — set \[ingress\] shape = "polling"/,
+      );
+  });
+
+  it("refuses an unknown auth value", () => {
+    const text = shipped.replace("[github]\n", '[github]\nauth = "pat"\n');
+    expect(() => parseConfig(text)).toThrowError(/\[github\]: auth must be "app" or "user"/);
+  });
+
+  it("the review core parses the key too (parseCoreConfig)", () => {
+    expect(parseCoreConfig(user()).github.auth).toBe("user");
+    expect(parseCoreConfig(shipped).github.auth).toBe("app");
   });
 });
 

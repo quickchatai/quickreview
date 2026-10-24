@@ -18,6 +18,7 @@
 // PiSessionManager that still exists serves what has not moved yet (the overseer, for now)
 // and lends its path helpers and environment, which is what keeps a worker's session the same
 // session a tmux round saw.
+import { isPersonMode } from "@quickchatai/pi-quickreview/src/identity.js";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AnswerHost, answerCapsOf } from "./answerworker.js";
@@ -223,6 +224,7 @@ export function buildWorkerWorld(o: WorkerWorldOptions): WorkerWorld {
   const journal = new PostingJournal({
     dir: join(stateDir, "posting-receipts"),
     repo: cfg.github.repo,
+    personMode: isPersonMode(cfg.github),
   });
 
   // The takeover and debug managers are built before the supervisor (it takes their gates)
@@ -311,7 +313,11 @@ export function buildWorkerWorld(o: WorkerWorldOptions): WorkerWorld {
       store,
       journal,
       cfg,
-      botLogins: [cfg.github.bot_login, cfg.github.app_slug],
+      // Marker-matched (posting-outbox.ts markedReviewsOf), so the person's
+      // login alone is safe in person mode: there is no App slug to add.
+      botLogins: isPersonMode(cfg.github)
+        ? [cfg.github.bot_login]
+        : [cfg.github.bot_login, cfg.github.app_slug],
       roundOf: commandRoundOf(store, headOf),
       log,
     },

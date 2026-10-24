@@ -593,6 +593,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     dir: companionGithubDir(socketMode ? laptopInstallEnv(process.env) : undefined),
     repo: full.github.repo,
     secretsDir: full.github.secrets_dir,
+    auth: full.github.auth ?? "app",
   });
   let configMirrorTimer: NodeJS.Timeout | undefined;
   const CONFIG_MIRROR_EVERY_MS = 30_000;

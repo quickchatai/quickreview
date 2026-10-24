@@ -34,7 +34,9 @@ direction** — is the owner's explicit call, never an agent's (AGENTS.md invari
   own webhook URL** when a rotating tunnel hostname changes. It touches only
   the App's configuration, can never reach the reviewed repo, is logged every
   time, and the closed set is pinned by deep equality in `tests/gate.test.ts`
-  so a second kind fails a test.
+  so a second kind fails a test. Under `[github] auth = "user"` there is no
+  App, so this class cannot run at all: the adapter refuses every App-JWT
+  route, and config load refuses the `tunnel-file` ingress that drives it.
 
 ## 2. RATIFIED fences
 

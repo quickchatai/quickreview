@@ -15,6 +15,7 @@ import { GUARDS_DEFAULTS, parseConfig, type Config } from "../../src/config.js";
 import { MutationGate, type MutationIntent } from "@quickchatai/pi-quickreview/src/gate.js";
 import { GitHubAdapter } from "../../src/github.js";
 import { makePostingGuard } from "@quickchatai/pi-quickreview/src/guards.js";
+import { isPersonMode } from "@quickchatai/pi-quickreview/src/identity.js";
 import { StateStore } from "../../src/state.js";
 import type { GuardsWorld, PrStub } from "./guards-world-rig.js";
 import { HEAD as RIG_HEAD } from "./guards-world-rig.js";
@@ -84,6 +85,17 @@ export function seedMark(
   store.close();
 }
 
+/** Person mode (`[github] auth = "user"`) in the rig's config.toml: the
+ * posting login becomes the person's — by default the PR's own author, the
+ * main target of that mode. */
+export function setPersonMode(s: GuardsWorld, login = "pr-author"): void {
+  const path = join(s.dir, "config.toml");
+  const text = readFileSync(path, "utf8")
+    .replace("[github]\n", '[github]\nauth = "user"\n')
+    .replace(/^bot_login = .*$/m, `bot_login = "${login}"`);
+  writeFileSync(path, text);
+}
+
 /** Switch [guards] knobs in the one config.toml the route parse. */
 export function setGuardKnobs(s: GuardsWorld, knobs: Record<string, boolean>): void {
   const path = join(s.dir, "config.toml");
@@ -133,12 +145,17 @@ function nodeConfig(s: GuardsWorld): Config {
     readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
   );
   const rig = parse(readFileSync(join(s.dir, "config.toml"), "utf8")) as {
-    github: { repo: string; bot_login: string };
+    github: { repo: string; bot_login: string; auth?: "app" | "user" };
     guards?: Partial<Config["guards"]>;
   };
   return {
     ...base,
-    github: { ...base.github, repo: rig.github.repo, bot_login: rig.github.bot_login },
+    github: {
+      ...base.github,
+      repo: rig.github.repo,
+      bot_login: rig.github.bot_login,
+      auth: rig.github.auth ?? "app",
+    },
     guards: { ...GUARDS_DEFAULTS, ...(rig.guards ?? {}) },
   };
 }
@@ -166,6 +183,7 @@ export function nodeRoute(s: GuardsWorld): Route {
             adapter,
             botLogin: cfg.github.bot_login,
             guards: cfg.guards,
+            personMode: isPersonMode(cfg.github),
             log: () => {},
           }),
         );

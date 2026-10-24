@@ -225,6 +225,28 @@ describe("handleDelivery", () => {
     },
   );
 
+  it("the polling shape (no secret handed) refuses every delivery unread — even one signed with the empty key", () => {
+    // `[ingress] shape = "polling"` (and so `[github] auth = "user"`): the
+    // daemon passes secret "". Anyone can compute an HMAC under the empty key,
+    // so it must authenticate nothing.
+    // MUTATION: drop the empty-secret refusal in handleDelivery — this fails.
+    const store = new StateStore(":memory:");
+    const onInterpretation = vi.fn();
+    const raw = Buffer.from(
+      JSON.stringify({ action: "labeled", repository: { full_name: cfg.github.repo } }),
+    );
+    const res = handleDelivery(
+      { cfg, store, secret: "", onInterpretation },
+      { signature: signBody(raw, ""), guid: "g-poll", event: "pull_request" },
+      raw,
+    );
+    expect(res).toEqual({ status: 404, reason: "webhooks-disabled" });
+    expect(verifySignature(raw, signBody(raw, ""), "")).toBe(false);
+    expect(onInterpretation).not.toHaveBeenCalled();
+    expect(store.db.prepare("SELECT COUNT(*) c FROM events").get()).toMatchObject({ c: 0 });
+    store.close();
+  });
+
   it("drops an event from another repository the App is installed on", () => {
     // The App's installation spans many repos and every one of them delivers
     // here. A PR closed elsewhere whose NUMBER matches a tracked PR must not

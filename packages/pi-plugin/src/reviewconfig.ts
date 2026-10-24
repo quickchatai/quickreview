@@ -23,9 +23,22 @@ import type { PostingPolicy } from "./postingpolicy.js";
 import { ALL_PASSES, SCAN_DEEP_FLOOR_LENSES, SCAN_DEEP_LENSES } from "./passes.js";
 import { PASS_TIER_ORDER, type PassTier } from "./types.js";
 
+/** `[github] auth`: whose credential the daemon runs on. `app` (the default)
+ * is a GitHub App's installation token; `user` is the person's own GitHub
+ * token, read from the `github_token` file in the secrets dir. `user` is
+ * polling-only: no webhooks, no App self-config, every review a COMMENT. */
+export type GithubAuthMode = "app" | "user";
+export const GITHUB_AUTH_MODES: readonly GithubAuthMode[] = ["app", "user"];
+
 export interface GithubConfig {
   repo: string;
+  /** Always set after parse; absent (a hand-built config) means "app". */
+  auth?: GithubAuthMode;
+  /** The App's slug. May be "" under `auth = "user"`, where no App exists. */
   app_slug: string;
+  /** The login the system posts as: the App's `<slug>[bot]`, or under
+   * `auth = "user"` the person's own login (onboarding reads it from
+   * `GET /user`). */
   bot_login: string;
   review_team: string;
   trigger_label: string;
@@ -1364,10 +1377,19 @@ export interface CoreConfig {
  * `secrets_dir` is as written; the reader that needs the secrets locates
  * them (src/homes.ts `locateSecrets`). */
 export function parseGithubSection(raw: Record<string, any>): GithubConfig {
+  const given = req(raw, "github") as Partial<GithubConfig>;
+  const auth = given.auth ?? "app";
+  if (!GITHUB_AUTH_MODES.includes(auth))
+    throw new Error(
+      `config.toml [github]: auth must be "app" or "user" (got ${JSON.stringify(auth)})`,
+    );
   return {
     base_branch: "main",
     clone_dir: "",
-    ...(req(raw, "github") as Partial<GithubConfig>),
+    // No App under the person's own credential: its slug may be left out.
+    ...(auth === "user" ? { app_slug: "" } : {}),
+    ...given,
+    auth,
   } as GithubConfig;
 }
 

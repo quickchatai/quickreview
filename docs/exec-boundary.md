@@ -532,6 +532,12 @@ compiled `dist/` guard.
   completes, the anomaly follows. It bounds the damage to one round. Its window
   is round start → round measurement, so a write made and reverted inside that
   window leaves both hashes equal.
+- **G3 under `[github] auth = "user"` sees only marker-bearing reviews.** In
+  that mode the bot posts as the person, so a review under their login counts
+  as the bot's only when it carries a `<!-- qcr… -->` marker or the review
+  footer (`packages/pi-plugin/src/identity.ts`). The person's own hand-written
+  approval never alarms. The cost: an out-of-gate review that carries neither
+  is indistinguishable from the person's own, and G3 does not see it.
 - **G3 is bounded to the current head**, because `reviewed_heads` is one row per
   PR. An older head's legitimate review has no surviving trace, so auditing
   history would be noise.

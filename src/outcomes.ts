@@ -97,6 +97,7 @@ import { prActivity, type PrActivity } from "./pr-activity.js";
 // read-only and memoised; a commit the clone does not hold is UNKNOWN, never a
 // change and never no-change. Every failure is the sweep's own — reconcile's
 // health (which lifts a deploy drain) never waits on it.
+import { carriesOwnMarker } from "@quickchatai/pi-quickreview/src/identity.js";
 import {
   carriedToRef,
   isPostedRow,
@@ -519,6 +520,10 @@ export interface OutcomeCaptureDeps {
   store: StateStore;
   /** `[github] bot_login` — whose root comments are findings. */
   botLogin: string;
+  /** `[github] auth = "user"`: the login is the person's, so a root comment is
+   * a finding only when it carries the reviewer's marker, and the person's
+   * own replies are a human's. */
+  personMode?: boolean;
   /** Absent ⇒ every "did the code change" question is unknown. */
   git?: AnchorGit;
   now?: () => Date;
@@ -585,6 +590,7 @@ export class OutcomeCapture {
     this.store.db.transaction(() => {
       for (const c of comments) {
         if (c.user !== this.deps.botLogin || c.in_reply_to_id !== null) continue;
+        if (this.deps.personMode && !carriesOwnMarker(c.body)) continue;
         const marker = parseFindingMarker(c.body);
         const head = commentHead(c.body);
         const info = stmt.run({
@@ -823,7 +829,8 @@ export class OutcomeCapture {
     const replies = new Map<number, PrCommentRow[]>();
     for (const c of this.store.prComments(pr)) {
       if (c.source !== "review_comment" || c.in_reply_to_id === null) continue;
-      if (c.author === this.deps.botLogin) continue;
+      if (c.author === this.deps.botLogin && (!this.deps.personMode || carriesOwnMarker(c.body)))
+        continue;
       replies.set(c.in_reply_to_id, [...(replies.get(c.in_reply_to_id) ?? []), c]);
     }
     const events = this.store.prEvents(pr, [

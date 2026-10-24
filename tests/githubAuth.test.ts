@@ -5,6 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   TokenMinter,
+  USER_TOKEN_REREAD_MS,
+  UserTokenSource,
+  appActorAlias,
+  githubCredential,
   mintAppJwt,
   type FetchFn,
 } from "@quickchatai/pi-quickreview/src/githubAuth.js";
@@ -271,5 +275,71 @@ describe("TokenMinter", () => {
       expect(auth).not.toContain("ghp_personal_should_never_be_used");
     }
     vi.unstubAllEnvs();
+  });
+});
+
+// `[github] auth = "user"`: the person's token, from the one file.
+describe("UserTokenSource", () => {
+  const write = (token: string) => writeFileSync(join(secretsDir, "github_token"), token);
+
+  it("reads <secrets>/github_token on first use, trimmed", async () => {
+    write("ghu_first\n");
+    const src = new UserTokenSource(secretsDir, () => T0);
+    expect(await src.installationToken()).toBe("ghu_first");
+  });
+
+  it("keeps the read for five minutes, then reads the file again", async () => {
+    write("ghu_first");
+    let now = T0;
+    const src = new UserTokenSource(secretsDir, () => now);
+    expect(await src.installationToken()).toBe("ghu_first");
+    write("ghu_second");
+    now = T0 + USER_TOKEN_REREAD_MS - 1;
+    expect(await src.installationToken()).toBe("ghu_first");
+    now = T0 + USER_TOKEN_REREAD_MS;
+    expect(await src.installationToken()).toBe("ghu_second");
+  });
+
+  it("invalidate() (the adapter's 401 path) makes the next call read the file again", async () => {
+    write("ghu_old");
+    const src = new UserTokenSource(secretsDir, () => T0);
+    expect(await src.installationToken()).toBe("ghu_old");
+    write("ghu_refreshed");
+    expect(await src.installationToken()).toBe("ghu_old");
+    src.invalidate();
+    expect(await src.installationToken()).toBe("ghu_refreshed");
+  });
+
+  it("a missing, empty or two-word file is an error naming the file — never its contents", async () => {
+    const src = new UserTokenSource(secretsDir, () => T0);
+    await expect(src.installationToken()).rejects.toThrow(
+      new RegExp(
+        `${join(secretsDir, "github_token").replace(/[/.]/g, "\\$&")} \\(ENOENT\\).*qcr github-token sync`,
+      ),
+    );
+    write("   \n");
+    await expect(src.installationToken()).rejects.toThrow(/is empty/);
+    write("ghu_a ghu_b");
+    const err = await src.installationToken().catch((e: Error) => e);
+    expect(String(err)).toMatch(/more than one/);
+    expect(String(err)).not.toContain("ghu_a");
+  });
+
+  it("has no App JWT — the seam's JWT routes are absent", () => {
+    expect((new UserTokenSource(secretsDir) as { appJwt?: unknown }).appJwt).toBeUndefined();
+  });
+
+  it("githubCredential picks the shape [github] auth names (missing ⇒ the App)", () => {
+    expect(githubCredential({ auth: "user", secrets_dir: secretsDir })).toBeInstanceOf(
+      UserTokenSource,
+    );
+    expect(githubCredential({ auth: "app", secrets_dir: secretsDir })).toBeInstanceOf(TokenMinter);
+    expect(githubCredential({ secrets_dir: secretsDir })).toBeInstanceOf(TokenMinter);
+  });
+
+  it("appActorAlias names no actor without an App slug", () => {
+    expect(appActorAlias("someone", "")).toBeUndefined();
+    expect(appActorAlias("[bot]", "")).toBeUndefined();
+    expect(appActorAlias("qcr[bot]", "qcr")).toBe("qcr");
   });
 });

@@ -29,6 +29,11 @@ import { DEFAULT_ROUND_STALL_GRACE_MIN, type Config } from "./config.js";
 import type { IssueCommentFull, PrRef, ReviewCommentFull, ReviewFull } from "./github.js";
 import type { OutcomeCapture, OutcomeSweepReport } from "./outcomes.js";
 import { applyEvent, isBotAuthor, mergedOverBlock } from "./statemachine.js";
+import {
+  botAccountLogin,
+  isOwnContent,
+  isPersonMode,
+} from "@quickchatai/pi-quickreview/src/identity.js";
 import type { RoundRow, StateStore } from "./state.js";
 import type { OvSessionSweepReport, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { performance } from "node:perf_hooks";
@@ -255,7 +260,11 @@ export function reconcileOrphanedRounds(
 export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileReport> {
   const { store, cfg, adapter } = deps;
   const now = deps.now ?? (() => new Date());
-  const botLogin = cfg.github.bot_login;
+  // The bot ACCOUNT: whose PRs are a bot's and whose captured comments are not
+  // a human's. "" in person mode (`[github] auth = "user"`), where the
+  // configured login is the person's: their PRs are reviewed, and their own
+  // comments are told from the reviewer's by its marker (identity.ts).
+  const botLogin = botAccountLogin(cfg.github);
   const report: ReconcileReport = {
     ran_at: now().toISOString(),
     open_prs: 0,
@@ -921,6 +930,8 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         }
         for (const c of rows) {
           if (!isHumanCapture(c, botLogin)) continue;
+          // Person mode: the reviewer's own words under the person's login.
+          if (isOwnContent(cfg.github, c.author, c.body)) continue;
           if (recordCapturedComment(store, c, "reconcile")) report.captured_comments++;
         }
         // ---- the exec boundary's OUTCOME layer ------------------------------
@@ -947,7 +958,12 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
               reviewComments: commentsByReview(inlineFetched),
               gatedCommentIds: store.botCommentIds(n),
             },
-            { botLogin, appSlug: cfg.github.app_slug },
+            {
+              botLogin: cfg.github.bot_login,
+              appSlug: cfg.github.app_slug,
+              // Person mode: only marker-bearing reviews are the reviewer's.
+              personMode: isPersonMode(cfg.github),
+            },
           );
           if (ungated.length > 0) {
             store.logEvent("ungated_review_detected", n, {

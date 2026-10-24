@@ -9,6 +9,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { captureFromEvent, recordCapturedComment } from "./capture.js";
 import { reviewTeamSlug, type Config } from "./config.js";
+import { botAccountLogin } from "@quickchatai/pi-quickreview/src/identity.js";
 import { interpretReviewEvent, isFeedbackBody, ledgerFeedbackSignal } from "./feedback.js";
 import { applyEvent as applyEventFor, mergedOverBlock } from "./statemachine.js";
 import type { StateStore, StatusSnapshot } from "./state.js";
@@ -20,6 +21,8 @@ import { blockedPrAuthor } from "./pr-conversation.js";
  * header, a wrong prefix, or a length mismatch (timingSafeEqual throws on
  * unequal lengths — we must not let that leak as a 500). */
 export function verifySignature(raw: Buffer, header: string | undefined, secret: string): boolean {
+  // An empty secret signs nothing: anyone can compute that HMAC.
+  if (secret === "") return false;
   if (!header || !header.startsWith("sha256=")) return false;
   const expected = Buffer.from(signBody(raw, secret), "utf8");
   const given = Buffer.from(header, "utf8");
@@ -499,6 +502,10 @@ export function handleDelivery(
   raw: Buffer,
 ): WebhookHandleResult {
   const log = deps.log ?? (() => {});
+  // The polling shape (and so `[github] auth = "user"`) takes no webhooks:
+  // the daemon hands no secret, and every delivery is refused unread. The
+  // reconcile poll is that install's only trigger.
+  if (deps.secret === "") return { status: 404, reason: "webhooks-disabled" };
   if (!verifySignature(raw, headers.signature, deps.secret)) {
     logRejection(deps, log, headers);
     return { status: 403, reason: "bad-signature" };
@@ -810,7 +817,9 @@ export async function applyInterpretation(
   i: Interpretation,
 ): Promise<void> {
   const { store, cfg } = deps;
-  const opts = { botLogin: cfg.github.bot_login };
+  // The bot ACCOUNT for PR authorship. Person mode has none; no webhook
+  // arrives there, but the state machine reads one rule everywhere.
+  const opts = { botLogin: botAccountLogin(cfg.github) };
   const local = <T>(run: () => T): T => store.webhookLocalOnce(deps.deliveryGuid, run);
   switch (i.kind) {
     case "trigger":

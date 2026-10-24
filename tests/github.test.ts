@@ -1256,3 +1256,121 @@ describe("complete GitHub evidence", () => {
     },
   );
 });
+
+// `[github] auth = "user"` (person mode): the adapter runs on the person's
+// token, has no App JWT, and posts no verdict event.
+describe("GitHubAdapter in person mode (auth = user)", () => {
+  const PERSON = { auth: "user" as const, app_slug: "", bot_login: "alice" };
+  /** The person's credential as the seam sees it: no appJwt at all. */
+  const userToken = {
+    installationToken: async () => "ghu_person",
+    invalidate: () => {},
+  };
+  function buildPerson(handler: (url: string, init: RequestInit) => unknown, dryRun = true) {
+    const rec = recorder(handler);
+    let adapter!: GitHubAdapter;
+    const gate = new MutationGate(dryRun, dryrunDir, (intent) => adapter.executeMutation(intent));
+    const personCfg: Config = { ...cfg, github: { ...cfg.github, ...PERSON } };
+    adapter = new GitHubAdapter(personCfg, userToken, gate, rec.fetchFn, "https://api.github.com");
+    return { adapter, calls: rec.calls };
+  }
+
+  it("never calls a JWT-authed App route: deliveries, hook config and the self-heal re-point refuse unsent", async () => {
+    const { adapter, calls } = buildPerson(() => ({}), false);
+    await expect(adapter.listWebhookDeliveries()).rejects.toThrow(/auth = "user" has no App/);
+    await expect(adapter.getAppWebhookConfig()).rejects.toThrow(/auth = "user" has no App/);
+    // The app-self-config kind executes even in dry-run; here it must still not reach GitHub.
+    await expect(adapter.updateOwnWebhookUrl("https://x", "https://y")).rejects.toThrow(
+      /auth = "user" has no App/,
+    );
+    expect(calls).toEqual([]);
+  });
+
+  it("reads with the person's token as the bearer", async () => {
+    const seen: string[] = [];
+    const rec = recorder(() => ({ items: [], incomplete_results: false }));
+    const fetchFn = (async (url: string | URL, init: RequestInit = {}) => {
+      seen.push(String((init.headers as Record<string, string>).authorization));
+      return rec.fetchFn(url, init);
+    }) as unknown as FetchFn;
+    const gate = new MutationGate(true, dryrunDir, async () => undefined);
+    const adapter = new GitHubAdapter(
+      { ...cfg, github: { ...cfg.github, ...PERSON } },
+      userToken,
+      gate,
+      fetchFn,
+      "https://api.github.com",
+    );
+    await adapter.searchLabelTriggered();
+    expect(seen).toEqual(["Bearer ghu_person"]);
+  });
+
+  it("omits -author:app/<slug> from the trigger searches", async () => {
+    const { adapter, calls } = buildPerson(() => ({ items: [], incomplete_results: false }));
+    await adapter.searchLabelTriggered();
+    await adapter.searchTeamTriggered();
+    for (const c of calls) expect(queryOf(c.url)).not.toContain("-author:");
+  });
+
+  it("the executor refuses a verdict event on the person's account, even with no guard installed", async () => {
+    const { adapter, calls } = buildPerson(() => ({ id: 1 }), false);
+    for (const event of ["APPROVE", "REQUEST_CHANGES"]) {
+      await expect(
+        adapter.gate.execute({
+          kind: "create_review",
+          method: "POST",
+          path: `/repos/${cfg.github.repo}/pulls/3/reviews`,
+          body: { commit_id: "abc", event, body: "x", comments: [] },
+          note: "post review",
+          pr: 3,
+        }),
+      ).rejects.toThrow(/posts every review as a COMMENT/);
+    }
+    expect(calls).toEqual([]);
+    await adapter.gate.execute({
+      kind: "create_review",
+      method: "POST",
+      path: `/repos/${cfg.github.repo}/pulls/3/reviews`,
+      body: { commit_id: "abc", event: "COMMENT", body: "x", comments: [] },
+      note: "post review",
+      pr: 3,
+    });
+    expect(calls.map((c) => c.method)).toEqual(["POST"]);
+  });
+
+  it("registers only marker-bearing inline comments as the reviewer's", async () => {
+    const { adapter } = buildPerson(() => [
+      { id: 1, user: { login: "alice" }, body: "[nit] x\n\n<!-- qcr:f=1:k -->" },
+      { id: 2, user: { login: "alice" }, body: "my own hand-typed note" },
+      { id: 3, user: { login: "bob" }, body: "<!-- qcr:f=1:k -->" },
+    ]);
+    expect(await adapter.listBotReviewComments(3)).toEqual([1]);
+  });
+
+  it("resolves only a thread whose root carries the reviewer's marker", async () => {
+    const thread = (body: string) => ({
+      data: {
+        repository: {
+          pullRequest: {
+            reviewThreads: {
+              nodes: [
+                {
+                  id: "PRRT_node",
+                  isResolved: false,
+                  comments: { nodes: [{ databaseId: 555, author: { login: "alice" }, body }] },
+                },
+              ],
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+          },
+        },
+      },
+    });
+    const own = buildPerson(() => thread("[blocker] x\n\n<!-- qcr:f=2:k -->"));
+    expect((await own.adapter.resolveOwnReviewThread(3, 555)).skipped).toBeNull();
+    const human = buildPerson(() => thread("a thread the person opened by hand"));
+    await expect(human.adapter.resolveOwnReviewThread(3, 555)).rejects.toThrow(
+      ThreadResolutionRefusal,
+    );
+  });
+});

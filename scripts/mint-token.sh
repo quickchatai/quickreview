@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
-# mint-token.sh — GitHub App installation token for the pi sessions' `gh` prefixing.
+# mint-token.sh — the daemon's GitHub token for the pi sessions' `gh` prefixing
+# and the git credential helper.
 #
-# Shell equivalent of packages/pi-plugin/src/githubAuth.ts:
+# Under `[github] auth = "user"` (the person's own credential, polling-only;
+# SECURITY.md) it prints the token file `<secrets dir>/github_token`
+# that the host-side refresher (`qcr github-token sync`) keeps fresh, and does
+# nothing else: no App, no JWT, no cache. --refresh re-reads the same file.
+#
+# Otherwise (`auth = "app"`, the default) it is the shell equivalent of
+# packages/pi-plugin/src/githubAuth.ts:
 #   * RS256 app JWT, iat = now-60s, exp = iat+9min (≤10 min ceiling)
 #   * installation id resolved via GET /app/installations
 #   * POST /app/installations/{id}/access_tokens for the installation token
 #   * token + expires_at cached; reused while (expires_at - now) > 5 min
 #   * single-flight via an mkdir lock; --refresh re-mints (the 401 path)
 #
-# The app PEM is the only credential — there is no personal-token path here.
-# Prints the bare token to stdout. stdlib tools only: bash, openssl, curl, python3.
+# The app PEM is the App route's only credential. Prints the bare token to stdout. stdlib tools only: bash, openssl, curl, python3.
 #
 # Usage:  mint-token.sh [--refresh]
 #   e.g.  GH_TOKEN="$(scripts/mint-token.sh)" gh pr view 123
@@ -62,6 +68,21 @@ cfg_sed() { # crude fallback: first `key = "value"` inside [section]
 # operator set one, else <config home>/secrets (never the old
 # ~/.config/quickreview-bot). The same answer the daemon's loader reaches.
 SECRETS_DIR="$(qcr_locate_secrets "$(cfg github secrets_dir || true)")" || exit 1
+
+# ---- auth = "user": the person's token file, as written ---------------------
+
+AUTH="$(cfg github auth 2>/dev/null || true)"
+AUTH="${AUTH:-app}"
+if [[ "$AUTH" == "user" ]]; then
+  TOKEN_FILE="$SECRETS_DIR/github_token"
+  [[ -r "$TOKEN_FILE" ]] ||
+    die "unreadable user token: $TOKEN_FILE ([github] auth = \"user\"; run \`qcr github-token sync\` on the host)"
+  token="$(tr -d '[:space:]' < "$TOKEN_FILE")"
+  [[ -n "$token" ]] || die "empty user token file: $TOKEN_FILE (run \`qcr github-token sync\` on the host)"
+  printf '%s\n' "$token"
+  exit 0
+fi
+[[ "$AUTH" == "app" ]] || die "[github] auth must be \"app\" or \"user\" (got \"$AUTH\")"
 
 APP_ID_FILE="$SECRETS_DIR/app_id"
 PEM_FILE="$SECRETS_DIR/app.pem"

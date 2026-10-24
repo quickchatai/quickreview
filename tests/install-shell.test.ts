@@ -476,6 +476,73 @@ describe("qcr_locate_secrets / qcr_locate_keys_file ≡ src/install.ts", () => {
   });
 });
 
+// `[github] auth = "user"`: the git credential helper and the session helpers
+// print the person's token FILE, and never reach for the App or the network.
+describe('mint-token under [github] auth = "user"', () => {
+  const runUser = (
+    toml: string,
+    token: string | null,
+    args: string[] = [],
+  ): { status: number | null; stdout: string; stderr: string } => {
+    const env: InstallEnv = { HOME: join(dir, "home"), XDG_CONFIG_HOME: join(dir, "xdg") };
+    const cfg = join(dir, "c.toml");
+    writeFileSync(cfg, toml);
+    mkdirSync(secretsHome(env), { recursive: true });
+    if (token !== null)
+      writeFileSync(join(secretsHome(env), "github_token"), token, { mode: 0o600 });
+    const r = spawnSync("bash", [join(repo, "scripts", "mint-token.sh"), ...args], {
+      encoding: "utf8",
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        ...env,
+        QCR_CONFIG: cfg,
+        // Any App call would fail here; the user branch must make none.
+        GITHUB_API: "http://127.0.0.1:9",
+      } as NodeJS.ProcessEnv,
+    });
+    return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+  };
+  const USER_TOML = '[github]\nauth = "user"\nsecrets_dir = ""\n';
+
+  it("prints the token file, trimmed, and nothing else — no App secrets needed", () => {
+    const r = runUser(USER_TOML, "ghu_abc123\n");
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toBe("ghu_abc123\n");
+  });
+
+  it("--refresh re-reads the same file (there is nothing to re-mint)", () => {
+    const r = runUser(USER_TOML, "ghu_xyz", ["--refresh"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toBe("ghu_xyz\n");
+  });
+
+  it("a missing or empty file dies naming the file and the refresher — never the App's files", () => {
+    const missing = runUser(USER_TOML, null);
+    expect(missing.status).not.toBe(0);
+    expect(missing.stderr).toContain("unreadable user token");
+    expect(missing.stderr).toContain("github_token");
+    expect(missing.stderr).toContain("qcr github-token sync");
+    expect(missing.stderr).not.toContain("app.pem");
+    const empty = runUser(USER_TOML, "  \n");
+    expect(empty.status).not.toBe(0);
+    expect(empty.stderr).toContain("empty user token file");
+  });
+
+  it("a config without the key is the App route (auth defaults to app)", () => {
+    const r = runUser('[github]\nsecrets_dir = ""\n', "ghu_never_printed");
+    expect(r.status).not.toBe(0);
+    expect(r.stdout).not.toContain("ghu_never_printed");
+    expect(r.stderr).toContain("unreadable app id");
+  });
+
+  it("refuses an unknown auth value", () => {
+    const r = runUser('[github]\nauth = "token"\nsecrets_dir = ""\n', "ghu_x");
+    expect(r.status).not.toBe(0);
+    expect(r.stdout).toBe("");
+    expect(r.stderr).toContain('auth must be "app" or "user"');
+  });
+});
+
 describe("qcr_profiles_merged", () => {
   const put = (p: string, text: string): void => {
     mkdirSync(dirname(p), { recursive: true });

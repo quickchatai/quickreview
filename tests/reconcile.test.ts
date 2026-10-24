@@ -589,6 +589,20 @@ describe("reconcileOnce", () => {
     expect(store.getPr(11)).toBeUndefined();
   });
 
+  it("person mode (auth = user) adopts the person's OWN PR — it is the main target — and still no [bot] PR", async () => {
+    // MUTATION: skip PRs authored by cfg.github.bot_login in person mode — this fails.
+    const person: Config = {
+      ...cfg,
+      github: { ...cfg.github, auth: "user", app_slug: "", bot_login: "alice" },
+    };
+    gh.open = [ref(21, { author: "alice" }), ref(22, { author: "dependabot[bot]" })];
+    gh.labelTriggered = [item(21, "alice"), item(22, "dependabot[bot]")];
+    const { hooks } = recordingHooks();
+    await reconcileOnce({ cfg: person, store, adapter: gh, hooks });
+    expect(store.getPr(21)?.state).toBe("queued");
+    expect(store.getPr(22)).toBeUndefined();
+  });
+
   it("does not disturb a round in flight", async () => {
     gh.open = [ref(12), ref(13)];
     gh.labelTriggered = [item(12)];
