@@ -6,7 +6,7 @@
 /** pi itself, with `/login` (or `/login <provider>`) typed and sent for the
  * user: pi runs in a fresh tmux session, and qcr reads pi's input box, the
  * lines between the last two editor borders on screen, every 0.3 s (a second
- * after a key). Empty, it gets the keys and an Enter; still holding exactly
+ * after a key, which counts as three polls toward the 30 s). Empty, it gets the keys and an Enter; still holding exactly
  * the keys, one more Enter (an Enter sent while pi still starts is lost, and
  * the first one may only accept the autocomplete). Anything else in the box is
  * one of pi's menus (the provider list, a provider's own login methods), and
@@ -44,8 +44,8 @@ export function loginInPi(provider?: string, pi: string = "pi"): string[] {
     `s=qcr-login-$$; tmux new-session -d -s "$s" ${pi} --no-approve || exit 1; i=0; ` +
       `while [ $i -lt 100 ]; do tmux has-session -t "$s" 2>/dev/null || break; ` +
       `if e=$(${box}); then ` +
-      `if [ -z "$e" ]; then tmux send-keys -t "$s" -l '${keys}'; tmux send-keys -t "$s" Enter; sleep 1; ` +
-      `elif [ "$e" = '${keys}' ]; then tmux send-keys -t "$s" Enter; sleep 1; ` +
+      `if [ -z "$e" ]; then tmux send-keys -t "$s" -l '${keys}'; tmux send-keys -t "$s" Enter; sleep 1; i=$((i+3)); ` +
+      `elif [ "$e" = '${keys}' ]; then tmux send-keys -t "$s" Enter; sleep 1; i=$((i+3)); ` +
       `else break; fi; fi; ` +
       `sleep 0.3; i=$((i+1)); done; ` +
       `tmux attach -t "$s" || { tmux kill-session -t "$s" 2>/dev/null; exit 1; }`,

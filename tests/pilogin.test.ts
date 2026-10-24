@@ -27,7 +27,8 @@ const exec = promisify(execFile);
 // autocomplete), the keys still shown for 0.6 s after the Enter that submits
 // them (a slow box), the menu, and what a pick on the menu leads to. An Enter
 // on the menu, or while it is being drawn, logs "picked" — the browser tab of
-// the bug. PAD is pi's editorPaddingX; DEAD a pi that exited at once.
+// the bug. PAD is pi's editorPaddingX; DEAD a pi that exited at once; STUCK a
+// pi that never takes the keys.
 const FAKE_TMUX = `#!/bin/sh
 D="$(dirname "$0")"
 log() { echo "$*" >> "$D/log"; }
@@ -58,7 +59,7 @@ case "$cmd" in
     else
       log "enter"
       case "$st" in
-        typed) echo accepted > "$D/state";;
+        typed) [ -z "$STUCK" ] && echo accepted > "$D/state";;
         accepted)
           echo submitting > "$D/state"
           (sleep 0.6; [ "$(cat "$D/state")" = submitting ] && echo menu > "$D/state") >/dev/null 2>&1 &;;
@@ -137,6 +138,21 @@ describe("loginInPi: keys go in until pi takes them, never on a menu", () => {
       "attach",
     ]);
   });
+
+  // MUTATION: drop the two `i=$((i+3));` — the settle seconds stop counting
+  // toward the 30 s, about 100 Enters go in over 130 s, and the case outlasts
+  // its minute (PROCESS_TIMEOUT_MS).
+  it.concurrent(
+    "a pi that never takes the keys still gets the terminal in about 30 s",
+    async () => {
+      const r = await runLogin("openai-codex", "Select OpenAI Codex login method:", { STUCK: "1" });
+      const enters = r.log.filter((l) => l === "enter").length;
+      // 100 polls, four for each Enter (its own and its second's three)
+      expect(enters).toBe(25);
+      expect(r.log.filter((l) => l.startsWith("type"))).toHaveLength(1);
+      expect(r.log.at(-1)).toBe("attach");
+    },
+  );
 
   // MUTATION: put `exec tmux attach -t "$s"` back — the log has no "kill".
   it.concurrent("with no terminal to attach to, the session is ended", async () => {

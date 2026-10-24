@@ -165,7 +165,8 @@ describe("qcr login", () => {
       },
     });
     expect(await cmdLogin([], f.deps)).toBe(0);
-    expect(f.ran).toEqual([{ cmd: "/usr/bin/node", args: [f.deps.piCli()] }]);
+    // MUTATION: drop "--no-approve" from cmdLogin's no-tmux run — this fails.
+    expect(f.ran).toEqual([{ cmd: "/usr/bin/node", args: [f.deps.piCli(), "--no-approve"] }]);
     const said = f.out.join("\n");
     expect(said).toMatch(/type \/login/);
     expect(said).toMatch(/logged in to openai-codex/);
