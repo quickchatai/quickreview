@@ -12,10 +12,13 @@
  * one of pi's menus (the provider list, a provider's own login methods), and
  * no key goes in again. pi draws every selection in that box, so this holds
  * whatever title pi or a provider gives the menu, where an Enter would pick
- * its default: a browser login, opened again on every poll. After 30 s
- * the terminal attaches regardless, so every login pi offers is there and
- * quitting pi ends it; a failed attach (no terminal) ends the session instead
- * of leaving pi running where nobody can reach it. `pi` is the pi to start: the
+ * its default: a browser login, opened again on every poll. pi starts with
+ * `--no-approve`: a login needs nothing from the folder qcr was run in, so a
+ * project folder neither stops it at pi's trust prompt nor gets trusted. A pi
+ * that has already exited ends the wait at once. After 30 s the terminal
+ * attaches regardless, so every login pi offers is there and quitting pi ends
+ * it; a failed attach (no terminal) ends the session instead of leaving pi
+ * running where nobody can reach it. `pi` is the pi to start: the
  * companion image's CLI on its PATH by default; the release image's entrypoint
  * passes its one pi, node_modules/.bin/pi (src/picli.ts `piCliIn`), and
  * `qcr login` the pinned package's own bin (src/picli.ts `piCliPath`). */
@@ -28,16 +31,19 @@ export function loginInPi(provider?: string, pi: string = "pi"): string[] {
   if (!/^[A-Za-z0-9._/@+-]+$/.test(pi))
     throw new Error(`scan login: pi ${JSON.stringify(pi)} is not a plain path`);
   const keys = provider ? `/login ${provider}` : "/login";
-  // The input box, blank lines dropped; awk fails while fewer than two
-  // borders are drawn (pi still starting), and the loop then only waits.
+  // The input box, its side padding (pi's editorPaddingX) trimmed and blank
+  // lines dropped; awk fails while fewer than two borders are drawn (pi still
+  // starting), and the loop then only waits.
   const box =
-    `tmux capture-pane -p -t "$s" | awk '/──────────/ { b[++n] = NR } { l[NR] = $0 } ` +
-    `END { if (n < 2) exit 1; for (i = b[n - 1] + 1; i < b[n]; i++) if (l[i] ~ /[^ ]/) print l[i] }'`;
+    `tmux capture-pane -p -t "$s" 2>/dev/null | awk '/──────────/ { b[++n] = NR } { l[NR] = $0 } ` +
+    `END { if (n < 2) exit 1; for (i = b[n - 1] + 1; i < b[n]; i++) ` +
+    `{ sub(/^ +/, "", l[i]); sub(/ +$/, "", l[i]); if (l[i] != "") print l[i] } }'`;
   return [
     "sh",
     "-c",
-    `s=qcr-login-$$; tmux new-session -d -s "$s" ${pi} || exit 1; i=0; ` +
-      `while [ $i -lt 100 ]; do if e=$(${box}); then ` +
+    `s=qcr-login-$$; tmux new-session -d -s "$s" ${pi} --no-approve || exit 1; i=0; ` +
+      `while [ $i -lt 100 ]; do tmux has-session -t "$s" 2>/dev/null || break; ` +
+      `if e=$(${box}); then ` +
       `if [ -z "$e" ]; then tmux send-keys -t "$s" -l '${keys}'; tmux send-keys -t "$s" Enter; sleep 1; ` +
       `elif [ "$e" = '${keys}' ]; then tmux send-keys -t "$s" Enter; sleep 1; ` +
       `else break; fi; fi; ` +
