@@ -196,7 +196,9 @@ export async function cmdLogin(args: readonly string[], deps: NpmVerbDeps): Prom
     deps.out(
       `qcr login: opening pi — type /login${provider ? ` ${provider}` : ""} and pick your provider, then quit pi (the login lands in ${agentDir}).`,
     );
-    const r = deps.run(deps.execPath, [pi], {});
+    // --no-approve as on the tmux route (src/pilogin.ts): a login needs
+    // nothing from this folder, so pi neither asks to trust it nor trusts it.
+    const r = deps.run(deps.execPath, [pi, "--no-approve"], {});
     if (r.error) {
       deps.err(`qcr login: pi could not start: ${r.error.message}`);
       return 1;

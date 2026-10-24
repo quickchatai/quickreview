@@ -238,7 +238,7 @@ describe("dispatch", () => {
     );
     // …on the image's one pi, never a pi on the PATH
     expect(loginInPi(undefined, "/opt/qcr/node_modules/.bin/pi")[2]).toContain(
-      'tmux new-session -d -s "$s" /opt/qcr/node_modules/.bin/pi ||',
+      'tmux new-session -d -s "$s" /opt/qcr/node_modules/.bin/pi --no-approve ||',
     );
     expect(() => loginInPi(undefined, "pi; rm -rf /")).toThrow(/plain path/);
   });

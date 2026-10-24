@@ -131,6 +131,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/pi-plugin.test.ts", // git for each fake host's scratch repo
   "tests/pi-resolution.test.ts",
   "tests/pibuiltins.test.ts",
+  "tests/pilogin.test.ts",
   "tests/pin-evidence.test.ts", // the evidence script run under node against the map
   "tests/plugin-qcr.test.ts", // the plugin's shell scripts against a fake docker, gh and qcr
   "tests/post-payload-parity.test.ts", // the Node post route, compared with recorded dry-run payloads
