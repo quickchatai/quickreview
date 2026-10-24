@@ -1716,9 +1716,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
               pump: () => d.pump(),
               // On the own-account route the bot login is the person, whose
               // own PRs are the point; only an App's bot is never reviewed.
-              ...((cfg.github as { auth?: unknown }).auth === "user"
-                ? {}
-                : { botLogin: cfg.github.bot_login }),
+              ...(isPersonMode(cfg.github) ? {} : { botLogin: cfg.github.bot_login }),
             },
             pr,
           );
