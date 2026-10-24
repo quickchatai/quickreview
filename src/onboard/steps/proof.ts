@@ -33,9 +33,8 @@
 // what it saw on the checklist — the record the go-live step later demands
 // before it will even offer the flip.
 import { join } from "node:path";
-import { mintAppJwt } from "@quickchatai/pi-quickreview/src/githubAuth.js";
+import { mintAppJwt, USER_TOKEN_FILE } from "@quickchatai/pi-quickreview/src/githubAuth.js";
 import { loadConfig } from "../../config.js";
-import { GITHUB_TOKEN_FILE } from "../../githubtoken.js";
 import { operatorCommandWriteScriptAt } from "../../operatorwrite.js";
 import { CHOICE_KEYS, userAuthRecorded } from "../choices.js";
 import { readTextOrNull } from "../engine.js";
@@ -439,7 +438,7 @@ async function readToken(
   secretsDir: string,
 ): Promise<string | null> {
   if (userAuthRecorded(ctx.choices)) {
-    const token = (readTextOrNull(join(secretsDir, GITHUB_TOKEN_FILE)) ?? "").trim();
+    const token = (readTextOrNull(join(secretsDir, USER_TOKEN_FILE)) ?? "").trim();
     return token === "" ? null : token;
   }
   const creds = readCredentials(secretsDir);

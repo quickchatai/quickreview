@@ -7,37 +7,14 @@
 // Everything effectful is injected (spawn, completion read, log), so tests
 // drive the whole flow with fakes; src/cli.ts cmdOnboard is the one real
 // assembly.
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { defaultSteps } from "./steps/index.js";
 import { onboardingToolAllowlist } from "./toolnames.js";
 
-export interface PiPin {
-  package: string;
-  version: string;
-}
-
-/** The pin from package.json's "qcrPi" block — the mirror that exists on a bare
- * public clone, where config.toml does not (the wizard writes it later).
- * config.toml [pi] stays the preferred source when it loads (cmdOnboard tries
- * it first); both mirror the same pinned version by rule 7's discipline. */
-export function piPinFromPackageJson(
-  root: string,
-  readFile: (p: string) => string = (p) => readFileSync(p, "utf8"),
-): PiPin | null {
-  try {
-    const pkg = JSON.parse(readFile(join(root, "package.json"))) as {
-      qcrPi?: { package?: unknown; version?: unknown };
-    };
-    const pi = pkg.qcrPi;
-    if (pi && typeof pi.package === "string" && typeof pi.version === "string") {
-      return { package: pi.package, version: pi.version };
-    }
-  } catch {
-    // fall through — the caller reports the missing pin
-  }
-  return null;
-}
+// The pin reader lives in a leaf module: src/version.ts (on the daemon's import
+// graph) needs it, and this module imports the whole step registry.
+export { piPinFromPackageJson, type PiPin } from "./pipin.js";
+import type { PiPin } from "./pipin.js";
 
 /** Dedicated onboarding session store — never the reviewer/companion dirs, so
  * onboarding cannot pollute (or be polluted by) any other pi session store. */

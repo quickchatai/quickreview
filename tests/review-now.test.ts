@@ -173,7 +173,7 @@ describe("the handler queues one human-asked round", () => {
     expect(at).toBeGreaterThan(0);
     const body = wire.slice(at, at + 700);
     expect(body).toMatch(/getPr: \(n\) => adapter\.getPr\(n\)/);
-    expect(body).toMatch(/auth === "user"/);
+    expect(body).toMatch(/isPersonMode\(cfg\.github\) \? \{\} : \{ botLogin: cfg\.github\.bot_login \}/);
   });
 });
 

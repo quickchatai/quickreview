@@ -328,5 +328,8 @@ describe("the daemon never reads a personal token itself", () => {
     expect(seen.size).toBeGreaterThan(100);
     expect(seen.has("src/reviewnow.ts")).toBe(true);
     expect(seen.has("src/githubtoken.ts")).toBe(false);
+    // Nor the wizard's step registry, which imports it (src/version.ts reads
+    // the pi pin from the leaf src/onboard/pipin.ts, never from launch.ts).
+    expect(seen.has("src/onboard/steps/index.ts")).toBe(false);
   });
 });

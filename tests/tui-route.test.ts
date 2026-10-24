@@ -26,6 +26,7 @@ import { setupLine, setupStateOf } from "../src/tui/setupstate.js";
 import { unknownSourceLines, unknownDetailLines } from "../src/tui/board.js";
 import { stripAnsi } from "../src/tui/paint.js";
 import { configFillStep } from "../src/onboard/steps/configfill.js";
+import { githubAccountStep } from "../src/onboard/steps/githubaccount.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const TEMPLATE: TuiConfig = { ...TUI_DEFAULTS, ssh_host: "" }; // config.example.toml's [tui]
@@ -184,10 +185,15 @@ describe("the setup banner", () => {
       const s = await setupStateOf(
         checklist({ topology: "local" }, ["preflight", "topology", "llm_auth"]),
       );
-      expect(s?.next).toBe(configFillStep().title);
+      // The GitHub step (order 33) comes before the config fill.
+      expect(s?.next).toBe(githubAccountStep().title);
       expect(setupLine(s!)).toBe(
-        `setup not finished — run \`qcr onboard\` to continue (next: ${configFillStep().title})`,
+        `setup not finished — run \`qcr onboard\` to continue (next: ${githubAccountStep().title})`,
       );
+      const after = await setupStateOf(
+        checklist({ topology: "local" }, ["preflight", "topology", "llm_auth", "github_account"]),
+      );
+      expect(after?.next).toBe(configFillStep().title);
     },
   );
 

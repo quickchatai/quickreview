@@ -437,7 +437,7 @@ describe("the first frame (structural, not timed)", () => {
 
   it('a half-finished onboarding with no ssh_host says so on the FIRST frame — never `ssh ""`', async () => {
     // The real box: config.toml still the template (`target = "ssh"`,
-    // `ssh_host = ""`), the checklist at config_fill, no stack up yet.
+    // `ssh_host = ""`), the checklist at the GitHub step, no stack up yet.
     const checklist = {
       version: 1,
       created_at: "2026-10-24T00:00:00Z",
@@ -459,7 +459,7 @@ describe("the first frame (structural, not timed)", () => {
     // width), naming the step the wizard would run next.
     expect(first).toContain("▲ setup not finished — qcr onboard");
     expect(first).toContain("next:");
-    expect(first).toContain("Interview and fill");
+    expect(first).toContain("your own account, or a GitHub App");
     const plain = stripAnsi(await board(h));
     expect(plain).toContain("setup not finished");
     // The route is the local stack, and nothing on the board is ssh advice.

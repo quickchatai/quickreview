@@ -34,9 +34,10 @@ import { execFile } from "node:child_process";
 import { chmodSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { USER_TOKEN_FILE } from "@quickchatai/pi-quickreview/src/githubAuth.js";
 
-/** The token file's name in the secrets dir — the shared interface. */
-export const GITHUB_TOKEN_FILE = "github_token";
+/** The token file's name in the secrets dir — the one the daemon's UserTokenSource reads. */
+export const GITHUB_TOKEN_FILE = USER_TOKEN_FILE;
 
 /** The marker that makes the crontab entry idempotent. */
 export const CRON_MARKER = "# qcr github-token sync";
