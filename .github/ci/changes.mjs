@@ -17,10 +17,14 @@
 // never a skipped check.
 import { appendFileSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { dirname, join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const ROUTING = [".github/workflows/ci.yml", ".github/ci/changes.mjs"];
+
+/** classify's keys, each a `changes` job output; every one but `full` names
+ * the job it gates. */
+export const ROUTES = ["full", "lint", "image", "clone"];
 
 /** Prose a reader reads and no build, image or clone consumes. Markdown inside
  * a code or data directory is not prose: whole-tree fences scan those. */
@@ -34,16 +38,20 @@ export const isDocs = (p) =>
 /** The test files that read docs prose, the whole of a docs-only run. A test
  * that starts reading docs joins this list; tests/ci-changes.test.ts fails a
  * test file that names a docs file and is in neither this list nor its
- * exemptions. They all pass with no dist/. */
+ * exemptions. context-files and reviewer-context hold the root's agent
+ * context files (AGENTS.md present, no AGENTS.override.md). They all pass
+ * with no dist/. */
 export const DOCS_SUITE = [
   "tests/action.test.ts",
   "tests/ci-clone-smoke.test.ts",
   "tests/companion-memory.test.ts",
+  "tests/context-files.test.ts",
   "tests/fences-published.test.ts",
   "tests/fences-tui.test.ts",
   "tests/onboarding-docs.test.ts",
   "tests/publishability.test.ts",
   "tests/release-docs.test.ts",
+  "tests/reviewer-context.test.ts",
   "tests/tool-uid.test.ts",
   "tests/tui-surfaces.test.ts",
   "tests/worker-rehearsal-tooling.test.ts",
@@ -120,37 +128,44 @@ export function classify(paths, { dockerignore }) {
   };
 }
 
-/** The `ci` job's verdict over its needs (toJSON(needs)): every job that ran
- * passed, and every job `changes` asked for ran. `test` always runs. */
+/** The `ci` job's verdict over its needs (toJSON(needs)): `changes` passed
+ * with every route a plain true or false, every job that ran passed, and
+ * every job that was skipped had a route saying it was not needed. A job no
+ * route names (`test`, or one added later) is always needed. */
 export function gate(needs) {
-  const problems = [];
   const changes = needs.changes;
   if (changes?.result !== "success") return [`changes: ${changes?.result ?? "missing"}`];
-  for (const job of ["test", "lint", "image", "clone"]) {
-    const result = needs[job]?.result ?? "missing";
-    const wanted = job === "test" || changes.outputs?.[job] === "true";
+  const outputs = changes.outputs ?? {};
+  const bad = ROUTES.filter((k) => outputs[k] !== "true" && outputs[k] !== "false");
+  if (bad.length)
+    return bad.map((k) => `changes: output ${k} is ${JSON.stringify(outputs[k] ?? null)}`);
+  const problems = [];
+  for (const [job, { result }] of Object.entries(needs)) {
+    if (job === "changes") continue;
+    const wanted = !(job in outputs) || outputs[job] === "true";
     if (result === "success" || (result === "skipped" && !wanted)) continue;
     problems.push(`${job}: ${result}${wanted ? " (needed)" : ""}`);
   }
   return problems;
 }
 
-// ---- CLI --------------------------------------------------------------------
-
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+// ---- CLI (run from the checkout's root) ----------------------------------------
 
 /** The changed paths between base and HEAD, or null when base is unknown or
- * cannot be fetched. Renames count as a delete and an add. */
+ * cannot be fetched. Renames count as a delete and an add. NUL-separated, so
+ * a name with a newline or a non-ASCII byte arrives as itself, not quoted. */
 function changedPaths(base) {
   if (!base || /^0+$/.test(base)) return null;
-  const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
+  const git = (...args) => execFileSync("git", args, { encoding: "utf8" });
   try {
     try {
       git("cat-file", "-e", `${base}^{commit}`);
     } catch {
       git("fetch", "--no-tags", "--depth=1", "origin", base);
     }
-    return git("diff", "--name-only", "--no-renames", base, "HEAD").split("\n").filter(Boolean);
+    return git("diff", "-z", "--name-only", "--no-renames", base, "HEAD")
+      .split("\0")
+      .filter(Boolean);
   } catch {
     return null;
   }
@@ -160,11 +175,13 @@ function main([cmd, arg]) {
   if (cmd === "docs-suite") return void process.stdout.write(DOCS_SUITE.join("\n") + "\n");
   if (cmd === "classify") {
     const paths = changedPaths(arg);
-    const dockerignore = readFileSync(join(root, "docker/Dockerfile.dockerignore"), "utf8");
+    const dockerignore = readFileSync("docker/Dockerfile.dockerignore", "utf8");
     const out = classify(paths, { dockerignore });
+    // Each name as a JSON string: a file named `::add-mask::…` must not reach
+    // the runner as a workflow command.
     console.log(
       paths
-        ? `${paths.length} changed path(s):\n${paths.join("\n")}`
+        ? `${paths.length} changed path(s):\n${paths.map((p) => `  ${JSON.stringify(p)}`).join("\n")}`
         : "changes unknown: running everything",
     );
     console.log(JSON.stringify(out));

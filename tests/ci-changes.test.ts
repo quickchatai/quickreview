@@ -12,10 +12,26 @@
 //     classify key is a job output, and the repo settings require the gate alone.
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { classify, dockerContext, DOCS_SUITE, gate, isDocs } from "../.github/ci/changes.mjs";
+import {
+  classify,
+  dockerContext,
+  DOCS_SUITE,
+  gate,
+  isDocs,
+  ROUTES,
+} from "../.github/ci/changes.mjs";
 
 interface Route {
   full: boolean;
@@ -177,6 +193,7 @@ describe("the image rule reads the dockerignore", () => {
 describe("DOCS_SUITE", () => {
   const suite = DOCS_SUITE;
 
+  // MUTATION: add "tests/no-such.test.ts" to DOCS_SUITE — this fails.
   it("lists test files that exist", () => {
     for (const f of suite) expect(existsSync(join(root, f)), f).toBe(true);
   });
@@ -190,6 +207,7 @@ describe("DOCS_SUITE", () => {
     "tests/setup-facts.test.ts": "CONTRIBUTING.md is a fake repo's file",
     "tests/setup-portrait.test.ts": "CONTRIBUTING.md is a fake repo's file",
     "tests/style-guide-sources.test.ts": "CONTRIBUTING.md is a fake repo's guide",
+    "tests/ci-changes.test.ts": "names docs paths as routing fixtures",
   };
 
   // MUTATION: remove tests/release-docs.test.ts from DOCS_SUITE — this fails.
@@ -213,37 +231,25 @@ describe("DOCS_SUITE", () => {
 });
 
 describe("gate", () => {
-  const verdict = gate;
   const ok = { result: "success" };
   const skipped = { result: "skipped" };
-  const changes = (outputs: Record<string, string>) => ({ result: "success", outputs });
+  const routes = (on: string[]) => ({
+    result: "success",
+    outputs: Object.fromEntries(ROUTES.map((k) => [k, String(on.includes(k))])),
+  });
 
   it("passes when the needed jobs passed and the rest were skipped", () => {
     expect(
-      verdict({
-        changes: changes({ full: "false", lint: "false", image: "false", clone: "false" }),
-        test: ok,
-        lint: skipped,
-        image: skipped,
-        clone: skipped,
-      }),
+      gate({ changes: routes([]), test: ok, lint: skipped, image: skipped, clone: skipped }),
     ).toEqual([]);
-    expect(
-      verdict({
-        changes: changes({ lint: "true", image: "true", clone: "true" }),
-        test: ok,
-        lint: ok,
-        image: ok,
-        clone: ok,
-      }),
-    ).toEqual([]);
+    expect(gate({ changes: routes(ROUTES), test: ok, lint: ok, image: ok, clone: ok })).toEqual([]);
   });
 
   // MUTATION: treat `skipped` as passing whatever `changes` said — this fails.
   it("fails a needed job that was skipped", () => {
     expect(
-      verdict({
-        changes: changes({ lint: "true" }),
+      gate({
+        changes: routes(["full", "lint"]),
         test: ok,
         lint: skipped,
         image: skipped,
@@ -252,23 +258,42 @@ describe("gate", () => {
     ).toEqual(["lint: skipped (needed)"]);
   });
 
-  // MUTATION: drop the `job === "test"` clause — a skipped test passes and this fails.
-  it("always needs the test job", () => {
+  // MUTATION: make a job with no route optional (`outputs[job] === "true"` alone) — both cases fail.
+  it("needs every job no route names: the test job, and one added later", () => {
     expect(
-      verdict({
-        changes: changes({}),
-        test: skipped,
+      gate({ changes: routes([]), test: skipped, lint: skipped, image: skipped, clone: skipped }),
+    ).toEqual(["test: skipped (needed)"]);
+    expect(
+      gate({
+        changes: routes([]),
+        test: ok,
         lint: skipped,
         image: skipped,
         clone: skipped,
+        later: skipped,
       }),
-    ).toEqual(["test: skipped (needed)"]);
+    ).toEqual(["later: skipped (needed)"]);
+  });
+
+  // MUTATION: drop the output check — a missing route then reads as "not needed" and this fails.
+  it("fails when a route is missing or not a plain true or false", () => {
+    const outputs = { full: "true", lint: "", image: "true", clone: "true" };
+    expect(
+      gate({
+        changes: { result: "success", outputs },
+        test: ok,
+        lint: skipped,
+        image: ok,
+        clone: ok,
+      }),
+    ).toEqual(['changes: output lint is ""']);
+    expect(gate({ changes: { result: "success" }, test: ok })).toHaveLength(ROUTES.length);
   });
 
   it("fails on a failed or cancelled job, and on a failed classification", () => {
     expect(
-      verdict({
-        changes: changes({}),
+      gate({
+        changes: routes([]),
         test: ok,
         lint: skipped,
         image: { result: "failure" },
@@ -276,18 +301,89 @@ describe("gate", () => {
       }),
     ).toEqual(["image: failure"]);
     expect(
-      verdict({
-        changes: changes({}),
+      gate({
+        changes: routes([]),
         test: { result: "cancelled" },
         lint: skipped,
         image: skipped,
         clone: skipped,
       }),
     ).toEqual(["test: cancelled (needed)"]);
-    expect(verdict({ changes: { result: "failure" }, test: skipped })).toEqual([
-      "changes: failure",
-    ]);
-    expect(verdict({})).toEqual(["changes: missing"]);
+    expect(gate({ changes: { result: "failure" }, test: skipped })).toEqual(["changes: failure"]);
+    expect(gate({})).toEqual(["changes: missing"]);
+  });
+});
+
+describe("the classify command on a real diff", () => {
+  // A scratch repo with the real dockerignore, a base commit, and a head that
+  // adds names git would quote, and one shaped like a workflow command.
+  const run = (names: string[]): { out: Record<string, string>; stdout: string } => {
+    const dir = mkdtempSync(join(tmpdir(), "ci-changes-"));
+    try {
+      const git = (...args: string[]) =>
+        execFileSync("git", ["-c", "maintenance.auto=false", "-c", "gc.auto=0", ...args], {
+          cwd: dir,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            GIT_AUTHOR_NAME: "t",
+            GIT_AUTHOR_EMAIL: "t@t",
+            GIT_COMMITTER_NAME: "t",
+            GIT_COMMITTER_EMAIL: "t@t",
+          },
+        });
+      git("init", "-q");
+      mkdirSync(join(dir, "docker"));
+      copyFileSync(
+        join(root, "docker/Dockerfile.dockerignore"),
+        join(dir, "docker/Dockerfile.dockerignore"),
+      );
+      git("add", "-A");
+      git("commit", "-qm", "base");
+      const base = git("rev-parse", "HEAD").trim();
+      for (const n of names) {
+        mkdirSync(dirname(join(dir, n)), { recursive: true });
+        writeFileSync(join(dir, n), "x\n");
+      }
+      git("add", "-A");
+      git("commit", "-qm", "head");
+      const outFile = join(dir, "github-output");
+      const stdout = execFileSync(
+        "node",
+        [join(root, ".github/ci/changes.mjs"), "classify", base],
+        {
+          cwd: dir,
+          encoding: "utf8",
+          env: { ...process.env, GITHUB_OUTPUT: outFile },
+        },
+      );
+      const out = Object.fromEntries(
+        readFileSync(outFile, "utf8")
+          .trim()
+          .split("\n")
+          .map((l) => l.split("=") as [string, string]),
+      );
+      return { out, stdout };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  // MUTATION: drop `-z` from the git diff (splitting on newlines) — the quoted name skips lint and image.
+  it("routes a non-ASCII source file as itself", () => {
+    expect(run(["src/café.ts"]).out).toEqual({
+      full: "true",
+      lint: "true",
+      image: "true",
+      clone: "true",
+    });
+  });
+
+  // MUTATION: print the names raw — a line then starts with `::` and this fails.
+  it("prints no name as a workflow command", () => {
+    const { stdout, out } = run(["::add-mask::true", "docs/a.md"]);
+    expect(stdout.split("\n").filter((l) => l.trimStart().startsWith("::"))).toEqual([]);
+    expect(out.full).toBe("true");
   });
 });
 
@@ -319,7 +415,8 @@ describe("ci.yml — the routing", () => {
   // MUTATION: drop the `image:` output line from the changes job — this fails.
   it("every classify key is a changes output, and each gated job reads its own", () => {
     const changesJob = job("changes");
-    for (const key of Object.keys(route(["src/daemon.ts"])))
+    expect(Object.keys(route(["src/daemon.ts"]))).toEqual(ROUTES);
+    for (const key of ROUTES)
       expect(changesJob).toContain(`${key}: \${{ steps.classify.outputs.${key} }}`);
     for (const name of ["lint", "image", "clone"])
       expect(job(name)).toContain(`if: \${{ needs.changes.outputs.${name} == 'true' }}`);

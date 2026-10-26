@@ -8,7 +8,8 @@
 // no version given, the pi this checkout has installed is the one run.
 // A version that is not installed needs `--install`, which puts pi and its
 // sibling packages at that version into node_modules without saving (it
-// reaches the registry: CI's matrix job does it in a fresh checkout).
+// reaches the registry, so run it in a fresh checkout). CI runs only the
+// installed pi's canaries; a version joins the range after this ran by hand.
 import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

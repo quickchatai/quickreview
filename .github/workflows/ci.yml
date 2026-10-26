@@ -129,8 +129,11 @@ jobs:
       # on their own, so a bump cannot merge without a separate canary result.
       # The comparison base is the pull request's base branch, or the previous
       # head of a push; an unknown base (a first push) counts as changed.
+      # Only with the full suite: a docs-only change cannot move a pi pin, and
+      # the canaries need the build that run skips.
       - name: pi dependencies changed?
         id: pi
+        if: ${{ needs.changes.outputs.full == 'true' }}
         env:
           BASE_REF: ${{ github.base_ref }}
           BEFORE: ${{ github.event.before }}

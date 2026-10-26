@@ -37,6 +37,7 @@ describe("ci.yml — the image job", () => {
     expect(job).toMatch(/DOCKER_BUILDKIT:\s*"1"/);
     // buildx, so the build uses the current builder (Blacksmith's cache) rather
     // than the "default" instance plain `docker build` goes to.
+    // MUTATION: change `docker buildx build --load` back to `docker build --load` — this fails.
     expect(job).toMatch(/docker buildx build --load\b[^\n]*-f docker\/Dockerfile\b/);
     expect(job).toContain('--build-arg "BUILD_SHA=${GITHUB_SHA}"');
     expect(job).toMatch(/\.github\/ci\/image-smoke\.sh\s+qcr-ci:smoke/);
