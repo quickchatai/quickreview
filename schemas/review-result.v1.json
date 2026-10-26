@@ -278,6 +278,10 @@
             "kind": {
               "enum": ["pr", "branch", "uncommitted", "diff"],
               "description": "What is reviewed: a pull request, the current branch against its base, the uncommitted working tree, or a unified diff handed in (`--diff`). Only a pr target can be posted."
+            },
+            "uncommitted": {
+              "const": true,
+              "description": "A branch target reviewed together with the working tree's uncommitted edits, as one review. Absent otherwise."
             }
           }
         },

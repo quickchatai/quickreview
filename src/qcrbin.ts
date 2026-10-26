@@ -7,7 +7,7 @@
 //   qcr version        the install's identity (src/version.ts)
 //   qcr review …       a daemonless review (src/reviewcli.ts)
 //   qcr login [p]      pi's own /login in the pinned pi (src/npmverbs.ts)
-//   qcr pi [args]      the pinned pi with the qcr plugin preloaded
+//   qcr pi [args]      the pinned pi with the qcr plugin and /selfimprove
 //   qcr update         the installing package manager updates qcr
 //
 // Every other verb goes to src/cli.ts `main` unchanged. The image's
@@ -25,7 +25,7 @@ export const BIN_HELP = [
   "  qcr                     open the admin TUI",
   "  qcr review [target]     review code here, with no daemon (`qcr review --help`)",
   "  qcr login [provider]    log in with pi's own /login, for the review sessions",
-  "  qcr pi [args]           pi with the qcr plugin (/review, /scan, /selfimprove, /qcr-setup)",
+  "  qcr pi [args]           pi with the qcr plugin (/qcr-review, /qcr-scan, /qcr-setup) and /selfimprove",
   "  qcr update              update qcr with the package manager that installed it",
   "  qcr version [--json]    this install's version, schemas and pi pin",
   "",

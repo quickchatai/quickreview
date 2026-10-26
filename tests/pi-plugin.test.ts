@@ -1,25 +1,37 @@
-// The pi plugin (packages/pi-plugin), in process: its manifest, the version
-// gate, what the extension registers, the /review flow over fake ports, the
-// destination rule, the borrowed login, and /scan, /selfimprove and
-// /qcr-setup over a fake runner. Nothing here spawns a process or touches the
-// network: the faux-provider round is tests/pi-plugin-round.test.ts, the
-// packed install tests/pi-plugin-install.test.ts. git runs: each fake host's
-// repo is a scratch git repo (the review store keys a repo's saved
-// destination by its root commit).
+// The pi plugin (packages/pi-plugin), in process: its manifest and skills, the
+// version gate, what the extension registers, /qcr-review in the background
+// through the extension on a fake pi (status line, result message, one review
+// at a time, stop, the posting rule), its arguments and presets, the
+// destination rule, the borrowed login, and /qcr-scan and /qcr-setup over a
+// fake runner. Nothing here spawns a process or touches the network: the
+// faux-provider round is tests/pi-plugin-round.test.ts, the packed install
+// tests/pi-plugin-install.test.ts, the real gate behind a post
+// tests/review-post-cli.test.ts. git runs: each fake host's repo is a scratch
+// git repo (the review store keys a repo's state by its root commit).
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createQuickReview } from "@quickchatai/pi-quickreview/extensions/quickreview.js";
+import {
+  createQuickReview,
+  QUICKREVIEW_COMMANDS,
+} from "@quickchatai/pi-quickreview/extensions/quickreview.js";
 import {
   declaredPiRange,
   parseSemver,
   piGate,
   satisfiesRange,
 } from "@quickchatai/pi-quickreview/src/plugin/versiongate.js";
-import { parseReviewCommand, splitArgs } from "@quickchatai/pi-quickreview/src/plugin/args.js";
+import {
+  parseReviewCommand,
+  REVIEW_PRESET_NAMES,
+  reviewLabel,
+  SECURITY_LENSES,
+  splitArgs,
+} from "@quickchatai/pi-quickreview/src/plugin/args.js";
+import { readQuickReviewSettings } from "@quickchatai/pi-quickreview/src/plugin/settings.js";
 import {
   destinationMenu,
   planDestinations,
@@ -31,22 +43,21 @@ import {
   type HostAuth,
 } from "@quickchatai/pi-quickreview/src/plugin/login.js";
 import {
+  KEEP_IT_HERE,
+  REVIEW_MESSAGE,
   REVIEW_TIMEOUT_MS,
+  reviewStatusLine,
   runReviewCommand,
   type ReviewCommandDeps,
 } from "@quickchatai/pi-quickreview/src/plugin/review.js";
 import type {
+  PostOffer,
   ReviewIo,
   ReviewOptions,
   ReviewResult,
   ReviewTarget,
 } from "@quickchatai/pi-quickreview/src/reviewapi.js";
-import {
-  parseScanCommand,
-  runScanCommand,
-  runSelfImproveCommand,
-  selfImproveBrief,
-} from "@quickchatai/pi-quickreview/src/plugin/scan.js";
+import { parseScanCommand, runScanCommand } from "@quickchatai/pi-quickreview/src/plugin/scan.js";
 import { runSetupChecks } from "@quickchatai/pi-quickreview/src/plugin/setup.js";
 import type {
   PluginHost,
@@ -56,6 +67,7 @@ import type {
 } from "@quickchatai/pi-quickreview/src/plugin/session.js";
 import { coreExtensionFile } from "@quickchatai/pi-quickreview/src/engine/extfiles.js";
 import { ROUND_EXTENSIONS } from "@quickchatai/pi-quickreview/src/engine/round.js";
+import { parseSkillFrontmatter } from "./helpers/skill-frontmatter.js";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const PLUGIN = join(ROOT, "packages", "pi-plugin");
@@ -71,11 +83,29 @@ const pluginPkg = (): Record<string, unknown> & {
 } => JSON.parse(readFileSync(join(PLUGIN, "package.json"), "utf8"));
 
 describe("the plugin's manifest", () => {
-  it("is a pi package of exactly one extension, the host entry", () => {
+  it("is a pi package of exactly one extension, the host entry, and its skills", () => {
     const pkg = pluginPkg();
     expect(pkg.keywords).toContain("pi-package");
-    expect(pkg.pi).toEqual({ extensions: ["./dist/src/plugin/index.js"] });
-    expect(pkg.files).toEqual(["dist", "assets", "README.md", "LICENSE"]);
+    expect(pkg.pi).toEqual({ extensions: ["./dist/src/plugin/index.js"], skills: ["./skills"] });
+    expect(pkg.files).toEqual(["dist", "assets", "skills", "README.md", "LICENSE"]);
+  });
+
+  // Each command is also a skill of the same name, and each skill names its
+  // command. MUTATION: delete skills/qcr-scan, or rename its `name:` — this
+  // fails.
+  it("ships one skill per command, named as the command, that tells the model the command", () => {
+    const dir = join(PLUGIN, "skills");
+    expect(readdirSync(dir).sort()).toEqual([...QUICKREVIEW_COMMANDS].sort());
+    for (const name of QUICKREVIEW_COMMANDS) {
+      const fm = parseSkillFrontmatter(readFileSync(join(dir, name, "SKILL.md"), "utf8"));
+      expect(fm.fields.get("name")?.value, name).toBe(name);
+      const description = fm.fields.get("description");
+      expect(description?.resolvesTo, name).toBe("string");
+      expect(description!.value.length, name).toBeGreaterThan(40);
+      // pi offers it to the model: a skill hidden from it could not route
+      expect(fm.fields.has("disable-model-invocation"), name).toBe(false);
+      expect(fm.body, name).toContain(`/${name}`);
+    }
   });
 
   // pi supplies these; a copy beside it would be a second instance of pi's
@@ -160,8 +190,9 @@ describe("the version gate", () => {
   });
 });
 
-/** A pi ExtensionAPI that records what an extension registers. */
-function fakePi(): {
+/** A pi ExtensionAPI that records what an extension registers, with pi's
+ * merged settings as `settings`. */
+function fakePi(settings: Record<string, unknown> = {}): {
   api: ExtensionAPI;
   commands: Map<
     string,
@@ -169,13 +200,14 @@ function fakePi(): {
   >;
   tools: unknown[];
   handlers: Map<string, Array<(e: unknown, ctx: unknown) => unknown>>;
-  sent: unknown[];
+  sent: Array<{ message: Record<string, unknown>; options?: Record<string, unknown> }>;
   userMessages: string[];
+  emit: (event: string) => void;
 } {
   const commands = new Map();
   const tools: unknown[] = [];
   const handlers = new Map<string, Array<(e: unknown, ctx: unknown) => unknown>>();
-  const sent: unknown[] = [];
+  const sent: Array<{ message: Record<string, unknown>; options?: Record<string, unknown> }> = [];
   const userMessages: string[] = [];
   const api = {
     registerCommand: (name: string, o: unknown) => commands.set(name, o),
@@ -184,10 +216,23 @@ function fakePi(): {
       handlers.set(event, [...(handlers.get(event) ?? []), h]);
       return () => {};
     },
-    sendMessage: (m: unknown) => sent.push(m),
+    sendMessage: (m: Record<string, unknown>, o?: Record<string, unknown>) =>
+      sent.push({ message: m, ...(o ? { options: o } : {}) }),
     sendUserMessage: (t: string) => userMessages.push(t),
+    getSettings: () => structuredClone(settings),
   };
-  return { api: api as unknown as ExtensionAPI, commands, tools, handlers, sent, userMessages };
+  const emit = (event: string): void => {
+    for (const h of handlers.get(event) ?? []) h({}, {});
+  };
+  return {
+    api: api as unknown as ExtensionAPI,
+    commands,
+    tools,
+    handlers,
+    sent,
+    userMessages,
+    emit,
+  };
 }
 
 const noRunner: Runner = {
@@ -198,12 +243,14 @@ const noRunner: Runner = {
 describe("the extension", () => {
   const config = { env: {}, home: tmp, runner: noRunner, print: () => {} };
 
-  // Passes are leaves: the person's session gets commands, never a tool.
-  // MUTATION: register the lens tool here — this fails.
-  it("registers exactly its four commands, and no tool, on a pi inside the range", () => {
+  // Passes are leaves: the person's session gets commands, never a tool. The
+  // unprefixed names are dropped, not aliased (ADR 0001). MUTATION: register
+  // the lens tool here, or keep "review" beside "qcr-review" — this fails.
+  it("registers exactly the three qcr- commands, and no tool, on a pi inside the range", () => {
     const pi = fakePi();
     createQuickReview({ ...config, piVersion: "1.4.0", range: "^1.4.0" })(pi.api);
-    expect([...pi.commands.keys()].sort()).toEqual(["qcr-setup", "review", "scan", "selfimprove"]);
+    expect([...pi.commands.keys()].sort()).toEqual(["qcr-review", "qcr-scan", "qcr-setup"]);
+    for (const gone of ["review", "scan", "selfimprove"]) expect(pi.commands.has(gone)).toBe(false);
     expect(pi.tools).toEqual([]);
   });
 
@@ -222,44 +269,139 @@ describe("the extension", () => {
   });
 });
 
-describe("/review's arguments", () => {
+describe("/qcr-review's arguments", () => {
   it("split on spaces, with quotes grouping", () => {
     expect(splitArgs(' 12  --profile "my p" ')).toEqual(["12", "--profile", "my p"]);
   });
 
-  it("name one target, the branch by default", () => {
-    expect(parseReviewCommand("")).toMatchObject({ target: { kind: "branch" }, preview: false });
-    expect(parseReviewCommand("--branch --base dev")).toMatchObject({
-      target: { kind: "branch", base: "dev" },
+  // MUTATION: make the bare command the branch alone (drop uncommitted) —
+  // this fails.
+  it("bare: this branch with its uncommitted changes, as one target", () => {
+    expect(parseReviewCommand("")).toEqual({
+      preset: null,
+      target: { kind: "branch", uncommitted: true },
+      preview: false,
+      json: false,
     });
-    expect(parseReviewCommand("#12 --repo o/r --to pr --limit 3 --profile p --json")).toEqual({
+    expect(parseReviewCommand("--base dev")).toMatchObject({
+      target: { kind: "branch", base: "dev", uncommitted: true },
+    });
+  });
+
+  it("a target: a PR as a number, #N or a URL, a branch by name, or --uncommitted", () => {
+    expect(parseReviewCommand("12")).toMatchObject({ target: { kind: "pr", pr: "12" } });
+    expect(parseReviewCommand("#12 --repo o/r --limit 3 --profile p --json")).toEqual({
+      preset: null,
       target: { kind: "pr", pr: "#12", repo: "o/r" },
       preview: false,
       json: true,
-      full: false,
-      to: ["pr"],
       limitUsd: 3,
       profile: "p",
     });
+    const url = "https://github.com/o/r/pull/7";
+    expect(parseReviewCommand(url)).toMatchObject({ target: { kind: "pr", pr: url } });
+    expect(parseReviewCommand("feature/x --base dev")).toMatchObject({
+      target: { kind: "branch", head: "feature/x", base: "dev" },
+    });
+    expect(parseReviewCommand("feature/x")).not.toHaveProperty("target.uncommitted");
     expect(parseReviewCommand("--uncommitted --preview")).toMatchObject({
       target: { kind: "uncommitted" },
       preview: true,
     });
+  });
+
+  // Either form the usage shows: a preset alone, a target alone, or the
+  // preset first and then the target. MUTATION: read the preset from any
+  // position — "12 quick" stops failing.
+  it("a preset is the first word when it names one, in front of any target", () => {
+    expect(REVIEW_PRESET_NAMES).toEqual(["quick", "full", "security"]);
+    expect(parseReviewCommand("quick")).toMatchObject({
+      preset: "quick",
+      target: { kind: "branch", uncommitted: true },
+    });
+    expect(parseReviewCommand("security 12")).toMatchObject({
+      preset: "security",
+      target: { kind: "pr", pr: "12" },
+    });
+    expect(parseReviewCommand("full --uncommitted")).toMatchObject({
+      preset: "full",
+      target: { kind: "uncommitted" },
+    });
+    // a branch that happens to be called like a preset, after one
+    expect(parseReviewCommand("full quick")).toMatchObject({
+      preset: "full",
+      target: { kind: "branch", head: "quick" },
+    });
+    // the person's default preset applies when none is typed, and a typed one wins
+    expect(parseReviewCommand("12", "quick")).toMatchObject({ preset: "quick" });
+    expect(parseReviewCommand("security 12", "quick")).toMatchObject({ preset: "security" });
+    expect(parseReviewCommand("12 quick")).toHaveProperty("error");
+    expect(parseReviewCommand("--preview quick")).toHaveProperty("error");
+  });
+
+  it("refuses what is not one target, and says the usage", () => {
     for (const bad of [
       "12 13",
       "12 --uncommitted",
-      "--to nowhere",
+      "feature --uncommitted",
+      "--to pr",
+      "--full",
+      "--branch",
       "--limit -1",
       "--repo o/r",
+      "feature --repo o/r",
       "--uncommitted --base x",
+      "12 --base x",
       "--wat",
       "--profile",
-    ])
-      expect(parseReviewCommand(bad), bad).toHaveProperty("error");
+      "--stop 12",
+    ]) {
+      const r = parseReviewCommand(bad);
+      expect(r, bad).toHaveProperty("error");
+      expect((r as { error: string }).error, bad).toMatch(/usage: \/qcr-review/);
+    }
+    expect(parseReviewCommand("--stop")).toEqual({ stop: true });
+  });
+
+  it("names what is reviewed in a person's words", () => {
+    const label = (l: string): string => reviewLabel(parseReviewCommand(l) as never);
+    expect(label("")).toBe("this branch with its uncommitted changes");
+    expect(label("quick 12")).toBe("PR #12 (quick)");
+    expect(label("#12")).toBe("PR #12");
+    expect(label("feature")).toBe("the branch feature");
+    expect(label("--uncommitted")).toBe("the uncommitted changes");
   });
 });
 
-describe("where a result goes (the rule /review and qcr review share)", () => {
+describe("the person's QuickReview settings (pi's settings, the quickreview key)", () => {
+  it("default to asking, with no preset", () => {
+    expect(readQuickReviewSettings({})).toEqual({
+      settings: { posting: "ask", preset: null },
+      warnings: [],
+    });
+    expect(readQuickReviewSettings(undefined).settings.posting).toBe("ask");
+  });
+
+  it("read the posting rule and the preset", () => {
+    for (const posting of ["ask", "never", "always"] as const)
+      expect(readQuickReviewSettings({ quickreview: { posting } }).settings.posting).toBe(posting);
+    expect(readQuickReviewSettings({ quickreview: { preset: "security" } }).settings.preset).toBe(
+      "security",
+    );
+  });
+
+  // A misspelt rule must never post. MUTATION: take any string as the rule —
+  // this fails.
+  it("keep the default on a value they do not know, and say so", () => {
+    const r = readQuickReviewSettings({ quickreview: { posting: "allways", preset: "fast" } });
+    expect(r.settings).toEqual({ posting: "ask", preset: null });
+    expect(r.warnings).toHaveLength(2);
+    expect(r.warnings[0]).toMatch(/quickreview\.posting/);
+    expect(readQuickReviewSettings({ quickreview: "always" }).settings.posting).toBe("ask");
+  });
+});
+
+describe("where a result goes (the rule qcr review keeps; the session shows and saves)", () => {
   const base = { explicit: [], json: false, saved: null, target: { pr: true } } as const;
 
   it("flags win, then the saved default, then asking, then printing", () => {
@@ -550,63 +692,60 @@ function fakeReview(result: Partial<ReviewResult> = {}): ReviewCommandDeps & {
   };
 }
 
-describe("/review over fake ports", () => {
-  // MUTATION: skip the question when nothing is saved — this fails.
-  it("asks where the result goes, each time, until an answer is kept for the repo", async () => {
-    const host = fakeHost();
+describe("/qcr-review's work, waited for (runReviewCommand)", () => {
+  // MUTATION: ask "Where should the review go?" again — this fails.
+  it("shows the result in the session and keeps it as files, asking nothing", async () => {
     const deps = fakeReview();
-    const ui = fakeUi({ picks: ["show it in this session"] });
-    await runReviewCommand("", host, ui, deps);
-    expect(ui.asked).toHaveLength(1);
-    expect(deps.calls[0]!.opts.destinations).toEqual(["terminal"]);
+    const ui = fakeUi();
+    await runReviewCommand("", fakeHost(), ui, deps);
+    expect(ui.asked).toEqual([]);
+    expect(deps.calls[0]!.target).toEqual({ kind: "branch", uncommitted: true });
+    expect(deps.calls[0]!.opts.destinations).toEqual(["terminal", "file"]);
     expect(ui.shown.join("\n")).toMatch(/# Review/);
-    // asked again: nothing was kept
-    const ui2 = fakeUi({
-      picks: ["save it as markdown and JSON, and always do this in this repo"],
-    });
-    await runReviewCommand("", host, ui2, deps);
-    expect(ui2.asked).toHaveLength(1);
-    expect(deps.calls[1]!.opts.destinations).toEqual(["file"]);
-    // kept: the next run asks nothing
-    const ui3 = fakeUi();
-    await runReviewCommand("", host, ui3, deps);
-    expect(ui3.asked).toHaveLength(0);
-    expect(deps.calls[2]!.opts.destinations).toEqual(["file"]);
   });
 
   it("runs as a host inside pi: its login, its cwd, the state home's runs, no memory", async () => {
     const host = fakeHost();
     const deps = fakeReview();
-    // The shipped defaults keep dry_run on: posting is refused before the
-    // review is paid for, and nothing flips the flag on the person's behalf.
-    const refused = fakeUi();
-    await runReviewCommand("12 --to pr --profile generic", host, refused, deps);
-    expect(deps.calls).toHaveLength(0);
-    expect(refused.notes.find(([l]) => l === "error")?.[1]).toMatch(
-      /posting needs a qcr config with dry_run = false/,
-    );
-    // The person's own config, with dry_run off, lets it post.
-    const configDir = join(host.env["XDG_CONFIG_HOME"]!, "qcr", "default");
-    mkdirSync(configDir, { recursive: true });
-    writeFileSync(
-      join(configDir, "config.toml"),
-      readFileSync(join(ROOT, "config.example.toml"), "utf8").replace(
-        /^dry_run = true$/m,
-        "dry_run = false",
-      ),
-    );
-    await runReviewCommand("12 --to pr --profile generic", host, fakeUi(), deps);
+    await runReviewCommand("12 --profile generic", host, fakeUi(), deps);
     const { target, opts } = deps.calls[0]!;
-    expect(opts.config.dry_run).toBe(false);
+    // the shipped defaults keep dry_run on, and nothing here moves it
+    expect(opts.config.dry_run).toBe(true);
     expect(target).toEqual({ kind: "pr", pr: "12" });
     expect(opts.repoDir).toBe(host.cwd);
     expect(opts.agentDir).toBe(host.agentDir);
     expect(opts.runsDir).toBe(
       join(host.env["XDG_STATE_HOME"]!, "qcr", "default", "review", "runs"),
     );
+    expect(opts.dryrunDir).toBe(
+      join(host.env["XDG_STATE_HOME"]!, "qcr", "default", "review", "dryrun"),
+    );
     expect(opts.memory).toBeNull();
-    expect(opts.destinations).toEqual(["pr"]);
+    // a post is never a destination: the posting rule offers it afterwards
+    expect(opts.destinations).not.toContain("pr");
     expect(opts.limits.timeoutMs).toBe(REVIEW_TIMEOUT_MS);
+  });
+
+  // A preset is the core's own options, named: never a path of its own.
+  // MUTATION: drop the preset's levers from contextFrom — this fails.
+  it("resolves a preset to the core's review options", async () => {
+    const deps = fakeReview();
+    await runReviewCommand("quick 12", fakeHost(), fakeUi(), deps);
+    await runReviewCommand("full feature", fakeHost(), fakeUi(), deps);
+    await runReviewCommand("security", fakeHost(), fakeUi(), deps);
+    await runReviewCommand("", fakeHost(), fakeUi(), deps);
+    const [quick, full, security, none] = deps.calls.map((c) => c.opts);
+    expect(quick!.config.review.preset).toBe("low");
+    expect(quick!.full).toBe(false);
+    expect(full!.config.review.preset).toBe("max");
+    expect(full!.full).toBe(true);
+    expect(deps.calls[1]!.target).toEqual({ kind: "branch", head: "feature" });
+    const skipped = security!.config.review.skip_lenses;
+    expect(skipped.length).toBeGreaterThan(0);
+    for (const kept of SECURITY_LENSES) expect(skipped).not.toContain(kept);
+    expect(skipped).toContain("pass-ui");
+    expect(none!.config.review.preset).toBe("default");
+    expect(none!.config.review.skip_lenses).toEqual([]);
   });
 
   it("prints in pi's print mode, the JSON with --json, and asks nothing", async () => {
@@ -622,11 +761,13 @@ describe("/review over fake ports", () => {
 
   it("refuses with pi's /login when only a key is there, before anything runs", async () => {
     const deps = fakeReview();
-    const ui = fakeUi({ picks: ["show it in this session"] });
+    const ui = fakeUi();
     const host = fakeHost({ auth: fakeAuth({ anthropic: { type: "api_key", expires: null } }) });
     await runReviewCommand("", host, ui, deps);
     expect(deps.calls).toHaveLength(0);
-    expect(ui.notes.find(([l]) => l === "error")?.[1]).toMatch(/\/login openai-codex/);
+    expect(ui.notes.find(([l]) => l === "error")?.[1]).toMatch(
+      /\/login openai-codex.*\/qcr-review again/,
+    );
   });
 
   it("a preview needs no login and asks nothing", async () => {
@@ -639,52 +780,331 @@ describe("/review over fake ports", () => {
     expect(ui.shown[0]).toMatch(/price: \$0\.61/);
   });
 
-  // MUTATION: drop the Esc hook — this fails.
-  it("Esc and the session's end stop the run", async () => {
-    let seen: AbortSignal | undefined;
-    const deps: ReviewCommandDeps = {
-      ...fakeReview(),
-      review: async (_t, opts, io = {}) => {
-        seen = io.signal;
-        ui.escape();
+  it("says a usage error and runs nothing", async () => {
+    const deps = fakeReview();
+    const ui = fakeUi();
+    await runReviewCommand("--to pr", fakeHost(), ui, deps);
+    expect(deps.calls).toHaveLength(0);
+    expect(ui.notes[0]).toEqual(["error", expect.stringMatching(/unknown flag --to/)]);
+  });
+
+  // One function builds every status line, so a later stage can enrich it.
+  it("builds its status line from the stage, the plan and the time since it started", () => {
+    const at = 1_000_000;
+    const base = { label: "PR #12", startedAt: at };
+    expect(reviewStatusLine({ ...base, stage: "preparing" }, at + 2_000)).toBe(
+      "QuickReview: preparing the review of PR #12… 2s",
+    );
+    expect(
+      reviewStatusLine(
+        { ...base, stage: "running", lenses: 9, estimateUsd: 1.1, capUsd: 2.2 },
+        at + 79_000,
+      ),
+    ).toBe("QuickReview: reviewing PR #12 — 9 lenses, about $1.10, stops at $2.20 · 1m 19s");
+    expect(reviewStatusLine({ ...base, stage: "asking" }, at + 5_000)).toMatch(/post it\?/);
+  });
+});
+
+/** A command context as pi hands one to a handler, over `ui` and `cwd`. */
+function fakeCtx(
+  ui: ReturnType<typeof fakeUi>,
+  cwd: string,
+): { ctx: unknown; statuses: Array<string | undefined> } {
+  const statuses: Array<string | undefined> = [];
+  const ctx = {
+    mode: ui.mode,
+    hasUI: ui.interactive,
+    cwd,
+    isIdle: () => true,
+    modelRegistry: {
+      getProviderAuthStatus: () => ({ configured: false }),
+      getProviderAuth: async () => undefined,
+    },
+    ui: {
+      select: (t: string, o: string[], x?: { signal?: AbortSignal }) => ui.select(t, o, x?.signal),
+      confirm: (t: string, m: string, x?: { signal?: AbortSignal }) => ui.confirm(t, m, x?.signal),
+      notify: (m: string, l: "info" | "warning" | "error") => ui.notify(m, l),
+      setStatus: (_key: string, text: string | undefined) => statuses.push(text),
+      onTerminalInput: () => () => {},
+    },
+  };
+  return { ctx, statuses };
+}
+
+/** A review the test lets finish: its round starts (lenses, price), then it
+ * waits for `finish`, or ends stopped when its signal aborts. With `offer`,
+ * the finished review offers itself for posting as the core does, and the
+ * answer is kept in `answers`. */
+function heldReview(o: { offer?: PostOffer; posted?: string } = {}): ReviewCommandDeps & {
+  calls: Array<{ target: ReviewTarget; opts: ReviewOptions; io: ReviewIo }>;
+  finish: () => void;
+  answers: boolean[];
+} {
+  const calls: Array<{ target: ReviewTarget; opts: ReviewOptions; io: ReviewIo }> = [];
+  const answers: boolean[] = [];
+  let finish: () => void = () => {};
+  const finished = new Promise<void>((done) => (finish = done));
+  return {
+    ...fakeReview(),
+    calls,
+    answers,
+    finish: () => finish(),
+    review: async (target, opts, io = {}) => {
+      calls.push({ target, opts, io });
+      io.started?.({
+        runDir: join(tmp, "held-run"),
+        outDir: join(tmp, "held-run", "out"),
+        sessionName: "review-x",
+        lenses: ["pass-baseline", "pass-security", "pass-validate"],
+        estimateUsd: 0.5,
+        capUsd: 1,
+      });
+      const stopped = new Promise<"stopped">((done) => {
+        if (io.signal?.aborted) done("stopped");
+        io.signal?.addEventListener("abort", () => done("stopped"), { once: true });
+      });
+      if ((await Promise.race([finished, stopped])) === "stopped")
         return {
           data: { schema_version: 1, ok: false, stopped: true },
           markdown: null,
           text: "✗ the review was stopped",
-          exitCode: 1,
+          exitCode: 1 as const,
           destinations: opts.destinations ?? null,
         };
-      },
-    };
-    const ui = fakeUi({ picks: ["show it in this session"] });
-    await runReviewCommand("", fakeHost(), ui, deps);
-    expect(seen?.aborted).toBe(true);
-    const ended = new AbortController();
-    let seen2: AbortSignal | undefined;
-    const ui2 = fakeUi({ picks: ["show it in this session"] });
-    await runReviewCommand("", fakeHost({ shutdown: ended.signal }), ui2, {
-      ...deps,
-      review: async (_t, opts, io = {}) => {
-        seen2 = io.signal;
-        ended.abort();
-        return {
-          data: { schema_version: 1, ok: false },
-          markdown: null,
-          text: "✗ stopped",
-          exitCode: 1,
-          destinations: opts.destinations ?? null,
-        };
-      },
-    });
-    expect(seen2?.aborted).toBe(true);
+      let post: Record<string, unknown> | undefined;
+      if (o.offer && io.offerPost) {
+        const yes = await io.offerPost(o.offer, io.signal ? { signal: io.signal } : {});
+        answers.push(yes);
+        if (yes) post = { ok: true, posted: 0, url: null, dry_run: true, recorded: "/d/x.json" };
+      }
+      return {
+        data: { schema_version: 1, ok: true, ...(post ? { post } : {}) },
+        markdown: "# Review of PR #12\n\n1 finding.\n",
+        text: `Review done\n${post ? (o.posted ?? "posted") : ""}`.trimEnd(),
+        exitCode: 0 as const,
+        destinations: opts.destinations ?? null,
+      };
+    },
+  };
+}
+
+/** Waits for `cond` inside the test's deadline, never by a count of ticks. */
+async function until(cond: () => boolean, what: string, ms = 3_000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
+/** The plugin on a fake pi, signed in through its agent dir's auth.json,
+ * with `review` as its core and `settings` as pi's settings. */
+function pluginOnFakePi(
+  review: ReviewCommandDeps,
+  settings: Record<string, unknown> = {},
+): {
+  pi: ReturnType<typeof fakePi>;
+  host: PluginHost;
+  run: (
+    args: string,
+    ui: ReturnType<typeof fakeUi>,
+  ) => Promise<{ statuses: Array<string | undefined> }>;
+} {
+  const host = fakeHost();
+  mkdirSync(host.agentDir, { recursive: true });
+  writeFileSync(
+    join(host.agentDir, "auth.json"),
+    JSON.stringify({ "openai-codex": { type: "oauth", expires: Date.now() + 10 * 3600_000 } }),
+  );
+  const pi = fakePi(settings);
+  createQuickReview({
+    env: host.env,
+    home: host.home,
+    runner: noRunner,
+    print: () => {},
+    piVersion: "1.4.0",
+    range: "^1.4.0",
+    agentDir: host.agentDir,
+    review,
+  })(pi.api);
+  const run = async (
+    args: string,
+    ui: ReturnType<typeof fakeUi>,
+  ): Promise<{ statuses: Array<string | undefined> }> => {
+    const { ctx, statuses } = fakeCtx(ui, host.cwd);
+    await pi.commands.get("qcr-review")!.handler(args, ctx);
+    return { statuses };
+  };
+  return { pi, host, run };
+}
+
+/** The review messages the plugin sent the session. */
+const reviewMessages = (pi: ReturnType<typeof fakePi>): string[] =>
+  pi.sent
+    .filter((s) => s.message["customType"] === REVIEW_MESSAGE)
+    .map((s) => String(s.message["content"]));
+
+describe("/qcr-review in the background, through the extension on a fake pi", () => {
+  // MUTATION: await the review in the command's handler — the handler does
+  // not return before `finish`, and this fails.
+  it("returns at once; the status line shows the progress, and the result arrives as the review message", async () => {
+    const deps = heldReview();
+    const { pi, run } = pluginOnFakePi(deps);
+    const ui = fakeUi();
+    const { statuses } = await run("", ui);
+    // the handler is back, and the review is still running
+    expect(ui.notes.at(-1)).toEqual(["info", expect.stringMatching(/in the background/)]);
+    await until(() => deps.calls.length === 1, "the review to start");
+    await until(
+      () => statuses.some((t) => /reviewing this branch .* 3 lenses, about \$0\.50/.test(t ?? "")),
+      "the round's status line",
+    );
+    expect(reviewMessages(pi)).toEqual([]);
+    deps.finish();
+    await until(() => reviewMessages(pi).length === 1, "the review message");
+    expect(reviewMessages(pi)[0]).toMatch(/# Review of PR #12/);
+    // shown without starting or steering a turn of the person's agent
+    expect(pi.sent[0]!.options).toEqual({ triggerTurn: false });
+    await until(() => statuses.at(-1) === undefined, "the status line to clear");
   });
 
-  it("says a usage error and runs nothing", async () => {
-    const deps = fakeReview();
+  // MUTATION: drop the slot's check — a second review starts, and this fails.
+  it("runs one review at a time, and a second start says which one is running", async () => {
+    const deps = heldReview();
+    const { pi, run } = pluginOnFakePi(deps);
+    await run("quick 12", fakeUi());
+    await until(() => deps.calls.length === 1, "the first review");
+    const second = fakeUi();
+    await run("--uncommitted", second);
+    expect(second.notes).toEqual([
+      ["warning", expect.stringMatching(/already reviewing PR #12 \(quick\)/)],
+    ]);
+    expect(deps.calls).toHaveLength(1);
+    deps.finish();
+    await until(() => reviewMessages(pi).length === 1, "the first review's message");
+    await new Promise((r) => setTimeout(r, 0));
+    // once it is done, the next one starts
+    const third = fakeUi();
+    await run("--uncommitted", third);
+    await until(() => deps.calls.length === 2, "the next review");
+  });
+
+  // MUTATION: drop the session_shutdown handler — the review never stops,
+  // and this fails.
+  it("stops with the session's end, and with /qcr-review --stop", async () => {
+    const deps = heldReview();
+    const { pi, run } = pluginOnFakePi(deps);
     const ui = fakeUi();
-    await runReviewCommand("--to mars", fakeHost(), ui, deps);
-    expect(deps.calls).toHaveLength(0);
-    expect(ui.notes[0]).toEqual(["error", expect.stringMatching(/unknown destination mars/)]);
+    await run("", ui);
+    await until(() => deps.calls.length === 1, "the review");
+    pi.emit("session_shutdown");
+    await until(() => deps.calls[0]!.io.signal?.aborted === true, "the stop");
+    await until(() => ui.notes.some(([l]) => l === "error"), "the stopped result");
+    expect(ui.notes.find(([l]) => l === "error")![1]).toMatch(/stopped/);
+
+    pi.emit("session_start");
+    const again = fakeUi();
+    await run("12", again);
+    await until(() => deps.calls.length === 2, "the second review");
+    const stopper = fakeUi();
+    await run("--stop", stopper);
+    expect(stopper.notes).toEqual([["warning", "stopping the review of PR #12…"]]);
+    await until(() => deps.calls[1]!.io.signal?.aborted === true, "the second stop");
+    await until(() => again.notes.some(([l]) => l === "error"), "the second stopped result");
+    await new Promise((r) => setTimeout(r, 0));
+    const idle = fakeUi();
+    await run("--stop", idle);
+    expect(idle.notes).toEqual([["info", "no QuickReview review is running here"]]);
+  });
+
+  const offer: PostOffer = {
+    repo: "o/r",
+    pr: 12,
+    markdown: "# Review of PR #12\n\n1 finding.\n",
+    findings: 1,
+    dryRun: true,
+  };
+
+  // The default rule asks, with No first, after the review is shown.
+  // MUTATION: offer the Yes answer first — this fails.
+  it("posting rule ask (the default): the review first, then a select with No first; No posts nothing", async () => {
+    const deps = heldReview({ offer });
+    const { pi, run } = pluginOnFakePi(deps);
+    const ui = fakeUi({ picks: [KEEP_IT_HERE] });
+    await run("12", ui);
+    await until(() => deps.calls.length === 1, "the review");
+    deps.finish();
+    await until(() => deps.answers.length === 1, "the answer");
+    expect(deps.answers).toEqual([false]);
+    expect(ui.asked).toHaveLength(1);
+    expect(ui.asked[0]![0]).toBe("No, keep it here");
+    // a dry-run install says so in the Yes it offers
+    expect(ui.asked[0]![1]).toMatch(/^Yes, post it \(dry run: the review is recorded, not sent\)$/);
+    // the review was shown before the question, and once
+    expect(reviewMessages(pi)).toEqual([offer.markdown]);
+    await until(() => ui.notes.some(([, m]) => /stays here/.test(m)), "the kept note");
+  });
+
+  it("posting rule ask: Yes posts, and the gate's line reaches the person", async () => {
+    const deps = heldReview({
+      offer,
+      posted:
+        "Dry run (dry_run = true in this install's config): the review of 1 comment on PR #12 was recorded, not posted: /d/x.json",
+    });
+    const { run } = pluginOnFakePi(deps, { quickreview: { posting: "ask" } });
+    const ui = fakeUi({ picks: ["Yes, post it (dry run: the review is recorded, not sent)"] });
+    await run("12", ui);
+    await until(() => deps.calls.length === 1, "the review");
+    deps.finish();
+    await until(() => ui.notes.some(([, m]) => /recorded, not posted/.test(m)), "the post line");
+    expect(deps.answers).toEqual([true]);
+  });
+
+  // MUTATION: offer the post on "never" — this fails.
+  it("posting rule never: no question, nothing posted", async () => {
+    const deps = heldReview({ offer });
+    const { pi, run } = pluginOnFakePi(deps, { quickreview: { posting: "never" } });
+    const ui = fakeUi();
+    await run("12", ui);
+    await until(() => deps.calls.length === 1, "the review");
+    expect(deps.calls[0]!.io.offerPost).toBeUndefined();
+    deps.finish();
+    await until(() => reviewMessages(pi).length === 1, "the review message");
+    expect(ui.asked).toEqual([]);
+  });
+
+  it("posting rule always: posts without a question", async () => {
+    const deps = heldReview({ offer, posted: "Posted 1 comment to PR #12 (comment-only review)" });
+    const { run } = pluginOnFakePi(deps, { quickreview: { posting: "always" } });
+    const ui = fakeUi();
+    await run("12", ui);
+    await until(() => deps.calls.length === 1, "the review");
+    deps.finish();
+    await until(() => deps.answers.length === 1, "the answer");
+    expect(deps.answers).toEqual([true]);
+    expect(ui.asked).toEqual([]);
+    await until(() => ui.notes.some(([, m]) => /Posted 1 comment/.test(m)), "the post line");
+  });
+
+  it("a misspelt posting rule asks, and says why", async () => {
+    const deps = heldReview({ offer });
+    const { run } = pluginOnFakePi(deps, { quickreview: { posting: "yes please" } });
+    const ui = fakeUi({ picks: [KEEP_IT_HERE] });
+    await run("12", ui);
+    expect(ui.notes[0]).toEqual(["warning", expect.stringMatching(/quickreview\.posting/)]);
+    await until(() => deps.calls.length === 1, "the review");
+    deps.finish();
+    await until(() => deps.answers.length === 1, "the answer");
+    expect(ui.asked).toHaveLength(1);
+  });
+
+  it("the person's default preset from pi's settings", async () => {
+    const deps = heldReview();
+    const { run } = pluginOnFakePi(deps, { quickreview: { preset: "quick" } });
+    await run("12", fakeUi());
+    await until(() => deps.calls.length === 1, "the review");
+    expect(deps.calls[0]!.opts.config.review.preset).toBe("low");
+    deps.finish();
   });
 });
 
@@ -735,7 +1155,7 @@ const scanAnswers = {
   "qcr scan findings": ok({ ok: true, total: 1, findings: [FINDING] }),
 };
 
-describe("/scan and /selfimprove (the qcr on PATH)", () => {
+describe("/qcr-scan (the qcr on PATH)", () => {
   it("prices, asks, starts, waits and lists the new findings, on the repo pi is in", async () => {
     const runner = scriptedRunner(scanAnswers);
     const host = fakeHost({ runner });
@@ -780,6 +1200,7 @@ describe("/scan and /selfimprove (the qcr on PATH)", () => {
     expect(runner.calls[0]).toContain("docker");
     expect(ui.notes.at(-1)?.[1]).toMatch(/not started/);
     expect(parseScanCommand("--sandbox vm")).toHaveProperty("error");
+    expect((parseScanCommand("--wat") as { error: string }).error).toMatch(/usage: \/qcr-scan/);
   });
 
   it("with nobody to confirm a price, starts nothing", async () => {
@@ -817,33 +1238,6 @@ describe("/scan and /selfimprove (the qcr on PATH)", () => {
     await runScanCommand("", fakeHost(), ui);
     expect(ui.notes[0]?.[1]).toMatch(/\/qcr-setup/);
     expect(ui.notes[0]?.[1]).toContain("npm i -g @quickchatai/quickreview");
-  });
-
-  // The engine scans; the person's own agent fixes.
-  it("/selfimprove hands this session's agent the findings and the fix loop", async () => {
-    const runner = scriptedRunner(scanAnswers);
-    const host = fakeHost({ runner });
-    const ui = fakeUi();
-    await runSelfImproveCommand("", host, ui);
-    expect(ui.told).toHaveLength(1);
-    const brief = ui.told[0]!;
-    expect(brief).toMatch(/qcr scan dismiss/);
-    expect(brief).toMatch(/needs-owner/);
-    expect(brief).toMatch(/\/selfimprove --delta --sha/);
-    expect(brief).toMatch(/"fingerprint": "fp1"/);
-    expect(brief).toContain(host.cwd);
-  });
-
-  it("/selfimprove tells nobody anything when the scan finds nothing", async () => {
-    const runner = scriptedRunner({
-      ...scanAnswers,
-      "qcr scan findings": ok({ ok: true, total: 0, findings: [] }),
-    });
-    const ui = fakeUi();
-    await runSelfImproveCommand("", fakeHost({ runner }), ui);
-    expect(ui.told).toHaveLength(0);
-    expect(ui.shown[0]).toMatch(/nothing new/);
-    expect(selfImproveBrief({ cwd: "/r", sha: null, findings: [], total: 3 })).toMatch(/0 of 3/);
   });
 });
 
@@ -931,6 +1325,6 @@ it("keeps the run's JSON next to a saved report", async () => {
   writeFileSync(report, "# r\n");
   const deps = fakeReview({ data: { schema_version: 1, ok: true, report } });
   const ui = fakeUi();
-  await runReviewCommand("--to file", fakeHost(), ui, deps);
+  await runReviewCommand("", fakeHost(), ui, deps);
   expect(JSON.parse(readFileSync(join(dir, "review.json"), "utf8"))).toMatchObject({ report });
 });

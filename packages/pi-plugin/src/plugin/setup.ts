@@ -6,7 +6,7 @@
 //   git       git is on PATH (every review target is a git one)
 //   GitHub    a credential for PR targets: GH_TOKEN or GITHUB_TOKEN set, or
 //             `gh` logged in (only their presence is read, never a value)
-//   qcr       the qcr CLI is on PATH (/scan and /selfimprove run it); when it
+//   qcr       the qcr CLI is on PATH (/qcr-scan runs it); when it
 //             is missing, the person is offered `npm i -g` of it, and it runs
 //             only on their yes
 import { assetRoot } from "../assetroot.js";
@@ -39,7 +39,7 @@ export function renderChecks(checks: readonly SetupCheck[]): string {
   ].join("\n");
 }
 
-/** The review's config as /review would load it; null (with why) when it
+/** The review's config as /qcr-review would load it; null (with why) when it
  * cannot be read. */
 function reviewConfig(host: PluginHost, root: () => string): CoreConfig | string {
   try {
@@ -127,7 +127,7 @@ export async function runSetupChecks(
   if (qcr === null && ui.interactive) {
     const yes = await ui.confirm(
       "QuickReview",
-      `/scan and /selfimprove run the qcr CLI, which is not on PATH. Install it now with \`npm i -g ${QCR_PACKAGE}\`?`,
+      `/qcr-scan runs the qcr CLI, which is not on PATH. Install it now with \`npm i -g ${QCR_PACKAGE}\`?`,
       host.shutdown,
     );
     if (yes) {
@@ -163,7 +163,7 @@ export async function runSetupChecks(
         : {
             name: "qcr",
             state: "fail",
-            detail: `not on PATH: /scan and /selfimprove need it. Install it with \`npm i -g ${QCR_PACKAGE}\`.`,
+            detail: `not on PATH: /qcr-scan needs it. Install it with \`npm i -g ${QCR_PACKAGE}\`.`,
           },
     );
   return checks;

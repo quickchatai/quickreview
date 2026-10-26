@@ -6,7 +6,9 @@
 //                         into the user's pi agent dir. pi's UI is the flow:
 //                         qcr types /login for the person and steps aside.
 //   qcr pi [args]         the pinned pi with the qcr plugin preloaded
-//                         (`-e <the plugin package's dir>`), args passed on.
+//                         (`-e <the plugin package's dir>`) and the app's
+//                         own /selfimprove beside it (`-e` its shim,
+//                         `APP_PI_EXTENSIONS`), args passed on.
 //   qcr update            the package manager that installed qcr (npm, pnpm or
 //                         bun) updates it globally. The release image keeps its
 //                         own route (a release), and a checkout its git.
@@ -106,7 +108,13 @@ export function npmVerbDeps(pkgRoot: string): NpmVerbDeps {
   };
 }
 
-/** `qcr pi [args]`: the pinned pi with the plugin preloaded; pi's exit code. */
+/** The app's own extensions `qcr pi` loads beside the plugin, as paths under
+ * the CLI package's root: the commands that are the app's, not the plugin's
+ * (ADR 0001). */
+export const APP_PI_EXTENSIONS: readonly string[] = ["extensions/cli/selfimprove.ts"];
+
+/** `qcr pi [args]`: the pinned pi with the plugin and the app's own
+ * extensions preloaded; pi's exit code. */
 export function cmdPi(args: readonly string[], deps: NpmVerbDeps): number {
   let pi: string;
   let plugin: string;
@@ -117,7 +125,8 @@ export function cmdPi(args: readonly string[], deps: NpmVerbDeps): number {
     deps.err(`qcr pi: ${err instanceof Error ? err.message : String(err)}`);
     return 1;
   }
-  const r = deps.run(deps.execPath, [pi, "-e", plugin, ...args], {});
+  const app = APP_PI_EXTENSIONS.flatMap((e) => ["-e", join(deps.pkgRoot, e)]);
+  const r = deps.run(deps.execPath, [pi, "-e", plugin, ...app, ...args], {});
   if (r.error) {
     deps.err(`qcr pi: pi could not start: ${r.error.message}`);
     return 1;

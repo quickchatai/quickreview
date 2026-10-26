@@ -176,10 +176,31 @@ function admitRepo(cwd: string): { ok: true; headSha: string } | { ok: false; er
   return { ok: true, headSha };
 }
 
-export function resolveBranch(cwd: string, asked?: string): BranchResolution {
-  const head = admitRepo(cwd);
-  if (!head.ok) return head;
-  const headSha = head.headSha;
+/** How a branch target is read: `head` names the branch (or commit) to
+ * review instead of HEAD; `uncommitted` adds the working tree's uncommitted
+ * edits on top of HEAD's commits, as one review (`snapshotWorkTree`, its
+ * scratch store under `scratchParent`). */
+export interface BranchOptions {
+  head?: string;
+  uncommitted?: boolean;
+  scratchParent?: string;
+}
+
+export function resolveBranch(
+  cwd: string,
+  asked?: string,
+  o: BranchOptions = {},
+): BranchResolution {
+  const admitted = admitRepo(cwd);
+  if (!admitted.ok) return admitted;
+  let headSha = admitted.headSha;
+  if (o.head !== undefined) {
+    const named = tryGit(cwd, ["rev-parse", "--verify", "--quiet", `${o.head}^{commit}`]);
+    if (named === null)
+      return { ok: false, error: `${o.head} is not a branch or commit in this repository` };
+    headSha = named;
+  }
+  const headRef = o.head ?? "HEAD";
   const base = baseOf(cwd, asked);
   if (base === null)
     return {
@@ -190,16 +211,44 @@ export function resolveBranch(cwd: string, asked?: string): BranchResolution {
           : "no base to review against: no origin default branch, main or master — pass --base REF",
     };
   const baseSha = git(cwd, ["rev-parse", `${base}^{commit}`]);
-  const mergeBase = tryGit(cwd, ["merge-base", base, "HEAD"]);
+  const mergeBase = tryGit(cwd, ["merge-base", base, headRef]);
   if (mergeBase === null)
     return {
       ok: false,
-      error: `HEAD and ${base} share no history, so there is no branch to review`,
+      error: `${headRef} and ${base} share no history, so there is no branch to review`,
     };
-  const branch = tryGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]) ?? "HEAD";
+  const branch = o.head ?? tryGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]) ?? "HEAD";
+  // The working tree's edits ride on HEAD only: a named branch is its commits.
+  if (o.uncommitted && o.head === undefined) {
+    const snap = snapshotWorkTree(cwd, headSha, mergeBase, o.scratchParent);
+    if (snap.edited) {
+      if (snap.files.length === 0)
+        return {
+          ok: false,
+          error: `nothing to review: ${branch} has no changes against ${base}, committed or not`,
+        };
+      return {
+        ok: true,
+        target: {
+          repo: repoName(cwd),
+          branch,
+          base,
+          headSha,
+          baseSha,
+          mergeBase,
+          files: snap.files,
+          lines: snap.lines,
+          uncommitted: { treeSha: snap.treeSha, patch: snap.patch },
+        },
+      };
+    }
+  }
   const { files, lines } = diffFiles(cwd, mergeBase, headSha);
   if (files.length === 0)
-    return { ok: false, error: `nothing to review: ${branch} has no changes against ${base}` };
+    return {
+      ok: false,
+      error: `nothing to review: ${branch} has no changes against ${base}${o.uncommitted && o.head === undefined ? ", committed or not" : ""}`,
+    };
   return {
     ok: true,
     target: {
@@ -215,26 +264,22 @@ export function resolveBranch(cwd: string, asked?: string): BranchResolution {
   };
 }
 
-/** The uncommitted working tree against HEAD: staged, unstaged and new
- * (untracked, not ignored) files, read without touching the person's index or
- * files. The snapshot is a tree built in a throwaway index, and its objects
- * are written to a throwaway object store that borrows the repo's as an
- * alternate, so nothing is written into the reviewed repository and a
- * read-only checkout works. The snapshot's scratch store goes under
- * `scratchParent` (default: the OS temp dir) and is gone when this returns. */
-export function resolveUncommitted(
+/** The working tree as one tree object: HEAD plus every uncommitted edit
+ * (staged, unstaged and new files, not ignored), built in a throwaway index
+ * whose objects go to a throwaway store borrowing the repo's as an alternate,
+ * so nothing is written into the reviewed repository and a read-only checkout
+ * works. `files` are the tree against `from`; `patch` is the binary patch
+ * from HEAD to it (empty when the tree is HEAD's, `edited` false). The scratch
+ * store goes under `scratchParent` (default: the OS temp dir) and is gone
+ * when this returns. */
+function snapshotWorkTree(
   cwd: string,
-  o: { scratchParent?: string } = {},
-): BranchResolution {
-  const head = admitRepo(cwd);
-  if (!head.ok) return head;
-  const headSha = head.headSha;
-  if (o.scratchParent !== undefined) mkdirSync(o.scratchParent, { recursive: true });
-  const scratch = mkdtempSync(join(o.scratchParent ?? tmpdir(), "qcr-snap-"));
-  let treeSha: string;
-  let files: PrFileEntry[];
-  let lines: number;
-  let patch: string;
+  headSha: string,
+  from: string,
+  scratchParent?: string,
+): { treeSha: string; files: PrFileEntry[]; lines: number; patch: string; edited: boolean } {
+  if (scratchParent !== undefined) mkdirSync(scratchParent, { recursive: true });
+  const scratch = mkdtempSync(join(scratchParent ?? tmpdir(), "qcr-snap-"));
   try {
     const objects = join(scratch, "objects");
     mkdirSync(objects);
@@ -263,15 +308,30 @@ export function resolveUncommitted(
       git(top, ["read-tree", headSha], { env });
     }
     git(top, ["add", "-A"], { env });
-    treeSha = git(top, ["write-tree"], { env });
-    ({ files, lines } = diffFiles(cwd, headSha, treeSha, env));
-    patch =
-      files.length === 0
-        ? ""
-        : git(cwd, ["diff", "--binary", "--no-renames", headSha, treeSha], { env, raw: true });
+    const treeSha = git(top, ["write-tree"], { env });
+    const edited = treeSha !== git(cwd, ["rev-parse", `${headSha}^{tree}`]);
+    const { files, lines } = diffFiles(cwd, from, treeSha, env);
+    const patch = edited
+      ? git(cwd, ["diff", "--binary", "--no-renames", headSha, treeSha], { env, raw: true })
+      : "";
+    return { treeSha, files, lines, patch, edited };
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
+}
+
+/** The uncommitted working tree against HEAD: staged, unstaged and new
+ * (untracked, not ignored) files, read without touching the person's index or
+ * files (the snapshot is `snapshotWorkTree`'s). */
+export function resolveUncommitted(
+  cwd: string,
+  o: { scratchParent?: string } = {},
+): BranchResolution {
+  const head = admitRepo(cwd);
+  if (!head.ok) return head;
+  const headSha = head.headSha;
+  const snap = snapshotWorkTree(cwd, headSha, headSha, o.scratchParent);
+  const { treeSha, files, lines, patch } = snap;
   if (files.length === 0)
     return { ok: false, error: "nothing to review: the working tree has no uncommitted changes" };
   const branch = tryGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]) ?? "HEAD";

@@ -18,9 +18,10 @@ The repository publishes two npm packages. The root is
 `@quickchatai/quickreview`, the whole app with the `qcr` bin (TUI, daemon,
 companion, every verb); the release image runs this same package.
 `packages/pi-plugin` is `@quickchatai/pi-quickreview`, the review core and
-the pi plugin over it (`/review`, `/scan`, `/qcr-setup`, `/selfimprove`),
-installable on its own with `pi install npm:@quickchatai/pi-quickreview`. The
-app depends on the core at its exact version.
+the pi plugin over it (`/qcr-review`, `/qcr-scan`, `/qcr-setup`, each also a
+skill), installable on its own with `pi install npm:@quickchatai/pi-quickreview`.
+The app depends on the core at its exact version, and its own pi (`qcr pi`)
+adds `/selfimprove`.
 
 Read [`README.md`](README.md) for what the system does for its user, and
 [`MANIFESTO.md`](MANIFESTO.md) for the beliefs it implements. This file is the

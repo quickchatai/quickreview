@@ -26,6 +26,12 @@
 // Not a fold: regression.ts's Recommendation "ask-owner-legacy" → "ask-owner" —
 // that value is produced and rendered only, never parsed back, so there is no
 // input side to keep.
+// Not a fold, by ruling: the pi plugin's unprefixed commands /review, /scan
+// and /selfimprove are dropped with no alias (docs/adr/0001-plugin-and-app-nest.md,
+// the one recorded exception to this file's rule). pi's command namespace is
+// shared with every other extension, so an alias would keep the collision the
+// rename removes. They are /qcr-review and /qcr-scan, and /selfimprove is the
+// app's own pi's; the last block below holds that no alias creeps back.
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,6 +45,8 @@ import {
 } from "../src/commands.js";
 import { OriginStore, parseOriginRecord } from "../src/slack/origin.js";
 import { foldSlackTier, StateStore } from "../src/state.js";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createQuickReview } from "@quickchatai/pi-quickreview/extensions/quickreview.js";
 
 // ---- fold 1: the tier string --------------------------------------------
 
@@ -217,5 +225,32 @@ describe("command fold: 'flag-owner-legacy' → 'flag-owner'", () => {
       expect(JSON.stringify(executed)).toContain("flag-owner");
       expect(JSON.stringify(executed)).not.toContain("flag-owner-legacy");
     });
+  });
+});
+
+// ---- not a fold: the plugin's dropped command names (ADR 0001) ------------
+
+describe("the pi plugin's unprefixed commands are dropped, not folded", () => {
+  // MUTATION: register "review" as an alias of "qcr-review" — this fails.
+  it("registers /qcr-review and /qcr-scan, and no /review, /scan or /selfimprove", () => {
+    const names: string[] = [];
+    const pi = {
+      registerCommand: (name: string) => names.push(name),
+      registerTool: () => {},
+      on: () => () => {},
+      sendMessage: () => {},
+      sendUserMessage: () => {},
+      getSettings: () => ({}),
+    } as unknown as ExtensionAPI;
+    createQuickReview({
+      env: {},
+      home: tmpdir(),
+      runner: { which: () => null, run: async () => ({ code: 127, stdout: "", stderr: "" }) },
+      print: () => {},
+      piVersion: "1.4.0",
+      range: "^1.4.0",
+    })(pi);
+    expect(names).toEqual(expect.arrayContaining(["qcr-review", "qcr-scan"]));
+    for (const gone of ["review", "scan", "selfimprove"]) expect(names).not.toContain(gone);
   });
 });

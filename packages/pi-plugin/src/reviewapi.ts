@@ -111,8 +111,12 @@ import { prepareReviewHost } from "./reviewhost.js";
 /** What is reviewed. */
 export type ReviewTarget =
   /** The repo dir's current branch against its base (`base`, else origin's
-   * default branch, main, master). */
-  | { kind: "branch"; base?: string }
+   * default branch, main, master). `head` reviews that branch (or commit)
+   * instead of HEAD; `uncommitted` adds the working tree's uncommitted edits
+   * on top of HEAD's commits, reviewed as one (with `head`, the named branch
+   * is its commits alone). A branch with uncommitted edits keeps no state:
+   * its next review is a whole one. Never posted anywhere. */
+  | { kind: "branch"; base?: string; head?: string; uncommitted?: boolean }
   /** The uncommitted working tree (staged, unstaged and new files) against
    * HEAD. Never posted anywhere. */
   | { kind: "uncommitted" }
@@ -237,6 +241,18 @@ export interface AskOptions {
   signal?: AbortSignal;
 }
 
+/** A finished PR review, offered for posting (`ReviewIo.offerPost`). */
+export interface PostOffer {
+  repo: string;
+  pr: number;
+  /** The review as the report renders it. */
+  markdown: string;
+  /** Findings in it the bot has not already posted on the PR. */
+  findings: number;
+  /** The install keeps dry_run on: a post is recorded, not sent. */
+  dryRun: boolean;
+}
+
 /** The round that is about to start, for a UI to show while it runs. */
 export interface ReviewStarted {
   /** The run's directory: the round's live log is under it (src/live/). */
@@ -262,6 +278,12 @@ export interface ReviewIo {
   /** The run's own progress lines for a person (the preview before the run,
    * the memory notice). */
   progress?: (line: string) => void;
+  /** Asked once a PR review has finished, when its destinations do not
+   * already post it: post it now? Yes posts exactly as `pr` would have, one
+   * comment-only review through the gate with the install's dry_run. Given
+   * the review as a person reads it. Absent: nothing is offered. A stop
+   * closes the question unanswered, and nothing is posted. */
+  offerPost?: (offer: PostOffer, o?: AskOptions) => Promise<boolean>;
   /** The round is about to start: where it runs and what it plans. */
   started?: (run: ReviewStarted) => void;
   /** A warning said before the run. */
@@ -599,7 +621,10 @@ async function runPipeline(
       resolved =
         target.kind === "uncommitted"
           ? resolveUncommitted(repoDir, { scratchParent: opts.runsDir })
-          : resolveBranch(repoDir, target.base);
+          : resolveBranch(repoDir, target.base, {
+              ...(target.head !== undefined ? { head: target.head } : {}),
+              ...(target.uncommitted ? { uncommitted: true, scratchParent: opts.runsDir } : {}),
+            });
     if (!resolved.ok) return refuse(1, [resolved.error]);
     t = resolved.target;
     runDir = join(opts.runsDir, `${stamp}-${t.headSha.slice(0, 7)}`);
@@ -633,10 +658,13 @@ async function runPipeline(
         : `the diff ${diffName}`
       : target.kind === "uncommitted"
         ? `uncommitted changes on ${t.branch}`
-        : `${t.branch} against ${t.base}`;
+        : `${t.branch} against ${t.base}${t.uncommitted ? ", with its uncommitted changes" : ""}`;
   const kind: "pr" | "branch" | "uncommitted" | "diff" = target.kind;
   // what the markdown report is titled
-  const subject = kind === "diff" ? label : `${t.branch} against ${t.base}`;
+  const subject =
+    kind === "diff"
+      ? label
+      : `${t.branch} against ${t.base}${kind === "branch" && t.uncommitted ? ", with its uncommitted changes" : ""}`;
   const settings = loadReviewSettings(repoDir);
   const action = (opts.limits.route ?? "laptop") === "action";
   // The laptop's confirm threshold is the person's limit; the Action has none,
@@ -648,14 +676,15 @@ async function runPipeline(
   // What an earlier review of this target left (none with `full`, or when it
   // cannot be trusted).
   // A branch and a PR each keep state under their own key (the PR's delta is
-  // computed in its scratch repository); the uncommitted tree and a diff keep none.
+  // computed in its scratch repository); the uncommitted tree, a branch with
+  // uncommitted edits on top and a diff keep none.
   // A run that posts to a PR reviews in full: the findings already on the PR
   // (the posted-findings skip) are its repeat protection, and an
   // unchanged-head shortcut would also skip the post.
   const targetKey = prInfo
     ? prTargetKey(prInfo.repo, prInfo.number)
     : branchTargetKey(t.repo, t.branch);
-  const keepsState = kind === "branch" || kind === "pr";
+  const keepsState = (kind === "branch" && t.uncommitted === undefined) || kind === "pr";
   const statePath =
     opts.storeDir === null
       ? null
@@ -851,7 +880,7 @@ async function runPipeline(
   const priorCount = scope === "delta" ? openFindings(prev).findings.length : 0;
   const previewData = {
     repo: t.repo,
-    target: { kind },
+    target: { kind, ...(kind === "branch" && t.uncommitted ? { uncommitted: true } : {}) },
     // posting is offered only when a PR is behind the target
     postable: prInfo !== null,
     ...(kind === "diff" ? {} : { branch: t.branch }),
@@ -999,7 +1028,7 @@ async function runPipeline(
         runWarnings.push(w);
         warn(w);
       }
-    } else if (kind === "uncommitted")
+    } else if (kind === "uncommitted" || t.uncommitted !== undefined)
       await addUncommittedTree(gitDir, treeDir, t, io.signal ? { signal: io.signal } : {});
     else await addReviewTree(gitDir, treeDir, t.headSha, io.signal ? { signal: io.signal } : {});
     const round: RoundSpec = {
@@ -1170,11 +1199,26 @@ async function runPipeline(
     ...customNotes,
     `Files: ${outDir}`,
   ].join("\n");
-  // Posting to the PR: one comment-only review, marked, deduplicated.
+  // Posting to the PR: one comment-only review, marked, deduplicated. Sent
+  // when the destinations say so, else when the person says yes to the offer.
   let posted: Record<string, unknown> | null = null;
   let postFailed = false;
   let postLine = "";
-  if (sends("pr") && prInfo !== null) {
+  const markdown = renderMarkdown(mdMeta, groups);
+  let post = sends("pr");
+  if (!post && prInfo !== null && io.offerPost) {
+    const offerPost = io.offerPost;
+    const offer: PostOffer = {
+      repo: prInfo.repo,
+      pr: prInfo.number,
+      markdown,
+      findings: count,
+      dryRun: opts.config.dry_run,
+    };
+    const yes = await unlessStopped(io.signal, (o) => offerPost(offer, o));
+    post = yes === true && !io.signal?.aborted;
+  }
+  if (post && prInfo !== null) {
     const id = await resolvePostCredential(
       opts.config.github.secrets_dir,
       loadPostIdentity(repoDir),
@@ -1245,6 +1289,6 @@ async function runPipeline(
     postFailed ? 1 : 0,
     postLine ? `${human}\n${postLine}` : human,
     { ok: !postFailed, partial: false, ...data, ...(posted ? { post: posted } : {}) },
-    renderMarkdown(mdMeta, groups),
+    markdown,
   );
 }
