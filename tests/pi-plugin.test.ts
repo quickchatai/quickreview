@@ -46,6 +46,7 @@ import {
   KEEP_IT_HERE,
   REVIEW_MESSAGE,
   REVIEW_TIMEOUT_MS,
+  liveLensLines,
   reviewStatusLine,
   runReviewCommand,
   type ReviewCommandDeps,
@@ -802,6 +803,24 @@ describe("/qcr-review's work, waited for (runReviewCommand)", () => {
       ),
     ).toBe("QuickReview: reviewing PR #12 — 9 lenses, about $1.10, stops at $2.20 · 1m 19s");
     expect(reviewStatusLine({ ...base, stage: "asking" }, at + 5_000)).toMatch(/post it\?/);
+    // While lenses run, the first one's activity, and how many more are running.
+    expect(
+      reviewStatusLine(
+        {
+          ...base,
+          stage: "running",
+          lenses: 9,
+          running: ["security · read src/x.ts · 7 tools · 0:41", "tests · 0:12"],
+        },
+        at + 79_000,
+      ),
+    ).toBe(
+      "QuickReview: reviewing PR #12 — 9 lenses · 1m 19s · security · read src/x.ts · 7 tools · 0:41 (+1 more)",
+    );
+  });
+
+  it("reads no lens lines for a run with no live log, and never throws", () => {
+    expect(liveLensLines(join(tmpdir(), "qcr-no-such-run"), Date.now())).toEqual([]);
   });
 });
 

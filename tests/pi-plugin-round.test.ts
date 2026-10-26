@@ -33,6 +33,7 @@ import { lensActivityLine } from "@quickchatai/pi-quickreview/src/live/lensline.
 import type { LiveAgentProgress } from "@quickchatai/pi-quickreview/src/round-progress.js";
 import { PiHost, type PiHostOptions } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import {
+  liveLensLines,
   REVIEW_DEPS,
   REVIEW_MESSAGE,
   runReviewCommand,
@@ -206,6 +207,14 @@ const filesNamed = (dir: string, name: string): string[] => {
   }
 };
 
+/** The run dir a round's live log sits under (`<run>/state/live/<key>/r<n>/`). */
+function liveRunDir(runsDir: string): string {
+  const log = filesNamed(runsDir, LIVE_MAIN_FILE)[0];
+  return log === undefined
+    ? join(runsDir, "missing")
+    : dirname(dirname(dirname(dirname(dirname(log)))));
+}
+
 /** The lens rows of the round's main log, projected as `qcr review status` does. */
 function projectedLenses(runsDir: string): LiveAgentProgress[] {
   const log = filesNamed(runsDir, LIVE_MAIN_FILE)[0];
@@ -234,6 +243,7 @@ describe("/review: live lens activity in the projection, while the lens runs", (
     const runsDir = join(state, "qcr", "default", "review", "runs");
     const faux = pricedFaux(() => 0.01, { provider: "faux", models: [{ id: "m" }] });
     let whileRunning: LiveAgentProgress[] = [];
+    let statusLines: string[] = [];
     faux.appendResponses([
       // the main session launches one lens
       () =>
@@ -254,6 +264,7 @@ describe("/review: live lens activity in the projection, while the lens runs", (
           10_000,
         );
         whileRunning = projectedLenses(runsDir);
+        statusLines = liveLensLines(liveRunDir(runsDir), Date.now());
         return fauxAssistantMessage("No findings.");
       },
       // the main session writes the review
@@ -329,6 +340,8 @@ describe("/review: live lens activity in the projection, while the lens runs", (
     });
     expect(running!.tool_count).toBe(1);
     expect(lensActivityLine(running!)).toMatch(/^security · read src\/a\.ts · 1 tool/);
+    // ...and the plugin's status line reads the same line from the run's dir.
+    expect(statusLines).toEqual([expect.stringMatching(/^security · read src\/a\.ts · 1 tool/)]);
 
     // Once it is done: completed, the final count kept, a measured duration,
     // no file it is "on" any more.

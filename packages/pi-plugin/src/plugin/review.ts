@@ -36,6 +36,8 @@ import { PI_REFRESH_MARGIN_MS, type AuthCopyWords } from "../engine/auth.js";
 import { contextFrom } from "../engine/context.js";
 import { lazyReviewRuntime, type ReviewRuntimeOptions } from "../engine/reviewruntime.js";
 import { homeProfilePlaces, loadOneShotConfig, stateHome } from "../homes.js";
+import { runningLensLines } from "../live/lensline.js";
+import { latestLiveRound, viewRound } from "../live/read.js";
 import {
   preview as corePreview,
   review as coreReview,
@@ -100,6 +102,9 @@ export interface ReviewProgress {
   lenses?: number;
   estimateUsd?: number;
   capUsd?: number | null;
+  /** What each running lens is doing, from the round's live log
+   * (`liveLensLines`); empty until a lens has started. */
+  running?: readonly string[];
 }
 
 const elapsed = (ms: number): string => {
@@ -125,12 +130,28 @@ export function reviewStatusLine(p: ReviewProgress, now: number): string {
           ? [`stops at $${p.capUsd.toFixed(2)}`]
           : []),
       ];
-      return `QuickReview: reviewing ${p.label}${plan.length ? ` — ${plan.join(", ")}` : ""} · ${since}`;
+      const now = p.running?.length
+        ? ` · ${p.running[0]}${p.running.length > 1 ? ` (+${p.running.length - 1} more)` : ""}`
+        : "";
+      return `QuickReview: reviewing ${p.label}${plan.length ? ` — ${plan.join(", ")}` : ""} · ${since}${now}`;
     }
     case "asking":
       return `QuickReview: ${p.label} reviewed in ${since} — post it?`;
     case "posting":
       return `QuickReview: posting the review of ${p.label}…`;
+  }
+}
+
+/** One line per running lens of the review in `runDir`, read from its live
+ * log: none when the log is missing or unreadable, which never costs the
+ * review its status line. */
+export function liveLensLines(runDir: string, now: number): string[] {
+  try {
+    const ref = latestLiveRound(runDir);
+    const agents = ref ? viewRound(ref).snapshot?.agents : undefined;
+    return agents ? runningLensLines(agents, { nowMs: now }) : [];
+  } catch {
+    return [];
   }
 }
 
@@ -413,8 +434,14 @@ async function reviewJob(
     log,
     signal: stop.signal,
   };
+  // Each second: the time, and once the round runs, what its lenses are doing.
+  const tick = (): void => {
+    if (runDir !== null && progress.stage === "running")
+      progress.running = liveLensLines(runDir, Date.now());
+    showStatus();
+  };
   showStatus();
-  const ticker = setInterval(showStatus, 1000);
+  const ticker = setInterval(tick, 1000);
   ticker.unref?.();
   let result: ReviewResult;
   try {
