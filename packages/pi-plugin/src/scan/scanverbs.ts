@@ -14,10 +14,7 @@
 // Exit codes: 0 done; 1 refused (or a waited-for run that did not end
 // complete); 2 usage; 3 `status --wait` gave up at its `--timeout`.
 import { readFileSync } from "node:fs";
-import {
-  SCAN_SCHEMA_VERSION,
-  withSchemaVersion,
-} from "@quickchatai/pi-quickreview/src/contract.js";
+import { SCAN_SCHEMA_VERSION, withSchemaVersion } from "../contract.js";
 import {
   CUT_CLI_VERBS as CUT_QCR_VERBS,
   renderCut,

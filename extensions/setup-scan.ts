@@ -46,7 +46,7 @@ import type { CaseRunner, SetupEngine } from "../src/setup/engine.js";
 import type { FindingsStore } from "../src/setup/findings.js";
 import { stateHomeFs } from "../src/setup/adapters.js";
 import { loadScanConfig } from "../src/setup/scanbuild.js";
-import { assembleScan, scanRuns } from "../src/setup/scanassemble.js";
+import { assembleScan, scanRuns } from "@quickchatai/pi-quickreview/src/scan/scanassemble.js";
 import {
   FINDINGS_LIMIT,
   FINDINGS_LIMIT_MAX,
@@ -66,7 +66,7 @@ import {
   startedLine,
   stopScan,
   type StopChannel,
-} from "../src/setup/scanrender.js";
+} from "@quickchatai/pi-quickreview/src/scan/scanrender.js";
 import type { ScanRunner, ScanSettings } from "../src/setup/scanrun.js";
 import { ScanTriage, type CloseFixedResult } from "../src/setup/triage.js";
 import type { MemoryStore } from "../src/memory/store.js";
@@ -104,7 +104,7 @@ export {
   type ScanVerbs,
   type StopChannel,
   type TicketsClosed,
-} from "../src/setup/scanrender.js";
+} from "@quickchatai/pi-quickreview/src/scan/scanrender.js";
 
 // ---- tool belt ---------------------------------------------------------------
 

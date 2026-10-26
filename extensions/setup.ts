@@ -58,7 +58,11 @@ import {
 import { fileURLToPath } from "node:url";
 import { configHome, stateHome } from "../src/install.js";
 import { SetupEngine } from "../src/setup/engine.js";
-import { renderCut, renderDraft, renderStatus } from "../src/setup/cutrender.js";
+import {
+  renderCut,
+  renderDraft,
+  renderStatus,
+} from "@quickchatai/pi-quickreview/src/scan/cutrender.js";
 import type { HistoryTheme, HistoryThemesFile } from "../src/setup/history.js";
 import {
   HISTORY_SECTIONS,
@@ -162,7 +166,7 @@ export {
   renderDraft,
   renderStatus,
   type CutVerbs,
-} from "../src/setup/cutrender.js";
+} from "@quickchatai/pi-quickreview/src/scan/cutrender.js";
 export function renderThemes(themes: readonly HistoryTheme[]): string {
   return themes.length === 0
     ? "  (none — an empty history has no themes)"

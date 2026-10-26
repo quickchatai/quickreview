@@ -178,7 +178,22 @@ export const EXTENSION_SDK_HOST_ALLOWED: Readonly<Record<string, readonly string
   // no turn owns the process (a wedged one aborts its own sessions), and the
   // SDK loads only when a review starts. The bot, the companion and the
   // debug round never load this extension.
+  // Its /qcr-scan runs a scan the same way: each case an SDK session on a
+  // hostPi PiHost (src/plugin/scancases.ts), the SDK loaded with the first
+  // case.
   [`${CORE_PACKAGE}/extensions/quickreview.ts`]: [
+    `${CORE_PACKAGE}/src/engine/pisdk.ts`,
+    `${CORE_PACKAGE}/src/engine/sdkruntime.ts`,
+  ],
+  // The app's /selfimprove runs in the person's own pi (`qcr pi`) beside the
+  // plugin, on the plugin's guided scan and the plugin's session helpers: it
+  // reaches the same two modules the same way, and nothing else. The bot and
+  // the companion never load it.
+  "extensions/selfimprove.ts": [
+    `${CORE_PACKAGE}/src/engine/pisdk.ts`,
+    `${CORE_PACKAGE}/src/engine/sdkruntime.ts`,
+  ],
+  "extensions/cli/selfimprove.ts": [
     `${CORE_PACKAGE}/src/engine/pisdk.ts`,
     `${CORE_PACKAGE}/src/engine/sdkruntime.ts`,
   ],

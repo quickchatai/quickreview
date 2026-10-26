@@ -13,8 +13,8 @@
 //     defaults, with its cases on SDK sessions in the person's own pi, each
 //     behind the bash guard.
 import { join } from "node:path";
-import type { CoreConfig } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
-import type { ProfileLookup } from "@quickchatai/pi-quickreview/src/profiles.js";
+import type { CoreConfig } from "../reviewconfig.js";
+import type { ProfileLookup } from "../profiles.js";
 import { FindingsStore } from "./findings.js";
 import { stateHomeFs } from "./scanfs.js";
 import type { CaseRunner, Refusal } from "./scanports.js";

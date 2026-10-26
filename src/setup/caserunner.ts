@@ -34,10 +34,10 @@ import {
   stderrExcerpt,
   transcriptFile,
   type AgentFile,
-} from "./caseread.js";
+} from "@quickchatai/pi-quickreview/src/scan/caseread.js";
 import type { CaseOutcome, CaseRunner, CaseSpec } from "./engine.js";
 
-export { parseAgentFile, type AgentFile } from "./caseread.js";
+export { parseAgentFile, type AgentFile } from "@quickchatai/pi-quickreview/src/scan/caseread.js";
 export {
   FILE_READ_TOOLS,
   TRANSCRIPT_RUNS_KEPT,
@@ -46,7 +46,7 @@ export {
   readSucceeded,
   stderrExcerpt,
   transcriptFile,
-} from "./caseread.js";
+} from "@quickchatai/pi-quickreview/src/scan/caseread.js";
 
 /** The spawn this runner needs — `child_process.spawn`'s shape, narrowed so
  * tests hand in a fake child. */

@@ -38,15 +38,15 @@ import {
   configAddenda,
   identityVars,
   type BuiltAgent,
-} from "@quickchatai/pi-quickreview/src/include.js";
+} from "../include.js";
 import {
   applyProfileTuning,
   effortSpec,
   lensModelOverrides,
   lensTuningAddenda,
-} from "@quickchatai/pi-quickreview/src/lenstuning.js";
-import type { CoreConfig } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
-import { PASS_TIER_ORDER } from "@quickchatai/pi-quickreview/src/types.js";
+} from "../lenstuning.js";
+import type { CoreConfig } from "../reviewconfig.js";
+import { PASS_TIER_ORDER } from "../types.js";
 import {
   applyProfileScan,
   loadProfileAddenda,
@@ -54,7 +54,7 @@ import {
   loadProfileLensTuning,
   loadProfileScan,
   type ProfileLookup,
-} from "@quickchatai/pi-quickreview/src/profiles.js";
+} from "../profiles.js";
 import { SCAN_PASS } from "./scan.js";
 import type { ScanSettings } from "./scanrun.js";
 

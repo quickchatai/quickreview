@@ -10,7 +10,7 @@
 // nothing else: the setup engine (engine.ts) owns one for its views, and a
 // scan host with no setup engine (the pi plugin's /qcr-scan) builds one of its
 // own over the same file.
-import { isSweepSkipped } from "@quickchatai/pi-quickreview/src/heuristics.js";
+import { isSweepSkipped } from "../heuristics.js";
 import { unitCandidates, vendoredRoots, type UnitCandidate } from "./facts.js";
 import type { Refusal, RepoReader, StateFs } from "./scanports.js";
 import {

@@ -6,7 +6,7 @@
 import { readdirSync, rmSync, statSync } from "node:fs";
 import { join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
-import { GITHUB_TOKEN_ENVS } from "@quickchatai/pi-quickreview/src/envstrip.js";
+import { GITHUB_TOKEN_ENVS } from "../envstrip.js";
 
 /** An agent file of the companion set: `name`/`tools`/`model` frontmatter
  * and the system prompt below it — the native subagent loader's format. */

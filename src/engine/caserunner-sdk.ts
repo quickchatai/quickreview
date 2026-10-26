@@ -28,19 +28,19 @@ import {
 import { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import { sdkRuntime } from "@quickchatai/pi-quickreview/src/engine/sdkruntime.js";
 import { BUDGET_EXIT_CODE } from "@quickchatai/pi-quickreview/src/engine/budget.js";
-import type { CaseRunner } from "../setup/scanports.js";
+import type { CaseRunner } from "@quickchatai/pi-quickreview/src/scan/scanports.js";
 import {
   LEAF_TURN_TIMEOUT_MS,
   sdkCaseRunner as sdkCaseRunnerOver,
   type SdkCaseRunnerOptions,
-} from "../setup/scanleaves.js";
+} from "@quickchatai/pi-quickreview/src/scan/scanleaves.js";
 
 export {
   LEAF_TURN_TIMEOUT_MS,
   caseSessionDir,
   type LeafExtras,
   type SdkCaseRunnerOptions,
-} from "../setup/scanleaves.js";
+} from "@quickchatai/pi-quickreview/src/scan/scanleaves.js";
 
 /** `sdkCaseRunner` (scanleaves.ts) in this process: the leaf env filtered
  * from this process's env and a read's `~` taken as this process's home,

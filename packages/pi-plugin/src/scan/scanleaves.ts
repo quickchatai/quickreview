@@ -24,16 +24,10 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import {
-  bashGuardConfigFromEnv,
-  createBashGuard,
-} from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
-import { CASE_STOP_GRACE_MS } from "@quickchatai/pi-quickreview/src/casebudget.js";
-import { splitModelSpec } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
-import {
-  AuthError,
-  SCAN_CASE_AUTH_BUDGET_MS,
-} from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import { bashGuardConfigFromEnv, createBashGuard } from "../../extensions/bash-guard.js";
+import { CASE_STOP_GRACE_MS } from "../casebudget.js";
+import { splitModelSpec } from "../reviewconfig.js";
+import { AuthError, SCAN_CASE_AUTH_BUDGET_MS } from "../engine/auth.js";
 import {
   TRANSCRIPT_RUNS_KEPT,
   caseReadout,
@@ -45,13 +39,9 @@ import {
   type AgentFile,
 } from "./caseread.js";
 import type { CaseOutcome, CaseRunner, CaseSpec } from "./scanports.js";
-import { LENS_SESSIONS_DIR } from "@quickchatai/pi-quickreview/src/engine/openable.js";
-import type {
-  Runtime,
-  SessionSpec,
-  TurnResult,
-} from "@quickchatai/pi-quickreview/src/engine/port.js";
-import type { SessionExtras } from "@quickchatai/pi-quickreview/src/engine/sdkruntime.js";
+import { LENS_SESSIONS_DIR } from "../engine/openable.js";
+import type { Runtime, SessionSpec, TurnResult } from "../engine/port.js";
+import type { SessionExtras } from "../engine/sdkruntime.js";
 
 /** A leaf turn's hard wall clock. The login's own case budget
  * (`SCAN_CASE_AUTH_BUDGET_MS`) is the usual bound and aborts first; this one

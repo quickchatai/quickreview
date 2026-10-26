@@ -29,9 +29,14 @@ knows the command and can tell you the line to type.
     at a time, and ending the session stops it.
   - After a PR review, your posting rule decides whether it goes to the PR
     as a comment-only review (see Settings).
-- `/qcr-scan` scans the whole repo for defects, priced first and started
-  only on your yes. It runs the `qcr` CLI on your machine; `--sandbox docker`
-  runs it in the scan sandbox instead.
+- `/qcr-scan [--delta] [--sha REF] [--preview]` scans the whole repo for
+  defects, priced first and started only on your yes. It runs in the
+  background in this pi, like a review: a status line while it runs, the new
+  findings as a message when it ends, `/qcr-scan stop` to stop it. Its cases
+  are SDK sessions of this pi behind the same read-only bash guard as the
+  review's lenses. `/qcr-scan findings`, `status`, `units` and the other
+  scan subcommands pass through as typed. The scan sandbox (a container) and
+  dismissing a finding are the `qcr` app's (`qcr scan`).
 - `/qcr-setup` checks the pi version, the login, git, GitHub access for PR
   targets and the `qcr` CLI, and offers to install `qcr`
   (`npm i -g @quickchatai/quickreview`).
@@ -79,7 +84,8 @@ exactly instead; `qcr pi` starts that pinned pi with this plugin preloaded.
 - A pi login for the review's models (`/login` in pi). The review borrows
   it: pi refreshes it when needed, and the review only ever reads a copy.
   An API key for another provider is not used in its place: with no login
-  for the review's provider, `/qcr-review` stops and names `/login`.
+  for the review's provider, `/qcr-review` stops and names `/login`. The
+  scan borrows it the same way.
 - For a PR: the App when a qcr install configures one, else `GITHUB_TOKEN`,
   `GH_TOKEN` or `gh auth login`, in that order.
 - For posting: a qcr config with `dry_run = false`. The shipped defaults keep
@@ -88,8 +94,11 @@ exactly instead; `qcr pi` starts that pinned pi with this plugin preloaded.
 
 ## What it never does
 
-- The review never writes to your checkout: it reads the tree as it is.
-- The review never runs your code, tests or app: it reads code and CI.
+- The review and the scan never write to your checkout: they read the tree
+  as it is.
+- The review and the scan never run your code, tests or app: they read code
+  (and the review, CI).
+- It never runs the `qcr` CLI.
 - It never posts unless you say yes to the post question (or your posting
   rule is `always`), and then it posts one comment-only review through the
   same mutation gate the bot uses. It never approves, requests changes or

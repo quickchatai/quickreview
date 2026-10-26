@@ -75,7 +75,12 @@ import {
   type CasePlan,
   type UnitCut,
 } from "./unitcut.js";
-import type { CaseRunner, Refusal, RepoReader, StateFs } from "./scanports.js";
+import type {
+  CaseRunner,
+  Refusal,
+  RepoReader,
+  StateFs,
+} from "@quickchatai/pi-quickreview/src/scan/scanports.js";
 import {
   UnitCutStore,
   candidateCut,
@@ -83,7 +88,7 @@ import {
   type CutView,
   type SavedCut,
   type UnitCutFile,
-} from "./unitcutstore.js";
+} from "@quickchatai/pi-quickreview/src/scan/unitcutstore.js";
 
 // ---- ports -------------------------------------------------------------------
 
@@ -96,7 +101,7 @@ export type {
   Refusal,
   RepoReader,
   StateFs,
-} from "./scanports.js";
+} from "@quickchatai/pi-quickreview/src/scan/scanports.js";
 // The stored unit cut (unitcutstore.ts), under the names setup has always used.
 export {
   UNIT_CUT_FILE,
@@ -107,7 +112,7 @@ export {
   type SavedCut,
   type UnitCutFile,
   type UnitSummary,
-} from "./unitcutstore.js";
+} from "@quickchatai/pi-quickreview/src/scan/unitcutstore.js";
 
 export interface TrackerTicket {
   title: string;

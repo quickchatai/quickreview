@@ -40,8 +40,13 @@ import {
 } from "./scandriverlog.js";
 import type { CloseFixedResult, ScanTriage } from "./setup/triage.js";
 import type { ScanRunner, ScanRun } from "./setup/scanrun.js";
-import type { UnitCutPort } from "./setup/unitcutstore.js";
-import { runScanVerb, usage, type DetachOutcome, type ScanVerbDeps } from "./setup/scanverbs.js";
+import type { UnitCutPort } from "@quickchatai/pi-quickreview/src/scan/unitcutstore.js";
+import {
+  runScanVerb,
+  usage,
+  type DetachOutcome,
+  type ScanVerbDeps,
+} from "@quickchatai/pi-quickreview/src/scan/scanverbs.js";
 import {
   SCAN_SCHEMA_VERSION,
   withSchemaVersion,
@@ -58,7 +63,7 @@ export {
   type FindingJson,
   type FindingsQuery,
   type ScanCommand,
-} from "./setup/scanverbs.js";
+} from "@quickchatai/pi-quickreview/src/scan/scanverbs.js";
 export type { UnitCutPort };
 
 /** What `qcr scan` runs over: the verbs' ports, with the app's triage, its
@@ -106,8 +111,8 @@ export { DETACH_TIMEOUT_MS, DRIVER_LOG, DRIVER_LOG_MAX };
 const SCAN_SDK_AGENT_DIR = "scan/sdk-agent";
 
 /** `--sandbox host|docker`, taken off any subcommand's arguments: where this
- * call runs a scan, over `[scan] sandbox`. The pi plugin's /scan passes
- * `host` unless the person asked for docker. */
+ * call runs a scan, over `[scan] sandbox`. The pi plugin's /qcr-scan never
+ * comes here: it runs the plugin's own engine in its pi. */
 export function takeSandboxFlag(rest: readonly string[]): {
   rest: string[];
   sandbox?: "host" | "docker";

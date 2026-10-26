@@ -27,7 +27,7 @@ export {
   configHomeFs,
   inRoot,
   stateHomeFs,
-} from "./scanfs.js";
+} from "@quickchatai/pi-quickreview/src/scan/scanfs.js";
 
 /**
  * GitHub through the companion's read-only token file (`src/tui/ghread.ts`

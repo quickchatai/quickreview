@@ -1,5 +1,5 @@
-// /selfimprove, the app's: the whole-repo scan (the plugin's guided run,
-// which runs this app's `qcr scan`), then the findings go to the agent of
+// /selfimprove, the app's: the whole-repo scan (the plugin's guided run, on
+// the plugin's own scan engine in this pi), then the findings go to the agent of
 // this session as a message from the person, with the fix loop of the
 // selfimprove skill (skills/selfimprove): the scan says what is wrong, the
 // person's own agent fixes it, and the next /selfimprove --delta re-scans
@@ -12,7 +12,9 @@ import {
   guidedScan,
   parseScanCommand,
   renderScanFindings,
+  type ScanCommandDeps,
   type ScanFinding,
+  type ScanSessions,
 } from "@quickchatai/pi-quickreview/src/plugin/scan.js";
 import type { PluginHost, SessionUi } from "@quickchatai/pi-quickreview/src/plugin/session.js";
 
@@ -46,20 +48,32 @@ export function selfImproveBrief(o: {
   ].join("\n");
 }
 
+/** What /selfimprove takes: the scan's run flags, never a preview or a verb. */
+export const SELFIMPROVE_USAGE = "usage: /selfimprove [--delta] [--sha REF]";
+
 /** /selfimprove: scan the repo, then hand the agent the findings and the fix loop. */
 export async function runSelfImproveCommand(
   line: string,
   host: PluginHost,
   ui: SessionUi,
+  /** The scan's sessions and seams (test seams; default the plugin's). */
+  scan: { sessions?: ScanSessions; deps?: ScanCommandDeps } = {},
 ): Promise<void> {
   const cmd = parseScanCommand(line);
-  if ("error" in cmd) return ui.notify(cmd.error.replaceAll("/qcr-scan", "/selfimprove"), "error");
-  if (cmd.kind === "pass")
+  if ("error" in cmd) {
+    // the scan's own words, with this command's usage in place of /qcr-scan's
+    const why = cmd.error.split("\n").filter((l) => !l.startsWith("usage:"));
     return ui.notify(
-      "/selfimprove takes the scan's flags only: --delta, --sha REF, --sandbox docker",
+      [...why, SELFIMPROVE_USAGE].join("\n").replaceAll("/qcr-scan", "/selfimprove"),
       "error",
     );
-  const r = await guidedScan(host, ui, cmd.o);
+  }
+  if (cmd.kind === "pass" || cmd.o.preview)
+    return ui.notify(
+      `/selfimprove takes the scan's flags only: --delta and --sha REF\n${SELFIMPROVE_USAGE}`,
+      "error",
+    );
+  const r = await guidedScan(host, ui, cmd.o, scan);
   if (!r.ok) {
     if (ui.mode === "print") ui.print(`✗ ${r.error}`);
     return ui.notify(r.error, "error");

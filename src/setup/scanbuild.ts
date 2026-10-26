@@ -7,7 +7,10 @@ import { homeProfileLookup, locateConfig } from "../install.js";
 import type { BuiltAgent } from "@quickchatai/pi-quickreview/src/include.js";
 import type { ProfileLookup } from "@quickchatai/pi-quickreview/src/profiles.js";
 import type { Refusal } from "./engine.js";
-import { buildScanAgents as buildAgentsOver, scanConfigOf } from "./scanagents.js";
+import {
+  buildScanAgents as buildAgentsOver,
+  scanConfigOf,
+} from "@quickchatai/pi-quickreview/src/scan/scanagents.js";
 
 export {
   SCAN_AGENTS_DIR,
@@ -15,7 +18,7 @@ export {
   scanConfigOf,
   scanPassModels,
   scanSettings,
-} from "./scanagents.js";
+} from "@quickchatai/pi-quickreview/src/scan/scanagents.js";
 
 /** The config a scan runs with: config.toml parsed, the profile's per-lens
  * tuning and `[scan]` overrides applied (the profile wins). Throws on a bad
