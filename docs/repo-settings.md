@@ -18,6 +18,8 @@ CI run.
 | One contributor cannot flood the queue | The open-PR limit for users without write access (manual, below) |
 | `main` cannot be rewritten or merged into unreviewed | The `main` ruleset: no deletion, no force push, squash-merged PRs with one approval and green CI; repository admins bypass it |
 | A leaked workflow token can do little | Default workflow token is read-only; Actions cannot approve PRs |
+| A moved or hijacked action tag cannot change what a workflow runs | Every `uses:` is pinned to a full commit SHA (`tests/workflow-pins.test.ts`), the Actions setting "Require actions to be pinned to a full-length commit SHA" refuses anything else at run time, and `.github/dependabot.yml` proposes the bumps |
+| A vulnerable dependency gets a fix PR | Dependabot alerts and Dependabot security updates on the lockfile |
 | No one but an admin starts a release | The `release tags` ruleset: only repository admins create, move or delete a `v*` tag. Every org member can push to this repo, and a tag push runs `release.yml` |
 | Only a tagged release can put a version on npm, and only after a maintainer's 2FA | Each npm package's trusted publisher (`.github/npm-trust.sh`, below): `release.yml`'s `npm` job in the `npm-publish` environment, which deploys only from a `v*.*.*` tag, may stage a version and never publish one. No npm token exists for CI to leak |
 | The release's model login stays put | The `release-e2e` environment (`RELEASE_E2E_PI_AUTH`) deploys only from `main` or a `v*.*.*` tag, after the admin who ran the script approves. A real release cannot publish without its e2e, so that approval gates every publish |
@@ -41,7 +43,8 @@ It sets: squash-only merging (PR title as the commit title, the commits as
 its body, never the PR body, which holds the pasted review), branch deletion
 on merge, forking on, the wiki off, secret scanning and push protection,
 private vulnerability reporting (what [SECURITY.md](../SECURITY.md) points
-at), Dependabot alerts, the read-only workflow token, no PR approval by
+at), Dependabot alerts and security updates, SHA-pinned actions only, the
+read-only workflow token, no PR approval by
 Actions, fork-PR approval for all external contributors, the `main` and
 `release tags` rulesets, the `release-e2e` environment's reviewer (the admin
 running the script) and deployment policy, and the `proposal` label the issue

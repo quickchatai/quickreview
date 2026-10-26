@@ -1,0 +1,16 @@
+# Dependabot version updates for the workflows' actions only. Every `uses:` is
+# pinned to a full commit SHA with its version in a trailing comment
+# (tests/workflow-pins.test.ts); Dependabot moves both together. Security
+# updates for the npm lockfile are a repository setting
+# (.github/repo-settings.sh), not configured here.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
