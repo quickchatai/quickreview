@@ -2,11 +2,12 @@
 // argv goes (src/qcrbin.ts), `qcr pi`, `qcr login` and `qcr update`
 // (src/npmverbs.ts), and the SQLite hint (src/sqlitehint.ts). Every child is
 // a fake: nothing here starts pi, tmux or a package manager.
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { binRoute } from "../src/qcrbin.js";
 import {
+  APP_PI_EXTENSIONS,
   cmdLogin,
   cmdPi,
   cmdUpdate,
@@ -98,8 +99,10 @@ describe("the bin's routes", () => {
 });
 
 describe("qcr pi", () => {
-  // MUTATION: drop the -e — pi starts without the plugin.
-  it("runs the pinned pi with the plugin preloaded and the args passed on", () => {
+  // The plugin carries /qcr-review, /qcr-scan and /qcr-setup; /selfimprove
+  // is the app's, loaded beside it (ADR 0001). MUTATION: drop either -e — pi
+  // starts without the plugin, or without /selfimprove, and this fails.
+  it("runs the pinned pi with the plugin and the app's /selfimprove preloaded, and the args passed on", () => {
     const f = fakeDeps({ onRun: () => 3 });
     expect(cmdPi(["--model", "x/y", "hello"], f.deps)).toBe(3);
     expect(f.ran).toEqual([
@@ -109,12 +112,21 @@ describe("qcr pi", () => {
           "/pkg/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
           "-e",
           "/pkg/node_modules/@quickchatai/pi-quickreview",
+          "-e",
+          "/usr/lib/node_modules/@quickchatai/quickreview/extensions/cli/selfimprove.ts",
           "--model",
           "x/y",
           "hello",
         ],
       },
     ]);
+  });
+
+  // The path is under the package root an npm install ships (`files` holds
+  // extensions/). MUTATION: name a shim that does not exist — this fails.
+  it("names app extensions that exist in the package", () => {
+    expect(APP_PI_EXTENSIONS.length).toBeGreaterThan(0);
+    for (const e of APP_PI_EXTENSIONS) expect(existsSync(join(ROOT, e)), e).toBe(true);
   });
 
   it("says so when pi is not installed", () => {
