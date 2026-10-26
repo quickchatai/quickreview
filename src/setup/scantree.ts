@@ -30,7 +30,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, normalize, relative } from "node:path";
-import { inRoot, MAX_READ_BYTES } from "./adapters.js";
+import { inRoot, MAX_READ_BYTES } from "./scanfs.js";
 import type { ScanSource, ScanTree } from "./scanrun.js";
 import type { UnreadableReason } from "./scan.js";
 import { isBinaryContent, textLineCount } from "./textsniff.js";
