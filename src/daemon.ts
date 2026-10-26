@@ -832,6 +832,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
 
   /** The open PRs the last listing reconcile pass saw (status.json `open_prs`). */
   let openPrs: OpenPrsSnapshot | undefined;
+  /** The last reconcile pass (status.json `poll`): null until one has ended. */
+  let lastPoll: { at: string; ok: boolean; error?: string } | null = null;
   let firstReconcileSeen = false;
   let firstHealthyReconcileAt: Date | null = null;
   // Deploy-window drain auto-lift: only the boot's first reconcile pass may
@@ -888,6 +890,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     const bootFirstPass = !firstReconcileSeen;
     firstReconcileSeen = true;
     let completed = false;
+    let thrown: unknown = undefined;
     await guard("reconcile", async () => {
       const report = await reconcileOnce({
         cfg,
@@ -914,7 +917,15 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         // sweep reads session transcripts and is not needed for that, so it
         // starts on the next pass to keep the boot pass short.
         receiptSweep: !bootFirstPass,
+      }).catch((err: unknown) => {
+        thrown = err;
+        throw err;
       });
+      lastPoll = {
+        at: report.ran_at,
+        ok: report.errors.length === 0,
+        ...(report.errors[0] !== undefined ? { error: report.errors[0] } : {}),
+      };
       // The board's "review a PR" list: kept from the last pass that listed.
       if (report.open_list) openPrs = { listed_at: report.ran_at, prs: report.open_list };
       log(
@@ -957,6 +968,15 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       }
       completed = true;
     });
+    if (thrown !== undefined)
+      lastPoll = {
+        at: (deps.now ? deps.now() : new Date()).toISOString(),
+        ok: false,
+        error: `the reconcile pass failed: ${thrown instanceof Error ? thrown.message : JSON.stringify(thrown)}`,
+      };
+    // The poll's outcome reaches status.json now, not at the next heartbeat:
+    // "working" is judged on it.
+    writeStatus();
     return completed;
   };
 
@@ -1122,6 +1142,12 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
             };
         }
       if (openPrs) snapshot.open_prs = openPrs;
+      snapshot.poll = {
+        last_at: lastPoll?.at ?? null,
+        ok: lastPoll?.ok ?? null,
+        ...(lastPoll?.error !== undefined ? { error: lastPoll.error } : {}),
+        interval_s: cfg.daemon.poll_interval_s,
+      };
       if (deps.runHost) snapshot.run_host = deps.runHost;
       writeStatusJson(stateDir, snapshot);
     } catch (err) {
