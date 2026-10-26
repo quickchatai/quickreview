@@ -123,7 +123,7 @@ jobs:
       e2e: ${{ steps.plan.outputs.e2e }}
       publish: ${{ steps.plan.outputs.publish }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: resolve and check the version
         id: plan
         env:
@@ -196,21 +196,21 @@ jobs:
     env:
       LOCAL_TAG: qcr-${{ matrix.image }}:${{ matrix.arch }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-qemu-action@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         if: matrix.qemu == 'true'
         with:
           platforms: arm64
       # On a Blacksmith runner: Blacksmith's builder, whose layer cache lives on
       # the runner fleet's own disks (one cache per image and arch). Anywhere
       # else (QCR_RUNNERS=github, the QEMU leg): buildx with the gha cache.
-      - uses: useblacksmith/setup-docker-builder@v2
+      - uses: useblacksmith/setup-docker-builder@19215110ab936351210feebdfa5b440b4493e184 # v2.2.0
         if: startsWith(matrix.runner, 'blacksmith-')
         with:
           cache-key: ${{ matrix.image }}-${{ matrix.arch }}
       - name: build (Blacksmith)
         if: startsWith(matrix.runner, 'blacksmith-')
-        uses: useblacksmith/build-push-action@v2
+        uses: useblacksmith/build-push-action@9b0579bbec7a6cad2f171596c57e7ac1e7658850 # v2.3.0
         with:
           context: .
           file: ${{ matrix.file }}
@@ -224,11 +224,11 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ needs.plan.outputs.version }}
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         if: ${{ !startsWith(matrix.runner, 'blacksmith-') }}
       - name: build
         if: ${{ !startsWith(matrix.runner, 'blacksmith-') }}
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ${{ matrix.file }}
@@ -281,7 +281,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/out"
           docker save "$LOCAL_TAG" | gzip -1 >"$RUNNER_TEMP/out/image.tar.gz"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: image-${{ matrix.image }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/out/image.tar.gz
@@ -301,8 +301,8 @@ jobs:
       LIMIT_USD: ${{ vars.RELEASE_E2E_LIMIT_USD || '2' }}
       LOCAL_TAG: qcr-release:amd64
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: image-release-amd64
           path: ${{ runner.temp }}/in
@@ -360,7 +360,7 @@ jobs:
         run: |
           rm -f "$RUNNER_TEMP/e2e/home/agent/auth.json" || true
           rm -rf "$RUNNER_TEMP/e2e" || true
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: e2e-ledger
@@ -392,13 +392,13 @@ jobs:
       VERSION: ${{ needs.plan.outputs.version }}
       REPO: ${{ matrix.image == 'release' && 'ghcr.io/quickchatai/quickreview' || 'ghcr.io/quickchatai/quickreview-memory' }}
     steps:
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: image-${{ matrix.image }}-*
           path: ${{ runner.temp }}/in
@@ -433,7 +433,7 @@ jobs:
             --arg amd64 "${{ steps.push.outputs.amd64 }}" --arg arm64 "${{ steps.push.outputs.arm64 }}" \
             '{repository: $repository, index: $index, amd64: $amd64, arm64: $arm64}' \
             >"$RUNNER_TEMP/digests-${{ matrix.image }}.json"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: digests-${{ matrix.image }}
           path: ${{ runner.temp }}/digests-${{ matrix.image }}.json
@@ -443,7 +443,7 @@ jobs:
       # told not to, and this job grants no artifact-metadata permission.
       - name: provenance for the amd64 image
         if: github.event.repository.visibility == 'public' || vars.RELEASE_ATTEST == 'true'
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.REPO }}
           subject-digest: ${{ steps.push.outputs.amd64 }}
@@ -451,7 +451,7 @@ jobs:
           create-storage-record: false
       - name: provenance for the arm64 image
         if: github.event.repository.visibility == 'public' || vars.RELEASE_ATTEST == 'true'
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.REPO }}
           subject-digest: ${{ steps.push.outputs.arm64 }}
@@ -459,7 +459,7 @@ jobs:
           create-storage-record: false
       - name: provenance for the index
         if: github.event.repository.visibility == 'public' || vars.RELEASE_ATTEST == 'true'
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.REPO }}
           subject-digest: ${{ steps.push.outputs.index }}
@@ -483,8 +483,8 @@ jobs:
     env:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: digests-*
           path: ${{ runner.temp }}/digests
@@ -498,7 +498,7 @@ jobs:
             --digests "$RUNNER_TEMP/digests" --out "$out"
           node scripts/deploy-manifest.mjs "$out" "$VERSION" >/dev/null
           printf '### Deploy manifest\n\n```json\n%s\n```\n' "$(cat "$out")" >>"$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: deploy-manifest-${{ env.VERSION }}
           path: ${{ runner.temp }}/manifest/deploy-manifest-${{ env.VERSION }}.json
@@ -518,7 +518,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: deploy-manifest-${{ env.VERSION }}
           path: ${{ runner.temp }}/manifest
@@ -562,8 +562,8 @@ jobs:
     env:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "26"
       - name: the packages are the tag's version
@@ -606,7 +606,7 @@ jobs:
             [ -f "$tgz" ] || { echo "::error::npm pack left no $tgz"; exit 1; }
             echo "${k%%:*}=$tgz" >>"$GITHUB_OUTPUT"
           done
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: npm-tarballs-${{ env.VERSION }}
           path: ${{ runner.temp }}/npm/*.tgz

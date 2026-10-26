@@ -46,8 +46,8 @@ jobs:
       matrix:
         node: ["26"]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -110,8 +110,8 @@ jobs:
       matrix:
         pi: ["1.4.0"]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "26"
           cache: npm
@@ -131,10 +131,10 @@ jobs:
     env:
       DOCKER_BUILDKIT: "1"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Blacksmith's builder: `docker build` below reuses its layer cache. Off a
       # Blacksmith runner (QCR_RUNNERS=github, or a fork's PR) it is skipped.
-      - uses: useblacksmith/setup-docker-builder@v2
+      - uses: useblacksmith/setup-docker-builder@19215110ab936351210feebdfa5b440b4493e184 # v2.2.0
         if: ${{ vars.QCR_RUNNERS != 'github' && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
         with:
           cache-key: ci-release-amd64
@@ -151,8 +151,8 @@ jobs:
     if: ${{ !github.event.pull_request.draft }}
     runs-on: ${{ (vars.QCR_RUNNERS == 'github' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'blacksmith-4vcpu-ubuntu-2404' }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "26"
           cache: npm

@@ -61,13 +61,22 @@ call PATCH "" '{
   }
 }'
 
-# SECURITY.md sends reports here; Dependabot alerts on the lockfile.
+# SECURITY.md sends reports here; Dependabot alerts on the lockfile and opens
+# the PR that fixes one.
 call PUT /private-vulnerability-reporting
 call PUT /vulnerability-alerts
+call PUT /automated-security-fixes
 
-# Actions: the default token reads only (every workflow that writes says so
+# Actions: a workflow may use an action only by its full commit SHA (a moved
+# tag cannot change what the release job runs; .github/dependabot.yml proposes
+# the bumps), the default token reads only (every workflow that writes says so
 # per job), Actions can never approve a PR, and no workflow run from an
 # outside contributor's fork starts until a maintainer approves it.
+call PUT /actions/permissions '{
+  "enabled": true,
+  "allowed_actions": "all",
+  "sha_pinning_required": true
+}'
 call PUT /actions/permissions/workflow '{
   "default_workflow_permissions": "read",
   "can_approve_pull_request_reviews": false

@@ -378,7 +378,9 @@ describe("release.yml — the npm job", () => {
     const checkout = steps.find((s) => s.uses?.startsWith("actions/checkout@"))!;
     expect(checkout.uses).toBe(wf.jobs.plan!.steps[0]!.uses);
     const setup = steps.find((s) => s.uses?.startsWith("actions/setup-node@"))!;
-    expect(setup.uses).toBe("actions/setup-node@v7");
+    // pinned by SHA (tests/workflow-pins.test.ts); the trailing comment is the major
+    expect(setup.uses).toMatch(/^actions\/setup-node@[0-9a-f]{40}$/);
+    expect(text).toContain(`uses: ${setup.uses} # v7.`);
     expect(setup.with).toEqual({ "node-version": "26" });
     // the checks, then npm ci, then pack, then the artifact, then the stage
     const at = (s: FullStep): number => steps.indexOf(s);
