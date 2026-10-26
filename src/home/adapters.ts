@@ -11,14 +11,24 @@
 //              every refresh.
 //   clock      Date.now.
 //
-// Reviews, auto-review, memory and spend have no adapter yet: their stubs
-// answer unknown, so the panel says Unknown rather than a zero.
+//   auto-review, memory
+//              this machine's compose stack (src/home/autoreview.ts,
+//              src/home/memory.ts): the containers, the daemon's own
+//              status.json, and the switches over the wizard's steps.
+//
+// Reviews and spend have no adapter yet: their stubs answer unknown, so the
+// panel says Unknown rather than a zero.
 import { execFile } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "smol-toml";
 import { loginSummary } from "@quickchatai/pi-quickreview/src/engine/auth.js";
-import { HOME_DEFAULTS, type HomeToolSet } from "../config.js";
+import { HOME_DEFAULTS, sandboxRoot, type HomeToolSet } from "../config.js";
+import type { OnboardAdapters } from "../onboard/engine.js";
+import { openStepMemoryForward } from "../onboard/stepforward.js";
+import { composeAutoReview } from "./autoreview.js";
+import { composeMemory } from "./memory.js";
+import { stepRunner } from "./switchon.js";
 import { locateConfig } from "../homes.js";
 import { piAgentDir } from "../piagentdir.js";
 import {
@@ -210,17 +220,59 @@ export const unbuiltPorts: {
   spend: { totals: notYet },
 };
 
+/** The wizard's adapters for switch-on's steps, over the app root. */
+export function stepAdapters(root: string, configPath: () => string) {
+  return (log: (line: string) => void): OnboardAdapters => ({
+    fetch: (input, init) => fetch(input, init),
+    runner: stepRunner,
+    clock: () => new Date(),
+    host: {
+      nodeVersion: process.version,
+      uid: typeof process.getuid === "function" ? process.getuid() : null,
+      inContainer: existsSync("/.dockerenv"),
+    },
+    paths: { stateDir: join(root, "state"), configPath: configPath() },
+    log,
+    memoryForward: (req) => openStepMemoryForward(req),
+  });
+}
+
 export function realHomeAdapters(o: {
   agentDir: string;
   configPath: () => string;
   runner?: Runner;
+  /** The app root, the compose project of this machine's stack: given, the
+   * auto-review and memory ports read and switch it. */
+  root?: string;
 }): HomeAdapters {
+  const repo = repoPort(o.configPath);
+  const stack =
+    o.root === undefined
+      ? null
+      : {
+          root: o.root,
+          configPath: o.configPath,
+          runner: stepRunner,
+          stepAdapters: stepAdapters(o.root, o.configPath),
+        };
   return {
     login: piLoginPort(o.agentDir),
     github: githubPort(o.runner ?? execRunner),
-    repo: repoPort(o.configPath),
+    repo,
     clock: { now: () => Date.now() },
     ...unbuiltPorts,
+    ...(stack
+      ? {
+          autoReview: composeAutoReview({ ...stack, now: () => Date.now() }),
+          memory: composeMemory({
+            ...stack,
+            repo: async () => {
+              const r = await repo.repo();
+              return r.kind === "known" ? r.value : null;
+            },
+          }),
+        }
+      : {}),
   };
 }
 
@@ -236,6 +288,7 @@ export function homeOptionsFromEnv(env: Readonly<Record<string, string | undefin
     adapters: realHomeAdapters({
       agentDir: piAgentDir(env),
       configPath: () => locateConfig({ env }).path,
+      root: (env["QCR_ROOT"] ?? "").trim() || sandboxRoot(),
     }),
     model,
     tools,

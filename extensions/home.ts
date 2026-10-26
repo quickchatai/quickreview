@@ -12,6 +12,12 @@
 //   open it on GitHub alt+o               o                    home_open_pr
 //   read it all again alt+u               u                    home_refresh
 //   what it shows     —                   —                    home_status
+//   auto-review on/off alt+a              a                    home_auto_review
+//   memory on/off     alt+m               m                    home_memory
+//
+// The two switches ask the person every question in the home (pi's select):
+// a tool starts one but cannot answer it, so the one confirm that turns
+// auto-review on, and with it the go-live, is the person's (invariant 6).
 //
 // f2 or a click focuses the panel for its plain keys, and Esc gives the
 // editor back: the panel never takes the keyboard by itself (nonCapturing).
@@ -31,6 +37,7 @@ import type { HomeToolSet } from "../src/config.js";
 import { HomeModel } from "../src/home/model.js";
 import { HOME_OVERLAY, HomePanel } from "../src/home/panel.js";
 import type { HomeAdapters } from "../src/home/ports.js";
+import type { Ask } from "../src/home/switches.js";
 import { HOME_TOOL_NAMES } from "../src/home/toolnames.js";
 
 type HomeToolName = (typeof HOME_TOOL_NAMES)[number];
@@ -69,6 +76,10 @@ export function createHome(o: HomeOptions): ExtensionFactory {
     let handle: OverlayHandle | undefined;
     let close: (() => void) | undefined;
     let frame = 0;
+    /** The session's UI, for the switches' questions. */
+    let sessionUi: Ask | undefined;
+    const askOf = (ctx: ExtensionContext | undefined): Ask | undefined =>
+      ctx?.hasUI ? ctx.ui : sessionUi;
     const stops: Array<() => void> = [];
     const redraw = (): void => tui?.requestRender();
     const model = new HomeModel({
@@ -90,6 +101,7 @@ export function createHome(o: HomeOptions): ExtensionFactory {
             rows: () => t.terminal.rows,
             unfocus: () => handle?.unfocus(),
             frame: () => frame,
+            ask: () => sessionUi,
           });
         },
         {
@@ -102,6 +114,7 @@ export function createHome(o: HomeOptions): ExtensionFactory {
 
     pi.on("session_start", (_e, ctx) => {
       model.setChatModel(ctx.model?.provider);
+      sessionUi = ctx.hasUI ? ctx.ui : undefined;
       if (ctx.mode === "tui") {
         mount(ctx);
         // the spinner turns only while a read is in flight
@@ -123,11 +136,15 @@ export function createHome(o: HomeOptions): ExtensionFactory {
       close = undefined;
     });
 
-    const key = (id: string, description: string, run: () => unknown): void =>
+    const key = (
+      id: string,
+      description: string,
+      run: (ctx: ExtensionContext | undefined) => unknown,
+    ): void =>
       pi.registerShortcut(id as KeyId, {
         description,
-        handler: () => {
-          void run();
+        handler: (ctx) => {
+          void run(ctx);
         },
       });
     key("alt+j", "quickreview home: next pull request", () => model.move(1));
@@ -135,6 +152,12 @@ export function createHome(o: HomeOptions): ExtensionFactory {
     key("alt+o", "quickreview home: open the pull request on GitHub", () => model.openPr());
     key("alt+u", "quickreview home: read everything again", () => model.refresh());
     key("f2", "quickreview home: focus the panel", () => handle?.focus());
+    key("alt+a", "quickreview home: switch auto-review on or off", (ctx) =>
+      model.switchAutoReview(askOf(ctx)),
+    );
+    key("alt+m", "quickreview home: switch memory on or off", (ctx) =>
+      model.switchMemory(askOf(ctx)),
+    );
 
     // one definition per HOME_TOOL_NAMES entry: a name without one does not compile
     const tools: { [N in HomeToolName]: QcrTool & { name: N } } = {
@@ -187,6 +210,24 @@ export function createHome(o: HomeOptions): ExtensionFactory {
         parameters: { type: "object", properties: { pr: PR_PARAM }, additionalProperties: false },
         execute: async (_id, p) =>
           textResult(await model.openPr(typeof p["pr"] === "number" ? p["pr"] : undefined)),
+      },
+      home_auto_review: {
+        name: "home_auto_review",
+        label: "Home auto-review",
+        description:
+          "Switch auto-review on or off. Switching on checks this machine, then asks the person where it runs, whether to turn memory on too, and for their one confirm; switching off warns them which review is running. Every question is the person's to answer in the home: this tool cannot answer or confirm for them.",
+        parameters: NO_PARAMS,
+        execute: async (_id, _p, _signal, _onUpdate, ctx) =>
+          textResult(await model.switchAutoReview(askOf(ctx))),
+      },
+      home_memory: {
+        name: "home_memory",
+        label: "Home memory",
+        description:
+          "Switch reviewer memory on or off, on its own: auto-review is not touched. The person confirms in the home, after seeing its RAM cost.",
+        parameters: NO_PARAMS,
+        execute: async (_id, _p, _signal, _onUpdate, ctx) =>
+          textResult(await model.switchMemory(askOf(ctx))),
       },
     };
     for (const name of HOME_TOOL_NAMES) registerQcrTool(pi, tools[name]);

@@ -5,7 +5,8 @@
 // hover maps back to a pull request.
 //
 //   ╭─ quickreview ───────────────── owner/name ─╮
-//   │ auto-review, memory + spend, the logins     │
+//   │ auto-review (+ what it picks up), memory +  │
+//   │ spend, the logins                           │
 //   ├─ To review ─────────────────────────── n ─┤
 //   ├─ Reviewed ──────────────────────────── n ─┤
 //   │ (spare rows)                               │
@@ -23,6 +24,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { ago, providerLabel, type HomeModel, type SetupGap } from "./model.js";
 import type { OpenPull, PrReview, Slot } from "./ports.js";
+import { pickUpPhrase, type Ask } from "./switches.js";
 
 type Fg = Parameters<Theme["fg"]>[0];
 
@@ -52,6 +54,9 @@ export interface PanelHost {
   unfocus(): void;
   /** A spinner frame counter. */
   frame(): number;
+  /** How a switch started from a panel key asks the person; absent, the
+   * switch says it cannot ask. */
+  ask?(): Ask | undefined;
 }
 
 const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -150,6 +155,26 @@ export class HomePanel implements Component {
     return `${this.c("accent", this.spin())} ${label} ${this.c("dim", "checking…")}`;
   }
 
+  /** The auto-review row, with the switch's key on the right where the home
+   * can switch it and the row says nothing there. */
+  private autoRow(): [string, string] {
+    const [left, right] = this.autoLine();
+    if (right !== "" || !this.m.canSwitch("autoReview")) return [left, right];
+    const s = this.m.state.autoReview;
+    if (s.kind === "pending") return [left, right];
+    const on = s.kind === "known" && s.value.state !== "off";
+    const key = this.host.focused() ? "a" : "alt+a";
+    return [left, this.c("dim", `${key} ${on ? "switches it off" : "turns it on"}`)];
+  }
+
+  /** What auto-review picks up, when the home knows where to read it. */
+  private triggerRow(): string | null {
+    const t = this.m.state.trigger;
+    if (t === null) return null;
+    if (t.kind === "pending") return this.c("dim", "  picks up … checking");
+    return this.c("dim", `  picks up ${pickUpPhrase(t.kind === "known" ? t.value : null)}`);
+  }
+
   private autoLine(): [string, string] {
     const s = this.m.state.autoReview;
     const c = (k: Fg, t: string): string => this.c(k, t);
@@ -180,7 +205,7 @@ export class HomePanel implements Component {
         ];
       case "paused-login":
         return [
-          `${c("warning", "‖")} Auto-review ${c("warning", "paused")} ${c("muted", "· login expired")}`,
+          `${c("warning", "‖")} Auto-review ${c("warning", "paused")} ${c("muted", `· ${s.value.cause ?? "login expired"}`)}`,
           "",
         ];
       case "broken":
@@ -202,7 +227,7 @@ export class HomePanel implements Component {
             ? `${this.c("success", "●")} Memory ${this.c("success", "on")}`
             : s.value === "starting"
               ? `${this.c("warning", this.spin())} Memory ${this.c("warning", "starting")}`
-              : `${this.c("dim", "○")} Memory ${this.c("muted", "off")}`;
+              : `${this.c("dim", "○")} Memory ${this.c("muted", "off")}${this.memoryCost()}`;
     const sp = this.m.state.spend;
     const right =
       sp.kind === "pending"
@@ -211,6 +236,14 @@ export class HomePanel implements Component {
           ? this.c("dim", "spend unknown")
           : this.c("muted", `${money(sp.value.today)} today · ${money(sp.value.month)} this month`);
     return [left, right];
+  }
+
+  /** Memory's RAM cost and key while it is off, where the home can switch it. */
+  private memoryCost(): string {
+    const control = this.m.memoryControl();
+    if (!control) return "";
+    const key = this.host.focused() ? "m" : "alt+m";
+    return this.c("dim", ` · ${control.ramCost()} · ${key}`);
   }
 
   private loginLine(): [string, string] {
@@ -399,12 +432,14 @@ export class HomePanel implements Component {
     const w = Math.max(40, width);
     this.rowMap.clear();
     const target = Math.max(20, this.host.rows() - EDITOR_ROWS);
-    const [a, aRight] = this.autoLine();
+    const [a, aRight] = this.autoRow();
     const [mem, spend] = this.memLine();
     const [login, tools] = this.loginLine();
+    const picks = this.triggerRow();
     const body = [
       this.top(w),
       this.row(w, a, aRight),
+      ...(picks === null ? [] : [this.row(w, picks)]),
       this.row(w, mem, spend),
       this.row(w, login, tools),
     ];
@@ -439,6 +474,8 @@ export class HomePanel implements Component {
     else if (data === "k" || matchesKey(data, "up")) m.move(-1);
     else if (data === "o") void m.openPr();
     else if (data === "u") void m.refresh();
+    else if (data === "a") void m.switchAutoReview(this.host.ask?.());
+    else if (data === "m") void m.switchMemory(this.host.ask?.());
   }
 
   handleMouse(e: TuiMouseEvent): TuiMouseEventResult | undefined {
