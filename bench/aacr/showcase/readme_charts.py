@@ -10,7 +10,7 @@
 The numbers are the papers' tables, copied here with the table each row comes from, so the
 README's charts and its prose read the same source: AACR-Bench is benchmark.tex Table
 tab:final (QuickReview's row: its frozen build, quickreview.tex Table tab:frozen), Martian is
-benchmark.tex Table tab:martianfinal, Qodo is benchmark.tex Table tab:qodo. The serious-defect
+benchmark.tex Table tab:martianfinal, Qodo is benchmark.tex Table tab:qodo. The high + medium
 counts (bench-hero) are computed from the per-defect credits in data/aacr.json,
 the same runs as tab:final. Every title is computed from the rows. The look is v4's (theme_v4);
 the images carry no repo file names.
@@ -102,8 +102,8 @@ KEYS = {"quickreview": QR, "pi-review": "pi-review panel", "claude-code": "Claud
 
 
 def serious():
-    """Per reviewer of AACR, from data/aacr.json's per-defect credits: high-severity found, serious (high +
-    medium) missed per 100 PRs, and the PRs with a serious defect where every one was found in full."""
+    """Per reviewer of AACR, from data/aacr.json's per-defect credits: high-severity found, high + medium found,
+    and the PRs with a high or medium defect where every one of them was found in full."""
     with open(DATA) as f:
         d = json.load(f)
     high = [x for x in d["defects"] if x["severity"] == "high"]
@@ -112,7 +112,6 @@ def serious():
     for x in ser:
         prs.setdefault(x["pr"], []).append(x)
     rows = {name: {"high": sum(x["credit"][k] for x in high),
-                   "missed": 100 * (len(ser) - sum(x["credit"][k] for x in ser)) / d["cases"],
                    "found": sum(x["credit"][k] for x in ser),
                    "clean": sum(all(x["credit"][k] == 1.0 for x in xs) for xs in prs.values())}
             for k, name in KEYS.items()}
@@ -217,50 +216,43 @@ def fig_qodo(T):
 
 HERO_SOURCE = ("520 defects each verified in the code; one judge (GPT-6 Sol), one run each, a partly found one counts ½. "
                + OTHERS.replace("Other reviewers: all", "Others").replace(" (Claude Opus 5.5)", " (Opus 5.5)")
-               + "\nQuickReview: its frozen build, its last changes mined from its misses on 145 of these PRs; on the 20 "
-                 "kept out, it finds 83% of all defects, the next best 72%.")
-MARGIN = {"high": 2.0, "missed": 2.0, "clean": 2.0}  # never headline a lead under 2 points (or 2 per 100 PRs, 2 PRs)
+               + "\nQuickReview: frozen build on GPT-6.1 Sol, last tuned on misses from 145 of these PRs; on the 20 kept out, "
+                 "it finds 83% of all defects, the next best 72%.")
+MARGIN = 2.0  # never headline a lead under 2 points
 
 
 def fig_hero(T):
-    """Three numbers on serious defects, each over the field it was measured against."""
+    """Three shares of the defects that matter, each over the field it was measured against."""
     S, n_high, n_ser, n_prs, n_cases = serious()
-    def gap(k, sign):  # QuickReview's lead over the next reviewer, in the panel's own unit (points for high)
-        nxt = max(sign * r[k] for n, r in S.items() if n != QR)
-        return (sign * S[QR][k] - nxt) * (100 / n_high if k == "high" else 1)
-    lead = all(gap(k, sg) >= MARGIN[k] for k, sg in (("high", 1), ("missed", -1), ("clean", 1)))
-    p = Page4(T, h=560)
-    p.title("Most high-severity defects found, fewest serious missed" if lead else "Serious defects found and missed")
-    p.metric(f"AACR-Bench · {n_cases} real PRs · serious = the {n_ser} high- and medium-severity defects · "
-             "QuickReview on GPT-6.1 Sol")
-    panels = [  # (key, big number, what it is, the bar's full length, a bar's value label, higher is better)
-        ("high", pct(100 * S[QR]["high"] / n_high), f"of the {n_high} high-severity defects found", n_high,
-         lambda v: pct(100 * v / n_high), True),
-        ("missed", f"{S[QR]['missed']:.1f}", "serious defects missed per 100 PRs",
-         max(r["missed"] for r in S.values()), lambda v: f"{v:.1f}", False),
-        ("clean", f"{S[QR]['clean']} of {n_prs}", "PRs with every serious defect found in full", n_prs,
-         lambda v: f"{v:.0f}", True),
+    panels = [  # (key, out of, big number, what it is)
+        ("high", n_high, None, f"of the {n_high} high-severity defects found"),
+        ("found", n_ser, None, f"of the {n_ser} high + medium defects found"),
+        ("clean", n_prs, f"{S[QR]['clean']} of {n_prs}", "PRs with all high + medium found in full"),
     ]
+    lead = all(100 * (S[QR][k] - max(r[k] for n, r in S.items() if n != QR)) / n >= MARGIN for k, n, _, _ in panels)
+    p = Page4(T, h=560)
+    p.title(f"The highest-performing of {len(S)} AI reviewers tested" if lead else f"{len(S)} AI reviewers tested")
+    p.metric(f"AACR-Bench · {n_cases} real PRs · {n_ser} high- and medium-severity defects, each verified in the code · "
+             "higher is better")
     col, top = 372, 296
-    for i, (k, big, what, vmax, fmt, up) in enumerate(panels):
+    for i, (k, vmax, big, what) in enumerate(panels):
         x0 = 64 + col * i
-        rows = sorted(S.items(), key=lambda kv: -kv[1][k] if up else kv[1][k])
-        nxt = next(r for n, r in rows if n != QR)
-        p.text(x0, 196, big, size=50, weight="bold", color=T["qr"], va="baseline")
+        fmt = (lambda v: f"{v:.0f}") if big else (lambda v, n=vmax: pct(100 * v / n))
+        rows = sorted(S.items(), key=lambda kv: -kv[1][k])
+        nxt = next((n, r) for n, r in rows if n != QR)
+        p.text(x0, 196, big or fmt(S[QR][k]), size=50, weight="bold", color=T["qr"], va="baseline")
         p.text(x0, 232, what, size=13.5, va="baseline")
-        p.text(x0, 258, f"next best: {fmt(nxt[k])} · {'higher' if up else 'lower'} is better", size=12.5,
-               color=T["ink2"], va="baseline")
+        p.text(x0, 258, f"next best: {fmt(nxt[1][k])} ({nxt[0]})", size=12.5, color=T["ink2"], va="baseline")
         pitch = 26
         for j, (name, r) in enumerate(rows):
             y = top + pitch * (j + 0.5)
             ours = name == QR
             ink, wt = (T["ink"], "bold") if ours else (T["ink2"], "normal")
             bx0, bx1 = x0 + 128, x0 + 250
-            if up:
-                theme.bar(p.c, bx0, bx1, y, 14, T["empty"], zorder=2)
+            theme.bar(p.c, bx0, bx1, y, 14, T["empty"], zorder=2)
             theme.bar(p.c, bx0, bx0 + (bx1 - bx0) * r[k] / vmax, y, 14, T["qr"] if ours else T["other"], zorder=3)
             p.text(bx0 - 10, y, "QuickReview" if ours else name, ha="right", size=12, color=ink, weight=wt)
-            p.text((bx1 if up else bx0 + (bx1 - bx0) * r[k] / vmax) + 8, y, fmt(r[k]), size=12, color=ink, weight=wt)
+            p.text(bx1 + 8, y, fmt(r[k]), size=12, color=ink, weight=wt)
     p.source(HERO_SOURCE)
     return p
 

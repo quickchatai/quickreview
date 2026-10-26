@@ -20,14 +20,14 @@ re-derives every candidate from the code** before one review is posted.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/media/bench-hero-dark.png">
-  <img src="docs/media/bench-hero.png" alt="AACR-Bench, 185 real PRs, QuickReview on GPT-6.1 Sol against six other reviewers. High-severity defects found: QuickReview 97%, next best Codex CLI 90%. Serious (high- and medium-severity) defects missed per 100 PRs: QuickReview 7, next best pi-review panel 19.5, worst PR-Agent 59.2. PRs with every serious defect found in full: QuickReview 109 of 122, next best pi-review panel 90.">
+  <img src="docs/media/bench-hero.png" alt="AACR-Bench, 185 real PRs, QuickReview on GPT-6.1 Sol against six other reviewers. High-severity defects found: QuickReview 97%, next best Codex CLI 90%. High- and medium-severity defects found, 235 in all: QuickReview 94%, next best pi-review panel 85%, lowest PR-Agent 53%. PRs with every high- and medium-severity defect found in full: QuickReview 109 of 122, next best pi-review panel 90.">
 </picture>
 
 On 185 real PRs with 520 defects each verified in the code, QuickReview on
 GPT-6.1 Sol finds **97% of the high-severity defects** and **89% of all of
-them**. It misses **7 serious defects per 100 PRs**, where the best of the six
-other reviewers we ran misses 19.5, and on **109 of the 122 PRs** that carry a
-high- or medium-severity defect it finds every one in full. On the same model
+them**. Of the 235 high- and medium-severity defects it finds **94%**, where
+the best of the six other reviewers we ran finds 85%, and on **109 of the 122
+PRs** that carry one it finds every one in full. On the same model
 it also finds more than the model maker's own reviewer: 97% and 89% against
 90% and 55% for Codex CLI on GPT-6.1 Sol, and 94% and 95% against 75% and 60%
 for Claude Code's `/code-review` on Claude Opus 5.5 (40 PRs it was tuned on).
@@ -103,9 +103,9 @@ of them true but minor.
 
 **What it misses.** Of the 235 high- and medium-severity defects,
 QuickReview misses 13, counting a partly found defect as half (10 missed
-outright, 6 found only in part): 7 per 100 PRs. The next best, the pi-review
-panel, misses 36 (19.5 per 100 PRs). On the 20 PRs kept out of its last
-tuning round it misses 2 of 31, the panel 5.
+outright, 6 found only in part). The next best, the pi-review panel, misses
+36. On the 20 PRs kept out of its last tuning round it misses 2 of 31, the
+panel 5.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/media/bench-same-model-dark.png">
