@@ -457,7 +457,7 @@ describe("the first frame (structural, not timed)", () => {
     const first = stripAnsi(h.written.join(""));
     // The top bar says it in short, the board's list in full (wrapped to its
     // width), naming the step the wizard would run next.
-    expect(first).toContain("▲ setup not finished — qcr onboard");
+    expect(first).toContain("▲ setup not finished");
     expect(first).toContain("next:");
     expect(first).toContain("your own account, or a GitHub App");
     const plain = stripAnsi(await board(h));
@@ -949,7 +949,7 @@ describe("connection triage", () => {
     expect(ran).toEqual([]);
     expect(d.kind).toBe("unconfigured");
     expect(d.cause).toBe(
-      '[tui] ssh_host is empty — run `qcr onboard`, or set [tui] target = "local"',
+      `[tui] ssh_host is empty — set it to the VM's ssh alias, or set [tui] target = "local"`,
     );
     expect(diagnosisLine(d)).not.toMatch(/ssh -v/);
     // The runner refuses an empty host the same way, without spawning.

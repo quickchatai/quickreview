@@ -1,5 +1,5 @@
 // Is onboarding finished? Read from the checklist file the wizard keeps
-// (src/onboard/engine.ts), so a TUI opened halfway through `qcr onboard` says
+// (src/onboard/engine.ts), so a TUI opened halfway through the wizard says
 // so on its first frame instead of troubleshooting a daemon nobody has started
 // yet.
 //
@@ -19,7 +19,7 @@ export interface SetupState {
 
 /** The one sentence every surface uses. */
 export function setupLine(s: SetupState): string {
-  return `setup not finished — run \`qcr onboard\` to continue${s.next ? ` (next: ${s.next})` : ""}`;
+  return `setup not finished — the setup wizard's checklist is not complete${s.next ? ` (next: ${s.next})` : ""}`;
 }
 
 /** Complete now: finished once and not reopened since (engine.ts `completeNow`). */

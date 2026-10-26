@@ -12,7 +12,7 @@ once (`deploy.sh provision`, this playbook), which installs a thin updater,
 `qcr-update`, and its run spec; every deploy after that is
 `deploy.sh release <version>`, which runs `ssh vm sudo qcr-update ...`.
 
-> **`qcr onboard` drives this route for you.** The wizard's
+> **The setup wizard's steps drive this route.** The wizard's
 > **topology** step offers it as one of two first-class answers — advertised as
 > the always-on recommendation, because a reviewer that is asleep reviews
 > nothing — then checks your ssh alias and agent *before* anything is built
@@ -40,7 +40,7 @@ having no built-in permission system.
 
 ## Prerequisites (once, manual)
 
-Items 2–4 are what `qcr onboard` fills in for you on this route; item 1 is
+Items 2–4 are what the setup wizard fills in for you on this route; item 1 is
 yours either way — the wizard never creates a machine.
 
 1. **A VM you can reach over ssh by an alias**, with passwordless sudo for your
@@ -315,7 +315,7 @@ ssh <vm> docker exec quickreview-sandbox tmux ls
 ssh <vm> curl -sS http://127.0.0.1:8787/health     # loopback-only by design
 ```
 
-That is the same layering `qcr onboard`'s verification step runs — containers,
+That is the same layering the setup wizard's verification step runs — containers,
 then the health endpoint, then GitHub's own webhook delivery log — and the
 order matters: a container that is not up cannot answer a health probe, and a
 daemon that is not answering cannot accept a delivery. While the tunnel is up

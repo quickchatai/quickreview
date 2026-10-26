@@ -1,12 +1,12 @@
-// `qcr onboard` mechanics: launch pi at the pinned version via npx
-// (pi stays a non-dependency — this works from a bare clone with only Node and
-// the checkout), hand it the onboarding system prompt + exactly one onboarding
-// extension + a restricted built-in tool set, and on exit either exec the TUI
-// (checklist complete) or say how to resume.
+// The onboarding wizard's pi session: pi at the pinned version via npx (pi
+// stays a non-dependency, so this works from a bare clone with only Node and
+// the checkout), with the onboarding system prompt, exactly one onboarding
+// extension and a restricted built-in tool set.
 //
-// Everything effectful is injected (spawn, completion read, log), so tests
-// drive the whole flow with fakes; src/cli.ts cmdOnboard is the one real
-// assembly.
+// `qcr onboard`, the door that launched it, is gone: a bare `qcr` opens the
+// home, whose setup checklist (src/home/setup.ts) covers a first run. The
+// wizard's steps stay, for the home's Advanced route (the GitHub App, ingress,
+// a remote server).
 import { join } from "node:path";
 import { defaultSteps } from "./steps/index.js";
 import { onboardingToolAllowlist } from "./toolnames.js";
@@ -62,42 +62,4 @@ export function onboardingPiArgv(
     "--session-dir",
     onboardingSessionDir(root),
   ];
-}
-
-export interface OnboardRunDeps {
-  pin: PiPin;
-  root: string;
-  /** Spawn with stdio inherited; resolves with the exit code (a spawn failure
-   * is a nonzero code, never a throw). */
-  spawn(cmd: string, args: string[]): Promise<number>;
-  /** Does the checklist file say every step verified? (engine.checklistComplete
-   * over state/ — the finish tool only sets the flag after a green re-verify.) */
-  isComplete(): boolean;
-  log(line: string): void;
-  /** Compiled CLI path for the TUI handoff (dist/src/cli.js). */
-  cliPath: string;
-  /** Node binary for the handoff; defaults to the running one. */
-  nodeBin?: string;
-}
-
-/**
- * Run the onboarding session and handle the handoff:
- *   - checklist complete after pi exits ⇒ open the TUI (same stdio);
- *   - otherwise print how to resume — `qcr onboard` again re-verifies
- *     completed steps and continues at the first unfinished one.
- */
-export async function runOnboard(deps: OnboardRunDeps): Promise<number> {
-  const argv = onboardingPiArgv(deps.pin, deps.root);
-  deps.log(
-    `onboarding: launching pi ${deps.pin.package}@${deps.pin.version} via npx (first run downloads it — give it a moment)`,
-  );
-  const code = await deps.spawn(argv[0]!, argv.slice(1));
-  if (deps.isComplete()) {
-    deps.log("onboarding: checklist verified complete — opening the TUI.");
-    return deps.spawn(deps.nodeBin ?? process.execPath, [deps.cliPath, "tui"]);
-  }
-  deps.log(
-    "onboarding: not finished yet. Run `qcr onboard` again to resume — completed steps are re-verified, not repeated.",
-  );
-  return code;
 }

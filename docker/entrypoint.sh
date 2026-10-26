@@ -9,6 +9,9 @@
 #   daemon     the always-on bot: dist/src/wire.js under a tmux server.
 #   companion  the pi companion container: a tmux server, kept alive.
 #   tui        the operator TUI (dist/src/cli.js tui).
+#   home       the home: the image's pi with the plugin and the home's panel
+#              (dist/src/cli.js home), on the login volume's pi home, so its
+#              device login lands where every later call reads it.
 #   login      pi's own /login, typed for the user (scanbox loginInPi).
 #   mint       a GitHub App installation token on stdout (scripts/mint-token.sh).
 #   install    the host wrapper, pinned to this image (scripts/install-wrapper.sh):
@@ -62,8 +65,8 @@
 # the cli mode does. Either way the daemon opens the directories the model's
 # scripts write to its group (share_tool_dirs) and nothing else: the secrets
 # mount and pi's login stay unreadable to the tool uid.
-# The login and tui modes run no engine and hold no GitHub token: they are
-# not separated. pi holds its own OAuth token as the tools' uid, which no
+# The login, home and tui modes run no engine and hold no GitHub token: they
+# are not separated. pi holds its own OAuth token as the tools' uid, which no
 # split hides from the tools it runs; the split protects the GitHub token.
 #
 # The login volume outlives every uid. `login` runs as the caller and
@@ -105,7 +108,7 @@ LOGIN_GID="${QCR_LOGIN_GID:-4747}"
 mode=cli
 if [ "$#" -gt 0 ]; then
   case "$1" in
-    install | mint | cli | daemon | worker | tui | companion | login)
+    install | mint | cli | daemon | worker | tui | companion | login | home)
       mode="$1"
       shift
       ;;
@@ -665,6 +668,17 @@ mode_login() {
   exit "$rc"
 }
 
+mode_home() {
+  # The image's one pi, as a bare `qcr` opens it (src/home/launch.ts), on
+  # pi's agent dir in this HOME: the login volume. Not exec: a device login
+  # made in the home is shared with the login group once pi has written it,
+  # however the session ended, as the login mode shares its own.
+  local rc=0
+  node "$APP/dist/src/cli.js" home "$@" || rc=$?
+  share_login
+  exit "$rc"
+}
+
 # The handover between pi's /login and the bot container's login refresher
 #. The refresher holds an exclusive flock on <agent>/auth.json.lock for
 # its whole life: when that lock is held, a refresher is running, and a login
@@ -785,6 +799,10 @@ case "$mode" in
   tui)
     tui_identity
     exec node "$APP/dist/src/cli.js" tui "$@"
+    ;;
+  home)
+    QCR_PI_TRUST_DIR="$APP" provision_pi_settings >&2
+    mode_home "$@"
     ;;
   login)
     QCR_PI_TRUST_DIR="$APP" provision_pi_settings >&2

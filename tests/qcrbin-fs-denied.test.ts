@@ -40,14 +40,14 @@ describe("the bin's top-level error path", () => {
   // fresh install's first config-reading verb prints a stack and this fails.
   it("turns a missing config into one line on stderr and exit 1", async () => {
     thrown.err = new MissingConfigError(
-      "no config at /h/.config/qcr/default/config.toml — the install's config home holds none (`qcr onboard` writes one)",
+      "no config at /h/.config/qcr/default/config.toml — the install's config home holds none (a bare `qcr` writes one when you choose a repository)",
     );
     const errs: string[] = [];
     vi.spyOn(console, "error").mockImplementation((l: unknown) => void errs.push(String(l)));
     await runBin(["regression"]);
     expect(process.exitCode).toBe(1);
     expect(errs).toEqual([
-      "qcr regression: no config at /h/.config/qcr/default/config.toml — the install's config home holds none (`qcr onboard` writes one)",
+      "qcr regression: no config at /h/.config/qcr/default/config.toml — the install's config home holds none (a bare `qcr` writes one when you choose a repository)",
     ]);
   });
 

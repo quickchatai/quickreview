@@ -584,7 +584,7 @@ describe("comment-preserving patch", () => {
     expect(line).toContain('repo = "acme/web-app"');
     expect(line).toContain("the repo to review");
     expect(line).not.toContain("← FILL");
-    expect(line).toContain("filled by qcr onboard:");
+    expect(line).toContain("filled by qcr:");
   });
 
   it("leaves no ← FILL marker on any line it filled", async () => {
@@ -649,7 +649,7 @@ describe("comment-preserving patch", () => {
     });
     expect(splitTail("'''hi''''' # c")).toEqual({ value: "'''hi'''''", gap: " ", comment: "# c" });
     expect(rewriteFillMarker("# ← FILL (3): your GitHub App slug")).toBe(
-      "# filled by qcr onboard: your GitHub App slug",
+      "# filled by qcr: your GitHub App slug",
     );
     expect(rewriteFillMarker("# nothing to rewrite")).toBe("# nothing to rewrite");
   });

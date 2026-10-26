@@ -88,11 +88,11 @@ describe("resolveTuiRoute — the template config before onboarding has filled i
     expect(r.cfg.target).toBe("ssh");
     expect(r.unconfigured).toBe(EMPTY_SSH_HOST);
     expect(EMPTY_SSH_HOST).toBe(
-      '[tui] ssh_host is empty — run `qcr onboard`, or set [tui] target = "local"',
+      `[tui] ssh_host is empty — set it to the VM's ssh alias, or set [tui] target = "local"`,
     );
     // A recorded VM route is told where its alias comes from.
     const vm = resolveTuiRoute(TEMPLATE, facts({ checklist: checklist({ topology: "vm" }) }));
-    expect(vm.unconfigured).toMatch(/VM route's ssh alias is written by onboarding/);
+    expect(vm.unconfigured).toMatch(/set it to the VM's ssh alias in config\.toml/);
   });
 
   it("never touches a configured ssh route", () => {
@@ -188,7 +188,7 @@ describe("the setup banner", () => {
       // The GitHub step (order 33) comes before the config fill.
       expect(s?.next).toBe(githubAccountStep().title);
       expect(setupLine(s!)).toBe(
-        `setup not finished — run \`qcr onboard\` to continue (next: ${githubAccountStep().title})`,
+        `setup not finished — the setup wizard's checklist is not complete (next: ${githubAccountStep().title})`,
       );
       const after = await setupStateOf(
         checklist({ topology: "local" }, ["preflight", "topology", "llm_auth", "github_account"]),
@@ -201,11 +201,11 @@ describe("the setup banner", () => {
     const conn = {
       kind: "unconfigured" as const,
       cause: EMPTY_SSH_HOST,
-      remedy: "qcr onboard",
+      remedy: "set [tui] ssh_host in config.toml",
     };
     const lines = unknownSourceLines(conn, 200, { next: "Interview" }).map(stripAnsi);
     expect(lines.join("\n")).toContain(
-      "setup not finished — run `qcr onboard` to continue (next: Interview)",
+      "setup not finished — the setup wizard's checklist is not complete (next: Interview)",
     );
     expect(lines.join("\n")).not.toMatch(/ssh|run this:/);
     // Unknown stays unknown: the count line is still the honest one.

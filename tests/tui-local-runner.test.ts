@@ -278,7 +278,7 @@ describe("an EMPTY ssh_host never reaches ssh", () => {
     const res = await realSshRunner("", ["cat", "/opt/quickreview/state/status.json"]);
     expect(res).toMatchObject({ ok: false, code: null });
     expect(res.stderr).toBe(
-      '[tui] ssh_host is empty — run `qcr onboard`, or set [tui] target = "local"',
+      `[tui] ssh_host is empty — set it to the VM's ssh alias, or set [tui] target = "local"`,
     );
     expect(spawnMock).not.toHaveBeenCalled();
   });

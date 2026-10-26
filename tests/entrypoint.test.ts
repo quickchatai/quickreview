@@ -44,7 +44,17 @@ const read = (rel: string): string => readFileSync(join(root, rel), "utf8");
 const cfg = parseConfig(read("config.example.toml"));
 const PKG = cfg.pi.package;
 const VERSION = cfg.pi.version;
-const MODES = ["install", "mint", "cli", "daemon", "worker", "tui", "companion", "login"] as const;
+const MODES = [
+  "install",
+  "mint",
+  "cli",
+  "daemon",
+  "worker",
+  "tui",
+  "companion",
+  "login",
+  "home",
+] as const;
 
 interface Rig {
   dir: string;
@@ -241,6 +251,34 @@ describe("dispatch", () => {
       'tmux new-session -d -s "$s" /opt/qcr/node_modules/.bin/pi --no-approve ||',
     );
     expect(() => loginInPi(undefined, "pi; rm -rf /")).toThrow(/plain path/);
+  });
+});
+
+// The home: a bare `qcr` on an image-only install (scripts/qcr-host.sh runs
+// this mode with the login volume at pi's agent dir).
+describe("home mode", () => {
+  it("opens the home through the cli's home verb, unsplit, with pi's exit code", () => {
+    const r = rig();
+    put(
+      join(r.app, "dist/src/cli.js"),
+      `console.log(JSON.stringify({ argv: process.argv.slice(2), uid: process.env.QCR_TOOL_UID ?? null, req: process.env.QCR_TOOL_UID_REQUIRED ?? null }));\nprocess.exitCode = 3;\n`,
+    );
+    const out = run(r, ["home"]);
+    expect(out.status, out.stderr).toBe(3);
+    expect(JSON.parse(out.stdout)).toEqual({ argv: ["home"], uid: null, req: null });
+  });
+
+  // MUTATION: exec the cli in mode_home (no share_login after it) — this fails.
+  it("shares a login the home's device login wrote with the login group, as the login mode does", () => {
+    const r = rig();
+    const auth = join(r.home, ".pi", "agent", "auth.json");
+    put(
+      join(r.app, "dist/src/cli.js"),
+      `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(auth)}, "{}", { mode: 0o600 });\nconsole.log("{}");\n`,
+    );
+    const out = run(r, ["home"]);
+    expect(out.status, out.stderr).toBe(0);
+    expect(statSync(auth).mode & 0o777).toBe(0o660);
   });
 });
 
@@ -585,6 +623,7 @@ describe("per-call modes register no bash-guard (the uid split is checked below)
   it.each([
     ["cli", ["version"]],
     ["login", ["login"]],
+    ["home", ["home"]],
   ] as const)("%s registers only the built-in disables", (_name, args) => {
     const r = rig();
     expect(run(r, [...args]).status).toBe(0);

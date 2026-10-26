@@ -109,7 +109,7 @@ export function resolveTuiRoute(file: TuiConfig, facts: RouteFacts): TuiRoute {
       };
       notes.push(
         `[tui] target is "ssh" with no ssh_host — reading the local compose stack in ${facts.projectDir} instead ` +
-          '(run `qcr onboard`, or set [tui] target = "local", to make it explicit)',
+          '(set [tui] target = "local" to make it explicit)',
       );
     } else {
       return {
@@ -117,7 +117,7 @@ export function resolveTuiRoute(file: TuiConfig, facts: RouteFacts): TuiRoute {
         notes,
         unconfigured:
           topology === "vm"
-            ? "[tui] ssh_host is empty — the VM route's ssh alias is written by onboarding: run `qcr onboard`"
+            ? "[tui] ssh_host is empty — set it to the VM's ssh alias in config.toml"
             : EMPTY_SSH_HOST,
       };
     }

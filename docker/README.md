@@ -6,7 +6,7 @@ repo-root `docker-compose.yml` is the whole stack, and the release image
 carries a copy of it. The Ansible route (`deploy/ansible/`) remains the path
 for a managed VM; both run the same daemon.
 
-> **`qcr onboard` drives this route for you.** The wizard's **topology** step
+> **The setup wizard's steps drive this route.** The wizard's **topology** step
 > offers it as one of two first-class answers — "this computer", the zero-server
 > way to run QuickReview — and then does everything below: it captures your uid,
 > writes the version pin, `QCR_UID` and `COMPOSE_PROFILES` into the project

@@ -6,10 +6,11 @@
 # supply are marked "← FILL (n)" — grep for FILL. Flip dry_run to false only
 # as a deliberate cutover act, never as part of setup.
 #
-# YOU DO NOT HAVE TO FILL THIS BY HAND: `scripts/qcr onboard` interviews you
-# for the few values only you can answer, derives the rest, and patches this
-# file in place — every comment survives, and a re-run edits only what changed.
-# It never writes dry_run in either direction; going live is its own explicit
+# YOU DO NOT HAVE TO FILL THIS BY HAND: a bare `qcr` (the home) writes the
+# repository you choose and its defaults, and the setup wizard's steps
+# interview you for the rest, derive what they can, and patch this file in
+# place — every comment survives, and a re-run edits only what changed.
+# Neither writes dry_run in either direction; going live is its own explicit
 # step. See docs/onboarding.md.
 # ONE mutation class is exempt and executes for real even here: the App
 # re-pointing its OWN webhook URL (see [ingress] below) — it can never touch
@@ -286,7 +287,7 @@ small_diff_lines = 150
 # EMPTY ssh_host), the TUI never runs `ssh ""`: on a compose project (the
 # checklist recorded the local topology, or the project .env pins
 # QCR_VERSION) it reads the local stack and says so once; otherwise every
-# surface says "ssh_host is empty — run qcr onboard".
+# surface says "ssh_host is empty — set it to the VM's ssh alias".
 target = "ssh"
 ssh_host = ""                                # ← FILL (7): ssh alias of the VM running the container
                                              #   (leave "" when target = "local" — it is unused)
@@ -904,7 +905,7 @@ extra_vendored_segments = []   # extra third-party markers (case-insensitive)
 # whatever — the system BEHAVES exactly as a build without the feature.
 # (The placeholder that renders empty leaves a blank line in the prompt, like
 # the sibling notes beside it.)
-# `qcr onboard`'s escalation step writes this section.
+# The setup wizard's escalation step writes this section.
 #
 # The configuration cannot be half-done: `enabled = true` with no `targets`,
 # or a rule pointing at a login that is not a target, or a rule that declares
