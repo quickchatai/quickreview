@@ -70,7 +70,7 @@ export function noLoginHint(provider: string, keyed: readonly string[]): string 
       : "";
   return (
     `the review runs on ${provider}, and this pi has no login for it. ` +
-    `Run /login ${provider} in pi, then /review again.${keys}`
+    `Run /login ${provider} in pi, then /qcr-review again.${keys}`
   );
 }
 
@@ -106,7 +106,7 @@ export async function borrowLogin(o: {
       } catch (err) {
         return {
           ok: false,
-          error: `pi could not refresh your ${p} login (${err instanceof Error ? err.message : String(err)}). Run /login ${p} in pi, then /review again.`,
+          error: `pi could not refresh your ${p} login (${err instanceof Error ? err.message : String(err)}). Run /login ${p} in pi, then /qcr-review again.`,
         };
       }
       logins = o.host.logins();
@@ -114,7 +114,7 @@ export async function borrowLogin(o: {
       if (after?.type !== "oauth" || after.expires === null || after.expires < now() + want)
         return {
           ok: false,
-          error: `your ${p} login does not last this review's ${Math.round(o.needMs / 60_000)} minutes even after pi refreshed it. Run /login ${p} in pi, then /review again.`,
+          error: `your ${p} login does not last this review's ${Math.round(o.needMs / 60_000)} minutes even after pi refreshed it. Run /login ${p} in pi, then /qcr-review again.`,
         };
       refreshed.push(p);
       continue;

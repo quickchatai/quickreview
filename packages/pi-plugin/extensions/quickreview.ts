@@ -1,7 +1,16 @@
-// The QuickReview pi plugin: /review, /scan, /qcr-setup and /selfimprove in a
-// user's own pi. A factory over its config (the host entry,
+// The QuickReview pi plugin: /qcr-review, /qcr-scan and /qcr-setup in a
+// user's own pi, each also shipped as a skill of the same name (the
+// package's skills/). A factory over its config (the host entry,
 // src/plugin/index.ts, reads the process's env and home once and hands them
 // in); the commands themselves are src/plugin/.
+//
+// The names are namespaced because pi's command namespace is shared with
+// every other extension: the unprefixed /review, /scan and /selfimprove are
+// gone (ADR 0001), and /selfimprove is the app's (its own pi, `qcr pi`).
+//
+// /qcr-review runs in the background: the command returns at once, one
+// review runs per session, and the session's end stops it. /qcr-scan and
+// /qcr-setup run in the foreground, one at a time.
 //
 // At load the running pi's VERSION is checked against the range the package
 // declares (src/plugin/versiongate.ts). Outside it the plugin registers no
@@ -20,9 +29,16 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loginSummary, type LoginSummary } from "../src/engine/auth.js";
 import type { HostAuth } from "../src/plugin/login.js";
-import { REVIEW_MESSAGE, runReviewCommand } from "../src/plugin/review.js";
-import { runScanCommand, runSelfImproveCommand } from "../src/plugin/scan.js";
+import {
+  REVIEW_DEPS,
+  REVIEW_MESSAGE,
+  ReviewSlot,
+  startReviewCommand,
+  type ReviewCommandDeps,
+} from "../src/plugin/review.js";
+import { runScanCommand } from "../src/plugin/scan.js";
 import type { PluginHost, Runner, SessionUi } from "../src/plugin/session.js";
+import { readQuickReviewSettings, type QuickReviewSettings } from "../src/plugin/settings.js";
 import { runSetupCommand } from "../src/plugin/setup.js";
 import { declaredPiRange, piGate } from "../src/plugin/versiongate.js";
 
@@ -35,17 +51,19 @@ export interface QuickReviewConfig {
   runner: Runner;
   /** Standard output (pi's print mode shows a command's result there). */
   print: (text: string) => void;
-  /** Test seams: the running pi's version, its agent dir, the range. */
+  /** Test seams: the running pi's version, its agent dir, the range, the
+   * review's core. */
   piVersion?: string;
   agentDir?: string;
   range?: string;
+  review?: ReviewCommandDeps;
 }
 
-/** The commands, in the order /qcr-setup names them. */
-export const QUICKREVIEW_COMMANDS = ["review", "scan", "qcr-setup", "selfimprove"] as const;
+/** The commands, each also a skill of the same name (skills/<name>/SKILL.md). */
+export const QUICKREVIEW_COMMANDS = ["qcr-review", "qcr-scan", "qcr-setup"] as const;
 
 /** The host pi's auth, by the shape the plugin asks of it. */
-function hostAuth(ctx: ExtensionCommandContext, agentDir: string): HostAuth {
+export function hostAuth(ctx: ExtensionCommandContext, agentDir: string): HostAuth {
   const registry = ctx.modelRegistry;
   return {
     logins(): LoginSummary {
@@ -80,7 +98,8 @@ function hostAuth(ctx: ExtensionCommandContext, agentDir: string): HostAuth {
 /** Is `data` the Esc key, as the terminal sends it? */
 const isEscape = (data: string): boolean => data === "\x1b" || data === "\x1b[27u";
 
-function sessionUi(
+/** The session's ways to reach the person, from a command's context. */
+export function sessionUi(
   pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
   print: (t: string) => void,
@@ -102,8 +121,13 @@ function sessionUi(
             return { consume: true };
           })
         : () => {},
+    // Shown, never a turn of its own: while the agent streams, the message
+    // waits for the turn to end instead of steering it.
     show: (markdown, details) =>
-      pi.sendMessage({ customType: REVIEW_MESSAGE, content: markdown, display: true, details }),
+      pi.sendMessage(
+        { customType: REVIEW_MESSAGE, content: markdown, display: true, details },
+        { triggerTurn: false },
+      ),
     tellAgent: (text) =>
       ctx.isIdle() ? pi.sendUserMessage(text) : pi.sendUserMessage(text, { deliverAs: "followUp" }),
     print,
@@ -131,9 +155,35 @@ export function createQuickReview(config: QuickReviewConfig): (pi: ExtensionAPI)
       if (shutdown.signal.aborted) shutdown = new AbortController();
     });
     pi.on("session_shutdown", () => shutdown.abort());
+    const hostOf = (ctx: ExtensionCommandContext): PluginHost => {
+      const agentDir = config.agentDir ?? getAgentDir();
+      return {
+        cwd: ctx.cwd,
+        env: config.env,
+        home: config.home,
+        piVersion: version,
+        agentDir,
+        auth: hostAuth(ctx, agentDir),
+        runner: config.runner,
+        shutdown: shutdown.signal,
+      };
+    };
+    // The person's own defaults, as pi's settings hold them now.
+    const settings = (ui: SessionUi): QuickReviewSettings => {
+      let all: unknown;
+      try {
+        all = pi.getSettings();
+      } catch {
+        all = undefined;
+      }
+      const read = readQuickReviewSettings(all);
+      for (const w of read.warnings) ui.notify(w, "warning");
+      return read.settings;
+    };
+    // /qcr-scan and /qcr-setup: in the foreground, one at a time.
     let busy = false;
     const command = (
-      name: (typeof QUICKREVIEW_COMMANDS)[number],
+      name: Exclude<(typeof QUICKREVIEW_COMMANDS)[number], "qcr-review">,
       description: string,
       run: (args: string, host: PluginHost, ui: SessionUi) => Promise<void>,
     ): void =>
@@ -146,40 +196,33 @@ export function createQuickReview(config: QuickReviewConfig): (pi: ExtensionAPI)
           }
           busy = true;
           try {
-            const agentDir = config.agentDir ?? getAgentDir();
-            const host: PluginHost = {
-              cwd: ctx.cwd,
-              env: config.env,
-              home: config.home,
-              piVersion: version,
-              agentDir,
-              auth: hostAuth(ctx, agentDir),
-              runner: config.runner,
-              shutdown: shutdown.signal,
-            };
-            await run(args.trim(), host, sessionUi(pi, ctx, config.print));
+            await run(args.trim(), hostOf(ctx), sessionUi(pi, ctx, config.print));
           } finally {
             busy = false;
           }
         },
       });
+    // /qcr-review: in the background, one review at a time in this session.
+    const reviews = new ReviewSlot();
+    pi.registerCommand("qcr-review", {
+      description:
+        "QuickReview: review this branch with its uncommitted changes, a PR, a branch or --uncommitted, in the background ([quick|full|security] first; --preview prices it, --stop stops it)",
+      handler: async (args, ctx) => {
+        const ui = sessionUi(pi, ctx, config.print);
+        await startReviewCommand(args.trim(), hostOf(ctx), ui, {
+          slot: reviews,
+          deps: config.review ?? REVIEW_DEPS,
+          settings: settings(ui),
+        });
+      },
+    });
     command(
-      "review",
-      "QuickReview: review a PR, this branch or the uncommitted tree (--preview prices it)",
-      runReviewCommand,
-    );
-    command(
-      "scan",
+      "qcr-scan",
       "QuickReview: scan the whole repo (needs the qcr CLI; --sandbox docker to sandbox it)",
       runScanCommand,
     );
     command("qcr-setup", "QuickReview: check what the plugin needs, install qcr", (_a, host, ui) =>
       runSetupCommand(host, ui, { range }),
-    );
-    command(
-      "selfimprove",
-      "QuickReview: scan this repo, then have this session's agent fix the findings",
-      runSelfImproveCommand,
     );
   };
 }

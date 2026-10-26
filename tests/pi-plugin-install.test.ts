@@ -5,15 +5,15 @@
 // real pi in rpc mode. Offline: the one dependency comes from this checkout's
 // node_modules as a tarball, and pi runs with PI_OFFLINE. No model is called.
 //
-// What it holds:
-//   - the tarball has no prompts/, skills/, themes/ or extensions/ at its
-//     root, so pi's conventional discovery finds nothing but the manifest's
-//     one extension; the seeds ship under assets/ only;
-//   - pi loads exactly the four commands, from the installed package, and no
-//     prompt template or skill at all;
+// What it holds (the nesting fence: the plugin alone, with no app):
+//   - the tarball has no prompts/, themes/ or extensions/ at its root, so
+//     pi's conventional discovery finds nothing but the manifest's one
+//     extension and its skills/; the seeds ship under assets/ only;
+//   - pi loads exactly the three qcr- commands and a skill of each name, from
+//     the installed package, and no prompt template at all;
 //   - the installed package carries no pi of its own, and the core finds its
 //     data and its extensions inside itself (never a checkout);
-//   - /review --preview runs end to end and answers in the session.
+//   - /qcr-review --preview runs end to end and answers in the session.
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -31,7 +31,8 @@ const PI = join(
   "cli.js",
 );
 const SCRATCH = join(ROOT, "node_modules", ".cache", `pi-plugin-install-${process.pid}`);
-const COMMANDS = ["qcr-setup", "review", "scan", "selfimprove"];
+const COMMANDS = ["qcr-review", "qcr-scan", "qcr-setup"];
+const SKILLS = COMMANDS.map((c) => `skill:${c}`);
 
 let tarball = "";
 let installed = "";
@@ -122,10 +123,18 @@ afterAll(() => rmSync(SCRATCH, { recursive: true, force: true }));
 
 describe("the packed plugin, installed into a fresh pi", () => {
   // MUTATION: ship prompts/ at the package root — this fails.
-  it("carries nothing pi would discover by convention, and its data under assets/", () => {
+  it("carries nothing pi would discover by convention but its skills, and its data under assets/", () => {
     const entries = run("tar", ["tzf", tarball], SCRATCH).trim().split("\n");
     const top = new Set(entries.map((e) => e.split("/")[1]));
-    expect([...top].sort()).toEqual(["LICENSE", "README.md", "assets", "dist", "package.json"]);
+    expect([...top].sort()).toEqual([
+      "LICENSE",
+      "README.md",
+      "assets",
+      "dist",
+      "package.json",
+      "skills",
+    ]);
+    for (const c of COMMANDS) expect(entries).toContain(`package/skills/${c}/SKILL.md`);
     expect(entries).toContain("package/assets/agents/pass-baseline.md");
     expect(entries).toContain("package/assets/seed-manifest.json");
     expect(entries).toContain("package/dist/src/plugin/index.js");
@@ -161,8 +170,9 @@ describe("the packed plugin, installed into a fresh pi", () => {
     }
   });
 
-  // MUTATION: list a skills/ directory in the manifest — this fails.
-  it("loads exactly the four commands from the package, and no prompt or skill", async () => {
+  // MUTATION: register "review" beside "qcr-review", or drop a skill from
+  // the manifest — this fails.
+  it("loads exactly the three commands and a skill of each name from the package, and no prompt", async () => {
     const { lines, stderr } = await rpc(SCRATCH, [{ id: "c", type: "get_commands" }], (l) =>
       l.some((x) => x["id"] === "c"),
     );
@@ -178,8 +188,20 @@ describe("the packed plugin, installed into a fresh pi", () => {
         c.sourceInfo.path.startsWith(realpathSync(installed)) ||
         c.sourceInfo.path.startsWith(installed),
     );
-    expect(ours.map((c) => c.name).sort()).toEqual(COMMANDS);
-    expect(commands.filter((c) => c.source !== "extension")).toEqual([]);
+    expect(
+      ours
+        .filter((c) => c.source === "extension")
+        .map((c) => c.name)
+        .sort(),
+    ).toEqual(COMMANDS);
+    expect(
+      ours
+        .filter((c) => c.source === "skill")
+        .map((c) => c.name)
+        .sort(),
+    ).toEqual(SKILLS);
+    expect(commands.filter((c) => c.source !== "extension" && c.source !== "skill")).toEqual([]);
+    expect(commands.filter((c) => c.source === "skill" && !ours.includes(c))).toEqual([]);
     expect(
       commands
         .filter((c) => c.source === "extension" && !ours.includes(c))
@@ -191,7 +213,7 @@ describe("the packed plugin, installed into a fresh pi", () => {
     );
   });
 
-  it("answers /review --preview in the session, offline", async () => {
+  it("answers /qcr-review --preview in the session, offline", async () => {
     const repo = join(SCRATCH, "repo");
     mkdirSync(repo, { recursive: true });
     const git = (...a: string[]): string =>
@@ -208,7 +230,7 @@ describe("the packed plugin, installed into a fresh pi", () => {
     git("commit", "-q", "-m", "add");
     const { lines, stderr } = await rpc(
       repo,
-      [{ id: "p", type: "prompt", message: "/review --preview" }],
+      [{ id: "p", type: "prompt", message: "/qcr-review --preview" }],
       (l) => l.some((x) => x["id"] === "p"),
     );
     const shown = lines.filter(

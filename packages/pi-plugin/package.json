@@ -2,7 +2,7 @@
   "name": "@quickchatai/pi-quickreview",
   "version": "1.2.0",
   "private": false,
-  "description": "QuickReview for pi: /review (a PR, the branch or the uncommitted tree), /scan, /selfimprove and /qcr-setup in your own pi session, on the same review core the QuickReview bot runs",
+  "description": "QuickReview for pi: /qcr-review (this branch, a PR, a branch or the uncommitted tree, in the background), /qcr-scan and /qcr-setup in your own pi session, each also a skill, on the same review core the QuickReview bot runs",
   "keywords": [
     "pi-package",
     "pi",
@@ -34,13 +34,17 @@
   "files": [
     "dist",
     "assets",
+    "skills",
     "README.md",
     "LICENSE"
   ],
-  "//pi": "pi loads exactly this: the one extension below. No prompts/, skills/ or themes/ directory exists at the package root (the frozen seeds ship under assets/), so pi's conventional discovery finds nothing else; tests/pi-plugin-install.test.ts proves it on the packed tarball.",
+  "//pi": "pi loads exactly this: the one extension and the skills/ directory below (one skill per command). No prompts/ or themes/ directory exists at the package root (the frozen seeds ship under assets/), so pi's conventional discovery finds nothing else; tests/pi-plugin-install.test.ts proves it on the packed tarball.",
   "pi": {
     "extensions": [
       "./dist/src/plugin/index.js"
+    ],
+    "skills": [
+      "./skills"
     ]
   },
   "scripts": {
