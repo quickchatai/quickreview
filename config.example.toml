@@ -367,6 +367,19 @@ session_dir = "state/pi-sessions"
 # lens_cache_stagger_ms = 2500
 # lens_pass_deadline_min = 8
 
+[home]
+# The home: a bare `qcr` opens the app's own pinned pi, on your own pi login
+# ($PI_CODING_AGENT_DIR, default ~/.pi/agent), with a panel of the
+# repository's pull requests. Every key is optional.
+#   model — the chat's model, "provider/id". The panel counts only this
+#           model's provider as signed in: a login under another provider
+#           cannot run the chat.
+#   tools — "reviewer": the model may call the plugin's tools, the home's
+#           own home_* tools and pi's read tools (read, grep, find, ls), and
+#           no MCP server starts. "full": every tool pi has.
+model = "openai-codex/gpt-6.1-sol"
+tools = "reviewer"
+
 [memory]
 # Round seeding — how much memory rides each round prompt and how
 # long the daemon waits for it. Memory NEVER blocks or delays a round: past

@@ -1,5 +1,5 @@
 // The `qcr` bin's front door and the verbs an npm install adds: where each
-// argv goes (src/qcrbin.ts), `qcr pi`, `qcr login` and `qcr update`
+// argv goes (src/qcrbin.ts; the home's own launch is tests/home-launch.test.ts), `qcr pi`, `qcr login` and `qcr update`
 // (src/npmverbs.ts), and the SQLite hint (src/sqlitehint.ts). Every child is
 // a fake: nothing here starts pi, tmux or a package manager.
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -57,8 +57,15 @@ function fakeDeps(o: {
 }
 
 describe("the bin's routes", () => {
-  it("a bare qcr opens the admin TUI", () => {
-    expect(binRoute([])).toEqual({ route: "tui" });
+  // MUTATION: route the empty argv to the TUI again — this fails.
+  it("a bare qcr opens the home, and qcr home does too", () => {
+    expect(binRoute([])).toEqual({ route: "home" });
+    expect(binRoute(["home"])).toEqual({ route: "home" });
+  });
+
+  it("qcr tui still opens the admin TUI, through the app's main", () => {
+    expect(binRoute(["tui"])).toEqual({ route: "app", argv: ["tui"] });
+    expect(binRoute(["tui", "12"])).toEqual({ route: "app", argv: ["tui", "12"] });
   });
 
   it("the npm verbs are its own, with --json taken off", () => {

@@ -237,6 +237,7 @@ the fence.
 | Operator surfaces | `src/tui/` (board, tabs, companion column), `src/cli.ts` (`qcr`), `src/slack/`, `src/commands.ts` + `src/levers.ts` |
 | Assembly | `src/daemon.ts` (stub-wired core, test-friendly) vs `src/wire.ts` (production wiring) |
 | Onboarding | `src/onboard/`, `extensions/onboarding.ts`, [`docs/onboarding.md`](docs/onboarding.md) |
+| The home (a bare `qcr`) | `src/home/launch.ts` (the pinned pi, quiet, on the person's own pi home), `extensions/home.ts` (`createHome` over the ports; every action a key and a `home_*` tool), `src/home/model.ts` (state and actions), `src/home/panel.ts` (the overlay), `src/home/ports.ts` + `src/home/adapters.ts` |
 | The pi plugin | `packages/pi-plugin/src/plugin/` (the entry `index.ts`, the commands, `versiongate.ts` for the `^1.4.0` pi range, `login.ts` for the borrowed host login), `packages/pi-plugin/src/reviewapi.ts`, [`packages/pi-plugin/README.md`](packages/pi-plugin/README.md) |
 | The npm CLI | `bin/qcr.js` → `src/qcrbin.ts` (the bin's front door: bare `qcr`, `review`, `login`, `pi`, `update`, `version`), `src/npmverbs.ts`, `src/updatenotice.ts`; every other verb goes to `src/cli.ts` |
 
