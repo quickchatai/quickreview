@@ -8,10 +8,10 @@
 // every other extension: the unprefixed /review, /scan and /selfimprove are
 // gone (ADR 0001), and /selfimprove is the app's (its own pi, `qcr pi`).
 //
-// /qcr-review runs in the background: the command returns at once, one
-// review runs per session, and the session's end stops it. /qcr-scan and
-// /qcr-setup run in the foreground, one at a time. /qcr-setup is the
-// plugin's setup checklist (src/setupchecklist.ts), the plugin's own steps only.
+// /qcr-review and /qcr-scan run in the background: the command returns at
+// once, one review and one scan run per session, and the session's end stops
+// them. /qcr-setup runs in the foreground: the plugin's setup checklist
+// (src/setupchecklist.ts), the plugin's own steps only.
 //
 // At load the running pi's VERSION is checked against the range the package
 // declares (src/plugin/versiongate.ts). Outside it the plugin registers no
@@ -37,7 +37,7 @@ import {
   startReviewCommand,
   type ReviewCommandDeps,
 } from "../src/plugin/review.js";
-import { runScanCommand } from "../src/plugin/scan.js";
+import { runScanCommand, ScanSessions } from "../src/plugin/scan.js";
 import type { PluginHost, Runner, SessionUi } from "../src/plugin/session.js";
 import { readQuickReviewSettings, type QuickReviewSettings } from "../src/plugin/settings.js";
 import { runSetupCommand } from "../src/plugin/setup.js";
@@ -181,10 +181,10 @@ export function createQuickReview(config: QuickReviewConfig): (pi: ExtensionAPI)
       for (const w of read.warnings) ui.notify(w, "warning");
       return read.settings;
     };
-    // /qcr-scan and /qcr-setup: in the foreground, one at a time.
+    // /qcr-setup: in the foreground, one at a time.
     let busy = false;
     const command = (
-      name: Exclude<(typeof QUICKREVIEW_COMMANDS)[number], "qcr-review">,
+      name: Exclude<(typeof QUICKREVIEW_COMMANDS)[number], "qcr-review" | "qcr-scan">,
       description: string,
       run: (args: string, host: PluginHost, ui: SessionUi) => Promise<void>,
     ): void =>
@@ -217,11 +217,18 @@ export function createQuickReview(config: QuickReviewConfig): (pi: ExtensionAPI)
         });
       },
     });
-    command(
-      "qcr-scan",
-      "QuickReview: scan the whole repo (needs the qcr CLI; --sandbox docker to sandbox it)",
-      runScanCommand,
-    );
+    // /qcr-scan: the plugin's own scan engine, in the background, one scan at
+    // a time in this session; a subcommand is answered in the foreground.
+    const scans = new ScanSessions();
+    pi.registerCommand("qcr-scan", {
+      description:
+        "QuickReview: scan the whole repo in the background (--delta, --sha REF, --preview; or a scan subcommand: status, stop, findings, units …)",
+      handler: async (args, ctx) => {
+        await runScanCommand(args.trim(), hostOf(ctx), sessionUi(pi, ctx, config.print), {
+          sessions: scans,
+        });
+      },
+    });
     command(
       "qcr-setup",
       "QuickReview: check what the plugin needs (pi, login, git, GitHub); `profile` sets up this repo's profile",

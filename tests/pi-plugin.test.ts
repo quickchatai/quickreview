@@ -2,15 +2,23 @@
 // version gate, what the extension registers, /qcr-review in the background
 // through the extension on a fake pi (status line, result message, one review
 // at a time, stop, the posting rule), its arguments and presets, the
-// destination rule, the borrowed login, /qcr-scan over a fake runner, and
-// /qcr-setup's checklist (the step registry) over a fake runner and a fake
-// pi. Nothing here spawns a process or touches the network: the faux-provider
-// round is tests/pi-plugin-round.test.ts, the packed install
+// destination rule, the borrowed login, /qcr-scan over the plugin's own scan
+// engine with a fake case runner, and /qcr-setup's checklist (the step
+// registry) over a fake runner and a fake pi. Nothing here spawns a process or
+// touches the network: the faux-provider round is tests/pi-plugin-round.test.ts, the packed install
 // tests/pi-plugin-install.test.ts, the real gate behind a post
 // tests/review-post-cli.test.ts. git runs: each fake host's repo is a scratch
 // git repo (the review store keys a repo's state by its root commit).
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -59,7 +67,13 @@ import type {
   ReviewResult,
   ReviewTarget,
 } from "@quickchatai/pi-quickreview/src/reviewapi.js";
-import { parseScanCommand, runScanCommand } from "@quickchatai/pi-quickreview/src/plugin/scan.js";
+import {
+  parseScanCommand,
+  runScanCommand,
+  scanStateHome,
+  ScanSessions,
+  type ScanCommandDeps,
+} from "@quickchatai/pi-quickreview/src/plugin/scan.js";
 import {
   PLUGIN_SETUP_STEPS,
   pluginSetupRegistry,
@@ -1161,109 +1175,162 @@ function scriptedRunner(
   };
 }
 
-const ok = (o: unknown): RunResult => ({ code: 0, stdout: JSON.stringify(o) + "\n", stderr: "" });
-const FINDING = {
-  fingerprint: "fp1",
-  file: "src/a.ts",
-  range: { start: 3, end: 3 },
-  lens: "pass-baseline",
-  severity: "P1",
-  claim: "a subtracts",
-};
-const scanAnswers = {
-  "qcr scan preview": ok({
-    ok: true,
-    preview: { files: 4, mode: "full", estimate_usd: 1.5, cap_usd: 3 },
-    start: ["--key", "k1", "--sha", "abc"],
-  }),
-  "qcr scan start": ok({ ok: true, run: { id: "r1" } }),
-  "qcr scan status": ok({ ok: true, run: { sha: "abcdef1234567890", display: "complete" } }),
-  "qcr scan findings": ok({ ok: true, total: 1, findings: [FINDING] }),
-};
+/** A fake host whose repo has code to scan: two top-level units and the rest. */
+function scanHost(o: Partial<PluginHost> = {}): PluginHost & { head: string } {
+  const host = fakeHost(o);
+  const git = (...args: string[]): string =>
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=T",
+        "-c",
+        "user.email=t@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        ...args,
+      ],
+      { cwd: host.cwd, encoding: "utf8" },
+    );
+  mkdirSync(join(host.cwd, "app"), { recursive: true });
+  mkdirSync(join(host.cwd, "lib"), { recursive: true });
+  writeFileSync(join(host.cwd, "app", "a.py"), "def add(a, b):\n    return a - b\n");
+  writeFileSync(join(host.cwd, "lib", "b.py"), "X = 1\n");
+  writeFileSync(join(host.cwd, "main.py"), "import app\n");
+  git("add", "-A");
+  git("commit", "-q", "-m", "code");
+  return { ...host, head: git("rev-parse", "HEAD").trim() };
+}
 
-describe("/qcr-scan (the qcr on PATH)", () => {
-  it("prices, asks, starts, waits and lists the new findings, on the repo pi is in", async () => {
-    const runner = scriptedRunner(scanAnswers);
-    const host = fakeHost({ runner });
+/** The scan's seams with a fake case runner: one finding per stage-1 case,
+ * the skeptic upholding nothing (NONE). `hang` holds every stage-1 case until
+ * it is stopped. */
+function fakeScan(
+  host: { head: string },
+  o: { hang?: boolean } = {},
+): ScanCommandDeps & {
+  agents: string[];
+} {
+  const agents: string[] = [];
+  return {
+    agents,
+    root: () => ROOT,
+    cases: () => ({
+      run: async (spec, signal) => {
+        agents.push(spec.agent);
+        if (spec.agent.startsWith("pass-validate"))
+          return { ok: true, output: "NONE\n", cost_usd: 0.01 };
+        if (o.hang)
+          return new Promise((done) =>
+            signal.addEventListener("abort", () => done({ ok: false, reason: "stopped" }), {
+              once: true,
+            }),
+          );
+        return {
+          ok: true,
+          cost_usd: 0.02,
+          output: `FINDINGS pass-scan SCAN ${spec.id} @${host.head}\n- path: ${spec.files[0]}\n  line: 1\n  kind: bug\n  severity: P1\n  claim: it subtracts\n\nSUGGEST NONE\n`,
+        };
+      },
+    }),
+  };
+}
+
+/** A runner that records every program asked for. */
+function recordingRunner(): Runner & { asked: string[] } {
+  const asked: string[] = [];
+  return {
+    asked,
+    which: (cmd) => (asked.push(cmd), null),
+    run: async (cmd) => (asked.push(cmd), { code: 127, stdout: "", stderr: "" }),
+  };
+}
+
+// The plugin carries the scan: no qcr CLI anywhere (ADR 0001's nesting). The
+// real engine runs over a scratch repo and a temp state home; only the case
+// runner, the model's side, is fake.
+describe("/qcr-scan (the plugin's own engine)", () => {
+  // MUTATION: make runScanCommand await the run before it returns — the
+  // background note comes after the findings, and this fails.
+  it("proposes the first unit cut, prices, asks, then scans in the background and shows the new findings", async () => {
+    const runner = recordingRunner();
+    const host = scanHost({ runner });
     const ui = fakeUi();
-    await runScanCommand("", host, ui);
-    expect(runner.calls.map((c) => c.slice(1, 3).join(" "))).toEqual([
-      "scan preview",
-      "scan start",
-      "scan status",
-      "scan findings",
-    ]);
-    expect(runner.calls[1]).toEqual([
-      "/bin/qcr",
-      "scan",
-      "start",
-      "--key",
-      "k1",
-      "--sha",
-      "abc",
-      "--sandbox",
-      "host",
-      "--json",
-    ]);
-    expect(runner.envs.every((e) => e?.["QCR_REVIEWED_REPO"] === host.cwd)).toBe(true);
-    // qcr's own default is the docker sandbox: natively on this machine is
-    // the plugin's default, so every call says so
-    for (const c of runner.calls) {
-      const at = c.indexOf("--sandbox");
-      expect(at, c.join(" ")).toBeGreaterThan(0);
-      expect(c[at + 1]).toBe("host");
-      expect(c.lastIndexOf("--sandbox")).toBe(at);
+    const deps = fakeScan(host);
+    const sessions = new ScanSessions();
+    await runScanCommand("", host, ui, { sessions, deps });
+    // the command returned with the run in flight, and said so
+    expect(ui.notes.map((n) => n[1]).join("\n")).toMatch(/scanning .* in the background/);
+    await sessions.idle();
+    expect(deps.agents.some((a) => a.startsWith("pass-scan"))).toBe(true);
+    expect(ui.shown.at(-1)).toMatch(/new findings?:/);
+    expect(ui.shown.at(-1)).toMatch(/^3 new findings:/);
+    expect(ui.shown.at(-1)).toMatch(/`app\/a\.py:1` — it subtracts/);
+    // the repo's own state home, under the qcr state home
+    expect(existsSync(join(scanStateHome(host), "setup", "unit-cut.json"))).toBe(true);
+    // never the qcr CLI, nor any other program through the host's runner
+    expect(runner.asked).toEqual([]);
+  });
+
+  it("starts nothing on a no, and nothing with nobody to confirm the price", async () => {
+    const host = scanHost();
+    const deps = fakeScan(host);
+    const no = fakeUi({ yes: false });
+    await runScanCommand("", host, no, { sessions: new ScanSessions(), deps });
+    expect(no.notes.at(-1)?.[1]).toMatch(/not started/);
+    const nobody = fakeUi({ interactive: false, mode: "print" });
+    await runScanCommand("", scanHost(), nobody, { sessions: new ScanSessions(), deps });
+    expect(nobody.printed.join("\n")).toMatch(/unit cut|nobody here can confirm/);
+    expect(deps.agents).toEqual([]);
+  });
+
+  it("answers a subcommand in the session, the unit cut first, and prices with --preview", async () => {
+    const host = scanHost();
+    const deps = fakeScan(host);
+    const sessions = new ScanSessions();
+    const ui = fakeUi();
+    await runScanCommand("units propose", host, ui, { sessions, deps });
+    await runScanCommand("units save", host, ui, { sessions, deps });
+    await runScanCommand("preview", host, ui, { sessions, deps });
+    expect(ui.shown[0]).toMatch(/^```text\n\$ \/qcr-scan units propose\n/);
+    expect(ui.shown[0]).toMatch(/\/qcr-scan units save/);
+    expect(ui.shown[2]).toMatch(/calibration/i);
+    // the next step is named in this pi's words, never qcr's
+    expect(ui.shown[2]).toMatch(/\/qcr-scan start --key/);
+    expect(ui.shown.join("\n")).not.toMatch(/qcr scan /);
+    await runScanCommand("--preview", host, ui, { sessions, deps });
+    expect(ui.shown.at(-1)).toMatch(/Scan 3 files of .*stops hard at \$/);
+    expect(deps.agents).toEqual([]);
+  });
+
+  it("stops the run in flight with /qcr-scan stop, and its findings so far follow", async () => {
+    const host = scanHost();
+    const deps = fakeScan(host, { hang: true });
+    const sessions = new ScanSessions();
+    const ui = fakeUi();
+    await runScanCommand("", host, ui, { sessions, deps });
+    expect(sessions.running).not.toBeNull();
+    // one scan at a time
+    await runScanCommand("", host, ui, { sessions, deps });
+    expect(ui.notes.at(-1)?.[1]).toMatch(/already scanning/);
+    await runScanCommand("stop", host, ui, { sessions, deps });
+    await sessions.idle();
+    expect(ui.shown.join("\n")).toMatch(/stopped/);
+    expect(ui.notes.map((n) => n[1]).join("\n")).toMatch(/the scan ended stopped/);
+  });
+
+  it("leaves the app's sandbox and triage to the app", async () => {
+    const host = scanHost();
+    const deps = fakeScan(host);
+    for (const sub of ["doctor", "login", "rebuild", "dismiss abc --reason x"]) {
+      const ui = fakeUi();
+      await runScanCommand(sub, host, ui, { sessions: new ScanSessions(), deps });
+      expect(ui.notes.at(-1)?.[1], sub).toMatch(/app/);
     }
-    expect(ui.shown[0]).toMatch(/src\/a\.ts:3.*a subtracts.*fp1/);
-  });
-
-  it("passes --sandbox docker through, and starts nothing on a no", async () => {
-    const runner = scriptedRunner(scanAnswers);
-    const ui = fakeUi({ yes: false });
-    await runScanCommand("--sandbox docker", fakeHost({ runner }), ui);
-    expect(runner.calls).toHaveLength(1);
-    expect(runner.calls[0]).toContain("--sandbox");
-    expect(runner.calls[0]).toContain("docker");
-    expect(ui.notes.at(-1)?.[1]).toMatch(/not started/);
-    expect(parseScanCommand("--sandbox vm")).toHaveProperty("error");
+    expect((parseScanCommand("--sandbox docker") as { error: string }).error).toMatch(
+      /sandbox is the app's/,
+    );
     expect((parseScanCommand("--wat") as { error: string }).error).toMatch(/usage: \/qcr-scan/);
-  });
-
-  it("with nobody to confirm a price, starts nothing", async () => {
-    const runner = scriptedRunner(scanAnswers);
-    const ui = fakeUi({ interactive: false, mode: "print" });
-    await runScanCommand("", fakeHost({ runner }), ui);
-    expect(runner.calls).toHaveLength(1);
-    expect(ui.printed[0]).toMatch(/nobody here can confirm/);
-  });
-
-  it("passes a subcommand through as typed", async () => {
-    const runner = scriptedRunner({
-      "qcr scan findings": { code: 0, stdout: "1 finding\n", stderr: "" },
-    });
-    const ui = fakeUi();
-    await runScanCommand("findings --state new", fakeHost({ runner }), ui);
-    expect(runner.calls[0]).toEqual([
-      "/bin/qcr",
-      "scan",
-      "findings",
-      "--state",
-      "new",
-      "--sandbox",
-      "host",
-    ]);
-    // a sandbox the person typed is theirs: none is added beside it
-    const typed = scriptedRunner({});
-    await runScanCommand("findings --sandbox docker", fakeHost({ runner: typed }), fakeUi());
-    expect(typed.calls[0]).toEqual(["/bin/qcr", "scan", "findings", "--sandbox", "docker"]);
-    expect(ui.shown[0]).toMatch(/1 finding/);
-  });
-
-  it("points at /qcr-setup when qcr is not on PATH", async () => {
-    const ui = fakeUi();
-    await runScanCommand("", fakeHost(), ui);
-    expect(ui.notes[0]?.[1]).toMatch(/\/qcr-setup/);
-    expect(ui.notes[0]?.[1]).toContain("npm i -g @quickchatai/quickreview");
   });
 });
 

@@ -166,6 +166,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/scan-run.test.ts",
   "tests/scan-sandbox.test.ts",
   "tests/scan-tree.test.ts",
+  "tests/selfimprove.test.ts", // git for each fake host's scratch repo
   "tests/setup-extension.test.ts",
   "tests/setup-interview.test.ts",
   "tests/setup-replay.test.ts",
