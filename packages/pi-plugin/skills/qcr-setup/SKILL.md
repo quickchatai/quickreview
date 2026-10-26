@@ -1,6 +1,6 @@
 ---
 name: qcr-setup
-description: Check that QuickReview can run here (pi version, model login, git, GitHub credential) with the /qcr-setup command. Use when a QuickReview command failed, or the person asks whether QuickReview is set up.
+description: Check that QuickReview can run here (pi version, model login, git, GitHub credential) and set up this repo's QuickReview profile, with the /qcr-setup command. Use when a QuickReview command failed, the person asks whether QuickReview is set up, or they want the reviewer tuned to this repo.
 ---
 
 # QuickReview: setup
@@ -14,3 +14,5 @@ A slash command is the person's to type: you cannot run it yourself. Give the pe
 ```
 
 When a check fails, its line names the fix (for a missing login, pi's own `/login`). Help the person with that fix; never read or print a token or key yourself.
+
+To tune the reviewer to this repo, the person types `/qcr-setup profile`: it hands you the brief for Setup, a survey of the repo, its review history and an interview, ending in the repo profile `.qcr/`. Follow that brief when it arrives. Do not write `.qcr/` before it does.

@@ -32,9 +32,13 @@ knows the command and can tell you the line to type.
 - `/qcr-scan` scans the whole repo for defects, priced first and started
   only on your yes. It runs the `qcr` CLI on your machine; `--sandbox docker`
   runs it in the scan sandbox instead.
-- `/qcr-setup` checks the pi version, the login, git, GitHub access for PR
-  targets and the `qcr` CLI, and offers to install `qcr`
-  (`npm i -g @quickchatai/quickreview`).
+- `/qcr-setup` checks the pi version, the login, git and GitHub access for
+  PR targets. It then offers to set up this repo's profile (`.qcr/`), No
+  first: on your yes, your agent in the session surveys the repo, reads its
+  review history, interviews you and writes the profile for you to commit.
+  `/qcr-setup profile` starts that straight away. Its checks are steps on a
+  setup checklist (`src/setupchecklist.ts`) that the `qcr` app extends with
+  its own steps.
 
 `/review`, `/scan` and `/selfimprove` are gone: pi's command namespace is
 shared with every other extension, so the commands carry the `qcr-` prefix.

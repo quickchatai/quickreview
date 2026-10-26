@@ -10,7 +10,8 @@
 //
 // /qcr-review runs in the background: the command returns at once, one
 // review runs per session, and the session's end stops it. /qcr-scan and
-// /qcr-setup run in the foreground, one at a time.
+// /qcr-setup run in the foreground, one at a time. /qcr-setup is the
+// plugin's setup checklist (src/setupchecklist.ts), the plugin's own steps only.
 //
 // At load the running pi's VERSION is checked against the range the package
 // declares (src/plugin/versiongate.ts). Outside it the plugin registers no
@@ -221,8 +222,10 @@ export function createQuickReview(config: QuickReviewConfig): (pi: ExtensionAPI)
       "QuickReview: scan the whole repo (needs the qcr CLI; --sandbox docker to sandbox it)",
       runScanCommand,
     );
-    command("qcr-setup", "QuickReview: check what the plugin needs, install qcr", (_a, host, ui) =>
-      runSetupCommand(host, ui, { range }),
+    command(
+      "qcr-setup",
+      "QuickReview: check what the plugin needs (pi, login, git, GitHub); `profile` sets up this repo's profile",
+      (args, host, ui) => runSetupCommand(args, host, ui, { range }),
     );
   };
 }

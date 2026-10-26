@@ -2,9 +2,10 @@
 // version gate, what the extension registers, /qcr-review in the background
 // through the extension on a fake pi (status line, result message, one review
 // at a time, stop, the posting rule), its arguments and presets, the
-// destination rule, the borrowed login, and /qcr-scan and /qcr-setup over a
-// fake runner. Nothing here spawns a process or touches the network: the
-// faux-provider round is tests/pi-plugin-round.test.ts, the packed install
+// destination rule, the borrowed login, /qcr-scan over a fake runner, and
+// /qcr-setup's checklist (the step registry) over a fake runner and a fake
+// pi. Nothing here spawns a process or touches the network: the faux-provider
+// round is tests/pi-plugin-round.test.ts, the packed install
 // tests/pi-plugin-install.test.ts, the real gate behind a post
 // tests/review-post-cli.test.ts. git runs: each fake host's repo is a scratch
 // git repo (the review store keys a repo's state by its root commit).
@@ -59,7 +60,13 @@ import type {
   ReviewTarget,
 } from "@quickchatai/pi-quickreview/src/reviewapi.js";
 import { parseScanCommand, runScanCommand } from "@quickchatai/pi-quickreview/src/plugin/scan.js";
-import { runSetupChecks } from "@quickchatai/pi-quickreview/src/plugin/setup.js";
+import {
+  PLUGIN_SETUP_STEPS,
+  pluginSetupRegistry,
+  renderChecklist,
+  runSetupChecks,
+} from "@quickchatai/pi-quickreview/src/plugin/setup.js";
+import { SetupChecklist, type SetupStep } from "@quickchatai/pi-quickreview/src/setupchecklist.js";
 import type {
   PluginHost,
   Runner,
@@ -1262,77 +1269,215 @@ describe("/qcr-scan (the qcr on PATH)", () => {
 
 describe("/qcr-setup", () => {
   const range = "^1.4.0";
+  const ghOk = { "gh auth status": { code: 0, stdout: "", stderr: "" } };
 
-  it("checks pi, the login, git, GitHub and qcr", async () => {
-    const runner = scriptedRunner({ "gh auth status": { code: 0, stdout: "", stderr: "" } });
-    const checks = await runSetupChecks(fakeHost({ runner }), fakeUi(), {
+  /** The plugin on a fake pi over `runner`, signed in through its agent dir,
+   * with /qcr-setup run as the person types it. */
+  function setupOnFakePi(runner: Runner): {
+    pi: ReturnType<typeof fakePi>;
+    host: PluginHost;
+    run: (args: string, ui: ReturnType<typeof fakeUi>) => Promise<void>;
+  } {
+    const host = fakeHost({ runner });
+    mkdirSync(host.agentDir, { recursive: true });
+    writeFileSync(
+      join(host.agentDir, "auth.json"),
+      JSON.stringify({ "openai-codex": { type: "oauth", expires: Date.now() + 10 * 3600_000 } }),
+    );
+    const pi = fakePi();
+    createQuickReview({
+      env: host.env,
+      home: host.home,
+      runner,
+      print: () => {},
+      piVersion: "1.4.0",
+      range,
+      agentDir: host.agentDir,
+    })(pi.api);
+    const run = async (args: string, ui: ReturnType<typeof fakeUi>): Promise<void> => {
+      const { ctx } = fakeCtx(ui, host.cwd);
+      await pi.commands.get("qcr-setup")!.handler(args, ctx);
+    };
+    return { pi, host, run };
+  }
+
+  it("detects pi, the login, git, GitHub and the repo profile, each with what it found", async () => {
+    const lines = await runSetupChecks({
+      host: fakeHost({ runner: scriptedRunner(ghOk) }),
       range,
       root: () => ROOT,
     });
-    expect(checks.map((c) => [c.name, c.state])).toEqual([
-      ["pi version", "ok"],
-      ["login", "ok"],
-      ["git", "ok"],
-      ["GitHub", "ok"],
-      ["qcr", "ok"],
+    expect(lines.map((l) => [l.id, l.title, l.status])).toEqual([
+      [PLUGIN_SETUP_STEPS.pi, "pi version", "done"],
+      [PLUGIN_SETUP_STEPS.login, "login", "done"],
+      [PLUGIN_SETUP_STEPS.git, "git", "done"],
+      [PLUGIN_SETUP_STEPS.github, "GitHub", "done"],
+      [PLUGIN_SETUP_STEPS.profile, "repo profile", "pending"],
     ]);
+    expect(lines.find((l) => l.id === PLUGIN_SETUP_STEPS.pi)!.found).toBe(
+      "pi 1.4.0, inside ^1.4.0",
+    );
+    expect(lines.find((l) => l.id === PLUGIN_SETUP_STEPS.git)!.found).toBe("/bin/git");
+    expect(lines.find((l) => l.id === PLUGIN_SETUP_STEPS.profile)!.note).toMatch(
+      /\/qcr-setup profile/,
+    );
   });
 
-  it("fails the login with the /login hint when only a key is there", async () => {
+  it("leaves the login missing with the /login hint when only a key is there", async () => {
     const host = fakeHost({
       runner: scriptedRunner({}),
       auth: fakeAuth({ openai: { type: "api_key", expires: null } }),
     });
-    const checks = await runSetupChecks(host, fakeUi(), { range, root: () => ROOT });
-    const login = checks.find((c) => c.name === "login")!;
-    expect(login.state).toBe("fail");
-    expect(login.detail).toMatch(/\/login openai-codex/);
-  });
-
-  // MUTATION: install without asking — this fails.
-  it("installs qcr only on the person's yes", async () => {
-    const withoutQcr = (): Runner & { calls: string[][] } => {
-      let installed = false;
-      const inner = scriptedRunner({ "npm i": (): RunResult => ((installed = true), ok({})) }, [
-        "git",
-        "npm",
-      ]);
-      return { ...inner, which: (c) => (c === "qcr" && installed ? "/bin/qcr" : inner.which(c)) };
-    };
-    const no = withoutQcr();
-    const c1 = await runSetupChecks(fakeHost({ runner: no }), fakeUi({ yes: false }), {
-      range,
-      root: () => ROOT,
-    });
-    expect(no.calls.some((c) => c[0] === "/bin/npm")).toBe(false);
-    expect(c1.find((c) => c.name === "qcr")!.state).toBe("fail");
-    const yes = withoutQcr();
-    const c2 = await runSetupChecks(fakeHost({ runner: yes }), fakeUi({ yes: true }), {
-      range,
-      root: () => ROOT,
-    });
-    expect(yes.calls).toContainEqual(["/bin/npm", "i", "-g", "@quickchatai/quickreview"]);
-    expect(c2.find((c) => c.name === "qcr")!.state).toBe("ok");
-    // with nobody to ask, nothing is installed
-    const quiet = withoutQcr();
-    await runSetupChecks(
-      fakeHost({ runner: quiet }),
-      fakeUi({ interactive: false, mode: "print" }),
-      {
-        range,
-        root: () => ROOT,
-      },
-    );
-    expect(quiet.calls.some((c) => c[0] === "/bin/npm")).toBe(false);
+    const lines = await runSetupChecks({ host, range, root: () => ROOT });
+    const login = lines.find((l) => l.id === PLUGIN_SETUP_STEPS.login)!;
+    expect(login.status).toBe("pending");
+    expect(login.note).toMatch(/\/login openai-codex/);
+    expect(renderChecklist(lines)).toMatch(/✗ \*\*login\*\*/);
+    expect(renderChecklist(lines)).toMatch(/1 check failed\./);
   });
 
   it("reads a GitHub token's presence only", async () => {
     const host = fakeHost({ runner: scriptedRunner({}) });
     host.env["GITHUB_TOKEN"] = "secret-value";
-    const checks = await runSetupChecks(host, fakeUi(), { range, root: () => ROOT });
-    const gh = checks.find((c) => c.name === "GitHub")!;
-    expect(gh.detail).toMatch(/GITHUB_TOKEN is set/);
-    expect(JSON.stringify(checks)).not.toContain("secret-value");
+    const lines = await runSetupChecks({ host, range, root: () => ROOT });
+    const gh = lines.find((l) => l.id === PLUGIN_SETUP_STEPS.github)!;
+    expect(gh.found).toMatch(/GITHUB_TOKEN is set/);
+    expect(JSON.stringify(lines)).not.toContain("secret-value");
+  });
+
+  it("finds this repo's .qcr/profile.toml at the repo's top level", async () => {
+    const host = fakeHost();
+    mkdirSync(join(host.cwd, ".qcr"), { recursive: true });
+    writeFileSync(join(host.cwd, ".qcr", "profile.toml"), 'ecosystem = "none"\n');
+    const sub = join(host.cwd, "src");
+    mkdirSync(sub, { recursive: true });
+    const runner = scriptedRunner({
+      "git rev-parse": { code: 0, stdout: `${host.cwd}\n`, stderr: "" },
+    });
+    const lines = await runSetupChecks({
+      host: { ...host, cwd: sub, runner },
+      range,
+      root: () => ROOT,
+    });
+    const profile = lines.find((l) => l.id === PLUGIN_SETUP_STEPS.profile)!;
+    expect(profile.status).toBe("done");
+    expect(profile.found).toMatch(/\.qcr\/profile\.toml in this repo/);
+  });
+
+  // The plugin does only what the plugin can do (ADR 0001): its setup never
+  // offers to install the app, asked or not. MUTATION: put the qcr check and
+  // its `npm i -g` offer back into /qcr-setup — this fails.
+  it("shows the checklist through the extension and never offers to install the app", async () => {
+    const runner = scriptedRunner(ghOk, ["git", "gh", "npm"]);
+    const { pi, run } = setupOnFakePi(runner);
+    const ui = fakeUi({ picks: ["No, not now"], yes: true });
+    await run("", ui);
+    const shown = reviewMessages(pi);
+    expect(shown).toHaveLength(1);
+    expect(shown[0]).toMatch(/^QuickReview setup/);
+    for (const title of ["pi version", "login", "git", "GitHub"])
+      expect(shown[0]).toContain(`- ✓ **${title}**`);
+    expect(shown[0]).toContain("- ! **repo profile**");
+    expect(shown[0]).toMatch(/Ready\./);
+    const said = [...shown, ...ui.asked.flat(), ...ui.notes.map((n) => n[1])].join("\n");
+    expect(said).not.toMatch(/npm i|install/i);
+    expect(said).not.toContain("@quickchatai/quickreview");
+    expect(runner.calls.some((c) => c[0] === "/bin/npm")).toBe(false);
+  });
+
+  // Setup is offered, never started: the offer's first answer is No.
+  // MUTATION: offer Yes first, or hand the agent the brief without asking —
+  // this fails.
+  it("offers this repo's profile Setup, No first, and hands the agent the brief only on yes", async () => {
+    const no = setupOnFakePi(scriptedRunner(ghOk));
+    const noUi = fakeUi({ picks: ["No, not now"] });
+    await no.run("", noUi);
+    expect(noUi.asked).toEqual([["No, not now", "Yes, set up this repo's profile"]]);
+    expect(no.pi.userMessages).toEqual([]);
+
+    const yes = setupOnFakePi(scriptedRunner(ghOk));
+    await yes.run("", fakeUi({ picks: ["Yes, set up this repo's profile"] }));
+    expect(yes.pi.userMessages).toHaveLength(1);
+    const brief = yes.pi.userMessages[0]!;
+    expect(brief).toContain(yes.host.cwd);
+    expect(brief).toMatch(/\.qcr\/profile\.toml/);
+    expect(brief).toMatch(
+      /goals, what must block a merge, its risk areas, and its style and tests/,
+    );
+    expect(brief).toContain(join(ROOT, "agents"));
+    expect(reviewMessages(yes.pi).at(-1)).toMatch(/Setup is with your agent/);
+  });
+
+  it("runs Setup straight away on `profile`, and asks nothing with a profile in place", async () => {
+    const direct = setupOnFakePi(scriptedRunner(ghOk));
+    const ui = fakeUi();
+    await direct.run("profile", ui);
+    expect(ui.asked).toEqual([]);
+    expect(direct.pi.userMessages).toHaveLength(1);
+    expect(direct.pi.userMessages[0]).toMatch(/QuickReview's Setup/);
+
+    const tuned = setupOnFakePi(scriptedRunner(ghOk));
+    mkdirSync(join(tuned.host.cwd, ".qcr"), { recursive: true });
+    writeFileSync(join(tuned.host.cwd, ".qcr", "profile.toml"), 'ecosystem = "none"\n');
+    const quiet = fakeUi();
+    await tuned.run("", quiet);
+    expect(quiet.asked).toEqual([]);
+    expect(reviewMessages(tuned.pi)[0]).toContain("- ✓ **repo profile**");
+    expect(tuned.pi.userMessages).toEqual([]);
+
+    const typo = setupOnFakePi(scriptedRunner(ghOk));
+    const bad = fakeUi();
+    await typo.run("profiel", bad);
+    expect(bad.notes[0]?.[0]).toBe("error");
+    expect(reviewMessages(typo.pi)).toEqual([]);
+  });
+
+  it("asks nothing with nobody to ask", async () => {
+    const { pi, run } = setupOnFakePi(scriptedRunner(ghOk));
+    const ui = fakeUi({ interactive: false, mode: "rpc" });
+    await run("", ui);
+    expect(ui.asked).toEqual([]);
+    expect(pi.userMessages).toEqual([]);
+    expect(reviewMessages(pi)[0]).toMatch(/^QuickReview setup/);
+  });
+
+  // The app's setup is this checklist with more steps registered onto it
+  // (ADR 0001); a step the app registers lives on the app's registry and
+  // never on /qcr-setup's. MUTATION: have /qcr-setup build its checklist from
+  // a registry shared at module level that the app registers onto — this
+  // fails.
+  it("takes an app step onto the app's checklist, beside the plugin's, and never shows it in /qcr-setup", async () => {
+    const appStep: SetupStep = {
+      id: "repo_pick",
+      title: "Pick a repository",
+      explain: "The repository the home reviews.",
+      order: 3.5,
+      detect: async () => ({ found: "owner/name · from your qcr config" }),
+      run: async () => ({ ok: true, checks: [] }),
+      verify: async () => ({ ok: true, checks: [] }),
+    };
+    const host = fakeHost({ runner: scriptedRunner(ghOk) });
+    const registry = pluginSetupRegistry({ host, range, root: () => ROOT }).register(appStep);
+    const app = new SetupChecklist(registry, { clock: () => new Date() }, { file: null });
+    await app.detect();
+    expect(app.list().map((l) => l.id)).toEqual([
+      PLUGIN_SETUP_STEPS.pi,
+      PLUGIN_SETUP_STEPS.login,
+      PLUGIN_SETUP_STEPS.git,
+      "repo_pick",
+      PLUGIN_SETUP_STEPS.github,
+      PLUGIN_SETUP_STEPS.profile,
+    ]);
+    expect(app.list().find((l) => l.id === "repo_pick")!.found).toBe(
+      "owner/name · from your qcr config",
+    );
+
+    const { pi, run } = setupOnFakePi(scriptedRunner(ghOk));
+    await run("", fakeUi({ picks: ["No, not now"] }));
+    expect(reviewMessages(pi)[0]).not.toContain("Pick a repository");
+    expect(
+      (await runSetupChecks({ host, range, root: () => ROOT })).map((l) => l.id),
+    ).not.toContain("repo_pick");
   });
 });
 

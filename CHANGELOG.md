@@ -16,7 +16,10 @@ with no alias:
 | `/scan`        | `/qcr-scan`                                                                       |
 | `/selfimprove` | `/selfimprove` in the app's own pi (`qcr pi`): it is no longer part of the plugin |
 
-`/qcr-setup` keeps its name.
+`/qcr-setup` keeps its name. It checks the pi version, the login, git and
+the GitHub credential, and no longer offers to install the `qcr` app. It
+offers instead to set up this repo's profile (`.qcr/`) with your agent, No
+first, and `/qcr-setup profile` starts that straight away.
 
 `/qcr-review` also changes how it runs:
 
