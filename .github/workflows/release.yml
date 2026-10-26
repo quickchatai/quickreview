@@ -42,7 +42,7 @@
 # builds on Blacksmith's Docker builder and its layer cache. The repository
 # variable QCR_RUNNERS=github puts every job on GitHub's own runners instead
 # (ubuntu-latest, ubuntu-24.04-arm), with buildx and the gha cache: the route for
-# a repo without the app, the public snapshot included. The `npm` job always
+# a repo without the app, a fork's copy included. The `npm` job always
 # runs on GitHub's ubuntu-latest: npm accepts trusted publishing and
 # provenance only from GitHub-hosted runners.
 #
@@ -59,11 +59,11 @@
 #     auth.json (a login for the model the e2e reaches), nothing else;
 #   - optional repo variables QCR_RUNNERS and RELEASE_ARM64_RUNNER (above) and
 #     RELEASE_E2E_LIMIT_USD (the per-run cap handed to `review --limit`).
-#   - packages: the repo needs write access to both ghcr packages. Artifact
-#     attestations on a private repo need a plan that offers them, so the
-#     provenance steps run only on a public repo or with the repo variable
-#     RELEASE_ATTEST=true; without them the deploy manifest's digests still pin
-#     what the VM pulls.
+#   - packages: the repo needs write access to both ghcr packages, which are
+#     public, so anyone pulls them with no login. The provenance attestations
+#     run on a public repo, as npm's provenance does; a private copy of this
+#     workflow publishes without them, and the deploy manifest's digests still
+#     pin what the VM pulls.
 #   - npmjs: the `quickchatai` org, which owns both packages;
 #   - environment `npm-publish`, whose deployment ref policy admits only tags
 #     matching v*.*.*, so a run from master or a branch never runs the `npm`
@@ -442,7 +442,7 @@ jobs:
       # writes an artifact-metadata storage record on a registry push unless
       # told not to, and this job grants no artifact-metadata permission.
       - name: provenance for the amd64 image
-        if: github.event.repository.visibility == 'public' || vars.RELEASE_ATTEST == 'true'
+        if: github.event.repository.visibility == 'public'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.REPO }}
@@ -450,7 +450,7 @@ jobs:
           push-to-registry: true
           create-storage-record: false
       - name: provenance for the arm64 image
-        if: github.event.repository.visibility == 'public' || vars.RELEASE_ATTEST == 'true'
+        if: github.event.repository.visibility == 'public'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.REPO }}
@@ -458,7 +458,7 @@ jobs:
           push-to-registry: true
           create-storage-record: false
       - name: provenance for the index
-        if: github.event.repository.visibility == 'public' || vars.RELEASE_ATTEST == 'true'
+        if: github.event.repository.visibility == 'public'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.REPO }}

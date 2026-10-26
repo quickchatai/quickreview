@@ -1,5 +1,4 @@
-# CI for qcr. Runs wherever this tree is pushed to GitHub: the private repo
-# and the public snapshot alike.
+# CI for qcr, on the public repository and on any fork's copy alike.
 #
 # Deliberately minimal and offline-true: no secrets, no external services, no
 # model. The suite mocks all I/O, and the publishability lint
@@ -12,7 +11,7 @@
 # fixture repo): no docker, no model, and the user docs leave that route out.
 #
 # Runners: Blacksmith's (blacksmith-*), which the org's Blacksmith app serves.
-# A repo without that app, the public snapshot included, sets the repository
+# A repo without that app, a fork included, sets the repository
 # variable QCR_RUNNERS=github and every job runs on GitHub's own runners. A pull
 # request from a fork always runs on GitHub's own runners (free for a public
 # repo), so outside code never runs on the paid ones; it also waits for a

@@ -204,10 +204,10 @@ describe("release.yml — the gates", () => {
     expect(JSON.stringify(att)).not.toMatch(/"push-to-registry":false/);
     // attestations only: no artifact-metadata storage record (no permission for one)
     expect(JSON.stringify(att).match(/"create-storage-record":false/g)).toHaveLength(3);
-    // a private repo on a plan without attestations still publishes
+    // a private copy of the workflow still publishes, without provenance (as npm)
     for (const step of att)
       expect((step as unknown as { if: string }).if).toBe(
-        "github.event.repository.visibility == 'public' || vars.RELEASE_ATTEST == 'true'",
+        "github.event.repository.visibility == 'public'",
       );
   });
 

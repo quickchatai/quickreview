@@ -535,7 +535,7 @@ fi
 # ---- 4. pull both images by digest, check them ----------------------------------------------------------
 
 step pull
-d pull "$DAEMON_REF" >/dev/null || die "could not pull $DAEMON_REF (is the VM logged in to ghcr.io? scripts/vm-ghcr-login.sh)"
+d pull "$DAEMON_REF" >/dev/null || die "could not pull $DAEMON_REF (the release images are public: check the VM reaches ghcr.io and the digest is published; a private mirror needs the VM logged in, scripts/vm-ghcr-login.sh)"
 d pull "$MEMORY_REF" >/dev/null || die "could not pull $MEMORY_REF"
 
 step check-images

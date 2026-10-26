@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# vm-ghcr-login.sh — log the review VM in to ghcr.io, so it can pull the
-# release images. Run by the owner, on the controller. Idempotent: running it
-# again replaces the login and the recorded expiry.
+# vm-ghcr-login.sh — log the review VM in to ghcr.io, so it can pull images
+# that are not public: a private mirror named by QC_RELEASE_IMAGE and
+# QC_RELEASE_MEMORY_IMAGE. The release images are public and pull with no
+# login, so a VM on them needs none of this. Run by the owner, on the
+# controller. Idempotent: running it again replaces the login and the recorded
+# expiry.
 #
 # The credential is a CLASSIC personal access token, scoped read:packages and
 # nothing else (the one carve-out from the App-only credential rule, for the
@@ -26,7 +29,7 @@
 #   scripts/vm-ghcr-login.sh --version X.Y.Z [--vm HOST] [--login USER] [--token-file FILE]
 #   pbpaste | scripts/vm-ghcr-login.sh --version X.Y.Z      # token on stdin
 #
-#   --version      a published release version; both images must exist at it
+#   --version      a published version; both images must exist at it
 #   --vm           ssh target (default: $QC_VM_HOST, else the inventory's first host)
 #   --login        the GitHub login to store (default: the token's own; if given
 #                  it must be the token's)

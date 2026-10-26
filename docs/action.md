@@ -1,27 +1,23 @@
 # The GitHub Action
 
 `uses: quickchatai/quickreview@v1` reviews a pull request and posts the findings
-as one comment-only review. It lives in this repository while the image is
-private, and moves to a repository of its own when the image goes public.
+as one comment-only review.
 
 ## Set up once
 
-1. **Let the repository pull the image.** The image
-   (`ghcr.io/<owner>/<name>:<version>`, the version being package.json's at the
-   action's ref) is a private package. Either open the package's settings and add
-   the consumer repository under **Manage Actions access** with the Read role, or
-   create a token with the `read:packages` scope and nothing else and pass it as
-   the `registry-token` input (a repository secret). That token is used for
-   `docker login` and for the preflight, and the review never sees it. If neither
-   is done, the action's preflight fails before anything runs and says so.
-2. **Give it a model.** The default models log in through ChatGPT OAuth: copy the
+The image (`ghcr.io/<owner>/<name>:<version>`, the version being package.json's
+at the action's ref) is a public package: the action pulls it anonymously, so
+the repository needs no package access, no `packages: read` permission and no
+registry secret.
+
+1. **Give it a model.** The default models log in through ChatGPT OAuth: copy the
    contents of a `~/.pi/agent/auth.json` that holds that login into a repository
    secret (`QCR_PI_AUTH` in the template) and pass it as `pi-auth`. The engine
    works from a copy with refresh disabled and refuses a login that would expire
    mid-run, so log in again when the secret ages out. Or pass a model API key
    (`openai-api-key`, `anthropic-api-key`, `gemini-api-key`,
    `digitalocean-api-key`) when the config's models are on that provider.
-3. **Copy the workflow.** [`docs/action/qcr-review.yml`](action/qcr-review.yml) to
+2. **Copy the workflow.** [`docs/action/qcr-review.yml`](action/qcr-review.yml) to
    `.github/workflows/qcr-review.yml`.
 
 ## When it runs
@@ -39,23 +35,34 @@ collaborators). Both also work in the every-push mode.
 **No cost cap.** Nothing limits a review unless the `limit` input (US dollars) is
 set; then the run stops hard at that limit. Nothing is ever asked.
 
+**A private mirror.** An image that is not public, named by the `image` input,
+needs a token that can read it as the `registry-token` input: a token with the
+`read:packages` scope and nothing else, as a repository secret, or
+`${{ github.token }}` with `permissions: packages: read` once the package grants
+the repository the Read role under **Manage Actions access**. That token is used
+for `docker login` and for the preflight, and the review never sees it.
+
 ## What the action does
 
 `action.yml` is a composite whose steps are the verbs of
 [`scripts/action.sh`](../scripts/action.sh):
 
-1. **preflight.** Asks the registry (with the same credential `docker login` will
-   use) whether this repository can read the image's manifest. On a refusal it
-   fails with the two ways out above. A registry that does not answer is only a
-   warning: docker's own pull then reports.
-2. **login.** `docker login` into a docker config of its own under
-   `$RUNNER_TEMP`, with the password on stdin.
+1. **preflight.** Asks the registry whether the image's manifest can be read,
+   the way docker will pull it: anonymously, or with `registry-token` when one is
+   given. On a refusal it fails before anything runs: anonymously that most
+   likely means the tag is not published, and the message also names the
+   private-mirror route. A registry that does not answer is only a warning:
+   docker's own pull then reports.
+2. **login.** Only with `registry-token`: `docker login` into a docker config of
+   its own under `$RUNNER_TEMP`, with the password on stdin. Without one it only
+   stages that docker config, empty, so the pull is anonymous even on a runner
+   that holds logins of its own.
 3. **run.** One throwaway container of the pinned image:
    `review <pr> --repo <owner/name> --to pr,terminal`. The container is the
    sandbox: no `docker.sock`, `--cap-drop ALL`, `no-new-privileges`, the model's
    tools under another uid. It gets the checkout read-only, a generated config,
    the pi login read-only, and `QCR_ROUTE=action`.
-4. **cleanup.** Removes the staging directory, the docker login included.
+4. **cleanup.** Removes the staging directory, any docker login included.
 
 **The token never enters the container's environment.** The GitHub token is
 written to a `0600` file in a fresh `0700` directory under `$RUNNER_TEMP`, mounted
