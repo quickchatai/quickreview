@@ -135,7 +135,9 @@ the caller is a model's tool belt.
 
 A step may also declare `detect()`: already true ⇒ `detect()` on the
 checklist marks it done with what was found, without running it. The
-wizard's steps declare none, and the wizard never calls it.
+wizard's steps declare none, and the wizard never calls it; the plugin's
+`/qcr-setup` (`packages/pi-plugin/src/plugin/setup.ts`) is a checklist of
+detecting steps kept in memory.
 
 ### The steps
 
