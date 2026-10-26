@@ -20,21 +20,19 @@ re-derives every candidate from the code** before one review is posted.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/media/bench-hero-dark.png">
-  <img src="docs/media/bench-hero.png" alt="AACR-Bench, 185 real PRs, QuickReview on GPT-6.1 Sol against six other reviewers. High-severity defects found: QuickReview 97%, next best Codex CLI 90%. High- and medium-severity defects found, 235 in all: QuickReview 94%, next best pi-review panel 85%, lowest PR-Agent 53%. PRs with every high- and medium-severity defect found in full: QuickReview 109 of 122, next best pi-review panel 90.">
+  <img src="docs/media/bench-hero.png" alt="AACR-Bench, 185 real PRs, 520 verified defects, QuickReview on GPT-6.1 Sol against six other reviewers, share found at each severity. High (90 defects): QuickReview 97%, next best Codex CLI 90%. Medium (145): QuickReview 93%, next best pi-review panel 82%. Low (285): QuickReview 84%, next best pi-review panel 52%.">
 </picture>
 
 On 185 real PRs with 520 defects each verified in the code, QuickReview on
-GPT-6.1 Sol finds **97% of the high-severity defects** and **89% of all of
-them**. Of the 235 high- and medium-severity defects it finds **94%**, where
-the best of the six other reviewers we ran finds 85%, and on **109 of the 122
-PRs** that carry one it finds every one in full. On the same model
-it also finds more than the model maker's own reviewer: 97% and 89% against
-90% and 55% for Codex CLI on GPT-6.1 Sol, and 94% and 95% against 75% and 60%
-for Claude Code's `/code-review` on Claude Opus 5.5 (40 PRs it was tuned on).
-Its last changes were mined from its misses on 145 of the 185 PRs; on the 20
-kept out, it finds 83% of all defects and the next best 72%. That recall costs
-more: about $2 and 17.5 minutes per PR, where the other tools take
-$0.07–0.53 and 0.7–2.3 minutes ([Benchmarks](#benchmarks)).
+GPT-6.1 Sol finds **97% of the high-severity defects, 93% of the medium and
+84% of the low**; at each severity the best of the six other reviewers we ran
+finds 90%, 82% and 52%. On the same model it also finds more than the model
+maker's own reviewer at every severity: against Claude Code's `/code-review`
+on Claude Opus 5.5 and against Codex CLI on GPT-6.1 Sol. Its last changes were
+mined from its misses on 145 of the 185 PRs; on the 20 kept out, it finds 83%
+of all defects and the next best 72%. That recall costs more: about $2 and
+17.5 minutes per PR, where the other tools take $0.07–0.53 and 0.7–2.3
+minutes ([Benchmarks](#benchmarks)).
 
 <p align="center">
   <img src="docs/media/lenses.gif" width="800"
@@ -89,27 +87,21 @@ configuration we found for each (except Claude Code, which ran `/code-review`
 at its default effort and was not varied), the OpenAI-based ones on the same
 model, under the same judge on the same PRs.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/media/bench-aacr-dark.png">
-  <img src="docs/media/bench-aacr.png" alt="AACR-Bench, 185 PRs, 520 verified defects. Share of high-severity defects found: QuickReview 97%, Codex CLI 90%, pi-review panel 89%, OpenCode 84%, Claude Code 81%, open-code-review 71%, PR-Agent 62%. Share of all defects found: QuickReview 89%, pi-review panel 67%, Claude Code 62%, open-code-review 57%, Codex CLI 55%, OpenCode 51%, PR-Agent 37%.">
-</picture>
-
 **AACR-Bench, verified defects.** AACR-Bench's own reference comments are
 mostly not real problems, so we built a key of 520 defects, each verified in
-the code, and a judge for it. Over the panel and Codex CLI the lead holds
-under a paired bootstrap on high and on high + medium defects (+8.3 points
-[+1.9, +14.6] on high over the panel). The price: 6.9 comments per PR, 42%
-of them true but minor.
-
-**What it misses.** Of the 235 high- and medium-severity defects,
-QuickReview misses 13, counting a partly found defect as half (10 missed
-outright, 6 found only in part). The next best, the pi-review panel, misses
-36. On the 20 PRs kept out of its last tuning round it misses 2 of 31, the
-panel 5.
+the code and graded by its consequence: **high** would block a merge (a
+user-visible bug on a normal path, a crash, data loss, a security hole, a
+broken build), **medium** should be fixed before merge, **low** is real but
+fine as a follow-up. The chart at the top is this key. QuickReview misses 2.5
+of the 90 high-severity defects, 10.5 of the 145 medium and 46 of the 285 low
+(a partly found defect counts as half); the best other reviewer at each
+severity misses 9, 26 and 136.5. Over the panel and Codex CLI the
+high-severity lead holds under a paired bootstrap (+8.3 points [+1.9, +14.6]
+over the panel). The price: 6.9 comments per PR, 42% of them true but minor.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/media/bench-same-model-dark.png">
-  <img src="docs/media/bench-same-model.png" alt="AACR-Bench, the same base model in two reviewers, one judge. Claude Opus 5.5, 40 PRs: QuickReview found 94% of the high-severity defects and 95% of all, Claude Code /code-review 75% and 60%. GPT-6.1 Sol, 185 PRs: QuickReview 97% and 89%, Codex CLI at high 90% and 55%. GPT-6 Sol, 185 PRs: QuickReview 96% and 84%, Codex CLI as shipped 78% and 48%.">
+  <img src="docs/media/bench-same-model.png" alt="AACR-Bench, the same base model in two reviewers, one judge, share found at high, medium and low severity. Claude Opus 5.5, 40 PRs: QuickReview 94%, 98%, 93%; Claude Code /code-review 75%, 71%, 45%. GPT-6.1 Sol, 185 PRs: QuickReview 97%, 93%, 84%; Codex CLI at high 90%, 70%, 37%. GPT-6 Sol, 185 PRs: QuickReview 96%, 86%, 80%; Codex CLI as shipped 78%, 61%, 31%.">
 </picture>
 
 **Same model, two reviewers.** With the model held fixed, QuickReview still
@@ -162,37 +154,37 @@ inside the intervals.
 it holds most of its recall on cheap open models, and it falls apart on a
 weak one:
 
-| QuickReview on | PRs | High found | All found | $/PR | Judge |
-|---|---|---|---|---|---|
-| GPT-6.1 Sol (frozen build) | 185 | 87.5 of 90 (97%) | 461 of 520 (89%) | 2.06 | gpt-6-sol |
-| DeepSeek V4.1 Flash (mostly low effort) | 185 | 83 of 90 (92%) | 451.5 of 520 (87%) | 0.74 | gpt-6.1-sol |
-| GLM-5.3 Flash | 185 | 83 of 90 (92%) | 435 of 520 (84%) | 0.52 | gpt-6.1-sol |
-| GPT-6 Luna | 185 | 39 of 90 (43%) | 147 of 520 (28%) | 0.04 | gpt-6-sol |
-| Claude Opus 5.5 | 40 | 32 of 34 (94%) | 119.5 of 126 (95%) | 3.24 | gpt-6-sol |
+| QuickReview on | PRs | High (90) | Medium (145) | Low (285) | All (520) | $/PR | Judge |
+|---|---|---|---|---|---|---|---|
+| GPT-6.1 Sol (frozen build) | 185 | 87.5 (97%) | 134.5 (93%) | 239 (84%) | 461 (89%) | 2.06 | gpt-6-sol |
+| DeepSeek V4.1 Flash (mostly low effort) | 185 | 83 (92%) | 131 (90%) | 237.5 (83%) | 451.5 (87%) | 0.74 | gpt-6.1-sol |
+| GLM-5.3 Flash | 185 | 83 (92%) | 120.5 (83%) | 231.5 (81%) | 435 (84%) | 0.52 | gpt-6.1-sol |
+| GPT-6 Luna | 185 | 39 (43%) | 44 (30%) | 64 (22%) | 147 (28%) | 0.04 | gpt-6-sol |
+| Claude Opus 5.5 | 40 | 32/34 (94%) | 30.5/31 (98%) | 57/61 (93%) | 119.5/126 (95%) | 3.24 | gpt-6-sol |
 
-The strongest third-party reviewers we ran find 81 of 90 high-severity
-defects (Codex CLI) and 347.5 of 520 in all (67%, the pi-review panel). The
+The best third-party reviewer at each severity finds 81 of 90 high (Codex
+CLI), 119 of 145 medium and 148.5 of 285 low (both the pi-review panel). The
 open-model rows ran a later build (mid-October, with cost changes made after
 the freeze) and a later judge; DeepSeek ran at low reasoning effort on 143 of
 its PRs, and GLM's review was missing a lens pass on 7. The GPT-6 Luna and
 Opus rows ran a September build; on the same 40 PRs as Opus, the frozen
-GPT-6.1 Sol build finds 33 of 34 and 105 of 126. Read the table as
-directional.
+GPT-6.1 Sol build finds 33 of 34 high, 28 of 31 medium and 44 of 61 low. Read
+the table as directional.
 
 <details>
 <summary>The full tables</summary>
 
 **AACR-Bench** (185 PRs, 10 languages, 520 verified defects; a partly found defect counts ½)
 
-| Reviewer | High (90) | High + medium (235) | All (520) | Comments correct | $/PR | Median min/PR |
-|---|---|---|---|---|---|---|
-| **QuickReview** | **87.5 (97%)** | **222 (94.5%)** | **461 (89%)** | 92% | 2.06 | 17.5 |
-| pi-review panel (high) | 80 (89%) | 199 (85%) | 347.5 (67%) | 89% | 0.27 | 1.8 |
-| Claude Code (Opus 5.5) | 72.5 (81%) | 177.5 (76%) | 324.5 (62%) | 81% | 0.20 | 0.7 |
-| open-code-review (high) | 63.5 (71%) | 165.5 (70%) | 298.5 (57%) | 86% | 0.53 | 1.8 |
-| Codex CLI (high) | 81 (90%) | 182.5 (78%) | 287 (55%) | 93% | 0.14 | 2.1 |
-| OpenCode (+ PR text) | 76 (84%) | 175 (74%) | 263.5 (51%) | 93% | 0.17 | 2.3 |
-| PR-Agent | 55.5 (62%) | 125.5 (53%) | 194 (37%) | 76% | 0.07 | 1.9 |
+| Reviewer | High (90) | Medium (145) | Low (285) | All (520) | Comments correct | $/PR | Median min/PR |
+|---|---|---|---|---|---|---|---|
+| **QuickReview** | **87.5 (97%)** | **134.5 (93%)** | **239 (84%)** | **461 (89%)** | 92% | 2.06 | 17.5 |
+| pi-review panel (high) | 80 (89%) | 119 (82%) | 148.5 (52%) | 347.5 (67%) | 89% | 0.27 | 1.8 |
+| Claude Code (Opus 5.5) | 72.5 (81%) | 105 (72%) | 147 (52%) | 324.5 (62%) | 81% | 0.20 | 0.7 |
+| open-code-review (high) | 63.5 (71%) | 102 (70%) | 133 (47%) | 298.5 (57%) | 86% | 0.53 | 1.8 |
+| Codex CLI (high) | 81 (90%) | 101.5 (70%) | 104.5 (37%) | 287 (55%) | 93% | 0.14 | 2.1 |
+| OpenCode (+ PR text) | 76 (84%) | 99 (68%) | 88.5 (31%) | 263.5 (51%) | 93% | 0.17 | 2.3 |
+| PR-Agent | 55.5 (62%) | 70 (48%) | 68.5 (24%) | 194 (37%) | 76% | 0.07 | 1.9 |
 
 **Martian** (50 PRs, Core; one `gpt-6.1-sol` judge for every row, the vendor rows re-judged from their published comments)
 
