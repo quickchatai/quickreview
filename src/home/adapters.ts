@@ -1,0 +1,243 @@
+// The home's real ports (src/home/ports.ts), and the one function that turns
+// a process's environment into the home's options: the env shim
+// (extensions/cli/home.ts) calls `homeOptionsFromEnv(process.env)`.
+//
+//   pi login   the auth file of the pi home the chat runs in: pi's own
+//              agent dir ($PI_CODING_AGENT_DIR, else ~/.pi/agent), read the
+//              way pi reads it, so the login line and the chat cannot
+//              disagree. Provider ids only, never a token.
+//   GitHub     `gh`: the account, the repository's open PRs, the browser.
+//   repository `[github] repo` of the install's config.toml, read again on
+//              every refresh.
+//   clock      Date.now.
+//
+// Reviews, auto-review, memory and spend have no adapter yet: their stubs
+// answer unknown, so the panel says Unknown rather than a zero.
+import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { parse } from "smol-toml";
+import { loginSummary } from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import { HOME_DEFAULTS, type HomeToolSet } from "../config.js";
+import { locateConfig } from "../homes.js";
+import { piAgentDir } from "../piagentdir.js";
+import {
+  known,
+  unknown,
+  type AutoReviewPort,
+  type GithubPort,
+  type HomeAdapters,
+  type Known,
+  type MemoryPort,
+  type OpenPull,
+  type PiLoginPort,
+  type RepoPort,
+  type ReviewsPort,
+  type SpendPort,
+} from "./ports.js";
+
+/** The launch hands the child pi its model and tool set in these. */
+export const HOME_MODEL_ENV = "QCR_HOME_MODEL";
+export const HOME_TOOLS_ENV = "QCR_HOME_TOOLS";
+
+export interface RunResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+  /** The command is not installed. */
+  missing?: boolean;
+}
+
+export interface Runner {
+  run(cmd: string, args: readonly string[]): Promise<RunResult>;
+}
+
+export const execRunner: Runner = {
+  run: (cmd, args) =>
+    new Promise((resolve) => {
+      execFile(cmd, [...args], { timeout: 30_000, maxBuffer: 16 << 20 }, (err, stdout, stderr) => {
+        const e = err as (NodeJS.ErrnoException & { code?: unknown }) | null;
+        resolve({
+          code: e === null ? 0 : typeof e.code === "number" ? e.code : 1,
+          stdout: String(stdout),
+          stderr: e && !stderr ? String(e.message) : String(stderr),
+          ...(e?.code === "ENOENT" ? { missing: true } : {}),
+        });
+      });
+    }),
+};
+
+const firstLine = (s: string): string => s.trim().split("\n")[0]?.trim() || "no output";
+const isMissingFile = (err: unknown): boolean =>
+  (err as NodeJS.ErrnoException | null)?.code === "ENOENT";
+const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/** The providers pi holds a login for in `agentDir`. No auth file is no
+ * login; a file that cannot be read or parsed is unknown. */
+export function piLoginPort(
+  agentDir: string,
+  read: (p: string) => string = (p) => readFileSync(p, "utf8"),
+): PiLoginPort {
+  return {
+    providers: async () => {
+      const path = join(agentDir, "auth.json");
+      let raw: string;
+      try {
+        raw = read(path);
+      } catch (err) {
+        return isMissingFile(err) ? known([]) : unknown(`can't read ${path}: ${message(err)}`);
+      }
+      try {
+        return known(Object.keys(loginSummary(raw)));
+      } catch (err) {
+        return unknown(`can't parse ${path}: ${message(err)}`);
+      }
+    },
+  };
+}
+
+/** gh's words for "you are not signed in". */
+const SIGNED_OUT = /gh auth login|not logged in|authentication required|HTTP 401|bad credentials/i;
+
+const PR_FIELDS =
+  "number,title,author,updatedAt,isDraft,additions,deletions,changedFiles,headRefName";
+
+export function githubPort(runner: Runner): GithubPort {
+  const why = (r: RunResult): string =>
+    r.missing ? "gh is not installed" : `gh failed: ${firstLine(r.stderr)}`;
+  return {
+    user: async () => {
+      const r = await runner.run("gh", ["api", "user", "--jq", ".login"]);
+      if (r.code === 0 && r.stdout.trim() !== "") return known(r.stdout.trim());
+      if (!r.missing && SIGNED_OUT.test(r.stderr)) return known(null);
+      return unknown(why(r));
+    },
+    openPulls: async (repo) => {
+      const r = await runner.run("gh", [
+        "pr",
+        "list",
+        "-R",
+        repo,
+        "--state",
+        "open",
+        "--limit",
+        "200",
+        "--json",
+        PR_FIELDS,
+      ]);
+      if (r.code !== 0) return unknown(why(r));
+      try {
+        return known(parsePulls(r.stdout));
+      } catch (err) {
+        return unknown(`gh's answer is not a pull request list: ${message(err)}`);
+      }
+    },
+    openInBrowser: async (repo, pr) => {
+      const r = await runner.run("gh", ["pr", "view", String(pr), "-R", repo, "--web"]);
+      return r.code === 0 ? { ok: true } : { ok: false, why: why(r) };
+    },
+  };
+}
+
+/** `gh pr list --json` rows as OpenPulls; throws on a row of the wrong shape. */
+export function parsePulls(json: string): OpenPull[] {
+  const rows = JSON.parse(json) as unknown;
+  if (!Array.isArray(rows)) throw new Error("not an array");
+  return rows.map((r: Record<string, unknown>) => {
+    if (typeof r["number"] !== "number" || typeof r["title"] !== "string")
+      throw new Error("a row without a number or title");
+    const author = r["author"] as { login?: unknown } | null | undefined;
+    const num = (k: string): number => (typeof r[k] === "number" ? r[k] : 0);
+    return {
+      number: r["number"],
+      title: r["title"],
+      author: typeof author?.login === "string" ? author.login : "ghost",
+      updatedAt: typeof r["updatedAt"] === "string" ? r["updatedAt"] : "",
+      isDraft: r["isDraft"] === true,
+      additions: num("additions"),
+      deletions: num("deletions"),
+      changedFiles: num("changedFiles"),
+      headRefName: typeof r["headRefName"] === "string" ? r["headRefName"] : "",
+    };
+  });
+}
+
+/** `[github] repo` of the config at `configPath()`, located again on every
+ * read. No config file, or an empty repo, is no repository. */
+export function repoPort(
+  configPath: () => string,
+  read: (p: string) => string = (p) => readFileSync(p, "utf8"),
+): RepoPort {
+  return {
+    repo: async () => {
+      let path: string;
+      let raw: string;
+      try {
+        path = configPath();
+        raw = read(path);
+      } catch (err) {
+        return isMissingFile(err) ? known(null) : unknown(message(err));
+      }
+      let repo: unknown;
+      try {
+        repo = (
+          (parse(raw) as Record<string, unknown>)["github"] as Record<string, unknown> | undefined
+        )?.["repo"];
+      } catch (err) {
+        return unknown(`${path} is not valid TOML: ${message(err)}`);
+      }
+      if (repo === undefined || repo === "") return known(null);
+      return typeof repo === "string" && /^[\w.-]+\/[\w.-]+$/.test(repo.trim())
+        ? known(repo.trim())
+        : unknown(`${path}: [github] repo is not "owner/name" (${JSON.stringify(repo)})`);
+    },
+  };
+}
+
+const NOT_YET = "the home cannot read it yet";
+const notYet = async (): Promise<Known<never>> => unknown(NOT_YET);
+
+/** The ports that have no adapter yet: each answers unknown. */
+export const unbuiltPorts: {
+  reviews: ReviewsPort;
+  autoReview: AutoReviewPort;
+  memory: MemoryPort;
+  spend: SpendPort;
+} = {
+  reviews: { latest: notYet },
+  autoReview: { status: notYet },
+  memory: { status: notYet },
+  spend: { totals: notYet },
+};
+
+export function realHomeAdapters(o: {
+  agentDir: string;
+  configPath: () => string;
+  runner?: Runner;
+}): HomeAdapters {
+  return {
+    login: piLoginPort(o.agentDir),
+    github: githubPort(o.runner ?? execRunner),
+    repo: repoPort(o.configPath),
+    clock: { now: () => Date.now() },
+    ...unbuiltPorts,
+  };
+}
+
+/** The home's options from a process's environment: the env shim's one call. */
+export function homeOptionsFromEnv(env: Readonly<Record<string, string | undefined>>): {
+  adapters: HomeAdapters;
+  model: string;
+  tools: HomeToolSet;
+} {
+  const model = (env[HOME_MODEL_ENV] ?? "").trim() || HOME_DEFAULTS.model;
+  const tools: HomeToolSet = env[HOME_TOOLS_ENV] === "full" ? "full" : "reviewer";
+  return {
+    adapters: realHomeAdapters({
+      agentDir: piAgentDir(env),
+      configPath: () => locateConfig({ env }).path,
+    }),
+    model,
+    tools,
+  };
+}

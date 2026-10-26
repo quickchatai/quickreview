@@ -22,7 +22,9 @@ import {
   createCompanionGuard,
   companionGuardConfigFromEnv,
 } from "../extensions/companion-guard.js";
+import { createHome } from "../extensions/home.js";
 import { createInjectBridge } from "../extensions/inject-bridge.js";
+import { homeOptionsFromEnv } from "../src/home/adapters.js";
 import {
   interactiveHostFor,
   interactiveLens,
@@ -253,8 +255,26 @@ function companionCases(): Record<string, ParityCase<never>> {
   };
 }
 
+/** The home: its options are the launch's model and tool set over the real
+ * ports, so what is compared is what pi records and the options resolved. */
+function homeCase(): ParityCase<ReturnType<typeof homeOptionsFromEnv>> {
+  const env = { QCR_HOME_MODEL: "anthropic/claude-x", QCR_HOME_TOOLS: "full" };
+  const settings = (o: ReturnType<typeof homeOptionsFromEnv>) => ({
+    model: o.model,
+    tools: o.tools,
+  });
+  return {
+    shimPath: join(ROOT, "extensions", "cli", "home.ts"),
+    env,
+    config: homeOptionsFromEnv(env),
+    factory: createHome,
+    resolved: { fromEnv: (e) => settings(homeOptionsFromEnv(e)), fromConfig: settings },
+  };
+}
+
 const CASES: Record<string, ParityCase<never>> = {
   ...companionCases(),
+  home: homeCase() as never,
   "ledger-pin": ledgerPinCase(),
   "bash-guard": bashGuardCase() as never,
   "finding-clusters": {

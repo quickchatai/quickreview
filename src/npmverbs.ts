@@ -15,11 +15,11 @@
 // `npmVerbDeps()` is the real assembly.
 import { spawnSync, type SpawnSyncOptions } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { pluginPackageDir } from "./coreext.js";
 import { detectInstall, type Installer } from "./installkind.js";
 import { readLogins } from "./loginhint.js";
+import { piAgentDir } from "./piagentdir.js";
 import { piCliPath } from "./picli.js";
 
 /** The npm package this CLI is published as. */
@@ -44,12 +44,9 @@ export function updateCommand(installer: Installer, pkg: string = CLI_PACKAGE): 
   }
 }
 
-/** pi's agent dir: `$PI_CODING_AGENT_DIR`, else `~/.pi/agent`, as pi reads it. */
-export function piAgentDir(env: Readonly<Record<string, string | undefined>>): string {
-  const set = (env["PI_CODING_AGENT_DIR"] ?? "").trim();
-  if (set !== "") return set;
-  return join((env["HOME"] ?? "").trim() || homedir(), ".pi", "agent");
-}
+// pi's agent dir lives in a leaf of its own, so the home reads the same rule
+// without these verbs.
+export { piAgentDir };
 
 /** The providers pi holds a credential for in `agentDir`, from its auth.json;
  * empty when there is none or it cannot be read. Never a token. */

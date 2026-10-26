@@ -1158,6 +1158,43 @@ export interface Config extends CoreConfig {
   /** The bot login's single refresher (`src/loginrefresh/`). Optional
    * in the file; off unless the cutover's config turns it on. */
   login_refresh: LoginRefreshConfig;
+  /** The home, the app's own pi a bare `qcr` opens (src/home/launch.ts).
+   * Optional in the file and here, so hand-rolled configs keep compiling;
+   * the parser fills every key. */
+  home?: HomeConfig;
+}
+
+/** Which tools the home's model may call: `reviewer` is the plugin's tools,
+ * the home's own `home_*` tools and pi's read tools; `full` is all of pi's. */
+export type HomeToolSet = "reviewer" | "full";
+
+/** `[home]`: the home a bare `qcr` opens (src/home/launch.ts reads it). */
+export interface HomeConfig {
+  /** The chat's model, `provider/id`. The panel's login line counts only
+   * this model's provider as signed in. */
+  model: string;
+  tools: HomeToolSet;
+}
+
+export const HOME_DEFAULTS: Readonly<HomeConfig> = {
+  model: "openai-codex/gpt-6.1-sol",
+  tools: "reviewer",
+};
+
+/** `[home]`, every key defaulted; a value of the wrong kind is refused. */
+export function parseHomeSection(raw: unknown): HomeConfig {
+  const t = (raw ?? {}) as Record<string, unknown>;
+  const model = t["model"] ?? HOME_DEFAULTS.model;
+  if (typeof model !== "string" || !/^[^/\s]+\/\S+$/.test(model))
+    throw new Error(
+      `config.toml [home]: model must be "provider/id" (got ${JSON.stringify(model)})`,
+    );
+  const tools = t["tools"] ?? HOME_DEFAULTS.tools;
+  if (tools !== "reviewer" && tools !== "full")
+    throw new Error(
+      `config.toml [home]: tools must be "reviewer" or "full" (got ${JSON.stringify(tools)})`,
+    );
+  return { model, tools };
 }
 
 /**
@@ -1822,6 +1859,7 @@ export function parseConfig(toml: string): Config {
       (raw.login_refresh ?? {}) as Record<string, unknown>,
       Number((req(raw, "daemon") as { round_deadline_min?: number }).round_deadline_min ?? 75),
     ),
+    home: parseHomeSection(raw.home),
   };
   validateReviewSection(cfg);
   foldLegacyOwnerSlackId(raw, cfg.owner);

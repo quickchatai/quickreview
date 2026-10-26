@@ -297,7 +297,8 @@ qcr review             # review this branch against its base, with no daemon
 qcr review 123         # review a pull request (or pass its URL)
 qcr pi                 # pi with the QuickReview plugin: /review /scan /selfimprove /qcr-setup
 qcr update             # update qcr with the package manager that installed it
-qcr                    # the admin TUI
+qcr                    # the home: pi on your own login, with your repo's pull requests
+qcr tui                # the admin TUI
 ```
 
 `qcr review` asks where the result goes (shown, saved as markdown and JSON,
