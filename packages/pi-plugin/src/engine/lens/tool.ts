@@ -17,12 +17,17 @@
 // unchanged: `details.results` holds one LensResult v1 per pass (with the run's
 // `id`, which is how a pass joined by two calls is counted once), `details.mode`
 // is `single` or `parallel`, and a pass still running reports `exitCode: -1`
-// in the updates. The tools run passes on a LensRunner (runlens.ts): the cap,
-// the cache groups and the retry-once deadline are the runner's, not theirs.
+// in the updates. Each slot also carries the native tool's `progress` record
+// (activity.ts): while a pass runs, an update is sent each time one of its
+// tool calls starts or ends, with its tool count, current tool and the path it
+// is on; a finished pass keeps its final count and duration. The tools run
+// passes on a LensRunner (runlens.ts): the cap, the cache groups and the
+// retry-once deadline are the runner's, not theirs.
 // This module touches no pi SDK; packages/pi-plugin/extensions/lens.ts and the round's hosting
 // give the definitions to pi.
 import { LENS_TOOL, LENS_WAVE_TOOL, type LensResult } from "../../lensresult.js";
 import { textResult, type QcrTool, type QcrToolResult } from "../../../extensions/pi-tool.js";
+import { lensProgressRecord, type LensActivity } from "./activity.js";
 import { planLaunch, type LaunchUnit } from "./launch-plan.js";
 import type { LensRun } from "./runlens.js";
 import { runSafely, type LensWave, type WaveRow, type WaveRunner } from "./wave.js";
@@ -47,7 +52,15 @@ export interface LensToolDeps {
   /** The sandbox root `lens_wave` falls back to when `env` names none: the
    * interactive pi's cwd, as its host resolves it. */
   cwd?: () => string;
+  /** At most one activity update per this many ms (a pass landing is told at
+   * once). Default ACTIVITY_UPDATE_MS; 0 tells every change. */
+  activityUpdateMs?: number;
 }
+
+/** How often a call tells its passes' activity, at most: a wave of twenty
+ * lenses starts and ends hundreds of tool calls, and every update carries the
+ * whole call's results to every listener of the main session. */
+export const ACTIVITY_UPDATE_MS = 500;
 
 type Execute = QcrTool["execute"];
 type Update = (partial: QcrToolResult) => void;
@@ -69,14 +82,35 @@ function outputOf(run: LensRun): string {
   return (isFailed(run.result) ? run.result.errorMessage : undefined) || run.text || "(no output)";
 }
 
-/** A pass that has not reported yet, in the native tool's still-running shape. */
-function placeholder(agent: string, task: string): Record<string, unknown> {
-  return { agent, task, exitCode: -1, messages: [], usage: ZERO_USAGE };
+/** A pass that has not reported yet, in the native tool's still-running shape,
+ * with what it is doing once it has done anything. */
+function placeholder(
+  agent: string,
+  task: string,
+  activity?: LensActivity,
+): Record<string, unknown> {
+  return {
+    agent,
+    task,
+    exitCode: -1,
+    messages: [],
+    usage: ZERO_USAGE,
+    ...(activity ? { progress: lensProgressRecord(activity, "running") } : {}),
+  };
 }
 
-/** One slot of `details.results`: the pass's LensResult v1 and the task it ran. */
+/** One slot of `details.results`: the pass's LensResult v1 and the task it ran,
+ * with its final tool count and duration. */
 function slot(run: LensRun, task: string): Record<string, unknown> {
-  return { ...run.result, task };
+  return {
+    ...run.result,
+    task,
+    ...(run.activity
+      ? {
+          progress: lensProgressRecord(run.activity, isFailed(run.result) ? "failed" : "completed"),
+        }
+      : {}),
+  };
 }
 
 function error(tool: string, message: string, hint: string): QcrToolResult {
@@ -89,7 +123,7 @@ function error(tool: string, message: string, hint: string): QcrToolResult {
 /** The result of a parallel call: the native summary text, `details.results`
  * in the order asked. */
 function parallelResult(
-  entries: ReadonlyArray<{ agent: string; task: string; run: LensRun | undefined }>,
+  entries: readonly Entry[],
   extraDetails: Record<string, unknown> = {},
 ): QcrToolResult {
   const finished = entries.filter((e) => e.run !== undefined);
@@ -111,14 +145,14 @@ function parallelResult(
   );
 }
 
-function resultsOf(
-  entries: ReadonlyArray<{ agent: string; task: string; run: LensRun | undefined }>,
-) {
-  return entries.map((e) => (e.run ? slot(e.run, e.task) : placeholder(e.agent, e.task)));
+function resultsOf(entries: readonly Entry[]) {
+  return entries.map((e) =>
+    e.run ? slot(e.run, e.task) : placeholder(e.agent, e.task, e.activity),
+  );
 }
 
 function progressUpdate(
-  entries: ReadonlyArray<{ agent: string; task: string; run: LensRun | undefined }>,
+  entries: readonly Entry[],
   extraDetails: Record<string, unknown> = {},
 ): QcrToolResult {
   const done = entries.filter((e) => e.run !== undefined).length;
@@ -136,6 +170,61 @@ interface Entry {
   agent: string;
   task: string;
   run: LensRun | undefined;
+  /** What the pass is doing while it runs. */
+  activity?: LensActivity;
+}
+
+/** Tells `onUpdate` where the entries stand: `now` at once (a pass landed),
+ * `soon` at most once per `everyMs` (a pass's activity changed), and `stop`
+ * drops what is pending once the call is over. A listener that throws is
+ * ignored. */
+interface Teller {
+  now(): void;
+  soon(): void;
+  stop(): void;
+}
+
+function updater(
+  entries: readonly Entry[],
+  onUpdate: Update | undefined,
+  extraDetails: Record<string, unknown>,
+  everyMs = ACTIVITY_UPDATE_MS,
+): Teller {
+  let last = Number.NEGATIVE_INFINITY;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const stop = (): void => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+  };
+  const now = (): void => {
+    stop();
+    last = Date.now();
+    try {
+      onUpdate?.(progressUpdate(entries, extraDetails));
+    } catch {
+      // a progress listener's failure is not the call's
+    }
+  };
+  return {
+    now,
+    soon: () => {
+      if (timer !== undefined) return;
+      const wait = last + everyMs - Date.now();
+      if (wait <= 0) return now();
+      timer = setTimeout(now, wait);
+      timer.unref?.();
+    },
+    stop,
+  };
+}
+
+/** The listener that lays a running entry's activity on it and tells. */
+function activityOf(entry: Entry, tell: Teller): (activity: LensActivity) => void {
+  return (activity) => {
+    if (entry.run !== undefined) return;
+    entry.activity = activity;
+    tell.soon();
+  };
 }
 
 /**
@@ -147,8 +236,7 @@ async function awaitEntries(
   entries: Entry[],
   runs: ReadonlyArray<Promise<LensRun>>,
   signal: AbortSignal | undefined,
-  onUpdate: Update | undefined,
-  extraDetails: Record<string, unknown>,
+  tell: Teller,
 ): Promise<"done" | "aborted"> {
   let stop: (() => void) | undefined;
   const aborted = new Promise<"aborted">((resolve) => {
@@ -161,16 +249,13 @@ async function awaitEntries(
     runs.map(async (p, i) => {
       const run = await p;
       entries[i]!.run = run;
-      try {
-        onUpdate?.(progressUpdate(entries, extraDetails));
-      } catch {
-        // a progress listener's failure is not the call's
-      }
+      tell.now();
     }),
   ).then(() => "done" as const);
   try {
     return await Promise.race([landed, aborted]);
   } finally {
+    tell.stop();
     if (stop !== undefined) signal?.removeEventListener("abort", stop);
   }
 }
@@ -218,11 +303,17 @@ export function lensExecute(deps: LensToolDeps): Execute {
     const call = readLensCall(params ?? {});
     if (typeof call === "string") return error(LENS_TOOL, call, "Nothing was launched.");
     const update = onUpdate as Update | undefined;
-    const runs = call.tasks.map((t) =>
-      runSafely(deps.runner, { agent: t.agent, task: t.task, ...(signal ? { signal } : {}) }),
-    );
     const entries: Entry[] = call.tasks.map((t) => ({ ...t, run: undefined }));
-    const outcome = await awaitEntries(entries, runs, signal, update, {});
+    const tell = updater(entries, update, {}, deps.activityUpdateMs);
+    const runs = call.tasks.map((t, i) =>
+      runSafely(deps.runner, {
+        agent: t.agent,
+        task: t.task,
+        ...(signal ? { signal } : {}),
+        onActivity: activityOf(entries[i]!, tell),
+      }),
+    );
+    const outcome = await awaitEntries(entries, runs, signal, tell);
     if (call.mode === "parallel") {
       const result = parallelResult(entries);
       return outcome === "aborted" ? { ...result, isError: true } : result;
@@ -314,14 +405,24 @@ export function lensWaveExecute(deps: LensToolDeps): Execute {
       agent: r.unit.agent,
       task: r.task,
       run: r.result,
+      ...(r.activity ? { activity: r.activity } : {}),
     }));
-    const outcome = await awaitEntries(
-      entries,
-      rows.map((r) => r.done),
-      signal,
-      update,
-      details,
-    );
+    const tell = updater(entries, update, details, deps.activityUpdateMs);
+    // A row the engine started may be well along: what it is doing is told at
+    // once, and every change after.
+    const unwatch = rows.map((r, i) => r.watch(activityOf(entries[i]!, tell)));
+    let outcome: "done" | "aborted";
+    try {
+      if (entries.some((e) => e.run === undefined && e.activity !== undefined)) tell.now();
+      outcome = await awaitEntries(
+        entries,
+        rows.map((r) => r.done),
+        signal,
+        tell,
+      );
+    } finally {
+      for (const off of unwatch) off();
+    }
     const result = parallelResult(entries, details);
     if (outcome === "aborted") {
       const running = entries.filter((e) => e.run === undefined).length;

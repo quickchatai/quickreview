@@ -15,7 +15,12 @@ import {
   readLiveEvents,
   type LiveEvent,
 } from "@quickchatai/pi-quickreview/src/live/events.js";
-import { latestLiveRound, lensLogIds, listLiveRounds, type LiveRoundRef } from "./live/read.js";
+import {
+  latestLiveRound,
+  lensLogIds,
+  listLiveRounds,
+  type LiveRoundRef,
+} from "@quickchatai/pi-quickreview/src/live/read.js";
 
 export const LIVE_USAGE =
   "usage: qcr live [RUN_ID | DIR] [--lens ID] [--round N] [--follow] [--json]";

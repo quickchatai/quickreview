@@ -18,7 +18,10 @@ import {
   LIVE_MAIN_FILE,
   readLiveEvents,
 } from "@quickchatai/pi-quickreview/src/live/events.js";
-import { projectRoundProgress, type RoundProgressProjection } from "../../src/live/projection.js";
+import {
+  projectRoundProgress,
+  type RoundProgressProjection,
+} from "@quickchatai/pi-quickreview/src/live/projection.js";
 
 export interface TimedEvent {
   /** Epoch ms of the event. */

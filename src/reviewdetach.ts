@@ -55,7 +55,8 @@ import {
   resolveBranch,
   resolveUncommitted,
 } from "@quickchatai/pi-quickreview/src/localreview.js";
-import { latestLiveRound, viewRound } from "./live/read.js";
+import { latestLiveRound, viewRound } from "@quickchatai/pi-quickreview/src/live/read.js";
+import { lensActivityLine, lensElapsedMs } from "@quickchatai/pi-quickreview/src/live/lensline.js";
 import { parsePrTarget } from "@quickchatai/pi-quickreview/src/prtarget.js";
 import { parseReviewArgs } from "./reviewcli.js";
 import {
@@ -285,7 +286,11 @@ function allRuns(home: string, deps: Liveness): Observed[] {
 }
 
 /** What a running review is doing, from its LiveEvent log projected to
- * round-progress v2 (src/live/): the same snapshot the bot's supervisor reads. */
+ * round-progress v2 (packages/pi-plugin/src/live/projection.ts): the same
+ * snapshot the bot's supervisor reads. Each lens carries what it is doing as
+ * it happens: its tool count, its current tool and the path that tool is on,
+ * and its time so far (a running lens's counts on from its start between
+ * updates). `line` is the same entry as one line a person reads. */
 interface LiveProgress {
   round: number;
   parent_status: "active" | "settled";
@@ -298,6 +303,8 @@ interface LiveProgress {
     duration_ms: number;
     tool_count: number;
     current_tool?: string;
+    current_target?: string;
+    line: string;
   }>;
 }
 
@@ -308,7 +315,7 @@ interface Progress {
 
 /** How far a run got: the lenses its stage record names (written when the round
  * ends) and, while it runs, its live log. */
-function progress(dir: string): Progress | null {
+function progress(dir: string, now: number): Progress | null {
   const work = join(dir, "work");
   let dirs: string[] = [];
   try {
@@ -342,9 +349,11 @@ function progress(dir: string): Progress | null {
         agents: snapshot.agents.map((a) => ({
           agent: a.agent,
           status: a.status,
-          duration_ms: a.duration_ms,
+          duration_ms: lensElapsedMs(a, now) ?? a.duration_ms,
           tool_count: a.tool_count,
           ...(a.current_tool ? { current_tool: a.current_tool } : {}),
+          ...(a.current_target ? { current_target: a.current_target } : {}),
+          line: lensActivityLine(a, { nowMs: now }),
         })),
       };
     }
@@ -360,7 +369,7 @@ function view(o: Observed, now: number): Record<string, unknown> {
     target: o.run.label,
     elapsed_s: Math.max(0, Math.round((now - o.run.started_at) / 1000)),
     exit_code: o.exitCode,
-    ...(o.state === "running" ? { progress: progress(o.dir) } : { result: o.result }),
+    ...(o.state === "running" ? { progress: progress(o.dir, now) } : { result: o.result }),
     ...(o.state === "failed" && o.exitCode === null
       ? { errors: [`the review process ended without a result; see ${join(o.dir, "driver.log")}`] }
       : {}),
@@ -378,6 +387,7 @@ function text(v: Record<string, unknown>): string {
       const names = by(s);
       if (names.length > 0) bits.push(`${s}: ${names.join(", ")}`);
     }
+    for (const a of p.live.agents) if (a.status === "running") bits.push(`  ${a.line}`);
     bits.push(`now: ${p.live.last_activity}`);
   }
   const errs = v["errors"] as string[] | undefined;
