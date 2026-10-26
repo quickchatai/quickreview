@@ -30,6 +30,7 @@ import {
   type TokenRunner,
 } from "../src/githubtoken.js";
 import { resolveSpecifier, runtimeSpecifiers } from "./helpers/layers.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const TOKEN = "gho_abcdefghijklmnopqrstuvwxyz012345";
 const BROKER_GH = "/usr/local/bin/gh";
@@ -305,31 +306,36 @@ describe("the daemon never reads a personal token itself", () => {
   // workers' process entries is walked (a direct-import grep cannot see a
   // module that imports something that imports it).
   // MUTATION: import { tokenKind } from "./githubtoken.js" in src/reviewnow.ts — this fails.
-  it("no daemon or worker entry reaches src/githubtoken.ts, however indirectly", () => {
-    const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-    const entries = [
-      "src/wire.ts",
-      "src/botworker.ts",
-      "src/answerworker.ts",
-      "src/loginrefresh/main.ts",
-      "src/openviking/sidecar-main.ts",
-    ];
-    const seen = new Set<string>();
-    const queue = [...entries];
-    while (queue.length > 0) {
-      const f = queue.shift()!;
-      if (seen.has(f)) continue;
-      seen.add(f);
-      for (const spec of runtimeSpecifiers(readFileSync(join(ROOT, f), "utf8"))) {
-        const to = resolveSpecifier(ROOT, f, spec);
-        if (to !== null && !seen.has(to)) queue.push(to);
+  // Reads every module the five entries reach: 5.4 s on a loaded CI runner.
+  it(
+    "no daemon or worker entry reaches src/githubtoken.ts, however indirectly",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+      const entries = [
+        "src/wire.ts",
+        "src/botworker.ts",
+        "src/answerworker.ts",
+        "src/loginrefresh/main.ts",
+        "src/openviking/sidecar-main.ts",
+      ];
+      const seen = new Set<string>();
+      const queue = [...entries];
+      while (queue.length > 0) {
+        const f = queue.shift()!;
+        if (seen.has(f)) continue;
+        seen.add(f);
+        for (const spec of runtimeSpecifiers(readFileSync(join(ROOT, f), "utf8"))) {
+          const to = resolveSpecifier(ROOT, f, spec);
+          if (to !== null && !seen.has(to)) queue.push(to);
+        }
       }
-    }
-    expect(seen.size).toBeGreaterThan(100);
-    expect(seen.has("src/reviewnow.ts")).toBe(true);
-    expect(seen.has("src/githubtoken.ts")).toBe(false);
-    // Nor the wizard's step registry, which imports it (src/version.ts reads
-    // the pi pin from the leaf src/onboard/pipin.ts, never from launch.ts).
-    expect(seen.has("src/onboard/steps/index.ts")).toBe(false);
-  });
+      expect(seen.size).toBeGreaterThan(100);
+      expect(seen.has("src/reviewnow.ts")).toBe(true);
+      expect(seen.has("src/githubtoken.ts")).toBe(false);
+      // Nor the wizard's step registry, which imports it (src/version.ts reads
+      // the pi pin from the leaf src/onboard/pipin.ts, never from launch.ts).
+      expect(seen.has("src/onboard/steps/index.ts")).toBe(false);
+    },
+  );
 });
