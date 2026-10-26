@@ -11,7 +11,7 @@ The numbers are the papers' tables, copied here with the table each row comes fr
 README's charts and its prose read the same source: AACR-Bench is benchmark.tex Table
 tab:final (QuickReview's row: its frozen build, quickreview.tex Table tab:frozen), Martian is
 benchmark.tex Table tab:martianfinal, Qodo is benchmark.tex Table tab:qodo. The serious-defect
-counts (bench-hero, bench-misses) are computed from the per-defect credits in data/aacr.json,
+counts (bench-hero) are computed from the per-defect credits in data/aacr.json,
 the same runs as tab:final. Every title is computed from the rows. The look is v4's (theme_v4);
 the images carry no repo file names.
 """
@@ -70,20 +70,21 @@ QODO = [  # (name, precision, recall)
 
 # The same base model in two reviewers, AACR-Bench, one judge (GPT-6 Sol at high) for both rows of a pair.
 SAME_MODEL = [  # (model, PRs, high defects, all defects, [(reviewer, high found, all found)])
-    # quickreview.tex Table tab:bm40 (QuickReview on Opus, 40 PRs: smoke10, dev10, holdout10, fresh10) and
+    # quickreview.tex Table tab:bm40 (QuickReview on Opus, the 40 T40 PRs it was tuned on, September build) and
     # benchmark.tex Table tab:halves-sol (Claude Code on the same 40, its 185-PR runs cut to them).
     ("Claude Opus 5.5", 40, 34, 126, [("QuickReview", 32, 119.5), ("Claude Code /code-review", 25.5, 75)]),
     # benchmark.tex Table tab:final: the frozen build and Codex CLI at high.
     ("GPT-6.1 Sol", 185, 90, 520, [("QuickReview", 87.5, 461), ("Codex CLI (high)", 81, 287)]),
-    # benchmark.tex Table tab:sol-summary: the original default run and Codex CLI as shipped (medium).
+    # benchmark.tex Table tab:sol-summary: the original default run and Codex CLI as first run (medium, no PR text).
     ("GPT-6 Sol", 185, 90, 520, [("QuickReview", 86, 437.5), ("Codex CLI (as shipped)", 70, 248.5)]),
 ]
 
-# Pairwise Elo on Martian's hard20 (the 20 PRs QuickReview on GPT-6.1 Sol and DeepSeek V4.1 Flash did worst
-# on), both judges pooled: the "Combined" table of the run archive's elo/martian-hard20-all-gpt/REPORT.md.
-# QuickReview's Opus and Sonnet runs kept the image's six quality lenses on GPT-6 Luna (about a fifth of calls).
+# Pairwise Elo on Martian's hard20 (the 20 PRs QuickReview on GPT-6.1 Sol or DeepSeek V4.1 Flash did worst on
+# against its own average), both judges pooled: the "Combined" table of the run archive's
+# elo/martian-hard20-all-gpt/REPORT.md. QuickReview's Opus and Sonnet runs kept the image's six lenses pinned to
+# GPT-6 Luna (maintainability, duplication, abstraction, consistency, placement, simplicity).
 ELO = [  # (name, Elo, 95% low, 95% high, QuickReview?)
-    ("Claude Code max (Sonnet 5.5 agents)", 1666, 1581, 1794, False),
+    ("Claude Code max (Opus + Sonnet 5.5)", 1666, 1581, 1794, False),
     ("QuickReview (Opus 5.5)*", 1628, 1567, 1726, True),
     ("QuickReview (GPT-6.1 Sol)", 1566, 1486, 1662, True),
     ("Claude Code high (Opus 5.5)", 1518, 1425, 1629, False),
@@ -92,7 +93,8 @@ ELO = [  # (name, Elo, 95% low, 95% high, QuickReview?)
     ("Claude Code high (Sonnet 5.5)", 1398, 1290, 1456, False),
     ("QuickReview (GLM-5.3 Flash)", 1329, 1110, 1477, True),
 ]
-ELO_DIRECT = ("QuickReview (Opus 5.5)*", "Claude Code high (Opus 5.5)", 29, 11)  # the pair's direct record, both judges
+# One pair from the same REPORT's every-pair table: direct record over both judges, and the gap's 95% interval.
+ELO_DIRECT = ("QuickReview (Opus 5.5)*", "Claude Code high (Opus 5.5)", 29, 11, (31, 196))
 
 DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "aacr.json")
 KEYS = {"quickreview": QR, "pi-review": "pi-review panel", "claude-code": "Claude Code",
@@ -114,7 +116,8 @@ def serious():
                    "found": sum(x["credit"][k] for x in ser),
                    "clean": sum(all(x["credit"][k] == 1.0 for x in xs) for xs in prs.values())}
             for k, name in KEYS.items()}
-    assert {n: r["high"] for n, r in rows.items()} == {r[0]: r[1] for r in AACR}, "data/aacr.json is not tab:final"
+    assert {n: (r["high"], sum(x["credit"][k] for x in d["defects"])) for k, n in KEYS.items() for r in [rows[n]]} \
+        == {r[0]: (r[1], r[2]) for r in AACR}, "data/aacr.json is not tab:final"
     return rows, len(high), len(ser), len(prs), d["cases"]
 
 
@@ -212,25 +215,30 @@ def fig_qodo(T):
         lambda q: q[1], lambda q: q[2])
 
 
-AACR_SOURCE = ("520 defects each verified in the code; one judge (GPT-6 Sol), one run per reviewer, a partly found "
-               "defect counts ½.\nQuickReview: its frozen build. " + OTHERS)
+HERO_SOURCE = ("520 defects each verified in the code; one judge (GPT-6 Sol), one run each, a partly found one counts ½. "
+               + OTHERS.replace("Other reviewers: all", "Others").replace(" (Claude Opus 5.5)", " (Opus 5.5)")
+               + "\nQuickReview: its frozen build, its last changes mined from its misses on 145 of these PRs; on the 20 "
+                 "kept out, it finds 83% of all defects, the next best 72%.")
+MARGIN = {"high": 2.0, "missed": 2.0, "clean": 2.0}  # never headline a lead under 2 points (or 2 per 100 PRs, 2 PRs)
 
 
 def fig_hero(T):
     """Three numbers on serious defects, each over the field it was measured against."""
     S, n_high, n_ser, n_prs, n_cases = serious()
-    best = {"high": max, "missed": min, "clean": max}
-    lead = all(S[QR][k] == f(r[k] for r in S.values()) for k, f in best.items())
+    def gap(k, sign):  # QuickReview's lead over the next reviewer, in the panel's own unit (points for high)
+        nxt = max(sign * r[k] for n, r in S.items() if n != QR)
+        return (sign * S[QR][k] - nxt) * (100 / n_high if k == "high" else 1)
+    lead = all(gap(k, sg) >= MARGIN[k] for k, sg in (("high", 1), ("missed", -1), ("clean", 1)))
     p = Page4(T, h=560)
-    p.title("Most serious defects found, fewest missed" if lead else "Serious defects found and missed")
+    p.title("Most high-severity defects found, fewest serious missed" if lead else "Serious defects found and missed")
     p.metric(f"AACR-Bench · {n_cases} real PRs · serious = the {n_ser} high- and medium-severity defects · "
              "QuickReview on GPT-6.1 Sol")
     panels = [  # (key, big number, what it is, the bar's full length, a bar's value label, higher is better)
         ("high", pct(100 * S[QR]["high"] / n_high), f"of the {n_high} high-severity defects found", n_high,
          lambda v: pct(100 * v / n_high), True),
-        ("missed", f"{S[QR]['missed']:.0f}", "serious defects missed per 100 PRs",
+        ("missed", f"{S[QR]['missed']:.1f}", "serious defects missed per 100 PRs",
          max(r["missed"] for r in S.values()), lambda v: f"{v:.1f}", False),
-        ("clean", f"{S[QR]['clean']} of {n_prs}", "PRs with every serious defect found", n_prs,
+        ("clean", f"{S[QR]['clean']} of {n_prs}", "PRs with every serious defect found in full", n_prs,
          lambda v: f"{v:.0f}", True),
     ]
     col, top = 372, 296
@@ -239,35 +247,21 @@ def fig_hero(T):
         rows = sorted(S.items(), key=lambda kv: -kv[1][k] if up else kv[1][k])
         nxt = next(r for n, r in rows if n != QR)
         p.text(x0, 196, big, size=50, weight="bold", color=T["qr"], va="baseline")
-        p.text(x0, 232, what, size=14.5, va="baseline")
-        p.text(x0, 258, f"next best: {fmt(nxt[k])}", size=12.5, color=T["ink2"], va="baseline")
+        p.text(x0, 232, what, size=13.5, va="baseline")
+        p.text(x0, 258, f"next best: {fmt(nxt[k])} · {'higher' if up else 'lower'} is better", size=12.5,
+               color=T["ink2"], va="baseline")
         pitch = 26
         for j, (name, r) in enumerate(rows):
             y = top + pitch * (j + 0.5)
             ours = name == QR
             ink, wt = (T["ink"], "bold") if ours else (T["ink2"], "normal")
-            bx0, bx1 = x0 + 128, x0 + 268
+            bx0, bx1 = x0 + 128, x0 + 250
             if up:
                 theme.bar(p.c, bx0, bx1, y, 14, T["empty"], zorder=2)
             theme.bar(p.c, bx0, bx0 + (bx1 - bx0) * r[k] / vmax, y, 14, T["qr"] if ours else T["other"], zorder=3)
-            p.text(bx0 - 10, y, "QuickReview" if ours else name, ha="right", size=11, color=ink, weight=wt)
-            p.text((bx1 if up else bx0 + (bx1 - bx0) * r[k] / vmax) + 8, y, fmt(r[k]), size=11, color=ink, weight=wt)
-    p.source(AACR_SOURCE)
-    return p
-
-
-def fig_misses(T):
-    """Serious defects missed per 100 PRs: the shortest bar is the best reviewer."""
-    S, _, n_ser, _, n_cases = serious()
-    rows = sorted(S.items(), key=lambda kv: kv[1]["missed"])
-    p = Page4(T, h=600)
-    p.title("Misses the fewest serious defects" if rows[0][0] == QR else "Serious defects missed")
-    p.metric(f"AACR-Bench · {n_cases} real PRs · high- and medium-severity defects missed per 100 PRs "
-             f"({n_ser} in all) · lower is better")
-    theme.bar_rows(p, [{"name": n, "value": r["missed"], "qr": n == QR,
-                        "label": f"{r['missed']:.1f}   finds {pct(100 * r['found'] / n_ser)}"} for n, r in rows],
-                   330, 1000, 170, p.h - 96, max(r["missed"] for _, r in rows))
-    p.source(AACR_SOURCE)
+            p.text(bx0 - 10, y, "QuickReview" if ours else name, ha="right", size=12, color=ink, weight=wt)
+            p.text((bx1 if up else bx0 + (bx1 - bx0) * r[k] / vmax) + 8, y, fmt(r[k]), size=12, color=ink, weight=wt)
+    p.source(HERO_SOURCE)
     return p
 
 
@@ -277,7 +271,7 @@ def fig_same_model(T):
     p = Page4(T, h=640)
     p.title(f"Same model, more defects found: ahead on all {len(SAME_MODEL)} models" if lead
             else "Same model, two reviewers")
-    p.metric("AACR-Bench · share of the verified defects found · each pair: one model, same PRs, one judge")
+    p.metric("AACR-Bench · share of the verified defects found · each pair: one model, same PRs · higher is better")
     cols = [("High severity", 1, 2, 380), ("All defects", 2, 3, 790)]
     top, width = 190, 300
     for head, _, _, x0 in cols:
@@ -285,7 +279,8 @@ def fig_same_model(T):
     y = top
     for model, n_prs, n_high, n_all, pair in SAME_MODEL:
         y += 22
-        p.text(64, y, f"{model} · {n_prs} PRs", size=13.5, weight="bold", color=T["ink"])
+        p.text(64, y, f"{model} · {n_prs} PRs · {n_high} high-severity, {n_all} in all", size=13.5, weight="bold",
+               color=T["ink"])
         y += 30
         for name, *found in pair:
             ours = name == "QuickReview"
@@ -298,23 +293,23 @@ def fig_same_model(T):
                 p.text(x0 + width + 12, y, pct(100 * share), size=13, color=ink, weight=wt)
             y += 32
         y += 6
-    p.source("One judge (GPT-6 Sol), one run each, a partly found defect counts ½. Opus: 40 PRs, 30 of them QuickReview's "
-             "tuning PRs.\nQuickReview: its frozen build on GPT-6.1 Sol, September builds on Opus and GPT-6 Sol. "
-             "Codex CLI: as shipped on GPT-6 Sol.")
+    p.source("One judge (GPT-6 Sol), one run each, a partly found defect counts ½. Opus: 40 PRs QuickReview was tuned on; "
+             "Claude Code at its default effort.\nQuickReview: its frozen build on GPT-6.1 Sol, September builds on Opus "
+             "and GPT-6 Sol. Codex CLI on GPT-6 Sol: as first run, at medium, without the PR text.")
     return p
 
 
 def fig_elo(T):
     """A pairwise Elo leaderboard: a dot per configuration, its 95% interval as a whisker."""
     rows = sorted(ELO, key=lambda r: -r[1])
-    first = next(k for k, r in enumerate(rows) if r[4])
-    title = (f"Judged side by side: {ordinal(first + 1)} of {len(rows)}, behind only {rows[0][0].split(' (')[0]}"
-             if first == 1 else f"Judged side by side: {ordinal(first + 1)} of {len(rows)}")
+    _, _, w, l, gap = ELO_DIRECT
+    separated = gap[0] > 0 and w > l  # the gap's interval excludes zero, and it won the games
     p = Page4(T, h=640)
-    p.title(title)
-    p.metric(f"Martian · the 20 PRs QuickReview did worst on · pairwise Elo with 95% intervals · higher is better")
+    p.title(f"On Opus 5.5, QuickReview beats Claude Code high {w}–{l}" if separated
+            else "Judged side by side")
+    p.metric("Martian · 20 PRs where QuickReview (GPT-6.1 Sol, DeepSeek) did worst · Elo, 95% intervals · higher is better")
     lo, hi = 1100, 1850
-    x0, x1, top, bottom = 400, p.w - 90, 186, p.h - 110
+    x0, x1, top, bottom = 420, p.w - 90, 186, p.h - 110
     X = lambda v: x0 + (x1 - x0) * (v - lo) / (hi - lo)  # noqa: E731
     for v in range(lo, hi + 1, 150):
         p.c.plot([X(v)] * 2, [top - 10, bottom + 4], color=T["grid"], lw=1, zorder=1)
@@ -328,13 +323,13 @@ def fig_elo(T):
         dot(p, X(elo), y, 7, fill, zorder=5)
         p.text(x0 - 16, y, name, ha="right", size=13, color=ink, weight=wt)
         p.text(X(b) + 10, y, str(elo), size=12, color=ink, weight=wt)
-    a, b, w, l = ELO_DIRECT
-    p.source("Two judges pooled, GPT-6.1 Sol and Claude Opus 5.5, each reading both reviews blind; alone, each favours its "
-             f"own model family.\n* Six quality lenses on GPT-6 Luna. Head to head, {a.rstrip('*')} beat {b} {w}–{l}.")
+    p.source(f"Two judges pooled (GPT-6.1 Sol, Claude Opus 5.5), each reading both reviews blind; {w}–{l} is their verdicts "
+             "on 20 PRs.\n* Six of its lenses on GPT-6 Luna. QuickReview builds: Oct 3 on GPT-6.1 Sol, mid-October on "
+             "DeepSeek and GLM, Oct 20 on Opus and Sonnet.")
     return p
 
 
-FIGURES = {"bench-hero": fig_hero, "bench-misses": fig_misses, "bench-same-model": fig_same_model,
+FIGURES = {"bench-hero": fig_hero, "bench-same-model": fig_same_model,
            "bench-aacr": fig_aacr, "bench-martian": fig_martian, "bench-qodo": fig_qodo, "bench-elo": fig_elo}
 
 
