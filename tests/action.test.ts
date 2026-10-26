@@ -565,14 +565,20 @@ describe("scripts/action.sh login", () => {
     expect(res.status, res.stderr).toBe(0);
     expect(res.stderr).toContain("pulled anonymously");
     expect(calls(r.dir)).toEqual([]);
-    expect(existsSync(join(r.work, "docker"))).toBe(false);
-    // and the review then runs with the runner's own docker config
+  });
+
+  // MUTATION: move the `mkdir -p "$w/docker"` in `login` below the no-token
+  // return — this fails.
+  it("pulls anonymously from an empty docker config of its own, never the runner's logins", () => {
+    const r = rig();
+    expect(sh("login", r.env()).status).toBe(0);
+    expect(readdirSync(join(r.work, "docker"))).toEqual([]);
     expect(sh("run", r.env()).status).toBe(0);
     expect(
       calls(r.dir)
         .find((c) => c.verb === "run")!
         .files("docker_config"),
-    ).toBe("");
+    ).toBe(join(r.work, "docker"));
   });
 
   it("logs in with the registry token on stdin, to a docker config of its own", () => {

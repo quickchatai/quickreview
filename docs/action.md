@@ -54,8 +54,9 @@ for `docker login` and for the preflight, and the review never sees it.
    private-mirror route. A registry that does not answer is only a warning:
    docker's own pull then reports.
 2. **login.** Only with `registry-token`: `docker login` into a docker config of
-   its own under `$RUNNER_TEMP`, with the password on stdin. Without one it does
-   nothing.
+   its own under `$RUNNER_TEMP`, with the password on stdin. Without one it only
+   stages that docker config, empty, so the pull is anonymous even on a runner
+   that holds logins of its own.
 3. **run.** One throwaway container of the pinned image:
    `review <pr> --repo <owner/name> --to pr,terminal`. The container is the
    sandbox: no `docker.sock`, `--cap-drop ALL`, `no-new-privileges`, the model's

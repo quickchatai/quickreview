@@ -240,11 +240,14 @@ preflight() {
 # Into a docker config of its own under the staging directory, so it touches
 # neither the runner's ~/.docker nor any later step, and cleanup removes it.
 # Only with a registry token: the release image is public and pulls without one.
+# The config is staged either way, so an anonymous pull is anonymous: a login
+# left in the runner's ~/.docker (a self-hosted runner's stale one) is never sent.
 login() {
   local image cred user token w
   image="$(resolve_image)"
   split_image "$image"
   w="$(work_dir)"
+  (umask 077 && mkdir -p "$w/docker")
   if [ -z "${QCR_ACTION_REGISTRY_TOKEN:-}" ]; then
     say "no registry-token: $image is pulled anonymously, with no login"
     return 0
@@ -252,7 +255,6 @@ login() {
   cred="$(registry_credential)"
   user="${cred%%$'\n'*}"
   token="${cred#*$'\n'}"
-  (umask 077 && mkdir -p "$w/docker")
   printf '%s' "$token" | DOCKER_CONFIG="$w/docker" docker login "$IMG_HOST" -u "$user" --password-stdin >/dev/null ||
     die "docker login to $IMG_HOST failed"
   say "logged in to $IMG_HOST as $user"
