@@ -355,7 +355,7 @@ Relevant `[daemon]` knobs in `config.example.toml`:
 SQLite is authoritative for the round plan, its timing and its verdict. It
 cannot see what the parent session and its subagents are doing *right now*.
 
-The worker's LiveEvent log, projected by `src/live/`, publishes that ephemeral
+The worker's LiveEvent log, projected by `packages/pi-plugin/src/live/projection.ts` and published by `src/live/publish.ts`, carries that ephemeral
 state and nothing else (the tmux pi extension that once did is gone). It observes tool-execution events, keys each subagent by **invocation**
 rather than by agent name (a parent may launch the same lens twice, and the
 second run must not inherit the first run's terminal timestamp), and atomically

@@ -21,7 +21,7 @@ import {
   type LiveEvent,
 } from "@quickchatai/pi-quickreview/src/live/events.js";
 import { createLiveWriter, slimResult } from "@quickchatai/pi-quickreview/src/live/writer.js";
-import { projectRoundProgress } from "../src/live/projection.js";
+import { projectRoundProgress } from "@quickchatai/pi-quickreview/src/live/projection.js";
 import { parseRoundProgress } from "@quickchatai/pi-quickreview/src/round-progress.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "live-events-"));

@@ -7,6 +7,14 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sdkStubArgs, writeSdkDriverStub, type SdkStubMode } from "./helpers/sdk-driver-stub.js";
+import { waitFor } from "./helpers/wait-for.js";
+import { validate } from "./helpers/json-schema-lite.js";
+import type { LensActivity } from "@quickchatai/pi-quickreview/src/engine/lens/activity.js";
+import type { LensRequest, LensRun } from "@quickchatai/pi-quickreview/src/engine/lens/runlens.js";
+import { lensToolDefinitions } from "@quickchatai/pi-quickreview/src/engine/lens/tool.js";
+import { LensWave, type WaveRunner } from "@quickchatai/pi-quickreview/src/engine/lens/wave.js";
+import { liveRoundDir } from "@quickchatai/pi-quickreview/src/live/events.js";
+import { createLiveWriter } from "@quickchatai/pi-quickreview/src/live/writer.js";
 import {
   CONTAINER_START_GRACE_MS,
   identifyTarget,
@@ -240,6 +248,163 @@ describe("status", () => {
     expect(json(h).run_id).toBe("run1");
     await runDetachedVerb("status", [], true, h.deps);
     expect(json(h).run_id).toBe("run2");
+  });
+});
+
+describe("status: live lens activity", () => {
+  /** A finished pass, as the runner returns it. */
+  const ran = (id: string, agent: string, exitCode: number, activity: LensActivity): LensRun => ({
+    text: exitCode === 0 ? "No findings." : "",
+    activity,
+    result: {
+      id,
+      agent,
+      model: "faux/m",
+      usage: { input: 0, output: 0, cacheRead: 0, cost: 0 },
+      messages: [],
+      exitCode,
+      ...(exitCode === 0 ? {} : { stopReason: "error", errorMessage: "provider failed" }),
+    },
+  });
+
+  it("carries each running lens's tool, its file and a growing count; a finished lens keeps its count, a failed one reads failed", async () => {
+    const h = harness();
+    await runDetachedVerb("start", [], true, h.deps);
+    // The run's round log, written as the core writes it: the main session's
+    // events, the real lens tool's progress updates among them.
+    const root = join(h.deps.home, "runs", "run1", "work", "review");
+    const sink = createLiveWriter({
+      dir: liveRoundDir(root, "review-feature", 1),
+      now: () => h.clock.t,
+      coalesceMs: 60_000,
+    }).main({ key: "review-feature", round: 1, pr: 0, session: "review-feature" });
+    const passes: Array<{ request: LensRequest; finish: (run: LensRun) => void }> = [];
+    const runner: WaveRunner = {
+      run: (request) => new Promise((finish) => passes.push({ request, finish })),
+    };
+    // Every change told at once (the tool's own pace is ACTIVITY_UPDATE_MS).
+    const [lens] = lensToolDefinitions({
+      runner,
+      wave: new LensWave(),
+      env: {},
+      activityUpdateMs: 0,
+    });
+    const args = {
+      tasks: [
+        { agent: "pass-security--sol-high", task: "a" },
+        { agent: "pass-tests--sol-high", task: "b" },
+      ],
+    };
+    const call = { toolCallId: "c1", toolName: "lens", args };
+    sink.feed({ type: "agent_start" });
+    sink.feed({ type: "tool_execution_start", ...call });
+    const done = lens!.execute("c1", args, undefined, (partialResult: unknown) =>
+      sink.feed({ type: "tool_execution_update", ...call, partialResult }),
+    );
+    await waitFor(() => passes.length === 2, "both passes to start");
+    const schema = JSON.parse(
+      readFileSync(join(import.meta.dirname, "..", "schemas", "review-result.v1.json"), "utf8"),
+    ) as Record<string, unknown>;
+    const lenses = async (): Promise<Array<Record<string, unknown>>> => {
+      sink.flush();
+      h.lines.length = 0;
+      expect(await runDetachedVerb("status", [], true, h.deps)).toBe(0);
+      // the payload a plugin reads, as its schema describes it
+      expect(validate(schema, json(h))).toEqual([]);
+      return json(h).progress.live.agents;
+    };
+    const [security, tests] = passes as [(typeof passes)[0], (typeof passes)[0]];
+
+    // The security lens is reading a file; the tests lens has done nothing yet.
+    security.request.onActivity!({
+      durationMs: 5_000,
+      toolCount: 3,
+      tool: "read",
+      args: "src/x.ts",
+      target: "src/x.ts",
+      toolRunning: true,
+    });
+    expect(await lenses()).toEqual([
+      {
+        agent: "pass-security--sol-high",
+        status: "running",
+        duration_ms: 5_000,
+        tool_count: 3,
+        current_tool: "read: src/x.ts",
+        current_target: "src/x.ts",
+        line: "security · read src/x.ts · 3 tools · 0:05",
+      },
+      {
+        agent: "pass-tests--sol-high",
+        status: "running",
+        duration_ms: 0,
+        tool_count: 0,
+        line: "tests · starting · 0:00",
+      },
+    ]);
+
+    // Seven seconds on: the count grows, the tool and its path move on, and a
+    // running lens's time counts from its start between its own updates.
+    h.clock.t += 7_000;
+    security.request.onActivity!({
+      durationMs: 6_000,
+      toolCount: 4,
+      tool: "grep",
+      args: "TODO",
+      target: "src",
+      toolRunning: true,
+    });
+    tests.request.onActivity!({
+      durationMs: 6_500,
+      toolCount: 1,
+      tool: "bash",
+      args: "git diff",
+      toolRunning: true,
+    });
+    const later = await lenses();
+    expect(later[0]).toMatchObject({
+      status: "running",
+      tool_count: 4,
+      current_tool: "grep: TODO",
+      current_target: "src",
+      duration_ms: 7_000,
+    });
+    // a tool with no path names none
+    expect(later[1]).toMatchObject({
+      status: "running",
+      tool_count: 1,
+      current_tool: "bash: git diff",
+    });
+    expect(later[1]).not.toHaveProperty("current_target");
+    // the human status names each running lens and what it is doing
+    h.lines.length = 0;
+    await runDetachedVerb("status", [], false, h.deps);
+    expect(h.lines.join("\n")).toMatch(/^ {2}security · grep src · 4 tools · 0:07$/m);
+    expect(h.lines.join("\n")).toMatch(/^ {2}tests · bash · 1 tool · 0:07$/m);
+
+    // One lens finishes, the other fails: their final counts and outcomes stay.
+    security.finish(
+      ran("r-sec", "pass-security--sol-high", 0, {
+        durationMs: 9_000,
+        toolCount: 5,
+        toolRunning: false,
+      }),
+    );
+    tests.finish(
+      ran("r-tst", "pass-tests--sol-high", 1, {
+        durationMs: 8_000,
+        toolCount: 2,
+        toolRunning: false,
+      }),
+    );
+    const result = await done;
+    sink.feed({ type: "tool_execution_end", ...call, result, isError: false });
+    const ended = await lenses();
+    expect(ended[0]).toMatchObject({ status: "completed", tool_count: 5, duration_ms: 9_000 });
+    expect(ended[0]).not.toHaveProperty("current_target");
+    expect(ended[0]!["line"]).toBe("security · done · 5 tools · 0:09");
+    expect(ended[1]).toMatchObject({ status: "failed", tool_count: 2, duration_ms: 8_000 });
+    expect(ended[1]!["line"]).toBe("tests · failed · 2 tools · 0:08");
   });
 });
 

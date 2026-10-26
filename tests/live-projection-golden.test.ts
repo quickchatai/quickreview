@@ -3,7 +3,7 @@
 // The goldens in fixtures/live-events/golden/ were recorded from the retired tmux
 // extension (extensions/round-progress.ts), the reference publisher. The same pi
 // events go to the LiveEvent writer; its log is read back from disk and projected
-// (src/live/projection.ts). The snapshot file and the transition log must be
+// (packages/pi-plugin/src/live/projection.ts). The snapshot file and the transition log must be
 // identical bytes to the goldens.
 //
 // The committed session (fixtures/live-events/pr-session.jsonl) is a recorded-
@@ -13,7 +13,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { readLiveEvents } from "@quickchatai/pi-quickreview/src/live/events.js";
-import { projectRoundProgress } from "../src/live/projection.js";
+import { projectRoundProgress } from "@quickchatai/pi-quickreview/src/live/projection.js";
 import {
   parseRoundProgress,
   roundExecutionStage,

@@ -68,6 +68,7 @@ import {
   settledWithin,
   type CacheLease,
 } from "./cache-run.js";
+import { LensActivityTracker, type LensActivity } from "./activity.js";
 import { passTimeoutMessage, runUnderDeadline } from "./deadline.js";
 import { leafCache } from "./leaf-cache.js";
 import type { AgentRegistry, LensAgent } from "./registry.js";
@@ -158,12 +159,18 @@ export interface LensRequest {
   task: string;
   /** Ends the pass: the session is aborted and the result says so. */
   signal?: AbortSignal;
+  /** Hears the pass's activity each time a tool call of its session starts or
+   * ends, while it runs. A listener that throws is ignored. */
+  onActivity?: (activity: LensActivity) => void;
 }
 
 export interface LensRun {
   result: LensResult;
   /** The pass's last assistant text; "" when it produced none. */
   text: string;
+  /** What the pass did, at its end: its tool count and duration. Absent on a
+   * pass that never reached its session's setup (an unknown agent, no permit). */
+  activity?: LensActivity;
 }
 
 export interface LensRunner {
@@ -572,12 +579,29 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
       warn(`warm-up for cache group ${lease.key} still running after ${waitMs} ms; lenses go on`);
   }
 
-  /** The attempts of one pass, under its permit. Never throws. */
+  /** The attempts of one pass, under its permit, with what it did: its
+   * activity is told to the request while it runs and kept on the run at its
+   * end. Never throws. */
   async function executeIn(
     id: string,
     agent: LensAgent,
     request: LensRequest,
     lease: CacheLease | undefined,
+  ): Promise<LensRun> {
+    const activity = new LensActivityTracker(now(), now, config.cwd);
+    const out = await attemptsOf(id, agent, request, lease, activity);
+    activity.settle();
+    return { ...out, activity: activity.view() };
+  }
+
+  /** executeIn's body: the attempts, each feeding `activity` from its
+   * session's events. Never throws. */
+  async function attemptsOf(
+    id: string,
+    agent: LensAgent,
+    request: LensRequest,
+    lease: CacheLease | undefined,
+    activity: LensActivityTracker,
   ): Promise<LensRun> {
     let spent = ZERO_USAGE;
     const modelSpec = agent.modelId ?? config.defaultModel;
@@ -591,6 +615,14 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
         errorMessage,
         extra,
       );
+    const tell = (): void => {
+      if (request.onActivity === undefined) return;
+      try {
+        request.onActivity(activity.view());
+      } catch {
+        // a listener's failure is not the pass's
+      }
+    };
     if (modelSpec === undefined)
       return fail(`agent ${agent.name} names no model and the run has no default`);
     if (thinking !== null && !THINKING_LEVEL_SET.has(thinking))
@@ -609,6 +641,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
       let entered = false;
       let sink: LiveSink | undefined;
       let unsubscribe: (() => void) | undefined;
+      let unhear: (() => void) | undefined;
       try {
         const pack = cache?.pack;
         const spec: HostSessionSpec = {
@@ -639,6 +672,9 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
         signal.throwIfAborted();
         session = await config.host.makeSession(spec);
         sessionId = session.sessionId;
+        unhear = session.subscribe((event) => {
+          if (activity.feed(event)) tell();
+        });
         if (config.live !== undefined) {
           try {
             const made = config.live(id, agent.name);
@@ -693,6 +729,9 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
         signal.throwIfAborted();
         return { ...reading, failure };
       } finally {
+        unhear?.();
+        // A call the attempt left open (an abort, a deadline) is over with it.
+        activity.settle();
         unsubscribe?.();
         sink?.close();
         if (session !== undefined) {

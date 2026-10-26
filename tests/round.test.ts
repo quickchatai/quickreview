@@ -18,7 +18,7 @@ import {
   liveRoundDir,
   readLiveEvents,
 } from "@quickchatai/pi-quickreview/src/live/events.js";
-import { projectRoundProgress } from "../src/live/projection.js";
+import { projectRoundProgress } from "@quickchatai/pi-quickreview/src/live/projection.js";
 import { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import type { Runtime, RuntimeSession } from "@quickchatai/pi-quickreview/src/engine/port.js";
 import { piCliRuntime } from "./helpers/pi-cli-runtime.js";
