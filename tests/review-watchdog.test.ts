@@ -84,8 +84,10 @@ describe("runWatchdog", () => {
       { pgid: 502, sig: "SIGKILL" },
       { pgid: 77, sig: "SIGKILL" },
     ]);
+    // the end carries its time: a host shows how long the run took
     expect(JSON.parse(readFileSync(join(dir, "exit.json"), "utf8"))).toEqual({
       code: WATCHDOG_EXIT_CODE,
+      at: f.clock.t,
     });
     const out = JSON.parse(readFileSync(join(dir, "output.jsonl"), "utf8").trim());
     expect(out.ok).toBe(false);

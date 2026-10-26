@@ -9,7 +9,11 @@
 //   ├─ To review ─────────────────────────── n ─┤
 //   ├─ Reviewed ──────────────────────────── n ─┤
 //   │ (spare rows)                               │
-//   ├─ #n ──────────────────────────────────────┤  the selected PR
+//   ├─ #n ──────────────────────────────────────┤  the selected PR: its price,
+//   │                                             its review's progress (the
+//   │                                             plan, the lenses, validate,
+//   │                                             write-up, a "now" line per
+//   │                                             running lens) or its findings
 //   ├───────────────────────────────────────────┤
 //   │ the notice, then the key hints             │
 //   ╰───────────────────────────────────────────╯
@@ -21,8 +25,10 @@ import {
   visibleWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
+import { clockOf } from "@quickchatai/pi-quickreview/src/live/lensline.js";
 import { ago, providerLabel, type HomeModel, type SetupGap } from "./model.js";
-import type { OpenPull, PrReview, Slot } from "./ports.js";
+import type { OpenPull, PrReview, ReviewQuote, Slot } from "./ports.js";
+import { sevOf, shortWhere, whereOf, type Lens, type Run } from "./review.js";
 
 type Fg = Parameters<Theme["fg"]>[0];
 
@@ -42,6 +48,10 @@ export const EDITOR_ROWS = 8;
 export const LIST_ROWS = 10;
 /** A notice wraps onto at most this many rows. */
 const NOTICE_ROWS = 3;
+/** The finished view lists this many findings before "… n more". */
+const FINDING_ROWS = 8;
+/** "now" lines for this many running lenses, then "and n more". */
+const NOW_ROWS = 4;
 
 export interface PanelHost {
   model: HomeModel;
@@ -266,19 +276,48 @@ export class HomePanel implements Component {
     return out;
   }
 
+  /** "~$1.33 · stops at $2.66", "price unknown", a spinner while pricing,
+   * or nothing before it is asked for. */
+  private price(q: Slot<ReviewQuote> | null, long: boolean): string {
+    if (q === null) return "";
+    if (q.kind === "pending") return this.c("dim", `${this.spin()} pricing`);
+    if (q.kind === "unknown") return this.c("dim", "price unknown");
+    const cap = q.value.capUsd;
+    return this.c(
+      "dim",
+      `~${money(q.value.estimateUsd)}${long ? (cap === null ? " · no hard stop" : ` · stops at ${money(cap)}`) : ""}`,
+    );
+  }
+
+  /** A run's lens bar: done of planned, `cells` wide. */
+  private bar(run: Run, cells: number): string {
+    const done = run.lenses.filter((l) => l.state === "done" || l.state === "failed").length;
+    const filled = Math.round((done / Math.max(1, run.lenses.length)) * cells);
+    return `${this.c("accent", "▰".repeat(filled))}${this.c("dim", "▱".repeat(cells - filled))} ${this.c("muted", `${done}/${run.lenses.length || "?"}`)}`;
+  }
+
   private prRow(w: number, p: OpenPull, review: PrReview | undefined, isSel: boolean): string {
     let mark: string;
     let right: string;
-    if (review) {
+    const run = this.m.runs.get(p.number);
+    if (run && this.m.isRunning(p.number)) {
+      mark = this.c("accent", this.spin());
+      right = this.bar(run, 8);
+    } else if (review) {
       mark = review.high ? this.c("warning", "●") : this.c("success", "✓");
       right =
-        review.findings === 0
-          ? this.c("success", "clean")
-          : this.c(review.high ? "warning" : "muted", plural(review.findings, "finding"));
+        review.findings === null
+          ? this.c("muted", "reviewed")
+          : review.findings === 0
+            ? this.c("success", "clean")
+            : this.c(review.high ? "warning" : "muted", plural(review.findings, "finding"));
       right += this.c("dim", ` · ${review.by} · ${ago(review.at, this.m.now())}`);
     } else {
       mark = this.c("dim", "○");
-      right = this.c("dim", `@${p.author} · ${ago(Date.parse(p.updatedAt), this.m.now())}`);
+      const price = this.price(this.m.quoteOf(p), false);
+      right =
+        this.c("dim", `@${p.author} · ${ago(Date.parse(p.updatedAt), this.m.now())}`) +
+        (price && this.m.quoteOf(p)?.kind === "known" ? this.c("dim", " · ") + price : "");
     }
     const cursor = isSel ? this.c("accent", "▌") : " ";
     const num = this.c(isSel ? "accent" : "muted", `#${p.number}`);
@@ -326,7 +365,9 @@ export class HomePanel implements Component {
       out.push(this.pending(this.m.state.pulls, w));
       return;
     }
-    const caps = listCaps(room, this.need()!);
+    // auto-review's note, when its half is unknown, takes a row of the room
+    const note = l.reviewed !== null && this.m.autoUnknown() !== null ? 1 : 0;
+    const caps = listCaps(room - note, this.need()!);
     out.push(this.rule(w, "To review", String(l.toReview.length)));
     if (l.toReview.length === 0)
       out.push(this.row(w, this.c("dim", "Nothing waiting. New pull requests show up here.")));
@@ -351,13 +392,18 @@ export class HomePanel implements Component {
     else if (l.reviewed.length === 0)
       out.push(this.row(w, this.c("dim", "Nothing reviewed here yet.")));
     else this.listRows(w, out, l.reviewed, caps.reviewed);
+    const auto = this.m.autoUnknown();
+    if (l.reviewed !== null && auto !== null)
+      out.push(this.row(w, this.c("dim", `Auto-review's reviews unknown — ${auto}.`)));
   }
 
   private details(w: number): string[] {
     const p = this.m.selectedPull();
     if (!p) return [];
     const c = (k: Fg, t: string): string => this.c(k, t);
-    const out = [this.rule(w, `#${p.number}`)];
+    const run = this.m.runs.get(p.number);
+    const running = run !== undefined && this.m.isRunning(p.number);
+    const out = [this.rule(w, `#${p.number}`, running && run.runId ? `run ${run.runId}` : "")];
     out.push(this.row(w, this.th.bold(p.title)));
     const size = ` · ${c("success", `+${p.additions}`)} ${c("error", `−${p.deletions}`)} in ${plural(p.changedFiles, "file")}`;
     out.push(
@@ -370,13 +416,22 @@ export class HomePanel implements Component {
       ),
     );
     const review = this.m.reviewOf(p.number);
-    if (review)
-      out.push(
-        this.row(
-          w,
-          `${c("success", "✓")} Reviewed by ${review.by === "auto" ? "auto-review" : "you"} · ${c(review.high ? "warning" : "text", plural(review.findings, "finding"))}`,
-        ),
-      );
+    if (running) out.push(...this.progress(w, run));
+    else {
+      out.push(this.row(w, ""));
+      // a failed or stopped run says why, and the PR stays reviewable
+      if (run?.stage === "failed" && (review === undefined || (run.ended ?? 0) >= review.at))
+        out.push(this.row(w, c("warning", `✗ The last review stopped: ${run.error ?? "unknown"}`)));
+      if (review) out.push(...this.finishedView(w, review));
+      else
+        out.push(
+          this.row(
+            w,
+            `${c("dim", "○")} Not reviewed yet.  ${c("accent", this.host.focused() ? "⏎" : "alt+r")} ${c("muted", "reviews it now, in the background")}`,
+            this.price(this.m.quoteOf(p), true),
+          ),
+        );
+    }
     out.push(
       this.row(
         w,
@@ -386,12 +441,135 @@ export class HomePanel implements Component {
     return out;
   }
 
+  /** A running review: the plan, the lens bar and chips, validate and
+   * write-up, then what each running lens is doing now. */
+  private progress(w: number, r: Run): string[] {
+    const c = (k: Fg, t: string): string => this.c(k, t);
+    const now = this.m.now();
+    const order: Run["stage"][] = ["plan", "lenses", "validate", "write", "done"];
+    const at = order.indexOf(r.stage);
+    const mark = (i: number): string =>
+      at > i ? c("success", "✓") : at === i ? c("accent", this.spin()) : c("dim", "○");
+    const price =
+      r.est === null
+        ? "price unknown"
+        : `~${money(r.est)}${r.cap === null ? "" : `, stops at ${money(r.cap)}`}`;
+    const plan =
+      r.lenses.length > 0
+        ? `${r.files === undefined ? "" : `${plural(r.files, "file")} → `}${r.lenses.length} lens${r.lenses.length === 1 ? "" : "es"}`
+        : (r.now ?? "planning");
+    const out = [
+      this.row(w, ""),
+      this.row(
+        w,
+        `${mark(0)} Plan       ${c("muted", plan)}`,
+        c("dim", `${clockOf(now - r.started)} · ${price}`),
+      ),
+      this.row(w, `${mark(1)} Lenses     ${this.bar(r, 12)}`),
+    ];
+    const chip = (l: Lens): string =>
+      l.state === "done"
+        ? `${c("success", "✓")} ${c("muted", l.name)}${c("dim", ` ${l.tools}t`)}${l.findings ? c("warning", ` ·${l.findings}`) : ""}`
+        : l.state === "run"
+          ? `${c("accent", this.spin())} ${l.name}${c("dim", ` ${clockOf(now - (l.since ?? now))}`)}`
+          : l.state === "failed"
+            ? `${c("error", "✗")} ${c("muted", l.name)}`
+            : `${c("dim", "○")} ${c("dim", l.name)}`;
+    const cell = Math.max(0, ...r.lenses.map((l) => l.name.length)) + 9;
+    const pad = (t: string): string => t + " ".repeat(Math.max(0, cell - visibleWidth(t)));
+    const chips = r.lenses.map(chip);
+    for (let i = 0; i < chips.length; i += 3)
+      out.push(
+        this.row(
+          w,
+          `             ${chips
+            .slice(i, i + 3)
+            .map(pad)
+            .join("")}`,
+        ),
+      );
+    out.push(
+      this.row(w, `${mark(2)} Validate   ${c("muted", "checks every finding against the code")}`),
+    );
+    out.push(
+      this.row(w, `${mark(3)} Write-up   ${c("muted", "the review, ready to read or post")}`),
+    );
+    out.push(this.row(w, ""));
+    // what the reviewer is doing right now: one line per running lens
+    const busy = r.lenses.filter((l) => l.state === "run");
+    if (busy.length === 0)
+      out.push(this.row(w, `${c("dim", "now")}  ${c("muted", r.now ?? "starting")}`));
+    for (const l of busy.slice(0, NOW_ROWS)) {
+      const line = l.line ?? `${l.name} · ${clockOf(now - (l.since ?? now))}`;
+      const cut = line.indexOf(" · ");
+      const name = cut < 0 ? line : line.slice(0, cut);
+      const rest = cut < 0 ? "" : line.slice(cut + 3);
+      out.push(this.row(w, `${c("dim", "now")}  ${c("accent", name)}  ${c("muted", rest)}`));
+    }
+    if (busy.length > NOW_ROWS)
+      out.push(this.row(w, c("dim", `     and ${busy.length - NOW_ROWS} more`)));
+    return out;
+  }
+
+  /** A finished review: who, how many, the time and the real cost, then one
+   * line per finding. */
+  private finishedView(w: number, r: PrReview): string[] {
+    const c = (k: Fg, t: string): string => this.c(k, t);
+    const right = [
+      ...(r.tookMs !== undefined ? [`took ${clockOf(r.tookMs)}`] : []),
+      ...(r.costUsd !== undefined ? [r.costUsd === null ? "cost unknown" : money(r.costUsd)] : []),
+      ...(r.tookMs === undefined && r.costUsd === undefined
+        ? [`${ago(r.at, this.m.now())} ago`]
+        : []),
+    ].join(" · ");
+    const count =
+      r.findings === null ? "findings on the pull request" : plural(r.findings, "finding");
+    const out = [
+      this.row(
+        w,
+        `${c("success", "✓")} Reviewed by ${r.by === "auto" ? "auto-review" : "you"} · ${c(r.high ? "warning" : "text", count)}`,
+        c("dim", right),
+      ),
+    ];
+    const list = r.list ?? [];
+    for (const f of list.slice(0, FINDING_ROWS)) {
+      const sev = sevOf(f.severity);
+      out.push(
+        this.row(
+          w,
+          `  ${c(sev === "high" ? "warning" : sev === "medium" ? "text" : "muted", sev.padEnd(6))} ${c("dim", shortWhere(whereOf(f)))}  ${f.title}`,
+        ),
+      );
+    }
+    if (list.length > FINDING_ROWS)
+      out.push(this.row(w, c("dim", `  … ${list.length - FINDING_ROWS} more`)));
+    if (r.list !== undefined && list.length === 0)
+      out.push(this.row(w, c("muted", "  Nothing worth raising.")));
+    out.push(
+      this.row(
+        w,
+        `  ${c("accent", this.host.focused() ? "⏎" : "alt+r")} ${c("muted", "shows the review in the chat")}`,
+      ),
+    );
+    return out;
+  }
+
   private hints(w: number): string {
     const k = (key: string, label: string): string =>
       `${this.c("accent", key)} ${this.c("muted", label)}`;
-    const items = this.host.focused()
-      ? [k("j/k", "move"), k("o", "open"), k("u", "refresh"), k("esc", "chat")]
-      : [k("alt+j/k", "move"), k("alt+o", "open"), k("alt+u", "refresh"), k("f2", "focus")];
+    const p = this.m.selectedPull();
+    const running = p !== undefined && this.m.isRunning(p.number);
+    const enter =
+      p === undefined ? null : !running && this.m.reviewOf(p.number) ? "show review" : "review";
+    const f = this.host.focused();
+    const items = [
+      ...(enter !== null && !running ? [k(f ? "⏎" : "alt+r", enter)] : []),
+      k(f ? "j/k" : "alt+j/k", "move"),
+      k(f ? "o" : "alt+o", "open"),
+      ...(running ? [k(f ? "s" : "alt+s", "stop")] : []),
+      k(f ? "u" : "alt+u", "refresh"),
+      k(f ? "esc" : "f2", f ? "chat" : "focus"),
+    ];
     return this.row(w, items.join("  "));
   }
 
@@ -426,6 +604,11 @@ export class HomePanel implements Component {
       if (need && detail.length > 0 && cramped(listCaps(roomWith(detail.length), need), need))
         detail = [];
       this.lists(w, body, roomWith(detail.length));
+      // a tall details area (a running review's lenses, a finished one's
+      // findings) keeps to what the lists left: its head stays, its tail is cut
+      const left = target - body.length - foot.length;
+      if (detail.length > left)
+        detail = left >= 4 ? [...detail.slice(0, left - 1), this.row(w, this.c("dim", "…"))] : [];
     }
     const spare = Math.max(0, target - body.length - detail.length - foot.length);
     const blank = Array.from({ length: spare }, () => this.row(w, ""));
@@ -439,6 +622,9 @@ export class HomePanel implements Component {
     else if (data === "k" || matchesKey(data, "up")) m.move(-1);
     else if (data === "o") void m.openPr();
     else if (data === "u") void m.refresh();
+    else if (matchesKey(data, "enter")) void m.enter();
+    else if (data === "r") void m.review();
+    else if (data === "s") void m.stopReview();
   }
 
   handleMouse(e: TuiMouseEvent): TuiMouseEventResult | undefined {

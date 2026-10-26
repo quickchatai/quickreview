@@ -10,6 +10,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   rmSync,
   symlinkSync,
@@ -35,7 +36,8 @@ const { destinationChoices } = await import("@quickchatai/pi-quickreview/src/rev
 const { saveDefaultDestinations } = await import("../src/reviewhome.js");
 const { contextFor } = await import("../src/bench/runner.js");
 const { openReviewStore } = await import("../src/reviewhome.js");
-const { review: coreReview } = await import("@quickchatai/pi-quickreview/src/reviewapi.js");
+const { review: coreReview, postSavedReview } =
+  await import("@quickchatai/pi-quickreview/src/reviewapi.js");
 const { prepareHostRun } = await import("../src/hostroute.js");
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -562,6 +564,73 @@ describe("review(): the post offered after a finished PR review", () => {
     expect(api.posts).toHaveLength(1);
     expect(api.posts[0]!.body.event).toBe("COMMENT");
     expect(r.text).toMatch(/Posted 2 comments/);
+  });
+
+  // The home asks after a detached run has ended, in another process: the
+  // run keeps the finished review, and the later yes posts exactly it.
+  // MUTATION: post the saved review around the gate (or ignore dry_run) — this fails.
+  it("a review not posted is kept for later, and its later post on a dry-run install is recorded, not sent", async () => {
+    const repo = cwdRepo("saved-dry");
+    const api = stubApi();
+    const h = prHarness(repo, happyPi("saved-dry").bin, api, {}, true);
+    const r = await coreReview({ kind: "pr", pr: "7" }, coreOpts(h), {});
+    expect(r.exitCode, r.text).toBe(0);
+    const file = r.data["post_ready"] as string;
+    expect(existsSync(file)).toBe(true);
+    const saved = JSON.parse(readFileSync(file, "utf8"));
+    expect(saved).toMatchObject({ version: 1, repo: "o/r", pr: 7, head_sha: headSha });
+    expect(saved.review.event).toBe("COMMENT");
+    // no credential is kept with it
+    expect(readFileSync(file, "utf8")).not.toContain('"tok"');
+    expect(api.posts).toHaveLength(0);
+    const out = await postSavedReview(file, {
+      config: h.deps.cfg,
+      dryrunDir: h.deps.dryrunDir,
+      github: h.deps.pr,
+    });
+    expect(out.failed).toBe(false);
+    expect(out.post).toMatchObject({ ok: true, dry_run: true });
+    expect(out.line).toMatch(/Dry run .*recorded, not posted/);
+    expect(api.posts).toHaveLength(0);
+    expect(dryFiles(h.deps.dryrunDir)).toHaveLength(1);
+  });
+
+  it("a saved review posted later on a live install is one COMMENT review, and a second post repeats nothing", async () => {
+    const repo = cwdRepo("saved-live");
+    const api = stubApi();
+    const h = prHarness(repo, happyPi("saved-live").bin, api);
+    const r = await coreReview({ kind: "pr", pr: "7" }, coreOpts(h), {
+      offerPost: async () => false,
+    });
+    const file = r.data["post_ready"] as string;
+    const post = () =>
+      postSavedReview(file, { config: h.deps.cfg, dryrunDir: h.deps.dryrunDir, github: h.deps.pr });
+    const first = await post();
+    expect(first.line).toMatch(/Posted 2 comments to PR #7 \(comment-only review\)/);
+    expect(api.posts).toHaveLength(1);
+    expect(api.posts[0]!.body).toMatchObject({ event: "COMMENT", commit_id: headSha });
+    const again = await post();
+    expect(again.line).toMatch(/Nothing posted: 2 comments are already on the PR/);
+    expect(api.posts).toHaveLength(1);
+  });
+
+  it("a review that posted keeps nothing for later, and a file that is not a saved review posts nothing", async () => {
+    const repo = cwdRepo("saved-none");
+    const api = stubApi();
+    const h = prHarness(repo, happyPi("saved-none").bin, api, {}, true);
+    const r = await coreReview({ kind: "pr", pr: "7" }, coreOpts(h), {
+      offerPost: async () => true,
+    });
+    expect(r.data["post_ready"]).toBeUndefined();
+    const junk = join(tmp, "not-a-post.json");
+    writeFileSync(junk, "{}");
+    const out = await postSavedReview(junk, {
+      config: h.deps.cfg,
+      dryrunDir: h.deps.dryrunDir,
+      github: h.deps.pr,
+    });
+    expect(out.failed).toBe(true);
+    expect(out.line).toMatch(/is not a saved review/);
   });
 
   it("is never offered for a branch", async () => {

@@ -106,6 +106,7 @@ describe("the GitHub port", () => {
           deletions: 1,
           changedFiles: 2,
           headRefName: "fix",
+          headRefOid: "abc123",
         },
       ]),
     }));
@@ -122,10 +123,13 @@ describe("the GitHub port", () => {
           deletions: 1,
           changedFiles: 2,
           headRefName: "fix",
+          headSha: "abc123",
         },
       ],
     });
     const args = gh.calls[0]!;
+    // the head commit comes along: a price is cached by it
+    expect(args[args.indexOf("--json") + 1]).toMatch(/,headRefOid$/);
     expect(args.slice(0, 5)).toEqual(["gh", "pr", "list", "-R", "acme/widgets"]);
     expect(args[args.indexOf("--state") + 1]).toBe("open");
   });
@@ -186,7 +190,6 @@ describe("the repository port", () => {
 
 describe("the ports without an adapter yet", () => {
   it("answer unknown, never a zero", async () => {
-    expect((await unbuiltPorts.reviews.latest("a/b")).kind).toBe("unknown");
     expect((await unbuiltPorts.autoReview.status()).kind).toBe("unknown");
     expect((await unbuiltPorts.memory.status()).kind).toBe("unknown");
     expect((await unbuiltPorts.spend.totals()).kind).toBe("unknown");

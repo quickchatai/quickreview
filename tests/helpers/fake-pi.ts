@@ -47,6 +47,8 @@ export interface FakePi {
   handlers: Map<string, Handler[]>;
   sent: unknown[];
   notes: string[];
+  /** Every `ui.select` asked, in order. */
+  selects: Array<{ title: string; options: string[] }>;
   overlays: FakeOverlay[];
   tui: FakeTui;
   theme: FakeTheme;
@@ -79,6 +81,10 @@ export function fakePi(
     /** The model pi says the chat runs on. */
     model?: { provider: string; id: string };
     rows?: number;
+    /** What `pi.getSettings()` answers (pi's merged settings). */
+    settings?: unknown;
+    /** How the person answers a `ui.select`; absent: nobody answers. */
+    select?: (title: string, options: string[]) => string | undefined;
   } = {},
 ): FakePi {
   const tools = new Map<string, ToolDefinition>();
@@ -87,6 +93,7 @@ export function fakePi(
   const handlers = new Map<string, Handler[]>();
   const sent: unknown[] = [];
   const notes: string[] = [];
+  const selects: FakePi["selects"] = [];
   const overlays: FakeOverlay[] = [];
   const tui = fakeTui(o.rows ?? 40);
   const theme = fakeTheme();
@@ -110,7 +117,10 @@ export function fakePi(
     notify: (m: string) => notes.push(m),
     setStatus: () => {},
     setWidget: () => {},
-    select: async () => undefined,
+    select: async (title: string, options: string[]) => {
+      selects.push({ title, options: [...options] });
+      return o.select?.(title, options);
+    },
     confirm: async () => false,
     input: async () => undefined,
     custom: (
@@ -168,6 +178,7 @@ export function fakePi(
       return () => {};
     },
     sendMessage: (m: unknown) => sent.push(m),
+    getSettings: () => o.settings ?? {},
     sendUserMessage: (t: string) => sent.push({ user: t }),
   } as unknown as ExtensionAPI;
 
@@ -191,6 +202,7 @@ export function fakePi(
     handlers,
     sent,
     notes,
+    selects,
     overlays,
     tui,
     theme,

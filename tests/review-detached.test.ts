@@ -788,7 +788,10 @@ describe("a detached review on the SDK runtime", () => {
     const driver = r.pid();
     expect(await until(() => !alive(driver), 20_000)).toBe(true);
     expect(readFileSync(join(r.dir, "exit-code"), "utf8")).toBe("0");
-    expect(JSON.parse(readFileSync(join(r.dir, "exit.json"), "utf8"))).toEqual({ code: 0 });
+    expect(JSON.parse(readFileSync(join(r.dir, "exit.json"), "utf8"))).toEqual({
+      code: 0,
+      at: expect.any(Number),
+    });
     expect(readdirSync(join(r.deps.home, "locks"))).toEqual([]);
   }, 30_000);
 });
