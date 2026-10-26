@@ -18,9 +18,10 @@ not get a shell route; it is a new op on the daemon.
 - `mint-token.sh` is the only credential source (App JWT → installation
   token, cached, single-flight). Never a personal token, never `GH_TOKEN`.
   The one personal credential is not GitHub access at all: `vm-ghcr-login.sh`
-  (run by the owner, on the controller) gives the VM's docker its classic
-  `read:packages` login for pulling the release images, and refuses any other
-  scope. It never takes the token as an argument or env, and posts nothing.
+  (run by the owner, on the controller) gives the VM's docker a classic
+  `read:packages` login for pulling from a private mirror (the release images
+  are public and need none), and refuses any other scope. It never takes the
+  token as an argument or env, and posts nothing.
 - `cutover.sh <version>` is the owner's one-time cutover window, from
   the legacy layout to the release layout: resumable through a state file, a stop at every go, and
   the drain HELD after the release. Its stage 9 pauses every tracked PR but one

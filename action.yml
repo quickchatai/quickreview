@@ -1,8 +1,8 @@
-# The qcr review Action (the private leg: it lives in the image's own repository).
+# The qcr review Action.
 #
-# A composite: it checks that this repository can pull the private release
-# image, logs in to the registry, and runs the image's `review` once for one
-# pull request, posting a comment-only review. Everything it does is in
+# A composite: it checks that the release image can be pulled (it is public, so
+# anonymously; a private mirror logs in with registry-token), and runs the
+# image's `review` once for one pull request, posting a comment-only review. Everything it does is in
 # scripts/action.sh (one verb per step), so it can be read, tested with a fake
 # docker, and linted outside a workflow. docs/action.md says how to use it;
 # docs/action/qcr-review.yml is the workflow to copy.
@@ -26,18 +26,18 @@ inputs:
   github-token:
     description: >-
       The token the review reads the pull request and posts with. It needs
-      pull-requests: write. It is also the registry login unless registry-token is set.
+      pull-requests: write.
     required: false
     default: ${{ github.token }}
   registry-token:
     description: >-
-      A registry-only secret (a token with the read:packages scope and nothing else),
-      for repositories the private package does not grant access to under "Manage
-      Actions access". Used for docker login and the preflight only.
+      Only for an image that is not public (a private mirror, named by the image
+      input): a token that can read it, as a secret. The release image is public and
+      is pulled anonymously without one. Used for docker login and the preflight only.
     required: false
     default: ""
   registry-user:
-    description: The user docker logs in as.
+    description: The user docker logs in as, with registry-token.
     required: false
     default: ${{ github.actor }}
   limit:
@@ -93,7 +93,7 @@ runs:
         QCR_ACTION_GH_TOKEN: ${{ inputs.github-token }}
       run: bash "$QCR_ACTION_PATH/scripts/action.sh" preflight
 
-    - name: Log in to the registry
+    - name: Log in to a private mirror (registry-token only)
       shell: bash
       env:
         QCR_ACTION_PATH: ${{ github.action_path }}

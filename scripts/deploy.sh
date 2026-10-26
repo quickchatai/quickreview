@@ -46,9 +46,10 @@
 #                      cloudflared when the inventory enables it), the
 #                      containers, the image stamp, the pi settings and the
 #                      reviewer stub, and the state/status.json heartbeat the
-#                      status collector reads. It also warns 14 days before the
-#                      VM's ghcr pull token expires (the expiry that
-#                      scripts/vm-ghcr-login.sh recorded).
+#                      status collector reads. It also warns 14 days before a
+#                      private mirror's ghcr pull token expires (the expiry
+#                      that scripts/vm-ghcr-login.sh recorded; the public
+#                      release images need no login, so no record).
 #
 # `sync`, `dev` and `rebuild` are gone (the on-VM rsync and build are deleted):
 # they refuse with a pointer to `release`. A pre-release fix is a release.
@@ -1083,8 +1084,9 @@ release_problem() {
   fi
 }
 
-# The VM's ghcr pull token expires (1 year, by ruling), and a lapsed one fails
-# the updater's pull. scripts/vm-ghcr-login.sh records the expiry on this
+# The release images are public and pull with no login. A private mirror's
+# ghcr pull token expires (1 year, by ruling), and a lapsed one fails the
+# updater's pull. scripts/vm-ghcr-login.sh records the expiry on this
 # controller; release and verify read it back. Within GHCR_WARN_DAYS of it
 # (or past it) the plan line starts with WARNING. Warn only, never a refusal.
 GHCR_WARN_DAYS=14
@@ -1095,7 +1097,7 @@ ghcr_expiry_status() {
   local file iso epoch now days
   file="$(qcr_ghcr_expiry_file 2>/dev/null)" || file=""
   if [[ -z "$file" || ! -s "$file" ]]; then
-    GHCR_EXPIRY_LINE="no recorded expiry for the VM's ghcr pull token (scripts/vm-ghcr-login.sh records it when the owner logs the VM in)"
+    GHCR_EXPIRY_LINE="no ghcr login recorded: the release images are public and pull without one (a private mirror logs the VM in with scripts/vm-ghcr-login.sh, which records its expiry)"
     return 0
   fi
   iso="$(head -1 "$file" | tr -d '[:space:]')"

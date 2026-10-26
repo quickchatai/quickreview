@@ -8,7 +8,7 @@
 # Moves the legacy tmux VM to the release image with per-round SDK workers.
 # It runs only what the owner can sanction, in order, and stops at every go:
 #
-#   1  preconditions   origin, the tag and its manifest, the registry login
+#   1  preconditions   origin, the tag and its manifest, a private mirror's registry login
 #                      and its expiry, the VM's updater (legacy layout, a
 #                      provisioned run spec), the config home (no retired
 #                      keys, lens_permits = 20)
@@ -350,7 +350,7 @@ s_preconditions() {
       (( left < 14 )) && warn "under 14 days left: renew with scripts/vm-ghcr-login.sh soon"
     fi
   else
-    bad "no registry login recorded ($exp_file): run scripts/vm-ghcr-login.sh --version $VERSION"; ok=1
+    good "no registry login recorded: the release images are public and pull without one (a private mirror: scripts/vm-ghcr-login.sh --version $VERSION)"
   fi
 
   if read_vm_status; then
