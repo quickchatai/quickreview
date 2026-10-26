@@ -22,8 +22,6 @@ on:
 permissions:
   contents: read
   pull-requests: write
-  # Pulling the private qcr image with this repository's token.
-  packages: read
 
 jobs:
   review:
@@ -82,6 +80,7 @@ jobs:
           # gemini-api-key, digitalocean-api-key).
           pi-auth: ${{ secrets.QCR_PI_AUTH }}
           # limit: "5"
-          # A repository the package does not grant access to: a read:packages
-          # token as a secret, used only for docker login.
+          # The release image is public and needs no registry login. Only an
+          # image that is not public (a private mirror, named by `image`) takes
+          # a token that can read it, used only for docker login.
           # registry-token: ${{ secrets.QCR_REGISTRY_TOKEN }}

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The composite Action's steps (action.yml), one verb each:
 #
-#   scripts/action.sh preflight   can this repository pull the private image?
-#   scripts/action.sh login       docker login to the image's registry
+#   scripts/action.sh preflight   can this repository pull the image?
+#   scripts/action.sh login       docker login, only for a private mirror
 #   scripts/action.sh run         one review of one PR, in a throwaway container
 #   scripts/action.sh cleanup     remove everything the other verbs staged
 #
@@ -34,10 +34,10 @@
 #   QCR_ACTION_IMAGE            an image reference; default: the registry path
 #                               and version of package.json at the action's ref
 #   QCR_ACTION_REGISTRY_USER    docker login user (default: the workflow actor)
-#   QCR_ACTION_REGISTRY_TOKEN   a registry-only read:packages secret, used for
-#                               docker login and the preflight only
-#   QCR_ACTION_GH_TOKEN         the GitHub token: the registry login when no
-#                               registry token is given, and the review's token
+#   QCR_ACTION_REGISTRY_TOKEN   a token that can read a private mirror, used for
+#                               docker login and the preflight only; without
+#                               one the image is pulled anonymously
+#   QCR_ACTION_GH_TOKEN         the GitHub token the review reads and posts with
 #   QCR_ACTION_PR, QCR_ACTION_REPO, QCR_ACTION_LIMIT, QCR_ACTION_PI_AUTH
 #   QCR_REGISTRY_API            tests only: the registry's base URL
 set -euo pipefail
@@ -107,13 +107,13 @@ split_image() { # split_image <image>
   esac
 }
 
-# The credential for the registry: a registry-only secret when the workflow gave
-# one, else the workflow's token. Echoes the user, then the token, on two lines.
+# The credential for a private mirror: the registry-token input, never the
+# workflow's token. Echoes the user, then the token, on two lines. Called only
+# when a registry token was given; the release image is public and needs none.
 registry_credential() {
   local user="${QCR_ACTION_REGISTRY_USER:-}" token="${QCR_ACTION_REGISTRY_TOKEN:-}"
-  [ -n "$token" ] || token="${QCR_ACTION_GH_TOKEN:-}"
   [ -n "$user" ] || user="${GITHUB_ACTOR:-}"
-  [ -n "$token" ] || die "no registry credential: pass github-token (the default is the workflow's token) or registry-token"
+  [ -n "$token" ] || die "no registry token"
   [ -n "$user" ] || die "no registry user: pass registry-user"
   case "$user$token" in
     *[\"\\]* | *$'\n'*) die "the registry credential holds a character the preflight cannot send" ;;
@@ -133,50 +133,76 @@ http_status() { # http_status <url> <body file> <curl config lines…>
   printf '%s\n' "${code:-000}"
 }
 
-denied_message() { # denied_message <image> <http status>
-  local image="$1" status="$2" owner="${IMG_REPO%%/*}" name="${IMG_REPO#*/}"
+# The ways in to an image that is not public: a read:packages token, or the
+# workflow's own token once the package grants this repository access.
+private_ways() {
+  local owner="${IMG_REPO%%/*}" name="${IMG_REPO#*/}"
+  cat >&2 <<EOF
+An image that is not public (a private mirror, named by the \`image\` input) needs
+a token that can read it, as the \`registry-token\` input. Either:
+  1. a token with the read:packages scope and nothing else, as a secret; or
+  2. \`\${{ github.token }}\`, with \`permissions: packages: read\` in the workflow,
+     once this repository has the Read role under "Manage Actions access":
+       https://github.com/orgs/$owner/packages/container/$name/settings
+It is used only for \`docker login\`; the review never sees it.
+EOF
+}
+
+denied_message() { # denied_message <image> <http status> <anonymous: 1|0>
+  local image="$1" status="$2" anon="$3"
+  if [ "$anon" = 1 ]; then
+    cat >&2 <<EOF
+
+qcr-action: the qcr image $image cannot be pulled anonymously (HTTP $status).
+
+The release image is public, so the likely cause is a tag that does not exist:
+check the action's ref, and that release ${IMG_REF} is published.
+EOF
+    private_ways
+    printf '::error::qcr action: %s cannot be pulled anonymously (HTTP %s): check that the tag is published; an image that is not public needs registry-token\n' "$image" "$status"
+    return 0
+  fi
   cat >&2 <<EOF
 
-qcr-action: this repository cannot pull the qcr image $image (HTTP $status).
+qcr-action: the registry-token cannot pull the qcr image $image (HTTP $status).
 
-The image is a private package. Either:
-  1. grant this repository access to the package: open
-       https://github.com/orgs/$owner/packages/container/$name/settings
-     and under "Manage Actions access" add this repository with the Read role; or
-  2. give the action a registry-only secret: a token with the read:packages
-     scope and nothing else, as the \`registry-token\` input. It is used only
-     for \`docker login\`; the review never sees it.
-The workflow also needs \`permissions: packages: read\` for the first way.
+The release image is public: without registry-token it is pulled anonymously.
 EOF
+  private_ways
   if [ "$status" = 404 ]; then
     echo "qcr-action: (a 404 also means the tag ${IMG_REF} does not exist: check the action's ref and the release.)" >&2
   fi
-  printf '::error::qcr action: this repository cannot pull %s (HTTP %s): grant it access under the package'"'"'s "Manage Actions access", or pass a registry-only read:packages secret as registry-token\n' "$image" "$status"
+  printf '::error::qcr action: registry-token cannot pull %s (HTTP %s): give it read access to the package, or drop it to pull the public image anonymously\n' "$image" "$status"
 }
 
 preflight() {
-  local image cred user token api body status tok
+  local image cred user token api body status tok anon=1
+  local -a auth=()
   image="$(resolve_image)"
   split_image "$image"
   if [ "$IMG_HOST" != ghcr.io ] && [ -z "${QCR_REGISTRY_API:-}" ]; then
     say "preflight skipped: $IMG_HOST is not ghcr.io, so docker's own pull reports access"
     return 0
   fi
-  cred="$(registry_credential)"
-  user="${cred%%$'\n'*}"
-  token="${cred#*$'\n'}"
+  # Without a registry token the check is anonymous, as docker's pull will be.
+  if [ -n "${QCR_ACTION_REGISTRY_TOKEN:-}" ]; then
+    cred="$(registry_credential)"
+    user="${cred%%$'\n'*}"
+    token="${cred#*$'\n'}"
+    auth=("user = \"$user:$token\"")
+    anon=0
+  fi
   api="${QCR_REGISTRY_API:-https://$IMG_HOST}"
   body="$(mktemp)"
 
   # The registry hands out a pull token for the repository; whether this
-  # credential may read it shows on the manifest.
-  status="$(http_status "$api/token?service=$IMG_HOST&scope=repository:$IMG_REPO:pull" "$body" \
-    "user = \"$user:$token\"")"
+  # credential (or none) may read it shows on the manifest.
+  status="$(http_status "$api/token?service=$IMG_HOST&scope=repository:$IMG_REPO:pull" "$body" "${auth[@]}")"
   case "$status" in
     200) ;;
     401 | 403 | 404)
       rm -f "$body"
-      denied_message "$image" "$status"
+      denied_message "$image" "$status" "$anon"
       exit 1
       ;;
     *)
@@ -200,7 +226,7 @@ preflight() {
       say "ok: this repository can pull $image"
       ;;
     401 | 403 | 404)
-      denied_message "$image" "$status"
+      denied_message "$image" "$status" "$anon"
       exit 1
       ;;
     *)
@@ -213,15 +239,22 @@ preflight() {
 
 # Into a docker config of its own under the staging directory, so it touches
 # neither the runner's ~/.docker nor any later step, and cleanup removes it.
+# Only with a registry token: the release image is public and pulls without one.
+# The config is staged either way, so an anonymous pull is anonymous: a login
+# left in the runner's ~/.docker (a self-hosted runner's stale one) is never sent.
 login() {
   local image cred user token w
   image="$(resolve_image)"
   split_image "$image"
   w="$(work_dir)"
+  (umask 077 && mkdir -p "$w/docker")
+  if [ -z "${QCR_ACTION_REGISTRY_TOKEN:-}" ]; then
+    say "no registry-token: $image is pulled anonymously, with no login"
+    return 0
+  fi
   cred="$(registry_credential)"
   user="${cred%%$'\n'*}"
   token="${cred#*$'\n'}"
-  (umask 077 && mkdir -p "$w/docker")
   printf '%s' "$token" | DOCKER_CONFIG="$w/docker" docker login "$IMG_HOST" -u "$user" --password-stdin >/dev/null ||
     die "docker login to $IMG_HOST failed"
   say "logged in to $IMG_HOST as $user"

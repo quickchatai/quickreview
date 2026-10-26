@@ -8,9 +8,10 @@
 //     line holds no token and no memory service, the token is a 0600 file in a
 //     0700 directory that is gone afterwards, the route is `action`, and the
 //     generated config is live with memory off;
-//   - the preflight against a local stand-in for the registry: a 403 fails
-//     with the two ways out, and the credential is the registry-only secret when
-//     one is given;
+//   - the preflight against a local stand-in for the registry: with no
+//     registry input it asks anonymously (the image is public) and never sends
+//     the workflow token, a refusal fails and names the private-mirror route,
+//     and the credential is the registry token when one is given;
 //   - the generated config, parsed by the real parser, and a review posted
 //     through the mutation gate with it.
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -125,14 +126,12 @@ describe("the workflow template — when it runs", () => {
     expect(templateText).not.toMatch(/dry[_-]run/i);
   });
 
-  it("uses the Action at the floating major tag, with a token that can only read packages", () => {
+  it("uses the Action at the floating major tag, with no package permission and no registry input", () => {
     const action = job.steps.find((s) => s.uses?.includes("quickreview@"))!;
     expect(action.uses).toMatch(/^[\w-]+\/quickreview@v1$/);
-    expect(tpl.permissions).toEqual({
-      contents: "read",
-      "pull-requests": "write",
-      packages: "read",
-    });
+    // the image is public: the template asks for nothing to pull it
+    expect(tpl.permissions).toEqual({ contents: "read", "pull-requests": "write" });
+    expect(action.with).not.toHaveProperty("registry-token");
     // the pull request's own code is never checked out
     const checkout = job.steps.find((s) => s.uses?.startsWith("actions/checkout@"))!;
     expect(checkout.with!["ref"]).toContain("github.event.pull_request.base.sha");
@@ -549,7 +548,7 @@ describe("scripts/action.sh run — the docker run line", () => {
 describe("scripts/action.sh cleanup", () => {
   it("removes the staging directory, the docker login included", () => {
     const r = rig();
-    expect(sh("login", r.env()).status).toBe(0);
+    expect(sh("login", r.env({ QCR_ACTION_REGISTRY_TOKEN: REGISTRY_SECRET })).status).toBe(0);
     expect(existsSync(join(r.work, "docker"))).toBe(true);
     expect(sh("cleanup", r.env()).status).toBe(0);
     expect(existsSync(r.work)).toBe(false);
@@ -557,21 +556,40 @@ describe("scripts/action.sh cleanup", () => {
 });
 
 describe("scripts/action.sh login", () => {
-  it("logs in with the password on stdin, to a docker config of its own", () => {
+  // MUTATION: drop the early return on an empty QCR_ACTION_REGISTRY_TOKEN in
+  // `login`, with registry_credential falling back to QCR_ACTION_GH_TOKEN —
+  // this fails.
+  it("logs in nowhere without a registry token: the public image pulls anonymously", () => {
     const r = rig();
     const res = sh("login", r.env());
     expect(res.status, res.stderr).toBe(0);
-    const login = calls(r.dir)[0]!;
-    expect(login.argv).toEqual(["login", "ghcr.io", "-u", "octo", "--password-stdin"]);
-    expect(login.files("stdin")).toBe(TOKEN);
-    expect(login.argv.join("\n")).not.toContain(TOKEN);
-    expect(login.files("docker_config")).toBe(join(r.work, "docker"));
+    expect(res.stderr).toContain("pulled anonymously");
+    expect(calls(r.dir)).toEqual([]);
   });
 
-  it("uses the registry-only secret instead of the workflow token when one is given", () => {
+  // MUTATION: move the `mkdir -p "$w/docker"` in `login` below the no-token
+  // return — this fails.
+  it("pulls anonymously from an empty docker config of its own, never the runner's logins", () => {
     const r = rig();
-    expect(sh("login", r.env({ QCR_ACTION_REGISTRY_TOKEN: REGISTRY_SECRET })).status).toBe(0);
-    expect(calls(r.dir)[0]!.files("stdin")).toBe(REGISTRY_SECRET);
+    expect(sh("login", r.env()).status).toBe(0);
+    expect(readdirSync(join(r.work, "docker"))).toEqual([]);
+    expect(sh("run", r.env()).status).toBe(0);
+    expect(
+      calls(r.dir)
+        .find((c) => c.verb === "run")!
+        .files("docker_config"),
+    ).toBe(join(r.work, "docker"));
+  });
+
+  it("logs in with the registry token on stdin, to a docker config of its own", () => {
+    const r = rig();
+    const res = sh("login", r.env({ QCR_ACTION_REGISTRY_TOKEN: REGISTRY_SECRET }));
+    expect(res.status, res.stderr).toBe(0);
+    const login = calls(r.dir)[0]!;
+    expect(login.argv).toEqual(["login", "ghcr.io", "-u", "octo", "--password-stdin"]);
+    expect(login.files("stdin")).toBe(REGISTRY_SECRET);
+    expect(login.argv.join("\n")).not.toContain(REGISTRY_SECRET);
+    expect(login.files("docker_config")).toBe(join(r.work, "docker"));
   });
 
   it("run uses that docker config, and the registry secret never reaches the review", () => {
@@ -623,54 +641,71 @@ describe("scripts/action.sh preflight", () => {
   const basic = (user: string, token: string): string =>
     `Basic ${Buffer.from(`${user}:${token}`).toString("base64")}`;
 
-  it("passes when the package's manifest can be read", async () => {
-    answer = (url) =>
-      url.startsWith("/token")
-        ? [200, '{"token":"pulltoken"}']
-        : url === "/v2/acme/qcr/manifests/1.2.3"
-          ? [200, "{}"]
-          : [404, "{}"];
+  // A registry that serves the public image to anyone, and refuses every
+  // credential: what a repository the package grants nothing to looks like,
+  // so a preflight that sent the workflow token would fail here.
+  const publicOnly = (url: string, auth: string | undefined): [number, string] =>
+    url.startsWith("/token")
+      ? auth === undefined
+        ? [200, '{"token":"anonpull"}']
+        : [403, '{"errors":[{"code":"DENIED"}]}']
+      : url === "/v2/acme/qcr/manifests/1.2.3" && auth === "Bearer anonpull"
+        ? [200, "{}"]
+        : [404, "{}"];
+
+  // MUTATION: send the workflow token (QCR_ACTION_GH_TOKEN) as the preflight's
+  // credential when no registry token is given — this fails.
+  it("passes with no registry input on a repository the package grants nothing to", async () => {
+    answer = publicOnly;
     const r = rig();
     const res = await preflight(r.env({ QCR_REGISTRY_API: base }));
     expect(res.status, res.out).toBe(0);
+    expect(res.out).toContain("ok: this repository can pull ghcr.io/acme/qcr:1.2.3");
     expect(seen[0]!.url).toContain("scope=repository:acme/qcr:pull");
-    expect(seen[0]!.authorization).toBe(basic("octo", TOKEN));
-    expect(seen[1]!.authorization).toBe("Bearer pulltoken");
+    expect(seen[0]!.authorization).toBeUndefined();
+    expect(seen[1]!.authorization).toBe("Bearer anonpull");
+    expect(JSON.stringify(seen)).not.toContain(Buffer.from(`octo:${TOKEN}`).toString("base64"));
   });
 
-  it("fails on a 403 with the two ways out, and names the package", async () => {
+  it("fails an anonymous refusal: the tag may be unpublished, and names the private-mirror route", async () => {
     answer = (url) =>
       url.startsWith("/token") ? [200, '{"token":"pulltoken"}'] : [403, '{"errors":[]}'];
     const r = rig();
     const res = await preflight(r.env({ QCR_REGISTRY_API: base }));
     expect(res.status).toBe(1);
-    expect(res.out).toContain("cannot pull the qcr image ghcr.io/acme/qcr:1.2.3 (HTTP 403)");
-    expect(res.out).toContain("Manage Actions access");
-    expect(res.out).toContain("https://github.com/orgs/acme/packages/container/qcr/settings");
+    expect(res.out).toContain(
+      "the qcr image ghcr.io/acme/qcr:1.2.3 cannot be pulled anonymously (HTTP 403)",
+    );
+    expect(res.out).toContain("release 1.2.3 is published");
     expect(res.out).toContain("registry-token");
     expect(res.out).toContain("read:packages");
-    expect(res.out).toContain("docker login");
+    expect(res.out).toContain("Manage Actions access");
+    expect(res.out).toContain("https://github.com/orgs/acme/packages/container/qcr/settings");
     expect(res.out).toContain("::error::");
     expect(res.out).not.toContain(TOKEN);
   });
 
   it("fails the same way when the token endpoint itself refuses", async () => {
-    answer = () => [403, "{}"];
+    answer = () => [401, "{}"];
     const res = await preflight(rig().env({ QCR_REGISTRY_API: base }));
     expect(res.status).toBe(1);
-    expect(res.out).toContain("(HTTP 403)");
-    expect(res.out).toContain("Manage Actions access");
+    expect(res.out).toContain("cannot be pulled anonymously (HTTP 401)");
   });
 
-  it("says a 404 may also be a missing tag", async () => {
+  it("fails a refused registry token, saying the public image needs none", async () => {
     answer = (url) => (url.startsWith("/token") ? [200, '{"token":"t"}'] : [404, "{}"]);
-    const res = await preflight(rig().env({ QCR_REGISTRY_API: base }));
+    const res = await preflight(
+      rig().env({ QCR_REGISTRY_API: base, QCR_ACTION_REGISTRY_TOKEN: REGISTRY_SECRET }),
+    );
     expect(res.status).toBe(1);
+    expect(res.out).toContain("the registry-token cannot pull the qcr image");
     expect(res.out).toContain("(HTTP 404)");
     expect(res.out).toContain("does not exist");
+    expect(res.out).toContain("without registry-token it is pulled anonymously");
+    expect(res.out).not.toContain(REGISTRY_SECRET);
   });
 
-  it("checks with the registry-only secret when one is given", async () => {
+  it("checks with the registry token when one is given", async () => {
     answer = (url) => (url.startsWith("/token") ? [200, '{"token":"t"}'] : [200, "{}"]);
     const r = rig();
     const res = await preflight(

@@ -33,7 +33,8 @@ an explicit `--to pr`, which the skill passes only when the user asks.
 ## Setup
 
 `scripts/qcr-setup.sh` runs the four steps in order and skips what is done.
-Pull access is `gh auth refresh -s read:packages`, then
+The image is public, so pull access needs nothing; only a private mirror
+needs `gh auth refresh -s read:packages`, then
 `gh auth token | docker login ghcr.io`. The two steps that need a person (the
 browser sign-in and pi's `/login`) run only on a terminal; without one the script
 prints the command and exits 10. The image defaults to

@@ -198,14 +198,20 @@ when one names another root. `remote_state_dir` stays the host path.
 
 ### Pulling the release
 
-The images are private and are pulled BY the updater, on the VM, by digest. The VM pulls them with ONE credential: your own CLASSIC
-personal access token, scoped `read:packages` and nothing else, stored by
-`docker login` in root's docker config on the VM host (never in a container,
-env, argv or the secrets directory: the daemon holds only the App credential). Not the token `gh auth
-token` prints: that one carries the full scopes of your gh login.
+The images are public on ghcr.io and are pulled BY the updater, on the VM, by
+digest. A public pull needs no login, so a VM that pulls the release images
+needs no registry credential at all; `deploy.sh verify` and `release` then say
+`no ghcr login recorded` and nothing more.
 
-A deploy needs this login to exist before the first `release` (the pull is the
-updater's first step, and a lapsed login fails there with nothing changed).
+**A private mirror.** Images that are not public (`QC_RELEASE_IMAGE` and
+`QC_RELEASE_MEMORY_IMAGE` naming another package) need the VM logged in, with
+ONE credential: your own CLASSIC personal access token, scoped `read:packages`
+and nothing else, stored by `docker login` in root's docker config on the VM
+host (never in a container, env, argv or the secrets directory: the daemon
+holds only the App credential). Not the token `gh auth token` prints: that one
+carries the full scopes of your gh login. The login must exist before the
+first `release` from the mirror (the pull is the updater's first step, and a
+lapsed login fails there with nothing changed).
 
 Once per VM, and again when the token is renewed (it expires after one year):
 
@@ -227,7 +233,9 @@ idempotent, and the token is never an argument or an environment variable.
 
 A lapsed login fails the updater's pull before anything on the VM changes
 (`qcr-update` refuses at its `pull` step). `scripts/deploy.sh verify` and
-`release` warn 14 days before the recorded expiry. `ssh <vm> sudo docker logout ghcr.io` removes the login.
+`release` warn 14 days before the recorded expiry. `ssh <vm> sudo docker logout ghcr.io` removes the login;
+a VM back on the public images can drop it, and the recorded expiry with it
+(`<state home>/ghcr-token-expiry`), so the warning stops.
 
 ### The cutover (legacy image to release image)
 

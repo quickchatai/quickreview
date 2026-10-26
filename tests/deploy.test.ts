@@ -3170,11 +3170,11 @@ describe("scripts/memory-search-check.mjs", () => {
 });
 
 // ---- the VM's ghcr pull credential ----------------------------------
-// The VM pulls the private release images with the owner's classic
-// read:packages login. The updater pulls BY DIGEST on the VM (a lapsed login
-// fails its pull before anything changes), `verify` and `release` warn before
-// the recorded token expiry; scripts/vm-ghcr-login.sh is the one writer of that
-// login. Every command here is a stub: no network, no ssh, no docker.
+// The release images are public, so the VM pulls them with no login; a private
+// mirror needs the owner's classic read:packages login. The updater pulls BY
+// DIGEST on the VM (a lapsed login fails its pull before anything changes),
+// `verify` and `release` warn before the recorded token expiry;
+// scripts/vm-ghcr-login.sh is the one writer of that login. Every command here is a stub: no network, no ssh, no docker.
 describe("deploy.sh — the pull login and the token expiry warning", () => {
   const scratch = (): Env => makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
 
@@ -3255,7 +3255,9 @@ describe("deploy.sh — the pull login and the token expiry warning", () => {
       expect(far.stdout).not.toContain("WARNING — the VM's ghcr");
       const none = probe(env, null);
       expect(none.code).toBe(0);
-      expect(none.stdout).toContain("no recorded expiry for the VM's ghcr pull token");
+      expect(none.stdout).toContain(
+        "no ghcr login recorded: the release images are public and pull without one",
+      );
       expect(none.stdout).not.toContain("WARNING — the VM's ghcr");
     });
 
