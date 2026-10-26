@@ -5,6 +5,15 @@
 // included (pi 1.4.0), so the reviewer-only launch names each home tool. The
 // read tools are pi's own; bash, edit and write are never on the list.
 
+/** The setup checklist's tools (src/home/setuptools.ts): one per step, and
+ * the next step. */
+export const HOME_SETUP_TOOL_NAMES = [
+  "home_setup_next",
+  "home_sign_in",
+  "home_check_github",
+  "home_choose_repo",
+] as const;
+
 /** Every tool the home registers. */
 export const HOME_TOOL_NAMES = [
   "home_status",
@@ -12,6 +21,7 @@ export const HOME_TOOL_NAMES = [
   "home_move",
   "home_select",
   "home_open_pr",
+  ...HOME_SETUP_TOOL_NAMES,
 ] as const;
 
 /** pi's built-in tools the reviewer-only home keeps: reading only. */

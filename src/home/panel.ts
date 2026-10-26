@@ -21,7 +21,7 @@ import {
   visibleWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import { ago, providerLabel, type HomeModel, type SetupGap } from "./model.js";
+import { ago, providerLabel, type HomeModel } from "./model.js";
 import type { OpenPull, PrReview, Slot } from "./ports.js";
 
 type Fg = Parameters<Theme["fg"]>[0];
@@ -239,33 +239,6 @@ export class HomePanel implements Component {
     ];
   }
 
-  /** The setup steps a read showed to be needed (the checklist's place). */
-  private setup(w: number): string[] {
-    const step: Record<SetupGap, [string, string]> = {
-      login: [`Sign in to ${providerLabel(this.m.chatProvider())}`, "run qcr login"],
-      github: ["Sign in to GitHub", "run gh auth login"],
-      repo: ["Choose a repository", "set [github] repo in your qcr config"],
-    };
-    const out = [this.rule(w, "Setup")];
-    for (const g of this.m.gaps()) {
-      const [label, how] = step[g];
-      out.push(
-        this.row(
-          w,
-          `${this.c("accent", "▸")} ${this.th.bold(this.c("text", label))}`,
-          this.c("muted", how),
-        ),
-      );
-    }
-    out.push(
-      this.row(
-        w,
-        `${this.c("dim", "Then")} ${this.c("accent", this.host.focused() ? "u" : "alt+u")} ${this.c("dim", "checks again.")}`,
-      ),
-    );
-    return out;
-  }
-
   private prRow(w: number, p: OpenPull, review: PrReview | undefined, isSel: boolean): string {
     let mark: string;
     let right: string;
@@ -416,17 +389,14 @@ export class HomePanel implements Component {
         foot.push(this.row(w, this.c(color, l)));
     }
     foot.push(this.hints(w), this.bottom(w));
-    let detail: string[] = [];
-    if (this.m.gaps().length > 0) body.push(...this.setup(w));
-    else {
-      // two titles and the rows of both lists share what the rest leaves
-      const roomWith = (d: number): number => target - body.length - d - foot.length - 2;
-      detail = this.details(w);
-      const need = this.need();
-      if (need && detail.length > 0 && cramped(listCaps(roomWith(detail.length), need), need))
-        detail = [];
-      this.lists(w, body, roomWith(detail.length));
-    }
+    // the setup checklist is the card's (src/home/setupcard.ts), never the panel's
+    // two titles and the rows of both lists share what the rest leaves
+    const roomWith = (d: number): number => target - body.length - d - foot.length - 2;
+    let detail = this.details(w);
+    const need = this.need();
+    if (need && detail.length > 0 && cramped(listCaps(roomWith(detail.length), need), need))
+      detail = [];
+    this.lists(w, body, roomWith(detail.length));
     const spare = Math.max(0, target - body.length - detail.length - foot.length);
     const blank = Array.from({ length: spare }, () => this.row(w, ""));
     return [...body, ...blank, ...detail, ...foot].map((l) => truncateToWidth(l, w));

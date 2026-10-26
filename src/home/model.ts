@@ -4,10 +4,11 @@
 // method, so a key and a tool can never do two different things.
 //
 // Detection reads every port at once; a slot is pending until its read lands,
-// then known or unknown. The setup gaps are only the things a read showed to
-// be missing (no login for the chat's provider, `gh` signed out, no
-// repository): a source that could not be read is Unknown, never a gap and
-// never a zero (invariant 9).
+// then known or unknown. The setup gaps are the setup checklist's
+// (src/home/setup.ts), which detects over these slots once a read has landed
+// (the `onRead` hook) and before the first notice: only what a read showed to
+// be missing is a gap; a source that could not be read is Unknown, never a
+// gap and never a zero (invariant 9).
 import type { HomeToolSet } from "../config.js";
 import {
   PENDING,
@@ -28,8 +29,8 @@ export interface Notice {
   kind: NoticeKind;
 }
 
-/** What a read showed to be missing: the setup checklist's steps. */
-export type SetupGap = "login" | "github" | "repo";
+/** What a read showed to be missing: a setup checklist step's id. */
+export type SetupGap = string;
 
 export interface HomeState {
   /** The providers pi holds a login for, in the chat's pi home. */
@@ -61,6 +62,11 @@ export interface HomeModelOptions {
   tools: HomeToolSet;
   /** Something the panel shows changed. */
   onChange?: () => void;
+  /** The setup checklist's gaps (src/home/setup.ts); none without one. */
+  gaps?: () => SetupGap[];
+  /** Every read has landed: the checklist detects over it, before the
+   * first notice. */
+  onRead?: () => Promise<void>;
 }
 
 /** The provider of a `provider/id` model. */
@@ -156,13 +162,9 @@ export class HomeModel {
     return l.kind === "known" ? l.value.includes(this.provider) : null;
   }
 
-  /** The setup steps a read showed to be needed. */
+  /** The setup steps a read showed to be needed: the checklist's gaps. */
   gaps(): SetupGap[] {
-    const out: SetupGap[] = [];
-    if (this.signedIn() === false) out.push("login");
-    if (this.state.github.kind === "known" && this.state.github.value === null) out.push("github");
-    if (this.state.repo.kind === "known" && this.state.repo.value === null) out.push("repo");
-    return out;
+    return this.o.gaps?.() ?? [];
   }
 
   /** Is anything still being read? */
@@ -256,6 +258,8 @@ export class HomeModel {
     }
     this.keepSelection();
     await side;
+    // the checklist never throws (a step's detect that does is a missing)
+    await this.o.onRead?.();
     this.greet();
     return this.summary();
   }

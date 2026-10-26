@@ -225,9 +225,10 @@ describe("the login that counts", () => {
   // MUTATION: count any provider in the auth file as signed in — this fails.
   it("a login under another provider shows as not signed in, and is a setup step", async () => {
     const h = await openHome(configured({ login: known(["anthropic", "openai-other"]) }));
-    const styled = text(h.styled());
-    expect(styled).toMatch(/<warning>✗<\/> <muted>OpenAI<\/> <warning>not signed in<\/>/);
-    expect(text(h.lines())).toMatch(/Sign in to OpenAI\s+run qcr login/);
+    // the setup card (tests/home-setup.test.ts), on its login step
+    expect(h.lines()[0]).toMatch(/quickreview ─+ setup ─╮$/);
+    expect(text(h.lines())).toMatch(/Sign in to OpenAI/);
+    expect(text(h.lines())).not.toMatch(/ChatGPT · signed in/);
     const status = JSON.parse(await h.pi.tool("home_status")) as {
       login: unknown;
       setup_needed: unknown;
@@ -253,11 +254,14 @@ describe("the login that counts", () => {
   it("names each missing piece as a setup step, and only those", async () => {
     const h = await openHome(configured({ user: known(null), repo: known(null) }));
     const lines = h.lines();
-    expect(text(lines)).toMatch(/Sign in to GitHub\s+run gh auth login/);
-    expect(text(lines)).toMatch(/Choose a repository\s+set \[github\] repo in your qcr config/);
-    expect(text(lines)).not.toMatch(/Sign in to OpenAI/);
+    // the setup card: what was found is done, what is missing is a step
+    expect(lines[0]).toMatch(/quickreview ─+ setup ─╮$/);
+    expect(text(lines)).toMatch(/✓ {2}Sign in to OpenAI/);
+    expect(text(lines)).toMatch(/▸ {2}Connect GitHub/);
+    expect(text(lines)).toMatch(/○ {2}Choose a repository/);
     expect(text(lines)).not.toMatch(/To review/);
-    expect(lines[0]).toMatch(/no repository ─╮$/);
+    const status = JSON.parse(await h.pi.tool("home_status")) as { setup_needed: unknown };
+    expect(status.setup_needed).toEqual(["github", "repo"]);
   });
 });
 
