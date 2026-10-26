@@ -24,7 +24,8 @@ walkthroughs already exist and are not repeated here — this page links them:
 
 | Mechanism | Files |
 |---|---|
-| Wizard state machine, checklist file, resume | `src/onboard/engine.ts` |
+| Setup checklist engine, step registry, checklist file, resume | `packages/pi-plugin/src/setupchecklist.ts` |
+| The wizard's binding of it (adapters, file path, first-run marker) | `src/onboard/engine.ts` |
 | Wizard step registry (order, enablement) | `src/onboard/steps/index.ts` |
 | Cross-step handoff keys and value vocabularies | `src/onboard/choices.ts` |
 | pi launch + post-exit handoff for `qcr onboard` | `src/onboard/launch.ts`, `src/cli.ts` (`cmdOnboard`) |
@@ -102,8 +103,10 @@ otherwise it prints how to resume.
 
 ### The engine and its resumability contract
 
-`OnboardingEngine` (`src/onboard/engine.ts`) is a checklist state machine over
-`OnboardingStep`s behind injected adapters (`OnboardAdapters`: `fetch`, a
+`OnboardingEngine` (`src/onboard/engine.ts`) is the plugin's setup checklist
+(`SetupChecklist` in `packages/pi-plugin/src/setupchecklist.ts`, the step registry
+ADR 0001 makes a public seam) bound to the wizard: a checklist state machine
+over `OnboardingStep`s behind injected adapters (`OnboardAdapters`: `fetch`, a
 `ProcessRunner` that never throws, a clock, an optional prompter, host facts,
 the state dir, a log). Nothing in a step touches the network, Docker or pi
 except through those adapters, which is why the whole flow is drivable from
@@ -129,6 +132,10 @@ wizard doubles as a diagnostic:
 
 Unknown or disabled step ids come back as refusals-as-answers, never throws:
 the caller is a model's tool belt.
+
+A step may also declare `detect()`: already true ⇒ `detect()` on the
+checklist marks it done with what was found, without running it. The
+wizard's steps declare none, and the wizard never calls it.
 
 ### The steps
 
