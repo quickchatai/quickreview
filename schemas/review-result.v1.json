@@ -137,6 +137,10 @@
     "post": {
       "$ref": "#/$defs/post"
     },
+    "post_ready": {
+      "type": "string",
+      "description": "A finished PR review that was not posted: the file it is kept in, which a host that asks the person later posts through the gate exactly as `--to pr` would have."
+    },
     "run_id": {
       "type": "string",
       "description": "A detached run's id (start, status, stop)."
@@ -148,6 +152,14 @@
     "target": {
       "type": "string",
       "description": "What a detached run reviews."
+    },
+    "started_at": {
+      "type": "number",
+      "description": "When a detached run was started, ms since the epoch."
+    },
+    "ended_at": {
+      "type": "number",
+      "description": "When a detached run ended (its exit or its stop), ms since the epoch; absent while it runs."
     },
     "elapsed_s": {
       "type": "integer",
