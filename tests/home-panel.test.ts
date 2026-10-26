@@ -586,8 +586,10 @@ describe("every action is also a home_* tool", () => {
     const h = await openHome();
     expect([...h.pi.tools.keys()]).toEqual([...HOME_TOOL_NAMES]);
     expect([...h.pi.shortcuts.keys()].sort()).toEqual([
+      "alt+a",
       "alt+j",
       "alt+k",
+      "alt+m",
       "alt+o",
       "alt+r",
       "alt+s",

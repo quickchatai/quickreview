@@ -7781,9 +7781,27 @@ export interface OpenPrsSnapshot {
   prs: OpenPrSummary[];
 }
 
+/** The authoritative reconcile poll's last pass (status.json `poll`): what
+ * "auto-review is working" is judged on, beside the heartbeat (the home's
+ * label, src/home/autoreview.ts). */
+export interface PollStatus {
+  /** When the last pass ran, ISO; null before the boot's first pass has ended. */
+  last_at: string | null;
+  /** That pass ran with no step error; null before the first pass. */
+  ok: boolean | null;
+  /** The first error, while not ok. */
+  error?: string;
+  /** The daemon's `[daemon] poll_interval_s`: freshness is judged against
+   * the daemon's own cadence, never a reader's guess. */
+  interval_s: number;
+}
+
 export interface StatusSnapshot {
   written_at: string;
   dry_run: boolean;
+  /** The reconcile poll's last pass. Absent in snapshots from an older
+   * daemon — readers say "unknown", never "working". */
+  poll?: PollStatus;
   /** Where the daemon runs (src/runhost.ts). Absent: not reported (an older
    * daemon, or one assembled without its host facts). */
   run_host?: import("./runhost.js").RunHostStatus;

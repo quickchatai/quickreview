@@ -14,10 +14,15 @@
 //              daemon's status (src/home/reviews.ts), as the person: their
 //              environment, so the run uses their own pi login.
 //
-// Auto-review, memory and spend have no adapter yet: their stubs answer
-// unknown, so the panel says Unknown rather than a zero.
+//   auto-review, memory
+//              this machine's compose stack (src/home/autoreview.ts,
+//              src/home/memory.ts): the containers, the daemon's own
+//              status.json, and the switches over the wizard's steps.
+//
+// Spend has no adapter yet: its stub answers unknown, so the
+// panel says Unknown rather than a zero.
 import { execFile } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "smol-toml";
 import { loginSummary } from "@quickchatai/pi-quickreview/src/engine/auth.js";
@@ -25,6 +30,11 @@ import { assetRoot } from "@quickchatai/pi-quickreview/src/assetroot.js";
 import { postSavedReview } from "@quickchatai/pi-quickreview/src/reviewapi.js";
 import { HOME_DEFAULTS, sandboxRoot, type HomeToolSet } from "../config.js";
 import { loadOneShotConfig, locateConfig, operatorStateDir, stateHome } from "../homes.js";
+import type { OnboardAdapters } from "../onboard/engine.js";
+import { openStepMemoryForward } from "../onboard/stepforward.js";
+import { composeAutoReview } from "./autoreview.js";
+import { composeMemory } from "./memory.js";
+import { stepRunner } from "./switchon.js";
 import { piAgentDir } from "../piagentdir.js";
 import { qcrChild, realDetachSeams, reviewsPort } from "./reviews.js";
 import {
@@ -244,19 +254,61 @@ export function realReviewsPort(env: Readonly<Record<string, string | undefined>
   });
 }
 
+/** The wizard's adapters for switch-on's steps, over the app root. */
+export function stepAdapters(root: string, configPath: () => string) {
+  return (log: (line: string) => void): OnboardAdapters => ({
+    fetch: (input, init) => fetch(input, init),
+    runner: stepRunner,
+    clock: () => new Date(),
+    host: {
+      nodeVersion: process.version,
+      uid: typeof process.getuid === "function" ? process.getuid() : null,
+      inContainer: existsSync("/.dockerenv"),
+    },
+    paths: { stateDir: join(root, "state"), configPath: configPath() },
+    log,
+    memoryForward: (req) => openStepMemoryForward(req),
+  });
+}
+
 export function realHomeAdapters(o: {
   agentDir: string;
   configPath: () => string;
   reviews: ReviewsPort;
   runner?: Runner;
+  /** The app root, the compose project of this machine's stack: given, the
+   * auto-review and memory ports read and switch it. */
+  root?: string;
 }): HomeAdapters {
+  const repo = repoPort(o.configPath);
+  const stack =
+    o.root === undefined
+      ? null
+      : {
+          root: o.root,
+          configPath: o.configPath,
+          runner: stepRunner,
+          stepAdapters: stepAdapters(o.root, o.configPath),
+        };
   return {
     login: piLoginPort(o.agentDir),
     github: githubPort(o.runner ?? execRunner),
-    repo: repoPort(o.configPath),
+    repo,
     clock: { now: () => Date.now() },
     reviews: o.reviews,
     ...unbuiltPorts,
+    ...(stack
+      ? {
+          autoReview: composeAutoReview({ ...stack, now: () => Date.now() }),
+          memory: composeMemory({
+            ...stack,
+            repo: async () => {
+              const r = await repo.repo();
+              return r.kind === "known" ? r.value : null;
+            },
+          }),
+        }
+      : {}),
   };
 }
 
@@ -273,6 +325,7 @@ export function homeOptionsFromEnv(env: Readonly<Record<string, string | undefin
       agentDir: piAgentDir(env),
       configPath: () => locateConfig({ env }).path,
       reviews: realReviewsPort(env),
+      root: (env["QCR_ROOT"] ?? "").trim() || sandboxRoot(),
     }),
     model,
     tools,

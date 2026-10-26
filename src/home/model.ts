@@ -26,6 +26,7 @@ import {
   type AutoReviewStatus,
   type HomeAdapters,
   type Known,
+  type MemoryControl,
   type MemoryState,
   type OpenPull,
   type Outcome,
@@ -44,6 +45,7 @@ import {
   runReview,
   type Run,
 } from "./review.js";
+import { switchAutoReview, switchMemory, type Ask, type SwitchHost } from "./switches.js";
 
 export type NoticeKind = "info" | "ok" | "warn";
 export interface Notice {
@@ -67,6 +69,9 @@ export interface HomeState {
   /** Auto-review's rounds, per PR. */
   autoRounds: Slot<ReadonlyMap<number, PrReview>>;
   autoReview: Slot<AutoReviewStatus>;
+  /** What auto-review picks up besides a review request: the trigger
+   * label; null when the port does not report it. */
+  trigger: Slot<string> | null;
   memory: Slot<MemoryState>;
   spend: Slot<SpendTotals>;
 }
@@ -175,9 +180,13 @@ export class HomeModel {
     reviews: PENDING,
     autoRounds: PENDING,
     autoReview: PENDING,
+    trigger: null,
     memory: PENDING,
     spend: PENDING,
   };
+  /** Slots a switch shows its own state in while it runs (src/home/switches.ts):
+   * a refresh does not overwrite them until released. */
+  private readonly held = new Set<keyof HomeState>();
   /** The selected pull request's number. */
   selected: number | null = null;
   notice: Notice | null = null;
@@ -205,6 +214,7 @@ export class HomeModel {
     this.tools = o.tools;
     this.provider = providerOf(o.model);
     this.after = o.after ?? noTimer;
+    if (o.adapters.autoReview.trigger) this.state.trigger = PENDING;
   }
 
   /** The session ended: no timer fires and no preview runs. Runs go on. */
@@ -344,6 +354,7 @@ export class HomeModel {
     const land =
       <K extends keyof HomeState>(key: K) =>
       (v: HomeState[K]): void => {
+        if (this.held.has(key)) return;
         this.state[key] = v;
         this.changed();
       };
@@ -352,6 +363,9 @@ export class HomeModel {
       safe(() => a.github.user()).then(land("github")),
       safe(() => a.autoReview.status()).then(land("autoReview")),
       safe(() => a.memory.status()).then(land("memory")),
+      a.autoReview.trigger
+        ? safe(() => a.autoReview.trigger!()).then(land("trigger"))
+        : Promise.resolve(),
       safe(() => a.spend.totals()).then(land("spend")),
     ]);
     const repo = await safe(() => a.repo.repo());
@@ -762,6 +776,54 @@ export class HomeModel {
     this.changed();
   }
 
+  // ---- the switches (src/home/switches.ts) ------------------------------
+
+  /** Can the home switch auto-review / memory, or only show them? */
+  canSwitch(what: "autoReview" | "memory"): boolean {
+    return this.o.adapters[what].control !== undefined;
+  }
+
+  /** Memory's switch, when the home has one. */
+  memoryControl(): MemoryControl | undefined {
+    return this.o.adapters.memory.control;
+  }
+
+  /** The trigger label, when known. */
+  trigger(): string | null {
+    const t = this.state.trigger;
+    return t?.kind === "known" ? t.value : null;
+  }
+
+  private switchHost(): SwitchHost {
+    const hold = (slot: "autoReview" | "memory", v: Known<unknown>): void => {
+      (this.state as unknown as Record<string, unknown>)[slot] = v;
+      this.held.add(slot);
+      this.changed();
+    };
+    return {
+      autoReview: () => this.state.autoReview,
+      memory: () => this.state.memory,
+      trigger: () => this.trigger(),
+      repo: () => this.repo(),
+      say: (text, kind) => this.say(text, kind),
+      hold,
+      release: (slot) => {
+        this.held.delete(slot);
+      },
+      refresh: () => this.refresh(),
+    };
+  }
+
+  /** Switch auto-review on or off: every question asked through `ask`. */
+  switchAutoReview(ask: Ask | undefined): Promise<string> {
+    return switchAutoReview(this.switchHost(), this.o.adapters, ask);
+  }
+
+  /** Switch memory on or off: its own switch, auto-review untouched. */
+  switchMemory(ask: Ask | undefined): Promise<string> {
+    return switchMemory(this.switchHost(), this.o.adapters, ask);
+  }
+
   /** What the panel shows, for the model: an unknown source is null, never
    * absent and never zero. */
   status(): Record<string, unknown> {
@@ -782,6 +844,10 @@ export class HomeModel {
       tools: this.tools,
       setup_needed: this.gaps(),
       auto_review: auto.kind === "known" ? auto.value : null,
+      ...(auto.kind === "unknown" ? { auto_review_unknown_because: auto.why } : {}),
+      ...(this.state.trigger
+        ? { auto_review_picks_up: { trigger_label: this.trigger(), review_requests: true } }
+        : {}),
       memory: nullable(this.state.memory),
       spend: nullable(this.state.spend),
       to_review: l ? l.toReview.map((p) => ({ ...row(p), price: this.priceOf(p) })) : null,

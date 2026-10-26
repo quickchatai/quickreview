@@ -15,6 +15,8 @@ export const HOME_TOOL_NAMES = [
   "home_review_pr",
   "home_show_review",
   "home_stop_review",
+  "home_auto_review",
+  "home_memory",
 ] as const;
 
 /** pi's built-in tools the reviewer-only home keeps: reading only. */
