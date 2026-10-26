@@ -18,16 +18,26 @@ for one kind of problem and never see each other's output. It merges their
 findings so one root cause gets one comment, and an **adversarial validator
 re-derives every candidate from the code** before one review is posted.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/media/bench-hero-dark.png">
+  <img src="docs/media/bench-hero.png" alt="AACR-Bench, 185 real PRs, QuickReview on GPT-6.1 Sol against six other reviewers. High-severity defects found: QuickReview 97%, next best Codex CLI 90%. Serious (high- and medium-severity) defects missed per 100 PRs: QuickReview 7, next best pi-review panel 19.5, worst PR-Agent 59.2. PRs with every serious defect found: QuickReview 109 of 122, next best pi-review panel 90.">
+</picture>
+
+On 185 real PRs with 520 defects each verified in the code, it finds
+**97% of the high-severity defects** and **89% of all of them**. It misses
+**7 serious defects per 100 PRs**, where the best of the six other reviewers
+we ran misses 19.5, and on **109 of the 122 PRs** that carry a high- or
+medium-severity defect it finds every one. It is not just the model: on the
+same model it finds more than the model maker's own reviewer, 94% of the
+high-severity defects against 75% for Claude Code on Claude Opus 5.5 (40
+PRs), and 89% of all defects against 55% for Codex CLI on GPT-6.1 Sol. That
+recall costs more: about $2 and 17 minutes per PR, where the other tools take
+$0.07–0.53 and 0.7–2.3 minutes ([Benchmarks](#benchmarks)).
+
 <p align="center">
   <img src="docs/media/lenses.gif" width="800"
        alt="Animation: nine lens passes sweep the same diff in parallel, each marking the lines where it finds a problem; findings that share a root cause merge, eight candidates into six causes; the validator re-derives each from the code, keeps four and strikes two with a reason (below the bar; refuted); the four survivors become one posted review, three blockers and one question, marked REQUEST_CHANGES.">
 </p>
-
-On 185 real PRs with 520 defects each verified in the code, it finds
-**97% of the high-severity defects and 89% of all of them**; the strongest
-third-party configuration we measured finds 67%. That recall costs more:
-about $2 and 17 minutes per PR, where the other tools take $0.07–0.53 and
-0.7–2.3 minutes ([Benchmarks](#benchmarks)).
 
 Around the review sits a small, deterministic TypeScript daemon with no LLM
 in its decision path. It takes GitHub App webhooks, runs an authoritative
@@ -88,6 +98,26 @@ under a paired bootstrap on high and on high + medium defects (+8.3 points
 of them true but minor.
 
 <picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/media/bench-misses-dark.png">
+  <img src="docs/media/bench-misses.png" alt="AACR-Bench, 185 PRs: high- and medium-severity defects missed per 100 PRs, 235 in all, lower is better. QuickReview 7.0 (finds 94%), pi-review panel 19.5 (85%), Codex CLI 28.4 (78%), Claude Code 31.1 (76%), OpenCode 32.4 (74%), open-code-review 37.6 (70%), PR-Agent 59.2 (53%).">
+</picture>
+
+**What it misses.** Counted the other way, on the 235 high- and
+medium-severity defects alone: QuickReview misses 13 of them (10 outright,
+6 found in part), 7 per 100 PRs; the next reviewer misses 36.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/media/bench-same-model-dark.png">
+  <img src="docs/media/bench-same-model.png" alt="AACR-Bench, the same base model in two reviewers, one judge. Claude Opus 5.5, 40 PRs: QuickReview found 94% of the high-severity defects and 95% of all, Claude Code /code-review 75% and 60%. GPT-6.1 Sol, 185 PRs: QuickReview 97% and 89%, Codex CLI at high 90% and 55%. GPT-6 Sol, 185 PRs: QuickReview 96% and 84%, Codex CLI as shipped 78% and 48%.">
+</picture>
+
+**Same model, two reviewers.** The lead is the harness, not the model: on
+each of the three models we ran it on, QuickReview finds more than the model
+maker's own reviewer, at several times the cost ($3.24 against $0.16 per PR
+on Opus). The Opus pair covers 40 PRs, 30 of them QuickReview's tuning PRs;
+on the other 10 it found 28 of 29 defects, Claude Code 20.
+
+<picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/media/bench-martian-dark.png">
   <img src="docs/media/bench-martian.png" alt="Martian Code Review Bench, 50 PRs, precision against recall. QuickReview: recall 65.8%, precision 16.2%, the highest recall and the lowest precision of seven reviewers. qodo-extended-v2 60.1% / 56.2%, cubic-v2 60.1% / 54.3%, open-code-review 58.9% / 26.7%, Claude Code 41.1% / 36.5%, PR-Agent 36.1% / 41.9%, OpenCode 33.5% / 32.7%.">
 </picture>
@@ -97,7 +127,7 @@ per PR and counts every other comment as a false positive. It extracts about
 12.8 issues per PR from QuickReview's reviews, so QuickReview has the highest
 recall and the lowest precision. We
 audited the goldens: of the 86 that describe a real defect the PR
-introduces, it finds 75 (87%), the most of any tool.
+introduces, it finds 75 (87%), the most of the seven reviewers judged alike.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/media/bench-qodo-dark.png">
@@ -108,6 +138,36 @@ introduces, it finds 75 (87%), the most of any tool.
 and 271 violations of rules written in the repo. QuickReview finds the most
 functional bugs of the thirteen tools (52.1%) and the second-most issues
 overall, at the lowest precision; it is fourth on F1.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/media/bench-elo-dark.png">
+  <img src="docs/media/bench-elo.png" alt="Pairwise Elo on the 20 Martian PRs QuickReview did worst on, two judges pooled, with 95% intervals. Claude Code max with Sonnet 5.5 agents 1666, QuickReview on Opus 5.5 1628, QuickReview on GPT-6.1 Sol 1566, Claude Code high on Opus 5.5 1518, QuickReview on Sonnet 5.5 1489, QuickReview on DeepSeek V4.1 Flash 1406, Claude Code high on Sonnet 5.5 1398, QuickReview on GLM-5.3 Flash 1329.">
+</picture>
+
+**Judged side by side.** A pairwise judge reads two reviews of the same PR
+blind and picks the better one; GPT-6.1 Sol and Claude Opus 5.5 both judged,
+and a Bradley-Terry fit turns 596 verdicts into Elo. On the 20 Martian PRs
+where QuickReview's recall was worst, QuickReview on Opus 5.5 (its six
+quality lenses on GPT-6 Luna) beat Claude Code's `/code-review` on Opus 5.5
+29–11, and trails only Claude Code's max fan-out mode, by a margin inside the
+intervals. Each judge alone favours its own model family, which is why
+both are pooled.
+
+**Other models.** QuickReview's models are configurable. On AACR-Bench
+it holds most of its recall on cheap open models, and it falls apart on a
+weak one:
+
+| QuickReview on | PRs | High found | All found | $/PR | Judge |
+|---|---|---|---|---|---|
+| GPT-6.1 Sol (frozen build) | 185 | 87.5 of 90 (97%) | 461 of 520 (89%) | 2.06 | gpt-6-sol |
+| DeepSeek V4.1 Flash | 185 | 83 of 90 (92%) | 451.5 of 520 (87%) | 0.74 | gpt-6.1-sol |
+| GLM-5.3 Flash | 185 | 83 of 90 (92%) | 435 of 520 (84%) | 0.52 | gpt-6.1-sol |
+| gpt-6-luna | 185 | 39 of 90 (43%) | 147 of 520 (28%) | 0.04 | gpt-6-sol |
+| Claude Opus 5.5 | 40 | 32 of 34 (94%) | 119.5 of 126 (95%) | 3.24 | gpt-6-sol |
+
+The best third-party reviewer we ran finds 80 of 90 and 347.5 of 520 (67%).
+The open-model runs used a later build and a later judge than the third-party
+rows, and GLM lost a lens pass on 10 of its PRs; read them as directional.
 
 <details>
 <summary>The full tables</summary>
