@@ -235,6 +235,9 @@ interface Observed {
   dir: string;
   state: RunState;
   exitCode: number | null;
+  /** When it ended, ms since the epoch: its exit's or its stop's time (a run
+   * recorded before the exit carried one has none). */
+  endedAt: number | null;
   result: unknown;
 }
 
@@ -244,8 +247,9 @@ function observe(home: string, runId: string, deps: Liveness): Observed | null {
   const dir = join(runsDir(home), runId);
   const run = readJson<RunRecord>(join(dir, "run.json"));
   if (run === null) return null;
-  const exit = readJson<{ code: number }>(join(dir, "exit.json"));
-  const stopped = existsSync(join(dir, "stopped.json"));
+  const exit = readJson<{ code: number; at?: number }>(join(dir, "exit.json"));
+  const stoppedAt = readJson<{ at?: number }>(join(dir, "stopped.json"));
+  const stopped = stoppedAt !== null || existsSync(join(dir, "stopped.json"));
   let state: RunState;
   // A run that was stopped and unwinds records a failing exit of its own on the
   // way out (an aborted turn has no result); `stop` is what ended it, so that
@@ -269,7 +273,15 @@ function observe(home: string, runId: string, deps: Liveness): Observed | null {
   } catch {
     // no output yet
   }
-  return { run, dir, state, exitCode: exit?.code ?? null, result };
+  const at = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) ? v : null;
+  const endedAt =
+    state === "running"
+      ? null
+      : state === "stopped"
+        ? (at(stoppedAt?.at) ?? at(exit?.at))
+        : at(exit?.at);
+  return { run, dir, state, exitCode: exit?.code ?? null, endedAt, result };
 }
 
 function allRuns(home: string, deps: Liveness): Observed[] {
@@ -367,7 +379,9 @@ function view(o: Observed, now: number): Record<string, unknown> {
     run_id: o.run.run_id,
     state: o.state,
     target: o.run.label,
-    elapsed_s: Math.max(0, Math.round((now - o.run.started_at) / 1000)),
+    started_at: o.run.started_at,
+    ...(o.endedAt !== null ? { ended_at: o.endedAt } : {}),
+    elapsed_s: Math.max(0, Math.round(((o.endedAt ?? now) - o.run.started_at) / 1000)),
     exit_code: o.exitCode,
     ...(o.state === "running" ? { progress: progress(o.dir, now) } : { result: o.result }),
     ...(o.state === "failed" && o.exitCode === null
@@ -393,6 +407,24 @@ function text(v: Record<string, unknown>): string {
   const errs = v["errors"] as string[] | undefined;
   if (errs) bits.push(...errs);
   return bits.join("\n");
+}
+
+/** One run as `status --json` reports it, with the review's own arguments. */
+export interface RunView {
+  view: Record<string, unknown>;
+  argv: readonly string[];
+}
+
+/** Every run in the registry at `home`, oldest first, each as `status`
+ * reports it: what a host re-attaches to after a restart. */
+export function listRunViews(home: string, deps: Liveness): RunView[] {
+  return allRuns(home, deps).map((o) => ({ view: view(o, deps.now()), argv: o.run.argv }));
+}
+
+/** One run as `status` reports it; null when there is no such run. */
+export function runView(home: string, runId: string, deps: Liveness): RunView | null {
+  const o = observe(home, runId, deps);
+  return o === null ? null : { view: view(o, deps.now()), argv: o.run.argv };
 }
 
 /** Run one `start | status | stop`; resolves its exit code. */
@@ -662,7 +694,7 @@ export async function runDetachedChild(o: {
     proc.off("SIGINT", onSignal);
     proc.off("SIGTERM", onSignal);
   }
-  writeFileSync(join(o.dir, "exit.json"), JSON.stringify({ code }));
+  writeFileSync(join(o.dir, "exit.json"), JSON.stringify({ code, at: Date.now() }));
   // only this run's own claim: a stop frees the lock for a newer run
   const lock = lockPath(dirname(dirname(o.dir)), o.key);
   if (readJson<{ run_id?: string }>(lock)?.run_id === basename(o.dir))
@@ -735,7 +767,10 @@ export async function runWatchdog(
           }),
         )}\n`,
       );
-      writeFileSync(join(w.dir, "exit.json"), JSON.stringify({ code: WATCHDOG_EXIT_CODE }));
+      writeFileSync(
+        join(w.dir, "exit.json"),
+        JSON.stringify({ code: WATCHDOG_EXIT_CODE, at: deps.now() }),
+      );
       rmSync(lockPath(dirname(dirname(w.dir)), w.key), { force: true });
       return "killed";
     }

@@ -15,6 +15,7 @@ import {
   type MemoryState,
   type OpenPull,
   type PrReview,
+  type ReviewsPort,
   type SpendTotals,
 } from "../src/home/ports.js";
 import { fakePi, settle, type FakePi } from "./helpers/fake-pi.js";
@@ -32,6 +33,7 @@ function pull(n: number, over: Partial<OpenPull> = {}): OpenPull {
     deletions: n,
     changedFiles: n,
     headRefName: `branch-${n}`,
+    headSha: `sha${n}`,
     ...over,
   };
 }
@@ -45,6 +47,7 @@ interface World {
   repo: Known<string | null>;
   pulls: Known<readonly OpenPull[]>;
   reviews: Known<ReadonlyMap<number, PrReview>>;
+  autoRounds: Known<ReadonlyMap<number, PrReview>>;
   auto: Known<AutoReviewStatus>;
   memory: Known<MemoryState>;
   spend: Known<SpendTotals>;
@@ -59,6 +62,7 @@ function configured(over: Partial<World> = {}): World {
     repo: known("acme/widgets"),
     pulls: known([pull(1), pull(3), pull(2)]),
     reviews: unknown("the home cannot read it yet"),
+    autoRounds: known(new Map()),
     auto: unknown("the home cannot read it yet"),
     memory: unknown("the home cannot read it yet"),
     spend: unknown("the home cannot read it yet"),
@@ -71,6 +75,26 @@ interface Calls {
   pulls: string[];
   user: number;
   opened: Array<[string, number]>;
+}
+
+/** A reviewer that is never asked in these cases (tests/home-review.test.ts
+ * drives the review button). */
+function idleReviews(w: World): ReviewsPort {
+  const no = async (): Promise<{ ok: false; why: string }> => ({
+    ok: false,
+    why: "no reviewer in this test",
+  });
+  return {
+    latest: async () => w.reviews,
+    autoRounds: async () => w.autoRounds,
+    preview: no,
+    start: no,
+    stop: no,
+    post: no,
+    status: async () => unknown("no reviewer in this test"),
+    runs: async () => known([]),
+    dryRun: async () => known(true),
+  };
 }
 
 function adaptersOver(w: World, calls: Calls): HomeAdapters {
@@ -92,7 +116,7 @@ function adaptersOver(w: World, calls: Calls): HomeAdapters {
     },
     repo: { repo: async () => w.repo },
     clock: { now: () => NOW },
-    reviews: { latest: async () => w.reviews },
+    reviews: idleReviews(w),
     autoReview: { status: async () => w.auto },
     memory: { status: async () => w.memory },
     spend: { totals: async () => w.spend },
@@ -131,6 +155,8 @@ async function openHome(
         t.stopped = true;
       };
     },
+    // the price-on-rest timer never fires here (tests/home-review.test.ts)
+    after: () => () => {},
   })(pi.api);
   await pi.start();
   return {
@@ -199,7 +225,17 @@ describe("the home on a configured machine", () => {
       github: { user: () => never, openPulls: () => never, openInBrowser: () => never },
       repo: { repo: () => never },
       clock: { now: () => NOW },
-      reviews: { latest: () => never },
+      reviews: {
+        latest: () => never,
+        autoRounds: () => never,
+        preview: () => never,
+        start: () => never,
+        status: () => never,
+        stop: () => never,
+        runs: () => never,
+        post: () => never,
+        dryRun: () => never,
+      },
       autoReview: { status: () => never },
       memory: { status: () => never },
       spend: { totals: () => never },
@@ -549,7 +585,15 @@ describe("every action is also a home_* tool", () => {
   it("registers exactly the home's tools and keys", async () => {
     const h = await openHome();
     expect([...h.pi.tools.keys()]).toEqual([...HOME_TOOL_NAMES]);
-    expect([...h.pi.shortcuts.keys()].sort()).toEqual(["alt+j", "alt+k", "alt+o", "alt+u", "f2"]);
+    expect([...h.pi.shortcuts.keys()].sort()).toEqual([
+      "alt+j",
+      "alt+k",
+      "alt+o",
+      "alt+r",
+      "alt+s",
+      "alt+u",
+      "f2",
+    ]);
     expect(h.pi.commands.size).toBe(0);
   });
 

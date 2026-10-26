@@ -10,17 +10,23 @@
 //   repository `[github] repo` of the install's config.toml, read again on
 //              every refresh.
 //   clock      Date.now.
+//   reviews    the app's detached review runs, its review state and the
+//              daemon's status (src/home/reviews.ts), as the person: their
+//              environment, so the run uses their own pi login.
 //
-// Reviews, auto-review, memory and spend have no adapter yet: their stubs
-// answer unknown, so the panel says Unknown rather than a zero.
+// Auto-review, memory and spend have no adapter yet: their stubs answer
+// unknown, so the panel says Unknown rather than a zero.
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "smol-toml";
 import { loginSummary } from "@quickchatai/pi-quickreview/src/engine/auth.js";
-import { HOME_DEFAULTS, type HomeToolSet } from "../config.js";
-import { locateConfig } from "../homes.js";
+import { assetRoot } from "@quickchatai/pi-quickreview/src/assetroot.js";
+import { postSavedReview } from "@quickchatai/pi-quickreview/src/reviewapi.js";
+import { HOME_DEFAULTS, sandboxRoot, type HomeToolSet } from "../config.js";
+import { loadOneShotConfig, locateConfig, operatorStateDir, stateHome } from "../homes.js";
 import { piAgentDir } from "../piagentdir.js";
+import { qcrChild, realDetachSeams, reviewsPort } from "./reviews.js";
 import {
   known,
   unknown,
@@ -100,7 +106,7 @@ export function piLoginPort(
 const SIGNED_OUT = /gh auth login|not logged in|authentication required|HTTP 401|bad credentials/i;
 
 const PR_FIELDS =
-  "number,title,author,updatedAt,isDraft,additions,deletions,changedFiles,headRefName";
+  "number,title,author,updatedAt,isDraft,additions,deletions,changedFiles,headRefName,headRefOid";
 
 export function githubPort(runner: Runner): GithubPort {
   const why = (r: RunResult): string =>
@@ -158,6 +164,7 @@ export function parsePulls(json: string): OpenPull[] {
       deletions: num("deletions"),
       changedFiles: num("changedFiles"),
       headRefName: typeof r["headRefName"] === "string" ? r["headRefName"] : "",
+      headSha: typeof r["headRefOid"] === "string" ? r["headRefOid"] : "",
     };
   });
 }
@@ -199,20 +206,48 @@ const notYet = async (): Promise<Known<never>> => unknown(NOT_YET);
 
 /** The ports that have no adapter yet: each answers unknown. */
 export const unbuiltPorts: {
-  reviews: ReviewsPort;
   autoReview: AutoReviewPort;
   memory: MemoryPort;
   spend: SpendPort;
 } = {
-  reviews: { latest: notYet },
   autoReview: { status: notYet },
   memory: { status: notYet },
   spend: { totals: notYet },
 };
 
+/** The reviewer as the person: the app's own bin and registry, the install's
+ * state home and config, in the environment the home runs in. */
+export function realReviewsPort(env: Readonly<Record<string, string | undefined>>): ReviewsPort {
+  const state = stateHome(env);
+  const appRoot = sandboxRoot();
+  // the home's own working directory (src/home/launch.ts `homePaths`)
+  const cwd = join(state, "home");
+  const proc = { execPath: process.execPath, bin: join(appRoot, "bin", "qcr.js"), cwd, env };
+  const config = () => loadOneShotConfig({ root: assetRoot(), env }).cfg;
+  return reviewsPort({
+    registry: join(state, "review", "detached"),
+    reportsDir: join(cwd, "reviews"),
+    reviewHome: join(state, "review"),
+    statusPath: join(operatorStateDir(appRoot, env), "status.json"),
+    qcr: qcrChild(proc),
+    detach: realDetachSeams(proc),
+    post: async (file) => {
+      const r = await postSavedReview(file, {
+        config: config(),
+        dryrunDir: join(state, "review", "dryrun"),
+        github: { env },
+      });
+      return { failed: r.failed, line: r.line };
+    },
+    dryRun: () => config().dry_run,
+    now: () => Date.now(),
+  });
+}
+
 export function realHomeAdapters(o: {
   agentDir: string;
   configPath: () => string;
+  reviews: ReviewsPort;
   runner?: Runner;
 }): HomeAdapters {
   return {
@@ -220,6 +255,7 @@ export function realHomeAdapters(o: {
     github: githubPort(o.runner ?? execRunner),
     repo: repoPort(o.configPath),
     clock: { now: () => Date.now() },
+    reviews: o.reviews,
     ...unbuiltPorts,
   };
 }
@@ -236,6 +272,7 @@ export function homeOptionsFromEnv(env: Readonly<Record<string, string | undefin
     adapters: realHomeAdapters({
       agentDir: piAgentDir(env),
       configPath: () => locateConfig({ env }).path,
+      reviews: realReviewsPort(env),
     }),
     model,
     tools,

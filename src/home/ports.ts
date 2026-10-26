@@ -7,10 +7,11 @@
 // (invariant 9): the panel renders it Unknown and the `home_status` tool
 // reports it as null.
 //
-// The ports this ticket's home reads are pi login, GitHub, the repository
-// and the clock. Reviews, auto-review, memory and spend are typed here so
-// the panel's rows exist from the start; until each has its adapter, the
-// stubs in adapters.ts answer unknown.
+// The home reads pi login, GitHub, the repository, the clock and the reviews
+// (the app's detached runs, its per-target review state and the daemon's
+// rounds). Auto-review, memory and spend are typed here so the panel's rows
+// exist from the start; until each has its adapter, the stubs in adapters.ts
+// answer unknown.
 
 /** A read that worked, or one that did not and why. */
 export type Known<T> = { kind: "known"; value: T } | { kind: "unknown"; why: string };
@@ -44,6 +45,8 @@ export interface OpenPull {
   deletions: number;
   changedFiles: number;
   headRefName: string;
+  /** The head commit: a price is cached by it. Empty when gh gave none. */
+  headSha: string;
 }
 
 export interface GithubPort {
@@ -68,19 +71,125 @@ export interface ClockPort {
 
 /** The latest review of one pull request. */
 export interface PrReview {
-  findings: number;
-  /** How many of the findings are high severity (P0, P1). */
-  high: number;
+  /** How many findings it raised; null when its source does not say
+   * (auto-review's status counts rounds, not findings). */
+  findings: number | null;
+  /** How many of the findings are high severity (P0, P1); null as above. */
+  high: number | null;
   /** Who ran it: the person from the home, or auto-review. */
   by: "you" | "auto";
   /** When it finished, ms since the epoch. */
   at: number;
+  /** The findings themselves, when the review's result is at hand. */
+  list?: readonly ReviewFinding[];
+  /** The review's markdown report, when it wrote one. */
+  report?: string;
+  /** How long it took, and what it cost (null: the result does not say). */
+  tookMs?: number;
+  costUsd?: number | null;
 }
 
+/** One finding as the home shows it. */
+export interface ReviewFinding {
+  /** The reviewer's severity, as written: P0 … P3, nit. */
+  severity: string;
+  path: string | null;
+  line: number | null;
+  title: string;
+  /** The lens agent that raised it. */
+  lens: string | null;
+}
+
+/** The reviewer's preview of one pull request: its plan, its price and the
+ * key that starts it over the repo's limit. */
+export interface ReviewQuote {
+  estimateUsd: number;
+  /** The hard stop; null: none. */
+  capUsd: number | null;
+  key: string;
+  /** The lens agents the plan runs, the validator among them. */
+  lenses: readonly string[];
+  files: number;
+  /** The head the quote is of. */
+  headSha: string | null;
+}
+
+/** One lens of a running review, from its live log. */
+export interface LiveLens {
+  /** The lens agent (`pass-security--sol-high`). */
+  agent: string;
+  /** running, completed, failed, or another word the log uses. */
+  status: string;
+  toolCount: number;
+  durationMs: number;
+  currentTool?: string;
+  currentTarget?: string;
+  /** The lens's activity as one line (packages/pi-plugin/src/live/lensline.ts). */
+  line: string;
+}
+
+export type ReviewRunState = "running" | "done" | "failed" | "stopped";
+
+/** A detached review run, as `qcr review status` reports it. */
+export interface ReviewRunStatus {
+  runId: string;
+  state: ReviewRunState;
+  /** The pull request it reviews, when it is one. */
+  repo: string | null;
+  pr: number | null;
+  /** When it was started, ms since the epoch. */
+  startedAt: number;
+  /** When it ended, ms since the epoch (the result's time); absent while it runs. */
+  endedAt?: number;
+  /** Where its report is written. */
+  report?: string;
+  /** While it runs: the lenses its live log names, and what the round says
+   * it is doing. Absent until the log exists. */
+  live?: { lastActivity: string; lenses: readonly LiveLens[] };
+  /** Once it has ended: what its result says. */
+  result?: {
+    findings: readonly ReviewFinding[];
+    /** What it cost; null when the result does not say. */
+    costUsd: number | null;
+    /** The finished review kept for a later post (the result's `post_ready`). */
+    postFile?: string;
+    /** It posted already (its own `--to pr`). */
+    posted?: boolean;
+  };
+  /** Why it failed or stopped. */
+  errors: readonly string[];
+}
+
+export type Outcome<T> = ({ ok: true } & T) | { ok: false; why: string };
+
+/** The reviewer, as the home drives it: the app's detached runs. */
 export interface ReviewsPort {
-  /** The latest review per open pull request of `repo`, by number. A PR
-   * absent from the map has no review. */
+  /** The latest review per open pull request of `repo` the person ran (the
+   * home's finished runs and the app's per-target review state), by number.
+   * A PR absent from the map has no review. */
   latest(repo: string): Promise<Known<ReadonlyMap<number, PrReview>>>;
+  /** The daemon's rounds per pull request of `repo` (auto-review's half of
+   * the Reviewed list). */
+  autoRounds(repo: string): Promise<Known<ReadonlyMap<number, PrReview>>>;
+  /** Price one pull request: the reviewer's own preview. A stop abandons it. */
+  preview(
+    repo: string,
+    pr: number,
+    o?: { signal?: AbortSignal },
+  ): Promise<Outcome<{ quote: ReviewQuote }>>;
+  /** Start a detached review with the preview's key, writing its report to a
+   * file in the state home. It never posts. */
+  start(repo: string, pr: number, key: string): Promise<Outcome<{ runId: string; report: string }>>;
+  status(runId: string): Promise<Known<ReviewRunStatus>>;
+  stop(runId: string): Promise<Outcome<object>>;
+  /** Every run of `repo` the registry holds, oldest first: what the home
+   * re-attaches to when it opens. */
+  runs(repo: string): Promise<Known<readonly ReviewRunStatus[]>>;
+  /** Post a finished review kept for later: one comment-only review through
+   * the gate, with the install's dry_run. `line` says what happened. */
+  post(postFile: string): Promise<Outcome<{ line: string }>>;
+  /** The install keeps dry_run on: a post is recorded, not sent. */
+  dryRun(): Promise<Known<boolean>>;
 }
 
 /** Auto-review's label (FT-0665): Unknown is the port answering unknown. */
