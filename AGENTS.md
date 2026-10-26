@@ -26,6 +26,17 @@ Read [`README.md`](README.md) for what the system does for its user, and
 [`MANIFESTO.md`](MANIFESTO.md) for the beliefs it implements. This file is the
 map for *changing* it.
 
+## Architecture decisions
+
+The decisions that shape the repository, each with its reasons and the
+options it rejected, are recorded in [`docs/adr/`](docs/adr/README.md). Read
+the index before a change that moves code between packages or adds a surface.
+
+- [ADR 0001](docs/adr/0001-plugin-and-app-nest.md): **the plugin and the app
+  nest.** The plugin (`packages/pi-plugin`) is what plain pi needs to review.
+  The app is the managed product around it: the home, setup, auto-review and
+  the TUI. Each works without the one outside it.
+
 ## Build, test, typecheck
 
 ```sh
@@ -77,6 +88,8 @@ All three must be green before you commit. Notes that will bite otherwise:
   The core never owns the process either: no `process.exit`, `process.cwd`,
   `console`, `homedir` or `node:readline` (a host passes those facts in),
   except the plugin's entry, `src/plugin/index.ts`, which may read the home.
+  Which package a responsibility belongs in is
+  [ADR 0001](docs/adr/0001-plugin-and-app-nest.md).
   `tests/layers.test.ts` holds both rules on the real tree
   (`tests/helpers/layers.ts`), and its ratchet,
   `tests/helpers/layer-allowlist.ts`, is empty and stays empty: a violation is
@@ -124,6 +137,9 @@ All three must be green before you commit. Notes that will bite otherwise:
 - **Legacy input folds are load-bearing.** Retired spellings stay accepted on
   input forever and are pinned by `tests/legacy-acceptance.test.ts`. Do not
   "clean them up" — a container somewhere is still running the older prompt.
+  The one exception is a record under `docs/adr/` that rules otherwise:
+  [ADR 0001](docs/adr/0001-plugin-and-app-nest.md) drops the plugin's
+  unprefixed pi commands.
 
 ## Invariants an agent must never break
 

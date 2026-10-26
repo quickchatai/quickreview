@@ -2,7 +2,9 @@
 
 How quickreviewd learns a repo it has just been installed on, tunes its reviewer
 to it, and reviews the whole codebase without a pull request. Driven by the
-operator's companion; the deterministic half is `src/setup/`.
+operator's companion; the deterministic half is `src/setup/`. It also names
+the two packages and what a person meets first
+([ADR 0001](docs/adr/0001-plugin-and-app-nest.md)).
 
 ## Language
 
@@ -165,3 +167,21 @@ _Avoid_: export, escalation
 **Scan memory**:
 What a scan teaches about the repo — recurring patterns and one hotspot per unit — written to reviewer memory as unpinned `#scan` entries, capped per scan; never an individual finding.
 _Avoid_: findings memory
+
+### The packages and the first run
+
+**Plugin**:
+The inner package, `@quickchatai/pi-quickreview`: the review core and the `/qcr-*` commands, and everything a person using plain pi needs to review. It works with no app.
+_Avoid_: core (the core is the plugin's engine code, a layer inside it), extension
+
+**App**:
+The outer package, `@quickchatai/quickreview` with the `qcr` bin: the managed product built on the plugin (home, setup, auto-review, TUI, memory).
+_Avoid_: CLI (the bin is one door into the app), daemon
+
+**Home**:
+The app's own customised pi session that a person lands in: login, the setup checklist, then the repository's pull requests with buttons to review them.
+_Avoid_: dashboard, board (the TUI's), companion
+
+**Auto-review**:
+The opt-in always-on daemon that reviews new pull requests by polling; reviewing one pull request from the home does not need it.
+_Avoid_: the bot, live mode (dry-run and live are a separate switch)
