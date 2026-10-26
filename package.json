@@ -98,7 +98,7 @@
     "test": "vitest run",
     "//canary:pi": "The offline pi canaries (tests/pi-canary/): the real pi SDK at the pinned version on pi-ai's faux provider, so no network and no cost. They also run inside `npm test`; this is the named entry point CI requires whenever the pi dependencies change (a bump is gated by it).",
     "canary:pi": "vitest run tests/pi-canary",
-    "//canary:pi:range": "The same canaries on each pi version the plugin's peer range (packages/pi-plugin/package.json) should hold, refusing one outside it: no argument runs the installed pi; `-- --install 1.4.x` fetches another first (the registry: CI's pi-range matrix runs it in a fresh checkout). Needs the build.",
+    "//canary:pi:range": "The same canaries on each pi version the plugin's peer range (packages/pi-plugin/package.json) should hold, refusing one outside it: no argument runs the installed pi; `-- --install 1.4.x` fetches another first (the registry). Run it by hand before a version joins the peer range; CI runs only the installed pi's canaries. Needs the build.",
     "canary:pi:range": "node scripts/pi-canary-range.mjs",
     "//lint": "Deliberately NOT chained into `test` or `build`: scripts/dev-tui.sh blocks on the build before the TUI paints (ruling 5), and an ESLint pass there is seconds of blank terminal. CI runs it as its own step.",
     "lint": "node --max-old-space-size=4096 node_modules/eslint/bin/eslint.js .",

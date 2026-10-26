@@ -35,7 +35,9 @@ describe("ci.yml — the image job", () => {
   it("builds the release Dockerfile under BuildKit and runs the smoke on the result", () => {
     const job = imageJob();
     expect(job).toMatch(/DOCKER_BUILDKIT:\s*"1"/);
-    expect(job).toMatch(/docker build\b[^\n]*-f docker\/Dockerfile\b/);
+    // buildx, so the build uses the current builder (Blacksmith's cache) rather
+    // than the "default" instance plain `docker build` goes to.
+    expect(job).toMatch(/docker buildx build --load\b[^\n]*-f docker\/Dockerfile\b/);
     expect(job).toContain('--build-arg "BUILD_SHA=${GITHUB_SHA}"');
     expect(job).toMatch(/\.github\/ci\/image-smoke\.sh\s+qcr-ci:smoke/);
     expect(job).toMatch(/-t qcr-ci:smoke\b/);
