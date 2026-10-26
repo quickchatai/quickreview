@@ -23,6 +23,7 @@ import type {
   Destination,
   DestinationMenuItem,
 } from "@quickchatai/pi-quickreview/src/reviewdest.js";
+import type { PostOffer, ReviewOptions } from "@quickchatai/pi-quickreview/src/reviewapi.js";
 
 vi.stubEnv(
   "QCR_CONFIG",
@@ -34,6 +35,8 @@ const { destinationChoices } = await import("@quickchatai/pi-quickreview/src/rev
 const { saveDefaultDestinations } = await import("../src/reviewhome.js");
 const { contextFor } = await import("../src/bench/runner.js");
 const { openReviewStore } = await import("../src/reviewhome.js");
+const { review: coreReview } = await import("@quickchatai/pi-quickreview/src/reviewapi.js");
+const { prepareHostRun } = await import("../src/hostroute.js");
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "review-cli-"));
@@ -486,5 +489,89 @@ describe("qcr review --to pr", () => {
     const h2 = prHarness(repo, pi.bin, api);
     expect(await runReviewCli(["7", "--to", "pr"], false, h2.deps)).toBe(0);
     expect(api.posts).toHaveLength(1);
+  });
+});
+
+// The post a session offers after the review (the pi plugin's posting rule,
+// `ReviewIo.offerPost`): the same post `--to pr` makes, through the same gate,
+// decided only once the review has finished.
+describe("review(): the post offered after a finished PR review", () => {
+  /** The core's options for a harness, as `qcr review` builds them, showing
+   * the result only: the post is never a destination here. */
+  const coreOpts = (h: ReturnType<typeof prHarness>): ReviewOptions => ({
+    repoDir: h.deps.cwd,
+    root: h.deps.root,
+    agentDir: h.deps.agentDir,
+    runsDir: h.deps.runsDir,
+    dryrunDir: h.deps.dryrunDir,
+    storeDir: null,
+    config: h.deps.cfg,
+    ecosystem: h.deps.ecosystem,
+    runtime: () => h.deps.runtime,
+    prepareHost: prepareHostRun,
+    destinations: ["terminal"],
+    limits: { timeoutMs: h.deps.timeoutMs },
+    github: h.deps.pr,
+  });
+  const dryFiles = (dir: string): string[] =>
+    existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith("-create_review.json")) : [];
+
+  // MUTATION: post before asking, or on a no — this fails.
+  it("asks once the review is done, and a no posts nothing and records nothing", async () => {
+    const repo = cwdRepo("offer-no");
+    const api = stubApi();
+    const h = prHarness(repo, happyPi("offer-no").bin, api, {}, true);
+    const offers: PostOffer[] = [];
+    const r = await coreReview({ kind: "pr", pr: "7" }, coreOpts(h), {
+      offerPost: async (o) => (offers.push(o), false),
+    });
+    expect(r.exitCode, r.text).toBe(0);
+    expect(offers).toHaveLength(1);
+    expect(offers[0]).toMatchObject({ repo: "o/r", pr: 7, findings: 2, dryRun: true });
+    expect(offers[0]!.markdown).toMatch(/b is wrong/);
+    expect(api.posts).toHaveLength(0);
+    expect(dryFiles(h.deps.dryrunDir)).toEqual([]);
+    expect(r.data["post"]).toBeUndefined();
+  });
+
+  // Invariant 6 holds on this route too: the yes goes through the gate with
+  // the install's dry_run. MUTATION: post through postReviewToPr's fetch
+  // around the gate — this fails.
+  it("a yes on a dry-run install is recorded in its dryrun dir, and nothing is sent", async () => {
+    const repo = cwdRepo("offer-dry");
+    const api = stubApi();
+    const h = prHarness(repo, happyPi("offer-dry").bin, api, {}, true);
+    const r = await coreReview({ kind: "pr", pr: "7" }, coreOpts(h), {
+      offerPost: async () => true,
+    });
+    expect(r.exitCode, r.text).toBe(0);
+    expect(api.posts).toHaveLength(0);
+    expect(dryFiles(h.deps.dryrunDir).length).toBeGreaterThan(0);
+    expect(r.data["post"]).toMatchObject({ ok: true, dry_run: true });
+    expect(r.text).toMatch(/Dry run .*recorded, not posted/);
+  });
+
+  it("a yes on a live install posts one COMMENT review", async () => {
+    const repo = cwdRepo("offer-live");
+    const api = stubApi();
+    const h = prHarness(repo, happyPi("offer-live").bin, api);
+    const r = await coreReview({ kind: "pr", pr: "7" }, coreOpts(h), {
+      offerPost: async () => true,
+    });
+    expect(r.exitCode, r.text).toBe(0);
+    expect(api.posts).toHaveLength(1);
+    expect(api.posts[0]!.body.event).toBe("COMMENT");
+    expect(r.text).toMatch(/Posted 2 comments/);
+  });
+
+  it("is never offered for a branch", async () => {
+    const repo = cwdRepo("offer-branch");
+    const h = prHarness(repo, happyPi("offer-branch").bin, stubApi());
+    let asked = 0;
+    const r = await coreReview({ kind: "branch", uncommitted: true }, coreOpts(h), {
+      offerPost: async () => (asked++, true),
+    });
+    expect(r.exitCode, r.text).toBe(0);
+    expect(asked).toBe(0);
   });
 });
