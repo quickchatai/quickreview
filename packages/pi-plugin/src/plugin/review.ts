@@ -55,7 +55,8 @@ import { borrowLogin, reviewProviders } from "./login.js";
 import type { PluginHost, SessionUi } from "./session.js";
 import { DEFAULT_SETTINGS, type PostingRule, type QuickReviewSettings } from "./settings.js";
 
-export { REVIEW_MESSAGE } from "./messages.js";
+import { KEEP_IT_HERE, postAnswer } from "./messages.js";
+export { KEEP_IT_HERE, postAnswer, REVIEW_MESSAGE } from "./messages.js";
 
 /** A review's wall clock, as `qcr review`'s. */
 export const REVIEW_TIMEOUT_MS = 60 * 60_000;
@@ -184,14 +185,6 @@ export class ReviewSlot {
     });
   }
 }
-
-/** The answers the post question offers: No first, as pi's own confirm
- * would start on Yes. */
-export const KEEP_IT_HERE = "No, keep it here";
-export const postAnswer = (dryRun: boolean): string =>
-  dryRun
-    ? "Yes, post it (dry run: the review is recorded, not sent)"
-    : "Yes, post it as a comment-only review";
 
 const fail = (ui: SessionUi, message: string): void => {
   if (ui.mode === "print") ui.print(`✗ ${message}`);

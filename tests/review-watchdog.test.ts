@@ -12,10 +12,10 @@ import {
   runWatchdog,
   WATCHDOG_EXIT_CODE,
   type WatchdogDeps,
+  watchdogCommand,
 } from "../src/reviewdetach.js";
 import { HEARTBEAT_FILE, readBeat, type Beat } from "@quickchatai/pi-quickreview/src/heartbeat.js";
 import { sdkStubArgs, writeSdkDriverStub } from "./helpers/sdk-driver-stub.js";
-import { watchdogCommand } from "../src/reviewcli.js";
 import { waitFor } from "./helpers/wait-for.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "review-watchdog-"));

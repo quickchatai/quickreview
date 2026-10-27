@@ -18,7 +18,7 @@
 // cursor rests on is priced after PRICE_REST_MS, one preview at a time, cached
 // by its head: a preview for a PR the cursor has left gives way to the next.
 import type { HomeToolSet } from "../config.js";
-import { KEEP_IT_HERE, postAnswer } from "@quickchatai/pi-quickreview/src/plugin/review.js";
+import { KEEP_IT_HERE, postAnswer } from "@quickchatai/pi-quickreview/src/plugin/messages.js";
 import type { PostingRule } from "@quickchatai/pi-quickreview/src/plugin/settings.js";
 import {
   PENDING,

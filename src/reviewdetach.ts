@@ -43,7 +43,8 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { stopLiveSessions } from "@quickchatai/pi-quickreview/src/engine/livesessions.js";
 import {
   HEARTBEAT_FILE,
@@ -58,7 +59,7 @@ import {
 import { latestLiveRound, viewRound } from "@quickchatai/pi-quickreview/src/live/read.js";
 import { lensActivityLine, lensElapsedMs } from "@quickchatai/pi-quickreview/src/live/lensline.js";
 import { parsePrTarget } from "@quickchatai/pi-quickreview/src/prtarget.js";
-import { parseReviewArgs } from "./reviewcli.js";
+import { parseReviewArgs } from "./reviewargs.js";
 import {
   REVIEW_SCHEMA_VERSION,
   withSchemaVersion,
@@ -776,4 +777,52 @@ export async function runWatchdog(
     }
     await deps.sleep(deps.pollMs ?? 2_000);
   }
+}
+
+/** The CLI entry the detached driver re-runs: `cli` beside this module. Read
+ * from where this module is, not from `process.argv[1]`, which is whatever the
+ * person launched (a bin symlink, a wrapper, a test runner). */
+export function detachedEntry(metaUrl: string = import.meta.url): string {
+  return fileURLToPath(new URL(`./cli${extname(fileURLToPath(metaUrl))}`, metaUrl));
+}
+
+/** The process `qcr review start` detaches: this node, this entry, the run's
+ * directory and key, the review's own arguments. */
+export function detachedCommand(
+  l: { dir: string; key: string; argv: readonly string[] },
+  o: { entry?: string; execPath?: string; execArgv?: readonly string[] } = {},
+): { command: string; args: string[] } {
+  return {
+    command: o.execPath ?? process.execPath,
+    args: [
+      ...(o.execArgv ?? process.execArgv),
+      o.entry ?? detachedEntry(),
+      "review",
+      "--detached-run",
+      l.dir,
+      l.key,
+      ...l.argv,
+      "--json",
+    ],
+  };
+}
+
+/** The watchdog `qcr review start` detaches beside the run: this node, this
+ * entry, the run's directory, key and driver pid. */
+export function watchdogCommand(
+  w: { dir: string; key: string; pid: number },
+  o: { entry?: string; execPath?: string; execArgv?: readonly string[] } = {},
+): { command: string; args: string[] } {
+  return {
+    command: o.execPath ?? process.execPath,
+    args: [
+      ...(o.execArgv ?? process.execArgv),
+      o.entry ?? detachedEntry(),
+      "review",
+      "--watchdog",
+      w.dir,
+      w.key,
+      String(w.pid),
+    ],
+  };
 }
