@@ -13,8 +13,9 @@
 //                         → vm_inventory → vm_deploy (a release)
 //   Slack                 the concierge's own guided tool sets it up; the
 //                         step here says what is set up and what is not
-//   Dry-run or live       "Stay in dry-run" first, then "Go live": the
-//                         go-live step switch-on runs (invariant 6: no other
+//   Dry-run or live       "Stay in dry-run" first, then "Go live": the proof
+//                         round, one more confirm, then the go-live step
+//                         (src/home/switches.ts goLive; invariant 6: no other
 //                         path moves dry_run, and nothing here moves it back)
 //
 // Every question is the person's, asked in the home: a tool can open a choice
@@ -51,7 +52,7 @@ import {
 import { VM_DEPLOY_STEP_ID, vmDeployStep } from "../onboard/steps/vmdeploy.js";
 import type { AutoReviewControl } from "./ports.js";
 import { switchOnRegistry, type SwitchOnStepOptions } from "./switchon.js";
-import type { Ask } from "./switches.js";
+import { goLive, type Ask } from "./switches.js";
 
 /** The choices, in the person's words. */
 export const ADVANCED = {
@@ -108,6 +109,8 @@ export interface HomeAdvancedOptions {
   autoReview?: AutoReviewControl;
   say: (text: string, kind?: "info" | "ok" | "warn") => void;
   refresh: () => Promise<string>;
+  /** The selected pull request: going live's proof round reviews it. */
+  selected?: () => number | null;
 }
 
 const NEEDS_PERSON =
@@ -307,17 +310,22 @@ export class HomeAdvanced {
       return said;
     }
     const pick = await ask.select(
-      "Auto-review is in dry-run: it reviews, and records what it would post instead of posting it. Going live posts each review to GitHub under your name.",
+      "Auto-review is in dry-run: it reviews, and records what it would post instead of posting it. Going live posts each review to GitHub under your name, after a proof round you read.",
       [STAY_DRY, GO_LIVE],
     );
     if (pick !== GO_LIVE) {
       this.o.say("Auto-review stays in dry-run.");
       return "stays in dry-run: nothing changed";
     }
-    const r = await control.goLive({ confirmed: true });
-    await this.o.refresh();
-    this.o.say(r.ok ? r.detail : `Not live: ${r.detail}`, r.ok ? "ok" : "warn");
-    return r.ok ? r.detail : `not live: ${r.detail}`;
+    return goLive(
+      {
+        say: (text, kind) => this.o.say(text, kind),
+        refresh: () => this.o.refresh(),
+        selected: () => this.o.selected?.() ?? null,
+      },
+      control,
+      ask,
+    );
   }
 }
 

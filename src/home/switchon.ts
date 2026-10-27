@@ -22,13 +22,25 @@
 //   bringup          the first time: pull and start the stack (restart:
 //                    unless-stopped, so it survives reboots)
 //   memory_user_keys, verify_stack
-//   go_live          the wizard's go-live step, handed the person's one
-//                    confirm: the only thing here that may move dry_run, and
-//                    it moves it only through goLiveStep (invariant 6)
+//   proof_round      ┐ after switch-on, never walked by it: auto-review
+//   go_live          ┘ comes up in dry-run. Going live is its own act
+//                    (runGoLive): the wizard's proof round on one real pull
+//                    request, read by the person, then one more confirm
+//                    handed to the go-live step, the only thing here that
+//                    may move dry_run, and only through goLiveStep
+//                    (invariant 6)
 //
 // A step the checklist already records as done is not run again (its answer
 // stands), except the two that act on the running machine: the machine checks
 // and the daemon start.
+//
+// Memory is set up in two phases (src/onboard/steps/memorykeys.ts): its root
+// key must be on disk before the engine boots, and its user keys can only be
+// minted by the running engine. On a stack not running it yet, the memory
+// step lands the root key and stops on the engine not answering; switch-on
+// goes on, the engine is started, and before memory_user_keys the memory
+// step runs again until the engine answers (memoryPhaseB). Any other memory
+// failure ends the walk.
 import { createServer } from "node:net";
 import { execFile } from "node:child_process";
 import {
@@ -58,9 +70,16 @@ import { ESCALATION_STEP_ID, escalationStep } from "../onboard/steps/escalation.
 import { GITHUB_ACCOUNT_STEP_ID, githubAccountStep } from "../onboard/steps/githubaccount.js";
 import { GO_LIVE_CONFIRMATION, GO_LIVE_STEP_ID, goLiveStep } from "../onboard/steps/golive.js";
 import { INGRESS_STEP_ID, isUp, readEnvKey, ingressStep } from "../onboard/steps/ingress.js";
-import { MEMORY_STEP_ID, memoryStep } from "../onboard/steps/memory.js";
+import { MEMORY_STEP_ID, memoryStep, waitsOnServer } from "../onboard/steps/memory.js";
 import { MEMORY_KEYS_STEP_ID, memoryUserKeysStep } from "../onboard/steps/memorykeys.js";
 import { preflightStep } from "../onboard/steps/preflight.js";
+import {
+  PROOF_CHOICE_KEY,
+  PROOF_STEP_ID,
+  parseProofRecord,
+  proofRoundStep,
+  type ProofRecord,
+} from "../onboard/steps/proof.js";
 import { TOPOLOGY_STEP_ID, topologyOf, topologyStep } from "../onboard/steps/topology.js";
 import { VERIFY_STACK_STEP_ID, verifyStackStep } from "../onboard/steps/verifyup.js";
 import {
@@ -91,11 +110,19 @@ export const SWITCH_ON_ORDER = [
   BRINGUP_STEP_ID,
   MEMORY_KEYS_STEP_ID,
   VERIFY_STACK_STEP_ID,
+  PROOF_STEP_ID,
   GO_LIVE_STEP_ID,
 ] as const;
 
 /** The steps that act on the running machine: run on every switch-on. */
 const EVERY_TIME: ReadonlySet<string> = new Set([MACHINE_CHECKS_STEP_ID, DAEMON_START_STEP_ID]);
+
+/** The steps after switch-on, each the person's own act: never walked. */
+const AFTER_SWITCH_ON: ReadonlySet<string> = new Set([PROOF_STEP_ID, GO_LIVE_STEP_ID]);
+
+/** How long phase B waits for a memory engine that has just started. */
+export const MEMORY_WAIT_ATTEMPTS = 20;
+export const MEMORY_WAIT_MS = 15_000;
 
 // ---- the machine checks -------------------------------------------------
 
@@ -282,12 +309,13 @@ export function switchOnRegistry(o: SwitchOnStepOptions = {}): StepRegistry<Onbo
     bringUpStep(),
     memoryUserKeysStep(),
     verifyStackStep(),
+    proofRoundStep(),
     goLiveStep(),
   ]);
 }
 
 /** What each step is handed: switch-on's silent defaults and the person's
- * answers. Only go_live is ever handed the confirm. */
+ * answers. Only go_live is ever handed the confirm, and only by runGoLive. */
 export function switchOnInput(
   id: string,
   a: { answers: { memory: boolean | null; confirmed: boolean }; repo: string | null },
@@ -321,6 +349,11 @@ export interface StepsRun<A extends ChecklistAdapters> {
   /** The configured repository, for the own-account step. */
   repo: string | null;
   progress?: (line: string) => void;
+  /** Start the memory engine, for memory's phase B on a stack brought up
+   * without it. Absent: the bring-up is what starts it. */
+  startMemory?: () => Promise<SwitchResult>;
+  /** Between phase B's tries while the engine starts (tests skip the wait). */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface SwitchOnRun<A extends ChecklistAdapters> extends Omit<StepsRun<A>, "memory"> {
@@ -333,21 +366,65 @@ export interface SwitchOnRun<A extends ChecklistAdapters> extends Omit<StepsRun<
 }
 
 const line = (id: string, what: string): string => `${id}: ${what}`;
+const realSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-/** The steps between the machine checks and the go-live, in order. The first
- * that fails ends the walk with what it said. No step here is ever handed a
- * confirm: the go-live is not among them. */
+export type Walked = { ok: true } | { ok: false; detail: string };
+
+/** Memory's phase B on a stack that runs now: start the engine (when the
+ * caller can), then run the memory step again until the engine answers, for
+ * a bounded wait. The root key is already in place, so the engine read it at
+ * boot. A failure that is not the engine starting up ends it at once. */
+export async function memoryPhaseB<A extends ChecklistAdapters>(
+  r: Pick<StepsRun<A>, "checklist" | "startMemory" | "sleep" | "progress">,
+  input: Record<string, unknown>,
+): Promise<{ ok: true; detail: string } | { ok: false; detail: string }> {
+  if (r.startMemory) {
+    const up = await r.startMemory();
+    if (!up.ok) return { ok: false, detail: `the memory engine did not start: ${up.detail}` };
+  }
+  r.progress?.("Waiting for the memory engine to answer…");
+  for (let attempt = 1; ; attempt += 1) {
+    const res = await r.checklist.runStep(MEMORY_STEP_ID, input);
+    if (res.ok) return { ok: true, detail: res.checks.map((c) => c.detail).join("; ") || "done" };
+    const why = res.failures.join("; ") || "it did not finish";
+    if (!waitsOnServer(res.checks) || attempt >= MEMORY_WAIT_ATTEMPTS)
+      return { ok: false, detail: why };
+    await (r.sleep ?? realSleep)(MEMORY_WAIT_MS);
+  }
+}
+
+/** The steps between the machine checks and the proof round, in order. The
+ * first that fails ends the walk with what it said, except memory's phase A
+ * waiting on an engine not yet running (its phase B follows the bring-up).
+ * No step here is ever handed a confirm: the go-live is not among them. */
 export async function runSteps<A extends ChecklistAdapters>(
   r: StepsRun<A>,
   steps: string[],
-): Promise<{ ok: true } | { ok: false; detail: string }> {
+): Promise<Walked> {
   const say = (s: string): void => {
     steps.push(s);
     r.progress?.(s);
   };
   const inputs = { answers: { memory: r.memory, confirmed: false as const }, repo: r.repo };
+  const failed = (id: string, title: string, why: string): Walked => {
+    steps.push(line(id, `failed: ${why}`));
+    return { ok: false, detail: `${title}: ${why}` };
+  };
+  let memoryWaits = false;
+  const phaseB = async (): Promise<Walked> => {
+    memoryWaits = false;
+    const b = await memoryPhaseB(r, switchOnInput(MEMORY_STEP_ID, inputs));
+    if (!b.ok) return failed(MEMORY_STEP_ID, "Memory", b.detail);
+    say(line(MEMORY_STEP_ID, b.detail));
+    return { ok: true };
+  };
   for (const s of r.checklist.list()) {
-    if (s.id === MACHINE_CHECKS_STEP_ID || s.id === GO_LIVE_STEP_ID) continue;
+    if (s.id === MACHINE_CHECKS_STEP_ID || AFTER_SWITCH_ON.has(s.id)) continue;
+    // the engine runs now (the bring-up, or a stack brought up before)
+    if (s.id === MEMORY_KEYS_STEP_ID && memoryWaits) {
+      const b = await phaseB();
+      if (!b.ok) return b;
+    }
     if (s.status === "disabled") {
       say(line(s.id, "not on this route"));
       continue;
@@ -360,21 +437,23 @@ export async function runSteps<A extends ChecklistAdapters>(
     }
     r.progress?.(`${s.title}…`);
     const res = await r.checklist.runStep(s.id, switchOnInput(s.id, inputs));
-    if (!res.ok) {
-      const why = res.failures.join("; ") || "it did not finish";
-      steps.push(line(s.id, `failed: ${why}`));
-      return { ok: false, detail: `${s.title}: ${why}` };
+    if (!res.ok && s.id === MEMORY_STEP_ID && waitsOnServer(res.checks)) {
+      memoryWaits = true;
+      say(line(s.id, "its root key is placed; its user keys follow once the engine runs"));
+      continue;
     }
+    if (!res.ok) return failed(s.id, s.title, res.failures.join("; ") || "it did not finish");
     say(line(s.id, res.checks.map((c) => c.detail).join("; ") || "done"));
   }
+  if (memoryWaits) return phaseB();
   return { ok: true };
 }
 
 /**
- * Run switch-on's steps after the machine checks, in order (runSteps). The
- * go-live step runs last, and only while the config is in dry-run: it is
- * handed the person's confirm, and whatever it decides is the answer (it may
- * refuse: then auto-review is on, in dry-run, and the outcome says why).
+ * Run switch-on's steps after the machine checks, in order (runSteps).
+ * Auto-review comes up in dry-run: switch-on never runs the proof round or
+ * the go-live, whatever the config says. Going live is runGoLive, its own
+ * act with its own confirm.
  */
 export async function runSwitchOn<A extends ChecklistAdapters>(
   r: SwitchOnRun<A>,
@@ -400,7 +479,7 @@ export async function runSwitchOn<A extends ChecklistAdapters>(
     return { ok: true, live: true, detail: "Auto-review is on and posts live.", steps };
   }
   if (dry === null) {
-    steps.push(line(GO_LIVE_STEP_ID, "skipped: the config's dry_run cannot be read"));
+    steps.push(line(GO_LIVE_STEP_ID, "unknown: the config's dry_run cannot be read"));
     return {
       ok: false,
       live: null,
@@ -409,22 +488,39 @@ export async function runSwitchOn<A extends ChecklistAdapters>(
       steps,
     };
   }
-  const go = await r.checklist.runStep(GO_LIVE_STEP_ID, switchOnInput(GO_LIVE_STEP_ID, r));
-  if (go.ok) {
-    say(line(GO_LIVE_STEP_ID, "live"));
-    return { ok: true, live: true, detail: "Auto-review is on and posts live.", steps };
-  }
-  const why = go.failures.join("; ") || "it did not finish";
-  steps.push(line(GO_LIVE_STEP_ID, `refused: ${why}`));
+  say(line(GO_LIVE_STEP_ID, "not yet: auto-review is in dry-run"));
   return {
     ok: true,
     live: false,
-    detail: `Auto-review is on in dry-run: it reviews, and posts nothing yet. Going live was refused: ${why}`,
+    detail:
+      "Auto-review is on in dry-run: it reviews, and posts nothing yet. Going live is its own step: one review you read, then one more confirm.",
     steps,
   };
 }
 
-/** The go-live step alone, from dry-run, on the person's confirm. */
+/** The proof round the checklist records, or null: what the go-live step
+ * demands (and re-verifies against the daemon's own state). */
+export function recordedProof<A extends ChecklistAdapters>(
+  checklist: SetupChecklist<A>,
+): ProofRecord | null {
+  return parseProofRecord(checklist.choices()[PROOF_CHOICE_KEY]);
+}
+
+/** The wizard's proof round on pull request `pr`, from dry-run: the daemon
+ * reviews it now, the round is followed through its own state, and the
+ * review it would have posted is read back. The detail is that review. */
+export async function runProofRound<A extends ChecklistAdapters>(
+  checklist: SetupChecklist<A>,
+  pr: number,
+): Promise<SwitchResult> {
+  const r = await checklist.runStep(PROOF_STEP_ID, { pr });
+  return r.ok
+    ? { ok: true, detail: r.checks.map((c) => c.detail).join("\n\n") }
+    : { ok: false, detail: r.failures.join("; ") || "the proof round did not finish" };
+}
+
+/** The go-live step, from dry-run, on the person's own go-live confirm
+ * (asked after the proof round, never the switch-on's). */
 export async function runGoLive<A extends ChecklistAdapters>(
   checklist: SetupChecklist<A>,
   answers: { confirmed: true },

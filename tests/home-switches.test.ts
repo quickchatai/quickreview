@@ -37,6 +37,11 @@ interface Machine {
   running: Known<readonly RunningRound[]>;
   /** What switch-on finds and leaves: live or dry-run. */
   goesLive: boolean;
+  /** The proof round on record, and what a new one on a PR comes to. */
+  proof: { pr: number; verdict: string } | null;
+  proofRound: { ok: true; detail: string } | { ok: false; detail: string };
+  /** The open pull requests the home lists (the first is selected). */
+  pulls: number[];
   /** Everything asked of the outside world, in order. */
   log: string[];
   answers: SwitchOnAnswers[];
@@ -50,6 +55,9 @@ function machine(over: Partial<Machine> = {}): Machine {
     machineChecks: { ok: true, detail: "Docker 27 · 41 GB free · port 8787 is free" },
     running: known([]),
     goesLive: true,
+    proof: null,
+    proofRound: { ok: true, detail: "#12 round 1 finished with verdict COMMENT" },
+    pulls: [],
     log: [],
     answers: [],
     ...over,
@@ -75,6 +83,15 @@ function adaptersOver(m: Machine): HomeAdapters {
         detail: m.goesLive ? "Auto-review is on and posts live." : "Auto-review is on in dry-run.",
         steps: ["topology: local"],
       };
+    },
+    proof: async () => {
+      m.log.push("auto.proof");
+      return m.proof;
+    },
+    proofRound: async (pr) => {
+      m.log.push(`auto.proofRound #${pr}`);
+      if (m.proofRound.ok) m.proof = { pr, verdict: "COMMENT" };
+      return m.proofRound;
     },
     goLive: async () => {
       m.log.push("auto.goLive");
@@ -108,7 +125,21 @@ function adaptersOver(m: Machine): HomeAdapters {
     login: { providers: async () => known(["openai-codex"]) },
     github: {
       user: async () => known("octo"),
-      openPulls: async () => known([]),
+      openPulls: async () =>
+        known(
+          m.pulls.map((n) => ({
+            number: n,
+            title: `PR ${n}`,
+            author: "octo",
+            updatedAt: new Date(NOW - n * 60_000).toISOString(),
+            isDraft: false,
+            additions: 1,
+            deletions: 1,
+            changedFiles: 1,
+            headRefName: `b${n}`,
+            headSha: `sha${n}`,
+          })),
+        ),
       openInBrowser: async () => ({ ok: true }),
     },
     repo: { repo: async () => known("acme/widgets") },
@@ -159,8 +190,9 @@ async function home(
 
 describe("switching auto-review on", () => {
   // MUTATION: ask the confirm before the memory offer, or skip the machine checks — this fails.
+  // MUTATION: say "goes live" in the dry-run confirm again — this fails.
   it("runs the machine checks, asks where, offers memory, then one confirm, in that order", async () => {
-    const m = machine();
+    const m = machine({ goesLive: false });
     const h = await home(m, [CHOICE.here, CHOICE.notNow, CHOICE.turnOn]);
     const said = await h.pi.tool("home_auto_review");
     expect(m.log).toEqual(["auto.machineChecks", "auto.switchOn"]);
@@ -168,7 +200,7 @@ describe("switching auto-review on", () => {
       "Where should auto-review run?",
       "Turn on memory too? Reviews learn this repository. It uses up to 4 GB of RAM.",
       expect.stringMatching(
-        /^Auto-review goes live: it reviews pull requests labelled "AI review requested" or with a review request in acme\/widgets, and posts each review to GitHub under your name\. It keeps running, across reboots, until you switch it off\.$/,
+        /^Auto-review starts in dry-run: it reviews pull requests labelled "AI review requested" or with a review request in acme\/widgets, and records what it would post instead of posting it\. Going live is its own step later: one review you read, then one more confirm\. It keeps running, across reboots, until you switch it off\.$/,
       ),
     ]);
     expect(h.asked[0]!.options).toEqual([
@@ -178,8 +210,8 @@ describe("switching auto-review on", () => {
     // the confirm offers Cancel first: the go-live is never the default
     expect(h.asked[2]!.options).toEqual([CHOICE.cancel, CHOICE.turnOn]);
     expect(m.answers).toEqual([{ memory: false, confirmed: true }]);
-    expect(said).toMatch(/Auto-review is on and posts live\./);
-    expect(h.text()).toMatch(/● Auto-review on · live/);
+    expect(said).toMatch(/Auto-review is on in dry-run\./);
+    expect(h.text()).toMatch(/● Auto-review on · dry-run/);
     expect(h.text()).toMatch(/picks up pull requests labelled "AI review requested"/);
   });
 
@@ -237,11 +269,12 @@ describe("switching auto-review on", () => {
     expect(h.asked[2]!.title).toMatch(/^Auto-review reviews pull requests/);
   });
 
-  it("a go-live the go-live step refuses leaves it on in dry-run, and says so", async () => {
-    const m = machine({ goesLive: false });
+  it("on a config whose dry_run can't be read, the confirm says posting is unknown", async () => {
+    const m = machine({ dryRun: { kind: "unknown", why: "no config" }, goesLive: false });
     const h = await home(m, [CHOICE.here, CHOICE.notNow, CHOICE.turnOn]);
-    expect(await h.pi.tool("home_auto_review")).toMatch(/dry-run/);
-    expect(h.text()).toMatch(/● Auto-review on · dry-run/);
+    await h.pi.tool("home_auto_review");
+    expect(h.asked[2]!.title).toMatch(/Whether it posts to GitHub is unknown: no config\./);
+    expect(h.asked[2]!.title).not.toMatch(/goes live|starts in dry-run/);
   });
 
   // MUTATION: let switchAutoReview run without asking when there is no UI — this fails.
@@ -325,13 +358,58 @@ describe("switching auto-review off", () => {
     expect(h.text()).toMatch(/● Auto-review on · live/);
   });
 
-  it("from dry-run the person can go live instead, through the same confirm", async () => {
-    const m = machine({ auto: "on-dry" });
+  it("from dry-run, with a proof round on record, going live is one more confirm", async () => {
+    const m = machine({ auto: "on-dry", proof: { pr: 7, verdict: "COMMENT" } });
     const h = await home(m, [CHOICE.goLive, CHOICE.goLive]);
     await h.pi.tool("home_auto_review");
     expect(h.asked[0]!.options).toEqual([CHOICE.keepOn, CHOICE.goLive, CHOICE.switchOff]);
+    expect(h.asked[1]!.title).toMatch(/^Go live\? You have read the review of #7\./);
     expect(h.asked[1]!.options).toEqual([CHOICE.cancel, CHOICE.goLive]);
-    expect(m.log).toEqual(["auto.running", "auto.goLive"]);
+    expect(m.log).toEqual(["auto.running", "auto.proof", "auto.goLive"]);
+  });
+
+  // MUTATION: call control.goLive straight after the proof round, without
+  // asking again — this fails.
+  it("with no proof round yet: the selected PR is reviewed in dry-run, then one more confirm", async () => {
+    const m = machine({ auto: "on-dry", pulls: [12] });
+    const h = await home(m, [CHOICE.goLive, CHOICE.proofRound, CHOICE.goLive]);
+    const said = await h.pi.tool("home_auto_review");
+    expect(h.asked[1]!.title).toMatch(/proof round first: auto-review reviews #12 now, in dry-run/);
+    expect(h.asked[1]!.options).toEqual([CHOICE.cancel, CHOICE.proofRound]);
+    expect(h.asked[2]!.title).toMatch(/^Go live\? You have read the review of #12\./);
+    expect(h.asked[2]!.options).toEqual([CHOICE.cancel, CHOICE.goLive]);
+    expect(m.log).toEqual([
+      "auto.running",
+      "auto.proof",
+      "auto.proofRound #12",
+      "auto.goLive",
+    ]);
+    expect(said).toMatch(/posts live now/);
+  });
+
+  it("the second confirm is the person's: cancelling it after the proof round goes nowhere", async () => {
+    const m = machine({ auto: "on-dry", pulls: [12] });
+    const h = await home(m, [CHOICE.goLive, CHOICE.proofRound, CHOICE.cancel]);
+    expect(await h.pi.tool("home_auto_review")).toMatch(/cancelled: nothing changed/);
+    expect(m.log).not.toContain("auto.goLive");
+  });
+
+  it("a proof round that does not finish, or no PR to prove it on, never goes live", async () => {
+    const failing = machine({
+      auto: "on-dry",
+      pulls: [12],
+      proofRound: { ok: false, detail: "the daemon refused to review #12 now" },
+    });
+    const h = await home(failing, [CHOICE.goLive, CHOICE.proofRound]);
+    expect(await h.pi.tool("home_auto_review")).toMatch(/proof round did not finish/);
+    expect(failing.log).not.toContain("auto.goLive");
+    expect(h.asked).toHaveLength(2);
+
+    const none = machine({ auto: "on-dry" });
+    const h2 = await home(none, [CHOICE.goLive]);
+    expect(await h2.pi.tool("home_auto_review")).toMatch(/no proof round yet/);
+    expect(none.log).toEqual(["auto.running", "auto.proof"]);
+    expect(h2.asked).toHaveLength(1);
   });
 });
 

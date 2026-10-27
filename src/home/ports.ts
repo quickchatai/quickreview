@@ -262,9 +262,15 @@ export interface SwitchOnAnswers {
   /** Memory with it: true turns it on, false keeps it off, null leaves it
    * as it is (it was not offered). */
   memory: boolean | null;
-  /** The one explicit confirm. Only a person's answer in the home sets it;
-   * it is what the go-live step is handed (invariant 6). */
+  /** The one explicit confirm. Only a person's answer in the home sets it.
+   * Switch-on comes up in dry-run: the go-live has a confirm of its own. */
   confirmed: true;
+}
+
+/** The proof round the go-live step demands, as recorded. */
+export interface ProofRound {
+  pr: number;
+  verdict: string;
 }
 
 export interface SwitchOnOutcome {
@@ -280,11 +286,17 @@ export interface SwitchOnOutcome {
 export interface AutoReviewControl {
   /** The machine checks (Docker, disk, ports): run before anything is asked. */
   machineChecks(): Promise<SwitchResult>;
-  /** The config's `dry_run` now: whether the confirm is a go-live. */
+  /** The config's `dry_run` now: whether it posts live once on. */
   dryRun(): Promise<Known<boolean>>;
   /** Run switch-on's steps in order; `progress` gets each line as it comes. */
   switchOn(answers: SwitchOnAnswers, progress?: (line: string) => void): Promise<SwitchOnOutcome>;
-  /** Go live from dry-run: the go-live step with the person's confirm. */
+  /** The proof round the checklist records; null when there is none yet. */
+  proof(): Promise<ProofRound | null>;
+  /** The proof round on pull request `pr`, from dry-run: the daemon reviews
+   * it now and the detail is the review it would have posted. */
+  proofRound(pr: number, progress?: (line: string) => void): Promise<SwitchResult>;
+  /** Go live from dry-run: the go-live step with the person's go-live
+   * confirm, asked after the proof round. */
   goLive(answers: { confirmed: true }): Promise<SwitchResult>;
   /** The rounds running now, for switch-off's warning. */
   running(): Promise<Known<readonly RunningRound[]>>;

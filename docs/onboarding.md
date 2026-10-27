@@ -115,9 +115,15 @@ and refreshes its own login. The host's login is never copied there.
     `vm_inventory` and `vm_deploy` of a release, this app's by default;
   - **Slack:** says what is set up; the concierge's own guided tool,
     [`npm run slack:setup`](#slack-later), sets up the rest;
-  - **Dry-run or live:** "Stay in dry-run" first, then "Go live", which is
-    the wizard's go-live step. Going back to dry-run is your own edit of
-    `dry_run`; nothing in the home moves it.
+  - **Dry-run or live:** "Stay in dry-run" first, then "Go live".
+    Switching auto-review on brings it up in dry-run, so going live is its
+    own act, here or from the auto-review switch while it runs in dry-run:
+    a proof round first (the wizard's `proof_round`: auto-review reviews
+    the selected pull request now, in dry-run, and the home shows the
+    review it would have posted), then one more confirm, then the wizard's
+    go-live step, which checks that proof against the daemon's own state.
+    A proof round already on record stands. Going back to dry-run is your
+    own edit of `dry_run`; nothing in the home moves it.
 
 ## The setup wizard
 

@@ -6,7 +6,11 @@
 //
 // Auto-review on:   machine checks → where it runs → the memory offer (when
 //                   memory is off) → one confirm → the steps
-//                   (src/home/switchon.ts), the go-live handed that confirm
+//                   (src/home/switchon.ts): it comes up in dry-run
+// Go live:          the proof round (one real pull request reviewed in
+//                   dry-run, its review shown) → one more confirm → the
+//                   go-live step. From switch-off's question while in
+//                   dry-run, or Advanced's "Dry-run or live"
 // Auto-review off:  a warning naming the running round → stop at once, data
 //                   kept, memory untouched
 // Memory:           its RAM cost → on or off, auto-review untouched
@@ -38,6 +42,7 @@ export const CHOICE = {
   keepOn: "Keep it on",
   switchOff: "Switch it off",
   goLive: "Go live",
+  proofRound: "Review it now, in dry-run",
 } as const;
 
 /** What the switches need of the home's model. */
@@ -47,6 +52,8 @@ export interface SwitchHost {
   /** The trigger label, when known. */
   trigger(): string | null;
   repo(): string | null;
+  /** The selected pull request: the proof round's, when one is needed. */
+  selected(): number | null;
   say(text: string, kind?: "info" | "ok" | "warn"): void;
   /** Show this in the slot until released, whatever a refresh reads. */
   hold(slot: "autoReview", v: Known<AutoReviewStatus>): void;
@@ -126,14 +133,16 @@ async function switchOn(
     if (m === undefined) return cancelled(host);
     memory = m === CHOICE.memoryOn;
   }
-  // 4. the one confirm
+  // 4. the one confirm: it comes up in dry-run unless the config is live
   const dry = await control.dryRun();
   const repo = host.repo() ?? "your repository";
   const picks = pickUpPhrase(host.trigger());
   const posture =
-    dry.kind === "known" && !dry.value
-      ? `Auto-review reviews ${picks} in ${repo}, and posts each review to GitHub.`
-      : `Auto-review goes live: it reviews ${picks} in ${repo}, and posts each review to GitHub under your name.`;
+    dry.kind === "unknown"
+      ? `Auto-review reviews ${picks} in ${repo}. Whether it posts to GitHub is unknown: ${dry.why}.`
+      : !dry.value
+        ? `Auto-review reviews ${picks} in ${repo}, and posts each review to GitHub.`
+        : `Auto-review starts in dry-run: it reviews ${picks} in ${repo}, and records what it would post instead of posting it. Going live is its own step later: one review you read, then one more confirm.`;
   const go = await ask.select(
     `${posture} It keeps running, across reboots, until you switch it off.`,
     [CHOICE.cancel, CHOICE.turnOn],
@@ -180,9 +189,56 @@ async function switchOff(host: SwitchHost, control: AutoReviewControl, ask: Ask)
   return `auto-review is off (${r.detail}). ${warning}`;
 }
 
-async function goLive(host: SwitchHost, control: AutoReviewControl, ask: Ask): Promise<string> {
+/** What going live needs of the home. */
+export interface GoLiveHost {
+  say(text: string, kind?: "info" | "ok" | "warn"): void;
+  refresh(): Promise<string>;
+  /** The selected pull request, for a proof round. */
+  selected(): number | null;
+}
+
+/**
+ * Go live, from dry-run: a proof round first, then one more confirm, then
+ * the go-live step (which re-checks the proof against the daemon's own
+ * state). The proof round is the wizard's: the daemon reviews one real pull
+ * request now, in dry-run, and the person reads what it would have posted.
+ * A proof already recorded stands; the go-live step judges it.
+ */
+export async function goLive(
+  host: GoLiveHost,
+  control: AutoReviewControl,
+  ask: Ask,
+): Promise<string> {
+  let proven = (await control.proof())?.pr ?? null;
+  if (proven === null) {
+    const pr = host.selected();
+    if (pr === null) {
+      const said =
+        "Going live needs a proof round first: one pull request reviewed in dry-run, which you read before anything posts. Select a pull request, then choose Go live again.";
+      host.say(said, "warn");
+      return "not live: no proof round yet, and no pull request is selected";
+    }
+    const run = await ask.select(
+      `Going live needs a proof round first: auto-review reviews #${pr} now, in dry-run, and shows you what it would post. Nothing is posted.`,
+      [CHOICE.cancel, CHOICE.proofRound],
+    );
+    if (run !== CHOICE.proofRound) return cancelled(host);
+    host.say(`Reviewing #${pr} in dry-run: the proof round…`);
+    let r;
+    try {
+      r = await control.proofRound(pr, (l) => host.say(l));
+    } catch (err) {
+      r = { ok: false as const, detail: String(err) };
+    }
+    if (!r.ok) {
+      host.say(`The proof round did not finish: ${r.detail}`, "warn");
+      return `not live: the proof round did not finish: ${r.detail}`;
+    }
+    host.say(r.detail, "ok");
+    proven = pr;
+  }
   const go = await ask.select(
-    "Go live? Auto-review then posts each review to GitHub under your name.",
+    `Go live? You have read the review of #${proven}. Auto-review then posts each review to GitHub under your name.`,
     [CHOICE.cancel, CHOICE.goLive],
   );
   if (go !== CHOICE.goLive) return cancelled(host);
@@ -192,7 +248,7 @@ async function goLive(host: SwitchHost, control: AutoReviewControl, ask: Ask): P
   return r.ok ? r.detail : `not live: ${r.detail}`;
 }
 
-function cancelled(host: SwitchHost): string {
+function cancelled(host: Pick<SwitchHost, "say">): string {
   host.say("Nothing changed.");
   return "cancelled: nothing changed";
 }

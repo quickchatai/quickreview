@@ -14,6 +14,13 @@
 //   restart   a stack brought up before is recreated, so the daemon has the
 //             mount and reads the config at boot (its volumes, so its data,
 //             are kept). A first switch-on's bring-up starts it this way.
+//   proof     a stack brought up before keeps its image pin and its extracted
+//             docker-compose.yml, which may be an older release's. So the
+//             compose file must define the mount before anything is written,
+//             and the running daemon must show it reviews on the login (its
+//             QCR_LOGIN_DIR, the login in the mount, an image whose
+//             refresher reads that dir) before the step says so. Until then
+//             the step is not done, and the next switch-on runs it again.
 //
 // The hand-over needs nothing more: while the refresher runs it refreshes far
 // ahead of pi's own window, so the home's pi, a borrower now, never has a
@@ -28,9 +35,24 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "smol-toml";
 import { parseConfig } from "../../config.js";
-import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
+import type {
+  CheckResult,
+  OnboardingStep,
+  ProcessRunner,
+  StepContext,
+  StepReport,
+} from "../engine.js";
+import { CONTAINER_LOGIN_DIR, LOGIN_DIR_ENV } from "../../loginrefresh/supervisor.js";
 import { BROUGHT_UP_CHOICE_KEY } from "./bringup.js";
-import { DAEMON_SERVICE, composeArgs, readEnvText, rootOf, writeAtomic } from "./compose.js";
+import {
+  DAEMON_SERVICE,
+  composeArgs,
+  daemonExec,
+  readEnvText,
+  releaseVersion,
+  rootOf,
+  writeAtomic,
+} from "./compose.js";
 import { assertNoDryRunEdit, patchToml, type TomlEdit } from "./configfill.js";
 import { readEnvKey, setEnvKey } from "./ingress.js";
 import { topologyOf } from "./topology.js";
@@ -72,6 +94,56 @@ const fail = (name: string, detail: string): StepReport => ({
   ok: false,
   checks: [{ name, ok: false, detail }],
 });
+
+/** The upgrade a stack too old for a shared login needs, said once. */
+function upgradeFix(root: string): string {
+  const version = releaseVersion(root);
+  return (
+    `Fix: update the stack in ${root} to a release with the shared login` +
+    `${version ? ` (QCR_VERSION=${version} in its .env, and that release's docker-compose.yml)` : ""}, ` +
+    "then switch auto-review on again"
+  );
+}
+
+/** Does the project's docker-compose.yml mount a shared login? null when
+ * there is no compose file yet (the bring-up places it, this release's). */
+export function composeMountsLogin(root: string): boolean | null {
+  let text: string;
+  try {
+    text = readFileSync(join(root, "docker-compose.yml"), "utf8");
+  } catch {
+    return null;
+  }
+  return text.includes(PI_LOGIN_DIR_ENV);
+}
+
+/** The running daemon, asked whether it reviews on the shared login: the
+ * compose definition hands it the dir, the mount holds the login, and its
+ * image's refresher reads that dir. Exit codes name which failed. */
+export const DAEMON_LOGIN_PROBE = [
+  "sh",
+  "-c",
+  `test "$${LOGIN_DIR_ENV}" = ${CONTAINER_LOGIN_DIR} || exit 3; ` +
+    `test -s ${CONTAINER_LOGIN_DIR}/auth.json || exit 4; ` +
+    `grep -q ${LOGIN_DIR_ENV} dist/src/loginrefresh/supervisor.js 2>/dev/null || exit 5`,
+] as const;
+
+/** Ask the running daemon (DAEMON_LOGIN_PROBE). A daemon that cannot be
+ * asked is not one that reviews on the login: never claimed. */
+export async function daemonLoginCheck(runner: ProcessRunner, root: string): Promise<CheckResult> {
+  const r = await daemonExec(runner, root, DAEMON_LOGIN_PROBE);
+  if (r.code === 0)
+    return { name: "daemon", ok: true, detail: "the daemon reviews on your login, data kept" };
+  const why =
+    r.code === 3
+      ? `the running daemon is not handed the login (its ${LOGIN_DIR_ENV} is not ${CONTAINER_LOGIN_DIR}): the stack's docker-compose.yml is an older release's`
+      : r.code === 4
+        ? `the running daemon sees no login at ${CONTAINER_LOGIN_DIR}: the stack's docker-compose.yml does not mount it`
+        : r.code === 5
+          ? "the running daemon's image predates the shared login: it would keep reviewing on a login of its own"
+          : `can't ask the running daemon whether it reviews on your login: ${firstLine(r.stderr || r.stdout)}`;
+  return { name: "daemon", ok: false, detail: `${why}. ${upgradeFix(root)}` };
+}
 
 export function loginShareStep(o: LoginShareOptions = {}): OnboardingStep {
   const state = async (ctx: StepContext): Promise<StepReport> => {
@@ -144,6 +216,11 @@ export function loginShareStep(o: LoginShareOptions = {}): OnboardingStep {
         }
       }
       const root = rootOf(ctx.adapters);
+      if (composeMountsLogin(root) === false)
+        return fail(
+          "daemon",
+          `${join(root, "docker-compose.yml")} is an older release's: it does not mount a shared login, so the daemon would keep a login of its own. Nothing was written. ${upgradeFix(root)}`,
+        );
       const envText = readEnvText(root);
       const nextEnv = setEnvKey(envText, PI_LOGIN_DIR_ENV, dir);
       if (patched !== null) writeAtomic(configPath, patched);
@@ -156,18 +233,23 @@ export function loginShareStep(o: LoginShareOptions = {}): OnboardingStep {
         },
       ];
       const changed = patched !== null || nextEnv !== envText;
-      if (changed && typeof ctx.choices[BROUGHT_UP_CHOICE_KEY] === "string") {
-        // the mount and the config are read when the container starts
-        const r = await ctx.adapters.runner.run(
-          "docker",
-          composeArgs(root, ["up", "-d", "--no-deps", "--force-recreate", DAEMON_SERVICE]),
-        );
-        if (r.code !== 0)
-          return fail(
-            "daemon",
-            `\`docker compose up -d --force-recreate ${DAEMON_SERVICE}\` exited ${r.code}: ${firstLine(r.stderr || r.stdout)}`,
+      if (typeof ctx.choices[BROUGHT_UP_CHOICE_KEY] === "string") {
+        if (changed) {
+          // the mount and the config are read when the container starts
+          const r = await ctx.adapters.runner.run(
+            "docker",
+            composeArgs(root, ["up", "-d", "--no-deps", "--force-recreate", DAEMON_SERVICE]),
           );
-        checks.push({ name: "daemon", ok: true, detail: "restarted on your login, data kept" });
+          if (r.code !== 0)
+            return fail(
+              "daemon",
+              `\`docker compose up -d --force-recreate ${DAEMON_SERVICE}\` exited ${r.code}: ${firstLine(r.stderr || r.stdout)}`,
+            );
+        }
+        // a stack brought up before says so itself, or the step is not done
+        const daemon = await daemonLoginCheck(ctx.adapters.runner, root);
+        checks.push(daemon);
+        if (!daemon.ok) return { ok: false, checks };
       }
       return { ok: true, checks };
     },

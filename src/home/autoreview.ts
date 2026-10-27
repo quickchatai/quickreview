@@ -43,7 +43,9 @@ import {
 } from "./ports.js";
 import {
   MACHINE_CHECKS_STEP_ID,
+  recordedProof,
   runGoLive,
+  runProofRound,
   runSwitchOn,
   switchOnRegistry,
   type SwitchOnStepOptions,
@@ -84,17 +86,28 @@ function parseSnapshot(text: string): Obj | string {
   }
 }
 
-/** Why the login it reviews on stops it, or null. A re-login ends the pause:
- * the refresher's record, read after the last auth failure the
- * daemon saw, of a login that works now, outweighs that failure's flag (which
- * would otherwise stand for its own half hour). */
-function loginPause(s: Obj, now: number): string | null {
+/** The refresher's record of the login, when the snapshot has one. */
+function refresherLogin(s: Obj): Obj | null {
   const lr = s["login_refresh"];
   const login = isObj(lr) ? lr["login"] : undefined;
+  return isObj(login) ? login : null;
+}
+
+/** A re-login ended the daemon's last auth failure: the refresher's record,
+ * read after that failure, of a login that works now. It outweighs the
+ * failure's flag, which would otherwise stand for its own half hour. */
+function loginRecovered(s: Obj, now: number): boolean {
   const expired = s["pi_auth_expired"];
-  if (isObj(expired) && !(isObj(login) && worksSince(login, expired["last_at"], now)))
-    return "login expired";
-  if (!isObj(login)) return null;
+  const login = refresherLogin(s);
+  return isObj(expired) && login !== null && worksSince(login, expired["last_at"], now);
+}
+
+/** Why the login it reviews on stops it, or null. A re-login ends the pause
+ * (loginRecovered). */
+function loginPause(s: Obj, now: number): string | null {
+  const login = refresherLogin(s);
+  if (isObj(s["pi_auth_expired"]) && !loginRecovered(s, now)) return "login expired";
+  if (login === null) return null;
   if (login["paused"] === true) return "a login is in progress";
   const expires = typeof login["expires_at"] === "string" ? Date.parse(login["expires_at"]) : NaN;
   if (Number.isFinite(expires) && expires <= now && typeof login["last_error"] === "string")
@@ -119,8 +132,18 @@ function worksSince(login: Obj, since: unknown, now: number): boolean {
   );
 }
 
-/** The pipeline's or the provider's cause, or null. */
-function brokenCause(s: Obj): string | null {
+/** The provider record the snapshot derives from that same auth failure
+ * (src/state.ts writes the two together, with one `last_at`). */
+function authDerived(s: Obj, pv: Obj): boolean {
+  const expired = s["pi_auth_expired"];
+  return (
+    isObj(expired) && typeof pv["last_at"] === "string" && pv["last_at"] === expired["last_at"]
+  );
+}
+
+/** The pipeline's or the provider's cause, or null. A provider failure that
+ * is only the recovered login's own flag is not a cause; any other is. */
+function brokenCause(s: Obj, now: number): string | null {
   const p = s["pipeline"];
   if (isObj(p) && p["healthy"] === false) {
     const first = Array.isArray(p["causes"]) ? (p["causes"][0] as unknown) : undefined;
@@ -133,7 +156,7 @@ function brokenCause(s: Obj): string | null {
     return "the review pipeline reports itself unhealthy";
   }
   const pv = s["provider"];
-  if (isObj(pv) && pv["healthy"] === false)
+  if (isObj(pv) && pv["healthy"] === false && !(authDerived(s, pv) && loginRecovered(s, now)))
     return typeof pv["detail"] === "string" ? pv["detail"] : "the model provider is failing";
   return null;
 }
@@ -183,7 +206,7 @@ export function autoReviewLabel(r: AutoReviewReading): Known<AutoReviewStatus> {
       cause: `no poll has finished for ${minutes(r.now - lastAt)}`,
       checkedAt,
     });
-  const cause = brokenCause(s);
+  const cause = brokenCause(s, r.now);
   if (cause) return known({ state: "broken", cause, checkedAt });
   if (s["dry_run"] === true) return known({ state: "on-dry", checkedAt });
   if (s["dry_run"] === false) return known({ state: "on-live", checkedAt });
@@ -313,9 +336,15 @@ export function composeAutoReview(o: ComposeAutoReviewOptions): AutoReviewPort {
         repo,
         dryRun: dryRunNow,
         stopMemory: () => compose(["stop", MEMORY_SERVICE], "memory stopped"),
+        startMemory: () => compose(["up", "-d", MEMORY_SERVICE], "the memory engine runs"),
         ...(progress ? { progress } : {}),
       });
     },
+    proof: async () => {
+      const p = recordedProof(engine(() => {}));
+      return p ? { pr: p.pr, verdict: p.verdict } : null;
+    },
+    proofRound: (pr, progress) => runProofRound(engine((l) => progress?.(l)), pr),
     goLive: (answers) =>
       runGoLive(
         engine(() => {}),
