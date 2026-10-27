@@ -175,6 +175,25 @@ describe("the takeover's login is a refresh-blanked borrowed copy", () => {
     ).toBe(DISABLED_REFRESH);
   });
 
+  // MUTATION: copy auth.json from spec.agent_dir in prepareBorrowedAgent — this fails.
+  it("borrows the login from the shared login dir, and models and settings from the agent dir", () => {
+    const login = ownerAgent();
+    const agent = join(dir, "own-agent");
+    mkdirSync(agent);
+    writeFileSync(join(agent, "models.json"), '{"own":true}');
+    const borrow = join(dir, "borrow");
+    prepareBorrowedAgent({
+      agent_dir: agent,
+      login_dir: login,
+      borrow_dir: borrow,
+      idle_ms: 60_000,
+    });
+    expect(
+      JSON.parse(readFileSync(join(borrow, "auth.json"), "utf8"))["openai-codex"].refresh,
+    ).toBe(DISABLED_REFRESH);
+    expect(readFileSync(join(borrow, "models.json"), "utf8")).toBe('{"own":true}');
+  });
+
   it("is refused, with no pi, when the token would expire inside the lease's window", async () => {
     ownerAgent(10 * 60_000);
     const lines: string[] = [];

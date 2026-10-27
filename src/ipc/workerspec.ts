@@ -43,6 +43,10 @@ export interface WorkerSpec {
    * in memory, never written back), and where models.json and the built lens
    * agents are read from. */
   agent_dir: string;
+  /** Where the login is borrowed from instead, when it is not in `agent_dir`:
+   * the single box's shared login (src/loginrefresh/supervisor.ts
+   * `loginDirOf`). Absent: `agent_dir`. */
+  login_dir?: string;
   /** Where the PR's main JSONL lives (`state/pi-sessions/pr-<n>`). The worker
    * resumes the newest one under it, or starts a session there at birth. */
   session_dir: string;
@@ -169,6 +173,7 @@ export function parseWorkerSpec(raw: unknown): WorkerSpec {
     spec.cap_usd = cap;
   }
   if (raw["lens_dir"] !== undefined) spec.lens_dir = abs(raw, "lens_dir");
+  if (raw["login_dir"] !== undefined) spec.login_dir = abs(raw, "login_dir");
   if (raw["compact"] !== undefined) {
     if (typeof raw["compact"] !== "boolean") return bad("`compact` must be a boolean");
     spec.compact = raw["compact"];
