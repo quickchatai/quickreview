@@ -117,6 +117,8 @@ function recordingPort(
 interface Control {
   dryRun: Known<boolean>;
   goLive: number;
+  /** The proof round on record (none: undefined). */
+  proof?: { pr: number; verdict: string };
 }
 
 function control(c: Control): AutoReviewControl {
@@ -124,6 +126,8 @@ function control(c: Control): AutoReviewControl {
     machineChecks: async () => ({ ok: true, detail: "ok" }),
     dryRun: async () => c.dryRun,
     switchOn: async () => ({ ok: true, live: false, detail: "on", steps: [] }),
+    proof: async () => c.proof ?? null,
+    proofRound: async () => ({ ok: false, detail: "no daemon here" }),
     goLive: async () => {
       c.goLive++;
       return { ok: true, detail: "Auto-review posts live now." };
@@ -420,16 +424,29 @@ describe("dry-run or live", () => {
     expect(c.goLive).toBe(0);
   });
 
-  it("Go live runs switch-on's go-live, on the person's pick", async () => {
-    const c: Control = { dryRun: known(true), goLive: 0 };
+  it("Go live runs switch-on's go-live, after the proof round and one more confirm", async () => {
+    const c: Control = { dryRun: known(true), goLive: 0, proof: { pr: 7, verdict: "COMMENT" } };
     const h = await openHome(
       recordingPort([]),
       { select: picking(ADVANCED.posting, () => GO_LIVE) },
       control(c),
     );
     await h.pi.tool("home_advanced");
+    expect(h.pi.selects[2]?.title).toMatch(/^Go live\? You have read the review of #7\./);
     expect(c.goLive).toBe(1);
     expect(h.text()).toMatch(/Auto-review posts live now/);
+  });
+
+  // MUTATION: run control.goLive from the posting choice without the proof flow — this fails.
+  it("Go live with no proof round and no pull request to prove it on moves nothing", async () => {
+    const c: Control = { dryRun: known(true), goLive: 0 };
+    const h = await openHome(
+      recordingPort([]),
+      { select: picking(ADVANCED.posting, () => GO_LIVE) },
+      control(c),
+    );
+    expect(await h.pi.tool("home_advanced")).toMatch(/no proof round yet/);
+    expect(c.goLive).toBe(0);
   });
 
   // MUTATION: offer a "back to dry-run" that writes the config — this fails (nothing is asked).

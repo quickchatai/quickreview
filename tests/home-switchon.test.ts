@@ -1,7 +1,8 @@
 // Switch-on's steps (src/home/switchon.ts): the wizard's own step modules on
-// the plugin's step registry, run in the stated order with silent defaults,
-// and the person's one confirm reaching the go-live step and nothing else —
-// so `dry_run` moves only through goLiveStep (invariant 6).
+// the plugin's step registry, run in the stated order with silent defaults.
+// Auto-review comes up in dry-run: switch-on never runs the proof round or
+// the go-live, and only runGoLive hands the go-live step a confirm — so
+// `dry_run` moves only through goLiveStep (invariant 6).
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,11 +17,14 @@ import {
 import {
   DAEMON_START_STEP_ID,
   MACHINE_CHECKS_STEP_ID,
+  MEMORY_WAIT_ATTEMPTS,
   SWITCH_ON_ORDER,
   daemonStartStep,
   freeGbFromDf,
   machineChecksStep,
+  recordedProof,
   runGoLive,
+  runProofRound,
   runSwitchOn,
   switchOnInput,
   switchOnRegistry,
@@ -34,6 +38,11 @@ import {
 import type { OnboardAdapters, ProcessResult } from "../src/onboard/engine.js";
 import { BROUGHT_UP_CHOICE_KEY } from "../src/onboard/steps/bringup.js";
 import { GO_LIVE_CONFIRMATION, GO_LIVE_STEP_ID, goLiveStep } from "../src/onboard/steps/golive.js";
+import { memoryOnStack } from "../src/home/memory.js";
+import { MEMORY_SERVER_CHECK } from "../src/onboard/steps/memory.js";
+import { MEMORY_KEYS_STEP_ID } from "../src/onboard/steps/memorykeys.js";
+import { PROOF_CHOICE_KEY, PROOF_STEP_ID, proofRoundStep } from "../src/onboard/steps/proof.js";
+import type { StepReport } from "../src/onboard/engine.js";
 
 const CLOCK = (): Date => new Date("2026-10-26T12:00:00Z");
 
@@ -45,16 +54,25 @@ interface Ran {
 /** Steps with switch-on's ids that record what they were handed. */
 function fakeSteps(
   ran: Ran[],
-  o: { fail?: string; refuseGoLive?: boolean; disabled?: string[] } = {},
+  o: {
+    fail?: string;
+    refuseGoLive?: boolean;
+    disabled?: string[];
+    /** The memory step's report on its nth run (1-based). */
+    memory?: (n: number) => StepReport;
+  } = {},
 ): SetupStep<ChecklistAdapters>[] {
+  let memoryRuns = 0;
   return SWITCH_ON_ORDER.map((id, i) => ({
     id,
     title: `step ${id}`,
     explain: "",
     order: (i + 1) * 10,
+    ...(id === PROOF_STEP_ID || id === GO_LIVE_STEP_ID ? { optional: true } : {}),
     ...(o.disabled?.includes(id) ? { enabled: () => false } : {}),
     run: async (ctx) => {
       ran.push({ id, input: { ...ctx.input } });
+      if (id === "memory" && o.memory) return o.memory(++memoryRuns);
       if (id === o.fail)
         return { ok: false, checks: [{ name: id, ok: false, detail: "it broke" }] };
       if (id === GO_LIVE_STEP_ID && o.refuseGoLive)
@@ -74,6 +92,19 @@ function checklistOver(steps: SetupStep<ChecklistAdapters>[]): SetupChecklist<Ch
 
 const stopped = async () => ({ ok: true as const, detail: "memory stopped" });
 
+/** Memory's phase A landed; phase B waits on an engine not answering yet. */
+const PHASE_A: StepReport = {
+  ok: false,
+  checks: [
+    { name: "root-key", ok: true, detail: "minted the server root key" },
+    { name: MEMORY_SERVER_CHECK, ok: false, detail: "nothing answers at :1933" },
+  ],
+};
+const MEMORY_DONE: StepReport = {
+  ok: true,
+  checks: [{ name: "user-keys", ok: true, detail: "minted reviewer, companion" }],
+};
+
 describe("switch-on's registry", () => {
   // MUTATION: register the go-live before bring-up, or drop the machine checks — this fails.
   it("is the wizard's steps in the stated order, machine checks first and the go-live last", () => {
@@ -84,6 +115,14 @@ describe("switch-on's registry", () => {
     ).toEqual([...SWITCH_ON_ORDER]);
     expect(SWITCH_ON_ORDER[0]).toBe(MACHINE_CHECKS_STEP_ID);
     expect(SWITCH_ON_ORDER[SWITCH_ON_ORDER.length - 1]).toBe(GO_LIVE_STEP_ID);
+  });
+
+  it("its proof round is the wizard's own proofRoundStep, just before the go-live", () => {
+    const proof = switchOnRegistry()
+      .steps()
+      .find((s) => s.id === PROOF_STEP_ID)!;
+    expect(proof.title).toBe(proofRoundStep().title);
+    expect(SWITCH_ON_ORDER.indexOf(PROOF_STEP_ID)).toBe(SWITCH_ON_ORDER.length - 2);
   });
 
   it("its go-live is the wizard's own goLiveStep, not a copy", () => {
@@ -152,7 +191,9 @@ describe("running switch-on", () => {
       dryRun: () => true,
       stopMemory: stopped,
     });
-    expect(ran.map((r) => r.id)).toEqual(SWITCH_ON_ORDER.slice(1));
+    expect(ran.map((r) => r.id)).toEqual(
+      SWITCH_ON_ORDER.slice(1, SWITCH_ON_ORDER.indexOf(PROOF_STEP_ID)),
+    );
     const input = (id: string) => ran.find((r) => r.id === id)!.input;
     expect(input("topology")).toEqual({ choice: "local" });
     expect(input("github_account")).toEqual({ github_auth: "user", repo: "acme/widgets" });
@@ -160,9 +201,34 @@ describe("running switch-on", () => {
     expect(input("embeddings")).toEqual({});
     expect(input("ingress")).toEqual({ choice: "polling" });
     expect(input("memory")).toEqual({ choice: "declined" });
-    expect(input(GO_LIVE_STEP_ID)).toEqual({ decision: "go_live", confirm: GO_LIVE_CONFIRMATION });
-    expect(out).toMatchObject({ ok: true, live: true });
+    expect(out).toMatchObject({ ok: true, live: false });
+    expect(out.detail).toMatch(/on in dry-run.*one review you read, then one more confirm/);
     expect(out.steps).toContain("memory: kept off");
+  });
+
+  // MUTATION: run the go-live (or the proof round) at the end of runSwitchOn,
+  // handed the switch-on confirm — this fails.
+  it("comes up in dry-run: the switch-on confirm never reaches the proof round or the go-live", async () => {
+    const ran: Ran[] = [];
+    const checklist = checklistOver(fakeSteps(ran));
+    // even with a proof round on record
+    (checklist.choices() as Record<string, unknown>)[PROOF_CHOICE_KEY] = {
+      pr: 7,
+      round_no: 1,
+      verdict: "COMMENT",
+      completed_at: "2026-10-26T11:00:00Z",
+    };
+    const out = await runSwitchOn({
+      checklist,
+      answers: { memory: null, confirmed: true },
+      repo: null,
+      dryRun: () => true,
+      stopMemory: stopped,
+    });
+    expect(ran.map((r) => r.id)).not.toContain(GO_LIVE_STEP_ID);
+    expect(ran.map((r) => r.id)).not.toContain(PROOF_STEP_ID);
+    expect(JSON.stringify(ran)).not.toContain(GO_LIVE_CONFIRMATION);
+    expect(out).toMatchObject({ ok: true, live: false });
   });
 
   it("stops at the first step that fails, and never reaches the go-live", async () => {
@@ -196,18 +262,12 @@ describe("running switch-on", () => {
     expect(out).toMatchObject({ ok: true, live: true });
   });
 
-  it("a refused go-live leaves auto-review on in dry-run, and says why", async () => {
+  it("a go-live the step refuses (no proof round) says why, and changes nothing", async () => {
     const ran: Ran[] = [];
-    const out = await runSwitchOn({
-      checklist: checklistOver(fakeSteps(ran, { refuseGoLive: true })),
-      answers: { memory: null, confirmed: true },
-      repo: null,
-      dryRun: () => true,
-      stopMemory: stopped,
+    const r = await runGoLive(checklistOver(fakeSteps(ran, { refuseGoLive: true })), {
+      confirmed: true,
     });
-    expect(out.ok).toBe(true);
-    expect(out.live).toBe(false);
-    expect(out.detail).toMatch(/on in dry-run.*no completed proof round/);
+    expect(r).toEqual({ ok: false, detail: "there is no completed proof round" });
   });
 
   it("a second switch-on is quick: done steps keep their answers, the daemon start runs again", async () => {
@@ -252,6 +312,22 @@ describe("running switch-on", () => {
     expect(out.steps).toContain("github_account: not on this route");
   });
 
+  it("the proof round reviews the named PR, and its record is what the go-live asks for", async () => {
+    const ran: Ran[] = [];
+    const checklist = checklistOver(fakeSteps(ran));
+    expect(recordedProof(checklist)).toBeNull();
+    const r = await runProofRound(checklist, 12);
+    expect(r.ok).toBe(true);
+    expect(ran).toEqual([{ id: PROOF_STEP_ID, input: { pr: 12 } }]);
+    (checklist.choices() as Record<string, unknown>)[PROOF_CHOICE_KEY] = {
+      pr: 12,
+      round_no: 2,
+      verdict: "APPROVE",
+      completed_at: "2026-10-26T11:00:00Z",
+    };
+    expect(recordedProof(checklist)).toMatchObject({ pr: 12, verdict: "APPROVE" });
+  });
+
   it("go-live from dry-run alone hands the go-live step the confirm", async () => {
     const ran: Ran[] = [];
     const r = await runGoLive(checklistOver(fakeSteps(ran)), { confirmed: true });
@@ -259,6 +335,122 @@ describe("running switch-on", () => {
     expect(ran).toEqual([
       { id: GO_LIVE_STEP_ID, input: { decision: "go_live", confirm: GO_LIVE_CONFIRMATION } },
     ]);
+  });
+});
+
+describe("memory's two phases on a fresh switch-on", () => {
+  const order = (ran: Ran[]) => ran.map((r) => r.id);
+
+  // MUTATION: end the walk on any memory failure in runSteps (drop the
+  // waitsOnServer branch) — this fails.
+  it("phase A waits on the engine: the walk goes on, then phase B runs before the user keys", async () => {
+    const ran: Ran[] = [];
+    let starts = 0;
+    const out = await runSwitchOn({
+      checklist: checklistOver(
+        fakeSteps(ran, { memory: (n) => (n === 1 ? PHASE_A : MEMORY_DONE) }),
+      ),
+      answers: { memory: true, confirmed: true },
+      repo: null,
+      dryRun: () => true,
+      stopMemory: stopped,
+      startMemory: async () => {
+        starts += 1;
+        return { ok: true, detail: "the memory engine runs" };
+      },
+      sleep: async () => {},
+    });
+    expect(out).toMatchObject({ ok: true, live: false });
+    const ids = order(ran);
+    // memory, then the bring-up, then memory again (phase B), then the keys step
+    expect(ids.filter((id) => id === "memory")).toHaveLength(2);
+    expect(ids.indexOf("bringup")).toBeGreaterThan(ids.indexOf("memory"));
+    expect(ids.lastIndexOf("memory")).toBeGreaterThan(ids.indexOf("bringup"));
+    expect(ids.lastIndexOf("memory")).toBeLessThan(ids.indexOf(MEMORY_KEYS_STEP_ID));
+    expect(starts).toBe(1);
+    expect(out.steps).toContain(
+      "memory: its root key is placed; its user keys follow once the engine runs",
+    );
+  });
+
+  it("phase B waits, bounded, while the engine starts", async () => {
+    const ran: Ran[] = [];
+    const slept: number[] = [];
+    const out = await runSwitchOn({
+      checklist: checklistOver(
+        fakeSteps(ran, { memory: (n) => (n <= 3 ? PHASE_A : MEMORY_DONE) }),
+      ),
+      answers: { memory: true, confirmed: true },
+      repo: null,
+      dryRun: () => true,
+      stopMemory: stopped,
+      sleep: async (ms) => {
+        slept.push(ms);
+      },
+    });
+    expect(out.ok).toBe(true);
+    expect(slept).toHaveLength(2);
+    // an engine that never answers ends it, after the bounded wait
+    const never: Ran[] = [];
+    const stuck = await runSwitchOn({
+      checklist: checklistOver(fakeSteps(never, { memory: () => PHASE_A })),
+      answers: { memory: true, confirmed: true },
+      repo: null,
+      dryRun: () => true,
+      stopMemory: stopped,
+      sleep: async () => {},
+    });
+    expect(stuck.ok).toBe(false);
+    expect(stuck.detail).toMatch(/nothing answers at :1933/);
+    expect(order(never).filter((id) => id === "memory")).toHaveLength(1 + MEMORY_WAIT_ATTEMPTS);
+    expect(order(never)).not.toContain(MEMORY_KEYS_STEP_ID);
+  });
+
+  // MUTATION: return the memory step's failure before starting the engine in
+  // memoryOnStack — this fails.
+  it("the memory switch on a stack brought up before: phase A, the engine started, then phase B", async () => {
+    const ran: Ran[] = [];
+    const log: string[] = [];
+    const checklist = checklistOver(
+      fakeSteps(ran, { memory: (n) => (n === 1 ? PHASE_A : MEMORY_DONE) }),
+    );
+    const r = await memoryOnStack(checklist, {
+      startMemory: async () => {
+        log.push("up memory");
+        return { ok: true, detail: "the memory engine runs" };
+      },
+      sleep: async () => {},
+    });
+    expect(r).toEqual({ ok: true, detail: "Memory is on." });
+    expect(log).toEqual(["up memory"]);
+    expect(ran.map((x) => x.id)).toEqual(["memory", "memory", MEMORY_KEYS_STEP_ID]);
+    expect(ran[0]!.input).toEqual({ choice: "configure" });
+  });
+
+  // MUTATION: accept any memory failure as phase A in waitsOnServer — this fails.
+  it("any other memory failure ends the walk at the memory step", async () => {
+    const ran: Ran[] = [];
+    const out = await runSwitchOn({
+      checklist: checklistOver(
+        fakeSteps(ran, {
+          memory: () => ({
+            ok: false,
+            checks: [
+              { name: "root-key", ok: true, detail: "kept" },
+              { name: "user-keys", ok: false, detail: "could not obtain a key for reviewer" },
+            ],
+          }),
+        }),
+      ),
+      answers: { memory: true, confirmed: true },
+      repo: null,
+      dryRun: () => true,
+      stopMemory: stopped,
+      sleep: async () => {},
+    });
+    expect(out.ok).toBe(false);
+    expect(out.detail).toMatch(/could not obtain a key for reviewer/);
+    expect(order(ran).at(-1)).toBe("memory");
   });
 });
 

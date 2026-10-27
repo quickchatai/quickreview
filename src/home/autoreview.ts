@@ -43,7 +43,9 @@ import {
 } from "./ports.js";
 import {
   MACHINE_CHECKS_STEP_ID,
+  recordedProof,
   runGoLive,
+  runProofRound,
   runSwitchOn,
   switchOnRegistry,
   type SwitchOnStepOptions,
@@ -334,9 +336,15 @@ export function composeAutoReview(o: ComposeAutoReviewOptions): AutoReviewPort {
         repo,
         dryRun: dryRunNow,
         stopMemory: () => compose(["stop", MEMORY_SERVICE], "memory stopped"),
+        startMemory: () => compose(["up", "-d", MEMORY_SERVICE], "the memory engine runs"),
         ...(progress ? { progress } : {}),
       });
     },
+    proof: async () => {
+      const p = recordedProof(engine(() => {}));
+      return p ? { pr: p.pr, verdict: p.verdict } : null;
+    },
+    proofRound: (pr, progress) => runProofRound(engine((l) => progress?.(l)), pr),
     goLive: (answers) =>
       runGoLive(
         engine(() => {}),

@@ -193,6 +193,7 @@ export function createHome(o: HomeOptions): ExtensionFactory {
       ...(o.adapters.autoReview.control ? { autoReview: o.adapters.autoReview.control } : {}),
       say: (text, kind) => model.say(text, kind),
       refresh: () => model.refresh(),
+      selected: () => model.selected,
     });
     // Setup's brief goes to the chat as the person's message, after the
     // agent's turn when one is running

@@ -877,6 +877,7 @@ export class HomeModel {
       memory: () => this.state.memory,
       trigger: () => this.trigger(),
       repo: () => this.repo(),
+      selected: () => this.selected,
       say: (text, kind) => this.say(text, kind),
       hold,
       release: (slot) => {
