@@ -443,6 +443,9 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
         srcDir: spec.login_dir ?? spec.agent_dir,
         needMs: spec.wall_clock_ms,
         now,
+        // a shared pi home holds the person's other logins too: only the
+        // review's providers are admitted
+        ...(spec.providers !== undefined ? { providers: spec.providers } : {}),
       });
     } catch (e) {
       if (e instanceof AuthError) throw new Stop(EXIT.auth, e.message);

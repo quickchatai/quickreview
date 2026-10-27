@@ -27,6 +27,7 @@ import type { Config } from "./config.js";
 import { DebugRoundManager } from "./debuground.js";
 import type { FileOutcome } from "./improvements.js";
 import { identityVars } from "@quickchatai/pi-quickreview/src/include.js";
+import { reviewProviders } from "@quickchatai/pi-quickreview/src/plugin/login.js";
 import {
   CapabilityStore,
   LaunchFiles,
@@ -211,6 +212,7 @@ export function buildWorkerWorld(o: WorkerWorldOptions): WorkerWorld {
       cwd: root,
       agent_dir: o.agentDir,
       ...(o.loginDir !== undefined && o.loginDir !== o.agentDir ? { login_dir: o.loginDir } : {}),
+      providers: reviewProviders(cfg),
       session_dir: sessions.sessionDir(row.session),
       system_prompt_file: sessions.writeSystemPrompt(row.session, prompt),
       model: cfg.models.conversation,
