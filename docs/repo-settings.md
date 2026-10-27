@@ -50,10 +50,12 @@ Actions, fork-PR approval for all external contributors, the `main` and
 running the script) and deployment policy, and the `proposal` label the issue
 form applies.
 
-The ruleset's required checks are the CI job names as GitHub reports them:
-`test (26)`, `pi-range (1.4.0)`, `image`, `clone`. A change to a job name or
-a matrix value in `ci.yml` changes the check's name: update the script in the
-same PR, or every PR waits for a check that never comes.
+The ruleset requires one check, `ci`, from GitHub Actions (app id 15368, so
+no other app or status post can satisfy it). It is the gate job in `ci.yml`:
+it passes when every job the change needed ran and passed, so the jobs behind
+it can be renamed, added or skipped by path without touching this setting.
+Renaming the gate itself does change the check's name: update the script in
+the same PR, or every PR waits for a check that never comes.
 
 ## npm trusted publishing
 

@@ -72,6 +72,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/bench-whatif.test.ts",
   "tests/botworker-process.test.ts", // the built worker as a child, with the capability on an inherited fd
   "tests/botworker.test.ts", // the model's bash runs the real verdict and post scripts, through the worker
+  "tests/ci-changes.test.ts", // git ls-files, to find the docs readers and the Dockerfile's sources
   "tests/ci-clone-smoke.test.ts",
   "tests/ci-image-smoke.test.ts",
   "tests/cli-bin.test.ts",
