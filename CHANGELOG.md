@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 1.3.0
 
 ### The pi plugin's commands are renamed
 
