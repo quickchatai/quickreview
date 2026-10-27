@@ -1857,55 +1857,6 @@ export async function cmdSetup(rest: string[]): Promise<number> {
   return 0;
 }
 
-/** `qcr onboard` — the guided setup wizard: pi at the pinned
- * version via npx (works from a bare clone; pi stays a non-dependency), the
- * onboarding prompt + extension + a restricted tool set, then the TUI handoff
- * when the checklist verifies complete. Resumable: run it again after a crash
- * and completed steps are re-verified, not repeated. */
-export async function cmdOnboard(): Promise<number> {
-  const { piPinFromPackageJson, onboardingSessionDir, runOnboard } =
-    await import("./onboard/launch.js");
-  const { checklistComplete } = await import("./onboard/engine.js");
-  const { spawn } = await import("node:child_process");
-  const root = sandboxRoot();
-  // Pin source: config.toml [pi] when it loads; package.json's "qcrPi" block on a
-  // bare clone (config.toml is written later, BY onboarding). Same pinned
-  // version by the rule-7 mirror discipline.
-  let pin: { package: string; version: string } | null = null;
-  try {
-    const { package: pkg, version } = loadConfig().pi;
-    pin = { package: pkg, version };
-  } catch {
-    pin = piPinFromPackageJson(root);
-  }
-  if (!pin)
-    throw new Error(
-      'onboard: pi pin not found (need config.toml [pi] or the package.json "qcrPi" block)',
-    );
-  mkdirSync(onboardingSessionDir(root), { recursive: true });
-  const run = (cmd: string, args: string[]): Promise<number> =>
-    new Promise((resolvePromise) => {
-      const child = spawn(cmd, args, {
-        stdio: "inherit",
-        cwd: root,
-        env: { ...process.env, QCR_ROOT: root },
-      });
-      child.on("error", (err) => {
-        console.error(`onboard: ${cmd} failed to start: ${err.message}`);
-        resolvePromise(1);
-      });
-      child.on("close", (code) => resolvePromise(code ?? 1));
-    });
-  return runOnboard({
-    pin,
-    root,
-    spawn: run,
-    isComplete: () => checklistComplete(join(root, "state")),
-    log: (line) => console.log(line),
-    cliPath: join(root, "dist", "src", "cli.js"),
-  });
-}
-
 export const ARCHIVE_USAGE =
   "usage: qcr archive status [--plan] [--json] | qcr archive run | qcr archive restore <pr> | " +
   "qcr archive extract <pr> --to <dir>";
@@ -2154,15 +2105,21 @@ export async function main(rawArgv: string[]): Promise<void> {
       const { runTui } = await import("./tui/index.js");
       return runTui(rest);
     }
+    case "home": {
+      // the home (src/home/launch.ts): the bin routes a bare `qcr` here too
+      // (src/qcrbin.ts); the image's home mode reaches it through this verb
+      if (rest.length > 0) throw new Error("usage: qcr home");
+      const { homeRunDeps, runHome } = await import("./home/launch.js");
+      // the token taken at startup, when the wrapper handed one over
+      const githubToken = takeHandoffToken();
+      process.exitCode = runHome({ ...homeRunDeps(sandboxRoot()), githubToken: () => githubToken });
+      return;
+    }
     case "companion":
       if (rest.length !== 1) throw new Error("usage: qcr companion <up|down|status|rebuild|plan>");
       return cmdCompanion(rest[0]);
     case "memory": {
       process.exitCode = await cmdMemory(rest);
-      return;
-    }
-    case "onboard": {
-      process.exitCode = await cmdOnboard();
       return;
     }
     case "setup": {
@@ -2273,7 +2230,7 @@ export async function main(rawArgv: string[]): Promise<void> {
     }
     default:
       console.log(
-        "usage: qcr <version|config check [--config-home <dir>]|onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|takeover <n>|debug-round <n>|release <n>|tui [pr|overseer]|drain <on [--hold]|off>|pause-pr <pr> [--reason <text>]|resume-pr <pr>|review-now <pr>|github-token sync [--gh <path>] [--secrets-dir <dir>]|message <pr> [--may-post] <text...>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
+        "usage: qcr <version|config check [--config-home <dir>]|home|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|takeover <n>|debug-round <n>|release <n>|tui [pr|overseer]|drain <on [--hold]|off>|pause-pr <pr> [--reason <text>]|resume-pr <pr>|review-now <pr>|github-token sync [--gh <path>] [--secrets-dir <dir>]|message <pr> [--may-post] <text...>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
           "companion <up|down|status|rebuild>|review [start|status|stop|branch|--uncommitted|--diff FILE|-|<PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--json]|live [RUN_ID|DIR] [--lens ID] [--round N] [--follow] [--json]|open [RUN_ID|DIR|FILE.jsonl|scan[:RUN]|pr N [--round R]] [--lens ID] [--write] [--print]|scan <preview|start|status|stop|findings|matches|match|suggestions|stage2 propose|stage2 start|dismiss|units show|units propose|units adjust|units save|login|doctor|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine|shadow-report [--days <n>]|off|on|suppress <id>|unsuppress <id>]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );

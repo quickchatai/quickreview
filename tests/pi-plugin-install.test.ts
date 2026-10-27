@@ -5,18 +5,21 @@
 // real pi in rpc mode. Offline: the one dependency comes from this checkout's
 // node_modules as a tarball, and pi runs with PI_OFFLINE. No model is called.
 //
-// What it holds:
-//   - the tarball has no prompts/, skills/, themes/ or extensions/ at its
-//     root, so pi's conventional discovery finds nothing but the manifest's
-//     one extension; the seeds ship under assets/ only;
-//   - pi loads exactly the four commands, from the installed package, and no
-//     prompt template or skill at all;
+// What it holds (the nesting fence: the plugin alone, with no app):
+//   - the tarball has no prompts/, themes/ or extensions/ at its root, so
+//     pi's conventional discovery finds nothing but the manifest's one
+//     extension and its skills/; the seeds ship under assets/ only;
+//   - pi loads exactly the three qcr- commands and a skill of each name, from
+//     the installed package, and no prompt template at all;
 //   - the installed package carries no pi of its own, and the core finds its
 //     data and its extensions inside itself (never a checkout);
-//   - /review --preview runs end to end and answers in the session.
+//   - /qcr-review --preview runs end to end and answers in the session;
+//   - /qcr-scan runs on the plugin's own scan engine with no `qcr` anywhere on
+//     PATH: it cuts a fixture repo into units, saves the cut, and prices the
+//     scan, each answer in the session.
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -31,7 +34,8 @@ const PI = join(
   "cli.js",
 );
 const SCRATCH = join(ROOT, "node_modules", ".cache", `pi-plugin-install-${process.pid}`);
-const COMMANDS = ["qcr-setup", "review", "scan", "selfimprove"];
+const COMMANDS = ["qcr-review", "qcr-scan", "qcr-setup"];
+const SKILLS = COMMANDS.map((c) => `skill:${c}`);
 
 let tarball = "";
 let installed = "";
@@ -41,9 +45,16 @@ const agentDir = join(home, ".pi", "agent");
 const run = (cmd: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv): string =>
   execFileSync(cmd, args, { cwd, encoding: "utf8", env: env ?? process.env, stdio: "pipe" });
 
-/** The env every pi child gets: a throwaway home, offline, no telemetry. */
+/** PATH with every directory that holds a `qcr` dropped: the plugin alone. */
+const PATH_WITHOUT_QCR = (process.env.PATH ?? "")
+  .split(delimiter)
+  .filter((d) => d !== "" && !existsSync(join(d, "qcr")))
+  .join(delimiter);
+
+/** The env every pi child gets: a throwaway home, offline, no telemetry, and
+ * no QuickReview app on PATH. */
 const piEnv = (): NodeJS.ProcessEnv => ({
-  PATH: process.env.PATH,
+  PATH: PATH_WITHOUT_QCR,
   HOME: home,
   PI_CODING_AGENT_DIR: agentDir,
   XDG_STATE_HOME: join(home, "state"),
@@ -122,10 +133,18 @@ afterAll(() => rmSync(SCRATCH, { recursive: true, force: true }));
 
 describe("the packed plugin, installed into a fresh pi", () => {
   // MUTATION: ship prompts/ at the package root — this fails.
-  it("carries nothing pi would discover by convention, and its data under assets/", () => {
+  it("carries nothing pi would discover by convention but its skills, and its data under assets/", () => {
     const entries = run("tar", ["tzf", tarball], SCRATCH).trim().split("\n");
     const top = new Set(entries.map((e) => e.split("/")[1]));
-    expect([...top].sort()).toEqual(["LICENSE", "README.md", "assets", "dist", "package.json"]);
+    expect([...top].sort()).toEqual([
+      "LICENSE",
+      "README.md",
+      "assets",
+      "dist",
+      "package.json",
+      "skills",
+    ]);
+    for (const c of COMMANDS) expect(entries).toContain(`package/skills/${c}/SKILL.md`);
     expect(entries).toContain("package/assets/agents/pass-baseline.md");
     expect(entries).toContain("package/assets/seed-manifest.json");
     expect(entries).toContain("package/dist/src/plugin/index.js");
@@ -161,8 +180,9 @@ describe("the packed plugin, installed into a fresh pi", () => {
     }
   });
 
-  // MUTATION: list a skills/ directory in the manifest — this fails.
-  it("loads exactly the four commands from the package, and no prompt or skill", async () => {
+  // MUTATION: register "review" beside "qcr-review", or drop a skill from
+  // the manifest — this fails.
+  it("loads exactly the three commands and a skill of each name from the package, and no prompt", async () => {
     const { lines, stderr } = await rpc(SCRATCH, [{ id: "c", type: "get_commands" }], (l) =>
       l.some((x) => x["id"] === "c"),
     );
@@ -178,8 +198,20 @@ describe("the packed plugin, installed into a fresh pi", () => {
         c.sourceInfo.path.startsWith(realpathSync(installed)) ||
         c.sourceInfo.path.startsWith(installed),
     );
-    expect(ours.map((c) => c.name).sort()).toEqual(COMMANDS);
-    expect(commands.filter((c) => c.source !== "extension")).toEqual([]);
+    expect(
+      ours
+        .filter((c) => c.source === "extension")
+        .map((c) => c.name)
+        .sort(),
+    ).toEqual(COMMANDS);
+    expect(
+      ours
+        .filter((c) => c.source === "skill")
+        .map((c) => c.name)
+        .sort(),
+    ).toEqual(SKILLS);
+    expect(commands.filter((c) => c.source !== "extension" && c.source !== "skill")).toEqual([]);
+    expect(commands.filter((c) => c.source === "skill" && !ours.includes(c))).toEqual([]);
     expect(
       commands
         .filter((c) => c.source === "extension" && !ours.includes(c))
@@ -191,7 +223,7 @@ describe("the packed plugin, installed into a fresh pi", () => {
     );
   });
 
-  it("answers /review --preview in the session, offline", async () => {
+  it("answers /qcr-review --preview in the session, offline", async () => {
     const repo = join(SCRATCH, "repo");
     mkdirSync(repo, { recursive: true });
     const git = (...a: string[]): string =>
@@ -208,7 +240,7 @@ describe("the packed plugin, installed into a fresh pi", () => {
     git("commit", "-q", "-m", "add");
     const { lines, stderr } = await rpc(
       repo,
-      [{ id: "p", type: "prompt", message: "/review --preview" }],
+      [{ id: "p", type: "prompt", message: "/qcr-review --preview" }],
       (l) => l.some((x) => x["id"] === "p"),
     );
     const shown = lines.filter(
@@ -224,5 +256,55 @@ describe("the packed plugin, installed into a fresh pi", () => {
     // a preview starts nothing: no run is left under the state home
     const runs = join(home, "state", "qcr", "default", "review", "runs");
     expect(existsSync(runs) ? readdirSync(runs) : []).toEqual([]);
+  });
+
+  // The scan is the plugin's own: no `qcr` on PATH, and the cut, the save and
+  // the price all answer in the session. MUTATION: send /qcr-scan back to the
+  // `qcr scan` subprocess (the plugin before the scan moved into it) — every answer here is
+  // then a "needs qcr" refusal, and this fails.
+  it("runs /qcr-scan on its own engine, with no qcr on PATH", async () => {
+    expect(() => run("sh", ["-c", "command -v qcr"], SCRATCH, piEnv())).toThrow();
+    const repo = join(SCRATCH, "scanrepo");
+    mkdirSync(join(repo, "app"), { recursive: true });
+    mkdirSync(join(repo, "lib"), { recursive: true });
+    writeFileSync(join(repo, "app", "a.py"), "def add(a, b):\n    return a - b\n");
+    writeFileSync(join(repo, "lib", "b.py"), "X = 1\n");
+    writeFileSync(join(repo, "main.py"), "import app\n");
+    const git = (...a: string[]): string =>
+      run(
+        "git",
+        ["-c", "user.name=T", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", ...a],
+        repo,
+      );
+    git("init", "-q", "-b", "main");
+    git("add", "-A");
+    git("commit", "-q", "-m", "code");
+    const answer = async (line: string): Promise<string> => {
+      const { lines, stderr } = await rpc(repo, [{ id: "s", type: "prompt", message: line }], (l) =>
+        l.some((x) => x["id"] === "s"),
+      );
+      const shown = lines.filter(
+        (x) =>
+          x["type"] === "message_end" &&
+          (x["message"] as { customType?: string }).customType === "qcr-review",
+      );
+      expect(shown, `${line}\n${stderr}\n${JSON.stringify(lines).slice(0, 2000)}`).toHaveLength(1);
+      expect(lines.find((x) => x["id"] === "s")).toMatchObject({ success: true });
+      return (shown[0]!["message"] as { content: string }).content;
+    };
+    const proposed = await answer("/qcr-scan units propose");
+    expect(proposed).toMatch(/Draft stored:/);
+    expect(proposed).toMatch(/- app \[directory\]/);
+    expect(proposed).toMatch(/- lib \[directory\]/);
+    expect(await answer("/qcr-scan units save")).toMatch(/Unit cut saved:/);
+    const priced = await answer("/qcr-scan --preview");
+    expect(priced).toMatch(/Scan 3 files/);
+    expect(priced).toMatch(/\/qcr-scan start --key/);
+    // the cut is saved under this repo's own scan home, and a preview starts nothing
+    const repos = join(home, "state", "qcr", "default", "repos");
+    const homes = readdirSync(repos);
+    expect(homes).toHaveLength(1);
+    expect(existsSync(join(repos, homes[0]!, "setup", "unit-cut.json"))).toBe(true);
+    expect(existsSync(join(repos, homes[0]!, "scan", "run.json"))).toBe(false);
   });
 });

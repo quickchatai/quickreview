@@ -19,23 +19,14 @@
 // trackersink.ts's. The GitHub reader port is declared and injected, but no
 // engine behaviour calls it yet (the PR replay builds its own reader).
 //
-// Persistence: `<state home>/setup/unit-cut.json`, tmp+rename atomic through
-// the state port. It holds the saved cut (the one survey and scan reuse), the
-// previous saved cut (so a re-cut can be compared and undone), and at most one
-// draft (the companion's proposal as the operator adjusts it). A saved cut is
-// never touched by a propose or an adjust — only `save` replaces it. An
-// unreadable file is reported and refuses every write: it may hold the
-// operator's saved cut, and silently starting fresh over it would lose that.
+// Persistence: the unit cut is unitcutstore.ts's, `<state home>/setup/unit-cut.json`:
+// the saved cut (the one survey and scan reuse), the previous saved cut (so a
+// re-cut can be compared and undone), and at most one draft. The ports the
+// scan shares (the checkout, the state home, the case runner) are
+// scanports.ts's.
 import { isSampleable } from "./survey.js";
 import type { MemoryStore } from "../memory/store.js";
-import { isSweepSkipped } from "@quickchatai/pi-quickreview/src/heuristics.js";
-import {
-  repoFacts,
-  unitCandidates,
-  vendoredRoots,
-  type RepoFacts,
-  type UnitCandidate,
-} from "./facts.js";
+import { repoFacts, type RepoFacts } from "./facts.js";
 import {
   SurveyRunner,
   type SurveyInputs,
@@ -79,96 +70,49 @@ import {
 import type { ProfileCheck } from "./profile.js";
 import {
   DEFAULT_CASE_BUDGET,
-  applyOps,
   assign,
-  checkCut,
-  normalizeCut,
-  splitUnit,
   type CaseBudget,
   type CasePlan,
   type UnitCut,
 } from "./unitcut.js";
+import type {
+  CaseRunner,
+  Refusal,
+  RepoReader,
+  StateFs,
+} from "@quickchatai/pi-quickreview/src/scan/scanports.js";
+import {
+  UnitCutStore,
+  candidateCut,
+  type CutStatus,
+  type CutView,
+  type SavedCut,
+  type UnitCutFile,
+} from "@quickchatai/pi-quickreview/src/scan/unitcutstore.js";
 
 // ---- ports -------------------------------------------------------------------
 
-/** The reviewed checkout, read-only (the companion mounts it `:ro`). Every
- * method is total: an unreadable checkout answers null, never throws. */
-export interface RepoReader {
-  /** Where the checkout is, for messages. */
-  readonly location: string;
-  /** Repo-relative paths of every tracked file, or null when there is no
-   * readable checkout. */
-  listFiles(): string[] | null;
-  /** A file's text, or null (missing, binary, over the reader's size cap). */
-  read(rel: string): string | null;
-  /** A file's line count (0 for an empty file), or null when unreadable. */
-  lines(rel: string): number | null;
-  /** The checked-out commit, or null when it cannot be read. */
-  head(): string | null;
-  /** Commits touching each file over the recent history — the survey's
-   * "most-changed" sample. Optional and total: absent or null when
-   * the history cannot be read, which only empties that one reason. */
-  changeCounts?(): Record<string, number> | null;
-}
-
-/** The filesystem rooted at the install's state home — PC-only, never shipped.
- * Paths are relative to that root; the implementation refuses any that would
- * leave it. The same shape roots the config home (`SetupPorts.config`). */
-export interface StateFs {
-  readonly location: string;
-  /** The file's text, or null when it does not exist. Throws only when it
-   * exists and cannot be read — the caller reports that, never overwrites. */
-  read(rel: string): string | null;
-  /** tmp+rename atomic write; creates parent directories. */
-  write(rel: string, text: string): void;
-}
-
-/** One case: a unit (or part of one) handed to background pi subagents inside
- * the companion. */
-export interface CaseSpec {
-  id: string;
-  unit: string;
-  agent: string;
-  files: string[];
-  prompt: string;
-}
-
-/** How a case ended: the lens's final answer and what it cost (null when
- * the runner could not tell), or why there is none. A failed or aborted case
- * may still have spent money: `cost_usd` on a failure is what it spent before
- * it ended (0 when it never started, null or absent when the runner cannot
- * tell) — a caller holding a budget counts it. */
-export type CaseOutcome =
-  | {
-      ok: true;
-      output: string;
-      cost_usd: number | null;
-      /** The files the case's file-read tool calls opened (`read`, and
-       * `grep` given a `path`), in call order, each resolved to the absolute
-       * path the call opened (against the case's working directory, which is
-       * not the scanned tree) — `[]` when it read nothing. Absent when the
-       * runner cannot tell, which is unknown, never "read nothing". The scan
-       * judges a lens that read none of its focus files as no reading at all. */
-      reads?: string[];
-      /** Where the runner kept the case's event stream, relative to its
-       * transcript directory; absent when it kept none. */
-      transcript?: string;
-    }
-  | { ok: false; reason: string; cost_usd?: number | null; transcript?: string };
-
-/** Runs cases as background subagents (survey, scan). The
- * engine decides what runs when and how many at once; the runner runs one
- * case to its end. Resolves for every outcome — a failed or aborted case is
- * `{ok:false}`, never a rejection. `onCost`, when given, hears the case's
- * running cost each time the runner learns more of it, so a caller with a
- * hard cap can abort a case mid-flight rather than after the fact. */
-export interface CaseRunner {
-  run(
-    spec: CaseSpec,
-    signal: AbortSignal,
-    onCost?: (spentSoFar: number) => void,
-  ): Promise<CaseOutcome>;
-}
+// The checkout, the state home and the case runner: the scan's own ports,
+// shared with it (scanports.ts).
+export type {
+  CaseOutcome,
+  CaseRunner,
+  CaseSpec,
+  Refusal,
+  RepoReader,
+  StateFs,
+} from "@quickchatai/pi-quickreview/src/scan/scanports.js";
+// The stored unit cut (unitcutstore.ts), under the names setup has always used.
+export {
+  UNIT_CUT_FILE,
+  UNIT_CUT_VERSION,
+  type CutStatus,
+  type CutView,
+  type DraftCut,
+  type SavedCut,
+  type UnitCutFile,
+  type UnitSummary,
+} from "@quickchatai/pi-quickreview/src/scan/unitcutstore.js";
 
 export interface TrackerTicket {
   title: string;
@@ -241,124 +185,24 @@ export interface SetupOptions {
   surveyConcurrency?: number;
 }
 
-// ---- the persisted file ------------------------------------------------------
-
-export const UNIT_CUT_FILE = "setup/unit-cut.json";
-export const UNIT_CUT_VERSION = 1;
-
-export interface SavedCut extends UnitCut {
-  saved_at: string;
-  /** The commit the cut was checked against, when readable. */
-  head: string | null;
-  /** How many files the cut covered at save — a later listing that differs is
-   * how a stale cut shows itself. */
-  files: number;
-}
-
-export interface DraftCut extends UnitCut {
-  updated_at: string;
-  /** `candidates` = the deterministic guess taken as-is; `companion` = a
-   * proposal the companion wrote; `adjusted` = either, after operator edits. */
-  source: "candidates" | "companion" | "adjusted";
-}
-
-export interface UnitCutFile {
-  version: number;
-  saved: SavedCut | null;
-  previous: SavedCut | null;
-  draft: DraftCut | null;
-}
-
 // ---- results -----------------------------------------------------------------
-
-export type Refusal = { ok: false; errors: string[] };
-
-export interface UnitSummary {
-  name: string;
-  kind: string;
-  roots: string[];
-  note: string;
-  files: number | null;
-  /** Files a pass would actually read (lockfiles, binaries, prose skipped). */
-  reviewable: number | null;
-  lines: number | null;
-  /** One per case; a unit that fits is one case under its own name. */
-  cases: Array<{ id: string; files: number; lines: number; over_budget: boolean }> | null;
-}
-
-export interface CutView {
-  units: UnitSummary[];
-  ignored: string[];
-  ignored_files: number | null;
-  unassigned: string[] | null;
-  /** Structural refusals — should never appear on a stored cut; shown if a
-   * hand-edited file carries one. */
-  errors: string[];
-  /** What save would refuse for (a draft may carry these; a saved cut that
-   * shows one has gone stale against the repo). */
-  blocking_save: string[];
-}
-
-export interface CutStatus {
-  ok: boolean;
-  /** Why the file or the repo could not be read — the rest is then partial. */
-  problems: string[];
-  /** The cut file exists but could not be read: `saved`/`draft` are then
-   * unknown, not absent. */
-  cut_file_unreadable: boolean;
-  saved: (CutView & { saved_at: string; head: string | null; files_at_save: number }) | null;
-  draft: (CutView & { updated_at: string; source: DraftCut["source"] }) | null;
-  has_previous: boolean;
-  repo_files: number | null;
-  head: string | null;
-}
 
 export type FactsResult = { ok: true; head: string | null; facts: RepoFacts } | Refusal;
 
-/** Why a stored cut is not one this version can read, or null when it is (or
- * is absent). Structure only — the partition itself is `checkCut`'s. */
-function cutShapeError(cut: unknown): string | null {
-  if (cut === null) return null;
-  if (typeof cut !== "object") return "is not an object";
-  const c = cut as { units?: unknown; ignored?: unknown };
-  const strings = (v: unknown): boolean =>
-    Array.isArray(v) && v.every((x) => typeof x === "string");
-  if (!Array.isArray(c.units)) return "has no `units` array";
-  for (const [i, u] of c.units.entries()) {
-    const unit = (u ?? {}) as { name?: unknown; roots?: unknown; kind?: unknown; note?: unknown };
-    if (
-      typeof unit.name !== "string" ||
-      !strings(unit.roots) ||
-      typeof unit.kind !== "string" ||
-      typeof unit.note !== "string"
-    ) {
-      return `units[${i}] is not {name, roots, kind, note}`;
-    }
-  }
-  if (!strings(c.ignored)) return "has no `ignored` array of paths";
-  return null;
-}
-
 // ---- engine ------------------------------------------------------------------
-
-/** The cut setup offers when none is saved: the candidates as units, the
- * vendored roots ignored. */
-function candidateCut(candidates: readonly UnitCandidate[], files: readonly string[]): UnitCut {
-  return {
-    units: candidates.map((c) => ({ name: c.name, roots: c.roots, kind: c.kind, note: c.reason })),
-    ignored: vendoredRoots(files),
-  };
-}
 
 export class SetupEngine {
   private readonly budget: CaseBudget;
   private readonly surveyRun: SurveyRunner;
+  /** The unit cut: its file, its views and its three verbs. */
+  private readonly cut: UnitCutStore;
 
   constructor(
     private readonly ports: SetupPorts,
     opts: SetupOptions = {},
   ) {
     this.budget = opts.caseBudget ?? DEFAULT_CASE_BUDGET;
+    this.cut = new UnitCutStore(ports, this.budget);
     this.surveyRun = new SurveyRunner(ports, () => this.surveyInputs(), {
       repoRoot: ports.repo.location,
       ...(opts.surveyConcurrency !== undefined ? { concurrency: opts.surveyConcurrency } : {}),
@@ -366,17 +210,11 @@ export class SetupEngine {
   }
 
   private files(): string[] | null {
-    const listed = this.ports.repo.listFiles();
-    return listed === null ? null : [...listed].sort();
+    return this.cut.files();
   }
 
   private noRepo(): Refusal {
-    return {
-      ok: false,
-      errors: [
-        `no readable checkout at ${this.ports.repo.location} — is the reviewed repo mounted?`,
-      ],
-    };
+    return this.cut.noRepo();
   }
 
   /** The deterministic repo facts. Recomputed on every call — they are cheap
@@ -391,325 +229,53 @@ export class SetupEngine {
     };
   }
 
-  // -- the file --
+  // -- the unit cut (unitcutstore.ts) --
 
   private load(): { file: UnitCutFile; error: string | null } {
-    const empty: UnitCutFile = {
-      version: UNIT_CUT_VERSION,
-      saved: null,
-      previous: null,
-      draft: null,
-    };
-    let text: string | null;
-    try {
-      text = this.ports.state.read(UNIT_CUT_FILE);
-    } catch (err) {
-      return {
-        file: empty,
-        error: `${UNIT_CUT_FILE} in ${this.ports.state.location} cannot be read: ${String(err)}`,
-      };
-    }
-    if (text === null) return { file: empty, error: null };
-    try {
-      const raw = JSON.parse(text) as Partial<UnitCutFile>;
-      if (typeof raw !== "object" || raw === null || raw.version !== UNIT_CUT_VERSION) {
-        throw new Error(
-          `unknown version ${JSON.stringify((raw as { version?: unknown } | null)?.version)}`,
-        );
-      }
-      const file: UnitCutFile = {
-        version: UNIT_CUT_VERSION,
-        saved: raw.saved ?? null,
-        previous: raw.previous ?? null,
-        draft: raw.draft ?? null,
-      };
-      // A hand-edited file must be reported, never crash a view: every later
-      // reader (assign, splitUnit) takes the shape on trust.
-      for (const key of ["saved", "previous", "draft"] as const) {
-        const bad = cutShapeError(file[key]);
-        if (bad !== null) throw new Error(`\`${key}\` ${bad}`);
-      }
-      return { file, error: null };
-    } catch (err) {
-      return {
-        file: empty,
-        error:
-          `${UNIT_CUT_FILE} in ${this.ports.state.location} is not a unit cut this version reads (${String(err)}) — ` +
-          "nothing will overwrite it; move it aside to start over",
-      };
-    }
-  }
-
-  private store(file: UnitCutFile): void {
-    this.ports.state.write(UNIT_CUT_FILE, `${JSON.stringify(file, null, 2)}\n`);
-  }
-
-  /** Load for a write: an unreadable file refuses rather than being replaced. */
-  private loadForWrite(): { file: UnitCutFile } | Refusal {
-    const { file, error } = this.load();
-    return error === null ? { file } : { ok: false, errors: [error] };
-  }
-
-  // -- views --
-
-  /** A unit's case plans over its reviewable (not sweep-skipped) files. */
-  private unitCases(
-    name: string,
-    owned: readonly string[],
-    lines: (p: string) => number,
-  ): CasePlan[] {
-    return splitUnit(
-      name,
-      owned.filter((f) => !isSweepSkipped(f)),
-      lines,
-      this.budget,
-    );
+    return this.cut.load();
   }
 
   private view(cut: UnitCut, files: readonly string[], lines: (p: string) => number): CutView {
-    const { errors, blocking_save } = checkCut(cut, files);
-    // A cut with structural errors (a hand-edited file) still gets a
-    // best-effort view, with the errors beside it.
-    const a = assign(cut, files);
-    const sizeErrors: string[] = [];
-    const units: UnitSummary[] = cut.units.map((u) => {
-      const owned = a.byUnit.get(u.name) ?? [];
-      const reviewable = owned.filter((f) => !isSweepSkipped(f));
-      let cases: CasePlan[] = [];
-      let unavailable = false;
-      try {
-        cases = this.unitCases(u.name, owned, lines);
-      } catch (err) {
-        unavailable = true;
-        sizeErrors.push(String(err));
-      }
-      return {
-        name: u.name,
-        kind: u.kind,
-        roots: u.roots,
-        note: u.note,
-        files: owned.length,
-        reviewable: reviewable.length,
-        lines: unavailable ? null : cases.reduce((n, c) => n + c.lines, 0),
-        cases: unavailable
-          ? null
-          : cases.map((c) => ({
-              id: c.id,
-              files: c.files.length,
-              lines: c.lines,
-              over_budget: c.over_budget,
-            })),
-      };
-    });
-    return {
-      units,
-      ignored: cut.ignored,
-      ignored_files: a.ignored.length,
-      unassigned: a.unassigned,
-      errors: [...errors, ...sizeErrors],
-      blocking_save,
-    };
+    return this.cut.view(cut, files, lines);
   }
 
   private lineCounter(): (p: string) => number {
-    const cache = new Map<string, number>();
-    return (p) => {
-      let n = cache.get(p);
-      if (n === undefined) {
-        const measured = this.ports.repo.lines(p);
-        if (measured === null)
-          throw new Error(
-            `line count UNKNOWN for ${p} — unreadable, binary or too large; no case or price can be inferred`,
-          );
-        n = measured;
-        cache.set(p, n);
-      }
-      return n;
-    };
+    return this.cut.lineCounter();
   }
 
   /** The saved cut and the draft, each re-checked against the repo as it is
    * now — so a saved cut the repo has outgrown (a new top-level directory no
    * unit claims) shows up here instead of being silently skipped later. */
   status(): CutStatus {
-    const { file, error } = this.load();
-    const problems = error === null ? [] : [error];
-    const files = this.files();
-    if (files === null) problems.push(this.noRepo().errors[0]!);
-    const head = files === null ? null : this.ports.repo.head();
-    const lines = this.lineCounter();
-    const see = (cut: UnitCut): CutView =>
-      files === null
-        ? {
-            units: cut.units.map((u) => ({
-              ...u,
-              files: null,
-              reviewable: null,
-              lines: null,
-              cases: null,
-            })),
-            ignored: cut.ignored,
-            ignored_files: null,
-            unassigned: null,
-            errors: [],
-            blocking_save: [],
-          }
-        : this.view(cut, files, lines);
-    return {
-      ok: problems.length === 0,
-      problems,
-      cut_file_unreadable: error !== null,
-      saved: file.saved
-        ? {
-            ...see(file.saved),
-            saved_at: file.saved.saved_at,
-            head: file.saved.head,
-            files_at_save: file.saved.files,
-          }
-        : null,
-      draft: file.draft
-        ? { ...see(file.draft), updated_at: file.draft.updated_at, source: file.draft.source }
-        : null,
-      has_previous: file.previous !== null,
-      repo_files: files?.length ?? null,
-      head,
-    };
+    return this.cut.status();
   }
 
-  // -- the three verbs --
-
-  /**
-   * Store a proposal as the draft, replacing any earlier draft (never the
-   * saved cut). `raw` is the companion's proposal — `{units, ignored?}` — or
-   * undefined to take the deterministic candidates as they are (vendored
-   * trees ignored). Refused when it is structurally wrong; save-blocking
-   * conditions are allowed in a draft and reported.
-   */
+  /** Store a proposal as the draft (unitcutstore.ts `propose`). */
   propose(raw?: unknown): { ok: true; draft: CutView } | Refusal {
-    const files = this.files();
-    if (files === null) return this.noRepo();
-    const loaded = this.loadForWrite();
-    if ("ok" in loaded) return loaded;
-    let cut: UnitCut;
-    let source: DraftCut["source"];
-    if (raw === undefined || raw === null || (typeof raw === "object" && !("units" in raw))) {
-      cut = candidateCut(unitCandidates(files), files);
-      source = "candidates";
-    } else {
-      const n = normalizeCut(raw);
-      if (!n.ok) return n;
-      cut = n.cut;
-      source = "companion";
-    }
-    const problems = checkCut(cut, files);
-    if (problems.errors.length > 0) return { ok: false, errors: problems.errors };
-    loaded.file.draft = { ...cut, updated_at: this.ports.clock().toISOString(), source };
-    this.store(loaded.file);
-    return { ok: true, draft: this.view(cut, files, this.lineCounter()) };
+    return this.cut.propose(raw);
   }
 
-  /**
-   * Apply the operator's corrections to the draft — starting one from the
-   * saved cut when there is no draft — all-or-nothing: a refused op, or a
-   * result that is structurally wrong, leaves the stored draft as it was.
-   */
+  /** Apply the operator's corrections to the draft (unitcutstore.ts `adjust`). */
   adjust(ops: unknown): { ok: true; draft: CutView } | Refusal {
-    if (!Array.isArray(ops) || ops.length === 0) {
-      return { ok: false, errors: ["`ops` must be a non-empty array of adjust operations"] };
-    }
-    const files = this.files();
-    if (files === null) return this.noRepo();
-    const loaded = this.loadForWrite();
-    if ("ok" in loaded) return loaded;
-    const base = loaded.file.draft ?? loaded.file.saved;
-    if (!base)
-      return { ok: false, errors: ["there is no unit cut to adjust yet — propose one first"] };
-    const applied = applyOps({ units: base.units, ignored: base.ignored }, ops);
-    if (!applied.ok) return applied;
-    const problems = checkCut(applied.cut, files);
-    if (problems.errors.length > 0) return { ok: false, errors: problems.errors };
-    loaded.file.draft = {
-      ...applied.cut,
-      updated_at: this.ports.clock().toISOString(),
-      source: "adjusted",
-    };
-    this.store(loaded.file);
-    return { ok: true, draft: this.view(applied.cut, files, this.lineCounter()) };
+    return this.cut.adjust(ops);
   }
 
-  /**
-   * Promote the draft to the unit cut. Refused unless it is a complete
-   * partition of the repo as it is now — every file in exactly one unit or
-   * deliberately ignored, no unit left empty. The cut it replaces is kept as
-   * `previous`.
-   */
+  /** Promote the draft to the unit cut (unitcutstore.ts `save`). */
   save(): { ok: true; saved: CutView } | Refusal {
-    const files = this.files();
-    if (files === null) return this.noRepo();
-    const loaded = this.loadForWrite();
-    if ("ok" in loaded) return loaded;
-    const draft = loaded.file.draft;
-    if (!draft) {
-      return {
-        ok: false,
-        errors: [
-          loaded.file.saved
-            ? "no draft to save — the saved cut is already in use; adjust it to start a draft"
-            : "no draft to save — propose a unit cut first",
-        ],
-      };
-    }
-    const cut: UnitCut = { units: draft.units, ignored: draft.ignored };
-    const problems = checkCut(cut, files);
-    if (problems.errors.length > 0 || problems.blocking_save.length > 0) {
-      return { ok: false, errors: [...problems.errors, ...problems.blocking_save] };
-    }
-    loaded.file.previous = loaded.file.saved;
-    loaded.file.saved = {
-      ...cut,
-      saved_at: this.ports.clock().toISOString(),
-      head: this.ports.repo.head(),
-      files: files.length,
-    };
-    loaded.file.draft = null;
-    this.store(loaded.file);
-    return { ok: true, saved: this.view(cut, files, this.lineCounter()) };
+    return this.cut.save();
   }
-
-  // -- reuse --
 
   /** The saved cut, for every later survey and scan; null when none is saved
    * (or the file cannot be read — `status()` says which). */
   savedCut(): SavedCut | null {
-    return this.load().file.saved;
+    return this.cut.savedCut();
   }
 
-  /**
-   * The saved cut as cases: every unit's reviewable files (optionally only
-   * those `include` keeps — a scan's stage 1 drops tests and migrations),
-   * split to fit the case budget, each case under its unit's name. Refused
-   * when there is no saved cut: a survey or scan never runs on a guess.
-   */
+  /** The saved cut as cases (unitcutstore.ts `cases`). */
   cases(
     include: (path: string) => boolean = () => true,
   ): { ok: true; cases: CasePlan[] } | Refusal {
-    const files = this.files();
-    if (files === null) return this.noRepo();
-    const { file, error } = this.load();
-    if (error !== null) return { ok: false, errors: [error] };
-    if (!file.saved)
-      return { ok: false, errors: ["no saved unit cut — propose, adjust and save one first"] };
-    const a = assign(file.saved, files);
-    const lines = this.lineCounter();
-    const cases: CasePlan[] = [];
-    try {
-      for (const u of file.saved.units) {
-        cases.push(...this.unitCases(u.name, (a.byUnit.get(u.name) ?? []).filter(include), lines));
-      }
-    } catch (err) {
-      return { ok: false, errors: [String(err)] };
-    }
-    return { ok: true, cases };
+    return this.cut.cases(include);
   }
 
   // -- review history (src/setup/history.ts) --

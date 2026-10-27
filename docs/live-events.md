@@ -11,7 +11,7 @@ state/live/<key>/r<round>/lens-<id>.jsonl     one lens session
 `<key>` is `pr-<n>` on the bot and the review's name on a one-shot; a one-shot
 keeps the tree inside its run directory (`<run>/state/live/...`). The format is
 `packages/pi-plugin/src/live/events.ts`, the writer `packages/pi-plugin/src/live/writer.ts`, the reader and the
-round-progress projection `src/live/read.ts` and `src/live/projection.ts`.
+round-progress projection `packages/pi-plugin/src/live/read.ts` and `packages/pi-plugin/src/live/projection.ts`.
 
 ## Lines
 
@@ -56,6 +56,26 @@ stamped at its window, so a heartbeat's `updated_at`, or a `started_at` taken
 from an update, can differ from the extension's by up to one window. Milestone
 order, statuses and command identity do not depend on it.
 
+## Live lens activity
+
+A lens reports what it is doing while it runs, not only when it ends. The
+runner (`packages/pi-plugin/src/engine/lens/runlens.ts`) hears each tool call
+of a pass's session start and end (`activity.ts`) and tells the request's
+`onActivity`; the `lens` and `lens_wave` tools lay that on the pass's running
+slot as the native subagent tool's `progress` record (status, duration, tool
+count, the current tool in `recentTools`, and `currentTarget`, the path it
+works on) and send an update, at most one per `ACTIVITY_UPDATE_MS` while a pass
+works and at once when one lands. The update reaches the main log like any
+other, so each running lens projects with a growing `tool_count`, its
+`current_tool` and its `current_target`; a finished one keeps its final count
+and duration, and a failed one reads `failed`. `current_target` is the one
+field past the extension, and a native round never carries it.
+
+`packages/pi-plugin/src/live/lensline.ts` turns one projected lens into the line
+a person reads (`security · read src/webhook.ts · 7 tools · 0:41`); `qcr review
+status` carries both, and the plugin reads the same projection through
+`latestLiveRound` and `viewRound`.
+
 ## Who writes and reads
 
 - `runRound` (`packages/pi-plugin/src/engine/round.ts`) writes the main log when its spec carries
@@ -64,7 +84,7 @@ order, statuses and command identity do not depend on it.
   update events the ordinary stream leaves out.
 - `createLensRunner` takes `live: (id, agent) => LiveSink` and logs each pass to
   `lens-<id>.jsonl`.
-- `qcr review status` projects the latest round to show which lenses run and what
-  the parent is doing, before the stage record exists.
+- `qcr review status` projects the latest round to show which lenses run, what
+  each is doing and what the parent is doing, before the stage record exists.
 - `qcr live [RUN_ID|DIR] [--lens ID] [--round N] [--follow] [--json]` prints the
   transcript.

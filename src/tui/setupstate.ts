@@ -1,25 +1,27 @@
-// Is onboarding finished? Read from the checklist file the wizard keeps
-// (src/onboard/engine.ts), so a TUI opened halfway through `qcr onboard` says
-// so on its first frame instead of troubleshooting a daemon nobody has started
-// yet.
+// Is setup finished? Read from the checklist file switch-on and Advanced keep
+// (src/onboard/engine.ts), so a TUI opened halfway through says so on its
+// first frame instead of troubleshooting a daemon nobody has started yet.
 //
 // Only a checklist that EXISTS and is not complete counts: an install that
-// never ran the wizard (a hand-written config, the VM operator's own setup)
-// has no checklist and gets no banner. The next step is the first enabled step,
-// in the wizard's own order, that the file does not record as done — the same
-// predicates the engine applies, so the TUI cannot name a step the wizard would
-// skip.
+// never switched auto-review on (a hand-written config, the VM operator's own
+// setup) has no checklist and gets no banner. Setup is finished in the home
+// (a bare `qcr`), so the steps judged are the home's: switch-on's and
+// Advanced's registry (src/home/advanced.ts), with the engine's own
+// predicates. The next step is the first enabled, required one the file does
+// not record as done; when there is none, nothing is left that the home could
+// finish, and there is no banner (the home never runs the wizard's finish, so
+// its checklist need not carry the wizard's completion marker).
 import { type ChecklistFile } from "../onboard/engine.js";
 
 export interface SetupState {
-  /** The title of the first pending step ("the final verification" when only
-   * finish is left), or undefined when it could not be computed. */
+  /** The title of the first pending step, or undefined when it could not be
+   * computed. */
   next: string | undefined;
 }
 
 /** The one sentence every surface uses. */
 export function setupLine(s: SetupState): string {
-  return `setup not finished — run \`qcr onboard\` to continue${s.next ? ` (next: ${s.next})` : ""}`;
+  return `setup not finished — run \`qcr\` to finish setting up${s.next ? ` (next: ${s.next})` : ""}`;
 }
 
 /** Complete now: finished once and not reopened since (engine.ts `completeNow`). */
@@ -27,22 +29,24 @@ function completeNow(file: ChecklistFile): boolean {
   return typeof file.completed_at === "string" && !file.reopened_at;
 }
 
-/** undefined = nothing to say (no checklist, or onboarding is complete). */
+/** undefined = nothing to say (no checklist, setup is complete, or the home
+ * has no step left to finish). */
 export async function setupStateOf(
   checklist: ChecklistFile | null,
 ): Promise<SetupState | undefined> {
   if (checklist === null || completeNow(checklist)) return undefined;
   let next: string | undefined;
   try {
-    const { defaultSteps } = await import("../onboard/steps/index.js");
-    const steps = [...defaultSteps()].sort((a, b) => a.order - b.order);
+    const { advancedRegistry } = await import("../home/advanced.js");
+    const steps = [...advancedRegistry().steps()].sort((a, b) => a.order - b.order);
     const pending = steps.find(
       (s) =>
         !s.optional &&
         (s.enabled ? s.enabled(checklist.choices) : true) &&
         checklist.steps[s.id]?.status !== "done",
     );
-    next = pending?.title ?? "the final verification";
+    if (pending === undefined) return undefined;
+    next = pending.title;
   } catch {
     // The step registry could not be loaded: the banner still says setup is
     // unfinished, without naming a step it could not compute.

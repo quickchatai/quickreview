@@ -60,7 +60,9 @@ function toolArgs(e: Bag): Bag {
   return record(e.args) ?? record(e.input) ?? record(e.arguments) ?? {};
 }
 
-function argPreview(args: Bag): string | undefined {
+/** A tool call's arguments as one line: the first of its command, path, query,
+ * pattern or url. */
+export function argPreview(args: Bag): string | undefined {
   for (const key of ["command", "path", "query", "pattern", "url"]) {
     const value = text(args[key]);
     if (value) return value.replace(/\s+/g, " ").slice(0, 120);
@@ -175,6 +177,9 @@ export function slimResult(raw: Bag, slot: number): LiveResult {
             : {}),
           ...(text(progress.lastMessage) ? { last_message: text(progress.lastMessage)! } : {}),
           ...(text(progress.error) ? { error: text(progress.error)! } : {}),
+          ...(text(progress.currentTarget)
+            ? { current_target: text(progress.currentTarget)!.slice(0, 240) }
+            : {}),
           ...(recent ? { recent_tools: recent } : {}),
         };
   return {

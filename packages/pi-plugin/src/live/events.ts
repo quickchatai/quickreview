@@ -50,6 +50,9 @@ export interface LiveResult {
     error?: string;
     /** `{tool, args, status}` as the native extension reports them. */
     recent_tools?: Array<{ tool?: string; args?: string; status?: string }>;
+    /** The path the running child's current tool works on (our lens tools'
+     * `currentTarget`; the native shape has none). */
+    current_target?: string;
   };
   /** The native shape carries no `progress`: what its transcript says. */
   native?: { tool_count: number; last_text?: string; last_tool?: string };

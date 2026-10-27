@@ -8,7 +8,7 @@
 // what rides each turn. The routes differ on purpose: the VM bot, the bench
 // image, the clone route (from the run's own dir outside the checkout)
 // and their lenses load the reviewer stub; the companion loads the full
-// AGENTS.md; the bench judge, the onboarding session and the scan leaves
+// AGENTS.md; the bench judge and the scan leaves
 // (-nc, on the host and in the container alike) load nothing.
 //
 // Each row is OBSERVED, not copied: the cwd, the argv and the agentDir come
@@ -53,7 +53,6 @@ import { COMPANION_AGENTS_DIR } from "../extensions/setup.js";
 import { COMPANION_DEFAULTS, resolveCompanionPaths, sandboxRoot } from "../src/config.js";
 import { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import { stateHome } from "../src/install.js";
-import { onboardingPiArgv } from "../src/onboard/launch.js";
 import { SCANBOX, scanRunArgv, type ScanBoxPlan } from "../src/scanbox.js";
 import { PiSessionManager } from "../src/sessions.js";
 import { piCaseRunner, type SpawnFn } from "../src/setup/caserunner.js";
@@ -539,18 +538,13 @@ beforeAll(async () => {
     note: LENS_NOTE,
   };
 
-  // -- the bench judge and the onboarding session: nothing -----------------------
+  // -- the bench judge: nothing ---------------------------------------------------
   const judgeArgv = judgePiArgv(ROOT, "m");
   observed.routes["bench-judge"] = row(checkoutFs("/case-tree"), {
     cwd: "/case-tree",
     agentDir: "/tmp/pi-agent",
     argv: judgeArgv,
     note: "Runs in the PR's own checkout, whose AGENTS.md must not reach the judge.",
-  });
-  observed.routes["onboard"] = row(checkoutFs(CHECKOUT), {
-    cwd: CHECKOUT,
-    agentDir: "/operator-pi-agent",
-    argv: onboardingPiArgv({ package: "@earendil-works/pi-coding-agent", version: "1.4.0" }, ROOT),
   });
 
   // -- the clone route: `qcr review` from the qcr checkout -------------------
@@ -775,10 +769,10 @@ describe("the context-file inventory", () => {
     for (const r of ["sdk", "sdk-lens"]) expect(routes[r]!.contextFiles, r).toBe("injected");
     // The full guide: the companion.
     expect(files("companion")).toEqual(["AGENTS.md"]);
-    // Nothing: the judge, the onboarding session, the scan leaves.
-    for (const r of ["bench-judge", "onboard", "scan-leaf-container", "scan-leaf-host"])
+    // Nothing: the judge, the scan leaves.
+    for (const r of ["bench-judge", "scan-leaf-container", "scan-leaf-host"])
       expect(files(r), r).toEqual([]);
-    for (const r of ["bench-judge", "onboard", "scan-leaf-container", "scan-leaf-host"])
+    for (const r of ["bench-judge", "scan-leaf-container", "scan-leaf-host"])
       expect(routes[r]!.contextFiles, r).toBe("disabled");
   });
 

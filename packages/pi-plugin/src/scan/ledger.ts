@@ -30,8 +30,8 @@
 // state port. An unreadable ledger is REPORTED and refuses writes: it is the
 // record of money already spent, and starting over on top of it would pay
 // for the same files twice.
-import type { ScanDepth } from "../config.js";
-import type { StateFs } from "./engine.js";
+import type { ScanDepth } from "../reviewconfig.js";
+import type { StateFs } from "./scanports.js";
 import { coverKey, rangesCover, type FileRange, type ScanRate } from "./scan.js";
 
 export const LEDGER_FILE = "scan/ledger.json";

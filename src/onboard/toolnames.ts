@@ -1,6 +1,6 @@
 // The onboarding session's tool names: one source for the extension that
-// registers them (extensions/onboarding.ts) and the argv that activates them
-// (launch.ts `onboardingPiArgv`).
+// registers them (extensions/onboarding.ts) and the `--tools` allowlist that
+// activates them (`onboardingToolAllowlist`).
 //
 // pi's `--tools <list>` is an allowlist over EVERY tool, extension tools
 // included (pi 1.4.0: createAgentSession({ tools }) leaves an extension tool

@@ -77,7 +77,7 @@ import { dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { OPENVIKING_DEFAULTS, parseConfig } from "../../config.js";
 import { configHome, locateKeysFile, locateSecrets } from "../../install.js";
-import { tuiMemoryBaseUrl } from "../../tui/memory.js";
+import { tuiMemoryBaseUrl } from "../../tui/memoryurl.js";
 import { shellQuote } from "../../tui/remote.js";
 import { CHOICE_KEYS, MEMORY_CHOICE_IDS, type MemoryChoice } from "../choices.js";
 import { deliverConfigChange } from "./configdelivery.js";
@@ -480,6 +480,22 @@ export const DECLINED_CHECKS: readonly CheckResult[] = [
 
 /** The check row that reports the daemon's on/off switch. */
 export const MEMORY_SWITCH_CHECK = "memory-switch";
+
+/** The check row that says phase B waits on a server not answering yet. */
+export const MEMORY_SERVER_CHECK = "memory-server";
+
+/** A run that landed phase A (the root key) and stopped only because the
+ * server is not up yet: on a stack not running memory, the bring-up starts
+ * it and the memory_user_keys step finishes phase B. Any other failure is a
+ * failure. */
+export function waitsOnServer(checks: readonly CheckResult[]): boolean {
+  const failed = checks.filter((c) => !c.ok);
+  return (
+    failed.length > 0 &&
+    failed.every((c) => c.name === MEMORY_SERVER_CHECK) &&
+    checks.some((c) => c.name === "root-key" && c.ok)
+  );
+}
 
 /**
  * Tell the DAEMON the operator's answer: `[openviking] enabled =
@@ -1009,7 +1025,7 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
         const ready = await serverReady(ctx.adapters.fetch, base, prov);
         if (!ready.ok) {
           checks.push({
-            name: "memory-server",
+            name: MEMORY_SERVER_CHECK,
             ok: false,
             detail: ready.answering
               ? `OpenViking answers at ${base} but is not ready (${ready.detail}). Check the engine and embedder logs, then run this step again; the memory forward already reaches it.`

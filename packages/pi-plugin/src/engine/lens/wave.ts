@@ -15,6 +15,7 @@
 // the session re-runs it through `lens` if it wants it again.
 import { randomUUID } from "node:crypto";
 import type { Runtime } from "../port.js";
+import type { LensActivity } from "./activity.js";
 import type { LaunchUnit } from "./launch-plan.js";
 import type { LensRequest, LensRun } from "./runlens.js";
 
@@ -39,6 +40,11 @@ export interface WaveRow {
   result: LensRun | undefined;
   /** The call's abort ended it before the model did. */
   aborted: boolean;
+  /** What the pass is doing, as its runner last told it; undefined until its
+   * first tool call. */
+  activity: LensActivity | undefined;
+  /** Hear each change of `activity` from now on; returns the unsubscribe. */
+  watch(listener: (activity: LensActivity) => void): () => void;
 }
 
 /** One pass, as a result however it ends: runLens does not reject, but a runner
@@ -89,6 +95,7 @@ export class LensWave {
   ): { row: WaveRow; started: boolean } {
     const held = this.byKey.get(unit.path);
     if (held !== undefined) return { row: held, started: false };
+    const listeners = new Set<(activity: LensActivity) => void>();
     // `done` is assigned below: the settling callback needs the row itself.
     const row = {
       key: unit.path,
@@ -97,11 +104,25 @@ export class LensWave {
       task: unit.task,
       result: undefined,
       aborted: false,
+      activity: undefined,
+      watch: (listener: (activity: LensActivity) => void) => {
+        listeners.add(listener);
+        return () => void listeners.delete(listener);
+      },
     } as WaveRow;
     row.done = runSafely(runner, {
       agent: unit.agent,
       task: unit.task,
       ...(signal ? { signal } : {}),
+      onActivity: (activity) => {
+        row.activity = activity;
+        for (const listener of [...listeners])
+          try {
+            listener(activity);
+          } catch {
+            // a listener's failure is not the row's
+          }
+      },
     }).then((run) => {
       row.result = run;
       if (signal?.aborted && run.result.stopReason === "aborted") {

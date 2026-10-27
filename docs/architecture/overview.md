@@ -47,7 +47,8 @@ front of that; the four supported ingress shapes are in
 | the TUI | `qcr tui` → `src/tui/` | the operator board, memory management, deploy and metrics tabs; reaches a remote daemon over ssh or a local one over Docker per `config.toml [tui] target`. See [tui.md](tui.md) and [../tui.md](../tui.md) |
 | the companion | `src/tui/companion.ts`, the release image's `companion` mode | a local pi session beside the TUI, for asking questions about the running system; it reaches the daemon only by injecting into the overseer |
 | Slack concierge | `src/slack/` | optional; a Socket Mode client (`src/slack/socket.ts`) with a router, reply path and policy layer over one public channel |
-| onboarding wizard | `scripts/qcr onboard` → `src/onboard/` | the guided install; see [../onboarding.md](../onboarding.md) |
+| the home | a bare `qcr` → `src/home/launch.ts`, `extensions/home.ts`, `src/home/` | the app's own pi with the plugin and the panel; its first run is the setup checklist (`src/home/setup.ts`); see [../onboarding.md](../onboarding.md) |
+| onboarding wizard | `src/onboard/` | the setup wizard's steps (the App, ingress, a server, go-live); its `qcr onboard` door is gone |
 
 The CLI and the TUI read state; they do not review. The only two operator
 writes the TUI performs are a message injected into a session (`src/tui/msg.ts`)

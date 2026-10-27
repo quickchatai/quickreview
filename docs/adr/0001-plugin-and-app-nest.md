@@ -1,6 +1,6 @@
 ---
 status: accepted
-built: no — this is the target shape; "Today" below says where the tree differs
+built: yes — the plugin side is built (FT-0666, FT-0667, FT-0668); the app's home is being built on the first-run-home map
 ---
 
 # The plugin and the app nest: each works without the one outside it
@@ -81,12 +81,15 @@ never knows the app exists.
   namespace with every other extension. When the rename is built, the
   plugin's command tests and any legacy-acceptance entries for these names
   change with it.
-- **Today the tree differs in four places**, and the build that follows this
-  ADR closes them:
-  - `/scan` and `/selfimprove` run the `qcr` CLI, which is the app.
-  - `/qcr-setup` offers to `npm i -g` the app.
-  - The commands are not namespaced.
-  - The commands are not shipped as skills.
+- **The tree used to differ in four places**, and the build that followed
+  this ADR closed them:
+  - `/scan` and `/selfimprove` ran the `qcr` CLI. Now `/qcr-scan` runs the
+    plugin's own scan engine, and `/selfimprove` is the app's.
+  - `/qcr-setup` offered to `npm i -g` the app. Now it runs only the
+    plugin's own steps.
+  - The commands were not namespaced. Now they are `/qcr-review`,
+    `/qcr-scan` and `/qcr-setup`.
+  - The commands were not shipped as skills. Now each one is.
 - **A fence proves the nesting:** the plugin, installed alone (packed and
   installed with no app), runs `/qcr-review` and `/qcr-scan`. The existing
   layer fence (`tests/layers.test.ts`: the core never imports the app) stays.

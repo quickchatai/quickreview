@@ -584,7 +584,7 @@ describe("comment-preserving patch", () => {
     expect(line).toContain('repo = "acme/web-app"');
     expect(line).toContain("the repo to review");
     expect(line).not.toContain("← FILL");
-    expect(line).toContain("filled by qcr onboard:");
+    expect(line).toContain("filled by qcr:");
   });
 
   it("leaves no ← FILL marker on any line it filled", async () => {
@@ -622,6 +622,25 @@ describe("comment-preserving patch", () => {
     expect(out).toContain('name = "Dana"');
   });
 
+  // MUTATION: drop the trailing-CR carry in patchLines — the mixed case fails.
+  it("keeps line endings: a CRLF file stays CRLF, a mixed file's edited line keeps its own", () => {
+    const crlf = patchToml('[github]\r\nrepo = "a/b" # mine\r\n', [
+      { section: "github", key: "repo", value: tomlString("c/d") },
+      { section: "github", key: "app_slug", value: tomlString("s") },
+      { section: "owner", key: "name", value: tomlString("Dana") },
+    ]);
+    expect(crlf.replace(/\r\n/g, "")).not.toContain("\n");
+    expect(crlf).toContain('repo = "c/d" # mine\r\n');
+    expect(parseToml(crlf)).toEqual({
+      github: { repo: "c/d", app_slug: "s" },
+      owner: { name: "Dana" },
+    });
+    const mixed = patchToml('[github]\nrepo = "a/b"\r\nbase_branch = "main"\n', [
+      { section: "github", key: "repo", value: tomlString("c/d") },
+    ]);
+    expect(mixed).toBe('[github]\nrepo = "c/d"\r\nbase_branch = "main"\n');
+  });
+
   it("recognises a table header carrying a trailing comment — never appends a duplicate table", () => {
     // `[tui] # mine` is legal TOML and the ingress reader already accepts it;
     // a second [tui] would make the whole file unloadable.
@@ -649,7 +668,7 @@ describe("comment-preserving patch", () => {
     });
     expect(splitTail("'''hi''''' # c")).toEqual({ value: "'''hi'''''", gap: " ", comment: "# c" });
     expect(rewriteFillMarker("# ← FILL (3): your GitHub App slug")).toBe(
-      "# filled by qcr onboard: your GitHub App slug",
+      "# filled by qcr: your GitHub App slug",
     );
     expect(rewriteFillMarker("# nothing to rewrite")).toBe("# nothing to rewrite");
   });

@@ -80,7 +80,6 @@ export function isBinaryContent(buf: Buffer, path = ""): boolean {
  * lens or a screen must never receive raw (NUL above all) rendered as a
  * visible `\u00XX` escape. Tab and newline are kept. */
 export function escapeControls(text: string): string {
-  // eslint-disable-next-line no-control-regex
   return text.replace(
     /[\u0000-\u0008\u000b-\u001f\u007f]/g,
     (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,

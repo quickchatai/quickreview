@@ -31,6 +31,7 @@ import {
   takeoverEnv,
 } from "../src/takeoverpi.js";
 import { TAKEOVER_TOOLS, type TakeoverSpec } from "../src/takeover.js";
+import { LOCK_FILE } from "../src/loginrefresh/refresher.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";
 import { bornReference, rehearseFile, type RequestShape } from "./helpers/resume-rehearsal.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
@@ -70,7 +71,7 @@ function ownerAgent(expiresInMs = 24 * HOUR): string {
     }),
     { mode: 0o660 },
   );
-  writeFileSync(join(agent, "auth.json.lock"), "");
+  writeFileSync(join(agent, LOCK_FILE), "");
   writeFileSync(join(agent, "models.json"), "{}");
   return agent;
 }
@@ -172,6 +173,25 @@ describe("the takeover's login is a refresh-blanked borrowed copy", () => {
     expect(
       JSON.parse(readFileSync(join(dir, "borrow", "auth.json"), "utf8"))["openai-codex"].refresh,
     ).toBe(DISABLED_REFRESH);
+  });
+
+  // MUTATION: copy auth.json from spec.agent_dir in prepareBorrowedAgent — this fails.
+  it("borrows the login from the shared login dir, and models and settings from the agent dir", () => {
+    const login = ownerAgent();
+    const agent = join(dir, "own-agent");
+    mkdirSync(agent);
+    writeFileSync(join(agent, "models.json"), '{"own":true}');
+    const borrow = join(dir, "borrow");
+    prepareBorrowedAgent({
+      agent_dir: agent,
+      login_dir: login,
+      borrow_dir: borrow,
+      idle_ms: 60_000,
+    });
+    expect(
+      JSON.parse(readFileSync(join(borrow, "auth.json"), "utf8"))["openai-codex"].refresh,
+    ).toBe(DISABLED_REFRESH);
+    expect(readFileSync(join(borrow, "models.json"), "utf8")).toBe('{"own":true}');
   });
 
   it("is refused, with no pi, when the token would expire inside the lease's window", async () => {

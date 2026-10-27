@@ -23,8 +23,8 @@ user can open the Docker socket.
 - `target = "ssh"` with an empty `ssh_host` is never `ssh ""`. On a compose
   project (the checklist recorded the local topology, or the `.env` pins
   `QCR_VERSION`) the TUI reads the local stack and says so once; otherwise the
-  board says "ssh_host is empty — run `qcr onboard`, or set [tui] target =
-  "local"" and the memory forward stays off with the same words.
+  board says "ssh_host is empty — set it to the VM's ssh alias, or set [tui]
+  target = "local"" and the memory forward stays off with the same words.
 - On the local route the VM-shaped defaults are read for one box: the state
   dir is the release image's `/opt/qcr/state`, a compose `-daemon-N`
   container implies its `-memory-N` sidecar for the memory forward, and sudo
@@ -34,7 +34,7 @@ user can open the Docker socket.
   the daemon container absent or stopped (with the `docker compose … up -d`
   that starts it), or Docker itself not answering — never an ssh fix.
 - While onboarding's checklist exists and is not complete, the first frame
-  says so: the top bar carries "setup not finished — qcr onboard", and where
+  says so: the top bar carries "setup not finished", and where
   the PR list would be, the full line names the wizard's next step instead of
   any daemon or ssh troubleshooting. The data stays unknown (`PRS (?)`).
 - The companion runs the release image the compose stack already pulled

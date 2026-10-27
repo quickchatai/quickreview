@@ -1,6 +1,133 @@
-# Onboarding — the guided setup, step by step
+# Onboarding — the first run, and the setup wizard's steps
 
-`qcr onboard` takes a machine with Docker to a working installation whose first
+A bare `qcr` opens the **home**: QuickReview's own pi, with the plugin loaded
+and a panel of your repository's pull requests. On a machine that is not set
+up, the home opens on a short [setup checklist](#the-first-run-the-homes-setup-checklist)
+instead, and turns into the panel once it is done.
+
+`qcr onboard`, the wizard's own door, is gone. Its steps, described from
+[Before you start](#before-you-start) on, set up what the first run does not:
+the always-on daemon, a GitHub App and webhooks, a server over ssh, memory and
+going live. Switching auto-review on runs the ones this machine needs, and the
+home's [Advanced](#spend-tune-to-this-repo-and-advanced) button offers the
+rest; everything they do also has a manual equivalent, indexed in
+[the README's appendix](../README.md#appendix--setting-up-by-hand).
+
+## The first run: the home's setup checklist
+
+```sh
+qcr
+```
+
+The card shows three steps. Each is detected first: a step that is already
+true shows as done, with what was found ("@you · via gh", "owner/name · from
+your qcr config"), and is never asked again.
+
+1. **Sign in to OpenAI.** pi's own device-code login for `openai-codex`, the
+   provider the home's chat runs on, on your own pi home, so the chat, the
+   panel and every review use the one login. It starts by itself: open the
+   URL the card shows and enter the code. Device-code login must be on for
+   your ChatGPT account first (ChatGPT → Settings → Security). A code that
+   expires or is denied says so, and `alt+n` starts a clean new one.
+2. **Connect GitHub.** `gh` installed and signed in. When it is not, the card
+   says what to run (`gh auth login`, in a shell), and `alt+n` checks again.
+3. **Choose a repository.** One of your recently pushed repositories, or paste
+   any `owner/name` or GitHub URL. It is written to your config's
+   `[github] repo`, with the defaults the home fills in silently: the timezone
+   (this machine's), the base branch (the repository's default branch) and
+   your name and login (from `gh`). A value you set yourself is kept, and
+   `dry_run` is never written.
+
+The first-run checks are pi, git and `gh`, and a check shows only while it
+fails. `alt+n` runs the next step (`alt+enter` is pi's); `f2` focuses the card,
+where `⏎` does the same and Esc gives the editor back. Every step is also a
+tool the chat's model can call: `home_sign_in`, `home_check_github`,
+`home_choose_repo` and `home_setup_next`. `qcr tui` opens the admin TUI, and
+only it starts the companion.
+
+## One login per box
+
+A machine has one OpenAI login: the one the home signed in to, in your own pi
+home (`$PI_CODING_AGENT_DIR`, else `~/.pi/agent`). The home's chat, every
+review you start from it and auto-review all use it, and exactly one process
+refreshes it at a time.
+
+- **Auto-review off:** the home's pi refreshes the login itself, by pi's own
+  rule (a token with under five minutes left, under pi's own lock on
+  `auth.json`).
+- **Switching auto-review on** shares that login with the stack. Switch-on's
+  login step writes `QCR_PI_LOGIN_DIR` (your pi agent dir) into the project
+  `.env`, which mounts it into the daemon's container at `/opt/qcr/login`,
+  and turns `[login_refresh] enabled` on in `config.toml`. The daemon's
+  refresher then owns that `auth.json`: it refreshes well ahead of pi's
+  window, so the home's pi never has a token to refresh and only reads it.
+  Only the login is shared. pi's settings in the container stay its own, and
+  your global pi settings are never written. A stack brought up before is
+  recreated on the shared login, with its data kept.
+- **Switching auto-review off** stops the daemon and its refresher with it,
+  and the home's pi refreshes on its own again.
+- **One at a time:** the refresher's lock, `loginrefresh.lock`, sits beside
+  `auth.json`, so a second refresher on the box is refused. The lock is never
+  `auth.json.lock`, which is pi's own.
+
+**When the login expires or is revoked,** the home's login line says
+*login expired*, and auto-review shows *Paused: login*. `alt+l` (`l` on the
+focused panel, or the `home_relogin` tool) signs in again with pi's device
+code. While auto-review runs, the home first pauses its refresher, the same
+handover the image's `login` mode makes, and waits until the refresher says it
+has paused. The refresher keeps its lock but writes nothing until the pause
+ends. When the sign-in ends, however it ends, the pause is lifted, the
+refresher reads the new login at once, and auto-review resumes on it. A pause
+left behind by a home that was killed mid-login is lifted by the refresher
+after 15 minutes. A raw `/login` typed in the home does not pause the
+refresher, so switch auto-review off before you use it.
+
+**A remote server** (the advanced route) signs in with its own device login
+and refreshes its own login. The host's login is never copied there.
+## Spend, "Tune to this repo" and Advanced
+
+- **The spend line** shows today's and this month's review cost: the home's
+  own reviews (each finished run's cost, on the day it ended) and
+  auto-review's recorded costs (its status snapshot's `today_spend_usd` and
+  `month_spend_usd`), over UTC days and months as `qcr spend` counts them. It
+  reads unknown when either cannot be read, for instance while auto-review is
+  switched off with its data kept, never a zero.
+- **Tune to this repo** (`t`, `alt+t`, `home_tune`) runs Setup: the chat's
+  agent surveys a checkout of the repository, reads its review history when it
+  can, interviews you, and writes the repo profile, `.qcr/` at the checkout's
+  root, each file only on your yes (`home_tune_write`). The checkout is
+  `QCR_REVIEWED_REPO`, `[companion] reviewed_repo_dir`, or the directory you
+  opened the home from, whichever git says is the repository. The tune stays
+  open through every file of the profile and ends with the one the agent
+  marks as the last; the panel says so then, and reviews use the profile once
+  you commit it. A write goes only to the file it names: a `.qcr/` or
+  `addenda/` that is a link, or a planted temporary file, is refused, never
+  written through. Nothing waits on it: until then, every review runs on the
+  default profile.
+- **Advanced** (`x`, `alt+x`, `home_advanced`) runs the wizard's own steps on
+  the same checklist switch-on uses:
+  - **A GitHub App:** `github_account` on the App route, `github_app` (the
+    manifest flow, through the hosted callback relay when
+    `QCR_ONBOARD_PUBLIC_ORIGIN` is set) and `app_slug_reconcile`;
+  - **Webhooks:** `ingress`, a tunnel instead of polling (on the App route
+    only: GitHub delivers webhooks to an App);
+  - **Another server, over ssh:** `topology`, `ssh_preflight`,
+    `vm_inventory` and `vm_deploy` of a release, this app's by default;
+  - **Slack:** says what is set up; the concierge's own guided tool,
+    [`npm run slack:setup`](#slack-later), sets up the rest;
+  - **Dry-run or live:** "Stay in dry-run" first, then "Go live".
+    Switching auto-review on brings it up in dry-run, so going live is its
+    own act, here or from the auto-review switch while it runs in dry-run:
+    a proof round first (the wizard's `proof_round`: auto-review reviews
+    the selected pull request now, in dry-run, and the home shows the
+    review it would have posted), then one more confirm, then the wizard's
+    go-live step, which checks that proof against the daemon's own state.
+    A proof round already on record stands. Going back to dry-run is your
+    own edit of `dry_run`; nothing in the home moves it.
+
+## The setup wizard
+
+The wizard takes a machine with Docker to a working installation whose first
 review you have watched happen. It is an interactive session: a pi agent talks
 you through what the system is *while building it*, and every act it performs is
 a named, deterministic tool whose result you see. The agent never improvises a
@@ -40,23 +167,13 @@ wizard composes exactly those tools rather than replacing them.
   <alias>`, with passwordless sudo there, and `ansible-playbook` installed on
   *your* machine — the deploy is an Ansible run from here, over your ssh.
 
-The wizard runs pi at the pinned version (`config.toml [pi]`, which the image
-carries and checks at every start). The session runs with no ambient
-extensions, exactly one onboarding extension, and a read-only built-in tool
-belt; its session store lives in `state/onboarding/pi-sessions/` and is never
-shared with the reviewer or companion sessions.
+The steps run inside the home, on its own pi at the pinned version
+(`config.toml [pi]`, which the image carries and checks at every start), and on
+the login the first run signed in to: there is no separate wizard session to
+start or log in to. Switching auto-review on runs the steps this machine needs;
+Advanced runs any one of the rest.
 
-**The wizard's own pi session needs model credentials before it can say
-anything.** If you have neither a ChatGPT login on this machine nor
-`OPENAI_API_KEY` in your environment, log in from pi's own input line with
-`/login` when it starts. On the OAuth route that is login 1 of 3 (see
-[The LLM route](#the-llm-route)).
-
-## Running it
-
-```sh
-qcr onboard
-```
+## Its checklist
 
 Run it again any time. The checklist lives in
 `state/onboarding/checklist.json` (in the `qcr-state` volume), and **a step claimed done is always
@@ -65,9 +182,8 @@ resume, and a run on a finished installation is a diagnostic. A corrupt or
 unreadable checklist degrades to a fresh one rather than failing, because the
 resume re-verifies everything anyway.
 
-Start every session by asking for the status (the guide does this itself): it
-reconciles the file against the world and demotes anything that no longer holds,
-naming what broke.
+Each step re-checks the file against the world before it is believed, and
+demotes anything that no longer holds, naming what broke.
 
 ### What you need, and the fast path
 
@@ -83,11 +199,10 @@ Three things, and only three:
 The recommended path takes the defaults all the way: the reviewer on **this
 computer** (`local`), **polling** instead of webhooks, and **your own GitHub
 account** instead of an App. Setup ends there: once the stack verifies, the
-wizard opens the TUI on the board, which lists every open pull request of the
-repository. **Select one and press `R`** — the review starts at once, with no
-label to add, and its progress shows on the board. Every question
-the guide asks maps to a step's input; it never asks you for anything a tool
-cannot take.
+home's panel lists every open pull request of the repository. **Select one and
+press `alt+r`** — the review starts at once, with no label to add, and its
+progress shows in the panel. Every question a step asks maps to that step's
+input; nothing asks you for what a step cannot take.
 
 ## The checklist
 
@@ -120,9 +235,9 @@ it is answered, exactly one of 33 and 40 is enabled.
 | 78 | go live, or stay in dry-run (after setup) | both |
 
 Steps 76 and 78 are **after setup**: they run and verify like the others, but
-the checklist completes without them, so the wizard finishes once the stack
-verifies and the first review happens on the board (`R`). Re-run `qcr onboard`
-later to go live; it offers the flip once a review has completed.
+the checklist completes without them, so setup finishes once the stack
+verifies, and the first review happens in the home (`alt+r`). Going live is
+later, from the home, once a review has completed.
 
 ### 10 — Preflight
 
@@ -213,24 +328,27 @@ exactly the way an ssh passphrase would.
 Two routes, both fully supported. See [docs/llm-setup.md](llm-setup.md) for the
 cost shapes and the manual equivalents.
 
-**ChatGPT OAuth (subscription).** Flat cost, and the catch is stated up front:
+**ChatGPT OAuth (subscription).** A stack the home switches on needs none of
+the logins below: it shares the home's own login
+([One login per box](#one-login-per-box)). For the wizard's route, the cost is
+flat, and the catch is stated up front:
 pi's OAuth tokens live in the pi home of whichever process logged in and **do
 not transfer between your host and the containers**. Expect up to three separate
-browser logins — this wizard's own pi session, the daemon container, and the
-companion container. Each is guided where it happens, and each is verified to
+browser logins — the home's own pi (the first run's sign-in), the daemon
+container, and the companion container. Each is guided where it happens, and each is verified to
 have landed on that container's *persistent* pi-home volume, so a later
 container recreate never silently costs you the login. Any OpenAI login counts
 at each of them — "OpenAI Codex (legacy)", "OpenAI" (Sign in with ChatGPT), or
 an OpenAI API key at `/login` — because every model reaches pi on the OpenAI
-login that exists (see [docs/llm-setup.md](llm-setup.md)). The wizard's own
-session opens `/login` by itself the first time, when pi has no usable login.
+login that exists (see [docs/llm-setup.md](llm-setup.md)). The home's first
+run signs in by itself, when pi has no usable login.
 
 **An OpenAI API key.** One paste covers the daemon and its review sessions at
 once: it lands as the `openai_api_key` file in your secrets dir, `0600`, and the
 daemon container's entrypoint exports it as `OPENAI_API_KEY` for every pi
 process in it. It reaches no other process: the companion container is never
 handed the key file, so the companion keeps its own login (its model is on the
-OAuth provider by default), and this wizard's own pi reads `OPENAI_API_KEY`
+OAuth provider by default), and the home's own pi reads `OPENAI_API_KEY`
 only from its own environment. The wizard then rewrites all six
 model strings in `config.toml` from the `openai-codex/` provider prefix to
 `openai/` — comment-preserving, idempotent, and reversible, so switching routes
@@ -313,7 +431,7 @@ Three properties worth knowing:
 
 - **It patches, it does not rewrite.** Every comment, blank line and key order in
   your file survives; a commented-out assignment is uncommented in place, and a
-  spent `← FILL (n)` marker becomes `filled by qcr onboard`. A re-run whose
+  spent `← FILL (n)` marker becomes `filled by qcr`. A re-run whose
   answers all match produces a byte-identical file and does not touch the disk.
 - **It validates before writing.** The candidate is loaded with the daemon's own
   strict loader first; if it would not load, nothing reaches `config.toml`.
@@ -513,7 +631,7 @@ created, and the click is yours.
 
 On a hosted box whose browser is not on the same machine (a reverse proxy
 forwards a public https origin to the box's `127.0.0.1:8788`), set
-`QCR_ONBOARD_PUBLIC_ORIGIN=https://<public host>` before `qcr onboard`, and
+`QCR_ONBOARD_PUBLIC_ORIGIN=https://<public host>` before the wizard runs, and
 `QCR_ONBOARD_SETUP_URL` when the page you open is not the origin itself. The
 manifest's redirect URL becomes `<origin>/manifest-callback`, the listener
 admits the proxy's Host header beside loopback, and it binds port 8788
@@ -758,10 +876,8 @@ that App-scoped webhook redelivery — never a review, a label or a comment.
 
 ### 76 — The proof round (after setup)
 
-The first review normally happens on the board, after setup: `R` on a selected
-pull request sends the same `review-now` command. The step stays for a
-re-run of `qcr onboard` (go-live reads its record) and for anyone who asks the
-guide to review from the chat.
+The first review normally happens in the home, after setup: `alt+r` on a
+selected pull request. The step stays because going live reads its record.
 
 Call it with no answer and it lists the five most recently updated open pull
 requests in the repository, yours marked (on your own account your PRs are the
@@ -795,7 +911,7 @@ attach to the session and a login prompt there is your answer.
 
 ### 78 — Go live, or stay in dry-run (after setup)
 
-The last decision, and it is yours alone, made after setup: re-run `qcr onboard`
+The last decision, and it is yours alone, made after setup: re-run the wizard
 and ask for it. It is offered only after a completed
 proof round, and the wizard re-checks that round against the daemon's own state
 store first: this is the one decision it will not make on the strength of a
@@ -839,8 +955,7 @@ When every step is done, the finish tool re-runs the **entire** verification
 checklist. Anything red comes back as the answer and the session does not exit —
 onboarding is never presented as finished while something is broken. All green
 and it marks the checklist complete, writes
-`state/companion/first-run.json`, closes itself, and the `qcr onboard` process
-opens the TUI.
+`state/companion/first-run.json` and closes itself.
 
 ### The companion's first-run interview
 
@@ -878,7 +993,7 @@ conversation; it is not re-delivered as a mechanism, and it never nags.
 
 ## If it is interrupted
 
-Run `qcr onboard` again. Completed steps are re-verified, not repeated,
+Run the wizard again. Completed steps are re-verified, not repeated,
 and the session continues at the first unfinished one. Nothing you answered is
 asked twice: answers live in the checklist as recorded choices, and steps read
 each other's rather than re-asking.
@@ -906,7 +1021,7 @@ claim until `finish_and_exit` runs green again.
 
 There is no Windows-native path. Run everything inside **WSL2**: Docker
 (Docker Desktop's WSL2 backend, or Docker Engine inside the distro), the `qcr`
-wrapper, and `qcr onboard` itself. The preflight step depends on a POSIX user
+wrapper, and the wizard itself. The preflight step depends on a POSIX user
 id to match the containers' user to the files you own, and says so if it
 cannot find one.
 
@@ -926,8 +1041,8 @@ never starts anything, and never touches `dry_run`.
 ## Working on QuickReview itself
 
 A clone is for developing QuickReview, not for running it, and none of the
-above needs one. The developer route (build, test, and the wizard run from a
-checkout with `scripts/qcr onboard`) is in
+above needs one. The developer route (build, test, and the home run from a
+checkout with `scripts/qcr home`) is in
 [CONTRIBUTING.md](../CONTRIBUTING.md#running-from-a-clone).
 
 ## What the wizard will not do

@@ -285,7 +285,8 @@ describe("the posting module stays out of the daemon", () => {
     expect(text).not.toMatch(/\/reviews`,\s*\{\s*method/);
   });
 
-  it("only the local review route (the core's src/reviewapi.ts) imports it", () => {
+  // MUTATION: import reviewpost.js from any other module under src/ — this fails.
+  it("only the local review route (the core's src/reviewapi.ts and src/savedpost.ts) imports it", () => {
     const importers = SRC_DIRS.flatMap((d) =>
       readdirSync(join(ROOT, d))
         .filter((f) => f.endsWith(".ts") && f !== "reviewpost.ts")
@@ -296,7 +297,10 @@ describe("the posting module stays out of the daemon", () => {
         )
         .map((f) => `${d}/${f}`),
     );
-    expect(importers).toEqual(["packages/pi-plugin/src/reviewapi.ts"]);
+    expect(importers.sort()).toEqual([
+      "packages/pi-plugin/src/reviewapi.ts",
+      "packages/pi-plugin/src/savedpost.ts",
+    ]);
   });
 
   it("is not reachable from the daemon's files", () => {

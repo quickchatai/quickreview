@@ -43,7 +43,8 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { stopLiveSessions } from "@quickchatai/pi-quickreview/src/engine/livesessions.js";
 import {
   HEARTBEAT_FILE,
@@ -55,9 +56,10 @@ import {
   resolveBranch,
   resolveUncommitted,
 } from "@quickchatai/pi-quickreview/src/localreview.js";
-import { latestLiveRound, viewRound } from "./live/read.js";
+import { latestLiveRound, viewRound } from "@quickchatai/pi-quickreview/src/live/read.js";
+import { lensActivityLine, lensElapsedMs } from "@quickchatai/pi-quickreview/src/live/lensline.js";
 import { parsePrTarget } from "@quickchatai/pi-quickreview/src/prtarget.js";
-import { parseReviewArgs } from "./reviewcli.js";
+import { parseReviewArgs } from "./reviewargs.js";
 import {
   REVIEW_SCHEMA_VERSION,
   withSchemaVersion,
@@ -234,6 +236,9 @@ interface Observed {
   dir: string;
   state: RunState;
   exitCode: number | null;
+  /** When it ended, ms since the epoch: its exit's or its stop's time (a run
+   * recorded before the exit carried one has none). */
+  endedAt: number | null;
   result: unknown;
 }
 
@@ -243,8 +248,9 @@ function observe(home: string, runId: string, deps: Liveness): Observed | null {
   const dir = join(runsDir(home), runId);
   const run = readJson<RunRecord>(join(dir, "run.json"));
   if (run === null) return null;
-  const exit = readJson<{ code: number }>(join(dir, "exit.json"));
-  const stopped = existsSync(join(dir, "stopped.json"));
+  const exit = readJson<{ code: number; at?: number }>(join(dir, "exit.json"));
+  const stoppedAt = readJson<{ at?: number }>(join(dir, "stopped.json"));
+  const stopped = stoppedAt !== null || existsSync(join(dir, "stopped.json"));
   let state: RunState;
   // A run that was stopped and unwinds records a failing exit of its own on the
   // way out (an aborted turn has no result); `stop` is what ended it, so that
@@ -268,7 +274,15 @@ function observe(home: string, runId: string, deps: Liveness): Observed | null {
   } catch {
     // no output yet
   }
-  return { run, dir, state, exitCode: exit?.code ?? null, result };
+  const at = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) ? v : null;
+  const endedAt =
+    state === "running"
+      ? null
+      : state === "stopped"
+        ? (at(stoppedAt?.at) ?? at(exit?.at))
+        : at(exit?.at);
+  return { run, dir, state, exitCode: exit?.code ?? null, endedAt, result };
 }
 
 function allRuns(home: string, deps: Liveness): Observed[] {
@@ -285,7 +299,11 @@ function allRuns(home: string, deps: Liveness): Observed[] {
 }
 
 /** What a running review is doing, from its LiveEvent log projected to
- * round-progress v2 (src/live/): the same snapshot the bot's supervisor reads. */
+ * round-progress v2 (packages/pi-plugin/src/live/projection.ts): the same
+ * snapshot the bot's supervisor reads. Each lens carries what it is doing as
+ * it happens: its tool count, its current tool and the path that tool is on,
+ * and its time so far (a running lens's counts on from its start between
+ * updates). `line` is the same entry as one line a person reads. */
 interface LiveProgress {
   round: number;
   parent_status: "active" | "settled";
@@ -298,6 +316,8 @@ interface LiveProgress {
     duration_ms: number;
     tool_count: number;
     current_tool?: string;
+    current_target?: string;
+    line: string;
   }>;
 }
 
@@ -308,7 +328,7 @@ interface Progress {
 
 /** How far a run got: the lenses its stage record names (written when the round
  * ends) and, while it runs, its live log. */
-function progress(dir: string): Progress | null {
+function progress(dir: string, now: number): Progress | null {
   const work = join(dir, "work");
   let dirs: string[] = [];
   try {
@@ -342,9 +362,11 @@ function progress(dir: string): Progress | null {
         agents: snapshot.agents.map((a) => ({
           agent: a.agent,
           status: a.status,
-          duration_ms: a.duration_ms,
+          duration_ms: lensElapsedMs(a, now) ?? a.duration_ms,
           tool_count: a.tool_count,
           ...(a.current_tool ? { current_tool: a.current_tool } : {}),
+          ...(a.current_target ? { current_target: a.current_target } : {}),
+          line: lensActivityLine(a, { nowMs: now }),
         })),
       };
     }
@@ -358,9 +380,11 @@ function view(o: Observed, now: number): Record<string, unknown> {
     run_id: o.run.run_id,
     state: o.state,
     target: o.run.label,
-    elapsed_s: Math.max(0, Math.round((now - o.run.started_at) / 1000)),
+    started_at: o.run.started_at,
+    ...(o.endedAt !== null ? { ended_at: o.endedAt } : {}),
+    elapsed_s: Math.max(0, Math.round(((o.endedAt ?? now) - o.run.started_at) / 1000)),
     exit_code: o.exitCode,
-    ...(o.state === "running" ? { progress: progress(o.dir) } : { result: o.result }),
+    ...(o.state === "running" ? { progress: progress(o.dir, now) } : { result: o.result }),
     ...(o.state === "failed" && o.exitCode === null
       ? { errors: [`the review process ended without a result; see ${join(o.dir, "driver.log")}`] }
       : {}),
@@ -378,11 +402,30 @@ function text(v: Record<string, unknown>): string {
       const names = by(s);
       if (names.length > 0) bits.push(`${s}: ${names.join(", ")}`);
     }
+    for (const a of p.live.agents) if (a.status === "running") bits.push(`  ${a.line}`);
     bits.push(`now: ${p.live.last_activity}`);
   }
   const errs = v["errors"] as string[] | undefined;
   if (errs) bits.push(...errs);
   return bits.join("\n");
+}
+
+/** One run as `status --json` reports it, with the review's own arguments. */
+export interface RunView {
+  view: Record<string, unknown>;
+  argv: readonly string[];
+}
+
+/** Every run in the registry at `home`, oldest first, each as `status`
+ * reports it: what a host re-attaches to after a restart. */
+export function listRunViews(home: string, deps: Liveness): RunView[] {
+  return allRuns(home, deps).map((o) => ({ view: view(o, deps.now()), argv: o.run.argv }));
+}
+
+/** One run as `status` reports it; null when there is no such run. */
+export function runView(home: string, runId: string, deps: Liveness): RunView | null {
+  const o = observe(home, runId, deps);
+  return o === null ? null : { view: view(o, deps.now()), argv: o.run.argv };
 }
 
 /** Run one `start | status | stop`; resolves its exit code. */
@@ -652,7 +695,7 @@ export async function runDetachedChild(o: {
     proc.off("SIGINT", onSignal);
     proc.off("SIGTERM", onSignal);
   }
-  writeFileSync(join(o.dir, "exit.json"), JSON.stringify({ code }));
+  writeFileSync(join(o.dir, "exit.json"), JSON.stringify({ code, at: Date.now() }));
   // only this run's own claim: a stop frees the lock for a newer run
   const lock = lockPath(dirname(dirname(o.dir)), o.key);
   if (readJson<{ run_id?: string }>(lock)?.run_id === basename(o.dir))
@@ -725,10 +768,61 @@ export async function runWatchdog(
           }),
         )}\n`,
       );
-      writeFileSync(join(w.dir, "exit.json"), JSON.stringify({ code: WATCHDOG_EXIT_CODE }));
+      writeFileSync(
+        join(w.dir, "exit.json"),
+        JSON.stringify({ code: WATCHDOG_EXIT_CODE, at: deps.now() }),
+      );
       rmSync(lockPath(dirname(dirname(w.dir)), w.key), { force: true });
       return "killed";
     }
     await deps.sleep(deps.pollMs ?? 2_000);
   }
+}
+
+/** The CLI entry the detached driver re-runs: `cli` beside this module. Read
+ * from where this module is, not from `process.argv[1]`, which is whatever the
+ * person launched (a bin symlink, a wrapper, a test runner). */
+export function detachedEntry(metaUrl: string = import.meta.url): string {
+  return fileURLToPath(new URL(`./cli${extname(fileURLToPath(metaUrl))}`, metaUrl));
+}
+
+/** The process `qcr review start` detaches: this node, this entry, the run's
+ * directory and key, the review's own arguments. */
+export function detachedCommand(
+  l: { dir: string; key: string; argv: readonly string[] },
+  o: { entry?: string; execPath?: string; execArgv?: readonly string[] } = {},
+): { command: string; args: string[] } {
+  return {
+    command: o.execPath ?? process.execPath,
+    args: [
+      ...(o.execArgv ?? process.execArgv),
+      o.entry ?? detachedEntry(),
+      "review",
+      "--detached-run",
+      l.dir,
+      l.key,
+      ...l.argv,
+      "--json",
+    ],
+  };
+}
+
+/** The watchdog `qcr review start` detaches beside the run: this node, this
+ * entry, the run's directory, key and driver pid. */
+export function watchdogCommand(
+  w: { dir: string; key: string; pid: number },
+  o: { entry?: string; execPath?: string; execArgv?: readonly string[] } = {},
+): { command: string; args: string[] } {
+  return {
+    command: o.execPath ?? process.execPath,
+    args: [
+      ...(o.execArgv ?? process.execArgv),
+      o.entry ?? detachedEntry(),
+      "review",
+      "--watchdog",
+      w.dir,
+      w.key,
+      String(w.pid),
+    ],
+  };
 }

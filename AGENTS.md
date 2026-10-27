@@ -18,9 +18,10 @@ The repository publishes two npm packages. The root is
 `@quickchatai/quickreview`, the whole app with the `qcr` bin (TUI, daemon,
 companion, every verb); the release image runs this same package.
 `packages/pi-plugin` is `@quickchatai/pi-quickreview`, the review core and
-the pi plugin over it (`/review`, `/scan`, `/qcr-setup`, `/selfimprove`),
-installable on its own with `pi install npm:@quickchatai/pi-quickreview`. The
-app depends on the core at its exact version.
+the pi plugin over it (`/qcr-review`, `/qcr-scan`, `/qcr-setup`, each also a
+skill), installable on its own with `pi install npm:@quickchatai/pi-quickreview`.
+The app depends on the core at its exact version, and its own pi (`qcr pi`)
+adds `/selfimprove`.
 
 Read [`README.md`](README.md) for what the system does for its user, and
 [`MANIFESTO.md`](MANIFESTO.md) for the beliefs it implements. This file is the
@@ -236,6 +237,7 @@ the fence.
 | Operator surfaces | `src/tui/` (board, tabs, companion column), `src/cli.ts` (`qcr`), `src/slack/`, `src/commands.ts` + `src/levers.ts` |
 | Assembly | `src/daemon.ts` (stub-wired core, test-friendly) vs `src/wire.ts` (production wiring) |
 | Onboarding | `src/onboard/`, `extensions/onboarding.ts`, [`docs/onboarding.md`](docs/onboarding.md) |
+| The home (a bare `qcr`) | `src/home/launch.ts` (the pinned pi, quiet, on the person's own pi home), `extensions/home.ts` (`createHome` over the ports; every action a key and a `home_*` tool), `src/home/model.ts` (state and actions, the review button), `src/home/panel.ts` (the overlay), `src/home/review.ts` (a review's progress model), `src/home/ports.ts` + `src/home/adapters.ts` + `src/home/reviews.ts` (the reviews port: preview, the detached registry's start/status/stop, the review state, the daemon's rounds, the post of a kept review) |
 | The pi plugin | `packages/pi-plugin/src/plugin/` (the entry `index.ts`, the commands, `versiongate.ts` for the `^1.4.0` pi range, `login.ts` for the borrowed host login), `packages/pi-plugin/src/reviewapi.ts`, [`packages/pi-plugin/README.md`](packages/pi-plugin/README.md) |
 | The npm CLI | `bin/qcr.js` → `src/qcrbin.ts` (the bin's front door: bare `qcr`, `review`, `login`, `pi`, `update`, `version`), `src/npmverbs.ts`, `src/updatenotice.ts`; every other verb goes to `src/cli.ts` |
 

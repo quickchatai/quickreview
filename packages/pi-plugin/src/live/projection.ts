@@ -16,7 +16,15 @@
 // `started_at` taken from an update can differ from the extension's by that
 // much. Nothing the supervisor decides on (the milestones' order, statuses,
 // command identity) depends on it.
-import { parseSessionCommandMarker } from "@quickchatai/pi-quickreview/src/session-command.js";
+//
+// One field goes past the extension: `current_target`, the path a running
+// lens's current tool works on, which only our lens tools report (their
+// `progress.currentTarget`, engine/lens/activity.ts). A native round carries
+// none, so its projection is the extension's to the byte.
+//
+// It lives in the core so the plugin can read a running review's lenses
+// (its status line) the way `qcr review status` and the bot's publisher do.
+import { parseSessionCommandMarker } from "../session-command.js";
 import {
   isLiveAgentStatus,
   type LiveAgentProgress,
@@ -25,8 +33,8 @@ import {
   type ProgressLogLine,
   type ProgressTransition,
   type RoundProgressSnapshot,
-} from "@quickchatai/pi-quickreview/src/round-progress.js";
-import type { LiveEvent, LiveResult } from "@quickchatai/pi-quickreview/src/live/events.js";
+} from "../round-progress.js";
+import type { LiveEvent, LiveResult } from "./events.js";
 
 function text(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
@@ -86,6 +94,9 @@ function asAgent(
         ? "running"
         : status(undefined, exit);
   const tool = currentTool(progress) ?? (live ? native.last_tool : undefined);
+  // Our lens tools name the path a running child is on; the native shape never
+  // did, so a recorded native round projects exactly as before.
+  const target = st === "running" ? text(progress?.current_target) : undefined;
   const last = text(progress?.last_message) ?? native.last_text;
   return {
     agent,
@@ -93,6 +104,7 @@ function asAgent(
     duration_ms: number(progress?.duration_ms),
     tool_count: number(progress?.tool_count) || native.tool_count,
     ...(tool ? { current_tool: tool } : {}),
+    ...(target ? { current_target: target } : {}),
     ...(last ? { last_message: last } : {}),
     ...(error ? { error } : {}),
   };
@@ -374,8 +386,9 @@ export class RoundProgressProjection {
       const previous = this.agents.get(key);
       // A parallel slot can finish while its siblings still run: a terminal
       // record carries its completion milestone from the first update that
-      // reports it, and a running one never carries one.
-      const { finished_at: previousFinished, ...kept } = previous ?? {};
+      // reports it, and a running one never carries one. The path a child is
+      // on is its latest line's alone: a tool with no path, or an end, has none.
+      const { finished_at: previousFinished, current_target, ...kept } = previous ?? {};
       const next: LiveAgentProgress = {
         ...kept,
         ...agent,
@@ -417,7 +430,7 @@ export class RoundProgressProjection {
       const previous = this.agents.get(key);
       // A child the call returns still running (a placeholder) carries no
       // finish time, as in toolUpdate: the parser refuses the pair.
-      const { finished_at: previousFinished, ...kept } = previous ?? {};
+      const { finished_at: previousFinished, current_target, ...kept } = previous ?? {};
       const finalAgent: LiveAgentProgress = {
         ...kept,
         ...agent,
@@ -450,6 +463,8 @@ export class RoundProgressProjection {
           status: failed ? "failed" : "completed",
           finished_at: previous?.finished_at ?? this.nowIso(),
         };
+        // An ended pass is on no file.
+        delete finalAgent.current_target;
         this.agents.set(key, finalAgent);
         finalAgents.push(finalAgent);
         this.passEnded(finalAgent);

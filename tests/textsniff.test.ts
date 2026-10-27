@@ -1,10 +1,14 @@
-// Text or binary (src/setup/textsniff.ts): one answer for every reader of the
+// Text or binary (packages/pi-plugin/src/scan/textsniff.ts): one answer for every reader of the
 // reviewed checkout. Selfscan round 6 found src/eodpinwatch.ts — a source
 // file with ONE literal NUL inside a template literal — dropped from every
 // lens's coverage by git's bare "any NUL is binary" probe.
 import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { escapeControls, isBinaryContent, isBinaryPath } from "../src/setup/textsniff.js";
+import {
+  escapeControls,
+  isBinaryContent,
+  isBinaryPath,
+} from "@quickchatai/pi-quickreview/src/scan/textsniff.js";
 
 const PNG = Buffer.concat([
   Buffer.from([

@@ -20,7 +20,7 @@ import {
   type ReportedFinding,
   type ScanFinding,
 } from "../src/setup/findings.js";
-import type { LedgerEntry } from "../src/setup/ledger.js";
+import type { LedgerEntry } from "@quickchatai/pi-quickreview/src/scan/ledger.js";
 import { FINDINGS_FILE, parseFindingsFile } from "../src/setup/scanreport.js";
 
 let stateDir: string;

@@ -1,5 +1,5 @@
 // Stage 2's price for a row the ledger never measured at its own settings
-// (src/setup/stage2.ts priceStage2Row), at the pricing seam with fake ledger
+// (packages/pi-plugin/src/scan/stage2.ts priceStage2Row), at the pricing seam with fake ledger
 // rows. Pricing every unmeasured row at stage 1's rate × the coarse
 // `unmeasured_rate_factor` overprices it badly and makes a budget fit cut rows
 // it could afford, so the prior is LEARNED where the ledger can teach it:
@@ -7,8 +7,8 @@
 // measured at the other setting.
 import { describe, expect, it } from "vitest";
 import { SCAN_DEFAULTS } from "../src/config.js";
-import type { LedgerEntry } from "../src/setup/ledger.js";
-import { priceStage2Row, type RowPrice } from "../src/setup/stage2.js";
+import type { LedgerEntry } from "@quickchatai/pi-quickreview/src/scan/ledger.js";
+import { priceStage2Row, type RowPrice } from "@quickchatai/pi-quickreview/src/scan/stage2.js";
 import { priceIsMeasured, priceLabel } from "../src/setup/stage2request.js";
 
 let n = 0;

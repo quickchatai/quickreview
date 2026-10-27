@@ -1,15 +1,11 @@
-// Finding and reading a round's LiveEvent logs: what `qcr review status` and
-// `qcr live` do with a run directory. No writer and no engine here, so a
-// daemon-side or TUI reader can import it.
+// Finding and reading a round's LiveEvent logs: what `qcr review status`,
+// `qcr live` and the plugin's status line do with a run directory. No writer
+// and no engine here, so a daemon-side or TUI reader can import it.
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import {
-  LIVE_MAIN_FILE,
-  readLiveEvents,
-  type LiveEvent,
-} from "@quickchatai/pi-quickreview/src/live/events.js";
+import { LIVE_MAIN_FILE, readLiveEvents, type LiveEvent } from "./events.js";
 import { projectRoundProgress } from "./projection.js";
-import type { RoundProgressSnapshot } from "@quickchatai/pi-quickreview/src/round-progress.js";
+import type { RoundProgressSnapshot } from "../round-progress.js";
 
 export interface LiveRoundRef {
   /** `state/live/<key>/r<round>` */

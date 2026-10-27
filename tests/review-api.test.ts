@@ -257,6 +257,78 @@ describe("review(): the local review as a call", () => {
     expect(existsSync(nowhere)).toBe(false);
   });
 
+  // The bare /qcr-review: the branch's commits and the working tree's edits,
+  // reviewed as one. MUTATION: drop the uncommitted option from the branch's
+  // resolution — the edit is missing from the plan, and this fails.
+  it(
+    "a branch with its uncommitted changes plans both as one review, and keeps no state",
+    { timeout: 30_000 },
+    async () => {
+      const faux = pricedFaux(() => 0.25, { provider: "faux", models: [{ id: "m" }] });
+      const { runtime, created } = fauxRuntime(faux);
+      const opts = options("with-edits", runtime);
+      // an edit to the committed file, and a file git has never seen
+      writeFileSync(
+        join(opts.repoDir, "src", "a.ts"),
+        "export const a = 1;\nexport const b = 2;\nexport const c = 4;\n",
+      );
+      writeFileSync(join(opts.repoDir, "src", "new.ts"), "export const n = 0;\n");
+      const both = await preview({ kind: "branch", uncommitted: true }, opts);
+      expect(both.exitCode, both.text).toBe(0);
+      expect(schemaErrors(both.data)).toEqual([]);
+      const p = both.data["preview"] as {
+        target: { kind: string; uncommitted?: boolean };
+        files: number;
+        key: string;
+      };
+      expect(p.target).toEqual({ kind: "branch", uncommitted: true });
+      expect(p.files).toBe(2);
+      expect(both.text).toMatch(/Review feature against main, with its uncommitted changes/);
+      // the committed branch alone is the one file, and keys apart
+      const committed = await preview({ kind: "branch" }, opts);
+      const c = committed.data["preview"] as { target: object; files: number; key: string };
+      expect(c.target).toEqual({ kind: "branch" });
+      expect(c.files).toBe(1);
+      expect(c.key).not.toBe(p.key);
+      // the person's index and files are as they were
+      expect(git(opts.repoDir, "status", "--porcelain")).toBe("M src/a.ts\n?? src/new.ts".trim());
+      expect(created()).toBe(0);
+    },
+  );
+
+  it(
+    "a clean tree with uncommitted asked for is the branch review itself",
+    { timeout: 30_000 },
+    async () => {
+      const faux = pricedFaux(() => 0.25, { provider: "faux", models: [{ id: "m" }] });
+      const { runtime } = fauxRuntime(faux);
+      const opts = options("clean-edits", runtime);
+      const r = await preview({ kind: "branch", uncommitted: true }, opts);
+      expect(r.exitCode, r.text).toBe(0);
+      const p = r.data["preview"] as { target: object; files: number };
+      expect(p.target).toEqual({ kind: "branch" });
+      expect(p.files).toBe(1);
+    },
+  );
+
+  it(
+    "a named branch is that branch's commits, whatever is checked out",
+    { timeout: 30_000 },
+    async () => {
+      const faux = pricedFaux(() => 0.25, { provider: "faux", models: [{ id: "m" }] });
+      const { runtime } = fauxRuntime(faux);
+      const opts = options("named", runtime);
+      git(opts.repoDir, "checkout", "-q", "main");
+      const r = await preview({ kind: "branch", head: "feature" }, opts);
+      expect(r.exitCode, r.text).toBe(0);
+      expect((r.data["preview"] as { branch: string; files: number }).branch).toBe("feature");
+      expect((r.data["preview"] as { files: number }).files).toBe(1);
+      const missing = await preview({ kind: "branch", head: "nope" }, opts);
+      expect(missing.exitCode).toBe(1);
+      expect(missing.text).toMatch(/nope is not a branch or commit/);
+    },
+  );
+
   it("a signal aborted before the run starts no session", { timeout: 30_000 }, async () => {
     const faux = pricedFaux(() => 0.25, { provider: "faux", models: [{ id: "m" }] });
     const { runtime, created } = fauxRuntime(faux);

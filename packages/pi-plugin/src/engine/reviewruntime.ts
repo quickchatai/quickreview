@@ -3,7 +3,7 @@
 // engine's lens tools and, with `[pi] engine_wave`, the board the round starts
 // the planned wave on. Each host route builds it with its own process facts:
 // `qcr review` owns its process (a wedged turn exits it, diagnostics go to
-// stderr); the pi plugin's /review runs inside the user's pi, owns nothing,
+// stderr); the pi plugin's /qcr-review runs inside the user's pi, owns nothing,
 // and leaves a wedged turn to its own sessions' abort.
 //
 // The SDK host loads on the first session, not here: a preview, a refusal and

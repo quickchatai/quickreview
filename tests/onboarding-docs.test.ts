@@ -1,6 +1,6 @@
 // The onboarding docs are pinned to the onboarding code.
 //
-// `qcr onboard` composes the tools the manual path documents, so the wizard and
+// The setup wizard composes the tools the manual path documents, so the wizard and
 // the docs must describe ONE truth — drift between them is the bug this suite
 // exists to catch. It asserts the load-bearing FACTS only (step ids and orders,
 // label names, ingress option ids and their compose profiles, the entry
@@ -131,31 +131,39 @@ describe("the GitHub App doc matches the labels the wizard creates", () => {
 });
 
 describe("the entry point is the one the docs promise", () => {
-  // The user docs tell a reader to run `qcr onboard` (the host wrapper the
-  // image installs); the developer docs tell a contributor to run it from a
-  // clone with `scripts/qcr onboard` / `npm run onboard`, so that script must
-  // exist and run the wrapper.
-  const pkg = JSON.parse(read("package.json")) as { scripts?: Record<string, string> };
+  // The user docs tell a reader to run a bare `qcr` (the home); the developer
+  // docs tell a contributor to run it from a clone with `scripts/qcr home`,
+  // the wrapper over the app's main, which knows the verb. `qcr onboard` is
+  // gone, and no doc may send anyone to it.
+  const DOCS = [
+    "README.md",
+    "CONTRIBUTING.md",
+    "docs/onboarding.md",
+    "docs/tui.md",
+    "docs/llm-setup.md",
+    "docs/github-app-setup.md",
+    "docker/README.md",
+    "deploy/ansible/README.md",
+    "config.example.toml",
+  ];
 
-  it("package.json carries an onboard script that runs the wrapper", () => {
-    const script = pkg.scripts?.onboard;
-    expect(script, "package.json has no `onboard` script").toBeDefined();
-    expect(script, "the onboard script must invoke the same wrapper the docs name").toContain(
-      "scripts/qcr",
-    );
-    expect(script).toContain("onboard");
+  // MUTATION: put "qcr onboard" back as an instruction in README.md — this fails.
+  it("no doc tells anyone to run qcr onboard", () => {
+    for (const name of DOCS) {
+      const doc = read(name).replace(/`qcr onboard`, the wizard's own door, is gone/, "");
+      expect(doc, name).not.toMatch(/qcr onboard|npm run onboard/);
+    }
   });
 
   it("the wrapper the docs name exists and the CLI knows the verb", () => {
     expect(read("scripts/qcr")).toContain("dist/src/cli.js");
-    expect(read("src/cli.ts")).toContain('case "onboard"');
-    expect(read("CONTRIBUTING.md")).toContain("scripts/qcr onboard");
+    expect(read("src/cli.ts")).toContain('case "home"');
+    expect(read("CONTRIBUTING.md")).toContain("scripts/qcr home");
   });
 
-  it("the user entry point is the host wrapper's, the clone one is in the developer section", () => {
-    expect(onboardingDoc).toContain("```sh\nqcr onboard\n```");
-    expect(readme).toContain("qcr onboard");
-    expect(read("CONTRIBUTING.md")).toContain("npm run onboard");
+  it("the user entry point is a bare qcr, the clone one is in the developer section", () => {
+    expect(onboardingDoc).toContain("```sh\nqcr\n```");
+    expect(readme).toMatch(/^qcr {2,}# the home/m);
     expect(read("scripts/install-wrapper.sh")).toContain("qcr");
   });
 
@@ -177,7 +185,7 @@ describe("the quickstart leads with the onboarding command", () => {
       readme.indexOf("### Where the reviewer lives"),
     );
     expect(quickstart, "the Quickstart section was not found").not.toBe("");
-    expect(quickstart).toContain("qcr onboard");
+    expect(quickstart).toMatch(/^qcr {2,}# the home/m);
     expect(readme).toContain("docs/onboarding.md");
   });
 
@@ -199,7 +207,7 @@ describe("the quickstart leads with the onboarding command", () => {
       ["docker/README.md", dockerDoc],
     ] as const) {
       expect(doc, `${name} must point at the guided path it is the manual half of`).toContain(
-        "qcr onboard",
+        "docs/onboarding.md",
       );
     }
   });

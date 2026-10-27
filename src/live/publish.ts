@@ -17,7 +17,10 @@ import {
   progressLogPath,
 } from "@quickchatai/pi-quickreview/src/round-progress.js";
 import { readLiveEvents } from "@quickchatai/pi-quickreview/src/live/events.js";
-import { RoundProgressProjection, type ProjectionIdentity } from "./projection.js";
+import {
+  RoundProgressProjection,
+  type ProjectionIdentity,
+} from "@quickchatai/pi-quickreview/src/live/projection.js";
 
 /** `<root>/state/round-progress/pr-<n>.json`, where the supervisor reads it. */
 export function roundProgressPath(root: string, pr: number): string {

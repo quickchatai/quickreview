@@ -164,8 +164,15 @@ const shipped = (root: string, path: string): boolean => existsSync(join(root, p
 
 // ---- the repo profile --------------------------------------------------------------
 
-/** Top-level `profile.toml` keys a repo profile may set. */
-const REPO_TOML_KEYS = new Set(["ecosystem", "lenses", "scan", "posting", "addenda"]);
+/** Top-level `profile.toml` keys a repo profile may set (/qcr-setup's
+ * profile brief names them too). */
+export const REPO_TOML_KEYS: ReadonlySet<string> = new Set([
+  "ecosystem",
+  "lenses",
+  "scan",
+  "posting",
+  "addenda",
+]);
 /** Keys named for what they would reach, so the refusal says why. */
 const GUARDED_KEY = /^(dry_run|github|secrets?(_dir)?|guard|bash_guard|gate|posting_gate)$/i;
 

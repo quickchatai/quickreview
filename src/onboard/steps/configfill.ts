@@ -121,8 +121,11 @@ function escapeRe(s: string): string {
  * marker in place — the EXPLANATION after it is the part worth keeping. */
 export function rewriteFillMarker(comment: string): string {
   if (!/←\s*FILL/.test(comment)) return comment;
-  return comment.replace(/←\s*FILL(\s*\(\d+\))?\s*:?\s*/, "filled by qcr onboard: ");
+  return comment.replace(/←\s*FILL(\s*\(\d+\))?\s*:?\s*/, "filled by qcr: ");
 }
+
+/** A line without the CR of its CRLF ending. */
+const bare = (line: string): string => line.replace(/\r$/, "");
 
 function sectionAt(lines: string[]): string[] {
   const out: string[] = [];
@@ -135,10 +138,12 @@ function sectionAt(lines: string[]): string[] {
       if (splitTail(continuation) !== null) continuation = null;
       continue;
     }
-    const m = HEADER_RE.exec(line);
+    const m = HEADER_RE.exec(bare(line));
     if (m) cur = m[1]!.trim();
     out.push(cur);
-    const assignment = /^\s*(?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+)\s*=\s*(.*)$/.exec(line);
+    const assignment = /^\s*(?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+)\s*=\s*(.*)$/.exec(
+      bare(line),
+    );
     if (assignment && splitTail(assignment[1]!) === null) continuation = assignment[1]!;
   }
   return out;
@@ -149,9 +154,18 @@ function sectionAt(lines: string[]): string[] {
  * key order. An existing assignment has only its VALUE replaced (its trailing
  * comment survives, with a spent `← FILL` marker rewritten); a commented-out
  * assignment is uncommented in place; a key absent from its section is appended
- * to the end of that section; a missing section is appended at EOF.
+ * to the end of that section; a missing section is appended at EOF. Line
+ * endings survive too: a CRLF file is patched as LF and given its CRs back, so
+ * an edited or added line ends the way every other line does, and in a file of
+ * mixed endings the edited line keeps its own.
  */
 export function patchToml(text: string, edits: readonly TomlEdit[]): string {
+  if (text.includes("\r\n") && !/(^|[^\r])\n/.test(text))
+    return patchLines(text.replace(/\r\n/g, "\n"), edits).replace(/\n/g, "\r\n");
+  return patchLines(text, edits);
+}
+
+function patchLines(text: string, edits: readonly TomlEdit[]): string {
   const lines = text.split("\n");
   for (const edit of edits) {
     const sections = sectionAt(lines);
@@ -162,7 +176,7 @@ export function patchToml(text: string, edits: readonly TomlEdit[]): string {
     for (const re of [live, commented]) {
       for (let i = 0; i < lines.length && !applied; i++) {
         if (sections[i] !== edit.section) continue;
-        const m = re.exec(lines[i]!);
+        const m = re.exec(bare(lines[i]!));
         if (!m) continue;
         try {
           if (!Object.hasOwn(parseToml(`${m[2]} = 0`), edit.key)) continue;
@@ -171,11 +185,13 @@ export function patchToml(text: string, edits: readonly TomlEdit[]): string {
         }
         let end = i;
         let tail = m[4]!;
-        while (splitTail(tail) === null && end + 1 < lines.length) tail += "\n" + lines[++end]!;
+        while (splitTail(tail) === null && end + 1 < lines.length)
+          tail += "\n" + bare(lines[++end]!);
         const parts = splitTail(tail);
         if (!parts) throw new Error(`cannot patch unterminated TOML assignment ${edit.key}`);
         const comment = parts.comment ? `${parts.gap}${rewriteFillMarker(parts.comment)}` : "";
-        lines.splice(i, end - i + 1, `${m[1]}${m[2]}${m[3]}${edit.value}${comment}`);
+        const cr = lines[end]!.endsWith("\r") ? "\r" : "";
+        lines.splice(i, end - i + 1, `${m[1]}${m[2]}${m[3]}${edit.value}${comment}${cr}`);
         applied = true;
       }
       if (applied) break;

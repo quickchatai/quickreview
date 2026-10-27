@@ -88,7 +88,7 @@ export function piGate(running: string, range: string): string | null {
   if (satisfiesRange(running, range)) return null;
   return (
     `QuickReview runs on pi ${range}, and this pi is ${running || "an unknown version"}: ` +
-    "its commands (/review, /scan, /qcr-setup, /selfimprove) are not loaded. " +
+    "its commands (/qcr-review, /qcr-scan, /qcr-setup) are not loaded. " +
     `Use a pi in ${range}, or a QuickReview release made for this pi.`
   );
 }

@@ -66,19 +66,11 @@
 // and covered at its depth: a standard reading never covers a deep row, and a
 // price measured at the other depth is borrowed only when nothing at the
 // row's own depth prices it as well — and the price says so (`across_depth`).
-import type { ScanDepth } from "../config.js";
-import { globMatcher } from "@quickchatai/pi-quickreview/src/glob.js";
-import { isSweepSkipped, isTestFile } from "@quickchatai/pi-quickreview/src/heuristics.js";
-import {
-  lensEnabled,
-  flooredTier,
-  type LensTuningMap,
-} from "@quickchatai/pi-quickreview/src/lenstuning.js";
-import {
-  PASS_TIER_ORDER,
-  tiersAtOrAbove,
-  type PassTier,
-} from "@quickchatai/pi-quickreview/src/types.js";
+import type { ScanDepth } from "../reviewconfig.js";
+import { globMatcher } from "../glob.js";
+import { isSweepSkipped, isTestFile } from "../heuristics.js";
+import { lensEnabled, flooredTier, type LensTuningMap } from "../lenstuning.js";
+import { PASS_TIER_ORDER, tiersAtOrAbove, type PassTier } from "../types.js";
 import {
   caseEstimate,
   coverKey,

@@ -48,6 +48,8 @@ export const SANDBOX_AUTH_WRITERS: Readonly<Record<string, string>> = {
   "src/bench/auth.ts": "the benchmark sandbox's empty or blanked login in its own tmpfs",
   "src/bench/opencode.ts": "OpenCode's auth.json in the case's own data dir",
   "packages/pi-plugin/src/reviewhost.ts": "a review run's throwaway agent dir (the host isolation)",
+  "packages/pi-plugin/src/plugin/scancases.ts":
+    "a scan case's throwaway agent dir: an empty store when the host pi keeps none",
   "scripts/action.sh": "the Action's per-run login dir, from its own input",
   "scripts/worker-rehearsal/layout.sh":
     "the worker rehearsal's throwaway host dir: a fake far-future login in the pihome it lays out",

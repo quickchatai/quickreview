@@ -25,8 +25,11 @@ import {
 import { setupLine, setupStateOf } from "../src/tui/setupstate.js";
 import { unknownSourceLines, unknownDetailLines } from "../src/tui/board.js";
 import { stripAnsi } from "../src/tui/paint.js";
-import { configFillStep } from "../src/onboard/steps/configfill.js";
+import { escalationStep } from "../src/onboard/steps/escalation.js";
 import { githubAccountStep } from "../src/onboard/steps/githubaccount.js";
+import { GO_LIVE_STEP_ID } from "../src/onboard/steps/golive.js";
+import { PROOF_STEP_ID } from "../src/onboard/steps/proof.js";
+import { MACHINE_CHECKS_STEP_ID, SWITCH_ON_ORDER, switchOnRegistry } from "../src/home/switchon.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const TEMPLATE: TuiConfig = { ...TUI_DEFAULTS, ssh_host: "" }; // config.example.toml's [tui]
@@ -88,11 +91,11 @@ describe("resolveTuiRoute — the template config before onboarding has filled i
     expect(r.cfg.target).toBe("ssh");
     expect(r.unconfigured).toBe(EMPTY_SSH_HOST);
     expect(EMPTY_SSH_HOST).toBe(
-      '[tui] ssh_host is empty — run `qcr onboard`, or set [tui] target = "local"',
+      `[tui] ssh_host is empty — set it to the VM's ssh alias, or set [tui] target = "local"`,
     );
     // A recorded VM route is told where its alias comes from.
     const vm = resolveTuiRoute(TEMPLATE, facts({ checklist: checklist({ topology: "vm" }) }));
-    expect(vm.unconfigured).toMatch(/VM route's ssh alias is written by onboarding/);
+    expect(vm.unconfigured).toMatch(/set it to the VM's ssh alias in config\.toml/);
   });
 
   it("never touches a configured ssh route", () => {
@@ -178,22 +181,41 @@ describe("the setup banner", () => {
     expect(await setupStateOf({ ...done, reopened_at: "2026-10-24T02:00:00Z" })).toBeDefined();
   });
 
+  // MUTATION: judge the checklist against the wizard's defaultSteps again, or
+  // name a step when none is left — this fails.
   it(
-    "names the wizard's next enabled step, in the wizard's own order",
+    "names the home's next step, in switch-on's order, and is absent once the home has none left",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
       const s = await setupStateOf(
-        checklist({ topology: "local" }, ["preflight", "topology", "llm_auth"]),
+        checklist({ topology: "local" }, [MACHINE_CHECKS_STEP_ID, "topology"]),
       );
-      // The GitHub step (order 33) comes before the config fill.
       expect(s?.next).toBe(githubAccountStep().title);
       expect(setupLine(s!)).toBe(
-        `setup not finished — run \`qcr onboard\` to continue (next: ${githubAccountStep().title})`,
+        `setup not finished — run \`qcr\` to finish setting up (next: ${githubAccountStep().title})`,
       );
       const after = await setupStateOf(
-        checklist({ topology: "local" }, ["preflight", "topology", "llm_auth", "github_account"]),
+        checklist({ topology: "local" }, [MACHINE_CHECKS_STEP_ID, "topology", "github_account"]),
       );
-      expect(after?.next).toBe(configFillStep().title);
+      expect(after?.next).toBe(escalationStep().title);
+      // A switch-on that walked every step on the own-account route leaves
+      // nothing the home could finish: no banner, though the wizard's finish
+      // (completed_at) never ran and the legacy wizard's own steps (its
+      // config fill, its llm_auth) are not recorded. The proof round and the
+      // go-live are optional.
+      const walked = SWITCH_ON_ORDER.filter((id) => id !== PROOF_STEP_ID && id !== GO_LIVE_STEP_ID);
+      expect(
+        await setupStateOf(checklist({ topology: "local", github_auth: "user" }, walked)),
+      ).toBeUndefined();
+      // a switch-on step left undone is named
+      const undone = await setupStateOf(
+        checklist({ topology: "local", github_auth: "user" }, walked.slice(0, -1)),
+      );
+      expect(undone?.next).toBe(
+        switchOnRegistry()
+          .steps()
+          .find((x) => x.id === walked.at(-1))?.title,
+      );
     },
   );
 
@@ -201,11 +223,11 @@ describe("the setup banner", () => {
     const conn = {
       kind: "unconfigured" as const,
       cause: EMPTY_SSH_HOST,
-      remedy: "qcr onboard",
+      remedy: "set [tui] ssh_host in config.toml",
     };
     const lines = unknownSourceLines(conn, 200, { next: "Interview" }).map(stripAnsi);
     expect(lines.join("\n")).toContain(
-      "setup not finished — run `qcr onboard` to continue (next: Interview)",
+      "setup not finished — run `qcr` to finish setting up (next: Interview)",
     );
     expect(lines.join("\n")).not.toMatch(/ssh|run this:/);
     // Unknown stays unknown: the count line is still the honest one.

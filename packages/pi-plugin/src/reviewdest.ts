@@ -1,7 +1,8 @@
 // Where a local review's result goes: shown to the person, saved as files,
-// JSON back to an agent, or posted to the PR. The same rules hold for every
-// surface that runs a review (`qcr review` in a terminal, the pi plugin's
-// /review in a session):
+// JSON back to an agent, or posted to the PR. These rules are `qcr review`'s
+// in a terminal. The pi plugin's /qcr-review asks none of this: it shows the
+// result in the session and keeps it as files, and offers a post after the
+// review by the person's posting rule (src/plugin/settings.ts):
 //
 //   - flags (`--to`, `--json`, `--out`) decide, when given;
 //   - else the repo's saved default, when it has one;
@@ -36,7 +37,7 @@ export interface DestinationChoice {
 }
 
 /** Where the person reads a result: a terminal (`qcr review`), or a pi
- * session (the plugin's /review), where "terminal" is the session itself and
+ * session, where "terminal" is the session itself and
  * a saved report carries its JSON beside the markdown. */
 export type DestinationSurface = "terminal" | "session";
 

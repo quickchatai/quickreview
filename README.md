@@ -305,22 +305,22 @@ no personal access token is used.
 docker run --rm --user "$(id -u):$(id -g)" -v ~/.local/bin:/out \
   ghcr.io/quickchatai/quickreview:<version> install
 
-qcr onboard          # the whole setup, guided
+qcr                  # the home: sign in, connect GitHub, choose a repository
 ```
 
-`qcr onboard` is a pi agent that walks you through setup using named,
-deterministic tools whose results you see. pi's `/login` opens by itself the
-first time; any OpenAI login works ([docs/llm-setup.md](docs/llm-setup.md)).
-It checks the machine, takes your own GitHub account where `gh` is signed in
-(or **creates your GitHub App in one click** from a pinned manifest, if you
-want a bot identity or webhooks), asks for one repository, defaults to polling,
-mints the memory keys and brings the stack up. Setup ends there, and the TUI
-opens on the board: it lists every open pull request of the repository, and
-**`R` on the one you select reviews it now**, with no label to add, its
-progress on the board and, in dry-run, the review recorded instead of posted.
-Re-run `qcr onboard` to go live once you have read a review. It is resumable,
-and re-running it on a working install is a diagnostic. Every step:
-[docs/onboarding.md](docs/onboarding.md).
+A bare `qcr` opens the **home**: QuickReview's own pi, with the plugin loaded
+and a panel of your repository's open pull requests. On a first run the panel
+is a short setup checklist, and anything already set up is found and skipped:
+sign in to OpenAI with pi's device code (device-code login must be on in
+ChatGPT → Settings → Security), check that `gh` is signed in, and choose a
+repository from your recently pushed ones or paste any `owner/name` or URL.
+`alt+n` runs the next step. The home then lists the pull requests, "To review"
+and "Reviewed". `qcr tui` opens the admin TUI, and only it starts the
+companion. Through the Docker wrapper the home runs in a container of its own:
+its login is kept in the `qcr-login` volume, its config and sessions in the
+`qcr-state` volume, and its `gh` uses the token the wrapper finds on this
+machine (`GITHUB_TOKEN`, `GH_TOKEN` or `gh auth token`). The always-on daemon, a GitHub App, webhooks and a server over ssh
+are the setup wizard's steps: [docs/onboarding.md](docs/onboarding.md).
 
 ### Where the reviewer lives
 
@@ -357,9 +357,10 @@ npm i -g @quickchatai/quickreview
 qcr login              # pi's own /login, for the review's models
 qcr review             # review this branch against its base, with no daemon
 qcr review 123         # review a pull request (or pass its URL)
-qcr pi                 # pi with the QuickReview plugin: /review /scan /selfimprove /qcr-setup
+qcr pi                 # pi with the plugin (/qcr-review /qcr-scan /qcr-setup) and /selfimprove
 qcr update             # update qcr with the package manager that installed it
-qcr                    # the admin TUI
+qcr                    # the home: pi on your own login, with your repo's pull requests
+qcr tui                # the admin TUI
 ```
 
 `qcr review` asks where the result goes (shown, saved as markdown and JSON,
@@ -415,8 +416,9 @@ never the same system ([MANIFESTO.md](MANIFESTO.md)).
 
 ## Appendix — setting up by hand
 
-`qcr onboard` composes these tools rather than replacing them; re-running it
-afterwards re-checks every step without rewriting what already holds.
+The setup wizard's steps ([docs/onboarding.md](docs/onboarding.md)) compose
+these tools rather than replacing them; re-running one afterwards re-checks it
+without rewriting what already holds.
 
 ```sh
 IMG=ghcr.io/quickchatai/quickreview:<version>
@@ -433,8 +435,8 @@ curl -s http://127.0.0.1:8787/health
 
 Then point your HTTPS ingress at the webhook port, install the App, create
 the trigger label and label a PR: `state/dryrun/` fills up. The memory keys
-are minted by the running server, so run `qcr onboard` for that step even if
-you did the rest by hand; declining memory is supported.
+are minted by the running server (the wizard's memory-keys steps, 60 and 72,
+in [docs/onboarding.md](docs/onboarding.md)); declining memory is supported.
 
 ## Star history
 

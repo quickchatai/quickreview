@@ -7781,9 +7781,27 @@ export interface OpenPrsSnapshot {
   prs: OpenPrSummary[];
 }
 
+/** The authoritative reconcile poll's last pass (status.json `poll`): what
+ * "auto-review is working" is judged on, beside the heartbeat (the home's
+ * label, src/home/autoreview.ts). */
+export interface PollStatus {
+  /** When the last pass ran, ISO; null before the boot's first pass has ended. */
+  last_at: string | null;
+  /** That pass ran with no step error; null before the first pass. */
+  ok: boolean | null;
+  /** The first error, while not ok. */
+  error?: string;
+  /** The daemon's `[daemon] poll_interval_s`: freshness is judged against
+   * the daemon's own cadence, never a reader's guess. */
+  interval_s: number;
+}
+
 export interface StatusSnapshot {
   written_at: string;
   dry_run: boolean;
+  /** The reconcile poll's last pass. Absent in snapshots from an older
+   * daemon — readers say "unknown", never "working". */
+  poll?: PollStatus;
   /** Where the daemon runs (src/runhost.ts). Absent: not reported (an older
    * daemon, or one assembled without its host facts). */
   run_host?: import("./runhost.js").RunHostStatus;
@@ -7874,6 +7892,11 @@ export interface StatusSnapshot {
   max_concurrent_rounds?: number;
   total_spend_usd: number;
   today_spend_usd?: number;
+  /** The month's spend so far: every round started in the snapshot's UTC
+   * month (the same rule as `today_spend_usd`, expired rounds included).
+   * Absent in snapshots from an older daemon: the home's spend line then
+   * reads unknown, never a zero. */
+  month_spend_usd?: number;
   digest_headline?: string;
   /** Present while pi sessions are failing API calls with token-expired
    * errors (packages/pi-plugin/src/authwatch.ts, fresh < 30 min). The TUI raises an alert. */
@@ -8224,6 +8247,8 @@ export function buildStatusSnapshot(
     ...(maxConcurrentRounds !== undefined ? { max_concurrent_rounds: maxConcurrentRounds } : {}),
     total_spend_usd: store.totalSpend(),
     today_spend_usd: roundUsage(store.roundsOn(today)).spend_usd,
+    // roundsOn matches by prefix: the month's `YYYY-MM` is every day of it
+    month_spend_usd: roundUsage(store.roundsOn(today.slice(0, 7))).spend_usd,
     ...(digestHeadline ? { digest_headline: digestHeadline } : {}),
     ...(piAuth
       ? {

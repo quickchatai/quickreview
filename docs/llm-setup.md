@@ -9,7 +9,7 @@ pi resolves credentials in this order: CLI flag → `auth.json` (the OAuth
 token store) → environment (`OPENAI_API_KEY`). A completed `/login` therefore
 takes precedence over an API key in the environment.
 
-**The onboarding wizard does all of this for you** (`qcr onboard`):
+**The onboarding wizard does all of this for you**:
 it asks the question, points you at the same secrets flow for the key (a key
 pasted into an agent session would land in a transcript, so it never accepts
 one as an argument), performs the five-value prefix rewrite below itself
@@ -49,8 +49,9 @@ The two providers serve the same model ids, so the model strings keep their
 sessions, the lenses, the companion, a takeover or debug round), the
 provider it names is used when its login exists, and otherwise the same model
 runs on the other OpenAI login. An install already logged in as
-"OpenAI Codex (legacy)" runs exactly as before. `qcr onboard` opens `/login`
-for you the first time, and the wizard's login checks accept any of the three.
+"OpenAI Codex (legacy)" runs exactly as before. A bare `qcr` (the home)
+signs in with pi's own `openai-codex` device-code login the first time, and
+the wizard's login checks accept any of the three.
 
 The OAuth tokens land in `auth.json` under pi's home, which is a **named
 Docker volume** (`pihome`) — so the login survives container restarts and

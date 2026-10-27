@@ -7,7 +7,7 @@
 # Values are read with hidden input and NEVER printed back. Re-run any time —
 # existing files are kept unless you choose to replace them.
 #
-# `scripts/qcr onboard` writes app_id / app.pem / webhook_secret itself, from
+# The setup wizard writes app_id / app.pem / webhook_secret itself, from
 # the GitHub App manifest exchange, and mints the OpenViking keys — so on the
 # guided path you only reach for this script for the values it points you at
 # (the OpenAI key, a tunnel token, an ngrok authtoken, the hosted-embeddings

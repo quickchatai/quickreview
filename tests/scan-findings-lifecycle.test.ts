@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stateHomeFs } from "../src/setup/adapters.js";
 import { FindingsStore, type ReportedFinding } from "../src/setup/findings.js";
-import type { LedgerEntry } from "../src/setup/ledger.js";
+import type { LedgerEntry } from "@quickchatai/pi-quickreview/src/scan/ledger.js";
 import type { FileRange } from "../src/setup/scan.js";
 
 let stateDir: string;

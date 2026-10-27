@@ -34,7 +34,12 @@ export interface LiveAgentProgress {
    * snapshots; supervisors must never infer their absence as a failure. */
   started_at?: string;
   finished_at?: string;
+  /** The running tool, or the last one, as `<tool>: <args>` (or the bare name). */
   current_tool?: string;
+  /** The path the running pass's current tool works on (a read's, grep's or
+   * find's `path`), relative to the pass's cwd when inside it. Absent on the
+   * native subagent shape and on a pass with no such tool yet. */
+  current_target?: string;
   last_message?: string;
   error?: string;
 }

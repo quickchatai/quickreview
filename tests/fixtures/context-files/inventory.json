@@ -80,12 +80,6 @@
       "effective": [],
       "note": "Runs in the PR's own checkout, whose AGENTS.md must not reach the judge."
     },
-    "onboard": {
-      "cwd": "/qcr-checkout",
-      "agentDir": "/operator-pi-agent",
-      "contextFiles": "disabled",
-      "effective": []
-    },
     "clone-review": {
       "cwd": "/home/op/.local/state/qcr/default/review/runs/RUN/out",
       "agentDir": "/home/op/.local/state/qcr/default/review/runs/RUN/agent",

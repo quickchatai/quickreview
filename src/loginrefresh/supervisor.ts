@@ -21,7 +21,7 @@
 // second refresher would rotate the refresh token under them.
 import { existsSync, readFileSync } from "node:fs";
 import { spawn as nodeSpawn } from "node:child_process";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import {
   foldChildLines,
   restartDelayMs,
@@ -32,6 +32,28 @@ import {
 } from "../openviking/supervisor.js";
 import { LOCK_HELD_EXIT } from "./lock.js";
 import type { LoginRefreshFileStatus, LoginRefreshStatus } from "./types.js";
+
+/** Names the login's dir when it is not pi's agent dir. The single box's
+ * shared login (one login per box): the home's switch-on mounts the
+ * host pi home's agent dir at CONTAINER_LOGIN_DIR (docker-compose.yml,
+ * QCR_PI_LOGIN_DIR in the project .env) and the compose file names it here.
+ * Only the login moves: the refresher keeps auth.json there and every worker
+ * borrows from there, while settings, models.json and the lens agents stay in
+ * the container's own agent dir, whose settings the entrypoint provisions and
+ * which must never be the person's own. */
+export const LOGIN_DIR_ENV = "QCR_LOGIN_DIR";
+/** Where docker-compose.yml mounts the host's login. */
+export const CONTAINER_LOGIN_DIR = "/opt/qcr/login";
+
+/** The login's dir: `QCR_LOGIN_DIR` when it is an absolute path, else pi's
+ * agent dir (the login volume, as before). */
+export function loginDirOf(
+  env: Readonly<Record<string, string | undefined>>,
+  agentDir: string,
+): string {
+  const set = (env[LOGIN_DIR_ENV] ?? "").trim();
+  return set !== "" && isAbsolute(set) ? set : agentDir;
+}
 
 /** The restart ladder, ms: a refresher that cannot start (lock held, config) is
  * retried slowly; one that crashed after a good run is retried at once. */
@@ -44,7 +66,8 @@ export const LOGIN_STATUS_POLL_MS = 5_000;
 export interface LoginRefreshSupervisorDeps {
   /** The checkout root: where `dist/src/loginrefresh/main.js` lives. */
   repoRoot: string;
-  /** pi's agent dir (the login volume's `agent/`). */
+  /** The login's dir: pi's agent dir (the login volume's `agent/`), or the
+   * single box's shared login (`loginDirOf`). */
   agentDir: string;
   marginMin: number;
   /** The login group, when the daemon knows it. */

@@ -23,7 +23,7 @@ import {
   type ReportedFinding,
   type ScanFinding,
 } from "../src/setup/findings.js";
-import type { LedgerEntry } from "../src/setup/ledger.js";
+import type { LedgerEntry } from "@quickchatai/pi-quickreview/src/scan/ledger.js";
 import { planStage1, type PriorReading } from "../src/setup/scan.js";
 import {
   ScanRunner,

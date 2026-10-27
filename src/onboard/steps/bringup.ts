@@ -80,13 +80,14 @@ import {
   embedderInputsCheck,
   localEmbedderEnvEntries,
 } from "./embeddings.js";
+import { CHOICE_KEYS } from "../choices.js";
 import { readEnvKey, readTomlKey, setEnvKey } from "./ingress.js";
 import { UID_CHOICE_KEY } from "./preflight.js";
 import { topologyOf } from "./topology.js";
 
 export const BRINGUP_STEP_ID = "bringup";
 /** Recorded timestamp of this step's successful bring-up. */
-export const BROUGHT_UP_CHOICE_KEY = "stack_brought_up_at";
+export const BROUGHT_UP_CHOICE_KEY = CHOICE_KEYS.broughtUpAt;
 
 /**
  * The note, in the operator's words, emitted before the pull begins.
@@ -442,7 +443,7 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
         }),
       );
       const ok = checks.every((c) => c.ok);
-      if (ok) ctx.recordChoice(BROUGHT_UP_CHOICE_KEY, ctx.adapters.clock().toISOString());
+      if (ok) ctx.recordChoice(CHOICE_KEYS.broughtUpAt, ctx.adapters.clock().toISOString());
       return { ok, checks, data: { profile, up_at: ctx.adapters.clock().toISOString() } };
     },
 

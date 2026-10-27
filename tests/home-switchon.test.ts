@@ -1,0 +1,717 @@
+// Switch-on's steps (src/home/switchon.ts): the wizard's own step modules on
+// the plugin's step registry, run in the stated order with silent defaults.
+// Auto-review comes up in dry-run: switch-on never runs the proof round or
+// the go-live, and only runGoLive hands the go-live step a confirm — so
+// `dry_run` moves only through goLiveStep (invariant 6).
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { parse as parseToml } from "smol-toml";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  SetupChecklist,
+  StepRegistry,
+  type ChecklistAdapters,
+  type SetupStep,
+} from "@quickchatai/pi-quickreview/src/setupchecklist.js";
+import {
+  DAEMON_START_STEP_ID,
+  MACHINE_CHECKS_STEP_ID,
+  MEMORY_WAIT_ATTEMPTS,
+  SWITCH_ON_ORDER,
+  daemonStartStep,
+  freeGbFromDf,
+  machineChecksStep,
+  recordedProof,
+  runGoLive,
+  runProofRound,
+  runSwitchOn,
+  switchOnInput,
+  switchOnRegistry,
+} from "../src/home/switchon.js";
+import {
+  DAEMON_LOGIN_PROBE,
+  LOGIN_SHARE_STEP_ID,
+  PI_LOGIN_DIR_ENV,
+  loginShareStep,
+} from "../src/onboard/steps/loginshare.js";
+import type { OnboardAdapters, ProcessResult } from "../src/onboard/engine.js";
+import { BROUGHT_UP_CHOICE_KEY } from "../src/onboard/steps/bringup.js";
+import { GO_LIVE_CONFIRMATION, GO_LIVE_STEP_ID, goLiveStep } from "../src/onboard/steps/golive.js";
+import { memoryOnStack } from "../src/home/memory.js";
+import { MEMORY_SERVER_CHECK } from "../src/onboard/steps/memory.js";
+import { MEMORY_KEYS_STEP_ID } from "../src/onboard/steps/memorykeys.js";
+import { PROOF_CHOICE_KEY, PROOF_STEP_ID, proofRoundStep } from "../src/onboard/steps/proof.js";
+import type { StepReport } from "../src/onboard/engine.js";
+
+const CLOCK = (): Date => new Date("2026-10-26T12:00:00Z");
+
+interface Ran {
+  id: string;
+  input: Record<string, unknown>;
+}
+
+/** Steps with switch-on's ids that record what they were handed. */
+function fakeSteps(
+  ran: Ran[],
+  o: {
+    fail?: string;
+    refuseGoLive?: boolean;
+    disabled?: string[];
+    /** The memory step's report on its nth run (1-based). */
+    memory?: (n: number) => StepReport;
+  } = {},
+): SetupStep<ChecklistAdapters>[] {
+  let memoryRuns = 0;
+  return SWITCH_ON_ORDER.map((id, i) => ({
+    id,
+    title: `step ${id}`,
+    explain: "",
+    order: (i + 1) * 10,
+    ...(id === PROOF_STEP_ID || id === GO_LIVE_STEP_ID ? { optional: true } : {}),
+    ...(o.disabled?.includes(id) ? { enabled: () => false } : {}),
+    run: async (ctx) => {
+      ran.push({ id, input: { ...ctx.input } });
+      if (id === "memory" && o.memory) return o.memory(++memoryRuns);
+      if (id === o.fail)
+        return { ok: false, checks: [{ name: id, ok: false, detail: "it broke" }] };
+      if (id === GO_LIVE_STEP_ID && o.refuseGoLive)
+        return {
+          ok: false,
+          checks: [{ name: "proof", ok: false, detail: "there is no completed proof round" }],
+        };
+      return { ok: true, checks: [{ name: id, ok: true, detail: `${id} ok` }] };
+    },
+    verify: async () => ({ ok: true, checks: [] }),
+  }));
+}
+
+function checklistOver(steps: SetupStep<ChecklistAdapters>[]): SetupChecklist<ChecklistAdapters> {
+  return new SetupChecklist(new StepRegistry(steps), { clock: CLOCK }, { file: null });
+}
+
+const stopped = async () => ({ ok: true as const, detail: "memory stopped" });
+
+/** Memory's phase A landed; phase B waits on an engine not answering yet. */
+const PHASE_A: StepReport = {
+  ok: false,
+  checks: [
+    { name: "root-key", ok: true, detail: "minted the server root key" },
+    { name: MEMORY_SERVER_CHECK, ok: false, detail: "nothing answers at :1933" },
+  ],
+};
+const MEMORY_DONE: StepReport = {
+  ok: true,
+  checks: [{ name: "user-keys", ok: true, detail: "minted reviewer, companion" }],
+};
+
+describe("switch-on's registry", () => {
+  // MUTATION: register the go-live before bring-up, or drop the machine checks — this fails.
+  it("is the wizard's steps in the stated order, machine checks first and the go-live last", () => {
+    expect(
+      switchOnRegistry()
+        .steps()
+        .map((s) => s.id),
+    ).toEqual([...SWITCH_ON_ORDER]);
+    expect(SWITCH_ON_ORDER[0]).toBe(MACHINE_CHECKS_STEP_ID);
+    expect(SWITCH_ON_ORDER[SWITCH_ON_ORDER.length - 1]).toBe(GO_LIVE_STEP_ID);
+  });
+
+  it("its proof round is the wizard's own proofRoundStep, just before the go-live", () => {
+    const proof = switchOnRegistry()
+      .steps()
+      .find((s) => s.id === PROOF_STEP_ID)!;
+    expect(proof.title).toBe(proofRoundStep().title);
+    expect(SWITCH_ON_ORDER.indexOf(PROOF_STEP_ID)).toBe(SWITCH_ON_ORDER.length - 2);
+  });
+
+  it("its go-live is the wizard's own goLiveStep, not a copy", () => {
+    const go = switchOnRegistry()
+      .steps()
+      .find((s) => s.id === GO_LIVE_STEP_ID)!;
+    const wizard = goLiveStep();
+    expect(go.title).toBe(wizard.title);
+    expect(go.explain).toBe(wizard.explain);
+    expect(go.order).toBe(wizard.order);
+  });
+});
+
+describe("the one confirm reaches the go-live step and nothing else", () => {
+  // MUTATION: hand { confirm: GO_LIVE_CONFIRMATION } to any other step in switchOnInput — this fails.
+  it("no step but go_live is ever handed the confirm, and go_live only on the person's yes", () => {
+    for (const id of SWITCH_ON_ORDER) {
+      const input = switchOnInput(id, { answers: { memory: true, confirmed: true }, repo: "a/b" });
+      if (id === GO_LIVE_STEP_ID)
+        expect(input).toEqual({ decision: "go_live", confirm: GO_LIVE_CONFIRMATION });
+      else expect(JSON.stringify(input)).not.toContain(GO_LIVE_CONFIRMATION);
+    }
+    expect(
+      switchOnInput(GO_LIVE_STEP_ID, { answers: { memory: null, confirmed: false }, repo: null }),
+    ).toEqual({});
+  });
+
+  it("refuses to run at all without the confirm", async () => {
+    const ran: Ran[] = [];
+    await expect(
+      runSwitchOn({
+        checklist: checklistOver(fakeSteps(ran)),
+        answers: { memory: null, confirmed: false as unknown as true },
+        repo: null,
+        dryRun: () => true,
+        stopMemory: stopped,
+      }),
+    ).rejects.toThrow(/confirm/);
+    expect(ran).toEqual([]);
+  });
+});
+
+describe("the home writes no config of its own", () => {
+  // MUTATION: call flipDryRunToFalse, or patchToml with key "dry_run", from
+  // any file under src/home/ — this fails.
+  it("no module of the home builds a dry_run edit or patches config.toml", () => {
+    const dir = join(process.cwd(), "src", "home");
+    const files = readdirSync(dir).filter((f) => f.endsWith(".ts"));
+    expect(files).toContain("switchon.ts");
+    for (const f of files) {
+      const text = readFileSync(join(dir, f), "utf8");
+      expect(text, `${f} must not edit dry_run`).not.toMatch(/key:\s*"dry_run"/);
+      expect(text, `${f} must not flip dry_run itself`).not.toMatch(/flipDryRunToFalse\s*\(/);
+      expect(text, `${f} must not patch config.toml`).not.toMatch(/patchToml\s*\(/);
+    }
+  });
+});
+
+describe("running switch-on", () => {
+  it("runs every step after the machine checks in order, with the silent defaults", async () => {
+    const ran: Ran[] = [];
+    const out = await runSwitchOn({
+      checklist: checklistOver(fakeSteps(ran)),
+      answers: { memory: false, confirmed: true },
+      repo: "acme/widgets",
+      dryRun: () => true,
+      stopMemory: stopped,
+    });
+    expect(ran.map((r) => r.id)).toEqual(
+      SWITCH_ON_ORDER.slice(1, SWITCH_ON_ORDER.indexOf(PROOF_STEP_ID)),
+    );
+    const input = (id: string) => ran.find((r) => r.id === id)!.input;
+    expect(input("topology")).toEqual({ choice: "local" });
+    expect(input("github_account")).toEqual({ github_auth: "user", repo: "acme/widgets" });
+    expect(input("escalation")).toEqual({ enable: "no" });
+    expect(input("embeddings")).toEqual({});
+    expect(input("ingress")).toEqual({ choice: "polling" });
+    expect(input("memory")).toEqual({ choice: "declined" });
+    expect(out).toMatchObject({ ok: true, live: false });
+    expect(out.detail).toMatch(/on in dry-run.*one review you read, then one more confirm/);
+    expect(out.steps).toContain("memory: kept off");
+  });
+
+  // MUTATION: run the go-live (or the proof round) at the end of runSwitchOn,
+  // handed the switch-on confirm — this fails.
+  it("comes up in dry-run: the switch-on confirm never reaches the proof round or the go-live", async () => {
+    const ran: Ran[] = [];
+    const checklist = checklistOver(fakeSteps(ran));
+    // even with a proof round on record
+    (checklist.choices() as Record<string, unknown>)[PROOF_CHOICE_KEY] = {
+      pr: 7,
+      round_no: 1,
+      verdict: "COMMENT",
+      completed_at: "2026-10-26T11:00:00Z",
+    };
+    const out = await runSwitchOn({
+      checklist,
+      answers: { memory: null, confirmed: true },
+      repo: null,
+      dryRun: () => true,
+      stopMemory: stopped,
+    });
+    expect(ran.map((r) => r.id)).not.toContain(GO_LIVE_STEP_ID);
+    expect(ran.map((r) => r.id)).not.toContain(PROOF_STEP_ID);
+    expect(JSON.stringify(ran)).not.toContain(GO_LIVE_CONFIRMATION);
+    expect(out).toMatchObject({ ok: true, live: false });
+  });
+
+  it("stops at the first step that fails, and never reaches the go-live", async () => {
+    const ran: Ran[] = [];
+    const out = await runSwitchOn({
+      checklist: checklistOver(fakeSteps(ran, { fail: "bringup" })),
+      answers: { memory: null, confirmed: true },
+      repo: null,
+      dryRun: () => true,
+      stopMemory: stopped,
+    });
+    expect(ran.map((r) => r.id)).not.toContain(GO_LIVE_STEP_ID);
+    expect(ran[ran.length - 1]!.id).toBe("bringup");
+    expect(out).toMatchObject({
+      ok: false,
+      live: false,
+      detail: "step bringup: bringup: it broke",
+    });
+  });
+
+  it("an already-live config skips the go-live: nothing to move", async () => {
+    const ran: Ran[] = [];
+    const out = await runSwitchOn({
+      checklist: checklistOver(fakeSteps(ran)),
+      answers: { memory: null, confirmed: true },
+      repo: null,
+      dryRun: () => false,
+      stopMemory: stopped,
+    });
+    expect(ran.map((r) => r.id)).not.toContain(GO_LIVE_STEP_ID);
+    expect(out).toMatchObject({ ok: true, live: true });
+  });
+
+  it("a go-live the step refuses (no proof round) says why, and changes nothing", async () => {
+    const ran: Ran[] = [];
+    const r = await runGoLive(checklistOver(fakeSteps(ran, { refuseGoLive: true })), {
+      confirmed: true,
+    });
+    expect(r).toEqual({ ok: false, detail: "proof: there is no completed proof round" });
+  });
+
+  it("a second switch-on is quick: done steps keep their answers, the daemon start runs again", async () => {
+    const ran: Ran[] = [];
+    const checklist = checklistOver(fakeSteps(ran));
+    const run = () =>
+      runSwitchOn({
+        checklist,
+        answers: { memory: null, confirmed: true },
+        repo: null,
+        dryRun: () => false,
+        stopMemory: stopped,
+      });
+    await run();
+    ran.length = 0;
+    const again = await run();
+    expect(ran.map((r) => r.id)).toEqual([DAEMON_START_STEP_ID]);
+    expect(again.steps).toContain("bringup: already done");
+  });
+
+  it("a memory yes runs the memory step again over an earlier no", async () => {
+    const ran: Ran[] = [];
+    const checklist = checklistOver(fakeSteps(ran));
+    const base = { checklist, repo: null, dryRun: () => false, stopMemory: stopped };
+    await runSwitchOn({ ...base, answers: { memory: false, confirmed: true } });
+    ran.length = 0;
+    await runSwitchOn({ ...base, answers: { memory: true, confirmed: true } });
+    expect(ran.map((r) => r.id)).toEqual(["memory", DAEMON_START_STEP_ID]);
+    expect(ran[0]!.input).toEqual({ choice: "configure" });
+  });
+
+  it("skips a step the recorded route disables", async () => {
+    const ran: Ran[] = [];
+    const out = await runSwitchOn({
+      checklist: checklistOver(fakeSteps(ran, { disabled: ["github_account"] })),
+      answers: { memory: null, confirmed: true },
+      repo: null,
+      dryRun: () => false,
+      stopMemory: stopped,
+    });
+    expect(ran.map((r) => r.id)).not.toContain("github_account");
+    expect(out.steps).toContain("github_account: not on this route");
+  });
+
+  it("the proof round reviews the named PR, and its record is what the go-live asks for", async () => {
+    const ran: Ran[] = [];
+    const checklist = checklistOver(fakeSteps(ran));
+    expect(recordedProof(checklist)).toBeNull();
+    const r = await runProofRound(checklist, 12);
+    expect(r.ok).toBe(true);
+    expect(ran).toEqual([{ id: PROOF_STEP_ID, input: { pr: 12 } }]);
+    (checklist.choices() as Record<string, unknown>)[PROOF_CHOICE_KEY] = {
+      pr: 12,
+      round_no: 2,
+      verdict: "APPROVE",
+      completed_at: "2026-10-26T11:00:00Z",
+    };
+    expect(recordedProof(checklist)).toMatchObject({ pr: 12, verdict: "APPROVE" });
+  });
+
+  it("go-live from dry-run alone hands the go-live step the confirm", async () => {
+    const ran: Ran[] = [];
+    const r = await runGoLive(checklistOver(fakeSteps(ran)), { confirmed: true });
+    expect(r.ok).toBe(true);
+    expect(ran).toEqual([
+      { id: GO_LIVE_STEP_ID, input: { decision: "go_live", confirm: GO_LIVE_CONFIRMATION } },
+    ]);
+  });
+});
+
+describe("memory's two phases on a fresh switch-on", () => {
+  const order = (ran: Ran[]) => ran.map((r) => r.id);
+
+  // MUTATION: end the walk on any memory failure in runSteps (drop the
+  // waitsOnServer branch) — this fails.
+  it("phase A waits on the engine: the walk goes on, then phase B runs before the user keys", async () => {
+    const ran: Ran[] = [];
+    let starts = 0;
+    const out = await runSwitchOn({
+      checklist: checklistOver(
+        fakeSteps(ran, { memory: (n) => (n === 1 ? PHASE_A : MEMORY_DONE) }),
+      ),
+      answers: { memory: true, confirmed: true },
+      repo: null,
+      dryRun: () => true,
+      stopMemory: stopped,
+      startMemory: async () => {
+        starts += 1;
+        return { ok: true, detail: "the memory engine runs" };
+      },
+      sleep: async () => {},
+    });
+    expect(out).toMatchObject({ ok: true, live: false });
+    const ids = order(ran);
+    // memory, then the bring-up, then memory again (phase B), then the keys step
+    expect(ids.filter((id) => id === "memory")).toHaveLength(2);
+    expect(ids.indexOf("bringup")).toBeGreaterThan(ids.indexOf("memory"));
+    expect(ids.lastIndexOf("memory")).toBeGreaterThan(ids.indexOf("bringup"));
+    expect(ids.lastIndexOf("memory")).toBeLessThan(ids.indexOf(MEMORY_KEYS_STEP_ID));
+    expect(starts).toBe(1);
+    expect(out.steps).toContain(
+      "memory: its root key is placed; its user keys follow once the engine runs",
+    );
+  });
+
+  it("phase B waits, bounded, while the engine starts", async () => {
+    const ran: Ran[] = [];
+    const slept: number[] = [];
+    const out = await runSwitchOn({
+      checklist: checklistOver(fakeSteps(ran, { memory: (n) => (n <= 3 ? PHASE_A : MEMORY_DONE) })),
+      answers: { memory: true, confirmed: true },
+      repo: null,
+      dryRun: () => true,
+      stopMemory: stopped,
+      sleep: async (ms) => {
+        slept.push(ms);
+      },
+    });
+    expect(out.ok).toBe(true);
+    expect(slept).toHaveLength(2);
+    // an engine that never answers ends it, after the bounded wait
+    const never: Ran[] = [];
+    const stuck = await runSwitchOn({
+      checklist: checklistOver(fakeSteps(never, { memory: () => PHASE_A })),
+      answers: { memory: true, confirmed: true },
+      repo: null,
+      dryRun: () => true,
+      stopMemory: stopped,
+      sleep: async () => {},
+    });
+    expect(stuck.ok).toBe(false);
+    expect(stuck.detail).toMatch(/nothing answers at :1933/);
+    expect(order(never).filter((id) => id === "memory")).toHaveLength(1 + MEMORY_WAIT_ATTEMPTS);
+    expect(order(never)).not.toContain(MEMORY_KEYS_STEP_ID);
+  });
+
+  // MUTATION: return the memory step's failure before starting the engine in
+  // memoryOnStack — this fails.
+  it("the memory switch on a stack brought up before: phase A, the engine started, then phase B", async () => {
+    const ran: Ran[] = [];
+    const log: string[] = [];
+    const checklist = checklistOver(
+      fakeSteps(ran, { memory: (n) => (n === 1 ? PHASE_A : MEMORY_DONE) }),
+    );
+    const r = await memoryOnStack(checklist, {
+      startMemory: async () => {
+        log.push("up memory");
+        return { ok: true, detail: "the memory engine runs" };
+      },
+      sleep: async () => {},
+    });
+    expect(r).toEqual({ ok: true, detail: "Memory is on." });
+    expect(log).toEqual(["up memory"]);
+    expect(ran.map((x) => x.id)).toEqual(["memory", "memory", MEMORY_KEYS_STEP_ID]);
+    expect(ran[0]!.input).toEqual({ choice: "configure" });
+  });
+
+  // MUTATION: accept any memory failure as phase A in waitsOnServer — this fails.
+  it("any other memory failure ends the walk at the memory step", async () => {
+    const ran: Ran[] = [];
+    const out = await runSwitchOn({
+      checklist: checklistOver(
+        fakeSteps(ran, {
+          memory: () => ({
+            ok: false,
+            checks: [
+              { name: "root-key", ok: true, detail: "kept" },
+              { name: "user-keys", ok: false, detail: "could not obtain a key for reviewer" },
+            ],
+          }),
+        }),
+      ),
+      answers: { memory: true, confirmed: true },
+      repo: null,
+      dryRun: () => true,
+      stopMemory: stopped,
+      sleep: async () => {},
+    });
+    expect(out.ok).toBe(false);
+    expect(out.detail).toMatch(/could not obtain a key for reviewer/);
+    expect(order(ran).at(-1)).toBe("memory");
+  });
+});
+
+// ---- the two steps of its own, over a fake machine --------------------------
+
+let dirs: string[] = [];
+afterEach(() => {
+  for (const d of dirs) rmSync(d, { recursive: true, force: true });
+  dirs = [];
+});
+
+function adaptersOver(
+  answer: (args: string[]) => ProcessResult,
+  calls: string[][],
+): OnboardAdapters {
+  const root = mkdtempSync(join(tmpdir(), "qcr-switchon-"));
+  dirs.push(root);
+  return {
+    fetch: (() => Promise.reject(new Error("no network"))) as unknown as typeof fetch,
+    runner: {
+      run: async (cmd, args) => {
+        calls.push([cmd, ...args]);
+        return answer(args);
+      },
+    },
+    clock: CLOCK,
+    host: { nodeVersion: "v26.1.0", uid: 1000 },
+    paths: { stateDir: join(root, "state"), configPath: join(root, "config.toml") },
+  };
+}
+
+const ok = (stdout = ""): ProcessResult => ({ code: 0, stdout, stderr: "" });
+const DF =
+  "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/sda1 100000000 50000000 ";
+
+describe("the machine checks: Docker, disk, ports", () => {
+  const answer =
+    (freeKb: number, daemonUp = false) =>
+    (args: string[]): ProcessResult =>
+      args[0] === "info"
+        ? ok("/var/lib/docker\n")
+        : args[0] === "-Pk"
+          ? ok(`${DF}${freeKb} 50% /\n`)
+          : args.includes("ps")
+            ? ok(daemonUp ? JSON.stringify({ Service: "daemon", State: "running" }) : "")
+            : ok("Docker version 27.0.0\n");
+
+  const run = async (o: { freeKb: number; portFree: boolean | null; daemonUp?: boolean }) => {
+    const calls: string[][] = [];
+    const checklist = new SetupChecklist(
+      new StepRegistry([machineChecksStep({ portFree: async () => o.portFree })]),
+      adaptersOver(answer(o.freeKb, o.daemonUp), calls),
+      { file: null },
+    );
+    return { r: await checklist.runStep(MACHINE_CHECKS_STEP_ID), calls };
+  };
+
+  it("passes on a machine with Docker, room and a free port", async () => {
+    const { r } = await run({ freeKb: 41 * 1024 * 1024, portFree: true });
+    expect(r.ok).toBe(true);
+    expect(r.checks.map((c) => c.name)).toEqual(
+      expect.arrayContaining(["docker", "compose", "disk", "ports"]),
+    );
+    expect(r.checks.find((c) => c.name === "disk")!.detail).toBe("41 GB free");
+  });
+
+  it("fails on too little disk, or a port another program holds", async () => {
+    expect((await run({ freeKb: 2 * 1024 * 1024, portFree: true })).r.failures.join()).toMatch(
+      /disk: only 2\.0 GB free/,
+    );
+    expect((await run({ freeKb: 41 * 1024 * 1024, portFree: false })).r.failures.join()).toMatch(
+      /ports: port 8787 is in use by another program/,
+    );
+  });
+
+  it("a port its own daemon holds is fine; an unmeasurable one is said as unknown", async () => {
+    const own = await run({ freeKb: 41 * 1024 * 1024, portFree: false, daemonUp: true });
+    expect(own.r.ok).toBe(true);
+    const unsure = await run({ freeKb: 41 * 1024 * 1024, portFree: null });
+    expect(unsure.r.checks.find((c) => c.name === "ports")!.detail).toMatch(/unknown/);
+  });
+
+  it("reads df's available column", () => {
+    expect(freeGbFromDf(`${DF}${10 * 1024 * 1024} 50% /\n`)).toBe(10);
+    expect(freeGbFromDf("garbage")).toBeNull();
+  });
+});
+
+describe("the daemon start", () => {
+  const checklistWith = (calls: string[][], up: boolean, broughtUp: boolean) => {
+    const c = new SetupChecklist(
+      new StepRegistry([daemonStartStep()]),
+      adaptersOver(
+        (args) =>
+          args.includes("ps")
+            ? ok(up ? JSON.stringify({ Service: "daemon", State: "running" }) : "")
+            : ok(),
+        calls,
+      ),
+      { file: null },
+    );
+    if (broughtUp)
+      (c.choices() as Record<string, unknown>)[BROUGHT_UP_CHOICE_KEY] = "2026-10-01T00:00:00Z";
+    return c;
+  };
+
+  it("starts the stopped daemon of a stack brought up before, keeping its data", async () => {
+    const calls: string[][] = [];
+    const r = await checklistWith(calls, false, true).runStep(DAEMON_START_STEP_ID);
+    expect(r.ok).toBe(true);
+    expect(calls).toContainEqual(expect.arrayContaining(["docker", "compose", "start", "daemon"]));
+    expect(calls.some((c) => c.includes("down") || c.includes("rm"))).toBe(false);
+  });
+
+  it("before the first bring-up there is nothing to start", async () => {
+    const calls: string[][] = [];
+    const r = await checklistWith(calls, false, false).runStep(DAEMON_START_STEP_ID);
+    expect(r.ok).toBe(true);
+    expect(calls).toEqual([]);
+  });
+});
+
+// ---- one login per box: the login step (src/onboard/steps/loginshare.ts) -----
+
+describe("the login step: the stack reviews on the home's own login", () => {
+  const EXAMPLE = readFileSync(new URL("../config.example.toml", import.meta.url), "utf8");
+
+  const setUp = (o: {
+    broughtUp: boolean;
+    login?: boolean;
+    config?: string;
+    /** The running daemon's answer to the login probe (exit code). */
+    probe?: number;
+    compose?: string;
+  }) => {
+    const calls: string[][] = [];
+    const adapters = adaptersOver(
+      (args) =>
+        args.includes("exec") && o.probe !== undefined
+          ? { code: o.probe, stdout: "", stderr: "" }
+          : ok(),
+      calls,
+    );
+    writeFileSync(adapters.paths.configPath, o.config ?? EXAMPLE);
+    const loginDir = mkdtempSync(join(tmpdir(), "qcr-home-pi-"));
+    dirs.push(loginDir);
+    if (o.login !== false) writeFileSync(join(loginDir, "auth.json"), "{}\n", { mode: 0o600 });
+    const checklist = new SetupChecklist(
+      new StepRegistry([loginShareStep({ loginDir })]),
+      adapters,
+      { file: null },
+    );
+    if (o.broughtUp)
+      (checklist.choices() as Record<string, unknown>)[BROUGHT_UP_CHOICE_KEY] =
+        "2026-10-01T00:00:00Z";
+    const root = join(adapters.paths.stateDir, "..");
+    if (o.compose !== undefined) writeFileSync(join(root, "docker-compose.yml"), o.compose);
+    const env = (): string => {
+      try {
+        return readFileSync(join(root, ".env"), "utf8");
+      } catch {
+        return "";
+      }
+    };
+    const config = (): string => readFileSync(adapters.paths.configPath, "utf8");
+    return { calls, checklist, loginDir, env, config };
+  };
+
+  it("runs after the memory step and before the daemon starts", () => {
+    expect(SWITCH_ON_ORDER.indexOf(LOGIN_SHARE_STEP_ID)).toBeGreaterThan(
+      SWITCH_ON_ORDER.indexOf("memory"),
+    );
+    expect(SWITCH_ON_ORDER.indexOf(LOGIN_SHARE_STEP_ID)).toBeLessThan(
+      SWITCH_ON_ORDER.indexOf(DAEMON_START_STEP_ID),
+    );
+  });
+
+  // MUTATION: drop the QCR_PI_LOGIN_DIR write, or the [login_refresh] patch — this fails.
+  it("names the home's login dir to the stack, turns the refresher on, and recreates a stack brought up before", async () => {
+    const s = setUp({ broughtUp: true });
+    const dryBefore = /^dry_run\s*=.*$/m.exec(s.config())?.[0];
+    const r = await s.checklist.runStep(LOGIN_SHARE_STEP_ID);
+    expect(r.ok).toBe(true);
+    expect(s.env()).toContain(`${PI_LOGIN_DIR_ENV}=${s.loginDir}\n`);
+    const cfg = parseToml(s.config()) as { login_refresh?: { enabled?: unknown } };
+    expect(cfg.login_refresh?.enabled).toBe(true);
+    // dry_run is not this step's (invariant 6)
+    expect(/^dry_run\s*=.*$/m.exec(s.config())?.[0]).toBe(dryBefore);
+    expect(s.calls).toContainEqual(
+      expect.arrayContaining(["up", "-d", "--no-deps", "--force-recreate", "daemon"]),
+    );
+    expect(s.calls.some((c) => c.includes("down") || c.includes("rm"))).toBe(false);
+    // the running daemon was asked, after the recreate
+    expect(s.calls.at(-1)).toEqual(
+      expect.arrayContaining(["exec", "-T", "daemon", ...DAEMON_LOGIN_PROBE]),
+    );
+    // a second run writes and recreates nothing, and asks the daemon again
+    s.calls.length = 0;
+    const again = await s.checklist.runStep(LOGIN_SHARE_STEP_ID);
+    expect(again.ok).toBe(true);
+    expect(s.calls).toHaveLength(1);
+    expect(s.calls[0]).toEqual(expect.arrayContaining(["exec", ...DAEMON_LOGIN_PROBE]));
+  });
+
+  // MUTATION: push the "daemon" check as ok whatever the probe answers — this fails.
+  it("a daemon whose image or compose file predates the shared login is not claimed: the step stays undone", async () => {
+    for (const [code, said] of [
+      [5, /image predates the shared login/],
+      [3, /docker-compose\.yml is an older release's/],
+      [4, /sees no login/],
+      [1, /can't ask the running daemon/],
+    ] as const) {
+      const s = setUp({ broughtUp: true, probe: code });
+      const r = await s.checklist.runStep(LOGIN_SHARE_STEP_ID);
+      expect(r.ok).toBe(false);
+      expect(r.failures.join()).toMatch(said);
+      expect(r.failures.join()).toMatch(/Fix: update the stack/);
+      expect(r.checks.map((c) => c.detail).join()).not.toMatch(/reviews on your login, data/);
+      expect(s.checklist.list().find((x) => x.id === LOGIN_SHARE_STEP_ID)?.status).toBe("pending");
+    }
+  });
+
+  // MUTATION: drop the composeMountsLogin check before the writes — this fails.
+  it("an older release's compose file, with no login mount, is refused before anything is written", async () => {
+    const s = setUp({ broughtUp: true, compose: "services:\n  daemon:\n    image: x\n" });
+    const before = s.config();
+    const r = await s.checklist.runStep(LOGIN_SHARE_STEP_ID);
+    expect(r.ok).toBe(false);
+    expect(r.failures.join()).toMatch(/older release's: it does not mount a shared login/);
+    expect(s.env()).toBe("");
+    expect(s.config()).toBe(before);
+    expect(s.calls).toEqual([]);
+    // this release's compose file mounts it
+    const current = readFileSync(new URL("../docker-compose.yml", import.meta.url), "utf8");
+    expect(current).toContain(PI_LOGIN_DIR_ENV);
+  });
+
+  it("before the first bring-up it only writes: the bring-up starts the daemon on it", async () => {
+    const s = setUp({ broughtUp: false });
+    expect((await s.checklist.runStep(LOGIN_SHARE_STEP_ID)).ok).toBe(true);
+    expect(s.env()).toContain(`${PI_LOGIN_DIR_ENV}=${s.loginDir}`);
+    expect(s.calls).toEqual([]);
+  });
+
+  it("refuses with no login to share yet, writing nothing", async () => {
+    const s = setUp({ broughtUp: true, login: false });
+    const before = s.config();
+    const r = await s.checklist.runStep(LOGIN_SHARE_STEP_ID);
+    expect(r.ok).toBe(false);
+    expect(r.failures.join()).toMatch(/no login at .*auth\.json yet: sign in in the home first/);
+    expect(s.env()).toBe("");
+    expect(s.config()).toBe(before);
+    expect(s.calls).toEqual([]);
+  });
+
+  it("refuses when the refresher's margin would not outlast the longest worker cap, writing nothing", async () => {
+    const config = EXAMPLE.replace(/^round_deadline_min = 75$/m, "round_deadline_min = 120");
+    expect(config).not.toBe(EXAMPLE);
+    const s = setUp({ broughtUp: true, config });
+    const r = await s.checklist.runStep(LOGIN_SHARE_STEP_ID);
+    expect(r.ok).toBe(false);
+    expect(r.failures.join()).toMatch(/would not load .* nothing was written/);
+    expect(s.config()).toBe(config);
+    expect(s.env()).toBe("");
+  });
+});

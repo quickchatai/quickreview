@@ -226,6 +226,11 @@ describe.skipIf(!BUILT)("the packed CLI (needs `npm run build`)", () => {
       "package/dist/src/qcrbin.js",
       "package/dist/src/cli.js",
       "package/extensions/cli/bash-guard.ts",
+      // the home's pi loads its extension's TypeScript by path (src/home/launch.ts)
+      "package/extensions/cli/home.ts",
+      "package/extensions/home.ts",
+      "package/src/home/setup.ts",
+      "package/src/home/setupcard.ts",
       "package/config.example.toml",
       ...SHIPPED_FIXTURES,
       ...BENCH_KEPT.map((m) => `package/dist/src/bench/${m}.js`),

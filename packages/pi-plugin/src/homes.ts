@@ -158,7 +158,7 @@ export function missingConfigMessage(located: LocatedConfig, stranded: string | 
   const base =
     located.source === "override"
       ? `no config at ${located.path} (named by QCR_CONFIG)`
-      : `no config at ${located.path} — the install's config home holds none (\`qcr onboard\` writes one)`;
+      : `no config at ${located.path} — the install's config home holds none (a bare \`qcr\` writes one when you choose a repository)`;
   return stranded === null
     ? base
     : `${base}; ${stranded} is no longer read — move it into the config home with \`qcr install migrate\``;

@@ -13,7 +13,7 @@
 // One exception, the VM's: after the cutover no pi session lives long enough to
 // refresh the bot's login, so ONE locked refresher in the bot container
 // (src/loginrefresh/, spawned and supervised by the daemon by path) is its
-// owner. It holds an exclusive flock on pihome/agent/auth.json.lock for its whole
+// owner. It holds an exclusive flock on pihome/agent/loginrefresh.lock for its whole
 // life, refreshes through pi-ai's own OAuth refresh and writes auth.json
 // atomically. Workers, takeover and debug pi are borrowers like any other: they
 // copy the file at spawn, blank, and take no lock. Everywhere else the login-refresh rule is as
@@ -42,6 +42,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { PI_AUTH_ERROR_RE } from "../authwatch.js";
 import { CASE_STOP_GRACE_MS } from "../casebudget.js";
+import { routeProvider } from "../modelroute.js";
 
 /** What a copied OAuth credential carries instead of the real refresh token. */
 export const DISABLED_REFRESH = "bench-refresh-disabled";
@@ -323,14 +324,28 @@ export function engineCredentials(o: {
   words?: AuthCopyWords;
   /** The refusal margin on top of `needMs`; default pi's refresh margin. */
   marginMs?: number;
+  /** Check only the logins these providers run on (each OpenAI one on the
+   * login that exists, modelroute.ts): a shared pi home's login for a
+   * provider the run never uses cannot refuse it. Omitted: every OAuth entry. */
+  providers?: readonly string[];
 }): EngineAuth {
   const src = join(o.srcDir, "auth.json");
   const words = o.words ?? ENGINE_AUTH_WORDS;
   if (!existsSync(src)) throw new AuthExpiring(words.missing(src), { code: "missing" });
   const parsed = JSON.parse(readOwnerAuth(src)) as AuthData;
-  const { expiresAt, provider } = blankRefresh(parsed);
+  const whole = blankRefresh(parsed);
+  const { expiresAt, provider } =
+    o.providers === undefined ? whole : blankRefresh(usedLogins(parsed, o.providers));
   checkAuth({ expiresAt, provider }, { ...o, words });
   return { credentials: new ReadOnlyCredentials(parsed), expiresAt, provider };
+}
+
+/** The entries of `parsed` that `providers` run on: each provider's own, or
+ * its OpenAI twin's when only the twin holds one (borrowLogin's routing). */
+function usedLogins(parsed: AuthData, providers: readonly string[]): AuthData {
+  const held = (q: string): boolean => typeof parsed[q] === "object" && parsed[q] !== null;
+  const used = new Set(providers.map((p) => routeProvider(p, "", { hasCredential: held })));
+  return Object.fromEntries(Object.entries(parsed).filter(([name]) => used.has(name)));
 }
 
 // ---- the process route ----------------------------------------------------------

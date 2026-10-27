@@ -30,7 +30,7 @@ import { Archiver } from "./archive/archiver.js";
 import { piGlobalSessionsDir } from "./archive/piglobal.js";
 import { runDirOf, toolUidSplit } from "./ipc/capability.js";
 import { PermitBroker } from "./ipc/permits.js";
-import { LoginRefreshSupervisor } from "./loginrefresh/supervisor.js";
+import { LoginRefreshSupervisor, loginDirOf } from "./loginrefresh/supervisor.js";
 import { pendingArchiveStatus } from "./archive/status.js";
 import { Learner, learnerKnobsOf } from "./learner/learner.js";
 import { renderNoPacketSection } from "./learner/packet.js";
@@ -770,6 +770,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // src/workerworld.ts. No config key picks the tmux route, and nothing births a
   // `pr-<n>` tmux session any more; `sessions` serves paths, worktrees and the replay harness.
   const agentDir = process.env["PI_CODING_AGENT_DIR"]?.trim() || join(homedir(), ".pi", "agent");
+  // The login itself: the agent dir, or the host's shared login on a single
+  // box (one login per box): the refresher owns it and every worker borrows it.
+  const loginDir = loginDirOf(process.env, agentDir);
   const workerWorld = buildWorkerWorld({
     cfg,
     root,
@@ -783,6 +786,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     ...(parts.ovSessions ? { ovSessions: parts.ovSessions } : {}),
     permits: lensPermits,
     agentDir,
+    loginDir,
     pump: () => daemon.pump(),
     loginGate: {
       paused: () => loginRefresh?.paused() ?? false,
@@ -1627,7 +1631,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       if (cfg.login_refresh.enabled) {
         loginRefresh = new LoginRefreshSupervisor({
           repoRoot: root,
-          agentDir,
+          agentDir: loginDir,
           marginMin: cfg.login_refresh.margin_min,
           log,
           // One anomaly per failure episode, through the one durable funnel.

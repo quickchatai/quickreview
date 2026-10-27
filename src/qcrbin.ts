@@ -3,11 +3,12 @@
 // verbs a person runs from an npm install are routed here first and load only
 // what they use, so they work where that native driver cannot load:
 //
-//   qcr                the admin TUI (`qcr tui`)
+//   qcr                the home: the app's own pi (src/home/launch.ts)
+//   qcr tui            the admin TUI (src/cli.ts)
 //   qcr version        the install's identity (src/version.ts)
 //   qcr review …       a daemonless review (src/reviewcli.ts)
 //   qcr login [p]      pi's own /login in the pinned pi (src/npmverbs.ts)
-//   qcr pi [args]      the pinned pi with the qcr plugin preloaded
+//   qcr pi [args]      the pinned pi with the qcr plugin and /selfimprove
 //   qcr update         the installing package manager updates qcr
 //
 // Every other verb goes to src/cli.ts `main` unchanged. The image's
@@ -22,10 +23,11 @@ import { MissingConfigError } from "./missingconfig.js";
 export const BIN_HELP = [
   "qcr — QuickReview",
   "",
-  "  qcr                     open the admin TUI",
+  "  qcr                     open the home: pi with the plugin and your pull requests",
+  "  qcr tui                 open the admin TUI",
   "  qcr review [target]     review code here, with no daemon (`qcr review --help`)",
   "  qcr login [provider]    log in with pi's own /login, for the review sessions",
-  "  qcr pi [args]           pi with the qcr plugin (/review, /scan, /selfimprove, /qcr-setup)",
+  "  qcr pi [args]           pi with the qcr plugin (/qcr-review, /qcr-scan, /qcr-setup) and /selfimprove",
   "  qcr update              update qcr with the package manager that installed it",
   "  qcr version [--json]    this install's version, schemas and pi pin",
   "",
@@ -33,19 +35,19 @@ export const BIN_HELP = [
 ].join("\n");
 
 /** The verbs that never print the update notice: the ones that hand the
- * terminal over (the TUI, pi) or are about versions themselves. */
-const QUIET_VERBS = new Set(["tui", "pi", "update", "version", "login"]);
+ * terminal over (the home, the TUI, pi) or are about versions themselves. */
+const QUIET_VERBS = new Set(["home", "tui", "pi", "update", "version", "login"]);
 
 /** What `runBin` would do with `argv`, before doing it. */
 export type BinRoute =
-  | { route: "tui" }
+  | { route: "home" }
   | { route: "help" }
   | { route: "pi"; args: string[] }
   | { route: "version" | "update" | "login" | "review"; args: string[]; json: boolean }
   | { route: "app"; argv: string[] };
 
 export function binRoute(argv: readonly string[]): BinRoute {
-  if (argv.length === 0) return { route: "tui" };
+  if (argv.length === 0 || (argv.length === 1 && argv[0] === "home")) return { route: "home" };
   // pi's arguments are pi's, `--json` included
   if (argv[0] === "pi") return { route: "pi", args: argv.slice(1) };
   // `qcr message` carries free text: src/cli.ts reads its argv as it is
@@ -115,8 +117,11 @@ async function maybeNotice(json: boolean): Promise<void> {
 
 async function route(r: BinRoute): Promise<void> {
   switch (r.route) {
-    case "tui":
-      return appMain(["tui"]);
+    case "home": {
+      const { homeRunDeps, runHome } = await import("./home/launch.js");
+      process.exitCode = runHome(homeRunDeps(await packageRoot()));
+      return;
+    }
     case "help":
       console.log(BIN_HELP);
       try {
@@ -181,6 +186,6 @@ export async function runBin(argv: readonly string[]): Promise<void> {
     return;
   }
   const verb = r.route === "app" ? r.argv.find((a) => a !== "--json") : r.route;
-  if (r.route !== "tui" && r.route !== "help" && !QUIET_VERBS.has(verb ?? ""))
+  if (r.route !== "help" && !QUIET_VERBS.has(verb ?? ""))
     await maybeNotice("json" in r ? r.json : r.route === "app" && r.argv.includes("--json"));
 }

@@ -24,10 +24,10 @@ walkthroughs already exist and are not repeated here — this page links them:
 
 | Mechanism | Files |
 |---|---|
-| Wizard state machine, checklist file, resume | `src/onboard/engine.ts` |
+| Setup checklist engine, step registry, checklist file, resume | `packages/pi-plugin/src/setupchecklist.ts` |
+| The wizard's binding of it (adapters, file path, first-run marker) | `src/onboard/engine.ts` |
 | Wizard step registry (order, enablement) | `src/onboard/steps/index.ts` |
 | Cross-step handoff keys and value vocabularies | `src/onboard/choices.ts` |
-| pi launch + post-exit handoff for `qcr onboard` | `src/onboard/launch.ts`, `src/cli.ts` (`cmdOnboard`) |
 | Wizard tool belt inside pi | `extensions/onboarding.ts`, `prompts/onboarding.md` |
 | "Where does the stack run" seam | `src/onboard/steps/transport.ts` |
 | Compose helpers shared by the bring-up tail | `src/onboard/steps/compose.ts` |
@@ -76,21 +76,16 @@ The operator TUI makes the same split separately, through `config.toml
 
 ### Shape
 
-`scripts/qcr onboard` → `cmdOnboard` in `src/cli.ts` → `runOnboard` in
-`src/onboard/launch.ts`. That launches **pi** at the pinned version through
-`npx` (`onboardingPiArgv`), so a bare clone with Node and the checkout is
-enough — pi is not a dependency of this repo. The pin is read from `config.toml
-[pi]` when that file exists and from the `qcrPi` block in `package.json`
-otherwise; both mirror the same version.
+Its door, `qcr onboard`, is gone: a bare `qcr` opens the home, whose first
+run is the setup checklist (`src/home/setup.ts`, the plugin's step registry
+with the home's steps on it). The wizard's own pi session went with its
+door: the home runs the wizard's steps in its own process, switch-on's on the
+setup checklist and the rest behind Advanced (`src/home/advanced.ts`).
 
-The session is deliberately narrow: `--no-extensions --no-skills
---no-context-files`, exactly one extension (`extensions/onboarding.ts`), a
-read-only built-in tool belt, `--approve` so it can
-never stall on a trust modal, and its own session store at
-`state/onboarding/pi-sessions/` — never the reviewer's or the companion's.
-pi's `--tools` allowlist covers extension tools as well as built-ins, so the
-argv names `read,ls,grep` and then every wizard tool, derived from the step
-registry (`src/onboard/toolnames.ts`); bash, write and edit are never on it.
+The wizard's tool belt stays for a pi that loads it by path: exactly one
+extension (`extensions/onboarding.ts`) whose `--tools` allowlist names
+`read,ls,grep` and then every wizard tool, derived from the step registry
+(`src/onboard/toolnames.ts`); bash, write and edit are never on it.
 
 `extensions/onboarding.ts` registers **one tool per engine step**, named
 `onboard_<step id>`, plus `onboard_status` (reconcile + listing) and
@@ -102,8 +97,10 @@ otherwise it prints how to resume.
 
 ### The engine and its resumability contract
 
-`OnboardingEngine` (`src/onboard/engine.ts`) is a checklist state machine over
-`OnboardingStep`s behind injected adapters (`OnboardAdapters`: `fetch`, a
+`OnboardingEngine` (`src/onboard/engine.ts`) is the plugin's setup checklist
+(`SetupChecklist` in `packages/pi-plugin/src/setupchecklist.ts`, the step registry
+ADR 0001 makes a public seam) bound to the wizard: a checklist state machine
+over `OnboardingStep`s behind injected adapters (`OnboardAdapters`: `fetch`, a
 `ProcessRunner` that never throws, a clock, an optional prompter, host facts,
 the state dir, a log). Nothing in a step touches the network, Docker or pi
 except through those adapters, which is why the whole flow is drivable from
@@ -129,6 +126,12 @@ wizard doubles as a diagnostic:
 
 Unknown or disabled step ids come back as refusals-as-answers, never throws:
 the caller is a model's tool belt.
+
+A step may also declare `detect()`: already true ⇒ `detect()` on the
+checklist marks it done with what was found, without running it. The
+wizard's steps declare none, and the wizard never calls it; the plugin's
+`/qcr-setup` (`packages/pi-plugin/src/plugin/setup.ts`) is a checklist of
+detecting steps kept in memory.
 
 ### The steps
 

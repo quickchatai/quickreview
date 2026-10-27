@@ -204,6 +204,6 @@ describe("the user docs leave the clone route out", () => {
   it("the clone route is documented, in the developer section", () => {
     const dev = read("CONTRIBUTING.md");
     expect(dev).toMatch(/## Running from a clone/);
-    expect(dev).toContain("scripts/qcr onboard");
+    expect(dev).toContain("scripts/qcr home");
   });
 });

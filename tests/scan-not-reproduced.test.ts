@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stateHomeFs } from "../src/setup/adapters.js";
 import type { SinkResult, TrackerSink, TrackerTicket } from "../src/setup/engine.js";
 import { FindingsStore, type ReportedFinding, type ScanFinding } from "../src/setup/findings.js";
-import type { LedgerEntry } from "../src/setup/ledger.js";
+import type { LedgerEntry } from "@quickchatai/pi-quickreview/src/scan/ledger.js";
 import { ScanTriage } from "../src/setup/triage.js";
 
 let dir: string;

@@ -91,6 +91,7 @@ export function readTakeoverSpec(file: string): TakeoverSpec {
     raw.session !== `takeover-pr-${raw.pr}` ||
     typeof raw.session_file !== "string" ||
     typeof raw.agent_dir !== "string" ||
+    (raw.login_dir !== undefined && typeof raw.login_dir !== "string") ||
     typeof raw.borrow_dir !== "string" ||
     typeof raw.model !== "string" ||
     typeof raw.cwd !== "string" ||
@@ -119,11 +120,11 @@ export function readLogin(agentDir: string): string | null {
  * the owner's dir.
  */
 export function prepareBorrowedAgent(
-  spec: Pick<TakeoverSpec, "agent_dir" | "borrow_dir" | "idle_ms">,
+  spec: Pick<TakeoverSpec, "agent_dir" | "login_dir" | "borrow_dir" | "idle_ms">,
   now?: () => number,
 ): { expiresAt: number | null } {
   const { expiresAt } = copyPiAuth({
-    srcDir: spec.agent_dir,
+    srcDir: spec.login_dir ?? spec.agent_dir,
     dstDir: spec.borrow_dir,
     needMs: spec.idle_ms + PI_REFRESH_MARGIN_MS,
     words: ENGINE_AUTH_WORDS,

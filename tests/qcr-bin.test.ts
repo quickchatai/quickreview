@@ -1,12 +1,21 @@
 // The `qcr` bin's front door and the verbs an npm install adds: where each
-// argv goes (src/qcrbin.ts), `qcr pi`, `qcr login` and `qcr update`
+// argv goes (src/qcrbin.ts; the home's own launch is tests/home-launch.test.ts), `qcr pi`, `qcr login` and `qcr update`
 // (src/npmverbs.ts), and the SQLite hint (src/sqlitehint.ts). Every child is
 // a fake: nothing here starts pi, tmux or a package manager.
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { binRoute } from "../src/qcrbin.js";
+import { BIN_HELP, binRoute } from "../src/qcrbin.js";
 import {
+  APP_PI_EXTENSIONS,
   cmdLogin,
   cmdPi,
   cmdUpdate,
@@ -33,6 +42,7 @@ function fakeDeps(o: {
   pkgRoot?: string;
   interactive?: boolean;
   onRun?: (r: Ran) => number | null;
+  holdLogin?: NpmVerbDeps["holdLogin"];
 }): { deps: NpmVerbDeps; ran: Ran[]; out: string[]; err: string[] } {
   const ran: Ran[] = [];
   const out: string[] = [];
@@ -51,13 +61,36 @@ function fakeDeps(o: {
     out: (l) => out.push(l),
     err: (l) => err.push(l),
     execPath: "/usr/bin/node",
+    holdLogin: o.holdLogin ?? (() => Promise.resolve({ ok: true, held: false, release: () => {} })),
   };
   return { deps, ran, out, err };
 }
 
 describe("the bin's routes", () => {
-  it("a bare qcr opens the admin TUI", () => {
-    expect(binRoute([])).toEqual({ route: "tui" });
+  // MUTATION: route the empty argv to the TUI again — this fails.
+  it("a bare qcr opens the home, and qcr home does too", () => {
+    expect(binRoute([])).toEqual({ route: "home" });
+    expect(binRoute(["home"])).toEqual({ route: "home" });
+  });
+
+  // MUTATION: put `case "onboard"` back into src/cli.ts main — this fails.
+  it("qcr onboard is gone: the door is the home, and onboard is an unknown verb", () => {
+    expect(binRoute(["onboard"])).toEqual({ route: "app", argv: ["onboard"] });
+    const cli = readFileSync(join(ROOT, "src", "cli.ts"), "utf8");
+    // the app's main has no reader of the verb, and its usage names none
+    expect(cli).not.toMatch(/case "onboard"/);
+    expect(cli).not.toMatch(/\|onboard\|/);
+    expect(cli).toMatch(/case "home": \{/);
+    expect(BIN_HELP).not.toMatch(/onboard/);
+    const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    expect(Object.values(pkg.scripts).join("\n")).not.toMatch(/\bonboard\b/);
+  });
+
+  it("qcr tui still opens the admin TUI, through the app's main", () => {
+    expect(binRoute(["tui"])).toEqual({ route: "app", argv: ["tui"] });
+    expect(binRoute(["tui", "12"])).toEqual({ route: "app", argv: ["tui", "12"] });
   });
 
   it("the npm verbs are its own, with --json taken off", () => {
@@ -98,8 +131,10 @@ describe("the bin's routes", () => {
 });
 
 describe("qcr pi", () => {
-  // MUTATION: drop the -e — pi starts without the plugin.
-  it("runs the pinned pi with the plugin preloaded and the args passed on", () => {
+  // The plugin carries /qcr-review, /qcr-scan and /qcr-setup; /selfimprove
+  // is the app's, loaded beside it (ADR 0001). MUTATION: drop either -e — pi
+  // starts without the plugin, or without /selfimprove, and this fails.
+  it("runs the pinned pi with the plugin and the app's /selfimprove preloaded, and the args passed on", () => {
     const f = fakeDeps({ onRun: () => 3 });
     expect(cmdPi(["--model", "x/y", "hello"], f.deps)).toBe(3);
     expect(f.ran).toEqual([
@@ -109,12 +144,21 @@ describe("qcr pi", () => {
           "/pkg/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
           "-e",
           "/pkg/node_modules/@quickchatai/pi-quickreview",
+          "-e",
+          "/usr/lib/node_modules/@quickchatai/quickreview/extensions/cli/selfimprove.ts",
           "--model",
           "x/y",
           "hello",
         ],
       },
     ]);
+  });
+
+  // The path is under the package root an npm install ships (`files` holds
+  // extensions/). MUTATION: name a shim that does not exist — this fails.
+  it("names app extensions that exist in the package", () => {
+    expect(APP_PI_EXTENSIONS.length).toBeGreaterThan(0);
+    for (const e of APP_PI_EXTENSIONS) expect(existsSync(join(ROOT, e)), e).toBe(true);
   });
 
   it("says so when pi is not installed", () => {
@@ -171,6 +215,41 @@ describe("qcr login", () => {
     expect(said).toMatch(/type \/login/);
     expect(said).toMatch(/logged in to openai-codex/);
     expect(said).not.toContain("SECRET");
+  });
+
+  // MUTATION: drop the holdLogin call from cmdLogin — the login races the
+  // refresher's write, and this fails.
+  it("pauses auto-review's login refresher before pi starts, and releases it after", async () => {
+    const order: string[] = [];
+    const home = join(tmp, "held-home");
+    const f = fakeDeps({
+      env: { PATH: join(tmp, "no-tmux"), HOME: home },
+      holdLogin: (dir) => {
+        order.push(`hold ${dir}`);
+        return Promise.resolve({ ok: true, held: true, release: () => order.push("release") });
+      },
+      onRun: () => {
+        order.push("pi");
+        return 1;
+      },
+    });
+    expect(await cmdLogin([], f.deps)).toBe(1);
+    expect(order).toEqual([`hold ${join(home, ".pi", "agent")}`, "pi", "release"]);
+    expect(f.out.join("\n")).toMatch(/refresher is paused/);
+  });
+
+  it("starts nothing when the refresher cannot be paused", async () => {
+    const f = fakeDeps({
+      env: { PATH: join(tmp, "no-tmux"), HOME: join(tmp, "unheld-home") },
+      holdLogin: () =>
+        Promise.resolve({
+          ok: false,
+          why: "auto-review's login refresher did not pause within 60 s",
+        }),
+    });
+    expect(await cmdLogin([], f.deps)).toBe(1);
+    expect(f.ran).toEqual([]);
+    expect(f.err.join("\n")).toMatch(/did not pause.*nothing was changed/);
   });
 
   it("fails when pi was quit without a login", async () => {

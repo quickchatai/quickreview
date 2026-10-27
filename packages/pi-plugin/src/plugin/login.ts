@@ -15,7 +15,6 @@
 //     that one exists (modelroute.ts), the same model id on either.
 // The run then reads a refresh-disabled copy of the login (engine/auth.ts):
 // nothing in it can refresh, so a rotated token never leaves the host.
-import type { CoreConfig } from "../reviewconfig.js";
 import type { LoginSummary } from "../engine/auth.js";
 import { routeProvider } from "../modelroute.js";
 
@@ -30,26 +29,6 @@ export interface HostAuth {
   /** Ask the host pi to make `provider`'s OAuth token valid for at least
    * `minValidityMs` more: it refreshes it if not. Rejects when it cannot. */
   refresh(provider: string, minValidityMs: number): Promise<void>;
-}
-
-/** The providers the review's sessions run on: every model spec's
- * `provider/` prefix, in first-seen order. */
-export function reviewProviders(cfg: Pick<CoreConfig, "models">): string[] {
-  const m = cfg.models;
-  const specs = [
-    m.conversation,
-    m.default,
-    ...Object.values(m.tiers),
-    ...Object.values(m.pass_models),
-  ];
-  const out: string[] = [];
-  for (const spec of specs) {
-    const slash = spec.indexOf("/");
-    if (slash <= 0) continue;
-    const p = spec.slice(0, slash);
-    if (!out.includes(p)) out.push(p);
-  }
-  return out;
 }
 
 export type BorrowResult =
@@ -70,8 +49,36 @@ export function noLoginHint(provider: string, keyed: readonly string[]): string 
       : "";
   return (
     `the review runs on ${provider}, and this pi has no login for it. ` +
-    `Run /login ${provider} in pi, then /review again.${keys}`
+    `Run /login ${provider} in pi, then /qcr-review again.${keys}`
   );
+}
+
+/** The providers a run actually uses for the review's `providers`: each one
+ * itself, or its OpenAI twin when only the twin has a credential
+ * (modelroute.ts). One reading for the setup checklist and `borrowLogin`, so
+ * setup never calls a login missing that a review can run on. */
+export function routedProviders(
+  providers: readonly string[],
+  host: Pick<HostAuth, "logins" | "configured">,
+): string[] {
+  const logins = host.logins();
+  const out: string[] = [];
+  for (const named of providers) {
+    const p = routeProvider(named, "", {
+      hasCredential: (q) => logins[q] !== undefined || host.configured(q),
+    });
+    if (!out.includes(p)) out.push(p);
+  }
+  return out;
+}
+
+/** Can a run use `provider` at all: an OAuth login (pi refreshes a short one
+ * before the run), or any other credential pi has. */
+export function canUseProvider(
+  provider: string,
+  host: Pick<HostAuth, "logins" | "configured">,
+): boolean {
+  return host.logins()[provider]?.type === "oauth" || host.configured(provider);
 }
 
 /**
@@ -90,13 +97,7 @@ export async function borrowLogin(o: {
   const want = o.needMs + o.marginMs;
   const refreshed: string[] = [];
   let logins = o.host.logins();
-  const providers: string[] = [];
-  for (const named of o.providers) {
-    const p = routeProvider(named, "", {
-      hasCredential: (q) => logins[q] !== undefined || o.host.configured(q),
-    });
-    if (!providers.includes(p)) providers.push(p);
-  }
+  const providers = routedProviders(o.providers, o.host);
   for (const p of providers) {
     const login = logins[p];
     if (login?.type === "oauth") {
@@ -106,7 +107,7 @@ export async function borrowLogin(o: {
       } catch (err) {
         return {
           ok: false,
-          error: `pi could not refresh your ${p} login (${err instanceof Error ? err.message : String(err)}). Run /login ${p} in pi, then /review again.`,
+          error: `pi could not refresh your ${p} login (${err instanceof Error ? err.message : String(err)}). Run /login ${p} in pi, then /qcr-review again.`,
         };
       }
       logins = o.host.logins();
@@ -114,7 +115,7 @@ export async function borrowLogin(o: {
       if (after?.type !== "oauth" || after.expires === null || after.expires < now() + want)
         return {
           ok: false,
-          error: `your ${p} login does not last this review's ${Math.round(o.needMs / 60_000)} minutes even after pi refreshed it. Run /login ${p} in pi, then /review again.`,
+          error: `your ${p} login does not last this review's ${Math.round(o.needMs / 60_000)} minutes even after pi refreshed it. Run /login ${p} in pi, then /qcr-review again.`,
         };
       refreshed.push(p);
       continue;

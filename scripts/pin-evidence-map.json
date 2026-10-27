@@ -15,9 +15,9 @@
       }
     },
     {
-      "id": "pi-argv-companion-onboarding",
-      "assumes": "The companion's and the onboarding wizard's pi argv (--extension, --no-extensions, --no-skills, --no-context-files, --tools) is accepted.",
-      "files": { "src/tui/companion.ts": 3, "src/onboard/launch.ts": 1 },
+      "id": "pi-argv-companion",
+      "assumes": "The companion's pi argv (--extension, --no-extensions, --no-skills, --no-context-files, --tools) is accepted.",
+      "files": { "src/tui/companion.ts": 3 },
       "signal": {
         "source": "session-jsonl",
         "kind": "jsonl",
@@ -225,7 +225,7 @@
     {
       "id": "case-runner-json-stream",
       "assumes": "pi's JSON mode event spellings (tool_execution_start/end, message_end usage), the bin path, path resolution of read arguments.",
-      "files": { "src/setup/caserunner.ts": 6 },
+      "files": { "src/setup/caserunner.ts": 3, "packages/pi-plugin/src/scan/caseread.ts": 3 },
       "signal": {
         "source": "scan-transcript",
         "kind": "jsonl",
@@ -284,6 +284,16 @@
         "source": "none",
         "kind": "gap",
         "needs": "a first onboarding run whose companion transcript shows /login opened by itself and the session's model moved to the login that exists; no extract field names either yet"
+      }
+    },
+    {
+      "id": "home-device-login",
+      "assumes": "pi 1.4.0 hands an extension its model runtime behind ctx.modelRegistry.runtime, whose login(provider, \"oauth\", interaction) runs the provider's own flow and stores the credential; openai-codex first asks for the method with a select whose device option id contains \"device\", then notifies a device_code event.",
+      "files": { "src/home/devicelogin.ts": 1 },
+      "signal": {
+        "source": "none",
+        "kind": "gap",
+        "needs": "a first home run on a machine with no openai-codex login whose card showed pi's device code and whose chat then answered on that login; no extract field names it yet"
       }
     },
     {

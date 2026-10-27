@@ -137,6 +137,10 @@
     "post": {
       "$ref": "#/$defs/post"
     },
+    "post_ready": {
+      "type": "string",
+      "description": "A finished PR review that was not posted: the file it is kept in, which a host that asks the person later posts through the gate exactly as `--to pr` would have."
+    },
     "run_id": {
       "type": "string",
       "description": "A detached run's id (start, status, stop)."
@@ -148,6 +152,14 @@
     "target": {
       "type": "string",
       "description": "What a detached run reviews."
+    },
+    "started_at": {
+      "type": "number",
+      "description": "When a detached run was started, ms since the epoch."
+    },
+    "ended_at": {
+      "type": "number",
+      "description": "When a detached run ended (its exit or its stop), ms since the epoch; absent while it runs."
     },
     "elapsed_s": {
       "type": "integer",
@@ -164,6 +176,50 @@
           "type": "array",
           "items": {
             "type": "string"
+          }
+        },
+        "live": {
+          "type": "object",
+          "description": "The running round's live log, projected: what the parent and each lens are doing now.",
+          "properties": {
+            "round": { "type": "integer", "minimum": 1 },
+            "parent_status": { "enum": ["active", "settled"] },
+            "last_activity": { "type": "string" },
+            "updated_at": { "type": "string" },
+            "active_tool": { "type": "string" },
+            "agents": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["agent", "status", "duration_ms", "tool_count"],
+                "properties": {
+                  "agent": { "type": "string" },
+                  "status": { "enum": ["running", "completed", "failed"] },
+                  "duration_ms": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "The lens's time so far; a running lens's counts from its start between updates."
+                  },
+                  "tool_count": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "Tool calls the lens has started; a finished lens keeps its final count."
+                  },
+                  "current_tool": {
+                    "type": "string",
+                    "description": "The running (or last) tool, as `<tool>: <args>` or the bare name."
+                  },
+                  "current_target": {
+                    "type": "string",
+                    "description": "While the lens runs: the path its current tool works on, when it names one."
+                  },
+                  "line": {
+                    "type": "string",
+                    "description": "The lens as one line a person reads: `security · read src/x.ts · 7 tools · 0:41`."
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -234,6 +290,10 @@
             "kind": {
               "enum": ["pr", "branch", "uncommitted", "diff"],
               "description": "What is reviewed: a pull request, the current branch against its base, the uncommitted working tree, or a unified diff handed in (`--diff`). Only a pr target can be posted."
+            },
+            "uncommitted": {
+              "const": true,
+              "description": "A branch target reviewed together with the working tree's uncommitted edits, as one review. Absent otherwise."
             }
           }
         },

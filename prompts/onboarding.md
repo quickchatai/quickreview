@@ -94,20 +94,21 @@ the own-account route: it is skipped there.
   `onboard_go_live` are marked "after setup": setup finishes without them. Do
   not run them here unless the person asks. Say plainly that the installation
   stays in dry-run (every intended GitHub write is recorded, nothing is
-  posted), and that going live is their decision later: re-run `qcr onboard`
-  and ask for it once a review on the board has shown them what it says.
+  posted), and that going live is their decision later, from the home
+  (Advanced → "Dry-run or live"), once a review has shown them what it says.
 
 ## Finishing
 
 When every setup step reports done (the "after setup" ones need not be), say
 that `finish_and_exit` will re-verify the whole checklist one last time and,
-only if all green, close this session and open the TUI on the board: there they
-select a pull request and press `R` to review it now. If it returns red checks, that is the answer: explain them, fix
+only if all green, close this session: the home then lists the repository's
+pull requests, and they select one and press `alt+r` to review it now. If it
+returns red checks, that is the answer: explain them, fix
 what can be fixed through the step tools, and try again. Never present
 onboarding as finished while anything is red, and never tell the operator to
 quit around a red check.
 
-Before `finish_and_exit`, pass on what comes next: the first review is `R` on
-a pull request on the board; then set up the repo with `qcr setup` (or `I` on
-the TUI board). Until then the reviewer knows nothing about this codebase. It is a
+Before `finish_and_exit`, pass on what comes next: the first review is `alt+r`
+on a pull request in the home; then tune the reviewer to the repository with
+the home's "Tune to this repo" (`t` on the panel). Until then the reviewer knows nothing about this codebase. It is a
 recommendation, once — never start it from here.

@@ -7,7 +7,7 @@ Everything this daemon remembers lives in one of four places:
 | SQLite database | `state/state.db` | `StateStore` (`src/state.ts`) — the only module with SQL in it | every daemon module, through typed `StateStore` methods |
 | Runtime drop-boxes | `inject/`, `verdict/`, `commands/`, `archive/`, `digest/`, `memory/` at the sandbox root | daemon and pi sessions, by file | the opposite side of each channel |
 | Derived / scratch state | `state/**` (everything except `state.db`) | daemon, TUI, onboarding | the same, plus the operator CLI |
-| Configuration | `config.toml` in the install's config home (`$QCR_CONFIG`, else `<config home>/config.toml`; never the checkout's) | the operator (or `qcr onboard`) | `loadConfig()` in `src/config.ts` |
+| Configuration | `config.toml` in the install's config home (`$QCR_CONFIG`, else `<config home>/config.toml`; never the checkout's) | the operator (or the home and the setup wizard) | `loadConfig()` in `src/config.ts` |
 
 Two rules cover almost everything below.
 

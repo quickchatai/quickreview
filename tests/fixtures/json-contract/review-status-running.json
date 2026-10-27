@@ -4,6 +4,7 @@
   "run_id": "run1001000",
   "state": "running",
   "target": "feature",
+  "started_at": 1001000,
   "elapsed_s": 0,
   "exit_code": null,
   "progress": null

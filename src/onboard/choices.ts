@@ -16,8 +16,7 @@
 //      record each key, and the test proves each named step really does — so a
 //      key that only ever gets read cannot survive review.
 //
-// A key private to one step — the go-live decision, the bring-up timestamp, the
-// vm-deploy record, the model prefix, the memory key-file path — stays a local
+// A key private to one step — the go-live decision, the vm-deploy record, the model prefix, the memory key-file path — stays a local
 // constant in that step. This file is about the handoffs.
 //
 // Nothing here imports a step (the steps import this), so there is no cycle and
@@ -65,6 +64,10 @@ export type MemoryChoice = (typeof MEMORY_CHOICE_IDS)[number];
 export const CHOICE_KEYS = {
   /** The operator's uid, captured by preflight: the containers run as it. */
   uid: "qcr_uid",
+  /** When the bring-up step last brought the stack up (an ISO timestamp).
+   * Written by bringup; read by the login-share step, which recreates a
+   * stack brought up before so the daemon gets its login mount. */
+  broughtUpAt: "stack_brought_up_at",
 
   /** `Topology`. Written by the topology step; read by everything that has to
    * know where the stack runs (transport selection, the VM-only steps). */
@@ -164,6 +167,7 @@ export type ChoiceKey = (typeof CHOICE_KEYS)[ChoiceName];
  */
 export const CHOICE_WRITERS: Record<ChoiceName, readonly string[]> = {
   uid: ["preflight"],
+  broughtUpAt: ["bringup"],
   githubAuth: ["github_account"],
   accountLogin: ["github_account"],
   accountRepo: ["github_account"],
@@ -210,7 +214,6 @@ export const CHOICE_WRITERS: Record<ChoiceName, readonly string[]> = {
 export const PRIVATE_CHOICE_KEYS: Readonly<Record<string, string>> = {
   llm_model_prefix: "llm_auth",
   openviking_keys_file: "memory",
-  stack_brought_up_at: "bringup",
   go_live_decision: "go_live",
 };
 

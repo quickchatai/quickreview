@@ -224,6 +224,26 @@ describe("the spec the daemon answers with", () => {
     expect(parseWorkerSpec(JSON.parse(JSON.stringify(spec)))).toEqual(spec);
   });
 
+  // MUTATION: drop login_dir from parseWorkerSpec, or accept a relative one — this fails.
+  it("carries the shared login's dir when the login is not in the agent dir, absolute only", () => {
+    const spec = { ...good(), login_dir: "/opt/qcr/login" };
+    expect(parseWorkerSpec(JSON.parse(JSON.stringify(spec))).login_dir).toBe("/opt/qcr/login");
+    expect(parseWorkerSpec(JSON.parse(JSON.stringify(good()))).login_dir).toBeUndefined();
+    expect(() => parseWorkerSpec({ ...good(), login_dir: "login" })).toThrow(/worker spec/);
+  });
+
+  // MUTATION: drop providers from parseWorkerSpec — the worker checks every
+  // login of a shared pi home again, and this fails.
+  it("carries the review's providers, a list of names only", () => {
+    const spec = { ...good(), providers: ["openai-codex", "anthropic"] };
+    expect(parseWorkerSpec(JSON.parse(JSON.stringify(spec))).providers).toEqual([
+      "openai-codex",
+      "anthropic",
+    ]);
+    expect(() => parseWorkerSpec({ ...good(), providers: "openai" })).toThrow(/worker spec/);
+    expect(() => parseWorkerSpec({ ...good(), providers: [""] })).toThrow(/worker spec/);
+  });
+
   it("refuses what it cannot trust", () => {
     const broken: Array<[string, (s: Record<string, unknown>) => void]> = [
       ["a session that is not pr-<pr>", (s) => (s["session"] = "pr-8")],
@@ -671,6 +691,27 @@ describe("the borrowed login", () => {
     expect(daemon.of("failed")[0]!.body).toMatchObject({ code: EXIT.auth });
     expect(String(daemon.of("failed")[0]!.body["reason"])).toMatch(/expires at/);
     expect(JSON.stringify(daemon.events)).not.toContain("A-TOKEN");
+  });
+
+  // MUTATION: drop `providers` from botworker's engineCredentials call — the
+  // person's unused expired login refuses the round, and this fails.
+  it("admits the review's providers only: an expired login nothing uses does not refuse it", async () => {
+    writeFileSync(
+      join(world.agentDir, "auth.json"),
+      JSON.stringify({
+        "openai-codex": {
+          type: "oauth",
+          access: "A",
+          refresh: "R",
+          expires: Date.now() + 3 * 3_600_000,
+        },
+        anthropic: { type: "oauth", access: "OLD", refresh: "R", expires: Date.now() - 60_000 },
+      }),
+    );
+    const refused = await round("ORDER\n", script([say("never")]));
+    expect(refused.code).toBe(EXIT.auth);
+    const { code } = await round("ORDER\n", script([say("ok")]), { providers: ["openai-codex"] });
+    expect(code).toBe(EXIT.ok);
   });
 });
 

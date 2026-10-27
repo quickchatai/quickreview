@@ -51,21 +51,13 @@ import {
 import { MEMORY_NOT_SET_UP, type ReviewMemoryPort, type RoundMemory } from "./memoryport.js";
 import type { ProfilePlace } from "./profilelookup.js";
 import type { ProfileLookup } from "./profiles.js";
-import {
-  assemblePostReview,
-  loadPostIdentity,
-  localPostGate,
-  postReviewToPr,
-  type PostResult,
-} from "./reviewpost.js";
+import { assemblePostReview, loadPostIdentity } from "./reviewpost.js";
 import {
   fetchPrTarget,
   parsePrTarget,
   resolvePostCredential,
   resolvePrCredential,
   type CredentialSource,
-  type PrCredentialDeps,
-  type PrFetchRequest,
 } from "./prtarget.js";
 import {
   FALLBACK_DESTINATIONS,
@@ -107,23 +99,11 @@ import {
 } from "./reviewstate.js";
 import { openReviewStoreIn } from "./reviewstore.js";
 import { prepareReviewHost } from "./reviewhost.js";
+import { postAssembled, type PostGithub, SAVED_POST_FILE, type SavedPost } from "./savedpost.js";
+import type { ReviewTarget } from "./reviewtarget.js";
 
-/** What is reviewed. */
-export type ReviewTarget =
-  /** The repo dir's current branch against its base (`base`, else origin's
-   * default branch, main, master). */
-  | { kind: "branch"; base?: string }
-  /** The uncommitted working tree (staged, unstaged and new files) against
-   * HEAD. Never posted anywhere. */
-  | { kind: "uncommitted" }
-  /** A pull request: `12`, `#12` or a github.com pull URL. A PR on another
-   * repo than the repo dir's needs `repo` (owner/name). */
-  | { kind: "pr"; pr: string | number; repo?: string }
-  /** A unified diff: its text, or a reader the run calls when it gets there
-   * (a reader's Error message is the refusal, word for word). `name` says
-   * where it came from: a file name, or "-" (or nothing) for a piped diff.
-   * The repo dir is optional and only read; a diff is never posted. */
-  | { kind: "diff"; diff: string | (() => Promise<string>); name?: string };
+export { postSavedReview, SAVED_POST_FILE, type PostOutcome, type SavedPost } from "./savedpost.js";
+export type { ReviewTarget } from "./reviewtarget.js";
 
 /** Who is asking. "laptop" previews the estimate, asks above the limit and
  * stops hard at twice the estimate. "action" never asks and has no cap of its
@@ -228,13 +208,25 @@ export interface ReviewOptions {
   full?: boolean;
   limits: ReviewLimits;
   /** The GitHub credential sources and where GitHub is (a test seam). */
-  github?: PrCredentialDeps & Pick<PrFetchRequest, "fetchFn" | "gitBase" | "apiBase">;
+  github?: PostGithub;
 }
 
 /** What a prompt port is given beside its question: the run's stop, which
  * closes the question unanswered. */
 export interface AskOptions {
   signal?: AbortSignal;
+}
+
+/** A finished PR review, offered for posting (`ReviewIo.offerPost`). */
+export interface PostOffer {
+  repo: string;
+  pr: number;
+  /** The review as the report renders it. */
+  markdown: string;
+  /** Findings in it the bot has not already posted on the PR. */
+  findings: number;
+  /** The install keeps dry_run on: a post is recorded, not sent. */
+  dryRun: boolean;
 }
 
 /** The round that is about to start, for a UI to show while it runs. */
@@ -262,6 +254,12 @@ export interface ReviewIo {
   /** The run's own progress lines for a person (the preview before the run,
    * the memory notice). */
   progress?: (line: string) => void;
+  /** Asked once a PR review has finished, when its destinations do not
+   * already post it: post it now? Yes posts exactly as `pr` would have, one
+   * comment-only review through the gate with the install's dry_run. Given
+   * the review as a person reads it. Absent: nothing is offered. A stop
+   * closes the question unanswered, and nothing is posted. */
+  offerPost?: (offer: PostOffer, o?: AskOptions) => Promise<boolean>;
   /** The round is about to start: where it runs and what it plans. */
   started?: (run: ReviewStarted) => void;
   /** A warning said before the run. */
@@ -599,7 +597,10 @@ async function runPipeline(
       resolved =
         target.kind === "uncommitted"
           ? resolveUncommitted(repoDir, { scratchParent: opts.runsDir })
-          : resolveBranch(repoDir, target.base);
+          : resolveBranch(repoDir, target.base, {
+              ...(target.head !== undefined ? { head: target.head } : {}),
+              ...(target.uncommitted ? { uncommitted: true, scratchParent: opts.runsDir } : {}),
+            });
     if (!resolved.ok) return refuse(1, [resolved.error]);
     t = resolved.target;
     runDir = join(opts.runsDir, `${stamp}-${t.headSha.slice(0, 7)}`);
@@ -633,10 +634,13 @@ async function runPipeline(
         : `the diff ${diffName}`
       : target.kind === "uncommitted"
         ? `uncommitted changes on ${t.branch}`
-        : `${t.branch} against ${t.base}`;
+        : `${t.branch} against ${t.base}${t.uncommitted ? ", with its uncommitted changes" : ""}`;
   const kind: "pr" | "branch" | "uncommitted" | "diff" = target.kind;
   // what the markdown report is titled
-  const subject = kind === "diff" ? label : `${t.branch} against ${t.base}`;
+  const subject =
+    kind === "diff"
+      ? label
+      : `${t.branch} against ${t.base}${kind === "branch" && t.uncommitted ? ", with its uncommitted changes" : ""}`;
   const settings = loadReviewSettings(repoDir);
   const action = (opts.limits.route ?? "laptop") === "action";
   // The laptop's confirm threshold is the person's limit; the Action has none,
@@ -648,14 +652,15 @@ async function runPipeline(
   // What an earlier review of this target left (none with `full`, or when it
   // cannot be trusted).
   // A branch and a PR each keep state under their own key (the PR's delta is
-  // computed in its scratch repository); the uncommitted tree and a diff keep none.
+  // computed in its scratch repository); the uncommitted tree, a branch with
+  // uncommitted edits on top and a diff keep none.
   // A run that posts to a PR reviews in full: the findings already on the PR
   // (the posted-findings skip) are its repeat protection, and an
   // unchanged-head shortcut would also skip the post.
   const targetKey = prInfo
     ? prTargetKey(prInfo.repo, prInfo.number)
     : branchTargetKey(t.repo, t.branch);
-  const keepsState = kind === "branch" || kind === "pr";
+  const keepsState = (kind === "branch" && t.uncommitted === undefined) || kind === "pr";
   const statePath =
     opts.storeDir === null
       ? null
@@ -790,12 +795,13 @@ async function runPipeline(
   const planRound = (
     tree: string,
     memory?: RoundMemory,
+    target: typeof roundTarget = roundTarget,
   ): { prompts: OneShotPrompts; scope: "delta" | "full"; fallback: typeof fallback } => {
     const common = {
       root: opts.root,
       cfg,
       ecosystem,
-      target: roundTarget,
+      target,
       tree,
       caseDir: outDir,
       files: t.files,
@@ -851,7 +857,7 @@ async function runPipeline(
   const priorCount = scope === "delta" ? openFindings(prev).findings.length : 0;
   const previewData = {
     repo: t.repo,
-    target: { kind },
+    target: { kind, ...(kind === "branch" && t.uncommitted ? { uncommitted: true } : {}) },
     // posting is offered only when a PR is behind the target
     postable: prInfo !== null,
     ...(kind === "diff" ? {} : { branch: t.branch }),
@@ -991,6 +997,7 @@ async function runPipeline(
   const sessionName = `review-${(kind === "diff" ? "diff" : kind === "uncommitted" ? "uncommitted" : t.branch).replace(/[^A-Za-z0-9._-]/g, "-")}`;
   const roundNo = scope === "delta" && prev !== null ? lastRound(prev).round_no + 1 : 1;
   let shot: OneShotResult;
+  let runTarget = roundTarget;
   try {
     if (kind === "diff") {
       // a plain directory: no git write, so a read-only checkout is enough
@@ -999,9 +1006,17 @@ async function runPipeline(
         runWarnings.push(w);
         warn(w);
       }
-    } else if (kind === "uncommitted")
-      await addUncommittedTree(gitDir, treeDir, t, io.signal ? { signal: io.signal } : {});
-    else await addReviewTree(gitDir, treeDir, t.headSha, io.signal ? { signal: io.signal } : {});
+    } else if (kind === "uncommitted" || t.uncommitted !== undefined) {
+      // the edits are committed in the review tree, so the advertised diff
+      // names that snapshot rather than HEAD, which lacks them
+      const snapshot = await addUncommittedTree(
+        gitDir,
+        treeDir,
+        t,
+        io.signal ? { signal: io.signal } : {},
+      );
+      runTarget = { ...roundTarget, headSha: snapshot };
+    } else await addReviewTree(gitDir, treeDir, t.headSha, io.signal ? { signal: io.signal } : {});
     const round: RoundSpec = {
       root: opts.root,
       cwd: host.cwd,
@@ -1009,13 +1024,13 @@ async function runPipeline(
       agentDir: host.agentDir,
       tree: treeDir,
       files: t.files,
-      target: roundTarget,
+      target: runTarget,
       outDir,
       cfg,
       ecosystem,
       timeoutMs: opts.limits.timeoutMs,
       // Rendered over the review tree, as production renders over its worktree.
-      prompts: planRound(treeDir, seeded.memory).prompts,
+      prompts: planRound(treeDir, seeded.memory, runTarget).prompts,
       ...(cap !== null ? { capUsd: cap } : {}),
       memory: seeded.memory,
       sessionName,
@@ -1170,17 +1185,27 @@ async function runPipeline(
     ...customNotes,
     `Files: ${outDir}`,
   ].join("\n");
-  // Posting to the PR: one comment-only review, marked, deduplicated.
+  // Posting to the PR: one comment-only review, marked, deduplicated. Sent
+  // when the destinations say so, else when the person says yes to the offer.
   let posted: Record<string, unknown> | null = null;
   let postFailed = false;
   let postLine = "";
-  if (sends("pr") && prInfo !== null) {
-    const id = await resolvePostCredential(
-      opts.config.github.secrets_dir,
-      loadPostIdentity(repoDir),
-      { source: prInfo.source, token: prToken },
-      gh,
-    );
+  let postReady: string | null = null;
+  const markdown = renderMarkdown(mdMeta, groups);
+  let post = sends("pr");
+  if (!post && prInfo !== null && io.offerPost) {
+    const offerPost = io.offerPost;
+    const offer: PostOffer = {
+      repo: prInfo.repo,
+      pr: prInfo.number,
+      markdown,
+      findings: count,
+      dryRun: opts.config.dry_run,
+    };
+    const yes = await unlessStopped(io.signal, (o) => offerPost(offer, o));
+    post = yes === true && !io.signal?.aborted;
+  }
+  if (prInfo !== null) {
     // what the bot has not already posted, as the terminal shows it
     const toPost = assemblePostReview(rawWithout(shot.findings, bot.findings), {
       cfg,
@@ -1190,61 +1215,62 @@ async function runPipeline(
       verdict,
       summary: typeof shot.outcome?.["summary"] === "string" ? shot.outcome["summary"] : null,
     });
-    // Every finding was the bot's already (none left inline or in the body):
-    // there is nothing to post, not even a review body to repeat.
-    const res: PostResult = !id.ok
-      ? id
-      : skipped.skipped > 0 && toPost.comments.length === 0 && !toPost.bodyFindings
-        ? { ok: true, posted: 0, skipped: skipped.skipped, url: null }
-        : await postReviewToPr({
-            repo: t.repo,
-            number: prInfo.number,
-            headSha: t.headSha,
-            token: id.token,
-            // The one gate, with the install's dry_run: a dry-run install records
-            // the review under its dryrun dir and sends nothing (AGENTS.md invariant 6).
-            gate: localPostGate({
-              dryRun: opts.config.dry_run,
-              dryrunDir: opts.dryrunDir,
-              token: id.token,
-              ...(gh?.fetchFn ? { fetchFn: gh.fetchFn } : {}),
-              ...(gh?.apiBase ? { apiBase: gh.apiBase } : {}),
-              ...(io.log ? { log: (msg: string) => io.log!(`[quickreviewd] ${msg}`) } : {}),
-            }),
-            review: toPost,
-            ...(gh?.fetchFn ? { fetchFn: gh.fetchFn } : {}),
-            ...(gh?.apiBase ? { apiBase: gh.apiBase } : {}),
-          });
-    if (res.ok && res.recorded !== undefined) {
-      posted = {
-        ok: true,
-        posted: 0,
-        skipped: res.skipped,
-        url: null,
-        dry_run: true,
-        would_post: res.wouldPost,
-        recorded: res.recorded,
-      };
-      postLine =
-        `Dry run (dry_run = true in this install's config): the review of ${res.wouldPost} ` +
-        `comment${res.wouldPost === 1 ? "" : "s"} on PR #${prInfo.number} was recorded, not posted: ${res.recorded}`;
-    } else if (res.ok) {
-      posted = { ok: true, posted: res.posted, skipped: res.skipped, url: res.url };
-      postLine =
-        res.posted === 0
-          ? `Nothing posted: ${res.skipped} comment${res.skipped === 1 ? " is" : "s are"} already on the PR.`
-          : `Posted ${res.posted} comment${res.posted === 1 ? "" : "s"} to PR #${prInfo.number} (comment-only review)` +
-            `${res.skipped ? `, ${res.skipped} already there` : ""}${res.url ? `: ${res.url}` : ""}`;
+    const postAs = loadPostIdentity(repoDir);
+    if (post) {
+      const id = await resolvePostCredential(
+        opts.config.github.secrets_dir,
+        postAs,
+        { source: prInfo.source, token: prToken },
+        gh,
+      );
+      const out = await postAssembled({
+        repo: t.repo,
+        pr: prInfo.number,
+        headSha: t.headSha,
+        credential: id,
+        review: toPost,
+        skipped: skipped.skipped,
+        dryRun: opts.config.dry_run,
+        dryrunDir: opts.dryrunDir,
+        ...(gh ? { github: gh } : {}),
+        ...(io.log ? { log: io.log } : {}),
+      });
+      posted = out.post;
+      postFailed = out.failed;
+      postLine = out.line;
     } else {
-      postFailed = true;
-      posted = { ok: false, error: res.error };
-      postLine = `Review not posted: ${res.error}`;
+      // Not posted: kept beside the run's files, so a host that asks the
+      // person later posts exactly this (`postSavedReview`). No token is kept.
+      const saved: SavedPost = {
+        version: 1,
+        repo: t.repo,
+        pr: prInfo.number,
+        head_sha: t.headSha,
+        source: prInfo.source,
+        post_as: postAs,
+        skipped: skipped.skipped,
+        review: toPost,
+      };
+      try {
+        mkdirSync(outDir, { recursive: true });
+        const file = join(outDir, SAVED_POST_FILE);
+        writeFileSync(file, `${JSON.stringify(saved, null, 2)}\n`);
+        postReady = file;
+      } catch {
+        // a review that cannot be kept for later is still the review
+      }
     }
   }
   return finish(
     postFailed ? 1 : 0,
     postLine ? `${human}\n${postLine}` : human,
-    { ok: !postFailed, partial: false, ...data, ...(posted ? { post: posted } : {}) },
-    renderMarkdown(mdMeta, groups),
+    {
+      ok: !postFailed,
+      partial: false,
+      ...data,
+      ...(posted ? { post: posted } : {}),
+      ...(postReady !== null ? { post_ready: postReady } : {}),
+    },
+    markdown,
   );
 }

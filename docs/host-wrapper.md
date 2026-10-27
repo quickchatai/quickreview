@@ -22,8 +22,9 @@ The image is public on ghcr.io; a pull needs no login.
 ## What a call is
 
 Every call is `docker run --rm -i --init` with `--cap-drop ALL` and
-`--security-opt no-new-privileges`, plus `-t` when the verb is `tui`, `open`,
-`login` or `debug` and both ends are terminals.
+`--security-opt no-new-privileges`, plus `-t` when the verb is the home (a bare
+`qcr` or `qcr home`), `tui`, `open`, `login` or `debug` and both ends are
+terminals.
 
 | mount                                        | from                                         |                                                                       |
 | -------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------- |
@@ -34,6 +35,12 @@ Every call is `docker run --rm -i --init` with `--cap-drop ALL` and
 | `/qcr-config/profiles`                       | `~/.config/qcr/profiles`                     | read-only                                                             |
 | `/run/qcr-in`                                | a per-call dir holding the GitHub token file | read-write                                                            |
 
+The home takes a mount list of its own: no `/repo`, the `qcr-login` volume
+read-write at pi's agent dir (its device login lands there, as `qcr login`'s
+does), the `qcr-state` volume with its state home and its `config.toml` on it
+(`QCR_CONFIG=/opt/qcr/state/home/config.toml`, so the repository it picks is
+written and kept), and the token dir.
+
 Only the profiles directory of the config home is mounted, never the install
 home that holds `<install>/secrets/`. The gh config and
 `docker.sock` are never mounted, and the ssh agent only into the TUI container
@@ -41,12 +48,12 @@ home that holds `<install>/secrets/`. The gh config and
 
 A call that can reach a model or GitHub starts as root with only `CAP_SETUID`
 and `CAP_SETGID` and drops to your uid inside, so the model's tools run as
-another uid (`docker/entrypoint.sh`). `version`, `help`, `install`, `tui`
-and `login` start as you.
+another uid (`docker/entrypoint.sh`). `version`, `help`, `install`, the home,
+`tui` and `login` start as you.
 
 ## The TUI and its companion
 
-`qcr` (and `qcr tui`) is two containers and no `docker.sock` anywhere. A TUI in
+`qcr tui` is two containers and no `docker.sock` anywhere. A TUI in
 a container cannot run `docker exec`, and handing it the socket would make it
 the host, so the wrapper does the companion's docker work itself, on the host,
 and the two containers meet in a named volume.
@@ -172,8 +179,11 @@ environment.
 
 ## Verbs
 
-- `qcr` opens the TUI (`tui` mode) and runs its companion (see "The TUI and its
-  companion"); `qcr tui [pr|overseer]` the same with arguments.
+- `qcr` (and `qcr home`) opens the home (`home` mode): the image's pi with the
+  plugin and the home's panel. Its `gh` reads the handed-over token as
+  `GH_TOKEN`, in the home's own environment only. It starts no companion.
+- `qcr tui [pr|overseer]` opens the admin TUI (`tui` mode) and runs its
+  companion (see "The TUI and its companion"); only it starts the companion.
 - `qcr login [provider]` runs pi's own `/login` over the `qcr-login` volume
   (see "The login" below).
 - `qcr review start|status|stop` make a run a container of its own (see "A

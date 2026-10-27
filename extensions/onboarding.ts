@@ -1,6 +1,8 @@
-// onboarding — the wizard's tool belt. Loaded ONLY by `qcr onboard`
-// (per spawn, `-e`, alongside --no-extensions — no ambient extension rides the
-// onboarding session), never registered globally. pi jiti-loads this TS source
+// onboarding — the wizard's tool belt. Loaded ONLY by a pi started with it
+// named by path (its env shim, extensions/cli/onboarding.ts, as `-e` alongside
+// --no-extensions, so no ambient extension rides that session), never
+// registered globally. No qcr verb starts such a session any more: the home
+// runs the wizard's steps itself (src/home/switchon.ts, Advanced). pi jiti-loads this TS source
 // on the HOST, so it imports the OnboardingEngine source directly and runs it
 // in-process: pi talks, these deterministic tools act, and the LLM never
 // freestyles a shell command (the built-in belt is read-only by argv).
@@ -11,8 +13,7 @@
 //   - finish_and_exit: re-runs the FULL verification; anything red comes back
 //     as the tool result (no exit, ever, while red); all green marks the
 //     checklist complete, writes the companion's first-run marker
-//     (state/companion/first-run.json), and triggers pi's deferred shutdown —
-//     the `qcr onboard` process then opens the TUI.
+//     (state/companion/first-run.json), and triggers pi's deferred shutdown.
 //
 // Convention notes (same shape as companion-guard/tui-view): degrade, never
 // wedge — a pi without registerTool registers nothing and says so; a missing
@@ -228,8 +229,8 @@ export function createOnboarding(config: OnboardingConfig): ExtensionFactory {
  * The onboarding session's first-run login: when pi has no usable model
  * login, pi's own /login menu opens with a widget that says which logins work
  * (any OpenAI one), and an OpenAI model whose provider has no login runs on
- * the twin login that exists (extensions/login-route.ts). `qcr onboard`
- * registers it with the tools; a host that builds its own onboarding
+ * the twin login that exists (extensions/login-route.ts). The wizard's
+ * session registers it with the tools; a host that builds its own onboarding
  * extension over `toolDefinitions` + `registerQcrTool` calls it too.
  */
 export function registerOnboardingSession(pi: ExtensionAPI): void {

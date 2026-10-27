@@ -14,7 +14,7 @@ import { SCAN_DEFAULTS, type ScanConfig } from "../src/config.js";
 import { stateHomeFs } from "../src/setup/adapters.js";
 import type { CaseOutcome, CaseSpec } from "../src/setup/engine.js";
 import { FindingsStore } from "../src/setup/findings.js";
-import { LEDGER_FILE, type LedgerFile } from "../src/setup/ledger.js";
+import { LEDGER_FILE, type LedgerFile } from "@quickchatai/pi-quickreview/src/scan/ledger.js";
 import {
   anchoredLines,
   evidenceQuotesAnchor,

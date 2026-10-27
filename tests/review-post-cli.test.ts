@@ -10,6 +10,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   rmSync,
   symlinkSync,
@@ -23,6 +24,7 @@ import type {
   Destination,
   DestinationMenuItem,
 } from "@quickchatai/pi-quickreview/src/reviewdest.js";
+import type { PostOffer, ReviewOptions } from "@quickchatai/pi-quickreview/src/reviewapi.js";
 
 vi.stubEnv(
   "QCR_CONFIG",
@@ -34,6 +36,9 @@ const { destinationChoices } = await import("@quickchatai/pi-quickreview/src/rev
 const { saveDefaultDestinations } = await import("../src/reviewhome.js");
 const { contextFor } = await import("../src/bench/runner.js");
 const { openReviewStore } = await import("../src/reviewhome.js");
+const { review: coreReview, postSavedReview } =
+  await import("@quickchatai/pi-quickreview/src/reviewapi.js");
+const { prepareHostRun } = await import("../src/hostroute.js");
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "review-cli-"));
@@ -486,5 +491,156 @@ describe("qcr review --to pr", () => {
     const h2 = prHarness(repo, pi.bin, api);
     expect(await runReviewCli(["7", "--to", "pr"], false, h2.deps)).toBe(0);
     expect(api.posts).toHaveLength(1);
+  });
+});
+
+// The post a session offers after the review (the pi plugin's posting rule,
+// `ReviewIo.offerPost`): the same post `--to pr` makes, through the same gate,
+// decided only once the review has finished.
+describe("review(): the post offered after a finished PR review", () => {
+  /** The core's options for a harness, as `qcr review` builds them, showing
+   * the result only: the post is never a destination here. */
+  const coreOpts = (h: ReturnType<typeof prHarness>): ReviewOptions => ({
+    repoDir: h.deps.cwd,
+    root: h.deps.root,
+    agentDir: h.deps.agentDir,
+    runsDir: h.deps.runsDir,
+    dryrunDir: h.deps.dryrunDir,
+    storeDir: null,
+    config: h.deps.cfg,
+    ecosystem: h.deps.ecosystem,
+    runtime: () => h.deps.runtime,
+    prepareHost: prepareHostRun,
+    destinations: ["terminal"],
+    limits: { timeoutMs: h.deps.timeoutMs },
+    github: h.deps.pr,
+  });
+  const dryFiles = (dir: string): string[] =>
+    existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith("-create_review.json")) : [];
+
+  // MUTATION: post before asking, or on a no — this fails.
+  it("asks once the review is done, and a no posts nothing and records nothing", async () => {
+    const repo = cwdRepo("offer-no");
+    const api = stubApi();
+    const h = prHarness(repo, happyPi("offer-no").bin, api, {}, true);
+    const offers: PostOffer[] = [];
+    const r = await coreReview({ kind: "pr", pr: "7" }, coreOpts(h), {
+      offerPost: async (o) => (offers.push(o), false),
+    });
+    expect(r.exitCode, r.text).toBe(0);
+    expect(offers).toHaveLength(1);
+    expect(offers[0]).toMatchObject({ repo: "o/r", pr: 7, findings: 2, dryRun: true });
+    expect(offers[0]!.markdown).toMatch(/b is wrong/);
+    expect(api.posts).toHaveLength(0);
+    expect(dryFiles(h.deps.dryrunDir)).toEqual([]);
+    expect(r.data["post"]).toBeUndefined();
+  });
+
+  // Invariant 6 holds on this route too: the yes goes through the gate with
+  // the install's dry_run. MUTATION: post through postReviewToPr's fetch
+  // around the gate — this fails.
+  it("a yes on a dry-run install is recorded in its dryrun dir, and nothing is sent", async () => {
+    const repo = cwdRepo("offer-dry");
+    const api = stubApi();
+    const h = prHarness(repo, happyPi("offer-dry").bin, api, {}, true);
+    const r = await coreReview({ kind: "pr", pr: "7" }, coreOpts(h), {
+      offerPost: async () => true,
+    });
+    expect(r.exitCode, r.text).toBe(0);
+    expect(api.posts).toHaveLength(0);
+    expect(dryFiles(h.deps.dryrunDir).length).toBeGreaterThan(0);
+    expect(r.data["post"]).toMatchObject({ ok: true, dry_run: true });
+    expect(r.text).toMatch(/Dry run .*recorded, not posted/);
+  });
+
+  it("a yes on a live install posts one COMMENT review", async () => {
+    const repo = cwdRepo("offer-live");
+    const api = stubApi();
+    const h = prHarness(repo, happyPi("offer-live").bin, api);
+    const r = await coreReview({ kind: "pr", pr: "7" }, coreOpts(h), {
+      offerPost: async () => true,
+    });
+    expect(r.exitCode, r.text).toBe(0);
+    expect(api.posts).toHaveLength(1);
+    expect(api.posts[0]!.body.event).toBe("COMMENT");
+    expect(r.text).toMatch(/Posted 2 comments/);
+  });
+
+  // The home asks after a detached run has ended, in another process: the
+  // run keeps the finished review, and the later yes posts exactly it.
+  // MUTATION: post the saved review around the gate (or ignore dry_run) — this fails.
+  it("a review not posted is kept for later, and its later post on a dry-run install is recorded, not sent", async () => {
+    const repo = cwdRepo("saved-dry");
+    const api = stubApi();
+    const h = prHarness(repo, happyPi("saved-dry").bin, api, {}, true);
+    const r = await coreReview({ kind: "pr", pr: "7" }, coreOpts(h), {});
+    expect(r.exitCode, r.text).toBe(0);
+    const file = r.data["post_ready"] as string;
+    expect(existsSync(file)).toBe(true);
+    const saved = JSON.parse(readFileSync(file, "utf8"));
+    expect(saved).toMatchObject({ version: 1, repo: "o/r", pr: 7, head_sha: headSha });
+    expect(saved.review.event).toBe("COMMENT");
+    // no credential is kept with it
+    expect(readFileSync(file, "utf8")).not.toContain('"tok"');
+    expect(api.posts).toHaveLength(0);
+    const out = await postSavedReview(file, {
+      config: h.deps.cfg,
+      dryrunDir: h.deps.dryrunDir,
+      github: h.deps.pr,
+    });
+    expect(out.failed).toBe(false);
+    expect(out.post).toMatchObject({ ok: true, dry_run: true });
+    expect(out.line).toMatch(/Dry run .*recorded, not posted/);
+    expect(api.posts).toHaveLength(0);
+    expect(dryFiles(h.deps.dryrunDir)).toHaveLength(1);
+  });
+
+  it("a saved review posted later on a live install is one COMMENT review, and a second post repeats nothing", async () => {
+    const repo = cwdRepo("saved-live");
+    const api = stubApi();
+    const h = prHarness(repo, happyPi("saved-live").bin, api);
+    const r = await coreReview({ kind: "pr", pr: "7" }, coreOpts(h), {
+      offerPost: async () => false,
+    });
+    const file = r.data["post_ready"] as string;
+    const post = () =>
+      postSavedReview(file, { config: h.deps.cfg, dryrunDir: h.deps.dryrunDir, github: h.deps.pr });
+    const first = await post();
+    expect(first.line).toMatch(/Posted 2 comments to PR #7 \(comment-only review\)/);
+    expect(api.posts).toHaveLength(1);
+    expect(api.posts[0]!.body).toMatchObject({ event: "COMMENT", commit_id: headSha });
+    const again = await post();
+    expect(again.line).toMatch(/Nothing posted: 2 comments are already on the PR/);
+    expect(api.posts).toHaveLength(1);
+  });
+
+  it("a review that posted keeps nothing for later, and a file that is not a saved review posts nothing", async () => {
+    const repo = cwdRepo("saved-none");
+    const api = stubApi();
+    const h = prHarness(repo, happyPi("saved-none").bin, api, {}, true);
+    const r = await coreReview({ kind: "pr", pr: "7" }, coreOpts(h), {
+      offerPost: async () => true,
+    });
+    expect(r.data["post_ready"]).toBeUndefined();
+    const junk = join(tmp, "not-a-post.json");
+    writeFileSync(junk, "{}");
+    const out = await postSavedReview(junk, {
+      config: h.deps.cfg,
+      dryrunDir: h.deps.dryrunDir,
+      github: h.deps.pr,
+    });
+    expect(out.failed).toBe(true);
+    expect(out.line).toMatch(/is not a saved review/);
+  });
+
+  it("is never offered for a branch", async () => {
+    const repo = cwdRepo("offer-branch");
+    const h = prHarness(repo, happyPi("offer-branch").bin, stubApi());
+    let asked = 0;
+    const r = await coreReview({ kind: "branch", uncommitted: true }, coreOpts(h), {
+      offerPost: async () => (asked++, true),
+    });
+    expect(r.exitCode, r.text).toBe(0);
+    expect(asked).toBe(0);
   });
 });
