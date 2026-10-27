@@ -377,9 +377,7 @@ describe("memory's two phases on a fresh switch-on", () => {
     const ran: Ran[] = [];
     const slept: number[] = [];
     const out = await runSwitchOn({
-      checklist: checklistOver(
-        fakeSteps(ran, { memory: (n) => (n <= 3 ? PHASE_A : MEMORY_DONE) }),
-      ),
+      checklist: checklistOver(fakeSteps(ran, { memory: (n) => (n <= 3 ? PHASE_A : MEMORY_DONE) })),
       answers: { memory: true, confirmed: true },
       repo: null,
       dryRun: () => true,
@@ -669,9 +667,7 @@ describe("the login step: the stack reviews on the home's own login", () => {
       expect(r.failures.join()).toMatch(said);
       expect(r.failures.join()).toMatch(/Fix: update the stack/);
       expect(r.checks.map((c) => c.detail).join()).not.toMatch(/reviews on your login, data/);
-      expect(s.checklist.list().find((x) => x.id === LOGIN_SHARE_STEP_ID)?.status).toBe(
-        "pending",
-      );
+      expect(s.checklist.list().find((x) => x.id === LOGIN_SHARE_STEP_ID)?.status).toBe("pending");
     }
   });
 

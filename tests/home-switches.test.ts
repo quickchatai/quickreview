@@ -378,12 +378,7 @@ describe("switching auto-review off", () => {
     expect(h.asked[1]!.options).toEqual([CHOICE.cancel, CHOICE.proofRound]);
     expect(h.asked[2]!.title).toMatch(/^Go live\? You have read the review of #12\./);
     expect(h.asked[2]!.options).toEqual([CHOICE.cancel, CHOICE.goLive]);
-    expect(m.log).toEqual([
-      "auto.running",
-      "auto.proof",
-      "auto.proofRound #12",
-      "auto.goLive",
-    ]);
+    expect(m.log).toEqual(["auto.running", "auto.proof", "auto.proofRound #12", "auto.goLive"]);
     expect(said).toMatch(/posts live now/);
   });
 

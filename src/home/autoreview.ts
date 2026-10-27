@@ -344,7 +344,11 @@ export function composeAutoReview(o: ComposeAutoReviewOptions): AutoReviewPort {
       const p = recordedProof(engine(() => {}));
       return p ? { pr: p.pr, verdict: p.verdict } : null;
     },
-    proofRound: (pr, progress) => runProofRound(engine((l) => progress?.(l)), pr),
+    proofRound: (pr, progress) =>
+      runProofRound(
+        engine((l) => progress?.(l)),
+        pr,
+      ),
     goLive: (answers) =>
       runGoLive(
         engine(() => {}),

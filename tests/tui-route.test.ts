@@ -29,11 +29,7 @@ import { escalationStep } from "../src/onboard/steps/escalation.js";
 import { githubAccountStep } from "../src/onboard/steps/githubaccount.js";
 import { GO_LIVE_STEP_ID } from "../src/onboard/steps/golive.js";
 import { PROOF_STEP_ID } from "../src/onboard/steps/proof.js";
-import {
-  MACHINE_CHECKS_STEP_ID,
-  SWITCH_ON_ORDER,
-  switchOnRegistry,
-} from "../src/home/switchon.js";
+import { MACHINE_CHECKS_STEP_ID, SWITCH_ON_ORDER, switchOnRegistry } from "../src/home/switchon.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const TEMPLATE: TuiConfig = { ...TUI_DEFAULTS, ssh_host: "" }; // config.example.toml's [tui]
@@ -207,9 +203,7 @@ describe("the setup banner", () => {
       // (completed_at) never ran and the legacy wizard's own steps (its
       // config fill, its llm_auth) are not recorded. The proof round and the
       // go-live are optional.
-      const walked = SWITCH_ON_ORDER.filter(
-        (id) => id !== PROOF_STEP_ID && id !== GO_LIVE_STEP_ID,
-      );
+      const walked = SWITCH_ON_ORDER.filter((id) => id !== PROOF_STEP_ID && id !== GO_LIVE_STEP_ID);
       expect(
         await setupStateOf(checklist({ topology: "local", github_auth: "user" }, walked)),
       ).toBeUndefined();
