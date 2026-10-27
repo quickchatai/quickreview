@@ -522,7 +522,7 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
   }
   // Short on the bar, where every segment competes for the width; the list
   // carries the full sentence with the next step.
-  const setupSeg = view.setup ? `${WARN}▲ setup not finished — qcr onboard${DRESET}` : "";
+  const setupSeg = view.setup ? `${WARN}▲ setup not finished${DRESET}` : "";
   const s = view.snapshot;
   const rounds = s ? `rounds ${s.running_rounds}/${s.max_concurrent_rounds ?? "?"}` : "";
   const spend = s?.today_spend_usd !== undefined ? `today $${s.today_spend_usd.toFixed(2)}` : "";

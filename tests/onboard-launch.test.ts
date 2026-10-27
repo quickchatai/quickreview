@@ -1,13 +1,12 @@
-// `qcr onboard` launch mechanics: the npx argv at the pinned
-// version, the restricted session shape, and the post-exit handoff (complete ⇒
-// TUI; incomplete ⇒ resume instructions). All spawns faked.
+// The onboarding wizard's pi session: the npx argv at the pinned version and
+// the restricted session shape. `qcr onboard`, the door that ran it, is gone
+// (a bare `qcr` opens the home); the wizard's steps stay for the home's
+// Advanced route.
 import { describe, expect, it } from "vitest";
 import {
   onboardingPiArgv,
   onboardingSessionDir,
   piPinFromPackageJson,
-  runOnboard,
-  type OnboardRunDeps,
 } from "../src/onboard/launch.js";
 
 const PIN = { package: "@earendil-works/pi-coding-agent", version: "0.84.4" };
@@ -71,47 +70,5 @@ describe("piPinFromPackageJson", () => {
     expect(
       piPinFromPackageJson(ROOT, () => JSON.stringify({ qcrPi: { package: "p" } })),
     ).toBeNull();
-  });
-});
-
-function deps(
-  complete: boolean,
-  spawns: Array<{ cmd: string; args: string[] }>,
-  codes: number[] = [0, 0],
-): OnboardRunDeps {
-  let call = 0;
-  return {
-    pin: PIN,
-    root: ROOT,
-    spawn: async (cmd, args) => {
-      spawns.push({ cmd, args });
-      return codes[call++] ?? 0;
-    },
-    isComplete: () => complete,
-    log: () => {},
-    cliPath: "/clone/dist/src/cli.js",
-    nodeBin: "/usr/bin/node",
-  };
-}
-
-describe("runOnboard", () => {
-  it("incomplete checklist: one pi spawn, resume instructions, pi's exit code propagated", async () => {
-    const spawns: Array<{ cmd: string; args: string[] }> = [];
-    const lines: string[] = [];
-    const d = deps(false, spawns, [3]);
-    d.log = (l) => lines.push(l);
-    const code = await runOnboard(d);
-    expect(code).toBe(3);
-    expect(spawns).toHaveLength(1);
-    expect(spawns[0]?.cmd).toBe("npx");
-    expect(lines.join("\n")).toMatch(/qcr onboard` again to resume/);
-  });
-
-  it("complete checklist: hands off to the TUI with inherited stdio semantics (second spawn)", async () => {
-    const spawns: Array<{ cmd: string; args: string[] }> = [];
-    const code = await runOnboard(deps(true, spawns, [0, 7]));
-    expect(code).toBe(7); // the TUI's exit code is the wizard's
-    expect(spawns).toHaveLength(2);
-    expect(spawns[1]).toEqual({ cmd: "/usr/bin/node", args: ["/clone/dist/src/cli.js", "tui"] });
   });
 });

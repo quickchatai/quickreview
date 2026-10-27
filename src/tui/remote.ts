@@ -341,7 +341,7 @@ export function killInFlightSsh(): number {
  * die on "Could not resolve hostname" and every surface would print an ssh
  * remedy with no host in it. */
 export const NO_SSH_HOST_STDERR =
-  '[tui] ssh_host is empty — run `qcr onboard`, or set [tui] target = "local"';
+  '[tui] ssh_host is empty — set it to the VM\'s ssh alias, or set [tui] target = "local"';
 
 export const realSshRunner: SshRunner = (host, argv, opts) =>
   host.trim() === ""

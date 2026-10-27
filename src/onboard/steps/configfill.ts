@@ -121,7 +121,7 @@ function escapeRe(s: string): string {
  * marker in place — the EXPLANATION after it is the part worth keeping. */
 export function rewriteFillMarker(comment: string): string {
   if (!/←\s*FILL/.test(comment)) return comment;
-  return comment.replace(/←\s*FILL(\s*\(\d+\))?\s*:?\s*/, "filled by qcr onboard: ");
+  return comment.replace(/←\s*FILL(\s*\(\d+\))?\s*:?\s*/, "filled by qcr: ");
 }
 
 function sectionAt(lines: string[]): string[] {

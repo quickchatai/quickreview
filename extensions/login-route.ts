@@ -190,7 +190,7 @@ export function openLogin(ui: HintUi, open: LoginOpen): "submitted" | "prefilled
 
 /** Register the model route and the login hint on `pi`. Exported so a host that
  * builds its own onboarding extension (over `toolDefinitions`) gets the same
- * first-run login as `qcr onboard`. */
+ * first-run login as the onboarding wizard. */
 export function registerLoginRoute(pi: ExtensionAPI, config: LoginRouteConfig): void {
   if (typeof pi.on !== "function") return;
   let shown = false;

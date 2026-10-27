@@ -94,7 +94,6 @@
     "prepack": "npm run build",
     "watch": "node scripts/tsc-watch.mjs -b --watch --preserveWatchOutput",
     "dev": "bash scripts/dev-tui.sh",
-    "onboard": "bash scripts/qcr onboard",
     "test": "vitest run",
     "//canary:pi": "The offline pi canaries (tests/pi-canary/): the real pi SDK at the pinned version on pi-ai's faux provider, so no network and no cost. They also run inside `npm test`; this is the named entry point CI requires whenever the pi dependencies change (a bump is gated by it).",
     "canary:pi": "vitest run tests/pi-canary",

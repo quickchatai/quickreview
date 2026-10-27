@@ -6,7 +6,7 @@
 # Nothing here builds the app or needs a checkout: `daemon` and `memory` are
 # pulled, `QCR_VERSION` pins them, and the project directory holds this file,
 # a .env and (for a tunnel) docker/tunnel/ -- all of which the image carries and
-# the onboarding wizard hands you the command to extract (qcr onboard, step 70):
+# the onboarding wizard hands you the command to extract (its step 70):
 #
 #   docker run --rm --entrypoint tar ghcr.io/quickchatai/quickreview:<version> \
 #     -C /opt/qcr -cf - docker-compose.yml docker/tunnel | tar -xf -

@@ -287,6 +287,16 @@
       }
     },
     {
+      "id": "home-device-login",
+      "assumes": "pi 1.4.0 hands an extension its model runtime behind ctx.modelRegistry.runtime, whose login(provider, \"oauth\", interaction) runs the provider's own flow and stores the credential; openai-codex first asks for the method with a select whose device option id contains \"device\", then notifies a device_code event.",
+      "files": { "src/home/devicelogin.ts": 1 },
+      "signal": {
+        "source": "none",
+        "kind": "gap",
+        "needs": "a first home run on a machine with no openai-codex login whose card showed pi's device code and whose chat then answered on that login; no extract field names it yet"
+      }
+    },
+    {
       "id": "tsc-buildinfo-fields",
       "assumes": "TypeScript 6.0's incremental build info names pending and failed files with the field names src/tui/reload.ts reads (re-read on the 6.0.3 bump: unchanged from 5.9).",
       "files": { "src/tui/reload.ts": 1 },

@@ -28,7 +28,7 @@ walkthroughs already exist and are not repeated here — this page links them:
 | The wizard's binding of it (adapters, file path, first-run marker) | `src/onboard/engine.ts` |
 | Wizard step registry (order, enablement) | `src/onboard/steps/index.ts` |
 | Cross-step handoff keys and value vocabularies | `src/onboard/choices.ts` |
-| pi launch + post-exit handoff for `qcr onboard` | `src/onboard/launch.ts`, `src/cli.ts` (`cmdOnboard`) |
+| The wizard's pi session argv (its `qcr onboard` door is gone; the home's Advanced route is to reuse it) | `src/onboard/launch.ts` |
 | Wizard tool belt inside pi | `extensions/onboarding.ts`, `prompts/onboarding.md` |
 | "Where does the stack run" seam | `src/onboard/steps/transport.ts` |
 | Compose helpers shared by the bring-up tail | `src/onboard/steps/compose.ts` |
@@ -77,9 +77,11 @@ The operator TUI makes the same split separately, through `config.toml
 
 ### Shape
 
-`scripts/qcr onboard` → `cmdOnboard` in `src/cli.ts` → `runOnboard` in
-`src/onboard/launch.ts`. That launches **pi** at the pinned version through
-`npx` (`onboardingPiArgv`), so a bare clone with Node and the checkout is
+Its door, `qcr onboard`, is gone: a bare `qcr` opens the home, whose first
+run is the setup checklist (`src/home/setup.ts`, the plugin's step registry
+with the home's steps on it). The wizard's session is `onboardingPiArgv` in
+`src/onboard/launch.ts`, which the home's Advanced route is to reuse. It runs
+**pi** at the pinned version through `npx`, so a bare clone with Node and the checkout is
 enough — pi is not a dependency of this repo. The pin is read from `config.toml
 [pi]` when that file exists and from the `qcrPi` block in `package.json`
 otherwise; both mirror the same version.

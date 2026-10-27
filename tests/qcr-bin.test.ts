@@ -2,10 +2,18 @@
 // argv goes (src/qcrbin.ts; the home's own launch is tests/home-launch.test.ts), `qcr pi`, `qcr login` and `qcr update`
 // (src/npmverbs.ts), and the SQLite hint (src/sqlitehint.ts). Every child is
 // a fake: nothing here starts pi, tmux or a package manager.
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { binRoute } from "../src/qcrbin.js";
+import { BIN_HELP, binRoute } from "../src/qcrbin.js";
 import {
   APP_PI_EXTENSIONS,
   cmdLogin,
@@ -61,6 +69,21 @@ describe("the bin's routes", () => {
   it("a bare qcr opens the home, and qcr home does too", () => {
     expect(binRoute([])).toEqual({ route: "home" });
     expect(binRoute(["home"])).toEqual({ route: "home" });
+  });
+
+  // MUTATION: put `case "onboard"` back into src/cli.ts main — this fails.
+  it("qcr onboard is gone: the door is the home, and onboard is an unknown verb", () => {
+    expect(binRoute(["onboard"])).toEqual({ route: "app", argv: ["onboard"] });
+    const cli = readFileSync(join(ROOT, "src", "cli.ts"), "utf8");
+    // the app's main has no reader of the verb, and its usage names none
+    expect(cli).not.toMatch(/case "onboard"/);
+    expect(cli).not.toMatch(/\|onboard\|/);
+    expect(cli).toMatch(/case "home": \{/);
+    expect(BIN_HELP).not.toMatch(/onboard/);
+    const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    expect(Object.values(pkg.scripts).join("\n")).not.toMatch(/\bonboard\b/);
   });
 
   it("qcr tui still opens the admin TUI, through the app's main", () => {

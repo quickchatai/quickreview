@@ -27,6 +27,15 @@
 // is done the person's posting rule (pi's settings, `quickreview.posting`)
 // applies, asking with "No, keep it here" first. A review's findings go to
 // the chat as the plugin's review message.
+//   next setup step   alt+n               ⏎ (on the card)      home_setup_next
+//   each setup step   —                   —                    home_sign_in,
+//                                                              home_check_github,
+//                                                              home_choose_repo
+//
+// On a machine that is not set up, the setup checklist (src/home/setup.ts)
+// shows as a centred card (src/home/setupcard.ts) instead of the panel; when
+// its last step is done the card gives way to the panel, and back again if a
+// read shows a step missing once more.
 //
 // f2 or a click focuses the panel for its plain keys, and Esc gives the
 // editor back: the panel never takes the keyboard by itself (nonCapturing).
@@ -45,10 +54,14 @@ import {
 import { REVIEW_MESSAGE } from "@quickchatai/pi-quickreview/src/plugin/review.js";
 import { readQuickReviewSettings } from "@quickchatai/pi-quickreview/src/plugin/settings.js";
 import type { HomeToolSet } from "../src/config.js";
+import { piDeviceLogin } from "../src/home/devicelogin.js";
 import { HomeModel } from "../src/home/model.js";
 import { HOME_OVERLAY, HomePanel } from "../src/home/panel.js";
 import type { HomeAdapters } from "../src/home/ports.js";
 import type { Ask } from "../src/home/switches.js";
+import { HomeSetup, type HomeSetupPorts, type SetupUi } from "../src/home/setup.js";
+import { SETUP_OVERLAY, SetupCard } from "../src/home/setupcard.js";
+import { setupTools } from "../src/home/setuptools.js";
 import { HOME_TOOL_NAMES } from "../src/home/toolnames.js";
 
 type HomeToolName = (typeof HOME_TOOL_NAMES)[number];
@@ -63,6 +76,8 @@ export interface HomeOptions {
   every?: (ms: number, fn: () => void) => () => void;
   /** Run `fn` once after `ms`; the returned function cancels it. */
   after?: (ms: number, fn: () => void) => () => void;
+  /** The setup checklist's ports beyond the home's own. */
+  setup?: HomeSetupPorts;
 }
 
 /** How often the home reads its sources again by itself. */
@@ -94,6 +109,8 @@ export function createHome(o: HomeOptions): ExtensionFactory {
     let tui: TUI | undefined;
     let handle: OverlayHandle | undefined;
     let close: (() => void) | undefined;
+    let mounted: "setup" | "home" | undefined;
+    let session: ExtensionContext | undefined;
     let frame = 0;
     /** The session's UI, for the switches' questions. */
     let sessionUi: Ask | undefined;
@@ -103,7 +120,7 @@ export function createHome(o: HomeOptions): ExtensionFactory {
     const redraw = (): void => tui?.requestRender();
     // the session's UI, for the post question; none outside the TUI
     let ui: ExtensionContext["ui"] | undefined;
-    const model = new HomeModel({
+    const model: HomeModel = new HomeModel({
       adapters: o.adapters,
       model: o.model,
       tools: o.tools,
@@ -124,41 +141,86 @@ export function createHome(o: HomeOptions): ExtensionFactory {
           return "ask";
         }
       },
+      gaps: (): string[] => setup.gaps(),
+      onRead: (): Promise<void> => setup.sync(),
     });
+    const setup: HomeSetup = new HomeSetup({
+      model,
+      github: o.adapters.github,
+      ports: o.setup ?? {},
+      deviceLogin: () =>
+        o.setup?.deviceLogin ?? (session ? piDeviceLogin(session.modelRegistry) : undefined),
+      onChange: redraw,
+      onPhase: () => {
+        if (session?.mode === "tui") mount(session);
+      },
+      interactive: () => session?.mode === "tui",
+    });
+    const dialogs = (ctx: ExtensionContext | undefined): SetupUi | undefined =>
+      ctx?.hasUI
+        ? {
+            select: (title, options) => ctx.ui.select(title, options),
+            input: (title, placeholder) => ctx.ui.input(title, placeholder),
+          }
+        : undefined;
+    const nextStep = (ctx: ExtensionContext | undefined): Promise<string> =>
+      setup.next(dialogs(ctx));
 
+    // The card while setup has a gap, the panel otherwise; a change of phase
+    // closes the one and opens the other.
     const mount = (ctx: ExtensionContext): void => {
-      if (close) return;
+      const want = setup.phase();
+      if (close && mounted === want) return;
+      close?.();
+      close = undefined;
+      handle = undefined;
+      mounted = want;
+      const focused = (): boolean => handle?.isFocused() ?? false;
       void ctx.ui.custom<void>(
         (t, theme, _keys, done) => {
           tui = t;
           close = () => done();
-          return new HomePanel(theme, {
-            model,
-            focused: () => handle?.isFocused() ?? false,
-            rows: () => t.terminal.rows,
-            unfocus: () => handle?.unfocus(),
-            frame: () => frame,
-            ask: () => sessionUi,
-          });
+          return want === "setup"
+            ? new SetupCard(theme, {
+                setup,
+                model,
+                focused,
+                rows: () => t.terminal.rows,
+                unfocus: () => handle?.unfocus(),
+                frame: () => frame,
+                next: () => void nextStep(session),
+              })
+            : new HomePanel(theme, {
+                model,
+                focused,
+                rows: () => t.terminal.rows,
+                unfocus: () => handle?.unfocus(),
+                frame: () => frame,
+                ask: () => sessionUi,
+              });
         },
         {
           overlay: true,
-          overlayOptions: { ...HOME_OVERLAY, margin: { ...HOME_OVERLAY.margin } },
+          overlayOptions:
+            want === "setup"
+              ? { ...SETUP_OVERLAY }
+              : { ...HOME_OVERLAY, margin: { ...HOME_OVERLAY.margin } },
           onHandle: (h) => (handle = h),
         },
       );
     };
 
     pi.on("session_start", (_e, ctx) => {
+      session = ctx;
       model.setChatModel(ctx.model?.provider);
       ui = ctx.mode === "tui" ? ctx.ui : undefined;
       sessionUi = ctx.hasUI ? ctx.ui : undefined;
       if (ctx.mode === "tui") {
         mount(ctx);
-        // the spinner turns only while a read is in flight
+        // the spinner turns only while a read or a setup step is in flight
         stops.push(
           every(SPIN_MS, () => {
-            if (!model.busy()) return;
+            if (!model.busy() && !setup.busy()) return;
             frame++;
             redraw();
           }),
@@ -173,8 +235,10 @@ export function createHome(o: HomeOptions): ExtensionFactory {
       model.dispose();
       ui = undefined;
       for (const stop of stops.splice(0)) stop();
+      setup.close();
       close?.();
       close = undefined;
+      mounted = undefined;
     });
 
     const key = (
@@ -203,6 +267,12 @@ export function createHome(o: HomeOptions): ExtensionFactory {
     key("alt+m", "quickreview home: switch memory on or off", (ctx) =>
       model.switchMemory(askOf(ctx)),
     );
+    pi.registerShortcut("alt+n", {
+      description: "quickreview home: run the next setup step",
+      handler: (ctx) => {
+        void nextStep(ctx);
+      },
+    });
 
     // one definition per HOME_TOOL_NAMES entry: a name without one does not compile
     const tools: { [N in HomeToolName]: QcrTool & { name: N } } = {
@@ -301,6 +371,7 @@ export function createHome(o: HomeOptions): ExtensionFactory {
         execute: async (_id, _p, _signal, _onUpdate, ctx) =>
           textResult(await model.switchMemory(askOf(ctx))),
       },
+      ...setupTools(setup),
     };
     for (const name of HOME_TOOL_NAMES) registerQcrTool(pi, tools[name]);
   };

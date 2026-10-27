@@ -584,7 +584,7 @@ export async function triageConnection(
     return {
       kind: "unconfigured",
       cause: deps.unconfigured ?? NO_SSH_HOST_STDERR,
-      remedy: "qcr onboard",
+      remedy: "set [tui] ssh_host in config.toml",
     };
   }
   const exists = deps.exists ?? existsSync;

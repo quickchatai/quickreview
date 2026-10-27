@@ -33,7 +33,7 @@ body:
     attributes:
       label: How you run it
       options:
-        - Docker image (qcr onboard)
+        - Docker image (qcr, the home)
         - npm package (qcr review)
         - pi plugin
         - GitHub Action

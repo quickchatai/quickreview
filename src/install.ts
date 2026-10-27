@@ -190,7 +190,7 @@ export function migrateReport(outcome: MigrateOutcome): { code: number; lines: s
       return {
         code: 0,
         lines: [
-          `no config.toml in the checkout or at ${outcome.to} — nothing to move (\`qcr onboard\` writes a new one there)`,
+          `no config.toml in the checkout or at ${outcome.to} — nothing to move (a bare \`qcr\` writes one there when you choose a repository)`,
         ],
       };
     case "override":

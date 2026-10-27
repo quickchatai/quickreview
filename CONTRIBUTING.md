@@ -102,14 +102,13 @@ tested in CI (the `clone` job: a fresh checkout, `npm ci`, `npm run build`,
 fixture, no Docker and no model) but not promised in the user docs.
 
 ```sh
-scripts/qcr onboard     # or: npm run onboard; the guided setup, from the checkout
+scripts/qcr home        # the home (a bare `qcr`), from the checkout
 scripts/qcr tui         # the operator board
 ```
 
-From a clone the wizard drives Docker on your machine directly, the same as
-the image's wizard does where it can; to run a locally built image through
-`docker-compose.yml`, see the last section of
-[docker/README.md](docker/README.md).
+From a clone the home loads the checkout's own plugin and home extension; to
+run a locally built image through `docker-compose.yml`, see the last section
+of [docker/README.md](docker/README.md).
 
 ## The rules that will surprise you
 
