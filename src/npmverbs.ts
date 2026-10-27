@@ -5,6 +5,9 @@
 //   qcr login [provider]  pi's own /login, in the pinned pi (src/picli.ts),
 //                         into the user's pi agent dir. pi's UI is the flow:
 //                         qcr types /login for the person and steps aside.
+//                         When auto-review's refresher holds that login, it
+//                         is paused first and released after, as the home's
+//                         re-login does (src/loginrefresh/handover.ts).
 //   qcr pi [args]         the pinned pi with the qcr plugin preloaded
 //                         (`-e <the plugin package's dir>`) and the app's
 //                         own /selfimprove beside it (`-e` its shim,
@@ -20,6 +23,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { pluginPackageDir } from "./coreext.js";
 import { detectInstall, type Installer } from "./installkind.js";
+import type { RefresherHold } from "./loginrefresh/handover.js";
 import { readLogins } from "./loginhint.js";
 import { piAgentDir } from "./piagentdir.js";
 import { piCliPath } from "./picli.js";
@@ -85,6 +89,9 @@ export interface NpmVerbDeps {
   err: (line: string) => void;
   /** `node`: the pinned pi's entry is a script, run by this node. */
   execPath: string;
+  /** Pause auto-review's login refresher of `agentDir` for a login, when one
+   * runs (src/loginrefresh/handover.ts `holdRefresher`). */
+  holdLogin: (agentDir: string) => Promise<RefresherHold>;
 }
 
 export function npmVerbDeps(pkgRoot: string): NpmVerbDeps {
@@ -102,6 +109,10 @@ export function npmVerbDeps(pkgRoot: string): NpmVerbDeps {
     out: (l) => console.log(l),
     err: (l) => console.error(l),
     execPath: process.execPath,
+    holdLogin: async (agentDir) => {
+      const { holdRefresher } = await import("./loginrefresh/handover.js");
+      return holdRefresher(agentDir);
+    },
   };
 }
 
@@ -175,6 +186,27 @@ export async function cmdLogin(args: readonly string[], deps: NpmVerbDeps): Prom
     return 1;
   }
   const agentDir = piAgentDir(deps.env);
+  // The refresher first, when one runs: a refresh that read the old grant and
+  // lands after the login would write it back over the new one.
+  const hold = await deps.holdLogin(agentDir);
+  if (!hold.ok) {
+    deps.err(`qcr login: ${hold.why}; nothing was changed.`);
+    return 1;
+  }
+  if (hold.held) deps.out("qcr login: auto-review's login refresher is paused while you log in.");
+  try {
+    return await runLogin(provider, pi, agentDir, deps);
+  } finally {
+    hold.release();
+  }
+}
+
+async function runLogin(
+  provider: string | undefined,
+  pi: string,
+  agentDir: string,
+  deps: NpmVerbDeps,
+): Promise<number> {
   const before = loggedInProviders(agentDir);
   let status: number | null;
   if (onPath("tmux", deps.env["PATH"])) {
