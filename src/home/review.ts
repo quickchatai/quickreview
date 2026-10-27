@@ -204,4 +204,3 @@ export function reviewMessage(o: { pr: number; title: string; review: PrReview }
     ...(r.report ? ["", `Full report: \`${r.report}\``] : []),
   ].join("\n");
 }
-

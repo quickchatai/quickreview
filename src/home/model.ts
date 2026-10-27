@@ -122,7 +122,6 @@ export const PRICE_REST_MS = 500;
 /** How often a running review's status is read. */
 export const STATUS_POLL_MS = 2000;
 
-
 /** "about $1.33, stops at $2.66", or what is not known of it. */
 export function priceWords(est: number | null, cap: number | null): string {
   if (est === null) return "price unknown";

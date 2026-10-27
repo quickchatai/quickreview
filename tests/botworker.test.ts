@@ -699,7 +699,12 @@ describe("the borrowed login", () => {
     writeFileSync(
       join(world.agentDir, "auth.json"),
       JSON.stringify({
-        "openai-codex": { type: "oauth", access: "A", refresh: "R", expires: Date.now() + 3 * 3_600_000 },
+        "openai-codex": {
+          type: "oauth",
+          access: "A",
+          refresh: "R",
+          expires: Date.now() + 3 * 3_600_000,
+        },
         anthropic: { type: "oauth", access: "OLD", refresh: "R", expires: Date.now() - 60_000 },
       }),
     );

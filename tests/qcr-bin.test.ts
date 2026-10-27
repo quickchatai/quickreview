@@ -242,7 +242,10 @@ describe("qcr login", () => {
     const f = fakeDeps({
       env: { PATH: join(tmp, "no-tmux"), HOME: join(tmp, "unheld-home") },
       holdLogin: () =>
-        Promise.resolve({ ok: false, why: "auto-review's login refresher did not pause within 60 s" }),
+        Promise.resolve({
+          ok: false,
+          why: "auto-review's login refresher did not pause within 60 s",
+        }),
     });
     expect(await cmdLogin([], f.deps)).toBe(1);
     expect(f.ran).toEqual([]);
