@@ -12,7 +12,10 @@
 #                        `stop` find it by label. `stop` sends `docker stop -t
 #                        <grace>`, then `docker kill`: the container is the
 #                        hard-kill backstop for a driver whose loop is frozen.
-#   qcr                  a bare qcr opens the operator TUI (tui mode)
+#   qcr                  a bare qcr (or `qcr home`) opens the home: the image's
+#                        pi with the plugin and its panel (home mode)
+#   qcr tui              the operator TUI (tui mode), the one verb that starts
+#                        the companion
 #   qcr login [provider] pi's own /login, stored in the qcr-login volume
 #   qcr update [version] pull a newer image and repin this file
 #
@@ -21,8 +24,8 @@
 #   a worktree's common git dir              at its own path     read-only
 #   the qcr-state volume                     /opt/qcr/state      read-write
 #   the qcr-login volume                     /qcr-login          read-only
-#                                            (only `login` mounts it read-write,
-#                                            at pi's agent dir; its files are in
+#                                            (only `login` and the home mount it
+#                                            read-write, at pi's agent dir; its files are in
 #                                            group 4747, which every call joins,
 #                                            so a uid change never loses the login)
 #   ~/.config/qcr/profiles                   /qcr-config/profiles read-only
@@ -219,10 +222,19 @@ split=1
 drop=0
 gh=1
 case "$verb" in
+  # The home is the person's own pi, as `qcr` from npm opens it: pi's agent
+  # dir on the login volume, read-write (its device login lands there), its
+  # config and sessions on the state volume, and the GitHub token for its `gh`.
   '')
-    mode=tui
+    mode=home
     tty=1
     split=0
+    ;;
+  home)
+    mode=home
+    tty=1
+    split=0
+    drop=1
     ;;
   tui)
     mode=tui
@@ -555,7 +567,8 @@ fi
 # ---- the GitHub token (GITHUB_TOKEN, GH_TOKEN, gh; no App on a laptop) -----
 
 # The claim call only reads git: it needs no token, and a token file is read once.
-if [ "$split" = 1 ] && [ "$gh" = 1 ] && [ "$phase" != claim ]; then
+# The home is handed it too: its `gh` lists and opens the pull requests.
+if { [ "$split" = 1 ] || [ "$mode" = home ]; } && [ "$gh" = 1 ] && [ "$phase" != claim ]; then
   token="${GITHUB_TOKEN:-}"
   [ -n "$token" ] || token="${GH_TOKEN:-}"
   if [ -z "$token" ] && command -v gh >/dev/null 2>&1; then
@@ -603,6 +616,16 @@ if [ "$mode" = login ]; then
   # pi's own /login, written to the login volume: the only read-write mount of
   # it. A login needs no repo, no state and no profiles.
   set -- "$@" --mount "type=volume,src=qcr-login,dst=/home/qcr/.pi/agent"
+elif [ "$mode" = home ]; then
+  # The home works on a GitHub repository, not on the directory you stand in:
+  # no repo mount. pi's agent dir is the login volume, read-write, as login's
+  # is. Its state home, sessions and config.toml (the repository it picks,
+  # which it writes) live on the state volume, so they persist and stay
+  # writable; the install home is never mounted.
+  set -- "$@" --mount "type=volume,src=qcr-login,dst=/home/qcr/.pi/agent"
+  set -- "$@" --mount "type=volume,src=qcr-state,dst=/opt/qcr/state"
+  set -- "$@" -e QCR_STATE_HOME=/opt/qcr/state/home
+  set -- "$@" -e QCR_CONFIG=/opt/qcr/state/home/config.toml
 else
   # The repo, read-only; a worktree's common git dir at its own path.
   set -- "$@" --mount "type=bind,src=$root,dst=/repo,readonly" -w "/repo$rel"

@@ -5,7 +5,8 @@
 //   - the installer: the pinned image, the -v ~/.local/bin:/out shape and the
 //     `| sh` shape, an option-looking image refused, nothing else on stdout;
 //   - every container: --rm -i --init, --cap-drop ALL, no-new-privileges, the
-//     repo read-only at /repo, a worktree's git dir read-only at its own path;
+//     repo read-only at /repo (the home and login take none), a worktree's git
+//     dir read-only at its own path;
 //   - the mounts: ONLY the profiles dir of the config home (never the install
 //     home that holds <install>/secrets/, never the gh config), the qcr-state
 //     and qcr-login volumes, and the token dir;
@@ -13,7 +14,8 @@
 //     0700 dir that is gone after the call; in no -e/--env and no argv; no App
 //     and so no mint container and no secrets mount;
 //   - the verbs: the model-reaching calls start as root with SETUID/SETGID for
-//     the uid split, the others as the caller; tui/open/login/debug get a
+//     the uid split, the others as the caller; a bare qcr is the home;
+//     home/tui/open/login/debug get a
 //     terminal; a scan runs in the foreground inside the sandbox marker;
 //   - update: repins the file; the once-a-day notice never fires in CI.
 import { afterEach, describe, expect, it } from "vitest";
@@ -580,15 +582,39 @@ describe("the other verbs", () => {
     }
   });
 
-  it("a bare qcr opens the TUI as the caller; tui keeps its arguments", () => {
+  // MUTATION: give the empty verb mode=tui again — the documented first run
+  // opens the old TUI, and this fails.
+  it("a bare qcr and qcr home open the home as the caller; tui keeps its arguments", () => {
     const r = rig();
-    r.run([]);
+    r.run([], { env: { GITHUB_TOKEN: TOKEN } });
+    r.run(["home"]);
     r.run(["tui", "overseer"]);
-    const [bare, named] = r.calls();
-    expect(bare!.slice(bare!.indexOf(IMAGE))).toEqual([IMAGE, "tui"]);
+    const [bare, home, named] = r.calls();
+    expect(bare!.slice(bare!.indexOf(IMAGE))).toEqual([IMAGE, "home"]);
+    expect(home!.slice(home!.indexOf(IMAGE))).toEqual([IMAGE, "home"]);
     expect(named!.slice(named!.indexOf(IMAGE))).toEqual([IMAGE, "tui", "overseer"]);
     expect(bare!.join(" ")).not.toContain("--cap-add");
-    expect(r.token(0)).toBeNull();
+    // the home is no TUI: no companion label, no ssh, no repo
+    expect(bare).not.toContain("qcr.role=tui");
+    expect(mounts(bare!).join("\n")).not.toMatch(/\.ssh|dst=\/repo/);
+  });
+
+  // MUTATION: mount the login volume read-only in home mode — the home's
+  // device login cannot be saved, and this fails.
+  it("the home gets pi's agent dir read-write, a writable config and state on the volume, and the token", () => {
+    const r = rig();
+    r.run([], { env: { GITHUB_TOKEN: TOKEN } });
+    const [argv] = r.calls();
+    expect(mounts(argv!)).toEqual([
+      "type=volume,src=qcr-login,dst=/home/qcr/.pi/agent",
+      "type=volume,src=qcr-state,dst=/opt/qcr/state",
+      `type=bind,src=${r.token(0)!.dir},dst=/run/qcr-in`,
+    ]);
+    expect(envs(argv!)).toContain("QCR_STATE_HOME=/opt/qcr/state/home");
+    expect(envs(argv!)).toContain("QCR_CONFIG=/opt/qcr/state/home/config.toml");
+    expect(envs(argv!)).toContain("QCR_GH_TOKEN_FILE=/run/qcr-in/gh-token");
+    expect(r.token(0)!.content).toBe(TOKEN);
+    expect(argv!.join(" ")).not.toContain(TOKEN);
   });
 
   it("login is pi's own /login with the login volume the only read-write mount of it", () => {
@@ -604,13 +630,18 @@ describe("the other verbs", () => {
     ]);
   });
 
-  it("only login mounts the login volume read-write; every call joins its group", () => {
+  it("only login and the home mount the login volume read-write; every call joins its group", () => {
     const r = rig();
-    const verbs = [["review"], ["scan", "start"], ["open"], ["debug"], [], ["tui"], ["version"]];
+    const verbs = [["review"], ["scan", "start"], ["open"], ["debug"], ["tui"], ["version"]];
     for (const v of verbs) r.run(v);
+    r.run([]);
     r.run(["login"]);
     const calls = r.calls();
     const loginCall = calls.pop()!;
+    const homeCall = calls.pop()!;
+    expect(mounts(homeCall).filter((m) => m.includes("qcr-login"))).toEqual([
+      "type=volume,src=qcr-login,dst=/home/qcr/.pi/agent",
+    ]);
     for (const argv of calls) {
       const login = mounts(argv).filter((m) => m.includes("qcr-login"));
       expect(login.every((m) => m.endsWith(",readonly"))).toBe(true);
@@ -619,7 +650,7 @@ describe("the other verbs", () => {
       "type=volume,src=qcr-login,dst=/home/qcr/.pi/agent",
     ]);
     // the login's files are in one fixed group, whichever uid wrote them
-    for (const argv of [...calls, loginCall]) {
+    for (const argv of [...calls, homeCall, loginCall]) {
       expect(argv[argv.indexOf("--group-add") + 1]).toBe("4747");
       expect(envs(argv)).toContain("QCR_LOGIN_GID=4747");
     }
@@ -628,7 +659,7 @@ describe("the other verbs", () => {
   });
 
   const script = spawnSync("script", ["--version"]).status === 0;
-  it.skipIf(!script)("tui, open, login and debug get a terminal; review does not", () => {
+  it.skipIf(!script)("home, tui, open, login and debug get a terminal; review does not", () => {
     const r = rig();
     const viaTty = (verb: string): void => {
       const cmd = `sh ${r.wrapper} ${verb}`;
@@ -647,12 +678,12 @@ describe("the other verbs", () => {
         },
       });
     };
-    for (const verb of ["tui", "open", "login", "debug"]) viaTty(verb);
+    for (const verb of ["home", "tui", "open", "login", "debug"]) viaTty(verb);
     viaTty("review");
     const calls = r.calls();
-    expect(calls).toHaveLength(5);
-    expect(calls.slice(0, 4).map((c) => c[2])).toEqual(["-it", "-it", "-it", "-it"]);
-    expect(calls[4]![2]).toBe("-i");
+    expect(calls).toHaveLength(6);
+    expect(calls.slice(0, 5).map((c) => c[2])).toEqual(["-it", "-it", "-it", "-it", "-it"]);
+    expect(calls[5]![2]).toBe("-i");
     expect(envs(calls[0]!)).toContain("TERM");
   });
 
@@ -711,7 +742,7 @@ describe("the TUI and its companion", () => {
     ssh(r);
     const agent = await agentSocket(r.dir);
     try {
-      const out = r.run([], { env: { ...withCompanion, SSH_AUTH_SOCK: agent.path } });
+      const out = r.run(["tui"], { env: { ...withCompanion, SSH_AUTH_SOCK: agent.path } });
       expect(out.status, out.stderr).toBe(0);
     } finally {
       agent.close();
@@ -824,7 +855,7 @@ describe("the TUI and its companion", () => {
     ssh(r);
     const agent = await agentSocket(r.dir);
     try {
-      r.run([], { env: { ...withCompanion, SSH_AUTH_SOCK: agent.path } });
+      r.run(["tui"], { env: { ...withCompanion, SSH_AUTH_SOCK: agent.path } });
       for (const v of [["review"], ["scan", "status"], ["login"], ["version"], ["open"]])
         r.run(v, { env: { SSH_AUTH_SOCK: agent.path } });
     } finally {
@@ -850,7 +881,7 @@ describe("the TUI and its companion", () => {
     const r = rig();
     const hash = /plan (\S+)/.exec(readFileSync(join(r.dir, "plan.txt"), "utf8"))![1]!;
     writeFileSync(join(r.dir, "companion-state"), `true ${hash}`);
-    r.run([], { env: withCompanion });
+    r.run(["tui"], { env: withCompanion });
     expect(verbs(r)).toEqual(["run", "inspect", "run", "ps", "stop"]);
   });
 
@@ -858,14 +889,14 @@ describe("the TUI and its companion", () => {
     const r = rig();
     const hash = /plan (\S+)/.exec(readFileSync(join(r.dir, "plan.txt"), "utf8"))![1]!;
     writeFileSync(join(r.dir, "companion-state"), `false ${hash}`);
-    r.run([], { env: withCompanion });
+    r.run(["tui"], { env: withCompanion });
     expect(verbs(r)).toEqual(["run", "inspect", "start", "run", "ps", "stop"]);
   });
 
   it("recreates a companion whose plan drifted (a mount, a flag, a new image)", () => {
     const r = rig();
     writeFileSync(join(r.dir, "companion-state"), "true 0000000000000000");
-    const out = r.run([], { env: withCompanion });
+    const out = r.run(["tui"], { env: withCompanion });
     expect(out.stderr).toContain("recreating");
     expect(verbs(r)).toEqual(["run", "inspect", "rm", "run", "run", "ps", "stop"]);
     expect(companionRun(r)).toContain(`${TMUX_VOLUME}:/run/qcr-tmux:rw`);
@@ -875,20 +906,20 @@ describe("the TUI and its companion", () => {
     const r = rig();
     const hash = /plan (\S+)/.exec(readFileSync(join(r.dir, "plan.txt"), "utf8"))![1]!;
     writeFileSync(join(r.dir, "companion-state"), `false ${hash}`);
-    r.run([], { env: { ...withCompanion, FAKE_START_FAIL: "1" } });
+    r.run(["tui"], { env: { ...withCompanion, FAKE_START_FAIL: "1" } });
     expect(verbs(r)).toEqual(["run", "inspect", "start", "rm", "run", "run", "ps", "stop"]);
   });
 
   it("leaves the companion running while another TUI container still uses it", () => {
     const r = rig();
-    r.run([], { env: { ...withCompanion, FAKE_TUI_PS: "abc123" } });
+    r.run(["tui"], { env: { ...withCompanion, FAKE_TUI_PS: "abc123" } });
     expect(verbs(r)).not.toContain("stop");
   });
 
   it("--no-companion and QCR_NO_COMPANION run the TUI alone: no plan, no volume", () => {
     const r = rig();
     r.run(["tui", "--no-companion"], { env: withCompanion });
-    r.run([]);
+    r.run(["tui"]);
     expect(verbs(r)).toEqual(["run", "run"]);
     for (const argv of r.calls(true)) {
       expect(mounts(argv).join("\n")).not.toContain(TMUX_VOLUME);
@@ -903,7 +934,7 @@ describe("the TUI and its companion", () => {
     ["the companion will not run", { FAKE_COMPANION_RUN_FAIL: "1" }],
   ])("when %s the TUI starts without a companion and says so", (_why, env) => {
     const r = rig();
-    const out = r.run([], { env: { ...withCompanion, ...env } });
+    const out = r.run(["tui"], { env: { ...withCompanion, ...env } });
     expect(out.stderr).toContain("the companion could not be started");
     if ("FAKE_PLAN_FAIL" in env) expect(out.stderr).toContain("planner: no ssh agent");
     const tui = tuiCall(r);
@@ -918,7 +949,7 @@ describe("the TUI and its companion", () => {
     const cfg = join(r.home, ".config", "qcr", "default", "config.toml");
     mkdirSync(dirname(cfg), { recursive: true });
     writeFileSync(cfg, "# the install's config\n");
-    r.run([]);
+    r.run(["tui"]);
     r.run(["review"]);
     const [tui, review] = r.calls();
     expect(mounts(tui!)).toContain(`type=bind,src=${cfg},dst=/qcr-config/config.toml,readonly`);
@@ -934,7 +965,7 @@ describe("the TUI and its companion", () => {
     const home = join(r.home, "custom-home");
     mkdirSync(home, { recursive: true });
     writeFileSync(join(home, "config.toml"), "# the install's config\n");
-    r.run([], { env: { QCR_CONFIG_HOME: home } });
+    r.run(["tui"], { env: { QCR_CONFIG_HOME: home } });
     const [tui] = r.calls();
     expect(mounts(tui!)).toContain(
       `type=bind,src=${join(home, "config.toml")},dst=/qcr-config/config.toml,readonly`,
@@ -943,7 +974,7 @@ describe("the TUI and its companion", () => {
 
   it("has no secrets, config home or ssh dir in what the companion is run with", () => {
     const r = rig();
-    r.run([], { env: withCompanion });
+    r.run(["tui"], { env: withCompanion });
     const flat = companionRun(r).join("\n");
     expect(flat).not.toMatch(/secrets|\.ssh|docker\.sock/);
     // only the profiles and portrait dirs of the config home

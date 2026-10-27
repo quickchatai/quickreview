@@ -18,6 +18,10 @@
 //   tools      `[home] tools = "reviewer"` (the default) names the allowed
 //              tools (src/home/toolnames.ts) and starts no MCP server;
 //              "full" leaves pi's own defaults.
+//   GitHub     the person's own `gh`. In the image (scripts/qcr-host.sh's
+//              home mode) there is no gh config: the wrapper hands the token
+//              over as a file (packages/pi-plugin/src/ghcred.ts), and the
+//              home passes it to pi as GH_TOKEN, in its environment only.
 //
 // `-ne` keeps the person's own extensions out: a plugin they installed in pi
 // themselves would otherwise register its commands twice.
@@ -30,6 +34,7 @@ import { parse } from "smol-toml";
 import { HOME_DEFAULTS, parseHomeSection, type HomeConfig } from "../config.js";
 import { pluginPackageDir } from "../coreext.js";
 import { locateConfig, stateHome } from "../homes.js";
+import { handedToken } from "@quickchatai/pi-quickreview/src/ghcred.js";
 import { piCliPath, piPackageDir } from "../picli.js";
 import { HOME_MODEL_ENV, HOME_TOOLS_ENV } from "./adapters.js";
 import { reviewerToolAllowlist } from "./toolnames.js";
@@ -74,6 +79,8 @@ export interface HomeLaunchInput {
   stateHome: string;
   home: HomeConfig;
   env: Env;
+  /** A GitHub token handed over to this process, or null: the person's gh. */
+  githubToken?: string | null;
 }
 
 export interface HomeLaunch {
@@ -111,6 +118,7 @@ export function homeLaunch(o: HomeLaunchInput): HomeLaunch {
       PI_SKIP_VERSION_CHECK: "1",
       [HOME_MODEL_ENV]: o.home.model,
       [HOME_TOOLS_ENV]: o.home.tools,
+      ...(o.githubToken ? { GH_TOKEN: o.githubToken } : {}),
     },
   };
 }
@@ -123,6 +131,8 @@ export interface HomeRunDeps {
   pluginDir(): string;
   /** The installed pi's version, or null when it cannot be read. */
   piVersion(): string | null;
+  /** The GitHub token handed over to this process, or null. */
+  githubToken(): string | null;
   /** The config's `[home]`; a problem with it is said and the defaults used. */
   homeConfig(): { home: HomeConfig; problem?: string };
   readFile(path: string): string;
@@ -178,6 +188,7 @@ export function runHome(deps: HomeRunDeps): number {
     stateHome: deps.stateHome,
     home,
     env: deps.env,
+    githubToken: deps.githubToken(),
   });
   const r = deps.run(deps.execPath, launch.args, { cwd: launch.cwd, env: launch.env });
   if (r.error) {
@@ -229,6 +240,7 @@ export function homeRunDeps(appRoot: string, env: Env = process.env): HomeRunDep
         return null;
       }
     },
+    githubToken: handedToken,
     homeConfig: () => readHomeConfig(env),
     readFile: (p) => readFileSync(p, "utf8"),
     writeFile: (p, t) => writeFileSync(p, t),

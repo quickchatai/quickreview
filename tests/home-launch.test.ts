@@ -33,6 +33,7 @@ function fakeDeps(o: {
   files?: Record<string, string>;
   home?: ReturnType<HomeRunDeps["homeConfig"]>;
   piCli?: () => string;
+  githubToken?: string | null;
 }): { deps: HomeRunDeps; ran: Ran[]; files: Map<string, string>; writes: string[]; err: string[] } {
   const files = new Map(Object.entries(o.files ?? {}));
   const ran: Ran[] = [];
@@ -45,6 +46,7 @@ function fakeDeps(o: {
     piCli: o.piCli ?? (() => PI),
     pluginDir: () => PLUGIN,
     piVersion: () => "1.4.0",
+    githubToken: () => o.githubToken ?? null,
     homeConfig: () => o.home ?? { home: { ...HOME_DEFAULTS } },
     readFile: (p) => {
       const t = files.get(p);
@@ -110,6 +112,25 @@ describe("the home's launch", () => {
     expect(launch(undefined, { PI_CODING_AGENT_DIR: "/srv/pi" }).env["PI_CODING_AGENT_DIR"]).toBe(
       "/srv/pi",
     );
+  });
+
+  // MUTATION: drop the GH_TOKEN spread in homeLaunch — the image's home has no gh.
+  it("passes a handed-over GitHub token to pi as GH_TOKEN, and none otherwise", () => {
+    const l = homeLaunch({
+      piCli: PI,
+      pluginDir: PLUGIN,
+      appRoot: APP,
+      stateHome: STATE,
+      home: { ...HOME_DEFAULTS },
+      env: {},
+      githubToken: "ghs_handed",
+    });
+    expect(l.env["GH_TOKEN"]).toBe("ghs_handed");
+    expect(l.args.join(" ")).not.toContain("ghs_handed");
+    expect("GH_TOKEN" in launch().env).toBe(false);
+    const f = fakeDeps({ githubToken: "ghs_handed" });
+    runHome(f.deps);
+    expect(f.ran[0]!.env["GH_TOKEN"]).toBe("ghs_handed");
   });
 
   it("is reviewer-only by default: read tools, the plugin's and the home's, no MCP", () => {

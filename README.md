@@ -254,7 +254,10 @@ ChatGPT → Settings → Security), check that `gh` is signed in, and choose a
 repository from your recently pushed ones or paste any `owner/name` or URL.
 `alt+n` runs the next step. The home then lists the pull requests, "To review"
 and "Reviewed". `qcr tui` opens the admin TUI, and only it starts the
-companion. The always-on daemon, a GitHub App, webhooks and a server over ssh
+companion. Through the Docker wrapper the home runs in a container of its own:
+its login is kept in the `qcr-login` volume, its config and sessions in the
+`qcr-state` volume, and its `gh` uses the token the wrapper finds on this
+machine (`GITHUB_TOKEN`, `GH_TOKEN` or `gh auth token`). The always-on daemon, a GitHub App, webhooks and a server over ssh
 are the setup wizard's steps: [docs/onboarding.md](docs/onboarding.md).
 
 ### Where the reviewer lives
