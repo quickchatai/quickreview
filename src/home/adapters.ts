@@ -19,8 +19,8 @@
 //              src/home/memory.ts): the containers, the daemon's own
 //              status.json, and the switches over the wizard's steps.
 //
-// Spend has no adapter yet: its stub answers unknown, so the
-// panel says Unknown rather than a zero.
+//   spend      the app's detached runs' costs and the daemon's recorded
+//              costs (src/home/spend.ts): unknown when either can't be read.
 import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -34,6 +34,7 @@ import type { OnboardAdapters } from "../onboard/engine.js";
 import { openStepMemoryForward } from "../onboard/stepforward.js";
 import { composeAutoReview } from "./autoreview.js";
 import { composeMemory } from "./memory.js";
+import { realSpendPort } from "./spend.js";
 import { stepRunner } from "./switchon.js";
 import { piAgentDir } from "../piagentdir.js";
 import { qcrChild, realDetachSeams, reviewsPort } from "./reviews.js";
@@ -279,6 +280,8 @@ export function realHomeAdapters(o: {
   /** The app root, the compose project of this machine's stack: given, the
    * auto-review and memory ports read and switch it. */
   root?: string;
+  /** The spend line's port (src/home/spend.ts); absent, its stub. */
+  spend?: SpendPort;
 }): HomeAdapters {
   const repo = repoPort(o.configPath);
   const stack =
@@ -297,6 +300,7 @@ export function realHomeAdapters(o: {
     clock: { now: () => Date.now() },
     reviews: o.reviews,
     ...unbuiltPorts,
+    ...(o.spend ? { spend: o.spend } : {}),
     ...(stack
       ? {
           autoReview: composeAutoReview({ ...stack, now: () => Date.now() }),
@@ -320,12 +324,18 @@ export function homeOptionsFromEnv(env: Readonly<Record<string, string | undefin
 } {
   const model = (env[HOME_MODEL_ENV] ?? "").trim() || HOME_DEFAULTS.model;
   const tools: HomeToolSet = env[HOME_TOOLS_ENV] === "full" ? "full" : "reviewer";
+  const root = (env["QCR_ROOT"] ?? "").trim() || sandboxRoot();
   return {
     adapters: realHomeAdapters({
       agentDir: piAgentDir(env),
       configPath: () => locateConfig({ env }).path,
       reviews: realReviewsPort(env),
-      root: (env["QCR_ROOT"] ?? "").trim() || sandboxRoot(),
+      root,
+      spend: realSpendPort({
+        registry: join(stateHome(env), "review", "detached"),
+        root,
+        runner: stepRunner,
+      }),
     }),
     model,
     tools,

@@ -7892,6 +7892,11 @@ export interface StatusSnapshot {
   max_concurrent_rounds?: number;
   total_spend_usd: number;
   today_spend_usd?: number;
+  /** The month's spend so far: every round started in the snapshot's UTC
+   * month (the same rule as `today_spend_usd`, expired rounds included).
+   * Absent in snapshots from an older daemon: the home's spend line then
+   * reads unknown, never a zero. */
+  month_spend_usd?: number;
   digest_headline?: string;
   /** Present while pi sessions are failing API calls with token-expired
    * errors (packages/pi-plugin/src/authwatch.ts, fresh < 30 min). The TUI raises an alert. */
@@ -8242,6 +8247,8 @@ export function buildStatusSnapshot(
     ...(maxConcurrentRounds !== undefined ? { max_concurrent_rounds: maxConcurrentRounds } : {}),
     total_spend_usd: store.totalSpend(),
     today_spend_usd: roundUsage(store.roundsOn(today)).spend_usd,
+    // roundsOn matches by prefix: the month's `YYYY-MM` is every day of it
+    month_spend_usd: roundUsage(store.roundsOn(today.slice(0, 7))).spend_usd,
     ...(digestHeadline ? { digest_headline: digestHeadline } : {}),
     ...(piAuth
       ? {
