@@ -26,6 +26,7 @@ import {
   switchOnRegistry,
 } from "../src/home/switchon.js";
 import {
+  DAEMON_LOGIN_PROBE,
   LOGIN_SHARE_STEP_ID,
   PI_LOGIN_DIR_ENV,
   loginShareStep,
@@ -385,9 +386,22 @@ describe("the daemon start", () => {
 describe("the login step: the stack reviews on the home's own login", () => {
   const EXAMPLE = readFileSync(new URL("../config.example.toml", import.meta.url), "utf8");
 
-  const setUp = (o: { broughtUp: boolean; login?: boolean; config?: string }) => {
+  const setUp = (o: {
+    broughtUp: boolean;
+    login?: boolean;
+    config?: string;
+    /** The running daemon's answer to the login probe (exit code). */
+    probe?: number;
+    compose?: string;
+  }) => {
     const calls: string[][] = [];
-    const adapters = adaptersOver(() => ok(), calls);
+    const adapters = adaptersOver(
+      (args) =>
+        args.includes("exec") && o.probe !== undefined
+          ? { code: o.probe, stdout: "", stderr: "" }
+          : ok(),
+      calls,
+    );
     writeFileSync(adapters.paths.configPath, o.config ?? EXAMPLE);
     const loginDir = mkdtempSync(join(tmpdir(), "qcr-home-pi-"));
     dirs.push(loginDir);
@@ -401,6 +415,7 @@ describe("the login step: the stack reviews on the home's own login", () => {
       (checklist.choices() as Record<string, unknown>)[BROUGHT_UP_CHOICE_KEY] =
         "2026-10-01T00:00:00Z";
     const root = join(adapters.paths.stateDir, "..");
+    if (o.compose !== undefined) writeFileSync(join(root, "docker-compose.yml"), o.compose);
     const env = (): string => {
       try {
         return readFileSync(join(root, ".env"), "utf8");
@@ -436,11 +451,51 @@ describe("the login step: the stack reviews on the home's own login", () => {
       expect.arrayContaining(["up", "-d", "--no-deps", "--force-recreate", "daemon"]),
     );
     expect(s.calls.some((c) => c.includes("down") || c.includes("rm"))).toBe(false);
-    // a second run finds it done and touches nothing
+    // the running daemon was asked, after the recreate
+    expect(s.calls.at(-1)).toEqual(
+      expect.arrayContaining(["exec", "-T", "daemon", ...DAEMON_LOGIN_PROBE]),
+    );
+    // a second run writes and recreates nothing, and asks the daemon again
     s.calls.length = 0;
     const again = await s.checklist.runStep(LOGIN_SHARE_STEP_ID);
     expect(again.ok).toBe(true);
+    expect(s.calls).toHaveLength(1);
+    expect(s.calls[0]).toEqual(expect.arrayContaining(["exec", ...DAEMON_LOGIN_PROBE]));
+  });
+
+  // MUTATION: push the "daemon" check as ok whatever the probe answers — this fails.
+  it("a daemon whose image or compose file predates the shared login is not claimed: the step stays undone", async () => {
+    for (const [code, said] of [
+      [5, /image predates the shared login/],
+      [3, /docker-compose\.yml is an older release's/],
+      [4, /sees no login/],
+      [1, /can't ask the running daemon/],
+    ] as const) {
+      const s = setUp({ broughtUp: true, probe: code });
+      const r = await s.checklist.runStep(LOGIN_SHARE_STEP_ID);
+      expect(r.ok).toBe(false);
+      expect(r.failures.join()).toMatch(said);
+      expect(r.failures.join()).toMatch(/Fix: update the stack/);
+      expect(r.checks.map((c) => c.detail).join()).not.toMatch(/reviews on your login, data/);
+      expect(s.checklist.list().find((x) => x.id === LOGIN_SHARE_STEP_ID)?.status).toBe(
+        "pending",
+      );
+    }
+  });
+
+  // MUTATION: drop the composeMountsLogin check before the writes — this fails.
+  it("an older release's compose file, with no login mount, is refused before anything is written", async () => {
+    const s = setUp({ broughtUp: true, compose: "services:\n  daemon:\n    image: x\n" });
+    const before = s.config();
+    const r = await s.checklist.runStep(LOGIN_SHARE_STEP_ID);
+    expect(r.ok).toBe(false);
+    expect(r.failures.join()).toMatch(/older release's: it does not mount a shared login/);
+    expect(s.env()).toBe("");
+    expect(s.config()).toBe(before);
     expect(s.calls).toEqual([]);
+    // this release's compose file mounts it
+    const current = readFileSync(new URL("../docker-compose.yml", import.meta.url), "utf8");
+    expect(current).toContain(PI_LOGIN_DIR_ENV);
   });
 
   it("before the first bring-up it only writes: the bring-up starts the daemon on it", async () => {
