@@ -663,6 +663,18 @@ describe("the repository write (setupadapters.ts)", () => {
     expect((parse(r.text) as Record<string, unknown>)["dry_run"]).toBe(false);
   });
 
+  // MUTATION: drop the CRLF round-trip in patchToml (split on LF only) — this fails.
+  it("a CRLF config stays CRLF: only the values change, never the line endings", () => {
+    const existing = TEMPLATE.replace(/\r?\n/g, "\r\n");
+    const r = renderRepoConfig(existing, "", choice);
+    if (!r.ok) throw new Error(r.why);
+    expect(r.text.replace(/\r\n/g, "")).not.toContain("\n");
+    expect(r.text).toMatch(/^repo = "acme\/widgets" +# filled by qcr: [^\r\n]*\r\n/m);
+    expect((parse(r.text) as Record<string, Record<string, unknown>>)["github"]!["repo"]).toBe(
+      "acme/widgets",
+    );
+  });
+
   it("a config that is not TOML is refused, and the template that dropped dry_run too", () => {
     expect(renderRepoConfig("[github\nrepo = ", "", choice)).toMatchObject({ ok: false });
     const noDry = TEMPLATE.replace(/^dry_run = true/m, "dry_run = false");
