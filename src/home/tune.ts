@@ -13,18 +13,40 @@
 // `home_tune_write`: the one write the home lends it, which writes only a
 // profile file, only while a tune runs, and only on the person's yes.
 //
-// The home then watches the profile (the plugin's own detect: `.qcr/
-// profile.toml` in the checkout) and says when Setup has written it. A
-// review reads the profile from the base commit, so it applies once the
-// person commits it there.
+// A profile is several files (profile.toml and one addendum per house rule),
+// so the tune stays open through all of them: it ends when the agent marks a
+// write as the profile's last file (`last`), or with the session. Until the
+// agent writes through the tool, the home also watches the profile (the
+// plugin's own detect: `.qcr/profile.toml` in the checkout) and says when one
+// is written another way. A review reads the profile from the base commit,
+// so it applies once the person commits it there.
+//
+// The checkout is untrusted: its contributors choose what is in it, links
+// included. A write creates its temporary file exclusively, never through a
+// link, and refuses a `.qcr/` or `addenda/` that is a link or resolves
+// outside the checkout, so a yes writes only the file it names.
 //
 //   tune     a key (t, alt+t) and the `home_tune` tool
 //   write    the `home_tune_write` tool: the agent's draft, the person's yes
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { randomBytes } from "node:crypto";
+import {
+  closeSync,
+  constants,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeSync,
+  type Stats,
+} from "node:fs";
+import { basename, dirname, join, relative, sep } from "node:path";
 import { profileSetupBrief } from "@quickchatai/pi-quickreview/src/plugin/setup.js";
 import { REPO_PROFILE_DIR } from "@quickchatai/pi-quickreview/src/profileoverrides.js";
-import { writeAtomic } from "@quickchatai/pi-quickreview/src/setupchecklist.js";
 import { parse } from "smol-toml";
 import type { ProcessRunner } from "../onboard/engine.js";
 import { known, unknown, type Known, type Outcome } from "./ports.js";
@@ -73,7 +95,7 @@ export function profileFile(file: string): string | null {
 export function homeBriefNote(checkout: string): string {
   return [
     "",
-    `In this home, the checkout is ${checkout}: read it with your read tools. Write each file of the profile with the \`home_tune_write\` tool (\`file\` is relative to ${REPO_PROFILE_DIR}/: \`profile.toml\` or \`addenda/<nn>-<rule-id>.md\`); it shows me the file and writes it only on my yes. If you cannot reach \`gh\` from here, skip the review history and say so.`,
+    `In this home, the checkout is ${checkout}: read it with your read tools. Write each file of the profile with the \`home_tune_write\` tool (\`file\` is relative to ${REPO_PROFILE_DIR}/: \`profile.toml\` or \`addenda/<nn>-<rule-id>.md\`); it shows me the file and writes it only on my yes. Pass \`last: true\` with the profile's final file: the tune ends with it. If you cannot reach \`gh\` from here, skip the review history and say so.`,
   ].join("\n");
 }
 
@@ -96,9 +118,11 @@ interface Tuning {
   repo: string;
   checkout: string;
   before: TuneStatus | null;
+  /** The files written through the tool; once there is one, only `last` ends it. */
+  wrote: string[];
 }
 
-/** The tune: one at a time, from the person's choice to the profile written. */
+/** The tune: one at a time, from the person's choice to the profile's last file. */
 export class HomeTune {
   private tuning: Tuning | null = null;
   private cancel: (() => void) | null = null;
@@ -125,7 +149,7 @@ export class HomeTune {
     const repo = this.o.repo();
     if (repo === null) return "no repository is chosen, so there is nothing to tune to";
     if (this.tuning)
-      return `Setup of ${this.tuning.repo} is under way with your agent in the chat (${this.tuning.checkout})`;
+      return `Setup of ${this.tuning.repo} is under way with your agent in the chat (${this.tuning.checkout}); it ends when your agent writes the profile's last file`;
     if (!tellAgent) return "Setup is a conversation with the chat's agent, and there is none here";
     let started: Outcome<TuneStart>;
     try {
@@ -142,6 +166,7 @@ export class HomeTune {
       repo,
       checkout: started.checkout,
       before: before.kind === "known" ? before.value : null,
+      wrote: [],
     };
     tellAgent(`${started.brief}\n${homeBriefNote(started.checkout)}`);
     this.o.say(
@@ -152,8 +177,9 @@ export class HomeTune {
     return `Setup of ${repo} started with the chat's agent, over ${started.checkout}; the home says when the profile is written`;
   }
 
-  /** The agent's draft of one profile file, written on the person's yes. */
-  async write(file: string, text: string, ask: Ask | undefined): Promise<string> {
+  /** The agent's draft of one profile file, written on the person's yes.
+   * `last`: it is the profile's final file, and the tune ends with it. */
+  async write(file: string, text: string, ask: Ask | undefined, last = false): Promise<string> {
     const t = this.tuning;
     const port = this.o.port;
     if (!t || !port) return "no tune is running: start one first (home_tune)";
@@ -180,8 +206,13 @@ export class HomeTune {
       r = { ok: false, why: message(err) };
     }
     if (!r.ok) return `${REPO_PROFILE_DIR}/${f} was not written: ${r.why}`;
-    void this.check();
-    return `wrote ${r.path}`;
+    if (this.tuning !== t) return `wrote ${r.path}`;
+    t.wrote.push(f);
+    if (!last)
+      return `wrote ${r.path}; the tune stays open: write the profile's other files, and pass last: true with the final one`;
+    const n = t.wrote.length === 1 ? "1 file" : `${t.wrote.length} files`;
+    this.finish(t, `${n} of ${REPO_PROFILE_DIR}/ in ${t.checkout}`);
+    return `wrote ${r.path}; Setup is done`;
   }
 
   private async read(repo: string): Promise<Known<TuneStatus>> {
@@ -202,24 +233,31 @@ export class HomeTune {
     });
   }
 
-  /** Has Setup written the profile since the tune started? Says so once. */
+  /** Has the profile been written another way since the tune started? Says
+   * so once. Once the agent writes through the tool, only `last` ends it: a
+   * profile.toml is the first file of several, not the end. */
   private async check(): Promise<boolean> {
     const t = this.tuning;
-    if (!t) return true;
+    if (!t || t.wrote.length > 0) return true;
     const s = await this.read(t.repo);
-    if (this.tuning !== t || s.kind === "unknown" || !s.value.tuned) return false;
+    if (this.tuning !== t || t.wrote.length > 0) return true;
+    if (s.kind === "unknown" || !s.value.tuned) return false;
     const b = t.before;
     const fresh = !b?.tuned || (s.value.at ?? 0) > (b.at ?? 0);
     if (!fresh) return false;
+    this.finish(t, s.value.detail);
+    return true;
+  }
+
+  private finish(t: Tuning, detail: string): void {
     this.tuning = null;
     this.cancel?.();
     this.cancel = null;
     this.o.say(
-      `Tuned to ${t.repo}: ${s.value.detail}. Reviews use it once it is committed to the base branch.`,
+      `Tuned to ${t.repo}: ${detail}. Reviews use it once it is committed to the base branch.`,
       "ok",
     );
     this.o.onChange?.();
-    return true;
   }
 }
 
@@ -300,11 +338,68 @@ export function checkoutTune(o: CheckoutTuneOptions): TunePort {
       if (f === null) return { ok: false, why: `${file} is not a profile file` };
       const path = join(checkout, REPO_PROFILE_DIR, f);
       try {
-        writeAtomic(path, text.endsWith("\n") ? text : `${text}\n`);
+        const body = text.endsWith("\n") ? text : `${text}\n`;
+        writeInCheckout(checkout, `${REPO_PROFILE_DIR}/${f}`, body);
       } catch (err) {
         return { ok: false, why: message(err) };
       }
       return { ok: true, path };
     },
   };
+}
+
+/** Write `rel` (slash-separated, below `checkout`) into an untrusted checkout.
+ * Every directory on the way is a real directory, made here when missing,
+ * never a link, and resolves inside the checkout; the file itself, when there,
+ * is a regular file. The text goes to a fresh temporary file, created
+ * exclusively and never through a link, then renamed over the target, so no
+ * name a contributor planted is opened for writing. */
+export function writeInCheckout(checkout: string, rel: string, text: string): void {
+  const top = realpathSync(checkout);
+  const parts = rel.split("/");
+  const name = parts.pop()!;
+  let dir = top;
+  for (const part of parts) {
+    dir = join(dir, part);
+    let st: Stats;
+    try {
+      st = lstatSync(dir);
+    } catch {
+      mkdirSync(dir);
+      st = lstatSync(dir);
+    }
+    if (st.isSymbolicLink()) throw new Error(`${relative(top, dir)} is a link, not a directory`);
+    if (!st.isDirectory()) throw new Error(`${relative(top, dir)} is not a directory`);
+  }
+  const real = realpathSync(dir);
+  if (real !== top && !real.startsWith(top + sep))
+    throw new Error(`${relative(top, dir)} resolves outside the checkout`);
+  const path = join(real, name);
+  try {
+    const st = lstatSync(path);
+    if (!st.isFile()) throw new Error(`${rel} is there and is not a plain file`);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  const tmp = join(dirname(path), `.${basename(path)}.${randomBytes(6).toString("hex")}.tmp`);
+  const fd = openSync(
+    tmp,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+    0o644,
+  );
+  try {
+    try {
+      writeSync(fd, text);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tmp, path);
+  } catch (err) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      // already renamed, or never there: nothing to clean up
+    }
+    throw err;
+  }
 }

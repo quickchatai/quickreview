@@ -4,7 +4,16 @@
 // `home_tune_write` on the person's yes, and the home says when it is done.
 // Nothing waits on it: a review runs before any tune. Then the real port over
 // a scratch checkout, with git faked.
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -27,6 +36,7 @@ import {
   type TunePort,
   type TuneStart,
   type TuneStatus,
+  writeInCheckout,
 } from "../src/home/tune.js";
 import { fakePi, settle } from "./helpers/fake-pi.js";
 import { idleReviews } from "./helpers/fake-reviews.js";
@@ -260,18 +270,56 @@ describe("the profile's files, on the person's yes", () => {
     expect(t.writes).toEqual([]);
   });
 
-  it("a yes writes it into the checkout's .qcr/, and the home says Setup is done", async () => {
+  it("a yes writes it into the checkout's .qcr/, and the last file ends the tune", async () => {
     const t = tuner();
     const h = await openHome(t, { answer: WRITE_YES });
     await h.pi.tool("home_tune");
     expect(
-      await h.pi.tool("home_tune_write", { file: "addenda/01-no-raw-sql.md", content: "---" }),
-    ).toBe("wrote /src/widgets/.qcr/addenda/01-no-raw-sql.md");
+      await h.pi.tool("home_tune_write", {
+        file: "addenda/01-no-raw-sql.md",
+        content: "---",
+        last: true,
+      }),
+    ).toBe("wrote /src/widgets/.qcr/addenda/01-no-raw-sql.md; Setup is done");
     await settle();
     expect(t.writes).toEqual([
       { checkout: "/src/widgets", file: "addenda/01-no-raw-sql.md", text: "---" },
     ]);
-    expect(h.text()).toMatch(/Tuned to acme\/widgets/);
+    expect(h.text()).toMatch(/Tuned to acme\/widgets: 1 file of \.qcr\/ in \/src\/widgets/);
+  });
+
+  // MUTATION: end the tune from write() on any profile write (call check(), or
+  // finish without `last`) — the addendum after profile.toml is refused, and this fails.
+  it("profile.toml first leaves the tune open for its addenda, until the last file", async () => {
+    const t = tuner();
+    const h = await openHome(t, { answer: WRITE_YES });
+    await h.pi.tool("home_tune");
+    expect(
+      await h.pi.tool("home_tune_write", { file: "profile.toml", content: "[lenses]" }),
+    ).toMatch(/tune stays open/);
+    // the fake port now reads the profile as freshly written: the watch must not end it
+    await settle();
+    await h.tick();
+    expect(h.text()).not.toMatch(/Tuned to/);
+    expect(
+      await h.pi.tool("home_tune_write", { file: "addenda/01-money.md", content: "a" }),
+    ).toMatch(/tune stays open/);
+    expect(
+      await h.pi.tool("home_tune_write", {
+        file: "addenda/02-tests.md",
+        content: "b",
+        last: true,
+      }),
+    ).toMatch(/Setup is done/);
+    expect(t.writes.map((w) => w.file)).toEqual([
+      "profile.toml",
+      "addenda/01-money.md",
+      "addenda/02-tests.md",
+    ]);
+    expect(h.text()).toMatch(/Tuned to acme\/widgets: 3 files of \.qcr\//);
+    expect(await h.pi.tool("home_tune_write", { file: "profile.toml", content: "x" })).toMatch(
+      /no tune is running/,
+    );
   });
 
   it("anything but a profile file is refused", async () => {
@@ -405,6 +453,51 @@ describe("the real tune port", () => {
     const after = await tune.status(REPO);
     expect(after.kind === "known" && after.value.tuned).toBe(true);
     expect((await tune.write(here, "../escape.toml", "x")).ok).toBe(false);
+  });
+
+  // MUTATION: open the temporary file with writeFileSync on a fixed name (the
+  // old writeAtomic) — the planted link is followed and .git/config truncated; this fails.
+  it("never writes through a temporary file a contributor planted as a link", async () => {
+    const here = scratch();
+    mkdirSync(join(here, ".git"));
+    writeFileSync(join(here, ".git", "config"), "[core]\n");
+    mkdirSync(join(here, ".qcr"));
+    symlinkSync("../.git/config", join(here, ".qcr", ".profile.toml.onboard.tmp"));
+    const w = await over(here).write(here, "profile.toml", "a = 1");
+    expect(w.ok).toBe(true);
+    expect(readFileSync(join(here, ".git", "config"), "utf8")).toBe("[core]\n");
+    expect(readFileSync(join(here, ".qcr", "profile.toml"), "utf8")).toBe("a = 1\n");
+    // no temporary file of its own is left behind
+    expect(readdirSync(join(here, ".qcr")).sort()).toEqual([
+      ".profile.toml.onboard.tmp",
+      "profile.toml",
+    ]);
+  });
+
+  // MUTATION: drop the link check on the directories in writeInCheckout — this fails.
+  it("refuses a .qcr/ or addenda/ that is a link out of the checkout", async () => {
+    const here = scratch();
+    const outside = scratch();
+    mkdirSync(join(here, ".qcr"));
+    symlinkSync(outside, join(here, ".qcr", "addenda"));
+    const w = await over(here).write(here, "addenda/AGENTS.md", "x");
+    expect(w.ok).toBe(false);
+    if (!w.ok) expect(w.why).toMatch(/addenda is a link/);
+    expect(existsSync(join(outside, "AGENTS.md"))).toBe(false);
+
+    const there = scratch();
+    symlinkSync(outside, join(there, ".qcr"));
+    expect(() => writeInCheckout(there, ".qcr/profile.toml", "x")).toThrow(/\.qcr is a link/);
+    expect(readdirSync(outside)).toEqual([]);
+  });
+
+  it("refuses a target that is there and is not a plain file", async () => {
+    const here = scratch();
+    const outside = scratch();
+    mkdirSync(join(here, ".qcr"));
+    symlinkSync(join(outside, "x"), join(here, ".qcr", "profile.toml"));
+    expect((await over(here).write(here, "profile.toml", "a")).ok).toBe(false);
+    expect(readdirSync(outside)).toEqual([]);
   });
 
   it("with no checkout, start refuses with what to do, and status is unknown", async () => {

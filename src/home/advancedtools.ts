@@ -41,7 +41,7 @@ export function advancedTools(h: AdvancedToolsHost): {
       name: "home_tune",
       label: "Home: tune to this repo",
       description:
-        "Run Setup for the home's repository: a survey of a checkout of it, its review history, and an interview with the person here in the chat, which writes the repo profile (.qcr/). It hands you the Setup brief as the person's next message, and the home says when the profile is written. Nothing requires it: reviews run on the default profile until then.",
+        "Run Setup for the home's repository: a survey of a checkout of it, its review history, and an interview with the person here in the chat, which writes the repo profile (.qcr/). It hands you the Setup brief as the person's next message, and the tune stays open until you write the profile's last file. Nothing requires it: reviews run on the default profile until then.",
       parameters: NO_PARAMS,
       execute: async () => textResult(await h.tune.tune(h.tellAgent)),
     },
@@ -49,7 +49,7 @@ export function advancedTools(h: AdvancedToolsHost): {
       name: "home_tune_write",
       label: "Home: write a profile file",
       description:
-        "While Setup runs (home_tune), write one file of the repo profile into the checkout's .qcr/: `profile.toml`, or `addenda/<nn>-<rule-id>.md`. Show the person the file in the chat first: the home asks them, and writes it only on their yes.",
+        "While Setup runs (home_tune), write one file of the repo profile into the checkout's .qcr/: `profile.toml`, or `addenda/<nn>-<rule-id>.md`. Show the person the file in the chat first: the home asks them, and writes it only on their yes. The tune stays open through every file: pass `last: true` with the profile's final one.",
       parameters: {
         type: "object",
         properties: {
@@ -58,12 +58,18 @@ export function advancedTools(h: AdvancedToolsHost): {
             description: "The file, relative to .qcr/: profile.toml or addenda/<nn>-<rule-id>.md.",
           },
           content: { type: "string", description: "The whole file." },
+          last: {
+            type: "boolean",
+            description: "True for the profile's final file: the tune ends with it.",
+          },
         },
         required: ["file", "content"],
         additionalProperties: false,
       },
       execute: async (_id, p, _signal, _onUpdate, ctx) =>
-        textResult(await h.tune.write(str(p["file"]), str(p["content"]), h.ask(ctx))),
+        textResult(
+          await h.tune.write(str(p["file"]), str(p["content"]), h.ask(ctx), p["last"] === true),
+        ),
     },
     home_advanced: {
       name: "home_advanced",

@@ -97,9 +97,13 @@ and refreshes its own login. The host's login is never copied there.
   can, interviews you, and writes the repo profile, `.qcr/` at the checkout's
   root, each file only on your yes (`home_tune_write`). The checkout is
   `QCR_REVIEWED_REPO`, `[companion] reviewed_repo_dir`, or the directory you
-  opened the home from, whichever git says is the repository. The panel says
-  when the profile is written; reviews use it once you commit it. Nothing
-  waits on it: until then, every review runs on the default profile.
+  opened the home from, whichever git says is the repository. The tune stays
+  open through every file of the profile and ends with the one the agent
+  marks as the last; the panel says so then, and reviews use the profile once
+  you commit it. A write goes only to the file it names: a `.qcr/` or
+  `addenda/` that is a link, or a planted temporary file, is refused, never
+  written through. Nothing waits on it: until then, every review runs on the
+  default profile.
 - **Advanced** (`x`, `alt+x`, `home_advanced`) runs the wizard's own steps on
   the same checklist switch-on uses:
   - **A GitHub App:** `github_account` on the App route, `github_app` (the
