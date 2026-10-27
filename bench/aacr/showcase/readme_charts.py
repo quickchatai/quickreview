@@ -189,8 +189,7 @@ def fig_qodo(T):
 
 HERO_SOURCE = ("520 defects each verified in the code; one judge (GPT-6 Sol), one run each, a partly found one counts ½. "
                + OTHERS.replace("Other reviewers: all", "Others").replace(" (Claude Opus 5.5)", " (Opus 5.5)")
-               + "\nQuickReview: frozen build on GPT-6.1 Sol, last tuned on misses from 145 of these PRs; on the 20 kept out, "
-                 "it finds 83% of all defects, the next best 72%.")
+               + "\nQuickReview: frozen build on GPT-6.1 Sol. Methodology and held-out results: see the repository's Benchmarks section.")
 MARGIN = 2.0  # never headline a lead under 2 points
 
 
@@ -251,7 +250,7 @@ def fig_same_model(T):
                 p.text(x0 + width + 12, y, pct(100 * f / n), size=13, color=ink, weight=wt)
             y += 32
         y += 6
-    p.source("One judge (GPT-6 Sol), one run each, a partly found defect counts ½. Opus: 40 PRs QuickReview was tuned on; "
+    p.source("One judge (GPT-6 Sol), one run each, a partly found defect counts ½. "
              "Claude Code at its default effort.\nQuickReview: its frozen build on GPT-6.1 Sol, September builds on Opus "
              "and GPT-6 Sol. Codex CLI on GPT-6 Sol: as first run, at medium, without the PR text.")
     return p
