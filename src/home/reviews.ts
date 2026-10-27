@@ -18,7 +18,7 @@
 //              review home's delta history, packages/pi-plugin/src/reviewstate.ts).
 //   autoRounds the daemon's rounds per PR, from its status.json.
 //   post       a finished review the run kept for later
-//              (packages/pi-plugin/src/reviewapi.ts `postSavedReview`): one
+//              (packages/pi-plugin/src/savedpost.ts `postSavedReview`): one
 //              comment-only review through the gate with the install's dry_run.
 //   dryRun     the install's dry_run.
 //
@@ -28,8 +28,8 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { openFindings, type ReviewState } from "@quickchatai/pi-quickreview/src/reviewstate.js";
-import { detachedCommand, watchdogCommand } from "../reviewcli.js";
 import {
+  detachedCommand,
   identifyTarget,
   launchDetached,
   listRunViews,
@@ -37,6 +37,7 @@ import {
   runView,
   type DetachDeps,
   type RunView,
+  watchdogCommand,
 } from "../reviewdetach.js";
 import {
   known,

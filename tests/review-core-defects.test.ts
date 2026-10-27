@@ -34,7 +34,8 @@ vi.stubEnv(
   resolve(dirname(fileURLToPath(import.meta.url)), "fixtures", "config.toml"),
 );
 
-const { runReviewCli, detachedCommand, detachedEntry } = await import("../src/reviewcli.js");
+const { runReviewCli } = await import("../src/reviewcli.js");
+const { detachedCommand, detachedEntry } = await import("../src/reviewdetach.js");
 const { contextFor } = await import("../src/bench/runner.js");
 const { findingMarker } = await import("@quickchatai/pi-quickreview/src/findingkey.js");
 
@@ -406,8 +407,10 @@ describe("the detached driver re-runs the CLI from where the code is", () => {
   });
 
   it("names the cli beside the module, in the module's own kind of file", () => {
-    expect(detachedEntry("file:///opt/qcr/dist/src/reviewcli.js")).toBe("/opt/qcr/dist/src/cli.js");
-    expect(detachedEntry("file:///work/src/reviewcli.ts")).toBe("/work/src/cli.ts");
+    expect(detachedEntry("file:///opt/qcr/dist/src/reviewdetach.js")).toBe(
+      "/opt/qcr/dist/src/cli.js",
+    );
+    expect(detachedEntry("file:///work/src/reviewdetach.ts")).toBe("/work/src/cli.ts");
     expect(detachedEntry()).toBe(join(ROOT, "src", "cli.ts"));
   });
 

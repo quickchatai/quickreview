@@ -21,7 +21,7 @@
 // (`[review] preset`, `skip_lenses`) and a scope (`full`). It is never a code
 // path of its own.
 import { ALL_PASSES } from "../passes.js";
-import type { ReviewTarget } from "../reviewapi.js";
+import type { ReviewTarget } from "../reviewtarget.js";
 
 /** The lenses the security preset keeps; every other lens is skipped. */
 export const SECURITY_LENSES: readonly string[] = [

@@ -32,7 +32,7 @@ import { join } from "node:path";
 import { parse } from "smol-toml";
 import { loginSummary } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import { assetRoot } from "@quickchatai/pi-quickreview/src/assetroot.js";
-import { postSavedReview } from "@quickchatai/pi-quickreview/src/reviewapi.js";
+import { postSavedReview } from "@quickchatai/pi-quickreview/src/savedpost.js";
 import { HOME_DEFAULTS, sandboxRoot, type HomeToolSet } from "../config.js";
 import { loadOneShotConfig, locateConfig, operatorStateDir, stateHome } from "../homes.js";
 import type { OnboardAdapters } from "../onboard/engine.js";
