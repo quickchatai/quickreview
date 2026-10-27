@@ -29,6 +29,7 @@ import {
 } from "@quickchatai/pi-quickreview/src/setupchecklist.js";
 import {
   OnboardingEngine,
+  sandboxRoot,
   type OnboardAdapters,
   type OnboardingStep,
   type StepContext,
@@ -335,8 +336,11 @@ function slackFacts(ctx: StepContext): { found: string } | { missing: string } {
     return { missing: `can't read ${ctx.adapters.paths.configPath}: ${String(err)}` };
   }
   const slack = isObj(cfg["slack"]) ? cfg["slack"] : {};
-  const howTo =
-    "the Slack concierge has its own guided setup, run in a shell from a clone of QuickReview: npm run slack:setup. It creates the Slack app, collects its two tokens, picks the channel and turns it on";
+  const tool = join(sandboxRoot(ctx.adapters.paths), "deploy", "collect-slack-secrets.mjs");
+  const run = existsSync(tool)
+    ? `node ${tool} (in a clone, npm run slack:setup)`
+    : "npm run slack:setup, in a clone of QuickReview";
+  const howTo = `the Slack concierge has its own guided setup, run in a shell: ${run}. It creates the Slack app, collects its two tokens, picks the channel and turns it on`;
   if (slack["enabled"] !== true) return { missing: `Slack is off: ${howTo}` };
   const channel = typeof slack["channel"] === "string" ? slack["channel"].trim() : "";
   if (channel === "") return { missing: `Slack is on but names no channel: ${howTo}` };
