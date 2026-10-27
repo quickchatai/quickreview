@@ -410,21 +410,45 @@ export function addDiffTree(cwd: string, dir: string, t: BranchTarget): string |
   }
 }
 
-/** The review's tree for an uncommitted target: HEAD, then the edits on top. */
+/** The review's tree for an uncommitted target: HEAD, then the edits on top,
+ * committed inside the throwaway checkout so the snapshot has a commit the
+ * instructions can name (`git diff <merge-base> <snapshot>` then holds the
+ * edits and new files too). Returns that commit, or `t.headSha` when there
+ * were no edits. `commit-tree`, not `commit`: no hook runs and nothing is
+ * signed. */
 export async function addUncommittedTree(
   cwd: string,
   dir: string,
   t: BranchTarget,
   o: { signal?: AbortSignal } = {},
-): Promise<void> {
+): Promise<string> {
   await addReviewTree(cwd, dir, t.headSha, o);
-  if (!t.uncommitted) return;
-  const { patch } = t.uncommitted;
-  if (patch)
-    await gitAsync(dir, ["apply", "--whitespace=nowarn"], {
-      input: patch,
-      ...(o.signal ? { signal: o.signal } : {}),
-    });
+  if (!t.uncommitted?.patch) return t.headSha;
+  const signal = o.signal ? { signal: o.signal } : {};
+  await gitAsync(dir, ["apply", "--index", "--whitespace=nowarn"], {
+    input: t.uncommitted.patch,
+    ...signal,
+  });
+  const tree = await gitAsync(dir, ["write-tree"], signal);
+  const snapshot = await gitAsync(
+    dir,
+    [
+      "-c",
+      "user.name=quickreview",
+      "-c",
+      "user.email=quickreview@localhost",
+      "commit-tree",
+      "--no-gpg-sign",
+      tree,
+      "-p",
+      t.headSha,
+      "-m",
+      "quickreview: the uncommitted changes under review",
+    ],
+    signal,
+  );
+  await gitAsync(dir, ["update-ref", "--no-deref", "HEAD", snapshot], signal);
+  return snapshot;
 }
 
 /** A throwaway detached checkout of `sha`, for the review to read. A shared
