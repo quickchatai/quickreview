@@ -87,6 +87,7 @@ import type {
   RunResult,
   SessionUi,
 } from "@quickchatai/pi-quickreview/src/plugin/session.js";
+import { fillCaseAgentDir } from "@quickchatai/pi-quickreview/src/plugin/scancases.js";
 import { coreExtensionFile } from "@quickchatai/pi-quickreview/src/engine/extfiles.js";
 import { ROUND_EXTENSIONS } from "@quickchatai/pi-quickreview/src/engine/round.js";
 import { parseSkillFrontmatter } from "./helpers/skill-frontmatter.js";
@@ -366,9 +367,10 @@ describe("/qcr-review's arguments", () => {
       "12 13",
       "12 --uncommitted",
       "feature --uncommitted",
-      "--to pr",
-      "--full",
-      "--branch",
+      "--to nowhere",
+      "quick --full",
+      "12 --branch",
+      "--branch --uncommitted",
       "--limit -1",
       "--repo o/r",
       "feature --repo o/r",
@@ -1204,10 +1206,15 @@ function scanHost(o: Partial<PluginHost> = {}): PluginHost & { head: string } {
 
 /** The scan's seams with a fake case runner: one finding per stage-1 case,
  * the skeptic upholding nothing (NONE). `hang` holds every stage-1 case until
- * it is stopped. */
+ * it is stopped; `hold` holds them until it resolves. `built` hears the
+ * options each case runner is built with. */
 function fakeScan(
   host: { head: string },
-  o: { hang?: boolean } = {},
+  o: {
+    hang?: boolean;
+    hold?: Promise<void>;
+    built?: (opts: Parameters<ScanCommandDeps["cases"]>[0]) => void;
+  } = {},
 ): ScanCommandDeps & {
   agents: string[];
 } {
@@ -1215,24 +1222,28 @@ function fakeScan(
   return {
     agents,
     root: () => ROOT,
-    cases: () => ({
-      run: async (spec, signal) => {
-        agents.push(spec.agent);
-        if (spec.agent.startsWith("pass-validate"))
-          return { ok: true, output: "NONE\n", cost_usd: 0.01 };
-        if (o.hang)
-          return new Promise((done) =>
-            signal.addEventListener("abort", () => done({ ok: false, reason: "stopped" }), {
-              once: true,
-            }),
-          );
-        return {
-          ok: true,
-          cost_usd: 0.02,
-          output: `FINDINGS pass-scan SCAN ${spec.id} @${host.head}\n- path: ${spec.files[0]}\n  line: 1\n  kind: bug\n  severity: P1\n  claim: it subtracts\n\nSUGGEST NONE\n`,
-        };
-      },
-    }),
+    cases: (opts) => {
+      o.built?.(opts);
+      return {
+        run: async (spec, signal) => {
+          agents.push(spec.agent);
+          if (spec.agent.startsWith("pass-validate"))
+            return { ok: true, output: "NONE\n", cost_usd: 0.01 };
+          if (o.hold) await o.hold;
+          if (o.hang)
+            return new Promise((done) =>
+              signal.addEventListener("abort", () => done({ ok: false, reason: "stopped" }), {
+                once: true,
+              }),
+            );
+          return {
+            ok: true,
+            cost_usd: 0.02,
+            output: `FINDINGS pass-scan SCAN ${spec.id} @${host.head}\n- path: ${spec.files[0]}\n  line: 1\n  kind: bug\n  severity: P1\n  claim: it subtracts\n\nSUGGEST NONE\n`,
+          };
+        },
+      };
+    },
   };
 }
 
@@ -1250,17 +1261,28 @@ function recordingRunner(): Runner & { asked: string[] } {
 // real engine runs over a scratch repo and a temp state home; only the case
 // runner, the model's side, is fake.
 describe("/qcr-scan (the plugin's own engine)", () => {
-  // MUTATION: make runScanCommand await the run before it returns — the
-  // background note comes after the findings, and this fails.
+  // The cases are held until the command has returned: the return comes
+  // before any finding. MUTATION: make runScanCommand await the run before
+  // it returns — the command is still pending when the race settles, and
+  // this fails.
   it("proposes the first unit cut, prices, asks, then scans in the background and shows the new findings", async () => {
     const runner = recordingRunner();
     const host = scanHost({ runner });
     const ui = fakeUi();
-    const deps = fakeScan(host);
+    let release!: () => void;
+    const deps = fakeScan(host, { hold: new Promise<void>((r) => (release = r)) });
     const sessions = new ScanSessions();
-    await runScanCommand("", host, ui, { sessions, deps });
-    // the command returned with the run in flight, and said so
+    const command = runScanCommand("", host, ui, { sessions, deps }).then(() => "returned");
+    const settled = await Promise.race([
+      command,
+      new Promise<string>((r) => setTimeout(() => r("still waiting"), 5_000)),
+    ]);
+    expect(settled).toBe("returned");
+    // the command returned with the run in flight, and said so, before any finding
+    expect(sessions.running).not.toBeNull();
     expect(ui.notes.map((n) => n[1]).join("\n")).toMatch(/scanning .* in the background/);
+    expect(ui.shown.join("\n")).not.toMatch(/new findings?:/);
+    release();
     await sessions.idle();
     expect(deps.agents.some((a) => a.startsWith("pass-scan"))).toBe(true);
     expect(ui.shown.at(-1)).toMatch(/new findings?:/);
@@ -1317,6 +1339,79 @@ describe("/qcr-scan (the plugin's own engine)", () => {
     await sessions.idle();
     expect(ui.shown.join("\n")).toMatch(/stopped/);
     expect(ui.notes.map((n) => n[1]).join("\n")).toMatch(/the scan ended stopped/);
+  });
+
+  // MUTATION: drop onStart or watchStops from passThrough's verb deps — the
+  // foreground run is not the session's (a second start is let in) or Esc
+  // never stops it (the command hangs), and this fails.
+  it("a foreground start is the session's run in flight, and Esc stops it", async () => {
+    const host = scanHost();
+    const deps = fakeScan(host, { hang: true });
+    const sessions = new ScanSessions();
+    const ui = fakeUi();
+    await runScanCommand("units propose", host, ui, { sessions, deps });
+    await runScanCommand("units save", host, ui, { sessions, deps });
+    await runScanCommand("preview", host, ui, { sessions, deps });
+    const key = /\/qcr-scan start --key ([A-Za-z0-9._-]+)/.exec(ui.shown.at(-1) ?? "")?.[1];
+    expect(key).toBeDefined();
+    const foreground = runScanCommand(`start --key ${key} --foreground`, host, ui, {
+      sessions,
+      deps,
+    });
+    while (!deps.agents.some((a) => a.startsWith("pass-scan")))
+      await new Promise((r) => setTimeout(r, 10));
+    expect(sessions.running).not.toBeNull();
+    await runScanCommand(`start --key ${key}`, host, ui, { sessions, deps });
+    expect(ui.notes.at(-1)?.[1]).toMatch(/already scanning/);
+    ui.escape();
+    await foreground;
+    await sessions.idle();
+    expect(sessions.running).toBeNull();
+    expect(ui.shown.at(-1)).toMatch(/stopped/);
+  });
+
+  // The case runner outlives one command; a later start reloads the config.
+  // MUTATION: read the providers once when the runner is built — the
+  // credentials stay the old config's, and this fails.
+  it("each case borrows the providers of the config as it reads now", async () => {
+    const host = scanHost();
+    const config = join(host.home, "qcr-config.toml");
+    const shipped = readFileSync(join(ROOT, "config.example.toml"), "utf8");
+    writeFileSync(config, shipped);
+    host.env["QCR_CONFIG"] = config;
+    const seen: { providers?: () => readonly string[] } = {};
+    const deps = fakeScan(host, { built: (o) => (seen.providers = o.providers) });
+    const sessions = new ScanSessions();
+    await runScanCommand("", host, fakeUi(), { sessions, deps });
+    await sessions.idle();
+    const providers = seen.providers;
+    if (providers === undefined) throw new Error("no case runner was built");
+    expect(providers()).toContain("openai-codex");
+    writeFileSync(config, shipped.replaceAll('"openai-codex/', '"anthropic/'));
+    expect(providers()).toContain("anthropic");
+    expect(providers()).not.toContain("openai-codex");
+  });
+
+  // MUTATION: drop fillCaseAgentDir's no-file branch (copyPiAuth on a host
+  // with no auth.json) — it throws "no pi login", and this fails.
+  it("a case on an environment-key host, with no login file, gets an empty login store", () => {
+    const hostAgent = mkdtempSync(join(tmp, "host-agent-"));
+    const caseDir = mkdtempSync(join(tmp, "case-agent-"));
+    fillCaseAgentDir(hostAgent, caseDir, ["openai"]);
+    expect(readFileSync(join(caseDir, "auth.json"), "utf8")).toBe("{}\n");
+    // with a login file, only the borrowed providers ride along
+    writeFileSync(
+      join(hostAgent, "auth.json"),
+      JSON.stringify({
+        openai: { type: "api_key", key: "k1" },
+        anthropic: { type: "api_key", key: "k2" },
+      }),
+    );
+    const second = mkdtempSync(join(tmp, "case-agent-"));
+    fillCaseAgentDir(hostAgent, second, ["openai"]);
+    expect(Object.keys(JSON.parse(readFileSync(join(second, "auth.json"), "utf8")))).toEqual([
+      "openai",
+    ]);
   });
 
   it("leaves the app's sandbox and triage to the app", async () => {
@@ -1390,17 +1485,44 @@ describe("/qcr-setup", () => {
     );
   });
 
-  it("leaves the login missing with the /login hint when only a key is there", async () => {
+  it("leaves the login missing with the /login hint when only another provider's key is there", async () => {
     const host = fakeHost({
       runner: scriptedRunner({}),
-      auth: fakeAuth({ openai: { type: "api_key", expires: null } }),
+      auth: fakeAuth({ anthropic: { type: "api_key", expires: null } }),
     });
     const lines = await runSetupChecks({ host, range, root: () => ROOT });
     const login = lines.find((l) => l.id === PLUGIN_SETUP_STEPS.login)!;
     expect(login.status).toBe("pending");
     expect(login.note).toMatch(/\/login openai-codex/);
+    expect(login.note).toMatch(/pi has a key for anthropic/);
     expect(renderChecklist(lines)).toMatch(/✗ \*\*login\*\*/);
     expect(renderChecklist(lines)).toMatch(/1 check failed\./);
+  });
+
+  // The checklist reads the login the way a review borrows it: the shipped
+  // openai-codex models run on an openai login when only that one exists.
+  // MUTATION: check reviewProviders(cfg) instead of routedProviders(…) in the
+  // login step — the twin's login reads missing and this fails.
+  it("counts the OpenAI twin's login or key as the login a review runs on", async () => {
+    for (const login of [
+      { type: "oauth", expires: Date.now() + 10 * 3600_000 },
+      { type: "api_key", expires: null },
+    ]) {
+      const auth = fakeAuth({ openai: login });
+      const host = fakeHost({ runner: scriptedRunner({}), auth });
+      const lines = await runSetupChecks({ host, range, root: () => ROOT });
+      const step = lines.find((l) => l.id === PLUGIN_SETUP_STEPS.login)!;
+      expect(step.status, login.type).toBe("done");
+      expect(step.found, login.type).toMatch(/pi can reach openai,/);
+      // and the review itself borrows that same login
+      const borrowed = await borrowLogin({
+        providers: ["openai-codex"],
+        host: auth,
+        needMs: 60_000,
+        marginMs: 0,
+      });
+      expect(borrowed, login.type).toMatchObject({ ok: true, providers: ["openai"] });
+    }
   });
 
   it("reads a GitHub token's presence only", async () => {

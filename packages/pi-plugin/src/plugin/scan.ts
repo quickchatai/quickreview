@@ -253,18 +253,20 @@ function buildRepoScan(host: PluginHost, home: string, deps: ScanCommandDeps): R
     config,
     profiles,
     unitCut: units,
-    cases: ({ agentsDir, transcriptDir, stop }) => {
-      const c = config();
-      return deps.cases({
+    cases: ({ agentsDir, transcriptDir, stop }) =>
+      deps.cases({
         host: () => repo?.host ?? host,
         root,
         home,
-        providers: c.ok ? reviewProviders(c.cfg) : [],
+        // the configuration the latest start built its agents from
+        providers: () => {
+          const c = config();
+          return c.ok ? reviewProviders(c.cfg) : [];
+        },
         agentsDir,
         transcriptDir,
         stop,
-      });
-    },
+      }),
     log,
   });
   repo = { ...assembled, host, units, config, log };
@@ -562,7 +564,11 @@ async function passThrough(
     );
   const json = argv.includes("--json");
   const rest = argv.filter((a) => a !== "--json");
-  // Esc, or the session ending, ends a wait (`status --wait`).
+  const starts = verb === "start" || (verb === "stage2" && argv[1] === "start");
+  if (starts && sessions.running !== null)
+    return fail(ui, `QuickReview is already scanning ${sessions.running}: /qcr-scan stop stops it`);
+  // Esc, or the session ending, ends a wait (`status --wait`) and stops a
+  // foreground start's run.
   const halt = new AbortController();
   const onShutdown = (): void => halt.abort();
   host.shutdown.addEventListener("abort", onShutdown, { once: true });
@@ -606,6 +612,29 @@ async function passThrough(
         if (!r.ok) return r;
         inBackground(host, ui, engine, sessions);
         return { ok: true, run: r.run, log: join(engine.home, "scan", "plugin.log") };
+      },
+      // A foreground start runs here and is waited for: it is the session's
+      // run in flight like a background one, Esc and the session ending stop
+      // it, and a stop asked for from outside this pi is answered.
+      onStart: (r) => {
+        if (r.ok) sessions.hold(host.cwd, engine.scan.idle());
+      },
+      watchStops: (scan) => {
+        const stopRun = (): void => void scan.stop();
+        if (halt.signal.aborted) stopRun();
+        else halt.signal.addEventListener("abort", stopRun, { once: true });
+        const ticker = setInterval(() => {
+          try {
+            scan.consumeStopRequest();
+          } catch (err) {
+            engine.log(`scan: a stop request could not be read: ${String(err)}`);
+          }
+        }, 1000);
+        ticker.unref?.();
+        return () => {
+          clearInterval(ticker);
+          halt.signal.removeEventListener("abort", stopRun);
+        };
       },
       sleep: (ms) =>
         new Promise((resolve, reject) => {
