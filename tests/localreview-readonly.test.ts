@@ -21,6 +21,7 @@ import {
   addReviewTree,
   addUncommittedTree,
   removeReviewTree,
+  resolveBranch,
   resolveUncommitted,
 } from "@quickchatai/pi-quickreview/src/localreview.js";
 
@@ -111,15 +112,46 @@ describe("resolveUncommitted on a read-only repository", () => {
     expect(() => git(ro, "cat-file", "-e", r.target.uncommitted!.treeSha)).toThrow();
   });
 
-  it("builds the same review tree from the patch the target carries", async () => {
+  // MUTATION: make addUncommittedTree return t.headSha after applying the
+  // patch (the edits left uncommitted) — the advertised diff loses them and
+  // this fails.
+  it("builds the same review tree from the patch the target carries, committed as the snapshot the instructions name", async () => {
     const repo = dirtyRepo("tree");
     const r = resolveUncommitted(repo);
     if (!r.ok) throw new Error(r.error);
     const dir = join(tmp, "tree-wt");
     try {
-      await addUncommittedTree(repo, dir, r.target);
-      expect(git(dir, "status", "--porcelain")).toMatch(/src\/new\.ts/);
-      expect(git(dir, "diff", "--stat", "HEAD").length).toBeGreaterThan(0);
+      const snapshot = await addUncommittedTree(repo, dir, r.target);
+      expect(snapshot).not.toBe(r.target.headSha);
+      expect(git(dir, "rev-parse", "HEAD")).toBe(snapshot);
+      expect(git(dir, "rev-parse", `${snapshot}^{tree}`)).toBe(r.target.uncommitted?.treeSha);
+      expect(git(dir, "status", "--porcelain")).toBe("");
+      // the scope the round order advertises: merge-base to the snapshot
+      const scope = git(dir, "diff", "--name-only", r.target.mergeBase, snapshot).split("\n");
+      expect(scope.sort()).toEqual(["blob.bin", "src/a.ts", "src/b.ts", "src/new.ts"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a branch with uncommitted edits: the snapshot's diff from the merge-base holds the commits and the edits", async () => {
+    const repo = dirtyRepo("combined");
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "all");
+    git(repo, "checkout", "-q", "-b", "topic");
+    writeFileSync(join(repo, "src", "c.ts"), "export const c = 1;\n");
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "topic");
+    writeFileSync(join(repo, "src", "c.ts"), "export const c = 2;\n");
+    writeFileSync(join(repo, "src", "d.ts"), "export const d = 0;\n");
+    const r = resolveBranch(repo, "main", { uncommitted: true });
+    if (!r.ok) throw new Error(r.error);
+    const dir = join(tmp, "combined-wt");
+    try {
+      const snapshot = await addUncommittedTree(repo, dir, r.target);
+      const scope = git(dir, "diff", "--name-only", r.target.mergeBase, snapshot).split("\n");
+      expect(scope.sort()).toEqual(["src/c.ts", "src/d.ts"]);
+      expect(git(dir, "show", `${snapshot}:src/c.ts`)).toBe("export const c = 2;");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

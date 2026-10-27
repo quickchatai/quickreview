@@ -795,12 +795,13 @@ async function runPipeline(
   const planRound = (
     tree: string,
     memory?: RoundMemory,
+    target: typeof roundTarget = roundTarget,
   ): { prompts: OneShotPrompts; scope: "delta" | "full"; fallback: typeof fallback } => {
     const common = {
       root: opts.root,
       cfg,
       ecosystem,
-      target: roundTarget,
+      target,
       tree,
       caseDir: outDir,
       files: t.files,
@@ -996,6 +997,7 @@ async function runPipeline(
   const sessionName = `review-${(kind === "diff" ? "diff" : kind === "uncommitted" ? "uncommitted" : t.branch).replace(/[^A-Za-z0-9._-]/g, "-")}`;
   const roundNo = scope === "delta" && prev !== null ? lastRound(prev).round_no + 1 : 1;
   let shot: OneShotResult;
+  let runTarget = roundTarget;
   try {
     if (kind === "diff") {
       // a plain directory: no git write, so a read-only checkout is enough
@@ -1004,9 +1006,17 @@ async function runPipeline(
         runWarnings.push(w);
         warn(w);
       }
-    } else if (kind === "uncommitted" || t.uncommitted !== undefined)
-      await addUncommittedTree(gitDir, treeDir, t, io.signal ? { signal: io.signal } : {});
-    else await addReviewTree(gitDir, treeDir, t.headSha, io.signal ? { signal: io.signal } : {});
+    } else if (kind === "uncommitted" || t.uncommitted !== undefined) {
+      // the edits are committed in the review tree, so the advertised diff
+      // names that snapshot rather than HEAD, which lacks them
+      const snapshot = await addUncommittedTree(
+        gitDir,
+        treeDir,
+        t,
+        io.signal ? { signal: io.signal } : {},
+      );
+      runTarget = { ...roundTarget, headSha: snapshot };
+    } else await addReviewTree(gitDir, treeDir, t.headSha, io.signal ? { signal: io.signal } : {});
     const round: RoundSpec = {
       root: opts.root,
       cwd: host.cwd,
@@ -1014,13 +1024,13 @@ async function runPipeline(
       agentDir: host.agentDir,
       tree: treeDir,
       files: t.files,
-      target: roundTarget,
+      target: runTarget,
       outDir,
       cfg,
       ecosystem,
       timeoutMs: opts.limits.timeoutMs,
       // Rendered over the review tree, as production renders over its worktree.
-      prompts: planRound(treeDir, seeded.memory).prompts,
+      prompts: planRound(treeDir, seeded.memory, runTarget).prompts,
       ...(cap !== null ? { capUsd: cap } : {}),
       memory: seeded.memory,
       sessionName,

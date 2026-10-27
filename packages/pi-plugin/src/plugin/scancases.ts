@@ -16,7 +16,7 @@
 // only the providers the scan runs on. A provider pi has no login for stops
 // the run with pi's /login as the fix. Nothing here owns the process: a
 // turn its abort and dispose did not end stops the run instead.
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   AuthExpiring,
@@ -52,8 +52,10 @@ export interface PluginScanCasesOptions {
   root: string;
   /** The scan's state home. */
   home: string;
-  /** The providers the scan's models name (login.ts `reviewProviders`). */
-  providers: readonly string[];
+  /** The providers the scan's models name (login.ts `reviewProviders`), read
+   * per case: the runner outlives one command, and a later start reloads the
+   * configuration its agents are built from. */
+  providers: () => readonly string[];
   agentsDir: string;
   transcriptDir: string;
   /** Stops the run, saying why. */
@@ -78,6 +80,28 @@ function releasing(s: RuntimeSession, release: () => void): RuntimeSession {
   });
 }
 
+/** Fill a case's private agent dir from the host pi's: a refresh-disabled
+ * copy of `providers`' login, and the person's custom provider list. A host
+ * with no login file runs on an environment key borrowLogin admitted, so the
+ * case gets an empty store, as the review's host run does (reviewhost.ts). */
+export function fillCaseAgentDir(
+  hostAgentDir: string,
+  agentDir: string,
+  providers: readonly string[],
+): void {
+  if (existsSync(join(hostAgentDir, "auth.json")))
+    copyPiAuth({
+      srcDir: hostAgentDir,
+      dstDir: agentDir,
+      needMs: PLUGIN_CASE_MS,
+      words: SCAN_AUTH_WORDS,
+      providers,
+    });
+  else writeFileSync(join(agentDir, "auth.json"), "{}\n", { mode: 0o600 });
+  const models = join(hostAgentDir, "models.json");
+  if (existsSync(models)) copyFileSync(models, join(agentDir, "models.json"));
+}
+
 /** The case runner /qcr-scan runs on: SDK sessions of this pi. */
 export function pluginScanCases(o: PluginScanCasesOptions): CaseRunner {
   const first = o.host();
@@ -91,7 +115,7 @@ export function pluginScanCases(o: PluginScanCasesOptions): CaseRunner {
     runtime: async (extras): Promise<Runtime> => {
       const host = o.host();
       const borrowed = await borrowLogin({
-        providers: o.providers,
+        providers: o.providers(),
         host: host.auth,
         needMs: PLUGIN_CASE_MS,
         marginMs: PI_REFRESH_MARGIN_MS,
@@ -108,15 +132,7 @@ export function pluginScanCases(o: PluginScanCasesOptions): CaseRunner {
       const agentDir = mkdtempSync(join(base, "case-"));
       const release = (): void => rmSync(agentDir, { recursive: true, force: true });
       try {
-        copyPiAuth({
-          srcDir: host.agentDir,
-          dstDir: agentDir,
-          needMs: PLUGIN_CASE_MS,
-          words: SCAN_AUTH_WORDS,
-          providers: borrowed.providers,
-        });
-        const models = join(host.agentDir, "models.json");
-        if (existsSync(models)) copyFileSync(models, join(agentDir, "models.json"));
+        fillCaseAgentDir(host.agentDir, agentDir, borrowed.providers);
         const auth = engineCredentials({
           srcDir: agentDir,
           needMs: PLUGIN_CASE_MS,

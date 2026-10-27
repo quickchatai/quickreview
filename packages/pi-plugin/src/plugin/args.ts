@@ -20,6 +20,12 @@
 // A preset is the review options the core already takes, named: a lens plan
 // (`[review] preset`, `skip_lenses`) and a scope (`full`). It is never a code
 // path of its own.
+//
+// Retired spellings stay accepted (tests/legacy-acceptance.test.ts), folded
+// to the current ones and never named in the usage: `--full` is the `full`
+// preset, `--branch` the bare command's branch, and `--to LIST` the old
+// destination list, of which only `json` still means anything (a result is
+// always shown and kept, and a post is the posting rule's).
 import { ALL_PASSES } from "../passes.js";
 import type { ReviewTarget } from "../reviewtarget.js";
 
@@ -77,6 +83,9 @@ export function splitArgs(line: string): string[] {
   return out;
 }
 
+/** The destinations the retired `--to` took. */
+const LEGACY_DESTINATIONS = ["terminal", "file", "json", "pr"];
+
 /** A word that names a pull request: a number, `#N`, or a pull URL. */
 const isPrWord = (w: string): boolean => /^#?\d+$/.test(w) || /^https?:\/\/\S+\/pull\/\d+/.test(w);
 
@@ -92,11 +101,14 @@ export function parseReviewCommand(
   const a = splitArgs(line);
   if (a.length === 1 && a[0] === "--stop") return { stop: true };
   let preset: ReviewPresetName | null = defaultPreset;
-  if (isPresetName(a[0])) preset = a.shift() as ReviewPresetName;
+  const typed = isPresetName(a[0]);
+  if (typed) preset = a.shift() as ReviewPresetName;
   let word: string | undefined;
   let repo: string | undefined;
   let base: string | undefined;
   let uncommitted = false;
+  let full = false;
+  let branch = false;
   const cmd: Omit<ReviewCommand, "target" | "preset"> = { preview: false, json: false };
   const value = (i: number, flag: string): string => {
     const v = a[i + 1];
@@ -132,6 +144,19 @@ export function parseReviewCommand(
           cmd.limitUsd = n;
           break;
         }
+        case "--full":
+          full = true;
+          break;
+        case "--branch":
+          branch = true;
+          break;
+        case "--to":
+          for (const d of value(i++, w).split(",").map((x) => x.trim())) {
+            if (!LEGACY_DESTINATIONS.includes(d))
+              throw new Error(`unknown destination ${d || "(empty)"}`);
+            if (d === "json") cmd.json = true;
+          }
+          break;
         case "--stop":
           throw new Error("--stop goes alone");
         default:
@@ -147,6 +172,17 @@ export function parseReviewCommand(
       error: `${err instanceof Error ? err.message : String(err)}\n${REVIEW_COMMAND_USAGE}`,
     };
   }
+  if (full) {
+    if (typed && preset !== "full")
+      return {
+        error: `--full is the full preset, and ${preset} was asked for: pick one\n${REVIEW_COMMAND_USAGE}`,
+      };
+    preset = "full";
+  }
+  if (branch && (word !== undefined || uncommitted))
+    return {
+      error: `--branch is this branch: a PR, a branch name and --uncommitted are each a whole target\n${REVIEW_COMMAND_USAGE}`,
+    };
   const pr = word !== undefined && isPrWord(word) ? word : undefined;
   const head = word !== undefined && pr === undefined ? word : undefined;
   if (word !== undefined && uncommitted)

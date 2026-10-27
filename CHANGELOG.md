@@ -30,9 +30,10 @@ first, and `/qcr-setup profile` starts that straight away.
   with its uncommitted changes, as one review. `/qcr-review NAME` reviews the
   branch `NAME`; a PR number or URL and `--uncommitted` work as before.
 - A preset may come first: `quick`, `full` or `security`. `--full` is now the
-  `full` preset, and `--branch` is gone (the bare command, or a branch name).
+  `full` preset, and `--branch` is the bare command; both are still accepted.
 - Where the result goes is no longer asked. It is shown in the session and
-  kept as markdown and JSON, and `--to` is gone. After a PR review, the
+  kept as markdown and JSON. `--to` is still accepted, and of its
+  destinations only `json` still changes anything. After a PR review, the
   posting rule in pi's settings decides: `"quickreview": { "posting": "ask" }`
   (the default) asks, with "No, keep it here" first; `"never"` and `"always"`
   skip the question. A post is one comment-only review through the gate,

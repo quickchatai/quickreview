@@ -74,6 +74,34 @@ export function noLoginHint(provider: string, keyed: readonly string[]): string 
   );
 }
 
+/** The providers a run actually uses for the review's `providers`: each one
+ * itself, or its OpenAI twin when only the twin has a credential
+ * (modelroute.ts). One reading for the setup checklist and `borrowLogin`, so
+ * setup never calls a login missing that a review can run on. */
+export function routedProviders(
+  providers: readonly string[],
+  host: Pick<HostAuth, "logins" | "configured">,
+): string[] {
+  const logins = host.logins();
+  const out: string[] = [];
+  for (const named of providers) {
+    const p = routeProvider(named, "", {
+      hasCredential: (q) => logins[q] !== undefined || host.configured(q),
+    });
+    if (!out.includes(p)) out.push(p);
+  }
+  return out;
+}
+
+/** Can a run use `provider` at all: an OAuth login (pi refreshes a short one
+ * before the run), or any other credential pi has. */
+export function canUseProvider(
+  provider: string,
+  host: Pick<HostAuth, "logins" | "configured">,
+): boolean {
+  return host.logins()[provider]?.type === "oauth" || host.configured(provider);
+}
+
 /**
  * Make sure every provider the review needs is usable for `needMs` from now,
  * refreshing a short OAuth login through the host. `marginMs` is added to the
@@ -90,13 +118,7 @@ export async function borrowLogin(o: {
   const want = o.needMs + o.marginMs;
   const refreshed: string[] = [];
   let logins = o.host.logins();
-  const providers: string[] = [];
-  for (const named of o.providers) {
-    const p = routeProvider(named, "", {
-      hasCredential: (q) => logins[q] !== undefined || o.host.configured(q),
-    });
-    if (!providers.includes(p)) providers.push(p);
-  }
+  const providers = routedProviders(o.providers, o.host);
   for (const p of providers) {
     const login = logins[p];
     if (login?.type === "oauth") {

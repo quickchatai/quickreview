@@ -37,7 +37,7 @@ import { PROFILES_DIR } from "../profilelookup.js";
 import type { CoreConfig } from "../reviewconfig.js";
 import { SEVERITIES } from "../severityrank.js";
 import { PASS_TIER_ORDER } from "../types.js";
-import { noLoginHint, reviewProviders } from "./login.js";
+import { canUseProvider, noLoginHint, reviewProviders, routedProviders } from "./login.js";
 import type { PluginHost, SessionUi } from "./session.js";
 import { piGate } from "./versiongate.js";
 
@@ -171,10 +171,9 @@ export function pluginSetupSteps(o: PluginSetupOptions): SetupStep[] {
         if (typeof cfg === "string")
           return { missing: `the review's config cannot be read: ${cfg}` };
         const logins = host.auth.logins();
-        const providers = reviewProviders(cfg);
-        const missing = providers.filter(
-          (p) => logins[p]?.type !== "oauth" && !host.auth.configured(p),
-        );
+        // the providers a review would run on, twins rerouted as borrowLogin does
+        const providers = routedProviders(reviewProviders(cfg), host.auth);
+        const missing = providers.filter((p) => !canUseProvider(p, host.auth));
         if (missing.length === 0)
           return {
             found: `pi can reach ${providers.join(", ")}, the providers the review runs on`,

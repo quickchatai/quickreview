@@ -21,8 +21,11 @@
 // the commit can occupy.
 import { execFileSync } from "node:child_process";
 import {
+  closeSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -40,7 +43,7 @@ import type { TreeFile } from "./scan.js";
 export const SCAN_TREES_DIR = "scan/tree";
 const COMPLETE_SUFFIX = ".complete";
 /** Blobs, and their bytes, per `cat-file --batch` call — bound one call's
- * output buffer (a single larger blob is a call of its own). */
+ * output buffer (a single larger blob is streamed to its file instead). */
 const BLOBS_PER_BATCH = 256;
 const BYTES_PER_BATCH = 64 * 1024 * 1024;
 const SHA_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
@@ -91,6 +94,42 @@ export function gitScanSource(
       return failed(err);
     }
   };
+  /** Where `rel` lands under `root`, or null for a path that leaves it. */
+  const placed = (root: string, rel: string): string | null => {
+    const full = normalize(join(root, rel));
+    return isAbsolute(rel) || !inRoot(relative(root, full)) ? null : full;
+  };
+  /** A blob larger than one batch goes from git straight to its file, never
+   * through this process's memory: a tracked multi-gigabyte asset costs disk,
+   * not the host pi's heap. */
+  const streamBlob = (root: string, blob: string, size: number, paths: string[]): boolean => {
+    let first: string | null = null;
+    for (const rel of paths) {
+      const full = placed(root, rel);
+      if (full === null) continue;
+      mkdirSync(dirname(full), { recursive: true });
+      if (first !== null) {
+        copyFileSync(first, full);
+        continue;
+      }
+      const fd = openSync(full, "w");
+      try {
+        execFileSync(
+          "git",
+          ["-c", `safe.directory=${repoRoot}`, "-C", repoRoot, "cat-file", "blob", blob],
+          { stdio: ["ignore", fd, "pipe"] },
+        );
+      } catch (err) {
+        failed(err);
+        return false;
+      } finally {
+        closeSync(fd);
+      }
+      if (statSync(full).size !== size) return false;
+      first = full;
+    }
+    return true;
+  };
   /** Write every listed file's blob, raw, under `root`. False when git
    * cannot produce one — the tree is then not complete. */
   const materialise = (root: string, files: TreeFile[]): boolean => {
@@ -115,6 +154,10 @@ export function gitScanSource(
     for (const blob of blobs) {
       const size = sizeOf.get(blob);
       if (size === undefined) return false;
+      if (size > batchBytes) {
+        if (!streamBlob(root, blob, size, pathsOf.get(blob)!)) return false;
+        continue;
+      }
       const last = chunks[chunks.length - 1];
       if (last && last.blobs.length < BLOBS_PER_BATCH && last.bytes + size <= batchBytes) {
         last.blobs.push(blob);
@@ -140,9 +183,8 @@ export function gitScanSource(
         if (body.length !== size) return false;
         at = nl + 1 + size + 1;
         for (const rel of pathsOf.get(blob)!) {
-          const full = normalize(join(root, rel));
-          const back = relative(root, full);
-          if (isAbsolute(rel) || !inRoot(back)) continue;
+          const full = placed(root, rel);
+          if (full === null) continue;
           mkdirSync(dirname(full), { recursive: true });
           writeFileSync(full, body);
         }

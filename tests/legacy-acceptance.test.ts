@@ -23,6 +23,11 @@
 //      StateStore.slackEvent in src/state.ts)
 //   2. command name "flag-owner-legacy" → "flag-owner" (LEGACY_COMMAND_NAMES,
 //      validateCommand in src/commands.ts)
+//   3. /qcr-review's retired arguments (parseReviewCommand,
+//      packages/pi-plugin/src/plugin/args.ts): "--full" → the full preset,
+//      "--branch" → the bare command's branch, "--to LIST" → accepted, its
+//      "json" still the JSON result. Skills and saved prompts still type them;
+//      ADR 0001's exception covers the command names, never these.
 // Not a fold: regression.ts's Recommendation "ask-owner-legacy" → "ask-owner" —
 // that value is produced and rendered only, never parsed back, so there is no
 // input side to keep.
@@ -47,6 +52,7 @@ import { OriginStore, parseOriginRecord } from "../src/slack/origin.js";
 import { foldSlackTier, StateStore } from "../src/state.js";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createQuickReview } from "@quickchatai/pi-quickreview/extensions/quickreview.js";
+import { parseReviewCommand } from "@quickchatai/pi-quickreview/src/plugin/args.js";
 
 // ---- fold 1: the tier string --------------------------------------------
 
@@ -225,6 +231,42 @@ describe("command fold: 'flag-owner-legacy' → 'flag-owner'", () => {
       expect(JSON.stringify(executed)).toContain("flag-owner");
       expect(JSON.stringify(executed)).not.toContain("flag-owner-legacy");
     });
+  });
+});
+
+// ---- fold 3: /qcr-review's retired arguments ------------------------------
+
+describe("/qcr-review argument folds: --full, --branch, --to", () => {
+  // MUTATION: delete the "--full" case from parseReviewCommand — this fails.
+  it("--full is the full preset", () => {
+    expect(parseReviewCommand("--full")).toMatchObject({
+      preset: "full",
+      target: { kind: "branch", uncommitted: true },
+    });
+    expect(parseReviewCommand("12 --full", "quick")).toMatchObject({
+      preset: "full",
+      target: { kind: "pr", pr: "12" },
+    });
+    expect(parseReviewCommand("full --full")).toMatchObject({ preset: "full" });
+  });
+
+  // MUTATION: delete the "--branch" case — this fails.
+  it("--branch is the bare command's branch, with --base as before", () => {
+    expect(parseReviewCommand("--branch")).toEqual(parseReviewCommand(""));
+    expect(parseReviewCommand("--branch --base dev")).toEqual(parseReviewCommand("--base dev"));
+  });
+
+  // MUTATION: delete the "--to" case — this fails.
+  it("--to takes the old destinations; json still means the JSON result", () => {
+    expect(parseReviewCommand("12 --to pr")).toEqual(parseReviewCommand("12"));
+    expect(parseReviewCommand("--to terminal,file")).toEqual(parseReviewCommand(""));
+    expect(parseReviewCommand("--to json")).toMatchObject({ json: true });
+    expect(parseReviewCommand("--to nowhere")).toHaveProperty("error");
+  });
+
+  it("the usage names only the current spellings", () => {
+    const usage = (parseReviewCommand("--wat") as { error: string }).error;
+    for (const old of ["--full", "--branch", "--to"]) expect(usage).not.toContain(old);
   });
 });
 

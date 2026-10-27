@@ -178,6 +178,28 @@ describe("gitScanSource materialisation is the listed blobs, byte for byte (self
     );
     expect(hashes).toEqual(files.map((f) => f.blob));
   });
+
+  // A blob larger than one batch is streamed from git to its file (never
+  // buffered in the host pi): its bytes, every path that shares it, and the
+  // reader's too-big answer are what a buffered read gave.
+  it("streams a blob larger than a batch to each of its paths, byte for byte", () => {
+    const big = Buffer.alloc(5000, "x\n");
+    mkdirSync(join(repo, "assets/deep"), { recursive: true });
+    writeFileSync(join(repo, "assets/big.txt"), big);
+    writeFileSync(join(repo, "assets/deep/same.txt"), big);
+    git("add", "-A");
+    git("commit", "-qm", "big");
+    const sha = git("rev-parse", "HEAD");
+    const opened = gitScanSource(repo, state, { batchBytes: 1000 }).open(sha, []);
+    if (!opened.ok) throw new Error(opened.reason);
+    for (const rel of ["assets/big.txt", "assets/deep/same.txt"])
+      expect(readFileSync(join(opened.tree.root, rel)).equals(big), rel).toBe(true);
+    const files = opened.tree.files;
+    const hashes = git("hash-object", ...files.map((f) => join(opened.tree.root, f.path))).split(
+      "\n",
+    );
+    expect(hashes).toEqual(files.map((f) => f.blob));
+  });
 });
 
 describe("gitScanSource text vs binary (selfscan round 6: a stray NUL is still text)", () => {
