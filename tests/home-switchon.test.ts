@@ -27,7 +27,7 @@ import {
 } from "../src/home/switchon.js";
 import {
   LOGIN_SHARE_STEP_ID,
-  PI_LOGIN_DIR_KEY,
+  PI_LOGIN_DIR_ENV,
   loginShareStep,
 } from "../src/onboard/steps/loginshare.js";
 import type { OnboardAdapters, ProcessResult } from "../src/onboard/engine.js";
@@ -427,7 +427,7 @@ describe("the login step: the stack reviews on the home's own login", () => {
     const dryBefore = /^dry_run\s*=.*$/m.exec(s.config())?.[0];
     const r = await s.checklist.runStep(LOGIN_SHARE_STEP_ID);
     expect(r.ok).toBe(true);
-    expect(s.env()).toContain(`${PI_LOGIN_DIR_KEY}=${s.loginDir}\n`);
+    expect(s.env()).toContain(`${PI_LOGIN_DIR_ENV}=${s.loginDir}\n`);
     const cfg = parseToml(s.config()) as { login_refresh?: { enabled?: unknown } };
     expect(cfg.login_refresh?.enabled).toBe(true);
     // dry_run is not this step's (invariant 6)
@@ -446,7 +446,7 @@ describe("the login step: the stack reviews on the home's own login", () => {
   it("before the first bring-up it only writes: the bring-up starts the daemon on it", async () => {
     const s = setUp({ broughtUp: false });
     expect((await s.checklist.runStep(LOGIN_SHARE_STEP_ID)).ok).toBe(true);
-    expect(s.env()).toContain(`${PI_LOGIN_DIR_KEY}=${s.loginDir}`);
+    expect(s.env()).toContain(`${PI_LOGIN_DIR_ENV}=${s.loginDir}`);
     expect(s.calls).toEqual([]);
   });
 

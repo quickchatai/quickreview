@@ -37,7 +37,7 @@ import { topologyOf } from "./topology.js";
 
 export const LOGIN_SHARE_STEP_ID = "login_share";
 /** The project .env key docker-compose.yml mounts the host's login from. */
-export const PI_LOGIN_DIR_KEY = "QCR_PI_LOGIN_DIR";
+export const PI_LOGIN_DIR_ENV = "QCR_PI_LOGIN_DIR";
 
 export interface LoginShareOptions {
   /** The home's pi agent dir, where its login is. Absent: nothing is shared
@@ -80,7 +80,7 @@ export function loginShareStep(o: LoginShareOptions = {}): OnboardingStep {
         ok: true,
         checks: [{ name: "login", ok: true, detail: "no home login to share here" }],
       };
-    const env = readEnvKey(readEnvText(rootOf(ctx.adapters)), PI_LOGIN_DIR_KEY);
+    const env = readEnvKey(readEnvText(rootOf(ctx.adapters)), PI_LOGIN_DIR_ENV);
     let config: string;
     try {
       config = readFileSync(ctx.adapters.paths.configPath, "utf8");
@@ -93,7 +93,7 @@ export function loginShareStep(o: LoginShareOptions = {}): OnboardingStep {
         : {
             name: "login",
             ok: false,
-            detail: `the stack does not mount your login (${PI_LOGIN_DIR_KEY} is ${env === null ? "unset" : JSON.stringify(env)})`,
+            detail: `the stack does not mount your login (${PI_LOGIN_DIR_ENV} is ${env === null ? "unset" : JSON.stringify(env)})`,
           },
       refresherEnabled(config) === true
         ? { name: "refresher", ok: true, detail: "its refresher keeps the login fresh" }
@@ -145,7 +145,7 @@ export function loginShareStep(o: LoginShareOptions = {}): OnboardingStep {
       }
       const root = rootOf(ctx.adapters);
       const envText = readEnvText(root);
-      const nextEnv = setEnvKey(envText, PI_LOGIN_DIR_KEY, dir);
+      const nextEnv = setEnvKey(envText, PI_LOGIN_DIR_ENV, dir);
       if (patched !== null) writeAtomic(configPath, patched);
       if (nextEnv !== envText) writeAtomic(join(root, ".env"), nextEnv);
       const checks: CheckResult[] = [
