@@ -75,8 +75,9 @@ import type { ScanLease } from "../src/setup/scanlease.js";
 
 const NO_PARAMS = { type: "object", properties: {} } as const;
 
-// The rendering and the shared verbs are src/setup/scanrender.ts's, shared
-// with `qcr scan` and the pi plugin's /qcr-scan.
+// The rendering and the shared verbs are
+// packages/pi-plugin/src/scan/scanrender.ts's, shared with `qcr scan` and the
+// pi plugin's /qcr-scan.
 export {
   CLI_VERBS,
   FINDINGS_LIMIT,
@@ -476,12 +477,12 @@ export function scanLeafRunner(
   };
 }
 
-/** The scan runner the companion's belt drives (src/setup/scanassemble.ts):
- * the reviewed checkout as a source of trees, the state home for every
- * record, the saved unit cut from the setup engine, the live config under the
- * profile, and a case runner over the scan agent build — and the triage over
- * its findings: reviewer memory and the tracker sink are the engine's own,
- * handed in. */
+/** The scan runner the companion's belt drives
+ * (packages/pi-plugin/src/scan/scanassemble.ts): the reviewed checkout as a
+ * source of trees, the state home for every record, the saved unit cut from
+ * the setup engine, the live config under the profile, and a case runner
+ * over the scan agent build — and the triage over its findings: reviewer
+ * memory and the tracker sink are the engine's own, handed in. */
 export function buildScan(
   engine: SetupEngine,
   reviewedRepo: string,

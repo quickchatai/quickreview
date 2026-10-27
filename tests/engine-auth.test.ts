@@ -159,6 +159,27 @@ describe("the preflight refuses what the run window would outlive", () => {
     expect((err as AuthExpiring).expiresAt).toBeGreaterThan(Date.now());
   });
 
+  // MUTATION: check `whole` instead of the used logins in engineCredentials —
+  // an unused expired login refuses a healthy review, and this fails.
+  it("with the run's providers, only their logins are admitted: an unused expired one does not refuse it", () => {
+    const shared = JSON.stringify({
+      anthropic: { type: "oauth", access: "OLD", refresh: "R", expires: Date.now() - HOUR },
+      openai: { type: "oauth", access: "A", refresh: "R", expires: Date.now() + 10 * HOUR },
+    });
+    writeFileSync(join(src, "auth.json"), shared);
+    expect(() => engineCredentials({ srcDir: src, needMs: 30 * MIN })).toThrow(AuthExpiring);
+    const a = engineCredentials({ srcDir: src, needMs: 30 * MIN, providers: ["openai"] });
+    expect(a.provider).toBe("openai");
+    // openai-codex runs on the openai login when only that one exists
+    expect(
+      engineCredentials({ srcDir: src, needMs: 30 * MIN, providers: ["openai-codex"] }).provider,
+    ).toBe("openai");
+    // a provider the run does use is still checked
+    expect(() =>
+      engineCredentials({ srcDir: src, needMs: 30 * MIN, providers: ["openai", "anthropic"] }),
+    ).toThrow(AuthExpiring);
+  });
+
   it("a token inside pi's refresh margin of the window's end is refused too", () => {
     writeFileSync(join(src, "auth.json"), login(30 * MIN + 2 * MIN));
     expect(() => engineCredentials({ srcDir: src, needMs: 30 * MIN })).toThrow(AuthExpiring);

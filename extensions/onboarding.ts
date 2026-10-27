@@ -1,6 +1,8 @@
-// onboarding — the wizard's tool belt. Loaded ONLY by the wizard's own pi
-// session (src/onboard/launch.ts onboardingPiArgv; per spawn, `-e`, alongside --no-extensions — no ambient extension rides the
-// onboarding session), never registered globally. pi jiti-loads this TS source
+// onboarding — the wizard's tool belt. Loaded ONLY by a pi started with it
+// named by path (its env shim, extensions/cli/onboarding.ts, as `-e` alongside
+// --no-extensions, so no ambient extension rides that session), never
+// registered globally. No qcr verb starts such a session any more: the home
+// runs the wizard's steps itself (src/home/switchon.ts, Advanced). pi jiti-loads this TS source
 // on the HOST, so it imports the OnboardingEngine source directly and runs it
 // in-process: pi talks, these deterministic tools act, and the LLM never
 // freestyles a shell command (the built-in belt is read-only by argv).

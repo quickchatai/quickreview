@@ -42,6 +42,7 @@ function fakeDeps(o: {
   pkgRoot?: string;
   interactive?: boolean;
   onRun?: (r: Ran) => number | null;
+  holdLogin?: NpmVerbDeps["holdLogin"];
 }): { deps: NpmVerbDeps; ran: Ran[]; out: string[]; err: string[] } {
   const ran: Ran[] = [];
   const out: string[] = [];
@@ -60,6 +61,7 @@ function fakeDeps(o: {
     out: (l) => out.push(l),
     err: (l) => err.push(l),
     execPath: "/usr/bin/node",
+    holdLogin: o.holdLogin ?? (() => Promise.resolve({ ok: true, held: false, release: () => {} })),
   };
   return { deps, ran, out, err };
 }
@@ -213,6 +215,38 @@ describe("qcr login", () => {
     expect(said).toMatch(/type \/login/);
     expect(said).toMatch(/logged in to openai-codex/);
     expect(said).not.toContain("SECRET");
+  });
+
+  // MUTATION: drop the holdLogin call from cmdLogin — the login races the
+  // refresher's write, and this fails.
+  it("pauses auto-review's login refresher before pi starts, and releases it after", async () => {
+    const order: string[] = [];
+    const home = join(tmp, "held-home");
+    const f = fakeDeps({
+      env: { PATH: join(tmp, "no-tmux"), HOME: home },
+      holdLogin: (dir) => {
+        order.push(`hold ${dir}`);
+        return Promise.resolve({ ok: true, held: true, release: () => order.push("release") });
+      },
+      onRun: () => {
+        order.push("pi");
+        return 1;
+      },
+    });
+    expect(await cmdLogin([], f.deps)).toBe(1);
+    expect(order).toEqual([`hold ${join(home, ".pi", "agent")}`, "pi", "release"]);
+    expect(f.out.join("\n")).toMatch(/refresher is paused/);
+  });
+
+  it("starts nothing when the refresher cannot be paused", async () => {
+    const f = fakeDeps({
+      env: { PATH: join(tmp, "no-tmux"), HOME: join(tmp, "unheld-home") },
+      holdLogin: () =>
+        Promise.resolve({ ok: false, why: "auto-review's login refresher did not pause within 60 s" }),
+    });
+    expect(await cmdLogin([], f.deps)).toBe(1);
+    expect(f.ran).toEqual([]);
+    expect(f.err.join("\n")).toMatch(/did not pause.*nothing was changed/);
   });
 
   it("fails when pi was quit without a login", async () => {
