@@ -38,8 +38,7 @@ import { loginSummary } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import { assetRoot } from "@quickchatai/pi-quickreview/src/assetroot.js";
 import { postSavedReview } from "@quickchatai/pi-quickreview/src/savedpost.js";
 import { HOME_DEFAULTS, sandboxRoot, type HomeToolSet } from "../config.js";
-import { loadOneShotConfig, locateConfig, stateHome } from "../homes.js";
-import { detectInstall } from "../installkind.js";
+import { loadOneShotConfig, locateConfig, stackRoot, stateHome } from "../homes.js";
 import type { OnboardAdapters, ProcessRunner } from "../onboard/engine.js";
 import { openStepMemoryForward } from "../onboard/stepforward.js";
 import { composeAutoReview, serviceState } from "./autoreview.js";
@@ -355,19 +354,13 @@ export const STACK_FILES: readonly string[] = [
   "config.example.toml",
 ];
 
-/** The compose project the home's switches drive, with the wizard's state
- * under it (`<root>/state`, `<root>/.env`): `QCR_ROOT` when set; a checkout
- * or the image is its own; an app installed by a package manager gets one in
- * its state home, never inside the package — a root-owned global prefix
- * refuses the write, and an update replaces the package with everything in it. */
+/** The compose project the home's switches drive (src/homes.ts `stackRoot`),
+ * shared with the admin TUI. */
 export function homeStackRoot(
   env: Readonly<Record<string, string | undefined>>,
   pkgRoot: string = sandboxRoot(),
 ): string {
-  const explicit = (env["QCR_ROOT"] ?? "").trim();
-  if (explicit !== "") return explicit;
-  const kind = detectInstall(pkgRoot, env).kind;
-  return kind === "global" || kind === "local" ? join(stateHome(env), "stack") : pkgRoot;
+  return stackRoot(env, pkgRoot);
 }
 
 /** Give a stack outside the package the package's own STACK_FILES, again on

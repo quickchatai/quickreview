@@ -454,11 +454,14 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
 
   const fileConfig = deps.config ?? loadConfig();
   // The route — which daemon the board reads, and how — from [tui] plus the
-  // facts this checkout holds locally (the compose project's .env, the
-  // onboarding checklist, the Docker socket's mode). Two small file reads and
-  // one access(2): no docker, network or walk, so it may precede the frame.
+  // facts the stack holds locally (the compose project's .env, the
+  // onboarding checklist, the Docker socket's mode). The stack is the one the
+  // home sets up (src/homes.ts `stackRoot`), so an app installed by a package
+  // manager reads it from its state home. Two small file reads and one
+  // access(2): no docker, network or walk, so it may precede the frame.
   const { readRouteFacts, resolveTuiRoute, pinnedVersion } = await import("./route.js");
-  const routeFacts = deps.routeFacts ?? readRouteFacts(sandboxRoot());
+  const { stackRoot } = await import("../homes.js");
+  const routeFacts = deps.routeFacts ?? readRouteFacts(stackRoot(process.env, sandboxRoot()));
   const route = resolveTuiRoute(fileConfig.tui, routeFacts);
   const loaded: Config = { ...fileConfig, tui: route.cfg };
   // In the containerised TUI the companion is a container the host wrapper

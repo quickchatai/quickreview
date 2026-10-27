@@ -104,6 +104,23 @@ export function operatorStateDir(
   return kind === "global" || kind === "local" ? stateHome(env) : join(root, "state");
 }
 
+/**
+ * The compose project the home's switches and the admin TUI share, with the
+ * setup's state under it (`<root>/state`, `<root>/.env`): `QCR_ROOT` when
+ * set; a checkout or the image is its own; an app installed by a package
+ * manager gets one in its state home, never inside the package — for the
+ * same reasons as `operatorStateDir`.
+ */
+export function stackRoot(
+  env: Readonly<Record<string, string | undefined>>,
+  pkgRoot: string,
+): string {
+  const explicit = (env["QCR_ROOT"] ?? "").trim();
+  if (explicit !== "") return explicit;
+  const kind = detectInstall(pkgRoot, env).kind;
+  return kind === "global" || kind === "local" ? join(stateHome(env), "stack") : pkgRoot;
+}
+
 export function locateConfig(opts: LocateOptions = {}): LocatedConfig {
   return core.locateConfig(optEnv(opts));
 }
