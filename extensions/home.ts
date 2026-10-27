@@ -29,8 +29,9 @@
 //   advanced          alt+x               x                    home_advanced
 //
 // The two switches ask the person every question in the home (pi's select):
-// a tool starts one but cannot answer it, so the one confirm that turns
-// auto-review on, and with it the go-live, is the person's (invariant 6).
+// a tool starts one but cannot answer it, so the confirm that turns
+// auto-review on (in dry-run) and going live's own, after its proof round,
+// are the person's (invariant 6).
 //
 // The review runs detached (the app's `qcr review start`, on the person's own
 // pi login), writes its report to a file and never posts by itself; once it
@@ -425,7 +426,7 @@ export function createHome(o: HomeOptions): ExtensionFactory {
         name: "home_auto_review",
         label: "Home auto-review",
         description:
-          "Switch auto-review on or off. Switching on checks this machine, then asks the person where it runs, whether to turn memory on too, and for their one confirm; switching off warns them which review is running. Every question is the person's to answer in the home: this tool cannot answer or confirm for them.",
+          "Switch auto-review on or off. Switching on checks this machine, then asks the person where it runs, whether to turn memory on too, and for their one confirm, and it comes up in dry-run; switching off warns them which review is running, and from dry-run offers going live (a proof round on the selected pull request, then one more confirm). Every question is the person's to answer in the home: this tool cannot answer or confirm for them.",
         parameters: NO_PARAMS,
         execute: async (_id, _p, _signal, _onUpdate, ctx) =>
           textResult(await model.switchAutoReview(askOf(ctx))),
