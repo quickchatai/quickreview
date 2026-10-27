@@ -630,10 +630,21 @@ describe("the posting rule after a review", () => {
     expect(h.rv.posts).toEqual([FINDINGS.postFile]);
   });
 
-  it("a misspelt rule is ask, never a post", async () => {
+  // MUTATION: drop the settings' warnings in postingRule — this fails.
+  it("a misspelt rule is ask, never a post, and the person is told why", async () => {
     const h = await finish({ posting: "yes-please" });
     expect(h.pi.selects).toHaveLength(1);
     expect(h.rv.posts).toEqual([]);
+    expect(h.pi.notes).toContain(
+      'pi settings: quickreview.posting is "yes-please", not one of ask, never, always; it stays "ask"',
+    );
+  });
+
+  // MUTATION: send the review message without `triggerTurn: false` — this fails.
+  it("the findings are shown in the chat, never a turn that steers the agent", async () => {
+    const h = await finish({ posting: "ask" });
+    expect(h.pi.sent).toHaveLength(1);
+    expect(h.pi.sentOptions).toEqual([{ triggerTurn: false }]);
   });
 
   it("a review with nothing kept to post asks nothing", async () => {

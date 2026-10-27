@@ -1,11 +1,15 @@
 // The home's real ports (src/home/adapters.ts) over fake files and a fake
 // `gh`: what each answers, and that a source that cannot be read answers
 // unknown rather than an empty value (invariant 9).
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import {
   githubPort,
   homeOptionsFromEnv,
+  homeStackRoot,
+  seedStack,
   parsePulls,
   piLoginPort,
   repoPort,
@@ -13,6 +17,7 @@ import {
   type RunResult,
   type Runner,
 } from "../src/home/adapters.js";
+import { stateHome } from "../src/homes.js";
 
 const files =
   (map: Record<string, string | Error>) =>
@@ -215,5 +220,53 @@ describe("the home's options from the env", () => {
       PI_CODING_AGENT_DIR: "/nonexistent-agent",
     });
     expect(await o.adapters.login.providers()).toEqual({ kind: "known", value: [] });
+  });
+});
+
+describe("the stack the home drives", () => {
+  const tmp = mkdtempSync(join(tmpdir(), "home-stack-"));
+  afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+  const env = { HOME: "/h", XDG_STATE_HOME: "/x/state" };
+
+  it("is QCR_ROOT when set, and a checkout or the image is its own", () => {
+    expect(homeStackRoot({ ...env, QCR_ROOT: " /srv/qcr " }, "/opt/qcr")).toBe("/srv/qcr");
+    expect(homeStackRoot(env, "/src/quickreview")).toBe("/src/quickreview");
+    expect(homeStackRoot(env, "/opt/qcr")).toBe("/opt/qcr");
+  });
+
+  // MUTATION: keep the package root for an installed app — this fails.
+  it("is in the state home for an app a package manager installed, never inside the package", () => {
+    const pkg = "/usr/lib/node_modules/@quickchatai/quickreview";
+    expect(homeStackRoot(env, pkg)).toBe(join(stateHome(env), "stack"));
+    expect(homeStackRoot(env, "/w/proj/node_modules/@quickchatai/quickreview")).toBe(
+      join(stateHome(env), "stack"),
+    );
+  });
+
+  it("gets the package's compose file, tunnel context and config template, and keeps the person's state", () => {
+    const pkg = join(tmp, "pkg");
+    mkdirSync(join(pkg, "docker", "tunnel"), { recursive: true });
+    writeFileSync(join(pkg, "docker-compose.yml"), "services: {} # new\n");
+    writeFileSync(join(pkg, "docker", "tunnel", "Dockerfile"), "FROM x\n");
+    writeFileSync(join(pkg, "config.example.toml"), "dry_run = true\n");
+    const stack = join(tmp, "stack");
+    mkdirSync(join(stack, "state"), { recursive: true });
+    writeFileSync(join(stack, "docker-compose.yml"), "services: {} # old\n");
+    writeFileSync(join(stack, ".env"), "QCR_PI_LOGIN_DIR=/h/.pi/agent\n");
+    writeFileSync(join(stack, "state", "keep.json"), "{}");
+    seedStack(stack, pkg);
+    expect(readFileSync(join(stack, "docker-compose.yml"), "utf8")).toBe("services: {} # new\n");
+    expect(existsSync(join(stack, "docker", "tunnel", "Dockerfile"))).toBe(true);
+    expect(existsSync(join(stack, "config.example.toml"))).toBe(true);
+    expect(readFileSync(join(stack, ".env"), "utf8")).toBe("QCR_PI_LOGIN_DIR=/h/.pi/agent\n");
+    expect(existsSync(join(stack, "state", "keep.json"))).toBe(true);
+  });
+
+  it("a checkout's own stack is left alone", () => {
+    const pkg = join(tmp, "checkout");
+    mkdirSync(pkg, { recursive: true });
+    writeFileSync(join(pkg, "docker-compose.yml"), "services: {}\n");
+    seedStack(pkg, pkg);
+    expect(readFileSync(join(pkg, "docker-compose.yml"), "utf8")).toBe("services: {}\n");
   });
 });

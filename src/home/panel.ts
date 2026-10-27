@@ -31,6 +31,7 @@ import { ago, providerLabel, type HomeModel } from "./model.js";
 import type { OpenPull, PrReview, ReviewQuote, Slot } from "./ports.js";
 import { sevOf, shortWhere, whereOf, type Lens, type Run } from "./review.js";
 import { pickUpPhrase, type Ask } from "./switches.js";
+import { money, plural } from "./words.js";
 
 type Fg = Parameters<Theme["fg"]>[0];
 
@@ -79,8 +80,6 @@ export interface PanelHost {
 }
 
 const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const money = (n: number): string => `$${n.toFixed(2)}`;
-const plural = (n: number, w: string): string => `${n} ${w}${n === 1 ? "" : "s"}`;
 
 /** How many pull requests each list may show, out of `room` rows for both
  * lists (their titles aside). Each gets half, its "… n more" row included; a

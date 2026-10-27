@@ -26,20 +26,26 @@
 //
 //   spend      the app's detached runs' costs and the daemon's recorded
 //              costs (src/home/spend.ts): unknown when either can't be read.
+//
+// The stack these drive is a compose project with the wizard's state under it
+// (`homeStackRoot`): a checkout or the image is its own, an app installed by
+// a package manager gets one in its state home, never inside the package.
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "smol-toml";
 import { loginSummary } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import { assetRoot } from "@quickchatai/pi-quickreview/src/assetroot.js";
 import { postSavedReview } from "@quickchatai/pi-quickreview/src/savedpost.js";
 import { HOME_DEFAULTS, sandboxRoot, type HomeToolSet } from "../config.js";
-import { loadOneShotConfig, locateConfig, operatorStateDir, stateHome } from "../homes.js";
-import type { OnboardAdapters } from "../onboard/engine.js";
+import { loadOneShotConfig, locateConfig, stateHome } from "../homes.js";
+import { detectInstall } from "../installkind.js";
+import type { OnboardAdapters, ProcessRunner } from "../onboard/engine.js";
 import { openStepMemoryForward } from "../onboard/stepforward.js";
 import { composeAutoReview, serviceState } from "./autoreview.js";
 import { hostLoginOwner } from "./loginowner.js";
 import { DAEMON_SERVICE } from "../onboard/steps/compose.js";
+import { daemonSnapshot } from "./daemonstatus.js";
 import { composeMemory } from "./memory.js";
 import { realSpendPort } from "./spend.js";
 import { composeAdvanced, type AdvancedPort } from "./advanced.js";
@@ -236,8 +242,12 @@ export const unbuiltPorts: {
 };
 
 /** The reviewer as the person: the app's own bin and registry, the install's
- * state home and config, in the environment the home runs in. */
-export function realReviewsPort(env: Readonly<Record<string, string | undefined>>): ReviewsPort {
+ * state home and config, in the environment the home runs in; auto-review's
+ * rounds from the daemon of the compose stack at `stack.root`. */
+export function realReviewsPort(
+  env: Readonly<Record<string, string | undefined>>,
+  stack: { root: string; runner: ProcessRunner },
+): ReviewsPort {
   const state = stateHome(env);
   const appRoot = sandboxRoot();
   // the home's own working directory (src/home/launch.ts `homePaths`)
@@ -248,7 +258,7 @@ export function realReviewsPort(env: Readonly<Record<string, string | undefined>
     registry: join(state, "review", "detached"),
     reportsDir: join(cwd, "reviews"),
     reviewHome: join(state, "review"),
-    statusPath: join(operatorStateDir(appRoot, env), "status.json"),
+    snapshot: () => daemonSnapshot(stack.runner, stack.root),
     qcr: qcrChild(proc),
     detach: realDetachSeams(proc),
     post: async (file) => {
@@ -337,6 +347,47 @@ export function realHomeAdapters(o: {
   };
 }
 
+/** What a compose project needs from the app: the stack, the tunnel
+ * wrappers' build context, and the config template the steps fill from. */
+export const STACK_FILES: readonly string[] = [
+  "docker-compose.yml",
+  join("docker", "tunnel"),
+  "config.example.toml",
+];
+
+/** The compose project the home's switches drive, with the wizard's state
+ * under it (`<root>/state`, `<root>/.env`): `QCR_ROOT` when set; a checkout
+ * or the image is its own; an app installed by a package manager gets one in
+ * its state home, never inside the package — a root-owned global prefix
+ * refuses the write, and an update replaces the package with everything in it. */
+export function homeStackRoot(
+  env: Readonly<Record<string, string | undefined>>,
+  pkgRoot: string = sandboxRoot(),
+): string {
+  const explicit = (env["QCR_ROOT"] ?? "").trim();
+  if (explicit !== "") return explicit;
+  const kind = detectInstall(pkgRoot, env).kind;
+  return kind === "global" || kind === "local" ? join(stateHome(env), "stack") : pkgRoot;
+}
+
+/** Give a stack outside the package the package's own STACK_FILES, again on
+ * every launch, so an update brings the stack that matches the app. The
+ * person's state there (`.env`, `state/`) is never touched. A copy that
+ * fails is left to the compose-file check, which says what is missing. */
+export function seedStack(root: string, pkgRoot: string): void {
+  if (root === pkgRoot) return;
+  for (const f of STACK_FILES) {
+    const from = join(pkgRoot, f);
+    if (!existsSync(from)) continue;
+    try {
+      mkdirSync(root, { recursive: true });
+      cpSync(from, join(root, f), { recursive: true, force: true });
+    } catch {
+      // the compose-file check names it
+    }
+  }
+}
+
 /** The home's options from a process's environment: the env shim's one call. */
 export function homeOptionsFromEnv(env: Readonly<Record<string, string | undefined>>): {
   adapters: HomeAdapters;
@@ -347,13 +398,14 @@ export function homeOptionsFromEnv(env: Readonly<Record<string, string | undefin
 } {
   const model = (env[HOME_MODEL_ENV] ?? "").trim() || HOME_DEFAULTS.model;
   const tools: HomeToolSet = env[HOME_TOOLS_ENV] === "full" ? "full" : "reviewer";
-  const root = (env["QCR_ROOT"] ?? "").trim() || sandboxRoot();
+  const root = homeStackRoot(env);
+  seedStack(root, sandboxRoot());
   const configPath = (): string => locateConfig({ env }).path;
   return {
     adapters: realHomeAdapters({
       agentDir: piAgentDir(env),
       configPath,
-      reviews: realReviewsPort(env),
+      reviews: realReviewsPort(env, { root, runner: stepRunner }),
       root,
       spend: realSpendPort({
         registry: join(stateHome(env), "review", "detached"),

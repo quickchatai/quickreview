@@ -48,6 +48,7 @@ import {
   type Run,
 } from "./review.js";
 import { switchAutoReview, switchMemory, type Ask, type SwitchHost } from "./switches.js";
+import { money, plural } from "./words.js";
 
 export type NoticeKind = "info" | "ok" | "warn";
 export interface Notice {
@@ -121,8 +122,6 @@ export const PRICE_REST_MS = 500;
 /** How often a running review's status is read. */
 export const STATUS_POLL_MS = 2000;
 
-const money = (n: number): string => `$${n.toFixed(2)}`;
-const plural = (n: number, w: string): string => `${n} ${w}${n === 1 ? "" : "s"}`;
 
 /** "about $1.33, stops at $2.66", or what is not known of it. */
 export function priceWords(est: number | null, cap: number | null): string {
