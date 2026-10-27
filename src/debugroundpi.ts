@@ -83,6 +83,7 @@ export function readDebugSpec(file: string): DebugRoundSpec {
     raw.session !== debugSession(raw.pr) ||
     typeof raw.command_id !== "string" ||
     typeof raw.agent_dir !== "string" ||
+    (raw.login_dir !== undefined && typeof raw.login_dir !== "string") ||
     typeof raw.borrow_dir !== "string" ||
     typeof raw.session_dir !== "string" ||
     typeof raw.model !== "string" ||

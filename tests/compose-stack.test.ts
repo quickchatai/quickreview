@@ -204,6 +204,8 @@ describe("the daemon's writable trees are the VM's", () => {
       .map((v) => v.replace(/^\$\{[^}]+\}:/, "").replace(/^[\w-]+:/, ""))
       .map((t) => t.replace(/\$\{QCR_CLONE_DIR:\?[^}]+\}/, "<clone>").replace(/:ro$/, ""))
       .filter((t) => t !== "/opt/qcr/state/ingress")
+      // the single box's shared login: the VM keeps its login in pi's home
+      .filter((t) => t !== "/opt/qcr/login")
       .sort();
 
   it("compose mounts every directory the VM's run spec mounts, and no other", () => {
@@ -218,6 +220,16 @@ describe("the daemon's writable trees are the VM's", () => {
       ]),
     );
     expect(composeTargets(daemon)).toEqual(vm);
+  });
+
+  // MUTATION: mount the host login over /home/qcr/.pi/agent, or set QCR_LOGIN_DIR unconditionally — this fails.
+  it("the single box's shared login is its own mount, named to the daemon only when it is set", () => {
+    expect(daemon.volumes).toContain("${QCR_PI_LOGIN_DIR:-qcr-login}:/opt/qcr/login");
+    expect(Object.keys(doc.volumes)).toContain("qcr-login");
+    expect(daemon.environment?.QCR_LOGIN_DIR).toBe("${QCR_PI_LOGIN_DIR:+/opt/qcr/login}");
+    // pi's own home (its settings, which the entrypoint provisions) stays the volume
+    expect(daemon.volumes).toContain("qcr-pihome:/home/qcr/.pi");
+    expect((daemon.volumes ?? []).filter((v) => v.includes("QCR_PI_LOGIN_DIR"))).toHaveLength(1);
   });
 
   it("each is a named volume the file declares, and the base clone's name is required", () => {

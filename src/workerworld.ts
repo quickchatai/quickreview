@@ -89,8 +89,12 @@ export interface WorkerWorldOptions {
   sessions: PiSessionManager;
   ovSessions?: OvSessionLifecycle;
   permits: PermitBroker;
-  /** pi's agent dir: where the login lives (the refresher keeps it). */
+  /** pi's agent dir: models.json, settings and the built lens agents. */
   agentDir: string;
+  /** Where the login lives (the refresher keeps it): the agent dir, unless
+   * the single box's shared login is mounted elsewhere (supervisor.ts
+   * `loginDirOf`). */
+  loginDir?: string;
   /** Run the daemon's pump (a lease freed, a worker gone). Late-bound: the daemon is built
    * after this. */
   pump: () => Promise<void>;
@@ -206,6 +210,7 @@ export function buildWorkerWorld(o: WorkerWorldOptions): WorkerWorld {
       root,
       cwd: root,
       agent_dir: o.agentDir,
+      ...(o.loginDir !== undefined && o.loginDir !== o.agentDir ? { login_dir: o.loginDir } : {}),
       session_dir: sessions.sessionDir(row.session),
       system_prompt_file: sessions.writeSystemPrompt(row.session, prompt),
       model: cfg.models.conversation,
@@ -255,6 +260,7 @@ export function buildWorkerWorld(o: WorkerWorldOptions): WorkerWorld {
       takeoverPlanFor({
         root,
         agentDir: o.agentDir,
+        ...(o.loginDir !== undefined ? { loginDir: o.loginDir } : {}),
         sessionsRoot: sessions.sessionsRoot(),
         model: cfg.models.conversation,
         pr,

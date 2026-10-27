@@ -27,6 +27,7 @@ import {
   type AutoReviewStatus,
   type HomeAdapters,
   type Known,
+  type LoginHealth,
   type MemoryControl,
   type MemoryState,
   type OpenPull,
@@ -75,7 +76,14 @@ export interface HomeState {
   trigger: Slot<string> | null;
   memory: Slot<MemoryState>;
   spend: Slot<SpendTotals>;
+  /** Who refreshes the login and whether it expired (src/home/loginowner.ts);
+   * null when the home has no such port. */
+  loginHealth: Slot<LoginHealth> | null;
 }
+
+/** After a re-login, auto-review's own "login expired" is taken as old news
+ * for this long: its status lags the refresher's by a poll or two. */
+export const RELOGIN_GRACE_MS = 5 * 60_000;
 
 /** The two lists, from the open pull requests and their latest reviews. */
 export interface HomeLists {
@@ -189,6 +197,7 @@ export class HomeModel {
     trigger: null,
     memory: PENDING,
     spend: PENDING,
+    loginHealth: null,
   };
   /** Slots a switch shows its own state in while it runs (src/home/switches.ts):
    * a refresh does not overwrite them until released. */
@@ -214,6 +223,10 @@ export class HomeModel {
   private stopping = new Set<number>();
   private attachedTo: string | null = null;
   private disposed = false;
+  /** pi refused the chat for its login: the error it showed. */
+  private chatLoginError: string | null = null;
+  /** When the person last signed in again, ms since the epoch. */
+  private reloggedAt: number | null = null;
   private readonly after: (ms: number, fn: () => void) => () => void;
 
   constructor(private readonly o: HomeModelOptions) {
@@ -221,6 +234,7 @@ export class HomeModel {
     this.provider = providerOf(o.model);
     this.after = o.after ?? noTimer;
     if (o.adapters.autoReview.trigger) this.state.trigger = PENDING;
+    if (o.adapters.loginOwner) this.state.loginHealth = PENDING;
   }
 
   /** The session ended: no timer fires and no preview runs. Runs go on. */
@@ -259,6 +273,57 @@ export class HomeModel {
   signedIn(): boolean | null {
     const l = this.state.login;
     return l.kind === "known" ? l.value.includes(this.provider) : null;
+  }
+
+  // ---- one login per box (src/home/loginowner.ts) -------------------------
+
+  /** pi refused the chat for its login (extensions/home.ts reads its error). */
+  loginFailed(why: string): void {
+    if (this.chatLoginError === why) return;
+    this.chatLoginError = why;
+    this.changed();
+  }
+
+  /** pi answered the chat: the login works. */
+  chatAnswered(): void {
+    if (this.chatLoginError === null) return;
+    this.chatLoginError = null;
+    this.changed();
+  }
+
+  /** The person signed in again: what said the old login failed is past. */
+  signedInAgain(): void {
+    this.chatLoginError = null;
+    this.reloggedAt = this.now();
+    this.changed();
+  }
+
+  /** Why the login no longer works ("login expired"), or null while nothing
+   * says so. */
+  loginExpired(): string | null {
+    if (this.chatLoginError !== null) return "login expired";
+    const h = this.state.loginHealth;
+    if (
+      h?.kind === "known" &&
+      h.value.expired !== undefined &&
+      !(this.reloggedAt !== null && (h.value.checkedAt ?? 0) < this.reloggedAt)
+    )
+      return h.value.expired;
+    const a = this.state.autoReview;
+    if (
+      a.kind === "known" &&
+      a.value.state === "paused-login" &&
+      a.value.cause === "login expired" &&
+      !(this.reloggedAt !== null && this.now() - this.reloggedAt < RELOGIN_GRACE_MS)
+    )
+      return "login expired";
+    return null;
+  }
+
+  /** Who refreshes the login now; null when that is not known. */
+  refreshedBy(): "auto-review" | "home" | null {
+    const h = this.state.loginHealth;
+    return h?.kind === "known" ? h.value.refresher : null;
   }
 
   /** The setup steps a read showed to be needed: the checklist's gaps. */
@@ -369,6 +434,9 @@ export class HomeModel {
         ? safe(() => a.autoReview.trigger!()).then(land("trigger"))
         : Promise.resolve(),
       safe(() => a.spend.totals()).then(land("spend")),
+      a.loginOwner
+        ? safe(() => a.loginOwner!.health()).then(land("loginHealth"))
+        : Promise.resolve(),
     ]);
     const repo = await safe(() => a.repo.repo());
     land("repo")(repo);
@@ -828,6 +896,16 @@ export class HomeModel {
     return switchMemory(this.switchHost(), this.o.adapters, ask);
   }
 
+  /** The login's owner and health, for the model: null when unknown. */
+  private loginOwnerStatus(h: Slot<LoginHealth>): Record<string, unknown> {
+    const expired = this.loginExpired();
+    return {
+      refreshed_by: this.refreshedBy(),
+      expired: expired !== null ? true : h.kind === "known" ? false : null,
+      ...(h.kind === "unknown" ? { refresher_unknown_because: h.why } : {}),
+    };
+  }
+
   /** What the panel shows, for the model: an unknown source is null, never
    * absent and never zero. */
   status(): Record<string, unknown> {
@@ -840,6 +918,7 @@ export class HomeModel {
         provider: this.provider,
         signed_in: this.signedIn(),
         ...(why(this.state.login) ? { unknown_because: why(this.state.login) } : {}),
+        ...(this.state.loginHealth ? this.loginOwnerStatus(this.state.loginHealth) : {}),
       },
       github: {
         user: nullable(this.state.github),

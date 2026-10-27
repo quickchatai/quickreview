@@ -123,6 +123,8 @@ export interface DebugRoundSpec {
   cwd: string;
   /** The login's owner dir: read-only, borrowed from. */
   agent_dir: string;
+  /** The login's dir when it is not `agent_dir` (the worker spec's). */
+  login_dir?: string;
   /** Where the pi's own agent dir (the blanked login copy) is made. */
   borrow_dir: string;
   /** The window the borrowed login must outlast. */
@@ -603,6 +605,7 @@ export class DebugRoundManager {
       root: spec.root,
       cwd: spec.cwd,
       agent_dir: spec.agent_dir,
+      ...(spec.login_dir !== undefined ? { login_dir: spec.login_dir } : {}),
       borrow_dir: borrow,
       idle_ms: this.idleMs,
       ...(file !== undefined ? { session_file: file } : {}),

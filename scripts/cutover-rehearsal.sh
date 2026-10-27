@@ -869,13 +869,13 @@ fi
 # ---- REFRESH-1: the refresher took over the existing login ------------------------------------------------------------------------------------
 PIHOME_SUM_NOW="$(sha256sum "$H/pihome/agent/auth.json" | cut -c1-16)"
 PIHOME_SUM_0="$(sha256sum "$PRISTINE/pihome/agent/auth.json" | cut -c1-16)"
-LOCKED=no; dx flock -n /home/qcr/.pi/agent/auth.json.lock true 2>/dev/null || LOCKED=yes
+LOCKED=no; dx flock -n /home/qcr/.pi/agent/loginrefresh.lock true 2>/dev/null || LOCKED=yes
 LR="$(status_get login_refresh)"
 EXP="$(login_expiry "$LR")"
 fact login_refresh "$LR"
 REFRESHER_PS="$(dx sh -c 'for p in /proc/[0-9]*; do tr "\0" " " <$p/cmdline 2>/dev/null; echo; done' | grep -c loginrefresh)"
 if [[ "$LOCKED" == yes && "$PIHOME_SUM_NOW" == "$PIHOME_SUM_0" && -n "$LR" && "$LR" != null && -n "$EXP" ]]; then
-  check REFRESH-1 pass "the login refresher took over the existing pihome login: it holds auth.json.lock, reports expires_at, and left the login file untouched (nothing was due)" "lock held: $LOCKED; auth.json sha $PIHOME_SUM_NOW == the legacy pihome's; login expires_at: $EXP; status.json login_refresh: $(echo "$LR" | cut -c1-200); refresher processes: $REFRESHER_PS"
+  check REFRESH-1 pass "the login refresher took over the existing pihome login: it holds loginrefresh.lock, reports expires_at, and left the login file untouched (nothing was due)" "lock held: $LOCKED; auth.json sha $PIHOME_SUM_NOW == the legacy pihome's; login expires_at: $EXP; status.json login_refresh: $(echo "$LR" | cut -c1-200); refresher processes: $REFRESHER_PS"
 else
   check REFRESH-1 fail "the refresher took over the existing login" "locked=$LOCKED sum $PIHOME_SUM_NOW vs $PIHOME_SUM_0 login_refresh=$LR expires_at=${EXP:-none}"
 fi
@@ -889,7 +889,7 @@ python3 "$WRH/pty-drive.py" --settle 14 --expect "Select|login|Login|authenticat
 PTY_PID=$!
 wait_for 40 "the refresher to pause" paused_now; SAW_PAUSE=$?
 PAUSE_FILE_SEEN=no; [[ -e "$H/pihome/agent/auth.json.pause" ]] && PAUSE_FILE_SEEN=yes
-LOCK_DURING=no; dx flock -n /home/qcr/.pi/agent/auth.json.lock true 2>/dev/null || LOCK_DURING=yes
+LOCK_DURING=no; dx flock -n /home/qcr/.pi/agent/loginrefresh.lock true 2>/dev/null || LOCK_DURING=yes
 wait "$PTY_PID"; PTY_RC=$?
 wait_for 40 "the refresher to resume" not_paused; RESUMED=$?
 dx tmux kill-server >/dev/null 2>&1

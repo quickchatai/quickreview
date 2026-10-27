@@ -2,9 +2,10 @@
 // the plugin's step registry, run in the stated order with silent defaults,
 // and the person's one confirm reaching the go-live step and nothing else —
 // so `dry_run` moves only through goLiveStep (invariant 6).
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parse as parseToml } from "smol-toml";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   SetupChecklist,
@@ -24,6 +25,7 @@ import {
   switchOnInput,
   switchOnRegistry,
 } from "../src/home/switchon.js";
+import { LOGIN_SHARE_STEP_ID, PI_LOGIN_DIR_KEY, loginShareStep } from "../src/home/loginshare.js";
 import type { OnboardAdapters, ProcessResult } from "../src/onboard/engine.js";
 import { BROUGHT_UP_CHOICE_KEY } from "../src/onboard/steps/bringup.js";
 import { GO_LIVE_CONFIRMATION, GO_LIVE_STEP_ID, goLiveStep } from "../src/onboard/steps/golive.js";
@@ -371,5 +373,98 @@ describe("the daemon start", () => {
     const r = await checklistWith(calls, false, false).runStep(DAEMON_START_STEP_ID);
     expect(r.ok).toBe(true);
     expect(calls).toEqual([]);
+  });
+});
+
+// ---- one login per box: the login step (src/home/loginshare.ts) -------------
+
+describe("the login step: the stack reviews on the home's own login", () => {
+  const EXAMPLE = readFileSync(new URL("../config.example.toml", import.meta.url), "utf8");
+
+  const setUp = (o: { broughtUp: boolean; login?: boolean; config?: string }) => {
+    const calls: string[][] = [];
+    const adapters = adaptersOver(() => ok(), calls);
+    writeFileSync(adapters.paths.configPath, o.config ?? EXAMPLE);
+    const loginDir = mkdtempSync(join(tmpdir(), "qcr-home-pi-"));
+    dirs.push(loginDir);
+    if (o.login !== false) writeFileSync(join(loginDir, "auth.json"), "{}\n", { mode: 0o600 });
+    const checklist = new SetupChecklist(
+      new StepRegistry([loginShareStep({ loginDir })]),
+      adapters,
+      { file: null },
+    );
+    if (o.broughtUp)
+      (checklist.choices() as Record<string, unknown>)[BROUGHT_UP_CHOICE_KEY] =
+        "2026-10-01T00:00:00Z";
+    const root = join(adapters.paths.stateDir, "..");
+    const env = (): string => {
+      try {
+        return readFileSync(join(root, ".env"), "utf8");
+      } catch {
+        return "";
+      }
+    };
+    const config = (): string => readFileSync(adapters.paths.configPath, "utf8");
+    return { calls, checklist, loginDir, env, config };
+  };
+
+  it("runs after the memory step and before the daemon starts", () => {
+    expect(SWITCH_ON_ORDER.indexOf(LOGIN_SHARE_STEP_ID)).toBeGreaterThan(
+      SWITCH_ON_ORDER.indexOf("memory"),
+    );
+    expect(SWITCH_ON_ORDER.indexOf(LOGIN_SHARE_STEP_ID)).toBeLessThan(
+      SWITCH_ON_ORDER.indexOf(DAEMON_START_STEP_ID),
+    );
+  });
+
+  // MUTATION: drop the QCR_PI_LOGIN_DIR write, or the [login_refresh] patch — this fails.
+  it("names the home's login dir to the stack, turns the refresher on, and recreates a stack brought up before", async () => {
+    const s = setUp({ broughtUp: true });
+    const dryBefore = /^dry_run\s*=.*$/m.exec(s.config())?.[0];
+    const r = await s.checklist.runStep(LOGIN_SHARE_STEP_ID);
+    expect(r.ok).toBe(true);
+    expect(s.env()).toContain(`${PI_LOGIN_DIR_KEY}=${s.loginDir}\n`);
+    const cfg = parseToml(s.config()) as { login_refresh?: { enabled?: unknown } };
+    expect(cfg.login_refresh?.enabled).toBe(true);
+    // dry_run is not this step's (invariant 6)
+    expect(/^dry_run\s*=.*$/m.exec(s.config())?.[0]).toBe(dryBefore);
+    expect(s.calls).toContainEqual(
+      expect.arrayContaining(["up", "-d", "--no-deps", "--force-recreate", "daemon"]),
+    );
+    expect(s.calls.some((c) => c.includes("down") || c.includes("rm"))).toBe(false);
+    // a second run finds it done and touches nothing
+    s.calls.length = 0;
+    const again = await s.checklist.runStep(LOGIN_SHARE_STEP_ID);
+    expect(again.ok).toBe(true);
+    expect(s.calls).toEqual([]);
+  });
+
+  it("before the first bring-up it only writes: the bring-up starts the daemon on it", async () => {
+    const s = setUp({ broughtUp: false });
+    expect((await s.checklist.runStep(LOGIN_SHARE_STEP_ID)).ok).toBe(true);
+    expect(s.env()).toContain(`${PI_LOGIN_DIR_KEY}=${s.loginDir}`);
+    expect(s.calls).toEqual([]);
+  });
+
+  it("refuses with no login to share yet, writing nothing", async () => {
+    const s = setUp({ broughtUp: true, login: false });
+    const before = s.config();
+    const r = await s.checklist.runStep(LOGIN_SHARE_STEP_ID);
+    expect(r.ok).toBe(false);
+    expect(r.failures.join()).toMatch(/no login at .*auth\.json yet: sign in in the home first/);
+    expect(s.env()).toBe("");
+    expect(s.config()).toBe(before);
+    expect(s.calls).toEqual([]);
+  });
+
+  it("refuses when the refresher's margin would not outlast the longest worker cap, writing nothing", async () => {
+    const config = EXAMPLE.replace(/^round_deadline_min = 75$/m, "round_deadline_min = 120");
+    expect(config).not.toBe(EXAMPLE);
+    const s = setUp({ broughtUp: true, config });
+    const r = await s.checklist.runStep(LOGIN_SHARE_STEP_ID);
+    expect(r.ok).toBe(false);
+    expect(r.failures.join()).toMatch(/would not load .* nothing was written/);
+    expect(s.config()).toBe(config);
+    expect(s.env()).toBe("");
   });
 });

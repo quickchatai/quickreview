@@ -439,7 +439,11 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
     // The login: borrowed, blanked, and checked against this worker's own cap.
     let auth: EngineAuth;
     try {
-      auth = engineCredentials({ srcDir: spec.agent_dir, needMs: spec.wall_clock_ms, now });
+      auth = engineCredentials({
+        srcDir: spec.login_dir ?? spec.agent_dir,
+        needMs: spec.wall_clock_ms,
+        now,
+      });
     } catch (e) {
       if (e instanceof AuthError) throw new Stop(EXIT.auth, e.message);
       throw e;
@@ -461,7 +465,11 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
         ownsProcess: true,
         homeDir: homedir(),
         ...(ids !== null && !("refused" in ids) ? { toolUid: ids } : {}),
-        fenceDirs: [...loginSourceDirs(env), ...credentialPaths(env, spec.env)],
+        fenceDirs: [
+          ...loginSourceDirs(env),
+          ...(spec.login_dir ? [spec.login_dir] : []),
+          ...credentialPaths(env, spec.env),
+        ],
         credentials: auth.credentials,
         settings: agentDirSettings(spec.agent_dir),
       });

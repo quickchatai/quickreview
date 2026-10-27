@@ -170,6 +170,16 @@ services:
       # pi's home: OAuth tokens (auth.json), session JSONLs, models.json --
       # must survive container recreates (sticky sessions + /login tokens).
       - qcr-pihome:/home/qcr/.pi
+      # The OpenAI login, on a single box: the host pi home's agent dir, the
+      # one the home signed in to, so the box has one login (FT-0658). The
+      # home's switch-on writes QCR_PI_LOGIN_DIR into the project .env and
+      # turns [login_refresh] on: the daemon's refresher then owns that
+      # auth.json while auto-review runs, and the home's pi takes it back when
+      # auto-review stops (src/home/loginowner.ts). Only the login is read
+      # there; pi's settings stay in the volume above. Unset (the VM, a
+      # wizard-made stack), a volume of its own nobody reads, and the daemon
+      # keeps its login in pi's home above.
+      - ${QCR_PI_LOGIN_DIR:-qcr-login}:/opt/qcr/login
       # Everything else the daemon writes under the read-only app root, the
       # same set the VM's run spec mounts (deploy/qcr-update.sh; the two are
       # held equal by tests/compose-stack.test.ts): the PR worktrees, the
@@ -200,6 +210,9 @@ services:
       QCR_SECRETS_MOUNT: /opt/quickreview/secrets
       # The uid the model's tools run as: never QCR_UID.
       QCR_TOOLS_AS: ${QCR_TOOLS_AS:-65534}
+      # Where the login is (src/loginrefresh/supervisor.ts loginDirOf): the
+      # mount above when the host's login is shared, else empty (pi's home).
+      QCR_LOGIN_DIR: ${QCR_PI_LOGIN_DIR:+/opt/qcr/login}
 
   # ---- the memory sidecar --------------------------------------------------
   # OpenViking, its venv, llama-cpp-python and the pinned GGUF in a container
@@ -341,6 +354,8 @@ volumes:
   qcr-verdict:
   qcr-sessions-home:
   qcr-base-clone:
+  # The login mount's stand-in while no host login is shared (see the daemon).
+  qcr-login:
   # The memory store, the sidecar's alone.
   qcr-memory:
   # Shared by the daemon (read) and a tunnel sidecar (write): the hostname

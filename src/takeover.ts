@@ -82,6 +82,9 @@ export interface TakeoverPlan {
   cwd: string;
   /** The login's owner dir (`pihome/agent`): read-only, borrowed from. */
   agent_dir: string;
+  /** The login's dir when it is not `agent_dir` (the single box's shared
+   * login): the login is borrowed from here, the rest from `agent_dir`. */
+  login_dir?: string;
   /** The PR's JSONL, which the pi resumes and appends to. */
   session_file: string;
   model: string;
@@ -597,6 +600,7 @@ function rmQuiet(file: string): void {
 export function takeoverPlanFor(o: {
   root: string;
   agentDir: string;
+  loginDir?: string;
   sessionsRoot: string;
   model: string;
   pr: number;
@@ -612,6 +616,7 @@ export function takeoverPlanFor(o: {
     root: o.root,
     cwd: o.root,
     agent_dir: o.agentDir,
+    ...(o.loginDir !== undefined && o.loginDir !== o.agentDir ? { login_dir: o.loginDir } : {}),
     session_file: file,
     model: o.model,
     ...(o.systemPromptFile ? { system_prompt_file: o.systemPromptFile } : {}),

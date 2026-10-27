@@ -224,6 +224,14 @@ describe("the spec the daemon answers with", () => {
     expect(parseWorkerSpec(JSON.parse(JSON.stringify(spec)))).toEqual(spec);
   });
 
+  // MUTATION: drop login_dir from parseWorkerSpec, or accept a relative one — this fails.
+  it("carries the shared login's dir when the login is not in the agent dir, absolute only", () => {
+    const spec = { ...good(), login_dir: "/opt/qcr/login" };
+    expect(parseWorkerSpec(JSON.parse(JSON.stringify(spec))).login_dir).toBe("/opt/qcr/login");
+    expect(parseWorkerSpec(JSON.parse(JSON.stringify(good()))).login_dir).toBeUndefined();
+    expect(() => parseWorkerSpec({ ...good(), login_dir: "login" })).toThrow(/worker spec/);
+  });
+
   it("refuses what it cannot trust", () => {
     const broken: Array<[string, (s: Record<string, unknown>) => void]> = [
       ["a session that is not pr-<pr>", (s) => (s["session"] = "pr-8")],

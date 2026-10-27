@@ -680,8 +680,10 @@ mode_home() {
 }
 
 # The handover between pi's /login and the bot container's login refresher
-#. The refresher holds an exclusive flock on <agent>/auth.json.lock for
-# its whole life: when that lock is held, a refresher is running, and a login
+#. The refresher holds an exclusive flock on <agent>/loginrefresh.lock
+# for its whole life (never <agent>/auth.json.lock: that is pi's own
+# proper-lockfile path, a directory, and a plain file there makes every pi fail
+# with ENOTDIR - so a leftover file from an earlier build is removed first): when that lock is held, a refresher is running, and a login
 # rewriting auth.json beside it would race its refresh. So the login asks it to
 # pause - writes <agent>/auth.json.pause - and waits for `"paused": true` in
 # its status file. A paused refresher neither refreshes nor writes, but KEEPS
@@ -692,11 +694,25 @@ mode_home() {
 LOGIN_PAUSE_FILE=""
 login_agent_dir() { printf '%s\n' "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"; }
 
+# Earlier builds' refresher locked a plain FILE at <agent>/auth.json.lock, pi's
+# proper-lockfile path; pi cannot start while it is there. Remove it when it is a
+# regular file (a directory is pi's own live lock) that no refresher of such a
+# build still holds.
+login_clear_legacy_lock() {
+  local legacy="$1/auth.json.lock"
+  [ -f "$legacy" ] && [ ! -L "$legacy" ] || return 0
+  command -v flock >/dev/null 2>&1 || return 0
+  flock -n "$legacy" true 2>/dev/null || return 0
+  rm -f "$legacy" && say "login: removed the old lock file $legacy (pi's own lock path)"
+  return 0
+}
+
 login_handover_begin() {
   local dir lock status rc=0 waited=0 max
   dir="$(login_agent_dir)"
-  lock="$dir/auth.json.lock"
+  lock="$dir/loginrefresh.lock"
   status="$dir/loginrefresh.status.json"
+  login_clear_legacy_lock "$dir"
   [ -e "$lock" ] || return 0
   if ! command -v flock >/dev/null 2>&1; then
     say "WARNING: flock is not installed - cannot tell whether a login refresher holds $lock"
