@@ -157,17 +157,11 @@ wizard composes exactly those tools rather than replacing them.
   <alias>`, with passwordless sudo there, and `ansible-playbook` installed on
   *your* machine — the deploy is an Ansible run from here, over your ssh.
 
-The wizard runs pi at the pinned version (`config.toml [pi]`, which the image
-carries and checks at every start). The session runs with no ambient
-extensions, exactly one onboarding extension, and a read-only built-in tool
-belt; its session store lives in `state/onboarding/pi-sessions/` and is never
-shared with the reviewer or companion sessions.
-
-**The wizard's own pi session needs model credentials before it can say
-anything.** If you have neither a ChatGPT login on this machine nor
-`OPENAI_API_KEY` in your environment, log in from pi's own input line with
-`/login` when it starts. On the OAuth route that is login 1 of 3 (see
-[The LLM route](#the-llm-route)).
+The steps run inside the home, on its own pi at the pinned version
+(`config.toml [pi]`, which the image carries and checks at every start), and on
+the login the first run signed in to: there is no separate wizard session to
+start or log in to. Switching auto-review on runs the steps this machine needs;
+Advanced runs any one of the rest.
 
 ## Its checklist
 
@@ -178,9 +172,8 @@ resume, and a run on a finished installation is a diagnostic. A corrupt or
 unreadable checklist degrades to a fresh one rather than failing, because the
 resume re-verifies everything anyway.
 
-Start every session by asking for the status (the guide does this itself): it
-reconciles the file against the world and demotes anything that no longer holds,
-naming what broke.
+Each step re-checks the file against the world before it is believed, and
+demotes anything that no longer holds, naming what broke.
 
 ### What you need, and the fast path
 
@@ -196,11 +189,10 @@ Three things, and only three:
 The recommended path takes the defaults all the way: the reviewer on **this
 computer** (`local`), **polling** instead of webhooks, and **your own GitHub
 account** instead of an App. Setup ends there: once the stack verifies, the
-wizard opens the TUI on the board, which lists every open pull request of the
-repository. **Select one and press `R`** — the review starts at once, with no
-label to add, and its progress shows on the board. Every question
-the guide asks maps to a step's input; it never asks you for anything a tool
-cannot take.
+home's panel lists every open pull request of the repository. **Select one and
+press `alt+r`** — the review starts at once, with no label to add, and its
+progress shows in the panel. Every question a step asks maps to that step's
+input; nothing asks you for what a step cannot take.
 
 ## The checklist
 
@@ -233,9 +225,9 @@ it is answered, exactly one of 33 and 40 is enabled.
 | 78 | go live, or stay in dry-run (after setup) | both |
 
 Steps 76 and 78 are **after setup**: they run and verify like the others, but
-the checklist completes without them, so the wizard finishes once the stack
-verifies and the first review happens on the board (`R`). Re-run the wizard
-later to go live; it offers the flip once a review has completed.
+the checklist completes without them, so setup finishes once the stack
+verifies, and the first review happens in the home (`alt+r`). Going live is
+later, from the home, once a review has completed.
 
 ### 10 — Preflight
 
@@ -332,21 +324,21 @@ the logins below: it shares the home's own login
 flat, and the catch is stated up front:
 pi's OAuth tokens live in the pi home of whichever process logged in and **do
 not transfer between your host and the containers**. Expect up to three separate
-browser logins — this wizard's own pi session, the daemon container, and the
-companion container. Each is guided where it happens, and each is verified to
+browser logins — the home's own pi (the first run's sign-in), the daemon
+container, and the companion container. Each is guided where it happens, and each is verified to
 have landed on that container's *persistent* pi-home volume, so a later
 container recreate never silently costs you the login. Any OpenAI login counts
 at each of them — "OpenAI Codex (legacy)", "OpenAI" (Sign in with ChatGPT), or
 an OpenAI API key at `/login` — because every model reaches pi on the OpenAI
-login that exists (see [docs/llm-setup.md](llm-setup.md)). The wizard's own
-session opens `/login` by itself the first time, when pi has no usable login.
+login that exists (see [docs/llm-setup.md](llm-setup.md)). The home's first
+run signs in by itself, when pi has no usable login.
 
 **An OpenAI API key.** One paste covers the daemon and its review sessions at
 once: it lands as the `openai_api_key` file in your secrets dir, `0600`, and the
 daemon container's entrypoint exports it as `OPENAI_API_KEY` for every pi
 process in it. It reaches no other process: the companion container is never
 handed the key file, so the companion keeps its own login (its model is on the
-OAuth provider by default), and this wizard's own pi reads `OPENAI_API_KEY`
+OAuth provider by default), and the home's own pi reads `OPENAI_API_KEY`
 only from its own environment. The wizard then rewrites all six
 model strings in `config.toml` from the `openai-codex/` provider prefix to
 `openai/` — comment-preserving, idempotent, and reversible, so switching routes
@@ -874,10 +866,8 @@ that App-scoped webhook redelivery — never a review, a label or a comment.
 
 ### 76 — The proof round (after setup)
 
-The first review normally happens on the board, after setup: `R` on a selected
-pull request sends the same `review-now` command. The step stays for a
-re-run of the wizard (go-live reads its record) and for anyone who asks the
-guide to review from the chat.
+The first review normally happens in the home, after setup: `alt+r` on a
+selected pull request. The step stays because going live reads its record.
 
 Call it with no answer and it lists the five most recently updated open pull
 requests in the repository, yours marked (on your own account your PRs are the
