@@ -11,7 +11,7 @@
 // (the app's detached runs, its per-target review state and the daemon's
 // rounds). Auto-review, memory and spend are typed here so the panel's rows
 // exist from the start; until each has its adapter, the stubs in adapters.ts
-// answer unknown. Auto-review and memory carry their switches (FT-0673) as
+// answer unknown. Auto-review and memory carry their switches as
 // optional controls.
 
 /** A read that worked, or one that did not and why. */
@@ -35,7 +35,7 @@ export interface PiLoginPort {
 }
 
 /** Who refreshes the box's one OpenAI login, and whether it still works
- * (FT-0658, src/home/loginowner.ts). */
+ * (src/home/loginowner.ts). */
 export interface LoginHealth {
   /** "auto-review": the daemon's refresher holds it (auto-review runs on this
    * machine); "home": the home's own pi refreshes it, by pi's own rule. */
@@ -216,7 +216,7 @@ export interface ReviewsPort {
   dryRun(): Promise<Known<boolean>>;
 }
 
-/** Auto-review's label (FT-0665): Unknown is the port answering unknown. */
+/** Auto-review's label: Unknown is the port answering unknown. */
 export type AutoReviewState = "off" | "starting" | "on-live" | "on-dry" | "paused-login" | "broken";
 
 export interface AutoReviewStatus {

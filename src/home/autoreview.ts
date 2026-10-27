@@ -2,7 +2,7 @@
 // container and its status snapshot, and the real switch over this machine's
 // compose stack (src/home/switchon.ts runs the steps).
 //
-// The label (FT-0665):
+// The label:
 //
 //   off           the daemon's container is not running (switched off, or
 //                 never brought up)
@@ -84,8 +84,8 @@ function parseSnapshot(text: string): Obj | string {
   }
 }
 
-/** Why the login it reviews on stops it, or null. A re-login ends the pause
- * (FT-0674): the refresher's record, read after the last auth failure the
+/** Why the login it reviews on stops it, or null. A re-login ends the pause:
+ * the refresher's record, read after the last auth failure the
  * daemon saw, of a login that works now, outweighs that failure's flag (which
  * would otherwise stand for its own half hour). */
 function loginPause(s: Obj, now: number): string | null {

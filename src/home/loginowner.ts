@@ -1,4 +1,4 @@
-// One login per box, as the home sees it (FT-0658, FT-0674): who refreshes
+// One login per box, as the home sees it: who refreshes
 // the OpenAI login the home signed in to, whether it still works, and the
 // re-login that replaces it safely.
 //

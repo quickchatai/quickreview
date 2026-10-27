@@ -1,5 +1,5 @@
 // The home's panel: a non-capturing overlay, a full-height column at the top
-// right of the chat (FT-0664's reference look). It draws the HomeModel in
+// right of the chat. It draws the HomeModel in
 // pi's theme tokens and turns keys and the mouse into the model's actions; it
 // owns no state of its own beyond the rows it last drew, which a click or a
 // hover maps back to a pull request.

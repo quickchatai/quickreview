@@ -34,7 +34,7 @@ import { LOCK_HELD_EXIT } from "./lock.js";
 import type { LoginRefreshFileStatus, LoginRefreshStatus } from "./types.js";
 
 /** Names the login's dir when it is not pi's agent dir. The single box's
- * shared login (one login per box, FT-0658): the home's switch-on mounts the
+ * shared login (one login per box): the home's switch-on mounts the
  * host pi home's agent dir at CONTAINER_LOGIN_DIR (docker-compose.yml,
  * QCR_PI_LOGIN_DIR in the project .env) and the compose file names it here.
  * Only the login moves: the refresher keeps auth.json there and every worker

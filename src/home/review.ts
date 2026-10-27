@@ -1,5 +1,4 @@
-// A review the home runs, as the details area draws it (FT-0665's progress
-// model): the plan the preview quoted, then what `qcr review status` says
+// A review the home runs, as the details area draws it: the plan the preview quoted, then what `qcr review status` says
 // as the detached run goes, then its findings and its real cost. Pure: the
 // model (src/home/model.ts) folds each status into a Run, the panel draws it.
 //

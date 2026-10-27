@@ -1,4 +1,4 @@
-// The home's review button (FT-0671) through its factory, on a fake pi with
+// The home's review button through its factory, on a fake pi with
 // a fake reviewer that scripts preview, start, status and the result: the
 // price on rest, the review's progress in the details area, its findings,
 // the post ask the posting rule makes, failed and stopped runs, and

@@ -10,7 +10,7 @@
 // be missing is a gap; a source that could not be read is Unknown, never a
 // gap and never a zero (invariant 9).
 //
-// The review button (FT-0671): `review` previews the PR, starts a detached
+// The review button: `review` previews the PR, starts a detached
 // run with the preview's key (so a one-key review always starts and its hard
 // stop caps it), polls its status into a Run (src/home/review.ts) and, once
 // it is done, applies the person's posting rule. Runs survive the home: when

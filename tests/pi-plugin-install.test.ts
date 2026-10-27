@@ -260,7 +260,7 @@ describe("the packed plugin, installed into a fresh pi", () => {
 
   // The scan is the plugin's own: no `qcr` on PATH, and the cut, the save and
   // the price all answer in the session. MUTATION: send /qcr-scan back to the
-  // `qcr scan` subprocess (the plugin before FT-0668) — every answer here is
+  // `qcr scan` subprocess (the plugin before the scan moved into it) — every answer here is
   // then a "needs qcr" refusal, and this fails.
   it("runs /qcr-scan on its own engine, with no qcr on PATH", async () => {
     expect(() => run("sh", ["-c", "command -v qcr"], SCRATCH, piEnv())).toThrow();

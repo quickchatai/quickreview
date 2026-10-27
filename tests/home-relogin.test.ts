@@ -1,4 +1,4 @@
-// One login per box, through the home's factory (FT-0674): on a fake pi with
+// One login per box, through the home's factory: on a fake pi with
 // a fake login owner (who refreshes the login, whether it expired, and the
 // refresher's pause) and a fake device login. What is pinned:
 //   - an expired login says "login expired" on the login line, with the one

@@ -17,7 +17,7 @@
 //     after 15 minutes (fake clock);
 //   - only src/loginrefresh and the entrypoint's login mode write the pihome's
 //     auth.json, and the daemon imports neither pi nor src/engine/;
-//   - one login per box (FT-0674): the host's login dir is the refresher's
+//   - one login per box: the host's login dir is the refresher's
 //     when it is shared, one refresher at a time across auto-review's switch
 //     on and off, and the home's re-login pauses a running refresher, writes
 //     the new login under pi's own lock, and the refresher resumes on it.
@@ -1193,7 +1193,7 @@ describe("the daemon imports neither pi nor src/engine/", () => {
   });
 });
 
-// ---- one login per box (FT-0674) -------------------------------------------
+// ---- one login per box -------------------------------------------------
 // On a single box the daemon's refresher runs on the HOST pi home's agent dir
 // (mounted into the container), the one the home signed in to. The home's pi
 // refreshes that file itself while auto-review is off; switching auto-review

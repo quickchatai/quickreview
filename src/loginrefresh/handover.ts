@@ -3,7 +3,7 @@
 // made outside the container, by the home's re-login (src/home/loginowner.ts).
 //
 // On a single box the daemon's refresher owns the host pi home's auth.json
-// while auto-review runs (one login per box, FT-0658). A login that rewrites
+// while auto-review runs (one login per box). A login that rewrites
 // that file beside it would race its refresh: whichever wrote last wins, and a
 // refresh landing after the login would put the old grant back. So a login
 // first asks the refresher to pause: it writes `auth.json.pause` and waits for

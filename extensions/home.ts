@@ -23,7 +23,7 @@
 // line says "login expired" (src/home/loginowner.ts reads the refresher's
 // record, pi's own error in the chat and auto-review's pause). It is pi's
 // device login, with auto-review's login refresher paused around it when it
-// runs, so the box keeps one login that one process refreshes (FT-0658).
+// runs, so the box keeps one login that one process refreshes.
 //   tune to this repo alt+t               t                    home_tune,
 //                                                              home_tune_write
 //   advanced          alt+x               x                    home_advanced
@@ -61,7 +61,7 @@ import {
   textResult,
   type QcrTool,
 } from "@quickchatai/pi-quickreview/extensions/pi-tool.js";
-import { REVIEW_MESSAGE } from "@quickchatai/pi-quickreview/src/plugin/review.js";
+import { REVIEW_MESSAGE } from "@quickchatai/pi-quickreview/src/plugin/messages.js";
 import { readQuickReviewSettings } from "@quickchatai/pi-quickreview/src/plugin/settings.js";
 import type { HomeToolSet } from "../src/config.js";
 import { piDeviceLogin } from "../src/home/devicelogin.js";

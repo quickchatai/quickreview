@@ -1,6 +1,5 @@
 // The setup card: on a machine that is not set up, the home opens on this,
-// centred at half the terminal's width and about half its height (FT-0664's
-// reference look), instead of the panel. It draws the setup checklist
+// centred at half the terminal's width and about half its height, instead of the panel. It draws the setup checklist
 // (src/home/setup.ts) in pi's theme tokens; when the last step is done the
 // extension swaps it for the panel at the top right.
 //

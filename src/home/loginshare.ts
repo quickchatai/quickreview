@@ -1,4 +1,4 @@
-// Switch-on's login step: one OpenAI login per box (FT-0658). The daemon's
+// Switch-on's login step: one OpenAI login per box. The daemon's
 // container reviews on the login the home signed in to, the host pi home's
 // auth.json, instead of a login of its own.
 //
