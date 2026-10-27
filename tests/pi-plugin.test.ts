@@ -807,9 +807,9 @@ describe("/qcr-review's work, waited for (runReviewCommand)", () => {
   it("says a usage error and runs nothing", async () => {
     const deps = fakeReview();
     const ui = fakeUi();
-    await runReviewCommand("--to pr", fakeHost(), ui, deps);
+    await runReviewCommand("--nope pr", fakeHost(), ui, deps);
     expect(deps.calls).toHaveLength(0);
-    expect(ui.notes[0]).toEqual(["error", expect.stringMatching(/unknown flag --to/)]);
+    expect(ui.notes[0]).toEqual(["error", expect.stringMatching(/unknown flag --nope/)]);
   });
 
   // One function builds every status line, so a later stage can enrich it.
@@ -1367,7 +1367,7 @@ describe("/qcr-scan (the plugin's own engine)", () => {
     await foreground;
     await sessions.idle();
     expect(sessions.running).toBeNull();
-    expect(ui.shown.at(-1)).toMatch(/stopped/);
+    expect(ui.shown.at(-1)).toMatch(/STOPPED/);
   });
 
   // The case runner outlives one command; a later start reloads the config.

@@ -151,7 +151,9 @@ export function parseReviewCommand(
           branch = true;
           break;
         case "--to":
-          for (const d of value(i++, w).split(",").map((x) => x.trim())) {
+          for (const d of value(i++, w)
+            .split(",")
+            .map((x) => x.trim())) {
             if (!LEGACY_DESTINATIONS.includes(d))
               throw new Error(`unknown destination ${d || "(empty)"}`);
             if (d === "json") cmd.json = true;
