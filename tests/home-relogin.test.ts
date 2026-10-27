@@ -299,9 +299,15 @@ describe("auto-review's pause ends with the re-login", () => {
     },
   });
 
-  // MUTATION: let pi_auth_expired win over a later working login in loginPause — this fails.
+  // MUTATION: let pi_auth_expired win over a later working login in loginPause, or
+  // drop the loginRecovered check from brokenCause's provider branch — this fails.
   it("a working login the refresher read after the last auth failure resumes it", () => {
-    const failed = { pi_auth_expired: { last_at: ago(300), hits: 2 } };
+    // the snapshot carries the auth failure twice: its flag and the provider
+    // record derived from it (src/state.ts), with the same last_at
+    const failed = {
+      pi_auth_expired: { last_at: ago(300), hits: 2 },
+      provider: { healthy: false, detail: "pi auth expired (2 hits)", last_at: ago(300) },
+    };
     expect(label(failed)).toBe("paused-login");
     expect(label({ ...failed, login_refresh: refresher({ checked_at: ago(10) }) })).toBe("on-live");
     // a record from before the failure, a paused one, or a failing one does not
@@ -315,6 +321,26 @@ describe("auto-review's pause ends with the re-login", () => {
       label({
         ...failed,
         login_refresh: refresher({ checked_at: ago(10), last_error: "openai-codex: 500" }),
+      }),
+    ).toBe("paused-login");
+  });
+
+  // MUTATION: skip every unhealthy provider once the login recovered — this fails.
+  it("a provider failure of its own still reads Broken after the re-login", () => {
+    const failed = { pi_auth_expired: { last_at: ago(300), hits: 2 } };
+    const working = { login_refresh: refresher({ checked_at: ago(10) }) };
+    expect(
+      label({
+        ...failed,
+        ...working,
+        provider: { healthy: false, detail: "rate limited for 2h", last_at: ago(30) },
+      }),
+    ).toBe("broken");
+    // without the re-login, the auth failure is a pause, not Broken
+    expect(
+      label({
+        ...failed,
+        provider: { healthy: false, detail: "pi auth expired (2 hits)", last_at: ago(300) },
       }),
     ).toBe("paused-login");
   });
