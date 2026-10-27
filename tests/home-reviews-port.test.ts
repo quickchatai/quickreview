@@ -1,8 +1,8 @@
 // The home's real reviews port (src/home/reviews.ts) over a detached-run
 // registry in a temp dir, a fake `qcr` for the preview, fake process seams
-// for the registry (no child is started), and the review state and the
-// daemon's status as files: what each method asks of the reviewer and what
-// it answers. No model runs and nothing is posted.
+// for the registry (no child is started), the review state as files and the
+// daemon's status snapshot as a value: what each method asks of the reviewer
+// and what it answers. No model runs and nothing is posted.
 import { afterAll, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,7 +14,10 @@ import {
   type QcrResult,
   type ReviewsPortDeps,
 } from "../src/home/reviews.js";
+import { realReviewsPort } from "../src/home/adapters.js";
+import type { DaemonSnapshot } from "../src/home/daemonstatus.js";
 import type { Known } from "../src/home/ports.js";
+import type { ProcessRunner } from "../src/onboard/engine.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "home-reviews-"));
 /** A known answer's value; an unknown one fails the case with its reason. */
@@ -29,6 +32,8 @@ let n = 0;
 
 interface Rig {
   deps: ReviewsPortDeps;
+  /** What the daemon's status snapshot answers. */
+  snap: DaemonSnapshot;
   qcrCalls: string[][];
   launched: Array<{ runId: string; argv: string[] }>;
   killed: number[];
@@ -49,7 +54,7 @@ function rig(o: { qcr?: (args: readonly string[]) => Partial<QcrResult> } = {}):
     registry: join(root, "review", "detached"),
     reportsDir: join(root, "home", "reviews"),
     reviewHome: join(root, "review"),
-    statusPath: join(root, "state", "status.json"),
+    snapshot: async () => r.snap,
     qcr: async (args) => {
       qcrCalls.push([...args]);
       return { code: 0, stdout: "", stderr: "", ...o.qcr?.(args) };
@@ -80,7 +85,8 @@ function rig(o: { qcr?: (args: readonly string[]) => Partial<QcrResult> } = {}):
     dryRun: () => true,
     now: () => NOW,
   };
-  return { deps, qcrCalls, launched, killed, live, posted };
+  const r: Rig = { deps, snap: { kind: "none" }, qcrCalls, launched, killed, live, posted };
+  return r;
 }
 
 /** A run the registry holds, as `start` and the child leave it. */
@@ -426,27 +432,40 @@ describe("the Reviewed list's sources", () => {
     });
   });
 
-  it("auto-review's half: the daemon's rounds per PR, Unknown when its status cannot be read", async () => {
+  it("auto-review's half: the daemon's reviewed PRs, Unknown when its status cannot be read", async () => {
     const r = rig();
     const port = reviewsPort(r.deps);
-    // no status on this machine: unknown, never "no reviews"
+    // auto-review recorded nothing on this machine: it reviewed nothing
+    expect(await port.autoRounds("acme/widgets")).toEqual({ kind: "known", value: new Map() });
+    // a daemon that is off keeps its status in its volume: unknown, never "no reviews"
+    r.snap = { kind: "off" };
     expect(await port.autoRounds("acme/widgets")).toEqual({
       kind: "unknown",
-      why: "auto-review has written no status on this machine",
+      why: "auto-review is off, and its reviews are read from it while it runs",
     });
-    mkdirSync(join(r.deps.statusPath, ".."), { recursive: true });
-    writeFileSync(r.deps.statusPath, "{ half");
+    r.snap = { kind: "unknown", why: "can't read its status: no such service" };
+    expect(await port.autoRounds("acme/widgets")).toEqual({
+      kind: "unknown",
+      why: "can't read its status: no such service",
+    });
+    r.snap = { kind: "text", text: "{ half" };
     expect((await port.autoRounds("acme/widgets")).kind).toBe("unknown");
-    writeFileSync(
-      r.deps.statusPath,
-      JSON.stringify({
+    r.snap = {
+      kind: "text",
+      text: JSON.stringify({
         written_at: "2026-10-26T11:00:00Z",
         prs: [
-          { number: 3, state: "REVIEWED", rounds: 2, updated_at: "2026-10-26T10:00:00Z" },
-          { number: 4, state: "NEW", rounds: 0 },
+          {
+            number: 3,
+            state: "REVIEWED",
+            rounds: 2,
+            last_verdict: "COMMENT",
+            updated_at: "2026-10-26T10:00:00Z",
+          },
+          { number: 4, state: "NEW", rounds: 0, last_verdict: null },
         ],
       }),
-    );
+    };
     const m = value(await port.autoRounds("acme/widgets"));
     expect([...m.keys()]).toEqual([3]);
     // the snapshot counts rounds, not findings: those read as not known
@@ -456,6 +475,32 @@ describe("the Reviewed list's sources", () => {
       by: "auto",
       at: Date.parse("2026-10-26T10:00:00Z"),
     });
+  });
+
+  // MUTATION: accept `rounds >= 1` again instead of a recorded verdict — this fails.
+  it("a PR whose rounds are all running or failed is not reviewed yet", async () => {
+    const r = rig();
+    r.snap = {
+      kind: "text",
+      text: JSON.stringify({
+        written_at: "2026-10-26T11:00:00Z",
+        prs: [
+          // the first round is still running
+          {
+            number: 5,
+            rounds: 1,
+            last_verdict: null,
+            current_round: { round_no: 1, status: "running" },
+          },
+          // its one round failed: counted, but no verdict was ever recorded
+          { number: 6, rounds: 1, last_verdict: null },
+          // a second round runs after a finished first: that one is a review
+          { number: 7, rounds: 2, last_verdict: "APPROVE", current_round: { round_no: 2 } },
+        ],
+      }),
+    };
+    const m = value(await reviewsPort(r.deps).autoRounds("acme/widgets"));
+    expect([...m.keys()]).toEqual([7]);
   });
 });
 
@@ -484,5 +529,40 @@ describe("post and dry_run", () => {
       kind: "unknown",
       why: "config.toml is not valid TOML",
     });
+  });
+});
+
+describe("the real port's auto-review half", () => {
+  // MUTATION: read a host status.json again instead of the daemon's — this fails.
+  it("reads the daemon's own snapshot inside its container, where it writes it", async () => {
+    const calls: string[] = [];
+    const runner: ProcessRunner = {
+      run: async (cmd, args) => {
+        const line = [cmd, ...args].join(" ");
+        calls.push(line);
+        if (args.includes("ps")) {
+          const row = JSON.stringify({ Service: "daemon", State: "running" });
+          return { code: 0, stdout: row, stderr: "" };
+        }
+        if (args.includes("exec"))
+          return {
+            code: 0,
+            stdout: JSON.stringify({
+              written_at: "2026-10-26T11:00:00Z",
+              prs: [{ number: 9, rounds: 1, last_verdict: "COMMENT" }],
+            }),
+            stderr: "",
+          };
+        return { code: 1, stdout: "", stderr: `unexpected: ${line}` };
+      },
+    };
+    const port = realReviewsPort({ HOME: join(tmp, "home") }, { root: "/stack", runner });
+    const m = value(await port.autoRounds("acme/widgets"));
+    expect([...m.keys()]).toEqual([9]);
+    expect(
+      calls.some((c) =>
+        c.includes("--project-directory /stack exec -T daemon cat /opt/qcr/state/status.json"),
+      ),
+    ).toBe(true);
   });
 });

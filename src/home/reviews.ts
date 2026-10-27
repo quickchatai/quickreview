@@ -16,7 +16,9 @@
 //   latest     the person's own reviews of the repo's PRs: the registry's
 //              finished runs and the app's per-target review state (the
 //              review home's delta history, packages/pi-plugin/src/reviewstate.ts).
-//   autoRounds the daemon's rounds per PR, from its status.json.
+//   autoRounds the PRs the daemon finished a review round of, from its
+//              status snapshot (src/home/daemonstatus.ts): a PR whose rounds
+//              are all still running or failed has no review yet.
 //   post       a finished review the run kept for later
 //              (packages/pi-plugin/src/savedpost.ts `postSavedReview`): one
 //              comment-only review through the gate with the install's dry_run.
@@ -39,6 +41,7 @@ import {
   type RunView,
   watchdogCommand,
 } from "../reviewdetach.js";
+import type { DaemonSnapshot } from "./daemonstatus.js";
 import {
   known,
   unknown,
@@ -68,8 +71,8 @@ export interface ReviewsPortDeps {
   reportsDir: string;
   /** The review home: `<state home>/review`, one store per repo. */
   reviewHome: string;
-  /** The daemon's status snapshot. */
-  statusPath: string;
+  /** The daemon's status snapshot (src/home/daemonstatus.ts). */
+  snapshot: () => Promise<DaemonSnapshot>;
   /** Run the app's own CLI with these arguments, as the person. */
   qcr: (args: readonly string[], o: { signal?: AbortSignal }) => Promise<QcrResult>;
   /** The registry's process seams: what `start` launches and how a run's
@@ -80,7 +83,7 @@ export interface ReviewsPortDeps {
   /** The install's dry_run; throws when its config cannot be read. */
   dryRun: () => boolean;
   now: () => number;
-  /** Read a file (the review state, the status snapshot). */
+  /** Read a file (the review state). */
   read?: (path: string) => string;
   list?: (dir: string) => string[];
 }
@@ -419,31 +422,34 @@ export function reviewsPort(d: ReviewsPortDeps): ReviewsPort {
     },
 
     autoRounds: async () => {
-      let raw: string;
+      let snapshot: DaemonSnapshot;
       try {
-        raw = read(d.statusPath);
+        snapshot = await d.snapshot();
       } catch (err) {
-        return unknown(
-          isMissing(err)
-            ? "auto-review has written no status on this machine"
-            : `can't read ${d.statusPath}: ${message(err)}`,
-        );
+        return unknown(`can't read auto-review's status: ${message(err)}`);
       }
+      // auto-review recorded nothing here: it reviewed nothing
+      if (snapshot.kind === "none") return known(new Map());
+      if (snapshot.kind === "off")
+        return unknown("auto-review is off, and its reviews are read from it while it runs");
+      if (snapshot.kind === "unknown") return unknown(snapshot.why);
       let snap: Json | undefined;
       try {
-        snap = obj(JSON.parse(raw));
+        snap = obj(JSON.parse(snapshot.text));
       } catch (err) {
-        return unknown(`${d.statusPath} is not JSON: ${message(err)}`);
+        return unknown(`auto-review's status is not JSON: ${message(err)}`);
       }
       const prs = snap?.["prs"];
-      if (!Array.isArray(prs)) return unknown(`${d.statusPath} lists no pull requests`);
+      if (!Array.isArray(prs)) return unknown("auto-review's status lists no pull requests");
       const written = Date.parse(str(snap?.["written_at"]) ?? "");
       const by = new Map<number, PrReview>();
       for (const p of prs) {
         const x = obj(p);
         const n = num(x?.["number"]);
-        const rounds = num(x?.["rounds"]);
-        if (x === undefined || n === undefined || rounds === undefined || rounds < 1) continue;
+        // `rounds` counts every round, running and failed ones too; a verdict
+        // is only recorded when a round finishes (src/state.ts): that is a review
+        const verdict = str(x?.["last_verdict"]);
+        if (x === undefined || n === undefined || verdict === undefined || verdict === "") continue;
         const at = Date.parse(str(x["updated_at"]) ?? "");
         // the snapshot counts rounds, not findings: those are on the PR
         by.set(n, {

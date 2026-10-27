@@ -22,13 +22,7 @@
 // whose result names no cost has nothing to add.
 import { listRunViews } from "../reviewdetach.js";
 import type { ProcessRunner } from "../onboard/engine.js";
-import {
-  COMPOSE_PROJECT,
-  CONTAINER_STATE_DIR,
-  DAEMON_SERVICE,
-  daemonExec,
-} from "../onboard/steps/compose.js";
-import { serviceState } from "./autoreview.js";
+import { daemonSnapshot } from "./daemonstatus.js";
 import { known, unknown, type Known, type SpendPort, type SpendTotals } from "./ports.js";
 import { parseRunStatus } from "./reviews.js";
 
@@ -162,40 +156,18 @@ export interface ComposeSpendOptions {
   runner: ProcessRunner;
 }
 
-const firstLine = (s: string): string => s.trim().split("\n")[0]?.trim() || "no output";
-
 /** Auto-review's recorded costs on this machine's compose stack: read from
- * the daemon's own status.json while it runs. A daemon that is off keeps its
- * costs in its state volume, where the home cannot read them: unknown. */
+ * the daemon's own status.json while it runs (src/home/daemonstatus.ts). A
+ * daemon that is off keeps its costs in its state volume, where the home
+ * cannot read them: unknown. */
 export function composeAutoSpend(o: ComposeSpendOptions): SpendSources["auto"] {
   return async (now) => {
-    const container = await serviceState(o.runner, o.root, DAEMON_SERVICE);
-    if (container.kind === "unknown") {
-      // no Docker at all: auto-review never ran on this machine
-      const v = await o.runner.run("docker", ["--version"]);
-      if (v.code !== 0 && /ENOENT|not found/i.test(`${v.stderr}${v.stdout}`))
-        return known({ today: 0, month: 0 });
-      return unknown(`can't ask Docker about auto-review: ${container.why}`);
-    }
-    if (container.value === "running") {
-      const r = await daemonExec(o.runner, o.root, ["cat", `${CONTAINER_STATE_DIR}/status.json`]);
-      if (r.code === 0) return snapshotSpend(r.stdout, now);
-      if (/no such file/i.test(r.stderr)) return known({ today: 0, month: 0 });
-      return unknown(`can't read its status: ${firstLine(r.stderr || r.stdout)}`);
-    }
-    // off: did it ever run here? Its state volume is where its costs are.
-    const volume = `${COMPOSE_PROJECT}_qcr-state`;
-    const vol = await o.runner.run("docker", [
-      "volume",
-      "ls",
-      "-q",
-      "--filter",
-      `name=^${volume}$`,
-    ]);
-    if (vol.code !== 0)
-      return unknown(`can't ask Docker for its state volume: ${firstLine(vol.stderr)}`);
-    if (vol.stdout.trim() === "") return known({ today: 0, month: 0 });
-    return unknown("auto-review is off, and its costs are read from it while it runs");
+    const s = await daemonSnapshot(o.runner, o.root);
+    if (s.kind === "text") return snapshotSpend(s.text, now);
+    if (s.kind === "none") return known({ today: 0, month: 0 });
+    if (s.kind === "off")
+      return unknown("auto-review is off, and its costs are read from it while it runs");
+    return unknown(s.why);
   };
 }
 

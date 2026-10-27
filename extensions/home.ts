@@ -35,8 +35,10 @@
 // The review runs detached (the app's `qcr review start`, on the person's own
 // pi login), writes its report to a file and never posts by itself; once it
 // is done the person's posting rule (pi's settings, `quickreview.posting`)
-// applies, asking with "No, keep it here" first. A review's findings go to
-// the chat as the plugin's review message.
+// applies, asking with "No, keep it here" first; a rule pi's settings spell
+// wrong is said, as the plugin says it. A review's findings go to the chat as
+// the plugin's review message: shown, never a turn of its own, so a review
+// that finishes while the agent works never steers it.
 //   next setup step   alt+n               ⏎ (on the card)      home_setup_next
 //   each setup step   —                   —                    home_sign_in,
 //                                                              home_check_github,
@@ -50,6 +52,10 @@
 // f2 or a click focuses the panel for its plain keys, and Esc gives the
 // editor back: the panel never takes the keyboard by itself (nonCapturing).
 // The first frame is drawn before any port is read; each read lands into it.
+//
+// The session's end (a quit, or /new replacing it) makes pi's context for it
+// stale: the home lets go of it there, and a read still in flight lands into
+// nothing.
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -138,6 +144,13 @@ export function createHome(o: HomeOptions): ExtensionFactory {
     const redraw = (): void => tui?.requestRender();
     // the session's UI, for the post question; none outside the TUI
     let ui: ExtensionContext["ui"] | undefined;
+    const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+    // a read nobody awaits: what went wrong is said, while the session lasts
+    const refresh = (): void => {
+      model.refresh().catch((err: unknown) => {
+        if (session) model.say(`Couldn't read everything again: ${message(err)}`, "warn");
+      });
+    };
     const model: HomeModel = new HomeModel({
       adapters: o.adapters,
       model: o.model,
@@ -145,23 +158,32 @@ export function createHome(o: HomeOptions): ExtensionFactory {
       onChange: redraw,
       after: o.after ?? realAfter,
       ask: async (question, options) => ui?.select(question, options),
+      // shown, never a turn of its own: while the agent streams, the message
+      // waits for the turn to end instead of steering it
       send: (m) =>
-        pi.sendMessage({
-          customType: REVIEW_MESSAGE,
-          content: m.content,
-          display: true,
-          details: m.details,
-        }),
+        pi.sendMessage(
+          { customType: REVIEW_MESSAGE, content: m.content, display: true, details: m.details },
+          { triggerTurn: false },
+        ),
       postingRule: () => {
+        let all: unknown;
         try {
-          return readQuickReviewSettings(pi.getSettings()).settings.posting;
+          all = pi.getSettings();
         } catch {
-          return "ask";
+          all = undefined;
         }
+        const read = readQuickReviewSettings(all);
+        for (const w of read.warnings) warn(w);
+        return read.settings.posting;
       },
       gaps: (): string[] => setup.gaps(),
       onRead: (): Promise<void> => setup.sync(),
     });
+    // a word to the person: pi's notice, else the panel's line
+    const warn = (text: string): void => {
+      if (session?.hasUI) session.ui.notify(text, "warning");
+      else model.say(text, "warn");
+    };
     const setup: HomeSetup = new HomeSetup({
       model,
       github: o.adapters.github,
@@ -273,8 +295,8 @@ export function createHome(o: HomeOptions): ExtensionFactory {
           }),
         );
       }
-      stops.push(every(REFRESH_MS, () => void model.refresh()));
-      void model.refresh();
+      stops.push(every(REFRESH_MS, refresh));
+      refresh();
     });
     pi.on("model_select", (e) => model.setChatModel(e.model.provider));
     // pi's own word on the login: a reply refused for it, or one that came back
@@ -297,6 +319,10 @@ export function createHome(o: HomeOptions): ExtensionFactory {
       close?.();
       close = undefined;
       mounted = undefined;
+      // pi's context for this session is stale now: nothing may reach it
+      session = undefined;
+      sessionUi = undefined;
+      tui = undefined;
     });
 
     const key = (
@@ -307,13 +333,15 @@ export function createHome(o: HomeOptions): ExtensionFactory {
       pi.registerShortcut(id as KeyId, {
         description,
         handler: (ctx) => {
-          void run(ctx);
+          void new Promise((resolve) => resolve(run(ctx))).catch((err: unknown) => {
+            if (session) model.say(message(err), "warn");
+          });
         },
       });
     key("alt+j", "quickreview home: next pull request", () => model.move(1));
     key("alt+k", "quickreview home: previous pull request", () => model.move(-1));
     key("alt+o", "quickreview home: open the pull request on GitHub", () => model.openPr());
-    key("alt+u", "quickreview home: read everything again", () => model.refresh());
+    key("alt+u", "quickreview home: read everything again", () => refresh());
     key("alt+r", "quickreview home: review the pull request, or show its review", () =>
       model.enter(),
     );

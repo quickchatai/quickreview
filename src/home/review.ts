@@ -14,6 +14,7 @@
 // to medium, and anything else to low.
 import { lensShortName } from "@quickchatai/pi-quickreview/src/live/lensline.js";
 import type { PrReview, ReviewFinding, ReviewQuote, ReviewRunStatus } from "./ports.js";
+import { plural } from "./words.js";
 
 export type Severity = "high" | "medium" | "low";
 
@@ -187,13 +188,14 @@ export function reviewMessage(o: { pr: number; title: string; review: PrReview }
   const r = o.review;
   const who = r.by === "auto" ? "auto-review" : "you";
   if (r.list === undefined) {
-    const n = r.findings === null ? "its findings are on the pull request" : plural(r.findings);
+    const n =
+      r.findings === null ? "its findings are on the pull request" : plural(r.findings, "finding");
     return `**#${o.pr} ${o.title}** — reviewed by ${who}; ${n}.`;
   }
   if (r.list.length === 0) return `**#${o.pr} ${o.title}** — reviewed by ${who}, no findings.`;
   const high = r.list.filter((f) => sevOf(f.severity) === "high").length;
   return [
-    `**#${o.pr} ${o.title}** — reviewed by ${who}: ${plural(r.list.length)}${high ? `, ${high} high` : ""}`,
+    `**#${o.pr} ${o.title}** — reviewed by ${who}: ${plural(r.list.length, "finding")}${high ? `, ${high} high` : ""}`,
     "",
     ...r.list.map(
       (f, i) =>
@@ -203,4 +205,3 @@ export function reviewMessage(o: { pr: number; title: string; review: PrReview }
   ].join("\n");
 }
 
-const plural = (n: number): string => `${n} finding${n === 1 ? "" : "s"}`;

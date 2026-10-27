@@ -435,6 +435,8 @@ export class HomeSetup {
   async sync(): Promise<void> {
     await this.checklist.reconcile();
     await this.checklist.detect();
+    // the session ended while the reads were out: their answer lands into nothing
+    if (this.closed) return;
     this.synced = true;
     if (this.isPending(HOME_STEPS.repo)) void this.recent();
     const phase = this.phase();

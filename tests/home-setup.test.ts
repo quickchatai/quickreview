@@ -393,6 +393,48 @@ describe("Sign in to OpenAI: pi's own device-code login", () => {
   });
 });
 
+describe("the session's end, with reads still out", () => {
+  // MUTATION: keep `session` after session_shutdown, or let setup.sync go on
+  // after close — the stale context throws from a read nobody awaits, and this fails.
+  it("a read that lands after /new replaced the session touches nothing of it", async () => {
+    const w = fresh();
+    let release: (v: Known<string | null>) => void = () => {};
+    const held = new Promise<Known<string | null>>((r) => (release = r));
+    const a = adapters(w);
+    a.github = { ...a.github, user: () => held };
+    const pi = fakePi({ mode: "tui" });
+    await createHome({
+      adapters: a,
+      model: "openai-codex/gpt-6.1-sol",
+      tools: "reviewer",
+      every: () => () => {},
+      setup: { firstRun: { host: host(w), range: "^1.4.0" } },
+    })(pi.api);
+    await pi.start();
+    const mounted = pi.overlays.length;
+    await pi.emit("session_shutdown");
+    // pi makes the outgoing context stale: any use of it throws
+    for (const k of ["mode", "hasUI", "ui", "modelRegistry"])
+      Object.defineProperty(pi.ctx, k, {
+        get: () => {
+          throw new Error("This extension ctx is stale after session replacement");
+        },
+      });
+    const rejections: unknown[] = [];
+    const onRejection = (e: unknown): void => void rejections.push(e);
+    process.on("unhandledRejection", onRejection);
+    try {
+      release(known(null));
+      await settle();
+      await new Promise((r) => setTimeout(r, 10));
+    } finally {
+      process.off("unhandledRejection", onRejection);
+    }
+    expect(rejections).toEqual([]);
+    expect(pi.overlays.length).toBe(mounted);
+  });
+});
+
 describe("Connect GitHub: gh, with a one-key re-check", () => {
   it("signed out: says what to run, and alt+n checks again", async () => {
     const w = fresh({ login: known(["openai-codex"]) });

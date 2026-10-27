@@ -46,6 +46,8 @@ export interface FakePi {
   commands: Map<string, unknown>;
   handlers: Map<string, Handler[]>;
   sent: unknown[];
+  /** The options each `sendMessage` was sent with, in order. */
+  sentOptions: unknown[];
   notes: string[];
   /** Every `ui.select` asked, in order. */
   selects: Array<{ title: string; options: string[] }>;
@@ -92,6 +94,7 @@ export function fakePi(
   const commands = new Map<string, unknown>();
   const handlers = new Map<string, Handler[]>();
   const sent: unknown[] = [];
+  const sentOptions: unknown[] = [];
   const notes: string[] = [];
   const selects: FakePi["selects"] = [];
   const overlays: FakeOverlay[] = [];
@@ -177,7 +180,10 @@ export function fakePi(
       handlers.set(event, [...(handlers.get(event) ?? []), h]);
       return () => {};
     },
-    sendMessage: (m: unknown) => sent.push(m),
+    sendMessage: (m: unknown, options?: unknown) => {
+      sent.push(m);
+      sentOptions.push(options);
+    },
     getSettings: () => o.settings ?? {},
     sendUserMessage: (t: string) => sent.push({ user: t }),
   } as unknown as ExtensionAPI;
@@ -201,6 +207,7 @@ export function fakePi(
     commands,
     handlers,
     sent,
+    sentOptions,
     notes,
     selects,
     overlays,

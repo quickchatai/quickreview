@@ -192,8 +192,9 @@ export interface ReviewsPort {
    * home's finished runs and the app's per-target review state), by number.
    * A PR absent from the map has no review. */
   latest(repo: string): Promise<Known<ReadonlyMap<number, PrReview>>>;
-  /** The daemon's rounds per pull request of `repo` (auto-review's half of
-   * the Reviewed list). */
+  /** The pull requests of `repo` the daemon finished a review round of
+   * (auto-review's half of the Reviewed list): a round still running or one
+   * that failed is no review. */
   autoRounds(repo: string): Promise<Known<ReadonlyMap<number, PrReview>>>;
   /** Price one pull request: the reviewer's own preview. A stop abandons it. */
   preview(
