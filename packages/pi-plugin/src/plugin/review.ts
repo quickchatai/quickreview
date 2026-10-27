@@ -55,8 +55,7 @@ import { borrowLogin, reviewProviders } from "./login.js";
 import type { PluginHost, SessionUi } from "./session.js";
 import { DEFAULT_SETTINGS, type PostingRule, type QuickReviewSettings } from "./settings.js";
 
-/** The custom message type the review is shown as. */
-export const REVIEW_MESSAGE = "qcr-review";
+export { REVIEW_MESSAGE } from "./messages.js";
 
 /** A review's wall clock, as `qcr review`'s. */
 export const REVIEW_TIMEOUT_MS = 60 * 60_000;
