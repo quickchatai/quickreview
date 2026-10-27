@@ -46,11 +46,8 @@ import {
   planDestinations,
   printDestinations,
 } from "@quickchatai/pi-quickreview/src/reviewdest.js";
-import {
-  borrowLogin,
-  reviewProviders,
-  type HostAuth,
-} from "@quickchatai/pi-quickreview/src/plugin/login.js";
+import { borrowLogin, type HostAuth } from "@quickchatai/pi-quickreview/src/plugin/login.js";
+import { reviewProviders } from "@quickchatai/pi-quickreview/src/modelroute.js";
 import {
   KEEP_IT_HERE,
   REVIEW_MESSAGE,

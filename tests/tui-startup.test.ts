@@ -456,10 +456,10 @@ describe("the first frame (structural, not timed)", () => {
     });
     const first = stripAnsi(h.written.join(""));
     // The top bar says it in short, the board's list in full (wrapped to its
-    // width), naming the step the wizard would run next.
+    // width), naming the step the home would run next: its own machine
+    // checks, which the wizard's preflight does not stand in for.
     expect(first).toContain("▲ setup not finished");
-    expect(first).toContain("next:");
-    expect(first).toContain("your own account, or a GitHub App");
+    expect(first).toContain("next: Machine");
     const plain = stripAnsi(await board(h));
     expect(plain).toContain("setup not finished");
     // The route is the local stack, and nothing on the board is ssh advice.

@@ -539,7 +539,7 @@ export async function cmdReview(
       // A person's run needs a credential for every provider the review's
       // models name; a key for another provider never stands in for one.
       const { reviewLoginRefusal } = await import("./loginhint.js");
-      const { reviewProviders } = await import("@quickchatai/pi-quickreview/src/plugin/login.js");
+      const { reviewProviders } = await import("@quickchatai/pi-quickreview/src/modelroute.js");
       const problem = reviewLoginRefusal({
         providers: reviewProviders(cfg),
         agentDir,

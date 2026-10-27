@@ -267,7 +267,7 @@ describe("running switch-on", () => {
     const r = await runGoLive(checklistOver(fakeSteps(ran, { refuseGoLive: true })), {
       confirmed: true,
     });
-    expect(r).toEqual({ ok: false, detail: "there is no completed proof round" });
+    expect(r).toEqual({ ok: false, detail: "proof: there is no completed proof round" });
   });
 
   it("a second switch-on is quick: done steps keep their answers, the daemon start runs again", async () => {

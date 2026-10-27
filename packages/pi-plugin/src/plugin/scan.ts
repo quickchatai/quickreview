@@ -45,7 +45,8 @@ import {
 import { UnitCutStore } from "../scan/unitcutstore.js";
 import { PI_REFRESH_MARGIN_MS } from "../engine/auth.js";
 import { splitArgs } from "./args.js";
-import { borrowLogin, reviewProviders } from "./login.js";
+import { borrowLogin } from "./login.js";
+import { reviewProviders } from "../modelroute.js";
 import { PLUGIN_CASE_MS, pluginScanCases } from "./scancases.js";
 import type { PluginHost, SessionUi } from "./session.js";
 

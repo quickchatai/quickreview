@@ -27,7 +27,7 @@ import type { Config } from "./config.js";
 import { DebugRoundManager } from "./debuground.js";
 import type { FileOutcome } from "./improvements.js";
 import { identityVars } from "@quickchatai/pi-quickreview/src/include.js";
-import { reviewProviders } from "@quickchatai/pi-quickreview/src/plugin/login.js";
+import { reviewProviders } from "@quickchatai/pi-quickreview/src/modelroute.js";
 import {
   CapabilityStore,
   LaunchFiles,

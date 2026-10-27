@@ -354,8 +354,8 @@ export const STACK_FILES: readonly string[] = [
   "config.example.toml",
 ];
 
-/** The compose project the home's switches drive (src/homes.ts `stackRoot`),
- * shared with the admin TUI. */
+/** The compose project the home's switches drive: src/homes.ts `stackRoot`,
+ * the one rule every surface that reads the stack uses. */
 export function homeStackRoot(
   env: Readonly<Record<string, string | undefined>>,
   pkgRoot: string = sandboxRoot(),

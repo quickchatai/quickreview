@@ -15,7 +15,6 @@
 //     that one exists (modelroute.ts), the same model id on either.
 // The run then reads a refresh-disabled copy of the login (engine/auth.ts):
 // nothing in it can refresh, so a rotated token never leaves the host.
-import type { CoreConfig } from "../reviewconfig.js";
 import type { LoginSummary } from "../engine/auth.js";
 import { routeProvider } from "../modelroute.js";
 
@@ -30,26 +29,6 @@ export interface HostAuth {
   /** Ask the host pi to make `provider`'s OAuth token valid for at least
    * `minValidityMs` more: it refreshes it if not. Rejects when it cannot. */
   refresh(provider: string, minValidityMs: number): Promise<void>;
-}
-
-/** The providers the review's sessions run on: every model spec's
- * `provider/` prefix, in first-seen order. */
-export function reviewProviders(cfg: Pick<CoreConfig, "models">): string[] {
-  const m = cfg.models;
-  const specs = [
-    m.conversation,
-    m.default,
-    ...Object.values(m.tiers),
-    ...Object.values(m.pass_models),
-  ];
-  const out: string[] = [];
-  for (const spec of specs) {
-    const slash = spec.indexOf("/");
-    if (slash <= 0) continue;
-    const p = spec.slice(0, slash);
-    if (!out.includes(p)) out.push(p);
-  }
-  return out;
 }
 
 export type BorrowResult =

@@ -20,8 +20,9 @@
 //              "full" leaves pi's own defaults.
 //   GitHub     the person's own `gh`. In the image (scripts/qcr-host.sh's
 //              home mode) there is no gh config: the wrapper hands the token
-//              over as a file (packages/pi-plugin/src/ghcred.ts), and the
-//              home passes it to pi as GH_TOKEN, in its environment only.
+//              over as a file (packages/pi-plugin/src/ghcred.ts), src/cli.ts
+//              takes it at startup, and the home passes it to pi as GH_TOKEN,
+//              in its environment only.
 //
 // `-ne` keeps the person's own extensions out: a plugin they installed in pi
 // themselves would otherwise register its commands twice.
@@ -34,7 +35,6 @@ import { parse } from "smol-toml";
 import { HOME_DEFAULTS, parseHomeSection, type HomeConfig } from "../config.js";
 import { pluginPackageDir } from "../coreext.js";
 import { locateConfig, stateHome } from "../homes.js";
-import { handedToken } from "@quickchatai/pi-quickreview/src/ghcred.js";
 import { piCliPath, piPackageDir } from "../picli.js";
 import { HOME_MODEL_ENV, HOME_TOOLS_ENV } from "./adapters.js";
 import { reviewerToolAllowlist } from "./toolnames.js";
@@ -240,7 +240,9 @@ export function homeRunDeps(appRoot: string, env: Env = process.env): HomeRunDep
         return null;
       }
     },
-    githubToken: handedToken,
+    // the person's own gh; the image's `qcr home` (src/cli.ts) passes the
+    // token the wrapper handed over
+    githubToken: () => null,
     homeConfig: () => readHomeConfig(env),
     readFile: (p) => readFileSync(p, "utf8"),
     writeFile: (p, t) => writeFileSync(p, t),

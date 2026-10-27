@@ -18,6 +18,28 @@
 // (extensions/login-route.ts); a host that only has a login FILE (the companion
 // entrypoint's default model) reads it with `providersInAuthJson`.
 
+import type { CoreConfig } from "./reviewconfig.js";
+
+/** The providers the review's sessions run on: every model spec's
+ * `provider/` prefix, in first-seen order. */
+export function reviewProviders(cfg: Pick<CoreConfig, "models">): string[] {
+  const m = cfg.models;
+  const specs = [
+    m.conversation,
+    m.default,
+    ...Object.values(m.tiers),
+    ...Object.values(m.pass_models),
+  ];
+  const out: string[] = [];
+  for (const spec of specs) {
+    const slash = spec.indexOf("/");
+    if (slash <= 0) continue;
+    const p = spec.slice(0, slash);
+    if (!out.includes(p)) out.push(p);
+  }
+  return out;
+}
+
 /** The OpenAI providers, each the other's twin. */
 export const OPENAI_PROVIDERS: readonly string[] = ["openai-codex", "openai"];
 

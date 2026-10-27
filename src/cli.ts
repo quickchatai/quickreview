@@ -2110,7 +2110,9 @@ export async function main(rawArgv: string[]): Promise<void> {
       // (src/qcrbin.ts); the image's home mode reaches it through this verb
       if (rest.length > 0) throw new Error("usage: qcr home");
       const { homeRunDeps, runHome } = await import("./home/launch.js");
-      process.exitCode = runHome(homeRunDeps(sandboxRoot()));
+      // the token taken at startup, when the wrapper handed one over
+      const githubToken = takeHandoffToken();
+      process.exitCode = runHome({ ...homeRunDeps(sandboxRoot()), githubToken: () => githubToken });
       return;
     }
     case "companion":

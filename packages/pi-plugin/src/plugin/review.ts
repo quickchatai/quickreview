@@ -51,7 +51,8 @@ import type { CoreConfig } from "../reviewconfig.js";
 import type { Destination } from "../reviewdest.js";
 import { prepareReviewHost } from "../reviewhost.js";
 import { parseReviewCommand, reviewLabel, REVIEW_PRESETS, type ReviewCommand } from "./args.js";
-import { borrowLogin, reviewProviders } from "./login.js";
+import { borrowLogin } from "./login.js";
+import { reviewProviders } from "../modelroute.js";
 import type { PluginHost, SessionUi } from "./session.js";
 import { DEFAULT_SETTINGS, type PostingRule, type QuickReviewSettings } from "./settings.js";
 

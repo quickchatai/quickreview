@@ -37,7 +37,8 @@ import { PROFILES_DIR } from "../profilelookup.js";
 import type { CoreConfig } from "../reviewconfig.js";
 import { SEVERITIES } from "../severityrank.js";
 import { PASS_TIER_ORDER } from "../types.js";
-import { canUseProvider, noLoginHint, reviewProviders, routedProviders } from "./login.js";
+import { canUseProvider, noLoginHint, routedProviders } from "./login.js";
+import { reviewProviders } from "../modelroute.js";
 import type { PluginHost, SessionUi } from "./session.js";
 import { piGate } from "./versiongate.js";
 
