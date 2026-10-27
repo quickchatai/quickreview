@@ -19,7 +19,7 @@ export interface SetupState {
 
 /** The one sentence every surface uses. */
 export function setupLine(s: SetupState): string {
-  return `setup not finished — the setup wizard's checklist is not complete${s.next ? ` (next: ${s.next})` : ""}`;
+  return `setup not finished — run \`qcr\` to finish setting up${s.next ? ` (next: ${s.next})` : ""}`;
 }
 
 /** Complete now: finished once and not reopened since (engine.ts `completeNow`). */

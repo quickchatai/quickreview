@@ -114,7 +114,7 @@ troubleshooting:
                      project): every read is docker exec into the daemon
                      container, no ssh. The board names an absent or stopped
                      container with the docker compose command that starts it
-  setup not finished the setup wizard's checklist is not complete (the board
+  setup not finished the setup checklist is not complete: run qcr (the board
                      names the next step)
   ▲ DATA STALE       ssh works but status.json stopped updating — the
                      container is down or the daemon hung (qcr-side:

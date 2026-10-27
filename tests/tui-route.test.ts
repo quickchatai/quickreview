@@ -188,7 +188,7 @@ describe("the setup banner", () => {
       // The GitHub step (order 33) comes before the config fill.
       expect(s?.next).toBe(githubAccountStep().title);
       expect(setupLine(s!)).toBe(
-        `setup not finished — the setup wizard's checklist is not complete (next: ${githubAccountStep().title})`,
+        `setup not finished — run \`qcr\` to finish setting up (next: ${githubAccountStep().title})`,
       );
       const after = await setupStateOf(
         checklist({ topology: "local" }, ["preflight", "topology", "llm_auth", "github_account"]),
@@ -205,7 +205,7 @@ describe("the setup banner", () => {
     };
     const lines = unknownSourceLines(conn, 200, { next: "Interview" }).map(stripAnsi);
     expect(lines.join("\n")).toContain(
-      "setup not finished — the setup wizard's checklist is not complete (next: Interview)",
+      "setup not finished — run `qcr` to finish setting up (next: Interview)",
     );
     expect(lines.join("\n")).not.toMatch(/ssh|run this:/);
     // Unknown stays unknown: the count line is still the honest one.

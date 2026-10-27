@@ -33,6 +33,7 @@ import { contextFrom } from "../engine/context.js";
 import { homeProfilePlaces, loadOneShotConfig } from "../homes.js";
 import { LENS_TUNING_KEYS } from "../lenstuning.js";
 import { REPO_PROFILE_DIR, REPO_TOML_KEYS } from "../profileoverrides.js";
+import { PROFILES_DIR } from "../profilelookup.js";
 import type { CoreConfig } from "../reviewconfig.js";
 import { SEVERITIES } from "../severityrank.js";
 import { PASS_TIER_ORDER } from "../types.js";
@@ -120,7 +121,7 @@ export function profileSetupBrief(o: { top: string; root: string }): string {
     "What a repo profile may carry (a review drops anything else and says so):",
     `- \`profile.toml\` with only ${keys}. Tune a lens with a \`[lenses.<lens>]\` table, whose keys are ${lensKeys}: \`enabled = false\` turns the lens off for this repo, \`min_tier\` is a floor (${PASS_TIER_ORDER.join(", ")}), \`effort\` is low, medium or high, \`max_severity\` is the lens's ceiling (${SEVERITIES.join(", ")}), and \`emphasis\` is a sentence or two on what matters most here. The lenses are the \`pass-*.md\` files in ${join(o.root, "agents")}; name one without the \`.md\`. A concern you weighed critical raises its lenses (a higher \`min_tier\` and \`effort\`, an \`emphasis\`), and one weighed ignore turns them off.`,
     "- `addenda/*.md`: one house rule each. The file opens with a front matter of exactly two lines, `id: <rule-id>` and `scope: <pass names, comma-separated>` (or `all`), between `---` fences, then the rule as you would tell a reviewer.",
-    `The shipped profiles in ${join(o.root, "profiles")} are worked examples of both files (\`example-django/\` has a profile.toml and addenda in this shape).`,
+    `The shipped profiles in ${join(o.root, PROFILES_DIR)} are worked examples of both files (\`example-django/\` has a profile.toml and addenda in this shape).`,
     "",
     "Ask me before anything that reaches outside the repo. Never read or print a token or key.",
   ].join("\n");
