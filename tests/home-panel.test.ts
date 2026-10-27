@@ -594,10 +594,13 @@ describe("every action is also a home_* tool", () => {
       "alt+j",
       "alt+k",
       "alt+m",
+      "alt+n",
       "alt+o",
       "alt+r",
       "alt+s",
+      "alt+t",
       "alt+u",
+      "alt+x",
       "f2",
     ]);
     expect(h.pi.commands.size).toBe(0);

@@ -35,6 +35,8 @@ import { openStepMemoryForward } from "../onboard/stepforward.js";
 import { composeAutoReview } from "./autoreview.js";
 import { composeMemory } from "./memory.js";
 import { realSpendPort } from "./spend.js";
+import { composeAdvanced, type AdvancedPort } from "./advanced.js";
+import { checkoutTune, type TunePort } from "./tune.js";
 import { stepRunner } from "./switchon.js";
 import { piAgentDir } from "../piagentdir.js";
 import { qcrChild, realDetachSeams, reviewsPort } from "./reviews.js";
@@ -321,14 +323,17 @@ export function homeOptionsFromEnv(env: Readonly<Record<string, string | undefin
   adapters: HomeAdapters;
   model: string;
   tools: HomeToolSet;
+  tune: TunePort;
+  advanced: AdvancedPort;
 } {
   const model = (env[HOME_MODEL_ENV] ?? "").trim() || HOME_DEFAULTS.model;
   const tools: HomeToolSet = env[HOME_TOOLS_ENV] === "full" ? "full" : "reviewer";
   const root = (env["QCR_ROOT"] ?? "").trim() || sandboxRoot();
+  const configPath = (): string => locateConfig({ env }).path;
   return {
     adapters: realHomeAdapters({
       agentDir: piAgentDir(env),
-      configPath: () => locateConfig({ env }).path,
+      configPath,
       reviews: realReviewsPort(env),
       root,
       spend: realSpendPort({
@@ -339,5 +344,11 @@ export function homeOptionsFromEnv(env: Readonly<Record<string, string | undefin
     }),
     model,
     tools,
+    tune: checkoutTune({ env, root: assetRoot, configPath, runner: stepRunner }),
+    advanced: composeAdvanced({
+      root,
+      env,
+      stepAdapters: stepAdapters(root, configPath),
+    }),
   };
 }

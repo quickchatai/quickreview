@@ -110,7 +110,7 @@ async function switchOn(
   if (where === undefined) return cancelled(host);
   if (where === CHOICE.elsewhere) {
     host.say(
-      "Auto-review on another server is set up in the advanced steps (Advanced in the home). Nothing changed here.",
+      'Auto-review on another server is set up in the advanced steps: Advanced (alt+x), "Auto-review on another server, over ssh". Nothing changed here.',
     );
     return "another server: the advanced steps set it up";
   }

@@ -8,8 +8,9 @@ instead, and turns into the panel once it is done.
 `qcr onboard`, the wizard's own door, is gone. Its steps, described from
 [Before you start](#before-you-start) on, set up what the first run does not:
 the always-on daemon, a GitHub App and webhooks, a server over ssh, memory and
-going live. The home is to offer them behind an Advanced button; everything
-they do also has a manual equivalent, indexed in
+going live. Switching auto-review on runs the ones this machine needs, and the
+home's [Advanced](#spend-tune-to-this-repo-and-advanced) button offers the
+rest; everything they do also has a manual equivalent, indexed in
 [the README's appendix](../README.md#appendix--setting-up-by-hand).
 
 ## The first run: the home's setup checklist
@@ -43,6 +44,37 @@ where `⏎` does the same and Esc gives the editor back. Every step is also a
 tool the chat's model can call: `home_sign_in`, `home_check_github`,
 `home_choose_repo` and `home_setup_next`. `qcr tui` opens the admin TUI, and
 only it starts the companion.
+
+## Spend, "Tune to this repo" and Advanced
+
+- **The spend line** shows today's and this month's review cost: the home's
+  own reviews (each finished run's cost, on the day it ended) and
+  auto-review's recorded costs (its status snapshot's `today_spend_usd` and
+  `month_spend_usd`), over UTC days and months as `qcr spend` counts them. It
+  reads unknown when either cannot be read, for instance while auto-review is
+  switched off with its data kept, never a zero.
+- **Tune to this repo** (`t`, `alt+t`, `home_tune`) runs Setup: the chat's
+  agent surveys a checkout of the repository, reads its review history when it
+  can, interviews you, and writes the repo profile, `.qcr/` at the checkout's
+  root, each file only on your yes (`home_tune_write`). The checkout is
+  `QCR_REVIEWED_REPO`, `[companion] reviewed_repo_dir`, or the directory you
+  opened the home from, whichever git says is the repository. The panel says
+  when the profile is written; reviews use it once you commit it. Nothing
+  waits on it: until then, every review runs on the default profile.
+- **Advanced** (`x`, `alt+x`, `home_advanced`) runs the wizard's own steps on
+  the same checklist switch-on uses:
+  - **A GitHub App:** `github_account` on the App route, `github_app` (the
+    manifest flow, through the hosted callback relay when
+    `QCR_ONBOARD_PUBLIC_ORIGIN` is set) and `app_slug_reconcile`;
+  - **Webhooks:** `ingress`, a tunnel instead of polling (on the App route
+    only: GitHub delivers webhooks to an App);
+  - **Another server, over ssh:** `topology`, `ssh_preflight`,
+    `vm_inventory` and `vm_deploy` of a release, this app's by default;
+  - **Slack:** says what is set up; the concierge's own guided tool,
+    [`npm run slack:setup`](#slack-later), sets up the rest;
+  - **Dry-run or live:** "Stay in dry-run" first, then "Go live", which is
+    the wizard's go-live step. Going back to dry-run is your own edit of
+    `dry_run`; nothing in the home moves it.
 
 ## The setup wizard
 

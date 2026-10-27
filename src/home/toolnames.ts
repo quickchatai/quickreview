@@ -14,6 +14,9 @@ export const HOME_SETUP_TOOL_NAMES = [
   "home_choose_repo",
 ] as const;
 
+/** "Tune to this repo" and Advanced (src/home/advancedtools.ts). */
+export const HOME_ADVANCED_TOOL_NAMES = ["home_tune", "home_tune_write", "home_advanced"] as const;
+
 /** Every tool the home registers. */
 export const HOME_TOOL_NAMES = [
   "home_status",
@@ -27,6 +30,7 @@ export const HOME_TOOL_NAMES = [
   "home_auto_review",
   "home_memory",
   ...HOME_SETUP_TOOL_NAMES,
+  ...HOME_ADVANCED_TOOL_NAMES,
 ] as const;
 
 /** pi's built-in tools the reviewer-only home keeps: reading only. */
