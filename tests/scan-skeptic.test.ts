@@ -36,7 +36,7 @@ import type { MemoryEntry, MemoryOp, MemoryStore, MemoryWriteResult } from "../s
 import { stateHomeFs } from "../src/setup/adapters.js";
 import type { CaseOutcome, SinkResult, TrackerSink, TrackerTicket } from "../src/setup/engine.js";
 import { FindingsStore, type ReportedFinding } from "../src/setup/findings.js";
-import { LEDGER_FILE } from "../src/setup/ledger.js";
+import { LEDGER_FILE } from "@quickchatai/pi-quickreview/src/scan/ledger.js";
 import { parseValidatorAnswer, SCAN_FALSE_POSITIVE_SLUGS } from "../src/setup/scan.js";
 import { buildScanAgents, scanConfig } from "../src/setup/scanbuild.js";
 import { validityOf } from "../src/setup/scanreport.js";

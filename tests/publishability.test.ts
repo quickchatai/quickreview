@@ -29,7 +29,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
-import { isBinaryContent } from "../src/setup/textsniff.js";
+import { isBinaryContent } from "@quickchatai/pi-quickreview/src/scan/textsniff.js";
 import { deadLinks } from "./helpers/published-links.js";
 import {
   HOME_LABEL,

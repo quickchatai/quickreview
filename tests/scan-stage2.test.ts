@@ -1,4 +1,4 @@
-// Scan stage 2 (src/setup/stage2.ts + the stage-2 half of
+// Scan stage 2 (packages/pi-plugin/src/scan/stage2.ts + the stage-2 half of
 // src/setup/scanrun.ts) driven the engine way, like tests/scan-run.test.ts:
 // every port faked, the state home a temp dir through the real rooted state
 // port. Stage 1's calibration runs first (a stage-2 row is priced from the
@@ -15,7 +15,12 @@ import type { LensTuningMap } from "@quickchatai/pi-quickreview/src/lenstuning.j
 import { stateHomeFs } from "../src/setup/adapters.js";
 import type { CaseOutcome, CaseSpec } from "../src/setup/engine.js";
 import { FindingsStore } from "../src/setup/findings.js";
-import { Ledger, LEDGER_FILE, type LedgerEntry, type LedgerFile } from "../src/setup/ledger.js";
+import {
+  Ledger,
+  LEDGER_FILE,
+  type LedgerEntry,
+  type LedgerFile,
+} from "@quickchatai/pi-quickreview/src/scan/ledger.js";
 import { renderProposal } from "../extensions/setup-scan.js";
 import {
   ScanRunner,
@@ -28,7 +33,7 @@ import {
   planStage2,
   type Stage2PlanInput,
   type Stage2RowRequest,
-} from "../src/setup/stage2.js";
+} from "@quickchatai/pi-quickreview/src/scan/stage2.js";
 import {
   clickStartStage2,
   readStage2Proposal,

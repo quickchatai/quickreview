@@ -28,7 +28,6 @@ walkthroughs already exist and are not repeated here — this page links them:
 | The wizard's binding of it (adapters, file path, first-run marker) | `src/onboard/engine.ts` |
 | Wizard step registry (order, enablement) | `src/onboard/steps/index.ts` |
 | Cross-step handoff keys and value vocabularies | `src/onboard/choices.ts` |
-| The wizard's pi session argv (its `qcr onboard` door is gone; the home's Advanced route is to reuse it) | `src/onboard/launch.ts` |
 | Wizard tool belt inside pi | `extensions/onboarding.ts`, `prompts/onboarding.md` |
 | "Where does the stack run" seam | `src/onboard/steps/transport.ts` |
 | Compose helpers shared by the bring-up tail | `src/onboard/steps/compose.ts` |
@@ -79,21 +78,14 @@ The operator TUI makes the same split separately, through `config.toml
 
 Its door, `qcr onboard`, is gone: a bare `qcr` opens the home, whose first
 run is the setup checklist (`src/home/setup.ts`, the plugin's step registry
-with the home's steps on it). The wizard's session is `onboardingPiArgv` in
-`src/onboard/launch.ts`, which the home's Advanced route is to reuse. It runs
-**pi** at the pinned version through `npx`, so a bare clone with Node and the checkout is
-enough — pi is not a dependency of this repo. The pin is read from `config.toml
-[pi]` when that file exists and from the `qcrPi` block in `package.json`
-otherwise; both mirror the same version.
+with the home's steps on it). The wizard's own pi session went with its
+door: the home runs the wizard's steps in its own process, switch-on's on the
+setup checklist and the rest behind Advanced (`src/home/advanced.ts`).
 
-The session is deliberately narrow: `--no-extensions --no-skills
---no-context-files`, exactly one extension (`extensions/onboarding.ts`), a
-read-only built-in tool belt, `--approve` so it can
-never stall on a trust modal, and its own session store at
-`state/onboarding/pi-sessions/` — never the reviewer's or the companion's.
-pi's `--tools` allowlist covers extension tools as well as built-ins, so the
-argv names `read,ls,grep` and then every wizard tool, derived from the step
-registry (`src/onboard/toolnames.ts`); bash, write and edit are never on it.
+The wizard's tool belt stays for a pi that loads it by path: exactly one
+extension (`extensions/onboarding.ts`) whose `--tools` allowlist names
+`read,ls,grep` and then every wizard tool, derived from the step registry
+(`src/onboard/toolnames.ts`); bash, write and edit are never on it.
 
 `extensions/onboarding.ts` registers **one tool per engine step**, named
 `onboard_<step id>`, plus `onboard_status` (reconcile + listing) and

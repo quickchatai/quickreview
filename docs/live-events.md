@@ -72,7 +72,7 @@ and duration, and a failed one reads `failed`. `current_target` is the one
 field past the extension, and a native round never carries it.
 
 `packages/pi-plugin/src/live/lensline.ts` turns one projected lens into the line
-a person reads (`security · read src/x.ts · 7 tools · 0:41`); `qcr review
+a person reads (`security · read src/webhook.ts · 7 tools · 0:41`); `qcr review
 status` carries both, and the plugin reads the same projection through
 `latestLiveRound` and `viewRound`.
 

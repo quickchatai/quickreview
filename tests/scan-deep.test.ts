@@ -41,7 +41,7 @@ import {
   readings,
   type LedgerEntry,
   type LedgerFile,
-} from "../src/setup/ledger.js";
+} from "@quickchatai/pi-quickreview/src/scan/ledger.js";
 import { MAX_SUGGESTIONS, SCAN_DEEP_LENSES, SCAN_PASS } from "../src/setup/scan.js";
 import { buildScanAgents, scanConfig } from "../src/setup/scanbuild.js";
 import {
@@ -59,7 +59,7 @@ import {
   type Stage2PlanInput,
   type Stage2Row,
   type Stage2RowRequest,
-} from "../src/setup/stage2.js";
+} from "@quickchatai/pi-quickreview/src/scan/stage2.js";
 import { priceIsMeasured, priceLabel, readStage2Proposal } from "../src/setup/stage2request.js";
 import type { UnitCut } from "../src/setup/unitcut.js";
 

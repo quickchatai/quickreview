@@ -15,9 +15,9 @@
       }
     },
     {
-      "id": "pi-argv-companion-onboarding",
-      "assumes": "The companion's and the onboarding wizard's pi argv (--extension, --no-extensions, --no-skills, --no-context-files, --tools) is accepted.",
-      "files": { "src/tui/companion.ts": 3, "src/onboard/launch.ts": 1 },
+      "id": "pi-argv-companion",
+      "assumes": "The companion's pi argv (--extension, --no-extensions, --no-skills, --no-context-files, --tools) is accepted.",
+      "files": { "src/tui/companion.ts": 3 },
       "signal": {
         "source": "session-jsonl",
         "kind": "jsonl",
@@ -225,7 +225,7 @@
     {
       "id": "case-runner-json-stream",
       "assumes": "pi's JSON mode event spellings (tool_execution_start/end, message_end usage), the bin path, path resolution of read arguments.",
-      "files": { "src/setup/caserunner.ts": 6 },
+      "files": { "src/setup/caserunner.ts": 3, "packages/pi-plugin/src/scan/caseread.ts": 3 },
       "signal": {
         "source": "scan-transcript",
         "kind": "jsonl",

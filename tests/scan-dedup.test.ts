@@ -499,7 +499,7 @@ describe("a collapsed finding's severity and silence, sighting by sighting", () 
     run: string,
     at: string,
     over: Record<string, unknown> = {},
-  ): import("../src/setup/ledger.js").LedgerEntry => ({
+  ): import("@quickchatai/pi-quickreview/src/scan/ledger.js").LedgerEntry => ({
     path: A932.path,
     blob: "b1",
     lens,

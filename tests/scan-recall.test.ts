@@ -39,7 +39,7 @@ import {
   stage2Leads,
   STAGE2_MAX_LEADS,
   type Stage2Row,
-} from "../src/setup/stage2.js";
+} from "@quickchatai/pi-quickreview/src/scan/stage2.js";
 
 let dir: string;
 beforeEach(() => {

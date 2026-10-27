@@ -15,7 +15,12 @@ import { SCAN_DEFAULTS, type ScanConfig } from "../src/config.js";
 import { stateHomeFs } from "../src/setup/adapters.js";
 import type { CaseOutcome, CaseSpec } from "../src/setup/engine.js";
 import { FindingsStore } from "../src/setup/findings.js";
-import { coveredBy, LEDGER_FILE, type LedgerEntry, type LedgerFile } from "../src/setup/ledger.js";
+import {
+  coveredBy,
+  LEDGER_FILE,
+  type LedgerEntry,
+  type LedgerFile,
+} from "@quickchatai/pi-quickreview/src/scan/ledger.js";
 import { cutRanges, planStage1, scanCasePrompt } from "../src/setup/scan.js";
 import {
   ScanRunner,

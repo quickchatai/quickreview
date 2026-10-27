@@ -24,7 +24,7 @@ import {
   SCAN_DEEP_LENSES,
 } from "../src/setup/scan.js";
 import { buildScanAgents } from "../src/setup/scanbuild.js";
-import { stage2Lenses } from "../src/setup/stage2.js";
+import { stage2Lenses } from "@quickchatai/pi-quickreview/src/scan/stage2.js";
 
 const sandbox = join(import.meta.dirname, "..");
 const fixture: Config = parseConfig(
