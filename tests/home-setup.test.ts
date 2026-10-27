@@ -623,8 +623,8 @@ describe("the repository write (setupadapters.ts)", () => {
     ownerLogin: "octo",
   };
 
-  it("a fresh config is the template with the pick and the defaults, dry_run still true", async () => {
-    const r = await renderRepoConfig(null, TEMPLATE, choice);
+  it("a fresh config is the template with the pick and the defaults, dry_run still true", () => {
+    const r = renderRepoConfig(null, TEMPLATE, choice);
     if (!r.ok) throw new Error(r.why);
     const doc = parse(r.text) as Record<string, Record<string, unknown>>;
     expect(doc["github"]!["repo"]).toBe("acme/widgets");
@@ -641,12 +641,12 @@ describe("the repository write (setupadapters.ts)", () => {
   });
 
   // MUTATION: fill the timezone and owner whatever the config holds — this fails.
-  it("an existing config keeps the owner's own timezone and name; the repo and its branch change", async () => {
+  it("an existing config keeps the owner's own timezone and name; the repo and its branch change", () => {
     const existing = TEMPLATE.replace('timezone = "UTC"', 'timezone = "America/New_York"').replace(
       /^name = ""/m,
       'name = "Someone Else"',
     );
-    const r = await renderRepoConfig(existing, "", choice);
+    const r = renderRepoConfig(existing, "", choice);
     if (!r.ok) throw new Error(r.why);
     const doc = parse(r.text) as Record<string, Record<string, unknown>>;
     expect(doc["ops"]!["timezone"]).toBe("America/New_York");
@@ -656,17 +656,17 @@ describe("the repository write (setupadapters.ts)", () => {
     expect(doc["github"]!["base_branch"]).toBe("trunk");
   });
 
-  it("an existing config's dry_run is carried as it is, in either direction", async () => {
+  it("an existing config's dry_run is carried as it is, in either direction", () => {
     const live = TEMPLATE.replace(/^dry_run = true/m, "dry_run = false");
-    const r = await renderRepoConfig(live, "", choice);
+    const r = renderRepoConfig(live, "", choice);
     if (!r.ok) throw new Error(r.why);
     expect((parse(r.text) as Record<string, unknown>)["dry_run"]).toBe(false);
   });
 
-  it("a config that is not TOML is refused, and the template that dropped dry_run too", async () => {
-    expect(await renderRepoConfig("[github\nrepo = ", "", choice)).toMatchObject({ ok: false });
+  it("a config that is not TOML is refused, and the template that dropped dry_run too", () => {
+    expect(renderRepoConfig("[github\nrepo = ", "", choice)).toMatchObject({ ok: false });
     const noDry = TEMPLATE.replace(/^dry_run = true/m, "dry_run = false");
-    const r = await renderRepoConfig(null, noDry, choice);
+    const r = renderRepoConfig(null, noDry, choice);
     expect(r).toMatchObject({ ok: false });
     expect(r.ok ? "" : r.why).toMatch(/dry_run/);
   });
