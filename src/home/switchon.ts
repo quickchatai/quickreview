@@ -16,7 +16,7 @@
 //   memory           the memory offer's answer, when it was offered
 //   login_share      the daemon reviews on the home's own login, which its
 //                    refresher keeps while it runs: one login per box
-//                    (src/home/loginshare.ts)
+//                    (src/onboard/steps/loginshare.ts)
 //   daemon_start     start a stack that was brought up before (a second
 //                    switch-on is this and little else: its data is kept)
 //   bringup          the first time: pull and start the stack (restart:
@@ -63,7 +63,11 @@ import { MEMORY_KEYS_STEP_ID, memoryUserKeysStep } from "../onboard/steps/memory
 import { preflightStep } from "../onboard/steps/preflight.js";
 import { TOPOLOGY_STEP_ID, topologyOf, topologyStep } from "../onboard/steps/topology.js";
 import { VERIFY_STACK_STEP_ID, verifyStackStep } from "../onboard/steps/verifyup.js";
-import { LOGIN_SHARE_STEP_ID, loginShareStep, type LoginShareOptions } from "./loginshare.js";
+import {
+  LOGIN_SHARE_STEP_ID,
+  loginShareStep,
+  type LoginShareOptions,
+} from "../onboard/steps/loginshare.js";
 import type { SwitchOnAnswers, SwitchOnOutcome, SwitchResult } from "./ports.js";
 
 export const MACHINE_CHECKS_STEP_ID = "machine_checks";

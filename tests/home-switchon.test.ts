@@ -25,7 +25,11 @@ import {
   switchOnInput,
   switchOnRegistry,
 } from "../src/home/switchon.js";
-import { LOGIN_SHARE_STEP_ID, PI_LOGIN_DIR_KEY, loginShareStep } from "../src/home/loginshare.js";
+import {
+  LOGIN_SHARE_STEP_ID,
+  PI_LOGIN_DIR_KEY,
+  loginShareStep,
+} from "../src/onboard/steps/loginshare.js";
 import type { OnboardAdapters, ProcessResult } from "../src/onboard/engine.js";
 import { BROUGHT_UP_CHOICE_KEY } from "../src/onboard/steps/bringup.js";
 import { GO_LIVE_CONFIRMATION, GO_LIVE_STEP_ID, goLiveStep } from "../src/onboard/steps/golive.js";
@@ -376,7 +380,7 @@ describe("the daemon start", () => {
   });
 });
 
-// ---- one login per box: the login step (src/home/loginshare.ts) -------------
+// ---- one login per box: the login step (src/onboard/steps/loginshare.ts) -----
 
 describe("the login step: the stack reviews on the home's own login", () => {
   const EXAMPLE = readFileSync(new URL("../config.example.toml", import.meta.url), "utf8");

@@ -5,7 +5,7 @@
 //   owner     the daemon's refresher holds the login while auto-review runs
 //             on this machine (its single-instance lock, beside auth.json in
 //             the home's own pi agent dir, which the stack mounts:
-//             src/home/loginshare.ts). Otherwise the home's pi refreshes it
+//             src/onboard/steps/loginshare.ts). Otherwise the home's pi refreshes it
 //             itself, by pi's own rule: a token inside pi's 5-minute window,
 //             under pi's own lock. While the refresher runs no token gets
 //             near that window, so the home's pi never refreshes: it borrows.

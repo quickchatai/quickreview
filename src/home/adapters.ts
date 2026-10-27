@@ -323,7 +323,7 @@ export function realHomeAdapters(o: {
     ...(o.spend ? { spend: o.spend } : {}),
     ...(stack
       ? {
-          // switch-on shares the home's login with the stack (src/home/loginshare.ts)
+          // switch-on shares the home's login with the stack (src/onboard/steps/loginshare.ts)
           autoReview: composeAutoReview({ ...stack, loginDir: o.agentDir, now: () => Date.now() }),
           memory: composeMemory({
             ...stack,

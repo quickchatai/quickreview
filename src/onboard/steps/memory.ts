@@ -77,7 +77,7 @@ import { dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { OPENVIKING_DEFAULTS, parseConfig } from "../../config.js";
 import { configHome, locateKeysFile, locateSecrets } from "../../install.js";
-import { tuiMemoryBaseUrl } from "../../tui/memory.js";
+import { tuiMemoryBaseUrl } from "../../tui/memoryurl.js";
 import { shellQuote } from "../../tui/remote.js";
 import { CHOICE_KEYS, MEMORY_CHOICE_IDS, type MemoryChoice } from "../choices.js";
 import { deliverConfigChange } from "./configdelivery.js";

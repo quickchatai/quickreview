@@ -52,7 +52,7 @@ import {
 import { countOutcome, emptyRequestCounter, type RequestCounter } from "../memory/health.js";
 import { OpenVikingStore } from "../openviking/store.js";
 import { readRetiredUrisFile, writeRetiredUris } from "../memory/ovsession.js";
-import { keysFilePath, MEMORY } from "./companion.js";
+import { keysFilePath } from "./companion.js";
 
 export { matchesQuery, normalizeTag, refOf } from "../memory/store.js";
 export type {
@@ -227,20 +227,8 @@ export function keysFileReader(
   };
 }
 
-/**
- * Where the TUI reaches OpenViking: the memory forward's loopback listener.
- *
- * `QCR_MEMORY_URL` overrides it wholesale; `QCR_MEMORY_PORT` matches the flag
- * the forward itself takes, so a non-default port only has to be spelled once.
- * `MEMORY.port` is the shared constant the forward and the companion already
- * agree on.
- */
-export function tuiMemoryBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
-  const explicit = (env["QCR_MEMORY_URL"] ?? env["QCR_MEMORY_ENDPOINT"] ?? "").trim();
-  if (explicit !== "") return explicit.replace(/\/+$/, "");
-  const port = Number(env["QCR_MEMORY_PORT"] ?? MEMORY.port) || MEMORY.port;
-  return `http://127.0.0.1:${port}`;
-}
+import { tuiMemoryBaseUrl } from "./memoryurl.js";
+export { tuiMemoryBaseUrl };
 
 // ---- the store ---------------------------------------------------------------
 

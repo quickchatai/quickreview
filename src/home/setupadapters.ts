@@ -23,7 +23,6 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { parse } from "smol-toml";
 import { assetRoot } from "@quickchatai/pi-quickreview/src/assetroot.js";
 import { nodeRunner } from "@quickchatai/pi-quickreview/src/plugin/runner.js";
 import type { PluginHost } from "@quickchatai/pi-quickreview/src/plugin/session.js";
@@ -33,7 +32,7 @@ import { locateConfig, stateHome } from "../homes.js";
 import { piAgentDir } from "../piagentdir.js";
 import { execRunner, type Runner, type RunResult } from "./adapters.js";
 import { known, unknown, type Known } from "./ports.js";
-import type { HomeSetupPorts, RepoChoice, RepoPickPort, RepoWrite } from "./setup.js";
+import type { HomeSetupPorts, RepoPickPort, RepoWrite } from "./setup.js";
 
 type Env = Readonly<Record<string, string | undefined>>;
 
@@ -57,78 +56,6 @@ export function systemTimezone(): string | null {
   } catch {
     return null;
   }
-}
-
-/** A config value as text, "" when absent or not a string. */
-function valueIn(doc: Record<string, unknown> | null, section: string, key: string): string {
-  const table = doc?.[section];
-  if (typeof table !== "object" || table === null) return "";
-  const v = (table as Record<string, unknown>)[key];
-  return typeof v === "string" ? v.trim() : "";
-}
-
-/** The config text with the choice in it, from `existing` (null: none yet,
- * so the template). What changed is named; a config that is not TOML is
- * refused, since what it holds cannot be seen. */
-export async function renderRepoConfig(
-  existing: string | null,
-  template: string,
-  choice: RepoChoice,
-): Promise<{ ok: true; text: string; wrote: string[] } | { ok: false; why: string }> {
-  // the onboarding config fill's writer, loaded only when a repository is written
-  const { assertNoDryRunEdit, changedEdits, patchToml, tomlString } =
-    await import("../onboard/steps/configfill.js");
-  const fresh = existing === null;
-  const source = existing ?? template;
-  let doc: Record<string, unknown> | null = null;
-  try {
-    doc = parse(source);
-  } catch (err) {
-    return {
-      ok: false,
-      why: `${fresh ? "the shipped template" : "the config"} is not valid TOML (${message(err)}); nothing was written`,
-    };
-  }
-  const fill = (section: string, key: string): boolean =>
-    fresh || valueIn(doc, section, key) === "";
-  const wanted = [
-    { section: "github", key: "repo", value: tomlString(choice.repo) },
-    ...(choice.baseBranch
-      ? [{ section: "github", key: "base_branch", value: tomlString(choice.baseBranch) }]
-      : []),
-    ...(choice.timezone && fill("ops", "timezone")
-      ? [{ section: "ops", key: "timezone", value: tomlString(choice.timezone) }]
-      : []),
-    ...(choice.ownerName && fill("owner", "name")
-      ? [{ section: "owner", key: "name", value: tomlString(choice.ownerName) }]
-      : []),
-    ...(choice.ownerLogin && fill("owner", "github_login")
-      ? [{ section: "owner", key: "github_login", value: tomlString(choice.ownerLogin) }]
-      : []),
-  ];
-  assertNoDryRunEdit(wanted);
-  const edits = changedEdits(source, wanted);
-  const text = edits.length > 0 ? patchToml(source, edits) : source;
-  let after: Record<string, unknown>;
-  try {
-    after = parse(text);
-  } catch (err) {
-    return {
-      ok: false,
-      why: `the patched config would not parse (${message(err)}); nothing was written`,
-    };
-  }
-  if (valueIn(after, "github", "repo") !== choice.repo)
-    return {
-      ok: false,
-      why: "the patched config does not carry the repository; nothing was written",
-    };
-  if (fresh && after["dry_run"] !== true)
-    return {
-      ok: false,
-      why: "the shipped template no longer ships dry_run = true; nothing was written (invariant 6)",
-    };
-  return { ok: true, text, wrote: edits.map((e) => `[${e.section}] ${e.key}`) };
 }
 
 /** A file's text; null only when it does not exist. Any other failure
@@ -234,7 +161,9 @@ export function repoPickPort(o: {
       }
       if (template === null)
         return { ok: false, why: `there is no ${path} and the shipped template is not readable` };
-      const r = await renderRepoConfig(existing, template, choice);
+      // the config fill's writer, loaded only when a repository is written
+      const { renderRepoConfig } = await import("../onboard/steps/repoconfig.js");
+      const r = renderRepoConfig(existing, template, choice);
       if (!r.ok) return r;
       try {
         if (r.text !== existing) write(path, r.text);

@@ -45,6 +45,7 @@ import { COMPANION_IMAGE, type CompanionConfig } from "../config.js";
 import { writeAtomic } from "../channelfs.js";
 import { appStamp } from "../appstamp.js";
 import { TOKEN_FILE } from "./ghread.js";
+import { MEMORY_PORT } from "./memoryurl.js";
 
 export interface DockerResult {
   ok: boolean;
@@ -274,7 +275,7 @@ export const MEMORY = {
   subnet: "198.51.100.0/24",
   gateway: "198.51.100.1",
   /** Same port the server listens on in the VM container ([openviking] port). */
-  port: 1933,
+  port: MEMORY_PORT,
   /** The OpenViking user whose memory the companion owns — becomes the
    * `X-OpenViking-User` header on every request it makes. */
   user: "companion",

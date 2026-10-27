@@ -27,19 +27,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "smol-toml";
-import { parseConfig } from "../config.js";
-import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../onboard/engine.js";
-import { BROUGHT_UP_CHOICE_KEY } from "../onboard/steps/bringup.js";
-import {
-  DAEMON_SERVICE,
-  composeArgs,
-  readEnvText,
-  rootOf,
-  writeAtomic,
-} from "../onboard/steps/compose.js";
-import { assertNoDryRunEdit, patchToml, type TomlEdit } from "../onboard/steps/configfill.js";
-import { readEnvKey, setEnvKey } from "../onboard/steps/ingress.js";
-import { topologyOf } from "../onboard/steps/topology.js";
+import { parseConfig } from "../../config.js";
+import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
+import { BROUGHT_UP_CHOICE_KEY } from "./bringup.js";
+import { DAEMON_SERVICE, composeArgs, readEnvText, rootOf, writeAtomic } from "./compose.js";
+import { assertNoDryRunEdit, patchToml, type TomlEdit } from "./configfill.js";
+import { readEnvKey, setEnvKey } from "./ingress.js";
+import { topologyOf } from "./topology.js";
 
 export const LOGIN_SHARE_STEP_ID = "login_share";
 /** The project .env key docker-compose.yml mounts the host's login from. */

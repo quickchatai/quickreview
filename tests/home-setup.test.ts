@@ -25,7 +25,8 @@ import {
   type LoginOutcome,
   type RepoChoice,
 } from "../src/home/setup.js";
-import { renderRepoConfig, repoPickPort } from "../src/home/setupadapters.js";
+import { renderRepoConfig } from "../src/onboard/steps/repoconfig.js";
+import { repoPickPort } from "../src/home/setupadapters.js";
 import { HOME_SETUP_TOOL_NAMES, HOME_TOOL_NAMES } from "../src/home/toolnames.js";
 import type { PluginHost } from "@quickchatai/pi-quickreview/src/plugin/session.js";
 import { fakePi, settle, type FakePi } from "./helpers/fake-pi.js";
