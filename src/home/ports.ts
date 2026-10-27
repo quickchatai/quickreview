@@ -34,6 +34,29 @@ export interface PiLoginPort {
   providers(): Promise<Known<readonly string[]>>;
 }
 
+/** Who refreshes the box's one OpenAI login, and whether it still works
+ * (FT-0658, src/home/loginowner.ts). */
+export interface LoginHealth {
+  /** "auto-review": the daemon's refresher holds it (auto-review runs on this
+   * machine); "home": the home's own pi refreshes it, by pi's own rule. */
+  refresher: "auto-review" | "home";
+  /** Why it no longer works ("login expired"), from the refresher's record;
+   * absent while it works or while nothing says otherwise. */
+  expired?: string;
+  /** When the refresher last looked at it, ms since the epoch. */
+  checkedAt?: number;
+}
+
+/** The handover around a re-login: the refresher paused, then released. */
+export type LoginHold = { ok: true; held: boolean; release(): void } | { ok: false; why: string };
+
+/** The box's one login, beside the pi that holds it. */
+export interface LoginOwnerPort {
+  health(): Promise<Known<LoginHealth>>;
+  /** Pause the refresher, when one runs, for a login; release it after. */
+  hold(): Promise<LoginHold>;
+}
+
 /** One open pull request, as `gh pr list --json` gives it. */
 export interface OpenPull {
   number: number;
@@ -296,4 +319,7 @@ export interface HomeAdapters {
   autoReview: AutoReviewPort;
   memory: MemoryPort;
   spend: SpendPort;
+  /** Who refreshes the login and whether it expired. Absent: the home shows
+   * only which providers it holds. */
+  loginOwner?: LoginOwnerPort;
 }

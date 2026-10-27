@@ -17,6 +17,13 @@
 //   what it shows     —                   —                    home_status
 //   auto-review on/off alt+a              a                    home_auto_review
 //   memory on/off     alt+m               m                    home_memory
+//   sign in again     alt+l               l                    home_relogin
+//
+// Signing in again is for a login that expired or was revoked: the login
+// line says "login expired" (src/home/loginowner.ts reads the refresher's
+// record, pi's own error in the chat and auto-review's pause). It is pi's
+// device login, with auto-review's login refresher paused around it when it
+// runs, so the box keeps one login that one process refreshes (FT-0658).
 //
 // The two switches ask the person every question in the home (pi's select):
 // a tool starts one but cannot answer it, so the one confirm that turns
@@ -55,6 +62,7 @@ import { REVIEW_MESSAGE } from "@quickchatai/pi-quickreview/src/plugin/review.js
 import { readQuickReviewSettings } from "@quickchatai/pi-quickreview/src/plugin/settings.js";
 import type { HomeToolSet } from "../src/config.js";
 import { piDeviceLogin } from "../src/home/devicelogin.js";
+import { Relogin, RELOGIN_KEY, isLoginError } from "../src/home/loginowner.js";
 import { HomeModel } from "../src/home/model.js";
 import { HOME_OVERLAY, HomePanel } from "../src/home/panel.js";
 import type { HomeAdapters } from "../src/home/ports.js";
@@ -148,13 +156,20 @@ export function createHome(o: HomeOptions): ExtensionFactory {
       model,
       github: o.adapters.github,
       ports: o.setup ?? {},
-      deviceLogin: () =>
-        o.setup?.deviceLogin ?? (session ? piDeviceLogin(session.modelRegistry) : undefined),
+      deviceLogin: () => deviceLogin(),
       onChange: redraw,
       onPhase: () => {
         if (session?.mode === "tui") mount(session);
       },
       interactive: () => session?.mode === "tui",
+    });
+    const deviceLogin = () =>
+      o.setup?.deviceLogin ?? (session ? piDeviceLogin(session.modelRegistry) : undefined);
+    const relogin = new Relogin({
+      model,
+      owner: o.adapters.loginOwner,
+      deviceLogin,
+      onChange: redraw,
     });
     const dialogs = (ctx: ExtensionContext | undefined): SetupUi | undefined =>
       ctx?.hasUI
@@ -197,6 +212,8 @@ export function createHome(o: HomeOptions): ExtensionFactory {
                 unfocus: () => handle?.unfocus(),
                 frame: () => frame,
                 ask: () => sessionUi,
+                relogin: () => void relogin.start(),
+                signingAgain: () => relogin.running() !== null,
               });
         },
         {
@@ -220,7 +237,7 @@ export function createHome(o: HomeOptions): ExtensionFactory {
         // the spinner turns only while a read or a setup step is in flight
         stops.push(
           every(SPIN_MS, () => {
-            if (!model.busy() && !setup.busy()) return;
+            if (!model.busy() && !setup.busy() && relogin.running() === null) return;
             frame++;
             redraw();
           }),
@@ -230,9 +247,19 @@ export function createHome(o: HomeOptions): ExtensionFactory {
       void model.refresh();
     });
     pi.on("model_select", (e) => model.setChatModel(e.model.provider));
+    // pi's own word on the login: a reply refused for it, or one that came back
+    pi.on("message_end", (e) => {
+      const m = e.message as { role?: unknown; stopReason?: unknown; errorMessage?: unknown };
+      if (m.role !== "assistant") return;
+      if (m.stopReason === "error") {
+        if (typeof m.errorMessage === "string" && isLoginError(m.errorMessage))
+          model.loginFailed(m.errorMessage);
+      } else if (m.stopReason !== "aborted") model.chatAnswered();
+    });
     pi.on("session_shutdown", () => {
       // the session's timers and its pricing stop; a running review goes on
       model.dispose();
+      relogin.close();
       ui = undefined;
       for (const stop of stops.splice(0)) stop();
       setup.close();
@@ -267,6 +294,7 @@ export function createHome(o: HomeOptions): ExtensionFactory {
     key("alt+m", "quickreview home: switch memory on or off", (ctx) =>
       model.switchMemory(askOf(ctx)),
     );
+    key(RELOGIN_KEY, "quickreview home: sign in again (an expired login)", () => relogin.start());
     pi.registerShortcut("alt+n", {
       description: "quickreview home: run the next setup step",
       handler: (ctx) => {
@@ -370,6 +398,14 @@ export function createHome(o: HomeOptions): ExtensionFactory {
         parameters: NO_PARAMS,
         execute: async (_id, _p, _signal, _onUpdate, ctx) =>
           textResult(await model.switchMemory(askOf(ctx))),
+      },
+      home_relogin: {
+        name: "home_relogin",
+        label: "Home sign in again",
+        description:
+          "Sign in again with pi's own device-code login, for the provider the chat runs on, when the login has expired or was revoked (the home's login line says \"login expired\"). When auto-review runs on this machine its login refresher is paused during the sign-in and resumes on the new login. Answers with the URL and the code to enter once pi has them; the sign-in finishes in the background when the person approves it.",
+        parameters: NO_PARAMS,
+        execute: async () => textResult(await relogin.start()),
       },
       ...setupTools(setup),
     };

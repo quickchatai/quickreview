@@ -44,6 +44,46 @@ tool the chat's model can call: `home_sign_in`, `home_check_github`,
 `home_choose_repo` and `home_setup_next`. `qcr tui` opens the admin TUI, and
 only it starts the companion.
 
+## One login per box
+
+A machine has one OpenAI login: the one the home signed in to, in your own pi
+home (`$PI_CODING_AGENT_DIR`, else `~/.pi/agent`). The home's chat, every
+review you start from it and auto-review all use it, and exactly one process
+refreshes it at a time.
+
+- **Auto-review off:** the home's pi refreshes the login itself, by pi's own
+  rule (a token with under five minutes left, under pi's own lock on
+  `auth.json`).
+- **Switching auto-review on** shares that login with the stack. Switch-on's
+  login step writes `QCR_PI_LOGIN_DIR` (your pi agent dir) into the project
+  `.env`, which mounts it into the daemon's container at `/opt/qcr/login`,
+  and turns `[login_refresh] enabled` on in `config.toml`. The daemon's
+  refresher then owns that `auth.json`: it refreshes well ahead of pi's
+  window, so the home's pi never has a token to refresh and only reads it.
+  Only the login is shared. pi's settings in the container stay its own, and
+  your global pi settings are never written. A stack brought up before is
+  recreated on the shared login, with its data kept.
+- **Switching auto-review off** stops the daemon and its refresher with it,
+  and the home's pi refreshes on its own again.
+- **One at a time:** the refresher's lock, `loginrefresh.lock`, sits beside
+  `auth.json`, so a second refresher on the box is refused. The lock is never
+  `auth.json.lock`, which is pi's own.
+
+**When the login expires or is revoked,** the home's login line says
+*login expired*, and auto-review shows *Paused: login*. `alt+l` (`l` on the
+focused panel, or the `home_relogin` tool) signs in again with pi's device
+code. While auto-review runs, the home first pauses its refresher, the same
+handover the image's `login` mode makes, and waits until the refresher says it
+has paused. The refresher keeps its lock but writes nothing until the pause
+ends. When the sign-in ends, however it ends, the pause is lifted, the
+refresher reads the new login at once, and auto-review resumes on it. A pause
+left behind by a home that was killed mid-login is lifted by the refresher
+after 15 minutes. A raw `/login` typed in the home does not pause the
+refresher, so switch auto-review off before you use it.
+
+**A remote server** (the advanced route) signs in with its own device login
+and refreshes its own login. The host's login is never copied there.
+
 ## The setup wizard
 
 The wizard takes a machine with Docker to a working installation whose first
@@ -255,7 +295,10 @@ exactly the way an ssh passphrase would.
 Two routes, both fully supported. See [docs/llm-setup.md](llm-setup.md) for the
 cost shapes and the manual equivalents.
 
-**ChatGPT OAuth (subscription).** Flat cost, and the catch is stated up front:
+**ChatGPT OAuth (subscription).** A stack the home switches on needs none of
+the logins below: it shares the home's own login
+([One login per box](#one-login-per-box)). For the wizard's route, the cost is
+flat, and the catch is stated up front:
 pi's OAuth tokens live in the pi home of whichever process logged in and **do
 not transfer between your host and the containers**. Expect up to three separate
 browser logins — this wizard's own pi session, the daemon container, and the

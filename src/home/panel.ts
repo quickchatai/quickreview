@@ -67,6 +67,11 @@ export interface PanelHost {
   /** How a switch started from a panel key asks the person; absent, the
    * switch says it cannot ask. */
   ask?(): Ask | undefined;
+  /** Sign in again (src/home/loginowner.ts Relogin); absent: the panel
+   * offers no re-login. */
+  relogin?(): void;
+  /** A re-login is in flight. */
+  signingAgain?(): boolean;
 }
 
 const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -259,14 +264,21 @@ export class HomePanel implements Component {
   private loginLine(): [string, string] {
     const label = providerLabel(this.m.chatProvider());
     const signed = this.m.signedIn();
+    // one login per box: an expired one says so, with the key that signs in again
+    const expired = this.m.loginExpired();
+    const again = this.host.relogin ? (this.host.focused() ? "l" : "alt+l") : null;
     const login =
       this.m.state.login.kind === "pending"
         ? `${this.c("accent", this.spin())} ${this.c("muted", label)} ${this.c("dim", "checking…")}`
-        : signed === null
-          ? `${this.c("dim", "?")} ${this.c("muted", label)} unknown`
-          : signed
-            ? `${this.c("success", "✓")} ${this.c("muted", label)} ${label === "OpenAI" ? "ChatGPT" : "signed in"}`
-            : `${this.c("warning", "✗")} ${this.c("muted", label)} ${this.c("warning", "not signed in")}`;
+        : this.host.signingAgain?.()
+          ? `${this.c("accent", this.spin())} ${this.c("muted", label)} ${this.c("dim", "signing in again…")}`
+          : expired !== null
+            ? `${this.c("error", "✗")} ${this.c("muted", label)} ${this.c("error", expired)}${again ? ` ${this.c("dim", "·")} ${this.c("accent", again)} ${this.c("muted", "sign in again")}` : ""}`
+            : signed === null
+              ? `${this.c("dim", "?")} ${this.c("muted", label)} unknown`
+              : signed
+                ? `${this.c("success", "✓")} ${this.c("muted", label)} ${label === "OpenAI" ? "ChatGPT" : "signed in"}`
+                : `${this.c("warning", "✗")} ${this.c("muted", label)} ${this.c("warning", "not signed in")}`;
     const g = this.m.state.github;
     const gh =
       g.kind === "pending"
@@ -632,6 +644,7 @@ export class HomePanel implements Component {
     else if (data === "s") void m.stopReview();
     else if (data === "a") void m.switchAutoReview(this.host.ask?.());
     else if (data === "m") void m.switchMemory(this.host.ask?.());
+    else if (data === "l") this.host.relogin?.();
   }
 
   handleMouse(e: TuiMouseEvent): TuiMouseEventResult | undefined {

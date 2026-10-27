@@ -26,6 +26,7 @@ export const HOME_TOOL_NAMES = [
   "home_stop_review",
   "home_auto_review",
   "home_memory",
+  "home_relogin",
   ...HOME_SETUP_TOOL_NAMES,
 ] as const;
 

@@ -16,7 +16,11 @@
 //   - a pause keeps the lock and stops the refresh; a stale pause file lifts
 //     after 15 minutes (fake clock);
 //   - only src/loginrefresh and the entrypoint's login mode write the pihome's
-//     auth.json, and the daemon imports neither pi nor src/engine/.
+//     auth.json, and the daemon imports neither pi nor src/engine/;
+//   - one login per box (FT-0674): the host's login dir is the refresher's
+//     when it is shared, one refresher at a time across auto-review's switch
+//     on and off, and the home's re-login pauses a running refresher, writes
+//     the new login under pi's own lock, and the refresher resumes on it.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawn, spawnSync } from "node:child_process";
 import {
@@ -41,7 +45,14 @@ import {
   engineCredentials,
   readOwnerAuth,
 } from "@quickchatai/pi-quickreview/src/engine/auth.js";
-import { LoginLockHeld, acquireLoginLock, removeLegacyLockFile } from "../src/loginrefresh/lock.js";
+import {
+  LoginLockHeld,
+  acquireLoginLock,
+  loginLockHeld,
+  removeLegacyLockFile,
+} from "../src/loginrefresh/lock.js";
+import { holdRefresher, refresherRuns } from "../src/loginrefresh/handover.js";
+import { expiredWhy, hostLoginOwner } from "../src/home/loginowner.js";
 import {
   AUTH_FILE,
   LEGACY_LOCK_FILE,
@@ -56,8 +67,10 @@ import {
 } from "../src/loginrefresh/refresher.js";
 import { OAUTH_LOADERS, piOAuthRefresh } from "../src/loginrefresh/pirefresh.js";
 import {
+  CONTAINER_LOGIN_DIR,
   LOGIN_STATUS_POLL_MS,
   LoginRefreshSupervisor,
+  loginDirOf,
   loginRefreshMain,
 } from "../src/loginrefresh/supervisor.js";
 import type { LoginRefreshFileStatus } from "../src/loginrefresh/types.js";
@@ -1177,5 +1190,176 @@ describe("the daemon imports neither pi nor src/engine/", () => {
     expect(withPi.map((f) => f.slice(root.length + 1))).toEqual(["src/loginrefresh/pirefresh.ts"]);
     for (const f of files)
       expect(stripComments(readFileSync(f, "utf8")), f).not.toMatch(/\/engine\//);
+  });
+});
+
+// ---- one login per box (FT-0674) -------------------------------------------
+// On a single box the daemon's refresher runs on the HOST pi home's agent dir
+// (mounted into the container), the one the home signed in to. The home's pi
+// refreshes that file itself while auto-review is off; switching auto-review
+// on starts the daemon and its refresher on it, switching off stops both. The
+// rig's dir stands for that shared dir throughout.
+
+describe("one login per box: the shared login dir", () => {
+  // MUTATION: make loginDirOf ignore QCR_LOGIN_DIR, or accept a relative one — this fails.
+  it("is the refresher's and the workers' when the compose file names it, else pi's agent dir", () => {
+    const agent = "/home/qcr/.pi/agent";
+    expect(loginDirOf({ QCR_LOGIN_DIR: CONTAINER_LOGIN_DIR }, agent)).toBe("/opt/qcr/login");
+    // the compose file's ${QCR_PI_LOGIN_DIR:+...}: empty when nothing is shared
+    expect(loginDirOf({ QCR_LOGIN_DIR: "" }, agent)).toBe(agent);
+    expect(loginDirOf({ QCR_LOGIN_DIR: "login" }, agent)).toBe(agent);
+    expect(loginDirOf({}, agent)).toBe(agent);
+  });
+
+  it("the refresher still refreshes the openai-codex entry there, inside pi's window plus the margin", async () => {
+    const r = await rig();
+    writeLogin(r.dir, { expires: r.clk.now() + PI_REFRESH_WINDOW_MS + MARGIN_MS - 60_000 });
+    await start(r);
+    expect(r.oauth.grants()).toBe(1);
+    expect(readLogin(r.dir)["openai-codex"]).toMatchObject({
+      access: "access-2",
+      refresh: "refresh-2",
+    });
+    expect(readStatus(r.dir).provider).toBe("openai-codex");
+  });
+});
+
+describe("one login per box: the hand-over", () => {
+  // MUTATION: have loginLockHeld create the lock file, or report a free lock as held — this fails.
+  it("is one refresher at a time across switch-on, switch-off and switch-on again", async () => {
+    const r = await rig();
+    writeLogin(r.dir, { expires: r.clk.now() + 24 * HOUR });
+    const owner = hostLoginOwner({ loginDir: r.dir, now: r.clk.now });
+    const lock = join(r.dir, LOCK_FILE);
+    // auto-review off: no refresher, the home's pi refreshes by itself
+    expect(await refresherRuns(r.dir)).toBe(false);
+    expect(existsSync(lock)).toBe(false); // the probe creates no lock file
+    expect(await owner.health()).toEqual({ kind: "known", value: { refresher: "home" } });
+    // switch-on: the daemon's refresher takes the login
+    const daemon = await start(r);
+    expect(loginLockHeld(lock)).toBe(true);
+    expect(await owner.health()).toMatchObject({
+      kind: "known",
+      value: { refresher: "auto-review" },
+    });
+    // a second refresher, from wherever, is refused
+    await expect(LoginRefresher.start(r.deps, { autoRun: false })).rejects.toBeInstanceOf(
+      LoginLockHeld,
+    );
+    // the home's pi, a borrower now, still locks and reads the file beside it
+    const pi = new FileAuthStorageBackend(join(r.dir, AUTH_FILE));
+    const seen = pi.withLock((current) => ({ result: current }));
+    expect(JSON.parse(seen ?? "{}")["openai-codex"].refresh).toBe("refresh-1");
+    // switch-off: the daemon stops, its refresher with it
+    await daemon.stop();
+    expect(loginLockHeld(lock)).toBe(false);
+    expect(await owner.health()).toEqual({ kind: "known", value: { refresher: "home" } });
+    // a re-login now pauses nothing
+    const hold = await holdRefresher(r.dir);
+    expect(hold).toMatchObject({ ok: true, held: false });
+    expect(existsSync(join(r.dir, PAUSE_FILE))).toBe(false);
+    // switch-on again: one refresher again
+    await start(r);
+    expect(loginLockHeld(lock)).toBe(true);
+  });
+
+  it("whether a refresher runs is unknown where flock cannot tell, unless the daemon's state answers", async () => {
+    const r = await rig();
+    writeFileSync(join(r.dir, LOCK_FILE), "");
+    const flockBin = join(r.dir, "no-such-flock");
+    expect(loginLockHeld(join(r.dir, LOCK_FILE), { flockBin })).toBeNull();
+    expect(await refresherRuns(r.dir, { flockBin })).toBeNull();
+    expect(await refresherRuns(r.dir, { flockBin, refresherRuns: async () => false })).toBe(false);
+    const hold = await holdRefresher(r.dir, { flockBin });
+    expect(hold.ok).toBe(false);
+    expect(existsSync(join(r.dir, PAUSE_FILE))).toBe(false);
+  });
+});
+
+describe("one login per box: the home's re-login", () => {
+  // MUTATION: resolve holdRefresher without waiting for `"paused": true`, or keep the
+  // pause file after release — this fails.
+  it("pauses the running refresher, keeps its lock, and the refresher resumes on the new login", async () => {
+    const r = await rig();
+    // the login expired and the refresh fails: the record says so
+    writeLogin(r.dir, { expires: Date.now() - 60_000 });
+    r.oauth.failWith(500);
+    const refresher = await start(r, { now: Date.now });
+    const owner = hostLoginOwner({ loginDir: r.dir, now: Date.now });
+    expect(await owner.health()).toMatchObject({
+      kind: "known",
+      value: { refresher: "auto-review", expired: "login expired" },
+    });
+    // the hold: the pause file, then the refresher's own word that it paused
+    const hold = await holdRefresher(r.dir, {
+      pollMs: 0,
+      sleep: () => refresher.tick(),
+    });
+    expect(hold).toMatchObject({ ok: true, held: true });
+    expect(existsSync(join(r.dir, PAUSE_FILE))).toBe(true);
+    expect(readStatus(r.dir).paused).toBe(true);
+    await expect(acquireLoginLock(join(r.dir, LOCK_FILE))).rejects.toBeInstanceOf(LoginLockHeld);
+    // pi's device login writes the new login under pi's own lock
+    const pi = new FileAuthStorageBackend(join(r.dir, AUTH_FILE));
+    pi.withLock(() => ({
+      result: null,
+      next: JSON.stringify({
+        "openai-codex": {
+          type: "oauth",
+          access: "login-access",
+          refresh: "login-refresh",
+          expires: Date.now() + 24 * HOUR,
+          accountId: "acct-1",
+        },
+      }),
+    }));
+    if (hold.ok) hold.release();
+    expect(existsSync(join(r.dir, PAUSE_FILE))).toBe(false);
+    await refresher.tick(); // resumes, and looks at once
+    const st = readStatus(r.dir);
+    expect(st.paused).toBe(false);
+    expect(st.last_error).toBeNull();
+    expect(Date.parse(st.expires_at!)).toBeGreaterThan(Date.now() + 23 * HOUR);
+    // nothing was refreshed over the new login
+    expect(r.oauth.grants()).toBe(0);
+    expect(readLogin(r.dir)["openai-codex"].refresh).toBe("login-refresh");
+    expect(await owner.health()).toMatchObject({
+      kind: "known",
+      value: { refresher: "auto-review" },
+    });
+    expect(((await owner.health()) as { value: { expired?: string } }).value.expired).toBe(
+      undefined,
+    );
+  });
+
+  it("refuses, and lifts its pause file, when the refresher does not pause in time", async () => {
+    const r = await rig();
+    writeLogin(r.dir, { expires: r.clk.now() + 24 * HOUR });
+    await start(r);
+    let t = 0;
+    const hold = await holdRefresher(r.dir, {
+      waitMs: 3_000,
+      now: () => t,
+      sleep: async (ms) => {
+        t += Math.max(ms, 500);
+      },
+    });
+    expect(hold.ok).toBe(false);
+    if (!hold.ok) expect(hold.why).toMatch(/did not pause within 3 s/);
+    expect(existsSync(join(r.dir, PAUSE_FILE))).toBe(false);
+  });
+
+  it("reads 'login expired' from the refresher's record: a refused grant, or a failing refresh past expiry", () => {
+    const now = Date.parse("2026-10-27T12:00:00Z");
+    const iso = (ms: number): string => new Date(now + ms).toISOString();
+    expect(expiredWhy({ last_error: null, expires_at: iso(-HOUR) }, now)).toBeNull();
+    expect(expiredWhy({ last_error: "openai-codex: 500", expires_at: iso(HOUR) }, now)).toBeNull();
+    expect(expiredWhy({ last_error: "openai-codex: 500", expires_at: iso(-1) }, now)).toBe(
+      "login expired",
+    );
+    expect(expiredWhy({ last_error: "invalid_grant", expires_at: iso(HOUR) }, now)).toBe(
+      "login expired",
+    );
+    expect(expiredWhy("not a record", now)).toBeNull();
   });
 });

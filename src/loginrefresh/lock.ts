@@ -24,6 +24,7 @@ import {
   chmodSync,
   chownSync,
   closeSync,
+  existsSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -152,4 +153,21 @@ export function removeLegacyLockFile(
   } catch (err) {
     return (err as NodeJS.ErrnoException).code === "ENOENT" ? "absent" : "unremovable";
   }
+}
+
+/**
+ * Does a refresher hold the lock at `path` now? true or false; null when it
+ * cannot be told (no flock on this machine, or flock failed). A probe, never a
+ * holder: no lock file is created where there is none (none: nobody holds it).
+ */
+export function loginLockHeld(path: string, o: { flockBin?: string } = {}): boolean | null {
+  if (!existsSync(path)) return false;
+  const probe = spawnSync(
+    o.flockBin ?? "flock",
+    ["-n", "-E", String(LOCK_HELD_EXIT), path, "true"],
+    { stdio: "ignore" },
+  );
+  if (probe.error) return null;
+  if (probe.status === LOCK_HELD_EXIT) return true;
+  return probe.status === 0 ? false : null;
 }

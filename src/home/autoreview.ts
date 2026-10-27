@@ -84,17 +84,39 @@ function parseSnapshot(text: string): Obj | string {
   }
 }
 
-/** Why the login it reviews on stops it, or null. */
+/** Why the login it reviews on stops it, or null. A re-login ends the pause
+ * (FT-0674): the refresher's record, read after the last auth failure the
+ * daemon saw, of a login that works now, outweighs that failure's flag (which
+ * would otherwise stand for its own half hour). */
 function loginPause(s: Obj, now: number): string | null {
-  if (isObj(s["pi_auth_expired"])) return "login expired";
   const lr = s["login_refresh"];
   const login = isObj(lr) ? lr["login"] : undefined;
+  const expired = s["pi_auth_expired"];
+  if (isObj(expired) && !(isObj(login) && worksSince(login, expired["last_at"], now)))
+    return "login expired";
   if (!isObj(login)) return null;
   if (login["paused"] === true) return "a login is in progress";
   const expires = typeof login["expires_at"] === "string" ? Date.parse(login["expires_at"]) : NaN;
   if (Number.isFinite(expires) && expires <= now && typeof login["last_error"] === "string")
     return "login expired";
   return null;
+}
+
+/** The refresher looked after `since` and found a login that works: not
+ * paused, no error, a token not yet expired. */
+function worksSince(login: Obj, since: unknown, now: number): boolean {
+  const at = typeof since === "string" ? Date.parse(since) : NaN;
+  const checked = typeof login["checked_at"] === "string" ? Date.parse(login["checked_at"]) : NaN;
+  const expires = typeof login["expires_at"] === "string" ? Date.parse(login["expires_at"]) : NaN;
+  return (
+    Number.isFinite(at) &&
+    Number.isFinite(checked) &&
+    checked > at &&
+    login["paused"] !== true &&
+    login["last_error"] === null &&
+    Number.isFinite(expires) &&
+    expires > now
+  );
 }
 
 /** The pipeline's or the provider's cause, or null. */

@@ -18,6 +18,11 @@
 //              this machine's compose stack (src/home/autoreview.ts,
 //              src/home/memory.ts): the containers, the daemon's own
 //              status.json, and the switches over the wizard's steps.
+//   login owner
+//              the same pi agent dir: whether auto-review's refresher holds
+//              the login (its lock beside auth.json, shared into the stack)
+//              and whether its record says the login expired
+//              (src/home/loginowner.ts).
 //
 // Spend has no adapter yet: its stub answers unknown, so the
 // panel says Unknown rather than a zero.
@@ -32,7 +37,9 @@ import { HOME_DEFAULTS, sandboxRoot, type HomeToolSet } from "../config.js";
 import { loadOneShotConfig, locateConfig, operatorStateDir, stateHome } from "../homes.js";
 import type { OnboardAdapters } from "../onboard/engine.js";
 import { openStepMemoryForward } from "../onboard/stepforward.js";
-import { composeAutoReview } from "./autoreview.js";
+import { composeAutoReview, serviceState } from "./autoreview.js";
+import { hostLoginOwner } from "./loginowner.js";
+import { DAEMON_SERVICE } from "../onboard/steps/compose.js";
 import { composeMemory } from "./memory.js";
 import { stepRunner } from "./switchon.js";
 import { piAgentDir } from "../piagentdir.js";
@@ -290,8 +297,19 @@ export function realHomeAdapters(o: {
           runner: stepRunner,
           stepAdapters: stepAdapters(o.root, o.configPath),
         };
+  const daemonRuns = stack
+    ? async (): Promise<boolean | null> => {
+        const s = await serviceState(stack.runner, stack.root, DAEMON_SERVICE);
+        return s.kind === "known" ? s.value !== "stopped" : null;
+      }
+    : undefined;
   return {
     login: piLoginPort(o.agentDir),
+    loginOwner: hostLoginOwner({
+      loginDir: o.agentDir,
+      now: () => Date.now(),
+      ...(daemonRuns ? { daemonRuns } : {}),
+    }),
     github: githubPort(o.runner ?? execRunner),
     repo,
     clock: { now: () => Date.now() },
@@ -299,7 +317,8 @@ export function realHomeAdapters(o: {
     ...unbuiltPorts,
     ...(stack
       ? {
-          autoReview: composeAutoReview({ ...stack, now: () => Date.now() }),
+          // switch-on shares the home's login with the stack (src/home/loginshare.ts)
+          autoReview: composeAutoReview({ ...stack, loginDir: o.agentDir, now: () => Date.now() }),
           memory: composeMemory({
             ...stack,
             repo: async () => {
