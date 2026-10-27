@@ -1,6 +1,6 @@
 // The setup checklist's real ports (src/home/setup.ts), and the one function
 // that turns a process's environment into them: the env shim
-// (extensions/cli/home.ts) calls `homeSetupFromEnv(process.env)`.
+// (extensions/cli/home.ts) calls `homeSetupFromEnv(process.env, VERSION)`.
 //
 //   first-run checks  the plugin's pi-version and git steps, over a
 //                     PluginHost of this process (its PATH, the running pi)
@@ -24,7 +24,6 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parse } from "smol-toml";
-import { VERSION } from "@earendil-works/pi-coding-agent";
 import { assetRoot } from "@quickchatai/pi-quickreview/src/assetroot.js";
 import { nodeRunner } from "@quickchatai/pi-quickreview/src/plugin/runner.js";
 import type { PluginHost } from "@quickchatai/pi-quickreview/src/plugin/session.js";
@@ -248,14 +247,15 @@ export function repoPickPort(o: {
 }
 
 /** The PluginHost the first-run checks read: this process's PATH and the
- * running pi. Only the plugin's pi-version and git steps run over it, so its
- * auth answers nothing. */
-export function firstRunHost(env: Env): PluginHost {
+ * running pi (its version, which the env shim reads off pi). Only the
+ * plugin's pi-version and git steps run over it, so its auth answers
+ * nothing. */
+export function firstRunHost(env: Env, piVersion: string): PluginHost {
   return {
     cwd: join(stateHome(env), "home"),
     env,
     home: (env["HOME"] ?? "").trim() || homedir(),
-    piVersion: VERSION,
+    piVersion,
     agentDir: piAgentDir(env),
     auth: {
       logins: () => ({}),
@@ -267,8 +267,9 @@ export function firstRunHost(env: Env): PluginHost {
   };
 }
 
-/** The setup's options from a process's environment: the env shim's one call. */
-export function homeSetupFromEnv(env: Env): HomeSetupPorts {
+/** The setup's options from a process's environment and the running pi's
+ * version: the env shim's one call. */
+export function homeSetupFromEnv(env: Env, piVersion: string): HomeSetupPorts {
   let range: string | null = null;
   try {
     range = declaredPiRange();
@@ -276,7 +277,7 @@ export function homeSetupFromEnv(env: Env): HomeSetupPorts {
     range = null;
   }
   return {
-    ...(range !== null ? { firstRun: { host: firstRunHost(env), range } } : {}),
+    ...(range !== null ? { firstRun: { host: firstRunHost(env, piVersion), range } } : {}),
     repos: repoPickPort({
       runner: execRunner,
       configPath: () => locateConfig({ env }).path,
