@@ -24,6 +24,9 @@
 // record, pi's own error in the chat and auto-review's pause). It is pi's
 // device login, with auto-review's login refresher paused around it when it
 // runs, so the box keeps one login that one process refreshes (FT-0658).
+//   tune to this repo alt+t               t                    home_tune,
+//                                                              home_tune_write
+//   advanced          alt+x               x                    home_advanced
 //
 // The two switches ask the person every question in the home (pi's select):
 // a tool starts one but cannot answer it, so the one confirm that turns
@@ -63,6 +66,8 @@ import { readQuickReviewSettings } from "@quickchatai/pi-quickreview/src/plugin/
 import type { HomeToolSet } from "../src/config.js";
 import { piDeviceLogin } from "../src/home/devicelogin.js";
 import { Relogin, RELOGIN_KEY, isLoginError } from "../src/home/loginowner.js";
+import { HomeAdvanced, type AdvancedAsk, type AdvancedPort } from "../src/home/advanced.js";
+import { advancedTools } from "../src/home/advancedtools.js";
 import { HomeModel } from "../src/home/model.js";
 import { HOME_OVERLAY, HomePanel } from "../src/home/panel.js";
 import type { HomeAdapters } from "../src/home/ports.js";
@@ -71,6 +76,7 @@ import { HomeSetup, type HomeSetupPorts, type SetupUi } from "../src/home/setup.
 import { SETUP_OVERLAY, SetupCard } from "../src/home/setupcard.js";
 import { setupTools } from "../src/home/setuptools.js";
 import { HOME_TOOL_NAMES } from "../src/home/toolnames.js";
+import { HomeTune, type TunePort } from "../src/home/tune.js";
 
 type HomeToolName = (typeof HOME_TOOL_NAMES)[number];
 
@@ -86,6 +92,10 @@ export interface HomeOptions {
   after?: (ms: number, fn: () => void) => () => void;
   /** The setup checklist's ports beyond the home's own. */
   setup?: HomeSetupPorts;
+  /** "Tune to this repo": Setup over a checkout (src/home/tune.ts). */
+  tune?: TunePort;
+  /** Advanced: the wizard's steps beyond switch-on (src/home/advanced.ts). */
+  advanced?: AdvancedPort;
 }
 
 /** How often the home reads its sources again by itself. */
@@ -171,6 +181,24 @@ export function createHome(o: HomeOptions): ExtensionFactory {
       deviceLogin,
       onChange: redraw,
     });
+    const tune = new HomeTune({
+      ...(o.tune ? { port: o.tune } : {}),
+      repo: () => model.repo(),
+      say: (text, kind) => model.say(text, kind),
+      after: o.after ?? realAfter,
+      onChange: redraw,
+    });
+    const advanced = new HomeAdvanced({
+      ...(o.advanced ? { port: o.advanced } : {}),
+      ...(o.adapters.autoReview.control ? { autoReview: o.adapters.autoReview.control } : {}),
+      say: (text, kind) => model.say(text, kind),
+      refresh: () => model.refresh(),
+    });
+    // Setup's brief goes to the chat as the person's message, after the
+    // agent's turn when one is running
+    const tellAgent = (text: string): void => pi.sendUserMessage(text, { deliverAs: "followUp" });
+    const advancedAsk = (ctx: ExtensionContext | undefined): AdvancedAsk | undefined =>
+      ctx?.hasUI ? ctx.ui : session?.hasUI ? session.ui : undefined;
     const dialogs = (ctx: ExtensionContext | undefined): SetupUi | undefined =>
       ctx?.hasUI
         ? {
@@ -214,6 +242,8 @@ export function createHome(o: HomeOptions): ExtensionFactory {
                 ask: () => sessionUi,
                 relogin: () => void relogin.start(),
                 signingAgain: () => relogin.running() !== null,
+                tune: () => void tune.tune(tellAgent),
+                advanced: () => void advanced.open(advancedAsk(session)),
               });
         },
         {
@@ -260,6 +290,7 @@ export function createHome(o: HomeOptions): ExtensionFactory {
       // the session's timers and its pricing stop; a running review goes on
       model.dispose();
       relogin.close();
+      tune.dispose();
       ui = undefined;
       for (const stop of stops.splice(0)) stop();
       setup.close();
@@ -295,6 +326,14 @@ export function createHome(o: HomeOptions): ExtensionFactory {
       model.switchMemory(askOf(ctx)),
     );
     key(RELOGIN_KEY, "quickreview home: sign in again (an expired login)", () => relogin.start());
+    key("alt+t", "quickreview home: tune the review to this repo (Setup)", () =>
+      tune.tune(tellAgent),
+    );
+    key(
+      "alt+x",
+      "quickreview home: advanced (a GitHub App, webhooks, a server, Slack, live)",
+      (ctx) => advanced.open(advancedAsk(ctx)),
+    );
     pi.registerShortcut("alt+n", {
       description: "quickreview home: run the next setup step",
       handler: (ctx) => {
@@ -408,6 +447,7 @@ export function createHome(o: HomeOptions): ExtensionFactory {
         execute: async () => textResult(await relogin.start()),
       },
       ...setupTools(setup),
+      ...advancedTools({ tune, advanced, tellAgent, ask: (ctx) => advancedAsk(ctx) }),
     };
     for (const name of HOME_TOOL_NAMES) registerQcrTool(pi, tools[name]);
   };

@@ -72,6 +72,10 @@ export interface PanelHost {
   relogin?(): void;
   /** A re-login is in flight. */
   signingAgain?(): boolean;
+  /** t: "Tune to this repo" (src/home/tune.ts). */
+  tune?(): void;
+  /** x: Advanced (src/home/advanced.ts). */
+  advanced?(): void;
 }
 
 const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -587,6 +591,9 @@ export class HomePanel implements Component {
       ...(running ? [k(f ? "s" : "alt+s", "stop")] : []),
       k(f ? "u" : "alt+u", "refresh"),
       k(f ? "esc" : "f2", f ? "chat" : "focus"),
+      // alt+t and alt+x while typing: the hints keep to the column's width
+      ...(f && this.host.tune ? [k("t", "tune")] : []),
+      ...(f && this.host.advanced ? [k("x", "advanced")] : []),
     ];
     return this.row(w, items.join("  "));
   }
@@ -645,6 +652,8 @@ export class HomePanel implements Component {
     else if (data === "a") void m.switchAutoReview(this.host.ask?.());
     else if (data === "m") void m.switchMemory(this.host.ask?.());
     else if (data === "l") this.host.relogin?.();
+    else if (data === "t") this.host.tune?.();
+    else if (data === "x") this.host.advanced?.();
   }
 
   handleMouse(e: TuiMouseEvent): TuiMouseEventResult | undefined {

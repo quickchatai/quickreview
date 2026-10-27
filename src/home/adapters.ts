@@ -24,8 +24,8 @@
 //              and whether its record says the login expired
 //              (src/home/loginowner.ts).
 //
-// Spend has no adapter yet: its stub answers unknown, so the
-// panel says Unknown rather than a zero.
+//   spend      the app's detached runs' costs and the daemon's recorded
+//              costs (src/home/spend.ts): unknown when either can't be read.
 import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -41,6 +41,9 @@ import { composeAutoReview, serviceState } from "./autoreview.js";
 import { hostLoginOwner } from "./loginowner.js";
 import { DAEMON_SERVICE } from "../onboard/steps/compose.js";
 import { composeMemory } from "./memory.js";
+import { realSpendPort } from "./spend.js";
+import { composeAdvanced, type AdvancedPort } from "./advanced.js";
+import { checkoutTune, type TunePort } from "./tune.js";
 import { stepRunner } from "./switchon.js";
 import { piAgentDir } from "../piagentdir.js";
 import { qcrChild, realDetachSeams, reviewsPort } from "./reviews.js";
@@ -286,6 +289,8 @@ export function realHomeAdapters(o: {
   /** The app root, the compose project of this machine's stack: given, the
    * auto-review and memory ports read and switch it. */
   root?: string;
+  /** The spend line's port (src/home/spend.ts); absent, its stub. */
+  spend?: SpendPort;
 }): HomeAdapters {
   const repo = repoPort(o.configPath);
   const stack =
@@ -315,6 +320,7 @@ export function realHomeAdapters(o: {
     clock: { now: () => Date.now() },
     reviews: o.reviews,
     ...unbuiltPorts,
+    ...(o.spend ? { spend: o.spend } : {}),
     ...(stack
       ? {
           // switch-on shares the home's login with the stack (src/home/loginshare.ts)
@@ -336,17 +342,32 @@ export function homeOptionsFromEnv(env: Readonly<Record<string, string | undefin
   adapters: HomeAdapters;
   model: string;
   tools: HomeToolSet;
+  tune: TunePort;
+  advanced: AdvancedPort;
 } {
   const model = (env[HOME_MODEL_ENV] ?? "").trim() || HOME_DEFAULTS.model;
   const tools: HomeToolSet = env[HOME_TOOLS_ENV] === "full" ? "full" : "reviewer";
+  const root = (env["QCR_ROOT"] ?? "").trim() || sandboxRoot();
+  const configPath = (): string => locateConfig({ env }).path;
   return {
     adapters: realHomeAdapters({
       agentDir: piAgentDir(env),
-      configPath: () => locateConfig({ env }).path,
+      configPath,
       reviews: realReviewsPort(env),
-      root: (env["QCR_ROOT"] ?? "").trim() || sandboxRoot(),
+      root,
+      spend: realSpendPort({
+        registry: join(stateHome(env), "review", "detached"),
+        root,
+        runner: stepRunner,
+      }),
     }),
     model,
     tools,
+    tune: checkoutTune({ env, root: assetRoot, configPath, runner: stepRunner }),
+    advanced: composeAdvanced({
+      root,
+      env,
+      stepAdapters: stepAdapters(root, configPath),
+    }),
   };
 }
