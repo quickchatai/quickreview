@@ -32,13 +32,7 @@ import { readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import type { StateStore } from "../state.js";
 import { yieldToLoop } from "@quickchatai/pi-quickreview/src/yieldloop.js";
-import {
-  archiveStamp,
-  bundlePassOf,
-  freshPassId,
-  identityFields,
-  sameRecorded,
-} from "./archivewrite.js";
+import { archiveStamp, bundlePassOf, freshPassId, identityFields } from "./archivewrite.js";
 import { readBundleRecords } from "./bundle.js";
 import { sameIdentity } from "./fsutil.js";
 import {
@@ -182,20 +176,23 @@ export async function restorePr(
         const steady = sameIdentity(live, after);
         if (steady && d.bytes === r.bytes && d.sha256 === r.sha256) {
           out.present += 1;
-          // Its identity is recorded unless it is the one the archive record
-          // already holds (a source that was never unlinked). A file an
-          // earlier restore pass put back — one that died before its entry
-          // was written — has a NEW inode: unrecorded, a re-archive after a
-          // re-close would not know it and would compress the same bytes
-          // again under `.v2`, instead of reusing the archived copy.
-          if (!sameRecorded(r, live))
-            restored.push({
-              source: r.source,
-              archive: r.archive,
-              sha256: r.sha256,
-              ...identityFields(live),
-              present: true,
-            });
+          // Its identity is recorded, always. A file an earlier restore pass
+          // put back — one that died before its entry was written — is
+          // unknown to the manifest otherwise, and a re-archive after a
+          // re-close would compress the same bytes again under `.v2` instead
+          // of reusing the archived copy. Its identity is no sign of whether
+          // it was ever unlinked: the filesystem hands a freed inode number
+          // back, and the restore gave the file its original size and mtime,
+          // so a file put back can carry exactly the identity the archive
+          // record holds. Recording a source that was never unlinked costs
+          // one `reused` entry at the re-archive, nothing more.
+          restored.push({
+            source: r.source,
+            archive: r.archive,
+            sha256: r.sha256,
+            ...identityFields(live),
+            present: true,
+          });
         } else out.liveDiffers.push(r.source);
         continue;
       }

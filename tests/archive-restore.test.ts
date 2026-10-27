@@ -604,36 +604,43 @@ describe("a restore cut short, then a re-close: nothing is compressed twice (reh
       n.endsWith(".gz"),
     );
 
+  // A restore killed after two files landed: no restore entry, no row update.
+  const cutShort = async (
+    f: PrFixture,
+  ): Promise<{ deps: Parameters<typeof restorePr>[0]; landed: string[] }> => {
+    reopen(f);
+    const deps = {
+      store: f.store,
+      root: f.root,
+      sessionsRoot: join(f.root, "state", "pi-sessions"),
+      now: () => new Date(f.clock.ms),
+      bytesPerS: 1e9,
+      log: () => {},
+    };
+    let n = 0;
+    await expect(
+      restorePr(
+        {
+          ...deps,
+          step: (name) => {
+            if (name === "restored_file" && ++n === 2) throw new Error("killed");
+          },
+        },
+        f.pr,
+        "reopen",
+      ),
+    ).rejects.toThrow("killed");
+    const landed = f.transcripts.filter((t) => existsSync(join(f.root, t)));
+    expect(landed.length).toBe(2);
+    return { deps, landed };
+  };
+
   it(
     "files an interrupted restore put back are recorded by the pass that completes it — the re-archive reuses them, no transcript is read into a gzip again",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
       const f = await archived();
-      reopen(f);
-      const deps = {
-        store: f.store,
-        root: f.root,
-        sessionsRoot: join(f.root, "state", "pi-sessions"),
-        now: () => new Date(f.clock.ms),
-        bytesPerS: 1e9,
-        log: () => {},
-      };
-      // Killed after two files landed: no restore entry, no row update.
-      let n = 0;
-      await expect(
-        restorePr(
-          {
-            ...deps,
-            step: (name) => {
-              if (name === "restored_file" && ++n === 2) throw new Error("killed");
-            },
-          },
-          f.pr,
-          "reopen",
-        ),
-      ).rejects.toThrow("killed");
-      const landed = f.transcripts.filter((t) => existsSync(join(f.root, t)));
-      expect(landed.length).toBe(2);
+      const { deps, landed } = await cutShort(f);
       const again = await restorePr(deps, f.pr, "reopen");
       expect(again).toMatchObject({ outcome: "restored", present: 2, restored: 2 });
       // The restore entry carries the files found back, with their NEW inodes.
@@ -659,6 +666,51 @@ describe("a restore cut short, then a re-close: nothing is compressed twice (reh
       );
       expect(added.map((e) => e.source).sort()).toEqual([...f.transcripts].sort());
       for (const t of f.transcripts) expect(existsSync(join(f.root, t))).toBe(false);
+    },
+  );
+
+  it(
+    "…and so are those that landed on the very inode the archive freed: the filesystem hands inode numbers back, and the restored size and mtime then make the identity the archived one",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const f = await archived();
+      const { deps, landed } = await cutShort(f);
+      // What an allocator that hands a freed inode number straight back
+      // produces (ext4 can, and CI's did): each landed file's identity — its
+      // dev and ino, and the size and original mtime the restore gave it — is
+      // the one its archive record holds. No test can choose the inode a file
+      // gets, so the record is given the landed file's dev and ino instead.
+      const m = manifestOf(f);
+      for (const e of m.entries) {
+        if (e.kind !== "transcript" || !landed.includes(e.source as string)) continue;
+        const st = statSync(join(f.root, e.source as string));
+        expect([e.bytes, e.mtime_ms]).toEqual([st.size, st.mtimeMs]);
+        Object.assign(e, { dev: st.dev, ino: st.ino });
+      }
+      writeFileSync(join(f.root, "archive", `pr-${f.pr}`, "manifest.json"), JSON.stringify(m));
+      const again = await restorePr(deps, f.pr, "reopen");
+      expect(again).toMatchObject({ outcome: "restored", present: 2, restored: 2 });
+      // Recorded all the same: an identity cannot tell a file put back on a
+      // reused inode from a source that was never unlinked.
+      const restore = manifestOf(f)
+        .entries.filter((e) => e.kind === "restore")
+        .pop()!;
+      const restored = restore.restored as Array<Record<string, unknown>>;
+      for (const t of landed)
+        expect(restored.find((r) => r.source === t)).toMatchObject({
+          present: true,
+          ino: statSync(join(f.root, t)).ino,
+        });
+      // The re-archive reuses every transcript, these two included.
+      const before = gzNames(f);
+      const steps: string[] = [];
+      await reclose(f, steps);
+      expect(steps.filter((x) => x.startsWith("partial_written"))).toEqual([]);
+      expect(gzNames(f)).toEqual(before);
+      const added = manifestOf(f).entries.filter(
+        (e) => e.kind === "transcript" && e.reused === true,
+      );
+      expect(added.map((e) => e.source).sort()).toEqual([...f.transcripts].sort());
     },
   );
 
