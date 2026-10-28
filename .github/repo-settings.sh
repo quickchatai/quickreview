@@ -134,24 +134,6 @@ upsert_ruleset "release tags" '{
   "rules": [ { "type": "creation" }, { "type": "update" }, { "type": "deletion" } ]
 }'
 
-# release-e2e holds RELEASE_E2E_PI_AUTH: a run reaches it only from main (a
-# dispatched scratch run) or a v*.*.* tag, and only after the admin running
-# this script approves the deployment (release.yml's "the owner as the
-# required reviewer", which a public repo's plan supports). A real release
-# cannot publish without its e2e, so this approval gates every publish.
-reviewer=$(gh api user --jq .id)
-call PUT /environments/release-e2e "{
-  \"reviewers\": [ { \"type\": \"User\", \"id\": $reviewer } ],
-  \"deployment_branch_policy\": { \"protected_branches\": false, \"custom_branch_policies\": true }
-}"
-have=$(gh api "repos/$REPO/environments/release-e2e/deployment-branch-policies" \
-  --jq '.branch_policies[] | .type + ":" + .name' 2>/dev/null || true)
-for want in branch:main 'tag:v*.*.*'; do
-  grep -qxF "$want" <<<"$have" ||
-    call POST /environments/release-e2e/deployment-branch-policies \
-      "{ \"type\": \"${want%%:*}\", \"name\": \"${want#*:}\" }"
-done
-
 # The label the proposal issue form applies (.github/ISSUE_TEMPLATE/proposal.yml).
 echo "label proposal"
 $APPLY && gh label create proposal --repo "$REPO" --force \

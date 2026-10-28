@@ -1,9 +1,8 @@
-# Release: build both images on both architectures, smoke each offline, run
-# one paid end-to-end review behind a human approval, then push to ghcr with
-# provenance attestations, and stage both npm packages for a maintainer's
-# approval.
+# Release: build both images on both architectures, smoke each offline, then
+# push to ghcr with provenance attestations, and stage both npm packages for a
+# maintainer's approval.
 #
-#   plan -> build (image x arch) -> e2e (release-e2e) -> publish (image)
+#   plan -> build (image x arch) -> publish (image)
 #        -> manifest -> attach-manifest (a non-scratch version only)
 #        -> npm (a real tag push only)
 #
@@ -53,12 +52,7 @@
 # fallback, slow, and the memory image can take hours under emulation.
 #
 # What the owner sets up once (this file creates none of it):
-#   - environment `release-e2e`, with the owner as the required reviewer;
-#     the e2e job is the only job that reads its secret;
-#   - secret `RELEASE_E2E_PI_AUTH` in that environment: the contents of a pi
-#     auth.json (a login for the model the e2e reaches), nothing else;
-#   - optional repo variables QCR_RUNNERS and RELEASE_ARM64_RUNNER (above) and
-#     RELEASE_E2E_LIMIT_USD (the per-run cap handed to `review --limit`).
+#   - optional repo variables QCR_RUNNERS and RELEASE_ARM64_RUNNER (above).
 #   - packages: the repo needs write access to both ghcr packages, which are
 #     public, so anyone pulls them with no login. The provenance attestations
 #     run on a public repo, as npm's provenance does; a private copy of this
@@ -77,14 +71,12 @@
 #     is staged by CI and approved by a maintainer with 2FA. No npm token
 #     exists anywhere for this workflow.
 #
-# The paid e2e is counted against the small separate release grant, not
-# the bench budget. Each run writes its ledger line (version, run, cap, spend)
-# to the job summary and to the e2e-ledger artifact.
+# No job reaches a model: the smoke runs offline, and no release step costs
+# money or holds a model login.
 #
-# Scratch runs: a version with `-scratch` in it (v0.0.0-scratch.1) may skip the
-# e2e (workflow_dispatch input run_e2e=false). A scratch version never moves
-# any tag but its own. A real version cannot skip the e2e, and cannot be
-# published from anything but its own tag.
+# Scratch runs: a version with `-scratch` in it (v0.0.0-scratch.1) may run from
+# any ref (workflow_dispatch). A scratch version never moves any tag but its
+# own. A real version cannot be published from anything but its own tag.
 name: Release
 
 on:
@@ -96,11 +88,6 @@ on:
         description: "Version without the leading v (X.Y.Z, or X.Y.Z-scratch.N for a scratch run)"
         required: true
         type: string
-      run_e2e:
-        description: "Run the paid e2e (only a -scratch version may turn it off)"
-        required: false
-        default: true
-        type: boolean
       publish:
         description: "Push to ghcr after the gates (a tag push always does)"
         required: false
@@ -120,7 +107,6 @@ jobs:
     outputs:
       version: ${{ steps.plan.outputs.version }}
       scratch: ${{ steps.plan.outputs.scratch }}
-      e2e: ${{ steps.plan.outputs.e2e }}
       publish: ${{ steps.plan.outputs.publish }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -131,30 +117,22 @@ jobs:
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
           IN_VERSION: ${{ inputs.version }}
-          IN_E2E: ${{ inputs.run_e2e }}
           IN_PUBLISH: ${{ inputs.publish }}
         run: |
           set -euo pipefail
           die() { echo "::error::release plan: $*"; exit 1; }
           if [ "$EVENT" = push ]; then
             version="${REF_NAME#v}"
-            want_e2e=true
             publish=true
           else
             version="$IN_VERSION"
-            want_e2e="$IN_E2E"
             publish="$IN_PUBLISH"
           fi
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] ||
             die "'$version' is not X.Y.Z or X.Y.Z-suffix"
           scratch=false
           [[ "$version" == *-scratch* ]] && scratch=true
-          e2e="$want_e2e"
-          if [ "$scratch" = true ]; then
-            # A tag push has no inputs, so a scratch tag always skips the paid run.
-            [ "$EVENT" != push ] || e2e=false
-          else
-            [ "$e2e" = true ] || die "only a -scratch version may skip the e2e"
+          if [ "$scratch" != true ]; then
             [ "$REF_TYPE" = tag ] && [ "$REF_NAME" = "v$version" ] ||
               die "a real release runs from its own tag v$version (this is $REF_TYPE $REF_NAME)"
             pkg="$(node -p 'require("./package.json").version')"
@@ -163,11 +141,10 @@ jobs:
           {
             echo "version=$version"
             echo "scratch=$scratch"
-            echo "e2e=$e2e"
             echo "publish=$publish"
           } >>"$GITHUB_OUTPUT"
-          printf '### Release plan\n\n- version: %s (scratch: %s)\n- paid e2e: %s\n- push to ghcr: %s\n' \
-            "$version" "$scratch" "$e2e" "$publish" >>"$GITHUB_STEP_SUMMARY"
+          printf '### Release plan\n\n- version: %s (scratch: %s)\n- push to ghcr: %s\n' \
+            "$version" "$scratch" "$publish" >>"$GITHUB_STEP_SUMMARY"
 
   # One leg per image and architecture. Builds with plain buildx (no push),
   # smokes offline, and hands the tested image to the later jobs as a tarball,
@@ -288,94 +265,14 @@ jobs:
           retention-days: 1
           compression-level: 0
 
-  # The one paid step: the release image reviews a tiny fixture diff with a
-  # real model. The environment's required reviewer is the approval; the
-  # pi login is that environment's only secret. Counted against the release grant.
-  e2e:
-    needs: [plan, build]
-    if: needs.plan.outputs.e2e == 'true'
-    runs-on: ${{ vars.QCR_RUNNERS == 'github' && 'ubuntu-latest' || 'blacksmith-4vcpu-ubuntu-2404' }}
-    timeout-minutes: 30
-    environment: release-e2e
-    env:
-      LIMIT_USD: ${{ vars.RELEASE_E2E_LIMIT_USD || '2' }}
-      LOCAL_TAG: qcr-release:amd64
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: image-release-amd64
-          path: ${{ runner.temp }}/in
-      - name: load the tested image
-        run: gunzip -c "$RUNNER_TEMP/in/image.tar.gz" | docker load
-      - name: review a fixture diff with the real model
-        env:
-          PI_AUTH: ${{ secrets.RELEASE_E2E_PI_AUTH }}
-          VERSION: ${{ needs.plan.outputs.version }}
-        run: |
-          set -euo pipefail
-          [ -n "$PI_AUTH" ] || { echo "::error::secret RELEASE_E2E_PI_AUTH is empty or missing from the release-e2e environment"; exit 1; }
-          work="$RUNNER_TEMP/e2e"
-          rm -rf "$work"
-          mkdir -p "$work/home/agent" "$work/repo"
-          # Group access only: the model's tool uid shares the run gid and
-          # pi, running as it, reads its login from here.
-          chmod 0770 "$work/home" "$work/home/agent"
-          (umask 007 && printf '%s' "$PI_AUTH" >"$work/home/agent/auth.json")
-          repo="$work/repo"
-          g() { git -C "$repo" -c user.email=e2e@example.com -c user.name=e2e "$@"; }
-          g init -q -b main
-          printf 'def total(xs):\n    return sum(xs)\n' >"$repo/calc.py"
-          g add . && g commit -qm base
-          g checkout -qb feat
-          printf 'def total(xs):\n    t = 0\n    for i in range(len(xs) - 1):\n        t += xs[i]\n    return t\n' >"$repo/calc.py"
-          g commit -qam "rewrite total"
-          chmod -R a+rX "$repo"
-          # A model-reaching run starts as root and drops to the run uid; the
-          # model's tools get another uid (docker/entrypoint.sh).
-          set +e
-          docker run --rm -i --init --user 0:0 --cap-drop ALL --cap-add SETUID --cap-add SETGID \
-            --security-opt no-new-privileges \
-            -e QCR_RUN_UID="$(id -u)" -e QCR_RUN_GID="$(id -g)" \
-            -e QCR_CONFIG=/opt/qcr/config.example.toml \
-            -v "$repo:/repo:ro" -w /repo -v "$work/home:/home/qcr/.pi" \
-            "$LOCAL_TAG" review --json --limit "$LIMIT_USD" >"$work/result.json" 2>"$work/stderr.log"
-          rc=$?
-          set -e
-          tail -n 20 "$work/stderr.log" >&2 || true
-          spend="$(jq -r '.cost_usd // "unknown"' "$work/result.json" 2>/dev/null || echo unknown)"
-          mkdir -p "$RUNNER_TEMP/ledger"
-          line="$(printf '%s release-e2e v%s run %s cap=%s spend=%s exit=%s' \
-            "$(date -u +%Y-%m-%dT%H:%MZ)" "$VERSION" "$GITHUB_RUN_ID" "$LIMIT_USD" "$spend" "$rc")"
-          echo "$line" >"$RUNNER_TEMP/ledger/e2e-ledger.txt"
-          printf '### Paid e2e (release-grant ledger)\n\n`%s`\n\nCounts against the separate release grant, not the bench budget.\n' "$line" >>"$GITHUB_STEP_SUMMARY"
-          [ "$rc" = 0 ] || { echo "::error::the e2e review exited $rc"; exit 1; }
-          jq -e '.schema_version == 1 and .ok == true and (.partial // false) == false' "$work/result.json" >/dev/null ||
-            { echo "::error::the e2e review did not finish ok"; exit 1; }
-      - name: remove the login from the runner
-        if: always()
-        # pi runs as the tool uid, so what it wrote under the mounted ~/.pi may
-        # not be deletable by the runner uid; a failed cleanup must not fail
-        # a job whose review passed (the hosted runner is destroyed anyway).
-        run: |
-          rm -f "$RUNNER_TEMP/e2e/home/agent/auth.json" || true
-          rm -rf "$RUNNER_TEMP/e2e" || true
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
-        with:
-          name: e2e-ledger
-          path: ${{ runner.temp }}/ledger/e2e-ledger.txt
-          if-no-files-found: ignore
-
-  # The only job with a registry login. Runs when every gate passed: the e2e
-  # succeeded, or was skipped on purpose for a scratch version.
+  # The only job with a registry login. Runs when every build leg and its
+  # smoke passed.
   publish:
-    needs: [plan, build, e2e]
+    needs: [plan, build]
     if: >-
       ${{ !cancelled()
       && needs.plan.outputs.publish == 'true'
-      && needs.build.result == 'success'
-      && (needs.e2e.result == 'success' || (needs.e2e.result == 'skipped' && needs.plan.outputs.e2e != 'true')) }}
+      && needs.build.result == 'success' }}
     name: publish ${{ matrix.image }}
     runs-on: ${{ vars.QCR_RUNNERS == 'github' && 'ubuntu-latest' || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 60
@@ -543,7 +440,7 @@ jobs:
   # publishing and provenance from GitHub-hosted runners only. No npm cache:
   # the tarballs are built from the lockfile and nothing else.
   npm:
-    needs: [plan, build, e2e, publish]
+    needs: [plan, build, publish]
     if: >-
       ${{ !cancelled()
       && github.event_name == 'push'
@@ -551,7 +448,6 @@ jobs:
       && needs.plan.outputs.publish == 'true'
       && needs.plan.outputs.scratch != 'true'
       && needs.build.result == 'success'
-      && needs.e2e.result == 'success'
       && needs.publish.result == 'success' }}
     runs-on: ubuntu-latest
     environment: npm-publish

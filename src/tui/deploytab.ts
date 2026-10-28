@@ -1,6 +1,6 @@
 // `[5] deploy` — "what would a deploy ship?" plus the deploy button.
-// Every deploy is a RELEASE: the tag, the two-arch build, the paid e2e and the
-// owner's approval already happened in CI, so the tab only chooses a version.
+// Every deploy is a RELEASE: the tag and the two-arch build with its smoke
+// already happened in CI, so the tab only chooses a version.
 // It shows the version and revision the VM runs (`qcr-update status --json`,
 // read over ssh) against the chosen version, the commits between the two
 // revisions (from the local checkout), and deploy.sh's own
