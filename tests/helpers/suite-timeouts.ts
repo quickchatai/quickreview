@@ -134,6 +134,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/pibuiltins.test.ts",
   "tests/pilogin.test.ts",
   "tests/pin-evidence.test.ts", // the evidence script run under node against the map
+  "tests/plugin-peers.test.ts", // a child node resolving pi's packages through the peer hook
   "tests/plugin-qcr.test.ts", // the plugin's shell scripts against a fake docker, gh and qcr
   "tests/post-payload-parity.test.ts", // the Node post route, compared with recorded dry-run payloads
   "tests/post-shim.test.ts", // the post scripts handing over to the client under bash
