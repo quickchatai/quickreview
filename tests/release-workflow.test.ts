@@ -3,9 +3,9 @@
 // read without any of them:
 //   - the triggers (a vX.Y.Z tag or a manual dispatch, nothing else);
 //   - the gate order: nothing but `publish` logs in to ghcr or pushes, and
-//     publish needs the build and the e2e;
-//   - the paid e2e: its own environment, and the only job that reads its
-//     secret;
+//     publish needs the build;
+//   - no job reaches a model: no paid e2e, no model login, no secret but the
+//     token;
 //   - the arm64 runners: native by default, QEMU on a variable;
 //   - provenance attestations for every pushed digest;
 //   - the `plan` step's version rules, run for real against a temp package.json;
@@ -55,11 +55,7 @@ describe("release.yml — triggers and permissions", () => {
   it("runs on a v* tag or a manual dispatch and nothing else", () => {
     expect(Object.keys(wf.on).sort()).toEqual(["push", "workflow_dispatch"]);
     expect(wf.on.push).toEqual({ tags: ["v*.*.*"] });
-    expect(Object.keys(wf.on.workflow_dispatch.inputs).sort()).toEqual([
-      "publish",
-      "run_e2e",
-      "version",
-    ]);
+    expect(Object.keys(wf.on.workflow_dispatch.inputs).sort()).toEqual(["publish", "version"]);
   });
 
   it("is read-only by default; only publish may write packages or attest, only attach-manifest contents", () => {
@@ -84,14 +80,13 @@ describe("release.yml — triggers and permissions", () => {
 });
 
 describe("release.yml — the gates", () => {
-  it("orders plan, build, e2e, publish", () => {
+  it("orders plan, build, publish", () => {
     expect(needs("build")).toEqual(["plan"]);
-    expect(needs("e2e").sort()).toEqual(["build", "plan"]);
-    expect(needs("publish").sort()).toEqual(["build", "e2e", "plan"]);
+    expect(needs("publish").sort()).toEqual(["build", "plan"]);
   });
 
   it("logs in and pushes in the publish job only", () => {
-    for (const name of ["plan", "build", "e2e"]) {
+    for (const name of ["plan", "build"]) {
       expect(jobText(name), name).not.toMatch(
         /docker\/login-action|docker push|imagetools|push\\?":\s*true|packages/,
       );
@@ -111,19 +106,20 @@ describe("release.yml — the gates", () => {
     expect(JSON.stringify(build)).toMatch(/"load":true/);
   });
 
-  it("publishes only after the e2e passed, or was skipped on purpose", () => {
+  it("publishes only after every build leg passed", () => {
     const cond = wf.jobs.publish!.if!;
     expect(cond).toContain("needs.build.result == 'success'");
-    expect(cond).toContain("needs.e2e.result == 'success'");
-    expect(cond).toContain("needs.e2e.result == 'skipped' && needs.plan.outputs.e2e != 'true'");
   });
 
-  it("the paid e2e runs in release-e2e and no other job reads a secret but the token", () => {
-    expect(wf.jobs.e2e!.environment).toBe("release-e2e");
-    expect(jobText("e2e")).toContain("secrets.RELEASE_E2E_PI_AUTH");
-    expect(jobText("e2e")).toMatch(/--limit/);
-    expect(jobText("e2e")).toContain("release-grant ledger");
-    for (const name of ["plan", "build", "publish"]) {
+  // A release waits on no approval but npm's 2FA, and costs nothing.
+  // MUTATION: add a job with `environment: release-e2e` that reads
+  // `secrets.RELEASE_E2E_PI_AUTH` — this fails.
+  it("no job reaches a model, waits in an approval environment or reads a secret but the token", () => {
+    for (const [name, job] of Object.entries(wf.jobs)) {
+      if (name !== "npm") expect(job.environment, name).toBeUndefined();
+      expect(jobText(name), name).not.toMatch(/auth\.json|--limit|PI_AUTH/);
+    }
+    for (const name of Object.keys(wf.jobs).filter((n) => n !== "npm")) {
       const secrets = [...jobText(name).matchAll(/secrets\.([A-Z_]+)/g)].map((m) => m[1]);
       expect(
         secrets.filter((s) => s !== "GITHUB_TOKEN"),
@@ -139,7 +135,7 @@ describe("release.yml — the gates", () => {
     // ref policy admits v*.*.* tags only, so a branch run cannot stage.
     // MUTATION: drop `environment: npm-publish` from the npm job — this fails.
     expect(wf.jobs.npm!.environment).toBe("npm-publish");
-    expect(wf.jobs.e2e!.if).toBe("needs.plan.outputs.e2e == 'true'");
+    expect(wf.jobs.e2e).toBeUndefined();
   });
 
   it("builds both images for both architectures and smokes each offline", () => {
@@ -276,19 +272,18 @@ describe("release.yml — the plan step", () => {
     return { status: r.status, out: kv };
   }
   const tag = (name: string) => ({ EVENT: "push", REF_TYPE: "tag", REF_NAME: name });
-  const dispatch = (v: string, e2e: boolean, publish: boolean, ref = "refs/heads/x") => ({
+  const dispatch = (v: string, publish: boolean, ref = "refs/heads/x") => ({
     EVENT: "workflow_dispatch",
     REF_TYPE: ref.includes("tags") ? "tag" : "branch",
     REF_NAME: ref.replace(/^refs\/(heads|tags)\//, ""),
     IN_VERSION: v,
-    IN_E2E: String(e2e),
     IN_PUBLISH: String(publish),
   });
 
-  it("a real tag matching package.json runs the e2e and publishes", () => {
+  it("a real tag matching package.json publishes", () => {
     const r = runPlan(tag("v1.2.3"));
     expect(r.status).toBe(0);
-    expect(r.out).toEqual({ version: "1.2.3", scratch: "false", e2e: "true", publish: "true" });
+    expect(r.out).toEqual({ version: "1.2.3", scratch: "false", publish: "true" });
   });
 
   it("refuses a tag that disagrees with package.json", () => {
@@ -297,30 +292,29 @@ describe("release.yml — the plan step", () => {
 
   it("refuses a malformed version", () => {
     expect(runPlan(tag("vNEXT")).status).toBe(1);
-    expect(runPlan(dispatch("1.2", true, false)).status).toBe(1);
+    expect(runPlan(dispatch("1.2", false)).status).toBe(1);
   });
 
   it("refuses a hyphen inside the suffix, which the deploy-side version checks reject", () => {
-    expect(runPlan(dispatch("1.2.3-rc-one", true, false)).status).toBe(1);
+    expect(runPlan(dispatch("1.2.3-rc-one", false)).status).toBe(1);
     expect(runPlan(tag("v0.0.0-scratch-1")).status).toBe(1);
   });
 
-  it("a scratch tag skips the paid e2e, whatever package.json says", () => {
+  it("a scratch tag publishes, whatever package.json says", () => {
     const r = runPlan(tag("v0.0.0-scratch.1"));
     expect(r.status).toBe(0);
-    expect(r.out).toMatchObject({ scratch: "true", e2e: "false", publish: "true" });
+    expect(r.out).toMatchObject({ scratch: "true", publish: "true" });
   });
 
-  it("a real version cannot skip the e2e, nor run from a branch", () => {
-    expect(runPlan(dispatch("1.2.3", false, false, "refs/tags/v1.2.3")).status).toBe(1);
-    expect(runPlan(dispatch("1.2.3", true, true)).status).toBe(1);
-    expect(runPlan(dispatch("1.2.3", true, true, "refs/tags/v1.2.3")).out.publish).toBe("true");
+  it("a real version cannot run from a branch", () => {
+    expect(runPlan(dispatch("1.2.3", true)).status).toBe(1);
+    expect(runPlan(dispatch("1.2.3", true, "refs/tags/v1.2.3")).out.publish).toBe("true");
   });
 
-  it("a scratch dispatch may skip the e2e and defaults to not publishing", () => {
-    const r = runPlan(dispatch("0.0.0-scratch.2", false, false));
+  it("a scratch dispatch runs from a branch and defaults to not publishing", () => {
+    const r = runPlan(dispatch("0.0.0-scratch.2", false));
     expect(r.status).toBe(0);
-    expect(r.out).toMatchObject({ scratch: "true", e2e: "false", publish: "false" });
+    expect(r.out).toMatchObject({ scratch: "true", publish: "false" });
   });
 
   it("cleans up", () => {
@@ -339,8 +333,8 @@ describe("release.yml — the npm job", () => {
   const stage = steps.find((s) => s.run?.includes("npm stage publish"))!;
   const dirs: string[] = [];
 
-  it("stages on a real tag push only, after the build, the e2e and the images", () => {
-    expect(needs("npm").sort()).toEqual(["build", "e2e", "plan", "publish"]);
+  it("stages on a real tag push only, after the build and the images", () => {
+    expect(needs("npm").sort()).toEqual(["build", "plan", "publish"]);
     const cond = job.if!;
     // MUTATION: drop the event check — a dispatch from a tag would stage to npm.
     for (const want of [
@@ -350,12 +344,9 @@ describe("release.yml — the npm job", () => {
       "needs.plan.outputs.publish == 'true'",
       "needs.plan.outputs.scratch != 'true'",
       "needs.build.result == 'success'",
-      "needs.e2e.result == 'success'",
       "needs.publish.result == 'success'",
     ])
       expect(cond, want).toContain(want);
-    // a real version never skips the e2e, so a skipped e2e is no pass here
-    expect(cond).not.toContain("needs.e2e.result == 'skipped'");
   });
 
   it("runs on GitHub's ubuntu-latest, whatever QCR_RUNNERS says", () => {

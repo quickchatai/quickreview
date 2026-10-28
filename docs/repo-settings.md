@@ -22,7 +22,6 @@ CI run.
 | A vulnerable dependency gets a fix PR | Dependabot alerts and Dependabot security updates on the lockfile |
 | No one but an admin starts a release | The `release tags` ruleset: only repository admins create, move or delete a `v*` tag. Every org member can push to this repo, and a tag push runs `release.yml` |
 | Only a tagged release can put a version on npm, and only after a maintainer's 2FA | Each npm package's trusted publisher (`.github/npm-trust.sh`, below): `release.yml`'s `npm` job in the `npm-publish` environment, which deploys only from a `v*.*.*` tag, may stage a version and never publish one. No npm token exists for CI to leak |
-| The release's model login stays put | The `release-e2e` environment (`RELEASE_E2E_PI_AUTH`) deploys only from `main` or a `v*.*.*` tag, after the admin who ran the script approves. A real release cannot publish without its e2e, so that approval gates every publish |
 
 ## Applying the settings
 
@@ -46,9 +45,7 @@ private vulnerability reporting (what [SECURITY.md](../SECURITY.md) points
 at), Dependabot alerts and security updates, SHA-pinned actions only, the
 read-only workflow token, no PR approval by
 Actions, fork-PR approval for all external contributors, the `main` and
-`release tags` rulesets, the `release-e2e` environment's reviewer (the admin
-running the script) and deployment policy, and the `proposal` label the issue
-form applies.
+`release tags` rulesets, and the `proposal` label the issue form applies.
 
 The ruleset requires one check, `ci`, from GitHub Actions (app id 15368, so
 no other app or status post can satisfy it). It is the gate job in `ci.yml`:

@@ -36,7 +36,7 @@ docker build -f docker/Dockerfile --build-arg BUILD_SHA="$(git rev-parse HEAD)" 
 own checks: seeds against the manifest, the three pi versions, no `claude`.)
 
 The alternative is a scratch release (`workflow_dispatch` with a
-`X.Y.Z-scratch.N` version and the paid e2e off) pulled from the registry. A
+`X.Y.Z-scratch.N` version) pulled from the registry. A
 locally built image is the quicker path and needs no registry login.
 
 ```sh

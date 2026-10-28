@@ -163,8 +163,8 @@ lists them. Search them through the companion or OpenViking Studio (`W`).
 | `S` | power the VM app container — stop or start, twice; absent until its state has been read |
 | `x` | abort the running deploy / power run, or close its finished log |
 
-Every deploy is a release: the tag, the two-arch build, the paid e2e and the
-owner's approval already happened in CI. The DEPLOYED line is the VM's running
+Every deploy is a release: the tag and the two-arch build with its smoke
+already happened in CI. The DEPLOYED line is the VM's running
 version and revision (`ssh <vm> sudo qcr-update status --json`), VERSION the
 chosen one (published versions come from a read-only `gh api` packages listing;
 `V` types one), PENDING the commits between the two revisions in the local

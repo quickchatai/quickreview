@@ -1,5 +1,5 @@
 {
   "name": "qcr",
   "description": "Review a branch, an uncommitted diff or a PR with qcr, and scan a repo, from Claude Code. Skills call the qcr host wrapper with --json and refuse a JSON schema version they do not know.",
-  "version": "1.3.0"
+  "version": "1.3.1"
 }

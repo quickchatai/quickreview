@@ -1,6 +1,6 @@
 // The SDK route under the separate tool uid, in real containers: the
 // repo's own entrypoint and built code in a stock node image, started with the
-// flags the release e2e, the wrapper and the Action give a model-reaching call
+// flags the wrapper and the Action give a model-reaching call
 // (--user 0:0, only SETUID/SETGID, no-new-privileges), so the kernel is the one
 // the release image will meet. The model is pi-ai's faux provider: its scripted
 // calls are an attacker's. No network, no model, nothing leaves the machine.
@@ -79,26 +79,6 @@ const gid = process.getgid?.() ?? 1000;
 /** The flags each caller gives a model-reaching call. Docker's own: the shapes
  * differ in the init process, the login group and the token mount. */
 const SHAPES: Record<string, { flags: string[]; token: boolean }> = {
-  // .github/workflows/release.yml: the paid e2e's docker run
-  "release e2e": {
-    flags: [
-      "--user",
-      "0:0",
-      "--cap-drop",
-      "ALL",
-      "--cap-add",
-      "SETUID",
-      "--cap-add",
-      "SETGID",
-      "--security-opt",
-      "no-new-privileges",
-      "-e",
-      `QCR_RUN_UID=${uid}`,
-      "-e",
-      `QCR_RUN_GID=${gid}`,
-    ],
-    token: false,
-  },
   // scripts/qcr-host.sh: `qcr review` (the token handed as a file)
   "host wrapper": {
     flags: [

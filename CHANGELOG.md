@@ -1,5 +1,12 @@
 # Release notes
 
+## 1.3.1
+
+The first published release of the changes below: the 1.3.0 tag's release
+run was cancelled before it published anything. The release workflow no
+longer runs a paid end-to-end review behind an approval: a tag goes from the
+two-arch build and its offline smoke to the ghcr images and the npm stage.
+
 ## 1.3.0
 
 ### The pi plugin's commands are renamed
