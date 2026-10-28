@@ -1,5 +1,14 @@
 # Release notes
 
+## 1.3.2
+
+The pi plugin reviews again in a plain pi. Installed with `pi install
+npm:@quickchatai/pi-quickreview`, `/qcr-review` failed with
+`ERR_MODULE_NOT_FOUND` for `@earendil-works/pi-coding-agent`: pi installs a
+package without its peers, and the review's engine, loaded on first use,
+looked for pi beside the plugin. The plugin now resolves pi's own packages
+from the running pi. The `qcr` app was not affected.
+
 ## 1.3.1
 
 The first published release of the changes below: the 1.3.0 tag's release
