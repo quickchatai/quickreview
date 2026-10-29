@@ -246,8 +246,15 @@ def rewrite_name(name: str, counts: collections.Counter) -> str:
     return rewrite(name.encode(), counts, NAME_RULES).decode()
 
 
-def is_text(data: bytes) -> bool:
-    return b"\x00" not in data[:65536]
+TEXT_EXT = (".log", ".txt", ".json", ".jsonl", ".md", ".sh", ".py", ".toml", ".yml", ".yaml", ".csv", ".diff", ".patch",
+            ".html", ".tex", ".env", ".cfg", ".ini")
+
+
+def is_text(data: bytes, name: str = "") -> bool:
+    """Text unless a NUL shows in its first 64 KiB; a file with a text
+    extension is text whatever it holds (a driver log can carry a stray NUL
+    and still quote a host path)."""
+    return b"\x00" not in data[:65536] or name.lower().endswith(TEXT_EXT)
 
 
 def omitted(text: str, link: str) -> str:
@@ -643,7 +650,7 @@ class Processor:
                     return None, "third-party: the judge transcript quotes harvested Copilot reviews (verdicts kept)"
         if parts[0].endswith("-code") and parts[-1] == "meta.json":
             data = self.tp.pr_body(data, counts)
-        if is_text(data):
+        if is_text(data, rel):
             data = rewrite(data, counts)
             counts["files-text"] += 1
         else:
@@ -1442,8 +1449,8 @@ REGREP = {
     "gh?_ token-shaped": rb"(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{36}(?![A-Za-z0-9])",
     "Fernet blob (gAAAAA, 100+)": rb"gAAAAA[A-Za-z0-9_\-=]{100,}",
     "home directory (dashed path)": HOME_DASHED_RX.lstrip(b"\\-"),
-    **{f"token {t}": rb"(?i:" + re.escape(t.encode()) + rb")" for t in SCRUB_EXTRA},
-    **{f"host {h}": rb"(?i:" + re.escape(h.strip().encode()) + rb")" for h in SCRUB_HOSTS},
+    **{f"token {i}": rb"(?i:" + re.escape(t.encode()) + rb")" for i, t in enumerate(SCRUB_EXTRA)},
+    **{f"host {i}": rb"(?i:" + re.escape(h.strip().encode()) + rb")" for i, h in enumerate(SCRUB_HOSTS)},
     "quickchat (any case)": rb"(?i:quickchat)",
 }
 
@@ -1461,12 +1468,34 @@ REGREP_SCAN = (rb"(?<![A-Za-z0-9])sk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,}|(?<![A-Z
                + b"".join(rb"|(?i:" + re.escape(h.strip().encode()) + rb")" for h in SCRUB_HOSTS) + rb"|(?i:quickchat)|sk-|gh[psor]_")
 
 
+# the same hunt for ripgrep's engine, which finds a long list of literals at
+# disk speed where one PCRE alternation crawls: every name, token and value as
+# a case-insensitive literal (a whole-word rule then counts every substring
+# hit, which can only over-count), the credential shapes with the char before
+# them inside the match in place of their look-behind
+REGREP_RG = [
+    rb"(?i:" + b"|".join(re.escape(t) for t in sorted(
+        {x.encode() for x in SCRUB_OWNERS + SCRUB_BOTS + SCRUB_PRIVATE_REPOS + SCRUB_OLD_NAMES + SCRUB_PRIVATE_WORDS
+         + _denylist_words() + SCRUB_EXTRA + [h.strip() for h in SCRUB_HOSTS]} | set(SCRUB_SECRETS)
+        | {HOME_B, HOME_DASHED.lstrip(b"-"), b"companion-pihome", b"quickchat"}, key=len, reverse=True)) + rb")",
+    rb"(?:^|[^A-Za-z0-9])sk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,}", rb"(?:^|[^A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{36}",
+    rb"gAAAAA[A-Za-z0-9_\-=]{100,}",
+    rb"[./\w-]*claude\.env", rb"sk-", rb"gh[psor]_",
+]
+
+
 def regrep_stream(cmd: list[str]) -> tuple[collections.Counter, list]:
     """Counts of every REGREP class over one decompressed stream, with
     samples (and their tar member) for the credential-shaped classes."""
     rx = {k: re.compile(v) for k, v in REGREP.items()}
     z = subprocess.Popen(cmd, stdout=subprocess.PIPE)
-    g = subprocess.Popen(["grep", "-aoP", REGREP_SCAN.decode()], stdin=z.stdout, stdout=subprocess.PIPE)
+    if shutil.which("rg"):
+        argv = ["rg", "-a", "-o", "--no-filename", "--no-line-number"]
+        for pat in REGREP_RG:
+            argv += ["-e", pat.decode()]
+    else:
+        argv = ["grep", "-aoP", REGREP_SCAN.decode()]
+    g = subprocess.Popen(argv, stdin=z.stdout, stdout=subprocess.PIPE)
     z.stdout.close()
     c, hits = collections.Counter(), []
     for line in g.stdout:
@@ -1485,17 +1514,24 @@ def regrep_stream(cmd: list[str]) -> tuple[collections.Counter, list]:
     return c, hits
 
 
+def _regrep_volume(vol: str):
+    c, hits = regrep_stream(["zstd", "-dc", "--long=27", "-q", vol])
+    return Path(vol).name, c, hits
+
+
 def cmd_regrep(a):
     out = Path(a.out)
     total = collections.Counter()
     report, samples = {}, {}
-    for vol in sorted(out.glob("*.tar.zst")):
-        c, hits = regrep_stream(["zstd", "-dc", "--long=27", "-q", str(vol)])
-        report[vol.name] = dict(c)
-        if hits:
-            samples[vol.name] = hits
-        total.update(c)
-        print(vol.name, dict(c), flush=True)
+    vols = [str(v) for v in sorted(out.glob("*.tar.zst"), key=lambda p: -p.stat().st_size)]
+    with multiprocessing.Pool(max(1, min(a.jobs, len(vols) or 1))) as pool:
+        for name, c, hits in pool.imap_unordered(_regrep_volume, vols):
+            report[name] = dict(c)
+            if hits:
+                samples[name] = hits
+            total.update(c)
+            print(name, dict(c), flush=True)
+    report = dict(sorted(report.items()))
     for side in sorted(p for p in out.iterdir() if p.is_file() and p.name != "regrep.json"
                        and (p.suffix in (".json", ".md", ".txt") or p.name in ("SHA256SUMS", "NOTICE"))):
         c, _ = regrep_stream(["cat", str(side)])
@@ -1519,6 +1555,8 @@ def main():
             s.add_argument("--out", required=True)
         if name in ("archive", "readme"):
             s.add_argument("--commit-remap", help="JSON {recorded qcr_commit: public main commit or null}")
+        if name == "regrep":
+            s.add_argument("--jobs", type=int, default=2, help="volumes scanned side by side")
         if name in ("archive", "slim"):
             s.add_argument("--level", type=int, default=19)
             s.add_argument("--cap", type=int, default=int(1.9 * GIB))
