@@ -28,11 +28,9 @@ GPT-6.1 Sol finds **97% of the high-severity defects, 93% of the medium and
 84% of the low**; at each severity the best of the six other reviewers we ran
 finds 90%, 82% and 52%. On the same model it also finds more than the model
 maker's own reviewer at every severity: against Claude Code's `/code-review`
-on Claude Opus 5.5 and against Codex CLI on GPT-6.1 Sol. Its last changes were
-mined from its misses on 145 of the 185 PRs; on the 20 kept out, it finds 83%
-of all defects and the next best 72%. That recall costs more: about $2 and
-17.5 minutes per PR, where the other tools take $0.07–0.53 and 0.7–2.3
-minutes ([Benchmarks](#benchmarks)).
+on Claude Opus 5.5 and against Codex CLI on GPT-6.1 Sol. That recall costs
+more: about $2 and 17.5 minutes per PR, where the other tools take $0.07–0.53
+and 0.7–2.3 minutes ([Benchmarks](#benchmarks)).
 
 <p align="center">
   <img src="docs/media/lenses.gif" width="800"
@@ -109,8 +107,7 @@ finds more than the model maker's own reviewer on each of the three models
 where we ran both, at 11 to 20 times the cost ($3.24 against $0.16 per PR on
 Opus). This contrasts two tools, not a measured design effect: they also
 differ in budget and inputs, Claude Code ran `/code-review` at its default
-effort, the Opus and GPT-6 Sol rows are September builds of QuickReview, and
-the 40 Opus PRs are all PRs QuickReview was tuned on.
+effort, and the Opus and GPT-6 Sol rows are September builds of QuickReview.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/media/bench-martian-dark.png">
@@ -213,10 +210,12 @@ the table as directional.
 
 </details>
 
-**Held-out PRs.** The last tuning round was mined from misses on part of
-each benchmark. On the PRs kept out of it, the frozen build finds 83% of
-AACR-Bench's defects (20 PRs), ties qodo-extended-v2 on Martian's real
-goldens (43 of 52, 30 PRs), and on Qodo (31 PRs) reaches 60.3% recall and
+**Tuning and held-out PRs.** The last tuning round was mined from misses on
+part of each benchmark, including 145 of the 185 AACR-Bench PRs. The 40 PRs
+in the Opus comparison were used to tune its September build. On the PRs
+kept out of the last tuning round, the frozen build finds 83% of AACR-Bench's
+defects (20 PRs), against the next best 72%, ties qodo-extended-v2 on Martian's
+real goldens (43 of 52, 30 PRs), and on Qodo (31 PRs) reaches 60.3% recall and
 F1 53.0, level with qodo-exhaustive's 51.3.
 
 **Read more.** Two papers carry the method, every table and the threats to
