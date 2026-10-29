@@ -1,7 +1,7 @@
 # openviking-pi — vendored, patched fork
 
 The OpenViking pi extension our sessions load. Vendored, not depended on:
-upstream ships it as an `examples/` directory, not a package, and we need twelve
+upstream ships it as an `examples/` directory, not a package, and we need thirteen
 behaviour changes that upstream has no reason to make.
 
 | | |
@@ -20,7 +20,7 @@ fails on drift between the two.
 
 ## Why a fork rather than configuration
 
-Every one of the twelve patches was tried as configuration first and does not
+Every one of the thirteen patches was tried as configuration first and does not
 exist there. The evidence is a spike against a **running v0.4.15 server plus
 the pinned pi 0.84.1**, with transcripts, kept with the project's design
 records. The short version: several of its findings contradict the OpenViking
@@ -29,12 +29,13 @@ anything here.
 
 ## The patch series
 
-Twelve numbered behaviour patches, applied in order over the vendored upstream
+Thirteen numbered behaviour patches, applied in order over the vendored upstream
 files, plus two unnumbered build patches (0000 scaffolding, 0012 typing). They live in `patches/` as
 `git apply`-able diffs — verified by applying the first thirteen, in order, to a
 pristine `v0.4.15` extraction and diffing the result against this directory:
-byte-identical. (0013 is checked to apply on the tree the first thirteen
-produce; the full pristine-extraction replay has not been re-run with it.) (`patches/` and `upstream.json` are meta and are not themselves
+byte-identical. (0013 and 0014 are checked to apply on the tree the patches
+before them produce; the full pristine-extraction replay has not been re-run
+with them.) (`patches/` and `upstream.json` are meta and are not themselves
 part of the reproduced tree.) Every hunk they add carries a greppable marker:
 
 ```sh
@@ -487,6 +488,23 @@ for its legacy cache; both are upstream files outside this patch's scope.
 Touches: `index.ts`, `config.ts`, `sync.ts`, `qcr-leaf.ts`, `qcr-shim.ts`
 (new), `qcr-hooks.ts` (new), `shared/pending-queue.mjs` and `.d.mts`, `NOTICE`,
 this README.
+
+### 0014 — one turn sync in flight per session (`[QCR PATCH 13]`)
+
+The `turn_end` hook runs under a deadline (`qcr-hooks.ts`), and a deadline
+that passes returns without cancelling the hook's work. Upstream's
+`syncBranch` then ran on in the background, and under a slow server the next
+turn started a second sync from the same watermark — which only advances once
+a whole sync has finished. One process sent the same messages to one OV
+session several times at once; the server takes a tree lock per session
+append, so they queued on it, timed out client-side (and were queued for
+replay), and the health probes queued behind them. On the bot it was measured
+at up to five appends in flight to one session from its one worker.
+
+`SyncManager.syncBranch` now runs one sync at a time. A turn that ends while
+one runs leaves its branch for that sync, which sends it next, from the
+advanced watermark; the coalesced call reports nothing added. Nothing is
+dropped and nothing is sent twice by the process.
 
 ## Rebasing onto a newer upstream
 

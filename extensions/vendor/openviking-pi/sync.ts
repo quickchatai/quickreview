@@ -38,6 +38,10 @@ export class SyncManager {
   private syncedEntryCount = 0;
   private queue: PendingQueueConfig;
   private debugLog: (message: string) => void;
+  // [QCR PATCH 13] One turn sync in flight: a turn that ends while one runs
+  // leaves its branch here, and the running sync takes it up next.
+  private syncing = false;
+  private nextBranch: any[] | null = null;
 
   constructor(client: OVClient, config: OVConfig, opts: SyncOptions = {}) {
     this.client = client;
@@ -110,9 +114,40 @@ export class SyncManager {
     return countUndeliveredForSession(pending, this.ovSessionId) === 0;
   }
 
+  /**
+   * [QCR PATCH 13] The turn_end hook's deadline returns without cancelling
+   * this sync, so under a slow server the next turn used to start a second one
+   * from the same watermark: the same messages went to one session several
+   * times at once and queued on its lock. A turn that ends while a sync runs
+   * now hands its branch to that sync, which sends it once it is done, from
+   * the advanced watermark. The coalesced call reports nothing added.
+   */
   async syncBranch(branch: any[]): Promise<SyncBranchResult> {
     if (!this.ovSessionId) return { added: 0, tokens: 0, allDelivered: true };
+    if (this.syncing) {
+      this.nextBranch = branch;
+      return { added: 0, tokens: 0, allDelivered: false };
+    }
+    this.syncing = true;
+    try {
+      const total: SyncBranchResult = { added: 0, tokens: 0, allDelivered: true };
+      let next: any[] | null = branch;
+      while (next) {
+        this.nextBranch = null;
+        const r = await this.syncOnce(next);
+        total.added += r.added;
+        total.tokens += r.tokens;
+        total.allDelivered = total.allDelivered && r.allDelivered;
+        next = this.nextBranch;
+      }
+      return total;
+    } finally {
+      this.syncing = false;
+    }
+  }
 
+  private async syncOnce(branch: any[]): Promise<SyncBranchResult> {
+    if (!this.ovSessionId) return { added: 0, tokens: 0, allDelivered: true };
     const extracted = extractBranchCapturePayloads(branch, this.syncedEntryCount, this.config);
     if (extracted.resetWatermark) this.syncedEntryCount = 0;
     let added = 0;

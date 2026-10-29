@@ -1,0 +1,133 @@
+diff --git a/extensions/vendor/openviking-pi/NOTICE b/extensions/vendor/openviking-pi/NOTICE
+index 15992e4a..c4450113 100644
+--- a/extensions/vendor/openviking-pi/NOTICE
++++ b/extensions/vendor/openviking-pi/NOTICE
+@@ -60,6 +60,9 @@ Changed by the quickreviewd maintainers, 2026-08-20:
+  12. The extension is a factory over a configuration value; the process's
+      environment, argv, working directory and home directory are read once, by
+      a shim, and every hook runs under a deadline and a catch (2026-10-19).
++ 13. One turn sync runs at a time per session: a turn that ends while one
++     runs hands its branch to it, so a hook deadline can no longer start a
++     second sync that re-sends the same messages (2026-10-29).
+ 
+ Plus vendoring scaffolding: build-conformance fixes for this repo's stricter
+ tsconfig (ambient type declarations while pi was not installed, retired once
+diff --git a/extensions/vendor/openviking-pi/README.md b/extensions/vendor/openviking-pi/README.md
+index 670e38b2..5ac0ec2e 100644
+--- a/extensions/vendor/openviking-pi/README.md
++++ b/extensions/vendor/openviking-pi/README.md
+@@ -1,7 +1,7 @@
+ # openviking-pi — vendored, patched fork
+ 
+ The OpenViking pi extension our sessions load. Vendored, not depended on:
+-upstream ships it as an `examples/` directory, not a package, and we need twelve
++upstream ships it as an `examples/` directory, not a package, and we need thirteen
+ behaviour changes that upstream has no reason to make.
+ 
+ | | |
+@@ -20,7 +20,7 @@ fails on drift between the two.
+ 
+ ## Why a fork rather than configuration
+ 
+-Every one of the twelve patches was tried as configuration first and does not
++Every one of the thirteen patches was tried as configuration first and does not
+ exist there. The evidence is a spike against a **running v0.4.15 server plus
+ the pinned pi 0.84.1**, with transcripts, kept with the project's design
+ records. The short version: several of its findings contradict the OpenViking
+@@ -29,12 +29,13 @@ anything here.
+ 
+ ## The patch series
+ 
+-Twelve numbered behaviour patches, applied in order over the vendored upstream
++Thirteen numbered behaviour patches, applied in order over the vendored upstream
+ files, plus two unnumbered build patches (0000 scaffolding, 0012 typing). They live in `patches/` as
+ `git apply`-able diffs — verified by applying the first thirteen, in order, to a
+ pristine `v0.4.15` extraction and diffing the result against this directory:
+-byte-identical. (0013 is checked to apply on the tree the first thirteen
+-produce; the full pristine-extraction replay has not been re-run with it.) (`patches/` and `upstream.json` are meta and are not themselves
++byte-identical. (0013 and 0014 are checked to apply on the tree the patches
++before them produce; the full pristine-extraction replay has not been re-run
++with them.) (`patches/` and `upstream.json` are meta and are not themselves
+ part of the reproduced tree.) Every hunk they add carries a greppable marker:
+ 
+ ```sh
+@@ -488,6 +489,23 @@ Touches: `index.ts`, `config.ts`, `sync.ts`, `qcr-leaf.ts`, `qcr-shim.ts`
+ (new), `qcr-hooks.ts` (new), `shared/pending-queue.mjs` and `.d.mts`, `NOTICE`,
+ this README.
+ 
++### 0014 — one turn sync in flight per session (`[QCR PATCH 13]`)
++
++The `turn_end` hook runs under a deadline (`qcr-hooks.ts`), and a deadline
++that passes returns without cancelling the hook's work. Upstream's
++`syncBranch` then ran on in the background, and under a slow server the next
++turn started a second sync from the same watermark — which only advances once
++a whole sync has finished. One process sent the same messages to one OV
++session several times at once; the server takes a tree lock per session
++append, so they queued on it, timed out client-side (and were queued for
++replay), and the health probes queued behind them. On the bot it was measured
++at up to five appends in flight to one session from its one worker.
++
++`SyncManager.syncBranch` now runs one sync at a time. A turn that ends while
++one runs leaves its branch for that sync, which sends it next, from the
++advanced watermark; the coalesced call reports nothing added. Nothing is
++dropped and nothing is sent twice by the process.
++
+ ## Rebasing onto a newer upstream
+ 
+ ```sh
+diff --git a/extensions/vendor/openviking-pi/sync.ts b/extensions/vendor/openviking-pi/sync.ts
+index 037d6306..ad940987 100644
+--- a/extensions/vendor/openviking-pi/sync.ts
++++ b/extensions/vendor/openviking-pi/sync.ts
+@@ -38,6 +38,10 @@ export class SyncManager {
+   private syncedEntryCount = 0;
+   private queue: PendingQueueConfig;
+   private debugLog: (message: string) => void;
++  // [QCR PATCH 13] One turn sync in flight: a turn that ends while one runs
++  // leaves its branch here, and the running sync takes it up next.
++  private syncing = false;
++  private nextBranch: any[] | null = null;
+ 
+   constructor(client: OVClient, config: OVConfig, opts: SyncOptions = {}) {
+     this.client = client;
+@@ -110,9 +114,40 @@ export class SyncManager {
+     return countUndeliveredForSession(pending, this.ovSessionId) === 0;
+   }
+ 
++  /**
++   * [QCR PATCH 13] The turn_end hook's deadline returns without cancelling
++   * this sync, so under a slow server the next turn used to start a second one
++   * from the same watermark: the same messages went to one session several
++   * times at once and queued on its lock. A turn that ends while a sync runs
++   * now hands its branch to that sync, which sends it once it is done, from
++   * the advanced watermark. The coalesced call reports nothing added.
++   */
+   async syncBranch(branch: any[]): Promise<SyncBranchResult> {
+     if (!this.ovSessionId) return { added: 0, tokens: 0, allDelivered: true };
++    if (this.syncing) {
++      this.nextBranch = branch;
++      return { added: 0, tokens: 0, allDelivered: false };
++    }
++    this.syncing = true;
++    try {
++      const total: SyncBranchResult = { added: 0, tokens: 0, allDelivered: true };
++      let next: any[] | null = branch;
++      while (next) {
++        this.nextBranch = null;
++        const r = await this.syncOnce(next);
++        total.added += r.added;
++        total.tokens += r.tokens;
++        total.allDelivered = total.allDelivered && r.allDelivered;
++        next = this.nextBranch;
++      }
++      return total;
++    } finally {
++      this.syncing = false;
++    }
++  }
+ 
++  private async syncOnce(branch: any[]): Promise<SyncBranchResult> {
++    if (!this.ovSessionId) return { added: 0, tokens: 0, allDelivered: true };
+     const extracted = extractBranchCapturePayloads(branch, this.syncedEntryCount, this.config);
+     if (extracted.resetWatermark) this.syncedEntryCount = 0;
+     let added = 0;

@@ -166,7 +166,7 @@ describe("provenance and licence", () => {
   });
 
   it("ships the patch series it claims to", () => {
-    expect(upstream.patches.length).toBe(14); // 0000 scaffolding + eleven numbered + 0012 typing + 0013 (patch 12)
+    expect(upstream.patches.length).toBe(15); // 0000 scaffolding + eleven numbered + 0012 typing + 0013 (patch 12) + 0014 (patch 13)
     for (const name of upstream.patches) {
       const patch = read(join("patches", name));
       expect(patch.length).toBeGreaterThan(0);
@@ -2191,7 +2191,7 @@ describe("PATCH 11 — the review session's memory boundary holds for recall, se
   });
 
   it("ships the patch, recorded in the series, with its markers", () => {
-    expect(upstream.patches.at(-3)).toBe("0011-review-session-memory-boundary.patch");
+    expect(upstream.patches[11]).toBe("0011-review-session-memory-boundary.patch");
     const patch = read(join("patches", "0011-review-session-memory-boundary.patch"));
     expect(patch).toContain("QCR PATCH 11");
     for (const f of [
@@ -2213,7 +2213,7 @@ describe("PATCH 11 — the review session's memory boundary holds for recall, se
 
 describe("PATCH 12 — the fork is typechecked against the real pi, not ambient stand-ins", () => {
   it("ships the patch, recorded after 0011, and the ambient shim is gone", () => {
-    expect(upstream.patches.at(-2)).toBe("0012-typecheck-against-the-real-pi.patch");
+    expect(upstream.patches[12]).toBe("0012-typecheck-against-the-real-pi.patch");
     const patch = read(join("patches", "0012-typecheck-against-the-real-pi.patch"));
     for (const f of ["index.ts", "vendor-pi-types.d.ts", "README.md"]) {
       expect(patch).toContain(`b/extensions/vendor/openviking-pi/${f}`);
@@ -2227,8 +2227,8 @@ describe("PATCH 12 — createOpenViking(cfg), file 0013", () => {
   // Behaviour is tested in tests/openviking-factory.test.ts (the shim, the hook
   // deadline, the factory over a fake pi and client), the parity case in
   // extension-factory-parity.test.ts and canary 9. This is the provenance.
-  it("ships the patch, recorded LAST in the series, with its markers and files", () => {
-    expect(upstream.patches.at(-1)).toBe("0013-createopenviking-factory.patch");
+  it("ships the patch, recorded after 0012 in the series, with its markers and files", () => {
+    expect(upstream.patches[13]).toBe("0013-createopenviking-factory.patch");
     const patch = read(join("patches", "0013-createopenviking-factory.patch"));
     expect(patch).toContain("QCR PATCH 12");
     for (const f of [
@@ -2255,5 +2255,77 @@ describe("PATCH 12 — createOpenViking(cfg), file 0013", () => {
     expect(patch).not.toContain("diff --git a/extensions/vendor/openviking-pi/upstream.json");
     expect(patch).not.toMatch(/^[+-].*extension_commit/m);
     expect(read("NOTICE")).toContain(upstream.commit);
+  });
+});
+
+describe("PATCH 13 — one turn sync in flight per session, file 0014", () => {
+  // The turn_end hook runs under a 30 s deadline and gives up WITHOUT cancelling
+  // its sync. Under a slow server the next turn then started a second sync from
+  // the same watermark, so one process sent the same messages to one session
+  // several times at once; the server's per-session lock made them queue, and
+  // the probes queued behind them (up to 5 appends in flight to one session).
+  type Gate = { release: () => void };
+  const slowClient = () => {
+    let inFlight = 0;
+    const seen = { maxInFlight: 0, sent: [] as string[], gates: [] as Gate[] };
+    const client = {
+      connected: true,
+      async getSession(id: string) {
+        return { session_id: id };
+      },
+      async addMessagePayload(_id: string, payload: unknown) {
+        inFlight++;
+        seen.maxInFlight = Math.max(seen.maxInFlight, inFlight);
+        seen.sent.push(JSON.stringify(payload));
+        await new Promise<void>((release) => seen.gates.push({ release }));
+        inFlight--;
+        return true;
+      },
+    } as unknown as ConstructorParameters<typeof SyncManager>[0];
+    return { client, seen };
+  };
+  const msg = (role: "user" | "assistant", text: string) => ({
+    type: "message",
+    message:
+      role === "user" ? { role, content: text } : { role, content: [{ type: "text", text }] },
+  });
+  const releaseAll = async (seen: { gates: Gate[] }, done: () => boolean) => {
+    const deadline = Date.now() + 2_000;
+    while (!done() && Date.now() < deadline) {
+      seen.gates.splice(0).forEach((g) => g.release());
+      await new Promise((r) => setTimeout(r, 1));
+    }
+  };
+
+  // MUTATION: drop the `if (this.syncing)` hand-off in syncBranch — this fails.
+  it("a turn that ends while a sync runs sends nothing twice and nothing at once; its messages follow", async () => {
+    const { client, seen } = slowClient();
+    const sync = new SyncManager(client, loadConfig(FORK));
+    expect(await sync.ensureSession({ OPENVIKING_SESSION_ID: "pr-42" })).toBe(true);
+    const turn1 = [msg("user", "review this change"), msg("assistant", "reading the diff")];
+    const turn2 = [...turn1, msg("user", "and the tests?"), msg("assistant", "they cover it")];
+
+    let settled = 0;
+    const first = sync.syncBranch(turn1).finally(() => settled++);
+    await new Promise((r) => setTimeout(r, 1));
+    // The hook's deadline passed; the next turn ends while the first sync waits.
+    const second = sync.syncBranch(turn2).finally(() => settled++);
+    await releaseAll(seen, () => settled === 2);
+    await first;
+    expect((await second).added).toBe(0);
+
+    expect(seen.maxInFlight).toBe(1);
+    expect(new Set(seen.sent).size).toBe(seen.sent.length);
+    for (const text of ["reading the diff", "and the tests?", "they cover it"])
+      expect(seen.sent.some((p) => p.includes(text))).toBe(true);
+    expect(sync.syncedCount).toBe(turn2.length);
+  });
+
+  it("ships the patch, recorded last in the series, with its marker", () => {
+    expect(upstream.patches.at(-1)).toBe("0014-one-turn-sync-in-flight.patch");
+    const patch = read(join("patches", "0014-one-turn-sync-in-flight.patch"));
+    expect(patch).toContain("QCR PATCH 13");
+    expect(patch).toContain("diff --git a/extensions/vendor/openviking-pi/sync.ts");
+    expect(read("NOTICE")).toContain(" 13. ");
   });
 });
