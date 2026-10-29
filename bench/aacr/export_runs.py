@@ -825,7 +825,11 @@ def cmd_archive(a):
     print(f"  {len(shipped):,} files ship in {len(files)} families; planning copies …", flush=True)
     copies = plan_copies(proc.tree, shipped, None if not a.groups else {r for g in groups for r in files[g]})
     print(f"  {len(copies):,} are copies of another shipped file", flush=True)
-    (out / ".left-out.json").write_text(json.dumps({f"{g} :: {r}": k for (g, r), k in sorted(left.items())}, indent=1) + "\n")
+    (out / "LEFT-OUT.json").write_text(json.dumps({"note": "Files the walk left out, per run family and reason "
+                                                          "(withheld families, path rules); the copies and third-party "
+                                                          "drops made while packing are in MANIFEST.json.",
+                                                  "files": {f"{g} :: {r}": k for (g, r), k in sorted(left.items())}},
+                                                 indent=1) + "\n")
     todo = []
     for g in groups:
         if group_done(out, g) and not a.rebuild:
@@ -951,14 +955,28 @@ def write_readme(out: Path, proc: Processor):
     for g in man["groups"].values():
         counts.update(g["rewrites"])
         left.update(g["left_out"])
+    walk = json.loads((out / "LEFT-OUT.json").read_text())["files"] if (out / "LEFT-OUT.json").exists() else {}
+    withheld_n = collections.Counter()
+    for k, n in walk.items():
+        fam, reason = k.split(" :: ", 1)
+        if RC.Catalogue.ships(proc.cat.families.get(fam)):
+            left[reason] += n
+        else:
+            withheld_n[fam] += n
     content_n = sum(v for k, v in counts.items() if k.startswith("content-rule "))
     rw = "\n".join(f"| `{k}` | {v:,} |" for k, v in sorted(counts.items())
                    if not k.startswith(("files-", "content-rule ")))
     if content_n:
         rw += f"\n| `content-rules` (all {man.get('content_rules', 0)} rules) | {content_n:,} |"
     lo = "\n".join(f"| {k} | {v:,} |" for k, v in sorted(left.items()))
-    wh = "\n".join(f"| `{w['family']}` | {w['title']} | {w['reason']} | {', '.join(f'`{m}`' for m in w['members'][:12])}"
-                   f"{' …' if len(w['members']) > 12 else ''} ({len(w['members'])}) |" for w in idx["withheld"])
+    wh_rows = []
+    for w in idx["withheld"]:
+        members = ", ".join(f"`{m}`" for m in w["members"][:12]) + (" …" if len(w["members"]) > 12 else "")
+        walked = withheld_n.get(w["family"])
+        n = len(w["members"])
+        size = f"{n} unit{'s' if n != 1 else ''}" + (f", {walked:,} files" if walked else "")
+        wh_rows.append(f"| `{w['family']}` | {w['title']} | {w['reason']} | {members} ({size}) |")
+    wh = "\n".join(wh_rows)
     level = man["compression"].split()[1].lstrip("-")
     cap = man["volume_cap_bytes"] / (1 << 30)
     text = f"""---

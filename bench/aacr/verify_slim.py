@@ -485,7 +485,7 @@ def main():
     (out / "summary.json").write_text(json.dumps(summary, indent=1) + "\n")
     print(json.dumps({k: v for k, v in summary.items() if k != "mismatch_rows"}, indent=1))
     for r in summary["mismatch_rows"]:
-        print("MISMATCH", r)
+        print(r[-1].split()[0], r)
 
 
 # README "Other models" (recompute/open_models.py names): high, medium, low, all, $/PR
