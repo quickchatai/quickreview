@@ -1,20 +1,21 @@
 diff --git a/extensions/vendor/openviking-pi/NOTICE b/extensions/vendor/openviking-pi/NOTICE
-index 15992e4a..0355be34 100644
+index 15992e4a..95126b8b 100644
 --- a/extensions/vendor/openviking-pi/NOTICE
 +++ b/extensions/vendor/openviking-pi/NOTICE
-@@ -60,6 +60,10 @@ Changed by the quickreviewd maintainers, 2026-08-20:
+@@ -60,6 +60,11 @@ Changed by the quickreviewd maintainers, 2026-08-20:
   12. The extension is a factory over a configuration value; the process's
       environment, argv, working directory and home directory are read once, by
       a shim, and every hook runs under a deadline and a catch (2026-10-19).
 + 13. One turn sync runs at a time per session: a turn that ends while one
-+     runs writes its new messages to the offline queue, which the running
-+     sync drains, so a hook deadline can no longer start a second sync that
-+     re-sends the same messages (2026-10-29).
++     runs queues its branch, the running sync sends the queued branches in
++     order, and agent_end waits for them under turn_end's deadline, so a hook
++     deadline can no longer start a second sync that re-sends the same
++     messages (2026-10-29).
  
  Plus vendoring scaffolding: build-conformance fixes for this repo's stricter
  tsconfig (ambient type declarations while pi was not installed, retired once
 diff --git a/extensions/vendor/openviking-pi/README.md b/extensions/vendor/openviking-pi/README.md
-index 670e38b2..6d753cdd 100644
+index 670e38b2..441f292d 100644
 --- a/extensions/vendor/openviking-pi/README.md
 +++ b/extensions/vendor/openviking-pi/README.md
 @@ -1,7 +1,7 @@
@@ -52,7 +53,7 @@ index 670e38b2..6d753cdd 100644
  part of the reproduced tree.) Every hunk they add carries a greppable marker:
  
  ```sh
-@@ -488,6 +489,29 @@ Touches: `index.ts`, `config.ts`, `sync.ts`, `qcr-leaf.ts`, `qcr-shim.ts`
+@@ -488,6 +489,33 @@ Touches: `index.ts`, `config.ts`, `sync.ts`, `qcr-leaf.ts`, `qcr-shim.ts`
  (new), `qcr-hooks.ts` (new), `shared/pending-queue.mjs` and `.d.mts`, `NOTICE`,
  this README.
  
@@ -68,40 +69,72 @@ index 670e38b2..6d753cdd 100644
 +replay), and the health probes queued behind them. On the bot it was measured
 +at up to five appends in flight to one session from its one worker.
 +
-+`SyncManager.syncBranch` now runs one sync at a time, and each sync claims its
-+messages (advances the watermark) before its first append. A turn that ends
-+while one runs claims its own new messages from the advanced watermark and
-+writes them to the offline queue on disk at once; the running sync drains the
-+queue, one append at a time, when it is done. So nothing is sent twice by the
-+process, a worker that exits before the running sync is done leaves the
-+handed-off turn on disk for the next session start's replay (the bot's
-+worker disposes its session without `session_shutdown`), and a branch switch
-+cannot overwrite a turn that was not sent yet. With no queue configured the
-+handed-off branches wait in memory, in order, instead.
++`SyncManager.syncBranch` now runs one sync at a time. A turn that ends while
++one runs queues its branch, in memory and in order; the running sync then
++sends each queued branch from the watermark the one before it left, so the
++process sends nothing twice and nothing at once, and a later turn (a branch
++switch included) never overwrites an earlier one. The offline queue on disk is
++not used for this: it is shared by every worker, it collapses identical
++payloads and replays by write time, all of which would reorder or drop turns.
++
++A bot worker disposes its session without `session_shutdown`, so the queued
++turns must go out before the prompt resolves: `agent_end` awaits
++`SyncManager.drain()`, and its deadline in `qcr-hooks.ts` is raised from 1 s
++to turn_end's 30 s. With nothing queued, `drain()` settles at once.
++
++Touches: `sync.ts`, `index.ts`, `qcr-hooks.ts`, `NOTICE`, this README.
 +
  ## Rebasing onto a newer upstream
  
  ```sh
+diff --git a/extensions/vendor/openviking-pi/index.ts b/extensions/vendor/openviking-pi/index.ts
+index 8bdc65d9..1b60eeee 100644
+--- a/extensions/vendor/openviking-pi/index.ts
++++ b/extensions/vendor/openviking-pi/index.ts
+@@ -405,6 +405,10 @@ async function register(pi: ExtensionAPI, cfg: OpenVikingConfig): Promise<void>
+   // --- agent_end ---
+   pi.on("agent_end", guard("agent_end", async (_event, _ctx) => {
+     recall.invalidate();
++    // [QCR PATCH 13] The turns queued behind a slow sync go out before the
++    // prompt resolves, under this hook's deadline: a worker disposes its
++    // session without session_shutdown, so this is the last chance.
++    await sync.drain();
+   }));
+ 
+   // ================================================================
+diff --git a/extensions/vendor/openviking-pi/qcr-hooks.ts b/extensions/vendor/openviking-pi/qcr-hooks.ts
+index 8979e729..89d8281c 100644
+--- a/extensions/vendor/openviking-pi/qcr-hooks.ts
++++ b/extensions/vendor/openviking-pi/qcr-hooks.ts
+@@ -32,7 +32,9 @@ export const HOOK_TIMEOUT_MS: Readonly<Record<HookName, number>> = {
+   tool_call: 2_000,
+   turn_end: 30_000,
+   session_shutdown: 5_000,
+-  agent_end: 1_000,
++  // [QCR PATCH 13] agent_end drains the turn syncs queued behind a slow one,
++  // so it gets turn_end's deadline; with nothing queued it returns at once.
++  agent_end: 30_000,
+   command: 15_000,
+ };
+ 
 diff --git a/extensions/vendor/openviking-pi/sync.ts b/extensions/vendor/openviking-pi/sync.ts
-index 037d6306..a57ae420 100644
+index 037d6306..32de4615 100644
 --- a/extensions/vendor/openviking-pi/sync.ts
 +++ b/extensions/vendor/openviking-pi/sync.ts
-@@ -38,6 +38,14 @@ export class SyncManager {
+@@ -38,6 +38,12 @@ export class SyncManager {
    private syncedEntryCount = 0;
    private queue: PendingQueueConfig;
    private debugLog: (message: string) => void;
-+  // [QCR PATCH 13] One turn sync in flight. A turn that ends while one runs
-+  // writes its new messages to the offline queue at once (`handedOff`), or,
-+  // with no queue, leaves its branch in `handedOffBranches`; the running sync
-+  // sends them, in order, when it is done.
++  // [QCR PATCH 13] One turn sync in flight per session. A turn that ends
++  // while one runs queues its branch here, in order; the running sync sends
++  // each in turn. `idle` settles when the queue is empty again.
 +  private syncing = false;
-+  private handedOff = false;
-+  private handOffWrites: Promise<unknown> = Promise.resolve();
-+  private handedOffBranches: any[][] = [];
++  private waiting: any[][] = [];
++  private idle: Promise<void> = Promise.resolve();
  
    constructor(client: OVClient, config: OVConfig, opts: SyncOptions = {}) {
      this.client = client;
-@@ -110,11 +118,72 @@ export class SyncManager {
+@@ -110,8 +116,46 @@ export class SyncManager {
      return countUndeliveredForSession(pending, this.ovSessionId) === 0;
    }
  
@@ -110,78 +143,41 @@ index 037d6306..a57ae420 100644
 +   * this sync, so under a slow server the next turn used to start a second one
 +   * from the same watermark: the same messages went to one session several
 +   * times at once and queued on its lock. Now one sync runs at a time. A turn
-+   * that ends while it runs claims its new messages from the advanced
-+   * watermark and writes them to the offline queue on disk, so a worker that
-+   * exits before the running sync is done loses nothing (the next session
-+   * start replays the queue), and a branch switch cannot overwrite an unsent
-+   * turn. The running sync drains the queue, one append at a time, when it is
-+   * done. With no queue configured the branches wait in memory instead.
++   * that ends while it runs queues its branch, and the running sync sends the
++   * queued branches one after another, each from the watermark the one before
++   * it left: nothing is sent twice or at once, and no turn is overwritten by a
++   * later one. `drain()` (awaited at agent_end) waits for the queue to empty.
 +   */
    async syncBranch(branch: any[]): Promise<SyncBranchResult> {
      if (!this.ovSessionId) return { added: 0, tokens: 0, allDelivered: true };
-+    if (this.syncing) return this.handOff(branch);
++    if (this.syncing) {
++      this.waiting.push(branch);
++      return { added: 0, tokens: 0, allDelivered: false };
++    }
 +    this.syncing = true;
++    let done!: () => void;
++    this.idle = new Promise<void>((resolve) => (done = resolve));
 +    try {
 +      const total = await this.syncOnce(branch);
-+      for (;;) {
-+        const next = this.handedOffBranches.shift();
-+        if (next) {
-+          const r = await this.syncOnce(next);
-+          total.added += r.added;
-+          total.tokens += r.tokens;
-+          total.allDelivered = total.allDelivered && r.allDelivered;
-+        } else if (this.handedOff) {
-+          this.handedOff = false;
-+          await this.handOffWrites;
-+          await this.replayPending();
-+        } else break;
++      for (let next = this.waiting.shift(); next; next = this.waiting.shift()) {
++        const r = await this.syncOnce(next);
++        total.added += r.added;
++        total.tokens += r.tokens;
++        total.allDelivered = total.allDelivered && r.allDelivered;
 +      }
 +      return total;
 +    } finally {
 +      this.syncing = false;
++      done();
 +    }
 +  }
 +
-+  private async handOff(branch: any[]): Promise<SyncBranchResult> {
-+    if (!this.queue.dir) {
-+      this.handedOffBranches.push(branch);
-+      return { added: 0, tokens: 0, allDelivered: false };
-+    }
-+    // Claimed, and the drain asked for, before the first await: the running
-+    // sync checks for hand-offs only between its own awaits, so it cannot
-+    // finish without seeing this one.
-+    const extracted = extractBranchCapturePayloads(branch, this.syncedEntryCount, this.config);
-+    this.syncedEntryCount = extracted.nextEntryCount;
-+    if (extracted.payloads.length > 0) this.handedOff = true;
-+    const sessionId = this.ovSessionId!;
-+    const write = (async () => {
-+      for (const payload of extracted.payloads)
-+        await enqueue("addMessage", sessionId, payload, { queue: this.queue });
-+    })();
-+    this.handOffWrites = this.handOffWrites.then(() => write);
-+    await write;
-+    const tokens = extracted.payloads.reduce((n, p) => n + estimatePayloadTokens(p), 0);
-+    return { added: extracted.payloads.length, tokens, allDelivered: false };
++  /** [QCR PATCH 13] Settles once no sync runs and no turn waits for one. */
++  drain(): Promise<void> {
++    return this.idle;
 +  }
- 
++
 +  private async syncOnce(branch: any[]): Promise<SyncBranchResult> {
-+    if (!this.ovSessionId) return { added: 0, tokens: 0, allDelivered: true };
+ 
      const extracted = extractBranchCapturePayloads(branch, this.syncedEntryCount, this.config);
--    if (extracted.resetWatermark) this.syncedEntryCount = 0;
-+    // [QCR PATCH 13] Claimed up front, so a hand-off during the appends below
-+    // starts after them. addPayload accepts every payload once a session is
-+    // set (a failed append is queued), so nothing claimed goes unsent.
-+    this.syncedEntryCount = extracted.nextEntryCount;
-     let added = 0;
-     let tokens = 0;
-     let allDelivered = true;
-@@ -125,9 +194,6 @@ export class SyncManager {
-       tokens += estimatePayloadTokens(payload);
-       allDelivered = allDelivered && result.delivered;
-     }
--    if (added === extracted.payloads.length) {
--      this.syncedEntryCount = extracted.nextEntryCount;
--    }
-     // [QCR PATCH 7] was `if (added > 0 && !takeoverEnabled) await
-     // this.commitIfNeeded()` — a session GET after every synced turn and a
-     // commit at 20k pending tokens. Commit is never called; the
+     if (extracted.resetWatermark) this.syncedEntryCount = 0;

@@ -38,14 +38,12 @@ export class SyncManager {
   private syncedEntryCount = 0;
   private queue: PendingQueueConfig;
   private debugLog: (message: string) => void;
-  // [QCR PATCH 13] One turn sync in flight. A turn that ends while one runs
-  // writes its new messages to the offline queue at once (`handedOff`), or,
-  // with no queue, leaves its branch in `handedOffBranches`; the running sync
-  // sends them, in order, when it is done.
+  // [QCR PATCH 13] One turn sync in flight per session. A turn that ends
+  // while one runs queues its branch here, in order; the running sync sends
+  // each in turn. `idle` settles when the queue is empty again.
   private syncing = false;
-  private handedOff = false;
-  private handOffWrites: Promise<unknown> = Promise.resolve();
-  private handedOffBranches: any[][] = [];
+  private waiting: any[][] = [];
+  private idle: Promise<void> = Promise.resolve();
 
   constructor(client: OVClient, config: OVConfig, opts: SyncOptions = {}) {
     this.client = client;
@@ -123,67 +121,44 @@ export class SyncManager {
    * this sync, so under a slow server the next turn used to start a second one
    * from the same watermark: the same messages went to one session several
    * times at once and queued on its lock. Now one sync runs at a time. A turn
-   * that ends while it runs claims its new messages from the advanced
-   * watermark and writes them to the offline queue on disk, so a worker that
-   * exits before the running sync is done loses nothing (the next session
-   * start replays the queue), and a branch switch cannot overwrite an unsent
-   * turn. The running sync drains the queue, one append at a time, when it is
-   * done. With no queue configured the branches wait in memory instead.
+   * that ends while it runs queues its branch, and the running sync sends the
+   * queued branches one after another, each from the watermark the one before
+   * it left: nothing is sent twice or at once, and no turn is overwritten by a
+   * later one. `drain()` (awaited at agent_end) waits for the queue to empty.
    */
   async syncBranch(branch: any[]): Promise<SyncBranchResult> {
     if (!this.ovSessionId) return { added: 0, tokens: 0, allDelivered: true };
-    if (this.syncing) return this.handOff(branch);
+    if (this.syncing) {
+      this.waiting.push(branch);
+      return { added: 0, tokens: 0, allDelivered: false };
+    }
     this.syncing = true;
+    let done!: () => void;
+    this.idle = new Promise<void>((resolve) => (done = resolve));
     try {
       const total = await this.syncOnce(branch);
-      for (;;) {
-        const next = this.handedOffBranches.shift();
-        if (next) {
-          const r = await this.syncOnce(next);
-          total.added += r.added;
-          total.tokens += r.tokens;
-          total.allDelivered = total.allDelivered && r.allDelivered;
-        } else if (this.handedOff) {
-          this.handedOff = false;
-          await this.handOffWrites;
-          await this.replayPending();
-        } else break;
+      for (let next = this.waiting.shift(); next; next = this.waiting.shift()) {
+        const r = await this.syncOnce(next);
+        total.added += r.added;
+        total.tokens += r.tokens;
+        total.allDelivered = total.allDelivered && r.allDelivered;
       }
       return total;
     } finally {
       this.syncing = false;
+      done();
     }
   }
 
-  private async handOff(branch: any[]): Promise<SyncBranchResult> {
-    if (!this.queue.dir) {
-      this.handedOffBranches.push(branch);
-      return { added: 0, tokens: 0, allDelivered: false };
-    }
-    // Claimed, and the drain asked for, before the first await: the running
-    // sync checks for hand-offs only between its own awaits, so it cannot
-    // finish without seeing this one.
-    const extracted = extractBranchCapturePayloads(branch, this.syncedEntryCount, this.config);
-    this.syncedEntryCount = extracted.nextEntryCount;
-    if (extracted.payloads.length > 0) this.handedOff = true;
-    const sessionId = this.ovSessionId!;
-    const write = (async () => {
-      for (const payload of extracted.payloads)
-        await enqueue("addMessage", sessionId, payload, { queue: this.queue });
-    })();
-    this.handOffWrites = this.handOffWrites.then(() => write);
-    await write;
-    const tokens = extracted.payloads.reduce((n, p) => n + estimatePayloadTokens(p), 0);
-    return { added: extracted.payloads.length, tokens, allDelivered: false };
+  /** [QCR PATCH 13] Settles once no sync runs and no turn waits for one. */
+  drain(): Promise<void> {
+    return this.idle;
   }
 
   private async syncOnce(branch: any[]): Promise<SyncBranchResult> {
-    if (!this.ovSessionId) return { added: 0, tokens: 0, allDelivered: true };
+
     const extracted = extractBranchCapturePayloads(branch, this.syncedEntryCount, this.config);
-    // [QCR PATCH 13] Claimed up front, so a hand-off during the appends below
-    // starts after them. addPayload accepts every payload once a session is
-    // set (a failed append is queued), so nothing claimed goes unsent.
-    this.syncedEntryCount = extracted.nextEntryCount;
+    if (extracted.resetWatermark) this.syncedEntryCount = 0;
     let added = 0;
     let tokens = 0;
     let allDelivered = true;
@@ -193,6 +168,9 @@ export class SyncManager {
       added++;
       tokens += estimatePayloadTokens(payload);
       allDelivered = allDelivered && result.delivered;
+    }
+    if (added === extracted.payloads.length) {
+      this.syncedEntryCount = extracted.nextEntryCount;
     }
     // [QCR PATCH 7] was `if (added > 0 && !takeoverEnabled) await
     // this.commitIfNeeded()` — a session GET after every synced turn and a
