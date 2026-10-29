@@ -405,6 +405,10 @@ async function register(pi: ExtensionAPI, cfg: OpenVikingConfig): Promise<void> 
   // --- agent_end ---
   pi.on("agent_end", guard("agent_end", async (_event, _ctx) => {
     recall.invalidate();
+    // [QCR PATCH 13] The turns queued behind a slow sync go out before the
+    // prompt resolves, under this hook's deadline: a worker disposes its
+    // session without session_shutdown, so this is the last chance.
+    await sync.drain();
   }));
 
   // ================================================================

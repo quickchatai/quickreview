@@ -32,7 +32,9 @@ export const HOOK_TIMEOUT_MS: Readonly<Record<HookName, number>> = {
   tool_call: 2_000,
   turn_end: 30_000,
   session_shutdown: 5_000,
-  agent_end: 1_000,
+  // [QCR PATCH 13] agent_end drains the turn syncs queued behind a slow one,
+  // so it gets turn_end's deadline; with nothing queued it returns at once.
+  agent_end: 30_000,
   command: 15_000,
 };
 

@@ -38,6 +38,14 @@ export class SyncManager {
   private syncedEntryCount = 0;
   private queue: PendingQueueConfig;
   private debugLog: (message: string) => void;
+  // [QCR PATCH 13] One turn sync in flight per session. A turn that ends
+  // while one runs queues its branch here, in order; the running sync sends
+  // each in turn. `idle` settles when the queue is empty again.
+  private syncing = false;
+  private waiting: any[][] = [];
+  private idle: Promise<void> = Promise.resolve();
+  // [QCR PATCH 13] The ids of the entries already sent (see syncOnce).
+  private sentIds = new Set<string>();
 
   constructor(client: OVClient, config: OVConfig, opts: SyncOptions = {}) {
     this.client = client;
@@ -52,6 +60,7 @@ export class SyncManager {
   restoreWatermark(n: number): void {
     const next = Math.max(0, Math.floor(Number(n) || 0));
     this.syncedEntryCount = next;
+    this.sentIds.clear(); // [QCR PATCH 13] the next sync re-seeds from `next`
   }
 
   /**
@@ -110,8 +119,54 @@ export class SyncManager {
     return countUndeliveredForSession(pending, this.ovSessionId) === 0;
   }
 
+  /**
+   * [QCR PATCH 13] The turn_end hook's deadline returns without cancelling
+   * this sync, so under a slow server the next turn used to start a second one
+   * from the same watermark: the same messages went to one session several
+   * times at once and queued on its lock. Now one sync runs at a time. A turn
+   * that ends while it runs queues its branch, and the running sync sends the
+   * queued branches one after another, each from the watermark the one before
+   * it left: nothing is sent twice or at once, and no turn is overwritten by a
+   * later one. `drain()` (awaited at agent_end) waits for the queue to empty.
+   */
   async syncBranch(branch: any[]): Promise<SyncBranchResult> {
     if (!this.ovSessionId) return { added: 0, tokens: 0, allDelivered: true };
+    if (this.syncing) {
+      this.waiting.push(branch);
+      return { added: 0, tokens: 0, allDelivered: false };
+    }
+    this.syncing = true;
+    let done!: () => void;
+    this.idle = new Promise<void>((resolve) => (done = resolve));
+    try {
+      const total = await this.syncOnce(branch);
+      for (let next = this.waiting.shift(); next; next = this.waiting.shift()) {
+        const r = await this.syncOnce(next);
+        total.added += r.added;
+        total.tokens += r.tokens;
+        total.allDelivered = total.allDelivered && r.allDelivered;
+      }
+      return total;
+    } finally {
+      this.syncing = false;
+      done();
+    }
+  }
+
+  /** [QCR PATCH 13] Settles once no sync runs and no turn waits for one. */
+  drain(): Promise<void> {
+    return this.idle;
+  }
+
+  private async syncOnce(branch: any[]): Promise<SyncBranchResult> {
+    // [QCR PATCH 13] A queued branch can be as long as the one sent before it
+    // and share none of its entries (a branch switch), so a length watermark
+    // would count its entries as sent. pi gives every entry an id: what was
+    // sent is remembered by id. The watermark below stays for entries without.
+    const ids = branch.map((entry) => entry?.id);
+    if (branch.length > 0 && ids.every((id) => typeof id === "string")) {
+      return this.syncById(branch, ids);
+    }
 
     const extracted = extractBranchCapturePayloads(branch, this.syncedEntryCount, this.config);
     if (extracted.resetWatermark) this.syncedEntryCount = 0;
@@ -132,6 +187,31 @@ export class SyncManager {
     // this.commitIfNeeded()` — a session GET after every synced turn and a
     // commit at 20k pending tokens. Commit is never called; the
     // per-turn sync above stays (owner ruling R3).
+    return { added, tokens, allDelivered };
+  }
+
+  /** [QCR PATCH 13] Sends each entry of `branch` not sent before, in order. */
+  private async syncById(branch: any[], ids: string[]): Promise<SyncBranchResult> {
+    // A restored watermark counts the branch's first entries as sent.
+    if (this.sentIds.size === 0) {
+      for (const id of ids.slice(0, this.syncedEntryCount)) this.sentIds.add(id);
+    }
+    let added = 0;
+    let tokens = 0;
+    let allDelivered = true;
+    for (const [i, entry] of branch.entries()) {
+      const id = ids[i]!;
+      if (this.sentIds.has(id)) continue;
+      for (const payload of extractBranchCapturePayloads([entry], 0, this.config).payloads) {
+        const result = await this.addPayload(payload);
+        if (!result.accepted) return { added, tokens, allDelivered };
+        added++;
+        tokens += estimatePayloadTokens(payload);
+        allDelivered = allDelivered && result.delivered;
+      }
+      this.sentIds.add(id);
+    }
+    this.syncedEntryCount = branch.length;
     return { added, tokens, allDelivered };
   }
 

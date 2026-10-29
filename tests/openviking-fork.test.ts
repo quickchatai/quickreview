@@ -58,6 +58,7 @@ import {
 } from "../extensions/vendor/openviking-pi/qcr-honest.js";
 import { BUSY_RETRY_DEFAULTS } from "../src/openviking/client.js";
 import { SyncManager } from "../extensions/vendor/openviking-pi/sync.js";
+import { HOOK_TIMEOUT_MS } from "../extensions/vendor/openviking-pi/qcr-hooks.js";
 import { RecallManager } from "../extensions/vendor/openviking-pi/recall.js";
 import {
   budgetedFetch,
@@ -166,7 +167,7 @@ describe("provenance and licence", () => {
   });
 
   it("ships the patch series it claims to", () => {
-    expect(upstream.patches.length).toBe(14); // 0000 scaffolding + eleven numbered + 0012 typing + 0013 (patch 12)
+    expect(upstream.patches.length).toBe(15); // 0000 scaffolding + eleven numbered + 0012 typing + 0013 (patch 12) + 0014 (patch 13)
     for (const name of upstream.patches) {
       const patch = read(join("patches", name));
       expect(patch.length).toBeGreaterThan(0);
@@ -2191,7 +2192,7 @@ describe("PATCH 11 — the review session's memory boundary holds for recall, se
   });
 
   it("ships the patch, recorded in the series, with its markers", () => {
-    expect(upstream.patches.at(-3)).toBe("0011-review-session-memory-boundary.patch");
+    expect(upstream.patches[11]).toBe("0011-review-session-memory-boundary.patch");
     const patch = read(join("patches", "0011-review-session-memory-boundary.patch"));
     expect(patch).toContain("QCR PATCH 11");
     for (const f of [
@@ -2213,7 +2214,7 @@ describe("PATCH 11 — the review session's memory boundary holds for recall, se
 
 describe("PATCH 12 — the fork is typechecked against the real pi, not ambient stand-ins", () => {
   it("ships the patch, recorded after 0011, and the ambient shim is gone", () => {
-    expect(upstream.patches.at(-2)).toBe("0012-typecheck-against-the-real-pi.patch");
+    expect(upstream.patches[12]).toBe("0012-typecheck-against-the-real-pi.patch");
     const patch = read(join("patches", "0012-typecheck-against-the-real-pi.patch"));
     for (const f of ["index.ts", "vendor-pi-types.d.ts", "README.md"]) {
       expect(patch).toContain(`b/extensions/vendor/openviking-pi/${f}`);
@@ -2227,8 +2228,8 @@ describe("PATCH 12 — createOpenViking(cfg), file 0013", () => {
   // Behaviour is tested in tests/openviking-factory.test.ts (the shim, the hook
   // deadline, the factory over a fake pi and client), the parity case in
   // extension-factory-parity.test.ts and canary 9. This is the provenance.
-  it("ships the patch, recorded LAST in the series, with its markers and files", () => {
-    expect(upstream.patches.at(-1)).toBe("0013-createopenviking-factory.patch");
+  it("ships the patch, recorded after 0012 in the series, with its markers and files", () => {
+    expect(upstream.patches[13]).toBe("0013-createopenviking-factory.patch");
     const patch = read(join("patches", "0013-createopenviking-factory.patch"));
     expect(patch).toContain("QCR PATCH 12");
     for (const f of [
@@ -2255,5 +2256,196 @@ describe("PATCH 12 — createOpenViking(cfg), file 0013", () => {
     expect(patch).not.toContain("diff --git a/extensions/vendor/openviking-pi/upstream.json");
     expect(patch).not.toMatch(/^[+-].*extension_commit/m);
     expect(read("NOTICE")).toContain(upstream.commit);
+  });
+});
+
+describe("PATCH 13 — one turn sync in flight per session, file 0014", () => {
+  // The turn_end hook runs under a 30 s deadline and gives up WITHOUT cancelling
+  // its sync. Under a slow server the next turn then started a second sync from
+  // the same watermark, so one process sent the same messages to one session
+  // several times at once; the server's per-session lock made them queue, and
+  // the probes queued behind them (up to 5 appends in flight to one session).
+  type Gate = { release: () => void };
+  // Every append blocks until released; `sent` keeps the delivery order.
+  const slowClient = () => {
+    let inFlight = 0;
+    const seen = { maxInFlight: 0, sent: [] as string[], gates: [] as Gate[] };
+    const client = {
+      connected: true,
+      async getSession(id: string) {
+        return { session_id: id };
+      },
+      async addMessagePayload(_id: string, payload: unknown) {
+        inFlight++;
+        seen.maxInFlight = Math.max(seen.maxInFlight, inFlight);
+        seen.sent.push(JSON.stringify(payload));
+        await new Promise<void>((release) => seen.gates.push({ release }));
+        inFlight--;
+        return true;
+      },
+    } as unknown as ConstructorParameters<typeof SyncManager>[0];
+    return { client, seen };
+  };
+  // pi gives every entry an id; here the text stands in for it.
+  const msg = (role: "user" | "assistant", text: string) => ({
+    id: text,
+    type: "message",
+    message:
+      role === "user" ? { role, content: text } : { role, content: [{ type: "text", text }] },
+  });
+  // Releases every append until all of `syncs` have settled.
+  const settle = async (seen: { gates: Gate[] }, syncs: Array<Promise<unknown>>) => {
+    let done = false;
+    const all = Promise.all(syncs).finally(() => (done = true));
+    const deadline = Date.now() + 2_000;
+    while (!done && Date.now() < deadline) {
+      seen.gates.splice(0).forEach((g) => g.release());
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    await all;
+  };
+  const started = async () => {
+    const { client, seen } = slowClient();
+    const sync = new SyncManager(client, loadConfig(FORK));
+    expect(await sync.ensureSession({ OPENVIKING_SESSION_ID: "pr-42" })).toBe(true);
+    return { sync, seen };
+  };
+  const texts = (seen: { sent: string[] }) =>
+    seen.sent.map((p) => (JSON.parse(p) as { parts: Array<{ text: string }> }).parts[0]!.text);
+  const tick = () => new Promise((r) => setTimeout(r, 1));
+  const turn1 = [msg("user", "review this change"), msg("assistant", "reading the diff")];
+  const turn2 = [...turn1, msg("user", "and the tests?"), msg("assistant", "they cover it")];
+  const turn3 = [...turn2, msg("user", "and the docs?"), msg("assistant", "they are updated")];
+
+  // MUTATION: drop the `if (this.syncing)` queue in syncBranch — this fails.
+  it("a turn that ends while a sync runs sends nothing twice and nothing at once; its messages follow", async () => {
+    const { sync, seen } = await started();
+    const first = sync.syncBranch(turn1);
+    await tick();
+    // The hook's deadline passed; the next turn ends while the first sync waits.
+    const second = sync.syncBranch(turn2);
+    await settle(seen, [first, second]);
+    expect(seen.maxInFlight).toBe(1);
+    expect(texts(seen)).toEqual([
+      "review this change",
+      "reading the diff",
+      "and the tests?",
+      "they cover it",
+    ]);
+    expect(sync.syncedCount).toBe(turn2.length);
+  });
+
+  // MUTATION: take the queued branches newest-first (`pop` for `shift`) — this fails.
+  it("turns queued behind a slow sync go out in transcript order", async () => {
+    const { sync, seen } = await started();
+    const first = sync.syncBranch(turn1);
+    await tick();
+    const queued = [sync.syncBranch(turn2), sync.syncBranch(turn3)];
+    await settle(seen, [first, ...queued]);
+    expect(seen.maxInFlight).toBe(1);
+    expect(texts(seen)).toEqual([
+      "review this change",
+      "reading the diff",
+      "and the tests?",
+      "they cover it",
+      "and the docs?",
+      "they are updated",
+    ]);
+  });
+
+  // MUTATION: keep only the latest queued branch — this fails.
+  it("a branch switch while a sync runs does not drop the turn it left", async () => {
+    const { sync, seen } = await started();
+    const first = sync.syncBranch(turn1);
+    await tick();
+    const left = [...turn1, msg("user", "first idea"), msg("assistant", "abandoned path")];
+    const switched = [msg("user", "other branch"), msg("assistant", "new path")];
+    const queued = [sync.syncBranch(left), sync.syncBranch(switched)];
+    await settle(seen, [first, ...queued]);
+    expect(seen.maxInFlight).toBe(1);
+    expect(texts(seen)).toEqual([
+      "review this change",
+      "reading the diff",
+      "first idea",
+      "abandoned path",
+      "other branch",
+      "new path",
+    ]);
+  });
+
+  // MUTATION: drop the `syncById` route in syncOnce (length watermark only) — this fails.
+  it("a queued branch as long as the one before it, or longer with another prefix, is sent in full", async () => {
+    const { sync, seen } = await started();
+    const first = sync.syncBranch(turn1);
+    await tick();
+    const sameLength = [msg("user", "other branch"), msg("assistant", "new path")];
+    const longer = [
+      msg("user", "third branch"),
+      msg("assistant", "a longer path"),
+      msg("user", "keep going"),
+    ];
+    const queued = [sync.syncBranch(sameLength), sync.syncBranch(longer)];
+    await settle(seen, [first, ...queued]);
+    expect(texts(seen)).toEqual([
+      "review this change",
+      "reading the diff",
+      "other branch",
+      "new path",
+      "third branch",
+      "a longer path",
+      "keep going",
+    ]);
+    // Back on the first branch with one more turn: only the new entries go.
+    await settle(seen, [sync.syncBranch(turn2)]);
+    expect(texts(seen).slice(7)).toEqual(["and the tests?", "they cover it"]);
+  });
+
+  // MUTATION: make syncById skip nothing (drop the `sentIds.has` check) — this fails.
+  it("entries without ids keep the length watermark, and a restored watermark seeds the ids", async () => {
+    const bare = turn2.map(({ id: _id, ...entry }) => entry);
+    const plain = await started();
+    await settle(plain.seen, [plain.sync.syncBranch(bare.slice(0, 2))]);
+    await settle(plain.seen, [plain.sync.syncBranch(bare)]);
+    expect(texts(plain.seen)).toHaveLength(4);
+
+    const restored = await started();
+    restored.sync.restoreWatermark(turn1.length);
+    await settle(restored.seen, [restored.sync.syncBranch(turn2)]);
+    expect(texts(restored.seen)).toEqual(["and the tests?", "they cover it"]);
+  });
+
+  // MUTATION: settle `drain()` before the queued turns are sent — this fails.
+  it("drain() settles only once the queued turns are sent, and at once when nothing runs", async () => {
+    const { sync, seen } = await started();
+    await sync.drain();
+    void sync.syncBranch(turn1);
+    await tick();
+    void sync.syncBranch(turn2);
+    let drained = false;
+    const drain = sync.drain().then(() => (drained = true));
+    await tick();
+    expect(drained).toBe(false);
+    await settle(seen, [drain]);
+    expect(drained).toBe(true);
+    expect(texts(seen)).toHaveLength(4);
+  });
+
+  // MUTATION: delete `await sync.drain();` from the agent_end handler, or put
+  // agent_end's deadline back to 1_000 in qcr-hooks.ts — either fails this.
+  it("agent_end waits for the queued turns under turn_end's deadline", () => {
+    const index = read("index.ts");
+    const agentEnd = index.slice(index.indexOf('pi.on("agent_end"'));
+    expect(agentEnd.slice(0, agentEnd.indexOf("}));"))).toContain("await sync.drain()");
+    expect(HOOK_TIMEOUT_MS.agent_end).toBe(HOOK_TIMEOUT_MS.turn_end);
+  });
+
+  // MUTATION: drop "0014-one-turn-sync-in-flight.patch" from upstream.json's
+  // patch list — this fails.
+  it("ships the patch, recorded last in the series, with its marker", () => {
+    expect(upstream.patches.at(-1)).toBe("0014-one-turn-sync-in-flight.patch");
+    const patch = read(join("patches", "0014-one-turn-sync-in-flight.patch"));
+    expect(patch).toContain("QCR PATCH 13");
+    expect(patch).toContain("diff --git a/extensions/vendor/openviking-pi/sync.ts");
+    expect(read("NOTICE")).toContain(" 13. ");
   });
 });
