@@ -677,6 +677,75 @@ describe("daemon wiring", () => {
     },
   );
 
+  // MUTATION: drop the requestSweep on a lapsed drain in daemon.ts pump — this fails.
+  it(
+    "a thread decision held by the breaker's drain is answered once the drain lapses on its own",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      let clock = new Date("2026-10-28T17:20:00.000Z");
+      store.close();
+      store = new StateStore(":memory:", () => clock);
+      store.engageDrain(
+        { issuer: "operator", expires_at: "2026-10-28T17:35:00.000Z" },
+        "worker_failures",
+      );
+      const daemon = createDaemon({
+        cfg: { ...loadConfig(join(process.cwd(), "tests/fixtures/config.toml")), dry_run: true },
+        root,
+        store,
+        adapter: fakeAdapter([], join(root, "state", "dryrun")),
+        listen: false,
+        log: () => {},
+      });
+      await daemon.start();
+      try {
+        new PingPongLedger(store.db).claimAuthorMessage({
+          pr: PR,
+          comment_id: 5001,
+          in_reply_to_id: 4000,
+          path: "src/app.ts",
+          body: "can a person look at this?",
+          author: "alice",
+        });
+        writeFileSync(
+          join(root, "verdict", `pr-${PR}-thread-4000-comment-5001.json`),
+          JSON.stringify({
+            pr: PR,
+            thread_id: 4000,
+            comment_id: 5001,
+            resolution: "keep_open",
+            reply: "",
+            reason: "author asked for a person",
+            human_requested: true,
+          }),
+        );
+        daemon.wakeThreadDecisions();
+        const paused = (): boolean =>
+          store.db
+            .prepare("SELECT 1 FROM events WHERE kind = 'pingpong_decisions_paused_draining'")
+            .all().length > 0;
+        const waitFor = async (done: () => boolean): Promise<void> => {
+          const deadline = Date.now() + 5_000;
+          while (!done() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20));
+        };
+        await waitFor(paused);
+        expect(paused()).toBe(true);
+        // Let the file write's own watcher events land while still drained, so
+        // only the lapse can wake the sweep below.
+        await new Promise((r) => setTimeout(r, 300));
+        expect(store.anomalies()).toEqual([]);
+
+        clock = new Date("2026-10-28T17:35:00.000Z");
+        await daemon.pump();
+        await waitFor(() => store.anomalies().length > 0);
+        expect(store.drainState().draining).toBe(false);
+        expect(store.anomalies()).toMatchObject([{ kind: "human_requested", pr: PR }]);
+      } finally {
+        await daemon.stop();
+      }
+    },
+  );
+
   /**
    * The author's "I want a human" is recorded, not dropped.
    *

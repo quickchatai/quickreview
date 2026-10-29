@@ -392,9 +392,14 @@ round in flight.
   errors (`src/daemon.ts`), so a broken deploy never resumes work blind.
   `qcr drain off` lifts it immediately. Two drains the boot never lifts: a
   system's (`draining_reason`, the worker crash-loop breaker) and the
-  operator's **hold** — `qcr drain on --hold` (`{"command":"drain","on":true,
-  "hold":true}`), the cutover's — which only an explicit `qcr drain off` lifts;
-  the boot logs `drain_hold_kept` instead. A hold is refused to any issuer but
+  operator's **hold**. The breaker's drain heals itself instead
+  (`src/workerbreaker.ts`): it lapses after 15 minutes and the queue retries;
+  if workers fail again it drains again, each time waiting twice as long, up to
+  4 hours, until a served round resets the wait. The boot that adds the
+  breaker's `trips` column gives a breaker drain an older daemon left standing
+  an expiry of now (`breaker_drain_heal_carried`). The operator's hold —
+  `qcr drain on --hold` (`{"command":"drain","on":true,"hold":true}`), the
+  cutover's — is lifted only by an explicit `qcr drain off`; the boot logs `drain_hold_kept` instead. A hold is refused to any issuer but
   the sealed operator channel, and never carries an expiry. The boot that adds
   the `hold` column to state.db carries a standing operator drain over as one
   (`drain_hold_carried`): that is how the legacy daemon's cutover drain holds.

@@ -1836,8 +1836,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         // pump starts nothing, recheck/ping-pong/EOD hold — in-flight rounds
         // finish naturally. Off is the manual lift; the automatic one is the
         // next boot's first healthy reconcile pass (daemon.ts) — except for
-        // the operator's HOLD, which only an explicit off lifts. Never touches
-        // GitHub, never goes near the gate.
+        // the operator's HOLD, which only an explicit off lifts, and the worker
+        // breaker's drain, which lapses on its own (src/workerbreaker.ts).
+        // Never touches GitHub, never goes near the gate.
         drain(on, issuer, forMin, deliveryKey, hold) {
           return drainLever(
             { ...leverDeps, deliveryKey },

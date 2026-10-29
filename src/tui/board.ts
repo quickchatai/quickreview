@@ -534,7 +534,7 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
   // guessed at. The operator's HOLD says that no boot lifts it; an
   // operator drain from a daemon that reports no hold marker says "hold ?".
   const drainSeg = s?.draining
-    ? `${FG.anomaly}⛔ DRAINING — ${s.running_rounds} round${s.running_rounds === 1 ? "" : "s"} finishing · ${s.drain_failed_loud ?? 0} failed loud · ${s.drained_deliveries ?? 0} dropped · ${leverHolderLabel(s.draining_by, s.draining_until)}${drainHoldLabel(s)}${s.draining_reason === "worker_failures" ? " · workers keep failing, drain off lifts it" : ""}${RESET}`
+    ? `${FG.anomaly}⛔ DRAINING — ${s.running_rounds} round${s.running_rounds === 1 ? "" : "s"} finishing · ${s.drain_failed_loud ?? 0} failed loud · ${s.drained_deliveries ?? 0} dropped · ${leverHolderLabel(s.draining_by, s.draining_until)}${drainHoldLabel(s)}${s.draining_reason === "worker_failures" ? (s.draining_until ? " · workers kept failing, it retries when it lapses; drain off lifts it now" : " · workers keep failing, drain off lifts it") : ""}${RESET}`
     : "";
   const td = s?.thread_decisions;
   const breakerSeg =

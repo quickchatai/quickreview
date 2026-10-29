@@ -954,8 +954,10 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       } else if (bootFirstPass && standing.draining && standing.reason !== null) {
         // A drain a system set for a reason (the worker crash-loop breaker,
         // `worker_failures`) is not a deploy window: a restart does not clear what
-        // made it. Only an explicit `drain off` does.
-        log(`drain stands — held for ${standing.reason}; only an explicit drain off lifts it`);
+        // made it. It lapses at its own expiry, or an explicit `drain off` lifts it.
+        log(
+          `drain stands — held for ${standing.reason}; ${standing.expires_at ? `it lifts itself at ${standing.expires_at}, or` : "only"} an explicit drain off lifts it`,
+        );
       } else if (bootFirstPass && report.errors.length === 0 && standing.draining) {
         // The operator's lift: this is the deploy flow's drain completing, so
         // it clears whatever hold stands — a session's included.
@@ -983,8 +985,10 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   const pump = async (): Promise<void> => {
     await guard("dispatch", async () => {
       // Session levers that lapsed since the last tick leave the ledger here;
-      // the readers below already treat them as gone.
-      sweepExpiredLevers(store, (line) => log(line));
+      // the readers below already treat them as gone. A drain that lapsed (a
+      // session's, or the worker breaker's healing itself) dropped thread
+      // replies as any drain does: sweep them as a lift would.
+      if (sweepExpiredLevers(store, (line) => log(line)).drain) threadDecisions.requestSweep();
       const orders = await dispatchOnce({
         cfg,
         store,

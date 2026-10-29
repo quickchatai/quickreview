@@ -11,6 +11,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
+import Database from "better-sqlite3";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -84,12 +85,135 @@ describe("the breaker over the store", () => {
     expect(b.failure(4, "c", "x").drained).toBe(false);
   });
 
+  // MUTATION: make `failure` pass drain = true for every error — this fails.
+  it("one network blip across concurrent workers does not drain; the retry failing again does", () => {
+    const store = new StateStore(":memory:");
+    const b = new WorkerBreaker(store);
+    const blip = "the round: the provider failed the turn: fetch failed";
+    for (const pr of [1, 2, 3]) expect(b.failure(pr, "c", blip).drained).toBe(false);
+    expect(store.drainState().draining).toBe(false);
+    // Each PR still counts toward its own park.
+    expect(store.workerBreaker(1)?.failures).toBe(1);
+    // The self-requeued retries fail on the network again: the outage is real.
+    b.failure(1, "c", blip);
+    b.failure(2, "c", blip);
+    expect(b.failure(3, "c", blip).drained).toBe(true);
+  });
+
+  it("a provider refusal or any other failure still counts at its first occurrence", () => {
+    const store = new StateStore(":memory:");
+    const b = new WorkerBreaker(store);
+    b.failure(1, "c", "the round: the provider refused the login: expired");
+    b.failure(2, "c", "the round: the provider failed the turn: 500 internal error");
+    expect(b.failure(3, "c", "the worker exited 1").drained).toBe(true);
+  });
+
+  // MUTATION: make `parks` in `failure` always true — this fails.
+  it("a provider network drop never parks a PR: it is the network's, not the PR's", () => {
+    const store = new StateStore(":memory:");
+    const b = new WorkerBreaker(store);
+    const blip = "the round: the provider failed the turn: fetch failed";
+    for (let i = 0; i < 3; i++) expect(b.failure(1, `c${i}`, blip).parked).toBe(false);
+    expect(b.gate(1)).toEqual({ ok: true });
+    // The PR's own crash still parks it, transport failures before it included.
+    expect(b.failure(1, "c3", "the worker exited 1").parked).toBe(true);
+  });
+
   it("a hand-set drain keeps no reason, and the breaker does not take it over", () => {
     const store = new StateStore(":memory:");
     store.engageDrain({ issuer: "operator", expires_at: null });
     const b = new WorkerBreaker(store);
     for (const pr of [1, 2, 3]) b.failure(pr, "c", "x");
     expect(store.drainState()).toMatchObject({ draining: true, reason: null });
+  });
+});
+
+describe("the breaker's drain heals itself", () => {
+  const T0 = Date.parse("2026-10-28T17:20:00Z");
+  const MIN = 60_000;
+  const rig = (): { store: StateStore; b: WorkerBreaker; at: (ms: number) => void } => {
+    let t = T0;
+    const store = new StateStore(":memory:", () => new Date(t));
+    const b = new WorkerBreaker(store, { now: () => t });
+    return { store, b, at: (ms) => (t = ms) };
+  };
+  const trip = (b: WorkerBreaker, tag: string): void => {
+    for (const pr of [1, 2, 3]) b.failure(pr, `${tag}${pr}`, "the worker exited 1");
+  };
+  const lapseOf = (store: StateStore): string | null => {
+    const d = store.drainState();
+    return d.draining ? d.expires_at : null;
+  };
+
+  // MUTATION: engage the breaker's drain with expires_at: null — this fails.
+  it("lifts itself after 15 min, so a passing outage cannot hold the bot down", () => {
+    const { store, b, at } = rig();
+    trip(b, "a");
+    expect(store.drainState()).toMatchObject({ draining: true, reason: "worker_failures" });
+    expect(lapseOf(store)).toBe(new Date(T0 + 15 * MIN).toISOString());
+    expect(b.gate(9)).toMatchObject({ ok: false, why: "draining" });
+    at(T0 + 15 * MIN);
+    expect(store.drainState().draining).toBe(false);
+    expect(b.gate(9)).toEqual({ ok: true });
+  });
+
+  // MUTATION: drop the `trips` doubling from the heal delay — this fails.
+  it("each re-trip with no served round in between waits twice as long, up to 4 h; a served round resets it", () => {
+    const { store, b, at } = rig();
+    let now = T0;
+    const waits: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      at(now);
+      trip(b, `t${i}`);
+      const lapse = Date.parse(lapseOf(store)!);
+      waits.push((lapse - now) / MIN);
+      now = lapse;
+    }
+    expect(waits).toEqual([15, 30, 60, 120, 240, 240]);
+    at(now);
+    b.success(7);
+    trip(b, "after");
+    expect((Date.parse(lapseOf(store)!) - now) / MIN).toBe(15);
+  });
+
+  it("the operator's own drain on over it stands until the operator lifts it", () => {
+    const { store, b, at } = rig();
+    trip(b, "a");
+    store.engageDrain({ issuer: "operator", expires_at: null });
+    at(T0 + 24 * 60 * MIN);
+    expect(store.drainState()).toMatchObject({ draining: true, expires_at: null });
+  });
+
+  // MUTATION: drop the UPDATE, or the window reset, in migrateBreakerHeal — this fails.
+  it("a breaker drain an older daemon left standing heals at the upgrade; a hand-set drain does not", () => {
+    for (const reason of ["worker_failures", null]) {
+      const path = join(dir, `legacy-${reason}.db`);
+      const old = new StateStore(path);
+      for (const pr of [1, 2, 3])
+        old.recordWorkerFailure(pr, {
+          commandId: "c",
+          error: "the worker exited 1",
+          at: new Date().toISOString(),
+          parkAfter: 2,
+        });
+      old.engageDrain({ issuer: "operator", expires_at: null }, reason);
+      old.close();
+      const raw = new Database(path);
+      raw.exec("ALTER TABLE worker_breaker_global DROP COLUMN trips");
+      raw.close();
+      const store = new StateStore(path);
+      try {
+        expect(store.drainState().draining).toBe(reason === null);
+        const carried = store.db
+          .prepare("SELECT 1 FROM events WHERE kind = 'breaker_drain_heal_carried'")
+          .all();
+        expect(carried).toHaveLength(reason === null ? 0 : 1);
+        // The legacy failures that tripped it do not count toward the next drain.
+        if (reason !== null) expect(store.failedWorkerPrsSince("1970-01-01T00:00:00Z")).toEqual([]);
+      } finally {
+        store.close();
+      }
+    }
   });
 });
 
@@ -155,6 +279,15 @@ describe("the TUI alert", () => {
       help: false,
     };
     expect(stripAnsi(topBar(view, 200))).toContain("workers keep failing");
+    // The breaker's own drain says it heals itself.
+    const healing = new StateStore(":memory:");
+    healing.engageDrain(
+      { issuer: "operator", expires_at: "2099-01-01T00:15:00.000Z" },
+      "worker_failures",
+    );
+    const bar = stripAnsi(topBar({ ...view, snapshot: buildStatusSnapshot(healing, true) }, 240));
+    expect(bar).toContain("lapses 00:15:00Z");
+    expect(bar).toContain("it retries when it lapses");
   });
 });
 

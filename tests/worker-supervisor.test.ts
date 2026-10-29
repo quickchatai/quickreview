@@ -1060,7 +1060,7 @@ describe("the per-PR breaker", () => {
 });
 
 describe("the global drain", () => {
-  it("three PRs failing within 15 min with no success set the drain; only drain off lifts it", async () => {
+  it("three PRs failing within 15 min with no success set the drain, which lapses on its own; drain off lifts it sooner", async () => {
     const r = await rig();
     await runWorker(r, 21, "fail");
     await runWorker(r, 22, "fail");
@@ -1070,9 +1070,14 @@ describe("the global drain", () => {
     expect(drain).toMatchObject({
       draining: true,
       issued_by: "operator",
-      expires_at: null,
       reason: "worker_failures",
     });
+    expect(drain.draining && drain.expires_at !== null && drain.since !== null).toBe(true);
+    // The breaker's clock and the store's are read a moment apart.
+    if (drain.draining)
+      expect(
+        Math.abs(Date.parse(drain.expires_at!) - Date.parse(drain.since!) - 15 * 60_000),
+      ).toBeLessThan(1_000);
     expect(crashAnomalies(r).filter((a) => a.pr === null)).toHaveLength(1);
     expect(buildStatusSnapshot(r.store, true)).toMatchObject({
       draining: true,
