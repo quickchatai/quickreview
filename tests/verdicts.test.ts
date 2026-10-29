@@ -4490,6 +4490,51 @@ describe("follow-up rounds: sweep telemetry", () => {
     expect(store.executedPasses(id)?.filter((p) => p.phase === "sweep")).toHaveLength(3);
   });
 
+  // prompts/round-follow-up.md step 4: "Nothing to validate ⇒ no validator".
+  // MUTATION: drop the nothingToValidate carve-out in recordPassTelemetry — this fails.
+  it("a delta stage whose lenses found nothing ran no validator by rule: no mismatch", async () => {
+    followUpRound(704, { sweepOwed: false });
+    await watcher().handleFile(
+      write(
+        704,
+        1,
+        verdictFile({
+          pr: 704,
+          verdict: "APPROVE",
+          passes: [{ name: "pass-baseline", tier: "sol-med", phase: "delta", findings: 0 }],
+        }),
+      ),
+    );
+    expect(count("pass_plan_mismatch")).toBe(0);
+    expect(anomalyKinds()).not.toContain("pass_plan_mismatch");
+  });
+
+  it("a delta stage with candidates, or with an unreported count, still owes its validator", async () => {
+    for (const [pr, findings] of [
+      [705, 2],
+      [706, null],
+    ] as const) {
+      followUpRound(pr, { sweepOwed: false });
+      await watcher().handleFile(
+        write(
+          pr,
+          1,
+          verdictFile({
+            pr,
+            verdict: "APPROVE",
+            passes: [{ name: "pass-baseline", tier: "sol-med", phase: "delta", findings }],
+          }),
+        ),
+      );
+    }
+    const missing = (
+      store.db
+        .prepare("SELECT payload FROM events WHERE kind = 'pass_plan_mismatch' ORDER BY id")
+        .all() as Array<{ payload: string }>
+    ).map((r) => JSON.parse(r.payload).missing);
+    expect(missing).toEqual([["pass-validate"], ["pass-validate"]]);
+  });
+
   it("a sweep that ran short of its plan is a mismatch on the sweep's lenses alone", async () => {
     const id = followUpRound(702, { sweepOwed: true });
     await watcher().handleFile(

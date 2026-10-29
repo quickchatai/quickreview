@@ -80,6 +80,7 @@ import {
 import { estimateUsd, type ModelPricing } from "./usage.js";
 import { TranscriptIndex } from "./transcriptindex.js";
 import { withinBudget } from "@quickchatai/pi-quickreview/src/budget.js";
+import { VALIDATE_PASS } from "@quickchatai/pi-quickreview/src/include.js";
 import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import { applyEvent, restoreStandingLifecycle } from "./statemachine.js";
 import type { VerdictAnnouncer } from "./slack/announce.js";
@@ -503,6 +504,12 @@ function plannedTierMismatches(passes: VerdictPassEntry[], rows: PlanRow[]): str
         wrong.push(lens);
   }
   return wrong;
+}
+
+/** Every lens of the stage reported its candidate count, and every count is zero. */
+function nothingToValidate(passes: VerdictPassEntry[]): boolean {
+  const lenses = passes.filter((p) => p.name !== VALIDATE_PASS);
+  return lenses.length > 0 && lenses.every((p) => p.findings === 0);
 }
 
 function comparePlan(
@@ -3003,6 +3010,12 @@ export class VerdictWatcher {
       const deltaPasses = followUp ? v.passes.filter((p) => p.phase !== "sweep") : v.passes;
       const sweepPasses = followUp ? v.passes.filter((p) => p.phase === "sweep") : [];
       const main = comparePlan(deltaPasses, plan, addable, legacyPlanned, true);
+      // A follow-up's delta stage dispatches no validator when its lenses
+      // found nothing (prompts/round-follow-up.md, "Nothing to validate ⇒ no
+      // validator"): that absence keeps the rule. Only a count every lens
+      // reported as zero says so; an unreported one still owes the validator.
+      if (followUp && nothingToValidate(deltaPasses))
+        main.missing = main.missing.filter((name) => name !== VALIDATE_PASS);
       let sweep: PlanComparison | null = null;
       if (sweepPasses.length > 0 || sweepStatus === "ran") {
         const sweepPlan = round.sweep_plan ? (JSON.parse(round.sweep_plan) as PlanRow[]) : [];
