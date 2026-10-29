@@ -30,6 +30,7 @@ import { zoneDateString } from "../eod.js";
 import { curationNeedsAttention } from "../learner/status.js";
 import { memoryStatusLine, type MemoryStatus } from "../memory/health.js";
 import type { StatusSnapshot } from "../state.js";
+import { DEFAULT_BREAKER_LIMITS } from "../workerbreaker.js";
 
 export type AlertTier = "notice" | "alert";
 
@@ -665,7 +666,7 @@ export function maybeWriteWorkerCrashAlerts(
       null,
       "workers failing on several PRs: the bot is draining",
       snapshot.draining_until
-        ? `Workers failed on three PRs within 15 minutes with no success, so the bot drains: no round, answer or debug worker starts. It lifts itself at ${snapshot.draining_until} and the queue retries; if workers fail again it drains again, each time waiting twice as long (up to 4 h). Run drain off to retry now.`
+        ? `Workers failed on three PRs within 15 minutes with no success, so the bot drains: no round, answer or debug worker starts. It lifts itself at ${snapshot.draining_until} and the queue retries; if workers fail again it drains again, each time waiting twice as long (up to ${DEFAULT_BREAKER_LIMITS.healMaxMs / 3_600_000} h). Run drain off to retry now.`
         : "Workers failed on three PRs within 15 minutes with no success, so the bot drains: no round, answer or debug worker starts. Fix the cause, then run drain off.",
     );
   return names;

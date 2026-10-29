@@ -184,11 +184,18 @@ describe("the breaker's drain heals itself", () => {
     expect(store.drainState()).toMatchObject({ draining: true, expires_at: null });
   });
 
-  // MUTATION: drop the UPDATE in migrateBreakerHeal — this fails.
+  // MUTATION: drop the UPDATE, or the window reset, in migrateBreakerHeal — this fails.
   it("a breaker drain an older daemon left standing heals at the upgrade; a hand-set drain does not", () => {
     for (const reason of ["worker_failures", null]) {
       const path = join(dir, `legacy-${reason}.db`);
       const old = new StateStore(path);
+      for (const pr of [1, 2, 3])
+        old.recordWorkerFailure(pr, {
+          commandId: "c",
+          error: "the worker exited 1",
+          at: new Date().toISOString(),
+          parkAfter: 2,
+        });
       old.engageDrain({ issuer: "operator", expires_at: null }, reason);
       old.close();
       const raw = new Database(path);
@@ -201,6 +208,8 @@ describe("the breaker's drain heals itself", () => {
           .prepare("SELECT 1 FROM events WHERE kind = 'breaker_drain_heal_carried'")
           .all();
         expect(carried).toHaveLength(reason === null ? 0 : 1);
+        // The legacy failures that tripped it do not count toward the next drain.
+        if (reason !== null) expect(store.failedWorkerPrsSince("1970-01-01T00:00:00Z")).toEqual([]);
       } finally {
         store.close();
       }

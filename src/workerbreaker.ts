@@ -174,7 +174,7 @@ export class WorkerBreaker {
       outcome: res.outcome,
       prs,
       at,
-      lapses,
+      expires_at: lapses,
     });
     this.store.logAnomaly(
       "worker_crash_loop",

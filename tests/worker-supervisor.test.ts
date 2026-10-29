@@ -1073,8 +1073,11 @@ describe("the global drain", () => {
       reason: "worker_failures",
     });
     expect(drain.draining && drain.expires_at !== null && drain.since !== null).toBe(true);
+    // The breaker's clock and the store's are read a moment apart.
     if (drain.draining)
-      expect(Date.parse(drain.expires_at!) - Date.parse(drain.since!)).toBe(15 * 60_000);
+      expect(
+        Math.abs(Date.parse(drain.expires_at!) - Date.parse(drain.since!) - 15 * 60_000),
+      ).toBeLessThan(1_000);
     expect(crashAnomalies(r).filter((a) => a.pr === null)).toHaveLength(1);
     expect(buildStatusSnapshot(r.store, true)).toMatchObject({
       draining: true,

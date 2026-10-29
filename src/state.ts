@@ -1940,7 +1940,8 @@ export class StateStore {
    * The breaker's drain lapses on its own (src/workerbreaker.ts). One an older
    * daemon set stands with no expiry, and only `drain off` would lift it: the
    * boot that adds the `trips` column gives it an expiry of now, so the first
-   * sweep lifts it and the queue retries. Only the breaker's drain is carried
+   * sweep lifts it and the queue retries, with the failures that tripped it
+   * spent. Only the breaker's drain is carried
    * (its reason, no hold); a hand-set drain stands as it was set.
    */
   private migrateBreakerHeal(): void {
@@ -1957,7 +1958,12 @@ export class StateStore {
             WHERE id = 1 AND draining = 1 AND reason = ? AND expires_at IS NULL AND hold = 0`,
         )
         .run(this.ts(), WORKER_FAILURES_DRAIN_REASON);
-      if (info.changes > 0) this.logEvent("breaker_drain_heal_carried", null, {});
+      if (info.changes > 0) {
+        // The failures that tripped it are spent, as at a new trip: a retry
+        // failing once more must not re-drain with them.
+        this.resetWorkerFailureWindow();
+        this.logEvent("breaker_drain_heal_carried", null, {});
+      }
     })();
   }
 
