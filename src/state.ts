@@ -7018,16 +7018,10 @@ export class StateStore {
     const rows = this.db
       .prepare("SELECT payload FROM events WHERE kind = 'recheck_upheld' AND pr = ? AND ts >= ?")
       .all(pr, since ?? "") as Array<{ payload: string | null }>;
-    const heads: string[] = [];
-    for (const r of rows) {
-      try {
-        const head = (JSON.parse(r.payload ?? "null") as { head_sha?: unknown } | null)?.head_sha;
-        if (typeof head === "string" && head !== "") heads.push(head);
-      } catch {
-        // an unreadable mark names no head
-      }
-    }
-    return heads;
+    // An unreadable mark names no head.
+    return rows
+      .map((r) => readStringField(r.payload, "head_sha"))
+      .filter((head): head is string => head !== undefined && head !== "");
   }
 
   /**
