@@ -596,3 +596,27 @@ describe("hf_export.work_dir_name", () => {
     expect(r).toEqual(["r1-martian", "r1-martian.martian-rescore", "q"]);
   });
 });
+
+describe("export_runs: stray NULs and the ripgrep re-grep", () => {
+  // MUTATION: drop the text-extension clause from export_runs.is_text — this fails
+  it("rewrites a log that carries a stray NUL", () => {
+    const r = pyModule(
+      "export_runs",
+      "import collections; c = collections.Counter()\n" +
+        "p = h.Processor.__new__(h.Processor)\n" +
+        "data = b'ok\\x00 report: /home/alice/projects/qcr-bench-runs/runs/x\\n'\n" +
+        "print(json.dumps([h.is_text(data, 'open-models/score.log'), h.is_text(data, 'figure.png'),\n" +
+        "  h.rewrite(data, c).decode().split(' ', 1)[1]]))",
+    );
+    expect(r).toEqual([true, false, "report: <runs>/runs/x\n"]);
+  });
+
+  // MUTATION: drop SCRUB_PRIVATE_REPOS from export_runs.REGREP_RG's literal list — this fails
+  it("hunts the private repository's name in the ripgrep patterns too", () => {
+    const r = pyModule(
+      "export_runs",
+      "import re\nprint(json.dumps(any(re.search(p, b'see WidgetCo-App here') for p in h.REGREP_RG)))",
+    );
+    expect(r).toBe(true);
+  });
+});
