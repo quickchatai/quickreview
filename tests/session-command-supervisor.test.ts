@@ -47,6 +47,7 @@ function seedRoundCommand(
     nextCheckAt?: string;
     lenses?: string[];
     passPlan?: { lens: string; agent: string; tier: "sol-med"; raisable_to: string[] }[];
+    addablePasses?: { lens: string; tier: string; optional?: true }[];
   } = {},
 ) {
   const id = opts.id ?? "cmd-1";
@@ -66,7 +67,10 @@ function seedRoundCommand(
     "first",
     opts.lenses ?? ["pass-baseline"],
     baseCfg.daemon.round_deadline_min,
-    opts.passPlan ? ({ pass_plan: opts.passPlan } as never) : {},
+    {
+      ...(opts.passPlan ? { pass_plan: opts.passPlan } : {}),
+      ...(opts.addablePasses ? { addable_passes: opts.addablePasses } : {}),
+    } as never,
   );
   store.stampPostingKey(roundId, `v1:${pr}:1:abc123`);
   const round = store.roundsFor(pr)[0]!;
@@ -891,6 +895,144 @@ describe("bounded round-stage supervision", () => {
       "first_pass_start",
       expect.stringContaining("no planned pass started"),
     );
+  });
+
+  // The first launch of #6256 round 3 carried only the round's optional rows.
+  // MUTATION: pass `planned` alone to plannedFanoutAgents in the supervisor — this fails.
+  it("an optional row the daemon dispatched opens the fanout; an add-protocol lens still does not", async () => {
+    for (const optional of [true, false]) {
+      store.close();
+      store = new StateStore(":memory:", () => clock);
+      clock = new Date("2026-08-27T20:00:00.000Z");
+      const { id, pr, round } = seedRoundCommand({
+        status: "running",
+        started: true,
+        nextCheckAt: "2026-08-27T20:45:00.000Z",
+        lenses: ["pass-baseline", "pass-validate"],
+        addablePasses: [
+          optional
+            ? { lens: "pass-sweep", tier: "sol-high", optional: true }
+            : { lens: "pass-sweep", tier: "sol-high" },
+        ],
+      });
+      clock = new Date("2026-08-27T20:05:00.000Z");
+      const onRoundFailure = vi.fn(async () => "requeued" as const);
+      const progress = () => ({
+        version: 2 as const,
+        pr,
+        session: `pr-${pr}`,
+        run_started_at: "2026-08-27T20:00:00.000Z",
+        updated_at: clock.toISOString(),
+        parent_status: "active" as const,
+        command_id: id,
+        command_sha256: "a".repeat(64),
+        command_accepted_at: "2026-08-27T20:00:01.000Z",
+        last_activity_at: clock.toISOString(),
+        last_activity: "optional rows first",
+        agents: [
+          {
+            execution_id: "lens-1:pass-sweep--sol-high",
+            agent: "pass-sweep--sol-high",
+            status: "running" as const,
+            duration_ms: 1,
+            tool_count: 0,
+            started_at: "2026-08-27T20:01:00.000Z",
+          },
+        ],
+      });
+      await supervisor(
+        hooks({ killSession: async () => {} }),
+        onRoundFailure,
+        baseCfg,
+        progress,
+      ).supervisor.scan();
+      if (optional) {
+        expect(onRoundFailure).not.toHaveBeenCalled();
+        expect(store.roundsFor(pr).find((item) => item.id === round.id)?.fanout_started_at).toBe(
+          "2026-08-27T20:01:00.000Z",
+        );
+      } else {
+        expect(onRoundFailure).toHaveBeenCalledWith(
+          pr,
+          round.round_no,
+          "first_pass_start",
+          expect.stringContaining("no planned pass started"),
+        );
+      }
+    }
+  });
+
+  // #6284 round 1: a 36-row plan ran out of the flat 35 minutes mid-validator.
+  // MUTATION: drop discoveryRows from the supervisor's roundStageDeadlines call — this fails.
+  it("a large plan gets its larger passes bound: not failed at 36 min, failed at its own bound", async () => {
+    const rows = [
+      ...Array.from({ length: 30 }, () => ({
+        lens: "pass-baseline",
+        agent: "pass-baseline--sol-med",
+        tier: "sol-med" as const,
+        raisable_to: [],
+      })),
+      {
+        lens: "pass-validate",
+        agent: "pass-validate--sol-med",
+        tier: "sol-med" as const,
+        raisable_to: [],
+      },
+    ];
+    for (const [at, fails] of [
+      ["2026-08-27T20:36:00.000Z", false],
+      ["2026-08-27T20:45:00.000Z", true],
+    ] as const) {
+      store.close();
+      store = new StateStore(":memory:", () => clock);
+      clock = new Date("2026-08-27T20:00:00.000Z");
+      const { id, pr, round } = seedRoundCommand({
+        status: "running",
+        started: true,
+        nextCheckAt: "2026-08-27T20:55:00.000Z",
+        lenses: ["pass-baseline", "pass-validate"],
+        passPlan: rows,
+      });
+      clock = new Date(at);
+      const onRoundFailure = vi.fn(async () => "requeued" as const);
+      const progress = () => ({
+        version: 2 as const,
+        pr,
+        session: `pr-${pr}`,
+        run_started_at: "2026-08-27T20:00:00.000Z",
+        updated_at: clock.toISOString(),
+        parent_status: "active" as const,
+        command_id: id,
+        command_sha256: "a".repeat(64),
+        command_accepted_at: "2026-08-27T20:00:01.000Z",
+        last_activity_at: clock.toISOString(),
+        last_activity: "a large wave",
+        agents: [
+          {
+            execution_id: "lens-1:pass-baseline--sol-med",
+            agent: "pass-baseline--sol-med",
+            status: "running" as const,
+            duration_ms: 1,
+            tool_count: 0,
+            started_at: "2026-08-27T20:01:00.000Z",
+          },
+        ],
+      });
+      await supervisor(
+        hooks({ killSession: async () => {} }),
+        onRoundFailure,
+        baseCfg,
+        progress,
+      ).supervisor.scan();
+      if (fails)
+        expect(onRoundFailure).toHaveBeenCalledWith(
+          pr,
+          round.round_no,
+          "passes_incomplete",
+          expect.stringContaining("within 45 minutes"),
+        );
+      else expect(onRoundFailure).not.toHaveBeenCalled();
+    }
   });
 
   it("does not infer a missing first pass from legacy or uncorrelated telemetry", async () => {

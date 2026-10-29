@@ -4,7 +4,11 @@
 // scheduler. Delivery remains inject-bridge-owned; round recovery remains the
 // VerdictWatcher's existing self-requeue path. The supervisor only classifies
 // finite start/finish obligations from durable command state + JSONL receipts.
-import { roundStageDeadlines } from "@quickchatai/pi-quickreview/src/round-stage-deadlines.js";
+import {
+  discoveryRowsOf,
+  roundStageAllowanceMin,
+  roundStageDeadlines,
+} from "@quickchatai/pi-quickreview/src/round-stage-deadlines.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -639,13 +643,15 @@ export class SessionCommandSupervisor {
     const now = this.now().getTime();
     const minute = 60_000;
     const sweepOwed = round.sweep_owed === 1;
+    const discoveryRows = discoveryRowsOf(round);
     const passesMaxMin =
       (this.deps.cfg.daemon.round_passes_max_min ?? DEFAULT_ROUND_PASSES_MAX_MIN) +
-      (sweepOwed ? this.sweepExtraMin() : 0);
+      roundStageAllowanceMin({ sweepOwed, sweepExtraMin: this.sweepExtraMin(), discoveryRows });
     const deadlines = roundStageDeadlines(
       started,
       resolveRoundStageBounds(this.deps.cfg.daemon),
       sweepOwed,
+      discoveryRows,
     );
     const firstPassAt = deadlines.first_pass_start;
     const passesAt = deadlines.passes_complete;
@@ -657,9 +663,10 @@ export class SessionCommandSupervisor {
 
     // The extension's generic subagent milestone is descriptive only. The
     // finite gate opens solely when exact correlated progress names one of the
-    // authoritative planned DISCOVERY lenses — validator-first, an added lens
-    // or a foreign tool cannot buy a later failure class.
-    const fanoutAgents = plannedFanoutAgents(progress, planned);
+    // DISCOVERY lenses the daemon dispatched — the planned ones or the round's
+    // optional rows. Validator-first, a lens added through the add protocol or
+    // a foreign tool cannot buy a later failure class.
+    const fanoutAgents = plannedFanoutAgents(progress, [...planned, ...optionalRowLenses(round)]);
     const plannedFanout = fanoutAgents.length > 0;
     if (plannedFanout) {
       const firstStarted = fanoutAgents.map((agent) => agent.started_at!).sort()[0]!;
@@ -838,8 +845,9 @@ export class SessionCommandSupervisor {
   }
 
   /** The command's fixed running cap in minutes: the configured bound, plus
-   * the sweep allowance when it carries a round whose pre-approval sweep is
-   * owed. Derived from the round ROW, never from progress. */
+   * the round's stage allowance (the pre-approval sweep's when it is owed, or
+   * a large plan's, whichever is larger). Derived from the round ROW, never
+   * from progress. */
   private runningMaxMin(command: SessionCommandRow, round?: RoundRow): number {
     const base =
       this.deps.cfg.daemon.session_command_running_max_min ??
@@ -848,7 +856,15 @@ export class SessionCommandSupervisor {
     const row =
       round ??
       this.deps.store.roundsFor(command.pr).find((item) => item.round_no === command.round_no);
-    return row?.sweep_owed === 1 ? base + this.sweepExtraMin() : base;
+    if (!row) return base;
+    return (
+      base +
+      roundStageAllowanceMin({
+        sweepOwed: row.sweep_owed === 1,
+        sweepExtraMin: this.sweepExtraMin(),
+        discoveryRows: discoveryRowsOf(row),
+      })
+    );
   }
 
   /** The fixed running deadline (epoch ms) of a command whose run began at
@@ -1125,6 +1141,23 @@ function firstExecutionPerLens(
 
 /** Plan rows per lens name from the round's recorded `pass_plan`; empty when
  * it is absent or unreadable (every lens then owes one execution). */
+/** The lenses of the optional rows the daemon dispatched with the round (the
+ * addable record's `optional` entries); a lens offered for the add protocol
+ * is not one. */
+function optionalRowLenses(round: RoundRow): string[] {
+  if (!round.addable_passes) return [];
+  try {
+    const rows: unknown = JSON.parse(round.addable_passes);
+    if (!Array.isArray(rows)) return [];
+    return rows
+      .filter((row) => (row as { optional?: unknown } | null)?.optional === true)
+      .map((row) => (row as { lens?: unknown }).lens)
+      .filter((lens): lens is string => typeof lens === "string");
+  } catch {
+    return [];
+  }
+}
+
 function plannedRowCounts(round: RoundRow): Map<string, number> {
   const counts = new Map<string, number>();
   if (!round.pass_plan) return counts;

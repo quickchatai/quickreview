@@ -563,7 +563,7 @@ mutation is recorded to `state/dryrun/` instead of executed.
 | `session_bridge_ready_timeout_s` | number | `30` (`DEFAULT_SESSION_BRIDGE_READY_TIMEOUT_S`) |
 | `session_command_running_max_min` | number | `45` |
 | `round_first_pass_max_min` | number | `5` |
-| `round_passes_max_min` | number | `35` |
+| `round_passes_max_min` | number | `35` (for a plan up to 20 discovery rows; a larger plan gets a minute per row more on this and on `session_command_running_max_min`, up to 20, not stacked with the sweep allowance — `round-stage-deadlines.ts`) |
 | `round_finalize_grace_min` | number | `5` |
 | `round_posted_tail_grace_min` | number | `15` (after a confirmed posting, how long a stage limit or the round deadline waits for the session's tail before settling the round from the receipt) |
 | `posting_receipt_grace_s` | number | `120` |
