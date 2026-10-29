@@ -12,19 +12,14 @@
 // where Node found nothing from the importer. A host that installs pi beside
 // the plugin (the qcr app, the image) never reaches the fallback, so its
 // resolution is unchanged. One pi package dir per process: the first wins.
-import { readFileSync } from "node:fs";
 import * as nodeModule from "node:module";
-import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { packageRootFrom } from "../assetroot.js";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { declaredPeerRanges } from "./versiongate.js";
 
 /** The packages the plugin's package.json declares as peers. */
 export function declaredPeers(from: string = import.meta.url): string[] {
-  const root = packageRootFrom(dirname(fileURLToPath(from)), "the plugin's package.json");
-  const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
-    peerDependencies?: Record<string, string>;
-  };
-  return Object.keys(pkg.peerDependencies ?? {});
+  return Object.keys(declaredPeerRanges(from));
 }
 
 /** Is `specifier` one of `peers` or a subpath of one? */

@@ -70,13 +70,19 @@ export function satisfiesRange(version: string, range: string): boolean {
   });
 }
 
-/** The range this package declares for pi, from its own package.json. */
-export function declaredPiRange(from: string = import.meta.url): string {
+/** The peer ranges this package declares, from its own package.json (the
+ * version gate's pi range, and the peers src/plugin/peers.ts resolves). */
+export function declaredPeerRanges(from: string = import.meta.url): Record<string, string> {
   const root = packageRootFrom(dirname(fileURLToPath(from)), "the plugin's package.json");
   const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
     peerDependencies?: Record<string, string>;
   };
-  const range = pkg.peerDependencies?.[PI_PACKAGE];
+  return pkg.peerDependencies ?? {};
+}
+
+/** The range this package declares for pi, from its own package.json. */
+export function declaredPiRange(from: string = import.meta.url): string {
+  const range = declaredPeerRanges(from)[PI_PACKAGE];
   if (typeof range !== "string" || range.trim() === "")
     throw new Error(`the plugin's package.json declares no peer range for ${PI_PACKAGE}`);
   return range;
