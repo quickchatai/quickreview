@@ -11,7 +11,10 @@
 //   - GLOBAL. `drainAfterPrs` PRs failing within `windowMs`, with no worker success
 //     in between, set the existing drain valve with the reason `worker_failures`.
 //     Only an explicit `drain off` lifts it (a boot's first healthy reconcile pass
-//     leaves a reasoned drain standing).
+//     leaves a reasoned drain standing). A PR's FIRST failure that is the
+//     provider's network dropping (`fetch failed`, a reset socket) does not feed
+//     the drain: one blip fails every concurrent worker at the same instant, and
+//     each of them is retried. A retry that fails again counts.
 //   - EVERY HOST. `gate` is the one question each host asks before it starts a
 //     round worker, an answer worker or a debug round: the bot
 //     is drained, or the PR is parked, and the answer is no. A takeover
@@ -47,6 +50,15 @@ export interface WorkerFailure {
 }
 
 const ERROR_CHARS = 300;
+
+/** The provider's transport dropped the turn (src/botworker.ts words it), as
+ * opposed to the provider answering with an error or refusing the login. */
+const PROVIDER_TRANSPORT =
+  /the provider failed the turn: .*\b(fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|socket hang up)\b/i;
+
+function isProviderTransportFailure(error: string): boolean {
+  return PROVIDER_TRANSPORT.test(error);
+}
 
 export class WorkerBreaker {
   readonly limits: BreakerLimits;
@@ -96,11 +108,13 @@ export class WorkerBreaker {
   failure(pr: number, commandId: string, error: string): WorkerFailure {
     const at = this.iso();
     const last = error.replace(/\s+/g, " ").trim().slice(0, ERROR_CHARS) || "no reason given";
+    const firstFailure = (this.store.workerBreaker(pr)?.failures ?? 0) === 0;
     const res = this.store.recordWorkerFailure(pr, {
       commandId,
       error: last,
       at,
       parkAfter: this.limits.parkAfter,
+      drain: !(firstFailure && isProviderTransportFailure(last)),
     });
     if (res.newlyParked) {
       const detail = `PR #${pr} is parked after ${res.failures} consecutive worker failures; last: ${last}`;

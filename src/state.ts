@@ -6696,11 +6696,12 @@ export class StateStore {
    * One more consecutive worker failure for `pr`. The PR is parked when the count
    * reaches `parkAfter`; `parked` says whether it stands parked now and
    * `newlyParked` whether THIS failure parked it (the caller raises the anomaly
-   * once).
+   * once). With `drain: false` it counts toward the park only: its epoch is one
+   * no window ever carries, so `failedWorkerPrsSince` never lists it.
    */
   recordWorkerFailure(
     pr: number,
-    o: { commandId: string; error: string; at: string; parkAfter: number },
+    o: { commandId: string; error: string; at: string; parkAfter: number; drain?: boolean },
   ): { failures: number; parked: boolean; newlyParked: boolean } {
     return this.db
       .transaction(() => {
@@ -6722,7 +6723,7 @@ export class StateStore {
             error: o.error,
             at: o.at,
             command: o.commandId,
-            epoch: this.workerEpoch(),
+            epoch: o.drain === false ? -1 : this.workerEpoch(),
           });
         return {
           failures,

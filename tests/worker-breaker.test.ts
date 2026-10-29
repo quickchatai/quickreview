@@ -84,6 +84,29 @@ describe("the breaker over the store", () => {
     expect(b.failure(4, "c", "x").drained).toBe(false);
   });
 
+  // MUTATION: make `failure` pass drain = true for every error — this fails.
+  it("one network blip across concurrent workers does not drain; the retry failing again does", () => {
+    const store = new StateStore(":memory:");
+    const b = new WorkerBreaker(store);
+    const blip = "the round: the provider failed the turn: fetch failed";
+    for (const pr of [1, 2, 3]) expect(b.failure(pr, "c", blip).drained).toBe(false);
+    expect(store.drainState().draining).toBe(false);
+    // Each PR still counts toward its own park.
+    expect(store.workerBreaker(1)?.failures).toBe(1);
+    // The self-requeued retries fail on the network again: the outage is real.
+    b.failure(1, "c", blip);
+    b.failure(2, "c", blip);
+    expect(b.failure(3, "c", blip).drained).toBe(true);
+  });
+
+  it("a provider refusal or any other failure still counts at its first occurrence", () => {
+    const store = new StateStore(":memory:");
+    const b = new WorkerBreaker(store);
+    b.failure(1, "c", "the round: the provider refused the login: expired");
+    b.failure(2, "c", "the round: the provider failed the turn: 500 internal error");
+    expect(b.failure(3, "c", "the worker exited 1").drained).toBe(true);
+  });
+
   it("a hand-set drain keeps no reason, and the breaker does not take it over", () => {
     const store = new StateStore(":memory:");
     store.engageDrain({ issuer: "operator", expires_at: null });
