@@ -274,6 +274,22 @@ describe("the extension", () => {
     expect(pi.tools).toEqual([]);
   });
 
+  // pi installs the plugin without its peers; the entry's resolve hook is
+  // handed the running pi's dir at load. MUTATION: drop the peers call from
+  // createQuickReview — this fails.
+  it("hands the running pi's package dir to the peer hook, and only inside the range", () => {
+    const seen: string[] = [];
+    const peers = (dir: string) => void seen.push(dir);
+    createQuickReview({ ...config, peers, piDir: "/opt/pi", piVersion: "1.4.0", range: "^1.4.0" })(
+      fakePi().api,
+    );
+    expect(seen).toEqual(["/opt/pi"]);
+    createQuickReview({ ...config, peers, piDir: "/opt/pi", piVersion: "1.3.0", range: "^1.4.0" })(
+      fakePi().api,
+    );
+    expect(seen).toEqual(["/opt/pi"]);
+  });
+
   // MUTATION: drop the gate — this fails.
   it("registers nothing on a pi outside the range, and says why once", () => {
     const pi = fakePi();

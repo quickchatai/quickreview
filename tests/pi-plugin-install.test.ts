@@ -13,13 +13,20 @@
 //     the installed package, and no prompt template at all;
 //   - the installed package carries no pi of its own, and the core finds its
 //     data and its extensions inside itself (never a checkout);
+//   - what the plugin imports with Node's own import() (the review's SDK,
+//     loaded on first use) finds pi only through the entry's resolve hook
+//     (src/plugin/peers.ts), which answers from the running pi's dir. The
+//     install sits outside this checkout, so no node_modules above it holds
+//     a pi that would answer instead;
 //   - /qcr-review --preview runs end to end and answers in the session;
 //   - /qcr-scan runs on the plugin's own scan engine with no `qcr` anywhere on
 //     PATH: it cuts a fixture repo into units, saves the cut, and prices the
 //     scan, each answer in the session.
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { delimiter, join, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { delimiter, dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -33,7 +40,9 @@ const PI = join(
   "bundle",
   "cli.js",
 );
-const SCRATCH = join(ROOT, "node_modules", ".cache", `pi-plugin-install-${process.pid}`);
+// Outside the checkout: Node walks up from the installed plugin, and this
+// repo's node_modules holds a pi that would hide a missing one.
+const SCRATCH = join(tmpdir(), `pi-plugin-install-${process.pid}`);
 const COMMANDS = ["qcr-review", "qcr-scan", "qcr-setup"];
 const SKILLS = COMMANDS.map((c) => `skill:${c}`);
 
@@ -156,6 +165,33 @@ describe("the packed plugin, installed into a fresh pi", () => {
   it("brings no pi of its own; the host's is the one it runs on", () => {
     expect(existsSync(join(SCRATCH, "inst", "node_modules", "@earendil-works"))).toBe(false);
     expect(existsSync(join(installed, "node_modules", "@earendil-works"))).toBe(false);
+  });
+
+  // pi installs no peers, so a module the plugin imports with Node's own
+  // import() resolves pi from the plugin's install, where none is. MUTATION:
+  // drop the fallback in peerResolve (src/plugin/peers.ts) — this fails.
+  it("loads the review's SDK with Node's import() only through the peer hook", () => {
+    const piDir = dirname(dirname(dirname(PI)));
+    const sdk = pathToFileURL(join(installed, "dist/src/engine/reviewsdk.js")).href;
+    const hook = pathToFileURL(join(installed, "dist/src/plugin/peers.js")).href;
+    const load = (withHook: boolean): string =>
+      run(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          [
+            withHook
+              ? `(await import(${JSON.stringify(hook)})).resolvePeersFrom(${JSON.stringify(piDir)});`
+              : "",
+            `try { await import(${JSON.stringify(sdk)}); process.stdout.write("loaded"); }`,
+            `catch (e) { process.stdout.write(String(e.code)); }`,
+          ].join("\n"),
+        ],
+        SCRATCH,
+      );
+    expect(load(false)).toBe("ERR_MODULE_NOT_FOUND");
+    expect(load(true)).toBe("loaded");
   });
 
   // The core resolves its data and its extensions inside the installed
