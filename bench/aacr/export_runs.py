@@ -26,6 +26,8 @@ nothing else in it changes:
   * the review bot's login and bare app slug ($QCR_SCRUB_BOT) -> `<review-bot>`,
     then the owner's name ($QCR_SCRUB_OWNER, any case) -> `<owner>`;
   * the product's earlier name ($QCR_SCRUB_OLD_NAME) -> `quickreview`;
+  * the private product repository's name ($QCR_SCRUB_PRIVATE_REPO, any case)
+    -> `<private-repo>`;
   * host paths: the bench runs dir ($QCR_SCRUB_RUNS_DIR) -> `<runs>`,
     the repo checkout ($QCR_SCRUB_REPO_DIR) -> `<repo>`, any other
     `$HOME` -> `<home>` (the home scrubbed is $QCR_SCRUB_HOME, default `~`), the docker volume `companion-pihome` -> `<pi-login-volume>`
@@ -97,6 +99,9 @@ def _env_list(key: str) -> list[str]:
 SCRUB_BOTS = _env_list("QCR_SCRUB_BOT")
 SCRUB_OWNERS = _env_list("QCR_SCRUB_OWNER")
 SCRUB_OLD_NAMES = _env_list("QCR_SCRUB_OLD_NAME")
+# the private product repository's name (comma-separated spellings), named in
+# a few model texts: $QCR_SCRUB_PRIVATE_REPO -> `<private-repo>`, any case
+SCRUB_PRIVATE_REPOS = _env_list("QCR_SCRUB_PRIVATE_REPO")
 # the repo checkout and the bench runs dir: $QCR_SCRUB_REPO_DIR (default: this
 # checkout, a worktree resolved to its main checkout) and $QCR_SCRUB_RUNS_DIR
 # (default: `qcr-bench-runs` beside that checkout)
@@ -145,6 +150,9 @@ def _identity_rules() -> list:
         o = owner.encode()
         out += [("owner", re.compile(re.escape(o)), b"<owner>", o),
                 ("owner-other-case", re.compile(rb"(?i:" + re.escape(o) + rb")"), b"<owner>", ("low", o.lower()))]
+    for repo in SCRUB_PRIVATE_REPOS:
+        r = repo.encode()
+        out.append(("private-repo", re.compile(rb"(?i:" + re.escape(r) + rb")"), b"<private-repo>", ("low", r.lower())))
     return out
 
 
@@ -714,6 +722,7 @@ def _write_manifest(out: Path, src: Path, results: list, a):
         "rewrites_applied": list(dict.fromkeys(r[0] for r in RULES)),
         "placeholders": {"the owner's name": "<owner>", "the review bot's login and slug": "<review-bot>",
                          "the product's earlier name": "quickreview",
+                         "the private product repository's name": "<private-repo>",
                          "the bench runs dir": "<runs>",
                          "the repo checkout": "<repo>",
                          "the exporting user's home directory": "<home>", "companion-pihome": "<pi-login-volume>",
@@ -816,6 +825,8 @@ packed. Nothing else in the text changed.
   `<review-bot>`; the owner's first name became `<owner>`. One placeholder per
   name, everywhere: prompts, transcripts, the model's own text, judge inputs,
   logs.
+- **The private product repository.** Its name, which a few model texts
+  mention in passing, became `<private-repo>`, in any case.
 - **The product's old name.** The product's earlier name became `quickreview`. It is the
   product's earlier name, not a person, so it gets the public name rather
   than a placeholder.
@@ -1070,6 +1081,7 @@ REGREP = {
     **{f"owner name {i} (any case)": rb"(?i:" + re.escape(o.encode()) + rb")" for i, o in enumerate(SCRUB_OWNERS)},
     **{f"review bot {i} (any case)": rb"(?i:" + re.escape(b.encode()) + rb")" for i, b in enumerate(SCRUB_BOTS)},
     **{f"old product name {i}": re.escape(n.encode()) for i, n in enumerate(SCRUB_OLD_NAMES)},
+    **{f"private repo {i} (any case)": rb"(?i:" + re.escape(r.encode()) + rb")" for i, r in enumerate(SCRUB_PRIVATE_REPOS)},
     "home directory": HOME_RX,
     "companion-pihome": rb"companion-pihome", "claude.env path": rb"[./\w-]*claude\.env",
     "sk- (substring)": rb"sk-", "ghp_ (substring)": rb"ghp_", "ghs_ (substring)": rb"ghs_", "gho_ (substring)": rb"gho_",
@@ -1086,7 +1098,7 @@ REGREP = {
 # one PCRE pass over the decompressed stream (tar headers included, so member
 # names are searched too); every match is classified afterwards by REGREP
 REGREP_SCAN = (rb"(?<![A-Za-z0-9])sk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,}|(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{36}(?![A-Za-z0-9])|gAAAAA[A-Za-z0-9_\-=]{100,}"
-               + b"".join(rb"|(?i:" + re.escape(t.encode()) + rb")" for t in SCRUB_OWNERS + SCRUB_BOTS)
+               + b"".join(rb"|(?i:" + re.escape(t.encode()) + rb")" for t in SCRUB_OWNERS + SCRUB_BOTS + SCRUB_PRIVATE_REPOS)
                + b"".join(b"|" + re.escape(n.encode()) for n in SCRUB_OLD_NAMES)
                + rb"|" + HOME_RX + rb"|companion-pihome|[./\w-]*claude\.env"
                rb"|" + HOME_DASHED_RX.lstrip(b"\\-")

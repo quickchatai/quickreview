@@ -11,7 +11,12 @@
 //      partial find as 1/2;
 //   4. qodo_effective reads the Qodo judge's append-only cache as its scorer
 //      does: one pass-1 judgement per PR and tool, a retry's success winning;
-//   5. aacr_arms resolves every arm name the committed arms files list.
+//   5. aacr_arms resolves every arm name the committed arms files list;
+//   6. generated_files fills what the public tree leaves out (charts,
+//      rendered keys, FULL-BENCHMARK.md) from --generated, the tree winning;
+//   7. the private product repository's name ($QCR_SCRUB_PRIVATE_REPO) becomes
+//      `<private-repo>` in any case, in this export and in the run archive's
+//      rewrite (export_runs.py), and the archive's re-grep still hunts it.
 
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -22,27 +27,27 @@ import { join } from "node:path";
 const tmp = mkdtempSync(join(tmpdir(), "hf-export-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
-function py(code: string, ...args: string[]): unknown {
+const SCRUB_ENV = {
+  QCR_SCRUB_HOME: "/home/alice",
+  QCR_SCRUB_RUNS_DIR: "/home/alice/projects/qcr-bench-runs",
+  // The identities come from the exporter; these are neutral plants.
+  QCR_SCRUB_OWNER: "Jordan",
+  QCR_SCRUB_BOT: "acme-review,acme-review-2",
+  QCR_SCRUB_OLD_NAME: "acme-reviewd",
+  QCR_SCRUB_PRIVATE_REPO: "widgetco-app",
+};
+
+function pyModule(mod: string, code: string, ...args: string[]): unknown {
   const out = execFileSync(
     "python3",
-    [
-      "-c",
-      `import sys, json; sys.path.insert(0, 'bench/aacr'); import hf_export as h\n${code}`,
-      ...args,
-    ],
-    {
-      env: {
-        ...process.env,
-        QCR_SCRUB_HOME: "/home/alice",
-        QCR_SCRUB_RUNS_DIR: "/home/alice/projects/qcr-bench-runs",
-        // The identities come from the exporter; these are neutral plants.
-        QCR_SCRUB_OWNER: "Jordan",
-        QCR_SCRUB_BOT: "acme-review,acme-review-2",
-        QCR_SCRUB_OLD_NAME: "acme-reviewd",
-      },
-    },
+    ["-c", `import sys, json; sys.path.insert(0, 'bench/aacr'); import ${mod} as h\n${code}`, ...args],
+    { env: { ...process.env, ...SCRUB_ENV } },
   );
   return JSON.parse(out.toString());
+}
+
+function py(code: string, ...args: string[]): unknown {
+  return pyModule("hf_export", code, ...args);
 }
 
 describe("hf_export.scrub", () => {
@@ -64,6 +69,16 @@ describe("hf_export.scrub", () => {
     expect(r[1]["review bot"]).toBe(2);
     expect(r[1]["owner"]).toBe(1);
     expect(r[1]["owner (other case)"]).toBe(1);
+  });
+
+  // MUTATION: drop the "private repo" entry from hf_export.SCRUB_RULES — this fails
+  it("rewrites the private product repository's name in any case", () => {
+    const r = py(
+      "import collections; c = collections.Counter(); print(json.dumps([h.scrub(sys.argv[1], c), dict(c)]))",
+      "Compare with widgetco-app/src and WidgetCo-App's profile; profiles/widgetco stays.",
+    ) as [string, Record<string, number>];
+    expect(r[0]).toBe("Compare with <private-repo>/src and <private-repo>'s profile; profiles/widgetco stays.");
+    expect(r[1]["private repo"]).toBe(2);
   });
 
   it("walks nested values, keys included, and leaves non-strings alone", () => {
@@ -221,5 +236,55 @@ describe("hf_export.aacr_arms", () => {
     expect(r.sol).toEqual([]);
     expect(r.ids).toContain("quickreview-default-sol");
     expect(r.ids).toContain("quickreview-low-sol");
+  });
+});
+
+describe("export_runs private-repo rewrite", () => {
+  // MUTATION: drop the private-repo rule from export_runs._identity_rules — this fails
+  it("rewrites the private repository's name in file text and member names, and counts it", () => {
+    const r = pyModule(
+      "export_runs",
+      "import collections; c = collections.Counter()\n" +
+        "t = h.rewrite(sys.argv[1].encode(), c).decode()\n" +
+        "n = h.rewrite_name('runs/x/WIDGETCO-APP-notes.txt', c)\n" +
+        "print(json.dumps([t, n, c['private-repo']]))",
+      'The diff touches widgetco-app/README and {"repo":"WidgetCo-App"}.',
+    ) as [string, string, number];
+    expect(r[0]).toBe('The diff touches <private-repo>/README and {"repo":"<private-repo>"}.');
+    expect(r[1]).toBe("runs/x/<private-repo>-notes.txt");
+    expect(r[2]).toBe(3);
+  });
+
+  // MUTATION: drop SCRUB_PRIVATE_REPOS from export_runs.REGREP_SCAN — this fails
+  it("re-greps the private repository's name after the rewrite", () => {
+    const r = pyModule(
+      "export_runs",
+      "import re\n" +
+        "print(json.dumps([bool(re.search(h.REGREP_SCAN, b'see WidgetCo-App here')),\n" +
+        "  [k for k in h.REGREP if k.startswith('private repo')]]))",
+    ) as [boolean, string[]];
+    expect(r[0]).toBe(true);
+    expect(r[1]).toEqual(["private repo 0 (any case)"]);
+  });
+});
+
+describe("hf_export.generated_files", () => {
+  // MUTATION: put a.generated before HERE in generated_files' roots — this fails
+  it("takes the tree's own artefact and fills the rest from --generated", () => {
+    const gen = join(tmp, "generated");
+    mkdirSync(join(gen, "charts"), { recursive: true });
+    writeFileSync(join(gen, "charts", "two-scores.jpg"), "older render");
+    writeFileSync(join(gen, "charts", "numbers.json"), "{}");
+    writeFileSync(join(gen, "FULL-BENCHMARK.md"), "# report");
+    const r = py(
+      "import types, os\n" +
+        "a = types.SimpleNamespace(generated=sys.argv[1])\n" +
+        "c = h.generated_files(a, 'charts'); top = h.generated_files(a, '')\n" +
+        "rel = lambda p: 'tree' if p.startswith(h.HERE + os.sep) else 'generated'\n" +
+        "print(json.dumps({'two': rel(c['two-scores.jpg']), 'numbers': rel(c['numbers.json']),\n" +
+        "  'full': rel(top['FULL-BENCHMARK.md']), 'none': sorted(h.generated_files(types.SimpleNamespace(generated=None), 'nope'))}))",
+      gen,
+    ) as Record<string, unknown>;
+    expect(r).toEqual({ two: "tree", numbers: "generated", full: "generated", none: [] });
   });
 });

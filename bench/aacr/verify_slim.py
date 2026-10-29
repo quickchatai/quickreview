@@ -14,6 +14,10 @@ same computation over the full runs and against the papers' printed numbers.
               scorer and published judgements; MIT, never in the bundle).
   --qodo-gt   Qodo PR-Review-Bench's git_code_review_bench_100_w_open_prs.jsonl
               (HF Qodo/PR-Review-Bench@a73957c, MIT).
+  --charts-ref  the dir holding the published numbers.json and
+              numbers-gpt6sol.json the charts are checked against (default
+              bench/aacr/charts; the public tree leaves them out, so point it at
+              the Hugging Face dataset's figures/).
 
 The tools run from a copy of bench/aacr in WORK; when that compare.py does not
 read `bench_cost_usd` yet, the copy gets the three-line patch
@@ -199,6 +203,8 @@ def main():
     ap.add_argument("--martian", required=True)
     ap.add_argument("--qodo-gt", required=True)
     ap.add_argument("--skip-charts", action="store_true")
+    ap.add_argument("--charts-ref", default=str(HERE / "charts"),
+                    help="dir with the reference numbers.json / numbers-gpt6sol.json (e.g. the HF dataset's figures/)")
     a = ap.parse_args()
     # absolute, because the Martian step imports from both while its cwd is the checkout
     a.martian = str(Path(a.martian).resolve())
@@ -327,7 +333,10 @@ def main():
                 cmd.append(f"--suffix={suffix}")
             run(cmd + arms_, env=env)
             mine = json.loads((cdir / f"numbers{suffix}.json").read_text())
-            theirs = json.loads((HERE / "charts" / f"numbers{suffix}.json").read_text())
+            ref = Path(a.charts_ref) / f"numbers{suffix}.json"
+            if not ref.exists():
+                raise SystemExit(f"{ref} not found: pass --charts-ref (the HF dataset's figures/) or --skip-charts")
+            theirs = json.loads(ref.read_text())
             # the committed gpt-6-sol chart data labels the arm quickreviewd, the
             # product's former name; arms-gpt6sol.txt says QuickReview
             renamed = {k.replace("quickreviewd", "QuickReview"): v for k, v in (theirs.get("arms") or {}).items()}

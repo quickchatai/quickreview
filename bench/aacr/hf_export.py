@@ -5,7 +5,7 @@
         --runs-dir <runs dir>/runs \\
         --aacr-dataset <AACR-Bench v1.0 dataset/positive_samples.json> \\
         --out <runs dir>/release/hf-dataset \\
-        --repo-id <org>/<name> [--archive-url URL] [--no-figures] [--no-load-check]
+        --repo-id <org>/<name> [--archive-url URL] [--generated DIR] [--no-figures] [--no-load-check]
 
 What it writes (no model call, nothing uploaded; the run dirs are only read):
 
@@ -19,6 +19,10 @@ What it writes (no model call, nothing uploaded; the run dirs are only read):
   figures/, keys/, reports/   the generated artefacts kept out of git:
                          the charts (the earlier study's re-drawn under the
                          public name), the rendered keys and FULL-BENCHMARK.
+                         The public tree carries only some of them; --generated
+                         names a bench/aacr-shaped dir (charts/, defects/*.md,
+                         FULL-BENCHMARK.md) that supplies the rest, the tree's
+                         own copy winning where both have a file.
   README.md (the card, from hf/card.md), LICENSE (Apache-2.0), NOTICE,
   validation.json        every count and headline number recomputed FROM THE
                          WRITTEN TABLES, against the papers' values.
@@ -89,6 +93,9 @@ def _env_list(key: str) -> list[str]:
 SCRUB_BOTS = _env_list("QCR_SCRUB_BOT")
 SCRUB_OWNERS = _env_list("QCR_SCRUB_OWNER")
 SCRUB_OLD_NAMES = _env_list("QCR_SCRUB_OLD_NAME")
+# the private product repository's name (comma-separated spellings):
+# $QCR_SCRUB_PRIVATE_REPO -> `<private-repo>`, any case
+SCRUB_PRIVATE_REPOS = _env_list("QCR_SCRUB_PRIVATE_REPO")
 
 SCRUB_RULES: list[tuple[str, str, str]] = [
     # (label, regex, replacement)
@@ -102,6 +109,7 @@ SCRUB_RULES: list[tuple[str, str, str]] = [
     *[("review bot (bare)", re.escape(b) + r"\b", "<review-bot>") for b in SCRUB_BOTS],
     *[("owner", re.escape(o), "<owner>") for o in SCRUB_OWNERS],
     *[("owner (other case)", r"(?i)" + re.escape(o), "<owner>") for o in SCRUB_OWNERS],
+    *[("private repo", r"(?i)" + re.escape(r), "<private-repo>") for r in SCRUB_PRIVATE_REPOS],
 ]
 _SCRUB = [(label, re.compile(rx), rep) for label, rx, rep in SCRUB_RULES]
 
@@ -1026,6 +1034,18 @@ def leak_scan(out: str) -> dict:
     return {f"{k[0]} :: {k[1]}": v for k, v in bad.items() if v}
 
 
+def generated_files(a, sub: str) -> dict[str, str]:
+    """name -> path of every file in bench/aacr/<sub>, with --generated's
+    <sub> filling in what the tree lacks (the tree's copy wins)."""
+    found: dict[str, str] = {}
+    for root in [HERE] + ([a.generated] if getattr(a, "generated", None) else []):
+        d = os.path.join(root, sub)
+        for f in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+            if os.path.isfile(os.path.join(d, f)):
+                found.setdefault(f, os.path.join(d, f))
+    return found
+
+
 def figures(a, out: str, counts: collections.Counter, notes: list[str]):
     """Charts, rendered keys, FULL-BENCHMARK. The earlier study's
     charts are re-drawn with the public name; everything textual is scrubbed."""
@@ -1034,12 +1054,11 @@ def figures(a, out: str, counts: collections.Counter, notes: list[str]):
     rep = os.path.join(out, "reports")
     for d in (fig, keys, rep):
         os.makedirs(d, exist_ok=True)
-    src = os.path.join(HERE, "charts")
-    redraw = {f for f in os.listdir(src) if "-gpt6sol" in f} | {"judge-agreement.jpg"}
-    for f in sorted(os.listdir(src)):
+    charts = generated_files(a, "charts")
+    redraw = {f for f in charts if "-gpt6sol" in f} | {"judge-agreement.jpg"}
+    for f, p in sorted(charts.items()):
         if f in redraw:
             continue
-        p = os.path.join(src, f)
         if f.endswith((".json", ".svg")):
             open(os.path.join(fig, f), "w").write(scrub(open(p).read(), counts))
         else:
@@ -1063,10 +1082,14 @@ def figures(a, out: str, counts: collections.Counter, notes: list[str]):
                 else:
                     shutil.copy2(p, os.path.join(fig, f))
         shutil.copy2(os.path.join(agree, "judge-agreement.jpg"), os.path.join(fig, "judge-agreement.jpg"))
-    for f in sorted(os.listdir(os.path.join(HERE, "defects"))):
+    for f, p in sorted(generated_files(a, "defects").items()):
         if f.endswith(".md"):
-            open(os.path.join(keys, f), "w").write(scrub(open(os.path.join(HERE, "defects", f)).read(), counts))
-    md = scrub(open(os.path.join(HERE, "FULL-BENCHMARK.md")).read(), counts)
+            open(os.path.join(keys, f), "w").write(scrub(open(p).read(), counts))
+    full = generated_files(a, "").get("FULL-BENCHMARK.md")
+    if full is None:
+        notes.append("FULL-BENCHMARK.md is in neither the tree nor --generated: reports/ not written")
+        return
+    md = scrub(open(full).read(), counts)
     md = md.replace("](charts/", "](../figures/")
     open(os.path.join(rep, "FULL-BENCHMARK.md"), "w").write(md)
     if shutil.which("chromium"):
@@ -1140,6 +1163,8 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--repo-id", required=True, help="the Hugging Face dataset id the card names")
     ap.add_argument("--archive-url", default="the run archive, a Hugging Face dataset repo (link and DOI TBD)")
+    ap.add_argument("--generated", help="a bench/aacr-shaped dir with the generated artefacts the public tree leaves out "
+                    "(charts/, defects/*.md, FULL-BENCHMARK.md); the tree's own files win")
     ap.add_argument("--no-figures", action="store_true")
     ap.add_argument("--no-load-check", action="store_true")
     a = ap.parse_args()
