@@ -2,7 +2,10 @@
 // Core tables: pr_state, rounds, bot_comments (registry), deliveries
 // (webhook dedupe), events (append log).
 import { findingRowFields } from "@quickchatai/pi-quickreview/src/finding-row.js";
-import { roundStageDeadlines } from "@quickchatai/pi-quickreview/src/round-stage-deadlines.js";
+import {
+  discoveryRowsOf,
+  roundStageDeadlines,
+} from "@quickchatai/pi-quickreview/src/round-stage-deadlines.js";
 import Database from "better-sqlite3";
 import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -8264,6 +8267,7 @@ export function buildStatusSnapshot(
                   started,
                   roundStageBounds,
                   round.sweep_owed === 1,
+                  discoveryRowsOf(round),
                 );
                 return {
                   ...identity,

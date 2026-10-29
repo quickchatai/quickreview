@@ -132,7 +132,11 @@ session_command_start_lease_s = 120
 session_command_running_max_min = 45
 # Command-correlated execution milestones: no first pass, incomplete pass plan,
 # and all-passes-done/no-verdict. Absolute start-derived bounds; activity cannot
-# renew them.
+# renew them. The first pass is any discovery lens the daemon dispatched, a
+# planned one or one of the round's optional rows. A plan above 20 discovery
+# rows gets a minute per row more on both the passes bound and the running cap,
+# up to 20 (packages/pi-plugin/src/round-stage-deadlines.ts); it does not stack
+# with the follow-up sweep's allowance.
 round_first_pass_max_min = 5
 round_passes_max_min = 35
 round_finalize_grace_min = 5
