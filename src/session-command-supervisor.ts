@@ -1139,8 +1139,6 @@ function firstExecutionPerLens(
   return first;
 }
 
-/** Plan rows per lens name from the round's recorded `pass_plan`; empty when
- * it is absent or unreadable (every lens then owes one execution). */
 /** The lenses of the optional rows the daemon dispatched with the round (the
  * addable record's `optional` entries); a lens offered for the add protocol
  * is not one. */
@@ -1158,6 +1156,8 @@ function optionalRowLenses(round: RoundRow): string[] {
   }
 }
 
+/** Plan rows per lens name from the round's recorded `pass_plan`; empty when
+ * it is absent or unreadable (every lens then owes one execution). */
 function plannedRowCounts(round: RoundRow): Map<string, number> {
   const counts = new Map<string, number>();
   if (!round.pass_plan) return counts;
