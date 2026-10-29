@@ -2346,8 +2346,7 @@ describe("PATCH 13 — one turn sync in flight per session, file 0014", () => {
     await new Promise((r) => setTimeout(r, 1));
     // The last turn hands off and the worker exits: nothing is released.
     await sync.syncBranch(turn2);
-    const pending = (await listPending(queue)) as Array<{ entry: { payload: unknown } }>;
-    const queued = pending.map((p) => JSON.stringify(p.entry.payload));
+    const queued = (await listPending(queue)).map((p) => JSON.stringify(p.entry["payload"]));
     expect(queued.some((p) => p.includes("and the tests?"))).toBe(true);
     expect(queued.some((p) => p.includes("they cover it"))).toBe(true);
     // What the running sync claimed is not queued again.
