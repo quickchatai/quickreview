@@ -531,6 +531,8 @@ function drainHolderLine(snapshot: StatusSnapshot): string {
 /** What lifts the drain that stands. A snapshot with no hold marker comes from
  * a daemon that does not report holds: whether its boot lifts it is unknown. */
 function drainLiftLine(snapshot: StatusSnapshot): string {
+  if (snapshot.draining_reason && snapshot.draining_until && snapshot.draining_hold !== true)
+    return `lifts itself at ${snapshot.draining_until} and retries; qcr drain off to lift now`;
   if (snapshot.draining_hold === true || snapshot.draining_reason)
     return "only qcr drain off lifts it — no boot does";
   if (snapshot.draining_hold === undefined)

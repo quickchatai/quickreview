@@ -550,8 +550,9 @@ export type DrainState =
       /** When the hold lapses; null = until lifted (operator only). */
       expires_at: string | null;
       /** Why a SYSTEM engaged it (`worker_failures`, the crash-loop breaker); null
-       * for a hand-set drain. A drain with a reason is lifted only by an explicit
-       * `drain off`, never by a boot's first reconcile pass. */
+       * for a hand-set drain. A drain with a reason is never lifted by a boot's
+       * first reconcile pass: the breaker's lapses at its `expires_at`, or an
+       * explicit `drain off` lifts it sooner. */
       reason: string | null;
       /** The operator's no-auto-lift HOLD (`qcr drain on --hold`): no
        * boot's first reconcile lifts it, only an explicit operator `drain off`.
@@ -1050,7 +1051,8 @@ CREATE TABLE IF NOT EXISTS drain_state (
 -- with parked_at set gets no worker until the operator's rerun-round or
 -- restart-session clears the row. worker_breaker_global.epoch ticks at every
 -- worker success (and at the lift of the breaker's drain); a failure counts
--- toward the global drain only while it carries the current epoch.
+-- toward the global drain only while it carries the current epoch. trips
+-- counts the breaker's drains since then: each waits twice as long to lapse.
 CREATE TABLE IF NOT EXISTS worker_breaker (
   pr              INTEGER PRIMARY KEY,
   failures        INTEGER NOT NULL DEFAULT 0,
@@ -1064,6 +1066,7 @@ CREATE TABLE IF NOT EXISTS worker_breaker (
 CREATE TABLE IF NOT EXISTS worker_breaker_global (
   id         INTEGER PRIMARY KEY CHECK (id = 1),
   epoch      INTEGER NOT NULL DEFAULT 0,
+  trips      INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL
 );
 -- The host lease: who holds a PR's session while the operator works
@@ -1828,6 +1831,7 @@ export class StateStore {
     this.db.exec("CREATE INDEX IF NOT EXISTS bot_comments_id ON bot_comments(comment_id)");
     this.migrateRecheckReceipts();
     this.migrateDrainHold();
+    this.migrateBreakerHeal();
     this.migrateSessionCommandCancelledStatus();
     this.runDataMigrations();
   }
@@ -1929,6 +1933,31 @@ export class StateStore {
         )
         .run();
       if (info.changes > 0) this.logEvent("drain_hold_carried", null, {});
+    })();
+  }
+
+  /**
+   * The breaker's drain lapses on its own (src/workerbreaker.ts). One an older
+   * daemon set stands with no expiry, and only `drain off` would lift it: the
+   * boot that adds the `trips` column gives it an expiry of now, so the first
+   * sweep lifts it and the queue retries. Only the breaker's drain is carried
+   * (its reason, no hold); a hand-set drain stands as it was set.
+   */
+  private migrateBreakerHeal(): void {
+    this.db.transaction(() => {
+      if (
+        !this.addColumn(
+          "ALTER TABLE worker_breaker_global ADD COLUMN trips INTEGER NOT NULL DEFAULT 0",
+        )
+      )
+        return;
+      const info = this.db
+        .prepare(
+          `UPDATE drain_state SET expires_at = ?
+            WHERE id = 1 AND draining = 1 AND reason = ? AND expires_at IS NULL AND hold = 0`,
+        )
+        .run(this.ts(), WORKER_FAILURES_DRAIN_REASON);
+      if (info.changes > 0) this.logEvent("breaker_drain_heal_carried", null, {});
     })();
   }
 
@@ -6696,19 +6725,31 @@ export class StateStore {
    * One more consecutive worker failure for `pr`. The PR is parked when the count
    * reaches `parkAfter`; `parked` says whether it stands parked now and
    * `newlyParked` whether THIS failure parked it (the caller raises the anomaly
-   * once). With `drain: false` it counts toward the park only: its epoch is one
-   * no window ever carries, so `failedWorkerPrsSince` never lists it.
+   * once). With `drain: false` it does not count toward the global drain: its
+   * epoch is one no window ever carries, so `failedWorkerPrsSince` never lists
+   * it. With `park: false` it counts but does not park the PR by itself.
    */
   recordWorkerFailure(
     pr: number,
-    o: { commandId: string; error: string; at: string; parkAfter: number; drain?: boolean },
+    o: {
+      commandId: string;
+      error: string;
+      at: string;
+      parkAfter: number;
+      drain?: boolean;
+      park?: boolean;
+    },
   ): { failures: number; parked: boolean; newlyParked: boolean } {
     return this.db
       .transaction(() => {
         const row = this.workerBreaker(pr);
         const failures = (row?.failures ?? 0) + 1;
         const wasParked = row?.parked_at != null;
-        const parkedAt = wasParked ? row.parked_at : failures >= o.parkAfter ? o.at : null;
+        const parkedAt = wasParked
+          ? row.parked_at
+          : o.park !== false && failures >= o.parkAfter
+            ? o.at
+            : null;
         this.db
           .prepare(
             `INSERT INTO worker_breaker (pr, failures, parked_at, last_error, last_failure_at, last_command_id, failure_epoch, updated_at)
@@ -6771,12 +6812,31 @@ export class StateStore {
     return row?.epoch ?? 0;
   }
 
-  /** Start the global failure window afresh: earlier failures stop counting. */
+  /** Start the global failure window afresh: earlier failures stop counting,
+   * and the breaker's next drain waits the shortest time again. */
   resetWorkerFailureWindow(): void {
     this.db
       .prepare(
-        `INSERT INTO worker_breaker_global (id, epoch, updated_at) VALUES (1, 1, @ts)
-         ON CONFLICT(id) DO UPDATE SET epoch = epoch + 1, updated_at = @ts`,
+        `INSERT INTO worker_breaker_global (id, epoch, trips, updated_at) VALUES (1, 1, 0, @ts)
+         ON CONFLICT(id) DO UPDATE SET epoch = epoch + 1, trips = 0, updated_at = @ts`,
+      )
+      .run({ ts: this.ts() });
+  }
+
+  /** The breaker's drains since the last worker success or operator lift. */
+  workerBreakerTrips(): number {
+    const row = this.db.prepare("SELECT trips FROM worker_breaker_global WHERE id = 1").get() as
+      { trips: number } | undefined;
+    return row?.trips ?? 0;
+  }
+
+  /** The breaker drained once more: the failures that tripped it are spent (a
+   * new epoch), and its next drain waits longer. */
+  recordWorkerBreakerTrip(): void {
+    this.db
+      .prepare(
+        `INSERT INTO worker_breaker_global (id, epoch, trips, updated_at) VALUES (1, 1, 1, @ts)
+         ON CONFLICT(id) DO UPDATE SET epoch = epoch + 1, trips = trips + 1, updated_at = @ts`,
       )
       .run({ ts: this.ts() });
   }

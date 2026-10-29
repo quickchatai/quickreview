@@ -4,17 +4,22 @@
 //
 //   - PER PR. A worker's failure is a non-zero exit, a `failed` event over the IPC,
 //     or a deadline kill (wall clock, stage or silence). After `parkAfter`
-//     consecutive ones the PR is PARKED: no further spawn, a `worker_crash_loop`
+//     consecutive ones the PR is PARKED (a provider network drop counts but
+//     never parks by itself: it says nothing about the PR): no further spawn, a `worker_crash_loop`
 //     anomaly (to the companion inbox), the last error in status.json and a TUI
 //     alert. A worker that served its round resets the PR's count. The operator
 //     unparks with `rerun-round` or `restart-session` (src/operator-recovery.ts).
 //   - GLOBAL. `drainAfterPrs` PRs failing within `windowMs`, with no worker success
 //     in between, set the existing drain valve with the reason `worker_failures`.
-//     Only an explicit `drain off` lifts it (a boot's first healthy reconcile pass
-//     leaves a reasoned drain standing). A PR's FIRST failure that is the
-//     provider's network dropping (`fetch failed`, a reset socket) does not feed
-//     the drain: one blip fails every concurrent worker at the same instant, and
-//     each of them is retried. A retry that fails again counts.
+//     The drain heals itself: it lapses after `healAfterMs`, the queue retries,
+//     and if workers fail again it drains again, each time waiting twice as long
+//     up to `healMaxMs`. A served round (or the operator's `drain off`, which
+//     lifts it at once) starts the wait from `healAfterMs` again. A boot's first
+//     healthy reconcile pass does not lift it early, and an operator's own
+//     `drain on` over it stands until the operator lifts it. A PR's FIRST
+//     failure that is the provider's network dropping (`fetch failed`, a reset
+//     socket) does not feed the drain: one blip fails every concurrent worker at
+//     the same instant, and each of them is retried. A retry that fails again counts.
 //   - EVERY HOST. `gate` is the one question each host asks before it starts a
 //     round worker, an answer worker or a debug round: the bot
 //     is drained, or the PR is parked, and the answer is no. A takeover
@@ -32,12 +37,18 @@ export interface BreakerLimits {
   drainAfterPrs: number;
   /** The window those PRs' latest failures must fall in. */
   windowMs: number;
+  /** How long the breaker's first drain stands before it lapses and the queue retries. */
+  healAfterMs: number;
+  /** The longest a drain waits, however often it has tripped. */
+  healMaxMs: number;
 }
 
 export const DEFAULT_BREAKER_LIMITS: BreakerLimits = {
   parkAfter: 2,
   drainAfterPrs: 3,
   windowMs: 15 * 60_000,
+  healAfterMs: 15 * 60_000,
+  healMaxMs: 4 * 60 * 60_000,
 };
 
 export type SpawnVerdict = { ok: true } | { ok: false; why: "draining" | "parked"; reason: string };
@@ -109,12 +120,14 @@ export class WorkerBreaker {
     const at = this.iso();
     const last = error.replace(/\s+/g, " ").trim().slice(0, ERROR_CHARS) || "no reason given";
     const firstFailure = (this.store.workerBreaker(pr)?.failures ?? 0) === 0;
+    const transport = isProviderTransportFailure(last);
     const res = this.store.recordWorkerFailure(pr, {
       commandId,
       error: last,
       at,
       parkAfter: this.limits.parkAfter,
-      drain: !(firstFailure && isProviderTransportFailure(last)),
+      drain: !(firstFailure && transport),
+      park: !transport,
     });
     if (res.newlyParked) {
       const detail = `PR #${pr} is parked after ${res.failures} consecutive worker failures; last: ${last}`;
@@ -140,12 +153,20 @@ export class WorkerBreaker {
     const since = new Date(this.now() - this.limits.windowMs).toISOString();
     const prs = this.store.failedWorkerPrsSince(since);
     if (prs.length < this.limits.drainAfterPrs) return false;
+    // A standing drain, the breaker's or a hand-set one, is never extended here.
+    if (this.store.drainState().draining) return false;
+    const waitMs = Math.min(
+      this.limits.healAfterMs * 2 ** this.store.workerBreakerTrips(),
+      this.limits.healMaxMs,
+    );
+    const lapses = new Date(this.now() + waitMs).toISOString();
     const res = this.store.engageDrain(
-      { issuer: "operator", expires_at: null },
+      { issuer: "operator", expires_at: lapses },
       WORKER_FAILURES_DRAIN_REASON,
     );
     if (res.outcome === "unchanged") return false;
-    const detail = `workers failed for ${prs.length} PRs (${prs.map((n) => `#${n}`).join(", ")}) within ${Math.round(this.limits.windowMs / 60_000)} min with no success; the bot is draining (${WORKER_FAILURES_DRAIN_REASON}) until an operator runs drain off`;
+    this.store.recordWorkerBreakerTrip();
+    const detail = `workers failed for ${prs.length} PRs (${prs.map((n) => `#${n}`).join(", ")}) within ${Math.round(this.limits.windowMs / 60_000)} min with no success; the bot is draining (${WORKER_FAILURES_DRAIN_REASON}) and retries at ${lapses} (in ${Math.round(waitMs / 60_000)} min); drain off lifts it now`;
     this.log(`worker_failures drain — ${detail}`);
     this.store.logEvent("drain_on", null, {
       by: "system",
@@ -153,6 +174,7 @@ export class WorkerBreaker {
       outcome: res.outcome,
       prs,
       at,
+      lapses,
     });
     this.store.logAnomaly(
       "worker_crash_loop",
