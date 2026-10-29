@@ -51,7 +51,7 @@ AACR = os.path.dirname(HERE)
 sys.path.insert(0, AACR)
 sys.path.insert(0, os.path.join(AACR, "openmodels"))
 from models import MODELS  # noqa: E402
-from lensfinal import lens as lens_name, lost as lost_lenses  # noqa: E402
+from lensfinal import events_file, lens as lens_name, lost as lost_lenses  # noqa: E402
 
 SETS = ("glm-aacr1", "glm-aacr-extra3", "glm-martian1", "glm-martian-extra2", "glm-qodo1", "glm-qodo-extra2")
 GPT_PRICE = {"input": 2.0, "output": 10.0, "cacheRead": 0.10}  # compare.py CODEX_RATES["gpt-6.1-sol"]
@@ -78,7 +78,7 @@ def set_ids(name: str, sets_dir: str) -> List[str]:
 def transcripts(events: Path) -> List[List[dict]]:
     """The main session's messages, then each lens child's, in order."""
     main, kids = [], []
-    with events.open() as f:
+    with events_file(events).open() as f:
         for line in f:
             try:
                 e = json.loads(line)
@@ -179,7 +179,7 @@ def main() -> None:
             for cid in set_ids(s, a.sets_dir):
                 cases.append(a.gpt_runs_dir / gpt_parent(s) / "cases" / cid if prefix is None
                              else a.runs_dir / f"{prefix}-{s}" / "cases" / cid)
-        missing = [str(c) for c in cases if not (c / "pi-events.jsonl").is_file()]
+        missing = [str(c) for c in cases if not events_file(c / "pi-events.jsonl").is_file()]
         if missing:
             sys.exit(f"{name}: no transcript in {missing[:3]}")
         r = row(cases, GPT_PRICE if model is None else MODELS[model]["price"])

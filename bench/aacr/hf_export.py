@@ -59,6 +59,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "ext"))
 import compare  # noqa: E402
+import release_catalogue as RC  # noqa: E402
+import scrub_extra as SX  # noqa: E402
 
 SETS = ("smoke10", "dev10", "holdout10", "fresh10", "rest145")
 AACR_V1_SHA256 = "d8683cb240249bc4e0aff6428802bdffa7b7573ace600552cab1cd0cb7e905c9"
@@ -97,8 +99,17 @@ SCRUB_OLD_NAMES = _env_list("QCR_SCRUB_OLD_NAME")
 # $QCR_SCRUB_PRIVATE_REPO -> `<private-repo>`, any case
 SCRUB_PRIVATE_REPOS = _env_list("QCR_SCRUB_PRIVATE_REPO")
 
+# credential values ($QCR_SCRUB_SECRET_FILES), private tokens
+# ($QCR_SCRUB_PRIVATE_WORDS), private hosts ($QCR_SCRUB_HOSTS) and the content
+# rules ($QCR_SCRUB_CONTENT_RULES): scrub_extra.py, shared with the run archive
+SCRUB_SECRETS = [v.decode() for v in SX.secret_values()]
+SCRUB_PRIVATE_WORDS = SX.env_list("QCR_SCRUB_PRIVATE_WORDS")
+SCRUB_HOSTS = SX.env_list("QCR_SCRUB_HOSTS")
+CONTENT_RULES = SX.ContentRules.from_env()
+
 SCRUB_RULES: list[tuple[str, str, str]] = [
     # (label, regex, replacement)
+    *[("credential value", re.escape(v), "<redacted-secret>") for v in SCRUB_SECRETS],
     ("host path: runs dir", re.escape(_RUNS_DIR), "<runs>"),
     ("host path: repo checkout", re.escape(_REPO_DIR), "<repo>"),
     ("host path: home", _HOME_RX + r"\b", "<home>"),
@@ -110,18 +121,30 @@ SCRUB_RULES: list[tuple[str, str, str]] = [
     *[("owner", re.escape(o), "<owner>") for o in SCRUB_OWNERS],
     *[("owner (other case)", r"(?i)" + re.escape(o), "<owner>") for o in SCRUB_OWNERS],
     *[("private repo", r"(?i)" + re.escape(r), "<private-repo>") for r in SCRUB_PRIVATE_REPOS],
+    *[("private token", r"(?i)(?<![A-Za-z0-9_])" + re.escape(w) + r"(?![A-Za-z0-9_])", "<private>") for w in SCRUB_PRIVATE_WORDS],
+    *[("private host", r"(?i)" + re.escape(h), "<private-host>") for h in SCRUB_HOSTS],
 ]
 _SCRUB = [(label, re.compile(rx), rep) for label, rx, rep in SCRUB_RULES]
+CONTENT_LABEL = "public-repository stand-ins (content rules)"
 
 
 def scrub(text, counts: collections.Counter | None = None):
-    """Apply SCRUB_RULES to one string (anything else is returned as is)."""
+    """Apply SCRUB_RULES, then the content rules, to one string (anything
+    else is returned as is)."""
     if not isinstance(text, str):
         return text
     for label, rx, rep in _SCRUB:
         text, n = rx.subn(rep, text)
         if n and counts is not None:
             counts[label] += n
+    if CONTENT_RULES is not None and len(text) > 3:
+        c = collections.Counter()
+        b = text.encode()
+        out = CONTENT_RULES.apply(b, c)
+        if out != b:
+            text = out.decode(errors="replace")
+            if counts is not None:
+                counts[CONTENT_LABEL] += sum(c.values())
     return text
 
 
@@ -253,11 +276,27 @@ SOL_IDS = {  # bench/aacr/final/arms-gpt6sol.txt name -> arm id
 }
 
 
+OPEN_IDS = {  # bench/aacr/final/arms-open-models.txt name -> arm id
+    "DeepSeek V4.1 Flash (mostly low effort)": "quickreview-deepseek-v41-flash",
+    "GLM-5.3 Flash": "quickreview-glm-53-flash",
+}
+OPEN_JUDGE = "gpt-6.1-sol-high"  # the open-model runs' defect judge (judge/v<key>-gpt-6.1-sol-high/)
+PAPER_JUDGES = (PRIMARY, SECOND, SELFCONS)
+JUDGE_ORDER = [PRIMARY, OPEN_JUDGE, SECOND, SELFCONS]
+AACR_TABLES = ("reviews", "defect_verdicts", "comment_verdicts", "aacr_matches")
+SET_SUFFIX = re.compile(r"^(.+?)-(?:smoke10|dev10|holdout10|fresh10|rest145)(?:-low)?$")
+
+
+def jlabel(label: str) -> str:
+    """The `judge` column's name of a judge dir label."""
+    return JUDGE_LABELS.get(label, label)
+
+
 def read_arms_file(path: str) -> list[tuple[str, list[str]]]:
     out = []
     for line in open(path):
         line = line.strip()
-        if line and "=" in line:
+        if line and "=" in line and not line.startswith("#"):
             name, _, runs = line.partition("=")
             out.append((name, runs.split(",")))
     return out
@@ -276,7 +315,8 @@ def aacr_arms() -> list[dict]:
             return
         arms[aid] = {"arm_id": aid, "benchmark": "aacr", "display_name": name, "runs": runs,
                      "studies": [study], "paper_tables": list(tables), "scope": scope,
-                     "link_only": kw.get("link_only", False), "note": kw.get("note", "")}
+                     "link_only": kw.get("link_only", False), "note": kw.get("note", ""),
+                     "judges": list(kw.get("judges", PAPER_JUDGES))}
 
     add("quickreview-frozen", "QuickReview frozen build (e32f0cf, gpt-6.1-sol)", _sets("final1"),
         "frozen build", ["benchmark: tab:finalbuild", "quickreview: The frozen build"])
@@ -318,6 +358,9 @@ def aacr_arms() -> list[dict]:
     for aid, name, run in fair:
         add(aid, name, [run], "best-shot selection on S40 (gpt-6-sol unless named)",
             ["benchmark: tab:bestshot, tab:transfer"], scope="runs")
+    for name, runs in read_arms_file(os.path.join(HERE, "final", "arms-open-models.txt")):
+        add(OPEN_IDS[name], name, runs, "other models (open-weight, DigitalOcean)", ["README: Other models"],
+            judges=(OPEN_JUDGE,))
     return list(arms.values())
 
 
@@ -380,6 +423,10 @@ class Exporter:
     def __init__(self, a):
         self.a = a
         self.runs_dir = os.path.abspath(os.path.expanduser(a.runs_dir))
+        om = getattr(a, "open_models", None)
+        self.om_runs = os.path.join(os.path.abspath(os.path.expanduser(om)), "runs") if om else None
+        catp = getattr(a, "catalogue", None)
+        self.cat = RC.Catalogue.load(catp) if catp else None
         self.counts = collections.Counter()
         self.notes: list[str] = []
         self.tables: dict[str, list[dict]] = {}
@@ -392,6 +439,87 @@ class Exporter:
 
     def S(self, v):
         return scrub_obj(v, self.counts)
+
+    # --- where a run lives, and its family ---------------------------------
+    def rd(self, run: str) -> str:
+        """A run (or scoring) dir: the bench runs dir's, else the open-model runs'."""
+        p = os.path.join(self.runs_dir, run)
+        if self.om_runs and not os.path.exists(p) and os.path.exists(os.path.join(self.om_runs, run)):
+            return os.path.join(self.om_runs, run)
+        return p
+
+    def family(self, run: str) -> dict | None:
+        if self.cat is None:
+            return None
+        kind = "om-runs" if self.om_runs and self.rd(run).startswith(self.om_runs + os.sep) else "runs"
+        return self.cat.family_of(kind, run)
+
+    def family_id(self, run: str | None) -> str | None:
+        f = self.family(run) if run else None
+        return f["id"] if f else None
+
+    def all_runs(self) -> list[str]:
+        """Every run and scoring dir of both roots that a shipped family with HF
+        tables holds."""
+        out = []
+        for root in [self.runs_dir] + ([self.om_runs] if self.om_runs else []):
+            for n in sorted(os.listdir(root)):
+                if n.startswith(".") or not os.path.isdir(os.path.join(root, n)) or self.rd(n) != os.path.join(root, n):
+                    continue
+                if RC.Catalogue.hf_tables(self.family(n)):
+                    out.append(n)
+        return out
+
+    def judge_labels(self, run: str) -> list[str]:
+        """The defect judges of a run: judge/v<key>-<label>/ and judge/wpself-<label>/."""
+        d = os.path.join(self.rd(run), "judge")
+        out = set()
+        for n in os.listdir(d) if os.path.isdir(d) else []:
+            m = re.match(r"^v\d+-(.+)$", n)
+            if m and os.path.isdir(os.path.join(d, n)):
+                out.add(m.group(1))
+            elif n.startswith("wpself-") and os.path.isdir(os.path.join(d, n)):
+                out.add(n)
+        return sorted(out, key=lambda x: (x not in JUDGE_ORDER, JUDGE_ORDER.index(x) if x in JUDGE_ORDER else 0, x))
+
+    def generic_aacr_arms(self, paper: list[dict]) -> list[dict]:
+        """An arm for every other shipped AACR review run: the runs of one
+        family that differ only in their set suffix form one arm when their PRs
+        do not overlap, else each run is its own arm. Scored like the paper's
+        arms: per PR the first run with a usable judgement of the arm's primary
+        judge."""
+        if self.cat is None:
+            return []
+        taken = {r for a in paper for r in a["runs"]}
+        groups: dict[tuple[str, str], list[str]] = collections.defaultdict(list)
+        for run in self.all_runs():
+            if "." in run or run in taken or not set(AACR_TABLES) & set(RC.Catalogue.hf_tables(self.family(run))):
+                continue
+            d = os.path.join(self.rd(run), "cases")
+            if not os.path.isdir(d) or not any(i in self.key for i in os.listdir(d)):
+                continue
+            m = SET_SUFFIX.match(run)
+            groups[(self.family_id(run), m.group(1) if m else run)].append(run)
+        ids = {a["arm_id"] for a in paper}
+        out = []
+        for (fid, prefix), runs in sorted(groups.items()):
+            cases = [set(i for i in os.listdir(os.path.join(self.rd(r), "cases")) if i in self.key) for r in runs]
+            disjoint = sum(len(c) for c in cases) == len(set().union(*cases))
+            for arm_runs in ([sorted(runs)] if disjoint else [[r] for r in sorted(runs)]):
+                aid = prefix if disjoint else arm_runs[0]
+                while aid in ids:
+                    aid += "+"
+                ids.add(aid)
+                labels = []
+                for r in arm_runs:
+                    labels += [x for x in self.judge_labels(r) if x not in labels]
+                labels.sort(key=lambda x: (x not in JUDGE_ORDER, JUDGE_ORDER.index(x) if x in JUDGE_ORDER else 0, x))
+                fam = self.cat.families.get(fid) or {}
+                out.append({"arm_id": aid, "benchmark": "aacr",
+                            "display_name": f"{fam.get('title') or fid}: {aid}", "runs": arm_runs,
+                            "studies": [fam.get("title") or fid], "paper_tables": [], "scope": "runs",
+                            "link_only": False, "note": "", "judges": labels or [PRIMARY]})
+        return out
 
     # --- the key -----------------------------------------------------------
     def build_key(self):
@@ -480,7 +608,7 @@ class Exporter:
             return list(self.key)
         seen = []
         for run in arm["runs"]:
-            d = os.path.join(self.runs_dir, run, "cases")
+            d = os.path.join(self.rd(run), "cases")
             for iid in sorted(os.listdir(d)) if os.path.isdir(d) else []:
                 if iid in self.key and iid not in seen:
                     seen.append(iid)
@@ -488,30 +616,32 @@ class Exporter:
 
     def judgement(self, run, iid, label):
         v = self.key[iid]["version"]
-        sub = label if label == SELFCONS else f"v{v}-{label}"
-        f = os.path.join(self.runs_dir, run, "judge", sub, f"{iid}.r1.json")
+        sub = label if label.startswith("wpself-") else f"v{v}-{label}"
+        f = os.path.join(self.rd(run), "judge", sub, f"{iid}.r1.json")
         j = _read_json(f)
         if not isinstance(j, dict) or j.get("error"):
             return None
         return j
 
     def build_aacr_reviews(self):
-        arms = aacr_arms()
+        paper = aacr_arms()
+        arms = paper + self.generic_aacr_arms(paper)
         reviews, dv, cv, matches = [], [], [], []
         mismatched = []
         for arm in arms:
             aacr_rows = self.aacr_metric(arm)
+            first = arm["judges"][0]
             for iid in self.arm_cases(arm):
-                src = next((r for r in arm["runs"] if self.judgement(r, iid, PRIMARY)), None)
+                src = next((r for r in arm["runs"] if self.judgement(r, iid, first)), None)
                 if src is None:
-                    src = next((r for r in arm["runs"] if os.path.isdir(os.path.join(self.runs_dir, r, "cases", iid))), None)
+                    src = next((r for r in arm["runs"] if os.path.isdir(os.path.join(self.rd(r), "cases", iid))), None)
                     judged = False
                 else:
                     judged = True
-                case_dir = os.path.join(self.runs_dir, src, "cases", iid) if src else None
+                case_dir = os.path.join(self.rd(src), "cases", iid) if src else None
                 summary = _read_json(os.path.join(case_dir, "case-summary.json")) if case_dir else None
                 summary = summary if isinstance(summary, dict) else {}
-                comments = review_for_judge(os.path.join(self.runs_dir, src), iid) if src else []
+                comments = review_for_judge(self.rd(src), iid) if src else []
                 body = None
                 if case_dir and os.path.exists(os.path.join(case_dir, "review.md")):
                     body = open(os.path.join(case_dir, "review.md")).read().strip() or None
@@ -527,45 +657,53 @@ class Exporter:
                     for c in comments:
                         c["text"] = None
                 a_ref = aacr_rows.get(iid)
-                judged_by = [JUDGE_LABELS[lb] for lb in (PRIMARY, SECOND, SELFCONS) if src and self.judgement(src, iid, lb)]
+                judged_by = [jlabel(lb) for lb in arm["judges"] if src and self.judgement(src, iid, lb)]
+                fid = self.family_id(src)
                 reviews.append(self.S({
                     "arm_id": arm["arm_id"], "instance_id": iid, "set": self.key[iid]["set"], "run": src,
                     "judged": judged, "status": summary.get("status"), "verdict": summary.get("verdict"),
                     "body": body, "comments": comments, "n_comments": len(comments),
                     "cost_usd": usd, "minutes": mins, "source_url": source_url,
                     "aacr_scored_comments": a_ref["generated"] if a_ref else None,
-                    "judged_by": judged_by,
+                    "judged_by": judged_by, "run_family": fid,
                 }))
                 if a_ref:
                     for key, share in sorted(a_ref["refs"].items()):
                         matches.append(self.S({"arm_id": arm["arm_id"], "instance_id": iid, "ref_key": key,
-                                               "match_share": share}))
+                                               "match_share": share, "run_family": fid}))
                 if not src:
                     continue
-                for label in (PRIMARY, SECOND, SELFCONS):
+                for label in arm["judges"]:
                     j = self.judgement(src, iid, label)
                     if j is None:
                         continue
-                    if label == PRIMARY and len(j.get("comments") or []) != len(comments):
+                    if label == first and len(j.get("comments") or []) != len(comments):
                         mismatched.append(f"{arm['arm_id']}/{iid}: judge {len(j.get('comments') or [])} vs export {len(comments)}")
-                    jl = JUDGE_LABELS[label]
+                    jl = jlabel(label)
                     for d in j.get("defects") or []:
                         dv.append(self.S({"arm_id": arm["arm_id"], "instance_id": iid, "judge": jl,
                                           "key_version": str(self.key[iid]["version"]), "defect_id": d["id"],
                                           "verdict": d.get("verdict"), "credit": credit(d.get("verdict")),
-                                          "comment_ids": [str(x) for x in d.get("comments") or []], "why": d.get("why")}))
+                                          "comment_ids": [str(x) for x in d.get("comments") or []], "why": d.get("why"),
+                                          "run_family": fid}))
                     for c in j.get("comments") or []:
                         cv.append(self.S({"arm_id": arm["arm_id"], "instance_id": iid, "judge": jl, "comment_id": c["id"],
                                           "grade": c.get("verdict"), "defect_id": c.get("defect"),
-                                          "new_defect": c.get("new_defect"), "why": c.get("why")}))
+                                          "new_defect": c.get("new_defect"), "why": c.get("why"), "run_family": fid}))
         if mismatched:
             self.notes.append(f"{len(mismatched)} reviews whose exported comment count differs from the primary judge's: "
                               + "; ".join(mismatched[:20]))
         arm_rows = []
         for arm in arms:
+            fams = sorted({self.family_id(r) or "" for r in arm["runs"]} - {""})
+            billed = sorted({(self.family(r) or {}).get("model_billed") or "" for r in arm["runs"]} - {""})
             arm_rows.append(self.S({k: arm[k] for k in ("arm_id", "benchmark", "display_name", "runs", "studies",
                                                         "paper_tables", "scope", "link_only", "note")}
-                                   | {"aacr_judge": self.aacr_judges.get(arm["arm_id"])}))
+                                   | {"aacr_judge": self.aacr_judges.get(arm["arm_id"]),
+                                      "judge": jlabel(arm["judges"][0]), "judges": [jlabel(x) for x in arm["judges"]],
+                                      "run_family": fams[0] if len(fams) == 1 else (", ".join(fams) or None),
+                                      "model_billed": " / ".join(billed) or None,
+                                      "in_paper": bool(arm["paper_tables"])}))
         self.tables["arms"] = arm_rows
         self.tables["reviews"], self.tables["defect_verdicts"] = reviews, dv
         self.tables["comment_verdicts"], self.tables["aacr_matches"] = cv, matches
@@ -574,7 +712,7 @@ class Exporter:
         """compare.aacr per PR: {iid: {"refs": {key: share}, "generated": n}}."""
         out, scored, judges = {}, set(), set()
         for run in arm["runs"]:
-            d = os.path.join(self.runs_dir, run, "results", "all")
+            d = os.path.join(self.rd(run), "results", "all")
             rounds = [f for f in sorted(glob.glob(os.path.join(d, "metrics_*_*.json"))) if "average" not in f]
             per = collections.defaultdict(list)
             for f in rounds:
@@ -596,7 +734,7 @@ class Exporter:
                         p for p in [(x.get("summary") or "").strip(), (x.get("failure_scenario") or "").strip()] if p)]
                 out[iid]["generated"] = len(rows)
             if got and rounds:
-                j = os.path.join(self.runs_dir, run, "judge.txt")
+                j = os.path.join(self.rd(run), "judge.txt")
                 judges.add(open(j).readline().strip() if os.path.exists(j) else "(no judge.txt)")
             scored |= got
         if judges:
@@ -606,8 +744,6 @@ class Exporter:
     # --- Martian --------------------------------------------------------------
     def build_martian(self):
         import martian_real
-        work_dirs = [("final1-martian50", {"quickreview": "quickreview-frozen"}),
-                     ("final1-ocr-martian50", {}), ("final1-pragent-martian50", {}), ("final1-opencode-martian50", {})]
         main = os.path.join(self.runs_dir, "final1-martian50.martian")
         published = json.load(open(os.path.join(main, "published-benchmark_data.json")))
         goldens = martian_real.buckets(published)
@@ -634,58 +770,98 @@ class Exporter:
                     "audit_evidence": (au.get("first") or {}).get("evidence"),
                     "audit_strongest_case": (au.get("first") or {}).get("strongest_case_for_golden"),
                 }))
-        reviews, verdicts, scores = [], [], []
         set_by_url = {c["martian"]["golden_url"]: c["instance_id"] for c in mset.values()}
-        for work, rename in work_dirs:
-            wd = os.path.join(self.runs_dir, work + ".martian")
-            evals = json.load(open(os.path.join(wd, "results", "gpt-6.1-sol", "evaluations.json")))
-            bench = json.load(open(os.path.join(wd, "results", "benchmark_data.json")))
-            ms = json.load(open(os.path.join(wd, "martian-scores.json")))
-            for tool, sc in ms["this_run"]["scores"].items():
-                scores.append({"tool": rename.get(tool, tool), "judge": "gpt-6.1-sol", "work_dir": work,
+        reviews, verdicts, scores = [], [], []
+        for work, rename in MARTIAN_PAPER:
+            self._martian_dir(work + ".martian", rename, goldens, set_by_url, reviews, verdicts, scores, paper=True)
+        done = {w + ".martian" for w, _ in MARTIAN_PAPER}
+        for wd in self.all_runs():
+            if ".martian" in wd and wd not in done:
+                self._martian_dir(wd, {}, goldens, set_by_url, reviews, verdicts, scores, paper=False)
+        self.tables["martian_prs"], self.tables["martian_goldens"] = prs, gold
+        self.tables["martian_reviews"], self.tables["martian_verdicts"] = reviews, verdicts
+        self.tables["martian_scores"] = [self.S(s) for s in scores]
+
+    def _martian_dir(self, wd: str, rename: dict, goldens: dict, set_by_url: dict, reviews: list, verdicts: list,
+                     scores: list, paper: bool):
+        """One Martian scoring dir: its reviews (as ingested), the judge's
+        verdict on every golden of every PR it scored, and its scores. A
+        paper dir keeps the 10-05 rows exactly (its `published` scores carry
+        no work dir; only the paper's judge, gpt-6.1-sol); any other dir
+        exports every judge it holds and names itself in every row."""
+        path = self.rd(wd)
+        work = work_dir_name(wd, ".martian")
+        fid = self.family_id(wd)
+        ms = _read_json(os.path.join(path, "martian-scores.json")) or {}
+        this_judge = (ms.get("this_run") or {}).get("judge")
+        judges = sorted(d for d in os.listdir(os.path.join(path, "results"))
+                        if os.path.isfile(os.path.join(path, "results", d, "evaluations.json"))) \
+            if os.path.isdir(os.path.join(path, "results")) else []
+        if paper:
+            judges = ["gpt-6.1-sol"]
+        if not judges:
+            self.notes.append(f"martian {wd}: no results/<judge>/evaluations.json")
+            return
+        primary = this_judge if this_judge in judges else judges[0]
+        for tool, sc in ((ms.get("this_run") or {}).get("scores") or {}).items():
+            scores.append({"tool": rename.get(tool, tool), "judge": this_judge or primary, "work_dir": work,
+                           "run_family": fid,
+                           **{f"{prof}_{k}": v.get(k) for prof, v in sc.items() for k in ("precision", "recall", "f1", "f2", "tp", "fp", "fn")}})
+        for judge, by in (ms.get("published") or {}).items():
+            if paper and work != "final1-martian50":
+                continue
+            for tool, sc in by["scores"].items():
+                scores.append({"tool": tool, "judge": f"published: {judge}", "work_dir": None if paper else work,
+                               "run_family": fid,
                                **{f"{prof}_{k}": v.get(k) for prof, v in sc.items() for k in ("precision", "recall", "f1", "f2", "tp", "fp", "fn")}})
-            if work == "final1-martian50":
-                for judge, by in ms["published"].items():
-                    for tool, sc in by["scores"].items():
-                        scores.append({"tool": tool, "judge": f"published: {judge}", "work_dir": None,
-                                       **{f"{prof}_{k}": v.get(k) for prof, v in sc.items() for k in ("precision", "recall", "f1", "f2", "tp", "fp", "fn")}})
+        bench = _read_json(os.path.join(path, "results", "benchmark_data.json")) or {}
+        run_dir = self.rd(wd.split(".martian")[0])
+        tools_here = set()
+        for judge in judges:
+            evals = json.load(open(os.path.join(path, "results", judge, "evaluations.json")))
             for u in sorted(evals):
                 for tool, e in evals[u].items():
+                    tools_here.add(tool)
                     vendor = tool.startswith("rejudged-")
                     name = rename.get(tool, tool)
-                    rv = next((r for r in bench[u]["reviews"] if r["tool"] == tool), {})
-                    iid = set_by_url.get(u)
-                    usd = mins = None
-                    if not vendor and iid:
-                        usd, mins = compare.usd_and_minutes(os.path.join(self.runs_dir, work, "cases", iid))
-                    comments = [] if vendor else [{"path": c.get("path"), "line": c.get("line"), "body": c.get("body")}
-                                                  for c in rv.get("review_comments") or []]
-                    reviews.append(self.S({
-                        "tool": name, "pr_url": u, "work_dir": work, "vendor_link_only": vendor,
-                        "source_url": rv.get("pr_url") if vendor else None, "comments": comments,
-                        "n_comments": len(rv.get("review_comments") or []),
-                        "extracted_candidates": e.get("total_candidates"),
-                        "unmatched_candidates": None if vendor else [fp.get("candidate") for fp in e.get("false_positives") or []],
-                        "tp": e.get("tp"), "fp": e.get("fp"), "fn": e.get("fn"), "skipped": e.get("skipped"),
-                        "cost_usd": usd, "minutes": mins,
-                    }))
-                    hit = {}
+                    if judge == primary:
+                        rv = next((r for r in (bench.get(u) or {}).get("reviews") or [] if r["tool"] == tool), {})
+                        iid = set_by_url.get(u)
+                        usd = mins = None
+                        own = not vendor and (paper or tool == "quickreview" or len([t for t in evals[u] if not t.startswith("rejudged-")]) == 1)
+                        if own and iid and os.path.isdir(os.path.join(run_dir, "cases", iid)):
+                            usd, mins = compare.usd_and_minutes(os.path.join(run_dir, "cases", iid))
+                        comments = [] if vendor else [{"path": c.get("path"), "line": c.get("line"), "body": c.get("body")}
+                                                      for c in rv.get("review_comments") or []]
+                        reviews.append(self.S({
+                            "tool": name, "pr_url": u, "work_dir": work, "vendor_link_only": vendor,
+                            "source_url": rv.get("pr_url") if vendor else None, "comments": comments,
+                            "n_comments": len(rv.get("review_comments") or []),
+                            "extracted_candidates": e.get("total_candidates"),
+                            "unmatched_candidates": None if vendor else [fp.get("candidate") for fp in e.get("false_positives") or []],
+                            "tp": e.get("tp"), "fp": e.get("fp"), "fn": e.get("fn"), "skipped": e.get("skipped"),
+                            "cost_usd": usd, "minutes": mins, "judge": judge, "run_family": fid,
+                        }))
+                    texts = {v["text"]: i for (uu, i), v in goldens.items() if uu == u}
+                    hit, unknown = {}, 0
                     for tp in e.get("true_positives") or []:
-                        idx = next(i for (uu, i), v in goldens.items() if uu == u and v["text"] == tp["golden_comment"])
+                        idx = texts.get(tp["golden_comment"])
+                        if idx is None:
+                            unknown += 1
+                            continue
                         hit[idx] = tp
+                    if unknown:
+                        self.notes.append(f"martian {wd} {judge} {tool} {u}: {unknown} matched golden(s) not in the published goldens")
                     for (uu, i), v in goldens.items():
                         if uu != u:
                             continue
                         tp = hit.get(i)
                         verdicts.append(self.S({
-                            "tool": name, "pr_url": u, "judge": "gpt-6.1-sol", "golden_index": i, "matched": tp is not None,
+                            "tool": name, "pr_url": u, "judge": judge, "golden_index": i, "matched": tp is not None,
                             "confidence": (tp or {}).get("confidence"),
                             "matched_candidate": None if vendor else (tp or {}).get("matched_candidate"),
-                            "reasoning": (tp or {}).get("reasoning"),
+                            "reasoning": (tp or {}).get("reasoning"), "work_dir": work, "run_family": fid,
                         }))
-        self.tables["martian_prs"], self.tables["martian_goldens"] = prs, gold
-        self.tables["martian_reviews"], self.tables["martian_verdicts"] = reviews, verdicts
-        self.tables["martian_scores"] = [self.S(s) for s in scores]
 
     # --- Qodo -----------------------------------------------------------------
     def build_qodo(self):
@@ -707,46 +883,170 @@ class Exporter:
                                       "start_line": x.get("start_line"), "end_line": x.get("end_line"),
                                       "problematic_code_snippet": x.get("problematic_code_snippet"),
                                       "rule_name": x.get("rule_name"), "functional": not x.get("rule_name")}))
-        import qodo_judge
-        work = [("ext-r6-qodo-pr100", {"quickreview": "quickreview-2026-10-02"}, "ext-r6-qodo-pr100"),
-                ("final1-qodo-pr100", {"quickreview": "quickreview-frozen"}, "final1-qodo-pr100"),
-                ("final1-ocr-qodo-pr100", {}, "final1-ocr-qodo-pr100"),
-                ("final1-opencode-qodo-pr100", {}, "final1-opencode-qodo-pr100"),
-                ("final1-pragent-qodo-pr100", {}, "final1-pragent-qodo-pr100")]
         by_url = {c["pr_url"]: c for c in qset}
         reviews, verdicts = [], []
-        for wd, rename, run in work:
-            for j in qodo_effective(open(os.path.join(self.runs_dir, wd + ".qodo", "judgements.jsonl"))):
-                tool = j["tool"]
-                vendor = tool in qodo_judge.VENDORS
-                name = rename.get(tool, tool)
-                url = j["pr"]
-                usd = mins = None
-                if not vendor:
-                    usd, mins = compare.usd_and_minutes(os.path.join(self.runs_dir, run, "cases", by_url[url]["instance_id"]))
-                f = (forks.get(url) or {}).get(tool)
-                cms = j.get("comments") or []
-                reviews.append(self.S({
-                    "tool": name, "pr_url": url, "work_dir": wd, "vendor_link_only": vendor,
-                    "source_url": f"https://github.com/agentic-review-benchmarks/{f['fork']}/pull/{f['pr']}" if vendor and f else None,
-                    "comments": [{"index": k, "path": c.get("path"), "start": c.get("start"), "end": c.get("end"),
-                                  "body": None if vendor else c.get("body")} for k, c in enumerate(cms)],
-                    "n_comments": j["n_comments"], "cost_usd": usd, "minutes": mins,
-                }))
-                iss = gt[url]["issues"]
-                by_issue = {m["issue"]: m for m in j["matches"]}
-                for i, x in enumerate(iss):
-                    m = by_issue.get(i)
-                    cm = cms[m["comment"]] if m else None
-                    verdicts.append(self.S({
-                        "tool": name, "pr_url": url, "work_dir": wd, "judge": "gpt-6.1-sol", "issue_index": i,
-                        "matched": m is not None, "comment_index": m["comment"] if m else None,
-                        "located_n5": bool(cm) and qodo_judge.located(cm, x, 5),
-                        "located_same_file": bool(cm) and qodo_judge.located(cm, x, float("inf")),
-                        "why": m.get("why") if m else None,
-                    }))
+        for wdname, rename, run in QODO_PAPER:
+            self._qodo_dir(self.rd(wdname + ".qodo"), wdname, rename, run, gt, by_url, forks, reviews, verdicts, True)
+        done = {w + ".qodo" for w, _, _ in QODO_PAPER}
+        for wd in self.all_runs():
+            if ".qodo" in wd and wd not in done:
+                self._qodo_dir(self.rd(wd), work_dir_name(wd, ".qodo"), {}, wd.split(".qodo")[0], gt, by_url, forks,
+                               reviews, verdicts, False)
         self.tables["qodo_prs"], self.tables["qodo_issues"] = prs, issues
         self.tables["qodo_reviews"], self.tables["qodo_verdicts"] = reviews, verdicts
+
+    def _qodo_dir(self, qdir: str, wd: str, rename: dict, run: str, gt: dict, by_url: dict, forks: dict,
+                  reviews: list, verdicts: list, paper: bool):
+        import qodo_judge
+        jf = os.path.join(qdir, "judgements.jsonl")
+        if not os.path.exists(jf):
+            self.notes.append(f"qodo {wd}: no judgements.jsonl")
+            return
+        judge = "gpt-6.1-sol"
+        jt = os.path.join(qdir, "judge", "JUDGE.txt")
+        if not paper and os.path.exists(jt):
+            judge = open(jt).read().split(",")[0].strip() or judge
+        fid = self.family_id(os.path.basename(qdir))
+        run_dir = self.rd(run)
+        for j in qodo_effective(open(jf)):
+            tool = j["tool"]
+            vendor = tool in qodo_judge.VENDORS
+            name = rename.get(tool, tool)
+            url = j["pr"]
+            if url not in gt:
+                continue
+            usd = mins = None
+            iid = by_url[url]["instance_id"]
+            if not vendor and os.path.isdir(os.path.join(run_dir, "cases", iid)):
+                usd, mins = compare.usd_and_minutes(os.path.join(run_dir, "cases", iid))
+            f = (forks.get(url) or {}).get(tool)
+            cms = j.get("comments") or []
+            reviews.append(self.S({
+                "tool": name, "pr_url": url, "work_dir": wd, "vendor_link_only": vendor,
+                "source_url": f"https://github.com/agentic-review-benchmarks/{f['fork']}/pull/{f['pr']}" if vendor and f else None,
+                "comments": [{"index": k, "path": c.get("path"), "start": c.get("start"), "end": c.get("end"),
+                              "body": None if vendor else c.get("body")} for k, c in enumerate(cms)],
+                "n_comments": j["n_comments"], "cost_usd": usd, "minutes": mins, "judge": judge, "run_family": fid,
+            }))
+            iss = gt[url]["issues"]
+            by_issue = {m["issue"]: m for m in j["matches"]}
+            for i, x in enumerate(iss):
+                m = by_issue.get(i)
+                cm = cms[m["comment"]] if m and m["comment"] < len(cms) else None
+                verdicts.append(self.S({
+                    "tool": name, "pr_url": url, "work_dir": wd, "judge": judge, "issue_index": i,
+                    "matched": m is not None, "comment_index": m["comment"] if m else None,
+                    "located_n5": bool(cm) and qodo_judge.located(cm, x, 5),
+                    "located_same_file": bool(cm) and qodo_judge.located(cm, x, float("inf")),
+                    "why": m.get("why") if m else None, "run_family": fid,
+                }))
+
+    # --- pairwise Elo -----------------------------------------------------------
+    def build_elo(self):
+        """elo_judgments: every judgment line of every plan; elo_ratings: the
+        ratings refit from the judgments (recompute/elo_ratings.py), per plan,
+        table (each judge, and both pooled) and category."""
+        sys.path.insert(0, os.path.join(HERE, "recompute"))
+        import elo_ratings as ER
+        rows, rats = [], []
+        base = self.a.elo_dir
+        self.elo_refits = {}
+        for plan_name in sorted(os.listdir(base)) if base and os.path.isdir(base) else []:
+            d = os.path.join(base, plan_name)
+            pj = os.path.join(d, "plan.json")
+            jd = os.path.join(d, "judgments")
+            if not (os.path.isfile(pj) and os.path.isdir(jd)):
+                continue
+            plan = json.load(open(pj))
+            labels = plan.get("labels") or {}
+            judgments = {j: ER.read_jsonl(os.path.join(jd, f"{j}.jsonl")) for j in ER.JUDGES}
+            fin = ER.finals(judgments)
+            used = {(j, r["id"], r["at"]) for j, by in fin.items() for r in by.values()}
+            for f in sorted(os.listdir(jd)):
+                if not f.endswith(".jsonl"):
+                    continue
+                stem = f[:-len(".jsonl")]
+                for r in ER.read_jsonl(os.path.join(jd, f)):
+                    v = r.get("verdict") or {}
+                    cats = v.get("categories") or {}
+                    row = {"plan": plan_name, "judgment_file": stem, "unit_id": r.get("id"), "round": r.get("round"),
+                           "pr": r.get("pr"), "a": r.get("a"), "b": r.get("b"),
+                           "a_label": labels.get(r.get("a")), "b_label": labels.get(r.get("b")),
+                           "judge": r.get("judge") or stem, "judge_model": r.get("model"), "effort": r.get("effort"),
+                           "at": r.get("at"), "status": r.get("status"), "prompt_sha256": r.get("prompt_sha256"),
+                           "used_in_ratings": (stem, r.get("id"), r.get("at")) in used,
+                           "overall_winner": (v.get("overall") or {}).get("winner"),
+                           "overall_reasoning": (v.get("overall") or {}).get("reasoning"),
+                           "error": r.get("error")}
+                    for c in ER.CATEGORIES:
+                        row[f"{c}_winner"] = (cats.get(c) or {}).get("winner")
+                        row[f"{c}_reasoning"] = (cats.get(c) or {}).get("reasoning")
+                    rows.append(self.S(row))
+            if not any(judgments.values()):
+                continue
+            rat = ER.ratings(plan, judgments)
+            self.elo_refits[plan_name] = rat
+            for table in [j for j in ER.JUDGES if j in rat] + (["combined"] if "combined" in rat else []):
+                for cat_name, t in [("overall", rat[table]["overall"])] + list(rat[table]["categories"].items()):
+                    for r in t["rows"]:
+                        rats.append(self.S({"plan": plan_name, "table": table, "category": cat_name,
+                                            "run": r["player"], "label": labels.get(r["player"], r["player"]),
+                                            "elo": r["elo"], "lo": r["lo"], "hi": r["hi"],
+                                            "w": r["w"], "t": r["t"], "l": r["l"],
+                                            "games": t["games"], "prs": t["prs"]}))
+        self.tables["elo_judgments"], self.tables["elo_ratings"] = rows, rats
+
+    # --- the run index -----------------------------------------------------------
+    def build_runs(self):
+        if self.cat is None:
+            self.tables["runs"] = []
+            return
+        remap = json.load(open(self.a.commit_remap)) if getattr(self.a, "commit_remap", None) else {}
+        roots = {"runs": self.runs_dir, "top": os.path.dirname(self.runs_dir)}
+        if self.om_runs:
+            roots.update({"om-runs": self.om_runs, "om-top": os.path.dirname(self.om_runs)})
+        rows = RC.index_rows(self.cat, roots, remap, lambda fid: [f"quickreview-runs-{fid}.tar.zst"])
+        self.tables["runs"] = [self.S({k: v for k, v in r.items()}) for r in rows]
+
+    # --- every table holds only the families the catalogue gives it --------------
+    def filter_by_family(self):
+        """Drop rows of a run family whose catalogue entry does not list the
+        table (e.g. a family whose reviews are a copy of another run's);
+        rows with no family (the key, the goldens, published scores) stay."""
+        if self.cat is None:
+            return
+        dropped = collections.Counter()
+        for name in ("reviews", "defect_verdicts", "comment_verdicts", "aacr_matches", "martian_reviews",
+                     "martian_verdicts", "martian_scores", "qodo_reviews", "qodo_verdicts"):
+            keep = []
+            for r in self.tables.get(name, []):
+                fid = r.get("run_family")
+                if fid and name not in RC.Catalogue.hf_tables(self.cat.families.get(fid)):
+                    dropped[(name, fid)] += 1
+                    continue
+                keep.append(r)
+            self.tables[name] = keep
+        for (name, fid), n in sorted(dropped.items()):
+            self.notes.append(f"{name}: {n} rows of {fid} left out (the catalogue gives that family no {name} rows)")
+
+
+MARTIAN_PAPER = [("final1-martian50", {"quickreview": "quickreview-frozen"}),
+                 ("final1-ocr-martian50", {}), ("final1-pragent-martian50", {}), ("final1-opencode-martian50", {})]
+QODO_PAPER = [("ext-r6-qodo-pr100", {"quickreview": "quickreview-2026-10-02"}, "ext-r6-qodo-pr100"),
+              ("final1-qodo-pr100", {"quickreview": "quickreview-frozen"}, "final1-qodo-pr100"),
+              ("final1-ocr-qodo-pr100", {}, "final1-ocr-qodo-pr100"),
+              ("final1-opencode-qodo-pr100", {}, "final1-opencode-qodo-pr100"),
+              ("final1-pragent-qodo-pr100", {}, "final1-pragent-qodo-pr100")]
+MARTIAN_PAPER_DIRS = {w for w, _ in MARTIAN_PAPER}
+
+
+def work_dir_name(scoring_dir: str, suffix: str) -> str:
+    """A scoring dir's `work_dir`: the review run's name for `<run><suffix>`
+    (the 10-05 spelling), the whole dir name for a variant such as
+    `<run><suffix>-rescore`, so two scorings of one run never share a name."""
+    base, _, rest = scoring_dir.partition(suffix)
+    return base if rest == "" else scoring_dir
+QODO_PAPER_DIRS = {w for w, _, _ in QODO_PAPER}
 
 
 # SPDX per reviewed repo. Code excerpts in `defects`
@@ -785,7 +1085,7 @@ REPO_LICENSES.update({
 CONFIGS = ["defects", "exclusions", "prs", "aacr_references", "aacr_reference_labels", "arms", "reviews",
            "defect_verdicts", "comment_verdicts", "aacr_matches", "martian_prs", "martian_goldens",
            "martian_reviews", "martian_verdicts", "martian_scores", "qodo_prs", "qodo_issues", "qodo_reviews",
-           "qodo_verdicts"]
+           "qodo_verdicts", "elo_judgments", "elo_ratings", "runs"]
 
 
 def write_parquet(tables: dict[str, list[dict]], out: str) -> dict[str, int]:
@@ -795,7 +1095,10 @@ def write_parquet(tables: dict[str, list[dict]], out: str) -> dict[str, int]:
     sizes = {}
     for name in CONFIGS:
         rows = tables[name]
-        t = pa.Table.from_pylist(rows)
+        # every key of every row, in first-seen order (from_pylist would take
+        # the first row's keys only), each column's type inferred over all rows
+        keys = list(dict.fromkeys(k for r in rows for k in r))
+        t = pa.table({k: pa.array([r.get(k) for r in rows]) for k in keys})
         # A column every row leaves null has no type; make it a string column.
         for i, f in enumerate(t.schema):
             if pa.types.is_null(f.type):
@@ -973,16 +1276,18 @@ def validate(t: dict[str, list[dict]]) -> list[dict]:
     check("martian audit real/notreal/disputed", f"{b['real']}/{b['notreal']}/{b['disputed']}", "86/77/10")
     for tool, real in {"quickreview-frozen": 75, "open-code-review": 67, "pr-agent": 46, "opencode": 48}.items():
         got = sum(1 for v in t["martian_verdicts"] if v["tool"] == tool and v["matched"]
+                  and v["work_dir"] in MARTIAN_PAPER_DIRS
                   and gold[(v["pr_url"], v["golden_index"])]["audit_bucket"] == "real")
         check(f"martian {tool}: real goldens found/86", got, real)
     for tool, (matched, p, r) in {"quickreview-frozen": (104, 0.162, 0.658), "open-code-review": (93, 0.267, 0.589)}.items():
-        s = next(x for x in t["martian_scores"] if x["tool"] == tool and x["judge"] == "gpt-6.1-sol")
+        s = next(x for x in t["martian_scores"] if x["tool"] == tool and x["judge"] == "gpt-6.1-sol"
+                 and x["work_dir"] in MARTIAN_PAPER_DIRS)
         check(f"martian {tool}: Core matched/158", s["core_tp"], matched)
         check(f"martian {tool}: Core P", s["core_precision"], p, 0.0006)
         check(f"martian {tool}: Core R", s["core_recall"], r, 0.0006)
     for tool, (usd, mins) in {"quickreview-frozen": (2.84, 26.1), "open-code-review": (0.86, 3.3),
                               "pr-agent": (0.09, 1.4), "opencode": (0.19, 2.4)}.items():
-        rs = [x for x in t["martian_reviews"] if x["tool"] == tool]
+        rs = [x for x in t["martian_reviews"] if x["tool"] == tool and x["work_dir"] in MARTIAN_PAPER_DIRS]
         check(f"martian {tool}: $/PR", round(statistics.mean(x["cost_usd"] for x in rs if x["cost_usd"] is not None), 2), usd, 0.006)
         check(f"martian {tool}: mean min/PR", round(statistics.mean(x["minutes"] for x in rs if x["minutes"]), 1), mins, 0.06)
     check("martian vendor comment text withheld",
@@ -993,12 +1298,13 @@ def validate(t: dict[str, list[dict]]) -> list[dict]:
     check("qodo functional / rule", f"{sum(x['functional'] for x in issues.values())}/{sum(not x['functional'] for x in issues.values())}", "309/271")
     qrev = collections.defaultdict(int)
     for r in t["qodo_reviews"]:
-        qrev[r["tool"]] += r["n_comments"]
+        if r["work_dir"] in QODO_PAPER_DIRS:
+            qrev[r["tool"]] += r["n_comments"]
     want = {"qodo-exhaustive": 51.5, "qodo-precise": 47.0, "augment": 41.2, "quickreview-frozen": 40.9,
             "opencode": 40.0, "copilot": 39.1, "greptile": 37.7, "cursor": 36.6, "open-code-review": 35.2,
             "quickreview-2026-10-02": 34.9, "codex": 34.6, "pr-agent": 34.5, "sentry": 21.6, "coderabbit": 21.6}
     for tool, f1 in want.items():
-        vs = [v for v in t["qodo_verdicts"] if v["tool"] == tool]
+        vs = [v for v in t["qodo_verdicts"] if v["tool"] == tool and v["work_dir"] in QODO_PAPER_DIRS]
         tp = sum(v["located_n5"] for v in vs)
         func = sum(v["located_n5"] for v in vs if issues[(v["pr_url"], v["issue_index"])]["functional"])
         r, p, f = rpf(tp, len(issues), qrev[tool])
@@ -1007,11 +1313,103 @@ def validate(t: dict[str, list[dict]]) -> list[dict]:
             check("qodo quickreview-frozen: functional recall", round(100 * func / 309, 1), 52.1, 0.051)
     for tool, (usd, mins) in {"quickreview-frozen": (2.48, 19.6), "open-code-review": (0.46, 1.9),
                               "opencode": (0.20, 2.3), "pr-agent": (0.10, 1.2)}.items():
-        rs = [x for x in t["qodo_reviews"] if x["tool"] == tool]
+        rs = [x for x in t["qodo_reviews"] if x["tool"] == tool and x["work_dir"] in QODO_PAPER_DIRS]
         check(f"qodo {tool}: $/PR", round(statistics.mean(x["cost_usd"] for x in rs if x["cost_usd"] is not None), 2), usd, 0.006)
         check(f"qodo {tool}: mean min/PR", round(statistics.mean(x["minutes"] for x in rs if x["minutes"]), 1), mins, 0.06)
     check("qodo vendor comment text withheld",
           all(c["body"] is None for r in t["qodo_reviews"] if r["vendor_link_only"] for c in r["comments"]), True)
+    return checks
+
+
+# README "Other models" (judge gpt-6.1-sol-high): found of 520, $ per PR
+OPEN_MODEL_ROWS = {"quickreview-glm-53-flash": (435, 0.52), "quickreview-deepseek-v41-flash": (451.5, 0.74)}
+# README "Judged side by side": the pooled Elo of three configurations, games, judges' agreement
+ELO_PLAN = "martian-hard20-all-gpt"
+ELO_README = {"ft0622-hard20-qr-opus55": 1628, "ft0622-hard20-cc-high-opus55": 1518, "ft0622-hard20-sonnet": 1666}
+
+
+# tables a family may list in the catalogue yet hold no rows of, for a reason
+# the data shows: AACR-Bench's own metric exists only for runs the AACR harness
+# scored; a Martian or Qodo review row exists only for a run that has a scoring
+# dir. Their per-family counts are reported in `coverage`, not checked.
+COVERAGE_REPORT_ONLY = ("aacr_matches", "martian_reviews", "qodo_reviews")
+
+
+def coverage(t: dict[str, list[dict]], cat) -> dict:
+    """family -> table -> rows, for every table the catalogue gives the family."""
+    out = {}
+    if cat is None:
+        return out
+    for f in cat.shipped_families():
+        for table in RC.Catalogue.hf_tables(f):
+            rows = t.get(table) or []
+            if table == "runs":
+                n = sum(1 for r in rows if r["family"] == f["id"])
+            elif table == "arms":
+                n = sum(1 for r in rows if f["id"] in (r.get("run_family") or "").split(", "))
+            elif table.startswith("elo_") or not rows or "run_family" not in rows[0]:
+                n = len(rows)  # a table no run family owns (the key, the Elo runs)
+            else:
+                n = sum(1 for r in rows if r.get("run_family") == f["id"])
+            out.setdefault(f["id"], {})[table] = n
+    return out
+
+
+def validate_release(t: dict[str, list[dict]], cat: "RC.Catalogue | None", elo_refits: dict, elo_dir: str | None) -> list[dict]:
+    """The checks of what this release adds: the open-model rows, the Elo
+    ratings (refit from the published judgments, equal to the run's own
+    ratings.json, and the README's numbers), and that every family the
+    catalogue gives a table has rows in it."""
+    checks = []
+
+    def check(what, got, want, tol=0.0):
+        ok = approx(got, want, tol) if tol else got == want
+        checks.append({"check": what, "got": got, "want": want, "ok": bool(ok)})
+
+    defects = {(d["instance_id"], d["defect_id"]): d["severity"] for d in t["defects"]}
+    for aid, (found, usd) in OPEN_MODEL_ROWS.items():
+        dv = [r for r in t["defect_verdicts"] if r["arm_id"] == aid and r["judge"] == OPEN_JUDGE]
+        rs = [r for r in t["reviews"] if r["arm_id"] == aid]
+        check(f"{aid}: judged PRs", sum(r["judged"] for r in rs), 185)
+        check(f"{aid}: found/520 ({OPEN_JUDGE})", defect_summary(dv, defects)["found"], found, 0.001)
+        c = [r["cost_usd"] for r in rs if r["judged"] and r["cost_usd"] is not None]
+        check(f"{aid}: $/PR", round(statistics.mean(c), 2) if c else None, usd, 0.006)
+    used = collections.Counter(r["judgment_file"] for r in t["elo_judgments"] if r["plan"] == ELO_PLAN and r["used_in_ratings"])
+    check(f"elo {ELO_PLAN}: judgments in the ratings (gpt + opus)", used["gpt"] + used["opus"], 596)
+    comb = {r["run"]: r for r in t["elo_ratings"] if r["plan"] == ELO_PLAN and r["table"] == "combined" and r["category"] == "overall"}
+    for run, elo in ELO_README.items():
+        check(f"elo {ELO_PLAN}: {run} pooled Elo", round(comb[run]["elo"]) if run in comb else None, elo)
+    check(f"elo {ELO_PLAN}: pooled games", next(iter(comb.values()))["games"] if comb else None, 596)
+    rat = elo_refits.get(ELO_PLAN)
+    if rat is not None:
+        check(f"elo {ELO_PLAN}: judges agree on the overall winner", round(100 * rat["agreement"]["overall"]["same_rate"]), 56)
+    if elo_dir:
+        sys.path.insert(0, os.path.join(HERE, "recompute"))
+        import elo_ratings as ER
+        for plan, r in sorted(elo_refits.items()):
+            f = os.path.join(elo_dir, plan, "ratings.json")
+            if os.path.exists(f):
+                # an older elo.py wrote no `pairs`: compare every key the file has
+                diffs = [x for x in ER._same(json.loads(json.dumps(r)), json.load(open(f))) if not x.endswith("only in refit")]
+                check(f"elo {plan}: refit from the judgments == its ratings.json (every key it holds)", len(diffs), 0)
+    if cat is not None:
+        for f in cat.shipped_families():
+            for table in RC.Catalogue.hf_tables(f):
+                if table in COVERAGE_REPORT_ONLY:
+                    continue
+                if table == "runs":
+                    got = sum(1 for r in t["runs"] if r["family"] == f["id"])
+                elif table == "arms":
+                    got = sum(1 for r in t["arms"] if f["id"] in (r.get("run_family") or "").split(", "))
+                elif table in ("elo_judgments", "elo_ratings"):
+                    got = len(t[table]) if t[table] else 0
+                elif table in t and t[table] and "run_family" in t[table][0]:
+                    got = sum(1 for r in t[table] if r.get("run_family") == f["id"])
+                else:
+                    continue
+                check(f"family {f['id']}: has rows in {table}", got > 0, True)
+        check("runs: every row is a shipped family",
+              all(RC.Catalogue.ships(cat.families.get(r["family"])) for r in t["runs"]), True)
     return checks
 
 
@@ -1116,7 +1514,8 @@ def render_card(a, out: str, sizes: dict, checks: list[dict], counts: collection
         for n in CONFIGS)
     # one row per kind of name, never the spelling itself: the patterns carry
     # the exporter's own paths and identities
-    kinds = dict.fromkeys((label, rep) for label, _, rep in SCRUB_RULES)
+    kinds = dict.fromkeys([(label, rep) for label, _, rep in SCRUB_RULES]
+                          + ([(CONTENT_LABEL, "the public repository's stand-in")] if CONTENT_RULES is not None else []))
     scrub_tbl = "\n".join(f"| {label} | `{rep}` | {counts.get(label, 0):,} |" for label, rep in kinds)
     ok = sum(c["ok"] for c in checks)
     vals = {"REPO_ID": a.repo_id, "ARCHIVE": a.archive_url, "CONFIGS_YAML": configs_yaml, "CONFIG_ROWS": rows,
@@ -1165,6 +1564,11 @@ def main():
     ap.add_argument("--archive-url", default="the run archive, a Hugging Face dataset repo (link and DOI TBD)")
     ap.add_argument("--generated", help="a bench/aacr-shaped dir with the generated artefacts the public tree leaves out "
                     "(charts/, defects/*.md, FULL-BENCHMARK.md); the tree's own files win")
+    ap.add_argument("--open-models", help="the open-model benchmark dir (its runs/ hold the open-model runs)")
+    ap.add_argument("--catalogue", help="the run catalogue (release_catalogue.py): which families ship and which "
+                    "tables each has rows in; without it only the 10-05 arms and scoring dirs are exported")
+    ap.add_argument("--commit-remap", help="JSON {recorded qcr_commit: public main commit or null}, for the runs table")
+    ap.add_argument("--elo-dir", help="the Elo runs (one dir per plan: plan.json, judgments/); default <runs>/../elo")
     ap.add_argument("--no-figures", action="store_true")
     ap.add_argument("--no-load-check", action="store_true")
     a = ap.parse_args()
@@ -1174,6 +1578,7 @@ def main():
     cache = os.path.join(os.path.dirname(a.runs_dir), "ext-cache", "qodo")
     a.qodo_gt = a.qodo_gt or os.path.join(cache, "git_code_review_bench_100_w_open_prs.jsonl")
     a.qodo_tools = a.qodo_tools or os.path.join(cache, "tool-comments.json")
+    a.elo_dir = a.elo_dir or os.path.join(os.path.dirname(a.runs_dir), "elo")
     out = os.path.abspath(os.path.expanduser(a.out))
     if os.path.exists(out):
         shutil.rmtree(out)
@@ -1184,12 +1589,14 @@ def main():
     print("AACR reviews and verdicts …", flush=True); ex.build_aacr_reviews()
     print("Martian …", flush=True); ex.build_martian()
     print("Qodo …", flush=True); ex.build_qodo()
+    print("Elo, run index …", flush=True); ex.build_elo(); ex.build_runs()
+    ex.filter_by_family()
     sizes = write_parquet(ex.tables, out)
     if not a.no_figures:
         print("figures, keys, reports …", flush=True)
         figures(a, out, ex.counts, ex.notes)
     tables = read_parquet(out)
-    checks = validate(tables)
+    checks = validate(tables) + validate_release(tables, ex.cat, ex.elo_refits, a.elo_dir)
     shutil.copy2(os.path.join(HERE, "hf", "LICENSE"), os.path.join(out, "LICENSE"))
     open(os.path.join(out, "NOTICE"), "w").write(NOTICE)
     render_card(a, out, sizes, checks, ex.counts)
@@ -1201,6 +1608,7 @@ def main():
             ds = datasets.load_dataset(out, n, split="test")
             load[n] = ds.num_rows
     report = {"rows": sizes, "checks": checks, "failed": [c for c in checks if not c["ok"]],
+              "coverage": coverage(tables, ex.cat),
               "scrub_counts": dict(ex.counts), "leaks": leaks, "load_dataset": load, "notes": ex.notes}
     json.dump(report, open(os.path.join(out, "validation.json"), "w"), indent=1, default=str)
     print(json.dumps({k: v for k, v in report.items() if k != "checks"}, indent=1, default=str))

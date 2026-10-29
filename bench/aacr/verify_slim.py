@@ -18,6 +18,18 @@ same computation over the full runs and against the papers' printed numbers.
               numbers-gpt6sol.json the charts are checked against (default
               bench/aacr/charts; the public tree leaves them out, so point it at
               the Hugging Face dataset's figures/).
+  --open-models-full  the full open-model runs dir (optional): the open-model
+              rows, the DigitalOcean speed table and the Elo costs are also
+              computed there and compared with the bundle's.
+  --elo-full  the full Elo plan dir (optional), for the same comparison.
+
+Beyond the papers' tables it recomputes, from the bundle's `open-models/runs`
+and `elo/`, the README's "Other models" rows (recompute/open_models.py), its
+pairwise Elo chart (recompute/elo_ratings.py, refit from the judgments and
+checked against the run's ratings.json and the committed chart data), and
+docs/DIGITALOCEAN.md's speed table and smoke figures (recompute/do_speed.py).
+A published number the full runs do not reproduce either is reported as DOC
+(the text, not the release, differs from the data), never as a pass.
 
 The tools run from a copy of bench/aacr in WORK; when that compare.py does not
 read `bench_cost_usd` yet, the copy gets the three-line patch
@@ -155,15 +167,25 @@ PAPER_QODO_COST = {"final1-qodo-pr100": ("2.48", "19.6"), "final1-opencode-qodo-
 
 class Report:
     def __init__(self):
-        self.rows, self.bad = [], 0
+        self.rows, self.bad, self.doc = [], 0, 0
 
-    def check(self, table, row, col, paper, ours):
+    def check(self, table, row, col, paper, ours, full=None):
+        """`full`: the same number computed from the full runs, when known. A
+        cell the bundle and the full runs agree on but the published text does
+        not is DOC: a fault of the text, not of the release."""
         ok = str(paper).strip() == str(ours).strip()
-        self.bad += not ok
-        self.rows.append((table, row, col, paper, ours, "ok" if ok else "MISMATCH"))
+        if ok:
+            status = "ok"
+        elif full is not None and str(full).strip() == str(ours).strip():
+            status = "DOC (the full runs give the bundle's value)"
+            self.doc += 1
+        else:
+            status = "MISMATCH"
+            self.bad += 1
+        self.rows.append((table, row, col, paper, ours, status))
 
     def text(self):
-        out = ["| Table | Row | Column | Paper | Re-scored from the bundle | |", "|---|---|---|---|---|---|"]
+        out = ["| Table | Row | Column | Published | Re-scored from the bundle | |", "|---|---|---|---|---|---|"]
         out += [f"| {' | '.join(map(str, r))} |" for r in self.rows]
         return "\n".join(out)
 
@@ -205,6 +227,8 @@ def main():
     ap.add_argument("--skip-charts", action="store_true")
     ap.add_argument("--charts-ref", default=str(HERE / "charts"),
                     help="dir with the reference numbers.json / numbers-gpt6sol.json (e.g. the HF dataset's figures/)")
+    ap.add_argument("--open-models-full", help="the full open-model runs dir, to compare the open-model numbers with")
+    ap.add_argument("--elo-full", help="the full Elo plan dir (elo/martian-hard20-all-gpt), to compare with")
     a = ap.parse_args()
     # absolute, because the Martian step imports from both while its cwd is the checkout
     a.martian = str(Path(a.martian).resolve())
@@ -229,7 +253,8 @@ def main():
 
     # 2. the tools: a copy of bench/aacr (+ the slim-bundle patch when compare.py lacks it)
     tools.mkdir()
-    for item in ("compare.py", "charts.py", "defects", "references.json", "sets", "bot_references.json", "final", "ext"):
+    for item in ("compare.py", "charts.py", "defects", "references.json", "sets", "bot_references.json", "final", "ext",
+                 "recompute", "openmodels", "elo", "showcase"):
         s = HERE / item
         (shutil.copytree if s.is_dir() else shutil.copy2)(s, tools / item)
     src = (tools / "compare.py").read_text()
@@ -441,17 +466,146 @@ def main():
         rep.check("tab:qodo", run_, "$/PR", pu, f"{u:.2f}")
         rep.check("tab:qodo", run_, "min/PR (mean)", pm, f"{m:.1f}")
 
+    paper_cells, paper_bad = len(rep.rows), rep.bad
+
+    # 8-10. the README's other-model rows and Elo chart, docs/DIGITALOCEAN.md
+    extra = release_claims(a, slim, tools, out, rep)
+
     (out / "paper-comparison.md").write_text(rep.text() + "\n")
-    print(f"\npaper comparison: {len(rep.rows)} cells, {rep.bad} mismatches -> {out / 'paper-comparison.md'}")
+    print(f"\npaper comparison: {paper_cells} paper cells, {paper_bad} mismatches; "
+          f"{len(rep.rows) - paper_cells} release cells, {rep.bad - paper_bad} mismatches, {rep.doc} DOC "
+          f"-> {out / 'paper-comparison.md'}")
     summary = {"files": nfiles, "hash_mismatches": bad, "pi_events_in_bundle": len(events), "c10_patched_copy": patched,
                "compare_vs_full": {k: ("identical" if not v else f"{len(v)} diff lines") for k, v in diffs.items()},
                "charts": chart_notes, "martian": dict(mstats), "qodo": dict(qstats),
-               "paper_cells": len(rep.rows), "paper_mismatches": rep.bad,
+               "paper_cells": paper_cells, "paper_mismatches": paper_bad,
+               "release_cells": len(rep.rows) - paper_cells, "release_mismatches": rep.bad - paper_bad,
+               "doc_mismatches": rep.doc, **extra,
                "mismatch_rows": [r for r in rep.rows if r[-1] != "ok"]}
     (out / "summary.json").write_text(json.dumps(summary, indent=1) + "\n")
     print(json.dumps({k: v for k, v in summary.items() if k != "mismatch_rows"}, indent=1))
     for r in summary["mismatch_rows"]:
         print("MISMATCH", r)
+
+
+# README "Other models" (recompute/open_models.py names): high, medium, low, all, $/PR
+README_OPEN = {"GLM-5.3 Flash": ("83", "120.5", "231.5", "435", "0.52"),
+               "DeepSeek V4.1 Flash (mostly low effort)": ("83", "131", "237.5", "451.5", "0.74")}
+README_OPEN_NOTES = {"DeepSeek low-effort PRs": "143", "GLM PRs missing a lens pass": "7"}
+# docs/DIGITALOCEAN.md "Why the open models take longer": minutes, output tokens (k), replies,
+# typical reply (s), generation speed (tok/s), $ per PR
+DO_TABLE = {"GPT-6.1 Sol": ("8", "21", "71", "12", "25", "2.30"), "GLM-5.3 Flash": ("30", "244", "196", "8", "37", "0.32"),
+            "DeepSeek V4.1 Flash": ("41", "323", "223", "14", "36", "0.57"), "Gemma 4 31B": ("34", "109", "130", "25", "9", "0.32")}
+DO_SMOKE = {"ok": "10/10", "usd": "3.31", "median min": "28", "slowest min": "54"}
+DO_SLOWEST = "54-66"
+# README "Judged side by side"
+README_ELO = {"games": "596", "judges agree": "56%", "ft0622-hard20-qr-opus55": "1628",
+              "ft0622-hard20-cc-high-opus55": "1518", "ft0622-hard20-sonnet": "1666"}
+
+
+def _py(script: Path, args: list[str], json_out: Path) -> dict | None:
+    p = subprocess.run([sys.executable, str(script)] + args + ["--json", str(json_out)], capture_output=True, text=True)
+    if p.returncode:
+        print(f"{script.name} failed: {p.stderr[-1500:]}")
+        return None
+    return json.loads(json_out.read_text())
+
+
+def release_claims(a, slim: Path, tools: Path, out: Path, rep: "Report") -> dict:
+    """The numbers this release adds beyond the papers, from the bundle (and,
+    when given, from the full runs, for the DOC/MISMATCH distinction)."""
+    res = {}
+    rc = tools / "recompute"
+    om_slim = slim / "open-models" / "runs"
+    # 8. "Other models"
+    mine = _py(rc / "open_models.py", ["--runs-dir", str(om_slim)], out / "open_models.slim.json")
+    full = _py(rc / "open_models.py", ["--runs-dir", a.open_models_full], out / "open_models.full.json") if a.open_models_full else None
+    res["open_models_vs_full"] = None if full is None or mine is None else ("identical" if _num_equal(mine, full) else "DIFFERENT")
+
+    def om_cells(r):
+        if not r:
+            return {}
+        out_ = {}
+        for name in README_OPEN:
+            x = r.get(name) or {}
+            f = x.get("found") or {}
+            out_[name] = (f"{f.get('high', 0):g}", f"{f.get('medium', 0):g}", f"{f.get('low', 0):g}", f"{x.get('all', 0):g}",
+                          "unknown" if x.get("usd_per_pr") is None else f"{x['usd_per_pr']:.2f}")
+        return out_
+    m, fl = om_cells(mine), om_cells(full)
+    for name, exp in README_OPEN.items():
+        for i, col in enumerate(("high", "medium", "low", "all", "$/PR")):
+            rep.check("README: Other models", name, col, exp[i], (m.get(name) or ("absent",) * 5)[i],
+                      (fl.get(name) or (None,) * 5)[i] if fl else None)
+    if mine:
+        ds = (mine.get("DeepSeek V4.1 Flash (mostly low effort)") or {}).get("effort", {}).get("total", {}).get("low")
+        glm = len(((mine.get("GLM-5.3 Flash") or {}).get("degraded") or {}).get("lens_unrecorded_only") or [])
+        fds = fglm = None
+        if full:
+            fds = (full.get("DeepSeek V4.1 Flash (mostly low effort)") or {}).get("effort", {}).get("total", {}).get("low")
+            fglm = len(((full.get("GLM-5.3 Flash") or {}).get("degraded") or {}).get("lens_unrecorded_only") or [])
+        rep.check("README: Other models", "DeepSeek", "PRs at low effort", README_OPEN_NOTES["DeepSeek low-effort PRs"], ds, fds)
+        rep.check("README: Other models", "GLM", "PRs missing a lens pass", README_OPEN_NOTES["GLM PRs missing a lens pass"], glm, fglm)
+    # 9. docs/DIGITALOCEAN.md
+    mine = _py(rc / "do_speed.py", ["--runs-dir", str(om_slim), "--gpt-runs-dir", str(slim / "runs"), "--sets-dir", str(tools / "sets")],
+               out / "do_speed.slim.json")
+    full = _py(rc / "do_speed.py", ["--runs-dir", a.open_models_full, "--gpt-runs-dir", a.full, "--sets-dir", str(tools / "sets")],
+               out / "do_speed.full.json") if a.open_models_full and a.full else None
+    res["do_speed_vs_full"] = None if full is None or mine is None else ("identical" if _num_equal(mine, full) else "DIFFERENT")
+
+    def do_cells(r):
+        if not r:
+            return {}
+        return {k: (f"{v['minutes']:.0f}", f"{v['output'] / 1000:.0f}", f"{v['replies']:.0f}", f"{v['reply_seconds']:.0f}",
+                    f"{v['tok_per_s']:.0f}", f"{v['usd']:.2f}") for k, v in (r.get("table") or {}).items()}
+    m, fl = do_cells(mine), do_cells(full)
+    for row, exp in DO_TABLE.items():
+        for i, col in enumerate(("minutes/PR", "output tokens/PR (k)", "replies/PR", "typical reply (s)", "tok/s", "$/PR")):
+            rep.check("DIGITALOCEAN: speed", row, col, exp[i], (m.get(row) or ("absent",) * 6)[i],
+                      (fl.get(row) or (None,) * 6)[i] if fl else None)
+
+    def smoke(r):
+        s_ = ((r or {}).get("smokes") or {}).get("glm53-smoke-p10-l12")
+        if not s_:
+            return {}
+        return {"ok": f"{s_['ok']}/{s_['prs']}", "usd": f"{s_['usd']:.2f}", "median min": f"{s_['median_min']:.0f}",
+                "slowest min": f"{s_['max_min']:.0f}"}
+    m, fl = smoke(mine), smoke(full)
+    for col, exp in DO_SMOKE.items():
+        rep.check("DIGITALOCEAN: GLM smoke", "glm53-smoke-p10-l12", col, exp, m.get(col, "absent"), fl.get(col) if fl else None)
+
+    def slowest(r):
+        xs = sorted(x[0] for x in ((r or {}).get("glm_full_slowest") or []))
+        return f"{xs[0]:.0f}-{xs[-1]:.0f}" if xs else "absent"
+    rep.check("DIGITALOCEAN: time limit", "glm53-full AACR, five slowest", "minutes", DO_SLOWEST, slowest(mine),
+              slowest(full) if full else None)
+    # 10. the Elo chart
+    plan = slim / "elo" / "martian-hard20-all-gpt"
+    p = subprocess.run([sys.executable, str(rc / "elo_ratings.py"), str(plan), "--check-ratings", "--chart-json",
+                        str(out / "elo-chart.json"), "--json", str(out / "elo.slim.json"), "--runs-dir", str(slim / "runs"),
+                        "--runs-dir", str(om_slim)], capture_output=True, text=True)
+    res["elo_refit_equals_ratings_json"] = p.returncode == 0 and "refit == ratings.json" in p.stdout
+    if p.returncode:
+        print("elo_ratings.py failed:", p.stderr[-1500:])
+    chart = json.loads((out / "elo-chart.json").read_text()) if (out / "elo-chart.json").exists() else {}
+    committed = json.loads((tools / "showcase" / "data" / "elo-martian-hard20.json").read_text())
+    res["elo_chart_vs_committed"] = ("identical" if chart and all(_num_equal(chart.get(k), committed.get(k))
+                                                                  for k in ("games", "prs", "agreement_overall", "rows", "pairs"))
+                                     else "DIFFERENT")
+    elo = {r["run"]: f"{r['elo']:.0f}" for r in chart.get("rows") or []}
+    got = {"games": str(chart.get("games")), "judges agree": f"{100 * (chart.get('agreement_overall') or 0):.0f}%", **elo}
+    for col, exp in README_ELO.items():
+        rep.check("README: Elo", "martian-hard20-all-gpt", col, exp, got.get(col, "absent"))
+    if a.elo_full and a.full:
+        fj = out / "elo.full.json"
+        subprocess.run([sys.executable, str(rc / "elo_ratings.py"), a.elo_full, "--json", str(fj), "--runs-dir", a.full]
+                       + (["--runs-dir", a.open_models_full] if a.open_models_full else []), capture_output=True, text=True)
+        if fj.exists() and (out / "elo.slim.json").exists():
+            sj, fu = json.loads((out / "elo.slim.json").read_text()), json.loads(fj.read_text())
+            res["elo_costs_vs_full"] = "identical" if _num_equal(sj.get("costs"), fu.get("costs")) else "DIFFERENT"
+            res["elo_ratings_vs_full"] = "identical" if _num_equal(sj.get("ratings"), fu.get("ratings")) else "DIFFERENT"
+    print(json.dumps(res, indent=1))
+    return res
 
 
 def _cost(run_dir: Path):

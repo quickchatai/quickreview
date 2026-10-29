@@ -16,13 +16,22 @@
 //      rendered keys, FULL-BENCHMARK.md) from --generated, the tree winning;
 //   7. the private product repository's name ($QCR_SCRUB_PRIVATE_REPO) becomes
 //      `<private-repo>` in any case, in this export and in the run archive's
-//      rewrite (export_runs.py), and the archive's re-grep still hunts it.
+//      rewrite (export_runs.py), and the archive's re-grep still hunts it;
+//   8. the release's added scrub (scrub_extra.py): credential values by value,
+//      private tokens as whole words, `$HOME/` path spellings, and the
+//      public repository's content rules with filter-repo's semantics, each
+//      regex's prefilter literal present in every match;
+//   9. the run catalogue decides what ships (release_catalogue.py): a
+//      withheld or uncatalogued unit never ships, the Elo packs never ship;
+//  10. a copied file ships once (plan_copies), at the source run's path;
+//  11. the slim bundle's pruned transcript keeps what the recompute scripts
+//      read and no text, and lensfinal reads it when the full one is absent.
 
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const tmp = mkdtempSync(join(tmpdir(), "hf-export-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -38,12 +47,22 @@ const SCRUB_ENV = {
 };
 
 function pyModule(mod: string, code: string, ...args: string[]): unknown {
+  return pyEnv({}, mod, code, ...args);
+}
+
+/** pyModule with extra environment (the scrub inputs are read at import). */
+function pyEnv(env: Record<string, string>, mod: string, code: string, ...args: string[]): unknown {
   const out = execFileSync(
     "python3",
     ["-c", `import sys, json; sys.path.insert(0, 'bench/aacr'); import ${mod} as h\n${code}`, ...args],
-    { env: { ...process.env, ...SCRUB_ENV } },
+    { env: { ...process.env, ...SCRUB_ENV, ...env } },
   );
   return JSON.parse(out.toString());
+}
+
+function put(path: string, text: string): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, text);
 }
 
 function py(code: string, ...args: string[]): unknown {
@@ -230,10 +249,12 @@ describe("hf_export.aacr_arms", () => {
         "names = lambda f: [n for n, _ in h.read_arms_file(os.path.join(h.HERE, 'final', f))]\n" +
         "print(json.dumps({'final': [n for n in names('arms.txt') if n not in h.FINAL_IDS],\n" +
         "  'sol': [n for n in names('arms-gpt6sol.txt') if n not in h.SOL_IDS],\n" +
+        "  'open': [n for n in names('arms-open-models.txt') if n not in h.OPEN_IDS],\n" +
         "  'ids': [a['arm_id'] for a in h.aacr_arms()]}))",
-    ) as { final: string[]; sol: string[]; ids: string[] };
+    ) as { final: string[]; sol: string[]; open: string[]; ids: string[] };
     expect(r.final).toEqual([]);
     expect(r.sol).toEqual([]);
+    expect(r.open).toEqual([]);
     expect(r.ids).toContain("quickreview-default-sol");
     expect(r.ids).toContain("quickreview-low-sol");
   });
@@ -286,5 +307,292 @@ describe("hf_export.generated_files", () => {
       gen,
     ) as Record<string, unknown>;
     expect(r).toEqual({ two: "tree", numbers: "generated", full: "generated", none: [] });
+  });
+});
+
+describe("scrub_extra: credentials, private tokens, home spellings", () => {
+  // A neutral plant: no real credential shape, never a real value.
+  const secretFile = join(tmp, "creds", "planted.env");
+  put(secretFile, "# a comment\nPLANTED_KEY='planted-not-a-key-0123456789'\nSHORT=abc\n");
+  const env = {
+    QCR_SCRUB_SECRET_FILES: secretFile,
+    QCR_SCRUB_PRIVATE_WORDS: "zz-operator-handle",
+  };
+
+  // MUTATION: drop the "secret" rules from export_runs._identity_rules — this fails
+  it("redacts every credential value wherever it occurs, and the re-grep hunts it", () => {
+    const r = pyEnv(
+      env,
+      "export_runs",
+      "import collections, re; c = collections.Counter()\n" +
+        "t = h.rewrite(sys.argv[1].encode(), c).decode()\n" +
+        "print(json.dumps([t, c['secret'], bool(re.search(h.REGREP_SCAN, b'x planted-not-a-key-0123456789 y'))]))",
+      'env: {"Authorization": "Bearer planted-not-a-key-0123456789"} and SHORT=abc',
+    ) as [string, number, boolean];
+    expect(r[0]).toBe('env: {"Authorization": "Bearer <redacted-secret>"} and SHORT=abc');
+    expect(r[1]).toBe(1);
+    expect(r[2]).toBe(true);
+  });
+
+  // MUTATION: drop the "private-word" rules from export_runs._identity_rules — this fails
+  it("rewrites a private token as a whole word in any case, never inside a longer word", () => {
+    const r = pyEnv(
+      env,
+      "export_runs",
+      "import collections; c = collections.Counter()\n" +
+        "print(json.dumps(h.rewrite(sys.argv[1].encode(), c).decode()))",
+      'github_login = "ZZ-Operator-Handle" and xzz-operator-handles stays',
+    );
+    expect(r).toBe('github_login = "<private>" and xzz-operator-handles stays');
+  });
+
+  // MUTATION: drop the `$HOME` spellings from export_runs._path_rx — this fails
+  it("rewrites the runs dir spelled through $HOME or ${HOME}", () => {
+    const r = pyEnv(
+      env,
+      "export_runs",
+      "import collections; c = collections.Counter()\n" +
+        "print(json.dumps(h.rewrite(sys.argv[1].encode(), c).decode()))",
+      "EXT_CACHE=$HOME/projects/qcr-bench-runs/ext-cache X=${HOME}/projects/qcr-bench-runs/runs",
+    );
+    expect(r).toBe("EXT_CACHE=<runs>/ext-cache X=<runs>/runs");
+  });
+
+  it("hf_export.scrub applies the same credential and token rules", () => {
+    const r = pyEnv(
+      env,
+      "hf_export",
+      "print(json.dumps(h.scrub(sys.argv[1])))",
+      "key planted-not-a-key-0123456789 from zz-operator-handle",
+    );
+    expect(r).toBe("key <redacted-secret> from <private>");
+  });
+});
+
+describe("scrub_extra.ContentRules", () => {
+  const rulesFile = join(tmp, "rules", "replacements.txt");
+  put(
+    rulesFile,
+    [
+      "Widgetco support guideline==>a support guideline",
+      "widget tracker==>gadget tracker",
+      "regex:\\bwidget([ \\t]*)tracker\\b==>issue\\1tracker",
+      "regex: \\(#90(12|34)\\)==>",
+      "dropme-token",
+      "Widgetco==>Example",
+      "",
+    ].join("\n"),
+  );
+
+  // MUTATION: apply the regexes before the literals in ContentRules.apply — this fails
+  it("applies every literal first, in file order, then every regex", () => {
+    const r = pyEnv(
+      { QCR_SCRUB_CONTENT_RULES: rulesFile },
+      "export_runs",
+      "import collections; c = collections.Counter()\n" +
+        "t = h.rewrite(sys.argv[1].encode(), c).decode()\n" +
+        "print(json.dumps([t, sorted(k for k in c if k.startswith('content-rule'))]))",
+      "Widgetco support guideline, see widget tracker and widget  tracker (#9012) and dropme-token; Widgetco.",
+    ) as [string, string[]];
+    // the literal turns "widget tracker" into "gadget tracker" before the
+    // regex runs; the regex rewrites only the spelling the literal missed
+    expect(r[0]).toBe("a support guideline, see gadget tracker and issue  tracker and ***REMOVED***; Example.");
+    expect(r[1]).toEqual([
+      "content-rule literal #1",
+      "content-rule literal #2",
+      "content-rule literal #3",
+      "content-rule literal #4",
+      "content-rule regex #1",
+      "content-rule regex #2",
+    ]);
+  });
+
+  // MUTATION: stop dropping the char before a `?` quantifier in regex_anchor — this fails
+  it("gives each regex a prefilter literal that every match contains", () => {
+    const cases: [string, string[]][] = [
+      ["colou?r scheme", ["color scheme", "colour scheme"]],
+      ["ab+c-d", ["abbbc-d"]],
+      ["\\bfleet([ \\t]*)tracker\\b", ["fleet tracker", "fleettracker"]],
+      ["x{2,3}yz-tail", ["xxyz-tail"]],
+      ["(?i)Mixed-Case", ["mixed-case"]],
+      ["pre[0-9]+post-fix", ["pre42post-fix"]],
+      ["\\(#90(12|34)\\)", ["(#9012)"]],
+    ];
+    const r = pyModule(
+      "scrub_extra",
+      "import re\ncases = json.loads(sys.argv[1]); out = []\n" +
+        "for pat, texts in cases:\n" +
+        "  a, ic = h.regex_anchor(pat.encode())\n" +
+        "  ok = all(re.search(pat, t) and (a is None or a in (re.search(pat, t).group(0).lower().encode() if ic else re.search(pat, t).group(0).encode())) for t in texts)\n" +
+        "  out.append([pat, a.decode() if a else None, ok])\n" +
+        "print(json.dumps(out))",
+      JSON.stringify(cases),
+    ) as [string, string | null, boolean][];
+    for (const [pat, , ok] of r) expect(ok, pat).toBe(true);
+    expect(r[0]![1]).toBe("r scheme");
+    expect(r[4]![1]).toBe("mixed-case");
+  });
+
+  it("has no prefilter for a top-level alternation", () => {
+    const r = pyModule("scrub_extra", "print(json.dumps(h.regex_anchor(b'alpha-one|beta-two')[0]))");
+    expect(r).toBeNull();
+  });
+});
+
+describe("release_catalogue and export_runs: what ships", () => {
+  const root = join(tmp, "cat");
+  const src = join(root, "bench-runs");
+  const om = join(root, "open-models");
+  put(join(src, "runs", "keep-dev10", "run.json"), JSON.stringify({ set: "dev10", qcr_commit: "aaa111" }));
+  put(join(src, "runs", "keep-dev10", "cases", "x", "pi-events.jsonl"), "{}\n");
+  put(join(src, "runs", "keep-dev10.review.log"), "log\n");
+  put(join(src, "runs", "own-repo-run", "run.json"), "{}");
+  put(join(src, "runs", "nobody-knows", "run.json"), "{}");
+  put(join(src, "elo", "plan-a", "plan.json"), "{}");
+  put(join(src, "elo", "plan-a", "packs", "u1.txt"), "whole reviewed file");
+  put(join(om, "runs", "om-run", "run.json"), "{}");
+  put(join(om, "driver.sh"), "echo\n");
+  const catalogue = join(root, "catalogue.json");
+  writeFileSync(
+    catalogue,
+    JSON.stringify({
+      claims: { "c:one": "a claim" },
+      families: [
+        { id: "kept", title: "Kept runs", location: "qcr-bench-runs/runs/", members: ["keep-dev10"], ship: "yes", hf_tables: ["runs (new)", "reviews"], claims: ["c:one"] },
+        { id: "own", title: "Own repo", location: "qcr-bench-runs/runs/", members: ["own-repo-run"], ship: "no:own-repo", hf_tables: [], claims: "none" },
+        { id: "elo", title: "Elo", location: "qcr-bench-runs/", members: ["elo"], ship: "yes", hf_tables: [], claims: "none" },
+        { id: "om", title: "Open models", location: "review-sandbox bench/aacr/artifacts/open-models/runs/ (gitignored)", members: ["om-run"], ship: "yes", hf_tables: [], claims: "none" },
+        { id: "drv", title: "Driver", location: "review-sandbox bench/aacr/artifacts/open-models/ (top level)", members: ["driver.sh"], ship: "yes", hf_tables: [], claims: "none" },
+      ],
+    }),
+  );
+
+  // MUTATION: make release_catalogue.Catalogue.ships accept every family — this fails
+  it("ships only catalogued families' units, and never the Elo packs", () => {
+    const r = pyModule(
+      "export_runs",
+      "from pathlib import Path\nimport release_catalogue as RC\n" +
+        "p = h.Processor(Path(sys.argv[1]), Path(sys.argv[2]), RC.Catalogue.load(sys.argv[3]))\n" +
+        "out = {rel: p.drop(rel) for rel in h.walk_files(p.src, p.om)}\n" +
+        "print(json.dumps(out))",
+      src,
+      om,
+      catalogue,
+    ) as Record<string, string | null>;
+    expect(r["runs/keep-dev10/run.json"]).toBeNull();
+    expect(r["runs/keep-dev10.review.log"]).toBeNull();
+    expect(r["open-models/runs/om-run/run.json"]).toBeNull();
+    expect(r["open-models/driver.sh"]).toBeNull();
+    expect(r["elo/plan-a/plan.json"]).toBeNull();
+    expect(r["runs/own-repo-run/run.json"]).toMatch(/^withheld: QuickReview reviewing our own repositories/);
+    expect(r["runs/nobody-knows/run.json"]).toMatch(/^not in the run catalogue/);
+    expect(r["elo/plan-a/packs/u1.txt"]).toMatch(/^regenerable: Elo packs/);
+  });
+
+  it("indexes every shipped unit with its run.json facts, and lists withheld families", () => {
+    const r = pyModule(
+      "release_catalogue",
+      "c = h.Catalogue.load(sys.argv[1])\n" +
+        "rows = h.index_rows(c, {'runs': sys.argv[2] + '/runs', 'top': sys.argv[2]}, {'aaa111': 'bbb222'})\n" +
+        "print(json.dumps([[r['unit'], r['family'], r['set'], r['qcr_commit_public'], r['claims'], r['hf_tables']] for r in rows]\n" +
+        "  + [[w['family'], w['reason']] for w in h.withheld_rows(c)]))",
+      catalogue,
+      src,
+    ) as unknown[][];
+    expect(r).toContainEqual(["keep-dev10", "kept", "dev10", "bbb222", ["c:one"], ["runs", "reviews"]]);
+    expect(r).toContainEqual(["elo", "elo", null, null, [], []]);
+    expect(r.find((x) => x[0] === "own")?.[1]).toMatch(/^withheld/);
+    expect(r.some((x) => x[0] === "own-repo-run")).toBe(false);
+  });
+});
+
+describe("export_runs.plan_copies", () => {
+  // MUTATION: in plan_copies, pick the hardlink canonical by path alone (drop copy_rank) — this fails
+  it("ships a hardlinked file once, at the source run's path, and maps a variant's byte copy to its source", () => {
+    const src = join(tmp, "copies");
+    put(join(src, "runs", "zsource-a", "cases", "x", "f.json"), "same bytes\n");
+    mkdirSync(join(src, "runs", "mv-a", "cases", "x"), { recursive: true });
+    linkSync(join(src, "runs", "zsource-a", "cases", "x", "f.json"), join(src, "runs", "mv-a", "cases", "x", "f.json"));
+    put(join(src, "runs", "mv-b", "VARIANT.json"), JSON.stringify({ policy: { src: ["zsource-a"] } }));
+    put(join(src, "runs", "mv-b", "cases", "x", "f.json"), "same bytes\n");
+    put(join(src, "runs", "mv-b", "cases", "x", "own.json"), "new\n");
+    const r = pyModule(
+      "export_runs",
+      "from pathlib import Path\nt = h.Tree(Path(sys.argv[1]))\n" +
+        "rels = [r for r in h.walk_files(t.src, None, ('runs',)) if not r.endswith('VARIANT.json')]\n" +
+        "print(json.dumps(h.plan_copies(t, rels)))",
+      src,
+    );
+    expect(r).toEqual({
+      "runs/mv-a/cases/x/f.json": "runs/zsource-a/cases/x/f.json",
+      "runs/mv-b/cases/x/f.json": "runs/zsource-a/cases/x/f.json",
+    });
+  });
+});
+
+describe("the slim bundle's pruned transcript", () => {
+  const events = [
+    { type: "message_start", message: { role: "assistant", content: [{ type: "text", text: "SECRET-PROSE" }] } },
+    {
+      type: "message_end",
+      message: { role: "assistant", timestamp: 1000, usage: { output: 7 }, content: [{ type: "text", text: "SECRET-PROSE" }] },
+    },
+    {
+      type: "tool_execution_end",
+      toolName: "launch_plan",
+      result: {
+        content: [{ type: "text", text: "SECRET-PROSE" }],
+        details: {
+          results: [
+            {
+              agent: "pass-x--sol-high",
+              stopReason: "error",
+              errorMessage: "overloaded",
+              messages: [{ role: "assistant", timestamp: 1500, usage: { output: 3 }, content: "SECRET-PROSE" }],
+            },
+          ],
+        },
+      },
+    },
+  ]
+    .map((e) => JSON.stringify(e))
+    .join("\n");
+
+  // MUTATION: drop "timestamp" from the message keys prune_events keeps — this fails
+  it("keeps timestamps, usage and lens outcomes and no text; lensfinal reads it in place of pi-events.jsonl", () => {
+    const caseDir = join(tmp, "slimcase");
+    mkdirSync(caseDir, { recursive: true });
+    const r = pyModule(
+      "export_runs",
+      "from pathlib import Path\nsys.path.insert(0, 'bench/aacr/openmodels')\nimport lensfinal\n" +
+        "d = Path(sys.argv[2]); pruned = h.prune_events(sys.argv[1].encode())\n" +
+        "(d / h.PRUNED_EVENTS).write_bytes(pruned)\n" +
+        "lines = [json.loads(l) for l in pruned.decode().splitlines()]\n" +
+        "print(json.dumps({'text': b'SECRET-PROSE' in pruned, 'n': len(lines),\n" +
+        "  'ts': lines[0]['message']['timestamp'], 'kid_ts': lines[1]['result']['details']['results'][0]['messages'][0]['timestamp'],\n" +
+        "  'marked': all(l['_slim'] == 'pruned' for l in lines),\n" +
+        "  'lost': lensfinal.lost(['pass-x--sol-high'], d / 'pi-events.jsonl')}))",
+      events,
+      caseDir,
+    ) as Record<string, unknown>;
+    expect(r).toEqual({
+      text: false,
+      n: 2,
+      ts: 1000,
+      kid_ts: 1500,
+      marked: true,
+      lost: [["pass-x--sol-high", "overloaded"]],
+    });
+  });
+});
+
+describe("hf_export.work_dir_name", () => {
+  // MUTATION: return scoring_dir.split(suffix)[0] in work_dir_name — this fails
+  it("names a scoring dir by its run, and keeps a variant scoring of the same run apart", () => {
+    const r = py(
+      "print(json.dumps([h.work_dir_name('r1-martian.martian', '.martian'), h.work_dir_name('r1-martian.martian-rescore', '.martian'),\n" +
+        "  h.work_dir_name('q.qodo', '.qodo')]))",
+    );
+    expect(r).toEqual(["r1-martian", "r1-martian.martian-rescore", "q"]);
   });
 });
