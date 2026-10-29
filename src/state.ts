@@ -7072,6 +7072,25 @@ export class StateStore {
     return someMarkHasKey(rows, key);
   }
 
+  /** Has a check after this (pr, key)'s spent nudge already been recorded? */
+  ledgerRepeatSeen(pr: number, key: string): boolean {
+    const rows = this.db
+      .prepare("SELECT payload FROM events WHERE kind = 'ledger_stale_repeat' AND pr = ?")
+      .all(pr) as Array<{ payload: string | null }>;
+    return someMarkHasKey(rows, key);
+  }
+
+  /** The heads a recheck upheld on `pr` at or after `since` (every one when null). */
+  recheckUpheldHeads(pr: number, since: string | null): string[] {
+    const rows = this.db
+      .prepare("SELECT payload FROM events WHERE kind = 'recheck_upheld' AND pr = ? AND ts >= ?")
+      .all(pr, since ?? "") as Array<{ payload: string | null }>;
+    // An unreadable mark names no head.
+    return rows
+      .map((r) => readStringField(r.payload, "head_sha"))
+      .filter((head): head is string => head !== undefined && head !== "");
+  }
+
   /**
    * What the event log says about the migration-collision COMMENT with this
    * fingerprint on this PR (the collision comment's dedupe). Scans every such event for the
