@@ -11,8 +11,14 @@
 // its ledger — no review work, no posting, no verdict file. A second stale
 // detection for the same round never nudges again: it logs
 // `ledger_stale_unresolved`, the grade that wakes the overseer (the session
-// ignored its one nudge). The once-mark is persisted BEFORE the inject, so
-// even a crashed inject can never turn into a nudge loop.
+// ignored its one nudge), once per nudge key; later checks at the same key
+// are a quiet `ledger_stale_repeat` event. The once-mark is persisted BEFORE
+// the inject, so even a crashed inject can never turn into a nudge loop.
+//
+// A recheck uphold (round-less) updates the ledger only "if the delta settled
+// or re-opened a finding" (prompts/round-recheck.md), so on that path a header
+// naming the head the PR was last reviewed at, or a head a recheck upheld
+// since, is fresh too.
 import { readFileSync } from "node:fs";
 import type { StateStore } from "./state.js";
 import { wakeOrHold } from "./wakes.js";
@@ -36,15 +42,32 @@ export function classifyLedger(
   content: string | null,
   pr: number,
   headSha: string,
+  alsoFresh: readonly string[] = [],
 ): LedgerFreshness {
   if (content === null) return "missing";
   const match = LEDGER_HEADER_RE.exec(content);
   if (!match) return "unparseable";
   if (Number(match[1]) !== pr) return "wrong_pr";
   const written = (match[2] as string).toLowerCase();
-  const head = headSha.toLowerCase();
-  const fresh = written === head || (written.length >= MIN_SHA_PREFIX && head.startsWith(written));
-  return fresh ? "fresh" : "stale_sha";
+  const names = (sha: string): boolean => {
+    const head = sha.toLowerCase();
+    return written === head || (written.length >= MIN_SHA_PREFIX && head.startsWith(written));
+  };
+  return names(headSha) || alsoFresh.some(names) ? "fresh" : "stale_sha";
+}
+
+/** The heads a recheck uphold may find in the header besides its own: the head
+ * of the PR's last verdicted round and every head a recheck upheld since. */
+export function upheldLedgerHeads(store: StateStore, pr: number): string[] {
+  const reviewed = store
+    .roundsFor(pr)
+    .filter((r) => r.verdict !== null)
+    .sort((a, b) => b.round_no - a.round_no)[0];
+  const since = reviewed ? (reviewed.finished_at ?? reviewed.started_at) : null;
+  return [
+    ...(reviewed?.head_sha ? [reviewed.head_sha] : []),
+    ...store.recheckUpheldHeads(pr, since),
+  ];
 }
 
 /** The re-nudge wake. Explicitly bookkeeping-only: the rewrite arrives
@@ -99,7 +122,12 @@ export async function enforceLedgerFreshness(
   } catch {
     content = null;
   }
-  const freshness = classifyLedger(content, pr, headSha);
+  const freshness = classifyLedger(
+    content,
+    pr,
+    headSha,
+    roundNo === null ? upheldLedgerHeads(store, pr) : [],
+  );
   if (freshness === "fresh") return "fresh";
 
   const detail = `ledger ${freshness} at ${path}: expected header "LEDGER PR #${pr} @ ${headSha}"`;
@@ -140,9 +168,17 @@ export async function enforceLedgerFreshness(
   if (store.ledgerNudgeSent(pr, key)) {
     // Still stale AFTER the re-nudge: the session ignored its one nudge —
     // this grade WAKES the overseer (the severity map in src/anomalies.ts), first-detection
-    // "ledger_stale" stays quiet (the nudge itself is the response).
-    store.logAnomaly("ledger_stale_unresolved", pr, roundNo, detail);
-    store.logEvent("ledger_stale_repeat", pr, { round_no: roundNo, head_sha: headSha, freshness });
+    // "ledger_stale" stays quiet (the nudge itself is the response). Raised
+    // once per key: a later check at the same key has no new nudge to give,
+    // so it is the quiet repeat event alone.
+    if (!store.ledgerRepeatSeen(pr, key))
+      store.logAnomaly("ledger_stale_unresolved", pr, roundNo, detail);
+    store.logEvent("ledger_stale_repeat", pr, {
+      key,
+      round_no: roundNo,
+      head_sha: headSha,
+      freshness,
+    });
     return "already_nudged";
   }
   store.logAnomaly("ledger_stale", pr, roundNo, detail);

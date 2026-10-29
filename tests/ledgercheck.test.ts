@@ -222,6 +222,65 @@ describe("enforceLedgerFreshness", () => {
     expect(injects).toHaveLength(2);
   });
 
+  // prompts/round-recheck.md: an uphold updates the ledger only "if the delta
+  // settled or re-opened a finding". A plain uphold leaves the header naming
+  // the head the PR was last reviewed at (or a head an earlier recheck upheld).
+  // MUTATION: drop the recheck-path accepted heads in enforceLedgerFreshness — this fails.
+  it("a recheck uphold accepts the ledger of the last reviewed head or an upheld head", async () => {
+    const OLD = "0".repeat(40);
+    const MID = "1".repeat(40);
+    store.upsertPr({
+      number: 7,
+      state: "tracked",
+      head_sha: HEAD,
+      title: "t",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    const id = store.startRound(7, "first", ["pass-baseline"], 60, { head_sha: OLD });
+    store.finishRound(id, "APPROVE", null);
+    const injects: string[] = [];
+    const d = deps(injects);
+
+    writeLedger(7, `LEDGER PR #7 @ ${OLD.slice(0, 12)}\n- reviewed`);
+    expect(await enforceLedgerFreshness(d, { pr: 7, roundNo: null, headSha: HEAD })).toBe("fresh");
+
+    store.logEvent("recheck_upheld", 7, { file: "f", head_sha: MID, reason: null });
+    writeLedger(7, `LEDGER PR #7 @ ${MID}\n- reviewed`);
+    expect(await enforceLedgerFreshness(d, { pr: 7, roundNo: null, headSha: HEAD })).toBe("fresh");
+    expect(injects).toEqual([]);
+    expect(anomalyKinds()).toEqual([]);
+
+    // A head nobody reviewed or upheld is still stale on the recheck path…
+    writeLedger(7, "LEDGER PR #7 @ 9999999999999999");
+    expect(await enforceLedgerFreshness(d, { pr: 7, roundNo: null, headSha: HEAD })).toBe("nudged");
+    // …and the round-end check still wants the round's own head.
+    writeLedger(7, `LEDGER PR #7 @ ${OLD}`);
+    expect(await enforceLedgerFreshness(d, { pr: 7, roundNo: 2, headSha: HEAD })).toBe("nudged");
+  });
+
+  // MUTATION: log ledger_stale_unresolved on every already_nudged check — this fails.
+  it("an ignored nudge raises ledger_stale_unresolved once per key; later repeats stay quiet", async () => {
+    const injects: string[] = [];
+    const d = deps(injects);
+    expect(await enforceLedgerFreshness(d, { pr: 7, roundNo: null, headSha: HEAD })).toBe("nudged");
+    for (let i = 0; i < 3; i++)
+      expect(await enforceLedgerFreshness(d, { pr: 7, roundNo: null, headSha: HEAD })).toBe(
+        "already_nudged",
+      );
+    expect(anomalyKinds()).toEqual(["ledger_stale", "ledger_stale_unresolved"]);
+    const repeats = store.db
+      .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'ledger_stale_repeat'")
+      .get() as { c: number };
+    expect(repeats.c).toBe(3);
+    // Another key is its own: round 2's ignored nudge is raised once too.
+    await enforceLedgerFreshness(d, { pr: 7, roundNo: 2, headSha: HEAD });
+    await enforceLedgerFreshness(d, { pr: 7, roundNo: 2, headSha: HEAD });
+    expect(anomalyKinds().filter((k) => k === "ledger_stale_unresolved")).toHaveLength(2);
+  });
+
   it("the wake text is bookkeeping-only: rewrite the ledger, nothing else", () => {
     const wake = ledgerRewriteWake(7, HEAD);
     expect(wake).toContain(`LEDGER PR #7 @ ${HEAD}`);
