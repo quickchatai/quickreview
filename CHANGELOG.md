@@ -9,6 +9,28 @@ package without its peers, and the review's engine, loaded on first use,
 looked for pi beside the plugin. The plugin now resolves pi's own packages
 from the running pi. The `qcr` app was not affected.
 
+The bot rides out a provider blip and raises less noise:
+
+- **A breaker drain lifts itself.** A two-second network drop to the model
+  provider could fail the rounds running at that moment, trip the worker
+  crash-loop breaker and drain the bot until an operator ran `drain off`. A
+  breaker drain now lapses after 15 minutes; if workers fail again it drains
+  again, each time twice as long, up to 4 hours. A PR's first network failure
+  no longer counts toward it, and a breaker drain an older daemon left
+  standing heals on upgrade. An operator's own drain is unchanged.
+- **The round-stage supervisor kills fewer live rounds.** The optional lenses
+  the daemon dispatches with a round now count toward its first fan-out, and
+  a plan of more than 20 lenses gets one more minute per lens, up to 20, on
+  its passes bound.
+- **Reviewer memory no longer stalls on its own locks.** The OpenViking
+  extension sends one turn sync at a time per session, in order, where a
+  session could send overlapping appends of the same messages and hold the
+  server's session locks for minutes.
+- **Fewer false anomalies.** A follow-up round whose new lenses found nothing
+  no longer raises a pass-plan mismatch for skipping its validator, a recheck
+  that upheld the review no longer finds the ledger stale, and an ignored
+  ledger nudge is raised once rather than at every check.
+
 ## 1.3.1
 
 The first published release of the changes below: the 1.3.0 tag's release
