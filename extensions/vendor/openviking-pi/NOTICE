@@ -61,8 +61,9 @@ Changed by the quickreviewd maintainers, 2026-08-20:
      environment, argv, working directory and home directory are read once, by
      a shim, and every hook runs under a deadline and a catch (2026-10-19).
  13. One turn sync runs at a time per session: a turn that ends while one
-     runs hands its branch to it, so a hook deadline can no longer start a
-     second sync that re-sends the same messages (2026-10-29).
+     runs writes its new messages to the offline queue, which the running
+     sync drains, so a hook deadline can no longer start a second sync that
+     re-sends the same messages (2026-10-29).
 
 Plus vendoring scaffolding: build-conformance fixes for this repo's stricter
 tsconfig (ambient type declarations while pi was not installed, retired once

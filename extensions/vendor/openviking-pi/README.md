@@ -501,10 +501,16 @@ append, so they queued on it, timed out client-side (and were queued for
 replay), and the health probes queued behind them. On the bot it was measured
 at up to five appends in flight to one session from its one worker.
 
-`SyncManager.syncBranch` now runs one sync at a time. A turn that ends while
-one runs leaves its branch for that sync, which sends it next, from the
-advanced watermark; the coalesced call reports nothing added. Nothing is
-dropped and nothing is sent twice by the process.
+`SyncManager.syncBranch` now runs one sync at a time, and each sync claims its
+messages (advances the watermark) before its first append. A turn that ends
+while one runs claims its own new messages from the advanced watermark and
+writes them to the offline queue on disk at once; the running sync drains the
+queue, one append at a time, when it is done. So nothing is sent twice by the
+process, a worker that exits before the running sync is done leaves the
+handed-off turn on disk for the next session start's replay (the bot's
+worker disposes its session without `session_shutdown`), and a branch switch
+cannot overwrite a turn that was not sent yet. With no queue configured the
+handed-off branches wait in memory, in order, instead.
 
 ## Rebasing onto a newer upstream
 

@@ -58,6 +58,7 @@ import {
 } from "../extensions/vendor/openviking-pi/qcr-honest.js";
 import { BUSY_RETRY_DEFAULTS } from "../src/openviking/client.js";
 import { SyncManager } from "../extensions/vendor/openviking-pi/sync.js";
+import { listPending } from "../extensions/vendor/openviking-pi/shared/pending-queue.mjs";
 import { RecallManager } from "../extensions/vendor/openviking-pi/recall.js";
 import {
   budgetedFetch,
@@ -2265,21 +2266,29 @@ describe("PATCH 13 — one turn sync in flight per session, file 0014", () => {
   // several times at once; the server's per-session lock made them queue, and
   // the probes queued behind them (up to 5 appends in flight to one session).
   type Gate = { release: () => void };
+  // Every append, direct or replayed from the queue, blocks until released.
   const slowClient = () => {
     let inFlight = 0;
     const seen = { maxInFlight: 0, sent: [] as string[], gates: [] as Gate[] };
+    const append = async (payload: unknown) => {
+      inFlight++;
+      seen.maxInFlight = Math.max(seen.maxInFlight, inFlight);
+      seen.sent.push(JSON.stringify(payload));
+      await new Promise<void>((release) => seen.gates.push({ release }));
+      inFlight--;
+    };
     const client = {
       connected: true,
       async getSession(id: string) {
         return { session_id: id };
       },
       async addMessagePayload(_id: string, payload: unknown) {
-        inFlight++;
-        seen.maxInFlight = Math.max(seen.maxInFlight, inFlight);
-        seen.sent.push(JSON.stringify(payload));
-        await new Promise<void>((release) => seen.gates.push({ release }));
-        inFlight--;
+        await append(payload);
         return true;
+      },
+      async fetchJSON(_path: string, init?: { body?: string }) {
+        await append(JSON.parse(init?.body ?? "null"));
+        return { ok: true, result: {} };
       },
     } as unknown as ConstructorParameters<typeof SyncManager>[0];
     return { client, seen };
@@ -2296,29 +2305,91 @@ describe("PATCH 13 — one turn sync in flight per session, file 0014", () => {
       await new Promise((r) => setTimeout(r, 1));
     }
   };
-
-  // MUTATION: drop the `if (this.syncing)` hand-off in syncBranch — this fails.
-  it("a turn that ends while a sync runs sends nothing twice and nothing at once; its messages follow", async () => {
+  const queueDir = () => mkdtempSync(join(tmpdir(), "ov-pending-"));
+  const started = async (queue?: { dir: string }) => {
     const { client, seen } = slowClient();
-    const sync = new SyncManager(client, loadConfig(FORK));
+    const sync = new SyncManager(client, loadConfig(FORK), queue ? { queue } : {});
     expect(await sync.ensureSession({ OPENVIKING_SESSION_ID: "pr-42" })).toBe(true);
-    const turn1 = [msg("user", "review this change"), msg("assistant", "reading the diff")];
-    const turn2 = [...turn1, msg("user", "and the tests?"), msg("assistant", "they cover it")];
+    return { sync, seen };
+  };
+  const turn1 = [msg("user", "review this change"), msg("assistant", "reading the diff")];
+  const turn2 = [...turn1, msg("user", "and the tests?"), msg("assistant", "they cover it")];
+  const sentAll = (seen: { sent: string[] }, texts: string[]) =>
+    texts.every((text) => seen.sent.some((p) => p.includes(text)));
 
+  // MUTATION: drop the `if (this.syncing)` hand-off in syncBranch, or raise
+  // `handedOff` only after the queue writes — either fails this.
+  it("a turn that ends while a sync runs sends nothing twice and nothing at once; its messages follow", async () => {
+    const queue = { dir: queueDir() };
+    const { sync, seen } = await started(queue);
     let settled = 0;
     const first = sync.syncBranch(turn1).finally(() => settled++);
     await new Promise((r) => setTimeout(r, 1));
     // The hook's deadline passed; the next turn ends while the first sync waits.
     const second = sync.syncBranch(turn2).finally(() => settled++);
-    await releaseAll(seen, () => settled === 2);
+    await releaseAll(seen, () => settled === 2 && sentAll(seen, ["they cover it"]));
     await first;
-    expect((await second).added).toBe(0);
+    await second;
 
     expect(seen.maxInFlight).toBe(1);
     expect(new Set(seen.sent).size).toBe(seen.sent.length);
-    for (const text of ["reading the diff", "and the tests?", "they cover it"])
-      expect(seen.sent.some((p) => p.includes(text))).toBe(true);
+    expect(sentAll(seen, ["reading the diff", "and the tests?", "they cover it"])).toBe(true);
     expect(sync.syncedCount).toBe(turn2.length);
+    rmSync(queue.dir, { recursive: true, force: true });
+  });
+
+  // MUTATION: keep the hand-off in memory instead of the queue — this fails.
+  it("a worker that exits before the running sync is done leaves the handed-off turn on disk", async () => {
+    const queue = { dir: queueDir() };
+    const { sync } = await started(queue);
+    void sync.syncBranch(turn1);
+    await new Promise((r) => setTimeout(r, 1));
+    // The last turn hands off and the worker exits: nothing is released.
+    await sync.syncBranch(turn2);
+    const pending = (await listPending(queue)) as Array<{ entry: { payload: unknown } }>;
+    const queued = pending.map((p) => JSON.stringify(p.entry.payload));
+    expect(queued.some((p) => p.includes("and the tests?"))).toBe(true);
+    expect(queued.some((p) => p.includes("they cover it"))).toBe(true);
+    // What the running sync claimed is not queued again.
+    expect(queued.some((p) => p.includes("reading the diff"))).toBe(false);
+    rmSync(queue.dir, { recursive: true, force: true });
+  });
+
+  // MUTATION: keep only the latest handed-off branch (the no-queue path) — this fails.
+  it.each([
+    ["with the queue", true],
+    ["with no queue", false],
+  ])(
+    "a branch switch while a sync runs does not drop the turn it left (%s)",
+    async (_, withQueue) => {
+      const queue = withQueue ? { dir: queueDir() } : undefined;
+      const { sync, seen } = await started(queue);
+      let settled = 0;
+      const first = sync.syncBranch(turn1).finally(() => settled++);
+      await new Promise((r) => setTimeout(r, 1));
+      const left = [...turn1, msg("user", "first idea"), msg("assistant", "abandoned path")];
+      const switched = [msg("user", "other branch"), msg("assistant", "new path")];
+      const b = sync.syncBranch(left).finally(() => settled++);
+      const c = sync.syncBranch(switched).finally(() => settled++);
+      await releaseAll(seen, () => settled === 3 && sentAll(seen, ["new path"]));
+      await Promise.all([first, b, c]);
+      expect(seen.maxInFlight).toBe(1);
+      expect(sentAll(seen, ["abandoned path", "new path"])).toBe(true);
+      if (queue) rmSync(queue.dir, { recursive: true, force: true });
+    },
+  );
+
+  it("with no queue configured, handed-off turns wait in memory and are sent in order", async () => {
+    const { sync, seen } = await started();
+    let settled = 0;
+    const first = sync.syncBranch(turn1).finally(() => settled++);
+    await new Promise((r) => setTimeout(r, 1));
+    const second = sync.syncBranch(turn2).finally(() => settled++);
+    await releaseAll(seen, () => settled === 2);
+    await Promise.all([first, second]);
+    expect(seen.maxInFlight).toBe(1);
+    expect(new Set(seen.sent).size).toBe(seen.sent.length);
+    expect(sentAll(seen, ["reading the diff", "they cover it"])).toBe(true);
   });
 
   it("ships the patch, recorded last in the series, with its marker", () => {
