@@ -503,16 +503,22 @@ at up to five appends in flight to one session from its one worker.
 
 `SyncManager.syncBranch` now runs one sync at a time. A turn that ends while
 one runs queues its branch, in memory and in order; the running sync then
-sends each queued branch from the watermark the one before it left, so the
-process sends nothing twice and nothing at once, and a later turn (a branch
-switch included) never overwrites an earlier one. The offline queue on disk is
+sends each queued branch in turn, so the process sends nothing twice and
+nothing at once, and a later turn (a branch switch included) never overwrites
+an earlier one. Upstream's watermark is a count of entries, so a queued branch
+as long as the one before it would read as sent; what was sent is now
+remembered by pi's entry ids, and only entries without ids fall back to the
+count. The offline queue on disk is
 not used for this: it is shared by every worker, it collapses identical
 payloads and replays by write time, all of which would reorder or drop turns.
 
 A bot worker disposes its session without `session_shutdown`, so the queued
 turns must go out before the prompt resolves: `agent_end` awaits
 `SyncManager.drain()`, and its deadline in `qcr-hooks.ts` is raised from 1 s
-to turn_end's 30 s. With nothing queued, `drain()` settles at once.
+to turn_end's 30 s. With nothing queued, `drain()` settles at once; with a
+slow server the prompt can resolve up to 30 s later than before. Turns still
+queued when that deadline passes are lost with the worker, as a running sync
+was before this patch; the pi transcript keeps them.
 
 Touches: `sync.ts`, `index.ts`, `qcr-hooks.ts`, `NOTICE`, this README.
 

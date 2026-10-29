@@ -1,5 +1,5 @@
 diff --git a/extensions/vendor/openviking-pi/NOTICE b/extensions/vendor/openviking-pi/NOTICE
-index 15992e4a..95126b8b 100644
+index 15992e4a..1afc0e01 100644
 --- a/extensions/vendor/openviking-pi/NOTICE
 +++ b/extensions/vendor/openviking-pi/NOTICE
 @@ -60,6 +60,11 @@ Changed by the quickreviewd maintainers, 2026-08-20:
@@ -8,14 +8,14 @@ index 15992e4a..95126b8b 100644
       a shim, and every hook runs under a deadline and a catch (2026-10-19).
 + 13. One turn sync runs at a time per session: a turn that ends while one
 +     runs queues its branch, the running sync sends the queued branches in
-+     order, and agent_end waits for them under turn_end's deadline, so a hook
-+     deadline can no longer start a second sync that re-sends the same
-+     messages (2026-10-29).
++     order, each entry sent once by its pi entry id, and agent_end waits for
++     them under turn_end's deadline, so a hook deadline can no longer start a
++     second sync that re-sends the same messages (2026-10-29).
  
  Plus vendoring scaffolding: build-conformance fixes for this repo's stricter
  tsconfig (ambient type declarations while pi was not installed, retired once
 diff --git a/extensions/vendor/openviking-pi/README.md b/extensions/vendor/openviking-pi/README.md
-index 670e38b2..441f292d 100644
+index 670e38b2..ca289c2d 100644
 --- a/extensions/vendor/openviking-pi/README.md
 +++ b/extensions/vendor/openviking-pi/README.md
 @@ -1,7 +1,7 @@
@@ -53,7 +53,7 @@ index 670e38b2..441f292d 100644
  part of the reproduced tree.) Every hunk they add carries a greppable marker:
  
  ```sh
-@@ -488,6 +489,33 @@ Touches: `index.ts`, `config.ts`, `sync.ts`, `qcr-leaf.ts`, `qcr-shim.ts`
+@@ -488,6 +489,39 @@ Touches: `index.ts`, `config.ts`, `sync.ts`, `qcr-leaf.ts`, `qcr-shim.ts`
  (new), `qcr-hooks.ts` (new), `shared/pending-queue.mjs` and `.d.mts`, `NOTICE`,
  this README.
  
@@ -71,16 +71,22 @@ index 670e38b2..441f292d 100644
 +
 +`SyncManager.syncBranch` now runs one sync at a time. A turn that ends while
 +one runs queues its branch, in memory and in order; the running sync then
-+sends each queued branch from the watermark the one before it left, so the
-+process sends nothing twice and nothing at once, and a later turn (a branch
-+switch included) never overwrites an earlier one. The offline queue on disk is
++sends each queued branch in turn, so the process sends nothing twice and
++nothing at once, and a later turn (a branch switch included) never overwrites
++an earlier one. Upstream's watermark is a count of entries, so a queued branch
++as long as the one before it would read as sent; what was sent is now
++remembered by pi's entry ids, and only entries without ids fall back to the
++count. The offline queue on disk is
 +not used for this: it is shared by every worker, it collapses identical
 +payloads and replays by write time, all of which would reorder or drop turns.
 +
 +A bot worker disposes its session without `session_shutdown`, so the queued
 +turns must go out before the prompt resolves: `agent_end` awaits
 +`SyncManager.drain()`, and its deadline in `qcr-hooks.ts` is raised from 1 s
-+to turn_end's 30 s. With nothing queued, `drain()` settles at once.
++to turn_end's 30 s. With nothing queued, `drain()` settles at once; with a
++slow server the prompt can resolve up to 30 s later than before. Turns still
++queued when that deadline passes are lost with the worker, as a running sync
++was before this patch; the pi transcript keeps them.
 +
 +Touches: `sync.ts`, `index.ts`, `qcr-hooks.ts`, `NOTICE`, this README.
 +
@@ -118,10 +124,10 @@ index 8979e729..89d8281c 100644
  };
  
 diff --git a/extensions/vendor/openviking-pi/sync.ts b/extensions/vendor/openviking-pi/sync.ts
-index 037d6306..32de4615 100644
+index 037d6306..ddfe651e 100644
 --- a/extensions/vendor/openviking-pi/sync.ts
 +++ b/extensions/vendor/openviking-pi/sync.ts
-@@ -38,6 +38,12 @@ export class SyncManager {
+@@ -38,6 +38,14 @@ export class SyncManager {
    private syncedEntryCount = 0;
    private queue: PendingQueueConfig;
    private debugLog: (message: string) => void;
@@ -131,10 +137,20 @@ index 037d6306..32de4615 100644
 +  private syncing = false;
 +  private waiting: any[][] = [];
 +  private idle: Promise<void> = Promise.resolve();
++  // [QCR PATCH 13] The ids of the entries already sent (see syncOnce).
++  private sentIds = new Set<string>();
  
    constructor(client: OVClient, config: OVConfig, opts: SyncOptions = {}) {
      this.client = client;
-@@ -110,8 +116,46 @@ export class SyncManager {
+@@ -52,6 +60,7 @@ export class SyncManager {
+   restoreWatermark(n: number): void {
+     const next = Math.max(0, Math.floor(Number(n) || 0));
+     this.syncedEntryCount = next;
++    this.sentIds.clear(); // [QCR PATCH 13] the next sync re-seeds from `next`
+   }
+ 
+   /**
+@@ -110,8 +119,54 @@ export class SyncManager {
      return countUndeliveredForSession(pending, this.ovSessionId) === 0;
    }
  
@@ -178,6 +194,46 @@ index 037d6306..32de4615 100644
 +  }
 +
 +  private async syncOnce(branch: any[]): Promise<SyncBranchResult> {
++    // [QCR PATCH 13] A queued branch can be as long as the one sent before it
++    // and share none of its entries (a branch switch), so a length watermark
++    // would count its entries as sent. pi gives every entry an id: what was
++    // sent is remembered by id. The watermark below stays for entries without.
++    const ids = branch.map((entry) => entry?.id);
++    if (branch.length > 0 && ids.every((id) => typeof id === "string")) {
++      return this.syncById(branch, ids);
++    }
  
      const extracted = extractBranchCapturePayloads(branch, this.syncedEntryCount, this.config);
      if (extracted.resetWatermark) this.syncedEntryCount = 0;
+@@ -135,6 +190,31 @@ export class SyncManager {
+     return { added, tokens, allDelivered };
+   }
+ 
++  /** [QCR PATCH 13] Sends each entry of `branch` not sent before, in order. */
++  private async syncById(branch: any[], ids: string[]): Promise<SyncBranchResult> {
++    // A restored watermark counts the branch's first entries as sent.
++    if (this.sentIds.size === 0) {
++      for (const id of ids.slice(0, this.syncedEntryCount)) this.sentIds.add(id);
++    }
++    let added = 0;
++    let tokens = 0;
++    let allDelivered = true;
++    for (const [i, entry] of branch.entries()) {
++      const id = ids[i]!;
++      if (this.sentIds.has(id)) continue;
++      for (const payload of extractBranchCapturePayloads([entry], 0, this.config).payloads) {
++        const result = await this.addPayload(payload);
++        if (!result.accepted) return { added, tokens, allDelivered };
++        added++;
++        tokens += estimatePayloadTokens(payload);
++        allDelivered = allDelivered && result.delivered;
++      }
++      this.sentIds.add(id);
++    }
++    this.syncedEntryCount = branch.length;
++    return { added, tokens, allDelivered };
++  }
++
+   async addPayload(payload: any): Promise<AddPayloadResult> {
+     if (!this.ovSessionId) return { accepted: false, delivered: false };
+     const ok = await this.client.addMessagePayload(this.ovSessionId, payload);

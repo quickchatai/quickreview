@@ -2286,7 +2286,9 @@ describe("PATCH 13 — one turn sync in flight per session, file 0014", () => {
     } as unknown as ConstructorParameters<typeof SyncManager>[0];
     return { client, seen };
   };
+  // pi gives every entry an id; here the text stands in for it.
   const msg = (role: "user" | "assistant", text: string) => ({
+    id: text,
     type: "message",
     message:
       role === "user" ? { role, content: text } : { role, content: [{ type: "text", text }] },
@@ -2371,6 +2373,47 @@ describe("PATCH 13 — one turn sync in flight per session, file 0014", () => {
     ]);
   });
 
+  // MUTATION: drop the `syncById` route in syncOnce (length watermark only) — this fails.
+  it("a queued branch as long as the one before it, or longer with another prefix, is sent in full", async () => {
+    const { sync, seen } = await started();
+    const first = sync.syncBranch(turn1);
+    await tick();
+    const sameLength = [msg("user", "other branch"), msg("assistant", "new path")];
+    const longer = [
+      msg("user", "third branch"),
+      msg("assistant", "a longer path"),
+      msg("user", "keep going"),
+    ];
+    const queued = [sync.syncBranch(sameLength), sync.syncBranch(longer)];
+    await settle(seen, [first, ...queued]);
+    expect(texts(seen)).toEqual([
+      "review this change",
+      "reading the diff",
+      "other branch",
+      "new path",
+      "third branch",
+      "a longer path",
+      "keep going",
+    ]);
+    // Back on the first branch with one more turn: only the new entries go.
+    await settle(seen, [sync.syncBranch(turn2)]);
+    expect(texts(seen).slice(7)).toEqual(["and the tests?", "they cover it"]);
+  });
+
+  // MUTATION: make syncById skip nothing (drop the `sentIds.has` check) — this fails.
+  it("entries without ids keep the length watermark, and a restored watermark seeds the ids", async () => {
+    const bare = turn2.map(({ id: _id, ...entry }) => entry);
+    const plain = await started();
+    await settle(plain.seen, [plain.sync.syncBranch(bare.slice(0, 2))]);
+    await settle(plain.seen, [plain.sync.syncBranch(bare)]);
+    expect(texts(plain.seen)).toHaveLength(4);
+
+    const restored = await started();
+    restored.sync.restoreWatermark(turn1.length);
+    await settle(restored.seen, [restored.sync.syncBranch(turn2)]);
+    expect(texts(restored.seen)).toEqual(["and the tests?", "they cover it"]);
+  });
+
   // MUTATION: settle `drain()` before the queued turns are sent — this fails.
   it("drain() settles only once the queued turns are sent, and at once when nothing runs", async () => {
     const { sync, seen } = await started();
@@ -2387,6 +2430,8 @@ describe("PATCH 13 — one turn sync in flight per session, file 0014", () => {
     expect(texts(seen)).toHaveLength(4);
   });
 
+  // MUTATION: delete `await sync.drain();` from the agent_end handler, or put
+  // agent_end's deadline back to 1_000 in qcr-hooks.ts — either fails this.
   it("agent_end waits for the queued turns under turn_end's deadline", () => {
     const index = read("index.ts");
     const agentEnd = index.slice(index.indexOf('pi.on("agent_end"'));
@@ -2394,6 +2439,8 @@ describe("PATCH 13 — one turn sync in flight per session, file 0014", () => {
     expect(HOOK_TIMEOUT_MS.agent_end).toBe(HOOK_TIMEOUT_MS.turn_end);
   });
 
+  // MUTATION: drop "0014-one-turn-sync-in-flight.patch" from upstream.json's
+  // patch list — this fails.
   it("ships the patch, recorded last in the series, with its marker", () => {
     expect(upstream.patches.at(-1)).toBe("0014-one-turn-sync-in-flight.patch");
     const patch = read(join("patches", "0014-one-turn-sync-in-flight.patch"));

@@ -62,9 +62,9 @@ Changed by the quickreviewd maintainers, 2026-08-20:
      a shim, and every hook runs under a deadline and a catch (2026-10-19).
  13. One turn sync runs at a time per session: a turn that ends while one
      runs queues its branch, the running sync sends the queued branches in
-     order, and agent_end waits for them under turn_end's deadline, so a hook
-     deadline can no longer start a second sync that re-sends the same
-     messages (2026-10-29).
+     order, each entry sent once by its pi entry id, and agent_end waits for
+     them under turn_end's deadline, so a hook deadline can no longer start a
+     second sync that re-sends the same messages (2026-10-29).
 
 Plus vendoring scaffolding: build-conformance fixes for this repo's stricter
 tsconfig (ambient type declarations while pi was not installed, retired once
