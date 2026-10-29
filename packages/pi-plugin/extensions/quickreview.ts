@@ -23,6 +23,7 @@
 import {
   VERSION,
   getAgentDir,
+  getPackageDir,
   type ExtensionAPI,
   type ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
@@ -52,9 +53,13 @@ export interface QuickReviewConfig {
   runner: Runner;
   /** Standard output (pi's print mode shows a command's result there). */
   print: (text: string) => void;
-  /** Test seams: the running pi's version, its agent dir, the range, the
-   * review's core. */
+  /** Resolve pi's own packages from the running pi's package dir for what the
+   * plugin imports later with Node's import() (src/plugin/peers.ts). */
+  peers?: (piDir: string) => void;
+  /** Test seams: the running pi's version and package dir, its agent dir, the
+   * range, the review's core. */
   piVersion?: string;
+  piDir?: string;
   agentDir?: string;
   range?: string;
   review?: ReviewCommandDeps;
@@ -150,6 +155,7 @@ export function createQuickReview(config: QuickReviewConfig): (pi: ExtensionAPI)
       });
       return;
     }
+    config.peers?.(config.piDir ?? getPackageDir());
     // The current session's end: a run in flight stops with it.
     let shutdown = new AbortController();
     pi.on("session_start", () => {

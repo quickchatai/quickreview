@@ -1,6 +1,6 @@
 {
   "name": "@quickchatai/pi-quickreview",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "private": false,
   "description": "QuickReview for pi: /qcr-review (this branch, a PR, a branch or the uncommitted tree, in the background), /qcr-scan and /qcr-setup in your own pi session, each also a skill, on the same review core the QuickReview bot runs",
   "keywords": [
