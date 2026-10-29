@@ -83,21 +83,41 @@ SAME_MODEL = [  # (model, PRs, (high, medium, low) defects, [(reviewer, high, me
 ]
 
 # Pairwise Elo on Martian's hard20 (the 20 PRs QuickReview on GPT-6.1 Sol or DeepSeek V4.1 Flash did worst on
-# against its own average), both judges pooled: the "Combined" table of the run archive's
-# elo/martian-hard20-all-gpt/REPORT.md. QuickReview's Opus and Sonnet runs kept the image's six lenses pinned to
-# GPT-6 Luna (maintainability, duplication, abstraction, consistency, placement, simplicity).
-ELO = [  # (name, Elo, 95% low, 95% high, QuickReview?)
-    ("Claude Code max (Opus + Sonnet 5.5)", 1666, 1581, 1794, False),
-    ("QuickReview (Opus 5.5)*", 1628, 1567, 1726, True),
-    ("QuickReview (GPT-6.1 Sol)", 1566, 1486, 1662, True),
-    ("Claude Code high (Opus 5.5)", 1518, 1425, 1629, False),
-    ("QuickReview (Sonnet 5.5)*", 1489, 1415, 1584, True),
-    ("QuickReview (DeepSeek V4.1 Flash)", 1406, 1201, 1556, True),
-    ("Claude Code high (Sonnet 5.5)", 1398, 1290, 1456, False),
-    ("QuickReview (GLM-5.3 Flash)", 1329, 1110, 1477, True),
-]
-# One pair from the same REPORT's every-pair table: direct record over both judges, and the gap's 95% interval.
-ELO_DIRECT = ("QuickReview (Opus 5.5)*", "Claude Code high (Opus 5.5)", 29, 11, (31, 196))
+# against its own average), both judges pooled: data/elo-martian-hard20.json, the "Combined" table refit from the
+# run archive's elo/martian-hard20-all-gpt judgments by bench/aacr/recompute/elo_ratings.py --chart-json (the same
+# numbers as that run's REPORT.md; --check-ratings proves it). QuickReview's Opus and Sonnet runs kept the image's
+# six lenses pinned to GPT-6 Luna (maintainability, duplication, abstraction, consistency, placement, simplicity).
+ELO_DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "elo-martian-hard20.json")
+ELO_LABELS = {  # run -> (the chart's name, QuickReview?)
+    "ft0622-hard20-sonnet": ("Claude Code max (Opus + Sonnet 5.5)", False),
+    "ft0622-hard20-qr-opus55": ("QuickReview (Opus 5.5)*", True),
+    "final1-martian50": ("QuickReview (GPT-6.1 Sol)", True),
+    "ft0622-hard20-cc-high-opus55": ("Claude Code high (Opus 5.5)", False),
+    "ft0622-hard20-qr-sonnet55": ("QuickReview (Sonnet 5.5)*", True),
+    "dsv41f-mix-martian50": ("QuickReview (DeepSeek V4.1 Flash)", True),
+    "ft0622-hard20-cc-high-sonnet55": ("Claude Code high (Sonnet 5.5)", False),
+    "glm53-full-martian50": ("QuickReview (GLM-5.3 Flash)", True),
+}
+# The pair the title names: QuickReview on Opus against Claude Code high on Opus.
+ELO_PAIR = ("ft0622-hard20-qr-opus55", "ft0622-hard20-cc-high-opus55")
+
+
+def elo_from_data(path=ELO_DATA):
+    """(rows, direct) as the chart draws them, rounded as REPORT.md prints them: rows are (name, Elo, 95% low,
+    95% high, QuickReview?); direct is (upper name, lower name, wins, losses, (gap low, gap high)) for ELO_PAIR."""
+    with open(path) as f:
+        d = json.load(f)
+    rows = [(ELO_LABELS[r["run"]][0], round(r["elo"]), round(r["lo"]), round(r["hi"]), ELO_LABELS[r["run"]][1])
+            for r in d["rows"]]
+    g = next(p for p in d["pairs"] if {p["upper"], p["lower"]} == set(ELO_PAIR))
+    if g["upper"] != ELO_PAIR[0]:
+        raise ValueError(f"{ELO_PAIR[0]} no longer ranks above {ELO_PAIR[1]}: the chart's title would be wrong")
+    direct = (ELO_LABELS[g["upper"]][0], ELO_LABELS[g["lower"]][0], g["direct"]["w"], g["direct"]["l"],
+              (round(g["lo"]), round(g["hi"])))
+    return rows, direct
+
+
+ELO, ELO_DIRECT = elo_from_data()
 
 DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "aacr.json")
 KEYS = {"quickreview": QR, "pi-review": "pi-review panel", "claude-code": "Claude Code",
