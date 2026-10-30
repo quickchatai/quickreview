@@ -17,6 +17,7 @@ import {
   type GuardAdapter,
 } from "@quickchatai/pi-quickreview/src/guards.js";
 import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
+import { renderedFooter } from "@quickchatai/pi-quickreview/src/reviewrender.js";
 import type { PrFileEntry } from "../src/github.js";
 import { StateStore } from "../src/state.js";
 import { applyEvent } from "../src/statemachine.js";
@@ -384,6 +385,124 @@ describe("guard 2 — the same head is never reviewed twice", () => {
     const { gate } = harness({ skip_unchanged_head: false });
     await gate.execute(reviewIntent("REQUEST_CHANGES"));
     expect((await gate.execute(reviewIntent("REQUEST_CHANGES"))).executed).toBe(true);
+  });
+});
+
+describe("the withheld approval, given — one line, not a second review", () => {
+  const KEY = `v1:5180:4:${HEAD}`;
+  const FOOTER = renderedFooter(BOT);
+  const fullBody = `The whole summary again.\n\n**Verdict: Approved** — no findings.\n\n${FOOTER}\n\n<!-- qcr-post:${KEY} -->`;
+  const approval = (comments: unknown[] = []): MutationIntent => {
+    const intent = reviewIntent("APPROVE", HEAD, fullBody);
+    return { ...intent, body: { ...(intent.body as object), comments } };
+  };
+  // The withheld round: its COMMENT stamped the head, its APPROVE verdict followed.
+  const withheldAt = (head: string) =>
+    store.recordReviewedHead(5180, { head_sha: head, verdict: "APPROVE", posted_event: "COMMENT" });
+  const ciIs = (adapter: FakeGuardAdapter, conclusion: string) =>
+    ((adapter as FakeGuardAdapter & { listChecks: GuardAdapter["listChecks"] }).listChecks =
+      async () => [{ name: "ci", source: "check_run", status: "completed", conclusion }]);
+  const sentBody = (executor: Harness["executor"]) =>
+    (executor.mock.calls[0]![0] as MutationIntent).body as { event: string; body: string };
+
+  // MUTATION: drop the given-approval step at the end of the guard — this fails.
+  it("the CI-green retry's APPROVE posts one line, keeping the footer and the posting marker", async () => {
+    const { gate, adapter, executor } = harness();
+    withheldAt(HEAD);
+    ciIs(adapter, "success");
+
+    expect((await gate.execute(approval())).executed).toBe(true);
+    const sent = sentBody(executor);
+    expect(sent.event).toBe("APPROVE");
+    expect(sent.body).not.toContain("The whole summary again.");
+    expect(sent.body).toMatch(/^CI is green at `68b8040`/);
+    expect(sent.body.endsWith(`${FOOTER}\n\n<!-- qcr-post:${KEY} -->`)).toBe(true);
+  });
+
+  // MUTATION: drop the `!hasNewEvidence` condition in givenApproval — this fails.
+  it("an author reply since the withheld review keeps the full body: the approval may answer it", async () => {
+    const { gate, adapter, executor } = harness();
+    withheldAt(HEAD);
+    store.noteAuthorReply(5180, new Date(Date.now() + 1000).toISOString());
+    ciIs(adapter, "success");
+    await gate.execute(approval());
+    expect(sentBody(executor).body).toBe(fullBody);
+  });
+
+  // MUTATION: drop the inline-comments condition in givenApproval — this fails.
+  it("an approval with inline comments keeps its body", async () => {
+    const { gate, adapter, executor } = harness();
+    withheldAt(HEAD);
+    ciIs(adapter, "success");
+    await gate.execute(approval([{ path: "a.py", line: 3, side: "RIGHT", body: "[nit] x" }]));
+    expect(sentBody(executor).body).toBe(fullBody);
+  });
+
+  // MUTATION: accept any posted COMMENT mark (drop the verdict check) — this fails.
+  it("only a withheld approval is given: a COMMENT mark with no APPROVE verdict keeps the body", async () => {
+    const { gate, adapter, executor } = harness();
+    store.recordReviewedHead(5180, { head_sha: HEAD, posted_event: "COMMENT" });
+    ciIs(adapter, "success");
+    await gate.execute(approval());
+    expect(sentBody(executor).body).toBe(fullBody);
+  });
+
+  it("a withheld approval at another head is a new review: the body stays", async () => {
+    const { gate, adapter, executor } = harness();
+    withheldAt(OLD);
+    ciIs(adapter, "success");
+    await gate.execute(approval());
+    expect(sentBody(executor).body).toBe(fullBody);
+  });
+
+  // MUTATION: drop `ciGreen &&` from the given-approval condition — this fails.
+  it("unreadable CI lets the approval through with its own body: nothing announces CI green", async () => {
+    const { gate, adapter, executor } = harness();
+    withheldAt(HEAD);
+    (adapter as FakeGuardAdapter & { listChecks: GuardAdapter["listChecks"] }).listChecks =
+      async () => {
+        throw new Error("GET /check-runs → 502");
+      };
+    await gate.execute(approval());
+    const sent = sentBody(executor);
+    expect(sent.event).toBe("APPROVE");
+    expect(sent.body).toBe(fullBody);
+  });
+
+  // MUTATION: drop `!deps.personMode &&` from the given-approval condition — this fails.
+  it("person mode keeps the session's body: its COMMENT mark never withheld anything for CI", async () => {
+    const adapter = new FakeGuardAdapter();
+    const executor = vi.fn(async () => ({ id: 900, comments: [] }));
+    const gate = new MutationGate(
+      false,
+      dryrunDir,
+      executor as unknown as (i: MutationIntent) => Promise<unknown>,
+    );
+    gate.setGuard(
+      makePostingGuard({
+        store,
+        adapter,
+        botLogin: BOT,
+        guards: { ...GUARDS_DEFAULTS },
+        personMode: true,
+      }),
+    );
+    withheldAt(HEAD);
+    ciIs(adapter, "success");
+    await gate.execute(approval());
+    const sent = sentBody(executor);
+    expect(sent.event).toBe("COMMENT");
+    expect(sent.body).toContain("The whole summary again.");
+  });
+
+  it("CI red again: guard 4 withholds once more and nothing is shortened", async () => {
+    const { gate, adapter, executor } = harness();
+    withheldAt(HEAD);
+    ciIs(adapter, "failure");
+    await gate.execute(approval());
+    const sent = sentBody(executor);
+    expect(sent.event).toBe("COMMENT");
+    expect(sent.body).toContain("The whole summary again.");
   });
 });
 
