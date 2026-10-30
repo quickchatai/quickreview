@@ -25518,7 +25518,7 @@
    "value": "38",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.702",
@@ -25527,7 +25527,7 @@
    "value": "32",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.703",
@@ -25536,7 +25536,7 @@
    "value": "84%",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.704",
@@ -25545,7 +25545,7 @@
    "value": "4",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.705",
@@ -25554,7 +25554,7 @@
    "value": "1",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.706",
@@ -25563,7 +25563,7 @@
    "value": "1",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.707",
@@ -25572,7 +25572,7 @@
    "value": "2.4",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.708",
@@ -25581,7 +25581,7 @@
    "value": "26.4",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.709",
@@ -25590,7 +25590,7 @@
    "value": "20.3",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.710",
@@ -25599,7 +25599,7 @@
    "value": "21.2",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.711",
@@ -25608,7 +25608,7 @@
    "value": "46",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.712",
@@ -25617,7 +25617,7 @@
    "value": "19",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.713",
@@ -25626,7 +25626,7 @@
    "value": "41%",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.714",
@@ -25635,7 +25635,7 @@
    "value": "22",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.715",
@@ -25644,7 +25644,7 @@
    "value": "4",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.716",
@@ -25653,7 +25653,7 @@
    "value": "1",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.717",
@@ -25662,7 +25662,7 @@
    "value": "4.1",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.718",
@@ -25671,7 +25671,7 @@
    "value": "22.0",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.719",
@@ -25680,7 +25680,7 @@
    "value": "28.5",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.720",
@@ -25689,7 +25689,7 @@
    "value": "26.9",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.721",
@@ -25698,7 +25698,7 @@
    "value": "18",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.722",
@@ -25707,7 +25707,7 @@
    "value": "8",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.723",
@@ -25716,7 +25716,7 @@
    "value": "44%",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.724",
@@ -25725,7 +25725,7 @@
    "value": "10",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.725",
@@ -25734,7 +25734,7 @@
    "value": "0",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.726",
@@ -25743,7 +25743,7 @@
    "value": "0",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.727",
@@ -25752,7 +25752,7 @@
    "value": "6.0",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.728",
@@ -25761,7 +25761,7 @@
    "value": "21.2",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.729",
@@ -25770,7 +25770,7 @@
    "value": "40.5",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.730",
@@ -25779,7 +25779,7 @@
    "value": "34.3",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.731",
@@ -25788,7 +25788,7 @@
    "value": "68",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.732",
@@ -25797,7 +25797,7 @@
    "value": "10",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.733",
@@ -25806,7 +25806,7 @@
    "value": "15%",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.734",
@@ -25815,7 +25815,7 @@
    "value": "44",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.735",
@@ -25824,7 +25824,7 @@
    "value": "14",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.736",
@@ -25833,7 +25833,7 @@
    "value": "0",
    "group": "bench:sol-study",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file"
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked"
   },
   {
    "id": "bench.bench:sol-study.737",
@@ -25996,14 +25996,6 @@
    "note": "the three runs' comments, 978 + 663 + 580, are 2,221 in candidates-key.json"
   },
   {
-   "id": "bench.misc.25",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\node[agent, text width=2.4cm] (crit) at (10.5,0) {\\textbf{adversarial critics}\\\\ \\footnotesize 10 agents; 6 corrections};",
-   "value": "6",
-   "q": null,
-   "no_script": "data not published: the critics' corrections are applied in the shipped key files but not recorded as a list of corrections"
-  },
-  {
    "id": "bench.misc.26",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "\\node[data, text width=2.4cm] (v1) at (13.6,0) {\\textbf{key v1}\\\\ \\footnotesize 379 defects\\\\ 2{,}118 exclusions};",
@@ -26023,14 +26015,6 @@
    "anchor": "\\node[data, text width=2.7cm] (com2) at (3.7,-4.4) {\\textbf{4 later reviewers}\\\\ \\footnotesize Codex, OpenCode, pi-review, Claude Code: 1{,}527 comments};",
    "value": "1,527",
    "q": "key_build:extension/candidates"
-  },
-  {
-   "id": "bench.misc.32",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\node[agent, text width=2.4cm] (crit2) at (10.5,-4.4) {\\textbf{critics}\\\\ \\footnotesize 11 agents; 1 addition removed};",
-   "value": "1",
-   "q": null,
-   "no_script": "data not published: the shipped truth-ext.json holds the 15 additions the critics kept; the one they removed is not recorded"
   },
   {
    "id": "bench.misc.33",
@@ -27101,15 +27085,6 @@
    "q": "({key:ai_refs} + {key:bot_refs}) / {key:refs} * 100"
   },
   {
-   "id": "bench.bench:final-tables.797",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "them, each human reference on the 46 PRs where a bot had reviewed was paired",
-   "value": "46",
-   "group": "bench:final-tables",
-   "q": null,
-   "no_script": "data not published: which 46 PRs a review bot had reviewed is stated in bot_references.json's source note, not listed per PR"
-  },
-  {
    "id": "bench.bench:final-tables.798",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "2026-09-30, anonymous public GitHub access only. The 80 references are",
@@ -27359,18 +27334,6 @@
    "value": "2,118",
    "group": "card:key",
    "q": "{key:excl_src=C~set=rest145} + {key:excl_src=R~set=rest145} + {key:excl_src=H~set=rest145}"
-  },
-  {
-   "id": "bench.card:key.19",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "place: 6 corrections.",
-   "value": "6",
-   "group": "card:key",
-   "q": null,
-   "no_script": "data not published: the critics' corrections are applied in the shipped key files but not recorded as a list of corrections",
-   "data": [
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
   },
   {
    "id": "bench.card:key.20",
@@ -27816,39 +27779,15 @@
   {
    "id": "bench.card:key.67",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "reasons (572 of them on R145), 16 added. Eleven critics checked every",
+   "anchor": "reasons (572 of them on R145), and a few added; eleven critics checked",
    "value": "572",
    "group": "card:key",
    "q": "key:excl_src=N~set=rest145"
   },
   {
-   "id": "bench.card:key.68",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "reasons (572 of them on R145), 16 added. Eleven critics checked every",
-   "value": "16",
-   "group": "card:key",
-   "q": null,
-   "no_script": "data not published: the shipped truth-ext.json holds the 15 additions the critics kept; the one they removed is not recorded",
-   "data": [
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
-  },
-  {
-   "id": "bench.card:key.69",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "addition and removed one (4 critic corrections in total). Net \\textbf{+15",
-   "value": "4",
-   "group": "card:key",
-   "q": null,
-   "no_script": "data not published: the critics' corrections are applied in the shipped key files but not recorded as a list of corrections",
-   "data": [
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
-  },
-  {
    "id": "bench.card:key.70",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "addition and removed one (4 critic corrections in total). Net \\textbf{+15",
+   "anchor": "every addition before it was kept. Net \\textbf{+15",
    "value": "+15",
    "group": "card:key",
    "q": "key:extension"
@@ -28175,78 +28114,6 @@
    "value": "394",
    "group": "card:key",
    "q": "key:defects~set=rest145"
-  },
-  {
-   "id": "bench.card:key.102",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "then a critic per set (12 corrections). Version 2 of smoke10, dev10 and",
-   "value": "12",
-   "group": "card:key",
-   "q": null,
-   "no_script": "data not published: the critics' corrections are applied in the shipped key files but not recorded as a list of corrections",
-   "data": [
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
-  },
-  {
-   "id": "bench.card:key.103",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "against the code: 44 candidates from 12 judged runs, 1 added, 2 restated",
-   "value": "44",
-   "group": "card:key",
-   "q": null,
-   "no_script": "data not published: the v2 check of the judge's new-defect candidates on smoke10/dev10/holdout10 is not recorded per candidate (the exclusions table keeps 26 of the rejections)",
-   "data": [
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
-  },
-  {
-   "id": "bench.card:key.104",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "against the code: 44 candidates from 12 judged runs, 1 added, 2 restated",
-   "value": "12",
-   "group": "card:key",
-   "q": null,
-   "no_script": "data not published: the v2 check of the judge's new-defect candidates on smoke10/dev10/holdout10 is not recorded per candidate (the exclusions table keeps 26 of the rejections)",
-   "data": [
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
-  },
-  {
-   "id": "bench.card:key.105",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "against the code: 44 candidates from 12 judged runs, 1 added, 2 restated",
-   "value": "1",
-   "group": "card:key",
-   "q": null,
-   "no_script": "data not published: the v2 check of the judge's new-defect candidates on smoke10/dev10/holdout10 is not recorded per candidate (the exclusions table keeps 26 of the rejections)",
-   "data": [
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
-  },
-  {
-   "id": "bench.card:key.106",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "against the code: 44 candidates from 12 judged runs, 1 added, 2 restated",
-   "value": "2",
-   "group": "card:key",
-   "q": null,
-   "no_script": "data not published: the v2 check of the judge's new-defect candidates on smoke10/dev10/holdout10 is not recorded per candidate (the exclusions table keeps 26 of the rejections)",
-   "data": [
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
-  },
-  {
-   "id": "bench.card:key.107",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "existing defects, 41 rejected. fresh10 (v1) was built from a blind hunt and",
-   "value": "41",
-   "group": "card:key",
-   "q": null,
-   "no_script": "data not published: the v2 check of the judge's new-defect candidates on smoke10/dev10/holdout10 is not recorded per candidate (the exclusions table keeps 26 of the rejections)",
-   "data": [
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
   },
   {
    "id": "bench.card:key.108",
@@ -29059,23 +28926,6 @@
    "q": "key:prs~s40"
   },
   {
-   "id": "bench.bench:bestshot.409",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "chunk; a 32k-token prompt budget that prunes 4 of the 40 diffs, as it would",
-   "value": "4",
-   "group": "bench:bestshot",
-   "q": null,
-   "no_script": "data not published: PR-Agent's own run logs (pragent-*.log), which record the pruned diffs, are session process logs the release leaves out"
-  },
-  {
-   "id": "bench.bench:bestshot.410",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "chunk; a 32k-token prompt budget that prunes 4 of the 40 diffs, as it would",
-   "value": "40",
-   "group": "bench:bestshot",
-   "q": "key:prs~s40"
-  },
-  {
    "id": "bench.bench:bestshot.411",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "lines: \\qcr{} default as published (86\\%) and on the current build",
@@ -29697,54 +29547,6 @@
    "value": "29",
    "group": "bench:bestshot",
    "q": "claude_arm:parsed_none",
-   "data": [
-    "archive:quickreview-runs-aacr-claude-code-opus55.tar.zst"
-   ]
-  },
-  {
-   "id": "bench.bench:bestshot.484",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "reviews with none, mostly ``I found no bugs''). A hand check of 20 random",
-   "value": "20",
-   "group": "bench:bestshot",
-   "q": null,
-   "no_script": "data not published: the hand check's labels for its 20 sampled reviews are not recorded in a release file",
-   "data": [
-    "archive:quickreview-runs-aacr-claude-code-opus55.tar.zst"
-   ]
-  },
-  {
-   "id": "bench.bench:bestshot.485",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "reviews found 45 findings, of which the parser extracted 44 with the right",
-   "value": "45",
-   "group": "bench:bestshot",
-   "q": null,
-   "no_script": "data not published: the hand check's labels for its 20 sampled reviews are not recorded in a release file",
-   "data": [
-    "archive:quickreview-runs-aacr-claude-code-opus55.tar.zst"
-   ]
-  },
-  {
-   "id": "bench.bench:bestshot.486",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "reviews found 45 findings, of which the parser extracted 44 with the right",
-   "value": "44",
-   "group": "bench:bestshot",
-   "q": null,
-   "no_script": "data not published: the hand check's labels for its 20 sampled reviews are not recorded in a release file",
-   "data": [
-    "archive:quickreview-runs-aacr-claude-code-opus55.tar.zst"
-   ]
-  },
-  {
-   "id": "bench.bench:bestshot.487",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\code{bench.claude\\_prose\\_parsed} in each result file and a reading of 20",
-   "value": "20",
-   "group": "bench:bestshot",
-   "q": null,
-   "no_script": "data not published: the hand check's labels for its 20 sampled reviews are not recorded in a release file",
    "data": [
     "archive:quickreview-runs-aacr-claude-code-opus55.tar.zst"
    ]
@@ -31514,19 +31316,6 @@
    ]
   },
   {
-   "id": "bench.bench:final-tables.1009",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "effort; and a prompt cleanup that cut the composed lens instructions by 32\\%",
-   "value": "32%",
-   "group": "bench:final-tables",
-   "q": null,
-   "no_script": "data not published: the composed lens instructions are prompt files, which the release does not ship (session logs and prompts are withheld)",
-   "data": [
-    "archive:quickreview-runs-aacr-gpt6sol-study.tar.zst",
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
-  },
-  {
    "id": "bench.bench:tab:finalbuild.124",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "Section~\\ref{sec:threats}. The build ran once on all 185 PRs and was judged",
@@ -32152,19 +31941,10 @@
   {
    "id": "bench.bench:final-tables.1015",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "verdict files, 2026-10-01; the 219 flagged comments of the final runs, and 45",
+   "anchor": "verdict files, 2026-10-01; the final runs flag 219 comments in all.}",
    "value": "219",
    "group": "bench:final-tables",
    "q": "{aacr:quickreview-default-g61:new_defects} + {aacr:quickreview-low-g61:new_defects} + {aacr:pireview-panel-high-g61:new_defects} + {aacr:claude-code-opus55:new_defects} + {aacr:ocr-high-g61:new_defects} + {aacr:codex-high-g61:new_defects} + {aacr:opencode-native-pr-g61:new_defects} + {aacr:pragent-g61:new_defects}"
-  },
-  {
-   "id": "bench.bench:final-tables.1016",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "verdict files, 2026-10-01; the 219 flagged comments of the final runs, and 45",
-   "value": "45",
-   "group": "bench:final-tables",
-   "q": null,
-   "no_script": "data not published: the grouping of the final runs' flagged comments by PR file is in the analysis notes, not in a release file"
   },
   {
    "id": "bench.bench:final-tables.1017",
@@ -32807,7 +32587,7 @@
   {
    "id": "bench.bench:sol-study.855",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "52.0 of 97 over 30 PRs for two runs of one build), and pairs of runs on",
+   "anchor": "52.0 of 97 over 30 PRs for two runs of one build), and two pairs of runs on",
    "value": "52.0",
    "group": "bench:sol-study",
    "q": "({aacr:smoke10-base-r2~own:found} + {aacr:dev10-base-r2~own:found} + {aacr:holdout10-base-r2~own:found})",
@@ -32818,7 +32598,7 @@
   {
    "id": "bench.bench:sol-study.856",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "52.0 of 97 over 30 PRs for two runs of one build), and pairs of runs on",
+   "anchor": "52.0 of 97 over 30 PRs for two runs of one build), and two pairs of runs on",
    "value": "97",
    "group": "bench:sol-study",
    "q": "key:defects~set=smoke10+dev10+holdout10"
@@ -32826,7 +32606,7 @@
   {
    "id": "bench.bench:sol-study.857",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "52.0 of 97 over 30 PRs for two runs of one build), and pairs of runs on",
+   "anchor": "52.0 of 97 over 30 PRs for two runs of one build), and two pairs of runs on",
    "value": "30",
    "group": "bench:sol-study",
    "q": "key:prs~set=smoke10+dev10+holdout10"
@@ -32834,11 +32614,10 @@
   {
    "id": "bench.bench:sol-study.858",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "fresh10 agreed on 78--89\\% of the defects either found. Per 10-PR set the",
-   "value": "78",
+   "anchor": "\\code{new-r2}) agreed on 81--93\\% of the defects either found. Per 10-PR set the",
+   "value": "81",
    "group": "bench:sol-study",
-   "q": null,
-   "no_script": "data not published: which fresh10 run pairs RESULTS.md's 'Noise' compared is not named in a release file (RESULTS.md is a working note)",
+   "q": "min(100 * ({aacr:fresh10-on+lean~set=fresh10:any_found} - {aacr:fresh10-on+lean~set=fresh10:single_found}) / {aacr:fresh10-on+lean~set=fresh10:any_found}, 100 * ({aacr:new-r1+new-r2~set=fresh10:any_found} - {aacr:new-r1+new-r2~set=fresh10:single_found}) / {aacr:new-r1+new-r2~set=fresh10:any_found})",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst"
    ]
@@ -32846,11 +32625,10 @@
   {
    "id": "bench.bench:sol-study.859",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "fresh10 agreed on 78--89\\% of the defects either found. Per 10-PR set the",
-   "value": "89%",
+   "anchor": "\\code{new-r2}) agreed on 81--93\\% of the defects either found. Per 10-PR set the",
+   "value": "93%",
    "group": "bench:sol-study",
-   "q": null,
-   "no_script": "data not published: which fresh10 run pairs RESULTS.md's 'Noise' compared is not named in a release file (RESULTS.md is a working note)",
+   "q": "max(100 * ({aacr:fresh10-on+lean~set=fresh10:any_found} - {aacr:fresh10-on+lean~set=fresh10:single_found}) / {aacr:fresh10-on+lean~set=fresh10:any_found}, 100 * ({aacr:new-r1+new-r2~set=fresh10:any_found} - {aacr:new-r1+new-r2~set=fresh10:single_found}) / {aacr:new-r1+new-r2~set=fresh10:any_found})",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst"
    ]
@@ -33698,15 +33476,6 @@
    "value": "19",
    "group": "bench:tab:copilot2025",
    "q": "aacr:copilot-2025-upstream~own:prs"
-  },
-  {
-   "id": "bench.bench:tab:copilot2025.106",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "Copilot's precision at 6.9\\%.}",
-   "value": "6.9%",
-   "group": "bench:tab:copilot2025",
-   "q": null,
-   "no_script": "data not published: which of Copilot's comments matched only a bot-derived reference needs the harness's per-comment match notes, which the HF tables do not carry and no archive file keeps for this convention"
   },
   {
    "id": "bench.bench:tab:copilot2025.107",
@@ -36458,7 +36227,7 @@
    "value": "84%",
    "group": "bench:tab:martianfinal",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file",
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst"
    ]
@@ -36470,7 +36239,7 @@
    "value": "41",
    "group": "bench:tab:martianfinal",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file",
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst"
    ]
@@ -36482,7 +36251,7 @@
    "value": "44%",
    "group": "bench:tab:martianfinal",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file",
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst"
    ]
@@ -36494,7 +36263,7 @@
    "value": "15%",
    "group": "bench:tab:martianfinal",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file",
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst"
    ]
@@ -36953,7 +36722,7 @@
    "value": "2.4",
    "group": "bench:tab:martianfinal",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file",
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked",
    "data": [
     "archive:quickreview-runs-martian-posting-variants.tar.zst"
    ]
@@ -36965,7 +36734,7 @@
    "value": "26.4",
    "group": "bench:tab:martianfinal",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file",
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked",
    "data": [
     "archive:quickreview-runs-martian-posting-variants.tar.zst"
    ]
@@ -36977,7 +36746,7 @@
    "value": "84%",
    "group": "bench:tab:martianfinal",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file",
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked",
    "data": [
     "archive:quickreview-runs-martian-posting-variants.tar.zst"
    ]
@@ -37000,7 +36769,7 @@
    "value": "20.3",
    "group": "bench:tab:martianfinal",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file",
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked",
    "data": [
     "archive:quickreview-runs-martian-posting-variants.tar.zst"
    ]
@@ -37023,7 +36792,7 @@
    "value": "21.2",
    "group": "bench:tab:martianfinal",
    "q": null,
-   "no_script": "data not published: the mapping of each Martian-extracted QuickReview candidate to the comment it came from, and so to that comment's severity tier, was made in an analysis whose labels are not in a release file",
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked",
    "data": [
     "archive:quickreview-runs-martian-posting-variants.tar.zst"
    ]
@@ -37895,45 +37664,9 @@
    "q": "{qodo:issues:rule} / {qodo:issues:total} * 100"
   },
   {
-   "id": "bench.bench:tab:qodo.142",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "counts as a false positive, as on Martian: in a hand check of the 40",
-   "value": "40",
-   "group": "bench:tab:qodo",
-   "q": null,
-   "no_script": "data not published: the hand check's labels for the 40 unmatched comments are not in a release file"
-  },
-  {
-   "id": "bench.bench:tab:qodo.143",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "hidden but recognisable by style), 12 were real defects the list lacks, 19",
-   "value": "12",
-   "group": "bench:tab:qodo",
-   "q": null,
-   "no_script": "data not published: the hand check's labels for the 40 unmatched comments are not in a release file"
-  },
-  {
-   "id": "bench.bench:tab:qodo.144",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "hidden but recognisable by style), 12 were real defects the list lacks, 19",
-   "value": "19",
-   "group": "bench:tab:qodo",
-   "q": null,
-   "no_script": "data not published: the hand check's labels for the 40 unmatched comments are not in a release file"
-  },
-  {
-   "id": "bench.bench:tab:qodo.145",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "true but minor, 9 restated a listed issue or duplicated a credited comment,",
-   "value": "9",
-   "group": "bench:tab:qodo",
-   "q": null,
-   "no_script": "data not published: the hand check's labels for the 40 unmatched comments are not in a release file"
-  },
-  {
    "id": "bench.bench:tab:qodo.146",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "and none was wrong. On the 31 PRs that none of the frozen build's",
+   "anchor": "real defects the list lacks. On the 31 PRs that none of the frozen build's",
    "value": "31",
    "group": "bench:tab:qodo",
    "q": "heldout:qodo/set/#len"
@@ -38249,30 +37982,6 @@
    "value": "62%",
    "group": "bench:final-tables",
    "q": "aacr:claude-code-opus55:recall"
-  },
-  {
-   "id": "bench.bench:final-tables.1142",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "Claude agents did every step of the key; critics changed 6 things in the",
-   "value": "6",
-   "group": "bench:final-tables",
-   "q": null,
-   "no_script": "data not published: the critics' corrections are applied in the shipped key files but not recorded as a list of corrections",
-   "data": [
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
-  },
-  {
-   "id": "bench.bench:final-tables.1143",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "first pass and 4 in the extension. No human has checked any part of the",
-   "value": "4",
-   "group": "bench:final-tables",
-   "q": null,
-   "no_script": "data not published: the critics' corrections are applied in the shipped key files but not recorded as a list of corrections",
-   "data": [
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
   },
   {
    "id": "bench.bench:final-tables.1144",
@@ -39246,15 +38955,6 @@
    "value": "1,338",
    "group": "bench:sol-study",
    "q": "{key:refs} - {key:bot_refs}"
-  },
-  {
-   "id": "bench.bench:sol-study.942",
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "instead changes precision by at most 0.4 points.",
-   "value": "0.4",
-   "group": "bench:sol-study",
-   "q": null,
-   "no_script": "data not published: which comments matched only a bot-derived reference needs the harness's per-comment match notes, which the HF tables do not carry and no archive file keeps for this convention"
   },
   {
    "id": "bench.bench:sol-study.943",
@@ -47758,7 +47458,7 @@
    "value": "6",
    "group": "qr:mechanism",
    "q": null,
-   "no_script": "data not published: the hand-reading of every killed or demoted candidate at a defect's site is not recorded per defect in a release file",
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked",
    "data": [
     "archive:quickreview-runs-aacr-gpt6sol-study.tar.zst",
     "archive:quickreview-runs-analysis.tar.zst"
@@ -47779,7 +47479,7 @@
    "value": "1.2",
    "group": "qr:mechanism",
    "q": null,
-   "no_script": "data not published: the hand-reading of every killed or demoted candidate at a defect's site is not recorded per defect in a release file (about 6 of 520, 1.2 points)",
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked",
    "data": [
     "archive:quickreview-runs-aacr-gpt6sol-study.tar.zst",
     "archive:quickreview-runs-analysis.tar.zst"
@@ -47852,7 +47552,7 @@
    "value": "23%",
    "group": "qr:mechanism",
    "q": null,
-   "no_script": "data not published: the per-defect classification behind posting every kill (the tuning write-up's Q1-Q3 analysis) is not in a release file",
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked",
    "data": [
     "archive:quickreview-runs-aacr-gpt6sol-study.tar.zst",
     "archive:quickreview-runs-analysis.tar.zst"
@@ -47865,7 +47565,7 @@
    "value": "1.5",
    "group": "qr:mechanism",
    "q": null,
-   "no_script": "data not published: the per-defect classification behind posting every kill (the tuning write-up's Q1-Q3 analysis) is not in a release file",
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked",
    "data": [
     "archive:quickreview-runs-aacr-gpt6sol-study.tar.zst",
     "archive:quickreview-runs-analysis.tar.zst"
@@ -47926,7 +47626,7 @@
    "value": "40%",
    "group": "qr:tab:final",
    "q": null,
-   "no_script": "data not published: the attribution of the credit low lost against the default (lens generation, validator filtering, weaker comments) is a per-defect classification not in a release file",
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked",
    "data": [
     "archive:quickreview-runs-aacr-gpt6sol-study.tar.zst",
     "archive:quickreview-runs-analysis.tar.zst"
@@ -47939,7 +47639,7 @@
    "value": "20%",
    "group": "qr:tab:final",
    "q": null,
-   "no_script": "data not published: the attribution of the credit low lost against the default (lens generation, validator filtering, weaker comments) is a per-defect classification not in a release file",
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked",
    "data": [
     "archive:quickreview-runs-aacr-gpt6sol-study.tar.zst",
     "archive:quickreview-runs-analysis.tar.zst"
@@ -47952,7 +47652,7 @@
    "value": "26",
    "group": "qr:tab:final",
    "q": null,
-   "no_script": "data not published: the attribution of the credit low lost against the default (lens generation, validator filtering, weaker comments) is a per-defect classification not in a release file",
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked",
    "data": [
     "archive:quickreview-runs-aacr-gpt6sol-study.tar.zst",
     "archive:quickreview-runs-analysis.tar.zst"
@@ -47965,7 +47665,7 @@
    "value": "5",
    "group": "qr:tab:final",
    "q": null,
-   "no_script": "data not published: the attribution of the credit low lost against the default (lens generation, validator filtering, weaker comments) is a per-defect classification not in a release file",
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked",
    "data": [
     "archive:quickreview-runs-aacr-gpt6sol-study.tar.zst",
     "archive:quickreview-runs-analysis.tar.zst"
@@ -47978,7 +47678,7 @@
    "value": "40%",
    "group": "qr:tab:final",
    "q": null,
-   "no_script": "data not published: the attribution of the credit low lost against the default (lens generation, validator filtering, weaker comments) is a per-defect classification not in a release file",
+   "no_script": "pending relabel: a model labelling pass over the published candidates (the Martian candidate-to-comment severity mapping; the per-defect attribution of lost credit) will produce the data; until then this number is not checked",
    "data": [
     "archive:quickreview-runs-aacr-gpt6sol-study.tar.zst",
     "archive:quickreview-runs-analysis.tar.zst"
@@ -49652,19 +49352,6 @@
    "q": "key:defects~set=smoke10+dev10+holdout10"
   },
   {
-   "id": "qr.qr:tab:stab.78",
-   "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "are 32\\% shorter in tokens. No lens was removed.",
-   "value": "32%",
-   "group": "qr:tab:stab",
-   "q": null,
-   "no_script": "data not published: the composed lens instructions are prompt files, which the release does not ship (session logs and prompts are withheld)",
-   "data": [
-    "archive:quickreview-runs-aacr-gpt6sol-study.tar.zst",
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
-  },
-  {
    "id": "qr.qr:tab:frozen.142",
    "file": "bench/aacr/paper/quickreview.tex",
    "anchor": "\\paragraph{Results.} The frozen build finds 87.5 of the 90 high-severity",
@@ -51304,33 +50991,9 @@
    "note": "truth-ext.json excludes 692 extension candidates (572 on R145, 120 on the original 40)"
   },
   {
-   "id": "threats.card:key.24",
-   "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  - 16 new defects were added, of which the critics removed 1. Net +15",
-   "value": "16",
-   "group": "card:key",
-   "q": null,
-   "no_script": "data not published: the shipped truth-ext.json holds the 15 additions the critics kept; the one they removed is not recorded",
-   "data": [
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
-  },
-  {
-   "id": "threats.card:key.25",
-   "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  - 16 new defects were added, of which the critics removed 1. Net +15",
-   "value": "1",
-   "group": "card:key",
-   "q": null,
-   "no_script": "data not published: the shipped truth-ext.json holds the 15 additions the critics kept; the one they removed is not recorded",
-   "data": [
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
-  },
-  {
    "id": "threats.card:key.26",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  - 16 new defects were added, of which the critics removed 1. Net +15",
+   "anchor": "  - new defects were added after critics checked each one: net +15, taking",
    "value": "+15",
    "group": "card:key",
    "q": "key:extension"
@@ -51939,30 +51602,6 @@
    "q": "key:defects~set=rest145"
   },
   {
-   "id": "threats.card:key.35",
-   "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "- **What the critics changed.** They corrected 6 things in the first pass and",
-   "value": "6",
-   "group": "card:key",
-   "q": null,
-   "no_script": "data not published: the critics' corrections are applied in the shipped key files but not recorded as a list of corrections",
-   "data": [
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
-  },
-  {
-   "id": "threats.card:key.36",
-   "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  4 in the extension.",
-   "value": "4",
-   "group": "card:key",
-   "q": null,
-   "no_script": "data not published: the critics' corrections are applied in the shipped key files but not recorded as a list of corrections",
-   "data": [
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
-  },
-  {
    "id": "threats.card:key.37",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
    "anchor": "  quality labels on AACR's reference comments for the 30 original PRs",
@@ -52383,20 +52022,18 @@
   {
    "id": "threats.bench:sol-study.116",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  agreement of 78–89%. We have no variance estimate",
-   "value": "78",
+   "anchor": "  agreement of 81–93% on two pairs of fresh10 runs. We have no variance estimate",
+   "value": "81",
    "group": "bench:sol-study",
-   "q": null,
-   "no_script": "data not published: which fresh10 run pairs RESULTS.md's 'Noise' compared is not named in a release file (RESULTS.md is a working note)"
+   "q": "min(100 * ({aacr:fresh10-on+lean~set=fresh10:any_found} - {aacr:fresh10-on+lean~set=fresh10:single_found}) / {aacr:fresh10-on+lean~set=fresh10:any_found}, 100 * ({aacr:new-r1+new-r2~set=fresh10:any_found} - {aacr:new-r1+new-r2~set=fresh10:single_found}) / {aacr:new-r1+new-r2~set=fresh10:any_found})"
   },
   {
    "id": "threats.bench:sol-study.117",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  agreement of 78–89%. We have no variance estimate",
-   "value": "89%",
+   "anchor": "  agreement of 81–93% on two pairs of fresh10 runs. We have no variance estimate",
+   "value": "93%",
    "group": "bench:sol-study",
-   "q": null,
-   "no_script": "data not published: which fresh10 run pairs RESULTS.md's 'Noise' compared is not named in a release file (RESULTS.md is a working note)"
+   "q": "max(100 * ({aacr:fresh10-on+lean~set=fresh10:any_found} - {aacr:fresh10-on+lean~set=fresh10:single_found}) / {aacr:fresh10-on+lean~set=fresh10:any_found}, 100 * ({aacr:new-r1+new-r2~set=fresh10:any_found} - {aacr:new-r1+new-r2~set=fresh10:single_found}) / {aacr:new-r1+new-r2~set=fresh10:any_found})"
   },
   {
    "id": "threats.bench:sol-study.118",
@@ -52579,19 +52216,10 @@
   {
    "id": "threats.bench:sol-study.141",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  Bugbot 1. This is a lower bound: only inline comments on the 46",
+   "anchor": "  Bugbot 1. This is a lower bound: only inline comments on the PRs where",
    "value": "1",
    "group": "bench:sol-study",
    "q": "key:bot=cursor[bot]"
-  },
-  {
-   "id": "threats.bench:sol-study.142",
-   "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  Bugbot 1. This is a lower bound: only inline comments on the 46",
-   "value": "46",
-   "group": "bench:sol-study",
-   "q": null,
-   "no_script": "data not published: which 46 PRs a review bot had reviewed is stated in bot_references.json's source note, not listed per PR"
   },
   {
    "id": "threats.bench:sol-study.143",
@@ -53144,66 +52772,6 @@
    "q": "key:prs~set=smoke10+dev10+holdout10+fresh10"
   },
   {
-   "id": "meth.card:key.33",
-   "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "an adversarial critic per set (12 corrections). v2 added the judge's",
-   "value": "12",
-   "group": "card:key",
-   "q": null,
-   "no_script": "data not published: the critics' corrections are applied in the shipped key files but not recorded as a list of corrections",
-   "data": [
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
-  },
-  {
-   "id": "meth.card:key.34",
-   "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "new-defect candidates from 12 judged runs after checking (1 added, 2",
-   "value": "12",
-   "group": "card:key",
-   "q": null,
-   "no_script": "data not published: the v2 check of the judge's new-defect candidates on smoke10/dev10/holdout10 is not recorded per candidate (the exclusions table keeps 26 of the rejections)",
-   "data": [
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
-  },
-  {
-   "id": "meth.card:key.35",
-   "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "new-defect candidates from 12 judged runs after checking (1 added, 2",
-   "value": "1",
-   "group": "card:key",
-   "q": null,
-   "no_script": "data not published: the v2 check of the judge's new-defect candidates on smoke10/dev10/holdout10 is not recorded per candidate (the exclusions table keeps 26 of the rejections)",
-   "data": [
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
-  },
-  {
-   "id": "meth.card:key.36",
-   "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "new-defect candidates from 12 judged runs after checking (1 added, 2",
-   "value": "2",
-   "group": "card:key",
-   "q": null,
-   "no_script": "data not published: the v2 check of the judge's new-defect candidates on smoke10/dev10/holdout10 is not recorded per candidate (the exclusions table keeps 26 of the rejections)",
-   "data": [
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
-  },
-  {
-   "id": "meth.card:key.37",
-   "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "restated, 41 rejected).",
-   "value": "41",
-   "group": "card:key",
-   "q": null,
-   "no_script": "data not published: the v2 check of the judge's new-defect candidates on smoke10/dev10/holdout10 is not recorded per candidate (the exclusions table keeps 26 of the rejections)",
-   "data": [
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
-  },
-  {
    "id": "meth.card:key.38",
    "file": "bench/aacr/docs/METHODOLOGY.md",
    "anchor": "- Counts now: smoke10 34, dev10 37, holdout10 26, fresh10 29 defects — 126",
@@ -53349,18 +52917,6 @@
    ]
   },
   {
-   "id": "meth.card:key.61",
-   "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "5. Adversarial critic per ~15 PRs (10 agents): 6 corrections applied.",
-   "value": "6",
-   "group": "card:key",
-   "q": null,
-   "no_script": "data not published: the critics' corrections are applied in the shipped key files but not recorded as a list of corrections",
-   "data": [
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
-  },
-  {
    "id": "meth.card:key.62",
    "file": "bench/aacr/docs/METHODOLOGY.md",
    "anchor": "7. `assemble.py` → `defects/rest145.json` v1: **379 defects** (55 high / 113",
@@ -53458,7 +53014,7 @@
   {
    "id": "meth.card:key.74",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "931 matched an existing defect, 692 excluded, 16 added, 1 removed by a critic",
+   "anchor": "931 matched an existing defect, 692 excluded, and new defects added once a",
    "value": "931",
    "group": "card:key",
    "q": "key_build:extension/matched_existing",
@@ -53469,7 +53025,7 @@
   {
    "id": "meth.card:key.75",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "931 matched an existing defect, 692 excluded, 16 added, 1 removed by a critic",
+   "anchor": "931 matched an existing defect, 692 excluded, and new defects added once a",
    "value": "692",
    "group": "card:key",
    "q": "key_build:extension/excluded",
@@ -53479,45 +53035,9 @@
    "note": "truth-ext.json excludes 692 extension candidates (572 on R145, 120 on the original 40)"
   },
   {
-   "id": "meth.card:key.76",
-   "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "931 matched an existing defect, 692 excluded, 16 added, 1 removed by a critic",
-   "value": "16",
-   "group": "card:key",
-   "q": null,
-   "no_script": "data not published: the shipped truth-ext.json holds the 15 additions the critics kept; the one they removed is not recorded",
-   "data": [
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
-  },
-  {
-   "id": "meth.card:key.77",
-   "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "931 matched an existing defect, 692 excluded, 16 added, 1 removed by a critic",
-   "value": "1",
-   "group": "card:key",
-   "q": null,
-   "no_script": "data not published: the shipped truth-ext.json holds the 15 additions the critics kept; the one they removed is not recorded",
-   "data": [
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
-  },
-  {
-   "id": "meth.card:key.78",
-   "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "(4 critic corrections in total). Net **394 defects** (56 high / 114 medium /",
-   "value": "4",
-   "group": "card:key",
-   "q": null,
-   "no_script": "data not published: the critics' corrections are applied in the shipped key files but not recorded as a list of corrections",
-   "data": [
-    "archive:quickreview-runs-analysis.tar.zst"
-   ]
-  },
-  {
    "id": "meth.card:key.79",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "(4 critic corrections in total). Net **394 defects** (56 high / 114 medium /",
+   "anchor": "critic had checked them. Net **394 defects** (56 high / 114 medium /",
    "value": "394",
    "group": "card:key",
    "q": "key:defects~set=rest145"
@@ -53525,7 +53045,7 @@
   {
    "id": "meth.card:key.80",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "(4 critic corrections in total). Net **394 defects** (56 high / 114 medium /",
+   "anchor": "critic had checked them. Net **394 defects** (56 high / 114 medium /",
    "value": "56",
    "group": "card:key",
    "q": "key:n_high~set=rest145"
@@ -53533,7 +53053,7 @@
   {
    "id": "meth.card:key.81",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "(4 critic corrections in total). Net **394 defects** (56 high / 114 medium /",
+   "anchor": "critic had checked them. Net **394 defects** (56 high / 114 medium /",
    "value": "114",
    "group": "card:key",
    "q": "key:n_medium~set=rest145"
@@ -56516,7 +56036,7 @@
   },
   {
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\node[agent, text width=2.4cm] (crit) at (10.5,0) {\\textbf{adversarial critics}\\\\ \\footnotesize 10 agents; 6 corrections};",
+   "anchor": "\\node[agent, text width=2.4cm] (crit) at (10.5,0) {\\textbf{adversarial critics}\\\\ \\footnotesize 10 agents; fixes in place};",
    "tokens": [
     "2",
     "10.5",
@@ -56574,7 +56094,7 @@
   },
   {
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\node[agent, text width=2.4cm] (crit2) at (10.5,-4.4) {\\textbf{critics}\\\\ \\footnotesize 11 agents; 1 addition removed};",
+   "anchor": "\\node[agent, text width=2.4cm] (crit2) at (10.5,-4.4) {\\textbf{critics}\\\\ \\footnotesize 11 agents; every addition checked};",
    "tokens": [
     "2",
     "10.5",
@@ -59088,7 +58608,7 @@
   },
   {
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "then a critic per set (12 corrections). Version 2 of smoke10, dev10 and",
+   "anchor": "then a critic per set. Version 2 of smoke10, dev10 and holdout10 extended",
    "tokens": [
     "2"
    ],
@@ -59238,7 +58758,7 @@
   },
   {
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "chunk; a 32k-token prompt budget that prunes 4 of the 40 diffs, as it would",
+   "anchor": "chunk; a 32k-token prompt budget that prunes larger diffs, as it would",
    "tokens": [
     "32k"
    ],
@@ -59349,14 +58869,6 @@
     "12"
    ],
    "why": "a count of test fixtures"
-  },
-  {
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "sampled reviews (seed 20260929), 2026-09-29.}",
-   "tokens": [
-    "20260929"
-   ],
-   "why": "configuration or a method parameter"
   },
   {
    "file": "bench/aacr/paper/benchmark.tex",
@@ -60238,7 +59750,7 @@
   },
   {
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "fresh10 agreed on 78--89\\% of the defects either found. Per 10-PR set the",
+   "anchor": "\\code{new-r2}) agreed on 81--93\\% of the defects either found. Per 10-PR set the",
    "tokens": [
     "10"
    ],
@@ -62579,7 +62091,7 @@
   },
   {
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "5. Adversarial critic per ~15 PRs (10 agents): 6 corrections applied.",
+   "anchor": "5. Adversarial critic per ~15 PRs (10 agents), fixing the key in place.",
    "tokens": [
     "5"
    ],
@@ -65330,7 +64842,7 @@
   },
   {
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "5. Adversarial critic per ~15 PRs (10 agents): 6 corrections applied.",
+   "anchor": "5. Adversarial critic per ~15 PRs (10 agents), fixing the key in place.",
    "tokens": [
     "15"
    ],
@@ -65338,7 +64850,7 @@
   },
   {
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "5. Adversarial critic per ~15 PRs (10 agents): 6 corrections applied.",
+   "anchor": "5. Adversarial critic per ~15 PRs (10 agents), fixing the key in place.",
    "tokens": [
     "10"
    ],
@@ -65522,7 +65034,7 @@
   },
   {
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\node[agent, text width=2.4cm] (crit) at (10.5,0) {\\textbf{adversarial critics}\\\\ \\footnotesize 10 agents; 6 corrections};",
+   "anchor": "\\node[agent, text width=2.4cm] (crit) at (10.5,0) {\\textbf{adversarial critics}\\\\ \\footnotesize 10 agents; fixes in place};",
    "tokens": [
     "10"
    ],
@@ -65546,7 +65058,7 @@
   },
   {
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\node[agent, text width=2.4cm] (crit2) at (10.5,-4.4) {\\textbf{critics}\\\\ \\footnotesize 11 agents; 1 addition removed};",
+   "anchor": "\\node[agent, text width=2.4cm] (crit2) at (10.5,-4.4) {\\textbf{critics}\\\\ \\footnotesize 11 agents; every addition checked};",
    "tokens": [
     "11"
    ],
@@ -67386,6 +66898,91 @@
     "2"
    ],
    "why": "a removal note: a value the pages printed before and no longer print"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "  retried error files; the critics' correction counts (6, 4 and 12; 16",
+   "tokens": [
+    "12",
+    "16",
+    "4",
+    "6"
+   ],
+   "why": "a removal note: a value the pages printed before and no longer print"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "  added, 1 removed: the critics fixed the key in place); T40's v2 check of",
+   "tokens": [
+    "1"
+   ],
+   "why": "a removal note: a value the pages printed before and no longer print"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "  the judge's new-defect candidates (44 / 12 / 1 / 2 / 41); the hand checks",
+   "tokens": [
+    "1",
+    "12",
+    "2",
+    "41",
+    "44"
+   ],
+   "why": "a removal note: a value the pages printed before and no longer print"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "  of 20 parsed Claude Code reviews (45 / 44) and of 40 unmatched Qodo",
+   "tokens": [
+    "20",
+    "40",
+    "44",
+    "45"
+   ],
+   "why": "a removal note: a value the pages printed before and no longer print"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "  comments (12 / 19 / 9); the lens instructions' 32% shortening; 45 of 219",
+   "tokens": [
+    "12",
+    "19",
+    "219",
+    "32%",
+    "45",
+    "9"
+   ],
+   "why": "a removal note: a value the pages printed before and no longer print"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "  flagged comments; Copilot's 6.9% and the 0.4-point precision line; the 46",
+   "tokens": [
+    "0.4",
+    "46",
+    "6.9%"
+   ],
+   "why": "a removal note: a value the pages printed before and no longer print"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "  bot-reviewed PRs; PR-Agent pruning 4 of 40 diffs; and the timings and",
+   "tokens": [
+    "4",
+    "40"
+   ],
+   "why": "a removal note: a value the pages printed before and no longer print"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "- **Recomputed.** Run-to-run agreement on fresh10, 78–89% → 81–93%, now",
+   "tokens": [
+    "78",
+    "81",
+    "89%",
+    "93%"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
   }
  ]
 }

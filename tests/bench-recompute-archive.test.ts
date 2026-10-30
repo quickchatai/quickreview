@@ -504,13 +504,17 @@ describe("the claims manifest's gaps", () => {
     expect(card.filter((c) => !c.q && !(c.alt ?? []).length).map((c) => c.id)).toEqual([]);
   });
 
-  // MUTATION: write a reason as "data not published" with nothing after it — this fails
-  it("says why, for every claim whose data the release does not hold", () => {
-    const unpublished = m.claims.filter((c) =>
-      (c.no_script ?? "").startsWith("data not published"),
-    );
-    expect(unpublished.length).toBeGreaterThan(0);
-    for (const c of unpublished) expect(c.no_script!).toMatch(/^data not published: .{20,}/);
+  // MUTATION: give any claim a "data not published: ..." reason instead of its q — this fails
+  // MUTATION: write a pending-relabel reason as "pending relabel" with nothing after it — this fails
+  it("leaves no claim unchecked but those pending a labelling pass, each with its reason", () => {
+    const unchecked = m.claims.filter((c) => !c.q && !(c.alt ?? []).length);
+    expect(unchecked.length).toBeGreaterThan(0);
+    for (const c of unchecked) expect(c.no_script ?? "").toMatch(/^pending relabel: .{20,}/);
+    const files = new Set(unchecked.map((c) => c.file));
+    expect([...files].sort()).toEqual([
+      "bench/aacr/paper/benchmark.tex",
+      "bench/aacr/paper/quickreview.tex",
+    ]);
   });
 
   // MUTATION: name a check's script that is not in the tree (e.g. "bench/aacr/recompute/missing.py") — this fails

@@ -536,8 +536,21 @@ branch printed the old values:
 - **Removed, because no published file holds them.** The stopped blind
   hunt's 32 drafts; the line-gate sweep's run-time judge-call counts (3,227
   and 10,983), its 2 failed calls and its ~$18 cost; the GPT judge's 2
-  retried error files; and the timings and smoke-test figures in
-  `bench/aacr/README.md`'s development notes.
+  retried error files; the critics' correction counts (6, 4 and 12; 16
+  added, 1 removed: the critics fixed the key in place); T40's v2 check of
+  the judge's new-defect candidates (44 / 12 / 1 / 2 / 41); the hand checks
+  of 20 parsed Claude Code reviews (45 / 44) and of 40 unmatched Qodo
+  comments (12 / 19 / 9); the lens instructions' 32% shortening; 45 of 219
+  flagged comments; Copilot's 6.9% and the 0.4-point precision line; the 46
+  bot-reviewed PRs; PR-Agent pruning 4 of 40 diffs; and the timings and
+  smoke-test figures in `bench/aacr/README.md`'s development notes.
+- **Recomputed.** Run-to-run agreement on fresh10, 78–89% → 81–93%, now
+  over two named pairs of published runs (`fresh10-on` with `lean`,
+  `new-r1` with `new-r2`).
+- **Pending a labelling pass.** The Martian severity table and the
+  technical report's attribution of lost credit are printed as before and
+  marked pending in the manifest: a labelling pass over the published
+  candidates will produce their data.
 
 ## Datasheet (summary)
 

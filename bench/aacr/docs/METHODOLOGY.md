@@ -168,9 +168,8 @@ each file):
   diff and code; every candidate (the hunt, the AACR references with their
   agent-produced reference labels, every comment any reviewer posted in our runs — ours and OCR's,
   anonymised) checked against the code, merged and graded, exclusions recorded;
-  an adversarial critic per set (12 corrections). v2 added the judge's
-  new-defect candidates from 12 judged runs after checking (1 added, 2
-  restated, 41 rejected).
+  an adversarial critic per set. v2 extended the key after checking the
+  judge's new-defect candidates against the code.
 - fresh10 (**v1**): blind hunt, then every comment of both of *our* arms
   (levers off/on) and the AACR references checked by a separate verifier.
   **OCR's comments were not candidates for fresh10.**
@@ -196,7 +195,7 @@ each file):
    978, low 663, OCR 580) anonymised and shuffled, the arm key in a separate file
    the agents were told never to open — checked against the code, merged,
    graded, rejections recorded with a restatement of the claim.
-5. Adversarial critic per ~15 PRs (10 agents): 6 corrections applied.
+5. Adversarial critic per ~15 PRs (10 agents), fixing the key in place.
 6. One PR (`ollama@2ed14f2`) whose default review was retried mid-verification
    had its candidate list renumbered; it was re-verified by one agent so every
    provenance id is right.
@@ -207,8 +206,8 @@ each file):
 1,527 candidates (OpenCode 557, pi-review 395, Codex 390, Claude Code 185 whole
 review texts) — anonymised and shuffled, checked against the code and the
 current truth by 31 verifier agents, then 11 critics checked every addition:
-931 matched an existing defect, 692 excluded, 16 added, 1 removed by a critic
-(4 critic corrections in total). Net **394 defects** (56 high / 114 medium /
+931 matched an existing defect, 692 excluded, and new defects added once a
+critic had checked them. Net **394 defects** (56 high / 114 medium /
 224 low). The same pass added no defect on the original 40, so their files and
 versions were **not changed** (their new exclusions stay in
 `qcr-bench-runs/{orig40-code}/*/truth-ext.json`); only rest145 moved to v2

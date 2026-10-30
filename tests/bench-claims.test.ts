@@ -385,7 +385,9 @@ describe("verify_claims end to end on small tables", () => {
     expect(strict.code).toBe(1);
     expect(strict.out).toContain("'needs-input': 1");
     const allowed = verify(gaps, "--allow-gaps");
-    expect(allowed.out).toContain("result: 7 pass, 0 failing, 2 documented gaps (allowed)");
+    expect(allowed.out).toContain(
+      "result: 7 pass, 0 failing, 0 pending relabel, 2 documented gaps (allowed)",
+    );
     expect(allowed.code).toBe(0);
     const bare = writeManifest("gaps-bare.json", [
       ...good,
@@ -399,6 +401,33 @@ describe("verify_claims end to end on small tables", () => {
       claim("smoke", "its smoke ran 12 minutes", "12", "mart:defects"),
     ]);
     expect(verify(wrong, "--allow-gaps").code).toBe(1);
+  });
+
+  // MUTATION: put "pending-relabel" in verify_claims.FAIL — this fails
+  // MUTATION: read every no_script reason as pending relabel (drop the PENDING_RELABEL prefix test) — this fails
+  it("reports a claim pending relabel with its reason and passes without --allow-gaps", () => {
+    const pending = writeManifest("pending.json", [
+      ...good,
+      claim("seven", "The report has 7 more.", "7", null, {
+        no_script: "pending relabel: a labelling pass will produce the data",
+      }),
+      claim("smoke", "its smoke ran 12 minutes", "12", null, {
+        no_script: "pending relabel: a labelling pass will produce the data",
+      }),
+    ]);
+    const r = verify(pending);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(
+      "PENDING-RELABEL x2: pending relabel: a labelling pass will produce the data",
+    );
+    expect(r.out).toContain("2 pending relabel, 0 documented gaps");
+    const other = writeManifest("pending-not.json", [
+      ...good,
+      claim("seven", "The report has 7 more.", "7", null, {
+        no_script: "planted: not computed yet",
+      }),
+    ]);
+    expect(verify(other).code).toBe(1);
   });
 
   it("fails the lint when a listed file prints a number the manifest does not account for", () => {

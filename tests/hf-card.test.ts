@@ -239,7 +239,7 @@ describe("the card states the release's verified state", () => {
       const card = render(`, repo_ref='bench-data-v1', verify_report=${JSON.stringify(clean)}`);
       expect(card).toContain("Every one of them passes");
       expect(card).toContain(
-        "On this release: all 6 claims pass, with 0 mismatch, 0 error, 0 missing source and no claim left unchecked.",
+        "On this release: all 6 checked claims pass, with 0 mismatch, 0 error, 0 missing source and no claim left unchecked.",
       );
       expect(card).not.toContain("--allow-gaps");
       const gap = join(dir, "gap.json");
@@ -253,6 +253,17 @@ describe("the card states the release's verified state", () => {
       const card2 = render(`, repo_ref='bench-data-v1', verify_report=${JSON.stringify(gap)}`);
       expect(card2).not.toContain("Every one of them passes");
       expect(card2).not.toContain("no claim left unchecked");
+      const relabel = join(dir, "relabel.json");
+      writeFileSync(
+        relabel,
+        JSON.stringify({
+          results: [...Array(5).fill({ status: "pass" }), { status: "pending-relabel" }],
+          consistency: [],
+        }),
+      );
+      const card3 = render(`, repo_ref='bench-data-v1', verify_report=${JSON.stringify(relabel)}`);
+      expect(card3).toContain("Every one of them passes, except 1 that wait for a labelling pass");
+      expect(card3).toContain("no claim left unchecked but the 1 pending a labelling pass");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -72,7 +72,7 @@ several sources.
   extension). That pass checked 1,527 of their comments:
   - 931 matched an existing defect;
   - 692 were excluded;
-  - 16 new defects were added, of which the critics removed 1. Net +15, taking
+  - new defects were added after critics checked each one: net +15, taking
     the total to 394.
 
   A late tool can therefore only score on defects someone earlier also found,
@@ -191,8 +191,8 @@ the basis of a decision.
 - **Who built it.** Claude agents did every step: a hunt, then a verifier,
   then a critic that spot-checked about 15 PRs per group, then the extension
   verifier, then extension critics.
-- **What the critics changed.** They corrected 6 things in the first pass and
-  4 in the extension.
+- **What the critics changed.** They fixed the key in place; the release
+  holds the corrected key, not a list of the corrections.
 - **Human review so far.** None. The only other labelled data is the
   quality labels on AACR's reference comments for the 30 original PRs
   (`sets/*.labels.json`, 253 references), and they are not human data
@@ -329,7 +329,7 @@ same budget.
 - **Single run per arm:** the headline is one run per reviewer. In earlier
   repeat runs of our own reviewer (the experiment log), two runs of the
   same arm differed by 1.5–2 found defects per 10-PR set, with run-to-run
-  agreement of 78–89%. We have no variance estimate for the other tools.
+  agreement of 81–93% on two pairs of fresh10 runs. We have no variance estimate for the other tools.
   - Default's lead over the next reviewer (18 points, 84% vs 66%) and over
     the third-party tools (22–36 points) is far larger than that noise.
   - Gaps under about 5 points are not. That covers most comparisons among
@@ -416,8 +416,8 @@ documented in `../README.md`.
   least 80 of those 361 (22%) are rewrites of comments an AI review bot
   posted on the original PR: GitHub Copilot 23, CodeRabbit 20, cubic 20,
   Sourcery 5, LlamaPReview 4, Gemini Code Assist 4, Ellipsis 3, Cursor
-  Bugbot 1. This is a lower bound: only inline comments on the 46
-  PRs where a bot reviewed were checked.
+  Bugbot 1. This is a lower bound: only inline comments on the PRs where
+  a bot reviewed were checked.
   - *Effect on AACR's metric.* A bot that wrote a reference is credited for
     repeating its own earlier comment, so any AACR comparison that includes
     those products is tilted towards them on those PRs. For our reviewers

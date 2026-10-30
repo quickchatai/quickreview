@@ -601,7 +601,7 @@ comments that an AI review bot posted on the original PR, not of a human's:
 GitHub Copilot 23, CodeRabbit 20, cubic 20, Sourcery 5, LlamaPReview 4,
 Gemini Code Assist 4, Ellipsis 3 and Cursor Bugbot 1. That raises the
 AI-written share of the list on these PRs from 75\% to at least 80\%. To find
-them, each human reference on the 46 PRs where a bot had reviewed was paired
+them, each human reference on a PR where a bot had reviewed was paired
 with the bot or human inline comment on the same file, within $\pm5$ lines,
 with the highest overlap of content words; every pair at an overlap of 0.15
 or more was read, and each was the same concern reworded, often with the
@@ -783,7 +783,7 @@ outputs were off limits to the hunt throughout.
   \node[data, text width=3.2cm] (com) at (-0.3,-2.0) {\textbf{reviewer comments}\\ \footnotesize default, low, OCR: 2{,}221};
   \node[box, text width=2.4cm] (anon) at (3.7,0) {\textbf{anonymise}\\ \footnotesize strip authorship, shuffle; key in a separate file};
   \node[agent, text width=2.7cm] (ver) at (7.1,0) {\textbf{independent verifiers}\\ \footnotesize 29 agents; each candidate checked against the code; merge, grade, or exclude with a reason};
-  \node[agent, text width=2.4cm] (crit) at (10.5,0) {\textbf{adversarial critics}\\ \footnotesize 10 agents; 6 corrections};
+  \node[agent, text width=2.4cm] (crit) at (10.5,0) {\textbf{adversarial critics}\\ \footnotesize 10 agents; fixes in place};
   \node[data, text width=2.4cm] (v1) at (13.6,0) {\textbf{key v1}\\ \footnotesize 379 defects\\ 2{,}118 exclusions};
   \draw[flow] (hunt.east) -- ++(0.3,0) |- (anon.west);
   \draw[flow] (refs) -- (anon);
@@ -794,7 +794,7 @@ outputs were off limits to the hunt throughout.
 
   \node[data, text width=2.7cm] (com2) at (3.7,-4.4) {\textbf{4 later reviewers}\\ \footnotesize Codex, OpenCode, pi-review, Claude Code: 1{,}527 comments};
   \node[agent, text width=2.7cm] (ext) at (7.1,-4.4) {\textbf{extension verifiers}\\ \footnotesize 31 agents, anonymised; may only add};
-  \node[agent, text width=2.4cm] (crit2) at (10.5,-4.4) {\textbf{critics}\\ \footnotesize 11 agents; 1 addition removed};
+  \node[agent, text width=2.4cm] (crit2) at (10.5,-4.4) {\textbf{critics}\\ \footnotesize 11 agents; every addition checked};
   \node[data, text width=2.4cm, very thick] (v2) at (13.6,-4.4) {\textbf{key v2}\\ \footnotesize 394 defects\\ (+15; none changed)};
   \draw[flow] (com2) -- (ext);
   \draw[flow] (ext) -- (crit2);
@@ -833,7 +833,7 @@ final comparison's gpt-6.1-sol runs were never candidates
   \item \textbf{Adversarial critic}: 10 agents, one per about 15 PRs,
   spot-checked every high-severity defect, a sample of other defects,
   exclusions, merges and grades against the code, and fixed the key in
-  place: 6 corrections.
+  place.
   \item \textbf{Repair and assembly}: one PR's candidate list was renumbered
   after verification and re-verified by one agent so every provenance id is
   correct; assembly into \code{defects/rest145.json} v1, \textbf{379 defects}
@@ -869,8 +869,8 @@ and checked against the code and the current key by 31 verifier agents. A
 Claude Code review is prose, so each whole review is one candidate whose
 claims are checked one by one (which is why the outcomes below sum to more
 than 1{,}527). Results: 931 matched an existing defect, 692 excluded with
-reasons (572 of them on R145), 16 added. Eleven critics checked every
-addition and removed one (4 critic corrections in total). Net \textbf{+15
+reasons (572 of them on R145), and a few added; eleven critics checked
+every addition before it was kept. Net \textbf{+15
 defects}: R145 v2 has \textbf{394 defects} (56 high / 114 medium / 224 low).
 The assembly script refused to write if any existing defect was dropped or
 changed, and the version number was bumped so verdicts from the two versions
@@ -902,10 +902,9 @@ runs were not in it (Section~\ref{sec:outofpool}).
 T40's keys were built earlier (2026-09-26/27) with the same shape: a blind
 hunt per PR, then a consolidator checking the hunt, the AACR references
 (with their labels) and every anonymised comment from our runs and OCR's,
-then a critic per set (12 corrections). Version 2 of smoke10, dev10 and
-holdout10 added the judge's ``new defect'' candidates after checking them
-against the code: 44 candidates from 12 judged runs, 1 added, 2 restated
-existing defects, 41 rejected. fresh10 (v1) was built from a blind hunt and
+then a critic per set. Version 2 of smoke10, dev10 and holdout10 extended
+the key after checking the judge's ``new defect'' candidates against the
+code. fresh10 (v1) was built from a blind hunt and
 the comments of both \qcr{} arms plus the references; \textbf{OCR's comments
 were not candidates for fresh10}, so OCR may be under-credited on those 10
 PRs.
@@ -1275,7 +1274,7 @@ receives it.
   \item \textbf{PR-Agent 0.46.0}~\cite{pragent}, new to the benchmark: its
   shipped defaults and full GitHub-App flow (\code{/describe},
   \code{/review}, \code{/improve}; at most 3 key issues and 3 suggestions per
-  chunk; a 32k-token prompt budget that prunes 4 of the 40 diffs, as it would
+  chunk; a 32k-token prompt budget that prunes larger diffs, as it would
   for any user), reading the PR title and body as it does on GitHub; on
   gpt-6-sol and on gpt-6.1-sol.
   \item \textbf{Claude Code} was \emph{not} varied. It stays at its
@@ -1509,12 +1508,9 @@ the AACR metric scores only parsed comments, so a finding without a line
 number is lost there. The parser read 174 of the 185 reviews (the other 11
 came back through the findings tool: 3 with findings, 8 empty) and
 extracted 402 located findings (mean 2.3 per review, median 2, maximum 9; 29
-reviews with none, mostly ``I found no bugs''). A hand check of 20 random
-reviews found 45 findings, of which the parser extracted 44 with the right
-path and line, and nothing that was not a finding; the miss names a file
-but no line, which the rules leave out by design.\footnote{Computed from
-\code{bench.claude\_prose\_parsed} in each result file and a reading of 20
-sampled reviews (seed 20260929), 2026-09-29.}
+reviews with none, mostly ``I found no bugs''); a finding that names a
+file but no line is left out by design.\footnote{Computed from
+\code{bench.claude\_prose\_parsed} in each result file, 2026-09-29.}
 
 \subsection{Execution and cost accounting}
 \label{sec:cost-accounting}
@@ -1942,8 +1938,8 @@ no token, time or finding budget applies; a per-file coverage check that
 sends a targeted sweep to changed source files no lens commented on; a
 deterministic merge of duplicate findings into one comment per root cause;
 the baseline, sweep and behaviour-comparison lenses at high reasoning
-effort; and a prompt cleanup that cut the composed lens instructions by 32\%
-in tokens.
+effort; and a prompt cleanup that shortened the composed lens
+instructions.
 
 Which sets its development used is listed at the head of
 Section~\ref{sec:threats}. The build ran once on all 185 PRs and was judged
@@ -2060,9 +2056,7 @@ such flags each; the final runs leave 4 to 55
 (Table~\ref{tab:outofpool}).\footnote{The earlier runs' residue is on T40,
 whose keys were built from older runs: OpenCode 32 and Codex CLI 8 flags
 there. Computed from the \code{new\_defect} field of the primary judge's
-verdict files, 2026-10-01; the 219 flagged comments of the final runs, and 45
-groups where several reviewers flag the same file of the same PR, are listed
-in the analysis notes.} So the key probably misses some real defects that
+verdict files, 2026-10-01; the final runs flag 219 comments in all.} So the key probably misses some real defects that
 only the final runs found, and every final reviewer's recall is understated
 by its share of them. In absolute terms the default has the most flags (61);
 per comment open-code-review (8.6 per 100), the panel (8.0) and Codex CLI
@@ -2439,8 +2433,9 @@ recall 65--82\%; most of the spread is one PR
 (\code{wavetermdev\_\_waveterm@61b0fb4}, 2 to 4 of its 5 defects), and the one
 high-severity defect was found in every run. Earlier repeat runs of older
 \qcr{} builds on T40 differed by a few found defects (54.5 vs
-52.0 of 97 over 30 PRs for two runs of one build), and pairs of runs on
-fresh10 agreed on 78--89\% of the defects either found. Per 10-PR set the
+52.0 of 97 over 30 PRs for two runs of one build), and two pairs of runs on
+fresh10 (\code{fresh10-on} with \code{lean}, \code{new-r1} with
+\code{new-r2}) agreed on 81--93\% of the defects either found. Per 10-PR set the
 two runs of one build differed by 1.5--2 found defects, 4--8 points of that
 set's 26--37 defects.\footnote{\code{RESULTS.md}, ``Noise'': 15.5/17.0,
 21.0/19.0 and 18.0/16.0 found on smoke10 (34 defects), dev10 (37) and
@@ -2573,9 +2568,7 @@ of cubic's and 2 of Ellipsis's. Scoring Copilot against rewrites of its own
 comments would measure whether it repeats itself, not whether it reviews
 well, so those 42 are removed for every reviewer, and a comment whose only
 match was a removed reference counts as unmatched.\footnote{\code{compare.py
--{}-exclude-refs bench/aacr/bot\_references.json} on these 19 PRs. Dropping
-such comments from the count instead of counting them as unmatched puts
-Copilot's precision at 6.9\%.}
+-{}-exclude-refs bench/aacr/bot\_references.json} on these 19 PRs.}
 
 \begin{table}[tbp]
   \centering
@@ -3416,11 +3409,8 @@ there.
 feature targets; the bugs are LLM-injected into real PRs, not organic. The
 vendor reviews are January 2026 versions; \qcr{} is a build of October 2026.
 The judge is ours, not Qodo's. A real defect that is not in the issue list
-counts as a false positive, as on Martian: in a hand check of the 40
-unmatched comments of the 2026-10-02 build on ten PRs (one model, the tool
-hidden but recognisable by style), 12 were real defects the list lacks, 19
-true but minor, 9 restated a listed issue or duplicated a credited comment,
-and none was wrong. On the 31 PRs that none of the frozen build's
+counts as a false positive, as on Martian, so some unmatched comments may be
+real defects the list lacks. On the 31 PRs that none of the frozen build's
 development used (Section~\ref{sec:threats}), its recall rose from 52.5\% to 60.3\% over
 the 2026-10-02 build ($+7.8$ points, 95\% CI $+2.1$ to $+14.1$, paired
 bootstrap over PRs) and its F1 from 49.7 to 53.0, against qodo-exhaustive's
@@ -3501,8 +3491,7 @@ documentation, not its maintainers' recommendation; corrections from
 maintainers will be published as errata.
 
 \paragraph{Threat 4: no human-verified key and no human-validated judge (severe; unmeasured).}
-Claude agents did every step of the key; critics changed 6 things in the
-first pass and 4 in the extension. No human has checked any part of the
+Claude agents did every step of the key, the critics included. No human has checked any part of the
 defect key, any judge verdict, or the AACR reference labels on the 30
 original PRs, which agents produced (Section~\ref{sec:reflimits}). If
 the verifier accepted plausible-but-wrong defects, recall is wrong for every
@@ -3667,7 +3656,7 @@ archived judge files with no model call, and \code{bench/aacr/README.md}
 (``Reproduce'') gives the three ways in: re-score the slim bundle with no key,
 re-judge the archived reviews, or re-run every arm, on a ChatGPT login or on
 one's own API keys. The generated charts and the readable renderings of the
-keys are in the dataset. The file names some footnotes cite --- \code{FULL-BENCHMARK.md}, \code{RESULTS.md}, \code{EXTERNAL-BENCHMARKS.md}, \code{MARTIAN-CRITIQUE.md}, \code{RUNS.md}, \code{REVIEW-benchmark.md} --- are the study's working notes, not part of the public repository or the dataset. The scratch analyses under \code{wp-data/} and \code{paper-data/}, with the key-construction analysis scripts, ship in the run archive's \code{analysis} volume. Every number this paper takes from the working notes is stated here, and \code{bench/aacr/claims.json} lists each published number with the data and script behind it; a few rest on records the release does not hold (hand checks, run-time judge call counts, third-party leaderboards), and the manifest names each with its reason. Ratios and differences of costs are computed from the unrounded per-PR costs, so they can differ by one unit from a ratio of the rounded figures printed beside them.
+keys are in the dataset. The file names some footnotes cite --- \code{FULL-BENCHMARK.md}, \code{RESULTS.md}, \code{EXTERNAL-BENCHMARKS.md}, \code{MARTIAN-CRITIQUE.md}, \code{RUNS.md}, \code{REVIEW-benchmark.md} --- are the study's working notes, not part of the public repository or the dataset. The scratch analyses under \code{wp-data/} and \code{paper-data/}, with the key-construction analysis scripts, ship in the run archive's \code{analysis} volume. Every number this paper takes from the working notes is stated here, and \code{bench/aacr/claims.json} lists each published number with the data and script behind it. A number the released data could not check was cut or reworded; the only exceptions are the Martian severity table (Section~\ref{sec:martianwhy}) and the companion report's attribution of lost credit, which wait for a labelling pass over the published candidates and are marked so in the manifest. Ratios and differences of costs are computed from the unrounded per-PR costs, so they can differ by one unit from a ratio of the rounded figures printed beside them.
 
 \paragraph{Run archive.} The run data are published on Hugging Face only,
 as the dataset \url{https://huggingface.co/datasets/quickchatai/quickreview-bench}
@@ -4957,7 +4946,7 @@ evaluation (\code{compare.py -{}-exclude-refs bot\_references.json}). A
 comment whose only match was a removed reference now matches nothing; we
 count it as unmatched, which is what the metric would have done had the
 reference never been on the list. Dropping such comments from the count
-instead changes precision by at most 0.4 points.
+instead would raise precision.
 
 \begin{table}[h]
   \centering
