@@ -21,7 +21,9 @@
 //   4. No green CI at this head ⇒ APPROVE is unavailable. The review still
 //      posts — as a COMMENT with the approval withheld and a plain note saying
 //      so — and the PR is re-queued when CI goes green. The classifier lives
-//      in cigate.ts.
+//      in cigate.ts. The retry's APPROVE at that head, with nothing new since
+//      and nothing inline, posts as one line (`givenApproval`): the withheld
+//      COMMENT already carries the review.
 //
 // All of them are installed on the one MutationGate (gate.ts `MutationGuard`),
 // not on a call site, so no posting route in the daemon can reach GitHub
@@ -195,6 +197,38 @@ export function hasNewEvidence(mark: ReviewedHeadRow | undefined, headSha: strin
   // Re-stamping the mark clears the reply, so this cannot loop.
   if (mark.last_author_reply_at && mark.last_author_reply_at >= mark.reviewed_at) return true;
   return false;
+}
+
+// ---- the withheld approval, given ------------------------------------------
+
+/**
+ * Is this APPROVE the one a review at this head withheld for CI? Its COMMENT
+ * already carries the whole review and promised the approval (guard 4's
+ * note), so the retry's approval is that promise kept, not a second review:
+ * the mark sits on this head with an APPROVE verdict over a posted COMMENT,
+ * nothing new has landed since, and the approval carries no inline comments.
+ */
+export function givenApproval(
+  mark: ReviewedHeadRow | undefined,
+  headSha: string,
+  body: ReviewBody,
+): boolean {
+  if (!mark || hasNewEvidence(mark, headSha)) return false;
+  if ((mark.verdict ?? "").toUpperCase() !== "APPROVE" || mark.posted_event !== "COMMENT")
+    return false;
+  return (body.comments ?? []).length === 0;
+}
+
+/** The given approval's body: one line, then the original's footer and
+ * posting marker exactly as they were (the receipt and the gate read the
+ * marker). */
+export function givenApprovalBody(original: string, headSha: string): string {
+  const line =
+    `CI is green at \`${headSha.slice(0, 7)}\`, so this gives the approval the ` +
+    "review above was waiting on. That review stands as written.";
+  const footer = original.search(/^_Automated review by /m);
+  const tail = footer >= 0 ? footer : original.search(/<!--\s*qcr-post:/);
+  return tail >= 0 ? `${line}\n\n${original.slice(tail)}` : line;
 }
 
 // ---- the guard installed on the gate --------------------------------------
@@ -434,6 +468,18 @@ function makeAppPostingGuard(deps: GuardDeps): MutationGuard {
         }
         // Green (or invisible) CI: no approval is being withheld here any more.
         if (ci === "green") deps.store.clearApprovalWithheld(pr);
+      }
+
+      // --- the withheld approval, given: one line, not a second review ---
+      if (approval && givenApproval(deps.store.reviewedHead(pr), head, body)) {
+        log(`guard: #${pr} APPROVE given for the review withheld at ${head.slice(0, 7)}`);
+        return {
+          intent: {
+            ...intent,
+            body: { ...body, body: givenApprovalBody(body.body ?? "", head) },
+            note: `post APPROVE review on #${pr} (the approval its review withheld for CI)`,
+          },
+        };
       }
       return {};
     },
