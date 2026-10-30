@@ -21,12 +21,19 @@ refuses to enter it), `ext-cache/`, `ext-data/`, `scratch-archive/`
 (third-party data, regenerable clones, scratch), the reviewed repos' code
 (`repo.git`, `base/`, `head/`, `pr.diff` — refetch them from repo@commit), the
 Elo packs (whole files of the reviewed repos; `elo.py pack` regenerates them),
-Martian's own data, every withheld family (own-repo reviews, aborted runs),
-and third-party comment text (vendor review comments, harvested Copilot
-reviews, SWE-PRBench's human review comments), which is replaced by a marker
-with a hash and a link. A file that is a copy of another shipped file (a
-hardlink, a posting-policy variant's or an assembled run's copy of its source
-run) ships once; its run's `SOURCE-COPIES.json` maps it to the copy that ships.
+Martian's own data, every withheld family (own-repo reviews, aborted runs,
+the `pc2-*` check the authors withheld), raw model session logs of every kind
+(session_logs.py: transcripts, event streams, session process logs, the
+sandbox command logs and the prompt files; each JSONL one ships as its
+numbers-only extract `*.pruned.jsonl` instead, priced against the full
+stream while it is written), and third-party comment text (vendor review
+comments, harvested Copilot reviews, SWE-PRBench's human review comments),
+which is replaced by a marker with a hash and a link. A file that is a copy
+of another shipped file (a hardlink, a posting-policy variant's or an
+assembled run's copy of its source run) ships once; its run's
+`SOURCE-COPIES.json` maps it to the copy that ships. The answer key's volume
+also carries `key-data/candidate-maps.json` and `key-data/pr-diffstats.json`
+(key_data.py).
 
 Every shipped text file is rewritten while it streams, in this order, and
 nothing else in it changes:
@@ -48,6 +55,10 @@ nothing else in it changes:
     `<private>`, private host names ($QCR_SCRUB_HOSTS) -> `<private-host>`;
   * the content rules ($QCR_SCRUB_CONTENT_RULES, scrub_extra.py): the
     stand-ins the public repository's history carries;
+  * the authors' tracker (scrub_extra.TICKET_RULES): ticket ids and paths
+    into it -> `<ticket>`;
+  * in JSON files, every `"qcr_commit"` -> the public main commit
+    (--commit-remap; remap_commits), with `"qcr_commit_on_public_main"`;
   * encrypted reasoning blobs are blanked, the record kept: the value of every
     `encrypted_content` (OpenAI), every base64 `thinkingSignature` and
     `signature` (Anthropic) becomes the empty string.
@@ -87,8 +98,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import key_data as KD  # noqa: E402
 import release_catalogue as RC  # noqa: E402
 import scrub_extra as SX  # noqa: E402
+import session_logs as SL  # noqa: E402
 
 GIB = 1 << 30
 MIN_FREE = 8 * GIB
@@ -98,6 +111,11 @@ OM = "open-models"
 # runs whose reviewed code is QuickReview's own private repository (the
 # self-review set): withheld whatever the catalogue says (fail closed)
 PRIVATE_RUNS = ("pc1-self-review-pc1",)
+# run families the authors withheld although they review public PRs: the
+# post-cleanup regression check of a development build (`pc2-*`, its AACR and
+# SWE-PRBench parts alike), withheld whatever the catalogue says (fail closed)
+OWNER_WITHHELD_PREFIXES = ("pc2-",)
+OWNER_WITHHELD = "withheld by the authors: a regression check of a development build (backs no published number)"
 MARTIAN_SRC = "https://github.com/withmartian/code-review-benchmark/blob/e616e84/offline/results/benchmark_data.json"
 QODO_VENDORS = {"qodo-exhaustive", "qodo-precise", "augment", "copilot", "cursor", "greptile", "codex", "coderabbit", "sentry"}
 
@@ -211,6 +229,9 @@ NAME_RULES = _identity_rules() + [
     ("pi-login-volume", re.compile(rb"companion-pihome"), b"<pi-login-volume>", b"companion-pihome"),
     *_private_token_rules(),
     CONTENT,
+    # the authors' tracker (scrub_extra.TICKET_RULES): after the content rules,
+    # which may spell a tracker id of their own
+    *SX.ticket_rules(),
 ]  # the rules that also apply to member names
 RULES = NAME_RULES + [
     ("blob-encrypted_content", re.compile(rb"(encrypted_content" + ESCQ + rb")" + B64 + rb"+"), rb"\1", b"encrypted_content"),
@@ -347,10 +368,15 @@ def drop_reason(rel: str) -> str | None:
             return "scheduler state (runs/.slots)"
         if any(run == r or run.startswith(r + ".") for r in PRIVATE_RUNS):
             return "withheld: QuickReview reviewing our own repositories (not a benchmark run)"
+        if run.startswith(OWNER_WITHHELD_PREFIXES):
+            return OWNER_WITHHELD
         if ".martian" in run and (name == "published-benchmark_data.json" or "golden_comments" in inner):
             return "third-party: Martian's own data (pin withmartian/code-review-benchmark@e616e84)"
     if parts[0] == "elo" and len(parts) > 2 and parts[2] == "packs":
         return ELO_PACKS
+    sl = SL.classify(rel)
+    if sl is not None and sl[1] is None:
+        return sl[0]  # a session log with no extract (prompts, process logs, unknown log kinds)
     if parts[0].endswith("-code"):
         if len(parts) > 2 and parts[2] in ("repo.git", "base", "head"):
             return "regenerable: reviewed-repo code (refetch repo@commit)"
@@ -603,13 +629,36 @@ def plan_copies(tree: Tree, shipped: list[str], only: set[str] | None = None) ->
     return out
 
 
+QCR_COMMIT = re.compile(rb'("qcr_commit"\s*:\s*)"([0-9a-f]{7,40})(-dirty)?"')
+
+
+def remap_commits(data: bytes, remap: dict, counts) -> bytes:
+    """Every `"qcr_commit": "<sha>"` of a JSON text, remapped to the public
+    main commit the history rewrite made of it (release_catalogue.remap_commit),
+    with a `qcr_commit_on_public_main` beside it: true when remapped, false
+    when the commit has no public equivalent (the recorded id is kept), null
+    when the remap does not know the commit. The text around it is untouched."""
+    if b'"qcr_commit"' not in data:
+        return data
+
+    def sub(m):
+        f = RC.commit_fields((m.group(2) + (m.group(3) or b"")).decode(), remap)
+        on = f["qcr_commit_on_public_main"]
+        counts[{True: "qcr_commit remapped to public main", False: "qcr_commit not on public main",
+                None: "qcr_commit unknown to the remap"}[on]] += 1
+        return (m.group(1) + json.dumps(f["qcr_commit"]).encode()
+                + b', "qcr_commit_on_public_main": ' + json.dumps(on).encode())
+    return QCR_COMMIT.sub(sub, data)
+
+
 class Processor:
     """Decides and transforms one file; shared by archive and slim."""
 
-    def __init__(self, src: Path, om: Path | None, cat: RC.Catalogue):
+    def __init__(self, src: Path, om: Path | None, cat: RC.Catalogue, remap: dict | None = None):
         self.src, self.om, self.cat = src, om, cat
         self.tree = Tree(src, om)
         self.tp = ThirdParty(src)
+        self.remap = remap or {}
 
     def family(self, rel: str) -> dict | None:
         """The run family of a file's unit. A file beside the run dirs
@@ -632,13 +681,32 @@ class Processor:
             return RC.Catalogue.withheld_reason(f)
         return drop_reason(rel)
 
+    @staticmethod
+    def arc_rel(rel: str) -> str:
+        """Where a shipped file lands: a session log's extract at its own name,
+        anything else at its path."""
+        sl = SL.classify(rel)
+        return SL.extract_name(rel) if sl is not None and sl[1] else rel
+
     def process(self, rel: str, counts: collections.Counter) -> tuple[bytes | None, str | None]:
-        """(content, None) to ship, or (None, reason) to leave out."""
+        """(content, None) to ship, or (None, reason) to leave out. A session
+        log ships as its numbers-only extract (session_logs.py); ship it at
+        arc_rel(rel)."""
         r = self.drop(rel)
         if r:
             return None, r
         p = self.tree.fs(rel)
         data = p.read_bytes()
+        sl = SL.classify(rel)
+        if sl is not None and sl[1]:
+            out = SL.extract(sl[1], data)
+            if sl[1] == "pi":
+                check_pi_cost(data, out, counts)
+            counts[f"session-log extracts ({sl[1]})"] += 1
+            counts["session-log bytes left out"] += len(data)
+            data = rewrite(out, counts)
+            counts["files-text"] += 1
+            return data, None
         parts = rel.split("/")
         rp = run_parts(rel)
         if rp and rp[1]:
@@ -653,12 +721,29 @@ class Processor:
                     return None, "third-party: the judge transcript quotes harvested Copilot reviews (verdicts kept)"
         if parts[0].endswith("-code") and parts[-1] == "meta.json":
             data = self.tp.pr_body(data, counts)
+        if rel.endswith(".json"):
+            data = remap_commits(data, self.remap, counts)
         if is_text(data, rel):
             data = rewrite(data, counts)
             counts["files-text"] += 1
         else:
             counts["files-binary"] += 1
         return data, None
+
+
+def check_pi_cost(full: bytes, pruned: bytes, counts) -> None:
+    """compare.py prices a case from its extract exactly as from its full
+    event stream (the lens ledger, a separate file, adds the same to both):
+    every extract is priced both ways while it is written, and a difference
+    is counted, never hidden."""
+    import compare
+    # speed only: every line pi_cost reads names one of these
+    keep = (b'"message_end"', b'"tool_execution_', b'"kind"')
+    a = compare.pi_cost_lines([ln for ln in full.splitlines() if any(k in ln for k in keep)])
+    b = compare.pi_cost_lines(pruned.splitlines())
+    counts["pi-cost checked"] += 1
+    if abs(a - b) > 1e-9:
+        counts["pi-cost differs (extract vs full)"] += 1
 
 
 # ---------------------------------------------------------------- volumes
@@ -728,10 +813,14 @@ class VolumeWriter:
         return self.volumes
 
 
+def load_remap(path: str | None) -> dict:
+    return json.loads(Path(path).read_text()) if path else {}
+
+
 def build_group(args) -> dict:
-    src, om, catp, out, group, files, copies, level, cap, threads = args
+    src, om, catp, out, group, files, copies, level, cap, threads, remap = args
     src, out = Path(src), Path(out)
-    proc = Processor(src, Path(om) if om else None, RC.Catalogue.load(catp))
+    proc = Processor(src, Path(om) if om else None, RC.Catalogue.load(catp), load_remap(remap))
     counts = collections.Counter()
     dropped = collections.Counter()
     w = VolumeWriter(out, f"quickreview-runs-{group}", level, cap, threads)
@@ -739,7 +828,9 @@ def build_group(args) -> dict:
     by_unit = collections.defaultdict(dict)
     for rel in files:
         if rel in copies:
-            by_unit[unit_prefix(rel)][rel[len(unit_prefix(rel)) + 1:]] = copies[rel]
+            # a session log's copy maps to its source's extract, by the same rule
+            a, c = proc.arc_rel(rel), proc.arc_rel(copies[rel])
+            by_unit[unit_prefix(a)][a[len(unit_prefix(a)) + 1:]] = c
             dropped["a copy of another shipped file (listed in its run's SOURCE-COPIES.json)"] += 1
             continue
         try:
@@ -750,7 +841,10 @@ def build_group(args) -> dict:
         if reason:
             dropped[reason] += 1
             continue
-        w.add(rewrite_name(rel, counts), data, proc.tree.fs(rel).stat().st_mtime)
+        sl = SL.classify(rel)
+        if sl is not None:
+            dropped[sl[0]] += 1  # the session log itself; its extract ships in its place
+        w.add(rewrite_name(proc.arc_rel(rel), counts), data, proc.tree.fs(rel).stat().st_mtime)
     for unit, m in sorted(by_unit.items()):
         doc = {"note": "Files of this run that are identical to another shipped file (a hardlink of it, or a "
                        "byte-identical copy of the same path in the run it was derived from) are not repeated in "
@@ -758,15 +852,42 @@ def build_group(args) -> dict:
                        "volume.",
                "files": {rewrite_name(k, counts): rewrite_name(v, counts) for k, v in sorted(m.items())}}
         w.add(rewrite_name(f"{unit}/SOURCE-COPIES.json", counts), (json.dumps(doc, indent=1) + "\n").encode(), 0)
+    if group == KEY_GROUP:
+        for name, data in key_data_files(src, counts).items():
+            w.add(name, data, time.time())
     vols = w.finish()
     return {"group": group, "volumes": [{**v, "path": str(v["path"]), "members": dict(v["members"])} for v in vols],
             "counts": dict(counts), "dropped": dict(dropped), "seconds": round(time.time() - t0)}
 
 
+KEY_GROUP = "answer-key"  # the family whose volume carries key-data/
+
+
+def key_data_files(src: Path, counts) -> dict[str, bytes]:
+    """key-data/candidate-maps.json and key-data/pr-diffstats.json
+    (key_data.py): which reviewer raised each key-building candidate, and each
+    PR's diff.stat size, as data, rewritten like every other text."""
+    docs = {
+        "key-data/candidate-maps.json": {
+            "note": "Which earlier run or reviewer raised each candidate the answer key was built from "
+                    "(candidates-key.json: rest145's first key, C1..Cn -> run; new-candidates-key.json: the "
+                    "extended key, N1..Nn -> reviewer), with the candidate's file, lines and text. One row per "
+                    "candidate; the same rows as the Hugging Face config `aacr_candidates`.",
+            "rows": KD.candidate_rows(str(src))},
+        "key-data/pr-diffstats.json": {
+            "note": "Each PR's size as the papers bucket it: files changed, insertions and deletions from the "
+                    "summary line of its `git diff --stat base head` (diff.stat in the case dir). The same rows "
+                    "as the Hugging Face config `pr_diffstats`.",
+            "rows": KD.diffstat_rows(str(src))},
+    }
+    return {k: rewrite((json.dumps(v, indent=1, ensure_ascii=False) + "\n").encode(), counts) for k, v in docs.items()}
+
+
 def _proc(a) -> Processor:
     if not a.catalogue:
         sys.exit("--catalogue is required: the run catalogue decides what ships")
-    return Processor(Path(a.src), Path(a.open_models) if a.open_models else None, RC.Catalogue.load(a.catalogue))
+    return Processor(Path(a.src), Path(a.open_models) if a.open_models else None, RC.Catalogue.load(a.catalogue),
+                     load_remap(getattr(a, "commit_remap", None)))
 
 
 def classify(proc: Processor) -> tuple[dict, collections.Counter]:
@@ -799,6 +920,14 @@ def cmd_plan(a):
     print()
     for (g, r), k in sorted(left.items()):
         print(f"left out {g:40} {k:8}  {r}")
+    # the file names behind the fail-closed rule, so each can be named as data or as a session log
+    shapes = collections.Counter()
+    for rel in walk_files(proc.src, proc.om):
+        sl = SL.classify(rel)
+        if sl is not None and sl[0] == SL.R_UNKNOWN and RC.Catalogue.ships(proc.family(rel)):
+            shapes[re.sub(r"\d+", "N", SL.run_inner(rel) or rel)] += 1
+    for k, n in shapes.most_common(60):
+        print(f"unknown log kind {n:8}  {k}")
 
 
 def group_done(out: Path, group: str) -> bool:
@@ -849,7 +978,8 @@ def cmd_archive(a):
     for g in todo:
         clear_group(out, g)
     jobs = [(str(proc.src), str(proc.om) if proc.om else None, a.catalogue, str(out), g, files[g],
-             {r: copies[r] for r in files[g] if r in copies}, a.level, a.cap, a.threads) for g in todo if files[g]]
+             {r: copies[r] for r in files[g] if r in copies}, a.level, a.cap, a.threads,
+             getattr(a, "commit_remap", None)) for g in todo if files[g]]
     jobs.sort(key=lambda j: -sum(1 for r in j[5] if r not in j[6]))
     if jobs:
         with multiprocessing.Pool(min(a.jobs, len(jobs)), maxtasksperchild=1) as pool:
@@ -900,6 +1030,7 @@ def _write_manifest(out: Path, proc: Processor, results: list, a):
                          "the private product repository's name": "<private-repo>",
                          "private tokens (a personal handle, a private commit id, an account id)": "<private>",
                          "private host names": "<private-host>",
+                         "the authors' tracker: ticket ids (FT-NNNN) and paths into it": "<ticket>",
                          "the bench runs dir": "<runs>",
                          "the repo checkout": "<repo>",
                          "the exporting user's home directory": "<home>", "companion-pihome": "<pi-login-volume>",
@@ -938,9 +1069,11 @@ def write_index(out: Path, proc: Processor, a):
     claim_ids = {c for r in rows for c in r["claims"]}
     doc = {"note": "One row per shipped unit (a run dir, a scoring dir, or a top-level tree) of the QuickReview "
                    "benchmark runs: its run family, what the family was for, the model it billed, its judges, the "
-                   "public claims it backs, its build commit (`qcr_commit`, as the run recorded it; "
-                   "`qcr_commit_public`, the same tree on the public repository after its history was rewritten, "
-                   "or null) and the archive volume(s) holding it. `withheld` lists every family left out and why.",
+                   "public claims it backs, its build commit (`qcr_commit`: the public main commit the "
+                   "repository's history rewrite made of the recorded one, `qcr_commit_on_public_main` true; a "
+                   "commit with no public equivalent keeps its recorded id with false, one the rewrite maps do not "
+                   "know with null) and the archive volume(s) holding it. `withheld` lists every family left out "
+                   "and why.",
            "units": rows, "withheld": RC.withheld_rows(proc.cat), "claims": RC.claims_index(proc.cat, claim_ids)}
     (out / "RUNS-INDEX.json").write_text(json.dumps(scrub_json(doc), indent=1, ensure_ascii=False) + "\n")
     print(f"wrote {out / 'RUNS-INDEX.json'}: {len(rows)} units")
@@ -975,7 +1108,7 @@ def write_readme(out: Path, proc: Processor):
             withheld_n[fam] += n
     content_n = sum(v for k, v in counts.items() if k.startswith("content-rule "))
     rw = "\n".join(f"| `{k}` | {v:,} |" for k, v in sorted(counts.items())
-                   if not k.startswith(("files-", "content-rule ")))
+                   if not k.startswith(("files-", "content-rule ", "session-log", "pi-cost", "case-summaries")))
     if content_n:
         rw += f"\n| `content-rules` (all {man.get('content_rules', 0)} rules) | {content_n:,} |"
     lo = "\n".join(f"| {k} | {v:,} |" for k, v in sorted(left.items()))
@@ -989,32 +1122,38 @@ def write_readme(out: Path, proc: Processor):
     wh = "\n".join(wh_rows)
     level = man["compression"].split()[1].lstrip("-")
     cap = man["volume_cap_bytes"] / (1 << 30)
-    text = f"""---
-license: apache-2.0
-pretty_name: QuickReview benchmark runs (run archive)
-tags:
-- code-review
-- benchmark
----
-
-# QuickReview benchmark runs — the run archive
+    sess = collections.Counter({k: v for k, v in left.items() if k.startswith("session log")})
+    session_kinds = "\n".join(f"- {k[0].upper() + k[1:]}: {v:,} files" for k, v in sorted(sess.items())) or "- (none found)"
+    session_kinds += ("\n\nBy name: `pi-events.jsonl` and `pi-events.r<lens>.jsonl`; `cases/<iid>/session/*.jsonl`; "
+                      "everything under `lens-sessions/`, `codex-sessions/` and `claude-transcripts/`; "
+                      "`opencode-events.jsonl`; every `*.events.jsonl` (judge event streams); the process logs "
+                      "`pi-stderr.log`, `pireview-stderr.log`, `ocr-stderr.log`, `opencode.log`, `codex-driver.log` "
+                      "(it echoes the prompt in its argv), `pragent-*.log`, `*.events.stderr.log`; every "
+                      "`*.sandbox-commands.log` and `sandbox-commands.log`; the prompt files `system-prompt.md`, `round-order.md`, "
+                      "`context-pack.md` and `tasks/*.md`; and the reviewed code a case dir copied "
+                      "(`head-patches.json`, `added-imports.txt`).")
+    pi_checked, pi_diff = counts.get("pi-cost checked", 0), counts.get("pi-cost differs (extract vs full)", 0)
+    text = f"""# QuickReview benchmark runs — the run archive
 
 Every benchmark run behind QuickReview's published numbers, and every other
-benchmark run we hold: each reviewer's full transcript (`pi-events.jsonl`,
-sessions, Codex and OpenCode event streams), its review, the judges' verdicts
-and transcripts, AACR-Bench's own metric files, the Martian, Qodo
-PR-Review-Bench and SWE-PRBench scoring, the pairwise Elo judgments, the
-open-model runs, the answer key, and the analysis behind the reports.
+benchmark run we hold: each review and its findings, the judges' verdicts
+with their reasoning, AACR-Bench's own metric files, the Martian, Qodo
+PR-Review-Bench and SWE-PRBench scoring, the pairwise Elo judgments, the run
+configurations and per-PR summaries (cost, time, tokens), the open-model
+runs, the answer key, and the analysis behind the reports. Raw model session
+logs are not here: each one ships as a numbers-only extract (see "Session
+logs" below).
 {nfiles:,} files in {len(rows)} volumes, one per run family, {total / (1 << 20):.0f} MiB compressed.
 
 `RUNS-INDEX.json` is the run index: one row per run directory with its family,
 what it was for, the model it billed, its judges, the public claims it backs,
-its build commit (as recorded, and its public equivalent) and its volume.
+its build commit (on public main where the history rewrite maps it) and its
+volume.
 
 DOI: minted by Hugging Face at upload. Code, benchmark definition and papers:
-the QuickReview repository, `bench/aacr/`. The slim re-score bundle (no
-transcripts) is published beside this archive and is enough to recompute
-every table with no model call.
+the QuickReview repository, `bench/aacr/`. The slim re-score bundle, in this
+dataset's `slim/` folder, is a subset of this archive and is enough to
+recompute every table with no model call.
 
 ## Volumes
 
@@ -1058,20 +1197,29 @@ mechanical rewrites applied to every text file and file name while it was
 packed. Nothing else in the text changed.
 
 - **Credentials.** A reviewer could read its container's environment, so a
-  provider API key sat verbatim in a few open-model transcripts. Every value
-  of our credential files was replaced by `<redacted-secret>`, wherever it
-  occurred; the key itself was revoked.
+  provider API key sat verbatim in a few open-model transcripts. Those
+  transcripts are not published (see "Session logs"), and every value of our
+  credential files is replaced by `<redacted-secret>` wherever else it occurs.
 - **Names.** The GitHub App persona's login (and its bare slug) became
   `<review-bot>`; the owner's first name became `<owner>`. One placeholder per
-  name, everywhere: prompts, transcripts, the model's own text, judge inputs,
-  logs. A personal handle, a private commit id and an account id became
+  name, everywhere: reviews, findings, the model's own text, verdicts, logs. A personal handle, a private commit id and an account id became
   `<private>`, private host names `<private-host>`.
-- **The private product repository.** Its name, which a few model texts and
-  one reviewer's listing of the bench's private case sets mention, became
-  `<private-repo>`, in any case.
+- **The private product repository.** Its name, which a few model texts
+  mention, became `<private-repo>`, in any case.
 - **The product's old name.** The product's earlier name became `quickreview`. It is the
   product's earlier name, not a person, so it gets the public name rather
   than a placeholder.
+- **The authors' tracker.** The tracker is not public, so its ticket ids
+  (`FT-` and three or four digits, in any case; upper case also without the
+  hyphen) and any path into it became `<ticket>`. Run directory names such as
+  `ft0622-hard20-…` are identifiers the public repository's own plans name,
+  and stay.
+- **Build commits.** Each `"qcr_commit"` (in `run.json` and every
+  `case-summary.json`) is the public main commit the repository's history
+  rewrite made of the recorded one, with `"qcr_commit_on_public_main": true`
+  beside it. A commit with no public equivalent (a side branch never merged)
+  keeps its recorded id with `false`; one the rewrite maps do not know, with
+  `null`.
 - **Host paths** in driver logs, scripts and analysis: the bench runs directory
   became `<runs>`, the repository checkout `<repo>`, any
   other path under the exporting user's home `<home>` (so the Claude Code credential file's path reads
@@ -1080,7 +1228,8 @@ packed. Nothing else in the text changed.
   An agent's scratch directory (`/tmp/claude-<uid>/-home-…/<session>/scratchpad`)
   became `<scratchpad>` and a Claude Code project dir `.claude/projects/<project>`,
   the spellings of the repository's `docs/PROMPTS.md`.
-- **The public repository's stand-ins.** The transcripts quote QuickReview's
+- **The public repository's stand-ins.** Some kept files (run
+  configurations, analysis notes, the model's own text) quote QuickReview's
   prompts as they were built at run time. Where those prompts carried
   examples drawn from private work (support guidelines, hosts, pull request
   numbers, internal tool names), the same stand-ins the public repository's
@@ -1089,10 +1238,10 @@ packed. Nothing else in the text changed.
   test fixture), which therefore reads with the stand-in.
 - **Encrypted reasoning blobs are blanked.** The value of every
   `encrypted_content` field (OpenAI reasoning items) and of every base64
-  `thinkingSignature` and `signature` (Anthropic thinking blocks) is the empty
-  string; the record around it is kept. The blobs are ciphertext under the
-  providers' keys, readable by nobody else; the usage records still carry the
-  reasoning-token counts.
+  `thinkingSignature` and `signature` (Anthropic thinking blocks) becomes the
+  empty string, the record around it kept. The blobs were in the session
+  logs, which are not published, so the rule finds none in what ships; the
+  extracts still carry the reasoning-token counts.
 - **Third-party text is linked, not copied.** Vendor review comments (the
   published tools Martian re-judged, the nine Qodo vendors, the upstream
   GitHub Copilot reviews) and the PR descriptions in the answer key's
@@ -1107,6 +1256,46 @@ Rewrite counts over the whole archive:
 | Rewrite | Count |
 |---|---|
 {rw}
+
+## Session logs
+
+The archive holds benchmark data only. Raw model session logs of every kind
+are left out: they hold the prompt text the sessions were built from during
+development, not benchmark data. The set is defined by file kind and fails
+closed (a log-shaped file inside a run directory that no rule names as data
+is left out too). Left out:
+
+{session_kinds}
+
+Each JSONL session log ships as a numbers-only extract beside where it was,
+named `<name>.pruned.jsonl`, so the speed, cost, token and lens claims stay
+verifiable:
+
+- `pi-events.pruned.jsonl`, from the reviewer's pi event stream: each
+  assistant message's role, timestamp, usage (tokens and cost) and stop
+  reason; each lens tool call's id and, for every lens run, its id, agent,
+  stop reason, error class (one of timeout, rate-limit, overloaded, aborted,
+  context-length, provider-error, other; never the message), usage, and its
+  messages' role, timestamp and usage. `bench/aacr/compare.py` prices a case
+  from it to the cent (the export priced every extract both ways: {pi_checked:,}
+  checked, {pi_diff:,} differing), `recompute/do_speed.py` and
+  `openmodels/lensfinal.py` read it in place of `pi-events.jsonl`.
+- every other `*.pruned.jsonl` (lens and session transcripts, Codex rollouts,
+  Claude Code and OpenCode transcripts, judge event streams): every number and
+  boolean of every line, and string values only under a closed set of keys
+  (type, role, timestamp, model, provider, stop reason, agent, tool name,
+  status, effort) and only when they are single short tokens. Each line is
+  marked `"_extract": "metrics"`.
+
+Kept, because they are data the harness wrote and hold no prompt: the run
+drivers' logs beside each run (`<run>.review.log`, `.judge.log`, `.score.log`
+and the like), the model bridge's and judge proxy's request logs
+(`bridge.jsonl`, `judge/judge.jsonl`), the lens ledger, AACR-Bench's harness
+input and run log (`eval/`), Martian's step logs, the Claude Code harness's
+parse log (`driver.log`), and each review tool's final output (the review
+itself: `review.md`, `comments.json`, `findings-record.json`,
+`pireview-stdout.txt`, `opencode-result.txt`, `ocr-stdout.json`,
+`pragent-*.json`, `claude-stdout.json`).
 
 ## What is not here, and why
 
@@ -1143,9 +1332,12 @@ repositories at the commits in `units.jsonl`; `packs.jsonl` lists the files
 each pack held. `bench/aacr/recompute/elo_ratings.py` refits the ratings from
 the judgments alone, with no pack.
 
-The Claude Code arm kept only its final result JSON (cost, usage, result
-text) and no transcript. That is what the run wrote, not something removed
-here.
+The answer key's build is in the `answer-key` volume twice over: the case
+files themselves (`*-code/<iid>/`, without the reviewed code), and two
+derived data files, `key-data/candidate-maps.json` (which earlier run or
+reviewer raised each key-building candidate) and `key-data/pr-diffstats.json`
+(each PR's files changed, insertions and deletions from its `diff.stat`),
+the same rows as the dataset's `aacr_candidates` and `pr_diffstats` configs.
 
 ## Licence and attribution
 
@@ -1227,7 +1419,7 @@ SLIM_MARTIAN = re.compile(r"^(martian-scores\.json|martian-report\.md|score_prof
                           r"|results/ingest-report\.json|results/[^/]+/(evaluations|candidates)\.json)$")
 SLIM_QODO = re.compile(r"^(scores\.json|scores\.md|judgements\.jsonl|judge/JUDGE\.txt)$")
 SLIM_ELO = re.compile(r"^elo/[^/]+/(plan\.json|units\.jsonl|ratings\.json|REPORT\.md|judgments/[^/]+\.jsonl)$")
-PRUNED_EVENTS = "pi-events.pruned.jsonl"
+PRUNED_EVENTS = SL.PI_PRUNED
 
 
 def slim_select(rel: str) -> bool:
@@ -1270,36 +1462,7 @@ def slim_events(rel: str, glm_ids: set[str]) -> bool:
     return rp[0] in GPT_SMOKE_PARENTS and rp[1][1] in glm_ids
 
 
-def prune_events(data: bytes) -> bytes:
-    """A transcript with every text removed: the assistant messages'
-    timestamps and usage, and each lens run's agent, outcome and its
-    messages' timestamps and usage — what recompute/do_speed.py and
-    openmodels/lensfinal.py read. Every kept line is marked `"_slim": "pruned"`."""
-    out = []
-    for line in data.splitlines():
-        try:
-            e = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(e, dict):
-            continue
-        if e.get("type") == "message_end" and isinstance(e.get("message"), dict):
-            m = e["message"]
-            out.append({"type": "message_end", "_slim": "pruned",
-                        "message": {k: m[k] for k in ("role", "timestamp", "usage", "stopReason") if k in m}})
-        elif e.get("type") == "tool_execution_end" and e.get("toolName") in ("launch_plan", "subagent"):
-            res = []
-            for r in ((e.get("result") or {}).get("details") or {}).get("results") or []:
-                if not isinstance(r, dict):
-                    continue
-                res.append({"agent": r.get("agent"), "stopReason": r.get("stopReason"),
-                            "errorMessage": r.get("errorMessage"), "stderr": (r.get("stderr") or "")[:200],
-                            "usage": r.get("usage"),
-                            "messages": [{k: m[k] for k in ("role", "timestamp", "usage") if k in m}
-                                         for m in r.get("messages") or [] if isinstance(m, dict)]})
-            out.append({"type": "tool_execution_end", "_slim": "pruned", "toolName": e["toolName"],
-                        "toolCallId": e.get("toolCallId"), "result": {"details": {"results": res}}})
-    return "".join(json.dumps(x, ensure_ascii=False) + "\n" for x in out).encode()
+prune_events = SL.prune_pi  # the slim bundle's and the archive's pruned transcript, one function
 
 
 def slim_cost(case_dir: Path) -> tuple[float | None, str]:
@@ -1378,9 +1541,10 @@ def slim_readme(n: int, counts) -> str:
 the external-benchmark scorers and `bench/aacr/recompute/` read to recompute
 the published tables (the papers, the README's Elo chart and "Other models"
 rows, `docs/DIGITALOCEAN.md`), with no model call and no transcript text.
-The full run archive (with every `pi-events.jsonl`) is the separate
-run-archive dataset; this bundle is a subset of it, rewritten the same way
-(see the archive README: names, placeholders, blanked reasoning blobs).
+The run archive, in this dataset's `archive/` folder, holds every run; this
+bundle is a subset of it, rewritten the same way (see the archive README:
+names, placeholders, blanked reasoning blobs, and why no raw session log is
+published in either).
 
 Unpack it and point the tools at its `runs/`:
 
@@ -1412,10 +1576,11 @@ Unpack it and point the tools at its `runs/`:
                         their file and lines), judge/JUDGE.txt
     open-models/runs/...                        the open-model runs, the same files
     open-models/runs/<run>/cases/<iid>/{PRUNED_EVENTS}
-                        the transcript with every text removed: each assistant
-                        message's timestamp and usage, each lens run's agent,
-                        outcome, and its messages' timestamps and usage (every
-                        line marked "_slim": "pruned"); also kept for the frozen
+                        the transcript's numbers-only extract (the archive's
+                        format): each assistant message's timestamp and usage,
+                        each lens run's id, agent, outcome and error class, and
+                        its messages' timestamps and usage (every line marked
+                        "_slim": "pruned"); also kept for the frozen
                         build's cases of the open-model smoke PRs in
                         runs/final1-{{rest145,martian50,qodo-pr100}}
     elo/<plan>/plan.json, units.jsonl, judgments/*.jsonl, ratings.json, REPORT.md
@@ -1455,6 +1620,8 @@ REGREP = {
     **{f"token {i}": rb"(?i:" + re.escape(t.encode()) + rb")" for i, t in enumerate(SCRUB_EXTRA)},
     **{f"host {i}": rb"(?i:" + re.escape(h.strip().encode()) + rb")" for i, h in enumerate(SCRUB_HOSTS)},
     "quickchat (any case)": rb"(?i:quickchat)",
+    "ticket id (FT-NNNN)": SX.TICKET_RULES[1][1],
+    "tracker path": rb"(?<![A-Za-z0-9_])tracker/(?:efforts|tickets|maps)/",
 }
 
 
@@ -1484,6 +1651,7 @@ REGREP_RG = [
     rb"(?:^|[^A-Za-z0-9])sk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,}", rb"(?:^|[^A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{36}",
     rb"gAAAAA[A-Za-z0-9_\-=]{100,}",
     rb"[./\w-]*claude\.env", rb"sk-", rb"gh[psor]_",
+    rb"(?:^|[^A-Za-z0-9])(?:[Ff][Tt]-[0-9]{3,4}|FT[0-9]{3,4})", rb"(?:^|[^A-Za-z0-9_])tracker/(?:efforts|tickets|maps)/",
 ]
 
 
@@ -1517,8 +1685,33 @@ def regrep_stream(cmd: list[str]) -> tuple[collections.Counter, list]:
     return c, hits
 
 
+def session_members(names) -> collections.Counter:
+    """Member names that are session logs (session_logs.classify drops or
+    extracts them): every count must be 0 in a built volume, whose session
+    logs ship only as `*.pruned.jsonl` extracts."""
+    c = collections.Counter()
+    for n in names:
+        sl = SL.classify(n)
+        if sl is not None:
+            c[f"member is a session log: {sl[0]}"] += 1
+    return c
+
+
+def volume_members(vol: str) -> list[str]:
+    z = subprocess.Popen(["zstd", "-dc", "--long=27", "-q", vol], stdout=subprocess.PIPE)
+    t = subprocess.run(["tar", "-t"], stdin=z.stdout, capture_output=True)
+    z.stdout.close()
+    if z.wait() != 0 or t.returncode != 0:
+        raise SystemExit(f"listing failed for {vol}")
+    return t.stdout.decode(errors="replace").splitlines()
+
+
 def _regrep_volume(vol: str):
     c, hits = regrep_stream(["zstd", "-dc", "--long=27", "-q", vol])
+    names = volume_members(vol)
+    c.update(session_members(names))
+    c["members listed"] += len(names)
+    c["members that are extracts (*.pruned.jsonl)"] += sum(1 for n in names if n.endswith(SL.PRUNED_SUFFIX))
     return Path(vol).name, c, hits
 
 
@@ -1556,7 +1749,7 @@ def main():
             s.add_argument("--catalogue", required=True, help="the run catalogue (release_catalogue.py)")
         if name != "plan":
             s.add_argument("--out", required=True)
-        if name in ("archive", "readme"):
+        if name in ("archive", "readme", "slim"):
             s.add_argument("--commit-remap", help="JSON {recorded qcr_commit: public main commit or null}")
         if name == "regrep":
             s.add_argument("--jobs", type=int, default=2, help="volumes scanned side by side")

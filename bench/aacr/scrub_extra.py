@@ -29,6 +29,12 @@ spelled in this repository:
                             (`[word:|user:|host:]token` lines); default
                             ~/.config/qcr/publish-denylist.txt.
 
+One rule needs no input: the authors' tracker is not public, so its ticket
+ids (`FT-0123`, `ft-0123`, `FT0123`) and any path into it
+(`…/tracker/efforts/…`, `…/tracker/tickets/…`) become `<ticket>`
+(TICKET_RULES, by pattern). Run directory names such as `ft0622-hard20-…`
+are identifiers the public repository's own plans name, and stay.
+
 Standard library only; bytes in, bytes out.
 """
 from __future__ import annotations
@@ -40,7 +46,27 @@ from typing import List, Optional, Tuple
 SECRET = b"<redacted-secret>"
 PRIVATE = b"<private>"
 PRIVATE_HOST = b"<private-host>"
+TICKET = b"<ticket>"
 _SECRET_MIN = 12
+
+# (name, pattern, prefilter as ("low", literal) = in the lower-cased text):
+# the tracker path first, so a ticket id inside it goes with the path
+TICKET_RULES = [
+    ("ticket-path", rb"[\w.~$/{}-]*(?<![A-Za-z0-9_])tracker/(?:efforts|tickets|maps)/[^\s\"'`<>()\[\]{},;]*",
+     ("low", b"tracker/")),
+    ("ticket-id", rb"(?<![A-Za-z0-9])(?:[Ff][Tt]-\d{3,4}|FT\d{3,4})(?!\d)", ("low", b"ft")),
+]
+
+
+def ticket_rules():
+    """[(name, compiled bytes regex, replacement, prefilter)] for the tracker."""
+    return [(n, re.compile(p), TICKET, pre) for n, p, pre in TICKET_RULES]
+
+
+def ticket_rules_str():
+    """The same rules for str text (the HF tables): [(label, regex, replacement)]."""
+    return [({"ticket-path": "tracker path", "ticket-id": "ticket id"}[n], p.decode(), TICKET.decode())
+            for n, p, _ in TICKET_RULES]
 
 
 def env_list(key: str) -> List[str]:

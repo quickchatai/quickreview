@@ -25,7 +25,17 @@
 //      withheld or uncatalogued unit never ships, the Elo packs never ship;
 //  10. a copied file ships once (plan_copies), at the source run's path;
 //  11. the slim bundle's pruned transcript keeps what the recompute scripts
-//      read and no text, and lensfinal reads it when the full one is absent.
+//      read and no text, and lensfinal reads it when the full one is absent;
+//  12. no raw model session log ships (session_logs.py): every kind is named
+//      by file kind, an unnamed log kind inside a run dir is left out (fail
+//      closed), each JSONL one ships as its numbers-only extract, and
+//      compare.py prices a case from its extract exactly as from the full
+//      stream;
+//  13. the authors' tracker ids and paths become `<ticket>`, run names stay;
+//  14. each `qcr_commit` is remapped to public main, with a flag saying so;
+//  15. the answer key's build data (candidate maps, diff.stat sizes) is read
+//      as data (key_data.py);
+//  16. `pc2-*` is withheld whatever the catalogue says.
 
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -550,7 +560,7 @@ describe("release_catalogue and export_runs: what ships", () => {
       "release_catalogue",
       "c = h.Catalogue.load(sys.argv[1])\n" +
         "rows = h.index_rows(c, {'runs': sys.argv[2] + '/runs', 'top': sys.argv[2]}, {'aaa111': 'bbb222'})\n" +
-        "print(json.dumps([[r['unit'], r['family'], r['set'], r['qcr_commit_public'], r['claims'], r['hf_tables']] for r in rows]\n" +
+        "print(json.dumps([[r['unit'], r['family'], r['set'], r['qcr_commit'], r['qcr_commit_on_public_main'], r['claims'], r['hf_tables']] for r in rows]\n" +
         "  + [[w['family'], w['reason']] for w in h.withheld_rows(c)]))",
       catalogue,
       src,
@@ -560,10 +570,11 @@ describe("release_catalogue and export_runs: what ships", () => {
       "kept",
       "dev10",
       "bbb222",
+      true,
       ["c:one"],
       ["runs", "reviews"],
     ]);
-    expect(r).toContainEqual(["elo", "elo", null, null, [], []]);
+    expect(r).toContainEqual(["elo", "elo", null, null, null, [], []]);
     expect(r.find((x) => x[0] === "own")?.[1]).toMatch(/^withheld/);
     expect(r.some((x) => x[0] === "own-repo-run")).toBe(false);
   });
@@ -717,5 +728,283 @@ describe("the product's earlier name in another case", () => {
     const b = py("print(json.dumps(h.scrub(sys.argv[1])))", text);
     expect(a).toBe("In the quickreview benchmark and quickreview footers");
     expect(b).toBe("In the quickreview benchmark and quickreview footers");
+  });
+});
+
+describe("session_logs.classify: the session-log set, by file kind", () => {
+  // MUTATION: drop "codex-sessions" from session_logs.TRANSCRIPT_DIRS — this fails
+  // MUTATION: delete the fail-closed R_UNKNOWN return in session_logs.classify — this fails
+  it("names every session-log kind, extracts the JSONL ones, and leaves out an unnamed log kind in a run dir", () => {
+    const paths = [
+      "runs/r/cases/o__r@1111111/pi-events.jsonl",
+      "runs/r/cases/o__r@1111111/pi-events.rsecurity.jsonl",
+      "runs/r/cases/o__r@1111111/session/2026-10-01T21-40-12-394Z_01a0f969-23e9-726f-810d-a5228a5b57f7.jsonl",
+      "runs/r/cases/o__r@1111111/lens-sessions/u/2026-x.jsonl",
+      "runs/r/cases/o__r@1111111/codex-sessions/rollout-1.jsonl",
+      "runs/r/cases/o__r@1111111/claude-transcripts/-work-repo/u/subagents/agent-1.jsonl",
+      "runs/r/cases/o__r@1111111/opencode-events.jsonl",
+      "runs/r/judge/v2-gpt-6-sol-high/o__r@1111111.r1.events.jsonl",
+      "runs/r/cases/o__r@1111111/pi-stderr.log",
+      "runs/r/cases/o__r@1111111/codex-driver.log",
+      "runs/r/cases/o__r@1111111/pragent-review.log",
+      "runs/r.sandbox-commands.log",
+      "runs/r/cases/o__r@1111111/system-prompt.md",
+      "runs/r/cases/o__r@1111111/round-order.md",
+      "runs/r/cases/o__r@1111111/tasks/01-pass-baseline--sol-high.md",
+      "runs/r/cases/o__r@1111111/head-patches.json",
+      "runs/r/mystery.jsonl",
+      "open-models/runs/om/cases/o__r@1111111/unknown.log",
+      // data: kept
+      "runs/r/cases/o__r@1111111/review.md",
+      "runs/r/cases/o__r@1111111/findings-record.json",
+      "runs/r/cases/o__r@1111111/lens-ledger.jsonl",
+      "runs/r/cases/o__r@1111111/driver.log",
+      "runs/r/bridge.jsonl",
+      "runs/r.martian/judge/judge.jsonl",
+      "runs/r.qodo/judgements.jsonl",
+      "runs/r/eval/harness-all.log",
+      "runs/r.review.log",
+      "open-models/full-glm53.log",
+      "elo/plan/judgments/gpt.jsonl",
+      "analysis/x/wp-data/logs/shim.log",
+    ];
+    const r = pyModule(
+      "session_logs",
+      "print(json.dumps({p: (lambda c: None if c is None else [c[0].split(':')[0].split(',')[0], c[1]])(h.classify(p)) for p in sys.argv[1:]}))",
+      ...paths,
+    ) as Record<string, [string, string | null] | null>;
+    const extracted = (p: string) => r[p]?.[1];
+    expect(extracted("runs/r/cases/o__r@1111111/pi-events.jsonl")).toBe("pi");
+    expect(extracted("runs/r/cases/o__r@1111111/pi-events.rsecurity.jsonl")).toBe("pi");
+    for (const p of paths.slice(2, 8)) expect(extracted(p), p).toBe("metrics");
+    for (const p of paths.slice(8, 18)) {
+      expect(r[p], p).not.toBeNull();
+      expect(extracted(p), p).toBeNull();
+    }
+    expect(r["runs/r/mystery.jsonl"]?.[0]).toBe("session log rule");
+    for (const p of paths.slice(18)) expect(r[p], p).toBeNull();
+  });
+});
+
+describe("session_logs.metrics_only: the generic numbers-only extract", () => {
+  // MUTATION: in session_logs._metrics, return a string under any key (drop the KEEP_STR test) — this fails
+  it("keeps numbers, booleans and single-token labels, and no text under any key", () => {
+    const lines = [
+      {
+        timestamp: "2026-10-01T21:40:12.394Z",
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: { total_token_usage: { input_tokens: 10, output_tokens: 3 } },
+          note: "SECRET-PROSE",
+        },
+      },
+      { type: "message", message: { role: "user", content: [{ type: "text", text: "SECRET-PROSE" }] } },
+      { type: "assistant", model: "a model with spaces", message: { usage: { input: 5, output: 2 }, stop: true } },
+      { type: "response_item", payload: { type: "SECRET PROSE IN A LABEL" } },
+    ]
+      .map((e) => JSON.stringify(e))
+      .join("\n");
+    const r = pyModule(
+      "session_logs",
+      "out = h.metrics_only(sys.argv[1].encode()).decode()\nprint(json.dumps([json.loads(l) for l in out.splitlines()]))",
+      lines,
+    ) as Record<string, unknown>[];
+    expect(JSON.stringify(r)).not.toMatch(/SECRET|spaces/);
+    expect(r).toEqual([
+      {
+        _extract: "metrics",
+        timestamp: "2026-10-01T21:40:12.394Z",
+        type: "event_msg",
+        payload: { type: "token_count", info: { total_token_usage: { input_tokens: 10, output_tokens: 3 } } },
+      },
+      { _extract: "metrics", type: "assistant", message: { usage: { input: 5, output: 2 }, stop: true } },
+    ]);
+  });
+});
+
+describe("session_logs.prune_pi: compare.py prices the extract as the full stream", () => {
+  const full = [
+    { type: "message_start", message: { role: "assistant", content: "SECRET-PROSE" } },
+    {
+      type: "message_end",
+      message: { role: "assistant", timestamp: 1, usage: { output: 9, cost: { total: 0.1 } }, content: "SECRET-PROSE" },
+    },
+    // call A reports lens run k1; call B reports k1 again and k2: k1 counts once
+    {
+      type: "tool_execution_end",
+      toolName: "launch_plan",
+      toolCallId: "A",
+      result: { content: "SECRET-PROSE", details: { results: [{ id: "k1", agent: "pass-a--sol-high", usage: { cost: { total: 0.7 } } }] } },
+    },
+    {
+      type: "tool_execution_end",
+      toolName: "lens_wave",
+      toolCallId: "B",
+      result: {
+        details: {
+          results: [
+            { id: "k1", agent: "pass-a--sol-high", usage: { cost: { total: 0.7 } } },
+            { id: "k2", agent: "pass-b--sol-high", stopReason: "error", errorMessage: "request timed out", usage: { cost: { total: 0.2 } } },
+          ],
+        },
+      },
+    },
+    // call C never ended: its largest live figure counts
+    {
+      type: "tool_execution_update",
+      toolName: "subagent",
+      toolCallId: "C",
+      partialResult: { details: { results: [{ id: "k3", usage: { cost: { total: 0.3 } }, messages: [{ content: "SECRET-PROSE" }] }] } },
+    },
+  ]
+    .map((e) => JSON.stringify(e))
+    .join("\n");
+
+  // MUTATION: keep only tool_execution_end in session_logs.prune_pi (drop the update events) — this fails
+  // MUTATION: drop "id" from session_logs._lens_result — this fails
+  it("keeps every field pi_cost reads, the error as a class, and no text", () => {
+    const r = pyModule(
+      "session_logs",
+      "import compare\npruned = h.prune_pi(sys.argv[1].encode())\n" +
+        "kid = [json.loads(l) for l in pruned.decode().splitlines()][2]['result']['details']['results'][1]\n" +
+        "print(json.dumps({'full': round(compare.pi_cost_lines(sys.argv[1].encode().splitlines()), 9),\n" +
+        "  'pruned': round(compare.pi_cost_lines(pruned.splitlines()), 9), 'text': b'SECRET' in pruned or b'timed out' in pruned,\n" +
+        "  'error': kid.get('errorClass'), 'message': 'errorMessage' in kid}))",
+      full,
+    );
+    expect(r).toEqual({ full: 1.3, pruned: 1.3, text: false, error: "timeout", message: false });
+  });
+});
+
+describe("export_runs: a run ships without its session logs", () => {
+  const root = join(tmp, "sessions");
+  const src = join(root, "bench-runs");
+  const c = join(src, "runs", "r1", "cases", "o__r@1111111");
+  put(join(src, "runs", "r1", "run.json"), '{\n  "set": "dev10",\n  "qcr_commit": "aaa1111"\n}\n');
+  put(
+    join(c, "pi-events.jsonl"),
+    JSON.stringify({ type: "message_end", message: { role: "assistant", timestamp: 5, usage: { output: 1 }, content: "SECRET-PROSE" } }) + "\n",
+  );
+  put(join(c, "session", "2026-10-01T00-00-00-000Z_01a0f969-23e9-726f-810d-a5228a5b57f7.jsonl"), '{"type":"message","message":{"content":"SECRET-PROSE","usage":{"input":4}}}\n');
+  put(join(c, "system-prompt.md"), "SECRET-PROSE\n");
+  put(join(c, "tasks", "01-pass-x--sol-high.md"), "SECRET-PROSE\n");
+  put(join(c, "pi-stderr.log"), "SECRET-PROSE\n");
+  put(join(c, "review.md"), "the review\n");
+  put(join(c, "case-summary.json"), '{"fingerprint": {"qcr_commit": "ccc3333"}}\n');
+  put(join(src, "runs", "r1", "mystery.jsonl"), '{"text":"SECRET-PROSE"}\n');
+  put(join(src, "runs", "r1.sandbox-commands.log"), "SECRET-PROSE\n");
+  put(join(src, "runs", "r1.review.log"), "progress\n");
+  put(join(src, "runs", "pc2-dev10", "run.json"), "{}");
+  const catalogue = join(root, "catalogue.json");
+  writeFileSync(
+    catalogue,
+    JSON.stringify({
+      families: [
+        { id: "f", title: "F", location: "qcr-bench-runs/runs/", members: ["r1", "pc2-dev10"], ship: "yes", hf_tables: [] },
+      ],
+    }),
+  );
+
+  // MUTATION: make export_runs.Processor.arc_rel return rel unchanged — this fails
+  // MUTATION: drop the OWNER_WITHHELD_PREFIXES check from export_runs.drop_reason — this fails
+  it("ships extracts in place of JSONL session logs, leaves out the rest, and withholds pc2 whatever the catalogue says", () => {
+    const r = pyModule(
+      "export_runs",
+      "import collections\nfrom pathlib import Path\nimport release_catalogue as RC\n" +
+        "p = h.Processor(Path(sys.argv[1]), None, RC.Catalogue.load(sys.argv[2]), {'aaa1111': 'bbb2222', 'ccc3333': None})\n" +
+        "out = {}\n" +
+        "for rel in h.walk_files(p.src, None):\n" +
+        "    data, why = p.process(rel, collections.Counter())\n" +
+        "    out[rel] = [p.arc_rel(rel), why is None, None if data is None else (b'SECRET' in data), None if data is None else data.decode()]\n" +
+        "print(json.dumps(out))",
+      src,
+      catalogue,
+    ) as Record<string, [string, boolean, boolean | null, string | null]>;
+    const base = "runs/r1/cases/o__r@1111111";
+    expect(r[`${base}/pi-events.jsonl`]?.slice(0, 3)).toEqual([`${base}/pi-events.pruned.jsonl`, true, false]);
+    const sess = Object.keys(r).find((k) => k.includes("/session/"))!;
+    expect(r[sess]?.[0]).toMatch(/\.pruned\.jsonl$/);
+    expect(r[sess]?.slice(1, 3)).toEqual([true, false]);
+    for (const k of [
+      `${base}/system-prompt.md`,
+      `${base}/tasks/01-pass-x--sol-high.md`,
+      `${base}/pi-stderr.log`,
+      "runs/r1/mystery.jsonl",
+      "runs/r1.sandbox-commands.log",
+      "runs/pc2-dev10/run.json",
+    ]) {
+      expect(r[k]?.[1], k).toBe(false);
+    }
+    expect(r[`${base}/review.md`]?.slice(1, 3)).toEqual([true, false]);
+    expect(r["runs/r1.review.log"]?.[1]).toBe(true);
+    // MUTATION: drop the `false`/`null` branch of export_runs.remap_commits — this fails
+    expect(JSON.parse(r["runs/r1/run.json"]![3]!)).toEqual({ set: "dev10", qcr_commit: "bbb2222", qcr_commit_on_public_main: true });
+    expect(JSON.parse(r[`${base}/case-summary.json`]![3]!)).toEqual({
+      fingerprint: { qcr_commit: "ccc3333", qcr_commit_on_public_main: false },
+    });
+  });
+
+  it("counts a session log among a volume's members, never its extract", () => {
+    const r = pyModule(
+      "export_runs",
+      "print(json.dumps(sum(h.session_members(sys.argv[1:]).values())))",
+      "runs/r/cases/x@1/pi-events.jsonl",
+      "runs/r/cases/x@1/pi-events.pruned.jsonl",
+      "runs/r/cases/x@1/review.md",
+    );
+    expect(r).toBe(1);
+  });
+});
+
+describe("the authors' tracker becomes <ticket>", () => {
+  // MUTATION: drop *SX.ticket_rules() from export_runs.NAME_RULES — this fails
+  // MUTATION: drop SX.ticket_rules_str() from hf_export.SCRUB_RULES — this fails
+  it("rewrites ticket ids and tracker paths in the archive and the tables, and leaves run names alone", () => {
+    const text =
+      "Per FT-0622 and ft-0550 (see FT0517); notes in ../fleet/tracker/efforts/bench/tickets/FT-0001-x.md; " +
+      "run ft0622-hard20-sonnet and FT-12345 stay.";
+    const want =
+      "Per <ticket> and <ticket> (see <ticket>); notes in <ticket>; run ft0622-hard20-sonnet and FT-12345 stay.";
+    const a = pyModule(
+      "export_runs",
+      "import collections; print(json.dumps(h.rewrite(sys.argv[1].encode(), collections.Counter()).decode()))",
+      text,
+    );
+    const b = py("print(json.dumps(h.scrub(sys.argv[1])))", text);
+    expect(a).toBe(want);
+    expect(b).toBe(want);
+  });
+});
+
+describe("key_data: the answer key's build, as data", () => {
+  const src = join(tmp, "keydata");
+  const d = join(src, "rest145-code", "o__r@1111111");
+  put(join(d, "candidates-key.json"), JSON.stringify({ C2: "all-low-rest145", C1: "all-ocr-rest145" }));
+  put(join(d, "candidates.json"), JSON.stringify({ candidates: [{ cand: "C1", path: "a.py", from_line: 3, to_line: 4, text: "t" }] }));
+  put(join(d, "new-candidates-key.json"), JSON.stringify({ N1: "codex" }));
+  put(join(d, "diff.stat"), " a.py | 4 +++-\n 2 files changed, 85 insertions(+), 36 deletions(-)\n");
+  put(join(src, "fresh10-code", "o__r@1111111", "diff.stat"), " 2 files changed, 85 insertions(+), 36 deletions(-)\n");
+  put(join(src, "orig40-code", "p__q@2222222", "diff.stat"), " 1 file changed, 7 insertions(+)\n");
+
+  // MUTATION: make changed_lines insertions alone in key_data.parse_diffstat — this fails
+  it("maps each candidate to who raised it and sizes each PR from its diff.stat", () => {
+    const r = pyModule(
+      "key_data",
+      "print(json.dumps([[[x['candidate'], x['round'], x['raised_by'], x['path']] for x in h.candidate_rows(sys.argv[1])],\n" +
+        "  [[x['instance_id'], x['files_changed'], x['insertions'], x['deletions'], x['changed_lines'], x['code_dirs']] for x in h.diffstat_rows(sys.argv[1])]]))",
+      src,
+    );
+    expect(r).toEqual([
+      [
+        ["C1", "candidates", "all-ocr-rest145", "a.py"],
+        ["C2", "candidates", "all-low-rest145", null],
+        ["N1", "new-candidates", "codex", null],
+      ],
+      [
+        ["o__r@1111111", 2, 85, 36, 121, ["rest145-code", "fresh10-code"]],
+        ["p__q@2222222", 1, 7, 0, 7, ["orig40-code"]],
+      ],
+    ]);
   });
 });

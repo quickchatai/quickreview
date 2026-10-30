@@ -8,10 +8,10 @@ may list a lens whose child failed — so the gate and the reports read this.
 import json
 from pathlib import Path
 
-# The slim re-score bundle keeps each open-model case's transcript with every
-# text removed under this name (bench/aacr/export_runs.py prune_events); a
+# The run archive and the slim re-score bundle keep each case's transcript with
+# every text removed under this name (bench/aacr/session_logs.py prune_pi); a
 # reader given a case's pi-events.jsonl falls back to it when the full file is
-# absent. The pruned lines keep every field read here.
+# absent. The pruned lines keep every field read here (the error as a class).
 PRUNED = "pi-events.pruned.jsonl"
 
 
@@ -45,7 +45,9 @@ def finals(events: Path) -> dict:
         for r in ((e.get("result") or {}).get("details") or {}).get("results") or []:
             k = lens(r.get("agent"))
             prev = out.get(k, {"launches": 0})
-            out[k] = {"stop": r.get("stopReason"), "error": r.get("errorMessage") or (r.get("stderr") or "")[:200],
+            # the pruned extract keeps a closed error class in place of the message text
+            out[k] = {"stop": r.get("stopReason"),
+                      "error": r.get("errorMessage") or r.get("errorClass") or (r.get("stderr") or "")[:200],
                       "launches": prev["launches"] + 1}
     return out
 

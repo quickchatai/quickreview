@@ -94,6 +94,7 @@ SLIM_COST_KEY = "bench_cost_usd"
 
 LENS_TOOLS = ("lens", "lens_wave", "subagent", "launch_plan")
 LEDGER_FILE = "lens-ledger.jsonl"
+PRUNED_EVENTS = "pi-events.pruned.jsonl"
 
 
 def _num(v):
@@ -110,15 +111,34 @@ def pi_cost(case_dir):
     assistant message, each lens tool call's children (a call counts its
     largest live figure until its end replaces it; a result with an `id` counts
     once), then lens-ledger.jsonl lines for runs no tool result reported."""
-    total = 0.0
-    owner = {}
-    per_call = {}
-    ev = os.path.join(case_dir, "pi-events.jsonl")
+    ev = events_path(case_dir)
     ledger = os.path.join(case_dir, LEDGER_FILE)
     lines = list(open(ev))
     if os.path.exists(ledger):
         lines += list(open(ledger))
+    return pi_cost_lines(lines)
+
+
+def events_path(case_dir):
+    """A case's pi event stream: `pi-events.jsonl`, or the run archive's and
+    slim bundle's numbers-only extract `pi-events.pruned.jsonl` (export_runs.py,
+    session_logs.prune_pi), which keeps every field pi_cost reads; None when
+    the case has neither."""
+    for name in ("pi-events.jsonl", PRUNED_EVENTS):
+        p = os.path.join(case_dir, name)
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def pi_cost_lines(lines):
+    """pi_cost over the event and ledger lines themselves."""
+    total = 0.0
+    owner = {}
+    per_call = {}
     for line in lines:
+        if isinstance(line, bytes):
+            line = line.decode("utf-8", "replace")
         if not line.startswith("{"):
             continue
         try:
@@ -161,7 +181,7 @@ def pi_cost(case_dir):
 
 def usd_and_minutes(case_dir):
     usd = None
-    ev = os.path.join(case_dir, "pi-events.jsonl")
+    ev = events_path(case_dir) or os.path.join(case_dir, "pi-events.jsonl")
     if os.path.exists(ev):
         usd = pi_cost(case_dir)
     s = os.path.join(case_dir, "case-summary.json")
@@ -179,7 +199,7 @@ def usd_and_minutes(case_dir):
     if not os.path.exists(ev) and summary.get("arm") == "claude" and summary.get("cost_usd") is not None:
         # The Claude Code arm: its own total_cost_usd (API-price equivalent).
         usd = summary["cost_usd"]
-    if not os.path.exists(ev) and SLIM_COST_KEY in summary:
+    if not os.path.exists(os.path.join(case_dir, "pi-events.jsonl")) and SLIM_COST_KEY in summary:
         # A slim-bundle case (no transcript): the price the export computed from
         # the full case dir with this same function, for every arm.
         usd = summary[SLIM_COST_KEY]

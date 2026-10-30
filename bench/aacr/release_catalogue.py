@@ -102,6 +102,7 @@ class Catalogue:
         why = ship.split(":", 1)[1] if ship.startswith("no:") else ship
         return {"own-repo": "withheld: QuickReview reviewing our own repositories (not a benchmark run)",
                 "aborted": "left out: an aborted or interrupted attempt",
+                "owner": "withheld by the authors: a regression check of a development build (backs no published number)",
                 "regenerable": "left out: regenerable (code, caches, scheduler state or release builds)",
                 "private": "left out: private working notes"}.get(why, f"left out: {why}")
 
@@ -115,6 +116,23 @@ class Catalogue:
 # ---------------------------------------------------------------- the public run index
 
 INDEX_FIELDS = ("title", "benchmark", "purpose", "arm_config", "model_billed", "judges", "claims", "notes")
+
+
+def commit_fields(commit: Optional[str], remap: Dict[str, Optional[str]]) -> Dict[str, object]:
+    """A run's build commit as the release states it: `qcr_commit` is the
+    public main commit the history rewrite made of the recorded one, with
+    `qcr_commit_on_public_main` true; a commit with no public equivalent keeps
+    its recorded id with false; one the remap does not know, with null (and
+    no commit at all is null, null)."""
+    if not commit:
+        return {"qcr_commit": None, "qcr_commit_on_public_main": None}
+    c = commit.strip()
+    base = c[:-len("-dirty")] if c.endswith("-dirty") else c
+    pub = remap_commit(c, remap)
+    if pub:
+        return {"qcr_commit": pub + c[len(base):], "qcr_commit_on_public_main": True}
+    known = c in remap or base in remap
+    return {"qcr_commit": c, "qcr_commit_on_public_main": False if known else None}
 
 
 def remap_commit(commit: Optional[str], remap: Dict[str, Optional[str]]) -> Optional[str]:
@@ -166,7 +184,7 @@ def index_rows(cat: Catalogue, roots: Dict[str, str], remap: Dict[str, Optional[
                     "set": rj.get("set") if isinstance(rj.get("set"), str) else None,
                     "cases": len(rj["cases"]) if isinstance(rj.get("cases"), list) else None,
                     "started_at": rj.get("started_at"), "finished_at": rj.get("finished_at"),
-                    "qcr_commit": commit, "qcr_commit_public": remap_commit(commit, remap),
+                    **commit_fields(commit, remap),
                     "arm_config": f.get("arm_config"), "model_billed": f.get("model_billed"),
                     "judges": f.get("judges"), "purpose": f.get("purpose"), "notes": f.get("notes"),
                     "claims": claim_ids, "hf_tables": Catalogue.hf_tables(f),
@@ -179,7 +197,7 @@ def index_rows(cat: Catalogue, roots: Dict[str, str], remap: Dict[str, Optional[
 def withheld_rows(cat: Catalogue) -> List[dict]:
     """Every withheld family, its members and why (the archive README and the
     card name each one). A family the catalogue lists as uncertain says so."""
-    unsure = {u.get("family") for u in cat.data.get("uncertain") or []}
+    unsure = {u.get("family") for u in cat.data.get("uncertain") or [] if not u.get("resolved")}
     return [{"family": f["id"], "title": f.get("title"),
              "reason": Catalogue.withheld_reason(f) + (" (held back pending the owner's confirmation)" if f["id"] in unsure else ""),
              "members": list(f.get("members") or []), "location": f.get("location")}

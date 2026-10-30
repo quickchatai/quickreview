@@ -59,6 +59,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "ext"))
 import compare  # noqa: E402
+import key_data as KD  # noqa: E402
 import release_catalogue as RC  # noqa: E402
 import scrub_extra as SX  # noqa: E402
 
@@ -124,8 +125,11 @@ SCRUB_RULES: list[tuple[str, str, str]] = [
     *[("private repo", r"(?i)" + re.escape(r), "<private-repo>") for r in SCRUB_PRIVATE_REPOS],
     *[("private token", r"(?i)(?<![A-Za-z0-9_])" + re.escape(w) + r"(?![A-Za-z0-9_])", "<private>") for w in SCRUB_PRIVATE_WORDS],
     *[("private host", r"(?i)" + re.escape(h), "<private-host>") for h in SCRUB_HOSTS],
+    # the authors' tracker: ticket ids and paths into it (scrub_extra.TICKET_RULES)
+    *SX.ticket_rules_str(),
 ]
 _SCRUB = [(label, re.compile(rx), rep) for label, rx, rep in SCRUB_RULES]
+_TICKET = [(label, re.compile(rx), rep) for label, rx, rep in SX.ticket_rules_str()]
 CONTENT_LABEL = "public-repository stand-ins (content rules)"
 
 
@@ -146,6 +150,10 @@ def scrub(text, counts: collections.Counter | None = None):
             text = out.decode(errors="replace")
             if counts is not None:
                 counts[CONTENT_LABEL] += sum(c.values())
+            for label, rx, rep in _TICKET:  # a stand-in may spell a tracker id of its own
+                text, n = rx.subn(rep, text)
+                if n and counts is not None:
+                    counts[label] += n
     return text
 
 
@@ -1008,6 +1016,18 @@ class Exporter:
                                             "games": t["games"], "prs": t["prs"]}))
         self.tables["elo_judgments"], self.tables["elo_ratings"] = rows, rats
 
+    # --- the answer key's build: candidate maps and PR sizes ---------------------
+    def build_key_data(self):
+        """aacr_candidates and pr_diffstats (key_data.py), from the `*-code`
+        case dirs beside runs/; the run archive's key-data/ holds the same rows."""
+        src = os.path.dirname(self.runs_dir)
+        cands = [r for r in KD.candidate_rows(src) if r["instance_id"] in self.key]
+        stats = [r for r in KD.diffstat_rows(src) if r["instance_id"] in self.key]
+        for r in cands + stats:
+            r["set"] = self.key[r["instance_id"]]["set"]
+        self.tables["aacr_candidates"] = [self.S(r) for r in cands]
+        self.tables["pr_diffstats"] = [self.S(r) for r in stats]
+
     # --- the run index -----------------------------------------------------------
     def build_runs(self):
         if self.cat is None:
@@ -1097,7 +1117,7 @@ REPO_LICENSES.update({
 CONFIGS = ["defects", "exclusions", "prs", "aacr_references", "aacr_reference_labels", "arms", "reviews",
            "defect_verdicts", "comment_verdicts", "aacr_matches", "martian_prs", "martian_goldens",
            "martian_reviews", "martian_verdicts", "martian_scores", "qodo_prs", "qodo_issues", "qodo_reviews",
-           "qodo_verdicts", "elo_judgments", "elo_ratings", "runs"]
+           "qodo_verdicts", "elo_judgments", "elo_ratings", "runs", "aacr_candidates", "pr_diffstats"]
 
 
 def write_parquet(tables: dict[str, list[dict]], out: str) -> dict[str, int]:
@@ -1397,6 +1417,40 @@ def judge_coverage_checks(t: dict[str, list[dict]]) -> list[dict]:
     return checks
 
 
+# the answer key's build, as the `*-code` dirs record it (key_data.py)
+KEY_BUILD = {"first_prs": 141, "first_rows": 2221, "extended_rows": 1527}
+
+
+def key_data_checks(t: dict[str, list[dict]]) -> list[dict]:
+    """The answer key's build data covers the key: every key PR has its size,
+    every R145 PR its first candidate map, every key PR its extended map, and
+    every candidate names who raised it."""
+    checks = []
+
+    def check(what, got, want):
+        checks.append({"check": what, "got": got, "want": want, "ok": got == want})
+
+    key = {r["instance_id"] for r in t["prs"]}
+    r145 = {r["instance_id"] for r in t["prs"] if r["set"] == "rest145"}
+    sizes = {r["instance_id"] for r in t.get("pr_diffstats") or []}
+    check("pr_diffstats: key PRs with a size", len(sizes & key), len(key))
+    check("pr_diffstats: changed_lines == insertions + deletions",
+          sum(r["changed_lines"] != r["insertions"] + r["deletions"] for r in t.get("pr_diffstats") or []), 0)
+    by_round, rows = collections.defaultdict(set), collections.Counter()
+    for r in t.get("aacr_candidates") or []:
+        by_round[r["round"]].add(r["instance_id"])
+        rows[r["round"]] += 1
+    # the source maps: 145 R145 PRs have a first-key map, 4 of them empty (no
+    # earlier run commented on the PR); every key PR has an extended-key map
+    check("aacr_candidates: R145 PRs with a first-key candidate", len(by_round["candidates"] & r145), KEY_BUILD["first_prs"])
+    check("aacr_candidates: first-key candidates", rows["candidates"], KEY_BUILD["first_rows"])
+    check("aacr_candidates: first-key rows outside R145", len(by_round["candidates"] - r145), 0)
+    check("aacr_candidates: key PRs with an extended-key candidate map", len(by_round["new-candidates"] & key), len(key))
+    check("aacr_candidates: extended-key candidates", rows["new-candidates"], KEY_BUILD["extended_rows"])
+    check("aacr_candidates: candidates with no raiser", sum(not r["raised_by"] for r in t.get("aacr_candidates") or []), 0)
+    return checks
+
+
 def validate_release(t: dict[str, list[dict]], cat: "RC.Catalogue | None", elo_refits: dict, elo_dir: str | None) -> list[dict]:
     """The checks of what this release adds: the open-model rows, the Elo
     ratings (refit from the published judgments, equal to the run's own
@@ -1417,6 +1471,7 @@ def validate_release(t: dict[str, list[dict]], cat: "RC.Catalogue | None", elo_r
         c = [r["cost_usd"] for r in rs if r["judged"] and r["cost_usd"] is not None]
         check(f"{aid}: $/PR", round(statistics.mean(c), 2) if c else None, usd, 0.006)
     checks += judge_coverage_checks(t)
+    checks += key_data_checks(t)
     used = collections.Counter(r["judgment_file"] for r in t["elo_judgments"] if r["plan"] == ELO_PLAN and r["used_in_ratings"])
     check(f"elo {ELO_PLAN}: judgments in the ratings (gpt + opus)", used["gpt"] + used["opus"], 596)
     comb = {r["run"]: r for r in t["elo_ratings"] if r["plan"] == ELO_PLAN and r["table"] == "combined" and r["category"] == "overall"}
@@ -1690,7 +1745,7 @@ def main():
     print("AACR reviews and verdicts …", flush=True); ex.build_aacr_reviews()
     print("Martian …", flush=True); ex.build_martian()
     print("Qodo …", flush=True); ex.build_qodo()
-    print("Elo, run index …", flush=True); ex.build_elo(); ex.build_runs()
+    print("Elo, run index, key data …", flush=True); ex.build_elo(); ex.build_runs(); ex.build_key_data()
     ex.filter_by_family()
     sizes = write_parquet(ex.tables, out)
     if not a.no_figures:

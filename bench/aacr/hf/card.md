@@ -26,13 +26,17 @@ repository:
   for 185 pull requests of AACR-Bench v1.0. Every review from every shipped
   AACR-Bench run, and every judge verdict that scored it. AACR-Bench's own
   metric. The reviews and verdicts on Martian's offline code-review benchmark
-  and on Qodo's PR-Review-Bench. The pairwise Elo judgments and ratings. A run
-  index.
+  and on Qodo's PR-Review-Bench. The pairwise Elo judgments and ratings. The
+  answer key's build data (which reviewer raised each candidate, each PR's
+  size). A run index.
 - **The run archive** ({{ARCHIVE_MD}}). The run directories as the
-  runs wrote them: transcripts, reviews, judge and scorer outputs, logs. There
-  is one `.tar.zst` volume per run family, {{RUN_UNITS}} run directories in
-  {{RUN_FAMILIES}} families. Its README lists every volume, every rewrite and
-  every file left out.
+  runs wrote them, without their raw model session logs: reviews and
+  findings, judge and scorer outputs with their reasoning, run configurations,
+  per-PR summaries, driver logs, and a numbers-only extract of every session
+  log (timestamps, token usage, cost, lens outcomes). There is one `.tar.zst`
+  volume per run family, {{RUN_UNITS}} run directories in {{RUN_FAMILIES}}
+  families. Its README lists every volume, every rewrite and every kind of
+  file left out.
 - **The slim re-score bundle** ({{SLIM_MD}}). The part of the archive
   that the scoring and recompute scripts read, with no transcript text.
 
@@ -114,7 +118,7 @@ repository under `bench/aacr/`.
 | README Qodo chart and table; benchmark paper `tab:qodo` | `readme:qodo`, `bench:tab:qodo` | `qodo_prs`, `qodo_issues`, `qodo_reviews`, `qodo_verdicts` | `qodo-final`, `qodo-r6-and-vendors` | Qodo's scorer on the slim bundle; `validation.json` |
 | README "Judged side by side" (pairwise Elo) and its chart | `readme:elo` | `elo_judgments`, `elo_ratings` | `elo-pairwise`; the reviews: `ft0622-hard20-claude-max-sonnet`, `ft0622-claude-code-high`, `ft0622-quickreview-on-claude`, `martian-final`, `openmodels-glm53-full`, `openmodels-dsv41f-mix` | `recompute/elo_ratings.py --check-ratings` |
 | `docs/DIGITALOCEAN.md`: speed and cost table, the smokes, the review time limit | `do:speed`, `do:glm-smoke`, `do:gemma-smoke`, `do:timeouts` | none (archive only) | `openmodels-smokes`, `openmodels-gpt61-baselines`, `openmodels-glm53-full`, `openmodels-driver`, `aacr-frozen-build` | `recompute/do_speed.py` |
-| QuickReview paper: cost mechanism (pass counts, lens shares, validator dispositions) | `qr:mechanism` | `reviews` | `aacr-gpt6sol-study` (transcripts) | the archive's `analysis/` |
+| QuickReview paper: cost mechanism (pass counts, lens shares, validator dispositions) | `qr:mechanism` | `reviews` | `aacr-gpt6sol-study` (the transcripts' numbers-only extracts) | the archive's `analysis/` |
 | QuickReview paper: tuning appendix (prompt iterations, levers, lenses) | `qr:app:tuning` | `arms`, `defect_verdicts` | `aacr-dev-iterations`, `aacr-dev-levers-presets` | `compare.py` over those runs |
 | QuickReview paper: the max preset example | `qr:max-anecdote` | `arms` (`quickreview-max-g61`) | `aacr-g61-smokes` | `compare.py` |
 
@@ -153,12 +157,14 @@ runs = load_dataset("{{REPO_ID}}", "runs", split="test")
   the reviewer configuration (`arm_config`), the model it billed
   (`model_billed`), its judges, what it was for (`purpose`), the published
   claims it backs (`claims`, the ids above) and the tables that hold its rows
-  (`hf_tables`). `qcr_commit` is the QuickReview build the run recorded. The
-  repository's history was rewritten before publication, so these ids are not
-  in the public history; `qcr_commit_public` names the public commit with the
-  same tree where one exists, and is null where the build was a side branch
-  that was never merged. The archive's `RUNS-INDEX.json` holds the same rows,
-  plus the families that were withheld.
+  (`hf_tables`). `qcr_commit` is the QuickReview build the run used. The
+  repository's history was rewritten before publication, so the ids the runs
+  recorded are not in the public history: `qcr_commit` names the public main
+  commit the rewrite made of the recorded one, with `qcr_commit_on_public_main`
+  true; a build from a side branch that was never merged keeps its recorded id,
+  with `qcr_commit_on_public_main` false. The archive's `run.json` and
+  `case-summary.json` files carry the same remap, and its `RUNS-INDEX.json`
+  holds the same rows, plus the families that were withheld.
 
 **The answer key (AACR-Bench, 185 PRs)**
 
@@ -176,6 +182,17 @@ runs = load_dataset("{{REPO_ID}}", "runs", split="test")
   `aacr_matches` uses), and whether a review bot wrote the original comment.
 - `aacr_reference_labels` — our check of the 253 references on 30 PRs:
   real defect, real maintainability point, trivial, dubious or duplicate.
+- `aacr_candidates` — how the key was built: one row per candidate the
+  agents checked, with the earlier run or the reviewer that raised it
+  (`raised_by`), its file, lines and text. `round` is `candidates` for the
+  first key of the rest145 PRs (each candidate mapped to the run that raised
+  it) and `new-candidates` for the extended key (each mapped to the comparison
+  reviewer). These back the papers' provenance table, the defects only
+  QuickReview's earlier runs raised, and the leave-one-reviewer-out key.
+- `pr_diffstats` — each PR's size as the papers bucket it: files changed,
+  insertions, deletions and their sum (`changed_lines`), from the PR's
+  `git diff --stat`. It backs recall by PR size. AACR-Bench's own
+  `prs.change_line_count` counts differently.
 
 **The reviews and verdicts (AACR)**
 
@@ -277,8 +294,19 @@ Martian, Qodo and Elo judges are the ones named here.
   repository are withheld whole. They are not benchmark runs, and they quote
   private code.
 - **A post-cleanup check of the default build** (`pc2-*`, public AACR-Bench
-  and SWE-PRBench PRs) is withheld until the authors confirm it is not an
-  own-repository run. It backs no published number.
+  and SWE-PRBench PRs) is withheld by the authors. It is a regression check of
+  a development build and backs no published number.
+- **Raw model session logs** of every kind are not published: the reviewers'
+  pi event streams and session files, lens, Codex, Claude Code and OpenCode
+  transcripts, the judges' event streams, the review and judge processes' own
+  output logs, the sandbox command logs, and the prompt files each session was
+  given. They hold the prompt text QuickReview's sessions were built from during
+  development, not benchmark data. Each JSONL session log ships instead as a
+  numbers-only extract (`*.pruned.jsonl`: timestamps, token usage, cost, stop
+  reasons and lens outcomes, no prompt or model text), so the speed, cost,
+  token and lens claims stay verifiable: `compare.py` prices a case from its
+  extract exactly as from the full stream. The set is defined by file kind
+  and fails closed; the archive's README lists every kind and its count.
 - **Aborted and interrupted attempts** are left out. Each one was re-run
   under its normal name, and the re-run ships.
 - **The Elo `packs/`** are left out. They are whole files of the reviewed
@@ -323,10 +351,15 @@ same one the run archive applies. Nothing else in the text was changed.
 - `quickreview` is the public name of the product. Its earlier internal name
   appears in prompts and footers, in any case.
 - `<private-repo>` is the authors' private product repository. A few model
-  texts, and one reviewer's listing of the bench's private case sets, name it.
-- `<redacted-secret>` replaces every value of the bench's credential files. A
-  provider API key that a reviewer could read from its container environment
-  appeared in a few open-model transcripts.
+  texts name it.
+- `<redacted-secret>` replaces every value of the bench's credential files,
+  wherever one occurs. A provider API key that a reviewer could read from its
+  container environment appeared in a few open-model transcripts; those
+  transcripts are not published.
+- `<ticket>` replaces the ids of the authors' tracker, which is not public,
+  and any path into it. Run directory names that carry a ticket number (such
+  as the `ft0622-*` runs) are identifiers the public repository's own plans
+  use, and stay.
 - `<private>` and `<private-host>` replace a personal handle, a private
   commit id, an account id and private host names.
 - `<runs>`, `<repo>`, `<home>` and `<pi-login-volume>` replace host paths

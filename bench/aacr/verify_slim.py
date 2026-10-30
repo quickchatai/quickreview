@@ -29,6 +29,11 @@ same computation over the full runs and against the papers' printed numbers.
               rows, the DigitalOcean speed table and the Elo costs are also
               computed there and compared with the bundle's.
   --elo-full  the full Elo plan dir (optional), for the same comparison.
+  --commit-remap  the {recorded qcr_commit: public main commit} map the
+              export applied (export_runs.py remap_commits): the bundle's
+              run.json files carry the public commits, so compare.py's
+              build note names them; the full runs' output is read through
+              the same map before the line-for-line diff, and nothing else.
 
 Beyond the papers' tables it recomputes, from the bundle's `open-models/runs`
 and `elo/`, the README's "Other models" rows (recompute/open_models.py), its
@@ -172,6 +177,36 @@ PAPER_QODO_COST = {"final1-qodo-pr100": ("2.48", "19.6"), "final1-opencode-qodo-
                    "final1-ocr-qodo-pr100": ("0.46", "1.9"), "final1-pragent-qodo-pr100": ("0.10", "1.2")}
 
 
+COMMIT_TOKEN = re.compile(r"(?<![0-9a-f])([0-9a-f]{7,40})(-dirty)?(?![0-9a-f])")
+
+
+def remap_commit_ids(text: str, remap: dict) -> str:
+    """`text` with every recorded build commit replaced as the export replaced
+    it (release_catalogue.remap_commit): an id as spelled (`-dirty` included)
+    when the map lists that spelling, else its clean id; a `-dirty` suffix is
+    kept. A commit the map gives no public equivalent stays as recorded."""
+    def sub(m):
+        rec = m.group(0)
+        pub = remap[rec] if rec in remap else remap.get(m.group(1))
+        return pub + (m.group(2) or "") if pub else rec
+    if not remap:
+        return text
+    out = []
+    for line in COMMIT_TOKEN.sub(sub, text).split("\n"):
+        head, sep, arms = line.partition(BUILD_NOTE)
+        if sep:  # compare.py lists each arm's builds sorted: sort the remapped ids again
+            parts = []
+            for seg in arms.split("; "):
+                name, colon, ids = seg.rpartition(": ")
+                parts.append(name + colon + ", ".join(sorted(ids.split(", "))) if colon else seg)
+            line = head + sep + "; ".join(parts)
+        out.append(line)
+    return "\n".join(out)
+
+
+BUILD_NOTE = "arms were reviewed by DIFFERENT builds — "
+
+
 class Report:
     def __init__(self):
         self.rows, self.bad, self.doc = [], 0, 0
@@ -237,7 +272,9 @@ def main():
                     help="dir with the reference numbers.json / numbers-gpt6sol.json (e.g. the HF dataset's figures/)")
     ap.add_argument("--open-models-full", help="the full open-model runs dir, to compare the open-model numbers with")
     ap.add_argument("--elo-full", help="the full Elo plan dir (elo/martian-hard20-all-gpt), to compare with")
+    ap.add_argument("--commit-remap", help="the export's {recorded qcr_commit: public main commit} map")
     a = ap.parse_args()
+    remap = json.loads(Path(a.commit_remap).read_text()) if a.commit_remap else {}
     # absolute, because the Martian step imports from both while its cwd is the checkout
     if a.martian:
         a.martian = str(Path(a.martian).resolve())
@@ -299,7 +336,8 @@ def main():
         (out / f"compare-{i}.slim.md").write_text(outputs[(label, "slim")])
         if a.full:
             (out / f"compare-{i}.full.md").write_text(outputs[(label, "full")])
-            d = list(difflib.unified_diff(outputs[(label, "full")].splitlines(), outputs[(label, "slim")].splitlines(), lineterm="", n=0))
+            full_text = remap_commit_ids(outputs[(label, "full")], remap)
+            d = list(difflib.unified_diff(full_text.splitlines(), outputs[(label, "slim")].splitlines(), lineterm="", n=0))
             diffs[label] = d
             print(f"compare {i} ({label}): {'IDENTICAL to the full runs' if not d else f'{len(d)} diff lines'}")
             for ln in d[:12]:
