@@ -110,12 +110,12 @@ reviewer at every severity; the strongest third-party configuration finds
 comments an audit judged real, and on Qodo's PR-Review-Bench 52\% of the
 functional bugs, the highest recall of the tools each benchmark scores under
 one judge (45\% of all Qodo's issues, second to 46\%), and ahead of the same
-three third-party harnesses on the same model on both (they find 54--78\%
+three third-party harnesses on the same model on both (they find 53--78\%
 of the real goldens and 44--46\% of the functional bugs). The price is volume, cost and time: it posts 6.9 comments per PR,
 92\% of them correct but 42\% minor, which gives it the lowest Martian F1
 and the fourth-highest Qodo F1; it costs \$2.06 per PR at list prices
 (median \$1.87; \$2.84 and \$2.48 on Martian's and Qodo's larger PRs), 51\%
-more than the build of the eight-reviewer comparison and 4 to 29 times the
+more than the build of the eight-reviewer comparison and 4 to 31 times the
 third-party tools, and takes a median 17.5 minutes per PR, 1.8 times that
 build, against 0.7--2.3 minutes for the others. The key,
 the exclusions, the judge prompt and every scoring script are released.
@@ -594,12 +594,12 @@ readability notes. A timestamp truncation that breaks mobile sync, CI broken
 by stale mocks, and a mode losing its tools are on no reference list, so a
 reviewer that reports them loses precision.
 
-\paragraph{``Human'' references that are bot comments.} On our 185 PRs, 362
+\paragraph{``Human'' references that are bot comments.} On our 185 PRs, 361
 references are marked human. At least 80 of them (22\%) are rewrites of
 comments that an AI review bot posted on the original PR, not of a human's:
 GitHub Copilot 23, CodeRabbit 20, cubic 20, Sourcery 5, LlamaPReview 4,
 Gemini Code Assist 4, Ellipsis 3 and Cursor Bugbot 1. That raises the
-AI-written share of the list on these PRs from 74\% to at least 80\%. To find
+AI-written share of the list on these PRs from 75\% to at least 80\%. To find
 them, each human reference on the 46 PRs where a bot had reviewed was paired
 with the bot or human inline comment on the same file, within $\pm5$ lines,
 with the highest overlap of content words; every pair at an overlap of 0.15
@@ -1345,12 +1345,12 @@ receives it.
 \paragraph{What configuration moved} (Table~\ref{tab:bestshot},
 Figure~\ref{fig:configsens}). \textbf{pi-review} gains 16 points (52\% to
 68\%): its default reasoning level alone gives 10, and the three-reviewer
-panel the rest, at 2.7 times the cost of a single high reviewer (\$0.46
+panel the rest, at 2.8 times the cost of a single high reviewer (\$0.46
 against \$0.17). \textbf{OpenCode} gains 17 points (43\% to 60\%): the
 native provider gives 7 and cuts the cost from \$0.96 to \$0.40 per PR,
 because our bridge had lost prompt caching; the PR text gives the other 10.
 \textbf{Codex CLI} gains 12 points at high effort (44\% to 56\%) and its
-comments-correct share rises from 62\% to 78\%, for \$0.05 more per PR.
+comments-correct share rises from 62\% to 78\%, for \$0.06 more per PR.
 \textbf{open-code-review}, already run as its harness runs it, moves least:
 2 points either way, with the best AACR F1 of any row at high effort
 (13.9\%). \textbf{PR-Agent} finds 30--34\%, the fewest, with the highest AACR
@@ -1869,7 +1869,7 @@ R145; the panel 62\% against 69\%; Claude Code 60\% against 63\%), so T40 is
 harder for everyone (its PRs were selected by changed-line windows and, for 30 of them, a
 minimum reference count, Appendix~\ref{app:sets}), and the default shows no visible
 in-sample advantage. The default's recall minus the mean of the other seven
-reviewers is 18.2 points on T40 and 22.5 on R145; in the earlier study the
+reviewers is 18.3 points on T40 and 22.5 on R145; in the earlier study the
 same margin was 29.0 and 27.6 points (difference $+1.4$, 95\% CI $-6.3$ to
 $+8.9$, Section~\ref{sec:sol}), so no tuning advantage is measurable, but
 the intervals are wide enough to hide one of several points. Decisions taken
@@ -1998,7 +1998,7 @@ compared default, its lead is not confined to low severity.
 
 \emph{What it costs, and what it posts.} \$2.06 per PR on average (median
 \$1.87, \$380 for the 185 PRs), 51\% more than the compared default and 4 to
-29 times the third-party tools (Table~\ref{tab:costfinal}); a median 17.5
+31 times the third-party tools (Table~\ref{tab:costfinal}); a median 17.5
 minutes per PR, 1.8 times the default's 9.5, against 0.7--2.3 minutes for
 the third-party tools. It posts 6.9 comments per PR against 5.4, 42\% of them
 true but minor (34\% for the default) and 4.5\% graded incorrect (2.5\%);
@@ -2426,7 +2426,7 @@ PRs, with \code{compare.py}, primary judge, 2026-09-29/30.}
     stab-r1 & 11 & 65\% & 1 & 3 & 7 & 76\% & 1.97 \\
     stab-r2 & 14 & 82\% & 1 & 5 & 8 & 70\% & 1.92 \\
     stab-r3 & 12.5 & 74\% & 1 & 4 & 7.5 & 78\% & 2.06 \\
-    stab-r4 & 11.5 & 68\% & 1 & 5 & 5.5 & 77\% & 2.03 \\
+    stab-r4 & 11.5 & 68\% & 1 & 5 & 5.5 & 73\% & 2.03 \\
     current build, full re-run & 13.5 & 79\% & 1 & 5 & 7.5 & 79\% & 2.01 \\
     original run & 13.5 & 79\% & 1 & 5 & 7.5 & 64\% & 1.94 \\
     \bottomrule
@@ -2524,7 +2524,7 @@ minus the mean recall of the six other reviewers is 29.0 points on T40 and
 a 95\% bootstrap interval of $-6.3$ to $+8.9$ (PRs resampled within each
 half).\footnote{Computed from the primary judge's verdict files, 5{,}000
 resamples, 2026-09-28.} The two halves' keys also differ. By source type
-(hunt, AACR references, any reviewer comment), 23 of T40's 126 defects (18\%)
+(hunt, AACR references, any reviewer comment), 27 of T40's 126 defects (21\%)
 have one source against 151 of R145's 394 (38\%), mostly defects raised only
 by reviewers (7 on T40, 144 on R145, where the verifier read the comments of
 three benchmarked reviewers). Per scored reviewer (found or partial by
@@ -2645,7 +2645,7 @@ measured.
   the largest precision penalty. Not all of that penalty is the list's
   fault: by our own judge 56\% of the default's comments map onto a
   verified defect, the lowest share of the eight (\code{low} 58\%,
-  open-code-review 63\%, the panel 67\%, PR-Agent 77\%, Claude Code 81\%,
+  open-code-review 63\%, the panel 67\%, PR-Agent 76\%, Claude Code 81\%,
   Codex CLI 85\%, OpenCode 87\%); the rest are mostly true minor notes
   (Table~\ref{tab:grades}).
   \item \textbf{The line gate.} A comment is judged only if it lands within
@@ -2659,7 +2659,7 @@ measured.
   comments that happened to match the dataset.
 \end{enumerate}
 
-The list is also less human than it is labelled: at least 80 of its 362
+The list is also less human than it is labelled: at least 80 of its 361
 ``human'' references on our PRs are rewritten review-bot comments
 (Section~\ref{sec:reflimits}). Removing them lowers AACR F1 by 0.1 to 1.4
 points per reviewer and leaves the top three on recall and F1 as they were
@@ -2833,7 +2833,7 @@ PRs, and scored each with the same judge and steps; the same three ran on
 Qodo's benchmark (Section~\ref{sec:qodo}). On recall \qcr{} is first and
 open-code-review second, as on AACR: 65.8, 58.9, then PR-Agent 36.1 and
 OpenCode 33.5 (Table~\ref{tab:martianfinal}); on the 86 golden comments the
-audit judged real (Section~\ref{sec:martianaudit}), 87\%, 78\%, 54\% and
+audit judged real (Section~\ref{sec:martianaudit}), 87\%, 78\%, 53\% and
 56\%. Precision and F1 order them the other way:
 PR-Agent has the highest F1 of the four (38.8) and \qcr{} the lowest
 (26.1), and open-code-review, which posts about half as many issues as \qcr{}
@@ -3667,11 +3667,15 @@ re-judge the archived reviews, or re-run every arm, on a ChatGPT login or on
 one's own API keys. The generated charts and the readable renderings of the
 keys are in the dataset. The file names some footnotes cite --- \code{FULL-BENCHMARK.md}, \code{RESULTS.md}, \code{EXTERNAL-BENCHMARKS.md}, \code{MARTIAN-CRITIQUE.md}, \code{RUNS.md}, \code{REVIEW-benchmark.md}, and the scratch analyses under \code{wp-data/} and \code{paper-data/} --- are the study's working notes. They are not part of the public repository; every number this paper takes from them is stated here, and the run data they were computed from is in the run archive below.
 
-\paragraph{Run archive.} The full run directories (reviews, transcripts,
-judge files, eval metrics) are published as one archive on Hugging Face
-only, under a Hugging Face DOI
-(\code{huggingface.co/datasets/XXXX/XXXX}, DOI \code{10.57967/hf/XXXX}), % FILL AT SUBMISSION
-with names rewritten to placeholders and model reasoning blobs blanked.
+\paragraph{Run archive.} The run data are published on Hugging Face only,
+as the dataset \url{https://huggingface.co/datasets/quickchatai/quickreview-bench}
+(its Hugging Face DOI is pending): browsable tables of every review, finding
+and judge verdict with the judges' reasoning, the run configurations, per-PR
+summaries (cost, time, tokens) and the pairwise judgments, beside the run
+directories as archive volumes and a slim bundle for re-scoring. Raw model
+session transcripts are not published; numbers-only extracts of them
+(timestamps, token usage, lens outcomes) are. Names are rewritten to
+placeholders and model reasoning blobs blanked.
 
 \paragraph{Local only.} Extracted PR code and the key-construction analysis
 scripts. AACR-Bench is Apache-2.0, so the derived index, labels and key may
@@ -3789,7 +3793,7 @@ scheduler, never per PR in isolation.
 Mateusz Jakubczak.
 \newblock QuickReview: a multi-pass automated code reviewer, its design, its cost, and how it performs on a verified defect benchmark.
 \newblock Technical report, companion to this paper, 2026.
-\newblock arXiv:XXXX.XXXXX. % FILL AT SUBMISSION
+\newblock \url{https://github.com/quickchatai/quickreview}, \code{bench/aacr/paper/quickreview.pdf}. % arXiv id: fill at submission
 
 
 % ---------------------------------------------------------------------

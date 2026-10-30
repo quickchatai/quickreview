@@ -519,13 +519,16 @@ def qodo_cells(a, slim: Path, tools: Path, out: Path, rep: "Report", qstats) -> 
 # README "Other models" (recompute/open_models.py names): high, medium, low, all, $/PR
 README_OPEN = {"GLM-5.3 Flash": ("83", "120.5", "231.5", "435", "0.52"),
                "DeepSeek V4.1 Flash (mostly low effort)": ("83", "131", "237.5", "451.5", "0.74")}
-README_OPEN_NOTES = {"DeepSeek low-effort PRs": "143", "GLM PRs missing a lens pass": "7"}
+# its notes under the table: PRs at low effort, and the PRs gate.py fails for a pass, by kind
+README_OPEN_NOTES = {"DeepSeek low-effort PRs": "143", "DeepSeek PRs that lost a lens pass": "5",
+                     "GLM PRs that lost a lens pass": "1", "GLM PRs that lost only the validator": "2",
+                     "GLM PRs missing a lens pass": "7"}
 # docs/DIGITALOCEAN.md "Why the open models take longer": minutes, output tokens (k), replies,
 # typical reply (s), generation speed (tok/s), $ per PR
-DO_TABLE = {"GPT-6.1 Sol": ("8", "21", "71", "12", "25", "2.30"), "GLM-5.3 Flash": ("30", "244", "196", "8", "37", "0.32"),
-            "DeepSeek V4.1 Flash": ("41", "323", "223", "14", "36", "0.57"), "Gemma 4 31B": ("34", "109", "130", "25", "9", "0.32")}
-DO_SMOKE = {"ok": "10/10", "usd": "3.31", "median min": "28", "slowest min": "54"}
-DO_SLOWEST = "54-66"
+DO_TABLE = {"GPT-6.1 Sol": ("16", "37", "78", "12", "25", "2.27"), "GLM-5.3 Flash": ("30", "244", "196", "8", "37", "0.32"),
+            "DeepSeek V4.1 Flash": ("42", "323", "230", "13", "36", "0.69"), "Gemma 4 31B": ("34", "109", "130", "25", "9", "0.32")}
+DO_SMOKE = {"ok": "10/10", "usd": "3.31", "median min": "26.5", "mean min": "27.9", "slowest min": "54"}
+DO_SLOWEST = "55-72"
 # README "Judged side by side"
 README_ELO = {"games": "596", "judges agree": "56%", "ft0622-hard20-qr-opus55": "1628",
               "ft0622-hard20-cc-high-opus55": "1518", "ft0622-hard20-sonnet": "1666"}
@@ -567,13 +570,20 @@ def release_claims(a, slim: Path, tools: Path, out: Path, rep: "Report") -> dict
                       (fl.get(name) or (None,) * 5)[i] if fl else None)
     if mine:
         ds = (mine.get("DeepSeek V4.1 Flash (mostly low effort)") or {}).get("effort", {}).get("total", {}).get("low")
-        glm = len(((mine.get("GLM-5.3 Flash") or {}).get("degraded") or {}).get("lens_unrecorded_only") or [])
-        fds = fglm = None
+        def degraded(r, name, kind):
+            return len((((r or {}).get(name) or {}).get("degraded") or {}).get(kind) or [])
+        dsn, glmn = "DeepSeek V4.1 Flash (mostly low effort)", "GLM-5.3 Flash"
+        fds = None
         if full:
-            fds = (full.get("DeepSeek V4.1 Flash (mostly low effort)") or {}).get("effort", {}).get("total", {}).get("low")
-            fglm = len(((full.get("GLM-5.3 Flash") or {}).get("degraded") or {}).get("lens_unrecorded_only") or [])
+            fds = (full.get(dsn) or {}).get("effort", {}).get("total", {}).get("low")
         rep.check("README: Other models", "DeepSeek", "PRs at low effort", README_OPEN_NOTES["DeepSeek low-effort PRs"], ds, fds)
-        rep.check("README: Other models", "GLM", "PRs missing a lens pass", README_OPEN_NOTES["GLM PRs missing a lens pass"], glm, fglm)
+        for row, name, col, kind, note in (
+                ("DeepSeek", dsn, "PRs that lost a lens pass", "lens_lost", "DeepSeek PRs that lost a lens pass"),
+                ("GLM", glmn, "PRs that lost a lens pass", "lens_lost", "GLM PRs that lost a lens pass"),
+                ("GLM", glmn, "PRs that lost only the validator", "validator_only_lost", "GLM PRs that lost only the validator"),
+                ("GLM", glmn, "PRs missing a lens pass", "lens_unrecorded_only", "GLM PRs missing a lens pass")):
+            rep.check("README: Other models", row, col, README_OPEN_NOTES[note], degraded(mine, name, kind),
+                      degraded(full, name, kind) if full else None)
     # 9. docs/DIGITALOCEAN.md
     mine = _py(rc / "do_speed.py", ["--runs-dir", str(om_slim), "--gpt-runs-dir", str(slim / "runs"), "--sets-dir", str(tools / "sets")],
                out / "do_speed.slim.json")
@@ -596,8 +606,8 @@ def release_claims(a, slim: Path, tools: Path, out: Path, rep: "Report") -> dict
         s_ = ((r or {}).get("smokes") or {}).get("glm53-smoke-p10-l12")
         if not s_:
             return {}
-        return {"ok": f"{s_['ok']}/{s_['prs']}", "usd": f"{s_['usd']:.2f}", "median min": f"{s_['median_min']:.0f}",
-                "slowest min": f"{s_['max_min']:.0f}"}
+        return {"ok": f"{s_['ok']}/{s_['prs']}", "usd": f"{s_['usd']:.2f}", "median min": f"{s_['median_min']:.1f}",
+                "mean min": f"{s_['mean_min']:.1f}", "slowest min": f"{s_['max_min']:.0f}"}
     m, fl = smoke(mine), smoke(full)
     for col, exp in DO_SMOKE.items():
         rep.check("DIGITALOCEAN: GLM smoke", "glm53-smoke-p10-l12", col, exp, m.get(col, "absent"), fl.get(col) if fl else None)

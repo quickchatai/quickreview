@@ -23,18 +23,18 @@ to the next message of the same transcript; a reply with no next message has no 
   $ / PR             mean over PRs of the case's usage (input, output, cacheRead) at the model's
                      list price (openmodels/models.py; GPT-6.1 Sol at compare.py CODEX_RATES)
 
-The GLM smoke paragraph ("10/10 reviews ok, ... $3.31 in total at list price, median about
-28 minutes per PR, slowest 54 minutes") is glm53-smoke-p10-l12 over the same six sets,
+The GLM smoke paragraph ("10/10 reviews ok, ... $3.31 in total at list price, median 26.5
+minutes per PR (mean 27.9), slowest 54 minutes") is glm53-smoke-p10-l12 over the same six sets,
 counted as openmodels/gate.py counts it: status ok, every planned lens run and its final
 attempt successful; dollars rounded to the cent per set, then summed; minutes per PR to one
-decimal, their median and mean, and the slowest. (The published "median about 28" is the
-mean, 27.9; the median is 26.5.) Gemma's smoke ("9 of 10 PRs cleanly") is the same count on
+decimal, their median and mean, and the slowest. (The text once printed the mean, 27.9, as
+"median about 28".) Gemma's smoke ("9 of 10 PRs cleanly") is the same count on
 its row's run.
 
-"Review time limit" ("GLM-5.3 Flash takes 54-66 minutes on the largest AACR PRs"): the five
-slowest reviews of the full GLM run (glm53-full-<set>) on AACR. The other half of that
-sentence, 5 of the first 10 PRs timing out at 75 minutes, happened in a first attempt whose
-cases the resumed run re-reviewed in place; no run file keeps it.
+"Review time limit" ("GLM-5.3 Flash's five slowest AACR reviews ... took 55-72 minutes"): the
+five slowest reviews of the full GLM run (glm53-full-<set>) on AACR. The first attempt's
+timeouts at 75 minutes happened in an attempt whose cases the resumed run re-reviewed in
+place; no run file keeps them, so the text gives no count.
 """
 from __future__ import annotations
 

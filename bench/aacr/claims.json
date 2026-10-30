@@ -1552,12 +1552,11 @@
   {
    "id": "readme.readme:elo.15",
    "file": "README.md",
-   "anchor": "than ten times its cost (about $4 per PR)",
-   "value": "4",
+   "anchor": "than ten times its cost ($4.61 per PR on average)",
+   "value": "4.61",
    "group": "readme:elo",
    "q": "elo_refit:costs/ft0622-hard20-qr-opus55/usd_mean",
-   "about": true,
-   "note": "the mean is $4.61 and the median $4.42"
+   "note": "the mean over the plan's 20 PRs; the median is $4.42"
   },
   {
    "id": "readme.readme:elo.16",
@@ -2124,14 +2123,48 @@
   {
    "id": "readme.readme:other-models.66",
    "file": "README.md",
-   "anchor": "its PRs, and GLM's review was missing a lens pass on 7.",
+   "anchor": "and the validator on 2, and on 7 more a lens pass ran but is missing from the",
    "value": "7",
    "group": "readme:other-models",
    "q": "open_models:GLM-5.3 Flash/degraded/lens_unrecorded_only/#len",
    "alt": [
     "slim:README: Other models|GLM|PRs missing a lens pass"
    ],
-   "note": "7 counts the PRs whose lens ran but the session did not record it; 1 more PR lost a lens and 2 lost the validator (open_models.py `degraded`)"
+   "note": "7 counts the PRs whose lens ran but whose session did not record it (open_models.py `degraded`)"
+  },
+  {
+   "id": "readme.readme:other-models.74",
+   "file": "README.md",
+   "anchor": "its PRs and lost one lens pass on 5 PRs. On GLM, one lens pass was lost on 1 PR",
+   "value": "5",
+   "group": "readme:other-models",
+   "q": "open_models:DeepSeek V4.1 Flash (mostly low effort)/degraded/lens_lost/#len",
+   "alt": [
+    "slim:README: Other models|DeepSeek|PRs that lost a lens pass"
+   ],
+   "note": "a lens pass whose final attempt failed or that never ran (open_models.py `degraded`)"
+  },
+  {
+   "id": "readme.readme:other-models.75",
+   "file": "README.md",
+   "anchor": "its PRs and lost one lens pass on 5 PRs. On GLM, one lens pass was lost on 1 PR",
+   "value": "1",
+   "group": "readme:other-models",
+   "q": "open_models:GLM-5.3 Flash/degraded/lens_lost/#len",
+   "alt": [
+    "slim:README: Other models|GLM|PRs that lost a lens pass"
+   ]
+  },
+  {
+   "id": "readme.readme:other-models.76",
+   "file": "README.md",
+   "anchor": "and the validator on 2, and on 7 more a lens pass ran but is missing from the",
+   "value": "2",
+   "group": "readme:other-models",
+   "q": "open_models:GLM-5.3 Flash/degraded/validator_only_lost/#len",
+   "alt": [
+    "slim:README: Other models|GLM|PRs that lost only the validator"
+   ]
   },
   {
    "id": "readme.readme:other-models.67",
@@ -4384,8 +4417,8 @@
   {
    "id": "do.do:speed.2",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "| GPT-6.1 Sol | 8 |",
-   "value": "8",
+   "anchor": "| GPT-6.1 Sol | 16 |",
+   "value": "16",
    "group": "do:speed",
    "q": "do_speed:table/GPT-6.1 Sol/minutes",
    "alt": [
@@ -4395,8 +4428,8 @@
   {
    "id": "do.do:speed.3",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "| GPT-6.1 Sol | 8 |",
-   "value": "21k",
+   "anchor": "| GPT-6.1 Sol | 16 |",
+   "value": "37k",
    "group": "do:speed",
    "q": "{do_speed:table/GPT-6.1 Sol/output} / 1000",
    "alt": [
@@ -4406,8 +4439,8 @@
   {
    "id": "do.do:speed.4",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "| GPT-6.1 Sol | 8 |",
-   "value": "71",
+   "anchor": "| GPT-6.1 Sol | 16 |",
+   "value": "78",
    "group": "do:speed",
    "q": "do_speed:table/GPT-6.1 Sol/replies",
    "alt": [
@@ -4417,7 +4450,7 @@
   {
    "id": "do.do:speed.5",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "| GPT-6.1 Sol | 8 |",
+   "anchor": "| GPT-6.1 Sol | 16 |",
    "value": "12",
    "group": "do:speed",
    "q": "do_speed:table/GPT-6.1 Sol/reply_seconds",
@@ -4428,7 +4461,7 @@
   {
    "id": "do.do:speed.6",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "| GPT-6.1 Sol | 8 |",
+   "anchor": "| GPT-6.1 Sol | 16 |",
    "value": "25",
    "group": "do:speed",
    "q": "do_speed:table/GPT-6.1 Sol/tok_per_s",
@@ -4437,8 +4470,8 @@
   {
    "id": "do.do:speed.7",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "| GPT-6.1 Sol | 8 |",
-   "value": "2.30",
+   "anchor": "| GPT-6.1 Sol | 16 |",
+   "value": "2.27",
    "group": "do:speed",
    "q": "do_speed:table/GPT-6.1 Sol/usd",
    "alt": [
@@ -4512,8 +4545,8 @@
   {
    "id": "do.do:speed.14",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "| DeepSeek V4.1 Flash | 41 |",
-   "value": "41",
+   "anchor": "| DeepSeek V4.1 Flash | 42 |",
+   "value": "42",
    "group": "do:speed",
    "q": "do_speed:table/DeepSeek V4.1 Flash/minutes",
    "alt": [
@@ -4523,7 +4556,7 @@
   {
    "id": "do.do:speed.15",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "| DeepSeek V4.1 Flash | 41 |",
+   "anchor": "| DeepSeek V4.1 Flash | 42 |",
    "value": "323k",
    "group": "do:speed",
    "q": "{do_speed:table/DeepSeek V4.1 Flash/output} / 1000",
@@ -4534,8 +4567,8 @@
   {
    "id": "do.do:speed.16",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "| DeepSeek V4.1 Flash | 41 |",
-   "value": "223",
+   "anchor": "| DeepSeek V4.1 Flash | 42 |",
+   "value": "230",
    "group": "do:speed",
    "q": "do_speed:table/DeepSeek V4.1 Flash/replies",
    "alt": [
@@ -4545,8 +4578,8 @@
   {
    "id": "do.do:speed.17",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "| DeepSeek V4.1 Flash | 41 |",
-   "value": "14",
+   "anchor": "| DeepSeek V4.1 Flash | 42 |",
+   "value": "13",
    "group": "do:speed",
    "q": "do_speed:table/DeepSeek V4.1 Flash/reply_seconds",
    "alt": [
@@ -4556,7 +4589,7 @@
   {
    "id": "do.do:speed.18",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "| DeepSeek V4.1 Flash | 41 |",
+   "anchor": "| DeepSeek V4.1 Flash | 42 |",
    "value": "36",
    "group": "do:speed",
    "q": "do_speed:table/DeepSeek V4.1 Flash/tok_per_s",
@@ -4565,14 +4598,13 @@
   {
    "id": "do.do:speed.19",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "| DeepSeek V4.1 Flash | 41 |",
-   "value": "0.57",
+   "anchor": "| DeepSeek V4.1 Flash | 42 |",
+   "value": "0.69",
    "group": "do:speed",
    "q": "do_speed:table/DeepSeek V4.1 Flash/usd",
    "alt": [
     "slim:DIGITALOCEAN: speed|DeepSeek V4.1 Flash|$/PR"
-   ],
-   "about": true
+   ]
   },
   {
    "id": "do.do:speed.20",
@@ -4641,36 +4673,42 @@
   {
    "id": "do.do:speed.26",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "They are slow because they take about 3× the",
+   "anchor": "They are slow because they take 2.5–3× the",
    "value": "3",
    "group": "do:speed",
-   "q": "({do_speed:table/GLM-5.3 Flash/replies} / {do_speed:table/GPT-6.1 Sol/replies} + {do_speed:table/DeepSeek V4.1 Flash/replies} / {do_speed:table/GPT-6.1 Sol/replies}) / 2",
-   "about": true,
-   "note": "read as the mean of GLM's and DeepSeek's replies per PR over GPT-6.1 Sol's"
+   "q": "{do_speed:table/DeepSeek V4.1 Flash/replies} / {do_speed:table/GPT-6.1 Sol/replies}",
+   "note": "DeepSeek's replies per PR over GPT-6.1 Sol's"
+  },
+  {
+   "id": "do.do:speed.29",
+   "file": "bench/aacr/docs/DIGITALOCEAN.md",
+   "anchor": "They are slow because they take 2.5–3× the",
+   "value": "2.5",
+   "group": "do:speed",
+   "q": "{do_speed:table/GLM-5.3 Flash/replies} / {do_speed:table/GPT-6.1 Sol/replies}",
+   "note": "GLM's replies per PR over GPT-6.1 Sol's"
   },
   {
    "id": "do.do:speed.27",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "steps and write 12–15× the output",
-   "value": "12",
+   "anchor": "steps and write 7–9× the output",
+   "value": "7",
    "group": "do:speed",
-   "q": "{do_speed:table/GLM-5.3 Flash/output} / {do_speed:table/GPT-6.1 Sol/output}",
-   "about": true
+   "q": "{do_speed:table/GLM-5.3 Flash/output} / {do_speed:table/GPT-6.1 Sol/output}"
   },
   {
    "id": "do.do:speed.28",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "steps and write 12–15× the output",
-   "value": "15",
+   "anchor": "steps and write 7–9× the output",
+   "value": "9",
    "group": "do:speed",
-   "q": "{do_speed:table/DeepSeek V4.1 Flash/output} / {do_speed:table/GPT-6.1 Sol/output}",
-   "about": true
+   "q": "{do_speed:table/DeepSeek V4.1 Flash/output} / {do_speed:table/GPT-6.1 Sol/output}"
   },
   {
    "id": "do.do:timeouts.1",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "The bench's per-review limit is 75 minutes, sized for GPT-6.1 Sol (~8 minutes a",
-   "value": "8",
+   "anchor": "sized for GPT-6.1 Sol (~16 minutes a",
+   "value": "16",
    "group": "do:timeouts",
    "q": "do_speed:table/GPT-6.1 Sol/minutes",
    "about": true,
@@ -4679,8 +4717,8 @@
   {
    "id": "do.do:timeouts.2",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "GLM-5.3 Flash takes 54–66 minutes on the largest AACR PRs, and 5 of the",
-   "value": "54",
+   "anchor": "55–72 minutes, and the run's first attempt timed out on some PRs at that limit",
+   "value": "55",
    "group": "do:timeouts",
    "q": "min({do_speed:glm_full_slowest/0/0}, {do_speed:glm_full_slowest/1/0}, {do_speed:glm_full_slowest/2/0}, {do_speed:glm_full_slowest/3/0}, {do_speed:glm_full_slowest/4/0})",
    "note": "the five slowest reviews of the full GLM run on AACR"
@@ -4688,28 +4726,11 @@
   {
    "id": "do.do:timeouts.3",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "GLM-5.3 Flash takes 54–66 minutes on the largest AACR PRs, and 5 of the",
-   "value": "66",
+   "anchor": "55–72 minutes, and the run's first attempt timed out on some PRs at that limit",
+   "value": "72",
    "group": "do:timeouts",
-   "q": "max({do_speed:glm_full_slowest/0/0}, {do_speed:glm_full_slowest/1/0}, {do_speed:glm_full_slowest/2/0}, {do_speed:glm_full_slowest/3/0}, {do_speed:glm_full_slowest/4/0})"
-  },
-  {
-   "id": "do.do:timeouts.4",
-   "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "GLM-5.3 Flash takes 54–66 minutes on the largest AACR PRs, and 5 of the",
-   "value": "5",
-   "group": "do:timeouts",
-   "q": null,
-   "no_script": "the first attempt's timeouts: no run file keeps them (the resumed run re-reviewed those cases in place)"
-  },
-  {
-   "id": "do.do:timeouts.5",
-   "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "first 10 PRs of the 2026-10-14 full run timed out at 75.",
-   "value": "10",
-   "group": "do:timeouts",
-   "q": null,
-   "no_script": "the first attempt's timeouts: no run file keeps them"
+   "q": "max({do_speed:glm_full_slowest/0/0}, {do_speed:glm_full_slowest/1/0}, {do_speed:glm_full_slowest/2/0}, {do_speed:glm_full_slowest/3/0}, {do_speed:glm_full_slowest/4/0})",
+   "note": "the slowest review of the full GLM run on AACR"
   },
   {
    "id": "do.do:glm-smoke.1",
@@ -4753,17 +4774,29 @@
   {
    "id": "do.do:glm-smoke.5",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "median about 28 minutes per PR, slowest 54 minutes.",
-   "value": "28",
+   "anchor": "median 26.5 minutes per PR (mean 27.9), slowest 54 minutes.",
+   "value": "26.5",
    "group": "do:glm-smoke",
    "q": "do_speed:smokes/glm53-smoke-p10-l12/median_min",
-   "about": true,
-   "note": "the median is 26.5 and the mean 27.9"
+   "alt": [
+    "slim:DIGITALOCEAN: GLM smoke|glm53-smoke-p10-l12|median min"
+   ]
+  },
+  {
+   "id": "do.do:glm-smoke.7",
+   "file": "bench/aacr/docs/DIGITALOCEAN.md",
+   "anchor": "median 26.5 minutes per PR (mean 27.9), slowest 54 minutes.",
+   "value": "27.9",
+   "group": "do:glm-smoke",
+   "q": "do_speed:smokes/glm53-smoke-p10-l12/mean_min",
+   "alt": [
+    "slim:DIGITALOCEAN: GLM smoke|glm53-smoke-p10-l12|mean min"
+   ]
   },
   {
    "id": "do.do:glm-smoke.6",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "median about 28 minutes per PR, slowest 54 minutes.",
+   "anchor": "median 26.5 minutes per PR (mean 27.9), slowest 54 minutes.",
    "value": "54",
    "group": "do:glm-smoke",
    "q": "do_speed:smokes/glm53-smoke-p10-l12/max_min",
@@ -15206,7 +15239,7 @@
   {
    "id": "bench.bench:tab:stab-sol.29",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 77\\% & 2.03 \\\\",
+   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 73\\% & 2.03 \\\\",
    "value": "11.5",
    "group": "bench:tab:stab-sol",
    "q": "aacr:quickreview-stab-r4~own:found"
@@ -15214,7 +15247,7 @@
   {
    "id": "bench.bench:tab:stab-sol.30",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 77\\% & 2.03 \\\\",
+   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 73\\% & 2.03 \\\\",
    "value": "68%",
    "group": "bench:tab:stab-sol",
    "q": "aacr:quickreview-stab-r4~own:recall"
@@ -15222,7 +15255,7 @@
   {
    "id": "bench.bench:tab:stab-sol.31",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 77\\% & 2.03 \\\\",
+   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 73\\% & 2.03 \\\\",
    "value": "1",
    "group": "bench:tab:stab-sol",
    "q": "aacr:quickreview-stab-r4~own:high"
@@ -15230,7 +15263,7 @@
   {
    "id": "bench.bench:tab:stab-sol.32",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 77\\% & 2.03 \\\\",
+   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 73\\% & 2.03 \\\\",
    "value": "5",
    "group": "bench:tab:stab-sol",
    "q": "aacr:quickreview-stab-r4~own:medium"
@@ -15238,7 +15271,7 @@
   {
    "id": "bench.bench:tab:stab-sol.33",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 77\\% & 2.03 \\\\",
+   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 73\\% & 2.03 \\\\",
    "value": "5.5",
    "group": "bench:tab:stab-sol",
    "q": "aacr:quickreview-stab-r4~own:low"
@@ -15246,15 +15279,15 @@
   {
    "id": "bench.bench:tab:stab-sol.34",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 77\\% & 2.03 \\\\",
-   "value": "77%",
+   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 73\\% & 2.03 \\\\",
+   "value": "73%",
    "group": "bench:tab:stab-sol",
    "q": "aacr:quickreview-stab-r4~own:correct"
   },
   {
    "id": "bench.bench:tab:stab-sol.35",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 77\\% & 2.03 \\\\",
+   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 73\\% & 2.03 \\\\",
    "value": "2.03",
    "group": "bench:tab:stab-sol",
    "q": "aacr:quickreview-stab-r4~own:usd"
@@ -26660,8 +26693,8 @@
   {
    "id": "bench.bench:tab:finalbuild.106",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "three third-party harnesses on the same model on both (they find 54--78\\%",
-   "value": "54",
+   "anchor": "three third-party harnesses on the same model on both (they find 53--78\\%",
+   "value": "53",
    "group": "bench:tab:finalbuild",
    "q": "min({martian:final1-ocr-martian50|open-code-review:real_pct}, {martian:final1-pragent-martian50|pr-agent:real_pct}, {martian:final1-opencode-martian50|opencode:real_pct})",
    "note": "PR-Agent's 46 of 86 is 53.5%"
@@ -26669,7 +26702,7 @@
   {
    "id": "bench.bench:tab:finalbuild.107",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "three third-party harnesses on the same model on both (they find 54--78\\%",
+   "anchor": "three third-party harnesses on the same model on both (they find 53--78\\%",
    "value": "78%",
    "group": "bench:tab:finalbuild",
    "q": "max({martian:final1-ocr-martian50|open-code-review:real_pct}, {martian:final1-pragent-martian50|pr-agent:real_pct}, {martian:final1-opencode-martian50|opencode:real_pct})"
@@ -26757,7 +26790,7 @@
   {
    "id": "bench.bench:tab:finalbuild.118",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "more than the build of the eight-reviewer comparison and 4 to 29 times the",
+   "anchor": "more than the build of the eight-reviewer comparison and 4 to 31 times the",
    "value": "4",
    "group": "bench:tab:finalbuild",
    "q": "{aacr:quickreview-frozen:usd} / max({aacr:pireview-panel-high-g61:usd}, {aacr:claude-code-opus55:usd}, {aacr:ocr-high-g61:usd}, {aacr:codex-high-g61:usd}, {aacr:opencode-native-pr-g61:usd}, {aacr:pragent-g61:usd})"
@@ -26765,11 +26798,11 @@
   {
    "id": "bench.bench:tab:finalbuild.119",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "more than the build of the eight-reviewer comparison and 4 to 29 times the",
-   "value": "29",
+   "anchor": "more than the build of the eight-reviewer comparison and 4 to 31 times the",
+   "value": "31",
    "group": "bench:tab:finalbuild",
    "q": "{aacr:quickreview-frozen:usd} / min({aacr:pireview-panel-high-g61:usd}, {aacr:claude-code-opus55:usd}, {aacr:ocr-high-g61:usd}, {aacr:codex-high-g61:usd}, {aacr:opencode-native-pr-g61:usd}, {aacr:pragent-g61:usd})",
-   "note": "the printed $2.06 / $0.07 gives 29; the unrounded costs give 31"
+   "note": "from the unrounded costs ($2.06 / $0.0655); the printed $2.06 / $0.07 would give 29"
   },
   {
    "id": "bench.bench:tab:finalbuild.120",
@@ -27408,7 +27441,7 @@
   {
    "id": "bench.bench:final-tables.783",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\paragraph{``Human'' references that are bot comments.} On our 185 PRs, 362",
+   "anchor": "\\paragraph{``Human'' references that are bot comments.} On our 185 PRs, 361",
    "value": "185",
    "group": "bench:final-tables",
    "q": "key:prs"
@@ -27416,8 +27449,8 @@
   {
    "id": "bench.bench:final-tables.784",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\paragraph{``Human'' references that are bot comments.} On our 185 PRs, 362",
-   "value": "362",
+   "anchor": "\\paragraph{``Human'' references that are bot comments.} On our 185 PRs, 361",
+   "value": "361",
    "group": "bench:final-tables",
    "q": "key:not_ai_refs"
   },
@@ -27504,15 +27537,15 @@
   {
    "id": "bench.bench:final-tables.795",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "AI-written share of the list on these PRs from 74\\% to at least 80\\%. To find",
-   "value": "74%",
+   "anchor": "AI-written share of the list on these PRs from 75\\% to at least 80\\%. To find",
+   "value": "75%",
    "group": "bench:final-tables",
    "q": "{key:ai_refs} / {key:refs} * 100"
   },
   {
    "id": "bench.bench:final-tables.796",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "AI-written share of the list on these PRs from 74\\% to at least 80\\%. To find",
+   "anchor": "AI-written share of the list on these PRs from 75\\% to at least 80\\%. To find",
    "value": "80%",
    "group": "bench:final-tables",
    "q": "({key:ai_refs} + {key:bot_refs}) / {key:refs} * 100"
@@ -29695,16 +29728,16 @@
   {
    "id": "bench.bench:bestshot.417",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "panel the rest, at 2.7 times the cost of a single high reviewer (\\$0.46",
-   "value": "2.7",
+   "anchor": "panel the rest, at 2.8 times the cost of a single high reviewer (\\$0.46",
+   "value": "2.8",
    "group": "bench:bestshot",
    "q": "{aacr:pireview-panel-sol-s40~s40:usd} / {aacr:pireview-high-sol-s40~s40:usd}",
-   "note": "the ratio of the printed costs, $0.46 / $0.17, is 2.7"
+   "note": "from the unrounded costs ($0.4646 / $0.1687); the printed $0.46 / $0.17 would give 2.7"
   },
   {
    "id": "bench.bench:bestshot.418",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "panel the rest, at 2.7 times the cost of a single high reviewer (\\$0.46",
+   "anchor": "panel the rest, at 2.8 times the cost of a single high reviewer (\\$0.46",
    "value": "0.46",
    "group": "bench:bestshot",
    "q": "aacr:pireview-panel-sol-s40~s40:usd"
@@ -29804,7 +29837,7 @@
   {
    "id": "bench.bench:bestshot.430",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "comments-correct share rises from 62\\% to 78\\%, for \\$0.05 more per PR.",
+   "anchor": "comments-correct share rises from 62\\% to 78\\%, for \\$0.06 more per PR.",
    "value": "62%",
    "group": "bench:bestshot",
    "q": "aacr:codex-medium-sol~s40:correct"
@@ -29812,7 +29845,7 @@
   {
    "id": "bench.bench:bestshot.431",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "comments-correct share rises from 62\\% to 78\\%, for \\$0.05 more per PR.",
+   "anchor": "comments-correct share rises from 62\\% to 78\\%, for \\$0.06 more per PR.",
    "value": "78%",
    "group": "bench:bestshot",
    "q": "aacr:codex-high-sol-s40~s40:correct"
@@ -29820,11 +29853,11 @@
   {
    "id": "bench.bench:bestshot.432",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "comments-correct share rises from 62\\% to 78\\%, for \\$0.05 more per PR.",
-   "value": "0.05",
+   "anchor": "comments-correct share rises from 62\\% to 78\\%, for \\$0.06 more per PR.",
+   "value": "0.06",
    "group": "bench:bestshot",
    "q": "{aacr:codex-high-sol-s40~s40:usd} - {aacr:codex-medium-sol~s40:usd}",
-   "note": "the difference of the printed costs, $0.24 - $0.19, is $0.05"
+   "note": "from the unrounded costs ($0.057); the printed $0.24 - $0.19 would give $0.05"
   },
   {
    "id": "bench.bench:bestshot.433",
@@ -31662,15 +31695,15 @@
   {
    "id": "bench.bench:final-tables.959",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "reviewers is 18.2 points on T40 and 22.5 on R145; in the earlier study the",
-   "value": "18.2",
+   "anchor": "reviewers is 18.3 points on T40 and 22.5 on R145; in the earlier study the",
+   "value": "18.3",
    "group": "bench:final-tables",
    "q": "{aacr:quickreview-default-g61~set=smoke10+dev10+holdout10+fresh10:recall} - ({aacr:quickreview-low-g61~set=smoke10+dev10+holdout10+fresh10:recall} + {aacr:pireview-panel-high-g61~set=smoke10+dev10+holdout10+fresh10:recall} + {aacr:claude-code-opus55~set=smoke10+dev10+holdout10+fresh10:recall} + {aacr:ocr-high-g61~set=smoke10+dev10+holdout10+fresh10:recall} + {aacr:codex-high-g61~set=smoke10+dev10+holdout10+fresh10:recall} + {aacr:opencode-native-pr-g61~set=smoke10+dev10+holdout10+fresh10:recall} + {aacr:pragent-g61~set=smoke10+dev10+holdout10+fresh10:recall}) / 7"
   },
   {
    "id": "bench.bench:final-tables.960",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "reviewers is 18.2 points on T40 and 22.5 on R145; in the earlier study the",
+   "anchor": "reviewers is 18.3 points on T40 and 22.5 on R145; in the earlier study the",
    "value": "22.5",
    "group": "bench:final-tables",
    "q": "{aacr:quickreview-default-g61~set=rest145:recall} - ({aacr:quickreview-low-g61~set=rest145:recall} + {aacr:pireview-panel-high-g61~set=rest145:recall} + {aacr:claude-code-opus55~set=rest145:recall} + {aacr:ocr-high-g61~set=rest145:recall} + {aacr:codex-high-g61~set=rest145:recall} + {aacr:opencode-native-pr-g61~set=rest145:recall} + {aacr:pragent-g61~set=rest145:recall}) / 7"
@@ -32493,16 +32526,16 @@
   {
    "id": "bench.bench:tab:finalbuild.165",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "29 times the third-party tools (Table~\\ref{tab:costfinal}); a median 17.5",
-   "value": "29",
+   "anchor": "31 times the third-party tools (Table~\\ref{tab:costfinal}); a median 17.5",
+   "value": "31",
    "group": "bench:tab:finalbuild",
    "q": "{aacr:quickreview-frozen:usd} / min({aacr:pireview-panel-high-g61:usd}, {aacr:claude-code-opus55:usd}, {aacr:ocr-high-g61:usd}, {aacr:codex-high-g61:usd}, {aacr:opencode-native-pr-g61:usd}, {aacr:pragent-g61:usd})",
-   "note": "the printed $2.06 / $0.07 gives 29; the unrounded costs give 31"
+   "note": "from the unrounded costs ($2.06 / $0.0655); the printed $2.06 / $0.07 would give 29"
   },
   {
    "id": "bench.bench:tab:finalbuild.166",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "29 times the third-party tools (Table~\\ref{tab:costfinal}); a median 17.5",
+   "anchor": "31 times the third-party tools (Table~\\ref{tab:costfinal}); a median 17.5",
    "value": "17.5",
    "group": "bench:tab:finalbuild",
    "q": "aacr:quickreview-frozen:min_median"
@@ -34028,16 +34061,16 @@
   {
    "id": "bench.bench:sol-study.909",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "(hunt, AACR references, any reviewer comment), 23 of T40's 126 defects (18\\%)",
-   "value": "23",
+   "anchor": "(hunt, AACR references, any reviewer comment), 27 of T40's 126 defects (21\\%)",
+   "value": "27",
    "group": "bench:sol-study",
    "q": "key:one_source~set=smoke10+dev10+holdout10+fresh10",
-   "note": "on T40 the provenance records the older runs the key was built from; the published count may use another reading of a source"
+   "note": "single-source defects of T40 by the key's provenance (truth-ext.json); an earlier text printed 23 (18%)"
   },
   {
    "id": "bench.bench:sol-study.910",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "(hunt, AACR references, any reviewer comment), 23 of T40's 126 defects (18\\%)",
+   "anchor": "(hunt, AACR references, any reviewer comment), 27 of T40's 126 defects (21\\%)",
    "value": "126",
    "group": "bench:sol-study",
    "q": "key:defects~set=smoke10+dev10+holdout10+fresh10"
@@ -34045,8 +34078,8 @@
   {
    "id": "bench.bench:sol-study.911",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "(hunt, AACR references, any reviewer comment), 23 of T40's 126 defects (18\\%)",
-   "value": "18%",
+   "anchor": "(hunt, AACR references, any reviewer comment), 27 of T40's 126 defects (21\\%)",
+   "value": "21%",
    "group": "bench:sol-study",
    "q": "{key:one_source~set=smoke10+dev10+holdout10+fresh10} / {key:defects~set=smoke10+dev10+holdout10+fresh10} * 100",
    "note": "as the count beside it"
@@ -34645,7 +34678,7 @@
   {
    "id": "bench.bench:final-tables.1052",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "open-code-review 63\\%, the panel 67\\%, PR-Agent 77\\%, Claude Code 81\\%,",
+   "anchor": "open-code-review 63\\%, the panel 67\\%, PR-Agent 76\\%, Claude Code 81\\%,",
    "value": "63%",
    "group": "bench:final-tables",
    "q": "aacr:ocr-high-g61:mapped"
@@ -34653,7 +34686,7 @@
   {
    "id": "bench.bench:final-tables.1053",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "open-code-review 63\\%, the panel 67\\%, PR-Agent 77\\%, Claude Code 81\\%,",
+   "anchor": "open-code-review 63\\%, the panel 67\\%, PR-Agent 76\\%, Claude Code 81\\%,",
    "value": "67%",
    "group": "bench:final-tables",
    "q": "aacr:pireview-panel-high-g61:mapped"
@@ -34661,15 +34694,15 @@
   {
    "id": "bench.bench:final-tables.1054",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "open-code-review 63\\%, the panel 67\\%, PR-Agent 77\\%, Claude Code 81\\%,",
-   "value": "77%",
+   "anchor": "open-code-review 63\\%, the panel 67\\%, PR-Agent 76\\%, Claude Code 81\\%,",
+   "value": "76%",
    "group": "bench:final-tables",
    "q": "aacr:pragent-g61:mapped"
   },
   {
    "id": "bench.bench:final-tables.1055",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "open-code-review 63\\%, the panel 67\\%, PR-Agent 77\\%, Claude Code 81\\%,",
+   "anchor": "open-code-review 63\\%, the panel 67\\%, PR-Agent 76\\%, Claude Code 81\\%,",
    "value": "81%",
    "group": "bench:final-tables",
    "q": "aacr:claude-code-opus55:mapped"
@@ -34705,7 +34738,7 @@
   {
    "id": "bench.bench:final-tables.1059",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "The list is also less human than it is labelled: at least 80 of its 362",
+   "anchor": "The list is also less human than it is labelled: at least 80 of its 361",
    "value": "80",
    "group": "bench:final-tables",
    "q": "key:bot_refs"
@@ -34713,8 +34746,8 @@
   {
    "id": "bench.bench:final-tables.1060",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "The list is also less human than it is labelled: at least 80 of its 362",
-   "value": "362",
+   "anchor": "The list is also less human than it is labelled: at least 80 of its 361",
+   "value": "361",
    "group": "bench:final-tables",
    "q": "key:not_ai_refs"
   },
@@ -36437,7 +36470,7 @@
   {
    "id": "bench.bench:tab:martianfinal.165",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "audit judged real (Section~\\ref{sec:martianaudit}), 87\\%, 78\\%, 54\\% and",
+   "anchor": "audit judged real (Section~\\ref{sec:martianaudit}), 87\\%, 78\\%, 53\\% and",
    "value": "87%",
    "group": "bench:tab:martianfinal",
    "q": "martian:final1-martian50|quickreview-frozen:real_pct"
@@ -36445,7 +36478,7 @@
   {
    "id": "bench.bench:tab:martianfinal.166",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "audit judged real (Section~\\ref{sec:martianaudit}), 87\\%, 78\\%, 54\\% and",
+   "anchor": "audit judged real (Section~\\ref{sec:martianaudit}), 87\\%, 78\\%, 53\\% and",
    "value": "78%",
    "group": "bench:tab:martianfinal",
    "q": "martian:final1-ocr-martian50|open-code-review:real_pct"
@@ -36453,8 +36486,8 @@
   {
    "id": "bench.bench:tab:martianfinal.167",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "audit judged real (Section~\\ref{sec:martianaudit}), 87\\%, 78\\%, 54\\% and",
-   "value": "54%",
+   "anchor": "audit judged real (Section~\\ref{sec:martianaudit}), 87\\%, 78\\%, 53\\% and",
+   "value": "53%",
    "group": "bench:tab:martianfinal",
    "q": "martian:final1-pragent-martian50|pr-agent:real_pct",
    "note": "46 of 86 is 53.5%"
@@ -45857,7 +45890,7 @@
   {
    "id": "qr.qr:tab:stab.29",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 77\\% & 2.03 \\\\",
+   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 73\\% & 2.03 \\\\",
    "value": "11.5",
    "group": "qr:tab:stab",
    "q": "aacr:quickreview-stab-r4~own:found"
@@ -45865,7 +45898,7 @@
   {
    "id": "qr.qr:tab:stab.30",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 77\\% & 2.03 \\\\",
+   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 73\\% & 2.03 \\\\",
    "value": "68%",
    "group": "qr:tab:stab",
    "q": "aacr:quickreview-stab-r4~own:recall"
@@ -45873,7 +45906,7 @@
   {
    "id": "qr.qr:tab:stab.31",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 77\\% & 2.03 \\\\",
+   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 73\\% & 2.03 \\\\",
    "value": "1",
    "group": "qr:tab:stab",
    "q": "aacr:quickreview-stab-r4~own:high"
@@ -45881,7 +45914,7 @@
   {
    "id": "qr.qr:tab:stab.32",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 77\\% & 2.03 \\\\",
+   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 73\\% & 2.03 \\\\",
    "value": "5",
    "group": "qr:tab:stab",
    "q": "aacr:quickreview-stab-r4~own:medium"
@@ -45889,7 +45922,7 @@
   {
    "id": "qr.qr:tab:stab.33",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 77\\% & 2.03 \\\\",
+   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 73\\% & 2.03 \\\\",
    "value": "5.5",
    "group": "qr:tab:stab",
    "q": "aacr:quickreview-stab-r4~own:low"
@@ -45897,15 +45930,15 @@
   {
    "id": "qr.qr:tab:stab.34",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 77\\% & 2.03 \\\\",
-   "value": "77%",
+   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 73\\% & 2.03 \\\\",
+   "value": "73%",
    "group": "qr:tab:stab",
    "q": "aacr:quickreview-stab-r4~own:correct"
   },
   {
    "id": "qr.qr:tab:stab.35",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 77\\% & 2.03 \\\\",
+   "anchor": "stab-r4 & 11.5 & 68\\% & 1 & 5 & 5.5 & 73\\% & 2.03 \\\\",
    "value": "2.03",
    "group": "qr:tab:stab",
    "q": "aacr:quickreview-stab-r4~own:usd"
@@ -47137,8 +47170,8 @@
   {
    "id": "qr.qr:tab:frozen.124",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "same model (they find 54--78\\% of the real goldens and 44--46\\% of the",
-   "value": "54",
+   "anchor": "same model (they find 53--78\\% of the real goldens and 44--46\\% of the",
+   "value": "53",
    "group": "qr:tab:frozen",
    "q": "min({martian:final1-ocr-martian50|open-code-review:real_pct}, {martian:final1-pragent-martian50|pr-agent:real_pct}, {martian:final1-opencode-martian50|opencode:real_pct})",
    "note": "PR-Agent's 46 of 86 is 53.5%"
@@ -47146,7 +47179,7 @@
   {
    "id": "qr.qr:tab:frozen.125",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "same model (they find 54--78\\% of the real goldens and 44--46\\% of the",
+   "anchor": "same model (they find 53--78\\% of the real goldens and 44--46\\% of the",
    "value": "78%",
    "group": "qr:tab:frozen",
    "q": "max({martian:final1-ocr-martian50|open-code-review:real_pct}, {martian:final1-pragent-martian50|pr-agent:real_pct}, {martian:final1-opencode-martian50|opencode:real_pct})"
@@ -47154,7 +47187,7 @@
   {
    "id": "qr.qr:tab:frozen.126",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "same model (they find 54--78\\% of the real goldens and 44--46\\% of the",
+   "anchor": "same model (they find 53--78\\% of the real goldens and 44--46\\% of the",
    "value": "44",
    "group": "qr:tab:frozen",
    "q": "min({qodo:final1-ocr-qodo-pr100|open-code-review:recall_functional}, {qodo:final1-pragent-qodo-pr100|pr-agent:recall_functional}, {qodo:final1-opencode-qodo-pr100|opencode:recall_functional})"
@@ -47162,7 +47195,7 @@
   {
    "id": "qr.qr:tab:frozen.127",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "same model (they find 54--78\\% of the real goldens and 44--46\\% of the",
+   "anchor": "same model (they find 53--78\\% of the real goldens and 44--46\\% of the",
    "value": "46%",
    "group": "qr:tab:frozen",
    "q": "max({qodo:final1-ocr-qodo-pr100|open-code-review:recall_functional}, {qodo:final1-pragent-qodo-pr100|pr-agent:recall_functional}, {qodo:final1-opencode-qodo-pr100|opencode:recall_functional})"
@@ -47234,7 +47267,7 @@
   {
    "id": "qr.qr:tab:frozen.136",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "comparison and 4 to 29 times the third-party tools; and",
+   "anchor": "comparison and 4 to 31 times the third-party tools; and",
    "value": "4",
    "group": "qr:tab:frozen",
    "q": "{aacr:quickreview-frozen:usd} / max({aacr:pireview-panel-high-g61:usd}, {aacr:claude-code-opus55:usd}, {aacr:ocr-high-g61:usd}, {aacr:codex-high-g61:usd}, {aacr:opencode-native-pr-g61:usd}, {aacr:pragent-g61:usd})"
@@ -47242,11 +47275,11 @@
   {
    "id": "qr.qr:tab:frozen.137",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "comparison and 4 to 29 times the third-party tools; and",
-   "value": "29",
+   "anchor": "comparison and 4 to 31 times the third-party tools; and",
+   "value": "31",
    "group": "qr:tab:frozen",
    "q": "{aacr:quickreview-frozen:usd} / min({aacr:pireview-panel-high-g61:usd}, {aacr:claude-code-opus55:usd}, {aacr:ocr-high-g61:usd}, {aacr:codex-high-g61:usd}, {aacr:opencode-native-pr-g61:usd}, {aacr:pragent-g61:usd})",
-   "note": "the printed $2.06 / $0.07 gives 29; the unrounded costs give 31"
+   "note": "from the unrounded costs ($2.06 / $0.0655); the printed $2.06 / $0.07 would give 29"
   },
   {
    "id": "qr.qr:tab:frozen.138",
@@ -48336,15 +48369,15 @@
   {
    "id": "qr.qr:tab:final.241",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "the mean of the other seven reviewers is 18.2 points on the 40 and 22.5 on",
-   "value": "18.2",
+   "anchor": "the mean of the other seven reviewers is 18.3 points on the 40 and 22.5 on",
+   "value": "18.3",
    "group": "qr:tab:final",
    "q": "{aacr:quickreview-default-g61~set=smoke10+dev10+holdout10+fresh10:recall} - ({aacr:quickreview-low-g61~set=smoke10+dev10+holdout10+fresh10:recall} + {aacr:pireview-panel-high-g61~set=smoke10+dev10+holdout10+fresh10:recall} + {aacr:claude-code-opus55~set=smoke10+dev10+holdout10+fresh10:recall} + {aacr:ocr-high-g61~set=smoke10+dev10+holdout10+fresh10:recall} + {aacr:codex-high-g61~set=smoke10+dev10+holdout10+fresh10:recall} + {aacr:opencode-native-pr-g61~set=smoke10+dev10+holdout10+fresh10:recall} + {aacr:pragent-g61~set=smoke10+dev10+holdout10+fresh10:recall}) / 7"
   },
   {
    "id": "qr.qr:tab:final.242",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "the mean of the other seven reviewers is 18.2 points on the 40 and 22.5 on",
+   "anchor": "the mean of the other seven reviewers is 18.3 points on the 40 and 22.5 on",
    "value": "40",
    "group": "qr:tab:final",
    "q": "key:prs~set=smoke10+dev10+holdout10+fresh10"
@@ -48352,7 +48385,7 @@
   {
    "id": "qr.qr:tab:final.243",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "the mean of the other seven reviewers is 18.2 points on the 40 and 22.5 on",
+   "anchor": "the mean of the other seven reviewers is 18.3 points on the 40 and 22.5 on",
    "value": "22.5",
    "group": "qr:tab:final",
    "q": "{aacr:quickreview-default-g61~set=rest145:recall} - ({aacr:quickreview-low-g61~set=rest145:recall} + {aacr:pireview-panel-high-g61~set=rest145:recall} + {aacr:claude-code-opus55~set=rest145:recall} + {aacr:ocr-high-g61~set=rest145:recall} + {aacr:codex-high-g61~set=rest145:recall} + {aacr:opencode-native-pr-g61~set=rest145:recall} + {aacr:pragent-g61~set=rest145:recall}) / 7"
@@ -49931,7 +49964,7 @@
   {
    "id": "qr.bench:bestshot.67",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "recall on gpt-6-sol, the panel 78\\% and 68\\% --- at 2.7 times the cost.",
+   "anchor": "recall on gpt-6-sol, the panel 78\\% and 68\\% --- at 2.8 times the cost.",
    "value": "78%",
    "group": "bench:bestshot",
    "q": "aacr:pireview-panel-sol-s40~s40:correct"
@@ -49939,7 +49972,7 @@
   {
    "id": "qr.bench:bestshot.68",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "recall on gpt-6-sol, the panel 78\\% and 68\\% --- at 2.7 times the cost.",
+   "anchor": "recall on gpt-6-sol, the panel 78\\% and 68\\% --- at 2.8 times the cost.",
    "value": "68%",
    "group": "bench:bestshot",
    "q": "aacr:pireview-panel-sol-s40~s40:recall"
@@ -49947,11 +49980,11 @@
   {
    "id": "qr.bench:bestshot.69",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "recall on gpt-6-sol, the panel 78\\% and 68\\% --- at 2.7 times the cost.",
-   "value": "2.7",
+   "anchor": "recall on gpt-6-sol, the panel 78\\% and 68\\% --- at 2.8 times the cost.",
+   "value": "2.8",
    "group": "bench:bestshot",
    "q": "{aacr:pireview-panel-sol-s40~s40:usd} / {aacr:pireview-high-sol-s40~s40:usd}",
-   "note": "the ratio of the printed costs, $0.46 / $0.17, is 2.7"
+   "note": "from the unrounded costs ($0.4646 / $0.1687); the printed $0.46 / $0.17 would give 2.7"
   },
   {
    "id": "qr.qr:mechanism.158",
@@ -50103,11 +50136,11 @@
   {
    "id": "qr.qr:basemodel.164",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "budget: the panel costs 2.7 times one reviewer, \\qcr{} five times the panel.",
-   "value": "2.7",
+   "anchor": "budget: the panel costs 2.8 times one reviewer, \\qcr{} five times the panel.",
+   "value": "2.8",
    "group": "qr:basemodel",
    "q": "{aacr:pireview-panel-sol-s40~s40:usd} / {aacr:pireview-high-sol-s40~s40:usd}",
-   "note": "the ratio of the printed costs, $0.46 / $0.17, is 2.7"
+   "note": "from the unrounded costs ($0.4646 / $0.1687); the printed $0.46 / $0.17 would give 2.7"
   },
   {
    "id": "qr.qr:basemodel.165",
@@ -50232,16 +50265,16 @@
   {
    "id": "qr.qr:basemodel.180",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "costs 20\\% less (\\$1.36 against \\$1.71). Its AACR F1 is the same (12.5\\%",
-   "value": "20%",
+   "anchor": "costs 21\\% less (\\$1.36 against \\$1.71). Its AACR F1 is the same (12.5\\%",
+   "value": "21%",
    "group": "qr:basemodel",
    "q": "(1 - {aacr:quickreview-default-g61:usd} / {aacr:quickreview-default-sol-rerun:usd}) * 100",
-   "note": "from the printed $1.36 and $1.71 it is 20%"
+   "note": "from the unrounded costs (20.6%); the printed $1.36 and $1.71 would give 20%"
   },
   {
    "id": "qr.qr:basemodel.181",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "costs 20\\% less (\\$1.36 against \\$1.71). Its AACR F1 is the same (12.5\\%",
+   "anchor": "costs 21\\% less (\\$1.36 against \\$1.71). Its AACR F1 is the same (12.5\\%",
    "value": "1.36",
    "group": "qr:basemodel",
    "q": "aacr:quickreview-default-g61:usd"
@@ -50249,7 +50282,7 @@
   {
    "id": "qr.qr:basemodel.182",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "costs 20\\% less (\\$1.36 against \\$1.71). Its AACR F1 is the same (12.5\\%",
+   "anchor": "costs 21\\% less (\\$1.36 against \\$1.71). Its AACR F1 is the same (12.5\\%",
    "value": "1.71",
    "group": "qr:basemodel",
    "q": "aacr:quickreview-default-sol-rerun:usd"
@@ -50257,7 +50290,7 @@
   {
    "id": "qr.qr:basemodel.183",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "costs 20\\% less (\\$1.36 against \\$1.71). Its AACR F1 is the same (12.5\\%",
+   "anchor": "costs 21\\% less (\\$1.36 against \\$1.71). Its AACR F1 is the same (12.5\\%",
    "value": "12.5%",
    "group": "qr:basemodel",
    "q": "aacr:quickreview-default-g61:aacr_f1"
@@ -51380,7 +51413,7 @@
   {
    "id": "qr.qr:tab:frozen.173",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "more than \\code{b2ce03a} and 4 to 29 times the third-party tools; a median",
+   "anchor": "more than \\code{b2ce03a} and 4 to 31 times the third-party tools; a median",
    "value": "4",
    "group": "qr:tab:frozen",
    "q": "{aacr:quickreview-frozen:usd} / max({aacr:pireview-panel-high-g61:usd}, {aacr:claude-code-opus55:usd}, {aacr:ocr-high-g61:usd}, {aacr:codex-high-g61:usd}, {aacr:opencode-native-pr-g61:usd}, {aacr:pragent-g61:usd})"
@@ -51388,11 +51421,11 @@
   {
    "id": "qr.qr:tab:frozen.174",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "more than \\code{b2ce03a} and 4 to 29 times the third-party tools; a median",
-   "value": "29",
+   "anchor": "more than \\code{b2ce03a} and 4 to 31 times the third-party tools; a median",
+   "value": "31",
    "group": "qr:tab:frozen",
    "q": "{aacr:quickreview-frozen:usd} / min({aacr:pireview-panel-high-g61:usd}, {aacr:claude-code-opus55:usd}, {aacr:ocr-high-g61:usd}, {aacr:codex-high-g61:usd}, {aacr:opencode-native-pr-g61:usd}, {aacr:pragent-g61:usd})",
-   "note": "the printed $2.06 / $0.07 gives 29; the unrounded costs give 31"
+   "note": "from the unrounded costs ($2.06 / $0.0655); the printed $2.06 / $0.07 would give 29"
   },
   {
    "id": "qr.qr:tab:frozen.175",
@@ -54079,8 +54112,8 @@
   {
    "id": "threats.bench:sol-study.129",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "- **The \"human\" references are partly bot output.** AACR marks 362 of the",
-   "value": "362",
+   "anchor": "- **The \"human\" references are partly bot output.** AACR marks 361 of the",
+   "value": "361",
    "group": "bench:sol-study",
    "q": "key:not_ai_refs"
   },
@@ -54095,7 +54128,7 @@
   {
    "id": "threats.bench:sol-study.131",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  least 80 of those 362 (22%) are rewrites",
+   "anchor": "  least 80 of those 361 (22%) are rewrites",
    "value": "80",
    "group": "bench:sol-study",
    "q": "key:bot_refs"
@@ -54103,15 +54136,15 @@
   {
    "id": "threats.bench:sol-study.132",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  least 80 of those 362 (22%) are rewrites",
-   "value": "362",
+   "anchor": "  least 80 of those 361 (22%) are rewrites",
+   "value": "361",
    "group": "bench:sol-study",
    "q": "key:not_ai_refs"
   },
   {
    "id": "threats.bench:sol-study.133",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  least 80 of those 362 (22%) are rewrites",
+   "anchor": "  least 80 of those 361 (22%) are rewrites",
    "value": "22%",
    "group": "bench:sol-study",
    "q": "{key:bot_refs} / {key:not_ai_refs} * 100"
@@ -56005,15 +56038,7 @@
   },
   {
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "The bench's per-review limit is 75 minutes, sized for GPT-6.1 Sol (~8 minutes a",
-   "tokens": [
-    "75"
-   ],
-   "why": "configuration or a method parameter"
-  },
-  {
-   "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "first 10 PRs of the 2026-10-14 full run timed out at 75.",
+   "anchor": "The bench's per-review limit is 75 minutes, sized for GPT-6.1 Sol (~16 minutes a",
    "tokens": [
     "75"
    ],
@@ -61776,14 +61801,6 @@
     "0.159"
    ],
    "why": "a version"
-  },
-  {
-   "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "(\\code{huggingface.co/datasets/XXXX/XXXX}, DOI \\code{10.57967/hf/XXXX})",
-   "tokens": [
-    "10.57967"
-   ],
-   "why": "an identifier (DOI prefix)"
   },
   {
    "file": "bench/aacr/paper/benchmark.tex",

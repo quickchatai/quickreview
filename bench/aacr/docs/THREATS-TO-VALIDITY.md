@@ -409,9 +409,9 @@ documented in `../README.md`.
   - On the 30 PRs whose references carry (agent-produced, human-unchecked)
     reference labels, about 11% are real defects and about 8% real
     maintainability issues.
-- **The "human" references are partly bot output.** AACR marks 362 of the
+- **The "human" references are partly bot output.** AACR marks 361 of the
   references on our 185 PRs as human comments rewritten by an LLM. At
-  least 80 of those 362 (22%) are rewrites of comments an AI review bot
+  least 80 of those 361 (22%) are rewrites of comments an AI review bot
   posted on the original PR: GitHub Copilot 23, CodeRabbit 20, cubic 20,
   Sourcery 5, LlamaPReview 4, Gemini Code Assist 4, Ellipsis 3, Cursor
   Bugbot 1. This is a lower bound: only inline comments on the 46

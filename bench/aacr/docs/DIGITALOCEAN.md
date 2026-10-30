@@ -60,13 +60,13 @@ is each reply's output tokens over the time from its request to the next message
 
 | Model | Minutes / PR | Output tokens / PR | Replies / PR | Typical reply | Generation speed | $ / PR |
 |---|---|---|---|---|---|---|
-| GPT-6.1 Sol | 8 | 21k | 71 | 12 s | ~25 tok/s | $2.30 API-equivalent |
+| GPT-6.1 Sol | 16 | 37k | 78 | 12 s | ~25 tok/s | $2.27 API-equivalent |
 | GLM-5.3 Flash | 30 | 244k | 196 | 8 s | ~37 tok/s | $0.32 |
-| DeepSeek V4.1 Flash | 41 | 323k | 223 | 14 s | ~36 tok/s | ~$0.57 |
+| DeepSeek V4.1 Flash | 42 | 323k | 230 | 13 s | ~36 tok/s | $0.69 |
 | Gemma 4 31B | 34 | 109k | 130 | 25 s | ~9 tok/s | $0.32 |
 
-GLM and DeepSeek are served quickly. They are slow because they take about 3× the
-steps and write 12–15× the output, mostly reasoning, and a PR waits for its
+GLM and DeepSeek are served quickly. They are slow because they take 2.5–3× the
+steps and write 7–9× the output, mostly reasoning, and a PR waits for its
 longest lens. Gemma is the one model DigitalOcean serves slowly.
 
 ## Durable retries, and what counts as a lost lens
@@ -87,9 +87,10 @@ attempt failed, or that never ran, makes the PR degraded.
 
 ## Review time limit
 
-The bench's per-review limit is 75 minutes, sized for GPT-6.1 Sol (~8 minutes a
-PR). GLM-5.3 Flash takes 54–66 minutes on the largest AACR PRs, and 5 of the
-first 10 PRs of the 2026-10-14 full run timed out at 75. The driver passes
+The bench's per-review limit is 75 minutes, sized for GPT-6.1 Sol (~16 minutes a
+PR). GLM-5.3 Flash's five slowest AACR reviews in the 2026-10-14 full run took
+55–72 minutes, and the run's first attempt timed out on some PRs at that limit
+(no log of that attempt was kept; the resumed run re-reviewed them in place). The driver passes
 `TIMEOUT_MIN` (default 180) through `arm.sh --timeout-min`. The limit is not
 part of a run's fingerprint, so a resume keeps finished PRs and re-runs the
 timed-out ones.
@@ -156,7 +157,7 @@ and says so.
 
 The smoke (2026-10-13): 10/10 reviews ok, zero model errors, every recorded
 reviewer reply from `digitalocean/glm-5.3-flash`, $3.31 in total at list price,
-median about 28 minutes per PR, slowest 54 minutes.
+median 26.5 minutes per PR (mean 27.9), slowest 54 minutes.
 
 ## Store the key
 

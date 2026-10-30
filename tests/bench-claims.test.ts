@@ -14,7 +14,12 @@
 //      script fails, a claim whose source is not in --data fails unless
 //      --partial;
 //   5. how a computed number is compared: printed like the published value,
-//      and an "about" claim within its tolerance.
+//      and an "about" claim within its tolerance;
+//   6. verify_slim.py's constants for the open-model figures (the DigitalOcean
+//      table and smoke, the README's notes under the Other models table) are
+//      the numbers the pages print;
+//   7. both papers name the published dataset, leave no XXXX placeholder, and
+//      say the raw session transcripts are not published.
 // Neutral planted names throughout.
 
 import { afterAll, describe, expect, it } from "vitest";
@@ -559,5 +564,96 @@ describe("claim_metrics: published numbers by key, from the tables", () => {
 
   it("refuses a key it cannot read, never a number", () => {
     expect(() => value("aacr", "nobody:found")).toThrow(/no arm/);
+  });
+});
+
+describe("verify_slim.py's copy of the published open-model figures", () => {
+  // verify_slim.py compares the bundle with the numbers the pages print, held as
+  // constants; a page corrected to the data without its constant (or the reverse)
+  // turns a passing cell into a DOC row. These read both sides.
+  const vs = py(
+    "import verify_slim as v; print(json.dumps({'table': v.DO_TABLE, 'smoke': v.DO_SMOKE, " +
+      "'slowest': v.DO_SLOWEST, 'notes': v.README_OPEN_NOTES}))",
+  ) as {
+    table: Record<string, string[]>;
+    smoke: Record<string, string>;
+    slowest: string;
+    notes: Record<string, string>;
+  };
+  const doc = readFileSync(join(AACR, "docs", "DIGITALOCEAN.md"), "utf8");
+  const flat = (s: string) => s.replace(/\s+/g, " ");
+
+  // MUTATION: put the GPT-6.1 Sol row of DIGITALOCEAN.md back to "| GPT-6.1 Sol | 8 | 21k | 71 |" — this fails
+  it("holds the DigitalOcean speed table exactly as the page prints it", () => {
+    expect(Object.keys(vs.table).sort()).toEqual(
+      ["DeepSeek V4.1 Flash", "GLM-5.3 Flash", "GPT-6.1 Sol", "Gemma 4 31B"].sort(),
+    );
+    for (const [model, exp] of Object.entries(vs.table)) {
+      const row = doc.split("\n").find((l) => l.startsWith(`| ${model} |`));
+      expect(row, model).toBeDefined();
+      const cells = row!
+        .split("|")
+        .slice(2, 8)
+        .map((c) => c.trim());
+      const printed = [
+        cells[0],
+        cells[1]!.replace(/k$/, ""),
+        cells[2],
+        cells[3]!.replace(/ s$/, ""),
+        cells[4]!.replace(/^~/, "").replace(/ tok\/s$/, ""),
+        cells[5]!.replace(/^~?\$/, "").split(" ")[0],
+      ];
+      expect(printed, model).toEqual(exp);
+    }
+  });
+
+  // MUTATION: set DO_SMOKE["median min"] back to "28", or DO_SLOWEST to "54-66" — this fails
+  it("holds the GLM smoke and the slowest full-run reviews as the page prints them", () => {
+    const text = flat(doc);
+    expect(text).toContain(
+      `median ${vs.smoke["median min"]} minutes per PR (mean ${vs.smoke["mean min"]}), ` +
+        `slowest ${vs.smoke["slowest min"]} minutes.`,
+    );
+    expect(text).toContain(`$${vs.smoke.usd} in total at list price`);
+    expect(text).toContain(`${vs.smoke.ok} reviews ok`);
+    expect(text).toContain(`took ${vs.slowest.replace("-", "–")} minutes`);
+  });
+
+  // MUTATION: print "missing a lens pass on 8" in README.md's Other models notes — this fails
+  it("holds the README's notes on the open-model rows as the README prints them", () => {
+    const readme = flat(readFileSync(join(ROOT, "README.md"), "utf8"));
+    const n = vs.notes;
+    expect(readme).toContain(
+      `low reasoning effort on ${n["DeepSeek low-effort PRs"]} of its PRs and lost one lens pass on ` +
+        `${n["DeepSeek PRs that lost a lens pass"]} PRs.`,
+    );
+    expect(readme).toContain(
+      `one lens pass was lost on ${n["GLM PRs that lost a lens pass"]} PR and the validator on ` +
+        `${n["GLM PRs that lost only the validator"]}, and on ${n["GLM PRs missing a lens pass"]} more a lens pass ran`,
+    );
+  });
+});
+
+describe("the papers' data availability", () => {
+  const PAPER = join(AACR, "paper");
+  const DATASET = "https://huggingface.co/datasets/quickchatai/quickreview-bench";
+  const tex = (name: string) => readFileSync(join(PAPER, name), "utf8");
+
+  // MUTATION: put back "\code{huggingface.co/datasets/XXXX/XXXX}" in benchmark.tex's run-archive paragraph — this fails
+  it("names the published dataset and leaves no XXXX placeholder in either paper", () => {
+    for (const name of ["benchmark.tex", "quickreview.tex"]) {
+      const t = tex(name);
+      expect(t, name).toContain(`\\url{${DATASET}}`);
+      expect(t.match(/X{4}/g), name).toBeNull();
+    }
+  });
+
+  // MUTATION: restore "The full run directories (reviews, transcripts," as the run-archive paragraph's opening — this fails
+  it("says the raw session transcripts are not published, only numbers-only extracts of them", () => {
+    const t = tex("benchmark.tex");
+    const para = t.slice(t.indexOf("\\paragraph{Run archive.}"), t.indexOf("\\paragraph{Local only.}"));
+    expect(para.length).toBeGreaterThan(0);
+    expect(para).not.toMatch(/\(reviews, transcripts,/);
+    expect(para.replace(/\s+/g, " ")).toContain("Raw model session transcripts are not published");
   });
 });
