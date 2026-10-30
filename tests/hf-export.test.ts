@@ -1025,20 +1025,20 @@ describe("export_runs: a run ships without its session logs", () => {
 
 describe("the authors' tracker becomes <ticket>", () => {
   // Fake ids, built at run time so this file carries no ticket-id-shaped literal: the 9xxx range
-  // and 0999 are not tickets. `ft0622` is the one number the public repository's own Elo plans name.
+  // and 0999 are not tickets.
   const id = (n: string): string => ["FT", n].join("-");
   const lower = (n: string): string => ["ft", n].join("");
   // MUTATION: drop *SX.ticket_rules() from export_runs.NAME_RULES — this fails
   // MUTATION: drop SX.ticket_rules_str() from hf_export.SCRUB_RULES — this fails
   // MUTATION: drop the "ticket-id-lower" rule from scrub_extra.TICKET_RULES — this fails
-  it("rewrites ticket ids and tracker paths in the archive and the tables, and leaves the kept run names alone", () => {
+  it("rewrites ticket ids and tracker paths in the archive and the tables, run names included", () => {
     const text =
       `Per ${id("9622")} and ${id("9550").toLowerCase()} (see ${id("9517").replace("-", "")}); ` +
       `notes in ../x/${["tracker", "efforts"].join("/")}/y/tickets/${id("9999")}-x.md; ` +
-      `image qcr-bench:${lower("0999")}; run ${lower("0622")}-hard20-sonnet and ${id("12345")} stay.`;
+      `image qcr-bench:${lower("0999")}; run ${lower("0998")}-hard20-sonnet and ${id("12345")} stay.`;
     const want =
       "Per <ticket> and <ticket> (see <ticket>); notes in <ticket>; image qcr-bench:<ticket>; " +
-      `run ${lower("0622")}-hard20-sonnet and ${id("12345")} stay.`;
+      `run <ticket>-hard20-sonnet and ${id("12345")} stay.`;
     const a = pyModule(
       "export_runs",
       "import collections; print(json.dumps(h.rewrite(sys.argv[1].encode(), collections.Counter()).decode()))",
@@ -1047,6 +1047,51 @@ describe("the authors' tracker becomes <ticket>", () => {
     const b = py("print(json.dumps(h.scrub(sys.argv[1])))", text);
     expect(a).toBe(want);
     expect(b).toBe(want);
+  });
+
+  // MUTATION: drop *SX.rename_rules() from export_runs.NAME_RULES — this fails
+  // MUTATION: drop SX.rename_rules_str() from hf_export.SCRUB_RULES — this fails
+  // MUTATION: move *SX.rename_rules() after *SX.ticket_rules() in export_runs.NAME_RULES — this fails
+  it("renames a study's run-name prefix ($QCR_SCRUB_RENAMES) before the tracker's rules see it", () => {
+    const env = { QCR_SCRUB_RENAMES: `${lower("0998")}=study,${id("0998")}=study` };
+    const text =
+      `run ${lower("0998")}-hard20-sonnet, plan martian-hard20-${lower("0998")}, ` +
+      `title "${id("0998")} probes", x${lower("0998")} and ${lower("0998")}1.`;
+    const want =
+      'run study-hard20-sonnet, plan martian-hard20-study, title "study probes", ' +
+      `x${lower("0998")} and ${lower("0998")}1.`;
+    const a = pyEnv(
+      env,
+      "export_runs",
+      "import collections; print(json.dumps(h.rewrite(sys.argv[1].encode(), collections.Counter()).decode()))",
+      text,
+    );
+    const b = pyEnv(env, "hf_export", "print(json.dumps(h.scrub(sys.argv[1])))", text);
+    const n = pyEnv(
+      env,
+      "export_runs",
+      "import collections; print(json.dumps(h.rewrite_name(sys.argv[1], collections.Counter())))",
+      `runs/${lower("0998")}-hard20-qr/cases/x/review.md`,
+    );
+    expect(a).toBe(want);
+    expect(b).toBe(want);
+    expect(n).toBe("runs/study-hard20-qr/cases/x/review.md");
+  });
+
+  // MUTATION: drop the SX.renamed() of family ids in release_catalogue.Catalogue.__init__ — this fails
+  it("names a renamed study's families (and so its volumes) by the new name, and still finds its source dirs", () => {
+    const env = { QCR_SCRUB_RENAMES: `${lower("0998")}=study` };
+    const fam = `${lower("0998")}-claude-code-high`;
+    const unit = `${lower("0998")}-hard20-cc-high-opus55`;
+    const r = pyEnv(
+      env,
+      "release_catalogue",
+      "c = h.Catalogue({'families': [{'id': sys.argv[1], 'location': 'qcr-bench-runs/runs/', 'members': [sys.argv[2]], " +
+        "'ship': 'yes'}]}); f = c.family_of('runs', sys.argv[2]); print(json.dumps([f['id'], list(c.families)]))",
+      fam,
+      unit,
+    );
+    expect(r).toEqual(["study-claude-code-high", ["study-claude-code-high"]]);
   });
 });
 

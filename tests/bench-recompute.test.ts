@@ -140,6 +140,30 @@ describe("aacr_bootstrap", () => {
     expect(res.intervals.X.recall).toEqual(want);
   });
 
+  // MUTATION: resample both halves from one pool (sa and sb from ha + hb) in halves() — this fails
+  it("tests the halves: the first arm's margin on A minus on B, resampled within each half", () => {
+    const sets = { p1: "a", p2: "a", p3: "b" };
+    const r = py(
+      "aacr_bootstrap",
+      "import random\na = json.loads(sys.argv[1]); s = json.loads(sys.argv[2])\n" +
+        "res = h.halves(s, a['d'], a['v'], ['X', 'Y'], ['a'], ['b'], b=40, seed=3)\n" +
+        "per = {x: h.per_pr(['p1', 'p2', 'p3'], a['d'], a['v'], x) for x in ('X', 'Y')}\n" +
+        "mg = lambda ids: 100 * (h.ratio(per['X'], ids, 'recall') - h.ratio(per['Y'], ids, 'recall'))\n" +
+        "rng = random.Random(3); vals = []\n" +
+        "for _ in range(40):\n" +
+        "    sa = [rng.choice(['p1', 'p2']) for _ in range(2)]; sb = [rng.choice(['p3'])]\n" +
+        "    vals.append(mg(sa) - mg(sb))\n" +
+        "from tables import percentile_ci\n" +
+        "print(json.dumps([res['diff'], mg(['p1', 'p2']) - mg(['p3']), [res['lo'], res['hi']], list(percentile_ci(vals)), res['prs_a'], res['prs_b']]))",
+      JSON.stringify({ d: DEFECTS, v: VERDICTS }),
+      JSON.stringify(sets),
+    ) as [number, number, number[], number[], number, number];
+    expect(r[0]).toBeCloseTo(r[1]);
+    expect(r[0]).toBeCloseTo(100 * (2.5 / 3) - (0 - 100));
+    expect(r[2]).toEqual(r[3]);
+    expect([r[4], r[5]]).toEqual([2, 1]);
+  });
+
   it("runs end to end on the tables and prices a defect found from the judged reviews", () => {
     const d = join(tmp, "aacr");
     jsonl(d, "prs", PRS);
@@ -345,6 +369,28 @@ describe("open_models", () => {
 });
 
 describe("do_speed", () => {
+  // MUTATION: price only input and output in projection() (drop cacheRead) — this fails
+  it("projects a never-run model's cost from every case's recorded usage", () => {
+    const base = join(tmp, "proj");
+    const cases = [
+      { input: 1_000_000, output: 0, cacheRead: 0 },
+      { input: 0, output: 1_000_000, cacheRead: 10_000_000 },
+    ].map((usage, i) => {
+      const d = join(base, `c${i}`);
+      mkdirSync(d, { recursive: true });
+      writeFileSync(join(d, "case-summary.json"), JSON.stringify({ usage }));
+      return d;
+    });
+    const r = py(
+      "do_speed",
+      "from pathlib import Path; p = h.projection([Path(x) for x in sys.argv[1:]], h.QWEN_PRICE)\n" +
+        "print(json.dumps([p['prs'], round(p['usd_total'], 6), round(p['usd_per_pr'], 6)]))",
+      ...cases,
+    );
+    // $2 input + ($6 output + 10 x $0.20 cache read) = $10 over two PRs
+    expect(r).toEqual([2, 10, 5]);
+  });
+
   // MUTATION: count every assistant message as a reply, timed or not — this fails
   it("times a reply from its request to the next message, and counts only timed replies", () => {
     const d = join(tmp, "speed", "case");
@@ -421,7 +467,7 @@ describe("the committed data behind the README", () => {
     );
     const pair = elo.pairs.find(
       (p: { upper: string; lower: string }) =>
-        p.upper === "ft0622-hard20-qr-opus55" && p.lower === "ft0622-hard20-cc-high-opus55",
+        p.upper === "ccvq-hard20-qr-opus55" && p.lower === "ccvq-hard20-cc-high-opus55",
     );
     const { w, t, l } = pair.direct;
     expect(README).toContain(`in ${w} of ${w + t + l} verdicts`);

@@ -53,6 +53,10 @@ nothing else in it changes:
     (the same spellings as the Hugging Face dataset export, hf_export.py);
   * private tokens ($QCR_SCRUB_PRIVATE_WORDS, any case, whole words) ->
     `<private>`, private host names ($QCR_SCRUB_HOSTS) -> `<private-host>`;
+  * study renames ($QCR_SCRUB_RENAMES, scrub_extra.py): a run-name prefix
+    the run dirs spell with a ticket number -> the study name the release
+    uses (`ccvq-…`, Claude Code vs QuickReview), in member names and volume
+    names too;
   * the content rules ($QCR_SCRUB_CONTENT_RULES, scrub_extra.py): the
     stand-ins the public repository's history carries;
   * the authors' tracker (scrub_extra.TICKET_RULES): ticket ids and paths
@@ -233,6 +237,8 @@ NAME_RULES = _identity_rules() + [
     ("home-escaped", re.compile(HOME_ESC_RX + rb"(?![A-Za-z0-9_\-])"), b"<home>", HOME_ESC),
     ("pi-login-volume", re.compile(rb"companion-pihome"), b"<pi-login-volume>", b"companion-pihome"),
     *_private_token_rules(),
+    # study renames (scrub_extra.rename_rules): before the tracker's rules, which would make a ticket of them
+    *SX.rename_rules(),
     CONTENT,
     # the authors' tracker (scrub_extra.TICKET_RULES): after the content rules,
     # which may spell a tracker id of their own
@@ -679,23 +685,26 @@ def sha256_file(p: Path) -> str:
 # multi-lane runs, the DeepSeek mix, the 40-PR comparison re-judges, a copied
 # smoke, whatif): when a file is in one of these and in a source run, the
 # source's copy is the one that ships.
+# Read against the release's names (scrub_extra.renamed), so an assembled ccvq run matches
+# whatever its source dir is called.
 COPY_RUN = re.compile(r"^(?:runs/(?:mv|mt|qr|t30)-|whatif$|open-models/runs/(?:dsv41f-mix-|s40cmp-|glm53-smoke-7879ddc5-glm-|argon4-smoke-)"
-                      r"|runs/ft0622-(?:hard20|m50)-(?!.*(?:-L\d+|__|-interim|-probe)$)[^/]*$)")
+                      r"|runs/ccvq-(?:hard20|m50)-(?!.*(?:-L\d+|__|-interim|-probe)$)[^/]*$)")
+ASSEMBLED = re.compile(r"^ccvq-(?:hard20|m50)-")
 
 
 def copy_rank(rel: str) -> int:
-    return 1 if COPY_RUN.match(unit_prefix(rel)) else 0
+    return 1 if COPY_RUN.match(SX.renamed(unit_prefix(rel))) else 0
 
 
 def designated_sources(tree: Tree, prefix: str) -> list[str]:
     """The unit prefixes whose same-path files this unit's files may copy
     byte for byte (not by hardlink): a posting-policy variant's sources, an
-    assembled ft0622 run's lanes, the copied GLM smoke's original."""
+    assembled ccvq run's lanes, the copied GLM smoke's original."""
     parts = prefix.split("/")
     if parts[0] == "runs":
         run = parts[1]
         out = [f"runs/{s}" for s in variant_sources(tree, run)]
-        if re.match(r"^ft0622-(?:hard20|m50)-", run) and not re.search(r"(?:-L\d+|__|-interim|-probe)", run):
+        if ASSEMBLED.match(SX.renamed(run)) and not re.search(r"(?:-L\d+|__|-interim|-probe)", run):
             out += [f"runs/{d}" for d in sorted(tree.run_dirs["runs"]) if d.startswith(run + "-")]
         return out
     if parts[0] == OM and len(parts) > 2:
@@ -1415,10 +1424,10 @@ packed. Nothing else in the text changed.
 - **The authors' tracker.** The tracker is not public, so its ticket ids
   (`FT-` and three or four digits, in any case, with or without the hyphen,
   as in an image tag `qcr-bench:<ticket>`) and any path into it became
-  `<ticket>`. One number is kept, inside run directory names: `ft0622-…`
-  (`ft0622-hard20-…`, `martian-hard20-ft0622`) names runs the public
-  repository's own Elo plans name, so the runs keep the names those plans
-  use.
+  `<ticket>`. No ticket number is kept. The runs of the Claude Code vs
+  QuickReview study, whose directory names began with one, are named
+  `ccvq-…` here (`ccvq-hard20-…`, the Elo plan `martian-hard20-ccvq`), the
+  names the public repository's Elo plans use.
 - **Build commits.** Each `"qcr_commit"` (in `run.json` and every
   `case-summary.json`) is the public main commit the repository's history
   rewrite made of the recorded one, with `"qcr_commit_on_public_main": true`
@@ -1864,7 +1873,7 @@ REGREP = {
     "GitHub fine-grained token-shaped (github_pat_)": rb"github_pat_[A-Za-z0-9_]{40,}",
     **{f"session text: {n}": rx.pattern for n, rx in SL.CONTENT_MARKERS},
     "ticket id (FT-NNNN)": SX.TICKET_RULES[1][1],
-    "ticket id (ftNNNN, not a kept run name)": SX.TICKET_RULES[2][1],
+    "ticket id (ftNNNN)": SX.TICKET_RULES[2][1],
     "tracker path": rb"(?<![A-Za-z0-9_])tracker/(?:efforts|tickets|maps)/",
 }
 

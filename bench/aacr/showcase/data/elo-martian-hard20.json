@@ -5,7 +5,7 @@
  "agreement_overall": 0.5604026845637584,
  "rows": [
   {
-   "run": "ft0622-hard20-sonnet",
+   "run": "ccvq-hard20-sonnet",
    "label": "Claude Code max, Sonnet 5.5 agents (Opus main)",
    "elo": 1665.6973495357672,
    "lo": 1580.5442111013208,
@@ -15,7 +15,7 @@
    "l": 58
   },
   {
-   "run": "ft0622-hard20-qr-opus55",
+   "run": "ccvq-hard20-qr-opus55",
    "label": "QuickReview, Opus 5.5",
    "elo": 1627.8309689059865,
    "lo": 1567.1472600632226,
@@ -35,7 +35,7 @@
    "l": 88
   },
   {
-   "run": "ft0622-hard20-cc-high-opus55",
+   "run": "ccvq-hard20-cc-high-opus55",
    "label": "Claude Code high, Opus 5.5 (1 agent)",
    "elo": 1518.1701502627325,
    "lo": 1424.8230824406955,
@@ -45,7 +45,7 @@
    "l": 105
   },
   {
-   "run": "ft0622-hard20-qr-sonnet55",
+   "run": "ccvq-hard20-qr-sonnet55",
    "label": "QuickReview, Sonnet 5.5",
    "elo": 1488.9908088984173,
    "lo": 1415.3384642892986,
@@ -65,7 +65,7 @@
    "l": 53
   },
   {
-   "run": "ft0622-hard20-cc-high-sonnet55",
+   "run": "ccvq-hard20-cc-high-sonnet55",
    "label": "Claude Code high, Sonnet 5.5 (1 agent)",
    "elo": 1398.426472745909,
    "lo": 1290.0604281177964,
@@ -87,8 +87,8 @@
  ],
  "pairs": [
   {
-   "upper": "ft0622-hard20-sonnet",
-   "lower": "ft0622-hard20-qr-opus55",
+   "upper": "ccvq-hard20-sonnet",
+   "lower": "ccvq-hard20-qr-opus55",
    "gap": 37.86638062978068,
    "lo": -33.10611559527433,
    "hi": 134.76365230226293,
@@ -99,7 +99,7 @@
    }
   },
   {
-   "upper": "ft0622-hard20-sonnet",
+   "upper": "ccvq-hard20-sonnet",
    "lower": "final1-martian50",
    "gap": 99.58419403331027,
    "lo": 4.915331287830895,
@@ -111,8 +111,8 @@
    }
   },
   {
-   "upper": "ft0622-hard20-sonnet",
-   "lower": "ft0622-hard20-cc-high-opus55",
+   "upper": "ccvq-hard20-sonnet",
+   "lower": "ccvq-hard20-cc-high-opus55",
    "gap": 147.52719927303474,
    "lo": 63.8874373745457,
    "hi": 241.4380796576238,
@@ -123,8 +123,8 @@
    }
   },
   {
-   "upper": "ft0622-hard20-sonnet",
-   "lower": "ft0622-hard20-qr-sonnet55",
+   "upper": "ccvq-hard20-sonnet",
+   "lower": "ccvq-hard20-qr-sonnet55",
    "gap": 176.70654063734992,
    "lo": 76.17414196470145,
    "hi": 296.5652497230094,
@@ -135,7 +135,7 @@
    }
   },
   {
-   "upper": "ft0622-hard20-sonnet",
+   "upper": "ccvq-hard20-sonnet",
    "lower": "dsv41f-mix-martian50",
    "gap": 259.77786287171944,
    "lo": 57.213975000332766,
@@ -147,8 +147,8 @@
    }
   },
   {
-   "upper": "ft0622-hard20-sonnet",
-   "lower": "ft0622-hard20-cc-high-sonnet55",
+   "upper": "ccvq-hard20-sonnet",
+   "lower": "ccvq-hard20-cc-high-sonnet55",
    "gap": 267.2708767898582,
    "lo": 154.09130386103107,
    "hi": 473.7741871711148,
@@ -159,7 +159,7 @@
    }
   },
   {
-   "upper": "ft0622-hard20-sonnet",
+   "upper": "ccvq-hard20-sonnet",
    "lower": "glm53-full-martian50",
    "gap": 336.84574205108424,
    "lo": 129.77489143294451,
@@ -171,7 +171,7 @@
    }
   },
   {
-   "upper": "ft0622-hard20-qr-opus55",
+   "upper": "ccvq-hard20-qr-opus55",
    "lower": "final1-martian50",
    "gap": 61.71781340352959,
    "lo": -3.4578119054970102,
@@ -183,8 +183,8 @@
    }
   },
   {
-   "upper": "ft0622-hard20-qr-opus55",
-   "lower": "ft0622-hard20-cc-high-opus55",
+   "upper": "ccvq-hard20-qr-opus55",
+   "lower": "ccvq-hard20-cc-high-opus55",
    "gap": 109.66081864325406,
    "lo": 31.310886230861797,
    "hi": 195.5576417743689,
@@ -195,8 +195,8 @@
    }
   },
   {
-   "upper": "ft0622-hard20-qr-opus55",
-   "lower": "ft0622-hard20-qr-sonnet55",
+   "upper": "ccvq-hard20-qr-opus55",
+   "lower": "ccvq-hard20-qr-sonnet55",
    "gap": 138.84016000756924,
    "lo": 77.49919356814803,
    "hi": 222.2117314639395,
@@ -207,7 +207,7 @@
    }
   },
   {
-   "upper": "ft0622-hard20-qr-opus55",
+   "upper": "ccvq-hard20-qr-opus55",
    "lower": "dsv41f-mix-martian50",
    "gap": 221.91148224193876,
    "lo": 21.838557170277227,
@@ -219,8 +219,8 @@
    }
   },
   {
-   "upper": "ft0622-hard20-qr-opus55",
-   "lower": "ft0622-hard20-cc-high-sonnet55",
+   "upper": "ccvq-hard20-qr-opus55",
+   "lower": "ccvq-hard20-cc-high-sonnet55",
    "gap": 229.40449616007754,
    "lo": 144.8795719946977,
    "hi": 413.91542013475555,
@@ -231,7 +231,7 @@
    }
   },
   {
-   "upper": "ft0622-hard20-qr-opus55",
+   "upper": "ccvq-hard20-qr-opus55",
    "lower": "glm53-full-martian50",
    "gap": 298.97936142130357,
    "lo": 115.80617753819774,
@@ -244,7 +244,7 @@
   },
   {
    "upper": "final1-martian50",
-   "lower": "ft0622-hard20-cc-high-opus55",
+   "lower": "ccvq-hard20-cc-high-opus55",
    "gap": 47.94300523972447,
    "lo": -61.68388823453779,
    "hi": 156.03353364479858,
@@ -256,7 +256,7 @@
   },
   {
    "upper": "final1-martian50",
-   "lower": "ft0622-hard20-qr-sonnet55",
+   "lower": "ccvq-hard20-qr-sonnet55",
    "gap": 77.12234660403965,
    "lo": -6.34982918117521,
    "hi": 177.89771014782036,
@@ -280,7 +280,7 @@
   },
   {
    "upper": "final1-martian50",
-   "lower": "ft0622-hard20-cc-high-sonnet55",
+   "lower": "ccvq-hard20-cc-high-sonnet55",
    "gap": 167.68668275654795,
    "lo": 74.34032043329194,
    "hi": 341.0407857471728,
@@ -303,8 +303,8 @@
    }
   },
   {
-   "upper": "ft0622-hard20-cc-high-opus55",
-   "lower": "ft0622-hard20-qr-sonnet55",
+   "upper": "ccvq-hard20-cc-high-opus55",
+   "lower": "ccvq-hard20-qr-sonnet55",
    "gap": 29.179341364315178,
    "lo": -61.693236157073216,
    "hi": 140.3663749590578,
@@ -315,7 +315,7 @@
    }
   },
   {
-   "upper": "ft0622-hard20-cc-high-opus55",
+   "upper": "ccvq-hard20-cc-high-opus55",
    "lower": "dsv41f-mix-martian50",
    "gap": 112.2506635986847,
    "lo": -110.14188233357777,
@@ -327,8 +327,8 @@
    }
   },
   {
-   "upper": "ft0622-hard20-cc-high-opus55",
-   "lower": "ft0622-hard20-cc-high-sonnet55",
+   "upper": "ccvq-hard20-cc-high-opus55",
+   "lower": "ccvq-hard20-cc-high-sonnet55",
    "gap": 119.74367751682348,
    "lo": 7.122671334017468,
    "hi": 303.5135249238542,
@@ -339,7 +339,7 @@
    }
   },
   {
-   "upper": "ft0622-hard20-cc-high-opus55",
+   "upper": "ccvq-hard20-cc-high-opus55",
    "lower": "glm53-full-martian50",
    "gap": 189.3185427780495,
    "lo": -26.734225176557175,
@@ -351,7 +351,7 @@
    }
   },
   {
-   "upper": "ft0622-hard20-qr-sonnet55",
+   "upper": "ccvq-hard20-qr-sonnet55",
    "lower": "dsv41f-mix-martian50",
    "gap": 83.07132223436952,
    "lo": -117.18682012427689,
@@ -363,8 +363,8 @@
    }
   },
   {
-   "upper": "ft0622-hard20-qr-sonnet55",
-   "lower": "ft0622-hard20-cc-high-sonnet55",
+   "upper": "ccvq-hard20-qr-sonnet55",
+   "lower": "ccvq-hard20-cc-high-sonnet55",
    "gap": 90.5643361525083,
    "lo": -13.018139185662449,
    "hi": 269.13351134411073,
@@ -375,7 +375,7 @@
    }
   },
   {
-   "upper": "ft0622-hard20-qr-sonnet55",
+   "upper": "ccvq-hard20-qr-sonnet55",
    "lower": "glm53-full-martian50",
    "gap": 160.13920141373433,
    "lo": -29.354756870556002,
@@ -388,7 +388,7 @@
   },
   {
    "upper": "dsv41f-mix-martian50",
-   "lower": "ft0622-hard20-cc-high-sonnet55",
+   "lower": "ccvq-hard20-cc-high-sonnet55",
    "gap": 7.493013918138786,
    "lo": -200.4083148176842,
    "hi": 170.75888365968012,
@@ -411,7 +411,7 @@
    }
   },
   {
-   "upper": "ft0622-hard20-cc-high-sonnet55",
+   "upper": "ccvq-hard20-cc-high-sonnet55",
    "lower": "glm53-full-martian50",
    "gap": 69.57486526122602,
    "lo": -94.92993058272782,

@@ -148,6 +148,8 @@ SCRUB_RULES: list[tuple[str, str, str]] = [
     ("host volume: pi login", r"companion-pihome", "<pi-login-volume>"),
     *[("private token", r"(?i)(?<![A-Za-z0-9_])" + re.escape(w) + r"(?![A-Za-z0-9_])", "<private>") for w in SCRUB_PRIVATE_WORDS],
     *[("private host", r"(?i)" + re.escape(h), "<private-host>") for h in SCRUB_HOSTS],
+    # study renames ($QCR_SCRUB_RENAMES), before the tracker's rules would make a ticket of them
+    *SX.rename_rules_str(),
     # the authors' tracker: ticket ids and paths into it (scrub_extra.TICKET_RULES)
     *SX.ticket_rules_str(),
 ]
@@ -1416,7 +1418,7 @@ def validate(t: dict[str, list[dict]]) -> list[dict]:
 OPEN_MODEL_ROWS = {"quickreview-glm-53-flash": (435, 0.52), "quickreview-deepseek-v41-flash": (451.5, 0.74)}
 # README "Judged side by side": the pooled Elo of three configurations, games, judges' agreement
 ELO_PLAN = "martian-hard20-all-gpt"
-ELO_README = {"ft0622-hard20-qr-opus55": 1628, "ft0622-hard20-cc-high-opus55": 1518, "ft0622-hard20-sonnet": 1666}
+ELO_README = {"ccvq-hard20-qr-opus55": 1628, "ccvq-hard20-cc-high-opus55": 1518, "ccvq-hard20-sonnet": 1666}
 ELO_JUDGES = ("claude-opus-5-5", "gpt-6.1-sol")  # the two judges the README's Elo pools (elo_judgments.judge_model)
 EXT_JUDGE = "gpt-6.1-sol"  # the one judge of every Martian and Qodo verdict row
 

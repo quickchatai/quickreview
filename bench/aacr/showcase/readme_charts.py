@@ -93,17 +93,17 @@ SAME_MODEL = [  # (model, PRs, (high, medium, low) defects, [(reviewer, high, me
 # six lenses pinned to GPT-6 Luna (maintainability, duplication, abstraction, consistency, placement, simplicity).
 ELO_DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "elo-martian-hard20.json")
 ELO_LABELS = {  # run -> (the chart's name, QuickReview?)
-    "ft0622-hard20-sonnet": ("Claude Code max (Opus + Sonnet 5.5)", False),
-    "ft0622-hard20-qr-opus55": ("QuickReview (Opus 5.5)*", True),
+    "ccvq-hard20-sonnet": ("Claude Code max (Opus + Sonnet 5.5)", False),
+    "ccvq-hard20-qr-opus55": ("QuickReview (Opus 5.5)*", True),
     "final1-martian50": ("QuickReview (GPT-6.1 Sol)", True),
-    "ft0622-hard20-cc-high-opus55": ("Claude Code high (Opus 5.5)", False),
-    "ft0622-hard20-qr-sonnet55": ("QuickReview (Sonnet 5.5)*", True),
+    "ccvq-hard20-cc-high-opus55": ("Claude Code high (Opus 5.5)", False),
+    "ccvq-hard20-qr-sonnet55": ("QuickReview (Sonnet 5.5)*", True),
     "dsv41f-mix-martian50": ("QuickReview (DeepSeek V4.1 Flash)", True),
-    "ft0622-hard20-cc-high-sonnet55": ("Claude Code high (Sonnet 5.5)", False),
+    "ccvq-hard20-cc-high-sonnet55": ("Claude Code high (Sonnet 5.5)", False),
     "glm53-full-martian50": ("QuickReview (GLM-5.3 Flash)", True),
 }
 # The pair the title names: QuickReview on Opus against Claude Code high on Opus.
-ELO_PAIR = ("ft0622-hard20-qr-opus55", "ft0622-hard20-cc-high-opus55")
+ELO_PAIR = ("ccvq-hard20-qr-opus55", "ccvq-hard20-cc-high-opus55")
 
 
 def elo_from_data(path=ELO_DATA):

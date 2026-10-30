@@ -832,17 +832,17 @@
   "readme:elo": {
    "families": [
     "elo-pairwise",
-    "ft0622-claude-code-high",
-    "ft0622-hard20-claude-max-sonnet",
-    "ft0622-quickreview-on-claude",
+    "ccvq-claude-code-high",
+    "ccvq-hard20-claude-max-sonnet",
+    "ccvq-quickreview-on-claude",
     "openmodels-dsv41f-mix",
     "openmodels-glm53-full"
    ],
    "archive": [
     "quickreview-runs-elo-pairwise.tar.zst",
-    "quickreview-runs-ft0622-claude-code-high.tar.zst",
-    "quickreview-runs-ft0622-hard20-claude-max-sonnet.tar.zst",
-    "quickreview-runs-ft0622-quickreview-on-claude.tar.zst",
+    "quickreview-runs-ccvq-claude-code-high.tar.zst",
+    "quickreview-runs-ccvq-hard20-claude-max-sonnet.tar.zst",
+    "quickreview-runs-ccvq-quickreview-on-claude.tar.zst",
     "quickreview-runs-openmodels-dsv41f-mix.tar.zst",
     "quickreview-runs-openmodels-glm53-full.tar.zst"
    ]
@@ -1734,7 +1734,7 @@
    "anchor": "alt=\"Pairwise Elo on the 20 Martian PRs",
    "value": "20",
    "group": "readme:elo",
-   "q": "elo:martian-hard20-all-gpt|combined|overall|ft0622-hard20-qr-opus55:prs"
+   "q": "elo:martian-hard20-all-gpt|combined|overall|ccvq-hard20-qr-opus55:prs"
   },
   {
    "id": "readme.readme:elo.2",
@@ -1742,9 +1742,9 @@
    "anchor": "alt=\"Pairwise Elo on the 20 Martian PRs",
    "value": "1666",
    "group": "readme:elo",
-   "q": "elo:martian-hard20-all-gpt|combined|overall|ft0622-hard20-sonnet:elo",
+   "q": "elo:martian-hard20-all-gpt|combined|overall|ccvq-hard20-sonnet:elo",
    "alt": [
-    "elo_chart:rows/[run=ft0622-hard20-sonnet]/elo"
+    "elo_chart:rows/[run=ccvq-hard20-sonnet]/elo"
    ]
   },
   {
@@ -1753,9 +1753,9 @@
    "anchor": "alt=\"Pairwise Elo on the 20 Martian PRs",
    "value": "1628",
    "group": "readme:elo",
-   "q": "elo:martian-hard20-all-gpt|combined|overall|ft0622-hard20-qr-opus55:elo",
+   "q": "elo:martian-hard20-all-gpt|combined|overall|ccvq-hard20-qr-opus55:elo",
    "alt": [
-    "elo_chart:rows/[run=ft0622-hard20-qr-opus55]/elo"
+    "elo_chart:rows/[run=ccvq-hard20-qr-opus55]/elo"
    ]
   },
   {
@@ -1775,9 +1775,9 @@
    "anchor": "alt=\"Pairwise Elo on the 20 Martian PRs",
    "value": "1518",
    "group": "readme:elo",
-   "q": "elo:martian-hard20-all-gpt|combined|overall|ft0622-hard20-cc-high-opus55:elo",
+   "q": "elo:martian-hard20-all-gpt|combined|overall|ccvq-hard20-cc-high-opus55:elo",
    "alt": [
-    "elo_chart:rows/[run=ft0622-hard20-cc-high-opus55]/elo"
+    "elo_chart:rows/[run=ccvq-hard20-cc-high-opus55]/elo"
    ]
   },
   {
@@ -1786,9 +1786,9 @@
    "anchor": "alt=\"Pairwise Elo on the 20 Martian PRs",
    "value": "1489",
    "group": "readme:elo",
-   "q": "elo:martian-hard20-all-gpt|combined|overall|ft0622-hard20-qr-sonnet55:elo",
+   "q": "elo:martian-hard20-all-gpt|combined|overall|ccvq-hard20-qr-sonnet55:elo",
    "alt": [
-    "elo_chart:rows/[run=ft0622-hard20-qr-sonnet55]/elo"
+    "elo_chart:rows/[run=ccvq-hard20-qr-sonnet55]/elo"
    ]
   },
   {
@@ -1808,9 +1808,9 @@
    "anchor": "alt=\"Pairwise Elo on the 20 Martian PRs",
    "value": "1398",
    "group": "readme:elo",
-   "q": "elo:martian-hard20-all-gpt|combined|overall|ft0622-hard20-cc-high-sonnet55:elo",
+   "q": "elo:martian-hard20-all-gpt|combined|overall|ccvq-hard20-cc-high-sonnet55:elo",
    "alt": [
-    "elo_chart:rows/[run=ft0622-hard20-cc-high-sonnet55]/elo"
+    "elo_chart:rows/[run=ccvq-hard20-cc-high-sonnet55]/elo"
    ]
   },
   {
@@ -1853,7 +1853,7 @@
    "anchor": "pooled. On the 20 Martian PRs where QuickReview",
    "value": "20",
    "group": "readme:elo",
-   "q": "elo:martian-hard20-all-gpt|combined|overall|ft0622-hard20-qr-opus55:prs"
+   "q": "elo:martian-hard20-all-gpt|combined|overall|ccvq-hard20-qr-opus55:prs"
   },
   {
    "id": "readme.readme:elo.13",
@@ -1861,7 +1861,7 @@
    "anchor": "at high effort on Opus 5.5 in 29 of 40 verdicts",
    "value": "29",
    "group": "readme:elo",
-   "q": "elo:martian-hard20-all-gpt|ft0622-hard20-qr-opus55|ft0622-hard20-cc-high-opus55:w"
+   "q": "elo:martian-hard20-all-gpt|ccvq-hard20-qr-opus55|ccvq-hard20-cc-high-opus55:w"
   },
   {
    "id": "readme.readme:elo.14",
@@ -1869,7 +1869,7 @@
    "anchor": "at high effort on Opus 5.5 in 29 of 40 verdicts",
    "value": "40",
    "group": "readme:elo",
-   "q": "{elo:martian-hard20-all-gpt|ft0622-hard20-qr-opus55|ft0622-hard20-cc-high-opus55:w} + {elo:martian-hard20-all-gpt|ft0622-hard20-qr-opus55|ft0622-hard20-cc-high-opus55:l} + {elo:martian-hard20-all-gpt|ft0622-hard20-qr-opus55|ft0622-hard20-cc-high-opus55:t}"
+   "q": "{elo:martian-hard20-all-gpt|ccvq-hard20-qr-opus55|ccvq-hard20-cc-high-opus55:w} + {elo:martian-hard20-all-gpt|ccvq-hard20-qr-opus55|ccvq-hard20-cc-high-opus55:l} + {elo:martian-hard20-all-gpt|ccvq-hard20-qr-opus55|ccvq-hard20-cc-high-opus55:t}"
   },
   {
    "id": "readme.readme:elo.15",
@@ -1877,7 +1877,7 @@
    "anchor": "than ten times its cost ($4.61 per PR on average)",
    "value": "4.61",
    "group": "readme:elo",
-   "q": "elo_refit:costs/ft0622-hard20-qr-opus55/usd_mean",
+   "q": "elo_refit:costs/ccvq-hard20-qr-opus55/usd_mean",
    "note": "the mean over the plan's 20 PRs; the median is $4.42"
   },
   {
@@ -1886,7 +1886,7 @@
    "anchor": "5.5 directing Sonnet 5.5 agents, about $20 per PR",
    "value": "20",
    "group": "readme:elo",
-   "q": "elo_refit:costs/ft0622-hard20-sonnet/usd_mean",
+   "q": "elo_refit:costs/ccvq-hard20-sonnet/usd_mean",
    "about": true
   },
   {
@@ -5430,7 +5430,7 @@
    "anchor": "**Pairwise Elo (Martian, 20 PRs)**",
    "value": "20",
    "group": "readme:elo",
-   "q": "elo:martian-hard20-all-gpt|combined|overall|ft0622-hard20-qr-opus55:prs"
+   "q": "elo:martian-hard20-all-gpt|combined|overall|ccvq-hard20-qr-opus55:prs"
   },
   {
    "id": "card.readme:elo.2",

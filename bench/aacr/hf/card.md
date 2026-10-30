@@ -122,7 +122,7 @@ repository under `bench/aacr/`.
 | README Martian chart and table; benchmark paper `tab:martianfinal` and the golden-comment audit | `readme:martian`, `bench:tab:martianfinal` | `martian_prs`, `martian_goldens`, `martian_reviews`, `martian_verdicts`, `martian_scores` | `martian-final`, `analysis` | Martian's scorer on the slim bundle (`verify_slim.py`); `validation.json` |
 | Martian development rounds, posting policies, judge noise (`tab:martianraw`, `fig:martianpolicy`) | `bench:tab:martianraw`, `bench:fig:martianpolicy`, `bench:martian-judge-noise` | `martian_scores`, `martian_verdicts` | `martian-tuning-rounds`, `martian-posting-variants`, `martian-judge-calibration` | Martian's scorer on the slim bundle |
 | README Qodo chart and table; benchmark paper `tab:qodo` | `readme:qodo`, `bench:tab:qodo` | `qodo_prs`, `qodo_issues`, `qodo_reviews`, `qodo_verdicts` | `qodo-final`, `qodo-r6-and-vendors` | Qodo's scorer on the slim bundle; `validation.json` |
-| README "Judged side by side" (pairwise Elo) and its chart | `readme:elo` | `elo_judgments`, `elo_ratings` | `elo-pairwise`; the reviews: `ft0622-hard20-claude-max-sonnet`, `ft0622-claude-code-high`, `ft0622-quickreview-on-claude`, `martian-final`, `openmodels-glm53-full`, `openmodels-dsv41f-mix` | `recompute/elo_ratings.py --check-ratings` |
+| README "Judged side by side" (pairwise Elo) and its chart | `readme:elo` | `elo_judgments`, `elo_ratings` | `elo-pairwise`; the reviews: `ccvq-hard20-claude-max-sonnet`, `ccvq-claude-code-high`, `ccvq-quickreview-on-claude`, `martian-final`, `openmodels-glm53-full`, `openmodels-dsv41f-mix` | `recompute/elo_ratings.py --check-ratings` |
 | `docs/DIGITALOCEAN.md`: speed and cost table, the smokes, the review time limit | `do:speed`, `do:glm-smoke`, `do:gemma-smoke`, `do:timeouts` | none (archive only) | `openmodels-smokes`, `openmodels-gpt61-baselines`, `openmodels-glm53-full`, `openmodels-driver`, `aacr-frozen-build` | `recompute/do_speed.py` |
 | QuickReview paper: cost mechanism (pass counts, lens shares, validator dispositions) | `qr:mechanism` | `reviews` | `aacr-gpt6sol-study` (the transcripts' numbers-only extracts) | `recompute/passes.py`, `recompute/lens_credit.py`, `recompute/tokens.py` |
 | QuickReview paper: tuning appendix (prompt iterations, levers, lenses) | `qr:app:tuning` | `arms`, `defect_verdicts` | `aacr-dev-iterations`, `aacr-dev-levers-presets` | `verify_claims.py` (its table checks, `recompute/claim_metrics.py`); `recompute/missed_defects.py` |
@@ -401,9 +401,10 @@ text are the third-party omissions above and the `qcr_commit` remap (see
   transcripts are not published.
 - `<ticket>` replaces the ids of the authors' tracker, which is not public,
   in any spelling (with or without the hyphen, in any case, as in an image tag
-  `qcr-bench:<ticket>`), and any path into it. One number is kept, inside run
-  names: the `ft0622-*` runs (and the `martian-hard20-ft0622` Elo plan) keep
-  their names, because the public repository's own Elo plans name them.
+  `qcr-bench:<ticket>`), and any path into it. No ticket number is kept: the
+  runs of the Claude Code vs QuickReview study, whose directory names began
+  with one, are named `ccvq-*` throughout (with the Elo plan
+  `martian-hard20-ccvq`), as the public repository's Elo plans name them.
 - `<private>` and `<private-host>` replace a personal handle, a private
   commit id, an account id and private host names.
 - `<runs>`, `<repo>`, `<home>` and `<pi-login-volume>` replace host paths

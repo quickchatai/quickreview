@@ -3,24 +3,24 @@
   "benchmark": "martian",
   "set": "sets/martian50.json",
   "runs": [
-    "ft0622-hard20-qr-sonnet55",
-    "ft0622-hard20-cc-high-opus55",
-    "ft0622-hard20-cc-high-sonnet55",
+    "ccvq-hard20-qr-sonnet55",
+    "ccvq-hard20-cc-high-opus55",
+    "ccvq-hard20-cc-high-sonnet55",
     "glm53-full-martian50",
-    "ft0622-hard20-qr-opus55",
+    "ccvq-hard20-qr-opus55",
     "dsv41f-mix-martian50",
     "final1-martian50",
-    "ft0622-hard20-sonnet"
+    "ccvq-hard20-sonnet"
   ],
   "labels": {
-    "ft0622-hard20-qr-sonnet55": "QuickReview, Sonnet 5.5",
-    "ft0622-hard20-cc-high-opus55": "Claude Code high, Opus 5.5 (1 agent)",
-    "ft0622-hard20-cc-high-sonnet55": "Claude Code high, Sonnet 5.5 (1 agent)",
+    "ccvq-hard20-qr-sonnet55": "QuickReview, Sonnet 5.5",
+    "ccvq-hard20-cc-high-opus55": "Claude Code high, Opus 5.5 (1 agent)",
+    "ccvq-hard20-cc-high-sonnet55": "Claude Code high, Sonnet 5.5 (1 agent)",
     "glm53-full-martian50": "QuickReview, GLM-5.3 Flash",
-    "ft0622-hard20-qr-opus55": "QuickReview, Opus 5.5",
+    "ccvq-hard20-qr-opus55": "QuickReview, Opus 5.5",
     "dsv41f-mix-martian50": "QuickReview, DeepSeek V4.1 Flash",
     "final1-martian50": "QuickReview, GPT-6.1 Sol",
-    "ft0622-hard20-sonnet": "Claude Code max, Sonnet 5.5 agents (Opus main)"
+    "ccvq-hard20-sonnet": "Claude Code max, Sonnet 5.5 agents (Opus main)"
   },
   "run_dirs": {
     "glm53-full-martian50": "bench/aacr/artifacts/open-models/runs",

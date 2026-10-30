@@ -29,6 +29,8 @@ import os
 import re
 from typing import Dict, Iterable, List, Optional, Tuple
 
+import scrub_extra as SX
+
 KINDS = ("runs", "om-runs", "om-top", "top")
 SHIPS = ("yes", "archive-only")
 
@@ -55,6 +57,11 @@ def archive_prefix(kind: str, name: str) -> str:
 
 class Catalogue:
     def __init__(self, data: dict):
+        # family ids as the release names them (scrub_extra.renamed: $QCR_SCRUB_RENAMES); the
+        # members keep their source names, which is how the walk finds them
+        data = dict(data, families=[dict(f, id=SX.renamed(f["id"])) for f in data["families"]],
+                    uncertain=[dict(u, family=SX.renamed(u["family"])) if u.get("family") else u
+                               for u in data.get("uncertain") or []])
         self.data = data
         self.families: Dict[str, dict] = {f["id"]: f for f in data["families"]}
         self.claims: Dict[str, str] = data.get("claims") or {}

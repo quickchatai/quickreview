@@ -25,6 +25,12 @@ spelled in this repository:
                             data quotes the prompts as they were built at run
                             time, so the stand-ins the public repository
                             carries are applied to it the same way.
+  $QCR_SCRUB_RENAMES        comma-separated `OLD=NEW` pairs: a run-name study
+                            prefix as the run dirs spell it -> the name the
+                            release gives it (any case, never inside a longer
+                            word or number), in member paths, volume and
+                            family names and text alike. The source run dirs
+                            keep their names; only the export renames.
   $QCR_PUBLISH_DENYLIST     (re-grep only) the publishability lint's denylist
                             (`[word:|user:|host:]token` lines); default
                             ~/.config/qcr/publish-denylist.txt.
@@ -34,8 +40,8 @@ ids (`FT-` and four digits, in any case, with or without the hyphen) and
 any path through its `tracker/` directory (into its efforts, tickets or maps) become
 `<ticket>` (TICKET_RULES, by pattern), and so does the lower-case form
 without the hyphen (`ft` and a number from 0001, in an image tag or a run
-name). The one number kept is TICKET_KEPT's: run directory names such as
-`ft0622-hard20-…` are identifiers the public repository's own Elo plans name.
+name). No ticket number is kept: a study whose run names began with one is
+renamed by $QCR_SCRUB_RENAMES first (RENAME rules, before the tracker's).
 
 Standard library only; bytes in, bytes out.
 """
@@ -57,12 +63,46 @@ TICKET_RULES = [
     ("ticket-path", rb"[\w.~$/{}-]*(?<![A-Za-z0-9_])tracker/(?:efforts|tickets|maps)/[^\s\"'`<>()\[\]{},;]*",
      ("low", b"tracker/")),
     ("ticket-id", rb"(?<![A-Za-z0-9])(?:[Ff][Tt]-\d{3,4}|FT\d{3,4})(?!\d)", ("low", b"ft")),
-    # the lower-case form without the hyphen (an image tag, a run name), except the run names
-    # the public repository's own Elo plans use (TICKET_KEPT)
-    ("ticket-id-lower", rb"(?<![A-Za-z0-9])ft0(?!622(?!\d))\d{3}(?!\d)", ("low", b"ft0")),
+    # the lower-case form without the hyphen (an image tag, a run name)
+    ("ticket-id-lower", rb"(?<![A-Za-z0-9])ft0\d{3}(?!\d)", ("low", b"ft0")),
 ]
-# ticket numbers kept inside run names: `ft0622-…` names runs public main's Elo plans name
-TICKET_KEPT = ("ft0622",)
+
+
+def renames(spec: Optional[str] = None) -> List[Tuple[str, str]]:
+    """[(old, new)] from `spec` or $QCR_SCRUB_RENAMES (`OLD=NEW,OLD=NEW`), longest old first."""
+    raw = os.environ.get("QCR_SCRUB_RENAMES", "") if spec is None else spec
+    out = []
+    for pair in raw.split(","):
+        if not pair.strip():
+            continue
+        old, sep, new = pair.partition("=")
+        if not sep or not old.strip() or not new.strip():
+            raise SystemExit(f"QCR_SCRUB_RENAMES: {pair!r} is not OLD=NEW")
+        out.append((old.strip(), new.strip()))
+    return sorted(out, key=lambda p: len(p[0]), reverse=True)
+
+
+def _rename_rx(old: str) -> str:
+    # any case; not inside a longer word or number (a hyphen beside it is fine: `x-OLD-y`)
+    return r"(?<![A-Za-z0-9])(?i:" + re.escape(old) + r")(?![A-Za-z0-9])"
+
+
+def rename_rules(spec: Optional[str] = None):
+    """[(name, compiled bytes regex, replacement, prefilter)]: the study renames, for export_runs.NAME_RULES."""
+    return [("rename", re.compile(_rename_rx(o).encode()), n.encode(), ("low", o.lower().encode()))
+            for o, n in renames(spec)]
+
+
+def rename_rules_str(spec: Optional[str] = None):
+    """The same for str text (the HF tables): [(label, regex, replacement)]."""
+    return [("study rename", _rename_rx(o), n) for o, n in renames(spec)]
+
+
+def renamed(name: str, spec: Optional[str] = None) -> str:
+    """`name` (a run, family or plan name as the source spells it) as the release names it."""
+    for _, rx, rep in rename_rules_str(spec):
+        name = re.sub(rx, rep, name)
+    return name
 
 
 def ticket_rules():

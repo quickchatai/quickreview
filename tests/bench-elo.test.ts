@@ -55,12 +55,12 @@ describe("bench/aacr/elo", () => {
   });
 
   it("the smoke plan names its four arms, both judges at xhigh, the agreed caps", () => {
-    const plan = JSON.parse(read(join("plans", "martian-hard20-ft0622.json")));
+    const plan = JSON.parse(read(join("plans", "martian-hard20-ccvq.json")));
     expect(plan.runs).toEqual([
-      "ft0622-hard20-qr-opus55",
-      "ft0622-hard20-qr-sonnet55",
-      "ft0622-hard20-sonnet",
-      "ft0622-hard20-cc-high-sonnet55",
+      "ccvq-hard20-qr-opus55",
+      "ccvq-hard20-qr-sonnet55",
+      "ccvq-hard20-sonnet",
+      "ccvq-hard20-cc-high-sonnet55",
     ]);
     expect(plan.judges.gpt).toMatchObject({ model: "gpt-6.1-sol", effort: "xhigh" });
     expect(plan.judges.opus).toMatchObject({ model: "claude-opus-5-5", effort: "xhigh" });

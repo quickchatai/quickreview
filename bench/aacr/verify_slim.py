@@ -605,8 +605,8 @@ DO_TABLE = {"GPT-6.1 Sol": ("16", "37", "78", "12", "25", "2.27"), "GLM-5.3 Flas
 DO_SMOKE = {"ok": "10/10", "usd": "3.32", "median min": "26.5", "mean min": "27.9", "slowest min": "54"}
 DO_SLOWEST = "55-72"
 # README "Judged side by side"
-README_ELO = {"games": "596", "judges agree": "56%", "ft0622-hard20-qr-opus55": "1628",
-              "ft0622-hard20-cc-high-opus55": "1518", "ft0622-hard20-sonnet": "1666"}
+README_ELO = {"games": "596", "judges agree": "56%", "ccvq-hard20-qr-opus55": "1628",
+              "ccvq-hard20-cc-high-opus55": "1518", "ccvq-hard20-sonnet": "1666"}
 
 
 def _py(script: Path, args: list[str], json_out: Path) -> dict | None:

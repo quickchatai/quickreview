@@ -86,13 +86,15 @@ their reasons: tracker ticket.
 
 ## Running it
 
-No run starts without the owner's explicit go.
+No run starts without the owner's explicit go. The plans name the runs as the
+published run archive does (`ccvq-…` for the Claude Code vs QuickReview study),
+so point `QCR_BENCH_RUNS_DIR` at an extracted archive's `runs/`.
 
 ```sh
 export QCR_BENCH_RUNS_DIR=/path/to/qcr-bench-runs/runs   # outside any worktree
 E=bench/aacr/elo
-python3 $E/elo.py init $E/plans/martian-hard20-ft0622.json        # → $QCR_BENCH_RUNS_DIR/../elo/<name>/
-D=$QCR_BENCH_RUNS_DIR/../elo/martian-hard20-ft0622
+python3 $E/elo.py init $E/plans/martian-hard20-ccvq.json        # → $QCR_BENCH_RUNS_DIR/../elo/<name>/
+D=$QCR_BENCH_RUNS_DIR/../elo/martian-hard20-ccvq
 python3 $E/elo.py pack $D            # pack every PR; prints prompt sizes; no model call
 
 $E/judge-gpt.sh start                # gpt-6.1-sol at xhigh on 127.0.0.1:8790 (ChatGPT login copy)
