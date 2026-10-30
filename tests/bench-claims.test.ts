@@ -46,7 +46,11 @@ function run(args: string[]): { code: number; out: string } {
 function py(code: string, ...args: string[]): unknown {
   const p = spawnSync(
     "python3",
-    ["-c", `import sys, json; sys.path.insert(0, ${JSON.stringify(join(AACR, "recompute"))}); sys.path.insert(0, ${JSON.stringify(AACR)})\n${code}`, ...args],
+    [
+      "-c",
+      `import sys, json; sys.path.insert(0, ${JSON.stringify(join(AACR, "recompute"))}); sys.path.insert(0, ${JSON.stringify(AACR)})\n${code}`,
+      ...args,
+    ],
     { encoding: "utf8" },
   );
   if (p.status !== 0) throw new Error(p.stderr);
@@ -65,7 +69,9 @@ function readmeTree(name: string, readme: string): { repo: string; manifest: str
     files: { "README.md": MANIFEST.files["README.md"]! },
     claims: MANIFEST.claims.filter((c) => c.file === "README.md"),
     not_claims: MANIFEST.not_claims.filter((n) => n.file === "README.md"),
-    checks: Object.fromEntries(Object.entries(MANIFEST.checks).map(([k, v]) => [k, { ...(v as object), scripts: [] }])),
+    checks: Object.fromEntries(
+      Object.entries(MANIFEST.checks).map(([k, v]) => [k, { ...(v as object), scripts: [] }]),
+    ),
   };
   const manifest = join(repo, "claims.json");
   writeFileSync(manifest, JSON.stringify(m));
@@ -79,7 +85,9 @@ describe("the claims manifest against the published text", () => {
   it("accounts for every number of README.md, and every anchor is on its line", () => {
     const r = run(["--lint"]);
     expect(r.out).not.toMatch(/MANIFEST:/);
-    expect(r.out).toMatch(/README\.md: \d+ number tokens, \d+ claims, \d+ not-claims, 0 unaccounted \(complete\)/);
+    expect(r.out).toMatch(
+      /README\.md: \d+ number tokens, \d+ claims, \d+ not-claims, 0 unaccounted \(complete\)/,
+    );
     expect(r.code).toBe(0);
     expect(MANIFEST.files["README.md"]?.lint).toBe("complete");
   });
@@ -94,7 +102,10 @@ describe("the claims manifest against the published text", () => {
     const real = readFileSync(join(ROOT, "README.md"), "utf8");
     const ok = readmeTree("readme-ok", real);
     expect(run(["--lint", "--repo", ok.repo, "--manifest", ok.manifest]).code).toBe(0);
-    const added = readmeTree("readme-added", real.replace("## Benchmarks\n", "## Benchmarks\n\nQuickReview finds 99% of every defect.\n"));
+    const added = readmeTree(
+      "readme-added",
+      real.replace("## Benchmarks\n", "## Benchmarks\n\nQuickReview finds 99% of every defect.\n"),
+    );
     const r = run(["--lint", "--repo", added.repo, "--manifest", added.manifest]);
     expect(r.code).toBe(1);
     expect(r.out).toMatch(/README\.md: 1 number\(s\) neither a claim nor a listed not-claim/);
@@ -103,9 +114,14 @@ describe("the claims manifest against the published text", () => {
 
   it("fails a README whose claimed number changed under the manifest", () => {
     const real = readFileSync(join(ROOT, "README.md"), "utf8");
-    const line = real.split("\n").find((l) => l.includes("The price: 6.9 comments per PR, 42% of them"));
+    const line = real
+      .split("\n")
+      .find((l) => l.includes("The price: 6.9 comments per PR, 42% of them"));
     expect(line).toBeDefined();
-    const changed = readmeTree("readme-changed", real.replace("42% of them true but minor", "41% of them true but minor"));
+    const changed = readmeTree(
+      "readme-changed",
+      real.replace("42% of them true but minor", "41% of them true but minor"),
+    );
     const r = run(["--lint", "--repo", changed.repo, "--manifest", changed.manifest]);
     expect(r.code).toBe(1);
     expect(r.out).toMatch(/anchor not found|not on the anchored line/);
@@ -122,32 +138,28 @@ describe("claim_text: the numbers of a published line", () => {
 
   // MUTATION: drop the `(?<![A-Za-z_]-)` lookbehind from NUM — the gpt-6.1 version becomes a token and this fails
   it("reads values, signs and units, never a version glued to a word", () => {
-    expect(tok("finds **97% of 90**, $0.07–0.53 (+8.3 [+1.9, +14.6]) on gpt-6.1-sol, S40, v1.0, #42, 21k, 0.86x")).toEqual([
-      "97%",
-      "90",
-      "0.07",
-      "0.53",
-      "+8.3",
-      "+1.9",
-      "+14.6",
-      "21k",
-      "0.86x",
-    ]);
+    expect(
+      tok(
+        "finds **97% of 90**, $0.07–0.53 (+8.3 [+1.9, +14.6]) on gpt-6.1-sol, S40, v1.0, #42, 21k, 0.86x",
+      ),
+    ).toEqual(["97%", "90", "0.07", "0.53", "+8.3", "+1.9", "+14.6", "21k", "0.86x"]);
   });
 
   it("drops dates, clock times, versions after a model name, URLs and image sizes", () => {
-    expect(tok('On 2026-10-04 at 17:23, Claude Opus 5.5 found 3,093 <img width="800" src="a/b2.png"> https://x.io/9')).toEqual(["3,093"]);
+    expect(
+      tok(
+        'On 2026-10-04 at 17:23, Claude Opus 5.5 found 3,093 <img width="800" src="a/b2.png"> https://x.io/9',
+      ),
+    ).toEqual(["3,093"]);
   });
 
   it("reads LaTeX as printed: escaped percent, thousands braces, math signs, and no reference numbers", () => {
-    expect(tok("\\textbf{409} & 79\\% & 10{,}000 & $-2.7$ & 85--87\\% \\ref{tab:x2} % 55 is a comment", true)).toEqual([
-      "409",
-      "79%",
-      "10,000",
-      "-2.7",
-      "85",
-      "87%",
-    ]);
+    expect(
+      tok(
+        "\\textbf{409} & 79\\% & 10{,}000 & $-2.7$ & 85--87\\% \\ref{tab:x2} % 55 is a comment",
+        true,
+      ),
+    ).toEqual(["409", "79%", "10,000", "-2.7", "85", "87%"]);
   });
 });
 
@@ -157,25 +169,93 @@ describe("verify_claims end to end on small tables", () => {
   mkdirSync(data, { recursive: true });
   mkdirSync(repo, { recursive: true });
   const jsonl = (name: string, rows: object[]) =>
-    writeFileSync(join(data, `${name}.jsonl`), rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+    writeFileSync(
+      join(data, `${name}.jsonl`),
+      rows.map((r) => JSON.stringify(r)).join("\n") + "\n",
+    );
   jsonl("prs", [
-    { instance_id: "p1", set: "s1", in_s40: true, language: "Go", pr_category: "Bug Fix", change_line_count: 10, repo: "r1" },
-    { instance_id: "p2", set: "s1", in_s40: false, language: "Go", pr_category: "Bug Fix", change_line_count: 20, repo: "r1" },
+    {
+      instance_id: "p1",
+      set: "s1",
+      in_s40: true,
+      language: "Go",
+      pr_category: "Bug Fix",
+      change_line_count: 10,
+      repo: "r1",
+    },
+    {
+      instance_id: "p2",
+      set: "s1",
+      in_s40: false,
+      language: "Go",
+      pr_category: "Bug Fix",
+      change_line_count: 20,
+      repo: "r1",
+    },
   ]);
   jsonl("defects", [
-    { instance_id: "p1", defect_id: "d1", severity: "high", kind: "bug", provenance_hunt: true, provenance_dataset_refs: [] },
-    { instance_id: "p1", defect_id: "d2", severity: "low", kind: "bug", provenance_hunt: false, provenance_dataset_refs: [] },
-    { instance_id: "p2", defect_id: "d1", severity: "medium", kind: "build", provenance_hunt: false, provenance_dataset_refs: ["R1"] },
+    {
+      instance_id: "p1",
+      defect_id: "d1",
+      severity: "high",
+      kind: "bug",
+      provenance_hunt: true,
+      provenance_dataset_refs: [],
+    },
+    {
+      instance_id: "p1",
+      defect_id: "d2",
+      severity: "low",
+      kind: "bug",
+      provenance_hunt: false,
+      provenance_dataset_refs: [],
+    },
+    {
+      instance_id: "p2",
+      defect_id: "d1",
+      severity: "medium",
+      kind: "build",
+      provenance_hunt: false,
+      provenance_dataset_refs: ["R1"],
+    },
   ]);
   jsonl("arms", [{ arm_id: "acme-review", judge: "judge-a" }]);
   jsonl("defect_verdicts", [
-    { arm_id: "acme-review", judge: "judge-a", instance_id: "p1", defect_id: "d1", verdict: "found", credit: 1 },
-    { arm_id: "acme-review", judge: "judge-a", instance_id: "p1", defect_id: "d2", verdict: "partial", credit: 0.5 },
+    {
+      arm_id: "acme-review",
+      judge: "judge-a",
+      instance_id: "p1",
+      defect_id: "d1",
+      verdict: "found",
+      credit: 1,
+    },
+    {
+      arm_id: "acme-review",
+      judge: "judge-a",
+      instance_id: "p1",
+      defect_id: "d2",
+      verdict: "partial",
+      credit: 0.5,
+    },
   ]);
   jsonl("comment_verdicts", []);
   jsonl("reviews", [
-    { arm_id: "acme-review", instance_id: "p1", judged: true, cost_usd: 1.0, minutes: 4, n_comments: 2 },
-    { arm_id: "acme-review", instance_id: "p2", judged: true, cost_usd: 2.0, minutes: 6, n_comments: 1 },
+    {
+      arm_id: "acme-review",
+      instance_id: "p1",
+      judged: true,
+      cost_usd: 1.0,
+      minutes: 4,
+      n_comments: 2,
+    },
+    {
+      arm_id: "acme-review",
+      instance_id: "p2",
+      judged: true,
+      cost_usd: 2.0,
+      minutes: 6,
+      n_comments: 1,
+    },
   ]);
   writeFileSync(
     join(repo, "PAGE.md"),
@@ -199,10 +279,21 @@ describe("verify_claims end to end on small tables", () => {
     },
     groups: {},
     not_claims: [
-      { file: "PAGE.md", anchor: "Released in 2026", tokens: ["2026", "3"], why: "a year; a version" },
+      {
+        file: "PAGE.md",
+        anchor: "Released in 2026",
+        tokens: ["2026", "3"],
+        why: "a year; a version",
+      },
     ],
   };
-  const claim = (id: string, anchor: string, value: string, q: string | null, extra: object = {}) => ({
+  const claim = (
+    id: string,
+    anchor: string,
+    value: string,
+    q: string | null,
+    extra: object = {},
+  ) => ({
     id,
     file: "PAGE.md",
     anchor,
@@ -215,7 +306,12 @@ describe("verify_claims end to end on small tables", () => {
     claim("defects", "Acme finds 1.5 of 3", "3", "key:defects"),
     claim("recall", "Acme finds 1.5 of 3", "50%", "aacr:acme-review:recall"),
     claim("usd", "Acme finds 1.5 of 3", "1.50", "aacr:acme-review:usd"),
-    claim("expr", "Acme finds 2 of the 3.", "2", "{aacr:acme-review:found} + {aacr:acme-review:partials} / 2"),
+    claim(
+      "expr",
+      "Acme finds 2 of the 3.",
+      "2",
+      "{aacr:acme-review:found} + {aacr:acme-review:partials} / 2",
+    ),
     claim("expr-n", "Acme finds 2 of the 3.", "3", "key:defects"),
     claim("about", "Acme scores about $1.6 a PR", "1.6", "aacr:acme-review:usd", { about: true }),
   ];
@@ -225,7 +321,18 @@ describe("verify_claims end to end on small tables", () => {
     return p;
   };
   const verify = (manifest: string, ...extra: string[]) =>
-    run(["--manifest", manifest, "--repo", repo, "--data", data, "--work", join(tmp, "work"), "--no-validation", ...extra]);
+    run([
+      "--manifest",
+      manifest,
+      "--repo",
+      repo,
+      "--data",
+      data,
+      "--work",
+      join(tmp, "work"),
+      "--no-validation",
+      ...extra,
+    ]);
 
   // MUTATION: make `same` compare floats exactly (drop render_like) — 50% against 50.0 fails and this fails
   it("passes every claim the tables give, printed the way the page prints it", () => {
@@ -244,7 +351,9 @@ describe("verify_claims end to end on small tables", () => {
   it("fails a claim with no script, and one whose source --data does not hold", () => {
     const m = writeManifest("gaps.json", [
       ...good,
-      claim("seven", "The report has 7 more.", "7", null, { no_script: "planted: not computed yet" }),
+      claim("seven", "The report has 7 more.", "7", null, {
+        no_script: "planted: not computed yet",
+      }),
       claim("smoke", "its smoke ran 12 minutes", "12", "do_speed:smokes/x/median_min"),
     ]);
     const strict = verify(m);
@@ -266,7 +375,12 @@ describe("verify_claims end to end on small tables", () => {
 
 describe("comparing a computed number with the printed one", () => {
   const same = (printed: string, x: number | string, about: number | null = null) =>
-    py("import verify_claims as V; print(json.dumps(V.same(sys.argv[1], json.loads(sys.argv[2]), json.loads(sys.argv[3]))))", printed, JSON.stringify(x), JSON.stringify(about));
+    py(
+      "import verify_claims as V; print(json.dumps(V.same(sys.argv[1], json.loads(sys.argv[2]), json.loads(sys.argv[3]))))",
+      printed,
+      JSON.stringify(x),
+      JSON.stringify(about),
+    );
 
   it("prints the computed number like the published one", () => {
     expect(same("79%", 78.65)).toBe(true);
@@ -292,19 +406,86 @@ describe("claim_metrics: published numbers by key, from the tables", () => {
   const jl = (name: string, rows: object[]) =>
     writeFileSync(join(dir, `${name}.jsonl`), rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
   jl("prs", [
-    { instance_id: "p1", set: "s1", in_s40: true, language: "Go", pr_category: "x", change_line_count: 5, repo: "r" },
-    { instance_id: "p2", set: "s2", in_s40: false, language: "Go", pr_category: "x", change_line_count: 9, repo: "r" },
+    {
+      instance_id: "p1",
+      set: "s1",
+      in_s40: true,
+      language: "Go",
+      pr_category: "x",
+      change_line_count: 5,
+      repo: "r",
+    },
+    {
+      instance_id: "p2",
+      set: "s2",
+      in_s40: false,
+      language: "Go",
+      pr_category: "x",
+      change_line_count: 9,
+      repo: "r",
+    },
   ]);
   jl("defects", [
-    { instance_id: "p1", defect_id: "d1", severity: "high", kind: "bug", provenance_hunt: true, provenance_dataset_refs: [], provenance_reviewer_comments: [] },
-    { instance_id: "p1", defect_id: "d2", severity: "low", kind: "bug", provenance_hunt: false, provenance_dataset_refs: [], provenance_reviewer_comments: ["C1"] },
-    { instance_id: "p2", defect_id: "d1", severity: "medium", kind: "build", provenance_hunt: false, provenance_dataset_refs: ["R1"], provenance_reviewer_comments: [] },
+    {
+      instance_id: "p1",
+      defect_id: "d1",
+      severity: "high",
+      kind: "bug",
+      provenance_hunt: true,
+      provenance_dataset_refs: [],
+      provenance_reviewer_comments: [],
+    },
+    {
+      instance_id: "p1",
+      defect_id: "d2",
+      severity: "low",
+      kind: "bug",
+      provenance_hunt: false,
+      provenance_dataset_refs: [],
+      provenance_reviewer_comments: ["C1"],
+    },
+    {
+      instance_id: "p2",
+      defect_id: "d1",
+      severity: "medium",
+      kind: "build",
+      provenance_hunt: false,
+      provenance_dataset_refs: ["R1"],
+      provenance_reviewer_comments: [],
+    },
   ]);
-  jl("arms", [{ arm_id: "acme", judge: "j1" }, { arm_id: "widget", judge: "j1" }]);
+  jl("arms", [
+    { arm_id: "acme", judge: "j1" },
+    { arm_id: "widget", judge: "j1" },
+  ]);
   jl("reviews", [
-    { arm_id: "acme", instance_id: "p1", judged: true, judged_by: ["j1", "j2"], cost_usd: 1, minutes: 2, n_comments: 1 },
-    { arm_id: "acme", instance_id: "p2", judged: true, judged_by: ["j1", "j2"], cost_usd: 3, minutes: 4, n_comments: 1 },
-    { arm_id: "widget", instance_id: "p2", judged: true, judged_by: ["j1"], cost_usd: 1, minutes: 1, n_comments: 0 },
+    {
+      arm_id: "acme",
+      instance_id: "p1",
+      judged: true,
+      judged_by: ["j1", "j2"],
+      cost_usd: 1,
+      minutes: 2,
+      n_comments: 1,
+    },
+    {
+      arm_id: "acme",
+      instance_id: "p2",
+      judged: true,
+      judged_by: ["j1", "j2"],
+      cost_usd: 3,
+      minutes: 4,
+      n_comments: 1,
+    },
+    {
+      arm_id: "widget",
+      instance_id: "p2",
+      judged: true,
+      judged_by: ["j1"],
+      cost_usd: 1,
+      minutes: 1,
+      n_comments: 0,
+    },
   ]);
   jl("defect_verdicts", [
     { arm_id: "acme", judge: "j1", instance_id: "p1", defect_id: "d1", verdict: "found" },

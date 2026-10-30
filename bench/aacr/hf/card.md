@@ -28,12 +28,12 @@ repository:
   metric. The reviews and verdicts on Martian's offline code-review benchmark
   and on Qodo's PR-Review-Bench. The pairwise Elo judgments and ratings. A run
   index.
-- **The run archive** ([`archive/`]({{ARCHIVE}})). The run directories as the
+- **The run archive** ({{ARCHIVE_MD}}). The run directories as the
   runs wrote them: transcripts, reviews, judge and scorer outputs, logs. There
   is one `.tar.zst` volume per run family, {{RUN_UNITS}} run directories in
   {{RUN_FAMILIES}} families. Its README lists every volume, every rewrite and
   every file left out.
-- **The slim re-score bundle** ([`slim/`]({{SLIM}})). The part of the archive
+- **The slim re-score bundle** ({{SLIM_MD}}). The part of the archive
   that the scoring and recompute scripts read, with no transcript text.
 
 DOI: {{DOI_MD}}. The code, the benchmark definition and both papers are in the

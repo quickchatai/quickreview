@@ -35,7 +35,11 @@ afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 function py(mod: string, code: string, ...args: string[]): unknown {
   const out = execFileSync(
     "python3",
-    ["-c", `import sys, json; sys.path.insert(0, ${JSON.stringify(RECOMPUTE)}); import ${mod} as h\n${code}`, ...args],
+    [
+      "-c",
+      `import sys, json; sys.path.insert(0, ${JSON.stringify(RECOMPUTE)}); import ${mod} as h\n${code}`,
+      ...args,
+    ],
     { cwd: ROOT },
   );
   return JSON.parse(out.toString());
@@ -92,7 +96,10 @@ describe("aacr_bootstrap", () => {
 
   // MUTATION: take the upper bound at int(.975 * B) instead of int(.975 * B) - 1 — this fails
   it("reads the percentile interval at index 250 and 9749 of 10,000", () => {
-    const r = py("tables", "import random; v = list(range(10000)); random.shuffle(v); print(json.dumps(h.percentile_ci(v)))");
+    const r = py(
+      "tables",
+      "import random; v = list(range(10000)); random.shuffle(v); print(json.dumps(h.percentile_ci(v)))",
+    );
     expect(r).toEqual([250, 9749]);
   });
 
@@ -102,9 +109,26 @@ describe("aacr_bootstrap", () => {
     jsonl(d, "prs", PRS);
     jsonl(d, "defects", DEFECTS);
     jsonl(d, "defect_verdicts", VERDICTS);
-    jsonl(d, "reviews", ["p1", "p2", "p3"].map((i) => ({ arm_id: "X", instance_id: i, judged: true, cost_usd: 1.0 })));
+    jsonl(
+      d,
+      "reviews",
+      ["p1", "p2", "p3"].map((i) => ({ arm_id: "X", instance_id: i, judged: true, cost_usd: 1.0 })),
+    );
     const out = join(tmp, "aacr-seed.json");
-    execFileSync("python3", ["-I", join(RECOMPUTE, "aacr_bootstrap.py"), "--data", d, "--arms", "X", "--resamples", "50", "--seed", "7", "--json", out]);
+    execFileSync("python3", [
+      "-I",
+      join(RECOMPUTE, "aacr_bootstrap.py"),
+      "--data",
+      d,
+      "--arms",
+      "X",
+      "--resamples",
+      "50",
+      "--seed",
+      "7",
+      "--json",
+      out,
+    ]);
     const res = JSON.parse(readFileSync(out, "utf8"));
     expect(res.seed).toBe(7);
     const want = py(
@@ -122,12 +146,33 @@ describe("aacr_bootstrap", () => {
     jsonl(d, "defects", DEFECTS);
     jsonl(d, "defect_verdicts", VERDICTS);
     jsonl(d, "reviews", [
-      ...["p1", "p2", "p3"].map((i) => ({ arm_id: "X", instance_id: i, judged: true, cost_usd: 1.0 })),
+      ...["p1", "p2", "p3"].map((i) => ({
+        arm_id: "X",
+        instance_id: i,
+        judged: true,
+        cost_usd: 1.0,
+      })),
       { arm_id: "X", instance_id: "p1", judged: false, cost_usd: 50 },
-      ...["p1", "p2", "p3"].map((i) => ({ arm_id: "Y", instance_id: i, judged: true, cost_usd: null })),
+      ...["p1", "p2", "p3"].map((i) => ({
+        arm_id: "Y",
+        instance_id: i,
+        judged: true,
+        cost_usd: null,
+      })),
     ]);
     const out = join(tmp, "aacr.json");
-    execFileSync("python3", ["-I", join(RECOMPUTE, "aacr_bootstrap.py"), "--data", d, "--arms", "X,Y", "--resamples", "100", "--json", out]);
+    execFileSync("python3", [
+      "-I",
+      join(RECOMPUTE, "aacr_bootstrap.py"),
+      "--data",
+      d,
+      "--arms",
+      "X,Y",
+      "--resamples",
+      "100",
+      "--json",
+      out,
+    ]);
     const res = JSON.parse(readFileSync(out, "utf8"));
     expect(res.costs.X.usd_per_defect).toBeCloseTo(3 / 2.5);
     expect(res.costs.X.reviews).toBe(3);
@@ -201,7 +246,9 @@ describe("heldout", () => {
 describe("elo_ratings", () => {
   const verdict = (w: string) => ({
     overall: { winner: w },
-    categories: Object.fromEntries(["recall", "precision", "finding_quality", "writing"].map((c) => [c, { winner: w }])),
+    categories: Object.fromEntries(
+      ["recall", "precision", "finding_quality", "writing"].map((c) => [c, { winner: w }]),
+    ),
   });
   const row = (judge: string, id: string, pr: string, sha: string, at: string, w: string) => ({
     id,
@@ -220,7 +267,10 @@ describe("elo_ratings", () => {
       row("gpt", "u2", "p2", "s2", "2026-01-01T00:00:01Z", "A"),
       row("gpt", "u1", "p1", "new", "2026-01-02T00:00:00Z", "B"),
     ],
-    opus: [row("opus", "u1", "p1", "new", "2026-01-02T00:00:05Z", "B"), row("opus", "u2", "p2", "s2", "2026-01-01T00:00:09Z", "A")],
+    opus: [
+      row("opus", "u1", "p1", "new", "2026-01-02T00:00:05Z", "B"),
+      row("opus", "u2", "p2", "s2", "2026-01-01T00:00:09Z", "A"),
+    ],
   };
 
   // MUTATION: keep a judge's first ok row whatever its hash (drop the current-hash check in finals) — this fails
@@ -238,7 +288,11 @@ describe("elo_ratings", () => {
 describe("open_models", () => {
   const runs = join(tmp, "runs");
   const ev = (results: { agent: string; stopReason: string }[]) =>
-    JSON.stringify({ type: "tool_execution_end", toolName: "launch_plan", result: { details: { results } } }) + "\n";
+    JSON.stringify({
+      type: "tool_execution_end",
+      toolName: "launch_plan",
+      result: { details: { results } },
+    }) + "\n";
   const kase = (id: string, summary: object, events: string) => {
     const d = join(runs, "r1", "cases", id);
     mkdirSync(d, { recursive: true });
@@ -247,12 +301,20 @@ describe("open_models", () => {
   };
   kase(
     "c1",
-    { fingerprint: { effort: { effort: "low" } }, planned_lenses: ["pass-a--sol-med", "pass-validate--sol-high"], executed_passes: ["pass-a--sol-med"] },
+    {
+      fingerprint: { effort: { effort: "low" } },
+      planned_lenses: ["pass-a--sol-med", "pass-validate--sol-high"],
+      executed_passes: ["pass-a--sol-med"],
+    },
     ev([{ agent: "pass-a--sol-med", stopReason: "stop" }]),
   );
   kase(
     "c2",
-    { fingerprint: { effort: { effort: "" } }, planned_lenses: ["pass-b--sol-high"], executed_passes: [] },
+    {
+      fingerprint: { effort: { effort: "" } },
+      planned_lenses: ["pass-b--sol-high"],
+      executed_passes: [],
+    },
     ev([{ agent: "pass-b--sol-high", stopReason: "stop" }]),
   );
   kase(
@@ -289,7 +351,10 @@ describe("do_speed", () => {
     mkdirSync(d, { recursive: true });
     writeFileSync(
       join(d, "case-summary.json"),
-      JSON.stringify({ duration_seconds: 600, usage: { input: 1_000_000, output: 1_000_000, cacheRead: 0 } }),
+      JSON.stringify({
+        duration_seconds: 600,
+        usage: { input: 1_000_000, output: 1_000_000, cacheRead: 0 },
+      }),
     );
     const end = (m: object) => JSON.stringify({ type: "message_end", message: m });
     writeFileSync(
@@ -323,13 +388,27 @@ describe("do_speed", () => {
         "print(json.dumps([s['minutes'], s['output'], s['replies'], s['timed'], s['usd']]))",
       d,
     );
-    expect(r).toEqual([10, 35, 2, [[2, 10], [4, 20]], 3]);
+    expect(r).toEqual([
+      10,
+      35,
+      2,
+      [
+        [2, 10],
+        [4, 20],
+      ],
+      3,
+    ]);
   });
 });
 
 describe("the committed data behind the README", () => {
   const README = readFileSync(join(ROOT, "README.md"), "utf8");
-  const elo = JSON.parse(readFileSync(join(ROOT, "bench", "aacr", "showcase", "data", "elo-martian-hard20.json"), "utf8"));
+  const elo = JSON.parse(
+    readFileSync(
+      join(ROOT, "bench", "aacr", "showcase", "data", "elo-martian-hard20.json"),
+      "utf8",
+    ),
+  );
 
   // MUTATION: change one row's "elo" in bench/aacr/showcase/data/elo-martian-hard20.json by 1 — this fails
   it("the Elo chart's data is what the README's alt text and prose say", () => {
@@ -337,9 +416,12 @@ describe("the committed data behind the README", () => {
     const printed = [...alt.matchAll(/\b1[0-9]{3}\b/g)].map((m) => Number(m[0]));
     expect(printed).toEqual(elo.rows.map((r: { elo: number }) => Math.round(r.elo)));
     expect(README).toContain(`their ${elo.games} verdicts`);
-    expect(README).toContain(`same winner only ${Math.round(100 * elo.agreement_overall)}% of the time`);
+    expect(README).toContain(
+      `same winner only ${Math.round(100 * elo.agreement_overall)}% of the time`,
+    );
     const pair = elo.pairs.find(
-      (p: { upper: string; lower: string }) => p.upper === "ft0622-hard20-qr-opus55" && p.lower === "ft0622-hard20-cc-high-opus55",
+      (p: { upper: string; lower: string }) =>
+        p.upper === "ft0622-hard20-qr-opus55" && p.lower === "ft0622-hard20-cc-high-opus55",
     );
     const { w, t, l } = pair.direct;
     expect(README).toContain(`in ${w} of ${w + t + l} verdicts`);
@@ -348,17 +430,27 @@ describe("the committed data behind the README", () => {
   // MUTATION: add a qodo-rules30 PR to bench/aacr/sets/qodo-heldout31.json — this fails
   it("the held-out Qodo set is 31 PRs of qodo-pr100 in no validation set", () => {
     const urls = (name: string): string[] =>
-      JSON.parse(readFileSync(join(ROOT, "bench", "aacr", "sets", `${name}.json`), "utf8")).cases.map(
-        (c: { pr_url: string }) => c.pr_url,
-      );
+      JSON.parse(
+        readFileSync(join(ROOT, "bench", "aacr", "sets", `${name}.json`), "utf8"),
+      ).cases.map((c: { pr_url: string }) => c.pr_url);
     const held = urls("qodo-heldout31");
     expect(held).toHaveLength(31);
     expect(new Set(held).size).toBe(31);
     const all = new Set(urls("qodo-pr100"));
     expect(held.filter((u) => !all.has(u))).toEqual([]);
-    for (const s of ["qodo-rules30", "qodo-swift13", "qodo-miss6", "qodo-dv5", "dedup5-qodo", "qodo-smoke10"]) {
+    for (const s of [
+      "qodo-rules30",
+      "qodo-swift13",
+      "qodo-miss6",
+      "qodo-dv5",
+      "dedup5-qodo",
+      "qodo-smoke10",
+    ]) {
       const used = new Set(urls(s));
-      expect(held.filter((u) => used.has(u)), s).toEqual([]);
+      expect(
+        held.filter((u) => used.has(u)),
+        s,
+      ).toEqual([]);
     }
   });
 });

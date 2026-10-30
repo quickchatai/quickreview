@@ -1574,8 +1574,10 @@ def card_values(a, sizes: dict, checks: list[dict], counts: collections.Counter,
     runs = runs or []
     url = dataset_url(a.repo_id)
     return {"REPO_ID": a.repo_id, "DATASET_URL": url,
-            "ARCHIVE": getattr(a, "archive_url", None) or f"{url}/tree/main/archive",
-            "SLIM": getattr(a, "slim_url", None) or f"{url}/tree/main/slim",
+            # whole links, so the template holds no link target a Markdown
+            # link check would read as a path in this repository
+            "ARCHIVE_MD": f"[`archive/`]({getattr(a, 'archive_url', None) or url + '/tree/main/archive'})",
+            "SLIM_MD": f"[`slim/`]({getattr(a, 'slim_url', None) or url + '/tree/main/slim'})",
             "DOI": getattr(a, "doi", None) or DOI_PENDING,
             "ARXIV_BENCHMARK": getattr(a, "arxiv_benchmark", None) or ARXIV_PENDING,
             "ARXIV_QUICKREVIEW": getattr(a, "arxiv_quickreview", None) or ARXIV_PENDING,

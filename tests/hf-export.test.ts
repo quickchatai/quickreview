@@ -54,7 +54,11 @@ function pyModule(mod: string, code: string, ...args: string[]): unknown {
 function pyEnv(env: Record<string, string>, mod: string, code: string, ...args: string[]): unknown {
   const out = execFileSync(
     "python3",
-    ["-c", `import sys, json; sys.path.insert(0, 'bench/aacr'); import ${mod} as h\n${code}`, ...args],
+    [
+      "-c",
+      `import sys, json; sys.path.insert(0, 'bench/aacr'); import ${mod} as h\n${code}`,
+      ...args,
+    ],
     { env: { ...process.env, ...SCRUB_ENV, ...env } },
   );
   return JSON.parse(out.toString());
@@ -96,7 +100,9 @@ describe("hf_export.scrub", () => {
       "import collections; c = collections.Counter(); print(json.dumps([h.scrub(sys.argv[1], c), dict(c)]))",
       "Compare with widgetco-app/src and WidgetCo-App's profile; profiles/widgetco stays.",
     ) as [string, Record<string, number>];
-    expect(r[0]).toBe("Compare with <private-repo>/src and <private-repo>'s profile; profiles/widgetco stays.");
+    expect(r[0]).toBe(
+      "Compare with <private-repo>/src and <private-repo>'s profile; profiles/widgetco stays.",
+    );
     expect(r[1]["private repo"]).toBe(2);
   });
 
@@ -396,7 +402,9 @@ describe("scrub_extra.ContentRules", () => {
     ) as [string, string[]];
     // the literal turns "widget tracker" into "gadget tracker" before the
     // regex runs; the regex rewrites only the spelling the literal missed
-    expect(r[0]).toBe("a support guideline, see gadget tracker and issue  tracker and ***REMOVED***; Example.");
+    expect(r[0]).toBe(
+      "a support guideline, see gadget tracker and issue  tracker and ***REMOVED***; Example.",
+    );
     expect(r[1]).toEqual([
       "content-rule literal #1",
       "content-rule literal #2",
@@ -434,7 +442,10 @@ describe("scrub_extra.ContentRules", () => {
   });
 
   it("has no prefilter for a top-level alternation", () => {
-    const r = pyModule("scrub_extra", "print(json.dumps(h.regex_anchor(b'alpha-one|beta-two')[0]))");
+    const r = pyModule(
+      "scrub_extra",
+      "print(json.dumps(h.regex_anchor(b'alpha-one|beta-two')[0]))",
+    );
     expect(r).toBeNull();
   });
 });
@@ -443,7 +454,10 @@ describe("release_catalogue and export_runs: what ships", () => {
   const root = join(tmp, "cat");
   const src = join(root, "bench-runs");
   const om = join(root, "open-models");
-  put(join(src, "runs", "keep-dev10", "run.json"), JSON.stringify({ set: "dev10", qcr_commit: "aaa111" }));
+  put(
+    join(src, "runs", "keep-dev10", "run.json"),
+    JSON.stringify({ set: "dev10", qcr_commit: "aaa111" }),
+  );
   put(join(src, "runs", "keep-dev10", "cases", "x", "pi-events.jsonl"), "{}\n");
   put(join(src, "runs", "keep-dev10.review.log"), "log\n");
   put(join(src, "runs", "own-repo-run", "run.json"), "{}");
@@ -458,11 +472,51 @@ describe("release_catalogue and export_runs: what ships", () => {
     JSON.stringify({
       claims: { "c:one": "a claim" },
       families: [
-        { id: "kept", title: "Kept runs", location: "qcr-bench-runs/runs/", members: ["keep-dev10"], ship: "yes", hf_tables: ["runs (new)", "reviews"], claims: ["c:one"] },
-        { id: "own", title: "Own repo", location: "qcr-bench-runs/runs/", members: ["own-repo-run"], ship: "no:own-repo", hf_tables: [], claims: "none" },
-        { id: "elo", title: "Elo", location: "qcr-bench-runs/", members: ["elo"], ship: "yes", hf_tables: [], claims: "none" },
-        { id: "om", title: "Open models", location: "review-sandbox bench/aacr/artifacts/open-models/runs/ (gitignored)", members: ["om-run"], ship: "yes", hf_tables: [], claims: "none" },
-        { id: "drv", title: "Driver", location: "review-sandbox bench/aacr/artifacts/open-models/ (top level)", members: ["driver.sh"], ship: "yes", hf_tables: [], claims: "none" },
+        {
+          id: "kept",
+          title: "Kept runs",
+          location: "qcr-bench-runs/runs/",
+          members: ["keep-dev10"],
+          ship: "yes",
+          hf_tables: ["runs (new)", "reviews"],
+          claims: ["c:one"],
+        },
+        {
+          id: "own",
+          title: "Own repo",
+          location: "qcr-bench-runs/runs/",
+          members: ["own-repo-run"],
+          ship: "no:own-repo",
+          hf_tables: [],
+          claims: "none",
+        },
+        {
+          id: "elo",
+          title: "Elo",
+          location: "qcr-bench-runs/",
+          members: ["elo"],
+          ship: "yes",
+          hf_tables: [],
+          claims: "none",
+        },
+        {
+          id: "om",
+          title: "Open models",
+          location: "review-sandbox bench/aacr/artifacts/open-models/runs/ (gitignored)",
+          members: ["om-run"],
+          ship: "yes",
+          hf_tables: [],
+          claims: "none",
+        },
+        {
+          id: "drv",
+          title: "Driver",
+          location: "review-sandbox bench/aacr/artifacts/open-models/ (top level)",
+          members: ["driver.sh"],
+          ship: "yes",
+          hf_tables: [],
+          claims: "none",
+        },
       ],
     }),
   );
@@ -484,7 +538,9 @@ describe("release_catalogue and export_runs: what ships", () => {
     expect(r["open-models/runs/om-run/run.json"]).toBeNull();
     expect(r["open-models/driver.sh"]).toBeNull();
     expect(r["elo/plan-a/plan.json"]).toBeNull();
-    expect(r["runs/own-repo-run/run.json"]).toMatch(/^withheld: QuickReview reviewing our own repositories/);
+    expect(r["runs/own-repo-run/run.json"]).toMatch(
+      /^withheld: QuickReview reviewing our own repositories/,
+    );
     expect(r["runs/nobody-knows/run.json"]).toMatch(/^not in the run catalogue/);
     expect(r["elo/plan-a/packs/u1.txt"]).toMatch(/^regenerable: Elo packs/);
   });
@@ -499,7 +555,14 @@ describe("release_catalogue and export_runs: what ships", () => {
       catalogue,
       src,
     ) as unknown[][];
-    expect(r).toContainEqual(["keep-dev10", "kept", "dev10", "bbb222", ["c:one"], ["runs", "reviews"]]);
+    expect(r).toContainEqual([
+      "keep-dev10",
+      "kept",
+      "dev10",
+      "bbb222",
+      ["c:one"],
+      ["runs", "reviews"],
+    ]);
     expect(r).toContainEqual(["elo", "elo", null, null, [], []]);
     expect(r.find((x) => x[0] === "own")?.[1]).toMatch(/^withheld/);
     expect(r.some((x) => x[0] === "own-repo-run")).toBe(false);
@@ -512,8 +575,14 @@ describe("export_runs.plan_copies", () => {
     const src = join(tmp, "copies");
     put(join(src, "runs", "zsource-a", "cases", "x", "f.json"), "same bytes\n");
     mkdirSync(join(src, "runs", "mv-a", "cases", "x"), { recursive: true });
-    linkSync(join(src, "runs", "zsource-a", "cases", "x", "f.json"), join(src, "runs", "mv-a", "cases", "x", "f.json"));
-    put(join(src, "runs", "mv-b", "VARIANT.json"), JSON.stringify({ policy: { src: ["zsource-a"] } }));
+    linkSync(
+      join(src, "runs", "zsource-a", "cases", "x", "f.json"),
+      join(src, "runs", "mv-a", "cases", "x", "f.json"),
+    );
+    put(
+      join(src, "runs", "mv-b", "VARIANT.json"),
+      JSON.stringify({ policy: { src: ["zsource-a"] } }),
+    );
     put(join(src, "runs", "mv-b", "cases", "x", "f.json"), "same bytes\n");
     put(join(src, "runs", "mv-b", "cases", "x", "own.json"), "new\n");
     const r = pyModule(
@@ -532,10 +601,18 @@ describe("export_runs.plan_copies", () => {
 
 describe("the slim bundle's pruned transcript", () => {
   const events = [
-    { type: "message_start", message: { role: "assistant", content: [{ type: "text", text: "SECRET-PROSE" }] } },
+    {
+      type: "message_start",
+      message: { role: "assistant", content: [{ type: "text", text: "SECRET-PROSE" }] },
+    },
     {
       type: "message_end",
-      message: { role: "assistant", timestamp: 1000, usage: { output: 7 }, content: [{ type: "text", text: "SECRET-PROSE" }] },
+      message: {
+        role: "assistant",
+        timestamp: 1000,
+        usage: { output: 7 },
+        content: [{ type: "text", text: "SECRET-PROSE" }],
+      },
     },
     {
       type: "tool_execution_end",
@@ -548,7 +625,14 @@ describe("the slim bundle's pruned transcript", () => {
               agent: "pass-x--sol-high",
               stopReason: "error",
               errorMessage: "overloaded",
-              messages: [{ role: "assistant", timestamp: 1500, usage: { output: 3 }, content: "SECRET-PROSE" }],
+              messages: [
+                {
+                  role: "assistant",
+                  timestamp: 1500,
+                  usage: { output: 3 },
+                  content: "SECRET-PROSE",
+                },
+              ],
             },
           ],
         },

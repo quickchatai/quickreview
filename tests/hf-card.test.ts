@@ -32,7 +32,11 @@ const SCRUB_ENV = {
 function py(code: string, ...args: string[]): unknown {
   const out = execFileSync(
     "python3",
-    ["-c", `import sys, json, types, collections; sys.path.insert(0, 'bench/aacr'); import hf_export as h\n${code}`, ...args],
+    [
+      "-c",
+      `import sys, json, types, collections; sys.path.insert(0, 'bench/aacr'); import hf_export as h\n${code}`,
+      ...args,
+    ],
     { env: { ...process.env, ...SCRUB_ENV } },
   );
   return JSON.parse(out.toString());
@@ -41,7 +45,9 @@ function py(code: string, ...args: string[]): unknown {
 /** Render card.md as the exporter does, with one row per config. */
 function render(extra = ""): string {
   return py(
-    "a = types.SimpleNamespace(repo_id='acme/bench'" + extra + ")\n" +
+    "a = types.SimpleNamespace(repo_id='acme/bench'" +
+      extra +
+      ")\n" +
       "sizes = {n: 1 for n in h.CONFIGS}\n" +
       "runs = [{'family': 'f1'}, {'family': 'f1'}, {'family': 'f2'}]\n" +
       "print(json.dumps(h.fill_card(open('bench/aacr/hf/card.md').read(), " +
@@ -75,7 +81,9 @@ describe("the dataset card renders completely", () => {
 
   // MUTATION: make md_link always return the pending form — this fails
   it("links a known DOI and arXiv id, and keeps the raw id in the BibTeX", () => {
-    const card = render(", doi='10.0000/acme.1', arxiv_benchmark='2611.00001', arxiv_quickreview='2611.00002'");
+    const card = render(
+      ", doi='10.0000/acme.1', arxiv_benchmark='2611.00001', arxiv_quickreview='2611.00002'",
+    );
     expect(card).toContain("DOI: [10.0000/acme.1](https://doi.org/10.0000/acme.1).");
     expect(card).toContain("arXiv [2611.00001](https://arxiv.org/abs/2611.00001)");
     expect(card).toContain("note   = {Quickchat AI. arXiv 2611.00002}");
