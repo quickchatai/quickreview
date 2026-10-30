@@ -28,7 +28,9 @@ and Qodo claims are checked from the tables.
 How a computed number is compared: it is printed the way the published value is printed —
 the same number of decimals, the same sign, thousands separator and `%` — and the two strings
 must be equal. The checks and their scripts are listed in claims.json under `checks`; a claim
-whose check has no script in this tree, or no `q`, fails as "no script".
+whose check has no script in this tree, or no `q`, fails as "no script"; one whose `no_script` reason starts
+"data not published" rests on data the release does not hold and fails as "not published" (the page's
+author may reword it).
 """
 from __future__ import annotations
 
@@ -193,13 +195,15 @@ class Sources:
         self.timings: Dict[str, float] = {}
 
     def needs(self, check: str) -> str:
+        """What the check reads: one part of the release (`hf`, `slim`, `archive`, `repo`), or several
+        joined with `+` (`hf+archive`), every one of which must be under --data."""
         spec = self.m["checks"].get(check)
         if spec is None:
             raise KeyError(f"check {check!r} is not in the manifest's `checks`")
         return spec["needs"]
 
     def available(self, check: str) -> bool:
-        return self.found.get(self.needs(check)) is not None
+        return all(self.found.get(part) is not None for part in self.needs(check).split("+"))
 
     def script_present(self, check: str) -> bool:
         spec = self.m["checks"][check]
@@ -241,7 +245,13 @@ class Sources:
     def _script_json(self, check: str, spec: dict) -> dict:
         if check not in self._json:
             out = self.work / f"{check}.json"
-            args = [x.replace("{hf}", self.found["hf"] or "").replace("{out}", str(out)) for x in spec["args"]]
+            subs = {"{hf}": self.found["hf"] or "", "{archive}": self.found["archive"] or "",
+                    "{work}": str(self.work / "scratch"), "{out}": str(out)}
+            args = []
+            for x in spec["args"]:
+                for k, v in subs.items():
+                    x = x.replace(k, v)
+                args.append(x)
             self._run(check, [sys.executable, str(REPO / spec["scripts"][0])] + args)
             self._json[check] = json.loads(out.read_text())
         return self._json[check]
@@ -332,8 +342,10 @@ def verify(a, manifest: dict, found) -> List[dict]:
         r = {"id": c["id"], "file": c["file"], "anchor": c["anchor"], "value": c["value"], "sources": []}
         qs = ([c["q"]] if c.get("q") else []) + list(c.get("alt") or [])
         if not qs:
-            r["status"] = "no-script"
-            r["why"] = c.get("no_script") or "no recompute script yet"
+            why = c.get("no_script") or "no recompute script yet"
+            # a claim whose data the release does not hold can never get a script: it is its own status
+            r["status"] = "not-published" if why.startswith(NOT_PUBLISHED) else "no-script"
+            r["why"] = why
             results.append(r)
             continue
         for q in qs:
@@ -386,7 +398,9 @@ def verify(a, manifest: dict, found) -> List[dict]:
     return results
 
 
-FAIL = ("mismatch", "error", "no-source", "no-script")
+FAIL = ("mismatch", "error", "no-source", "no-script", "not-published")
+GAPS = ("no-script", "not-published")
+NOT_PUBLISHED = "data not published"
 
 
 def consistency(a, found, src: "Sources") -> List[dict]:
@@ -438,14 +452,19 @@ def report_md(manifest: dict, lint: dict, results: List[dict], found, timings, c
         out.append(f"| {f} | {s['tokens']} | {s['claims']} | {s['not_claims']} | {s['unaccounted']} | "
                    f"{sum(r['status'] == 'pass' for r in rs)} | {sum(r['status'] in FAIL for r in rs)} |")
     out.append("")
-    bad = [r for r in results if r["status"] in FAIL and r["status"] != "no-script"]
-    gaps = [r for r in results if r["status"] == "no-script"]
-    if gaps:
+    bad = [r for r in results if r["status"] in FAIL and r["status"] not in GAPS]
+    for status, title, lead in (
+            ("no-script", "No recompute script yet",
+             "claims are listed with the data behind them but no check computes them. By reason:"),
+            ("not-published", "Data not published",
+             "claims rest on data the release does not hold, so no check can recompute them from it. By reason:")):
+        gaps = [r for r in results if r["status"] == status]
+        if not gaps:
+            continue
         by = {}
         for r in gaps:
             by.setdefault(r.get("why") or "", []).append(r)
-        out += ["## No recompute script yet", "",
-                f"{len(gaps)} claims are listed with the data behind them but no check computes them. By reason:", "",
+        out += [f"## {title}", "", f"{len(gaps)} {lead}", "",
                 "| Claims | Reason | Where (first few) |", "|---|---|---|"]
         for why, rs in sorted(by.items(), key=lambda kv: -len(kv[1])):
             where = ", ".join(f"{r['file'].split('/')[-1]}:{lint['files'].get(r['file'], {}).get('lines', {}).get(r['id'], '?')}"
@@ -507,6 +526,9 @@ def main() -> int:
         for s in spec.get("scripts", []):
             if not (repo / s).exists():
                 lint["errors"].append(f"check {ch}: script {s} is missing")
+        bad = [p for p in spec["needs"].split("+") if p not in ("hf", "slim", "archive", "repo")]
+        if bad:
+            lint["errors"].append(f"check {ch}: needs {bad} is not a part of the release (hf, slim, archive, repo)")
     for e in lint["errors"]:
         print("MANIFEST:", e, file=sys.stderr)
     for f, s in sorted(lint["files"].items()):
@@ -527,12 +549,15 @@ def main() -> int:
     tot = Counter(r["status"] for r in results)
     print("claims:", dict(sorted(tot.items())))
     gaps = Counter(r.get("why") for r in results if r["status"] == "no-script")
+    unpublished = Counter(r.get("why") for r in results if r["status"] == "not-published")
     for r in results:
-        if r["status"] in FAIL and r["status"] != "no-script":
+        if r["status"] in FAIL and r["status"] not in GAPS:
             comp = ", ".join(str(s.get("printed_as", s.get("why", ""))) for s in r["sources"]) or r.get("why", "")
             print(f"  {r['status'].upper()} {r['id']} ({r['file']}): published {r['value']!r}, computed {comp}")
     for why, n in gaps.most_common():
         print(f"  NO-SCRIPT x{n}: {why}")
+    for why, n in unpublished.most_common():
+        print(f"  NOT-PUBLISHED x{n}: {why}")
     bad_c = [c for c in a._consistency if not c["ok"]]
     print(f"release checks: {len(a._consistency) - len(bad_c)} of {len(a._consistency)} pass")
     for c in bad_c:

@@ -14,6 +14,18 @@ given as `<name>.jsonl`, which is how the tests feed small fixtures.
 | Pairwise Elo, judge agreement, head-to-head record; $ per PR of each configuration | README "Judged side by side" and its chart | `elo_ratings.py <archive>/elo/martian-hard20-all-gpt [--check-ratings] [--runs-dir <archive runs> ...]` | the Elo run's `plan.json`, `units.jsonl`, `judgments/` |
 | "Other models" rows, DeepSeek's effort mix, GLM's missing passes | README "Other models" | `open_models.py --runs-dir <open-model runs>` | the open-model runs; `final/arms-open-models.txt` |
 | Speed table, smoke figures, slowest reviews | `docs/DIGITALOCEAN.md` | `do_speed.py --runs-dir <open-model runs> --gpt-runs-dir <runs>` | the open-model smoke and full runs; `final1-*` |
+| How the answer key was built: candidates by run and reviewer, hunt drafts, exclusions, tab:prov, the hunt's grade, the saturation curve, leave-one-reviewer-out, the key without QuickReview-only defects | benchmark.tex §"The answer key", THREATS-TO-VALIDITY.md §1, METHODOLOGY.md §5 | `key_build.py --archive <archive> --data <hf-dataset>` | archive `answer-key` (`rest145-code/`, `orig40-code/`); HF `prs`, `defects`, `defect_verdicts` |
+| Tokens per PR (tab:costfinal, the gpt-6-sol study's budget table, the panel comparison, passes per PR and output per pass) | both papers, THREATS-TO-VALIDITY.md §5 | `tokens.py --archive <archive> --data <hf-dataset>` | archive `runs/<run>/cases/<id>/` (`pi-events.pruned.jsonl`, `case-summary.json`); HF `reviews`, `runs` |
+| Judging cost and operations: calls, tokens, list cost, judgements in error, the self-consistency re-run, the AACR judge's logged calls and estimated cost | benchmark.tex "Judging cost and operations", THREATS-TO-VALIDITY.md, METHODOLOGY.md | `judge_ops.py --archive <archive> --data <hf-dataset>` | archive `runs/<run>/judge/`, `eval/`, `results/all/` |
+| Lens passes per PR and each lens's share of PRs | quickreview.tex tab:lenses and §"One round" | `passes.py --archive <archive> --data <hf-dataset>` | archive `case-summary.json` |
+| The Claude Code arm's harness facts (denied commands, the prose parser) | benchmark.tex "Claude Code's prose parser", PROMPTS.md | `claude_arm.py --archive <archive> --data <hf-dataset>` | archive `claude-stdout.json`, `results/all/`, `<run>.review.log` |
+| Martian tune20 against the extended key, and its sensitivity | benchmark.tex tab:martianext, tab:martiansens | `martian_ext.py --archive <archive> --data <hf-dataset>` | archive `analysis/…/fair/`, `gm/rows.json`, `runs/mv-r1-asposted.martian/` |
+
+The archive-backed scripts take the release's `archive/` folder (they unpack
+only the volumes they read, into `--work`) or an already unpacked archive.
+`archive.py` is their shared reader. Every session log they count from is the
+release's numbers-only extract (`*.pruned.jsonl`): usage, timestamps and
+outcomes, no prompt or model text.
 
 ## The held-out Qodo set
 
@@ -68,4 +80,6 @@ under `--data`, recomputes every claim from whichever of them it holds
 `verify_slim.py` over the bundle), re-runs the release's own checks
 (`hf_export.py`'s validation and `verify_slim.py`'s bundle checks), and exits
 non-zero on any mismatch, missing source or missing script. `--partial`
-checks only what the given data holds.
+checks only what the given data holds. A claim whose data the release does not
+hold (its `no_script` reason starts "data not published") is reported as *not
+published*, apart from the claims that only wait for a script.

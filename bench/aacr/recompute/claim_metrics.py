@@ -16,6 +16,8 @@ aacr     ARM[@JUDGE][~SEL]:METRIC
            | set=a+b (the `prs.set` names) | lang=<language> | kind=<pr_category>
            | lines=<lo>-<hi> (change_line_count, inclusive) | arm=<arm id> (that arm's PRs) | pr=<instance id>
            | refcat=<AACR reference category> (the aacr_* metrics over those references only)
+           | rlabel=<label reality> (the aacr_* metrics over the labelled references of that reality only)
+           | size=<lo>-<hi> (insertions + deletions of the PR's diff.stat, the HF pr_diffstats, inclusive)
          ARM+ARM+...[@JUDGE][~SEL]:single_found|any_found  key defects found or partly found by exactly one / any arm
            | dset=indep (only defects the blind hunt or an AACR reference raised) | dkind=<defect kind>
            | dnotkind=<defect kind> | dset=limitation (the defects carrying a benchmark_limitation note)
@@ -40,7 +42,7 @@ aacr     ARM[@JUDGE][~SEL]:METRIC
              (AACR-Bench's own metric: references found = summed match shares)
 key      METRIC[~SEL]  the answer key alone: defects n_high n_medium n_low prs exclusions refs bot_refs
          indep (defects the blind hunt or an AACR reference raised) extension, ext_high|ext_medium|ext_low
-         (added by the key's v2 extension) prs_with_defects languages repos max_lines (the largest change) labels labelled_prs; SEL also takes dkind=<kind>
+         (added by the key's v2 extension) prs_with_defects languages repos max_lines (the largest change) labels labelled_prs; SEL also takes dkind=<kind> and size=<lo>-<hi>
          refs_cited (AACR references some defect's provenance cites) cited_pct (of the references)
          label=<reality> (labelled references of that reality) bot=<bot> (bot-derived references of that bot)
          bot_prs ai_refs not_ai_refs label_starts ref_raised ref_raised_high (defects an AACR reference raised)
@@ -50,14 +52,19 @@ key      METRIC[~SEL]  the answer key alone: defects n_high n_medium n_low prs e
          median_per_pr max_per_pr mean_per_pr  excl_src=<prefix> (exclusions whose candidate id starts so)
          one_source reviewer_only (defects with one kind of source: hunt, AACR reference or reviewer comments)
          SEL also takes v1 (leave out the defects the key's v2 extension added)
+         size_median size_max (pr_diffstats changed lines) ai_or_bot_pct (references AI-written or bot-derived)
+         unrunnable unrunnable_repo=<owner/repo> (sets/full.json PRs missing from the release's PRs)
 judges   J1|J2|ARM+ARM+...[|sample=JUDGE]:METRIC   two defect judges on the same reviews (see Judges)
-martian  WORK|TOOL[@JUDGE]:METRIC  (JUDGE default gpt-6.1-sol; a published judge is
+martian  WORK[+WORK...]|TOOL[@JUDGE][~HALF]:METRIC  (JUDGE default gpt-6.1-sol; a published judge is
          "published: <model>", and WORK "-" names Martian's own published scores over all 50 PRs). METRIC: {core,strict,all}_{tp,fp,fn,precision,recall,f1,f2},
+         the stored scores of one dir; with HALF (a set file, martian-tune20 or martian-test30) recounted on that
+         half's PRs from the per-golden verdicts and per-PR false positives, and with several WORKs summed;
          real_found notreal_found disputed_found real_pct notreal_share, real_found~<set> (on one half),
          all_blocking all_blocking_real all_real (PRs in which every Critical/High golden, every real
          Critical/High one, every real one was matched) and their n_*_prs denominators,
-         usd min_mean extracted comments_per_pr prs
-         goldens:real|notreal|disputed|total|prs
+         usd min_mean extracted comments_per_pr inline_per_pr prs
+         goldens[~HALF]:real|notreal|disputed|total|prs|blocking|blocking_<bucket> (Critical/High goldens)
+         dirs:<prefix>  the scoring dirs whose name starts with prefix and score quickreview; extracted_total
 qodo     WORK|TOOL:METRIC  METRIC: hits comments per_pr precision recall f1 recall_functional
          recall_rule (the primary rule, N=5), the same with _samefile or _semantic (no location), usd min_mean prs
          issues:total|functional|rule|prs|repos
@@ -186,6 +193,12 @@ class Aacr(Provider):
                 lo, _, hi = v.partition("-")
                 keep &= {i for i, p in prs.items()
                          if (p["change_line_count"] or 0) >= float(lo) and (not hi or (p["change_line_count"] or 0) <= float(hi))}
+            elif k == "size":
+                lo, _, hi = v.partition("-")
+                size = {r["instance_id"]: r["changed_lines"] for r in self.t("pr_diffstats")}
+                keep &= {i for i in prs if size.get(i) is not None and size[i] >= float(lo) and (not hi or size[i] <= float(hi))}
+            elif k == "rlabel":
+                pass  # a reference label's reality; read by the aacr_* metrics
             elif k == "arm":
                 if v not in self._index()[5]:
                     raise KeyError_(f"selector arm={v}: no such arm")
@@ -283,7 +296,8 @@ class Aacr(Provider):
             return _mean(mins)
         if metric.startswith("aacr_"):
             refcat = next((p.partition("=")[2] for p in sel.split("&") if p.startswith("refcat=")), None)
-            return self._aacr(arm, keep, metric[5:], judged, refcat)
+            rlabel = next((p.partition("=")[2] for p in sel.split("&") if p.startswith("rlabel=")), None)
+            return self._aacr(arm, keep, metric[5:], judged, refcat, rlabel)
         raise KeyError_(f"unknown aacr metric {metric!r}")
 
     def _multi(self, head, sel, metric):
@@ -306,14 +320,30 @@ class Aacr(Provider):
             return len(hits)
         raise KeyError_(f"unknown multi-arm metric {metric!r}")
 
-    def _aacr(self, arm, keep, m, judged, refcat=None):
+    def labelled_refs(self) -> Dict[tuple, str]:
+        """(PR, ref_key) -> the label's reality, for every labelled reference: a label is aligned to the
+        reference at the same position of its PR's list, and must name the same path and start line
+        (src/bench/report.ts's rule); a label that does not align is a fault, never skipped."""
+        refs = {(r["instance_id"], r["ref_index"]): r for r in self.t("aacr_references")}
+        out = {}
+        for lab in self.t("aacr_reference_labels"):
+            r = refs.get((lab["instance_id"], lab["index"]))
+            if r is None or r["path"] != lab["path"] or int(r["from_line"] or 0) != int(lab["from_line"] or 0):
+                raise KeyError_(f"label {lab['instance_id']}#{lab['index']} does not align with a reference")
+            out[(lab["instance_id"], r["ref_key"])] = lab["reality"]
+        return out
+
+    def _aacr(self, arm, keep, m, judged, refcat=None, rlabel=None):
         refs = [r for r in self.t("aacr_references") if r["instance_id"] in keep and (refcat is None or r["category"] == refcat)]
+        if rlabel is not None:
+            lab = self.labelled_refs()
+            refs = [r for r in refs if lab.get((r["instance_id"], r["ref_key"])) == rlabel]
         nobot = m.endswith("_nobot")
         base = m[:-6] if nobot else m
         bot = {r["ref_key"] for r in refs if r["bot_derived"]}
         cat_keys = {(r["instance_id"], r["ref_key"]) for r in refs}
         shares = [x for x in self.t("aacr_matches") if x["arm_id"] == arm and x["instance_id"] in keep
-                  and (refcat is None or (x["instance_id"], x["ref_key"]) in cat_keys)]
+                  and ((refcat is None and rlabel is None) or (x["instance_id"], x["ref_key"]) in cat_keys)]
         found = sum(x["match_share"] for x in shares if not (nobot and x["ref_key"] in bot))
         n_refs = len(refs) - (len(bot) if nobot else 0)
         comments = sum(r["aacr_scored_comments"] or 0 for r in judged)
@@ -359,6 +389,10 @@ class Key(Provider):
                 keep &= {r["instance_id"] for r in self.t("reviews") if r["arm_id"] == v}
             elif k == "dkind":
                 dkind = v
+            elif k == "size":
+                lo, _, hi = v.partition("-")
+                size = {r["instance_id"]: r["changed_lines"] for r in self.t("pr_diffstats")}
+                keep &= {i for i in prs if size.get(i) is not None and size[i] >= float(lo) and (not hi or size[i] <= float(hi))}
             elif k == "v1":
                 v1 = True
             else:
@@ -444,6 +478,18 @@ class Key(Provider):
             return len(cited) if metric == "refs_cited" else _pct(len(cited), n_refs)
         if metric == "repos":
             return len({prs[i]["repo"] for i in keep})
+        if metric in ("size_median", "size_max"):
+            size = [r["changed_lines"] for r in self.t("pr_diffstats") if r["instance_id"] in keep]
+            return _median(size) if metric == "size_median" else max(size)
+        if metric == "ai_or_bot_pct":  # references AI-written or rewritten from a review bot's comment
+            rs = [x for x in self.t("aacr_references") if x["instance_id"] in keep]
+            return _pct(sum(1 for x in rs if x["is_ai_comment"] or x["bot_derived"]), len(rs))
+        if metric == "unrunnable" or metric.startswith("unrunnable_repo="):
+            # AACR-Bench v1.0's scored PRs (the committed sets/full.json) that are not among the release's PRs
+            import json as _json
+            full = _json.load(open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sets", "full.json")))
+            gone = [c for c in full["cases"] if c["instance_id"] not in prs]
+            return len(gone) if metric == "unrunnable" else sum(1 for c in gone if c["repo"] == metric.partition("=")[2])
         raise KeyError_(f"unknown key metric {metric!r}")
 
 
@@ -452,15 +498,32 @@ class Key(Provider):
 class Martian(Provider):
     def compute(self, key: str) -> Optional[float]:
         head, _, metric = key.rpartition(":")
-        if head == "goldens":
+        if head == "dirs":  # how many scoring dirs' names start with the prefix (and score `quickreview`)
+            return len({s["work_dir"] for s in self.t("martian_scores")
+                        if s["work_dir"] and s["work_dir"].startswith(metric) and s["tool"] == "quickreview"})
+        if head.startswith("goldens"):
+            gold = self.t("martian_goldens")
+            _, _, half = head.partition("~")
+            if half:
+                import json as _json
+                setf = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sets", half + ".json")
+                urls = {c["pr_url"] for c in _json.load(open(setf))["cases"]}
+                gold = [g for g in gold if g["pr_url"] in urls]
             if metric == "prs":
-                return len(self.t("martian_prs"))
-            b = collections.Counter(g["audit_bucket"] for g in self.t("martian_goldens"))
-            return len(self.t("martian_goldens")) if metric == "total" else b[metric]
+                return len(self.t("martian_prs")) if not half else len({g["pr_url"] for g in gold})
+            if metric.startswith("blocking"):  # goldens Martian labels Critical or High, [by audit bucket]
+                blk = [g for g in gold if (g["severity"] or "").lower() in ("critical", "high")]
+                b = metric.partition("_")[2]
+                return len(blk) if not b else sum(1 for g in blk if g["audit_bucket"] == b)
+            b = collections.Counter(g["audit_bucket"] for g in gold)
+            return len(gold) if metric == "total" else b[metric]
+        head, _, half = head.partition("~")
         work, _, rest = head.partition("|")
         tool, _, judge = rest.partition("@")
         judge = judge or "gpt-6.1-sol"
         work = None if work == "-" else work  # "-": Martian's own published scores over all 50 PRs (no scoring dir)
+        if (half or "+" in (work or "")) and metric.split("_", 1)[0] in PROFILES:
+            return self._recount(work.split("+"), tool, judge, half or None, metric)
         if metric.startswith("real_found~"):  # real goldens found on one half (a committed set file of PR urls)
             import json as _json
             setf = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sets", metric[11:] + ".json")
@@ -516,11 +579,60 @@ class Martian(Provider):
             return _mean([r["minutes"] for r in rows if r["minutes"]])
         if metric == "extracted":
             return _mean([r["extracted_candidates"] or 0 for r in rows])
+        if metric == "extracted_total":
+            return sum(r["extracted_candidates"] or 0 for r in rows)
         if metric == "comments_per_pr":
             return _mean([r["n_comments"] or 0 for r in rows])
+        if metric == "inline_per_pr":  # posted comments anchored to a line (the review body is not one)
+            return _mean([sum(1 for c in (r["comments"] or []) if c.get("line") is not None) for r in rows])
         if metric == "prs":
             return len(rows)
         raise KeyError_(f"unknown martian metric {metric!r}")
+
+
+    def _counts(self, work, tool, judge, half):
+        """{profile: (tp, fp, fn)} of one scoring dir: its stored scores, or, restricted to a half (a committed
+        set file of PR urls), recounted from the per-golden verdicts and the per-PR false positives."""
+        if half is None:
+            rows = [s for s in self.t("martian_scores") if s["work_dir"] == work and s["tool"] == tool and s["judge"] == judge]
+            if len(rows) != 1:
+                raise KeyError_(f"martian scores for {work}|{tool}@{judge}: {len(rows)} rows")
+            return {p: (rows[0][f"{p}_tp"], rows[0][f"{p}_fp"], rows[0][f"{p}_fn"]) for p in PROFILES}
+        import json as _json
+        setf = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sets", half + ".json")
+        urls = {c["pr_url"] for c in _json.load(open(setf))["cases"]}
+        reviews = [r for r in self.t("martian_reviews") if r["work_dir"] == work and r["tool"] == tool and r["pr_url"] in urls]
+        if not reviews:
+            raise KeyError_(f"no martian reviews of {work}|{tool} on {half}")
+        prs = {r["pr_url"] for r in reviews}
+        cat = {(g["pr_url"], g["golden_index"]): g["category"] for g in self.t("martian_goldens")}
+        hit = {(v["pr_url"], v["golden_index"]) for v in self.t("martian_verdicts")
+               if v["work_dir"] == work and v["tool"] == tool and v["judge"] == judge and v["matched"] and v["pr_url"] in prs}
+        fp = sum(r["fp"] or 0 for r in reviews)
+        out = {}
+        for p, excluded in PROFILES.items():
+            tp = sum(1 for k in hit if cat[k] not in excluded)
+            out[p] = (tp, fp, sum(1 for k, c in cat.items() if k[0] in prs and c not in excluded) - tp)
+        return out
+
+    def _recount(self, works, tool, judge, half, metric):
+        prof, _, m = metric.partition("_")
+        tp = fp = fn = 0
+        for w in works:
+            a, b, c = self._counts(w, tool, judge, half)[prof]
+            tp, fp, fn = tp + a, fp + b, fn + c
+        p = tp / (tp + fp) if tp + fp else 0.0
+        r = tp / (tp + fn) if tp + fn else 0.0
+        f = {"tp": tp, "fp": fp, "fn": fn, "precision": 100 * p, "recall": 100 * r,
+             "f1": 100 * (2 * p * r / (p + r) if p + r else 0.0), "f2": 100 * (5 * p * r / (4 * p + r) if p + r else 0.0)}
+        if m not in f:
+            raise KeyError_(f"unknown martian metric {metric!r}")
+        return f[m]
+
+
+# Martian's scoring profiles: the golden categories each leaves out (its scorer's Core and Strict)
+PROFILES = {"all": frozenset(), "core": frozenset({"style", "speculative"}),
+            "strict": frozenset({"style", "speculative", "doc_defect", "test_gap", "perf"})}
 
 
 # ---------------------------------------------------------------- Qodo
