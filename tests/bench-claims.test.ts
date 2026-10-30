@@ -373,6 +373,37 @@ describe("verify_claims end to end on small tables", () => {
   });
 });
 
+describe("a slim cell that needs a third-party input", () => {
+  // The cells verify_slim produced, empty: `_slim` reads them instead of
+  // running the bundle check.
+  const slimCell = (key: string, martian: string | null) =>
+    py(
+      `import types, verify_claims as V
+a = types.SimpleNamespace(work=sys.argv[3], martian=json.loads(sys.argv[2]), qodo_gt=None)
+src = V.Sources(a, {"checks": {}}, {})
+src._json["slim"] = {"cells": {}, "files": {}}
+try:
+    src._slim({"part": "cells"}, sys.argv[1]); print(json.dumps("value"))
+except V.NoSource as e:
+    print(json.dumps("no-source: " + str(e)))
+except KeyError:
+    print(json.dumps("error"))`,
+      key,
+      JSON.stringify(martian),
+      join(tmp, "slim-needs"),
+    );
+
+  // MUTATION: drop the slim_needs check in Sources._slim — the Martian cell is an error again and this fails
+  it("is a missing source without that input, and an error only when the input was given", () => {
+    expect(slimCell("tab:martianfinal|PR-Agent|P", null)).toBe(
+      "no-source: --martian (third-party, never in the release)",
+    );
+    expect(slimCell("tab:qodo|qodo-precise|P", null)).toMatch(/^no-source: --qodo-gt/);
+    expect(slimCell("tab:martianfinal|PR-Agent|P", "/m")).toBe("error");
+    expect(slimCell("tab:final|arm|P", null)).toBe("error");
+  });
+});
+
 describe("comparing a computed number with the printed one", () => {
   const same = (printed: string, x: number | string, about: number | null = null) =>
     py(

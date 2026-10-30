@@ -170,6 +170,18 @@ class NoSource(Exception):
     pass
 
 
+# verify_slim re-scores these tables' cells only with a third-party input,
+# which is never in the release: without it such a cell is a missing source
+# (the tables still give the same number), never an error.
+SLIM_THIRD_PARTY = {"tab:martianfinal": ("martian", "--martian"), "tab:qodo": ("qodo_gt", "--qodo-gt")}
+
+
+def slim_needs(key: str, a) -> Optional[str]:
+    """The flag a slim cell `key` needs that `a` was not given, or None."""
+    need = SLIM_THIRD_PARTY.get(key.split("|", 1)[0])
+    return need[1] if need and not getattr(a, need[0], None) else None
+
+
 class Sources:
     def __init__(self, a, manifest: dict, found: Dict[str, Optional[str]]):
         self.a, self.m, self.found = a, manifest, found
@@ -254,6 +266,9 @@ class Sources:
         part = spec["part"]
         if part == "cells":
             if key not in s["cells"]:
+                need = slim_needs(key, self.a)
+                if need:
+                    raise NoSource(f"{need} (third-party, never in the release)")
                 raise KeyError(f"verify_slim produced no cell {key!r}")
             return s["cells"][key]
         doc = s["files"].get(part)
@@ -335,6 +350,8 @@ def verify(a, manifest: dict, found) -> List[dict]:
                     s["printed_as"] = printed_as(c, v)
                     about = manifest.get("about_tolerance") if c.get("about") else None
                     s["status"] = "ok" if same(c["value"], v, about) else "mismatch"
+            except NoSource as e:
+                s["status"], s["why"] = "no-source", f"needs {e}"
             except (KeyError, ValueError, RuntimeError, ZeroDivisionError, TypeError) as e:
                 s["status"], s["why"] = "error", str(e)[:400]
             except Exception as e:  # a provider's own fault (claim_metrics.KeyError_)
