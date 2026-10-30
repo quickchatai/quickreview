@@ -940,8 +940,8 @@ high-severity defects alone the panel and Codex CLI are not separated from
 the default, and they find a high-severity defect for \$0.62 and \$0.33
 against \$3.01. A team that wants the most important findings cheaply is
 better served by one of those tools at its best configuration; \qcr{} is the
-choice when a missed medium- or low-severity defect costs more than about
-\$2--3 of review. All costs are list prices; the OpenAI-based arms ran
+choice when a missed medium- or low-severity defect costs more than the
+\$2.05--\$3.27 of review that each extra defect found costs above. All costs are list prices; the OpenAI-based arms ran
 through a subscription login, so they are not bills. Ratios and differences
 of costs are computed from the unrounded per-PR costs, so they can differ by
 one unit from a ratio of the rounded figures printed beside them.
@@ -1758,8 +1758,8 @@ superseded by the full benchmark.
   \item The tests lens and the ``every problem on the lines'' rule raised
   fresh10 recall to 27 / 26.5 of 29 over two runs --- by then fresh10 was
   in-sample.
-  \item The code-quality lenses added about 3 problems found on 9 PRs
-  (mostly low severity, within noise) and raised AACR maintainability matches from 1 to 4 of 30, at +29\% cost; abstraction posted nothing on its
+  \item The code-quality lenses (runs qon and qoff, one review per PR) added 2 problems found on 9 PRs
+  (mostly low severity, within noise) and raised AACR maintainability matches from 1 to 2 of 30, at +28\% cost; abstraction posted nothing on its
   own there, the first sign of what Table~\ref{tab:lenscost} later showed.
 \end{itemize}
 

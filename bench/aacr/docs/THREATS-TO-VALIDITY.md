@@ -171,7 +171,7 @@ the basis of a decision.
 - **Default stays first out of sample.** Its lead over the next reviewer is
   21 points on the 40 and 16 on the 145. Over the mean of the other six it
   leads by 29.0 points on the 40 and 27.6 on the 145; the difference, +1.4,
-  has a 95% CI of [−6.3, +8.9], so the margin does not measurably shrink.
+  has a 95% CI of [−6.3, +9.1], so the margin does not measurably shrink.
   The rest of the ordering does not hold across the halves (OCR is last on
   the 40 and fourth on the 145; low and Claude Code swap). Every reviewer
   except Codex CLI scores higher on the 145, so the 145 look easier for
@@ -305,8 +305,8 @@ same budget.
   `pass-intent` lens uses them. No other tool gets them: the AACR harness
   passes none to OCR, Codex, OpenCode or Claude Code, and pi-review gets only
   the diff. *Favours ours.*
-- **Budget:** QuickReview default runs about 10–15 lens passes plus a
-  validator. Per PR, on average:
+- **Budget:** QuickReview default runs a median of 11 passes per PR, the
+  validator included (interquartile range 8.5–14). Per PR, on average:
 
   | Reviewer | Uncached input | Cached input | Output | Cost per PR |
   |---|---|---|---|---|
@@ -328,7 +328,7 @@ same budget.
     expensive model family. *Direction unclear.*
 - **Single run per arm:** the headline is one run per reviewer. In earlier
   repeat runs of our own reviewer (the experiment log), two runs of the
-  same arm differed by about 1–2 defects per 10 PRs, with run-to-run
+  same arm differed by 1.5–2 found defects per 10-PR set, with run-to-run
   agreement of 78–89%. We have no variance estimate for the other tools.
   - Default's lead over the next reviewer (18 points, 84% vs 66%) and over
     the third-party tools (22–36 points) is far larger than that noise.
@@ -404,7 +404,8 @@ documented in `../README.md`.
 
 **AACR-Bench's own metric.**
 - **The reference comments are not a list of real defects.**
-  - 74% of them are AI-written.
+  - 74% of them are AI-written, according to AACR-Bench v1.0's own paper and
+    dataset metadata ([arXiv:2601.19494](https://arxiv.org/abs/2601.19494)).
   - Of all 1,107 references on the new PRs, only 12.8% are part of a verified
     defect.
   - On the 30 PRs whose references carry (agent-produced, human-unchecked)
@@ -488,13 +489,13 @@ documented in `../README.md`.
   - Claude Code's figures are Anthropic's reported `costUSD`.
 - **Judge concurrency and the Opus rate limit.** Several judges ran at once.
   - **The rate limit.** The Opus judge hit the Anthropic organisation's
-    limit for `claude-opus-5-5`: 50 requests per minute, with about 1.7 API
-    calls per judgement. The first pass produced HTTP 429 error files.
+    limit for `claude-opus-5-5`: 50 requests per minute, and a final judgement
+    averages 2.0 API calls. The first pass produced HTTP 429 error files.
   - **The resume.** The queue was stopped and resumed at `-P 3` ×
     concurrency 4. A final `--resume` pass at `-P 1` re-ran every remaining
     error.
-  - **Final state:** 0 errors in 1,295 Opus judgements. The GPT judge's 2
-    error files were retried to 0.
+  - **Final state:** 0 errors in 1,295 Opus judgements. The GPT judge's
+    error files were also retried to 0.
   - `compare.py` counts an error file as not judged, never as a miss, and
     flags any it finds.
   - Retried judgements are fresh model calls, so a retried case is one
@@ -542,8 +543,8 @@ documented in `../README.md`.
   intervals cover PR sampling only.
 - A human-verified answer key for the 145 new PRs.
 - A like-for-like comparison at equal inputs or equal compute. We compared
-  tools as shipped; ours reads the PR description and spends about 10× the
-  tokens.
+  tools as shipped; ours reads the PR description and reads 4–15× the input
+  tokens of each other tool (the Budget table above).
 - Comparability with the published AACR leaderboard.
 
 ## Hardening, in priority order

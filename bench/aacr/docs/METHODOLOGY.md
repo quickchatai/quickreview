@@ -151,7 +151,7 @@ in the tables (`compare.py` takes the first run with a judgement per PR).
 
 **One review per PR per reviewer.** Every number comes from a single run. On
 the 40 original PRs, repeated runs of our reviewer earlier this week varied by
-about ±1–2 found defects per 10 PRs (the benchmark paper, its run-to-run variance section).
+1.5–2 found defects per 10-PR set (the benchmark paper, its run-to-run variance section).
 
 ## 5. Ground truth
 
@@ -185,8 +185,8 @@ each file):
    `references.json` (the AACR references, model names stripped).
 2. Expert hunt, 29 Claude agents × ~5 PRs (`hunt.json`). The first launch was
    blind (no references); the operator then decided the ground truth should use
-   the benchmark's reference comments as leads, the blind run was stopped (32
-   drafts written) and re-run with references; the 32 drafts were re-checked as
+   the benchmark's reference comments as leads, the blind run was stopped and
+   re-run with references; the drafts it had written were re-checked as
    candidates. Each reference got a verdict. Result: 235 draft defects (46
    high); 134 references judged real, 973 rejected. Reviewer outputs were off
    limits to the hunt.
@@ -294,15 +294,15 @@ pipeline (§5) and the independent-source check, and its limits are in
 
 **Judge errors and the Opus rate limit.** The Opus judge hit the Anthropic
 organisation's rate limit for `claude-opus-5-5`. That limit is 50 requests
-per minute, and a judgement averages about 1.7 API calls. The first pass
+per minute, and a final judgement averages 2.0 API calls. The first pass
 produced HTTP 429 error files. Here is what was done:
 
 1. The queue was stopped and resumed at lower parallelism (`-P 3` ×
    concurrency 4).
 2. A final `--resume` pass at `-P 1` re-ran every remaining error file.
 
-Final state: **0 errors in 1,295 Opus judgements**. The GPT judge left 2
-error files, which were retried to 0. `compare.py` treats an error file as
+Final state: **0 errors in 1,295 Opus judgements**. The GPT judge's error
+files were also retried to 0. `compare.py` treats an error file as
 "not judged", never as a miss, and every final row reads 185/185.
 
 **AACR eval** (`bench.sh eval`, `in-container.sh`): the harness's

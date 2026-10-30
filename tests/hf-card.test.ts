@@ -215,7 +215,44 @@ describe("the card states the release's verified state", () => {
         "On this release: 5 of 8 claims pass; 0 mismatch, 0 error and 0 missing source; the documented " +
           "gaps are 1 claims with no recompute script yet and 2 whose data the release does not hold.",
       );
+      expect(card).toContain("5 of 8 pass; the rest are listed in the verifier's report");
+      expect(card).not.toContain("Every one of them passes");
       expect(card).not.toContain("<verifier result pending>");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // MUTATION: make claims_lead say every number passes whatever the report counts — this fails
+  // MUTATION: make verify_result print the no-gap sentence when a claim is not-published — this fails
+  it("says every number is checked only when the report has no claim left unchecked", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hf-card-"));
+    try {
+      const clean = join(dir, "clean.json");
+      writeFileSync(
+        clean,
+        JSON.stringify({
+          results: Array(6).fill({ status: "pass" }),
+          consistency: [{ ok: true }, { ok: true }],
+        }),
+      );
+      const card = render(`, repo_ref='bench-data-v1', verify_report=${JSON.stringify(clean)}`);
+      expect(card).toContain("Every one of them passes");
+      expect(card).toContain(
+        "On this release: all 6 claims pass, with 0 mismatch, 0 error, 0 missing source and no claim left unchecked.",
+      );
+      expect(card).not.toContain("--allow-gaps");
+      const gap = join(dir, "gap.json");
+      writeFileSync(
+        gap,
+        JSON.stringify({
+          results: [...Array(5).fill({ status: "pass" }), { status: "not-published" }],
+          consistency: [],
+        }),
+      );
+      const card2 = render(`, repo_ref='bench-data-v1', verify_report=${JSON.stringify(gap)}`);
+      expect(card2).not.toContain("Every one of them passes");
+      expect(card2).not.toContain("no claim left unchecked");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -106,7 +106,8 @@ backend the published runs used — read a keyed re-run as a replication, not a
 copy. Every keyed run records `auth: "api-key"` in its fingerprint and
 `run.json`. Scale: a median of about five minutes per review, 185 PRs for each
 of eight reviewers, plus the external benchmarks — days of wall time and real
-model spend; repeat runs differ by about ±2 found issues per benchmark.
+model spend; repeat runs of one build differed by 1.5–2 found defects per
+10-PR set.
 
 `run.json` `qcr_commit` values name builds in the pre-publication history; the
 public history starts at its first commit.
@@ -284,7 +285,8 @@ missed — for every arm alike, so arms stay comparable, but the absolute
 recall on `full` is out of 185 runnable PRs' worth of findability. None of
 the 40 defect-benchmark PRs is affected. Claim improvements on `fresh10`: the other
 30 PRs informed the 2026-09 levers, and in-sample gains shrank by half out of
-sample. Differences under ~2 defects per 10 PRs are noise.
+sample. Repeat runs of one build differed by 1.5–2 found defects per 10-PR
+set, so a smaller difference is noise.
 
 ## Quick start
 
@@ -296,7 +298,7 @@ less bench/aacr/runs/first-try/report.md
 ```
 
 `smoke` takes about an hour or two for the 10 PRs (one production round each —
-lens fan-out plus validator; measured live rounds run a median ~13 minutes).
+lens fan-out plus validator).
 
 ## The case sets (`sets/`)
 
@@ -306,7 +308,7 @@ x/1505) by `select_cases.py`, which refuses any other revision:
 
 | Set         | PRs | References | Rule                                                                                                                                                                                                                                                                 |
 | ----------- | --- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `smoke10`   | 10  | 62         | 20–160 changed lines, ≥4 references, quota Python 3 / TS 2 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1, smallest first, one PR per repo; 17 backups                                                                                                                        |
+| `smoke10`   | 10  | 62         | 20–160 changed lines, ≥4 references, quota Python 3 / TS 2 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1, smallest first, one PR per repo; 16 backups                                                                                                                        |
 | `holdout10` | 10  | 85         | smoke10's filters, no smoke10 repository, quota Python 1 / TS 2 / JS 2 / Go 1 / Java 2 / Rust 1 / C 1, a short language filled from the smallest remaining PR. The generalisation check: a change is kept only if it holds here too, and nothing is ever tuned on it |
 | `dev10`     | 10  | 106        | a second development set, so changes are not tuned on smoke10 alone: 20–400 changed lines (the small-PR pool is spent), ≥4 references, no smoke10 or holdout10 repository, quota C++ 2 / TS 1 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1 / C# 1 / PHP 1                   |
 | `full`      | 196 | 1,505      | every PR the harness scores (4 of the 200 have no positive references and are never scored by it)                                                                                                                                                                    |
@@ -408,8 +410,9 @@ so a bench run picks them up only when its `--config` selects that profile.
   those as body bullets instead (its COMMENT path — red or pending CI — posts
   them inline). The report splits verdicts so this is visible.
 - **Variants.** `all` = every inline comment that would have been posted;
-  `no-nits` drops `[nit]`; `blockers` keeps only `[blocker]`. The references are
-  42% maintainability/readability — a class the validator trims on purpose — so
+  `no-nits` drops `[nit]`; `blockers` keeps only `[blocker]`. By AACR-Bench's own
+  metadata, 42% of the references are maintainability/readability — a class the
+  validator trims on purpose — so
   compare variants, not one headline.
 - **Findings posted in the review body count.** Production sends a finding
   with no valid inline anchor (a deletion-only change, a notebook line) into
@@ -456,7 +459,8 @@ so a bench run picks them up only when its `--config` selects that profile.
   open-code-review v1.3.1 + GPT-5.5: published 234/728 precision, 234/1505
   recall) under the same judge and dataset, next to ours — `--arm ocr` (below)
   does that. The harness's Claude Code arm runs only as `--arm claude`, inside this sandbox (the project's one sanctioned place to run Claude Code, 2026-09-28).
-- **The ground truth is 74% AI-seeded** (GPT-5.2 alone 25%, our model's family),
+- **The ground truth is 74% AI-seeded**, by AACR-Bench's own paper and metadata
+  (GPT-5.2 alone 25%, our model's family),
   and precision counts every comment the annotators did not record as a false
   positive.
 
@@ -618,8 +622,8 @@ bench/aacr/arm.sh --prefix opencode --arm opencode --cases fresh10 --eval 3   # 
 **Why `subtask: false`.** The built-in `review` runs as a subtask; when it
 returns, OpenCode tells the parent session to "continue with your task",
 and the parent — which holds the same prompt, fragment and findings tool —
-reviewed the PR again and re-reported the same findings (first smoke test:
-3 + 2 and 1 + 1 reports of the same issues, a pure precision penalty codex's
+reviewed the PR again and re-reported the same findings (in the first smoke
+test each issue came back twice, a pure precision penalty codex's
 relay-only main thread does not pay). `REVIEW_COMMAND_TEMPLATE` is the
 built-in's text verbatim (checked: the rendered prompt and system prompt are
 identical to the built-in's), so the one session gets exactly the built-in
@@ -788,15 +792,11 @@ on stub and on real output: `tests/bench-pireview.test.ts`.
   `case-summary.json` (status, verdict, findings/actionable, pi's tokens and
   cost, tool calls).
 
-**Smoke test (2026-09-28, 2 PRs of `fresh10`)**: `arm.sh --prefix sm-pireview
+**Smoke test (2026-09-28, two PRs of `fresh10`)**: `arm.sh --prefix sm-pireview
 --arm pireview --cases fresh10:immich-app__immich@966c3f2,google-gemini__gemini-cli@4c150ab
---eval 1` — both `ok`, 2 comments each (all actionable, verdict
-`request_changes`), 0.9 / 0.8 min, ~105k tokens in (65k cached) / 1.5k out,
-$0.11 per PR; every comment carries a repo-relative path and a line range
-(3 of 4 inside the diff's hunks, the 4th on an existing test the change
-breaks); defect judge 4/6 found (67%, 3/5 high, 1/1 medium), 100% of comments
-correct; AACR `all` 0/5 references matched (4 comments, line precision 0.5).
-One pi-review session, no subagents, 14–22 read/grep/find calls per PR.
+--eval 1` — both `ok`, every comment actionable (verdict `request_changes`)
+and carrying a repo-relative path and a line range; one pi-review session per
+PR, no subagents.
 
 ## The PR-Agent arm (`--arm pragent`)
 
@@ -1084,20 +1084,17 @@ bench/aacr/arm.sh --prefix full1 --cases full --eval 3       # review 185 runnab
 bench/aacr/arm.sh --prefix full1 --cases full --eval 3 --resume   # after an interruption: only what is not ok
 ```
 
-**Where the time went** (measured 2026-09-27 over the 513 reviewed cases in
-the runs dir): a review is a median 5.2 min, mean 7.5, p90 10.8, p95 13.5.
-The defect judge is ~1–2 min per 10 PRs. The AACR harness judges ONE PR at a
-time, ~47 s per PR per round per variant with the codex judge — 3 rounds × 3
-variants of `full` is ~22 hours in one process, more than the reviews. The
-old `arm.sh --cases full` ran the whole set in one container at
-`--concurrency 2` (~11.5 h of reviews), then the judge, then that eval:
-**~33 hours**.
+**Where the time went.** A review takes minutes (the final comparison's
+default: a median of 9.5 min per PR). The AACR harness judges ONE PR at a
+time, so 3 rounds × 3 variants of `full` in one process took longer than the
+reviews. The old `arm.sh --cases full` ran the whole set in one container at
+`--concurrency 2`, then the judge, then that eval: **more than a day**.
 
 **What the scheduler does now** (`arm.sh`, QuickReview arm):
 
 - **One queue, one container per case.** Every case of every set and repeat,
   longest PR first (`change_line_count`, so the slow ones do not form the
-  tail). A container per case costs ~1 s (agents build in under a second) and
+  tail). A container per case costs about a second (agents build in less) and
   caps each review on its own (`QCR_BENCH_REVIEW_MEMORY=3g`), so one runaway
   cannot starve the others. `bench.sh review --phase init|case|finish` splits
   the run so that only `init` writes `run.json`.
@@ -1119,9 +1116,8 @@ old `arm.sh --cases full` ran the whole set in one container at
   `concurrency N -> M, reason` and lands in `.slots/concurrency.log`.
   `QCR_BENCH_ADAPTIVE=0` keeps auto at its start value; `--parallel N` and an
   explicit `QCR_BENCH_MAX_PARALLEL=N` are fixed caps (the old behaviour).
-  `QCR_BENCH_REVIEW_MB` 768 is the measured peak: cgroup `memory.peak` of live
-  review containers was 577–788 MB including page cache, ~210 MB anonymous
-  steady (measured 2026-10-02).
+  `QCR_BENCH_REVIEW_MB` 768 is set from the cgroup `memory.peak` of live
+  review containers, page cache included (measured 2026-10-02).
 - **The plan's usage limit stops the machine.** "Codex error: The usage limit
   has been reached" is the login's plan window spent (every refusal on record,
   2026-09-29, each case failing within seconds), not a short 429: a case that
@@ -1145,12 +1141,12 @@ old `arm.sh --cases full` ran the whole set in one container at
   or overload pauses new launches for `QCR_BENCH_RATE_LIMIT_PAUSE` (300 s).
   Whatever is still not ok after that is what `--resume` re-runs.
 
-**Expected on a 16-core, 31 GB host with no swap**: memory is not what binds.
-A review measured ~250 MB anonymous plus ~200 MB page cache, up to ~1 GB with
-six lens children at once; `auto` gives 10 slots with 14+ GB available. At 10
-slots `full` reviews in ~2.3 h (185 × 7.5 min / 10) plus a short tail, the
-defect judge ~10 min, and the 3-round eval ~1.2 h (≈18 judge processes) —
-**~4 hours** instead of ~33. `--eval 1` brings the eval to ~25 min.
+**Expected on a 16-core, 31 GB host with no swap**: memory is not what binds;
+`auto` gives 10 slots with 14+ GB available. At 10 slots `full` reviews in
+about a tenth of the one-container time plus a short tail, and the 3-round
+eval (18 judge processes: 3 variants × 6 shards) runs beside it, so an arm
+takes **hours** instead of more than a day. `--eval 1` cuts the eval to a
+third.
 
 **Risks.** The ONE ChatGPT login is the real limit: earlier arms ran 8–10
 reviews at once (each fanning out to up to 6 lens children) with no
@@ -1161,7 +1157,7 @@ with `--resume`. The eval adds ~18 low-effort judge calls at once while it
 runs.
 
 **Keep the desktop indexer out of the runs dir.** KDE's `baloo_file_extractor`
-was seen at 8 GB RSS indexing the multi-megabyte `pi-events.jsonl` files
+was seen using several GB of memory indexing the multi-megabyte `pi-events.jsonl` files
 under `$QCR_BENCH_RUNS_DIR`. That is memory the reviews could
 use, on a machine without swap. Exclude the directory: System Settings →
 Search → File Search → add it to the excluded folders, or

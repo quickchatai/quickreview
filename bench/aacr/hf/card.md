@@ -58,11 +58,11 @@ The two papers:
 `bench/aacr/claims.json` in the repository lists every benchmark number of
 both papers, the README, `bench/aacr/docs/` and this card, with the data and
 the script behind it, and one command recomputes them all from this data with
-no model call ("How to verify"). Nearly all pass. The rest are documented
-gaps, each with its reason in the manifest: a few numbers rest on records the
-release does not hold (hand checks, run-time judge call counts, third-party
-leaderboards) or have no recompute script yet. Published numbers that
+no model call ("How to verify"). {{CLAIMS_LEAD}} Published numbers that
 differed from the data were corrected to it before this release ("Versions").
+Third-party figures the pages quote (AACR-Bench's own metadata, Qodo's and
+Martian's published scores and leaderboards) are attributed to their source
+and listed in the manifest as quotes, not as claims.
 
 ## Read this first
 
@@ -458,14 +458,13 @@ git clone https://github.com/withmartian/code-review-benchmark martian
 git -C martian checkout e616e849755441da38f18bf3adba2c9583b03803
 hf download Qodo/PR-Review-Bench --repo-type dataset --revision a73957c450a70693a743260e5637fffc44625f16 --local-dir qodo
 uv run --no-project --with pyarrow python bench/aacr/verify_claims.py --data $D \
-    --martian martian --qodo-gt qodo/git_code_review_bench_100_w_open_prs.jsonl --allow-gaps
+    --martian martian --qodo-gt qodo/git_code_review_bench_100_w_open_prs.jsonl
 ```
 
-It fails on a mismatch, an error or a missing source. Without `--allow-gaps`
-it also fails on the documented gaps (claims with no recompute script yet,
-claims whose data the release does not hold, and, when an input above is
-left out, the claims that need it); with it, it lists them with their
-reasons and passes. On this release: {{VERIFY_RESULT}}
+It fails on a mismatch, an error, a missing source, a claim with no
+recompute script and a claim whose data the release does not hold; left
+without an input above, it fails on the claims that need it.
+On this release: {{VERIFY_RESULT}}
 
 `validation.json` recomputes, from these tables alone, the row counts (520
 defects, 3,093 exclusions, 185 PRs per full arm, 1,418 references, 173
@@ -523,6 +522,22 @@ branch printed the old values:
   (no run file records it).
 - **`docs/THREATS-TO-VALIDITY.md` and `METRICS.md`.** 361 "human" references
   (was 362).
+- **Checked against the data in the final pass.** The halves bootstrap
+  interval, −6.3 to +8.9 → −6.3 to +9.1 (benchmark paper, THREATS); the Opus
+  judge's API calls per judgement, about 1.7 → 2.0 (benchmark paper, THREATS,
+  METHODOLOGY); the code-quality lenses in the technical report's tuning log,
+  about 3 more defects found → 2, AACR maintainability matches 1 → 4 of 30 →
+  1 → 2 of 30, +29% → +28% cost; the re-judge's distance below Martian's
+  published scores, 1.5–6.3 → 0.9–6.3 F1 points; the Martian posting-policy
+  sweep, "F2 between 42 and 44 at best" → "42.0 as posted to 46.2 at best";
+  smoke10's backup PRs in `bench/aacr/README.md`, 17 → 16. Loose ranges
+  ("about 1–2 defects per 10 PRs", "about 10–15 lens passes", "about 10× the
+  tokens", "$2–3 of review") now print the measured figure.
+- **Removed, because no published file holds them.** The stopped blind
+  hunt's 32 drafts; the line-gate sweep's run-time judge-call counts (3,227
+  and 10,983), its 2 failed calls and its ~$18 cost; the GPT judge's 2
+  retried error files; and the timings and smoke-test figures in
+  `bench/aacr/README.md`'s development notes.
 
 ## Datasheet (summary)
 

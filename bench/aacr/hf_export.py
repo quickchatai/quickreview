@@ -1709,6 +1709,7 @@ def card_values(a, sizes: dict, checks: list[dict], counts: collections.Counter,
     url = dataset_url(a.repo_id)
     return {"REPO_ID": a.repo_id, "DATASET_URL": url, "REPO_REF": getattr(a, "repo_ref", None) or "main",
             "VERIFY_RESULT": verify_result(getattr(a, "verify_report", None)),
+            "CLAIMS_LEAD": claims_lead(getattr(a, "verify_report", None)),
             # whole links, so the template holds no link target a Markdown
             # link check would read as a path in this repository
             "ARCHIVE_MD": f"[`archive/`]({getattr(a, 'archive_url', None) or url + '/tree/main/archive'})",
@@ -1730,6 +1731,21 @@ def card_values(a, sizes: dict, checks: list[dict], counts: collections.Counter,
 VERIFY_PENDING = "`<verifier result pending>`"
 
 
+GAP_STATUSES = ("no-script", "not-published", "needs-input")
+
+
+def claims_lead(path: str | None) -> str:
+    """The card's lead sentence on the verifier: every number checked only when the report says so."""
+    if not path:
+        return VERIFY_PENDING
+    c = collections.Counter(x["status"] for x in json.load(open(path))["results"])
+    if c.get("pass", 0) == sum(c.values()):
+        return ("Every one of them passes: a number the release could not check was cut from the pages "
+                "or reworded to the number the data gives.")
+    return (f"{c.get('pass', 0):,} of {sum(c.values()):,} pass; the rest are listed in the verifier's "
+            "report with the reason each could not be checked.")
+
+
 def verify_result(path: str | None) -> str:
     """The card's one-paragraph statement of the claims verifier's result on this release, from its
     --report-json; a pending marker until it has run (PUBLISH.md re-renders the card with it)."""
@@ -1740,6 +1756,10 @@ def verify_result(path: str | None) -> str:
     cons = r.get("consistency") or []
     ok = sum(1 for x in cons if x["ok"])
     fails = sum(c.get(k, 0) for k in ("mismatch", "error", "no-source"))
+    if not fails and not any(c.get(k) for k in GAP_STATUSES):
+        return (f"all {c.get('pass', 0):,} claims pass, with 0 mismatch, 0 error, 0 missing source and no "
+                f"claim left unchecked. The release's own checks (the tables' validation and the slim "
+                f"bundle's) pass {ok} of {len(cons)}.")
     return (f"{c.get('pass', 0):,} of {sum(c.values()):,} claims pass; {c.get('mismatch', 0)} mismatch, "
             f"{c.get('error', 0)} error and {c.get('no-source', 0)} missing source"
             + ("" if not fails else " (this release is not ready)")
