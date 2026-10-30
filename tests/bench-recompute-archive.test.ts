@@ -201,10 +201,7 @@ describe("key_build", () => {
 
   // MUTATION: count every N-sourced exclusion of truth-ext.json, also those truth-current.json already had — this fails
   it("counts the extension's exclusions as the N-sourced ones the extension added", () => {
-    write(
-      join(r145, "truth-current.json"),
-      truth(p1, [{ source: "N1", reason: "planted" }]),
-    );
+    write(join(r145, "truth-current.json"), truth(p1, [{ source: "N1", reason: "planted" }]));
     const r = py(
       "import key_build as K; k = K.Key(__import__('pathlib').Path(sys.argv[1])); print(json.dumps(K.extension(k)['excluded']))",
       root,
@@ -220,13 +217,18 @@ describe("tokens", () => {
   jsonl(join(pi, "pi-events.pruned.jsonl"), [
     {
       type: "message_end",
-      message: { role: "assistant", usage: { input: 10, cacheWrite: 5, cacheRead: 100, output: 7 } },
+      message: {
+        role: "assistant",
+        usage: { input: 10, cacheWrite: 5, cacheRead: 100, output: 7 },
+      },
     },
     { type: "message_end", message: { role: "user" } },
     {
       type: "tool_execution_end",
       toolName: "subagent",
-      result: { details: { results: [{ agent: "pass-x", usage: { input: 1, cacheRead: 2, output: 3 } }] } },
+      result: {
+        details: { results: [{ agent: "pass-x", usage: { input: 1, cacheRead: 2, output: 3 } }] },
+      },
     },
   ]);
   write(join(pi, "case-summary.json"), { status: "ok" });
@@ -264,8 +266,14 @@ describe("judge_ops", () => {
   write(join(dir("r1"), "P1.r1.json"), { error: "HTTP 429" });
   write(join(dir("r2"), "P1.r1.json"), { defects: [] });
   jsonl(join(dir("r2"), "P1.r1.events.pruned.jsonl"), [
-    { type: "message_end", message: { role: "assistant", usage: { input: 1000, cacheRead: 0, output: 100 } } },
-    { type: "message_end", message: { role: "assistant", usage: { input: 1000, cacheRead: 0, output: 100 } } },
+    {
+      type: "message_end",
+      message: { role: "assistant", usage: { input: 1000, cacheRead: 0, output: 100 } },
+    },
+    {
+      type: "message_end",
+      message: { role: "assistant", usage: { input: 1000, cacheRead: 0, output: 100 } },
+    },
   ]);
   write(join(dir("r1"), "P2.r1.json"), { defects: [] }); // no extract: no model call
 
@@ -309,10 +317,25 @@ describe("martian_ext", () => {
     { pr: "cal1", idx: 0, q: "valid", D: "P+" },
     { pr: "cal1", idx: 1, q: "trivial", D: "NR" },
   ]);
-  const cand = (cid: string, matched: string[], tool = "quickreview") => ({ tool, pr: PR, idx: 0, text: cid, matched, cid });
+  const cand = (cid: string, matched: string[], tool = "quickreview") => ({
+    tool,
+    pr: PR,
+    idx: 0,
+    text: cid,
+    matched,
+    cid,
+  });
   // C1 calls the unlisted defect minor, C2 (same issue) calls it real; C3 states the valid golden.
   // Every other tool gets one wrong candidate.
-  const others = ["cubic-v2", "qodo-extended-v2", "claude-code", "augment", "qodo-v2", "macroscope", "devin"];
+  const others = [
+    "cubic-v2",
+    "qodo-extended-v2",
+    "claude-code",
+    "augment",
+    "qodo-v2",
+    "macroscope",
+    "devin",
+  ];
   write(join(an, "fair", "secret.json"), {
     C1: cand("C1", []),
     C2: cand("C2", []),
@@ -326,12 +349,19 @@ describe("martian_ext", () => {
       C1: { class: "MINOR", issue: "cal1.R1" },
       C2: { class: "REAL", issue: "cal1.R1" },
       C3: { class: "GOLDEN", issue: "cal1.0" },
-      ...Object.fromEntries(others.map((t) => [`O-${t}`, { class: "WRONG", issue: `cal1.W-${t}` }])),
+      ...Object.fromEntries(
+        others.map((t) => [`O-${t}`, { class: "WRONG", issue: `cal1.W-${t}` }]),
+      ),
     },
   });
   const res = join(root, "runs", "mv-r1-asposted.martian", "results");
   write(join(res, "benchmark_data.json"), {
-    [PR]: { golden_comments: [{ comment: "g0", severity: "High" }, { comment: "g1", severity: "Low" }] },
+    [PR]: {
+      golden_comments: [
+        { comment: "g0", severity: "High" },
+        { comment: "g1", severity: "Low" },
+      ],
+    },
   });
   write(join(res, "gpt-6.1-sol", "candidates.json"), { [PR]: {} });
   write(join(res, "gpt-6.1-sol", "evaluations.json"), { [PR]: {} });
@@ -343,7 +373,10 @@ describe("martian_ext", () => {
         "t = x['tool']['quickreview']; print(json.dumps([x['key'], t['raised'], t['p_strict'], t['dup_pct'], t['minor_pct']]))",
       root,
     );
-    expect(r).toEqual([2, 2, (100 * 2) / 3, 100 / 3, 0]);
+    const [key, raised, pStrict, dupPct, minorPct] = r as number[];
+    expect([key, raised, minorPct]).toEqual([2, 2, 0]);
+    expect(pStrict).toBeCloseTo((100 * 2) / 3, 9);
+    expect(dupPct).toBeCloseTo(100 / 3, 9);
   });
 });
 
@@ -371,7 +404,12 @@ describe("claim_metrics", () => {
       golden_index,
       matched,
     });
-    jsonl(join(d, "martian_verdicts.jsonl"), [v(A, 0, true), v(A, 1, true), v(A, 2, false), v(B, 0, true)]);
+    jsonl(join(d, "martian_verdicts.jsonl"), [
+      v(A, 0, true),
+      v(A, 1, true),
+      v(A, 2, false),
+      v(B, 0, true),
+    ]);
     jsonl(join(d, "martian_reviews.jsonl"), [
       { work_dir: "w", tool: "t", pr_url: A, fp: 3 },
       { work_dir: "w", tool: "t", pr_url: B, fp: 10 },
@@ -387,7 +425,10 @@ describe("claim_metrics", () => {
   // MUTATION: make the size bucket's upper bound exclusive (`<` for `<=`) — the 50-line PR leaves the bucket and this fails
   it("buckets a PR by its diff.stat size with inclusive bounds", () => {
     const d = join(tmp, "size-tables");
-    jsonl(join(d, "prs.jsonl"), ["a", "b", "c"].map((instance_id) => ({ instance_id })));
+    jsonl(
+      join(d, "prs.jsonl"),
+      ["a", "b", "c"].map((instance_id) => ({ instance_id })),
+    );
     jsonl(join(d, "pr_diffstats.jsonl"), [
       { instance_id: "a", changed_lines: 50 },
       { instance_id: "b", changed_lines: 51 },
@@ -440,16 +481,27 @@ describe("the claims manifest's gaps", () => {
 
   // MUTATION: write a reason as "data not published" with nothing after it — this fails
   it("says why, for every claim whose data the release does not hold", () => {
-    const unpublished = m.claims.filter((c) => (c.no_script ?? "").startsWith("data not published"));
+    const unpublished = m.claims.filter((c) =>
+      (c.no_script ?? "").startsWith("data not published"),
+    );
     expect(unpublished.length).toBeGreaterThan(0);
     for (const c of unpublished) expect(c.no_script!).toMatch(/^data not published: .{20,}/);
   });
 
   // MUTATION: name a check's script that is not in the tree (e.g. "bench/aacr/recompute/missing.py") — this fails
   it("runs every archive-backed check from a script in this tree", () => {
-    const archive = Object.entries(m.checks).filter(([, c]) => c.needs.split("+").includes("archive"));
+    const archive = Object.entries(m.checks).filter(([, c]) =>
+      c.needs.split("+").includes("archive"),
+    );
     expect(archive.map(([k]) => k).sort()).toEqual(
-      expect.arrayContaining(["claude_arm", "judge_ops", "key_build", "martian_ext", "passes", "tokens"]),
+      expect.arrayContaining([
+        "claude_arm",
+        "judge_ops",
+        "key_build",
+        "martian_ext",
+        "passes",
+        "tokens",
+      ]),
     );
     for (const [, c] of archive) {
       expect(c.scripts?.length).toBeGreaterThan(0);
@@ -464,7 +516,11 @@ describe("lens_credit", () => {
   write(join(root, "runs", "r", "results", "all", "P.json"), {
     review: {
       comments: [
-        { path: "a.go", start_line: 10, content: "[blocker] x\n_P1 · confidence 1.0 · lens pass-baseline, pass-sweep_" },
+        {
+          path: "a.go",
+          start_line: 10,
+          content: "[blocker] x\n_P1 · confidence 1.0 · lens pass-baseline, pass-sweep_",
+        },
         { path: "b.go", start_line: 1, content: "[blocker] (body-only) y" },
       ],
     },
@@ -473,7 +529,14 @@ describe("lens_credit", () => {
   write(join(case_, "findings-record.json"), {
     findings: [
       { id: "f1", path: "b.go", line: 1, lens: "pass-intent, pass-claims", disposition: "posted" },
-      { id: "f2", path: "b.go", line: 2, lens: "pass-tests", disposition: "merged", merged_into: "f1" },
+      {
+        id: "f2",
+        path: "b.go",
+        line: 2,
+        lens: "pass-tests",
+        disposition: "merged",
+        merged_into: "f1",
+      },
     ],
   });
 
@@ -514,7 +577,12 @@ describe("copilot_harvest, smoke_lenses, martian_published", () => {
     write(join(root, "runs", "upstream-copilot2025-dev10", "cases", "P", "case-summary.json"), {
       reviewed_aacr_head: false,
       by_source: { inline: 3, "body-low-confidence": 1 },
-      findings: [{ mapping: "identical-context" }, { mapping: "dropped-line" }, { mapping: "identical-file" }, { mapping: "at-head" }],
+      findings: [
+        { mapping: "identical-context" },
+        { mapping: "dropped-line" },
+        { mapping: "identical-file" },
+        { mapping: "at-head" },
+      ],
     });
     const r = py(
       "import copilot_harvest as C, pathlib; x = C.compute(pathlib.Path(sys.argv[1]))\n" +
@@ -527,12 +595,19 @@ describe("copilot_harvest, smoke_lenses, martian_published", () => {
   // MUTATION: count lens outcomes by stopReason only (drop errorClass) — the timeout reads "error" and this fails
   it("reads a lens's timeout from its error class", () => {
     const root = join(tmp, "smoke");
-    jsonl(join(root, "open-models", "runs", "s-glm-aacr1", "cases", "P", "pi-events.pruned.jsonl"), [
-      {
-        type: "tool_execution_end",
-        result: { details: { results: [{ stopReason: "error", errorClass: "timeout" }, { stopReason: "stop" }] } },
-      },
-    ]);
+    jsonl(
+      join(root, "open-models", "runs", "s-glm-aacr1", "cases", "P", "pi-events.pruned.jsonl"),
+      [
+        {
+          type: "tool_execution_end",
+          result: {
+            details: {
+              results: [{ stopReason: "error", errorClass: "timeout" }, { stopReason: "stop" }],
+            },
+          },
+        },
+      ],
+    );
     const r = py(
       "import smoke_lenses as S, pathlib; print(json.dumps(S.compute(pathlib.Path(sys.argv[1]), 's-glm-')['timed_out']))",
       root,
@@ -543,9 +618,19 @@ describe("copilot_harvest, smoke_lenses, martian_published", () => {
   // MUTATION: raise on a credit whose text names no listed golden (as before) instead of leaving it out — this fails
   it("leaves out a published credit naming no listed golden, and shares the rest by audit bucket", () => {
     const m = join(tmp, "martian-src", "offline", "results");
-    write(join(m, "benchmark_data.json"), { u: { golden_comments: [{ comment: "g0" }, { comment: "g1" }] } });
+    write(join(m, "benchmark_data.json"), {
+      u: { golden_comments: [{ comment: "g0" }, { comment: "g1" }] },
+    });
     write(join(m, "anthropic_claude-opus-4-5-20251101", "evaluations.json"), {
-      u: { tool: { true_positives: [{ golden_comment: "g0" }, { golden_comment: "g1" }, { golden_comment: "gone" }] } },
+      u: {
+        tool: {
+          true_positives: [
+            { golden_comment: "g0" },
+            { golden_comment: "g1" },
+            { golden_comment: "gone" },
+          ],
+        },
+      },
     });
     const r = py(
       "import martian_published as P, pathlib\n" +
@@ -562,17 +647,40 @@ describe("claim_metrics: completed reviews", () => {
   // MUTATION: drop the status test in the done= selector — the timed-out PR is kept and this fails
   it("keeps only the PRs an arm's review completed", () => {
     const d = join(tmp, "done-tables");
-    jsonl(join(d, "prs.jsonl"), ["a", "b"].map((instance_id) => ({ instance_id, in_s40: false })));
+    jsonl(
+      join(d, "prs.jsonl"),
+      ["a", "b"].map((instance_id) => ({ instance_id, in_s40: false })),
+    );
     jsonl(join(d, "defects.jsonl"), [
       { instance_id: "a", defect_id: "D1", severity: "low" },
       { instance_id: "b", defect_id: "D1", severity: "low" },
     ]);
     jsonl(join(d, "arms.jsonl"), [{ arm_id: "M", judge: "gpt-6-sol-high" }]);
     jsonl(join(d, "reviews.jsonl"), [
-      { arm_id: "M", instance_id: "a", run: "r", judged: true, status: "ok", n_comments: 1, cost_usd: 1, minutes: 1 },
-      { arm_id: "M", instance_id: "b", run: "r", judged: true, status: "timeout", n_comments: 0, cost_usd: 1, minutes: 45 },
+      {
+        arm_id: "M",
+        instance_id: "a",
+        run: "r",
+        judged: true,
+        status: "ok",
+        n_comments: 1,
+        cost_usd: 1,
+        minutes: 1,
+      },
+      {
+        arm_id: "M",
+        instance_id: "b",
+        run: "r",
+        judged: true,
+        status: "timeout",
+        n_comments: 0,
+        cost_usd: 1,
+        minutes: 45,
+      },
     ]);
-    jsonl(join(d, "defect_verdicts.jsonl"), [{ arm_id: "M", judge: "gpt-6-sol-high", instance_id: "a", defect_id: "D1", verdict: "found" }]);
+    jsonl(join(d, "defect_verdicts.jsonl"), [
+      { arm_id: "M", judge: "gpt-6-sol-high", instance_id: "a", defect_id: "D1", verdict: "found" },
+    ]);
     jsonl(join(d, "comment_verdicts.jsonl"), []);
     const r = py(
       "import claim_metrics as CM; a = CM.Aacr(CM.Tables(sys.argv[1]))\n" +

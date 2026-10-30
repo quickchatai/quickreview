@@ -651,7 +651,10 @@ describe("the papers' data availability", () => {
   // MUTATION: restore "The full run directories (reviews, transcripts," as the run-archive paragraph's opening — this fails
   it("says the raw session transcripts are not published, only numbers-only extracts of them", () => {
     const t = tex("benchmark.tex");
-    const para = t.slice(t.indexOf("\\paragraph{Run archive.}"), t.indexOf("\\paragraph{Local only.}"));
+    const para = t.slice(
+      t.indexOf("\\paragraph{Run archive.}"),
+      t.indexOf("\\paragraph{Local only.}"),
+    );
     expect(para.length).toBeGreaterThan(0);
     expect(para).not.toMatch(/\(reviews, transcripts,/);
     expect(para.replace(/\s+/g, " ")).toContain("Raw model session transcripts are not published");

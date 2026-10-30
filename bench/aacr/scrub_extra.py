@@ -30,9 +30,9 @@ spelled in this repository:
                             ~/.config/qcr/publish-denylist.txt.
 
 One rule needs no input: the authors' tracker is not public, so its ticket
-ids (`FT-0123`, `ft-0123`, `FT0123`) and any path into it
-(`…/tracker/efforts/…`, `…/tracker/tickets/…`) become `<ticket>`
-(TICKET_RULES, by pattern). Run directory names such as `ft0622-hard20-…`
+ids (`FT-` and four digits, in any case, with or without the hyphen) and
+any path into it (`…/tracker/efforts/…`, `…/tracker/tickets/…`) become
+`<ticket>` (TICKET_RULES, by pattern). Run directory names such as `ft0622-hard20-…`
 are identifiers the public repository's own plans name, and stay.
 
 Standard library only; bytes in, bytes out.

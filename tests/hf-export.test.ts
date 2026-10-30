@@ -799,8 +799,15 @@ describe("session_logs.metrics_only: the generic numbers-only extract", () => {
           note: "SECRET-PROSE",
         },
       },
-      { type: "message", message: { role: "user", content: [{ type: "text", text: "SECRET-PROSE" }] } },
-      { type: "assistant", model: "a model with spaces", message: { usage: { input: 5, output: 2 }, stop: true } },
+      {
+        type: "message",
+        message: { role: "user", content: [{ type: "text", text: "SECRET-PROSE" }] },
+      },
+      {
+        type: "assistant",
+        model: "a model with spaces",
+        message: { usage: { input: 5, output: 2 }, stop: true },
+      },
       { type: "response_item", payload: { type: "SECRET PROSE IN A LABEL" } },
     ]
       .map((e) => JSON.stringify(e))
@@ -816,9 +823,16 @@ describe("session_logs.metrics_only: the generic numbers-only extract", () => {
         _extract: "metrics",
         timestamp: "2026-10-01T21:40:12.394Z",
         type: "event_msg",
-        payload: { type: "token_count", info: { total_token_usage: { input_tokens: 10, output_tokens: 3 } } },
+        payload: {
+          type: "token_count",
+          info: { total_token_usage: { input_tokens: 10, output_tokens: 3 } },
+        },
       },
-      { _extract: "metrics", type: "assistant", message: { usage: { input: 5, output: 2 }, stop: true } },
+      {
+        _extract: "metrics",
+        type: "assistant",
+        message: { usage: { input: 5, output: 2 }, stop: true },
+      },
     ]);
   });
 });
@@ -828,14 +842,24 @@ describe("session_logs.prune_pi: compare.py prices the extract as the full strea
     { type: "message_start", message: { role: "assistant", content: "SECRET-PROSE" } },
     {
       type: "message_end",
-      message: { role: "assistant", timestamp: 1, usage: { output: 9, cost: { total: 0.1 } }, content: "SECRET-PROSE" },
+      message: {
+        role: "assistant",
+        timestamp: 1,
+        usage: { output: 9, cost: { total: 0.1 } },
+        content: "SECRET-PROSE",
+      },
     },
     // call A reports lens run k1; call B reports k1 again and k2: k1 counts once
     {
       type: "tool_execution_end",
       toolName: "launch_plan",
       toolCallId: "A",
-      result: { content: "SECRET-PROSE", details: { results: [{ id: "k1", agent: "pass-a--sol-high", usage: { cost: { total: 0.7 } } }] } },
+      result: {
+        content: "SECRET-PROSE",
+        details: {
+          results: [{ id: "k1", agent: "pass-a--sol-high", usage: { cost: { total: 0.7 } } }],
+        },
+      },
     },
     {
       type: "tool_execution_end",
@@ -845,7 +869,13 @@ describe("session_logs.prune_pi: compare.py prices the extract as the full strea
         details: {
           results: [
             { id: "k1", agent: "pass-a--sol-high", usage: { cost: { total: 0.7 } } },
-            { id: "k2", agent: "pass-b--sol-high", stopReason: "error", errorMessage: "request timed out", usage: { cost: { total: 0.2 } } },
+            {
+              id: "k2",
+              agent: "pass-b--sol-high",
+              stopReason: "error",
+              errorMessage: "request timed out",
+              usage: { cost: { total: 0.2 } },
+            },
           ],
         },
       },
@@ -855,7 +885,13 @@ describe("session_logs.prune_pi: compare.py prices the extract as the full strea
       type: "tool_execution_update",
       toolName: "subagent",
       toolCallId: "C",
-      partialResult: { details: { results: [{ id: "k3", usage: { cost: { total: 0.3 } }, messages: [{ content: "SECRET-PROSE" }] }] } },
+      partialResult: {
+        details: {
+          results: [
+            { id: "k3", usage: { cost: { total: 0.3 } }, messages: [{ content: "SECRET-PROSE" }] },
+          ],
+        },
+      },
     },
   ]
     .map((e) => JSON.stringify(e))
@@ -884,9 +920,15 @@ describe("export_runs: a run ships without its session logs", () => {
   put(join(src, "runs", "r1", "run.json"), '{\n  "set": "dev10",\n  "qcr_commit": "aaa1111"\n}\n');
   put(
     join(c, "pi-events.jsonl"),
-    JSON.stringify({ type: "message_end", message: { role: "assistant", timestamp: 5, usage: { output: 1 }, content: "SECRET-PROSE" } }) + "\n",
+    JSON.stringify({
+      type: "message_end",
+      message: { role: "assistant", timestamp: 5, usage: { output: 1 }, content: "SECRET-PROSE" },
+    }) + "\n",
   );
-  put(join(c, "session", "2026-10-01T00-00-00-000Z_01a0f969-23e9-726f-810d-a5228a5b57f7.jsonl"), '{"type":"message","message":{"content":"SECRET-PROSE","usage":{"input":4}}}\n');
+  put(
+    join(c, "session", "2026-10-01T00-00-00-000Z_01a0f969-23e9-726f-810d-a5228a5b57f7.jsonl"),
+    '{"type":"message","message":{"content":"SECRET-PROSE","usage":{"input":4}}}\n',
+  );
   put(join(c, "system-prompt.md"), "SECRET-PROSE\n");
   put(join(c, "tasks", "01-pass-x--sol-high.md"), "SECRET-PROSE\n");
   put(join(c, "pi-stderr.log"), "SECRET-PROSE\n");
@@ -901,7 +943,14 @@ describe("export_runs: a run ships without its session logs", () => {
     catalogue,
     JSON.stringify({
       families: [
-        { id: "f", title: "F", location: "qcr-bench-runs/runs/", members: ["r1", "pc2-dev10"], ship: "yes", hf_tables: [] },
+        {
+          id: "f",
+          title: "F",
+          location: "qcr-bench-runs/runs/",
+          members: ["r1", "pc2-dev10"],
+          ship: "yes",
+          hf_tables: [],
+        },
       ],
     }),
   );
@@ -922,7 +971,11 @@ describe("export_runs: a run ships without its session logs", () => {
       catalogue,
     ) as Record<string, [string, boolean, boolean | null, string | null]>;
     const base = "runs/r1/cases/o__r@1111111";
-    expect(r[`${base}/pi-events.jsonl`]?.slice(0, 3)).toEqual([`${base}/pi-events.pruned.jsonl`, true, false]);
+    expect(r[`${base}/pi-events.jsonl`]?.slice(0, 3)).toEqual([
+      `${base}/pi-events.pruned.jsonl`,
+      true,
+      false,
+    ]);
     const sess = Object.keys(r).find((k) => k.includes("/session/"))!;
     expect(r[sess]?.[0]).toMatch(/\.pruned\.jsonl$/);
     expect(r[sess]?.slice(1, 3)).toEqual([true, false]);
@@ -939,7 +992,11 @@ describe("export_runs: a run ships without its session logs", () => {
     expect(r[`${base}/review.md`]?.slice(1, 3)).toEqual([true, false]);
     expect(r["runs/r1.review.log"]?.[1]).toBe(true);
     // MUTATION: drop the `false`/`null` branch of export_runs.remap_commits — this fails
-    expect(JSON.parse(r["runs/r1/run.json"]![3]!)).toEqual({ set: "dev10", qcr_commit: "bbb2222", qcr_commit_on_public_main: true });
+    expect(JSON.parse(r["runs/r1/run.json"]![3]!)).toEqual({
+      set: "dev10",
+      qcr_commit: "bbb2222",
+      qcr_commit_on_public_main: true,
+    });
     expect(JSON.parse(r[`${base}/case-summary.json`]![3]!)).toEqual({
       fingerprint: { qcr_commit: "ccc3333", qcr_commit_on_public_main: false },
     });
@@ -980,11 +1037,25 @@ describe("the authors' tracker becomes <ticket>", () => {
 describe("key_data: the answer key's build, as data", () => {
   const src = join(tmp, "keydata");
   const d = join(src, "rest145-code", "o__r@1111111");
-  put(join(d, "candidates-key.json"), JSON.stringify({ C2: "all-low-rest145", C1: "all-ocr-rest145" }));
-  put(join(d, "candidates.json"), JSON.stringify({ candidates: [{ cand: "C1", path: "a.py", from_line: 3, to_line: 4, text: "t" }] }));
+  put(
+    join(d, "candidates-key.json"),
+    JSON.stringify({ C2: "all-low-rest145", C1: "all-ocr-rest145" }),
+  );
+  put(
+    join(d, "candidates.json"),
+    JSON.stringify({
+      candidates: [{ cand: "C1", path: "a.py", from_line: 3, to_line: 4, text: "t" }],
+    }),
+  );
   put(join(d, "new-candidates-key.json"), JSON.stringify({ N1: "codex" }));
-  put(join(d, "diff.stat"), " a.py | 4 +++-\n 2 files changed, 85 insertions(+), 36 deletions(-)\n");
-  put(join(src, "fresh10-code", "o__r@1111111", "diff.stat"), " 2 files changed, 85 insertions(+), 36 deletions(-)\n");
+  put(
+    join(d, "diff.stat"),
+    " a.py | 4 +++-\n 2 files changed, 85 insertions(+), 36 deletions(-)\n",
+  );
+  put(
+    join(src, "fresh10-code", "o__r@1111111", "diff.stat"),
+    " 2 files changed, 85 insertions(+), 36 deletions(-)\n",
+  );
   put(join(src, "orig40-code", "p__q@2222222", "diff.stat"), " 1 file changed, 7 insertions(+)\n");
 
   // MUTATION: make changed_lines insertions alone in key_data.parse_diffstat — this fails

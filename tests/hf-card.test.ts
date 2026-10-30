@@ -75,7 +75,7 @@ describe("the dataset card renders completely", () => {
     // the run archive and the slim bundle default to this dataset's own folders
     expect(card).toContain("(https://huggingface.co/datasets/acme/bench/tree/main/archive)");
     expect(card).toContain("(https://huggingface.co/datasets/acme/bench/tree/main/slim)");
-    expect(card).toContain("3 run directories in\n  2 families");
+    expect(card).toMatch(/\b3 run directories in\s+2\s+families\b/); // the template wraps freely
     expect(card).toContain("size_categories:\n- n<1K\n"); // one row per config
   });
 
