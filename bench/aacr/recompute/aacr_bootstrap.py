@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """AACR-Bench bootstrap intervals and paired differences, from the published tables.
 
-    python3 bench/aacr/recompute/aacr_bootstrap.py --data <hf-dataset> [--arms a,b,...] [--json OUT]
+    python3 bench/aacr/recompute/aacr_bootstrap.py --data <hf-dataset> [--arms a,b,...] [--seed N] [--json OUT]
 
 (`uv run --no-project --with pyarrow python ...` when the tables are parquet.)
 
@@ -21,7 +21,9 @@ any arm is scored (so every arm and every pair sees the same resamples: the
 difference is paired). Per resample a recall is a ratio of sums — credit found
 on the drawn PRs over the defects of the drawn PRs (a resample with no defect
 of that kind divides by 1). The interval is the sorted values at index 250 and
-9749. Credit is the published `defect_verdicts.credit` (found 1, partial ½) of
+9749. The earlier gpt-6-sol study's intervals (tab:ci-sol and its paired
+differences) were drawn the same way with seed 20260928: `--seed 20260928`.
+Credit is the published `defect_verdicts.credit` (found 1, partial ½) of
 the primary judge, `gpt-6-sol-high`; a defect with no verdict row counts 0.
 
 Inputs (configs of the Hugging Face dataset): `prs` (the 185 PR ids),
@@ -162,6 +164,7 @@ def main() -> None:
     ap.add_argument("--data", required=True, help="the Hugging Face dataset dir (or its data/ dir)")
     ap.add_argument("--arms", default=",".join(DEFAULT_ARMS), help="arm ids, comma-separated, in row order")
     ap.add_argument("--resamples", type=int, default=RESAMPLES)
+    ap.add_argument("--seed", type=int, default=SEED, help="the resampling seed (the earlier study's: 20260928)")
     ap.add_argument("--json", help="also write every number to this JSON file")
     a = ap.parse_args()
     arms = [x for x in a.arms.split(",") if x]
@@ -172,7 +175,7 @@ def main() -> None:
     missing = [x for x in arms if x not in known]
     if missing:
         sys.exit(f"no {JUDGE} verdicts for arm(s) {missing}")
-    res = bootstrap(prs, defects, verdicts, arms, b=a.resamples)
+    res = bootstrap(prs, defects, verdicts, arms, b=a.resamples, seed=a.seed)
     res["costs"] = costs(prs, defects, verdicts, load_table(a.data, "reviews"), arms)
     print(render(res, res["costs"], arms))
     if a.json:

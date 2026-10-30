@@ -14,8 +14,11 @@ aacr     ARM[@JUDGE][~SEL]:METRIC
          SEL narrows the PRs (and so the key), `&`-joined:
            all (default) | own (the PRs the arm has a review of) | s40 | o145
            | set=a+b (the `prs.set` names) | lang=<language> | kind=<pr_category>
-           | lines=<lo>-<hi> (change_line_count, inclusive) | arm=<arm id> (that arm's PRs)
+           | lines=<lo>-<hi> (change_line_count, inclusive) | arm=<arm id> (that arm's PRs) | pr=<instance id>
+           | refcat=<AACR reference category> (the aacr_* metrics over those references only)
+         ARM+ARM+...[@JUDGE][~SEL]:single_found|any_found  key defects found or partly found by exactly one / any arm
            | dset=indep (only defects the blind hunt or an AACR reference raised) | dkind=<defect kind>
+           | dnotkind=<defect kind> | dset=limitation (the defects carrying a benchmark_limitation note)
          METRIC:
            found high medium low            credit found (partial 1/2)
            defects n_high n_medium n_low    the key's size on the PRs
@@ -37,21 +40,27 @@ aacr     ARM[@JUDGE][~SEL]:METRIC
              (AACR-Bench's own metric: references found = summed match shares)
 key      METRIC[~SEL]  the answer key alone: defects n_high n_medium n_low prs exclusions refs bot_refs
          indep (defects the blind hunt or an AACR reference raised) extension, ext_high|ext_medium|ext_low
-         (added by the key's v2 extension) prs_with_defects languages repos labels labelled_prs; SEL also takes dkind=<kind>
+         (added by the key's v2 extension) prs_with_defects languages repos max_lines (the largest change) labels labelled_prs; SEL also takes dkind=<kind>
          refs_cited (AACR references some defect's provenance cites) cited_pct (of the references)
          label=<reality> (labelled references of that reality) bot=<bot> (bot-derived references of that bot)
-         bot_prs not_ai_refs cite_bot cite_bot_hunt (defects citing a bot-derived reference; of them, hunted)
+         bot_prs ai_refs not_ai_refs label_starts ref_raised ref_raised_high (defects an AACR reference raised)
+         cite_bot cite_bot_hunt (defects citing a bot-derived reference; of them, hunted)
          indep_reviewed indep_unreviewed (hunt-or-reference defects some reviewer also raised; none did)
-judges   J1|J2|ARM+ARM+...:[high_]same|pairs|pct   two defect judges' verdicts on the same (arm, PR,
-         defect), over every key defect (or every high-severity one) of each arm (no row = missed)
-         repeat_prs   PRs the primary judge re-judged for self-consistency
+         not_hunt[_high|_medium|_low|_reviewer_only|_ref] (defects the blind hunt did not raise)
+         median_per_pr max_per_pr mean_per_pr  excl_src=<prefix> (exclusions whose candidate id starts so)
+         one_source reviewer_only (defects with one kind of source: hunt, AACR reference or reviewer comments)
+         SEL also takes v1 (leave out the defects the key's v2 extension added)
+judges   J1|J2|ARM+ARM+...[|sample=JUDGE]:METRIC   two defect judges on the same reviews (see Judges)
 martian  WORK|TOOL[@JUDGE]:METRIC  (JUDGE default gpt-6.1-sol; a published judge is
          "published: <model>", and WORK "-" names Martian's own published scores over all 50 PRs). METRIC: {core,strict,all}_{tp,fp,fn,precision,recall,f1,f2},
-         real_found notreal_found disputed_found real_pct notreal_share, usd min_mean extracted comments_per_pr prs
+         real_found notreal_found disputed_found real_pct notreal_share, real_found~<set> (on one half),
+         all_blocking all_blocking_real all_real (PRs in which every Critical/High golden, every real
+         Critical/High one, every real one was matched) and their n_*_prs denominators,
+         usd min_mean extracted comments_per_pr prs
          goldens:real|notreal|disputed|total|prs
 qodo     WORK|TOOL:METRIC  METRIC: hits comments per_pr precision recall f1 recall_functional
-         recall_rule (the primary rule, N=5), the same with _samefile, usd min_mean prs
-         issues:total|functional|rule|prs
+         recall_rule (the primary rule, N=5), the same with _samefile or _semantic (no location), usd min_mean prs
+         issues:total|functional|rule|prs|repos
 elo      PLAN|TABLE|CATEGORY|RUN:elo|lo|hi|w|t|l|games|prs   (the published ratings table)
          PLAN:agreement   share of units both judges answered on which they name the same overall winner
          PLAN[@JUDGE]:judgments   judgments used in the ratings (of one judge: gpt, opus)
@@ -169,6 +178,8 @@ class Aacr(Provider):
                 keep &= {i for i, p in prs.items() if p["set"] in names}
             elif k == "lang":
                 keep &= {i for i, p in prs.items() if p["language"] == v}
+            elif k == "pr":
+                keep &= {v}
             elif k == "kind":
                 keep &= {i for i, p in prs.items() if p["pr_category"] == v}
             elif k == "lines":
@@ -183,6 +194,12 @@ class Aacr(Provider):
                 dfilter = lambda d: bool(d["provenance_hunt"] or d["provenance_dataset_refs"])  # noqa: E731
             elif k == "dkind":
                 dfilter = lambda d, v=v: d["kind"] == v  # noqa: E731
+            elif k == "dnotkind":
+                dfilter = lambda d, v=v: d["kind"] != v  # noqa: E731
+            elif k == "refcat":
+                pass  # AACR-Bench's reference category; read by the aacr_* metrics
+            elif k == "dset" and v == "limitation":
+                dfilter = lambda d: bool(d.get("benchmark_limitation"))  # noqa: E731
             else:
                 raise KeyError_(f"unknown selector {part!r}")
         return keep, dfilter
@@ -192,6 +209,8 @@ class Aacr(Provider):
         if not head:
             raise KeyError_(f"aacr key {key!r} has no metric")
         head, _, sel = head.partition("~")
+        if "+" in head.partition("@")[0]:
+            return self._multi(head, sel, metric)
         arm, _, judge = head.partition("@")
         judge = judge or self.judge_of(arm)
         prs_, defects, dv, cv, rv, arms = self._index()
@@ -263,15 +282,38 @@ class Aacr(Provider):
         if metric == "min_mean":
             return _mean(mins)
         if metric.startswith("aacr_"):
-            return self._aacr(arm, keep, metric[5:], judged)
+            refcat = next((p.partition("=")[2] for p in sel.split("&") if p.startswith("refcat=")), None)
+            return self._aacr(arm, keep, metric[5:], judged, refcat)
         raise KeyError_(f"unknown aacr metric {metric!r}")
 
-    def _aacr(self, arm, keep, m, judged):
-        refs = [r for r in self.t("aacr_references") if r["instance_id"] in keep]
+    def _multi(self, head, sel, metric):
+        """ARM+ARM+...[@JUDGE]~SEL:single_found|any_found — key defects found (or partly) by exactly one / any of the arms."""
+        arms_, _, judge = head.partition("@")
+        arms = arms_.split("+")
+        prs_, defects, dv, _, _, known = self._index()
+        keep, dfilter = self.select(arms[0], sel)
+        hits = collections.Counter()
+        for a in arms:
+            if a not in known:
+                raise KeyError_(f"no arm {a!r}")
+            ver = dv.get((a, judge or self.judge_of(a)), {})
+            for k, d in defects.items():
+                if k[0] in keep and (dfilter is None or dfilter(d)) and ver.get(k) in CREDIT:
+                    hits[k] += 1
+        if metric == "single_found":
+            return sum(1 for c in hits.values() if c == 1)
+        if metric == "any_found":
+            return len(hits)
+        raise KeyError_(f"unknown multi-arm metric {metric!r}")
+
+    def _aacr(self, arm, keep, m, judged, refcat=None):
+        refs = [r for r in self.t("aacr_references") if r["instance_id"] in keep and (refcat is None or r["category"] == refcat)]
         nobot = m.endswith("_nobot")
         base = m[:-6] if nobot else m
         bot = {r["ref_key"] for r in refs if r["bot_derived"]}
-        shares = [x for x in self.t("aacr_matches") if x["arm_id"] == arm and x["instance_id"] in keep]
+        cat_keys = {(r["instance_id"], r["ref_key"]) for r in refs}
+        shares = [x for x in self.t("aacr_matches") if x["arm_id"] == arm and x["instance_id"] in keep
+                  and (refcat is None or (x["instance_id"], x["ref_key"]) in cat_keys)]
         found = sum(x["match_share"] for x in shares if not (nobot and x["ref_key"] in bot))
         n_refs = len(refs) - (len(bot) if nobot else 0)
         comments = sum(r["aacr_scored_comments"] or 0 for r in judged)
@@ -300,7 +342,7 @@ class Key(Provider):
         metric, _, sel = key.partition("~")
         prs = {p["instance_id"]: p for p in self.t("prs")}
         keep = set(prs)
-        dkind = None
+        dkind, v1 = None, False
         for part in [p for p in sel.split("&") if p and p != "all"]:
             k, _, v = part.partition("=")
             if k == "set":
@@ -311,11 +353,18 @@ class Key(Provider):
                 keep &= {i for i, p in prs.items() if not p["in_s40"]}
             elif k == "lang":
                 keep &= {i for i, p in prs.items() if p["language"] == v}
+            elif k == "pr":
+                keep &= {v}
+            elif k == "arm":
+                keep &= {r["instance_id"] for r in self.t("reviews") if r["arm_id"] == v}
             elif k == "dkind":
                 dkind = v
+            elif k == "v1":
+                v1 = True
             else:
                 raise KeyError_(f"unknown key selector {part!r}")
-        d = [x for x in self.t("defects") if x["instance_id"] in keep and (dkind is None or x["kind"] == dkind)]
+        d = [x for x in self.t("defects") if x["instance_id"] in keep and (dkind is None or x["kind"] == dkind)
+             and not (v1 and x["provenance_added_in"])]
         sev = collections.Counter(x["severity"] for x in d)
         if metric == "defects":
             return len(d)
@@ -337,6 +386,12 @@ class Key(Provider):
             return sum(1 for x in self.t("aacr_references") if x["instance_id"] in keep and x["bot_derived"] and x["bot"] == metric[4:])
         if metric == "bot_prs":
             return len({x["instance_id"] for x in self.t("aacr_references") if x["instance_id"] in keep and x["bot_derived"]})
+        if metric == "ai_refs":
+            return sum(1 for x in self.t("aacr_references") if x["instance_id"] in keep and x["is_ai_comment"])
+        if metric == "label_starts":
+            return len({(x["instance_id"], x["path"], x["from_line"]) for x in self.t("aacr_reference_labels") if x["instance_id"] in keep})
+        if metric in ("ref_raised", "ref_raised_high"):
+            return sum(1 for x in d if x["provenance_dataset_refs"] and (metric == "ref_raised" or x["severity"] == "high"))
         if metric == "not_ai_refs":
             return sum(1 for x in self.t("aacr_references") if x["instance_id"] in keep and not x["is_ai_comment"])
         if metric in ("cite_bot", "cite_bot_hunt"):
@@ -352,6 +407,31 @@ class Key(Provider):
             return sum(1 for x in d if x["provenance_added_in"] and x["severity"] == metric[4:])
         if metric == "prs_with_defects":
             return len({x["instance_id"] for x in d})
+        if metric in ("one_source", "reviewer_only"):
+            def kinds(x):
+                return [bool(x["provenance_hunt"]), bool(x["provenance_dataset_refs"]), bool(x["provenance_reviewer_comments"])]
+            if metric == "one_source":
+                return sum(1 for x in d if sum(kinds(x)) == 1)
+            return sum(1 for x in d if kinds(x) == [False, False, True])
+        if metric.startswith("excl_src="):
+            return sum(1 for x in self.t("exclusions") if x["instance_id"] in keep and (x["source"] or "").startswith(metric[9:]))
+        if metric.startswith("not_hunt"):
+            nh = [x for x in d if not x["provenance_hunt"]]
+            sub = metric[8:]
+            if sub in ("_high", "_medium", "_low"):
+                return sum(1 for x in nh if x["severity"] == sub[1:])
+            if sub == "_reviewer_only":
+                return sum(1 for x in nh if not x["provenance_dataset_refs"])
+            if sub == "_ref":
+                return sum(1 for x in nh if x["provenance_dataset_refs"])
+            return len(nh)
+        if metric in ("median_per_pr", "max_per_pr", "mean_per_pr"):
+            per = collections.Counter(x["instance_id"] for x in d)
+            counts = [per.get(i, 0) for i in keep]
+            return {"median_per_pr": _median(counts), "max_per_pr": max(counts) if counts else None,
+                    "mean_per_pr": _mean(counts)}[metric]
+        if metric == "max_lines":
+            return max(prs[i]["change_line_count"] or 0 for i in keep)
         if metric == "languages":
             return len({prs[i]["language"] for i in keep})
         if metric == "labels":
@@ -381,6 +461,31 @@ class Martian(Provider):
         tool, _, judge = rest.partition("@")
         judge = judge or "gpt-6.1-sol"
         work = None if work == "-" else work  # "-": Martian's own published scores over all 50 PRs (no scoring dir)
+        if metric.startswith("real_found~"):  # real goldens found on one half (a committed set file of PR urls)
+            import json as _json
+            setf = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sets", metric[11:] + ".json")
+            urls = {c["pr_url"] for c in _json.load(open(setf))["cases"]}
+            gold = {(g["pr_url"], g["golden_index"]): g["audit_bucket"] for g in self.t("martian_goldens")}
+            return len({(v["pr_url"], v["golden_index"]) for v in self.t("martian_verdicts")
+                        if v["work_dir"] == work and v["tool"] == tool and v["judge"] == judge and v["matched"]
+                        and v["pr_url"] in urls and gold.get((v["pr_url"], v["golden_index"])) == "real"})
+        if metric in ("all_blocking", "all_blocking_real", "all_real", "n_blocking_prs", "n_blocking_real_prs", "n_real_prs"):
+            gold = self.t("martian_goldens")
+            hit = {(v["pr_url"], v["golden_index"]) for v in self.t("martian_verdicts")
+                   if v["work_dir"] == work and v["tool"] == tool and v["judge"] == judge and v["matched"]}
+            want = collections.defaultdict(set)
+            for g in gold:
+                blocking = (g["severity"] or "").lower() in ("critical", "high")
+                real = g["audit_bucket"] == "real"
+                if (metric.endswith("blocking") or metric == "n_blocking_prs") and blocking:
+                    want[g["pr_url"]].add((g["pr_url"], g["golden_index"]))
+                elif metric in ("all_blocking_real", "n_blocking_real_prs") and blocking and real:
+                    want[g["pr_url"]].add((g["pr_url"], g["golden_index"]))
+                elif metric in ("all_real", "n_real_prs") and real:
+                    want[g["pr_url"]].add((g["pr_url"], g["golden_index"]))
+            if metric.startswith("n_"):
+                return len(want)
+            return sum(1 for ks in want.values() if ks <= hit)
         for kind in ("core", "strict", "all"):
             if metric.startswith(kind + "_"):
                 rows = [s for s in self.t("martian_scores") if s["work_dir"] == work and s["tool"] == tool and s["judge"] == judge]
@@ -427,6 +532,8 @@ class Qodo(Provider):
         if head == "issues":
             if metric == "prs":
                 return len(self.t("qodo_prs"))
+            if metric == "repos":
+                return len({p["repo"] for p in self.t("qodo_prs")})
             return {"total": len(issues), "functional": sum(1 for i in issues.values() if i["functional"]),
                     "rule": sum(1 for i in issues.values() if not i["functional"])}[metric]
         work, _, tool = head.partition("|")
@@ -435,9 +542,10 @@ class Qodo(Provider):
         if not vs or not rows:
             raise KeyError_(f"no qodo verdicts or reviews for {work}|{tool}")
         same = metric.endswith("_samefile")
-        m = metric[:-9] if same else metric
+        sem = metric.endswith("_semantic")
+        m = metric[:-9] if same or sem else metric
         loc = "located_same_file" if same else "located_n5"
-        hit = {(v["pr_url"], v["issue_index"]) for v in vs if v["matched"] and v[loc]}
+        hit = {(v["pr_url"], v["issue_index"]) for v in vs if v["matched"] and (sem or v[loc])}
         comments = sum(r["n_comments"] or 0 for r in rows)
         n = len(issues)
         if m == "hits":
@@ -515,33 +623,121 @@ class Elo(Provider):
 # ---------------------------------------------------------------- two defect judges
 
 class Judges(Provider):
+    """Two defect judges (or one judge and its re-run) on the same reviews.
+
+    J1|J2|ARM+ARM+...[|sample=JUDGE]:METRIC — every key defect (comment) of each arm's reviews that
+    both judges judged (reviews.judged_by), restricted with `sample=` to the reviews a third judge
+    also judged (the re-run's 30 PRs). Defect metrics (no row = missed): same pairs pct kappa,
+    high_* (high-severity only), merged_pct merged_kappa (found and partial one class), disagree
+    disagree_partial. Comment metrics (pairs both judges graded): c_same c_pairs c_pct c_kappa,
+    c_bin_pct (correct = correct-valuable or correct-minor), c_bin_min_pct c_bin_max_pct (the lowest
+    and highest per-arm share), c_from=<grade>>to=<grade> (comments J1 graded one way and J2 the other).
+    repeat_prs: PRs the primary judge re-judged for self-consistency."""
+
+    @staticmethod
+    def _kappa(pairs):
+        n = len(pairs)
+        if not n:
+            return None
+        m1 = collections.Counter(x for x, _ in pairs)
+        m2 = collections.Counter(y for _, y in pairs)
+        po = sum(1 for x, y in pairs if x == y) / n
+        pe = sum(m1[c] * m2[c] for c in set(m1) | set(m2)) / (n * n)
+        return (po - pe) / (1 - pe) if pe < 1 else None
+
     def compute(self, key: str) -> Optional[float]:
-        head, _, metric = key.rpartition(":")
         if key == "repeat_prs":
             return len({r["instance_id"] for r in self.t("reviews") if "gpt-6-sol-high-repeat" in (r["judged_by"] or [])})
+        head, _, metric = key.rpartition(":")
         parts = head.split("|")
-        if len(parts) != 3:
-            raise KeyError_(f"judges key {key!r}: want J1|J2|ARM+ARM:metric")
+        if len(parts) not in (3, 4):
+            raise KeyError_(f"judges key {key!r}: want J1|J2|ARM+ARM[|sample=JUDGE]:metric")
         j1, j2, arms = parts[0], parts[1], parts[2].split("+")
+        sample = parts[3].partition("=")[2] if len(parts) == 4 else None
+        need = {j1, j2} | ({sample} if sample else set())
+        both = {(r["arm_id"], r["instance_id"]) for r in self.t("reviews")
+                if r["arm_id"] in arms and need <= set(r["judged_by"] or [])}
+        if not both:
+            raise KeyError_(f"no reviews of {arms} judged by {sorted(need)}")
+        if metric.startswith("c_"):
+            g = collections.defaultdict(dict)
+            for r in self.t("comment_verdicts"):
+                if r["judge"] in (j1, j2) and (r["arm_id"], r["instance_id"]) in both:
+                    g[(r["arm_id"], r["instance_id"], r["comment_id"])][r["judge"]] = r["grade"]
+            pairs = {k: (v[j1], v[j2]) for k, v in g.items() if j1 in v and j2 in v}
+            ok = ("correct-valuable", "correct-minor")
+            m = metric[2:]
+            if m == "same":
+                return sum(1 for x, y in pairs.values() if x == y)
+            if m == "pairs":
+                return len(pairs)
+            if m == "pct":
+                return _pct(sum(1 for x, y in pairs.values() if x == y), len(pairs))
+            if m == "kappa":
+                return self._kappa(list(pairs.values()))
+            if m == "bin_pct":
+                return _pct(sum(1 for x, y in pairs.values() if (x in ok) == (y in ok)), len(pairs))
+            if m in ("bin_min_pct", "bin_max_pct"):
+                per = []
+                for arm in arms:
+                    ps = [v for k, v in pairs.items() if k[0] == arm]
+                    per.append(_pct(sum(1 for x, y in ps if (x in ok) == (y in ok)), len(ps)))
+                return (min if m == "bin_min_pct" else max)(per)
+            if m.startswith("from="):
+                frm, _, to = m[5:].partition(">to=")
+                return sum(1 for x, y in pairs.values() if x == frm and y == to)
+            raise KeyError_(f"unknown judges metric {metric!r}")
+        high = {(d["instance_id"], d["defect_id"]) for d in self.t("defects") if d["severity"] == "high"}
         keys = [(d["instance_id"], d["defect_id"]) for d in self.t("defects")]
+        if metric in ("kendall_found", "discordant_found"):
+            found = {}
+            for j in (j1, j2):
+                c = collections.Counter()
+                for r in self.t("defect_verdicts"):
+                    if r["judge"] == j and r["arm_id"] in arms and (r["arm_id"], r["instance_id"]) in both:
+                        c[r["arm_id"]] += CREDIT.get(r["verdict"], 0.0)
+                found[j] = c
+            conc = disc = 0
+            for i in range(len(arms)):
+                for k in range(i + 1, len(arms)):
+                    x = found[j1][arms[i]] - found[j1][arms[k]]
+                    y = found[j2][arms[i]] - found[j2][arms[k]]
+                    if x * y > 0:
+                        conc += 1
+                    elif x * y < 0:
+                        disc += 1
+            if metric == "discordant_found":
+                return disc
+            return (conc - disc) / (conc + disc) if conc + disc else None
+        if metric.startswith("high_"):
+            keys = [k for k in keys if k in high]
+            metric = metric[5:]
         v = collections.defaultdict(dict)
         for r in self.t("defect_verdicts"):
             if r["judge"] in (j1, j2) and r["arm_id"] in arms:
                 v[(r["arm_id"], r["judge"])][(r["instance_id"], r["defect_id"])] = r["verdict"]
-        high = {(d["instance_id"], d["defect_id"]) for d in self.t("defects") if d["severity"] == "high"}
-        if metric.startswith("high_"):
-            keys = [k for k in keys if k in high]
-            metric = metric[5:]
-        same = n = 0
-        for a in arms:
-            if not v.get((a, j1)) or not v.get((a, j2)):
-                raise KeyError_(f"no {j1} or {j2} verdicts for arm {a}")
-            for k in keys:
-                n += 1
-                same += v[(a, j1)].get(k, "missed") == v[(a, j2)].get(k, "missed")
-        if metric not in ("same", "pairs", "pct"):
-            raise KeyError_(f"unknown judges metric {metric!r}")
-        return {"same": same, "pairs": n, "pct": _pct(same, n)}[metric]
+        pairs = [(v[(a, j1)].get(k, "missed"), v[(a, j2)].get(k, "missed"))
+                 for a in arms for k in keys if (a, k[0]) in both]
+        n = len(pairs)
+        same = sum(1 for x, y in pairs if x == y)
+        merge = {"partial": "found"}
+        if metric == "same":
+            return same
+        if metric == "pairs":
+            return n
+        if metric == "pct":
+            return _pct(same, n)
+        if metric == "kappa":
+            return self._kappa(pairs)
+        if metric == "merged_pct":
+            return _pct(sum(1 for x, y in pairs if merge.get(x, x) == merge.get(y, y)), n)
+        if metric == "merged_kappa":
+            return self._kappa([(merge.get(x, x), merge.get(y, y)) for x, y in pairs])
+        if metric == "disagree":
+            return n - same
+        if metric == "disagree_partial":
+            return sum(1 for x, y in pairs if x != y and "partial" in (x, y))
+        raise KeyError_(f"unknown judges metric {metric!r}")
 
 
 PROVIDERS = {"aacr": Aacr, "key": Key, "martian": Martian, "qodo": Qodo, "elo": Elo, "judges": Judges}

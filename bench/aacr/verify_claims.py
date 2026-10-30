@@ -97,6 +97,20 @@ def render_like(printed: str, x: float) -> str:
     return s + suffix
 
 
+def printed_as(claim: dict, v) -> Optional[str]:
+    """How a computed value reads beside the published one (a source's own string as a number when it is one)."""
+    if v is None:
+        return None
+    if isinstance(v, str):
+        try:
+            v = float(CT.normalise(v).strip().rstrip("%kMx").replace(",", ""))
+        except ValueError:
+            return v
+    if claim.get("about"):
+        return f"{float(v):.2f}"
+    return render_like(CT.normalise(claim["value"]), float(v))
+
+
 def number_of(printed: str) -> float:
     return float(CT.normalise(printed).strip().rstrip("%kMx").replace(",", ""))
 
@@ -318,8 +332,7 @@ def verify(a, manifest: dict, found) -> List[dict]:
                 else:
                     v = evaluate(src, q)
                     s["computed"] = v if v is None or isinstance(v, str) else float(v)
-                    s["printed_as"] = (v if isinstance(v, str) or v is None else f"{float(v):.2f}" if c.get("about")
-                                       else render_like(CT.normalise(c["value"]), float(v)))
+                    s["printed_as"] = printed_as(c, v)
                     about = manifest.get("about_tolerance") if c.get("about") else None
                     s["status"] = "ok" if same(c["value"], v, about) else "mismatch"
             except (KeyError, ValueError, RuntimeError, ZeroDivisionError, TypeError) as e:
@@ -333,8 +346,10 @@ def verify(a, manifest: dict, found) -> List[dict]:
             r["status"] = "error"
         elif "mismatch" in st:
             r["status"] = "mismatch"
+            n_src = sum(1 for s in r["sources"] if s.get("status") in ("ok", "mismatch"))
             r["class"] = ("data bug: the sources disagree with each other" if len(computed) > 1
-                          else "stale published number: every source gives the same other value")
+                          else "stale published number: every source gives the same other value" if n_src > 1
+                          else "stale published number: the data gives another value")
         elif "ok" in st:
             r["status"] = "pass"
         elif "no-script" in st:
@@ -350,13 +365,49 @@ def verify(a, manifest: dict, found) -> List[dict]:
                 r["status"], r["why"] = "no-source", f"archive volume(s) missing: {gone}"
         results.append(r)
     a._timings = src.timings
+    a._consistency = consistency(a, found, src)
     return results
 
 
 FAIL = ("mismatch", "error", "no-source", "no-script")
 
 
-def report_md(manifest: dict, lint: dict, results: List[dict], found, timings) -> str:
+def consistency(a, found, src: "Sources") -> List[dict]:
+    """The release's own checks, re-run on the downloaded data: hf_export.py's validation (every count and
+    headline number recomputed from the tables, the checks validation.json records) and verify_slim.py's
+    bundle checks (file hashes, no transcript text, every Martian and Qodo scoring dir re-scored, the Elo
+    refit equal to the run's ratings.json)."""
+    out = []
+    if found.get("hf") and not a.no_validation:
+        sys.path.insert(0, str(HERE))
+        import hf_export as H
+        from tables import load_table
+        try:
+            t = {n: load_table(found["hf"], n) for n in H.CONFIGS}
+        except SystemExit as e:  # a config the release should hold is missing
+            return out + [{"source": "hf_export.validate", "check": "every config's table is present", "ok": False,
+                           "got": str(e), "want": "all of " + ", ".join(H.CONFIGS)}]
+        for c in H.validate(t) + H.validate_release(t, None, {}, None):
+            out.append({"source": "hf_export.validate", "check": c["check"], "ok": bool(c["ok"]),
+                        "got": c["got"], "want": c["want"]})
+    if found.get("slim") and "slim" in src._json:
+        summ = json.loads((src.work / "slim-verify" / "out" / "summary.json").read_text())
+        out.append({"source": "verify_slim", "check": "every bundle file matches FILES.sha256", "ok": summ["hash_mismatches"] == 0,
+                    "got": summ["hash_mismatches"], "want": 0})
+        out.append({"source": "verify_slim", "check": "no transcript text (pi-events.jsonl) in the bundle",
+                    "ok": summ["pi_events_in_bundle"] == 0, "got": summ["pi_events_in_bundle"], "want": 0})
+        for name in ("martian", "qodo"):
+            st = summ.get(name) or {}
+            if st:
+                out.append({"source": "verify_slim", "check": f"every {name} scoring dir re-scores to its stored scores",
+                            "ok": set(st) <= {"identical", "numbers identical, scores.md text differs"}, "got": st, "want": "identical"})
+        if "elo_refit_equals_ratings_json" in summ:
+            out.append({"source": "verify_slim", "check": "the Elo refit from the judgments equals the run's ratings.json",
+                        "ok": bool(summ["elo_refit_equals_ratings_json"]), "got": summ["elo_refit_equals_ratings_json"], "want": True})
+    return out
+
+
+def report_md(manifest: dict, lint: dict, results: List[dict], found, timings, consist=()) -> str:
     from collections import Counter
     out = ["# Claims verification", "",
            f"Manifest: `bench/aacr/claims.json` ({len(manifest['claims'])} claims, "
@@ -370,7 +421,20 @@ def report_md(manifest: dict, lint: dict, results: List[dict], found, timings) -
         out.append(f"| {f} | {s['tokens']} | {s['claims']} | {s['not_claims']} | {s['unaccounted']} | "
                    f"{sum(r['status'] == 'pass' for r in rs)} | {sum(r['status'] in FAIL for r in rs)} |")
     out.append("")
-    bad = [r for r in results if r["status"] in FAIL]
+    bad = [r for r in results if r["status"] in FAIL and r["status"] != "no-script"]
+    gaps = [r for r in results if r["status"] == "no-script"]
+    if gaps:
+        by = {}
+        for r in gaps:
+            by.setdefault(r.get("why") or "", []).append(r)
+        out += ["## No recompute script yet", "",
+                f"{len(gaps)} claims are listed with the data behind them but no check computes them. By reason:", "",
+                "| Claims | Reason | Where (first few) |", "|---|---|---|"]
+        for why, rs in sorted(by.items(), key=lambda kv: -len(kv[1])):
+            where = ", ".join(f"{r['file'].split('/')[-1]}:{lint['files'].get(r['file'], {}).get('lines', {}).get(r['id'], '?')}"
+                              for r in rs[:4])
+            out.append(f"| {len(rs)} | {why.replace('|', '/')} | {where}{' …' if len(rs) > 4 else ''} |")
+        out.append("")
     if bad:
         out += ["## Not passing", "", "| Claim | File:line | Published | Computed | Status | Why |", "|---|---|---|---|---|---|"]
         for r in bad:
@@ -380,6 +444,14 @@ def report_md(manifest: dict, lint: dict, results: List[dict], found, timings) -
             if r.get("note"):
                 why = f"{why} — {r['note']}"
             out.append(f"| {r['id']} | {r['file']}:{line} | {r['value']} | {comp} | {r['status']} | {why.replace('|', '/')} |")
+        out.append("")
+    if consist:
+        bad_c = [c for c in consist if not c["ok"]]
+        out += ["## The release's own checks, re-run", "",
+                f"{len(consist) - len(bad_c)} of {len(consist)} pass (hf_export.py's validation over the tables, "
+                f"verify_slim.py's bundle checks).", ""]
+        for c in bad_c:
+            out.append(f"- FAILED ({c['source']}): {c['check']}: got {c['got']}, want {c['want']}")
         out.append("")
     if timings:
         out += ["Script run times (s): " + ", ".join(f"{k} {v}" for k, v in timings.items()), ""]
@@ -397,6 +469,7 @@ def main() -> int:
     ap.add_argument("--partial", action="store_true", help="skip, do not fail, claims with no source in --data")
     ap.add_argument("--file", action="append", help="verify only the claims of this published file (repeatable)")
     ap.add_argument("--lint", action="store_true", help="check the manifest against the published text only; no data")
+    ap.add_argument("--no-validation", action="store_true", help="skip re-running hf_export.py's table validation")
     ap.add_argument("--report-md")
     ap.add_argument("--report-json")
     a = ap.parse_args()
@@ -431,21 +504,29 @@ def main() -> int:
     if not any(found[k] for k in ("hf", "slim", "archive")):
         print("no release data found under --data", file=sys.stderr)
         return 2
-    a._timings = {}
+    a._timings, a._consistency = {}, []
     results = verify(a, manifest, found)
     from collections import Counter
     tot = Counter(r["status"] for r in results)
     print("claims:", dict(sorted(tot.items())))
+    gaps = Counter(r.get("why") for r in results if r["status"] == "no-script")
     for r in results:
-        if r["status"] in FAIL:
+        if r["status"] in FAIL and r["status"] != "no-script":
             comp = ", ".join(str(s.get("printed_as", s.get("why", ""))) for s in r["sources"]) or r.get("why", "")
             print(f"  {r['status'].upper()} {r['id']} ({r['file']}): published {r['value']!r}, computed {comp}")
+    for why, n in gaps.most_common():
+        print(f"  NO-SCRIPT x{n}: {why}")
+    bad_c = [c for c in a._consistency if not c["ok"]]
+    print(f"release checks: {len(a._consistency) - len(bad_c)} of {len(a._consistency)} pass")
+    for c in bad_c:
+        print(f"  CHECK FAILED ({c['source']}): {c['check']}: got {c['got']}, want {c['want']}")
     if a.report_md:
-        Path(a.report_md).write_text(report_md(manifest, lint, results, found, a._timings))
+        Path(a.report_md).write_text(report_md(manifest, lint, results, found, a._timings, a._consistency))
     if a.report_json:
         Path(a.report_json).write_text(json.dumps({"found": found, "lint": lint, "results": results,
-                                                   "timings": a._timings}, indent=1, default=str) + "\n")
-    return 1 if lint["errors"] or any(r["status"] in FAIL for r in results) else 0
+                                                   "consistency": a._consistency, "timings": a._timings},
+                                                  indent=1, default=str) + "\n")
+    return 1 if lint["errors"] or any(r["status"] in FAIL for r in results) or bad_c else 0
 
 
 if __name__ == "__main__":

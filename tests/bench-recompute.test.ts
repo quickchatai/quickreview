@@ -96,6 +96,26 @@ describe("aacr_bootstrap", () => {
     expect(r).toEqual([250, 9749]);
   });
 
+  // MUTATION: ignore --seed in main (always SEED) — the earlier study's intervals and this fail
+  it("draws with the seed it is given (the earlier study's is 20260928)", () => {
+    const d = join(tmp, "aacr-seed");
+    jsonl(d, "prs", PRS);
+    jsonl(d, "defects", DEFECTS);
+    jsonl(d, "defect_verdicts", VERDICTS);
+    jsonl(d, "reviews", ["p1", "p2", "p3"].map((i) => ({ arm_id: "X", instance_id: i, judged: true, cost_usd: 1.0 })));
+    const out = join(tmp, "aacr-seed.json");
+    execFileSync("python3", ["-I", join(RECOMPUTE, "aacr_bootstrap.py"), "--data", d, "--arms", "X", "--resamples", "50", "--seed", "7", "--json", out]);
+    const res = JSON.parse(readFileSync(out, "utf8"));
+    expect(res.seed).toBe(7);
+    const want = py(
+      "aacr_bootstrap",
+      "a = json.loads(sys.argv[1]); r = h.bootstrap([p['instance_id'] for p in a['p']], a['d'], a['v'], ['X'], b=50, seed=7)\n" +
+        "print(json.dumps(r['intervals']['X']['recall']))",
+      JSON.stringify({ p: PRS, d: DEFECTS, v: VERDICTS }),
+    );
+    expect(res.intervals.X.recall).toEqual(want);
+  });
+
   it("runs end to end on the tables and prices a defect found from the judged reviews", () => {
     const d = join(tmp, "aacr");
     jsonl(d, "prs", PRS);

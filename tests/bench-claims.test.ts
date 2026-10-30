@@ -225,7 +225,7 @@ describe("verify_claims end to end on small tables", () => {
     return p;
   };
   const verify = (manifest: string, ...extra: string[]) =>
-    run(["--manifest", manifest, "--repo", repo, "--data", data, "--work", join(tmp, "work"), ...extra]);
+    run(["--manifest", manifest, "--repo", repo, "--data", data, "--work", join(tmp, "work"), "--no-validation", ...extra]);
 
   // MUTATION: make `same` compare floats exactly (drop render_like) — 50% against 50.0 fails and this fails
   it("passes every claim the tables give, printed the way the page prints it", () => {
@@ -249,10 +249,10 @@ describe("verify_claims end to end on small tables", () => {
     ]);
     const strict = verify(m);
     expect(strict.code).toBe(1);
-    expect(strict.out).toContain("NO-SCRIPT seven");
+    expect(strict.out).toContain("NO-SCRIPT x1: planted: not computed yet");
     expect(strict.out).toContain("NO-SOURCE smoke");
     const partial = verify(m, "--partial");
-    expect(partial.out).toContain("NO-SCRIPT seven");
+    expect(partial.out).toContain("NO-SCRIPT x1: planted: not computed yet");
     expect(partial.out).not.toContain("NO-SOURCE smoke");
   });
 
@@ -283,5 +283,69 @@ describe("comparing a computed number with the printed one", () => {
   it("passes an approximate claim within the tolerance, and only then", () => {
     expect(same("20", 20.95, 0.1)).toBe(true);
     expect(same("4", 4.61, 0.1)).toBe(false);
+  });
+});
+
+describe("claim_metrics: published numbers by key, from the tables", () => {
+  const dir = join(tmp, "metrics");
+  mkdirSync(dir, { recursive: true });
+  const jl = (name: string, rows: object[]) =>
+    writeFileSync(join(dir, `${name}.jsonl`), rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  jl("prs", [
+    { instance_id: "p1", set: "s1", in_s40: true, language: "Go", pr_category: "x", change_line_count: 5, repo: "r" },
+    { instance_id: "p2", set: "s2", in_s40: false, language: "Go", pr_category: "x", change_line_count: 9, repo: "r" },
+  ]);
+  jl("defects", [
+    { instance_id: "p1", defect_id: "d1", severity: "high", kind: "bug", provenance_hunt: true, provenance_dataset_refs: [], provenance_reviewer_comments: [] },
+    { instance_id: "p1", defect_id: "d2", severity: "low", kind: "bug", provenance_hunt: false, provenance_dataset_refs: [], provenance_reviewer_comments: ["C1"] },
+    { instance_id: "p2", defect_id: "d1", severity: "medium", kind: "build", provenance_hunt: false, provenance_dataset_refs: ["R1"], provenance_reviewer_comments: [] },
+  ]);
+  jl("arms", [{ arm_id: "acme", judge: "j1" }, { arm_id: "widget", judge: "j1" }]);
+  jl("reviews", [
+    { arm_id: "acme", instance_id: "p1", judged: true, judged_by: ["j1", "j2"], cost_usd: 1, minutes: 2, n_comments: 1 },
+    { arm_id: "acme", instance_id: "p2", judged: true, judged_by: ["j1", "j2"], cost_usd: 3, minutes: 4, n_comments: 1 },
+    { arm_id: "widget", instance_id: "p2", judged: true, judged_by: ["j1"], cost_usd: 1, minutes: 1, n_comments: 0 },
+  ]);
+  jl("defect_verdicts", [
+    { arm_id: "acme", judge: "j1", instance_id: "p1", defect_id: "d1", verdict: "found" },
+    { arm_id: "acme", judge: "j1", instance_id: "p1", defect_id: "d2", verdict: "partial" },
+    { arm_id: "acme", judge: "j2", instance_id: "p1", defect_id: "d1", verdict: "found" },
+    { arm_id: "widget", judge: "j1", instance_id: "p2", defect_id: "d1", verdict: "found" },
+  ]);
+  jl("comment_verdicts", []);
+  const value = (provider: string, key: string) =>
+    py(
+      `import claim_metrics as M; t = M.Tables(sys.argv[1]); print(json.dumps(M.PROVIDERS[sys.argv[2]](t).value(sys.argv[3])))`,
+      dir,
+      provider,
+      key,
+    );
+
+  // MUTATION: credit a partial find as 1 in CREDIT — found becomes 2 and this fails
+  it("scores an arm by its judge: a partial counts 1/2, a defect with no row is missed", () => {
+    expect(value("aacr", "acme:found")).toBe(1.5);
+    expect(value("aacr", "acme:high_rec")).toBe(100);
+    expect(value("aacr", "acme:missed")).toBe(1.5);
+    expect(value("aacr", "acme@j2:found")).toBe(1);
+  });
+
+  // MUTATION: drop the `arm=` selector's PR filter — widget's PRs become both and this fails
+  it("narrows the PRs and the key by selector", () => {
+    expect(value("aacr", "acme~arm=widget:defects")).toBe(1);
+    expect(value("aacr", "acme~dset=indep:defects")).toBe(2);
+    expect(value("aacr", "acme+widget~all:single_found")).toBe(3);
+    expect(value("key", "one_source")).toBe(3);
+    expect(value("key", "reviewer_only")).toBe(1);
+  });
+
+  // MUTATION: compare the two judges on every review instead of the ones both judged — pairs becomes 3+ and this fails
+  it("compares two judges only on the reviews both judged, missing rows as missed", () => {
+    expect(value("judges", "j1|j2|acme:pairs")).toBe(3);
+    expect(value("judges", "j1|j2|acme:same")).toBe(2);
+    expect(value("judges", "j1|j2|acme:disagree_partial")).toBe(1);
+  });
+
+  it("refuses a key it cannot read, never a number", () => {
+    expect(() => value("aacr", "nobody:found")).toThrow(/no arm/);
   });
 });

@@ -46,3 +46,26 @@ The archive ships no `packs/`, so `elo.py report` cannot run on it.
 `elo_ratings.py` refits the ratings from the judgments with the same
 Bradley-Terry code and seed. `--check-ratings` shows that the refit equals the
 run's own `ratings.json`.
+
+## Every published number: the claims manifest
+
+`bench/aacr/claims.json` lists every benchmark number the README, the bench
+docs, the Elo README, the dataset card and both papers print: the line it is
+on (an anchor), the value as printed, and the check that recomputes it, or,
+where no check does yet, the reason and the data that holds it. Numbers on
+those lines that are not benchmark claims (versions, dates, list prices,
+method parameters, identifiers) are listed too, with the reason, so that every
+number of every listed file is accounted for. The manifest's `scope` states
+the rule.
+
+    python3 bench/aacr/verify_claims.py --lint      # the manifest against the text; no data
+    uv run --no-project --with pyarrow python bench/aacr/verify_claims.py \
+        --data <downloaded release> [--martian <checkout>] [--qodo-gt <jsonl>] --report-md OUT.md
+
+The verifier finds the Hugging Face tables, the slim bundle and the archive
+under `--data`, recomputes every claim from whichever of them it holds
+(`claim_metrics.py` over the tables; this directory's scripts and
+`verify_slim.py` over the bundle), re-runs the release's own checks
+(`hf_export.py`'s validation and `verify_slim.py`'s bundle checks), and exits
+non-zero on any mismatch, missing source or missing script. `--partial`
+checks only what the given data holds.
