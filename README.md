@@ -229,7 +229,7 @@ automated code reviewer*](bench/aacr/paper/quickreview.pdf).
 Every run behind these numbers is published as the Hugging Face dataset
 [quickchatai/quickreview-bench](https://huggingface.co/datasets/quickchatai/quickreview-bench): the answer
 key, every review and verdict, the Elo judgments, and the run directories
-with their transcripts. [`bench/aacr/recompute/`](bench/aacr/recompute/README.md)
+with a numbers-only extract in place of each raw session log. [`bench/aacr/recompute/`](bench/aacr/recompute/README.md)
 rebuilds each number from it with no model call, and
 [`bench/aacr/README.md`](bench/aacr/README.md#reproduce) shows how to
 re-score the runs with no keys, re-judge them, or re-run the benchmark on

@@ -192,7 +192,7 @@ each file):
    limits to the hunt.
 3. Reviews by default, low and OCR on rest145.
 4. Independent verification, 29 Claude agents × ~5 PRs: every candidate — the
-   hunt's defects, all 1,107 references, all 2,216 reviewer comments (default
+   hunt's defects, all 1,107 references, all 2,221 reviewer comments (default
    978, low 663, OCR 580) anonymised and shuffled, the arm key in a separate file
    the agents were told never to open — checked against the code, merged,
    graded, rejections recorded with a restatement of the claim.
@@ -207,7 +207,7 @@ each file):
 1,527 candidates (OpenCode 557, pi-review 395, Codex 390, Claude Code 185 whole
 review texts) — anonymised and shuffled, checked against the code and the
 current truth by 31 verifier agents, then 11 critics checked every addition:
-931 matched an existing defect, 691 excluded, 16 added, 1 removed by a critic
+931 matched an existing defect, 692 excluded, 16 added, 1 removed by a critic
 (4 critic corrections in total). Net **394 defects** (56 high / 114 medium /
 224 low). The same pass added no defect on the original 40, so their files and
 versions were **not changed** (their new exclusions stay in
@@ -363,8 +363,9 @@ The hunt, verify and extension prompts are reproduced in `PROMPTS.md`.
 
 **In this repo**: the harness wrapper, every arm, sets, ground truth,
 the compare/charts scripts, METRICS and the two papers (with the figures they
-include). **In the Hugging Face dataset [quickchatai/quickreview-bench](https://huggingface.co/datasets/quickchatai/quickreview-bench)**: the run directories (reviews, transcripts,
-judge files, eval metrics), the generated charts and tables, and a slim
+include). **In the Hugging Face dataset [quickchatai/quickreview-bench](https://huggingface.co/datasets/quickchatai/quickreview-bench)**: the run directories (reviews,
+judge files, eval metrics, and a numbers-only extract in place of each raw
+session log), the generated charts and tables, and a slim
 re-score bundle; `../README.md` "Reproduce" says how to use each. A re-run
 reproduces the method, not the exact numbers: models are nondeterministic and
 each reviewer ran once.

@@ -779,7 +779,7 @@ outputs were off limits to the hunt throughout.
 \begin{tikzpicture}
   \node[agent, text width=3.2cm] (hunt) at (-0.3,2.3) {\textbf{expert hunt}\\ \footnotesize 29 agents, references as leads, never the reviews\\ 235 drafts};
   \node[data, text width=3.2cm] (refs) at (-0.3,0) {\textbf{AACR references}\\ \footnotesize 1{,}107 comments};
-  \node[data, text width=3.2cm] (com) at (-0.3,-2.0) {\textbf{reviewer comments}\\ \footnotesize default, low, OCR: 2{,}216};
+  \node[data, text width=3.2cm] (com) at (-0.3,-2.0) {\textbf{reviewer comments}\\ \footnotesize default, low, OCR: 2{,}221};
   \node[box, text width=2.4cm] (anon) at (3.7,0) {\textbf{anonymise}\\ \footnotesize strip authorship, shuffle; key in a separate file};
   \node[agent, text width=2.7cm] (ver) at (7.1,0) {\textbf{independent verifiers}\\ \footnotesize 29 agents; each candidate checked against the code; merge, grade, or exclude with a reason};
   \node[agent, text width=2.4cm] (crit) at (10.5,0) {\textbf{adversarial critics}\\ \footnotesize 10 agents; 6 corrections};
@@ -823,7 +823,7 @@ final comparison's gpt-6.1-sol runs were never candidates
   open-code-review ran on R145 (gpt-6-sol).
   \item \textbf{Independent verification}: 29 Claude agents, about five PRs
   each. Every candidate (the hunt's drafts, all 1{,}107 references, and all
-  2{,}216 reviewer comments: default 978, low 663, OCR 580) was checked
+  2{,}221 reviewer comments: default 978, low 663, OCR 580) was checked
   against the code. Reviewer comments were anonymised and shuffled; the key
   mapping them to reviewers sat in a separate file the agents were told never
   to open. Duplicates were merged, severities graded, and every rejection
@@ -867,7 +867,7 @@ whole review texts) was anonymised, shuffled by a hash of the comment text,
 and checked against the code and the current key by 31 verifier agents. A
 Claude Code review is prose, so each whole review is one candidate whose
 claims are checked one by one (which is why the outcomes below sum to more
-than 1{,}527). Results: 931 matched an existing defect, 691 excluded with
+than 1{,}527). Results: 931 matched an existing defect, 692 excluded with
 reasons (572 of them on R145), 16 added. Eleven critics checked every
 addition and removed one (4 critic corrections in total). Net \textbf{+15
 defects}: R145 v2 has \textbf{394 defects} (56 high / 114 medium / 224 low).
@@ -2776,9 +2776,9 @@ golden audit, which reads all 173 and is kept out of every reviewer change.
     \cmidrule(lr){3-6}\cmidrule(lr){7-10}
     Reviewer & Issues/PR & P & R & F1 & $F_2$ & P & R & F1 & $F_2$ \\
     \midrule
-    \qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.8 \\
+    \qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\
     \qcr{} default, round 3 (five lens changes) & 9.2 & 20.2 & 60.3 & 30.3 & 43.2 & \multicolumn{4}{c}{not run} \\
-    \qcr{} default, round 4 (six more changes) & 10.6 & \multicolumn{4}{c}{not run (targeted check only)} & 18.6 & 55.0 & 27.8 & 39.6 \\
+    \qcr{} default, round 4 (six more changes) & 10.5 & \multicolumn{4}{c}{not run (targeted check only)} & 18.6 & 55.0 & 27.8 & 39.6 \\
     \qcr{} frozen posting policy & 2.0 & 49.0 & 43.1 & 45.9 & 44.2 & 36.5 & 19.0 & 25.0 & 21.0 \\
     \qcr{} \code{snappy} profile, iteration 1 & 3.3 & 27.0 & 34.5 & 30.3 & 32.7 & \multicolumn{4}{c}{not run} \\
     \midrule
@@ -2820,7 +2820,7 @@ points, $F_2$ unchanged within judge noise. \qcr{} has never been judged by Opus
 50 PRs Opus credits 7--12 more matches per tool than our judge across our
 passes (in this one cubic-v2 95 $\to$ 104, qodo-extended-v2 95 $\to$ 102,
 Claude Code 65 $\to$ 76); the same shift puts the frozen build at roughly
-17--18 precision and 70--73 recall, $F_2 \approx$ 43.5--45.6, fourteenth to
+17--18 precision and 70--73 recall, $F_2 \approx$ 43.6--45.6, fourteenth to
 sixteenth of 23 on the published leaderboard (Figure~\ref{fig:martianlb}):
 recall at the top, precision at the bottom.
 
@@ -3100,7 +3100,7 @@ the 30 held-out PRs (Table~\ref{tab:martianpending}).
     \toprule
     Reviewer (\code{test30}) & P & R & F1 & $F_2$ & Real found & Not real \\
     \midrule
-    \qcr{} default, as posted (round 1) & 18.2 & 54.0 & 27.2 & 38.8 & 40 / 52 & 22\% \\
+    \qcr{} default, as posted (round 1) & 18.2 & 54.0 & 27.2 & 38.7 & 40 / 52 & 22\% \\
     \qcr{} default, round 4 & 18.6 & 55.0 & 27.8 & 39.6 & 42 / 52 & 22\% \\
     \midrule
     qodo-extended-v2 (re-judged) & 59.4 & 60.0 & 59.7 & 59.9 & 43 / 52 & 25\% \\
@@ -3112,7 +3112,7 @@ the 30 held-out PRs (Table~\ref{tab:martianpending}).
 
 On Martian's own score round 4 is flat: precision 18.6 against 18.2, recall
 55.0 against 54.0, inside the roughly three points by which two judgings of
-the same comparator differ. Its volume is unchanged (10.6 inline comments
+the same comparator differ. Its volume is unchanged (10.5 inline comments
 per PR against 10.8; 299 extracted issues against 301), so precision remains
 the whole of the gap. On the audited real goldens it moved from 40 to 42 of
 52, one behind qodo-extended-v2 (43) and ahead of cubic-v2 (33) and Claude
@@ -3457,7 +3457,7 @@ Recall is against the union of defects somebody in the candidate pool raised
 and a verifier confirmed. \qcr{} default (on gpt-6-sol) raised 88\% of the v1
 R145 defects and 29 that nobody else did. \emph{Mitigations:} anonymised,
 shuffled candidates with the key withheld; every rejection recorded (2{,}118
-and 691); few additions from the extension. \emph{Measured:} on the 369
+and 692); few additions from the extension. \emph{Measured:} on the 369
 defects the hunt or a reference raised, the final comparison's order at the
 top is unchanged (default 81\%, \code{low} 74\%, Claude Code 70\%, the panel
 69\%; Section~\ref{sec:halves}); in the earlier study the

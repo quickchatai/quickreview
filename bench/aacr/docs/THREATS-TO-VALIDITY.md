@@ -70,7 +70,7 @@ several sources.
   OpenCode, pi-review and Claude Code were only added in a second pass (the
   extension). That pass checked 1,527 of their comments:
   - 931 matched an existing defect;
-  - 691 were excluded;
+  - 692 were excluded;
   - 16 new defects were added, of which the critics removed 1. Net +15, taking
     the total to 394.
 
@@ -118,7 +118,7 @@ What it does not show:
   every reviewer's comments anonymised and shuffled, and the reviewer key was
   never shown to them. A comment was never accepted because of who wrote it.
 - **Every rejection is recorded** with its reason: 2,118 in the first pass and
-  691 in the extension. So a reader can audit what was thrown away.
+  692 in the extension. So a reader can audit what was thrown away.
 - **The extension produced few new defects.** Only 15 of the 1,527 new
   comments became new defects. That is evidence the pool was already close to
   saturated, not proof that it was.

@@ -23408,7 +23408,7 @@
   {
    "id": "bench.bench:sol-study.419",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.8 \\\\",
+   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
    "value": "9.0",
    "group": "bench:sol-study",
    "q": "martian:mv-r1-asposted|quickreview:inline_per_pr",
@@ -23417,7 +23417,7 @@
   {
    "id": "bench.bench:sol-study.420",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.8 \\\\",
+   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
    "value": "19.7",
    "group": "bench:sol-study",
    "q": "martian:mv-r1-asposted|quickreview:core_precision"
@@ -23425,7 +23425,7 @@
   {
    "id": "bench.bench:sol-study.421",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.8 \\\\",
+   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
    "value": "58.6",
    "group": "bench:sol-study",
    "q": "martian:mv-r1-asposted|quickreview:core_recall"
@@ -23433,7 +23433,7 @@
   {
    "id": "bench.bench:sol-study.422",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.8 \\\\",
+   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
    "value": "29.4",
    "group": "bench:sol-study",
    "q": "martian:mv-r1-asposted|quickreview:core_f1"
@@ -23441,7 +23441,7 @@
   {
    "id": "bench.bench:sol-study.423",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.8 \\\\",
+   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
    "value": "42.0",
    "group": "bench:sol-study",
    "q": "martian:mv-r1-asposted|quickreview:core_f2"
@@ -23449,7 +23449,7 @@
   {
    "id": "bench.bench:sol-study.424",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.8 \\\\",
+   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
    "value": "18.2",
    "group": "bench:sol-study",
    "q": "martian:ext-g61-martian-test30|quickreview:core_precision"
@@ -23457,7 +23457,7 @@
   {
    "id": "bench.bench:sol-study.425",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.8 \\\\",
+   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
    "value": "54.0",
    "group": "bench:sol-study",
    "q": "martian:ext-g61-martian-test30|quickreview:core_recall"
@@ -23465,7 +23465,7 @@
   {
    "id": "bench.bench:sol-study.426",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.8 \\\\",
+   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
    "value": "27.2",
    "group": "bench:sol-study",
    "q": "martian:ext-g61-martian-test30|quickreview:core_f1"
@@ -23473,8 +23473,8 @@
   {
    "id": "bench.bench:sol-study.427",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.8 \\\\",
-   "value": "38.8",
+   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
+   "value": "38.7",
    "group": "bench:sol-study",
    "q": "martian:ext-g61-martian-test30|quickreview:core_f2"
   },
@@ -23521,15 +23521,15 @@
   {
    "id": "bench.bench:sol-study.435",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, round 4 (six more changes) & 10.6 & \\multicolumn{4}{c}{not run (targeted check only)} & 18.6 & 55.0 & 27.8 & 39.6 \\\\",
-   "value": "10.6",
+   "anchor": "\\qcr{} default, round 4 (six more changes) & 10.5 & \\multicolumn{4}{c}{not run (targeted check only)} & 18.6 & 55.0 & 27.8 & 39.6 \\\\",
+   "value": "10.5",
    "group": "bench:sol-study",
    "q": "martian:ext-r4-martian-test30|quickreview:inline_per_pr"
   },
   {
    "id": "bench.bench:sol-study.436",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, round 4 (six more changes) & 10.6 & \\multicolumn{4}{c}{not run (targeted check only)} & 18.6 & 55.0 & 27.8 & 39.6 \\\\",
+   "anchor": "\\qcr{} default, round 4 (six more changes) & 10.5 & \\multicolumn{4}{c}{not run (targeted check only)} & 18.6 & 55.0 & 27.8 & 39.6 \\\\",
    "value": "18.6",
    "group": "bench:sol-study",
    "q": "martian:ext-r4-martian-test30|quickreview:core_precision"
@@ -23537,7 +23537,7 @@
   {
    "id": "bench.bench:sol-study.437",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, round 4 (six more changes) & 10.6 & \\multicolumn{4}{c}{not run (targeted check only)} & 18.6 & 55.0 & 27.8 & 39.6 \\\\",
+   "anchor": "\\qcr{} default, round 4 (six more changes) & 10.5 & \\multicolumn{4}{c}{not run (targeted check only)} & 18.6 & 55.0 & 27.8 & 39.6 \\\\",
    "value": "55.0",
    "group": "bench:sol-study",
    "q": "martian:ext-r4-martian-test30|quickreview:core_recall"
@@ -23545,7 +23545,7 @@
   {
    "id": "bench.bench:sol-study.438",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, round 4 (six more changes) & 10.6 & \\multicolumn{4}{c}{not run (targeted check only)} & 18.6 & 55.0 & 27.8 & 39.6 \\\\",
+   "anchor": "\\qcr{} default, round 4 (six more changes) & 10.5 & \\multicolumn{4}{c}{not run (targeted check only)} & 18.6 & 55.0 & 27.8 & 39.6 \\\\",
    "value": "27.8",
    "group": "bench:sol-study",
    "q": "martian:ext-r4-martian-test30|quickreview:core_f1"
@@ -23553,7 +23553,7 @@
   {
    "id": "bench.bench:sol-study.439",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, round 4 (six more changes) & 10.6 & \\multicolumn{4}{c}{not run (targeted check only)} & 18.6 & 55.0 & 27.8 & 39.6 \\\\",
+   "anchor": "\\qcr{} default, round 4 (six more changes) & 10.5 & \\multicolumn{4}{c}{not run (targeted check only)} & 18.6 & 55.0 & 27.8 & 39.6 \\\\",
    "value": "39.6",
    "group": "bench:sol-study",
    "q": "martian:ext-r4-martian-test30|quickreview:core_f2"
@@ -25338,7 +25338,7 @@
   {
    "id": "bench.bench:sol-study.665",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted (round 1) & 18.2 & 54.0 & 27.2 & 38.8 & 40 / 52 & 22\\% \\\\",
+   "anchor": "\\qcr{} default, as posted (round 1) & 18.2 & 54.0 & 27.2 & 38.7 & 40 / 52 & 22\\% \\\\",
    "value": "18.2",
    "group": "bench:sol-study",
    "q": "martian:ext-g61-martian-test30|quickreview:core_precision"
@@ -25346,7 +25346,7 @@
   {
    "id": "bench.bench:sol-study.666",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted (round 1) & 18.2 & 54.0 & 27.2 & 38.8 & 40 / 52 & 22\\% \\\\",
+   "anchor": "\\qcr{} default, as posted (round 1) & 18.2 & 54.0 & 27.2 & 38.7 & 40 / 52 & 22\\% \\\\",
    "value": "54.0",
    "group": "bench:sol-study",
    "q": "martian:ext-g61-martian-test30|quickreview:core_recall"
@@ -25354,7 +25354,7 @@
   {
    "id": "bench.bench:sol-study.667",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted (round 1) & 18.2 & 54.0 & 27.2 & 38.8 & 40 / 52 & 22\\% \\\\",
+   "anchor": "\\qcr{} default, as posted (round 1) & 18.2 & 54.0 & 27.2 & 38.7 & 40 / 52 & 22\\% \\\\",
    "value": "27.2",
    "group": "bench:sol-study",
    "q": "martian:ext-g61-martian-test30|quickreview:core_f1"
@@ -25362,15 +25362,15 @@
   {
    "id": "bench.bench:sol-study.668",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted (round 1) & 18.2 & 54.0 & 27.2 & 38.8 & 40 / 52 & 22\\% \\\\",
-   "value": "38.8",
+   "anchor": "\\qcr{} default, as posted (round 1) & 18.2 & 54.0 & 27.2 & 38.7 & 40 / 52 & 22\\% \\\\",
+   "value": "38.7",
    "group": "bench:sol-study",
    "q": "martian:ext-g61-martian-test30|quickreview:core_f2"
   },
   {
    "id": "bench.bench:sol-study.669",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted (round 1) & 18.2 & 54.0 & 27.2 & 38.8 & 40 / 52 & 22\\% \\\\",
+   "anchor": "\\qcr{} default, as posted (round 1) & 18.2 & 54.0 & 27.2 & 38.7 & 40 / 52 & 22\\% \\\\",
    "value": "40",
    "group": "bench:sol-study",
    "q": "martian:ext-g61-martian-test30|quickreview:real_found"
@@ -25378,7 +25378,7 @@
   {
    "id": "bench.bench:sol-study.670",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted (round 1) & 18.2 & 54.0 & 27.2 & 38.8 & 40 / 52 & 22\\% \\\\",
+   "anchor": "\\qcr{} default, as posted (round 1) & 18.2 & 54.0 & 27.2 & 38.7 & 40 / 52 & 22\\% \\\\",
    "value": "52",
    "group": "bench:sol-study",
    "q": "martian:goldens~martian-test30:real"
@@ -25386,7 +25386,7 @@
   {
    "id": "bench.bench:sol-study.671",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted (round 1) & 18.2 & 54.0 & 27.2 & 38.8 & 40 / 52 & 22\\% \\\\",
+   "anchor": "\\qcr{} default, as posted (round 1) & 18.2 & 54.0 & 27.2 & 38.7 & 40 / 52 & 22\\% \\\\",
    "value": "22%",
    "group": "bench:sol-study",
    "q": "martian:ext-g61-martian-test30|quickreview:notreal_share"
@@ -26094,8 +26094,8 @@
   {
    "id": "bench.misc.22",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\node[data, text width=3.2cm] (com) at (-0.3,-2.0) {\\textbf{reviewer comments}\\\\ \\footnotesize default, low, OCR: 2{,}216};",
-   "value": "2,216",
+   "anchor": "\\node[data, text width=3.2cm] (com) at (-0.3,-2.0) {\\textbf{reviewer comments}\\\\ \\footnotesize default, low, OCR: 2{,}221};",
+   "value": "2,221",
    "q": "key_build:first_key/candidates",
    "note": "the three runs' comments, 978 + 663 + 580, are 2,221 in candidates-key.json"
   },
@@ -27492,8 +27492,8 @@
   {
    "id": "bench.card:key.12",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "2{,}216 reviewer comments: default 978, low 663, OCR 580) was checked",
-   "value": "2,216",
+   "anchor": "2{,}221 reviewer comments: default 978, low 663, OCR 580) was checked",
+   "value": "2,221",
    "group": "card:key",
    "q": "key_build:first_key/candidates",
    "data": [
@@ -27504,7 +27504,7 @@
   {
    "id": "bench.card:key.13",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "2{,}216 reviewer comments: default 978, low 663, OCR 580) was checked",
+   "anchor": "2{,}221 reviewer comments: default 978, low 663, OCR 580) was checked",
    "value": "978",
    "group": "card:key",
    "q": "key_build:first_key/candidates_by_run/default",
@@ -27515,7 +27515,7 @@
   {
    "id": "bench.card:key.14",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "2{,}216 reviewer comments: default 978, low 663, OCR 580) was checked",
+   "anchor": "2{,}221 reviewer comments: default 978, low 663, OCR 580) was checked",
    "value": "663",
    "group": "card:key",
    "q": "key_build:first_key/candidates_by_run/low",
@@ -27526,7 +27526,7 @@
   {
    "id": "bench.card:key.15",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "2{,}216 reviewer comments: default 978, low 663, OCR 580) was checked",
+   "anchor": "2{,}221 reviewer comments: default 978, low 663, OCR 580) was checked",
    "value": "580",
    "group": "card:key",
    "q": "key_build:first_key/candidates_by_run/ocr",
@@ -27964,7 +27964,7 @@
   {
    "id": "bench.card:key.64",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "than 1{,}527). Results: 931 matched an existing defect, 691 excluded with",
+   "anchor": "than 1{,}527). Results: 931 matched an existing defect, 692 excluded with",
    "value": "1,527",
    "group": "card:key",
    "q": "key_build:extension/candidates",
@@ -27975,7 +27975,7 @@
   {
    "id": "bench.card:key.65",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "than 1{,}527). Results: 931 matched an existing defect, 691 excluded with",
+   "anchor": "than 1{,}527). Results: 931 matched an existing defect, 692 excluded with",
    "value": "931",
    "group": "card:key",
    "q": "key_build:extension/matched_existing",
@@ -27986,8 +27986,8 @@
   {
    "id": "bench.card:key.66",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "than 1{,}527). Results: 931 matched an existing defect, 691 excluded with",
-   "value": "691",
+   "anchor": "than 1{,}527). Results: 931 matched an existing defect, 692 excluded with",
+   "value": "692",
    "group": "card:key",
    "q": "key_build:extension/excluded",
    "data": [
@@ -35727,7 +35727,7 @@
   {
    "id": "bench.bench:tab:martianfinal.152",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "17--18 precision and 70--73 recall, $F_2 \\approx$ 43.5--45.6, fourteenth to",
+   "anchor": "17--18 precision and 70--73 recall, $F_2 \\approx$ 43.6--45.6, fourteenth to",
    "value": "17",
    "group": "bench:tab:martianfinal",
    "q": "({martian:final1-martian50|quickreview-frozen:core_tp} + min({martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:ext-default3-martian-tune20+ext-r4-martian-test30|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-claude-code:core_tp})) / ({martian:final1-martian50|quickreview-frozen:core_tp} + {martian:final1-martian50|quickreview-frozen:core_fp}) * 100"
@@ -35735,7 +35735,7 @@
   {
    "id": "bench.bench:tab:martianfinal.153",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "17--18 precision and 70--73 recall, $F_2 \\approx$ 43.5--45.6, fourteenth to",
+   "anchor": "17--18 precision and 70--73 recall, $F_2 \\approx$ 43.6--45.6, fourteenth to",
    "value": "18",
    "group": "bench:tab:martianfinal",
    "q": "({martian:final1-martian50|quickreview-frozen:core_tp} + max({martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:ext-default3-martian-tune20+ext-r4-martian-test30|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-claude-code:core_tp})) / ({martian:final1-martian50|quickreview-frozen:core_tp} + {martian:final1-martian50|quickreview-frozen:core_fp}) * 100"
@@ -35743,7 +35743,7 @@
   {
    "id": "bench.bench:tab:martianfinal.154",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "17--18 precision and 70--73 recall, $F_2 \\approx$ 43.5--45.6, fourteenth to",
+   "anchor": "17--18 precision and 70--73 recall, $F_2 \\approx$ 43.6--45.6, fourteenth to",
    "value": "70",
    "group": "bench:tab:martianfinal",
    "q": "({martian:final1-martian50|quickreview-frozen:core_tp} + min({martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:ext-default3-martian-tune20+ext-r4-martian-test30|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-claude-code:core_tp})) / ({martian:final1-martian50|quickreview-frozen:core_tp} + {martian:final1-martian50|quickreview-frozen:core_fn}) * 100"
@@ -35751,7 +35751,7 @@
   {
    "id": "bench.bench:tab:martianfinal.155",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "17--18 precision and 70--73 recall, $F_2 \\approx$ 43.5--45.6, fourteenth to",
+   "anchor": "17--18 precision and 70--73 recall, $F_2 \\approx$ 43.6--45.6, fourteenth to",
    "value": "73",
    "group": "bench:tab:martianfinal",
    "q": "({martian:final1-martian50|quickreview-frozen:core_tp} + max({martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:ext-default3-martian-tune20+ext-r4-martian-test30|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-claude-code:core_tp})) / ({martian:final1-martian50|quickreview-frozen:core_tp} + {martian:final1-martian50|quickreview-frozen:core_fn}) * 100"
@@ -35759,15 +35759,15 @@
   {
    "id": "bench.bench:tab:martianfinal.156",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "17--18 precision and 70--73 recall, $F_2 \\approx$ 43.5--45.6, fourteenth to",
-   "value": "43.5",
+   "anchor": "17--18 precision and 70--73 recall, $F_2 \\approx$ 43.6--45.6, fourteenth to",
+   "value": "43.6",
    "group": "bench:tab:martianfinal",
    "q": "5 * (({martian:final1-martian50|quickreview-frozen:core_tp} + min({martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:ext-default3-martian-tune20+ext-r4-martian-test30|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-claude-code:core_tp})) / ({martian:final1-martian50|quickreview-frozen:core_tp} + {martian:final1-martian50|quickreview-frozen:core_fp}) * 100) * (({martian:final1-martian50|quickreview-frozen:core_tp} + min({martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:ext-default3-martian-tune20+ext-r4-martian-test30|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-claude-code:core_tp})) / ({martian:final1-martian50|quickreview-frozen:core_tp} + {martian:final1-martian50|quickreview-frozen:core_fn}) * 100) / (4 * (({martian:final1-martian50|quickreview-frozen:core_tp} + min({martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:ext-default3-martian-tune20+ext-r4-martian-test30|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-claude-code:core_tp})) / ({martian:final1-martian50|quickreview-frozen:core_tp} + {martian:final1-martian50|quickreview-frozen:core_fp}) * 100) + (({martian:final1-martian50|quickreview-frozen:core_tp} + min({martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:ext-default3-martian-tune20+ext-r4-martian-test30|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-claude-code:core_tp})) / ({martian:final1-martian50|quickreview-frozen:core_tp} + {martian:final1-martian50|quickreview-frozen:core_fn}) * 100))"
   },
   {
    "id": "bench.bench:tab:martianfinal.157",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "17--18 precision and 70--73 recall, $F_2 \\approx$ 43.5--45.6, fourteenth to",
+   "anchor": "17--18 precision and 70--73 recall, $F_2 \\approx$ 43.6--45.6, fourteenth to",
    "value": "45.6",
    "group": "bench:tab:martianfinal",
    "q": "5 * (({martian:final1-martian50|quickreview-frozen:core_tp} + max({martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:ext-default3-martian-tune20+ext-r4-martian-test30|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-claude-code:core_tp})) / ({martian:final1-martian50|quickreview-frozen:core_tp} + {martian:final1-martian50|quickreview-frozen:core_fp}) * 100) * (({martian:final1-martian50|quickreview-frozen:core_tp} + max({martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:ext-default3-martian-tune20+ext-r4-martian-test30|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-claude-code:core_tp})) / ({martian:final1-martian50|quickreview-frozen:core_tp} + {martian:final1-martian50|quickreview-frozen:core_fn}) * 100) / (4 * (({martian:final1-martian50|quickreview-frozen:core_tp} + max({martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:ext-default3-martian-tune20+ext-r4-martian-test30|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-claude-code:core_tp})) / ({martian:final1-martian50|quickreview-frozen:core_tp} + {martian:final1-martian50|quickreview-frozen:core_fp}) * 100) + (({martian:final1-martian50|quickreview-frozen:core_tp} + max({martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:ext-default3-martian-tune20+ext-r4-martian-test30|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-claude-code:core_tp})) / ({martian:final1-martian50|quickreview-frozen:core_tp} + {martian:final1-martian50|quickreview-frozen:core_fn}) * 100))"
@@ -36925,8 +36925,8 @@
   {
    "id": "bench.bench:tab:martianfinal.278",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "the same comparator differ. Its volume is unchanged (10.6 inline comments",
-   "value": "10.6",
+   "anchor": "the same comparator differ. Its volume is unchanged (10.5 inline comments",
+   "value": "10.5",
    "group": "bench:tab:martianfinal",
    "q": "martian:ext-r4-martian-test30|quickreview:inline_per_pr",
    "data": [
@@ -38378,8 +38378,8 @@
   {
    "id": "bench.bench:final-tables.1123",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "and 691); few additions from the extension. \\emph{Measured:} on the 369",
-   "value": "691",
+   "anchor": "and 692); few additions from the extension. \\emph{Measured:} on the 369",
+   "value": "692",
    "group": "bench:final-tables",
    "q": "key_build:extension/excluded",
    "data": [
@@ -38390,7 +38390,7 @@
   {
    "id": "bench.bench:final-tables.1124",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "and 691); few additions from the extension. \\emph{Measured:} on the 369",
+   "anchor": "and 692); few additions from the extension. \\emph{Measured:} on the 369",
    "value": "369",
    "group": "bench:final-tables",
    "q": "key:indep"
@@ -42759,20 +42759,20 @@
   {
    "id": "qr.qr:mechanism.92",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "seven smaller sub-lenses & 2.8\\% & 80.5 & --- & 4 \\\\",
-   "value": "2.8%",
+   "anchor": "seven smaller sub-lenses & 2.7\\% & 80.5 & --- & 4 \\\\",
+   "value": "2.7%",
    "group": "qr:mechanism",
    "q": "round({lens_credit:cost_share/rollout}, 1) + round({lens_credit:cost_share/ui}, 1) + round({lens_credit:cost_share/concurrency}, 1) + round({lens_credit:cost_share/delivery}, 1) + round({lens_credit:cost_share/deferred}, 1) + round({lens_credit:cost_share/roundtrip}, 1) + round({lens_credit:cost_share/statelessness}, 1)",
    "data": [
     "archive:quickreview-runs-aacr-gpt6sol-study.tar.zst",
     "archive:quickreview-runs-analysis.tar.zst"
    ],
-   "note": "the seven lenses' shares, 0.7 + 0.5 + 0.5 + 0.4 + 0.3 + 0.2 + 0.1, add to 2.7 (unrounded 2.71); the text prints 2.8"
+   "note": "the seven lenses' shares, 0.7 + 0.5 + 0.5 + 0.4 + 0.3 + 0.2 + 0.1, add to 2.7 (unrounded 2.71)"
   },
   {
    "id": "qr.qr:mechanism.93",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "seven smaller sub-lenses & 2.8\\% & 80.5 & --- & 4 \\\\",
+   "anchor": "seven smaller sub-lenses & 2.7\\% & 80.5 & --- & 4 \\\\",
    "value": "80.5",
    "group": "qr:mechanism",
    "q": "{lens_credit:co_credit/rollout} + {lens_credit:co_credit/ui} + {lens_credit:co_credit/concurrency} + {lens_credit:co_credit/delivery} + {lens_credit:co_credit/deferred} + {lens_credit:co_credit/roundtrip} + {lens_credit:co_credit/statelessness}",
@@ -42784,7 +42784,7 @@
   {
    "id": "qr.qr:mechanism.94",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "seven smaller sub-lenses & 2.8\\% & 80.5 & --- & 4 \\\\",
+   "anchor": "seven smaller sub-lenses & 2.7\\% & 80.5 & --- & 4 \\\\",
    "value": "4",
    "group": "qr:mechanism",
    "q": "{lens_credit:unique/rollout} + {lens_credit:unique/ui} + {lens_credit:unique/delivery} + {lens_credit:unique/deferred}",
@@ -47798,20 +47798,20 @@
   {
    "id": "qr.qr:mechanism.126",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "were raised by a single lens and 127 by six or more (two lenses 57, three",
-   "value": "127",
+   "anchor": "were raised by a single lens and 126 by six or more (two lenses 57, three",
+   "value": "126",
    "group": "qr:mechanism",
    "q": "lens_credit:lenses_per_defect/6+",
    "data": [
     "archive:quickreview-runs-aacr-gpt6sol-study.tar.zst",
     "archive:quickreview-runs-analysis.tar.zst"
    ],
-   "note": "one defect (gofr 2c0c099 D1, credited through a finding posted in the review body) has five lenses in this recount, the text counts it with six or more"
+   "note": "one defect (gofr 2c0c099 D1, credited through a finding posted in the review body) has five lenses, so it counts under five, not six or more"
   },
   {
    "id": "qr.qr:mechanism.127",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "were raised by a single lens and 127 by six or more (two lenses 57, three",
+   "anchor": "were raised by a single lens and 126 by six or more (two lenses 57, three",
    "value": "57",
    "group": "qr:mechanism",
    "q": "lens_credit:lenses_per_defect/2",
@@ -47823,7 +47823,7 @@
   {
    "id": "qr.qr:mechanism.128",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "72, four 60, five 53). The validator saw 2{,}959 candidates: 1{,}456 merged",
+   "anchor": "72, four 60, five 54). The validator saw 2{,}959 candidates: 1{,}456 merged",
    "value": "72",
    "group": "qr:mechanism",
    "q": "lens_credit:lenses_per_defect/3",
@@ -47835,7 +47835,7 @@
   {
    "id": "qr.qr:mechanism.129",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "72, four 60, five 53). The validator saw 2{,}959 candidates: 1{,}456 merged",
+   "anchor": "72, four 60, five 54). The validator saw 2{,}959 candidates: 1{,}456 merged",
    "value": "60",
    "group": "qr:mechanism",
    "q": "lens_credit:lenses_per_defect/4",
@@ -47847,20 +47847,20 @@
   {
    "id": "qr.qr:mechanism.130",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "72, four 60, five 53). The validator saw 2{,}959 candidates: 1{,}456 merged",
-   "value": "53",
+   "anchor": "72, four 60, five 54). The validator saw 2{,}959 candidates: 1{,}456 merged",
+   "value": "54",
    "group": "qr:mechanism",
    "q": "lens_credit:lenses_per_defect/5",
    "data": [
     "archive:quickreview-runs-aacr-gpt6sol-study.tar.zst",
     "archive:quickreview-runs-analysis.tar.zst"
    ],
-   "note": "one defect (gofr 2c0c099 D1, credited through a finding posted in the review body) has five lenses in this recount, the text counts it with six or more"
+   "note": "one defect (gofr 2c0c099 D1, credited through a finding posted in the review body) has five lenses, so it counts under five, not six or more"
   },
   {
    "id": "qr.qr:mechanism.131",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "72, four 60, five 53). The validator saw 2{,}959 candidates: 1{,}456 merged",
+   "anchor": "72, four 60, five 54). The validator saw 2{,}959 candidates: 1{,}456 merged",
    "value": "2,959",
    "group": "qr:mechanism",
    "q": "lens_credit:validator/findings",
@@ -47872,7 +47872,7 @@
   {
    "id": "qr.qr:mechanism.132",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "72, four 60, five 53). The validator saw 2{,}959 candidates: 1{,}456 merged",
+   "anchor": "72, four 60, five 54). The validator saw 2{,}959 candidates: 1{,}456 merged",
    "value": "1,456",
    "group": "qr:mechanism",
    "q": "lens_credit:validator/merged",
@@ -51591,8 +51591,8 @@
   {
    "id": "threats.card:key.23",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  - 691 were excluded;",
-   "value": "691",
+   "anchor": "  - 692 were excluded;",
+   "value": "692",
    "group": "card:key",
    "q": "key_build:extension/excluded",
    "data": [
@@ -51959,8 +51959,8 @@
   {
    "id": "threats.card:key.30",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  691 in the extension. So a reader can audit",
-   "value": "691",
+   "anchor": "  692 in the extension. So a reader can audit",
+   "value": "692",
    "group": "card:key",
    "q": "key_build:extension/excluded",
    "data": [
@@ -53699,7 +53699,7 @@
   {
    "id": "meth.card:key.54",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "hunt's defects, all 1,107 references, all 2,216 reviewer comments (default",
+   "anchor": "hunt's defects, all 1,107 references, all 2,221 reviewer comments (default",
    "value": "1,107",
    "group": "card:key",
    "q": "key:refs~set=rest145"
@@ -53707,8 +53707,8 @@
   {
    "id": "meth.card:key.55",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "hunt's defects, all 1,107 references, all 2,216 reviewer comments (default",
-   "value": "2,216",
+   "anchor": "hunt's defects, all 1,107 references, all 2,221 reviewer comments (default",
+   "value": "2,221",
    "group": "card:key",
    "q": "key_build:first_key/candidates",
    "data": [
@@ -53859,7 +53859,7 @@
   {
    "id": "meth.card:key.74",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "931 matched an existing defect, 691 excluded, 16 added, 1 removed by a critic",
+   "anchor": "931 matched an existing defect, 692 excluded, 16 added, 1 removed by a critic",
    "value": "931",
    "group": "card:key",
    "q": "key_build:extension/matched_existing",
@@ -53870,8 +53870,8 @@
   {
    "id": "meth.card:key.75",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "931 matched an existing defect, 691 excluded, 16 added, 1 removed by a critic",
-   "value": "691",
+   "anchor": "931 matched an existing defect, 692 excluded, 16 added, 1 removed by a critic",
+   "value": "692",
    "group": "card:key",
    "q": "key_build:extension/excluded",
    "data": [
@@ -53882,7 +53882,7 @@
   {
    "id": "meth.card:key.76",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "931 matched an existing defect, 691 excluded, 16 added, 1 removed by a critic",
+   "anchor": "931 matched an existing defect, 692 excluded, 16 added, 1 removed by a critic",
    "value": "16",
    "group": "card:key",
    "q": null,
@@ -53894,7 +53894,7 @@
   {
    "id": "meth.card:key.77",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "931 matched an existing defect, 691 excluded, 16 added, 1 removed by a critic",
+   "anchor": "931 matched an existing defect, 692 excluded, 16 added, 1 removed by a critic",
    "value": "1",
    "group": "card:key",
    "q": null,
@@ -56222,7 +56222,7 @@
   },
   {
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\node[data, text width=3.2cm] (com) at (-0.3,-2.0) {\\textbf{reviewer comments}\\\\ \\footnotesize default, low, OCR: 2{,}216};",
+   "anchor": "\\node[data, text width=3.2cm] (com) at (-0.3,-2.0) {\\textbf{reviewer comments}\\\\ \\footnotesize default, low, OCR: 2{,}221};",
    "tokens": [
     "3",
     "-0.3",
@@ -65188,7 +65188,7 @@
   },
   {
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, round 4 (six more changes) & 10.6 & \\multicolumn{4}{c}{not run (targeted check only)} & 18.6 & 55.0 & 27.8 & 39.6 \\\\",
+   "anchor": "\\qcr{} default, round 4 (six more changes) & 10.5 & \\multicolumn{4}{c}{not run (targeted check only)} & 18.6 & 55.0 & 27.8 & 39.6 \\\\",
    "tokens": [
     "4"
    ],
@@ -65204,7 +65204,7 @@
   },
   {
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted (round 1) & 18.2 & 54.0 & 27.2 & 38.8 & 40 / 52 & 22\\% \\\\",
+   "anchor": "\\qcr{} default, as posted (round 1) & 18.2 & 54.0 & 27.2 & 38.7 & 40 / 52 & 22\\% \\\\",
    "tokens": [
     "1"
    ],

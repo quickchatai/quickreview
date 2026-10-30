@@ -32,7 +32,7 @@ the authors' machines.
 
 **Tier 1 — re-score and re-chart the published runs: no keys, no docker.**
 Download the **slim re-score bundle** (the dataset's `slim/` folder) — every run dir
-behind the papers' tables, without the multi-gigabyte per-case transcripts —
+behind the papers' tables, without the per-case session-log extracts —
 and point the scripts at it:
 
 ```sh
@@ -45,11 +45,11 @@ bench/aacr/final/score.sh        # every final table (compare.py) and both chart
 primary judge, `…-claude-opus-5-5` for the second: `--judge-model
 claude-opus-5-5`), `results/all/metrics_*_*.json` and `results/all/<instance>.json`,
 and `cases/<instance>/case-summary.json`. That is the bundle's whole layout. A
-case's cost comes from its `pi-events.jsonl` when the transcript is there (the
-full archive); in the slim bundle the summary carries `bench_cost_usd` instead
-— the same number, computed from the full transcript by `compare.py`'s own
-`usd_and_minutes` when the bundle was cut (null = unpriced) — so both re-score
-to the same cent. Still keyless and offline once the image exists:
+case's cost comes from its event stream when the case has one (the run
+archive's numbers-only `pi-events.pruned.jsonl`); in the slim bundle the
+summary carries `bench_cost_usd` instead — the same number, computed from the
+full event stream by `compare.py`'s own `usd_and_minutes` when the bundle was
+cut (null = unpriced) — so both re-score to the same cent. Still keyless and offline once the image exists:
 `bench.sh build`, then `bench.sh judge-report` / `results` / `report` (all
 `--network none`).
 
