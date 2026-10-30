@@ -15,8 +15,11 @@ reviewers) and [`paper/quickreview.pdf`](paper/quickreview.pdf) (the
 reviewer), and in [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md),
 [`docs/THREATS-TO-VALIDITY.md`](docs/THREATS-TO-VALIDITY.md) and
 [`docs/PROMPTS.md`](docs/PROMPTS.md). Every run behind them — reviews,
-verdicts, scores, the charts and tables they produce — will be published
-in the Hugging Face dataset and run archive (not out yet).
+verdicts, scores, the charts and tables they produce — is published in the
+Hugging Face dataset [quickchatai/quickreview-bench](https://huggingface.co/datasets/quickchatai/quickreview-bench):
+tables of every review and verdict, the run archive in its `archive/` folder
+and the slim re-score bundle in `slim/`. [`recompute/`](recompute/README.md)
+rebuilds each published number from it with no model call.
 
 ## Reproduce
 
@@ -28,7 +31,7 @@ Three tiers, cheapest first. Nothing here needs this repo's private history or
 the authors' machines.
 
 **Tier 1 — re-score and re-chart the published runs: no keys, no docker.**
-Download the **slim re-score bundle** from the run archive — every run dir
+Download the **slim re-score bundle** (the dataset's `slim/` folder) — every run dir
 behind the papers' tables, without the multi-gigabyte per-case transcripts —
 and point the scripts at it:
 
@@ -137,7 +140,7 @@ shipped on gpt-6-sol, graded by two judges from different model families
 Opus 5.5) are in the paper's supporting material. `final/score.sh` draws the
 charts into `charts/` (the final comparison under the plain names; the
 gpt-6-sol study under `-gpt6sol`). This repo ships only the ones the papers
-include; the full set, with the numbers behind them, goes into the Hugging Face dataset and run archive (to be published; not out yet):
+include; the full set, with the numbers behind them, is in the Hugging Face dataset's `figures/` folder:
 
 | Chart                                                       | Shows                                                                                                                                              |
 | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |

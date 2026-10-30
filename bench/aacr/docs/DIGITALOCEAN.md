@@ -40,6 +40,19 @@ not parse and the bench silently ended the case as no-output. The bench now
 gives such a round its one continuation, naming the file and the parser's
 message, and a file still unreadable after it is the case's recorded error.
 
+## The published runs
+
+The runs this page reports are published in the Hugging Face dataset
+[quickchatai/quickreview-bench](https://huggingface.co/datasets/quickchatai/quickreview-bench), in its `archive/`
+folder: the smokes in `quickreview-runs-openmodels-smokes.tar.zst`, the full
+GLM run in `quickreview-runs-openmodels-glm53-full.tar.zst`, the gates,
+concurrency reports and driver logs in
+`quickreview-runs-openmodels-driver.tar.zst`, and the GPT-6.1 Sol cases in
+`quickreview-runs-aacr-frozen-build.tar.zst`. The dataset's `slim/` bundle
+holds the same runs without transcript text, which is enough for
+[`recompute/do_speed.py`](../recompute/do_speed.py) to rebuild the speed table
+and the smoke figures below.
+
 ## Why the open models take longer
 
 The same 10 PRs, 2026-10-13. GPT-6.1 Sol from the `final1` run; generation speed

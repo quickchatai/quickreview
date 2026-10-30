@@ -103,6 +103,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/ghcred-handoff.test.ts",
   "tests/golden-prompts.test.ts",
   "tests/guards.test.ts", // the guard cases drive the real gate over a loopback GitHub stub
+  "tests/hf-card.test.ts",
   "tests/hf-export.test.ts",
   "tests/host-isolation.test.ts",
   "tests/host-wrapper.test.ts",

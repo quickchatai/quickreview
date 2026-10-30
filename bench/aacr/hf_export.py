@@ -293,6 +293,16 @@ def jlabel(label: str) -> str:
     return JUDGE_LABELS.get(label, label)
 
 
+def judges_that_scored(arm_id: str, looked_for: list[str], *verdict_tables: list[dict]) -> list[str]:
+    """`arms.judges`: the judges (column names, in `looked_for`'s order) with at
+    least one verdict row for this arm. `looked_for` is every judge the export
+    searched the arm's runs for; a judge that left no verdict is not listed, so
+    the column never claims a judge that did not score the arm (the second judge
+    scored the earlier study's seven arms only)."""
+    seen = {r["judge"] for rows in verdict_tables for r in rows if r["arm_id"] == arm_id}
+    return [jlabel(x) for x in looked_for if jlabel(x) in seen]
+
+
 def read_arms_file(path: str) -> list[tuple[str, list[str]]]:
     out = []
     for line in open(path):
@@ -701,7 +711,8 @@ class Exporter:
             arm_rows.append(self.S({k: arm[k] for k in ("arm_id", "benchmark", "display_name", "runs", "studies",
                                                         "paper_tables", "scope", "link_only", "note")}
                                    | {"aacr_judge": self.aacr_judges.get(arm["arm_id"]),
-                                      "judge": jlabel(arm["judges"][0]), "judges": [jlabel(x) for x in arm["judges"]],
+                                      "judge": jlabel(arm["judges"][0]),
+                                      "judges": judges_that_scored(arm["arm_id"], arm["judges"], dv, cv),
                                       "run_family": fams[0] if len(fams) == 1 else (", ".join(fams) or None),
                                       "model_billed": " / ".join(billed) or None,
                                       "in_paper": bool(arm["paper_tables"])}))
@@ -1327,6 +1338,8 @@ OPEN_MODEL_ROWS = {"quickreview-glm-53-flash": (435, 0.52), "quickreview-deepsee
 # README "Judged side by side": the pooled Elo of three configurations, games, judges' agreement
 ELO_PLAN = "martian-hard20-all-gpt"
 ELO_README = {"ft0622-hard20-qr-opus55": 1628, "ft0622-hard20-cc-high-opus55": 1518, "ft0622-hard20-sonnet": 1666}
+ELO_JUDGES = ("claude-opus-5-5", "gpt-6.1-sol")  # the two judges the README's Elo pools (elo_judgments.judge_model)
+EXT_JUDGE = "gpt-6.1-sol"  # the one judge of every Martian and Qodo verdict row
 
 
 # tables a family may list in the catalogue yet hold no rows of, for a reason
@@ -1356,6 +1369,34 @@ def coverage(t: dict[str, list[dict]], cat) -> dict:
     return out
 
 
+def judge_coverage_checks(t: dict[str, list[dict]]) -> list[dict]:
+    """The card's "Judges" section, checked against the tables: the second
+    judge and the primary judge's re-run scored the earlier gpt-6-sol study's
+    seven arms and nothing else; every Martian and Qodo verdict has the one
+    judge; the Elo ratings pool exactly the two named judges; and `arms.judges`
+    names exactly the judges with verdict rows for the arm."""
+    checks = []
+
+    def check(what, got, want):
+        checks.append({"check": what, "got": got, "want": want, "ok": got == want})
+
+    seven = sorted(SOL_IDS.values())
+    scored = collections.defaultdict(set)
+    for name in ("defect_verdicts", "comment_verdicts"):
+        for r in t.get(name) or []:
+            scored[r["judge"]].add(r["arm_id"])
+    check("judges: arms the second judge (claude-opus-5-5) scored", sorted(scored[jlabel(SECOND)]), seven)
+    check("judges: arms the primary judge's re-run scored", sorted(scored[jlabel(SELFCONS)]), seven)
+    for name in ("martian_verdicts", "qodo_verdicts"):
+        check(f"judges: {name} judges", sorted({r["judge"] for r in t.get(name) or []}), [EXT_JUDGE])
+    used = {(r["plan"], r["judge_model"]) for r in t.get("elo_judgments") or [] if r["used_in_ratings"]}
+    check(f"judges: elo {ELO_PLAN} judges in the ratings", sorted(m for p, m in used if p == ELO_PLAN), list(ELO_JUDGES))
+    wrong = [a["arm_id"] for a in t.get("arms") or []
+             if sorted(a["judges"] or []) != sorted(j for j, arms in scored.items() if a["arm_id"] in arms)]
+    check("judges: arms.judges == the judges with verdict rows for the arm", wrong, [])
+    return checks
+
+
 def validate_release(t: dict[str, list[dict]], cat: "RC.Catalogue | None", elo_refits: dict, elo_dir: str | None) -> list[dict]:
     """The checks of what this release adds: the open-model rows, the Elo
     ratings (refit from the published judgments, equal to the run's own
@@ -1375,6 +1416,7 @@ def validate_release(t: dict[str, list[dict]], cat: "RC.Catalogue | None", elo_r
         check(f"{aid}: found/520 ({OPEN_JUDGE})", defect_summary(dv, defects)["found"], found, 0.001)
         c = [r["cost_usd"] for r in rs if r["judged"] and r["cost_usd"] is not None]
         check(f"{aid}: $/PR", round(statistics.mean(c), 2) if c else None, usd, 0.006)
+    checks += judge_coverage_checks(t)
     used = collections.Counter(r["judgment_file"] for r in t["elo_judgments"] if r["plan"] == ELO_PLAN and r["used_in_ratings"])
     check(f"elo {ELO_PLAN}: judgments in the ratings (gpt + opus)", used["gpt"] + used["opus"], 596)
     comb = {r["run"]: r for r in t["elo_ratings"] if r["plan"] == ELO_PLAN and r["table"] == "combined" and r["category"] == "overall"}
@@ -1507,8 +1549,18 @@ def figures(a, out: str, counts: collections.Counter, notes: list[str]):
         notes.append("chromium not found: reports/FULL-BENCHMARK.pdf not rendered (the .md is there)")
 
 
-def render_card(a, out: str, sizes: dict, checks: list[dict], counts: collections.Counter):
-    tmpl = open(os.path.join(HERE, "hf", "card.md")).read()
+DOI_PENDING = "<DOI pending>"
+ARXIV_PENDING = "<arXiv pending>"
+
+
+def dataset_url(repo_id: str) -> str:
+    return f"https://huggingface.co/datasets/{repo_id}"
+
+
+def card_values(a, sizes: dict, checks: list[dict], counts: collections.Counter, runs: list[dict] | None = None) -> dict:
+    """Every {{NAME}} the card template holds, from the export's own facts. What
+    is not known at export time (the DOI, the papers' arXiv ids) renders as an
+    explicit pending marker, never as an empty string or a guess."""
     rows = "\n".join(f"| `{n}` | {sizes[n]:,} |" for n in CONFIGS)
     configs_yaml = "\n".join(
         f"- config_name: {n}\n  data_files:\n  - split: test\n    path: data/{n}.parquet" + ("\n  default: true" if n == "defects" else "")
@@ -1519,11 +1571,52 @@ def render_card(a, out: str, sizes: dict, checks: list[dict], counts: collection
                           + ([(CONTENT_LABEL, "the public repository's stand-in")] if CONTENT_RULES is not None else []))
     scrub_tbl = "\n".join(f"| {label} | `{rep}` | {counts.get(label, 0):,} |" for label, rep in kinds)
     ok = sum(c["ok"] for c in checks)
-    vals = {"REPO_ID": a.repo_id, "ARCHIVE": a.archive_url, "CONFIGS_YAML": configs_yaml, "CONFIG_ROWS": rows,
-            "SCRUB_TABLE": scrub_tbl, "CHECKS": f"{ok} of {len(checks)}"}
+    runs = runs or []
+    url = dataset_url(a.repo_id)
+    return {"REPO_ID": a.repo_id, "DATASET_URL": url,
+            "ARCHIVE": getattr(a, "archive_url", None) or f"{url}/tree/main/archive",
+            "SLIM": getattr(a, "slim_url", None) or f"{url}/tree/main/slim",
+            "DOI": getattr(a, "doi", None) or DOI_PENDING,
+            "ARXIV_BENCHMARK": getattr(a, "arxiv_benchmark", None) or ARXIV_PENDING,
+            "ARXIV_QUICKREVIEW": getattr(a, "arxiv_quickreview", None) or ARXIV_PENDING,
+            # prose forms: a pending marker in code font (bare <...> is an HTML
+            # tag to a Markdown renderer and would vanish), a known id as a link
+            "DOI_MD": md_link(getattr(a, "doi", None), DOI_PENDING, "https://doi.org/"),
+            "ARXIV_BENCHMARK_MD": md_link(getattr(a, "arxiv_benchmark", None), ARXIV_PENDING, "https://arxiv.org/abs/"),
+            "ARXIV_QUICKREVIEW_MD": md_link(getattr(a, "arxiv_quickreview", None), ARXIV_PENDING, "https://arxiv.org/abs/"),
+            "CONFIGS_YAML": configs_yaml, "CONFIG_ROWS": rows, "SCRUB_TABLE": scrub_tbl,
+            "CHECKS": f"{ok} of {len(checks)}",
+            "RUN_UNITS": f"{len(runs):,}", "RUN_FAMILIES": f"{len({r['family'] for r in runs}):,}",
+            "SIZE_CATEGORY": size_category(sum(sizes.values()))}
+
+
+def md_link(value: str | None, pending: str, base: str) -> str:
+    return f"[{value}]({base}{value})" if value else f"`{pending}`"
+
+
+def size_category(rows: int) -> str:
+    """The card's `size_categories` tag (Hugging Face's buckets) for the total row count."""
+    for top, tag in ((1_000, "n<1K"), (10_000, "1K<n<10K"), (100_000, "10K<n<100K"), (1_000_000, "100K<n<1M")):
+        if rows < top:
+            return tag
+    return "1M<n<10M"
+
+
+def fill_card(tmpl: str, vals: dict) -> str:
+    """Substitute every {{NAME}}; a name the template holds and `vals` lacks is
+    an error, so a card never ships with a raw {{...}} in it."""
     for k, v in vals.items():
         tmpl = tmpl.replace("{{" + k + "}}", v)
-    open(os.path.join(out, "README.md"), "w").write(tmpl)
+    left = sorted(set(re.findall(r"\{\{([A-Z_]+)\}\}", tmpl)))
+    if left:
+        raise SystemExit(f"card template: no value for {', '.join(left)}")
+    return tmpl
+
+
+def render_card(a, out: str, sizes: dict, checks: list[dict], counts: collections.Counter, runs: list[dict] | None = None):
+    tmpl = open(os.path.join(HERE, "hf", "card.md")).read()
+    card = fill_card(tmpl, card_values(a, sizes, checks, counts, runs))
+    open(os.path.join(out, "README.md"), "w").write(card)
 
 
 NOTICE = """This dataset was assembled by Quickchat AI and is distributed under the Apache License,
@@ -1562,7 +1655,12 @@ def main():
     ap.add_argument("--qodo-tools", help="tool-comments.json from qodo_scrape.py build (default: <runs>/../ext-cache/qodo/)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--repo-id", required=True, help="the Hugging Face dataset id the card names")
-    ap.add_argument("--archive-url", default="the run archive, a Hugging Face dataset repo (link and DOI TBD)")
+    ap.add_argument("--archive-url", help="where the run archive volumes are published "
+                    "(default: the archive/ folder of the --repo-id dataset)")
+    ap.add_argument("--slim-url", help="where the slim re-score bundle is published (default: its slim/ folder)")
+    ap.add_argument("--doi", help=f"the dataset's DOI, once Hugging Face has minted it (default: {DOI_PENDING!r})")
+    ap.add_argument("--arxiv-benchmark", help=f"the benchmark paper's arXiv id (default: {ARXIV_PENDING!r})")
+    ap.add_argument("--arxiv-quickreview", help=f"the QuickReview paper's arXiv id (default: {ARXIV_PENDING!r})")
     ap.add_argument("--generated", help="a bench/aacr-shaped dir with the generated artefacts the public tree leaves out "
                     "(charts/, defects/*.md, FULL-BENCHMARK.md); the tree's own files win")
     ap.add_argument("--open-models", help="the open-model benchmark dir (its runs/ hold the open-model runs)")
@@ -1600,7 +1698,7 @@ def main():
     checks = validate(tables) + validate_release(tables, ex.cat, ex.elo_refits, a.elo_dir)
     shutil.copy2(os.path.join(HERE, "hf", "LICENSE"), os.path.join(out, "LICENSE"))
     open(os.path.join(out, "NOTICE"), "w").write(NOTICE)
-    render_card(a, out, sizes, checks, ex.counts)
+    render_card(a, out, sizes, checks, ex.counts, tables.get("runs"))
     leaks = leak_scan(out)
     load = {}
     if not a.no_load_check:

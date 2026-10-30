@@ -70,7 +70,9 @@ QODO = [  # (name, precision, recall)
 
 
 # The same base model in two reviewers, AACR-Bench, one judge (GPT-6 Sol at high) for both rows of a pair.
-# Per severity, from bench/aacr/compare.py over the run archive (no model calls); the totals are the tables named.
+# Per severity, from bench/aacr/compare.py over the published runs (no model calls); the totals are the tables named.
+# The runs: https://huggingface.co/datasets/quickchatai/quickreview-bench (tables `arms`, `defect_verdicts`; the
+# slim bundle and the run archive in its slim/ and archive/ folders).
 SAME_MODEL = [  # (model, PRs, (high, medium, low) defects, [(reviewer, high, medium, low found)])
     # quickreview.tex Table tab:bm40 (QuickReview on Opus, the 40 T40 PRs it was tuned on, September build;
     # runs opus-*) and benchmark.tex Table tab:halves-sol (Claude Code on the same 40: runs all-claude-*).
@@ -84,8 +86,10 @@ SAME_MODEL = [  # (model, PRs, (high, medium, low) defects, [(reviewer, high, me
 
 # Pairwise Elo on Martian's hard20 (the 20 PRs QuickReview on GPT-6.1 Sol or DeepSeek V4.1 Flash did worst on
 # against its own average), both judges pooled: data/elo-martian-hard20.json, the "Combined" table refit from the
-# run archive's elo/martian-hard20-all-gpt judgments by bench/aacr/recompute/elo_ratings.py --chart-json (the same
-# numbers as that run's REPORT.md; --check-ratings proves it). QuickReview's Opus and Sonnet runs kept the image's
+# published judgments of elo/martian-hard20-all-gpt by bench/aacr/recompute/elo_ratings.py --chart-json (the same
+# numbers as that run's REPORT.md; --check-ratings proves it). The judgments are the `elo_judgments` table of
+# https://huggingface.co/datasets/quickchatai/quickreview-bench, and the plan dir is its archive volume
+# archive/quickreview-runs-elo-pairwise.tar.zst. QuickReview's Opus and Sonnet runs kept the image's
 # six lenses pinned to GPT-6 Luna (maintainability, duplication, abstraction, consistency, placement, simplicity).
 ELO_DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "elo-martian-hard20.json")
 ELO_LABELS = {  # run -> (the chart's name, QuickReview?)

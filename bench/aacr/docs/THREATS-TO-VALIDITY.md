@@ -16,7 +16,9 @@ we did step by step, and [PROMPTS.md](PROMPTS.md), which gives every prompt
 verbatim. The headline results are in the benchmark paper
 ([`../paper/benchmark.pdf`](../paper/benchmark.pdf)). The chronological
 experiment log this page cites is a working note of the study; it is not in the
-public repo, and the runs it describes are in the published run archive.
+public repo. The runs it describes are published in the Hugging Face dataset
+[quickchatai/quickreview-bench](https://huggingface.co/datasets/quickchatai/quickreview-bench): the reviews and
+verdicts as tables, the run directories in its `archive/` folder.
 
 Short version: **the ranking of QuickReview default above every other
 reviewer is robust. The exact size of its lead is not.** Several threats
@@ -26,7 +28,9 @@ below favour our reviewer. Two have now been measured:
   lead.
 - A second judge from another model family (threat 4) agrees with the first
   on 98.7% of verdicts, which largely retires judge bias as a threat. It
-  does not validate the answer key, which both judges share.
+  scored the earlier gpt-6-sol study only; the final gpt-6.1-sol comparison,
+  the frozen build, Martian and Qodo have the GPT judge alone. It does not
+  validate the answer key, which both judges share.
 
 The rest have not been measured away.
 
@@ -250,8 +254,11 @@ unmeasured.
   it in one place.
 
 **Mitigation.**
-- **A second judge from the other family re-scored every review.** It
-  covered all 1,295 reviews and ended with 0 errors.
+- **A second judge from the other family re-scored every review of the
+  earlier gpt-6-sol study.** It covered all 1,295 reviews of its seven
+  reviewers and ended with 0 errors. It did not score the final gpt-6.1-sol
+  comparison, the frozen build, the open-model runs, Martian or Qodo: those
+  rest on one GPT judge.
   - It gave the same verdict (found, partly or missed) on 3,593 of 3,640
     reviewer-defect pairs (98.7%), and on 628 of 630 high-severity pairs.
   - Problems found moved by at most ±3 defects per reviewer, and recall is
@@ -547,8 +554,9 @@ documented in `../README.md`.
    subset (threat 1). A stricter per-tool version is still open: recall on
    defects raised by at least one source other than that tool itself.
 3. **A third-family judge** for both metrics. A second-family defect judge
-   (Opus 5.5) is done, with inter-judge agreement. The AACR metric still has
-   only the one judge.
+   (Opus 5.5) is done for the earlier gpt-6-sol study, with inter-judge
+   agreement. The final comparison, the frozen build, Martian and Qodo, and
+   the AACR metric, still have only the one judge.
 4. **Freeze the reviewer** at a tagged commit, then build a new truth
    blind-first for new PRs from outside AACR, and only then run the tools.
 5. **Three runs per arm,** with bootstrap confidence intervals over PRs.

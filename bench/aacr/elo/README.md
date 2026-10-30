@@ -134,6 +134,28 @@ $E/judge-gpt.sh stop
 - **The GPT judge's login copy** must have two hours left when the container
   starts. Restart `judge-gpt.sh` before a long run.
 
+## The published judgments
+
+The judgments behind the README's Elo chart (plan `martian-hard20-all-gpt`)
+and its smoke plan are published in the Hugging Face dataset
+[quickchatai/quickreview-bench](https://huggingface.co/datasets/quickchatai/quickreview-bench):
+- **`elo_judgments`:** one row per judgment, every attempt, with both judges'
+  reasoning and the prompt's sha256. `used_in_ratings` marks the 596 that the
+  ratings use.
+- **`elo_ratings`:** the ratings per plan, judge table (`gpt`, `opus`, the
+  pooled `combined`) and category, with their intervals.
+- **The plan directories** (`plan.json`, `units.jsonl`, `judgments/`,
+  `ratings.json`, `REPORT.md`, logs) are in its `archive/` folder, volume
+  `quickreview-runs-elo-pairwise.tar.zst`, and in its `slim/` bundle.
+
+The packs are not published: they are whole files of the reviewed
+repositories. `elo.py pack` rebuilds them from the public repositories at the
+commits in `units.jsonl`, and `packs.jsonl` lists the files each pack held.
+Without packs, `elo.py report` cannot run, so
+[`../recompute/elo_ratings.py`](../recompute/elo_ratings.py) refits the
+ratings from the judgments alone, with the same Bradley-Terry code and seed;
+`--check-ratings` shows the refit equals the run's own `ratings.json`.
+
 ## Files
 
 - **`elo_data.py`** loads cases and reviews (one loader per benchmark; Martian
