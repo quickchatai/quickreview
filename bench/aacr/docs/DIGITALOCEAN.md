@@ -30,8 +30,9 @@ accepts only the reasoning levels low, high, xhigh and max (DigitalOcean answers
 400 to `medium`), so its registry entry maps `medium` → `high` and `minimal` →
 `low`: the sol-med and terra-med lenses run at high on DeepSeek. Qwen3.8-Max
 (`qwen3.8-max`, $2.00 / $6.00 / $0.20) also passed that probe but is left out
-for now: at GLM's token profile it would cost about $3.09 a PR, ~$1,030 a full
-run, more than GPT-6.1 Sol's ~$770 API-equivalent for the same 335 PRs. Adding a model means
+for now: at GLM's token profile on its full run it would cost about $6.29 a PR,
+~$2,100 a full run (about $3.17 a PR at the 10-PR smoke's profile), more than
+GPT-6.1 Sol's ~$770 API-equivalent for the same 335 PRs. Adding a model means
 one entry in each of those two places and an image rebuild.
 
 Gemma 4's smoke (2026-10-13 19:57) reviewed 9 of 10 PRs cleanly; the tenth
@@ -45,7 +46,10 @@ message, and a file still unreadable after it is the case's recorded error.
 The runs this page reports are published in the Hugging Face dataset
 [quickchatai/quickreview-bench](https://huggingface.co/datasets/quickchatai/quickreview-bench), in its `archive/`
 folder: the smokes in `quickreview-runs-openmodels-smokes.tar.zst`, the full
-GLM run in `quickreview-runs-openmodels-glm53-full.tar.zst`, the gates,
+GLM run in `quickreview-runs-openmodels-glm53-full.tar.zst`, the DeepSeek runs
+in `quickreview-runs-openmodels-dsv41f-full.tar.zst`,
+`quickreview-runs-openmodels-dsv41f-low.tar.zst` and
+`quickreview-runs-openmodels-dsv41f-mix.tar.zst`, the gates,
 concurrency reports and driver logs in
 `quickreview-runs-openmodels-driver.tar.zst`, and the GPT-6.1 Sol cases in
 `quickreview-runs-aacr-frozen-build.tar.zst`. The dataset's `slim/` bundle
@@ -57,6 +61,8 @@ and the smoke figures below.
 
 The same 10 PRs, 2026-10-13. GPT-6.1 Sol from the `final1` run; generation speed
 is each reply's output tokens over the time from its request to the next message.
+Minutes, output tokens, replies, the typical reply and generation speed are
+medians over the PRs; $ / PR is the mean.
 
 | Model | Minutes / PR | Output tokens / PR | Replies / PR | Typical reply | Generation speed | $ / PR |
 |---|---|---|---|---|---|---|
@@ -156,7 +162,7 @@ DigitalOcean list prices. It counts a lens launched with a doubled tier suffix
 and says so.
 
 The smoke (2026-10-13): 10/10 reviews ok, zero model errors, every recorded
-reviewer reply from `digitalocean/glm-5.3-flash`, $3.31 in total at list price,
+reviewer reply from `digitalocean/glm-5.3-flash`, $3.32 in total at list price,
 median 26.5 minutes per PR (mean 27.9), slowest 54 minutes.
 
 ## Store the key
@@ -196,7 +202,7 @@ export QCR_BENCH_IMAGE=qcr-bench:latest
 ```
 
 If using an existing image instead, set `QCR_BENCH_IMAGE` to its tag and skip
-the build. The successful check used the local `qcr-bench:ft0554` image.
+the build. The successful check used a locally built benchmark image.
 Run the following from the repository root in Bash. The temporary file contains
 an environment-variable reference, never the key itself.
 

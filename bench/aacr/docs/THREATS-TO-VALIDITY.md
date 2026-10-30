@@ -27,10 +27,11 @@ below favour our reviewer. Two have now been measured:
 - Seeding the answer key with its comments (threat 1) did not create its
   lead.
 - A second judge from another model family (threat 4) agrees with the first
-  on 98.7% of verdicts, which largely retires judge bias as a threat. It
-  scored the earlier gpt-6-sol study only; the final gpt-6.1-sol comparison,
-  the frozen build, Martian and Qodo have the GPT judge alone. It does not
-  validate the answer key, which both judges share.
+  on 98.7% of verdicts on the earlier gpt-6-sol study, the only study it
+  scored, which largely retires judge bias as a threat there. The final
+  gpt-6.1-sol comparison, the frozen build, Martian and Qodo have the GPT
+  judge alone, so for them the threat is narrowed by that study, not
+  measured. It does not validate the answer key, which both judges share.
 
 The rest have not been measured away.
 

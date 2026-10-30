@@ -6,7 +6,8 @@
   "Not claims: version numbers and model names (`version_patterns`, and any number glued to a word, such as gpt-6.1 or S40); dates, years and clock times; third-party plan and list prices (per-million-token rates, subscription prices); method parameters chosen before a run (resamples, seeds, timeouts, retries, concurrency, caps, the confidence level); identifiers (PR, commit, ticket, section, table, figure, step and list numbers); install and configuration values; numbers quoted from other papers; and how many reviewers a table or chart was designed to show. A number of these kinds that the lint sees is listed under `not_claims` with its reason.",
   "Spelled-out numbers (\"six other reviewers\", \"ten times\") are claims when they report a measurement, but the lint sees digits only, so they are not listed.",
   "A claim printed as approximate (\"about $4\", \"~$770\") carries `about: true` and passes when the recomputed number is within `about_tolerance` (relative) of the printed one. Every other claim passes when the recomputed number, printed with the published value's decimals, sign, thousands separator and `%`, is the same string.",
-  "`lint: complete` files account for every number token (bench/aacr/recompute/claim_text.py defines a token): each is a claim or a listed not-claim, and tests/bench-claims.test.ts holds README.md to it with no data. `lint: report` files list what is covered so far; verify_claims.py reports the rest as unaccounted."
+  "`lint: complete` files account for every number token (bench/aacr/recompute/claim_text.py defines a token): each is a claim or a listed not-claim, and tests/bench-claims.test.ts holds README.md to it with no data. `lint: report` files list what is covered so far; verify_claims.py reports the rest as unaccounted.",
+  "Rounding: a computed number is printed the way Python's `format` prints the float with the published value's decimals, which is how the papers' tables were generated; a value half-way between two printed values takes the nearer binary float's side (16.25 prints 16.2, and 8.95, stored as 8.9499…, prints 8.9). Every page follows that convention."
  ],
  "about_tolerance": 0.1,
  "version_patterns": [
@@ -41,6 +42,9 @@
   },
   "bench/aacr/docs/PROMPTS.md": {
    "lint": "complete"
+  },
+  "bench/aacr/README.md": {
+   "lint": "report"
   }
  },
  "checks": {
@@ -4674,27 +4678,19 @@
    ]
   },
   {
-   "id": "do.do:projection.1",
-   "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "for now: at GLM's token profile it would cost about $3.09 a PR",
-   "value": "3.09",
-   "group": "do:projection",
-   "q": null,
-   "no_script": "a projection whose token base the page does not state; GLM's measured full-run profile (open-models/runs/glm53-full-*) priced at the listed Qwen3.8-Max rates gives $1.26 a PR"
-  },
-  {
    "id": "do.do:projection.2",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "for now: at GLM's token profile it would cost about $3.09 a PR",
-   "value": "1,030",
+   "anchor": "~$2,100 a full run (about $3.17 a PR at the 10-PR smoke's profile), more than",
+   "value": "2,100",
    "group": "do:projection",
    "q": null,
-   "no_script": "a projection whose token base the page does not state; GLM's measured full-run profile (open-models/runs/glm53-full-*) priced at the listed Qwen3.8-Max rates gives $1.26 a PR"
+   "no_script": "a projection: GLM's full-run token use (open-models/runs/glm53-full-*/cases/*/case-summary.json `usage`, main session and lenses, 335 PRs) priced at the listed Qwen3.8-Max rates ($2.00 in / $6.00 out / $0.20 cache read per 1M) gives $6.29 a PR and $2,108 for 335 PRs; no committed script computes it yet",
+   "about": true
   },
   {
    "id": "do.do:projection.3",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "run, more than GPT-6.1 Sol's ~$770 API-equivalent for the same 335 PRs.",
+   "anchor": "GPT-6.1 Sol's ~$770 API-equivalent for the same 335 PRs. Adding a model means",
    "value": "770",
    "group": "do:projection",
    "q": "{aacr:quickreview-frozen:usd_total} + {martian:final1-martian50|quickreview-frozen:usd} * {martian:final1-martian50|quickreview-frozen:prs} + {qodo:final1-qodo-pr100|quickreview-frozen:usd} * {qodo:final1-qodo-pr100|quickreview-frozen:prs}",
@@ -4703,7 +4699,7 @@
   {
    "id": "do.do:projection.4",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "run, more than GPT-6.1 Sol's ~$770 API-equivalent for the same 335 PRs.",
+   "anchor": "GPT-6.1 Sol's ~$770 API-equivalent for the same 335 PRs. Adding a model means",
    "value": "335",
    "group": "do:projection",
    "q": "{aacr:quickreview-frozen:judged} + {martian:final1-martian50|quickreview-frozen:prs} + {qodo:final1-qodo-pr100|quickreview-frozen:prs}"
@@ -5080,8 +5076,8 @@
   {
    "id": "do.do:glm-smoke.4",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "$3.31 in total at list price,",
-   "value": "3.31",
+   "anchor": "$3.32 in total at list price,",
+   "value": "3.32",
    "group": "do:glm-smoke",
    "q": "do_speed:smokes/glm53-smoke-p10-l12/usd",
    "alt": [
@@ -5439,7 +5435,7 @@
   {
    "id": "card.readme:elo.2",
    "file": "bench/aacr/hf/card.md",
-   "anchor": "`used_in_ratings` marks the 596 judgments",
+   "anchor": "the 596 of the README's plan (`martian-hard20-all-gpt`) and the smoke",
    "value": "596",
    "group": "readme:elo",
    "q": "elo:martian-hard20-all-gpt:judgments"
@@ -5547,110 +5543,6 @@
    "value": "580",
    "group": "card:key",
    "q": "qodo:issues:total"
-  },
-  {
-   "id": "card.do:speed.1",
-   "file": "bench/aacr/hf/card.md",
-   "anchor": "16 min, 37k output tokens, 78 replies and $2.27 per PR (published 8 min,",
-   "value": "16",
-   "group": "do:speed",
-   "q": "do_speed:table/GPT-6.1 Sol/minutes"
-  },
-  {
-   "id": "card.do:speed.2",
-   "file": "bench/aacr/hf/card.md",
-   "anchor": "16 min, 37k output tokens, 78 replies and $2.27 per PR (published 8 min,",
-   "value": "37k",
-   "group": "do:speed",
-   "q": "{do_speed:table/GPT-6.1 Sol/output} / 1000"
-  },
-  {
-   "id": "card.do:speed.3",
-   "file": "bench/aacr/hf/card.md",
-   "anchor": "16 min, 37k output tokens, 78 replies and $2.27 per PR (published 8 min,",
-   "value": "78",
-   "group": "do:speed",
-   "q": "do_speed:table/GPT-6.1 Sol/replies"
-  },
-  {
-   "id": "card.do:speed.4",
-   "file": "bench/aacr/hf/card.md",
-   "anchor": "16 min, 37k output tokens, 78 replies and $2.27 per PR (published 8 min,",
-   "value": "2.27",
-   "group": "do:speed",
-   "q": "do_speed:table/GPT-6.1 Sol/usd"
-  },
-  {
-   "id": "card.do:speed.5",
-   "file": "bench/aacr/hf/card.md",
-   "anchor": "- The DeepSeek V4.1 Flash row: the data gives 42 min, 230 replies, 13 s and",
-   "value": "42",
-   "group": "do:speed",
-   "q": "do_speed:table/DeepSeek V4.1 Flash/minutes"
-  },
-  {
-   "id": "card.do:speed.6",
-   "file": "bench/aacr/hf/card.md",
-   "anchor": "- The DeepSeek V4.1 Flash row: the data gives 42 min, 230 replies, 13 s and",
-   "value": "230",
-   "group": "do:speed",
-   "q": "do_speed:table/DeepSeek V4.1 Flash/replies"
-  },
-  {
-   "id": "card.do:speed.7",
-   "file": "bench/aacr/hf/card.md",
-   "anchor": "- The DeepSeek V4.1 Flash row: the data gives 42 min, 230 replies, 13 s and",
-   "value": "13",
-   "group": "do:speed",
-   "q": "do_speed:table/DeepSeek V4.1 Flash/reply_seconds"
-  },
-  {
-   "id": "card.do:speed.8",
-   "file": "bench/aacr/hf/card.md",
-   "anchor": "$0.69 (published 41 min, 223, 14 s, about $0.57).",
-   "value": "0.69",
-   "group": "do:speed",
-   "q": "do_speed:table/DeepSeek V4.1 Flash/usd"
-  },
-  {
-   "id": "card.do:glm-smoke.1",
-   "file": "bench/aacr/hf/card.md",
-   "anchor": "- The GLM smoke's \"median about 28 minutes\" is the mean; the median is 26.5.",
-   "value": "26.5",
-   "group": "do:glm-smoke",
-   "q": "do_speed:smokes/glm53-smoke-p10-l12/median_min"
-  },
-  {
-   "id": "card.do:timeouts.1",
-   "file": "bench/aacr/hf/card.md",
-   "anchor": "  72.2 minutes.",
-   "value": "72.2",
-   "group": "do:timeouts",
-   "q": "do_speed:glm_full_slowest/0/0"
-  },
-  {
-   "id": "card.readme:other-models.1",
-   "file": "bench/aacr/hf/card.md",
-   "anchor": "- README, \"GLM's review was missing a lens pass on 7\": 7 is the PRs whose lens",
-   "value": "7",
-   "group": "readme:other-models",
-   "q": "open_models:GLM-5.3 Flash/degraded/lens_unrecorded_only/#len"
-  },
-  {
-   "id": "card.readme:elo.3",
-   "file": "bench/aacr/hf/card.md",
-   "anchor": "data gives $4.61 mean, $4.42 median.",
-   "value": "4.61",
-   "group": "readme:elo",
-   "q": "elo_refit:costs/ft0622-hard20-qr-opus55/usd_mean"
-  },
-  {
-   "id": "card.readme:elo.4",
-   "file": "bench/aacr/hf/card.md",
-   "anchor": "data gives $4.61 mean, $4.42 median.",
-   "value": "4.42",
-   "group": "readme:elo",
-   "q": "elo_refit:costs/ft0622-hard20-qr-opus55/usd_median"
   },
   {
    "id": "card.card:key.31",
@@ -23408,16 +23300,15 @@
   {
    "id": "bench.bench:sol-study.419",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
-   "value": "9.0",
+   "anchor": "\\qcr{} default, as posted & 8.9 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
+   "value": "8.9",
    "group": "bench:sol-study",
-   "q": "martian:mv-r1-asposted|quickreview:inline_per_pr",
-   "note": "179 inline comments on 20 PRs, 8.95 a PR: the text rounds it half up, the verifier as Python prints (8.9), as everywhere else"
+   "q": "martian:mv-r1-asposted|quickreview:inline_per_pr"
   },
   {
    "id": "bench.bench:sol-study.420",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
+   "anchor": "\\qcr{} default, as posted & 8.9 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
    "value": "19.7",
    "group": "bench:sol-study",
    "q": "martian:mv-r1-asposted|quickreview:core_precision"
@@ -23425,7 +23316,7 @@
   {
    "id": "bench.bench:sol-study.421",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
+   "anchor": "\\qcr{} default, as posted & 8.9 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
    "value": "58.6",
    "group": "bench:sol-study",
    "q": "martian:mv-r1-asposted|quickreview:core_recall"
@@ -23433,7 +23324,7 @@
   {
    "id": "bench.bench:sol-study.422",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
+   "anchor": "\\qcr{} default, as posted & 8.9 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
    "value": "29.4",
    "group": "bench:sol-study",
    "q": "martian:mv-r1-asposted|quickreview:core_f1"
@@ -23441,7 +23332,7 @@
   {
    "id": "bench.bench:sol-study.423",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
+   "anchor": "\\qcr{} default, as posted & 8.9 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
    "value": "42.0",
    "group": "bench:sol-study",
    "q": "martian:mv-r1-asposted|quickreview:core_f2"
@@ -23449,7 +23340,7 @@
   {
    "id": "bench.bench:sol-study.424",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
+   "anchor": "\\qcr{} default, as posted & 8.9 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
    "value": "18.2",
    "group": "bench:sol-study",
    "q": "martian:ext-g61-martian-test30|quickreview:core_precision"
@@ -23457,7 +23348,7 @@
   {
    "id": "bench.bench:sol-study.425",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
+   "anchor": "\\qcr{} default, as posted & 8.9 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
    "value": "54.0",
    "group": "bench:sol-study",
    "q": "martian:ext-g61-martian-test30|quickreview:core_recall"
@@ -23465,7 +23356,7 @@
   {
    "id": "bench.bench:sol-study.426",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
+   "anchor": "\\qcr{} default, as posted & 8.9 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
    "value": "27.2",
    "group": "bench:sol-study",
    "q": "martian:ext-g61-martian-test30|quickreview:core_f1"
@@ -23473,7 +23364,7 @@
   {
    "id": "bench.bench:sol-study.427",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
+   "anchor": "\\qcr{} default, as posted & 8.9 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\\\",
    "value": "38.7",
    "group": "bench:sol-study",
    "q": "martian:ext-g61-martian-test30|quickreview:core_f2"
@@ -23561,16 +23452,15 @@
   {
    "id": "bench.bench:sol-study.440",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} frozen posting policy & 2.0 & 49.0 & 43.1 & 45.9 & 44.2 & 36.5 & 19.0 & 25.0 & 21.0 \\\\",
-   "value": "2.0",
+   "anchor": "\\qcr{} frozen posting policy & 1.9 & 49.0 & 43.1 & 45.9 & 44.2 & 36.5 & 19.0 & 25.0 & 21.0 \\\\",
+   "value": "1.9",
    "group": "bench:sol-study",
-   "q": "martian:mv-r7-c100-l2-vb|quickreview:inline_per_pr",
-   "note": "39 inline comments on 20 PRs, 1.95 a PR: the text rounds it half up, the verifier as Python prints (1.9)"
+   "q": "martian:mv-r7-c100-l2-vb|quickreview:inline_per_pr"
   },
   {
    "id": "bench.bench:sol-study.441",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} frozen posting policy & 2.0 & 49.0 & 43.1 & 45.9 & 44.2 & 36.5 & 19.0 & 25.0 & 21.0 \\\\",
+   "anchor": "\\qcr{} frozen posting policy & 1.9 & 49.0 & 43.1 & 45.9 & 44.2 & 36.5 & 19.0 & 25.0 & 21.0 \\\\",
    "value": "49.0",
    "group": "bench:sol-study",
    "q": "martian:mv-r7-c100-l2-vb|quickreview:core_precision"
@@ -23578,7 +23468,7 @@
   {
    "id": "bench.bench:sol-study.442",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} frozen posting policy & 2.0 & 49.0 & 43.1 & 45.9 & 44.2 & 36.5 & 19.0 & 25.0 & 21.0 \\\\",
+   "anchor": "\\qcr{} frozen posting policy & 1.9 & 49.0 & 43.1 & 45.9 & 44.2 & 36.5 & 19.0 & 25.0 & 21.0 \\\\",
    "value": "43.1",
    "group": "bench:sol-study",
    "q": "martian:mv-r7-c100-l2-vb|quickreview:core_recall"
@@ -23586,7 +23476,7 @@
   {
    "id": "bench.bench:sol-study.443",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} frozen posting policy & 2.0 & 49.0 & 43.1 & 45.9 & 44.2 & 36.5 & 19.0 & 25.0 & 21.0 \\\\",
+   "anchor": "\\qcr{} frozen posting policy & 1.9 & 49.0 & 43.1 & 45.9 & 44.2 & 36.5 & 19.0 & 25.0 & 21.0 \\\\",
    "value": "45.9",
    "group": "bench:sol-study",
    "q": "martian:mv-r7-c100-l2-vb|quickreview:core_f1"
@@ -23594,7 +23484,7 @@
   {
    "id": "bench.bench:sol-study.444",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} frozen posting policy & 2.0 & 49.0 & 43.1 & 45.9 & 44.2 & 36.5 & 19.0 & 25.0 & 21.0 \\\\",
+   "anchor": "\\qcr{} frozen posting policy & 1.9 & 49.0 & 43.1 & 45.9 & 44.2 & 36.5 & 19.0 & 25.0 & 21.0 \\\\",
    "value": "44.2",
    "group": "bench:sol-study",
    "q": "martian:mv-r7-c100-l2-vb|quickreview:core_f2"
@@ -23602,7 +23492,7 @@
   {
    "id": "bench.bench:sol-study.445",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} frozen posting policy & 2.0 & 49.0 & 43.1 & 45.9 & 44.2 & 36.5 & 19.0 & 25.0 & 21.0 \\\\",
+   "anchor": "\\qcr{} frozen posting policy & 1.9 & 49.0 & 43.1 & 45.9 & 44.2 & 36.5 & 19.0 & 25.0 & 21.0 \\\\",
    "value": "36.5",
    "group": "bench:sol-study",
    "q": "martian:mt-test30-frozen|quickreview:core_precision"
@@ -23610,7 +23500,7 @@
   {
    "id": "bench.bench:sol-study.446",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} frozen posting policy & 2.0 & 49.0 & 43.1 & 45.9 & 44.2 & 36.5 & 19.0 & 25.0 & 21.0 \\\\",
+   "anchor": "\\qcr{} frozen posting policy & 1.9 & 49.0 & 43.1 & 45.9 & 44.2 & 36.5 & 19.0 & 25.0 & 21.0 \\\\",
    "value": "19.0",
    "group": "bench:sol-study",
    "q": "martian:mt-test30-frozen|quickreview:core_recall"
@@ -23618,7 +23508,7 @@
   {
    "id": "bench.bench:sol-study.447",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} frozen posting policy & 2.0 & 49.0 & 43.1 & 45.9 & 44.2 & 36.5 & 19.0 & 25.0 & 21.0 \\\\",
+   "anchor": "\\qcr{} frozen posting policy & 1.9 & 49.0 & 43.1 & 45.9 & 44.2 & 36.5 & 19.0 & 25.0 & 21.0 \\\\",
    "value": "25.0",
    "group": "bench:sol-study",
    "q": "martian:mt-test30-frozen|quickreview:core_f1"
@@ -23626,7 +23516,7 @@
   {
    "id": "bench.bench:sol-study.448",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\qcr{} frozen posting policy & 2.0 & 49.0 & 43.1 & 45.9 & 44.2 & 36.5 & 19.0 & 25.0 & 21.0 \\\\",
+   "anchor": "\\qcr{} frozen posting policy & 1.9 & 49.0 & 43.1 & 45.9 & 44.2 & 36.5 & 19.0 & 25.0 & 21.0 \\\\",
    "value": "21.0",
    "group": "bench:sol-study",
    "q": "martian:mt-test30-frozen|quickreview:core_f2"
@@ -33550,19 +33440,16 @@
   {
    "id": "bench.bench:sol-study.909",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "(hunt, AACR references, any reviewer comment), 27 of T40's 126 defects (21\\%)",
-   "value": "27",
+   "anchor": "(hunt, AACR references, any reviewer comment), 23 of T40's 126 defects (18\\%)",
+   "value": "23",
    "group": "bench:sol-study",
-   "q": "key:one_source~set=smoke10+dev10+holdout10+fresh10",
-   "note": "the HF defects table's provenance on T40 leaves out the extension reviewers' matches that the archive's orig40-code/<id>/truth-ext.json records for 7 defects (cline 2195a68 D2, cline 7d18fb9 D3, immich 966c3f2 D2, ragflow 7051234 D3, LocalAI e466450 D2, n8n 9321691 D4, symfony 2b9721f D1); the table gives 27, truth-ext.json 23",
-   "alt": [
-    "{key_build:single_source/orig40/single}"
-   ]
+   "q": "{key_build:single_source/orig40/single}",
+   "note": "the sentence's footnote source, provenance in truth-ext.json (the answer-key volume), which on T40 adds the extension reviewers' matches; the HF defects table carries the key files' provenance, which on T40 records the older runs only and gives 27 (21%), the reading the paragraph on the 39 reviewer-less defects uses"
   },
   {
    "id": "bench.bench:sol-study.910",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "(hunt, AACR references, any reviewer comment), 27 of T40's 126 defects (21\\%)",
+   "anchor": "(hunt, AACR references, any reviewer comment), 23 of T40's 126 defects (18\\%)",
    "value": "126",
    "group": "bench:sol-study",
    "q": "key:defects~set=smoke10+dev10+holdout10+fresh10"
@@ -33570,14 +33457,11 @@
   {
    "id": "bench.bench:sol-study.911",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "(hunt, AACR references, any reviewer comment), 27 of T40's 126 defects (21\\%)",
-   "value": "21%",
+   "anchor": "(hunt, AACR references, any reviewer comment), 23 of T40's 126 defects (18\\%)",
+   "value": "18%",
    "group": "bench:sol-study",
-   "q": "{key:one_source~set=smoke10+dev10+holdout10+fresh10} / {key:defects~set=smoke10+dev10+holdout10+fresh10} * 100",
-   "note": "the HF defects table's provenance on T40 leaves out the extension reviewers' matches that the archive's orig40-code/<id>/truth-ext.json records for 7 defects (cline 2195a68 D2, cline 7d18fb9 D3, immich 966c3f2 D2, ragflow 7051234 D3, LocalAI e466450 D2, n8n 9321691 D4, symfony 2b9721f D1); the table gives 21%, truth-ext.json 18%",
-   "alt": [
-    "{key_build:single_source/orig40/pct_single}"
-   ]
+   "q": "{key_build:single_source/orig40/pct_single}",
+   "note": "the sentence's footnote source, provenance in truth-ext.json (the answer-key volume), which on T40 adds the extension reviewers' matches; the HF defects table carries the key files' provenance, which on T40 records the older runs only and gives 27 (21%), the reading the paragraph on the 39 reviewer-less defects uses"
   },
   {
    "id": "bench.bench:sol-study.912",
@@ -51340,7 +51224,7 @@
   {
    "id": "threats.bench:sol-study.1",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "on 98.7% of verdicts, which largely retires judge bias",
+   "anchor": "on 98.7% of verdicts on the earlier gpt-6-sol study, the only study it",
    "value": "98.7%",
    "group": "bench:sol-study",
    "q": "judges:gpt-6-sol-high|claude-opus-5-5|quickreview-default-sol+quickreview-low-sol+ocr-medium-sol+codex-medium-sol+opencode-bridge-sol+pireview-medium-sol+claude-code-opus55:pct"
@@ -54403,6 +54287,409 @@
    "value": "185",
    "group": "bench:sol-study",
    "q": "aacr:claude-code-opus55:judged"
+  },
+  {
+   "id": "do.do:projection.5",
+   "file": "bench/aacr/docs/DIGITALOCEAN.md",
+   "anchor": "~$2,100 a full run (about $3.17 a PR at the 10-PR smoke's profile), more than",
+   "value": "3.17",
+   "group": "do:projection",
+   "q": null,
+   "no_script": "a projection: the 10-PR smoke's token use (open-models/runs/glm53-smoke-p10-l12-*) priced at the same rates gives $3.17 a PR; no committed script computes it yet"
+  },
+  {
+   "id": "do.do:projection.1",
+   "file": "bench/aacr/docs/DIGITALOCEAN.md",
+   "anchor": "for now: at GLM's token profile on its full run it would cost about $6.29 a PR,",
+   "value": "6.29",
+   "group": "do:projection",
+   "q": null,
+   "no_script": "a projection: GLM's full-run token use (open-models/runs/glm53-full-*/cases/*/case-summary.json `usage`, main session and lenses, 335 PRs) priced at the listed Qwen3.8-Max rates ($2.00 in / $6.00 out / $0.20 cache read per 1M) gives $6.29 a PR and $2,108 for 335 PRs; no committed script computes it yet",
+   "about": true
+  },
+  {
+   "id": "bench-readme.readme:aacr.1",
+   "file": "bench/aacr/README.md",
+   "anchor": "| **QuickReview default** ",
+   "value": "409",
+   "group": "readme:aacr",
+   "q": "aacr:quickreview-default-g61:found"
+  },
+  {
+   "id": "bench-readme.readme:aacr.2",
+   "file": "bench/aacr/README.md",
+   "anchor": "| **QuickReview default** ",
+   "value": "79%",
+   "group": "readme:aacr",
+   "q": "aacr:quickreview-default-g61:recall"
+  },
+  {
+   "id": "bench-readme.readme:aacr.3",
+   "file": "bench/aacr/README.md",
+   "anchor": "| **QuickReview default** ",
+   "value": "83.5",
+   "group": "readme:aacr",
+   "q": "aacr:quickreview-default-g61:high"
+  },
+  {
+   "id": "bench-readme.readme:aacr.4",
+   "file": "bench/aacr/README.md",
+   "anchor": "| **QuickReview default** ",
+   "value": "95%",
+   "group": "readme:aacr",
+   "q": "aacr:quickreview-default-g61:correct"
+  },
+  {
+   "id": "bench-readme.readme:aacr.5",
+   "file": "bench/aacr/README.md",
+   "anchor": "| **QuickReview default** ",
+   "value": "1.36",
+   "group": "readme:aacr",
+   "q": "aacr:quickreview-default-g61:usd"
+  },
+  {
+   "id": "bench-readme.readme:aacr.6",
+   "file": "bench/aacr/README.md",
+   "anchor": "| **QuickReview default** ",
+   "value": "12.5%",
+   "group": "readme:aacr",
+   "q": "aacr:quickreview-default-g61:aacr_f1"
+  },
+  {
+   "id": "bench-readme.readme:aacr.7",
+   "file": "bench/aacr/README.md",
+   "anchor": "| QuickReview low ",
+   "value": "365.5",
+   "group": "readme:aacr",
+   "q": "aacr:quickreview-low-g61:found"
+  },
+  {
+   "id": "bench-readme.readme:aacr.8",
+   "file": "bench/aacr/README.md",
+   "anchor": "| QuickReview low ",
+   "value": "70%",
+   "group": "readme:aacr",
+   "q": "aacr:quickreview-low-g61:recall"
+  },
+  {
+   "id": "bench-readme.readme:aacr.9",
+   "file": "bench/aacr/README.md",
+   "anchor": "| QuickReview low ",
+   "value": "79.5",
+   "group": "readme:aacr",
+   "q": "aacr:quickreview-low-g61:high"
+  },
+  {
+   "id": "bench-readme.readme:aacr.10",
+   "file": "bench/aacr/README.md",
+   "anchor": "| QuickReview low ",
+   "value": "94%",
+   "group": "readme:aacr",
+   "q": "aacr:quickreview-low-g61:correct"
+  },
+  {
+   "id": "bench-readme.readme:aacr.11",
+   "file": "bench/aacr/README.md",
+   "anchor": "| QuickReview low ",
+   "value": "0.88",
+   "group": "readme:aacr",
+   "q": "aacr:quickreview-low-g61:usd"
+  },
+  {
+   "id": "bench-readme.readme:aacr.12",
+   "file": "bench/aacr/README.md",
+   "anchor": "| QuickReview low ",
+   "value": "11.5%",
+   "group": "readme:aacr",
+   "q": "aacr:quickreview-low-g61:aacr_f1"
+  },
+  {
+   "id": "bench-readme.readme:aacr.13",
+   "file": "bench/aacr/README.md",
+   "anchor": "| pi-review 0.18.0 ",
+   "value": "347.5",
+   "group": "readme:aacr",
+   "q": "aacr:pireview-panel-high-g61:found"
+  },
+  {
+   "id": "bench-readme.readme:aacr.14",
+   "file": "bench/aacr/README.md",
+   "anchor": "| pi-review 0.18.0 ",
+   "value": "67%",
+   "group": "readme:aacr",
+   "q": "aacr:pireview-panel-high-g61:recall"
+  },
+  {
+   "id": "bench-readme.readme:aacr.15",
+   "file": "bench/aacr/README.md",
+   "anchor": "| pi-review 0.18.0 ",
+   "value": "80",
+   "group": "readme:aacr",
+   "q": "aacr:pireview-panel-high-g61:high"
+  },
+  {
+   "id": "bench-readme.readme:aacr.16",
+   "file": "bench/aacr/README.md",
+   "anchor": "| pi-review 0.18.0 ",
+   "value": "89%",
+   "group": "readme:aacr",
+   "q": "aacr:pireview-panel-high-g61:correct"
+  },
+  {
+   "id": "bench-readme.readme:aacr.17",
+   "file": "bench/aacr/README.md",
+   "anchor": "| pi-review 0.18.0 ",
+   "value": "0.27",
+   "group": "readme:aacr",
+   "q": "aacr:pireview-panel-high-g61:usd"
+  },
+  {
+   "id": "bench-readme.readme:aacr.18",
+   "file": "bench/aacr/README.md",
+   "anchor": "| pi-review 0.18.0 ",
+   "value": "8.5%",
+   "group": "readme:aacr",
+   "q": "aacr:pireview-panel-high-g61:aacr_f1"
+  },
+  {
+   "id": "bench-readme.readme:aacr.19",
+   "file": "bench/aacr/README.md",
+   "anchor": "| Claude Code 2.1.283 ",
+   "value": "324.5",
+   "group": "readme:aacr",
+   "q": "aacr:claude-code-opus55:found"
+  },
+  {
+   "id": "bench-readme.readme:aacr.20",
+   "file": "bench/aacr/README.md",
+   "anchor": "| Claude Code 2.1.283 ",
+   "value": "62%",
+   "group": "readme:aacr",
+   "q": "aacr:claude-code-opus55:recall"
+  },
+  {
+   "id": "bench-readme.readme:aacr.21",
+   "file": "bench/aacr/README.md",
+   "anchor": "| Claude Code 2.1.283 ",
+   "value": "72.5",
+   "group": "readme:aacr",
+   "q": "aacr:claude-code-opus55:high"
+  },
+  {
+   "id": "bench-readme.readme:aacr.22",
+   "file": "bench/aacr/README.md",
+   "anchor": "| Claude Code 2.1.283 ",
+   "value": "81%",
+   "group": "readme:aacr",
+   "q": "aacr:claude-code-opus55:correct"
+  },
+  {
+   "id": "bench-readme.readme:aacr.23",
+   "file": "bench/aacr/README.md",
+   "anchor": "| Claude Code 2.1.283 ",
+   "value": "0.20",
+   "group": "readme:aacr",
+   "q": "aacr:claude-code-opus55:usd"
+  },
+  {
+   "id": "bench-readme.readme:aacr.24",
+   "file": "bench/aacr/README.md",
+   "anchor": "| Claude Code 2.1.283 ",
+   "value": "8.9%",
+   "group": "readme:aacr",
+   "q": "aacr:claude-code-opus55:aacr_f1"
+  },
+  {
+   "id": "bench-readme.readme:aacr.25",
+   "file": "bench/aacr/README.md",
+   "anchor": "| open-code-review 1.3.1 ",
+   "value": "298.5",
+   "group": "readme:aacr",
+   "q": "aacr:ocr-high-g61:found"
+  },
+  {
+   "id": "bench-readme.readme:aacr.26",
+   "file": "bench/aacr/README.md",
+   "anchor": "| open-code-review 1.3.1 ",
+   "value": "57%",
+   "group": "readme:aacr",
+   "q": "aacr:ocr-high-g61:recall"
+  },
+  {
+   "id": "bench-readme.readme:aacr.27",
+   "file": "bench/aacr/README.md",
+   "anchor": "| open-code-review 1.3.1 ",
+   "value": "63.5",
+   "group": "readme:aacr",
+   "q": "aacr:ocr-high-g61:high"
+  },
+  {
+   "id": "bench-readme.readme:aacr.28",
+   "file": "bench/aacr/README.md",
+   "anchor": "| open-code-review 1.3.1 ",
+   "value": "86%",
+   "group": "readme:aacr",
+   "q": "aacr:ocr-high-g61:correct"
+  },
+  {
+   "id": "bench-readme.readme:aacr.29",
+   "file": "bench/aacr/README.md",
+   "anchor": "| open-code-review 1.3.1 ",
+   "value": "0.53",
+   "group": "readme:aacr",
+   "q": "aacr:ocr-high-g61:usd"
+  },
+  {
+   "id": "bench-readme.readme:aacr.30",
+   "file": "bench/aacr/README.md",
+   "anchor": "| open-code-review 1.3.1 ",
+   "value": "11.6%",
+   "group": "readme:aacr",
+   "q": "aacr:ocr-high-g61:aacr_f1"
+  },
+  {
+   "id": "bench-readme.readme:aacr.31",
+   "file": "bench/aacr/README.md",
+   "anchor": "| Codex CLI 0.159.2 ",
+   "value": "287",
+   "group": "readme:aacr",
+   "q": "aacr:codex-high-g61:found"
+  },
+  {
+   "id": "bench-readme.readme:aacr.32",
+   "file": "bench/aacr/README.md",
+   "anchor": "| Codex CLI 0.159.2 ",
+   "value": "55%",
+   "group": "readme:aacr",
+   "q": "aacr:codex-high-g61:recall"
+  },
+  {
+   "id": "bench-readme.readme:aacr.33",
+   "file": "bench/aacr/README.md",
+   "anchor": "| Codex CLI 0.159.2 ",
+   "value": "81",
+   "group": "readme:aacr",
+   "q": "aacr:codex-high-g61:high"
+  },
+  {
+   "id": "bench-readme.readme:aacr.34",
+   "file": "bench/aacr/README.md",
+   "anchor": "| Codex CLI 0.159.2 ",
+   "value": "93%",
+   "group": "readme:aacr",
+   "q": "aacr:codex-high-g61:correct"
+  },
+  {
+   "id": "bench-readme.readme:aacr.35",
+   "file": "bench/aacr/README.md",
+   "anchor": "| Codex CLI 0.159.2 ",
+   "value": "0.14",
+   "group": "readme:aacr",
+   "q": "aacr:codex-high-g61:usd"
+  },
+  {
+   "id": "bench-readme.readme:aacr.36",
+   "file": "bench/aacr/README.md",
+   "anchor": "| Codex CLI 0.159.2 ",
+   "value": "7.8%",
+   "group": "readme:aacr",
+   "q": "aacr:codex-high-g61:aacr_f1"
+  },
+  {
+   "id": "bench-readme.readme:aacr.37",
+   "file": "bench/aacr/README.md",
+   "anchor": "| OpenCode 1.18.33 ",
+   "value": "263.5",
+   "group": "readme:aacr",
+   "q": "aacr:opencode-native-pr-g61:found"
+  },
+  {
+   "id": "bench-readme.readme:aacr.38",
+   "file": "bench/aacr/README.md",
+   "anchor": "| OpenCode 1.18.33 ",
+   "value": "51%",
+   "group": "readme:aacr",
+   "q": "aacr:opencode-native-pr-g61:recall"
+  },
+  {
+   "id": "bench-readme.readme:aacr.39",
+   "file": "bench/aacr/README.md",
+   "anchor": "| OpenCode 1.18.33 ",
+   "value": "76",
+   "group": "readme:aacr",
+   "q": "aacr:opencode-native-pr-g61:high"
+  },
+  {
+   "id": "bench-readme.readme:aacr.40",
+   "file": "bench/aacr/README.md",
+   "anchor": "| OpenCode 1.18.33 ",
+   "value": "93%",
+   "group": "readme:aacr",
+   "q": "aacr:opencode-native-pr-g61:correct"
+  },
+  {
+   "id": "bench-readme.readme:aacr.41",
+   "file": "bench/aacr/README.md",
+   "anchor": "| OpenCode 1.18.33 ",
+   "value": "0.17",
+   "group": "readme:aacr",
+   "q": "aacr:opencode-native-pr-g61:usd"
+  },
+  {
+   "id": "bench-readme.readme:aacr.42",
+   "file": "bench/aacr/README.md",
+   "anchor": "| OpenCode 1.18.33 ",
+   "value": "6.9%",
+   "group": "readme:aacr",
+   "q": "aacr:opencode-native-pr-g61:aacr_f1"
+  },
+  {
+   "id": "bench-readme.readme:aacr.43",
+   "file": "bench/aacr/README.md",
+   "anchor": "| PR-Agent 0.46.0 ",
+   "value": "194",
+   "group": "readme:aacr",
+   "q": "aacr:pragent-g61:found"
+  },
+  {
+   "id": "bench-readme.readme:aacr.44",
+   "file": "bench/aacr/README.md",
+   "anchor": "| PR-Agent 0.46.0 ",
+   "value": "37%",
+   "group": "readme:aacr",
+   "q": "aacr:pragent-g61:recall"
+  },
+  {
+   "id": "bench-readme.readme:aacr.45",
+   "file": "bench/aacr/README.md",
+   "anchor": "| PR-Agent 0.46.0 ",
+   "value": "55.5",
+   "group": "readme:aacr",
+   "q": "aacr:pragent-g61:high"
+  },
+  {
+   "id": "bench-readme.readme:aacr.46",
+   "file": "bench/aacr/README.md",
+   "anchor": "| PR-Agent 0.46.0 ",
+   "value": "76%",
+   "group": "readme:aacr",
+   "q": "aacr:pragent-g61:correct"
+  },
+  {
+   "id": "bench-readme.readme:aacr.47",
+   "file": "bench/aacr/README.md",
+   "anchor": "| PR-Agent 0.46.0 ",
+   "value": "0.07",
+   "group": "readme:aacr",
+   "q": "aacr:pragent-g61:usd"
+  },
+  {
+   "id": "bench-readme.readme:aacr.48",
+   "file": "bench/aacr/README.md",
+   "anchor": "| PR-Agent 0.46.0 ",
+   "value": "9.4%",
+   "group": "readme:aacr",
+   "q": "aacr:pragent-g61:aacr_f1"
   }
  ],
  "not_claims": [
@@ -55050,85 +55337,6 @@
     "95%"
    ],
    "why": "configuration or a method parameter"
-  },
-  {
-   "file": "bench/aacr/hf/card.md",
-   "anchor": "No number in either paper changed: all 391",
-   "tokens": [
-    "391"
-   ],
-   "why": "a count of verification checks, not a benchmark result"
-  },
-  {
-   "file": "bench/aacr/hf/card.md",
-   "anchor": "16 min, 37k output tokens, 78 replies and $2.27 per PR (published 8 min,",
-   "tokens": [
-    "8"
-   ],
-   "why": "a quote of the published number being corrected"
-  },
-  {
-   "file": "bench/aacr/hf/card.md",
-   "anchor": "21k, 71, $2.30).",
-   "tokens": [
-    "21k",
-    "71",
-    "2.30"
-   ],
-   "why": "a quote of the published number being corrected"
-  },
-  {
-   "file": "bench/aacr/hf/card.md",
-   "anchor": "$0.69 (published 41 min, 223, 14 s, about $0.57).",
-   "tokens": [
-    "41",
-    "223",
-    "14",
-    "0.57"
-   ],
-   "why": "a quote of the published number being corrected"
-  },
-  {
-   "file": "bench/aacr/hf/card.md",
-   "anchor": "- The GLM smoke's \"median about 28 minutes\" is the mean; the median is 26.5.",
-   "tokens": [
-    "28"
-   ],
-   "why": "a quote of the published number being corrected"
-  },
-  {
-   "file": "bench/aacr/hf/card.md",
-   "anchor": "- \"54–66 minutes on the largest AACR PRs\": the full run's slowest review took",
-   "tokens": [
-    "54",
-    "66"
-   ],
-   "why": "a quote of the published number being corrected"
-  },
-  {
-   "file": "bench/aacr/hf/card.md",
-   "anchor": "- \"5 of the first 10 PRs timed out\": no run file records it.",
-   "tokens": [
-    "5",
-    "10"
-   ],
-   "why": "a quote of the published number being corrected"
-  },
-  {
-   "file": "bench/aacr/hf/card.md",
-   "anchor": "- README, \"GLM's review was missing a lens pass on 7\": 7 is the PRs whose lens",
-   "tokens": [
-    "7"
-   ],
-   "why": "a quote of the published number being corrected"
-  },
-  {
-   "file": "bench/aacr/hf/card.md",
-   "anchor": "- README, \"about $4 per PR\" for QuickReview on Opus 5.5 in the Elo pool: the",
-   "tokens": [
-    "4"
-   ],
-   "why": "a quote of the published number being corrected"
   },
   {
    "file": "bench/aacr/hf/card.md",
@@ -65497,6 +65705,308 @@
     "5"
    ],
    "why": "an iteration number"
+  },
+  {
+   "file": "bench/aacr/docs/DIGITALOCEAN.md",
+   "anchor": "~$2,100 a full run (about $3.17 a PR at the 10-PR smoke's profile), more than",
+   "tokens": [
+    "10"
+   ],
+   "why": "a run named by its set size"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "77% → 73% (`tab:stab-sol`, `tab:stab`). The Martian development table",
+   "tokens": [
+    "73%",
+    "77%"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "38.8 → 38.7, round 4's issues per PR 10.6 → 10.5, and issues per PR as",
+   "tokens": [
+    "10.5",
+    "10.6",
+    "38.7",
+    "38.8",
+    "4"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "posted 9.0 → 8.9 and under the frozen posting policy 2.0 → 1.9 (179 and 39",
+   "tokens": [
+    "1.9",
+    "179",
+    "2.0",
+    "39",
+    "8.9",
+    "9.0"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "comments on 20 PRs, printed the way every other table prints a",
+   "tokens": [
+    "20"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "third-party harnesses find, 54--78% → 53--78%; the frozen build's cost",
+   "tokens": [
+    "53",
+    "54",
+    "78%",
+    "78%"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "against the third-party tools, 4 to 29 → 4 to 31 times; the pi-review",
+   "tokens": [
+    "29",
+    "31",
+    "4",
+    "4"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "panel's cost, 2.7 → 2.8 times one high reviewer; Codex at high effort,",
+   "tokens": [
+    "2.7",
+    "2.8"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "$0.05 → $0.06 more per PR; the frozen build against the default,",
+   "tokens": [
+    "0.05",
+    "0.06"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "20% → 21% less; the default's lead on T40, 18.2 → 18.3 points; PR-Agent's",
+   "tokens": [
+    "18.2",
+    "18.3",
+    "20%",
+    "21%"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "comments mapping to a defect, 77% → 76%; AACR-Bench's \"human\" references,",
+   "tokens": [
+    "76%",
+    "77%"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "362 → 361; their AI-written share, 74% → 75%; the key's reviewer comments,",
+   "tokens": [
+    "361",
+    "362",
+    "74%",
+    "75%"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "2,216 → 2,221, and its excluded candidates, 691 → 692; the Opus-shifted",
+   "tokens": [
+    "2,216",
+    "2,221",
+    "691",
+    "692"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "Martian projection, 43.5 → 43.6; the seven smaller sub-lenses' cost share,",
+   "tokens": [
+    "43.5",
+    "43.6"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "2.8% → 2.7%; defects raised by six or more lenses, 127 → 126, and by five,",
+   "tokens": [
+    "126",
+    "127",
+    "2.7%",
+    "2.8%"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "53 → 54. Ratios and differences of costs use the unrounded costs, so a few",
+   "tokens": [
+    "53",
+    "54"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "- **README.** QuickReview on Opus 5.5 in the Elo pool costs $4.61 per PR on",
+   "tokens": [
+    "4.61"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "average (was \"about $4\"); the open-model rows' lost lens and validator",
+   "tokens": [
+    "4"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "passes are given per kind (was \"missing a lens pass on 7\").",
+   "tokens": [
+    "7"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "16 min, 37k output tokens, 78 replies, $2.27 (was 8, 21k, 71, $2.30); the",
+   "tokens": [
+    "16",
+    "2.27",
+    "2.30",
+    "21k",
+    "37k",
+    "71",
+    "78",
+    "8"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "DeepSeek row, 42 min, 230 replies, 13 s, $0.69 (was 41, 223, 14 s, about",
+   "tokens": [
+    "0.69",
+    "13",
+    "14",
+    "223",
+    "230",
+    "41",
+    "42"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "$0.57); 2.5–3× the steps and 7–9× the output (was about 3× and 12–15×);",
+   "tokens": [
+    "0.57",
+    "12",
+    "15",
+    "2.5",
+    "3",
+    "3",
+    "7",
+    "9"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "about 16 minutes a PR for GPT-6.1 Sol (was about 8); GLM's slowest AACR",
+   "tokens": [
+    "16",
+    "8"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "reviews 55–72 minutes (was 54–66); the GLM smoke's median 26.5 minutes",
+   "tokens": [
+    "26.5",
+    "54",
+    "55",
+    "66",
+    "72"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "(was \"about 28\", the mean) and its total $3.32 (was $3.31, a sum of",
+   "tokens": [
+    "28",
+    "3.31",
+    "3.32"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "per-set cents); the Qwen3.8-Max projection, about $6.29 a PR and ~$2,100 a",
+   "tokens": [
+    "2,100",
+    "6.29"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "full run at GLM's full-run token profile (was $3.09 and ~$1,030, a smoke's",
+   "tokens": [
+    "1,030",
+    "3.09"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "- **`docs/THREATS-TO-VALIDITY.md` and `METRICS.md`.** 361 \"human\" references",
+   "tokens": [
+    "361"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "(was 362).",
+   "tokens": [
+    "362"
+   ],
+   "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "`LICENSES/MIT-martian.txt`, Copyright (c) 2025 Martian) and Qodo",
+   "tokens": [
+    "2025"
+   ],
+   "why": "a year"
   }
  ]
 }

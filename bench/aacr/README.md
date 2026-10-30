@@ -32,7 +32,9 @@ the authors' machines.
 
 **Tier 1 — re-score and re-chart the published runs: no keys, no docker.**
 Download the **slim re-score bundle** (the dataset's `slim/` folder) — every run dir
-behind the papers' tables, without the per-case session-log extracts —
+behind the papers' tables, with no session log (the open-model cases and the
+frozen build's cases of the open-model smoke PRs keep their numbers-only
+`pi-events.pruned.jsonl` extract, which the speed table reads) —
 and point the scripts at it:
 
 ```sh

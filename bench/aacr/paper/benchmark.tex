@@ -2524,7 +2524,7 @@ minus the mean recall of the six other reviewers is 29.0 points on T40 and
 a 95\% bootstrap interval of $-6.3$ to $+8.9$ (PRs resampled within each
 half).\footnote{Computed from the primary judge's verdict files, 5{,}000
 resamples, 2026-09-28.} The two halves' keys also differ. By source type
-(hunt, AACR references, any reviewer comment), 27 of T40's 126 defects (21\%)
+(hunt, AACR references, any reviewer comment), 23 of T40's 126 defects (18\%)
 have one source against 151 of R145's 394 (38\%), mostly defects raised only
 by reviewers (7 on T40, 144 on R145, where the verifier read the comments of
 three benchmarked reviewers). Per scored reviewer (found or partial by
@@ -2776,10 +2776,10 @@ golden audit, which reads all 173 and is kept out of every reviewer change.
     \cmidrule(lr){3-6}\cmidrule(lr){7-10}
     Reviewer & Issues/PR & P & R & F1 & $F_2$ & P & R & F1 & $F_2$ \\
     \midrule
-    \qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\
+    \qcr{} default, as posted & 8.9 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.7 \\
     \qcr{} default, round 3 (five lens changes) & 9.2 & 20.2 & 60.3 & 30.3 & 43.2 & \multicolumn{4}{c}{not run} \\
     \qcr{} default, round 4 (six more changes) & 10.5 & \multicolumn{4}{c}{not run (targeted check only)} & 18.6 & 55.0 & 27.8 & 39.6 \\
-    \qcr{} frozen posting policy & 2.0 & 49.0 & 43.1 & 45.9 & 44.2 & 36.5 & 19.0 & 25.0 & 21.0 \\
+    \qcr{} frozen posting policy & 1.9 & 49.0 & 43.1 & 45.9 & 44.2 & 36.5 & 19.0 & 25.0 & 21.0 \\
     \qcr{} \code{snappy} profile, iteration 1 & 3.3 & 27.0 & 34.5 & 30.3 & 32.7 & \multicolumn{4}{c}{not run} \\
     \midrule
     cubic-v2 (re-judged) & 3.3 & 62.1 & 70.7 & 66.1 & 68.8 & 53.3 & 57.0 & 55.1 & 56.2 \\
@@ -3665,7 +3665,7 @@ archived judge files with no model call, and \code{bench/aacr/README.md}
 (``Reproduce'') gives the three ways in: re-score the slim bundle with no key,
 re-judge the archived reviews, or re-run every arm, on a ChatGPT login or on
 one's own API keys. The generated charts and the readable renderings of the
-keys are in the dataset. The file names some footnotes cite --- \code{FULL-BENCHMARK.md}, \code{RESULTS.md}, \code{EXTERNAL-BENCHMARKS.md}, \code{MARTIAN-CRITIQUE.md}, \code{RUNS.md}, \code{REVIEW-benchmark.md}, and the scratch analyses under \code{wp-data/} and \code{paper-data/} --- are the study's working notes. They are not part of the public repository; every number this paper takes from them is stated here, and the run data they were computed from is in the run archive below.
+keys are in the dataset. The file names some footnotes cite --- \code{FULL-BENCHMARK.md}, \code{RESULTS.md}, \code{EXTERNAL-BENCHMARKS.md}, \code{MARTIAN-CRITIQUE.md}, \code{RUNS.md}, \code{REVIEW-benchmark.md} --- are the study's working notes, not part of the public repository or the dataset. The scratch analyses under \code{wp-data/} and \code{paper-data/}, with the key-construction analysis scripts, ship in the run archive's \code{analysis} volume. Every number this paper takes from the working notes is stated here, and \code{bench/aacr/claims.json} lists each published number with the data and script behind it; a few rest on records the release does not hold (hand checks, run-time judge call counts, third-party leaderboards), and the manifest names each with its reason. Ratios and differences of costs are computed from the unrounded per-PR costs, so they can differ by one unit from a ratio of the rounded figures printed beside them.
 
 \paragraph{Run archive.} The run data are published on Hugging Face only,
 as the dataset \url{https://huggingface.co/datasets/quickchatai/quickreview-bench}
@@ -3677,8 +3677,7 @@ session transcripts are not published; numbers-only extracts of them
 (timestamps, token usage, lens outcomes) are. Names are rewritten to
 placeholders and model reasoning blobs blanked.
 
-\paragraph{Local only.} Extracted PR code and the key-construction analysis
-scripts. AACR-Bench is Apache-2.0, so the derived index, labels and key may
+\paragraph{Local only.} Extracted PR code. AACR-Bench is Apache-2.0, so the derived index, labels and key may
 ship with attribution; code quotes ship with per-repository attribution, and
 full checkouts are not redistributed.
 

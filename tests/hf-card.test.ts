@@ -14,7 +14,9 @@
 
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const DATASET = "https://huggingface.co/datasets/quickchatai/quickreview-bench";
 const CARD = readFileSync("bench/aacr/hf/card.md", "utf8");
@@ -75,7 +77,10 @@ describe("the dataset card renders completely", () => {
     // the run archive and the slim bundle default to this dataset's own folders
     expect(card).toContain("(https://huggingface.co/datasets/acme/bench/tree/main/archive)");
     expect(card).toContain("(https://huggingface.co/datasets/acme/bench/tree/main/slim)");
-    expect(card).toMatch(/\b3 run directories in\s+2\s+families\b/); // the template wraps freely
+    expect(card).toMatch(/\b3 run index\s+units\b[^.]*?\bin\s+2\s+families\b/); // the template wraps freely
+    // the clone the verify steps use, and the verifier's result, pending until it has run
+    expect(card).toContain("git clone --branch main https://github.com/quickchatai/quickreview");
+    expect(card).toContain("On this release: `<verifier result pending>`");
     expect(card).toContain("size_categories:\n- n<1K\n"); // one row per config
   });
 
@@ -181,5 +186,63 @@ describe("public pages that cite run data link the published dataset", () => {
     const src = readFileSync("bench/aacr/showcase/readme_charts.py", "utf8");
     expect(src).toContain("`elo_judgments` table");
     expect(src).not.toMatch(/run archive's elo\//);
+  });
+});
+
+describe("the card states the release's verified state", () => {
+  // MUTATION: make verify_result ignore its report (always the pending marker) — this fails
+  it("renders the verifier's counts and the repository ref the release was verified against", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hf-card-"));
+    try {
+      const report = join(dir, "vc.json");
+      writeFileSync(
+        report,
+        JSON.stringify({
+          results: [
+            ...Array(5).fill({ status: "pass" }),
+            { status: "no-script" },
+            { status: "not-published" },
+            { status: "not-published" },
+          ],
+          consistency: [{ ok: true }, { ok: true }],
+        }),
+      );
+      const card = render(`, repo_ref='bench-data-v1', verify_report=${JSON.stringify(report)}`);
+      expect(card).toContain(
+        "git clone --branch bench-data-v1 https://github.com/quickchatai/quickreview",
+      );
+      expect(card).toContain(
+        "On this release: 5 of 8 claims pass; 0 mismatch, 0 error and 0 missing source; the documented " +
+          "gaps are 1 claims with no recompute script yet and 2 whose data the release does not hold.",
+      );
+      expect(card).not.toContain("<verifier result pending>");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("the card is leak-scanned like every other file", () => {
+  // MUTATION: put README.md back on leak_scan's skip list — this fails
+  it("finds a scrubbed name in the card, except on a BibTeX author line", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hf-leak-"));
+    try {
+      mkdirSync(join(dir, "data"));
+      const r = py(
+        "import os\n" +
+          "out = sys.argv[1]\n" +
+          "h.CONFIGS[:] = []\n" +
+          "open(os.path.join(out, 'README.md'), 'w').write('  author = {Jordan Smith},\\nAsk Jordan.\\n')\n" +
+          "a = h.leak_scan(out)\n" +
+          "open(os.path.join(out, 'README.md'), 'w').write('  author = {Jordan Smith},\\n')\n" +
+          "print(json.dumps([sum(a.values()), sum(h.leak_scan(out).values())]))",
+        dir,
+      );
+      const [before, after] = r as [number, number];
+      expect(before).toBeGreaterThan(0); // "Ask Jordan." (both owner rules match it)
+      expect(after).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

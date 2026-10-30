@@ -19,8 +19,8 @@ configs:
 # Real defects in code review
 
 The data behind every benchmark number QuickReview publishes, and every other
-benchmark run its authors hold. It comes in three parts, all in this
-repository:
+benchmark run its authors hold except those listed under "What is not here,
+and why". It comes in three parts, all in this repository:
 
 - **The tables** (the configs below, `data/*.parquet`). A verified defect key
   for 185 pull requests of AACR-Bench v1.0. Every review from every shipped
@@ -32,10 +32,12 @@ repository:
 - **The run archive** ({{ARCHIVE_MD}}). The run directories as the
   runs wrote them, without their raw model session logs: reviews and
   findings, judge and scorer outputs with their reasoning, run configurations,
-  per-PR summaries, driver logs, and a numbers-only extract of every session
-  log (timestamps, token usage, cost, lens outcomes). There is one `.tar.zst`
-  volume per run family, {{RUN_UNITS}} run directories in {{RUN_FAMILIES}}
-  families. Its README lists every volume, every rewrite and every kind of
+  per-PR summaries, driver logs, and a numbers-only extract of every JSONL
+  session log (timestamps, token usage, cost, lens outcomes); the other session
+  logs, the process logs and the prompt files are left out with no extract.
+  There is one `.tar.zst` volume per run family, {{RUN_UNITS}} run index
+  units (run and scoring directories, driver files, support trees) in
+  {{RUN_FAMILIES}} families. Its README lists every volume, every rewrite and every kind of
   file left out.
 - **The slim re-score bundle** ({{SLIM_MD}}). The part of the archive
   that the scoring and recompute scripts read, with no transcript text.
@@ -53,10 +55,14 @@ The two papers:
   and how it performs on a verified defect benchmark* (the technical report,
   arXiv {{ARXIV_QUICKREVIEW_MD}}).
 
-Every number in their tables, and every benchmark number in the repository's
-README and `bench/aacr/docs/`, can be recomputed from this data with no model
-call; "How to verify" below shows how. The few published figures the data does
-not reproduce are listed in their own section.
+`bench/aacr/claims.json` in the repository lists every benchmark number of
+both papers, the README, `bench/aacr/docs/` and this card, with the data and
+the script behind it, and one command recomputes them all from this data with
+no model call ("How to verify"). Nearly all pass. The rest are documented
+gaps, each with its reason in the manifest: a few numbers rest on records the
+release does not hold (hand checks, run-time judge call counts, third-party
+leaderboards) or have no recompute script yet. Published numbers that
+differed from the data were corrected to it before this release ("Versions").
 
 ## Read this first
 
@@ -118,8 +124,8 @@ repository under `bench/aacr/`.
 | README Qodo chart and table; benchmark paper `tab:qodo` | `readme:qodo`, `bench:tab:qodo` | `qodo_prs`, `qodo_issues`, `qodo_reviews`, `qodo_verdicts` | `qodo-final`, `qodo-r6-and-vendors` | Qodo's scorer on the slim bundle; `validation.json` |
 | README "Judged side by side" (pairwise Elo) and its chart | `readme:elo` | `elo_judgments`, `elo_ratings` | `elo-pairwise`; the reviews: `ft0622-hard20-claude-max-sonnet`, `ft0622-claude-code-high`, `ft0622-quickreview-on-claude`, `martian-final`, `openmodels-glm53-full`, `openmodels-dsv41f-mix` | `recompute/elo_ratings.py --check-ratings` |
 | `docs/DIGITALOCEAN.md`: speed and cost table, the smokes, the review time limit | `do:speed`, `do:glm-smoke`, `do:gemma-smoke`, `do:timeouts` | none (archive only) | `openmodels-smokes`, `openmodels-gpt61-baselines`, `openmodels-glm53-full`, `openmodels-driver`, `aacr-frozen-build` | `recompute/do_speed.py` |
-| QuickReview paper: cost mechanism (pass counts, lens shares, validator dispositions) | `qr:mechanism` | `reviews` | `aacr-gpt6sol-study` (the transcripts' numbers-only extracts) | the archive's `analysis/` |
-| QuickReview paper: tuning appendix (prompt iterations, levers, lenses) | `qr:app:tuning` | `arms`, `defect_verdicts` | `aacr-dev-iterations`, `aacr-dev-levers-presets` | `compare.py` over those runs |
+| QuickReview paper: cost mechanism (pass counts, lens shares, validator dispositions) | `qr:mechanism` | `reviews` | `aacr-gpt6sol-study` (the transcripts' numbers-only extracts) | `recompute/passes.py`, `recompute/lens_credit.py`, `recompute/tokens.py` |
+| QuickReview paper: tuning appendix (prompt iterations, levers, lenses) | `qr:app:tuning` | `arms`, `defect_verdicts` | `aacr-dev-iterations`, `aacr-dev-levers-presets` | `verify_claims.py` (its table checks, `recompute/claim_metrics.py`); `recompute/missed_defects.py` |
 | QuickReview paper: the max preset example | `qr:max-anecdote` | `arms` (`quickreview-max-g61`) | `aacr-g61-smokes` | `compare.py` |
 
 The other run families back no published number and ship anyway: the fast
@@ -151,7 +157,11 @@ runs = load_dataset("{{REPO_ID}}", "runs", split="test")
 
 **The run index**
 
-- `runs` — one row per shipped run directory, {{RUN_UNITS}} rows: its path in
+- `runs` — one row per shipped run index unit, {{RUN_UNITS}} rows. Most are
+  run directories and their scoring directories; the open-model driver's
+  files (scripts, logs, gate reports) and a few top-level trees (the answer
+  key, the analysis, the re-run logs, the Elo runs, the what-if study) are
+  units of their own, and `path` shows which. Each row gives its path in
   the archive and its volume (`archive_volumes`), its family and the family's
   title, the benchmark and PR set, the number of cases, start and end times,
   the reviewer configuration (`arm_config`), the model it billed
@@ -174,7 +184,10 @@ runs = load_dataset("{{REPO_ID}}", "runs", split="test")
   and consequence (`statement`), sites, kind, severity, evidence (file:line
   and short code quotes), what a finding must say to count (`counts_if`),
   provenance, and two never-scored annotations (`benchmark_limitation`,
-  `bot_derived_reference`). `key_version` is the key version the judge used
+  `bot_derived_reference`). The provenance is the key files': on the T40 sets
+  it records the older runs those keys were built from, and the answer-key
+  volume's `orig40-code/<id>/truth-ext.json` adds the extension reviewers'
+  matches; each paper number says which reading it uses. `key_version` is the key version the judge used
   (fresh10 is on version 1, the other sets on version 2).
 - `exclusions` — 3,093 candidates checked and rejected, each with its reason.
 - `aacr_references` — AACR-Bench's own 1,418 reference comments on these PRs
@@ -201,9 +214,15 @@ runs = load_dataset("{{REPO_ID}}", "runs", split="test")
   its run family, the model it billed, its primary judge (`judge`) and every
   judge with verdicts for it (`judges`). `in_paper` marks the configurations
   the papers or the README report. The final comparison is eight
-  configurations: the seven `*-g61` arms and `claude-code-opus55`. The frozen
-  build is `quickreview-frozen`; the earlier gpt-6-sol study is the seven
-  `*-sol` arms and `claude-code-opus55`; `*-s40` arms are the best-shot
+  configurations: `quickreview-default-g61`, `quickreview-low-g61`,
+  `pireview-panel-high-g61`, `ocr-high-g61`, `codex-high-g61`,
+  `opencode-native-pr-g61`, `pragent-g61` and `claude-code-opus55` (the other
+  `*-g61` arms, `quickreview-max-g61`, `best-pragent-g61` and
+  `pi099-smoke-g61`, are not in it). The frozen build is `quickreview-frozen`;
+  the earlier gpt-6-sol study is `quickreview-default-sol`,
+  `quickreview-low-sol`, `ocr-medium-sol`, `codex-medium-sol`,
+  `opencode-bridge-sol`, `pireview-medium-sol` and `claude-code-opus55`
+  (`pi099-smoke-sol` is a smoke, not in it); `*-s40` arms are the best-shot
   selection runs on S40; the open-model rows are
   `quickreview-glm-53-flash` and `quickreview-deepseek-v41-flash`. Every other
   shipped AACR run is an arm named after its run.
@@ -252,17 +271,20 @@ final comparison has a judged review for all 185 PRs.
   configurations (`a`, `b`) as the judge saw them, the judge and its effort,
   the winner overall and in four categories (recall, precision, finding
   quality, writing) with the judge's reasoning, and the sha256 of the prompt.
-  `used_in_ratings` marks the 596 judgments the README's ratings use. The rest
-  are attempts at a superseded prompt, live Opus probes and an exploratory
-  DeepSeek judge, kept for completeness.
+  `used_in_ratings` marks, per plan, the judgments that plan's ratings use:
+  the 596 of the README's plan (`martian-hard20-all-gpt`) and the smoke
+  plan's own. The rest are attempts at a superseded prompt, live Opus probes
+  and an exploratory DeepSeek judge, kept for completeness.
 - `elo_ratings` — per plan, judge table (`gpt`, `opus`, `combined`) and
   category: each configuration's Elo, its 95% bootstrap interval, its wins,
   ties and losses, and its games. The pairing plans themselves are in the
   `elo-pairwise` volume.
 
-**Other files.** `figures/` holds the papers' charts and their data,
-`keys/` the answer key rendered as Markdown, `reports/` the full benchmark
-report. `validation.json` holds the checks below.
+**Other files.** `figures/` holds the papers' charts and their data, and
+`keys/` the answer key rendered as Markdown. `validation.json` holds the
+checks below. `LICENSES/` holds the MIT licence texts of Martian's and
+Qodo's data (see "Licence"). The working report the papers grew from is not
+included: the papers supersede it.
 
 ## Judges
 
@@ -272,10 +294,10 @@ labels in the first column.
 | Judge | Model | What it scored |
 |---|---|---|
 | `gpt-6-sol-high` | GPT-6 Sol, high effort | the primary judge of the papers: the frozen build, the final comparison, the earlier study, and every other AACR arm except the open-model ones below (base models, stability, selection, development runs, the re-baseline, the refactor smoke). |
-| `claude-opus-5-5` | Claude Opus 5.5 | the second judge. **Only the earlier gpt-6-sol study:** its seven arms (`*-sol` and `claude-code-opus55`), 3,640 reviewer-defect pairs. Claude Code's run is shared by both comparisons, so the final comparison's Claude Code row carries both judges; no other final-comparison arm does. |
+| `claude-opus-5-5` | Claude Opus 5.5 | the second judge. **Only the earlier gpt-6-sol study:** its seven arms (listed under `arms` above), 3,640 reviewer-defect pairs. Claude Code's run is shared by both comparisons, so the final comparison's Claude Code row carries both judges; no other final-comparison arm does. |
 | `gpt-6-sol-high-repeat` | GPT-6 Sol, high effort | the primary judge run again, on the same seven arms and 30 PRs, for self-consistency. |
 | `gpt-6.1-sol-high` | GPT-6.1 Sol, high effort | the open-model runs (GLM-5.3 Flash, DeepSeek V4.1 Flash, the DigitalOcean smokes) and the GPT-6.1 Sol baselines copied beside them. |
-| AACR-Bench's harness | GPT-6 Sol, low effort, three rounds | `aacr_matches`; `arms.aacr_judge` names it per arm. |
+| AACR-Bench's harness | GPT-6 Sol, low effort, three rounds | `aacr_matches` for every arm the papers report. Early development arms (prompt iterations, smokes, end-to-end checks; none in the papers) ran it with GPT-5.6 Terra at low effort, or with a single round. `arms.aacr_judge` names the model and rounds per arm. |
 | `gpt-6.1-sol` | GPT-6.1 Sol | every row of `martian_verdicts` and `qodo_verdicts`. One judge. |
 | Elo: `gpt-6.1-sol` and `claude-opus-5-5` | GPT-6.1 Sol and Claude Opus 5.5, both at xhigh | the pairwise judgments, 298 each in the ratings, pooled into 596. The two pick the same overall winner in 56% of the comparisons both judged. |
 
@@ -305,23 +327,42 @@ Martian, Qodo and Elo judges are the ones named here.
   numbers-only extract (`*.pruned.jsonl`: timestamps, token usage, cost, stop
   reasons and lens outcomes, no prompt or model text), so the speed, cost,
   token and lens claims stay verifiable: `compare.py` prices a case from its
-  extract exactly as from the full stream. The set is defined by file kind
-  and fails closed; the archive's README lists every kind and its count.
-- **Aborted and interrupted attempts** are left out. Each one was re-run
-  under its normal name, and the re-run ships.
+  extract exactly as from the full stream. Session text inside the files that
+  are kept is rewritten field by field: a harness result's `stdout` (the
+  Codex event stream) and `stderr` become numbers-only extracts, a prompt in
+  a driver's recorded argv or a tool's prompt template becomes a hash, and
+  Claude Code's denied commands become a count. The set is defined by file
+  kind and fails closed, and a kept data file that still holds session text
+  is left out whole; the archive's README lists every kind and its count.
+- **Aborted and interrupted attempts** (`aborted-*`, the open-model
+  driver's `interrupted*`) are left out. Most were re-run under their normal
+  name, and the re-run ships. The attempts at a full Martian run of
+  QuickReview on Opus 5.5 (`aborted-c4-opus55-martian50`,
+  `aborted-ratelimit-opus55-martian50`) were stopped and never completed:
+  only that configuration's smoke, `opus55-martian-smoke10`, ships. The
+  partial base-model probe (`aacr-astra-probe`) ships as the partial run it
+  is; `runs.purpose` says where it stopped.
 - **The Elo `packs/`** are left out. They are whole files of the reviewed
   repositories, cut to each PR, and some are under AGPL or source-available
   licences. `bench/aacr/elo/elo.py pack` rebuilds them from the public
   repositories at the commits in `units.jsonl`, and `packs.jsonl` lists the
   files each pack held. `recompute/elo_ratings.py` refits the ratings from the
   judgments alone, with no pack.
-- **Third-party text** is linked, never copied: the vendor review comments
-  Martian publishes (and its `published-benchmark_data.json`), the reviews of
-  Qodo's nine vendors, the upstream Copilot reviews, SWE-PRBench's human review
-  comments, and the PR descriptions in the answer key's `meta.json`. A row
+- **Third-party text** is linked, not copied: the vendor review comments
+  Martian publishes (and its `published-benchmark_data.json`), the Martian
+  judge's extractions of those comments (the vendor candidates in the
+  archived `candidates.json` and `evaluations.json`, and in the blind
+  annotation's candidate list), the reviews of Qodo's nine vendors, the
+  upstream Copilot reviews, SWE-PRBench's human review comments, and PR
+  authors' descriptions wherever a file copied one (the answer key's
+  `meta.json`, PR-Agent's describe output, the open-model case sets). A row
   carries the source URL and the comment locations; an archived file carries
   `[third-party text omitted, sha256:<prefix>; see <link>]`, so equal texts
-  stay equal and every score recomputes unchanged.
+  stay equal and every score recomputes unchanged. Third-party text that does
+  ship, under its own licence: Martian's golden comments and published
+  tool-level judgements and Qodo's issues (MIT, see "Licence"), AACR-Bench's
+  reference comments (Apache-2.0), and code quoted by reviewers and judges
+  (each project's licence).
 - **Encrypted reasoning blobs** are blanked: the value of every OpenAI
   `encrypted_content` and every Anthropic `thinkingSignature` and `signature`
   is the empty string, and the record around it is kept. They are ciphertext
@@ -340,7 +381,9 @@ Martian, Qodo and Elo judges are the ones named here.
 ## Names rewritten
 
 Before export, every string in every table passed through one rewrite, the
-same one the run archive applies. Nothing else in the text was changed.
+same one the run archive applies. Apart from it, the only changes to the
+text are the third-party omissions above and the `qcr_commit` remap (see
+`runs`).
 
 | What | Replaced with | Occurrences in the tables |
 |---|---|---|
@@ -357,13 +400,15 @@ same one the run archive applies. Nothing else in the text was changed.
   container environment appeared in a few open-model transcripts; those
   transcripts are not published.
 - `<ticket>` replaces the ids of the authors' tracker, which is not public,
-  and any path into it. Run directory names that carry a ticket number (such
-  as the `ft0622-*` runs) are identifiers the public repository's own plans
-  use, and stay.
+  in any spelling (with or without the hyphen, in any case, as in an image tag
+  `qcr-bench:<ticket>`), and any path into it. One number is kept, inside run
+  names: the `ft0622-*` runs (and the `martian-hard20-ft0622` Elo plan) keep
+  their names, because the public repository's own Elo plans name them.
 - `<private>` and `<private-host>` replace a personal handle, a private
   commit id, an account id and private host names.
 - `<runs>`, `<repo>`, `<home>` and `<pi-login-volume>` replace host paths
-  and a docker volume name; they occur only in logs.
+  and a docker volume name; they occur almost only in the archive's logs (the
+  table above counts the few in the tables).
 - The public repository's stand-ins: where QuickReview's prompts, as built
   at run time, carried examples from private work, the same stand-ins the
   public repository's history carries replace them, by the same rules.
@@ -374,11 +419,12 @@ The archive's README gives the count of every rewrite over the whole archive.
 
 ## How to verify
 
-Download the dataset and the QuickReview repository, then recompute:
+Download the dataset and the QuickReview repository at the ref this release
+was verified against, then recompute:
 
 ```sh
 hf download {{REPO_ID}} --repo-type dataset --local-dir quickreview-bench
-git clone https://github.com/quickchatai/quickreview
+git clone --branch {{REPO_REF}} https://github.com/quickchatai/quickreview
 cd quickreview
 D=../quickreview-bench
 
@@ -389,21 +435,36 @@ uv run --no-project --with pyarrow python bench/aacr/recompute/heldout.py --data
 # the slim bundle: every final table and chart, the open-model rows,
 # the DigitalOcean table, the Elo refit
 mkdir slim && tar --zstd -xf $D/slim/quickreview-bench-slim.tar.zst -C slim
-QCR_BENCH_RUNS_DIR=$PWD/slim/runs bench/aacr/final/score.sh
+QCR_BENCH_RUNS_DIR=$PWD/slim/runs QCR_CHARTS_OUT=$PWD/charts-out bench/aacr/final/score.sh
 python3 bench/aacr/recompute/open_models.py --runs-dir slim/open-models/runs
 python3 bench/aacr/recompute/do_speed.py --runs-dir slim/open-models/runs --gpt-runs-dir slim/runs
 python3 bench/aacr/recompute/elo_ratings.py slim/elo/martian-hard20-all-gpt --check-ratings \
     --runs-dir slim/runs --runs-dir slim/open-models/runs
 ```
 
+`QCR_CHARTS_OUT` keeps the re-drawn charts out of the clone (a re-rendered
+JPEG differs byte for byte from the committed one).
 `bench/aacr/recompute/README.md` maps each published number to its script.
 The claims verifier checks every published number listed in
-`bench/aacr/claims.json` against this data in one command, and fails on a
-mismatch, a missing source or a missing script:
+`bench/aacr/claims.json` against this data in one command. Two of its
+inputs are third-party and never in this dataset: a checkout of Martian's
+benchmark at the pinned commit (its scorer and published judgements) and
+Qodo's ground-truth file (the dataset's
+`git_code_review_bench_100_w_open_prs.jsonl`):
 
 ```sh
-uv run --no-project --with pyarrow python bench/aacr/verify_claims.py --data $D
+git clone https://github.com/withmartian/code-review-benchmark martian
+git -C martian checkout e616e849755441da38f18bf3adba2c9583b03803
+hf download Qodo/PR-Review-Bench --repo-type dataset --revision a73957c450a70693a743260e5637fffc44625f16 --local-dir qodo
+uv run --no-project --with pyarrow python bench/aacr/verify_claims.py --data $D \
+    --martian martian --qodo-gt qodo/git_code_review_bench_100_w_open_prs.jsonl --allow-gaps
 ```
+
+It fails on a mismatch, an error or a missing source. Without `--allow-gaps`
+it also fails on the documented gaps (claims with no recompute script yet,
+claims whose data the release does not hold, and, when an input above is
+left out, the claims that need it); with it, it lists them with their
+reasons and passes. On this release: {{VERIFY_RESULT}}
 
 `validation.json` recomputes, from these tables alone, the row counts (520
 defects, 3,093 exclusions, 185 PRs per full arm, 1,418 references, 173
@@ -419,28 +480,48 @@ checks.
 
 This is one release. The tables of the papers' first data build (2026-10-05,
 never published) were rebuilt inside it from the same run directories, and
-every run held since was added. No number in either paper changed: all 391
-table cells of the papers re-score to the published values.
+every run held since was added. Building the claims manifest against this
+data found published numbers that differ from it; each was corrected to the
+data in the papers (both rebuilt), the README and `bench/aacr/docs/` before
+this release. The pages as previously published on the repository's main
+branch printed the old values:
 
-## Published numbers this data does not reproduce
-
-These figures in `bench/aacr/docs/DIGITALOCEAN.md` and the README do not
-follow from the run files:
-
-- The GPT-6.1 Sol row of the DigitalOcean speed table: the data gives
-  16 min, 37k output tokens, 78 replies and $2.27 per PR (published 8 min,
-  21k, 71, $2.30).
-- The DeepSeek V4.1 Flash row: the data gives 42 min, 230 replies, 13 s and
-  $0.69 (published 41 min, 223, 14 s, about $0.57).
-- The GLM smoke's "median about 28 minutes" is the mean; the median is 26.5.
-- "54–66 minutes on the largest AACR PRs": the full run's slowest review took
-  72.2 minutes.
-- "5 of the first 10 PRs timed out": no run file records it.
-- README, "GLM's review was missing a lens pass on 7": 7 is the PRs whose lens
-  ran but whose session did not record it; one more PR lost a lens and two
-  lost the validator.
-- README, "about $4 per PR" for QuickReview on Opus 5.5 in the Elo pool: the
-  data gives $4.61 mean, $4.42 median.
+- **Paper tables.** The stability run `stab-r4`: comments correct
+  77% → 73% (`tab:stab-sol`, `tab:stab`). The Martian development table
+  (`tab:martianraw`) and the posting-policy table: the default's `test30` F2
+  38.8 → 38.7, round 4's issues per PR 10.6 → 10.5, and issues per PR as
+  posted 9.0 → 8.9 and under the frozen posting policy 2.0 → 1.9 (179 and 39
+  comments on 20 PRs, printed the way every other table prints a
+  half-way value).
+- **Paper prose.** The share of Martian's real goldens the three
+  third-party harnesses find, 54--78% → 53--78%; the frozen build's cost
+  against the third-party tools, 4 to 29 → 4 to 31 times; the pi-review
+  panel's cost, 2.7 → 2.8 times one high reviewer; Codex at high effort,
+  $0.05 → $0.06 more per PR; the frozen build against the default,
+  20% → 21% less; the default's lead on T40, 18.2 → 18.3 points; PR-Agent's
+  comments mapping to a defect, 77% → 76%; AACR-Bench's "human" references,
+  362 → 361; their AI-written share, 74% → 75%; the key's reviewer comments,
+  2,216 → 2,221, and its excluded candidates, 691 → 692; the Opus-shifted
+  Martian projection, 43.5 → 43.6; the seven smaller sub-lenses' cost share,
+  2.8% → 2.7%; defects raised by six or more lenses, 127 → 126, and by five,
+  53 → 54. Ratios and differences of costs use the unrounded costs, so a few
+  read one unit off a ratio of the rounded figures printed beside them.
+- **README.** QuickReview on Opus 5.5 in the Elo pool costs $4.61 per PR on
+  average (was "about $4"); the open-model rows' lost lens and validator
+  passes are given per kind (was "missing a lens pass on 7").
+- **`docs/DIGITALOCEAN.md`.** The GPT-6.1 Sol row of the speed table,
+  16 min, 37k output tokens, 78 replies, $2.27 (was 8, 21k, 71, $2.30); the
+  DeepSeek row, 42 min, 230 replies, 13 s, $0.69 (was 41, 223, 14 s, about
+  $0.57); 2.5–3× the steps and 7–9× the output (was about 3× and 12–15×);
+  about 16 minutes a PR for GPT-6.1 Sol (was about 8); GLM's slowest AACR
+  reviews 55–72 minutes (was 54–66); the GLM smoke's median 26.5 minutes
+  (was "about 28", the mean) and its total $3.32 (was $3.31, a sum of
+  per-set cents); the Qwen3.8-Max projection, about $6.29 a PR and ~$2,100 a
+  full run at GLM's full-run token profile (was $3.09 and ~$1,030, a smoke's
+  profile); the count of timed-out PRs in the first full attempt is dropped
+  (no run file records it).
+- **`docs/THREATS-TO-VALIDITY.md` and `METRICS.md`.** 361 "human" references
+  (was 362).
 
 ## Datasheet (summary)
 
@@ -475,9 +556,16 @@ follow from the run files:
 ## Licence
 
 Apache-2.0 (LICENSE), with NOTICE carrying AACR-Bench's attribution and the
-modified-work statement, and the Martian and Qodo attributions. The run
-archive and the slim bundle are under the same licence; the archive's README
-carries the SWE-PRBench attribution as well.
+modified-work statement. Two parts stay under their own MIT licences, whose
+copyright and permission notices travel with them in `LICENSES/`: Martian's
+golden comments and published tool-level judgements (`martian_*`,
+`LICENSES/MIT-martian.txt`, Copyright (c) 2025 Martian) and Qodo
+PR-Review-Bench's issues (`qodo_*`, `LICENSES/MIT-qodo.txt`, the Qodo team).
+Code quoted anywhere in the release stays under its own project's licence,
+copyleft and source-available ones included (`prs.repo_license`,
+`martian_prs.repo_license`, `qodo_prs.repo_license`). The run archive and the
+slim bundle carry the same licence files and their own NOTICE; the archive's
+also carries the SWE-PRBench attribution.
 
 ## Citation
 
