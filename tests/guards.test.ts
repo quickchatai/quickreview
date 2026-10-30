@@ -17,6 +17,7 @@ import {
   type GuardAdapter,
 } from "@quickchatai/pi-quickreview/src/guards.js";
 import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
+import { renderedFooter } from "@quickchatai/pi-quickreview/src/reviewrender.js";
 import type { PrFileEntry } from "../src/github.js";
 import { StateStore } from "../src/state.js";
 import { applyEvent } from "../src/statemachine.js";
@@ -389,7 +390,7 @@ describe("guard 2 — the same head is never reviewed twice", () => {
 
 describe("the withheld approval, given — one line, not a second review", () => {
   const KEY = `v1:5180:4:${HEAD}`;
-  const FOOTER = `_Automated review by \`${BOT}\` (quickreview sandbox). Reply to any comment._`;
+  const FOOTER = renderedFooter(BOT);
   const fullBody = `The whole summary again.\n\n**Verdict: Approved** — no findings.\n\n${FOOTER}\n\n<!-- qcr-post:${KEY} -->`;
   const approval = (comments: unknown[] = []): MutationIntent => {
     const intent = reviewIntent("APPROVE", HEAD, fullBody);
@@ -452,6 +453,46 @@ describe("the withheld approval, given — one line, not a second review", () =>
     ciIs(adapter, "success");
     await gate.execute(approval());
     expect(sentBody(executor).body).toBe(fullBody);
+  });
+
+  // MUTATION: drop `ciGreen &&` from the given-approval condition — this fails.
+  it("unreadable CI lets the approval through with its own body: nothing announces CI green", async () => {
+    const { gate, adapter, executor } = harness();
+    withheldAt(HEAD);
+    (adapter as FakeGuardAdapter & { listChecks: GuardAdapter["listChecks"] }).listChecks =
+      async () => {
+        throw new Error("GET /check-runs → 502");
+      };
+    await gate.execute(approval());
+    const sent = sentBody(executor);
+    expect(sent.event).toBe("APPROVE");
+    expect(sent.body).toBe(fullBody);
+  });
+
+  // MUTATION: drop `!deps.personMode &&` from the given-approval condition — this fails.
+  it("person mode keeps the session's body: its COMMENT mark never withheld anything for CI", async () => {
+    const adapter = new FakeGuardAdapter();
+    const executor = vi.fn(async () => ({ id: 900, comments: [] }));
+    const gate = new MutationGate(
+      false,
+      dryrunDir,
+      executor as unknown as (i: MutationIntent) => Promise<unknown>,
+    );
+    gate.setGuard(
+      makePostingGuard({
+        store,
+        adapter,
+        botLogin: BOT,
+        guards: { ...GUARDS_DEFAULTS },
+        personMode: true,
+      }),
+    );
+    withheldAt(HEAD);
+    ciIs(adapter, "success");
+    await gate.execute(approval());
+    const sent = sentBody(executor);
+    expect(sent.event).toBe("COMMENT");
+    expect(sent.body).toContain("The whole summary again.");
   });
 
   it("CI red again: guard 4 withholds once more and nothing is shortened", async () => {
