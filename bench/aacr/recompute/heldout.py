@@ -14,8 +14,8 @@ AACR-Bench — holdout10 + fresh10 (sets/*.json), 20 PRs, 55 defects: the frozen
 Martian — test30 (sets/martian-test30.json; tune20 is sets/martian-tune20.json): real
   goldens found per tool under the gpt-6.1-sol judge. A golden is real when the audit put
   it in the `real` bucket (`martian_goldens.audit_bucket`); its half comes from the set
-  files, not from `audit_split`, which the export leaves empty for the nine goldens the
-  first audit round labelled.
+  files (`martian_goldens.audit_split` names the same half; the export fills it from the
+  set files for the nine goldens the first audit round labelled).
 Qodo — the 31 PRs in no mined or validation set: every PR of qodo-pr100 except
   (a) the PRs of the 59 "vendor-caught misses" — functional issues (no rule_name) that one
       of Qodo's nine published vendors matched and the 2026-10-02 build did not, by the

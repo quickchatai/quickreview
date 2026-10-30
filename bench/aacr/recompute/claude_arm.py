@@ -7,8 +7,9 @@
 (`uv run --no-project --with pyarrow python ...` for the parquet tables.)
 
 For every judged review of the arm `claude-code-opus55` (the HF `reviews` table names its run), reads
-  runs/<run>/cases/<id>/claude-stdout.json   Claude Code's own result envelope: `permission_denials`
-                                             lists the commands the harness's permission set denied;
+  runs/<run>/cases/<id>/claude-stdout.json   Claude Code's own result envelope: `permission_denials_count`
+                                             counts the commands the harness's permission set denied
+                                             (the export keeps the count, not the model's commands);
   runs/<run>/results/all/<id>.json            `bench.claude_view.source` (where the review's comments
                                              came from: `prose`, parsed by src/bench/claudeprose.ts,
                                              or the findings tool) and `bench.claude_prose_parsed`
@@ -55,7 +56,7 @@ def main() -> None:
     for r in rows:
         case = root / "runs" / r["run"] / "cases" / r["instance_id"]
         out = read_json(case / "claude-stdout.json")
-        denied += bool(out.get("permission_denials"))
+        denied += bool(out.get("permission_denials_count") or out.get("permission_denials"))
         bench = read_json(root / "runs" / r["run"] / "results" / "all" / f"{r['instance_id']}.json").get("bench") or {}
         p = bench.get("claude_prose_parsed")
         if p is not None:

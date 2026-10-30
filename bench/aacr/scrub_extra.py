@@ -31,9 +31,11 @@ spelled in this repository:
 
 One rule needs no input: the authors' tracker is not public, so its ticket
 ids (`FT-` and four digits, in any case, with or without the hyphen) and
-any path into it (`…/tracker/efforts/…`, `…/tracker/tickets/…`) become
-`<ticket>` (TICKET_RULES, by pattern). Run directory names such as `ft0622-hard20-…`
-are identifiers the public repository's own plans name, and stay.
+any path through its `tracker/` directory (into its efforts, tickets or maps) become
+`<ticket>` (TICKET_RULES, by pattern), and so does the lower-case form
+without the hyphen (`ft` and a number from 0001, in an image tag or a run
+name). The one number kept is TICKET_KEPT's: run directory names such as
+`ft0622-hard20-…` are identifiers the public repository's own Elo plans name.
 
 Standard library only; bytes in, bytes out.
 """
@@ -55,7 +57,12 @@ TICKET_RULES = [
     ("ticket-path", rb"[\w.~$/{}-]*(?<![A-Za-z0-9_])tracker/(?:efforts|tickets|maps)/[^\s\"'`<>()\[\]{},;]*",
      ("low", b"tracker/")),
     ("ticket-id", rb"(?<![A-Za-z0-9])(?:[Ff][Tt]-\d{3,4}|FT\d{3,4})(?!\d)", ("low", b"ft")),
+    # the lower-case form without the hyphen (an image tag, a run name), except the run names
+    # the public repository's own Elo plans use (TICKET_KEPT)
+    ("ticket-id-lower", rb"(?<![A-Za-z0-9])ft0(?!622(?!\d))\d{3}(?!\d)", ("low", b"ft0")),
 ]
+# ticket numbers kept inside run names: `ft0622-…` names runs public main's Elo plans name
+TICKET_KEPT = ("ft0622",)
 
 
 def ticket_rules():
@@ -65,7 +72,8 @@ def ticket_rules():
 
 def ticket_rules_str():
     """The same rules for str text (the HF tables): [(label, regex, replacement)]."""
-    return [({"ticket-path": "tracker path", "ticket-id": "ticket id"}[n], p.decode(), TICKET.decode())
+    return [({"ticket-path": "tracker path", "ticket-id": "ticket id", "ticket-id-lower": "ticket id"}[n], p.decode(),
+             TICKET.decode())
             for n, p, _ in TICKET_RULES]
 
 

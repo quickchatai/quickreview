@@ -16,14 +16,16 @@ What it writes (no model call, nothing uploaded; the run dirs are only read):
                          reviews, defect_verdicts, comment_verdicts,
                          aacr_matches), and the Martian and Qodo benchmarks'
                          goldens, reviews and verdicts.
-  figures/, keys/, reports/   the generated artefacts kept out of git:
+  figures/, keys/ [reports/]  the generated artefacts kept out of git:
                          the charts (the earlier study's re-drawn under the
-                         public name), the rendered keys and FULL-BENCHMARK.
+                         public name), the rendered keys, and with
+                         --with-report the superseded FULL-BENCHMARK report.
                          The public tree carries only some of them; --generated
                          names a bench/aacr-shaped dir (charts/, defects/*.md,
                          FULL-BENCHMARK.md) that supplies the rest, the tree's
                          own copy winning where both have a file.
   README.md (the card, from hf/card.md), LICENSE (Apache-2.0), NOTICE,
+  LICENSES/MIT-*.txt     Martian's and Qodo's MIT licence texts (notices.py),
   validation.json        every count and headline number recomputed FROM THE
                          WRITTEN TABLES, against the papers' values.
 
@@ -60,6 +62,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "ext"))
 import compare  # noqa: E402
 import key_data as KD  # noqa: E402
+import notices as NT  # noqa: E402
 import release_catalogue as RC  # noqa: E402
 import scrub_extra as SX  # noqa: E402
 
@@ -108,13 +111,24 @@ SCRUB_PRIVATE_WORDS = SX.env_list("QCR_SCRUB_PRIVATE_WORDS")
 SCRUB_HOSTS = SX.env_list("QCR_SCRUB_HOSTS")
 CONTENT_RULES = SX.ContentRules.from_env()
 
+_HOME = os.environ.get("QCR_SCRUB_HOME", os.path.expanduser("~")).rstrip("/")
+_HOME_DASHED = re.escape(_HOME.replace("/", "-"))  # Claude Code's project-dir spelling
+
+
+def _path_rx(path: str) -> str:
+    """A path's regex: absolute, or `~/`-, `$HOME/`- or `${HOME}/`-relative when under the home
+    (export_runs._path_rx's spellings)."""
+    if path.startswith(_HOME + "/"):
+        return r"(?:" + re.escape(path) + r"|(?:~|\$HOME|\$\{HOME\})/" + re.escape(path[len(_HOME) + 1:]) + r")"
+    return re.escape(path)
+
+
+# the same order as the run archive's rules (export_runs.NAME_RULES): credential values, the
+# product's earlier name, the bot, the owner, the private repo, then host paths, private tokens
+# and hosts, then the tracker
 SCRUB_RULES: list[tuple[str, str, str]] = [
     # (label, regex, replacement)
     *[("credential value", re.escape(v), "<redacted-secret>") for v in SCRUB_SECRETS],
-    ("host path: runs dir", re.escape(_RUNS_DIR), "<runs>"),
-    ("host path: repo checkout", re.escape(_REPO_DIR), "<repo>"),
-    ("host path: home", _HOME_RX + r"\b", "<home>"),
-    ("host volume: pi login", r"companion-pihome", "<pi-login-volume>"),
     # the earlier product name first: it may contain the bot's slug
     *[("old product name", re.escape(n), "quickreview") for n in SCRUB_OLD_NAMES],
     *[("old product name (other case)", r"(?i)" + re.escape(n), "quickreview") for n in SCRUB_OLD_NAMES],
@@ -123,6 +137,15 @@ SCRUB_RULES: list[tuple[str, str, str]] = [
     *[("owner", re.escape(o), "<owner>") for o in SCRUB_OWNERS],
     *[("owner (other case)", r"(?i)" + re.escape(o), "<owner>") for o in SCRUB_OWNERS],
     *[("private repo", r"(?i)" + re.escape(r), "<private-repo>") for r in SCRUB_PRIVATE_REPOS],
+    ("host path: runs dir", _path_rx(_RUNS_DIR), "<runs>"),
+    ("host path: repo checkout", _path_rx(_REPO_DIR), "<repo>"),
+    ("host path: scratchpad", r"/tmp/claude-\d+/" + _HOME_DASHED + r"-[A-Za-z0-9\-]*/[0-9a-f\-]{36}(?:/scratchpad)?",
+     "<scratchpad>"),
+    ("host path: Claude Code project", r"\.claude/projects/" + _HOME_DASHED + r"-[A-Za-z0-9\-]*", ".claude/projects/<project>"),
+    ("host path: home", _HOME_RX + r"\b", "<home>"),
+    ("host path: home (dashed)", _HOME_DASHED + r"(?=[-/])", "-<home>"),
+    ("host path: home (JSON-escaped)", re.escape(_HOME.replace("/", "\\/")) + r"(?![A-Za-z0-9_\-])", "<home>"),
+    ("host volume: pi login", r"companion-pihome", "<pi-login-volume>"),
     *[("private token", r"(?i)(?<![A-Za-z0-9_])" + re.escape(w) + r"(?![A-Za-z0-9_])", "<private>") for w in SCRUB_PRIVATE_WORDS],
     *[("private host", r"(?i)" + re.escape(h), "<private-host>") for h in SCRUB_HOSTS],
     # the authors' tracker: ticket ids and paths into it (scrub_extra.TICKET_RULES)
@@ -562,6 +585,9 @@ class Exporter:
                 "repo_license": REPO_LICENSES[m["repo"]][0], "repo_license_note": REPO_LICENSES[m["repo"]][1],
             })
             for x in c["defects"]:
+                # the key file's provenance, as the papers read it; on T40 it records the older runs
+                # only, and the case's truth-ext.json (the answer-key volume) adds the extension
+                # reviewers' matches (N-ids)
                 p = x.get("provenance") or {}
                 hunt = p.get("hunt")
                 bdr = x.get("bot_derived_reference")
@@ -771,6 +797,10 @@ class Exporter:
         for x in json.load(open(os.path.join(HERE, "ext", "martian-tuning", "golden-audit-full.json"))):
             audit[(x["url"], x["idx"])] = x
         mset = {c["martian"]["golden_url"]: c for c in json.load(open(os.path.join(HERE, "sets", "martian50.json")))["cases"]}
+        # each PR's half, from the set files (the audit file leaves the split empty for the goldens
+        # its first round labelled)
+        half = {c["martian"]["golden_url"]: name for name in ("test30", "tune20")
+                for c in json.load(open(os.path.join(HERE, "sets", f"martian-{name}.json")))["cases"]}
         prs, gold = [], []
         for u in sorted(published):
             p = published[u]
@@ -778,13 +808,14 @@ class Exporter:
             prs.append(self.S({"pr_url": u, "instance_id": c.get("instance_id"), "repo": c.get("repo"),
                                "source_repo": p.get("source_repo"), "title": p.get("pr_title"),
                                "base_commit": c.get("base_commit"), "head_commit": c.get("head_commit"),
-                               "language": c.get("language"), "goldens": len(p["golden_comments"])}))
+                               "language": c.get("language"), "goldens": len(p["golden_comments"]),
+                               **bench_repo_license(c.get("repo"))}))
             for i, g in enumerate(p["golden_comments"]):
                 au = audit.get((u, i)) or {}
                 gold.append(self.S({
                     "pr_url": u, "golden_index": i, "comment": g["comment"], "severity": g.get("severity"),
                     "category": g.get("category"), "audit_bucket": goldens[(u, i)]["bucket"],
-                    "audit_split": au.get("split"),
+                    "audit_split": au.get("split") or half.get(u),
                     "audit_first_verdict": (au.get("first") or {}).get("verdict"),
                     "audit_second_verdict": (au.get("second") or {}).get("verdict"),
                     "audit_evidence": (au.get("first") or {}).get("evidence"),
@@ -896,7 +927,8 @@ class Exporter:
             g = gt[c["pr_url"]]
             prs.append(self.S({"pr_url": c["pr_url"], "instance_id": c["instance_id"], "repo": c["repo"],
                                "title": c.get("title"), "base_commit": c["base_commit"], "head_commit": c["head_commit"],
-                               "language": c.get("language"), "issues": len(g["issues"])}))
+                               "language": c.get("language"), "issues": len(g["issues"]),
+                               **bench_repo_license(c["repo"])}))
             for i, x in enumerate(g["issues"]):
                 issues.append(self.S({"pr_url": c["pr_url"], "issue_index": i, "title": x.get("title"),
                                       "description": x.get("description"), "file_path": x.get("file_path"),
@@ -1108,6 +1140,33 @@ REPO_LICENSES.update({
     "elastic/elasticsearch": ("AGPL-3.0-only OR SSPL-1.0 OR Elastic-2.0", "source-available: x-pack/ is Elastic-2.0 only"),
     "timescale/timescaledb": ("Apache-2.0 AND LicenseRef-Timescale", "source-available: tsl/ is under the Timescale License"),
 })
+
+
+# The Martian and Qodo PRs' repositories (forks keep their upstream's licence): the upstream
+# project's declared licence, SPDX where one exists. Recorded from each upstream project's own
+# licence statement, not re-read at each PR's commit; `*_license_note` says what to check.
+BENCH_REPO_LICENSES = {
+    "ai-code-review-evaluation/discourse-graphite": ("GPL-2.0-or-later", "fork of discourse/discourse"),
+    "calcom/cal.com": ("AGPL-3.0-only", "source-available parts: the `ee` directories are under cal.com's commercial licence"),
+    "grafana/grafana": ("AGPL-3.0-only", ""),
+    "keycloak/keycloak": ("Apache-2.0", ""),
+    "ai-code-review-evaluation/keycloak-greptile": ("Apache-2.0", "fork of keycloak/keycloak"),
+    "getsentry/sentry": ("LicenseRef-FSL-1.1-Apache-2.0", "source-available: Functional Source License 1.1, Apache-2.0 future licence"),
+    "ai-code-review-evaluation/sentry-greptile": ("LicenseRef-FSL-1.1-Apache-2.0", "fork of getsentry/sentry; source-available"),
+    "agentic-review-benchmarks/Ghost": ("MIT", "fork of TryGhost/Ghost"),
+    "agentic-review-benchmarks/aspnetcore": ("MIT", "fork of dotnet/aspnetcore"),
+    "agentic-review-benchmarks/cal.com": ("AGPL-3.0-only", "fork of calcom/cal.com; the `ee` directories are under cal.com's commercial licence"),
+    "agentic-review-benchmarks/dify": ("LicenseRef-Dify-Open-Source", "fork of langgenius/dify: Apache-2.0 with additional conditions"),
+    "agentic-review-benchmarks/firefox-ios": ("MPL-2.0", "fork of mozilla-mobile/firefox-ios"),
+    "agentic-review-benchmarks/prefect": ("Apache-2.0", "fork of PrefectHQ/prefect"),
+    "agentic-review-benchmarks/redis": ("LicenseRef-redis", "fork of redis/redis: RSALv2 OR SSPLv1 (7.4 on), AGPL-3.0 added in 8.0; check the fork's LICENSE at the PR's commit"),
+    "agentic-review-benchmarks/tauri": ("Apache-2.0 OR MIT", "fork of tauri-apps/tauri"),
+}
+
+
+def bench_repo_license(repo: str | None) -> dict:
+    lic, note = BENCH_REPO_LICENSES.get(repo or "", (None, "not recorded"))
+    return {"repo_license": lic, "repo_license_note": note}
 
 
 # ---------------------------------------------------------------------------
@@ -1472,6 +1531,12 @@ def validate_release(t: dict[str, list[dict]], cat: "RC.Catalogue | None", elo_r
         check(f"{aid}: $/PR", round(statistics.mean(c), 2) if c else None, usd, 0.006)
     checks += judge_coverage_checks(t)
     checks += key_data_checks(t)
+    # the card's statements about these columns: every Martian and Qodo PR names its repository's
+    # licence, and every Martian golden its half (the set files fill the audit's gaps)
+    for n in ("martian_prs", "qodo_prs"):
+        check(f"{n}: every row names its repository's licence", sum(1 for r in t[n] if not r.get("repo_license")), 0)
+    check("martian_goldens: every golden has its half (audit_split)",
+          sum(1 for r in t["martian_goldens"] if r.get("audit_split") not in ("test30", "tune20")), 0)
     used = collections.Counter(r["judgment_file"] for r in t["elo_judgments"] if r["plan"] == ELO_PLAN and r["used_in_ratings"])
     check(f"elo {ELO_PLAN}: judgments in the ratings (gpt + opus)", used["gpt"] + used["opus"], 596)
     comb = {r["run"]: r for r in t["elo_ratings"] if r["plan"] == ELO_PLAN and r["table"] == "combined" and r["category"] == "overall"}
@@ -1511,20 +1576,27 @@ def validate_release(t: dict[str, list[dict]], cat: "RC.Catalogue | None", elo_r
     return checks
 
 
+BIBTEX_AUTHOR = re.compile(r"^\s*author\s*=\s*\{")
+
+
 def leak_scan(out: str) -> dict:
     """Every scrubbed spelling must be gone from every text file written."""
     bad = collections.Counter()
     pats = [re.compile(rx) for _, rx, _ in SCRUB_RULES]
-    import pyarrow.parquet as pq
     for n in CONFIGS:
+        import pyarrow.parquet as pq
         t = pq.read_table(os.path.join(out, "data", f"{n}.parquet"))
         blob = json.dumps(t.to_pylist(), ensure_ascii=False, default=str)
         for p in pats:
             bad[(n, p.pattern)] += len(p.findall(blob))
     for root, _, files in os.walk(out):
         for f in files:
-            if f.endswith((".md", ".json", ".svg")) and f not in ("README.md", "NOTICE"):
+            if f.endswith((".md", ".json", ".svg", ".txt")) or f == "NOTICE":
                 txt = open(os.path.join(root, f), errors="replace").read()
+                if f == "README.md" and root == out:
+                    # the card: the citations name the papers' author in full, as the papers do (ruled);
+                    # every other line is scanned like any file
+                    txt = "\n".join(ln for ln in txt.splitlines() if not BIBTEX_AUTHOR.match(ln))
                 for p in pats:
                     bad[(os.path.relpath(os.path.join(root, f), out), p.pattern)] += len(p.findall(txt))
     return {f"{k[0]} :: {k[1]}": v for k, v in bad.items() if v}
@@ -1548,7 +1620,7 @@ def figures(a, out: str, counts: collections.Counter, notes: list[str]):
     fig = os.path.join(out, "figures")
     keys = os.path.join(out, "keys")
     rep = os.path.join(out, "reports")
-    for d in (fig, keys, rep):
+    for d in (fig, keys) + ((rep,) if getattr(a, "with_report", False) else ()):
         os.makedirs(d, exist_ok=True)
     charts = generated_files(a, "charts")
     redraw = {f for f in charts if "-gpt6sol" in f} | {"judge-agreement.jpg"}
@@ -1581,6 +1653,11 @@ def figures(a, out: str, counts: collections.Counter, notes: list[str]):
     for f, p in sorted(generated_files(a, "defects").items()):
         if f.endswith(".md"):
             open(os.path.join(keys, f), "w").write(scrub(open(p).read(), counts))
+    if not getattr(a, "with_report", False):
+        # the working report of 2026-10-01: its numbers are not in the claims manifest and the papers,
+        # corrected to the data, supersede it, so the release leaves it out unless asked
+        notes.append("reports/ not written (FULL-BENCHMARK.md is a superseded working report; --with-report writes it)")
+        return
     full = generated_files(a, "").get("FULL-BENCHMARK.md")
     if full is None:
         notes.append("FULL-BENCHMARK.md is in neither the tree nor --generated: reports/ not written")
@@ -1628,7 +1705,8 @@ def card_values(a, sizes: dict, checks: list[dict], counts: collections.Counter,
     ok = sum(c["ok"] for c in checks)
     runs = runs or []
     url = dataset_url(a.repo_id)
-    return {"REPO_ID": a.repo_id, "DATASET_URL": url,
+    return {"REPO_ID": a.repo_id, "DATASET_URL": url, "REPO_REF": getattr(a, "repo_ref", None) or "main",
+            "VERIFY_RESULT": verify_result(getattr(a, "verify_report", None)),
             # whole links, so the template holds no link target a Markdown
             # link check would read as a path in this repository
             "ARCHIVE_MD": f"[`archive/`]({getattr(a, 'archive_url', None) or url + '/tree/main/archive'})",
@@ -1645,6 +1723,28 @@ def card_values(a, sizes: dict, checks: list[dict], counts: collections.Counter,
             "CHECKS": f"{ok} of {len(checks)}",
             "RUN_UNITS": f"{len(runs):,}", "RUN_FAMILIES": f"{len({r['family'] for r in runs}):,}",
             "SIZE_CATEGORY": size_category(sum(sizes.values()))}
+
+
+VERIFY_PENDING = "`<verifier result pending>`"
+
+
+def verify_result(path: str | None) -> str:
+    """The card's one-paragraph statement of the claims verifier's result on this release, from its
+    --report-json; a pending marker until it has run (PUBLISH.md re-renders the card with it)."""
+    if not path:
+        return VERIFY_PENDING
+    r = json.load(open(path))
+    c = collections.Counter(x["status"] for x in r["results"])
+    cons = r.get("consistency") or []
+    ok = sum(1 for x in cons if x["ok"])
+    fails = sum(c.get(k, 0) for k in ("mismatch", "error", "no-source"))
+    return (f"{c.get('pass', 0):,} of {sum(c.values()):,} claims pass; {c.get('mismatch', 0)} mismatch, "
+            f"{c.get('error', 0)} error and {c.get('no-source', 0)} missing source"
+            + ("" if not fails else " (this release is not ready)")
+            + f"; the documented gaps are {c.get('no-script', 0)} claims with no recompute script yet and "
+              f"{c.get('not-published', 0)} whose data the release does not hold"
+            + (f", and {c['needs-input']} that need a third-party input" if c.get("needs-input") else "")
+            + f". The release's own checks (the tables' validation and the slim bundle's) pass {ok} of {len(cons)}.")
 
 
 def md_link(value: str | None, pending: str, base: str) -> str:
@@ -1676,32 +1776,36 @@ def render_card(a, out: str, sizes: dict, checks: list[dict], counts: collection
     open(os.path.join(out, "README.md"), "w").write(card)
 
 
-NOTICE = """This dataset was assembled by Quickchat AI and is distributed under the Apache License,
-Version 2.0 (LICENSE).
+def rerender_card(a, out: str) -> None:
+    """--card-only: the card from a built dataset dir, its tables and validation.json unchanged."""
+    import pyarrow.parquet as pq
+    v = json.load(open(os.path.join(out, "validation.json")))
+    sizes = {n: pq.ParquetFile(os.path.join(out, "data", f"{n}.parquet")).metadata.num_rows for n in CONFIGS}
+    if sizes != v["rows"]:
+        raise SystemExit("--card-only: the tables' row counts differ from validation.json; rebuild the dataset")
+    runs = pq.read_table(os.path.join(out, "data", "runs.parquet"), columns=["family"]).to_pylist()
+    NT.write_licences(out)
+    open(os.path.join(out, "NOTICE"), "w").write(dataset_notice())
+    render_card(a, out, sizes, v["checks"], collections.Counter(v.get("scrub_counts") or {}), runs)
+    leaks = leak_scan(out)
+    if leaks:
+        raise SystemExit(f"--card-only: the re-rendered card leaks: {leaks}")
+    print(f"re-rendered {os.path.join(out, 'README.md')} (DOI {getattr(a, 'doi', None) or DOI_PENDING}, "
+          f"repository ref {a.repo_ref})")
 
-It contains material derived from AACR-Bench v1.0 (https://github.com/alibaba/aacr-bench,
-dataset commit ab8af8d5c74e2a4d1945d247ea4bbc49f93eb33f, harness commit
-68a569759289a83654a59d06db2a72910edf0a4a), licensed under the Apache License, Version 2.0.
-AACR-Bench ships no NOTICE file of its own. MODIFIED WORK: the `aacr_references` config
-reproduces AACR-Bench's reference comments for the 185 runnable PRs with our derived keys,
-bot-derived flags and labels added; `prs`, `defects` and `exclusions` are a new answer key
-built on AACR-Bench's PR selection; nothing in AACR-Bench itself was changed. Cite:
-Zhang et al., "AACR-Bench: Evaluating Automatic Code Review with Holistic Repository-Level
-Context", arXiv:2601.19494 (2026).
 
-The `martian_*` configs contain golden comments from Martian's offline code-review
-benchmark (https://github.com/withmartian/code-review-benchmark, commit
-e616e849755441da38f18bf3adba2c9583b03803), MIT licence, Copyright (c) 2025 Martian.
-
-The `qodo_*` configs contain issues from Qodo PR-Review-Bench
-(https://huggingface.co/datasets/Qodo/PR-Review-Bench, revision
-a73957c450a70693a743260e5637fffc44625f16), MIT licence, by the Qodo team.
-
-Code excerpts quoted in `defects` (evidence, sites) come from the reviewed open-source
-repositories at the commits named in `prs`; they remain under each project's own licence
-(SPDX id in `prs.repo_license`). Comments written by third-party review bots are not
-included: those rows carry links to the original comments.
-"""
+def dataset_notice() -> str:
+    return NT.notice(
+        "This dataset was assembled by Quickchat AI and is distributed under the Apache License,\n"
+        "Version 2.0 (LICENSE). Its `archive/` and `slim/` folders carry their own NOTICE.",
+        modified="MODIFIED WORK: the `aacr_references` config reproduces AACR-Bench's reference comments for "
+                 "the 185 runnable PRs with our derived keys, bot-derived flags and labels added; `prs`, `defects` "
+                 "and `exclusions` are a new answer key built on AACR-Bench's PR selection; nothing in AACR-Bench "
+                 "itself was changed.",
+        martian_where="The `martian_*` configs",
+        qodo_where="The `qodo_*` configs",
+        swepr=False) + ("\nThe licence of each reviewed repository is in `prs.repo_license`, "
+                        "`martian_prs.repo_license` and `qodo_prs.repo_license` (SPDX ids).\n")
 
 
 def main():
@@ -1725,7 +1829,16 @@ def main():
                     "tables each has rows in; without it only the 10-05 arms and scoring dirs are exported")
     ap.add_argument("--commit-remap", help="JSON {recorded qcr_commit: public main commit or null}, for the runs table")
     ap.add_argument("--elo-dir", help="the Elo runs (one dir per plan: plan.json, judgments/); default <runs>/../elo")
+    ap.add_argument("--repo-ref", default="main",
+                    help="the QuickReview repository's tag or commit the card's verify steps clone (the one the release "
+                         "was verified against)")
+    ap.add_argument("--verify-report", help="verify_claims.py --report-json over this release: the card states its result")
+    ap.add_argument("--card-only", action="store_true",
+                    help="re-render README.md, LICENSE, LICENSES/ and NOTICE in an existing --out from its own tables "
+                         "and validation.json (to fill the DOI or the repository tag after upload); nothing else changes")
     ap.add_argument("--no-figures", action="store_true")
+    ap.add_argument("--with-report", action="store_true",
+                    help="also write reports/FULL-BENCHMARK.md and .pdf, the superseded working report (off by default)")
     ap.add_argument("--no-load-check", action="store_true")
     a = ap.parse_args()
     if not (SCRUB_BOTS and SCRUB_OWNERS):
@@ -1736,6 +1849,9 @@ def main():
     a.qodo_tools = a.qodo_tools or os.path.join(cache, "tool-comments.json")
     a.elo_dir = a.elo_dir or os.path.join(os.path.dirname(a.runs_dir), "elo")
     out = os.path.abspath(os.path.expanduser(a.out))
+    if a.card_only:
+        rerender_card(a, out)
+        return
     if os.path.exists(out):
         shutil.rmtree(out)
     os.makedirs(out)
@@ -1753,8 +1869,8 @@ def main():
         figures(a, out, ex.counts, ex.notes)
     tables = read_parquet(out)
     checks = validate(tables) + validate_release(tables, ex.cat, ex.elo_refits, a.elo_dir)
-    shutil.copy2(os.path.join(HERE, "hf", "LICENSE"), os.path.join(out, "LICENSE"))
-    open(os.path.join(out, "NOTICE"), "w").write(NOTICE)
+    NT.write_licences(out)
+    open(os.path.join(out, "NOTICE"), "w").write(dataset_notice())
     render_card(a, out, sizes, checks, ex.counts, tables.get("runs"))
     leaks = leak_scan(out)
     load = {}

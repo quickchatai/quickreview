@@ -46,11 +46,14 @@ PI_PRUNED = "pi-events" + PRUNED_SUFFIX
 
 R_PI = "session log: the reviewer's pi event stream (numbers-only extract `pi-events.pruned.jsonl` ships)"
 R_SESSION = "session log: a model session transcript (numbers-only extract `*.pruned.jsonl` ships)"
+R_SESSION_OTHER = "session log: a model session transcript in another form (`.json`, `.md`, ...; no extract)"
 R_JUDGE = "session log: a judge's event stream (numbers-only extract `*.pruned.jsonl` ships)"
 R_PROCESS = "session log: a review or judge process's own output log (no extract)"
 R_SANDBOX = "session log: the sandbox command log, which echoes the prompts (no extract)"
 R_PROMPT = "session log: the prompts a session was given, built from the repository at the run's commit (no extract)"
-R_UNKNOWN = "session log rule, fail closed: a log kind inside a run directory that no rule names as data"
+R_UNKNOWN = "session log rule, fail closed: a log kind that no rule names as data"
+R_ABORTED = "withheld: the log of an aborted run"
+R_CONTENT = "session log rule, fail closed: a data file that still carries session or prompt text after its field rules"
 R_CODE = "regenerable: reviewed-repo code (refetch repo@commit)"
 
 PI_EVENTS = re.compile(r"^pi-events(?:\.[\w-]+)?\.jsonl$")
@@ -58,8 +61,12 @@ TRANSCRIPT_DIRS = ("lens-sessions", "codex-sessions", "claude-transcripts")
 PROCESS_LOGS = re.compile(r"^(?:pi-stderr\.log|pireview-stderr\.log|ocr-stderr\.log|opencode\.log|codex-driver\.log"
                           r"|pragent-[\w-]+\.log|.*\.events\.stderr\.log|.*-stderr\.log|.*\.stderr)$")
 PROMPT_FILES = ("system-prompt.md", "round-order.md", "context-pack.md")
+# a task a session wrote for another session (the validator's brief): a prompt too
+TASK_FILE = re.compile(r"^[\w.-]*-task\.md$")
 CASE_CODE = ("head-patches.json", "added-imports.txt")
 LOG_EXT = (".jsonl", ".ndjson", ".log")
+# a log kind anywhere in a name's suffix chain (`x.log.aborted`, `x.jsonl.1`)
+LOG_CHAIN = re.compile(r"\.(?:jsonl|ndjson|log)(?:\.|$)")
 
 # Log-shaped files inside a run directory that are data, each written by the
 # harness rather than by a model session, and holding no prompt or model text.
@@ -78,6 +85,22 @@ DATA_LOGS = [
     (re.compile(r"^(?:judge|export|replay-container)\.log$"), "a scoring dir's judge, export and replay progress logs"),
     (re.compile(r"^[\w.-]+\.(?:score|rescore|judge|eval|review)\.log$"), "a re-run driver's per-set scoring log"),
     (re.compile(r"^(?:cal\d+|qr\d*)\.log$"), "the Martian calibration driver's posting logs (all50-logs)"),
+    # beside the run dirs and outside them: BESIDE_LOGS and TREE_LOGS below
+]
+
+# Logs outside the run dirs, matched by their whole path: harness progress logs, no session text
+TREE_LOGS = [
+    (re.compile(r"^analysis/[^/]+/wp-data/logs/(?:(?:shim|linek\d*|selfcons)-[\w.+-]+|driver\d*)\.log$"),
+     "the AACR re-scoring drivers' progress logs (verdict lines; an error line keeps only its class)"),
+    (re.compile(r"^analysis/[^/]+/wp-data/linek-runs/[^/]+/eval/[^/]+\.(?:jsonl|log)$"),
+     "the re-scored runs' copies of AACR-Bench's harness input and run log"),
+    (re.compile(r"^analysis/[^/]+/extract\d*\.log$"), "the key build's PR-extraction progress log"),
+    (re.compile(r"^logs/[\w.+-]+\.log$"), "the re-run drivers' plan and progress logs"),
+    (re.compile(r"^elo/[^/]+/(?:run|[\w-]+-live|opus-collect)\.log$"), "the Elo runner's progress log: one line per judgment"),
+    (re.compile(r"^elo/[^/]+/(?:units|packs|batches)\.jsonl$"), "the Elo plan's units, pack index and batch ids"),
+    (re.compile(r"^elo/[^/]+/judgments/[^/]+\.jsonl$"), "pairwise judgments"),
+    (re.compile(r"^elo/judge-gpt-log/judge\.jsonl$"), "the judge proxy's request log: time, status, latency, model"),
+    (re.compile(r"^open-models/[^/]+\.log$"), "the open-model driver's build, launch, judge and watchdog logs"),
 ]
 
 
@@ -95,8 +118,33 @@ def run_inner(rel: str) -> Optional[str]:
     return None
 
 
-def data_log(inner: str) -> Optional[str]:
-    for rx, what in DATA_LOGS:
+# Logs beside the run dirs (`runs/<run>.<kind>.log`), matched by name: the run drivers' own logs
+BESIDE_LOGS = [
+    (re.compile(r"^[\w.+-]+\.(?:arm|judge-opus|judge-gpt|rejudge|rebuild|eval2|review\.first|launch|resume|prefetch)\.log$"),
+     "a re-run driver's per-set launch, image build, prefetch and scoring log"),
+    (re.compile(r"^[\w.+-]+\.log$"), "a run driver's log beside its run dir (`<run>.log`)"),
+]
+
+
+def beside_run(rel: str) -> bool:
+    parts = rel.split("/")
+    return (parts[0] == "runs" and len(parts) == 2) or (parts[0] == "open-models" and len(parts) == 3 and parts[1] == "runs")
+
+
+def log_scope(rel: str) -> str:
+    """The path a DATA_LOGS rule is matched against: the path inside a run
+    dir, a file beside the run dirs by its own name, anything else whole."""
+    inner = run_inner(rel)
+    if inner is not None:
+        return inner
+    return rel.split("/")[-1] if beside_run(rel) else rel
+
+
+def data_log(inner: str, beside: bool = False, tree: bool = False) -> Optional[str]:
+    """What a log-shaped file is, as data: `inner` is its path inside a run dir (DATA_LOGS), its
+    name beside the run dirs (`beside`: BESIDE_LOGS too), or its whole path outside them (`tree`:
+    TREE_LOGS only). None: no rule names it."""
+    for rx, what in (TREE_LOGS if tree else DATA_LOGS + (BESIDE_LOGS if beside else [])):
         if rx.search(inner):
             return what
     return None
@@ -116,8 +164,8 @@ def classify(rel: str) -> Optional[Tuple[str, Optional[str]]]:
     if in_case:
         below = parts[case_at + 2:-1]  # the dirs between cases/<iid>/ and the file
         if below[:1] == ["session"] or any(d in TRANSCRIPT_DIRS for d in below):
-            return R_SESSION, ("metrics" if name.endswith(".jsonl") else None)
-        if not below and name in PROMPT_FILES or below == ["tasks"] and name.endswith(".md"):
+            return (R_SESSION, "metrics") if name.endswith(".jsonl") else (R_SESSION_OTHER, None)
+        if not below and (name in PROMPT_FILES or TASK_FILE.match(name)) or below == ["tasks"] and name.endswith(".md"):
             return R_PROMPT, None
         if not below and name in CASE_CODE:
             return R_CODE, None
@@ -127,8 +175,10 @@ def classify(rel: str) -> Optional[Tuple[str, Optional[str]]]:
         return R_JUDGE, "metrics"
     if PROCESS_LOGS.match(name):
         return R_PROCESS, None
-    inner = run_inner(rel)
-    if inner is not None and name.endswith(LOG_EXT) and data_log(inner) is None:
+    if name.endswith(".aborted"):
+        return R_ABORTED, None
+    tree = run_inner(rel) is None and not beside_run(rel)
+    if LOG_CHAIN.search(name) and (not name.endswith(LOG_EXT) or data_log(log_scope(rel), beside_run(rel), tree) is None):
         return R_UNKNOWN, None
     return None
 
@@ -318,3 +368,148 @@ def metrics_only(data: bytes) -> bytes:
 
 def extract(kind: str, data: bytes) -> bytes:
     return prune_pi(data) if kind == "pi" else metrics_only(data)
+
+
+# ---------------------------------------------------------------- session text inside kept files
+
+# A kept data file can still carry a session's text in one of its fields: a
+# harness result's `stdout` is the CLI's whole event stream (shell commands,
+# their output, the agent's messages), its `stderr` the process log; a
+# driver's recorded argv holds the prompt it passed; a tool's config holds
+# its prompt template. Those fields are rewritten here, the rest of the file
+# is kept; content_markers() then fails closed on any session text left.
+
+PROMPT_ARG_MIN = 300  # an argv element this long, or with a newline, is a prompt
+OMIT_PROMPT = "prompt"
+OMIT_PROCESS = "process output"
+
+
+def omit_mark(kind: str, text: str) -> str:
+    import hashlib
+    h = hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()[:16]
+    return f"[{kind} omitted: sha256:{h}, {len(text)} chars]"
+
+
+def stream_extract(text: str) -> dict:
+    """A process's stdout reduced to numbers: line count, and for a JSON
+    event stream (`codex exec --json` and the like) the count of each event
+    and item type and every usage record; no command, output or message."""
+    out = {"chars": len(text), "lines": 0}
+    events, items, usage = {}, {}, []
+    for line in text.splitlines():
+        out["lines"] += 1
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(e, dict):
+            continue
+        t = _safe(e.get("type"))
+        if t:
+            events[t] = events.get(t, 0) + 1
+        it = e.get("item") if isinstance(e.get("item"), dict) else None
+        if it is not None and t == "item.completed":
+            k = _safe(it.get("type") or it.get("item_type"))
+            if k:
+                items[k] = items.get(k, 0) + 1
+        u = _usage(e.get("usage"))
+        if u:
+            usage.append(u)
+    if events:
+        out["events"] = events
+    if items:
+        out["items_completed"] = items
+    if usage:
+        out["usage"] = usage
+    return out
+
+
+def _argv_clean(argv, counts) -> list:
+    out = []
+    for x in argv:
+        if isinstance(x, str) and (len(x) >= PROMPT_ARG_MIN or "\n" in x):
+            out.append(omit_mark(OMIT_PROMPT, x))
+            counts["session text: prompt argument"] += 1
+        else:
+            out.append(x)
+    return out
+
+
+def strip_session_fields(rel: str, obj, counts):
+    """The JSON object of a kept file with every session-text field
+    rewritten (see above); `obj` is changed in place and returned."""
+    name = rel.rsplit("/", 1)[-1]
+    if isinstance(obj, dict):
+        for k in ("stdout", "stderr"):
+            v = obj.get(k)
+            if isinstance(v, str):
+                del obj[k]
+                if v:
+                    obj[f"{k}_extract"] = (stream_extract(v) if k == "stdout"
+                                           else {"chars": len(v), "lines": len(v.splitlines()),
+                                                 "error_class": error_class(v)})
+                    counts[f"session text: result {k}"] += 1
+        if isinstance(obj.get("argv"), list):
+            obj["argv"] = _argv_clean(obj["argv"], counts)
+        if name == "opencode-config.json":
+            for c in (obj.get("command") or {}).values():
+                if isinstance(c, dict) and isinstance(c.get("template"), str):
+                    c["template"] = omit_mark(OMIT_PROMPT, c["template"])
+                    counts["session text: prompt template"] += 1
+            for ag in (obj.get("agent") or {}).values():
+                if isinstance(ag, dict) and isinstance(ag.get("prompt"), str):
+                    ag["prompt"] = omit_mark(OMIT_PROMPT, ag["prompt"])
+                    counts["session text: prompt template"] += 1
+        if name == "claude-stdout.json" and isinstance(obj.get("permission_denials"), list):
+            obj["permission_denials_count"] = len(obj.pop("permission_denials"))
+            counts["session text: tool calls (permission denials)"] += 1
+    elif isinstance(obj, list) and name.endswith("-argv.json"):
+        obj = _argv_clean(obj, counts)
+    return obj
+
+
+def strip_prompt_lines(text: str, prompts: list) -> tuple:
+    """`text` without the lines a session copied from its own prompt files
+    (a ledger that pasted the round order): every line of 25+ characters
+    found in one of `prompts`, and the `===ROUNDORDER===` marker. Returns
+    (text, lines removed)."""
+    seen = set()
+    for p in prompts:
+        for ln in p.splitlines():
+            ln = ln.strip()
+            if len(ln) >= 25:
+                seen.add(ln)
+    out, n = [], 0
+    for ln in text.splitlines(keepends=True):
+        st = ln.strip()
+        if st == ROUNDORDER or st in seen:
+            n += 1
+            continue
+        out.append(ln)
+    return "".join(out), n
+
+
+ROUNDORDER = "===ROUNDORDER==="
+_Q = rb'\\*"'
+# session or prompt text, at any JSON escaping depth; none may remain in a shipped data file
+CONTENT_MARKERS = [
+    ("event stream (thread.started)", re.compile(_Q + rb"type" + _Q + rb"\s*:\s*" + _Q + rb"thread\.started")),
+    ("event stream (item.completed)", re.compile(_Q + rb"type" + _Q + rb"\s*:\s*" + _Q + rb"item\.completed")),
+    ("event stream (command_execution)", re.compile(_Q + rb"type" + _Q + rb"\s*:\s*" + _Q + rb"command_execution")),
+    ("event stream (aggregated_output)", re.compile(_Q + rb"aggregated_output" + _Q + rb"\s*:")),
+    ("round-order prompt", re.compile(re.escape(ROUNDORDER.encode()) + rb"|You are this PR's only shepherd")),
+    ("PR author's description (PR-Agent)", re.compile(rb"### \*\*User description\*\*")),
+    ("PR author's description (harness prompt)", re.compile(rb"as its author described it")),
+]
+# code that parses those streams names their keys: the gate reads data files only
+CODE_EXT = (".py", ".js", ".mjs", ".ts", ".sh")
+
+
+def content_markers(rel: str, data: bytes) -> list:
+    """The CONTENT_MARKERS a shipped file still carries (empty for code)."""
+    if rel.endswith(CODE_EXT):
+        return []
+    return [n for n, rx in CONTENT_MARKERS if rx.search(data)]

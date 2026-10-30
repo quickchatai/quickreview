@@ -99,6 +99,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import key_data as KD  # noqa: E402
+import notices as NT  # noqa: E402
 import release_catalogue as RC  # noqa: E402
 import scrub_extra as SX  # noqa: E402
 import session_logs as SL  # noqa: E402
@@ -117,6 +118,10 @@ PRIVATE_RUNS = ("pc1-self-review-pc1",)
 OWNER_WITHHELD_PREFIXES = ("pc2-",)
 OWNER_WITHHELD = "withheld by the authors: a regression check of a development build (backs no published number)"
 MARTIAN_SRC = "https://github.com/withmartian/code-review-benchmark/blob/e616e84/offline/results/benchmark_data.json"
+# Martian's published tools whose candidates a calibration re-judge kept under their own name
+MARTIAN_PUBLISHED_TOOLS = {"claude-code", "cubic-v2", "qodo-extended-v2", "qodo-v2", "augment", "macroscope", "devin",
+                           "coderabbit", "copilot-v2", "greptile", "cursor", "graphite", "baz", "bito", "codeant",
+                           "korbit", "kodus", "linearb", "propel", "sourcery", "gemini", "codex"}
 QODO_VENDORS = {"qodo-exhaustive", "qodo-precise", "augment", "copilot", "cursor", "greptile", "codex", "coderabbit", "sentry"}
 
 # ---------------------------------------------------------------- the rewrite
@@ -299,6 +304,20 @@ def run_parts(rel: str) -> tuple[str, list[str]] | None:
     return None
 
 
+def case_of(rel: str) -> tuple[str, str] | None:
+    """(the case dir's archive path, the instance id) for a file directly in
+    a run's `cases/<iid>/`, else None."""
+    parts = rel.split("/")
+    if len(parts) >= 3 and parts[-3] == "cases":
+        return "/".join(parts[:-1]), parts[-2]
+    return None
+
+
+# the AACR re-scoring shim's error lines quote the judge's argv, prompt included: only the error class ships
+SHIM_LOG = re.compile(r"(?:^|/)(?:shim-[\w.+-]+|judge-shim)\.log$")
+SHIM_ERROR = re.compile(rb"^(judge error: )(.*)$", re.M)
+
+
 def unit_prefix(rel: str) -> str:
     """The archive path of the unit (run dir, top-level tree) a file is in."""
     parts = rel.split("/")
@@ -307,6 +326,21 @@ def unit_prefix(rel: str) -> str:
     if parts[0] == OM:
         return "/".join(parts[:3]) if parts[1] == "runs" and len(parts) > 2 else "/".join(parts[:2])
     return parts[0]
+
+
+# the suffixes a run's scoring dirs and logs beside it carry (`<run>.martian`, `<run>.review.log`, ...)
+RUN_SUFFIX = re.compile(r"^\.(?:log|launch\.log|resume\.log|prefetch\.log|sandbox-commands\.log|review(?:\.first)?\.log"
+                        r"|arm\.(?:json|log)|judge(?:-opus|-gpt)?\.log"
+                        r"|eval2?\.log|rebuild\.log|rejudge\.log|(?:interim1\.)?score\.log"
+                        r"|martian(?:-rescore|-alone|-interim1)?|qodo(?:-rescore|-full|-interim1)?|sweprbench(?:-MOCK)?)$")
+
+
+def strip_run_suffix(name: str) -> str:
+    """`name` without a known run suffix (RUN_SUFFIX); unchanged when it has none."""
+    for i in range(1, len(name)):
+        if name[i] == "." and RUN_SUFFIX.match(name[i:]):
+            return name[:i]
+    return name
 
 
 class Tree:
@@ -331,10 +365,13 @@ class Tree:
         return self.src / rel
 
     def run_of(self, name: str, kind: str = "runs") -> str:
+        """The run a `runs/` entry belongs to: the run dir itself, or a run
+        dir plus one of the known scoring and log suffixes. Any other suffix
+        is its own (uncatalogued, so withheld) unit."""
         for d in self.run_dirs[kind]:
-            if name == d or name.startswith(d + "."):
+            if name == d or (name.startswith(d + ".") and RUN_SUFFIX.match(name[len(d):])):
                 return d
-        return re.sub(r"\.[^.]*$", "", name)
+        return strip_run_suffix(name)
 
     def unit(self, rel: str) -> tuple[str, str]:
         parts = rel.split("/")
@@ -349,6 +386,11 @@ class Tree:
 
 # ---------------------------------------------------------------- per-file policy
 
+# the blind annotation's prompts (they quote PR bodies and every tool's candidates, vendors' included)
+# and the analysis agents' working notes; the scripts and data outputs beside them ship
+ANALYSIS_PROMPTS = re.compile(r"analysis/[^/]+/fair/(?:INSTRUCTIONS\.md|packets/|appendix\.md)")
+ANALYSIS_NOTES = re.compile(r"analysis/[^/]+/(?:ext-bench/DECISIONS-PENDING\.md|paper-research/[^/]+\.md"
+                            r"|paper-data/factcheck(?:/[^/]+|-analyses)\.md|paper-examples/examples-notes\.md)$")
 SWEPR_HUMAN = re.compile(r"analysis/sweprbench-[^/]+/(human-all\.txt|joined\.json|misses\.txt|samples\.json|files/)")
 ELO_PACKS = "regenerable: Elo packs (whole files of the reviewed repositories; `elo.py pack` rebuilds them from the public repos)"
 
@@ -383,6 +425,10 @@ def drop_reason(rel: str) -> str | None:
         if name in ("pr.diff",):
             return "regenerable: reviewed-repo code (refetch repo@commit)"
     if parts[0] == "analysis":
+        if ANALYSIS_PROMPTS.match(rel):
+            return "session log: an annotator's or agent's prompt (the instructions and per-PR packets; no extract)"
+        if ANALYSIS_NOTES.match(rel):
+            return "working notes: the analysis agents' planning and fact-check notes (no published number rests on them)"
         if SWEPR_HUMAN.match(rel):
             return "third-party: SWE-PRBench human review comments (see foundry-ai/swe-prbench@b87f579)"
         if name.endswith(".diff"):
@@ -394,9 +440,17 @@ class ThirdParty:
     """Structural removal of third-party comment text from the files our
     tooling copied it into; everything else of those files is kept."""
 
-    def __init__(self, src: Path):
+    def __init__(self, src: Path, om: Path | None = None):
         self.src = src
         self.qodo_links = {}
+        self.pr_urls = {}  # instance id -> its upstream PR (the open-model case sets list every Martian and Qodo PR)
+        for sets in (sorted(om.glob("sets*/*.json")) if om is not None else []):
+            try:
+                for c in json.loads(sets.read_text()).get("cases") or []:
+                    if isinstance(c, dict) and c.get("instance_id") and c.get("pr_url"):
+                        self.pr_urls[c["instance_id"]] = c["pr_url"]
+            except (ValueError, AttributeError):
+                pass
         tc = src / "ext-cache" / "qodo" / "tool-comments.json"
         if tc.exists():  # only to build links; the file itself never ships
             for row in json.loads(tc.read_text()):
@@ -421,6 +475,87 @@ class ThirdParty:
             m["body"] = omitted(m["body"], f"https://github.com/{m.get('repo')}/pull/{m.get('pr')}")
             counts["third-party-omitted:pr-description"] += 1
         return (json.dumps(m, indent=2, ensure_ascii=False) + ("\n" if data.endswith(b"\n") else "")).encode()
+
+    def pr_link(self, iid: str) -> str:
+        m = self.meta.get(iid) or {}
+        num = m.get("pr") or m.get("pr_number")
+        if m.get("repo") and num:
+            return f"https://github.com/{m['repo']}/pull/{num}"
+        return self.pr_urls.get(iid) or f"the upstream PR of {iid}"
+
+    # ---- PR-Agent's describe output: its first section is the PR author's own description
+    USER_DESC = re.compile(r"### \*\*User description\*\*\n.*?(?=\n### \*\*|\Z)", re.S)
+
+    def _user_description(self, text: str, link: str, counts) -> str:
+        def sub(m):
+            counts["third-party-omitted:pr-description (PR-Agent)"] += 1
+            return "The PR author's description: " + omitted(m.group(0), link) + "\n"
+        return self.USER_DESC.sub(sub, text)
+
+    def pragent_describe(self, data: bytes, iid: str, counts) -> bytes:
+        d = json.loads(data)
+        link = self.pr_link(iid)
+        if isinstance(d.get("pr_text"), str) and d["pr_text"].strip():
+            d["pr_text"] = omitted(d["pr_text"], link)
+            counts["third-party-omitted:pr-description (PR-Agent)"] += 1
+        pub = d.get("published_description")
+        if isinstance(pub, dict) and isinstance(pub.get("body"), str):
+            pub["body"] = self._user_description(pub["body"], link, counts)
+        return (json.dumps(d, indent=2, ensure_ascii=False) + ("\n" if data.endswith(b"\n") else "")).encode()
+
+    def pragent_description_md(self, data: bytes, iid: str, counts) -> bytes:
+        return self._user_description(data.decode(errors="replace"), self.pr_link(iid), counts).encode()
+
+    # ---- the open-model case sets: each case's PR description, linked
+    def set_bodies(self, data: bytes, counts) -> bytes:
+        d = json.loads(data)
+        for c in d.get("cases") or [] if isinstance(d, dict) else []:
+            if isinstance(c, dict) and isinstance(c.get("body"), str) and c["body"].strip():
+                c["body"] = omitted(c["body"], c.get("pr_url") or self.pr_link(c.get("instance_id") or ""))
+                counts["third-party-omitted:pr-description"] += 1
+        return (json.dumps(d, indent=2, ensure_ascii=False) + ("\n" if data.endswith(b"\n") else "")).encode()
+
+    # ---- Martian: the judge's extractions from the re-judged published tools' reviews
+    @staticmethod
+    def martian_vendor(tool: str) -> bool:
+        """A published tool's review (Martian's benchmark data), not one of ours."""
+        return tool.startswith("rejudged-") or tool in MARTIAN_PUBLISHED_TOOLS
+
+    def martian_judge_file(self, name: str, data: bytes, counts) -> bytes:
+        """candidates.json / evaluations.json: every vendor candidate's text
+        becomes a marker (ids, paths, lines, matches and the judge's reasoning stay)."""
+        d = json.loads(data)
+        n = 0
+        for pr, tools in (d.items() if isinstance(d, dict) else []):
+            for tool, v in (tools.items() if isinstance(tools, dict) else []):
+                if not self.martian_vendor(tool):
+                    continue
+                link = f"{MARTIAN_SRC} ({pr}, {tool.removeprefix('rejudged-')})"
+                if name == "candidates.json" and isinstance(v, list):
+                    for c in v:
+                        if isinstance(c, dict) and isinstance(c.get("text"), str) and c["text"]:
+                            c["text"] = omitted(c["text"], link)
+                            n += 1
+                elif name == "evaluations.json" and isinstance(v, dict):
+                    for tp in v.get("true_positives") or []:
+                        if isinstance(tp, dict) and isinstance(tp.get("matched_candidate"), str) and tp["matched_candidate"]:
+                            tp["matched_candidate"] = omitted(tp["matched_candidate"], link)
+                            n += 1
+                    for fp in v.get("false_positives") or []:
+                        if isinstance(fp, dict) and isinstance(fp.get("candidate"), str) and fp["candidate"]:
+                            fp["candidate"] = omitted(fp["candidate"], link)
+                            n += 1
+        counts["third-party-omitted:martian-vendor-candidate"] += n
+        return (json.dumps(d, indent=2, ensure_ascii=False) + "\n").encode()
+
+    def fair_secret(self, data: bytes, counts) -> bytes:
+        """analysis …/fair/secret.json: the blind annotation's candidate list; a vendor tool's text becomes a marker."""
+        d = json.loads(data)
+        for c in d.values():
+            if isinstance(c, dict) and c.get("tool") != "quickreview" and isinstance(c.get("text"), str) and c["text"]:
+                c["text"] = omitted(c["text"], f"{MARTIAN_SRC} ({c.get('pr')}, {c.get('tool')})")
+                counts["third-party-omitted:martian-vendor-candidate"] += 1
+        return (json.dumps(d, indent=1, ensure_ascii=False) + "\n").encode()
 
     # ---- Martian: the re-judged published tools' review bodies
     def martian_benchmark_data(self, data: bytes, counts) -> bytes:
@@ -657,7 +792,7 @@ class Processor:
     def __init__(self, src: Path, om: Path | None, cat: RC.Catalogue, remap: dict | None = None):
         self.src, self.om, self.cat = src, om, cat
         self.tree = Tree(src, om)
-        self.tp = ThirdParty(src)
+        self.tp = ThirdParty(src, om)
         self.remap = remap or {}
 
     def family(self, rel: str) -> dict | None:
@@ -666,9 +801,8 @@ class Processor:
         by stripping its suffixes; no match is no family (withheld)."""
         kind, name = self.tree.unit(rel)
         f = self.cat.family_of(kind, name)
-        while f is None and kind in ("runs", "om-runs") and "." in name:
-            name = name.rsplit(".", 1)[0]
-            f = self.cat.family_of(kind, name)
+        if f is None and kind in ("runs", "om-runs") and strip_run_suffix(name) != name:
+            f = self.cat.family_of(kind, strip_run_suffix(name))
         return f
 
     def group(self, rel: str) -> str | None:
@@ -708,11 +842,14 @@ class Processor:
             counts["files-text"] += 1
             return data, None
         parts = rel.split("/")
+        name = parts[-1]
         rp = run_parts(rel)
         if rp and rp[1]:
             run, inner = rp
             if ".martian" in run and inner[-1] == "benchmark_data.json":
                 data = self.tp.martian_benchmark_data(data, counts)
+            elif ".martian" in run and inner[-1] in ("candidates.json", "evaluations.json") and "results" in inner:
+                data = self.tp.martian_judge_file(inner[-1], data, counts)
             elif ".qodo" in run and inner[-1] == "judgements.jsonl":
                 data = self.tp.qodo_judgements(data, counts)
             elif parts[0] == "runs" and run.startswith("upstream-copilot"):
@@ -721,14 +858,71 @@ class Processor:
                     return None, "third-party: the judge transcript quotes harvested Copilot reviews (verdicts kept)"
         if parts[0].endswith("-code") and parts[-1] == "meta.json":
             data = self.tp.pr_body(data, counts)
+        case = case_of(rel)
+        if name == "pragent-describe.json" and case:
+            data = self.tp.pragent_describe(data, case[1], counts)
+        elif name == "pragent-description.md" and case:
+            data = self.tp.pragent_description_md(data, case[1], counts)
+        elif parts[0] == OM and len(parts) == 3 and parts[1].startswith("sets") and name.endswith(".json"):
+            data = self.tp.set_bodies(data, counts)
+        elif re.match(r"analysis/[^/]+/fair/secret\.json$", rel):
+            data = self.tp.fair_secret(data, counts)
         if rel.endswith(".json"):
+            data = self.session_fields(rel, data, counts)
             data = remap_commits(data, self.remap, counts)
+        elif case and name.lower() == "ledger.md":
+            # the session's working ledger, seeded from its prompt; a review.md is the posted review and stays whole
+            data = self.prompt_lines(case[0], data, counts)
+        elif SHIM_LOG.search(rel):
+            data = SHIM_ERROR.sub(lambda m: m.group(1) + b"[omitted: " + (SL.error_class(m.group(2).decode(errors="replace"))
+                                                                          or "other").encode() + b"]", data)
         if is_text(data, rel):
             data = rewrite(data, counts)
             counts["files-text"] += 1
+            bad = SL.content_markers(rel, data)
+            if bad:
+                # fail closed: a data file that still carries session or prompt text is left out
+                for b in bad:
+                    counts[f"left out, session text in a data file: {b}"] += 1
+                return None, SL.R_CONTENT
         else:
             counts["files-binary"] += 1
         return data, None
+
+    @staticmethod
+    def session_fields(rel: str, data: bytes, counts) -> bytes:
+        """A JSON file with its session-text fields rewritten (session_logs.strip_session_fields);
+        unchanged bytes when no field needed it."""
+        if not any(k in data for k in (b'"stdout"', b'"stderr"', b'"argv"', b'"template"', b'"permission_denials"', b'"prompt"')) \
+                and not rel.endswith("-argv.json"):
+            return data
+        try:
+            obj = json.loads(data)
+        except ValueError:
+            return data
+        before = collections.Counter(counts)
+        obj = SL.strip_session_fields(rel, obj, counts)
+        if counts == before:
+            return data
+        return (json.dumps(obj, indent=1, ensure_ascii=False) + "\n").encode()
+
+    def prompt_lines(self, case_rel: str, data: bytes, counts) -> bytes:
+        """A case's markdown (its ledger) without the lines it copied from the case's own prompt files."""
+        d = self.tree.fs(case_rel)
+        prompts = []
+        for f in [d / n for n in SL.PROMPT_FILES] + sorted(d.glob("*-task.md")) + sorted((d / "tasks").glob("*.md")):
+            try:
+                prompts.append(f.read_text(errors="replace"))
+            except OSError:
+                pass
+        text = data.decode(errors="replace")
+        if not prompts and SL.ROUNDORDER not in text:
+            return data
+        out, n = SL.strip_prompt_lines(text, prompts)
+        if n:
+            counts["session text: prompt lines copied into a case file"] += n
+            return out.encode()
+        return data
 
 
 def check_pi_cost(full: bytes, pruned: bytes, counts) -> None:
@@ -826,6 +1020,14 @@ def build_group(args) -> dict:
     w = VolumeWriter(out, f"quickreview-runs-{group}", level, cap, threads)
     t0 = time.time()
     by_unit = collections.defaultdict(dict)
+    names: dict[str, str] = {}
+
+    def add(name: str, data: bytes, mtime: float, src: str = ""):
+        # two files whose names differ only in a rewritten token would collide on extraction
+        if name in names:
+            raise SystemExit(f"{group}: two files pack to the same member name {name!r}")
+        names[name] = src
+        w.add(name, data, mtime)
     for rel in files:
         if rel in copies:
             # a session log's copy maps to its source's extract, by the same rule
@@ -844,17 +1046,17 @@ def build_group(args) -> dict:
         sl = SL.classify(rel)
         if sl is not None:
             dropped[sl[0]] += 1  # the session log itself; its extract ships in its place
-        w.add(rewrite_name(proc.arc_rel(rel), counts), data, proc.tree.fs(rel).stat().st_mtime)
+        add(rewrite_name(proc.arc_rel(rel), counts), data, proc.tree.fs(rel).stat().st_mtime)
     for unit, m in sorted(by_unit.items()):
         doc = {"note": "Files of this run that are identical to another shipped file (a hardlink of it, or a "
                        "byte-identical copy of the same path in the run it was derived from) are not repeated in "
                        "the archive; each maps to the archive path of the copy that ships, which may be in another "
                        "volume.",
                "files": {rewrite_name(k, counts): rewrite_name(v, counts) for k, v in sorted(m.items())}}
-        w.add(rewrite_name(f"{unit}/SOURCE-COPIES.json", counts), (json.dumps(doc, indent=1) + "\n").encode(), 0)
+        add(rewrite_name(f"{unit}/SOURCE-COPIES.json", counts), (json.dumps(doc, indent=1) + "\n").encode(), 0)
     if group == KEY_GROUP:
         for name, data in key_data_files(src, counts).items():
-            w.add(name, data, time.time())
+            add(name, data, time.time())
     vols = w.finish()
     return {"group": group, "volumes": [{**v, "path": str(v["path"]), "members": dict(v["members"])} for v in vols],
             "counts": dict(counts), "dropped": dict(dropped), "seconds": round(time.time() - t0)}
@@ -1000,7 +1202,8 @@ def write_manifest(out: Path, proc: Processor, results: list, a):
     # one invocation per group may run side by side: the manifest's
     # read-modify-write holds an exclusive lock, and lands by rename
     import fcntl
-    with open(out / ".MANIFEST.lock", "w") as lock:
+    # the lock sits beside the folder, never in it (the folder is uploaded as it is)
+    with open(out.parent / f".{out.name}-MANIFEST.lock", "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         _write_manifest(out, proc, results, a)
 
@@ -1136,13 +1339,13 @@ def write_readme(out: Path, proc: Processor):
     text = f"""# QuickReview benchmark runs — the run archive
 
 Every benchmark run behind QuickReview's published numbers, and every other
-benchmark run we hold: each review and its findings, the judges' verdicts
+benchmark run we hold except those listed under "What is not here": each review and its findings, the judges' verdicts
 with their reasoning, AACR-Bench's own metric files, the Martian, Qodo
 PR-Review-Bench and SWE-PRBench scoring, the pairwise Elo judgments, the run
 configurations and per-PR summaries (cost, time, tokens), the open-model
 runs, the answer key, and the analysis behind the reports. Raw model session
-logs are not here: each one ships as a numbers-only extract (see "Session
-logs" below).
+logs are not here: each JSONL one ships as a numbers-only extract (see
+"Session logs" below).
 {nfiles:,} files in {len(rows)} volumes, one per run family, {total / (1 << 20):.0f} MiB compressed.
 
 `RUNS-INDEX.json` is the run index: one row per run directory with its family,
@@ -1210,10 +1413,12 @@ packed. Nothing else in the text changed.
   product's earlier name, not a person, so it gets the public name rather
   than a placeholder.
 - **The authors' tracker.** The tracker is not public, so its ticket ids
-  (`FT-` and three or four digits, in any case; upper case also without the
-  hyphen) and any path into it became `<ticket>`. Run directory names such as
-  `ft0622-hard20-…` are identifiers the public repository's own plans name,
-  and stay.
+  (`FT-` and three or four digits, in any case, with or without the hyphen,
+  as in an image tag `qcr-bench:<ticket>`) and any path into it became
+  `<ticket>`. One number is kept, inside run directory names: `ft0622-…`
+  (`ft0622-hard20-…`, `martian-hard20-ft0622`) names runs the public
+  repository's own Elo plans name, so the runs keep the names those plans
+  use.
 - **Build commits.** Each `"qcr_commit"` (in `run.json` and every
   `case-summary.json`) is the public main commit the repository's history
   rewrite made of the recorded one, with `"qcr_commit_on_public_main": true`
@@ -1242,14 +1447,24 @@ packed. Nothing else in the text changed.
   empty string, the record around it kept. The blobs were in the session
   logs, which are not published, so the rule finds none in what ships; the
   extracts still carry the reasoning-token counts.
-- **Third-party text is linked, not copied.** Vendor review comments (the
-  published tools Martian re-judged, the nine Qodo vendors, the upstream
-  GitHub Copilot reviews) and the PR descriptions in the answer key's
-  `meta.json` are replaced by
-  `[third-party text omitted, sha256:<first 16 hex of the text's sha256>; see <link>]`.
-  The hash keeps equal texts equal, so every score recomputes unchanged.
-  JSON files whose third-party text was replaced were re-serialised with
-  their original indentation.
+- **Third-party text is linked, not copied.** These are replaced by
+  `[third-party text omitted, sha256:<first 16 hex of the text's sha256>; see <link>]`:
+  vendor review comments (the published tools Martian re-judged, the nine
+  Qodo vendors, the upstream GitHub Copilot reviews); the Martian judge's
+  extractions of those vendors' comments (each vendor candidate's `text` in
+  `results/<judge>/candidates.json`, and `matched_candidate` and `candidate`
+  in `evaluations.json`; ids, paths, lines, matches and the judge's reasoning
+  stay) and the vendor candidates of the blind annotation
+  (`analysis/…/fair/secret.json`); and PR authors' descriptions, wherever a
+  file copied one (the answer key's `meta.json`, PR-Agent's
+  `pragent-describe.json` and `pragent-description.md`, the open-model case
+  sets). The hash keeps equal texts equal, so every score recomputes
+  unchanged. JSON files whose third-party text was replaced were
+  re-serialised. What stays third-party inside the files: Martian's golden
+  comments (MIT) in Martian's scoring files, Qodo's issues (MIT) in the Qodo
+  scoring files and `analysis/qodo-2026-10-03/`, AACR-Bench's reference
+  comments (Apache-2.0), and code quoted by reviewers and judges (each
+  project's own licence).
 
 Rewrite counts over the whole archive:
 
@@ -1262,8 +1477,9 @@ Rewrite counts over the whole archive:
 The archive holds benchmark data only. Raw model session logs of every kind
 are left out: they hold the prompt text the sessions were built from during
 development, not benchmark data. The set is defined by file kind and fails
-closed (a log-shaped file inside a run directory that no rule names as data
-is left out too). Left out:
+closed: a log-shaped file anywhere in the archive (a `.log`, `.jsonl` or
+`.ndjson` anywhere in its name, `x.log.1` included) that no rule names as
+data is left out too, and so is every log of an aborted run. Left out:
 
 {session_kinds}
 
@@ -1286,6 +1502,31 @@ verifiable:
   (type, role, timestamp, model, provider, stop reason, agent, tool name,
   status, effort) and only when they are single short tokens. Each line is
   marked `"_extract": "metrics"`.
+
+Session text inside the files that are kept is rewritten field by field,
+and the export fails closed on any left:
+
+- a harness result's `stdout` (the CLI's whole event stream: Codex's shell
+  commands, their output and its messages) and `stderr` (the process log),
+  in `results/**/<iid>.json`, become `stdout_extract` (line count, the count
+  of each event and item type, and every usage record) and `stderr_extract`
+  (its size and error class);
+- a prompt in a driver's recorded argv (`codex-driver.json`, `*-argv.json`)
+  and OpenCode's review template (`opencode-config.json`) become
+  `[prompt omitted: sha256:<16 hex>, <n> chars]` (the harness prompts are in
+  the repository's `bench/aacr/docs/PROMPTS.md`);
+- Claude Code's `permission_denials` (the model's denied commands) in
+  `claude-stdout.json` become `permission_denials_count`;
+- the lines a case's ledger copied from that case's own prompt files are
+  removed, and the AACR re-scoring shim's error lines keep only the error
+  class;
+- a task one session wrote for another (`*-task.md`) is a prompt file, and
+  the blind annotation's instructions and per-PR packets are prompts:
+  left out.
+
+After those rules, a data file that still holds an event stream, the
+round-order prompt or a PR author's description is left out whole
+(`session_logs.CONTENT_MARKERS`).
 
 Kept, because they are data the harness wrote and hold no prompt: the run
 drivers' logs beside each run (`<run>.review.log`, `.judge.log`, `.score.log`
@@ -1356,9 +1597,10 @@ harness ran unmodified except for its judge endpoint. Cite AACR-Bench as:
     AACR-Bench: Evaluating automatic code review with holistic repository-level
     context. arXiv:2601.19494 [cs.SE], 2026. https://arxiv.org/abs/2601.19494
 
-External benchmarks, under their own licences; their data are referenced,
-not redistributed, beyond short quotations inside judge outputs and the
-MIT-licensed golden comments inside Martian's scoring files: Martian's
+External benchmarks, under their own licences. Martian's golden comments and
+Qodo's issues (both MIT) are inside their scoring files; SWE-PRBench's data is
+referenced, not redistributed, beyond short quotations inside judge outputs.
+Martian's
 offline code-review benchmark (MIT, (c) 2025 Martian,
 github.com/withmartian/code-review-benchmark @ e616e84); Qodo
 PR-Review-Bench (MIT, the Qodo team,
@@ -1376,40 +1618,30 @@ DOI (minted by Hugging Face at upload).
     print(f"wrote {out / 'README.md'}, LICENSE and NOTICE")
 
 
-ARCHIVE_NOTICE = """This run archive was assembled by Quickchat AI and is distributed under the Apache
-License, Version 2.0 (LICENSE).
-
-It contains material derived from AACR-Bench v1.0 (https://github.com/alibaba/aacr-bench,
-dataset commit ab8af8d5c74e2a4d1945d247ea4bbc49f93eb33f, harness commit
-68a569759289a83654a59d06db2a72910edf0a4a), licensed under the Apache License, Version 2.0.
-AACR-Bench ships no NOTICE file of its own. MODIFIED WORK: derived from AACR-Bench v1.0
-and modified by Quickchat AI in 2026. The runs re-key AACR-Bench's PRs with a verified
-defect key, score new reviews against it, and keep AACR-Bench's reference comments and
-labels and its harness's metric files as the harness wrote them (the harness ran
-unmodified except for its judge endpoint). Cite: Zhang et al., "AACR-Bench: Evaluating
-Automatic Code Review with Holistic Repository-Level Context", arXiv:2601.19494 (2026).
-
-Martian's scoring dirs contain golden comments from Martian's offline code-review
-benchmark (https://github.com/withmartian/code-review-benchmark, commit
-e616e849755441da38f18bf3adba2c9583b03803), MIT licence, Copyright (c) 2025 Martian.
-
-The Qodo scoring dirs contain issues from Qodo PR-Review-Bench
-(https://huggingface.co/datasets/Qodo/PR-Review-Bench, revision
-a73957c450a70693a743260e5637fffc44625f16), MIT licence, by the Qodo team.
-
-SWE-PRBench (https://huggingface.co/datasets/foundry-ai/swe-prbench, CC BY 4.0; harness
-MIT): its data is not redistributed here; its human review comments are left out.
-
-Code quoted by reviewers and judges comes from the reviewed open-source repositories at
-the commits each case names and stays under each project's own licence. Comments written
-by third-party review tools and the PR descriptions written by PR authors are not
-included: each is replaced by a hash and a link to the original.
-"""
+def archive_notice(lead: str) -> str:
+    return NT.notice(
+        lead,
+        modified="MODIFIED WORK: derived from AACR-Bench v1.0 and modified by Quickchat AI in 2026. The runs "
+                 "re-key AACR-Bench's PRs with a verified defect key, score new reviews against it, and keep "
+                 "AACR-Bench's reference comments and labels and its harness's metric files as the harness wrote "
+                 "them (the harness ran unmodified except for its judge endpoint).",
+        martian_where="Martian's scoring dirs (`runs/*.martian*/`)",
+        qodo_where="The Qodo scoring dirs (`runs/*.qodo*/`) and `analysis/qodo-2026-10-03/`")
 
 
-def write_licence(out: Path):
-    shutil.copyfile(HERE / "hf" / "LICENSE", out / "LICENSE")
-    (out / "NOTICE").write_text(ARCHIVE_NOTICE)
+ARCHIVE_LEAD = """This run archive was assembled by Quickchat AI and is distributed under the Apache
+License, Version 2.0 (LICENSE)."""
+SLIM_LEAD = """This slim re-score bundle, a subset of the run archive in this dataset's `archive/`
+folder, was assembled by Quickchat AI and is distributed under the Apache License, Version 2.0
+(LICENSE)."""
+
+
+def write_licence(out: Path, lead: str = ARCHIVE_LEAD):
+    NT.write_licences(out)
+    text = archive_notice(lead)
+    if lead == SLIM_LEAD:  # the bundle holds no SWE-PRBench data and no analysis tree
+        text = text.replace(NT.SWEPR.strip() + "\n\n", "").replace(" and `analysis/qodo-2026-10-03/`", "")
+    (out / "NOTICE").write_text(text)
 
 # ---------------------------------------------------------------- slim bundle
 
@@ -1530,17 +1762,19 @@ def cmd_slim(a):
         print(f"{p.name}: {v['files']} files, {v['bytes_in'] / (1 << 20):.1f} MiB raw, {p.stat().st_size / (1 << 20):.1f} MiB")
         (out / (p.name + ".sha256")).write_text(f"{sha256_file(p)}  {p.name}\n")
     (out / "README.md").write_text(readme)
-    write_licence(out)
-    (out / "counts.json").write_text(json.dumps(dict(counts), indent=1) + "\n")
+    write_licence(out, SLIM_LEAD)
+    # the rewrite counts are the build's record, not part of the upload: beside the folder, not in it
+    (out.parent / f"{out.name}-counts.json").write_text(json.dumps(dict(counts), indent=1) + "\n")
 
 
 def slim_readme(n: int, counts) -> str:
     return f"""# QuickReview benchmark — slim re-score bundle
 
-{n} files. Everything `bench/aacr/final/score.sh`, `compare.py`, `charts.py`,
+{n} files, plus this README and `FILES.sha256`. Everything `bench/aacr/final/score.sh`, `compare.py`, `charts.py`,
 the external-benchmark scorers and `bench/aacr/recompute/` read to recompute
 the published tables (the papers, the README's Elo chart and "Other models"
-rows, `docs/DIGITALOCEAN.md`), with no model call and no transcript text.
+rows, `docs/DIGITALOCEAN.md`), with no model call and no session log (a
+harness result's `stdout` and `stderr` are numbers-only extracts here too).
 The run archive, in this dataset's `archive/` folder, holds every run; this
 bundle is a subset of it, rewritten the same way (see the archive README:
 names, placeholders, blanked reasoning blobs, and why no raw session log is
@@ -1570,7 +1804,9 @@ Unpack it and point the tools at its `runs/`:
         bench_cost_source  where that figure came from
     runs/<run>.martian*/martian-scores.json, martian-report.md, score_profiles.txt,
                         results/ingest-report.json, results/<judge>/evaluations.json
-                        and candidates.json (the judge's step-2 extractions)
+                        and candidates.json (the judge's step-2 extractions; a
+                        re-judged vendor tool's candidate text is a hash + link,
+                        which the scorer does not read)
     runs/<run>.qodo*/scores.json, scores.md, judgements.jsonl (vendor comment
                         bodies replaced by a hash + link; the scorer reads only
                         their file and lines), judge/JUDGE.txt
@@ -1620,7 +1856,15 @@ REGREP = {
     **{f"token {i}": rb"(?i:" + re.escape(t.encode()) + rb")" for i, t in enumerate(SCRUB_EXTRA)},
     **{f"host {i}": rb"(?i:" + re.escape(h.strip().encode()) + rb")" for i, h in enumerate(SCRUB_HOSTS)},
     "quickchat (any case)": rb"(?i:quickchat)",
+    "JWT-shaped (eyJ..eyJ..)": rb"eyJ[A-Za-z0-9_\-]{8,}\.eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}",
+    "Google API key-shaped (AIza)": rb"AIza[0-9A-Za-z_\-]{35}",
+    "AWS access key-shaped (AKIA)": rb"AKIA[0-9A-Z]{16}",
+    "Slack token-shaped (xox?-)": rb"xox[abprs]-[A-Za-z0-9\-]{10,}",
+    "PEM private key": rb"-----BEGIN [A-Z ]*PRIVATE KEY-----",
+    "GitHub fine-grained token-shaped (github_pat_)": rb"github_pat_[A-Za-z0-9_]{40,}",
+    **{f"session text: {n}": rx.pattern for n, rx in SL.CONTENT_MARKERS},
     "ticket id (FT-NNNN)": SX.TICKET_RULES[1][1],
+    "ticket id (ftNNNN, not a kept run name)": SX.TICKET_RULES[2][1],
     "tracker path": rb"(?<![A-Za-z0-9_])tracker/(?:efforts|tickets|maps)/",
 }
 
@@ -1652,7 +1896,41 @@ REGREP_RG = [
     rb"gAAAAA[A-Za-z0-9_\-=]{100,}",
     rb"[./\w-]*claude\.env", rb"sk-", rb"gh[psor]_",
     rb"(?:^|[^A-Za-z0-9])(?:[Ff][Tt]-[0-9]{3,4}|FT[0-9]{3,4})", rb"(?:^|[^A-Za-z0-9_])tracker/(?:efforts|tickets|maps)/",
+    rb"(?:^|[^A-Za-z0-9])ft0[0-9]{3}",
+    rb"eyJ[A-Za-z0-9_\-]{8,}\.eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}", rb"AIza[0-9A-Za-z_\-]{35}", rb"AKIA[0-9A-Z]{16}",
+    rb"xox[abprs]-[A-Za-z0-9\-]{10,}", rb"-----BEGIN [A-Z ]*PRIVATE KEY-----", rb"github_pat_[A-Za-z0-9_]{40,}",
+    rb"type\\*\"\s*:\s*\\*\"(?:thread\.started|item\.completed|command_execution)", rb"aggregated_output",
+    rb"===ROUNDORDER===|You are this PR's only shepherd", rb"### \*\*User description\*\*", rb"as its author described it",
 ]
+
+
+SAMPLED = ("sk- key-shaped", "gh?_ token-shaped", "Fernet blob (gAAAAA, 100+)", "JWT-shaped (eyJ..eyJ..)",
+           "Google API key-shaped (AIza)", "AWS access key-shaped (AKIA)", "Slack token-shaped (xox?-)",
+           "PEM private key", "GitHub fine-grained token-shaped (github_pat_)")
+# The gate: a class that names us (an identity, a credential value, a private word, a host path, a
+# ticket) or session text must count 0, or the re-grep fails. The credential-shaped classes count
+# third-party fixtures quoted from the reviewed repositories (test keys, sample tokens, a public
+# Firebase config): they are reported, with samples, and fail only above REGREP_FIXTURE_CEILING,
+# the counts the final build was read against by hand.
+REGREP_ZERO = ("owner name", "review bot", "old product name", "private repo", "secret value", "private word",
+               "denylist word", "home directory", "token ", "host ", "ticket id", "tracker path", "session text",
+               "member is a session log", "companion-pihome")
+REGREP_FIXTURE_CEILING: dict[str, int] = {}
+
+
+def regrep_failures(total: collections.Counter, ceiling: dict | None = None) -> list[str]:
+    """The classes over their allowance: every REGREP_ZERO class above 0, and every
+    credential-shaped class above its ceiling (`ceiling`, default REGREP_FIXTURE_CEILING)."""
+    ceiling = REGREP_FIXTURE_CEILING if ceiling is None else ceiling
+    bad = []
+    for k, n in sorted(total.items()):
+        if not n:
+            continue
+        if k.startswith(REGREP_ZERO) and not (k == "companion-pihome" and n <= 2):
+            bad.append(f"{k}: {n}")
+        elif k in SAMPLED and k in ceiling and n > ceiling[k]:
+            bad.append(f"{k}: {n} (allowed {ceiling[k]})")
+    return bad
 
 
 def regrep_stream(cmd: list[str]) -> tuple[collections.Counter, list]:
@@ -1675,7 +1953,7 @@ def regrep_stream(cmd: list[str]) -> tuple[collections.Counter, list]:
             n = len(r.findall(m))
             if n:
                 c[k] += n
-                if k in ("sk- key-shaped", "gh?_ token-shaped", "Fernet blob (gAAAAA, 100+)") and len(hits) < 20:
+                if k in SAMPLED and len(hits) < 20:
                     hits.append((k, m[:24].decode(errors="replace") + "..."))
     grc, zrc = g.wait(), z.wait()
     if zrc != 0 or grc not in (0, 1):
@@ -1728,14 +2006,23 @@ def cmd_regrep(a):
             total.update(c)
             print(name, dict(c), flush=True)
     report = dict(sorted(report.items()))
-    for side in sorted(p for p in out.iterdir() if p.is_file() and p.name != "regrep.json"
+    for side in sorted(p for p in out.rglob("*") if p.is_file() and p.name != "regrep.json"
                        and (p.suffix in (".json", ".md", ".txt") or p.name in ("SHA256SUMS", "NOTICE"))):
         c, _ = regrep_stream(["cat", str(side)])
         if c:
             report[side.name] = dict(c)
             total.update(c)
     print("TOTAL", dict(total))
-    (out / "regrep.json").write_text(json.dumps({"volumes": report, "total": dict(total), "samples": samples}, indent=1) + "\n")
+    ceiling = json.loads(Path(a.fixtures).read_text()) if getattr(a, "fixtures", None) else None
+    bad = regrep_failures(total, ceiling)
+    # the report is the build's record, beside the folder: nothing in the folder is uploaded unread
+    rep = Path(a.report) if getattr(a, "report", None) else out.parent / f"regrep-{out.name}.json"
+    rep.write_text(json.dumps({"volumes": report, "total": dict(total), "samples": samples, "failures": bad},
+                              indent=1) + "\n")
+    if bad:
+        print("RE-GREP FAILED:", *bad, sep="\n  ")
+        sys.exit(1)
+    print("re-grep clean: every identity, credential value, private word, ticket and session-text class is 0")
 
 
 def main():
@@ -1753,6 +2040,9 @@ def main():
             s.add_argument("--commit-remap", help="JSON {recorded qcr_commit: public main commit or null}")
         if name == "regrep":
             s.add_argument("--jobs", type=int, default=2, help="volumes scanned side by side")
+            s.add_argument("--report", help="where the counts go (default: regrep-<folder>.json beside the folder)")
+            s.add_argument("--fixtures", help="JSON {credential-shaped class: ceiling} of third-party fixture counts "
+                                              "read by hand; a class over it fails")
         if name in ("archive", "slim"):
             s.add_argument("--level", type=int, default=19)
             s.add_argument("--cap", type=int, default=int(1.9 * GIB))

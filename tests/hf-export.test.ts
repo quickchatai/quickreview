@@ -35,7 +35,16 @@
 //  14. each `qcr_commit` is remapped to public main, with a flag saying so;
 //  15. the answer key's build data (candidate maps, diff.stat sizes) is read
 //      as data (key_data.py);
-//  16. `pc2-*` is withheld whatever the catalogue says.
+//  16. `pc2-*` is withheld whatever the catalogue says;
+//  17. the fail-closed log rule reaches every tree (an unnamed log kind, an
+//      aborted run's log and a session's task file are left out anywhere);
+//  18. session text inside kept JSON files (a harness result's stdout and
+//      stderr, a prompt argument, a prompt template, denied commands) becomes
+//      numbers or hashes, and a data file still holding it is left out;
+//  19. PR authors' descriptions and the Martian judge's vendor candidates are
+//      linked, not copied, wherever a file copied them;
+//  20. the re-grep is a gate, verify_slim fails on what it finds, and a run
+//      suffix ships with its run only when it is a known one.
 
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -430,7 +439,7 @@ describe("scrub_extra.ContentRules", () => {
     const cases: [string, string[]][] = [
       ["colou?r scheme", ["color scheme", "colour scheme"]],
       ["ab+c-d", ["abbbc-d"]],
-      ["\\bfleet([ \\t]*)tracker\\b", ["fleet tracker", "fleettracker"]],
+      ["\\bblue([ \\t]*)widget\\b", ["blue widget", "bluewidget"]],
       ["x{2,3}yz-tail", ["xxyz-tail"]],
       ["(?i)Mixed-Case", ["mixed-case"]],
       ["pre[0-9]+post-fix", ["pre42post-fix"]],
@@ -766,7 +775,7 @@ describe("session_logs.classify: the session-log set, by file kind", () => {
       "runs/r.review.log",
       "open-models/full-glm53.log",
       "elo/plan/judgments/gpt.jsonl",
-      "analysis/x/wp-data/logs/shim.log",
+      "analysis/x/wp-data/logs/shim-k5-all-default-rest145.log",
     ];
     const r = pyModule(
       "session_logs",
@@ -1015,14 +1024,21 @@ describe("export_runs: a run ships without its session logs", () => {
 });
 
 describe("the authors' tracker becomes <ticket>", () => {
+  // Fake ids, built at run time so this file carries no ticket-id-shaped literal: the 9xxx range
+  // and 0999 are not tickets. `ft0622` is the one number the public repository's own Elo plans name.
+  const id = (n: string): string => ["FT", n].join("-");
+  const lower = (n: string): string => ["ft", n].join("");
   // MUTATION: drop *SX.ticket_rules() from export_runs.NAME_RULES — this fails
   // MUTATION: drop SX.ticket_rules_str() from hf_export.SCRUB_RULES — this fails
-  it("rewrites ticket ids and tracker paths in the archive and the tables, and leaves run names alone", () => {
+  // MUTATION: drop the "ticket-id-lower" rule from scrub_extra.TICKET_RULES — this fails
+  it("rewrites ticket ids and tracker paths in the archive and the tables, and leaves the kept run names alone", () => {
     const text =
-      "Per FT-0622 and ft-0550 (see FT0517); notes in ../fleet/tracker/efforts/bench/tickets/FT-0001-x.md; " +
-      "run ft0622-hard20-sonnet and FT-12345 stay.";
+      `Per ${id("9622")} and ${id("9550").toLowerCase()} (see ${id("9517").replace("-", "")}); ` +
+      `notes in ../x/${["tracker", "efforts"].join("/")}/y/tickets/${id("9999")}-x.md; ` +
+      `image qcr-bench:${lower("0999")}; run ${lower("0622")}-hard20-sonnet and ${id("12345")} stay.`;
     const want =
-      "Per <ticket> and <ticket> (see <ticket>); notes in <ticket>; run ft0622-hard20-sonnet and FT-12345 stay.";
+      "Per <ticket> and <ticket> (see <ticket>); notes in <ticket>; image qcr-bench:<ticket>; " +
+      `run ${lower("0622")}-hard20-sonnet and ${id("12345")} stay.`;
     const a = pyModule(
       "export_runs",
       "import collections; print(json.dumps(h.rewrite(sys.argv[1].encode(), collections.Counter()).decode()))",
@@ -1076,6 +1092,322 @@ describe("key_data: the answer key's build, as data", () => {
         ["o__r@1111111", 2, 85, 36, 121, ["rest145-code", "fresh10-code"]],
         ["p__q@2222222", 1, 7, 0, 7, ["orig40-code"]],
       ],
+    ]);
+  });
+});
+
+describe("session_logs: fail closed beyond the run dirs, and prompt files by kind", () => {
+  // MUTATION: in session_logs.classify, apply the R_UNKNOWN rule only when run_inner(rel) is not None — this fails
+  // MUTATION: drop the `.aborted` return in session_logs.classify — this fails
+  // MUTATION: drop TASK_FILE from session_logs.classify — this fails
+  it("leaves out an unnamed log kind anywhere, an aborted run's log and a session's task file; keeps the named harness logs", () => {
+    const paths = [
+      "logs/rerun-x.log.aborted",
+      "analysis/x/wp-data/logs/notes.log",
+      "elo/plan/stray.jsonl",
+      "open-models/sub/driver.log",
+      "runs/r/mystery.log",
+      "runs/r/cases/o__r@1111111/validate-task.md",
+      // data: kept
+      "logs/rerun-x.log",
+      "elo/plan/run.log",
+      "elo/plan/units.jsonl",
+      "analysis/x/wp-data/logs/selfcons-all-claude-c1-rest145.log",
+      "runs/r.judge-opus.log",
+      "runs/r.launch.log",
+      "runs/r/cases/o__r@1111111/ledger.md",
+    ];
+    const r = pyModule(
+      "session_logs",
+      "print(json.dumps({p: h.classify(p) is not None for p in sys.argv[1:]}))",
+      ...paths,
+    ) as Record<string, boolean>;
+    for (const p of paths.slice(0, 6)) expect(r[p], p).toBe(true);
+    for (const p of paths.slice(6)) expect(r[p], p).toBe(false);
+  });
+});
+
+/** What strip_session_fields returns for the documents of the test below. */
+interface Extracted {
+  review_output?: string[];
+  stdout_extract?: {
+    events: Record<string, number>;
+    items_completed: Record<string, number>;
+    usage: object[];
+  };
+  stderr_extract?: { error_class: string };
+  argv?: string[];
+  permission_denials_count?: number;
+  result?: string;
+}
+
+describe("session_logs.strip_session_fields: session text inside kept JSON files", () => {
+  const stream = [
+    { type: "thread.started", thread_id: "t" },
+    {
+      type: "item.completed",
+      item: { type: "command_execution", command: "cat SECRET", aggregated_output: "SECRET-CODE" },
+    },
+    { type: "item.completed", item: { type: "agent_message", text: "SECRET-PROSE" } },
+    { type: "turn.completed", usage: { input_tokens: 10, output_tokens: 3 } },
+  ]
+    .map((e) => JSON.stringify(e))
+    .join("\n");
+
+  // MUTATION: in session_logs.strip_session_fields, keep `stdout` (drop the `del obj[k]`) — this fails
+  // MUTATION: in session_logs._argv_clean, keep every element — this fails
+  it("turns a result's stdout and stderr into numbers, a prompt argument and a template into hashes, denied commands into a count", () => {
+    const docs: [string, unknown][] = [
+      [
+        "runs/r/results/all/o__r@1111111.json",
+        { review_output: ["kept"], stdout: stream, stderr: "Error: SECRET timed out" },
+      ],
+      [
+        "runs/r/cases/o__r@1111111/codex-driver.json",
+        { argv: ["codex", "exec", "SECRET-PROMPT ".repeat(40)] },
+      ],
+      [
+        "runs/r/cases/o__r@1111111/opencode-argv.json",
+        ["opencode", "run", "line one\nSECRET-PROMPT"],
+      ],
+      [
+        "runs/r/cases/o__r@1111111/opencode-config.json",
+        { command: { review: { template: "SECRET-PROMPT", subtask: false } } },
+      ],
+      [
+        "runs/r/cases/o__r@1111111/claude-stdout.json",
+        { result: "the review", permission_denials: [{ tool_input: { command: "ls SECRET" } }] },
+      ],
+    ];
+    const r = pyModule(
+      "session_logs",
+      "import collections\nc = collections.Counter()\n" +
+        "out = [h.strip_session_fields(rel, doc, c) for rel, doc in json.loads(sys.argv[1])]\n" +
+        "print(json.dumps([out, dict(c)]))",
+      JSON.stringify(docs),
+    ) as [Extracted[], Record<string, number>];
+    const text = JSON.stringify(r[0]);
+    expect(text).not.toContain("SECRET");
+    const res = r[0][0]!;
+    expect(res.review_output).toEqual(["kept"]);
+    expect(res.stdout_extract!.events).toEqual({
+      "thread.started": 1,
+      "item.completed": 2,
+      "turn.completed": 1,
+    });
+    expect(res.stdout_extract!.items_completed).toEqual({ command_execution: 1, agent_message: 1 });
+    expect(res.stdout_extract!.usage).toEqual([{ input_tokens: 10, output_tokens: 3 }]);
+    expect(res.stderr_extract!.error_class).toBe("timeout");
+    expect(r[0][1]!.argv!.slice(0, 2)).toEqual(["codex", "exec"]);
+    expect(r[0][1]!.argv![2]).toMatch(/^\[prompt omitted: sha256:[0-9a-f]{16}, \d+ chars\]$/);
+    expect(r[0][4]!.permission_denials_count).toBe(1);
+    expect(r[0][4]!.result).toBe("the review");
+  });
+
+  // MUTATION: drop the "event stream (aggregated_output)" entry from session_logs.CONTENT_MARKERS — this fails
+  it("finds session text left in a data file, and never flags code", () => {
+    const r = pyModule(
+      "session_logs",
+      "print(json.dumps([h.content_markers(p, sys.argv[2].encode()) for p in ('runs/r/x.json', 'analysis/a/parse.py')]))",
+      "",
+      '{"other": "{\\"aggregated_output\\": \\"code\\"}"}',
+    ) as string[][];
+    expect(r[0]).toEqual(["event stream (aggregated_output)"]);
+    expect(r[1]).toEqual([]);
+  });
+
+  // MUTATION: in session_logs.strip_prompt_lines, keep lines found in the prompts — this fails
+  it("removes the lines a ledger copied from its case's prompt files", () => {
+    const r = pyModule(
+      "session_logs",
+      "print(json.dumps(h.strip_prompt_lines(sys.argv[1], [sys.argv[2]])))",
+      "# Ledger\n===ROUNDORDER===\nRun the full round from your system prompt now.\nfound a bug in a.py\n",
+      "Run the full round from your system prompt now.\n",
+    );
+    expect(r).toEqual(["# Ledger\nfound a bug in a.py\n", 2]);
+  });
+});
+
+describe("export_runs: third-party and session text inside kept files", () => {
+  const root = join(tmp, "fields");
+  const src = join(root, "bench-runs");
+  const om = join(root, "om");
+  const iid = "o__r@1111111";
+  put(
+    join(src, "runs", "r1", "results", "all", `${iid}.json`),
+    JSON.stringify({ review_output: ["kept"], stdout: '{"type":"thread.started"}\n', stderr: "" }),
+  );
+  put(
+    join(src, "runs", "r1", "results", "all", "odd.json"),
+    JSON.stringify({ note: '{"type":"item.completed","item":{"aggregated_output":"SECRET"}}' }),
+  );
+  put(
+    join(src, "runs", "r1", "cases", iid, "pragent-description.md"),
+    "<!-- pr-agent-generated -->\n### **User description**\nSECRET-BODY by the author\n\n### **PR Type**\nBug fix\n",
+  );
+  put(
+    join(src, "runs", "r1", "cases", iid, "pragent-describe.json"),
+    JSON.stringify({
+      pr_text: "SECRET-BODY",
+      published_description: {
+        title: "t",
+        body: "### **User description**\nSECRET-BODY\n### **PR Type**\nx",
+      },
+    }),
+  );
+  put(
+    join(src, "runs", "r1", "cases", iid, "round-order.md"),
+    "===ROUNDORDER===\nYou are this PR's only shepherd, keep going.\n",
+  );
+  put(
+    join(src, "runs", "r1", "cases", iid, "ledger.md"),
+    "# L\n===ROUNDORDER===\nYou are this PR's only shepherd, keep going.\nnote\n",
+  );
+  put(
+    join(src, "runs", "r1.martian", "results", "j", "candidates.json"),
+    JSON.stringify({
+      u: {
+        quickreview: [{ text: "ours" }],
+        "rejudged-cubic-v2": [{ text: "SECRET-VENDOR", line: 3 }],
+      },
+    }),
+  );
+  put(
+    join(om, "sets-low", "s.json"),
+    JSON.stringify({
+      cases: [{ instance_id: iid, pr_url: "https://x/pull/1", body: "SECRET-BODY" }],
+    }),
+  );
+  put(join(om, "runs", ".keep"), "");
+  const catalogue = join(root, "catalogue.json");
+  writeFileSync(
+    catalogue,
+    JSON.stringify({
+      families: [
+        {
+          id: "f",
+          title: "F",
+          location: "qcr-bench-runs/runs/",
+          members: ["r1"],
+          ship: "yes",
+          hf_tables: [],
+        },
+        {
+          id: "d",
+          title: "D",
+          location: "open-models/",
+          members: ["sets-low"],
+          ship: "yes",
+          hf_tables: [],
+        },
+      ],
+    }),
+  );
+
+  // MUTATION: drop the SL.content_markers check from export_runs.Processor.process — this fails
+  // MUTATION: drop the pragent_description_md branch from export_runs.Processor.process — this fails
+  // MUTATION: drop the martian_judge_file branch from export_runs.Processor.process — this fails
+  it("rewrites results, PR bodies, vendor candidates and copied prompt lines, and leaves out a file still holding a stream", () => {
+    const r = pyModule(
+      "export_runs",
+      "import collections\nfrom pathlib import Path\nimport release_catalogue as RC\n" +
+        "p = h.Processor(Path(sys.argv[1]), Path(sys.argv[3]), RC.Catalogue.load(sys.argv[2]), {})\n" +
+        "out = {}\n" +
+        "for rel in h.walk_files(p.src, p.om):\n" +
+        "    data, why = p.process(rel, collections.Counter())\n" +
+        "    out[rel] = [why, None if data is None else data.decode()]\n" +
+        "print(json.dumps(out))",
+      src,
+      catalogue,
+      om,
+    ) as Record<string, [string | null, string | null]>;
+    const base = `runs/r1/cases/${iid}`;
+    for (const [k, v] of Object.entries(r)) {
+      if (v[1] !== null)
+        expect(v[1], k).not.toMatch(
+          /SECRET|"type": ?"thread\.started"|only shepherd|User description/,
+        );
+    }
+    expect(JSON.parse(r[`runs/r1/results/all/${iid}.json`]![1]!).stdout_extract.events).toEqual({
+      "thread.started": 1,
+    });
+    expect(r["runs/r1/results/all/odd.json"]![0]).toMatch(/still carries session or prompt text/);
+    expect(r[`${base}/pragent-description.md`]![1]).toContain("third-party text omitted");
+    expect(r[`${base}/pragent-description.md`]![1]).toContain("### **PR Type**");
+    expect(r[`${base}/ledger.md`]![1]).toBe("# L\nnote\n");
+    expect(r[`${base}/round-order.md`]![1]).toBeNull();
+    const cands = JSON.parse(r["runs/r1.martian/results/j/candidates.json"]![1]!);
+    expect(cands.u.quickreview[0].text).toBe("ours");
+    expect(cands.u["rejudged-cubic-v2"][0]).toMatchObject({ line: 3 });
+    expect(cands.u["rejudged-cubic-v2"][0].text).toMatch(/^\[third-party text omitted, sha256:/);
+    expect(JSON.parse(r["open-models/sets-low/s.json"]![1]!).cases[0].body).toContain(
+      "https://x/pull/1",
+    );
+  });
+});
+
+describe("export_runs.regrep_failures: the re-grep is a gate", () => {
+  // MUTATION: make export_runs.regrep_failures return [] — this fails
+  it("fails on any identity, ticket or session-text count and on a fixture class over its ceiling", () => {
+    const r = pyModule(
+      "export_runs",
+      "import collections\nprint(json.dumps(h.regrep_failures(collections.Counter(json.loads(sys.argv[1])), json.loads(sys.argv[2]))))",
+      JSON.stringify({
+        "owner name 0 (any case)": 0,
+        "ticket id (FT-NNNN)": 1,
+        "session text: event stream (aggregated_output)": 2,
+        "Google API key-shaped (AIza)": 5,
+        "JWT-shaped (eyJ..eyJ..)": 3,
+        "quickchat (any case)": 9,
+        "companion-pihome": 2,
+      }),
+      JSON.stringify({ "Google API key-shaped (AIza)": 4, "JWT-shaped (eyJ..eyJ..)": 3 }),
+    ) as string[];
+    expect(r).toEqual([
+      "Google API key-shaped (AIza): 5 (allowed 4)",
+      "session text: event stream (aggregated_output): 2",
+      "ticket id (FT-NNNN): 1",
+    ]);
+  });
+});
+
+describe("export_runs: member names stay unique, and an unknown run suffix is its own unit", () => {
+  // MUTATION: in export_runs.Tree.run_of, accept any `.` suffix again — this fails
+  it("strips only the known scoring and log suffixes", () => {
+    const r = pyModule(
+      "export_runs",
+      "print(json.dumps([h.strip_run_suffix(n) for n in sys.argv[1:]]))",
+      "r1.martian",
+      "r1.review.log",
+      "r1.qodo-rescore",
+      "r1.newthing",
+      "r1",
+    );
+    expect(r).toEqual(["r1", "r1", "r1", "r1.newthing", "r1"]);
+  });
+});
+
+describe("verify_slim.summary_failures: the bundle check fails on what it finds", () => {
+  // MUTATION: make verify_slim.summary_failures return [] — this fails
+  it("fails on an unlisted file, a skipped or different scoring dir, a differing table or chart", () => {
+    const r = pyModule(
+      "verify_slim",
+      "print(json.dumps(h.summary_failures(json.loads(sys.argv[1]))))",
+      JSON.stringify({
+        hash_mismatches: 0,
+        unlisted_files: 1,
+        session_text_files: 0,
+        martian: { identical: 3, "SKIPPED: judge output but no martian-scores.json": 1 },
+        qodo: { identical: 2, "numbers identical, scores.md text differs": 1 },
+        compare_vs_full: { a: "identical", b: "2 diff lines" },
+        charts: ["final IDENTICAL to", "study DIFFER from"],
+      }),
+    ) as string[];
+    expect(r).toEqual([
+      "unlisted_files: 1",
+      "martian: {'identical': 3, 'SKIPPED: judge output but no martian-scores.json': 1}",
+      "compare.py b: 2 diff lines",
+      "study DIFFER from",
     ]);
   });
 });
