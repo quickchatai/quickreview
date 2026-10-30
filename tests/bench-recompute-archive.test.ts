@@ -22,7 +22,15 @@
 //      the one kept is the higher-ranked class;
 //   8. claim_metrics: a Martian score restricted to one half is recounted under
 //      the profile's golden categories; PR size buckets are inclusive; a reference
-//      label that does not align with its reference is a fault.
+//      label that does not align with its reference is a fault; `done=` keeps only
+//      the PRs an arm's review completed;
+//   9. lens_credit: a comment posted in the review body (no lens trailer) takes the
+//      lenses of the posted finding at its site;
+//  10. panel_confirmed: the judge's C1.. follow the panel's right-side clusters, then
+//      the base-side ones;
+//  11. copilot_harvest, smoke_lenses, martian_published: an earlier push's line is
+//      kept only when the harvest mapped it; a lens's timeout is read from its
+//      error class; a published credit naming no listed golden is left out.
 
 import { afterAll, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
@@ -447,5 +455,130 @@ describe("the claims manifest's gaps", () => {
       expect(c.scripts?.length).toBeGreaterThan(0);
       for (const s of c.scripts ?? []) expect(() => readFileSync(join(ROOT, s))).not.toThrow();
     }
+  });
+});
+
+describe("lens_credit", () => {
+  const root = join(tmp, "lens");
+  const case_ = join(root, "runs", "r", "cases", "P");
+  write(join(root, "runs", "r", "results", "all", "P.json"), {
+    review: {
+      comments: [
+        { path: "a.go", start_line: 10, content: "[blocker] x\n_P1 · confidence 1.0 · lens pass-baseline, pass-sweep_" },
+        { path: "b.go", start_line: 1, content: "[blocker] (body-only) y" },
+      ],
+    },
+  });
+  write(join(case_, "comments.json"), []);
+  write(join(case_, "findings-record.json"), {
+    findings: [
+      { id: "f1", path: "b.go", line: 1, lens: "pass-intent, pass-claims", disposition: "posted" },
+      { id: "f2", path: "b.go", line: 2, lens: "pass-tests", disposition: "merged", merged_into: "f1" },
+    ],
+  });
+
+  // MUTATION: drop the findings-record fallback in judged_comments — C2 has no lens and this fails
+  it("gives a body-posted comment the lenses of the posted finding at its site", () => {
+    const r = py(
+      "import lens_credit as L, pathlib; c = pathlib.Path(sys.argv[1])\n" +
+        "out = L.judged_comments(c, c.parent.parent / 'results' / 'all' / 'P.json')\n" +
+        "print(json.dumps([[i, sorted(x)] for i, x in out]))",
+      case_,
+    );
+    expect(r).toEqual([
+      ["C1", ["baseline", "sweep"]],
+      ["C2", ["claims", "intent", "tests"]],
+    ]);
+  });
+});
+
+describe("panel_confirmed", () => {
+  // MUTATION: number the clusters in meta order (drop the right-then-base split) — this fails
+  it("numbers the judged comments right-side clusters first, then base-side ones", () => {
+    const r = py(
+      "import panel_confirmed as P\n" +
+        "f = lambda s, side: {'summary': s, 'actionable': True, 'location': {'side': side}}\n" +
+        "meta = {'sourceFindings': [{'id': 'a', 'finding': f('A', 'base')}, {'id': 'b', 'finding': f('B', 'head')}, {'id': 'c', 'finding': f('C', 'head')}],\n" +
+        "        'confirmedClusters': [{'summary': 'A', 'confirmed': True, 'sourceFindingIds': ['a']}, {'summary': 'B', 'confirmed': True, 'sourceFindingIds': ['b']}],\n" +
+        "        'advisories': [{'summary': 'C', 'confirmed': False, 'sourceFindingIds': ['c']}]}\n" +
+        "print(json.dumps(P.confirmed_ids(meta)))",
+    );
+    expect(r).toEqual({ C1: true, C2: false, C3: true });
+  });
+});
+
+describe("copilot_harvest, smoke_lenses, martian_published", () => {
+  // MUTATION: count every finding not at the head as kept (drop the KEPT test) — this fails
+  it("keeps an earlier push's line only when the harvest mapped it", () => {
+    const root = join(tmp, "copilot");
+    write(join(root, "runs", "upstream-copilot2025-dev10", "cases", "P", "case-summary.json"), {
+      reviewed_aacr_head: false,
+      by_source: { inline: 3, "body-low-confidence": 1 },
+      findings: [{ mapping: "identical-context" }, { mapping: "dropped-line" }, { mapping: "identical-file" }, { mapping: "at-head" }],
+    });
+    const r = py(
+      "import copilot_harvest as C, pathlib; x = C.compute(pathlib.Path(sys.argv[1]))\n" +
+        "print(json.dumps([x['earlier_push'], x['earlier_push_lines'], x['earlier_push_kept'], x['earlier_push_path_only'], x['findings']]))",
+      root,
+    );
+    expect(r).toEqual([1, 3, 2, 1, 4]);
+  });
+
+  // MUTATION: count lens outcomes by stopReason only (drop errorClass) — the timeout reads "error" and this fails
+  it("reads a lens's timeout from its error class", () => {
+    const root = join(tmp, "smoke");
+    jsonl(join(root, "open-models", "runs", "s-glm-aacr1", "cases", "P", "pi-events.pruned.jsonl"), [
+      {
+        type: "tool_execution_end",
+        result: { details: { results: [{ stopReason: "error", errorClass: "timeout" }, { stopReason: "stop" }] } },
+      },
+    ]);
+    const r = py(
+      "import smoke_lenses as S, pathlib; print(json.dumps(S.compute(pathlib.Path(sys.argv[1]), 's-glm-')['timed_out']))",
+      root,
+    );
+    expect(r).toBe(1);
+  });
+
+  // MUTATION: raise on a credit whose text names no listed golden (as before) instead of leaving it out — this fails
+  it("leaves out a published credit naming no listed golden, and shares the rest by audit bucket", () => {
+    const m = join(tmp, "martian-src", "offline", "results");
+    write(join(m, "benchmark_data.json"), { u: { golden_comments: [{ comment: "g0" }, { comment: "g1" }] } });
+    write(join(m, "anthropic_claude-opus-4-5-20251101", "evaluations.json"), {
+      u: { tool: { true_positives: [{ golden_comment: "g0" }, { golden_comment: "g1" }, { golden_comment: "gone" }] } },
+    });
+    const r = py(
+      "import martian_published as P, pathlib\n" +
+        "g = [{'pr_url': 'u', 'golden_index': 0, 'audit_bucket': 'real', 'severity': 'High'}, {'pr_url': 'u', 'golden_index': 1, 'audit_bucket': 'notreal', 'severity': 'Low'}]\n" +
+        "x = P.compute(pathlib.Path(sys.argv[1]), g); t = x['tools']['tool']\n" +
+        "print(json.dumps([x['unknown_credits'], t['credited'], t['real_found'], t['notreal_share'], t['all_blocking_real']]))",
+      join(tmp, "martian-src"),
+    );
+    expect(r).toEqual([{ tool: 1 }, 2, 1, 50, 1]);
+  });
+});
+
+describe("claim_metrics: completed reviews", () => {
+  // MUTATION: drop the status test in the done= selector — the timed-out PR is kept and this fails
+  it("keeps only the PRs an arm's review completed", () => {
+    const d = join(tmp, "done-tables");
+    jsonl(join(d, "prs.jsonl"), ["a", "b"].map((instance_id) => ({ instance_id, in_s40: false })));
+    jsonl(join(d, "defects.jsonl"), [
+      { instance_id: "a", defect_id: "D1", severity: "low" },
+      { instance_id: "b", defect_id: "D1", severity: "low" },
+    ]);
+    jsonl(join(d, "arms.jsonl"), [{ arm_id: "M", judge: "gpt-6-sol-high" }]);
+    jsonl(join(d, "reviews.jsonl"), [
+      { arm_id: "M", instance_id: "a", run: "r", judged: true, status: "ok", n_comments: 1, cost_usd: 1, minutes: 1 },
+      { arm_id: "M", instance_id: "b", run: "r", judged: true, status: "timeout", n_comments: 0, cost_usd: 1, minutes: 45 },
+    ]);
+    jsonl(join(d, "defect_verdicts.jsonl"), [{ arm_id: "M", judge: "gpt-6-sol-high", instance_id: "a", defect_id: "D1", verdict: "found" }]);
+    jsonl(join(d, "comment_verdicts.jsonl"), []);
+    const r = py(
+      "import claim_metrics as CM; a = CM.Aacr(CM.Tables(sys.argv[1]))\n" +
+        "print(json.dumps([a.value('M~done=M:defects'), a.value('M~done=M:found'), a.value('M:defects')]))",
+      d,
+    );
+    expect(r).toEqual([1, 1, 2]);
   });
 });

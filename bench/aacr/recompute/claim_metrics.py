@@ -17,6 +17,7 @@ aacr     ARM[@JUDGE][~SEL]:METRIC
            | lines=<lo>-<hi> (change_line_count, inclusive) | arm=<arm id> (that arm's PRs) | pr=<instance id>
            | refcat=<AACR reference category> (the aacr_* metrics over those references only)
            | rlabel=<label reality> (the aacr_* metrics over the labelled references of that reality only)
+           | done=<arm id> (the PRs that arm's review completed, status ok) | run=<run> (the arm's reviews from that run)
            | size=<lo>-<hi> (insertions + deletions of the PR's diff.stat, the HF pr_diffstats, inclusive)
          ARM+ARM+...[@JUDGE][~SEL]:single_found|any_found  key defects found or partly found by exactly one / any arm
            | dset=indep (only defects the blind hunt or an AACR reference raised) | dkind=<defect kind>
@@ -199,6 +200,12 @@ class Aacr(Provider):
                 keep &= {i for i in prs if size.get(i) is not None and size[i] >= float(lo) and (not hi or size[i] <= float(hi))}
             elif k == "rlabel":
                 pass  # a reference label's reality; read by the aacr_* metrics
+            elif k == "run":  # the PRs whose review of this arm came from that run
+                keep &= {r["instance_id"] for r in rv.get(arm, []) if r["run"] == v}
+            elif k == "done":  # the PRs that arm's review completed (status ok; not timed out or failed)
+                if v not in self._index()[5]:
+                    raise KeyError_(f"selector done={v}: no such arm")
+                keep &= {r["instance_id"] for r in rv.get(v, []) if r["status"] == "ok"}
             elif k == "arm":
                 if v not in self._index()[5]:
                     raise KeyError_(f"selector arm={v}: no such arm")

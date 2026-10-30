@@ -196,7 +196,8 @@ class Sources:
 
     def needs(self, check: str) -> str:
         """What the check reads: one part of the release (`hf`, `slim`, `archive`, `repo`), or several
-        joined with `+` (`hf+archive`), every one of which must be under --data."""
+        joined with `+` (`hf+archive`), every one of which must be under --data; `martian` is the
+        third-party Martian checkout --martian names (never in the release)."""
         spec = self.m["checks"].get(check)
         if spec is None:
             raise KeyError(f"check {check!r} is not in the manifest's `checks`")
@@ -246,6 +247,7 @@ class Sources:
         if check not in self._json:
             out = self.work / f"{check}.json"
             subs = {"{hf}": self.found["hf"] or "", "{archive}": self.found["archive"] or "",
+                    "{martian}": self.found.get("martian") or "",
                     "{work}": str(self.work / "scratch"), "{out}": str(out)}
             args = []
             for x in spec["args"]:
@@ -526,9 +528,10 @@ def main() -> int:
         for s in spec.get("scripts", []):
             if not (repo / s).exists():
                 lint["errors"].append(f"check {ch}: script {s} is missing")
-        bad = [p for p in spec["needs"].split("+") if p not in ("hf", "slim", "archive", "repo")]
+        bad = [p for p in spec["needs"].split("+") if p not in ("hf", "slim", "archive", "repo", "martian")]
         if bad:
-            lint["errors"].append(f"check {ch}: needs {bad} is not a part of the release (hf, slim, archive, repo)")
+            lint["errors"].append(f"check {ch}: needs {bad} is not a part of the release (hf, slim, archive, repo) "
+                                  f"or the third-party Martian checkout (martian)")
     for e in lint["errors"]:
         print("MANIFEST:", e, file=sys.stderr)
     for f, s in sorted(lint["files"].items()):
@@ -539,7 +542,8 @@ def main() -> int:
             Path(a.report_json).write_text(json.dumps({"lint": lint}, indent=1) + "\n")
         return 1 if lint["errors"] else 0
     found = discover(a.data)
-    print(f"data: hf={found['hf']} slim={found['slim']} archive={found['archive']}")
+    found["martian"] = str(Path(a.martian).resolve()) if a.martian else None  # third-party, never in the release
+    print(f"data: hf={found['hf']} slim={found['slim']} archive={found['archive']} martian={found['martian']}")
     if not any(found[k] for k in ("hf", "slim", "archive")):
         print("no release data found under --data", file=sys.stderr)
         return 2

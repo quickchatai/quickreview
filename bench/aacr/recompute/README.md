@@ -20,6 +20,17 @@ given as `<name>.jsonl`, which is how the tests feed small fixtures.
 | Lens passes per PR and each lens's share of PRs | quickreview.tex tab:lenses and §"One round" | `passes.py --archive <archive> --data <hf-dataset>` | archive `case-summary.json` |
 | The Claude Code arm's harness facts (denied commands, the prose parser) | benchmark.tex "Claude Code's prose parser", PROMPTS.md | `claude_arm.py --archive <archive> --data <hf-dataset>` | archive `claude-stdout.json`, `results/all/`, `<run>.review.log` |
 | Martian tune20 against the extended key, and its sensitivity | benchmark.tex tab:martianext, tab:martiansens | `martian_ext.py --archive <archive> --data <hf-dataset>` | archive `analysis/…/fair/`, `gm/rows.json`, `runs/mv-r1-asposted.martian/` |
+| AACR-Bench's metric at line gates 1, 5 and 999 | benchmark.tex "The line-gate effect, measured" | `line_gate.py --archive <archive> --data <hf-dataset>` | archive `analysis/…/wp-data/linek-runs/`, `runs/<run>/results/all/`; `references.json` |
+| Per-lens cost share, co-credit and unique finds; the validator's dispositions; the default's misses by what the review had at them | quickreview.tex tab:lenscost, §"Where the money goes", §"The validator removes little" | `lens_credit.py --archive <archive> --data <hf-dataset>` | archive `pi-events.pruned.jsonl`, `findings-record.json`, `results/all/`; HF `defect_verdicts` |
+| pi-review's panel read with confirmed findings only | quickreview.tex §"What the vote does", tab:panel40 | `panel_confirmed.py --archive <archive> --data <hf-dataset>` | archive `pireview-meta.json`; HF `defect_verdicts`, `comment_verdicts` |
+| The missed-defect analysis behind the levers | quickreview.tex appendix "Tuning" | `missed_defects.py --archive <archive> --data <hf-dataset>` | archive `analysis/2026-09-26-missed-defects/miss-G*.json` |
+| Copilot's harvested 2025 reviews | benchmark.tex §"Copilot 2025, harvested" | `copilot_harvest.py --archive <archive> --data <hf-dataset>` | archive `runs/upstream-copilot2025-*/cases/` |
+| The 2026-10-13 GLM smoke's lens timeouts | `docs/DIGITALOCEAN.md` | `smoke_lenses.py --archive <archive>` | archive `open-models/runs/glm53-smoke-7879ddc5-glm-*` |
+| Martian's published Opus 4.5 judgements against the golden audit | benchmark.tex tab:martianaudit (right block) | `martian_published.py --martian <checkout> --data <hf-dataset>` | third-party: Martian's repository at e616e84 (`--martian`); HF `martian_goldens` |
+
+The Martian scores of tuning passes, posting policies, calibration re-judges and either half are
+`claim_metrics.py`'s `martian` keys over the HF tables (`WORK[+WORK]|TOOL[~HALF]:core_f2`), the
+development runs' figures its `aacr` keys over their arms.
 
 The archive-backed scripts take the release's `archive/` folder (they unpack
 only the volumes they read, into `--work`) or an already unpacked archive.
