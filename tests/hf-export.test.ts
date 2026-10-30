@@ -620,3 +620,18 @@ describe("export_runs: stray NULs and the ripgrep re-grep", () => {
     expect(r).toBe(true);
   });
 });
+
+describe("the product's earlier name in another case", () => {
+  // MUTATION: drop the "old-product-name-other-case" rule from export_runs._identity_rules — this fails
+  it("becomes the public name in the archive's rewrite and in the tables", () => {
+    const text = "In the ACME-Reviewd benchmark and acme-reviewd footers";
+    const a = pyModule(
+      "export_runs",
+      "import collections; print(json.dumps(h.rewrite(sys.argv[1].encode(), collections.Counter()).decode()))",
+      text,
+    );
+    const b = py("print(json.dumps(h.scrub(sys.argv[1])))", text);
+    expect(a).toBe("In the quickreview benchmark and quickreview footers");
+    expect(b).toBe("In the quickreview benchmark and quickreview footers");
+  });
+});

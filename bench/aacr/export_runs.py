@@ -167,8 +167,11 @@ def _identity_rules() -> list:
     # credential values first: nothing else may cut one in two
     out = [("secret", re.compile(re.escape(v)), SX.SECRET, v) for v in SCRUB_SECRETS]
     # the earlier product name next: it may contain the bot's slug
-    out += [("old-product-name", re.compile(re.escape(n.encode())), b"quickreview", n.encode())
-            for n in SCRUB_OLD_NAMES]
+    for n in SCRUB_OLD_NAMES:
+        b = n.encode()
+        out += [("old-product-name", re.compile(re.escape(b)), b"quickreview", b),
+                # a model's own capitalisation of it ("QC-…")
+                ("old-product-name-other-case", re.compile(rb"(?i:" + re.escape(b) + rb")"), b"quickreview", ("low", b.lower()))]
     for bot in SCRUB_BOTS:
         b = bot.encode()
         out += [("review-bot", re.compile(re.escape(b) + BOT), b"<review-bot>", b),

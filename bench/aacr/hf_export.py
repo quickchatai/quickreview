@@ -116,6 +116,7 @@ SCRUB_RULES: list[tuple[str, str, str]] = [
     ("host volume: pi login", r"companion-pihome", "<pi-login-volume>"),
     # the earlier product name first: it may contain the bot's slug
     *[("old product name", re.escape(n), "quickreview") for n in SCRUB_OLD_NAMES],
+    *[("old product name (other case)", r"(?i)" + re.escape(n), "quickreview") for n in SCRUB_OLD_NAMES],
     *[("review bot", re.escape(b) + r"\[bot\]", "<review-bot>") for b in SCRUB_BOTS],
     *[("review bot (bare)", re.escape(b) + r"\b", "<review-bot>") for b in SCRUB_BOTS],
     *[("owner", re.escape(o), "<owner>") for o in SCRUB_OWNERS],
