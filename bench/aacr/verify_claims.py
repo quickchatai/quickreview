@@ -5,7 +5,7 @@ source or missing script.
 
     uv run --no-project --with pyarrow python bench/aacr/verify_claims.py --data <release dir> \\
         [--data <another dir>] [--martian <checkout>] [--qodo-gt <jsonl>] [--work <scratch>] \\
-        [--report-md OUT.md] [--report-json OUT.json] [--partial] [--file README.md]
+        [--report-md OUT.md] [--report-json OUT.json] [--partial] [--allow-gaps] [--file README.md]
     python3 bench/aacr/verify_claims.py --lint          # the manifest against the repo's text; no data
 
 --data names the downloaded release, or any part of it; the verifier finds:
@@ -30,7 +30,12 @@ the same number of decimals, the same sign, thousands separator and `%` — and 
 must be equal. The checks and their scripts are listed in claims.json under `checks`; a claim
 whose check has no script in this tree, or no `q`, fails as "no script"; one whose `no_script` reason starts
 "data not published" rests on data the release does not hold and fails as "not published" (the page's
-author may reword it).
+author may reword it); one that needs --martian or --qodo-gt when it was not given fails as "needs input".
+Those three are the documented gaps: with --allow-gaps they are listed with their reasons and pass, as long
+as the manifest records a reason; a mismatch, an error or a missing source always fails.
+
+Numbers compare as Python's `format` prints the computed float with the published decimals (the manifest's
+`scope` states the rule: 16.25 prints 16.2, and 8.95, stored as 8.9499..., prints 8.9).
 """
 from __future__ import annotations
 
@@ -344,10 +349,11 @@ def verify(a, manifest: dict, found) -> List[dict]:
         r = {"id": c["id"], "file": c["file"], "anchor": c["anchor"], "value": c["value"], "sources": []}
         qs = ([c["q"]] if c.get("q") else []) + list(c.get("alt") or [])
         if not qs:
-            why = c.get("no_script") or "no recompute script yet"
+            why = c.get("no_script") or ""
             # a claim whose data the release does not hold can never get a script: it is its own status
             r["status"] = "not-published" if why.startswith(NOT_PUBLISHED) else "no-script"
-            r["why"] = why
+            r["why"] = why or "no recompute script yet (no reason recorded)"
+            r["documented"] = bool(why)
             results.append(r)
             continue
         for q in qs:
@@ -357,7 +363,11 @@ def verify(a, manifest: dict, found) -> List[dict]:
                 if missing:
                     s["status"], s["why"] = "no-script", f"check(s) {missing} have no script in this tree"
                 elif not all(src.available(ch) for ch in checks_of(q)):
-                    s["status"], s["why"] = "no-source", "needs " + "+".join(sorted({src.needs(ch) for ch in checks_of(q)}))
+                    need = sorted({src.needs(ch) for ch in checks_of(q)})
+                    missing_parts = {part for n in need for part in n.split("+") if src.found.get(part) is None}
+                    third = missing_parts and missing_parts <= THIRD_PARTY_INPUTS
+                    s["status"] = "needs-input" if third else "no-source"
+                    s["why"] = "needs " + "+".join(need) + (" (third-party: pass --martian)" if third else "")
                 else:
                     v = evaluate(src, q)
                     s["computed"] = v if v is None or isinstance(v, str) else float(v)
@@ -365,7 +375,8 @@ def verify(a, manifest: dict, found) -> List[dict]:
                     about = manifest.get("about_tolerance") if c.get("about") else None
                     s["status"] = "ok" if same(c["value"], v, about) else "mismatch"
             except NoSource as e:
-                s["status"], s["why"] = "no-source", f"needs {e}"
+                third = str(e).startswith(("--martian", "--qodo-gt")) or "martian" == str(e)
+                s["status"], s["why"] = ("needs-input" if third else "no-source"), f"needs {e}"
             except (KeyError, ValueError, RuntimeError, ZeroDivisionError, TypeError) as e:
                 s["status"], s["why"] = "error", str(e)[:400]
             except Exception as e:  # a provider's own fault (claim_metrics.KeyError_)
@@ -385,6 +396,8 @@ def verify(a, manifest: dict, found) -> List[dict]:
             r["status"] = "pass"
         elif "no-script" in st:
             r["status"] = "no-script"
+        elif st and all(x == "needs-input" for x in st):
+            r["status"] = "needs-input"
         else:
             r["status"] = "skipped" if a.partial else "no-source"
         if c.get("note"):
@@ -400,8 +413,13 @@ def verify(a, manifest: dict, found) -> List[dict]:
     return results
 
 
-FAIL = ("mismatch", "error", "no-source", "no-script", "not-published")
-GAPS = ("no-script", "not-published")
+FAIL = ("mismatch", "error", "no-source", "no-script", "not-published", "needs-input")
+# Documented gaps: a claim the manifest records with its reason (no recompute script yet; data the
+# release does not hold) or one that needs a third-party input the run was not given. They fail by
+# default; --allow-gaps reports them and passes, so a clean run reads "0 mismatch, 0 error, 0 missing
+# source". A gap with no recorded reason is never allowed.
+GAPS = ("no-script", "not-published", "needs-input")
+THIRD_PARTY_INPUTS = {"martian"}
 NOT_PUBLISHED = "data not published"
 
 
@@ -508,6 +526,10 @@ def main() -> int:
     ap.add_argument("--file", action="append", help="verify only the claims of this published file (repeatable)")
     ap.add_argument("--lint", action="store_true", help="check the manifest against the published text only; no data")
     ap.add_argument("--no-validation", action="store_true", help="skip re-running hf_export.py's table validation")
+    ap.add_argument("--allow-gaps", action="store_true",
+                    help="pass when the only claims not passing are documented gaps (no-script and not-published, "
+                         "each with its reason in the manifest, and needs-input); mismatches, errors and missing "
+                         "sources still fail")
     ap.add_argument("--report-md")
     ap.add_argument("--report-json")
     a = ap.parse_args()
@@ -572,7 +594,20 @@ def main() -> int:
         Path(a.report_json).write_text(json.dumps({"found": found, "lint": lint, "results": results,
                                                    "consistency": a._consistency, "timings": a._timings},
                                                   indent=1, default=str) + "\n")
-    return 1 if lint["errors"] or any(r["status"] in FAIL for r in results) or bad_c else 0
+    def failing(r):
+        if r["status"] not in FAIL:
+            return False
+        if a.allow_gaps and r["status"] in GAPS:
+            # a gap passes only with its reason on record: the manifest's no_script, or the missing input
+            return not r.get("documented", True)
+        return True
+    bad_claims = [r for r in results if failing(r)]
+    gaps_n = sum(1 for r in results if r["status"] in GAPS)
+    verdict = 1 if lint["errors"] or bad_claims or bad_c else 0
+    print(f"result: {tot.get('pass', 0)} pass, {len(bad_claims)} failing, {gaps_n} documented gaps "
+          f"({'allowed' if a.allow_gaps else 'failing; --allow-gaps passes them'}), "
+          f"release checks {len(a._consistency) - len(bad_c)}/{len(a._consistency)}: exit {verdict}")
+    return verdict
 
 
 if __name__ == "__main__":

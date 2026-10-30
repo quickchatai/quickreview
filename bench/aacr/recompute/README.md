@@ -83,14 +83,20 @@ the rule.
 
     python3 bench/aacr/verify_claims.py --lint      # the manifest against the text; no data
     uv run --no-project --with pyarrow python bench/aacr/verify_claims.py \
-        --data <downloaded release> [--martian <checkout>] [--qodo-gt <jsonl>] --report-md OUT.md
+        --data <downloaded release> [--martian <checkout>] [--qodo-gt <jsonl>] [--allow-gaps] --report-md OUT.md
 
 The verifier finds the Hugging Face tables, the slim bundle and the archive
 under `--data`, recomputes every claim from whichever of them it holds
 (`claim_metrics.py` over the tables; this directory's scripts and
 `verify_slim.py` over the bundle), re-runs the release's own checks
 (`hf_export.py`'s validation and `verify_slim.py`'s bundle checks), and exits
-non-zero on any mismatch, missing source or missing script. `--partial`
+non-zero on any mismatch, error, missing source or missing script. `--partial`
 checks only what the given data holds. A claim whose data the release does not
 hold (its `no_script` reason starts "data not published") is reported as *not
-published*, apart from the claims that only wait for a script.
+published*, apart from the claims that only wait for a script, and a claim
+that needs `--martian` or `--qodo-gt` when it was not given as *needs input*.
+Those three are the documented gaps: `--allow-gaps` lists them with their
+reasons and passes, so a clean run reads "0 failing"; a gap whose reason the
+manifest does not record still fails. Numbers are compared the way Python's
+`format` prints the computed float (the manifest's `scope` states the
+rounding rule).

@@ -297,8 +297,17 @@ def main():
         import hashlib
         bad += hashlib.sha256((slim / p).read_bytes()).hexdigest() != h
     nfiles = sum(1 for _ in (slim / "FILES.sha256").read_text().splitlines())
-    events = list(slim.glob("runs/*/cases/*/pi-events.jsonl"))
-    print(f"unpacked {nfiles} files, {bad} hash mismatches, {len(events)} pi-events.jsonl (expected 0)")
+    listed = {ln.split("  ", 2)[2] for ln in (slim / "FILES.sha256").read_text().splitlines()}
+    members = sorted(str(f.relative_to(slim)) for f in slim.rglob("*") if f.is_file())
+    unlisted = [m for m in members if m not in listed and m not in ("README.md", "FILES.sha256")]
+    # no session log by kind (session_logs.classify, the export's own rule) and no session text inside
+    # a kept file (session_logs.content_markers: an event stream, the round-order prompt, a PR body)
+    import session_logs as SL
+    events = [m for m in members if SL.classify(m) is not None]
+    session_text = [m for m in members if m.endswith((".json", ".jsonl", ".md", ".txt"))
+                    and SL.content_markers(m, (slim / m).read_bytes())]
+    print(f"unpacked {nfiles} files, {bad} hash mismatches, {len(unlisted)} files not in FILES.sha256, "
+          f"{len(events)} session logs, {len(session_text)} files with session text (expected 0 each)")
 
     # 2. the tools: a copy of bench/aacr (+ the slim-bundle patch when compare.py lacks it)
     tools.mkdir()
@@ -433,6 +442,7 @@ def main():
         print("Qodo: no --qodo-gt; scoring dirs not re-scored")
 
     paper_cells, paper_bad = len(rep.rows), rep.bad
+    skipped = sum(v for k, v in list(mstats.items()) + list(qstats.items()) if k.startswith("SKIPPED"))
 
     # 8-10. the README's other-model rows and Elo chart, docs/DIGITALOCEAN.md
     extra = release_claims(a, slim, tools, out, rep)
@@ -441,7 +451,9 @@ def main():
     print(f"\npaper comparison: {paper_cells} paper cells, {paper_bad} mismatches; "
           f"{len(rep.rows) - paper_cells} release cells, {rep.bad - paper_bad} mismatches, {rep.doc} DOC "
           f"-> {out / 'paper-comparison.md'}")
-    summary = {"files": nfiles, "hash_mismatches": bad, "pi_events_in_bundle": len(events), "c10_patched_copy": patched,
+    summary = {"files": nfiles, "hash_mismatches": bad, "unlisted_files": len(unlisted),
+               "pi_events_in_bundle": len(events), "session_text_files": len(session_text),
+               "scoring_dirs_skipped": skipped, "c10_patched_copy": patched,
                "compare_vs_full": {k: ("identical" if not v else f"{len(v)} diff lines") for k, v in diffs.items()},
                "charts": chart_notes, "martian": dict(mstats), "qodo": dict(qstats),
                "paper_cells": paper_cells, "paper_mismatches": paper_bad,
@@ -455,6 +467,27 @@ def main():
     print(json.dumps({k: v for k, v in summary.items() if k != "mismatch_rows"}, indent=1))
     for r in summary["mismatch_rows"]:
         print(r[-1].split()[0], r)
+    failures = summary_failures(summary)
+    if failures:
+        print("VERIFY FAILED:", *failures, sep="\n  ")
+        raise SystemExit(1)
+    print("verify_slim: every check passed")
+
+
+def summary_failures(summary: dict) -> list:
+    """What makes the bundle fail: a hash mismatch, a file FILES.sha256 does not list, a session log
+    or session text in the bundle, a paper or release cell that differs, a scoring dir that re-scores
+    differently or could not be re-scored, a compare.py table that differs from the full runs."""
+    out = [f"{k}: {summary.get(k)}" for k in ("hash_mismatches", "unlisted_files", "pi_events_in_bundle",
+                                              "session_text_files", "paper_mismatches", "release_mismatches",
+                                              "scoring_dirs_skipped") if summary.get(k)]
+    for name in ("martian", "qodo"):
+        st = summary.get(name) or {}
+        if set(st) - {"identical", "numbers identical, scores.md text differs"}:
+            out.append(f"{name}: {st}")
+    out += [f"compare.py {k}: {v}" for k, v in (summary.get("compare_vs_full") or {}).items() if v != "identical"]
+    out += [c for c in summary.get("charts") or [] if "DIFFER" in c]
+    return out
 
 
 def martian_cells(a, slim: Path, tools: Path, rep: "Report", mstats) -> None:
@@ -471,6 +504,8 @@ def martian_cells(a, slim: Path, tools: Path, rep: "Report", mstats) -> None:
     for d in sorted((slim / "runs").glob("*.martian*")):
         stored = d / "martian-scores.json"
         if not stored.exists():
+            if any((d / "results").glob("*/evaluations.json")):
+                mstats["SKIPPED: judge output but no martian-scores.json"] += 1
             continue
         s = json.loads(stored.read_text())
         ours = json.loads((d / "results" / s["this_run"]["judge"] / "evaluations.json").read_text())
@@ -514,6 +549,8 @@ def qodo_cells(a, slim: Path, tools: Path, out: Path, rep: "Report", qstats) -> 
     qscores = {}
     for d in sorted((slim / "runs").glob("*.qodo*")):
         if not (d / "scores.json").exists():
+            if (d / "judgements.jsonl").exists():
+                qstats["SKIPPED: judgements but no scores.json"] += 1
             continue
         stored = json.loads((d / "scores.json").read_text())
         set_name = _qodo_set(d.name)
@@ -565,7 +602,7 @@ README_OPEN_NOTES = {"DeepSeek low-effort PRs": "143", "DeepSeek PRs that lost a
 # typical reply (s), generation speed (tok/s), $ per PR
 DO_TABLE = {"GPT-6.1 Sol": ("16", "37", "78", "12", "25", "2.27"), "GLM-5.3 Flash": ("30", "244", "196", "8", "37", "0.32"),
             "DeepSeek V4.1 Flash": ("42", "323", "230", "13", "36", "0.69"), "Gemma 4 31B": ("34", "109", "130", "25", "9", "0.32")}
-DO_SMOKE = {"ok": "10/10", "usd": "3.31", "median min": "26.5", "mean min": "27.9", "slowest min": "54"}
+DO_SMOKE = {"ok": "10/10", "usd": "3.32", "median min": "26.5", "mean min": "27.9", "slowest min": "54"}
 DO_SLOWEST = "55-72"
 # README "Judged side by side"
 README_ELO = {"games": "596", "judges agree": "56%", "ft0622-hard20-qr-opus55": "1628",

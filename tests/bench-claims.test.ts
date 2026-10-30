@@ -281,6 +281,7 @@ describe("verify_claims end to end on small tables", () => {
       key: { kind: "tables", provider: "key", needs: "hf", scripts: [] },
       aacr: { kind: "tables", provider: "aacr", needs: "hf", scripts: [] },
       do_speed: { kind: "slim", part: "do_speed.slim.json", needs: "slim", scripts: [] },
+      mart: { kind: "tables", provider: "key", needs: "hf+martian", scripts: [] },
     },
     groups: {},
     not_claims: [
@@ -368,6 +369,36 @@ describe("verify_claims end to end on small tables", () => {
     const partial = verify(m, "--partial");
     expect(partial.out).toContain("NO-SCRIPT x1: planted: not computed yet");
     expect(partial.out).not.toContain("NO-SOURCE smoke");
+  });
+
+  // MUTATION: in verify_claims.main's failing(), allow a gap with no recorded reason — this fails
+  // MUTATION: drop the needs-input status (a missing --martian is a missing source again) — this fails
+  it("passes documented gaps with --allow-gaps, and never a gap without its reason or a mismatch", () => {
+    const gaps = writeManifest("gaps-only.json", [
+      ...good,
+      claim("seven", "The report has 7 more.", "7", null, {
+        no_script: "planted: not computed yet",
+      }),
+      claim("smoke", "its smoke ran 12 minutes", "12", "mart:defects"),
+    ]);
+    const strict = verify(gaps);
+    expect(strict.code).toBe(1);
+    expect(strict.out).toContain("'needs-input': 1");
+    const allowed = verify(gaps, "--allow-gaps");
+    expect(allowed.out).toContain("result: 7 pass, 0 failing, 2 documented gaps (allowed)");
+    expect(allowed.code).toBe(0);
+    const bare = writeManifest("gaps-bare.json", [
+      ...good,
+      claim("seven", "The report has 7 more.", "7", null),
+      claim("smoke", "its smoke ran 12 minutes", "12", "mart:defects"),
+    ]);
+    expect(verify(bare, "--allow-gaps").code).toBe(1);
+    const wrong = writeManifest("gaps-wrong.json", [
+      ...good,
+      claim("seven", "The report has 7 more.", "7", "key:defects"),
+      claim("smoke", "its smoke ran 12 minutes", "12", "mart:defects"),
+    ]);
+    expect(verify(wrong, "--allow-gaps").code).toBe(1);
   });
 
   it("fails the lint when a listed file prints a number the manifest does not account for", () => {

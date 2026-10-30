@@ -124,7 +124,8 @@ def row(cases: List[Path], price: Dict[str, float]) -> dict:
 
 
 def smoke(runs_dir: Path, prefix: str, model: str, sets: List[str], sets_dir: str) -> dict:
-    """gate.py's count over one smoke: ok PRs, $ (cents per set, summed), median and slowest minutes."""
+    """gate.py's count over one smoke: ok PRs, $ (every case summed, then rounded to the cent), median and
+    slowest minutes."""
     price = MODELS[model]["price"]
     ok, n, usd, mins = 0, 0, 0.0, []
     for s in sets:
@@ -145,7 +146,7 @@ def smoke(runs_dir: Path, prefix: str, model: str, sets: List[str], sets_dir: st
             set_usd += sum((u.get(k) or 0) / 1e6 * p for k, p in price.items())
             if j.get("duration_seconds"):
                 mins.append(round(j["duration_seconds"] / 60, 1))
-        usd += round(set_usd, 2)
+        usd += set_usd
     m = sorted(mins)
     return {"prefix": prefix, "prs": n, "ok": ok, "usd": round(usd, 2),
             "median_min": statistics.median(m) if m else None, "mean_min": statistics.mean(m) if m else None,
