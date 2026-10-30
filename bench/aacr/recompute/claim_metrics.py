@@ -66,6 +66,7 @@ martian  WORK[+WORK...]|TOOL[@JUDGE][~HALF]:METRIC  (JUDGE default gpt-6.1-sol; 
          usd min_mean extracted comments_per_pr inline_per_pr prs
          goldens[~HALF]:real|notreal|disputed|total|prs|blocking|blocking_<bucket> (Critical/High goldens)
          dirs:<prefix>  the scoring dirs whose name starts with prefix and score quickreview; extracted_total
+         dirsmax:<prefix>:METRIC  the best {core,strict,all}_* score of quickreview over those dirs (judge gpt-6.1-sol)
 qodo     WORK|TOOL:METRIC  METRIC: hits comments per_pr precision recall f1 recall_functional
          recall_rule (the primary rule, N=5), the same with _samefile or _semantic (no location), usd min_mean prs
          issues:total|functional|rule|prs|repos
@@ -508,6 +509,13 @@ class Martian(Provider):
         if head == "dirs":  # how many scoring dirs' names start with the prefix (and score `quickreview`)
             return len({s["work_dir"] for s in self.t("martian_scores")
                         if s["work_dir"] and s["work_dir"].startswith(metric) and s["tool"] == "quickreview"})
+        if head.startswith("dirsmax:"):  # the best score of quickreview over the scoring dirs whose names start with a prefix
+            vals = [s.get(metric) for s in self.t("martian_scores") if s["work_dir"] and s["tool"] == "quickreview"
+                    and s["work_dir"].startswith(head[8:]) and s["judge"] == "gpt-6.1-sol"]
+            vals = [v for v in vals if v is not None]
+            if not vals:
+                raise KeyError_(f"no martian scores {metric!r} for dirs {head[8:]}*")
+            return 100 * max(vals) if metric.split("_", 1)[1] in ("precision", "recall", "f1", "f2") else max(vals)
         if head.startswith("goldens"):
             gold = self.t("martian_goldens")
             _, _, half = head.partition("~")

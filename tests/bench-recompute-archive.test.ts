@@ -422,6 +422,31 @@ describe("claim_metrics", () => {
     expect(r).toEqual([1, 3, 1, 25, 50]);
   });
 
+  // MUTATION: take min instead of max in Martian.compute's dirsmax branch — this fails
+  // MUTATION: drop the judge filter (`s["judge"] == "gpt-6.1-sol"`) in the dirsmax branch — this fails
+  it("reads the best score over the scoring dirs a prefix names, quickreview and our judge only", () => {
+    const d = join(tmp, "dirsmax-tables");
+    const s = (work_dir: string, tool: string, judge: string, core_f2: number) => ({
+      work_dir,
+      tool,
+      judge,
+      core_f2,
+    });
+    jsonl(join(d, "martian_scores.jsonl"), [
+      s("mv-a", "quickreview", "gpt-6.1-sol", 0.42),
+      s("mv-b", "quickreview", "gpt-6.1-sol", 0.462),
+      s("mv-c", "quickreview", "published: other", 0.9),
+      s("mv-d", "vendor", "gpt-6.1-sol", 0.8),
+      s("mw-e", "quickreview", "gpt-6.1-sol", 0.7),
+    ]);
+    const r = py(
+      "import claim_metrics as CM; m = CM.Martian(CM.Tables(sys.argv[1]))\n" +
+        "print(json.dumps(round(m.value('dirsmax:mv-:core_f2'), 6)))",
+      d,
+    );
+    expect(r).toBe(46.2);
+  });
+
   // MUTATION: make the size bucket's upper bound exclusive (`<` for `<=`) — the 50-line PR leaves the bucket and this fails
   it("buckets a PR by its diff.stat size with inclusive bounds", () => {
     const d = join(tmp, "size-tables");

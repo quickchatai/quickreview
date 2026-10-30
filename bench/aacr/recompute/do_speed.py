@@ -31,6 +31,12 @@ decimal, their median and mean, and the slowest. (The text once printed the mean
 "median about 28".) Gemma's smoke ("9 of 10 PRs cleanly") is the same count on
 its row's run.
 
+"Qwen3.8-Max ... would cost about $6.29 a PR, ~$2,100 a full run (about $3.17 a PR at the 10-PR
+smoke's profile)": a projection, no Qwen run. Every case of the full GLM run (glm53-full-<set> over
+the AACR sets, martian50 and qodo-pr100: 335 PRs) and of the GLM smoke (glm53-smoke-p10-l12 over the six
+sets) keeps its token use in `case-summary.json` `usage` (the main session and its lenses); priced at
+Qwen3.8-Max's list rates (QWEN_PRICE) it gives the mean per PR and, for the full run, the total.
+
 "Review time limit" ("GLM-5.3 Flash's five slowest AACR reviews ... took 55-72 minutes"): the
 five slowest reviews of the full GLM run (glm53-full-<set>) on AACR. The first attempt's
 timeouts at 75 minutes happened in an attempt whose cases the resumed run re-reviewed in
@@ -63,6 +69,25 @@ ROWS = (  # (row, model id for the price, run prefix; None = the frozen build's 
 )
 FULL_GLM, AACR_SETS = "glm53-full", ("smoke10", "dev10", "holdout10", "fresh10", "rest145")
 SMOKES = (("glm-5.3-flash", "glm53-smoke-p10-l12"), ("gemma-4-31B-it", "gemma4-smoke-d39d39dc-1013-1957"))
+# Qwen3.8-Max's DigitalOcean list price per 1M tokens (docs/DIGITALOCEAN.md, 2026-10-13): never run, only projected
+QWEN_PRICE = {"input": 2.00, "output": 6.00, "cacheRead": 0.20}
+FULL_SETS = AACR_SETS + ("martian50", "qodo-pr100")
+
+
+def projection(case_dirs: List[Path], price: Dict[str, float]) -> dict:
+    """Every case's `usage` priced at `price`: PRs, mean $ per PR, total $ (a case with no summary is an error)."""
+    usd = []
+    for d in case_dirs:
+        f = d / "case-summary.json"
+        if not f.is_file():
+            sys.exit(f"projection: no case summary in {d}")
+        u = json.loads(f.read_text()).get("usage") or {}
+        usd.append(sum((u.get(k) or 0) / 1e6 * p for k, p in price.items()))
+    return {"prs": len(usd), "usd_per_pr": statistics.mean(usd), "usd_total": sum(usd)}
+
+
+def run_cases(runs_dir: Path, run: str) -> List[Path]:
+    return sorted(p for p in (runs_dir / run / "cases").iterdir() if p.is_dir())
 
 
 def gpt_parent(set_name: str) -> str:
@@ -192,6 +217,12 @@ def main() -> None:
         res["smokes"][prefix] = s
         print(f"\nsmoke {prefix}: {s['ok']}/{s['prs']} clean, ${s['usd']:.2f} at list price, "
               f"median {s['median_min']:.1f} min (mean {s['mean_min']:.1f}), slowest {s['max_min']} min")
+    full = [c for s in FULL_SETS for c in run_cases(a.runs_dir, f"{FULL_GLM}-{s}")]
+    smoke_cases = [a.runs_dir / f"{SMOKES[0][1]}-{s}" / "cases" / cid for s in SETS for cid in set_ids(s, a.sets_dir)]
+    res["qwen_projection"] = {"full": projection(full, QWEN_PRICE), "smoke": projection(smoke_cases, QWEN_PRICE)}
+    q = res["qwen_projection"]
+    print(f"\nQwen3.8-Max projection: GLM full run's tokens ${q['full']['usd_per_pr']:.2f} a PR, "
+          f"${q['full']['usd_total']:,.0f} for {q['full']['prs']} PRs; the smoke's ${q['smoke']['usd_per_pr']:.2f} a PR")
     slow = slowest(a.runs_dir, FULL_GLM, AACR_SETS, a.sets_dir)
     res["glm_full_slowest"] = slow
     print(f"\n{FULL_GLM} AACR, slowest reviews (minutes): " + ", ".join(f"{m} ({cid})" for m, cid in slow))

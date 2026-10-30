@@ -23,6 +23,14 @@ on the drawn PRs over the defects of the drawn PRs (a resample with no defect
 of that kind divides by 1). The interval is the sorted values at index 250 and
 9749. The earlier gpt-6-sol study's intervals (tab:ci-sol and its paired
 differences) were drawn the same way with seed 20260928: `--seed 20260928`.
+
+`--halves A:B` (each a `+`-joined list of `prs.set` names) adds the halves test
+of benchmark.tex Section "Tuned and unseen PRs" and THREATS: the first arm's
+recall minus the mean recall of the other arms (its margin) on the PRs of A,
+minus the same margin on B, with a 95% interval from 5,000 resamples
+(`--halves-resamples`) drawn within each half: per resample, A's PRs (sorted)
+then B's, each by `rng.choice` over its own half, from one
+`random.Random(seed)`; the interval is the sorted values at index 125 and 4874.
 Credit is the published `defect_verdicts.credit` (found 1, partial ½) of
 the primary judge, `gpt-6-sol-high`; a defect with no verdict row counts 0.
 
@@ -45,6 +53,7 @@ from tables import load_table, percentile_ci  # noqa: E402
 
 SEED = 20261001
 RESAMPLES = 10_000
+HALVES_RESAMPLES = 5_000
 JUDGE = "gpt-6-sol-high"
 WEIGHT = {"high": 3, "medium": 2, "low": 1}
 # metric -> the severities it counts and whether it is weighted
@@ -116,6 +125,29 @@ def bootstrap(prs: Sequence[str], defects: List[dict], verdicts: List[dict], arm
     return out
 
 
+def halves(sets: Dict[str, str], defects: List[dict], verdicts: List[dict], arms: Sequence[str],
+           a_sets: Sequence[str], b_sets: Sequence[str], b: int = HALVES_RESAMPLES, seed: int = SEED) -> dict:
+    """The first arm's margin over the mean of the others on half A minus on half B, in points, with its
+    95% interval (PRs resampled within each half)."""
+    ha = sorted(i for i, s in sets.items() if s in a_sets)
+    hb = sorted(i for i, s in sets.items() if s in b_sets)
+    per = {x: per_pr(ha + hb, defects, verdicts, x) for x in arms}
+
+    def margin(ids: Sequence[str]) -> float:
+        r = [ratio(per[x], ids, "recall") for x in arms]
+        return 100 * (r[0] - sum(r[1:]) / (len(r) - 1))
+    rng = random.Random(seed)
+    vals = []
+    for _ in range(b):
+        sa = [rng.choice(ha) for _ in ha]
+        sb = [rng.choice(hb) for _ in hb]
+        vals.append(margin(sa) - margin(sb))
+    lo, hi = percentile_ci(vals)
+    return {"a": "+".join(a_sets), "b": "+".join(b_sets), "prs_a": len(ha), "prs_b": len(hb),
+            "resamples": b, "seed": seed, "margin_a": margin(ha), "margin_b": margin(hb),
+            "diff": margin(ha) - margin(hb), "lo": lo, "hi": hi}
+
+
 def costs(prs: Sequence[str], defects: List[dict], verdicts: List[dict], reviews: List[dict],
           arms: Sequence[str]) -> Dict[str, dict]:
     """Per arm: list cost of its judged reviews over the PRs, per PR, per defect found and per high found.
@@ -166,6 +198,8 @@ def main() -> None:
     ap.add_argument("--resamples", type=int, default=RESAMPLES)
     ap.add_argument("--seed", type=int, default=SEED, help="the resampling seed (the earlier study's: 20260928)")
     ap.add_argument("--json", help="also write every number to this JSON file")
+    ap.add_argument("--halves", help="A:B, each a +-joined list of prs.set names: the first arm's margin on A minus on B")
+    ap.add_argument("--halves-resamples", type=int, default=HALVES_RESAMPLES)
     a = ap.parse_args()
     arms = [x for x in a.arms.split(",") if x]
     prs = sorted(r["instance_id"] for r in load_table(a.data, "prs"))
@@ -178,6 +212,15 @@ def main() -> None:
     res = bootstrap(prs, defects, verdicts, arms, b=a.resamples, seed=a.seed)
     res["costs"] = costs(prs, defects, verdicts, load_table(a.data, "reviews"), arms)
     print(render(res, res["costs"], arms))
+    if a.halves:
+        ha, _, hb = a.halves.partition(":")
+        sets = {r["instance_id"]: r["set"] for r in load_table(a.data, "prs")}
+        res["halves"] = halves(sets, defects, verdicts, arms, ha.split("+"), hb.split("+"),
+                               b=a.halves_resamples, seed=a.seed)
+        h = res["halves"]
+        print(f"\nHalves: {arms[0]}'s margin over the mean of the others, {h['a']} ({h['prs_a']} PRs) "
+              f"{h['margin_a']:.1f} minus {h['b']} ({h['prs_b']}) {h['margin_b']:.1f} = {h['diff']:+.1f} "
+              f"[{h['lo']:+.1f}, {h['hi']:+.1f}] ({h['resamples']:,} resamples within each half)")
     if a.json:
         with open(a.json, "w") as f:
             json.dump(res, f, indent=1)
