@@ -10,10 +10,17 @@ same computation over the full runs and against the papers' printed numbers.
   --full      the full runs dir (optional): every compare.py table is also run
               there with the repo's unmodified compare.py and the two outputs
               are diffed line for line.
+  --bundle    the bundle's .tar.zst, or a directory it is already unpacked in
+              (used in place, read only).
   --martian   a checkout of withmartian/code-review-benchmark@e616e84 (its
               scorer and published judgements; MIT, never in the bundle).
+              Optional: without it the Martian scoring dirs are not re-scored
+              and tab:martianfinal's score cells are not produced.
   --qodo-gt   Qodo PR-Review-Bench's git_code_review_bench_100_w_open_prs.jsonl
-              (HF Qodo/PR-Review-Bench@a73957c, MIT).
+              (HF Qodo/PR-Review-Bench@a73957c, MIT). Optional, as --martian,
+              for the Qodo scoring dirs and tab:qodo's score cells.
+  --cells-json  also write every compared cell (table, row, column, published,
+              re-scored, status) here: bench/aacr/verify_claims.py reads it.
   --charts-ref  the dir holding the published numbers.json and
               numbers-gpt6sol.json the charts are checked against (default
               bench/aacr/charts; the public tree leaves them out, so point it at
@@ -222,8 +229,9 @@ def main():
     ap.add_argument("--bundle", required=True)
     ap.add_argument("--work", required=True)
     ap.add_argument("--full", help="the full runs dir, for a line-for-line diff of every compare.py table")
-    ap.add_argument("--martian", required=True)
-    ap.add_argument("--qodo-gt", required=True)
+    ap.add_argument("--martian", help="withmartian/code-review-benchmark checkout (optional)")
+    ap.add_argument("--qodo-gt", help="Qodo PR-Review-Bench ground-truth jsonl (optional)")
+    ap.add_argument("--cells-json", help="write every compared cell here as JSON")
     ap.add_argument("--skip-charts", action="store_true")
     ap.add_argument("--charts-ref", default=str(HERE / "charts"),
                     help="dir with the reference numbers.json / numbers-gpt6sol.json (e.g. the HF dataset's figures/)")
@@ -231,17 +239,21 @@ def main():
     ap.add_argument("--elo-full", help="the full Elo plan dir (elo/martian-hard20-all-gpt), to compare with")
     a = ap.parse_args()
     # absolute, because the Martian step imports from both while its cwd is the checkout
-    a.martian = str(Path(a.martian).resolve())
+    if a.martian:
+        a.martian = str(Path(a.martian).resolve())
     work = Path(a.work).resolve()
     if work.exists():
         shutil.rmtree(work)
     slim, tools = work / "slim", work / "aacr"
-    slim.mkdir(parents=True)
     out = work / "out"
-    out.mkdir()
+    out.mkdir(parents=True)
 
-    # 1. unpack, check every file's hash
-    run(["tar", "--zstd", "-xf", a.bundle, "-C", str(slim)])
+    # 1. unpack (or use an unpacked bundle in place), check every file's hash
+    if Path(a.bundle).is_dir():
+        slim = Path(a.bundle).resolve()
+    else:
+        slim.mkdir(parents=True)
+        run(["tar", "--zstd", "-xf", a.bundle, "-C", str(slim)])
     bad = 0
     for ln in (slim / "FILES.sha256").read_text().splitlines():
         h, _, p = ln.split("  ", 2)
@@ -372,6 +384,43 @@ def main():
             print(chart_notes[-1])
 
     # 6. Martian: every scoring dir, by Martian's own scorer, against the stored scores
+    mstats, qstats = collections.Counter(), collections.Counter()
+    if a.martian:
+        martian_cells(a, slim, tools, rep, mstats)
+    else:
+        print("Martian: no --martian checkout; scoring dirs not re-scored")
+    if a.qodo_gt:
+        qodo_cells(a, slim, tools, out, rep, qstats)
+    else:
+        print("Qodo: no --qodo-gt; scoring dirs not re-scored")
+
+    paper_cells, paper_bad = len(rep.rows), rep.bad
+
+    # 8-10. the README's other-model rows and Elo chart, docs/DIGITALOCEAN.md
+    extra = release_claims(a, slim, tools, out, rep)
+
+    (out / "paper-comparison.md").write_text(rep.text() + "\n")
+    print(f"\npaper comparison: {paper_cells} paper cells, {paper_bad} mismatches; "
+          f"{len(rep.rows) - paper_cells} release cells, {rep.bad - paper_bad} mismatches, {rep.doc} DOC "
+          f"-> {out / 'paper-comparison.md'}")
+    summary = {"files": nfiles, "hash_mismatches": bad, "pi_events_in_bundle": len(events), "c10_patched_copy": patched,
+               "compare_vs_full": {k: ("identical" if not v else f"{len(v)} diff lines") for k, v in diffs.items()},
+               "charts": chart_notes, "martian": dict(mstats), "qodo": dict(qstats),
+               "paper_cells": paper_cells, "paper_mismatches": paper_bad,
+               "release_cells": len(rep.rows) - paper_cells, "release_mismatches": rep.bad - paper_bad,
+               "doc_mismatches": rep.doc, **extra,
+               "mismatch_rows": [r for r in rep.rows if r[-1] != "ok"]}
+    (out / "summary.json").write_text(json.dumps(summary, indent=1) + "\n")
+    if a.cells_json:
+        Path(a.cells_json).write_text(json.dumps({"columns": ["table", "row", "column", "published", "rescored", "status"],
+                                                  "rows": rep.rows}, indent=1, default=str) + "\n")
+    print(json.dumps({k: v for k, v in summary.items() if k != "mismatch_rows"}, indent=1))
+    for r in summary["mismatch_rows"]:
+        print(r[-1].split()[0], r)
+
+
+def martian_cells(a, slim: Path, tools: Path, rep: "Report", mstats) -> None:
+    """Step 6: every Martian scoring dir re-scored by Martian's own scorer; tab:martianfinal."""
     sys.path.insert(0, str(Path(a.martian) / "offline"))
     sys.path.insert(0, str(tools / "ext"))
     cwd = os.getcwd()
@@ -380,7 +429,6 @@ def main():
     MR.PUBLISHED = Path(a.martian) / "offline" / "results"
     cats = MR._load_golden_categories(MR.PUBLISHED)
     os.chdir(cwd)
-    mstats = collections.Counter()
     recomputed = {}
     for d in sorted((slim / "runs").glob("*.martian*")):
         stored = d / "martian-scores.json"
@@ -420,10 +468,11 @@ def main():
         rep.check("tab:martianfinal", run_, "$/PR", pu, f"{u:.2f}")
         rep.check("tab:martianfinal", run_, "min/PR (mean)", pm, f"{m:.1f}")
 
-    # 7. Qodo: every scoring dir, by qodo_judge.py's scorer, against the stored scores.md
+
+def qodo_cells(a, slim: Path, tools: Path, out: Path, rep: "Report", qstats) -> None:
+    """Step 7: every Qodo scoring dir re-scored by qodo_judge.py's scorer; tab:qodo."""
     import qodo_judge as QJ
     gt = {r["pr_url_to_review"]: r for r in map(json.loads, Path(a.qodo_gt).read_text().splitlines()) if r}
-    qstats = collections.Counter()
     qscores = {}
     for d in sorted((slim / "runs").glob("*.qodo*")):
         if not (d / "scores.json").exists():
@@ -465,27 +514,6 @@ def main():
         u, m = _cost(slim / "runs" / run_)
         rep.check("tab:qodo", run_, "$/PR", pu, f"{u:.2f}")
         rep.check("tab:qodo", run_, "min/PR (mean)", pm, f"{m:.1f}")
-
-    paper_cells, paper_bad = len(rep.rows), rep.bad
-
-    # 8-10. the README's other-model rows and Elo chart, docs/DIGITALOCEAN.md
-    extra = release_claims(a, slim, tools, out, rep)
-
-    (out / "paper-comparison.md").write_text(rep.text() + "\n")
-    print(f"\npaper comparison: {paper_cells} paper cells, {paper_bad} mismatches; "
-          f"{len(rep.rows) - paper_cells} release cells, {rep.bad - paper_bad} mismatches, {rep.doc} DOC "
-          f"-> {out / 'paper-comparison.md'}")
-    summary = {"files": nfiles, "hash_mismatches": bad, "pi_events_in_bundle": len(events), "c10_patched_copy": patched,
-               "compare_vs_full": {k: ("identical" if not v else f"{len(v)} diff lines") for k, v in diffs.items()},
-               "charts": chart_notes, "martian": dict(mstats), "qodo": dict(qstats),
-               "paper_cells": paper_cells, "paper_mismatches": paper_bad,
-               "release_cells": len(rep.rows) - paper_cells, "release_mismatches": rep.bad - paper_bad,
-               "doc_mismatches": rep.doc, **extra,
-               "mismatch_rows": [r for r in rep.rows if r[-1] != "ok"]}
-    (out / "summary.json").write_text(json.dumps(summary, indent=1) + "\n")
-    print(json.dumps({k: v for k, v in summary.items() if k != "mismatch_rows"}, indent=1))
-    for r in summary["mismatch_rows"]:
-        print(r[-1].split()[0], r)
 
 
 # README "Other models" (recompute/open_models.py names): high, medium, low, all, $/PR
