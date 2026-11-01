@@ -101,6 +101,10 @@ TREE_LOGS = [
     (re.compile(r"^elo/[^/]+/judgments/[^/]+\.jsonl$"), "pairwise judgments"),
     (re.compile(r"^elo/judge-gpt-log/judge\.jsonl$"), "the judge proxy's request log: time, status, latency, model"),
     (re.compile(r"^open-models/[^/]+\.log$"), "the open-model driver's build, launch, judge and watchdog logs"),
+    # the labelling passes' answers (bench/aacr/relabel/release.py): one row per labelled unit, the label
+    # and its one-line reason over public benchmark PRs, with the model and the prompt's sha256; no prompt text
+    (re.compile(r"^analysis/relabel/(?:martian_tiers|lost_credit)\.labels\.jsonl$"),
+     "the labelling passes' label files: key, label, one-line reason, model, effort, prompt sha256"),
 ]
 
 

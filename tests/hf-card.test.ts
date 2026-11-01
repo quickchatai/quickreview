@@ -225,6 +225,7 @@ describe("the card states the release's verified state", () => {
 
   // MUTATION: make claims_lead say every number passes whatever the report counts — this fails
   // MUTATION: make verify_result print the no-gap sentence when a claim is not-published — this fails
+  // MUTATION: count "pending-relabel" as a pass in claims_lead — this fails
   it("says every number is checked only when the report has no claim left unchecked", () => {
     const dir = mkdtempSync(join(tmpdir(), "hf-card-"));
     try {
@@ -239,7 +240,7 @@ describe("the card states the release's verified state", () => {
       const card = render(`, repo_ref='bench-data-v1', verify_report=${JSON.stringify(clean)}`);
       expect(card).toContain("Every one of them passes");
       expect(card).toContain(
-        "On this release: all 6 checked claims pass, with 0 mismatch, 0 error, 0 missing source and no claim left unchecked.",
+        "On this release: all 6 claims pass, with 0 mismatch, 0 error, 0 missing source and no claim left unchecked.",
       );
       expect(card).not.toContain("--allow-gaps");
       const gap = join(dir, "gap.json");
@@ -253,6 +254,7 @@ describe("the card states the release's verified state", () => {
       const card2 = render(`, repo_ref='bench-data-v1', verify_report=${JSON.stringify(gap)}`);
       expect(card2).not.toContain("Every one of them passes");
       expect(card2).not.toContain("no claim left unchecked");
+      // a status the verifier does not know (the retired "pending-relabel") is not a pass either
       const relabel = join(dir, "relabel.json");
       writeFileSync(
         relabel,
@@ -262,8 +264,8 @@ describe("the card states the release's verified state", () => {
         }),
       );
       const card3 = render(`, repo_ref='bench-data-v1', verify_report=${JSON.stringify(relabel)}`);
-      expect(card3).toContain("Every one of them passes, except 1 that wait for a labelling pass");
-      expect(card3).toContain("no claim left unchecked but the 1 pending a labelling pass");
+      expect(card3).not.toContain("Every one of them passes");
+      expect(card3).not.toContain("no claim left unchecked");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -108,6 +108,9 @@ import release_catalogue as RC  # noqa: E402
 import scrub_extra as SX  # noqa: E402
 import session_logs as SL  # noqa: E402
 
+sys.path.insert(0, str(HERE / "relabel"))
+import release as RL  # noqa: E402  (the labelling passes' files: analysis/relabel/)
+
 GIB = 1 << 30
 MIN_FREE = 8 * GIB
 SHIPPED_TOPS = ("runs", "analysis", "whatif", "logs", "ext-images", "elo", "fresh10-code", "orig40-code", "rest145-code")
@@ -1066,12 +1069,23 @@ def build_group(args) -> dict:
     if group == KEY_GROUP:
         for name, data in key_data_files(src, counts).items():
             add(name, data, time.time())
+    if group == RELABEL_GROUP:
+        for name, data in relabel_files(counts).items():
+            add(name, data, time.time())
     vols = w.finish()
     return {"group": group, "volumes": [{**v, "path": str(v["path"]), "members": dict(v["members"])} for v in vols],
             "counts": dict(counts), "dropped": dict(dropped), "seconds": round(time.time() - t0)}
 
 
 KEY_GROUP = "answer-key"  # the family whose volume carries key-data/
+RELABEL_GROUP = "analysis"  # the family whose volume carries analysis/relabel/ (the slim bundle carries it too)
+
+
+def relabel_files(counts) -> dict[str, bytes]:
+    """analysis/relabel/: the two labelling passes' label files, their prompts and LABELS.json
+    (bench/aacr/relabel/release.py, which refuses a label row without its model and its prompt's
+    sha256), rewritten like every other text."""
+    return {k: rewrite(v, counts) for k, v in RL.files().items()}
 
 
 def key_data_files(src: Path, counts) -> dict[str, bytes]:
@@ -1589,6 +1603,15 @@ reviewer raised each key-building candidate) and `key-data/pr-diffstats.json`
 (each PR's files changed, insertions and deletions from its `diff.stat`),
 the same rows as the dataset's `aacr_candidates` and `pr_diffstats` configs.
 
+The `analysis` volume also carries `analysis/relabel/`: the label files of
+the two labelling passes behind the benchmark paper's severity table
+(`tab:martiantiers`) and the QuickReview paper's lost-credit figures, each
+row with the model that wrote it (gpt-6.1-sol) and the sha256 of the prompt
+file shipped beside it, and `LABELS.json` naming the script, model, effort,
+prompt hash and row count of each pass. `bench/aacr/relabel/<pass>.py
+--compute` turns them and this archive into the published numbers with no
+model call.
+
 ## Licence and attribution
 
 Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0), the same
@@ -1761,6 +1784,10 @@ def cmd_slim(a):
         w.add(name, data, proc.tree.fs(rel).stat().st_mtime)
         index.append((name, len(data), hashlib.sha256(data).hexdigest()))
         n += 1
+    for name, data in relabel_files(counts).items():
+        w.add(name, data, time.time())
+        index.append((name, len(data), hashlib.sha256(data).hexdigest()))
+        n += 1
     readme = slim_readme(n, counts)
     w.add("README.md", readme.encode(), time.time())
     idx = "".join(f"{h}  {s}  {p}\n" for p, s, h in index)
@@ -1829,6 +1856,9 @@ Unpack it and point the tools at its `runs/`:
                         build's cases of the open-model smoke PRs in
                         runs/final1-{{rest145,martian50,qodo-pr100}}
     elo/<plan>/plan.json, units.jsonl, judgments/*.jsonl, ratings.json, REPORT.md
+    analysis/relabel/   the two labelling passes' label files, their prompts and
+                        LABELS.json (model, effort, prompt sha256, rows), the same
+                        files the archive's analysis volume carries
     FILES.sha256                                sha256, size and path of every file
 
 compare.py reads `bench_cost_usd` when a case has no `pi-events.jsonl`;

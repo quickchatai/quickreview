@@ -1145,6 +1145,7 @@ describe("session_logs: fail closed beyond the run dirs, and prompt files by kin
   // MUTATION: in session_logs.classify, apply the R_UNKNOWN rule only when run_inner(rel) is not None — this fails
   // MUTATION: drop the `.aborted` return in session_logs.classify — this fails
   // MUTATION: drop TASK_FILE from session_logs.classify — this fails
+  // MUTATION: drop the analysis/relabel label-file rule from session_logs.TREE_LOGS — this fails
   it("leaves out an unnamed log kind anywhere, an aborted run's log and a session's task file; keeps the named harness logs", () => {
     const paths = [
       "logs/rerun-x.log.aborted",
@@ -1153,6 +1154,7 @@ describe("session_logs: fail closed beyond the run dirs, and prompt files by kin
       "open-models/sub/driver.log",
       "runs/r/mystery.log",
       "runs/r/cases/o__r@1111111/validate-task.md",
+      "analysis/relabel/notes.jsonl",
       // data: kept
       "logs/rerun-x.log",
       "elo/plan/run.log",
@@ -1161,14 +1163,15 @@ describe("session_logs: fail closed beyond the run dirs, and prompt files by kin
       "runs/r.judge-opus.log",
       "runs/r.launch.log",
       "runs/r/cases/o__r@1111111/ledger.md",
+      "analysis/relabel/lost_credit.labels.jsonl",
     ];
     const r = pyModule(
       "session_logs",
       "print(json.dumps({p: h.classify(p) is not None for p in sys.argv[1:]}))",
       ...paths,
     ) as Record<string, boolean>;
-    for (const p of paths.slice(0, 6)) expect(r[p], p).toBe(true);
-    for (const p of paths.slice(6)) expect(r[p], p).toBe(false);
+    for (const p of paths.slice(0, 7)) expect(r[p], p).toBe(true);
+    for (const p of paths.slice(7)) expect(r[p], p).toBe(false);
   });
 });
 

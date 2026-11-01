@@ -125,6 +125,8 @@ repository under `bench/aacr/`.
 | README "Judged side by side" (pairwise Elo) and its chart | `readme:elo` | `elo_judgments`, `elo_ratings` | `elo-pairwise`; the reviews: `ccvq-hard20-claude-max-sonnet`, `ccvq-claude-code-high`, `ccvq-quickreview-on-claude`, `martian-final`, `openmodels-glm53-full`, `openmodels-dsv41f-mix` | `recompute/elo_ratings.py --check-ratings` |
 | `docs/DIGITALOCEAN.md`: speed and cost table, the smokes, the review time limit | `do:speed`, `do:glm-smoke`, `do:gemma-smoke`, `do:timeouts` | none (archive only) | `openmodels-smokes`, `openmodels-gpt61-baselines`, `openmodels-glm53-full`, `openmodels-driver`, `aacr-frozen-build` | `recompute/do_speed.py` |
 | QuickReview paper: cost mechanism (pass counts, lens shares, validator dispositions) | `qr:mechanism` | `reviews` | `aacr-gpt6sol-study` (the transcripts' numbers-only extracts) | `recompute/passes.py`, `recompute/lens_credit.py`, `recompute/tokens.py` |
+| Benchmark paper `tab:martiantiers` (QuickReview on Martian by its own severity) | `bench:tab:martianfinal`, `bench:sol-study` | `martian_goldens` | `analysis` (`analysis/relabel/martian_tiers.labels.jsonl`, its prompt, `LABELS.json`; the blind `tune20` classification), `martian-posting-variants`, `martian-tuning-rounds` | `relabel/martian_tiers.py --compute` |
+| QuickReview paper: the validator's kills and the lost-credit attribution | `qr:mechanism`, `qr:tab:final` | `defects`, `reviews`, `defect_verdicts` | `analysis` (`analysis/relabel/lost_credit.labels.jsonl`, its prompt, `LABELS.json`), `aacr-gpt6sol-study` | `relabel/lost_credit.py --compute` |
 | QuickReview paper: tuning appendix (prompt iterations, levers, lenses) | `qr:app:tuning` | `arms`, `defect_verdicts` | `aacr-dev-iterations`, `aacr-dev-levers-presets` | `verify_claims.py` (its table checks, `recompute/claim_metrics.py`); `recompute/missed_defects.py` |
 | QuickReview paper: the max preset example | `qr:max-anecdote` | `arms` (`quickreview-max-g61`) | `aacr-g61-smokes` | `compare.py` |
 
@@ -443,6 +445,23 @@ python3 bench/aacr/recompute/elo_ratings.py slim/elo/martian-hard20-all-gpt --ch
     --runs-dir slim/runs --runs-dir slim/open-models/runs
 ```
 
+Two tables in the papers rest on a labelling pass as well as the runs: the
+benchmark paper's `tab:martiantiers` and the QuickReview paper's lost-credit
+figures. The label files ship in the archive's `analysis` volume and the slim
+bundle under `analysis/relabel/`, each row with the model that wrote it
+(gpt-6.1-sol) and the sha256 of the prompt shipped beside it; `LABELS.json`
+names the script, model, effort, prompt hash and row count of each pass. The
+two scripts turn the labels and the archive into the published numbers with no
+model call (each unpacks the archive volumes it reads into `work/`), and refuse
+a row whose prompt hash is not the shipped prompt's:
+
+```sh
+uv run --no-project --with pyarrow python3 bench/aacr/relabel/martian_tiers.py \
+    --archive $D/archive --data $D --work work --compute
+uv run --no-project --with pyarrow python3 bench/aacr/relabel/lost_credit.py \
+    --archive $D/archive --data $D --work work --compute
+```
+
 `QCR_CHARTS_OUT` keeps the re-drawn charts out of the clone (a re-rendered
 JPEG differs byte for byte from the committed one).
 `bench/aacr/recompute/README.md` maps each published number to its script.
@@ -547,10 +566,16 @@ branch printed the old values:
 - **Recomputed.** Run-to-run agreement on fresh10, 78–89% → 81–93%, now
   over two named pairs of published runs (`fresh10-on` with `lean`,
   `new-r1` with `new-r2`).
-- **Pending a labelling pass.** The Martian severity table and the
-  technical report's attribution of lost credit are printed as before and
-  marked pending in the manifest: a labelling pass over the published
-  candidates will produce their data.
+- **Relabelled.** The Martian severity table and the technical report's
+  lost-credit figures are recomputed from two labelling passes that ship in
+  `analysis/relabel/` (gpt-6.1-sol; see "How to verify"). The table's
+  candidate-to-comment mapping is rebuilt (word overlap, a label where overlap
+  cannot settle it), which moves a few candidates between tiers and changes the
+  per-subset Martian scores. The lost-credit attribution now counts a nearby
+  comment or dropped finding only when the label says it is about the defect:
+  lens generation's share rises, weaker comments' falls, and fewer of the
+  default's misses had a dropped finding stating them. Every changed cell and
+  sentence prints what the labels give.
 
 ## Datasheet (summary)
 

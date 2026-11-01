@@ -1739,13 +1739,9 @@ def claims_lead(path: str | None) -> str:
     if not path:
         return VERIFY_PENDING
     c = collections.Counter(x["status"] for x in json.load(open(path))["results"])
-    relabel = c.get("pending-relabel", 0)
-    if c.get("pass", 0) + relabel == sum(c.values()):
-        return ("Every one of them passes" + (
-            f", except {relabel} that wait for a labelling pass that will produce their data (the manifest "
-            "lists each as pending relabel)" if relabel else "")
-            + ": a number the release could not check was cut from the pages or reworded to the number the "
-              "data gives.")
+    if c.get("pass", 0) == sum(c.values()):
+        return ("Every one of them passes: a number the release could not check was cut from the pages or "
+                "reworded to the number the data gives.")
     return (f"{c.get('pass', 0):,} of {sum(c.values()):,} pass; the rest are listed in the verifier's "
             "report with the reason each could not be checked.")
 
@@ -1760,12 +1756,10 @@ def verify_result(path: str | None) -> str:
     cons = r.get("consistency") or []
     ok = sum(1 for x in cons if x["ok"])
     fails = sum(c.get(k, 0) for k in ("mismatch", "error", "no-source"))
-    if not fails and not any(c.get(k) for k in GAP_STATUSES):
-        relabel = c.get("pending-relabel", 0)
-        return (f"all {c.get('pass', 0):,} checked claims pass, with 0 mismatch, 0 error, 0 missing source and no "
-                f"claim left unchecked" + (f" but the {relabel} pending a labelling pass" if relabel else "")
-                + f". The release's own checks (the tables' validation and the slim bundle's) pass {ok} of "
-                  f"{len(cons)}.")
+    if c.get("pass", 0) == sum(c.values()):
+        return (f"all {c.get('pass', 0):,} claims pass, with 0 mismatch, 0 error, 0 missing source and no "
+                f"claim left unchecked. The release's own checks (the tables' validation and the slim bundle's) "
+                f"pass {ok} of {len(cons)}.")
     return (f"{c.get('pass', 0):,} of {sum(c.values()):,} claims pass; {c.get('mismatch', 0)} mismatch, "
             f"{c.get('error', 0)} error and {c.get('no-source', 0)} missing source"
             + ("" if not fails else " (this release is not ready)")
