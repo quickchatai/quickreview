@@ -22,6 +22,8 @@ given as `<name>.jsonl`, which is how the tests feed small fixtures.
 | Martian tune20 against the extended key, and its sensitivity | benchmark.tex tab:martianext, tab:martiansens | `martian_ext.py --archive <archive> --data <hf-dataset>` | archive `analysis/…/fair/`, `gm/rows.json`, `runs/mv-r1-asposted.martian/` |
 | AACR-Bench's metric at line gates 1, 5 and 999 | benchmark.tex "The line-gate effect, measured" | `line_gate.py --archive <archive> --data <hf-dataset>` | archive `analysis/…/wp-data/linek-runs/`, `runs/<run>/results/all/`; `references.json` |
 | Per-lens cost share, co-credit and unique finds; the validator's dispositions; the default's misses by what the review had at them | quickreview.tex tab:lenscost, §"Where the money goes", §"The validator removes little" | `lens_credit.py --archive <archive> --data <hf-dataset>` | archive `pi-events.pruned.jsonl`, `findings-record.json`, `results/all/`; HF `defect_verdicts` |
+| QuickReview on Martian by its own severity: each candidate's tier, the blind tune20 classes per tier, the Core score per posted subset | benchmark.tex tab:martiantiers | `../relabel/martian_tiers.py --archive <archive> --data <hf-dataset> --compute` | archive `analysis/relabel/martian_tiers.labels.jsonl` (+ prompt), `runs/*.martian/`; HF `martian_goldens` |
+| Where the low preset's lost credit went; the default's killed or withheld findings stating a defect it missed, and the recall bound | quickreview.tex §"The validator removes little", §"What the compute buys" | `../relabel/lost_credit.py --archive <archive> --data <hf-dataset> --compute` | archive `analysis/relabel/lost_credit.labels.jsonl` (+ prompt), `findings-record.json`; HF `defects`, `reviews`, `defect_verdicts` |
 | pi-review's panel read with confirmed findings only | quickreview.tex §"What the vote does", tab:panel40 | `panel_confirmed.py --archive <archive> --data <hf-dataset>` | archive `pireview-meta.json`; HF `defect_verdicts`, `comment_verdicts` |
 | The missed-defect analysis behind the levers | quickreview.tex appendix "Tuning" | `missed_defects.py --archive <archive> --data <hf-dataset>` | archive `analysis/2026-09-26-missed-defects/miss-G*.json` |
 | Copilot's harvested 2025 reviews | benchmark.tex §"Copilot 2025, harvested" | `copilot_harvest.py --archive <archive> --data <hf-dataset>` | archive `runs/upstream-copilot2025-*/cases/` |
@@ -97,9 +99,10 @@ published*, apart from the claims that only wait for a script, and a claim
 that needs `--martian` or `--qodo-gt` when it was not given as *needs input*.
 Those three are the documented gaps: they fail, and `--allow-gaps` lists them
 with their reasons and passes them (a gap whose reason the manifest does not
-record still fails). This release has none. One status never fails: a claim
-whose reason starts "pending relabel" waits for a labelling pass that will
-produce its data (the Martian severity table and the lost-credit attribution);
-it is listed with its reason and counted apart from the passes. Numbers are compared the way Python's
+record still fails). This release has none, and no other status exists: the
+Martian severity table and the lost-credit attribution are checked by
+`../relabel/martian_tiers.py` and `../relabel/lost_credit.py --compute`, which
+read the label files the release ships (`analysis/relabel/`) with no model
+call. Numbers are compared the way Python's
 `format` prints the computed float (the manifest's `scope` states the
 rounding rule).

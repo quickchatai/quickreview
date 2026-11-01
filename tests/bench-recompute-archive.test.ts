@@ -31,11 +31,15 @@
 //  11. copilot_harvest, smoke_lenses, martian_published: an earlier push's line is
 //      kept only when the harvest mapped it; a lens's timeout is read from its
 //      error class; a published credit naming no listed golden is left out.
+//  12. relabel: the two labelling passes' unit tests (bench/aacr/relabel/test_relabel.py)
+//      run under python3, and every committed label row names the model that wrote
+//      it and the sha256 of the committed prompt it was asked with.
 
 import { afterAll, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -505,16 +509,10 @@ describe("the claims manifest's gaps", () => {
   });
 
   // MUTATION: give any claim a "data not published: ..." reason instead of its q — this fails
-  // MUTATION: write a pending-relabel reason as "pending relabel" with nothing after it — this fails
-  it("leaves no claim unchecked but those pending a labelling pass, each with its reason", () => {
+  // MUTATION: put back one claim with a "pending relabel: ..." reason and no q — this fails
+  it("leaves no claim unchecked", () => {
     const unchecked = m.claims.filter((c) => !c.q && !(c.alt ?? []).length);
-    expect(unchecked.length).toBeGreaterThan(0);
-    for (const c of unchecked) expect(c.no_script ?? "").toMatch(/^pending relabel: .{20,}/);
-    const files = new Set(unchecked.map((c) => c.file));
-    expect([...files].sort()).toEqual([
-      "bench/aacr/paper/benchmark.tex",
-      "bench/aacr/paper/quickreview.tex",
-    ]);
+    expect(unchecked.map((c) => `${c.id}: ${c.no_script ?? ""}`)).toEqual([]);
   });
 
   // MUTATION: name a check's script that is not in the tree (e.g. "bench/aacr/recompute/missing.py") — this fails
@@ -527,7 +525,9 @@ describe("the claims manifest's gaps", () => {
         "claude_arm",
         "judge_ops",
         "key_build",
+        "lost_credit",
         "martian_ext",
+        "martian_tiers",
         "passes",
         "tokens",
       ]),
@@ -718,4 +718,37 @@ describe("claim_metrics: completed reviews", () => {
     );
     expect(r).toEqual([1, 1, 2]);
   });
+});
+
+describe("relabel: the labelling passes and their shipped label files", () => {
+  const RELABEL = join(AACR, "relabel");
+
+  // MUTATION: make martian_tiers' overlap ignore the tier margin (settle every candidate) — this fails
+  it("passes the passes' own unit tests under python3", () => {
+    const p = spawnSync("python3", ["-m", "unittest", join(RELABEL, "test_relabel.py")], {
+      encoding: "utf8",
+      cwd: ROOT,
+    });
+    expect(p.stderr).toMatch(/\nOK\s*$/);
+    expect(p.status).toBe(0);
+  });
+
+  // MUTATION: change one byte of bench/aacr/relabel/lost_credit.prompt.md — this fails
+  // MUTATION: drop "model" from one row of martian_tiers.labels.jsonl — this fails
+  it.each(["martian_tiers", "lost_credit"])(
+    "%s: every label row carries its model and the committed prompt's sha256",
+    (name) => {
+      const prompt = readFileSync(join(RELABEL, `${name}.prompt.md`));
+      const want = createHash("sha256").update(prompt).digest("hex");
+      const rows = readFileSync(join(RELABEL, `${name}.labels.jsonl`), "utf8")
+        .split("\n")
+        .filter((l) => l.trim())
+        .map((l) => JSON.parse(l) as { model?: string; prompt_sha256?: string });
+      expect(rows.length).toBeGreaterThan(0);
+      const bad = rows
+        .map((r, i) => ({ i, model: r.model, sha: r.prompt_sha256 }))
+        .filter((r) => r.model !== "gpt-6.1-sol" || r.sha !== want);
+      expect(bad).toEqual([]);
+    },
+  );
 });

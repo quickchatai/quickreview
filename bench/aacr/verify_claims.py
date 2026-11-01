@@ -32,9 +32,8 @@ whose check has no script in this tree, or no `q`, fails as "no script"; one who
 "data not published" rests on data the release does not hold and fails as "not published" (the page's
 author may reword it); one that needs --martian or --qodo-gt when it was not given fails as "needs input".
 Those three are the documented gaps: with --allow-gaps they are listed with their reasons and pass, as long
-as the manifest records a reason; a mismatch, an error or a missing source always fails. One more status
-never fails: "pending relabel", a claim whose `no_script` reason starts so, waiting for a labelling pass that
-will produce its data; it is listed with its reason and counted apart from the passes.
+as the manifest records a reason; a mismatch, an error or a missing source always fails. There is no other
+status: a claim waiting for data (a labelling pass, say) has no script and fails like any other.
 
 Numbers compare as Python's `format` prints the computed float with the published decimals (the manifest's
 `scope` states the rule: 16.25 prints 16.2, and 8.95, stored as 8.9499..., prints 8.9).
@@ -353,8 +352,7 @@ def verify(a, manifest: dict, found) -> List[dict]:
         if not qs:
             why = c.get("no_script") or ""
             # a claim whose data the release does not hold can never get a script: it is its own status
-            r["status"] = ("pending-relabel" if why.startswith(PENDING_RELABEL)
-                           else "not-published" if why.startswith(NOT_PUBLISHED) else "no-script")
+            r["status"] = "not-published" if why.startswith(NOT_PUBLISHED) else "no-script"
             r["why"] = why or "no recompute script yet (no reason recorded)"
             r["documented"] = bool(why)
             results.append(r)
@@ -424,8 +422,6 @@ FAIL = ("mismatch", "error", "no-source", "no-script", "not-published", "needs-i
 GAPS = ("no-script", "not-published", "needs-input")
 THIRD_PARTY_INPUTS = {"martian"}
 NOT_PUBLISHED = "data not published"
-# a claim waiting for a labelling pass that will produce its data: reported with its reason, never failing
-PENDING_RELABEL = "pending relabel"
 
 
 def consistency(a, found, src: "Sources") -> List[dict]:
@@ -482,9 +478,7 @@ def report_md(manifest: dict, lint: dict, results: List[dict], found, timings, c
             ("no-script", "No recompute script yet",
              "claims are listed with the data behind them but no check computes them. By reason:"),
             ("not-published", "Data not published",
-             "claims rest on data the release does not hold, so no check can recompute them from it. By reason:"),
-            ("pending-relabel", "Pending a labelling pass",
-             "claims wait for a labelling pass that will produce their data; they are not checked yet. By reason:")):
+             "claims rest on data the release does not hold, so no check can recompute them from it. By reason:")):
         gaps = [r for r in results if r["status"] == status]
         if not gaps:
             continue
@@ -583,7 +577,6 @@ def main() -> int:
     print("claims:", dict(sorted(tot.items())))
     gaps = Counter(r.get("why") for r in results if r["status"] == "no-script")
     unpublished = Counter(r.get("why") for r in results if r["status"] == "not-published")
-    relabel = Counter(r.get("why") for r in results if r["status"] == "pending-relabel")
     for r in results:
         if r["status"] in FAIL and r["status"] not in GAPS:
             comp = ", ".join(str(s.get("printed_as", s.get("why", ""))) for s in r["sources"]) or r.get("why", "")
@@ -592,8 +585,6 @@ def main() -> int:
         print(f"  NO-SCRIPT x{n}: {why}")
     for why, n in unpublished.most_common():
         print(f"  NOT-PUBLISHED x{n}: {why}")
-    for why, n in relabel.most_common():
-        print(f"  PENDING-RELABEL x{n}: {why}")
     bad_c = [c for c in a._consistency if not c["ok"]]
     print(f"release checks: {len(a._consistency) - len(bad_c)} of {len(a._consistency)} pass")
     for c in bad_c:
@@ -614,7 +605,7 @@ def main() -> int:
     bad_claims = [r for r in results if failing(r)]
     gaps_n = sum(1 for r in results if r["status"] in GAPS)
     verdict = 1 if lint["errors"] or bad_claims or bad_c else 0
-    print(f"result: {tot.get('pass', 0)} pass, {len(bad_claims)} failing, {tot.get('pending-relabel', 0)} pending relabel, "
+    print(f"result: {tot.get('pass', 0)} pass, {len(bad_claims)} failing, "
           f"{gaps_n} documented gaps "
           f"({'allowed' if a.allow_gaps else 'failing; --allow-gaps passes them'}), "
           f"release checks {len(a._consistency) - len(bad_c)}/{len(a._consistency)}: exit {verdict}")
