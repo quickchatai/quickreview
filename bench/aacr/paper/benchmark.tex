@@ -3166,24 +3166,33 @@ reviewer's severity bar drops such remarks by design.
 
 Splitting \qcr{}'s comments by its own severity shows where the benchmark
 cannot see it (Figure~\ref{fig:martianstrength}, Table~\ref{tab:martiantiers}).
-In the blind \code{tune20} classification, 84\% of its P0--P1 comments name a
+In the blind \code{tune20} classification, 84\% of the candidates extracted
+from its P0--P1 comments name a
 real defect, a golden or an unlisted bug; that falls to 42\% at P2 and at P3
 and to 15\% for nits, which are mostly true but minor. Recounting the existing
 Martian judgements on all 50 PRs for subsets of what \qcr{} posted, P0--P1
-alone (2.1 comments per PR) scores 29.0 precision: the comments that are
-84\% real defects are seven in ten ``false positives'' to the list,
+alone (2.1 extracted candidates per PR) scores 29.0 precision: the tier
+whose candidates are 84\% real defects on \code{tune20} is seven in ten
+``false positives'' to the list over the 50 PRs,
 because the list lacks most of the bugs they name. Cutting to them also
 drops Martian recall from 57.0 to 19.6 and $F_2$ from 40.9 to 21.0, since
 many listed goldens are the minor remarks \qcr{} posts at lower severity.
 
 A candidate's tier is the tier of the posted comment it was extracted from,
 a link Martian's extraction does not record, so it is rebuilt for this
-release. Word overlap between the candidate and each comment settles most
-links. For the 21 candidates it could not settle (across the three scoring
-runs: the best match was the review's summary, or a comment of another tier
-scored as close), gpt-6.1-sol read the candidate and the review's comments,
-stripped of their tags and severity, and named the comment it restates; it
-found none for one candidate, which the table shows as unmapped. The real,
+release. Word overlap (the share of the candidate's words of four or more
+characters that a comment also has) settles the tier for 618 of the 639
+candidates in the three scoring runs: the left block's \code{mv-r1-asposted},
+the right block's \code{ext-default3-martian-tune20} and
+\code{ext-r4-martian-test30}. For the other 21 (the best match was the
+review's summary or scored below a floor, or a comment of another tier
+scored within a margin of it; the thresholds are in
+\code{bench/aacr/relabel/martian\_tiers.py}), gpt-6.1-sol read the candidate
+and the review's comments, stripped of their tags and severity labels (each
+still marked as inline, folded, body bullet or summary), and named the
+comment it restates; it found none for one candidate, which the table shows
+as unmapped. The overlap links were not checked against labels, and the
+labels are one model's, not checked by hand. The real,
 minor, dup and wrong classes are the original blind \code{tune20}
 classification as the archive's analysis volume ships it; only the tiers
 were rebuilt.
@@ -3191,7 +3200,7 @@ were rebuilt.
 \begin{figure}[tbp]
   \centering
   \includegraphics[width=1.0\textwidth]{../charts/martian-strength.pdf}
-  \caption{\qcr{} by its own severity. Left: share of comments that are real defects (blind \code{tune20} classification) against Martian's precision for the same subset (50 PRs, existing judgements recounted). Right: what each tier is.}
+  \caption{\qcr{} by its own severity. Left: share of candidates that are real defects (blind \code{tune20} classification) against Martian's precision when the same tiers are posted (50 PRs, existing judgements recounted). Right: what each tier is.}
   \label{fig:martianstrength}
 \end{figure}
 
@@ -3202,7 +3211,7 @@ were rebuilt.
   few trivial or wrong goldens, so counts are $\pm 1$ against
   Table~\ref{tab:martianext}), by the tier of the comment each was extracted
   from (word overlap, or a gpt-6.1-sol label where overlap could not settle
-  it; ``unmapped'': no posted comment states the candidate).
+  it; ``unmapped'': the labeller found no posted comment that states the candidate).
   Right block: Martian Core on all 50 PRs when only that subset is posted,
   recounted from the existing judgements.}
   \label{tab:martiantiers}
@@ -3672,7 +3681,7 @@ archived judge files with no model call, and \code{bench/aacr/README.md}
 (``Reproduce'') gives the three ways in: re-score the slim bundle with no key,
 re-judge the archived reviews, or re-run every arm, on a ChatGPT login or on
 one's own API keys. The generated charts and the readable renderings of the
-keys are in the dataset. The file names some footnotes cite --- \code{FULL-BENCHMARK.md}, \code{RESULTS.md}, \code{EXTERNAL-BENCHMARKS.md}, \code{MARTIAN-CRITIQUE.md}, \code{RUNS.md}, \code{REVIEW-benchmark.md} --- are the study's working notes, not part of the public repository or the dataset. The scratch analyses under \code{wp-data/} and \code{paper-data/}, with the key-construction analysis scripts, ship in the run archive's \code{analysis} volume. Every number this paper takes from the working notes is stated here, and \code{bench/aacr/claims.json} lists each published number with the data and script behind it. A number the released data could not check was cut or reworded. Two analyses rest on a labelling pass as well as the runs, the Martian severity table (Section~\ref{sec:martianwhy}) and the companion report's attribution of lost credit: their gpt-6.1-sol labels ship in the archive's \code{analysis} volume under \code{analysis/relabel/}, each row with the model and the sha256 of the prompt shipped beside it, and the manifest's checks recompute both from them with no model call. Ratios and differences of costs are computed from the unrounded per-PR costs, so they can differ by one unit from a ratio of the rounded figures printed beside them.
+keys are in the dataset. The file names some footnotes cite --- \code{FULL-BENCHMARK.md}, \code{RESULTS.md}, \code{EXTERNAL-BENCHMARKS.md}, \code{MARTIAN-CRITIQUE.md}, \code{RUNS.md}, \code{REVIEW-benchmark.md} --- are the study's working notes, not part of the public repository or the dataset. The scratch analyses under \code{wp-data/} and \code{paper-data/}, with the key-construction analysis scripts, ship in the run archive's \code{analysis} volume. Every number this paper takes from the working notes is stated here, and \code{bench/aacr/claims.json} lists each published number with the data and script behind it. A number the released data could not check was cut or reworded. Two analyses rest on a labelling pass as well as the runs, the Martian severity table (Section~\ref{sec:martianwhy}) and the companion report's attribution of lost credit: their gpt-6.1-sol labels ship in the archive's \code{analysis} volume under \code{analysis/relabel/}, each row with the model and the sha256 of the prompt shipped beside it, and the manifest's checks recompute both from them with no model call. The labels are one model's and were not checked by hand. Ratios and differences of costs are computed from the unrounded per-PR costs, so they can differ by one unit from a ratio of the rounded figures printed beside them.
 
 \paragraph{Run archive.} The run data are published on Hugging Face only,
 as the dataset \url{https://huggingface.co/datasets/quickchatai/quickreview-bench}

@@ -901,16 +901,23 @@ main session & 13.5\% & --- & --- & --- \\
 \paragraph{The validator removes little that is real.} For every defect the
 default did not fully credit, gpt-6.1-sol labelled each finding its validator
 killed or withheld within five lines of the defect as stating the defect,
-related to it, or about something else, from the defect's and the finding's
-text alone (no code). It labelled a dropped finding as stating 5 of the 520
-real defects that earned no credit --- 1.0 point of recall. The default's
-misses are recognition misses, not
-filtering: of its 82.5 missed credits, 56 had a comment posted within five
+related to it, or about something else. It read the defect's statement,
+counting condition and location and the finding's text alone (no code), and
+was not told which items were posted or by which arm; the labels are one
+model's and were not checked by hand. Of the 520 real defects, it labelled
+a dropped finding as stating 5 that the default missed outright --- 1.0
+point of recall. The default's misses are recognition misses, not
+filtering: of the 80 defects it missed outright (82.5 missed credits,
+counting a partial find as half), 56 had a comment posted within five
 lines that the judge credited to something else, 11 had a candidate
-elsewhere in the file, 7 had nothing raised in the file, and 6 had a
-candidate at the site that was dropped. Posting every killed or withheld
-finding would add 23\% more comments for at most 2.7 points (1.0 counting
-only the findings labelled as stating the defect).
+elsewhere in the file, 7 had nothing raised in the file, and 6 had nothing
+posted near them but a finding at the site that was not posted. These
+classes go by position, not by label, and a dropped finding can also sit
+beside a posted comment, so they do not bound what posting the drops would
+recover. Posting every killed or withheld finding would add 23\% more
+comments for at most 2.7 points if the labels are right (1.0 counting only
+the findings labelled as stating the defect; 5.3 if every dropped finding
+within five lines counted).
 
 \subsection{What the compute buys}
 
@@ -918,14 +925,18 @@ only the findings labelled as stating the defect).
 preset --- the same plan, every role at low reasoning --- finds 70\% at
 \$0.88 per PR against 79\% at \$1.36; the difference is established. On the
 gpt-6-sol runs, where the gap was larger (84\% against 66\%), an attribution
-of the lost credit put 55\% of it in lens generation (nothing within five
-lines of the defect was about it), 20\% in validator filtering (a low
-validator dropped the only findings about 32 uncredited defects, against 7
-at high), and 26\% in weaker comments that were about the defect but earned
-less credit. The shares are of the gross lost credit, the 109.5 credits on
-116 defects that the default earned and low did not. Whether a comment or a
-dropped finding near a defect is about it is gpt-6.1-sol's label, as above:
-stating the defect or related to it, from the text alone. A
+of the lost credit put 55\% of it in lens generation (no posted comment and
+no killed or withheld finding within five lines of the defect was about it),
+20\% in validator filtering (only a finding low's validator dropped was
+about it; 22 of the lost defects), and 26\% in weaker comments that were
+about the defect but earned less credit (shares rounded). The shares are of
+the gross lost credit, the 109.5 credits on
+116 defects that the default earned and low did not. Of the defects each
+arm left with no credit, 32 at low had every finding about them dropped by
+the validator, against 7 in the default, whose validator runs at high. Whether a
+comment or a dropped finding near a defect is about it is gpt-6.1-sol's
+label, as above: stating the defect or related to it, from the text alone,
+without being told which items were posted. A
 smaller base model that writes about half as much per pass collapses to
 28\% (Section~\ref{sec:basemodel}): what the lenses do not raise, the
 validator and the session cannot recover.

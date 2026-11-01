@@ -1017,6 +1017,18 @@
   "readme:cost": {
    "families": [],
    "archive": []
+  },
+  "bench:tab:martiantiers": {
+   "families": [
+    "analysis",
+    "martian-posting-variants",
+    "martian-tuning-rounds"
+   ],
+   "archive": [
+    "quickreview-runs-analysis.tar.zst",
+    "quickreview-runs-martian-posting-variants.tar.zst",
+    "quickreview-runs-martian-tuning-rounds.tar.zst"
+   ]
   }
  },
  "claims": [
@@ -36438,7 +36450,7 @@
   {
    "id": "bench.bench:tab:martianfinal.312",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "\\caption{\\qcr{} by its own severity. Left: share of comments that are real defects",
+   "anchor": "\\caption{\\qcr{} by its own severity. Left: share of candidates that are real defects",
    "value": "50",
    "group": "bench:tab:martianfinal",
    "q": "martian:goldens:prs",
@@ -47092,7 +47104,7 @@
   {
    "id": "qr.qr:mechanism.149",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "text alone (no code). It labelled a dropped finding as stating 5 of the 520",
+   "anchor": "model's and were not checked by hand. Of the 520 real defects, it labelled",
    "value": "520",
    "group": "qr:mechanism",
    "q": "key:defects"
@@ -47100,7 +47112,7 @@
   {
    "id": "qr.qr:mechanism.151",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "filtering: of its 82.5 missed credits, 56 had a comment posted within five",
+   "anchor": "filtering: of the 80 defects it missed outright (82.5 missed credits,",
    "value": "82.5",
    "group": "qr:mechanism",
    "q": "aacr:quickreview-default-sol:missed",
@@ -47112,7 +47124,7 @@
   {
    "id": "qr.qr:mechanism.152",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "filtering: of its 82.5 missed credits, 56 had a comment posted within five",
+   "anchor": "counting a partial find as half), 56 had a comment posted within five",
    "value": "56",
    "group": "qr:mechanism",
    "q": "lens_credit:misses/posted_near",
@@ -47136,7 +47148,7 @@
   {
    "id": "qr.qr:mechanism.154",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "elsewhere in the file, 7 had nothing raised in the file, and 6 had a",
+   "anchor": "elsewhere in the file, 7 had nothing raised in the file, and 6 had nothing",
    "value": "7",
    "group": "qr:mechanism",
    "q": "lens_credit:misses/nothing_in_file",
@@ -47148,7 +47160,7 @@
   {
    "id": "qr.qr:mechanism.155",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "elsewhere in the file, 7 had nothing raised in the file, and 6 had a",
+   "anchor": "elsewhere in the file, 7 had nothing raised in the file, and 6 had nothing",
    "value": "6",
    "group": "qr:mechanism",
    "q": "lens_credit:misses/dropped_at_site",
@@ -53789,11 +53801,11 @@
    "q": "aacr:quickreview-default-g61:min_median"
   },
   {
-   "id": "bench.bench:sol-study.relabel-1",
+   "id": "bench.bench:tab:martiantiers.relabel-1",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P0--P1 & 38 & 32 (84\\%) & 4 & 1 & 1 & P0--P1 only & 2.1 & 29.0 & 19.6 & 21.0 \\\\",
    "value": "38",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/P0-P1/n",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -53803,11 +53815,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-2",
+   "id": "bench.bench:tab:martiantiers.relabel-2",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P0--P1 & 38 & 32 (84\\%) & 4 & 1 & 1 & P0--P1 only & 2.1 & 29.0 & 19.6 & 21.0 \\\\",
    "value": "32",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/P0-P1/real",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -53817,11 +53829,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-3",
+   "id": "bench.bench:tab:martiantiers.relabel-3",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P0--P1 & 38 & 32 (84\\%) & 4 & 1 & 1 & P0--P1 only & 2.1 & 29.0 & 19.6 & 21.0 \\\\",
    "value": "84%",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/P0-P1/real_pct",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -53831,11 +53843,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-4",
+   "id": "bench.bench:tab:martiantiers.relabel-4",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P0--P1 & 38 & 32 (84\\%) & 4 & 1 & 1 & P0--P1 only & 2.1 & 29.0 & 19.6 & 21.0 \\\\",
    "value": "4",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/P0-P1/minor",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -53845,11 +53857,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-5",
+   "id": "bench.bench:tab:martiantiers.relabel-5",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P0--P1 & 38 & 32 (84\\%) & 4 & 1 & 1 & P0--P1 only & 2.1 & 29.0 & 19.6 & 21.0 \\\\",
    "value": "1",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/P0-P1/dup",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -53859,11 +53871,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-6",
+   "id": "bench.bench:tab:martiantiers.relabel-6",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P0--P1 & 38 & 32 (84\\%) & 4 & 1 & 1 & P0--P1 only & 2.1 & 29.0 & 19.6 & 21.0 \\\\",
    "value": "1",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/P0-P1/wrong",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -53873,11 +53885,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-7",
+   "id": "bench.bench:tab:martiantiers.relabel-7",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P0--P1 & 38 & 32 (84\\%) & 4 & 1 & 1 & P0--P1 only & 2.1 & 29.0 & 19.6 & 21.0 \\\\",
    "value": "2.1",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:right/P0-P1 only/per_pr",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -53887,11 +53899,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-8",
+   "id": "bench.bench:tab:martiantiers.relabel-8",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P0--P1 & 38 & 32 (84\\%) & 4 & 1 & 1 & P0--P1 only & 2.1 & 29.0 & 19.6 & 21.0 \\\\",
    "value": "29.0",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:right/P0-P1 only/precision",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -53901,11 +53913,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-9",
+   "id": "bench.bench:tab:martiantiers.relabel-9",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P0--P1 & 38 & 32 (84\\%) & 4 & 1 & 1 & P0--P1 only & 2.1 & 29.0 & 19.6 & 21.0 \\\\",
    "value": "19.6",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:right/P0-P1 only/recall",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -53915,11 +53927,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-10",
+   "id": "bench.bench:tab:martiantiers.relabel-10",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P0--P1 & 38 & 32 (84\\%) & 4 & 1 & 1 & P0--P1 only & 2.1 & 29.0 & 19.6 & 21.0 \\\\",
    "value": "21.0",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:right/P0-P1 only/f2",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -53929,11 +53941,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-11",
+   "id": "bench.bench:tab:martiantiers.relabel-11",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P2 & 45 & 19 (42\\%) & 21 & 4 & 1 & blockers only & 4.1 & 22.8 & 29.1 & 27.6 \\\\",
    "value": "45",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/P2/n",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -53943,11 +53955,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-12",
+   "id": "bench.bench:tab:martiantiers.relabel-12",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P2 & 45 & 19 (42\\%) & 21 & 4 & 1 & blockers only & 4.1 & 22.8 & 29.1 & 27.6 \\\\",
    "value": "19",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/P2/real",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -53957,11 +53969,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-13",
+   "id": "bench.bench:tab:martiantiers.relabel-13",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P2 & 45 & 19 (42\\%) & 21 & 4 & 1 & blockers only & 4.1 & 22.8 & 29.1 & 27.6 \\\\",
    "value": "42%",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/P2/real_pct",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -53971,11 +53983,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-14",
+   "id": "bench.bench:tab:martiantiers.relabel-14",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P2 & 45 & 19 (42\\%) & 21 & 4 & 1 & blockers only & 4.1 & 22.8 & 29.1 & 27.6 \\\\",
    "value": "21",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/P2/minor",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -53985,11 +53997,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-15",
+   "id": "bench.bench:tab:martiantiers.relabel-15",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P2 & 45 & 19 (42\\%) & 21 & 4 & 1 & blockers only & 4.1 & 22.8 & 29.1 & 27.6 \\\\",
    "value": "4",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/P2/dup",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -53999,11 +54011,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-16",
+   "id": "bench.bench:tab:martiantiers.relabel-16",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P2 & 45 & 19 (42\\%) & 21 & 4 & 1 & blockers only & 4.1 & 22.8 & 29.1 & 27.6 \\\\",
    "value": "1",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/P2/wrong",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54013,11 +54025,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-17",
+   "id": "bench.bench:tab:martiantiers.relabel-17",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P2 & 45 & 19 (42\\%) & 21 & 4 & 1 & blockers only & 4.1 & 22.8 & 29.1 & 27.6 \\\\",
    "value": "4.1",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:right/blockers only/per_pr",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54027,11 +54039,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-18",
+   "id": "bench.bench:tab:martiantiers.relabel-18",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P2 & 45 & 19 (42\\%) & 21 & 4 & 1 & blockers only & 4.1 & 22.8 & 29.1 & 27.6 \\\\",
    "value": "22.8",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:right/blockers only/precision",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54041,11 +54053,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-19",
+   "id": "bench.bench:tab:martiantiers.relabel-19",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P2 & 45 & 19 (42\\%) & 21 & 4 & 1 & blockers only & 4.1 & 22.8 & 29.1 & 27.6 \\\\",
    "value": "29.1",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:right/blockers only/recall",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54055,11 +54067,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-20",
+   "id": "bench.bench:tab:martiantiers.relabel-20",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P2 & 45 & 19 (42\\%) & 21 & 4 & 1 & blockers only & 4.1 & 22.8 & 29.1 & 27.6 \\\\",
    "value": "27.6",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:right/blockers only/f2",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54069,11 +54081,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-21",
+   "id": "bench.bench:tab:martiantiers.relabel-21",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P3 & 19 & 8 (42\\%) & 10 & 1 & 0 & P0--P2 & 5.9 & 22.3 & 41.8 & 35.6 \\\\",
    "value": "19",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/P3/n",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54083,11 +54095,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-22",
+   "id": "bench.bench:tab:martiantiers.relabel-22",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P3 & 19 & 8 (42\\%) & 10 & 1 & 0 & P0--P2 & 5.9 & 22.3 & 41.8 & 35.6 \\\\",
    "value": "8",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/P3/real",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54097,11 +54109,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-23",
+   "id": "bench.bench:tab:martiantiers.relabel-23",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P3 & 19 & 8 (42\\%) & 10 & 1 & 0 & P0--P2 & 5.9 & 22.3 & 41.8 & 35.6 \\\\",
    "value": "42%",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/P3/real_pct",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54111,11 +54123,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-24",
+   "id": "bench.bench:tab:martiantiers.relabel-24",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P3 & 19 & 8 (42\\%) & 10 & 1 & 0 & P0--P2 & 5.9 & 22.3 & 41.8 & 35.6 \\\\",
    "value": "10",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/P3/minor",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54125,11 +54137,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-25",
+   "id": "bench.bench:tab:martiantiers.relabel-25",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P3 & 19 & 8 (42\\%) & 10 & 1 & 0 & P0--P2 & 5.9 & 22.3 & 41.8 & 35.6 \\\\",
    "value": "1",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/P3/dup",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54139,11 +54151,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-26",
+   "id": "bench.bench:tab:martiantiers.relabel-26",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P3 & 19 & 8 (42\\%) & 10 & 1 & 0 & P0--P2 & 5.9 & 22.3 & 41.8 & 35.6 \\\\",
    "value": "0",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/P3/wrong",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54153,11 +54165,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-27",
+   "id": "bench.bench:tab:martiantiers.relabel-27",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P3 & 19 & 8 (42\\%) & 10 & 1 & 0 & P0--P2 & 5.9 & 22.3 & 41.8 & 35.6 \\\\",
    "value": "5.9",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:right/P0-P2/per_pr",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54167,11 +54179,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-28",
+   "id": "bench.bench:tab:martiantiers.relabel-28",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P3 & 19 & 8 (42\\%) & 10 & 1 & 0 & P0--P2 & 5.9 & 22.3 & 41.8 & 35.6 \\\\",
    "value": "22.3",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:right/P0-P2/precision",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54181,11 +54193,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-29",
+   "id": "bench.bench:tab:martiantiers.relabel-29",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P3 & 19 & 8 (42\\%) & 10 & 1 & 0 & P0--P2 & 5.9 & 22.3 & 41.8 & 35.6 \\\\",
    "value": "41.8",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:right/P0-P2/recall",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54195,11 +54207,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-30",
+   "id": "bench.bench:tab:martiantiers.relabel-30",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "P3 & 19 & 8 (42\\%) & 10 & 1 & 0 & P0--P2 & 5.9 & 22.3 & 41.8 & 35.6 \\\\",
    "value": "35.6",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:right/P0-P2/f2",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54209,11 +54221,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-31",
+   "id": "bench.bench:tab:martiantiers.relabel-31",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "nit & 67 & 10 (15\\%) & 44 & 13 & 0 & everything & 9.4 & 19.2 & 57.0 & 40.9 \\\\",
    "value": "67",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/nit/n",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54223,11 +54235,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-32",
+   "id": "bench.bench:tab:martiantiers.relabel-32",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "nit & 67 & 10 (15\\%) & 44 & 13 & 0 & everything & 9.4 & 19.2 & 57.0 & 40.9 \\\\",
    "value": "10",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/nit/real",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54237,11 +54249,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-33",
+   "id": "bench.bench:tab:martiantiers.relabel-33",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "nit & 67 & 10 (15\\%) & 44 & 13 & 0 & everything & 9.4 & 19.2 & 57.0 & 40.9 \\\\",
    "value": "15%",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/nit/real_pct",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54251,11 +54263,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-34",
+   "id": "bench.bench:tab:martiantiers.relabel-34",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "nit & 67 & 10 (15\\%) & 44 & 13 & 0 & everything & 9.4 & 19.2 & 57.0 & 40.9 \\\\",
    "value": "44",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/nit/minor",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54265,11 +54277,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-35",
+   "id": "bench.bench:tab:martiantiers.relabel-35",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "nit & 67 & 10 (15\\%) & 44 & 13 & 0 & everything & 9.4 & 19.2 & 57.0 & 40.9 \\\\",
    "value": "13",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/nit/dup",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54279,11 +54291,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-36",
+   "id": "bench.bench:tab:martiantiers.relabel-36",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "nit & 67 & 10 (15\\%) & 44 & 13 & 0 & everything & 9.4 & 19.2 & 57.0 & 40.9 \\\\",
    "value": "0",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/nit/wrong",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54293,11 +54305,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-37",
+   "id": "bench.bench:tab:martiantiers.relabel-37",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "unmapped & 1 & 0 (0\\%) & 1 & 0 & 0 & & & & & \\\\",
    "value": "1",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/unmapped/n",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54307,11 +54319,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-38",
+   "id": "bench.bench:tab:martiantiers.relabel-38",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "unmapped & 1 & 0 (0\\%) & 1 & 0 & 0 & & & & & \\\\",
    "value": "0",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/unmapped/real",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54321,11 +54333,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-39",
+   "id": "bench.bench:tab:martiantiers.relabel-39",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "unmapped & 1 & 0 (0\\%) & 1 & 0 & 0 & & & & & \\\\",
    "value": "0%",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/unmapped/real_pct",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54335,11 +54347,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-40",
+   "id": "bench.bench:tab:martiantiers.relabel-40",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "unmapped & 1 & 0 (0\\%) & 1 & 0 & 0 & & & & & \\\\",
    "value": "1",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/unmapped/minor",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54349,11 +54361,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-41",
+   "id": "bench.bench:tab:martiantiers.relabel-41",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "unmapped & 1 & 0 (0\\%) & 1 & 0 & 0 & & & & & \\\\",
    "value": "0",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/unmapped/dup",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54363,11 +54375,11 @@
    ]
   },
   {
-   "id": "bench.bench:sol-study.relabel-42",
+   "id": "bench.bench:tab:martiantiers.relabel-42",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "unmapped & 1 & 0 (0\\%) & 1 & 0 & 0 & & & & & \\\\",
    "value": "0",
-   "group": "bench:sol-study",
+   "group": "bench:tab:martiantiers",
    "q": "martian_tiers:left/unmapped/wrong",
    "data": [
     "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
@@ -54410,7 +54422,7 @@
   {
    "id": "bench.bench:tab:martianfinal.relabel-45",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "In the blind \\code{tune20} classification, 84\\% of its P0--P1 comments name a",
+   "anchor": "In the blind \\code{tune20} classification, 84\\% of the candidates extracted",
    "value": "84%",
    "group": "bench:tab:martianfinal",
    "q": "martian_tiers:left/P0-P1/real_pct",
@@ -54424,7 +54436,7 @@
   {
    "id": "bench.bench:tab:martianfinal.relabel-46",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "alone (2.1 comments per PR) scores 29.0 precision: the comments that are",
+   "anchor": "alone (2.1 extracted candidates per PR) scores 29.0 precision: the tier",
    "value": "2.1",
    "group": "bench:tab:martianfinal",
    "q": "martian_tiers:right/P0-P1 only/per_pr",
@@ -54438,7 +54450,7 @@
   {
    "id": "bench.bench:tab:martianfinal.relabel-47",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "alone (2.1 comments per PR) scores 29.0 precision: the comments that are",
+   "anchor": "alone (2.1 extracted candidates per PR) scores 29.0 precision: the tier",
    "value": "29.0",
    "group": "bench:tab:martianfinal",
    "q": "martian_tiers:right/P0-P1 only/precision",
@@ -54452,7 +54464,7 @@
   {
    "id": "bench.bench:tab:martianfinal.relabel-48",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "84\\% real defects are seven in ten ``false positives'' to the list,",
+   "anchor": "whose candidates are 84\\% real defects on \\code{tune20} is seven in ten",
    "value": "84%",
    "group": "bench:tab:martianfinal",
    "q": "martian_tiers:left/P0-P1/real_pct",
@@ -54494,7 +54506,7 @@
   {
    "id": "bench.bench:tab:martianfinal.relabel-51",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "links. For the 21 candidates it could not settle (across the three scoring",
+   "anchor": "\\code{ext-r4-martian-test30}. For the other 21 (the best match was the",
    "value": "21",
    "group": "bench:tab:martianfinal",
    "q": "martian_tiers:labels",
@@ -54508,7 +54520,7 @@
   {
    "id": "qr.qr:mechanism.relabel-52",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "text alone (no code). It labelled a dropped finding as stating 5 of the 520",
+   "anchor": "a dropped finding as stating 5 that the default missed outright --- 1.0",
    "value": "5",
    "group": "qr:mechanism",
    "q": "lost_credit:labelled/same_claim_killed",
@@ -54523,7 +54535,7 @@
   {
    "id": "qr.qr:mechanism.relabel-53",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "real defects that earned no credit --- 1.0 point of recall. The default's",
+   "anchor": "a dropped finding as stating 5 that the default missed outright --- 1.0",
    "value": "1.0",
    "group": "qr:mechanism",
    "q": "lost_credit:labelled/same_claim_killed_points",
@@ -54538,7 +54550,7 @@
   {
    "id": "qr.qr:mechanism.relabel-54",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "finding would add 23\\% more comments for at most 2.7 points (1.0 counting",
+   "anchor": "recover. Posting every killed or withheld finding would add 23\\% more",
    "value": "23%",
    "group": "qr:mechanism",
    "q": "lost_credit:kills/dropped_pct_of_posted",
@@ -54553,7 +54565,7 @@
   {
    "id": "qr.qr:mechanism.relabel-55",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "finding would add 23\\% more comments for at most 2.7 points (1.0 counting",
+   "anchor": "comments for at most 2.7 points if the labels are right (1.0 counting only",
    "value": "2.7",
    "group": "qr:mechanism",
    "q": "lost_credit:labelled/at_most_points_same_or_related",
@@ -54568,7 +54580,7 @@
   {
    "id": "qr.qr:mechanism.relabel-56",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "finding would add 23\\% more comments for at most 2.7 points (1.0 counting",
+   "anchor": "comments for at most 2.7 points if the labels are right (1.0 counting only",
    "value": "1.0",
    "group": "qr:mechanism",
    "q": "lost_credit:labelled/at_most_points_same",
@@ -54583,7 +54595,7 @@
   {
    "id": "qr.qr:tab:final.relabel-57",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "of the lost credit put 55\\% of it in lens generation (nothing within five",
+   "anchor": "of the lost credit put 55\\% of it in lens generation (no posted comment and",
    "value": "55%",
    "group": "qr:tab:final",
    "q": "lost_credit:labelled/attribution_pct/lens generation",
@@ -54598,7 +54610,7 @@
   {
    "id": "qr.qr:tab:final.relabel-58",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "lines of the defect was about it), 20\\% in validator filtering (a low",
+   "anchor": "20\\% in validator filtering (only a finding low's validator dropped was",
    "value": "20%",
    "group": "qr:tab:final",
    "q": "lost_credit:labelled/attribution_pct/validator filtering",
@@ -54613,7 +54625,7 @@
   {
    "id": "qr.qr:tab:final.relabel-59",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "validator dropped the only findings about 32 uncredited defects, against 7",
+   "anchor": "arm left with no credit, 32 at low had every finding about them dropped by",
    "value": "32",
    "group": "qr:tab:final",
    "q": "lost_credit:labelled/only_killed/low",
@@ -54628,7 +54640,7 @@
   {
    "id": "qr.qr:tab:final.relabel-60",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "validator dropped the only findings about 32 uncredited defects, against 7",
+   "anchor": "the validator, against 7 in the default, whose validator runs at high. Whether a",
    "value": "7",
    "group": "qr:tab:final",
    "q": "lost_credit:labelled/only_killed/default",
@@ -54643,7 +54655,7 @@
   {
    "id": "qr.qr:tab:final.relabel-61",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "at high), and 26\\% in weaker comments that were about the defect but earned",
+   "anchor": "about it; 22 of the lost defects), and 26\\% in weaker comments that were",
    "value": "26%",
    "group": "qr:tab:final",
    "q": "lost_credit:labelled/attribution_pct/weaker comments",
@@ -54658,7 +54670,7 @@
   {
    "id": "qr.qr:tab:final.relabel-62",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "less credit. The shares are of the gross lost credit, the 109.5 credits on",
+   "anchor": "the gross lost credit, the 109.5 credits on",
    "value": "109.5",
    "group": "qr:tab:final",
    "q": "lost_credit:labelled/lost_credit",
@@ -54673,7 +54685,7 @@
   {
    "id": "qr.qr:tab:final.relabel-63",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "116 defects that the default earned and low did not. Whether a comment or a",
+   "anchor": "116 defects that the default earned and low did not. Of the defects each",
    "value": "116",
    "group": "qr:tab:final",
    "q": "lost_credit:labelled/lost_defects",
@@ -54683,6 +54695,87 @@
     "hf:defects",
     "hf:reviews",
     "hf:defect_verdicts"
+   ]
+  },
+  {
+   "id": "qr.qr:mechanism.relabel-64",
+   "file": "bench/aacr/paper/quickreview.tex",
+   "anchor": "filtering: of the 80 defects it missed outright (82.5 missed credits,",
+   "value": "80",
+   "group": "qr:mechanism",
+   "q": "{lens_credit:misses/posted_near} + {lens_credit:misses/elsewhere_in_file} + {lens_credit:misses/nothing_in_file} + {lens_credit:misses/dropped_at_site}",
+   "data": [
+    "archive:quickreview-runs-aacr-gpt6sol-study.tar.zst",
+    "archive:quickreview-runs-analysis.tar.zst"
+   ]
+  },
+  {
+   "id": "qr.qr:mechanism.relabel-65",
+   "file": "bench/aacr/paper/quickreview.tex",
+   "anchor": "the findings labelled as stating the defect; 5.3 if every dropped finding",
+   "value": "5.3",
+   "group": "qr:mechanism",
+   "q": "lost_credit:proximity/at_most_points_same_or_related",
+   "data": [
+    "archive:quickreview-runs-aacr-gpt6sol-study.tar.zst (findings-record.json)",
+    "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/lost_credit.labels.jsonl)",
+    "hf:defects",
+    "hf:reviews",
+    "hf:defect_verdicts"
+   ]
+  },
+  {
+   "id": "qr.qr:tab:final.relabel-66",
+   "file": "bench/aacr/paper/quickreview.tex",
+   "anchor": "about it; 22 of the lost defects), and 26\\% in weaker comments that were",
+   "value": "22",
+   "group": "qr:tab:final",
+   "q": "lost_credit:labelled/attribution_defects/validator filtering",
+   "data": [
+    "archive:quickreview-runs-aacr-gpt6sol-study.tar.zst (findings-record.json)",
+    "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/lost_credit.labels.jsonl)",
+    "hf:defects",
+    "hf:reviews",
+    "hf:defect_verdicts"
+   ]
+  },
+  {
+   "id": "bench.bench:tab:martiantiers.relabel-67",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "characters that a comment also has) settles the tier for 618 of the 639",
+   "value": "618",
+   "group": "bench:tab:martiantiers",
+   "q": "{martian_tiers:links/mv-r1-asposted.martian/overlap} + {martian_tiers:links/ext-default3-martian-tune20.martian/overlap} + {martian_tiers:links/ext-r4-martian-test30.martian/overlap}",
+   "data": [
+    "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
+    "archive:quickreview-runs-martian-posting-variants.tar.zst",
+    "archive:quickreview-runs-martian-tuning-rounds.tar.zst",
+    "hf:martian_goldens"
+   ]
+  },
+  {
+   "id": "bench.bench:tab:martiantiers.relabel-68",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "characters that a comment also has) settles the tier for 618 of the 639",
+   "value": "639",
+   "group": "bench:tab:martiantiers",
+   "q": "{martian_tiers:links/mv-r1-asposted.martian/overlap} + {martian_tiers:links/ext-default3-martian-tune20.martian/overlap} + {martian_tiers:links/ext-r4-martian-test30.martian/overlap} + {martian_tiers:labels}",
+   "data": [
+    "archive:quickreview-runs-analysis.tar.zst (analysis/relabel/martian_tiers.labels.jsonl, the blind tune20 classification)",
+    "archive:quickreview-runs-martian-posting-variants.tar.zst",
+    "archive:quickreview-runs-martian-tuning-rounds.tar.zst",
+    "hf:martian_goldens"
+   ]
+  },
+  {
+   "id": "bench.bench:tab:martianfinal.relabel-69",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "``false positives'' to the list over the 50 PRs,",
+   "value": "50",
+   "group": "bench:tab:martianfinal",
+   "q": "martian:goldens:prs",
+   "data": [
+    "archive:quickreview-runs-martian-posting-variants.tar.zst"
    ]
   }
  ],

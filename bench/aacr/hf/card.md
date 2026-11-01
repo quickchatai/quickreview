@@ -125,7 +125,7 @@ repository under `bench/aacr/`.
 | README "Judged side by side" (pairwise Elo) and its chart | `readme:elo` | `elo_judgments`, `elo_ratings` | `elo-pairwise`; the reviews: `ccvq-hard20-claude-max-sonnet`, `ccvq-claude-code-high`, `ccvq-quickreview-on-claude`, `martian-final`, `openmodels-glm53-full`, `openmodels-dsv41f-mix` | `recompute/elo_ratings.py --check-ratings` |
 | `docs/DIGITALOCEAN.md`: speed and cost table, the smokes, the review time limit | `do:speed`, `do:glm-smoke`, `do:gemma-smoke`, `do:timeouts` | none (archive only) | `openmodels-smokes`, `openmodels-gpt61-baselines`, `openmodels-glm53-full`, `openmodels-driver`, `aacr-frozen-build` | `recompute/do_speed.py` |
 | QuickReview paper: cost mechanism (pass counts, lens shares, validator dispositions) | `qr:mechanism` | `reviews` | `aacr-gpt6sol-study` (the transcripts' numbers-only extracts) | `recompute/passes.py`, `recompute/lens_credit.py`, `recompute/tokens.py` |
-| Benchmark paper `tab:martiantiers` (QuickReview on Martian by its own severity) | `bench:tab:martianfinal`, `bench:sol-study` | `martian_goldens` | `analysis` (`analysis/relabel/martian_tiers.labels.jsonl`, its prompt, `LABELS.json`; the blind `tune20` classification), `martian-posting-variants`, `martian-tuning-rounds` | `relabel/martian_tiers.py --compute` |
+| Benchmark paper `tab:martiantiers` (QuickReview on Martian by its own severity) | `bench:tab:martiantiers`, `bench:tab:martianfinal` | `martian_goldens` | `analysis` (`analysis/relabel/martian_tiers.labels.jsonl`, its prompt, `LABELS.json`; the blind `tune20` classification), `martian-posting-variants`, `martian-tuning-rounds` | `relabel/martian_tiers.py --compute` |
 | QuickReview paper: the validator's kills and the lost-credit attribution | `qr:mechanism`, `qr:tab:final` | `defects`, `reviews`, `defect_verdicts` | `analysis` (`analysis/relabel/lost_credit.labels.jsonl`, its prompt, `LABELS.json`), `aacr-gpt6sol-study` | `relabel/lost_credit.py --compute` |
 | QuickReview paper: tuning appendix (prompt iterations, levers, lenses) | `qr:app:tuning` | `arms`, `defect_verdicts` | `aacr-dev-iterations`, `aacr-dev-levers-presets` | `verify_claims.py` (its table checks, `recompute/claim_metrics.py`); `recompute/missed_defects.py` |
 | QuickReview paper: the max preset example | `qr:max-anecdote` | `arms` (`quickreview-max-g61`) | `aacr-g61-smokes` | `compare.py` |
@@ -575,7 +575,9 @@ branch printed the old values:
   comment or dropped finding only when the label says it is about the defect:
   lens generation's share rises, weaker comments' falls, and fewer of the
   default's misses had a dropped finding stating them. Every changed cell and
-  sentence prints what the labels give.
+  sentence prints what the labels give. The labels are one model's
+  (gpt-6.1-sol, effort xhigh), not checked by hand; the lost-credit labeller
+  was not told which findings were posted.
 
 ## Datasheet (summary)
 

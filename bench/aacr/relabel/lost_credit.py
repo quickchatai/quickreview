@@ -5,8 +5,10 @@ less compute finds less"), rebuilt from the release.
 
     uv run --no-project --with pyarrow python3 bench/aacr/relabel/lost_credit.py \\
         --archive <release>/archive --data <hf-dataset> --work <scratch> --dry-run
-    uv run --no-project --with anthropic==1.15.0 --with pyarrow python3 bench/aacr/relabel/lost_credit.py \\
+    uv run --no-project --with pyarrow python3 bench/aacr/relabel/lost_credit.py \\
         --archive <release>/archive --data <hf-dataset> --work <scratch> --run
+        # gpt-6.1-sol through judge-gpt.sh's bridge, as the shipped labels were made;
+        # --labeller opus uses the Batch API instead and needs --with anthropic==1.15.0
     uv run --no-project --with pyarrow python3 bench/aacr/relabel/lost_credit.py \\
         --archive <release>/archive --data <hf-dataset> --work <scratch> --compute [--json OUT]
 

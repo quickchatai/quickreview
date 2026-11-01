@@ -309,7 +309,8 @@ def fig_leaderboard():
 
 # 8 — where QuickReview is strong: its own severity tiers, real-defect share vs Martian's precision.
 # charts/martian-tiers.json is `relabel/martian_tiers.py --compute --json` over the release (tab:martiantiers);
-# the one unmapped candidate (no posted comment states it) counts only in "everything".
+# the one unmapped candidate (left block, mv-r1-asposted: the labeller found no posted comment that states
+# it) counts only in the "everything" real share; the right block's runs have none.
 _MT = json.load(open(os.path.join(OUT, "martian-tiers.json")))
 _L, _R = _MT["left"], _MT["right"]
 TIERS = [(t.replace("-", "–"), _L[t]["n"], _L[t]["real"], _L[t]["minor"], _L[t]["dup"], _L[t]["wrong"])
