@@ -12,9 +12,9 @@
 #     or config, so a security-only review never plans nothing.
 #   * The validator runs at sol-high whatever the preset says, and an
 #     unverified security finding survives as a question (`fold`).
-#   * Security findings post in their own budget; nothing else posts but a
-#     surviving [blocker], which posts whatever its tags (the validator kills
-#     every non-security candidate out-of-scope first).
+#   * Security findings post in their own budget; nothing else posts, a
+#     [blocker] included (the validator kills every non-security candidate
+#     out-of-scope first, and posting withholds what it missed).
 #
 # An APPROVE from this profile means "no security finding", never "this PR
 # is correct". Select it with `[review] profile = "security"`.

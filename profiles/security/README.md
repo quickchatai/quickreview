@@ -74,12 +74,12 @@ body as "did not complete"; it never reads as clean.
 
 ## What posts
 
-- Only security findings post (`[posting] scope = "security"`), with one
-  exception: a surviving `[blocker]` posts whatever its tags say. The
-  validator kills every non-security candidate `out-of-scope` first, so a
-  non-security blocker that reaches posting is one the validator missed;
-  the exemption is there so a real security blocker whose lens and kind say
-  nothing of security is never withheld.
+- Only security findings post (`[posting] scope = "security"`): every
+  other survivor, a `[blocker]` included, is withheld with the word
+  `security-scope`. The validator kills every non-security candidate
+  `out-of-scope` first, and posting withholds whatever it missed. A real
+  security defect whose lens says nothing of security is recorded with a
+  `security` kind, so it posts.
 - Security findings have their own budget of eight comments
   (`security_max = 8`), apart from any comment cap.
 - A security finding the validator cannot settle by reading survives as a

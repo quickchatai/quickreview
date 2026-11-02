@@ -806,7 +806,10 @@ of a `security`, `exploit-chain` or `partial-chain` kind,
   `questions = "off"` and `"blocking"`, so a security question never loses
   its slot to a cap meant for the rest.
 - **`scope = "security"`** withholds every non-security finding with the
-  word `security-scope`, a blocker excepted. `[security] only = true` sets
+  word `security-scope`, a blocker included: out of scope is not over
+  budget, and a security-only review posts nothing else. A security defect
+  whose lens says nothing of security is recorded with a `security` kind so
+  it posts. `[security] only = true` sets
   it unless the profile chain sets a scope.
 
 Under any policy or none, **a partial exploit chain never posts**: a chain

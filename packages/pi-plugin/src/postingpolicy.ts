@@ -36,11 +36,14 @@
 //      (src/bench/benchposting.ts), so a session that over-posts is still cut.
 //      What it cuts is recorded `withheld` with a word, never dropped silently.
 //
-// Three invariants no setting moves: a `[blocker]` is NEVER withheld (the
-// blocker bar does not move — a budget is filled around the blockers, never
-// out of them; not even `scope = "security"` withholds one), nothing a policy
-// withholds is deleted from the findings record, and a partial exploit chain
-// (secevidence.ts `isPartialChain`) is never posted from the findings record,
+// Three invariants no setting moves: a `[blocker]` is NEVER withheld by a
+// budget or a tag rule (the blocker bar does not move — a budget is filled
+// around the blockers, never out of them; the one rule that withholds a
+// blocker is `scope = "security"`, which withholds a NON-security one: out of
+// scope is not over budget, and a security-only review posts nothing
+// else), nothing a policy withholds is deleted from the findings record, and
+// a partial exploit chain (secevidence.ts `isPartialChain`) is never posted
+// from the findings record,
 // under any policy or none — it is a doubt the session should not have
 // posted, so every render of the record and the bench's policing of a
 // hand-written case (src/bench/benchposting.ts `benchPolicyToEnforce`)
@@ -50,7 +53,7 @@
 // fact (findingsrecord.ts `security_outcome_mismatch`).
 //
 // The security keys. `scope = "security"` withholds every non-security
-// finding (`security-scope`). `security_max = N` (> 0) gives security
+// finding (`security-scope`), a blocker included. `security_max = N` (> 0) gives security
 // findings (severity.ts `isSecurityFinding`) a channel of their own: they
 // skip the questions rules (`questions-off`, `question-not-blocking`), fill
 // up to N slots of their own — counted apart from `max_comments`, never
@@ -305,7 +308,7 @@ function policyLines(p: PostingPolicy, who: "session" | "validator"): string[] {
     );
   if (postingScope(p) === "security")
     L.push(
-      `- **Security findings only.** Only a security finding posts — one raised by a \`pass-sec-*\` lens or \`pass-security\`, or whose \`kind:\` begins \`security\` or \`exploit-chain\`. Every other survivor is recorded \`withheld\` (word \`security-scope\`), except a \`[blocker]\`, which posts whatever its lens.`,
+      `- **Security findings only.** Only a security finding posts — one raised by a \`pass-sec-*\` lens or \`pass-security\`, or whose \`kind:\` begins \`security\` or \`exploit-chain\`. Every other survivor is recorded \`withheld\` (word \`security-scope\`), a \`[blocker]\` included: this review posts nothing that is not a security finding. A survivor that is a security defect although its lens says nothing of security is recorded with a \`kind:\` of \`security\` (or \`security:<class>\`), so it posts.`,
     );
   const securityMax = postingSecurityMax(p);
   if (securityMax > 0)
@@ -364,7 +367,9 @@ export function postingPolicyAddenda(p: PostingPolicy | undefined): PassAddendum
       .map((w) => `\`${w}\``)
       .join(
         ", ",
-      )}): the session records each one in the findings record as \`withheld\` — never posted, never deleted. Withholding is not a kill: do not move a withheld finding's severity or confidence, and never withhold a \`[blocker]\`.`,
+      )}): the session records each one in the findings record as \`withheld\` — never posted, never deleted. Withholding is not a kill: do not move a withheld finding's severity or confidence, and never withhold a \`[blocker]\`${
+      postingScope(p) === "security" ? " but a non-security one (word `security-scope`)" : ""
+    }.`,
     ...(p.comment_style === "concise"
       ? [
           "",
@@ -426,10 +431,11 @@ export interface Selection<T> {
  * post. Deterministic and order-preserving for what it keeps:
  *   0. a partial exploit chain is withheld (`partial-chain`) under ANY policy,
  *      the default included — the one rule that runs with no policy;
- *   1. scope and tag rules — `scope = security` (`security-scope`, never a
- *      blocker), `nits = off`, `questions = off | blocking` (a question of
- *      unknown severity is kept: it cannot be shown non-blocking; a security
- *      item is exempt from both question rules while `security_max > 0`);
+ *   1. scope and tag rules — `scope = security` (`security-scope`, a
+ *      non-security blocker included), `nits = off`,
+ *      `questions = off | blocking` (a question of unknown severity is kept:
+ *      it cannot be shown non-blocking; a security item is exempt from both
+ *      question rules while `security_max > 0`);
  *   2. repeat sites — of the items sharing a key, only the strongest (class,
  *      then severity, then the first posted) is kept; the rest are withheld;
  *   3. the budget — blockers always kept; the remaining slots go to the rest
@@ -440,8 +446,9 @@ export interface Selection<T> {
  *      under `repeat_sites = true`) post on one slot. With `security_max > 0`
  *      the security items are budgeted the same way in a channel of their
  *      own, `security_max` slots, and never count toward `max_comments`.
- * A blocker is never withheld by any rule but a repeat site of itself — or
- * being a partial chain, which is a doubt and not a survivor at all.
+ * A blocker is never withheld by any rule but a repeat site of itself, being
+ * out of a security scope — or being a partial chain, which is a doubt and
+ * not a survivor at all.
  */
 export function selectPosted<T>(
   items: readonly T[],
@@ -461,7 +468,7 @@ export function selectPosted<T>(
   const pass1: typeof viewed = [];
   for (const e of viewed) {
     const { item, v } = e;
-    if (postingScope(p) === "security" && v.security !== true && v.cls !== "blocker") {
+    if (postingScope(p) === "security" && v.security !== true) {
       withheld.push({ item, word: "security-scope" });
       continue;
     }

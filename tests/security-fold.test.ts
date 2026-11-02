@@ -351,32 +351,60 @@ describe("the posting policy's security rules", () => {
     ).toEqual([]);
   });
 
-  it("scope = security withholds every non-security finding but a blocker", () => {
+  // Owner rule: the security profile posts nothing that is not security.
+  // Out of scope is not over budget, so a non-security blocker is withheld
+  // too; a security blocker posts.
+  // MUTATION: restore `&& v.cls !== "blocker"` in selectPosted's scope check
+  // (packages/pi-plugin/src/postingpolicy.ts) — `b` is kept, and this fails.
+  it("scope = security withholds every non-security finding, a blocker included", () => {
     const out = select(
       [
         item("q"),
         item("n", { cls: "nit", severity: "nit" }),
         item("b", { cls: "blocker", severity: "P1" }),
+        sec("sb", { cls: "blocker", severity: "P1" }),
         sec("s"),
       ],
       policy({ scope: "security" }),
     );
     expect(out).toEqual({
-      kept: ["b", "s"],
-      withheld: { q: "security-scope", n: "security-scope" },
+      kept: ["sb", "s"],
+      withheld: { q: "security-scope", n: "security-scope", b: "security-scope" },
     });
+    // Without the scope the same blocker posts whatever the budget.
+    const unscoped = select(
+      [item("q"), item("b", { cls: "blocker", severity: "P1" })],
+      policy({ max_comments: 1 }),
+    );
+    expect(unscoped.kept).toContain("b");
   });
 
-  // The profile's own words state the blocker exemption the code makes, so
-  // "only security posts" is never read as stricter than it is.
-  // MUTATION: restore "nothing else posts." alone in profile.toml — this fails.
-  it("the security profile's README and profile.toml state the blocker exemption", () => {
+  // The words the session and the validator read say what the code does: no
+  // blocker exemption, so the validator is never told a non-security blocker
+  // posts while the profile's addendum tells it to kill one.
+  // MUTATION: restore "except a `[blocker]`, which posts whatever its lens"
+  // in policyLines — this fails.
+  it("the scope's prompt text grants a non-security blocker no exemption", () => {
+    const p = policy({ scope: "security" });
+    const [addendum] = postingPolicyAddenda(p);
+    for (const text of [renderPostingPolicyNote(p), addendum!.text]) {
+      expect(text).not.toMatch(/except a `\[blocker\]`/);
+      expect(text).not.toContain("whatever its lens");
+      expect(text).toContain("a `[blocker]` included");
+    }
+    expect(addendum!.text).toContain("never withhold a `[blocker]` but a non-security one");
+  });
+
+  // The profile's own words state what the code does.
+  // MUTATION: restore "nothing else posts but a surviving [blocker]" in
+  // profile.toml — this fails.
+  it("the security profile's README and profile.toml state that no blocker is exempt", () => {
     const readme = readFileSync(join(ROOT, "profiles", "security", "README.md"), "utf8");
-    expect(readme).toMatch(
-      /Only security findings post[^\n]*\n[^\n]*exception: a surviving\s+`\[blocker\]` posts/,
-    );
+    expect(readme).toMatch(/Only security findings post[^\n]*\n[^\n]*a `\[blocker\]` included/);
+    expect(readme).not.toMatch(/exception: a surviving\s+`\[blocker\]`/);
     const toml = readFileSync(join(ROOT, "profiles", "security", "profile.toml"), "utf8");
-    expect(toml).toMatch(/nothing else posts but a\n#\s+surviving \[blocker\]/);
+    expect(toml).toMatch(/nothing else posts, a\n#\s+\[blocker\] included/);
+    expect(toml).not.toMatch(/but a\n#\s+surviving \[blocker\]/);
   });
 
   // MUTATION: let security items count toward max_comments (budget them with
