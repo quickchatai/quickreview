@@ -550,6 +550,11 @@ export interface ScanPreview {
    * `start` with ITS key starts stage 0, and the next preview is stage 1.
    * Absent: nothing to draft first. */
   threat_model_stage?: ThreatModelPreview;
+  /** Why the repository's `.qcr/threat-model.md`, listed in the tree, could
+   * not be read (`too-big`, `binary`, `empty`, …): the scan reads no model
+   * in its place but the profile's, and never drafts over it under `auto`.
+   * Absent: none listed, or it was read. */
+  threat_model_problem?: string;
 }
 
 /** What `proposeThreatModel` answers: whether stage 0 would run and why, what
@@ -1093,6 +1098,7 @@ export class ScanRunner {
       ...(depth === "deep" ? { depth } : {}),
     };
     const threatModel = this.threatModelFor(tree, settings);
+    const modelProblem = threatModel?.source === "repo" ? null : this.repoModelProblem(tree);
     const preview: ScanPreview = {
       key: planKey({
         mode,
@@ -1133,6 +1139,7 @@ export class ScanRunner {
       ...(reconcileOnly !== null ? { reconcile_only: reconcileOnly } : {}),
       blockers,
       ...modelRef(threatModel),
+      ...(modelProblem !== null ? { threat_model_problem: modelProblem } : {}),
     };
     // Stage 0 first, when it is due and this scan would read anything.
     const stage0 =
@@ -1188,6 +1195,22 @@ export class ScanRunner {
   /** The repository's or the profile's threat model — the repository's
    * `.qcr/threat-model.md` read from the tree at the scan sha winning — or
    * null. Never the draft: that is a model no person has read. */
+  /** Why the repository's model is listed in the tree but cannot be read —
+   * the tree's own reason (`too-big`, `binary`), `empty`, or the read's
+   * error — or null: not listed, or readable. Honest-unknown: a model that
+   * is there is never reported missing. */
+  private repoModelProblem(tree: ScanTree): string | null {
+    if (!tree.files.some((f) => f.path === REPO_THREAT_MODEL_PATH)) return null;
+    let text: string | null;
+    try {
+      text = tree.read(REPO_THREAT_MODEL_PATH);
+    } catch (err) {
+      return `unreadable: ${clean(err)}`;
+    }
+    if (text === null) return tree.whyUnreadable?.(REPO_THREAT_MODEL_PATH) ?? "unreadable";
+    return text.trim() === "" ? "empty" : null;
+  }
+
   private ratifiedThreatModel(tree: ScanTree, settings: ScanSettings): ThreatModel | null {
     return resolveThreatModel({
       readRepo: () => tree.read(REPO_THREAT_MODEL_PATH),
@@ -1202,6 +1225,15 @@ export class ScanRunner {
   private threatModelFor(tree: ScanTree, settings: ScanSettings): ThreatModel | null {
     const ratified = this.ratifiedThreatModel(tree, settings);
     if (ratified !== null || settings.scan.threat_model === "off") return ratified;
+    // The repository HAS a model the tree cannot hand over: the draft never
+    // stands in for the one a person wrote.
+    const problem = this.repoModelProblem(tree);
+    if (problem !== null) {
+      this.ports.log?.(
+        `setup: the repository's ${REPO_THREAT_MODEL_PATH} is present but cannot be read (${problem}) — the scan reads no threat model`,
+      );
+      return null;
+    }
     let text: string | null;
     try {
       text = this.ports.state.read(THREAT_MODEL_DRAFT_FILE);
@@ -2118,6 +2150,7 @@ export class ScanRunner {
     const { sha, tree, settings } = pre;
     const cfg = settings.scan;
     const existing = this.ratifiedThreatModel(tree, settings);
+    const problem = existing?.source === "repo" ? null : this.repoModelProblem(tree);
     const blockers: string[] = [];
     let why: string;
     if (cfg.threat_model === "off") {
@@ -2126,10 +2159,14 @@ export class ScanRunner {
     } else if (cfg.threat_model === "auto" && existing !== null) {
       why = `[scan] threat_model is auto and ${existing.source === "repo" ? `the repository's ${REPO_THREAT_MODEL_PATH}` : "the install profile's threat-model.md"} exists — the scan reads it; set threat_model = "always" to draft a revision`;
       blockers.push(why);
+    } else if (cfg.threat_model === "auto" && problem !== null) {
+      // Present but unreadable is not absent: never drafted over silently.
+      why = `the repository's ${REPO_THREAT_MODEL_PATH} is present but cannot be read (${problem}) — fix it, or set threat_model = "always" to draft one anyway`;
+      blockers.push(why);
     } else {
       why =
         cfg.threat_model === "always"
-          ? `[scan] threat_model is always: a draft is written every time it is asked for${existing !== null ? ", revising the existing model" : ""}`
+          ? `[scan] threat_model is always: a draft is written every time it is asked for${existing !== null ? ", revising the existing model" : ""}${problem !== null ? ` (the repository's ${REPO_THREAT_MODEL_PATH} is present but cannot be read: ${problem})` : ""}`
           : `[scan] threat_model is auto and neither the repository's ${REPO_THREAT_MODEL_PATH} nor the install profile's threat-model.md exists`;
     }
     // The routes a person would start a threat model from: read from the

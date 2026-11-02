@@ -1150,6 +1150,37 @@ describe("stage 0 is part of the scan: a preview offers it first, a stage-1 star
     expect(after.preview.threat_model?.source).toBe("repo");
   });
 
+  // MUTATION: drop the `problem !== null` blocker from planThreatModelFrom —
+  // this fails (stage 0 becomes due and says the model does not exist).
+  it("auto, the repository's model present but unreadable: a blocker names the reason, no stage 0, no draft read in its place", async () => {
+    const files: Record<string, string> = { ...FILES, ".qcr/threat-model.md": "x" };
+    const tree = (): ScanTree => ({
+      ...mapTree(files),
+      read: (q) => (q === ".qcr/threat-model.md" ? null : (files[q] ?? null)),
+      whyUnreadable: (q) => (q === ".qcr/threat-model.md" ? "too-big" : null),
+    });
+    const r = rig({ scan: AUTO, tree });
+    // A stale draft from before the repository had a model is never read.
+    r.state.write(THREAT_MODEL_DRAFT_FILE, `${THREAT_MODEL}`);
+    const s = new ScanRunner(r.ports);
+    const p = await s.preview();
+    if (!p.ok) throw new Error(p.errors.join("; "));
+    expect(p.preview.threat_model_stage).toBeUndefined();
+    expect(p.preview.threat_model).toBeUndefined();
+    expect(p.preview.threat_model_problem).toBe("too-big");
+    const text = renderPreview(p.preview);
+    expect(text).toContain(
+      "The repository's .qcr/threat-model.md is present but cannot be read (too-big)",
+    );
+    expect(text).not.toContain("neither the repository's");
+    const tm = await s.proposeThreatModel();
+    if (!tm.ok) throw new Error(tm.errors.join("; "));
+    expect(tm.preview.blockers).toEqual([
+      'the repository\'s .qcr/threat-model.md is present but cannot be read (too-big) — fix it, or set threat_model = "always" to draft one anyway',
+    ]);
+    expect(r.logs.join("\n")).toContain("present but cannot be read (too-big)");
+  });
+
   it("a stage 0 that wrote no draft leaves it due: the scan still does not start without it", async () => {
     const r = rig({
       scan: AUTO,

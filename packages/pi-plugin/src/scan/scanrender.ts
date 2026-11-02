@@ -188,6 +188,10 @@ export function renderPreview(p: ScanPreview, verbs: ScanVerbs = TOOL_VERBS): st
     );
   }
   if (p.threat_model) out.push(threatModelLine(p.threat_model));
+  if (p.threat_model_problem)
+    out.push(
+      `! The repository's ${REPO_THREAT_MODEL_PATH} is present but cannot be read (${p.threat_model_problem}): this scan does not read it${p.threat_model ? "" : ", nor any draft in its place"} — fix the file to have it read.`,
+    );
   for (const b of p.blockers) out.push(`✗ ${b}`);
   const stage0 = p.threat_model_stage;
   if (p.blockers.length === 0 && stage0 !== undefined) {
