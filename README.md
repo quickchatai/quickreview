@@ -376,8 +376,12 @@ Already using pi? Install just the plugin:
 
 - **Repo profiles** ([docs/profiles.md](docs/profiles.md)): house-rule
   addenda, lens-selection heuristics and per-lens switches. Shipped:
-  `default`, `example-django`, `minimal`, `fast` and `snappy`; start from
+  `default`, `example-django`, `minimal`, `fast`, `snappy` and `security`
+  (a security-only review by the fourteen `pass-sec-*` lenses); start from
   `extends = "default"` and write only what differs.
+- **Security review on demand:** the `qcr:security` label or
+  `@<bot> security` from a collaborator, or `qcr review-now <pr> --security`,
+  adds the security lenses to a PR's next round.
 - **Presets:** `[review] preset` is `default`, `max` (every model at its
   ceiling) or `low` (about half the cost and time, lower recall).
 - **Cost:** the daemon is one small container; the model spend is per round.

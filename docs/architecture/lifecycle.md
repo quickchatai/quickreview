@@ -279,6 +279,22 @@ stronger lens's finding vanish. A profile may switch the validator off
 (`[lenses.pass-validate] enabled = false`). Lenses not planned are offered as
 `addable_lenses`.
 
+The **security family** (the fourteen `pass-sec-*` lenses) joins the plan
+before the profile's `enabled` and `skip_lenses` filters: the lenses its
+content triggers select (`[security] triggers`,
+`packages/pi-plugin/src/securitytriggers.ts`), the whole family while a
+security request stands (`pr_review_requests`, `src/securityrequest.ts`),
+and every lens a profile plans `always` (dropped on a docs-only change).
+Dispatch reads the threat model at the base commit and the security facts
+through read-only git (bounded; past the bound the round plans from the diff
+alone and logs `security_facts_degraded`) and hands both to the plan and the
+family's task files. A family row runs at the risk tier and is not required,
+except the exploit chain's `delta` row; a failed one is named in the posted
+review body as a security pass that did not complete
+(`security_pass_incomplete`). The chain's `compose` row is planned into
+`post_plan`, written to `tasks-post/`, and launched by the session after the
+discovery wave, never with it.
+
 The plan's rows are listed in **launch order, slowest first** (`slowestFirst`).
 The session launches a turn's rows in table order and the lens runner starts
 them under a process-wide cap (`[engine] lens_max_concurrency`) in that order,

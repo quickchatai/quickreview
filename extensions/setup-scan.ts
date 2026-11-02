@@ -212,10 +212,10 @@ export function scanToolDefinitions(
     name: "scan_findings",
     label: "Scan findings",
     description:
-      "The stored scan findings, grouped by the skeptic's validity tier — confirmed, then likely, then doubtful, then unknown (never " +
+      "The stored scan findings, grouped by the skeptic's validity tier — confirmed, then likely, then needs-review (a security finding the skeptic could not settle, its proof gap kept), then doubtful, then unknown (never " +
       "judged) — most severe first inside each, each with its fingerprint. A new finding marked LOOKS LIKE DISMISSED resembles one the " +
       "operator dismissed (named, with the reason) and sorts below its tier: it is NOT dismissed — put the resemblance to him, never " +
-      "dismiss it on his behalf. Filter by validity (confirmed/likely/doubtful/unknown), state " +
+      "dismiss it on his behalf. Filter by validity (confirmed/likely/needs-review/doubtful/unknown), state " +
       "(new/promoted/dismissed/fixed), lens, unit, severity, or doubted (true: only those marked 'may not be valid').",
     promptSnippet: "List stored scan findings",
     parameters: {
@@ -226,7 +226,10 @@ export function scanToolDefinitions(
         unit: { type: "string" },
         severity: { type: "string" },
         doubted: { type: "boolean" },
-        validity: { type: "string", description: "confirmed | likely | doubtful | unknown" },
+        validity: {
+          type: "string",
+          description: "confirmed | likely | needs-review | doubtful | unknown",
+        },
         limit: { type: "number" },
       },
     },

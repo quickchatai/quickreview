@@ -106,10 +106,12 @@ A scan under this profile is a deep security scan:
   variant;
 - stage 1 reports security defects only and points only security lenses
   (the `scan-stage1-security` addendum);
-- when neither home has a threat model, the scan drafts one first
-  (`[scan] threat_model = "auto"`). The draft is labelled DRAFT wherever it
-  is shown, and nothing reads it as a person's until you copy it into one
-  of the two homes.
+- the scan reads the threat model from the scanned tree's
+  `.qcr/threat-model.md`, else this profile chain's copy. A drafted one
+  (stage 0, `[scan] threat_model = "auto"`) is read only when neither home
+  has one, labelled DRAFT wherever it is shown; no `qcr scan` verb or
+  companion tool starts stage 0 yet, so for now write the threat model
+  yourself, from the example above.
 
 ## Cost
 
@@ -132,6 +134,6 @@ security review can be asked for on any PR, on top of the default plan:
 - a `@<bot> security` comment from an owner, member or collaborator
   (`[security] command`);
 - `qcr review-now <pr> --security` from the operator;
-- `/review --security` in pi.
+- `/qcr-review --security` in pi.
 
 A request plans the whole family, but never a lens a profile switched off.

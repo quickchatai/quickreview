@@ -1061,7 +1061,8 @@ lenses = []                    # the lenses a scan may run at all, each a deep l
 kinds = []                     # the finding kinds a scan keeps, e.g. ["security"] (a prefix keeps
                                # "security:injection" too); [] = every kind
 threat_model = "auto"          # draft a threat model first: "auto" (only when neither the repo's
-                               # .qcr/threat-model.md nor the profile's threat-model.md exists) | "always" | "off"
+                               # .qcr/threat-model.md nor the profile's threat-model.md exists) | "always" | "off";
+                               # "off" also never reads a draft (no verb starts the drafting stage yet)
 # Where `qcr scan start` drives a run (not a profile key). "docker": in a throwaway
 # container from the companion image, mounting only the reviewed repo (read-only),
 # the state home, the companion's pi login (read-only) and this config (read-only)
