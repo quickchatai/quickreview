@@ -160,7 +160,12 @@ describe("the round templates", () => {
       expect(text, t).toContain("`security_outcome` and `hop_labels` are optional");
       // The record example stays valid JSON and carries the security-demoted
       // question with its tag.
-      const example = /```json\n(\{\n {2}"pr": \{\{n\}\}[\s\S]*?\n\})\n```/.exec(text)?.[1];
+      // The findings record is the example that carries comments_posted;
+      // the verdict example before it is not JSON (`"APPROVE" | ...`).
+      const example =
+        /```json\n(\{\n {2}"pr": \{\{n\}\},\n {2}"round_no": \{\{round_no\}\},\n {2}"head_sha": "\{\{head_sha\}\}",\n {2}"comments_posted"[\s\S]*?\n\})\n```/.exec(
+          text,
+        )?.[1];
       expect(example, t).toBeDefined();
       const parsed = JSON.parse(
         example!.replace("{{n}}", "1").replace("{{round_no}}", "1").replace("{{head_sha}}", "x"),

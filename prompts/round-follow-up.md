@@ -976,9 +976,10 @@ alone: a bare `below-bar` teaches nobody anything.
   `confidence` or `reachability`, the one that moved.
 - `posted_as` on a `posted` entry **and on a `downgraded` entry that went out**
   is the tag it actually went out under, and it comes from the closed grammar:
-  `blocker`, `question`, `nit`, `check this`, `ask your human` or `deferred`.
-  Anything else is a finding that escaped its own machinery, and the daemon
-  counts it. A `downgraded` entry with no `posted_as` is counted as never posted.
+  `blocker`, `question`, `nit`, `check this`,
+  `ask your human` or `deferred`. Anything else is a finding that escaped its
+  own machinery, and the daemon counts it. A `downgraded` entry with no
+  `posted_as` is counted as never posted.
 - `security_outcome` and `hop_labels` are optional, on a security candidate
   only — copy them from the validator's answer when it gives them.
   `security_outcome` is `confirmed`, `question`, `partial-chain`, `refuted` or
