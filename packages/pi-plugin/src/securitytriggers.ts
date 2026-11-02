@@ -43,7 +43,7 @@ import {
 } from "./heuristics.js";
 import { CHAIN_PASS, SECURITY_FAMILY, type ChainStrategy } from "./passes.js";
 import type { SecurityTriggerMode } from "./reviewconfig.js";
-import type { SecurityFact } from "./secfacts.js";
+import { importLineMask, type SecurityFact } from "./secfacts.js";
 import { threatModelHits, type ThreatModel } from "./threatmodel.js";
 
 export interface SecurityTrigger {
@@ -81,9 +81,10 @@ export interface SecurityTrigger {
 /** A guard: an authentication or authorisation check, or a verification,
  * whose removal leaves something unguarded. The same markers as the
  * `removed-guard` security fact (secfacts.ts), which a planner with facts
- * passes in as well. */
+ * passes in as well. `verify=` is a keyword argument, never a variable
+ * named verify. The probe never reads an import line (`importLineMask`). */
 const GUARD_RE =
-  /\blogin_required\b|\bpermission_required\b|\bpermission_classes\b|\bauthentication_classes\b|\bIs(?:Authenticated|AdminUser)\w*|@UseGuards\b|@(?:PreAuthorize|PostAuthorize|Secured|RolesAllowed)\b|\[Authorize\b|\b(?:load_and_)?authorize(?:_resource\b|!|\()|\b[rR]equire_?(?:[aA]uth\w*|[lL]ogin|[aA]dmin|[rR]ole|[pP]ermission)s?\b|\b(?:before_action|before_filter|prepend_before_action)\s+:(?:authenticate\w*|authorize\w*|require_login|ensure_\w*(?:auth|admin|login)\w*)|\b(?:auth|jwt|fresh_jwt|token|admin|staff_member)_required\b|\brequires_auth\w*|\b(?:ensure|is)Authenticated\b|\bpassport\.authenticate\b|\b\w*[Aa]uth\w*[Mm]iddleware\b|\.(?:authenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority)\(|\bverify\s*=(?!=)(?!\s*(?:False|false|0)\b)\s*\S+/;
+  /\blogin_required\b|\bpermission_required\b|\bpermission_classes\b|\bauthentication_classes\b|\bIs(?:Authenticated|AdminUser)\w*|@UseGuards\b|@(?:PreAuthorize|PostAuthorize|Secured|RolesAllowed)\b|\[Authorize\b|\b(?:load_and_)?authorize(?:_resource\b|!|\()|\b[rR]equire_?(?:[aA]uth\w*|[lL]ogin|[aA]dmin|[rR]ole|[pP]ermission)s?\b|\b(?:before_action|before_filter|prepend_before_action)\s+:(?:authenticate\w*|authorize\w*|require_login|ensure_\w*(?:auth|admin|login)\w*)|\b(?:auth|jwt|fresh_jwt|token|admin|staff_member)_required\b|\brequires_auth\w*|\b(?:ensure|is)Authenticated\b|\bpassport\.authenticate\b|\b\w*[Aa]uth\w*[Mm]iddleware\b|\.(?:authenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority)\(|(?:[(,]\s*verify\s*=|^\s*verify=)(?!=)(?!\s*(?:False|false|0)\b)\s*\S+/;
 
 /** A SQL statement inside a string: the keyword in capitals and the shape
  * after it, so prose that says "select … from" is not SQL. */
@@ -526,11 +527,18 @@ function contentHit(files: readonly PrFileEntry[], t: SecurityTrigger): Hit | nu
       if (m) return hit(file, text, m.index);
       continue;
     }
-    // removed: line by line, and only what the file does not add back
+    // removed: line by line, and only what the file does not add back.
+    // Import lines count on neither side: dropping an unused import of a
+    // guard removes no guard, and an import added elsewhere puts none back.
+    const lines = text.split("\n");
+    const imports = importLineMask(lines);
+    const otherLines = other.split("\n");
+    const otherImports = importLineMask(otherLines);
+    const back = otherLines.filter((_, i) => !otherImports[i]).join("\n");
     let offset = 0;
-    for (const line of text.split("\n")) {
-      const m = t.re.exec(line);
-      if (m && !other.includes(m[0].trim())) return hit(file, text, offset);
+    for (const [i, line] of lines.entries()) {
+      const m = imports[i] ? null : t.re.exec(line);
+      if (m && !back.includes(m[0].trim())) return hit(file, text, offset);
       offset += line.length + 1;
     }
   }

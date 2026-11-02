@@ -275,6 +275,50 @@ function escapeRe(s: string): string {
 // ---------------------------------------------------------------------------
 // removed-guard
 
+/** A line that only imports a name: Python `import`/`from … import`, an ES
+ * `import`, a CommonJS `require`, PHP/Rust `use`, Ruby `require`, C#
+ * `using`. Dropping an unused import of a guard is a cleanup, never a
+ * removed guard; the guard's removal is its decorator, middleware or call
+ * line. */
+const IMPORT_LINE_RE =
+  /^\s*(?:import\b|from\s+[\w.]+\s+import\b|(?:const|let|var)\s+(?:\{[^}]*\}|[\w$]+)\s*=\s*require\s*\(|use\s+[\w\\:]+|require(?:_relative)?\s*\(?\s*["']|using\s+[\w.]+\s*;)/;
+/** A member line inside a multi-line import (`login_required,`, `)`,
+ * `} from './auth';`). */
+const IMPORT_MEMBER_RE =
+  /^\s*(?:[\w.$]+(?:\s+as\s+[\w$]+)?\s*,?\s*)*(?:[)}]\s*(?:from\s+["'][^"'\n]*["']\s*)?;?)?\s*$/;
+
+/**
+ * Which of `lines` (one side of a diff, in order) belong to an import
+ * statement — the opener and, for a bracketed multi-line import, each
+ * member line after it up to the closing bracket. A line that is not an
+ * import member ends the statement and is judged on its own, so a removed
+ * import opener never hides a removed decorator further down.
+ */
+export function importLineMask(lines: readonly string[]): boolean[] {
+  const out: boolean[] = [];
+  let close: ")" | "}" | null = null;
+  for (const line of lines) {
+    if (close !== null && IMPORT_MEMBER_RE.test(line)) {
+      out.push(true);
+      if (line.includes(close)) close = null;
+      continue;
+    }
+    close = null;
+    const isImport = IMPORT_LINE_RE.test(line);
+    out.push(isImport);
+    if (!isImport) continue;
+    if (line.lastIndexOf("(") > line.lastIndexOf(")")) close = ")";
+    else if (line.lastIndexOf("{") > line.lastIndexOf("}")) close = "}";
+  }
+  return out;
+}
+
+/** `lines` without the ones `importLineMask` marks. */
+function withoutImports<T>(lines: readonly T[], text: (l: T) => string): T[] {
+  const mask = importLineMask(lines.map(text));
+  return lines.filter((_, i) => !mask[i]);
+}
+
 /** Guard markers: an authentication or authorisation check, or certificate
  * verification, whose removal leaves something unguarded. */
 const GUARD_MARKERS: readonly { name: string; re: RegExp }[] = [
@@ -301,7 +345,12 @@ const GUARD_MARKERS: readonly { name: string; re: RegExp }[] = [
     re: /\.(?:authenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority)\(/,
   },
   { name: "has_permission", re: /\b(?:check|has|requires?)_?[Pp]erm(?:ission)?s?\b/ },
-  { name: "verify=", re: /\bverify\s*=(?!=)(?!\s*(?:False|false|0)\b)/ },
+  // A keyword argument (`get(url, verify=ca)`, or `verify=ca,` on a line of
+  // its own), never a variable named verify (`const verify = createVerify()`).
+  {
+    name: "verify=",
+    re: /(?:[(,]\s*verify\s*=|^\s*verify=)(?!=)(?!\s*(?:False|false|0)\b)/,
+  },
 ];
 
 function removedGuard(files: readonly PrFileEntry[]): SecurityFact[] {
@@ -310,10 +359,19 @@ function removedGuard(files: readonly PrFileEntry[]): SecurityFact[] {
   for (const { file, hunks } of patched) {
     if (file.status === "removed") continue;
     const lines = hunks.flatMap((h) => h.lines).filter((l) => !COMMENT_RE.test(l.text));
+    // Import lines count on neither side: a dropped unused import is not a
+    // removed guard, and a re-ordered one does not put a removed one back.
+    const side = (kind: "+" | "-") =>
+      withoutImports(
+        lines.filter((l) => l.kind === kind),
+        (l) => l.text,
+      );
+    const minus = side("-");
+    const plus = side("+");
     for (const marker of GUARD_MARKERS) {
-      const removed = lines.filter((l) => l.kind === "-" && marker.re.test(l.text));
+      const removed = minus.filter((l) => marker.re.test(l.text));
       if (removed.length === 0) continue;
-      const added = lines.filter((l) => l.kind === "+" && marker.re.test(l.text)).length;
+      const added = plus.filter((l) => marker.re.test(l.text)).length;
       if (removed.length <= added) continue;
       const first = removed[0]!;
       found.push(

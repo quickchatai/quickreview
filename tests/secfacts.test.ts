@@ -85,6 +85,33 @@ describe("removed-guard", () => {
       expect(statuses(computeSecurityFacts([f], null), "removed-guard")).toEqual(["clear"]);
   });
 
+  /**
+   * MUTATION: count import lines in removedGuard (drop `withoutImports`) —
+   * this fails; restore the bare `\bverify\s*=` marker — the createVerify
+   * case fails.
+   */
+  it("is clear when only an unused import of a guard, or a variable named verify, is removed", () => {
+    for (const minus of [
+      "-from django.contrib.auth.decorators import login_required",
+      "-import { requireAuth } from './auth';",
+      "-const verify = createVerify('sha256');",
+    ]) {
+      const f = file("app/views.py", `@@ -1,2 +1,1 @@\n${minus}\n def export(request):`);
+      expect(statuses(computeSecurityFacts([f], null), "removed-guard"), minus).toEqual(["clear"]);
+    }
+    const both = file(
+      "app/views.py",
+      [
+        "@@ -1,4 +1,2 @@",
+        "-from django.contrib.auth.decorators import login_required",
+        "+from django.contrib.auth.decorators import login_required  # noqa",
+        "-@login_required",
+        " def export(request):",
+      ].join("\n"),
+    );
+    expect(statuses(computeSecurityFacts([both], null), "removed-guard")).toEqual(["found"]);
+  });
+
   it("is unknown for a changed file that came without a patch", () => {
     const facts = only(
       computeSecurityFacts([file("app/huge.py", undefined)], null),

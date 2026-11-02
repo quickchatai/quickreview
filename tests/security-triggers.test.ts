@@ -396,6 +396,50 @@ describe("a removed guard", () => {
     expect(lenses([added])).toEqual([]);
   });
 
+  /**
+   * MUTATION: drop the import skip in contentHit's removed-line loop (read
+   * `t.re.exec(line)` for every line) — this fails; restore the bare
+   * `\bverify\s*=` arm in GUARD_RE — the `createVerify` case fails.
+   */
+  it("an unused import dropped, or a variable named verify, is no guard removed", () => {
+    for (const minus of [
+      ["from django.contrib.auth.decorators import login_required"],
+      ["import { requireAuth } from './auth';"],
+      ["const { requireAuth } = require('./auth');"],
+      [
+        "from django.contrib.auth.decorators import (",
+        "    login_required,",
+        "    permission_required,",
+        ")",
+      ],
+      ["import {", "  requireAuth,", "  requireAdmin,", "} from './auth';"],
+      ["use App\\Http\\Middleware\\RequireAuth;"],
+      ["const verify = createVerify('sha256');"],
+      ["verify = make_verifier(key)"],
+    ]) {
+      const f = hunk("src/app.ts", minus, ["const ok = true;"]);
+      expect(lenses([f]), minus.join(" / ")).toEqual([]);
+    }
+  });
+
+  it("a guard decorator removed still plans the pair, its import gone with it or not", () => {
+    const withImport = hunk(
+      "app/views.py",
+      ["from django.contrib.auth.decorators import login_required", "@login_required"],
+      [],
+    );
+    const importKept = changed("app/views.py", ["@login_required"], "-");
+    // An import added elsewhere does not put back the removed decorator.
+    const reordered = hunk(
+      "app/views.py",
+      ["@login_required", "from django.contrib.auth.decorators import login_required"],
+      ["from django.contrib.auth.decorators import login_required  # noqa"],
+    );
+    const kwarg = changed("app/client.py", ["    verify=ca_bundle,"], "-");
+    for (const f of [withImport, importKept, reordered, kwarg])
+      expect(lenses([f]), f.patch).toEqual(["pass-sec-authn-coverage", CHAIN_PASS]);
+  });
+
   it("a removed-guard fact plans the same pair with no patch at all", () => {
     const fact: SecurityFact = {
       check: "removed-guard",
