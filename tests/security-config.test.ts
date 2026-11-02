@@ -27,7 +27,7 @@ import {
   type CoreConfig,
 } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import { ALL_PASSES, SECURITY_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
-import { VALIDATE_PASS } from "@quickchatai/pi-quickreview/src/include.js";
+import { buildAgents, VALIDATE_PASS } from "@quickchatai/pi-quickreview/src/include.js";
 import {
   alwaysPlannedLenses,
   parseLensTable,
@@ -156,6 +156,16 @@ describe("[models] risk_passes always carries the security family", () => {
       ...SECURITY_FAMILY,
     ]);
     expect(withSecurityFamily(["pass-ui"])).toEqual(["pass-ui", ...SECURITY_FAMILY]);
+  });
+
+  // MUTATION: in buildAgents, default riskPasses to
+  // MODELS_TIER_DEFAULTS.risk_passes without withSecurityFamily — this fails.
+  it("a build given no risk passes builds a family lens once, at the risk tier", () => {
+    const src = join(dir, "agents");
+    mkdirSync(src, { recursive: true });
+    writeFileSync(join(src, "pass-sec-access.md"), "---\nname: pass-sec-access\n---\nbody\n");
+    const built = buildAgents(src, join(dir, "out"), { root: dir });
+    expect(built.map((b) => b.name)).toEqual(["pass-sec-access--sol-high"]);
   });
 
   it("a risk_passes that is not a list of names is refused", () => {

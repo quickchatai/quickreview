@@ -32,6 +32,7 @@ import { ALLOWED_PROGRAMS } from "../extensions/bash-guard.js";
 import {
   MODELS_TIER_DEFAULTS,
   splitModelSpec,
+  withSecurityFamily,
   type ScanDepth,
   type NitPolicy,
   type MemoryDelivery,
@@ -1851,7 +1852,9 @@ export interface BuildAgentsOptions {
   root?: string;
   /** config.models.tiers — PassTier → model spec ("provider/model:thinking"). */
   tiers?: Record<PassTier, string>;
-  /** config.models.risk_passes — build only the sol-high variant. */
+  /** config.models.risk_passes — build only the sol-high variant. Absent,
+   * the shipped default joined with the security family, the same set a
+   * parsed config resolves to. */
   riskPasses?: string[];
   /** config.models.validate_tier — pass-validate's lowest built tier: the
    * validator is built at it and every tier above (`tiersForPass`). */
@@ -2026,7 +2029,7 @@ export function buildAgents(
   const root = opts.root ?? resolve(srcDir, "..");
   const read = opts.readFile ?? ((p: string) => readFileSync(p, "utf8"));
   const tiers = opts.tiers ?? MODELS_TIER_DEFAULTS.tiers;
-  const riskPasses = opts.riskPasses ?? MODELS_TIER_DEFAULTS.risk_passes;
+  const riskPasses = opts.riskPasses ?? withSecurityFamily(MODELS_TIER_DEFAULTS.risk_passes);
   const validateTier = opts.validateTier ?? MODELS_TIER_DEFAULTS.validate_tier;
   const addenda = opts.addenda ?? PASS_ADDENDA;
   const ecosystem = opts.ecosystem ?? "django";
