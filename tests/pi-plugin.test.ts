@@ -1161,6 +1161,24 @@ describe("/qcr-review in the background, through the extension on a fake pi", ()
     expect(deps.calls[0]!.opts.config.review.preset).toBe("low");
     deps.finish();
   });
+
+  // MUTATION: drop the securityRequest spread from the plugin's ReviewOptions
+  // (packages/pi-plugin/src/plugin/review.ts) — `--security` is parsed and
+  // then ignored, and this fails.
+  it("--security asks the core for the security family; without it, nothing is asked", async () => {
+    const asked = heldReview();
+    const { run } = pluginOnFakePi(asked);
+    await run("12 --security", fakeUi());
+    await until(() => asked.calls.length === 1, "the review");
+    expect(asked.calls[0]!.opts.securityRequest).toEqual({ by: "", source: "operator" });
+    asked.finish();
+    const plain = heldReview();
+    const second = pluginOnFakePi(plain);
+    await second.run("12", fakeUi());
+    await until(() => plain.calls.length === 1, "the review");
+    expect(plain.calls[0]!.opts).not.toHaveProperty("securityRequest");
+    plain.finish();
+  });
 });
 
 /** A runner that answers `qcr` calls from a script and logs them. */

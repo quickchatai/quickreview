@@ -33,6 +33,7 @@ import { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import type { Runtime } from "@quickchatai/pi-quickreview/src/engine/port.js";
 import { pricedFaux } from "./helpers/priced-faux.js";
 import { validate } from "./helpers/json-schema-lite.js";
+import { SECURITY_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";
 
 useOfflineGuard();
@@ -256,6 +257,29 @@ describe("review(): the local review as a call", () => {
     expect(cwdAsks).toEqual([]);
     expect(existsSync(nowhere)).toBe(false);
   });
+
+  // MUTATION: drop the securityRequest spread from planRound's inputs
+  // (packages/pi-plugin/src/reviewapi.ts) — the request plans nothing, and
+  // this fails.
+  it(
+    "a security request plans the whole security family into the plan the person sees",
+    { timeout: 30_000 },
+    async () => {
+      const faux = pricedFaux(() => 0.25, { provider: "faux", models: [{ id: "m" }] });
+      const { runtime } = fauxRuntime(faux);
+      const plain = await preview({ kind: "branch" }, options("sec-plain", runtime));
+      const asked = await preview(
+        { kind: "branch" },
+        { ...options("sec-asked", runtime), securityRequest: { by: "", source: "operator" } },
+      );
+      expect(asked.exitCode, asked.text).toBe(0);
+      const lensesOf = (r: typeof plain): string[] =>
+        // the plan's agents, `<lens>--<tier>`
+        (r.data["preview"] as { lenses: string[] }).lenses.map((a) => a.replace(/--[^-].*$/, ""));
+      for (const lens of SECURITY_FAMILY) expect(lensesOf(asked), lens).toContain(lens);
+      expect(lensesOf(plain).filter((l) => SECURITY_FAMILY.includes(l))).toEqual([]);
+    },
+  );
 
   // The bare /qcr-review: the branch's commits and the working tree's edits,
   // reviewed as one. MUTATION: drop the uncommitted option from the branch's

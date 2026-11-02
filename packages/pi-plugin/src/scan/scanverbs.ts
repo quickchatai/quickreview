@@ -668,7 +668,7 @@ export async function runScanVerb(
         suggestions,
         stage2: s
           ? {
-              lenses: stage2Lenses(s.lenses).map((lens) => ({
+              lenses: stage2Lenses(s.lenses, s.scan.lenses).map((lens) => ({
                 lens,
                 tiers: lensTiers(s.lenses, lens, s.riskPasses ?? []),
               })),

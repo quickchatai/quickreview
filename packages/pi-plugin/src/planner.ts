@@ -563,7 +563,10 @@ const ALWAYS_REASON =
 /** Why a requested security lens is in the plan: who asked, and how. */
 function requestReason(r: SecurityRequest): string {
   const how = { label: "with a PR label", comment: "in a PR comment", operator: "as the operator" };
-  return `a security review was requested by @${r.by} ${how[r.source]}`;
+  // An asker the host could not name (a label seen without its webhook, the
+  // plugin's person) is left out, never rendered as a bare "@".
+  const by = r.by.trim() === "" ? "" : ` by @${r.by.trim()}`;
+  return `a security review was requested${by} ${how[r.source]}`;
 }
 
 /** The lenses `slowestFirst` launches last within their tier: conditional

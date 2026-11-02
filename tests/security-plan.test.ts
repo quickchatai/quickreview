@@ -221,6 +221,20 @@ describe("a request", () => {
       expect(r.required === true, `${r.lens}:${r.strategy ?? ""}`).toBe(r.strategy === "delta");
   });
 
+  /**
+   * MUTATION: render `by @${r.by}` whatever `by` holds in requestReason
+   * (planner.ts) — the reason reads "requested by @ as the operator", and
+   * this fails.
+   */
+  it("an asker the host could not name is left out of the reason, never a bare @", () => {
+    for (const source of ["operator", "label"] as const) {
+      const p = plan(fixture, [PLAIN], { securityRequest: { by: "", source } });
+      const why = rows(p, "pass-sec-access")[0]!.why ?? "";
+      expect(why).toMatch(/^a security review was requested (as the operator|with a PR label)$/);
+      expect(why).not.toContain("@");
+    }
+  });
+
   it("keeps a trigger's own reason over the request's", () => {
     const p = plan(fixture, [SQL], { securityRequest: REQUEST });
     expect(rows(p, "pass-sec-injection")[0]!.why).toMatch(/app\/repo\.py/);

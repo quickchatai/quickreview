@@ -15,6 +15,8 @@ const { benchConfig } = await import("../src/bench/runner.js");
 const { ecosystemFor } = await import("@quickchatai/pi-quickreview/src/ecosystem.js");
 const { oneShotThreatModel, renderOneShotPrompts } =
   await import("@quickchatai/pi-quickreview/src/engine/prompts.js");
+const { renderDeltaRound } = await import("@quickchatai/pi-quickreview/src/reviewdelta.js");
+const { emptyState } = await import("@quickchatai/pi-quickreview/src/reviewstate.js");
 
 const CHAIN = "pass-sec-exploit-chain";
 
@@ -78,5 +80,68 @@ describe("a one-shot round's security inputs", () => {
     expect(oneShotThreatModel(root, cfg, { readRepoThreatModel: boom })).toBeNull();
     expect(oneShotThreatModel(root, cfg, { readRepoThreatModel: () => null })).toBeNull();
     expect(oneShotThreatModel(root, cfg, {})).toBeNull();
+  });
+
+  /**
+   * The plugin's re-review: `/qcr-review --security` on a target reviewed
+   * before plans the delta round through renderDeltaRound
+   * (packages/pi-plugin/src/reviewdelta.ts). MUTATION: drop `...ctx.security`
+   * from its planFollowUp call (or the `securityRequest` pass-through) — the
+   * delta round plans no family row, and this fails.
+   */
+  it("a request reaches the delta round of a re-review", () => {
+    const cfg = benchConfig("");
+    const files = [{ ...FILES[0]!, additions: 200 }];
+    const state = emptyState(TARGET.repo);
+    state.rounds.push({
+      round_no: 1,
+      head_sha: "c".repeat(40),
+      base_sha: TARGET.baseSha,
+      merge_base: TARGET.mergeBase,
+      reviewed_at: "2026-10-19T00:00:00.000Z",
+      verdict: "APPROVE",
+      scope: "full",
+      cost_usd: null,
+    });
+    const delta = {
+      ok: true as const,
+      tree: "t".repeat(40),
+      files: [
+        {
+          path: "src/a.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 0,
+          ranges: [[1, 1]] as Array<[number, number]>,
+          whole_file: false,
+          patch: "@@ -1 +1,2 @@\n+export const b = 2;\n",
+        },
+      ],
+      lines: 1,
+      conflicted: [],
+    };
+    const render = (security: boolean) =>
+      renderDeltaRound({
+        root,
+        cfg,
+        ecosystem: ecosystemFor("none"),
+        target: TARGET,
+        tree,
+        caseDir: join(tmp, security ? "delta-asked" : "delta-plain"),
+        files,
+        issuedAt: "2026-10-19T00:00:00.000Z",
+        state,
+        delta,
+        ...(security ? { securityRequest: { by: "", source: "operator" as const } } : {}),
+      });
+    const asked = render(true);
+    expect(asked.followUp.scope).toBe("delta");
+    const family = new Set(
+      asked.passPlan.filter((r) => SECURITY_FAMILY.includes(r.lens)).map((r) => r.lens),
+    );
+    expect(family.has("pass-sec-access")).toBe(true);
+    const plain = render(false);
+    expect(plain.followUp.scope).toBe("delta");
+    expect(plain.passPlan.some((r) => SECURITY_FAMILY.includes(r.lens))).toBe(false);
   });
 });

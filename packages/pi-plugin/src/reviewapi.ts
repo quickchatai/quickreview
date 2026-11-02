@@ -73,6 +73,7 @@ import type { RoundSpec } from "./engine/round.js";
 import { renderOneShotPrompts, type OneShotPrompts } from "./engine/prompts.js";
 import { AuthExpiring } from "./engine/auth.js";
 import type { Runtime } from "./engine/port.js";
+import type { SecurityRequest } from "./types.js";
 import { fetchBotFindings, skipPosted, type PostedFinding } from "./reviewbotfindings.js";
 import { computeDelta, deltaEnabled, renderDeltaRound, type DeltaFound } from "./reviewdelta.js";
 import { REVIEW_SCHEMA_VERSION, withSchemaVersion } from "./contract.js";
@@ -182,6 +183,10 @@ export interface ReviewOptions {
   ecosystem: Ecosystem;
   /** Where profiles are looked up before the asset tree's examples. */
   profileHomes?: readonly ProfilePlace[];
+  /** A security review asked for on this run (`/qcr-review --security`): the
+   * whole security family is planned, never a lens the profile switched off.
+   * Absent: the family rows come from the triggers and the profile alone. */
+  securityRequest?: SecurityRequest;
   /** Builds the runtime that hosts one run's review session. Called once per
    * run, when the round is about to start (a preview, a refusal or an
    * unchanged head builds none), and the runtime is disposed when the run
@@ -807,6 +812,7 @@ async function runPipeline(
       files: t.files,
       issuedAt: new Date().toISOString(),
       ...profileArgs,
+      ...(opts.securityRequest ? { securityRequest: opts.securityRequest } : {}),
     };
     let why = fallback;
     if (prev !== null && delta !== null) {

@@ -452,6 +452,25 @@ describe("matches and match", () => {
 });
 
 describe("suggestions and stage 2", () => {
+  // MUTATION: call stage2Lenses without `s.scan.lenses` in the suggestions
+  // verb (packages/pi-plugin/src/scan/scanverbs.ts) — the JSON offers lenses
+  // the `[scan] lenses` allowlist leaves out, and this fails.
+  it("the suggestions' stage-2 lenses stay inside [scan] lenses", async () => {
+    const rig = scanRig({ dir });
+    const allowed = ["pass-data-safety", "pass-security"];
+    const h = harness({
+      ...rig,
+      settingsOf: () => {
+        const s = rig.settingsOf()!;
+        return { ...s, scan: { ...s.scan, lenses: allowed } };
+      },
+    });
+    await calibrate(h);
+    const sugs = await h.run(["suggestions"], true);
+    const offered = (sugs.json.stage2.lenses as Array<{ lens: string }>).map((l) => l.lens);
+    expect(offered.sort()).toEqual([...allowed].sort());
+  });
+
   it("suggestions list stage 1's leads; a proposal is priced and started by its key", async () => {
     const h = harness();
     await calibrate(h);

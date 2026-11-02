@@ -374,6 +374,9 @@ async function reviewJob(
     config: cfg,
     ecosystem,
     profileHomes,
+    // `--security`: the person at pi asks for the whole security family; the
+    // plugin knows no login to name, so the plan says who asked by role.
+    ...(cmd.securityRequest ? { securityRequest: { by: "", source: "operator" as const } } : {}),
     runtime: (req) => {
       runDir = req.runDir;
       return deps.runtime(cfg, {
