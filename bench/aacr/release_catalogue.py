@@ -125,25 +125,64 @@ class Catalogue:
 INDEX_FIELDS = ("title", "benchmark", "purpose", "arm_config", "model_billed", "judges", "claims", "notes")
 
 
-def commit_fields(commit: Optional[str], remap: Dict[str, Optional[str]]) -> Dict[str, object]:
+# how a recorded build id was matched to its public main commit (the remap's evidence file, `match`):
+# "same", the history rewrites' commit maps carry it there (or it is on public main itself);
+# "date+subject", matched by author date and subject alone; "ancestor", the rewrite dropped the
+# commit, which touched only files never published, so it maps to its nearest kept ancestor
+MATCH_KINDS = ("same", "date+subject", "ancestor")
+
+
+def load_remap(path: Optional[str]) -> Tuple[Dict[str, Optional[str]], Dict[str, dict]]:
+    """The commit remap, a flat {recorded qcr_commit: public main commit or
+    null}, and its evidence by recorded id: the entries of the file beside it
+    (`qcr-commit-remap.json` -> `qcr-commit-remap-evidence.json`), each with
+    the `match` kind the release publishes. A remap that maps any id needs
+    its evidence file."""
+    if not path:
+        return {}, {}
+    with open(path) as fh:
+        remap = json.load(fh)
+    ev_path = re.sub(r"\.json$", "", path) + "-evidence.json"
+    if not os.path.exists(ev_path):
+        if any(remap.values()):
+            raise SystemExit(f"{path}: no {os.path.basename(ev_path)} beside it, so no match kind for its mapped ids")
+        return remap, {}
+    with open(ev_path) as fh:
+        return remap, {e["recorded"]: e for e in json.load(fh)["entries"]}
+
+
+def commit_fields(commit: Optional[str], remap: Dict[str, Optional[str]],
+                  evidence: Optional[Dict[str, dict]] = None) -> Dict[str, object]:
     """A run's build commit as the release states it: `qcr_commit` is the
     public main commit the history rewrite made of the recorded one, with
-    `qcr_commit_on_public_main` true; a commit with no public equivalent keeps
-    its recorded id with false; one the remap does not know, with null (and
-    no commit at all is null, null). `qcr_commit_dirty` is true when the
-    recorded id carries `-dirty` (the build had uncommitted changes, so it is
-    the named commit plus them, not the commit itself), false otherwise; a
-    dirty build keeps the `-dirty` suffix on whichever id it publishes."""
+    `qcr_commit_on_public_main` true and `qcr_commit_match` the evidence's
+    kind for it (MATCH_KINDS; null when not on public main); a commit with no
+    public equivalent keeps its recorded id with false; one the remap does
+    not know, with null (and no commit at all is null throughout).
+    `qcr_commit_dirty` is true when the recorded id carries `-dirty` (the
+    build had uncommitted changes, so it is the named commit plus them, not
+    the commit itself), false otherwise; a dirty build keeps the `-dirty`
+    suffix on whichever id it publishes."""
     if not commit:
-        return {"qcr_commit": None, "qcr_commit_on_public_main": None, "qcr_commit_dirty": None}
+        return {"qcr_commit": None, "qcr_commit_on_public_main": None, "qcr_commit_match": None,
+                "qcr_commit_dirty": None}
     c = commit.strip()
     dirty = c.endswith("-dirty")
     base = c[:-len("-dirty")] if dirty else c
     pub = remap_commit(c, remap)
     if pub:
-        return {"qcr_commit": pub + c[len(base):], "qcr_commit_on_public_main": True, "qcr_commit_dirty": dirty}
+        match = ((evidence or {}).get(remap_key(c, remap)) or {}).get("match")
+        return {"qcr_commit": pub + c[len(base):], "qcr_commit_on_public_main": True, "qcr_commit_match": match,
+                "qcr_commit_dirty": dirty}
     known = c in remap or base in remap
-    return {"qcr_commit": c, "qcr_commit_on_public_main": False if known else None, "qcr_commit_dirty": dirty}
+    return {"qcr_commit": c, "qcr_commit_on_public_main": False if known else None, "qcr_commit_match": None,
+            "qcr_commit_dirty": dirty}
+
+
+def remap_key(commit: str, remap: Dict[str, Optional[str]]) -> str:
+    """The remap's key for a recorded id: as spelled, else without `-dirty`."""
+    c = commit.strip()
+    return c if c in remap else (c[:-len("-dirty")] if c.endswith("-dirty") else c)
 
 
 def remap_commit(commit: Optional[str], remap: Dict[str, Optional[str]]) -> Optional[str]:
@@ -151,11 +190,7 @@ def remap_commit(commit: Optional[str], remap: Dict[str, Optional[str]]) -> Opti
     rewrites (None when it maps to none: a side branch never merged)."""
     if not commit:
         return None
-    c = commit.strip()
-    if c in remap:
-        return remap[c]
-    base = c[:-len("-dirty")] if c.endswith("-dirty") else c
-    return remap.get(base)
+    return remap.get(remap_key(commit, remap))
 
 
 def _run_json(path: str) -> dict:
@@ -168,14 +203,16 @@ def _run_json(path: str) -> dict:
 
 
 def index_rows(cat: Catalogue, roots: Dict[str, str], remap: Dict[str, Optional[str]],
-               volume_of=None, recorded: Optional[Dict[str, Optional[str]]] = None) -> List[dict]:
+               volume_of=None, recorded: Optional[Dict[str, Optional[str]]] = None,
+               evidence: Optional[Dict[str, dict]] = None) -> List[dict]:
     """One row per shipped unit: the family's facts plus the unit's own
     run.json facts (set, start, finish, build commit). `roots` maps a unit
     kind to the directory holding it; `volume_of(family_id)` names the
     archive volume(s) the unit's files are in; `recorded`, when given, is
     filled with each row's recorded build commit by its `path` (never
-    published: the validation checks the published one against it). Strings
-    are left raw (the caller scrubs)."""
+    published: the validation checks the published one against it);
+    `evidence`, the remap's evidence (load_remap), gives each match kind.
+    Strings are left raw (the caller scrubs)."""
     rows = []
     for f in cat.shipped_families():
         for kind in location_kinds(f.get("location", "")):
@@ -199,7 +236,7 @@ def index_rows(cat: Catalogue, roots: Dict[str, str], remap: Dict[str, Optional[
                     "set": rj.get("set") if isinstance(rj.get("set"), str) else None,
                     "cases": len(rj["cases"]) if isinstance(rj.get("cases"), list) else None,
                     "started_at": rj.get("started_at"), "finished_at": rj.get("finished_at"),
-                    **commit_fields(commit, remap),
+                    **commit_fields(commit, remap, evidence),
                     "arm_config": f.get("arm_config"), "model_billed": f.get("model_billed"),
                     "judges": f.get("judges"), "purpose": f.get("purpose"), "notes": f.get("notes"),
                     "claims": claim_ids, "hf_tables": Catalogue.hf_tables(f),
@@ -210,26 +247,41 @@ def index_rows(cat: Catalogue, roots: Dict[str, str], remap: Dict[str, Optional[
 
 
 def commit_problems(rows: List[dict], recorded: Dict[str, Optional[str]],
-                    remap: Dict[str, Optional[str]]) -> Dict[str, int]:
+                    remap: Dict[str, Optional[str]], evidence: Optional[Dict[str, dict]] = None) -> Dict[str, int]:
     """Rows of the run index whose published build commit misstates the
     recorded one: `dirty_unflagged`, a run whose recorded id carries `-dirty`
     without `qcr_commit_dirty` true (or a clean one flagged); `off_main`, a
     row marked `qcr_commit_on_public_main` true whose commit is not the
     remap's public main commit for the recorded id (the remap's values are
-    the public main commits, each an ancestor of main)."""
+    the public main commits, each an ancestor of main); `unmatched`, a row on
+    public main without a match kind, or not the evidence's kind for its
+    recorded id, or a row off main with one; `ancestor_unproven`, an
+    "ancestor" row whose evidence does not show the remap's commit an
+    ancestor of main with the dropped commits' paths never on it."""
     public = {v for v in remap.values() if v}
-    bad = {"dirty_unflagged": 0, "off_main": 0}
+    evidence = evidence or {}
+    bad = {"dirty_unflagged": 0, "off_main": 0, "unmatched": 0, "ancestor_unproven": 0}
     for r in rows:
         rec = recorded.get(r["path"])
         rec = rec.strip() if isinstance(rec, str) else None
         dirty = bool(rec and rec.endswith("-dirty"))
         if rec and r.get("qcr_commit_dirty") is not dirty:
             bad["dirty_unflagged"] += 1
+        match = r.get("qcr_commit_match")
         if r.get("qcr_commit_on_public_main") is True:
             pub = (r.get("qcr_commit") or "")
             pub = pub[:-len("-dirty")] if pub.endswith("-dirty") else pub
             if not rec or pub not in public or pub != remap_commit(rec, remap):
                 bad["off_main"] += 1
+            ev = evidence.get(remap_key(rec, remap)) if rec else None
+            if match not in MATCH_KINDS or not ev or ev.get("match") != match:
+                bad["unmatched"] += 1
+            if match == "ancestor" and not (ev and ev.get("public_main") == pub == remap_commit(rec, remap)
+                                            and ev.get("ancestor_of_origin_main") is True
+                                            and ev.get("dropped_paths_on_public_main") == []):
+                bad["ancestor_unproven"] += 1
+        elif match is not None:
+            bad["unmatched"] += 1
     return bad
 
 

@@ -60925,7 +60925,7 @@
   },
   {
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "gpt-6.1-sol & \\code{openai-codex/gpt-6.1-sol} & 0.99.1 & \\code{b2ce03a} \\\\",
+   "anchor": "gpt-6.1-sol & \\code{openai-codex/gpt-6.1-sol} & 0.99.1 & \\code{b2ce03a} (dirty) \\\\",
    "tokens": [
     "0.99"
    ],

@@ -474,7 +474,7 @@ class Exporter:
         self.counts = collections.Counter()
         self.notes: list[str] = []
         self.tables: dict[str, list[dict]] = {}
-        self.commits: tuple[dict, dict] | None = None
+        self.commits: tuple[dict, dict, dict] | None = None
         self.aacr_judges: dict[str, str] = {}
         self.key = {}  # iid -> {"set", "version", "case"}
         for s in SETS:
@@ -1068,16 +1068,17 @@ class Exporter:
         if self.cat is None:
             self.tables["runs"] = []
             return
-        remap = json.load(open(self.a.commit_remap)) if getattr(self.a, "commit_remap", None) else {}
+        remap, evidence = RC.load_remap(getattr(self.a, "commit_remap", None))
         roots = {"runs": self.runs_dir, "top": os.path.dirname(self.runs_dir)}
         if self.om_runs:
             roots.update({"om-runs": self.om_runs, "om-top": os.path.dirname(self.om_runs)})
         recorded: dict = {}
-        rows = RC.index_rows(self.cat, roots, remap, lambda fid: [f"quickreview-runs-{fid}.tar.zst"], recorded)
+        rows = RC.index_rows(self.cat, roots, remap, lambda fid: [f"quickreview-runs-{fid}.tar.zst"], recorded,
+                             evidence)
         self.tables["runs"] = [self.S({k: v for k, v in r.items()}) for r in rows]
         # the recorded build ids, never published, by the row's published path: the validation
         # checks every published commit and its flags against them (RC.commit_problems)
-        self.commits = ({scrub(k): v for k, v in recorded.items()}, remap)
+        self.commits = ({scrub(k): v for k, v in recorded.items()}, remap, evidence)
 
     # --- every table holds only the families the catalogue gives it --------------
     def filter_by_family(self):
@@ -1568,14 +1569,15 @@ def key_data_checks(t: dict[str, list[dict]]) -> list[dict]:
 
 
 def validate_release(t: dict[str, list[dict]], cat: "RC.Catalogue | None", elo_refits: dict, elo_dir: str | None,
-                     commits: "tuple[dict, dict] | None" = None) -> list[dict]:
+                     commits: "tuple[dict, dict, dict] | None" = None) -> list[dict]:
     """The checks of what this release adds: the open-model rows, the Elo
     ratings (refit from the published judgments, equal to the run's own
     ratings.json, and the README's numbers), that every family the
     catalogue gives a table has rows in it, and (`commits`: the recorded
-    build ids by published path, and the remap) that `runs` states every
-    build commit as recorded: a dirty build flagged, a public main commit
-    only where the remap gives it."""
+    build ids by published path, the remap and its evidence) that `runs`
+    states every build commit as recorded: a dirty build flagged, a public
+    main commit only where the remap gives it, with the evidence's match
+    kind, and an "ancestor" one only where the evidence proves it."""
     checks = []
 
     def check(what, got, want, tol=0.0):
@@ -1638,14 +1640,19 @@ def validate_release(t: dict[str, list[dict]], cat: "RC.Catalogue | None", elo_r
         check("runs: every row is a shipped family",
               all(RC.Catalogue.ships(cat.families.get(r["family"])) for r in t["runs"]), True)
     if commits is not None:
-        recorded, remap = commits
-        bad = RC.commit_problems(t["runs"], recorded, remap)
+        recorded, remap, evidence = commits
+        bad = RC.commit_problems(t["runs"], recorded, remap, evidence)
         check("runs: every row's recorded build id was read", sum(1 for r in t["runs"] if r["path"] not in recorded), 0)
         # the card's statement: a dirty build is flagged, never published as the clean commit
         check("runs: a run built with uncommitted changes has qcr_commit_dirty true, a clean one false",
               bad["dirty_unflagged"], 0)
         check("runs: every qcr_commit on public main is the remap's public main commit for the recorded id",
               bad["off_main"], 0)
+        # the card's statement: every on-main commit says how it was matched (same, date+subject, ancestor)
+        check("runs: every row on public main has the evidence's qcr_commit_match, and no row off it has one",
+              bad["unmatched"], 0)
+        check("runs: every \"ancestor\" row's commit is the remap's, an ancestor of main whose dropped "
+              "descendants touched only files never on main (per the evidence)", bad["ancestor_unproven"], 0)
     return checks
 
 

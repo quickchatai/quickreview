@@ -66,8 +66,8 @@ nothing else in it changes:
   * the authors' tracker (scrub_extra.TICKET_RULES): ticket ids and paths
     into it -> `<ticket>`;
   * in JSON files, every `"qcr_commit"` -> the public main commit
-    (--commit-remap; remap_commits), with `"qcr_commit_on_public_main"` and
-    `"qcr_commit_dirty"`;
+    (--commit-remap; remap_commits), with `"qcr_commit_on_public_main"`,
+    `"qcr_commit_match"` and `"qcr_commit_dirty"`;
   * encrypted reasoning blobs are blanked, the record kept: the value of every
     `encrypted_content` (OpenAI), every base64 `thinkingSignature` and
     `signature` (Anthropic) becomes the empty string.
@@ -738,27 +738,31 @@ def plan_copies(tree: Tree, shipped: list[str], only: set[str] | None = None) ->
 QCR_COMMIT = re.compile(rb'("qcr_commit"\s*:\s*)"([0-9a-f]{7,40})(-dirty)?"')
 
 
-def remap_commits(data: bytes, remap: dict, counts) -> bytes:
+def remap_commits(data: bytes, remap: dict, counts, evidence: dict | None = None) -> bytes:
     """Every `"qcr_commit": "<sha>"` of a JSON text, remapped to the public
     main commit the history rewrite made of it (release_catalogue.remap_commit),
     with a `qcr_commit_on_public_main` beside it: true when remapped, false
     when the commit has no public equivalent (the recorded id is kept), null
-    when the remap does not know the commit; and a `qcr_commit_dirty`: true
-    when the recorded id carries `-dirty` (built with uncommitted changes; the
-    suffix stays on the published id), false otherwise. The text around it is
-    untouched."""
+    when the remap does not know the commit; a `qcr_commit_match`: how the
+    public main commit was matched (the remap's `evidence`, RC.MATCH_KINDS;
+    null when not remapped); and a `qcr_commit_dirty`: true when the recorded
+    id carries `-dirty` (built with uncommitted changes; the suffix stays on
+    the published id), false otherwise. The text around it is untouched."""
     if b'"qcr_commit"' not in data:
         return data
 
     def sub(m):
-        f = RC.commit_fields((m.group(2) + (m.group(3) or b"")).decode(), remap)
+        f = RC.commit_fields((m.group(2) + (m.group(3) or b"")).decode(), remap, evidence)
         on = f["qcr_commit_on_public_main"]
         counts[{True: "qcr_commit remapped to public main", False: "qcr_commit not on public main",
                 None: "qcr_commit unknown to the remap"}[on]] += 1
+        if f["qcr_commit_match"]:
+            counts[f"qcr_commit matched: {f['qcr_commit_match']}"] += 1
         if f["qcr_commit_dirty"]:
             counts["qcr_commit dirty build (flagged)"] += 1
         return (m.group(1) + json.dumps(f["qcr_commit"]).encode()
                 + b', "qcr_commit_on_public_main": ' + json.dumps(on).encode()
+                + b', "qcr_commit_match": ' + json.dumps(f["qcr_commit_match"]).encode()
                 + b', "qcr_commit_dirty": ' + json.dumps(f["qcr_commit_dirty"]).encode())
     return QCR_COMMIT.sub(sub, data)
 
@@ -766,11 +770,13 @@ def remap_commits(data: bytes, remap: dict, counts) -> bytes:
 class Processor:
     """Decides and transforms one file; shared by archive and slim."""
 
-    def __init__(self, src: Path, om: Path | None, cat: RC.Catalogue, remap: dict | None = None):
+    def __init__(self, src: Path, om: Path | None, cat: RC.Catalogue, remap: dict | None = None,
+                 evidence: dict | None = None):
         self.src, self.om, self.cat = src, om, cat
         self.tree = Tree(src, om)
         self.tp = ThirdParty(src, om)
         self.remap = remap or {}
+        self.evidence = evidence or {}
 
     def family(self, rel: str) -> dict | None:
         """The run family of a file's unit. A file beside the run dirs
@@ -842,7 +848,7 @@ class Processor:
             data = self.tp.set_bodies(data, counts)
         if rel.endswith(".json"):
             data = self.session_fields(rel, data, counts)
-            data = remap_commits(data, self.remap, counts)
+            data = remap_commits(data, self.remap, counts, self.evidence)
         elif case and name.lower() == "ledger.md":
             # the session's working ledger, seeded from its prompt; a review.md is the posted review and stays whole
             data = self.prompt_lines(case[0], data, counts)
@@ -980,14 +986,15 @@ class VolumeWriter:
         return self.volumes
 
 
-def load_remap(path: str | None) -> dict:
-    return json.loads(Path(path).read_text()) if path else {}
+def load_remap(path: str | None) -> tuple[dict, dict]:
+    """The remap and its evidence by recorded id (release_catalogue.load_remap)."""
+    return RC.load_remap(path)
 
 
 def build_group(args) -> dict:
     src, om, catp, out, group, files, copies, level, cap, threads, remap = args
     src, out = Path(src), Path(out)
-    proc = Processor(src, Path(om) if om else None, RC.Catalogue.load(catp), load_remap(remap))
+    proc = Processor(src, Path(om) if om else None, RC.Catalogue.load(catp), *load_remap(remap))
     counts = collections.Counter()
     dropped = collections.Counter()
     w = VolumeWriter(out, f"quickreview-runs-{group}", level, cap, threads)
@@ -1073,7 +1080,7 @@ def _proc(a) -> Processor:
     if not a.catalogue:
         sys.exit("--catalogue is required: the run catalogue decides what ships")
     return Processor(Path(a.src), Path(a.open_models) if a.open_models else None, RC.Catalogue.load(a.catalogue),
-                     load_remap(getattr(a, "commit_remap", None)))
+                     *load_remap(getattr(a, "commit_remap", None)))
 
 
 def classify(proc: Processor) -> tuple[dict, collections.Counter]:
@@ -1246,22 +1253,25 @@ def scrub_json(obj):
 def write_index(out: Path, proc: Processor, a):
     """RUNS-INDEX.json: every shipped unit with its family's facts, its
     run.json facts and the volume it is in; every withheld family and why."""
-    remap = json.loads(Path(a.commit_remap).read_text()) if getattr(a, "commit_remap", None) else {}
+    remap, evidence = load_remap(getattr(a, "commit_remap", None))
     man = json.loads((out / "MANIFEST.json").read_text()) if (out / "MANIFEST.json").exists() else {"groups": {}}
     vols = {g: [v["file"] for v in d["volumes"]] for g, d in man["groups"].items()}
     roots = {"runs": str(proc.src / "runs"), "top": str(proc.src)}
     if proc.om:
         roots.update({"om-runs": str(proc.om / "runs"), "om-top": str(proc.om)})
-    rows = RC.index_rows(proc.cat, roots, remap, lambda fid: vols.get(fid, []))
+    rows = RC.index_rows(proc.cat, roots, remap, lambda fid: vols.get(fid, []), evidence=evidence)
     claim_ids = {c for r in rows for c in r["claims"]}
     doc = {"note": "One row per shipped unit (a run dir, a scoring dir, or a top-level tree) of the QuickReview "
                    "benchmark runs: its run family, what the family was for, the model it billed, its judges, the "
                    "public claims it backs, its build commit (`qcr_commit`: the public main commit the "
-                   "repository's history rewrite made of the recorded one, `qcr_commit_on_public_main` true; a "
-                   "commit with no public equivalent keeps its recorded id with false, one the rewrite maps do not "
-                   "know with null; `qcr_commit_dirty` true for a build with uncommitted changes, which maps to "
-                   "the commit it was built on and keeps the `-dirty` suffix: that commit plus changes, not the "
-                   "commit itself) and the archive volume(s) holding it. `withheld` lists every family left out "
+                   "recorded one became after the repository's history rewrite, `qcr_commit_on_public_main` true, "
+                   "and `qcr_commit_match` how it was matched: `same` by the rewrite's commit maps, `date+subject` "
+                   "by author date and subject alone, `ancestor` the nearest kept ancestor of a commit the rewrite "
+                   "dropped because it changed only unpublished files; a commit with no public equivalent keeps "
+                   "its recorded id with false, one the rewrite maps do not know with null; separately, "
+                   "`qcr_commit_dirty` true for a build with uncommitted changes, which maps to the commit it was "
+                   "built on and keeps the `-dirty` suffix: that commit plus changes, not the commit itself) and "
+                   "the archive volume(s) holding it. `withheld` lists every family left out "
                    "and why.",
            "units": rows, "withheld": RC.withheld_rows(proc.cat), "claims": RC.claims_index(proc.cat, claim_ids)}
     (out / "RUNS-INDEX.json").write_text(json.dumps(scrub_json(doc), indent=1, ensure_ascii=False) + "\n")
@@ -1406,13 +1416,19 @@ packed. Nothing else in the text changed.
   `ccvq-…` here (`ccvq-hard20-…`, the Elo plan `martian-hard20-ccvq`), the
   names the public repository's Elo plans use.
 - **Build commits.** Each `"qcr_commit"` (in `run.json` and every
-  `case-summary.json`) is the public main commit the repository's history
-  rewrite made of the recorded one, with `"qcr_commit_on_public_main": true`
-  beside it. A commit with no public equivalent (a side branch never merged,
-  or a commit the rewrite dropped) keeps its recorded id with `false`; one
-  the rewrite maps do not know, with `null`. A dirty build (the recorded id
-  ends in `-dirty`: built with uncommitted changes) maps to the commit it was
-  built on, keeps the `-dirty` suffix and is flagged
+  `case-summary.json`) is the public main commit the recorded one became
+  after the repository's history rewrite, with
+  `"qcr_commit_on_public_main": true` beside it and `"qcr_commit_match"`
+  saying how it was matched: `"same"`, the rewrite's commit maps carry the
+  recorded commit to it; `"date+subject"`, matched by author date and
+  subject alone; `"ancestor"`, the rewrite dropped the recorded commit
+  because it changed only files that were never published, so it maps to
+  the nearest ancestor the rewrite kept, whose published files are the
+  same. A commit with no public equivalent (a side branch never merged)
+  keeps its recorded id with `false` and a `null` match; one the rewrite
+  maps do not know, with `null`. The dirty flag is separate: a dirty build
+  (the recorded id ends in `-dirty`: built with uncommitted changes) maps
+  to the commit it was built on, keeps the `-dirty` suffix and is flagged
   `"qcr_commit_dirty": true` (`false` for every other build): it is that
   commit plus changes that were never committed, not the commit itself.
 - **Host paths** in driver logs, scripts and analysis: the bench runs directory
