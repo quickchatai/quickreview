@@ -351,7 +351,8 @@ export interface RecordConformance {
    * either way the record cannot count it as posted
    * (packages/pi-plugin/src/findingkey.ts `entryDisposition`), and this is
    * how often that happens. A `security-demoted` question recorded without
-   * its tag lands here. */
+   * its tag lands here; under `[security] fold` the render route gives it its
+   * `question` tag before posting (reviewrender.ts `applySecurityFoldToRecord`). */
   downgraded_untagged: string[];
   /** A security entry the validator left `doubted` as `unverifiable` while
    * the security fold was on (`[security] fold`): a candidate the fold says

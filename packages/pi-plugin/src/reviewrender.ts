@@ -524,10 +524,13 @@ export const SECURITY_FOLD_REASON =
  * session should have recorded it: `downgraded`, word `security-demoted`,
  * axis `confidence`, `posted_as: "question"`. Its severity and confidence are
  * kept: confidence carries the doubt. A partial chain, a `refuted` and a
- * `bad-anchor` entry stay doubted. The only fold the code makes; the shell
- * route's session folds by the round prompt (templates.ts
- * `renderSecurityFoldNote`). Returns the keys it folded; the record object
- * itself when it folded none.
+ * `bad-anchor` entry stay doubted. A security entry recorded `downgraded`
+ * with the word `security-demoted` but no `posted_as` — the fold's own answer
+ * with its tag forgotten, which would otherwise count as never posted
+ * (findingkey.ts `entryDisposition`) — is given `posted_as: "question"`, its
+ * own reason kept. The only fold the code makes; the shell route's session
+ * folds by the round prompt (templates.ts `renderSecurityFoldNote`). Returns
+ * the keys it folded; the record object itself when it folded none.
  */
 export function applySecurityFoldToRecord(record: unknown): {
   record: unknown;
@@ -544,6 +547,22 @@ export function applySecurityFoldToRecord(record: unknown): {
     const entry = e as Record<string, unknown>;
     const d = normalizeDisposition(entry.disposition);
     const word = (str(entry.word) ?? str(entry.reason_word) ?? "").toLowerCase();
+    if (
+      d === "downgraded" &&
+      word === "security-demoted" &&
+      str(entry.posted_as) === null &&
+      securityEntry(entry) &&
+      !partialChainEntry(entry)
+    ) {
+      folded.push(findingRecordKey(entry, index));
+      const reason = str(entry.reason);
+      return {
+        ...entry,
+        posted_as: "question",
+        axis: str(entry.axis) ?? "confidence",
+        reason: reason ?? SECURITY_FOLD_REASON,
+      };
+    }
     if (
       (d !== "doubted" && d !== "killed") ||
       word !== "unverifiable" ||

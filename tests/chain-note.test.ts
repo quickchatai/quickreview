@@ -175,8 +175,14 @@ describe("the round templates", () => {
       const parsed = JSON.parse(
         example!.replace("{{n}}", "1").replace("{{round_no}}", "1").replace("{{head_sha}}", "x"),
       ) as { findings: Array<Record<string, unknown>> };
-      expect(parsed.findings.find((f) => f.word === "security-demoted"), t).toBeUndefined();
-      expect(parsed.findings.find((f) => f.lens === "pass-sec-access"), t).toMatchObject({
+      expect(
+        parsed.findings.find((f) => f.word === "security-demoted"),
+        t,
+      ).toBeUndefined();
+      expect(
+        parsed.findings.find((f) => f.lens === "pass-sec-access"),
+        t,
+      ).toMatchObject({
         disposition: "doubted",
         word: "unverifiable",
       });

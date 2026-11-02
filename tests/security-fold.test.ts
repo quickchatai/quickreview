@@ -110,7 +110,53 @@ describe("the security fold on the render route", () => {
     expect(out.folded).toEqual(["s1"]);
   });
 
+  // A session that follows the validator's fold but forgets the tag records
+  // `downgraded`/`security-demoted` with no `posted_as` — which the record
+  // counts as never posted. MUTATION: drop the downgraded branch from
+  // applySecurityFoldToRecord — the question renders nothing; this fails.
+  const untagged = {
+    disposition: "downgraded",
+    word: "security-demoted",
+    axis: "confidence",
+  };
+
+  it("gives a security-demoted downgrade recorded without its tag the question tag", () => {
+    const out = renderPostedReview(record([entry(untagged)]), { securityFold: true });
+    expect(out.folded).toEqual(["s1"]);
+    expect(out.rendered.comments).toHaveLength(1);
+    expect(out.rendered.comments[0]!.body).toMatch(
+      /^\[question\] Invoices are read without the tenant key/,
+    );
+    expect(out.rendered.problems.join("\n")).not.toContain("downgraded with no posted_as");
+    expect(findingsOf(out.record)[0]).toMatchObject({
+      disposition: "downgraded",
+      word: "security-demoted",
+      posted_as: "question",
+      reason: "No read settles whether the middleware sets org_id first.",
+    });
+    expect(
+      parseFindingsRecord(out.record, 7, 1, { fold: true }).record!.findings[0]!.disposition,
+    ).toBe("posted");
+  });
+
+  it("without the fold, an untagged security-demoted downgrade stays unposted and is named", () => {
+    const rec = record([entry(untagged)]);
+    const out = renderPostedReview(rec, {});
+    expect(out.folded).toEqual([]);
+    expect(out.rendered.comments).toHaveLength(0);
+    expect(out.rendered.problems.join("\n")).toContain("downgraded with no posted_as");
+  });
+
   it.each([
+    [
+      "an untagged security-demoted partial chain",
+      { ...untagged, lens: "pass-sec-exploit-chain:delta", kind: "partial-chain" },
+    ],
+    [
+      "an untagged security-demoted non-security entry",
+      { ...untagged, lens: "pass-baseline", kind: "logic" },
+    ],
+    ["a security-demoted entry already tagged", { ...untagged, posted_as: "question" }],
     ["a non-security candidate", { ...doubted, lens: "pass-baseline", kind: "logic" }],
     ["a refuted security candidate", { disposition: "doubted", word: "refuted" }],
     ["a bad anchor", { disposition: "doubted", word: "bad-anchor" }],
