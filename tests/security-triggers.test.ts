@@ -108,6 +108,13 @@ describe("strong probes fire in two languages", () => {
       "@user.update(role: params[:role])",
       "+",
     ],
+    // a GraphQL resolver's arguments
+    [
+      "pass-sec-privesc",
+      "src/graphql/resolvers.ts",
+      "return db.user.update({ where: { id }, data: { role: args.role } });",
+      "+",
+    ],
     // a wide grant
     ["pass-sec-iam", "infra/deploy-policy.json", '      "Action": "*",', "+"],
     ["pass-sec-iam", "infra/iam.tf", '    actions   = ["*"]', "+"],
@@ -346,6 +353,12 @@ describe("near-misses do not fire", () => {
     ["pass-sec-injection", "app/api.py", "cfg = yaml.safe_load(stream)", "+"],
     ["pass-sec-injection", "app/api.py", "cfg = yaml.load(stream, Loader=yaml.SafeLoader)", "+"],
     ["pass-sec-injection", "app/api.py", "data = json.loads(request.body)", "+"],
+    // MUTATION: put the yaml.load arm back in DESERIALIZE_RE (every code
+    // file), or `args` back in ROLE_FROM_REQUEST_RE — the matching row fires.
+    // js-yaml's load is safe since v4
+    ["pass-sec-injection", "src/config.ts", "const doc = yaml.load(readFileSync(p, 'utf8'));", "+"],
+    // argparse's namespace in a script is not request input
+    ["pass-sec-privesc", "scripts/admin.py", "create_user(name=args.name, role=args.role)", "+"],
     // escaping kept
     ["pass-sec-injection", "src/render.js", 'el.innerHTML = "";', "+"],
     ["pass-sec-injection", "src/render.js", "el.textContent = userInput;", "+"],
@@ -398,6 +411,19 @@ describe("near-misses do not fire", () => {
 
   it.each(NEAR)("%s does not fire on %s: %s", (lens, file, line, sign) => {
     expect(lenses([changed(file, [line], sign)], "strong")).not.toContain(lens);
+  });
+
+  // MUTATION: drop the trailing non-root lookahead from USER_ROOT_RE — this
+  // fails.
+  it("a USER root install step followed by a non-root USER is not a root container", () => {
+    const step = changed("Dockerfile", [
+      "USER root",
+      "RUN apt-get update && apt-get install -y curl",
+      "USER app",
+    ]);
+    expect(lenses([step])).not.toContain("pass-sec-infra");
+    const left = changed("Dockerfile", ["USER app", "RUN make", "USER root"]);
+    expect(lenses([left])).toContain("pass-sec-infra");
   });
 
   it("a guard moved within its file is not a guard removed", () => {

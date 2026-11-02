@@ -117,9 +117,14 @@ const SQL_INTERPOLATION_RE = new RegExp(
 const SHELL_EVAL_RE =
   /\bshell\s*=\s*True\b|\bshell:\s*true\b|\bexec\.Command(?:Context)?\((?:\s*ctx\s*,)?\s*"(?:sh|bash)"\s*,\s*"-c"|(?<![\w.$])(?:exec|eval)\s*\(\s*(?![\s"'`)])|\bos\.(?:system|popen)\(\s*(?!["'\s])|\b(?:child_process\.)?exec(?:Sync)?\(\s*`[^`\n]*\$\{|\b(?:child_process\.)?exec(?:Sync)?\(\s*["'][^"'\n]*["']\s*\+|\bRuntime\.getRuntime\(\)\.exec\(|\bProcessBuilder\(\s*["'](?:sh|bash|cmd(?:\.exe)?)["']/;
 
-/** A deserializer that runs code from its input. */
+/** A deserializer that runs code from its input. PyYAML's `load` without a
+ * safe loader is one, read in Python only (`PY_FILE_RE`): js-yaml's `load`
+ * is safe since v4. */
 const DESERIALIZE_RE =
-  /\b(?:c?[pP]ickle|dill|shelve)\.loads?\(|\byaml\.(?:load|load_all)\((?![^)\n]*Safe)|\byaml\.unsafe_load\w*\(|\bjsonpickle\.decode\(|\bObjectInputStream\b|\bMarshal\.load\b|\bBinaryFormatter\b|(?<![\w.])unserialize\(|\bnode-serialize\b/;
+  /\b(?:c?[pP]ickle|dill|shelve)\.loads?\(|\byaml\.unsafe_load\w*\(|\bjsonpickle\.decode\(|\bObjectInputStream\b|\bMarshal\.load\b|\bBinaryFormatter\b|(?<![\w.])unserialize\(|\bnode-serialize\b/;
+
+const PYYAML_LOAD_RE = /\byaml\.(?:load|load_all)\((?![^)\n]*Safe)/;
+const PY_FILE_RE = /\.pyi?$/;
 
 /** An escape hatch out of HTML escaping, in code. */
 const HTML_ESCAPE_HATCH_RE =
@@ -172,8 +177,10 @@ const NO_AUTH_RE =
 const PRIVILEGED_RE =
   /\bprivileged:\s*true\b|\bhost(?:Network|PID|IPC):\s*true\b|\ballowPrivilegeEscalation:\s*true\b|--privileged\b|\bnetwork_mode:\s*["']?host\b/;
 const DOCKERFILE_RE = /(^|\/)(?:Dockerfile|Containerfile)[^/]*$/;
-/** A container that runs as root, said outright. */
-const USER_ROOT_RE = /^\s*USER\s+(?:root|0)(?::\S+)?\s*$/m;
+/** A container that runs as root, said outright — and left that way: a
+ * `USER root` the same added text follows with a non-root `USER` is the
+ * usual install step, not a root container. */
+const USER_ROOT_RE = /^\s*USER\s+(?:root|0)(?::\S+)?\s*$(?![\s\S]*^\s*USER\s+(?!root\b|0\b)\S+)/m;
 /** A non-root user taken away: the container falls back to root. */
 const USER_NONROOT_RE = /^\s*USER\s+(?!root\b|0\b)\S+/m;
 
@@ -186,10 +193,20 @@ const WILDCARD_GRANT_RE =
 const SQL_GRANT_FILE_RE = /\.sql$|(^|\/)(?:migrations|db\/migrate|migrate)\//i;
 const SQL_GRANT_RE = /\bGRANT\s+[^;\n]*?\bTO\s+["\w]/i;
 
-/** A role or permission field written from request input — never the
- * caller's own identity read off the request (`request.user.role`). */
-const ROLE_FROM_REQUEST_RE =
-  /\b(?:is_?admin|is_?superuser|is_?staff|isSuperuser|roles?|permissions?|privileges?|access_level|accessLevel)["'\]]?\s*(?:=(?!=)|:)\s*(?:request|req|params|body|payload|input|ctx\.request|form|args)\b(?!\.(?:user|auth|session|principal|identity|claims|token)\b)/i;
+/** A role or permission field written from `source` — never the caller's
+ * own identity read off the request (`request.user.role`). */
+const roleFrom = (source: string): RegExp =>
+  new RegExp(
+    String.raw`\b(?:is_?admin|is_?superuser|is_?staff|isSuperuser|roles?|permissions?|privileges?|access_level|accessLevel)["'\]]?\s*(?:=(?!=)|:)\s*(?:${source})\b(?!\.(?:user|auth|session|principal|identity|claims|token)\b)`,
+    "i",
+  );
+/** Request input. */
+const ROLE_FROM_REQUEST_RE = roleFrom("request|req|params|body|payload|input|ctx\\.request|form");
+/** A GraphQL resolver's `args` — request input outside Python, where `args`
+ * is argparse's namespace in a script (`role=args.role`). */
+const ROLE_FROM_ARGS_RE = roleFrom("args");
+const NON_PY_CODE_FILE_RE =
+  /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs|go|rb|java|kt|kts|rs|cs|php|swift|scala|dart|ex|exs)$/i;
 
 // ---- weak probes -----------------------------------------------------------
 
@@ -239,6 +256,14 @@ export const SECURITY_TRIGGERS: readonly SecurityTrigger[] = [
     why: "a role or permission field is written from request input",
   },
   {
+    lens: "pass-sec-privesc",
+    strength: "strong",
+    probe: "added",
+    re: ROLE_FROM_ARGS_RE,
+    files: NON_PY_CODE_FILE_RE,
+    why: "a role or permission field is written from resolver arguments",
+  },
+  {
     lens: "pass-sec-iam",
     strength: "strong",
     probe: "config",
@@ -286,6 +311,14 @@ export const SECURITY_TRIGGERS: readonly SecurityTrigger[] = [
     strength: "strong",
     probe: "added",
     re: DESERIALIZE_RE,
+    why: "an unsafe deserializer reads input",
+  },
+  {
+    lens: "pass-sec-injection",
+    strength: "strong",
+    probe: "added",
+    re: PYYAML_LOAD_RE,
+    files: PY_FILE_RE,
     why: "an unsafe deserializer reads input",
   },
   {
