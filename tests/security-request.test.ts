@@ -149,6 +149,16 @@ describe("the @<bot> security command", () => {
       source: "label",
       meta: { head_sha: "head42" },
     });
+    // Whoever set the label counts, an auto-labeler too: the reconcile poll
+    // honours the same label without knowing who set it.
+    expect(
+      interpretEvent(
+        "pull_request",
+        "labeled",
+        labelPayload(LABEL, { login: "some-app[bot]", type: "Bot" }),
+        interpretDeps(),
+      ),
+    ).toMatchObject({ kind: "security_requested", by: "some-app[bot]", source: "label" });
   });
 
   it("anyone else is ignored with a reason, and so is a switched-off command or label", () => {
@@ -178,14 +188,6 @@ describe("the @<bot> security command", () => {
         interpretDeps({ securityLabel: "" }),
       ),
     ).toMatchObject({ kind: "ignored" });
-    expect(
-      interpretEvent(
-        "pull_request",
-        "labeled",
-        labelPayload(LABEL, { login: "some-app[bot]", type: "Bot" }),
-        interpretDeps(),
-      ),
-    ).toMatchObject({ kind: "ignored", reason: "security label set by a bot" });
     // Not the command: ordinary routing, untouched.
     expect(
       interpretEvent(
@@ -426,6 +428,114 @@ describe("the reconcile pass", () => {
       store.db.prepare("UPDATE pr_state SET updated_at = ? WHERE number = 42").run("2099-01-01");
       await reconcileOnce({ cfg, store, adapter, hooks, ackSecurityRequest: ack, log: () => {} });
       expect(ack).toHaveBeenCalledOnce();
+    },
+  );
+});
+
+describe("the reconcile pass reads the security label", () => {
+  const POLLING: Config = { ...cfg, ingress: { ...cfg.ingress, shape: "polling" } };
+  const ref = (number: number, labels: string[], author = "dana-op"): PrRef => ({
+    number,
+    title: `PR ${number}`,
+    author,
+    head_sha: `head${number}`,
+    base_ref: "main",
+    updated_at: "2026-11-01T10:00:00Z",
+    state: "open",
+    draft: false,
+    merged: false,
+    labels,
+  });
+  const run = async (store: StateStore, open: PrRef[]) => {
+    const adapter: ReconcileAdapter = {
+      searchLabelTriggered: async () => [],
+      searchTeamTriggered: async () => [],
+      listOpenPrs: async () => open,
+      getPr: async (n: number) => open.find((p) => p.number === n)!,
+      listBotReviewComments: async () => [],
+      listReviewCommentsFull: async () => [],
+      listIssueComments: async () => [],
+      listReviewsFull: async () => [],
+    };
+    const hooks = {
+      async dispatchRound() {},
+      async inject() {},
+      async archiveAndClose() {},
+    } as SessionHooks;
+    await reconcileOnce({ cfg: POLLING, store, adapter, hooks, log: () => {} });
+  };
+  const requests = (store: StateStore, pr: number): number =>
+    (
+      store.db
+        .prepare("SELECT COUNT(*) AS n FROM events WHERE kind = 'review_requested' AND pr = ?")
+        .get(pr) as { n: number }
+    ).n;
+
+  // MUTATION: delete the label loop from sweepSecurityRequests — this fails:
+  // a polling install never turns the label into a request.
+  it(
+    "a label on a PR reviewed at its head is a request, recorded once while the label stays on",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const store = new StateStore(":memory:");
+      tracked(store, 42);
+      store.recordReviewedHead(42, {
+        head_sha: "head42",
+        verdict: "APPROVE",
+        posted_event: "APPROVE",
+      });
+      await run(store, [ref(42, [LABEL])]);
+      expect(store.getPr(42)?.state).toBe("queued");
+      expect(hasNewEvidence(store.reviewedHead(42), "head42")).toBe(true);
+      expect(store.reviewRequest(42, "security")).toMatchObject({
+        source: "label",
+        requested_by: "",
+      });
+      expect(store.reviewRequest(42, "security")?.served_at).not.toBeNull();
+      expect(requests(store, 42)).toBe(1);
+      // The round settles at the head; the label is still on: nothing new.
+      store.db.prepare("UPDATE pr_state SET state='tracked' WHERE number=42").run();
+      store.recordReviewedHead(42, {
+        head_sha: "head42",
+        verdict: "APPROVE",
+        posted_event: "APPROVE",
+      });
+      await run(store, [ref(42, [LABEL])]);
+      expect(requests(store, 42)).toBe(1);
+      expect(store.getPr(42)?.state).toBe("tracked");
+      // Off, then on again: the withdrawal is the edge, and the label asks again.
+      await run(store, [ref(42, [])]);
+      expect(store.reviewRequest(42, "security")).toBeUndefined();
+      await run(store, [ref(42, [LABEL])]);
+      expect(requests(store, 42)).toBe(2);
+      expect(store.getPr(42)?.state).toBe("queued");
+    },
+  );
+
+  it(
+    "adopts an untracked labelled PR, and leaves a bot-authored, a paused or an unlabelled one",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const store = new StateStore(":memory:");
+      tracked(store, 9);
+      store.db.prepare("UPDATE pr_state SET paused = 1 WHERE number = 9").run();
+      await run(store, [
+        ref(7, [LABEL]),
+        ref(8, [LABEL], "dependabot[bot]"),
+        ref(9, [LABEL]),
+        ref(10, ["needs-review"]),
+      ]);
+      expect(store.getPr(7)).toMatchObject({ state: "queued", head_sha: "head7" });
+      expect(store.reviewRequest(7, "security")?.source).toBe("label");
+      expect(store.getPr(8)).toBeUndefined();
+      expect(store.reviewRequest(8, "security")).toBeUndefined();
+      expect(store.reviewRequest(9, "security")).toBeUndefined();
+      expect(store.getPr(9)?.state).toBe("tracked");
+      expect(store.getPr(10)).toBeUndefined();
+      expect(store.reviewRequest(10, "security")).toBeUndefined();
+      // A bot-authored PR records nothing on any pass, so no request loops.
+      await run(store, [ref(8, [LABEL], "dependabot[bot]")]);
+      expect(requests(store, 8)).toBe(0);
     },
   );
 });

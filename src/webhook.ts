@@ -239,8 +239,9 @@ function interpretPullRequest(
       if (name === deps.triggerLabel)
         return { kind: "trigger", pr: meta.number, source: "label", meta };
       if (deps.securityLabel && name === deps.securityLabel) {
-        if (isBotUser(payload?.sender, deps.botLogin))
-          return { kind: "ignored", reason: "security label set by a bot", pr: meta.number };
+        // Whoever set it counts, an auto-labeler too: the reconcile poll,
+        // which never learns who set a label, honours the same label
+        // (src/securityrequest.ts).
         return {
           kind: "security_requested",
           pr: meta.number,

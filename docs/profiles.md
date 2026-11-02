@@ -1031,7 +1031,11 @@ A request plans the whole family on the PR's next round, on top of the
 profile's plan, but never a lens the profile switched off or skipped
 (`src/securityrequest.ts`):
 
-- the **label** `[security] label` (`qcr:security`), added by a person;
+- the **label** `[security] label` (`qcr:security`), set by anyone who can
+  label the PR — an auto-labeler counts too. The reconcile poll reads it as
+  well, so a polling install, or a missed `labeled` webhook, still records
+  the request (its asker unknown); taking the label off and putting it back
+  asks again;
 - **`@<bot> security`** (or `@<bot> security review`) as the first line of a
   comment by an OWNER, MEMBER or COLLABORATOR, while `[security] command`
   is on. Anyone else is ignored with a log line and no reply. A fresh
@@ -1046,8 +1050,9 @@ A request is a row of `pr_review_requests` (one per PR and kind) and is
 served once: it notes new evidence at the reviewed head, so a PR already
 reviewed at its head is reviewed again. While it stands, every round of the
 PR plans the family; the label coming off withdraws it, and closing the PR
-drops it. The reconcile poll applies a comment its webhook missed and serves
-a request that waited for a running round.
+drops it. The reconcile poll applies a comment its webhook missed, records
+a label request no webhook brought, and serves a request that waited for a
+running round.
 
 ## Lens-selection heuristics — `heuristics.toml`
 

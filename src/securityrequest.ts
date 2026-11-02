@@ -13,7 +13,9 @@
 // settle — the round was planned without it, and its verdict re-stamps the
 // mark — and the reconcile pass serves it then (`sweepSecurityRequests`).
 //
-// Who may ask: a label needs triage rights on GitHub already; a comment is
+// Who may ask: a label needs triage rights on GitHub already, and whoever set
+// it counts — a person or an auto-labeler alike, since a polling install never
+// learns who set a label at all; a comment is
 // accepted only from an OWNER, MEMBER or COLLABORATOR (`author_association`),
 // and only while `[security] command` is on. Anything else is ignored with a
 // logged reason and no reply. The one reply is the acknowledgement of a fresh
@@ -38,7 +40,7 @@ import { promptQuoted } from "@quickchatai/pi-quickreview/src/codespan.js";
 import type { SecurityRequest } from "@quickchatai/pi-quickreview/src/types.js";
 import type { PrFileEntry } from "./github.js";
 import type { ReviewRequestRow, StateStore } from "./state.js";
-import { applyEvent, type PrMeta } from "./statemachine.js";
+import { applyEvent, isBotAuthor, type PrMeta } from "./statemachine.js";
 import type { RoundFindingRow } from "@quickchatai/pi-quickreview/src/storerows.js";
 
 /** The `pr_review_requests` kind a security request is recorded under. */
@@ -200,8 +202,19 @@ export function serveSecurityRequest(
 /**
  * The reconcile pass's half (GitHub wins): withdraw a label request whose
  * label is no longer on the PR, drop every request of a PR that closed or is
- * not open any more, and serve each waiting request whose PR has no round
- * running — adopting a PR this daemon does not track from the open list.
+ * not open any more, record a label request for an open PR that carries the
+ * label with no request standing, and serve each waiting request whose PR has
+ * no round running — adopting a PR this daemon does not track from the open
+ * list.
+ *
+ * The label is read here because a polling install has no `labeled` webhook
+ * at all, and a webhook install can miss one: without this, a label added to
+ * a PR already reviewed at its head would start nothing until some other
+ * trigger did. The standing row is the label's edge record: it stays while
+ * the label does, so a label left on records nothing new, and taking it off
+ * and putting it back records a fresh request. Who set the label is not known
+ * here (`requested_by` ""). A bot-authored PR is never reviewed, so its label
+ * records nothing; neither does a paused PR's until it is resumed.
  *
  * `open` is the open-PR list this pass read, or null when it failed (then
  * nothing is withdrawn or dropped, and only tracked PRs are served).
@@ -240,16 +253,34 @@ export function sweepSecurityRequests(
       if (store.clearReviewRequests(pr, "label-removed", SECURITY_REQUEST_KIND)) cleared.push(pr);
     }
   }
+  const meta = (ref: { title: string; head_sha: string; author: string }): PrMeta => ({
+    title: ref.title,
+    head_sha: ref.head_sha,
+    author: ref.author,
+  });
+  const opts = {
+    ...(a.botLogin !== undefined ? { botLogin: a.botLogin } : {}),
+    ...(a.now ? { now: a.now } : {}),
+  };
+  if (a.open !== null && a.label !== "") {
+    for (const [pr, ref] of a.open) {
+      if (!ref.labels.includes(a.label)) continue;
+      if (store.reviewRequest(pr, SECURITY_REQUEST_KIND) !== undefined) continue;
+      if (a.botLogin !== undefined && isBotAuthor(ref.author, a.botLogin)) continue;
+      const local = store.getPr(pr);
+      if (local?.state === "closed" || local?.paused) continue;
+      const outcome = applySecurityRequest(
+        store,
+        { pr, source: "label", by: "" },
+        { meta: meta(ref), ...opts },
+      );
+      if (outcome.fresh && outcome.served) served.push(pr);
+    }
+  }
   for (const req of store.unservedReviewRequests()) {
     if (req.kind !== SECURITY_REQUEST_KIND) continue;
     const ref = a.open?.get(req.pr);
-    if (
-      serveSecurityRequest(store, req.pr, {
-        ...(ref ? { meta: { title: ref.title, head_sha: ref.head_sha, author: ref.author } } : {}),
-        ...(a.botLogin !== undefined ? { botLogin: a.botLogin } : {}),
-        ...(a.now ? { now: a.now } : {}),
-      })
-    )
+    if (serveSecurityRequest(store, req.pr, { ...(ref ? { meta: meta(ref) } : {}), ...opts }))
       served.push(req.pr);
   }
   return { served, cleared };
@@ -260,8 +291,8 @@ export function sweepSecurityRequests(
  * request stands until the PR closes. A label request stands while the label
  * is on the PR: `labels` is what GitHub said this round (null when the read
  * failed — then the recorded request stands). A configured label on the PR
- * with no row (its webhook was missed, or the install polls) is a request
- * whose asker is not known.
+ * with no row yet (its webhook was missed, or the install polls, and the
+ * reconcile pass has not recorded it) is a request whose asker is not known.
  */
 export function resolveSecurityRequest(a: {
   row: ReviewRequestRow | undefined;
