@@ -293,7 +293,12 @@ were found and that approval waits on green CI alone — and
 and CI now classifies green, the PR is re-queued through the ordinary
 dispatch → round → verdict path. **No review is posted from there and no
 verdict is invented** — the session decides again, and this time the approval
-is available.
+is available. When it approves at the same head with nothing new since (no
+author reply) and nothing inline, over CI guard 4 saw green, the posting guard
+gives that approval as one line in place of the session's body
+(`givenApproval`): the withheld COMMENT above already carries the review, so
+the approval does not repeat it. The footer and the posting marker stay.
+Person mode never takes this step: its COMMENTs withheld nothing.
 
 ### Guarantees
 
