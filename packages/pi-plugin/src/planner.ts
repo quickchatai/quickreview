@@ -180,7 +180,8 @@ export interface PassPlan {
  *   raised to match a lens — is not raisable, and is always last;
  * - every other selected lens gets the passTier() tier and may be raised to
  *   any higher tier's variant (ascending order).
- * addable_lenses = every known pass not already in the plan.
+ * addable_lenses = every known pass not already in the plan — the security
+ * family only on a round already doing security work, the chain lens never.
  * The rows come back in launch order, slowest first (`slowestFirst`).
  *
  * The profile's per-lens tuning (`cfg.lenses`) wins over all of
@@ -549,8 +550,22 @@ export function buildPassPlan(
       });
   }
   const selected = new Set([...pass_plan, ...post_plan].map((p) => p.lens));
+  // The security family is offered only to a round already doing security
+  // work (a family row planned, a request, a security-only profile): a PR
+  // with no security signal is offered what it was before the family
+  // existed. The chain lens is never offered: it runs as strategy rows the
+  // plan places, never as an ad hoc pass.
+  const securityRound =
+    requested ||
+    security.only ||
+    [...pass_plan, ...post_plan].some((p) => SECURITY_FAMILY.includes(p.lens));
   const addable_lenses = [...new Set([...ALL_PASSES, ...cfg.models.risk_passes])].filter(
-    (l) => !selected.has(l) && on(l) && !skip.has(l),
+    (l) =>
+      !selected.has(l) &&
+      on(l) &&
+      !skip.has(l) &&
+      l !== CHAIN_PASS &&
+      (securityRound || !SECURITY_FAMILY.includes(l)),
   );
   return {
     pass_plan: slowestFirst(pass_plan, files, risk),

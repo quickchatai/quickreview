@@ -213,11 +213,12 @@ describe("[review] dedup_merge = false — byte-identical to before the duplicat
 // template, the pass plan, or a rendered note changes; re-pin deliberately and
 // say why in the commit, never to make `[posting]` pass.
 //
-// The security family moved them all: the fourteen `pass-sec-*` lenses join
-// the addable list and the build, the findings-record example gains a
+// The security family moved them all: the findings-record example gains a
 // security entry, the `posted_as` bullet covers a downgraded entry that went
 // out, the kill-word list gains `partial-chain`, and the validator gains the
-// security addenda. None of it is `[posting]`.
+// security addenda. The fourteen `pass-sec-*` lenses join the build but not
+// the addable list of a round with no security signal, as this fixture's is.
+// None of it is `[posting]`.
 //
 // `[review] render_outputs` defaults on, so step 6 of every round carries the
 // `{{render_note}}` (write the findings record first, render the body and the
@@ -226,9 +227,9 @@ describe("[review] dedup_merge = false — byte-identical to before the duplicat
 //
 // With `dedup_merge = false`, `coverage_check = false` and no posting policy:
 const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
-  first: "f4ef394d58447861c19f24f599339461e9e9f28a7d6227309d08c55516774f86",
-  "re-review": "d11d31f2c9443b3bcc77dc9507da7b0a8cefe1e3f7cb915bce7f32ab387cd82b",
-  staleness: "9e6df0ed5651251e03bdd3231a198c2fb0238d3f60930cee2859e837b8dee286",
+  first: "80a61e1cfc09d1d09a7db21d74f30005934344491555450460a13ec2fe9dfdbc",
+  "re-review": "3bf11a63dcbb5609eb4e7e5161546fc8f025852132023665ae6fd65381457b38",
+  staleness: "b584759981b0b64a18e36a207ffdd5bd6550077aadf7970aea38663d6893e4ce",
 };
 // The default orders: `[review] dedup_merge` on (step 4 carries the
 // `{{dedup_note}}` — group candidates with `cluster_findings` before the
@@ -237,23 +238,23 @@ const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
 // posting-policy note), and `[review] coverage_check` on (the fixture PR
 // changes source files, so step 2 ends with the `{{coverage_note}}`).
 const GOLDEN_ORDERS: Record<string, string> = {
-  first: "1cdd4de1266ebc1970559ddf9e9548d545aec661c6f6ef2faf936c7c7e6feb53",
-  "re-review": "7f9a43bac641a61af4a5ee50523366249b540c36ca6d2d311da02912d1808755",
-  staleness: "37be3edd5a55a007ec6ac6b34b491af1d09c0871764b0640e6719784f909e678",
+  first: "90f9a34cd233b8a8af4f791d123c1a9e61a6b8d9816eb0bce2924155a662617b",
+  "re-review": "441abd8fd240f0a4f6009c00e363719794305f5bde56897bd27457bd987e5440",
+  staleness: "35d2ee04db7f26e101be9ca1c2eda07a0b791cc630dfd16619f14f7ccf316727",
 };
 // `[review] coverage_check = false`: the default orders without the
 // `{{coverage_note}}`.
 const GOLDEN_ORDERS_NO_COVERAGE: Record<string, string> = {
-  first: "9f3ba65063eef42d743236351b90408785d1c49214b5edf6cdabc2b3112109cb",
-  "re-review": "b5ce47f30e604b16c9d336401741af1848e91b6da72716b13dda5256e50cadc4",
-  staleness: "fb4428568e96dfb54e93bd33b7067540b78b9f33b430828c2898f9530c44c315",
+  first: "1104efb08375393da61dca3e4f0de8a86a07bc6a8d84cd9227fe5ae59dad43a9",
+  "re-review": "2f769e59222087845863e570449c742842bfeb0e13e1ce01c1bcfb3f9419faf9",
+  staleness: "e10e198b70f98bc5b0a11b50878ea346b332af3fb61888897243ee74f4621a23",
 };
 // `[review] render_outputs = false`, `dedup_merge = false`, `coverage_check =
 // false` and no posting policy: the orders without any of those levers.
 const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
-  first: "e4f6ee7ef9be265e323f0fbaa9dcb68ff6f8024164616ddaeadee1150f8e1843",
-  "re-review": "d09b44f9174066ea6b272edc3f8013135c96275fe5a4ae0feff50ce6c2f7c9df",
-  staleness: "44ef8d4c6aaa9d7e1b1a1e56b57853f0e149f048541a3e90ff75473533747cea",
+  first: "780e6af3347c38c70dfc6c8c30407be84298633fac95f45760a2dbefb1623cd3",
+  "re-review": "f0f282e16815f9f9d90cb2c8840aa1b8a0d651cc332ccbf69b0df7cd5b391596",
+  staleness: "2b30d75c173ab6cfc4142146377466adee99b9551ba6653f235f4046f91fb0d4",
 };
 // The default profile's built agents with `[review] dedup_merge = false` and no
 // posting policy. These hashes move only when an agent body, an addendum or the

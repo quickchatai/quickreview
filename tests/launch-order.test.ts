@@ -80,11 +80,13 @@ describe("the plan lists its rows slowest first", () => {
     // their JSON, and the addable list as planned).
     expect(sha(canon(p.pass_plan))).toBe(PRE_LEVER_ROWS);
     // The security family joined the registry after the lever, and nothing
-    // here triggers it (an inline `is_staff` check is no guard marker), so
-    // every family lens is addable: the list before it is the pinned one.
-    const family = (l: string): boolean => SECURITY_FAMILY.includes(l);
-    expect(sha(p.addable_lenses.filter((l) => !family(l)))).toBe(PRE_LEVER_ADDABLE);
-    expect(p.addable_lenses.filter(family)).toEqual([...SECURITY_FAMILY]);
+    // here triggers it (an inline `is_staff` check is no guard marker): a
+    // round with no security signal is offered exactly the pre-lever list.
+    // MUTATION: drop `(securityRound || !SECURITY_FAMILY.includes(l))` from
+    // buildPassPlan's addable filter — the family joins the list, and this
+    // fails.
+    expect(sha(p.addable_lenses)).toBe(PRE_LEVER_ADDABLE);
+    expect(p.addable_lenses.filter((l) => SECURITY_FAMILY.includes(l))).toEqual([]);
     expect(p.sweep_unswept).toEqual([]);
   });
 

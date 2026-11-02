@@ -143,6 +143,28 @@ describe("a family row in the default profile", () => {
   });
 
   /**
+   * MUTATION: drop `(securityRound || !SECURITY_FAMILY.includes(l))` from
+   * buildPassPlan's addable filter — a round with no security signal is
+   * offered the family; drop `l !== CHAIN_PASS` — the chain is offered as an
+   * ad hoc pass. Either fails.
+   */
+  it("offers the family as addable only to a round doing security work, and never the chain", () => {
+    const offered = (p: PassPlan): string[] =>
+      p.addable_lenses.filter((l) => SECURITY_FAMILY.includes(l));
+    // No signal: nothing of the family is offered.
+    expect(offered(plan(fixture, [PLAIN]))).toEqual([]);
+    // A triggered round: the rest of the family, but never the chain lens.
+    const triggered = plan(fixture, [SQL]);
+    expect(familyRows(triggered).length).toBeGreaterThan(0);
+    expect(offered(triggered).length).toBeGreaterThan(0);
+    expect(offered(triggered)).not.toContain(CHAIN_PASS);
+    for (const l of offered(triggered)) expect(rows(triggered, l)).toEqual([]);
+    // A request plans the family; whatever is left is offered, the chain never.
+    const asked = plan(fixture, [PLAIN], { securityRequest: REQUEST });
+    expect(asked.addable_lenses).not.toContain(CHAIN_PASS);
+  });
+
+  /**
    * MUTATION: set `needsCreate: false` back on secfacts.ts's
    * `.filter(...).exists()` shape — this fails: the computed fact plans
    * pass-sec-toctou and compose on a read-only existence check.

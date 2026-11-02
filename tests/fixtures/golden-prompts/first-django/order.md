@@ -240,7 +240,7 @@ raise to" column when the diff's semantic complexity demands it — each raise
 needs a one-line stated reason, and those reasons go into the verdict
 `summary`. **Never lower a tier.** A pass marked pinned has no raise option.
 
-**Add protocol.** You MAY additionally run a lens from: pass-contracts, pass-security, pass-statelessness, pass-prod-risk, pass-delivery, pass-intent, pass-placement, pass-simplicity, pass-concurrency, pass-ask-human, pass-widened, pass-roundtrip, pass-deferred, pass-bounds, pass-rollout, pass-style, pass-lint-conformance, pass-sec-authn-coverage, pass-sec-access, pass-sec-privesc, pass-sec-iam, pass-sec-tokens, pass-sec-toctou, pass-sec-injection, pass-sec-boundaries, pass-sec-secrets-data, pass-sec-supply-chain, pass-sec-llm, pass-sec-infra, pass-sec-variant, pass-sec-exploit-chain —
+**Add protocol.** You MAY additionally run a lens from: pass-contracts, pass-security, pass-statelessness, pass-prod-risk, pass-delivery, pass-intent, pass-placement, pass-simplicity, pass-concurrency, pass-ask-human, pass-widened, pass-roundtrip, pass-deferred, pass-bounds, pass-rollout, pass-style, pass-lint-conformance —
 with a one-line stated reason. The plan is chosen from the diff's shape, so
 it can miss what the diff says: read the diff once before you launch, and when
 it shows a concrete shape an addable lens exists for (a check that now admits
