@@ -1,5 +1,28 @@
 # Release notes
 
+## Unreleased
+
+### The Claude Code plugin moves off Docker
+
+QuickReview installs into Claude Code, Codex, Copilot CLI, Cursor, opencode,
+Gemini CLI and Antigravity from npm, through one installer:
+`npx @quickchatai/quickreview plugin install --to <host|all>`, then
+`qcr plugin update` and `qcr plugin uninstall --from <host|all>`
+([docs/plugin.md](docs/plugin.md)). It needs no Docker, no image and no
+GitHub package token.
+
+The Docker-based Claude Code plugin is gone: its setup script, the image
+wrapper install it ran, and this repository's own marketplace. If you
+installed it, remove it, then install the new one:
+
+```sh
+claude plugin uninstall qcr
+npx @quickchatai/quickreview plugin install --to claude
+```
+
+`claude plugin marketplace remove quickreview` drops the old marketplace too.
+The release image's own `qcr` wrapper is unchanged.
+
 ## 1.3.2
 
 The pi plugin reviews again in a plain pi. Installed with `pi install

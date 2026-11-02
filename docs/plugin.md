@@ -1,8 +1,80 @@
-# The host plugins and their one skill source
+# QuickReview in your coding-agent CLI
+
+`qcr plugin` installs QuickReview's review, scan and setup commands into the
+coding-agent CLIs on this machine: Claude Code, Codex, Copilot CLI, Cursor,
+opencode, Gemini CLI and Antigravity (the **hosts**). Each command runs `qcr`
+on this machine. There is no Docker, no image and no GitHub package token.
+pi has its own plugin, `pi install npm:@quickchatai/pi-quickreview`
+([packages/pi-plugin/README.md](../packages/pi-plugin/README.md)).
+
+## Install
+
+With nothing installed yet, `npx` runs the installer straight from npm:
+
+```sh
+npx @quickchatai/quickreview plugin install --to claude
+```
+
+With `qcr` installed (`npm i -g @quickchatai/quickreview`), it is the same verb:
+
+```sh
+qcr plugin install --to <host>      # one host
+qcr plugin install --to all         # every host found on this machine
+qcr plugin install --to claude --project   # this repository only, where a host has a project scope
+```
+
+| Host        | Install                               | Then type                                | To pick it up                                                           |
+| ----------- | ------------------------------------- | ---------------------------------------- | ----------------------------------------------------------------------- |
+| Claude Code | `qcr plugin install --to claude`      | `/qcr:review`, `/qcr:scan`, `/qcr:setup` | restart Claude Code, or run `/reload-plugins` in a session already open |
+| Codex       | `qcr plugin install --to codex`       | `$qcr:review`, `$qcr:scan`, `$qcr:setup` | start a new Codex session                                               |
+| Copilot CLI | `qcr plugin install --to copilot`     | `/qcr-review`, `/qcr-scan`, `/qcr-setup` | start a new Copilot CLI session                                         |
+| Cursor      | `qcr plugin install --to cursor`      | `/qcr-review`, `/qcr-scan`, `/qcr-setup` | reload the Cursor window, or start a new `cursor-agent` session         |
+| opencode    | `qcr plugin install --to opencode`    | `/qcr-review`, `/qcr-scan`, `/qcr-setup` | restart opencode                                                        |
+| Gemini CLI  | `qcr plugin install --to gemini`      | `/qcr:review`, `/qcr:scan`, `/qcr:setup` | restart Gemini CLI                                                      |
+| Antigravity | `qcr plugin install --to antigravity` | `/qcr:review`, `/qcr:scan`, `/qcr:setup` | start a new Antigravity session                                         |
+
+The installer prints the same two lines for each host it installed into: what
+to type, and how to pick it up. A plugin is installed at user scope. Only
+Claude Code has a project scope the installer writes, so `--project` installs
+there and skips every other host with the reason.
+
+`--to all` finds a host by its executable on `PATH`, and Cursor also by
+`~/.cursor`. With no host found it exits 0 and says so. Every run prints one
+row per host, installed, updated, removed, skipped or failed (with the host's
+own message), and `--json` prints the same rows. The exit code is 0 when no
+host failed, 1 when one did, and 2 for a usage error.
+
+## Update and uninstall
+
+```sh
+qcr plugin update                    # every host QuickReview is installed in, to this release
+qcr plugin uninstall --from <host>   # one host
+qcr plugin uninstall --from all      # every host
+```
+
+`qcr update` updates `qcr` itself; `qcr plugin update` then brings every host
+plugin up to that release. Install, update and uninstall each end by
+deleting the rendered releases no host uses any more.
+
+## Moving from the Docker-based Claude Code plugin
+
+Releases up to 1.3.2 shipped a Claude Code plugin from this repository's own
+marketplace, which installed the image's `qcr` wrapper through Docker. It is
+gone. If you installed it, remove it, then install the new one:
+
+```sh
+claude plugin uninstall qcr
+npx @quickchatai/quickreview plugin install --to claude
+```
+
+`claude plugin marketplace remove quickreview` then drops the old marketplace
+too. The release image's own `qcr` wrapper, which runs the bot and the home in
+Docker, is unchanged ([host-wrapper.md](host-wrapper.md)).
+
+## How a host plugin is made
 
 `plugins/qcr/templates/` is the one skill source for QuickReview's commands,
-in the pi Plugin and in every host plugin (Claude Code, Codex, Copilot,
-Cursor, opencode, Gemini CLI, Antigravity). Each command has one template: a
+in the pi Plugin and in every host plugin. Each command has one template: a
 shared description, a **pi body**, which hands the person the `/qcr-…` line
 to type, and a **host body**, which runs `qcr` itself.
 
@@ -11,44 +83,42 @@ host, the package version and the contract number to the files that host
 reads. It fills in the command's name (`review` on a namespaced host,
 `qcr-review` on a bare one), the invoke spelling, the version (every
 manifest's, and the pinned `npx` fallback's) and the host's own note, such as
-Codex's request for network access.
+Codex's request for network access. Its `NAMES` table is where the "Then
+type" column above comes from.
 
-| host        | the person types | rendered layout                                                    |
-| ----------- | ---------------- | ------------------------------------------------------------------ |
-| Claude Code | `/qcr:review`    | `.claude-plugin/marketplace.json`, plugin in `qcr/`                |
-| Codex       | `$qcr:review`    | `.claude-plugin/marketplace.json`, `qcr/.codex-plugin/plugin.json` |
-| Copilot CLI | `/qcr-review`    | `.github/plugin/marketplace.json`, plugin in `qcr/`                |
-| Cursor      | `/qcr-review`    | `.cursor-plugin/plugin.json` and `skills/`                         |
-| opencode    | `/qcr-review`    | `skills/` alone                                                    |
-| Gemini CLI  | `/qcr:review`    | `gemini-extension.json` and `commands/qcr/*.toml`                  |
-| Antigravity | `/qcr:review`    | `plugin.json` and `skills/`                                        |
-| pi          | `/qcr-review`    | the Plugin's `skills/`                                             |
+| Host        | Rendered layout                                                    |
+| ----------- | ------------------------------------------------------------------ |
+| Claude Code | `.claude-plugin/marketplace.json`, plugin in `qcr/`                |
+| Codex       | `.claude-plugin/marketplace.json`, `qcr/.codex-plugin/plugin.json` |
+| Copilot CLI | `.github/plugin/marketplace.json`, plugin in `qcr/`                |
+| Cursor      | `.cursor-plugin/plugin.json` and `skills/`                         |
+| opencode    | `skills/` alone                                                    |
+| Gemini CLI  | `gemini-extension.json` and `commands/qcr/*.toml`                  |
+| Antigravity | `plugin.json` and `skills/`                                        |
+| pi          | the Plugin's `skills/`                                             |
 
-`qcr plugin install --to <host|all>` renders a host's folder into the data
-home (`$XDG_DATA_HOME/qcr/plugins/<host>/<version>/`) and points the host at
-it through the host's own install verb. Cursor and opencode have none, so
-their render is copied where they load it: Cursor's folder into
-`~/.cursor/plugins/local/qcr` (a window reload or a new agent session
-re-indexes it), opencode's skills into `$XDG_CONFIG_HOME/opencode/skills`. A
-record beside the render, `<host>.copy.json`, names every file and folder the
-copy wrote; update rewrites those, uninstall deletes them, and an install that
-would land on a path the record does not name fails instead. `--to all` finds
-a host by its executable on `PATH`, and Cursor also by `~/.cursor`.
+`plugins/qcr/` is a source, never an installable plugin: it holds the
+renderer and the templates, and the repository root carries no plugin
+manifest or marketplace. `qcr plugin install --to <host>` renders a host's
+folder into the data home (`$XDG_DATA_HOME/qcr/plugins/<host>/<version>/`)
+and points the host at it through the host's own install verb. Cursor and
+opencode have none, so their render is copied where they load it: Cursor's
+folder into `~/.cursor/plugins/local/qcr`, opencode's skills into
+`$XDG_CONFIG_HOME/opencode/skills`. A record beside the render,
+`<host>.copy.json`, names every file and folder the copy wrote; update
+rewrites those, uninstall deletes them, and an install that would land on a
+path the record does not name fails instead.
 
 The pi Plugin's `packages/pi-plugin/skills/` is that render, made by
 `npm run build` and by the Plugin's prepack (`node plugins/qcr/render.mjs pi`,
 which checks the copy it wrote; `--check` only checks). It is gitignored and
-never edited. `tests/plugin-render.test.ts` holds one golden per host and pi:
-a template edited without `UPDATE_GOLDEN=1` fails it.
+never edited.
 
 A host body probes the installed `qcr` first (`qcr --schema 1 version`) and,
 on any nonzero exit or output that is not JSON, runs the exact release it was
 rendered from through `npx -y @quickchatai/quickreview@<version>`. A host scan
-runs with `--sandbox host`.
-
-The root `.claude-plugin/marketplace.json` and `plugins/qcr/.claude-plugin/`
-still list the Docker-era Claude Code plugin, and its setup script
-(`plugins/qcr/scripts/qcr-setup.sh`) stays until the installer replaces it.
+runs with `--sandbox host`: in `qcr`'s own process, behind its read-only
+guard.
 
 ## The schema check
 
@@ -70,22 +140,15 @@ The review skill posts nothing: a `--schema` run is always `--json`, which makes
 the result's destination `json` whatever the repo saved. Posting to a PR needs
 an explicit `--to pr`, which the skill passes only when the user asks.
 
-## The Docker-era setup script
-
-`scripts/qcr-setup.sh` runs the four steps in order and skips what is done.
-The image is public, so pull access needs nothing; only a private mirror
-needs `gh auth refresh -s read:packages`, then
-`gh auth token | docker login ghcr.io`. The two steps that need a person (the
-browser sign-in and pi's `/login`) run only on a terminal; without one the script
-prints the command and exits 10. The image defaults to
-`ghcr.io/<owner>/quickreview:<version>` (the publishing org's namespace, set in the script), the release the plugin ships with
-(the registry has no `latest` tag); `QCR_IMAGE` names another image, and a tag
-already on the machine skips the pull check. It makes no model call.
-
 ## Tests
 
-`tests/plugin-render.test.ts` holds the goldens and every host's bodies.
-`tests/plugin-qcr.test.ts` checks the Claude Code render and runs the setup script against
-a fake `qcr`, `docker` and `gh` on `PATH` and the recorded version payload in
-`tests/fixtures/json-contract/`. `tests/schema-flag.test.ts` drives the
-contract flag through the bin's front door and the image's entry.
+`tests/plugin-render.test.ts` holds one golden per host and pi (a template
+edited without `UPDATE_GOLDEN=1` fails it), every host's bodies, and the
+fences that keep `plugins/qcr/` a source with no Docker in it.
+`tests/plugin-docs.test.ts` checks that this page's install table and the
+README's install lines name every host with the invoke spellings of the
+renderer's `NAMES`. `tests/plugin-install-claude.test.ts`,
+`tests/plugin-install-hosts.test.ts` and `tests/plugin-install-copy.test.ts`
+drive `qcr plugin` against fake hosts on `PATH`.
+`tests/schema-flag.test.ts` drives the contract flag through the bin's front
+door and the image's entry.

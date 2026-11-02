@@ -33,7 +33,7 @@ A scan reads the whole repository at one commit, or one folder of it, not a diff
 
 {{include:pick-qcr}}
 
-Every scan call here also carries `--sandbox host`: the scan runs on this machine, behind qcr's read-only guard, with no Docker.
+Every scan call here also carries `--sandbox host`: the scan runs on this machine, in qcr's own process, behind its read-only guard.
 
 ## Steps
 

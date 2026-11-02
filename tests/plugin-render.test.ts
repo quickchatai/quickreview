@@ -10,11 +10,22 @@
 //     marketplace hosts get a local marketplace naming the plugin;
 //   - a host body runs qcr only at its contract, falls back to the pinned
 //     `npx`, scans with `--sandbox host`, and Codex's asks for the network
-//     once, up front; a pi body hands the person the `/qcr-…` line.
+//     once, up front; a pi body hands the person the `/qcr-…` line;
+//   - plugins/qcr/ is a source (the renderer and the templates, no manifest)
+//     that names no Docker, ghcr or fixed release, and the repo root carries
+//     no plugin manifest or marketplace.
 //
 // Regenerate the goldens ONLY for a deliberate change to the source or the
 // layout: `UPDATE_GOLDEN=1 npx vitest run tests/plugin-render.test.ts`.
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -223,6 +234,53 @@ describe("the manifests", () => {
   });
 });
 
+describe("the host plugin is a source, off Docker", () => {
+  const SOURCE = join(ROOT, "plugins", "qcr");
+  const AT2 = { version: "4.5.6", contract: TEMPLATE_CONTRACT };
+  const RELEASE = /\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\b/g;
+
+  // MUTATION: put a `docker run …` step back into plugins/qcr/templates/setup.md's
+  // host body, or write `"version": "1.3.2"` into one template — this fails.
+  it("no source file and no render names Docker, ghcr, read:packages or a fixed release", () => {
+    for (const p of tree(SOURCE)) {
+      const text = readFileSync(join(SOURCE, p), "utf8");
+      expect(text, `plugins/qcr/${p}`).not.toMatch(/docker|ghcr|read:packages/i);
+      // the release is the render's input, never a literal a person bumps
+      expect(text.match(RELEASE) ?? [], `plugins/qcr/${p}`).toEqual([]);
+    }
+    for (const t of TARGETS)
+      for (const [p, text] of Object.entries(rendered(t, AT2))) {
+        expect(text, `${t}/${p}`).not.toMatch(/docker|ghcr|read:packages/i);
+        expect(new Set(text.match(RELEASE) ?? []), `${t}/${p}`).toEqual(
+          new Set(text.match(RELEASE) ? ["4.5.6"] : []),
+        );
+      }
+  });
+
+  // MUTATION: restore plugins/qcr/.claude-plugin/plugin.json, or
+  // plugins/qcr/scripts/qcr-setup.sh — this fails.
+  it("plugins/qcr/ holds the renderer, its types and the templates, and no manifest", () => {
+    const extra = tree(SOURCE).filter(
+      (p) => p !== "render.mjs" && p !== "render.d.mts" && !p.startsWith("templates/"),
+    );
+    expect(extra).toEqual([]);
+  });
+
+  // MUTATION: restore the root .claude-plugin/marketplace.json — this fails.
+  it("the repo root carries no plugin manifest or marketplace of its own", () => {
+    for (const p of [
+      ".claude-plugin",
+      ".codex-plugin",
+      ".cursor-plugin",
+      ".github/plugin",
+      "gemini-extension.json",
+      "plugin.json",
+      "marketplace.json",
+    ])
+      expect(existsSync(join(ROOT, p)), p).toBe(false);
+  });
+});
+
 describe("the skills", () => {
   it.each(TARGETS.filter((t) => t !== "gemini"))(
     "%s: front matter parses, and each name matches its folder",
@@ -309,6 +367,33 @@ describe("the bodies", () => {
     expect(setup).toContain("`qcr login`");
     expect(setup).toContain("`npx -y @quickchatai/quickreview@0.0.0-golden login`");
     expect(setup).toContain(NAMES[t]!["review"]!.invoke);
+  });
+
+  // MUTATION: drop "Wait for a go" from plugins/qcr/templates/review.md's host
+  // body — this fails.
+  it.each(HOSTS)("%s: review previews before it runs and posts only on --to pr", (t) => {
+    const review = bodies(t).find(([p]) => /review/.test(p))![1];
+    expect(review).toMatch(/--preview/);
+    expect(review).toMatch(/Wait for a go/);
+    expect(review).toMatch(/only with `--to pr`/);
+    expect(review).not.toMatch(/--post/);
+  });
+
+  it.each(HOSTS)("%s: review and scan say what a refusal of the contract looks like", (t) => {
+    for (const [p, body] of bodies(t).filter(([p]) => /review|scan/.test(p))) {
+      expect(body, p).toMatch(/schema_version/);
+      expect(body, p).toMatch(/exits 3 with nothing on stdout/);
+    }
+  });
+
+  // MUTATION: move the login check above the version probe in
+  // plugins/qcr/templates/setup.md's host body — this fails.
+  it.each(HOSTS)("%s: setup checks qcr's contract, then the login", (t) => {
+    const setup = bodies(t).find(([p]) => /setup/.test(p))![1];
+    const at = ["qcr --schema 1 version", "auth.json", "`qcr login`"].map((s) => setup.indexOf(s));
+    expect(at.every((i) => i >= 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    expect(setup).not.toMatch(/CLAUDE_PLUGIN_ROOT|qcr-setup\.sh/);
   });
 
   // MUTATION: delete plugins/qcr/templates/notes/codex.md — this fails.

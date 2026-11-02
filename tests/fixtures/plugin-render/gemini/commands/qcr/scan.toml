@@ -22,7 +22,7 @@ npx -y @quickchatai/quickreview@0.0.0-golden --schema 1 version
 
 If that fails too, report its error as printed, stop, and use the setup skill (/qcr:setup).
 
-Every scan call here also carries `--sandbox host`: the scan runs on this machine, behind qcr's read-only guard, with no Docker.
+Every scan call here also carries `--sandbox host`: the scan runs on this machine, in qcr's own process, behind its read-only guard.
 
 ## Steps
 

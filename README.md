@@ -358,7 +358,6 @@ qcr review             # review this branch against its base, with no daemon
 qcr review 123         # review a pull request (or pass its URL)
 qcr pi                 # pi with the plugin (/qcr-review /qcr-scan /qcr-setup) and /selfimprove
 qcr update             # update qcr with the package manager that installed it
-qcr plugin install --to claude   # /qcr:review, /qcr:scan and /qcr:setup in Claude Code
 qcr                    # the home: pi on your own login, with your repo's pull requests
 qcr tui                # the admin TUI
 ```
@@ -372,6 +371,29 @@ the better host for an always-on bot ([docker/README.md](docker/README.md)).
 Already using pi? Install just the plugin:
 `pi install npm:@quickchatai/pi-quickreview`
 ([packages/pi-plugin/README.md](packages/pi-plugin/README.md)).
+
+### In your coding-agent CLI
+
+One command installs QuickReview's review, scan and setup into each
+coding-agent CLI on this machine, with no Docker. Each line is what to run,
+then what to type in that CLI:
+
+```sh
+npx @quickchatai/quickreview plugin install --to claude        # Claude Code: /qcr:review /qcr:scan /qcr:setup
+npx @quickchatai/quickreview plugin install --to codex         # Codex: $qcr:review $qcr:scan $qcr:setup
+npx @quickchatai/quickreview plugin install --to copilot       # Copilot CLI: /qcr-review /qcr-scan /qcr-setup
+npx @quickchatai/quickreview plugin install --to cursor        # Cursor: /qcr-review /qcr-scan /qcr-setup
+npx @quickchatai/quickreview plugin install --to opencode      # opencode: /qcr-review /qcr-scan /qcr-setup
+npx @quickchatai/quickreview plugin install --to gemini        # Gemini CLI: /qcr:review /qcr:scan /qcr:setup
+npx @quickchatai/quickreview plugin install --to antigravity   # Antigravity: /qcr:review /qcr:scan /qcr:setup
+npx @quickchatai/quickreview plugin install --to all           # every one found on this machine
+npx @quickchatai/quickreview plugin update                     # every install, to this release
+npx @quickchatai/quickreview plugin uninstall --from all       # or --from <host>
+```
+
+With `qcr` installed, `qcr plugin …` is the same command. Each host's scope,
+reload step and the move from the old Docker-based Claude Code plugin are in
+[docs/plugin.md](docs/plugin.md).
 
 ## Configuring and running it
 
@@ -406,7 +428,7 @@ never the same system ([MANIFESTO.md](MANIFESTO.md)).
 - [docs/host-wrapper.md](docs/host-wrapper.md) — the `qcr` host wrapper
 - [docs/profiles.md](docs/profiles.md) — repo profiles and per-lens tuning
 - [packages/pi-plugin/README.md](packages/pi-plugin/README.md) — the pi plugin
-- [docs/plugin.md](docs/plugin.md) — the Claude Code plugin
+- [docs/plugin.md](docs/plugin.md) — QuickReview in Claude Code, Codex, Copilot CLI, Cursor, opencode, Gemini CLI and Antigravity
 - [docs/ownership.md](docs/ownership.md) — the owner-only surfaces: the dry-run flag, frozen seeds, ratification
 - [docs/exec-boundary.md](docs/exec-boundary.md) — what stops a review session running your code
 - [docs/memory-embeddings.md](docs/memory-embeddings.md) — the embedder: local by default, hosted opt-in

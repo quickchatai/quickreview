@@ -140,7 +140,6 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/plugin-install-claude.test.ts", // qcr plugin against a fake claude on PATH
   "tests/plugin-install-hosts.test.ts", // qcr plugin against fake codex, copilot, gemini and agy
   "tests/plugin-peers.test.ts", // a child node resolving pi's packages through the peer hook
-  "tests/plugin-qcr.test.ts", // the plugin's shell scripts against a fake docker, gh and qcr
   "tests/post-payload-parity.test.ts", // the Node post route, compared with recorded dry-run payloads
   "tests/post-shim.test.ts", // the post scripts handing over to the client under bash
   "tests/posting-journal.test.ts", // the Python receipt helper beside the TypeScript journal
