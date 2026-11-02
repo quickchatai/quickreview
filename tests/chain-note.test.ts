@@ -440,8 +440,10 @@ describe("a planned round", () => {
   });
 
   /**
-   * MUTATION: render `order.post_plan` rows in renderPassTasks (write the
-   * compose row into `tasks/`) — this fails.
+   * MUTATION: plan the compose row into the discovery plan (in planner.ts,
+   * `post_plan.push({` → `pass_plan.push({` for compose) — this fails.
+   * (Appending `order.post_plan` to renderPassTasks' rows alone does not:
+   * the post-discovery filter, fenced above, still drops compose.)
    */
   it(
     "writes the chain's strategy rows into tasks/ and its compose row only into tasks-post/",

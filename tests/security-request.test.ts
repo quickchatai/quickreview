@@ -15,9 +15,9 @@
 //       the profile switched off;
 //   (5) the operator verb, the dry-run acknowledgement, and the read-only git
 //       reader behind the threat model and the security facts.
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { parsePrLeverArgs } from "../src/cli.js";
 import { executeCommand, validateCommand, type CommandDeps } from "../src/commands.js";
@@ -517,6 +517,45 @@ describe("dispatch plans the family from the request", () => {
       expect(familyRows(order)).toContain("pass-sec-access");
       expect(familyRows(order)).not.toContain("pass-sec-iam");
       expect(order.security_facts?.length ?? 0).toBeGreaterThan(0);
+    },
+  );
+});
+
+describe("dispatch writes the chain's compose row outside the wave", () => {
+  // MUTATION: drop the tasks-post writer in dispatchOnce (no
+  // post_task_files) — this fails. MUTATION: keep an earlier attempt's
+  // tasks-post when no post row is planned (drop its rmSync) — this fails.
+  it(
+    "compose goes to tasks-post/ with post_task_files; a round without it leaves no stale dir",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const store = new StateStore(":memory:");
+      tracked(store, 52, "queued", "sha52");
+      store.recordReviewRequest({
+        pr: 52,
+        kind: "security",
+        source: "label",
+        requested_by: "maya-dev",
+      });
+      const order = await dispatchWith(store, [LABEL]);
+      expect(order.post_plan?.map((r) => r.strategy)).toEqual(["compose"]);
+      const post = order.post_task_files ?? [];
+      expect(post).toHaveLength(1);
+      expect(post[0]!.row).toBe(0);
+      expect(post[0]!.path).toMatch(
+        /\/tasks-post\/01-pass-sec-exploit-chain--[a-z-]+@compose\.md$/,
+      );
+      expect(readFileSync(post[0]!.path, "utf8")).toContain("Strategy: compose");
+      expect((order.pass_task_files ?? []).some((t) => t.path.includes("@compose"))).toBe(false);
+
+      // The same PR and round, planned without the family: the earlier
+      // attempt's tasks-post/ is gone, so nothing stale can be launched.
+      const store2 = new StateStore(":memory:");
+      tracked(store2, 52, "queued", "sha52");
+      const plain = await dispatchWith(store2, []);
+      expect(plain.post_plan).toBeUndefined();
+      expect(plain.post_task_files).toBeUndefined();
+      expect(existsSync(dirname(post[0]!.path))).toBe(false);
     },
   );
 });

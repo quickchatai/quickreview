@@ -44,6 +44,7 @@ import {
   decideFollowUp,
   lensesOf,
   optionalOrderOf,
+  postOrderOf,
   renderDeltaPatch,
   reviewedHeadOf,
   roundDeltaOf,
@@ -2126,6 +2127,31 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
             };
           } catch (err) {
             log(`dispatch: #${row.number} optional task files unavailable`, err);
+          }
+        }
+        // The post-discovery rows' task files (`post_plan`, the chain's
+        // `compose`) — their own directory and row index (`row` indexes
+        // `post_plan`), which the discovery wave never lists: the session
+        // launches them once the wave has returned (the chain note). Total,
+        // as above, and an earlier attempt's dir is removed when none is
+        // planned, so nothing stale can be launched from it.
+        const postDir = join(passesDir, "tasks-post");
+        if (!built.post_plan || built.post_plan.length === 0) {
+          try {
+            rmSync(postDir, { recursive: true, force: true });
+          } catch (err) {
+            log(`dispatch: #${row.number} stale post task dir not removed`, err);
+          }
+        } else {
+          try {
+            const postOrder = postOrderOf(packed, built.post_plan);
+            const postTasks = writePassTasks(postDir, postOrder, renderGateNotes(postOrder, eco));
+            order = {
+              ...order,
+              post_task_files: postTasks.map((t) => ({ row: t.row, agent: t.agent, path: t.path })),
+            };
+          } catch (err) {
+            log(`dispatch: #${row.number} post task files unavailable`, err);
           }
         }
         if (built.sweep_plan && built.sweep_plan.length > 0) {
