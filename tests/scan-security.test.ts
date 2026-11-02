@@ -32,6 +32,8 @@ import {
   kindAllowed,
   kindKept,
   normalizeKind,
+  readingCovers,
+  stage1LensKey,
   scanCasePrompt,
   type TreeFile,
 } from "@quickchatai/pi-quickreview/src/scan/scan.js";
@@ -60,6 +62,7 @@ import { treeAt } from "@quickchatai/pi-quickreview/src/scan/scantree.js";
 import {
   networkIamInventory,
   planStage2,
+  priceStage2Row,
   stage2CasePrompt,
   stage2Lenses,
   type Stage2PlanInput,
@@ -405,6 +408,139 @@ describe("[scan] kinds drops a candidate of another kind, counted", () => {
     expect(run.mode).toBe("stage2");
     expect(run.cases[0]).toMatchObject({ status: "done", findings: 2 });
     expect(run.cases[0]!.off_kind ?? 0).toBe(0);
+  });
+});
+
+// ---- a kinds-filtered stage 1 is its own reading ---------------------------------------
+
+describe("a [scan] kinds-filtered stage 1 is its own coverage and reconcile reading", () => {
+  const SEC_KINDS = ["security", "exploit-chain", "partial-chain"];
+
+  it("stage1LensKey/readingCovers: a filtered reading is keyed by its kinds and covers only what it keeps", () => {
+    expect(stage1LensKey([])).toBe("pass-scan");
+    const key = stage1LensKey(["partial-chain", "Security", "exploit-chain"]);
+    expect(key).toBe("pass-scan:kinds=exploit-chain,partial-chain,security");
+    expect(stage1LensKey(SEC_KINDS)).toBe(key);
+    expect(readingCovers(key, "pass-scan", "security-sqli")).toBe(true);
+    expect(readingCovers(key, "pass-scan", "bug")).toBe(false);
+    expect(readingCovers("pass-scan", "pass-scan", "bug")).toBe(true);
+    expect(readingCovers(key, "pass-sec-access", "security-idor")).toBe(false);
+  });
+
+  // MUTATION: drop the stage-1 key mapping from priceStage2Row — this fails.
+  it("a filtered stage-1 reading still prices a stage-2 row (extrapolated from stage 1)", () => {
+    const row = {
+      path: "app/a.py",
+      blob: "b",
+      lens: stage1LensKey(SEC_KINDS),
+      tier: "sol-med",
+      effort: "medium",
+      validator: false,
+      sha: SHA,
+      lines: 1000,
+      cost_usd: 2,
+      run: "r",
+      case: "app",
+      at: "2026-11-02T10:00:00Z",
+    };
+    const cfg = { tier: "sol-med", effort: "medium", validator: false, unmeasured_rate_factor: 3 };
+    const price = priceStage2Row([row], cfg, "pass-sec-access", "sol-med", "medium");
+    expect(price).toMatchObject({ basis: "extrapolated", from: "pass-scan" });
+    expect(price!.rate.usd_per_kline).toBeCloseTo(6);
+  });
+
+  /** A tree whose app/a.py blob is the version the test sets. */
+  function versioned(): { tree: () => ScanTree; bump: () => void } {
+    let v = 1;
+    return {
+      bump: () => v++,
+      tree: () => ({
+        ...mapTree(FILES),
+        files: Object.keys(FILES).map((path) => ({
+          path,
+          blob: path === "app/a.py" ? `b-${path}-v${v}` : `b-${path}`,
+        })),
+      }),
+    };
+  }
+
+  // MUTATION: write stage 1's ledger rows under `pass-scan` whatever
+  // `[scan] kinds` (drop `ledgerLens` from the stage-1 jobs) — this fails;
+  // so does matching rows to findings by lens alone in findings.reconcile.
+  it("a security reading of changed content never settles a general finding it would have dropped; it does settle a security one", async () => {
+    const t = versioned();
+    let answer = (spec: CaseSpec): string =>
+      findingsOn(spec, [
+        item(1, "security:sqli", "Interpolated SQL"),
+        item(3, "bug", "Off by one"),
+      ]);
+    const r = rig({ scan: { validator: false }, tree: t.tree, lens: (spec) => answer(spec) });
+    const s = new ScanRunner(r.ports);
+    await runStage1(s);
+    const stateOf = (kind: string) =>
+      new FindingsStore(r.state).list().findings.find((f) => f.kind === kind)?.state;
+    expect(stateOf("bug")).toBe("new");
+    expect(stateOf("security-sqli")).toBe("new");
+
+    t.bump();
+    answer = () => "NONE\n\nSUGGEST NONE\n";
+    r.settings.scan = { ...r.settings.scan, kinds: SEC_KINDS };
+    await runStage1(s);
+    expect(stateOf("bug")).toBe("new");
+    expect(stateOf("security-sqli")).toBe("fixed");
+
+    // A general reading of the same content does settle it.
+    r.settings.scan = { ...r.settings.scan, kinds: [] };
+    await runStage1(s);
+    expect(stateOf("bug")).toBe("fixed");
+  });
+
+  // MUTATION: key stage 1's coverage on `pass-scan` whatever `[scan] kinds`
+  // (`s1 = SCAN_PASS` in plan) — this fails.
+  it("a security preview after a whole general scan still reads every file, and the reverse", async () => {
+    const r = rig({ scan: { validator: false } });
+    const s = new ScanRunner(r.ports);
+    await runStage1(s);
+    const general = await s.preview();
+    if (!general.ok) throw new Error(general.errors.join("; "));
+    expect(general.preview.cases).toHaveLength(0);
+
+    r.settings.scan = { ...r.settings.scan, kinds: SEC_KINDS };
+    const sec = await s.preview();
+    if (!sec.ok) throw new Error(sec.errors.join("; "));
+    expect(sec.preview.blockers).toEqual([]);
+    expect(sec.preview.cases.flatMap((c) => c.files.map((f) => f.path)).sort()).toEqual(
+      Object.keys(FILES).sort(),
+    );
+    await runStage1(s);
+    const secAgain = await s.preview();
+    if (!secAgain.ok) throw new Error(secAgain.errors.join("; "));
+    expect(secAgain.preview.cases).toHaveLength(0);
+
+    // Back to general, after only the security reading moved: still covered.
+    r.settings.scan = { ...r.settings.scan, kinds: [] };
+    const back = await s.preview();
+    if (!back.ok) throw new Error(back.errors.join("; "));
+    expect(back.preview.cases).toHaveLength(0);
+    const rows = JSON.parse(r.state.read("scan/ledger.json")!) as {
+      entries: Array<{ lens: string }>;
+    };
+    expect(new Set(rows.entries.map((e) => e.lens))).toEqual(
+      new Set(["pass-scan", stage1LensKey(SEC_KINDS)]),
+    );
+  });
+
+  it("a security scan first, then a general one: the general one still reads every file", async () => {
+    const r = rig({ scan: { validator: false, kinds: SEC_KINDS } });
+    const s = new ScanRunner(r.ports);
+    await runStage1(s);
+    r.settings.scan = { ...r.settings.scan, kinds: [] };
+    const p = await s.preview();
+    if (!p.ok) throw new Error(p.errors.join("; "));
+    expect(p.preview.blockers).toEqual([]);
+    expect(p.preview.cases.flatMap((c) => c.files.map((f) => f.path)).sort()).toEqual(
+      Object.keys(FILES).sort(),
+    );
   });
 });
 

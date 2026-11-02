@@ -80,6 +80,11 @@
 //     security-only scan does not rest on prompt text alone. A security-
 //     family lens's findings are security findings whatever kind it wrote
 //     (`sqli`, none at all), so they are kept under a security `kinds`.
+//     A filtered stage-1 reading keeps its ledger rows under its own lens
+//     (scan.ts `stage1LensKey`, `pass-scan:kinds=…`): its own coverage,
+//     price and delta basis, so a security scan and a general scan never
+//     mark each other's files read, and reconcile lets it settle only the
+//     findings of a kind it keeps (scan.ts `readingCovers`).
 //   * With `[security] fold` on, the skeptic's verdict on a SECURITY
 //     candidate (severity.ts `isSecurityFinding`, the one rule PR rounds
 //     and the scan share) it could not settle — the
@@ -165,6 +170,7 @@ import {
   coverKey,
   evidenceQuotesAnchor,
   findingFingerprint,
+  isStage1Lens,
   kindKept,
   normalizeCode,
   parseScanAnswer,
@@ -180,6 +186,7 @@ import {
   drainLanes,
   SCAN_DEEP_MAX_SUGGESTIONS,
   SCAN_PASS,
+  stage1LensKey,
   type ExclusionReason,
   type PromptContext,
   type ScanCandidate,
@@ -661,8 +668,10 @@ interface CaseJob {
   /** Stage 2: why the row, and every unit it spans. */
   reason?: string;
   units?: string[];
-  /** Where the case's ledger rows are kept: the lens, or a chain row's
-   * `<lens>:<strategy>` (stage2.ts `rowLensKey`). Absent: `lens`. */
+  /** Where the case's ledger rows are kept: the lens, a chain row's
+   * `<lens>:<strategy>` (stage2.ts `rowLensKey`), or a `[scan] kinds`-
+   * filtered stage-1 reading's `pass-scan:kinds=…` (scan.ts
+   * `stage1LensKey`). Absent: `lens`. */
   ledgerLens?: string;
   /** Stage 0: the case writes the threat-model draft, never findings. */
   threatModel?: true;
@@ -938,12 +947,15 @@ export class ScanRunner {
     const { sha, tree, entries, settings } = pre;
     const cfg = settings.scan;
     const depth = cfg.depth;
+    // Stage 1's ledger lens: a `[scan] kinds`-filtered reading is its own
+    // coverage, price and delta basis (scan.ts `stage1LensKey`).
+    const s1 = stage1LensKey(cfg.kinds);
     // A delta compares against the last scan: each file's newest content the
     // ledger read, and the tree that scan read (listed, not materialised).
     let basis: { since: string; read: Map<string, string>; baseline: Map<string, string> } | null =
       null;
     if (delta) {
-      const last = lastScanned(entries, SCAN_PASS);
+      const last = lastScanned(entries, s1);
       if (last === null)
         return {
           ok: false,
@@ -960,7 +972,7 @@ export class ScanRunner {
       }
       basis = {
         since: last.sha,
-        read: newestRead(entries, SCAN_PASS),
+        read: newestRead(entries, s1),
         baseline: new Map(listed.map((f) => [f.path, f.blob])),
       };
     }
@@ -971,12 +983,12 @@ export class ScanRunner {
       whyUnreadable: (p) => tree.whyUnreadable?.(p) ?? null,
       // Coverage at the run's depth: a deep run reads again what only a
       // standard reading covers.
-      covered: coveredBy(entries, SCAN_PASS, depth),
-      partial: partialRanges(entries, SCAN_PASS, depth),
+      covered: coveredBy(entries, s1, depth),
+      partial: partialRanges(entries, s1, depth),
       // Coverage first: never-read and cut-short files run before changed
       // ones, so the hard stop never starves the same tail run after run.
       history: new Map(
-        [...readings(entries, SCAN_PASS, depth)].map(([path, r]) => [
+        [...readings(entries, s1, depth)].map(([path, r]) => [
           path,
           { blob: r.blob, complete: r.complete, at: r.newest.at },
         ]),
@@ -987,7 +999,7 @@ export class ScanRunner {
       ...(basis ? { delta: basis } : {}),
     });
     const key: RateKey = {
-      lens: SCAN_PASS,
+      lens: s1,
       tier: cfg.tier,
       effort: cfg.effort,
       validator: cfg.validator,
@@ -1057,7 +1069,7 @@ export class ScanRunner {
     // only because no deep one does: counted apart, so the preview says so.
     const owedShallow = (b: NonNullable<typeof basis>): { owed_shallow?: number } => {
       if (depth !== "deep") return {};
-      const standard = coveredBy(entries, SCAN_PASS, "standard");
+      const standard = coveredBy(entries, s1, "standard");
       const seen = new Set<string>();
       for (const c of plan.cases)
         for (const f of c.files)
@@ -1086,6 +1098,9 @@ export class ScanRunner {
         cap: Math.round(cap * 1e6),
         // Editing the threat model the cases quote re-plans.
         ...modelKey(threatModel),
+        // So does changing what the reading keeps: its rows land under
+        // another ledger lens.
+        ...(s1 !== SCAN_PASS ? { focus: s1 } : {}),
       }),
       mode,
       sha,
@@ -1390,9 +1405,11 @@ export class ScanRunner {
     // Stage 1 points stage 2 only at lenses stage 2 may run here: on in the
     // profile and inside `[scan] lenses`.
     const deepLenses = stage2Lenses(settings.lenses, cfg.lenses);
+    const s1 = stage1LensKey(cfg.kinds);
     const jobs: CaseJob[] = preview.cases.map((c) => ({
       plan: c,
       lens: SCAN_PASS,
+      ...(s1 !== SCAN_PASS ? { ledgerLens: s1 } : {}),
       tier: cfg.tier,
       effort: cfg.effort,
       prompt: (ctx) => scanCasePrompt(c, ctx, deepLenses, threatModel),
@@ -1579,11 +1596,11 @@ export class ScanRunner {
           : {
               // Distinct files (and file × lens pairs): a file read at two
               // contents, two depths or in ranges is still one file.
-              files: new Set(ledger.entries.filter((e) => e.lens === SCAN_PASS).map((e) => e.path))
+              files: new Set(ledger.entries.filter((e) => isStage1Lens(e.lens)).map((e) => e.path))
                 .size,
               deep_files: new Set(
                 ledger.entries
-                  .filter((e) => e.lens !== SCAN_PASS)
+                  .filter((e) => !isStage1Lens(e.lens))
                   .map((e) => `${e.lens}\0${e.path}`),
               ).size,
               cost_usd: ledger.entries.reduce((n, e) => n + (e.cost_usd ?? 0), 0),

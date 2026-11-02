@@ -105,6 +105,7 @@ import {
   threatModelSection,
   type FileRange,
   SCAN_PASS,
+  isStage1Lens,
   type PromptContext,
   type ScanCaseFile,
   type ScanRate,
@@ -218,13 +219,18 @@ export type PriceSettings = {
  * every reading, marked `across_depth`.
  */
 export function priceStage2Row(
-  entries: readonly LedgerEntry[],
+  ledger: readonly LedgerEntry[],
   cfg: PriceSettings,
   lens: string,
   tier: string,
   effort: string,
   depth?: ScanDepth,
 ): RowPrice | null {
+  // A `[scan] kinds`-filtered stage-1 reading prices stage 1 like any other:
+  // what a stage-2 row borrows is stage 1's cost per line, not its focus.
+  const entries = ledger.map((e) =>
+    e.lens !== SCAN_PASS && isStage1Lens(e.lens) ? { ...e, lens: SCAN_PASS } : e,
+  );
   const any = priceFrom(entries, cfg, lens, tier, effort);
   if (depth === undefined || any === null) return any;
   const same = priceFrom(

@@ -635,6 +635,51 @@ export function kindKept(kind: string, lens: string, kinds: readonly string[]): 
   return kinds.some(isSecurityKind) && isSecurityFinding(kind, lens);
 }
 
+/** The ledger lens's marker for a stage-1 reading filtered by `[scan] kinds`. */
+const STAGE1_FOCUS = `${SCAN_PASS}:kinds=`;
+
+/**
+ * The lens stage 1's ledger rows are kept under: `pass-scan` for a reading
+ * that kept every kind, `pass-scan:kinds=<kinds, normalized, sorted>` for one
+ * `[scan] kinds` filtered. A filtered reading is its own coverage, price and
+ * reconcile reading: a security scan never reads as a general scan of the
+ * same files (nor the reverse), and its silence never settles a finding of a
+ * kind it dropped (`readingCovers`). Pure.
+ */
+export function stage1LensKey(kinds: readonly string[]): string {
+  if (kinds.length === 0) return SCAN_PASS;
+  return `${STAGE1_FOCUS}${[...new Set(kinds.map(normalizeKind))].sort().join(",")}`;
+}
+
+/** The kinds a stage-1 ledger lens kept (`[]` = every kind), or null when the
+ * lens is not stage 1's. Pure. */
+export function stage1Kinds(lensKey: string): string[] | null {
+  if (lensKey === SCAN_PASS) return [];
+  if (!lensKey.startsWith(STAGE1_FOCUS)) return null;
+  return lensKey
+    .slice(STAGE1_FOCUS.length)
+    .split(",")
+    .filter((k) => k !== "");
+}
+
+/** Is this ledger lens a stage-1 reading, filtered or not? */
+export const isStage1Lens = (lensKey: string): boolean => stage1Kinds(lensKey) !== null;
+
+/**
+ * Does a ledger row read by `rowLens` count as a reading of a finding of
+ * `kind` that `findingLens` raised — one that would have reported it again?
+ * Its own lens always; for a stage-1 finding (`pass-scan`), also a
+ * kinds-filtered stage-1 reading that keeps its kind (`kindKept`). A
+ * filtered reading of a kind it drops is silent about it by construction,
+ * so it never settles one fixed. Pure.
+ */
+export function readingCovers(rowLens: string, findingLens: string, kind: string): boolean {
+  if (rowLens === findingLens) return true;
+  if (findingLens !== SCAN_PASS) return false;
+  const kinds = stage1Kinds(rowLens);
+  return kinds !== null && kinds.length > 0 && kindKept(kind, findingLens, kinds);
+}
+
 /** One candidate as a validator reads it, in the findings grammar — the
  * scan's skeptic and the replay's validator alike. */
 export function candidateItem(f: ScanCandidate): string {
