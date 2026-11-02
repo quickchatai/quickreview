@@ -404,6 +404,57 @@ describe("hf_export.generated_files", () => {
   });
 });
 
+describe("hf_export.figure_problems", () => {
+  // MUTATION: drop the \chart{} pattern from hf_export.PAPER_CHART_RX (keep only ../charts/) — this fails
+  // MUTATION: in figure_problems, skip a paper chart whose figure is missing (compare only when both exist) — this fails
+  // MUTATION: in figure_problems, compare the ARM_FREE_CHARTS figure with itself instead of its -gpt6sol twin — this fails
+  it("flags a paper chart whose repository copy is not the exported figure, and an arm-free chart unlike its twin", () => {
+    const root = join(tmp, "figs");
+    const paper = join(root, "paper");
+    const charts = join(root, "charts");
+    const fig = join(root, "figures");
+    put(
+      join(paper, "a.tex"),
+      "\\newcommand{\\chart}[1]{../charts/#1.jpg}\n" +
+        "\\includegraphics{\\chart{bars-gpt6sol}}\n\\includegraphics{\\chart{same}}\n" +
+        "\\includegraphics[width=1.0\\textwidth]{../charts/vector.pdf}\n\\includegraphics{\\chart{gone}}\n",
+    );
+    put(join(charts, "bars-gpt6sol.jpg"), "drawn from the older arm names");
+    put(join(fig, "bars-gpt6sol.jpg"), "drawn from the public arm names");
+    put(join(charts, "same.jpg"), "one drawing");
+    put(join(fig, "same.jpg"), "one drawing");
+    put(join(charts, "vector.pdf"), "pdf");
+    put(join(fig, "vector.pdf"), "pdf");
+    put(join(charts, "gone.jpg"), "in the repository only");
+    put(join(fig, "reference-quality.jpg"), "a staged older layout");
+    put(join(fig, "reference-quality-gpt6sol.jpg"), "the redraw");
+    const r = py(
+      "print(json.dumps({'names': h.paper_charts(sys.argv[1]),\n" +
+        "  'bad': h.figure_problems(sys.argv[1], sys.argv[2], sys.argv[3]),\n" +
+        "  'empty': h.figure_problems(sys.argv[2], sys.argv[2], sys.argv[3])['paper_differs']}))",
+      paper,
+      charts,
+      fig,
+    ) as Record<string, unknown>;
+    expect(r).toEqual({
+      names: ["bars-gpt6sol.jpg", "gone.jpg", "same.jpg", "vector.pdf"],
+      bad: {
+        paper_differs: ["bars-gpt6sol.jpg", "gone.jpg"],
+        arm_free_differs: ["reference-quality.jpg"],
+      },
+      empty: ["(no chart in the papers)"],
+    });
+    put(join(fig, "reference-quality.jpg"), "the redraw");
+    const same = py(
+      "print(json.dumps(h.figure_problems(sys.argv[1], sys.argv[2], sys.argv[3])['arm_free_differs']))",
+      paper,
+      charts,
+      fig,
+    );
+    expect(same).toEqual([]);
+  });
+});
+
 describe("scrub_extra: credentials, private tokens, home spellings", () => {
   // A neutral plant: no real credential shape, never a real value.
   const secretFile = join(tmp, "creds", "planted.env");

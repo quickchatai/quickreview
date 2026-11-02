@@ -1694,6 +1694,56 @@ def generated_files(a, sub: str) -> dict[str, str]:
     return found
 
 
+# charts.py draws these from the AACR reference labels alone, the same for any arm set: the
+# export writes the redraw's -gpt6sol drawing under the plain name too, never a staged copy
+ARM_FREE_CHARTS = ("reference-quality.jpg",)
+# what the papers include: \chart{name} (charts/<name>.jpg) and ../charts/<file>; "#" skips the macro's own body
+PAPER_CHART_RX = (re.compile(r"\\chart\{([^}#]+)\}"), re.compile(r"\{\.\./charts/([^}#]+)\}"))
+
+
+def paper_charts(paper_dir: str) -> list[str]:
+    """Every file under charts/ that a paper in paper_dir includes."""
+    names: set[str] = set()
+    for tex in sorted(glob.glob(os.path.join(paper_dir, "*.tex"))):
+        src = open(tex).read()
+        names |= {m + ".jpg" for m in PAPER_CHART_RX[0].findall(src)}
+        names |= set(PAPER_CHART_RX[1].findall(src))
+    return sorted(names)
+
+
+def _sha256(path: str) -> str | None:
+    return hashlib.sha256(open(path, "rb").read()).hexdigest() if os.path.isfile(path) else None
+
+
+def figure_problems(paper_dir: str, charts_dir: str, fig_dir: str) -> dict[str, list[str]]:
+    """The figures against the papers: `paper_differs`, every chart a paper includes whose
+    repository copy is missing or not byte-identical to the exported figure (the repository
+    copy must be the drawing the export publishes, so a chart drawn from older names cannot
+    reach a paper), "(no chart in the papers)" when none is found; `arm_free_differs`, every
+    ARM_FREE_CHARTS figure missing or not byte-identical to its -gpt6sol twin."""
+    names = paper_charts(paper_dir)
+    paper = [n for n in names if _sha256(os.path.join(charts_dir, n)) is None
+             or _sha256(os.path.join(charts_dir, n)) != _sha256(os.path.join(fig_dir, n))]
+    twin = []
+    for f in ARM_FREE_CHARTS:
+        stem, ext = os.path.splitext(f)
+        got = _sha256(os.path.join(fig_dir, f))
+        if got is None or got != _sha256(os.path.join(fig_dir, f"{stem}-gpt6sol{ext}")):
+            twin.append(f)
+    return {"paper_differs": paper if names else ["(no chart in the papers)"], "arm_free_differs": twin}
+
+
+def figure_checks(out: str) -> list[dict]:
+    # MUTATION: restore bench/aacr/charts/independent-defects-gpt6sol.jpg from 1a27e542 (drawn from the
+    # older arm names) — the first check fails; put the staged October reference-quality.jpg in figures/
+    # — the second fails
+    p = figure_problems(os.path.join(HERE, "paper"), os.path.join(HERE, "charts"), os.path.join(out, "figures"))
+    return [{"check": "figures: every chart the papers include is byte-identical in the repository and in figures/",
+             "got": p["paper_differs"], "want": [], "ok": p["paper_differs"] == []},
+            {"check": "figures: a chart that no arm set changes is the same drawing under its plain and -gpt6sol names",
+             "got": p["arm_free_differs"], "want": [], "ok": p["arm_free_differs"] == []}]
+
+
 def figures(a, out: str, counts: collections.Counter, notes: list[str]):
     """Charts, rendered keys, FULL-BENCHMARK. The earlier study's
     charts are re-drawn with the public name; everything textual is scrubbed."""
@@ -1703,7 +1753,7 @@ def figures(a, out: str, counts: collections.Counter, notes: list[str]):
     for d in (fig, keys) + ((rep,) if getattr(a, "with_report", False) else ()):
         os.makedirs(d, exist_ok=True)
     charts = generated_files(a, "charts")
-    redraw = {f for f in charts if "-gpt6sol" in f} | {"judge-agreement.jpg"}
+    redraw = {f for f in charts if "-gpt6sol" in f} | {"judge-agreement.jpg"} | set(ARM_FREE_CHARTS)
     for f, p in sorted(charts.items()):
         if f in redraw:
             continue
@@ -1730,6 +1780,9 @@ def figures(a, out: str, counts: collections.Counter, notes: list[str]):
                 else:
                     shutil.copy2(p, os.path.join(fig, f))
         shutil.copy2(os.path.join(agree, "judge-agreement.jpg"), os.path.join(fig, "judge-agreement.jpg"))
+        for f in ARM_FREE_CHARTS:
+            stem, ext = os.path.splitext(f)
+            shutil.copy2(os.path.join(tmp, f"{stem}-gpt6sol{ext}"), os.path.join(fig, f))
     for f, p in sorted(generated_files(a, "defects").items()):
         if f.endswith(".md"):
             open(os.path.join(keys, f), "w").write(scrub(open(p).read(), counts))
@@ -1969,6 +2022,8 @@ def main():
         figures(a, out, ex.counts, ex.notes)
     tables = read_parquet(out)
     checks = validate(tables) + validate_release(tables, ex.cat, ex.elo_refits, a.elo_dir, ex.commits)
+    if not a.no_figures:
+        checks += figure_checks(out)
     NT.write_licences(out)
     open(os.path.join(out, "NOTICE"), "w").write(dataset_notice())
     render_card(a, out, sizes, checks, ex.counts, tables.get("runs"))
