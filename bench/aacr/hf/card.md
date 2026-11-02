@@ -173,8 +173,13 @@ runs = load_dataset("{{REPO_ID}}", "runs", split="test")
   repository's history was rewritten before publication, so the ids the runs
   recorded are not in the public history: `qcr_commit` names the public main
   commit the rewrite made of the recorded one, with `qcr_commit_on_public_main`
-  true; a build from a side branch that was never merged keeps its recorded id,
-  with `qcr_commit_on_public_main` false. The archive's `run.json` and
+  true; a build with no public equivalent (from a side branch that was never
+  merged, or a commit the rewrite dropped) keeps its recorded id, with
+  `qcr_commit_on_public_main` false. A dirty build (built with uncommitted
+  changes; the recorded id ends in `-dirty`) maps to the commit it was built
+  on, keeps the `-dirty` suffix and is flagged `qcr_commit_dirty` true (false
+  for every other build): it is that commit plus changes that were never
+  committed, not the commit itself. The archive's `run.json` and
   `case-summary.json` files carry the same remap, and its `RUNS-INDEX.json`
   holds the same rows, plus the families that were withheld.
 

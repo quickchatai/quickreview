@@ -66,7 +66,8 @@ nothing else in it changes:
   * the authors' tracker (scrub_extra.TICKET_RULES): ticket ids and paths
     into it -> `<ticket>`;
   * in JSON files, every `"qcr_commit"` -> the public main commit
-    (--commit-remap; remap_commits), with `"qcr_commit_on_public_main"`;
+    (--commit-remap; remap_commits), with `"qcr_commit_on_public_main"` and
+    `"qcr_commit_dirty"`;
   * encrypted reasoning blobs are blanked, the record kept: the value of every
     `encrypted_content` (OpenAI), every base64 `thinkingSignature` and
     `signature` (Anthropic) becomes the empty string.
@@ -742,7 +743,10 @@ def remap_commits(data: bytes, remap: dict, counts) -> bytes:
     main commit the history rewrite made of it (release_catalogue.remap_commit),
     with a `qcr_commit_on_public_main` beside it: true when remapped, false
     when the commit has no public equivalent (the recorded id is kept), null
-    when the remap does not know the commit. The text around it is untouched."""
+    when the remap does not know the commit; and a `qcr_commit_dirty`: true
+    when the recorded id carries `-dirty` (built with uncommitted changes; the
+    suffix stays on the published id), false otherwise. The text around it is
+    untouched."""
     if b'"qcr_commit"' not in data:
         return data
 
@@ -751,8 +755,11 @@ def remap_commits(data: bytes, remap: dict, counts) -> bytes:
         on = f["qcr_commit_on_public_main"]
         counts[{True: "qcr_commit remapped to public main", False: "qcr_commit not on public main",
                 None: "qcr_commit unknown to the remap"}[on]] += 1
+        if f["qcr_commit_dirty"]:
+            counts["qcr_commit dirty build (flagged)"] += 1
         return (m.group(1) + json.dumps(f["qcr_commit"]).encode()
-                + b', "qcr_commit_on_public_main": ' + json.dumps(on).encode())
+                + b', "qcr_commit_on_public_main": ' + json.dumps(on).encode()
+                + b', "qcr_commit_dirty": ' + json.dumps(f["qcr_commit_dirty"]).encode())
     return QCR_COMMIT.sub(sub, data)
 
 
@@ -1252,7 +1259,9 @@ def write_index(out: Path, proc: Processor, a):
                    "public claims it backs, its build commit (`qcr_commit`: the public main commit the "
                    "repository's history rewrite made of the recorded one, `qcr_commit_on_public_main` true; a "
                    "commit with no public equivalent keeps its recorded id with false, one the rewrite maps do not "
-                   "know with null) and the archive volume(s) holding it. `withheld` lists every family left out "
+                   "know with null; `qcr_commit_dirty` true for a build with uncommitted changes, which maps to "
+                   "the commit it was built on and keeps the `-dirty` suffix: that commit plus changes, not the "
+                   "commit itself) and the archive volume(s) holding it. `withheld` lists every family left out "
                    "and why.",
            "units": rows, "withheld": RC.withheld_rows(proc.cat), "claims": RC.claims_index(proc.cat, claim_ids)}
     (out / "RUNS-INDEX.json").write_text(json.dumps(scrub_json(doc), indent=1, ensure_ascii=False) + "\n")
@@ -1399,9 +1408,13 @@ packed. Nothing else in the text changed.
 - **Build commits.** Each `"qcr_commit"` (in `run.json` and every
   `case-summary.json`) is the public main commit the repository's history
   rewrite made of the recorded one, with `"qcr_commit_on_public_main": true`
-  beside it. A commit with no public equivalent (a side branch never merged)
-  keeps its recorded id with `false`; one the rewrite maps do not know, with
-  `null`.
+  beside it. A commit with no public equivalent (a side branch never merged,
+  or a commit the rewrite dropped) keeps its recorded id with `false`; one
+  the rewrite maps do not know, with `null`. A dirty build (the recorded id
+  ends in `-dirty`: built with uncommitted changes) maps to the commit it was
+  built on, keeps the `-dirty` suffix and is flagged
+  `"qcr_commit_dirty": true` (`false` for every other build): it is that
+  commit plus changes that were never committed, not the commit itself.
 - **Host paths** in driver logs, scripts and analysis: the bench runs directory
   became `<runs>`, the repository checkout `<repo>`, any
   other path under the exporting user's home `<home>` (so the Claude Code credential file's path reads

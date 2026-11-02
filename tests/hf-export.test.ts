@@ -33,6 +33,9 @@
 //      stream;
 //  13. the authors' tracker ids and paths become `<ticket>`, run names stay;
 //  14. each `qcr_commit` is remapped to public main, with a flag saying so;
+//      a dirty build maps to the commit it was built on and is flagged
+//      `qcr_commit_dirty`, and the run index is checked against the recorded
+//      ids (release_catalogue.commit_problems);
 //  15. the answer key's build data (candidate maps, diff.stat sizes) is read
 //      as data (key_data.py);
 //  16. `pc2-*` is withheld whatever the catalogue says;
@@ -632,7 +635,7 @@ describe("release_catalogue and export_runs: what ships", () => {
       "release_catalogue",
       "c = h.Catalogue.load(sys.argv[1])\n" +
         "rows = h.index_rows(c, {'runs': sys.argv[2] + '/runs', 'top': sys.argv[2]}, {'aaa111': 'bbb222'})\n" +
-        "print(json.dumps([[r['unit'], r['family'], r['set'], r['qcr_commit'], r['qcr_commit_on_public_main'], r['claims'], r['hf_tables']] for r in rows]\n" +
+        "print(json.dumps([[r['unit'], r['family'], r['set'], r['qcr_commit'], r['qcr_commit_on_public_main'], r['qcr_commit_dirty'], r['claims'], r['hf_tables']] for r in rows]\n" +
         "  + [[w['family'], w['reason']] for w in h.withheld_rows(c)]))",
       catalogue,
       src,
@@ -643,12 +646,69 @@ describe("release_catalogue and export_runs: what ships", () => {
       "dev10",
       "bbb222",
       true,
+      false,
       ["c:one"],
       ["runs", "reviews"],
     ]);
-    expect(r).toContainEqual(["elo", "elo", null, null, null, [], []]);
+    expect(r).toContainEqual(["elo", "elo", null, null, null, null, [], []]);
     expect(r.find((x) => x[0] === "own")?.[1]).toMatch(/^withheld/);
     expect(r.some((x) => x[0] === "own-repo-run")).toBe(false);
+  });
+
+  // MUTATION: drop the `dirty_unflagged` count from release_catalogue.commit_problems — this fails
+  // MUTATION: in commit_problems, count `off_main` only when the commit is missing (skip the remap comparison) — this fails
+  it("checks the run index's build commits against the recorded ids: a dirty build flagged, main only per the remap", () => {
+    const rows = [
+      {
+        path: "runs/a",
+        qcr_commit: "p1-dirty",
+        qcr_commit_on_public_main: true,
+        qcr_commit_dirty: true,
+      },
+      {
+        path: "runs/b",
+        qcr_commit: "p1-dirty",
+        qcr_commit_on_public_main: true,
+        qcr_commit_dirty: false,
+      },
+      {
+        path: "runs/c",
+        qcr_commit: "p1",
+        qcr_commit_on_public_main: true,
+        qcr_commit_dirty: false,
+      },
+      {
+        path: "runs/d",
+        qcr_commit: "p2",
+        qcr_commit_on_public_main: true,
+        qcr_commit_dirty: false,
+      },
+      {
+        path: "runs/e",
+        qcr_commit: "s1",
+        qcr_commit_on_public_main: false,
+        qcr_commit_dirty: false,
+      },
+      { path: "runs/f", qcr_commit: null, qcr_commit_on_public_main: null, qcr_commit_dirty: null },
+    ];
+    const recorded = {
+      "runs/a": "r1-dirty",
+      "runs/b": "r1-dirty",
+      "runs/c": "r1",
+      "runs/d": "r3",
+      "runs/e": "s1",
+      "runs/f": null,
+    };
+    const remap = { "r1-dirty": "p1", r1: "p1", r2: "p2", r3: "p1", s1: null };
+    const r = pyModule(
+      "release_catalogue",
+      "print(json.dumps(h.commit_problems(json.loads(sys.argv[1]), json.loads(sys.argv[2]), json.loads(sys.argv[3]))))",
+      JSON.stringify(rows),
+      JSON.stringify(recorded),
+      JSON.stringify(remap),
+    );
+    // b: a dirty build published unflagged; d: p2 is on main, but not the commit r3 became
+    expect(r).toEqual({ dirty_unflagged: 1, off_main: 1 });
   });
 });
 
@@ -1006,6 +1066,7 @@ describe("export_runs: a run ships without its session logs", () => {
   put(join(c, "pi-stderr.log"), "SECRET-PROSE\n");
   put(join(c, "review.md"), "the review\n");
   put(join(c, "case-summary.json"), '{"fingerprint": {"qcr_commit": "ccc3333"}}\n');
+  put(join(c, "dirty-summary.json"), '{"fingerprint": {"qcr_commit": "ddd4444-dirty"}}\n');
   put(join(src, "runs", "r1", "mystery.jsonl"), '{"text":"SECRET-PROSE"}\n');
   put(join(src, "runs", "r1.sandbox-commands.log"), "SECRET-PROSE\n");
   put(join(src, "runs", "r1.review.log"), "progress\n");
@@ -1033,7 +1094,7 @@ describe("export_runs: a run ships without its session logs", () => {
     const r = pyModule(
       "export_runs",
       "import collections\nfrom pathlib import Path\nimport release_catalogue as RC\n" +
-        "p = h.Processor(Path(sys.argv[1]), None, RC.Catalogue.load(sys.argv[2]), {'aaa1111': 'bbb2222', 'ccc3333': None})\n" +
+        "p = h.Processor(Path(sys.argv[1]), None, RC.Catalogue.load(sys.argv[2]), {'aaa1111': 'bbb2222', 'ccc3333': None, 'ddd4444-dirty': 'eee5555'})\n" +
         "out = {}\n" +
         "for rel in h.walk_files(p.src, None):\n" +
         "    data, why = p.process(rel, collections.Counter())\n" +
@@ -1064,13 +1125,28 @@ describe("export_runs: a run ships without its session logs", () => {
     expect(r[`${base}/review.md`]?.slice(1, 3)).toEqual([true, false]);
     expect(r["runs/r1.review.log"]?.[1]).toBe(true);
     // MUTATION: drop the `false`/`null` branch of export_runs.remap_commits — this fails
+    // MUTATION: drop the `"qcr_commit_dirty"` insertion from export_runs.remap_commits — this fails
     expect(JSON.parse(r["runs/r1/run.json"]![3]!)).toEqual({
       set: "dev10",
       qcr_commit: "bbb2222",
       qcr_commit_on_public_main: true,
+      qcr_commit_dirty: false,
     });
     expect(JSON.parse(r[`${base}/case-summary.json`]![3]!)).toEqual({
-      fingerprint: { qcr_commit: "ccc3333", qcr_commit_on_public_main: false },
+      fingerprint: {
+        qcr_commit: "ccc3333",
+        qcr_commit_on_public_main: false,
+        qcr_commit_dirty: false,
+      },
+    });
+    // a dirty build maps to the commit it was built on, keeps its suffix and is flagged
+    // MUTATION: make release_catalogue.commit_fields return "qcr_commit_dirty": False always — this fails
+    expect(JSON.parse(r[`${base}/dirty-summary.json`]![3]!)).toEqual({
+      fingerprint: {
+        qcr_commit: "eee5555-dirty",
+        qcr_commit_on_public_main: true,
+        qcr_commit_dirty: true,
+      },
     });
   });
 

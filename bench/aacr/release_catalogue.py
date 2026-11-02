@@ -130,16 +130,20 @@ def commit_fields(commit: Optional[str], remap: Dict[str, Optional[str]]) -> Dic
     public main commit the history rewrite made of the recorded one, with
     `qcr_commit_on_public_main` true; a commit with no public equivalent keeps
     its recorded id with false; one the remap does not know, with null (and
-    no commit at all is null, null)."""
+    no commit at all is null, null). `qcr_commit_dirty` is true when the
+    recorded id carries `-dirty` (the build had uncommitted changes, so it is
+    the named commit plus them, not the commit itself), false otherwise; a
+    dirty build keeps the `-dirty` suffix on whichever id it publishes."""
     if not commit:
-        return {"qcr_commit": None, "qcr_commit_on_public_main": None}
+        return {"qcr_commit": None, "qcr_commit_on_public_main": None, "qcr_commit_dirty": None}
     c = commit.strip()
-    base = c[:-len("-dirty")] if c.endswith("-dirty") else c
+    dirty = c.endswith("-dirty")
+    base = c[:-len("-dirty")] if dirty else c
     pub = remap_commit(c, remap)
     if pub:
-        return {"qcr_commit": pub + c[len(base):], "qcr_commit_on_public_main": True}
+        return {"qcr_commit": pub + c[len(base):], "qcr_commit_on_public_main": True, "qcr_commit_dirty": dirty}
     known = c in remap or base in remap
-    return {"qcr_commit": c, "qcr_commit_on_public_main": False if known else None}
+    return {"qcr_commit": c, "qcr_commit_on_public_main": False if known else None, "qcr_commit_dirty": dirty}
 
 
 def remap_commit(commit: Optional[str], remap: Dict[str, Optional[str]]) -> Optional[str]:
@@ -164,12 +168,14 @@ def _run_json(path: str) -> dict:
 
 
 def index_rows(cat: Catalogue, roots: Dict[str, str], remap: Dict[str, Optional[str]],
-               volume_of=None) -> List[dict]:
+               volume_of=None, recorded: Optional[Dict[str, Optional[str]]] = None) -> List[dict]:
     """One row per shipped unit: the family's facts plus the unit's own
     run.json facts (set, start, finish, build commit). `roots` maps a unit
     kind to the directory holding it; `volume_of(family_id)` names the
-    archive volume(s) the unit's files are in. Strings are left raw (the
-    caller scrubs)."""
+    archive volume(s) the unit's files are in; `recorded`, when given, is
+    filled with each row's recorded build commit by its `path` (never
+    published: the validation checks the published one against it). Strings
+    are left raw (the caller scrubs)."""
     rows = []
     for f in cat.shipped_families():
         for kind in location_kinds(f.get("location", "")):
@@ -182,6 +188,8 @@ def index_rows(cat: Catalogue, roots: Dict[str, str], remap: Dict[str, Optional[
                     continue
                 rj = _run_json(path) if os.path.isdir(path) else {}
                 commit = rj.get("qcr_commit")
+                if recorded is not None:
+                    recorded[archive_prefix(kind, name)] = commit
                 claims = f.get("claims")
                 claim_ids = [c.strip() for c in claims.split(",")] if isinstance(claims, str) and claims != "none" else (
                     list(claims) if isinstance(claims, list) else [])
@@ -199,6 +207,30 @@ def index_rows(cat: Catalogue, roots: Dict[str, str], remap: Dict[str, Optional[
                 })
     rows.sort(key=lambda r: (r["family"], r["path"]))
     return rows
+
+
+def commit_problems(rows: List[dict], recorded: Dict[str, Optional[str]],
+                    remap: Dict[str, Optional[str]]) -> Dict[str, int]:
+    """Rows of the run index whose published build commit misstates the
+    recorded one: `dirty_unflagged`, a run whose recorded id carries `-dirty`
+    without `qcr_commit_dirty` true (or a clean one flagged); `off_main`, a
+    row marked `qcr_commit_on_public_main` true whose commit is not the
+    remap's public main commit for the recorded id (the remap's values are
+    the public main commits, each an ancestor of main)."""
+    public = {v for v in remap.values() if v}
+    bad = {"dirty_unflagged": 0, "off_main": 0}
+    for r in rows:
+        rec = recorded.get(r["path"])
+        rec = rec.strip() if isinstance(rec, str) else None
+        dirty = bool(rec and rec.endswith("-dirty"))
+        if rec and r.get("qcr_commit_dirty") is not dirty:
+            bad["dirty_unflagged"] += 1
+        if r.get("qcr_commit_on_public_main") is True:
+            pub = (r.get("qcr_commit") or "")
+            pub = pub[:-len("-dirty")] if pub.endswith("-dirty") else pub
+            if not rec or pub not in public or pub != remap_commit(rec, remap):
+                bad["off_main"] += 1
+    return bad
 
 
 def withheld_rows(cat: Catalogue) -> List[dict]:

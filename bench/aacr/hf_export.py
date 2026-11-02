@@ -474,6 +474,7 @@ class Exporter:
         self.counts = collections.Counter()
         self.notes: list[str] = []
         self.tables: dict[str, list[dict]] = {}
+        self.commits: tuple[dict, dict] | None = None
         self.aacr_judges: dict[str, str] = {}
         self.key = {}  # iid -> {"set", "version", "case"}
         for s in SETS:
@@ -1071,8 +1072,12 @@ class Exporter:
         roots = {"runs": self.runs_dir, "top": os.path.dirname(self.runs_dir)}
         if self.om_runs:
             roots.update({"om-runs": self.om_runs, "om-top": os.path.dirname(self.om_runs)})
-        rows = RC.index_rows(self.cat, roots, remap, lambda fid: [f"quickreview-runs-{fid}.tar.zst"])
+        recorded: dict = {}
+        rows = RC.index_rows(self.cat, roots, remap, lambda fid: [f"quickreview-runs-{fid}.tar.zst"], recorded)
         self.tables["runs"] = [self.S({k: v for k, v in r.items()}) for r in rows]
+        # the recorded build ids, never published, by the row's published path: the validation
+        # checks every published commit and its flags against them (RC.commit_problems)
+        self.commits = ({scrub(k): v for k, v in recorded.items()}, remap)
 
     # --- every table holds only the families the catalogue gives it --------------
     def filter_by_family(self):
@@ -1562,11 +1567,15 @@ def key_data_checks(t: dict[str, list[dict]]) -> list[dict]:
     return checks
 
 
-def validate_release(t: dict[str, list[dict]], cat: "RC.Catalogue | None", elo_refits: dict, elo_dir: str | None) -> list[dict]:
+def validate_release(t: dict[str, list[dict]], cat: "RC.Catalogue | None", elo_refits: dict, elo_dir: str | None,
+                     commits: "tuple[dict, dict] | None" = None) -> list[dict]:
     """The checks of what this release adds: the open-model rows, the Elo
     ratings (refit from the published judgments, equal to the run's own
-    ratings.json, and the README's numbers), and that every family the
-    catalogue gives a table has rows in it."""
+    ratings.json, and the README's numbers), that every family the
+    catalogue gives a table has rows in it, and (`commits`: the recorded
+    build ids by published path, and the remap) that `runs` states every
+    build commit as recorded: a dirty build flagged, a public main commit
+    only where the remap gives it."""
     checks = []
 
     def check(what, got, want, tol=0.0):
@@ -1628,6 +1637,15 @@ def validate_release(t: dict[str, list[dict]], cat: "RC.Catalogue | None", elo_r
                 check(f"family {f['id']}: has rows in {table}", got > 0, True)
         check("runs: every row is a shipped family",
               all(RC.Catalogue.ships(cat.families.get(r["family"])) for r in t["runs"]), True)
+    if commits is not None:
+        recorded, remap = commits
+        bad = RC.commit_problems(t["runs"], recorded, remap)
+        check("runs: every row's recorded build id was read", sum(1 for r in t["runs"] if r["path"] not in recorded), 0)
+        # the card's statement: a dirty build is flagged, never published as the clean commit
+        check("runs: a run built with uncommitted changes has qcr_commit_dirty true, a clean one false",
+              bad["dirty_unflagged"], 0)
+        check("runs: every qcr_commit on public main is the remap's public main commit for the recorded id",
+              bad["off_main"], 0)
     return checks
 
 
@@ -1943,7 +1961,7 @@ def main():
         print("figures, keys, reports …", flush=True)
         figures(a, out, ex.counts, ex.notes)
     tables = read_parquet(out)
-    checks = validate(tables) + validate_release(tables, ex.cat, ex.elo_refits, a.elo_dir)
+    checks = validate(tables) + validate_release(tables, ex.cat, ex.elo_refits, a.elo_dir, ex.commits)
     NT.write_licences(out)
     open(os.path.join(out, "NOTICE"), "w").write(dataset_notice())
     render_card(a, out, sizes, checks, ex.counts, tables.get("runs"))
