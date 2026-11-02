@@ -121,6 +121,34 @@ describe("removed-guard", () => {
     expect(facts.map((f) => f.status)).toEqual(["unknown"]);
     expect(facts[0]!.detail).toContain("app/huge.py");
   });
+
+  // MUTATION: restore `if (file.status === "removed") continue;` in
+  // removedGuard — the deleted guard module reads clear, and this fails.
+  it("finds the guards of a deleted file, and is unknown for a deleted file with no patch", () => {
+    const deleted = file(
+      "app/middleware/auth.py",
+      "@@ -1,3 +0,0 @@\n-@login_required\n-def guard(request):\n-    return require_auth(request)\n",
+      "removed",
+    );
+    const facts = only(computeSecurityFacts([deleted], null), "removed-guard");
+    expect(facts.map((f) => f.status)).toContain("found");
+    expect(facts.every((f) => f.status !== "clear")).toBe(true);
+    const first = facts.find((f) => f.status === "found")!;
+    expect(first.file).toBe("app/middleware/auth.py");
+    expect(first.detail).toContain("deletes the file");
+    const unpatched = only(
+      computeSecurityFacts([file("app/middleware/auth.py", undefined, "removed")], null),
+      "removed-guard",
+    );
+    expect(unpatched.map((f) => f.status)).toEqual(["unknown"]);
+    // To a check that reads no deletion, a deleted file changes nothing.
+    expect(
+      statuses(
+        computeSecurityFacts([file("app/roles.py", undefined, "removed")], null),
+        "role-enum-shift",
+      ),
+    ).toEqual(["clear"]);
+  });
 });
 
 describe("role-enum-shift", () => {

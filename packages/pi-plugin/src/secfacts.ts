@@ -168,8 +168,13 @@ function snippet(text: string): string {
   return codePath(t.length > 120 ? `${t.slice(0, 117)}...` : t);
 }
 
-/** PR files the diff-only checks read: patched, not prose, not tests. */
-function patchedFiles(files: readonly PrFileEntry[]): {
+/** PR files the diff-only checks read: patched, not prose, not tests. A
+ * deleted file with no patch is unread only for a check that reads what a
+ * deletion takes away (`removedUnread`): to the others it changes nothing. */
+function patchedFiles(
+  files: readonly PrFileEntry[],
+  opts: { removedUnread?: boolean } = {},
+): {
   patched: { file: PrFileEntry; hunks: Hunk[] }[];
   unread: string[];
 } {
@@ -178,7 +183,7 @@ function patchedFiles(files: readonly PrFileEntry[]): {
   for (const f of files) {
     if (isProse(f.filename) || isTest(f.filename) || BINARY_RE.test(f.filename)) continue;
     if (f.patch === undefined) {
-      if (f.status !== "removed") unread.push(f.filename);
+      if (f.status !== "removed" || opts.removedUnread) unread.push(f.filename);
       continue;
     }
     patched.push({ file: f, hunks: parsePatch(f.patch) });
@@ -354,10 +359,12 @@ const GUARD_MARKERS: readonly { name: string; re: RegExp }[] = [
 ];
 
 function removedGuard(files: readonly PrFileEntry[]): SecurityFact[] {
-  const { patched, unread } = patchedFiles(files);
+  // A deleted file is the most direct removal of all: every guard it held is
+  // gone, with nothing added back.
+  const { patched, unread } = patchedFiles(files, { removedUnread: true });
   const found: SecurityFact[] = [];
   for (const { file, hunks } of patched) {
-    if (file.status === "removed") continue;
+    const deleted = file.status === "removed";
     const lines = hunks.flatMap((h) => h.lines).filter((l) => !COMMENT_RE.test(l.text));
     // Import lines count on neither side: a dropped unused import is not a
     // removed guard, and a re-ordered one does not put a removed one back.
@@ -378,9 +385,11 @@ function removedGuard(files: readonly PrFileEntry[]): SecurityFact[] {
         fact(
           "removed-guard",
           "found",
-          added === 0
-            ? `removes ${snippet(first.text)} (base line ${first.line}) and adds no \`${marker.name}\` back in this file`
-            : `removes ${removed.length} \`${marker.name}\` line(s) and adds back ${added}; the first removed is ${snippet(first.text)} (base line ${first.line})`,
+          deleted
+            ? `deletes the file; its base line ${first.line} carried ${snippet(first.text)}${removed.length > 1 ? ` (and ${removed.length - 1} more \`${marker.name}\` line(s))` : ""}`
+            : added === 0
+              ? `removes ${snippet(first.text)} (base line ${first.line}) and adds no \`${marker.name}\` back in this file`
+              : `removes ${removed.length} \`${marker.name}\` line(s) and adds back ${added}; the first removed is ${snippet(first.text)} (base line ${first.line})`,
           { file: file.filename },
         ),
       );
