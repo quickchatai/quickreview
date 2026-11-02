@@ -125,7 +125,7 @@ export function buildScanAgents(
     onlyTiers: { [SCAN_PASS]: [cfg.scan.tier] },
     addenda: [
       ...PASS_ADDENDA,
-      ...configAddenda(cfg.review),
+      ...configAddenda(cfg.review, cfg.security),
       ...loadProfileAddenda(root, cfg.review.profile, lookup),
       ...lensTuningAddenda(cfg.lenses),
     ],

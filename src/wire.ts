@@ -1287,7 +1287,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             models: roundAgentModels(cfg),
             addenda: [
               ...PASS_ADDENDA,
-              ...configAddenda(cfg.review),
+              ...configAddenda(cfg.review, cfg.security),
               ...profileAddenda,
               // The profile's `emphasis` / `max_severity`, compiled.
               ...lensTuningAddenda(cfg.lenses),
