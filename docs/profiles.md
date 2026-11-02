@@ -398,7 +398,9 @@ threat_model = "auto"      # off (the default) | auto | always — stage 0's thr
 `lenses` bounds what stage 1 may suggest and what stage 2 may run, the deep
 floor included; a floor lens outside it gets no rows. `kinds` drops, after
 parsing, a candidate whose kind is not listed (`security` keeps every
-`security:<class>`), counted on its case as `off_kind`. `threat_model` says
+`security:<class>`), counted on its case as `off_kind`. Under a security kind
+a security-family lens's findings are security findings whatever kind it
+wrote (`sqli`, or none), so they are kept. `threat_model` says
 whether the scan drafts a threat model first (stage 0) and reads that draft
 when neither the scanned tree's `.qcr/threat-model.md` nor the profile has
 one. Stage 0 (`agents/scan/pass-sec-threat-model.md`) is one case over the

@@ -36,7 +36,12 @@ import {
   VALIDATE_PASS,
 } from "../include.js";
 import { SCAN_DEEP_LENSES } from "../passes.js";
-import { REACHABILITY_VALUES, reachabilityCappedSeverity, type Reachability } from "../severity.js";
+import {
+  REACHABILITY_VALUES,
+  isSecurityFinding,
+  reachabilityCappedSeverity,
+  type Reachability,
+} from "../severity.js";
 import { REPO_THREAT_MODEL_PATH, threatModelEntryGlob, type ThreatModel } from "../threatmodel.js";
 import { isMigrationFile } from "./facts.js";
 import { assign, splitUnit, type CaseBudget, type UnitCut } from "./unitcut.js";
@@ -608,6 +613,26 @@ export function kindAllowed(kind: string, kinds: readonly string[]): boolean {
     const want = normalizeKind(m);
     return k === want || k.startsWith(`${want}-`);
   });
+}
+
+/** A `[scan] kinds` entry that names the security family: `security`,
+ * `exploit-chain` or `partial-chain`, or a kind one of them prefixes. */
+function isSecurityKind(kind: string): boolean {
+  return isSecurityFinding(normalizeKind(kind), null);
+}
+
+/**
+ * Whether a scan keeps a candidate its `lens` reported under `[scan] kinds`:
+ * `kindAllowed`, or — when `kinds` names a security kind — any security
+ * finding (severity.ts `isSecurityFinding`, the rule the fold and PR rounds
+ * share). A security-family lens's findings are kept whatever kind it wrote
+ * (`sqli`, `idor`, none at all), so a security-only scan never drops the
+ * findings it exists to produce over a spelling; a general lens's are kept
+ * by their kind alone. Pure.
+ */
+export function kindKept(kind: string, lens: string, kinds: readonly string[]): boolean {
+  if (kindAllowed(kind, kinds)) return true;
+  return kinds.some(isSecurityKind) && isSecurityFinding(kind, lens);
 }
 
 /** One candidate as a validator reads it, in the findings grammar — the

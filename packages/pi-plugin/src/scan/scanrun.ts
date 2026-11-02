@@ -76,8 +76,10 @@
 // `[security] fold`):
 //   * `[scan] lenses` bounds what stage 1 may suggest and stage 2 may run
 //     (stage2.ts `stage2Lenses`); `[scan] kinds` drops, after parsing and
-//     counted, every candidate of another kind (scan.ts `kindAllowed`) — a
-//     security-only scan does not rest on prompt text alone.
+//     counted, every candidate of another kind (scan.ts `kindKept`) — a
+//     security-only scan does not rest on prompt text alone. A security-
+//     family lens's findings are security findings whatever kind it wrote
+//     (`sqli`, none at all), so they are kept under a security `kinds`.
 //   * With `[security] fold` on, the skeptic's verdict on a SECURITY
 //     candidate (severity.ts `isSecurityFinding`, the one rule PR rounds
 //     and the scan share) it could not settle — the
@@ -163,7 +165,7 @@ import {
   coverKey,
   evidenceQuotesAnchor,
   findingFingerprint,
-  kindAllowed,
+  kindKept,
   normalizeCode,
   parseScanAnswer,
   parseValidatorAnswer,
@@ -2593,11 +2595,12 @@ export class ScanRunner {
     let dropped = answer.dropped + answer.suggestions_dropped;
     // `[scan] kinds`: a candidate of another kind is dropped here, after the
     // answer counted as a reading, and counted apart — a scan for security
-    // keeps security findings whatever the lens wrote.
+    // keeps security findings whatever the lens wrote: a security-family
+    // lens's findings are kept whatever kind it spelled (scan.ts `kindKept`).
     const kinds = settings.scan.kinds;
     let offKind = 0;
     const keepKind = (cand: ScanCandidate): boolean => {
-      if (kindAllowed(cand.kind, kinds)) return true;
+      if (kindKept(cand.kind, job.lens, kinds)) return true;
       offKind++;
       return false;
     };

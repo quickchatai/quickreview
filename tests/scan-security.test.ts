@@ -4,7 +4,8 @@
 //   * `[scan] lenses` bounds stage 1's suggestions and stage 2's rows, the
 //     floor's included (stage2.ts `stage2Lenses`, scanrun.ts);
 //   * `[scan] kinds` drops a candidate of another kind after parsing,
-//     counted (scan.ts `kindAllowed`);
+//     counted (scan.ts `kindKept`) — a security-family lens's findings are
+//     kept under a security `kinds` whatever kind they were written as;
 //   * `[security] fold` stores a security candidate the skeptic could not
 //     settle `needs-review`, its doubt kept as the proof gap — and only a
 //     security candidate, and only with fold on (scanrun.ts `doubtTier`);
@@ -29,6 +30,7 @@ import {
 } from "@quickchatai/pi-quickreview/src/scan/findings.js";
 import {
   kindAllowed,
+  kindKept,
   normalizeKind,
   scanCasePrompt,
   type TreeFile,
@@ -173,7 +175,7 @@ function rig(
     },
     source: {
       location: "/reviewed",
-      resolve: (ref) => (ref === "HEAD" ? SHA : null),
+      resolve: (ref) => (ref === "HEAD" || ref === SHA ? SHA : null),
       open: () => ({ ok: true, tree: tree() }),
       list: () => tree().files,
     },
@@ -357,6 +359,52 @@ describe("[scan] kinds drops a candidate of another kind, counted", () => {
     expect(app).toMatchObject({ status: "done", findings: 1, off_kind: 1 });
     expect(r.logs.join("\n")).toMatch(/1 candidate\(s\) of a kind outside \[scan\] kinds/);
     expect(renderStatus(s.status())).toContain("Dropped as outside [scan] kinds: 1 candidate(s)");
+  });
+
+  // MUTATION: drop the `isSecurityFinding` branch from kindKept — this fails.
+  it("kindKept: under a security `kinds`, a security-family lens's finding is kept whatever kind it wrote; a general lens's by its kind", () => {
+    const SEC = ["security", "exploit-chain", "partial-chain"];
+    for (const kind of ["sqli", "idor", "ssrf", "sec-idor", "vuln-xss", "unclassified"]) {
+      expect(kindKept(normalizeKind(kind), "pass-sec-injection", SEC)).toBe(true);
+      expect(kindKept(normalizeKind(kind), "pass-security", SEC)).toBe(true);
+      expect(kindKept(normalizeKind(kind), "pass-scan", SEC)).toBe(false);
+    }
+    expect(kindKept("security-sqli", "pass-scan", SEC)).toBe(true);
+    // A kinds list that names no security kind keeps by kind alone.
+    expect(kindKept("sqli", "pass-sec-injection", ["bug"])).toBe(false);
+    expect(kindKept("bug", "pass-scan", ["bug"])).toBe(true);
+  });
+
+  // MUTATION: call kindAllowed(cand.kind, kinds) in scanrun's keepKind
+  // (no lens) — this fails.
+  it("a stage-2 security-family case's findings are stored under a security `kinds`, an off-format or missing kind included", async () => {
+    const r = rig({
+      scan: { kinds: ["security", "exploit-chain", "partial-chain"], validator: false },
+      lens: (spec) =>
+        spec.agent.startsWith("pass-sec-injection--")
+          ? findingsOn(spec, [
+              item(1, "sqli", "Interpolated SQL"),
+              item(3, "", "Command built from input"),
+            ])
+          : findingsOn(spec, [item(5, "bug", "Off by one")]),
+    });
+    const s = new ScanRunner(r.ports);
+    await runStage1(s);
+    // Stage 1 is a general lens: its `bug` is dropped, counted.
+    expect(new FindingsStore(r.state).list().findings).toEqual([]);
+    const p = await s.proposeStage2({
+      rows: [{ lens: "pass-sec-injection", files: ["app/a.py"], reason: "raw SQL" }],
+    });
+    if (!p.ok) throw new Error(p.errors.join("; "));
+    const started = await s.startStage2({ key: p.proposal.key });
+    if (!started.ok) throw new Error(started.errors.join("; "));
+    await s.idle();
+    const stored = new FindingsStore(r.state).list({ lens: "pass-sec-injection" }).findings;
+    expect(stored.map((f) => f.kind).sort()).toEqual(["sqli", "unclassified"]);
+    const run = s.status().run!;
+    expect(run.mode).toBe("stage2");
+    expect(run.cases[0]).toMatchObject({ status: "done", findings: 2 });
+    expect(run.cases[0]!.off_kind ?? 0).toBe(0);
   });
 });
 

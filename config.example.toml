@@ -1059,7 +1059,8 @@ deep_lenses = ["pass-consistency", "pass-delivery", "pass-duplication", "pass-ma
                                # the order is the priority: under a budget the first lens covers the whole tree before the next starts
 lenses = []                    # the lenses a scan may run at all, each a deep lens; [] = every deep lens
 kinds = []                     # the finding kinds a scan keeps, e.g. ["security"] (a prefix keeps
-                               # "security:injection" too); [] = every kind
+                               # "security:injection" too; under a security kind a pass-sec-* lens's
+                               # findings are kept whatever kind it wrote); [] = every kind
 threat_model = "off"           # draft a threat model first (stage 0, part of the scan: a preview offers it, a scan
                                # start waits for it): "auto" (only when neither the repo's .qcr/threat-model.md nor
                                # the profile's threat-model.md exists, and no draft yet) | "always" (once per scanned
