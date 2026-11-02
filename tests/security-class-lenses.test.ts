@@ -42,6 +42,8 @@ const EVIDENCE_FIELDS = new Set([
   "bypass",
   "glue",
   "weakest",
+  "seed",
+  "unrecorded",
 ]);
 
 const body = (lens: string): string =>
@@ -156,5 +158,11 @@ describe("the ownership rulings, where the class lens reads them", () => {
     expect(text).toContain("read-only `git log`");
     expect(text).toContain("The seed hunk itself");
     expect(text).not.toMatch(/allowed commands/i);
+    // `siblings:` means neighbouring operations and their guards across the
+    // family; the variant's line names its seed.
+    // MUTATION: rename `seed:` back to `siblings:` in agents/pass-sec-variant.md — fails.
+    const lines = section(text, "Evidence lines");
+    expect(lines).toMatch(/^ {4}seed: /m);
+    expect(lines).not.toMatch(/^ {4}siblings: /m);
   });
 });

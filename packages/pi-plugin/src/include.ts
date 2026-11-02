@@ -672,6 +672,7 @@ const SECURITY_CANDIDATE =
 const VALIDATE_SECURITY_FOLD_ADDENDUM =
   "\n## The security fold — an unproven security candidate is asked, never doubted (config `[security] fold = true`; supersedes the DOUBTED rule above for this case)\n" +
   `This section binds ${SECURITY_CANDIDATE}. When its claim cannot be verified by reading — the word would be \`unverifiable\`, or its confidence falls under 0.5 after your audit — do NOT list it under DOUBTED. It survives with the downgrade \`security-demoted\`: this section routes every such security candidate to that ONE downgrade label, and like every downgrade it names the axis moved — **confidence** — and why, as the proof gap: the smallest fact that, if false, kills the finding (\`security-demoted — confidence 0.8→0.5: is the tenant id always set by the middleware before this handler runs?\`). Rewrite its \`claim\` as the question that gap asks, with the consequence if the answer is no; set its \`confidence\` to 0.6 or less, so it posts as a question; keep its severity — confidence carries the doubt, severity never does.\n\n` +
+  "This covers what the security evidence rule above sends to DOUBTED: a security candidate with one or more evidence lines labelled plausible and none contradicted survives as the question naming that gap, and an exploit chain with exactly one plausible hop and none contradicted survives as the question naming that hop (`security_outcome: question` either way).\n\n" +
   "Nothing else moves: a candidate you refuted with a cited contradicting `file:line`, a `bad-anchor`, and a chain's `partial-chain` still go under DOUBTED, and every candidate that is not a security candidate follows the DOUBTED rule as before.\n";
 
 // `[security] fold` in a scan: a security candidate the skeptic cannot
@@ -1477,28 +1478,43 @@ export const VALIDATE_SEC_NEWLY_REACHABLE_ADDENDUM =
   "\n## A sink this PR newly reaches is in scope (sandbox rule)\n" +
   `This section binds ${SECURITY_CANDIDATE}. A weakness in code this PR does not touch is in scope when this PR adds a path to it: a new route, handler, consumer or caller that reaches it, a removed or weakened guard on the way to it, a wider audience for the entry point that leads to it. \`out-of-scope\` or "pre-existing" on such a candidate is wrong — judge it, with the PR's hop (the new path, at its changed line) as the anchor and the old sink cited. Only a weakness that no changed line reaches, unguards or depends on is out of scope, and the kill names the base line and shows the head reaches it no differently.\n`;
 
+// The variant lens's product is the pattern's siblings outside the diff: an
+// unfixed sibling of a pattern this PR fixes is reached by no changed line,
+// so the rule above would kill it out of scope. PR builds only — a scan's
+// seed is a past fix commit, and a scan has no scope to leave.
+export const VALIDATE_SEC_VARIANT_SIBLINGS_ADDENDUM =
+  "\n## A variant of this PR's pattern is in scope (sandbox rule)\n" +
+  `This section binds ${SECURITY_CANDIDATE}, when its lens is \`pass-sec-variant\`. ` +
+  'Such a candidate whose `seed:` line names a hunk of this PR as its seed is in scope although its site lies outside the diff: a pattern this PR fixes or introduces makes its unfixed or newly unsafe siblings part of this change, and an incomplete fix is this PR\'s defect. This qualifies the rule above — never kill such a candidate `out-of-scope` or "pre-existing" for naming unchanged code. Judge it as a body-only finding (no `line:`, `path:` kept) under every other rule. Kill it `out-of-scope` only when the seed it cites is not a hunk of this PR, or the site does not match the pattern the seed names.\n';
+
 // "Absence alone does not establish safety": not finding the attack is not
 // refutation, and a control the repository does not contain is no control.
 export const VALIDATE_SEC_REFUTED_CITES_ADDENDUM =
   "\n## Refuting a security candidate takes a cited line (sandbox rule)\n" +
-  `This section binds ${SECURITY_CANDIDATE}. \`refuted\` on it cites the \`file:line\` you read that contradicts a named line of its evidence — the guard that dominates the path, the query that does carry the tenant key, the verifier that does reject the token. **Absence alone is not refutation**: "I could not find a way to exploit it" or "no caller passes untrusted input that I saw" is a gap in your search, not a contradiction. **A control the repository does not contain does not count**: a gateway, WAF, proxy, network policy or identity provider the code assumes but the worktree does not configure is a proof gap to name, never a refutation. When your hunt settles nothing either way, the candidate is not refuted: it survives, as the question its proof gap asks, or its claim is \`unverifiable\`.\n`;
+  `This section binds ${SECURITY_CANDIDATE}. \`refuted\` on it cites the \`file:line\` you read that contradicts a named line of its evidence — the guard that dominates the path, the query that does carry the tenant key, the verifier that does reject the token. **Absence alone is not refutation**: "I could not find a way to exploit it" or "no caller passes untrusted input that I saw" is a gap in your search, not a contradiction. **A control the repository does not contain does not count**: a gateway, WAF, proxy, network policy or identity provider the code assumes but the worktree does not configure is a proof gap to name, never a refutation. When your hunt settles nothing either way, the candidate is not refuted: its claim is \`unverifiable\`, never \`refuted\`, and the proof gap is named as its reason.\n`;
 
 // The evidence block's lines labelled one by one, and a chain's outcome
 // computed from its hop labels by a fixed table — the code recomputes the
 // outcome from the labels (`security_outcome`, `hop_labels` in the findings
 // record) and counts a mismatch. `partial-chain` is a DOUBTED word: a chain
 // with two unproven hops is stored for the next round's delta, never posted.
+// A plausible candidate — one unproven line, or one unproven chain hop — is
+// DOUBTED `unverifiable` here; only `[security] fold` lets it survive as a
+// question (VALIDATE_SECURITY_FOLD_ADDENDUM), so the default profile posts no
+// unverified security finding. A lead-backed hop is valid only on a lead that
+// survived confirmed, so a chain is never confirmed on a lead that is itself
+// only a question.
 export const VALIDATE_SEC_EVIDENCE_ADDENDUM =
   "\n## Security evidence — label every line, and a chain hop by hop (sandbox rule)\n" +
   `This section binds ${SECURITY_CANDIDATE}. Its \`evidence:\` block names a source, a boundary, a sink, a path and the controls hunted. Re-derive each line from the code and label it:\n\n` +
   "- **valid** — you read the cited `file:line` and it says what the line claims;\n" +
   "- **plausible** — nothing you read contradicts it, but one fact you could not settle by reading stands in the way (name it);\n" +
   "- **contradicted** — a `file:line` you read says otherwise (cite it).\n\n" +
-  "Name the failing endpoint when one fails: the source is not attacker-controlled, the sink is not sensitive, or a hop between them is guarded. Every line valid: it survives. No line contradicted but one or more plausible: it survives as a question naming that gap, at `confidence` 0.6 or less, with its severity kept. A load-bearing line contradicted: `refuted`, citing it.\n\n" +
-  "**An exploit chain** (`kind: exploit-chain`, from `pass-sec-exploit-chain`) is judged after its leads. Judge every lead it cites first; then label each hop. A hop that rests on a lead is valid only when that lead survived you, contradicted when you refuted it, plausible otherwise. Then the outcome, by this table and no other:\n\n" +
+  "Name the failing endpoint when one fails: the source is not attacker-controlled, the sink is not sensitive, or a hop between them is guarded. Every line valid: it survives. No line contradicted but one or more plausible: it is not refuted, and it is not proven either — the DOUBTED rule above holds: list it under DOUBTED with the word `unverifiable`, naming that gap. A load-bearing line contradicted: `refuted`, citing it.\n\n" +
+  "**An exploit chain** (`kind: exploit-chain`, from `pass-sec-exploit-chain`) is judged after its leads. Judge every lead it cites first; then label each hop. A hop that rests on a lead is valid only when that lead survived you **confirmed** (`security_outcome: confirmed`, every evidence line valid); plausible when it survived only as a question, went under DOUBTED, or you could not judge it; contradicted when you refuted it. Then the outcome, by this table and no other:\n\n" +
   "| Hop labels | Outcome |\n|---|---|\n" +
   "| every hop valid | survives |\n" +
-  "| exactly one plausible, none contradicted | survives as a question naming that hop |\n" +
+  "| exactly one plausible, none contradicted | DOUBTED with the word `unverifiable`, naming that hop |\n" +
   "| two or more plausible, none contradicted | DOUBTED with the word `partial-chain` |\n" +
   "| any hop contradicted | `refuted`, citing the hop |\n\n" +
   "This section adds ONE word to the closed vocabulary, for chains only:\n\n" +
@@ -1916,6 +1932,12 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
     scope: [VALIDATE_PASS],
     mode: "pr",
     text: VALIDATE_SEC_NEWLY_REACHABLE_ADDENDUM,
+  },
+  {
+    id: "validate-sec-variant-siblings",
+    scope: [VALIDATE_PASS],
+    mode: "pr",
+    text: VALIDATE_SEC_VARIANT_SIBLINGS_ADDENDUM,
   },
   {
     id: "validate-sec-refuted-cites",

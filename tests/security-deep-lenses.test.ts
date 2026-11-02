@@ -122,6 +122,17 @@ describe("the infra lens", () => {
     expect(text).toContain("**Live-state note for the operator**");
   });
 
+  // `gains:` means authority gained across the family; an audit sink's
+  // missing record is its own line.
+  // MUTATION: put back "`gains:` names what goes unrecorded" in
+  // agents/pass-sec-infra.md — fails.
+  it("names an audit sink's gap `unrecorded:`, never `gains:`", () => {
+    expect(text).toContain("`unrecorded:` names the actions, principals or resources");
+    expect(text).not.toMatch(/`gains:` names what goes unrecorded/);
+    const lines = evidenceLines(text, "## Evidence");
+    expect(lines.some((l) => /^\s+unrecorded:/.test(l))).toBe(true);
+  });
+
   // MUTATION: write `delta:` in place of `pr-hop:` in the infra block — fails.
   it("adds only family-named lines to the block", () => {
     const lines = evidenceLines(text, "## Evidence");

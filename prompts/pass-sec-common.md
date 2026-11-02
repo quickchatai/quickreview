@@ -47,7 +47,9 @@ and lacked before; `pr-hop:` the hop this PR adds, widens or unguards;
 credential stays valid; `listener:` where an entry point is served and who
 reaches it; `siblings:` neighbouring operations and their guards; `bypass:`
 the request that reaches the effect; `glue:` what passes from one hop to the
-next and why it fits; `weakest:` the hop whose failure kills a chain.
+next and why it fits; `weakest:` the hop whose failure kills a chain;
+`seed:` the hunk or fix commit a variant site matches; `unrecorded:` what a
+removed or muted audit sink no longer records.
 
 ## Outcomes
 

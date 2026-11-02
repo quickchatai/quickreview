@@ -53,12 +53,29 @@ describe("securityOutcome — the chain's outcome table", () => {
   it("matches the validator's table in the evidence addendum, row for row", () => {
     const rows: Array<[string, string]> = [
       ["every hop valid", "survives"],
-      ["exactly one plausible, none contradicted", "survives as a question naming that hop"],
+      [
+        "exactly one plausible, none contradicted",
+        "DOUBTED with the word `unverifiable`, naming that hop",
+      ],
       ["two or more plausible, none contradicted", "DOUBTED with the word `partial-chain`"],
       ["any hop contradicted", "`refuted`, citing the hop"],
     ];
     for (const [labels, outcome] of rows)
       expect(VALIDATE_SEC_EVIDENCE_ADDENDUM).toContain(`| ${labels} | ${outcome} |`);
+  });
+});
+
+describe("a hop resting on a lead", () => {
+  // A lead that survived only as a question is not a proven hop: labelling
+  // its hop valid would let an all-valid label set compute `confirmed`.
+  // MUTATION: drop "**confirmed**" from the lead-hop sentence in
+  // VALIDATE_SEC_EVIDENCE_ADDENDUM — this fails.
+  it("is valid only when the lead survived confirmed, plausible when it survived only as a question", () => {
+    expect(VALIDATE_SEC_EVIDENCE_ADDENDUM).toContain(
+      "A hop that rests on a lead is valid only when that lead survived you **confirmed** (`security_outcome: confirmed`, every evidence line valid); plausible when it survived only as a question, went under DOUBTED, or you could not judge it; contradicted when you refuted it.",
+    );
+    // and such a hop moves the chain off `confirmed`
+    expect(securityOutcome(["valid", "plausible", "valid"])).toBe("question");
   });
 });
 

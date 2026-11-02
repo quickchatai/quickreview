@@ -33,6 +33,7 @@ const REGISTRY_IDS = [
   "sec-family-own-lens",
   "validate-sec-pr-text",
   "validate-sec-newly-reachable",
+  "validate-sec-variant-siblings",
   "validate-sec-refuted-cites",
   "validate-sec-evidence",
   "scan-sec-precision",
@@ -83,6 +84,15 @@ describe("each security addendum binds exactly its scope, in its mode", () => {
 
   it("the newly-reachable rule binds the validator in PR builds only — a scan has no delta", () => {
     expect(boundTo("validate-sec-newly-reachable")).toEqual({ pr: [VALIDATE_PASS], scan: [] });
+  });
+
+  // MUTATION: delete the validate-sec-variant-siblings entry from PASS_ADDENDA — this fails.
+  it("the variant-siblings rule binds the validator in PR builds only, right after the newly-reachable rule it qualifies", () => {
+    expect(boundTo("validate-sec-variant-siblings")).toEqual({ pr: [VALIDATE_PASS], scan: [] });
+    const v = ids(VALIDATE_PASS, "pr");
+    expect(v.indexOf("validate-sec-variant-siblings")).toBe(
+      v.indexOf("validate-sec-newly-reachable") + 1,
+    );
   });
 
   it("the scan's class narrowing binds the family, pass-security and the skeptic, in scan builds only", () => {
@@ -151,6 +161,46 @@ describe("[security] fold is the only switch, and it is off by default", () => {
       s.indexOf("scan-skeptic-validate"),
     );
     expect(s.at(-1)).toBe("scan-security-needs-review");
+  });
+});
+
+describe("an unproven security candidate posts as a question only under the fold", () => {
+  const SURVIVES_AS_QUESTION = /survives,? as (?:a|the) question/i;
+  const validatorBody = (fold: boolean, mode: "pr" | "scan" = "pr") =>
+    composeAddendum(
+      VALIDATE_PASS,
+      [...PASS_ADDENDA, ...configAddenda(REVIEW, fold ? { fold: true } : SECURITY_DEFAULTS)],
+      "django",
+      mode,
+    );
+
+  // MUTATION: restore "it survives as a question naming that gap" in
+  // VALIDATE_SEC_EVIDENCE_ADDENDUM's plausible branch — this fails.
+  it("with the default config, no validator rule lets a plausible security candidate survive as a question", () => {
+    for (const mode of ["pr", "scan"] as const) {
+      const body = validatorBody(false, mode);
+      expect(body, mode).toContain(VALIDATE_SEC_EVIDENCE_ADDENDUM);
+      expect(body, mode).not.toMatch(SURVIVES_AS_QUESTION);
+    }
+    expect(VALIDATE_SEC_EVIDENCE_ADDENDUM).toMatch(
+      /one or more plausible: it is not refuted, and it is not proven either — the DOUBTED rule above holds: list it under DOUBTED with the word `unverifiable`/,
+    );
+    expect(text("validate-sec-refuted-cites")).toMatch(
+      /its claim is `unverifiable`, never `refuted`/,
+    );
+  });
+
+  // MUTATION: drop the "This covers what the security evidence rule above
+  // sends to DOUBTED" paragraph from VALIDATE_SECURITY_FOLD_ADDENDUM — this fails.
+  it("with fold on, the PR validator lets a plausible candidate and a one-plausible-hop chain survive as a question", () => {
+    const body = validatorBody(true);
+    expect(body).toMatch(SURVIVES_AS_QUESTION);
+    expect(body.indexOf("one or more evidence lines labelled plausible")).toBeGreaterThan(
+      body.indexOf(VALIDATE_SEC_EVIDENCE_ADDENDUM),
+    );
+    expect(body).toMatch(
+      /exactly one plausible hop and none contradicted survives as the question/,
+    );
   });
 });
 
@@ -251,19 +301,28 @@ describe("what the entries say", () => {
     expect(t).toMatch(/`out-of-scope`/);
   });
 
+  it("a variant's sibling outside the diff is in scope, judged body-only, killed only off-pattern or off-PR", () => {
+    const t = text("validate-sec-variant-siblings");
+    expect(t).toContain("`pass-sec-variant`");
+    expect(t).toContain("`seed:` line names a hunk of this PR");
+    expect(t).toMatch(/never kill such a candidate `out-of-scope`/);
+    expect(t).toMatch(/body-only finding \(no `line:`, `path:` kept\)/);
+    expect(t).toMatch(/only when the seed it cites is not a hunk of this PR/);
+  });
+
   it("refutation cites a line; absence and an absent edge control are not refutation", () => {
     const t = text("validate-sec-refuted-cites");
     expect(t).toMatch(/Absence alone is not refutation/);
     expect(t).toMatch(/A control the repository does not contain does not count/);
   });
 
-  it("the chain table: one plausible asks, two or more is partial-chain, any contradicted refutes", () => {
+  it("the chain table: one plausible is unverifiable, two or more is partial-chain, any contradicted refutes", () => {
     const t = text("validate-sec-evidence");
     for (const label of ["**valid**", "**plausible**", "**contradicted**"])
       expect(t, label).toContain(label);
     expect(t).toContain("| every hop valid | survives |");
     expect(t).toContain(
-      "| exactly one plausible, none contradicted | survives as a question naming that hop |",
+      "| exactly one plausible, none contradicted | DOUBTED with the word `unverifiable`, naming that hop |",
     );
     expect(t).toContain(
       "| two or more plausible, none contradicted | DOUBTED with the word `partial-chain` |",

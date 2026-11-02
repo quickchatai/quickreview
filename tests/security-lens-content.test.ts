@@ -52,6 +52,8 @@ const EXTRA_FIELDS = [
   "bypass",
   "glue",
   "weakest",
+  "seed",
+  "unrecorded",
 ];
 
 /** Build only the family's files (the includes still resolve against the

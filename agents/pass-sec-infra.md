@@ -175,7 +175,8 @@ band; the Config recorder `is_enabled = false`; EKS log types losing
 above broader ones; GCP `exempted_members` or an audit-log exclusion; a
 diagnostic setting or sink removed or retargeted; retention cut to days;
 flow logs only where the threat model relies on them. Muting is removal;
-`gains:` names what goes unrecorded.
+`unrecorded:` names the actions, principals or resources that go
+unrecorded.
 
 ## Evidence — the family block, plus these lines
 
@@ -188,6 +189,7 @@ control's step-3 chain and its first broken link. Add:
     listener:    <where the row is served> — reached by remote-unauth | remote-auth | tenant-internal | local
     gains:       <what the reached thing hands over, naming its own identity>
     pr-hop:      <file:line> — introduced | weakened | newly reachable
+    unrecorded:  <audit-sink rows only: what goes unrecorded>
 ```
 
 Anchor on the changed line that creates, relies on or weakens the control.

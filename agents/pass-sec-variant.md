@@ -50,7 +50,7 @@ and you never launch anything.
 
 Beside the base block:
 
-    siblings:    <the seed (the PR's hunk or the fix commit) and how this site matches it>
+    seed:        <the seed (the PR's hunk or the fix commit) and how this site matches it>
 
 A sibling outside the diff has no anchor in the review: omit `line:`,
 keep `path:` and cite the site in the evidence. Each site takes the
