@@ -190,10 +190,20 @@ describe("the findings record's security fields and counters", () => {
     expect(parsed.conformance!.security_outcome_mismatch).toEqual([]);
   });
 
-  // MUTATION: drop the `computed !== outcome` comparison — fails.
+  // MUTATION: drop the `computed !== outcome` comparison — fails (on m3: m1 is
+  // a downgraded entry with a posted_as, so it reads as posted, and its
+  // partial-chain labels are caught by the partial-chain check on their own).
   it("counts an outcome its hop labels do not compute, and a partial chain marked posted", () => {
     const c = parseFindingsRecord(
       record([
+        entry({
+          id: "m3",
+          kind: "exploit-chain",
+          disposition: "posted",
+          posted_as: "blocker",
+          security_outcome: "question",
+          hop_labels: ["valid", "valid"],
+        }),
         entry({
           id: "m1",
           kind: "exploit-chain",
@@ -226,7 +236,7 @@ describe("the findings record's security fields and counters", () => {
       7,
       1,
     ).conformance!;
-    expect(c.security_outcome_mismatch).toEqual(["m1", "m2"]);
+    expect(c.security_outcome_mismatch).toEqual(["m3", "m1", "m2"]);
   });
 
   // MUTATION: count security_doubted regardless of `opts.fold` — fails.
