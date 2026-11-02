@@ -30,7 +30,10 @@ import type { PrOwnedDeltaFile } from "@quickchatai/pi-quickreview/src/prdelta.j
 import type { PriorFinding } from "@quickchatai/pi-quickreview/src/priorfindings.js";
 import { assignPriorFindings } from "@quickchatai/pi-quickreview/src/priortasks.js";
 import { applyProfileSecurity } from "@quickchatai/pi-quickreview/src/profiles.js";
-import type { SecurityFact } from "@quickchatai/pi-quickreview/src/secfacts.js";
+import {
+  computeSecurityFacts,
+  type SecurityFact,
+} from "@quickchatai/pi-quickreview/src/secfacts.js";
 import { parseThreatModel } from "@quickchatai/pi-quickreview/src/threatmodel.js";
 import type {
   PassPlanEntry,
@@ -114,6 +117,29 @@ describe("a family row in the default profile", () => {
       expect(familyRows(p)).toEqual([]);
       expect(p.post_plan).toBeUndefined();
     }
+  });
+
+  /**
+   * MUTATION: set `needsCreate: false` back on secfacts.ts's
+   * `.filter(...).exists()` shape — this fails: the computed fact plans
+   * pass-sec-toctou and compose on a read-only existence check.
+   */
+  it("plans nothing on a read-only existence check, with the facts computed", () => {
+    const views = changed("shop/views.py", [
+      "    if Order.objects.filter(user=request.user).exists():",
+      "        return redirect('/orders')",
+    ]);
+    const facts = computeSecurityFacts([views], {
+      readHead: (path) =>
+        path === "shop/models.py"
+          ? "class Order(Model):\n    user = models.ForeignKey(User, on_delete=models.CASCADE)\n"
+          : null,
+      readBase: () => null,
+      listHead: () => ["shop/models.py", "shop/views.py"],
+    });
+    const p = plan(fixture, [views], { securityFacts: facts });
+    expect(familyRows(p)).toEqual([]);
+    expect(p.post_plan).toBeUndefined();
   });
 
   it('is left out when [security] triggers = "off"', () => {

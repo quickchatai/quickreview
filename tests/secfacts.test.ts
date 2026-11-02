@@ -210,6 +210,36 @@ describe("unique-without-index", () => {
     ]);
   });
 
+  /**
+   * MUTATION: set `needsCreate: false` back on the `.filter(...).exists()`
+   * (or `exists?(...)`) shape — this fails: an ordinary existence read on a
+   * foreign key is reported as a race.
+   */
+  it("an existence check with no create in the file is an ordinary read, never a race", () => {
+    const head = {
+      "shop/models.py":
+        "class Order(Model):\n    user = models.ForeignKey(User, on_delete=models.CASCADE)\n",
+    };
+    for (const line of [
+      "+    if Order.objects.filter(user=request.user).exists():",
+      "+    if Order.exists?(user: current_user)",
+    ]) {
+      const views = file(
+        "shop/views.py",
+        [
+          "@@ -1,1 +1,3 @@",
+          " def checkout(request):",
+          line,
+          "+        return redirect('/orders')",
+        ].join("\n"),
+      );
+      expect(
+        statuses(computeSecurityFacts([views], repo(head)), "unique-without-index"),
+        line,
+      ).toEqual(["clear"]);
+    }
+  });
+
   it("recognises the common unique declarations", () => {
     expect(hasUniqueConstraint("model User {\n  email String @unique\n}", "email")).toBe(true);
     expect(hasUniqueConstraint("  @Column({ unique: true })\n  email: string;", "email")).toBe(
@@ -499,7 +529,7 @@ describe("computeSecurityFacts", () => {
     const files = [
       file(
         "accounts/services.py",
-        "@@ -1,1 +1,2 @@\n def f(email):\n+    if User.objects.filter(email=email).exists(): raise X()",
+        "@@ -1,1 +1,3 @@\n def f(email):\n+    if User.objects.filter(email=email).exists(): raise X()\n+    User.objects.create(email=email)",
       ),
       file("infra/sg.tf", '@@ -0,0 +1,1 @@\n+resource "aws_security_group" "a" {}', "added"),
       file("deploy/compose.yml", '@@ -1,1 +1,2 @@\n ports:\n+  - "80:80"'),

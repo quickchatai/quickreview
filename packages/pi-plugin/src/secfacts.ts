@@ -452,14 +452,21 @@ function roleEnumShift(files: readonly PrFileEntry[]): SecurityFact[] {
 // unique-without-index
 
 /** Uniqueness checks in code: group 1 is the column. `needsCreate`: the
- * shape is an ordinary read unless the same file also adds a create. */
+ * shape is an ordinary read unless the same file also adds a create — an
+ * existence check (`.filter(user=…).exists()`, `exists?(…)`) is the most
+ * common read there is, and only a check-then-insert is the race. The
+ * `get_or_create` and `validates … uniqueness` shapes always create. */
 const UNIQUE_CHECKS: readonly { shape: string; re: RegExp; needsCreate: boolean }[] = [
   {
-    shape: ".filter(...).exists()",
+    shape: ".filter(...).exists() then create",
     re: /\.filter\(\s*(\w+?)(?:__i?exact)?\s*=[^\n]*\)\s*\.exists\(\)/,
-    needsCreate: false,
+    needsCreate: true,
   },
-  { shape: "exists?(...)", re: /\bexists\?\(\s*:?(\w+)\s*(?::|=>)/, needsCreate: false },
+  {
+    shape: "exists?(...) then create",
+    re: /\bexists\?\(\s*:?(\w+)\s*(?::|=>)/,
+    needsCreate: true,
+  },
   {
     shape: "validates ... uniqueness",
     re: /\bvalidates\s+:(\w+)\b[^\n]*\buniqueness\b/,
