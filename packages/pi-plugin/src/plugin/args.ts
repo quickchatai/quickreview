@@ -20,12 +20,14 @@
 //                   security family's lenses are planned as if requested
 //
 // `security` the preset and `--security` the flag differ: the preset skips
-// every lens outside the security family (an APPROVE then means "no security
-// finding"), and the flag keeps the plan and adds the family to it.
+// every lens outside the security family and plans the whole family as a
+// request, so a change with no security signal is still read by every family
+// lens (an APPROVE then means "no security finding"); the flag keeps the plan
+// and adds the family to it.
 //
 // A preset is the review options the core already takes, named: a lens plan
-// (`[review] preset`, `skip_lenses`) and a scope (`full`). It is never a code
-// path of its own.
+// (`[review] preset`, `skip_lenses`), a scope (`full`) and a security request
+// (`securityRequest`). It is never a code path of its own.
 //
 // Retired spellings stay accepted (tests/legacy-acceptance.test.ts), folded
 // to the current ones and never named in the usage: `--full` is the `full`
@@ -47,13 +49,19 @@ function securitySkips(): string[] {
 /** The presets /qcr-review takes, each as the core's review options. */
 export const REVIEW_PRESETS = {
   /** The default plan at low reasoning: about half the cost and time. */
-  quick: { levers: "review.preset=low", full: false },
+  quick: { levers: "review.preset=low", full: false, securityRequest: false },
   /** The full lever plan at the highest reasoning, over the whole target
    * again (what an earlier review left is ignored). */
-  full: { levers: "review.preset=max", full: true },
-  /** Only the security-family lenses the change triggers, with the
-   * validator. */
-  security: { levers: `review.skip_lenses=${securitySkips().join("|")}`, full: false },
+  full: { levers: "review.preset=max", full: true, securityRequest: false },
+  /** The whole security family, planned as a request whatever the change's
+   * triggers say, with the validator; every other lens is skipped. Without
+   * the request a change with no strong security signal would plan the
+   * validator alone, and no lens would read it. */
+  security: {
+    levers: `review.skip_lenses=${securitySkips().join("|")}`,
+    full: false,
+    securityRequest: true,
+  },
 } as const;
 
 export type ReviewPresetName = keyof typeof REVIEW_PRESETS;

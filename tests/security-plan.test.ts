@@ -29,6 +29,7 @@ import {
 import type { PrOwnedDeltaFile } from "@quickchatai/pi-quickreview/src/prdelta.js";
 import type { PriorFinding } from "@quickchatai/pi-quickreview/src/priorfindings.js";
 import { assignPriorFindings } from "@quickchatai/pi-quickreview/src/priortasks.js";
+import { REVIEW_PRESETS } from "@quickchatai/pi-quickreview/src/plugin/args.js";
 import { applyProfileSecurity } from "@quickchatai/pi-quickreview/src/profiles.js";
 import {
   computeSecurityFacts,
@@ -109,6 +110,28 @@ describe("a family row in the default profile", () => {
     expect(rows(p, "pass-baseline")[0]?.required).toBe(true);
     const risky = plan(fixture, [changed("auth/permissions.py", ["ROLES = ['admin']"])]);
     expect(rows(risky, "pass-security")[0]?.required).toBe(true);
+  });
+
+  /**
+   * MUTATION: set the security preset's `securityRequest` to false in
+   * plugin/args.ts — the preset's options then carry no request, and the
+   * plan of an ordinary change is the validator alone: this fails.
+   */
+  it("the /qcr-review security preset plans the family on a change with no security signal", () => {
+    const preset = REVIEW_PRESETS.security;
+    const skip = preset.levers.slice("review.skip_lenses=".length).split("|");
+    const cfg: Config = { ...fixture, review: { ...fixture.review, skip_lenses: skip } };
+    const sec: PlanSecurityInputs = preset.securityRequest
+      ? { securityRequest: { by: "", source: "operator" } }
+      : {};
+    const p = plan(cfg, [PLAIN], sec);
+    expect(familyRows(p).length).toBeGreaterThan(0);
+    expect(p.pass_plan.some((r) => r.lens === VALIDATE_PASS)).toBe(true);
+    expect(
+      p.pass_plan.every((r) => SECURITY_FAMILY.includes(r.lens) || r.lens === VALIDATE_PASS),
+    ).toBe(true);
+    // The control: the same skips with no request plan no lens that reads the change.
+    expect(familyRows(plan(cfg, [PLAIN]))).toEqual([]);
   });
 
   it("plans nothing of the family on ordinary code or a docs change", () => {

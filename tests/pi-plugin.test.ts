@@ -765,6 +765,8 @@ describe("/qcr-review's work, waited for (runReviewCommand)", () => {
 
   // A preset is the core's own options, named: never a path of its own.
   // MUTATION: drop the preset's levers from contextFrom — this fails.
+  // MUTATION: drop `|| preset?.securityRequest` from runReviewCommand — the
+  // security preset's request assertion fails.
   it("resolves a preset to the core's review options", async () => {
     const deps = fakeReview();
     await runReviewCommand("quick 12", fakeHost(), fakeUi(), deps);
@@ -781,6 +783,9 @@ describe("/qcr-review's work, waited for (runReviewCommand)", () => {
     expect(skipped.length).toBeGreaterThan(0);
     for (const kept of SECURITY_LENSES) expect(skipped).not.toContain(kept);
     expect(skipped).toContain("pass-ui");
+    // the security preset plans the whole family as a request; no other does
+    expect(security!.securityRequest).toEqual({ by: "", source: "operator" });
+    for (const o of [quick, full, none]) expect(o!.securityRequest).toBeUndefined();
     expect(none!.config.review.preset).toBe("default");
     expect(none!.config.review.skip_lenses).toEqual([]);
   });
