@@ -26,6 +26,9 @@ import re
 import sqlite3
 import sys
 
+# The tier ladder, PASS_TIER_ORDER in packages/pi-plugin/src/types.ts (the
+# TypeScript side strips it in round-progress.ts lensForAgent). This script
+# cannot import it, so tests/required-passes.test.ts pins the list against it.
 TIER_SUFFIX = re.compile(r"--(?:terra-med|sol-med|sol-high)$")
 
 
