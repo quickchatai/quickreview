@@ -296,6 +296,72 @@ describe("unique-without-index", () => {
     }
   });
 
+  // A unique column of the same name on another model backs nothing.
+  // MUTATION: back a candidate with any file where hasUniqueConstraint holds
+  // (drop the uniqueForModel tie in uniqueWithoutIndex) — Subscriber's
+  // unique email clears User's check, and this fails.
+  it("a unique column on another model never clears the check", () => {
+    const twoFiles = repo({
+      "accounts/models.py": "class User(Model):\n    email = models.EmailField(max_length=255)\n",
+      "newsletter/models.py":
+        "class Subscriber(Model):\n    email = models.EmailField(unique=True)\n",
+    });
+    const oneFile = repo({
+      "accounts/models.py":
+        "class User(Model):\n    email = models.EmailField(max_length=255)\n\n\nclass Subscriber(Model):\n    email = models.EmailField(unique=True)\n",
+    });
+    for (const io of [twoFiles, oneFile]) {
+      const facts = only(computeSecurityFacts([service], io), "unique-without-index");
+      expect(facts.map((f) => f.status)).toEqual(["unknown"]);
+      expect(facts[0]!.detail).toContain("could not be tied to `User`");
+    }
+  });
+
+  it("ties a check to its model's block, its table's index, or its class for validates", () => {
+    // The model's own Meta constraint, beside another model's plain column.
+    const meta = repo({
+      "accounts/models.py":
+        'class Subscriber(Model):\n    email = models.EmailField()\n\n\nclass User(Model):\n    email = models.EmailField()\n\n    class Meta:\n        constraints = [UniqueConstraint(fields=["email"], name="u")]\n',
+    });
+    expect(statuses(computeSecurityFacts([service], meta), "unique-without-index")).toEqual([
+      "clear",
+    ]);
+    // Rails: `validates` in the class the hunk names, the index in a migration.
+    const rails = file(
+      "app/models/user.rb",
+      [
+        "@@ -1,2 +1,3 @@ class User < ApplicationRecord",
+        "   has_many :orders",
+        "+  validates :email, uniqueness: true",
+        "   end",
+      ].join("\n"),
+    );
+    const migration = (table: string) =>
+      repo({
+        "db/migrate/001_index.rb": `class AddIndex < ActiveRecord::Migration[7.0]\n  def change\n    add_index :${table}, :email, unique: true\n  end\nend\n`,
+      });
+    expect(
+      statuses(computeSecurityFacts([rails], migration("users")), "unique-without-index"),
+    ).toEqual(["clear"]);
+    expect(
+      statuses(computeSecurityFacts([rails], migration("subscribers")), "unique-without-index"),
+    ).toEqual(["unknown"]);
+    // No model on the line: a constraint somewhere cannot be tied to it.
+    const bare = file(
+      "src/signup.ts",
+      [
+        "@@ -1,1 +1,3 @@",
+        " export async function signup(email: string) {",
+        "+  if (await findOne({ email })) throw new Error('taken');",
+        "+  return create({ email });",
+      ].join("\n"),
+    );
+    const prisma = repo({ "prisma/schema.prisma": "model User {\n  email String @unique\n}\n" });
+    const facts = only(computeSecurityFacts([bare], prisma), "unique-without-index");
+    expect(facts.map((f) => f.status)).toEqual(["unknown"]);
+    expect(facts[0]!.detail).toContain("the model the check queries");
+  });
+
   it("recognises the common unique declarations", () => {
     expect(hasUniqueConstraint("model User {\n  email String @unique\n}", "email")).toBe(true);
     expect(hasUniqueConstraint("  @Column({ unique: true })\n  email: string;", "email")).toBe(

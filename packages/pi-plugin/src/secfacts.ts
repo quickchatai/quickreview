@@ -610,25 +610,124 @@ export function hasUniqueConstraint(text: string, col: string): boolean {
   return false;
 }
 
+/** The model a uniqueness check's line queries: `User.objects.filter`,
+ * `User.exists?`, `prisma.user.findFirst`, `session.query(User)`,
+ * `userRepository.findOneBy`, … Group 1 is the model or its client name. */
+const MODEL_HINTS: readonly RegExp[] = [
+  /\bquery\(\s*([A-Z]\w*)\s*\)/,
+  /\b([A-Z]\w*)\s*\.\s*(?:objects|query)\s*\./,
+  /\bprisma\s*\.\s*(\w+)\s*\./,
+  /\b(\w+?)(?:Repository|Repo)\s*\.\s*find/,
+  /\b([A-Z]\w*)\s*\.\s*(?:exists\?|find_by|where|findOne|findFirst|findOneBy|filter_by)\b/,
+];
+/** The class a `validates` line sits in, from the hunk's scope or its lines. */
+const CLASS_RE = /\bclass\s+([A-Z]\w*)/;
+
+function modelHint(text: string): string | undefined {
+  for (const re of MODEL_HINTS) {
+    const m = re.exec(text);
+    if (m) return m[1]!;
+  }
+  return undefined;
+}
+
+/** A model's spellings: its class (`OrderItem`), its table (`order_item`,
+ * `order_items`) and Django's `model_name` (`orderitem`). */
+function modelNames(model: string): { cls: string; snake: string; plural: string; flat: string } {
+  const cls = model.charAt(0).toUpperCase() + model.slice(1);
+  const snake = cls
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/([A-Z])([A-Z][a-z])/g, "$1_$2")
+    .toLowerCase();
+  const plural = /(?:s|x|ch|sh)$/.test(snake)
+    ? `${snake}es`
+    : /[^aeiou]y$/.test(snake)
+      ? `${snake.slice(0, -1)}ies`
+      : `${snake}s`;
+  return { cls, snake, plural, flat: snake.replace(/_/g, "") };
+}
+
+/** A line that opens some model's or table's declaration: where one model's
+ * block ends. */
+const ANY_DECL_RE =
+  /^\s*(?:class|model)\s+[A-Z]|\bcreate_table\b|\bCREATE\s+TABLE\b|\bmigrations\.\w+\(|\bmodel_name\s*=|__tablename__|\.define\(|@Entity\b/i;
+
+/** Whether `text` declares a unique constraint on `col` FOR `model`: inside
+ * the model's own block (its class, Prisma model, `create_table`, `CREATE
+ * TABLE`, Django migration operation), or on a statement that names its
+ * table (`add_index :users, :email, unique: true`, `CREATE UNIQUE INDEX …
+ * ON users (email)`). A constraint on a same-named column of another model
+ * never backs the check. */
+function uniqueForModel(text: string, model: string, col: string): boolean {
+  const n = modelNames(model);
+  const tables = `(?:${escapeRe(n.snake)}|${escapeRe(n.plural)})`;
+  const decl = new RegExp(
+    [
+      `\\b(?:class|model|interface|entity)\\s+${escapeRe(n.cls)}\\b`,
+      `\\bcreate_table\\s*\\(?\\s*[:"']${tables}\\b`,
+      `\\bCREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?[\`"']?(?:\\w+\\.)?${tables}\\b`,
+      `__tablename__\\s*=\\s*['"]${tables}['"]`,
+      `\\bmodel_name\\s*=\\s*['"]${escapeRe(n.flat)}['"]`,
+      `^\\s*name\\s*=\\s*['"]${escapeRe(n.cls)}['"]`,
+      `\\.define\\(\\s*['"](?:${escapeRe(n.cls)}|${tables})['"]`,
+      `@Entity\\(\\s*(?:\\{\\s*name\\s*:\\s*)?['"]${tables}['"]`,
+    ].join("|"),
+    "i",
+  );
+  const table = new RegExp(`(?:^|[^\\w.])[:"'\`]?${tables}[\`"']?(?:[^\\w]|$)`, "i");
+  const lines = text.split("\n");
+  const indent = (l: string): number => /^\s*/.exec(l)![0].length;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (table.test(line) && hasUniqueConstraint(line, col)) return true;
+    if (!decl.test(line)) continue;
+    let j = i + 1;
+    while (j < lines.length && !(ANY_DECL_RE.test(lines[j]!) && indent(lines[j]!) <= indent(line)))
+      j++;
+    if (hasUniqueConstraint(lines.slice(i, j).join("\n"), col)) return true;
+  }
+  return false;
+}
+
 function uniqueWithoutIndex(
   files: readonly PrFileEntry[],
   io: SecurityFactsIo | null,
 ): SecurityFact[] {
-  const candidates: { file: string; line: number; column: string; shape: string }[] = [];
+  const candidates: {
+    file: string;
+    line: number;
+    column: string;
+    shape: string;
+    model?: string;
+  }[] = [];
   for (const { file, hunks } of patchedFiles(files).patched) {
     if (file.status === "removed" || !CODE_RE.test(file.filename)) continue;
     const added = hunks
       .flatMap((h) => h.lines)
       .filter((l) => l.kind === "+" && !COMMENT_RE.test(l.text));
     const creates = added.some((l) => CREATE_RE.test(l.text));
-    for (const l of added) {
-      for (const check of UNIQUE_CHECKS) {
-        const m = check.re.exec(l.text);
-        if (!m || (check.needsCreate && !creates)) continue;
-        const column = m[1]!;
-        if (KEY_COLUMNS.has(column.toLowerCase())) continue;
-        candidates.push({ file: file.filename, line: l.line, column, shape: check.shape });
-        break;
+    for (const hunk of hunks) {
+      // The class the hunk's lines sit in, as far as the hunk shows it.
+      let cls = CLASS_RE.exec(hunk.scope)?.[1];
+      for (const l of hunk.lines) {
+        if (l.kind === "-") continue;
+        cls = CLASS_RE.exec(l.text)?.[1] ?? cls;
+        if (l.kind !== "+" || COMMENT_RE.test(l.text)) continue;
+        for (const check of UNIQUE_CHECKS) {
+          const m = check.re.exec(l.text);
+          if (!m || (check.needsCreate && !creates)) continue;
+          const column = m[1]!;
+          if (KEY_COLUMNS.has(column.toLowerCase())) continue;
+          const model = check.shape.startsWith("validates") ? cls : modelHint(l.text);
+          candidates.push({
+            file: file.filename,
+            line: l.line,
+            column,
+            shape: check.shape,
+            ...(model !== undefined ? { model } : {}),
+          });
+          break;
+        }
       }
     }
   }
@@ -653,9 +752,23 @@ function uniqueWithoutIndex(
   const found: SecurityFact[] = [];
   const clear: string[] = [];
   const unsettled: string[] = [];
+  const untied: string[] = [];
   for (const c of candidates) {
-    const holder = [...texts].find(([, text]) => hasUniqueConstraint(text, c.column));
-    if (holder) clear.push(`${codePath(c.column)} (unique in ${codePath(holder[0])})`);
+    // A constraint backs the check only on the model the check queries: a
+    // unique `email` on `Subscriber` says nothing of `User.email`.
+    const holders = [...texts].filter(([, text]) => hasUniqueConstraint(text, c.column));
+    const tied =
+      c.model === undefined
+        ? undefined
+        : holders.find(([, text]) => uniqueForModel(text, c.model!, c.column));
+    if (tied)
+      clear.push(
+        `${codePath(c.column)} (unique on ${codePath(modelNames(c.model!).cls)} in ${codePath(tied[0])})`,
+      );
+    else if (holders.length > 0)
+      untied.push(
+        `a unique constraint on ${codePath(c.column)} exists in ${codePath(holders[0]![0])}, but it could not be tied to ${c.model !== undefined ? codePath(modelNames(c.model).cls) : "the model the check queries"}`,
+      );
     else if (failed.length || listing.capped) unsettled.push(codePath(c.column));
     else
       found.push(
@@ -676,6 +789,7 @@ function uniqueWithoutIndex(
         `no unique constraint was found for ${unsettled.join(", ")}, but ${failed.length ? `${failed.length} schema file(s) could not be read` : `the schema files were capped at ${SECURITY_FACTS_MAX_FILES}`}`,
       ),
     );
+  for (const why of untied) out.push(fact(check, "unknown", why));
   if (clear.length)
     out.push(fact(check, "clear", `every other uniqueness check is backed: ${clear.join(", ")}`));
   return out;
