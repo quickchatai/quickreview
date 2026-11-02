@@ -63,7 +63,9 @@ export interface LiveResult {
 /** A task a lens tool call launches, as the host resolved it at call start. */
 export interface LiveExecution {
   agent: string;
-  phase?: "plan" | "sweep" | "optional";
+  phase?: "plan" | "sweep" | "optional" | "post";
+  /** The row's strategy, from its task file's name (`NN-<agent>@<strategy>.md`). */
+  strategy?: string;
 }
 
 export interface LiveUsage {

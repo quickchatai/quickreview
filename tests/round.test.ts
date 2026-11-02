@@ -9,7 +9,7 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { AuthExpiring } from "@quickchatai/pi-quickreview/src/engine/auth.js";
@@ -407,6 +407,55 @@ describe("prepareRound", () => {
       undefined,
     );
     expect(prep.env.QCR_SUBAGENT_PASS_DEADLINE_MIN).toBe("5");
+  });
+
+  // The post-discovery rows (`tasks-post`, the chain's `compose`) are the
+  // session's to launch once the wave has returned; the engine's wave is
+  // `tasks/` alone.
+  // MUTATION: plan the engine wave over tasks/ and tasks-post/ in prepareRound
+  // — the compose row joins the wave (or the plan is refused) and this fails.
+  it("starts the engine wave from tasks/ alone and sanctions tasks-post for the session", () => {
+    const outDir = join(tmp, "out-post");
+    const chain = "pass-sec-exploit-chain--sol-high";
+    const task = (dir: string, file: string) => ({
+      path: join(outDir, dir, file),
+      text: `# ${file}\n`,
+    });
+    // An earlier attempt's post-discovery task never leaks into this one.
+    mkdirSync(join(outDir, "tasks-post"), { recursive: true });
+    writeFileSync(join(outDir, "tasks-post", `02-${chain}@compose.md`), "stale");
+    const prep = prepareRound(
+      {
+        root: mkRoot(tmp, "root-post"),
+        agentDir: join(tmp, "agent"),
+        tree: mkTree(tmp, "tree-post"),
+        files: FILES,
+        target: TARGET,
+        outDir,
+        cfg: benchConfig(""),
+        ecosystem: ecosystemFor("none"),
+        timeoutMs: 10 * 60_000,
+        prompts: {
+          system: "system",
+          order: "order",
+          plannedLenses: ["pass-baseline", "pass-sec-exploit-chain"],
+          passPlan: [],
+          taskFiles: [
+            task("tasks", "01-pass-baseline--sol-high.md"),
+            task("tasks", `02-${chain}@delta.md`),
+          ],
+          extraFiles: [task("tasks-post", `01-${chain}@compose.md`)],
+        },
+      },
+      { plannedWave: true },
+    );
+    expect(prep.startWarnings).toEqual([]);
+    expect(prep.waveUnits.map((u) => [u.phase, u.agent, u.strategy ?? null])).toEqual([
+      ["plan", "pass-baseline--sol-high", null],
+      ["plan", chain, "delta"],
+    ]);
+    expect(prep.env.QCR_LAUNCH_PLAN_DIRS!.split(delimiter)).toContain(join(outDir, "tasks-post"));
+    expect(readdirSync(join(outDir, "tasks-post"))).toEqual([`01-${chain}@compose.md`]);
   });
 });
 

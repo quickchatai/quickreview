@@ -340,10 +340,12 @@ export class RoundProgressProjection {
       for (const [index, agent] of names.entries()) {
         const key = keys[index]!;
         const phase: PassExecutionPhase | undefined = executions[index]?.phase;
+        const strategy = executions[index]?.strategy;
         this.agents.set(key, {
           execution_id: key,
           agent,
           ...(phase ? { phase } : {}),
+          ...(strategy ? { strategy } : {}),
           status: "running",
           duration_ms: 0,
           tool_count: 0,

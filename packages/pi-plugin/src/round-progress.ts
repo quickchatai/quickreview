@@ -16,7 +16,11 @@ export function isLiveAgentStatus(value: unknown): value is LiveAgentStatus {
   return typeof value === "string" && LIVE_AGENT_STATUSES.some((status) => status === value);
 }
 
-export type PassExecutionPhase = "plan" | "sweep" | "optional";
+/** The task directory a pass was launched from: the round's `tasks/`, the
+ * sweep's, a follow-up round's optional rows, or the rows that run after the
+ * discovery wave (`tasks-post`, the chain's `compose`). */
+export const PASS_EXECUTION_PHASES = ["plan", "sweep", "optional", "post"] as const;
+export type PassExecutionPhase = (typeof PASS_EXECUTION_PHASES)[number];
 
 export interface LiveAgentProgress {
   /** One subagent tool invocation, not merely an agent name. Repeated lenses
@@ -27,6 +31,12 @@ export interface LiveAgentProgress {
    * their original plan interpretation. Sweep completions never repair a
    * different phase's required failure. */
   phase?: PassExecutionPhase;
+  /** The strategy of the row the pass was launched for, from its task file's
+   * name (`NN-<agent>@<strategy>.md`): the exploit chain runs one row per
+   * strategy under one agent, and only its `delta` row is required, so a
+   * completed `forward` must never stand in for a failed `delta`. Absent on a
+   * row of a lens with one strategy and on a free-form launch. */
+  strategy?: string;
   status: LiveAgentStatus;
   duration_ms: number;
   tool_count: number;
@@ -201,7 +211,9 @@ export function parseRoundProgress(raw: string): RoundProgressSnapshot | undefin
       if (
         (value.version === 2 && typeof agent.execution_id !== "string") ||
         typeof agent.agent !== "string" ||
-        (agent.phase !== undefined && !["plan", "sweep", "optional"].includes(agent.phase)) ||
+        (agent.phase !== undefined && !PASS_EXECUTION_PHASES.includes(agent.phase)) ||
+        (agent.strategy !== undefined &&
+          (typeof agent.strategy !== "string" || agent.strategy.length === 0)) ||
         !isLiveAgentStatus(agent.status) ||
         typeof agent.duration_ms !== "number" ||
         !Number.isFinite(agent.duration_ms) ||

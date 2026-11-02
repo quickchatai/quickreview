@@ -71,7 +71,8 @@ export function argPreview(args: Bag): string | undefined {
 }
 
 /** The task slots of a `subagent` / `lens` call (one `{agent, task}` or
- * `{tasks:[...]}`), with the phase its task-file pointer names. */
+ * `{tasks:[...]}`), with the phase its task-file pointer names and the
+ * strategy its task file's name carries (`NN-<agent>@<strategy>.md`). */
 export function subagentExecutions(args: Bag): LiveExecution[] {
   const tasks =
     typeof args.agent === "string" ? [args] : Array.isArray(args.tasks) ? args.tasks : args.chain;
@@ -80,16 +81,19 @@ export function subagentExecutions(args: Bag): LiveExecution[] {
     const agent = text(task?.agent);
     if (!agent) return [];
     const pointer = text(task?.task)?.match(
-      /^Task file: [^\n]*[/]tasks(-sweep|-optional)?[/][^\n]+\. Read it first;/,
+      /^Task file: [^\n]*[/]tasks(-sweep|-optional|-post)?[/]([^\n]+)\. Read it first;/,
     );
     const phase: LiveExecution["phase"] | undefined = pointer
       ? pointer[1] === "-sweep"
         ? "sweep"
         : pointer[1] === "-optional"
           ? "optional"
-          : "plan"
+          : pointer[1] === "-post"
+            ? "post"
+            : "plan"
       : undefined;
-    return [{ agent, ...(phase ? { phase } : {}) }];
+    const strategy = pointer?.[2]?.match(/@([a-z][a-z0-9-]*)\.md$/)?.[1];
+    return [{ agent, ...(phase ? { phase } : {}), ...(strategy ? { strategy } : {}) }];
   });
 }
 

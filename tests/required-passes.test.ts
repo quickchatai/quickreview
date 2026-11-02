@@ -7,6 +7,12 @@
 //  - the rule (src/requiredpasses.ts): a failure with fewer completions than
 //    rows is a gap; a relaunch that completed closes it; a snapshot that is
 //    missing or of another round is UNKNOWN, never a gap;
+//  - a strategy row (the exploit chain's required `delta`) is answered only by
+//    executions launched for its strategy, so a completed `forward` never
+//    covers a failed `delta`; a row with no strategy counts as before;
+//  - failedSecurityRows names the security-family rows that failed, required
+//    or not, and is UNKNOWN — never an empty list — without this round's
+//    snapshot;
 //  - the shell copy (scripts/required-passes.py) answers as the TypeScript
 //    one does over the same plan row and snapshot;
 //  - the posting route refuses before it queues or records anything;
@@ -27,8 +33,18 @@ import type {
   LiveAgentProgress,
   RoundProgressSnapshot,
 } from "@quickchatai/pi-quickreview/src/round-progress.js";
-import { requiredPassGap, requiredRows } from "../src/requiredpasses.js";
+import {
+  describeGap,
+  failedSecurityRows,
+  requiredPassGap,
+  requiredRows,
+} from "../src/requiredpasses.js";
 import { StateStore } from "../src/state.js";
+import {
+  CHAIN_PASS,
+  SECURITY_FAMILY,
+  type ChainStrategy,
+} from "@quickchatai/pi-quickreview/src/passes.js";
 import type { PassPlanEntry, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { roundPromptMarker } from "@quickchatai/pi-quickreview/src/types.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
@@ -114,7 +130,7 @@ const TIMEOUT = "pass pass-security--sol-high timed out after 8 min (retried onc
 const HEAD = "68b8040c0ffee1234567890abcdef0123456789a";
 
 describe("the plan builder marks the required rows", () => {
-  it("pass-baseline and every risk pass are required; nothing else is", () => {
+  it("pass-baseline, every risk pass outside the security family and the chain's delta are required; nothing else is", () => {
     const files = [
       file("src/orders/api.py", 300),
       file(".github/workflows/ci.yml", 20),
@@ -124,7 +140,11 @@ describe("the plan builder marks the required rows", () => {
     const risk = new Set(baseCfg.models.risk_passes);
     expect(pass_plan.some((p) => risk.has(p.lens))).toBe(true);
     for (const p of pass_plan)
-      expect(p.required === true, p.lens).toBe(p.lens === "pass-baseline" || risk.has(p.lens));
+      expect(p.required === true, `${p.lens}${p.strategy ? `:${p.strategy}` : ""}`).toBe(
+        p.lens === "pass-baseline" ||
+          (risk.has(p.lens) && !SECURITY_FAMILY.includes(p.lens)) ||
+          (p.lens === CHAIN_PASS && p.strategy === "delta"),
+      );
   });
 
   it("every row of a split baseline is required, and counts as a row", () => {
@@ -265,12 +285,201 @@ CASES.push(
   },
 );
 
+// The exploit chain: one agent, one row per strategy, only `delta` required.
+const CHAIN = CHAIN_PASS;
+const chainRow = (strategy: ChainStrategy, required = false): PassPlanEntry => ({
+  ...row(CHAIN, required),
+  strategy,
+});
+const chainRun = (
+  strategy: string | undefined,
+  status: LiveAgentProgress["status"],
+  error?: string,
+): LiveAgentProgress =>
+  Object.assign(agent(CHAIN, status, error), {
+    phase: "plan" as const,
+    ...(strategy !== undefined ? { strategy } : {}),
+  });
+const CHAIN_PLAN: PassPlanEntry[] = [
+  row("pass-baseline", true),
+  chainRow("delta", true),
+  chainRow("forward"),
+  chainRow("backward"),
+];
+const CHAIN_TIMEOUT = "pass pass-sec-exploit-chain--sol-high timed out after 8 min (retried once)";
+
+CASES.push(
+  // MUTATION: ignore strategy in requiredPassGap (drop the `a.strategy ===
+  // strategy` match in runsFor, or the strategy test in required-passes.py) —
+  // the completed forward stands in for the failed delta and this fails.
+  {
+    name: "a completed chain forward cannot mask a failed chain delta",
+    plan: CHAIN_PLAN,
+    progress: snapshot(3, [
+      agent("pass-baseline", "completed"),
+      chainRun("delta", "failed", CHAIN_TIMEOUT),
+      chainRun("forward", "completed"),
+      chainRun("backward", "completed"),
+    ]),
+    expected: "missing",
+  },
+  {
+    name: "only the chain forward failed: the required delta completed",
+    plan: CHAIN_PLAN,
+    progress: snapshot(3, [
+      agent("pass-baseline", "completed"),
+      chainRun("delta", "completed"),
+      chainRun("forward", "failed", CHAIN_TIMEOUT),
+      chainRun("backward", "completed"),
+    ]),
+    expected: "complete",
+  },
+  {
+    name: "a relaunched chain delta closes its own gap",
+    plan: CHAIN_PLAN,
+    progress: snapshot(3, [
+      agent("pass-baseline", "completed"),
+      chainRun("delta", "failed", CHAIN_TIMEOUT),
+      chainRun("delta", "completed"),
+    ]),
+    expected: "complete",
+  },
+  {
+    name: "a delta relaunched without its task file never counts for it",
+    plan: CHAIN_PLAN,
+    progress: snapshot(3, [
+      agent("pass-baseline", "completed"),
+      chainRun("delta", "failed", CHAIN_TIMEOUT),
+      chainRun(undefined, "completed"),
+    ]),
+    expected: "missing",
+  },
+  {
+    name: "a legacy required row with no strategy counts every execution of its lens",
+    plan: [row(CHAIN, true)],
+    progress: snapshot(3, [
+      chainRun("delta", "failed", CHAIN_TIMEOUT),
+      chainRun("forward", "completed"),
+    ]),
+    expected: "complete",
+  },
+);
+
 describe("requiredPassGap", () => {
   it.each(CASES)("$name", ({ plan, progress, sweepPlan, expected }) => {
     const gap = requiredPassGap(plan, progress, 3, sweepPlan);
     expect(gap.state).toBe(expected);
     if (gap.state === "missing" && plan === PLAN)
       expect(gap.missing[0]).toMatchObject({ lens: "pass-security", errors: [TIMEOUT] });
+  });
+});
+
+describe("a strategy row's gap", () => {
+  it("names the lens and its strategy", () => {
+    const gap = requiredPassGap(
+      CHAIN_PLAN,
+      snapshot(3, [chainRun("delta", "failed", CHAIN_TIMEOUT), chainRun("forward", "completed")]),
+      3,
+    );
+    expect(gap).toMatchObject({
+      state: "missing",
+      missing: [{ lens: CHAIN, strategy: "delta", rows: 1, completed: 0, failed: 1 }],
+    });
+    if (gap.state === "missing")
+      expect(describeGap(gap.missing)).toBe(
+        `${CHAIN}:delta (0/1 completed, 1 failed: ${CHAIN_TIMEOUT})`,
+      );
+  });
+
+  it("counts a strategy row under <lens>:<strategy>, a plain row under its lens", () => {
+    const rows = requiredRows(CHAIN_PLAN);
+    expect([...rows]).toEqual([
+      ["pass-baseline", 1],
+      [`${CHAIN}:delta`, 1],
+    ]);
+  });
+});
+
+describe("failedSecurityRows", () => {
+  const SEC_PLAN: PassPlanEntry[] = [
+    row("pass-baseline", true),
+    row("pass-tests"),
+    row("pass-sec-access"),
+    row("pass-sec-injection"),
+    chainRow("delta", true),
+    chainRow("forward"),
+  ];
+  const POST_PLAN: PassPlanEntry[] = [{ ...chainRow("compose"), stage: "post-discovery" }];
+
+  it("names the family rows that failed and never completed, required or not", () => {
+    const result = failedSecurityRows(
+      SEC_PLAN,
+      snapshot(3, [
+        agent("pass-baseline", "completed"),
+        agent("pass-tests", "failed", "boom"),
+        agent("pass-sec-access", "completed"),
+        agent("pass-sec-injection", "failed", "x"),
+        chainRun("delta", "completed"),
+        chainRun("forward", "failed", CHAIN_TIMEOUT),
+      ]),
+      3,
+    );
+    expect(result).toEqual({
+      state: "known",
+      failed: [
+        { lens: "pass-sec-injection", errors: ["x"] },
+        { lens: CHAIN, strategy: "forward", errors: [CHAIN_TIMEOUT] },
+      ],
+    });
+  });
+
+  // MUTATION: ignore strategy in failedSecurityRows (count every chain
+  // execution for every chain row) — the completed delta hides the failed
+  // forward, or the failed forward is reported against delta, and this fails.
+  it("tells the chain's strategies apart", () => {
+    const result = failedSecurityRows(
+      SEC_PLAN,
+      snapshot(3, [chainRun("delta", "failed", CHAIN_TIMEOUT), chainRun("forward", "completed")]),
+      3,
+    );
+    expect(result).toEqual({
+      state: "known",
+      failed: [{ lens: CHAIN, strategy: "delta", errors: [CHAIN_TIMEOUT] }],
+    });
+  });
+
+  it("reads the post-discovery rows from the post phase alone", () => {
+    const compose = (status: LiveAgentProgress["status"], phase: "plan" | "post") =>
+      Object.assign(agent(CHAIN, status, status === "failed" ? "boom" : undefined), {
+        phase,
+        strategy: "compose",
+      });
+    expect(
+      failedSecurityRows(SEC_PLAN, snapshot(3, [compose("failed", "post")]), 3, POST_PLAN),
+    ).toEqual({
+      state: "known",
+      failed: [{ lens: CHAIN, strategy: "compose", errors: ["boom"] }],
+    });
+    expect(
+      failedSecurityRows(
+        SEC_PLAN,
+        snapshot(3, [compose("failed", "post"), compose("completed", "post")]),
+        3,
+        POST_PLAN,
+      ),
+    ).toEqual({ state: "known", failed: [] });
+  });
+
+  it("is unknown, never an empty list, without this round's snapshot", () => {
+    expect(failedSecurityRows(SEC_PLAN, undefined, 3).state).toBe("unknown");
+    expect(
+      failedSecurityRows(SEC_PLAN, snapshot(2, [agent("pass-sec-access", "failed")]), 3).state,
+    ).toBe("unknown");
+  });
+
+  it("has nothing to say of a plan with no family row", () => {
+    expect(failedSecurityRows(PLAN, undefined, 3)).toEqual({ state: "known", failed: [] });
+    expect(failedSecurityRows(null, undefined, 3)).toEqual({ state: "known", failed: [] });
   });
 });
 
