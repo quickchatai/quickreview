@@ -390,18 +390,29 @@ depth = "deep"             # standard (the default) | deep — see "The deep sca
 deep_lenses = ["pass-consistency", "pass-delivery"]  # the deep floor's lenses, in priority order
 lenses = ["pass-sec-access", "pass-sec-injection"]  # the lenses stage 2 may run; [] = every deep lens
 kinds = ["security"]       # the finding kinds a scan keeps; [] = every kind
-threat_model = "auto"      # auto | always | off — stage 0's threat-model draft
+threat_model = "auto"      # off (the default) | auto | always — stage 0's threat-model draft
 ```
 
 `lenses` bounds what stage 1 may suggest and what stage 2 may run, the deep
 floor included; a floor lens outside it gets no rows. `kinds` drops, after
 parsing, a candidate whose kind is not listed (`security` keeps every
 `security:<class>`), counted on its case as `off_kind`. `threat_model` says
-whether a run may read a drafted threat model (stage 0, below) when neither
-the scanned tree's `.qcr/threat-model.md` nor the profile has one; `off`
-never reads one. Stage 0 itself (`agents/scan/pass-sec-threat-model.md`,
-one case over the route inventory, written to the state home only) is built
-but no `qcr scan` verb or companion tool starts it yet.
+whether the scan drafts a threat model first (stage 0) and reads that draft
+when neither the scanned tree's `.qcr/threat-model.md` nor the profile has
+one. Stage 0 (`agents/scan/pass-sec-threat-model.md`) is one case over the
+route inventory, stopped hard at `calibration_max_usd` (or what the last one
+cost), and writes its DRAFT to the state home only
+(`scan/threat-model.draft.md`), never to the repository. It is part of the
+scan whenever it is due: under `auto`, when no model and no draft exist yet;
+under `always`, once per scanned sha (revising the existing model). A due
+stage 0 rides the stage-1 or delta preview (`threat_model_stage`, and
+`preview --json`'s `start` is its key), a stage-1 start is refused until it
+has run, and `start` with its key runs it; the next preview is the scan
+itself, over the draft. The guided `/qcr-scan` asks for it first, then for
+the scan. `off`, the default, never drafts and never reads a draft, so a
+scan outside the security profile (which sets `auto`) costs what it did;
+`qcr scan threat-model propose` (the companion's
+`scan_threat_model_propose`) drafts again on request when it is not off.
 
 **The profile wins**, per key, along the `extends` chain (nearest profile
 that sets it); `exclude` is replaced whole, never appended. The install's
@@ -549,6 +560,8 @@ qcr scan match --key K OLD=NEW…                  # its whole answer; unpaired 
 qcr scan suggestions
 qcr scan stage2 propose [--rows FILE|-] [--budget USD] [--deep|--standard] [--sha REF]
 qcr scan stage2 start --key K [--rows row-1,row-3]
+qcr scan threat-model propose [--sha REF]        # stage 0: what drafting the threat model reads and costs
+qcr scan threat-model start --key K [--sha REF]  # runs it; the draft goes to the state home only
 qcr scan dismiss FP… --reason TEXT               # the triage dismissal: sticky, with its memory note
 qcr scan units show                              # the saved unit cut and the draft (setup_unit_cut)
 qcr scan units propose [--file F|-]              # store a draft: {units, ignored} from F, or the default proposal
@@ -571,7 +584,7 @@ belt's unit-cut tools over the same engine and rendering (`propose` takes the
 `setup_unit_cut_propose` shape, `adjust` its ops); a scan reads by unit, so a
 repo needs a saved cut before its first preview.
 
-`start` and `stage2 start` launch a detached `qcr scan … --foreground`
+`start`, `stage2 start` and `threat-model start` launch a detached `qcr scan … --foreground`
 driver — in the scan sandbox by default (below), or as a host process with
 `[scan] sandbox = "host"` — return once it has recorded the run, and leave its
 output in

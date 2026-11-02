@@ -1060,9 +1060,11 @@ deep_lenses = ["pass-consistency", "pass-delivery", "pass-duplication", "pass-ma
 lenses = []                    # the lenses a scan may run at all, each a deep lens; [] = every deep lens
 kinds = []                     # the finding kinds a scan keeps, e.g. ["security"] (a prefix keeps
                                # "security:injection" too); [] = every kind
-threat_model = "auto"          # draft a threat model first: "auto" (only when neither the repo's
-                               # .qcr/threat-model.md nor the profile's threat-model.md exists) | "always" | "off";
-                               # "off" also never reads a draft (no verb starts the drafting stage yet)
+threat_model = "off"           # draft a threat model first (stage 0, part of the scan: a preview offers it, a scan
+                               # start waits for it): "auto" (only when neither the repo's .qcr/threat-model.md nor
+                               # the profile's threat-model.md exists, and no draft yet) | "always" (once per scanned
+                               # sha) | "off" (the default; the security profile sets "auto"); "off" also never reads
+                               # a draft. Not off, `qcr scan threat-model propose` drafts one again on request
 # Where `qcr scan start` drives a run (not a profile key). "docker": in a throwaway
 # container from the companion image, mounting only the reviewed repo (read-only),
 # the state home, the companion's pi login (read-only) and this config (read-only)

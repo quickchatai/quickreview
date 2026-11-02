@@ -190,10 +190,12 @@ describe("[models] risk_passes always carries the security family", () => {
 });
 
 describe("[scan] lenses, kinds and threat_model", () => {
-  it("default to every deep lens, every kind and a threat model drafted when none exists", () => {
+  it("default to every deep lens, every kind and no threat-model stage (the security profile turns it on)", () => {
     expect(SCAN_DEFAULTS.lenses).toEqual([]);
     expect(SCAN_DEFAULTS.kinds).toEqual([]);
-    expect(SCAN_DEFAULTS.threat_model).toBe("auto");
+    // Off by default: stage 0 is part of every scan it is on for, so a scan
+    // outside the security profile keeps its price.
+    expect(SCAN_DEFAULTS.threat_model).toBe("off");
     expect(configWith().scan).toEqual(SCAN_DEFAULTS);
   });
 

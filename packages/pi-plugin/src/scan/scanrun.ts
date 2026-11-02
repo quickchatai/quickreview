@@ -102,6 +102,14 @@
 //     draft goes to the state home only — `scan/threat-model.draft.md` and
 //     `scan/threat-model.json` — never to the scanned tree: a person copies
 //     it to `.qcr/threat-model.md` after reading it.
+//     It is part of the scan, not an extra: while it is DUE (`auto` with no
+//     model and no draft yet; `always` with no draft written at the scan
+//     sha), a stage-1 or delta preview that would read anything carries its
+//     proposal (`threat_model_stage`), a stage-1 start is refused naming it,
+//     and `start` with stage 0's key starts stage 0 — so every entry point
+//     that previews and starts a scan (`qcr scan`, the tools, the guided
+//     /qcr-scan) drafts the model first, at the price it showed. Once the
+//     draft is written the next preview is stage 1, reading it.
 //
 // Persistence: `<state home>/scan/run.json` (the current run and a short
 // history), `scan/suggestions.json` (stage 1's deep-lens suggestions, the
@@ -525,6 +533,11 @@ export interface ScanPreview {
   /** The threat model the cases would read (where from, its hash — part of
    * the key). Absent: none. */
   threat_model?: { source: ThreatModel["source"]; hash: string };
+  /** Stage 0 is due before this scan (`[scan] threat_model`, see the module
+   * header): its proposal. A stage-1 start is refused while it is set;
+   * `start` with ITS key starts stage 0, and the next preview is stage 1.
+   * Absent: nothing to draft first. */
+  threat_model_stage?: ThreatModelPreview;
 }
 
 /** What `proposeThreatModel` answers: whether stage 0 would run and why, what
@@ -549,6 +562,16 @@ export interface ThreatModelPreview {
   inventory: string;
   /** Why a start would be refused whatever the key. */
   blockers: string[];
+}
+
+/** What every plan reads first (`ScanRunner.prerequisites`). */
+interface PlanPrerequisites {
+  ok: true;
+  settings: ScanSettings;
+  cut: UnitCut;
+  sha: string;
+  tree: ScanTree;
+  entries: LedgerEntry[];
 }
 
 export interface ScanStatus {
@@ -874,19 +897,7 @@ export class ScanRunner {
    * `ref` names (default HEAD), its tree and the ledger. Opening a tree
    * prunes the others, never the active run's nor a planning start's;
    * `claim` (a start planning) marks this one as the starting start's. */
-  private prerequisites(
-    ref: string | undefined,
-    claim: boolean,
-  ):
-    | {
-        ok: true;
-        settings: ScanSettings;
-        cut: UnitCut;
-        sha: string;
-        tree: ScanTree;
-        entries: LedgerEntry[];
-      }
-    | Refusal {
+  private prerequisites(ref: string | undefined, claim: boolean): PlanPrerequisites | Refusal {
     const other = this.ports.lease?.other();
     if (other) return { ok: false, errors: [heldElsewhere(other)] };
     const s = this.ports.settings();
@@ -1097,7 +1108,42 @@ export class ScanRunner {
       blockers,
       ...modelRef(threatModel),
     };
+    // Stage 0 first, when it is due and this scan would read anything.
+    const stage0 =
+      cases.length > 0 && blockers.length === 0 ? this.dueThreatModel(pre, threatModel) : null;
+    if (stage0 !== null) preview.threat_model_stage = stage0;
     return { ok: true, planned: { preview, tree, settings, threatModel } };
+  }
+
+  /** Stage 0's proposal when the scan at `pre` must draft its threat model
+   * first, else null: `[scan] threat_model` is `off`, or a model it would
+   * read is there — the repository's or the profile's (`auto`), the draft
+   * (`auto`), or a draft written at this very sha (`always`). */
+  private dueThreatModel(
+    pre: PlanPrerequisites,
+    threatModel: ThreatModel | null,
+  ): ThreatModelPreview | null {
+    const mode = pre.settings.scan.threat_model;
+    if (mode === "off") return null;
+    if (mode === "auto" && threatModel !== null) return null;
+    if (mode === "always" && this.draftedAt() === pre.sha) return null;
+    const p = this.planThreatModelFrom(pre);
+    return p.preview.blockers.length > 0 ? null : p.preview;
+  }
+
+  /** The sha the last stored draft was written at (`THREAT_MODEL_RECORD_FILE`),
+   * or null: none, or unreadable (said in the log) — then it is drafted again
+   * rather than assumed current. */
+  private draftedAt(): string | null {
+    try {
+      const text = this.ports.state.read(THREAT_MODEL_RECORD_FILE);
+      if (text === null) return null;
+      const sha = (JSON.parse(text) as { sha?: unknown }).sha;
+      return typeof sha === "string" ? sha : null;
+    } catch (err) {
+      this.ports.log?.(`setup: ${THREAT_MODEL_RECORD_FILE} cannot be read: ${clean(err)}`);
+      return null;
+    }
   }
 
   // -- the threat model --
@@ -1183,7 +1229,21 @@ export class ScanRunner {
       };
     }
     const key = args.key;
+    // Stage 0's key starts stage 0: the key a preview's `threat_model_stage`
+    // (or `proposeThreatModel`) handed out. Keys of the two plans never meet
+    // (stage 0's carries its stage).
+    if (this.isThreatModelKey(key, args.sha))
+      return this.startThreatModel({ key, ...(args.sha !== undefined ? { sha: args.sha } : {}) });
     return this.holdingStart(() => this.startPlanned(key, args.sha, args.delta === true));
+  }
+
+  /** Is `key` the key stage 0 plans at `ref` now? Never under
+   * `[scan] threat_model = "off"`, and never on a plan that cannot be made. */
+  private isThreatModelKey(key: string, ref: string | undefined): boolean {
+    const s = this.ports.settings();
+    if (!s.ok || s.settings.scan.threat_model === "off") return false;
+    const p = this.planThreatModel(ref);
+    return p.ok && p.preview.key === key;
   }
 
   /** Why no start may begin now: a run is active, or another start is still
@@ -1296,6 +1356,16 @@ export class ScanRunner {
     const p = await this.plan(args.sha, delta, true);
     if (!p.ok) return p;
     const { preview, tree, settings, threatModel } = p.planned;
+    const stage0 = preview.threat_model_stage;
+    if (stage0 !== undefined) {
+      return {
+        ok: false,
+        errors: [
+          `the threat model is drafted first (stage 0 — ${stage0.why}): start it with key ${stage0.key}, ` +
+            `stopped hard at $${stage0.cap_usd.toFixed(2)}, then preview again; [scan] threat_model = "off" scans without one`,
+        ],
+      };
+    }
     if (args.key !== preview.key) {
       return {
         ok: false,
@@ -1995,7 +2065,17 @@ export class ScanRunner {
       }
     | Refusal {
     const pre = this.prerequisites(ref, claim);
-    if (!pre.ok) return pre;
+    return pre.ok ? this.planThreatModelFrom(pre) : pre;
+  }
+
+  /** `planThreatModel` over prerequisites already read. */
+  private planThreatModelFrom(pre: PlanPrerequisites): {
+    ok: true;
+    preview: ThreatModelPreview;
+    tree: ScanTree;
+    settings: ScanSettings;
+    existing: ThreatModel | null;
+  } {
     const { sha, tree, settings } = pre;
     const cfg = settings.scan;
     const existing = this.ratifiedThreatModel(tree, settings);

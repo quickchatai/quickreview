@@ -64,9 +64,9 @@ export interface ScanVerbs {
   /** The progress and stop verbs a start names. */
   status: string;
   stop: string;
-  /** How to start the proposed threat-model stage `key`. Absent: the
+  /** How to start the proposed threat-model stage (stage 0). Absent: the
    * surface has no such verb, and the rendering says so plainly. */
-  threatModelStart?(key: string): string;
+  threatModelStart?(p: Pick<ThreatModelPreview, "key" | "sha">): string;
 }
 
 export const TOOL_VERBS: ScanVerbs = {
@@ -79,6 +79,8 @@ export const TOOL_VERBS: ScanVerbs = {
     `To run only some rows: add rows (their ids, e.g. ["row-1"]) — only runnable rows, and the run stops hard at their total.`,
   status: "scan_status",
   stop: "scan_stop",
+  // scan_start starts stage 0 when handed stage 0's key.
+  threatModelStart: (p) => `scan_start with key ${p.key} and sha ${p.sha}`,
 };
 
 export const CLI_VERBS: ScanVerbs = {
@@ -91,6 +93,7 @@ export const CLI_VERBS: ScanVerbs = {
     "To run only some rows: add --rows with their ids (e.g. --rows row-1,row-3) — only runnable rows, and the run stops hard at their total.",
   status: "qcr scan status",
   stop: "qcr scan stop",
+  threatModelStart: (p) => `qcr scan threat-model start --key ${p.key} --sha ${p.sha}`,
 };
 
 /** A delta's unchanged-but-owed files: those no reading covers, and — on a
@@ -186,7 +189,17 @@ export function renderPreview(p: ScanPreview, verbs: ScanVerbs = TOOL_VERBS): st
   }
   if (p.threat_model) out.push(threatModelLine(p.threat_model));
   for (const b of p.blockers) out.push(`✗ ${b}`);
-  if (p.blockers.length === 0) {
+  const stage0 = p.threat_model_stage;
+  if (p.blockers.length === 0 && stage0 !== undefined) {
+    // Stage 0 is part of this scan: it runs first, and stage 1 is previewed
+    // again once its draft is written.
+    out.push(
+      "FIRST, before this scan reads anything: the threat model ([scan] threat_model). " +
+        "Start stage 0 below; once its draft is written, preview again for the scan itself — it then reads the DRAFT. " +
+        'To scan without a threat model, set [scan] threat_model = "off".',
+      renderThreatModelPreview(stage0, verbs),
+    );
+  } else if (p.blockers.length === 0) {
     out.push(`To run it: ${verbs.start(p)} — only after the operator agreed to the cost.`);
   }
   return out.join("\n\n");
@@ -245,7 +258,7 @@ export function renderThreatModelPreview(
   for (const b of p.blockers) out.push(`✗ ${b}`);
   if (p.blockers.length === 0)
     out.push(
-      `To run it: ${verbs.threatModelStart ? verbs.threatModelStart(p.key) : `start the threat-model stage with key ${p.key}`} — only after the operator agreed to the cost.`,
+      `To run it: ${verbs.threatModelStart ? verbs.threatModelStart(p) : `start the threat-model stage with key ${p.key}`} — only after the operator agreed to the cost.`,
     );
   return out.join("\n\n");
 }

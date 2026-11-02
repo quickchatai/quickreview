@@ -21,6 +21,11 @@
 //     (`[scan] depth = "deep"`, or `deep: true`; `deep: false` makes it
 //     standard) adds the floor after them — every `[scan] deep_lenses` lens
 //     over every file stage 1 reads — and the companion's rows may be none;
+//   - scan_threat_model_propose: stage 0 — what drafting the threat model
+//     (`[scan] threat_model`) would read and cost, and its key. A preview
+//     already offers it when it is due (a stage-1 start then waits for it);
+//     scan_start starts it, handed its key. The draft lands in the state
+//     home only;
 //   - scan_stage2_start: start the stored proposal by its key — or only the
 //     runnable rows named in `rows`, stopped hard at their total — on the
 //     operator's word. The TUI's click reaches the same start through
@@ -61,6 +66,7 @@ import {
   renderQuestion,
   renderStatus,
   renderSuggestions,
+  renderThreatModelPreview,
   stage2StartedLine,
   startedDetails,
   startedLine,
@@ -158,7 +164,8 @@ export function scanToolDefinitions(
     description:
       "Start exactly the run a scan_preview showed — pass its key (and the same sha). It runs in the background as subagents and stops " +
       "HARD at the previewed estimate (the calibration cap for a calibration run). Refused if anything moved since the preview. Only after " +
-      "the operator agreed to the cost ('do it').",
+      "the operator agreed to the cost ('do it'). When the preview said the threat model comes FIRST (stage 0), its key starts that " +
+      "stage; preview again once it is done.",
     promptSnippet: "Start the previewed scan",
     parameters: {
       type: "object",
@@ -364,6 +371,24 @@ export function scanToolDefinitions(
       return text(renderProposal(r.proposal), { proposal: proposalDetails(r.proposal) });
     },
   };
+  const threatModel: QcrTool = {
+    name: "scan_threat_model_propose",
+    label: "Propose the threat model",
+    description:
+      "Stage 0: what drafting the repo's threat model would read (the route inventory) and cost, and the key scan_start takes to run it — " +
+      'or why it would not run ([scan] threat_model = "off", or "auto" with the repository\'s or the profile\'s model there). Free: it ' +
+      "runs nothing. A scan_preview already offers stage 0 when it is due; this re-drafts on request. The draft goes to the state home " +
+      "only, never to the repository: a person copies it to .qcr/threat-model.md after reading it.",
+    promptSnippet: "Propose drafting the threat model",
+    parameters: { type: "object", properties: { sha: SHA_PARAM } },
+    execute: async (_id, params) => {
+      const r = await scan.proposeThreatModel(
+        typeof params?.sha === "string" ? { sha: params.sha } : {},
+      );
+      if (!r.ok) return refused("Threat-model proposal", r);
+      return text(renderThreatModelPreview(r.preview), { preview: r.preview });
+    },
+  };
   const start2: QcrTool = {
     name: "scan_stage2_start",
     label: "Start scan stage 2",
@@ -393,7 +418,19 @@ export function scanToolDefinitions(
       });
     },
   };
-  return [preview, start, status, stop, list, matches, match, suggestions, propose, start2];
+  return [
+    preview,
+    start,
+    status,
+    stop,
+    list,
+    matches,
+    match,
+    suggestions,
+    propose,
+    start2,
+    threatModel,
+  ];
 }
 
 /** How often the belt looks for the TUI's requests (a stage-2 start click,

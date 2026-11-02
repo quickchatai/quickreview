@@ -1080,7 +1080,9 @@ export interface ScanConfig {
   kinds: string[];
   /** When the scan drafts a threat model first (stage 0): `auto` only when
    * neither the repository's `.qcr/threat-model.md` nor the profile's
-   * `threat-model.md` exists, `always` every scan, `off` never. */
+   * `threat-model.md` exists (and no draft yet), `always` once per scanned
+   * sha, `off` never (and no draft is read). `off` by default — a scan
+   * outside the security profile, which sets `auto`, costs what it did. */
   threat_model: ScanThreatModelMode;
 }
 
@@ -1110,7 +1112,7 @@ export const SCAN_DEFAULTS: ScanConfig = {
   deep_lenses: [...SCAN_DEEP_FLOOR_LENSES],
   lenses: [],
   kinds: [],
-  threat_model: "auto",
+  threat_model: "off",
 };
 
 /** The `[scan]` keys a repo profile may override — what is about THIS repo

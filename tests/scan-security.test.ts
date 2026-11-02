@@ -35,7 +35,12 @@ import {
 } from "@quickchatai/pi-quickreview/src/scan/scan.js";
 import { scanConfigOf, scanSettings } from "@quickchatai/pi-quickreview/src/scan/scanagents.js";
 import { stateHomeFs } from "@quickchatai/pi-quickreview/src/scan/scanfs.js";
-import { renderStatus } from "@quickchatai/pi-quickreview/src/scan/scanrender.js";
+import { renderPreview, renderStatus } from "@quickchatai/pi-quickreview/src/scan/scanrender.js";
+import {
+  parseScanArgs,
+  runScanVerb,
+  type ScanVerbDeps,
+} from "@quickchatai/pi-quickreview/src/scan/scanverbs.js";
 import { isSecurityFinding } from "@quickchatai/pi-quickreview/src/severity.js";
 import {
   doubtTier,
@@ -689,12 +694,16 @@ describe("the threat model's hash is part of every plan key", () => {
 
 // ---- stage 0 ------------------------------------------------------------------------------
 
+const AUTO = { threat_model: "auto" } as const;
+
 describe("stage 0 drafts the threat model when none exists", () => {
   it("is refused when the repository's or the profile's model exists (auto), and when off", async () => {
     for (const r of [
-      rig({ files: { ...FILES, ".qcr/threat-model.md": THREAT_MODEL } }),
-      rig({ profileThreatModel: THREAT_MODEL }),
+      rig({ scan: AUTO, files: { ...FILES, ".qcr/threat-model.md": THREAT_MODEL } }),
+      rig({ scan: AUTO, profileThreatModel: THREAT_MODEL }),
       rig({ scan: { threat_model: "off" } }),
+      // off is the default
+      rig(),
     ]) {
       const s = new ScanRunner(r.ports);
       const p = await s.proposeThreatModel();
@@ -720,7 +729,7 @@ describe("stage 0 drafts the threat model when none exists", () => {
         e.isDirectory() ? walk(join(d, e.name)) : [relative(root, join(d, e.name))],
       );
     const before = walk(root).sort();
-    const r = rig({ tree: () => treeAt(SHA, root, listed) });
+    const r = rig({ scan: AUTO, tree: () => treeAt(SHA, root, listed) });
     const s = new ScanRunner(r.ports);
     const p = await s.proposeThreatModel();
     if (!p.ok) throw new Error(p.errors.join("; "));
@@ -751,7 +760,7 @@ describe("stage 0 drafts the threat model when none exists", () => {
   });
 
   it("the draft then feeds the next stage-1 run, labelled DRAFT, and re-keys it", async () => {
-    const r = rig();
+    const r = rig({ scan: AUTO });
     const s = new ScanRunner(r.ports);
     const before = await s.preview();
     if (!before.ok) throw new Error(before.errors.join("; "));
@@ -787,6 +796,7 @@ describe("stage 0 drafts the threat model when none exists", () => {
 
   it("an answer with no model writes no draft and fails the case", async () => {
     const r = rig({
+      scan: AUTO,
       threatModel: () => ({ ok: true, output: "I could not read the tree.", cost_usd: 0.1 }),
     });
     const s = new ScanRunner(r.ports);
@@ -800,6 +810,153 @@ describe("stage 0 drafts the threat model when none exists", () => {
     expect(
       parseThreatModelAnswer("THREAT MODEL x\n```markdown\n## Sinks\n- `lib/**` — SQL\n```\n"),
     ).toEqual({ ok: true, text: "## Sinks\n- `lib/**` — SQL\n" });
+  });
+});
+
+describe("stage 0 is part of the scan: a preview offers it first, a stage-1 start waits for it", () => {
+  // MUTATION: drop `preview.threat_model_stage = stage0` from plan() — the
+  // stage-1 start goes ahead with no threat model, and this fails.
+  // MUTATION: drop the isThreatModelKey route from start() — stage 0's key
+  // is refused as a changed plan, and this fails.
+  it("auto, nothing to read from: the preview carries stage 0, its key starts it, then stage 1 reads the DRAFT", async () => {
+    const r = rig({ scan: AUTO });
+    const s = new ScanRunner(r.ports);
+    const p = await s.preview();
+    if (!p.ok) throw new Error(p.errors.join("; "));
+    const stage0 = p.preview.threat_model_stage;
+    expect(stage0).toMatchObject({ mode: "threat-model", blockers: [], sha: SHA });
+    expect(p.preview.blockers).toEqual([]);
+    const text = renderPreview(p.preview);
+    expect(text).toContain("FIRST, before this scan reads anything: the threat model");
+    expect(text).toContain(`scan_start with key ${stage0!.key} and sha ${SHA}`);
+    expect(text).not.toContain(`scan_start with key ${p.preview.key}`);
+    // The stage-1 key is refused while stage 0 is due, naming it.
+    const early = await s.start({ key: p.preview.key });
+    expect(early.ok).toBe(false);
+    expect(!early.ok && early.errors.join(" ")).toContain(`start it with key ${stage0!.key}`);
+    expect(r.specs).toHaveLength(0);
+    // Stage 0's key, through the ordinary start.
+    const s0 = await s.start({ key: stage0!.key });
+    if (!s0.ok) throw new Error(s0.errors.join("; "));
+    expect(s0.run.mode).toBe("threat-model");
+    await s.idle();
+    expect(r.specs.map((x) => x.agent)).toEqual([`${THREAT_MODEL_PASS}--${SCAN_DEFAULTS.tier}`]);
+    expect(r.state.read(THREAT_MODEL_DRAFT_FILE)).toContain("DRAFT threat model");
+    // Then the scan itself, over the draft.
+    const again = await s.preview();
+    if (!again.ok) throw new Error(again.errors.join("; "));
+    expect(again.preview.threat_model_stage).toBeUndefined();
+    expect(again.preview.threat_model?.source).toBe("draft");
+    const s1 = await s.start({ key: again.preview.key });
+    if (!s1.ok) throw new Error(s1.errors.join("; "));
+    await s.idle();
+    const app = r.specs.find(
+      (x) => x.agent.startsWith("pass-scan--") && x.files.includes("app/a.py"),
+    )!;
+    expect(app.prompt).toContain("DRAFT threat model");
+  });
+
+  it("off (the default), or a model in the repository or the profile under auto: no stage 0, the scan starts as before", async () => {
+    for (const make of [
+      () => rig(),
+      () => rig({ scan: AUTO, files: { ...FILES, ".qcr/threat-model.md": THREAT_MODEL } }),
+      () => rig({ scan: AUTO, profileThreatModel: THREAT_MODEL }),
+    ]) {
+      // each from an empty state home: the last one's ledger covers every file
+      rmSync(join(dir, "state"), { recursive: true, force: true });
+      const r = make();
+      const s = new ScanRunner(r.ports);
+      const p = await s.preview();
+      if (!p.ok) throw new Error(p.errors.join("; "));
+      expect(p.preview.threat_model_stage).toBeUndefined();
+      expect(renderPreview(p.preview)).not.toContain("FIRST, before this scan");
+      await runStage1(s);
+      expect(r.specs.some((x) => x.agent.startsWith(`${THREAT_MODEL_PASS}--`))).toBe(false);
+      expect(r.state.read(THREAT_MODEL_DRAFT_FILE)).toBeNull();
+    }
+  });
+
+  it("always: due once per scanned sha — a draft written at this sha satisfies it, one from another does not", async () => {
+    const r = rig({ scan: { threat_model: "always" }, profileThreatModel: THREAT_MODEL });
+    const s = new ScanRunner(r.ports);
+    const p = await s.preview();
+    if (!p.ok) throw new Error(p.errors.join("; "));
+    expect(p.preview.threat_model_stage?.existing?.source).toBe("profile");
+    r.state.write(THREAT_MODEL_RECORD_FILE, JSON.stringify({ version: 1, sha: "b".repeat(40) }));
+    const other = await s.preview();
+    if (!other.ok) throw new Error(other.errors.join("; "));
+    expect(other.preview.threat_model_stage).toBeDefined();
+    await s.start({ key: other.preview.threat_model_stage!.key });
+    await s.idle();
+    const after = await s.preview();
+    if (!after.ok) throw new Error(after.errors.join("; "));
+    expect(after.preview.threat_model_stage).toBeUndefined();
+    // Under always the profile's model is still the one the cases read.
+    expect(after.preview.threat_model?.source).toBe("profile");
+  });
+
+  it("a stage 0 that wrote no draft leaves it due: the scan still does not start without it", async () => {
+    const r = rig({
+      scan: AUTO,
+      threatModel: () => ({ ok: true, output: "nothing", cost_usd: 0.1 }),
+    });
+    const s = new ScanRunner(r.ports);
+    const p = await s.preview();
+    if (!p.ok) throw new Error(p.errors.join("; "));
+    await s.start({ key: p.preview.threat_model_stage!.key });
+    await s.idle();
+    const again = await s.preview();
+    if (!again.ok) throw new Error(again.errors.join("; "));
+    expect(again.preview.threat_model_stage).toBeDefined();
+    expect((await s.start({ key: again.preview.key })).ok).toBe(false);
+  });
+
+  it("qcr scan: preview's start is stage 0's key; threat-model propose and start --foreground run it", async () => {
+    const r = rig({ scan: AUTO });
+    const s = new ScanRunner(r.ports);
+    const out: string[] = [];
+    const deps: ScanVerbDeps = {
+      scan: s,
+      findings: new FindingsStore(r.state),
+      settingsOf: () => r.settings,
+      triage: null,
+      afterMatch: null,
+      home: join(dir, "state"),
+      driverLog: join(dir, "driver.log"),
+      out: (l) => out.push(l),
+      detach: async () => ({ ok: false, errors: ["no detach here"] }),
+      sleep: async () => {},
+      now: () => 0,
+    };
+    expect(parseScanArgs(["threat-model", "propose", "--sha", "HEAD"])).toEqual({
+      verb: "threat-model-propose",
+      sha: "HEAD",
+    });
+    expect(() => parseScanArgs(["threat-model", "start"])).toThrow(/needs --key/);
+    expect(await runScanVerb(["preview"], true, deps)).toBe(0);
+    const pv = JSON.parse(out.pop()!) as {
+      start: string[];
+      preview: { threat_model_stage: { key: string } };
+    };
+    expect(pv.start).toEqual(["--key", pv.preview.threat_model_stage.key, "--sha", SHA]);
+    expect(await runScanVerb(["threat-model", "propose"], false, deps)).toBe(0);
+    const human = out.pop()!;
+    expect(human).toContain("THREAT MODEL (stage 0)");
+    expect(human).toContain(
+      `qcr scan threat-model start --key ${pv.preview.threat_model_stage.key} --sha ${SHA}`,
+    );
+    expect(await runScanVerb(["threat-model", "propose"], true, deps)).toBe(0);
+    const proposal = JSON.parse(out.pop()!) as { start: string[] };
+    expect(proposal.start).toEqual(["--key", pv.preview.threat_model_stage.key, "--sha", SHA]);
+    expect(
+      await runScanVerb(
+        ["threat-model", "start", "--key", pv.preview.threat_model_stage.key, "--foreground"],
+        true,
+        deps,
+      ),
+    ).toBe(0);
+    expect(r.state.read(THREAT_MODEL_DRAFT_FILE)).toContain("DRAFT threat model");
+    expect(JSON.parse(out.pop()!)).toMatchObject({ ok: true, run: { mode: "threat-model" } });
   });
 });
 

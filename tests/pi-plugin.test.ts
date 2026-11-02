@@ -1260,6 +1260,13 @@ function fakeScan(
           agents.push(spec.agent);
           if (spec.agent.startsWith("pass-validate"))
             return { ok: true, output: "NONE\n", cost_usd: 0.01 };
+          // Stage 0's lens: a threat model, in its sections.
+          if (spec.agent.startsWith("pass-sec-threat-model"))
+            return {
+              ok: true,
+              cost_usd: 0.05,
+              output: `THREAT MODEL ${spec.id} @${host.head}\n\n## Entry points\n\n- \`app/**\` — the public API.\n`,
+            };
           if (o.hold) await o.hold;
           if (o.hang)
             return new Promise((done) =>
@@ -1323,6 +1330,44 @@ describe("/qcr-scan (the plugin's own engine)", () => {
     expect(existsSync(join(scanStateHome(host), "setup", "unit-cut.json"))).toBe(true);
     // never the qcr CLI, nor any other program through the host's runner
     expect(runner.asked).toEqual([]);
+  });
+
+  // Stage 0 is part of the guided scan ([scan] threat_model): asked for and
+  // run first, then the scan itself is priced and asked for over its draft.
+  // MUTATION: drop the stage-0 block from priceAndStart — the stage-1 start
+  // is refused while stage 0 is due, and this fails.
+  it("with [scan] threat_model = auto, drafts the threat model first, then scans over the draft", async () => {
+    const host = scanHost();
+    const config = join(host.home, "qcr-config.toml");
+    writeFileSync(
+      config,
+      readFileSync(join(ROOT, "config.example.toml"), "utf8").replace(
+        /^threat_model = "off"/m,
+        'threat_model = "auto"',
+      ),
+    );
+    const env = { ...host.env, QCR_CONFIG: config };
+    const asked: string[] = [];
+    const ui = fakeUi({
+      confirm: async (_title: string, message: string) => (asked.push(message), true),
+    });
+    const deps = fakeScan(host);
+    const sessions = new ScanSessions();
+    await runScanCommand("units propose", { ...host, env }, ui, { sessions, deps });
+    await runScanCommand("units save", { ...host, env }, ui, { sessions, deps });
+    await runScanCommand("", { ...host, env }, ui, { sessions, deps });
+    await sessions.idle();
+    expect(asked[0]).toMatch(/drafts its threat model \(stage 0/);
+    expect(asked[1]).toMatch(/^Scan \d+ files/);
+    const lens = deps.agents.findIndex((a) => a.startsWith("pass-sec-threat-model"));
+    const scan = deps.agents.findIndex((a) => a.startsWith("pass-scan"));
+    expect(lens).toBeGreaterThanOrEqual(0);
+    expect(scan).toBeGreaterThan(lens);
+    expect(
+      readFileSync(join(scanStateHome(host), "scan", "threat-model.draft.md"), "utf8"),
+    ).toContain("DRAFT threat model");
+    // never into the repository
+    expect(existsSync(join(host.cwd, ".qcr"))).toBe(false);
   });
 
   it("starts nothing on a no, and nothing with nobody to confirm the price", async () => {
