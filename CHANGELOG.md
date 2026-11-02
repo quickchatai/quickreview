@@ -27,6 +27,13 @@ answer `/qcr:review`. While the old one is installed, `qcr plugin install` and
 Claude Code for you in this repository only (`.claude/settings.local.json`).
 The release image's own `qcr` wrapper is unchanged.
 
+`qcr scan` on the host scans the checkout it runs in, even when
+`[companion] reviewed_repo_dir` names another repository: that setting is
+read only outside any checkout. From inside the companion's repository, or a
+worktree of it, the scan still uses the companion's checkout and state.
+`QCR_REVIEWED_REPO` still names any checkout. A preview and a start now name
+the checkout they scan (`repo`).
+
 ## 1.3.2
 
 The pi plugin reviews again in a plain pi. Installed with `pi install

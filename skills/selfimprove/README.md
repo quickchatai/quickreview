@@ -31,4 +31,4 @@ The skill spends money on scans, so it is meant to run only when you ask for it:
 
 ## Before you start
 
-`qcr scan` must read this repository, through `[companion] reviewed_repo_dir` or `QCR_REVIEWED_REPO`. Its case runner also needs `pi` on PATH and logged in.
+`qcr scan` must read this repository: run it from inside this checkout (or a worktree of it), or name it with `QCR_REVIEWED_REPO`. Its case runner also needs `pi` on PATH and logged in.

@@ -131,8 +131,11 @@ rendered from through `npx -y @quickchatai/quickreview@<version>`. A host scan
 runs with `--sandbox host`: in `qcr`'s own process, behind its read-only
 guard. It scans the checkout the host runs in (git's toplevel of its
 directory) and keeps that repo's scan state in its own folder under the state
-home, unless `QCR_REVIEWED_REPO` or `[companion] reviewed_repo_dir` names
-another checkout.
+home. `QCR_REVIEWED_REPO` in the env names another checkout;
+`[companion] reviewed_repo_dir` does only outside any checkout, and from inside
+that repo (or a worktree of it) the scan keeps the companion's shared state.
+A preview and a start name the checkout they scan (`repo`), and the skill
+shows it beside the price.
 
 ## The schema check
 

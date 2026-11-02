@@ -591,6 +591,7 @@ async function passThrough(
       triage: null,
       afterMatch: null,
       home: engine.home,
+      repo: host.cwd,
       driverLog: join(engine.home, "scan", "plugin.log"),
       out: (l) => out.push(l),
       // A start runs here, in the background, like the guided one.

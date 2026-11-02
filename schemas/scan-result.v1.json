@@ -19,6 +19,10 @@
         "type": "string"
       }
     },
+    "repo": {
+      "type": "string",
+      "description": "preview, start: the checkout the scan reads, so a price is approved for the repository it is for."
+    },
     "preview": {
       "$ref": "#/$defs/preview"
     },

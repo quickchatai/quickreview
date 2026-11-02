@@ -475,6 +475,9 @@ export interface ScanVerbDeps {
   afterMatch: (() => Promise<TicketsClosed>) | null;
   /** The state home. */
   home: string;
+  /** The checkout the scan reads. A preview and a start name it (`repo`),
+   * so whoever approves the price sees which repository it is for. */
+  repo?: string;
   /** Where a foreground start's output goes, as its start outcome names it. */
   driverLog: string;
   out: (line: string) => void;
@@ -533,6 +536,8 @@ export async function runScanVerb(
     return emit(2, msg, { ok: false, errors: [msg] });
   }
   const { scan } = deps;
+  const repoField = deps.repo !== undefined ? { repo: deps.repo } : {};
+  const scanning = deps.repo !== undefined ? `Repository: ${deps.repo}\n\n` : "";
   switch (cmd.verb) {
     case "preview": {
       const r = await scan.preview({
@@ -553,8 +558,9 @@ export async function runScanVerb(
               ...(p.mode === "delta" ? ["--delta"] : []),
               ...(p.path !== null ? ["--path", p.path] : []),
             ];
-      return emit(0, renderPreview(p, CLI_VERBS), {
+      return emit(0, `${scanning}${renderPreview(p, CLI_VERBS)}`, {
         ok: true,
+        ...repoField,
         preview: previewDetails(p),
         start,
       });
@@ -594,9 +600,10 @@ export async function runScanVerb(
         if (!d.ok) return refused(what, d);
         return emit(
           0,
-          `${line(d.run)}\nDriver output: ${d.log}${d.container ? `\nContainer: ${d.container}` : ""}`,
+          `${scanning}${line(d.run)}\nDriver output: ${d.log}${d.container ? `\nContainer: ${d.container}` : ""}`,
           {
             ok: true,
+            ...repoField,
             run: startedDetails(d.run),
             log: d.log,
             ...(d.container ? { container: d.container } : {}),

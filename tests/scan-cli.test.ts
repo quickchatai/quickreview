@@ -182,6 +182,21 @@ describe("preview and start", () => {
     });
   });
 
+  // Whoever approves a price must see which repository it is for: a host
+  // agent shows `repo` beside the estimate (plugins/qcr/templates/scan.md).
+  // MUTATION: drop `...repoField` from the preview answer in
+  // packages/pi-plugin/src/scan/scanverbs.ts — this fails.
+  it("a preview and a start name the checkout they scan", async () => {
+    const h = harness();
+    h.deps.repo = "/work/repo-b";
+    const human = await h.run(["preview"]);
+    expect(human.text).toMatch(/^Repository: \/work\/repo-b\n\nCALIBRATION run at/);
+    const p = await h.run(["preview"], true);
+    expect(p.json).toMatchObject({ ok: true, repo: "/work/repo-b" });
+    const started = await h.run(["start", "--key", p.json.preview.key], true);
+    expect(started.json).toMatchObject({ ok: true, repo: "/work/repo-b" });
+  });
+
   it("a delta start passes --delta through, and is refused without it", async () => {
     const trees = { [SHA]: FILES, [SHA2]: { ...FILES, "app/a.py": "ONE\nTWO\nthree\n" } };
     const h = harness(scanRig({ dir, trees }));

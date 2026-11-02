@@ -54,7 +54,7 @@ import {
   SCAN_AUTH_SRC_ENV,
   SCAN_CASE_AUTH_BUDGET_MS,
 } from "@quickchatai/pi-quickreview/src/engine/auth.js";
-import { checkoutOf, scanEnv } from "../src/scancli.js";
+import { checkoutOf, mountedCheckout, scanEnv } from "../src/scancli.js";
 import { repoScanHome } from "../src/install.js";
 import {
   CompanionLifecycle,
@@ -1083,11 +1083,16 @@ describe("the driver inside the sandbox", () => {
     expect(env.QCR_TRACKER_DIR).toBeUndefined();
   });
 
-  it("on the host the [companion] checkout and tracker still fill in", () => {
-    const env = scanEnv({ QCR_ROOT: "/r" }, "/reviewed-repo", () => ({
-      reviewed_repo_dir: "/host/app",
-      tracker_dir: "/host/tracker",
-    }));
+  it("on the host outside any checkout the [companion] checkout and tracker still fill in", () => {
+    const env = scanEnv(
+      { QCR_ROOT: "/r" },
+      "/reviewed-repo",
+      () => ({
+        reviewed_repo_dir: "/host/app",
+        tracker_dir: "/host/tracker",
+      }),
+      () => null,
+    );
     expect(env.QCR_REVIEWED_REPO).toBe("/host/app");
     expect(env.QCR_TRACKER_DIR).toBe("/host/tracker");
   });
@@ -1125,18 +1130,91 @@ describe("the driver inside the sandbox", () => {
     // a state home the person named is kept
     const named = scanEnv({ ...host, QCR_STATE_HOME: "/mine" }, "/reviewed-repo", noConfig, here);
     expect(named.QCR_STATE_HOME).toBe("/mine");
-    // a checkout the env or the config names wins, over the global home
+    // a checkout the env names wins, over the global home
     const set = scanEnv(
-      host,
+      { ...host, QCR_REVIEWED_REPO: "/host/app" },
       "/reviewed-repo",
-      () => ({
-        reviewed_repo_dir: "/host/app",
-        tracker_dir: "",
-      }),
+      noConfig,
       here,
     );
     expect(set.QCR_REVIEWED_REPO).toBe("/host/app");
     expect(set.QCR_STATE_HOME).toBeUndefined();
+  });
+
+  // An App user's config names the companion's repo; a /qcr:scan typed in
+  // another repo scans the repo it is typed in, never the companion's.
+  // MUTATION: read `[companion] reviewed_repo_dir` before `here()` in
+  // scanEnv again — this fails.
+  it("on the host inside a checkout, scans that checkout even when [companion] names another repo", () => {
+    const mine = join(dir, "repo-b");
+    const theirs = join(dir, "repo-a");
+    for (const r of [mine, theirs]) {
+      mkdirSync(r, { recursive: true });
+      execFileSync("git", ["init", "-q", r]);
+    }
+    const host = { QCR_ROOT: "/r", HOME: dir, XDG_STATE_HOME: join(dir, "state") };
+    const companionOf = () => ({ reviewed_repo_dir: theirs, tracker_dir: "" });
+    const top = checkoutOf(mine);
+    const env = scanEnv(host, "/reviewed-repo", companionOf, () => top);
+    expect(env.QCR_REVIEWED_REPO).toBe(top);
+    expect(env.QCR_STATE_HOME).toBe(repoScanHome(host, top));
+    // inside the companion its own config decides, as before
+    const inCompanion = scanEnv(
+      { ...host, [IN_COMPANION_ENV]: "1" },
+      "/reviewed-repo",
+      companionOf,
+      () => top,
+    );
+    expect(inCompanion.QCR_REVIEWED_REPO).toBe(theirs);
+  });
+
+  // The companion's repo, from its checkout or a worktree of it, keeps the
+  // companion's checkout and shared state home: the TUI and the companion
+  // read that run.
+  // MUTATION: drop the same-repository check in scanEnv (always `own(top)`)
+  // — this fails.
+  it("on the host inside the [companion] repo or a worktree of it, keeps the companion's checkout and state", () => {
+    const theirs = join(dir, "repo-a");
+    mkdirSync(theirs, { recursive: true });
+    execFileSync("git", ["init", "-q", "-b", "main", theirs]);
+    execFileSync("git", [
+      "-C",
+      theirs,
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@example.com",
+      "commit",
+      "-q",
+      "--allow-empty",
+      "-m",
+      "base",
+    ]);
+    const tree = join(dir, "repo-a-tree");
+    execFileSync("git", ["-C", theirs, "worktree", "add", "-q", "-b", "side", tree]);
+    const host = { QCR_ROOT: "/r", HOME: dir, XDG_STATE_HOME: join(dir, "state") };
+    const companionOf = () => ({ reviewed_repo_dir: theirs, tracker_dir: "" });
+    for (const at of [theirs, tree]) {
+      const env = scanEnv(host, "/reviewed-repo", companionOf, () => checkoutOf(at));
+      expect(env.QCR_REVIEWED_REPO).toBe(theirs);
+      expect(env.QCR_STATE_HOME).toBeUndefined();
+    }
+  });
+
+  // `qcr scan --sandbox docker` mounts the checkout scanEnv chose: on a host
+  // with no config, the one the command runs in.
+  // MUTATION: have mountedCheckout read process.env.QCR_REVIEWED_REPO or the
+  // config's reviewed_repo_dir instead of the env it is given — this fails.
+  it("the docker sandbox mounts the checkout scanEnv chose", () => {
+    const repo = join(dir, "mounted");
+    mkdirSync(join(repo, "src"), { recursive: true });
+    execFileSync("git", ["init", "-q", repo]);
+    const top = checkoutOf(join(repo, "src"));
+    const noConfig = (): never => {
+      throw new Error("no config");
+    };
+    const host = { QCR_ROOT: "/r", HOME: dir, XDG_STATE_HOME: join(dir, "state") };
+    expect(mountedCheckout(scanEnv(host, "/reviewed-repo", noConfig, () => top))).toBe(top);
   });
 
   it("writes its started outcome atomically, whole", () => {

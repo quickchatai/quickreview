@@ -382,18 +382,90 @@ describe("the bodies", () => {
     expect(review).not.toMatch(/--post/);
   });
 
+  // Every call the agent is told to make goes through qcr scan's own parser:
+  // a full `qcr --schema 1 scan …` call; a bare fragment that leads with a
+  // scan verb (`status --wait --timeout S`), parsed as `scan <fragment>`;
+  // and a bare flag a step names (`--path DIR`, `--limit N`), parsed on the
+  // call it adds to, the full call before it. A placeholder (`S`, `N`, a
+  // valued flag named alone) takes a sample value.
   // MUTATION: spell a scan call in plugins/qcr/templates/scan.md's host body
   // `scan unit propose` — this fails.
-  it.each(HOSTS)("%s: every scan call the body names is one qcr scan parses", (t) => {
-    for (const [p, body] of bodies(t))
-      for (const c of runs(body).filter((r) => /--schema 1 scan\b/.test(r))) {
-        const argv = c.replace(/^`+|`+$/g, "").split(/\s+/);
-        const rest = argv.slice(argv.indexOf("scan") + 1).filter((a, i, all) => {
-          // --sandbox is qcr scan's own flag (src/scancli.ts), taken before the parse
-          return a !== "--sandbox" && all[i - 1] !== "--sandbox";
-        });
-        expect(() => parseScanArgs(rest), `${p}: ${c}`).not.toThrow();
+  // MUTATION: spell `status --wait --timout S` in that body — this fails.
+  // MUTATION: spell `--limt N` in step 4 of that body — this fails.
+  const SCAN_VERBS = new Set([
+    "preview",
+    "start",
+    "status",
+    "stop",
+    "findings",
+    "matches",
+    "match",
+    "suggestions",
+    "stage2",
+    "dismiss",
+    "login",
+    "units",
+    "doctor",
+    "rebuild",
+  ]);
+  const SAMPLE: Record<string, string> = {
+    "--path": "src",
+    "--sha": "HEAD",
+    "--timeout": "5",
+    "--limit": "3",
+    "--severity": "high",
+    "--validity": "likely",
+    "--lens": "security",
+    "--state": "new",
+    "--unit": "app",
+    "--key": "K",
+  };
+  // qcr's own flags, taken before the scan's parse (src/scancli.ts, src/schemaflag.ts)
+  const OWN = new Set(["--sandbox", "--schema", "--json"]);
+  const words = (span: string): string[] => {
+    const raw = span
+      .replace(/^`+|`+$/g, "")
+      .trim()
+      .split(/\s+/);
+    const out: string[] = [];
+    for (let i = 0; i < raw.length; i++) {
+      const a = raw[i]!;
+      if (OWN.has(a)) {
+        if (a !== "--json") i++;
+        continue;
       }
+      const next = raw[i + 1];
+      if (a in SAMPLE) {
+        out.push(
+          a,
+          next === undefined || next.startsWith("--") || /^[A-Z]+$/.test(next) ? SAMPLE[a]! : next,
+        );
+        if (next !== undefined && !next.startsWith("--")) i++;
+      } else out.push(a);
+    }
+    return out;
+  };
+  it.each(HOSTS)("%s: every scan call the body names is one qcr scan parses", (t) => {
+    let parsed = 0;
+    for (const [p, body] of bodies(t)) {
+      let last: string[] | null = null;
+      for (const m of body.matchAll(/`[^`\n]+`/g)) {
+        const span = m[0];
+        const first = span.replace(/^`+/, "").split(/\s+/)[0]!;
+        let argv: string[];
+        if (/--schema 1 scan\b/.test(span)) {
+          const w = words(span);
+          argv = w.slice(w.indexOf("scan") + 1);
+          last = argv;
+        } else if (SCAN_VERBS.has(first)) argv = words(span);
+        else if (first.startsWith("--") && !OWN.has(first) && last !== null)
+          argv = [...last, ...words(span)];
+        else continue;
+        expect(() => parseScanArgs(argv), `${p}: ${span} → ${argv.join(" ")}`).not.toThrow();
+        parsed++;
+      }
+    }
+    expect(parsed).toBeGreaterThan(10);
   });
 
   // A repo's first scan has no unit cut, and the preview stops on it; the

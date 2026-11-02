@@ -545,8 +545,9 @@ a minute its run reads as interrupted, and the ledger resumes it. A driver
 that finds its lease lost (suspended past its life while another took over)
 stops its run and writes the run record no more. The lease does not
 serialise `scan/findings.json`: a `match` or `dismiss` written while a driver
-reconciles can lose one of the two writes. On the host the CLI reads the
-`[companion] reviewed_repo_dir` checkout (or `QCR_REVIEWED_REPO`); with
+reconciles can lose one of the two writes. On the host the CLI reads
+`QCR_REVIEWED_REPO`, else the checkout it runs in, else (outside any
+checkout) the `[companion] reviewed_repo_dir` checkout; with
 `sandbox = "host"` the case runner's `pi` is the one on the PATH.
 
 #### The scan sandbox
