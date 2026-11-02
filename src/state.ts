@@ -1660,6 +1660,8 @@ export interface RoundStartMeta {
   sweep_owed?: boolean | null;
   sweep_plan?: PassPlanEntry[] | null;
   sweep_status?: SweepStatus | null;
+  /** The post-discovery rows (`PassPlan.post_plan`), when planned. */
+  post_plan?: PassPlanEntry[] | null;
 }
 
 /** One recheck claim, as `rechecksFor` reads it. */
@@ -1809,6 +1811,9 @@ export class StateStore {
       "ALTER TABLE rounds ADD COLUMN sweep_plan TEXT",
       "ALTER TABLE rounds ADD COLUMN sweep_status TEXT",
       "ALTER TABLE rounds ADD COLUMN merge_base TEXT",
+      // The post-discovery rows (the chain's `compose`), so a failed one is
+      // read from the round's own record. Nullable, additive.
+      "ALTER TABLE rounds ADD COLUMN post_plan TEXT",
       // Held wakes are leased and acked only after delivery.
       "ALTER TABLE pending_wakes ADD COLUMN claim_token TEXT",
       "ALTER TABLE pending_wakes ADD COLUMN claimed_at TEXT",
@@ -2434,6 +2439,10 @@ export class StateStore {
     if (meta.sweep_plan !== undefined) {
       sets.push("sweep_plan = ?");
       args.push(meta.sweep_plan === null ? null : JSON.stringify(meta.sweep_plan));
+    }
+    if (meta.post_plan !== undefined) {
+      sets.push("post_plan = ?");
+      args.push(meta.post_plan === null ? null : JSON.stringify(meta.post_plan));
     }
     if (sets.length === 0) return;
     this.db.prepare(`UPDATE rounds SET ${sets.join(", ")} WHERE id = ?`).run(...args, id);

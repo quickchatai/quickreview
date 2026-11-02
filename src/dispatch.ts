@@ -1613,6 +1613,12 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           validate_tier: validateTier,
           pass_plan: plannedPasses,
           addable_passes: addablePasses,
+          // The post-discovery rows (the chain's `compose`): recorded beside
+          // the plan, so the posting route names a failed one as it names a
+          // failed plan row (postops.ts withSecurityGaps).
+          ...(passPolicy.post_plan && passPolicy.post_plan.length > 0
+            ? { post_plan: passPolicy.post_plan }
+            : {}),
           head_sha: preparedHead,
           ...(tree?.merge_base ? { merge_base: tree.merge_base } : {}),
           ...(roundType === "re-review"
@@ -1670,6 +1676,8 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           });
           store.setRoundMeta(roundId, {
             scope: "full",
+            post_plan:
+              fullPlan.post_plan && fullPlan.post_plan.length > 0 ? fullPlan.post_plan : null,
             delta_base_sha: null,
             delta_lines: null,
             delta_files: null,

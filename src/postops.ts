@@ -417,6 +417,7 @@ class PostOps {
       parsePlan(row.pass_plan),
       readRoundProgress(this.d.root, pr),
       round,
+      parsePlan(row.post_plan),
     );
     if (gaps.state !== "known" || gaps.failed.length === 0) return text;
     this.d.store.logEvent("security_pass_incomplete", pr, {

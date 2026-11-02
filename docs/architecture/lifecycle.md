@@ -293,7 +293,9 @@ except the exploit chain's `delta` row; a failed one is named in the posted
 review body as a security pass that did not complete
 (`security_pass_incomplete`). The chain's `compose` row is planned into
 `post_plan`, written to `tasks-post/`, and launched by the session after the
-discovery wave, never with it.
+discovery wave, never with it. The round's record keeps those rows
+(`rounds.post_plan`, beside `pass_plan`), so a failed `compose` is named in
+the body from the round's own record, as a failed plan row is.
 
 The plan's rows are listed in **launch order, slowest first** (`slowestFirst`).
 The session launches a turn's rows in table order and the lens runner starts

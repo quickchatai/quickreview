@@ -547,6 +547,12 @@ describe("dispatch writes the chain's compose row outside the wave", () => {
       );
       expect(readFileSync(post[0]!.path, "utf8")).toContain("Strategy: compose");
       expect((order.pass_task_files ?? []).some((t) => t.path.includes("@compose"))).toBe(false);
+      // The round's record holds the post rows beside its plan, so the
+      // posting route reads a failed compose from it (postops.ts
+      // withSecurityGaps). MUTATION: drop the post_plan spread from
+      // dispatchOnce's startRound meta — this fails.
+      const [recorded] = store.roundsFor(52);
+      expect(JSON.parse(recorded!.post_plan ?? "null")).toEqual(order.post_plan);
 
       // The same PR and round, planned without the family: the earlier
       // attempt's tasks-post/ is gone, so nothing stale can be launched.
@@ -555,6 +561,7 @@ describe("dispatch writes the chain's compose row outside the wave", () => {
       const plain = await dispatchWith(store2, []);
       expect(plain.post_plan).toBeUndefined();
       expect(plain.post_task_files).toBeUndefined();
+      expect(store2.roundsFor(52)[0]!.post_plan).toBeNull();
       expect(existsSync(dirname(post[0]!.path))).toBe(false);
     },
   );
