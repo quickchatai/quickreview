@@ -4,10 +4,12 @@
 // plan row (the template's own rule), and each task file carries its row's
 // findings, with the one-line `PRIOR` answer the lens writes back.
 //
-// A LEAF: types and the data fence only. `passtasks.ts` and `priorfindings.ts`
-// import it, and `priorfindings.ts` reaches `passtasks.ts` back through the
-// findings record, so nothing here may import either at runtime.
+// A LEAF: types, the data fence and the pass vocabulary only. `passtasks.ts`
+// and `priorfindings.ts` import it, and `priorfindings.ts` reaches
+// `passtasks.ts` back through the findings record, so nothing here may import
+// either at runtime.
 import { fenceAsData } from "./datafence.js";
+import { SECURITY_FAMILY } from "./passes.js";
 import type { PriorFindingsList } from "./priorfindings.js";
 import type { PassPlanEntry, PriorAssignment, PriorTaskEntry } from "./types.js";
 
@@ -43,7 +45,9 @@ function rowHolding(
  * Assign every listed prior finding to the plan row that owns it — the
  * daemon's half of step 1 of a follow-up round. The rule is the
  * template's own: the lens that raised it when that lens is planned, else
- * `pass-baseline`, which a follow-up plan always carries for exactly this.
+ * `pass-baseline`, which a follow-up plan always carries for exactly this —
+ * or, in a security-only review, which plans no baseline, the first
+ * security-family row (a class lens before a chain row).
  * A lens planned as several rows (the sweep, behaviour-delta, a split
  * baseline) owns it on the row whose files hold its path; a sweep or
  * behaviour-delta finding whose file no row holds falls to pass-baseline,
@@ -65,7 +69,10 @@ export function assignPriorFindings(
     if (p.lens === "pass-validate") return;
     byLens.set(p.lens, [...(byLens.get(p.lens) ?? []), i]);
   });
-  const baseline = byLens.get("pass-baseline") ?? [];
+  // The fallback owner: the baseline rows, else one security-family row.
+  const family = plan.flatMap((p, i) => (SECURITY_FAMILY.includes(p.lens) ? [i] : []));
+  const firstFamily = family.find((i) => plan[i]!.strategy === undefined) ?? family[0];
+  const baseline = byLens.get("pass-baseline") ?? (firstFamily !== undefined ? [firstFamily] : []);
   const out = new Map<number, PriorTaskEntry[]>();
   for (const f of list.findings) {
     let row: number | null = null;
