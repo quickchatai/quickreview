@@ -241,8 +241,8 @@ later, from the home, once a review has completed.
 
 ### 10 — Preflight
 
-Checks Node ≥ 26 (the supported Node, which the image carries; an older one is
-noted, not refused),
+Checks Node ≥ 22.19 (the supported Node; the image carries its own Node 26; an
+older one is noted, not refused),
 `docker --version` and `docker compose version`, asks the registry whether the
 release image can be pulled, and captures your user id. The uid matters: the
 containers run as it, so they can read the 0600 files you own in the secrets

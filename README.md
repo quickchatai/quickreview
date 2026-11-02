@@ -347,8 +347,8 @@ does not carry it yet).
 ## Install with npm
 
 The npm package is the whole app, the same code the image runs, as the `qcr`
-command on Node 26 or later (npm, pnpm and bun all work; an older Node is
-not blocked, but only 26+ is supported):
+command on Node 22.19 or later (npm, pnpm and bun all work; an older Node is
+not blocked, but only 22.19+ is supported):
 
 ```sh
 npm i -g @quickchatai/quickreview

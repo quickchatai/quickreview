@@ -26,10 +26,11 @@ import {
   type OnboardingStep,
 } from "../src/onboard/engine.js";
 import {
-  MIN_NODE_MAJOR,
+  MIN_NODE_LABEL,
   PREFLIGHT_STEP_ID,
   UID_CHOICE_KEY,
-  parseNodeMajor,
+  meetsNodeFloor,
+  parseNodeVersion,
   preflightStep,
 } from "../src/onboard/steps/preflight.js";
 
@@ -95,21 +96,32 @@ function engine(host: FakeHost = {}, calls: string[] = []): OnboardingEngine {
   return new OnboardingEngine([preflightStep()], fakeAdapters(host, calls));
 }
 
-describe("parseNodeMajor", () => {
+describe("parseNodeVersion / meetsNodeFloor", () => {
   it("parses v-prefixed and bare versions; rejects garbage", () => {
-    expect(parseNodeMajor("v22.5.1")).toBe(22);
-    expect(parseNodeMajor("23.0.0")).toBe(23);
-    expect(parseNodeMajor("nonsense")).toBeNull();
+    expect(parseNodeVersion("v22.5.1")).toEqual({ major: 22, minor: 5 });
+    expect(parseNodeVersion("23.0.0")).toEqual({ major: 23, minor: 0 });
+    expect(parseNodeVersion("nonsense")).toBeNull();
+  });
+
+  // MUTATION: compare the major alone — 22.18 then meets the floor and this fails.
+  it("the floor is a major and a minor: 22.18 is under it, 22.19, 24 and 26 meet it", () => {
+    expect(meetsNodeFloor("v22.18.0")).toBe(false);
+    expect(meetsNodeFloor("v20.19.0")).toBe(false);
+    expect(meetsNodeFloor("v22.19.0")).toBe(true);
+    expect(meetsNodeFloor("v24.0.0")).toBe(true);
+    expect(meetsNodeFloor("v26.10.0")).toBe(true);
+    expect(meetsNodeFloor("nonsense")).toBe(false);
   });
 });
 
 describe("preflight step lifecycle", () => {
-  it("checks the same Node floor package.json declares, and says that number", () => {
-    const pkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as {
-      engines: { node: string };
-    };
-    expect(pkg.engines.node).toBe(`>=${MIN_NODE_MAJOR}`);
-    expect(preflightStep().explain).toContain(`Node ${MIN_NODE_MAJOR} or newer`);
+  // The floor agrees with both packages' engines and CI in tests/node-floor.test.ts.
+  it("says the Node floor it checks", async () => {
+    expect(preflightStep().explain).toContain(`Node ${MIN_NODE_LABEL} or newer`);
+    const at = await engine({ nodeVersion: "v22.19.0" }).runStep(PREFLIGHT_STEP_ID);
+    expect(at.checks.find((c) => c.name === "node")!.detail).toBe(
+      `Node v22.19.0 (${MIN_NODE_LABEL} or newer is supported)`,
+    );
   });
 
   it("green run marks the step done, captures the uid as a choice, and persists", async () => {
@@ -135,6 +147,9 @@ describe("preflight step lifecycle", () => {
     const e = engine({ nodeVersion: "v22.11.0" });
     const result = await e.runStep(PREFLIGHT_STEP_ID);
     expect(result.ok).toBe(true);
+    expect(result.checks.find((c) => c.name === "node")!.detail).toMatch(
+      /older than the supported Node 22\.19/,
+    );
     expect(result.failures.join(" ")).not.toMatch(/node:/);
     expect(readChecklist(stateDir)?.steps[PREFLIGHT_STEP_ID]?.status).toBe("done");
   });

@@ -76,8 +76,8 @@ All three must be green before you commit. Notes that will bite otherwise:
 ## Conventions
 
 - **TypeScript strict**, plus `noUncheckedIndexedAccess` and
-  `noImplicitOverride` (`tsconfig.json`). Node **≥ 26** (`package.json`
-  `engines`).
+  `noImplicitOverride` (`tsconfig.json`). Node **≥ 22.19** (both packages'
+  `engines`; CI's test job runs 22, 24 and 26, and the images carry 26).
 - **ESM, `module: NodeNext`** — local imports carry the **`.js` suffix** even
   from `.ts` files.
 - **Two layers, fenced.** The review core is its own package, the npm

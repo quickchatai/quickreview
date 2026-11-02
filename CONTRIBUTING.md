@@ -90,7 +90,7 @@ repos, shell scripts against a loopback HTTP stub, local subprocesses) are
 listed in `tests/AGENTS.md`.
 
 Conventions: TypeScript strict, ESM (`"type": "module"`, NodeNext; local
-imports use the `.js` suffix), Node ≥ 26, minimal dependencies. The map for
+imports use the `.js` suffix), Node ≥ 22.19, minimal dependencies. The map for
 changing the code is [AGENTS.md](AGENTS.md).
 
 ## Running from a clone
