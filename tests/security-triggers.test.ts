@@ -698,7 +698,9 @@ describe("docs-only changes", () => {
       "pages/blog.mdx",
     ])
       expect(isDocsOnlyChange([{ filename: path }]), path).toBe(false);
-    expect(isDocsOnlyChange([{ filename: "docs/api/index.md" }, { filename: "NOTICE" }])).toBe(true);
+    expect(isDocsOnlyChange([{ filename: "docs/api/index.md" }, { filename: "NOTICE" }])).toBe(
+      true,
+    );
   });
 
   it("an empty list is not docs-only: it may be a list that failed to load", () => {

@@ -821,10 +821,12 @@ const DOCS_EXT_RE = /\.(?:md|markdown|txt|rst|adoc|png|jpe?g|gif|webp|ico|bmp)$/
 const LICENCE_FILE_RE = /(^|\/)(?:LICEN[CS]E|COPYING|NOTICE|AUTHORS)(?:\.[^/]*)?$/i;
 /** A build input or a dependency list spelled `.txt`: a manifest, not
  * prose (`requirements*.txt` is in `DEPS_MANIFEST_RE`). */
-const TXT_MANIFEST_RE = /(^|\/)(?:CMakeLists\.txt|constraints[^/]*\.txt)$|(^|\/)requirements\/[^/]*\.txt$/i;
+const TXT_MANIFEST_RE =
+  /(^|\/)(?:CMakeLists\.txt|constraints[^/]*\.txt)$|(^|\/)requirements\/[^/]*\.txt$/i;
 
 function isDocsPath(path: string): boolean {
-  if (CODE_FILE_RE.test(path) || CONFIG_FILE_RE.test(path) || DEPS_MANIFEST_RE.test(path)) return false;
+  if (CODE_FILE_RE.test(path) || CONFIG_FILE_RE.test(path) || DEPS_MANIFEST_RE.test(path))
+    return false;
   if (TXT_MANIFEST_RE.test(path)) return false;
   return LICENCE_FILE_RE.test(path) || DOCS_EXT_RE.test(path);
 }
