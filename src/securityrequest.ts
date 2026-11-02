@@ -132,26 +132,30 @@ export function applySecurityRequest(
   req: SecurityRequestInput,
   opts: { meta?: PrMeta; botLogin?: string; now?: () => Date } = {},
 ): SecurityRequestOutcome {
-  return store.db.transaction((): SecurityRequestOutcome => {
-    if (store.getPr(req.pr)?.state === "closed") {
-      store.logEvent("review_request_ignored", req.pr, {
+  return store.db
+    .transaction((): SecurityRequestOutcome => {
+      if (store.getPr(req.pr)?.state === "closed") {
+        store.logEvent("review_request_ignored", req.pr, {
+          kind: SECURITY_REQUEST_KIND,
+          source: req.source,
+          by: req.by,
+          reason: "pr-closed",
+        });
+        return { fresh: false, reason: "closed" };
+      }
+      const fresh = store.recordReviewRequest({
+        pr: req.pr,
         kind: SECURITY_REQUEST_KIND,
         source: req.source,
-        by: req.by,
-        reason: "pr-closed",
+        requested_by: req.by,
+        ...(req.comment_id !== undefined ? { comment_id: req.comment_id } : {}),
       });
-      return { fresh: false, reason: "closed" };
-    }
-    const fresh = store.recordReviewRequest({
-      pr: req.pr,
-      kind: SECURITY_REQUEST_KIND,
-      source: req.source,
-      requested_by: req.by,
-      ...(req.comment_id !== undefined ? { comment_id: req.comment_id } : {}),
-    });
-    if (!fresh) return { fresh: false, reason: "already-requested" };
-    return { fresh: true, served: serveSecurityRequest(store, req.pr, opts) };
-  })();
+      if (!fresh) return { fresh: false, reason: "already-requested" };
+      return { fresh: true, served: serveSecurityRequest(store, req.pr, opts) };
+      // Reads, then writes: IMMEDIATE takes the write lock up front, so a busy
+      // writer elsewhere is waited for rather than failing the upgrade.
+    })
+    .immediate();
 }
 
 /**
@@ -167,26 +171,30 @@ export function serveSecurityRequest(
   pr: number,
   opts: { meta?: PrMeta; botLogin?: string; now?: () => Date } = {},
 ): boolean {
-  return store.db.transaction((): boolean => {
-    const req = store.reviewRequest(pr, SECURITY_REQUEST_KIND);
-    if (!req || req.served_at !== null) return false;
-    const row = store.getPr(pr);
-    if (row?.state === "reviewing" || row?.state === "closed") return false;
-    if (!row && !opts.meta?.head_sha) return false;
-    const now = opts.now ?? (() => new Date());
-    const result = applyEvent(store, pr, { type: "trigger", source: "manual" }, opts.meta ?? {}, {
-      ...(opts.botLogin !== undefined ? { botLogin: opts.botLogin } : {}),
-      now,
-      reason: `security-request:${req.source}`,
-    });
-    if (result.skipped) {
-      store.clearReviewRequests(pr, "bot-author", SECURITY_REQUEST_KIND);
-      return false;
-    }
-    store.noteNewEvidence(pr, now().toISOString());
-    store.markReviewRequestServed(pr, SECURITY_REQUEST_KIND);
-    return true;
-  })();
+  return store.db
+    .transaction((): boolean => {
+      const req = store.reviewRequest(pr, SECURITY_REQUEST_KIND);
+      if (!req || req.served_at !== null) return false;
+      const row = store.getPr(pr);
+      if (row?.state === "reviewing" || row?.state === "closed") return false;
+      if (!row && !opts.meta?.head_sha) return false;
+      const now = opts.now ?? (() => new Date());
+      const result = applyEvent(store, pr, { type: "trigger", source: "manual" }, opts.meta ?? {}, {
+        ...(opts.botLogin !== undefined ? { botLogin: opts.botLogin } : {}),
+        now,
+        reason: `security-request:${req.source}`,
+      });
+      if (result.skipped) {
+        store.clearReviewRequests(pr, "bot-author", SECURITY_REQUEST_KIND);
+        return false;
+      }
+      store.noteNewEvidence(pr, now().toISOString());
+      store.markReviewRequestServed(pr, SECURITY_REQUEST_KIND);
+      return true;
+      // Reads, then writes: IMMEDIATE, as above (nested in a caller's
+      // transaction it is a savepoint).
+    })
+    .immediate();
 }
 
 /**
