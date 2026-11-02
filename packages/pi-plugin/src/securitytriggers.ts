@@ -139,10 +139,23 @@ const WORKFLOW_FILE_RE = /(^|\/)\.github\/workflows\/[^/]+\.ya?ml$/;
 /** A workflow running on the base repository's secrets for a fork's code. */
 const PULL_REQUEST_TARGET_RE = /\bpull_request_target\b/;
 /** An attacker-written field (a title, a body, a branch name, a commit
- * message) expanded into a shell: on a `run:` line or inside a run block —
- * never as a mapping value (`env:`), which is the safe spelling. */
-const WORKFLOW_INJECTION_RE =
-  /^(?!\s*-?\s*(?!run:)[\w.-]+:(?:\s|$)).*\$\{\{\s*github\.(?:head_ref\b|event\.(?:pull_request|issue|comment|review|review_comment|discussion|discussion_comment|pages|commits|head_commit|workflow_run)\b)/m;
+ * message, an author name) expanded into a shell: on a `run:` line or inside
+ * a run block — never as a mapping value (`env:`), which is the safe
+ * spelling. Only the leaves an outsider writes count: a PR's number or a
+ * head SHA is in every CI workflow and injects nothing. */
+const ATTACKER_LEAF = [
+  String.raw`head_ref\b`,
+  String.raw`event\.(?:pull_request|issue|discussion)\.(?:title|body)\b`,
+  String.raw`event\.pull_request\.head\.(?:ref|label|repo\.default_branch)\b`,
+  String.raw`event\.(?:comment|review|review_comment|discussion_comment)\.body\b`,
+  String.raw`event\.(?:commits(?:\[[^\]\s]*\]|\.\*)?|head_commit)\.(?:message|author\.(?:name|email))\b`,
+  String.raw`event\.pages(?:\[[^\]\s]*\]|\.\*)?\.page_name\b`,
+  String.raw`event\.workflow_run\.(?:head_branch|display_title|head_commit\.(?:message|author\.(?:name|email)))\b`,
+].join("|");
+const WORKFLOW_INJECTION_RE = new RegExp(
+  String.raw`^(?!\s*-?\s*(?!run:)[\w.-]+:(?:\s|$)).*\$\{\{\s*github\.(?:${ATTACKER_LEAF})`,
+  "m",
+);
 
 /** Credential shapes (the publishability lint's set): a GitHub token, a
  * private key block, an OpenAI-style key, a Slack token, an AWS key id. */

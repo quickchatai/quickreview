@@ -215,6 +215,30 @@ describe("strong probes fire in two languages", () => {
       '          echo "${{ github.event.issue.body }}" > body.txt',
       "+",
     ],
+    [
+      "pass-sec-supply-chain",
+      ".github/workflows/ci.yml",
+      "          git checkout ${{ github.event.pull_request.head.ref }}",
+      "+",
+    ],
+    [
+      "pass-sec-supply-chain",
+      ".github/workflows/ci.yml",
+      '      - run: echo "${{ github.head_ref }}"',
+      "+",
+    ],
+    [
+      "pass-sec-supply-chain",
+      ".github/workflows/deploy.yml",
+      "          ./deploy.sh ${{ github.event.workflow_run.head_branch }}",
+      "+",
+    ],
+    [
+      "pass-sec-supply-chain",
+      ".github/workflows/notify.yml",
+      '          echo "${{ github.event.head_commit.message }}"',
+      "+",
+    ],
     // the host given away
     ["pass-sec-infra", "infra/sg.tf", '  ingress { cidr_blocks = ["0.0.0.0/0"] }', "+"],
     ["pass-sec-infra", "k8s/deploy.yaml", "      hostNetwork: true", "+"],
@@ -339,6 +363,27 @@ describe("near-misses do not fire", () => {
       "pass-sec-supply-chain",
       ".github/workflows/ci.yml",
       "      - run: echo ${{ github.sha }}",
+      "+",
+    ],
+    // a field no outsider writes: the PR's number, a SHA
+    // MUTATION: restore the bare `event\.(?:pull_request|…)\b` root in
+    // WORKFLOW_INJECTION_RE — the three rows below fire.
+    [
+      "pass-sec-supply-chain",
+      ".github/workflows/ci.yml",
+      '      - run: echo "PR ${{ github.event.pull_request.number }}"',
+      "+",
+    ],
+    [
+      "pass-sec-supply-chain",
+      ".github/workflows/ci.yml",
+      "          git checkout ${{ github.event.pull_request.head.sha }}",
+      "+",
+    ],
+    [
+      "pass-sec-supply-chain",
+      ".github/workflows/ci.yml",
+      "          git diff ${{ github.event.pull_request.base.sha }}...HEAD",
       "+",
     ],
     // a workflow word outside a workflow
