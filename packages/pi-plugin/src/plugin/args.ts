@@ -16,6 +16,12 @@
 //   --limit USD     this run's limit (above it the run asks)
 //   --repo O/N      the PR's repo, when it is not the cwd's
 //   --stop          stop the review running in this session
+//   --security      ask for a security review on top of the plan: the
+//                   security family's lenses are planned as if requested
+//
+// `security` the preset and `--security` the flag differ: the preset skips
+// every lens outside the security family (an APPROVE then means "no security
+// finding"), and the flag keeps the plan and adds the family to it.
 //
 // A preset is the review options the core already takes, named: a lens plan
 // (`[review] preset`, `skip_lenses`) and a scope (`full`). It is never a code
@@ -26,18 +32,13 @@
 // preset, `--branch` the bare command's branch, and `--to LIST` the old
 // destination list, of which only `json` still means anything (a result is
 // always shown and kept, and a post is the posting rule's).
-import { ALL_PASSES } from "../passes.js";
+import { ALL_PASSES, SECURITY_FAMILY } from "../passes.js";
 import type { ReviewTarget } from "../reviewtarget.js";
 
-/** The lenses the security preset keeps; every other lens is skipped. */
-export const SECURITY_LENSES: readonly string[] = [
-  "pass-baseline",
-  "pass-security",
-  "pass-data-safety",
-  "pass-bounds",
-  "pass-contracts",
-  "pass-validate",
-];
+/** The lenses the security preset keeps — the security family and the
+ * validator; every other lens is skipped, so a lens added to `ALL_PASSES`
+ * later is skipped without an edit here. */
+export const SECURITY_LENSES: readonly string[] = [...SECURITY_FAMILY, "pass-validate"];
 
 function securitySkips(): string[] {
   return ALL_PASSES.filter((p) => !SECURITY_LENSES.includes(p));
@@ -50,8 +51,8 @@ export const REVIEW_PRESETS = {
   /** The full lever plan at the highest reasoning, over the whole target
    * again (what an earlier review left is ignored). */
   full: { levers: "review.preset=max", full: true },
-  /** Only the risk lenses the change triggers (security, data safety,
-   * bounds, contracts), with the baseline and the validator. */
+  /** Only the security-family lenses the change triggers, with the
+   * validator. */
   security: { levers: `review.skip_lenses=${securitySkips().join("|")}`, full: false },
 } as const;
 
@@ -69,11 +70,14 @@ export interface ReviewCommand {
   json: boolean;
   profile?: string;
   limitUsd?: number;
+  /** `--security`: a security review asked for on top of the plan. Set only
+   * when the flag is given. */
+  securityRequest?: true;
 }
 
 export const REVIEW_COMMAND_USAGE =
   `usage: /qcr-review [${REVIEW_PRESET_NAMES.join("|")}] [PR number or URL | BRANCH | --uncommitted] ` +
-  "[--base REF] [--preview] [--json] [--profile NAME] [--limit USD] [--repo OWNER/NAME] | /qcr-review --stop";
+  "[--base REF] [--preview] [--json] [--security] [--profile NAME] [--limit USD] [--repo OWNER/NAME] | /qcr-review --stop";
 
 /** The words of a command line; double quotes group, nothing else is special. */
 export function splitArgs(line: string): string[] {
@@ -124,6 +128,9 @@ export function parseReviewCommand(
           break;
         case "--json":
           cmd.json = true;
+          break;
+        case "--security":
+          cmd.securityRequest = true;
           break;
         case "--uncommitted":
           uncommitted = true;
