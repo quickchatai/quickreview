@@ -165,6 +165,19 @@ describe("the family's shared contract", () => {
     for (const name of EXTRA_FIELDS) expect(text, name).toContain(`\`${name}:\``);
   });
 
+  // An env var or CLI flag as the attacker's input is excluded; the config
+  // the repo ships is the infra, iam and supply-chain lenses' whole remit.
+  // MUTATION: restore "environment, command-line or operator config treated
+  // as trusted;" in prompts/pass-sec-common.md — fails.
+  it("excludes the operator as an attacker source, never the config the repo ships", () => {
+    const flat = text.replace(/\s+/g, " ");
+    expect(flat).toContain(
+      "an environment variable, command-line flag or operator-written runtime setting treated as attacker input (the operator is trusted)",
+    );
+    expect(flat).toContain("This never excludes the config the repository ships");
+    expect(flat).not.toContain("environment, command-line or operator config treated as trusted");
+  });
+
   // MUTATION: change "set `confidence` to 0.6 or less, and keep the severity"
   // to "lower the severity" — fails.
   it("keeps doubt in confidence, never in severity, and excludes rather than asks", () => {

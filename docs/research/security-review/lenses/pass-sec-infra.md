@@ -134,7 +134,10 @@ anonymous `Admin`, Hasura with no admin secret, Airflow `AUTH_ROLE_PUBLIC =
 'Admin'`, a registry with no `REGISTRY_AUTH` or an anonymous-admin Jenkins
 (a push there reaches every deploy that pulls from it), Docker `-H tcp://`
 without `--tlsverify`, actuator `exposure.include=*` on the app port, sshd
-password or root login. Keys-only sshd is remote-auth.
+with `PermitEmptyPasswords yes` or a default or baked-in password. sshd
+password auth or `PermitRootLogin yes` on a public listener is remote-auth,
+and keys-only sshd, `PermitRootLogin prohibit-password` included, is
+intended exposure.
 
 **Node credentials.** An explicit `http_tokens = "optional"` beside a broad
 role (account and AMI defaults sit outside the repo); the PUT hop limit binds

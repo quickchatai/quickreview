@@ -70,7 +70,10 @@ also matches `/public-admin`. You find them by building a table.
    row authenticated by a different mechanism by design (HMAC webhook, mTLS,
    API key, basic auth) is judged against that mechanism, not against the
    siblings' session. Role checks must be allow-lists: `role != "guest"`
-   admits new, null and differently cased roles.
+   admits new, null and differently cased roles. When the weaker row is
+   authenticated and its effect is a grant, override or security-setting
+   write, the missing or weak role gate is `pass-sec-privesc`'s: record it
+   as a lead, not a candidate.
 6. **Matcher vs router — only where they are separate.** Do this step when
    the matcher is hand-written in the repo (`startsWith`, regex, `strncmp`)
    or the matcher and the router are different components (proxy vs app,
@@ -201,12 +204,13 @@ calls it" — routes ship in bundles and API documents. `reachability` is
 ## Stay inside your lens
 
 Object ownership, tenant keys, IDOR and row-level security predicates are
-`pass-sec-access`; the logic of endpoints that grant roles is
-`pass-sec-privesc`; how a present verifier checks algorithm, audience,
+`pass-sec-access`; the logic of endpoints that grant roles, and a missing
+or weak role gate on an authenticated grant, override or security-setting
+route, are `pass-sec-privesc`'s; how a present verifier checks algorithm, audience,
 expiry and rotation is `pass-sec-tokens`; check-then-use windows are
 `pass-sec-toctou`; firewall, security-group and network-policy state is
 `pass-sec-infra`; grants to a role, service account or group (cloud IAM,
 trust, cluster RBAC) are `pass-sec-iam`, while an invoker's `allUsers` is
 your auth cell. Row-level security switched off on an exposed table is
-yours. When an unguarded row's effect is one of those lenses' classes,
-anchor at the missing guard here and name the other lens.
+yours. When an unauthenticated row's effect is one of those lenses'
+classes, anchor at the missing guard here and name the other lens.

@@ -238,6 +238,22 @@ describe("the shipped security profile", () => {
       expect(keeps(kind), kind).toBe(false);
   });
 
+  // Stage 1's SUGGEST rows are how a non-floor lens joins a security scan,
+  // and this addendum is the last word on where they point.
+  // MUTATION: drop the `pass-sec-toctou` clause from
+  // profiles/security/addenda/scan-stage1-security.md — fails.
+  it("points stage 1 at every family lens outside the deep floor", () => {
+    const rule = readFileSync(
+      join(root, "profiles", "security", "addenda", "scan-stage1-security.md"),
+      "utf8",
+    );
+    const where = rule.slice(rule.indexOf("**Where to point.**"));
+    for (const lens of SECURITY_FAMILY.filter(
+      (l) => l !== "pass-sec-variant" && l !== "pass-sec-exploit-chain",
+    ))
+      expect(where, lens).toContain(`\`${lens}\``);
+  });
+
   it("binds its scan rule to stage 1 of a scan alone, and its validator rule to both builds", () => {
     const pack = loadProfileAddenda(root, PROFILE, lookup());
     const ids = (pass: string, mode: "pr" | "scan") =>

@@ -69,7 +69,11 @@ Excluded for the whole family:
 - generic hardening with no named exposure;
 - a race with no window cited by `file:line`;
 - an outdated dependency without a published advisory this code reaches;
-- environment, command-line or operator config treated as trusted;
+- an environment variable, command-line flag or operator-written runtime
+  setting treated as attacker input (the operator is trusted). This never
+  excludes the config the repository ships (compose files, IaC, manifests,
+  proxy, sshd or IAM policy): `pass-sec-infra`, `pass-sec-iam` and
+  `pass-sec-supply-chain` judge it as shipped;
 - the same-principal class: the only writer of the "untrusted" input is the
   operator, this system's own code, or an actor that already holds what the
   finding says it gains (a tenant, end user or webhook sender never is);
@@ -105,7 +109,7 @@ CWE id goes in the block's `cwe:` line.
 ## Who owns what
 
 The lens whose fix closes the defect owns it, anchored where the fix goes.
-- `pass-sec-authn-coverage`: an entry point without its siblings' authentication or function-level authorization, a check that does not stop the request, matcher vs router, forgeable identity headers, row-level security switched off on an exposed table.
+- `pass-sec-authn-coverage`: an entry point without its siblings' authentication, or without their function-level authorization where the effect is not a grant, override or security-setting write (that role gate is privesc's), a check that does not stop the request, matcher vs router, forgeable identity headers, row-level security switched off on an exposed table.
 - `pass-sec-access`: this principal on this object: IDOR, the tenant key on every query, ordinary mass assignment, CSRF, CORS and framing (not OAuth `state`), row-level security predicates.
 - `pass-sec-privesc`: the application role model: grant sinks and ceilings, invites, SSO and SCIM binding, bootstrap, override inputs, security-setting writes, weakly protected escalation, a role held in a server cache, a `GRANT` run at request time.
 - `pass-sec-iam`: the platform grant graph: cloud IAM, trust and federation, cluster RBAC, sudoers and setuid, the docker group, a `GRANT` or role membership a migration adds.

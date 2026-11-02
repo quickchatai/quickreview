@@ -135,8 +135,11 @@ Redis without `requirepass`, `xpack.security.enabled: false`, an anonymous
 `Admin` dashboard role, a GraphQL engine with no admin secret, a registry
 with no auth or an anonymous-admin CI server (a push there reaches every
 deploy that pulls from it), Docker `-H tcp://` without `--tlsverify`, an
-actuator `exposure.include=*` on the app port, sshd password or root login.
-Keys-only sshd is remote-auth.
+actuator `exposure.include=*` on the app port, sshd with
+`PermitEmptyPasswords yes` or a default or baked-in password. sshd password
+auth or `PermitRootLogin yes` on a public listener is remote-auth (the P1
+row), and keys-only sshd, `PermitRootLogin prohibit-password` included, is
+intended exposure.
 
 **Node credentials.** An explicit `http_tokens = "optional"` beside a broad
 role (account and image defaults sit outside the repo); the PUT hop limit
@@ -200,14 +203,16 @@ enforce NetworkPolicy? If not, every pod reaches Postgres."). A removed
 per-account audit sink, in a repo with no organisation-level resources and
 no threat-model line naming an organisation sink, is a question.
 
-**Live-state note for the operator** (neither finding nor question): for a
-changed row safe only if a control is live, where no path in this repo puts
-it there, one line in the review body: `Live state: <control> is only
-correct if <live fact>; this repo <never does it | does it only in f:l> —
-verify on the <host|cluster|account>.` At most two per review, none once
-the threat model records the fact. A path here that ships rules without the
-enable is a finding, unless the host image is built elsewhere (an image
-looked up by data source): then the enable is `?`.
+**Live state, asked as a question**: for a changed row safe only if a
+control is live, where no path in this repo puts it there, write one
+finding at `P3`, `kind: security:live-state`, anchored on the changed row,
+whose `claim:` is the question `Live state: <control> is only correct if
+<live fact>; this repo <never does it | does it only in f:l> — is it set on
+the <host|cluster|account>?`, at `confidence` 0.6 or less, with the live
+fact as its `proof-gaps:`. None once the threat model records the fact. A
+path here that ships rules without the enable is a finding, unless the host
+image is built elsewhere (an image looked up by data source): then the
+enable is `?`.
 
 ## Never a finding
 
@@ -216,7 +221,7 @@ Beyond the family's list:
   limits, logging not removed or muted);
 - default-open egress, unless the threat model claims egress control;
 - intended exposure: a website bucket, one named as public assets, port 22
-  to keys-only sshd;
+  to keys-only sshd (`prohibit-password` root included);
 - an IAM-authenticated cluster endpoint, unless the PR changes it and the
   threat model claims a private control plane;
 - a bind-all inside a container, `EXPOSE`;

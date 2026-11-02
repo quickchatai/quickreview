@@ -82,6 +82,25 @@ describe("the identity lenses' evidence lines", () => {
   });
 });
 
+describe("the iam lens's database identities", () => {
+  // A SECURITY DEFINER function runs only its own body with the owner's
+  // privileges; EXECUTE on one confers the owner role only through a
+  // steerable body.
+  // MUTATION: restore "`EXECUTE` on a security-definer function owned by a
+  // stronger role → that role" in agents/pass-sec-iam.md — fails.
+  it("treats EXECUTE on a definer function as what its body does, unless the body can be steered", () => {
+    const iam = flat("pass-sec-iam");
+    expect(iam).not.toMatch(/security-definer function owned by a stronger role → that role/);
+    expect(iam).toContain(
+      "`EXECUTE` on a `SECURITY DEFINER` function owned by a stronger role confers only what its body does",
+    );
+    expect(iam).toContain("or the function lacks `SET search_path`");
+    expect(iam).toContain(
+      "a definer function with a pinned `search_path` and no argument-built dynamic SQL",
+    );
+  });
+});
+
 describe("the identity lenses' ownership splits", () => {
   // A database GRANT: a migration's is the platform grant graph, one a request
   // handler runs is the application's role model.
@@ -109,6 +128,31 @@ describe("the identity lenses' ownership splits", () => {
       expect(section(lens, "Stay inside your lens"), lens).toMatch(
         /row-level security predicates[^.]*access/i,
       );
+  });
+
+  // A missing role gate on an authenticated grant route: privesc's, so the
+  // sibling diff in authn-coverage records it as a lead, not a candidate.
+  // MUTATION: drop "(that role gate is privesc's)" from the authn-coverage
+  // line of prompts/pass-sec-common.md — fails.
+  it("give a missing role gate on an authenticated grant route to privesc, from both sides", () => {
+    const common = readFileSync(
+      join(AGENTS, "..", "prompts", "pass-sec-common.md"),
+      "utf8",
+    ).replace(/\s+/g, " ");
+    expect(common).toContain(
+      "without their function-level authorization where the effect is not a grant, override or security-setting write (that role gate is privesc's)",
+    );
+    expect(flat("pass-sec-authn-coverage")).toContain(
+      "the missing or weak role gate is `pass-sec-privesc`'s: record it as a lead, not a candidate.",
+    );
+    const authn = section("pass-sec-authn-coverage", "Stay inside your lens");
+    expect(authn).toContain(
+      "a missing or weak role gate on an authenticated grant, override or security-setting route, are `pass-sec-privesc`'s",
+    );
+    expect(authn).toContain("When an unauthenticated row's effect is one of those lenses' classes");
+    expect(section("pass-sec-privesc", "Stay inside your lens")).toContain(
+      "an authenticated route whose role gate is absent, weak or reads the wrong value is yours",
+    );
   });
 
   // OAuth `state` is token binding, not the access lens's CSRF.

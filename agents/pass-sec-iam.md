@@ -125,9 +125,12 @@ removed grant is never a finding; a removed narrowing control is.
      `auth/token/create` → any policy.
    - Database: `SUPERUSER`, `CREATEROLE`, `BYPASSRLS`, `WITH GRANT OPTION`
      or `WITH ADMIN OPTION`, membership in an owner or admin role,
-     ownership of a table (it can switch row-level security off), and
-     `EXECUTE` on a security-definer function owned by a stronger role →
-     that role.
+     ownership of a table (it can switch row-level security off) → that
+     role. `EXECUTE` on a `SECURITY DEFINER` function owned by a stronger
+     role confers only what its body does, unless the body builds dynamic
+     SQL (`EXECUTE`, `format()` without `%I`/`%L`) from its arguments, or
+     the function lacks `SET search_path` and the caller can create objects
+     in a schema on the path: then it confers the owner role. Cite the body.
    - Host → root: sudo `NOPASSWD` on a shell-escaping binary or a wildcard
      argument, `SETENV`, `env_keep` of `LD_PRELOAD|PYTHONPATH|PATH`,
      `!env_reset`, `(ALL, !root)`, `sudoedit`; setuid on an interpreter;
@@ -156,7 +159,8 @@ removed grant is never a finding; a removed narrowing control is.
 6. **Hunt the defeating control** and cite it: an explicit `Deny`, an
    enforced boundary, a condition binding org, repo id, ref or environment,
    `resourceNames`, an enforcing admission policy blocking the needed pod,
-   `env_reset` without `SETENV`, `NOEXEC`. Environments, branch protection
+   `env_reset` without `SETENV`, `NOEXEC`, a definer function with a pinned
+   `search_path` and no argument-built dynamic SQL. Environments, branch protection
    and rulesets managed in the repo are evidence: read them. SCPs, org and
    deny policies, protection managed elsewhere: a proof gap, never a
    refutation; one question per PR per guardrail kind, only for an edge

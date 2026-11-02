@@ -115,11 +115,34 @@ describe("the infra lens", () => {
   });
 
   // MUTATION: replace "never that it is running right now" with "and that it is running" — fails.
-  it("claims the config the repo ships, never live state, and notes live state for the operator", () => {
+  it("claims the config the repo ships, never live state", () => {
     expect(text).toContain(
       "in force in the config this repo ships, never that it is running right\nnow",
     );
-    expect(text).toContain("**Live-state note for the operator**");
+  });
+
+  // A lens's whole output is its findings block, so a load-bearing live fact
+  // reaches the operator as a question in that block — no body line that
+  // nothing downstream carries.
+  // MUTATION: restore the "**Live-state note for the operator**" paragraph
+  // ("one line in the review body") in agents/pass-sec-infra.md — fails.
+  it("asks a load-bearing live fact as a P3 question in its findings block, never a review-body line", () => {
+    const para = text.slice(text.indexOf("**Live state, asked as a question**"));
+    expect(text).toContain("**Live state, asked as a question**");
+    expect(para).toContain("`P3`, `kind: security:live-state`");
+    expect(para).toContain("`confidence` 0.6 or less");
+    expect(text).not.toContain("in the review body");
+    expect(text).not.toMatch(/Live-state note/);
+  });
+
+  // sshd password auth is authenticated: it is never the auth-off P0 case.
+  // MUTATION: restore "sshd password or root login. Keys-only sshd is
+  // remote-auth." in agents/pass-sec-infra.md — fails.
+  it("counts only an empty or default sshd password as auth off; password or root login is remote-auth", () => {
+    expect(text).toContain("`PermitEmptyPasswords yes` or a default or baked-in password");
+    expect(text).toContain("auth or `PermitRootLogin yes` on a public listener is remote-auth");
+    expect(text).toContain("`PermitRootLogin prohibit-password` included, is\nintended exposure");
+    expect(text).not.toContain("sshd password or root login");
   });
 
   // `gains:` means authority gained across the family; an audit sink's
