@@ -262,6 +262,39 @@ describe("a request is new evidence, served once", () => {
     expect(store.getPr(42)?.state).toBe("tracked");
   });
 
+  // MUTATION: drop the bot-authored check from interpretIssueComment's
+  // security branch — this fails: an untracked Dependabot PR is promised a
+  // round, and the request is recorded.
+  it("a maintainer's command on a bot-authored PR is refused before any record or reply", async () => {
+    const store = new StateStore(":memory:");
+    const ack = vi.fn();
+    const touched = vi.fn();
+    const payload = commentPayload(`${MENTION} security`, "OWNER");
+    const i = interpretEvent(
+      "issue_comment",
+      "created",
+      {
+        ...payload,
+        issue: { ...payload.issue, user: { login: "dependabot[bot]", type: "Bot" } },
+      },
+      interpretDeps(),
+    );
+    expect(i).toMatchObject({ kind: "ignored", reason: "security request on a bot-authored PR" });
+    await applyInterpretation({ cfg, store, onSecurityAck: ack, onPrTouched: touched }, i);
+    expect(ack).not.toHaveBeenCalled();
+    expect(touched).not.toHaveBeenCalled();
+    expect(store.reviewRequest(42, "security")).toBeUndefined();
+    // The control: the same command on a person's PR is a request.
+    expect(
+      interpretEvent(
+        "issue_comment",
+        "created",
+        { ...payload, issue: { ...payload.issue, user: { login: "dana-op", type: "User" } } },
+        interpretDeps(),
+      ),
+    ).toMatchObject({ kind: "security_requested" });
+  });
+
   it("a label is not acknowledged, and adopts an untracked PR from its payload", async () => {
     const store = new StateStore(":memory:");
     const ack = vi.fn();

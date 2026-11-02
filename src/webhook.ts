@@ -419,6 +419,12 @@ function interpretIssueComment(
     if (!command.ok) return { kind: "ignored", reason: command.reason, pr };
     if (!Number.isSafeInteger(comment.id) || comment.id <= 0)
       return { kind: "ignored", reason: "security command without a comment id", pr };
+    // A bot-authored PR is never reviewed (the pull_request route drops it
+    // too): refused here, before anything is recorded or acknowledged, since
+    // a PR this daemon does not track would otherwise be promised a round
+    // the reconcile pass then withdraws.
+    if (isBotUser(issue.user, deps.botLogin))
+      return { kind: "ignored", reason: "security request on a bot-authored PR", pr };
     return {
       kind: "security_requested",
       pr,
