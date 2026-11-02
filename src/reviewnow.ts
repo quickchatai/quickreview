@@ -11,8 +11,15 @@
 // The PR is read from GitHub first (one GET), so a closed or merged PR, or a
 // number that is not a PR of the reviewed repo, is refused with its reason
 // instead of being adopted into the state store.
+//
+// `--security` also records the operator's request for a security review
+// (src/securityrequest.ts): every round of the PR then plans the security
+// family, and the request is new evidence, so a PR already reviewed at its
+// head is reviewed again rather than skipped. A request that lands while a
+// round runs is served once that round settles.
 import type { PrRef } from "./github.js";
 import type { FileOutcome } from "./improvements.js";
+import { applySecurityRequest, type SecurityRequestOutcome } from "./securityrequest.js";
 import { applyEvent } from "./statemachine.js";
 import type { StateStore } from "./state.js";
 
@@ -28,7 +35,25 @@ export interface ReviewNowDeps {
   now?: () => Date;
 }
 
-export async function reviewNow(deps: ReviewNowDeps, pr: number): Promise<FileOutcome> {
+/** The login an operator request is recorded under. */
+export const OPERATOR_REQUESTER = "operator";
+
+/** What `--security` did, for the operator's receipt. */
+function securityOutcome(o: SecurityRequestOutcome): string {
+  if (!o.fresh)
+    return o.reason === "closed"
+      ? "security review not requested: closed"
+      : "security review already requested";
+  return o.served
+    ? "security review requested"
+    : "security review requested; it runs once the round in flight settles";
+}
+
+export async function reviewNow(
+  deps: ReviewNowDeps,
+  pr: number,
+  opts: { security?: boolean } = {},
+): Promise<FileOutcome> {
   let ref: PrRef;
   try {
     ref = await deps.getPr(pr);
@@ -49,6 +74,26 @@ export async function reviewNow(deps: ReviewNowDeps, pr: number): Promise<FileOu
   // rerun-round's unpark is — without it the new round could never start.
   if (deps.store.clearWorkerBreaker(pr))
     deps.store.logEvent("worker_unparked", pr, { by: "review-now" });
+  const meta = { title: ref.title, head_sha: ref.head_sha, author: ref.author };
+  let security: SecurityRequestOutcome | undefined;
+  if (opts.security) {
+    security = applySecurityRequest(
+      deps.store,
+      { pr, source: "operator", by: OPERATOR_REQUESTER },
+      {
+        meta,
+        ...(deps.botLogin ? { botLogin: deps.botLogin } : {}),
+        ...(deps.now ? { now: deps.now } : {}),
+      },
+    );
+    // Served: the request's own trigger queued the round. A bot-authored PR
+    // withdraws the request and falls through to the refusal below.
+    if (security.fresh && security.served) {
+      await deps.pump();
+      const state = deps.store.getPr(pr)?.state ?? "queued";
+      return { ok: true, pr, state, head_sha: ref.head_sha, outcome: securityOutcome(security) };
+    }
+  }
   const result = applyEvent(
     deps.store,
     pr,
@@ -72,5 +117,11 @@ export async function reviewNow(deps: ReviewNowDeps, pr: number): Promise<FileOu
     };
   await deps.pump();
   const state = deps.store.getPr(pr)?.state ?? result.to;
-  return { ok: true, pr, state, head_sha: ref.head_sha };
+  return {
+    ok: true,
+    pr,
+    state,
+    head_sha: ref.head_sha,
+    ...(security ? { outcome: securityOutcome(security) } : {}),
+  };
 }

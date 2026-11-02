@@ -110,6 +110,23 @@ import type {
 } from "@quickchatai/pi-quickreview/src/types.js";
 import { preparePriorFindings } from "@quickchatai/pi-quickreview/src/priorfindings.js";
 import { type PrOwnedDelta, prWorktreeRel } from "./worktrees.js";
+import { SECURITY_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
+import { SECURITY_DEFAULTS } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import {
+  computeSecurityFacts,
+  type SecurityFact,
+} from "@quickchatai/pi-quickreview/src/secfacts.js";
+import { resolveThreatModel } from "@quickchatai/pi-quickreview/src/threatmodel.js";
+import type { PlanSecurityInputs } from "@quickchatai/pi-quickreview/src/planner.js";
+import {
+  partialChainLeads,
+  PRIOR_PARTIAL_CHAINS_MAX,
+  readRepoThreatModel,
+  resolveSecurityRequest,
+  SECURITY_REQUEST_KIND,
+  securityFactsAt,
+  type RepoGitReader,
+} from "./securityrequest.js";
 
 /** The slice of GitHubAdapter dispatch needs — all mutations are gated inside
  * the adapter, so this module never touches GitHub directly. */
@@ -119,7 +136,7 @@ export interface DispatchAdapter {
   /** Read-only; dispatch needs `base_ref` to keep the base branch fresh, and
    * `body` as pass-intent's artifact + substance-bar input. Absent body ⇒ the
    * intent lens is never selected. */
-  getPr(n: number): Promise<{ base_ref: string; body?: string }>;
+  getPr(n: number): Promise<{ base_ref: string; body?: string; labels?: string[] }>;
   addLabel(n: number, label: string): Promise<GateResult>;
   removeLabel(n: number, label: string): Promise<GateResult>;
   deleteTeamReviewRequest(n: number): Promise<GateResult>;
@@ -205,6 +222,18 @@ export interface DispatchDeps {
    * is skipped and logged, never fatal.
    */
   listBaseMigrations?: (baseSha: string) => Promise<string[]>;
+  /**
+   * Read-only git over the reviewed repository's commits
+   * (src/securityrequest.ts `gitRepoReader` over the base clone): the
+   * repository's threat model at the base commit and the security facts'
+   * reads. Absent (stub-wired core, unit tests without git) ⇒ no repository
+   * threat model, and only the facts' two diff-only checks run.
+   */
+  securityGit?: RepoGitReader;
+  /** The selected profile's threat model text (`loadProfileThreatModel`),
+   * read once at assembly. The repository's own wins over it. Absent or
+   * null ⇒ none. */
+  profileThreatModel?: string | null;
   /**
    * The most recent human author of `paths` in the history reachable from
    * `sha` (WorktreeManager.lastHumanAuthor). Read-only git in the
@@ -998,6 +1027,82 @@ export {
   type PrOwnedDeltaReader,
 } from "@quickchatai/pi-quickreview/src/planner.js";
 
+/** The most a round waits on the security facts' repository reads; past it
+ * the facts are the diff-only checks, the rest `unknown`. The reads sit in
+ * the one serialized dispatch pump, so they are bounded like the integrity
+ * baseline. */
+export const SECURITY_FACTS_BUDGET_MS = 15_000;
+
+/**
+ * A round's security inputs (src/securityrequest.ts). The request is the
+ * PR's recorded one or its label, as `resolveSecurityRequest` reads them.
+ * When no security-family lens can run at all (every one switched off),
+ * nothing is read from the repository. Otherwise: the repository's threat
+ * model at the base commit, else the profile's, else none; the facts, bounded
+ * by `SECURITY_FACTS_BUDGET_MS`; and earlier rounds' partial chains. Total —
+ * a failed read is no threat model and `unknown` facts, never a failed round.
+ */
+async function securityInputsFor(
+  deps: DispatchDeps,
+  pr: number,
+  files: PrFileEntry[],
+  tree: PreparedTree | undefined,
+  labels: string[] | null,
+): Promise<{
+  securityRequest?: PlanSecurityInputs["securityRequest"];
+  threatModel: NonNullable<PlanSecurityInputs["threatModel"]> | null;
+  securityFacts: SecurityFact[];
+  priorPartialChains: string[];
+}> {
+  const { cfg, store } = deps;
+  const log = deps.log ?? (() => {});
+  const security = cfg.security ?? SECURITY_DEFAULTS;
+  const securityRequest = resolveSecurityRequest({
+    row: store.reviewRequest(pr, SECURITY_REQUEST_KIND),
+    labels,
+    label: security.label,
+  });
+  const request = securityRequest ? { securityRequest } : {};
+  if (!SECURITY_FAMILY.some((lens) => lensEnabled(cfg.lenses, lens)))
+    return { ...request, threatModel: null, securityFacts: [], priorPartialChains: [] };
+  let repoThreatModel: string | null = null;
+  try {
+    repoThreatModel = await readRepoThreatModel(deps.securityGit, tree?.base_sha ?? "");
+  } catch (err) {
+    log(`dispatch: #${pr} repository threat model unreadable`, err);
+  }
+  const threatModel = resolveThreatModel({
+    readRepo: () => repoThreatModel,
+    readProfile: () => deps.profileThreatModel ?? null,
+  });
+  let securityFacts: SecurityFact[];
+  try {
+    const bounded = await withinBudget(
+      securityFactsAt(files, deps.securityGit, {
+        head: tree?.head_sha ?? "",
+        base: tree?.base_sha ?? "",
+      }),
+      SECURITY_FACTS_BUDGET_MS,
+    );
+    if (bounded.kind === "done") securityFacts = bounded.value;
+    else {
+      log(`dispatch: #${pr} security facts past ${SECURITY_FACTS_BUDGET_MS} ms — diff-only`);
+      store.logEvent("security_facts_degraded", pr, {
+        reason: "budget",
+        budget_ms: SECURITY_FACTS_BUDGET_MS,
+      });
+      securityFacts = computeSecurityFacts(files, null);
+    }
+  } catch (err) {
+    log(`dispatch: #${pr} security facts failed — diff-only`, err);
+    securityFacts = computeSecurityFacts(files, null);
+  }
+  const priorPartialChains = partialChainLeads(
+    store.partialChainFindings(pr, PRIOR_PARTIAL_CHAINS_MAX),
+  );
+  return { ...request, threatModel, securityFacts, priorPartialChains };
+}
+
 /** What the round row records of a plan — the same projection on the
  * normal path and on the patch-write fallback, so the stored round and the
  * order always describe one plan. A follow-up round's optional rows ride
@@ -1157,7 +1262,11 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // standing REQUEST_CHANGES. Guard 2 keys on head + author reply and
       // nothing else, so THAT is the test here — provenance (a label, a team
       // re-request, a reconcile re-derivation) is a scheduling signal and
-      // never widens the posting boundary. If the standing verdict cannot be
+      // never widens the posting boundary. The one request that is evidence
+      // is an explicit maintainer's or operator's request for a security
+      // review (src/securityrequest.ts): serving it stamps the mark's reply
+      // stamp once (`noteNewEvidence`), so the round it queues runs at an
+      // already-reviewed head, and guard 2 reads the same stamp. If the standing verdict cannot be
       // read off the mark (a COMMENT-only row), no round runs either — guard
       // 2 would still refuse it — but nothing is guessed: the PR lands in
       // `tracked` with a precise anomaly instead of an invented verdict.
@@ -1348,10 +1457,14 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // failed round.
       let baseRef = "";
       let prBody: string | undefined;
+      // The PR's labels as GitHub has them this round (a label request for a
+      // security review stands while its label does); null when unread.
+      let labels: string[] | null = null;
       try {
         const ref = await deps.adapter.getPr(row.number);
         baseRef = ref.base_ref;
         prBody = ref.body;
+        labels = Array.isArray(ref.labels) ? ref.labels : null;
       } catch (err) {
         log(`dispatch: base ref lookup failed on #${row.number}`, err);
       }
@@ -1390,9 +1503,20 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       const ciLinters = lensEnabled(cfg.lenses, LINT_CONFORMANCE_PASS, cfg.review.lint_conformance)
         ? findCiLinters(resolve(sandboxRoot(), worktreeFor(row.number)))
         : [];
+      // What the security family reads beyond the files: a maintainer's or
+      // the operator's request, the threat model, the deterministic facts and
+      // earlier rounds' partial chains. Read once, before the plan, and
+      // handed to the plan, the follow-up decision and the order alike.
+      const sec = await securityInputsFor(deps, row.number, files, tree, labels);
+      const planSecurity: PlanSecurityInputs = {
+        ...(sec.securityRequest ? { securityRequest: sec.securityRequest } : {}),
+        threatModel: sec.threatModel,
+        securityFacts: sec.securityFacts,
+      };
       // The plan is pure and deterministic in `files` + the PR body + the
-      // style guide + the linters: built ONCE here and handed to
-      // buildRoundOrder, so the round row and the order never disagree.
+      // style guide + the linters + the security inputs: built ONCE here and
+      // handed to buildRoundOrder, so the round row and the order never
+      // disagree.
       const fullPlan = buildPassPlan(
         cfg,
         files,
@@ -1401,6 +1525,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         deps.heuristics,
         styleGuide,
         ciLinters,
+        planSecurity,
       );
       // Follow-up rounds (docs/follow-up-rounds.md): every round after the
       // first reviews the PR-owned change since the last reviewed head — or,
@@ -1431,6 +1556,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
             ecosystem: eco,
             styleGuide,
             ciLinters,
+            ...planSecurity,
           },
         );
         if (decided.kind === "delta") followUp = decided.decision;
@@ -1809,6 +1935,10 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         // The host's lens tools, so the prompt and the task files name the ones its
         // sessions have (rule 9: `lens` / `lens_wave` on workers).
         ...(deps.hooks.lensRuntime ? { lensRuntime: deps.hooks.lensRuntime } : {}),
+        ...planSecurity,
+        ...(sec.priorPartialChains.length > 0
+          ? { priorPartialChains: sec.priorPartialChains }
+          : {}),
       });
       store.stampPostingKey(roundId, built.posting_key!);
       // The round row already holds the order's plan: the style guide and the

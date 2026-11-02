@@ -38,6 +38,12 @@ import type { OpenPrSummary, RoundRow, StateStore } from "./state.js";
 import type { OvSessionSweepReport, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { performance } from "node:perf_hooks";
 import { yieldToLoop } from "@quickchatai/pi-quickreview/src/yieldloop.js";
+import { SECURITY_DEFAULTS } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import {
+  applySecurityRequest,
+  securityCommandDecision,
+  sweepSecurityRequests,
+} from "./securityrequest.js";
 
 export interface ReconcileSearchItem {
   number: number;
@@ -118,6 +124,10 @@ export interface ReconcileDeps {
    * as its own bounded step after it. Absent ⇒ no outcome capture. Its
    * failures are its own and never reach `errors`. */
   outcomes?: Pick<OutcomeCapture, "observeBotComments" | "sweep">;
+  /** Acknowledge a fresh `@<bot> security` request the comment sweep found
+   * (its webhook was missed, or the install polls) — the daemon posts it
+   * through the gate, as the webhook route does. Absent ⇒ no reply. */
+  ackSecurityRequest?: (pr: number, by: string) => Promise<unknown> | void;
   /** The undelivered-recheck sweep. `false` skips it for this pass — the
    * daemon's boot pass, whose health lifts a deploy drain and which must not
    * wait on reading session transcripts. */
@@ -295,7 +305,11 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
   // ---- 1. open-PR truth ---------------------------------------------------
   const open = new Map<number, PrRef>();
   let openListed = false;
+  // When the list was asked for: a request recorded after it is not judged
+  // by a list that could not hold its PR (the security-request sweep).
+  let listedAt = "";
   await step("listOpenPrs", async () => {
+    listedAt = now().toISOString();
     for (const pr of await adapter.listOpenPrs()) open.set(pr.number, pr);
     openListed = true;
     report.open_prs = open.size;
@@ -850,7 +864,11 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
   // It captures ONLY: nothing here routes, wakes a session, stamps a mark or
   // feeds the [feedback] engine. A tagged comment picked up here gets the tag
   // recorded and nothing else — the same-day addendum stays tag-gated on the
-  // webhook's feedback path, where a human is in the loop.
+  // webhook's feedback path, where a human is in the loop. The one exception
+  // is the `@<bot> security` command (src/securityrequest.ts), the polling
+  // route of a maintainer's request: a top-level comment captured here for the
+  // first time — so the webhook never saw it — is applied as the webhook
+  // would, with the same grammar and the same author_association check.
   if (
     deps.captureComments !== false &&
     adapter.listReviewCommentsFull &&
@@ -906,11 +924,13 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
           a.updated_at < b.updated_at ? 1 : a.updated_at > b.updated_at ? -1 : a.number - b.number,
         )
         .slice(0, COMMENT_SWEEP_MAX_PRS);
+      const security = cfg.security ?? SECURITY_DEFAULTS;
       for (const local of candidates) {
         const n = local.number;
         let rows: CapturedComment[];
         let reviewsFetched: ReviewFull[] = [];
         let inlineFetched: ReviewCommentFull[] = [];
+        let topFetched: IssueCommentFull[] = [];
         try {
           const [inline, top, reviews] = await Promise.all([
             adapter.listReviewCommentsFull!(n),
@@ -919,6 +939,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
           ]);
           reviewsFetched = reviews;
           inlineFetched = inline;
+          topFetched = top;
           rows = [
             ...inline.map((c) => capturedFromReviewComment(n, c)),
             ...top.map((c) => capturedFromIssueComment(n, c)),
@@ -938,11 +959,52 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
             (deps.log ?? (() => {}))(`reconcile: outcome facts #${n} failed`, err);
           }
         }
+        const freshTop = new Set<number>();
         for (const c of rows) {
           if (!isHumanCapture(c, botLogin)) continue;
           // Person mode: the reviewer's own words under the person's login.
           if (isOwnContent(cfg.github, c.author, c.body)) continue;
-          if (recordCapturedComment(store, c, "reconcile")) report.captured_comments++;
+          if (recordCapturedComment(store, c, "reconcile")) {
+            report.captured_comments++;
+            if (c.source === "issue_comment") freshTop.add(c.comment_id);
+          }
+        }
+        for (const c of topFetched) {
+          if (!freshTop.has(c.id)) continue;
+          const decision = securityCommandDecision(c, {
+            botLogin: cfg.github.bot_login,
+            command: security.command,
+          });
+          if (decision === null) continue;
+          if (!decision.ok) {
+            store.logEvent("review_request_ignored", n, {
+              kind: "security",
+              source: "comment",
+              comment_id: c.id,
+              by: c.user,
+              reason: decision.reason,
+            });
+            continue;
+          }
+          const ref = open.get(n);
+          const outcome = applySecurityRequest(
+            store,
+            { pr: n, source: "comment", by: c.user, comment_id: c.id },
+            {
+              botLogin,
+              now,
+              ...(ref
+                ? { meta: { title: ref.title, head_sha: ref.head_sha, author: ref.author } }
+                : {}),
+            },
+          );
+          if (outcome.fresh && deps.ackSecurityRequest) {
+            try {
+              await deps.ackSecurityRequest(n, c.user);
+            } catch (err) {
+              report.errors.push(`security-ack #${n}: ${String(err)}`);
+            }
+          }
         }
         // ---- the exec boundary's OUTCOME layer ------------------------------
         // The bot's OWN reviews, which `isHumanCapture` discards above, are the
@@ -1003,6 +1065,26 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       }
     });
   }
+
+  // ---- security requests -------------------------------------------------------
+  // GitHub wins over the request rows (src/securityrequest.ts): a label
+  // request whose label came off is withdrawn, a closed PR's requests go,
+  // and a request that waited for a running round is served once that round
+  // has settled — new evidence at the head it reviewed, and the PR queued.
+  await step("security-requests", async () => {
+    const security = cfg.security ?? SECURITY_DEFAULTS;
+    const swept = sweepSecurityRequests(store, {
+      open: openListed ? open : null,
+      listedAt,
+      label: security.label,
+      botLogin,
+      now,
+    });
+    if (swept.served.length > 0 || swept.cleared.length > 0)
+      (deps.log ?? (() => {}))(
+        `reconcile: security requests served ${JSON.stringify(swept.served)} cleared ${JSON.stringify(swept.cleared)}`,
+      );
+  });
 
   // ---- outcome capture -------------------------------------------------------
   // What became of every posted finding: link each bot comment to its finding,

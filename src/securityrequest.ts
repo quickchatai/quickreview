@@ -1,0 +1,418 @@
+// On-demand security review: a maintainer's PR label or `@<bot> security`
+// comment, or the operator's `qcr review-now <pr> --security`.
+//
+// A request is one row in `pr_review_requests` (kind `security`). While it
+// stands, every round of the PR plans the whole security family
+// (packages/pi-plugin/src/planner.ts, `PlanSecurityInputs.securityRequest`); a
+// request never plans a lens the profile switched off or skipped. It is
+// served once: the reviewed-head mark is stamped with new evidence
+// (`noteNewEvidence`) and the PR is triggered, so a PR already reviewed at its
+// head is reviewed again rather than skipped by guard 2. An explicit
+// maintainer request is new evidence; nothing else about it widens the posting
+// boundary. A request that lands while a round runs waits for that round to
+// settle — the round was planned without it, and its verdict re-stamps the
+// mark — and the reconcile pass serves it then (`sweepSecurityRequests`).
+//
+// Who may ask: a label needs triage rights on GitHub already; a comment is
+// accepted only from an OWNER, MEMBER or COLLABORATOR (`author_association`),
+// and only while `[security] command` is on. Anything else is ignored with a
+// logged reason and no reply. The one reply is the acknowledgement of a fresh
+// comment request, posted through the gate's `create_issue_comment` (so
+// dry-run suppresses it).
+//
+// This module also holds the daemon's read-only git reader for what the
+// security rows read from the repository: the threat model at the BASE commit
+// (`.qcr/threat-model.md`) and the deterministic security facts
+// (packages/pi-plugin/src/secfacts.ts). Reads are `git ls-tree` and `git
+// cat-file` in the base clone with the daemon's git pins; nothing is checked
+// out, rendered or executed (docs/exec-boundary.md).
+import type { ExecFn } from "@quickchatai/pi-quickreview/src/execfn.js";
+import {
+  computeSecurityFacts,
+  SECURITY_FACTS_MAX_FILES,
+  type SecurityFact,
+  type SecurityFactsIo,
+} from "@quickchatai/pi-quickreview/src/secfacts.js";
+import { REPO_THREAT_MODEL_PATH } from "@quickchatai/pi-quickreview/src/threatmodel.js";
+import { promptQuoted } from "@quickchatai/pi-quickreview/src/codespan.js";
+import type { SecurityRequest } from "@quickchatai/pi-quickreview/src/types.js";
+import type { PrFileEntry } from "./github.js";
+import type { ReviewRequestRow, StateStore } from "./state.js";
+import { applyEvent, type PrMeta } from "./statemachine.js";
+import type { RoundFindingRow } from "@quickchatai/pi-quickreview/src/storerows.js";
+
+/** The `pr_review_requests` kind a security request is recorded under. */
+export const SECURITY_REQUEST_KIND = "security";
+
+/** The `author_association` values whose `@<bot> security` is accepted. */
+export const SECURITY_REQUEST_ASSOCIATIONS: ReadonlySet<string> = new Set([
+  "OWNER",
+  "MEMBER",
+  "COLLABORATOR",
+]);
+
+/** The hidden marker on the acknowledgement, so it reads as the reviewer's
+ * own content (packages/pi-plugin/src/identity.ts) on every route. */
+export const SECURITY_ACK_MARKER = "<!-- qcr-security-request -->";
+
+// ---- the comment grammar ---------------------------------------------------
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Whether a comment body is the security command: its first line is
+ * `@<bot> security` or `@<bot> security review`, case-insensitive, where
+ * `<bot>` is the bot login without its `[bot]` suffix. Anything after the
+ * first line is free text. False for an empty login.
+ */
+export function isSecurityCommand(body: unknown, botLogin: string): boolean {
+  if (typeof body !== "string") return false;
+  const mention = botLogin.replace(/\[bot\]$/i, "").trim();
+  if (mention === "") return false;
+  const first = (body.replace(/^﻿/, "").split(/\r?\n/, 1)[0] ?? "").trim();
+  return new RegExp(`^@${escapeRegExp(mention)}\\s+security(?:\\s+review)?\\s*$`, "i").test(first);
+}
+
+/**
+ * Decide a comment that may be the security command. Null when it is not the
+ * command at all (route it as any other comment); otherwise accepted, or
+ * refused with the reason the event log records — the command switched off
+ * (`[security] command = false`), or an author who is not an owner, member or
+ * collaborator of the repository.
+ */
+export function securityCommandDecision(
+  comment: { body: unknown; author_association?: unknown },
+  opts: { botLogin: string; command: boolean },
+): null | { ok: true } | { ok: false; reason: string } {
+  if (!isSecurityCommand(comment.body, opts.botLogin)) return null;
+  if (!opts.command) return { ok: false, reason: "security command is off ([security] command)" };
+  const association =
+    typeof comment.author_association === "string" ? comment.author_association : "";
+  if (!SECURITY_REQUEST_ASSOCIATIONS.has(association))
+    return {
+      ok: false,
+      reason: `security command from a non-collaborator (author_association ${association || "unknown"})`,
+    };
+  return { ok: true };
+}
+
+/** The acknowledgement of a fresh comment request. */
+export function securityAckBody(by: string): string {
+  const who = by ? ` (asked by @${by})` : "";
+  return `Security review requested${who}. The next review round of this pull request runs the security lenses.\n\n${SECURITY_ACK_MARKER}`;
+}
+
+// ---- applying and serving a request ----------------------------------------
+
+export interface SecurityRequestInput {
+  pr: number;
+  source: ReviewRequestRow["source"];
+  /** The login that asked; "" when it is not known. */
+  by: string;
+  comment_id?: number;
+}
+
+export type SecurityRequestOutcome =
+  /** A request already stands for the PR, or the PR is closed: nothing was
+   * written and nothing is queued. */
+  | { fresh: false; reason: "already-requested" | "closed" }
+  /** The request was recorded. `served`: it reached the queue now; false
+   * while a running round settles first, or for a PR this daemon does not
+   * track yet (the reconcile pass adopts it from its open list). */
+  | { fresh: true; served: boolean };
+
+/**
+ * Record a security request and serve it when it can be served now. One
+ * transaction: the row, the evidence note and the trigger commit together.
+ */
+export function applySecurityRequest(
+  store: StateStore,
+  req: SecurityRequestInput,
+  opts: { meta?: PrMeta; botLogin?: string; now?: () => Date } = {},
+): SecurityRequestOutcome {
+  return store.db.transaction((): SecurityRequestOutcome => {
+    if (store.getPr(req.pr)?.state === "closed") {
+      store.logEvent("review_request_ignored", req.pr, {
+        kind: SECURITY_REQUEST_KIND,
+        source: req.source,
+        by: req.by,
+        reason: "pr-closed",
+      });
+      return { fresh: false, reason: "closed" };
+    }
+    const fresh = store.recordReviewRequest({
+      pr: req.pr,
+      kind: SECURITY_REQUEST_KIND,
+      source: req.source,
+      requested_by: req.by,
+      ...(req.comment_id !== undefined ? { comment_id: req.comment_id } : {}),
+    });
+    if (!fresh) return { fresh: false, reason: "already-requested" };
+    return { fresh: true, served: serveSecurityRequest(store, req.pr, opts) };
+  })();
+}
+
+/**
+ * Hand a waiting request to the queue: note new evidence at the reviewed
+ * head (once — the row is stamped served in the same transaction) and
+ * trigger the PR, the same `trigger`/`manual` event `qcr review-now` uses.
+ * False — and nothing written — while a round runs, for a closed PR, for a PR
+ * not tracked here with no head to adopt it at, or for a request already
+ * served. A bot-authored PR is never reviewed: its request is withdrawn.
+ */
+export function serveSecurityRequest(
+  store: StateStore,
+  pr: number,
+  opts: { meta?: PrMeta; botLogin?: string; now?: () => Date } = {},
+): boolean {
+  return store.db.transaction((): boolean => {
+    const req = store.reviewRequest(pr, SECURITY_REQUEST_KIND);
+    if (!req || req.served_at !== null) return false;
+    const row = store.getPr(pr);
+    if (row?.state === "reviewing" || row?.state === "closed") return false;
+    if (!row && !opts.meta?.head_sha) return false;
+    const now = opts.now ?? (() => new Date());
+    const result = applyEvent(store, pr, { type: "trigger", source: "manual" }, opts.meta ?? {}, {
+      ...(opts.botLogin !== undefined ? { botLogin: opts.botLogin } : {}),
+      now,
+      reason: `security-request:${req.source}`,
+    });
+    if (result.skipped) {
+      store.clearReviewRequests(pr, "bot-author", SECURITY_REQUEST_KIND);
+      return false;
+    }
+    store.noteNewEvidence(pr, now().toISOString());
+    store.markReviewRequestServed(pr, SECURITY_REQUEST_KIND);
+    return true;
+  })();
+}
+
+/**
+ * The reconcile pass's half (GitHub wins): withdraw a label request whose
+ * label is no longer on the PR, drop every request of a PR that closed or is
+ * not open any more, and serve each waiting request whose PR has no round
+ * running — adopting a PR this daemon does not track from the open list.
+ *
+ * `open` is the open-PR list this pass read, or null when it failed (then
+ * nothing is withdrawn or dropped, and only tracked PRs are served).
+ * `listedAt` is when it was read: a request recorded after it is not judged
+ * by a list that could not have held its PR.
+ */
+export function sweepSecurityRequests(
+  store: StateStore,
+  a: {
+    open: ReadonlyMap<
+      number,
+      { title: string; head_sha: string; author: string; labels: readonly string[] }
+    > | null;
+    listedAt: string;
+    label: string;
+    botLogin?: string;
+    now?: () => Date;
+  },
+): { served: number[]; cleared: number[] } {
+  const served: number[] = [];
+  const cleared: number[] = [];
+  for (const pr of store.reviewRequestPrs()) {
+    const req = store.reviewRequest(pr, SECURITY_REQUEST_KIND);
+    const listed = req !== undefined && req.requested_at <= a.listedAt;
+    if (store.getPr(pr)?.state === "closed" || (a.open !== null && listed && !a.open.has(pr))) {
+      if (store.clearReviewRequests(pr, "pr-closed")) cleared.push(pr);
+      continue;
+    }
+    const ref = a.open?.get(pr);
+    if (
+      req?.source === "label" &&
+      listed &&
+      ref !== undefined &&
+      (a.label === "" || !ref.labels.includes(a.label))
+    ) {
+      if (store.clearReviewRequests(pr, "label-removed", SECURITY_REQUEST_KIND)) cleared.push(pr);
+    }
+  }
+  for (const req of store.unservedReviewRequests()) {
+    if (req.kind !== SECURITY_REQUEST_KIND) continue;
+    const ref = a.open?.get(req.pr);
+    if (
+      serveSecurityRequest(store, req.pr, {
+        ...(ref ? { meta: { title: ref.title, head_sha: ref.head_sha, author: ref.author } } : {}),
+        ...(a.botLogin !== undefined ? { botLogin: a.botLogin } : {}),
+        ...(a.now ? { now: a.now } : {}),
+      })
+    )
+      served.push(req.pr);
+  }
+  return { served, cleared };
+}
+
+/**
+ * The request a round of this PR plans with, or none. A comment or operator
+ * request stands until the PR closes. A label request stands while the label
+ * is on the PR: `labels` is what GitHub said this round (null when the read
+ * failed — then the recorded request stands). A configured label on the PR
+ * with no row (its webhook was missed, or the install polls) is a request
+ * whose asker is not known.
+ */
+export function resolveSecurityRequest(a: {
+  row: ReviewRequestRow | undefined;
+  labels: readonly string[] | null;
+  label: string;
+}): SecurityRequest | undefined {
+  const labelled = a.label !== "" && a.labels !== null && a.labels.includes(a.label);
+  if (a.row && (a.row.source !== "label" || a.labels === null || labelled))
+    return { by: a.row.requested_by, source: a.row.source };
+  if (labelled) return { by: "", source: "label" };
+  return undefined;
+}
+
+// ---- earlier rounds' partial chains -----------------------------------------
+
+/** The most partial chains a `delta` row is handed. */
+export const PRIOR_PARTIAL_CHAINS_MAX = 10;
+const PARTIAL_CHAIN_LINE_MAX = 300;
+
+/**
+ * Earlier rounds' `partial-chain` records as one line each — where, and what
+ * the record says — for the chain's `delta` row (`RoundOrder.prior_partial_chains`).
+ * Each line is flattened (no line break can start a new instruction) and
+ * capped; the task renders them under an UNCONFIRMED heading.
+ */
+export function partialChainLeads(rows: readonly RoundFindingRow[]): string[] {
+  return rows.slice(0, PRIOR_PARTIAL_CHAINS_MAX).map((r) => {
+    const where = r.path ? `${r.path}${r.line ? `:${r.line}` : ""}` : "(no anchor)";
+    const what = r.title ?? r.reason ?? r.finding_key;
+    const line = promptQuoted(`round ${r.round_no}: ${where} — ${what}`);
+    return line.length > PARTIAL_CHAIN_LINE_MAX
+      ? `${line.slice(0, PARTIAL_CHAIN_LINE_MAX - 1)}…`
+      : line;
+  });
+}
+
+// ---- the repository reads ---------------------------------------------------
+
+/** Read-only access to the reviewed repository's committed files. */
+export interface RepoGitReader {
+  /** Every regular file at `sha`, with its size in bytes; null when the
+   * listing failed. */
+  listFiles(sha: string): Promise<ReadonlyArray<{ path: string; size: number }> | null>;
+  /** A file's text at `sha`; null when it is absent, not a regular file,
+   * over `maxBytes`, or unreadable. */
+  readFile(sha: string, path: string, maxBytes?: number): Promise<string | null>;
+}
+
+const SHA_RE = /^[0-9a-f]{7,64}$/i;
+/** The largest file a fact check or the threat model reads. */
+export const REPO_READ_MAX_BYTES = 1024 * 1024;
+/** The largest threat model read — what the repo-profile extraction caps a
+ * `.qcr/` file at; the parser cuts the text it keeps further. */
+export const THREAT_MODEL_READ_MAX_BYTES = 256 * 1024;
+
+/**
+ * The reader over a git directory (the daemon's base clone): `git ls-tree`
+ * and `git cat-file` only, through `exec` (the daemon passes
+ * `pinnedGitExec`, which carries its git pins). A sha that is not a sha, or
+ * a path that could be read as an option or names no file, reads as null.
+ */
+export function gitRepoReader(exec: ExecFn, gitDir: string): RepoGitReader {
+  const git = (args: string[]) => exec("git", args, { cwd: gitDir, timeoutMs: 30_000 });
+  return {
+    async listFiles(sha) {
+      if (!SHA_RE.test(sha)) return null;
+      try {
+        const res = await git(["ls-tree", "-r", "-z", "--long", sha]);
+        if (res.code !== 0) return null;
+        const out: Array<{ path: string; size: number }> = [];
+        for (const entry of res.stdout.split("\0")) {
+          const tab = entry.indexOf("\t");
+          if (tab < 0) continue;
+          const [mode, type, , size] = entry.slice(0, tab).split(/\s+/);
+          if (type !== "blob" || (mode !== "100644" && mode !== "100755")) continue;
+          out.push({ path: entry.slice(tab + 1), size: Number(size) });
+        }
+        return out;
+      } catch {
+        return null;
+      }
+    },
+    async readFile(sha, path, maxBytes = REPO_READ_MAX_BYTES) {
+      if (!SHA_RE.test(sha) || path === "" || path.includes("\0") || path.startsWith("/"))
+        return null;
+      const spec = `${sha}:${path}`;
+      try {
+        // A tree or a submodule has a size too; `cat-file blob` refuses it.
+        const size = await git(["cat-file", "-s", spec]);
+        if (size.code !== 0 || !(Number(size.stdout.trim()) <= maxBytes)) return null;
+        const blob = await git(["cat-file", "blob", spec]);
+        return blob.code === 0 ? blob.stdout : null;
+      } catch {
+        return null;
+      }
+    },
+  };
+}
+
+/** The repository's threat model at the base commit, or null. */
+export async function readRepoThreatModel(
+  reader: RepoGitReader | undefined,
+  baseSha: string,
+): Promise<string | null> {
+  if (!reader || !baseSha) return null;
+  return reader.readFile(baseSha, REPO_THREAT_MODEL_PATH, THREAT_MODEL_READ_MAX_BYTES);
+}
+
+/** How many times the facts are recomputed while their reads are fetched. */
+const FACT_PASSES = 4;
+/** The most files the facts read in all, over both commits. */
+export const FACT_READS_MAX = 4 * SECURITY_FACTS_MAX_FILES;
+const FACT_READ_CONCURRENCY = 8;
+
+/**
+ * The security facts with their repository reads served from git.
+ * `computeSecurityFacts` reads synchronously, so the facts are computed over a
+ * cache: each pass records the reads it missed, they are fetched, and the
+ * facts are computed again — until a pass misses nothing, or the passes or the
+ * read budget run out, when a read still missing answers null and its check
+ * says `unknown`, never `clear`. With no reader or no head, only the two
+ * diff-only checks run.
+ */
+export async function securityFactsAt(
+  files: PrFileEntry[],
+  reader: RepoGitReader | undefined,
+  shas: { head: string; base: string },
+): Promise<SecurityFact[]> {
+  if (!reader || !shas.head) return computeSecurityFacts(files, null);
+  const listing = await reader.listFiles(shas.head);
+  const headSizes = new Map((listing ?? []).map((f) => [f.path, f.size]));
+  const cache = new Map<string, string | null>();
+  let budget = FACT_READS_MAX;
+  let facts: SecurityFact[] = [];
+  for (let pass = 0; pass < FACT_PASSES; pass++) {
+    const missed = new Map<string, { sha: string; path: string }>();
+    const read = (side: "head" | "base", path: string): string | null => {
+      const key = `${side}\0${path}`;
+      if (cache.has(key)) return cache.get(key)!;
+      const sha = side === "head" ? shas.head : shas.base;
+      if (!sha) return null;
+      if (side === "head" && listing !== null && !headSizes.has(path)) return null;
+      missed.set(key, { sha, path });
+      return null;
+    };
+    const io: SecurityFactsIo = {
+      readHead: (p) => read("head", p),
+      readBase: (p) => read("base", p),
+      listHead: () => (listing === null ? null : listing.map((f) => f.path)),
+    };
+    facts = computeSecurityFacts(files, io);
+    if (missed.size === 0 || budget <= 0 || pass === FACT_PASSES - 1) break;
+    const todo = [...missed].slice(0, budget);
+    budget -= todo.length;
+    for (let i = 0; i < todo.length; i += FACT_READ_CONCURRENCY) {
+      const chunk = todo.slice(i, i + FACT_READ_CONCURRENCY);
+      const texts = await Promise.all(chunk.map(([, r]) => reader.readFile(r.sha, r.path)));
+      chunk.forEach(([key], j) => cache.set(key, texts[j] ?? null));
+    }
+  }
+  return facts;
+}

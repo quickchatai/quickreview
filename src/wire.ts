@@ -81,6 +81,7 @@ import {
   loadProfileAddenda,
   loadProfileEcosystem,
   loadProfileHeuristics,
+  loadProfileThreatModel,
 } from "@quickchatai/pi-quickreview/src/profiles.js";
 import { postingPolicyAddenda } from "@quickchatai/pi-quickreview/src/postingpolicy.js";
 import {
@@ -159,6 +160,8 @@ import type { RoundOrder, SessionHooks } from "@quickchatai/pi-quickreview/src/t
 import { versionInfo } from "./version.js";
 import { WebhookHealer } from "./webhookheal.js";
 import { buildWorkerWorld } from "./workerworld.js";
+import { pinnedGitExec } from "./worktrees.js";
+import { gitRepoReader } from "./securityrequest.js";
 
 export interface ProductionParts {
   cfg: Config;
@@ -927,6 +930,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // malformed heuristics.toml fails the assembly loudly (same contract as the
   // addenda pack below) and every dispatch selects with the same predicates.
   const profileHeuristics = loadProfileHeuristics(root, cfg.review.profile, homeProfileLookup());
+  // The profile's threat model, read once here for the same reason: an
+  // unreadable file fails the assembly loudly. The reviewed repository's own
+  // (`.qcr/threat-model.md` at each round's base) wins over it.
+  const profileThreatModel = loadProfileThreatModel(root, cfg.review.profile, homeProfileLookup());
 
   // The gate's loud line (app-self-config executions) goes to the
   // daemon log; the default console fallback covers any unwired gate.
@@ -1057,6 +1064,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     // Migration-number pre-check input: the base branch's migrations
     // at the sha the round pinned. Local git in the just-fetched base clone.
     listBaseMigrations: (baseSha) => sessions.worktrees.listMigrationFiles(baseSha),
+    // The security family's repository reads: the threat model at the base
+    // and the security facts — `git ls-tree` / `git cat-file` in the same
+    // base clone, with the daemon's git pins, nothing checked out or run.
+    securityGit: gitRepoReader(pinnedGitExec, sessions.worktrees.basePath),
+    profileThreatModel,
     // Escalation-mention pick: most recent human author of the
     // touched first-party directive files at the round's merge base, read from
     // the base clone; the daemon's own bot identity never qualifies.
@@ -1712,7 +1724,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         },
         // The operator's "review this PR now" (the onboarding proof round):
         // the label path's state-machine trigger, with no GitHub write to ask.
-        reviewNow(pr) {
+        reviewNow(pr, _file, opts) {
           return reviewNow(
             {
               store: d.store,
@@ -1723,6 +1735,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
               ...(isPersonMode(cfg.github) ? {} : { botLogin: cfg.github.bot_login }),
             },
             pr,
+            // `--security`: the operator's request for a security review.
+            opts?.security ? { security: true } : {},
           );
         },
         resolveTerminalFailure(payload) {
