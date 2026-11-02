@@ -367,6 +367,18 @@ describe("the posting policy's security rules", () => {
     });
   });
 
+  // The profile's own words state the blocker exemption the code makes, so
+  // "only security posts" is never read as stricter than it is.
+  // MUTATION: restore "nothing else posts." alone in profile.toml — this fails.
+  it("the security profile's README and profile.toml state the blocker exemption", () => {
+    const readme = readFileSync(join(ROOT, "profiles", "security", "README.md"), "utf8");
+    expect(readme).toMatch(
+      /Only security findings post[^\n]*\n[^\n]*exception: a surviving\s+`\[blocker\]` posts/,
+    );
+    const toml = readFileSync(join(ROOT, "profiles", "security", "profile.toml"), "utf8");
+    expect(toml).toMatch(/nothing else posts but a\n#\s+surviving \[blocker\]/);
+  });
+
   // MUTATION: let security items count toward max_comments (budget them with
   // the rest) — the non-security question loses its slot; fails.
   it("security_max is the security findings' own budget, apart from max_comments", () => {
