@@ -293,10 +293,16 @@ const deltaFile = (f: PrFileEntry): PrOwnedDeltaFile => ({
 
 /** A follow-up round over a PR of `files` (each padded to 200 lines, so the
  * small delta stays under the ratio) whose fix push is `delta`. */
-function followUp(cfg: Config, files: PrFileEntry[], delta: PrFileEntry[]) {
+function followUp(
+  cfg: Config,
+  files: PrFileEntry[],
+  delta: PrFileEntry[],
+  sec: PlanSecurityInputs = {},
+) {
   const whole = files.map((f) => ({ ...f, additions: 200 }));
   const dfiles = delta.map(deltaFile);
   return planFollowUp(cfg, undefined, {
+    ...sec,
     delta: {
       ok: true,
       tree: "t".repeat(40),
@@ -306,7 +312,7 @@ function followUp(cfg: Config, files: PrFileEntry[], delta: PrFileEntry[]) {
     },
     fromSha: "a".repeat(40),
     files: whole,
-    fullPlan: plan(cfg, whole),
+    fullPlan: plan(cfg, whole, sec),
     ecosystem: DJANGO_ECOSYSTEM,
     styleGuide: [],
     ciLinters: [],
@@ -329,6 +335,29 @@ describe("a follow-up round's anchor", () => {
     if (some.kind !== "delta") return;
     expect(rows(some.decision.plan, "pass-baseline")).toEqual([]);
     expect(familyRows(some.decision.plan).length).toBeGreaterThan(0);
+  });
+
+  /**
+   * MUTATION: drop the docs-only carry in planFollowUp — this fails: the
+   * README push answers `anchor-unplanned` and runs a full review.
+   */
+  it("in a security-only review, a docs-only push carries one class row of the full plan instead of a full round", () => {
+    const cfg = securityOnly({ "pass-sec-access": { plan: "always" } });
+    const r = followUp(cfg, [SQL, PLAIN, README], [README]);
+    expect(r.kind).toBe("delta");
+    if (r.kind !== "delta") return;
+    const family = familyRows(r.decision.plan);
+    expect(family.map((p) => p.lens)).toEqual(["pass-sec-access"]);
+    expect(family[0]!.why).toMatch(/docs-only push/);
+    expect(rows(r.decision.plan, "pass-baseline")).toEqual([]);
+    expect(rows(r.decision.plan, VALIDATE_PASS)).toHaveLength(1);
+    expect(r.decision.plan.addable_lenses).not.toContain("pass-sec-access");
+    expect(r.decision.plan.post_plan).toBeUndefined();
+    // A full plan with no family row has nothing to carry.
+    expect(followUp(securityOnly(), [PLAIN], [README])).toMatchObject({
+      kind: "full",
+      reason: "anchor-unplanned",
+    });
   });
 
   it("outside it is still pass-baseline, under the reason it always had", () => {
@@ -363,6 +392,37 @@ describe("a follow-up round's anchor", () => {
     if (r.kind !== "delta") return;
     const planned = new Set(familyRows(r.decision.plan).map((p) => p.lens));
     expect(planned).toEqual(new Set(SECURITY_FAMILY));
+  });
+});
+
+describe("a follow-up round's security facts", () => {
+  /** A guard the PR removed in app/views.py, as the daemon's facts say. */
+  const REMOVED_GUARD: SecurityFact = {
+    check: "removed-guard",
+    status: "found",
+    lens: "pass-sec-authn-coverage",
+    file: "app/views.py",
+    detail: "`@login_required` is removed from `export`",
+  };
+  const VIEWS = changed("app/views.py", ["return render(request, 'export.html')"]);
+
+  /**
+   * MUTATION: pass `args.securityFacts` to the delta's buildPassPlan unfiltered
+   * (drop the delta-path filter in planFollowUp) — this fails.
+   */
+  it("plan from the facts about the delta's own files, never the whole PR's", () => {
+    const sec = { securityFacts: [REMOVED_GUARD] };
+    const elsewhere = followUp(fixture, [VIEWS, PLAIN], [PLAIN], sec);
+    expect(elsewhere.kind).toBe("delta");
+    if (elsewhere.kind !== "delta") return;
+    expect(familyRows(elsewhere.decision.plan)).toEqual([]);
+    expect(elsewhere.decision.plan.post_plan).toBeUndefined();
+
+    const touched = followUp(fixture, [VIEWS, PLAIN], [VIEWS], sec);
+    expect(touched.kind).toBe("delta");
+    if (touched.kind !== "delta") return;
+    expect(rows(touched.decision.plan, "pass-sec-authn-coverage")).toHaveLength(1);
+    expect(rows(touched.decision.plan, CHAIN_PASS).map((r) => r.strategy)).toContain("delta");
   });
 });
 

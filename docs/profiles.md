@@ -991,7 +991,9 @@ command = true          # config.toml only; "@<bot> security"
   security findings. Only the named profile chain can switch one of those
   lenses back on or widen the scope: a repository's `.qcr/profile.toml`
   `[lenses.<pass>] enabled = true` or `[posting] scope` does not. A follow-up delta anchors on a family row
-  (`anchor-unplanned` answers a full review without one), and two planned
+  (`anchor-unplanned` answers a full review without one; a docs-only push
+  instead carries one class row of the full plan, the `always` lens first),
+  and two planned
   family rows plan the chain's `delta`.
 
 ### The threat model and the security facts
@@ -1012,7 +1014,9 @@ NetworkPolicy selecting nothing, and the route inventory — each `found`,
 `clear` or `unknown`. A fact the line parser cannot
 settle is `unknown`, never `clear`. Computing them is bounded (15 s); past
 it, or on an error, the round uses the diff alone and logs
-`security_facts_degraded`.
+`security_facts_degraded`. The facts read the whole pull request; a
+follow-up round plans only from those about a file its push touched, so a
+fact found once does not re-plan its lens on every later push.
 
 ### Asking for a security review
 

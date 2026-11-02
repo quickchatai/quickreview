@@ -851,6 +851,14 @@ export function planFollowUp(
       detail: { delta_lines: delta.lines, pr_lines: prLines, ratio },
     };
   const deltaFiles = deltaAsPrFiles(delta.files) as PrFileEntry[];
+  // The security facts are the whole PR's (the daemon computes them over the
+  // PR head against its base), so a fact found once would plan its lens on
+  // every later push. The delta plans from the facts about its own files;
+  // a fact that names no file reads the whole PR, which a delta does not.
+  const deltaPaths = new Set(deltaFiles.map((f) => f.filename));
+  const securityFacts = args.securityFacts?.filter(
+    (f) => f.file !== undefined && deltaPaths.has(f.file),
+  );
   let plan = buildPassPlan(
     cfg,
     deltaFiles,
@@ -859,7 +867,7 @@ export function planFollowUp(
     heuristics,
     args.styleGuide,
     args.ciLinters,
-    { tierFiles: args.files, ...securityInputsOf(args) },
+    { tierFiles: args.files, ...securityInputsOf({ ...args, securityFacts }) },
   );
   // The migration gate and the pre-check read the WHOLE PR, and their notes
   // name pass-data-safety (a degraded pre-check un-muzzles that lens, never
@@ -906,13 +914,43 @@ export function planFollowUp(
       cfg.review.follow_up_small_delta_lines ?? REVIEW_DEFAULTS.follow_up_small_delta_lines;
     if (smallDelta > 0 && delta.lines <= smallDelta) plan = leanFollowUpPlan(plan);
   }
+  // A security-only review anchors a follow-up on a family row, and a
+  // docs-only delta plans none (the `always` lenses drop on docs). Rather
+  // than answer the cheapest push with a full review, the delta carries one
+  // class row of the full plan — the profile's `always` lens first — to
+  // verify the prior findings over it.
+  const only = (cfg.security ?? SECURITY_DEFAULTS).only;
+  if (
+    only &&
+    isDocsOnlyChange(deltaFiles) &&
+    !plan.pass_plan.some((p) => SECURITY_FAMILY.includes(p.lens))
+  ) {
+    const classRows = args.fullPlan.pass_plan.filter(
+      (p) => SECURITY_FAMILY.includes(p.lens) && p.lens !== CHAIN_PASS,
+    );
+    const always = new Set(alwaysPlannedLenses(cfg.lenses));
+    const anchor = classRows.find((p) => always.has(p.lens)) ?? classRows[0];
+    if (anchor !== undefined) {
+      const carried: PassPlanEntry = {
+        ...anchor,
+        why: "a docs-only push: carried from the full plan to verify the prior findings",
+      };
+      const at = plan.pass_plan.findIndex((p) => p.lens === VALIDATE_PASS);
+      const rows = [...plan.pass_plan];
+      rows.splice(at < 0 ? rows.length : at, 0, carried);
+      plan = {
+        ...plan,
+        pass_plan: slowestFirst(rows, deltaFiles, new Set(cfg.models.risk_passes)),
+        addable_lenses: plan.addable_lenses.filter((l) => l !== anchor.lens),
+      };
+    }
+  }
   // pass-baseline carries every prior finding no other planned lens owns: a
   // follow-up plan without it (a profile switched it off) cannot verify them.
   // A security-only review has no baseline: there a security-family row
   // carries them (packages/pi-plugin/src/priortasks.ts), and a delta that
   // plans none runs as a full round.
   if (!plan.pass_plan.some((p) => p.lens === BASELINE_PASS)) {
-    const only = (cfg.security ?? SECURITY_DEFAULTS).only;
     if (!only) return { kind: "full", reason: "baseline-unplanned" };
     if (!plan.pass_plan.some((p) => SECURITY_FAMILY.includes(p.lens)))
       return { kind: "full", reason: "anchor-unplanned" };
