@@ -240,7 +240,7 @@ raise to" column when the diff's semantic complexity demands it — each raise
 needs a one-line stated reason, and those reasons go into the verdict
 `summary`. **Never lower a tier.** A pass marked pinned has no raise option.
 
-**Add protocol.** You MAY additionally run a lens from: pass-contracts, pass-security, pass-statelessness, pass-prod-risk, pass-delivery, pass-intent, pass-placement, pass-simplicity, pass-concurrency, pass-ask-human, pass-widened, pass-roundtrip, pass-deferred, pass-bounds, pass-rollout, pass-style, pass-lint-conformance —
+**Add protocol.** You MAY additionally run a lens from: pass-contracts, pass-security, pass-statelessness, pass-prod-risk, pass-delivery, pass-intent, pass-placement, pass-simplicity, pass-concurrency, pass-ask-human, pass-widened, pass-roundtrip, pass-deferred, pass-bounds, pass-rollout, pass-style, pass-lint-conformance, pass-sec-authn-coverage, pass-sec-access, pass-sec-privesc, pass-sec-iam, pass-sec-tokens, pass-sec-toctou, pass-sec-injection, pass-sec-boundaries, pass-sec-secrets-data, pass-sec-supply-chain, pass-sec-llm, pass-sec-infra, pass-sec-variant, pass-sec-exploit-chain —
 with a one-line stated reason. The plan is chosen from the diff's shape, so
 it can miss what the diff says: read the diff once before you launch, and when
 it shows a concrete shape an addable lens exists for (a check that now admits
@@ -903,6 +903,24 @@ alone: a bare `below-bar` teaches nobody anything.
       "disposition": "killed",
       "word": "duplicate",
       "reason": "Same defect as f5 from pass-placement, differently phrased; f5 survives and names the better home."
+    },
+    {
+      "id": "f3",
+      "path": "src/api/invoices.py",
+      "line": 57,
+      "lens": "pass-sec-access",
+      "tier": "sol-high",
+      "severity": "P1",
+      "confidence": 0.5,
+      "reachability": "routine",
+      "kind": "security:idor",
+      "evidence": "invoices.py:57 filters by request.org_id; nothing read shows the middleware sets it before this handler runs",
+      "disposition": "downgraded",
+      "word": "security-demoted",
+      "axis": "confidence",
+      "posted_as": "question",
+      "security_outcome": "question",
+      "reason": "Proof gap: is org_id always set before this handler? If not, any user reads another org's invoices."
     }
   ]
 }
@@ -917,15 +935,22 @@ alone: a bare `below-bar` teaches nobody anything.
 - `word` is the closed-vocabulary kill or downgrade word (`refuted`,
   `unverifiable`, `bad-anchor`, `duplicate`, `out-of-scope`,
   `settled:<thread-id>`, `nit-out-of-delta`, `below-bar`, `security-demoted`,
-  `intent-over-cap`, `design-over-cap`, `inflated`, `understated`,
+  `partial-chain`, `intent-over-cap`, `design-over-cap`, `inflated`, `understated`,
   `overreachable`, `understated-reach`, `nit-no-request`, `self-narration`,
   `ask-human-unnamed-defect`, `tag-outside-grammar`) — required on `killed`,
   `doubted` and `downgraded`. On a `downgraded` entry also give `axis`: `severity`,
   `confidence` or `reachability`, the one that moved.
-- `posted_as` on a `posted` entry is the tag it actually went out under, and it
-  comes from the closed grammar: `blocker`, `question`, `nit`, `check this`,
-  `ask your human` or `deferred`. Anything else is a finding that escaped its own machinery,
-  and the daemon counts it.
+- `posted_as` on a `posted` entry **and on a `downgraded` entry that went out**
+  is the tag it actually went out under, and it comes from the closed grammar:
+  `blocker`, `question`, `nit`, `check this`,
+  `ask your human` or `deferred`. Anything else is a finding that escaped its
+  own machinery, and the daemon counts it. A `downgraded` entry with no
+  `posted_as` is counted as never posted.
+- `security_outcome` and `hop_labels` are optional, on a security candidate
+  only — copy them from the validator's answer when it gives them.
+  `security_outcome` is `confirmed`, `question`, `partial-chain`, `refuted` or
+  `excluded`; `hop_labels` is an exploit chain's label for each hop, in order
+  (`valid`, `plausible` or `contradicted`). Leave both out of every other entry.
 - `request` is **required on an entry posted as a nit**: the concrete
   change that nit asked for, in one clause. A nit that asked for nothing should
   not have been posted, and this field is how that is measured.

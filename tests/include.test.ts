@@ -549,8 +549,10 @@ describe("the real seeded content", () => {
       // (its shipped floor is the top tier) = 58, + pass-tests × 3 = 61,
       // + the code-quality lenses (maintainability, duplication, abstraction)
       // and pass-style × 3 = 73, + pass-consistency × 3 = 76,
-      // + pass-behaviour-delta × 3 = 79, + pass-lint-conformance × 3 = 82.
-      expect(built).toHaveLength(82);
+      // + pass-behaviour-delta × 3 = 79, + pass-lint-conformance × 3 = 82,
+      // + the 14 pass-sec-* lenses × 1 (the family always runs at the risk
+      // tier, so each builds one variant) = 96.
+      expect(built).toHaveLength(96);
       for (const b of built) {
         const text = readFileSync(b.output, "utf8");
         // No lens file names a model: the built variant carries exactly the

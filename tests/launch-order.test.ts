@@ -24,6 +24,7 @@ import type { PrFileEntry } from "../src/github.js";
 import { renderPassTaskNote, writePassTasks } from "@quickchatai/pi-quickreview/src/passtasks.js";
 import type { PrStateRow } from "../src/state.js";
 import { PASS_TIER_ORDER, type PassPlanEntry } from "@quickchatai/pi-quickreview/src/types.js";
+import { SECURITY_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
 
 const sandbox = join(import.meta.dirname, "..");
 const fixture: Config = parseConfig(
@@ -78,7 +79,12 @@ describe("the plan lists its rows slowest first", () => {
     // Taken from the plan without `slowestFirst` (the rows as a sorted set of
     // their JSON, and the addable list as planned).
     expect(sha(canon(p.pass_plan))).toBe(PRE_LEVER_ROWS);
-    expect(sha(p.addable_lenses)).toBe(PRE_LEVER_ADDABLE);
+    // The security family joined the registry after the lever, and nothing
+    // here triggers it (an inline `is_staff` check is no guard marker), so
+    // every family lens is addable: the list before it is the pinned one.
+    const family = (l: string): boolean => SECURITY_FAMILY.includes(l);
+    expect(sha(p.addable_lenses.filter((l) => !family(l)))).toBe(PRE_LEVER_ADDABLE);
+    expect(p.addable_lenses.filter(family)).toEqual([...SECURITY_FAMILY]);
     expect(p.sweep_unswept).toEqual([]);
   });
 
