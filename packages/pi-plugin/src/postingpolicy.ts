@@ -36,10 +36,23 @@
 //      (src/bench/benchposting.ts), so a session that over-posts is still cut.
 //      What it cuts is recorded `withheld` with a word, never dropped silently.
 //
-// Two invariants no setting moves: a `[blocker]` is NEVER withheld (the
+// Three invariants no setting moves: a `[blocker]` is NEVER withheld (the
 // blocker bar does not move — a budget is filled around the blockers, never
-// out of them), and nothing a policy withholds is deleted from the findings
-// record.
+// out of them; not even `scope = "security"` withholds one), nothing a policy
+// withholds is deleted from the findings record, and a partial exploit chain
+// (secevidence.ts `isPartialChain`) is NEVER posted, under any policy or none
+// — it is a doubt the session should not have posted, so it is withheld with
+// the word `partial-chain`.
+//
+// The security keys. `scope = "security"` withholds every non-security
+// finding (`security-scope`). `security_max = N` (> 0) gives security
+// findings (severity.ts `isSecurityFinding`) a channel of their own: they
+// skip the questions rules (`questions-off`, `question-not-blocking`), fill
+// up to N slots of their own — counted apart from `max_comments`, never
+// against it — and over N are `over-budget`. Their own channel is filled
+// without competing with anything, which is what "ranked first among the
+// non-blockers" comes to; at `security_max = 0` they share the budget and
+// rank exactly as before.
 import { VALIDATE_PASS, type PassAddendum } from "./include.js";
 import { severityRank } from "./severityrank.js";
 import { stripSanctionedTags } from "./severity.js";
@@ -106,15 +119,31 @@ export function postingScope(p: PostingPolicy | undefined): PostingScope {
 /** A budget is a handful of comments, not a second inline cap (GitHub's is 50). */
 export const MAX_COMMENTS_LIMIT = 50;
 
-/** The words a withheld finding carries in the findings record. */
-export const WITHHOLD_WORDS = [
+/** The words a policy without security keys withholds with — what the
+ * validator is told it may write (`withholdWordsFor`). */
+const BASE_WITHHOLD_WORDS = [
   "over-budget",
   "nits-off",
   "questions-off",
   "question-not-blocking",
   "repeat-site",
 ] as const;
+
+/** The words a withheld finding carries in the findings record: the base
+ * five, `security-scope` (a non-security finding under `scope =
+ * "security"`) and `partial-chain` (a partial exploit chain, never posted). */
+export const WITHHOLD_WORDS = [...BASE_WITHHOLD_WORDS, "security-scope", "partial-chain"] as const;
 export type WithholdWord = (typeof WITHHOLD_WORDS)[number];
+
+/** The withhold words the validator may write under a policy: the base five,
+ * plus `security-scope` when the policy scopes posting to security. A
+ * `partial-chain` is the validator's DOUBTED word, never a withhold it
+ * chooses, so it is never listed. */
+export function withholdWordsFor(p: PostingPolicy): readonly WithholdWord[] {
+  return postingScope(p) === "security"
+    ? [...BASE_WITHHOLD_WORDS, "security-scope"]
+    : BASE_WITHHOLD_WORDS;
+}
 
 /** Ids the compiled posting addenda take — a profile pack may not claim them. */
 export const POSTING_ADDENDUM_IDS = ["posting-policy-validate"] as const;
@@ -269,6 +298,15 @@ function policyLines(p: PostingPolicy, who: "session" | "validator"): string[] {
     L.push(
       "- **Concise comments.** Each posted comment is ONE claim: the tag-and-title line, then at most three sentences — what goes wrong, where, and under what condition — then the metadata tail. No scenario essays, no restated mechanism, no menu of fixes. A precise sentence satisfies the blocker self-sufficiency rule.",
     );
+  if (postingScope(p) === "security")
+    L.push(
+      `- **Security findings only.** Only a security finding posts — one raised by a \`pass-sec-*\` lens or \`pass-security\`, or whose \`kind:\` begins \`security\` or \`exploit-chain\`. Every other survivor is recorded \`withheld\` (word \`security-scope\`), except a \`[blocker]\`, which posts whatever its lens.`,
+    );
+  const securityMax = postingSecurityMax(p);
+  if (securityMax > 0)
+    L.push(
+      `- **Security findings have their own ${securityMax} slot${securityMax === 1 ? "" : "s"}.** A security finding posts in its own budget, counted apart from any other budget above and never against it, and the questions rules above do not apply to it: a security question posts at any severity. Fill those slots blockers first, then by severity; a security finding beyond them is recorded \`withheld\` (word \`over-budget\`).`,
+    );
   return L;
 }
 
@@ -315,7 +353,13 @@ export function postingPolicyAddenda(p: PostingPolicy | undefined): PassAddendum
     "- <lens> <path:line> — <word> — <one-line reason>",
     "```",
     "",
-    `SELECTED is the survivors to post, most important first. WITHHELD is every other survivor with its word (${WITHHOLD_WORDS.map((w) => `\`${w}\``).join(", ")}): the session records each one in the findings record as \`withheld\` — never posted, never deleted. Withholding is not a kill: do not move a withheld finding's severity or confidence, and never withhold a \`[blocker]\`.`,
+    `SELECTED is the survivors to post, most important first. WITHHELD is every other survivor with its word (${withholdWordsFor(
+      p,
+    )
+      .map((w) => `\`${w}\``)
+      .join(
+        ", ",
+      )}): the session records each one in the findings record as \`withheld\` — never posted, never deleted. Withholding is not a kill: do not move a withheld finding's severity or confidence, and never withhold a \`[blocker]\`.`,
     ...(p.comment_style === "concise"
       ? [
           "",
@@ -346,6 +390,12 @@ export interface PolicyView {
    * is not known. Within one class and severity the budget prefers a changed
    * line, then unknown, then unchanged code. */
   changedLine?: boolean;
+  /** Is it a security finding (severity.ts `isSecurityFinding`)? Absent =
+   * no: it posts under `scope = "all"` and shares the one budget. */
+  security?: boolean;
+  /** Is it a partial exploit chain (secevidence.ts `isPartialChain`)? One is
+   * never posted, under any policy. */
+  partialChain?: boolean;
 }
 
 const changedRank = (c: boolean | undefined): number => (c === true ? 0 : c === undefined ? 1 : 2);
@@ -369,8 +419,12 @@ export interface Selection<T> {
 /**
  * Apply the policy to the items a round would post, in the order they would
  * post. Deterministic and order-preserving for what it keeps:
- *   1. tag rules — `nits = off`, `questions = off | blocking` (a question of
- *      unknown severity is kept: it cannot be shown non-blocking);
+ *   0. a partial exploit chain is withheld (`partial-chain`) under ANY policy,
+ *      the default included — the one rule that runs with no policy;
+ *   1. scope and tag rules — `scope = security` (`security-scope`, never a
+ *      blocker), `nits = off`, `questions = off | blocking` (a question of
+ *      unknown severity is kept: it cannot be shown non-blocking; a security
+ *      item is exempt from both question rules while `security_max > 0`);
  *   2. repeat sites — of the items sharing a key, only the strongest (class,
  *      then severity, then the first posted) is kept; the rest are withheld;
  *   3. the budget — blockers always kept; the remaining slots go to the rest
@@ -378,31 +432,54 @@ export interface Selection<T> {
  *      severity, then a changed line before an unknown one before unchanged
  *      code (`changedLine`), then the order the session posted them in (its
  *      own ranking). A slot is a root cause: the sites sharing a key (kept
- *      under `repeat_sites = true`) post on one slot.
- * A blocker is never withheld by any rule but a repeat site of itself.
+ *      under `repeat_sites = true`) post on one slot. With `security_max > 0`
+ *      the security items are budgeted the same way in a channel of their
+ *      own, `security_max` slots, and never count toward `max_comments`.
+ * A blocker is never withheld by any rule but a repeat site of itself — or
+ * being a partial chain, which is a doubt and not a survivor at all.
  */
 export function selectPosted<T>(
   items: readonly T[],
   view: (t: T) => PolicyView,
   p: PostingPolicy | undefined,
 ): Selection<T> {
-  if (p === undefined || isDefaultPosting(p)) return { kept: [...items], withheld: [] };
   const withheld: Selection<T>["withheld"] = [];
-  const pass1: Array<{ item: T; v: PolicyView; i: number }> = [];
+  const viewed: Array<{ item: T; v: PolicyView; i: number }> = [];
   items.forEach((item, i) => {
     const v = view(item);
-    if (v.cls === "nit" && p.nits === "off") return void withheld.push({ item, word: "nits-off" });
-    if (v.cls === "question" && p.questions === "off")
-      return void withheld.push({ item, word: "questions-off" });
+    if (v.partialChain === true) return void withheld.push({ item, word: "partial-chain" });
+    viewed.push({ item, v, i });
+  });
+  if (p === undefined || isDefaultPosting(p)) return { kept: viewed.map((e) => e.item), withheld };
+  const securityMax = postingSecurityMax(p);
+  const ownChannel = (v: PolicyView): boolean => securityMax > 0 && v.security === true;
+  const pass1: typeof viewed = [];
+  for (const e of viewed) {
+    const { item, v } = e;
+    if (postingScope(p) === "security" && v.security !== true && v.cls !== "blocker") {
+      withheld.push({ item, word: "security-scope" });
+      continue;
+    }
+    if (v.cls === "nit" && p.nits === "off") {
+      withheld.push({ item, word: "nits-off" });
+      continue;
+    }
+    if (v.cls === "question" && p.questions === "off" && !ownChannel(v)) {
+      withheld.push({ item, word: "questions-off" });
+      continue;
+    }
     if (
       v.cls === "question" &&
       p.questions === "blocking" &&
+      !ownChannel(v) &&
       v.severity !== null &&
       sevRank(v.severity) > 2
-    )
-      return void withheld.push({ item, word: "question-not-blocking" });
-    pass1.push({ item, v, i });
-  });
+    ) {
+      withheld.push({ item, word: "question-not-blocking" });
+      continue;
+    }
+    pass1.push(e);
+  }
   const pass2: typeof pass1 = [];
   if (!p.repeat_sites) {
     // The site that posts is the finding's strongest occurrence — by class,
@@ -427,34 +504,49 @@ export function selectPosted<T>(
       pass2.push(e);
     }
   } else pass2.push(...pass1);
-  if (p.max_comments <= 0) return { kept: pass2.map((e) => e.item), withheld };
-  const blockers = pass2.filter((e) => e.v.cls === "blocker");
-  const rest = pass2
-    .filter((e) => e.v.cls !== "blocker")
-    .sort(
-      (a, b) =>
-        CLASS_RANK[a.v.cls] - CLASS_RANK[b.v.cls] ||
-        sevRank(a.v.severity) - sevRank(b.v.severity) ||
-        changedRank(a.v.changedLine) - changedRank(b.v.changedLine) ||
-        a.i - b.i,
-    );
-  // The budget counts ROOT CAUSES: under `repeat_sites = true` every site of
-  // a finding (one key) posts on the slot its first site took.
-  const slotted = new Set<string>();
-  let used = 0;
-  const hasSlot = (e: (typeof pass2)[number]): boolean => e.v.key !== "" && slotted.has(e.v.key);
-  const take = (e: (typeof pass2)[number]): void => {
-    if (hasSlot(e)) return;
-    if (e.v.key !== "") slotted.add(e.v.key);
-    used += 1;
-  };
   const chosen = new Set<number>();
-  for (const e of [...blockers, ...rest]) {
-    if (e.v.cls === "blocker" || hasSlot(e) || used < p.max_comments) {
-      take(e);
-      chosen.add(e.i);
-    } else withheld.push({ item: e.item, word: "over-budget" });
-  }
+  const budget = (entries: typeof pass2, cap: number): void => {
+    if (cap <= 0) {
+      for (const e of entries) chosen.add(e.i);
+      return;
+    }
+    const blockers = entries.filter((e) => e.v.cls === "blocker");
+    const rest = entries
+      .filter((e) => e.v.cls !== "blocker")
+      .sort(
+        (a, b) =>
+          CLASS_RANK[a.v.cls] - CLASS_RANK[b.v.cls] ||
+          sevRank(a.v.severity) - sevRank(b.v.severity) ||
+          changedRank(a.v.changedLine) - changedRank(b.v.changedLine) ||
+          a.i - b.i,
+      );
+    // The budget counts ROOT CAUSES: under `repeat_sites = true` every site
+    // of a finding (one key) posts on the slot its first site took.
+    const slotted = new Set<string>();
+    let used = 0;
+    const hasSlot = (e: (typeof pass2)[number]): boolean => e.v.key !== "" && slotted.has(e.v.key);
+    const take = (e: (typeof pass2)[number]): void => {
+      if (hasSlot(e)) return;
+      if (e.v.key !== "") slotted.add(e.v.key);
+      used += 1;
+    };
+    for (const e of [...blockers, ...rest]) {
+      if (e.v.cls === "blocker" || hasSlot(e) || used < cap) {
+        take(e);
+        chosen.add(e.i);
+      } else withheld.push({ item: e.item, word: "over-budget" });
+    }
+  };
+  // Security findings in their own channel never count toward
+  // `max_comments`: the two budgets are filled apart.
+  budget(
+    pass2.filter((e) => ownChannel(e.v)),
+    securityMax,
+  );
+  budget(
+    pass2.filter((e) => !ownChannel(e.v)),
+    p.max_comments,
+  );
   return { kept: pass2.filter((e) => chosen.has(e.i)).map((e) => e.item), withheld };
 }
 

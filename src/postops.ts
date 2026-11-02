@@ -60,7 +60,15 @@ import {
   type ReviewPayload,
 } from "./posting.js";
 import { markedReviewsOf } from "./posting-outbox.js";
-import { describeGap, parsePlan, readRoundProgress, requiredPassGap } from "./requiredpasses.js";
+import {
+  describeGap,
+  failedSecurityRows,
+  parsePlan,
+  readRoundProgress,
+  requiredPassGap,
+  type FailedSecurityRow,
+} from "./requiredpasses.js";
+import { securityPassIncompleteLine } from "@quickchatai/pi-quickreview/src/templates.js";
 import { snapshotMark } from "@quickchatai/pi-quickreview/src/standing-review.js";
 import type { StateStore } from "./state.js";
 
@@ -337,6 +345,24 @@ function describeFailure(err: unknown): string {
   return err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200);
 }
 
+/**
+ * A review body with the fail-closed line for every security-family row that
+ * failed and never completed (templates.ts `securityPassIncompleteLine`):
+ * a security pass that did not finish leaves its area unreviewed, and the
+ * review says so — never silent, never blocking. A line the session already
+ * wrote (the round prompt asks it for the same words) is not repeated, so
+ * the body carries each line once.
+ */
+export function withSecurityIncompleteLines(
+  text: string,
+  failed: readonly Pick<FailedSecurityRow, "lens" | "strategy">[],
+): string {
+  const missing = [
+    ...new Set(failed.map((row) => securityPassIncompleteLine(row.lens, row.strategy))),
+  ].filter((line) => !text.includes(line));
+  return missing.length === 0 ? text : `${text.trimEnd()}\n\n${missing.join("\n")}`;
+}
+
 class PostOps {
   constructor(private readonly d: PostOpsDeps) {}
 
@@ -376,6 +402,28 @@ class PostOps {
         "blocked",
         `required pass missing for #${pr} round ${round} — ${describeGap(gap.missing)}. Nothing was posted and nothing may be: do not retry or post another way; commit your verdict file as decided and stop — the daemon requeues the round.`,
       );
+  }
+
+  /**
+   * The body with the fail-closed security lines (`withSecurityIncompleteLines`)
+   * over the round's recorded plan and its live snapshot. Unknown evidence —
+   * no snapshot, another round's — adds nothing and claims nothing: the body
+   * never says a security pass completed.
+   */
+  private withSecurityGaps(pr: number, round: number, text: string): string {
+    const row = this.d.store.roundsFor(pr).find((r) => r.round_no === round);
+    if (!row) return text;
+    const gaps = failedSecurityRows(
+      parsePlan(row.pass_plan),
+      readRoundProgress(this.d.root, pr),
+      round,
+    );
+    if (gaps.state !== "known" || gaps.failed.length === 0) return text;
+    this.d.store.logEvent("security_pass_incomplete", pr, {
+      round_no: round,
+      failed: gaps.failed.map((f) => (f.strategy ? `${f.lens}:${f.strategy}` : f.lens)),
+    });
+    return withSecurityIncompleteLines(text, gaps.failed);
   }
 
   /** The head the review is about: the round's, else the PR's live head. */
@@ -473,10 +521,13 @@ class PostOps {
     },
   ): Promise<PostOutcome> {
     const { keyed, head, event } = r;
+    // A security pass that did not complete is named in the body, never
+    // silent (fail-closed); a round with no family row is untouched.
+    const text = keyed ? this.withSecurityGaps(ctx.pr, keyed.round, r.text) : r.text;
     const jobPayload: JobPayload = {
       commit_id: head,
       event,
-      body: keyed ? `${r.text}\n\n${postingMarker(keyed.key)}` : r.text,
+      body: keyed ? `${text}\n\n${postingMarker(keyed.key)}` : text,
       ...(r.comments ? { comments: r.comments } : {}),
     };
     // The approval's red-CI refusal runs before anything is queued or sent.

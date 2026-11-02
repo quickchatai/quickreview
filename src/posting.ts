@@ -36,6 +36,7 @@ import {
   isAskHumanFinding,
   isDeferredFinding,
   isFirstPartyDirectiveInjection,
+  isSecurityFinding,
   postTag,
   stripUngrammaticalTag,
   type PostTag,
@@ -47,6 +48,7 @@ import {
   INLINE_COMMENT_CAP,
   renderedFooter as reviewFooter,
 } from "@quickchatai/pi-quickreview/src/reviewrender.js";
+import { isPartialChain } from "@quickchatai/pi-quickreview/src/secevidence.js";
 
 // The inline cap and the footer are the live render route's, so the two
 // cannot drift.
@@ -201,7 +203,8 @@ export interface AssembledReview {
    * Stripped from the payload, kept here so the escape is countable. */
   ungrammatical: Array<{ finding: Finding; tag: string }>;
   /** Findings the posting policy kept off the PR, each with its word,
-   * recorded `withheld` in the findings record. Empty without a policy. */
+   * recorded `withheld` in the findings record. Empty without a policy, but
+   * for a partial exploit chain, which is withheld under any policy. */
   withheld: Array<{ finding: Finding; word: WithholdWord }>;
 }
 
@@ -290,8 +293,9 @@ export function assembleReview(full: ReviewInput): AssembledReview {
 
   // 0. the profile's posting policy: the budget, the tag rules and one site
   //    per finding, over the findings in the order the session ranked them.
-  //    A no-op (the same input) without a policy. Within one severity the
-  //    budget prefers a finding on a changed line (`changedLine`).
+  //    A no-op (the same input) without a policy, but for a partial exploit
+  //    chain, which never posts. Within one severity the budget prefers a
+  //    finding on a changed line (`changedLine`).
   const runs = full.policy && full.patches ? runsByPath(full.patches) : undefined;
   const selection = selectPosted(
     full.findings,
@@ -299,6 +303,10 @@ export function assembleReview(full: ReviewInput): AssembledReview {
       cls: tags.get(f) as PolicyClass,
       severity: f.severity,
       key: siteKey(stripUngrammaticalTag(f.title).title),
+      // Security findings may have their own channel or the whole scope
+      // (`[posting] security_max`, `scope`); a partial chain never posts.
+      security: isSecurityFinding(f.kind, f.lens),
+      partialChain: isPartialChain({ kind: f.kind ?? null }),
       ...(runs && f.line !== undefined
         ? {
             changedLine: checkAnchor(runs, {

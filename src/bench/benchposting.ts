@@ -42,12 +42,18 @@ import {
   entriesById,
   rootCauseId,
   markWithheld,
+  partialChainEntry,
   postedClassOf,
   recordPostingKeys,
+  securityEntry,
   withheldReason,
 } from "@quickchatai/pi-quickreview/src/reviewrender.js";
 import { entryDisposition, recordSide } from "@quickchatai/pi-quickreview/src/findingkey.js";
-import { bareTag, stripSanctionedTags } from "@quickchatai/pi-quickreview/src/severity.js";
+import {
+  bareTag,
+  isSecurityFinding,
+  stripSanctionedTags,
+} from "@quickchatai/pi-quickreview/src/severity.js";
 import {
   benchPath,
   CASE_FILES,
@@ -85,9 +91,14 @@ interface Item {
   /** The record entry it states (a body item's always; an inline comment's
    * when the record has one). */
   entry?: Record<string, unknown>;
+  /** inline: the lens its trailer names (`· lens <name>_`), for a comment
+   * the record has no entry for. */
+  lens?: string;
 }
 
 const SEV_TAIL = /_\s*(P[0-3]|nit)\s*·\s*confidence/i;
+/** The trailer's lens: `_P1 · confidence 0.80 · lens pass-x_`. */
+const LENS_TAIL = /·\s*lens\s+([^_\n]+?)\s*_\s*$/m;
 
 function classOf(tag: string): PolicyClass {
   return tag === "blocker" || tag === "question" || tag === "nit" ? tag : "check";
@@ -236,6 +247,7 @@ export function policeBenchOutput(args: {
       side: parsed.side === "LEFT" ? "LEFT" : "RIGHT",
       ...(parsed.marker === "deferred" ? { deferred: true } : {}),
       ...(parsed.start_line !== undefined ? { start_line: parsed.start_line } : {}),
+      ...(LENS_TAIL.test(parsed.body) ? { lens: LENS_TAIL.exec(parsed.body)![1]!.trim() } : {}),
       row,
     });
     bodies.push(parsed.body);
@@ -279,6 +291,10 @@ export function policeBenchOutput(args: {
       cls: it.cls,
       severity: it.severity,
       key: (it.entry && keys.get(it.entry)) ?? siteKey(it.title),
+      // As production reads them: the record entry's kind and lens, else the
+      // comment's own trailer.
+      security: it.entry ? securityEntry(it.entry) : isSecurityFinding(null, it.lens ?? null),
+      partialChain: it.entry ? partialChainEntry(it.entry) : false,
       // The whole anchor, span included, as production ranks it.
       ...(runs
         ? {

@@ -36,7 +36,14 @@ import {
   type FindingDisposition,
 } from "./findingkey.js";
 import { WITHHOLD_WORDS } from "./postingpolicy.js";
-import { bareTag, isSanctionedTag } from "./severity.js";
+import {
+  isPartialChain,
+  normalizeSecurityOutcome,
+  readHopLabels,
+  securityOutcome,
+  type SecurityOutcome,
+} from "./secevidence.js";
+import { bareTag, isSanctionedTag, isSecurityFinding } from "./severity.js";
 
 /** The validator's validity vetoes (packages/pi-plugin/src/doubtwords.ts). */
 export { DOUBT_WORDS };
@@ -152,6 +159,13 @@ export interface FindingsRecordEntry {
   /** The posted comment's one-line title, as the session wrote it. Null when
    * the entry has none — never derived from the reason. */
   title: string | null;
+  /** A security candidate's outcome as the validator wrote it
+   * (packages/pi-plugin/src/secevidence.ts), on the closed set. Absent when
+   * the entry carries none — every non-security entry, and older records. */
+  security_outcome?: SecurityOutcome;
+  /** An exploit chain's hop labels, in hop order, as written (trimmed, lower
+   * case). Absent when the entry carries none. */
+  hop_labels?: string[];
 }
 
 /** Cap on a recorded title — a title is one line, never a body. */
@@ -332,6 +346,23 @@ export interface RecordConformance {
    * it is counted rather than judged, and never killed on this signal alone.
    */
   restated: string[];
+  /** A `downgraded` entry with no `posted_as`. A validator downgrade keeps
+   * its finding, so the survivor went out under SOME tag — or it was lost:
+   * either way the record cannot count it as posted
+   * (packages/pi-plugin/src/findingkey.ts `entryDisposition`), and this is
+   * how often that happens. A `security-demoted` question recorded without
+   * its tag lands here. */
+  downgraded_untagged: string[];
+  /** A security entry the validator left `doubted` as `unverifiable` while
+   * the security fold was on (`[security] fold`): a candidate the fold says
+   * is asked as a question, never doubted. Counted only when the caller
+   * says the fold was on. */
+  security_doubted: string[];
+  /** A security entry whose written `security_outcome` disagrees with the
+   * outcome its `hop_labels` compute (secevidence.ts `securityOutcome`), or
+   * a partial chain recorded as posted — a chain with two unproven hops is a
+   * doubt, never a post. */
+  security_outcome_mismatch: string[];
 }
 
 export function isConformant(c: RecordConformance): boolean {
@@ -340,6 +371,13 @@ export function isConformant(c: RecordConformance): boolean {
     c.nits_without_request.length === 0 &&
     c.doubted_posted.length === 0
   );
+}
+
+/** What the parse needs to know about the install that wrote the record. */
+export interface FindingsRecordOptions {
+  /** `[security] fold` was on for the round: an unverifiable security
+   * candidate should have been asked, not doubted (`security_doubted`). */
+  fold?: boolean;
 }
 
 export interface ParsedFindingsRecord {
@@ -380,6 +418,7 @@ export function parseFindingsRecord(
   raw: unknown,
   pr: number,
   roundNo: number,
+  opts: FindingsRecordOptions = {},
 ): ParsedFindingsRecord {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw))
     return { status: "unparseable" };
@@ -403,6 +442,9 @@ export function parseFindingsRecord(
     nits_without_request: [],
     doubted_posted: [],
     restated: [],
+    downgraded_untagged: [],
+    security_doubted: [],
+    security_outcome_mismatch: [],
   };
   for (const [i, entry] of rawFindings.entries()) {
     if (typeof entry !== "object" || entry === null) {
@@ -446,6 +488,24 @@ export function parseFindingsRecord(
     }
     if (disposition === "doubted" && str(e.posted_as) !== null)
       conformance.doubted_posted.push(key);
+    if (disposition === "downgraded") conformance.downgraded_untagged.push(key);
+    const kind = str(e.kind);
+    const outcome = normalizeSecurityOutcome(e.security_outcome);
+    const hopLabels = readHopLabels(e.hop_labels);
+    if (isSecurityFinding(kind, lens)) {
+      if (
+        opts.fold === true &&
+        disposition === "doubted" &&
+        word?.trim().toLowerCase() === "unverifiable"
+      )
+        conformance.security_doubted.push(key);
+      const computed = hopLabels === null ? "unknown" : securityOutcome(hopLabels);
+      const partialPosted =
+        disposition === "posted" &&
+        (computed === "partial-chain" || isPartialChain({ kind, word, security_outcome: outcome }));
+      if (partialPosted || (computed !== "unknown" && outcome !== null && outcome !== computed))
+        conformance.security_outcome_mismatch.push(key);
+    }
     findings.push({
       key,
       path,
@@ -455,7 +515,7 @@ export function parseFindingsRecord(
       severity: str(e.severity),
       confidence: num(e.confidence),
       reachability: str(e.reachability),
-      kind: str(e.kind),
+      kind,
       disposition,
       axis: normalizeAxis(e.axis),
       word,
@@ -471,6 +531,10 @@ export function parseFindingsRecord(
         const t = str(e.title);
         return t === null ? null : t.replace(/\s+/g, " ").slice(0, TITLE_CAP);
       })(),
+      // Telemetry keeps the lens verbatim, a chain's `:strategy` included
+      // (`pass-sec-exploit-chain:delta`): the strategy is what a chain row ran.
+      ...(outcome !== null ? { security_outcome: outcome } : {}),
+      ...(hopLabels !== null ? { hop_labels: hopLabels } : {}),
     });
   }
   if (noLens > 0) notes.push(`${noLens} entr${noLens === 1 ? "y" : "ies"} without a lens`);
@@ -484,6 +548,18 @@ export function parseFindingsRecord(
     notes.push(`${conformance.nits_without_request.length} posted nit(s) asking for nothing`);
   if (conformance.doubted_posted.length > 0)
     notes.push(`${conformance.doubted_posted.length} doubted finding(s) marked as posted`);
+  if (conformance.downgraded_untagged.length > 0)
+    notes.push(
+      `${conformance.downgraded_untagged.length} downgraded finding(s) with no posted_as (counted as not posted)`,
+    );
+  if (conformance.security_doubted.length > 0)
+    notes.push(
+      `${conformance.security_doubted.length} security finding(s) doubted as unverifiable under the security fold`,
+    );
+  if (conformance.security_outcome_mismatch.length > 0)
+    notes.push(
+      `${conformance.security_outcome_mismatch.length} security outcome(s) disagreeing with their hop labels`,
+    );
 
   const priorParsed = parsePriorArray(v, roundNo);
   notes.push(...priorParsed.notes);
@@ -510,6 +586,7 @@ export function readFindingsRecord(
   path: string,
   pr: number,
   roundNo: number,
+  opts: FindingsRecordOptions = {},
 ): ParsedFindingsRecord {
   let text: string;
   try {
@@ -523,7 +600,7 @@ export function readFindingsRecord(
   } catch {
     return { status: "unparseable" };
   }
-  return parseFindingsRecord(decoded, pr, roundNo);
+  return parseFindingsRecord(decoded, pr, roundNo, opts);
 }
 
 /** `<root>/state/findings/pr-<n>-round-<k>.json` — the pinned path, same

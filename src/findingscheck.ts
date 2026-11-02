@@ -34,6 +34,9 @@ export interface FindingsCheckDeps {
    * A returned promise is awaited; synchronous callbacks stay accepted.
    */
   onRecorded?: (target: { pr: number; roundNo: number; roundId: number | null }) => unknown;
+  /** `[security] fold` is on: a security entry left doubted as
+   * `unverifiable` is counted (`security_doubted`). */
+  securityFold?: boolean;
 }
 
 export interface FindingsCheckTarget {
@@ -70,7 +73,7 @@ export async function enforceFindingsRecord(
   const { store, log } = deps;
   const { pr, roundNo, headSha, planned } = target;
   const path = findingsRecordPath(deps.findingsDir, pr, roundNo);
-  const parsed = readFindingsRecord(path, pr, roundNo);
+  const parsed = readFindingsRecord(path, pr, roundNo, { fold: deps.securityFold === true });
 
   if (parsed.status === "ok" && parsed.record) {
     ingestFindingsRecord(deps, target, parsed, parsed.record);
@@ -122,7 +125,7 @@ export const FINDINGS_REPAIR_WINDOW_MS = 7 * 24 * 3_600_000;
  * alone: no second nudge and no further anomaly. Returns how many it stored.
  */
 export function ingestRepairedFindingsRecords(
-  deps: Pick<FindingsCheckDeps, "store" | "findingsDir" | "log" | "onRecorded">,
+  deps: Pick<FindingsCheckDeps, "store" | "findingsDir" | "log" | "onRecorded" | "securityFold">,
   now: Date,
 ): number {
   const { store } = deps;
@@ -153,6 +156,7 @@ export function ingestRepairedFindingsRecords(
       findingsRecordPath(deps.findingsDir, n.pr, roundNo),
       n.pr,
       roundNo,
+      { fold: deps.securityFold === true },
     );
     if (parsed.status !== "ok" || !parsed.record) continue;
     // A mark written before it carried the round's identity: the round row.
@@ -236,6 +240,9 @@ function ingestFindingsRecord(
       nits_without_request: c.nits_without_request.length,
       doubted_posted: c.doubted_posted.length,
       restated: c.restated.length,
+      downgraded_untagged: c.downgraded_untagged.length,
+      security_doubted: c.security_doubted.length,
+      security_outcome_mismatch: c.security_outcome_mismatch.length,
     });
     if (!isConformant(c)) {
       store.logAnomaly(

@@ -28,6 +28,7 @@
 import type { Verdict as VerdictType } from "./types.js";
 
 import { SEVERITIES } from "./severityrank.js";
+import { isSecurityLens } from "./passes.js";
 export { SEVERITIES };
 export type Severity = (typeof SEVERITIES)[number];
 
@@ -297,6 +298,79 @@ export const ASK_HUMAN_LENS = "pass-ask-human";
 export function isAskHumanFinding(kind?: string | null, lens?: string | null): boolean {
   if (kind?.trim().toLowerCase() === "ask-human") return true;
   return (lens ?? "").toLowerCase().includes(ASK_HUMAN_LENS);
+}
+
+// ---- security findings --------------------------------------------------
+//
+// A security finding is judged and posted by the security family's rules: the
+// validator labels its evidence, an unproven one is asked rather than
+// doubted (the `[security] fold`), and the posting policy can give it its own
+// budget (`[posting] security_max`, `scope`). Its SEVERITY comes from the
+// family's impact × exposure matrix (`securitySeverity`), which a lens applies
+// when it writes the finding; the posting map above is the same for it as for
+// any finding — `postTag` and `reachabilityCappedSeverity` have no security
+// branch, so the reachability gate holds for it too.
+
+/** The lens that reviews security in the default profile; not a member of
+ * the security family, but its findings are security findings. */
+export const GENERAL_SECURITY_LENS = "pass-security";
+
+/** The `kind:` prefixes that make a finding a security finding, whatever
+ * lens raised it. */
+const SECURITY_KIND_RE = /^(?:security|exploit-chain|partial-chain)(?![a-z0-9])/;
+
+/**
+ * Is this a security finding? Its lens field names a security-family lens
+ * (`pass-sec-*`, joined fields and a chain's `:strategy` read as
+ * `isSecurityLens` reads them) or `pass-security`, or its `kind` begins
+ * `security`, `exploit-chain` or `partial-chain` (`security:idor`). The rule
+ * the validator's security addenda bind by (include.ts
+ * `SECURITY_CANDIDATE`), as code.
+ */
+export function isSecurityFinding(kind?: string | null, lens?: string | null): boolean {
+  if (SECURITY_KIND_RE.test((kind ?? "").trim().toLowerCase())) return true;
+  const field = lens ?? "";
+  if (isSecurityLens(field)) return true;
+  return field
+    .toLowerCase()
+    .split(/[+,/&;|]/)
+    .some((part) => (part.trim().split(/[\s:#@]+/)[0] ?? "") === GENERAL_SECURITY_LENS);
+}
+
+/** What a security finding lets an attacker do: **A** acts on other users or
+ * the system, **B** reads others' or non-public data (or does what the app
+ * requires an account for), **C** discloses version, build or topology. */
+export type SecurityImpact = "A" | "B" | "C";
+
+/** Who can reach it, most exposed first. */
+export type SecurityExposure = "remote-unauth" | "remote-auth" | "tenant" | "local";
+
+export const SECURITY_EXPOSURES: readonly SecurityExposure[] = [
+  "remote-unauth",
+  "remote-auth",
+  "tenant",
+  "local",
+];
+
+/** The family's matrix (prompts/pass-sec-common.md, "Severity: impact ×
+ * exposure"), row by impact, column by exposure. */
+const SECURITY_MATRIX: Readonly<Record<SecurityImpact, readonly (Severity | "excluded")[]>> = {
+  A: ["P0", "P1", "P2", "P3"],
+  B: ["P1", "P2", "P3", "excluded"],
+  C: ["P3", "excluded", "excluded", "excluded"],
+};
+
+/**
+ * A security finding's severity from its impact and exposure — `excluded`
+ * where the matrix says it is never a finding. Confidence carries doubt;
+ * severity never does, so nothing here reads how likely the attack is.
+ * Pinned against the prompt's table by tests/secevidence.test.ts.
+ */
+export function securitySeverity(
+  impact: SecurityImpact,
+  exposure: SecurityExposure,
+): Severity | "excluded" {
+  return SECURITY_MATRIX[impact][SECURITY_EXPOSURES.indexOf(exposure)]!;
 }
 
 // ---- the "[deferred]" grammar --------------------------------------------

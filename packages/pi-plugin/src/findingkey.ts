@@ -57,9 +57,15 @@ export function recordSide(val: unknown): "LEFT" | "RIGHT" {
  *   `posted_as` it reads as posted (`entryDisposition`); without one it
  *   is never posted, and the renderer reports it.
  * - `doubted` — the validator could not stand behind the CLAIM (`DOUBT_WORDS`:
- *   refuted, unverifiable, bad anchor). A validity veto is a mark, not a
- *   deletion — kept here as "may not be valid", never posted on the PR,
- *   shown in the TUI for the operator to judge.
+ *   refuted, unverifiable, bad anchor, and an exploit chain's
+ *   `partial-chain`). A validity veto is a mark, not a deletion — kept here
+ *   as "may not be valid", never posted on the PR, shown in the TUI for the
+ *   operator to judge. The one exception is the security fold
+ *   (`[security] fold`): a security candidate doubted as `unverifiable` is
+ *   asked instead — the session records it `downgraded`, word
+ *   `security-demoted`, `posted_as: "question"`, and the render route
+ *   (reviewrender.ts `applySecurityFoldToRecord`) rewrites one the session
+ *   left doubted the same way, so it reads as posted here.
  * - `merged` / `folded` — merge-stage attrition: the same defect
  *   collapsed into another finding, or a different defect carried as a
  *   paragraph under one. Attrition here counts like a kill; it must never
