@@ -60,8 +60,10 @@ too.
   hop this change adds) whenever two or more family lenses are planned, a
   guard is removed or the change touches the threat model, and the only
   security row whose failure re-runs the round; `forward` and `backward` on
-  a request, or whenever a threat model exists (the default profile also
-  wants a large change); and `compose`, after every other lens has returned,
+  a request, or when a threat model exists and a security trigger fired
+  (the four `always` lenses alone do not count; the default profile also
+  wants over 150 triggered server-side lines); and `compose`, after every
+  other lens has returned,
   over this round's security findings.
 - **A threat model** (below) plans the lenses its entries name when the
   change touches them.
