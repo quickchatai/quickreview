@@ -964,7 +964,10 @@ command = true          # config.toml only; "@<bot> security"
   `security_pass_incomplete` event), never read as clean. When the round's
   progress record cannot be read, the body says completion is unknown
   (`SECURITY_PASSES_UNKNOWN_LINE`, the `security_pass_unknown` event). The
-  one required family row is the chain's `delta`.
+  one-shot route (`qcr review --security`, `/qcr-review --security`) writes
+  the same lines from the planned family rows with no entry among the
+  outcome's returned `passes` (`securityRowsNotReturned`). The one required
+  family row is the chain's `delta`.
 - **The exploit chain** (`pass-sec-exploit-chain`) is planned as one row per
   strategy, each naming its rule: `delta` (from the hop this change adds),
   `forward` and `backward` (from the threat model's entry points and crown

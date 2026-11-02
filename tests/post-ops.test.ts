@@ -30,10 +30,11 @@ import {
   roundPostingKey,
   type PostingReceipt,
 } from "../src/posting-receipt.js";
-import { withSecurityIncompleteLines, type PostOutcome } from "../src/postops.js";
+import type { PostOutcome } from "../src/postops.js";
 import {
   SECURITY_PASSES_UNKNOWN_LINE,
   securityPassIncompleteLine,
+  withSecurityIncompleteLines,
 } from "@quickchatai/pi-quickreview/src/templates.js";
 import type { PassPlanEntry } from "@quickchatai/pi-quickreview/src/types.js";
 import {

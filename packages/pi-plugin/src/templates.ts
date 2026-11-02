@@ -524,6 +524,36 @@ export function securityPassIncompleteLine(lens: string, strategy?: string): str
 export const SECURITY_PASSES_UNKNOWN_LINE =
   "Whether every security pass completed this round is unknown (no progress record for this round).";
 
+/** The fail-closed lines a review body still lacks: one per security row
+ * that did not complete (`securityPassIncompleteLine`), each once, leaving
+ * out a line the body already carries — the round prompt asks the session
+ * for the same words. */
+export function missingSecurityIncompleteLines(
+  text: string,
+  failed: readonly { lens: string; strategy?: string | undefined }[],
+): string[] {
+  return [
+    ...new Set(failed.map((row) => securityPassIncompleteLine(row.lens, row.strategy))),
+  ].filter((line) => !text.includes(line));
+}
+
+/**
+ * A review body with the fail-closed line for every security-family row that
+ * did not complete — failed, still running or never launched: a security
+ * pass that did not finish leaves its area unreviewed, and the review says
+ * so — never silent, never blocking. A line the session already wrote is
+ * not repeated, so the body carries each line once. Both posting routes use
+ * it: the daemon's (src/postops.ts) and the one-shot's (reviewpost.ts
+ * `assemblePostReview`).
+ */
+export function withSecurityIncompleteLines(
+  text: string,
+  failed: readonly { lens: string; strategy?: string | undefined }[],
+): string {
+  const missing = missingSecurityIncompleteLines(text, failed);
+  return missing.length === 0 ? text : `${text.trimEnd()}\n\n${missing.join("\n")}`;
+}
+
 /**
  * `{{chain_note}}`, at the end of step 2: "" unless the order carries the
  * chain's `compose` row (`chain_compose`) or reviews security alone

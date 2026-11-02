@@ -66,11 +66,10 @@ import {
   parsePlan,
   readRoundProgress,
   requiredPassGap,
-  type FailedSecurityRow,
 } from "./requiredpasses.js";
 import {
   SECURITY_PASSES_UNKNOWN_LINE,
-  securityPassIncompleteLine,
+  withSecurityIncompleteLines,
 } from "@quickchatai/pi-quickreview/src/templates.js";
 import { snapshotMark } from "@quickchatai/pi-quickreview/src/standing-review.js";
 import type { StateStore } from "./state.js";
@@ -346,25 +345,6 @@ function describeFailure(err: unknown): string {
   if (err instanceof GitHubRequestError)
     return `GitHub answered ${err.status} (${err.method} ${err.path})`;
   return err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200);
-}
-
-/**
- * A review body with the fail-closed line for every security-family row that
- * did not complete — failed, still running or never launched
- * (templates.ts `securityPassIncompleteLine`):
- * a security pass that did not finish leaves its area unreviewed, and the
- * review says so — never silent, never blocking. A line the session already
- * wrote (the round prompt asks it for the same words) is not repeated, so
- * the body carries each line once.
- */
-export function withSecurityIncompleteLines(
-  text: string,
-  failed: readonly Pick<FailedSecurityRow, "lens" | "strategy">[],
-): string {
-  const missing = [
-    ...new Set(failed.map((row) => securityPassIncompleteLine(row.lens, row.strategy))),
-  ].filter((line) => !text.includes(line));
-  return missing.length === 0 ? text : `${text.trimEnd()}\n\n${missing.join("\n")}`;
 }
 
 class PostOps {

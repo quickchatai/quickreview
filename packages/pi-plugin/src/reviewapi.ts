@@ -51,7 +51,7 @@ import {
 import { MEMORY_NOT_SET_UP, type ReviewMemoryPort, type RoundMemory } from "./memoryport.js";
 import type { ProfilePlace } from "./profilelookup.js";
 import type { ProfileLookup } from "./profiles.js";
-import { assemblePostReview, loadPostIdentity } from "./reviewpost.js";
+import { assemblePostReview, loadPostIdentity, securityRowsNotReturned } from "./reviewpost.js";
 import {
   fetchPrTarget,
   parsePrTarget,
@@ -1220,6 +1220,9 @@ async function runPipeline(
       lenses,
       verdict,
       summary: typeof shot.outcome?.["summary"] === "string" ? shot.outcome["summary"] : null,
+      // The fail-closed security lines, from the plan and the passes that
+      // returned — the daemon's route reads its round progress instead.
+      security: securityRowsNotReturned(shot.prompts.passPlan, shot.outcome),
     });
     const postAs = loadPostIdentity(repoDir);
     if (post) {

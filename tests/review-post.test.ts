@@ -12,8 +12,14 @@ import {
   assemblePostReview,
   localPostGate,
   postReviewToPr,
+  securityRowsNotReturned,
   type PostRequest,
 } from "@quickchatai/pi-quickreview/src/reviewpost.js";
+import {
+  SECURITY_PASSES_UNKNOWN_LINE,
+  securityPassIncompleteLine,
+} from "@quickchatai/pi-quickreview/src/templates.js";
+import type { PassPlanEntry } from "@quickchatai/pi-quickreview/src/types.js";
 import { parseFindingMarker } from "@quickchatai/pi-quickreview/src/findingkey.js";
 import { SRC_DIRS } from "./helpers/source-trees.js";
 import { CORE_NAME, escapeRe } from "./helpers/source-trees.js";
@@ -68,6 +74,117 @@ describe("assemblePostReview", () => {
     }
     expect(parseFindingMarker(r.comments[0]!.body)?.key).toBe("f1");
     expect(r.body).toContain(QCR_VISIBLE_MARKER);
+  });
+});
+
+// The one-shot route (`/qcr-review --security`, `qcr review --security`) has
+// no round progress to read: its security rows that did not complete are the
+// planned family rows with no entry among the outcome's returned `passes`, and
+// the body carries the same fail-closed lines as the daemon's route.
+describe("the one-shot route's fail-closed security lines", () => {
+  const CHAIN = "pass-sec-exploit-chain";
+  const planRow = (lens: string, strategy?: string): PassPlanEntry => ({
+    lens,
+    agent: `${lens}--sol-high`,
+    tier: "sol-high",
+    raisable_to: [],
+    ...(strategy !== undefined ? { strategy: strategy as PassPlanEntry["strategy"] } : {}),
+  });
+  const PLAN = [
+    planRow("pass-baseline"),
+    planRow("pass-sec-access"),
+    planRow("pass-sec-injection"),
+    planRow(CHAIN, "delta"),
+    planRow(CHAIN, "forward"),
+  ];
+  const outcome = (...names: Array<string | { name: string; strategy: string }>) => ({
+    verdict: "COMMENT",
+    passes: names.map((n) =>
+      typeof n === "string" ? { name: n, findings: 0 } : { ...n, findings: 0 },
+    ),
+  });
+
+  // MUTATION: return `{ state: "known", failed: [] }` from securityRowsNotReturned
+  // whenever `passes` is an array — this fails.
+  it("names each planned family row with no returned pass, strategy by strategy", () => {
+    expect(
+      securityRowsNotReturned(
+        PLAN,
+        outcome("pass-baseline", "pass-sec-access--sol-high", `${CHAIN}:delta`, "pass-validate"),
+      ),
+    ).toEqual({
+      state: "known",
+      failed: [{ lens: "pass-sec-injection" }, { lens: CHAIN, strategy: "forward" }],
+    });
+    expect(
+      securityRowsNotReturned(
+        PLAN,
+        outcome(
+          "pass-sec-access",
+          "pass-sec-injection",
+          { name: CHAIN, strategy: "forward" },
+          CHAIN,
+        ),
+      ),
+    ).toEqual({ state: "known", failed: [] });
+  });
+
+  it("names the lens once when the rows it is short of cannot be told apart", () => {
+    expect(
+      securityRowsNotReturned(PLAN, outcome("pass-sec-access", "pass-sec-injection", CHAIN)),
+    ).toEqual({ state: "known", failed: [{ lens: CHAIN }] });
+  });
+
+  it("is unknown with no outcome or no passes array, and says nothing of a plan with no family row", () => {
+    expect(securityRowsNotReturned(PLAN, undefined)).toEqual({ state: "unknown" });
+    expect(securityRowsNotReturned(PLAN, { verdict: "COMMENT" })).toEqual({ state: "unknown" });
+    expect(securityRowsNotReturned([planRow("pass-baseline")], undefined)).toEqual({
+      state: "known",
+      failed: [],
+    });
+  });
+
+  // MUTATION: drop the `securityLines` step from assemblePostReview — this fails.
+  it("puts the lines in the posted body, above qcr's marker, once", () => {
+    const line = securityPassIncompleteLine("pass-sec-injection");
+    const r = assemblePostReview(record("COMMENT"), {
+      cfg,
+      roundNo: 1,
+      lenses: [],
+      security: { state: "known", failed: [{ lens: "pass-sec-injection" }] },
+    });
+    expect(r.body).toContain(line);
+    expect(r.body.indexOf(line)).toBeLessThan(r.body.indexOf(QCR_VISIBLE_MARKER));
+    expect(r.body.trimEnd().endsWith(QCR_VISIBLE_MARKER)).toBe(true);
+    // A line the session already wrote (here, in the summary) is not repeated.
+    const said = { ...record("COMMENT"), summary: `s. ${line}` };
+    const again = assemblePostReview(said, {
+      cfg,
+      roundNo: 1,
+      lenses: [],
+      summary: `s. ${line}`,
+      security: { state: "known", failed: [{ lens: "pass-sec-injection" }] },
+    });
+    expect(again.body.split(line).length - 1).toBe(1);
+    const unknown = assemblePostReview(record("COMMENT"), {
+      cfg,
+      roundNo: 1,
+      lenses: [],
+      security: { state: "unknown" },
+    });
+    expect(unknown.body).toContain(SECURITY_PASSES_UNKNOWN_LINE);
+    const none = assemblePostReview(record("COMMENT"), { cfg, roundNo: 1, lenses: [] });
+    expect(none.body).not.toMatch(/did not complete|is unknown/);
+  });
+
+  // The call site is the reader: the one-shot route hands the run's evidence
+  // to the assembler. MUTATION: drop the `security:` argument from
+  // reviewapi.ts's assemblePostReview call — this fails.
+  it("the one-shot route passes its run's evidence to the assembler", () => {
+    const api = readFileSync(join(ROOT, "packages", "pi-plugin", "src", "reviewapi.ts"), "utf8");
+    expect(api).toMatch(
+      /assemblePostReview\([\s\S]{0,600}?security: securityRowsNotReturned\(shot\.prompts\.passPlan, shot\.outcome\)/,
+    );
   });
 });
 
