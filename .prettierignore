@@ -2,6 +2,7 @@
 dist/
 node_modules/
 packages/*/assets/
+packages/pi-plugin/skills/
 
 # Runtime state written by the daemon, the TUI and the tests. Gitignored
 # already; listed so a stray local file can never be reformatted. The
@@ -71,6 +72,10 @@ bench/aacr/**/*.json
 
 # Recorded prompt output (tests/golden-prompts.test.ts): byte-exact, never reformatted.
 tests/fixtures/golden-prompts/
+
+# The host plugins' and the pi Plugin's rendered goldens (tests/plugin-render.test.ts):
+# byte-exact, as the renderer writes them.
+tests/fixtures/plugin-render/
 
 # Recorded golden outputs, compared byte for byte by their tests (UPDATE_GOLDEN
 # writes them as JSON.stringify(…, null, 2)); a formatter rewriting them would

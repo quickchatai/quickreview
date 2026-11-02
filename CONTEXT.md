@@ -3,7 +3,8 @@
 How quickreviewd learns a repo it has just been installed on, tunes its reviewer
 to it, and reviews the whole codebase without a pull request. Driven by the
 operator's companion; the deterministic half is `src/setup/`. It also names
-the two packages and what a person meets first
+the two packages, what a person meets first and the other coding-agent CLIs
+it installs into
 ([ADR 0001](docs/adr/0001-plugin-and-app-nest.md)).
 
 ## Language
@@ -100,7 +101,7 @@ _Avoid_: job, chunk, batch
 ### Reviewing the whole repo
 
 **Scan**:
-A whole-repo bug, design and nit review of a set-up repo with no pull request, in two stages.
+A bug, design and nit review of a set-up repo with no pull request, of the whole repo or one folder of it, in two stages.
 _Avoid_: audit, sweep (that is a PR lens), survey
 
 **Stage 1**:
@@ -172,7 +173,7 @@ _Avoid_: findings memory
 
 **Plugin**:
 The inner package, `@quickchatai/pi-quickreview`: the review core and the `/qcr-*` commands, and everything a person using plain pi needs to review. It works with no app.
-_Avoid_: core (the core is the plugin's engine code, a layer inside it), extension
+_Avoid_: core (the core is the plugin's engine code, a layer inside it), extension, host plugin (that is a host's, and runs the app)
 
 **App**:
 The outer package, `@quickchatai/quickreview` with the `qcr` bin: the managed product built on the plugin (home, setup, auto-review, TUI, memory).
@@ -181,6 +182,22 @@ _Avoid_: CLI (the bin is one door into the app), daemon
 **Home**:
 The app's own customised pi session that a person lands in: login, the setup checklist, then the repository's pull requests with buttons to review them.
 _Avoid_: dashboard, board (the TUI's), companion
+
+**Host**:
+A coding-agent CLI other than pi that QuickReview installs into, such as Claude Code, Codex or Cursor.
+_Avoid_: client, agent (the reviewer's own sessions are agents too)
+
+**Host plugin**:
+The skills and manifests that let a host run reviews and scans through the app's `qcr`, written once with the plugin's own skills. "Plugin" alone is always the pi package.
+_Avoid_: plugin (alone), extension, integration
+
+**Model route**:
+Which provider and models a review runs on, picked from the credential the person has.
+_Avoid_: provider (a route can name several), model (a route is the whole choice)
+
+**Full review**:
+The review as shipped, on its default plan of lenses, as opposed to the `full` preset, which reviews the whole change again at the highest effort.
+_Avoid_: full (alone, that is the preset), complete review
 
 **Auto-review**:
 The opt-in always-on daemon that reviews new pull requests by polling; reviewing one pull request from the home does not need it.

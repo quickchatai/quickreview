@@ -1,19 +1,43 @@
-# The Claude Code plugin
+# The host plugins and their one skill source
 
-`plugins/qcr/` is a Claude Code plugin whose skills call the `qcr` host wrapper
-([host-wrapper.md](host-wrapper.md)) as a headless black box and read what it
-prints. The repository root carries the marketplace file
-(`.claude-plugin/marketplace.json`), so `/plugin marketplace add <owner>/<repo>`
-then `/plugin install qcr@quickreview` installs it.
+`plugins/qcr/templates/` is the one skill source for QuickReview's commands,
+in the pi Plugin and in every host plugin (Claude Code, Codex, Copilot,
+Cursor, opencode, Gemini CLI, Antigravity). Each command has one template: a
+shared description, a **pi body**, which hands the person the `/qcr-…` line
+to type, and a **host body**, which runs `qcr` itself.
 
-| skill        | does                                                                               |
-| ------------ | ---------------------------------------------------------------------------------- |
-| `qcr-setup`  | Docker, then pull access, then the wrapper, then login. Safe to re-run.            |
-| `qcr-review` | reviews a branch, the uncommitted changes, a piped diff or a PR: preview, then run |
-| `qcr-scan`   | previews, starts and reads a whole-repository scan                                 |
+`plugins/qcr/render.mjs` renders it: one pure function from the source, a
+host, the package version and the contract number to the files that host
+reads. It fills in the command's name (`review` on a namespaced host,
+`qcr-review` on a bare one), the invoke spelling, the version (every
+manifest's, and the pinned `npx` fallback's) and the host's own note, such as
+Codex's request for network access.
 
-Claude Code prefixes a plugin's skills with its name, so the setup skill is
-`/qcr:qcr-setup`.
+| host        | the person types | rendered layout                                                    |
+| ----------- | ---------------- | ------------------------------------------------------------------ |
+| Claude Code | `/qcr:review`    | `.claude-plugin/marketplace.json`, plugin in `qcr/`                |
+| Codex       | `$qcr:review`    | `.claude-plugin/marketplace.json`, `qcr/.codex-plugin/plugin.json` |
+| Copilot CLI | `/qcr-review`    | `.github/plugin/marketplace.json`, plugin in `qcr/`                |
+| Cursor      | `/qcr-review`    | `.cursor-plugin/plugin.json` and `skills/`                         |
+| opencode    | `/qcr-review`    | `skills/` alone                                                    |
+| Gemini CLI  | `/qcr:review`    | `gemini-extension.json` and `commands/qcr/*.toml`                  |
+| Antigravity | `/qcr:review`    | `plugin.json` and `skills/`                                        |
+| pi          | `/qcr-review`    | the Plugin's `skills/`                                             |
+
+The pi Plugin's `packages/pi-plugin/skills/` is that render, made by
+`npm run build` and by the Plugin's prepack (`node plugins/qcr/render.mjs pi`,
+which checks the copy it wrote; `--check` only checks). It is gitignored and
+never edited. `tests/plugin-render.test.ts` holds one golden per host and pi:
+a template edited without `UPDATE_GOLDEN=1` fails it.
+
+A host body probes the installed `qcr` first (`qcr --schema 1 version`) and,
+on any nonzero exit or output that is not JSON, runs the exact release it was
+rendered from through `npx -y @quickchatai/quickreview@<version>`. A host scan
+runs with `--sandbox host`.
+
+The root `.claude-plugin/marketplace.json` and `plugins/qcr/.claude-plugin/`
+still list the Docker-era Claude Code plugin, and its setup script
+(`plugins/qcr/scripts/qcr-setup.sh`) stays until the installer replaces it.
 
 ## The schema check
 
@@ -35,7 +59,7 @@ The review skill posts nothing: a `--schema` run is always `--json`, which makes
 the result's destination `json` whatever the repo saved. Posting to a PR needs
 an explicit `--to pr`, which the skill passes only when the user asks.
 
-## Setup
+## The Docker-era setup script
 
 `scripts/qcr-setup.sh` runs the four steps in order and skips what is done.
 The image is public, so pull access needs nothing; only a private mirror
@@ -49,7 +73,8 @@ already on the machine skips the pull check. It makes no model call.
 
 ## Tests
 
-`tests/plugin-qcr.test.ts` checks the skills and runs the setup script against
+`tests/plugin-render.test.ts` holds the goldens and every host's bodies.
+`tests/plugin-qcr.test.ts` checks the Claude Code render and runs the setup script against
 a fake `qcr`, `docker` and `gh` on `PATH` and the recorded version payload in
 `tests/fixtures/json-contract/`. `tests/schema-flag.test.ts` drives the
 contract flag through the bin's front door and the image's entry.

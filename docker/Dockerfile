@@ -101,7 +101,12 @@ COPY scripts/verify-dist.mjs scripts/verify-dist.mjs
 COPY packages packages
 COPY src src
 COPY extensions extensions
+COPY plugins/qcr/render.mjs plugins/qcr/render.mjs
+COPY plugins/qcr/templates plugins/qcr/templates
 RUN npx tsc -b && node scripts/verify-dist.mjs
+# The pi Plugin's skills, rendered from the one skill source as the build
+# renders them in a checkout (plugins/qcr/render.mjs): the home's pi loads them.
+RUN node plugins/qcr/render.mjs pi
 RUN npm prune --omit=dev --no-audit --no-fund && npm cache clean --force
 
 # ---- release -----------------------------------------------------------------

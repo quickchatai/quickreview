@@ -33,7 +33,7 @@ LOG="$ROOT/state/tsc-watch.log"
 mkdir -p "$ROOT/state"
 
 echo "qcr dev: building…" >&2
-if ! (cd "$ROOT" && npx tsc -b); then
+if ! (cd "$ROOT" && npx tsc -b && node plugins/qcr/render.mjs pi); then
   echo "qcr dev: build failed — fix the errors above, then run again." >&2
   exit 1
 fi

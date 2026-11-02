@@ -1,4 +1,5 @@
-// The pi plugin (packages/pi-plugin), in process: its manifest and skills, the
+// The pi plugin (packages/pi-plugin), in process: its manifest and skills (as
+// rendered from the one skill source, plugins/qcr/), the
 // version gate, what the extension registers, /qcr-review in the background
 // through the extension on a fake pi (status line, result message, one review
 // at a time, stop, the posting rule), its arguments and presets, the
@@ -10,15 +11,7 @@
 // tests/review-post-cli.test.ts. git runs: each fake host's repo is a scratch
 // git repo (the review store keys a repo's state by its root commit).
 import { execFileSync } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -89,6 +82,7 @@ import { fillCaseAgentDir } from "@quickchatai/pi-quickreview/src/plugin/scancas
 import { coreExtensionFile } from "@quickchatai/pi-quickreview/src/engine/extfiles.js";
 import { ROUND_EXTENSIONS } from "@quickchatai/pi-quickreview/src/engine/round.js";
 import { parseSkillFrontmatter } from "./helpers/skill-frontmatter.js";
+import { loadSource, render, TEMPLATE_CONTRACT } from "../plugins/qcr/render.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const PLUGIN = join(ROOT, "packages", "pi-plugin");
@@ -112,13 +106,21 @@ describe("the plugin's manifest", () => {
   });
 
   // Each command is also a skill of the same name, and each skill names its
-  // command. MUTATION: delete skills/qcr-scan, or rename its `name:` — this
-  // fails.
+  // command. The skills/ the Plugin ships is rendered from the one skill
+  // source (plugins/qcr/render.mjs) at build and pack, and gitignored, so this
+  // reads the render itself: a fresh clone has no skills/ before a build.
+  // MUTATION: delete plugins/qcr/templates/scan.md, or render the pi copy
+  // under the namespaced names — this fails.
   it("ships one skill per command, named as the command, that tells the model the command", () => {
-    const dir = join(PLUGIN, "skills");
-    expect(readdirSync(dir).sort()).toEqual([...QUICKREVIEW_COMMANDS].sort());
+    const files = render(loadSource(), "pi", {
+      version: pluginPkg()["version"] as string,
+      contract: TEMPLATE_CONTRACT,
+    });
+    expect(Object.keys(files).sort()).toEqual(
+      [...QUICKREVIEW_COMMANDS].map((c) => `skills/${c}/SKILL.md`).sort(),
+    );
     for (const name of QUICKREVIEW_COMMANDS) {
-      const fm = parseSkillFrontmatter(readFileSync(join(dir, name, "SKILL.md"), "utf8"));
+      const fm = parseSkillFrontmatter(files[`skills/${name}/SKILL.md`]!);
       expect(fm.fields.get("name")?.value, name).toBe(name);
       const description = fm.fields.get("description");
       expect(description?.resolvesTo, name).toBe("string");

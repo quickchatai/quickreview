@@ -9,6 +9,8 @@
 //   - the tarball has no prompts/, themes/ or extensions/ at its root, so
 //     pi's conventional discovery finds nothing but the manifest's one
 //     extension and its skills/; the seeds ship under assets/ only;
+//   - its skills/ is the prepack's render of the one skill source
+//     (plugins/qcr/), byte for byte;
 //   - pi loads exactly the three qcr- commands and a skill of each name, from
 //     the installed package, and no prompt template at all;
 //   - the installed package carries no pi of its own, and the core finds its
@@ -28,6 +30,7 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { loadSource, render, TEMPLATE_CONTRACT } from "../plugins/qcr/render.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const PLUGIN = join(ROOT, "packages", "pi-plugin");
@@ -109,7 +112,8 @@ async function rpc(
 beforeAll(() => {
   rmSync(SCRATCH, { recursive: true, force: true });
   mkdirSync(join(SCRATCH, "inst"), { recursive: true });
-  // the real pack: prepack builds, copies the data and checks it; postpack cleans
+  // the real pack: prepack builds, renders the skills, copies the data and
+  // checks both; postpack cleans the data
   const name = run("npm", ["pack", "--pack-destination", SCRATCH, "--silent"], PLUGIN).trim();
   tarball = join(SCRATCH, name.split("\n").pop()!);
   const toml = run(
@@ -160,6 +164,29 @@ describe("the packed plugin, installed into a fresh pi", () => {
     // the checkout is left as it was: postpack removed the copies
     expect(existsSync(join(PLUGIN, "assets"))).toBe(false);
     expect(existsSync(join(PLUGIN, "LICENSE"))).toBe(false);
+  });
+
+  // The skills/ the Plugin ships is rendered from the one skill source at
+  // pack; the tarball's copy is that render, byte for byte, and nothing else.
+  // MUTATION: drop the render from the Plugin's prepack and edit a pi body in
+  // plugins/qcr/templates/ after the last build — this fails.
+  it("carries the pi skills exactly as a fresh render of the one skill source", () => {
+    const want = render(loadSource(), "pi", {
+      version: (
+        JSON.parse(run("tar", ["xzOf", tarball, "package/package.json"], SCRATCH)) as {
+          version: string;
+        }
+      ).version,
+      contract: TEMPLATE_CONTRACT,
+    });
+    const entries = run("tar", ["tzf", tarball], SCRATCH).trim().split("\n");
+    const packed = entries
+      .filter((e) => e.startsWith("package/skills/") && !e.endsWith("/"))
+      .map((e) => e.slice("package/".length))
+      .sort();
+    expect(packed).toEqual(Object.keys(want).sort());
+    for (const [p, content] of Object.entries(want))
+      expect(run("tar", ["xzOf", tarball, `package/${p}`], SCRATCH), p).toBe(content);
   });
 
   it("brings no pi of its own; the host's is the one it runs on", () => {

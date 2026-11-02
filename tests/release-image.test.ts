@@ -172,6 +172,11 @@ describe("release image — stages and pins", () => {
 
   it("the build stage compiles with tsc and verifies dist", () => {
     expect(lines).toContain("RUN npx tsc -b && node scripts/verify-dist.mjs");
+    // the pi Plugin's skills are gitignored and rendered, here as in a checkout's
+    // build; the release stage takes them with the rest of packages/.
+    // MUTATION: drop the render from the build stage — this fails.
+    expect(lines).toContain("RUN node plugins/qcr/render.mjs pi");
+    expect(lines).toContain("COPY plugins/qcr/templates plugins/qcr/templates");
     // …then ships production dependencies only
     expect(runWith("npm prune")).toContain("--omit=dev");
   });

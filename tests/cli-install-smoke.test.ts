@@ -232,6 +232,9 @@ describe.skipIf(!BUILT)("the packed CLI (needs `npm run build`)", () => {
       "package/src/home/setup.ts",
       "package/src/home/setupcard.ts",
       "package/config.example.toml",
+      // the one skill source and its renderer, which `qcr plugin` renders from
+      "package/plugins/qcr/render.mjs",
+      "package/plugins/qcr/templates/review.md",
       ...SHIPPED_FIXTURES,
       ...BENCH_KEPT.map((m) => `package/dist/src/bench/${m}.js`),
     ])

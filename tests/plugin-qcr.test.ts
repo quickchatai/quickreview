@@ -1,14 +1,17 @@
-// The qcr Claude Code plugin (plugins/qcr): skills that call the qcr
-// host wrapper as `qcr --schema 1 …` (the contract flag itself is
-// tests/schema-flag.test.ts), and /qcr-setup. No docker, no gh, no model, no
-// network: the script runs against a fake qcr, docker and gh on PATH that log
-// every call, and against the recorded version payload of
+// The qcr Claude Code plugin: its skills as the one skill source renders them
+// for Claude Code (plugins/qcr/render.mjs; every host's render is
+// tests/plugin-render.test.ts), which call qcr as `qcr --schema 1 …` (the
+// contract flag itself is tests/schema-flag.test.ts), and the Docker-era
+// /qcr-setup script, which stays until the installer replaces it. No docker,
+// no gh, no model, no network: the script runs against a fake qcr, docker and
+// gh on PATH that log every call, and against the recorded version payload of
 // tests/fixtures/json-contract.
 //
-//   - the SKILL.md files parse as pi/Claude read them, call qcr only with the
-//     plugin's contract, and never bare;
-//   - qcr-setup checks Docker, then pull auth, then the wrapper, then login, in
-//     that order, skips what is done, and hands a terminal-only step to the
+//   - the rendered SKILL.md files parse as pi/Claude read them, call qcr only
+//     with the plugin's contract, and never bare;
+//   - the setup skill checks qcr's contract, then the login, with no Docker;
+//   - qcr-setup.sh checks Docker, then pull auth, then the wrapper, then login,
+//     in that order, skips what is done, and hands a terminal-only step to the
 //     human (exit 10) without running it.
 import { afterEach, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
@@ -25,6 +28,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseSkillFrontmatter } from "./helpers/skill-frontmatter.js";
+import { loadSource, render, TEMPLATE_CONTRACT } from "../plugins/qcr/render.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PLUGIN = join(root, "plugins", "qcr");
@@ -44,9 +48,13 @@ const scratch = (): string => {
 
 // ---- the skills -----------------------------------------------------------------
 
-const SKILLS = ["qcr-review", "qcr-scan", "qcr-setup"] as const;
-const skillText = (n: string): string =>
-  readFileSync(join(PLUGIN, "skills", n, "SKILL.md"), "utf8");
+const SKILLS = ["review", "scan", "setup"] as const;
+const CLAUDE = render(loadSource(), "claude", {
+  version: (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string })
+    .version,
+  contract: TEMPLATE_CONTRACT,
+});
+const skillText = (n: string): string => CLAUDE[`qcr/skills/${n}/SKILL.md`]!;
 
 describe("the plugin's files", () => {
   it("plugin.json and marketplace.json name the same plugin and path", () => {
@@ -73,7 +81,7 @@ describe("the plugin's files", () => {
     expect(spawnSync("test", ["-x", SETUP]).status).toBe(0);
   });
 
-  // MUTATION: restore plugins/qcr/scripts/qcr-json, or name it in a skill — this fails.
+  // MUTATION: restore plugins/qcr/scripts/qcr-json, or name it in a template — this fails.
   it("has no schema wrapper of its own: qcr reads the contract flag itself", () => {
     expect(existsSync(join(PLUGIN, "scripts", "qcr-json"))).toBe(false);
     for (const name of SKILLS) expect(skillText(name), name).not.toContain("qcr-json");
@@ -91,11 +99,12 @@ describe("the plugin's files", () => {
     });
   }
 
-  // MUTATION: drop `--schema 1` from one command in the review skill's table — this fails.
-  it("review and scan call qcr only with contract 1, and say to stop on a refusal", () => {
+  // MUTATION: drop `--schema {{schema}}` from one command in the host table of
+  // plugins/qcr/templates/review.md — this fails.
+  it("review and scan call qcr only with contract 1, and say what a refusal looks like", () => {
     for (const [name, verb] of [
-      ["qcr-review", "review"],
-      ["qcr-scan", "scan"],
+      ["review", "review"],
+      ["scan", "scan"],
     ] as const) {
       const t = skillText(name);
       expect(t).toContain(`qcr --schema 1 ${verb}`);
@@ -111,20 +120,22 @@ describe("the plugin's files", () => {
   });
 
   it("the review skill previews before it runs and posts only on --to pr", () => {
-    const t = skillText("qcr-review");
+    const t = skillText("review");
     expect(t).toMatch(/--preview/);
     expect(t).toMatch(/Wait for a go/);
     expect(t).toMatch(/only with `--to pr`/);
     expect(t).not.toMatch(/--post/);
   });
 
-  it("the setup skill names the four steps in order and the exit codes", () => {
-    const t = skillText("qcr-setup");
-    const at = ["Docker", "Pull access", "The wrapper", "Login"].map((s) => t.indexOf(s));
+  // MUTATION: put the Docker steps back in plugins/qcr/templates/setup.md's
+  // host body — this fails.
+  it("the setup skill checks qcr's contract, then the login, and offers the npm install", () => {
+    const t = skillText("setup");
+    const at = ["qcr --schema 1 version", "auth.json", "`qcr login`"].map((s) => t.indexOf(s));
     expect(at.every((i) => i >= 0)).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
-    expect(t).toContain("gh auth refresh -s read:packages");
-    expect(t).toMatch(/exits 10/);
+    expect(t).toContain("npm i -g @quickchatai/quickreview");
+    expect(t).not.toMatch(/docker|ghcr|CLAUDE_PLUGIN_ROOT|qcr-setup\.sh/i);
   });
 });
 

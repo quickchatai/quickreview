@@ -38,7 +38,7 @@
     "README.md",
     "LICENSE"
   ],
-  "//pi": "pi loads exactly this: the one extension and the skills/ directory below (one skill per command). No prompts/ or themes/ directory exists at the package root (the frozen seeds ship under assets/), so pi's conventional discovery finds nothing else; tests/pi-plugin-install.test.ts proves it on the packed tarball.",
+  "//pi": "pi loads exactly this: the one extension and the skills/ directory below (one skill per command), which the build and the prepack render from the repo's one skill source (plugins/qcr/render.mjs) and check against that render; it is gitignored. No prompts/ or themes/ directory exists at the package root (the frozen seeds ship under assets/), so pi's conventional discovery finds nothing else; tests/pi-plugin-install.test.ts proves it on the packed tarball.",
   "pi": {
     "extensions": [
       "./dist/src/plugin/index.js"
@@ -48,8 +48,8 @@
     ]
   },
   "scripts": {
-    "build": "tsc -b",
-    "prepack": "tsc -b && node ../../scripts/plugin-assets.mjs",
+    "build": "tsc -b && node ../../plugins/qcr/render.mjs pi",
+    "prepack": "tsc -b && node ../../plugins/qcr/render.mjs pi && node ../../scripts/plugin-assets.mjs",
     "postpack": "node ../../scripts/plugin-assets.mjs --clean"
   },
   "dependencies": {

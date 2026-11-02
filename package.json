@@ -32,7 +32,7 @@
   "bin": {
     "qcr": "bin/qcr.js"
   },
-  "//files": "Exactly what the app reads at runtime from its package root: the build (dist/), the bin, the TypeScript sources pi loads as extensions (extensions/ and the src/ they import), the data the app and the companion read (agents/, prompts/, seeds/, schemas/, generic profiles/, skills/, the seed manifest), the scripts sessions and the bring-up run (scripts/), the deploy and docker files the onboarding, the companion and the memory sidecar use, the shipped config defaults, and the synthetic regression cases `qcr regression` reads by default. Never other tests, the bench (except the three modules the app imports: cost, exec, values), docs, state, secrets, the private profile or the operator-only and dev scripts (each excluded by file name: a `dir/` pattern does not match `dir.sh`); never a rulebook file. tests/cli-install-smoke.test.ts packs it and checks.",
+  "//files": "Exactly what the app reads at runtime from its package root: the build (dist/), the bin, the TypeScript sources pi loads as extensions (extensions/ and the src/ they import), the data the app and the companion read (agents/, prompts/, seeds/, schemas/, generic profiles/, skills/, the seed manifest), the host plugins' skill source and its renderer (plugins/, which `qcr plugin` renders from), the scripts sessions and the bring-up run (scripts/), the deploy and docker files the onboarding, the companion and the memory sidecar use, the shipped config defaults, and the synthetic regression cases `qcr regression` reads by default. Never other tests, the bench (except the three modules the app imports: cost, exec, values), docs, state, secrets, the private profile or the operator-only and dev scripts (each excluded by file name: a `dir/` pattern does not match `dir.sh`); never a rulebook file. tests/cli-install-smoke.test.ts packs it and checks.",
   "files": [
     "bin/",
     "dist/",
@@ -56,6 +56,7 @@
     "profiles/",
     "!profiles/quickchat/",
     "skills/",
+    "plugins/",
     "scripts/",
     "!scripts/cutover.sh",
     "!scripts/cutover-rehearsal.sh",
@@ -90,7 +91,7 @@
     "node": ">=22.19"
   },
   "scripts": {
-    "build": "tsc -b && node scripts/verify-dist.mjs && node scripts/build-stamp.mjs",
+    "build": "tsc -b && node plugins/qcr/render.mjs pi && node scripts/verify-dist.mjs && node scripts/build-stamp.mjs",
     "prepack": "npm run build",
     "watch": "node scripts/tsc-watch.mjs -b --watch --preserveWatchOutput",
     "dev": "bash scripts/dev-tui.sh",

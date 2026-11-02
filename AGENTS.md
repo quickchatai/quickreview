@@ -243,6 +243,7 @@ the fence.
 | Onboarding | `src/onboard/`, `extensions/onboarding.ts`, [`docs/onboarding.md`](docs/onboarding.md) |
 | The home (a bare `qcr`) | `src/home/launch.ts` (the pinned pi, quiet, on the person's own pi home), `extensions/home.ts` (`createHome` over the ports; every action a key and a `home_*` tool), `src/home/model.ts` (state and actions, the review button), `src/home/panel.ts` (the overlay), `src/home/review.ts` (a review's progress model), `src/home/ports.ts` + `src/home/adapters.ts` + `src/home/reviews.ts` (the reviews port: preview, the detached registry's start/status/stop, the review state, the daemon's rounds, the post of a kept review) |
 | The pi plugin | `packages/pi-plugin/src/plugin/` (the entry `index.ts`, the commands, `versiongate.ts` for the `^1.4.0` pi range, `login.ts` for the borrowed host login), `packages/pi-plugin/src/reviewapi.ts`, [`packages/pi-plugin/README.md`](packages/pi-plugin/README.md) |
+| Host plugins | `plugins/qcr/templates/` (the one skill source), `plugins/qcr/render.mjs` (its renderer, for every host and the Plugin's gitignored `skills/`), [`docs/plugin.md`](docs/plugin.md) |
 | The npm CLI | `bin/qcr.js` → `src/qcrbin.ts` (the bin's front door: bare `qcr`, `review`, `scan`, `login`, `pi`, `update`, `version`), `src/schemaflag.ts` (`qcr --schema N`, a host plugin's contract, `CONTRACTS` in `packages/pi-plugin/src/contract.ts`), `src/npmverbs.ts`, `src/updatenotice.ts`; every other verb goes to `src/cli.ts` |
 
 `agents/`, `prompts/`, `skills/companion/` and `extensions/` are shipped bot

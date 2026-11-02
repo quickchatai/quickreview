@@ -120,7 +120,9 @@ exactly instead; `qcr pi` starts that pinned pi with this plugin preloaded.
 ## What ships in the package
 
 The compiled review core and the plugin (`dist/`), one skill per command
-(`skills/`), and under `assets/` the
+(`skills/`, rendered at pack time from the same skill source as QuickReview's
+plugins for other coding-agent CLIs, and checked against it), and under
+`assets/` the
 data the core reads: the agents, prompts and seeds, the schemas, the
 profiles and the shipped config defaults. `assets/` is copied from the
 repository at pack time and checked file by file against its source, so the
