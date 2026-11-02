@@ -62199,14 +62199,6 @@
   },
   {
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  - OCR ran on `786278` and `1ad710b`;",
-   "tokens": [
-    "786278"
-   ],
-   "why": "a commit id"
-  },
-  {
-   "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
    "anchor": "    limit for `claude-opus-5-5`: 50 requests per minute",
    "tokens": [
     "50"

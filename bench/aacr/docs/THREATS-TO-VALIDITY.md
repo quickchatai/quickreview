@@ -467,7 +467,7 @@ documented in `../README.md`.
   to the candidate pool, but not OCR.
 - **Different builds across arms.** Examples:
   - default ran on `2d2036f` for the 40 PRs and `1ad710b` for the 145;
-  - OCR ran on `786278` and `1ad710b`;
+  - OCR ran on `3581ebe` and `1ad710b`;
   - the new arms ran on `641f373`/`3bd89b3`.
 
   The differences between builds are benchmark code and an on-by-default
