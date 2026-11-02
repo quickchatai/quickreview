@@ -15,11 +15,19 @@ import {
   taskPointer,
   unitKeys,
 } from "@quickchatai/pi-quickreview/src/engine/lens/launch-plan.js";
+import { lensToolDefinitions } from "@quickchatai/pi-quickreview/src/engine/lens/tool.js";
+import {
+  launchWave,
+  LensWave,
+  type WaveRunner,
+} from "@quickchatai/pi-quickreview/src/engine/lens/wave.js";
 import { roundLiveWriter } from "@quickchatai/pi-quickreview/src/engine/livewire.js";
 import { readLiveEvents, LIVE_MAIN_FILE } from "@quickchatai/pi-quickreview/src/live/events.js";
 import { projectRoundProgress } from "@quickchatai/pi-quickreview/src/live/projection.js";
 import { createLiveWriter } from "@quickchatai/pi-quickreview/src/live/writer.js";
 import { parseRoundProgress } from "@quickchatai/pi-quickreview/src/round-progress.js";
+import type { PassPlanEntry } from "@quickchatai/pi-quickreview/src/types.js";
+import { failedSecurityRows, requiredPassGap } from "../src/requiredpasses.js";
 
 const CHAIN = "pass-sec-exploit-chain--sol-high";
 
@@ -248,5 +256,100 @@ describe("the strategy and the post phase reach the round-progress snapshot", ()
     const unknownPhase = structuredClone(snapshot!);
     (unknownPhase.agents[0] as unknown as Record<string, unknown>).phase = "later";
     expect(parseRoundProgress(JSON.stringify(unknownPhase))).toBeUndefined();
+  });
+});
+
+// The production default (`lens_runtime = "engine"`, `engine_wave = true`):
+// the engine starts the planned rows at round start, writing nothing to the
+// live log, and the session collects them with ONE `lens_wave` call and no
+// arguments. No call's start names those rows, so each wave slot carries its
+// row's phase and strategy to the snapshot itself.
+describe("an engine-started wave collected with no arguments", () => {
+  const logs = mkdtempSync(join(tmpdir(), "qcr-security-wave-engine-"));
+  afterAll(() => rmSync(logs, { recursive: true, force: true }));
+  const sha = "b".repeat(64);
+  const PLAN: PassPlanEntry[] = [
+    { lens: "pass-baseline", agent: "pass-baseline--sol-high", required: true },
+    { lens: "pass-sec-access", agent: "pass-sec-access--sol-high" },
+    { lens: "pass-sec-exploit-chain", agent: CHAIN, strategy: "delta", required: true },
+    { lens: "pass-sec-exploit-chain", agent: CHAIN, strategy: "forward" },
+  ] as PassPlanEntry[];
+
+  /** A runner whose `delta` row fails and every other row completes. */
+  const runner: WaveRunner = {
+    run: async (request) => {
+      const failed = request.task.includes("@delta.md");
+      return {
+        text: failed ? "" : "found nothing",
+        result: {
+          id: `L-${request.task.length}-${failed ? "d" : "x"}`,
+          agent: request.agent,
+          model: "faux",
+          usage: { input: 0, output: 0, cacheRead: 0, cost: 0 },
+          messages: [],
+          exitCode: failed ? 1 : 0,
+          ...(failed ? { stopReason: "error", errorMessage: "pass timed out" } : {}),
+        },
+      } as Awaited<ReturnType<WaveRunner["run"]>>;
+    },
+  };
+
+  // MUTATION: drop `unit: r.unit` from lensWaveExecute's entries (or the
+  // phase/strategy copy in slimResult or asAgent) — the delta slot reaches
+  // the snapshot with no strategy, and the strategies below read null.
+  it("names each row's strategy, and the failed delta blocks the post", async () => {
+    const plan = planLaunch({ dirs: [tasks] }, env());
+    if (!plan.ok) throw new Error(plan.error);
+    const wave = new LensWave();
+    launchWave(wave, runner, plan.units);
+    const [, lensWave] = lensToolDefinitions({ runner, wave, env: env() });
+    const result = await lensWave!.execute("w1", {}, undefined, undefined);
+
+    const writer = roundLiveWriter({ root: logs, key: "pr-77", round: 1 }, env());
+    const sink = writer.main({ key: "pr-77", round: 1, pr: 77, session: "pr-77" });
+    sink.feed({ type: "agent_start" });
+    sink.feed({
+      type: "message_start",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: `order <!-- qcr-command:cmd-77:${sha} -->` }],
+      },
+    });
+    sink.feed({ type: "tool_execution_start", toolCallId: "w1", toolName: "lens_wave", args: {} });
+    sink.feed({
+      type: "tool_execution_end",
+      toolCallId: "w1",
+      toolName: "lens_wave",
+      result,
+      isError: false,
+    });
+    sink.feed({ type: "agent_settled", aborted: false });
+    sink.close();
+    const projection = projectRoundProgress(
+      readLiveEvents(join(writer.dir, LIVE_MAIN_FILE)).events,
+    );
+    const snapshot = parseRoundProgress(projection!.snapshotJson!);
+    expect(snapshot!.agents.map((a) => [a.agent, a.phase, a.strategy ?? null, a.status])).toEqual([
+      ["pass-baseline--sol-high", "plan", null, "completed"],
+      ["pass-sec-access--sol-high", "plan", null, "completed"],
+      [CHAIN, "plan", "delta", "failed"],
+      [CHAIN, "plan", "forward", "completed"],
+    ]);
+    const withRound = { ...snapshot!, round_no: 1 };
+    expect(requiredPassGap(PLAN, withRound, 1)).toMatchObject({
+      state: "missing",
+      missing: [{ lens: "pass-sec-exploit-chain", strategy: "delta" }],
+    });
+    expect(failedSecurityRows(PLAN, withRound, 1)).toEqual({
+      state: "known",
+      failed: [
+        {
+          lens: "pass-sec-exploit-chain",
+          strategy: "delta",
+          why: "failed",
+          errors: ["pass timed out"],
+        },
+      ],
+    });
   });
 });

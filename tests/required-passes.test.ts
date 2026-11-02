@@ -356,6 +356,32 @@ CASES.push(
     ]),
     expected: "missing",
   },
+  // MUTATION: drop the untaggedRuns branch from gapsOf (or the lens_runs
+  // fallback in required-passes.py) — the failed delta whose strategy the
+  // telemetry lost matches no `delta` run and this reads complete.
+  {
+    name: "a chain delta that failed with no recorded strategy still blocks",
+    plan: CHAIN_PLAN,
+    progress: snapshot(3, [
+      agent("pass-baseline", "completed"),
+      chainRun(undefined, "failed", CHAIN_TIMEOUT),
+      chainRun(undefined, "completed"),
+      chainRun(undefined, "completed"),
+    ]),
+    expected: "missing",
+  },
+  {
+    name: "chain rows with no recorded strategy that all completed are whole",
+    plan: CHAIN_PLAN,
+    progress: snapshot(3, [
+      agent("pass-baseline", "completed"),
+      chainRun(undefined, "failed", CHAIN_TIMEOUT),
+      chainRun(undefined, "completed"),
+      chainRun(undefined, "completed"),
+      chainRun(undefined, "completed"),
+    ]),
+    expected: "complete",
+  },
   {
     name: "a legacy required row with no strategy counts every execution of its lens",
     plan: [row(CHAIN, true)],
@@ -488,6 +514,30 @@ describe("failedSecurityRows", () => {
       state: "known",
       failed: [{ lens: CHAIN, strategy: "delta", why: "failed", errors: [CHAIN_TIMEOUT] }],
     });
+  });
+
+  // A chain execution with no recorded strategy could have run any chain row.
+  // MUTATION: drop the untaggedRuns branch from incompleteSecurityRows — the
+  // failed untagged run matches no strategy row, every row reads "not-run" or
+  // complete, and the first expectation fails.
+  it("is unknown when a strategy row's lens ran with no recorded strategy and fell short", () => {
+    const untagged = (status: LiveAgentProgress["status"]) =>
+      chainRun(undefined, status, status === "failed" ? CHAIN_TIMEOUT : undefined);
+    const base = [agent("pass-sec-access", "completed"), agent("pass-sec-injection", "completed")];
+    expect(
+      failedSecurityRows(
+        SEC_PLAN,
+        snapshot(3, [...base, untagged("failed"), untagged("completed")]),
+        3,
+      ).state,
+    ).toBe("unknown");
+    expect(
+      failedSecurityRows(
+        SEC_PLAN,
+        snapshot(3, [...base, untagged("failed"), untagged("completed"), untagged("completed")]),
+        3,
+      ),
+    ).toEqual({ state: "known", failed: [] });
   });
 
   it("reads the post-discovery rows from the post phase alone", () => {

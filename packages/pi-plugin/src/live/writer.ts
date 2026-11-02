@@ -143,6 +143,14 @@ function finiteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+/** The task-directory phases a wave slot may name (`LiveExecution.phase`). */
+const LIVE_PHASES: ReadonlyArray<NonNullable<LiveResult["phase"]>> = [
+  "plan",
+  "sweep",
+  "optional",
+  "post",
+];
+
 /** One child of a lens tool call, reduced to what round-progress reads. */
 export function slimResult(raw: Bag, slot: number): LiveResult {
   const progress = record(raw.progress);
@@ -153,6 +161,8 @@ export function slimResult(raw: Bag, slot: number): LiveResult {
   const error = typeof raw.errorMessage === "string" ? raw.errorMessage : undefined;
   const native = nativeParts(raw.messages);
   const cost = lensUsageOf(raw.usage).cost;
+  const phase = LIVE_PHASES.find((p) => p === raw.phase);
+  const strategy = text(raw.strategy);
   const recent = Array.isArray(progress?.recentTools)
     ? progress.recentTools.map(record).flatMap((t) => {
         if (t === undefined) return [];
@@ -198,6 +208,8 @@ export function slimResult(raw: Bag, slot: number): LiveResult {
     ...(slimProgress ? { progress: slimProgress } : {}),
     ...(native ? { native } : {}),
     ...(cost > 0 ? { cost_usd: cost } : {}),
+    ...(phase ? { phase } : {}),
+    ...(strategy ? { strategy } : {}),
   };
 }
 

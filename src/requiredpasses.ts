@@ -31,7 +31,11 @@
  * keyed `<lens>:<strategy>`, and only executions launched for that strategy
  * (`LiveAgentProgress.strategy`, from the task file's name) count for it: a
  * completed `forward` never covers a failed `delta`. A row with no strategy
- * counts every execution of its lens, as before.
+ * counts every execution of its lens, as before. When a strategy row's lens
+ * also ran executions with no recorded strategy (a pass launched without
+ * its task file's name), which row each ran cannot be told: the gap is then
+ * judged over the lens as a whole, failing toward blocking, and
+ * `failedSecurityRows` answers unknown unless the lens completed every row.
  *
  * `failedSecurityRows` reads the same evidence for the security family's
  * rows, required or not, by a rule of its own: the line it feeds never holds
@@ -90,6 +94,19 @@ function countRows(plan: readonly PassPlanEntry[]): Map<string, number> {
   return rows;
 }
 
+/** A phase's executions of one lens (any tier). */
+function lensRuns(
+  progress: RoundProgressSnapshot,
+  lens: string,
+  phase: "plan" | "sweep" | "post",
+): RoundProgressSnapshot["agents"] {
+  return progress.agents.filter(
+    (a) =>
+      lensForAgent(a.agent) === lens &&
+      (phase === "plan" ? a.phase === undefined || a.phase === "plan" : a.phase === phase),
+  );
+}
+
 /** The executions that answer for one counted row in one phase: its lens's
  * (any tier), launched from that phase's task directory, and — for a
  * strategy row — launched for that strategy. */
@@ -99,23 +116,51 @@ function runsFor(
   phase: "plan" | "sweep" | "post",
 ): RoundProgressSnapshot["agents"] {
   const { lens, strategy } = keyParts(key);
-  return progress.agents.filter(
-    (a) =>
-      lensForAgent(a.agent) === lens &&
-      (strategy === undefined || a.strategy === strategy) &&
-      (phase === "plan" ? a.phase === undefined || a.phase === "plan" : a.phase === phase),
+  return lensRuns(progress, lens, phase).filter(
+    (a) => strategy === undefined || a.strategy === strategy,
   );
 }
 
-/** The counted rows that failed and never completed, in one phase. */
+/** A strategy row's lens has executions with no recorded strategy: a pass
+ * launched without its task file's name, or a row whose strategy the
+ * telemetry lost. Which row such an execution ran cannot be told, so it can
+ * neither be dropped (a failed `delta` would read as never failed) nor be
+ * credited to one row (a completed `forward` would cover a failed `delta`). */
+function untaggedRuns(
+  progress: RoundProgressSnapshot,
+  key: string,
+  phase: "plan" | "sweep" | "post",
+): boolean {
+  const { lens, strategy } = keyParts(key);
+  return (
+    strategy !== undefined && lensRuns(progress, lens, phase).some((a) => a.strategy === undefined)
+  );
+}
+
+/** The plan's rows per lens, every strategy together. */
+function lensRowCounts(plan: readonly PassPlanEntry[]): Map<string, number> {
+  const rows = new Map<string, number>();
+  for (const row of plan) rows.set(row.lens, (rows.get(row.lens) ?? 0) + 1);
+  return rows;
+}
+
+/** The counted rows that failed and never completed, in one phase. A
+ * strategy row whose lens has executions with no recorded strategy is judged
+ * over its lens as a whole — every execution against every row the phase
+ * plans for the lens — so the gap fails toward blocking: a failed execution
+ * with fewer completions than the lens's rows is missing. */
 function gapsOf(
   progress: RoundProgressSnapshot,
   obligations: ReadonlyMap<string, number>,
   phase: "plan" | "sweep" | "post",
+  lensRows: ReadonlyMap<string, number>,
 ): Array<Omit<MissingPass, "phase">> {
   const out: Array<Omit<MissingPass, "phase">> = [];
-  for (const [key, rows] of obligations) {
-    const runs = runsFor(progress, key, phase);
+  for (const [key, keyRows] of obligations) {
+    const whole = untaggedRuns(progress, key, phase);
+    const { lens } = keyParts(key);
+    const runs = whole ? lensRuns(progress, lens, phase) : runsFor(progress, key, phase);
+    const rows = whole ? Math.max(keyRows, lensRows.get(lens) ?? 0) : keyRows;
     const completed = runs.filter((a) => a.status === "completed").length;
     const failedRuns = runs.filter((a) => a.status === "failed");
     if (failedRuns.length > 0 && completed < rows)
@@ -147,8 +192,11 @@ export function requiredPassGap(
       reason: `round-progress snapshot is for round ${progress.round_no ?? "?"}, not ${roundNo}`,
     };
   const missing: MissingPass[] = [
-    ...gapsOf(progress, required, "plan"),
-    ...gapsOf(progress, sweepRequired, "sweep").map((m) => ({ ...m, phase: "sweep" as const })),
+    ...gapsOf(progress, required, "plan", lensRowCounts(plan ?? [])),
+    ...gapsOf(progress, sweepRequired, "sweep", lensRowCounts(sweepPlan ?? [])).map((m) => ({
+      ...m,
+      phase: "sweep" as const,
+    })),
   ];
   return missing.length > 0 ? { state: "missing", missing } : { state: "complete" };
 }
@@ -182,14 +230,23 @@ function incompleteSecurityRows(
   progress: RoundProgressSnapshot,
   obligations: ReadonlyMap<string, number>,
   phase: "plan" | "post",
-): FailedSecurityRow[] {
+  lensRows: ReadonlyMap<string, number>,
+): FailedSecurityRow[] | { untold: string } {
   const out: FailedSecurityRow[] = [];
   for (const [key, rows] of obligations) {
+    const { lens, strategy } = keyParts(key);
+    // A strategy row whose lens ran executions with no recorded strategy
+    // cannot be told complete or not, row by row: the lens as a whole either
+    // completed every row the phase plans for it, or the answer is unknown.
+    if (untaggedRuns(progress, key, phase)) {
+      const done = lensRuns(progress, lens, phase).filter((a) => a.status === "completed");
+      if (done.length >= Math.max(rows, lensRows.get(lens) ?? 0)) continue;
+      return { untold: lens };
+    }
     const runs = runsFor(progress, key, phase);
     if (runs.filter((a) => a.status === "completed").length >= rows) continue;
     if (phase === "post" && runs.length === 0) continue;
     const failedRuns = runs.filter((a) => a.status === "failed");
-    const { lens, strategy } = keyParts(key);
     out.push({
       lens,
       ...(strategy !== undefined ? { strategy } : {}),
@@ -220,10 +277,10 @@ export function failedSecurityRows(
   roundNo: number,
   postPlan?: readonly PassPlanEntry[] | null,
 ): SecurityRowFailures {
-  const family = (rows: readonly PassPlanEntry[] | null | undefined) =>
-    countRows((rows ?? []).filter((row) => SECURITY_FAMILY.includes(row.lens)));
-  const planned = family(plan);
-  const post = family(postPlan);
+  const familyRows = (rows: readonly PassPlanEntry[] | null | undefined) =>
+    (rows ?? []).filter((row) => SECURITY_FAMILY.includes(row.lens));
+  const planned = countRows(familyRows(plan));
+  const post = countRows(familyRows(postPlan));
   if (planned.size === 0 && post.size === 0) return { state: "known", failed: [] };
   if (!progress) return { state: "unknown", reason: "no readable round-progress snapshot" };
   if (progress.round_no !== roundNo)
@@ -231,13 +288,20 @@ export function failedSecurityRows(
       state: "unknown",
       reason: `round-progress snapshot is for round ${progress.round_no ?? "?"}, not ${roundNo}`,
     };
-  return {
-    state: "known",
-    failed: [
-      ...incompleteSecurityRows(progress, planned, "plan"),
-      ...incompleteSecurityRows(progress, post, "post"),
-    ],
-  };
+  const failed: FailedSecurityRow[] = [];
+  for (const rows of [
+    incompleteSecurityRows(progress, planned, "plan", lensRowCounts(familyRows(plan))),
+    incompleteSecurityRows(progress, post, "post", lensRowCounts(familyRows(postPlan))),
+  ]) {
+    // Never an empty `known` over rows nobody can tell apart.
+    if (!Array.isArray(rows))
+      return {
+        state: "unknown",
+        reason: `${rows.untold} ran executions with no recorded strategy, so which of its rows did not complete cannot be told`,
+      };
+    failed.push(...rows);
+  }
+  return { state: "known", failed };
 }
 
 /** Every failed pass execution in a round's snapshot — the round's gap

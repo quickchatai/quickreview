@@ -100,6 +100,10 @@ function asAgent(
   const last = text(progress?.last_message) ?? native.last_text;
   return {
     agent,
+    // A wave slot names its row: a row the engine started has no call start
+    // that did.
+    ...(result.phase ? { phase: result.phase } : {}),
+    ...(text(result.strategy) ? { strategy: text(result.strategy)! } : {}),
     status: st,
     duration_ms: number(progress?.duration_ms),
     tool_count: number(progress?.tool_count) || native.tool_count,
