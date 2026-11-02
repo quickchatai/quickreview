@@ -192,10 +192,16 @@ export function renderPreview(p: ScanPreview, verbs: ScanVerbs = TOOL_VERBS): st
   const stage0 = p.threat_model_stage;
   if (p.blockers.length === 0 && stage0 !== undefined) {
     // Stage 0 is part of this scan: it runs first, and stage 1 is previewed
-    // again once its draft is written.
+    // again once its draft is written. With a repository or profile model
+    // there (`always`), the scan keeps reading that model: the draft is a
+    // revision for a person to adopt.
+    const reads =
+      stage0.existing === null
+        ? "once its draft is written, preview again for the scan itself — it then reads the DRAFT."
+        : `its draft is a revision for a person to read and adopt: this scan, like every scan while ${existingName(stage0.existing.source)} exists, keeps reading that model. Once the draft is written, preview again for the scan itself.`;
     out.push(
       "FIRST, before this scan reads anything: the threat model ([scan] threat_model). " +
-        "Start stage 0 below; once its draft is written, preview again for the scan itself — it then reads the DRAFT. " +
+        `Start stage 0 below; ${reads} ` +
         'To scan without a threat model, set [scan] threat_model = "off".',
       renderThreatModelPreview(stage0, verbs),
     );
@@ -203,6 +209,13 @@ export function renderPreview(p: ScanPreview, verbs: ScanVerbs = TOOL_VERBS): st
     out.push(`To run it: ${verbs.start(p)} — only after the operator agreed to the cost.`);
   }
   return out.join("\n\n");
+}
+
+/** The ratified model a stage-0 draft would revise, by name. */
+function existingName(source: string): string {
+  return source === "repo"
+    ? `the repository's ${REPO_THREAT_MODEL_PATH}`
+    : "the install profile's threat-model.md";
 }
 
 /** Where the threat model a run reads comes from, as one line. */
@@ -243,13 +256,13 @@ export function renderThreatModelPreview(
     p.estimate_usd === null
       ? `No threat-model run has finished here, so there is no estimate: it stops hard at ${usd(p.cap_usd)}.`
       : `The last one cost ${usd(p.estimate_usd)}; this one stops hard at ${usd(p.cap_usd)}.`,
-    `It writes a DRAFT to ${THREAT_MODEL_DRAFT_FILE} in the state home — never to the repository. Later scans read it, labelled DRAFT, ` +
-      `until a person copies it to ${REPO_THREAT_MODEL_PATH} (or the profile's threat-model.md).`,
+    p.existing === null
+      ? `It writes a DRAFT to ${THREAT_MODEL_DRAFT_FILE} in the state home — never to the repository. Later scans read it, labelled DRAFT, ` +
+          `until a person copies it to ${REPO_THREAT_MODEL_PATH} (or the profile's threat-model.md).`
+      : `It writes a DRAFT to ${THREAT_MODEL_DRAFT_FILE} in the state home — never to the repository. ` +
+          `It revises ${existingName(p.existing.source)} (sha256 ${p.existing.hash.slice(0, 12)}): scans keep reading that model, ` +
+          `and the draft takes effect only once a person copies it over ${p.existing.source === "repo" ? REPO_THREAT_MODEL_PATH : "the profile's threat-model.md"}.`,
   );
-  if (p.existing)
-    out.push(
-      `It revises the ${p.existing.source === "repo" ? `repository's ${REPO_THREAT_MODEL_PATH}` : "install profile's threat-model.md"} (sha256 ${p.existing.hash.slice(0, 12)}).`,
-    );
   out.push(
     p.inventory !== ""
       ? `What it starts from — the route inventory, read by line parsers:\n${p.inventory}`

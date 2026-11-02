@@ -1123,6 +1123,33 @@ describe("stage 0 is part of the scan: a preview offers it first, a stage-1 star
     expect(after.preview.threat_model?.source).toBe("profile");
   });
 
+  // MUTATION: render the "it then reads the DRAFT" sentence whatever
+  // `stage0.existing` — this fails.
+  it("always, with the repository's model: the preview never says the scan reads the DRAFT, and stage 1 keeps reading the repository's", async () => {
+    const r = rig({
+      scan: { threat_model: "always" },
+      files: { ...FILES, ".qcr/threat-model.md": THREAT_MODEL },
+    });
+    const s = new ScanRunner(r.ports);
+    const p = await s.preview();
+    if (!p.ok) throw new Error(p.errors.join("; "));
+    expect(p.preview.threat_model?.source).toBe("repo");
+    expect(p.preview.threat_model_stage?.existing?.source).toBe("repo");
+    const text = renderPreview(p.preview);
+    expect(text).not.toContain("reads the DRAFT");
+    expect(text).not.toContain("Later scans read it");
+    expect(text).toContain(
+      "its draft is a revision for a person to read and adopt: this scan, like every scan while the repository's .qcr/threat-model.md exists, keeps reading that model",
+    );
+    expect(text).toContain("scans keep reading that model");
+    await s.start({ key: p.preview.threat_model_stage!.key });
+    await s.idle();
+    const after = await s.preview();
+    if (!after.ok) throw new Error(after.errors.join("; "));
+    expect(after.preview.threat_model_stage).toBeUndefined();
+    expect(after.preview.threat_model?.source).toBe("repo");
+  });
+
   it("a stage 0 that wrote no draft leaves it due: the scan still does not start without it", async () => {
     const r = rig({
       scan: AUTO,

@@ -116,7 +116,9 @@
 //     and `start` with stage 0's key starts stage 0 — so every entry point
 //     that previews and starts a scan (`qcr scan`, the tools, the guided
 //     /qcr-scan) drafts the model first, at the price it showed. Once the
-//     draft is written the next preview is stage 1, reading it.
+//     draft is written the next preview is stage 1, reading it — unless a
+//     repository or profile model exists (`always`): then the draft is a
+//     revision for a person to adopt, and scans keep reading that model.
 //
 // Persistence: `<state home>/scan/run.json` (the current run and a short
 // history), `scan/suggestions.json` (stage 1's deep-lens suggestions, the

@@ -1064,7 +1064,9 @@ kinds = []                     # the finding kinds a scan keeps, e.g. ["security
 threat_model = "off"           # draft a threat model first (stage 0, part of the scan: a preview offers it, a scan
                                # start waits for it): "auto" (only when neither the repo's .qcr/threat-model.md nor
                                # the profile's threat-model.md exists, and no draft yet) | "always" (once per scanned
-                               # sha) | "off" (the default; the security profile sets "auto"); "off" also never reads
+                               # sha; with a repo/profile model present the draft is a revision for a person to
+                               # adopt, and scans keep reading the existing model) | "off" (the default; the
+                               # security profile sets "auto"); "off" also never reads
                                # a draft. Not off, `qcr scan threat-model propose` drafts one again on request
 # Where `qcr scan start` drives a run (not a profile key). "docker": in a throwaway
 # container from the companion image, mounting only the reviewed repo (read-only),

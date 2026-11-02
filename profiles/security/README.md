@@ -120,7 +120,10 @@ A scan under this profile is a deep security scan:
   "auto"`): the preview offers it at its price, the scan starts once it has
   run, and the draft — in the state home, never in the repository — is
   read labelled DRAFT wherever it is shown. Read it, correct it and commit
-  it as `.qcr/threat-model.md` to make it the repository's.
+  it as `.qcr/threat-model.md` to make it the repository's. Under
+  `threat_model = "always"` with a model already there, stage 0 still runs
+  at every new sha, but its draft is only a revision for a person to adopt:
+  the scan keeps reading the existing model.
 
 ## Cost
 
