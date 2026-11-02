@@ -680,6 +680,27 @@ describe("docs-only changes", () => {
       expect(isDocsOnlyChange([{ filename: "README.md" }, { filename: extra }]), extra).toBe(false);
   });
 
+  /**
+   * MUTATION: put back the bare `(^|\/)docs?\/` arm (or `mdx`) in the docs
+   * test, or drop the `.txt` manifest names — this fails.
+   */
+  it("a file is docs by its own name, never by a docs/ directory: code and build files under it are not", () => {
+    for (const path of [
+      "app/api/docs/views.py",
+      "app/internal/docs/export.py",
+      "src/doc/handler.ts",
+      "docs/conf.py",
+      "docs/deploy.yaml",
+      "CMakeLists.txt",
+      "native/CMakeLists.txt",
+      "requirements/base.txt",
+      "constraints.txt",
+      "pages/blog.mdx",
+    ])
+      expect(isDocsOnlyChange([{ filename: path }]), path).toBe(false);
+    expect(isDocsOnlyChange([{ filename: "docs/api/index.md" }, { filename: "NOTICE" }])).toBe(true);
+  });
+
   it("an empty list is not docs-only: it may be a list that failed to load", () => {
     expect(isDocsOnlyChange([])).toBe(false);
   });

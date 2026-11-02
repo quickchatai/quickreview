@@ -260,6 +260,19 @@ describe('[lenses.<pass>] plan = "always"', () => {
     expect(rows(docs, "pass-concurrency")).toEqual([]);
   });
 
+  /**
+   * MUTATION: put back the bare `(^|\/)docs?\/` arm in the docs test
+   * (securitytriggers.ts) — this fails: code under a docs/ directory would
+   * read as docs-only and drop the lens.
+   */
+  it("plans the lens on code that sits under a docs/ directory", () => {
+    const cfg = securityOnly({ "pass-sec-access": { plan: "always" } });
+    const idor = changed("app/internal/docs/export.py", ["doc = Doc.objects.get(pk=pk)"]);
+    const p = plan(cfg, [idor]);
+    expect(rows(p, "pass-sec-access")).toHaveLength(1);
+    expect(familyRows(p).length).toBeGreaterThan(0);
+  });
+
   it("never plans a lens the profile switched off", () => {
     const cfg = tuned({ "pass-sec-access": { plan: "always", enabled: false } });
     expect(rows(plan(cfg, [PLAIN]), "pass-sec-access")).toEqual([]);

@@ -32,6 +32,7 @@ import type { PrFileEntry } from "./githubcore.js";
 import {
   addedCode,
   addedConfig,
+  CODE_FILE_RE,
   CONFIG_FILE_RE,
   DEPS_MANIFEST_RE,
   diffSide,
@@ -810,15 +811,22 @@ export function chainStrategies(
 
 // ---- docs-only changes -----------------------------------------------------
 
-/** Prose and images: Markdown, plain text, reStructuredText, AsciiDoc,
- * anything under `docs/`, the licence files, raster images. SVG is not here:
- * it can carry script. A dependency list spelled `.txt` (`requirements.txt`)
- * is a manifest, not prose. */
-const DOCS_PATH_RE =
-  /\.(?:md|mdx|markdown|txt|rst|adoc|png|jpe?g|gif|webp|ico|bmp)$|(^|\/)docs?\/|(^|\/)(?:LICEN[CS]E|COPYING|NOTICE|AUTHORS)(?:\.[^/]*)?$/i;
+/** Prose and images, decided by the file's own name, never its directory:
+ * Markdown, plain text, reStructuredText, AsciiDoc, raster images and the
+ * licence files. A `docs/` directory makes nothing docs by itself (code sits
+ * under `app/api/docs/` too), MDX carries JSX, and SVG can carry script, so
+ * none of them is here. A file with a code or configuration extension is
+ * never docs, wherever it sits. */
+const DOCS_EXT_RE = /\.(?:md|markdown|txt|rst|adoc|png|jpe?g|gif|webp|ico|bmp)$/i;
+const LICENCE_FILE_RE = /(^|\/)(?:LICEN[CS]E|COPYING|NOTICE|AUTHORS)(?:\.[^/]*)?$/i;
+/** A build input or a dependency list spelled `.txt`: a manifest, not
+ * prose (`requirements*.txt` is in `DEPS_MANIFEST_RE`). */
+const TXT_MANIFEST_RE = /(^|\/)(?:CMakeLists\.txt|constraints[^/]*\.txt)$|(^|\/)requirements\/[^/]*\.txt$/i;
 
 function isDocsPath(path: string): boolean {
-  return DOCS_PATH_RE.test(path) && !DEPS_MANIFEST_RE.test(path);
+  if (CODE_FILE_RE.test(path) || CONFIG_FILE_RE.test(path) || DEPS_MANIFEST_RE.test(path)) return false;
+  if (TXT_MANIFEST_RE.test(path)) return false;
+  return LICENCE_FILE_RE.test(path) || DOCS_EXT_RE.test(path);
 }
 
 /**

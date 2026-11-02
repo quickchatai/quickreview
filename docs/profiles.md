@@ -295,7 +295,9 @@ consumer reads that one `cfg.lenses`. What each key moves
   stays the only route into a pass body (AGENTS.md invariant 4). ≤ 2000 characters.
 - **`plan = "always"`** — plan time: the lens is planned on every PR that
   changes code or configuration, whatever its triggers say; a docs-only
-  change (every file docs, text or an image) drops such a row, and a lens
+  change (every file prose, plain text, a raster image or a licence file,
+  judged by the file's own name: code or configuration under a `docs/`
+  directory is not docs) drops such a row, and a lens
   something else planned keeps its row either way. It never overrides
   `enabled = false` or `[review] skip_lenses`, and the validator takes no
   `plan` (it is planned on every review already). `triggered`, the
