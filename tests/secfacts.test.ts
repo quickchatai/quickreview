@@ -6,6 +6,7 @@ import type { PrFileEntry } from "@quickchatai/pi-quickreview/src/githubcore.js"
 import {
   SEC_FACT_CHECKS,
   SECURITY_FACTS_HEADING,
+  SECURITY_FACTS_MAX_FILES,
   composePublishedPorts,
   computeSecurityFacts,
   flattenYaml,
@@ -479,6 +480,53 @@ describe("networkpolicy-selector", () => {
     ]);
     expect(doc.get("spec.podSelector")).toBe("{}");
     expect(doc.get("spec.ingress.-.from.-.podSelector.matchLabels.app")).toBe("lb");
+  });
+});
+
+// A listing cut at SECURITY_FACTS_MAX_FILES is not all of the repository: a
+// subject that sits past the cut is not absent.
+describe("a capped listing is never clear", () => {
+  /** `n` filler files of `ext` first, then `extra` — past the cap. */
+  const capped = (ext: string, filler: string, extra: Record<string, string>) => {
+    const head: Record<string, string> = {};
+    for (let i = 0; i < SECURITY_FACTS_MAX_FILES; i++)
+      head[`a/${String(i).padStart(3, "0")}.${ext}`] = filler;
+    return repo({ ...head, ...extra });
+  };
+
+  // MUTATION: drop the `listing.capped` branch from networkPolicySelector's
+  // no-policy return — this reads clear.
+  it("networkpolicy-selector: a policy past the cap leaves it unknown", () => {
+    const io = capped("yaml", "kind: ConfigMap\n", {
+      "z/netpol.yaml": "kind: NetworkPolicy\nmetadata:\n  name: web\n",
+    });
+    const pr = file("k8s/deploy.yaml", "@@ -1 +1,2 @@\n+  labels:\n+    app: web");
+    const facts = only(computeSecurityFacts([pr], io), "networkpolicy-selector");
+    expect(facts.map((f) => f.status)).toEqual(["unknown"]);
+    expect(facts[0]!.detail).toContain(`capped at ${SECURITY_FACTS_MAX_FILES}`);
+  });
+
+  // MUTATION: restore the bare `if (!at) continue;` in
+  // unattachedSecurityGroup — the group declared past the cap reads clear.
+  it("unattached-security-group: a group declared past the cap leaves it unknown", () => {
+    const io = capped("tf", "# nothing\n", {
+      "z/sg.tf": 'resource "aws_security_group" "web" {\n  name = "web"\n}\n',
+    });
+    const pr = file("infra/main.tf", "@@ -1 +1,2 @@\n+  ingress_from = aws_security_group.web.id");
+    const facts = only(computeSecurityFacts([pr], io), "unattached-security-group");
+    expect(facts.map((f) => f.status)).toEqual(["unknown"]);
+    expect(facts[0]!.detail).toContain("aws_security_group.web");
+  });
+
+  it("an uncapped listing with neither still says clear", () => {
+    const yaml = repo({ "k8s/config.yaml": "kind: ConfigMap\n" });
+    const pr = file("k8s/deploy.yaml", "@@ -1 +1,2 @@\n+  labels:\n+    app: web");
+    expect(statuses(computeSecurityFacts([pr], yaml), "networkpolicy-selector")).toEqual(["clear"]);
+    const tf = repo({ "infra/other.tf": "# nothing\n" });
+    const sg = file("infra/main.tf", "@@ -1 +1,2 @@\n+  ingress_from = aws_security_group.web.id");
+    expect(statuses(computeSecurityFacts([sg], tf), "unattached-security-group")).toEqual([
+      "clear",
+    ]);
   });
 });
 

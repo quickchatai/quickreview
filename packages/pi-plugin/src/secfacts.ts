@@ -765,7 +765,20 @@ function unattachedSecurityGroup(
   const ok: string[] = [];
   for (const name of [...names].sort()) {
     const at = declared.get(name);
-    if (!at) continue; // removed by the PR, or declared outside the files read
+    if (!at) {
+      // Declared in no file read: removed by the PR — unless the files read
+      // are not all of them, when the declaration may sit past the cap or in
+      // a file that could not be read.
+      if (listing.capped || failed.length)
+        out.push(
+          fact(
+            check,
+            "unknown",
+            `${codePath(`aws_security_group.${name}`)} is not declared in the files read, but ${failed.length ? `${failed.length} Terraform file(s) could not be read` : `the Terraform files were capped at ${SECURITY_FACTS_MAX_FILES}`}`,
+          ),
+        );
+      continue;
+    }
     if (attached.has(name)) ok.push(codePath(name));
     else if (handedOn.has(name) || failed.length || listing.capped)
       out.push(
@@ -794,7 +807,13 @@ function unattachedSecurityGroup(
     result.push(
       failed.length
         ? fact(check, "unknown", `${failed.length} Terraform file(s) could not be read`)
-        : fact(check, "clear", "no security group the PR touches is still declared"),
+        : listing.capped
+          ? fact(
+              check,
+              "unknown",
+              `no security group the PR touches is declared in the files read, but they were capped at ${SECURITY_FACTS_MAX_FILES}`,
+            )
+          : fact(check, "clear", "no security group the PR touches is still declared"),
     );
   return result;
 }
@@ -1089,10 +1108,19 @@ function networkPolicySelector(
       }
     }
   }
+  // No policy in the files read is no policy only when every manifest was read.
   if (policies.length === 0)
     return failed.length
       ? [fact(check, "unknown", `${failed.length} manifest file(s) could not be read`)]
-      : [fact(check, "clear", "no NetworkPolicy in the repository's manifests")];
+      : listing.capped
+        ? [
+            fact(
+              check,
+              "unknown",
+              `no NetworkPolicy in the manifests read, but they were capped at ${SECURITY_FACTS_MAX_FILES}`,
+            ),
+          ]
+        : [fact(check, "clear", "no NetworkPolicy in the repository's manifests")];
   const found: SecurityFact[] = [];
   const out: SecurityFact[] = [];
   let matched = 0;
