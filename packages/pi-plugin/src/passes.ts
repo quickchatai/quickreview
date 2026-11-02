@@ -135,17 +135,25 @@ export const CHAIN_STRATEGIES = ["delta", "forward", "backward", "compose"] as c
 
 export type ChainStrategy = (typeof CHAIN_STRATEGIES)[number];
 
+/** The lens one part of a recorded lens field names: its first word, with a
+ * `:strategy`, `#n` or `@ site` after it dropped, and the built agent's
+ * `--<tier>` suffix (`pass-sec-access--sol-high`, round-progress.ts
+ * `lensForAgent`) dropped too — a session may write the agent it launched
+ * rather than the lens. No lens name contains `--`. */
+export function lensToken(part: string): string {
+  return (part.trim().split(/[\s:#@]+/)[0] ?? "").replace(/--.*$/, "");
+}
+
 /** Whether a recorded lens field names a security-family lens. The field is
  * what a session wrote: one lens, or several joined
  * (`pass-sec-access + pass-baseline`, `pass-sec-tokens,pass-sec-access`),
- * and a chain row carries its strategy (`pass-sec-exploit-chain:delta`).
+ * a chain row carries its strategy (`pass-sec-exploit-chain:delta`), and
+ * either may carry the agent's tier suffix (`lensToken`).
  * `pass-security` is not a member; a caller that counts it as security
  * says so itself. */
 export function isSecurityLens(lensField: string): boolean {
   for (const part of lensField.toLowerCase().split(/[+,/&;|]/)) {
-    // the lens is the first word; a `:strategy`, `#n` or `@ site` follows it
-    const token = part.trim().split(/[\s:#@]+/)[0] ?? "";
-    if (SECURITY_FAMILY.includes(token)) return true;
+    if (SECURITY_FAMILY.includes(lensToken(part))) return true;
   }
   return false;
 }

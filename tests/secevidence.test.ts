@@ -154,6 +154,18 @@ describe("isSecurityFinding", () => {
     expect(isSecurityFinding("partial-chain", null)).toBe(true);
   });
 
+  // A session may write the agent it launched — the lens with its tier
+  // suffix — in the lens field. MUTATION: drop the `--<tier>` replace from
+  // passes.ts `lensToken` — this fails.
+  it("reads a lens field that carries the built agent's tier suffix", () => {
+    expect(isSecurityFinding(null, "pass-sec-access--sol-high")).toBe(true);
+    expect(isSecurityFinding(null, "pass-security--sol-high")).toBe(true);
+    expect(isSecurityFinding(null, "pass-sec-exploit-chain--sol-high:delta")).toBe(true);
+    expect(isSecurityFinding(null, "pass-baseline + pass-sec-tokens--terra-med")).toBe(true);
+    expect(isSecurityFinding("idor", "pass-sec-access--sol-med")).toBe(true);
+    expect(isSecurityFinding(null, "pass-simplicity--sol-med")).toBe(false);
+  });
+
   it("is false for other lenses and kinds", () => {
     expect(isSecurityFinding(null, "pass-baseline")).toBe(false);
     expect(isSecurityFinding("injection", "pass-tests")).toBe(false);

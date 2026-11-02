@@ -28,7 +28,7 @@
 import type { Verdict as VerdictType } from "./types.js";
 
 import { SEVERITIES } from "./severityrank.js";
-import { isSecurityLens } from "./passes.js";
+import { isSecurityLens, lensToken } from "./passes.js";
 export { SEVERITIES };
 export type Severity = (typeof SEVERITIES)[number];
 
@@ -334,7 +334,7 @@ export function isSecurityFinding(kind?: string | null, lens?: string | null): b
   return field
     .toLowerCase()
     .split(/[+,/&;|]/)
-    .some((part) => (part.trim().split(/[\s:#@]+/)[0] ?? "") === GENERAL_SECURITY_LENS);
+    .some((part) => lensToken(part) === GENERAL_SECURITY_LENS);
 }
 
 /** What a security finding lets an attacker do: **A** acts on other users or
