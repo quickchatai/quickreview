@@ -159,8 +159,8 @@ def commit_fields(commit: Optional[str], remap: Dict[str, Optional[str]],
     kind for it (MATCH_KINDS; null when not on public main); a commit with no
     public equivalent keeps its recorded id with false; one the remap does
     not know, with null (and no commit at all is null throughout).
-    `qcr_commit_dirty` is true when the recorded id carries `-dirty` (the
-    build had uncommitted changes, so it is the named commit plus them, not
+    `qcr_commit_dirty` is true when the recorded id carries `-dirty` (built
+    from a checkout with uncommitted or untracked files, so not necessarily
     the commit itself), false otherwise; a dirty build keeps the `-dirty`
     suffix on whichever id it publishes."""
     if not commit:
@@ -187,7 +187,7 @@ def remap_key(commit: str, remap: Dict[str, Optional[str]]) -> str:
 
 def remap_commit(commit: Optional[str], remap: Dict[str, Optional[str]]) -> Optional[str]:
     """The public main commit a run's build commit became after the history
-    rewrites (None when it maps to none: a side branch never merged)."""
+    rewrites (None when it maps to none: a side branch never merged, or another clone's commit)."""
     if not commit:
         return None
     return remap.get(remap_key(commit, remap))

@@ -109,8 +109,10 @@ of eight reviewers, plus the external benchmarks — days of wall time and real
 model spend; repeat runs of one build differed by 1.5–2 found defects per
 10-PR set.
 
-`run.json` `qcr_commit` values name builds in the pre-publication history; the
-public history starts at its first commit.
+The published runs' `qcr_commit` values are remapped to public main commits
+(the dataset card's `runs` table describes `qcr_commit_on_public_main`,
+`qcr_commit_match` and `qcr_commit_dirty`); a run you make records your own
+checkout's commit.
 
 ## Results
 

@@ -1266,12 +1266,14 @@ def write_index(out: Path, proc: Processor, a):
                    "public claims it backs, its build commit (`qcr_commit`: the public main commit the "
                    "recorded one became after the repository's history rewrite, `qcr_commit_on_public_main` true, "
                    "and `qcr_commit_match` how it was matched: `same` by the rewrite's commit maps, `date+subject` "
-                   "by author date and subject alone, `ancestor` the nearest kept ancestor of a commit the rewrite "
-                   "dropped because it changed only unpublished files; a commit with no public equivalent keeps "
-                   "its recorded id with false, one the rewrite maps do not know with null; separately, "
-                   "`qcr_commit_dirty` true for a build with uncommitted changes, which maps to the commit it was "
-                   "built on and keeps the `-dirty` suffix: that commit plus changes, not the commit itself) and "
-                   "the archive volume(s) holding it. `withheld` lists every family left out "
+                   "by author date and subject alone (no unit in this release), `ancestor` the nearest kept "
+                   "ancestor of a commit the rewrite dropped because it changed only unpublished files; a commit "
+                   "with no public equivalent (a side branch never merged, or another clone's commit that no "
+                   "rewrite map holds) keeps its recorded id with false and a null match; separately, "
+                   "`qcr_commit_dirty` true for a build from a checkout with uncommitted or untracked files, which "
+                   "maps to the commit it was built on and keeps the `-dirty` suffix: that commit plus whatever was "
+                   "not committed, not necessarily the commit itself; a unit that recorded no commit has all four "
+                   "fields null) and the archive volume(s) holding it. `withheld` lists every family left out "
                    "and why.",
            "units": rows, "withheld": RC.withheld_rows(proc.cat), "claims": RC.claims_index(proc.cat, claim_ids)}
     (out / "RUNS-INDEX.json").write_text(json.dumps(scrub_json(doc), indent=1, ensure_ascii=False) + "\n")
@@ -1421,16 +1423,20 @@ packed. Nothing else in the text changed.
   `"qcr_commit_on_public_main": true` beside it and `"qcr_commit_match"`
   saying how it was matched: `"same"`, the rewrite's commit maps carry the
   recorded commit to it; `"date+subject"`, matched by author date and
-  subject alone; `"ancestor"`, the rewrite dropped the recorded commit
-  because it changed only files that were never published, so it maps to
-  the nearest ancestor the rewrite kept, whose published files are the
-  same. A commit with no public equivalent (a side branch never merged)
-  keeps its recorded id with `false` and a `null` match; one the rewrite
-  maps do not know, with `null`. The dirty flag is separate: a dirty build
-  (the recorded id ends in `-dirty`: built with uncommitted changes) maps
-  to the commit it was built on, keeps the `-dirty` suffix and is flagged
+  subject alone (none in this release); `"ancestor"`, the rewrite dropped
+  the recorded commit because it changed only files that were never
+  published, so it maps to the nearest ancestor the rewrite kept, whose
+  published files are the same. A commit with no public equivalent (a side
+  branch never merged, or another clone's commit that no rewrite map holds)
+  keeps its recorded id with `false` and a `null` match; a commit the remap
+  does not list would get `null` (none in this release). The dirty flag is
+  separate: a dirty build (the recorded id ends in `-dirty`: built from a
+  checkout with uncommitted or untracked files) maps to the commit it was
+  built on, keeps the `-dirty` suffix and is flagged
   `"qcr_commit_dirty": true` (`false` for every other build): it is that
-  commit plus changes that were never committed, not the commit itself.
+  commit plus whatever was not committed, which was not saved, so not
+  necessarily the commit itself. A `"qcr_commit": null` (no commit was
+  recorded) carries none of these fields.
 - **Host paths** in driver logs, scripts and analysis: the bench runs directory
   became `<runs>`, the repository checkout `<repo>`, any
   other path under the exporting user's home `<home>` (so the Claude Code credential file's path reads

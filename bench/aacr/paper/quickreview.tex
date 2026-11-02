@@ -259,11 +259,13 @@ not only better.
 
 This section describes the reviewer at the build every final number was
 measured on (\code{b2ce03a});\footnote{\label{fn:dirty}Every run on
-\code{b2ce03a} used it with small uncommitted changes that were not saved
-(its recorded build id ends in \code{-dirty}), so checking out
-\code{b2ce03a} gives a close build, not the measured one byte for byte. The
-tables mark it ``dirty''.} later commits change the reviewer's code, and
-a reader reproducing the results should use that build.
+\code{b2ce03a} recorded its build id with \code{-dirty}: its image was
+built from a checkout with uncommitted or untracked files, which were not
+saved, so checking out \code{b2ce03a} gives a close build, not necessarily
+the measured one byte for byte. Tables~\ref{tab:sources}
+and~\ref{tab:bmarms} mark it ``dirty''.} later commits change the
+reviewer's code, and a reader reproducing the results should start from
+that build.
 
 \subsection{Principles}
 
@@ -1327,8 +1329,8 @@ was repeated.
 \section{The frozen build}
 \label{sec:frozen}
 
-Everything above measures build \code{b2ce03a} (2026-10-01, with the
-unsaved changes of footnote~\ref{fn:dirty}). Over the next
+Everything above measures build \code{b2ce03a} (the comparison of
+2026-10-01; dirty, footnote~\ref{fn:dirty}). Over the next
 three days the reviewer was changed once more, from the misses of that build
 on the stored benchmark runs, and frozen as build \code{e32f0cf}
 (2026-10-04), still on gpt-6.1-sol. The changes:

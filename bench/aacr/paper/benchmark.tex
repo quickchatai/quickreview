@@ -1926,8 +1926,8 @@ removed.
 \subsection{The frozen build}
 \label{sec:finalbuild}
 
-The comparison above is \qcr{} as of 2026-10-01 (build \code{b2ce03a}, with
-small unsaved changes: Section~\ref{sec:repro}). It
+The comparison above is \qcr{} as of 2026-10-01 (build \code{b2ce03a}, built
+from a checkout with unsaved changes: Section~\ref{sec:repro}). It
 was then changed for three more days and frozen (build \code{e32f0cf},
 2026-10-04), on the same model, gpt-6.1-sol. The changes, described in the
 companion report~\cite{qcrreport}: two lenses (one compares base and head
@@ -3666,9 +3666,10 @@ comparability with the published AACR leaderboard.
 pi 0.99.1 for every gpt-6.1-sol arm; reviewer builds by commit
 (\code{2d2036f}, \code{1ad710b}, \code{3581ebe}, \code{641f373},
 \code{3bd89b3}, \code{42ec500} for the earlier study; \code{b2ce03a} for
-\qcr{} in the final comparison, whose runs used it with small uncommitted
-changes that were not saved, so checking out \code{b2ce03a} gives a close
-build, not the measured one byte for byte); seeds and prompts by sha256
+\qcr{} in the final comparison, whose image was built from a checkout with
+uncommitted or untracked files that were not saved (its recorded id ends in
+\code{-dirty}), so checking out \code{b2ce03a} gives a close build that may
+not be the measured one byte for byte); seeds and prompts by sha256
 (\code{docs/PROMPTS.md} \S4.1). The selection sets are derived by a
 committed rule (\code{bench/aacr/final/select40.py -{}-check}).
 
