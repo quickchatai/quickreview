@@ -51,6 +51,12 @@ and `CAP_SETGID` and drops to your uid inside, so the model's tools run as
 another uid (`docker/entrypoint.sh`). `version`, `help`, `install`, the home,
 `tui` and `login` start as you.
 
+A host plugin's `qcr --schema N <verb> …` is the call its verb would be: the
+wrapper reads the verb past the flag and hands the flag to the image, which
+answers in contract N or refuses (`src/schemaflag.ts`). With any other verb
+after it, the call is a plain one the image refuses. Such a call prints no
+update notice.
+
 ## The TUI and its companion
 
 `qcr tui` is two containers and no `docker.sock` anywhere. A TUI in

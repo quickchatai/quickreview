@@ -14,6 +14,10 @@
 //   qcr pi [args]      the pinned pi with the qcr plugin and /selfimprove
 //   qcr update         the installing package manager updates qcr
 //
+// `qcr --schema N review|scan|version …` is a host plugin's call: the verb
+// in contract N's JSON, or a refusal (src/schemaflag.ts), and no update
+// notice.
+//
 // Every other verb goes to src/cli.ts `main` unchanged. The image's
 // `node /opt/qcr/dist/src/cli.js` never comes through here. Run as a script
 // itself (`node dist/src/qcrbin.js`), this module is the bin: the detached
@@ -26,6 +30,7 @@ import { isEntryModule } from "./entrymodule.js";
 import { isSqliteUnavailable, sqliteHint } from "./sqlitehint.js";
 import { fsDeniedLine } from "./fsdenied.js";
 import { MissingConfigError } from "./missingconfig.js";
+import { parseSchemaFlag } from "./schemaflag.js";
 
 /** The bin's own lines on top of the app's usage (`qcr help`). */
 export const BIN_HELP = [
@@ -39,6 +44,7 @@ export const BIN_HELP = [
   "  qcr pi [args]           pi with the qcr plugin (/qcr-review, /qcr-scan, /qcr-setup) and /selfimprove",
   "  qcr update              update qcr with the package manager that installed it",
   "  qcr version [--json]    this install's version, schemas and pi pin",
+  "  qcr --schema N <verb>   review, scan or version as JSON in host-plugin contract N",
   "",
   "Every app verb:",
 ].join("\n");
@@ -56,10 +62,25 @@ export type BinRoute =
       route: "version" | "update" | "login" | "review" | "scan";
       args: string[];
       json: boolean;
+      /** The host-plugin contract a `--schema N` run asked for. */
+      schema?: number;
     }
+  /** `--schema` refused before any verb ran: the line goes to stderr. */
+  | { route: "refused"; code: 2 | 3; line: string }
   | { route: "app"; argv: string[] };
 
 export function binRoute(argv: readonly string[]): BinRoute {
+  const schema = parseSchemaFlag(argv);
+  if (schema.kind === "refused") return { route: "refused", code: schema.code, line: schema.line };
+  if (schema.kind === "ok") {
+    const [verb, ...args] = schema.argv;
+    return {
+      route: verb as "review" | "scan" | "version",
+      args,
+      json: true,
+      schema: schema.contract,
+    };
+  }
   if (argv.length === 0 || (argv.length === 1 && argv[0] === "home")) return { route: "home" };
   // pi's arguments are pi's, `--json` included
   if (argv[0] === "pi") return { route: "pi", args: argv.slice(1) };
@@ -194,6 +215,10 @@ async function route(r: BinRoute): Promise<void> {
       process.exitCode = cmdUpdate(r.args, npmVerbDeps(root));
       return;
     }
+    case "refused":
+      console.error(r.line);
+      process.exitCode = r.code;
+      return;
     case "app":
       return appMain(r.argv);
   }
@@ -217,6 +242,8 @@ export async function runBin(argv: readonly string[]): Promise<void> {
     return;
   }
   const verb = r.route === "app" ? r.argv.find((a) => a !== "--json") : r.route;
+  // a host plugin's run reads stdout and stderr as the contract's, whole
+  if (r.route === "refused" || ("schema" in r && r.schema !== undefined)) return;
   if (r.route !== "help" && !QUIET_VERBS.has(verb ?? ""))
     await maybeNotice("json" in r ? r.json : r.route === "app" && r.argv.includes("--json"));
 }

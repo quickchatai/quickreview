@@ -17,6 +17,7 @@ import { takeHandoffToken } from "@quickchatai/pi-quickreview/src/ghcred.js";
 import { isEntryModule } from "./entrymodule.js";
 import { loadConfig, sandboxRoot, type Config, type TuiConfig } from "./config.js";
 import { daemonLoadLine } from "./eventloop.js";
+import { parseSchemaFlag } from "./schemaflag.js";
 import {
   ManifestUnreadable,
   parseManifestText,
@@ -2010,7 +2011,16 @@ export function splitJsonFlag(argv: string[]): { json: boolean; argv: string[] }
 }
 
 export async function main(rawArgv: string[]): Promise<void> {
-  const { json, argv } = splitJsonFlag(rawArgv);
+  // `qcr --schema N <verb>`, as the bin's front door reads it (src/schemaflag.ts):
+  // the image's wrapper comes in here, not through src/qcrbin.ts.
+  const schema = parseSchemaFlag(rawArgv);
+  if (schema.kind === "refused") {
+    console.error(schema.line);
+    process.exitCode = schema.code;
+    return;
+  }
+  const { json, argv } =
+    schema.kind === "ok" ? { json: true, argv: schema.argv } : splitJsonFlag(rawArgv);
   // A GitHub token handed over as a file (packages/pi-plugin/src/ghcred.ts) is read and
   // unlinked here, before any verb can start a pi or bash child. A file that
   // is named but cannot be taken is a one-line failure, never a stack trace.

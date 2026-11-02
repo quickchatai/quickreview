@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "version.v1.json",
   "title": "qcr version --json, version 1",
-  "description": "What a plugin checks before it talks to this install: the image's version, the schema versions of the review and scan payloads, and the pi pin.",
+  "description": "What a plugin checks before it talks to this install: the image's version, the schema versions of the review and scan payloads, the host-plugin contracts it accepts, and the pi pin.",
   "type": "object",
   "required": ["schema_version", "image", "schemas", "pi"],
   "properties": {
@@ -39,6 +39,11 @@
           "description": "schema_version of scan-result payloads."
         }
       }
+    },
+    "contracts": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 1 },
+      "description": "The host-plugin contract numbers `qcr --schema N` accepts, ascending. Added within version 1: a qcr from before the flag prints none."
     },
     "pi": {
       "type": ["object", "null"],

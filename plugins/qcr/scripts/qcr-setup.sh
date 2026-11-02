@@ -12,7 +12,8 @@
 # terminal. Without one the script prints the exact command and exits 10, so a
 # skill can hand it over instead of hanging on a prompt nobody sees.
 #
-#   exit 0   ready: `qcr version --json` answered with a schema this plugin knows
+#   exit 0   ready: `qcr --schema 1 version` answered, so this qcr prints the
+#            plugin's contract (a qcr from before the flag fails it)
 #   exit 1   a step failed (the message names the fix)
 #   exit 10  a step needs the human at a terminal (the command is printed)
 #
@@ -23,7 +24,8 @@
 # terminal). It makes no model call.
 set -eu
 
-HERE="$(cd "$(dirname "$0")" && pwd)"
+# The host-plugin contract the skills are written for (`qcr --schema N`).
+CONTRACT=1
 # Kept equal to plugin.json's and package.json's version; a test checks it.
 RELEASE_VERSION=1.3.2
 IMAGE="${QCR_IMAGE:-ghcr.io/quickchatai/quickreview:$RELEASE_VERSION}"
@@ -85,7 +87,7 @@ step 3 "the qcr wrapper"
 QCR=''
 if command -v qcr >/dev/null 2>&1; then QCR="$(command -v qcr)"; fi
 if [ -z "$QCR" ] && [ -x "$DEST/qcr" ]; then QCR="$DEST/qcr"; fi
-if [ -n "$QCR" ] && QCR_BIN="$QCR" "$HERE/qcr-json" version >/dev/null 2>&1; then
+if [ -n "$QCR" ] && "$QCR" --schema "$CONTRACT" version >/dev/null 2>&1; then
   say "$QCR is installed and answers"
 else
   mkdir -p "$DEST"
@@ -129,6 +131,6 @@ fi
 
 # ---- done -------------------------------------------------------------------------
 printf '\n'
-QCR_BIN="$QCR" "$HERE/qcr-json" version >/dev/null ||
-  die "$QCR does not answer \`version --json\` with a schema this plugin knows — run: $QCR update"
+"$QCR" --schema "$CONTRACT" version >/dev/null ||
+  die "$QCR does not answer \`--schema $CONTRACT version\`, the contract this plugin speaks — run: $QCR update"
 say "ready: $("$QCR" version | head -n 1)"

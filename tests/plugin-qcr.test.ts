@@ -1,14 +1,12 @@
 // The qcr Claude Code plugin (plugins/qcr): skills that call the qcr
-// host wrapper with --json, and /qcr-setup. No docker, no gh, no model, no
-// network: the scripts run against a fake qcr, docker and gh on PATH that log
-// every call, and against the recorded payloads of tests/fixtures/json-contract
-// (the goldens the schemas are validated with) plus a few forged ones.
+// host wrapper as `qcr --schema 1 …` (the contract flag itself is
+// tests/schema-flag.test.ts), and /qcr-setup. No docker, no gh, no model, no
+// network: the script runs against a fake qcr, docker and gh on PATH that log
+// every call, and against the recorded version payload of
+// tests/fixtures/json-contract.
 //
-//   - qcr-json passes a payload through only when every top-level object leads
-//     with a schema_version it knows, and refuses (exit 3, nothing on stdout)
-//     any other; it adds --json once and keeps qcr's own exit status;
-//   - the SKILL.md files parse as pi/Claude read them, name the one caller, and
-//     never call qcr bare;
+//   - the SKILL.md files parse as pi/Claude read them, call qcr only with the
+//     plugin's contract, and never bare;
 //   - qcr-setup checks Docker, then pull auth, then the wrapper, then login, in
 //     that order, skips what is done, and hands a terminal-only step to the
 //     human (exit 10) without running it.
@@ -19,7 +17,6 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -31,10 +28,8 @@ import { parseSkillFrontmatter } from "./helpers/skill-frontmatter.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PLUGIN = join(root, "plugins", "qcr");
-const QCR_JSON = join(PLUGIN, "scripts", "qcr-json");
 const SETUP = join(PLUGIN, "scripts", "qcr-setup.sh");
 const GOLDEN = join(root, "tests", "fixtures", "json-contract");
-const FORGED = join(root, "tests", "fixtures", "plugin-qcr");
 const TOKEN = "ghp_PLUGIN_SECRET_0123456789";
 
 const dirs: string[] = [];
@@ -46,166 +41,6 @@ const scratch = (): string => {
   dirs.push(d);
   return d;
 };
-
-// ---- qcr-json -------------------------------------------------------------------
-
-// A qcr that prints a recorded payload, logs its argv and exits FAKE_RC.
-const FAKE_QCR = `#!/bin/sh
-printf '%s\\n' "$*" >> "$FAKE_DIR/argv"
-if [ -n "\${FAKE_PAYLOAD-}" ]; then cat "$FAKE_PAYLOAD"; fi
-exit "\${FAKE_RC-0}"
-`;
-
-function qcrJson(
-  args: string[],
-  o: { payload?: string; rc?: number } = {},
-): { status: number | null; stdout: string; stderr: string; argv: string[] } {
-  const dir = scratch();
-  const fake = join(dir, "qcr");
-  writeFileSync(fake, FAKE_QCR, { mode: 0o755 });
-  const out = spawnSync("sh", [QCR_JSON, ...args], {
-    env: {
-      PATH: process.env["PATH"]!,
-      TMPDIR: dir,
-      QCR_BIN: fake,
-      FAKE_DIR: dir,
-      ...(o.payload !== undefined ? { FAKE_PAYLOAD: o.payload } : {}),
-      FAKE_RC: String(o.rc ?? 0),
-    },
-    encoding: "utf8",
-  });
-  const argvFile = join(dir, "argv");
-  const argv = existsSync(argvFile)
-    ? readFileSync(argvFile, "utf8").split("\n").filter(Boolean)
-    : [];
-  // the temp payload is gone after the call
-  expect(readdirSync(dir).filter((f) => f.startsWith("qcr-json."))).toEqual([]);
-  return { status: out.status, stdout: out.stdout, stderr: out.stderr, argv };
-}
-
-const golden = (name: string): string => join(GOLDEN, name);
-
-describe("qcr-json — known schema versions", () => {
-  const cases: Array<[string, string[], string]> = [
-    ["review", ["review", "--preview"], "review-preview.json"],
-    ["review", ["review", "--diff", "-", "--preview"], "review-diff-preview.json"],
-    ["review", ["review"], "review-done.json"],
-    ["review", ["review", "start", "feature"], "review-start.json"],
-    ["review", ["review", "status", "run1001000"], "review-status-running.json"],
-    ["review", ["review", "status", "run1001000"], "review-status-done.json"],
-    ["review", ["review", "stop", "run1001000"], "review-stop.json"],
-    ["review", ["review"], "review-refused.json"],
-    ["scan", ["scan", "preview"], "scan-preview.json"],
-    ["scan", ["scan", "status"], "scan-status.json"],
-    ["scan", ["scan", "findings"], "scan-findings.json"],
-    ["scan", ["scan", "start", "--key", "K"], "scan-refused.json"],
-    ["version", ["version"], "version.json"],
-  ];
-  for (const [, args, file] of cases) {
-    it(`passes ${file} through byte for byte`, () => {
-      const r = qcrJson(args, { payload: golden(file) });
-      expect(r.status, r.stderr).toBe(0);
-      expect(r.stdout).toBe(readFileSync(golden(file), "utf8"));
-    });
-  }
-
-  it("keeps qcr's own exit status beside a valid payload", () => {
-    const r = qcrJson(["review"], { payload: golden("review-partial.json"), rc: 1 });
-    expect(r.status).toBe(1);
-    expect(r.stdout).toBe(readFileSync(golden("review-partial.json"), "utf8"));
-  });
-
-  it("does not read a nested result's schema_version", () => {
-    const r = qcrJson(["review", "status", "r1"], {
-      payload: join(FORGED, "review-nested-v2.json"),
-    });
-    expect(r.status, r.stderr).toBe(0);
-  });
-});
-
-describe("qcr-json — refuses what it does not know", () => {
-  it("an unknown review version: exit 3, nothing on stdout, the reason on stderr", () => {
-    const r = qcrJson(["review", "--preview"], { payload: join(FORGED, "review-schema-v2.json") });
-    expect(r.status).toBe(3);
-    expect(r.stdout).toBe("");
-    expect(r.stderr).toMatch(/review schema_version 2/);
-    expect(r.stderr).toMatch(/understands 1/);
-    expect(r.stderr).toMatch(/qcr update/);
-  });
-
-  it("an unknown scan and version schema, likewise", () => {
-    const s = qcrJson(["scan", "preview"], { payload: join(FORGED, "scan-schema-v2.json") });
-    expect([s.status, s.stdout]).toEqual([3, ""]);
-    const v = qcrJson(["version"], { payload: join(FORGED, "version-schema-v2.json") });
-    expect([v.status, v.stdout]).toEqual([3, ""]);
-  });
-
-  it("refuses a stream when any payload in it is unknown", () => {
-    const r = qcrJson(["review", "status", "r1"], {
-      payload: join(FORGED, "review-stream.ndjson"),
-    });
-    expect([r.status, r.stdout]).toEqual([3, ""]);
-    expect(r.stderr).toMatch(/schema_version 2/);
-  });
-
-  it("refuses an object that does not lead with schema_version", () => {
-    const r = qcrJson(["review"], { payload: join(FORGED, "review-no-version.json") });
-    expect([r.status, r.stdout]).toEqual([3, ""]);
-    expect(r.stderr).toMatch(/schema_version none/);
-  });
-
-  it("a v1 review payload is not accepted as a different family's version", () => {
-    // each family has its own list; scan 1 and review 1 happen to be equal today,
-    // so the check is that the list is read per verb
-    const src = readFileSync(QCR_JSON, "utf8");
-    expect(src).toMatch(/KNOWN_review="1"/);
-    expect(src).toMatch(/KNOWN_scan="1"/);
-    expect(src).toMatch(/KNOWN_version="1"/);
-  });
-
-  it("no payload at all: qcr's failing status if it failed, else 4", () => {
-    const failed = qcrJson(["review"], { rc: 7 });
-    expect([failed.status, failed.stdout]).toEqual([7, ""]);
-    expect(failed.stderr).toMatch(/exited 7/);
-    const silent = qcrJson(["review"], {});
-    expect([silent.status, silent.stdout]).toEqual([4, ""]);
-  });
-
-  it("only review, scan and version, else usage (2) and qcr is not run", () => {
-    const r = qcrJson(["daemon"]);
-    expect(r.status).toBe(2);
-    expect(r.argv).toEqual([]);
-  });
-});
-
-describe("qcr-json — what it runs", () => {
-  it("adds --json exactly once", () => {
-    const a = qcrJson(["review", "--preview"], { payload: golden("review-preview.json") });
-    expect(a.argv).toEqual(["review --preview --json"]);
-    const b = qcrJson(["review", "--json", "--preview"], {
-      payload: golden("review-preview.json"),
-    });
-    expect(b.argv).toEqual(["review --json --preview"]);
-  });
-
-  it("keeps arguments with spaces whole", () => {
-    const dir = scratch();
-    const fake = join(dir, "qcr");
-    writeFileSync(
-      fake,
-      `#!/bin/sh\nprintf '[%s]' "$@" > "${dir}/argv"\ncat "${golden("review-preview.json")}"\n`,
-      {
-        mode: 0o755,
-      },
-    );
-    const out = spawnSync("sh", [QCR_JSON, "review", "--base", "release v2"], {
-      env: { PATH: process.env["PATH"]!, QCR_BIN: fake },
-      encoding: "utf8",
-    });
-    expect(out.status).toBe(0);
-    expect(readFileSync(join(dir, "argv"), "utf8")).toBe("[review][--base][release v2][--json]");
-  });
-});
 
 // ---- the skills -----------------------------------------------------------------
 
@@ -234,8 +69,15 @@ describe("the plugin's files", () => {
     );
   });
 
-  it("the scripts are executable", () => {
-    for (const s of [QCR_JSON, SETUP]) expect(spawnSync("test", ["-x", s]).status, s).toBe(0);
+  it("the setup script is executable", () => {
+    expect(spawnSync("test", ["-x", SETUP]).status).toBe(0);
+  });
+
+  // MUTATION: restore plugins/qcr/scripts/qcr-json, or name it in a skill — this fails.
+  it("has no schema wrapper of its own: qcr reads the contract flag itself", () => {
+    expect(existsSync(join(PLUGIN, "scripts", "qcr-json"))).toBe(false);
+    for (const name of SKILLS) expect(skillText(name), name).not.toContain("qcr-json");
+    expect(readFileSync(SETUP, "utf8")).not.toContain("qcr-json");
   });
 
   for (const name of SKILLS) {
@@ -249,14 +91,21 @@ describe("the plugin's files", () => {
     });
   }
 
-  it("review and scan call qcr only through qcr-json, and say to refuse an unknown schema", () => {
-    for (const name of ["qcr-review", "qcr-scan"]) {
+  // MUTATION: drop `--schema 1` from one command in the review skill's table — this fails.
+  it("review and scan call qcr only with contract 1, and say to stop on a refusal", () => {
+    for (const [name, verb] of [
+      ["qcr-review", "review"],
+      ["qcr-scan", "scan"],
+    ] as const) {
       const t = skillText(name);
-      expect(t).toContain("${CLAUDE_PLUGIN_ROOT}/scripts/qcr-json");
+      expect(t).toContain(`qcr --schema 1 ${verb}`);
       expect(t).toMatch(/schema_version/);
-      expect(t).toMatch(/exits 3/);
-      // every command line in a code block goes through the caller
-      const bare = t.split("\n").filter((l) => /^\s*(qcr|\$\s*qcr)\s+(review|scan)\b/.test(l));
+      expect(t).toMatch(/exits 3 with nothing on stdout/);
+      // every command in a code span or block that runs the verb carries the contract
+      const code = [...t.matchAll(/```[\s\S]*?```|`[^`\n]+`/g)].map((m) => m[0]);
+      const runs = code.filter((c) => /\bqcr\b[^`]*\b(review|scan)\b/.test(c));
+      expect(runs.length, name).toBeGreaterThan(2);
+      const bare = runs.filter((c) => !/\bqcr --schema 1 (review|scan)\b/.test(c));
       expect(bare, name).toEqual([]);
     }
   });
@@ -325,15 +174,22 @@ case "$1 $2" in
 esac
 exit 2
 `;
-// The qcr the image installs: answers version --json (schema from FAKE_VERSION_FILE), logs login.
+// The qcr the image installs: answers \`--schema N version\` for the contracts in
+// FAKE_CONTRACTS (default 1) with FAKE_VERSION_FILE, refuses another N with 3,
+// and, as a qcr from before the flag would, any --schema with 2 under
+// FAKE_NO_SCHEMA_FLAG. Logs every call.
 const FAKE_INSTALLED_QCR = `#!/bin/sh
 echo "qcr $*" >> "$FAKE_LOG"
 case "$1" in
-  version)
-    case " $* " in
-      *" --json "*) cat "$FAKE_VERSION_FILE" ;;
-      *) echo "qcr 0.1.0" ;;
-    esac ;;
+  --schema)
+    [ -z "\${FAKE_NO_SCHEMA_FLAG-}" ] || { echo "unknown command: --schema" >&2; exit 2; }
+    case " \${FAKE_CONTRACTS-1} " in
+      *" $2 "*) ;;
+      *) echo "qcr --schema: this qcr does not print contract $2" >&2; exit 3 ;;
+    esac
+    [ "$3" = version ] || exit 2
+    cat "$FAKE_VERSION_FILE" ;;
+  version) echo "qcr 0.1.0" ;;
   login) exit 0 ;;
   *) exit 2 ;;
 esac
@@ -459,7 +315,7 @@ describe("qcr-setup — the order on a fresh machine", () => {
       idx(log, /^docker run .* install$/),
       idx(log, "--entrypoint test"),
       idx(log, "qcr login"),
-      idx(log, "qcr version --json"),
+      idx(log, "qcr --schema 1 version"),
     ];
     expect(
       order.every((i) => i >= 0),
@@ -591,14 +447,19 @@ describe("qcr-setup — skips what is done", () => {
     expect(r.stdout + r.stderr + rig.log().join("\n")).not.toContain("sk-fake");
   });
 
-  it("a wrapper whose schema this plugin does not know is not ready", () => {
-    const rig = setupRig();
-    const r = rig.run({
-      onPath: true,
-      env: { FAKE_LOGIN_PRESENT: "1", FAKE_VERSION_FILE: join(FORGED, "version-schema-v2.json") },
+  // MUTATION: make the final check `"$QCR" version` again — this fails.
+  for (const [what, env] of [
+    ["a qcr that does not print contract 1", { FAKE_CONTRACTS: "2" }],
+    ["a qcr from before the --schema flag", { FAKE_NO_SCHEMA_FLAG: "1" }],
+  ] as const) {
+    it(`${what} is not ready`, () => {
+      const rig = setupRig();
+      const r = rig.run({ onPath: true, env: { FAKE_LOGIN_PRESENT: "1", ...env } });
+      // step 3 sees an installed qcr that fails the check, reinstalls, and the final check still fails
+      expect(r.status).toBe(1);
+      expect(idx(rig.log(), / install$/)).toBeGreaterThanOrEqual(0);
+      expect(r.stderr).toMatch(/--schema 1 version/);
+      expect(r.stderr).toMatch(/qcr update/);
     });
-    // step 3 sees an installed qcr that fails the check, reinstalls, and the final check still fails
-    expect(r.status).toBe(1);
-    expect(r.stderr).toMatch(/qcr update/);
-  });
+  }
 });

@@ -7,21 +7,20 @@ description: Scan a whole repository for bugs with qcr, check on a running scan,
 
 A scan reads the whole repository at one commit, not a diff. It is long and costs real money: preview first and start only on the user's say.
 
-## Always call it through `qcr-json`
+## Always call it as `qcr --schema 1`
 
 ```sh
-QCRJ="${CLAUDE_PLUGIN_ROOT}/scripts/qcr-json"
-"$QCRJ" scan …
+qcr --schema 1 scan …
 ```
 
-`qcr-json` prints a payload only when its `schema_version` is one this plugin knows. On an unknown version it exits 3 and prints nothing on stdout: stop and tell the user to update the plugin and run `qcr update`. Never call `qcr scan` bare. If `qcr` or its login is missing, run the **qcr-setup** skill.
+`--schema 1` asks qcr for contract 1, the JSON this plugin was written for: every payload leads with the `schema_version` the contract names, and the flag implies `--json`. A qcr that does not print contract 1 exits 3 with nothing on stdout and the reason on stderr; a qcr from before the flag exits nonzero with no JSON. Either way stop and tell the user to update the plugin and run `qcr update`. Never call qcr without it. If `qcr` or its login is missing, run the **qcr-setup** skill.
 
 ## Steps
 
-1. `"$QCRJ" scan preview` (add `--sha REF` for another commit, `--delta` for only what changed since the last scan). Nothing starts. Show the user `preview.estimate_usd`, `preview.cap_usd` and the case list, and wait for a go.
-2. `"$QCRJ" scan start --key <preview.key>`. A stale key is refused (`ok: false`); preview again and show the new price.
-3. `"$QCRJ" scan status` shows progress; `status --wait --timeout S` waits. `"$QCRJ" scan stop` ends it.
-4. `"$QCRJ" scan findings` lists what was found; narrow with `--severity`, `--validity`, `--lens`, `--limit N`.
+1. `qcr --schema 1 scan preview` (add `--sha REF` for another commit, `--delta` for only what changed since the last scan). Nothing starts. Show the user `preview.estimate_usd`, `preview.cap_usd` and the case list, and wait for a go.
+2. `qcr --schema 1 scan start --key <preview.key>`. A stale key is refused (`ok: false`); preview again and show the new price.
+3. `qcr --schema 1 scan status` shows progress; `status --wait --timeout S` waits. `qcr --schema 1 scan stop` ends it.
+4. `qcr --schema 1 scan findings` lists what was found; narrow with `--severity`, `--validity`, `--lens`, `--limit N`.
 
 ## Reading the result
 
