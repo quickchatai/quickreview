@@ -25,6 +25,7 @@ import {
   VALIDATE_PASS,
 } from "@quickchatai/pi-quickreview/src/include.js";
 import { QUALITY_PASSES, SWEEP_PASS } from "@quickchatai/pi-quickreview/src/heuristics.js";
+import { SECURITY_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
 
 const ROOT = process.cwd();
 const fixture = readFileSync(resolve(ROOT, "tests/fixtures/config.toml"), "utf8");
@@ -415,7 +416,9 @@ describe("bench --config: arrays, open maps, typos", () => {
       "review.skip_lenses=pass-abstraction|pass-duplication,models.risk_passes=pass-security",
     );
     expect(cfg.review.skip_lenses).toEqual(["pass-abstraction", "pass-duplication"]);
-    expect(cfg.models.risk_passes).toEqual(["pass-security"]);
+    // The security family joins any risk list: a family lens always runs at
+    // the risk tier, so the lever cannot drop it.
+    expect(cfg.models.risk_passes).toEqual(["pass-security", ...SECURITY_FAMILY]);
     expect(applyConfigOverrides(cfg, "review.skip_lenses=").review.skip_lenses).toEqual([]);
     expect(() => applyConfigOverrides(baseCfg, "review.skip_lenses=pass-ui||pass-ui")).toThrow(
       /empty item/,
@@ -475,6 +478,18 @@ describe("bench --config: arrays, open maps, typos", () => {
       validate_consequence_rule: true,
     });
     expect(arm.pass_tiers).toEqual({ ...DEFAULT_PASS_TIERS, "pass-sweep": "sol-high" });
+  });
+
+  // MUTATION: drop the `security` spread from runFingerprint (src/bench/runner.ts)
+  // — the security-only arm fingerprints like the default, and this fails.
+  it("the fingerprint records [security] only when it moves the review", () => {
+    expect(runFingerprint(baseCfg, "p")).not.toHaveProperty("security");
+    const only = runFingerprint(applyConfigOverrides(baseCfg, "security.only=true"), "p");
+    expect(only.security).toEqual({ triggers: "strong", only: true, fold: false });
+    // Who may ask for a review is not a review setting.
+    expect(
+      runFingerprint(applyConfigOverrides(baseCfg, "security.command=false"), "p"),
+    ).not.toHaveProperty("security");
   });
 });
 

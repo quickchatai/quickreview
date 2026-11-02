@@ -88,6 +88,7 @@ import {
   type Customisation,
 } from "@quickchatai/pi-quickreview/src/profileoverrides.js";
 import type { LensTuning } from "@quickchatai/pi-quickreview/src/lenstuning.js";
+import { SECURITY_DEFAULTS } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import { homeProfileLookup } from "../install.js";
 import type { ProfileLookup } from "@quickchatai/pi-quickreview/src/profiles.js";
 import {
@@ -271,6 +272,11 @@ export interface RunFingerprint {
   /** The profile's `[posting]` policy. Absent at the default posting, so a run
    * without one keeps its fingerprint. */
   posting?: PostingPolicy;
+  /** The review-shaping keys of `[security]` (the profile's overlay
+   * applied). Absent when all three are at their defaults, so a run without
+   * one keeps its fingerprint; `label` and `command` decide who may ask for
+   * a review, which a bench run never reads. */
+  security?: { triggers: string; only: boolean; fold: boolean };
   /** Present only on an SDK run (`[engine] runtime = "sdk"`, the config default
    * since the engine route), with the lens tool it ran and `wave: true` when the engine
    * started the planned discovery wave (`[pi] engine_wave`, also the default).
@@ -300,6 +306,15 @@ function reviewSettingsDigest(cfg: Config): string {
     },
   };
   return createHash("sha256").update(JSON.stringify(settings)).digest("hex");
+}
+
+/** `[security]` at the shipped review: the keys a bench run reads unmoved. */
+function isDefaultSecurity(s: Config["security"]): boolean {
+  return (
+    s.triggers === SECURITY_DEFAULTS.triggers &&
+    s.only === SECURITY_DEFAULTS.only &&
+    s.fold === SECURITY_DEFAULTS.fold
+  );
 }
 
 type FingerprintLensTuning = Omit<LensTuning, "guide"> & {
@@ -390,6 +405,15 @@ export function runFingerprint(
     },
     ...(Object.keys(cfg.lenses ?? {}).length > 0 ? { lenses: fingerprintLenses(cfg.lenses!) } : {}),
     ...(isDefaultPosting(cfg.posting) ? {} : { posting: { ...cfg.posting! } }),
+    ...(isDefaultSecurity(cfg.security)
+      ? {}
+      : {
+          security: {
+            triggers: cfg.security.triggers,
+            only: cfg.security.only,
+            fold: cfg.security.fold,
+          },
+        }),
     ...(custom?.customised
       ? {
           customised: true as const,

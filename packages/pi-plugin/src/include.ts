@@ -1501,7 +1501,9 @@ export const VALIDATE_SEC_EVIDENCE_ADDENDUM =
   "| exactly one plausible, none contradicted | survives as a question naming that hop |\n" +
   "| two or more plausible, none contradicted | DOUBTED with the word `partial-chain` |\n" +
   "| any hop contradicted | `refuted`, citing the hop |\n\n" +
-  "This section adds that ONE word, `partial-chain`, to the closed vocabulary, for chains only. Never merge a chain into one of its leads, nor a lead into the chain: they are different findings, even where they share lines; when candidate groups are in play, a chain stays in its leads' group as its own finding.\n\n" +
+  "This section adds ONE word to the closed vocabulary, for chains only:\n\n" +
+  "- `partial-chain` — an exploit chain with two or more plausible hops and none contradicted; it goes under DOUBTED, kept for the next round, never posted and never killed.\n\n" +
+  "Never merge a chain into one of its leads, nor a lead into the chain: they are different findings, even where they share lines; when candidate groups are in play, a chain stays in its leads' group as its own finding.\n\n" +
   "On every security candidate you judge, write `security_outcome: confirmed | question | partial-chain | refuted` beside your verdict — in its findings-block entry when it survives, after its DOUBTED or KILLED line otherwise, in the reason of its row when you answer with a decision table. On a chain also write `hop_labels: [<label of hop 1>, <label of hop 2>, …]`, one label per hop in order. The session carries both into the findings record, where the outcome is recomputed from the labels by the table above.\n";
 
 // The scan's false-positive classes turned trust-boundary doubts into P3
