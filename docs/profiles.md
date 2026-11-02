@@ -1011,7 +1011,8 @@ profile's plan, but never a lens the profile switched off or skipped
   (`create_issue_comment`, suppressed in dry-run, marked
   `<!-- qcr-security-request -->`);
 - **`qcr review-now <pr> --security`** from the operator;
-- **`/qcr-review --security`** in pi (the plugin's one-shot review).
+- **`/qcr-review --security`** in pi, or **`qcr review --security`** in the
+  terminal (the one-shot review, which plans it for that run alone).
 
 A request is a row of `pr_review_requests` (one per PR and kind) and is
 served once: it notes new evidence at the reviewed head, so a PR already

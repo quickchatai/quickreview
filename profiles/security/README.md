@@ -134,6 +134,6 @@ security review can be asked for on any PR, on top of the default plan:
 - a `@<bot> security` comment from an owner, member or collaborator
   (`[security] command`);
 - `qcr review-now <pr> --security` from the operator;
-- `/qcr-review --security` in pi.
+- `/qcr-review --security` in pi, or `qcr review --security` in the terminal.
 
 A request plans the whole family, but never a lens a profile switched off.

@@ -90,6 +90,7 @@ export function reviewHelp(): string {
     "  --key K           start over the limit without asking, quoting the key a preview showed",
     "  --limit USD       the limit for this run, over the repo's own (in the Action: the hard stop)",
     "  --full            review the whole branch again, ignoring what an earlier review left",
+    "  --security        ask for a security review on top of the plan: every lens of the security family\n                    is planned (never one the profile switched off), as /qcr-review --security asks",
     "  --json            one JSON object instead of text (the agent destination)",
     "  --to DEST         where the result goes, for this run: terminal, file, json, pr (comma-separated;\n                    pr posts a comment-only review to the PR and needs a PR target)",
     "  --out FILE        write the markdown report to FILE (implies file)",
@@ -318,6 +319,10 @@ export async function runReviewCli(
     destinations,
     ...(cmd.out !== undefined ? { reportFile: resolve(deps.cwd, cmd.out) } : {}),
     full: cmd.full,
+    // `--security`: the person at the terminal asks for the whole security
+    // family, as `/qcr-review --security` does; the terminal knows no login
+    // to name, so the plan says who asked by role.
+    ...(cmd.securityRequest ? { securityRequest: { by: "", source: "operator" as const } } : {}),
     limits: {
       ...(deps.route !== undefined ? { route: deps.route } : {}),
       ...(cmd.limit !== undefined ? { limitUsd: cmd.limit } : {}),
