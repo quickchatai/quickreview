@@ -120,6 +120,9 @@ describe("a one-shot round's security inputs", () => {
       lines: 1,
       conflicted: [],
     };
+    // The host's security inputs: the repository's threat model, the facts
+    // that can plan, and the route inventory on demand.
+    let inventoryAsked = 0;
     const render = (security: boolean) =>
       renderDeltaRound({
         root,
@@ -133,6 +136,26 @@ describe("a one-shot round's security inputs", () => {
         state,
         delta,
         ...(security ? { securityRequest: { by: "", source: "operator" as const } } : {}),
+        readRepoThreatModel: () => "## Controls\n- REPO-CONTROL-MARK\n",
+        securityFacts: [
+          {
+            check: "removed-guard",
+            status: "clear",
+            lens: "pass-sec-authn-coverage",
+            detail: "no guard removed",
+          },
+        ],
+        securityInventory: () => {
+          inventoryAsked++;
+          return [
+            {
+              check: "route-inventory",
+              status: "found",
+              lens: "pass-sec-authn-coverage",
+              detail: "INVENTORY-MARK",
+            },
+          ];
+        },
       });
     const asked = render(true);
     expect(asked.followUp.scope).toBe("delta");
@@ -140,8 +163,22 @@ describe("a one-shot round's security inputs", () => {
       asked.passPlan.filter((r) => SECURITY_FAMILY.includes(r.lens)).map((r) => r.lens),
     );
     expect(family.has("pass-sec-access")).toBe(true);
+    // MUTATION: drop the readRepoThreatModel (or securityInventory)
+    // pass-through in renderDeltaRound — the delta round's security tasks
+    // read no repository threat model (no inventory), and this fails.
+    const secTasks = asked.taskFiles
+      .filter((t) => t.path.includes("pass-sec-access"))
+      .map((t) => t.text)
+      .join("\n");
+    expect(secTasks).toContain("REPO-CONTROL-MARK");
+    expect(secTasks).toContain("the repository's `.qcr/threat-model.md`");
+    expect(secTasks).toContain("INVENTORY-MARK");
+    expect(inventoryAsked).toBeGreaterThan(0);
+    inventoryAsked = 0;
     const plain = render(false);
     expect(plain.followUp.scope).toBe("delta");
     expect(plain.passPlan.some((r) => SECURITY_FAMILY.includes(r.lens))).toBe(false);
+    // A round that plans no family row never computes the inventory.
+    expect(inventoryAsked).toBe(0);
   });
 });

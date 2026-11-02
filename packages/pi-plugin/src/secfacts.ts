@@ -1284,15 +1284,25 @@ function routeInventory(files: readonly PrFileEntry[], io: SecurityFactsIo | nul
 // ---------------------------------------------------------------------------
 // The seam
 
+/** The checks that can plan a lens: every check but the route inventory,
+ * which lists and finds nothing (securitytriggers.ts `factHits` skips it). A
+ * host computes these before the plan, and the inventory only for a round
+ * whose plan has a security-family row — the only reader of its output. */
+export const SECURITY_TRIGGER_CHECKS: readonly SecFactCheck[] = SEC_FACT_CHECKS.filter(
+  (c) => c !== "route-inventory",
+);
+
 /**
- * Every check over a PR's files, cheapest first. The two diff-only checks
- * always run; the rest read the repository through `io`, and with no `io`
- * say `unknown` whenever the PR touches their subject. Total: a check that
- * throws becomes `unknown`, never a missing line.
+ * Every check over a PR's files, cheapest first — or the ones `checks`
+ * names, in the same order. The two diff-only checks always run; the rest
+ * read the repository through `io`, and with no `io` say `unknown` whenever
+ * the PR touches their subject. Total: a check that throws becomes
+ * `unknown`, never a missing line.
  */
 export function computeSecurityFacts(
   files: PrFileEntry[],
   io: SecurityFactsIo | null,
+  checks: readonly SecFactCheck[] = SEC_FACT_CHECKS,
 ): SecurityFact[] {
   const run: Record<SecFactCheck, () => SecurityFact[]> = {
     "removed-guard": () => removedGuard(files),
@@ -1303,7 +1313,7 @@ export function computeSecurityFacts(
     "networkpolicy-selector": () => networkPolicySelector(files, io),
     "route-inventory": () => routeInventory(files, io),
   };
-  return SEC_FACT_CHECKS.flatMap((check) => {
+  return SEC_FACT_CHECKS.filter((check) => checks.includes(check)).flatMap((check) => {
     try {
       return run[check]();
     } catch {

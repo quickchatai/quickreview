@@ -74,6 +74,10 @@ import { renderOneShotPrompts, type OneShotPrompts } from "./engine/prompts.js";
 import { AuthExpiring } from "./engine/auth.js";
 import type { Runtime } from "./engine/port.js";
 import type { SecurityRequest } from "./types.js";
+import { computeSecurityFacts, SECURITY_TRIGGER_CHECKS, type SecurityFact } from "./secfacts.js";
+import { localGitFactsIo } from "./secfactsgit.js";
+import { SECURITY_FAMILY } from "./passes.js";
+import { lensEnabled } from "./lenstuning.js";
 import { fetchBotFindings, skipPosted, type PostedFinding } from "./reviewbotfindings.js";
 import { computeDelta, deltaEnabled, renderDeltaRound, type DeltaFound } from "./reviewdelta.js";
 import { REVIEW_SCHEMA_VERSION, withSchemaVersion } from "./contract.js";
@@ -784,6 +788,28 @@ async function runPipeline(
   const readFile = overrideReader(opts.root, overrides);
   const profileLookup = overrides.lookup;
   const profileArgs = { ...(readFile ? { readFile } : {}), profileLookup };
+  // What the security family reads beyond the files, as dispatch reads it:
+  // the repository's `.qcr/threat-model.md` at the base commit (read with
+  // the repo profile above; it wins over the profile's copy), and the
+  // deterministic facts over the reviewed commits — the ones that can plan a
+  // lens now, the route inventory only for a round that plans a family row.
+  // A diff has no commit to read, so only its diff-only checks run. Nothing
+  // is read when every family lens is off.
+  const repoThreatModel = overrides.repoThreatModel;
+  const familyOn = SECURITY_FAMILY.some((lens) => lensEnabled(cfg.lenses, lens));
+  const factsIo =
+    kind === "diff"
+      ? null
+      : localGitFactsIo(gitDir, { head: t.uncommitted?.treeSha ?? t.headSha, base: t.baseSha });
+  let inventory: readonly SecurityFact[] | undefined;
+  const securityArgs = familyOn
+    ? {
+        readRepoThreatModel: () => repoThreatModel,
+        securityFacts: computeSecurityFacts(t.files, factsIo, SECURITY_TRIGGER_CHECKS),
+        securityInventory: () =>
+          (inventory ??= computeSecurityFacts(t.files, factsIo, ["route-inventory"])),
+      }
+    : { readRepoThreatModel: () => repoThreatModel };
   const roundTarget = {
     repo: t.repo,
     number: prInfo?.number ?? 0,
@@ -812,6 +838,7 @@ async function runPipeline(
       files: t.files,
       issuedAt: new Date().toISOString(),
       ...profileArgs,
+      ...securityArgs,
       ...(opts.securityRequest ? { securityRequest: opts.securityRequest } : {}),
     };
     let why = fallback;

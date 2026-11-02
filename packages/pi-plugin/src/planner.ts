@@ -152,6 +152,11 @@ export interface PlanSecurityInputs {
   threatModel?: ThreatModel | null;
   /** The deterministic security facts (packages/pi-plugin/src/secfacts.ts). */
   securityFacts?: readonly SecurityFact[];
+  /** The facts no plan reads (the route inventory, secfacts.ts
+   * `SECURITY_TRIGGER_CHECKS` leaves it out), computed on demand: the order
+   * calls it only when a security-family row is planned, so a round with
+   * none reads nothing for them. Appended to `securityFacts`. */
+  securityInventory?: () => readonly SecurityFact[];
 }
 
 /** What `buildPassPlan` returns. */
@@ -1166,7 +1171,12 @@ export function sweepOrderOf(order: RoundOrder, sweepPlan: PassPlanEntry[]): Rou
 function securityOrderFields(
   args: Pick<
     Parameters<typeof buildRoundOrder>[0],
-    "cfg" | "securityRequest" | "threatModel" | "securityFacts" | "priorPartialChains"
+    | "cfg"
+    | "securityRequest"
+    | "threatModel"
+    | "securityFacts"
+    | "securityInventory"
+    | "priorPartialChains"
   >,
   passPlan: readonly PassPlanEntry[],
   postPlan: PassPlanEntry[],
@@ -1179,7 +1189,9 @@ function securityOrderFields(
     validator !== undefined &&
     PASS_TIER_ORDER.indexOf(validator.tier) < PASS_TIER_ORDER.indexOf(SECURITY_VALIDATOR_TIER);
   const tm = args.threatModel ?? null;
-  const facts = args.securityFacts ?? [];
+  const facts = familyPlanned
+    ? [...(args.securityFacts ?? []), ...(args.securityInventory?.() ?? [])]
+    : [];
   const partial = args.priorPartialChains ?? [];
   const delta = passPlan.some((p) => p.lens === CHAIN_PASS && p.strategy === "delta");
   return {
@@ -1271,6 +1283,9 @@ export function buildRoundOrder(args: {
   /** The deterministic security facts; carried when a security-family row
    * is planned. */
   securityFacts?: readonly SecurityFact[];
+  /** `PlanSecurityInputs.securityInventory`: called only when a
+   * security-family row is planned, its facts carried after `securityFacts`. */
+  securityInventory?: () => readonly SecurityFact[];
   /** Earlier rounds' `partial-chain` records on this PR, rendered as one
    * line each: handed to the chain's `delta` row as unconfirmed leads. */
   priorPartialChains?: readonly string[];

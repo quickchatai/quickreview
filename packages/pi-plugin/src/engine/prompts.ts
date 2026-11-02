@@ -111,6 +111,9 @@ export interface OneShotSecurity {
   /** The deterministic security facts the host computed
    * (packages/pi-plugin/src/secfacts.ts); absent ⇒ none. */
   securityFacts?: readonly SecurityFact[];
+  /** The facts no plan reads (the route inventory), computed only when a
+   * security-family row is planned (`PlanSecurityInputs.securityInventory`). */
+  securityInventory?: () => readonly SecurityFact[];
 }
 
 /** The threat model a one-shot round reads: the repository's (through the
@@ -134,6 +137,7 @@ function planSecurityOf(sec: OneShotSecurity, threatModel: ThreatModel | null): 
     ...(sec.securityRequest ? { securityRequest: sec.securityRequest } : {}),
     threatModel,
     ...(sec.securityFacts ? { securityFacts: sec.securityFacts } : {}),
+    ...(sec.securityInventory ? { securityInventory: sec.securityInventory } : {}),
   };
 }
 

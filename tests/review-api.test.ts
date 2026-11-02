@@ -281,6 +281,58 @@ describe("review(): the local review as a call", () => {
     },
   );
 
+  // Owner rule: the repository's `.qcr/threat-model.md` (at the base commit)
+  // wins over the profile's copy, on the one-shot routes as on the daemon's,
+  // and the security lenses get the deterministic facts.
+  // MUTATION: drop `readRepoThreatModel` from planRound's inputs
+  // (packages/pi-plugin/src/reviewapi.ts `securityArgs`) — the round reads no
+  // threat model, and this fails; drop `securityFacts`/`securityInventory`
+  // and the facts section is missing.
+  it(
+    "a security round reads the repository's threat model at the base, and the facts",
+    { timeout: 60_000 },
+    async () => {
+      const faux = pricedFaux(() => 0.25, { provider: "faux", models: [{ id: "m" }] });
+      const { runtime } = fauxRuntime(faux);
+      const opts = {
+        ...options("sec-threat-model", runtime),
+        securityRequest: { by: "", source: "operator" as const },
+      };
+      // The model on main (the base); the branch changes it, and the base's wins.
+      const repo = opts.repoDir;
+      git(repo, "checkout", "-q", "main");
+      mkdirSync(join(repo, ".qcr"), { recursive: true });
+      writeFileSync(join(repo, ".qcr", "threat-model.md"), "## Controls\n- BASE-CONTROL-MARK\n");
+      git(repo, "add", "-A");
+      git(repo, "commit", "-q", "-m", "threat model");
+      git(repo, "checkout", "-q", "feature");
+      git(repo, "rebase", "-q", "main");
+      writeFileSync(join(repo, ".qcr", "threat-model.md"), "## Controls\n- HEAD-CONTROL-MARK\n");
+      git(repo, "commit", "-q", "-am", "edit the threat model");
+      let tasks = "";
+      faux.appendResponses([
+        async () => {
+          const out = outDirOf(opts.runsDir);
+          const dir = join(out, "tasks");
+          tasks = readdirSync(dir)
+            .filter((f) => f.includes("pass-sec-access"))
+            .map((f) => readFileSync(join(dir, f), "utf8"))
+            .join("\n");
+          writeFileSync(join(out, "findings-record.json"), record);
+          writeFileSync(join(out, "outcome.json"), outcome);
+          return fauxAssistantMessage("done");
+        },
+      ]);
+      const r = await review({ kind: "branch" }, opts, {});
+      expect(r.exitCode, r.text).toBe(0);
+      expect(tasks).toContain("the repository's `.qcr/threat-model.md` on the base branch");
+      expect(tasks).toContain("BASE-CONTROL-MARK");
+      expect(tasks).not.toContain("HEAD-CONTROL-MARK");
+      expect(tasks).toContain("Security facts (computed from the repository, not by a model)");
+      expect(tasks).toContain("`route-inventory`");
+    },
+  );
+
   // The bare /qcr-review: the branch's commits and the working tree's edits,
   // reviewed as one. MUTATION: drop the uncommitted option from the branch's
   // resolution — the edit is missing from the plan, and this fails.
