@@ -117,8 +117,11 @@
     "@earendil-works/pi-ai": "1.4.0",
     "@quickchatai/pi-quickreview": "1.3.2",
     "@earendil-works/pi-coding-agent": "1.4.0",
-    "better-sqlite3": "13.0.3",
     "smol-toml": "1.9.1"
+  },
+  "//optionalDependencies": "better-sqlite3 is the state store's driver (src/state.ts), a native module: optional, so an install where it cannot build still installs, and the verbs that never open the store (src/sqlitehint.ts SQLITE_FREE_VERBS) still run. Every other verb prints the SQLite hint.",
+  "optionalDependencies": {
+    "better-sqlite3": "13.0.3"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

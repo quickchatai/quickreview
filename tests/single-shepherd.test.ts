@@ -192,10 +192,12 @@ describe("daemon topology", () => {
     // person's own interactive pi with the plugin) and `qcr login` (pi's own
     // /login). The person's own terminal, never a scheduled agent; only the
     // package's bin imports qcrbin, and only qcrbin imports npmverbs (pinned
-    // below).
+    // below). sqlitehint.ts only names the verbs that run without the state
+    // store, `pi` among them, and starts nothing.
     const allowedPaths = [
       "/src/qcrbin.ts",
       "/src/npmverbs.ts",
+      "/src/sqlitehint.ts",
       "/src/oneshot.ts",
       "/src/reviewcli.ts",
       "/src/opencli.ts",
@@ -241,7 +243,8 @@ describe("daemon topology", () => {
     // `qcr scan` — the companion's scan tools as a CLI verb, driving the
     // case runner in the operator's own one-shot process (as the companion
     // drives it in its container). It holds only while nothing but the CLI's
-    // dispatch reaches it, which the check after this one pins.
+    // two doors (src/cli.ts and src/qcrbin.ts) reaches it, which the check
+    // after this one pins.
     // src/engine/caserunner-sdk.ts is the same runner's SDK twin: it
     // reads the leaf's agent file and event stream with the process runner's
     // own helpers, so it reaches setup/caserunner.js at runtime. Only
@@ -255,8 +258,10 @@ describe("daemon topology", () => {
       .filter((f) => !f.endsWith("/src/tui/index.ts"))
       .filter((f) => /["'][^"']*\/nativecompanion\.js["']/.test(readFileSync(f, "utf8")));
     expect(reachesNativeCompanion).toEqual([]);
+    // `qcr scan` has two doors: the app's main (the image's `qcr`) and the
+    // npm bin's front door, which reaches it without the state store.
     const reachesScanCli = allSrcFiles()
-      .filter((f) => !f.endsWith("/src/cli.ts"))
+      .filter((f) => !f.endsWith("/src/cli.ts") && !f.endsWith("/src/qcrbin.ts"))
       .filter((f) => /["'][^"']*\/scancli\.js["']/.test(readFileSync(f, "utf8")));
     expect(reachesScanCli).toEqual([]);
     // The scan sandbox's pi allowance above holds only while `qcr scan` is

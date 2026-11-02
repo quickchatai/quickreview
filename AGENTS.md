@@ -109,9 +109,13 @@ All three must be green before you commit. Notes that will bite otherwise:
   the repo root in a checkout or the image. The seeds sit under `assets/`,
   not at the package root, because pi turns a package's `prompts/` into slash
   commands.
-- **Minimal dependencies.** Runtime: `better-sqlite3`, `smol-toml`. Dev: `typescript`, `vitest`, `@types/*`,
-  `eslint` + `@eslint/js` + `typescript-eslint`, `prettier`. Adding
-  one is a decision, not a convenience.
+- **Minimal dependencies.** Runtime: `smol-toml`, and `better-sqlite3` as an
+  optional dependency: it is the state store's native driver, so an install
+  where it cannot build still installs, and the verbs that never open the store
+  (`SQLITE_FREE_VERBS` in `src/sqlitehint.ts`, and the home) still run; their
+  routes are fenced by `tests/sqlite-free-routes.test.ts`. Dev: `typescript`,
+  `vitest`, `@types/*`, `eslint` + `@eslint/js` + `typescript-eslint`,
+  `prettier`. Adding one is a decision, not a convenience.
 - **Tests mock all I/O**: fake fetch and adapters, `StateStore(":memory:")`,
   temp directories. The suite must stay green **offline, with no secrets, on a
   fresh clone** — a stranger's first command is the suite. A handful of suites
