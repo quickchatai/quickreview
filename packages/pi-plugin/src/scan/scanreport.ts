@@ -41,10 +41,12 @@ export const SCAN_STOP_RESULT_FILE = "scan/stop-result.json";
 
 /** The skeptic's tier for a stored scan finding: `confirmed` (it traced a
  * concrete scenario), `likely` (a real mechanism, reachability not fully
- * traced), `doubtful` (refuted, class-matched, or anything it would have
- * killed — kept, never dropped). */
-export type Validity = "confirmed" | "likely" | "doubtful";
-export const VALIDITIES: readonly Validity[] = ["confirmed", "likely", "doubtful"];
+ * traced), `needs-review` (a security candidate the skeptic could not
+ * settle, under `[security] fold`: for a person to check, its doubt kept as
+ * the proof gap — scanrun.ts), `doubtful` (refuted, class-matched, or
+ * anything it would have killed — kept, never dropped). */
+export type Validity = "confirmed" | "likely" | "needs-review" | "doubtful";
+export const VALIDITIES: readonly Validity[] = ["confirmed", "likely", "needs-review", "doubtful"];
 /** A tier, or `unknown`: no skeptic judged it (the validator was off or
  * failed) or it was stored before tiers existed — never guessed. */
 export type ValidityView = Validity | "unknown";

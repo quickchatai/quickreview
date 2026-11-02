@@ -97,6 +97,9 @@ function validityLine(f: ScanFinding): string {
   const v = validityOf(f);
   if (v === "unknown") return "unknown — no skeptic judged it";
   if (v === "doubtful") return `doubtful${f.doubt?.class ? ` (${f.doubt.class})` : ""}`;
+  // A security finding the skeptic could not settle: the gap a person checks.
+  if (v === "needs-review")
+    return `needs-review — a security finding for a person to check${f.doubt ? `: ${oneLine(f.doubt.reason)}` : ""}`;
   return `${v}${f.scenario ? ` — ${oneLine(f.scenario)}` : ""}`;
 }
 

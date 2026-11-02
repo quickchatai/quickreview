@@ -72,15 +72,56 @@
 // hard stop at the approved estimate, the same ledger (keyed by the row's
 // lens), the same findings store (filed under the unit owning each file).
 //
+// THE SECURITY FAMILY (`[scan] lenses`, `kinds`, `threat_model` and
+// `[security] fold`):
+//   * `[scan] lenses` bounds what stage 1 may suggest and stage 2 may run
+//     (stage2.ts `stage2Lenses`); `[scan] kinds` drops, after parsing and
+//     counted, every candidate of another kind (scan.ts `kindAllowed`) — a
+//     security-only scan does not rest on prompt text alone.
+//   * With `[security] fold` on, the skeptic's verdict on a SECURITY
+//     candidate (scan.ts `isSecurityCandidate`) it could not settle — the
+//     word `unverifiable`, a `[same-principal]` or `[contrived-concurrency]`
+//     class whose reason cites no `path:line`, or no mention at all — is
+//     stored `needs-review`, its doubt kept as the proof gap, never
+//     `doubtful`. The engine maps it, so a skeptic that ignores the
+//     `scan-security-needs-review` addendum still cannot bury one.
+//   * THE THREAT MODEL. A run reads the repository's `.qcr/threat-model.md`
+//     from the tree at the scan sha, else the install profile's, else — when
+//     `[scan] threat_model` is not `off` — the DRAFT this scan's stage 0
+//     wrote. Its hash is part of every plan key, so editing the model
+//     re-plans; stage 1 quotes the entries naming each case's files, a
+//     security row of stage 2 its controls, and the deep floor reads its
+//     entry-point files first.
+//   * STAGE 0 (`proposeThreatModel` / `startThreatModel`) drafts that model
+//     when `[scan] threat_model` is `always`, or `auto` with neither the
+//     repository's nor the profile's: one case of the scan-only
+//     `pass-sec-threat-model` lens, given the route inventory
+//     (secfacts.ts), under the same key, lease and hard stop (`[scan]
+//     calibration_max_usd` — it has no estimate before its first run). Its
+//     draft goes to the state home only — `scan/threat-model.draft.md` and
+//     `scan/threat-model.json` — never to the scanned tree: a person copies
+//     it to `.qcr/threat-model.md` after reading it.
+//
 // Persistence: `<state home>/scan/run.json` (the current run and a short
 // history), `scan/suggestions.json` (stage 1's deep-lens suggestions, the
 // input to stage 2), `scan/stage2.json` (the latest stage-2 proposal),
 // beside the ledger and the findings store — and the TUI's stop request
 // and its answer (`scan/stop.json`, `scan/stop-result.json` —
 // scanreport.ts, which also owns the run record's name and parser).
+import { createHash } from "node:crypto";
 import { posix } from "node:path";
+import { globMatcherOrNothing } from "../glob.js";
 import { VALIDATE_PASS } from "../include.js";
 import type { LensTuningMap } from "../lenstuning.js";
+import { SECURITY_FAMILY } from "../passes.js";
+import { computeSecurityFacts, renderSecurityFacts } from "../secfacts.js";
+import {
+  parseThreatModel,
+  REPO_THREAT_MODEL_PATH,
+  resolveThreatModel,
+  threatModelEntryGlob,
+  type ThreatModel,
+} from "../threatmodel.js";
 import { higherTier, type PassTier } from "../types.js";
 import type { ScanConfig, ScanDepth } from "../reviewconfig.js";
 import type { CaseOutcome, CaseRunner, Refusal, StateFs } from "./scanports.js";
@@ -112,6 +153,8 @@ import {
   coverKey,
   evidenceQuotesAnchor,
   findingFingerprint,
+  isSecurityCandidate,
+  kindAllowed,
   normalizeCode,
   parseScanAnswer,
   parseValidatorAnswer,
@@ -119,7 +162,10 @@ import {
   planStage1,
   scanCasePrompt,
   scanValidatorPrompt,
+  scenarioIsAnchored,
   survivorSource,
+  threatModelSection,
+  TREE_PATHS_NOTE,
   drainLanes,
   SCAN_DEEP_MAX_SUGGESTIONS,
   SCAN_PASS,
@@ -134,12 +180,15 @@ import {
   type UnreadableReason,
 } from "./scan.js";
 import {
+  networkIamInventory,
   planStage2,
   priceStage2Row,
+  rowLensKey,
   stage2Cases,
   stage2CasePrompt,
   stage2Leads,
   stage2Key,
+  stage2Lenses,
   unitOwner,
   type Stage2Row,
   type Stage2RowRequest,
@@ -268,6 +317,13 @@ export interface ScanSettings {
   lenses?: LensTuningMap;
   /** `[models] risk_passes` — built at `sol-high` only. */
   riskPasses?: readonly string[];
+  /** `[security] fold` after the profile: a security candidate the skeptic
+   * could not settle is stored `needs-review`. Absent = off. */
+  fold?: boolean;
+  /** The install profile's `threat-model.md` (profiles.ts
+   * `loadProfileThreatModel`); absent or null = none. The repository's own,
+   * read from the tree at the scan sha, wins over it. */
+  profileThreatModel?: string | null;
 }
 
 export interface ScanPorts {
@@ -301,7 +357,15 @@ export const SCAN_TRANSCRIPTS_DIR = "scan/transcripts";
 /** Summaries of finished runs kept beside the current one. */
 export const RUN_HISTORY = 20;
 
-export type ScanMode = "calibration" | "stage1" | "delta" | "stage2";
+export type ScanMode = "calibration" | "stage1" | "delta" | "stage2" | "threat-model";
+
+/** Stage 0's lens (agents/scan/pass-sec-threat-model.md): scan-only, a leaf. */
+export const THREAT_MODEL_PASS = "pass-sec-threat-model";
+/** Under the state home: the threat-model stage's draft, and its record. */
+export const THREAT_MODEL_DRAFT_FILE = "scan/threat-model.draft.md";
+export const THREAT_MODEL_RECORD_FILE = "scan/threat-model.json";
+/** The one case a threat-model run reads. */
+export const THREAT_MODEL_CASE = "threat-model";
 export type ScanCaseStatus = "pending" | "running" | "done" | "failed" | "stopped" | "skipped";
 export type ScanRunState = "running" | "complete" | "partial" | "stopped" | "capped";
 
@@ -325,6 +389,12 @@ export interface ScanCaseState {
    * written before the tiers). */
   confirmed?: number;
   likely?: number;
+  /** Security findings stored `needs-review` (`[security] fold`); counted
+   * here, never in `doubted`. Absent: none. */
+  needs_review?: number;
+  /** Candidates of a kind `[scan] kinds` does not keep, dropped after
+   * parsing. Absent: none. */
+  off_kind?: number;
   /** Answer items that could not be read or anchored. */
   dropped: number;
   /** The lens's file-read calls, counted; absent when the runner could not
@@ -377,6 +447,9 @@ export interface ScanRun {
   matching?: ReconcileResult | null;
   /** Tickets of promoted findings this run's end closed as fixed. */
   tickets_closed?: number;
+  /** The threat model the run's cases read: where from and its hash.
+   * Absent: none. */
+  threat_model?: { source: ThreatModel["source"]; hash: string };
 }
 
 export interface ScanRunSummary {
@@ -448,6 +521,33 @@ export interface ScanPreview {
   reconcile_only?: string;
   /** Why a start would be refused whatever the key. */
   blockers: string[];
+  /** The threat model the cases would read (where from, its hash — part of
+   * the key). Absent: none. */
+  threat_model?: { source: ThreatModel["source"]; hash: string };
+}
+
+/** What `proposeThreatModel` answers: whether stage 0 would run and why, what
+ * it would read, its price and the key a start must quote. */
+export interface ThreatModelPreview {
+  key: string;
+  mode: "threat-model";
+  sha: string;
+  /** Why it runs (`[scan] threat_model` and what exists), or why not. */
+  why: string;
+  /** The repository's or the profile's model it would revise (`always`), or
+   * null — none exists. A draft never counts as one. */
+  existing: { source: ThreatModel["source"]; hash: string } | null;
+  /** What the last finished threat-model run cost here, or null: none has
+   * run, so there is no estimate. */
+  estimate_usd: number | null;
+  /** The hard stop: `[scan] calibration_max_usd`, or the estimate when
+   * the last run cost more. */
+  cap_usd: number;
+  tier: PassTier;
+  /** The route inventory the lens is handed (secfacts.ts), rendered. */
+  inventory: string;
+  /** Why a start would be refused whatever the key. */
+  blockers: string[];
 }
 
 export interface ScanStatus {
@@ -490,6 +590,31 @@ interface KeptFinding {
   doubt: FindingDoubt | null;
 }
 
+/** The doubt classes a security candidate keeps only with a citation. */
+const CITED_CLASSES: readonly string[] = ["same-principal", "contrived-concurrency"];
+
+/**
+ * The tier a skeptic's doubt on a candidate stores, under `[security] fold`:
+ * `needs-review` for a SECURITY candidate it could not settle — the word
+ * `unverifiable`, a same-principal or contrived-concurrency class whose
+ * reason cites no `path:line`, or no mention at all (`doubt` null) — else
+ * `doubtful`. With fold off, or for any other candidate, always `doubtful`.
+ * Pure.
+ */
+export function doubtTier(
+  cand: Pick<ScanCandidate, "kind">,
+  lens: string,
+  doubt: Pick<FindingDoubt, "word" | "reason" | "class"> | null,
+  fold: boolean,
+): "needs-review" | "doubtful" {
+  if (!fold || !isSecurityCandidate(cand.kind, lens)) return "doubtful";
+  if (doubt === null || doubt.word === "unverifiable") return "needs-review";
+  const cls = doubt.class ?? null;
+  if (cls !== null && CITED_CLASSES.includes(cls) && !scenarioIsAnchored(doubt.reason))
+    return "needs-review";
+  return "doubtful";
+}
+
 /** One case of a run, whatever the stage: what it reads, with which lens at
  * which tier and effort, what it is told, and where its findings are filed. */
 interface CaseJob {
@@ -504,9 +629,17 @@ interface CaseJob {
   unitOf: (path: string) => string;
   /** Stage 1 reads and stores deep-lens suggestions; stage 2 does not. */
   suggestions: boolean;
+  /** Stage 1: the deep lenses its SUGGEST block may name. Absent: every
+   * deep lens (`SCAN_DEEP_LENSES`). */
+  deepLenses?: readonly string[];
   /** Stage 2: why the row, and every unit it spans. */
   reason?: string;
   units?: string[];
+  /** Where the case's ledger rows are kept: the lens, or a chain row's
+   * `<lens>:<strategy>` (stage2.ts `rowLensKey`). Absent: `lens`. */
+  ledgerLens?: string;
+  /** Stage 0: the case writes the threat-model draft, never findings. */
+  threatModel?: true;
 }
 
 type Stage2Planned =
@@ -516,6 +649,7 @@ type Stage2Planned =
       tree: ScanTree;
       settings: ScanSettings;
       cut: UnitCut;
+      threatModel: ThreatModel | null;
     }
   | Refusal;
 
@@ -523,7 +657,19 @@ interface Planned {
   preview: ScanPreview;
   tree: ScanTree;
   settings: ScanSettings;
+  threatModel: ThreatModel | null;
 }
+
+/** A threat model as a run record and a preview name it. */
+const modelRef = (
+  tm: ThreatModel | null,
+): { threat_model?: { source: ThreatModel["source"]; hash: string } } =>
+  tm === null ? {} : { threat_model: { source: tm.source, hash: tm.hash } };
+
+/** The model's part of a plan key: absent when there is none, so a scan with
+ * no threat model keys exactly as before. */
+const modelKey = (tm: ThreatModel | null): { threat_model?: string } =>
+  tm === null ? {} : { threat_model: tm.hash };
 
 /** The run record, read totally: an unreadable file is the error beside an
  * empty record, never a throw (the portrait and the re-tune read it too). */
@@ -578,6 +724,100 @@ export function finishedRuns(state: StateFs): { runs: ScanRunSummary[]; error: s
   }
   out.sort((a, b) => (b.finished_at ?? b.started_at).localeCompare(a.finished_at ?? a.started_at));
   return { runs: out, error };
+}
+
+// ---- stage 0: the threat model's prompt and answer --------------------------------
+
+/** The header a threat-model answer starts with. */
+export const THREAT_MODEL_ANSWER = "THREAT MODEL";
+
+/** The `##` sections a draft is written in — threatmodel.ts reads them. */
+export const THREAT_MODEL_SECTIONS = [
+  "Entry points",
+  "Personas",
+  "Crown jewels",
+  "Controls",
+  "Sinks",
+  "Network controls",
+  "Data isolation",
+  "Token lifetimes",
+] as const;
+
+/** Stage 0's task string: the tree, the route inventory the lens starts from,
+ * the model it revises (`always` over an existing one) quoted as data, and
+ * the answer's shape. */
+export function threatModelCasePrompt(
+  ctx: PromptContext,
+  inventory: string,
+  existing: ThreatModel | null,
+): string {
+  const revise = threatModelSection(existing, [
+    "entryPoints",
+    "personas",
+    "crownJewels",
+    "controls",
+    "sinks",
+    "network",
+  ]);
+  return [
+    `SCAN CASE ${ctx.caseId} — stage 0, the threat model.`,
+    `Scan sha: ${ctx.sha}`,
+    `Tree root (the repository at the scan sha, read-only): ${ctx.root}`,
+    TREE_PATHS_NOTE,
+    "",
+    ...(inventory !== ""
+      ? [inventory, ""]
+      : ["No route inventory could be read: find the entry points yourself.", ""]),
+    ...(revise.length > 0
+      ? ["The current model, to revise — keep what the code still shows, correct what it does not:", ...revise, ""]
+      : []),
+    `Answer with a line \`${THREAT_MODEL_ANSWER} ${ctx.caseId} @${ctx.sha}\`, then the threat model as Markdown in these \`##\` sections, in this order: ${THREAT_MODEL_SECTIONS.join(", ")}. Every entry is one list item that starts with the backticked repo-relative path or glob it is about.`,
+  ].join("\n");
+}
+
+/**
+ * Read stage 0's answer: the Markdown after the `THREAT MODEL` line (a
+ * surrounding code fence taken off), or why it is none — no header, or no
+ * entry in any section threatmodel.ts reads. Pure.
+ */
+export function parseThreatModelAnswer(
+  output: string,
+): { ok: true; text: string } | { ok: false; reason: string } {
+  const lines = output.split(/\r?\n/);
+  const at = lines.findIndex((l) => l.trim().replace(/[`*]/g, "").startsWith(THREAT_MODEL_ANSWER));
+  if (at < 0) return { ok: false, reason: `the answer carried no \`${THREAT_MODEL_ANSWER}\` line` };
+  let body = lines.slice(at + 1);
+  while (body.length > 0 && body[0]!.trim() === "") body.shift();
+  while (body.length > 0 && body[body.length - 1]!.trim() === "") body.pop();
+  if (body.length >= 2 && /^\s*(```|~~~)/.test(body[0]!) && /^\s*(```|~~~)\s*$/.test(body[body.length - 1]!))
+    body = body.slice(1, -1);
+  const text = `${body.join("\n").trim()}\n`;
+  const tm = parseThreatModel(text, "draft");
+  const entries =
+    tm.entryPoints.length +
+    tm.personas.length +
+    tm.crownJewels.length +
+    tm.controls.length +
+    tm.sinks.length +
+    tm.network.length +
+    tm.dataIsolation.length +
+    tm.tokenLifetimes.length;
+  if (entries === 0)
+    return {
+      ok: false,
+      reason: `the answer named no entry under any threat-model section (${THREAT_MODEL_SECTIONS.join(", ")})`,
+    };
+  return { ok: true, text };
+}
+
+/** The draft file: a comment that says it is a DRAFT and how a person makes
+ * it the repository's, then the model's text. */
+function draftFileText(text: string, run: Pick<ScanRun, "id" | "sha">, at: string): string {
+  return (
+    `<!-- DRAFT threat model, written by the scan's threat-model stage (${run.id}, at ${run.sha.slice(0, 12)}, ${at}). ` +
+    `No person has reviewed it. Read it, correct it, and copy it to ${REPO_THREAT_MODEL_PATH} in the repository to make it the repository's. -->\n\n` +
+    text
+  );
 }
 
 export class ScanRunner {
@@ -809,6 +1049,7 @@ export class ScanRunner {
       validate_tier: cfg.validator ? cfg.tier : null,
       ...(depth === "deep" ? { depth } : {}),
     };
+    const threatModel = this.threatModelFor(tree, settings);
     const preview: ScanPreview = {
       key: planKey({
         mode,
@@ -821,6 +1062,8 @@ export class ScanRunner {
         ]),
         settings: runSettings,
         cap: Math.round(cap * 1e6),
+        // Editing the threat model the cases quote re-plans.
+        ...modelKey(threatModel),
       }),
       mode,
       sha,
@@ -843,8 +1086,38 @@ export class ScanRunner {
       delta: basis ? { since: basis.since, owed: plan.owed, ...owedShallow(basis) } : null,
       ...(reconcileOnly !== null ? { reconcile_only: reconcileOnly } : {}),
       blockers,
+      ...modelRef(threatModel),
     };
-    return { ok: true, planned: { preview, tree, settings } };
+    return { ok: true, planned: { preview, tree, settings, threatModel } };
+  }
+
+  // -- the threat model --
+
+  /** The repository's or the profile's threat model — the repository's
+   * `.qcr/threat-model.md` read from the tree at the scan sha winning — or
+   * null. Never the draft: that is a model no person has read. */
+  private ratifiedThreatModel(tree: ScanTree, settings: ScanSettings): ThreatModel | null {
+    return resolveThreatModel({
+      readRepo: () => tree.read(REPO_THREAT_MODEL_PATH),
+      readProfile: () => settings.profileThreatModel ?? null,
+    });
+  }
+
+  /** The threat model a run's cases read: the repository's, else the
+   * profile's, else — unless `[scan] threat_model = "off"` — the draft stage
+   * 0 left in the state home, labelled DRAFT wherever it is quoted. A draft
+   * that cannot be read is none (said in the log), never a guess. */
+  private threatModelFor(tree: ScanTree, settings: ScanSettings): ThreatModel | null {
+    const ratified = this.ratifiedThreatModel(tree, settings);
+    if (ratified !== null || settings.scan.threat_model === "off") return ratified;
+    let text: string | null;
+    try {
+      text = this.ports.state.read(THREAT_MODEL_DRAFT_FILE);
+    } catch (err) {
+      this.ports.log?.(`setup: ${THREAT_MODEL_DRAFT_FILE} cannot be read: ${clean(err)}`);
+      return null;
+    }
+    return text === null || text.trim() === "" ? null : parseThreatModel(text, "draft");
   }
 
   /** Why a run that reads nothing must still run, or null: an open finding
@@ -853,7 +1126,13 @@ export class ScanRunner {
    * its own reconcile (interrupted, or its reconcile failed). */
   private reconcileOwed(tree: ScanTree): string | null {
     const last = this.load().file.current;
-    if (last !== null && last.id !== this.active?.id && last.matching == null)
+    // A threat-model run reads no findings, so it owes no reconcile.
+    if (
+      last !== null &&
+      last.mode !== "threat-model" &&
+      last.id !== this.active?.id &&
+      last.matching == null
+    )
       return `the last run (${last.id}) ended before its findings were reconciled`;
     const { findings, error } = this.findings.load();
     if (error !== null) return null;
@@ -1007,7 +1286,7 @@ export class ScanRunner {
     const args = { key, sha };
     const p = await this.plan(args.sha, delta, true);
     if (!p.ok) return p;
-    const { preview, tree, settings } = p.planned;
+    const { preview, tree, settings, threatModel } = p.planned;
     if (args.key !== preview.key) {
       return {
         ok: false,
@@ -1027,15 +1306,19 @@ export class ScanRunner {
       };
 
     const cfg = settings.scan;
+    // Stage 1 points stage 2 only at lenses stage 2 may run here: on in the
+    // profile and inside `[scan] lenses`.
+    const deepLenses = stage2Lenses(settings.lenses, cfg.lenses);
     const jobs: CaseJob[] = preview.cases.map((c) => ({
       plan: c,
       lens: SCAN_PASS,
       tier: cfg.tier,
       effort: cfg.effort,
-      prompt: (ctx) => scanCasePrompt(c, ctx),
+      prompt: (ctx) => scanCasePrompt(c, ctx, deepLenses, threatModel),
       label: `stage 1, unit ${c.unit}`,
       unitOf: () => c.unit,
       suggestions: true,
+      deepLenses,
     }));
     const lost = this.leaseLost();
     if (lost !== null) return lost;
@@ -1054,6 +1337,7 @@ export class ScanRunner {
           validate_tier: preview.settings.validate_tier,
           ...(preview.settings.depth ? { depth: preview.settings.depth } : {}),
         },
+        ...modelRef(threatModel),
       },
       jobs,
       tree,
@@ -1065,7 +1349,10 @@ export class ScanRunner {
   /** Record a new run as current and drive its cases in the background. */
   private launch(
     file: RunFile,
-    head: Pick<ScanRun, "mode" | "sha" | "plan_key" | "cap_usd" | "estimate_usd" | "settings">,
+    head: Pick<
+      ScanRun,
+      "mode" | "sha" | "plan_key" | "cap_usd" | "estimate_usd" | "settings" | "threat_model"
+    >,
     jobs: CaseJob[],
     tree: ScanTree,
     settings: ScanSettings,
@@ -1104,8 +1391,15 @@ export class ScanRunner {
         started_at: null,
         finished_at: null,
         ...(head.mode === "stage2"
-          ? { lens: job.lens, tier: job.tier, reason: job.reason, units: job.units }
-          : {}),
+          ? {
+              lens: job.ledgerLens ?? job.lens,
+              tier: job.tier,
+              reason: job.reason,
+              units: job.units,
+            }
+          : head.mode === "threat-model"
+            ? { lens: job.lens, tier: job.tier }
+            : {}),
       })),
       problems: [],
       matching: null,
@@ -1272,6 +1566,28 @@ export class ScanRunner {
       deep === undefined ? pre.settings.scan.depth : deep ? "deep" : "standard";
     const settings: ScanSettings = { ...pre.settings, scan: { ...pre.settings.scan, depth } };
     const cfg = settings.scan;
+    const threatModel = this.threatModelFor(tree, settings);
+    // A security floor reads the tree for network and IAM resources (and the
+    // threat model's network controls) before infra and the chain join it.
+    const securityFloor =
+      depth === "deep" && cfg.deep_lenses.some((l) => SECURITY_FAMILY.includes(l));
+    const networkIam = securityFloor
+      ? [
+          ...networkIamInventory(
+            tree.files.map((f) => f.path),
+            (q) => tree.read(q),
+          ).found,
+          ...(threatModel !== null && threatModel.network.length > 0
+            ? [`the threat model's network controls (${threatModel.network.length})`]
+            : []),
+        ]
+      : [];
+    const entryGlobs =
+      threatModel === null
+        ? []
+        : threatModel.entryPoints
+            .map(threatModelEntryGlob)
+            .filter((g): g is string => g !== null);
     const plan = planStage2({
       rows: request,
       cut: pre.cut,
@@ -1289,6 +1605,9 @@ export class ScanRunner {
       price: (lens, tier, effort) => priceStage2Row(entries, cfg, lens, tier, effort, depth),
       budgetUsd,
       ...(depth === "deep" ? { floor: cfg.deep_lenses } : {}),
+      allow: cfg.lenses,
+      networkIam,
+      ...(entryGlobs.length > 0 ? { entryPoint: globMatcherOrNothing(entryGlobs) } : {}),
     });
     if (!plan.ok) return { ok: false, errors: plan.errors };
     const runnable = plan.rows.filter((r) => r.status === "run");
@@ -1296,7 +1615,7 @@ export class ScanRunner {
       sha,
       rows: runnable.map((r) => [
         r.id,
-        r.lens,
+        rowLensKey(r.lens, r.strategy),
         r.tier,
         r.effort,
         [...r.files, ...r.tests].map((f) => `${f.path}@${f.blob}`),
@@ -1305,6 +1624,8 @@ export class ScanRunner {
       validator: cfg.validator,
       cap: Math.round(plan.total_usd * 1e6),
       ...(depth === "deep" ? { depth } : {}),
+      // Editing the threat model the security rows quote re-plans.
+      ...modelKey(threatModel),
     });
     const proposal: StoredStage2Proposal = {
       key,
@@ -1320,7 +1641,7 @@ export class ScanRunner {
       depth,
       floor: plan.floor,
     };
-    return { ok: true, proposal, tree, settings, cut: pre.cut };
+    return { ok: true, proposal, tree, settings, cut: pre.cut, threatModel };
   }
 
   /**
@@ -1357,6 +1678,9 @@ export class ScanRunner {
             : [],
         ...(typeof o.tier === "string" && o.tier.trim() !== "" ? { tier: o.tier.trim() } : {}),
         reason: typeof o.reason === "string" ? o.reason : "",
+        ...(typeof o.strategy === "string" && o.strategy.trim() !== ""
+          ? { strategy: o.strategy.trim() }
+          : {}),
       });
     }
     let budget: number | null = null;
@@ -1505,12 +1829,14 @@ export class ScanRunner {
         lens: row.lens,
         tier: row.tier,
         effort: row.effort,
-        prompt: (ctx: PromptContext) => stage2CasePrompt(row, ctx, c.files, leadsOf(row)),
-        label: `stage 2, ${c.id} (${row.lens})`,
+        prompt: (ctx: PromptContext) =>
+          stage2CasePrompt(row, ctx, c.files, leadsOf(row), p.threatModel),
+        label: `stage 2, ${c.id} (${rowLensKey(row.lens, row.strategy)})`,
         unitOf,
         suggestions: false,
         reason: row.reason,
         units: row.units,
+        ...(row.strategy ? { ledgerLens: rowLensKey(row.lens, row.strategy) } : {}),
       })),
     );
     const cfg = p.settings.scan;
@@ -1532,6 +1858,7 @@ export class ScanRunner {
           validate_tier: cfg.validator ? top : null,
           ...(cfg.depth === "deep" ? { depth: cfg.depth } : {}),
         },
+        ...modelRef(p.threatModel),
       },
       jobs,
       p.tree,
@@ -1642,6 +1969,252 @@ export class ScanRunner {
     } finally {
       this.consuming = false;
     }
+  }
+
+  // -- stage 0: the threat model --
+
+  /** Plan stage 0 at `ref`: whether it runs and why, what it reads, its
+   * price and the key a start must quote. */
+  private planThreatModel(
+    ref: string | undefined,
+    claim = false,
+  ):
+    | {
+        ok: true;
+        preview: ThreatModelPreview;
+        tree: ScanTree;
+        settings: ScanSettings;
+        existing: ThreatModel | null;
+      }
+    | Refusal {
+    const pre = this.prerequisites(ref, claim);
+    if (!pre.ok) return pre;
+    const { sha, tree, settings } = pre;
+    const cfg = settings.scan;
+    const existing = this.ratifiedThreatModel(tree, settings);
+    const blockers: string[] = [];
+    let why: string;
+    if (cfg.threat_model === "off") {
+      why = "[scan] threat_model is off: the scan never drafts a threat model";
+      blockers.push(why);
+    } else if (cfg.threat_model === "auto" && existing !== null) {
+      why = `[scan] threat_model is auto and ${existing.source === "repo" ? `the repository's ${REPO_THREAT_MODEL_PATH}` : "the install profile's threat-model.md"} exists — the scan reads it; set threat_model = "always" to draft a revision`;
+      blockers.push(why);
+    } else {
+      why =
+        cfg.threat_model === "always"
+          ? `[scan] threat_model is always: a draft is written every time it is asked for${existing !== null ? ", revising the existing model" : ""}`
+          : `[scan] threat_model is auto and neither the repository's ${REPO_THREAT_MODEL_PATH} nor the install profile's threat-model.md exists`;
+    }
+    // The routes a person would start a threat model from: read from the
+    // tree by line parsers (secfacts.ts), never by a model.
+    const io = {
+      readHead: (q: string) => tree.read(q),
+      readBase: () => null,
+      listHead: () => tree.files.map((f) => f.path),
+    };
+    const inventory = renderSecurityFacts(
+      computeSecurityFacts([], io).filter((f) => f.check === "route-inventory"),
+    );
+    // Priced from the last threat-model run that finished here; none means
+    // no estimate, and the cap holds it as it holds a calibration run.
+    const { file } = this.load();
+    const runs = [
+      ...(file.current ? [this.summary(file.current, file.current.state)] : []),
+      ...file.history,
+    ];
+    const last = runs.find((r) => r.mode === "threat-model" && r.state === "complete");
+    const estimate = last?.spent_usd ?? null;
+    // Never stopped below what the last one cost.
+    const cap = Math.max(cfg.calibration_max_usd, estimate ?? 0);
+    const preview: ThreatModelPreview = {
+      key: planKey({
+        stage: 0,
+        sha,
+        tier: cfg.tier,
+        cap: Math.round(cap * 1e6),
+        existing: existing?.hash ?? null,
+        inventory: createHash("sha256").update(inventory).digest("hex"),
+      }),
+      mode: "threat-model",
+      sha,
+      why,
+      existing: existing === null ? null : { source: existing.source, hash: existing.hash },
+      estimate_usd: estimate,
+      cap_usd: cap,
+      tier: cfg.tier,
+      inventory,
+      blockers,
+    };
+    return { ok: true, preview, tree, settings, existing };
+  }
+
+  /**
+   * What drafting a threat model (stage 0) would read and cost at `sha`, and
+   * the key a start must quote — or, in `blockers`, why it would not run:
+   * `[scan] threat_model = "off"`, or `auto` with the repository's or the
+   * profile's model already there. Runs nothing, stores nothing.
+   */
+  async proposeThreatModel(
+    args: { sha?: string } = {},
+  ): Promise<{ ok: true; preview: ThreatModelPreview } | Refusal> {
+    const p = this.planThreatModel(args.sha);
+    return p.ok ? { ok: true, preview: p.preview } : p;
+  }
+
+  /**
+   * Start the proposed threat-model run in the background: one case of
+   * `pass-sec-threat-model`, stopped hard at `[scan] calibration_max_usd`.
+   * Re-planned first; a key that no longer matches is refused. Its draft
+   * lands in the state home only (`THREAT_MODEL_DRAFT_FILE`,
+   * `THREAT_MODEL_RECORD_FILE`).
+   */
+  async startThreatModel(args: {
+    key?: unknown;
+    sha?: string;
+  }): Promise<{ ok: true; run: ScanRun } | Refusal> {
+    const busy = this.refuseBusy();
+    if (busy !== null) return busy;
+    if (typeof args.key !== "string" || args.key === "") {
+      return {
+        ok: false,
+        errors: [
+          "no proposal key — propose the threat model, show the operator the cost, then start with its key",
+        ],
+      };
+    }
+    const key = args.key;
+    return this.holdingStart(async () => {
+      const p = this.planThreatModel(args.sha, true);
+      if (!p.ok) return p;
+      const { preview, tree, settings, existing } = p;
+      if (preview.key !== key) {
+        return {
+          ok: false,
+          errors: [
+            `the plan changed since that proposal (key ${key}, now ${preview.key}) — propose again and show the operator the new cost`,
+          ],
+        };
+      }
+      if (preview.blockers.length > 0) return { ok: false, errors: preview.blockers };
+      const { file, error } = this.load();
+      if (error !== null) return { ok: false, errors: [error] };
+      const built = this.ports.buildAgents(settings);
+      if (!built.ok)
+        return {
+          ok: false,
+          errors: built.errors.map((e) => `the scan agents could not be built: ${e}`),
+        };
+      const job: CaseJob = {
+        plan: {
+          unit: "(repository)",
+          id: THREAT_MODEL_CASE,
+          part: 1,
+          parts: 1,
+          files: [],
+          lines: 0,
+          estimate_usd: preview.estimate_usd,
+        },
+        lens: THREAT_MODEL_PASS,
+        tier: preview.tier,
+        effort: "tier",
+        prompt: (ctx) => threatModelCasePrompt(ctx, preview.inventory, existing),
+        label: "stage 0, the threat model",
+        unitOf: () => "(repository)",
+        suggestions: false,
+        threatModel: true,
+      };
+      const lost = this.leaseLost();
+      if (lost !== null) return lost;
+      const run = this.launch(
+        file,
+        {
+          mode: "threat-model",
+          sha: preview.sha,
+          plan_key: preview.key,
+          cap_usd: preview.cap_usd,
+          estimate_usd: preview.estimate_usd,
+          settings: {
+            tier: preview.tier,
+            effort: "tier",
+            validator: false,
+            validate_tier: null,
+          },
+        },
+        [job],
+        tree,
+        settings,
+      );
+      return { ok: true as const, run };
+    });
+  }
+
+  /** Stage 0's one case: the lens drafts the threat model; a draft that
+   * parses into at least one entry is written to the state home — never to
+   * the scanned tree. Resolves with what it cost, like `runCase`. */
+  private async runThreatModelCase(
+    file: RunFile,
+    run: ScanRun,
+    job: CaseJob,
+    tree: ScanTree,
+    signal: AbortSignal,
+    onCost: (spentSoFar: number) => void,
+  ): Promise<number> {
+    const plan = job.plan;
+    const c = run.cases.find((x) => x.id === plan.id)!;
+    if (signal.aborted) {
+      c.status = "stopped";
+      return 0;
+    }
+    c.status = "running";
+    c.started_at = this.ports.clock().toISOString();
+    this.store(file);
+    const ctx = { root: tree.root, sha: run.sha, caseId: `${run.id}/${plan.id}` };
+    let seen = 0;
+    const outcome = await this.runOne(
+      {
+        id: ctx.caseId,
+        unit: plan.unit,
+        agent: `${job.lens}--${job.tier}`,
+        files: [],
+        prompt: job.prompt(ctx),
+      },
+      signal,
+      (v) => {
+        seen = Math.max(seen, v);
+        onCost(seen);
+      },
+    );
+    const cost = outcome.cost_usd === undefined ? null : outcome.cost_usd;
+    if (outcome.transcript !== undefined) c.transcript = outcome.transcript;
+    if (outcome.ok && outcome.reads !== undefined) c.reads = outcome.reads.length;
+    const finish = (status: ScanCaseStatus, err: string | null): number => {
+      c.status = status;
+      c.error = err;
+      c.cost_usd = cost;
+      c.finished_at = this.ports.clock().toISOString();
+      if (cost === null) run.unpriced_cases++;
+      return cost ?? Math.max(seen, plan.estimate_usd ?? 0);
+    };
+    if (!outcome.ok) return finish(signal.aborted ? "stopped" : "failed", outcome.reason);
+    const draft = parseThreatModelAnswer(outcome.output);
+    if (!draft.ok) return finish("failed", draft.reason);
+    if (!this.fenced.has(run.id)) this.renewTick();
+    if (this.fenced.has(run.id)) return finish("stopped", "the scan driver lease was lost");
+    const at = this.ports.clock().toISOString();
+    const text = draftFileText(draft.text, run, at);
+    try {
+      this.ports.state.write(THREAT_MODEL_DRAFT_FILE, text);
+      const tm = parseThreatModel(text, "draft");
+      this.ports.state.write(
+        THREAT_MODEL_RECORD_FILE,
+        `${JSON.stringify({ version: 1, sha: run.sha, source: tm.source, hash: tm.hash, run: run.id, at }, null, 1)}\n`,
+      );
+      run.threat_model = { source: tm.source, hash: tm.hash };
+    } catch (err) {
+      return finish("failed", `the draft could not be stored: ${clean(err)}`);
+    }
+    return finish("done", null);
   }
 
   /**
@@ -1756,9 +2329,10 @@ export class ScanRunner {
         next++;
         reserved += est;
         live.set(plan.id, 0);
-        const spent = await this.runCase(file, run, job, tree, settings, signal, (v) =>
-          onCost(plan.id, v),
-        );
+        const report = (v: number): void => onCost(plan.id, v);
+        const spent = job.threatModel
+          ? await this.runThreatModelCase(file, run, job, tree, signal, report)
+          : await this.runCase(file, run, job, tree, settings, signal, report);
         live.delete(plan.id);
         reserved -= est;
         run.spent_usd += spent;
@@ -1803,8 +2377,8 @@ export class ScanRunner {
     for (const c of run.cases)
       if (c.status === "pending") c.status = capHit ? "skipped" : "stopped";
     // A run that lost its lease settles nothing: the findings are the new
-    // holder's to reconcile.
-    if (!this.fenced.has(run.id)) {
+    // holder's to reconcile. A threat-model run read no findings to settle.
+    if (!this.fenced.has(run.id) && run.mode !== "threat-model") {
       this.reconcile(run, tree);
       await this.closeFixedTickets(run);
     }
@@ -1919,6 +2493,7 @@ export class ScanRunner {
     const deep = settings.scan.depth === "deep";
     const answer = parseScanAnswer(outcome.output, {
       root: tree.root,
+      ...(job.deepLenses !== undefined ? { deepLenses: job.deepLenses } : {}),
       ...(deep && job.suggestions ? { maxSuggestions: SCAN_DEEP_MAX_SUGGESTIONS } : {}),
     });
     // Only findings or an explicit NONE is a reading. Prose with neither (a
@@ -1929,6 +2504,25 @@ export class ScanRunner {
       return finish("failed", "the lens answered with no finding and no NONE line");
     }
     let dropped = answer.dropped + answer.suggestions_dropped;
+    // `[scan] kinds`: a candidate of another kind is dropped here, after the
+    // answer counted as a reading, and counted apart — a scan for security
+    // keeps security findings whatever the lens wrote.
+    const kinds = settings.scan.kinds;
+    let offKind = 0;
+    const keepKind = (cand: ScanCandidate): boolean => {
+      if (kindAllowed(cand.kind, kinds)) return true;
+      offKind++;
+      return false;
+    };
+    const candidates = answer.candidates.filter(keepKind);
+    const noteOffKind = (): void => {
+      if (offKind === 0) return;
+      c.off_kind = offKind;
+      this.ports.log?.(
+        `setup: case ${plan.id}: ${offKind} candidate(s) of a kind outside [scan] kinds (${kinds.join(", ")}) dropped`,
+      );
+    };
+    const fold = settings.fold === true;
     // A candidate — a lens's or a skeptic's survivor — stands on the code at
     // its anchor: null when it falls outside the case's range or its lines
     // are not in the tree (dropped).
@@ -1943,14 +2537,15 @@ export class ScanRunner {
       return { code: normalizeCode(lines), quoted: evidenceQuotesAnchor(cand.evidence, lines) };
     };
     const anchored: Array<{ cand: ScanCandidate; code: string; quoted: boolean }> = [];
-    for (const cand of answer.candidates) {
+    for (const cand of candidates) {
       const at = anchor(cand);
       if (at === null) dropped++;
       else anchored.push({ cand, ...at });
     }
 
-    if (answer.candidates.length > 0 && anchored.length === 0) {
+    if (candidates.length > 0 && anchored.length === 0) {
       c.dropped = dropped;
+      noteOffKind();
       return finish("failed", "none of the reported findings could be anchored to this case");
     }
 
@@ -2018,6 +2613,9 @@ export class ScanRunner {
         const upheld = new Set<ScanCandidate>();
         const cands = anchored.map((a) => a.cand);
         for (const s of read.survivors) {
+          // A survivor the skeptic re-kinded out of `[scan] kinds` is not kept;
+          // the candidate it stood for is then unmentioned, never lost.
+          if (!keepKind(s)) continue;
           const at = anchor(s);
           if (at === null) {
             dropped++;
@@ -2048,19 +2646,23 @@ export class ScanRunner {
           const hit = anchored.find((a) => names(a) && !upheld.has(a.cand)) ?? anchored.find(names);
           if (!hit) continue;
           doubted.add(hit.cand);
+          const doubt = { word: d.word, reason: d.reason, class: d.class };
           judged.push({
             ...hit,
-            validity: "doubtful",
+            // `[security] fold`: a security candidate it could not settle is
+            // for a person, not doubtful (doubtTier); the doubt stays.
+            validity: doubtTier(hit.cand, job.lens, doubt, fold),
             scenario: null,
-            doubt: { word: d.word, reason: d.reason, class: d.class },
+            doubt,
           });
         }
-        // Never mentioned — neither upheld nor doubted: kept, doubtful.
+        // Never mentioned — neither upheld nor doubted: kept, doubtful (a
+        // security candidate under fold: needs-review).
         for (const a of anchored) {
           if (upheld.has(a.cand) || doubted.has(a.cand)) continue;
           judged.push({
             ...a,
-            validity: "doubtful",
+            validity: doubtTier(a.cand, job.lens, null, fold),
             scenario: null,
             doubt: { word: "not-upheld", reason: UNMENTIONED_REASON, class: null },
           });
@@ -2127,9 +2729,14 @@ export class ScanRunner {
       return finish("failed", `its findings could not be stored: ${clean(err)}`);
     }
     c.findings = reported.length;
-    c.doubted = reported.filter((r) => r.doubt !== null).length;
+    // A needs-review finding keeps its doubt as the proof gap, but it is
+    // counted as what it is, never as doubtful.
+    c.doubted = reported.filter((r) => r.doubt !== null && r.validity !== "needs-review").length;
     c.confirmed = reported.filter((r) => r.validity === "confirmed").length;
     c.likely = reported.filter((r) => r.validity === "likely").length;
+    const needsReview = reported.filter((r) => r.validity === "needs-review").length;
+    if (needsReview > 0) c.needs_review = needsReview;
+    noteOffKind();
 
     if (job.suggestions) {
       const suggestions = answer.suggestions
@@ -2154,7 +2761,7 @@ export class ScanRunner {
       .map((f) => ({
         path: f.path,
         blob: f.blob,
-        lens: job.lens,
+        lens: job.ledgerLens ?? job.lens,
         ...(f.range ? { range: f.range } : {}),
         tier: job.tier,
         effort: job.effort,

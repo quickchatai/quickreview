@@ -48,7 +48,9 @@
 //   * EVERY JUDGED FINDING HAS A VALIDITY TIER (the scan validator is the
 //     skeptic). `confirmed` — the skeptic traced a concrete
 //     scenario (kept in `scenario`); `likely` — a real mechanism whose
-//     reachability it could not trace all the way; `doubtful` — refuted,
+//     reachability it could not trace all the way; `needs-review` — a
+//     security candidate it could not settle, under `[security] fold`, kept
+//     for a person with its doubt as the proof gap; `doubtful` — refuted,
 //     class-matched, or anything it would have killed, carried in `doubt`
 //     (word, reason, and the false-positive class when one matched). A
 //     finding no skeptic judged — the validator off or failed, or stored
@@ -369,10 +371,11 @@ function combinedValidity(a: Judgement, b: Judgement): Pick<ScanFinding, "validi
 }
 
 /** The doubt and tier of two sightings, told as ONE story: when either was
- * tiered, the tier decides and the doubt follows it (a doubtful tier keeps
- * its doubt, a confirmed/likely one clears it) — so a finding never reads
- * doubtful with no reason, nor confirmed while flagged "may not be valid".
- * With no tier on either side, the pre-tier doubt rule stands. */
+ * tiered, the tier decides and the doubt follows it (a doubtful or
+ * needs-review tier keeps its doubt — a needs-review one's is the proof gap a
+ * person checks — and a confirmed/likely one clears it) — so a finding never
+ * reads doubtful with no reason, nor confirmed while flagged "may not be
+ * valid". With no tier on either side, the pre-tier doubt rule stands. */
 function combinedJudgement(
   a: Judgement,
   b: Judgement,
@@ -380,9 +383,10 @@ function combinedJudgement(
   const tiered = combinedValidity(a, b);
   if (tiered.validity === null || tiered.validity === undefined)
     return { doubt: combinedDoubt(a, b), ...tiered };
-  if (tiered.validity !== "doubtful") return { doubt: null, ...tiered };
-  // Neither side ranks above doubtful here, so at least one IS doubtful.
-  const src = validityOf(b) === "doubtful" ? b : a;
+  if (tiered.validity === "confirmed" || tiered.validity === "likely")
+    return { doubt: null, ...tiered };
+  // The side that carries the chosen tier carries its doubt.
+  const src = validityOf(b) === tiered.validity ? b : a;
   return { doubt: src.doubt ?? a.doubt ?? b.doubt, ...tiered };
 }
 

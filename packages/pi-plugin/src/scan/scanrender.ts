@@ -23,18 +23,21 @@ import {
 } from "./scanreport.js";
 import { type FindingsStore, dismissedLookalike, lookalikeRank } from "./findings.js";
 import { SEVERITIES, type ScanSeverity } from "./scan.js";
-import { lensTiers, stage2Lenses, MAX_STAGE2_ROWS } from "./stage2.js";
+import { lensTiers, rowLensKey, stage2Lenses, MAX_STAGE2_ROWS } from "./stage2.js";
 import { priceIsMeasured, priceLabel, type StoredStage2Proposal } from "./stage2request.js";
 import { escapeControls } from "./textsniff.js";
 import {
   SCAN_TRANSCRIPTS_DIR,
+  THREAT_MODEL_DRAFT_FILE,
   type ScanRunner,
   type ScanPreview,
   type ScanRun,
   type ScanSettings,
   type ScanStatus,
   type StoredSuggestion,
+  type ThreatModelPreview,
 } from "./scanrun.js";
+import { REPO_THREAT_MODEL_PATH } from "../threatmodel.js";
 
 /** What closing the tickets of the findings a match fixed did: the tickets
  * closed, and the closes the tracker refused. A host with no tracker has no
@@ -61,6 +64,9 @@ export interface ScanVerbs {
   /** The progress and stop verbs a start names. */
   status: string;
   stop: string;
+  /** How to start the proposed threat-model stage `key`. Absent: the
+   * surface has no such verb, and the rendering says so plainly. */
+  threatModelStart?(key: string): string;
 }
 
 export const TOOL_VERBS: ScanVerbs = {
@@ -178,6 +184,7 @@ export function renderPreview(p: ScanPreview, verbs: ScanVerbs = TOOL_VERBS): st
       `Nothing to read, but ${p.reconcile_only}: the run reads no case and only reconciles the findings (no cost).`,
     );
   }
+  if (p.threat_model) out.push(threatModelLine(p.threat_model));
   for (const b of p.blockers) out.push(`✗ ${b}`);
   if (p.blockers.length === 0) {
     out.push(`To run it: ${verbs.start(p)} — only after the operator agreed to the cost.`);
@@ -185,17 +192,62 @@ export function renderPreview(p: ScanPreview, verbs: ScanVerbs = TOOL_VERBS): st
   return out.join("\n\n");
 }
 
-/** A run's findings by validity tier — `(2 confirmed, 1 likely, 3 doubtful)`
- * — from the per-case counts; `unknown` for what no skeptic judged (the
- * validator off or failed, or a case recorded before the tiers). */
+/** Where the threat model a run reads comes from, as one line. */
+function threatModelLine(tm: NonNullable<ScanPreview["threat_model"]>): string {
+  const from =
+    tm.source === "repo"
+      ? `the repository's ${REPO_THREAT_MODEL_PATH} at this sha`
+      : tm.source === "profile"
+        ? "the install profile's threat-model.md"
+        : `the DRAFT in ${THREAT_MODEL_DRAFT_FILE} (no person has reviewed it; copy it to ${REPO_THREAT_MODEL_PATH} once read)`;
+  return `Threat model: ${from}, sha256 ${tm.hash.slice(0, 12)} — its entries ride the cases as claims to check, and editing it re-plans.`;
+}
+
+/** A run's findings by validity tier — `(2 confirmed, 1 likely, 3 doubtful)`,
+ * `needs-review` beside them when a security fold stored any — from the
+ * per-case counts; `unknown` for what no skeptic judged (the validator off
+ * or failed, or a case recorded before the tiers). */
 function tierCounts(r: NonNullable<ScanStatus["run"]>, findings: number, doubted: number): string {
   if (!r.settings.validator)
     return doubted ? ` (${doubted} may not be valid)` : " (skeptic off — validity unknown)";
   const confirmed = r.cases.reduce((n, c) => n + (c.confirmed ?? 0), 0);
   const likely = r.cases.reduce((n, c) => n + (c.likely ?? 0), 0);
-  const unknown = findings - confirmed - likely - doubted;
+  const review = r.cases.reduce((n, c) => n + (c.needs_review ?? 0), 0);
+  const unknown = findings - confirmed - likely - review - doubted;
   if (findings === 0) return "";
-  return ` (${confirmed} confirmed, ${likely} likely, ${doubted} doubtful${unknown > 0 ? `, ${unknown} unknown` : ""})`;
+  return ` (${confirmed} confirmed, ${likely} likely, ${review > 0 ? `${review} needs-review, ` : ""}${doubted} doubtful${unknown > 0 ? `, ${unknown} unknown` : ""})`;
+}
+
+/** The threat-model stage's proposal: why it runs (or not), what it reads,
+ * its price and how to start it. */
+export function renderThreatModelPreview(
+  p: ThreatModelPreview,
+  verbs: ScanVerbs = TOOL_VERBS,
+): string {
+  const out: string[] = [];
+  out.push(
+    `THREAT MODEL (stage 0) at ${p.sha.slice(0, 12)} — ${p.tier}, one case: ${p.why}.`,
+    p.estimate_usd === null
+      ? `No threat-model run has finished here, so there is no estimate: it stops hard at ${usd(p.cap_usd)}.`
+      : `The last one cost ${usd(p.estimate_usd)}; this one stops hard at ${usd(p.cap_usd)}.`,
+    `It writes a DRAFT to ${THREAT_MODEL_DRAFT_FILE} in the state home — never to the repository. Later scans read it, labelled DRAFT, ` +
+      `until a person copies it to ${REPO_THREAT_MODEL_PATH} (or the profile's threat-model.md).`,
+  );
+  if (p.existing)
+    out.push(
+      `It revises the ${p.existing.source === "repo" ? `repository's ${REPO_THREAT_MODEL_PATH}` : "install profile's threat-model.md"} (sha256 ${p.existing.hash.slice(0, 12)}).`,
+    );
+  out.push(
+    p.inventory !== ""
+      ? `What it starts from — the route inventory, read by line parsers:\n${p.inventory}`
+      : "No route inventory could be read: the lens finds the entry points itself.",
+  );
+  for (const b of p.blockers) out.push(`✗ ${b}`);
+  if (p.blockers.length === 0)
+    out.push(
+      `To run it: ${verbs.threatModelStart ? verbs.threatModelStart(p.key) : `start the threat-model stage with key ${p.key}`} — only after the operator agreed to the cost.`,
+    );
+  return out.join("\n\n");
 }
 
 export function renderStatus(s: ScanStatus, verbs: ScanVerbs = TOOL_VERBS): string {
@@ -208,16 +260,36 @@ export function renderStatus(s: ScanStatus, verbs: ScanVerbs = TOOL_VERBS): stri
     const done = r.cases.filter((c) => c.status === "done").length;
     const findings = r.cases.reduce((n, c) => n + c.findings, 0);
     const doubted = r.cases.reduce((n, c) => n + c.doubted, 0);
-    out.push(
-      `${r.id} (${r.mode === "stage2" ? "stage 2" : r.mode}${r.settings.depth === "deep" ? ", deep" : ""}) at ${r.sha.slice(0, 12)}: ${r.display.toUpperCase()} — ${done}/${r.cases.length} cases, ` +
-        `${findings} finding(s)${tierCounts(r, findings, doubted)}, spent ${usd(r.spent_usd)} of ${usd(r.cap_usd)}` +
-        (r.unpriced_cases
-          ? ` (${r.unpriced_cases} unpriced case(s) counted at their estimate)`
-          : ""),
-    );
+    const unpriced = r.unpriced_cases
+      ? ` (${r.unpriced_cases} unpriced case(s) counted at their estimate)`
+      : "";
+    if (r.mode === "threat-model") {
+      // Stage 0 reads no findings: what it leaves is the draft.
+      out.push(
+        `${r.id} (threat model) at ${r.sha.slice(0, 12)}: ${r.display.toUpperCase()} — ` +
+          (r.threat_model
+            ? `DRAFT written to ${THREAT_MODEL_DRAFT_FILE} (sha256 ${r.threat_model.hash.slice(0, 12)}) — read it, then copy it to ${REPO_THREAT_MODEL_PATH}`
+            : "no draft written") +
+          `, spent ${usd(r.spent_usd)} of ${usd(r.cap_usd)}${unpriced}`,
+      );
+    } else
+      out.push(
+        `${r.id} (${r.mode === "stage2" ? "stage 2" : r.mode}${r.settings.depth === "deep" ? ", deep" : ""}) at ${r.sha.slice(0, 12)}: ${r.display.toUpperCase()} — ${done}/${r.cases.length} cases, ` +
+          `${findings} finding(s)${tierCounts(r, findings, doubted)}, spent ${usd(r.spent_usd)} of ${usd(r.cap_usd)}` +
+          unpriced,
+      );
+    if (r.mode !== "threat-model" && r.threat_model) out.push(threatModelLine(r.threat_model));
+    const offKind = r.cases.reduce((n, c) => n + (c.off_kind ?? 0), 0);
+    if (offKind > 0)
+      out.push(`Dropped as outside [scan] kinds: ${offKind} candidate(s) — not stored.`);
     // Stage 2 is re-entered by a new proposal (the rows already read are
     // covered, free); stage 1 by a new preview.
-    const again = r.mode === "stage2" ? "Propose stage 2 again" : "Preview";
+    const again =
+      r.mode === "stage2"
+        ? "Propose stage 2 again"
+        : r.mode === "threat-model"
+          ? "Propose the threat model again"
+          : "Preview";
     if (r.display === "interrupted")
       out.push(
         `It was interrupted (the process driving it went away — the companion restarted, or a \`qcr scan\` driver died). ${again} and start again — the ledger resumes it.`,
@@ -277,7 +349,8 @@ export function renderStatus(s: ScanStatus, verbs: ScanVerbs = TOOL_VERBS): stri
   return out.join("\n");
 }
 
-/** Findings in validity order — confirmed, likely, doubtful, unknown — the
+/** Findings in validity order — confirmed, likely, needs-review, doubtful,
+ * unknown — the
  * store's order (most severe first) kept inside each tier, a finding that
  * looks like a dismissed one below the rest of its tier. */
 export function byValidity(fs: readonly ScanFinding[]): ScanFinding[] {
@@ -303,6 +376,10 @@ function validityNote(f: ScanFinding): string {
   const v = validityOf(f);
   if (v === "doubtful")
     return `, DOUBTFUL — ${f.doubt?.word ?? "?"}${f.doubt?.class ? ` [${f.doubt.class}]` : ""}`;
+  // A security finding the skeptic could not settle: the proof gap is what
+  // a person checks.
+  if (v === "needs-review")
+    return `, NEEDS REVIEW — ${f.doubt ? `${f.doubt.word}${f.doubt.class ? ` [${f.doubt.class}]` : ""}: ${f.doubt.reason}` : "unsettled"}`;
   if (v === "unknown")
     return f.doubt
       ? `, MAY NOT BE VALID — ${f.doubt.word}`
@@ -366,7 +443,7 @@ export function renderSuggestions(
     }
   }
   if (settings) {
-    const lenses = stage2Lenses(settings.lenses);
+    const lenses = stage2Lenses(settings.lenses, settings.scan.lenses);
     out.push(
       "",
       `Stage 2 may run: ${lenses.map((l) => `${l} (${lensTiers(settings.lenses, l, settings.riskPasses ?? []).join("|")})`).join(", ")}.`,
@@ -385,9 +462,10 @@ export function renderSuggestions(
 function renderFloor(p: StoredStage2Proposal): string[] {
   const floor = p.rows.filter((r) => r.floor);
   const out: string[] = [];
-  const lenses = [...new Set(floor.map((r) => r.lens))];
+  // A chain row's strategy is its own floor lens (stage2.ts rowLensKey).
+  const lenses = [...new Set(floor.map((r) => rowLensKey(r.lens, r.strategy)))];
   for (const lens of lenses) {
-    const rows = floor.filter((r) => r.lens === lens);
+    const rows = floor.filter((r) => rowLensKey(r.lens, r.strategy) === lens);
     const run = rows.filter((r) => r.status === "run");
     const over = rows.filter((r) => r.status === "over-budget");
     const covered = rows.filter((r) => r.status === "covered");
@@ -405,9 +483,17 @@ function renderFloor(p: StoredStage2Proposal): string[] {
   const f = p.floor;
   if (f) {
     if (f.lenses.length === 0)
-      out.push("  The floor has no lens: every [scan] deep_lenses lens is switched off.");
+      out.push(
+        "  The floor has no lens: every [scan] deep_lenses lens is switched off or outside [scan] lenses.",
+      );
     if (f.skipped.length > 0)
-      out.push(`  Switched off by the profile, no floor rows: ${f.skipped.join(", ")}.`);
+      out.push(
+        `  Switched off by the profile or outside [scan] lenses, no floor rows: ${f.skipped.join(", ")}.`,
+      );
+    if (f.added)
+      out.push(
+        `  Added to the security floor — the tree has network or IAM resources: ${f.added.lenses.join(", ")} (${f.added.because.join("; ")}).`,
+      );
     if (f.covered > 0 || f.named > 0)
       out.push(
         `  Left out of the floor: ${f.covered} file × lens already read deep at this content` +
@@ -448,7 +534,7 @@ export function renderProposal(p: StoredStage2Proposal, verbs: ScanVerbs = TOOL_
             : ` — OVER BUDGET (${usd(r.estimate_usd)}, left out)`;
       const price = priceLabel(r.price);
       return [
-        `  ${r.id}: ${r.lens} at ${r.tier} over ${r.units.join(" + ")}${r.units.length > 1 ? " (cross-module)" : ""} — ${r.files.length} file(s)` +
+        `  ${r.id}: ${rowLensKey(r.lens, r.strategy)} at ${r.tier} over ${r.units.join(" + ")}${r.units.length > 1 ? " (cross-module)" : ""} — ${r.files.length} file(s)` +
           (r.tests.length ? ` + ${r.tests.length} paired test(s)` : "") +
           `, ${r.lines} lines, ~${usd(r.estimate_usd)} (${price})${mark}`,
         `      ${r.reason}`,
@@ -540,7 +626,7 @@ export function findingsFilter(
     if (!(VALIDITY_ORDER as readonly string[]).includes(p.validity))
       return {
         ok: false,
-        error: `Unknown validity ${JSON.stringify(p.validity)} — confirmed, likely, doubtful or unknown.`,
+        error: `Unknown validity ${JSON.stringify(p.validity)} — ${VALIDITY_ORDER.slice(0, -1).join(", ")} or ${VALIDITY_ORDER[VALIDITY_ORDER.length - 1]}.`,
       };
     filter.validity = p.validity as ValidityView;
   }
