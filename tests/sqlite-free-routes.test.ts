@@ -220,7 +220,15 @@ describe("the bin's front door where the SQLite driver cannot load", () => {
   it("qcr plugin answers", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     process.env.PATH = join(dir, "no-hosts");
     process.env.XDG_DATA_HOME = join(dir, "data");
-    await runBin(["plugin", "update", "--json"]);
+    // a temp HOME: Cursor is also found by its ~/.cursor
+    const home = process.env.HOME;
+    process.env.HOME = join(dir, "home");
+    try {
+      await runBin(["plugin", "update", "--json"]);
+    } finally {
+      if (home === undefined) delete process.env.HOME;
+      else process.env.HOME = home;
+    }
     expect(process.exitCode ?? 0).toBe(0);
     expect(err.join("\n")).not.toMatch(/state database|better-sqlite3/);
     const payload = JSON.parse(out.join("\n")) as {

@@ -130,6 +130,7 @@ let out: string[];
 let err: string[];
 const KEYS = [
   "PATH",
+  "HOME",
   "XDG_DATA_HOME",
   "FAKE_CLAUDE_STATE",
   "FAKE_CLAUDE_LOG",
@@ -149,6 +150,8 @@ beforeEach(() => {
   writeFileSync(join(bin, "claude"), FAKE_CLAUDE, { mode: 0o755 });
   for (const k of KEYS) saved[k] = process.env[k];
   process.env.PATH = bin;
+  // a temp HOME: Cursor is found by its ~/.cursor, and is given a copy there
+  process.env.HOME = join(dir, "home");
   process.env.XDG_DATA_HOME = data;
   process.env.FAKE_CLAUDE_STATE = join(dir, "claude-state.json");
   process.env.FAKE_CLAUDE_LOG = join(dir, "claude-argv.log");
@@ -405,7 +408,7 @@ describe("when claude fails or is missing", () => {
       }),
     ]);
     expect(await qcr("plugin", "install", "--to", "all")).toBe(0);
-    expect(out.join("\n")).toMatch(/no coding-agent CLI found on PATH/);
+    expect(out.join("\n")).toMatch(/no coding-agent CLI found \(looked for claude, /);
     expect(existsSync(join(data, "qcr"))).toBe(false);
   });
 });

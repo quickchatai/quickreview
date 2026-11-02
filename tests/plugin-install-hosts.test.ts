@@ -338,6 +338,7 @@ let out: string[];
 let err: string[];
 const KEYS = [
   "PATH",
+  "HOME",
   "XDG_DATA_HOME",
   "FAKE_DIR",
   "QCR_NO_UPDATE_NOTICE",
@@ -355,6 +356,8 @@ beforeEach(() => {
   for (const h of HOSTS) writeFileSync(join(bin, h.exe), h.fake, { mode: 0o755 });
   for (const k of KEYS) saved[k] = process.env[k];
   process.env.PATH = bin;
+  // a temp HOME: Cursor is found by its ~/.cursor, and is given a copy there
+  process.env.HOME = join(dir, "home");
   process.env.XDG_DATA_HOME = data;
   process.env.FAKE_DIR = join(dir, "fake");
   process.env.QCR_NO_UPDATE_NOTICE = "1";
@@ -595,6 +598,8 @@ describe("qcr plugin across these hosts", () => {
       ["claude", "skipped"],
       ["codex", "failed"],
       ["copilot", "installed"],
+      ["cursor", "skipped"],
+      ["opencode", "skipped"],
       ["gemini", "installed"],
       ["antigravity", "installed"],
     ]);

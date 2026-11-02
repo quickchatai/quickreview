@@ -18,9 +18,21 @@
 // uninstall removes it through the host's own verb. Both, and install, then
 // delete the renders no host references any more.
 //
+// Cursor and opencode have no install verb, so their render is copied where
+// the host loads it, and a record of every file and folder the copy wrote
+// (`<data home>/plugins/<host>.copy.json`) is what update rewrites and
+// uninstall deletes: a path the record does not name is never written over
+// or removed, and an install that would land on one fails instead.
+//
+// A host is found by its executable on PATH; Cursor also by its config
+// directory, `~/.cursor`, since an editor install puts no CLI on PATH. A
+// copy host whose record is there is found by update and uninstall even once
+// the host itself is gone. `--to all` with no host found is an exit 0 that
+// says so.
+//
 // It never prompts (every host child gets /dev/null for stdin), never logs
-// in, and writes nothing beyond the render and what the host's own verb
-// writes. Each host's outcome is one row: installed, updated, removed,
+// in, and writes nothing beyond the render, a copy host's files and record,
+// and what the host's own verb writes. Each host's outcome is one row: installed, updated, removed,
 // skipped (not on PATH, not installed) or failed (with the host's own
 // message); the summary adds the invoke line and the reload step, and
 // `--json` prints the same rows. Exit 0 when no host failed, 1 when one
@@ -104,21 +116,38 @@
 // plugin list --json` and `agy plugin uninstall <name>`; no update verb and
 // no scope flag is documented, so a re-point is uninstall, then install,
 // and a list entry is read by its `name` alone.
+//
+// Cursor (from its plugin docs; its CLI offers only marketplace verbs, and
+// install is interactive): a local plugin is a folder in
+// `~/.cursor/plugins/local/<name>`, loaded after a window reload or in a new
+// agent session, which re-indexes the folder; a marketplace plugin of the
+// same name wins over it. Local plugins are the user's: no project scope.
+//
+// opencode (probed with opencode 2.0.18 in a throwaway HOME): no verb
+// installs a skill; skills are found in `$XDG_CONFIG_HOME/opencode/skills/
+// <name>/SKILL.md` (`opencode debug paths` names that config dir, default
+// `~/.config/opencode`), each also a `/<name>` command, read at startup.
 import { spawnSync } from "node:child_process";
 import {
   accessSync,
   constants,
+  copyFileSync,
   existsSync,
+  lstatSync,
+  mkdirSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   renameSync,
+  rmdirSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
-import { delimiter, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type * as Renderer from "../plugins/qcr/render.mjs";
-import { dataHome } from "./homes.js";
+import { dataHome, homeOf, xdgBase } from "./homes.js";
 
 type Render = typeof Renderer;
 
@@ -139,7 +168,8 @@ export interface PluginRow {
   scopes: string[];
   /** The release the host now loads, when it loads one. */
   version: string | null;
-  /** The rendered folder the host is pointed at, when it is. */
+  /** The folder the host loads QuickReview from, when it loads it: the
+   * render it is pointed at, or where a copy host's files were copied. */
   dir: string | null;
   /** What the host said, or why the row was skipped or failed. */
   detail: string;
@@ -216,8 +246,16 @@ interface HostInstaller {
   host: string;
   /** The host's name in the summary. */
   label: string;
-  /** Its executable, found on PATH. */
-  exe: string;
+  /** What finding it looks for: its executables, and any folder. */
+  lookFor(ctx: Ctx): string[];
+  /** The host here: the executable its verbs run (a copy host: what found
+   * it); null when it is not here. */
+  locate(ctx: Ctx): string | null;
+  /** Why it was not found. */
+  notFound(ctx: Ctx): string;
+  /** A copy host's record of an install here, which update and uninstall
+   * reach even when the host is no longer found; null when there is none. */
+  recorded?(ctx: Ctx): string | null;
   reload: string;
   /** Why `--project` skips this host, or null when it has a project scope. */
   noProject: string | null;
@@ -240,6 +278,13 @@ function which(cmd: string, path: string | undefined): string | null {
   }
   return null;
 }
+
+/** A host found by its executable `exe` on PATH. */
+const onPath = (exe: string): Pick<HostInstaller, "lookFor" | "locate" | "notFound"> => ({
+  lookFor: () => [exe],
+  locate: (ctx) => which(exe, ctx.deps.env["PATH"]),
+  notFound: () => `${exe} is not on PATH`,
+});
 
 const real = (p: string): string => {
   try {
@@ -447,7 +492,7 @@ function claudeInstaller(): HostInstaller {
   return {
     host,
     label: "Claude Code",
-    exe: "claude",
+    ...onPath("claude"),
     reload,
     noProject: null,
     install(ctx, exe, scope) {
@@ -647,7 +692,7 @@ function marketplaceInstaller(m: MarketplaceHost): HostInstaller {
   return {
     host,
     label: m.label,
-    exe: m.exe,
+    ...onPath(m.exe),
     reload: m.reload,
     noProject: m.noProject,
     install(ctx, exe) {
@@ -844,7 +889,7 @@ function folderInstaller(f: FolderHost): HostInstaller {
   return {
     host,
     label: f.label,
-    exe: f.exe,
+    ...onPath(f.exe),
     reload: f.reload,
     noProject: f.noProject,
     install(ctx, exe) {
@@ -950,11 +995,277 @@ const antigravityInstaller = (): HostInstaller =>
     uninstall: (ctx) => ["plugin", "uninstall", ctx.render.PLUGIN_NAME],
   });
 
+/** A host with no install verb (Cursor, opencode): the render's files
+ * copied where the host loads them, with a record of every file and folder
+ * the copy wrote, so update and uninstall touch those and nothing else. */
+interface CopyHost {
+  host: string;
+  label: string;
+  reload: string;
+  noProject: string | null;
+  /** The executables, any one of which on PATH means the host is here. */
+  exes: readonly string[];
+  /** A folder whose presence also means it is here. */
+  configDir?(env: PluginDeps["env"]): string;
+  /** The render's files under `from` are copied to `<to>/<into><the rest
+   * of the path>`. */
+  from: string;
+  into: string;
+  to(env: PluginDeps["env"]): string;
+}
+
+/** What a copy wrote, in `<data home>/plugins/<host>.copy.json`. */
+interface CopyRecord {
+  version: string;
+  /** The render the files were copied from. */
+  render: string;
+  /** Every file the copy wrote, absolute. */
+  files: string[];
+  /** Every folder it created, absolute. */
+  dirs: string[];
+}
+
+/** Whether anything, a dangling link included, is at `p`. */
+const there = (p: string): boolean => {
+  try {
+    lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const isDir = (p: string): boolean => {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+/** Delete `files` (a folder in their place is left alone), then each of
+ * `dirs` that is empty, deepest first: a folder holding anything the copy
+ * did not write keeps it. The files deleted. */
+function unwrite(files: readonly string[], dirs: readonly string[]): string[] {
+  const gone: string[] = [];
+  for (const f of files) {
+    try {
+      if (lstatSync(f).isDirectory()) continue;
+    } catch {
+      continue; // already gone
+    }
+    rmSync(f, { force: true });
+    gone.push(f);
+  }
+  for (const d of [...dirs].sort((a, b) => b.length - a.length)) {
+    try {
+      rmdirSync(d);
+    } catch {
+      // not empty, or gone
+    }
+  }
+  return gone;
+}
+
+function copyInstaller(c: CopyHost): HostInstaller {
+  const { host } = c;
+  const recordPath = (ctx: Ctx): string => join(ctx.root, `${host}.copy.json`);
+  /** The record, or null when there is none; one that cannot be read
+   * throws, since without it no file can be told to be the copy's. */
+  const readRecord = (ctx: Ctx): CopyRecord | null => {
+    const p = recordPath(ctx);
+    if (!existsSync(p)) return null;
+    let v: unknown;
+    try {
+      v = JSON.parse(readFileSync(p, "utf8")) as unknown;
+    } catch {
+      v = null;
+    }
+    const strs = (x: unknown): x is string[] =>
+      Array.isArray(x) && x.every((e) => typeof e === "string");
+    if (
+      !isRecord(v) ||
+      typeof v["version"] !== "string" ||
+      typeof v["render"] !== "string" ||
+      !strs(v["files"]) ||
+      !strs(v["dirs"])
+    )
+      throw new Error(`${p} is not a record qcr plugin can read; it names the files to remove`);
+    return { version: v["version"], render: v["render"], files: v["files"], dirs: v["dirs"] };
+  };
+  const writeRecord = (ctx: Ctx, r: CopyRecord): void => {
+    mkdirSync(ctx.root, { recursive: true });
+    writeFileSync(recordPath(ctx), `${JSON.stringify(r, null, 2)}\n`);
+  };
+  /** Is the copy a record names still there? */
+  const live = (r: CopyRecord | null): r is CopyRecord =>
+    r !== null && r.files.some((f) => there(f));
+  const dest = (ctx: Ctx): string => resolve(c.to(ctx.deps.env), c.into);
+  const plural = (n: number): string => `${n} file${n === 1 ? "" : "s"}`;
+
+  /** Copy this release's render over `before`'s copy: the row. */
+  const land = (ctx: Ctx, before: CopyRecord | null, outcome: PluginOutcome): PluginRow => {
+    const to = c.to(ctx.deps.env);
+    const rels = Object.keys(
+      ctx.render.render(ctx.source, host, {
+        version: ctx.version,
+        contract: ctx.render.TEMPLATE_CONTRACT,
+      }),
+    )
+      .filter((p) => p.startsWith(c.from))
+      .map((p) => ({ path: p, rel: `${c.into}${p.slice(c.from.length)}` }));
+    const ownFiles = new Set(before?.files ?? []);
+    const ownDirs = new Set(before?.dirs ?? []);
+    // a path already there that the copy did not write is never written
+    // over: neither the folder a command lands in nor any file
+    for (const { rel } of rels) {
+      const top = join(to, rel.split("/")[0]!);
+      const at = join(to, rel);
+      for (const p of [top, at])
+        if (there(p) && !ownDirs.has(p) && !ownFiles.has(p))
+          return row(
+            host,
+            "failed",
+            `${p} is already there and qcr plugin did not write it; move it away, then install again`,
+            { dir: dest(ctx) },
+          );
+    }
+    const dir = renderFor(ctx, host);
+    const next = rels.map((r) => join(to, r.rel));
+    const dirs = new Set(ownDirs);
+    for (const f of next)
+      for (let d = dirname(f); !there(d) && d !== dirname(d); d = dirname(d)) dirs.add(d);
+    // recorded before anything is written, so a copy cut short is still
+    // the copy's to remove
+    writeRecord(ctx, {
+      version: ctx.version,
+      render: dir,
+      files: [...new Set([...ownFiles, ...next])],
+      dirs: [...dirs],
+    });
+    for (const [i, r] of rels.entries()) {
+      const f = next[i]!;
+      mkdirSync(dirname(f), { recursive: true });
+      rmSync(f, { force: true });
+      copyFileSync(join(dir, r.path), f);
+    }
+    // what an older release wrote and this one does not
+    unwrite(
+      [...ownFiles].filter((f) => !next.includes(f)),
+      [...dirs].filter((d) => !next.some((f) => f.startsWith(`${d}/`))),
+    );
+    writeRecord(ctx, {
+      version: ctx.version,
+      render: dir,
+      files: next,
+      dirs: [...dirs].filter((d) => there(d)),
+    });
+    const was = before !== null && before.version !== ctx.version ? ` (was ${before.version})` : "";
+    return row(host, outcome, `copied ${plural(next.length)} into ${dest(ctx)}${was}`, {
+      scopes: ["user"],
+      version: ctx.version,
+      dir: dest(ctx),
+      invoke: invokeOf(ctx, host),
+      reload: c.reload,
+      removed: tidy(ctx, host, dir),
+    });
+  };
+  /** Everything the copy and the installer wrote for this host, gone. */
+  const clear = (ctx: Ctx, r: CopyRecord | null): { files: string[]; renders: string[] } => {
+    const files = r === null ? [] : unwrite(r.files, r.dirs);
+    const renders = tidy(ctx, host, null);
+    rmSync(join(ctx.root, host), { recursive: true, force: true });
+    rmSync(recordPath(ctx), { force: true });
+    return { files, renders };
+  };
+
+  return {
+    host,
+    label: c.label,
+    lookFor: (ctx) => [...c.exes, ...(c.configDir ? [c.configDir(ctx.deps.env)] : [])],
+    locate(ctx) {
+      for (const exe of c.exes) {
+        const at = which(exe, ctx.deps.env["PATH"]);
+        if (at !== null) return at;
+      }
+      const cfg = c.configDir?.(ctx.deps.env);
+      return cfg !== undefined && isDir(cfg) ? cfg : null;
+    },
+    notFound(ctx) {
+      const exes = c.exes.length > 1 ? `neither ${c.exes.join(" nor ")} is` : `${c.exes[0]} is not`;
+      const cfg = c.configDir?.(ctx.deps.env);
+      return cfg === undefined ? `${exes} on PATH` : `${exes} on PATH, and there is no ${cfg}`;
+    },
+    recorded: (ctx) => (existsSync(recordPath(ctx)) ? recordPath(ctx) : null),
+    reload: c.reload,
+    noProject: c.noProject,
+    install(ctx) {
+      const before = readRecord(ctx);
+      const updated = live(before) && before.version !== ctx.version;
+      return land(ctx, before, updated ? "updated" : "installed");
+    },
+    update(ctx) {
+      const before = readRecord(ctx);
+      if (!live(before)) {
+        // a record whose copy is gone is no install: it and the renders go
+        const { renders } = clear(ctx, before);
+        return row(host, "skipped", "QuickReview is not installed here", { removed: renders });
+      }
+      return land(ctx, before, "updated");
+    },
+    uninstall(ctx) {
+      const before = readRecord(ctx);
+      const { files, renders } = clear(ctx, before);
+      if (before === null && renders.length === 0)
+        return row(host, "skipped", "QuickReview is not installed here");
+      return row(host, "removed", `deleted ${plural(files.length)} from ${dest(ctx)}`, {
+        scopes: files.length > 0 ? ["user"] : [],
+        reload: c.reload,
+        removed: renders,
+      });
+    },
+  };
+}
+
+/** Cursor: the render copied into its local-plugins folder (the module
+ * header has what its docs say). */
+const cursorInstaller = (): HostInstaller =>
+  copyInstaller({
+    host: "cursor",
+    label: "Cursor",
+    reload:
+      "reload the Cursor window, or start a new cursor-agent session, so it re-indexes its local plugins",
+    noProject:
+      "Cursor loads local plugins from the user's ~/.cursor only, so it has no project scope",
+    exes: ["cursor-agent", "cursor"],
+    configDir: (env) => join(homeOf(env), ".cursor"),
+    from: "",
+    into: "qcr/",
+    to: (env) => join(homeOf(env), ".cursor", "plugins", "local"),
+  });
+
+/** opencode: the rendered skills copied into its global skills folder (the
+ * module header has what the probe showed). */
+const opencodeInstaller = (): HostInstaller =>
+  copyInstaller({
+    host: "opencode",
+    label: "opencode",
+    reload: "restart opencode",
+    noProject:
+      "qcr plugin puts opencode's skills in its global skills folder only, so it has no project scope",
+    exes: ["opencode"],
+    from: "skills/",
+    into: "",
+    to: (env) => join(xdgBase(env["XDG_CONFIG_HOME"], env, ".config"), "opencode", "skills"),
+  });
+
 /** Every host the installer can install into, in `--to all` order. */
 const INSTALLERS: readonly HostInstaller[] = [
   claudeInstaller(),
   codexInstaller(),
   copilotInstaller(),
+  cursorInstaller(),
+  opencodeInstaller(),
   geminiInstaller(),
   antigravityInstaller(),
 ];
@@ -1044,10 +1355,13 @@ export async function cmdPlugin(
     root: join(dataHome(deps.env), "plugins"),
   };
   const rows: PluginRow[] = [];
+  /** The hosts not found here. */
+  const missing = new Set<string>();
   for (const h of p.hosts) {
-    const exe = which(h.exe, deps.env["PATH"]);
+    const exe = h.locate(ctx) ?? (p.verb === "install" ? null : (h.recorded?.(ctx) ?? null));
     if (exe === null) {
-      rows.push(row(h.host, "skipped", `${h.exe} is not on PATH`));
+      missing.add(h.host);
+      rows.push(row(h.host, "skipped", h.notFound(ctx)));
       continue;
     }
     // a host with no project scope is skipped, never given a user install
@@ -1072,12 +1386,9 @@ export async function cmdPlugin(
     deps.out(JSON.stringify({ verb: p.verb, version: ctx.version, ok: !failed, hosts: rows }));
   } else {
     const label = (host: string): string => p.hosts.find((h) => h.host === host)?.label ?? host;
-    if (
-      !p.named &&
-      rows.every((r) => r.outcome === "skipped" && r.detail.endsWith("is not on PATH"))
-    )
+    if (!p.named && rows.every((r) => missing.has(r.host)))
       deps.out(
-        `qcr plugin ${p.verb}: no coding-agent CLI found on PATH (looked for ${p.hosts.map((h) => h.exe).join(", ")}).`,
+        `qcr plugin ${p.verb}: no coding-agent CLI found (looked for ${p.hosts.flatMap((h) => h.lookFor(ctx)).join(", ")}).`,
       );
     else for (const l of summary(rows, label)) deps.out(l);
   }

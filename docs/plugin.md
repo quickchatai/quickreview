@@ -24,6 +24,17 @@ Codex's request for network access.
 | Antigravity | `/qcr:review`    | `plugin.json` and `skills/`                                        |
 | pi          | `/qcr-review`    | the Plugin's `skills/`                                             |
 
+`qcr plugin install --to <host|all>` renders a host's folder into the data
+home (`$XDG_DATA_HOME/qcr/plugins/<host>/<version>/`) and points the host at
+it through the host's own install verb. Cursor and opencode have none, so
+their render is copied where they load it: Cursor's folder into
+`~/.cursor/plugins/local/qcr` (a window reload or a new agent session
+re-indexes it), opencode's skills into `$XDG_CONFIG_HOME/opencode/skills`. A
+record beside the render, `<host>.copy.json`, names every file and folder the
+copy wrote; update rewrites those, uninstall deletes them, and an install that
+would land on a path the record does not name fails instead. `--to all` finds
+a host by its executable on `PATH`, and Cursor also by `~/.cursor`.
+
 The pi Plugin's `packages/pi-plugin/skills/` is that render, made by
 `npm run build` and by the Plugin's prepack (`node plugins/qcr/render.mjs pi`,
 which checks the copy it wrote; `--check` only checks). It is gitignored and
