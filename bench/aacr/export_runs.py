@@ -28,7 +28,11 @@ sandbox command logs and the prompt files; each JSONL one ships as its
 numbers-only extract `*.pruned.jsonl` instead, priced against the full
 stream while it is written), and third-party comment text (vendor review
 comments, harvested Copilot reviews, SWE-PRBench's human review comments),
-which is replaced by a marker with a hash and a link. A file that is a copy
+which is replaced by a marker with a hash and a link. Two copies of vendor
+text ship verbatim, as third-party text: the Martian judge's extractions of
+the re-judged vendors' comments (`results/<judge>/candidates.json` and
+`evaluations.json`) and the blind annotation's vendor candidates
+(`analysis/…/fair/secret.json`). A file that is a copy
 of another shipped file (a hardlink, a posting-policy variant's or an
 assembled run's copy of its source run) ships once; its run's
 `SOURCE-COPIES.json` maps it to the copy that ships. The answer key's volume
@@ -125,10 +129,6 @@ PRIVATE_RUNS = ("pc1-self-review-pc1",)
 OWNER_WITHHELD_PREFIXES = ("pc2-",)
 OWNER_WITHHELD = "withheld by the authors: a regression check of a development build (backs no published number)"
 MARTIAN_SRC = "https://github.com/withmartian/code-review-benchmark/blob/e616e84/offline/results/benchmark_data.json"
-# Martian's published tools whose candidates a calibration re-judge kept under their own name
-MARTIAN_PUBLISHED_TOOLS = {"claude-code", "cubic-v2", "qodo-extended-v2", "qodo-v2", "augment", "macroscope", "devin",
-                           "coderabbit", "copilot-v2", "greptile", "cursor", "graphite", "baz", "bito", "codeant",
-                           "korbit", "kodus", "linearb", "propel", "sourcery", "gemini", "codex"}
 QODO_VENDORS = {"qodo-exhaustive", "qodo-precise", "augment", "copilot", "cursor", "greptile", "codex", "coderabbit", "sentry"}
 
 # ---------------------------------------------------------------- the rewrite
@@ -524,48 +524,6 @@ class ThirdParty:
                 counts["third-party-omitted:pr-description"] += 1
         return (json.dumps(d, indent=2, ensure_ascii=False) + ("\n" if data.endswith(b"\n") else "")).encode()
 
-    # ---- Martian: the judge's extractions from the re-judged published tools' reviews
-    @staticmethod
-    def martian_vendor(tool: str) -> bool:
-        """A published tool's review (Martian's benchmark data), not one of ours."""
-        return tool.startswith("rejudged-") or tool in MARTIAN_PUBLISHED_TOOLS
-
-    def martian_judge_file(self, name: str, data: bytes, counts) -> bytes:
-        """candidates.json / evaluations.json: every vendor candidate's text
-        becomes a marker (ids, paths, lines, matches and the judge's reasoning stay)."""
-        d = json.loads(data)
-        n = 0
-        for pr, tools in (d.items() if isinstance(d, dict) else []):
-            for tool, v in (tools.items() if isinstance(tools, dict) else []):
-                if not self.martian_vendor(tool):
-                    continue
-                link = f"{MARTIAN_SRC} ({pr}, {tool.removeprefix('rejudged-')})"
-                if name == "candidates.json" and isinstance(v, list):
-                    for c in v:
-                        if isinstance(c, dict) and isinstance(c.get("text"), str) and c["text"]:
-                            c["text"] = omitted(c["text"], link)
-                            n += 1
-                elif name == "evaluations.json" and isinstance(v, dict):
-                    for tp in v.get("true_positives") or []:
-                        if isinstance(tp, dict) and isinstance(tp.get("matched_candidate"), str) and tp["matched_candidate"]:
-                            tp["matched_candidate"] = omitted(tp["matched_candidate"], link)
-                            n += 1
-                    for fp in v.get("false_positives") or []:
-                        if isinstance(fp, dict) and isinstance(fp.get("candidate"), str) and fp["candidate"]:
-                            fp["candidate"] = omitted(fp["candidate"], link)
-                            n += 1
-        counts["third-party-omitted:martian-vendor-candidate"] += n
-        return (json.dumps(d, indent=2, ensure_ascii=False) + "\n").encode()
-
-    def fair_secret(self, data: bytes, counts) -> bytes:
-        """analysis …/fair/secret.json: the blind annotation's candidate list; a vendor tool's text becomes a marker."""
-        d = json.loads(data)
-        for c in d.values():
-            if isinstance(c, dict) and c.get("tool") != "quickreview" and isinstance(c.get("text"), str) and c["text"]:
-                c["text"] = omitted(c["text"], f"{MARTIAN_SRC} ({c.get('pr')}, {c.get('tool')})")
-                counts["third-party-omitted:martian-vendor-candidate"] += 1
-        return (json.dumps(d, indent=1, ensure_ascii=False) + "\n").encode()
-
     # ---- Martian: the re-judged published tools' review bodies
     def martian_benchmark_data(self, data: bytes, counts) -> bytes:
         d = json.loads(data)
@@ -860,8 +818,6 @@ class Processor:
             run, inner = rp
             if ".martian" in run and inner[-1] == "benchmark_data.json":
                 data = self.tp.martian_benchmark_data(data, counts)
-            elif ".martian" in run and inner[-1] in ("candidates.json", "evaluations.json") and "results" in inner:
-                data = self.tp.martian_judge_file(inner[-1], data, counts)
             elif ".qodo" in run and inner[-1] == "judgements.jsonl":
                 data = self.tp.qodo_judgements(data, counts)
             elif parts[0] == "runs" and run.startswith("upstream-copilot"):
@@ -877,8 +833,6 @@ class Processor:
             data = self.tp.pragent_description_md(data, case[1], counts)
         elif parts[0] == OM and len(parts) == 3 and parts[1].startswith("sets") and name.endswith(".json"):
             data = self.tp.set_bodies(data, counts)
-        elif re.match(r"analysis/[^/]+/fair/secret\.json$", rel):
-            data = self.tp.fair_secret(data, counts)
         if rel.endswith(".json"):
             data = self.session_fields(rel, data, counts)
             data = remap_commits(data, self.remap, counts)
@@ -1470,24 +1424,27 @@ packed. Nothing else in the text changed.
   empty string, the record around it kept. The blobs were in the session
   logs, which are not published, so the rule finds none in what ships; the
   extracts still carry the reasoning-token counts.
-- **Third-party text is linked, not copied.** These are replaced by
+- **Third-party text is linked, not copied, with two exceptions.** These
+  are replaced by
   `[third-party text omitted, sha256:<first 16 hex of the text's sha256>; see <link>]`:
   vendor review comments (the published tools Martian re-judged, the nine
-  Qodo vendors, the upstream GitHub Copilot reviews); the Martian judge's
-  extractions of those vendors' comments (each vendor candidate's `text` in
-  `results/<judge>/candidates.json`, and `matched_candidate` and `candidate`
-  in `evaluations.json`; ids, paths, lines, matches and the judge's reasoning
-  stay) and the vendor candidates of the blind annotation
-  (`analysis/…/fair/secret.json`); and PR authors' descriptions, wherever a
-  file copied one (the answer key's `meta.json`, PR-Agent's
-  `pragent-describe.json` and `pragent-description.md`, the open-model case
-  sets). The hash keeps equal texts equal, so every score recomputes
-  unchanged. JSON files whose third-party text was replaced were
-  re-serialised. What stays third-party inside the files: Martian's golden
-  comments (MIT) in Martian's scoring files, Qodo's issues (MIT) in the Qodo
-  scoring files and `analysis/qodo-2026-10-03/`, AACR-Bench's reference
-  comments (Apache-2.0), and code quoted by reviewers and judges (each
-  project's own licence).
+  Qodo vendors, the upstream GitHub Copilot reviews), and PR authors'
+  descriptions, wherever a file copied one (the answer key's `meta.json`,
+  PR-Agent's `pragent-describe.json` and `pragent-description.md`, the
+  open-model case sets). The hash keeps equal texts equal, so every score
+  recomputes unchanged. JSON files whose third-party text was replaced were
+  re-serialised. The exceptions ship verbatim, as third-party text: the
+  Martian judge's extractions of the re-judged vendors' comments (each
+  candidate's `text` in `results/<judge>/candidates.json`, and
+  `matched_candidate` and `candidate` in `evaluations.json`) and the vendor
+  candidates of the blind annotation (`analysis/…/fair/secret.json`). That
+  text belongs to its authors, the vendors' review bots that posted it on
+  public PRs, and is not covered by this archive's licence. What else stays
+  third-party inside the files: Martian's golden comments (MIT) in Martian's
+  scoring files, Qodo's issues (MIT) in the Qodo scoring files and
+  `analysis/qodo-2026-10-03/`, AACR-Bench's reference comments
+  (Apache-2.0), and code quoted by reviewers and judges (each project's own
+  licence).
 
 Rewrite counts over the whole archive:
 
@@ -1841,8 +1798,8 @@ Unpack it and point the tools at its `runs/`:
     runs/<run>.martian*/martian-scores.json, martian-report.md, score_profiles.txt,
                         results/ingest-report.json, results/<judge>/evaluations.json
                         and candidates.json (the judge's step-2 extractions; a
-                        re-judged vendor tool's candidate text is a hash + link,
-                        which the scorer does not read)
+                        re-judged vendor tool's candidate text ships verbatim as
+                        third-party text, its vendor's, not under this licence)
     runs/<run>.qodo*/scores.json, scores.md, judgements.jsonl (vendor comment
                         bodies replaced by a hash + link; the scorer reads only
                         their file and lines), judge/JUDGE.txt

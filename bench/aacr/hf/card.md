@@ -351,20 +351,26 @@ Martian, Qodo and Elo judges are the ones named here.
   files each pack held. `recompute/elo_ratings.py` refits the ratings from the
   judgments alone, with no pack.
 - **Third-party text** is linked, not copied: the vendor review comments
-  Martian publishes (and its `published-benchmark_data.json`), the Martian
-  judge's extractions of those comments (the vendor candidates in the
-  archived `candidates.json` and `evaluations.json`, and in the blind
-  annotation's candidate list), the reviews of Qodo's nine vendors, the
-  upstream Copilot reviews, SWE-PRBench's human review comments, and PR
-  authors' descriptions wherever a file copied one (the answer key's
-  `meta.json`, PR-Agent's describe output, the open-model case sets). A row
-  carries the source URL and the comment locations; an archived file carries
+  Martian publishes (and its `published-benchmark_data.json`), the reviews of
+  Qodo's nine vendors, the upstream Copilot reviews, SWE-PRBench's human
+  review comments, and PR authors' descriptions wherever a file copied one
+  (the answer key's `meta.json`, PR-Agent's describe output, the open-model
+  case sets). A row carries the source URL and the comment locations; an
+  archived file carries
   `[third-party text omitted, sha256:<prefix>; see <link>]`, so equal texts
   stay equal and every score recomputes unchanged. Third-party text that does
   ship, under its own licence: Martian's golden comments and published
   tool-level judgements and Qodo's issues (MIT, see "Licence"), AACR-Bench's
   reference comments (Apache-2.0), and code quoted by reviewers and judges
-  (each project's licence).
+  (each project's licence). Two copies of vendor text also ship verbatim:
+  the Martian judge's extractions of the re-judged vendors' comments (the
+  vendor candidates in the archived and slim `candidates.json` and
+  `evaluations.json`) and the vendor candidates of the blind annotation's
+  candidate list (the archive's `analysis/…/fair/secret.json`). That text
+  belongs to its authors, the vendors' review bots that posted it on public
+  pull requests, and is not covered by this dataset's licence. The tables
+  keep it out: `martian_reviews` rows of a vendor carry no comment or
+  candidate text.
 - **Encrypted reasoning blobs** are blanked: the value of every OpenAI
   `encrypted_content` and every Anthropic `thinkingSignature` and `signature`
   is the empty string, and the record around it is kept. They are ciphertext
@@ -619,9 +625,13 @@ golden comments and published tool-level judgements (`martian_*`,
 PR-Review-Bench's issues (`qodo_*`, `LICENSES/MIT-qodo.txt`, the Qodo team).
 Code quoted anywhere in the release stays under its own project's licence,
 copyleft and source-available ones included (`prs.repo_license`,
-`martian_prs.repo_license`, `qodo_prs.repo_license`). The run archive and the
-slim bundle carry the same licence files and their own NOTICE; the archive's
-also carries the SWE-PRBench attribution.
+`martian_prs.repo_license`, `qodo_prs.repo_license`). The vendor text the
+run archive and the slim bundle copy verbatim (the Martian judge's
+extractions of the re-judged vendors' comments and the blind annotation's
+vendor candidates) belongs to its authors, the vendors' review bots that
+posted it on public pull requests, and is not covered by this licence. The
+run archive and the slim bundle carry the same licence files and their own
+NOTICE; the archive's also carries the SWE-PRBench attribution.
 
 ## Citation
 

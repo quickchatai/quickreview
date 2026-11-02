@@ -41,8 +41,10 @@
 //  18. session text inside kept JSON files (a harness result's stdout and
 //      stderr, a prompt argument, a prompt template, denied commands) becomes
 //      numbers or hashes, and a data file still holding it is left out;
-//  19. PR authors' descriptions and the Martian judge's vendor candidates are
-//      linked, not copied, wherever a file copied them;
+//  19. PR authors' descriptions and the vendors' Martian review bodies are
+//      linked, not copied, wherever a file copied them; the Martian judge's
+//      extractions of vendor comments and the blind annotation's vendor
+//      candidates ship verbatim (third-party text, copied by the owner's ruling);
 //  20. the re-grep is a gate, verify_slim fails on what it finds, and a run
 //      suffix ships with its run only when it is a known one.
 
@@ -1316,8 +1318,36 @@ describe("export_runs: third-party and session text inside kept files", () => {
     JSON.stringify({
       u: {
         quickreview: [{ text: "ours" }],
-        "rejudged-cubic-v2": [{ text: "SECRET-VENDOR", line: 3 }],
+        "rejudged-cubic-v2": [{ text: "VENDOR-CANDIDATE", line: 3 }],
       },
+    }),
+  );
+  put(
+    join(src, "runs", "r1.martian", "results", "j", "evaluations.json"),
+    JSON.stringify({
+      u: {
+        "rejudged-cubic-v2": {
+          true_positives: [{ matched_candidate: "VENDOR-MATCHED" }],
+          false_positives: [{ candidate: "VENDOR-UNMATCHED" }],
+        },
+      },
+    }),
+  );
+  put(
+    join(src, "runs", "r1.martian", "benchmark_data.json"),
+    JSON.stringify({
+      "https://x/pull/2": {
+        reviews: [
+          { tool: "rejudged-cubic-v2", review_comments: [{ body: "SECRET-VENDOR-BODY", line: 4 }] },
+        ],
+      },
+    }),
+  );
+  put(
+    join(src, "analysis", "a1", "fair", "secret.json"),
+    JSON.stringify({
+      C1: { tool: "cubic-v2", pr: "u", text: "VENDOR-FAIR" },
+      C2: { tool: "quickreview", pr: "u", text: "ours" },
     }),
   );
   put(
@@ -1348,14 +1378,24 @@ describe("export_runs: third-party and session text inside kept files", () => {
           ship: "yes",
           hf_tables: [],
         },
+        {
+          id: "analysis",
+          title: "A",
+          location: "qcr-bench-runs/",
+          members: ["analysis"],
+          ship: "yes",
+          hf_tables: [],
+        },
       ],
     }),
   );
 
   // MUTATION: drop the SL.content_markers check from export_runs.Processor.process — this fails
   // MUTATION: drop the pragent_description_md branch from export_runs.Processor.process — this fails
-  // MUTATION: drop the martian_judge_file branch from export_runs.Processor.process — this fails
-  it("rewrites results, PR bodies, vendor candidates and copied prompt lines, and leaves out a file still holding a stream", () => {
+  // MUTATION: drop the martian_benchmark_data branch from export_runs.Processor.process — this fails
+  // MUTATION: restore a branch that sends results/<judge>/candidates.json, evaluations.json or
+  //           analysis/…/fair/secret.json through omitted() — this fails
+  it("rewrites results, PR bodies, vendor review bodies and copied prompt lines, ships the judge's vendor candidates verbatim, and leaves out a file still holding a stream", () => {
     const r = pyModule(
       "export_runs",
       "import collections\nfrom pathlib import Path\nimport release_catalogue as RC\n" +
@@ -1386,8 +1426,19 @@ describe("export_runs: third-party and session text inside kept files", () => {
     expect(r[`${base}/round-order.md`]![1]).toBeNull();
     const cands = JSON.parse(r["runs/r1.martian/results/j/candidates.json"]![1]!);
     expect(cands.u.quickreview[0].text).toBe("ours");
-    expect(cands.u["rejudged-cubic-v2"][0]).toMatchObject({ line: 3 });
-    expect(cands.u["rejudged-cubic-v2"][0].text).toMatch(/^\[third-party text omitted, sha256:/);
+    expect(cands.u["rejudged-cubic-v2"][0]).toEqual({ text: "VENDOR-CANDIDATE", line: 3 });
+    const evals = JSON.parse(r["runs/r1.martian/results/j/evaluations.json"]![1]!);
+    expect(evals.u["rejudged-cubic-v2"].true_positives[0].matched_candidate).toBe("VENDOR-MATCHED");
+    expect(evals.u["rejudged-cubic-v2"].false_positives[0].candidate).toBe("VENDOR-UNMATCHED");
+    const fair = JSON.parse(r["analysis/a1/fair/secret.json"]![1]!);
+    expect(fair.C1.text).toBe("VENDOR-FAIR");
+    expect(fair.C2.text).toBe("ours");
+    const bodies = JSON.parse(r["runs/r1.martian/benchmark_data.json"]![1]!);
+    const body = bodies["https://x/pull/2"].reviews[0].review_comments[0];
+    expect(body.body).toMatch(
+      /^\[third-party text omitted, sha256:[0-9a-f]+; see https:\/\/github\.com\/withmartian\//,
+    );
+    expect(body.line).toBe(4);
     expect(JSON.parse(r["open-models/sets-low/s.json"]![1]!).cases[0].body).toContain(
       "https://x/pull/1",
     );

@@ -49,11 +49,15 @@ source-available parts). The release carries short excerpts only: the reviewed r
 code itself (their trees and diffs) is not included."""
 
 THIRD_PARTY_TEXT = """Comments written by third-party review tools (the vendors Martian and Qodo publish, the
-upstream GitHub Copilot reviews), the Martian judge's extractions of those comments, and the
-descriptions PR authors wrote are not included: each is replaced by a hash and a link to the
-original. The exception is AACR-Bench's own reference comments, some of which AACR-Bench
-derived from review bots' comments (flagged `bot_derived`); they ship under AACR-Bench's
-Apache-2.0 licence as part of its dataset."""
+upstream GitHub Copilot reviews) and the descriptions PR authors wrote are not included: each
+is replaced by a hash and a link to the original. Two copies of vendor text do ship verbatim,
+in the run archive and the slim bundle: the Martian judge's extractions of the re-judged
+vendors' comments (the scoring dirs' `candidates.json` and `evaluations.json`) and, in the
+archive only, the blind annotation's vendor candidates (`analysis/.../fair/secret.json`). That
+text belongs to its authors, the vendors' review bots that posted it on public pull requests,
+and is not covered by this release's licence. AACR-Bench's own reference comments, some of
+which AACR-Bench derived from review bots' comments (flagged `bot_derived`), ship under
+AACR-Bench's Apache-2.0 licence as part of its dataset."""
 
 
 def notice(lead: str, modified: str, martian_where: str, qodo_where: str, swepr: bool = True) -> str:
