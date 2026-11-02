@@ -940,7 +940,16 @@ looks for is in `profiles/security/README.md`). Every one includes the shared
 contract `prompts/pass-sec-common.md`: an evidence block (source, boundary,
 sink, path, controls hunted), one owner per class, and the
 impact × exposure matrix the code pins as `securitySeverity`. The general
-`pass-security` and `pass-bounds` are not in the family and are unchanged.
+`pass-security` and `pass-bounds` are not in the family. `pass-bounds` is
+unchanged. The `pass-security` lens body is unchanged in PR builds; in scan
+builds it gains the `scan-sec-precision` narrowing of the same-principal and
+contrived-concurrency classes. Its candidates are security candidates
+(`packages/pi-plugin/src/include.ts SECURITY_CANDIDATE`): the validator's
+security rules judge them in every build (PR text is never counterevidence,
+a refutation cites the line that contradicts it, evidence is labelled line
+by line, and in PR rounds a sink the PR newly reaches is in scope), and
+they count as security findings when posted (`severity.ts
+isSecurityFinding`: the `security_max` channel and `scope = "security"`).
 
 ```toml
 # config.toml (a profile's [security] wins for triggers, only and fold)

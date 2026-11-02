@@ -105,6 +105,25 @@ describe("each security addendum binds exactly its scope, in its mode", () => {
     );
   });
 
+  // docs/profiles.md describes what the family does to the general security
+  // lens, and must not call it unchanged while a scan build narrows its body
+  // and the validator judges its candidates by the security rules.
+  // MUTATION: restore "are not in the family and are unchanged." in
+  // docs/profiles.md — this fails.
+  it("docs/profiles.md states what changes for pass-security, as the registry binds it", () => {
+    expect(ALL_PASSES).toContain("pass-security");
+    expect(ids("pass-security", "pr")).not.toContain("scan-sec-precision");
+    expect(ids("pass-security", "scan")).toContain("scan-sec-precision");
+    const doc = readFileSync(join(root, "docs", "profiles.md"), "utf8").replace(/\s+/g, " ");
+    expect(doc).not.toMatch(
+      /`pass-security` and `pass-bounds` are not in the family and are unchanged/,
+    );
+    expect(doc).toContain(
+      "The `pass-security` lens body is unchanged in PR builds; in scan builds it gains the `scan-sec-precision` narrowing",
+    );
+    expect(doc).toContain("Its candidates are security candidates");
+  });
+
   // MUTATION: scope validate-security-fold to "all" — this fails (every lens
   // would carry it in a PR build).
   it("with fold on, the fold binds the validator in PR builds, the needs-review rule in scans", () => {
