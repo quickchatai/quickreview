@@ -1357,7 +1357,15 @@ export function routeRegistrations(text: string): { line: number; method: string
   return out;
 }
 
-function routeInventory(files: readonly PrFileEntry[], io: SecurityFactsIo | null): SecurityFact[] {
+/** Where a route inventory reads: a PR's files and their directories, or a
+ * whole tree (a scan's stage 0), which has no PR and no changed directory. */
+type InventoryScope = "pr" | "tree";
+
+function routeInventory(
+  files: readonly PrFileEntry[],
+  io: SecurityFactsIo | null,
+  over: InventoryScope = "pr",
+): SecurityFact[] {
   const check = "route-inventory";
   if (io === null) return [fact(check, "unknown", NO_IO)];
   const code = (p: string) => CODE_RE.test(p) && !isTest(p);
@@ -1409,7 +1417,14 @@ function routeInventory(files: readonly PrFileEntry[], io: SecurityFactsIo | nul
     listing.capped ? `the files read were capped at ${SECURITY_FACTS_MAX_FILES}` : null,
     failed.length ? `${failed.length} file(s) could not be read` : null,
   ].filter((x): x is string => x !== null);
-  const scope = `the ${texts.size} file(s) read from the changed directories and route-like paths`;
+  const scope =
+    over === "tree"
+      ? `the ${texts.size} route-like file(s) read from the tree`
+      : `the ${texts.size} file(s) read from the changed directories and route-like paths`;
+  const lead =
+    over === "tree"
+      ? "An entry point without the guard its neighbours carry is a lead for the model"
+      : "A route the PR adds or moves without the guard its neighbours carry is the lead";
   if (total === 0)
     return [
       failed.length || listing.capped
@@ -1425,7 +1440,7 @@ function routeInventory(files: readonly PrFileEntry[], io: SecurityFactsIo | nul
       ...fact(
         check,
         "found",
-        `${total} route registration(s) in ${withRoutes} of ${scope}${limits.length ? `; ${limits.join("; ")}` : ""}. A route the PR adds or moves without the guard its neighbours carry is the lead`,
+        `${total} route registration(s) in ${withRoutes} of ${scope}${limits.length ? `; ${limits.join("; ")}` : ""}. ${lead}`,
       ),
       items,
     },
@@ -1442,6 +1457,19 @@ function routeInventory(files: readonly PrFileEntry[], io: SecurityFactsIo | nul
 export const SECURITY_TRIGGER_CHECKS: readonly SecFactCheck[] = SEC_FACT_CHECKS.filter(
   (c) => c !== "route-inventory",
 );
+
+/**
+ * The route inventory over a whole tree, worded for one — no PR, no changed
+ * directory: the route-like files the listing holds (a scan's stage 0, which
+ * a person starts a threat model from). Total, as `computeSecurityFacts` is.
+ */
+export function treeRouteInventory(io: SecurityFactsIo | null): SecurityFact[] {
+  try {
+    return routeInventory([], io, "tree");
+  } catch {
+    return [fact("route-inventory", "unknown", "the check failed on this input")];
+  }
+}
 
 /**
  * Every check over a PR's files, cheapest first — or the ones `checks`

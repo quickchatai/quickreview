@@ -13,6 +13,7 @@ import {
   hasUniqueConstraint,
   renderSecurityFacts,
   routeRegistrations,
+  treeRouteInventory,
   type SecFactCheck,
   type SecurityFact,
   type SecurityFactsIo,
@@ -668,6 +669,27 @@ describe("route-inventory", () => {
     expect(statuses(computeSecurityFacts([util], noListing), "route-inventory")).toEqual([
       "unknown",
     ]);
+  });
+
+  // MUTATION: word treeRouteInventory's scope or lead as the PR's — this fails.
+  it("over a whole tree (a scan's stage 0) it reads route-like files and never speaks of a PR", () => {
+    const io = repo({
+      "src/routes/users.ts": routes,
+      "src/lib/util.ts": 'app.get("/not-route-like-path");\n',
+    });
+    const [fact, ...rest] = treeRouteInventory(io);
+    expect(rest).toEqual([]);
+    expect(fact?.status).toBe("found");
+    expect(fact!.detail).toBe(
+      "2 route registration(s) in 1 of the 1 route-like file(s) read from the tree. An entry point without the guard its neighbours carry is a lead for the model",
+    );
+    expect(JSON.stringify(fact)).not.toMatch(/\bPR\b|changed directories/);
+    // The PR wording is unchanged.
+    const [prFact] = only(computeSecurityFacts([pr], io), "route-inventory");
+    expect(prFact!.detail).toMatch(
+      /read from the changed directories and route-like paths\. A route the PR adds or moves without the guard its neighbours carry is the lead$/,
+    );
+    expect(treeRouteInventory(null).map((f) => f.status)).toEqual(["unknown"]);
   });
 
   it("reads registrations across frameworks and skips outbound calls", () => {

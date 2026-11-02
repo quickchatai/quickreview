@@ -959,6 +959,9 @@ describe("stage 0 drafts the threat model when none exists", () => {
     await s.idle();
     expect(r.specs.map((x) => x.agent)).toEqual([`${THREAT_MODEL_PASS}--${SCAN_DEFAULTS.tier}`]);
     expect(r.specs[0]!.prompt).toContain("/users/{id}");
+    // A scan has no PR: the inventory is worded for the tree.
+    expect(r.specs[0]!.prompt).toContain("route-like file(s) read from the tree");
+    expect(r.specs[0]!.prompt).not.toContain("A route the PR adds");
     const draft = r.state.read(THREAT_MODEL_DRAFT_FILE)!;
     expect(draft).toContain("DRAFT threat model");
     expect(draft).toContain("the tenant filter on every query");

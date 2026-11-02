@@ -132,7 +132,7 @@ import { globMatcherOrNothing } from "../glob.js";
 import { VALIDATE_PASS } from "../include.js";
 import type { LensTuningMap } from "../lenstuning.js";
 import { SECURITY_FAMILY } from "../passes.js";
-import { computeSecurityFacts, renderSecurityFacts } from "../secfacts.js";
+import { renderSecurityFacts, treeRouteInventory } from "../secfacts.js";
 import { isSecurityFinding } from "../severity.js";
 import {
   parseThreatModel,
@@ -2176,9 +2176,7 @@ export class ScanRunner {
       readBase: () => null,
       listHead: () => tree.files.map((f) => f.path),
     };
-    const inventory = renderSecurityFacts(
-      computeSecurityFacts([], io).filter((f) => f.check === "route-inventory"),
-    );
+    const inventory = renderSecurityFacts(treeRouteInventory(io));
     // Priced from the last threat-model run that finished here; none means
     // no estimate, and the cap holds it as it holds a calibration run.
     const { file } = this.load();
