@@ -85,6 +85,7 @@ import {
   type ScanStopResult,
   type ValidityView,
   VALIDITY_ORDER,
+  isDoubted,
   validityOf,
 } from "../setup/scanreport.js";
 import { currentLease, leaseIsLive, type LeaseRecord } from "../setup/scanlease.js";
@@ -172,8 +173,7 @@ export function matchesFilter(f: ScanFilter, x: ScanFinding): boolean {
   if (f.lens && ![x.lens, ...(x.lenses ?? [])].some((l) => l === f.lens || l === `pass-${f.lens}`))
     return false;
   if (f.severity && x.severity !== f.severity) return false;
-  if (f.doubted !== undefined && (x.doubt !== null && x.doubt !== undefined) !== f.doubted)
-    return false;
+  if (f.doubted !== undefined && isDoubted(x) !== f.doubted) return false;
   if (f.validity !== undefined && validityOf(x) !== f.validity) return false;
   return true;
 }
@@ -683,7 +683,7 @@ function headerLines(deps: ScanTabDeps, repo: string | undefined): string[] {
 }
 
 function findingTitle(f: ScanFinding): string {
-  return `${STATE_GLYPH[f.state] ?? "?"} ${f.severity} ${f.lens.replace(/^pass-/, "")}  ${sanitizeText(f.path).replace(/\s+/g, " ")}:${f.start}${f.doubt ? "  ?" : ""}${f.not_reproduced ? "  ↺" : ""}${dismissedLookalike(f) ? "  ≈" : ""}`;
+  return `${STATE_GLYPH[f.state] ?? "?"} ${f.severity} ${f.lens.replace(/^pass-/, "")}  ${sanitizeText(f.path).replace(/\s+/g, " ")}:${f.start}${isDoubted(f) ? "  ?" : ""}${f.not_reproduced ? "  ↺" : ""}${dismissedLookalike(f) ? "  ≈" : ""}`;
 }
 
 const TIER_TITLE: Record<ValidityView, string> = {

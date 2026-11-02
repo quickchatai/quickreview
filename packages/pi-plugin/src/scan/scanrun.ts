@@ -227,6 +227,7 @@ import {
 import type { UnitCut } from "./unitcut.js";
 import { LEASE_RENEW_MS, type LeaseRecord, type ScanLease } from "./scanlease.js";
 import {
+  isDoubted,
   parseRunFile,
   parseStopRequest,
   parseStopResult,
@@ -2838,7 +2839,7 @@ export class ScanRunner {
     c.findings = reported.length;
     // A needs-review finding keeps its doubt as the proof gap, but it is
     // counted as what it is, never as doubtful.
-    c.doubted = reported.filter((r) => r.doubt !== null && r.validity !== "needs-review").length;
+    c.doubted = reported.filter(isDoubted).length;
     c.confirmed = reported.filter((r) => r.validity === "confirmed").length;
     c.likely = reported.filter((r) => r.validity === "likely").length;
     const needsReview = reported.filter((r) => r.validity === "needs-review").length;

@@ -37,7 +37,7 @@ import { dehash, formatEventTags } from "../memory/eventtags.js";
 import type { MemoryStore } from "../memory/store.js";
 import type { Refusal, StateFs, TrackerSink, TrackerTicket } from "./engine.js";
 import { goneDismissal, settled, type FindingsStore, type ScanFinding } from "./findings.js";
-import { DISMISS_REASON_MAX, validityOf } from "./scanreport.js";
+import { DISMISS_REASON_MAX, isDoubted, validityOf } from "./scanreport.js";
 import { findingLocation } from "./presentation.js";
 
 export const SCAN_TAG = "scan";
@@ -103,6 +103,16 @@ function validityLine(f: ScanFinding): string {
   return `${v}${f.scenario ? ` — ${oneLine(f.scenario)}` : ""}`;
 }
 
+/** The ticket's "Validated" line: a needs-review finding is a question for a
+ * person, never "may not be valid" (scanreport.ts `isDoubted`). */
+function validatedLine(f: ScanFinding): string {
+  if (validityOf(f) === "needs-review")
+    return `needs review — a person checks${f.doubt ? `: ${oneLine(f.doubt.reason)}` : ""}`;
+  if (isDoubted(f) && f.doubt)
+    return `MAY NOT BE VALID — ${f.doubt.word}: ${oneLine(f.doubt.reason)}`;
+  return f.validated ? "yes" : "no validator looked at it";
+}
+
 /** The ticket a promoted finding becomes. The body is rendered from the
  * stored finding; the companion adds at most a title and a note. */
 export function findingTicket(
@@ -120,7 +130,7 @@ export function findingTicket(
     "",
     `- **Severity:** ${f.severity}${f.confidence !== null ? ` (confidence ${f.confidence})` : ""}`,
     `- **Kind:** ${f.kind}`,
-    `- **Validated:** ${f.doubt ? `MAY NOT BE VALID — ${f.doubt.word}: ${oneLine(f.doubt.reason)}` : f.validated ? "yes" : "no validator looked at it"}`,
+    `- **Validated:** ${validatedLine(f)}`,
     `- **Validity:** ${validityLine(f)}`,
     "",
     `**Claim.** ${oneLine(f.claim)}`,

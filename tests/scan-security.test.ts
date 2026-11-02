@@ -23,10 +23,14 @@ import { dirname, join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, SCAN_DEFAULTS, type Config, type ScanConfig } from "../src/config.js";
 import { homeProfileLookup, type InstallEnv } from "../src/install.js";
+import { scanFacts } from "../src/setup/scanfacts.js";
+import { findingTicket } from "../src/setup/triage.js";
+import { matchesFilter } from "../src/tui/scantab.js";
 import type { CaseOutcome, CaseSpec } from "@quickchatai/pi-quickreview/src/scan/scanports.js";
 import {
   FindingsStore,
   type ReportedFinding,
+  type ScanFinding,
 } from "@quickchatai/pi-quickreview/src/scan/findings.js";
 import {
   kindAllowed,
@@ -41,6 +45,7 @@ import { scanConfigOf, scanSettings } from "@quickchatai/pi-quickreview/src/scan
 import { stateHomeFs } from "@quickchatai/pi-quickreview/src/scan/scanfs.js";
 import { renderPreview, renderStatus } from "@quickchatai/pi-quickreview/src/scan/scanrender.js";
 import {
+  findingJson,
   parseScanArgs,
   runScanVerb,
   type ScanVerbDeps,
@@ -637,6 +642,34 @@ describe("[security] fold: a security candidate the skeptic could not settle is 
     const app = s.status().run!.cases.find((c) => c.unit === "app")!;
     expect([app.findings, app.needs_review, app.doubted]).toEqual([5, 3, 2]);
     expect(renderStatus(s.status())).toContain("3 needs-review, 2 doubtful");
+  });
+
+  // MUTATION: test `f.doubt !== null` in place of `isDoubted(f)` in any one
+  // of the store's filter, matchesFilter, findingJson, scanFacts or the
+  // ticket's Validated line — this fails.
+  it("a needs-review finding is never doubted: not under --doubted, kept by --not-doubted and `valid`, not counted by the portrait, no MAY NOT BE VALID ticket", async () => {
+    const r = rig({ fold: true, lens: LENS, validator: SKEPTIC });
+    await runStage1(new ScanRunner(r.ports));
+    const store = new FindingsStore(r.state);
+    const all = store.list().findings;
+    const review = all.filter((f) => f.validity === "needs-review");
+    const doubtful = all.filter((f) => f.validity === "doubtful");
+    expect([review.length, doubtful.length]).toEqual([3, 2]);
+    expect(review.every((f) => f.doubt !== null)).toBe(true);
+    const lines = (fs: ScanFinding[]) => fs.map((f) => f.start).sort();
+    expect(lines(store.list({ doubted: true }).findings)).toEqual(lines(doubtful));
+    expect(lines(store.list({ doubted: false }).findings)).toEqual(lines(review));
+    expect(review.every((f) => matchesFilter({ doubted: false }, f))).toBe(true);
+    expect(review.some((f) => matchesFilter({ doubted: true }, f))).toBe(false);
+    expect(review.map((f) => findingJson(f).doubted)).toEqual([false, false, false]);
+    expect(doubtful.map((f) => findingJson(f).doubted)).toEqual([true, true]);
+    expect(scanFacts(r.state).scan?.findings.doubted).toBe(2);
+    for (const f of review) {
+      const body = findingTicket(f, "S").body;
+      expect(body).not.toContain("MAY NOT BE VALID");
+      expect(body).toContain("**Validated:** needs review — a person checks");
+    }
+    expect(findingTicket(doubtful[0]!, "S").body).toContain("MAY NOT BE VALID");
   });
 
   // MUTATION: map needs-review regardless of fold (drop `!fold ||` in

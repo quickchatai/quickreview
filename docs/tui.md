@@ -229,7 +229,8 @@ first (a traced scenario), then likely (a real mechanism, reachability not
 fully traced), doubtful (refuted or class-matched — kept, never dropped) and
 unknown (no skeptic judged it) — each under its heading, most severe first
 inside a tier, style findings grouped per rule with a count (`?` = may not be
-valid, `↺` = not reproduced: a re-read
+valid — never on a needs-review security finding, which is a question for a
+person, not a doubt — `↺` = not reproduced: a re-read
 of its unchanged code did not report it again, so it stays open for triage
 — only changed code is ever settled `fixed`) — over the selected one's detail,
 which the mouse wheel scrolls when it is longer than the pane (j/k and the

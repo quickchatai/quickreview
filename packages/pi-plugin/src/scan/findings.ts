@@ -106,6 +106,7 @@ import {
   goneDismissal,
   lookalikeRank,
   parseFindingsFile,
+  isDoubted,
   validityOf,
   type Validity,
   type ValidityView,
@@ -1215,7 +1216,7 @@ export class FindingsStore {
             (f.lenses ?? []).includes(filter.lens)) &&
           (filter.unit === undefined || f.unit === filter.unit) &&
           (filter.severity === undefined || f.severity === filter.severity) &&
-          (filter.doubted === undefined || (f.doubt !== null) === filter.doubted) &&
+          (filter.doubted === undefined || isDoubted(f) === filter.doubted) &&
           (filter.validity === undefined || validityOf(f) === filter.validity),
       )
       .sort(

@@ -48,7 +48,7 @@ import {
   type ScanVerbs,
   type TicketsClosed,
 } from "./scanrender.js";
-import { dismissedLookalike, validityOf } from "./scanreport.js";
+import { dismissedLookalike, isDoubted, validityOf } from "./scanreport.js";
 import type { ScanRunner, ScanRun, ScanSettings, ScanStatus } from "./scanrun.js";
 import { lensTiers, stage2Lenses, MAX_STAGE2_ROWS } from "./stage2.js";
 import type { StoredStage2Proposal } from "./stage2request.js";
@@ -342,7 +342,8 @@ export interface FindingJson {
   validity: string;
   state: string;
   claim: string;
-  /** Marked "may not be valid" by the validator. */
+  /** Marked "may not be valid" by the validator — never a needs-review
+   * finding, whose doubt is the proof gap a person checks (`isDoubted`). */
   doubted: boolean;
   doubt: { word: string; reason: string; class: string | null } | null;
   /** A dismissed finding it resembles — flagged, never auto-dismissed. */
@@ -367,7 +368,7 @@ export function findingJson(f: ScanFinding): FindingJson {
     validity: validityOf(f),
     state: f.state,
     claim: f.claim,
-    doubted: f.doubt !== null,
+    doubted: isDoubted(f),
     doubt: f.doubt
       ? { word: f.doubt.word, reason: f.doubt.reason, class: f.doubt.class ?? null }
       : null,

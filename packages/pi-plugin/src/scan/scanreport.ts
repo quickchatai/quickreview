@@ -71,6 +71,15 @@ export function validityOf(f: { validity?: Validity | null }): ValidityView {
     : "unknown";
 }
 
+/** Is a finding DOUBTED — the skeptic's doubt stands against it? A
+ * needs-review finding keeps its doubt as the proof gap a person checks, and
+ * is never counted, filtered or marked as doubted: the ONE rule the run's
+ * counts, the store's filter, the JSON, the portrait, the TUI and the ticket
+ * share. */
+export function isDoubted(f: { doubt?: unknown; validity?: Validity | null }): boolean {
+  return f.doubt !== null && f.doubt !== undefined && validityOf(f) !== "needs-review";
+}
+
 const clean = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 // ---- the two records ---------------------------------------------------------------
