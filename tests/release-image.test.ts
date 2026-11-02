@@ -25,6 +25,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseConfig } from "../src/config.js";
 import { readInventory } from "./helpers/context-files.js";
+import { copiedBeforeTsc, outOfTreeTypeInputs } from "./helpers/out-of-tree-imports.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel: string): string => readFileSync(join(root, rel), "utf8");
@@ -257,6 +258,15 @@ describe("release image — any uid, a root-owned tree", () => {
         sources.some((s) => covers(a, s)),
         a,
       ).toBe(true);
+  });
+
+  it("the build stage copies every file the app imports from outside its trees", () => {
+    // src/plugincli.ts types itself from plugins/qcr/render.d.mts; without it
+    // tsc reads the untyped render.mjs and the build stage fails.
+    // MUTATION: drop the `COPY plugins/qcr/render.d.mts` line — this fails.
+    const inputs = outOfTreeTypeInputs(root);
+    expect(inputs).toContain("plugins/qcr/render.d.mts");
+    for (const rel of inputs) expect(copiedBeforeTsc(lines, rel), rel).toBe(true);
   });
 
   it("the secrets and state of a checkout are never admitted", () => {

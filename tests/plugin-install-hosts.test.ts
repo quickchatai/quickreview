@@ -13,8 +13,10 @@
 // What it holds, per host: the render lands in the data home at the running
 // release and is the folder the host's verbs are given; a re-install; an
 // install and an update over an older release, which re-point the host and
-// delete the older render; an uninstall through the host's own verbs; a
-// failing host, reported on its own row; `--project`, a skip with the
+// delete the older render; a re-point that fails after removing the old
+// install, which puts the old one back, or says the host is left without it;
+// an uninstall through the host's own verbs; a failing host, reported on its
+// own row; `--project`, a skip with the
 // reason that runs nothing; and the invoke line the summary prints.
 import {
   existsSync,
@@ -64,6 +66,11 @@ const die = (m) => { console.error(m); process.exit(1); };
 const json = (o) => { console.log(JSON.stringify(o, null, 2)); process.exit(0); };
 const read = (dir, rel) => JSON.parse(fs.readFileSync(path.join(dir, rel), "utf8"));
 const verb = ${words};
+const onceFile = path.join(D, "${name}-fail-once");
+if (fs.existsSync(onceFile) && verb.endsWith(fs.readFileSync(onceFile, "utf8").trim())) {
+  fs.rmSync(onceFile);
+  die("the fake ${name} was told to fail once");
+}
 `;
 
 const FAKE_CODEX = `${preamble("codex", `argv.slice(0, argv[1] === "marketplace" ? 3 : 2).join(" ")`)}
@@ -212,6 +219,9 @@ interface HostCase {
   invoke: string[];
   /** The verb a failing install fails at, as the fake names it. */
   installVerb: string;
+  /** The second step of a re-point, after the first removed the old
+   * install, as the fake names it. */
+  repointVerb: string;
   /** The argv of a fresh install, of one over an older release at `old`,
    * and of an uninstall, given the render `dir`. */
   fresh(dir: string): string[];
@@ -240,6 +250,7 @@ const HOSTS: HostCase[] = [
     fake: FAKE_CODEX,
     invoke: ["$qcr:review", "$qcr:scan", "$qcr:setup"],
     installVerb: "plugin add",
+    repointVerb: "plugin marketplace add",
     fresh: (dir) => [
       "plugin list --json",
       "plugin marketplace list --json",
@@ -274,6 +285,7 @@ const HOSTS: HostCase[] = [
     fake: FAKE_COPILOT,
     invoke: ["/qcr-review", "/qcr-scan", "/qcr-setup"],
     installVerb: "plugin install",
+    repointVerb: "plugin marketplace add",
     fresh: (dir) => [
       "plugin list --json",
       "plugin marketplace list --json",
@@ -304,6 +316,7 @@ const HOSTS: HostCase[] = [
     fake: FAKE_GEMINI,
     invoke: ["/qcr:review", "/qcr:scan", "/qcr:setup"],
     installVerb: "extensions install",
+    repointVerb: "extensions install",
     fresh: (dir) => ["extensions list -o json", `extensions install ${dir} --consent`],
     over: (dir) => [
       "extensions list -o json",
@@ -322,6 +335,7 @@ const HOSTS: HostCase[] = [
     fake: FAKE_AGY,
     invoke: ["/qcr:review", "/qcr:scan", "/qcr:setup"],
     installVerb: "plugin install",
+    repointVerb: "plugin install",
     fresh: (dir) => ["plugin list --json", `plugin install ${dir}`],
     over: (dir) => ["plugin list --json", "plugin uninstall qcr", `plugin install ${dir}`],
     uninstall: ["plugin list --json", "plugin uninstall qcr"],
@@ -402,6 +416,8 @@ const setState = (h: HostCase, s: FakeState): void =>
   writeFileSync(join(dir, "fake", `${h.exe}-state.json`), JSON.stringify(s));
 const failAt = (h: HostCase, verb: string): void =>
   writeFileSync(join(dir, "fake", `${h.exe}-fail`), verb);
+const failOnce = (h: HostCase, verb: string): void =>
+  writeFileSync(join(dir, "fake", `${h.exe}-fail-once`), verb);
 const renderDir = (h: HostCase, version = VERSION): string =>
   join(data, "qcr", "plugins", h.host, version);
 const hostRender = (h: HostCase, version = VERSION) =>
@@ -545,6 +561,55 @@ describe.each(HOSTS)("qcr plugin for $label", (h) => {
     ]);
     expect(await qcr("plugin", "install", "--to", h.host)).toBe(1);
     expect(out.join("\n")).toMatch(new RegExp(`^${h.label}: failed: .*told to fail`, "m"));
+  });
+
+  // MUTATION: drop the put-back from the re-point (codex and copilot: the
+  // marketplace add of the old folder; gemini and agy: the install from the
+  // old source) — the host is left loading nothing and this fails.
+  it("an update whose re-point fails after removing the old install puts the old one back", async () => {
+    const old = olderInstall(h);
+    failOnce(h, h.repointVerb);
+    const { code, rows } = await qcrJson("plugin", "update");
+    expect(code).toBe(1);
+    expect(rowOf(rows, h)).toEqual(
+      expect.objectContaining({
+        outcome: "failed",
+        removed: [],
+        detail: expect.stringMatching(
+          new RegExp(`told to fail once; the previous install, from ${old}, was put back$`),
+        ) as unknown,
+      }),
+    );
+    expect(h.loads(fakeState(h))).toBe(old);
+    expect(existsSync(old)).toBe(true);
+    // …so the next update still finds it and re-points it
+    const again = await qcrJson("plugin", "update");
+    expect(again.code).toBe(0);
+    expect(rowOf(again.rows, h)).toEqual(
+      expect.objectContaining({ outcome: "updated", removed: [old] }),
+    );
+    expect(h.loads(fakeState(h))).toBe(renderDir(h));
+  });
+
+  // MUTATION: drop the afterRemoval note from the failed row — this fails.
+  it("a re-point that cannot put the old install back says the host is left without it", async () => {
+    const old = olderInstall(h);
+    failAt(h, h.repointVerb);
+    const { code, rows } = await qcrJson("plugin", "update");
+    expect(code).toBe(1);
+    expect(rowOf(rows, h)).toEqual(
+      expect.objectContaining({
+        outcome: "failed",
+        detail: expect.stringMatching(
+          new RegExp(
+            `told to fail .*; the previous install was already removed, so ${h.label} has no QuickReview now: \`qcr plugin install --to ${h.host}\` installs it again$`,
+          ),
+        ) as unknown,
+      }),
+    );
+    expect(h.loads(fakeState(h))).toBeNull();
+    // no render is deleted on a failed row
+    expect(existsSync(old)).toBe(true);
   });
 
   // MUTATION: drop the noProject skip in cmdPlugin — the host is given a

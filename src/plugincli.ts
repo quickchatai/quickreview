@@ -17,7 +17,11 @@
 // install instead. Update
 // re-renders and re-points every host it finds QuickReview installed in;
 // uninstall removes it through the host's own verb. Both, and install, then
-// delete the renders no host references any more.
+// delete the renders no host references any more. A re-point that removes
+// the working install first (Codex and Copilot drop the marketplace, Gemini
+// and Antigravity uninstall) and then fails puts the previous install back
+// from its render, which nothing has deleted yet; when that cannot be done,
+// the failed row says the host is left without QuickReview.
 //
 // Cursor and opencode have no install verb, so their render is copied where
 // the host loads it, and a record of every file and folder the copy wrote
@@ -84,7 +88,9 @@
 //     release, so it is install and update both.
 //   - `codex plugin list --json` is `{installed: [{pluginId, version}]}`;
 //     `codex plugin marketplace list --json` is `{marketplaces: [{name,
-//     root}]}`. A plugin whose marketplace is gone is not listed.
+//     root}]}`. A plugin whose marketplace is gone is not listed; its
+//     enablement stays in config.toml, so adding the marketplace back lists
+//     it again, enabled.
 //   - `codex plugin remove qcr@<mkt> --json`, then `marketplace remove`.
 //   - Plugins are enabled in the user's config only: no project scope.
 //   - Failures are one `Error: …` line on stderr, exit 1.
@@ -666,6 +672,27 @@ function landed(
 const noAnswer = (exe: string, args: readonly string[]): string =>
   `\`${[exe, ...args].join(" ")}\` did not answer`;
 
+/** What a re-point that failed after its first step removed the working
+ * install adds to the host's message. No render has been deleted yet on that
+ * path, so the previous install is put back from `prev` while that folder is
+ * there; otherwise the row says the host is left without QuickReview, and how
+ * to install it again. */
+function afterRemoval(
+  h: { host: string; label: string },
+  prev: string | null,
+  restore: (prev: string) => boolean,
+): string {
+  if (prev !== null && prev !== "" && existsSync(prev) && restore(prev))
+    return `; the previous install, from ${prev}, was put back`;
+  return `; the previous install was already removed, so ${h.label} has no QuickReview now: \`qcr plugin install --to ${h.host}\` installs it again`;
+}
+
+/** `a` with `more` added to its message. */
+const withMessage = (a: HostAnswer, more: string): HostAnswer => ({
+  ...a,
+  message: `${a.message}${more}`,
+});
+
 /** A host that installs from a local marketplace the render holds (Codex,
  * Copilot): the marketplace pointed at the render, then the plugin
  * installed from it. */
@@ -709,11 +736,17 @@ function marketplaceInstaller(m: MarketplaceHost): HostInstaller {
     if (at === undefined)
       return { ok: false, json: null, message: noAnswer(m.exe, m.marketplaces) };
     if (at !== null && real(at) === real(dir)) return { ok: true, json: null, message: "" };
-    if (at !== null) {
-      const gone = ask(ctx, exe, m.removeMarketplace(ctx));
-      if (!gone.ok) return gone;
-    }
-    return ask(ctx, exe, m.addMarketplace(ctx, dir));
+    if (at === null) return ask(ctx, exe, m.addMarketplace(ctx, dir));
+    const gone = ask(ctx, exe, m.removeMarketplace(ctx));
+    if (!gone.ok) return gone;
+    const added = ask(ctx, exe, m.addMarketplace(ctx, dir));
+    if (added.ok) return added;
+    // the plugin's enablement outlives its marketplace, so adding the old
+    // folder back restores the install
+    return withMessage(
+      added,
+      afterRemoval(m, at, (prev) => ask(ctx, exe, m.addMarketplace(ctx, prev)).ok),
+    );
   };
   const id = (ctx: Ctx): string => `${ctx.render.PLUGIN_NAME}@${ctx.render.MARKETPLACE_NAME}`;
   /** Point, then install: the row. `before` is what was installed. */
@@ -932,9 +965,16 @@ function folderInstaller(f: FolderHost): HostInstaller {
       const un = ask(ctx, exe, f.uninstall(ctx));
       if (!un.ok) return row(host, "failed", un.message, { dir, scopes: ["user"] });
     }
-    const { args, env } = f.install(ctx, dir);
-    const inst = ask(ctx, exe, args, env === undefined ? {} : { env });
-    if (!inst.ok) return row(host, "failed", inst.message, { dir, scopes: ["user"] });
+    const install = (from: string): HostAnswer => {
+      const { args, env } = f.install(ctx, from);
+      return ask(ctx, exe, args, env === undefined ? {} : { env });
+    };
+    const inst = install(dir);
+    if (!inst.ok) {
+      const more =
+        before === null ? "" : afterRemoval(f, before.source, (prev) => install(prev).ok);
+      return row(host, "failed", `${inst.message}${more}`, { dir, scopes: ["user"] });
+    }
     return landed(ctx, f, outcome, inst.message, dir);
   };
   return {

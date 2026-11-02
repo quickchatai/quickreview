@@ -102,6 +102,9 @@ COPY packages packages
 COPY src src
 COPY extensions extensions
 COPY plugins/qcr/render.mjs plugins/qcr/render.mjs
+# Its types: src/plugincli.ts imports them, and without them tsc reads the
+# untyped .mjs and the build fails.
+COPY plugins/qcr/render.d.mts plugins/qcr/render.d.mts
 COPY plugins/qcr/templates plugins/qcr/templates
 RUN npx tsc -b && node scripts/verify-dist.mjs
 # The pi Plugin's skills, rendered from the one skill source as the build

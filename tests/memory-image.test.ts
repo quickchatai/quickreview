@@ -45,6 +45,7 @@ import {
 } from "../src/config.js";
 import { sidecarConfig, startSidecar } from "../src/openviking/sidecar.js";
 import type { SupervisedChild } from "../src/openviking/index.js";
+import { copiedBeforeTsc, outOfTreeTypeInputs } from "./helpers/out-of-tree-imports.js";
 import { PROCESS_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 import { waitFor } from "./helpers/wait-for.js";
 
@@ -211,6 +212,20 @@ describe("memory image — build context", () => {
       const used = copies.some((src) => src === a || src.startsWith(`${a}/`));
       expect(used, `${a} is admitted but never copied`).toBe(true);
     }
+  });
+
+  it("copies every file the app's build imports from outside its trees", () => {
+    // tsc -b compiles the whole app, src/plugincli.ts too, which types itself
+    // from plugins/qcr/render.d.mts; without it the build stage fails.
+    // MUTATION: drop the `COPY plugins/qcr/render.d.mts` line — this fails.
+    const steps = dockerfile
+      .replace(/\\\n/g, " ")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l !== "" && !l.startsWith("#"));
+    const inputs = outOfTreeTypeInputs(root);
+    expect(inputs).toContain("plugins/qcr/render.d.mts");
+    for (const rel of inputs) expect(copiedBeforeTsc(steps, rel), rel).toBe(true);
   });
 
   it("ships exactly the runtime packages the sidecar's import closure reaches", () => {

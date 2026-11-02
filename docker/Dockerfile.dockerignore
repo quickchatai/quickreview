@@ -8,6 +8,7 @@
 !tsconfig.json
 !packages
 !plugins/qcr/render.mjs
+!plugins/qcr/render.d.mts
 !plugins/qcr/templates
 !src
 !extensions

@@ -8,6 +8,7 @@
 !packages
 !src
 !extensions
+!plugins/qcr/render.d.mts
 !scripts
 !config.example.toml
 !docker/memory/entrypoint.sh

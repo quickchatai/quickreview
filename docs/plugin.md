@@ -57,7 +57,11 @@ qcr plugin uninstall --from all      # every host
 
 `qcr update` updates `qcr` itself; `qcr plugin update` then brings every host
 plugin up to that release. Install, update and uninstall each end by
-deleting the rendered releases no host uses any more.
+deleting the rendered releases no host uses any more. Moving Codex, Copilot
+CLI, Gemini CLI or Antigravity to a new release removes the old install
+first; if the new one then fails, the old release is put back, and when it
+cannot be, the failed row says so and `qcr plugin install --to <host>`
+installs it again.
 
 ## Moving from the Docker-based Claude Code plugin
 

@@ -9,8 +9,9 @@
 //   - every manifest carries the version it was rendered at, and the three
 //     marketplace hosts get a local marketplace naming the plugin;
 //   - a host body runs qcr only at its contract, falls back to the pinned
-//     `npx`, scans with `--sandbox host`, and Codex's asks for the network
-//     once, up front; a pi body hands the person the `/qcr-…` line;
+//     `npx`, scans with `--sandbox host` in calls qcr scan parses, makes a
+//     repo's first unit cut, and Codex's asks for the network once, up
+//     front; a pi body hands the person the `/qcr-…` line;
 //   - plugins/qcr/ is a source (the renderer and the templates, no manifest)
 //     that names no Docker, ghcr or fixed release, and the repo root carries
 //     no plugin manifest or marketplace.
@@ -31,6 +32,8 @@ import { dirname, join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { parse as parseToml } from "smol-toml";
 import { supportedContracts } from "@quickchatai/pi-quickreview/src/contract.js";
+import { parseScanArgs } from "@quickchatai/pi-quickreview/src/scan/scanverbs.js";
+import { ADJUST_OPS } from "@quickchatai/pi-quickreview/src/scan/unitcut.js";
 import {
   COMMANDS,
   HOSTS,
@@ -377,6 +380,45 @@ describe("the bodies", () => {
     expect(review).toMatch(/Wait for a go/);
     expect(review).toMatch(/only with `--to pr`/);
     expect(review).not.toMatch(/--post/);
+  });
+
+  // MUTATION: spell a scan call in plugins/qcr/templates/scan.md's host body
+  // `scan unit propose` — this fails.
+  it.each(HOSTS)("%s: every scan call the body names is one qcr scan parses", (t) => {
+    for (const [p, body] of bodies(t))
+      for (const c of runs(body).filter((r) => /--schema 1 scan\b/.test(r))) {
+        const argv = c.replace(/^`+|`+$/g, "").split(/\s+/);
+        const rest = argv.slice(argv.indexOf("scan") + 1).filter((a, i, all) => {
+          // --sandbox is qcr scan's own flag (src/scancli.ts), taken before the parse
+          return a !== "--sandbox" && all[i - 1] !== "--sandbox";
+        });
+        expect(() => parseScanArgs(rest), `${p}: ${c}`).not.toThrow();
+      }
+  });
+
+  // A repo's first scan has no unit cut, and the preview stops on it; the
+  // body makes one rather than ending there.
+  // MUTATION: drop the no-cut branch from plugins/qcr/templates/scan.md's host
+  // body — this fails.
+  it.each(HOSTS)("%s: scan proposes the first unit cut and saves it on a go", (t) => {
+    const scan = bodies(t).find(([p]) => /scan/.test(p))![1];
+    const at = [
+      "no saved unit cut",
+      "`qcr --schema 1 scan units propose --sandbox host`",
+      "ask whether to save it",
+      "`qcr --schema 1 scan units save --sandbox host`",
+      "preview again",
+    ].map((s) => scan.indexOf(s));
+    expect(
+      at.every((i) => i >= 0),
+      String(at),
+    ).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    // a draft save refuses is fixed with the adjust ops qcr takes, every one named
+    // MUTATION: add an op to ADJUST_OPS in packages/pi-plugin/src/scan/unitcut.ts — this fails.
+    expect(scan).toContain("`qcr --schema 1 scan units adjust --file - --sandbox host`");
+    const named = /a JSON array of ops on stdin \(([^;]+);/.exec(scan)?.[1] ?? "";
+    expect([...named.matchAll(/`(\w+)`/g)].map((m) => m[1])).toEqual([...ADJUST_OPS]);
   });
 
   it.each(HOSTS)("%s: review and scan say what a refusal of the contract looks like", (t) => {
