@@ -11,7 +11,9 @@
 // into the package: a host loads the folder in place long after this run,
 // and an `npx` cache, the package an update replaces, are both disposable.
 // It then points the host there through the host's own non-interactive verb,
-// at user scope, or at the host's project scope with `--project`. Update
+// at user scope, or at the host's project scope with `--project`; a host
+// with no project scope is skipped with the reason, never given a user
+// install instead. Update
 // re-renders and re-points every host it finds QuickReview installed in;
 // uninstall removes it through the host's own verb. Both, and install, then
 // delete the renders no host references any more.
@@ -47,6 +49,61 @@
 //     `claude plugin marketplace remove quickreview-local` drops it.
 //   - Every verb takes `--json` and prints one result line (`outcome`,
 //     `message`, a `failureCode` on failure) and exits 0 or 1.
+//
+// Codex (probed with codex-cli 0.162.1, CODEX_HOME in a throwaway HOME):
+//   - `codex plugin marketplace add <dir> --json` reads the render's
+//     `.claude-plugin/marketplace.json`; re-adding the same dir is an ok
+//     no-op (`alreadyAdded`), but a dir other than the one the name points at
+//     fails ("already added from a different source; remove it before adding
+//     this source"), so a re-point is `marketplace remove <name>`, then add.
+//   - `codex plugin add qcr@<mkt> --json` copies the plugin into its cache
+//     and enables it in config.toml; run again it installs the folder's
+//     release, so it is install and update both.
+//   - `codex plugin list --json` is `{installed: [{pluginId, version}]}`;
+//     `codex plugin marketplace list --json` is `{marketplaces: [{name,
+//     root}]}`. A plugin whose marketplace is gone is not listed.
+//   - `codex plugin remove qcr@<mkt> --json`, then `marketplace remove`.
+//   - Plugins are enabled in the user's config only: no project scope.
+//   - Failures are one `Error: …` line on stderr, exit 1.
+//
+// Copilot CLI (probed with 1.0.105, COPILOT_HOME in a throwaway HOME):
+//   - `copilot plugin marketplace add <dir>` reads the render's
+//     `.github/plugin/marketplace.json`; any add of a registered name fails
+//     ("already registered"), even the same dir, so the installer adds only
+//     when the name is missing and re-points with `marketplace remove`
+//     first, which keeps the plugin's enablement.
+//   - `copilot plugin install qcr@<mkt>` (the form Copilot keeps; a direct
+//     install is deprecated) enables it; a local marketplace loads live from
+//     the render, never copied, so the render must outlive the run, and
+//     `plugin update` has nothing to do for it. Install again is ok.
+//   - `copilot plugin uninstall qcr@<mkt>` disables it; `marketplace remove`
+//     drops the marketplace.
+//   - `plugin list --json` is `[{name, marketplace, version, enabled}]`;
+//     `plugin marketplace list --json` is `[{name, source: "Local: <dir>"}]`.
+//   - Its project scope is declarative (the repo's
+//     `.github/copilot/settings.json`), with no verb or scope flag.
+//   - Success is a line of text on stdout, failure one line on stderr.
+//
+// Gemini CLI (probed with 0.61.0 in a throwaway HOME):
+//   - `gemini extensions install <dir> --consent` copies the folder into
+//     its extensions home; with stdin closed it still stops at a
+//     folder-trust prompt unless GEMINI_CLI_TRUST_WORKSPACE=true, which the
+//     installer sets for that one call only.
+//   - Installing an installed extension fails ("already installed. Please
+//     uninstall it first"), from any dir, and `extensions update` re-reads
+//     only the dir it was installed from, so a re-point is `extensions
+//     uninstall qcr`, then install.
+//   - `gemini extensions list -o json` is `[{name, version,
+//     installMetadata: {source}}]` on stdout, but an empty list is `[]` on
+//     stderr.
+//   - Install has no scope: extensions are the user's.
+//   - Every message, success or failure, is on stderr.
+//
+// Antigravity (`agy`, not probed: no agy was at hand, so this follows its
+// plugin docs for CLI 1.4.x): `agy plugin install <dir>`, `agy
+// plugin list --json` and `agy plugin uninstall <name>`; no update verb and
+// no scope flag is documented, so a re-point is uninstall, then install,
+// and a list entry is read by its `name` alone.
 import { spawnSync } from "node:child_process";
 import {
   accessSync,
@@ -100,11 +157,13 @@ export interface PluginDeps {
   cwd: string;
   /** The App package's root: the skill source is its plugins/qcr/. */
   pkgRoot: string;
-  /** Run a host's CLI with no terminal: stdin is /dev/null, output captured. */
+  /** Run a host's CLI with no terminal: stdin is /dev/null, output
+   * captured; `env` is added to this process's environment for that one
+   * call. */
   run: (
     cmd: string,
     args: readonly string[],
-    opts: { cwd: string },
+    opts: { cwd: string; env?: Readonly<Record<string, string>> },
   ) => { status: number | null; stdout: string; stderr: string; error?: Error };
   out: (line: string) => void;
   err: (line: string) => void;
@@ -121,7 +180,7 @@ export function pluginDeps(pkgRoot: string): PluginDeps {
     run: (cmd, args, opts) => {
       const r = spawnSync(cmd, [...args], {
         cwd: opts.cwd,
-        env: process.env,
+        env: opts.env === undefined ? process.env : { ...process.env, ...opts.env },
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
         timeout: HOST_TIMEOUT_MS,
@@ -160,6 +219,8 @@ interface HostInstaller {
   /** Its executable, found on PATH. */
   exe: string;
   reload: string;
+  /** Why `--project` skips this host, or null when it has a project scope. */
+  noProject: string | null;
   install(ctx: Ctx, exe: string, scope: "user" | "project"): PluginRow;
   update(ctx: Ctx, exe: string): PluginRow;
   uninstall(ctx: Ctx, exe: string): PluginRow;
@@ -188,30 +249,69 @@ const real = (p: string): string => {
   }
 };
 
-/** A host child's answer: ok, the parsed last JSON line, and its message. */
+/** A host child's answer: ok, its JSON object (the whole stdout, or its
+ * last JSON line), and its message. */
 interface HostAnswer {
   ok: boolean;
   json: Record<string, unknown> | null;
   message: string;
 }
 
-function ask(ctx: Ctx, exe: string, args: readonly string[], cwd = ctx.deps.cwd): HostAnswer {
-  const r = ctx.deps.run(exe, args, { cwd });
-  const line = r.stdout
-    .trim()
-    .split("\n")
-    .reverse()
-    .find((l) => l.trim().startsWith("{"));
-  let json: Record<string, unknown> | null = null;
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** The JSON a host printed: its whole stdout, else its last line that
+ * starts an object; null when there is none. */
+function parseJson(stdout: string): unknown {
+  const t = stdout.trim();
+  if (t === "") return null;
   try {
-    json = line === undefined ? null : (JSON.parse(line) as Record<string, unknown>);
+    return JSON.parse(t) as unknown;
   } catch {
-    json = null;
+    const line = t
+      .split("\n")
+      .reverse()
+      .find((l) => l.trim().startsWith("{"));
+    try {
+      return line === undefined ? null : (JSON.parse(line) as unknown);
+    } catch {
+      return null;
+    }
   }
-  const message = json?.["message"];
-  const said = typeof message === "string" ? message : (r.stderr.trim().split("\n")[0] ?? "");
+}
+
+const lastLine = (s: string): string =>
+  s
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "")
+    .pop() ?? "";
+
+/** Run one host verb. Its message is the JSON's `message`; else, on
+ * success, the last line it printed, and on failure its last line on
+ * stderr (hosts print their prompts and notices before the outcome). */
+function ask(
+  ctx: Ctx,
+  exe: string,
+  args: readonly string[],
+  opts: { cwd?: string; env?: Readonly<Record<string, string>> } = {},
+): HostAnswer {
+  const r = ctx.deps.run(exe, args, {
+    cwd: opts.cwd ?? ctx.deps.cwd,
+    ...(opts.env === undefined ? {} : { env: opts.env }),
+  });
+  const parsed = parseJson(r.stdout);
+  const json = isRecord(parsed) ? parsed : null;
   if (r.error) return { ok: false, json, message: r.error.message };
   const ok = r.status === 0 && json?.["outcome"] !== "failed";
+  const message = json?.["message"];
+  const text = parsed === null ? lastLine(r.stdout) : "";
+  const said =
+    typeof message === "string"
+      ? message
+      : ok
+        ? text || lastLine(r.stderr)
+        : lastLine(r.stderr) || text;
   return {
     ok,
     json,
@@ -219,16 +319,22 @@ function ask(ctx: Ctx, exe: string, args: readonly string[], cwd = ctx.deps.cwd)
   };
 }
 
-/** A JSON array a host listed, or null when it could not be read. */
-function askList(ctx: Ctx, exe: string, args: readonly string[]): unknown[] | null {
+/** The JSON a host listed, or null when it could not be read: its stdout,
+ * or its stderr when stdout is empty (Gemini prints an empty list there). */
+function askJson(ctx: Ctx, exe: string, args: readonly string[]): unknown {
   const r = ctx.deps.run(exe, args, { cwd: ctx.deps.cwd });
   if (r.error || r.status !== 0) return null;
   try {
-    const v = JSON.parse(r.stdout) as unknown;
-    return Array.isArray(v) ? v : null;
+    return JSON.parse(r.stdout.trim() !== "" ? r.stdout : r.stderr) as unknown;
   } catch {
     return null;
   }
+}
+
+/** A JSON array a host listed, or null when it could not be read. */
+function askList(ctx: Ctx, exe: string, args: readonly string[]): unknown[] | null {
+  const v = askJson(ctx, exe, args);
+  return Array.isArray(v) ? v : null;
 }
 
 /** `host`'s render at this release, written when it is missing or differs:
@@ -343,6 +449,7 @@ function claudeInstaller(): HostInstaller {
     label: "Claude Code",
     exe: "claude",
     reload,
+    noProject: null,
     install(ctx, exe, scope) {
       const before = installs(ctx, exe);
       if (before === null) return row(host, "failed", "`claude plugin list --json` did not answer");
@@ -385,12 +492,9 @@ function claudeInstaller(): HostInstaller {
       if (!pointed.ok) return row(host, "failed", pointed.message, { dir });
       const said: string[] = [];
       for (const e of found) {
-        const up = ask(
-          ctx,
-          exe,
-          ["plugin", "update", id(ctx.render), "-s", e.scope, "--json"],
-          cwdOf(ctx, e),
-        );
+        const up = ask(ctx, exe, ["plugin", "update", id(ctx.render), "-s", e.scope, "--json"], {
+          cwd: cwdOf(ctx, e),
+        });
         if (!up.ok) return row(host, "failed", up.message, { dir, scopes: [e.scope] });
         said.push(up.message);
       }
@@ -408,12 +512,9 @@ function claudeInstaller(): HostInstaller {
       if (found === null) return row(host, "failed", "`claude plugin list --json` did not answer");
       const said: string[] = [];
       for (const e of found) {
-        const un = ask(
-          ctx,
-          exe,
-          ["plugin", "uninstall", id(ctx.render), "-s", e.scope, "--json"],
-          cwdOf(ctx, e),
-        );
+        const un = ask(ctx, exe, ["plugin", "uninstall", id(ctx.render), "-s", e.scope, "--json"], {
+          cwd: cwdOf(ctx, e),
+        });
         if (!un.ok) return row(host, "failed", un.message, { scopes: [e.scope] });
         said.push(un.message);
       }
@@ -447,8 +548,416 @@ function claudeInstaller(): HostInstaller {
   };
 }
 
+/** A row for a host now loading this release from `dir`, at user scope;
+ * the renders it no longer references are deleted. */
+function landed(
+  ctx: Ctx,
+  h: { host: string; reload: string },
+  outcome: PluginOutcome,
+  detail: string,
+  dir: string,
+): PluginRow {
+  return row(h.host, outcome, detail, {
+    scopes: ["user"],
+    version: ctx.version,
+    dir,
+    invoke: invokeOf(ctx, h.host),
+    reload: h.reload,
+    removed: tidy(ctx, h.host, dir),
+  });
+}
+
+const noAnswer = (exe: string, args: readonly string[]): string =>
+  `\`${[exe, ...args].join(" ")}\` did not answer`;
+
+/** A host that installs from a local marketplace the render holds (Codex,
+ * Copilot): the marketplace pointed at the render, then the plugin
+ * installed from it. */
+interface MarketplaceHost {
+  host: string;
+  label: string;
+  exe: string;
+  reload: string;
+  noProject: string | null;
+  /** The argv that lists the installs, and the release of QuickReview's in
+   * what it printed: null when it is not installed. */
+  list: readonly string[];
+  installed(listed: unknown, ctx: Ctx): { version: string | null } | null;
+  /** The argv that lists the marketplaces, and the folder QuickReview's
+   * points at in what it printed: null when it is not declared. */
+  marketplaces: readonly string[];
+  declared(listed: unknown, ctx: Ctx): string | null;
+  /** Each verb's argv. */
+  addMarketplace(ctx: Ctx, dir: string): string[];
+  removeMarketplace(ctx: Ctx): string[];
+  installPlugin(ctx: Ctx): string[];
+  removePlugin(ctx: Ctx): string[];
+}
+
+function marketplaceInstaller(m: MarketplaceHost): HostInstaller {
+  const { host } = m;
+  /** null: not installed; undefined: the list failed. */
+  const installs = (ctx: Ctx, exe: string): { version: string | null } | null | undefined => {
+    const listed = askJson(ctx, exe, m.list);
+    return listed === null ? undefined : m.installed(listed, ctx);
+  };
+  /** null: not declared; undefined: the list failed. */
+  const referenced = (ctx: Ctx, exe: string): string | null | undefined => {
+    const listed = askJson(ctx, exe, m.marketplaces);
+    return listed === null ? undefined : m.declared(listed, ctx);
+  };
+  /** The marketplace on `dir`: left alone when it is there already, else
+   * added, after removing it from where it pointed. */
+  const point = (ctx: Ctx, exe: string, dir: string): HostAnswer => {
+    const at = referenced(ctx, exe);
+    if (at === undefined)
+      return { ok: false, json: null, message: noAnswer(m.exe, m.marketplaces) };
+    if (at !== null && real(at) === real(dir)) return { ok: true, json: null, message: "" };
+    if (at !== null) {
+      const gone = ask(ctx, exe, m.removeMarketplace(ctx));
+      if (!gone.ok) return gone;
+    }
+    return ask(ctx, exe, m.addMarketplace(ctx, dir));
+  };
+  const id = (ctx: Ctx): string => `${ctx.render.PLUGIN_NAME}@${ctx.render.MARKETPLACE_NAME}`;
+  /** Point, then install: the row. `before` is what was installed. */
+  const land = (
+    ctx: Ctx,
+    exe: string,
+    before: { version: string | null } | null,
+    outcome: PluginOutcome,
+  ): PluginRow => {
+    const dir = renderFor(ctx, host);
+    const pointed = point(ctx, exe, dir);
+    if (!pointed.ok) return row(host, "failed", pointed.message, { dir });
+    const inst = ask(ctx, exe, m.installPlugin(ctx));
+    if (!inst.ok) return row(host, "failed", inst.message, { dir, scopes: ["user"] });
+    const was =
+      before !== null && before.version !== null && before.version !== ctx.version
+        ? ` (was ${before.version})`
+        : "";
+    return landed(
+      ctx,
+      m,
+      outcome,
+      inst.message !== "" ? inst.message : `${id(ctx)} at release ${ctx.version}${was}`,
+      dir,
+    );
+  };
+  return {
+    host,
+    label: m.label,
+    exe: m.exe,
+    reload: m.reload,
+    noProject: m.noProject,
+    install(ctx, exe) {
+      const before = installs(ctx, exe);
+      if (before === undefined) return row(host, "failed", noAnswer(m.exe, m.list));
+      const updated = before !== null && before.version !== ctx.version;
+      return land(ctx, exe, before, updated ? "updated" : "installed");
+    },
+    update(ctx, exe) {
+      const found = installs(ctx, exe);
+      if (found === undefined) return row(host, "failed", noAnswer(m.exe, m.list));
+      if (found === null)
+        return row(host, "skipped", "QuickReview is not installed here", {
+          removed: tidy(ctx, host, referenced(ctx, exe)),
+        });
+      return land(ctx, exe, found, "updated");
+    },
+    uninstall(ctx, exe) {
+      const found = installs(ctx, exe);
+      if (found === undefined) return row(host, "failed", noAnswer(m.exe, m.list));
+      const declared = referenced(ctx, exe);
+      if (declared === undefined) return row(host, "failed", noAnswer(m.exe, m.marketplaces));
+      const said: string[] = [];
+      const scopes = found === null ? [] : ["user"];
+      if (found !== null) {
+        const un = ask(ctx, exe, m.removePlugin(ctx));
+        if (!un.ok) return row(host, "failed", un.message, { scopes });
+        said.push(un.message);
+      }
+      if (declared !== null) {
+        const gone = ask(ctx, exe, m.removeMarketplace(ctx));
+        if (!gone.ok) return row(host, "failed", gone.message, { scopes });
+        said.push(gone.message);
+      }
+      const removed = tidy(ctx, host, null);
+      rmSync(join(ctx.root, host), { recursive: true, force: true });
+      if (found === null && declared === null && removed.length === 0)
+        return row(host, "skipped", "QuickReview is not installed here");
+      return row(host, "removed", said.filter((s) => s !== "").join(" ") || `${id(ctx)} removed`, {
+        scopes,
+        reload: m.reload,
+        removed,
+      });
+    },
+  };
+}
+
+const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
+
+/** Codex: `codex plugin marketplace add`, then `codex plugin add
+ * qcr@<mkt>` (the module header has what the probe showed). */
+const codexInstaller = (): HostInstaller =>
+  marketplaceInstaller({
+    host: "codex",
+    label: "Codex",
+    exe: "codex",
+    reload: "start a new Codex session",
+    noProject: "Codex enables plugins in the user's config only, so it has no project scope",
+    list: ["plugin", "list", "--json"],
+    installed(listed, ctx) {
+      const all = isRecord(listed) && Array.isArray(listed["installed"]) ? listed["installed"] : [];
+      const e = all.find(
+        (x): x is Record<string, unknown> =>
+          isRecord(x) &&
+          x["pluginId"] === `${ctx.render.PLUGIN_NAME}@${ctx.render.MARKETPLACE_NAME}` &&
+          x["installed"] !== false,
+      );
+      return e === undefined ? null : { version: str(e["version"]) };
+    },
+    marketplaces: ["plugin", "marketplace", "list", "--json"],
+    declared(listed, ctx) {
+      const all =
+        isRecord(listed) && Array.isArray(listed["marketplaces"]) ? listed["marketplaces"] : [];
+      const e = all.find(
+        (x): x is Record<string, unknown> =>
+          isRecord(x) && x["name"] === ctx.render.MARKETPLACE_NAME,
+      );
+      // a marketplace of that name that is not a folder is never the render
+      return e === undefined ? null : (str(e["root"]) ?? "");
+    },
+    addMarketplace: (_ctx, dir) => ["plugin", "marketplace", "add", dir, "--json"],
+    removeMarketplace: (ctx) => [
+      "plugin",
+      "marketplace",
+      "remove",
+      ctx.render.MARKETPLACE_NAME,
+      "--json",
+    ],
+    installPlugin: (ctx) => [
+      "plugin",
+      "add",
+      `${ctx.render.PLUGIN_NAME}@${ctx.render.MARKETPLACE_NAME}`,
+      "--json",
+    ],
+    removePlugin: (ctx) => [
+      "plugin",
+      "remove",
+      `${ctx.render.PLUGIN_NAME}@${ctx.render.MARKETPLACE_NAME}`,
+      "--json",
+    ],
+  });
+
+/** Copilot CLI: `copilot plugin marketplace add`, then `copilot plugin
+ * install qcr@<mkt>`, the form Copilot keeps supporting (the module header
+ * has what the probe showed). */
+const copilotInstaller = (): HostInstaller =>
+  marketplaceInstaller({
+    host: "copilot",
+    label: "Copilot CLI",
+    exe: "copilot",
+    reload: "start a new Copilot CLI session",
+    noProject:
+      "Copilot CLI's project scope is the repository's .github/copilot/settings.json, which no copilot verb writes",
+    list: ["plugin", "list", "--json"],
+    installed(listed, ctx) {
+      const e = (Array.isArray(listed) ? listed : []).find(
+        (x): x is Record<string, unknown> =>
+          isRecord(x) &&
+          x["name"] === ctx.render.PLUGIN_NAME &&
+          x["marketplace"] === ctx.render.MARKETPLACE_NAME &&
+          x["enabled"] !== false,
+      );
+      return e === undefined ? null : { version: str(e["version"]) };
+    },
+    marketplaces: ["plugin", "marketplace", "list", "--json"],
+    declared(listed, ctx) {
+      const e = (Array.isArray(listed) ? listed : []).find(
+        (x): x is Record<string, unknown> =>
+          isRecord(x) && x["name"] === ctx.render.MARKETPLACE_NAME,
+      );
+      if (e === undefined) return null;
+      const source = str(e["source"]) ?? "";
+      // a marketplace of that name that is not a folder is never the render
+      return source.startsWith("Local: ") ? source.slice("Local: ".length) : "";
+    },
+    addMarketplace: (_ctx, dir) => ["plugin", "marketplace", "add", dir],
+    removeMarketplace: (ctx) => ["plugin", "marketplace", "remove", ctx.render.MARKETPLACE_NAME],
+    installPlugin: (ctx) => [
+      "plugin",
+      "install",
+      `${ctx.render.PLUGIN_NAME}@${ctx.render.MARKETPLACE_NAME}`,
+    ],
+    removePlugin: (ctx) => [
+      "plugin",
+      "uninstall",
+      `${ctx.render.PLUGIN_NAME}@${ctx.render.MARKETPLACE_NAME}`,
+    ],
+  });
+
+/** A host that installs the rendered folder itself by its path (Gemini CLI,
+ * Antigravity): it is re-pointed by an uninstall, then an install. */
+interface FolderHost {
+  host: string;
+  label: string;
+  exe: string;
+  reload: string;
+  noProject: string | null;
+  /** The argv that lists the installs, and QuickReview's in what it
+   * printed: its release and the folder it was installed from, each null
+   * when unknown; null when it is not installed. */
+  list: readonly string[];
+  installed(listed: unknown, ctx: Ctx): { version: string | null; source: string | null } | null;
+  /** Each verb's argv, and the environment the install adds for its call. */
+  install(ctx: Ctx, dir: string): { args: string[]; env?: Readonly<Record<string, string>> };
+  uninstall(ctx: Ctx): string[];
+}
+
+function folderInstaller(f: FolderHost): HostInstaller {
+  const { host } = f;
+  type Found = { version: string | null; source: string | null };
+  const installs = (ctx: Ctx, exe: string): Found | null | undefined => {
+    const listed = askJson(ctx, exe, f.list);
+    return listed === null ? undefined : f.installed(listed, ctx);
+  };
+  /** Install the render over `before`: nothing when `before` came from it. */
+  const land = (ctx: Ctx, exe: string, before: Found | null, outcome: PluginOutcome): PluginRow => {
+    const dir = renderFor(ctx, host);
+    if (
+      before !== null &&
+      before.source !== null &&
+      real(before.source) === real(dir) &&
+      (before.version === null || before.version === ctx.version)
+    )
+      return landed(ctx, f, outcome, `already installed from release ${ctx.version}`, dir);
+    if (before !== null) {
+      const un = ask(ctx, exe, f.uninstall(ctx));
+      if (!un.ok) return row(host, "failed", un.message, { dir, scopes: ["user"] });
+    }
+    const { args, env } = f.install(ctx, dir);
+    const inst = ask(ctx, exe, args, env === undefined ? {} : { env });
+    if (!inst.ok) return row(host, "failed", inst.message, { dir, scopes: ["user"] });
+    return landed(ctx, f, outcome, inst.message, dir);
+  };
+  return {
+    host,
+    label: f.label,
+    exe: f.exe,
+    reload: f.reload,
+    noProject: f.noProject,
+    install(ctx, exe) {
+      const before = installs(ctx, exe);
+      if (before === undefined) return row(host, "failed", noAnswer(f.exe, f.list));
+      const updated = before !== null && before.version !== ctx.version;
+      return land(ctx, exe, before, updated ? "updated" : "installed");
+    },
+    update(ctx, exe) {
+      const found = installs(ctx, exe);
+      if (found === undefined) return row(host, "failed", noAnswer(f.exe, f.list));
+      if (found === null)
+        return row(host, "skipped", "QuickReview is not installed here", {
+          removed: tidy(ctx, host, null),
+        });
+      return land(ctx, exe, found, "updated");
+    },
+    uninstall(ctx, exe) {
+      const found = installs(ctx, exe);
+      if (found === undefined) return row(host, "failed", noAnswer(f.exe, f.list));
+      let said = "";
+      if (found !== null) {
+        const un = ask(ctx, exe, f.uninstall(ctx));
+        if (!un.ok) return row(host, "failed", un.message, { scopes: ["user"] });
+        said = un.message;
+      }
+      const removed = tidy(ctx, host, null);
+      rmSync(join(ctx.root, host), { recursive: true, force: true });
+      if (found === null && removed.length === 0)
+        return row(host, "skipped", "QuickReview is not installed here");
+      return row(host, "removed", said, {
+        scopes: found === null ? [] : ["user"],
+        reload: f.reload,
+        removed,
+      });
+    },
+  };
+}
+
+/** Gemini CLI: `gemini extensions install <dir> --consent`, with the
+ * workspace-trust variable set for that one call (the module header has
+ * what the probe showed). */
+const geminiInstaller = (): HostInstaller =>
+  folderInstaller({
+    host: "gemini",
+    label: "Gemini CLI",
+    exe: "gemini",
+    reload: "restart Gemini CLI",
+    noProject: "Gemini CLI installs extensions for the user only, so it has no project scope",
+    list: ["extensions", "list", "-o", "json"],
+    installed(listed, ctx) {
+      const e = (Array.isArray(listed) ? listed : []).find(
+        (x): x is Record<string, unknown> => isRecord(x) && x["name"] === ctx.render.PLUGIN_NAME,
+      );
+      if (e === undefined) return null;
+      const meta = e["installMetadata"];
+      return { version: str(e["version"]), source: isRecord(meta) ? str(meta["source"]) : null };
+    },
+    install: (_ctx, dir) => ({
+      args: ["extensions", "install", dir, "--consent"],
+      env: { GEMINI_CLI_TRUST_WORKSPACE: "true" },
+    }),
+    uninstall: (ctx) => ["extensions", "uninstall", ctx.render.PLUGIN_NAME],
+  });
+
+/** Antigravity: `agy plugin install <dir>` (from its docs; the module
+ * header says what is unprobed). Its manifest carries no version, so the
+ * installed release is read from the render folder a list entry names. */
+const antigravityInstaller = (): HostInstaller =>
+  folderInstaller({
+    host: "antigravity",
+    label: "Antigravity",
+    exe: "agy",
+    reload: "start a new Antigravity session",
+    noProject: "agy plugin install has no project scope",
+    list: ["plugin", "list", "--json"],
+    installed(listed, ctx) {
+      const all = Array.isArray(listed)
+        ? listed
+        : isRecord(listed) && Array.isArray(listed["plugins"])
+          ? listed["plugins"]
+          : [];
+      const e = all.find(
+        (x): x is Record<string, unknown> => isRecord(x) && x["name"] === ctx.render.PLUGIN_NAME,
+      );
+      if (e === undefined) return null;
+      const base = join(ctx.root, "antigravity");
+      const source =
+        ["path", "source", "installedFrom"]
+          .map((k) => str(e[k]))
+          .find((p) => p !== null && resolve(p).startsWith(`${base}/`)) ?? null;
+      return {
+        version:
+          source === null
+            ? null
+            : (resolve(source)
+                .slice(base.length + 1)
+                .split("/")[0] ?? null),
+        source,
+      };
+    },
+    install: (_ctx, dir) => ({ args: ["plugin", "install", dir] }),
+    uninstall: (ctx) => ["plugin", "uninstall", ctx.render.PLUGIN_NAME],
+  });
+
 /** Every host the installer can install into, in `--to all` order. */
-const INSTALLERS: readonly HostInstaller[] = [claudeInstaller()];
+const INSTALLERS: readonly HostInstaller[] = [
+  claudeInstaller(),
+  codexInstaller(),
+  copilotInstaller(),
+  geminiInstaller(),
+  antigravityInstaller(),
+];
 
 /** The hosts `qcr plugin` installs into, by name. */
 export const PLUGIN_HOSTS: readonly string[] = INSTALLERS.map((i) => i.host);
@@ -539,6 +1048,11 @@ export async function cmdPlugin(
     const exe = which(h.exe, deps.env["PATH"]);
     if (exe === null) {
       rows.push(row(h.host, "skipped", `${h.exe} is not on PATH`));
+      continue;
+    }
+    // a host with no project scope is skipped, never given a user install
+    if (p.verb === "install" && p.project && h.noProject !== null) {
+      rows.push(row(h.host, "skipped", h.noProject));
       continue;
     }
     try {

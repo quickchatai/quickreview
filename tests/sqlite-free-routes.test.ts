@@ -228,7 +228,8 @@ describe("the bin's front door where the SQLite driver cannot load", () => {
       hosts: Array<{ outcome: string }>;
     };
     expect(payload.ok).toBe(true);
-    expect(payload.hosts.map((h) => h.outcome)).toEqual(["skipped"]);
+    expect(payload.hosts.length).toBeGreaterThan(0);
+    expect(payload.hosts.map((h) => h.outcome)).toEqual(payload.hosts.map(() => "skipped"));
   });
 
   it("qcr login refuses a bad provider by itself", { timeout: HEAVY_TIMEOUT_MS }, async () => {

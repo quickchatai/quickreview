@@ -309,7 +309,7 @@ describe("qcr plugin update", () => {
     const old = olderInstall("1.0.0", ["user", "project"]);
     const { code, rows } = await qcrJson("plugin", "update");
     expect(code).toBe(0);
-    expect(rows).toEqual([
+    expect(rows.filter((r) => r.host === "claude")).toEqual([
       expect.objectContaining({
         host: "claude",
         outcome: "updated",
@@ -332,7 +332,9 @@ describe("qcr plugin update", () => {
   it("skips a claude with nothing installed, and touches nothing", async () => {
     const { code, rows } = await qcrJson("plugin", "update");
     expect(code).toBe(0);
-    expect(rows).toEqual([expect.objectContaining({ host: "claude", outcome: "skipped" })]);
+    expect(rows.filter((r) => r.host === "claude")).toEqual([
+      expect.objectContaining({ host: "claude", outcome: "skipped" }),
+    ]);
     expect(
       argvs().filter((a) => !a.startsWith("plugin list") && !a.includes("list --json")),
     ).toEqual([]);
@@ -366,7 +368,7 @@ describe("qcr plugin uninstall --from claude", () => {
     // a second uninstall has nothing to do
     const again = await qcrJson("plugin", "uninstall", "--from", "all");
     expect(again.code).toBe(0);
-    expect(again.rows[0]!.outcome).toBe("skipped");
+    expect(again.rows.map((r) => r.outcome)).toEqual(again.rows.map(() => "skipped"));
   });
 });
 
@@ -416,7 +418,7 @@ describe("usage", () => {
     [["frobnicate"]],
     [["install"]],
     [["install", "--to"]],
-    [["install", "--to", "codex"]],
+    [["install", "--to", "vim"]],
     [["install", "--to", "claude", "--bogus"]],
     [["install", "--from", "claude"]],
     [["install", "--to", "claude", "--to", "claude"]],

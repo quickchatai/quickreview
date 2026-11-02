@@ -45,7 +45,7 @@ export const BIN_HELP = [
   "  qcr login [provider]    log in with pi's own /login, for the review sessions",
   "  qcr pi [args]           pi with the qcr plugin (/qcr-review, /qcr-scan, /qcr-setup) and /selfimprove",
   "  qcr update              update qcr with the package manager that installed it",
-  "  qcr plugin <subcommand> install /qcr:review into Claude Code (`qcr plugin --help`)",
+  "  qcr plugin <subcommand> install QuickReview into your coding-agent CLIs (`qcr plugin --help`)",
   "  qcr version [--json]    this install's version, schemas and pi pin",
   "  qcr --schema N <verb>   review, scan or version as JSON in host-plugin contract N",
   "",

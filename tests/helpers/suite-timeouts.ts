@@ -37,6 +37,8 @@ export const TYPECHECK_TIMEOUT_MS = 600_000;
  *   companion-memory — the forward's ssh probe (fails fast, no VM);
  *   onboard-streamrunner — a node child under the wizard's streaming runner;
  *   plugin-install-claude — qcr plugin's host CLI, a fake claude on PATH;
+ *   plugin-install-hosts — qcr plugin's host CLIs, fake codex, copilot, gemini
+ *     and agy on PATH;
  *   tui-deploy-process — a node child under the deploy tab's runner;
  *   tui-openurl — a launcher that does not exist;
  *   tui-sshtriage-probe — the triage's probe runner over `sh` and a program
@@ -136,6 +138,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/pilogin.test.ts",
   "tests/pin-evidence.test.ts", // the evidence script run under node against the map
   "tests/plugin-install-claude.test.ts", // qcr plugin against a fake claude on PATH
+  "tests/plugin-install-hosts.test.ts", // qcr plugin against fake codex, copilot, gemini and agy
   "tests/plugin-peers.test.ts", // a child node resolving pi's packages through the peer hook
   "tests/plugin-qcr.test.ts", // the plugin's shell scripts against a fake docker, gh and qcr
   "tests/post-payload-parity.test.ts", // the Node post route, compared with recorded dry-run payloads
