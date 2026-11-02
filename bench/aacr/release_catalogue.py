@@ -127,9 +127,9 @@ INDEX_FIELDS = ("title", "benchmark", "purpose", "arm_config", "model_billed", "
 
 # how a recorded build id was matched to its public main commit (the remap's evidence file, `match`):
 # "same", the history rewrites' commit maps carry it there (or it is on public main itself);
-# "date+subject", matched by author date and subject alone; "ancestor", the rewrite dropped the
-# commit, which touched only files never published, so it maps to its nearest kept ancestor
-MATCH_KINDS = ("same", "date+subject", "ancestor")
+# "ancestor", the rewrite dropped the commit, which touched only files never published, so it maps
+# to its nearest kept ancestor. There is no other kind: load_remap refuses an entry with one
+MATCH_KINDS = ("same", "ancestor")
 
 
 def load_remap(path: Optional[str]) -> Tuple[Dict[str, Optional[str]], Dict[str, dict]]:
@@ -137,7 +137,8 @@ def load_remap(path: Optional[str]) -> Tuple[Dict[str, Optional[str]], Dict[str,
     null}, and its evidence by recorded id: the entries of the file beside it
     (`qcr-commit-remap.json` -> `qcr-commit-remap-evidence.json`), each with
     the `match` kind the release publishes. A remap that maps any id needs
-    its evidence file."""
+    its evidence file, and an entry whose kind is not in MATCH_KINDS is
+    refused."""
     if not path:
         return {}, {}
     with open(path) as fh:
@@ -148,7 +149,11 @@ def load_remap(path: Optional[str]) -> Tuple[Dict[str, Optional[str]], Dict[str,
             raise SystemExit(f"{path}: no {os.path.basename(ev_path)} beside it, so no match kind for its mapped ids")
         return remap, {}
     with open(ev_path) as fh:
-        return remap, {e["recorded"]: e for e in json.load(fh)["entries"]}
+        entries = json.load(fh)["entries"]
+    bad = sorted({str(e.get("match")) for e in entries if e.get("match") not in MATCH_KINDS})
+    if bad:
+        raise SystemExit(f"{ev_path}: match kind(s) {', '.join(bad)} not in {', '.join(MATCH_KINDS)}")
+    return remap, {e["recorded"]: e for e in entries}
 
 
 def commit_fields(commit: Optional[str], remap: Dict[str, Optional[str]],

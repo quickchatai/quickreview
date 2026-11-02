@@ -35,7 +35,8 @@
 //  14. each `qcr_commit` is remapped to public main, with a flag saying so;
 //      a dirty build maps to the commit it was built on and is flagged
 //      `qcr_commit_dirty`, every on-main commit says how it was matched
-//      (`qcr_commit_match`, from the remap's evidence file), and the run index
+//      (`qcr_commit_match`, `same` or `ancestor`, from the remap's evidence
+//      file, which is refused with any other kind), and the run index
 //      is checked against the recorded ids and the evidence
 //      (release_catalogue.commit_problems);
 //  15. the answer key's build data (candidate maps, diff.stat sizes) is read
@@ -686,7 +687,7 @@ describe("release_catalogue and export_runs: what ships", () => {
       row("runs/d", "p2", true, "same", false),
       row("runs/e", "s1", false, null, false),
       row("runs/f", null, null, null, null),
-      // g: on main without a match kind; h: a kind the evidence does not give; i: off main with one
+      // g: on main without a match kind; h: a retired kind, not the evidence's; i: off main with one
       row("runs/g", "p1", true, null, false),
       row("runs/h", "p1", true, "date+subject", false),
       row("runs/i", "s1", false, "same", false),
@@ -749,7 +750,9 @@ describe("release_catalogue and export_runs: what ships", () => {
 
   // MUTATION: make release_catalogue.load_remap return an empty evidence map — this fails
   // MUTATION: drop the missing-evidence SystemExit from release_catalogue.load_remap — this fails
-  it("reads each mapped id's match kind from the evidence file beside the remap, and refuses a remap without one", () => {
+  // MUTATION: add "date+subject" back to release_catalogue.MATCH_KINDS — this fails
+  // MUTATION: drop the unknown-kind SystemExit from release_catalogue.load_remap — this fails
+  it("reads each mapped id's match kind from the evidence file beside the remap, and refuses a remap without one or with a kind other than same and ancestor", () => {
     const dir = join(tmp, "remap");
     put(join(dir, "qcr-commit-remap.json"), JSON.stringify({ r1: "p1", s1: null }));
     put(
@@ -757,13 +760,20 @@ describe("release_catalogue and export_runs: what ships", () => {
       JSON.stringify({ entries: [{ recorded: "r1", public_main: "p1", match: "ancestor" }] }),
     );
     put(join(dir, "bare.json"), JSON.stringify({ r1: "p1" }));
+    // the retired kind: matched by author date and subject alone
+    put(join(dir, "old.json"), JSON.stringify({ r1: "p1" }));
+    put(
+      join(dir, "old-evidence.json"),
+      JSON.stringify({ entries: [{ recorded: "r1", public_main: "p1", match: "date+subject" }] }),
+    );
     const r = pyModule(
       "release_catalogue",
       "remap, ev = h.load_remap(sys.argv[1])\n" +
-        "try:\n    h.load_remap(sys.argv[2]); bare = 'loaded'\nexcept SystemExit:\n    bare = 'refused'\n" +
-        "print(json.dumps([h.commit_fields('r1-dirty', remap, ev), h.commit_fields('s1', remap, ev), bare]))",
+        "def tried(p):\n    try:\n        h.load_remap(p); return 'loaded'\n    except SystemExit:\n        return 'refused'\n" +
+        "print(json.dumps([h.commit_fields('r1-dirty', remap, ev), h.commit_fields('s1', remap, ev), tried(sys.argv[2]), tried(sys.argv[3])]))",
       join(dir, "qcr-commit-remap.json"),
       join(dir, "bare.json"),
+      join(dir, "old.json"),
     );
     expect(r).toEqual([
       {
@@ -778,6 +788,7 @@ describe("release_catalogue and export_runs: what ships", () => {
         qcr_commit_match: null,
         qcr_commit_dirty: false,
       },
+      "refused",
       "refused",
     ]);
   });

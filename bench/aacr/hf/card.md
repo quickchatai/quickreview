@@ -175,14 +175,13 @@ runs = load_dataset("{{REPO_ID}}", "runs", split="test")
   recorded are not in the public history: `qcr_commit` names the public main
   commit the recorded one became, with `qcr_commit_on_public_main` true and
   `qcr_commit_match` saying how it was matched: `same`, the rewrite's commit
-  maps carry the recorded commit to it; `date+subject`, matched by author date
-  and subject alone (no row in this release); `ancestor`, the rewrite dropped
-  the recorded commit because it changed only files that were never
-  published, so it maps to the nearest ancestor the rewrite kept, whose
-  published files are the same. A build with no public equivalent (from a
-  side branch that was never merged, or from another clone whose commits no
-  rewrite map holds) keeps its recorded id, with `qcr_commit_on_public_main`
-  false and `qcr_commit_match` null. The dirty flag is separate: a dirty build
+  maps carry the recorded commit to it; `ancestor`, the rewrite dropped the
+  recorded commit because it changed only files that were never published, so
+  it maps to the nearest ancestor the rewrite kept, whose published files are
+  the same. A build with no public equivalent (from a side branch that was
+  never merged, or from another clone whose commits no rewrite map holds)
+  keeps its recorded id, with `qcr_commit_on_public_main` false and
+  `qcr_commit_match` null. The dirty flag is separate: a dirty build
   (built from a checkout with uncommitted or untracked files; the recorded id
   ends in `-dirty`) maps to the commit it was built on, keeps the `-dirty`
   suffix and is flagged `qcr_commit_dirty` true (false for every other build):

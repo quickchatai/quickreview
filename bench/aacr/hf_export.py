@@ -1648,7 +1648,7 @@ def validate_release(t: dict[str, list[dict]], cat: "RC.Catalogue | None", elo_r
               bad["dirty_unflagged"], 0)
         check("runs: every qcr_commit on public main is the remap's public main commit for the recorded id",
               bad["off_main"], 0)
-        # the card's statement: every on-main commit says how it was matched (same, date+subject, ancestor)
+        # the card's statement: every on-main commit says how it was matched (same or ancestor)
         check("runs: every row on public main has the evidence's qcr_commit_match, and no row off it has one",
               bad["unmatched"], 0)
         check("runs: every \"ancestor\" row's commit is the remap's, an ancestor of main whose dropped "

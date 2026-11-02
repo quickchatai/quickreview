@@ -1265,11 +1265,10 @@ def write_index(out: Path, proc: Processor, a):
                    "benchmark runs: its run family, what the family was for, the model it billed, its judges, the "
                    "public claims it backs, its build commit (`qcr_commit`: the public main commit the "
                    "recorded one became after the repository's history rewrite, `qcr_commit_on_public_main` true, "
-                   "and `qcr_commit_match` how it was matched: `same` by the rewrite's commit maps, `date+subject` "
-                   "by author date and subject alone (no unit in this release), `ancestor` the nearest kept "
-                   "ancestor of a commit the rewrite dropped because it changed only unpublished files; a commit "
-                   "with no public equivalent (a side branch never merged, or another clone's commit that no "
-                   "rewrite map holds) keeps its recorded id with false and a null match; separately, "
+                   "and `qcr_commit_match` how it was matched: `same` by the rewrite's commit maps, `ancestor` "
+                   "the nearest kept ancestor of a commit the rewrite dropped because it changed only unpublished "
+                   "files; a commit with no public equivalent (a side branch never merged, or another clone's "
+                   "commit that no rewrite map holds) keeps its recorded id with false and a null match; separately, "
                    "`qcr_commit_dirty` true for a build from a checkout with uncommitted or untracked files, which "
                    "maps to the commit it was built on and keeps the `-dirty` suffix: that commit plus whatever was "
                    "not committed, not necessarily the commit itself; a unit that recorded no commit has all four "
@@ -1422,13 +1421,12 @@ packed. Nothing else in the text changed.
   after the repository's history rewrite, with
   `"qcr_commit_on_public_main": true` beside it and `"qcr_commit_match"`
   saying how it was matched: `"same"`, the rewrite's commit maps carry the
-  recorded commit to it; `"date+subject"`, matched by author date and
-  subject alone (none in this release); `"ancestor"`, the rewrite dropped
-  the recorded commit because it changed only files that were never
-  published, so it maps to the nearest ancestor the rewrite kept, whose
-  published files are the same. A commit with no public equivalent (a side
-  branch never merged, or another clone's commit that no rewrite map holds)
-  keeps its recorded id with `false` and a `null` match; a commit the remap
+  recorded commit to it; `"ancestor"`, the rewrite dropped the recorded
+  commit because it changed only files that were never published, so it
+  maps to the nearest ancestor the rewrite kept, whose published files are
+  the same. A commit with no public equivalent (a side branch never
+  merged, or another clone's commit that no rewrite map holds) keeps its
+  recorded id with `false` and a `null` match; a commit the remap
   does not list would get `null` (none in this release). The dirty flag is
   separate: a dirty build (the recorded id ends in `-dirty`: built from a
   checkout with uncommitted or untracked files) maps to the commit it was
