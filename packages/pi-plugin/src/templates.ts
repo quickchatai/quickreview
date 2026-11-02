@@ -441,12 +441,23 @@ export function renderValidatorNote(order: Pick<RoundOrder, "pass_plan">): strin
  * answer in hand.
  */
 export function renderValidatorShardNote(
-  order: Pick<RoundOrder, "pass_plan" | "validator_shards" | "lens_runtime">,
+  order: Pick<
+    RoundOrder,
+    "pass_plan" | "validator_shards" | "lens_runtime" | "security_validator_agent"
+  >,
 ): string {
+  if (!order.pass_plan.some((p) => p.lens === "pass-validate")) return "";
+  return [shardLines(order), securityValidatorLines(order)]
+    .filter((part) => part.length > 0)
+    .map((part) => ["", ...part].join("\n"))
+    .join("\n");
+}
+
+/** The shard half of `{{validator_shard_note}}`: none with one shard. */
+function shardLines(order: Pick<RoundOrder, "validator_shards" | "lens_runtime">): string[] {
   const n = order.validator_shards ?? 1;
-  if (n <= 1 || !order.pass_plan.some((p) => p.lens === "pass-validate")) return "";
+  if (n <= 1) return [];
   return [
-    "",
     `**Validator in ${n} parallel groups.** Split the merged candidates into ${n}`,
     "groups by FILE: every candidate of one file in the same group, every",
     "candidate of one root cause in the same group even across files, the groups",
@@ -459,6 +470,174 @@ export function renderValidatorShardNote(
     "record the other `killed` / `duplicate`; and a posting budget, when this",
     "round has one, is applied once, over every group's survivors together.",
     "The verdict's `passes` gets ONE `pass-validate` entry with the summed counts.",
+  ];
+}
+
+/**
+ * The security half of `{{validator_shard_note}}`: when the round planned a
+ * security-family row and its validator runs below the risk tier the family
+ * runs at, the security candidates are validated as their own group at
+ * `security_validator_agent`, in the same launch call as the planned
+ * validator — the validator row keeps its tier (tests/
+ * fences-validator-tier.test.ts). None without the field.
+ */
+function securityValidatorLines(
+  order: Pick<RoundOrder, "validator_shards" | "lens_runtime" | "security_validator_agent">,
+): string[] {
+  const agent = order.security_validator_agent;
+  if (!agent) return [];
+  const n = order.validator_shards ?? 1;
+  return [
+    "**Security candidates are validated at the risk tier.** This round planned",
+    "security lenses, which run at a higher tier than its `pass-validate` row. Take",
+    "every security candidate — raised by a `pass-sec-*` lens or `pass-security`,",
+    "or whose `kind:` begins `security`, `exploit-chain` or `partial-chain` — out",
+    "of the merged candidates into a group of its own, every exploit chain with",
+    `every lead it cites, and validate that group with \`${agent}\` in the`,
+    `SAME \`${launchVocab(order).lens}\` call (\`tasks:[…]\`) as the planned \`pass-validate\` variant${n > 1 ? "'s groups" : ""},`,
+    "with the WHOLE SETTLED list and the MERGED/FOLDED lines that concern it.",
+    "Every other candidate goes to the planned variant as before; with no",
+    "security candidate, launch only the planned variant, and with no other",
+    `candidate, only \`${agent}\`. Merge the answers into one kill log: survivors,`,
+    "kills, doubts and downgrades are the union; a duplicate across the groups",
+    "and a posting budget are yours at the merge. The verdict's `passes` gets ONE",
+    "`pass-validate` entry with the summed counts.",
+  ];
+}
+
+/** The fixed review-body line for a security-family row that failed this
+ * round — the fail-closed rule: a security pass that did not finish leaves
+ * its area unreviewed, and the body says so rather than staying silent. A
+ * chain row names its strategy (`pass-sec-exploit-chain:delta`). The round
+ * prompt asks the session for this line (`renderChainNote`); the daemon's
+ * own check writes the same words, so the two can be told apart from
+ * nothing else. */
+export function securityPassIncompleteLine(lens: string, strategy?: string): string {
+  const name = strategy !== undefined ? `${lens}:${strategy}` : lens;
+  return `Security pass \`${name}\` did not complete; its area is unreviewed this round.`;
+}
+
+/**
+ * `{{chain_note}}`, at the end of step 2: "" unless the order carries the
+ * chain's `compose` row (`chain_compose`) or reviews security alone
+ * (`security_only`), so every other order is byte-identical.
+ *
+ * With `compose`: once every planned lens and coverage row has returned and
+ * BEFORE step 3, the session collects the round's security candidates as
+ * `CHAIN LEADS` and launches the one post-discovery row over them — the
+ * daemon renders this note and launches nothing (docs/
+ * single-shepherd-invariant.md); `compose` is a leaf like every lens. With
+ * no leads it logs `CHAIN-SKIPPED no leads`. A chain is never merged into a
+ * lead, and a chain and its leads are validated in one group. Either way the
+ * note asks for the fail-closed body line for a security row that failed
+ * (`securityPassIncompleteLine`), and in a security-only review it says a
+ * non-security candidate is killed `out-of-scope`.
+ */
+export function renderChainNote(
+  order: Pick<
+    RoundOrder,
+    | "chain_compose"
+    | "security_only"
+    | "post_plan"
+    | "post_task_files"
+    | "security_validator_agent"
+    | "validator_shards"
+    | "lens_runtime"
+  >,
+): string {
+  if (!order.chain_compose && !order.security_only) return "";
+  const vocab = launchVocab(order);
+  const out: string[] = [];
+  const compose = order.chain_compose
+    ? (order.post_plan ?? [])
+        .map((p, row) => ({ p, row }))
+        .find(({ p }) => p.strategy === "compose")
+    : undefined;
+  if (compose) {
+    const file = order.post_task_files?.find((f) => f.row === compose.row);
+    const launch = file
+      ? [
+          `launch the \`compose\` row with ONE \`${vocab.lens}\` call to \`${compose.p.agent}\`:`,
+          "its task is the pointer",
+          `\`Task file: ${file.path}. Read it first; it is your complete task.\``,
+          "followed by the CHAIN LEADS block, verbatim. Its file sits in",
+          `\`${taskDirOf([file])}\`, which no wave launches: never pass that`,
+          `directory to \`${vocab.wave}\`.`,
+        ]
+      : [
+          `launch the \`compose\` row with ONE \`${vocab.lens}\` call to \`${compose.p.agent}\`.`,
+          "It has no task file: write its task string as for any lens you launch by",
+          "hand — the round's worktree, head and diff range, the PR text, SETTLED, the",
+          "gate notes — with `Strategy: compose` on a line of its own, then the CHAIN",
+          "LEADS block, verbatim.",
+        ];
+    out.push(
+      "",
+      "**Exploit chains — compose this round's security leads.** When every",
+      "planned lens and every coverage row has returned and BEFORE step 3,",
+      "collect this round's security candidates — every candidate raised by a",
+      "`pass-sec-*` lens or `pass-security`, or whose `kind:` begins `security`,",
+      "`exploit-chain` or `partial-chain` — under the heading `CHAIN LEADS`,",
+      "one line each: `L1 <path:line> — <claim>`, through `Ln`. If there are any,",
+      ...launch,
+      "It runs alone, after the wave; its candidates join step 3 like any lens's.",
+      "If there are none, do not launch it: log one line, exactly",
+      "`CHAIN-SKIPPED no leads`, and go on.",
+      "A chain is its own candidate, citing its leads by id: never merge a chain",
+      "into one of its leads, nor a lead into a chain, even where they share lines.",
+      `In step 4 a chain and every lead it cites go to the same validator group${
+        order.security_validator_agent
+          ? ` — the security group, at \`${order.security_validator_agent}\``
+          : (order.validator_shards ?? 1) > 1
+            ? " — the same shard"
+            : ""
+      }.`,
+    );
+  }
+  out.push(
+    "",
+    "**A security pass that did not complete is said, never silent.** For every",
+    "security row of the plan that failed, errored or was cut short — a",
+    "`pass-sec-*` row, each exploit-chain strategy its own row — put this line,",
+    "exactly, in the review body, a chain row named `pass-sec-exploit-chain:<strategy>`:",
+    "",
+    securityPassIncompleteLine("<lens>"),
+  );
+  if (order.security_only)
+    out.push(
+      "",
+      "**This install reviews security only: a non-security candidate is killed",
+      "`out-of-scope`.** Record it `killed` with the word `out-of-scope`, and",
+      "never post it.",
+    );
+  return out.join("\n");
+}
+
+/**
+ * `{{security_fold_note}}`, after step 4's DOUBTED paragraph: "" unless the
+ * order carries `security_fold` (`[security] fold`), so every other order is
+ * byte-identical. The session's half of the validator's
+ * `validate-security-fold` addendum (packages/pi-plugin/src/include.ts): an
+ * unverified security candidate comes back `security-demoted`, never
+ * DOUBTED, and is posted as a question naming the proof gap — and its
+ * record entry carries `posted_as`, which is what counts it as posted
+ * (packages/pi-plugin/src/findingkey.ts `entryDisposition`).
+ */
+export function renderSecurityFoldNote(order: Pick<RoundOrder, "security_fold">): string {
+  if (!order.security_fold) return "";
+  return [
+    "",
+    "**The security fold — an unproven security candidate is asked, never",
+    "doubted.** This install folds a security candidate the validator could not",
+    "verify into a question: it comes back with the downgrade `security-demoted`,",
+    "never DOUBTED, and it is NOT doubted here either — a `security-demoted`",
+    "candidate under DOUBTED is the same candidate, treated the same. Post it as a",
+    "question in `### For a human to double-check`, naming the proof gap: the one",
+    "fact that, if it does not hold, makes the finding real. Record it",
+    '`"disposition": "downgraded"`, `"word": "security-demoted"`, `"axis":',
+    '"confidence"`, `"posted_as": "question"`. A security candidate the validator',
+    "refuted by citing a line it read, a `bad-anchor` and a `partial-chain` stay",
+    "DOUBTED.",
   ].join("\n");
 }
 
@@ -908,6 +1087,11 @@ export function roundVars(
     validator_output_note: renderValidatorOutputNote(order),
     // `[review] coverage_check`: "" unless the order carries coverage files.
     coverage_note: renderCoverageNote(order),
+    // The security family: "" unless the order composes exploit chains
+    // (`chain_compose`) or reviews security only (`security_only`).
+    chain_note: renderChainNote(order),
+    // `[security] fold`: "" unless the order carries `security_fold`.
+    security_fold_note: renderSecurityFoldNote(order),
     // Follow-up rounds: "" unless the order carries them; only
     // round-follow-up.md places them, so every other template is unchanged.
     prior_findings_note: order.prior_findings_note ?? "",
