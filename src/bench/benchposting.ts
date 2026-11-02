@@ -30,7 +30,9 @@ import { commentsEnvelope } from "./artifacts.js";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  DEFAULT_POSTING_POLICY,
   firstSentence,
+  isDefaultPosting,
   selectPosted,
   siteKey,
   verdictLineFor,
@@ -48,7 +50,11 @@ import {
   securityEntry,
   withheldReason,
 } from "@quickchatai/pi-quickreview/src/reviewrender.js";
-import { entryDisposition, recordSide } from "@quickchatai/pi-quickreview/src/findingkey.js";
+import {
+  entryDisposition,
+  recordEntries,
+  recordSide,
+} from "@quickchatai/pi-quickreview/src/findingkey.js";
 import {
   bareTag,
   isSecurityFinding,
@@ -411,6 +417,39 @@ function readJsonOr(path: string): unknown {
   } catch {
     return undefined;
   }
+}
+
+/** Does a findings record mark a partial exploit chain posted
+ * (secevidence.ts `isPartialChain`, read as reviewrender.ts
+ * `partialChainEntry` reads it)? */
+export function recordPostsPartialChain(record: unknown): boolean {
+  if (typeof record !== "object" || record === null || Array.isArray(record)) return false;
+  const entries = recordEntries(record as Record<string, unknown>) ?? [];
+  return entries.some(
+    (e) =>
+      typeof e === "object" &&
+      e !== null &&
+      entryDisposition(e as Record<string, unknown>) === "posted" &&
+      partialChainEntry(e as Record<string, unknown>),
+  );
+}
+
+/**
+ * The policy the bench enforces on a case the session wrote by hand: the
+ * profile's own when it sets one; under the default policy, the default —
+ * whose one cut is a posted partial chain, never posted under any policy or
+ * none — only when the case's findings record marks one posted, so every
+ * other default-policy case is scored exactly as the session wrote it. Null
+ * when there is nothing to enforce.
+ */
+export function benchPolicyToEnforce(
+  caseDir: string,
+  policy: PostingPolicy | undefined,
+): PostingPolicy | null {
+  if (policy !== undefined && !isDefaultPosting(policy)) return policy;
+  return recordPostsPartialChain(readJsonOr(join(caseDir, CASE_FILES.findings)))
+    ? { ...DEFAULT_POSTING_POLICY }
+    : null;
 }
 
 /**

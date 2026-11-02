@@ -42,7 +42,11 @@ import {
   reservedAddendumIds,
 } from "@quickchatai/pi-quickreview/src/profiles.js";
 import { bodyPostedFindings, parseSessionComments } from "../src/bench/aacr.js";
-import { enforceBenchPosting, policeBenchOutput } from "../src/bench/benchposting.js";
+import {
+  benchPolicyToEnforce,
+  enforceBenchPosting,
+  policeBenchOutput,
+} from "../src/bench/benchposting.js";
 import { collectComments, runFingerprint } from "../src/bench/runner.js";
 import type { PrStateRow } from "../src/state.js";
 import { renderRoundPrompt } from "@quickchatai/pi-quickreview/src/templates.js";
@@ -777,6 +781,31 @@ describe("benchmark export: a cut comment marks ITS record entry, never a neighb
     expect(enforceBenchPosting(d, SNAPPY)).toBeNull();
     expect(readFileSync(join(d, "comments.json"), "utf8")).toBe('[{"path": "src/a.ts", "line": 3,');
     expect(existsSync(join(d, "comments.session.json"))).toBe(false);
+  });
+
+  // A hand-written case under the default policy is policed for the one cut
+  // no policy moves — a posted partial chain — and for nothing else.
+  // MUTATION: make benchPolicyToEnforce return null under the default policy
+  // (the runner's old `!isDefaultPosting` condition) — this fails.
+  it("under the default policy, a case whose record posts a partial chain has that one comment cut", () => {
+    const before = collectComments(caseDir(SESSION)).comments.length;
+    expect(benchPolicyToEnforce(caseDir(SESSION), undefined)).toBeNull();
+    expect(benchPolicyToEnforce(caseDir(SESSION), SNAPPY)).toBe(SNAPPY);
+    const record = structuredClone(SESSION.record) as { findings: Array<Record<string, unknown>> };
+    const f4 = record.findings.find((f) => f["id"] === "f4")!;
+    Object.assign(f4, {
+      lens: "pass-sec-exploit-chain:delta",
+      kind: "exploit-chain",
+      word: "partial-chain",
+    });
+    const d = caseDir({ ...SESSION, record });
+    const policy = benchPolicyToEnforce(d, undefined);
+    expect(policy).toEqual(DEFAULT_POSTING_POLICY);
+    const report = enforceBenchPosting(d, policy!);
+    expect(report?.withheld.map((w) => [w.line, w.word])).toEqual([[40, "partial-chain"]]);
+    const scored = collectComments(d).comments;
+    expect(scored.length).toBe(before - 1);
+    expect(scored.some((c) => c.line === 40)).toBe(false);
   });
 });
 

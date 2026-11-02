@@ -40,9 +40,14 @@
 // blocker bar does not move — a budget is filled around the blockers, never
 // out of them; not even `scope = "security"` withholds one), nothing a policy
 // withholds is deleted from the findings record, and a partial exploit chain
-// (secevidence.ts `isPartialChain`) is NEVER posted, under any policy or none
-// — it is a doubt the session should not have posted, so it is withheld with
-// the word `partial-chain`.
+// (secevidence.ts `isPartialChain`) is never posted from the findings record,
+// under any policy or none — it is a doubt the session should not have
+// posted, so every render of the record and the bench's policing of a
+// hand-written case (src/bench/benchposting.ts `benchPolicyToEnforce`)
+// withhold it with the word `partial-chain`. A review the session writes by
+// hand in production (`[review] render_outputs = false`) is held to this by
+// the round prompt alone, and a partial chain it posts is counted after the
+// fact (findingsrecord.ts `security_outcome_mismatch`).
 //
 // The security keys. `scope = "security"` withholds every non-security
 // finding (`security-scope`). `security_max = N` (> 0) gives security

@@ -98,7 +98,12 @@ import {
 // The round's lens agents are built by the core (`qcr review` builds them too).
 import { buildBenchAgents } from "@quickchatai/pi-quickreview/src/engine/roundagents.js";
 export { buildBenchAgents };
-import { enforceBenchPosting, POLICED_ORIGINALS, type BenchPostingReport } from "./benchposting.js";
+import {
+  benchPolicyToEnforce,
+  enforceBenchPosting,
+  POLICED_ORIGINALS,
+  type BenchPostingReport,
+} from "./benchposting.js";
 import {} from "@quickchatai/pi-quickreview/src/severity.js";
 import type { PassPlanEntry } from "@quickchatai/pi-quickreview/src/types.js";
 import {} from "@quickchatai/pi-quickreview/src/templates.js";
@@ -929,8 +934,11 @@ export async function reviewCase(
       log(
         `review: ${c.instance_id} — posting policy kept ${renderedPosting.kept} of ${renderedPosting.kept + renderedPosting.withheld.length} (${renderedPosting.withheld.map((w) => w.word).join(", ") || "nothing withheld"})`,
       );
-    } else if (!isDefaultPosting(ctx.cfg.posting) && outcome !== undefined) {
-      const policed = enforceBenchPosting(caseDir, ctx.cfg.posting!, headPatches);
+    } else if (outcome !== undefined) {
+      // A hand-written case (no render): the profile's policy, or — under the
+      // default — the partial-chain cut alone, when the record posts one.
+      const enforce = benchPolicyToEnforce(caseDir, ctx.cfg.posting);
+      const policed = enforce ? enforceBenchPosting(caseDir, enforce, headPatches) : null;
       if (policed) {
         summary.posting = policed;
         log(
