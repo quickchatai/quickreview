@@ -10,10 +10,10 @@ QuickReview's whole-repo scan is the `/qcr-scan` command of this pi. It prices t
 A slash command is the person's to type: you cannot run it yourself. To run the scan, give the person the line to type:
 
 ```text
-/qcr-scan [--delta] [--sha REF] [--preview]
+/qcr-scan [--delta] [--sha REF] [--path DIR] [--preview]
 ```
 
-- Nothing scans the whole repo.
+- Nothing scans the whole repo; `--path DIR` scans one folder of it (a path relative to the repo root).
 - `--delta` scans only the files that changed since the last scan; `--sha REF` scans the tree at `REF`.
 - `--preview` prices the scan and starts nothing; `/qcr-scan stop` stops a running one.
 - `/qcr-scan findings`, `/qcr-scan status`, `/qcr-scan units` and the other scan subcommands pass through as typed.

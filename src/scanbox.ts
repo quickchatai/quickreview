@@ -103,7 +103,8 @@ export { loginInPi } from "./pilogin.js";
  * `DetachOutcome` carries it — `R` is its run record), its log and, from a
  * sandbox, its container; or a refusal. */
 export type StartOutcome<R = unknown> =
-  { ok: true; run: R; log: string; container?: string } | { ok: false; errors: string[] };
+  | { ok: true; run: R; log: string; container?: string }
+  | { ok: false; errors: string[]; usage?: true };
 
 /** In-container paths of a scan sandbox. The image fixes the app's and the
  * pi home's; the rest are the companion's own mount points, so code inside

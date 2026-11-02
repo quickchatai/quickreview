@@ -6,6 +6,7 @@
     "id": "scan-20260929T100001Z",
     "mode": "calibration",
     "sha": "0000000000000000000000000000000000000000",
+    "path": null,
     "state": "complete",
     "display": "complete",
     "depth": "standard",

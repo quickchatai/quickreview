@@ -67,6 +67,7 @@ import type {
 import {
   parseScanCommand,
   runScanCommand,
+  SCAN_COMMAND_USAGE,
   scanStateHome,
   ScanSessions,
   type ScanCommandDeps,
@@ -1335,6 +1336,31 @@ describe("/qcr-scan (the plugin's own engine)", () => {
     expect(ui.shown.join("\n")).not.toMatch(/qcr scan /);
     await runScanCommand("--preview", host, ui, { sessions, deps });
     expect(ui.shown.at(-1)).toMatch(/Scan 3 files of .*stops hard at \$/);
+    expect(deps.agents).toEqual([]);
+  });
+
+  it("takes --path: the guided run and a preview price one folder, and the usage says so", async () => {
+    expect(SCAN_COMMAND_USAGE).toMatch(/\[--path DIR\]/);
+    expect(parseScanCommand("--path ./lib/ --preview")).toEqual({
+      kind: "guided",
+      o: { delta: false, path: "lib", preview: true },
+    });
+    expect((parseScanCommand("--path /etc") as { error: string }).error).toMatch(
+      /absolute[\s\S]*usage: \/qcr-scan/,
+    );
+    const host = scanHost();
+    const deps = fakeScan(host);
+    const sessions = new ScanSessions();
+    const ui = fakeUi();
+    await runScanCommand("units propose", host, ui, { sessions, deps });
+    await runScanCommand("units save", host, ui, { sessions, deps });
+    await runScanCommand("--path lib --preview", host, ui, { sessions, deps });
+    expect(ui.shown.at(-1)).toMatch(/Scan 1 files of lib\/ in /);
+    expect(ui.shown.at(-1)).toMatch(/\/qcr-scan start --key \w+ --sha \w+ --path lib`/);
+    await runScanCommand("preview --path lib", host, ui, { sessions, deps });
+    expect(ui.shown.at(-1)).toMatch(/\/qcr-scan start --key \w+ --sha \w+ --path lib/);
+    await runScanCommand("--path nope --preview", host, ui, { sessions, deps });
+    expect(ui.notes.at(-1)?.[1]).toMatch(/--path nope is not a folder/);
     expect(deps.agents).toEqual([]);
   });
 

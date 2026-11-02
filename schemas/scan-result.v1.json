@@ -115,6 +115,10 @@
         "sha": {
           "type": "string"
         },
+        "path": {
+          "type": ["string", "null"],
+          "description": "A folder scan's folder (--path), relative to the repo root; null for the whole repo."
+        },
         "state": {
           "type": "string"
         },
@@ -214,6 +218,7 @@
         "id": { "type": "string" },
         "mode": { "type": "string" },
         "sha": { "type": "string" },
+        "path": { "type": ["string", "null"] },
         "cases": { "type": "integer" },
         "cap_usd": { "type": "number" }
       }
@@ -364,6 +369,10 @@
         },
         "sha": {
           "type": "string"
+        },
+        "path": {
+          "type": ["string", "null"],
+          "description": "A folder scan's folder (--path), relative to the repo root; null for the whole repo."
         },
         "cases": {
           "type": "array",

@@ -9,6 +9,7 @@ import type { CaseOutcome, CaseSpec } from "../../src/setup/engine.js";
 import { FindingsStore } from "../../src/setup/findings.js";
 import { fileLease, type ScanLease } from "../../src/setup/scanlease.js";
 import { ScanRunner, type ScanSettings } from "../../src/setup/scanrun.js";
+import type { UnitCut } from "../../src/setup/unitcut.js";
 
 export const SHA = "a".repeat(40);
 export const SHA2 = "b".repeat(40);
@@ -44,6 +45,10 @@ export function scanRig(opts: {
   clock?: { t: number };
   /** Called while a start plans (from the saved-cut port). */
   duringPlan?: () => void;
+  /** The saved unit cut; null: none is saved. Omitted: units app and lib. */
+  cut?: UnitCut | null;
+  /** Every case the runner was handed, in order. */
+  ran?: CaseSpec[];
 }): Rig {
   const trees = opts.trees ?? { [SHA]: FILES };
   const head = opts.head ?? SHA;
@@ -78,6 +83,7 @@ export function scanRig(opts: {
     clock,
     cases: {
       run: (spec: CaseSpec, signal: AbortSignal): Promise<CaseOutcome> => {
+        opts.ran?.push(spec);
         if (opts.hang?.(spec))
           return new Promise((res) =>
             signal.addEventListener("abort", () => res({ ok: false, reason: "stopped" }), {
@@ -109,9 +115,11 @@ export function scanRig(opts: {
     },
     savedCut: () => {
       opts.duringPlan?.();
+      if (opts.cut === null)
+        return { ok: false, errors: ["no saved unit cut — propose, adjust and save one first"] };
       return {
         ok: true,
-        cut: {
+        cut: opts.cut ?? {
           units: ["app", "lib"].map((u) => ({ name: u, roots: [u], kind: "directory", note: "" })),
           ignored: [],
         },

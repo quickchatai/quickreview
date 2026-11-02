@@ -13,7 +13,8 @@
 //     sha, whichever units own them — cross-cutting bugs (auth across views,
 //     middleware and the model) live exactly between units. The row records
 //     every unit it touches; a finding is filed under the unit that owns its
-//     file.
+//     file. A folder proposal (`path`) keeps every row, its paired tests and
+//     the floor under its folder.
 //   * TESTS ARE PAIRED, ONLY HERE. Stage 1 never reads a test. In stage 2 a
 //     test enters a row only as the pair of a code file the row names
 //     (`pairTests`: same subject, same language family, nearest directory),
@@ -89,6 +90,7 @@ import {
   type ScanRate,
   type TreeFile,
   type UnreadableReason,
+  underPath,
 } from "./scan.js";
 import { depthOf, measuredRate, rateWhere, type LedgerEntry } from "./ledger.js";
 import { assign, splitUnit, type CaseBudget, type UnitCut } from "./unitcut.js";
@@ -334,6 +336,9 @@ export interface Stage2PlanInput {
   /** A deep proposal's floor lenses (`[scan] deep_lenses`, in order); absent
    * = no floor. `covered` and `partial` must answer at the deep depth. */
   floor?: readonly string[];
+  /** A folder proposal (scan.ts `scanPath`): a row names only files under
+   * it, its tests are paired from under it, and the floor covers only it. */
+  path?: string | null;
 }
 
 /** What a deep proposal's floor covered and left out. */
@@ -517,6 +522,8 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
   const excluded = globMatcher(input.exclude);
   const blobs = new Map(input.files.map((f) => [f.path, f.blob]));
   const treePaths = [...blobs.keys()].sort();
+  // What a folder proposal may read: the files under its folder.
+  const inside = treePaths.filter((p) => underPath(p, input.path));
   const unitOf = unitOwner(input.cut, treePaths);
   const allowed = stage2Lenses(input.lenses);
   const seen = new Set<string>();
@@ -558,7 +565,7 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
     // A paired test obeys the named files' rules: never an unreadable kind
     // (generated, vendored, a lockfile), never excluded, readable as text.
     const pairable = (t: string): boolean =>
-      !isSweepSkipped(t) && !excluded(t) && input.linesOf(t) !== null;
+      underPath(t, input.path) && !isSweepSkipped(t) && !excluded(t) && input.linesOf(t) !== null;
     for (const code of spec.pair ? sorted : []) {
       for (const t of pairTests(code, treePaths, pairable)) {
         if (taken.has(t)) continue;
@@ -659,6 +666,8 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
     const lines = new Map<string, number>();
     for (const p of named) {
       if (!blobs.has(p)) problems.push(`${p} is not in the tree at the scan sha`);
+      else if (!underPath(p, input.path))
+        problems.push(`${p} is outside the scan's --path ${input.path}`);
       else if (isTestFile(p))
         problems.push(
           `${p} is a test — tests enter stage 2 only paired with the code they test; name that code`,
@@ -712,7 +721,7 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
     // Stage 1's files: readable, not a test, a migration, an excluded glob
     // or an unreadable kind — and owned by a unit of the cut.
     const lines = new Map<string, number>();
-    for (const p of treePaths) {
+    for (const p of inside) {
       if (stage1Exclusion(p, excluded) !== null) continue;
       const n = input.linesOf(p);
       if (n !== null) lines.set(p, n);
@@ -757,7 +766,7 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
             ? `no row and no floor: every [scan] deep_lenses lens (${input.floor.join(", ")}) is switched off by this repo's profile`
             : floor.covered > 0
               ? "nothing left for the floor: the ledger already holds a deep reading of every file by every floor lens at this content"
-              : "no row and no floor: stage 1 reads no file a unit of the cut owns",
+              : `no row and no floor: stage 1 reads no file a unit of the cut owns${input.path ? ` under ${input.path}` : ""}`,
         ],
       };
     }

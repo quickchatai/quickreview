@@ -488,15 +488,15 @@ line (`ok: false` with `errors` on a refusal). Exit codes: 0 done, 1 refused,
 2 usage, 3 `status --wait` timed out.
 
 ```sh
-qcr scan preview [--sha REF] [--delta]           # cases and price; prints the start key
-qcr scan start --key K [--sha REF] [--delta]     # starts EXACTLY that preview
+qcr scan preview [--sha REF] [--delta] [--path DIR]   # cases and price; prints the start key
+qcr scan start --key K [--sha REF] [--delta] [--path DIR]   # starts EXACTLY that preview
 qcr scan status [--wait [--timeout S]]           # --wait blocks until the run ends
 qcr scan stop
 qcr scan findings [--state S] [--lens L] [--unit U] [--severity P] [--validity V] [--doubted|--not-doubted] [--limit N]
 qcr scan matches                                 # the pending match question
 qcr scan match --key K OLD=NEW…                  # its whole answer; unpaired old ones become fixed
 qcr scan suggestions
-qcr scan stage2 propose [--rows FILE|-] [--budget USD] [--deep|--standard] [--sha REF]
+qcr scan stage2 propose [--rows FILE|-] [--budget USD] [--deep|--standard] [--sha REF] [--path DIR]
 qcr scan stage2 start --key K [--rows row-1,row-3]
 qcr scan dismiss FP… --reason TEXT               # the triage dismissal: sticky, with its memory note
 qcr scan units show                              # the saved unit cut and the draft (setup_unit_cut)
@@ -511,7 +511,13 @@ qcr scan rebuild                                 # build [scan] image, stamped �
 The approval rules are the tools': `start` takes only the key a `preview`
 printed (`preview --json` gives it as `start`, the arguments to pass on), and
 anything that moved since — the plan, the sha, the price, a setting — is
-refused; the run stops hard at the estimate it showed. `stage2 start` takes
+refused; the run stops hard at the estimate it showed. `--path DIR` scopes a
+preview, its start and a stage 2 proposal to one folder, relative to the repo
+root: stage 1's cases are the cut's units narrowed to the files under it (a
+unit only partly inside keeps its name), the ledger, exclusions and `--delta`
+apply inside it, and a proposal's rows and deep floor name only files under
+it. The path is part of the key, and one that is absolute, leaves the repo or
+names no folder of the tree at the sha is a usage error (exit 2). `stage2 start` takes
 only the key of the stored proposal, and `--rows` narrows it to runnable rows,
 the hard stop their total. `stage2 propose` reads the companion's rows (the
 `scan_stage2_propose` shape: `[{lens, files, tier?, reason}]`) from a JSON

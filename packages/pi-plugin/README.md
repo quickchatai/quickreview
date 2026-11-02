@@ -29,8 +29,9 @@ knows the command and can tell you the line to type.
     at a time, and ending the session stops it.
   - After a PR review, your posting rule decides whether it goes to the PR
     as a comment-only review (see Settings).
-- `/qcr-scan [--delta] [--sha REF] [--preview]` scans the whole repo for
-  defects, priced first and started only on your yes. It runs in the
+- `/qcr-scan [--delta] [--sha REF] [--path DIR] [--preview]` scans the whole
+  repo, or with `--path` one folder of it, for defects, priced first and
+  started only on your yes. It runs in the
   background in this pi, like a review: a status line while it runs, the new
   findings as a message when it ends, `/qcr-scan stop` to stop it. Its cases
   are SDK sessions of this pi behind the same read-only bash guard as the

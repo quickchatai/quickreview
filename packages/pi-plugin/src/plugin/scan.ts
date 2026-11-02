@@ -12,7 +12,8 @@
 // when it ends. One scan runs per session; `/qcr-scan stop` (or the session
 // ending) stops it, and the ledger keeps what finished. A repo scanned for the
 // first time gets a unit cut proposed from its layout and saved, once the
-// person agrees. `--preview` prices the run and starts nothing.
+// person agrees. `--preview` prices the run and starts nothing. `--path DIR`
+// scans one folder of the repo (scan/scan.ts `scanPath`).
 //
 // `/qcr-scan <subcommand> …` is the scan's verb of that name, the same one
 // `qcr scan <subcommand>` runs (scan/scanverbs.ts), answered here. A start
@@ -33,7 +34,8 @@ import { scanConfigOf } from "../scan/scanagents.js";
 import { assembleScan, type AssembledScan } from "../scan/scanassemble.js";
 import { checkoutReader, stateHomeFs } from "../scan/scanfs.js";
 import type { CaseRunner, Refusal } from "../scan/scanports.js";
-import { listFindings, type ScanVerbs } from "../scan/scanrender.js";
+import { listFindings, pathFlag, type ScanVerbs } from "../scan/scanrender.js";
+import { scanPath } from "../scan/scan.js";
 import type { ScanRun, ScanStatus } from "../scan/scanrun.js";
 import {
   findingJson,
@@ -77,12 +79,12 @@ export const SCAN_SUBCOMMANDS = [
 export const APP_SUBCOMMANDS: readonly string[] = ["login", "doctor", "rebuild", "dismiss"];
 
 export const SCAN_COMMAND_USAGE =
-  "usage: /qcr-scan [--delta] [--sha REF] [--preview] | /qcr-scan <scan subcommand> …";
+  "usage: /qcr-scan [--delta] [--sha REF] [--path DIR] [--preview] | /qcr-scan <scan subcommand> …";
 
 /** How the scan's answers name the next step here. */
 export const PLUGIN_SCAN_VERBS: ScanVerbs = {
   start: (p) =>
-    `/qcr-scan start --key ${p.key} --sha ${p.sha}${p.mode === "delta" ? " --delta" : ""}`,
+    `/qcr-scan start --key ${p.key} --sha ${p.sha}${p.mode === "delta" ? " --delta" : ""}${pathFlag(p.path)}`,
   matches: "/qcr-scan matches",
   match: (key) => `/qcr-scan match --key ${key} OLD=NEW… — the pairs`,
   stage2Start: (key) =>
@@ -99,6 +101,8 @@ export type ScanFinding = FindingJson;
 export interface ScanOptions {
   delta: boolean;
   sha?: string;
+  /** One folder of the repo, normalised (scan/scan.ts `scanPath`). */
+  path?: string;
   /** Price it, start nothing. */
   preview?: boolean;
 }
@@ -118,6 +122,11 @@ export function parseScanCommand(
     else if (w === "--preview") o.preview = true;
     else if (w === "--sha" && next !== undefined && !next.startsWith("--")) {
       o.sha = next;
+      i++;
+    } else if (w === "--path" && next !== undefined && !next.startsWith("--")) {
+      const p = scanPath(next);
+      if (!p.ok) return { error: `${p.why}\n${SCAN_COMMAND_USAGE}` };
+      if (p.path !== null) o.path = p.path;
       i++;
     } else if (w === "--sandbox")
       return {
@@ -331,7 +340,11 @@ async function priceAndStart(
   const { scan } = engine;
   ui.status("QuickReview: pricing the scan…");
   try {
-    const previewArgs = { ...(o.sha ? { sha: o.sha } : {}), delta: o.delta };
+    const previewArgs = {
+      ...(o.sha ? { sha: o.sha } : {}),
+      delta: o.delta,
+      ...(o.path ? { path: o.path } : {}),
+    };
     let pv = await scan.preview(previewArgs);
     if (!pv.ok && pv.errors.some((e) => NO_CUT.test(e))) {
       // First scan of this repo: a scan reads by unit, and the cut is
@@ -361,7 +374,7 @@ async function priceAndStart(
     if (p.blockers.length > 0)
       return { ok: false, error: `the scan cannot start: ${p.blockers.join("; ")}` };
     const what =
-      `Scan ${p.files} files of ${host.cwd}` +
+      `Scan ${p.files} files of ${p.path !== null ? `${p.path}/ in ` : ""}${host.cwd}` +
       `${p.mode === "delta" ? " (the files changed since the last scan)" : ""} for about ` +
       `${p.estimate_usd === null ? "the price of a calibration run" : usd(p.estimate_usd)}; it stops hard at ${usd(p.cap_usd)}.`;
     if (o.preview)
@@ -388,7 +401,12 @@ async function priceAndStart(
     }
     if (!(await ui.confirm("QuickReview scan", `${what} Start it?`, host.shutdown)))
       return { ok: false, error: "the scan was not started" };
-    const started = await scan.start({ key: p.key, sha: p.sha, delta: p.mode === "delta" });
+    const started = await scan.start({
+      key: p.key,
+      sha: p.sha,
+      delta: p.mode === "delta",
+      ...(p.path !== null ? { path: p.path } : {}),
+    });
     if (!started.ok) return { ok: false, error: started.errors.join("; ") };
     return { ok: true, run: started.run };
   } finally {
@@ -603,6 +621,7 @@ async function passThrough(
                 key: parsed.key,
                 ...(parsed.sha ? { sha: parsed.sha } : {}),
                 delta: parsed.delta,
+                ...(parsed.path ? { path: parsed.path } : {}),
               })
             : parsed.verb === "stage2-start"
               ? await engine.scan.startStage2({
