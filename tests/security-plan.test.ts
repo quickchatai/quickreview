@@ -116,7 +116,7 @@ describe("a family row in the default profile", () => {
     }
   });
 
-  it("is left out when [security] triggers = \"off\"", () => {
+  it('is left out when [security] triggers = "off"', () => {
     const off: Config = { ...fixture, security: { ...fixture.security, triggers: "off" } };
     expect(familyRows(plan(off, [SQL, UNGUARDED]))).toEqual([]);
   });

@@ -129,10 +129,7 @@ export function oneShotThreatModel(
 }
 
 /** The planner's security inputs for a one-shot round. */
-function planSecurityOf(
-  sec: OneShotSecurity,
-  threatModel: ThreatModel | null,
-): PlanSecurityInputs {
+function planSecurityOf(sec: OneShotSecurity, threatModel: ThreatModel | null): PlanSecurityInputs {
   return {
     ...(sec.securityRequest ? { securityRequest: sec.securityRequest } : {}),
     threatModel,
@@ -202,25 +199,27 @@ export interface OneShotPrompts {
 }
 
 /** The first round's order + system prompt for a target: production renderers. */
-export function renderOneShotPrompts(args: {
-  root: string;
-  cfg: CoreConfig;
-  ecosystem: Ecosystem;
-  target: OneShotTarget;
-  tree: string;
-  caseDir: string;
-  files: PrFileEntry[];
-  issuedAt: string;
-  /** The rendered third-party-sources block, "" when none (depsources.ts). */
-  dependencyNote?: string;
-  /** The round's memory seed (src/reviewmemory.ts); absent => memory-less. */
-  memory?: RoundMemory;
-  /** Reads a shipped `prompts/` file instead of the disk: where a profile's
-   * replacement is served (packages/pi-plugin/src/profileoverrides.ts). Absent: the file itself. */
-  readFile?: (path: string) => string;
-  /** The profile loaders' lookup, carrying the repo profile's layer. */
-  profileLookup?: ProfileLookup;
-} & OneShotSecurity): OneShotPrompts {
+export function renderOneShotPrompts(
+  args: {
+    root: string;
+    cfg: CoreConfig;
+    ecosystem: Ecosystem;
+    target: OneShotTarget;
+    tree: string;
+    caseDir: string;
+    files: PrFileEntry[];
+    issuedAt: string;
+    /** The rendered third-party-sources block, "" when none (depsources.ts). */
+    dependencyNote?: string;
+    /** The round's memory seed (src/reviewmemory.ts); absent => memory-less. */
+    memory?: RoundMemory;
+    /** Reads a shipped `prompts/` file instead of the disk: where a profile's
+     * replacement is served (packages/pi-plugin/src/profileoverrides.ts). Absent: the file itself. */
+    readFile?: (path: string) => string;
+    /** The profile loaders' lookup, carrying the repo profile's layer. */
+    profileLookup?: ProfileLookup;
+  } & OneShotSecurity,
+): OneShotPrompts {
   const { root, cfg, target, tree } = args;
   const readPrompt = (name: string): string => {
     const path = join(root, "prompts", name);
