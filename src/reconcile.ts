@@ -998,7 +998,9 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
                 : {}),
             },
           );
-          if (outcome.fresh && deps.ackSecurityRequest) {
+          // A fresh request is acknowledged, and so is one that took over a
+          // label request (it now stands on this comment's word).
+          if ((outcome.fresh || outcome.reason === "upgraded") && deps.ackSecurityRequest) {
             try {
               await deps.ackSecurityRequest(n, c.user);
             } catch (err) {

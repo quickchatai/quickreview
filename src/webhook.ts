@@ -975,7 +975,8 @@ export async function applyInterpretation(
       // An explicit maintainer request is new evidence: a PR reviewed at
       // its head is reviewed again, with the security family planned
       // (src/securityrequest.ts). A request that already stands changes
-      // nothing and is not acknowledged twice.
+      // nothing and is not acknowledged twice — except a comment taking over
+      // a label request, which now stands on its word and is acknowledged.
       const outcome = local(() =>
         applySecurityRequest(
           store,
@@ -988,7 +989,10 @@ export async function applyInterpretation(
           { botLogin: opts.botLogin, ...(i.meta ? { meta: i.meta } : {}) },
         ),
       );
-      if (!outcome.fresh) return;
+      if (!outcome.fresh) {
+        if (outcome.reason === "upgraded" && i.source === "comment") await deps.onSecurityAck?.(i);
+        return;
+      }
       if (i.source === "comment") await deps.onSecurityAck?.(i);
       if (outcome.served) await deps.onPrTouched?.(i.pr);
       return;

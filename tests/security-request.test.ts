@@ -390,6 +390,51 @@ describe("the reconcile pass", () => {
     );
   });
 
+  // MUTATION: make upgradeLabelReviewRequest return false without updating —
+  // this fails: the comment goes unacknowledged and the label coming off
+  // withdraws the maintainer's request.
+  it("a comment over a standing label request takes it over: acknowledged, and it outlives the label", async () => {
+    const store = new StateStore(":memory:");
+    tracked(store, 42);
+    const label = interpretEvent("pull_request", "labeled", labelPayload(LABEL), interpretDeps());
+    const ack = vi.fn();
+    await applyInterpretation({ cfg, store, onSecurityAck: ack }, label);
+    const served = store.reviewRequest(42, "security")?.served_at;
+    expect(served).not.toBeNull();
+    const comment = interpretEvent(
+      "issue_comment",
+      "created",
+      commentPayload(`${MENTION} security`, "MEMBER", 5009, "lee-ops"),
+      interpretDeps(),
+    );
+    await applyInterpretation({ cfg, store, onSecurityAck: ack }, comment);
+    expect(ack).toHaveBeenCalledOnce();
+    expect(store.reviewRequest(42, "security")).toMatchObject({
+      source: "comment",
+      requested_by: "lee-ops",
+      comment_id: 5009,
+      served_at: served,
+    });
+    // A second comment, or the operator, over it changes nothing more.
+    expect(applySecurityRequest(store, { pr: 42, source: "operator", by: "operator" })).toEqual({
+      fresh: false,
+      reason: "already-requested",
+    });
+    // The label comes off: the maintainer's request stands.
+    const listedAt = new Date(Date.now() + 60_000).toISOString();
+    const open = new Map([
+      [42, { title: "PR 42", head_sha: "head42", author: "dana-op", labels: [] as string[] }],
+    ]);
+    expect(sweepSecurityRequests(store, { open, listedAt, label: LABEL }).cleared).toEqual([]);
+    expect(
+      resolveSecurityRequest({
+        row: store.reviewRequest(42, "security"),
+        labels: [],
+        label: LABEL,
+      }),
+    ).toEqual({ by: "lee-ops", source: "comment" });
+  });
+
   it(
     "applies a collaborator's command its webhook missed, acknowledges once, and ignores a contributor's",
     { timeout: HEAVY_TIMEOUT_MS },

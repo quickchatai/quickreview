@@ -1049,8 +1049,10 @@ profile's plan, but never a lens the profile switched off or skipped
 A request is a row of `pr_review_requests` (one per PR and kind) and is
 served once: it notes new evidence at the reviewed head, so a PR already
 reviewed at its head is reviewed again. While it stands, every round of the
-PR plans the family; the label coming off withdraws it, and closing the PR
-drops it. The reconcile poll applies a comment its webhook missed, records
+PR plans the family; the label coming off withdraws a label request, and
+closing the PR drops any. A comment or operator request made while a label
+request stands takes the row over (a comment is acknowledged), so the label
+coming off no longer withdraws it. The reconcile poll applies a comment its webhook missed, records
 a label request no webhook brought, and serves a request that waited for a
 running round.
 

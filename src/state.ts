@@ -2952,6 +2952,36 @@ export class StateStore {
     return fresh;
   }
 
+  /** A comment or operator request taking over a standing label request: the
+   * row keeps its time and its serving, and now stands on the asker's word,
+   * so the label coming off no longer withdraws it. True when a label row was
+   * taken over; a non-label row, or a label request, changes nothing. */
+  upgradeLabelReviewRequest(input: {
+    pr: number;
+    kind: string;
+    source: ReviewRequestRow["source"];
+    requested_by: string;
+    comment_id?: number | null;
+  }): boolean {
+    if (input.source === "label") return false;
+    const upgraded =
+      this.db
+        .prepare(
+          `UPDATE pr_review_requests SET source = ?, requested_by = ?, comment_id = ?
+            WHERE pr = ? AND kind = ? AND source = 'label'`,
+        )
+        .run(input.source, input.requested_by, input.comment_id ?? null, input.pr, input.kind)
+        .changes === 1;
+    if (upgraded)
+      this.logEvent("review_request_upgraded", input.pr, {
+        kind: input.kind,
+        source: input.source,
+        by: input.requested_by,
+        ...(input.comment_id ? { comment_id: input.comment_id } : {}),
+      });
+    return upgraded;
+  }
+
   reviewRequest(pr: number, kind: string): ReviewRequestRow | undefined {
     return this.db
       .prepare("SELECT * FROM pr_review_requests WHERE pr = ? AND kind = ?")

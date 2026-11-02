@@ -43,7 +43,9 @@ function securityOutcome(o: SecurityRequestOutcome): string {
   if (!o.fresh)
     return o.reason === "closed"
       ? "security review not requested: closed"
-      : "security review already requested";
+      : o.reason === "upgraded"
+        ? "security review already requested by label; it now stands until the PR closes"
+        : "security review already requested";
   return o.served
     ? "security review requested"
     : "security review requested; it runs once the round in flight settles";

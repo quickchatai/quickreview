@@ -118,8 +118,11 @@ export interface SecurityRequestInput {
 
 export type SecurityRequestOutcome =
   /** A request already stands for the PR, or the PR is closed: nothing was
-   * written and nothing is queued. */
-  | { fresh: false; reason: "already-requested" | "closed" }
+   * written and nothing is queued. `upgraded`: a comment or operator request
+   * took over a standing label request — the row now stands on the asker's
+   * word (the label coming off no longer withdraws it), keeps its serving,
+   * and queues nothing more; a comment is acknowledged. */
+  | { fresh: false; reason: "already-requested" | "closed" | "upgraded" }
   /** The request was recorded. `served`: it reached the queue now; false
    * while a running round settles first, or for a PR this daemon does not
    * track yet (the reconcile pass adopts it from its open list). */
@@ -145,14 +148,19 @@ export function applySecurityRequest(
         });
         return { fresh: false, reason: "closed" };
       }
-      const fresh = store.recordReviewRequest({
+      const row = {
         pr: req.pr,
         kind: SECURITY_REQUEST_KIND,
         source: req.source,
         requested_by: req.by,
         ...(req.comment_id !== undefined ? { comment_id: req.comment_id } : {}),
-      });
-      if (!fresh) return { fresh: false, reason: "already-requested" };
+      };
+      const fresh = store.recordReviewRequest(row);
+      if (!fresh)
+        return {
+          fresh: false,
+          reason: store.upgradeLabelReviewRequest(row) ? "upgraded" : "already-requested",
+        };
       return { fresh: true, served: serveSecurityRequest(store, req.pr, opts) };
       // Reads, then writes: IMMEDIATE takes the write lock up front, so a busy
       // writer elsewhere is waited for rather than failing the upgrade.
