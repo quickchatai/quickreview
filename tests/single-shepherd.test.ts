@@ -196,7 +196,7 @@ describe("daemon topology", () => {
     // store, `pi` among them, and starts nothing: it is let through only
     // while it has no way to start a process (no child_process, no piBin, no
     // --no-session), so the verb list is excused and a spawn is not.
-    // MUTATION: add `import { spawnSync } from "node:child_process";` to
+    // MUTATION: add a spawnSync import from node's child_process module to
     // src/sqlitehint.ts — this fails.
     const verbListOnly = (f: string): boolean =>
       f.endsWith("/src/sqlitehint.ts") &&
