@@ -1059,6 +1059,17 @@ describe("stage 0 is part of the scan: a preview offers it first, a stage-1 star
     await s.idle();
     expect(r.specs.map((x) => x.agent)).toEqual([`${THREAT_MODEL_PASS}--${SCAN_DEFAULTS.tier}`]);
     expect(r.state.read(THREAT_MODEL_DRAFT_FILE)).toContain("DRAFT threat model");
+    // MUTATION: drop `draft` from the stage-0 planKey — this fails. Its key
+    // is spent: a retried start never pays for stage 0 again.
+    for (const retry of [
+      () => s.start({ key: stage0!.key }),
+      () => s.startThreatModel({ key: stage0!.key }),
+    ]) {
+      const twice = await retry();
+      expect(twice.ok).toBe(false);
+      expect(!twice.ok && twice.errors.join(" ")).toMatch(/changed/);
+    }
+    expect(r.specs).toHaveLength(1);
     // Then the scan itself, over the draft.
     const again = await s.preview();
     if (!again.ok) throw new Error(again.errors.join("; "));

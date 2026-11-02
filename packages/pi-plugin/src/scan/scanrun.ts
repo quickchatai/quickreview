@@ -702,6 +702,12 @@ const modelRef = (
 ): { threat_model?: { source: ThreatModel["source"]; hash: string } } =>
   tm === null ? {} : { threat_model: { source: tm.source, hash: tm.hash } };
 
+/** The stage-0 key's view of the draft record: a digest of its text (sha,
+ * hash, run, time), or null when there is none. */
+function draftKey(record: string | null): string | null {
+  return record === null ? null : createHash("sha256").update(record).digest("hex");
+}
+
 /** The model's part of a plan key: absent when there is none, so a scan with
  * no threat model keys exactly as before. */
 const modelKey = (tm: ThreatModel | null): { threat_model?: string } =>
@@ -1153,11 +1159,22 @@ export class ScanRunner {
    * or null: none, or unreadable (said in the log) — then it is drafted again
    * rather than assumed current. */
   private draftedAt(): string | null {
+    const text = this.draftRecordText();
+    if (text === null) return null;
     try {
-      const text = this.ports.state.read(THREAT_MODEL_RECORD_FILE);
-      if (text === null) return null;
       const sha = (JSON.parse(text) as { sha?: unknown }).sha;
       return typeof sha === "string" ? sha : null;
+    } catch (err) {
+      this.ports.log?.(`setup: ${THREAT_MODEL_RECORD_FILE} cannot be read: ${clean(err)}`);
+      return null;
+    }
+  }
+
+  /** The stored draft's record as written (`THREAT_MODEL_RECORD_FILE`: its
+   * sha, hash, run and time), or null: none, or unreadable (said in the log). */
+  private draftRecordText(): string | null {
+    try {
+      return this.ports.state.read(THREAT_MODEL_RECORD_FILE);
     } catch (err) {
       this.ports.log?.(`setup: ${THREAT_MODEL_RECORD_FILE} cannot be read: ${clean(err)}`);
       return null;
@@ -2142,6 +2159,11 @@ export class ScanRunner {
         cap: Math.round(cap * 1e6),
         existing: existing?.hash ?? null,
         inventory: createHash("sha256").update(inventory).digest("hex"),
+        // The draft on record: a stage 0 that ran writes a new one, so the
+        // key it was started with is spent — a retried or repeated start
+        // never pays for the same draft twice. A fresh proposal still keys
+        // a deliberate re-draft.
+        draft: draftKey(this.draftRecordText()),
       }),
       mode: "threat-model",
       sha,
